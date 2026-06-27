@@ -43,6 +43,8 @@ header img{height:40px;filter:brightness(0) invert(1);background:transparent}
 .tab{padding:.55rem 1.4rem;border-radius:10px 10px 0 0;font-size:.82rem;font-weight:600;cursor:pointer;border:2px solid transparent;border-bottom:none;color:rgba(255,255,255,.6);background:rgba(255,255,255,.08);transition:.15s;white-space:nowrap}
 .tab:hover{color:#fff;background:rgba(255,255,255,.15)}
 .tab.active{background:var(--bg);color:var(--navy);border-color:var(--border);border-bottom-color:var(--bg);position:relative;bottom:-1px}
+.tab .ti{display:inline-block;filter:grayscale(1) brightness(6);transition:.15s}
+.tab.active .ti,.tab:hover .ti{filter:none}
 .tab-content-wrap{background:var(--bg);min-height:calc(100vh - 110px);border-top:2px solid var(--border)}
 
 /* ── Tab panels ── */
@@ -184,6 +186,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 .ob-item.done{color:var(--gray);text-decoration:line-through}
 .ob-section{font-size:.72rem;font-weight:700;text-transform:uppercase;color:var(--navy);margin:.9rem 0 .25rem;letter-spacing:.05em}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
@@ -211,17 +214,18 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
           onfocus="this.style.borderColor='rgba(255,255,255,.7)'" onblur="this.style.borderColor='rgba(255,255,255,.3)'">
         <span style="position:absolute;left:.55rem;top:50%;transform:translateY(-50%);font-size:.78rem;opacity:.6;pointer-events:none">🔍</span>
       </div>
+      <span id="sync-status" style="font-size:.72rem;font-weight:600;color:#94a3b8;white-space:nowrap">☁ Synced</span>
       <button class="logout-btn" onclick="openChangePwd()">🔑 Change Password</button>
       <button class="logout-btn" onclick="doLogout()">Sign Out</button>
     </div>
   </header>
 
   <div class="tab-bar">
-    <div class="tab active" onclick="switchTab('onboarding',this)">🔍 Background & References</div>
-    <div class="tab" onclick="switchTab('orientations',this)">📅 Orientations</div>
-    <div class="tab" onclick="switchTab('training',this)">🎓 Training</div>
-    <div class="tab" onclick="switchTab('compliance',this)">✅ Active Compliance</div>
-    <div class="tab" onclick="switchTab('offboarding',this)">🚪 Offboarding</div>
+    <div class="tab active" onclick="switchTab('onboarding',this)"><span class="ti">🔍</span> Background & References</div>
+    <div class="tab" onclick="switchTab('orientations',this)"><span class="ti">📅</span> Orientations</div>
+    <div class="tab" onclick="switchTab('training',this)"><span class="ti">🎓</span> Training</div>
+    <div class="tab" onclick="switchTab('compliance',this)"><span class="ti">✅</span> Active Compliance</div>
+    <div class="tab" onclick="switchTab('offboarding',this)"><span class="ti">🚪</span> Offboarding</div>
   </div>
 
   <div class="tab-content-wrap">
@@ -749,11 +753,12 @@ function checkPwd(val){ return btoa(val) === getStoredPwd(); }
 const TODAY = new Date(); TODAY.setHours(0,0,0,0);
 
 // ── Auth ──────────────────────────────────────────────────────────────
-function doLogin(){
+async function doLogin(){
   if(checkPwd(document.getElementById('pwd').value)){
     document.getElementById('login-screen').style.display='none';
     document.getElementById('app').style.display='block';
     document.getElementById('hdr-date').textContent = new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+    await loadFromSupabase();
     renderAll();
   } else { document.getElementById('err').style.display='block'; }
 }
@@ -808,6 +813,41 @@ const ZAPIER_ORIENTATION_WEBHOOK = "https://hooks.zapier.com/hooks/catch/REPLACE
 const ZAPIER_ATTENDANCE_WEBHOOK = "https://hooks.zapier.com/hooks/catch/REPLACE_WITH_YOUR_URL/attendance/";
 // Fires every time a candidate record is saved — syncs to AxisCare applicant + Google Drive Sheet
 const ZAPIER_CANDIDATE_WEBHOOK = "https://hooks.zapier.com/hooks/catch/REPLACE_WITH_YOUR_URL/candidate/";
+
+// ── SUPABASE ───────────────────────────────────────────────────────────
+const SB_URL  = 'https://zngsgedlsxinbygwmxwn.supabase.co';
+const SB_KEY  = 'sb_publishable_vssU6X7nKHSOCW96H0ezGg_c89w7yc_';
+const sb = supabase.createClient(SB_URL, SB_KEY);
+
+async function syncToSupabase(key, data){
+  try {
+    await sb.from('app_data').upsert({ key, data, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+  } catch(e){ console.warn('Supabase sync:', e); }
+}
+
+async function loadFromSupabase(){
+  setSyncStatus('syncing');
+  try {
+    const { data, error } = await sb.from('app_data').select('*');
+    if(error || !data) { setSyncStatus('offline'); return; }
+    data.forEach(row => {
+      if(!row.data) return;
+      if(row.key==='candidates')     { candidates=row.data; obId=Math.max(obId,...candidates.map(c=>c.id+1),10); }
+      if(row.key==='caregivers')     { caregivers=row.data; cgId=Math.max(cgId,...caregivers.map(c=>c.id+1),10); }
+      if(row.key==='orient_sessions'){ orientSessions=row.data; orientId=Math.max(orientId,...orientSessions.map(s=>s.id+1),1); }
+      if(row.key==='offboardings')   { offboardings=row.data; offId=Math.max(offId,...offboardings.map(o=>o.id+1),10); }
+    });
+    setSyncStatus('ok');
+  } catch(e){ console.warn('Supabase load failed, using localStorage:', e); setSyncStatus('offline'); }
+}
+
+function setSyncStatus(s){
+  const el = document.getElementById('sync-status');
+  if(!el) return;
+  const map = { syncing:['⟳ Syncing…','#94a3b8'], ok:['☁ Synced','#22c55e'], offline:['⚡ Local only','#f59e0b'] };
+  const [label,color] = map[s]||map.ok;
+  el.textContent=label; el.style.color=color;
+}
 
 // ── DATA — localStorage-backed ─────────────────────────────────────────
 const SEED_CANDIDATES = [
@@ -873,14 +913,17 @@ let offId = parseInt(localStorage.getItem('cc_off_id') || '10');
 function saveCandidates(){
   localStorage.setItem('cc_candidates', JSON.stringify(candidates));
   localStorage.setItem('cc_ob_id', String(obId));
+  syncToSupabase('candidates', candidates);
 }
 function saveCaregivers(){
   localStorage.setItem('cc_caregivers', JSON.stringify(caregivers));
   localStorage.setItem('cc_cg_id', String(cgId));
+  syncToSupabase('caregivers', caregivers);
 }
 function saveOffboardings(){
   localStorage.setItem('cc_offboardings', JSON.stringify(offboardings));
   localStorage.setItem('cc_off_id', String(offId));
+  syncToSupabase('offboardings', offboardings);
 }
 
 // ── TRAINING LOGIC ────────────────────────────────────────────────────
@@ -1467,6 +1510,7 @@ let acSelected = new Set();
 function saveOrientStore(){
   localStorage.setItem('cc_orient_sessions', JSON.stringify(orientSessions));
   localStorage.setItem('cc_orient_id', String(orientId));
+  syncToSupabase('orient_sessions', orientSessions);
 }
 
 function fmtTime(t){
