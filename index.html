@@ -321,6 +321,8 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
             <th>EDL <span style="font-weight:400;opacity:.7">90 days</span></th>
             <th>FCSR <span style="font-weight:400;opacity:.7">annual</span></th>
             <th>Fingerprint BG</th>
+            <th>Supervisory Visit <span style="font-weight:400;opacity:.7">annual</span></th>
+            <th>Performance Review <span style="font-weight:400;opacity:.7">annual</span></th>
             <th>Actions</th>
           </tr></thead>
           <tbody id="ac-tbody"></tbody>
@@ -664,6 +666,11 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
       </div>
       <div class="grp"><label>Fingerprint Date</label><input type="date" id="cg-fp-date"></div>
       <div class="grp"><label>Fingerprint Proof Link</label><input type="url" id="cg-fp-proof" placeholder="https://drive.google.com/..."></div>
+      <div class="sect-lbl">Annual Supervisory &amp; Performance</div>
+      <div class="grp"><label>Last Supervisory Visit Date</label><input type="date" id="cg-supv-date"></div>
+      <div class="grp"><label>Supervisory Visit Proof Link</label><input type="url" id="cg-supv-proof" placeholder="https://drive.google.com/..."></div>
+      <div class="grp"><label>Last Performance Review Date</label><input type="date" id="cg-perf-date"></div>
+      <div class="grp"><label>Performance Review Proof Link</label><input type="url" id="cg-perf-proof" placeholder="https://drive.google.com/..."></div>
     </div>
     <div class="modal-acts">
       <button class="btn-cancel" onclick="closeModal('cg-modal')">Cancel</button>
@@ -1076,7 +1083,8 @@ let acFilterVal='all';
 function acFilter(f,btn){ acFilterVal=f; document.querySelectorAll('#panel-compliance .fb').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); renderAC(); }
 function acWorst(c){
   const o=chkStatus(c.oig_date,90,14), e=chkStatus(c.edl_date,90,14), f=chkStatus(c.fcsr_date,365,30);
-  const ss=[o.status,e.status,f.status];
+  const sv=chkStatus(c.supv_date,365,30), pr=chkStatus(c.perf_date,365,30);
+  const ss=[o.status,e.status,f.status,sv.status,pr.status];
   if(ss.includes('Overdue')) return 'overdue';
   if(ss.includes('Due Soon')) return 'duesoon';
   if(ss.every(s=>s==='Current')) return 'current';
@@ -1095,6 +1103,7 @@ function renderAC(){
 
   tbody.innerHTML=list.map(c=>{
     const o=chkStatus(c.oig_date,90,14), e=chkStatus(c.edl_date,90,14), f=chkStatus(c.fcsr_date,365,30);
+    const sv=chkStatus(c.supv_date,365,30), pr=chkStatus(c.perf_date,365,30);
     function compCell(lastStr,info,overrideStatus,proof){
       const s=overrideStatus||info.status;
       const nd=info.nextDue?info.nextDue.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}):'';
@@ -1110,6 +1119,8 @@ function renderAC(){
       <td>${compCell(c.edl_date,e,c.edl_status,c.edl_proof)}</td>
       <td>${compCell(c.fcsr_date,f,c.fcsr_status,c.fcsr_proof)}</td>
       <td><div class="chk">${c.oos==='yes'?`<span class="badge ${fpBadge}">${c.fp}</span>${c.fp_date?`<span class="chk-date">${fmtD(c.fp_date)}</span>`:''}${proofLink(c.fp_proof)}`:`<span class="badge b-gray">Not required</span>`}</div></td>
+      <td>${compCell(c.supv_date,sv,'',c.supv_proof)}</td>
+      <td>${compCell(c.perf_date,pr,'',c.perf_proof)}</td>
       <td><div class="acts"><button class="ibtn" onclick="openCGModal('compliance',${c.id})">✏️</button></div></td>
     </tr>`;
   }).join('');
@@ -1363,7 +1374,7 @@ function openCGModal(tab,id=null){ cgReturnTab=tab; editingCG=id;
   document.getElementById('cg-modal-title').textContent=id?'Edit Caregiver':'Add Caregiver';
   const c=id?caregivers.find(x=>x.id===id):null;
   const g=k=>document.getElementById(k);
-  const fields=['cg-first','cg-last','cg-hire','cg-orient','cg-alz','cg-ojt-date','cg-ojt-proof','cg-ojt-online','cg-annual','cg-annual-proof','cg-oig','cg-oig-proof','cg-edl','cg-edl-proof','cg-fcsr','cg-fcsr-proof','cg-fp-date','cg-fp-proof'];
+  const fields=['cg-first','cg-last','cg-hire','cg-orient','cg-alz','cg-ojt-date','cg-ojt-proof','cg-ojt-online','cg-annual','cg-annual-proof','cg-oig','cg-oig-proof','cg-edl','cg-edl-proof','cg-fcsr','cg-fcsr-proof','cg-fp-date','cg-fp-proof','cg-supv-date','cg-supv-proof','cg-perf-date','cg-perf-proof'];
   if(c){
     g('cg-first').value=c.first;g('cg-last').value=c.last;g('cg-hire').value=c.hire_date||'';
     g('cg-oos').value=c.oos||'no';g('cg-orient').value=c.orient_date||'';g('cg-alz').value=c.alz_date||'';
@@ -1374,6 +1385,8 @@ function openCGModal(tab,id=null){ cgReturnTab=tab; editingCG=id;
     g('cg-edl').value=c.edl_date||'';g('cg-edl-s').value=c.edl_status||'';g('cg-edl-proof').value=c.edl_proof||'';
     g('cg-fcsr').value=c.fcsr_date||'';g('cg-fcsr-s').value=c.fcsr_status||'';g('cg-fcsr-proof').value=c.fcsr_proof||'';
     g('cg-fp').value=c.fp||'N/A';g('cg-fp-date').value=c.fp_date||'';g('cg-fp-proof').value=c.fp_proof||'';
+    g('cg-supv-date').value=c.supv_date||'';g('cg-supv-proof').value=c.supv_proof||'';
+    g('cg-perf-date').value=c.perf_date||'';g('cg-perf-proof').value=c.perf_proof||'';
   } else { fields.forEach(k=>g(k).value=''); g('cg-oos').value='no';g('cg-ojt-signed').value='no';g('cg-oig-s').value='';g('cg-edl-s').value='';g('cg-fcsr-s').value='';g('cg-fp').value='N/A'; }
   document.getElementById('cg-modal').classList.add('open');
 }
@@ -1387,7 +1400,9 @@ function saveCG(){
     oig_date:g('cg-oig'),oig_status:g('cg-oig-s'),oig_proof:g('cg-oig-proof'),
     edl_date:g('cg-edl'),edl_status:g('cg-edl-s'),edl_proof:g('cg-edl-proof'),
     fcsr_date:g('cg-fcsr'),fcsr_status:g('cg-fcsr-s'),fcsr_proof:g('cg-fcsr-proof'),
-    fp:g('cg-fp'),fp_date:g('cg-fp-date'),fp_proof:g('cg-fp-proof')};
+    fp:g('cg-fp'),fp_date:g('cg-fp-date'),fp_proof:g('cg-fp-proof'),
+    supv_date:g('cg-supv-date'),supv_proof:g('cg-supv-proof'),
+    perf_date:g('cg-perf-date'),perf_proof:g('cg-perf-proof')};
   if(editingCG){ const i=caregivers.findIndex(x=>x.id===editingCG); caregivers[i]={...caregivers[i],...d}; }
   else { caregivers.push({id:cgId++,...d}); }
   saveCaregivers(); closeModal('cg-modal'); renderAlerts();
@@ -1938,7 +1953,9 @@ function promoteToCaregiver(candidateId){
     oig_date: c.oig_date||'', oig_status: '', oig_proof: '',
     edl_date: c.edl_date||'', edl_status: '', edl_proof: '',
     fcsr_date: c.fcsr_date||'', fcsr_status: '', fcsr_proof: '',
-    fp: c.fp||'N/A', fp_date: c.fp_date||'', fp_proof: ''
+    fp: c.fp||'N/A', fp_date: c.fp_date||'', fp_proof: '',
+    supv_date: '', supv_proof: '',
+    perf_date: '', perf_proof: ''
   });
   saveCaregivers();
   candidates = candidates.filter(x=>x.id!==candidateId);
