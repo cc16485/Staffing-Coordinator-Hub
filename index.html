@@ -288,6 +288,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
           <thead><tr>
             <th>Caregiver</th><th>Hire Date</th>
             <th>Pre-Contact (6hr) <span style="font-weight:400;opacity:.7">before clients</span></th>
+            <th>First Client Contact</th>
             <th>30-Day OJT (12hr total) <span style="font-weight:400;opacity:.7">deadline</span></th>
             <th>Annual 5hr <span style="font-weight:400;opacity:.7">yr 2+</span></th>
             <th>Overall</th><th>Actions</th>
@@ -644,6 +645,8 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
       <div class="grp"><label>Agency Orientation (2hr) — Date</label><input type="date" id="cg-orient"></div>
       <div class="grp"><label>Alzheimer's &amp; Dementia — Date</label><input type="date" id="cg-alz"></div>
       <div class="grp"><label>ALZ Training Hours Completed</label><input type="number" id="cg-alz-hrs" min="0" max="20" placeholder="e.g. 4"></div>
+      <div class="sect-lbl">First Client Contact</div>
+      <div class="grp"><label>Date of First Client Contact <span style="font-size:.72rem;color:var(--teal)">(required in training file)</span></label><input type="date" id="cg-first-contact"></div>
       <div class="sect-lbl">Training — 30-Day Orientation (12hr total within 30 days)</div>
       <div class="grp"><label>Orientation Total Hours Completed</label><input type="number" id="cg-orient-hrs" min="0" max="20" placeholder="Required: 12"></div>
       <div class="grp"><label>OJT In-Person/On-Site — Date</label><input type="date" id="cg-ojt-date"></div>
@@ -1168,6 +1171,17 @@ function renderTR(){
       <td><div class="name-cell">${c.first} ${c.last}</div></td>
       <td><span class="chk-date">${fmtD(c.hire_date)||'—'}</span></td>
       <td><div class="chk"><span class="badge ${preBadge}">${preLabel}</span>${orientLine}${alzLine}${alzHrsLine}</div></td>
+      <td>${(()=>{
+        if(!c.first_contact){ return ts.preContactDone?`<div class="chk"><span class="badge b-gray">Not recorded</span><span class="chk-date" style="color:var(--gray)">Required in training file</span></div>`:`<div class="chk"><span class="badge b-gray">—</span></div>`; }
+        const fcD=pd(c.first_contact);
+        const orientOk=c.orient_date&&pd(c.orient_date)<=fcD;
+        const alzOk=c.alz_date&&pd(c.alz_date)<=fcD;
+        const preOk=orientOk&&alzOk;
+        const statusBadge=preOk?'b-green':'b-red';
+        const statusLabel=preOk?'✓ Compliant':'⚠ Training gap';
+        const note=!orientOk?'Orientation not done before contact':!alzOk?'ALZ training not done before contact':'Pre-contact training was complete';
+        return `<div class="chk"><span class="badge ${statusBadge}">${statusLabel}</span><span class="chk-date">${fmtD(c.first_contact)}</span><span class="chk-date" style="color:${preOk?'var(--green)':'var(--red)'}">${note}</span></div>`;
+      })()}</td>
       <td><div class="chk"><span class="badge ${thirtyBadge}">${thirtyLabel}</span><span class="chk-date">Deadline: ${ddStr||'—'}</span>${ojtLine}${ojtOnlineLine}${orientHrsLine}${proofLine}</div></td>
       <td><div class="chk"><span class="badge ${annBadge}">${annLabel}</span>${annDateLine}${annHrsLine}${annProofLine}</div></td>
       <td><span class="badge ${oBadge}">${ts.overall}</span></td>
@@ -1495,11 +1509,11 @@ function openCGModal(tab,id=null){ cgReturnTab=tab; editingCG=id;
   document.getElementById('cg-modal-title').textContent=id?'Edit Caregiver':'Add Caregiver';
   const c=id?caregivers.find(x=>x.id===id):null;
   const g=k=>document.getElementById(k);
-  const fields=['cg-first','cg-last','cg-hire','cg-orient','cg-alz','cg-alz-hrs','cg-orient-hrs','cg-ojt-date','cg-ojt-proof','cg-ojt-online','cg-annual','cg-annual-hrs','cg-annual-proof','cg-ethics-date','cg-ethics-proof','cg-rights-date','cg-rights-proof','cg-oig','cg-oig-proof','cg-edl','cg-edl-proof','cg-fcsr-reg','cg-fcsr','cg-fcsr-proof','cg-fp-date','cg-fp-proof','cg-supv-date','cg-supv-proof','cg-perf-date','cg-perf-proof'];
+  const fields=['cg-first','cg-last','cg-hire','cg-orient','cg-alz','cg-alz-hrs','cg-orient-hrs','cg-first-contact','cg-ojt-date','cg-ojt-proof','cg-ojt-online','cg-annual','cg-annual-hrs','cg-annual-proof','cg-ethics-date','cg-ethics-proof','cg-rights-date','cg-rights-proof','cg-oig','cg-oig-proof','cg-edl','cg-edl-proof','cg-fcsr-reg','cg-fcsr','cg-fcsr-proof','cg-fp-date','cg-fp-proof','cg-supv-date','cg-supv-proof','cg-perf-date','cg-perf-proof'];
   if(c){
     g('cg-first').value=c.first;g('cg-last').value=c.last;g('cg-hire').value=c.hire_date||'';
     g('cg-oos').value=c.oos||'no';g('cg-orient').value=c.orient_date||'';g('cg-alz').value=c.alz_date||'';
-    g('cg-alz-hrs').value=c.alz_hrs||'';g('cg-orient-hrs').value=c.orient_hrs||'';
+    g('cg-alz-hrs').value=c.alz_hrs||'';g('cg-orient-hrs').value=c.orient_hrs||'';g('cg-first-contact').value=c.first_contact||'';
     g('cg-ojt-date').value=c.ojt_date||'';g('cg-ojt-signed').value=c.ojt_signed||'no';
     g('cg-ojt-proof').value=c.ojt_proof||'';g('cg-ojt-online').value=c.ojt_online||'';
     g('cg-annual').value=c.annual_date||'';g('cg-annual-hrs').value=c.annual_hrs||'';g('cg-annual-proof').value=c.annual_proof||'';
@@ -1518,7 +1532,7 @@ function saveCG(){
   const g=k=>document.getElementById(k).value;
   if(!g('cg-first')||!g('cg-last')){alert('Name required.');return;}
   const d={first:g('cg-first'),last:g('cg-last'),hire_date:g('cg-hire'),oos:g('cg-oos'),
-    orient_date:g('cg-orient'),alz_date:g('cg-alz'),alz_hrs:g('cg-alz-hrs'),orient_hrs:g('cg-orient-hrs'),
+    orient_date:g('cg-orient'),alz_date:g('cg-alz'),alz_hrs:g('cg-alz-hrs'),orient_hrs:g('cg-orient-hrs'),first_contact:g('cg-first-contact'),
     ojt_date:g('cg-ojt-date'),ojt_signed:g('cg-ojt-signed'),ojt_proof:g('cg-ojt-proof'),ojt_online:g('cg-ojt-online'),
     annual_date:g('cg-annual'),annual_hrs:g('cg-annual-hrs'),annual_proof:g('cg-annual-proof'),
     ethics_date:g('cg-ethics-date'),ethics_proof:g('cg-ethics-proof'),
@@ -2184,7 +2198,7 @@ function openSettings(){
   renderRecipients();
   document.getElementById('new-recip-name').value='';
   document.getElementById('new-recip-email').value='';
-  document.getElementById('settings-modal').style.display='flex';
+  document.getElementById('settings-modal').classList.add('open');
 }
 function renderRecipients(){
   const list = document.getElementById('recipients-list');
