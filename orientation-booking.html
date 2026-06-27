@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Choose Your Orientation Date — Caring Companions</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --navy:#0E3860; --yellow:#FFC671; --teal:#54BDB8;
+  --bg:#F6F9FD; --white:#fff; --gray:#6B7280; --border:#E2E8F0;
+  --green:#22C55E; --green-bg:#dcfce7; --green-text:#15803d;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min-height:100vh}
+
+/* ── Header ── */
+.page-header{background:var(--navy);padding:1.25rem 1.5rem;text-align:center}
+.page-header img{height:48px;margin-bottom:.5rem;display:block;margin-left:auto;margin-right:auto}
+.page-header h1{color:#fff;font-size:1.1rem;font-weight:700}
+.page-header p{color:rgba(255,255,255,.6);font-size:.78rem;margin-top:.15rem}
+
+/* ── Yellow accent bar ── */
+.accent-bar{height:4px;background:linear-gradient(90deg,var(--yellow),var(--teal))}
+
+/* ── Main container ── */
+.container{max-width:600px;margin:0 auto;padding:1.5rem 1rem 3rem}
+
+/* ── Welcome card ── */
+.welcome-card{background:var(--white);border-radius:14px;padding:1.5rem;box-shadow:0 2px 16px rgba(14,56,96,.08);margin-bottom:1.5rem;text-align:center}
+.welcome-card .hi{font-size:1.4rem;font-weight:700;color:var(--navy);margin-bottom:.35rem}
+.welcome-card .sub{font-size:.88rem;color:var(--gray);line-height:1.6}
+.welcome-card .sub strong{color:var(--navy)}
+
+/* ── Section label ── */
+.section-label{font-size:.75rem;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.75rem}
+
+/* ── Session cards ── */
+.session-option{background:var(--white);border-radius:12px;border:2px solid var(--border);padding:1.1rem 1.25rem;margin-bottom:.75rem;cursor:pointer;transition:.15s;display:flex;align-items:center;gap:1rem}
+.session-option:hover{border-color:var(--teal);box-shadow:0 4px 16px rgba(84,189,184,.15)}
+.session-option.selected{border-color:var(--teal);background:#f0fffe;box-shadow:0 4px 20px rgba(84,189,184,.2)}
+.session-option.full{opacity:.5;cursor:not-allowed;background:#fafafa}
+.sess-sel-circle{width:22px;height:22px;border-radius:50%;border:2px solid var(--border);flex-shrink:0;transition:.15s;display:flex;align-items:center;justify-content:center}
+.session-option.selected .sess-sel-circle{border-color:var(--teal);background:var(--teal)}
+.sess-sel-check{color:#fff;font-size:.75rem;display:none}
+.session-option.selected .sess-sel-check{display:block}
+.sess-info{flex:1}
+.sess-dow-label{font-size:.68rem;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.05em}
+.sess-date-label{font-size:1rem;font-weight:700;color:var(--navy)}
+.sess-time-label{font-size:.8rem;color:var(--gray);margin-top:.1rem}
+.sess-loc-label{font-size:.75rem;color:var(--gray);margin-top:.25rem;display:flex;align-items:center;gap:.3rem}
+.sess-spots{font-size:.72rem;font-weight:600;padding:.2rem .5rem;border-radius:20px}
+.spots-open{background:var(--green-bg);color:var(--green-text)}
+.spots-full{background:#fee2e2;color:#b91c1c}
+
+/* ── Select button ── */
+.btn-confirm{width:100%;padding:.85rem;background:var(--teal);color:#fff;border:none;border-radius:10px;font-family:inherit;font-size:.95rem;font-weight:700;cursor:pointer;margin-top:1rem;transition:.15s;letter-spacing:.01em}
+.btn-confirm:hover{background:#3da8a3}
+.btn-confirm:disabled{opacity:.4;cursor:not-allowed}
+
+/* ── Different time note ── */
+.diff-time{background:var(--white);border-radius:12px;border:1.5px solid var(--border);padding:1rem 1.25rem;text-align:center;margin-top:1.25rem}
+.diff-time p{font-size:.82rem;color:var(--gray);line-height:1.6}
+.diff-time a{color:var(--teal);font-weight:600;text-decoration:none}
+.diff-time a:hover{text-decoration:underline}
+
+/* ── Confirmation screen ── */
+#confirm-screen{display:none}
+.confirm-card{background:var(--white);border-radius:16px;padding:2rem 1.5rem;box-shadow:0 4px 24px rgba(14,56,96,.1);text-align:center;margin-bottom:1.25rem}
+.confirm-icon{font-size:3rem;margin-bottom:.75rem}
+.confirm-card h2{font-size:1.25rem;font-weight:700;color:var(--navy);margin-bottom:.5rem}
+.confirm-card .conf-sub{font-size:.88rem;color:var(--gray);margin-bottom:1.5rem;line-height:1.6}
+.conf-detail{background:var(--bg);border-radius:10px;padding:1rem;text-align:left;margin-bottom:1.25rem}
+.conf-row{display:flex;gap:.75rem;align-items:flex-start;margin-bottom:.6rem}
+.conf-row:last-child{margin-bottom:0}
+.conf-icon{font-size:1rem;flex-shrink:0;margin-top:.05rem}
+.conf-txt .conf-lbl{font-size:.68rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:.04em}
+.conf-txt .conf-val{font-size:.9rem;font-weight:600;color:var(--navy)}
+.conf-map-link{font-size:.75rem;color:var(--teal);text-decoration:none;display:block;margin-top:.15rem}
+.what-to-bring{background:#fffbeb;border:1.5px solid var(--yellow);border-radius:10px;padding:1rem;margin-top:.75rem;text-align:left}
+.what-to-bring h4{font-size:.78rem;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem}
+.what-to-bring ul{list-style:none;padding:0}
+.what-to-bring ul li{font-size:.82rem;color:var(--navy);padding:.2rem 0;display:flex;gap:.4rem}
+.what-to-bring ul li::before{content:"✓";color:var(--teal);font-weight:700}
+.contact-row{font-size:.82rem;color:var(--gray);margin-top:.75rem}
+.contact-row a{color:var(--teal);font-weight:600;text-decoration:none}
+
+/* ── No sessions ── */
+.no-sessions{text-align:center;padding:3rem 1.5rem}
+.no-sessions p{color:var(--gray);font-size:.88rem;line-height:1.7;margin-bottom:1rem}
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <img src="https://images.leadconnectorhq.com/image/f_webp/q_80/r_1200/u_https://assets.cdn.filesafe.space/Recp0AhyMh8lrtKJ9kaj/media/691b9707bb3d037e0ad689bf.png" alt="Caring Companions">
+  <h1>Orientation Scheduling</h1>
+  <p>Caring Companions In-Home Senior Care — Springfield, MO</p>
+</div>
+<div class="accent-bar"></div>
+
+<!-- BOOKING SCREEN -->
+<div class="container" id="booking-screen">
+  <div class="welcome-card">
+    <div class="hi" id="welcome-name">🎉 Congratulations!</div>
+    <div class="sub" id="welcome-sub">
+      We're excited to have you join the Caring Companions family.<br>
+      Please choose an orientation date below that works best for you.
+    </div>
+  </div>
+
+  <div class="section-label">Available Orientation Dates</div>
+  <div id="sessions-list"></div>
+
+  <button class="btn-confirm" id="confirm-btn" disabled onclick="submitBooking()">Confirm My Date →</button>
+
+  <div class="diff-time">
+    <p>
+      Don't see a time that works for you?<br>
+      <strong>No problem — just reach out and we'll find something that works.</strong><br><br>
+      📞 <a href="tel:+14172348494">(417) 234-8494</a> &nbsp;·&nbsp;
+      💬 Text us at <a href="sms:+14172348494">(417) 234-8494</a> &nbsp;·&nbsp;
+      ✉️ <a href="mailto:samantha@mo-care.com">samantha@mo-care.com</a>
+    </p>
+  </div>
+</div>
+
+<!-- CONFIRMATION SCREEN -->
+<div class="container" id="confirm-screen">
+  <div class="confirm-card">
+    <div class="confirm-icon">🎉</div>
+    <h2>You're all set!</h2>
+    <div class="conf-sub">We can't wait to meet you. Here are your orientation details:</div>
+
+    <div class="conf-detail">
+      <div class="conf-row">
+        <div class="conf-icon">📅</div>
+        <div class="conf-txt">
+          <div class="conf-lbl">Date & Time</div>
+          <div class="conf-val" id="conf-datetime"></div>
+        </div>
+      </div>
+      <div class="conf-row">
+        <div class="conf-icon">⏱</div>
+        <div class="conf-txt">
+          <div class="conf-lbl">Duration</div>
+          <div class="conf-val">Approximately 2 hours</div>
+        </div>
+      </div>
+      <div class="conf-row" id="conf-loc-row">
+        <div class="conf-icon">📍</div>
+        <div class="conf-txt">
+          <div class="conf-lbl">Location</div>
+          <div class="conf-val" id="conf-location"></div>
+          <a class="conf-map-link" id="conf-map-link" href="#" target="_blank">Open in Google Maps →</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="what-to-bring">
+      <h4>What to bring</h4>
+      <ul>
+        <li>Government-issued photo ID (driver's license or state ID)</li>
+        <li>Social Security card</li>
+        <li>Voided check or bank account info for direct deposit</li>
+        <li>Any certifications you have (CNA, CPR, etc.)</li>
+      </ul>
+    </div>
+
+    <div class="contact-row" style="margin-top:1rem">
+      Questions? Call or text us at <a href="tel:+14172348494">(417) 234-8494</a><br>
+      or email <a href="mailto:samantha@mo-care.com">samantha@mo-care.com</a>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const ZAPIER_BOOKING_WEBHOOK = 'https://hooks.zapier.com/hooks/catch/REPLACE_ME/orient/';
+const ADDR = '1331 N Stewart Ave Ste B, Springfield MO 65802';
+
+const SB_URL = 'https://zngsgedlsxinbygwmxwn.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpuZ3NnZWRsc3hpbmJ5Z3dteHduIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI1NDIzNDQsImV4cCI6MjA5ODExODM0NH0.L_31_UKdccyRH9n7p1GaBlZTqcJipB008H-GIvxwLxM';
+const sb = supabase.createClient(SB_URL, SB_KEY);
+
+const params = new URLSearchParams(window.location.search);
+const sessionsRaw = params.get('sessions');
+const firstName = params.get('first') || '';
+const lastName  = params.get('last')  || '';
+const phone     = params.get('phone') || '';
+const candId    = params.get('id')    || '';
+
+let sessions = [];
+try { sessions = sessionsRaw ? JSON.parse(atob(sessionsRaw)) : []; } catch(e){ sessions=[]; }
+
+let selectedSession = null;
+
+function fmtTime(t){
+  if(!t) return '';
+  const [h,m]=t.split(':').map(Number);
+  return `${h%12||12}:${String(m).padStart(2,'0')} ${h>=12?'PM':'AM'}`;
+}
+function fmtDateLong(dateStr){
+  const d=new Date(dateStr+'T00:00:00');
+  return d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+}
+function getDow(dateStr){
+  return new Date(dateStr+'T00:00:00').toLocaleDateString('en-US',{weekday:'long'});
+}
+
+function init(){
+  // Personalize welcome message
+  if(firstName){
+    document.getElementById('welcome-name').textContent = `🎉 Hi, ${firstName}!`;
+    document.getElementById('welcome-sub').innerHTML =
+      `We're so excited to welcome you to the Caring Companions family!<br>
+       Please choose an orientation date below that works best for you.`;
+  }
+
+  const list = document.getElementById('sessions-list');
+
+  if(!sessions.length){
+    list.innerHTML = `<div class="no-sessions">
+      <p>There are no orientation sessions currently scheduled.<br>
+      Please reach out to us and we'll get you set up!</p>
+      <p>📞 <a href="tel:+14172348494" style="color:var(--teal);font-weight:600">(417) 234-8494</a></p>
+    </div>`;
+    document.getElementById('confirm-btn').style.display='none';
+    return;
+  }
+
+  list.innerHTML = sessions.map(s=>{
+    const isFull = s.spots <= 0;
+    const dow = getDow(s.date);
+    const dateLabel = fmtDateLong(s.date);
+    const timeLabel = fmtTime(s.time);
+    const locLabel = s.remote ? '🖥 Remote — video call' : `📍 ${ADDR}`;
+    const spotsLabel = isFull
+      ? `<span class="sess-spots spots-full">Full</span>`
+      : `<span class="sess-spots spots-open">${s.spots} spot${s.spots!==1?'s':''} available</span>`;
+    return `<div class="session-option${isFull?' full':''}" id="sess-opt-${s.id}" onclick="${isFull?'':` selectSession(${s.id})`}">
+      <div class="sess-sel-circle"><span class="sess-sel-check">✓</span></div>
+      <div class="sess-info">
+        <div class="sess-dow-label">${dow}</div>
+        <div class="sess-date-label">${dateLabel}</div>
+        <div class="sess-time-label">${timeLabel} &nbsp;·&nbsp; 2 hours</div>
+        <div class="sess-loc-label">${locLabel}</div>
+      </div>
+      ${spotsLabel}
+    </div>`;
+  }).join('');
+}
+
+function selectSession(id){
+  selectedSession = sessions.find(s=>s.id===id);
+  document.querySelectorAll('.session-option').forEach(el=>el.classList.remove('selected'));
+  const opt = document.getElementById('sess-opt-'+id);
+  if(opt) opt.classList.add('selected');
+  document.getElementById('confirm-btn').disabled = false;
+}
+
+async function submitBooking(){
+  if(!selectedSession) return;
+  const btn = document.getElementById('confirm-btn');
+  btn.textContent = 'Booking… ⏳';
+  btn.disabled = true;
+
+  const booking = {
+    first: firstName, last: lastName, phone: phone,
+    booked_at: new Date().toISOString(),
+    attend_status: null
+  };
+
+  try {
+    // Load current sessions from Supabase, add booking, save back
+    const { data } = await sb.from('app_data').select('data').eq('key','orient_sessions').single();
+    if(data?.data){
+      const sessions = data.data;
+      const idx = sessions.findIndex(s => s.id === selectedSession.id);
+      if(idx !== -1){
+        if(!sessions[idx].bookings) sessions[idx].bookings = [];
+        sessions[idx].bookings.push(booking);
+        await sb.from('app_data').upsert({ key:'orient_sessions', data:sessions, updated_at:new Date().toISOString() }, { onConflict:'key' });
+      }
+    }
+  } catch(e){ console.warn('Supabase booking write:', e); }
+
+  // Also fire Zapier for calendar event / SMS confirmation
+  fetch(ZAPIER_BOOKING_WEBHOOK, { method:'POST', body:JSON.stringify({
+    candidate_first: firstName, candidate_last: lastName, phone: phone,
+    session_id: selectedSession.id, session_date: selectedSession.date,
+    session_time: selectedSession.time, is_remote: selectedSession.remote,
+    video_link: selectedSession.link || '',
+    location: selectedSession.remote ? (selectedSession.link||'Remote') : ADDR,
+    booked_at: new Date().toISOString()
+  })}).catch(()=>{});
+
+  showConfirmation();
+}
+
+function showConfirmation(){
+  document.getElementById('booking-screen').style.display = 'none';
+  document.getElementById('confirm-screen').style.display = 'block';
+
+  const dateLabel = fmtDateLong(selectedSession.date);
+  const timeLabel = fmtTime(selectedSession.time);
+  document.getElementById('conf-datetime').textContent = `${dateLabel} at ${timeLabel}`;
+
+  if(selectedSession.remote){
+    document.getElementById('conf-location').textContent = 'Remote — video call';
+    const mapLink = document.getElementById('conf-map-link');
+    if(selectedSession.link){
+      mapLink.href = selectedSession.link;
+      mapLink.textContent = 'Join video call →';
+    } else {
+      mapLink.style.display='none';
+    }
+  } else {
+    document.getElementById('conf-location').textContent = ADDR;
+    const mapsUrl = `https://maps.google.com/?q=${encodeURIComponent(ADDR)}`;
+    const mapLink = document.getElementById('conf-map-link');
+    mapLink.href = mapsUrl;
+    mapLink.textContent = 'Open in Google Maps →';
+  }
+
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+
+init();
+</script>
+</body>
+</html>
