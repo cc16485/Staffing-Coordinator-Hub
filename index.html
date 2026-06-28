@@ -972,11 +972,13 @@ function gdrivePickAndUpload(inputId){
     const btn = document.querySelector(`button[data-gdrive-btn="${inputId}"]`);
     if(btn){ btn.textContent = '⏳'; btn.disabled = true; }
     try {
-      const folderId = await gdriveEnsureFolder();
+      const personName = gdriveGetPersonName();
+      const folderId = await gdriveEnsurePersonFolder(personName);
       const ext = file.name.split('.').pop();
       const label = inputId.replace(/^(cg|ob)-/,'').replace(/-proof$/,'').replace(/-/g,'_');
       const stamp = new Date().toISOString().slice(0,10);
-      const filename = `${label}_${stamp}.${ext}`;
+      const safeName = personName ? personName.replace(/ /g,'_')+'_' : '';
+      const filename = `${safeName}${label}_${stamp}.${ext}`;
       const url = await gdriveUploadFile(file, folderId, filename);
       document.getElementById(inputId).value = url;
       if(btn){ btn.textContent = '✓'; btn.style.background = 'var(--green)';
@@ -987,6 +989,21 @@ function gdrivePickAndUpload(inputId){
     }
   };
   fileInput.click();
+}
+
+// Get the name of the person whose modal is currently open
+function gdriveGetPersonName(){
+  if(document.getElementById('cg-modal')?.classList.contains('open')){
+    const f=document.getElementById('cg-first')?.value.trim();
+    const l=document.getElementById('cg-last')?.value.trim();
+    if(f&&l) return `${f} ${l}`;
+  }
+  if(document.getElementById('ob-modal')?.classList.contains('open')){
+    const f=document.getElementById('ob-first')?.value.trim();
+    const l=document.getElementById('ob-last')?.value.trim();
+    if(f&&l) return `${f} ${l}`;
+  }
+  return null;
 }
 
 async function gdriveEnsureFolder(){
@@ -1006,6 +1023,32 @@ async function gdriveEnsureFolder(){
   if(!create.ok) throw new Error(folder.error?.message || 'Could not create Drive folder');
   gdriveFolderId = folder.id;
   return gdriveFolderId;
+}
+
+// Find or create a per-employee subfolder inside the root compliance folder
+const gdrivePersonFolderCache = {};
+async function gdriveEnsurePersonFolder(personName){
+  const rootId = await gdriveEnsureFolder();
+  if(!personName) return rootId;
+  if(gdrivePersonFolderCache[personName]) return gdrivePersonFolderCache[personName];
+  const q = encodeURIComponent(`name='${personName}' and '${rootId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`, {
+    headers: { Authorization: `Bearer ${gdriveAccessToken}` }
+  });
+  const data = await res.json();
+  if(data.files && data.files.length > 0){
+    gdrivePersonFolderCache[personName] = data.files[0].id;
+    return data.files[0].id;
+  }
+  const create = await fetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${gdriveAccessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: personName, mimeType: 'application/vnd.google-apps.folder', parents: [rootId] })
+  });
+  const folder = await create.json();
+  if(!create.ok) throw new Error(folder.error?.message || 'Could not create employee folder');
+  gdrivePersonFolderCache[personName] = folder.id;
+  return folder.id;
 }
 
 async function gdriveUploadFile(file, folderId, filename){
