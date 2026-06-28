@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Compliance Hub — Caring Companions</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
 :root {
   --navy:#0E3860; --yellow:#FFC671; --teal:#54BDB8;
@@ -724,6 +725,13 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 <div class="overlay" id="settings-modal">
   <div class="modal" style="max-width:480px">
     <h3>⚙️ Settings</h3>
+    <div class="sect-lbl" style="margin-top:.75rem">Google Drive Integration</div>
+    <p style="font-size:.78rem;color:var(--gray);margin:.4rem 0 .75rem">Paste your Google OAuth Client ID here to enable the 📤 upload buttons on proof fields. Files upload to a <em>Caring Companions Compliance</em> folder in your Google Drive and the link is saved automatically.</p>
+    <div style="display:flex;gap:.5rem;margin-bottom:.5rem;align-items:center">
+      <label style="font-size:.8rem;font-weight:500;white-space:nowrap;color:var(--navy)">Client ID:</label>
+      <input type="text" id="settings-gdrive-client-id" placeholder="xxxxxxxxxx.apps.googleusercontent.com" style="flex:1;padding:.45rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.78rem">
+    </div>
+    <p style="font-size:.72rem;color:var(--gray);margin-bottom:1rem">Get this from <strong>console.cloud.google.com</strong> → APIs &amp; Services → Credentials → OAuth 2.0 Client ID. Add <strong>hub.mo-care.com</strong> as an authorized JavaScript origin.</p>
     <div class="sect-lbl" style="margin-top:.75rem">AxisCare Integration</div>
     <p style="font-size:.78rem;color:var(--gray);margin:.4rem 0 .75rem">Your AxisCare site number is used in the AxisCare Sync Zap to post status notes to caregiver profiles. Find it in your AxisCare URL: <span style="font-family:monospace;font-size:.78rem">https://<strong>XXXXX</strong>.axiscare.com</span></p>
     <div style="display:flex;gap:.5rem;margin-bottom:1rem;align-items:center">
@@ -912,6 +920,137 @@ function doLogout(){
 }
 // Auto-login if session exists
 if(localStorage.getItem('cc_session')==='1') showApp();
+
+// ── Google Drive Integration ──────────────────────────────────────────
+let gdriveTokenClient = null;
+let gdriveAccessToken = null;
+let gdriveFolderId    = null;
+let gdrivePendingId   = null;
+
+function gdriveInit(){
+  const clientId = appSettings.google_client_id;
+  if(!clientId || typeof google === 'undefined' || !google.accounts) return;
+  gdriveTokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: clientId,
+    scope: 'https://www.googleapis.com/auth/drive.file',
+    callback: async (resp) => {
+      if(resp.error){ alert('Google sign-in failed: ' + resp.error); return; }
+      gdriveAccessToken = resp.access_token;
+      if(gdrivePendingId){ await gdrivePickAndUpload(gdrivePendingId); gdrivePendingId = null; }
+    }
+  });
+}
+
+function gdriveUploadClick(inputId){
+  if(!appSettings.google_client_id){
+    alert('Add your Google Client ID in ⚙️ Settings → Google Drive Integration first.');
+    return;
+  }
+  if(!gdriveTokenClient) gdriveInit();
+  if(!gdriveTokenClient){
+    alert('Google sign-in is still loading — try again in a moment.');
+    return;
+  }
+  gdrivePendingId = inputId;
+  if(!gdriveAccessToken){
+    gdriveTokenClient.requestAccessToken({ prompt: '' });
+    return;
+  }
+  gdrivePickAndUpload(inputId);
+}
+
+function gdrivePickAndUpload(inputId){
+  const fileInput = document.createElement('input');
+  fileInput.type = 'file';
+  fileInput.accept = '.pdf,.jpg,.jpeg,.png,.doc,.docx';
+  fileInput.style.display = 'none';
+  document.body.appendChild(fileInput);
+  fileInput.onchange = async () => {
+    const file = fileInput.files[0];
+    document.body.removeChild(fileInput);
+    if(!file) return;
+    const btn = document.querySelector(`button[data-gdrive-btn="${inputId}"]`);
+    if(btn){ btn.textContent = '⏳'; btn.disabled = true; }
+    try {
+      const folderId = await gdriveEnsureFolder();
+      const ext = file.name.split('.').pop();
+      const label = inputId.replace(/^(cg|ob)-/,'').replace(/-proof$/,'').replace(/-/g,'_');
+      const stamp = new Date().toISOString().slice(0,10);
+      const filename = `${label}_${stamp}.${ext}`;
+      const url = await gdriveUploadFile(file, folderId, filename);
+      document.getElementById(inputId).value = url;
+      if(btn){ btn.textContent = '✓'; btn.style.background = 'var(--green)';
+        setTimeout(() => { btn.textContent = '📤'; btn.style.background = 'var(--navy)'; btn.disabled = false; }, 2000); }
+    } catch(e){
+      alert('Upload failed: ' + e.message);
+      if(btn){ btn.textContent = '📤'; btn.disabled = false; }
+    }
+  };
+  fileInput.click();
+}
+
+async function gdriveEnsureFolder(){
+  if(gdriveFolderId) return gdriveFolderId;
+  const q = encodeURIComponent(`name='Caring Companions Compliance' and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)`, {
+    headers: { Authorization: `Bearer ${gdriveAccessToken}` }
+  });
+  const data = await res.json();
+  if(data.files && data.files.length > 0){ gdriveFolderId = data.files[0].id; return gdriveFolderId; }
+  const create = await fetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${gdriveAccessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Caring Companions Compliance', mimeType: 'application/vnd.google-apps.folder' })
+  });
+  const folder = await create.json();
+  if(!create.ok) throw new Error(folder.error?.message || 'Could not create Drive folder');
+  gdriveFolderId = folder.id;
+  return gdriveFolderId;
+}
+
+async function gdriveUploadFile(file, folderId, filename){
+  const metadata = { name: filename, parents: [folderId] };
+  const form = new FormData();
+  form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+  form.append('file', file);
+  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${gdriveAccessToken}` },
+    body: form
+  });
+  const data = await res.json();
+  if(!res.ok) throw new Error(data.error?.message || 'Upload failed');
+  await fetch(`https://www.googleapis.com/drive/v3/files/${data.id}/permissions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${gdriveAccessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'anyone', role: 'reader' })
+  });
+  return `https://drive.google.com/file/d/${data.id}/view`;
+}
+
+// Inject 📤 upload buttons next to every proof URL input
+function setupDriveButtons(){
+  document.querySelectorAll('input[type="url"][id$="-proof"]').forEach(input => {
+    if(input.parentElement.querySelector('[data-gdrive-btn]')) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = '📤';
+    btn.title = 'Upload file to Google Drive';
+    btn.setAttribute('data-gdrive-btn', input.id);
+    btn.style.cssText = 'padding:.35rem .6rem;background:var(--navy);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:.75rem;white-space:nowrap;flex-shrink:0;line-height:1';
+    btn.onclick = () => gdriveUploadClick(input.id);
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = 'display:flex;gap:.35rem;align-items:center;width:100%';
+    input.parentNode.insertBefore(wrapper, input);
+    wrapper.appendChild(input);
+    wrapper.appendChild(btn);
+  });
+}
+
+// Initialize GIS after the library loads
+window.addEventListener('load', () => {
+  setTimeout(() => { if(appSettings.google_client_id) gdriveInit(); setupDriveButtons(); }, 500);
+});
 function openChangePwd(){
   const cur=prompt('Current password:');
   if(!checkPwd(cur||'')){ alert('Incorrect current password.'); return; }
@@ -2517,6 +2656,7 @@ function openSettings(){
   document.getElementById('new-recip-name').value='';
   document.getElementById('new-recip-email').value='';
   document.getElementById('settings-ac-site').value=appSettings.axiscare_site||'';
+  document.getElementById('settings-gdrive-client-id').value=appSettings.google_client_id||'';
   document.getElementById('settings-modal').classList.add('open');
 }
 function renderRecipients(){
@@ -2552,6 +2692,14 @@ function removeRecipient(idx){
 }
 function saveSettings(){
   appSettings.axiscare_site = document.getElementById('settings-ac-site').value.trim();
+  const newClientId = document.getElementById('settings-gdrive-client-id').value.trim();
+  if(newClientId !== appSettings.google_client_id){
+    appSettings.google_client_id = newClientId;
+    gdriveTokenClient = null; // reset so it re-initializes with new client ID
+    gdriveAccessToken = null;
+    gdriveFolderId = null;
+    if(newClientId) gdriveInit();
+  }
   localStorage.setItem('cc_settings', JSON.stringify(appSettings));
   syncToSupabase('settings', appSettings);
   closeModal('settings-modal');
