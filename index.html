@@ -287,7 +287,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
         <table>
           <thead><tr>
             <th>Caregiver</th><th>Hire Date</th>
-            <th>Agency Orientation + ALZ <span style="font-weight:400;opacity:.7">6hr — before clients</span></th>
+            <th>Agency Orientation + ALZ <span style="font-weight:400;opacity:.7">6hr — cleared to schedule</span></th>
             <th>First Client Contact</th>
             <th>OJT In-Home + Online <span style="font-weight:400;opacity:.7">6hr — all 12hr due within 30 days</span></th>
             <th>Annual 5hr <span style="font-weight:400;opacity:.7">yr 2+</span></th>
@@ -638,6 +638,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
       <div class="grp"><label>First Name</label><input type="text" id="cg-first"></div>
       <div class="grp"><label>Last Name</label><input type="text" id="cg-last"></div>
       <div class="grp"><label>Hire Date</label><input type="date" id="cg-hire"></div>
+      <div class="grp"><label>AxisCare ID <span style="font-size:.72rem;color:var(--teal)">(from their AxisCare profile — used for status sync)</span></label><input type="text" id="cg-axiscare-id" placeholder="e.g. 12345"></div>
       <div class="grp"><label>Lived outside MO 5 yrs?</label>
         <select id="cg-oos"><option value="no">No</option><option value="yes">Yes — fingerprint required</option></select>
       </div>
@@ -705,7 +706,13 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 <div class="overlay" id="settings-modal">
   <div class="modal" style="max-width:480px">
     <h3>⚙️ Settings</h3>
-    <div class="sect-lbl" style="margin-top:.75rem">Compliance Alert Recipients</div>
+    <div class="sect-lbl" style="margin-top:.75rem">AxisCare Integration</div>
+    <p style="font-size:.78rem;color:var(--gray);margin:.4rem 0 .75rem">Your AxisCare site number is used in the AxisCare Sync Zap to post status notes to caregiver profiles. Find it in your AxisCare URL: <span style="font-family:monospace;font-size:.78rem">https://<strong>XXXXX</strong>.axiscare.com</span></p>
+    <div style="display:flex;gap:.5rem;margin-bottom:1rem;align-items:center">
+      <label style="font-size:.8rem;font-weight:500;white-space:nowrap;color:var(--navy)">Site Number:</label>
+      <input type="text" id="settings-ac-site" placeholder="e.g. 10856" style="flex:1;padding:.45rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.83rem">
+    </div>
+    <div class="sect-lbl">Compliance Alert Recipients</div>
     <p style="font-size:.78rem;color:var(--gray);margin:.4rem 0 .75rem">These people receive the Monday/Friday compliance reminder emails.</p>
     <div id="recipients-list" style="display:flex;flex-direction:column;gap:.5rem;margin-bottom:.75rem"></div>
     <div style="display:flex;gap:.5rem;margin-bottom:1rem">
@@ -738,6 +745,58 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
       <button class="btn-cancel" onclick="closeModal('csv-import-modal')" style="flex:1">Cancel</button>
       <button id="csv-preview-btn" class="btn-save" onclick="previewCSV()" style="flex:1;background:var(--teal)">Preview</button>
       <button id="csv-import-btn" class="btn-save" onclick="confirmCSVImport()" style="flex:1;display:none">Import All</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Manual Reference -->
+<div class="overlay" id="manual-ref-modal">
+  <div class="modal" style="max-width:520px">
+    <h3 id="mref-title">Record Reference</h3>
+    <p id="mref-sub" style="font-size:.78rem;color:var(--gray);margin:-.5rem 0 1rem"></p>
+    <div class="fg">
+      <div class="sect-lbl">Completed By</div>
+      <div class="grp"><label>Staff Member Name</label><input type="text" id="mref-staff" placeholder="Your name"></div>
+      <div class="grp"><label>Completed Via</label>
+        <select id="mref-via"><option value="Phone call">Phone call</option><option value="In person">In person</option><option value="Video call">Video call</option></select>
+      </div>
+      <div class="grp"><label>Date Completed</label><input type="date" id="mref-date"></div>
+      <div class="sect-lbl">Reference Information</div>
+      <div class="grp"><label>Reference Name</label><input type="text" id="mref-name"></div>
+      <div class="grp"><label>Reference Type</label>
+        <select id="mref-type"><option value="Professional">Professional</option><option value="Personal">Personal</option></select>
+      </div>
+      <div class="grp"><label>Relationship to Applicant</label><input type="text" id="mref-rel" placeholder="e.g. Former supervisor, Friend"></div>
+      <div class="grp"><label>How Long Have They Known the Applicant?</label><input type="text" id="mref-howlong" placeholder="e.g. 3 years"></div>
+      <div class="sect-lbl">Reference Responses</div>
+      <div class="grp full"><label>Would you recommend this person for a caregiving position?</label>
+        <select id="mref-recommend" onchange="updateMrefPreview()">
+          <option value="">-- Select --</option>
+          <option value="yes">Yes — highly recommend</option>
+          <option value="reservations">Yes, with reservations</option>
+          <option value="no">No — would not recommend</option>
+        </select>
+      </div>
+      <div class="grp"><label>Reliability / Dependability</label>
+        <select id="mref-reliability" onchange="updateMrefPreview()"><option value="">--</option><option value="Excellent">Excellent</option><option value="Good">Good</option><option value="Fair">Fair</option><option value="Poor">Poor</option></select>
+      </div>
+      <div class="grp"><label>Works Well With Others</label>
+        <select id="mref-interpersonal" onchange="updateMrefPreview()"><option value="">--</option><option value="Excellent">Excellent</option><option value="Good">Good</option><option value="Fair">Fair</option><option value="Poor">Poor</option></select>
+      </div>
+      <div class="grp"><label>Honesty / Trustworthiness</label>
+        <select id="mref-honesty" onchange="updateMrefPreview()"><option value="">--</option><option value="Excellent">Excellent</option><option value="Good">Good</option><option value="Fair">Fair</option><option value="Poor">Poor</option></select>
+      </div>
+      <div class="grp full"><label>Any concerns about this person working with vulnerable adults?</label>
+        <select id="mref-concerns" onchange="updateMrefPreview()"><option value="none">No concerns</option><option value="minor">Minor concerns noted</option><option value="serious">Serious concerns</option></select>
+      </div>
+      <div class="grp full"><label>Additional Comments / Notes</label>
+        <textarea id="mref-notes" rows="3" style="width:100%;padding:.45rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.83rem;resize:vertical"></textarea>
+      </div>
+      <div id="mref-score-preview" style="display:none;padding:.6rem .85rem;border-radius:8px;font-size:.82rem;font-weight:600;margin-top:.25rem"></div>
+    </div>
+    <div class="modal-acts">
+      <button class="btn-cancel" onclick="closeModal('manual-ref-modal')">Cancel</button>
+      <button class="btn-save" onclick="saveManualRef()">Save Reference</button>
     </div>
   </div>
 </div>
@@ -880,6 +939,9 @@ const ZAPIER_ORIENTATION_WEBHOOK = "https://hooks.zapier.com/hooks/catch/REPLACE
 const ZAPIER_ATTENDANCE_WEBHOOK = "https://hooks.zapier.com/hooks/catch/REPLACE_WITH_YOUR_URL/attendance/";
 // Fires every time a candidate record is saved — syncs to AxisCare applicant + Google Drive Sheet
 const ZAPIER_CANDIDATE_WEBHOOK = "https://hooks.zapier.com/hooks/catch/REPLACE_WITH_YOUR_URL/candidate/";
+// Fires when a caregiver is cleared to schedule (orientation+ALZ done) or candidate is Ready for Orientation
+// Zap adds a note to their AxisCare profile so care coordinators can see status without hub access
+const ZAPIER_AC_STATUS_WEBHOOK = "https://hooks.zapier.com/hooks/catch/28062149/42aqc9c/";
 
 // ── SUPABASE ───────────────────────────────────────────────────────────
 const SB_URL  = 'https://zngsgedlsxinbygwmxwn.supabase.co';
@@ -1079,10 +1141,12 @@ function renderOB(){
     const proofLink=(url,label)=>url?`<a class="proof-link" href="${url}" target="_blank" rel="noopener">📄 ${label}</a>`:'';
     return `<tr>
       <td><div class="name-cell">${c.first} ${c.last}</div>${c.oos==='yes'?'<span class="sub" style="color:#F97316">⚠ Out-of-state</span>':''}${staleBadge?`<div style="margin-top:2px">${staleBadge}</div>`:''}</td>
-      <td><span class="badge ${refBadge(c.r1s)}">${c.r1s}</span>${c.r1n?`<span class="sub">${c.r1n}</span>`:''}${proofLink(c.r1_proof,'View form')}</td>
-      <td><span class="badge ${refBadge(c.r2s)}">${c.r2s}</span>${c.r2n?`<span class="sub">${c.r2n}</span>`:''}${proofLink(c.r2_proof,'View form')}</td>
-      <td><span class="badge ${refBadge(c.r3s)}">${c.r3s}</span>${c.r3n?`<span class="sub">${c.r3n}</span>`:''}${proofLink(c.r3_proof,'View form')}</td>
-      <td><span class="badge ${refBadge(c.r4s)}">${c.r4s}</span>${c.r4n?`<span class="sub">${c.r4n}</span>`:''}${proofLink(c.r4_proof,'View form')}</td>
+      ${[1,2,3,4].map(n=>{
+        const s=c[`r${n}s`],nm=c[`r${n}n`],pf=c[`r${n}_proof`],mn=c[`r${n}_manual`];
+        const manualTag=mn?`<span class="sub" style="color:var(--teal)">📞 ${mn.via} · ${fmtD(mn.date)||''}${mn.staff?' · '+mn.staff:''}</span>`:'';
+        const recordBtn=s==='Pending'?`<button onclick="openManualRef(${c.id},${n})" style="margin-top:3px;background:none;border:1px solid var(--teal);color:var(--teal);border-radius:5px;font-size:.68rem;padding:.18rem .45rem;cursor:pointer;font-family:inherit">📞 Record</button>`:`<button onclick="openManualRef(${c.id},${n})" style="margin-top:3px;background:none;border:1px solid var(--border);color:var(--gray);border-radius:5px;font-size:.68rem;padding:.18rem .45rem;cursor:pointer;font-family:inherit">✏️ Edit</button>`;
+        return `<td><span class="badge ${refBadge(s)}">${s}</span>${nm?`<span class="sub">${nm}</span>`:''}${manualTag}${pf?proofLink(pf,'View form'):''}${recordBtn}</td>`;
+      }).join('')}
       <td><div class="chk"><span class="badge ${c.oig==='CLEAR'?'b-green':c.oig==='FLAGGED'?'b-red':'b-gray'}">${c.oig||'Pending'}</span>${c.oig_date?`<span class="chk-date">${fmtD(c.oig_date)}</span>`:''}${proofLink(c.oig_proof,'View')}</div></td>
       <td><div class="chk"><span class="badge ${c.edl==='Clear'?'b-green':c.edl==='Issues Found'?'b-red':'b-gray'}">${c.edl||'Pending'}</span>${c.edl_date?`<span class="chk-date">${fmtD(c.edl_date)}</span>`:''}${proofLink(c.edl_proof,'View')}</div></td>
       <td><div class="chk"><span class="badge ${c.fcsr==='Clear'?'b-green':c.fcsr==='Issues Found'?'b-red':'b-gray'}">${c.fcsr||'Pending'}</span>${c.fcsr_date?`<span class="chk-date">${fmtD(c.fcsr_date)}</span>`:''}${proofLink(c.fcsr_proof,'View')}</div></td>
@@ -1140,7 +1204,7 @@ function renderTR(){
     const ts=trainStatus(c);
     // Pre-contact cell
     const preBadge=ts.preContactDone?'b-green':'b-red';
-    const preLabel=ts.preContactDone?'✓ Cleared':'⛔ Blocked';
+    const preLabel=ts.preContactDone?'✓ Cleared to Schedule':'⛔ Blocked';
     const orientLine=c.orient_date?`<span class="chk-date">Agency Orientation (2hr): ${fmtD(c.orient_date)} ✓${c.orient_proof?` <a class="proof-link" href="${c.orient_proof}" target="_blank">📄</a>`:' <span style="color:#f97316;font-size:.67rem">no proof</span>'}</span>`:`<span class="chk-date" style="color:var(--red)">Agency Orientation: missing</span>`;
     const alzLine=c.alz_date?`<span class="chk-date">ALZ/Dementia (4hr): ${fmtD(c.alz_date)} ✓${c.alz_proof?` <a class="proof-link" href="${c.alz_proof}" target="_blank">📄</a>`:' <span style="color:#f97316;font-size:.67rem">no proof</span>'}</span>`:`<span class="chk-date" style="color:var(--red)">ALZ/Dementia Training: missing</span>`;
     const alzHrsLine=c.alz_hrs?(parseInt(c.alz_hrs)>=4?`<span class="chk-date" style="color:var(--green)">ALZ hours: ${c.alz_hrs} ✓</span>`:`<span class="chk-date" style="color:var(--amber)">⚠ ALZ hours: ${c.alz_hrs}/4 required</span>`):'';
@@ -1325,9 +1389,11 @@ function renderAlerts(){
 
   // Training
   const blocked = caregivers.filter(c=>{ const ts=trainStatus(c); return ts.overall==='Client Contact Blocked'; }).length;
-  const ojtOverdue = caregivers.filter(c=>{ const ts=trainStatus(c); return ts.thirtyStatus==='Overdue'; }).length;
-  if(blocked) alerts.push({color:'#EF4444', text:`${blocked} caregiver${blocked>1?'s':''} blocked from client contact — basic training incomplete`, tab:'training'});
-  if(ojtOverdue) alerts.push({color:'#F97316', text:`${ojtOverdue} caregiver${ojtOverdue>1?'s':''} OJT overdue`, tab:'training'});
+  const ojtOverdue = caregivers.filter(c=>{ const ts=trainStatus(c); return ts.thirtyPassed && !ts.thirtyDone; }).length;
+  const ojtDueSoon = caregivers.filter(c=>{ const ts=trainStatus(c); return !ts.thirtyDone && !ts.thirtyPassed && ts.thirtyDeadline && daysLeft(ts.thirtyDeadline)<=7; }).length;
+  if(blocked) alerts.push({color:'#EF4444', text:`${blocked} caregiver${blocked>1?'s':''} blocked from client contact — orientation/ALZ training incomplete`, tab:'training'});
+  if(ojtOverdue) alerts.push({color:'#F97316', text:`${ojtOverdue} caregiver${ojtOverdue>1?'s':''} OJT overdue — 30-day training deadline passed`, tab:'training'});
+  if(ojtDueSoon) alerts.push({color:'#F97316', text:`${ojtDueSoon} caregiver${ojtDueSoon>1?'s':''} OJT due within 7 days — complete remaining training`, tab:'training'});
 
   // Active Compliance
   let acOverdue=0, acDueSoon=0;
@@ -1385,6 +1451,9 @@ function openOBModal(id=null){
 function saveOB(){
   const g=k=>document.getElementById(k).value;
   if(!g('ob-first')||!g('ob-last')){alert('Name required.');return;}
+  // Capture pre-save state
+  const oldCand = editingOB ? candidates.find(x=>x.id===editingOB) : null;
+  const wasReady = oldCand ? obDeriveStatus(oldCand)==='Ready for Orientation' : false;
   const d={first:g('ob-first'),last:g('ob-last'),phone:g('ob-phone'),oos:g('ob-oos'),
     r1n:g('ob-r1n'),r1s:g('ob-r1s'),r2n:g('ob-r2n'),r2s:g('ob-r2s'),r3n:g('ob-r3n'),r3s:g('ob-r3s'),r4n:g('ob-r4n'),r4s:g('ob-r4s'),
     r1_proof:g('ob-r1-proof'),r2_proof:g('ob-r2-proof'),r3_proof:g('ob-r3-proof'),r4_proof:g('ob-r4-proof'),
@@ -1396,6 +1465,16 @@ function saveOB(){
   if(editingOB){ const i=candidates.findIndex(x=>x.id===editingOB); candidates[i]={...candidates[i],...d}; saved=candidates[i]; }
   else { const rec={id:obId++,...d,invite_sent:false,invite_sent_date:'',added:new Date().toISOString().split('T')[0]}; candidates.push(rec); saved=rec; }
   saveCandidates(); closeModal('ob-modal'); renderOB(); renderAlerts();
+  // Push to AxisCare if candidate just became Ready for Orientation
+  const nowReady = obDeriveStatus(saved)==='Ready for Orientation';
+  if(nowReady && !wasReady){
+    pushAxisCareStatus('orientation_ready', {
+      first: saved.first, last: saved.last,
+      axiscare_id: saved.axiscare_id||'',
+      phone: saved.phone||'',
+      note: `✅ Ready for Orientation — background checks clear, 2 positive references received. Ready to be scheduled for orientation.`
+    });
+  }
   // Push to AxisCare + Google Drive via Zapier
   fetch(ZAPIER_CANDIDATE_WEBHOOK,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
     candidate_id: saved.id,
@@ -1505,12 +1584,74 @@ async function confirmSendInvite(){
 }
 function delOB(id){ const c=candidates.find(x=>x.id===id); if(confirm(`Remove ${c.first} ${c.last}?`)){ candidates=candidates.filter(x=>x.id!==id); saveCandidates(); renderOB(); renderAlerts(); } }
 
+// ── MANUAL REFERENCE ──────────────────────────────────────────────────
+let _mrefCandId=null, _mrefSlot=null;
+function scoreManualRef(recommend,reliability,interpersonal,honesty,concerns){
+  if(!recommend) return null;
+  if(recommend==='no'||concerns==='serious') return 'Negative';
+  const scores={Excellent:3,Good:2,Fair:1,Poor:0};
+  const avg=([reliability,interpersonal,honesty].filter(Boolean).map(r=>scores[r]||0).reduce((a,b)=>a+b,0))/3;
+  if(recommend==='reservations'||concerns==='minor'||avg<1.5) return 'Conditional';
+  return 'Positive';
+}
+function updateMrefPreview(){
+  const score=scoreManualRef(
+    document.getElementById('mref-recommend').value,
+    document.getElementById('mref-reliability').value,
+    document.getElementById('mref-interpersonal').value,
+    document.getElementById('mref-honesty').value,
+    document.getElementById('mref-concerns').value
+  );
+  const el=document.getElementById('mref-score-preview');
+  if(!score){el.style.display='none';return;}
+  const colors={Positive:'#d1fae5',Conditional:'#fef3c7',Negative:'#fee2e2'};
+  const text={Positive:'✅ This reference will score as Positive',Conditional:'⚠️ This reference will score as Conditional',Negative:'❌ This reference will score as Negative'};
+  el.style.display='block';el.style.background=colors[score];el.style.color='#1e293b';el.textContent=text[score];
+}
+function openManualRef(candidateId, slot){
+  _mrefCandId=candidateId; _mrefSlot=slot;
+  const c=candidates.find(x=>x.id===candidateId);
+  document.getElementById('mref-title').textContent=`Record Reference ${slot} — ${c.first} ${c.last}`;
+  document.getElementById('mref-sub').textContent=`Completing this form on behalf of the reference (phone/in-person). Will be saved as staff-completed.`;
+  const existing=c[`r${slot}_manual`]||{};
+  const g=k=>document.getElementById(k);
+  g('mref-staff').value=existing.staff||'';
+  g('mref-via').value=existing.via||'Phone call';
+  g('mref-date').value=existing.date||new Date().toISOString().split('T')[0];
+  g('mref-name').value=c[`r${slot}n`]||existing.name||'';
+  g('mref-type').value=existing.type||'Professional';
+  g('mref-rel').value=existing.relationship||'';
+  g('mref-howlong').value=existing.how_long||'';
+  g('mref-recommend').value=existing.recommend||'';
+  g('mref-reliability').value=existing.reliability||'';
+  g('mref-interpersonal').value=existing.interpersonal||'';
+  g('mref-honesty').value=existing.honesty||'';
+  g('mref-concerns').value=existing.concerns||'none';
+  g('mref-notes').value=existing.notes||'';
+  updateMrefPreview();
+  document.getElementById('manual-ref-modal').classList.add('open');
+}
+function saveManualRef(){
+  const g=k=>document.getElementById(k).value;
+  if(!g('mref-recommend')){ alert('Please select a recommendation.'); return; }
+  const score=scoreManualRef(g('mref-recommend'),g('mref-reliability'),g('mref-interpersonal'),g('mref-honesty'),g('mref-concerns'));
+  const manual={staff:g('mref-staff'),via:g('mref-via'),date:g('mref-date'),name:g('mref-name'),type:g('mref-type'),
+    relationship:g('mref-rel'),how_long:g('mref-howlong'),recommend:g('mref-recommend'),
+    reliability:g('mref-reliability'),interpersonal:g('mref-interpersonal'),honesty:g('mref-honesty'),
+    concerns:g('mref-concerns'),notes:g('mref-notes')};
+  const i=candidates.findIndex(x=>x.id===_mrefCandId);
+  candidates[i][`r${_mrefSlot}n`]=g('mref-name');
+  candidates[i][`r${_mrefSlot}s`]=score;
+  candidates[i][`r${_mrefSlot}_manual`]=manual;
+  saveCandidates(); closeModal('manual-ref-modal'); renderOB(); renderAlerts();
+}
+
 let cgReturnTab='training';
 function openCGModal(tab,id=null){ cgReturnTab=tab; editingCG=id;
   document.getElementById('cg-modal-title').textContent=id?'Edit Caregiver':'Add Caregiver';
   const c=id?caregivers.find(x=>x.id===id):null;
   const g=k=>document.getElementById(k);
-  const fields=['cg-first','cg-last','cg-hire','cg-orient','cg-orient-proof','cg-alz','cg-alz-hrs','cg-alz-proof','cg-first-contact','cg-ojt-date','cg-ojt-proof','cg-ojt-online','cg-ojt-online-proof','cg-annual','cg-annual-hrs','cg-annual-proof','cg-ethics-date','cg-ethics-proof','cg-rights-date','cg-rights-proof','cg-oig','cg-oig-proof','cg-edl','cg-edl-proof','cg-fcsr-reg','cg-fcsr','cg-fcsr-proof','cg-fp-date','cg-fp-proof','cg-supv-date','cg-supv-proof','cg-perf-date','cg-perf-proof'];
+  const fields=['cg-first','cg-last','cg-hire','cg-axiscare-id','cg-orient','cg-orient-proof','cg-alz','cg-alz-hrs','cg-alz-proof','cg-first-contact','cg-ojt-date','cg-ojt-proof','cg-ojt-online','cg-ojt-online-proof','cg-annual','cg-annual-hrs','cg-annual-proof','cg-ethics-date','cg-ethics-proof','cg-rights-date','cg-rights-proof','cg-oig','cg-oig-proof','cg-edl','cg-edl-proof','cg-fcsr-reg','cg-fcsr','cg-fcsr-proof','cg-fp-date','cg-fp-proof','cg-supv-date','cg-supv-proof','cg-perf-date','cg-perf-proof'];
   if(c){
     g('cg-first').value=c.first;g('cg-last').value=c.last;g('cg-hire').value=c.hire_date||'';
     g('cg-oos').value=c.oos||'no';g('cg-orient').value=c.orient_date||'';g('cg-alz').value=c.alz_date||'';
@@ -1532,7 +1673,10 @@ function openCGModal(tab,id=null){ cgReturnTab=tab; editingCG=id;
 function saveCG(){
   const g=k=>document.getElementById(k).value;
   if(!g('cg-first')||!g('cg-last')){alert('Name required.');return;}
-  const d={first:g('cg-first'),last:g('cg-last'),hire_date:g('cg-hire'),oos:g('cg-oos'),
+  // Capture pre-save state to detect status changes
+  const oldCG = editingCG ? caregivers.find(x=>x.id===editingCG) : null;
+  const wasCleared = oldCG ? trainStatus(oldCG).preContactDone : false;
+  const d={first:g('cg-first'),last:g('cg-last'),hire_date:g('cg-hire'),oos:g('cg-oos'),axiscare_id:g('cg-axiscare-id'),
     orient_date:g('cg-orient'),orient_proof:g('cg-orient-proof'),alz_date:g('cg-alz'),alz_hrs:g('cg-alz-hrs'),alz_proof:g('cg-alz-proof'),first_contact:g('cg-first-contact'),
     ojt_date:g('cg-ojt-date'),ojt_signed:g('cg-ojt-signed'),ojt_proof:g('cg-ojt-proof'),ojt_online:g('cg-ojt-online'),ojt_online_proof:g('cg-ojt-online-proof'),
     annual_date:g('cg-annual'),annual_hrs:g('cg-annual-hrs'),annual_proof:g('cg-annual-proof'),
@@ -1544,10 +1688,40 @@ function saveCG(){
     fp:g('cg-fp'),fp_date:g('cg-fp-date'),fp_proof:g('cg-fp-proof'),
     supv_date:g('cg-supv-date'),supv_proof:g('cg-supv-proof'),
     perf_date:g('cg-perf-date'),perf_proof:g('cg-perf-proof')};
-  if(editingCG){ const i=caregivers.findIndex(x=>x.id===editingCG); caregivers[i]={...caregivers[i],...d}; }
-  else { caregivers.push({id:cgId++,...d}); }
+  let savedCG;
+  if(editingCG){ const i=caregivers.findIndex(x=>x.id===editingCG); caregivers[i]={...caregivers[i],...d}; savedCG=caregivers[i]; }
+  else { const rec={id:cgId++,...d}; caregivers.push(rec); savedCG=rec; }
   saveCaregivers(); closeModal('cg-modal'); renderAlerts();
   if(cgReturnTab==='training') renderTR(); else renderAC();
+  // Push to AxisCare if caregiver just became cleared to schedule (orientation + ALZ done)
+  const nowCleared = trainStatus(savedCG).preContactDone;
+  if(nowCleared && !wasCleared){
+    const ts = trainStatus(savedCG);
+    const hire = pd(savedCG.hire_date);
+    const ojtDeadline = hire ? addDays(hire,30).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : 'within 30 days of hire';
+    pushAxisCareStatus('cleared_to_schedule', {
+      first: savedCG.first, last: savedCG.last,
+      axiscare_id: savedCG.axiscare_id||'',
+      hire_date: savedCG.hire_date||'',
+      orient_date: savedCG.orient_date||'',
+      alz_date: savedCG.alz_date||'',
+      ojt_deadline: ojtDeadline,
+      note: `✅ Cleared for first shift — orientation and ALZ/dementia training complete. Remaining OJT (4hr in-home + 2hr online) must be completed by ${ojtDeadline}.`
+    });
+  }
+}
+
+// ── AXISCARE STATUS PUSH ──────────────────────────────────────────────
+function pushAxisCareStatus(type, data){
+  if(ZAPIER_AC_STATUS_WEBHOOK.includes('REPLACE_WITH_YOUR_URL')){
+    console.log('AxisCare status push skipped — webhook not configured:', type, data);
+    return;
+  }
+  fetch(ZAPIER_AC_STATUS_WEBHOOK,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    type,
+    timestamp: new Date().toISOString(),
+    ...data
+  })}).catch(e=>console.warn('AxisCare status webhook (CORS expected — Zapier still receives it):', e));
 }
 
 function openOFFModal(id=null){ editingOFF=id;
@@ -2199,6 +2373,7 @@ function openSettings(){
   renderRecipients();
   document.getElementById('new-recip-name').value='';
   document.getElementById('new-recip-email').value='';
+  document.getElementById('settings-ac-site').value=appSettings.axiscare_site||'';
   document.getElementById('settings-modal').classList.add('open');
 }
 function renderRecipients(){
@@ -2233,6 +2408,7 @@ function removeRecipient(idx){
   renderRecipients();
 }
 function saveSettings(){
+  appSettings.axiscare_site = document.getElementById('settings-ac-site').value.trim();
   localStorage.setItem('cc_settings', JSON.stringify(appSettings));
   syncToSupabase('settings', appSettings);
   closeModal('settings-modal');
