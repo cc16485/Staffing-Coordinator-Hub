@@ -710,6 +710,16 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
   </div>
 </div>
 
+<!-- MODAL: Employee Profile -->
+<div class="overlay" id="profile-modal">
+  <div class="modal" style="max-width:720px">
+    <div id="profile-content"></div>
+    <div class="modal-acts" style="margin-top:1.25rem">
+      <button class="btn-cancel" onclick="closeModal('profile-modal')" style="width:100%">Close</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL: Settings -->
 <div class="overlay" id="settings-modal">
   <div class="modal" style="max-width:480px">
@@ -1148,7 +1158,7 @@ function renderOB(){
 
     const proofLink=(url,label)=>url?`<a class="proof-link" href="${url}" target="_blank" rel="noopener">📄 ${label}</a>`:'';
     return `<tr>
-      <td><div class="name-cell">${c.first} ${c.last}</div>${c.oos==='yes'?'<span class="sub" style="color:#F97316">⚠ Out-of-state</span>':''}${staleBadge?`<div style="margin-top:2px">${staleBadge}</div>`:''}</td>
+      <td><div class="name-cell" style="cursor:pointer;color:var(--navy)" onclick="openProfile('${c.first}','${c.last}')" title="View full profile">${c.first} ${c.last} <span style="font-size:.65rem;color:var(--teal)">↗</span></div>${c.oos==='yes'?'<span class="sub" style="color:#F97316">⚠ Out-of-state</span>':''}${staleBadge?`<div style="margin-top:2px">${staleBadge}</div>`:''}</td>
       ${[1,2,3,4].map(n=>{
         const s=c[`r${n}s`],nm=c[`r${n}n`],pf=c[`r${n}_proof`],mn=c[`r${n}_manual`];
         const manualTag=mn?`<span class="sub" style="color:var(--teal)">📞 ${mn.via} · ${fmtD(mn.date)||''}${mn.staff?' · '+mn.staff:''}</span>`:'';
@@ -1243,7 +1253,7 @@ function renderTR(){
     // Overall
     const oBadge={Current:'b-green','Annual Due Soon':'b-amber','Annual Overdue':'b-red','Training Overdue':'b-red','OJT Pending':'b-gray','Client Contact Blocked':'b-red'}[ts.overall]||'b-gray';
     return `<tr>
-      <td><div class="name-cell">${c.first} ${c.last}</div></td>
+      <td><div class="name-cell" style="cursor:pointer" onclick="openProfile('${c.first}','${c.last}')" title="View full profile">${c.first} ${c.last} <span style="font-size:.65rem;color:var(--teal)">↗</span></div></td>
       <td><span class="chk-date">${fmtD(c.hire_date)||'—'}</span></td>
       <td><div class="chk"><span class="badge ${preBadge}">${preLabel}</span>${orientLine}${alzLine}${alzHrsLine}</div></td>
       <td>${(()=>{
@@ -1323,7 +1333,7 @@ function renderAC(){
     const chkd = acSelected.has(c.id) ? 'checked' : '';
     return `<tr>
       <td style="width:36px"><input type="checkbox" ${chkd} onchange="toggleACSelect(${c.id},this.checked)" style="accent-color:var(--teal);cursor:pointer"></td>
-      <td><div class="name-cell">${c.first} ${c.last}</div>${c.oos==='yes'?'<span class="sub" style="color:#F97316">⚠ Out-of-state</span>':''}</td>
+      <td><div class="name-cell" style="cursor:pointer" onclick="openProfile('${c.first}','${c.last}')" title="View full profile">${c.first} ${c.last} <span style="font-size:.65rem;color:var(--teal)">↗</span></div>${c.oos==='yes'?'<span class="sub" style="color:#F97316">⚠ Out-of-state</span>':''}</td>
       <td>${compCell(c.oig_date,o,c.oig_status,c.oig_proof)}</td>
       <td>${compCell(c.edl_date,e,c.edl_status,c.edl_proof)}</td>
       <td>${(()=>{ const reg=fcsrRegStatus(c); const regColor=reg.status==='ok'?'var(--green)':reg.status==='overdue'?'var(--red)':'var(--amber)'; const regIcon=reg.status==='ok'?'✓':reg.status==='overdue'?'⚠':'⏳'; return compCell(c.fcsr_date,f,c.fcsr_status,c.fcsr_proof)+`<span class="chk-date" style="color:${regColor}">${regIcon} ${reg.label}</span>`; })()}</td>
@@ -1367,7 +1377,7 @@ function renderOFF(){
   tbody.innerHTML=list.map(o=>{
     const done=offComplete(o);
     return `<tr>
-      <td><div class="name-cell">${o.first} ${o.last}</div><span class="sub">${o.reason||''}</span></td>
+      <td><div class="name-cell" style="cursor:pointer" onclick="openProfile('${o.first}','${o.last}')" title="View full profile">${o.first} ${o.last} <span style="font-size:.65rem;color:var(--teal)">↗</span></div><span class="sub">${o.reason||''}</span></td>
       <td>${fmtD(o.lastday)||'—'}</td>
       <td>${chkBadge(o.ac)}<span class="sub">${o.ac_date?fmtD(o.ac_date):''}</span></td>
       <td>${chkBadge(o.viv)}</td>
@@ -2383,6 +2393,156 @@ function exportComplianceCSV(){
   a.href='data:text/csv;charset=utf-8,'+encodeURIComponent(csv);
   a.download=`compliance_${new Date().toISOString().split('T')[0]}.csv`;
   a.click();
+}
+
+// ── Employee Profile ──────────────────────────────────────────────────
+function openProfile(first, last){
+  const nm = `${first} ${last}`;
+  const cand = candidates.find(c=>`${c.first} ${c.last}`.toLowerCase()===nm.toLowerCase());
+  const cg   = caregivers.find(c=>`${c.first} ${c.last}`.toLowerCase()===nm.toLowerCase());
+  const off  = offboardings.find(o=>`${o.first} ${o.last}`.toLowerCase()===nm.toLowerCase());
+  // Find orientation booking across all sessions
+  let booking=null, bookSess=null;
+  for(const s of orientSessions){
+    const b=(s.bookings||[]).find(b=>`${b.first} ${b.last}`.toLowerCase()===nm.toLowerCase());
+    if(b){booking=b;bookSess=s;break;}
+  }
+
+  const refBadge=s=>({Positive:'b-green',Conditional:'b-amber',Negative:'b-red',Pending:'b-gray'}[s]||'b-gray');
+  const compBadge=s=>({Current:'b-green','Due Soon':'b-amber',Overdue:'b-red'}[s]||'b-gray');
+  const miss='<span style="color:#cbd5e1;font-size:.75rem">—</span>';
+
+  // ── Header ──
+  const phone = cand?.phone || cg?.phone || '';
+  const hireDate = cg?.hire_date ? `Hired ${fmtD(cg.hire_date)}` : (cand ? 'Pre-hire / Candidate' : '');
+  const acwStatus = cg ? acWorst(cg) : null;
+  const acwBadge = {current:'b-green',duesoon:'b-amber',overdue:'b-red',pending:'b-gray'}[acwStatus]||'b-gray';
+  const acwLabel = {current:'Compliance Current',duesoon:'Due Soon',overdue:'Compliance Overdue',pending:'Pending'}[acwStatus]||'';
+  const candStatus = cand ? obDeriveStatus(cand) : null;
+  const candBadge = candStatus==='Ready for Orientation'?'b-green':candStatus==='Needs Review'?'b-red':'b-gray';
+
+  let html = `<div style="border-bottom:2px solid var(--border);padding-bottom:1rem;margin-bottom:1rem">`;
+  html += `<h2 style="font-size:1.25rem;font-weight:700;color:var(--navy);margin-bottom:.25rem">👤 ${nm}</h2>`;
+  html += `<div style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;font-size:.82rem;color:var(--gray)">`;
+  if(phone) html += `<a href="tel:${phone}" style="color:var(--teal);text-decoration:none">📞 ${phone}</a>`;
+  if(hireDate) html += `<span>${hireDate}</span>`;
+  if(cg?.axiscare_id) html += `<span style="color:var(--gray)">AxisCare ID: ${cg.axiscare_id}</span>`;
+  html += `</div>`;
+  html += `<div style="display:flex;gap:.4rem;margin-top:.6rem;flex-wrap:wrap">`;
+  if(candStatus) html += `<span class="badge ${candBadge}">${candStatus}</span>`;
+  if(acwLabel)   html += `<span class="badge ${acwBadge}">${acwLabel}</span>`;
+  if(!cand && !cg) html += `<span class="badge b-gray">No records found</span>`;
+  html += `</div></div>`;
+
+  // ── Background & References ──
+  html += `<div class="sect-lbl">Background &amp; References</div>`;
+  if(cand){
+    html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem .75rem;margin:.5rem 0 .75rem">`;
+    [1,2,3,4].forEach(n=>{
+      const s=cand[`r${n}s`]||'Pending', nm2=cand[`r${n}n`]||'', ph=cand[`r${n}_phone`]||'', em=cand[`r${n}_email`]||'';
+      const mn=cand[`r${n}_manual`];
+      html+=`<div style="background:var(--slate-bg);border-radius:8px;padding:.5rem .65rem">`;
+      html+=`<div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.2rem"><span style="font-size:.72rem;font-weight:600;color:var(--gray)">REF ${n}</span><span class="badge ${refBadge(s)}" style="font-size:.65rem">${s}</span></div>`;
+      html+=nm2?`<div style="font-size:.8rem;font-weight:600;color:var(--navy)">${nm2}</div>`:miss;
+      if(ph) html+=`<a href="tel:${ph}" style="font-size:.72rem;color:var(--teal);text-decoration:none;display:block">📞 ${ph}</a>`;
+      if(em) html+=`<a href="mailto:${em}" style="font-size:.72rem;color:var(--teal);text-decoration:none;display:block">✉️ ${em}</a>`;
+      if(mn) html+=`<span style="font-size:.67rem;color:var(--teal);display:block;margin-top:.15rem">📞 Staff completed · ${mn.via} · ${fmtD(mn.date)||''}</span>`;
+      if(cand[`r${n}_proof`]) html+=`<a class="proof-link" href="${cand[`r${n}_proof`]}" target="_blank" style="display:block;margin-top:.2rem">📄 form</a>`;
+      html+=`</div>`;
+    });
+    html+=`</div>`;
+    // Background checks
+    html+=`<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.4rem;margin-bottom:.75rem">`;
+    [{label:'OIG',val:cand.oig,date:cand.oig_date,ok:'CLEAR'},{label:'EDL',val:cand.edl,date:cand.edl_date,ok:'Clear'},{label:'FCSR',val:cand.fcsr,date:cand.fcsr_date,ok:'Clear'},{label:'Fingerprint',val:cand.fp,date:cand.fp_date,ok:'Clear'}].forEach(({label,val,date,ok})=>{
+      const b=val===ok?'b-green':(!val||val==='Pending'||val==='N/A')?'b-gray':'b-red';
+      html+=`<div style="background:var(--slate-bg);border-radius:8px;padding:.45rem .6rem;text-align:center"><div style="font-size:.68rem;font-weight:600;color:var(--gray)">${label}</div><span class="badge ${b}" style="font-size:.65rem;margin-top:.2rem">${val||'Pending'}</span>${date?`<div style="font-size:.65rem;color:var(--gray);margin-top:.15rem">${fmtD(date)}</div>`:''}</div>`;
+    });
+    html+=`</div>`;
+  } else {
+    html+=`<p style="font-size:.8rem;color:var(--gray);margin:.4rem 0 .75rem">No candidate record found.</p>`;
+  }
+
+  // ── Orientation ──
+  html+=`<div class="sect-lbl">Orientation</div>`;
+  html+=`<div style="background:var(--slate-bg);border-radius:8px;padding:.6rem .8rem;margin:.5rem 0 .75rem;font-size:.82rem">`;
+  if(cand?.invite_sent){
+    html+=`<div style="margin-bottom:.2rem">📅 Invite sent: <strong>${fmtD(cand.invite_sent_date)||'Yes'}</strong></div>`;
+  } else {
+    html+=`<div style="color:var(--gray);margin-bottom:.2rem">📅 Invite not yet sent</div>`;
+  }
+  if(bookSess){
+    const outcomeLabel={attended:'✅ Attended',noshow:'🚫 No-Show',rescheduled:'📅 Rescheduled',canceled:'❌ Canceled'}[booking?.outcome]||'⏳ Booked';
+    const outColor={attended:'var(--green)',noshow:'var(--red)',rescheduled:'#F97316',canceled:'var(--red)'}[booking?.outcome]||'var(--navy)';
+    html+=`<div>Session: <strong>${fmtD(bookSess.date)}${bookSess.time?' · '+bookSess.time:''}</strong> — <span style="color:${outColor};font-weight:600">${outcomeLabel}</span></div>`;
+  } else {
+    html+=`<div style="color:var(--gray)">No orientation session booked</div>`;
+  }
+  html+=`</div>`;
+
+  // ── Training ──
+  html+=`<div class="sect-lbl">Training</div>`;
+  if(cg){
+    const ts=trainStatus(cg);
+    const daysLeft30=ts.thirtyDeadline?daysLeft(ts.thirtyDeadline):null;
+    html+=`<div style="background:var(--slate-bg);border-radius:8px;padding:.6rem .8rem;margin:.5rem 0 .75rem">`;
+    html+=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:.3rem .75rem;font-size:.8rem">`;
+    html+=`<div><span style="color:var(--gray);font-size:.72rem">Agency Orientation (2hr)</span><br>${cg.orient_date?`<strong>${fmtD(cg.orient_date)}</strong> <span style="color:var(--green)">✓</span>`:'<span style="color:var(--red)">Missing</span>'}</div>`;
+    html+=`<div><span style="color:var(--gray);font-size:.72rem">ALZ/Dementia (4hr)</span><br>${cg.alz_date?`<strong>${fmtD(cg.alz_date)}</strong>${cg.alz_hrs?` · ${cg.alz_hrs}hr`:''} <span style="color:var(--green)">✓</span>`:'<span style="color:var(--red)">Missing</span>'}</div>`;
+    html+=`<div><span style="color:var(--gray);font-size:.72rem">OJT In-Home (4hr)</span><br>${cg.ojt_date?`<strong>${fmtD(cg.ojt_date)}</strong> <span style="color:var(--green)">✓</span>`:'<span style="color:var(--amber)">Pending</span>'}</div>`;
+    html+=`<div><span style="color:var(--gray);font-size:.72rem">OJT Online (2hr)</span><br>${cg.ojt_online?`<strong>${fmtD(cg.ojt_online)}</strong> <span style="color:var(--green)">✓</span>`:'<span style="color:var(--amber)">Pending</span>'}</div>`;
+    html+=`<div><span style="color:var(--gray);font-size:.72rem">First Client Contact</span><br>${cg.first_contact?`<strong>${fmtD(cg.first_contact)}</strong>`:miss}</div>`;
+    html+=`<div><span style="color:var(--gray);font-size:.72rem">30-Day Deadline</span><br>${ts.thirtyDeadline?`<strong>${ts.thirtyDeadline.toLocaleDateString('en-US',{month:'short',day:'numeric'})}</strong> ${ts.thirtyDone?'<span style="color:var(--green)">✓ Done</span>':ts.thirtyPassed?'<span style="color:var(--red)">⚠ Overdue</span>':`<span style="color:${daysLeft30<=7?'var(--red)':'var(--amber)'}">${daysLeft30}d left</span>`}`:miss}</div>`;
+    html+=`</div>`;
+    const oBadge={Current:'b-green','Annual Due Soon':'b-amber','Annual Overdue':'b-red','Training Overdue':'b-red','OJT Pending':'b-gray','Client Contact Blocked':'b-red'}[ts.overall]||'b-gray';
+    html+=`<div style="margin-top:.5rem;padding-top:.5rem;border-top:1px solid var(--border)"><span class="badge ${oBadge}">${ts.overall}</span></div>`;
+    html+=`</div>`;
+  } else {
+    html+=`<p style="font-size:.8rem;color:var(--gray);margin:.4rem 0 .75rem">No caregiver / training record found.</p>`;
+  }
+
+  // ── Active Compliance ──
+  html+=`<div class="sect-lbl">Active Compliance</div>`;
+  if(cg){
+    const o=chkStatus(cg.oig_date,90,14), e=chkStatus(cg.edl_date,90,14), f=chkStatus(cg.fcsr_date,365,30);
+    const sv=chkStatus(cg.supv_date,365,30), pr=chkStatus(cg.perf_date,365,30);
+    const fReg=fcsrRegStatus(cg);
+    const regColor=fReg.status==='ok'?'var(--green)':fReg.status==='overdue'?'var(--red)':'var(--amber)';
+    html+=`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.4rem;margin:.5rem 0 .75rem">`;
+    [{label:'OIG',chk:o,date:cg.oig_date},{label:'EDL',chk:e,date:cg.edl_date},{label:'FCSR Annual',chk:f,date:cg.fcsr_date},{label:'Supervisory Visit',chk:sv,date:cg.supv_date},{label:'Performance Review',chk:pr,date:cg.perf_date}].forEach(({label,chk,date})=>{
+      const b=compBadge(chk.status);
+      html+=`<div style="background:var(--slate-bg);border-radius:8px;padding:.45rem .6rem"><div style="font-size:.68rem;font-weight:600;color:var(--gray);margin-bottom:.2rem">${label}</div><span class="badge ${b}" style="font-size:.65rem">${chk.status}</span>${date?`<div style="font-size:.65rem;color:var(--gray);margin-top:.15rem">${fmtD(date)}</div>`:''}</div>`;
+    });
+    html+=`</div>`;
+    html+=`<div style="font-size:.75rem;padding:.4rem .6rem;background:var(--slate-bg);border-radius:8px;margin-bottom:.5rem"><span style="color:${regColor};font-weight:600">FCSR Registration:</span> ${fReg.label}</div>`;
+  } else {
+    html+=`<p style="font-size:.8rem;color:var(--gray);margin:.4rem 0">No active compliance record found.</p>`;
+  }
+
+  // ── Offboarding ──
+  if(off){
+    const done=offComplete(off);
+    const chk=(v,yesLabel='Done')=>v==='yes'?`<span class="badge b-green">${yesLabel}</span>`:v==='na'?`<span class="badge b-gray">N/A</span>`:`<span class="badge b-amber">Pending</span>`;
+    html+=`<div class="sect-lbl" style="color:var(--red)">Offboarding${done?' ✓':' — In Progress'}</div>`;
+    html+=`<div style="background:#fff1f2;border:1px solid #fecdd3;border-radius:8px;padding:.65rem .8rem;margin:.5rem 0 .75rem;font-size:.82rem">`;
+    html+=`<div style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin-bottom:.5rem">`;
+    html+=`<span style="font-weight:600;color:var(--red)">${off.reason||'Separation'}</span>`;
+    if(off.lastday) html+=`<span style="color:var(--gray)">Last day: <strong>${fmtD(off.lastday)}</strong></span>`;
+    if(off.ben) html+=`<span style="color:var(--gray)">Benefits end: <strong>${fmtD(off.ben)}</strong></span>`;
+    html+=`</div>`;
+    html+=`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.35rem;margin-bottom:.4rem">`;
+    html+=`<div><span style="font-size:.68rem;color:var(--gray);font-weight:600">AxisCare</span><br>${chk(off.ac,'Deactivated')}${off.ac_date?`<span style="font-size:.65rem;color:var(--gray);display:block">${fmtD(off.ac_date)}</span>`:''}</div>`;
+    html+=`<div><span style="font-size:.68rem;color:var(--gray);font-weight:600">Viventium</span><br>${chk(off.viv,'Updated')}</div>`;
+    html+=`<div><span style="font-size:.68rem;color:var(--gray);font-weight:600">Equipment</span><br>${chk(off.equip,'Returned')}</div>`;
+    html+=`<div><span style="font-size:.68rem;color:var(--gray);font-weight:600">Final Pay</span><br>${chk(off.pay,'Issued')}</div>`;
+    html+=`<div><span style="font-size:.68rem;color:var(--gray);font-weight:600">Exit Interview</span><br>${chk(off.exit,'Done')}</div>`;
+    html+=`<div><span style="font-size:.68rem;color:var(--gray);font-weight:600">Records Retain Through</span><br><span style="font-size:.75rem;font-weight:600;color:var(--navy)">${off.retain||offCalcRetain(off.lastday)||'—'}</span></div>`;
+    html+=`</div>`;
+    if(off.notes) html+=`<div style="font-size:.75rem;color:var(--gray);margin-top:.25rem;padding-top:.35rem;border-top:1px solid #fecdd3">📝 ${off.notes}</div>`;
+    html+=`</div>`;
+  }
+
+  document.getElementById('profile-content').innerHTML=html;
+  document.getElementById('profile-modal').classList.add('open');
 }
 
 // ── Settings ──────────────────────────────────────────────────────────
