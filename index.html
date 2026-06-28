@@ -998,58 +998,23 @@ function setSyncStatus(s){
 }
 
 // ── DATA — localStorage-backed ─────────────────────────────────────────
-const SEED_CANDIDATES = [
-  {id:1,first:"Maria",last:"Rodriguez",phone:"4175551001",oos:"no",
-   r1n:"Bob Jones",r1s:"Positive",r2n:"Carol White",r2s:"Positive",r3n:"Dave Brown",r3s:"Pending",r4n:"Eve Davis",r4s:"Pending",
-   oig:"CLEAR",oig_date:"2026-06-20",edl:"Clear",edl_date:"2026-06-20",fcsr:"Clear",fcsr_date:"2026-06-22",fp:"N/A",fp_date:"",notes:"",
-   invite_sent:false,invite_sent_date:""},
-  {id:2,first:"James",last:"Wilson",phone:"4175551002",oos:"yes",
-   r1n:"Tom Lee",r1s:"Positive",r2n:"Sara Kim",r2s:"Conditional",r3n:"",r3s:"Pending",r4n:"",r4s:"Pending",
-   oig:"CLEAR",oig_date:"2026-06-18",edl:"Pending",edl_date:"",fcsr:"Pending",fcsr_date:"",fp:"Required",fp_date:"",notes:"Lived in Kansas 2022-2024",
-   invite_sent:false,invite_sent_date:""},
-  {id:3,first:"Tanya",last:"Brooks",phone:"4175551003",oos:"no",
-   r1n:"",r1s:"Pending",r2n:"",r2s:"Pending",r3n:"",r3s:"Pending",r4n:"",r4s:"Pending",
-   oig:"Pending",oig_date:"",edl:"Pending",edl_date:"",fcsr:"Pending",fcsr_date:"",fp:"N/A",fp_date:"",notes:"",
-   invite_sent:false,invite_sent_date:""},
-];
-const SEED_CAREGIVERS = [
-  {id:1,first:"Jane",last:"Smith",hire_date:"2025-04-01",oos:"no",
-   orient_date:"2025-04-02",alz_date:"2025-04-03",
-   ojt_date:"2025-04-20",ojt_signed:"yes",ojt_proof:"",ojt_online:"2025-04-21",
-   annual_date:"2026-04-05",annual_proof:"",
-   oig_date:"2026-03-15",oig_status:"",oig_proof:"",
-   edl_date:"2026-03-15",edl_status:"",edl_proof:"",
-   fcsr_date:"2025-12-01",fcsr_status:"",fcsr_proof:"",
-   fp:"N/A",fp_date:"",fp_proof:""},
-  {id:2,first:"Marcus",last:"Johnson",hire_date:"2025-07-15",oos:"yes",
-   orient_date:"2025-07-16",alz_date:"2025-07-17",
-   ojt_date:"2025-08-01",ojt_signed:"yes",ojt_proof:"https://drive.google.com/example",ojt_online:"2025-08-02",
-   annual_date:"2026-07-20",annual_proof:"",
-   oig_date:"2026-06-01",oig_status:"",oig_proof:"https://drive.google.com/example",
-   edl_date:"2026-06-01",edl_status:"",edl_proof:"",
-   fcsr_date:"2026-01-10",fcsr_status:"",fcsr_proof:"",
-   fp:"Clear",fp_date:"2025-07-20",fp_proof:""},
-  {id:3,first:"Angela",last:"Torres",hire_date:"2026-05-01",oos:"no",
-   orient_date:"2026-05-02",alz_date:"",
-   ojt_date:"",ojt_signed:"no",ojt_proof:"",ojt_online:"",
-   annual_date:"",annual_proof:"",
-   oig_date:"2026-06-20",oig_status:"",oig_proof:"",
-   edl_date:"",edl_status:"Pending",edl_proof:"",
-   fcsr_date:"2026-06-20",fcsr_status:"",fcsr_proof:"",
-   fp:"N/A",fp_date:"",fp_proof:""},
-  {id:4,first:"Robert",last:"Davis",hire_date:"2026-06-01",oos:"no",
-   orient_date:"",alz_date:"",
-   ojt_date:"",ojt_signed:"no",ojt_proof:"",ojt_online:"",
-   annual_date:"",annual_proof:"",
-   oig_date:"",oig_status:"Pending",oig_proof:"",
-   edl_date:"",edl_status:"Pending",edl_proof:"",
-   fcsr_date:"",fcsr_status:"Pending",fcsr_proof:"",
-   fp:"N/A",fp_date:"",fp_proof:""},
-];
-const SEED_OFFBOARDINGS = [
-  {id:1,first:"Sandra",last:"Moore",lastday:"2026-05-31",reason:"Voluntary Resignation",
-   ac:"yes",ac_date:"2026-06-01",viv:"yes",equip:"yes",pay:"yes",pay_date:"2026-06-07",exit:"yes",ben:"2026-06-30",notes:""},
-];
+const SEED_CANDIDATES = [];
+const SEED_CAREGIVERS = [];
+const SEED_OFFBOARDINGS = [];
+
+// One-time migration: remove example people that shipped with earlier versions
+const SEED_CANDIDATE_NAMES = ["Maria Rodriguez","James Wilson","Tanya Brooks"];
+const SEED_CAREGIVER_NAMES = ["Jane Smith","Marcus Johnson","Angela Torres","Robert Davis"];
+const SEED_OFFBOARDING_NAMES = ["Sandra Moore"];
+function clearSeedPeople(){
+  if(localStorage.getItem('cc_seed_cleared')) return;
+  const nm = (f,l)=>`${f} ${l}`;
+  candidates   = candidates.filter(c=>!SEED_CANDIDATE_NAMES.includes(nm(c.first,c.last)));
+  caregivers   = caregivers.filter(c=>!SEED_CAREGIVER_NAMES.includes(nm(c.first,c.last)));
+  offboardings = offboardings.filter(o=>!SEED_OFFBOARDING_NAMES.includes(nm(o.first,o.last)));
+  saveCandidates(); saveCaregivers(); saveOffboardings();
+  localStorage.setItem('cc_seed_cleared','1');
+}
 
 let appSettings  = JSON.parse(localStorage.getItem('cc_settings'))    || { alert_recipients: [{name:'Samantha', email:'samantha@mo-care.com'}] };
 let candidates   = JSON.parse(localStorage.getItem('cc_candidates'))   || SEED_CANDIDATES;
@@ -1058,6 +1023,7 @@ let offboardings = JSON.parse(localStorage.getItem('cc_offboardings')) || SEED_O
 let obId  = parseInt(localStorage.getItem('cc_ob_id')  || '10');
 let cgId  = parseInt(localStorage.getItem('cc_cg_id')  || '10');
 let offId = parseInt(localStorage.getItem('cc_off_id') || '10');
+clearSeedPeople();
 
 function saveCandidates(){
   localStorage.setItem('cc_candidates', JSON.stringify(candidates));
