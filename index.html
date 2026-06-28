@@ -309,6 +309,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
         <button class="fb" onclick="acFilter('overdue',this)">Overdue</button>
         <button class="fb" onclick="acFilter('duesoon',this)">Due Soon</button>
         <button class="fb" onclick="acFilter('current',this)">All Current</button>
+        <button class="add-btn" onclick="batchOIGCheck()" style="background:var(--teal)">🔍 Batch OIG Check</button>
         <button class="add-btn" onclick="exportComplianceCSV()" style="background:var(--navy)">📥 Export CSV</button>
         <button class="add-btn" onclick="downloadCSVTemplate()" style="background:var(--navy)">📋 CSV Template</button>
         <button class="add-btn" onclick="openImportModal()" style="background:#7c3aed">⬆ Import CSV</button>
@@ -609,6 +610,10 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
       </div>
       <div class="grp full"><label>Ref 4 Form Link</label><input type="url" id="ob-r4-proof" placeholder="https://…"></div>
       <div class="sect-lbl">Background &amp; Compliance</div>
+      <div style="background:var(--blue-bg);border-radius:8px;padding:.6rem .85rem;margin-bottom:.75rem;display:flex;align-items:center;justify-content:space-between;gap:.5rem">
+        <span style="font-size:.78rem;color:var(--blue-text);font-weight:500">OIG Exclusion Check — checks the federal exclusions database instantly.</span>
+        <button type="button" id="ob-oig-check-btn" onclick="oigCheckFromOBModal()" style="padding:.35rem .85rem;background:var(--navy);color:#fff;border:none;border-radius:6px;font-size:.78rem;font-weight:600;cursor:pointer;white-space:nowrap;font-family:inherit">🔍 Run OIG Check</button>
+      </div>
       <div class="grp"><label>OIG Status</label>
         <select id="ob-oig"><option value="Pending">Pending</option><option value="CLEAR">Clear</option><option value="FLAGGED">Flagged</option></select>
       </div>
@@ -677,6 +682,10 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
       <div class="grp"><label>Participant Rights Signed Date</label><input type="date" id="cg-rights-date"></div>
       <div class="grp"><label>Participant Rights Proof Link</label><input type="url" id="cg-rights-proof" placeholder="https://drive.google.com/..."></div>
       <div class="sect-lbl">Active Compliance</div>
+      <div style="background:var(--blue-bg);border-radius:8px;padding:.6rem .85rem;margin-bottom:.75rem;display:flex;align-items:center;justify-content:space-between;gap:.5rem">
+        <span style="font-size:.78rem;color:var(--blue-text);font-weight:500">OIG Exclusion Check — runs against the federal exclusions database instantly.</span>
+        <button type="button" id="cg-oig-check-btn" onclick="oigCheckFromCGModal()" style="padding:.35rem .85rem;background:var(--navy);color:#fff;border:none;border-radius:6px;font-size:.78rem;font-weight:600;cursor:pointer;white-space:nowrap;font-family:inherit">🔍 Run OIG Check</button>
+      </div>
       <div class="grp"><label>OIG Last Check Date</label><input type="date" id="cg-oig"></div>
       <div class="grp"><label>OIG Status</label>
         <select id="cg-oig-s"><option value="">Auto</option><option value="Current">Current</option><option value="Overdue">Overdue</option></select>
@@ -751,9 +760,57 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
       <input type="email" id="new-recip-email" placeholder="Email address" style="flex:2;padding:.45rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.83rem">
       <button onclick="addRecipient()" style="padding:.45rem .9rem;background:var(--teal);color:#fff;border:none;border-radius:8px;font-family:inherit;font-size:.83rem;font-weight:600;cursor:pointer">+ Add</button>
     </div>
+    <div class="sect-lbl" style="margin-top:.75rem;color:var(--red)">Admin Passcode</div>
+    <p style="font-size:.78rem;color:var(--gray);margin:.4rem 0 .75rem">This passcode is required to open Settings. Keep it separate from the staff login password so VAs can't access this page.</p>
+    <div style="display:flex;gap:.5rem;margin-bottom:.35rem;align-items:center">
+      <label style="font-size:.8rem;font-weight:500;white-space:nowrap;color:var(--navy)">Current:</label>
+      <input type="password" id="settings-admin-current" placeholder="Current admin passcode" style="flex:1;padding:.45rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.83rem">
+    </div>
+    <div style="display:flex;gap:.5rem;margin-bottom:.35rem;align-items:center">
+      <label style="font-size:.8rem;font-weight:500;white-space:nowrap;color:var(--navy)">New:</label>
+      <input type="password" id="settings-admin-new" placeholder="New admin passcode" style="flex:1;padding:.45rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.83rem">
+    </div>
+    <div style="display:flex;gap:.5rem;margin-bottom:1rem;align-items:center">
+      <label style="font-size:.8rem;font-weight:500;white-space:nowrap;color:var(--navy)">Confirm:</label>
+      <input type="password" id="settings-admin-confirm" placeholder="Confirm new passcode" style="flex:1;padding:.45rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.83rem">
+    </div>
     <div style="display:flex;gap:.5rem;margin-top:.5rem">
       <button class="btn-cancel" onclick="closeModal('settings-modal')" style="flex:1">Cancel</button>
       <button class="btn-save" onclick="saveSettings()" style="flex:1">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: OIG Check Result -->
+<div class="overlay" id="oig-result-modal">
+  <div class="modal" style="max-width:580px">
+    <div id="oig-result-content"></div>
+    <div class="modal-acts" id="oig-result-acts" style="margin-top:1.25rem"></div>
+  </div>
+</div>
+
+<!-- MODAL: Batch OIG Progress -->
+<div class="overlay" id="oig-batch-modal">
+  <div class="modal" style="max-width:560px">
+    <h3>🔍 Batch OIG Exclusion Check</h3>
+    <div id="oig-batch-content" style="margin-top:.75rem"></div>
+    <div class="modal-acts" style="margin-top:1.25rem">
+      <button class="btn-cancel" id="oig-batch-close-btn" onclick="closeModal('oig-batch-modal')" style="width:100%;display:none">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Admin Passcode Prompt -->
+<div class="overlay" id="admin-pwd-modal">
+  <div class="modal" style="max-width:360px;text-align:center">
+    <div style="font-size:1.5rem;margin-bottom:.5rem">🔒</div>
+    <h3 style="margin-bottom:.35rem">Admin Access Required</h3>
+    <p style="font-size:.82rem;color:var(--gray);margin-bottom:1.25rem">Settings are restricted to admins only. Enter your admin passcode to continue.</p>
+    <input type="password" id="admin-pwd-input" placeholder="Admin passcode" style="width:100%;padding:.75rem 1rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.9rem;color:var(--navy);margin-bottom:.5rem">
+    <div class="err" id="admin-pwd-err" style="margin-bottom:.75rem">Incorrect passcode.</div>
+    <div style="display:flex;gap:.5rem">
+      <button class="btn-cancel" onclick="closeModal('admin-pwd-modal')" style="flex:1">Cancel</button>
+      <button class="btn-save" onclick="submitAdminPwd()" style="flex:1">Enter</button>
     </div>
   </div>
 </div>
@@ -900,6 +957,12 @@ const DEFAULT_PWD_B64 = btoa('CC2026Hub!');
 function getStoredPwd(){ return localStorage.getItem('cc_pwd') || DEFAULT_PWD_B64; }
 function checkPwd(val){ return btoa(val) === getStoredPwd(); }
 
+// ── Admin passcode — gates Settings access ────────────────────────────
+// Default admin passcode on first load: same as login password.
+// Change it in Settings → Admin Passcode.
+function getAdminPwd(){ return localStorage.getItem('cc_admin_pwd') || getStoredPwd(); }
+function checkAdminPwd(val){ return btoa(val) === getAdminPwd(); }
+
 const TODAY = new Date(); TODAY.setHours(0,0,0,0);
 
 // ── Auth ──────────────────────────────────────────────────────────────
@@ -925,6 +988,178 @@ function doLogout(){
 }
 // Auto-login if session exists
 if(localStorage.getItem('cc_session')==='1') showApp();
+
+// ── OIG Exclusion Check ───────────────────────────────────────────────
+async function runOIGCheck(first, last){
+  const url = `https://exclusions.oig.hhs.gov/api/search.json?firstname=${encodeURIComponent(first)}&lastname=${encodeURIComponent(last)}`;
+  const res = await fetch(url);
+  if(!res.ok) throw new Error(`OIG API returned ${res.status}`);
+  const data = await res.json();
+  const matches = data.results || [];
+  return {
+    clear: matches.length === 0,
+    date: new Date().toISOString().slice(0,10),
+    matches
+  };
+}
+
+function oigMatchTable(matches){
+  return `<table style="width:100%;border-collapse:collapse;font-size:.78rem;margin-top:.5rem">
+    <thead><tr style="background:var(--red-bg)">
+      <th style="padding:.4rem .6rem;text-align:left;color:var(--red-text)">Name</th>
+      <th style="padding:.4rem .6rem;text-align:left;color:var(--red-text)">DOB</th>
+      <th style="padding:.4rem .6rem;text-align:left;color:var(--red-text)">State</th>
+      <th style="padding:.4rem .6rem;text-align:left;color:var(--red-text)">Exclusion Type</th>
+      <th style="padding:.4rem .6rem;text-align:left;color:var(--red-text)">Excl. Date</th>
+    </tr></thead>
+    <tbody>${matches.map(m=>`<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:.4rem .6rem">${m.firstname||''} ${m.lastname||''}</td>
+      <td style="padding:.4rem .6rem">${m.dob||'—'}</td>
+      <td style="padding:.4rem .6rem">${m.state||'—'}</td>
+      <td style="padding:.4rem .6rem">${m.excltype||'—'}</td>
+      <td style="padding:.4rem .6rem">${m.excldate||'—'}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+}
+
+function showOIGResult(name, result, onClear, onFlagged, onDismiss){
+  const c = document.getElementById('oig-result-content');
+  const a = document.getElementById('oig-result-acts');
+  if(result.clear){
+    c.innerHTML = `<div style="text-align:center;padding:.5rem 0">
+      <div style="font-size:2.5rem">✅</div>
+      <h3 style="margin:.5rem 0 .25rem;color:var(--green-text)">OIG Check — CLEAR</h3>
+      <p style="font-size:.85rem;color:var(--gray)"><strong>${name}</strong> was not found on the OIG Exclusions List.</p>
+      <p style="font-size:.78rem;color:var(--gray);margin-top:.35rem">Checked: ${result.date}</p>
+    </div>`;
+    a.innerHTML = `<button class="btn-save" style="width:100%;background:var(--green)" onclick="oigResultConfirm()">Save — Mark CLEAR</button>`;
+    a._onConfirm = () => { onClear(result.date); closeModal('oig-result-modal'); };
+  } else {
+    c.innerHTML = `<div>
+      <div style="text-align:center;margin-bottom:.75rem">
+        <div style="font-size:2rem">⚠️</div>
+        <h3 style="margin:.4rem 0 .2rem;color:var(--red-text)">Potential OIG Match Found</h3>
+        <p style="font-size:.82rem;color:var(--gray)">The name <strong>${name}</strong> returned ${result.matches.length} result${result.matches.length>1?'s':''} on the OIG Exclusions List. Review carefully — common names may return false positives.</p>
+      </div>
+      ${oigMatchTable(result.matches)}
+      <p style="font-size:.75rem;color:var(--gray);margin-top:.75rem">If this is NOT your employee, click "Not a Match — Mark CLEAR". If it IS a match, click "Confirm FLAGGED".</p>
+    </div>`;
+    a.innerHTML = `
+      <button class="btn-cancel" onclick="oigResultDismiss()">Cancel</button>
+      <button class="btn-save" style="background:var(--green)" onclick="oigResultNotMatch()">Not a Match — Mark CLEAR</button>
+      <button class="btn-save" style="background:var(--red)" onclick="oigResultFlagged()">Confirm FLAGGED</button>`;
+    a._onClear   = () => { onClear(result.date); closeModal('oig-result-modal'); };
+    a._onFlagged = () => { onFlagged(result.date); closeModal('oig-result-modal'); };
+    a._onDismiss = () => { if(onDismiss) onDismiss(); closeModal('oig-result-modal'); };
+  }
+  document.getElementById('oig-result-modal').classList.add('open');
+}
+function oigResultConfirm(){ document.getElementById('oig-result-acts')._onConfirm?.(); }
+function oigResultNotMatch(){ document.getElementById('oig-result-acts')._onClear?.(); }
+function oigResultFlagged(){ document.getElementById('oig-result-acts')._onFlagged?.(); }
+function oigResultDismiss(){ document.getElementById('oig-result-acts')._onDismiss?.(); closeModal('oig-result-modal'); }
+
+async function oigCheckFromCGModal(){
+  const first = document.getElementById('cg-first').value.trim();
+  const last  = document.getElementById('cg-last').value.trim();
+  if(!first || !last){ alert('Enter the caregiver name first.'); return; }
+  const btn = document.getElementById('cg-oig-check-btn');
+  btn.textContent = '⏳ Checking…'; btn.disabled = true;
+  try {
+    const result = await runOIGCheck(first, last);
+    btn.textContent = '🔍 Run OIG Check'; btn.disabled = false;
+    showOIGResult(`${first} ${last}`, result,
+      (date) => { // CLEAR
+        document.getElementById('cg-oig').value = date;
+        document.getElementById('cg-oig-s').value = 'Current';
+      },
+      (date) => { // FLAGGED
+        document.getElementById('cg-oig').value = date;
+        document.getElementById('cg-oig-s').value = 'Overdue';
+      }
+    );
+  } catch(e){
+    btn.textContent = '🔍 Run OIG Check'; btn.disabled = false;
+    alert('OIG check failed: ' + e.message + '\n\nCheck your internet connection or try again.');
+  }
+}
+
+async function oigCheckFromOBModal(){
+  const first = document.getElementById('ob-first').value.trim();
+  const last  = document.getElementById('ob-last').value.trim();
+  if(!first || !last){ alert('Enter the candidate name first.'); return; }
+  const btn = document.getElementById('ob-oig-check-btn');
+  btn.textContent = '⏳ Checking…'; btn.disabled = true;
+  try {
+    const result = await runOIGCheck(first, last);
+    btn.textContent = '🔍 Run OIG Check'; btn.disabled = false;
+    showOIGResult(`${first} ${last}`, result,
+      (date) => {
+        document.getElementById('ob-oig').value = 'CLEAR';
+        document.getElementById('ob-oig-date').value = date;
+      },
+      (date) => {
+        document.getElementById('ob-oig').value = 'FLAGGED';
+        document.getElementById('ob-oig-date').value = date;
+      }
+    );
+  } catch(e){
+    btn.textContent = '🔍 Run OIG Check'; btn.disabled = false;
+    alert('OIG check failed: ' + e.message);
+  }
+}
+
+async function batchOIGCheck(){
+  if(!caregivers.length){ alert('No caregivers to check.'); return; }
+  document.getElementById('oig-batch-modal').classList.add('open');
+  document.getElementById('oig-batch-close-btn').style.display = 'none';
+  const content = document.getElementById('oig-batch-content');
+  const today = new Date().toISOString().slice(0,10);
+  let cleared=0, flagged=0, errors=0;
+  const flaggedList = [];
+  content.innerHTML = `<div style="font-size:.83rem;color:var(--gray);margin-bottom:.75rem">Checking ${caregivers.length} caregiver${caregivers.length>1?'s':''}…</div>
+    <div id="oig-batch-progress" style="font-size:.8rem;color:var(--navy)"></div>`;
+  for(let i=0; i<caregivers.length; i++){
+    const cg = caregivers[i];
+    document.getElementById('oig-batch-progress').textContent = `${i+1} of ${caregivers.length}: ${cg.first} ${cg.last}…`;
+    try {
+      const result = await runOIGCheck(cg.first, cg.last);
+      if(result.clear){
+        caregivers[i].oig_date = today;
+        cleared++;
+      } else {
+        flagged++;
+        flaggedList.push({ name:`${cg.first} ${cg.last}`, matches: result.matches });
+      }
+    } catch(e){ errors++; }
+    await new Promise(r=>setTimeout(r,300)); // rate limit
+  }
+  saveCaregivers(); renderAC(); renderAlerts();
+  let html = `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem;margin-bottom:1rem">
+    <div style="background:var(--green-bg);border-radius:8px;padding:.75rem;text-align:center">
+      <div style="font-size:1.6rem;font-weight:700;color:var(--green-text)">${cleared}</div>
+      <div style="font-size:.72rem;color:var(--green-text);font-weight:600">CLEAR</div>
+    </div>
+    <div style="background:${flagged?'var(--red-bg)':'var(--slate-bg)'};border-radius:8px;padding:.75rem;text-align:center">
+      <div style="font-size:1.6rem;font-weight:700;color:${flagged?'var(--red-text)':'var(--slate-text)'}">${flagged}</div>
+      <div style="font-size:.72rem;color:${flagged?'var(--red-text)':'var(--slate-text)'};font-weight:600">FLAGGED — Review</div>
+    </div>
+    <div style="background:var(--slate-bg);border-radius:8px;padding:.75rem;text-align:center">
+      <div style="font-size:1.6rem;font-weight:700;color:var(--slate-text)">${errors}</div>
+      <div style="font-size:.72rem;color:var(--slate-text);font-weight:600">Errors</div>
+    </div>
+  </div>`;
+  if(flaggedList.length){
+    html += `<div style="font-size:.8rem;font-weight:700;color:var(--red-text);margin-bottom:.5rem">⚠️ Review these potential matches:</div>`;
+    flaggedList.forEach(f=>{
+      html += `<div style="margin-bottom:.75rem"><div style="font-weight:600;font-size:.83rem;color:var(--navy);margin-bottom:.25rem">${f.name}</div>${oigMatchTable(f.matches)}</div>`;
+    });
+    html += `<p style="font-size:.75rem;color:var(--gray);margin-top:.5rem">Open each flagged caregiver's record to review and update their OIG status manually.</p>`;
+  }
+  if(errors){ html += `<p style="font-size:.75rem;color:var(--amber-text);margin-top:.5rem">⚠ ${errors} caregiver${errors>1?'s':''} could not be checked — try individually.</p>`; }
+  content.innerHTML = html;
+  document.getElementById('oig-batch-close-btn').style.display = 'block';
+}
 
 // ── Google Drive Integration ──────────────────────────────────────────
 let gdriveTokenClient = null;
@@ -2724,12 +2959,31 @@ function openProfile(first, last){
 
 // ── Settings ──────────────────────────────────────────────────────────
 function openSettings(){
+  // Gate behind admin passcode
+  document.getElementById('admin-pwd-input').value='';
+  document.getElementById('admin-pwd-err').style.display='none';
+  document.getElementById('admin-pwd-modal').classList.add('open');
+}
+function submitAdminPwd(){
+  const val = document.getElementById('admin-pwd-input').value;
+  if(!checkAdminPwd(val)){
+    document.getElementById('admin-pwd-err').style.display='block';
+    return;
+  }
+  closeModal('admin-pwd-modal');
+  _openSettingsModal();
+}
+document.getElementById('admin-pwd-input')?.addEventListener('keydown',e=>{if(e.key==='Enter')submitAdminPwd();});
+function _openSettingsModal(){
   renderRecipients();
   document.getElementById('new-recip-name').value='';
   document.getElementById('new-recip-email').value='';
   document.getElementById('settings-ac-site').value=appSettings.axiscare_site||'';
   document.getElementById('settings-gdrive-client-id').value=appSettings.google_client_id||'';
   document.getElementById('settings-gdrive-folder-id').value=appSettings.google_drive_folder_id||'';
+  document.getElementById('settings-admin-current').value='';
+  document.getElementById('settings-admin-new').value='';
+  document.getElementById('settings-admin-confirm').value='';
   document.getElementById('settings-modal').classList.add('open');
 }
 function renderRecipients(){
@@ -2774,6 +3028,17 @@ function saveSettings(){
     gdriveFolderId = null;
     Object.keys(gdrivePersonFolderCache).forEach(k=>delete gdrivePersonFolderCache[k]);
     if(newClientId) gdriveInit();
+  }
+  // Admin passcode change
+  const curPwd  = document.getElementById('settings-admin-current').value;
+  const newPwd  = document.getElementById('settings-admin-new').value;
+  const confPwd = document.getElementById('settings-admin-confirm').value;
+  if(newPwd || curPwd){
+    if(!checkAdminPwd(curPwd)){ alert('Current admin passcode is incorrect.'); return; }
+    if(!newPwd){ alert('Enter a new admin passcode.'); return; }
+    if(newPwd !== confPwd){ alert('New passcode and confirmation do not match.'); return; }
+    localStorage.setItem('cc_admin_pwd', btoa(newPwd));
+    alert('Admin passcode updated.');
   }
   localStorage.setItem('cc_settings', JSON.stringify(appSettings));
   syncToSupabase('settings', appSettings);
