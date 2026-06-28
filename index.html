@@ -579,22 +579,30 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
         <select id="ob-oos"><option value="">Unknown</option><option value="no">No</option><option value="yes">Yes — fingerprint required</option></select>
       </div>
       <div class="sect-lbl">References</div>
-      <div class="grp"><label>Ref 1 Name</label><input type="text" id="ob-r1n"></div>
+      <div class="grp"><label>Ref 1 Name</label><input type="text" id="ob-r1n" placeholder="Full name"></div>
+      <div class="grp"><label>Ref 1 Phone</label><input type="tel" id="ob-r1-phone" placeholder="417-555-0000"></div>
+      <div class="grp"><label>Ref 1 Email</label><input type="email" id="ob-r1-email" placeholder="email@example.com"></div>
       <div class="grp"><label>Ref 1 Status</label>
         <select id="ob-r1s"><option value="Pending">Pending</option><option value="Positive">Positive</option><option value="Conditional">Conditional</option><option value="Negative">Negative</option></select>
       </div>
       <div class="grp full"><label>Ref 1 Form Link</label><input type="url" id="ob-r1-proof" placeholder="https://…"></div>
-      <div class="grp"><label>Ref 2 Name</label><input type="text" id="ob-r2n"></div>
+      <div class="grp"><label>Ref 2 Name</label><input type="text" id="ob-r2n" placeholder="Full name"></div>
+      <div class="grp"><label>Ref 2 Phone</label><input type="tel" id="ob-r2-phone" placeholder="417-555-0000"></div>
+      <div class="grp"><label>Ref 2 Email</label><input type="email" id="ob-r2-email" placeholder="email@example.com"></div>
       <div class="grp"><label>Ref 2 Status</label>
         <select id="ob-r2s"><option value="Pending">Pending</option><option value="Positive">Positive</option><option value="Conditional">Conditional</option><option value="Negative">Negative</option></select>
       </div>
       <div class="grp full"><label>Ref 2 Form Link</label><input type="url" id="ob-r2-proof" placeholder="https://…"></div>
-      <div class="grp"><label>Ref 3 Name</label><input type="text" id="ob-r3n"></div>
+      <div class="grp"><label>Ref 3 Name</label><input type="text" id="ob-r3n" placeholder="Full name"></div>
+      <div class="grp"><label>Ref 3 Phone</label><input type="tel" id="ob-r3-phone" placeholder="417-555-0000"></div>
+      <div class="grp"><label>Ref 3 Email</label><input type="email" id="ob-r3-email" placeholder="email@example.com"></div>
       <div class="grp"><label>Ref 3 Status</label>
         <select id="ob-r3s"><option value="Pending">Pending</option><option value="Positive">Positive</option><option value="Conditional">Conditional</option><option value="Negative">Negative</option></select>
       </div>
       <div class="grp full"><label>Ref 3 Form Link</label><input type="url" id="ob-r3-proof" placeholder="https://…"></div>
-      <div class="grp"><label>Ref 4 Name</label><input type="text" id="ob-r4n"></div>
+      <div class="grp"><label>Ref 4 Name</label><input type="text" id="ob-r4n" placeholder="Full name"></div>
+      <div class="grp"><label>Ref 4 Phone</label><input type="tel" id="ob-r4-phone" placeholder="417-555-0000"></div>
+      <div class="grp"><label>Ref 4 Email</label><input type="email" id="ob-r4-email" placeholder="email@example.com"></div>
       <div class="grp"><label>Ref 4 Status</label>
         <select id="ob-r4s"><option value="Pending">Pending</option><option value="Positive">Positive</option><option value="Conditional">Conditional</option><option value="Negative">Negative</option></select>
       </div>
@@ -1145,7 +1153,9 @@ function renderOB(){
         const s=c[`r${n}s`],nm=c[`r${n}n`],pf=c[`r${n}_proof`],mn=c[`r${n}_manual`];
         const manualTag=mn?`<span class="sub" style="color:var(--teal)">📞 ${mn.via} · ${fmtD(mn.date)||''}${mn.staff?' · '+mn.staff:''}</span>`:'';
         const recordBtn=s==='Pending'?`<button onclick="openManualRef(${c.id},${n})" style="margin-top:3px;background:none;border:1px solid var(--teal);color:var(--teal);border-radius:5px;font-size:.68rem;padding:.18rem .45rem;cursor:pointer;font-family:inherit">📞 Record</button>`:`<button onclick="openManualRef(${c.id},${n})" style="margin-top:3px;background:none;border:1px solid var(--border);color:var(--gray);border-radius:5px;font-size:.68rem;padding:.18rem .45rem;cursor:pointer;font-family:inherit">✏️ Edit</button>`;
-        return `<td><span class="badge ${refBadge(s)}">${s}</span>${nm?`<span class="sub">${nm}</span>`:''}${manualTag}${pf?proofLink(pf,'View form'):''}${recordBtn}</td>`;
+        const ph=c[`r${n}_phone`],em=c[`r${n}_email`];
+        const contactLine=ph||em?`<span class="sub">${ph?`<a href="tel:${ph}" style="color:var(--teal);text-decoration:none" title="Call">📞 ${ph}</a>`:''}${ph&&em?' · ':''} ${em?`<a href="mailto:${em}" style="color:var(--teal);text-decoration:none" title="Email">✉️ ${em}</a>`:''}</span>`:'';
+        return `<td><span class="badge ${refBadge(s)}">${s}</span>${nm?`<span class="sub">${nm}</span>`:''}${contactLine}${manualTag}${pf?proofLink(pf,'View form'):''}${recordBtn}</td>`;
       }).join('')}
       <td><div class="chk"><span class="badge ${c.oig==='CLEAR'?'b-green':c.oig==='FLAGGED'?'b-red':'b-gray'}">${c.oig||'Pending'}</span>${c.oig_date?`<span class="chk-date">${fmtD(c.oig_date)}</span>`:''}${proofLink(c.oig_proof,'View')}</div></td>
       <td><div class="chk"><span class="badge ${c.edl==='Clear'?'b-green':c.edl==='Issues Found'?'b-red':'b-gray'}">${c.edl||'Pending'}</span>${c.edl_date?`<span class="chk-date">${fmtD(c.edl_date)}</span>`:''}${proofLink(c.edl_proof,'View')}</div></td>
@@ -1432,8 +1442,10 @@ function openOBModal(id=null){
   const g=k=>document.getElementById(k);
   if(c){
     g('ob-first').value=c.first;g('ob-last').value=c.last;g('ob-phone').value=c.phone||'';g('ob-oos').value=c.oos||'';
-    g('ob-r1n').value=c.r1n;g('ob-r1s').value=c.r1s;g('ob-r2n').value=c.r2n;g('ob-r2s').value=c.r2s;
-    g('ob-r3n').value=c.r3n;g('ob-r3s').value=c.r3s;g('ob-r4n').value=c.r4n;g('ob-r4s').value=c.r4s;
+    g('ob-r1n').value=c.r1n||'';g('ob-r1s').value=c.r1s||'Pending';g('ob-r1-phone').value=c.r1_phone||'';g('ob-r1-email').value=c.r1_email||'';
+    g('ob-r2n').value=c.r2n||'';g('ob-r2s').value=c.r2s||'Pending';g('ob-r2-phone').value=c.r2_phone||'';g('ob-r2-email').value=c.r2_email||'';
+    g('ob-r3n').value=c.r3n||'';g('ob-r3s').value=c.r3s||'Pending';g('ob-r3-phone').value=c.r3_phone||'';g('ob-r3-email').value=c.r3_email||'';
+    g('ob-r4n').value=c.r4n||'';g('ob-r4s').value=c.r4s||'Pending';g('ob-r4-phone').value=c.r4_phone||'';g('ob-r4-email').value=c.r4_email||'';
     g('ob-r1-proof').value=c.r1_proof||'';g('ob-r2-proof').value=c.r2_proof||'';
     g('ob-r3-proof').value=c.r3_proof||'';g('ob-r4-proof').value=c.r4_proof||'';
     g('ob-oig').value=c.oig;g('ob-oig-date').value=c.oig_date;g('ob-oig-proof').value=c.oig_proof||'';
@@ -1441,7 +1453,9 @@ function openOBModal(id=null){
     g('ob-fcsr').value=c.fcsr;g('ob-fcsr-date').value=c.fcsr_date;g('ob-fcsr-proof').value=c.fcsr_proof||'';
     g('ob-fp').value=c.fp;g('ob-fp-date').value=c.fp_date;g('ob-fp-proof').value=c.fp_proof||'';g('ob-notes').value=c.notes||'';
   } else {
-    ['ob-first','ob-last','ob-phone','ob-r1n','ob-r2n','ob-r3n','ob-r4n','ob-oig-date','ob-edl-date','ob-fcsr-date','ob-fp-date','ob-notes',
+    ['ob-first','ob-last','ob-phone','ob-r1n','ob-r1-phone','ob-r1-email','ob-r2n','ob-r2-phone','ob-r2-email',
+     'ob-r3n','ob-r3-phone','ob-r3-email','ob-r4n','ob-r4-phone','ob-r4-email',
+     'ob-oig-date','ob-edl-date','ob-fcsr-date','ob-fp-date','ob-notes',
      'ob-r1-proof','ob-r2-proof','ob-r3-proof','ob-r4-proof','ob-oig-proof','ob-edl-proof','ob-fcsr-proof','ob-fp-proof'].forEach(k=>g(k).value='');
     g('ob-oos').value='';g('ob-r1s').value='Pending';g('ob-r2s').value='Pending';g('ob-r3s').value='Pending';g('ob-r4s').value='Pending';
     g('ob-oig').value='Pending';g('ob-edl').value='Pending';g('ob-fcsr').value='Pending';g('ob-fp').value='N/A';
@@ -1455,7 +1469,10 @@ function saveOB(){
   const oldCand = editingOB ? candidates.find(x=>x.id===editingOB) : null;
   const wasReady = oldCand ? obDeriveStatus(oldCand)==='Ready for Orientation' : false;
   const d={first:g('ob-first'),last:g('ob-last'),phone:g('ob-phone'),oos:g('ob-oos'),
-    r1n:g('ob-r1n'),r1s:g('ob-r1s'),r2n:g('ob-r2n'),r2s:g('ob-r2s'),r3n:g('ob-r3n'),r3s:g('ob-r3s'),r4n:g('ob-r4n'),r4s:g('ob-r4s'),
+    r1n:g('ob-r1n'),r1s:g('ob-r1s'),r1_phone:g('ob-r1-phone'),r1_email:g('ob-r1-email'),
+    r2n:g('ob-r2n'),r2s:g('ob-r2s'),r2_phone:g('ob-r2-phone'),r2_email:g('ob-r2-email'),
+    r3n:g('ob-r3n'),r3s:g('ob-r3s'),r3_phone:g('ob-r3-phone'),r3_email:g('ob-r3-email'),
+    r4n:g('ob-r4n'),r4s:g('ob-r4s'),r4_phone:g('ob-r4-phone'),r4_email:g('ob-r4-email'),
     r1_proof:g('ob-r1-proof'),r2_proof:g('ob-r2-proof'),r3_proof:g('ob-r3-proof'),r4_proof:g('ob-r4-proof'),
     oig:g('ob-oig'),oig_date:g('ob-oig-date'),oig_proof:g('ob-oig-proof'),
     edl:g('ob-edl'),edl_date:g('ob-edl-date'),edl_proof:g('ob-edl-proof'),
