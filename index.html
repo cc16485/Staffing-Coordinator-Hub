@@ -2127,13 +2127,23 @@ async function gcalDeleteEvent(session){
 let clientQueueShowCompleted = false;
 
 async function loadClientQueue(forceRender=false){
+  const el = document.getElementById('client-queue-list');
+  if(el) el.innerHTML = `<div style="text-align:center;padding:1rem;color:var(--gray);font-size:.8rem">⏳ Loading client queue…</div>`;
   try {
+    const { data:{ session } } = await sb.auth.getSession();
+    if(!session){
+      window._clientQueue = [];
+      if(el) el.innerHTML = `<div style="background:#fef3c7;border:1.5px solid #fcd34d;border-radius:8px;padding:.75rem 1rem;font-size:.82rem;color:#92400e">⚠️ Not signed in — client queue requires authentication. Please sign in to view new clients.</div>`;
+      return;
+    }
     const { data, error } = await sb.from('client_queue').select('*').order('added_at', { ascending: false });
     if(error) throw error;
     window._clientQueue = data || [];
   } catch(e){
     window._clientQueue = window._clientQueue || [];
     console.warn('client_queue load failed', e);
+    if(el) el.innerHTML = `<div style="background:#fee2e2;border:1.5px solid #fca5a5;border-radius:8px;padding:.75rem 1rem;font-size:.82rem;color:#b91c1c">❌ Could not load client queue: <strong>${e.message}</strong>${e.code ? ` (code: ${e.code})` : ''}<br><span style="font-size:.72rem;margin-top:.3rem;display:block">Open browser console (F12) for details.</span></div>`;
+    return;
   }
   renderClientQueue();
 }
@@ -3127,7 +3137,7 @@ function saveOB(){
     });
   }
   // Push to AxisCare + Google Drive via Zapier
-  fetch(ZAPIER_CANDIDATE_WEBHOOK,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+  fetch(ZAPIER_CANDIDATE_WEBHOOK,{method:'POST',body:JSON.stringify({
     candidate_id: saved.id,
     first: saved.first, last: saved.last, full_name:`${saved.first} ${saved.last}`,
     phone: saved.phone||'',
@@ -3368,11 +3378,12 @@ function pushAxisCareStatus(type, data){
     console.log('AxisCare status push skipped — webhook not configured:', type, data);
     return;
   }
-  fetch(ZAPIER_AC_STATUS_WEBHOOK,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+  // No Content-Type header → browser sends simple request with no CORS preflight → Zapier receives it
+  fetch(ZAPIER_AC_STATUS_WEBHOOK,{method:'POST',body:JSON.stringify({
     type,
     timestamp: new Date().toISOString(),
     ...data
-  })}).catch(e=>console.warn('AxisCare status webhook (CORS expected — Zapier still receives it):', e));
+  })}).catch(e=>console.warn('AxisCare status webhook error:', e));
 }
 
 function openOFFModal(id=null){ editingOFF=id;
@@ -4219,7 +4230,7 @@ function _openSettingsModal(){
   document.getElementById('settings-gdrive-folder-id').value=appSettings.google_drive_folder_id||'';
   document.getElementById('settings-gcal-id').value=appSettings.gcal_calendar_id||'';
   document.getElementById('settings-ac-orient-webhook').value=appSettings.ac_orient_webhook||'';
-  document.getElementById('settings-nc-webhook').value=appSettings.ac_new_client_webhook||'';
+  if(document.getElementById('settings-nc-webhook')) document.getElementById('settings-nc-webhook').value=appSettings.ac_new_client_webhook||'';
   document.getElementById('settings-admin-current').value='';
   document.getElementById('settings-admin-new').value='';
   document.getElementById('settings-admin-confirm').value='';
@@ -4323,7 +4334,7 @@ function saveSettings(){
   appSettings.google_drive_folder_id = document.getElementById('settings-gdrive-folder-id').value.trim();
   appSettings.gcal_calendar_id = document.getElementById('settings-gcal-id').value.trim() || 'primary';
   appSettings.ac_orient_webhook = document.getElementById('settings-ac-orient-webhook').value.trim();
-  appSettings.ac_new_client_webhook = document.getElementById('settings-nc-webhook').value.trim();
+  appSettings.ac_new_client_webhook = document.getElementById('settings-nc-webhook')?.value.trim() || appSettings.ac_new_client_webhook || '';
   if(newClientId !== appSettings.google_client_id){
     appSettings.google_client_id = newClientId;
     gdriveTokenClient = null;
