@@ -267,6 +267,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     <div class="tab" onclick="switchTab('orientations',this)"><span class="ti">📅</span> Orientations</div>
     <div class="tab" onclick="switchTab('training',this)"><span class="ti">🎓</span> Training</div>
     <div class="tab" onclick="switchTab('compliance',this)"><span class="ti">✅</span> Active Compliance</div>
+    <div class="tab" onclick="switchTab('scheduling',this)"><span class="ti">🗓</span> Scheduling</div>
     <div class="tab" onclick="switchTab('evv',this)"><span class="ti">📝</span> EVV Corrections</div>
     <div class="tab" onclick="switchTab('offboarding',this)"><span class="ti">🚪</span> Offboarding</div>
   </div>
@@ -526,6 +527,129 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
           <div id="or-sessions-list"></div>
         </div>
       </div>
+    </div>
+
+    <!-- ══════════════════════════════ SCHEDULING ══════════════════════════════ -->
+    <div class="panel" id="panel-scheduling">
+
+      <!-- Tab Guide -->
+      <div class="tab-guide">
+        <div class="tab-guide-hdr" onclick="toggleGuide('scheduling')">
+          <span class="tab-guide-title">📋 How This Tab Works — Scheduling Overview</span>
+          <span class="tab-guide-arrow" id="guide-arrow-scheduling">▼</span>
+        </div>
+        <div class="tab-guide-body" id="guide-body-scheduling">
+          <div class="guide-section-lbl" style="border-top:none;padding-top:0;margin-top:0">Your two systems</div>
+          <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body"><strong>AxisCare</strong> is where all shifts live. Every caregiver, every client, every scheduled visit is created and managed here. This is your source of truth for the schedule.<span class="tip">Use the quick-launch button above to open AxisCare directly.</span></div></div>
+          <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body"><strong>CareQB</strong> is your phone system and also supports scheduling workflows — use it for caregiver outreach, call documentation, and shift coverage calls.<span class="tip">Use the quick-launch button above to open CareQB directly.</span></div></div>
+          <div class="guide-section-lbl">General rules</div>
+          <div class="guide-step"><div class="guide-step-num">⚠️</div><div class="guide-step-body">A caregiver must have completed <strong>Agency Orientation + ALZ Training</strong> before being scheduled with their first client. Check the Training tab before scheduling anyone new.</div></div>
+          <div class="guide-step"><div class="guide-step-num">⚠️</div><div class="guide-step-body">Always confirm a caregiver's <strong>availability and active status</strong> in AxisCare before assigning them to a shift. Do not schedule deactivated caregivers.</div></div>
+        </div>
+      </div>
+
+      <!-- Quick Launch -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.25rem">
+        <a id="axiscare-launch-btn" href="#" target="_blank" rel="noopener"
+          style="display:flex;align-items:center;gap:.85rem;background:var(--navy);color:#fff;border-radius:12px;padding:1rem 1.25rem;text-decoration:none;box-shadow:0 2px 12px rgba(14,56,96,.18);transition:.15s"
+          onmouseover="this.style.opacity='.88'" onmouseout="this.style.opacity='1'">
+          <span style="font-size:1.8rem;line-height:1">🗓</span>
+          <div>
+            <div style="font-size:1rem;font-weight:700;letter-spacing:-.01em">Open AxisCare</div>
+            <div style="font-size:.72rem;opacity:.75;margin-top:.15rem">Scheduling, shifts &amp; caregiver profiles</div>
+          </div>
+          <span style="margin-left:auto;font-size:.8rem;opacity:.6">↗</span>
+        </a>
+        <a href="https://app.careqb.pro/" target="_blank" rel="noopener"
+          style="display:flex;align-items:center;gap:.85rem;background:var(--teal);color:#fff;border-radius:12px;padding:1rem 1.25rem;text-decoration:none;box-shadow:0 2px 12px rgba(84,189,184,.25);transition:.15s"
+          onmouseover="this.style.opacity='.88'" onmouseout="this.style.opacity='1'">
+          <span style="font-size:1.8rem;line-height:1">📞</span>
+          <div>
+            <div style="font-size:1rem;font-weight:700;letter-spacing:-.01em">Open CareQB</div>
+            <div style="font-size:.72rem;opacity:.75;margin-top:.15rem">Phone system &amp; scheduling support</div>
+          </div>
+          <span style="margin-left:auto;font-size:.8rem;opacity:.6">↗</span>
+        </a>
+      </div>
+
+      <!-- Scenario SOPs -->
+      <div style="display:flex;flex-direction:column;gap:.75rem">
+
+        <!-- Scenario 1: New Caregiver -->
+        <div style="border:1.5px solid var(--border);border-radius:10px;overflow:hidden">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:.7rem 1rem;background:#f8fafc;cursor:pointer;user-select:none" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block';this.querySelector('.sop-arrow').style.transform=this.nextElementSibling.style.display==='block'?'rotate(180deg)':''">
+            <div style="display:flex;align-items:center;gap:.6rem">
+              <span style="font-size:1.1rem">🆕</span>
+              <span style="font-size:.85rem;font-weight:700;color:var(--navy)">Scheduling a New Caregiver for the First Time</span>
+            </div>
+            <span class="sop-arrow" style="font-size:.8rem;color:var(--gray);transition:transform .2s">▼</span>
+          </div>
+          <div style="display:none;padding:.9rem 1rem 1rem;border-top:1px solid var(--border)">
+            <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">Confirm in the <strong>Training tab</strong> that the caregiver has completed Agency Orientation + ALZ Training. If not, they cannot be scheduled yet.</div></div>
+            <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body">Open <strong>AxisCare</strong> and locate the caregiver's profile. Confirm their status is Active and their availability is entered correctly.</div></div>
+            <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body">Review the open shifts or the client's preferred schedule. Match the caregiver based on availability, location, and any client preferences on file.</div></div>
+            <div class="guide-step"><div class="guide-step-num">4</div><div class="guide-step-body">Create the shift in AxisCare — enter the client, caregiver, date, start/end time, and service type. Save the shift.</div></div>
+            <div class="guide-step"><div class="guide-step-num">5</div><div class="guide-step-body">Contact the caregiver to confirm the shift — via CareQB call or text. Document the confirmation in CareQB.</div></div>
+            <div class="guide-step"><div class="guide-step-num">6</div><div class="guide-step-body">Notify the client or their family of the caregiver's name and scheduled arrival time if required.</div></div>
+          </div>
+        </div>
+
+        <!-- Scenario 2: New Client -->
+        <div style="border:1.5px solid var(--border);border-radius:10px;overflow:hidden">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:.7rem 1rem;background:#f8fafc;cursor:pointer;user-select:none" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block';this.querySelector('.sop-arrow').style.transform=this.nextElementSibling.style.display==='block'?'rotate(180deg)':''">
+            <div style="display:flex;align-items:center;gap:.6rem">
+              <span style="font-size:1.1rem">🏠</span>
+              <span style="font-size:.85rem;font-weight:700;color:var(--navy)">Adding a New Client &amp; Setting Up Their Schedule</span>
+            </div>
+            <span class="sop-arrow" style="font-size:.8rem;color:var(--gray);transition:transform .2s">▼</span>
+          </div>
+          <div style="display:none;padding:.9rem 1rem 1rem;border-top:1px solid var(--border)">
+            <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">Confirm that the client's intake paperwork is complete and the authorization/hours have been received from the payer (Medicaid, VA, LTC insurance, or private pay).</div></div>
+            <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body">Create the client profile in <strong>AxisCare</strong> — enter their name, address, contact info, service type, authorized hours, and any preferences or care notes.</div></div>
+            <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body">Identify available caregivers who match the client's location, schedule, and any preferences. Check the Active Compliance tab to confirm all caregivers being considered are fully compliant.</div></div>
+            <div class="guide-step"><div class="guide-step-num">4</div><div class="guide-step-body">Create recurring shifts in AxisCare for the client's approved schedule. Assign the selected caregiver to each shift.</div></div>
+            <div class="guide-step"><div class="guide-step-num">5</div><div class="guide-step-body">Call or text the caregiver via <strong>CareQB</strong> to introduce the client and confirm all shifts. Document the call.</div></div>
+            <div class="guide-step"><div class="guide-step-num">6</div><div class="guide-step-body">Notify the client or family of the assigned caregiver, start date, and expected arrival time.</div></div>
+          </div>
+        </div>
+
+        <!-- Scenario 3: Open/Dropped Shift -->
+        <div style="border:1.5px solid var(--border);border-radius:10px;overflow:hidden">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:.7rem 1rem;background:#fff7ed;cursor:pointer;user-select:none" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block';this.querySelector('.sop-arrow').style.transform=this.nextElementSibling.style.display==='block'?'rotate(180deg)':''">
+            <div style="display:flex;align-items:center;gap:.6rem">
+              <span style="font-size:1.1rem">⚠️</span>
+              <span style="font-size:.85rem;font-weight:700;color:#92400e">Filling an Open or Dropped Shift</span>
+            </div>
+            <span class="sop-arrow" style="font-size:.8rem;color:#92400e;transition:transform .2s">▼</span>
+          </div>
+          <div style="display:none;padding:.9rem 1rem 1rem;border-top:1px solid #fed7aa">
+            <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">Identify the open shift in AxisCare — note the client, date, time, and hours. Flag it as unfilled in AxisCare if not already done.</div></div>
+            <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body">Pull a list of available caregivers for that time slot. Prioritize caregivers who have worked with that client before when possible.</div></div>
+            <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body">Begin outreach via <strong>CareQB</strong> — call or text available caregivers one at a time. Document every attempt in CareQB whether they answer or not.</div></div>
+            <div class="guide-step"><div class="guide-step-num">4</div><div class="guide-step-body">Once a caregiver confirms, update the shift in <strong>AxisCare</strong> immediately with their name. Remove the open/unfilled flag.</div></div>
+            <div class="guide-step"><div class="guide-step-num">5</div><div class="guide-step-body">Notify the client or family that coverage has been arranged. If the shift cannot be filled, escalate to <strong>Samantha</strong> right away — do not leave a client uncovered without notifying management.</div></div>
+          </div>
+        </div>
+
+        <!-- Scenario 4: Caregiver Call-Out -->
+        <div style="border:1.5px solid var(--border);border-radius:10px;overflow:hidden">
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:.7rem 1rem;background:#fdf2f8;cursor:pointer;user-select:none" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block';this.querySelector('.sop-arrow').style.transform=this.nextElementSibling.style.display==='block'?'rotate(180deg)':''">
+            <div style="display:flex;align-items:center;gap:.6rem">
+              <span style="font-size:1.1rem">📵</span>
+              <span style="font-size:.85rem;font-weight:700;color:#86198f">Caregiver Call-Out Process</span>
+            </div>
+            <span class="sop-arrow" style="font-size:.8rem;color:#86198f;transition:transform .2s">▼</span>
+          </div>
+          <div style="display:none;padding:.9rem 1rem 1rem;border-top:1px solid #f0abfc">
+            <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">When a caregiver calls out, document it in <strong>CareQB</strong> immediately — note the caregiver's name, client affected, shift time, and reason given.</div></div>
+            <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body">Go to <strong>AxisCare</strong> and mark the shift as the caregiver calling out. This keeps the schedule accurate in real time.</div></div>
+            <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body">Follow the <strong>Filling an Open/Dropped Shift</strong> process above to find coverage. Time is critical — start outreach immediately.</div></div>
+            <div class="guide-step"><div class="guide-step-num">4</div><div class="guide-step-body">Contact the <strong>client or family</strong> to let them know there has been a change and provide an updated arrival time or confirmation of coverage.</div></div>
+            <div class="guide-step"><div class="guide-step-num">5</div><div class="guide-step-body">If the same caregiver has <strong>3 or more call-outs in 30 days</strong>, flag it and notify Samantha for follow-up. Excessive call-outs may need to be addressed through HR.</div></div>
+          </div>
+        </div>
+
+      </div><!-- end scenarios -->
     </div>
 
     <!-- ══════════════════════════════ EVV CORRECTIONS ══════════════════════════════ -->
@@ -2637,7 +2761,13 @@ function renderAlerts(){
   `).join('');
 }
 
-function renderAll(){ renderOB(); renderTR(); renderAC(); renderOFF(); renderOrientations(); renderAlerts(); }
+function renderAll(){ renderOB(); renderTR(); renderAC(); renderOFF(); renderOrientations(); renderAlerts(); updateAxisCareLaunchBtn(); }
+function updateAxisCareLaunchBtn(){
+  const btn = document.getElementById('axiscare-launch-btn');
+  if(!btn) return;
+  const site = appSettings.axiscare_site||'';
+  btn.href = site ? `https://${site}.axiscare.com` : 'https://axiscare.com';
+}
 
 // ── MODALS ────────────────────────────────────────────────────────────
 let editingOB=null, editingCG=null, editingOFF=null;
