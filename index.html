@@ -572,6 +572,49 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
         </a>
       </div>
 
+      <!-- New Client Alert Widget -->
+      <div style="background:#fff7ed;border:2px solid #f59e0b;border-radius:12px;padding:1rem 1.25rem;margin-bottom:1.25rem">
+        <div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.65rem">
+          <span style="font-size:1.2rem">🏠</span>
+          <div>
+            <div style="font-size:.88rem;font-weight:700;color:#92400e">New Client Needs Scheduling</div>
+            <div style="font-size:.72rem;color:#b45309">Care Coordinators: fill this out after setting up a new client in AxisCare to alert the Staffing Coordinator.</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-bottom:.5rem">
+          <div>
+            <label style="font-size:.72rem;font-weight:600;color:#92400e;display:block;margin-bottom:.25rem">Client Name</label>
+            <input type="text" id="nc-client-name" placeholder="First Last" style="width:100%;padding:.42rem .7rem;border:1.5px solid #f59e0b;border-radius:8px;font-family:inherit;font-size:.82rem;background:#fff;box-sizing:border-box">
+          </div>
+          <div>
+            <label style="font-size:.72rem;font-weight:600;color:#92400e;display:block;margin-bottom:.25rem">Requested Start Date</label>
+            <input type="date" id="nc-start-date" style="width:100%;padding:.42rem .7rem;border:1.5px solid #f59e0b;border-radius:8px;font-family:inherit;font-size:.82rem;background:#fff;box-sizing:border-box">
+          </div>
+          <div>
+            <label style="font-size:.72rem;font-weight:600;color:#92400e;display:block;margin-bottom:.25rem">Authorized Hrs/Week</label>
+            <input type="text" id="nc-auth-hours" placeholder="e.g. 20 hrs/week" style="width:100%;padding:.42rem .7rem;border:1.5px solid #f59e0b;border-radius:8px;font-family:inherit;font-size:.82rem;background:#fff;box-sizing:border-box">
+          </div>
+          <div>
+            <label style="font-size:.72rem;font-weight:600;color:#92400e;display:block;margin-bottom:.25rem">Payer</label>
+            <select id="nc-payer" style="width:100%;padding:.42rem .7rem;border:1.5px solid #f59e0b;border-radius:8px;font-family:inherit;font-size:.82rem;background:#fff;box-sizing:border-box">
+              <option value="">— Select —</option>
+              <option>Medicaid</option>
+              <option>VA</option>
+              <option>Long-Term Care Insurance</option>
+              <option>Private Pay</option>
+            </select>
+          </div>
+        </div>
+        <div style="margin-bottom:.6rem">
+          <label style="font-size:.72rem;font-weight:600;color:#92400e;display:block;margin-bottom:.25rem">Notes for Staffing Coordinator (optional)</label>
+          <textarea id="nc-notes" rows="2" placeholder="e.g. Client prefers female caregiver, mornings only, lives in Battlefield area…" style="width:100%;padding:.42rem .7rem;border:1.5px solid #f59e0b;border-radius:8px;font-family:inherit;font-size:.82rem;background:#fff;resize:vertical;box-sizing:border-box"></textarea>
+        </div>
+        <div style="display:flex;align-items:center;gap:.75rem">
+          <button onclick="sendNewClientAlert()" style="padding:.45rem 1.1rem;background:#f59e0b;color:#fff;border:none;border-radius:8px;font-family:inherit;font-size:.83rem;font-weight:700;cursor:pointer">🔔 Notify Staffing Coordinator</button>
+          <span id="nc-alert-status" style="font-size:.78rem;color:#92400e;display:none"></span>
+        </div>
+      </div>
+
       <!-- Scenario SOPs -->
       <div style="display:flex;flex-direction:column;gap:.75rem">
 
@@ -604,12 +647,16 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
             <span class="sop-arrow" style="font-size:.8rem;color:var(--gray);transition:transform .2s">▼</span>
           </div>
           <div style="display:none;padding:.9rem 1rem 1rem;border-top:1px solid var(--border)">
-            <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">Confirm that the client's intake paperwork is complete and the authorization/hours have been received from the payer (Medicaid, VA, LTC insurance, or private pay).</div></div>
-            <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body">Create the client profile in <strong>AxisCare</strong> — enter their name, address, contact info, service type, authorized hours, and any preferences or care notes.</div></div>
-            <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body">Identify available caregivers who match the client's location, schedule, and any preferences. Check the Active Compliance tab to confirm all caregivers being considered are fully compliant.</div></div>
-            <div class="guide-step"><div class="guide-step-num">4</div><div class="guide-step-body">Create recurring shifts in AxisCare for the client's approved schedule. Assign the selected caregiver to each shift.</div></div>
-            <div class="guide-step"><div class="guide-step-num">5</div><div class="guide-step-body">Call or text the caregiver via <strong>CareQB</strong> to introduce the client and confirm all shifts. Document the call.</div></div>
-            <div class="guide-step"><div class="guide-step-num">6</div><div class="guide-step-body">Notify the client or family of the assigned caregiver, start date, and expected arrival time.</div></div>
+            <div style="font-size:.72rem;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">Care Coordinator — sets up the client in AxisCare</div>
+            <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">Confirm intake paperwork is complete and authorization/hours have been received from the payer (Medicaid, LTC insurance, VA, or private pay).</div></div>
+            <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body">Create the client profile in <strong>AxisCare</strong> — enter name, address, contact info, care plan tasks, service type, authorized hours, schedule, and any client preferences or care notes.</div></div>
+            <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body">Enter all <strong>authorizations</strong> in AxisCare — payer, service codes, authorized units/hours, and effective dates.</div></div>
+            <div class="guide-step"><div class="guide-step-num">4</div><div class="guide-step-body">Once the client is fully set up, use the <strong>"New Client Needs Scheduling"</strong> alert below to notify the Staffing Coordinator that this client is ready to be matched and scheduled.</div></div>
+            <div style="font-size:.72rem;font-weight:700;color:#b45309;text-transform:uppercase;letter-spacing:.05em;margin:.75rem 0 .5rem;border-top:1px solid var(--border);padding-top:.6rem">Staffing Coordinator — matches &amp; schedules</div>
+            <div class="guide-step"><div class="guide-step-num">5</div><div class="guide-step-body">Review the client's care plan, schedule, and location in AxisCare. Identify available caregivers who are a good match — check the Active Compliance tab to confirm they are fully compliant.</div></div>
+            <div class="guide-step"><div class="guide-step-num">6</div><div class="guide-step-body">Create recurring shifts in AxisCare for the client's approved schedule. Assign the selected caregiver to each shift.</div></div>
+            <div class="guide-step"><div class="guide-step-num">7</div><div class="guide-step-body">Call or text the caregiver via <strong>CareQB</strong> to introduce the client and confirm all shifts. Document the call.</div></div>
+            <div class="guide-step"><div class="guide-step-num">8</div><div class="guide-step-body">Notify the client or family of the assigned caregiver's name and expected start date/time.</div></div>
           </div>
         </div>
 
@@ -1299,6 +1346,14 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     <div style="display:flex;gap:.5rem;margin-bottom:.65rem;align-items:center">
       <label style="font-size:.8rem;font-weight:500;white-space:nowrap;color:var(--navy)">Site Number:</label>
       <input type="text" id="settings-ac-site" placeholder="e.g. 10856" style="flex:1;padding:.45rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.83rem">
+    </div>
+    <div style="background:#fff7ed;border:1.5px solid #f59e0b;border-radius:10px;padding:.85rem 1rem;margin-bottom:.65rem">
+      <div style="font-size:.7rem;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">🏠 New Client Scheduling Alert Webhook (Zapier → Email)</div>
+      <p style="font-size:.72rem;color:var(--gray);margin:0 0 .5rem">When a Care Coordinator clicks "Notify Staffing Coordinator," the hub posts to this URL. Set up a Zap: <strong>Catch Hook → Email by Zapier</strong> (or Gmail) to forward the details to your Staffing Coordinator.</p>
+      <div style="display:flex;gap:.5rem;align-items:center">
+        <label style="font-size:.78rem;font-weight:500;white-space:nowrap;color:#92400e">Webhook URL:</label>
+        <input type="text" id="settings-nc-webhook" placeholder="https://hooks.zapier.com/hooks/catch/…" style="flex:1;padding:.42rem .7rem;border:1.5px solid #f59e0b;border-radius:8px;font-family:inherit;font-size:.75rem">
+      </div>
     </div>
     <div style="background:#f0fffe;border:1.5px solid var(--teal);border-radius:10px;padding:.85rem 1rem;margin-bottom:.75rem">
       <div style="font-size:.7rem;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">🔗 Orientation Shift Webhook (Zapier → AxisCare)</div>
@@ -2090,6 +2145,66 @@ async function gcalDeleteEvent(session){
       { method:'DELETE', headers:{ Authorization:`Bearer ${token}` } }
     );
   } catch(e){ console.warn('gcal delete error', e); }
+}
+
+// ── New Client Scheduling Alert ──────────────────────────────────────
+async function sendNewClientAlert(){
+  const name      = document.getElementById('nc-client-name').value.trim();
+  const startDate = document.getElementById('nc-start-date').value;
+  const authHrs   = document.getElementById('nc-auth-hours').value.trim();
+  const payer     = document.getElementById('nc-payer').value;
+  const notes     = document.getElementById('nc-notes').value.trim();
+  const statusEl  = document.getElementById('nc-alert-status');
+
+  if(!name){ alert('Please enter the client name.'); return; }
+
+  // Build formatted date
+  const dateLabel = startDate
+    ? new Date(startDate+'T00:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'})
+    : 'TBD';
+
+  // Who sent the alert
+  const { data:{ user } } = await sb.auth.getUser();
+  const sentBy = user?.email || 'Care Coordinator';
+
+  const payload = {
+    type:           'new_client_scheduling',
+    client_name:    name,
+    start_date:     startDate || '',
+    start_date_label: dateLabel,
+    auth_hours:     authHrs || 'See AxisCare',
+    payer:          payer || 'See AxisCare',
+    notes:          notes || '',
+    sent_by:        sentBy,
+    sent_at:        new Date().toISOString(),
+    recipients:     getNotifEmails('comp'), // uses Comp notification group — adjust as needed
+  };
+
+  statusEl.style.display='inline';
+  statusEl.textContent='⏳ Sending…';
+
+  // Try Zapier webhook if configured
+  const webhook = appSettings.ac_new_client_webhook;
+  let sent = false;
+  if(webhook && !webhook.includes('REPLACE')){
+    try {
+      await fetch(webhook, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+      sent = true;
+    } catch(e){ console.warn('New client webhook failed', e); }
+  }
+
+  if(sent){
+    statusEl.textContent = `✅ Staffing Coordinator notified about ${name}`;
+    document.getElementById('nc-client-name').value='';
+    document.getElementById('nc-start-date').value='';
+    document.getElementById('nc-auth-hours').value='';
+    document.getElementById('nc-payer').value='';
+    document.getElementById('nc-notes').value='';
+  } else {
+    // Fallback: show the notification as a visible alert in the hub
+    statusEl.textContent='';
+    alert(`📋 New Client Alert\n\nClient: ${name}\nStart: ${dateLabel}\nPayer: ${payer||'—'}\nHrs/Week: ${authHrs||'—'}\n${notes?'Notes: '+notes+'\n':''}\nAdd the Zapier webhook in Settings → AxisCare to send this automatically via email.`);
+  }
 }
 
 // ── AxisCare Orientation Shift ────────────────────────────────────────
@@ -3930,6 +4045,7 @@ function _openSettingsModal(){
   document.getElementById('settings-gdrive-folder-id').value=appSettings.google_drive_folder_id||'';
   document.getElementById('settings-gcal-id').value=appSettings.gcal_calendar_id||'';
   document.getElementById('settings-ac-orient-webhook').value=appSettings.ac_orient_webhook||'';
+  document.getElementById('settings-nc-webhook').value=appSettings.ac_new_client_webhook||'';
   document.getElementById('settings-admin-current').value='';
   document.getElementById('settings-admin-new').value='';
   document.getElementById('settings-admin-confirm').value='';
@@ -4033,6 +4149,7 @@ function saveSettings(){
   appSettings.google_drive_folder_id = document.getElementById('settings-gdrive-folder-id').value.trim();
   appSettings.gcal_calendar_id = document.getElementById('settings-gcal-id').value.trim() || 'primary';
   appSettings.ac_orient_webhook = document.getElementById('settings-ac-orient-webhook').value.trim();
+  appSettings.ac_new_client_webhook = document.getElementById('settings-nc-webhook').value.trim();
   if(newClientId !== appSettings.google_client_id){
     appSettings.google_client_id = newClientId;
     gdriveTokenClient = null;
