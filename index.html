@@ -187,6 +187,23 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 .ob-item.done{color:var(--gray);text-decoration:line-through}
 .ob-section{font-size:.72rem;font-weight:700;text-transform:uppercase;color:var(--navy);margin:.9rem 0 .25rem;letter-spacing:.05em}
 
+/* ── Tab Guide (collapsible how-it-works) ── */
+.tab-guide{border:1.5px solid var(--teal);border-radius:10px;margin-bottom:1.1rem;overflow:hidden}
+.tab-guide-hdr{display:flex;align-items:center;justify-content:space-between;padding:.6rem 1rem;background:#f0fffe;cursor:pointer;user-select:none}
+.tab-guide-hdr:hover{background:#e4f8f7}
+.tab-guide-title{font-size:.78rem;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.05em}
+.tab-guide-arrow{font-size:.8rem;color:var(--teal);transition:transform .2s}
+.tab-guide-arrow.open{transform:rotate(180deg)}
+.tab-guide-body{display:none;padding:.85rem 1rem 1rem;background:#fff}
+.tab-guide-body.open{display:block}
+.guide-step{display:flex;gap:.7rem;margin-bottom:.7rem;align-items:flex-start}
+.guide-step:last-child{margin-bottom:0}
+.guide-step-num{flex-shrink:0;width:1.5rem;height:1.5rem;border-radius:50%;background:var(--navy);color:#fff;font-size:.68rem;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:.05rem}
+.guide-step-body{font-size:.79rem;color:var(--navy);line-height:1.55}
+.guide-step-body strong{color:var(--navy)}
+.guide-step-body .tip{display:block;font-size:.72rem;color:var(--gray);margin-top:.2rem}
+.guide-section-lbl{font-size:.68rem;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.06em;margin:.75rem 0 .4rem;border-top:1px solid var(--border);padding-top:.55rem}
+
 /* ── EVV Corrections ── */
 .evv-card{background:var(--white);border-radius:12px;box-shadow:0 2px 12px rgba(14,56,96,.07);padding:1.1rem 1.25rem;margin-bottom:1rem}
 .evv-card-title{display:flex;align-items:center;gap:.5rem;font-size:.9rem;font-weight:700;color:var(--navy);margin-bottom:.85rem}
@@ -259,13 +276,24 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     <!-- ═══════════════════════════════ ONBOARDING ═══════════════════════════════ -->
     <div class="panel active" id="panel-onboarding">
 
-      <!-- Workflow context blurb -->
-      <div style="background:var(--white);border-left:4px solid var(--teal);border-radius:0 10px 10px 0;padding:.9rem 1.1rem;margin-bottom:1.25rem;box-shadow:0 2px 8px rgba(14,56,96,.06)">
-        <div style="font-size:.8rem;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.3rem">How candidates appear here</div>
-        <div style="font-size:.83rem;color:var(--navy);line-height:1.6">
-          Candidates in this tab have <strong>completed Step 1 onboarding paperwork in Viventium</strong>, which automatically pushes them into AxisCare and triggers their appearance here.
-          At this stage, all <strong>background checks</strong> (FCSR, and fingerprint if applicable) and <strong>reference checks</strong> must be completed before a hiring decision can be made.
-          A candidate reaches <strong>Ready for Orientation</strong> only after 2 positive references and clear results on all three checks: <strong>OIG</strong>, <strong>EDL</strong>, and <strong>FCSR</strong>.
+      <!-- Tab Guide -->
+      <div class="tab-guide">
+        <div class="tab-guide-hdr" onclick="toggleGuide('ob')">
+          <span class="tab-guide-title">📋 How This Tab Works — Step by Step</span>
+          <span class="tab-guide-arrow" id="guide-arrow-ob">▼</span>
+        </div>
+        <div class="tab-guide-body" id="guide-body-ob">
+          <div class="guide-section-lbl" style="border-top:none;padding-top:0;margin-top:0">How candidates get here</div>
+          <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">Candidate completes their application in <strong>Viventium</strong>. This triggers an email to Gmail and automatically adds them to this tab.<span class="tip">If a candidate doesn't appear, check that Viventium sent the notification and manually add them using "+ Add Candidate."</span></div></div>
+          <div class="guide-section-lbl">Your checklist for each candidate</div>
+          <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body"><strong>Run OIG Exclusion Check</strong> — click the OIG button on their row. Must be clear before proceeding.<span class="tip">You can also run a batch OIG check for all pending candidates at once using the Batch OIG button.</span></div></div>
+          <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body"><strong>Order FCSR Background Check</strong> — done manually through FCSR. Log the date ordered and mark clear/failed when results arrive.</div></div>
+          <div class="guide-step"><div class="guide-step-num">4</div><div class="guide-step-body"><strong>Send Reference Forms</strong> — click "Send Refs" to email the reference form link to each reference the candidate listed. Requires 2 positive references.<span class="tip">Reference form URL: mo-care.com/reference-form — responses are auto-scored and appear in the candidate record.</span></div></div>
+          <div class="guide-step"><div class="guide-step-num">5</div><div class="guide-step-body"><strong>Fingerprint</strong> — schedule if required. Log the date completed.</div></div>
+          <div class="guide-step"><div class="guide-step-num">6</div><div class="guide-step-body">Once <strong>OIG ✅ + FCSR ✅ + 2 Refs ✅</strong>, the candidate's status automatically changes to <strong>Ready for Orientation</strong>. Notify the team to book them into an orientation session.</div></div>
+          <div class="guide-step"><div class="guide-step-num">7</div><div class="guide-step-body">If any check fails, status moves to <strong>Needs Review</strong>. Document the reason and determine next steps with management.</div></div>
+          <div class="guide-section-lbl">Processing Stats</div>
+          <div class="guide-step"><div class="guide-step-num">📊</div><div class="guide-step-body">Use the <strong>Stats</strong> filter button to see how long each candidate is taking — we aim to get applicants to orientation as fast as possible.</div></div>
         </div>
       </div>
 
@@ -300,6 +328,23 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 
     <!-- ═══════════════════════════════ TRAINING ════════════════════════════════ -->
     <div class="panel" id="panel-training">
+      <div class="tab-guide">
+        <div class="tab-guide-hdr" onclick="toggleGuide('training')">
+          <span class="tab-guide-title">📋 How This Tab Works — Step by Step</span>
+          <span class="tab-guide-arrow" id="guide-arrow-training">▼</span>
+        </div>
+        <div class="tab-guide-body" id="guide-body-training">
+          <div class="guide-section-lbl" style="border-top:none;padding-top:0;margin-top:0">How caregivers get here</div>
+          <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">Caregivers appear here after completing orientation and being <strong>promoted</strong> from the Orientations tab. You can also add them manually with <strong>+ Add Caregiver</strong>.</div></div>
+          <div class="guide-section-lbl">Training milestones to track</div>
+          <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body"><strong>Agency Orientation + ALZ Training</strong> (6 hrs total) — must be completed before the caregiver can be scheduled with their first client.</div></div>
+          <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body"><strong>First Client Contact</strong> — log the date the caregiver was first scheduled with a client. This starts the 30-day OJT clock.</div></div>
+          <div class="guide-step"><div class="guide-step-num">4</div><div class="guide-step-body"><strong>OJT In-Home + Online</strong> (12 hrs total) — must be completed within 30 days of first client contact. The <strong>30-Day Training Due</strong> filter highlights anyone approaching or past this deadline.</div></div>
+          <div class="guide-step"><div class="guide-step-num">5</div><div class="guide-step-body"><strong>Annual 5-Hour Training</strong> — required every year starting year 2. Use the <strong>Annual Due</strong> filter to see who is coming up.</div></div>
+          <div class="guide-section-lbl">Flags to watch</div>
+          <div class="guide-step"><div class="guide-step-num">⛔</div><div class="guide-step-body">The <strong>Client Contact Blocked</strong> filter shows caregivers who have not completed their orientation/ALZ training and should NOT yet be scheduled with clients.</div></div>
+        </div>
+      </div>
       <div id="train-alert"></div>
       <div class="stats" id="tr-stats"></div>
       <div class="controls">
@@ -328,6 +373,22 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 
     <!-- ═══════════════════════════════ ACTIVE COMPLIANCE ════════════════════════ -->
     <div class="panel" id="panel-compliance">
+      <div class="tab-guide">
+        <div class="tab-guide-hdr" onclick="toggleGuide('compliance')">
+          <span class="tab-guide-title">📋 How This Tab Works — Step by Step</span>
+          <span class="tab-guide-arrow" id="guide-arrow-compliance">▼</span>
+        </div>
+        <div class="tab-guide-body" id="guide-body-compliance">
+          <div class="guide-section-lbl" style="border-top:none;padding-top:0;margin-top:0">Ongoing compliance checks</div>
+          <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">This tab tracks all <strong>active caregivers</strong> for recurring compliance requirements. Three checks must stay current: <strong>OIG Exclusion</strong>, <strong>EDL</strong>, and <strong>FCSR Background Check</strong>.</div></div>
+          <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body">Use the <strong>🔍 Batch OIG Check</strong> button to run the OIG exclusion check on all caregivers at once. This should be done regularly (monthly at minimum).<span class="tip">OIG only requires first and last name — no SSN or date of birth needed.</span></div></div>
+          <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body">Use the <strong>Overdue</strong> and <strong>Due Soon</strong> filters to prioritize who needs attention. Red = overdue, yellow = coming up within 30 days.</div></div>
+          <div class="guide-section-lbl">Supervisory visits &amp; performance reviews</div>
+          <div class="guide-step"><div class="guide-step-num">4</div><div class="guide-step-body">Log <strong>Supervisory Visit</strong> dates and <strong>Performance Review</strong> dates in each caregiver's record. These are required for Medicaid compliance audits.</div></div>
+          <div class="guide-section-lbl">Import / Export</div>
+          <div class="guide-step"><div class="guide-step-num">5</div><div class="guide-step-body">Use <strong>📥 Export CSV</strong> to download your full caregiver list for reporting. Use <strong>⬆ Import CSV</strong> to bulk-upload caregivers using the provided template.</div></div>
+        </div>
+      </div>
       <div class="stats" id="ac-stats"></div>
       <div class="controls">
         <input type="text" placeholder="Search caregiver..." oninput="renderAC()">
@@ -370,6 +431,24 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 
     <!-- ═══════════════════════════════ OFFBOARDING ══════════════════════════════ -->
     <div class="panel" id="panel-offboarding">
+      <div class="tab-guide">
+        <div class="tab-guide-hdr" onclick="toggleGuide('offboarding')">
+          <span class="tab-guide-title">📋 How This Tab Works — Step by Step</span>
+          <span class="tab-guide-arrow" id="guide-arrow-offboarding">▼</span>
+        </div>
+        <div class="tab-guide-body" id="guide-body-offboarding">
+          <div class="guide-section-lbl" style="border-top:none;padding-top:0;margin-top:0">Starting an offboarding record</div>
+          <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">When a caregiver resigns or is terminated, click <strong>+ Add Offboarding</strong> and enter their last day. This creates a checklist to track every required step.</div></div>
+          <div class="guide-section-lbl">Checklist items to complete</div>
+          <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body"><strong>AxisCare</strong> — deactivate the caregiver's profile so they can no longer be scheduled. Log the date.</div></div>
+          <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body"><strong>Viventium</strong> — update their employment status to terminated and process their final paycheck.</div></div>
+          <div class="guide-step"><div class="guide-step-num">4</div><div class="guide-step-body"><strong>Equipment returned</strong> — confirm any agency equipment (PPE kits, etc.) has been returned.</div></div>
+          <div class="guide-step"><div class="guide-step-num">5</div><div class="guide-step-body"><strong>Exit Interview</strong> — complete if applicable. Document any feedback.</div></div>
+          <div class="guide-step"><div class="guide-step-num">6</div><div class="guide-step-body"><strong>Benefits End Date</strong> — note when benefits coverage ends if applicable.</div></div>
+          <div class="guide-step"><div class="guide-step-num">7</div><div class="guide-step-body"><strong>Records Retention</strong> — Missouri requires employee records be kept for a minimum of 3 years. Log the date records should be purged.</div></div>
+          <div class="guide-step"><div class="guide-step-num">8</div><div class="guide-step-body">Once all steps are complete, mark the record as <strong>Complete</strong> using the In Progress / Complete filter.</div></div>
+        </div>
+      </div>
       <div class="stats" id="off-stats"></div>
       <div class="controls">
         <input type="text" placeholder="Search..." oninput="renderOFF()">
@@ -395,10 +474,22 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     <!-- ══════════════════════════════ ORIENTATIONS ══════════════════════════════ -->
     <div class="panel" id="panel-orientations">
 
-      <div style="background:var(--white);border-left:4px solid var(--yellow);border-radius:0 10px 10px 0;padding:.9rem 1.1rem;margin-bottom:1.25rem;box-shadow:0 2px 8px rgba(14,56,96,.06)">
-        <div style="font-size:.8rem;font-weight:700;color:#c47f00;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.3rem">How this works</div>
-        <div style="font-size:.83rem;color:var(--navy);line-height:1.6">
-          Create orientation sessions below — set the date, time, and capacity (up to 6 per session). Use <strong>Copy Booking Link</strong> to send a candidate a personalized link where they can choose their preferred session. When they book, Zapier creates the Google Calendar event and texts them a confirmation.
+      <div class="tab-guide">
+        <div class="tab-guide-hdr" onclick="toggleGuide('orient')">
+          <span class="tab-guide-title">📋 How This Tab Works — Step by Step</span>
+          <span class="tab-guide-arrow" id="guide-arrow-orient">▼</span>
+        </div>
+        <div class="tab-guide-body" id="guide-body-orient">
+          <div class="guide-section-lbl" style="border-top:none;padding-top:0;margin-top:0">Scheduling a session</div>
+          <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">Click <strong>+ Add Session</strong> to create an orientation. Set the date, start time (default 10am), capacity, location, and who is running it (facilitator + role).<span class="tip">The session will automatically sync to Google Calendar and create a shift in AxisCare if those webhooks are configured in Settings.</span></div></div>
+          <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body">To schedule repeating sessions, use the <strong>Repeat</strong> dropdown (weekly, biweekly, or monthly). The hub creates all sessions in one step and tags them as a series.</div></div>
+          <div class="guide-section-lbl">Booking candidates in</div>
+          <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body">Once a candidate is <strong>Ready for Orientation</strong> in the Background &amp; References tab, click <strong>🔗 Copy Booking Link</strong> on a session and send it to them. They pick their preferred time from a self-serve page.<span class="tip">Or click <strong>+ Add Booking</strong> to manually add a candidate (useful for phone/text bookings).</span></div></div>
+          <div class="guide-step"><div class="guide-step-num">4</div><div class="guide-step-body">Session capacity fills up automatically. A <strong>FULL</strong> badge appears when there are no open spots.</div></div>
+          <div class="guide-section-lbl">Day of orientation</div>
+          <div class="guide-step"><div class="guide-step-num">5</div><div class="guide-step-body">After the session, switch to <strong>Past Sessions &amp; Attendance</strong> and mark each attendee: ✅ Attended, 🚫 No-Show, 📅 Rescheduled, or ❌ Canceled.</div></div>
+          <div class="guide-step"><div class="guide-step-num">6</div><div class="guide-step-body">For anyone who <strong>Attended</strong>, click the <strong>🎓 Promote</strong> button to move them into the Active Compliance tab as a new caregiver.</div></div>
+          <div class="guide-step"><div class="guide-step-num">7</div><div class="guide-step-body">For <strong>No-Shows</strong>, follow up and rebook them into the next available session using a new booking link.</div></div>
         </div>
       </div>
 
@@ -439,6 +530,25 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 
     <!-- ══════════════════════════════ EVV CORRECTIONS ══════════════════════════════ -->
     <div class="panel" id="panel-evv">
+
+      <!-- Tab Guide -->
+      <div class="tab-guide">
+        <div class="tab-guide-hdr" onclick="toggleGuide('evv')">
+          <span class="tab-guide-title">📋 How This Tab Works — Step by Step</span>
+          <span class="tab-guide-arrow" id="guide-arrow-evv">▼</span>
+        </div>
+        <div class="tab-guide-body" id="guide-body-evv">
+          <div class="guide-section-lbl" style="border-top:none;padding-top:0;margin-top:0">Employee responsibilities</div>
+          <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">Employees submit EVV corrections using the form at <strong>hub.mo-care.com/evv-correction-form</strong>. Deadline is <strong>Sunday at Midnight</strong> each week.<span class="tip">Copy and share the form link using the button below the deadline bar.</span></div></div>
+          <div class="guide-section-lbl">Staffing Coordinator responsibilities</div>
+          <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body">Check this tab <strong>daily</strong> for new submissions. Pending corrections appear under "Pending Submissions."</div></div>
+          <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body">For each submission: review the corrected clock-in/out times and tasks, then open <strong>WellSky Daily</strong> and make the correction on the caregiver's visit record.</div></div>
+          <div class="guide-step"><div class="guide-step-num">4</div><div class="guide-step-body">After updating WellSky, come back here and click <strong>✅ Accept</strong> to mark the submission as processed. Or click <strong>Dismiss</strong> if the submission was invalid.</div></div>
+          <div class="guide-step"><div class="guide-step-num">5</div><div class="guide-step-body">All corrections must be completed in WellSky by <strong>Monday at 10am</strong> for payroll to process correctly.</div></div>
+          <div class="guide-section-lbl">Logging a manual correction</div>
+          <div class="guide-step"><div class="guide-step-num">6</div><div class="guide-step-body">Use <strong>+ Log Manual Correction</strong> to record a correction made directly without a form submission — for example when a caregiver calls in a correction by phone.</div></div>
+        </div>
+      </div>
 
       <!-- Deadline reminder bar -->
       <div class="evv-deadline-bar">
@@ -1062,9 +1172,19 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     <p style="font-size:.72rem;color:var(--gray);margin-bottom:1rem">Enter <strong>primary</strong> to use your main calendar, or paste a specific calendar ID from Google Calendar → Settings → your calendar → Calendar ID.</p>
     <div class="sect-lbl" style="margin-top:.75rem">AxisCare Integration</div>
     <p style="font-size:.78rem;color:var(--gray);margin:.4rem 0 .75rem">Your AxisCare site number is used in the AxisCare Sync Zap to post status notes to caregiver profiles. Find it in your AxisCare URL: <span style="font-family:monospace;font-size:.78rem">https://<strong>XXXXX</strong>.axiscare.com</span></p>
-    <div style="display:flex;gap:.5rem;margin-bottom:1rem;align-items:center">
+    <div style="display:flex;gap:.5rem;margin-bottom:.65rem;align-items:center">
       <label style="font-size:.8rem;font-weight:500;white-space:nowrap;color:var(--navy)">Site Number:</label>
       <input type="text" id="settings-ac-site" placeholder="e.g. 10856" style="flex:1;padding:.45rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.83rem">
+    </div>
+    <div style="background:#f0fffe;border:1.5px solid var(--teal);border-radius:10px;padding:.85rem 1rem;margin-bottom:.75rem">
+      <div style="font-size:.7rem;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">🔗 Orientation Shift Webhook (Zapier → AxisCare)</div>
+      <p style="font-size:.72rem;color:var(--gray);margin:0 0 .5rem">When you add an orientation session, the hub will POST to this URL so Zapier can create the shift in AxisCare automatically.</p>
+      <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.4rem">
+        <label style="font-size:.78rem;font-weight:500;white-space:nowrap;color:var(--navy)">Webhook URL:</label>
+        <input type="text" id="settings-ac-orient-webhook" placeholder="https://hooks.zapier.com/hooks/catch/…" style="flex:1;padding:.42rem .7rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.75rem">
+      </div>
+      <p style="font-size:.7rem;color:var(--gray);margin:0">Setup: In Zapier, create a Zap → <strong>Trigger:</strong> Webhooks by Zapier (Catch Hook) → <strong>Action:</strong> AxisCare: Create Shift. Map the fields below, then paste the webhook URL here.<br>
+      <strong>Fields sent:</strong> date, time, end_time, duration_hours, facilitator, facilitator_role, location, is_remote, video_link, capacity, notes, session_id</p>
     </div>
     <div class="sect-lbl">Staff &amp; Notifications</div>
     <p style="font-size:.78rem;color:var(--gray);margin:.4rem 0 .75rem">Add staff members and choose which automated reminder emails each person receives.</p>
@@ -1753,6 +1873,14 @@ window.addEventListener('load', () => {
 });
 // Password changes handled via Supabase — use "Reset Password" in the header.
 
+// ── Tab Guide toggle ─────────────────────────────────────────────────
+function toggleGuide(id){
+  const body  = document.getElementById('guide-body-'+id);
+  const arrow = document.getElementById('guide-arrow-'+id);
+  const open  = body.classList.toggle('open');
+  arrow.classList.toggle('open', open);
+}
+
 // ── Google Calendar Sync ─────────────────────────────────────────────
 const ORIENT_DURATION_HOURS = 2;
 
@@ -1838,6 +1966,37 @@ async function gcalDeleteEvent(session){
       { method:'DELETE', headers:{ Authorization:`Bearer ${token}` } }
     );
   } catch(e){ console.warn('gcal delete error', e); }
+}
+
+// ── AxisCare Orientation Shift ────────────────────────────────────────
+async function axisCreateOrientShift(session){
+  const webhook = appSettings.ac_orient_webhook;
+  if(!webhook || webhook.includes('REPLACE')) return;
+  const [h, m] = (session.time||'10:00').split(':').map(Number);
+  const start = new Date(`${session.date}T${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:00`);
+  const end = new Date(start.getTime() + ORIENT_DURATION_HOURS*60*60*1000);
+  const fmt = d => d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true});
+  const payload = {
+    session_id:       session.id,
+    date:             session.date,
+    time:             session.time,
+    end_time:         `${String(end.getHours()).padStart(2,'0')}:${String(end.getMinutes()).padStart(2,'0')}`,
+    time_readable:    fmt(start),
+    end_time_readable:fmt(end),
+    duration_hours:   ORIENT_DURATION_HOURS,
+    facilitator:      session.facilitator||'',
+    facilitator_role: session.facilitator_role||'',
+    location:         session.is_remote==='yes' ? (session.video_link||'Remote') : '1331 N Stewart Ave Ste B, Springfield MO 65802',
+    is_remote:        session.is_remote==='yes',
+    video_link:       session.video_link||'',
+    capacity:         session.capacity||6,
+    notes:            session.notes||'',
+    shift_type:       'Orientation',
+    agency:           'Caring Companions In-Home Senior Care',
+  };
+  try {
+    await fetch(webhook, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+  } catch(e){ console.warn('AxisCare orient shift webhook failed', e); }
 }
 
 async function gcalSyncAll(){
@@ -3221,6 +3380,7 @@ function saveOrient(){
       orientSessions[i]={...orientSessions[i],...base, date:g('or-date')};
       const s=orientSessions[i];
       if(s.gcal_event_id) gcalUpdateEvent(s); else gcalCreateEvent(s).then(eid=>{ if(eid){ s.gcal_event_id=eid; saveOrientStore(); } });
+      axisCreateOrientShift(s);
     }
   } else {
     const recur = g('or-recur');
@@ -3230,8 +3390,8 @@ function saveOrient(){
     dates.forEach(date=>{
       const newSess = {id:orientId++, bookings:[], ...base, date, ...(seriesId?{series_id:seriesId}:{})};
       orientSessions.push(newSess);
-      // Create calendar event asynchronously
       gcalCreateEvent(newSess).then(eid=>{ if(eid){ newSess.gcal_event_id=eid; saveOrientStore(); } });
+      axisCreateOrientShift(newSess);
     });
   }
   saveOrientStore();
@@ -3639,6 +3799,7 @@ function _openSettingsModal(){
   document.getElementById('settings-gdrive-client-id').value=appSettings.google_client_id||'';
   document.getElementById('settings-gdrive-folder-id').value=appSettings.google_drive_folder_id||'';
   document.getElementById('settings-gcal-id').value=appSettings.gcal_calendar_id||'';
+  document.getElementById('settings-ac-orient-webhook').value=appSettings.ac_orient_webhook||'';
   document.getElementById('settings-admin-current').value='';
   document.getElementById('settings-admin-new').value='';
   document.getElementById('settings-admin-confirm').value='';
@@ -3741,6 +3902,7 @@ function saveSettings(){
   const newClientId = document.getElementById('settings-gdrive-client-id').value.trim();
   appSettings.google_drive_folder_id = document.getElementById('settings-gdrive-folder-id').value.trim();
   appSettings.gcal_calendar_id = document.getElementById('settings-gcal-id').value.trim() || 'primary';
+  appSettings.ac_orient_webhook = document.getElementById('settings-ac-orient-webhook').value.trim();
   if(newClientId !== appSettings.google_client_id){
     appSettings.google_client_id = newClientId;
     gdriveTokenClient = null;
