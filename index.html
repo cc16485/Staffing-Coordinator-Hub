@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Compliance Hub — Caring Companions</title>
+<title>Staffing Hub — Caring Companions</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
@@ -180,12 +180,6 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 .pts-btn{flex:1;padding:.3rem .6rem;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;font-size:.75rem;font-weight:600;cursor:pointer;background:var(--white);color:var(--navy);transition:.12s}
 .pts-btn.active{background:var(--navy);color:#fff;border-color:var(--navy)}
 
-/* ── Offboarding checklist ── */
-.ob-checklist{display:flex;flex-direction:column;gap:.4rem;margin-top:.5rem}
-.ob-item{display:flex;align-items:center;gap:.6rem;font-size:.82rem}
-.ob-item input[type=checkbox]{accent-color:var(--teal);width:14px;height:14px;cursor:pointer}
-.ob-item.done{color:var(--gray);text-decoration:line-through}
-.ob-section{font-size:.72rem;font-weight:700;text-transform:uppercase;color:var(--navy);margin:.9rem 0 .25rem;letter-spacing:.05em}
 
 /* ── Tab Guide (collapsible how-it-works) ── */
 .tab-guide{border:1.5px solid var(--teal);border-radius:10px;margin-bottom:1.1rem;overflow:hidden}
@@ -231,7 +225,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 <div id="login-screen">
   <div class="login-card">
     <img src="https://images.leadconnectorhq.com/image/f_webp/q_80/r_1200/u_https://assets.cdn.filesafe.space/Recp0AhyMh8lrtKJ9kaj/media/691b9707bb3d037e0ad689bf.png" alt="Caring Companions">
-    <h2>Compliance Hub</h2>
+    <h2>Staffing Hub</h2>
     <p>HR admin access only</p>
     <input type="email" id="login-email" placeholder="Email address" autocomplete="email" style="margin-bottom:.75rem">
     <input type="password" id="pwd" placeholder="Password" autocomplete="current-password">
@@ -247,7 +241,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 <div id="app">
   <header>
     <img src="https://images.leadconnectorhq.com/image/f_webp/q_80/r_1200/u_https://assets.cdn.filesafe.space/Recp0AhyMh8lrtKJ9kaj/media/691b9707bb3d037e0ad689bf.png" alt="Caring Companions">
-    <div class="hdr-center"><h1>Compliance Hub</h1><p id="hdr-date"></p></div>
+    <div class="hdr-center"><h1>Staffing Hub</h1><p id="hdr-date"></p></div>
     <div class="hdr-right">
       <div style="position:relative">
         <input type="text" id="global-search" placeholder="🔍 Search all..." oninput="onGlobalSearch(this.value)"
@@ -269,7 +263,6 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     <div class="tab" onclick="switchTab('compliance',this)"><span class="ti">✅</span> Active Compliance</div>
     <div class="tab" onclick="switchTab('scheduling',this)"><span class="ti">🗓</span> Scheduling</div>
     <div class="tab" onclick="switchTab('evv',this)"><span class="ti">📝</span> EVV Corrections</div>
-    <div class="tab" onclick="switchTab('offboarding',this)"><span class="ti">🚪</span> Offboarding</div>
   </div>
 
   <div class="tab-content-wrap">
@@ -427,48 +420,6 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
           <tbody id="ac-tbody"></tbody>
         </table>
         <div class="empty" id="ac-empty" style="display:none">No caregivers match.</div>
-      </div>
-    </div>
-
-    <!-- ═══════════════════════════════ OFFBOARDING ══════════════════════════════ -->
-    <div class="panel" id="panel-offboarding">
-      <div class="tab-guide">
-        <div class="tab-guide-hdr" onclick="toggleGuide('offboarding')">
-          <span class="tab-guide-title">📋 How This Tab Works — Step by Step</span>
-          <span class="tab-guide-arrow" id="guide-arrow-offboarding">▼</span>
-        </div>
-        <div class="tab-guide-body" id="guide-body-offboarding">
-          <div class="guide-section-lbl" style="border-top:none;padding-top:0;margin-top:0">Starting an offboarding record</div>
-          <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">When a caregiver resigns or is terminated, click <strong>+ Add Offboarding</strong> and enter their last day. This creates a checklist to track every required step.</div></div>
-          <div class="guide-section-lbl">Checklist items to complete</div>
-          <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body"><strong>AxisCare</strong> — deactivate the caregiver's profile so they can no longer be scheduled. Log the date.</div></div>
-          <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body"><strong>Viventium</strong> — update their employment status to terminated and process their final paycheck.</div></div>
-          <div class="guide-step"><div class="guide-step-num">4</div><div class="guide-step-body"><strong>Equipment returned</strong> — confirm any agency equipment (PPE kits, etc.) has been returned.</div></div>
-          <div class="guide-step"><div class="guide-step-num">5</div><div class="guide-step-body"><strong>Exit Interview</strong> — complete if applicable. Document any feedback.</div></div>
-          <div class="guide-step"><div class="guide-step-num">6</div><div class="guide-step-body"><strong>Benefits End Date</strong> — note when benefits coverage ends if applicable.</div></div>
-          <div class="guide-step"><div class="guide-step-num">7</div><div class="guide-step-body"><strong>Records Retention</strong> — Missouri requires employee records be kept for a minimum of 3 years. Log the date records should be purged.</div></div>
-          <div class="guide-step"><div class="guide-step-num">8</div><div class="guide-step-body">Once all steps are complete, mark the record as <strong>Complete</strong> using the In Progress / Complete filter.</div></div>
-        </div>
-      </div>
-      <div class="stats" id="off-stats"></div>
-      <div class="controls">
-        <input type="text" placeholder="Search..." oninput="renderOFF()">
-        <button class="fb active" onclick="offFilter('all',this)">All</button>
-        <button class="fb" onclick="offFilter('active',this)">In Progress</button>
-        <button class="fb" onclick="offFilter('complete',this)">Complete</button>
-        <button class="add-btn" onclick="openOFFModal()">+ Add Offboarding</button>
-      </div>
-      <div class="tbl-wrap">
-        <table>
-          <thead><tr>
-            <th>Employee</th><th>Last Day</th>
-            <th>AxisCare Deactivated</th><th>Viventium Updated</th>
-            <th>Equipment Returned</th><th>Final Paycheck</th>
-            <th>Exit Interview</th><th>Benefits End Date</th><th>Records Keep Until</th><th>Notes</th><th>Actions</th>
-          </tr></thead>
-          <tbody id="off-tbody"></tbody>
-        </table>
-        <div class="empty" id="off-empty" style="display:none">No offboarding records.</div>
       </div>
     </div>
 
@@ -1504,36 +1455,6 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     <div class="modal-acts">
       <button class="btn-cancel" onclick="closeModal('manual-ref-modal')">Cancel</button>
       <button class="btn-save" onclick="saveManualRef()">Save Reference</button>
-    </div>
-  </div>
-</div>
-
-<!-- MODAL: Offboarding -->
-<div class="overlay" id="off-modal">
-  <div class="modal">
-    <h3 id="off-modal-title">Add Offboarding Record</h3>
-    <div class="fg">
-      <div class="grp"><label>First Name</label><input type="text" id="off-first"></div>
-      <div class="grp"><label>Last Name</label><input type="text" id="off-last"></div>
-      <div class="grp"><label>Last Day of Employment</label><input type="date" id="off-lastday" onchange="document.getElementById('off-retain').value=offCalcRetain(this.value)"></div>
-      <div class="grp"><label>Reason</label>
-        <select id="off-reason"><option value="">--</option><option>Voluntary Resignation</option><option>Termination</option><option>End of Assignment</option><option>Retirement</option></select>
-      </div>
-      <div class="sect-lbl">Checklist</div>
-      <div class="grp"><label>AxisCare Deactivated</label><select id="off-ac"><option value="no">No</option><option value="yes">Yes</option></select></div>
-      <div class="grp"><label>AxisCare Date</label><input type="date" id="off-ac-date"></div>
-      <div class="grp"><label>Viventium Updated</label><select id="off-viv"><option value="no">No</option><option value="yes">Yes</option></select></div>
-      <div class="grp"><label>Equipment Returned</label><select id="off-equip"><option value="no">No</option><option value="yes">Yes</option><option value="na">N/A</option></select></div>
-      <div class="grp"><label>Final Paycheck Issued</label><select id="off-pay"><option value="no">No</option><option value="yes">Yes</option></select></div>
-      <div class="grp"><label>Final Pay Date</label><input type="date" id="off-pay-date"></div>
-      <div class="grp"><label>Exit Interview Done</label><select id="off-exit"><option value="no">No</option><option value="yes">Yes</option><option value="na">Declined</option></select></div>
-      <div class="grp"><label>Benefits End Date</label><input type="date" id="off-ben"></div>
-      <div class="grp full"><label>Notes</label><input type="text" id="off-notes"></div>
-      <div class="grp"><label>Records Retention Through <span style="font-size:.72rem;color:var(--teal)">(auto: last day + 5 yrs)</span></label><input type="text" id="off-retain" readonly style="background:var(--slate-bg);color:var(--gray)"></div>
-    </div>
-    <div class="modal-acts">
-      <button class="btn-cancel" onclick="closeModal('off-modal')">Cancel</button>
-      <button class="btn-save" onclick="saveOFF()">Save</button>
     </div>
   </div>
 </div>
@@ -2575,7 +2496,6 @@ async function loadFromSupabase(){
       if(row.key==='candidates')     { candidates=row.data; obId=Math.max(obId,...candidates.map(c=>c.id+1),10); }
       if(row.key==='caregivers')     { caregivers=row.data; cgId=Math.max(cgId,...caregivers.map(c=>c.id+1),10); }
       if(row.key==='orient_sessions'){ orientSessions=row.data; orientId=Math.max(orientId,...orientSessions.map(s=>s.id+1),1); }
-      if(row.key==='offboardings')   { offboardings=row.data; offId=Math.max(offId,...offboardings.map(o=>o.id+1),10); }
       if(row.key==='settings')       { appSettings=row.data; localStorage.setItem('cc_settings',JSON.stringify(row.data)); }
       if(row.key==='evv_corrections'){ localStorage.setItem('cc_evv_corrections', JSON.stringify(row.data)); }
     });
@@ -2594,29 +2514,23 @@ function setSyncStatus(s){
 // ── DATA — localStorage-backed ─────────────────────────────────────────
 const SEED_CANDIDATES = [];
 const SEED_CAREGIVERS = [];
-const SEED_OFFBOARDINGS = [];
-
 // One-time migration: remove example people that shipped with earlier versions
 const SEED_CANDIDATE_NAMES = ["Maria Rodriguez","James Wilson","Tanya Brooks"];
 const SEED_CAREGIVER_NAMES = ["Jane Smith","Marcus Johnson","Angela Torres","Robert Davis"];
-const SEED_OFFBOARDING_NAMES = ["Sandra Moore"];
 function clearSeedPeople(){
   if(localStorage.getItem('cc_seed_cleared')) return;
   const nm = (f,l)=>`${f} ${l}`;
-  candidates   = candidates.filter(c=>!SEED_CANDIDATE_NAMES.includes(nm(c.first,c.last)));
-  caregivers   = caregivers.filter(c=>!SEED_CAREGIVER_NAMES.includes(nm(c.first,c.last)));
-  offboardings = offboardings.filter(o=>!SEED_OFFBOARDING_NAMES.includes(nm(o.first,o.last)));
-  saveCandidates(); saveCaregivers(); saveOffboardings();
+  candidates = candidates.filter(c=>!SEED_CANDIDATE_NAMES.includes(nm(c.first,c.last)));
+  caregivers = caregivers.filter(c=>!SEED_CAREGIVER_NAMES.includes(nm(c.first,c.last)));
+  saveCandidates(); saveCaregivers();
   localStorage.setItem('cc_seed_cleared','1');
 }
 
 let appSettings  = JSON.parse(localStorage.getItem('cc_settings'))    || { alert_recipients: [{name:'Samantha', email:'samantha@mo-care.com'}] };
 let candidates   = JSON.parse(localStorage.getItem('cc_candidates'))   || SEED_CANDIDATES;
 let caregivers   = JSON.parse(localStorage.getItem('cc_caregivers'))   || SEED_CAREGIVERS;
-let offboardings = JSON.parse(localStorage.getItem('cc_offboardings')) || SEED_OFFBOARDINGS;
 let obId  = parseInt(localStorage.getItem('cc_ob_id')  || '10');
 let cgId  = parseInt(localStorage.getItem('cc_cg_id')  || '10');
-let offId = parseInt(localStorage.getItem('cc_off_id') || '10');
 clearSeedPeople();
 
 function saveCandidates(){
@@ -2629,12 +2543,6 @@ function saveCaregivers(){
   localStorage.setItem('cc_cg_id', String(cgId));
   syncToSupabase('caregivers', caregivers);
 }
-function saveOffboardings(){
-  localStorage.setItem('cc_offboardings', JSON.stringify(offboardings));
-  localStorage.setItem('cc_off_id', String(offId));
-  syncToSupabase('offboardings', offboardings);
-}
-
 // ── TRAINING LOGIC ────────────────────────────────────────────────────
 function trainStatus(c){
   const hire = pd(c.hire_date);
@@ -3049,46 +2957,6 @@ function renderAC(){
     <div class="stat"><div class="lbl">OIG Overdue</div><div class="val v-red">${oigOd}</div></div>`;
 }
 
-// ── OFFBOARDING RENDER ────────────────────────────────────────────────
-let offFilterVal='all';
-function offFilter(f,btn){ offFilterVal=f; document.querySelectorAll('#panel-offboarding .fb').forEach(b=>b.classList.remove('active')); btn.classList.add('active'); renderOFF(); }
-function offComplete(o){ return o.ac==='yes'&&o.viv==='yes'&&(o.equip==='yes'||o.equip==='na')&&o.pay==='yes'&&(o.exit==='yes'||o.exit==='na'); }
-function renderOFF(){
-  const q=((document.querySelector('#panel-offboarding input')||{value:''}).value||globalSearch).toLowerCase();
-  const list=offboardings.filter(o=>{
-    const n=`${o.first} ${o.last}`.toLowerCase();
-    const done=offComplete(o);
-    return (!q||n.includes(q))&&(offFilterVal==='all'||(offFilterVal==='complete'&&done)||(offFilterVal==='active'&&!done));
-  });
-  const tbody=document.getElementById('off-tbody');
-  document.getElementById('off-empty').style.display=list.length?'none':'block';
-  if(!list.length){tbody.innerHTML='';return;}
-
-  function chkBadge(v,yeslabel='Done'){ return v==='yes'?badge('Current',yeslabel):v==='na'?badge('Pending','N/A'):badge('Pending','Pending'); }
-  tbody.innerHTML=list.map(o=>{
-    const done=offComplete(o);
-    return `<tr>
-      <td><div class="name-cell" style="cursor:pointer" onclick="openProfile('${o.first}','${o.last}')" title="View full profile">${o.first} ${o.last} <span style="font-size:.65rem;color:var(--teal)">↗</span></div><span class="sub">${o.reason||''}</span></td>
-      <td>${fmtD(o.lastday)||'—'}</td>
-      <td>${chkBadge(o.ac)}<span class="sub">${o.ac_date?fmtD(o.ac_date):''}</span></td>
-      <td>${chkBadge(o.viv)}</td>
-      <td>${chkBadge(o.equip)}</td>
-      <td>${chkBadge(o.pay)}<span class="sub">${o.pay_date?fmtD(o.pay_date):''}</span></td>
-      <td>${chkBadge(o.exit,'Done')}</td>
-      <td>${o.ben?fmtD(o.ben):'—'}</td>
-      <td><span style="font-size:.78rem;color:var(--gray)">${o.retain_until||'—'}</span></td>
-      <td><span style="font-size:.78rem">${o.notes||'—'}</span></td>
-      <td><div class="acts"><button class="ibtn" onclick="openOFFModal(${o.id})">✏️</button><button class="ibtn" onclick="delOFF(${o.id})">🗑️</button></div></td>
-    </tr>`;
-  }).join('');
-
-  const total=offboardings.length, done=offboardings.filter(offComplete).length, inprog=total-done;
-  document.getElementById('off-stats').innerHTML=`
-    <div class="stat"><div class="lbl">Total</div><div class="val v-navy">${total}</div></div>
-    <div class="stat"><div class="lbl">In Progress</div><div class="val v-amber">${inprog}</div></div>
-    <div class="stat"><div class="lbl">Complete</div><div class="val v-green">${done}</div></div>`;
-}
-
 function renderAlerts(){
   const alerts = [];
 
@@ -3127,11 +2995,11 @@ function renderAlerts(){
   if(!alerts.length){ strip.style.display='none'; return; }
   strip.style.display='flex';
   strip.innerHTML = alerts.map(a=>`
-    <span onclick="switchTab('${a.tab}', document.querySelector('.tab-bar .tab:nth-child(${['onboarding','orientations','training','compliance','offboarding'].indexOf(a.tab)+1})'))" style="cursor:pointer;background:rgba(255,255,255,.1);border-left:3px solid ${a.color};border-radius:0 6px 6px 0;padding:.25rem .65rem;font-size:.72rem;color:#fff;font-weight:500;white-space:nowrap;transition:.15s" onmouseover="this.style.background='rgba(255,255,255,.18)'" onmouseout="this.style.background='rgba(255,255,255,.1)'">${a.text}</span>
+    <span onclick="switchTab('${a.tab}', document.querySelector('.tab-bar .tab:nth-child(${['onboarding','orientations','training','compliance'].indexOf(a.tab)+1})'))" style="cursor:pointer;background:rgba(255,255,255,.1);border-left:3px solid ${a.color};border-radius:0 6px 6px 0;padding:.25rem .65rem;font-size:.72rem;color:#fff;font-weight:500;white-space:nowrap;transition:.15s" onmouseover="this.style.background='rgba(255,255,255,.18)'" onmouseout="this.style.background='rgba(255,255,255,.1)'">${a.text}</span>
   `).join('');
 }
 
-function renderAll(){ renderOB(); renderTR(); renderAC(); renderOFF(); renderOrientations(); renderAlerts(); updateAxisCareLaunchBtn(); renderClientQueue(); }
+function renderAll(){ renderOB(); renderTR(); renderAC(); renderOrientations(); renderAlerts(); updateAxisCareLaunchBtn(); renderClientQueue(); }
 function updateAxisCareLaunchBtn(){
   const btn = document.getElementById('axiscare-launch-btn');
   if(!btn) return;
@@ -3140,7 +3008,7 @@ function updateAxisCareLaunchBtn(){
 }
 
 // ── MODALS ────────────────────────────────────────────────────────────
-let editingOB=null, editingCG=null, editingOFF=null;
+let editingOB=null, editingCG=null;
 
 function openOBModal(id=null){
   editingOB=id;
@@ -3303,7 +3171,7 @@ async function confirmSendInvite(){
     phone:           fmtPhone(c.phone),
     message:         buildInviteMsg(c, url),
     booking_url:     url,
-    sent_by:         'Compliance Hub',
+    sent_by:         'Staffing Hub',
     sent_at:         new Date().toISOString(),
   };
   try {
@@ -3457,37 +3325,7 @@ function pushAxisCareStatus(type, data){
   })}).catch(e=>console.warn('AxisCare status webhook error:', e));
 }
 
-function openOFFModal(id=null){ editingOFF=id;
-  document.getElementById('off-modal-title').textContent=id?'Edit Offboarding':'Add Offboarding Record';
-  const g=k=>document.getElementById(k);
-  const o=id?offboardings.find(x=>x.id===id):null;
-  if(o){
-    g('off-first').value=o.first;g('off-last').value=o.last;g('off-lastday').value=o.lastday||'';
-    g('off-reason').value=o.reason||'';g('off-ac').value=o.ac;g('off-ac-date').value=o.ac_date||'';
-    g('off-viv').value=o.viv;g('off-equip').value=o.equip;g('off-pay').value=o.pay;
-    g('off-pay-date').value=o.pay_date||'';g('off-exit').value=o.exit;g('off-ben').value=o.ben||'';g('off-notes').value=o.notes||'';
-    g('off-retain').value=o.retain_until||offCalcRetain(o.lastday);
-  } else {
-    ['off-first','off-last','off-lastday','off-ac-date','off-pay-date','off-ben','off-notes','off-retain'].forEach(k=>g(k).value='');
-    g('off-reason').value='';g('off-ac').value='no';g('off-viv').value='no';g('off-equip').value='no';g('off-pay').value='no';g('off-exit').value='no';
-  }
-  document.getElementById('off-modal').classList.add('open');
-}
-function offCalcRetain(lastday){ if(!lastday) return ''; const d=new Date(lastday+'T00:00:00'); d.setFullYear(d.getFullYear()+5); return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }
-function saveOFF(){
-  const g=k=>document.getElementById(k).value;
-  if(!g('off-first')||!g('off-last')){alert('Name required.');return;}
-  const d={first:g('off-first'),last:g('off-last'),lastday:g('off-lastday'),reason:g('off-reason'),
-    ac:g('off-ac'),ac_date:g('off-ac-date'),viv:g('off-viv'),equip:g('off-equip'),
-    pay:g('off-pay'),pay_date:g('off-pay-date'),exit:g('off-exit'),ben:g('off-ben'),notes:g('off-notes'),
-    retain_until:g('off-retain')||offCalcRetain(g('off-lastday'))};
-  if(editingOFF){ const i=offboardings.findIndex(x=>x.id===editingOFF); offboardings[i]={...offboardings[i],...d}; }
-  else { offboardings.push({id:offId++,...d}); }
-  saveOffboardings(); closeModal('off-modal'); renderOFF();
-}
-function delOFF(id){ const o=offboardings.find(x=>x.id===id); if(confirm(`Remove ${o.first} ${o.last}?`)){ offboardings=offboardings.filter(x=>x.id!==id); saveOffboardings(); renderOFF(); } }
-
-function closeModal(id){ document.getElementById(id).classList.remove('open'); editingOB=null; editingCG=null; editingOFF=null; editingOrient=null; editScope='single'; pendingEditId=null; pendingDeleteId=null; pendingCancelSessId=null; pendingCancelBookingIdx=null; }
+function closeModal(id){ document.getElementById(id).classList.remove('open'); editingOB=null; editingCG=null; editingOrient=null; editScope='single'; pendingEditId=null; pendingDeleteId=null; pendingCancelSessId=null; pendingCancelBookingIdx=null; }
 document.querySelectorAll('.overlay').forEach(o=>o.addEventListener('click',e=>{ if(e.target===o) closeModal(o.id); }));
 document.getElementById('or-date').addEventListener('change',()=>{ if(document.getElementById('or-recur').value!=='none') updateRecurPreview(); });
 document.getElementById('or-recur-count').addEventListener('change', updateRecurPreview);
@@ -4132,7 +3970,6 @@ function openProfile(first, last){
   const nm = `${first} ${last}`;
   const cand = candidates.find(c=>`${c.first} ${c.last}`.toLowerCase()===nm.toLowerCase());
   const cg   = caregivers.find(c=>`${c.first} ${c.last}`.toLowerCase()===nm.toLowerCase());
-  const off  = offboardings.find(o=>`${o.first} ${o.last}`.toLowerCase()===nm.toLowerCase());
   // Find orientation booking across all sessions
   let booking=null, bookSess=null;
   for(const s of orientSessions){
@@ -4248,29 +4085,6 @@ function openProfile(first, last){
     html+=`<div style="font-size:.75rem;padding:.4rem .6rem;background:var(--slate-bg);border-radius:8px;margin-bottom:.5rem"><span style="color:${regColor};font-weight:600">FCSR Registration:</span> ${fReg.label}</div>`;
   } else {
     html+=`<p style="font-size:.8rem;color:var(--gray);margin:.4rem 0">No active compliance record found.</p>`;
-  }
-
-  // ── Offboarding ──
-  if(off){
-    const done=offComplete(off);
-    const chk=(v,yesLabel='Done')=>v==='yes'?`<span class="badge b-green">${yesLabel}</span>`:v==='na'?`<span class="badge b-gray">N/A</span>`:`<span class="badge b-amber">Pending</span>`;
-    html+=`<div class="sect-lbl" style="color:var(--red)">Offboarding${done?' ✓':' — In Progress'}</div>`;
-    html+=`<div style="background:#fff1f2;border:1px solid #fecdd3;border-radius:8px;padding:.65rem .8rem;margin:.5rem 0 .75rem;font-size:.82rem">`;
-    html+=`<div style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin-bottom:.5rem">`;
-    html+=`<span style="font-weight:600;color:var(--red)">${off.reason||'Separation'}</span>`;
-    if(off.lastday) html+=`<span style="color:var(--gray)">Last day: <strong>${fmtD(off.lastday)}</strong></span>`;
-    if(off.ben) html+=`<span style="color:var(--gray)">Benefits end: <strong>${fmtD(off.ben)}</strong></span>`;
-    html+=`</div>`;
-    html+=`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.35rem;margin-bottom:.4rem">`;
-    html+=`<div><span style="font-size:.68rem;color:var(--gray);font-weight:600">AxisCare</span><br>${chk(off.ac,'Deactivated')}${off.ac_date?`<span style="font-size:.65rem;color:var(--gray);display:block">${fmtD(off.ac_date)}</span>`:''}</div>`;
-    html+=`<div><span style="font-size:.68rem;color:var(--gray);font-weight:600">Viventium</span><br>${chk(off.viv,'Updated')}</div>`;
-    html+=`<div><span style="font-size:.68rem;color:var(--gray);font-weight:600">Equipment</span><br>${chk(off.equip,'Returned')}</div>`;
-    html+=`<div><span style="font-size:.68rem;color:var(--gray);font-weight:600">Final Pay</span><br>${chk(off.pay,'Issued')}</div>`;
-    html+=`<div><span style="font-size:.68rem;color:var(--gray);font-weight:600">Exit Interview</span><br>${chk(off.exit,'Done')}</div>`;
-    html+=`<div><span style="font-size:.68rem;color:var(--gray);font-weight:600">Records Retain Through</span><br><span style="font-size:.75rem;font-weight:600;color:var(--navy)">${off.retain||offCalcRetain(off.lastday)||'—'}</span></div>`;
-    html+=`</div>`;
-    if(off.notes) html+=`<div style="font-size:.75rem;color:var(--gray);margin-top:.25rem;padding-top:.35rem;border-top:1px solid #fecdd3">📝 ${off.notes}</div>`;
-    html+=`</div>`;
   }
 
   document.getElementById('profile-content').innerHTML=html;
@@ -4539,7 +4353,7 @@ function confirmCSVImport(){
 // ── Global search ─────────────────────────────────────────────────────
 function onGlobalSearch(val){
   globalSearch = val.toLowerCase();
-  const renders={onboarding:renderOB,training:renderTR,compliance:renderAC,offboarding:renderOFF};
+  const renders={onboarding:renderOB,training:renderTR,compliance:renderAC};
   if(renders[activeTab]) renders[activeTab]();
 }
 function addManualBooking(sessId){
