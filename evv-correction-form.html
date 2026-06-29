@@ -104,6 +104,8 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min
 
 <!-- Form -->
 <div class="form-wrap" id="form-screen">
+  <!-- Honeypot: hidden from real users, bots fill it in — submission rejected if not empty -->
+  <input type="text" name="website" id="f-honey" autocomplete="off" tabindex="-1" aria-hidden="true" style="display:none!important;position:absolute;left:-9999px;opacity:0;height:0;width:0">
 
   <!-- Important notice -->
   <div class="notice" style="margin-bottom:1.1rem">
@@ -383,6 +385,9 @@ function validate() {
 
 // ── Submit ────────────────────────────────────────────────────────────
 async function submitForm() {
+  // Honeypot check — bots fill this hidden field, humans don't
+  if (document.getElementById('f-honey').value !== '') return;
+
   if (!validate()) {
     document.querySelector('.field-error.show')?.scrollIntoView({ behavior:'smooth', block:'center' });
     return;
