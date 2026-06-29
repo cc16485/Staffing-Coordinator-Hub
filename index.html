@@ -442,7 +442,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 
       <!-- Deadline reminder bar -->
       <div class="evv-deadline-bar">
-        ⏰ <strong>Employee Submission Deadline: Monday at 10am</strong> &nbsp;|&nbsp; Staffing Coordinator: Make corrections in <strong>WellSky Daily</strong> — all completed by <strong>Monday at 10am</strong>
+        ⏰ <strong>Employee Submission Deadline: Sunday at Midnight</strong> &nbsp;|&nbsp; Staffing Coordinator: Make corrections in <strong>WellSky Daily</strong> — all completed by <strong>Monday at 10am</strong> for Payroll
       </div>
 
       <!-- Form link bar -->
@@ -1066,13 +1066,44 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
       <label style="font-size:.8rem;font-weight:500;white-space:nowrap;color:var(--navy)">Site Number:</label>
       <input type="text" id="settings-ac-site" placeholder="e.g. 10856" style="flex:1;padding:.45rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.83rem">
     </div>
-    <div class="sect-lbl">Compliance Alert Recipients</div>
-    <p style="font-size:.78rem;color:var(--gray);margin:.4rem 0 .75rem">These people receive the Monday/Friday compliance reminder emails.</p>
-    <div id="recipients-list" style="display:flex;flex-direction:column;gap:.5rem;margin-bottom:.75rem"></div>
-    <div style="display:flex;gap:.5rem;margin-bottom:1rem">
-      <input type="text" id="new-recip-name" placeholder="Name" style="flex:1;padding:.45rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.83rem">
-      <input type="email" id="new-recip-email" placeholder="Email address" style="flex:2;padding:.45rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.83rem">
-      <button onclick="addRecipient()" style="padding:.45rem .9rem;background:var(--teal);color:#fff;border:none;border-radius:8px;font-family:inherit;font-size:.83rem;font-weight:600;cursor:pointer">+ Add</button>
+    <div class="sect-lbl">Staff &amp; Notifications</div>
+    <p style="font-size:.78rem;color:var(--gray);margin:.4rem 0 .75rem">Add staff members and choose which automated reminder emails each person receives.</p>
+
+    <!-- Notification legend -->
+    <div style="display:flex;flex-wrap:wrap;gap:.35rem .75rem;margin-bottom:.75rem">
+      <span style="font-size:.68rem;background:#e8f4fd;color:var(--navy);border-radius:4px;padding:.15rem .45rem;font-weight:600">EVV</span><span style="font-size:.68rem;color:var(--gray)">EVV Monday 8am reminder</span>
+      <span style="font-size:.68rem;background:#f0fffe;color:var(--teal);border-radius:4px;padding:.15rem .45rem;font-weight:600;border:1px solid var(--teal)">Comp</span><span style="font-size:.68rem;color:var(--gray)">Compliance alerts (Mon/Fri)</span>
+      <span style="font-size:.68rem;background:#fff7e6;color:#b45309;border-radius:4px;padding:.15rem .45rem;font-weight:600">Orient</span><span style="font-size:.68rem;color:var(--gray)">Orientation reminders</span>
+      <span style="font-size:.68rem;background:#f3f0ff;color:#6d28d9;border-radius:4px;padding:.15rem .45rem;font-weight:600">BG</span><span style="font-size:.68rem;color:var(--gray)">Background check alerts</span>
+      <span style="font-size:.68rem;background:#fdf2f8;color:#be185d;border-radius:4px;padding:.15rem .45rem;font-weight:600">Refs</span><span style="font-size:.68rem;color:var(--gray)">Reference check completions</span>
+    </div>
+
+    <div id="staff-users-list" style="display:flex;flex-direction:column;gap:.5rem;margin-bottom:.75rem"></div>
+
+    <!-- Add staff form -->
+    <div style="background:#f8fafc;border:1.5px dashed var(--border);border-radius:10px;padding:.85rem 1rem;margin-bottom:1rem">
+      <div style="font-size:.7rem;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.6rem">+ Add Staff Member</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.5rem;margin-bottom:.5rem">
+        <input type="text" id="new-staff-name" placeholder="Full name" style="padding:.42rem .7rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.8rem">
+        <input type="email" id="new-staff-email" placeholder="Email address" style="padding:.42rem .7rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.8rem">
+        <select id="new-staff-role" style="padding:.42rem .7rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.8rem;background:#fff">
+          <option value="">— Role —</option>
+          <option>Owner</option>
+          <option>Care Coordinator</option>
+          <option>Staffing Coordinator</option>
+          <option>Lead Caregiver</option>
+          <option>Other</option>
+        </select>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:.4rem .85rem;margin-bottom:.6rem;align-items:center">
+        <span style="font-size:.72rem;font-weight:600;color:var(--navy)">Notifications:</span>
+        <label style="display:flex;align-items:center;gap:.3rem;font-size:.75rem;cursor:pointer"><input type="checkbox" id="ns-evv" checked> EVV</label>
+        <label style="display:flex;align-items:center;gap:.3rem;font-size:.75rem;cursor:pointer"><input type="checkbox" id="ns-comp" checked> Compliance</label>
+        <label style="display:flex;align-items:center;gap:.3rem;font-size:.75rem;cursor:pointer"><input type="checkbox" id="ns-orient"> Orientations</label>
+        <label style="display:flex;align-items:center;gap:.3rem;font-size:.75rem;cursor:pointer"><input type="checkbox" id="ns-bg"> BG Checks</label>
+        <label style="display:flex;align-items:center;gap:.3rem;font-size:.75rem;cursor:pointer"><input type="checkbox" id="ns-refs"> References</label>
+      </div>
+      <button onclick="addStaffUser()" style="padding:.38rem .9rem;background:var(--teal);color:#fff;border:none;border-radius:8px;font-family:inherit;font-size:.8rem;font-weight:600;cursor:pointer">+ Add Staff Member</button>
     </div>
     <div class="sect-lbl" style="margin-top:.75rem;color:var(--red)">Admin Passcode</div>
     <p style="font-size:.78rem;color:var(--gray);margin:.4rem 0 .75rem">This passcode is required to open Settings. Keep it separate from the staff login password so VAs can't access this page.</p>
@@ -1282,6 +1313,7 @@ async function showApp(){
   document.getElementById('app').style.display='block';
   document.getElementById('hdr-date').textContent = new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
   await loadFromSupabase();
+  migrateOldRecipients();
   renderAll();
 }
 
@@ -3602,9 +3634,7 @@ function submitAdminPwd(){
 }
 document.getElementById('admin-pwd-input')?.addEventListener('keydown',e=>{if(e.key==='Enter')submitAdminPwd();});
 function _openSettingsModal(){
-  renderRecipients();
-  document.getElementById('new-recip-name').value='';
-  document.getElementById('new-recip-email').value='';
+  renderStaffUsers();
   document.getElementById('settings-ac-site').value=appSettings.axiscare_site||'';
   document.getElementById('settings-gdrive-client-id').value=appSettings.google_client_id||'';
   document.getElementById('settings-gdrive-folder-id').value=appSettings.google_drive_folder_id||'';
@@ -3614,36 +3644,97 @@ function _openSettingsModal(){
   document.getElementById('settings-admin-confirm').value='';
   document.getElementById('settings-modal').classList.add('open');
 }
-function renderRecipients(){
-  const list = document.getElementById('recipients-list');
-  const recips = appSettings.alert_recipients || [];
-  if(!recips.length){
-    list.innerHTML = '<div style="font-size:.8rem;color:var(--gray);padding:.5rem 0">No recipients yet.</div>';
+const NOTIF_TYPES = [
+  { key:'evv',    label:'EVV',    color:'#e8f4fd',  tc:'var(--navy)',  title:'EVV Monday 8am reminder' },
+  { key:'comp',   label:'Comp',   color:'#f0fffe',  tc:'var(--teal)',  title:'Compliance alerts (Mon/Fri)', border:'1px solid var(--teal)' },
+  { key:'orient', label:'Orient', color:'#fff7e6',  tc:'#b45309',      title:'Orientation reminders' },
+  { key:'bg',     label:'BG',     color:'#f3f0ff',  tc:'#6d28d9',      title:'Background check alerts' },
+  { key:'refs',   label:'Refs',   color:'#fdf2f8',  tc:'#be185d',      title:'Reference check completions' },
+];
+
+function renderStaffUsers(){
+  const list = document.getElementById('staff-users-list');
+  if(!list) return;
+  const users = appSettings.staff_users || [];
+  if(!users.length){
+    list.innerHTML = '<div style="font-size:.8rem;color:var(--gray);padding:.5rem 0;font-style:italic">No staff added yet.</div>';
     return;
   }
-  list.innerHTML = recips.map((r,i)=>`
-    <div style="display:flex;align-items:center;gap:.5rem;padding:.5rem .75rem;background:var(--slate-bg);border-radius:8px">
-      <div style="flex:1">
-        <div style="font-size:.83rem;font-weight:600;color:var(--navy)">${r.name}</div>
-        <div style="font-size:.75rem;color:var(--gray)">${r.email}</div>
+  list.innerHTML = users.map((u,i)=>{
+    const notifBadges = NOTIF_TYPES.map(n=>{
+      const on = u.notifications?.[n.key];
+      return `<button onclick="toggleStaffNotif(${i},'${n.key}')" title="${n.title}"
+        style="font-size:.65rem;font-weight:700;padding:.18rem .42rem;border-radius:4px;cursor:pointer;border:1.5px solid ${on?(n.border||'transparent'):'var(--border)'};
+        background:${on?n.color:'#f8fafc'};color:${on?n.tc:'#bbb'};transition:.12s">${n.label}</button>`;
+    }).join('');
+    return `<div style="display:grid;grid-template-columns:1fr 1.5fr auto auto;gap:.5rem;align-items:center;padding:.6rem .75rem;background:var(--slate-bg);border-radius:8px;border:1.5px solid var(--border)">
+      <div>
+        <div style="font-size:.83rem;font-weight:600;color:var(--navy)">${u.name}</div>
+        <div style="font-size:.7rem;color:var(--gray)">${u.role||''}</div>
       </div>
-      <button onclick="removeRecipient(${i})" style="background:none;border:none;cursor:pointer;font-size:1rem;color:var(--gray);padding:.2rem .4rem" title="Remove">✕</button>
-    </div>`).join('');
+      <div style="font-size:.75rem;color:var(--gray);word-break:break-all">${u.email}</div>
+      <div style="display:flex;gap:.25rem;flex-wrap:wrap">${notifBadges}</div>
+      <button onclick="removeStaffUser(${i})" style="background:none;border:none;cursor:pointer;font-size:1rem;color:var(--gray);padding:.2rem .4rem;flex-shrink:0" title="Remove">✕</button>
+    </div>`;
+  }).join('');
 }
-function addRecipient(){
-  const name = document.getElementById('new-recip-name').value.trim();
-  const email = document.getElementById('new-recip-email').value.trim();
-  if(!name||!email){ alert('Both name and email are required.'); return; }
+
+function toggleStaffNotif(idx, key){
+  if(!appSettings.staff_users[idx].notifications) appSettings.staff_users[idx].notifications = {};
+  appSettings.staff_users[idx].notifications[key] = !appSettings.staff_users[idx].notifications[key];
+  syncAlertRecipients();
+  renderStaffUsers();
+}
+
+function addStaffUser(){
+  const name  = document.getElementById('new-staff-name').value.trim();
+  const email = document.getElementById('new-staff-email').value.trim();
+  const role  = document.getElementById('new-staff-role').value;
+  if(!name||!email){ alert('Name and email are required.'); return; }
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ alert('Please enter a valid email address.'); return; }
-  if(!appSettings.alert_recipients) appSettings.alert_recipients = [];
-  appSettings.alert_recipients.push({name, email});
-  document.getElementById('new-recip-name').value='';
-  document.getElementById('new-recip-email').value='';
-  renderRecipients();
+  if(!appSettings.staff_users) appSettings.staff_users = [];
+  const notifications = {};
+  NOTIF_TYPES.forEach(n=>{ notifications[n.key] = document.getElementById('ns-'+n.key)?.checked||false; });
+  appSettings.staff_users.push({ id: Date.now(), name, email, role, notifications });
+  document.getElementById('new-staff-name').value='';
+  document.getElementById('new-staff-email').value='';
+  document.getElementById('new-staff-role').value='';
+  NOTIF_TYPES.forEach(n=>{ const el=document.getElementById('ns-'+n.key); if(el) el.checked = (n.key==='evv'||n.key==='comp'); });
+  syncAlertRecipients();
+  renderStaffUsers();
 }
-function removeRecipient(idx){
-  appSettings.alert_recipients.splice(idx,1);
-  renderRecipients();
+
+function removeStaffUser(idx){
+  if(!confirm(`Remove ${appSettings.staff_users[idx].name}?`)) return;
+  appSettings.staff_users.splice(idx,1);
+  syncAlertRecipients();
+  renderStaffUsers();
+}
+
+// Keep alert_recipients in sync so existing compliance email logic still works
+function syncAlertRecipients(){
+  appSettings.alert_recipients = (appSettings.staff_users||[])
+    .filter(u=>u.notifications?.comp)
+    .map(u=>({name:u.name, email:u.email}));
+}
+
+// Helper: get emails for a given notification type
+function getNotifEmails(key){
+  return (appSettings.staff_users||[])
+    .filter(u=>u.notifications?.[key])
+    .map(u=>u.email)
+    .filter(Boolean);
+}
+
+// Migrate old alert_recipients into staff_users on first load
+function migrateOldRecipients(){
+  if(appSettings.staff_users) return; // already migrated
+  const old = appSettings.alert_recipients || [];
+  appSettings.staff_users = old.map(r=>({
+    id: Date.now()+Math.random(),
+    name: r.name, email: r.email, role: '',
+    notifications: { evv:true, comp:true, orient:false, bg:false, refs:false }
+  }));
 }
 function saveSettings(){
   appSettings.axiscare_site = document.getElementById('settings-ac-site').value.trim();
