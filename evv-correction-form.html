@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EVV Correction Form — Caring Companions</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root {
+  --navy:#0E3860; --yellow:#FFC671; --teal:#54BDB8;
+  --bg:#F6F9FD; --white:#fff; --gray:#6B7280; --border:#E2E8F0;
+  --green:#22C55E; --green-bg:#dcfce7; --green-text:#15803d;
+  --amber-bg:#fef3c7; --amber-text:#92400e;
+  --red:#EF4444; --red-bg:#fee2e2; --red-text:#b91c1c;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min-height:100vh}
+
+/* Header */
+.form-header{background:var(--navy);padding:1.1rem 1.5rem;display:flex;align-items:center;gap:1rem}
+.form-header img{height:42px;filter:brightness(0) invert(1)}
+.form-header-text h1{color:#fff;font-size:1rem;font-weight:700}
+.form-header-text p{color:rgba(255,255,255,.6);font-size:.75rem;margin-top:.1rem}
+
+/* Deadline banner */
+.deadline-bar{background:var(--yellow);padding:.55rem 1.5rem;font-size:.8rem;font-weight:700;color:var(--navy);text-align:center}
+
+/* Form wrapper */
+.form-wrap{max-width:700px;margin:1.5rem auto;padding:0 1rem 3rem}
+
+/* Cards / sections */
+.section{background:var(--white);border-radius:12px;box-shadow:0 2px 12px rgba(14,56,96,.07);padding:1.25rem 1.4rem;margin-bottom:1.1rem}
+.section-title{font-size:.88rem;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:.06em;margin-bottom:.9rem;padding-bottom:.55rem;border-bottom:2px solid var(--yellow);display:flex;align-items:center;gap:.4rem}
+
+/* Grid */
+.fg{display:grid;grid-template-columns:1fr 1fr;gap:.7rem}
+.fg .grp.full{grid-column:1/-1}
+@media(max-width:520px){.fg{grid-template-columns:1fr}}
+.grp{display:flex;flex-direction:column;gap:.2rem}
+.grp label{font-size:.72rem;font-weight:600;color:var(--gray);text-transform:uppercase;letter-spacing:.03em}
+.grp input,.grp select,.grp textarea{padding:.5rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.85rem;color:var(--navy);background:var(--white)}
+.grp input:focus,.grp select:focus,.grp textarea:focus{outline:none;border-color:var(--teal)}
+.req{color:var(--red)}
+
+/* Task checklist */
+.task-checklist{display:flex;flex-direction:column;gap:.4rem;margin-top:.4rem}
+.task-item{display:flex;align-items:flex-start;gap:.6rem;font-size:.84rem;cursor:pointer;padding:.4rem .6rem;border-radius:6px;border:1.5px solid var(--border);background:var(--bg);transition:.12s}
+.task-item:hover{border-color:var(--navy);background:#eef3f9}
+.task-item input[type=checkbox]{accent-color:var(--navy);margin-top:.15rem;flex-shrink:0}
+.task-item:has(input:checked){border-color:var(--navy);background:#dce8f5}
+
+/* Reason checkboxes */
+.reason-list{display:flex;flex-direction:column;gap:.5rem}
+.reason-item{display:flex;align-items:flex-start;gap:.6rem;font-size:.84rem;cursor:pointer;padding:.4rem .6rem;border-radius:6px;border:1.5px solid var(--border);background:var(--bg);transition:.12s}
+.reason-item:hover{border-color:var(--teal);background:#f0fdfc}
+.reason-item input[type=radio]{accent-color:var(--teal);margin-top:.15rem;flex-shrink:0}
+.reason-item.selected{border-color:var(--teal);background:#e6f8f7}
+
+/* Signature canvas */
+.sig-wrap{border:1.5px solid var(--border);border-radius:8px;overflow:hidden;position:relative;background:#fff}
+.sig-wrap canvas{display:block;width:100%;touch-action:none}
+.sig-toolbar{display:flex;justify-content:space-between;align-items:center;padding:.35rem .7rem;background:var(--bg);border-top:1px solid var(--border)}
+.sig-toolbar span{font-size:.72rem;color:var(--gray)}
+.sig-clear-btn{background:none;border:1px solid var(--border);border-radius:5px;padding:.2rem .55rem;font-size:.72rem;font-family:inherit;cursor:pointer;color:var(--navy)}
+.sig-clear-btn:hover{border-color:var(--red);color:var(--red)}
+.sig-required-note{font-size:.72rem;color:var(--gray);margin-top:.3rem}
+
+/* Notice box */
+.notice{background:var(--amber-bg);border:1.5px solid #fcd34d;border-radius:8px;padding:.75rem 1rem;font-size:.8rem;color:var(--amber-text);line-height:1.6}
+
+/* Submit button */
+.submit-btn{width:100%;padding:.85rem;background:var(--navy);color:#fff;border:none;border-radius:10px;font-family:inherit;font-size:1rem;font-weight:700;cursor:pointer;margin-top:.5rem;transition:.15s}
+.submit-btn:hover{background:#1a5e9b}
+.submit-btn:disabled{opacity:.6;cursor:not-allowed}
+
+/* Error/success states */
+.field-error{font-size:.72rem;color:var(--red);margin-top:.2rem;display:none}
+.field-error.show{display:block}
+.input-error{border-color:var(--red)!important}
+
+/* Success screen */
+#success-screen{display:none;max-width:500px;margin:4rem auto;padding:1rem;text-align:center}
+.success-icon{font-size:3.5rem;margin-bottom:1rem}
+.success-card{background:var(--white);border-radius:16px;padding:2rem;box-shadow:0 8px 32px rgba(14,56,96,.12)}
+.success-card h2{font-size:1.3rem;font-weight:700;color:var(--green-text);margin-bottom:.5rem}
+.success-card p{font-size:.9rem;color:var(--gray);line-height:1.7;margin-bottom:.75rem}
+.success-card .ref{font-size:.78rem;background:var(--bg);border-radius:6px;padding:.4rem .7rem;color:var(--navy);font-family:monospace;display:inline-block;margin-top:.25rem}
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="form-header">
+  <img src="https://images.leadconnectorhq.com/image/f_webp/q_80/r_1200/u_https://assets.cdn.filesafe.space/Recp0AhyMh8lrtKJ9kaj/media/691b9707bb3d037e0ad689bf.png" alt="Caring Companions">
+  <div class="form-header-text">
+    <h1>EVV Correction Form</h1>
+    <p>Caring Companions In-Home Senior Care</p>
+  </div>
+</div>
+
+<!-- Deadline banner -->
+<div class="deadline-bar">⏰ Corrections must be submitted by Saturday 11:59 PM of the pay period in which the visit occurred.</div>
+
+<!-- Form -->
+<div class="form-wrap" id="form-screen">
+
+  <!-- Important notice -->
+  <div class="notice" style="margin-bottom:1.1rem">
+    ⚠️ <strong>Before submitting this form:</strong> Make sure you have attempted to clock in/out correctly in the AxisCare app. This form is for legitimate errors only — it does not guarantee approval. <strong>Do not exaggerate or falsify times.</strong> Falsifying EVV records is fraud and may result in termination and legal consequences.
+  </div>
+
+  <!-- Section 1: Who are you -->
+  <div class="section">
+    <div class="section-title">👤 1. Attendant &amp; Client</div>
+    <div class="fg">
+      <div class="grp">
+        <label>Your Name (Attendant) <span class="req">*</span></label>
+        <input type="text" id="f-attendant" placeholder="First Last" autocomplete="name">
+        <div class="field-error" id="err-attendant">Required</div>
+      </div>
+      <div class="grp">
+        <label>Client's Name <span class="req">*</span></label>
+        <input type="text" id="f-consumer" placeholder="First Last">
+        <div class="field-error" id="err-consumer">Required</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Section 2: Visit info -->
+  <div class="section">
+    <div class="section-title">📅 2. Visit Details</div>
+    <div class="fg">
+      <div class="grp">
+        <label>Date of Visit <span class="req">*</span></label>
+        <input type="date" id="f-visitdate">
+        <div class="field-error" id="err-visitdate">Required</div>
+      </div>
+      <div class="grp">
+        <label>Date You Are Submitting This</label>
+        <input type="date" id="f-submitdate">
+      </div>
+    </div>
+    <div class="fg" style="margin-top:.75rem">
+      <div class="grp">
+        <label>Corrected Clock-In <span class="req">*</span></label>
+        <input type="time" id="f-new-in">
+        <div class="field-error" id="err-new-in">Required — enter the correct time</div>
+      </div>
+      <div class="grp">
+        <label>Corrected Clock-Out <span class="req">*</span></label>
+        <input type="time" id="f-new-out">
+        <div class="field-error" id="err-new-out">Required — enter the correct time</div>
+      </div>
+    </div><!-- end .fg clock times -->
+    <div class="grp full" style="margin-top:.75rem">
+      <label>Tasks Performed During This Visit (check all that apply)</label>
+      <div class="task-checklist">
+        <label class="task-item"><input type="checkbox" name="tasks" value="Dietary — Meal preparation, cleanup, and/or eating assistance"> Dietary — Meal preparation, cleanup, and/or eating assistance</label>
+        <label class="task-item"><input type="checkbox" name="tasks" value="Dressing/Grooming — Dressing, undressing, hair, nails, oral hygiene, shaving"> Dressing/Grooming — Dressing, undressing, hair, nails, oral hygiene, shaving</label>
+        <label class="task-item"><input type="checkbox" name="tasks" value="Bathing — Bathing and/or shampooing hair"> Bathing — Bathing and/or shampooing hair</label>
+        <label class="task-item"><input type="checkbox" name="tasks" value="Toileting/Continence — Bathroom assistance and/or changing bed linens"> Toileting/Continence — Bathroom assistance and/or changing bed linens</label>
+        <label class="task-item"><input type="checkbox" name="tasks" value="Mobility/Transfer — Transfer and ambulation assistance"> Mobility/Transfer — Transfer and ambulation assistance</label>
+        <label class="task-item"><input type="checkbox" name="tasks" value="Self-Administration of Medications — Assistance with medications or topical ointments"> Self-Administration of Medications — Assistance with medications or topical ointments</label>
+        <label class="task-item"><input type="checkbox" name="tasks" value="Medically Related Household Tasks — Homemaker/household services"> Medically Related Household Tasks — Homemaker/household services</label>
+      </div>
+    </div>
+  </div><!-- end section 2 -->
+
+  <!-- Section 3: Reason -->
+  <div class="section">
+    <div class="section-title">❓ 3. Reason for Correction</div>
+    <p style="font-size:.8rem;color:var(--gray);margin-bottom:.75rem">Select the reason that best describes what happened. <span class="req">*</span></p>
+    <div class="reason-list" id="reason-list">
+      <label class="reason-item"><input type="radio" name="reason" value="Phone was dead / no battery"> Phone was dead or had no battery at clock-in or clock-out</label>
+      <label class="reason-item"><input type="radio" name="reason" value="App crashed or technical error"> AxisCare app crashed or had a technical error (screenshot is helpful)</label>
+      <label class="reason-item"><input type="radio" name="reason" value="No cell service at client location"> No cell service at the client's location</label>
+      <label class="reason-item"><input type="radio" name="reason" value="Forgot to clock in or out"> I forgot to clock in or out (this should be rare — not a recurring reason)</label>
+      <label class="reason-item"><input type="radio" name="reason" value="AxisCare app update caused disruption"> A AxisCare app update caused a disruption</label>
+      <label class="reason-item"><input type="radio" name="reason" value="Client home phone unavailable"> Client's home phone was not available for landline EVV</label>
+      <label class="reason-item"><input type="radio" name="reason" value="Other"> Other (explain below)</label>
+    </div>
+    <div class="field-error" id="err-reason" style="margin-top:.4rem">Please select a reason</div>
+    <div class="grp full" id="reason-other-grp" style="display:none;margin-top:.75rem">
+      <label>Explain the reason <span class="req">*</span></label>
+      <input type="text" id="f-reason-other" placeholder="Describe what happened…">
+      <div class="field-error" id="err-reason-other">Please describe what happened</div>
+    </div>
+  </div>
+
+  <!-- Section 4: What happened -->
+  <div class="section">
+    <div class="section-title">📝 4. What Happened</div>
+    <div class="grp full">
+      <label>Describe in your own words what happened <span class="req">*</span></label>
+      <textarea id="f-notes" rows="4" placeholder="Example: My phone died at the end of the shift before I could clock out. I was working from 8am to 2pm but the system only shows me clocking in — no clock-out recorded."></textarea>
+      <div class="field-error" id="err-notes">Please describe what happened</div>
+    </div>
+  </div>
+
+  <!-- Section 5: Attendant signature -->
+  <div class="section">
+    <div class="section-title">✍️ 5. Attendant Signature</div>
+    <p style="font-size:.8rem;color:var(--gray);margin-bottom:.75rem">
+      By signing below, I certify that the information on this form is true and accurate to the best of my knowledge. I understand that falsifying EVV records is a serious violation that may result in termination and legal consequences.
+    </p>
+    <div class="sig-wrap">
+      <canvas id="sig-attendant" height="140"></canvas>
+      <div class="sig-toolbar">
+        <span>Sign with your finger or mouse</span>
+        <button class="sig-clear-btn" type="button" onclick="clearSig('sig-attendant')">Clear</button>
+      </div>
+    </div>
+    <div class="field-error" id="err-sig" style="margin-top:.4rem">Signature required</div>
+    <p class="sig-required-note">This signature confirms the times and reason above are accurate.</p>
+  </div>
+
+  <!-- Section 6: Client acknowledgment -->
+  <div class="section">
+    <div class="section-title">👤 6. Client Acknowledgment</div>
+    <p style="font-size:.8rem;color:var(--gray);margin-bottom:.75rem">
+      If the client is present, their signature confirms they were receiving care during the corrected timeframe.
+    </p>
+    <div class="sig-wrap">
+      <canvas id="sig-consumer" height="120"></canvas>
+      <div class="sig-toolbar">
+        <span>Client signs here</span>
+        <button class="sig-clear-btn" type="button" onclick="clearSig('sig-consumer')">Clear</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Submit -->
+  <button class="submit-btn" id="submit-btn" onclick="submitForm()">Submit EVV Correction Form</button>
+  <p style="text-align:center;font-size:.75rem;color:var(--gray);margin-top:.75rem">
+    Questions? Contact us at <a href="mailto:samantha@mo-care.com" style="color:var(--teal)">samantha@mo-care.com</a> or call <a href="tel:4172348494" style="color:var(--teal)">(417) 234-8494</a>
+  </p>
+
+</div><!-- end form-wrap -->
+
+<!-- Success screen -->
+<div id="success-screen">
+  <div class="success-card">
+    <div class="success-icon">✅</div>
+    <h2>Correction Submitted!</h2>
+    <p>Your EVV correction form has been received. Our admin team will review it and update AxisCare if approved. You do not need to do anything else.</p>
+    <p><strong>Keep in mind:</strong> corrections must be submitted before <strong>Saturday 11:59 PM</strong> to be processed for that week's payroll.</p>
+    <p style="font-size:.78rem;color:var(--gray);margin-top:.5rem">Confirmation ID: <span class="ref" id="confirm-id"></span></p>
+    <p style="font-size:.78rem;color:var(--gray);margin-top:.75rem">If you have questions, contact <a href="mailto:samantha@mo-care.com" style="color:var(--teal)">samantha@mo-care.com</a></p>
+  </div>
+</div>
+
+<script>
+// ── Supabase ───────────────────────────────────────────────────────────
+const SB_URL = 'https://zngsgedlsxinbygwmxwn.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpuZ3NnZWRsc3hpbmJ5Z3dteHduIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI1NDIzNDQsImV4cCI6MjA5ODExODM0NH0.L_31_UKdccyRH9n7p1GaBlZTqcJipB008H-GIvxwLxM';
+const sb = supabase.createClient(SB_URL, SB_KEY);
+
+// ── Signature canvases ────────────────────────────────────────────────
+const sigState = {};
+
+function initSig(id) {
+  const canvas = document.getElementById(id);
+  const ctx = canvas.getContext('2d');
+  // Size canvas to its display size
+  function resize() {
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * window.devicePixelRatio;
+    canvas.height = canvas.height || 140 * window.devicePixelRatio;
+    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+    ctx.strokeStyle = '#1a2f4a';
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+  }
+  resize();
+  sigState[id] = { drawing: false, hasContent: false, ctx, canvas };
+
+  function getPos(e) {
+    const r = canvas.getBoundingClientRect();
+    const src = e.touches ? e.touches[0] : e;
+    return { x: src.clientX - r.left, y: src.clientY - r.top };
+  }
+
+  canvas.addEventListener('mousedown', e => {
+    const s = sigState[id]; s.drawing = true;
+    const p = getPos(e); s.ctx.beginPath(); s.ctx.moveTo(p.x, p.y);
+  });
+  canvas.addEventListener('mousemove', e => {
+    if (!sigState[id].drawing) return;
+    const p = getPos(e); sigState[id].ctx.lineTo(p.x, p.y); sigState[id].ctx.stroke();
+    sigState[id].hasContent = true;
+  });
+  canvas.addEventListener('mouseup', () => { sigState[id].drawing = false; });
+  canvas.addEventListener('mouseleave', () => { sigState[id].drawing = false; });
+
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const s = sigState[id]; s.drawing = true;
+    const p = getPos(e); s.ctx.beginPath(); s.ctx.moveTo(p.x, p.y);
+  }, { passive: false });
+  canvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    if (!sigState[id].drawing) return;
+    const p = getPos(e); sigState[id].ctx.lineTo(p.x, p.y); sigState[id].ctx.stroke();
+    sigState[id].hasContent = true;
+  }, { passive: false });
+  canvas.addEventListener('touchend', () => { sigState[id].drawing = false; });
+}
+
+function clearSig(id) {
+  const s = sigState[id];
+  s.ctx.clearRect(0, 0, s.canvas.width, s.canvas.height);
+  s.hasContent = false;
+}
+
+function getSigDataURL(id) {
+  const s = sigState[id];
+  if (!s.hasContent) return null;
+  return s.canvas.toDataURL('image/png');
+}
+
+// ── Reason radio style ───────────────────────────────────────────────
+document.querySelectorAll('.reason-item input[type=radio]').forEach(r => {
+  r.addEventListener('change', () => {
+    document.querySelectorAll('.reason-item').forEach(el => el.classList.remove('selected'));
+    r.closest('.reason-item').classList.add('selected');
+    document.getElementById('reason-other-grp').style.display = r.value === 'Other' ? 'flex' : 'none';
+    document.getElementById('err-reason').classList.remove('show');
+  });
+});
+
+// ── Pre-fill today's date ─────────────────────────────────────────────
+document.getElementById('f-submitdate').value = new Date().toISOString().split('T')[0];
+
+// ── Validation ───────────────────────────────────────────────────────
+function setErr(id, show) {
+  const el = document.getElementById('err-' + id);
+  const input = document.getElementById('f-' + id);
+  if (el) el.classList.toggle('show', show);
+  if (input) input.classList.toggle('input-error', show);
+}
+
+function validate() {
+  let ok = true;
+
+  const attendant = document.getElementById('f-attendant').value.trim();
+  setErr('attendant', !attendant); if (!attendant) ok = false;
+
+  const consumer = document.getElementById('f-consumer').value.trim();
+  setErr('consumer', !consumer); if (!consumer) ok = false;
+
+  const visitdate = document.getElementById('f-visitdate').value;
+  setErr('visitdate', !visitdate); if (!visitdate) ok = false;
+
+  const newIn = document.getElementById('f-new-in').value;
+  setErr('new-in', !newIn); if (!newIn) ok = false;
+
+  const newOut = document.getElementById('f-new-out').value;
+  setErr('new-out', !newOut); if (!newOut) ok = false;
+
+  const reasonEl = document.querySelector('input[name=reason]:checked');
+  const noReason = !reasonEl;
+  document.getElementById('err-reason').classList.toggle('show', noReason);
+  if (noReason) ok = false;
+
+  if (reasonEl?.value === 'Other') {
+    const other = document.getElementById('f-reason-other').value.trim();
+    document.getElementById('err-reason-other').classList.toggle('show', !other);
+    document.getElementById('f-reason-other').classList.toggle('input-error', !other);
+    if (!other) ok = false;
+  }
+
+  const notes = document.getElementById('f-notes').value.trim();
+  setErr('notes', !notes); if (!notes) ok = false;
+
+  const hasSig = sigState['sig-attendant']?.hasContent;
+  document.getElementById('err-sig').classList.toggle('show', !hasSig);
+  if (!hasSig) ok = false;
+
+  return ok;
+}
+
+// ── Submit ────────────────────────────────────────────────────────────
+async function submitForm() {
+  if (!validate()) {
+    document.querySelector('.field-error.show')?.scrollIntoView({ behavior:'smooth', block:'center' });
+    return;
+  }
+
+  const btn = document.getElementById('submit-btn');
+  btn.disabled = true;
+  btn.textContent = 'Submitting…';
+
+  const reasonEl = document.querySelector('input[name=reason]:checked');
+  const reason = reasonEl?.value === 'Other'
+    ? document.getElementById('f-reason-other').value.trim()
+    : reasonEl?.value || '';
+
+  const checkedTasks = [...document.querySelectorAll('input[name=tasks]:checked')].map(el => el.value);
+  const tasks = checkedTasks.join('; ') || null;
+
+  const payload = {
+    attendant:    document.getElementById('f-attendant').value.trim(),
+    consumer:     document.getElementById('f-consumer').value.trim(),
+    visitdate:    document.getElementById('f-visitdate').value,
+    submitdate:   document.getElementById('f-submitdate').value || null,
+    orig_in:      document.getElementById('f-orig-in').value || null,
+    orig_out:     document.getElementById('f-orig-out').value || null,
+    new_in:       document.getElementById('f-new-in').value,
+    new_out:      document.getElementById('f-new-out').value,
+    reason,
+    tasks,
+    notes:        document.getElementById('f-notes').value.trim(),
+    sig_attendant: getSigDataURL('sig-attendant'),
+    sig_consumer:  getSigDataURL('sig-consumer'),
+    processed:    false,
+    submitted_at: new Date().toISOString()
+  };
+
+  try {
+    const { data, error } = await sb.from('evv_submissions').insert([payload]).select('id');
+    if (error) throw error;
+
+    const confirmId = data?.[0]?.id?.substring(0,8).toUpperCase() || 'N/A';
+    document.getElementById('confirm-id').textContent = confirmId;
+    document.getElementById('form-screen').style.display = 'none';
+    document.getElementById('success-screen').style.display = 'block';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } catch(err) {
+    console.error(err);
+    btn.disabled = false;
+    btn.textContent = 'Submit EVV Correction Form';
+    alert('Submission failed. Please check your connection and try again. If the problem continues, call (417) 234-8494.\n\nError: ' + (err.message || err));
+  }
+}
+
+// ── Init ─────────────────────────────────────────────────────────────
+window.addEventListener('load', () => {
+  initSig('sig-attendant');
+  initSig('sig-consumer');
+});
+</script>
+</body>
+</html>
