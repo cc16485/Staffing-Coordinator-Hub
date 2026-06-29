@@ -289,7 +289,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
             <th>EDL Check</th>
             <th>FCSR BG</th>
             <th>Fingerprint BG</th>
-            <th>Status</th><th>Actions</th>
+            <th>Status</th><th style="min-width:120px">Actions</th>
           </tr></thead>
           <tbody id="ob-tbody"></tbody>
         </table>
@@ -422,9 +422,10 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
         <div class="or-sessions-panel">
           <div class="or-sessions-hdr">
             <h3 id="or-list-title">All Upcoming Sessions</h3>
-            <div style="display:flex;align-items:center;gap:.5rem">
+            <div style="display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
               <span id="or-session-count" style="font-size:.75rem;color:var(--gray)"></span>
               <button class="add-btn" style="padding:.3rem .7rem;font-size:.75rem" onclick="openOrientModal()">+ Add Session</button>
+              <button class="add-btn" style="padding:.3rem .7rem;font-size:.75rem;background:var(--teal)" onclick="gcalSyncAll()" title="Create/update all upcoming sessions in Google Calendar">📅 Sync to GCal</button>
             </div>
           </div>
           <div class="past-sess-toggle" style="border-bottom:1px solid var(--border);border-radius:0;padding:.5rem .85rem">
@@ -781,6 +782,30 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
         <label>Video Link (Zoom / Google Meet)</label>
         <input type="text" id="or-video-link" placeholder="https://zoom.us/j/...">
       </div>
+      <div class="grp full" style="background:#f0fffe;border:1.5px solid var(--teal);border-radius:10px;padding:.85rem 1rem">
+        <div style="font-size:.7rem;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.65rem">👤 Who is running this orientation?</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.6rem">
+          <div class="grp">
+            <label>Facilitator Name</label>
+            <input type="text" id="or-facilitator" placeholder="e.g. Samantha, Augusta…" list="facilitator-list" autocomplete="off">
+            <datalist id="facilitator-list">
+              <option value="Samantha">
+              <option value="Augusta">
+            </datalist>
+          </div>
+          <div class="grp">
+            <label>Role</label>
+            <select id="or-facilitator-role">
+              <option value="">— Select role —</option>
+              <option value="Care Coordinator">Care Coordinator</option>
+              <option value="Lead Caregiver">Lead Caregiver</option>
+              <option value="Staffing Coordinator">Staffing Coordinator</option>
+              <option value="Owner">Owner</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+        </div>
+      </div>
       <div class="grp full"><label>Notes (optional)</label><input type="text" id="or-notes-field" placeholder="e.g. Bring ID, park in rear lot"></div>
 
       <!-- Recurrence -->
@@ -1029,7 +1054,12 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
       <input type="text" id="settings-gdrive-folder-id" placeholder="Paste folder ID from Drive URL" style="flex:1;padding:.45rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.78rem">
     </div>
     <p style="font-size:.72rem;color:var(--gray);margin-bottom:.35rem">The folder ID is the long string at the end of your Google Drive folder URL:<br><span style="font-family:monospace">drive.google.com/drive/folders/<strong>1vaeRb-DVuVX_LzBqjMMoZTvZUtxm0pNp</strong></span></p>
-    <p style="font-size:.72rem;color:var(--gray);margin-bottom:1rem">The hub will create a subfolder per employee, then OIG / EDL / FCSR / Training / etc. folders inside each one automatically.</p>
+    <p style="font-size:.72rem;color:var(--gray);margin-bottom:.35rem">The hub will create a subfolder per employee, then OIG / EDL / FCSR / Training / etc. folders inside each one automatically.</p>
+    <div style="display:flex;gap:.5rem;margin-bottom:.5rem;align-items:center">
+      <label style="font-size:.8rem;font-weight:500;white-space:nowrap;color:var(--navy)">Orientation Calendar ID:</label>
+      <input type="text" id="settings-gcal-id" placeholder="e.g. samantha@mo-care.com or primary" style="flex:1;padding:.45rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.78rem">
+    </div>
+    <p style="font-size:.72rem;color:var(--gray);margin-bottom:1rem">Enter <strong>primary</strong> to use your main calendar, or paste a specific calendar ID from Google Calendar → Settings → your calendar → Calendar ID.</p>
     <div class="sect-lbl" style="margin-top:.75rem">AxisCare Integration</div>
     <p style="font-size:.78rem;color:var(--gray);margin:.4rem 0 .75rem">Your AxisCare site number is used in the AxisCare Sync Zap to post status notes to caregiver profiles. Find it in your AxisCare URL: <span style="font-family:monospace;font-size:.78rem">https://<strong>XXXXX</strong>.axiscare.com</span></p>
     <div style="display:flex;gap:.5rem;margin-bottom:1rem;align-items:center">
@@ -1503,7 +1533,7 @@ function gdriveInit(){
   if(!clientId || typeof google === 'undefined' || !google.accounts) return;
   gdriveTokenClient = google.accounts.oauth2.initTokenClient({
     client_id: clientId,
-    scope: 'https://www.googleapis.com/auth/drive.file',
+    scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/calendar',
     callback: async (resp) => {
       if(resp.error){ alert('Google sign-in failed: ' + resp.error); return; }
       gdriveAccessToken = resp.access_token;
@@ -1690,6 +1720,118 @@ window.addEventListener('load', () => {
   setTimeout(() => { if(appSettings.google_client_id) gdriveInit(); setupDriveButtons(); }, 500);
 });
 // Password changes handled via Supabase — use "Reset Password" in the header.
+
+// ── Google Calendar Sync ─────────────────────────────────────────────
+const ORIENT_DURATION_HOURS = 2;
+
+function gcalCalendarId(){
+  return (appSettings.gcal_calendar_id||'primary').trim();
+}
+
+async function gcalEnsureToken(){
+  // Reuse the same Drive/Calendar token client
+  if(!gdriveTokenClient) gdriveInit();
+  if(!gdriveAccessToken){
+    return new Promise((resolve, reject) => {
+      if(!gdriveTokenClient){ reject(new Error('Google not configured')); return; }
+      const orig = gdriveTokenClient.callback;
+      gdriveTokenClient.callback = (resp) => {
+        if(resp.error){ reject(new Error(resp.error)); }
+        else { gdriveAccessToken = resp.access_token; resolve(resp.access_token); }
+        gdriveTokenClient.callback = orig;
+      };
+      gdriveTokenClient.requestAccessToken({ prompt: '' });
+    });
+  }
+  return gdriveAccessToken;
+}
+
+function gcalBuildEvent(session){
+  const [h, m] = (session.time||'10:00').split(':').map(Number);
+  const start = new Date(`${session.date}T${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:00`);
+  const end = new Date(start.getTime() + ORIENT_DURATION_HOURS*60*60*1000);
+  const toLocal = d => d.toISOString().replace(/\.\d{3}Z$/, '');
+  const locParts = session.is_remote==='yes'
+    ? { location: session.video_link||'Remote — video call', conferenceUrl: session.video_link }
+    : { location: '1331 N Stewart Ave Ste B, Springfield, MO 65802' };
+  const facName = session.facilitator || '';
+  const facRole = session.facilitator_role || '';
+  const facFull = facName && facRole ? `${facName} (${facRole})` : facName || facRole || '';
+  const facilitatorNote = facFull ? `\nFacilitator: ${facFull}` : '';
+  const notesNote = session.notes ? `\nNotes: ${session.notes}` : '';
+  const attendeeCount = (session.bookings||[]).length;
+  return {
+    summary: `Caring Companions Orientation${facFull ? ` — ${facFull}` : ''}`,
+    description: `Agency orientation session (${attendeeCount}/${session.capacity||6} booked)${facilitatorNote}${notesNote}`,
+    location: locParts.location,
+    start: { dateTime: toLocal(start), timeZone: 'America/Chicago' },
+    end:   { dateTime: toLocal(end),   timeZone: 'America/Chicago' },
+  };
+}
+
+async function gcalCreateEvent(session){
+  if(!appSettings.google_client_id) return null;
+  try {
+    const token = await gcalEnsureToken();
+    const res = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(gcalCalendarId())}/events`,
+      { method:'POST', headers:{ Authorization:`Bearer ${token}`, 'Content-Type':'application/json' },
+        body: JSON.stringify(gcalBuildEvent(session)) }
+    );
+    if(!res.ok){ console.warn('gcal create failed', await res.text()); return null; }
+    const data = await res.json();
+    return data.id;
+  } catch(e){ console.warn('gcal create error', e); return null; }
+}
+
+async function gcalUpdateEvent(session){
+  if(!appSettings.google_client_id || !session.gcal_event_id) return;
+  try {
+    const token = await gcalEnsureToken();
+    const res = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(gcalCalendarId())}/events/${session.gcal_event_id}`,
+      { method:'PUT', headers:{ Authorization:`Bearer ${token}`, 'Content-Type':'application/json' },
+        body: JSON.stringify(gcalBuildEvent(session)) }
+    );
+    if(!res.ok){ console.warn('gcal update failed', await res.text()); }
+  } catch(e){ console.warn('gcal update error', e); }
+}
+
+async function gcalDeleteEvent(session){
+  if(!appSettings.google_client_id || !session.gcal_event_id) return;
+  try {
+    const token = await gcalEnsureToken();
+    await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(gcalCalendarId())}/events/${session.gcal_event_id}`,
+      { method:'DELETE', headers:{ Authorization:`Bearer ${token}` } }
+    );
+  } catch(e){ console.warn('gcal delete error', e); }
+}
+
+async function gcalSyncAll(){
+  if(!appSettings.google_client_id){
+    alert('Set up your Google Client ID in Settings → Google Drive/Calendar first.');
+    return;
+  }
+  const now = new Date(); now.setHours(0,0,0,0);
+  const upcoming = orientSessions.filter(s=>new Date(s.date+'T00:00:00')>=now);
+  if(!upcoming.length){ alert('No upcoming sessions to sync.'); return; }
+  const btn = event.target; btn.disabled=true; btn.textContent='⏳ Syncing…';
+  let synced=0, failed=0;
+  for(const s of upcoming){
+    try {
+      if(s.gcal_event_id){ await gcalUpdateEvent(s); synced++; }
+      else {
+        const eid = await gcalCreateEvent(s);
+        if(eid){ s.gcal_event_id=eid; synced++; } else { failed++; }
+      }
+    } catch(e){ failed++; }
+  }
+  saveOrientStore();
+  renderOrientations();
+  btn.disabled=false; btn.textContent='📅 Sync to GCal';
+  alert(`Calendar sync complete: ${synced} synced${failed?`, ${failed} failed`:''}. Check Google Calendar at calendar.google.com.`);
+}
 
 // ── Tabs ──────────────────────────────────────────────────────────────
 function switchTab(name, btn){
@@ -2822,6 +2964,13 @@ function renderSessionsList(){
     const locLabel = s.is_remote==='yes'
       ? `<span class="badge b-blue" style="font-size:.65rem">🖥 Remote</span>${s.video_link?` <a href="${s.video_link}" target="_blank" style="font-size:.68rem;color:var(--teal)">Join link</a>`:''}`
       : `📍 ${ORIENT_ADDR}`;
+    const facilitatorLabel = s.facilitator
+      ? (s.facilitator_role ? `${s.facilitator} · <span style="font-weight:400;color:var(--teal)">${s.facilitator_role}</span>` : s.facilitator)
+      : null;
+    const facilitatorTag = facilitatorLabel
+      ? `<div style="font-size:.72rem;font-weight:600;color:var(--navy);margin-top:.3rem">👤 ${facilitatorLabel}</div>` : '';
+    const calTag = s.gcal_event_id
+      ? `<span title="Synced to Google Calendar" style="font-size:.65rem;color:#34A853;margin-left:.4rem">📅 GCal ✓</span>` : '';
     const chips = (s.bookings||[]).length
       ? (s.bookings||[]).map(b=>`<span class="booking-chip">${b.first} ${b.last}</span>`).join('')
       : '<span style="font-size:.7rem;color:var(--gray);font-style:italic">No bookings yet</span>';
@@ -2831,8 +2980,9 @@ function renderSessionsList(){
       <div class="sess-top">
         <div class="sess-date-block">
           <div class="sess-dow">${dow}</div>
-          <div class="sess-date">${date}${fullBadge}</div>
+          <div class="sess-date">${date}${fullBadge}${calTag}</div>
           <div class="sess-time">${fmtTime(s.time)} · 2 hours</div>
+          ${facilitatorTag}
           ${seriesBadge}
         </div>
         <div class="sess-actions">
@@ -2984,6 +3134,8 @@ function _doOpenOrientModal(id){
     document.getElementById('or-cap').value=s.capacity||'6';
     document.getElementById('or-remote').value=s.is_remote||'no';
     document.getElementById('or-video-link').value=s.video_link||'';
+    document.getElementById('or-facilitator').value=s.facilitator||'';
+    document.getElementById('or-facilitator-role').value=s.facilitator_role||'';
     document.getElementById('or-notes-field').value=s.notes||'';
     document.getElementById('or-link-grp').style.display=s.is_remote==='yes'?'block':'none';
   } else {
@@ -2992,6 +3144,8 @@ function _doOpenOrientModal(id){
     document.getElementById('or-cap').value='6';
     document.getElementById('or-remote').value='no';
     document.getElementById('or-video-link').value='';
+    document.getElementById('or-facilitator').value='';
+    document.getElementById('or-facilitator-role').value='';
     document.getElementById('or-notes-field').value='';
     document.getElementById('or-link-grp').style.display='none';
   }
@@ -3006,7 +3160,8 @@ function saveOrient(){
   if(!g('or-date')||!g('or-time')){ alert('Date and time are required.'); return; }
   const base={
     time:g('or-time'), capacity:g('or-cap'),
-    is_remote:g('or-remote'), video_link:g('or-video-link'), notes:g('or-notes-field')
+    is_remote:g('or-remote'), video_link:g('or-video-link'),
+    notes:g('or-notes-field'), facilitator:g('or-facilitator').trim(), facilitator_role:g('or-facilitator-role')
   };
   if(editingOrient){
     if(editScope==='future'){
@@ -3015,28 +3170,36 @@ function saveOrient(){
       if(sess && sess.series_id){
         orientSessions=orientSessions.map(s=>{
           if(s.series_id===sess.series_id && s.date>=sess.date){
-            return {...s, ...base}; // keep date, id, bookings; update time/cap/location etc
+            return {...s, ...base};
           }
           return s;
         });
+        // Sync updated sessions to calendar
+        orientSessions.filter(s=>s.series_id===sess.series_id && s.date>=sess.date).forEach(s=>{
+          if(s.gcal_event_id) gcalUpdateEvent(s); else gcalCreateEvent(s).then(eid=>{ if(eid){ s.gcal_event_id=eid; saveOrientStore(); } });
+        });
       } else {
-        // No series_id (shouldn't happen), fall back to single edit
         const i=orientSessions.findIndex(x=>x.id===editingOrient);
         orientSessions[i]={...orientSessions[i],...base, date:g('or-date')};
+        const s=orientSessions[i];
+        if(s.gcal_event_id) gcalUpdateEvent(s); else gcalCreateEvent(s).then(eid=>{ if(eid){ s.gcal_event_id=eid; saveOrientStore(); } });
       }
     } else {
-      // Editing single session only
       const i=orientSessions.findIndex(x=>x.id===editingOrient);
       orientSessions[i]={...orientSessions[i],...base, date:g('or-date')};
+      const s=orientSessions[i];
+      if(s.gcal_event_id) gcalUpdateEvent(s); else gcalCreateEvent(s).then(eid=>{ if(eid){ s.gcal_event_id=eid; saveOrientStore(); } });
     }
   } else {
     const recur = g('or-recur');
     const dates = recur==='none' ? [g('or-date')] : calcRecurDates();
     if(!dates.length){ alert('No valid dates generated. Check the date and recurrence settings.'); return; }
-    // Tag recurring batches with a shared series_id so future edits can span the series
     const seriesId = dates.length>1 ? Date.now() : null;
     dates.forEach(date=>{
-      orientSessions.push({id:orientId++, bookings:[], ...base, date, ...(seriesId?{series_id:seriesId}:{})});
+      const newSess = {id:orientId++, bookings:[], ...base, date, ...(seriesId?{series_id:seriesId}:{})};
+      orientSessions.push(newSess);
+      // Create calendar event asynchronously
+      gcalCreateEvent(newSess).then(eid=>{ if(eid){ newSess.gcal_event_id=eid; saveOrientStore(); } });
     });
   }
   saveOrientStore();
@@ -3056,6 +3219,7 @@ function deleteOrient(id){
   }
   const {dow,date}=sessDateShort(s.date);
   if(!confirm(`Delete the ${dow} ${date} at ${fmtTime(s.time)} session?`)) return;
+  gcalDeleteEvent(s);
   orientSessions=orientSessions.filter(x=>x.id!==id);
   saveOrientStore(); renderOrientations();
 }
@@ -3067,10 +3231,13 @@ function deleteOrientConfirm(scope){
     const seriesId=s.series_id, sessDate=s.date;
     const count=orientSessions.filter(x=>x.series_id===seriesId && x.date>=sessDate).length;
     if(!confirm(`Delete ${count} sessions (this and all future in this series)?`)){pendingDeleteId=null;return;}
+    // Delete calendar events for all affected sessions
+    orientSessions.filter(x=>x.series_id===seriesId && x.date>=sessDate).forEach(x=>gcalDeleteEvent(x));
     orientSessions=orientSessions.filter(x=>!(x.series_id===seriesId && x.date>=sessDate));
   } else {
     const {dow,date}=sessDateShort(s.date);
     if(!confirm(`Delete just the ${dow} ${date} session?`)){pendingDeleteId=null;return;}
+    gcalDeleteEvent(s);
     orientSessions=orientSessions.filter(x=>x.id!==pendingDeleteId);
   }
   pendingDeleteId=null;
@@ -3441,6 +3608,7 @@ function _openSettingsModal(){
   document.getElementById('settings-ac-site').value=appSettings.axiscare_site||'';
   document.getElementById('settings-gdrive-client-id').value=appSettings.google_client_id||'';
   document.getElementById('settings-gdrive-folder-id').value=appSettings.google_drive_folder_id||'';
+  document.getElementById('settings-gcal-id').value=appSettings.gcal_calendar_id||'';
   document.getElementById('settings-admin-current').value='';
   document.getElementById('settings-admin-new').value='';
   document.getElementById('settings-admin-confirm').value='';
@@ -3481,6 +3649,7 @@ function saveSettings(){
   appSettings.axiscare_site = document.getElementById('settings-ac-site').value.trim();
   const newClientId = document.getElementById('settings-gdrive-client-id').value.trim();
   appSettings.google_drive_folder_id = document.getElementById('settings-gdrive-folder-id').value.trim();
+  appSettings.gcal_calendar_id = document.getElementById('settings-gcal-id').value.trim() || 'primary';
   if(newClientId !== appSettings.google_client_id){
     appSettings.google_client_id = newClientId;
     gdriveTokenClient = null;
