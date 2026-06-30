@@ -234,6 +234,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min
 
   <!-- Submit -->
   <button class="submit-btn" id="submit-btn" onclick="submitForm()">Submit EVV Correction Form</button>
+  <div id="submit-error" style="display:none;margin-top:.85rem;background:#fef2f2;border:1.5px solid #fca5a5;border-radius:10px;padding:.85rem 1rem;font-size:.82rem;color:#b91c1c;line-height:1.5"></div>
   <p style="text-align:center;font-size:.75rem;color:var(--gray);margin-top:.75rem">
     Questions? Contact us at <a href="mailto:samantha@mo-care.com" style="color:var(--teal)">samantha@mo-care.com</a> or call <a href="tel:4172348494" style="color:var(--teal)">(417) 234-8494</a>
   </p>
@@ -394,6 +395,8 @@ async function submitForm() {
   }
 
   const btn = document.getElementById('submit-btn');
+  const errBox = document.getElementById('submit-error');
+  errBox.style.display = 'none';
   btn.disabled = true;
   btn.textContent = 'Submitting…';
 
@@ -423,8 +426,22 @@ async function submitForm() {
     submitted_at: new Date().toISOString()
   };
 
+  function showError(msg) {
+    btn.disabled = false;
+    btn.textContent = 'Submit EVV Correction Form';
+    errBox.innerHTML = `<strong>Submission failed.</strong> ${msg}<br><span style="font-size:.78rem">If this keeps happening, call us at (417) 234-8494.</span>`;
+    errBox.style.display = 'block';
+    errBox.scrollIntoView({ behavior:'smooth', block:'center' });
+  }
+
+  // Timeout safety — if Supabase never responds, unblock the button after 15s
+  const timeout = setTimeout(() => {
+    showError('The server did not respond. Please check your internet connection and try again.');
+  }, 15000);
+
   try {
     const { data, error } = await sb.from('evv_submissions').insert([payload]).select('id');
+    clearTimeout(timeout);
     if (error) throw error;
 
     const confirmId = data?.[0]?.id?.substring(0,8).toUpperCase() || 'N/A';
@@ -433,10 +450,13 @@ async function submitForm() {
     document.getElementById('success-screen').style.display = 'block';
     window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch(err) {
-    console.error(err);
-    btn.disabled = false;
-    btn.textContent = 'Submit EVV Correction Form';
-    alert('Submission failed. Please check your connection and try again. If the problem continues, call (417) 234-8494.\n\nError: ' + (err.message || err));
+    clearTimeout(timeout);
+    console.error('EVV submit error:', err);
+    const msg = err?.message || String(err) || 'Unknown error.';
+    const hint = msg.includes('permission denied') || msg.includes('row-level security')
+      ? 'The form does not have permission to save to the database. Please contact Samantha — the database permissions need to be updated.'
+      : 'Please check your internet connection and try again.';
+    showError(hint + ` <span style="font-size:.75rem;color:#9ca3af">(${msg})</span>`);
   }
 }
 
