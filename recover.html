@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Recovery — Caring Companions Staffing Hub</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+:root{--navy:#0E3860;--yellow:#FFC671;--teal:#54BDB8;--bg:#F6F9FD;--gray:#6B7280;--border:#E2E8F0;--green:#22C55E;--red:#EF4444}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min-height:100vh;padding:2rem 1rem}
+.card{background:#fff;border-radius:14px;max-width:560px;margin:0 auto;padding:2rem;box-shadow:0 4px 24px rgba(14,56,96,.1)}
+h1{font-size:1.15rem;margin-bottom:.4rem}
+p{font-size:.85rem;color:var(--gray);line-height:1.6;margin-bottom:1rem}
+.row{display:flex;justify-content:space-between;align-items:center;padding:.6rem .8rem;border:1.5px solid var(--border);border-radius:8px;margin-bottom:.5rem;font-size:.85rem}
+.row b{color:var(--navy)}
+.pill{font-size:.72rem;font-weight:700;border-radius:12px;padding:.15rem .6rem}
+.pill.ok{background:#dcfce7;color:#15803d}
+.pill.none{background:#f1f5f9;color:#94a3b8}
+input{width:100%;padding:.65rem .9rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.88rem;margin-bottom:.7rem}
+button{width:100%;padding:.75rem;background:var(--teal);color:#fff;border:none;border-radius:9px;font-family:inherit;font-size:.92rem;font-weight:700;cursor:pointer}
+button:disabled{opacity:.5;cursor:not-allowed}
+#status{margin-top:1rem;font-size:.83rem;line-height:1.7;white-space:pre-line}
+.good{color:#15803d}.bad{color:#b91c1c}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>🛟 Staffing Hub — Data Recovery</h1>
+  <p>This page restores your candidate & caregiver lists to the cloud from the backup copy saved in this browser. <strong>Use the browser you normally use for the hub</strong> (this copy is per-browser).</p>
+  <div id="found"></div>
+  <div id="login-box" style="margin-top:1.25rem">
+    <input type="email" id="email" placeholder="Your hub email" autocomplete="email">
+    <input type="password" id="pwd" placeholder="Your hub password" autocomplete="current-password">
+    <button id="go" onclick="restore()">🔄 Sign In &amp; Restore My Data</button>
+  </div>
+  <div id="status"></div>
+</div>
+
+<script>
+const SB_URL = 'https://zngsgedlsxinbygwmxwn.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpuZ3NnZWRsc3hpbmJ5Z3dteHduIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI1NDIzNDQsImV4cCI6MjA5ODExODM0NH0.L_31_UKdccyRH9n7p1GaBlZTqcJipB008H-GIvxwLxM';
+const sb = supabase.createClient(SB_URL, SB_KEY);
+
+// localStorage key → cloud app_data key
+const KEYS = [
+  { local:'cc_candidates',      cloud:'candidates',      label:'Candidates' },
+  { local:'cc_caregivers',      cloud:'caregivers',      label:'Caregivers' },
+  { local:'cc_evv_corrections', cloud:'evv_corrections', label:'EVV correction log' },
+  { local:'cc_orient_sessions', cloud:'orient_sessions', label:'Orientation sessions' },
+];
+
+function localData(k){
+  try { const d = JSON.parse(localStorage.getItem(k)); return Array.isArray(d) ? d : []; }
+  catch(e){ return []; }
+}
+
+// Show what this browser has saved
+document.getElementById('found').innerHTML = KEYS.map(k => {
+  const n = localData(k.local).length;
+  return `<div class="row"><b>${k.label}</b><span class="pill ${n?'ok':'none'}">${n ? n + ' found in this browser' : 'none here'}</span></div>`;
+}).join('');
+
+async function restore(){
+  const st = document.getElementById('status');
+  const btn = document.getElementById('go');
+  const email = document.getElementById('email').value.trim();
+  const pwd = document.getElementById('pwd').value;
+  if(!email || !pwd){ st.innerHTML = '<span class="bad">Enter your hub email and password first.</span>'; return; }
+  btn.disabled = true; btn.textContent = 'Working…';
+  st.textContent = '';
+  const log = [];
+
+  const { error: authErr } = await sb.auth.signInWithPassword({ email, password: pwd });
+  if(authErr){
+    st.innerHTML = `<span class="bad">Sign-in failed: ${authErr.message}</span>`;
+    btn.disabled = false; btn.textContent = '🔄 Sign In & Restore My Data';
+    return;
+  }
+  log.push('✅ Signed in.');
+
+  for(const k of KEYS){
+    const local = localData(k.local);
+    if(!local.length){ log.push(`— ${k.label}: nothing saved in this browser, skipped.`); continue; }
+    // Never overwrite cloud data that still exists
+    const { data: rows, error: readErr } = await sb.from('app_data').select('data').eq('key', k.cloud);
+    if(readErr){ log.push(`❌ ${k.label}: could not check the cloud (${readErr.message}).`); continue; }
+    const cloud = rows?.[0]?.data;
+    if(Array.isArray(cloud) && cloud.length){
+      log.push(`— ${k.label}: the cloud already has ${cloud.length} records, left untouched.`);
+      continue;
+    }
+    const { error: upErr } = await sb.from('app_data').upsert(
+      { key: k.cloud, data: local, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+    if(upErr){ log.push(`❌ ${k.label}: restore failed (${upErr.message}).`); }
+    else { log.push(`✅ ${k.label}: restored ${local.length} record${local.length!==1?'s':''} to the cloud.`); }
+  }
+
+  await sb.auth.signOut();
+  log.push('', 'Done — you can close this page and tell Claude what it says above.');
+  st.innerHTML = log.map(l => l.startsWith('✅') ? `<span class="good">${l}</span>` : l.startsWith('❌') ? `<span class="bad">${l}</span>` : l).join('\n');
+  btn.textContent = 'Finished';
+}
+</script>
+</body>
+</html>
