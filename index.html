@@ -256,6 +256,9 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     </div>
   </header>
 
+  <!-- Cross-tab alerts strip (filled by renderAlerts) -->
+  <div id="alert-strip" style="display:none;flex-wrap:wrap;gap:.45rem;padding:.55rem 1.5rem 0;background:var(--navy)"></div>
+
   <div class="tab-bar">
     <div class="tab active" onclick="switchTab('onboarding',this)"><span class="ti">🔍</span> Background & References</div>
     <div class="tab" onclick="switchTab('orientations',this)"><span class="ti">📅</span> Orientations</div>
@@ -748,12 +751,12 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
         </div>
         <div class="tab-guide-body" id="guide-body-evv">
           <div class="guide-section-lbl" style="border-top:none;padding-top:0;margin-top:0">Employee responsibilities</div>
-          <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">Employees submit EVV corrections using the form at <strong>hub.mo-care.com/evv-correction-form</strong>. Deadline is <strong>Sunday at Midnight</strong> each week.<span class="tip">Copy and share the form link using the button below the deadline bar.</span></div></div>
+          <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">Employees submit EVV corrections using the form at <strong>sc.mo-care.com/evv-correction-form</strong>. Deadline is <strong>Sunday at Midnight</strong> each week.<span class="tip">Copy and share the form link using the button below the deadline bar.</span></div></div>
           <div class="guide-section-lbl">Staffing Coordinator responsibilities</div>
           <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body">Check this tab <strong>daily</strong> for new submissions. Pending corrections appear under "Pending Submissions."</div></div>
-          <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body">For each submission: review the corrected clock-in/out times and tasks, then open <strong>WellSky Daily</strong> and make the correction on the caregiver's visit record.</div></div>
-          <div class="guide-step"><div class="guide-step-num">4</div><div class="guide-step-body">After updating WellSky, come back here and click <strong>✅ Accept</strong> to mark the submission as processed. Or click <strong>Dismiss</strong> if the submission was invalid.</div></div>
-          <div class="guide-step"><div class="guide-step-num">5</div><div class="guide-step-body">All corrections must be completed in WellSky by <strong>Monday at 10am</strong> for payroll to process correctly.</div></div>
+          <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body">For each submission: review the corrected clock-in/out times and tasks, then open <strong>AxisCare</strong> and make the correction on the caregiver's visit record.</div></div>
+          <div class="guide-step"><div class="guide-step-num">4</div><div class="guide-step-body">After updating AxisCare, come back here and click <strong>✅ Accept</strong> to mark the submission as processed. Or click <strong>Dismiss</strong> if the submission was invalid.</div></div>
+          <div class="guide-step"><div class="guide-step-num">5</div><div class="guide-step-body">All corrections must be completed in AxisCare by <strong>Monday at 10am</strong> for payroll to process correctly.</div></div>
           <div class="guide-section-lbl">Logging a manual correction</div>
           <div class="guide-step"><div class="guide-step-num">6</div><div class="guide-step-body">Use <strong>+ Log Manual Correction</strong> to record a correction made directly without a form submission — for example when a caregiver calls in a correction by phone.</div></div>
         </div>
@@ -761,13 +764,13 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 
       <!-- Deadline reminder bar -->
       <div class="evv-deadline-bar">
-        ⏰ <strong>Employee Submission Deadline: Sunday at Midnight</strong> &nbsp;|&nbsp; Staffing Coordinator: Make corrections in <strong>WellSky Daily</strong> — all completed by <strong>Monday at 10am</strong> for Payroll
+        ⏰ <strong>Employee Submission Deadline: Sunday at Midnight</strong> &nbsp;|&nbsp; Staffing Coordinator: Make corrections in <strong>AxisCare</strong> — all completed by <strong>Monday at 10am</strong> for Payroll
       </div>
 
       <!-- Form link bar -->
       <div class="evv-form-link-bar">
         <div style="font-size:.8rem;font-weight:700;color:var(--navy);white-space:nowrap">📋 EVV Form</div>
-        <code style="font-size:.82rem;font-weight:600;color:var(--navy);background:#dde9f8;padding:.25rem .65rem;border-radius:6px;flex:1;min-width:160px">hub.mo-care.com/evv-correction-form</code>
+        <code style="font-size:.82rem;font-weight:600;color:var(--navy);background:#dde9f8;padding:.25rem .65rem;border-radius:6px;flex:1;min-width:160px">sc.mo-care.com/evv-correction-form</code>
         <button class="evv-copy-btn" onclick="copyEVVFormLink(this)">📋 Copy Link</button>
         <div style="font-size:.75rem;color:#555">Share this link with the attendant when they need to submit a correction</div>
       </div>
@@ -1204,6 +1207,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
       <div class="grp"><label>First Name</label><input type="text" id="ob-first"></div>
       <div class="grp"><label>Last Name</label><input type="text" id="ob-last"></div>
       <div class="grp"><label>Cell Phone</label><input type="text" id="ob-phone" placeholder="4175551234"></div>
+      <div class="grp"><label>Email</label><input type="email" id="ob-email" placeholder="email@example.com"></div>
       <div class="grp"><label>Lived outside MO in last 5 years?</label>
         <select id="ob-oos"><option value="">Unknown</option><option value="no">No</option><option value="yes">Yes — fingerprint required</option></select>
       </div>
@@ -1639,6 +1643,14 @@ const SB_URL  = 'https://zngsgedlsxinbygwmxwn.supabase.co';
 const SB_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpuZ3NnZWRsc3hpbmJ5Z3dteHduIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI1NDIzNDQsImV4cCI6MjA5ODExODM0NH0.L_31_UKdccyRH9n7p1GaBlZTqcJipB008H-GIvxwLxM';
 const sb = supabase.createClient(SB_URL, SB_KEY);
 
+// ── Admin passcode — gates Settings access ────────────────────────────
+// Stored in localStorage; set on first use via Settings.
+function getAdminPwd(){ return localStorage.getItem('cc_admin_pwd') || ''; }
+function checkAdminPwd(val){ return val !== '' && btoa(val) === getAdminPwd(); }
+
+const TODAY = new Date(); TODAY.setHours(0,0,0,0);
+
+// ── Supabase Auth ─────────────────────────────────────────────────────
 // Fixed slug this hub checks against a signed-in user's app_metadata.hub_access.
 // Must exactly match this hub's row in Team Hub's hub_portals list ("staffing").
 const HUB_SLUG = 'staffing';
@@ -1652,15 +1664,6 @@ function hasHubAccess(user){
   if(access === undefined || access === null) return true;
   return Array.isArray(access) && access.includes(HUB_SLUG);
 }
-
-// ── Admin passcode — gates Settings access ────────────────────────────
-// Stored in localStorage; set on first use via Settings.
-function getAdminPwd(){ return localStorage.getItem('cc_admin_pwd') || ''; }
-function checkAdminPwd(val){ return val !== '' && btoa(val) === getAdminPwd(); }
-
-const TODAY = new Date(); TODAY.setHours(0,0,0,0);
-
-// ── Supabase Auth ─────────────────────────────────────────────────────
 async function showApp(){
   document.getElementById('login-screen').style.display='none';
   document.getElementById('app').style.display='block';
@@ -1669,6 +1672,7 @@ async function showApp(){
   migrateOldRecipients();
   renderAll();
   loadClientQueue();
+  mergePendingBookings();
 }
 
 async function doLogin(){
@@ -2157,7 +2161,10 @@ function gcalBuildEvent(session){
   const [h, m] = (session.time||'10:00').split(':').map(Number);
   const start = new Date(`${session.date}T${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:00`);
   const end = new Date(start.getTime() + getOrientDuration()*60*60*1000);
-  const toLocal = d => d.toISOString().replace(/\.\d{3}Z$/, '');
+  // Format as local wall-clock time (NOT toISOString, which converts to UTC and
+  // shifted events by 5-6 hours when paired with the America/Chicago timeZone)
+  const pad2 = n => String(n).padStart(2,'0');
+  const toLocal = d => `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}:00`;
   const locParts = session.is_remote==='yes'
     ? { location: session.video_link||'Remote — video call', conferenceUrl: session.video_link }
     : { location: '1331 N Stewart Ave Ste B, Springfield, MO 65802' };
@@ -2432,20 +2439,29 @@ function renderClientCard(c){
   </div>`;
 }
 
+// Surfaces Supabase save failures (e.g. a missing column) instead of losing the
+// change silently — the checklist state lives in the client_queue table.
+function cqSaveError(error){
+  alert('⚠️ Could not save to the client queue: ' + error.message +
+    '\n\nIf this mentions a missing column, run fix-scheduling-and-bookings.sql in the Supabase SQL Editor.');
+}
+
 async function updateCQStep(id, field, value){
   const item = (window._clientQueue||[]).find(c=>c.id===id);
   const tsField = field + '_at';
   const tsValue = value ? new Date().toISOString() : null;
   if(item){ item[field] = value; item[tsField] = tsValue; }
   renderClientQueue();
-  await sb.from('client_queue').update({ [field]: value, [tsField]: tsValue }).eq('id', id);
+  const { error } = await sb.from('client_queue').update({ [field]: value, [tsField]: tsValue }).eq('id', id);
+  if(error) cqSaveError(error);
 }
 
 async function saveCallNotes(id, field, value){
   const item = (window._clientQueue||[]).find(c=>c.id===id);
   if(item) item[field] = value;
   renderClientQueue();
-  await sb.from('client_queue').update({ [field]: value }).eq('id', id);
+  const { error } = await sb.from('client_queue').update({ [field]: value }).eq('id', id);
+  if(error) cqSaveError(error);
 }
 
 async function saveCaregiverName(id, name){
@@ -2453,7 +2469,8 @@ async function saveCaregiverName(id, name){
   const item = (window._clientQueue||[]).find(c=>c.id===id);
   if(item) item.caregiver_assigned_name = name.trim();
   renderClientQueue();
-  await sb.from('client_queue').update({ caregiver_assigned_name: name.trim() }).eq('id', id);
+  const { error } = await sb.from('client_queue').update({ caregiver_assigned_name: name.trim() }).eq('id', id);
+  if(error) cqSaveError(error);
 }
 
 async function completeClientQueueItem(id){
@@ -2463,7 +2480,8 @@ async function completeClientQueueItem(id){
   const item = (window._clientQueue||[]).find(c=>c.id===id);
   if(item){ item.status='complete'; item.completed_at=now; item.completed_by=user?.email||''; }
   renderClientQueue();
-  await sb.from('client_queue').update({ status:'complete', completed_at:now, completed_by:user?.email||'' }).eq('id', id);
+  const { error } = await sb.from('client_queue').update({ status:'complete', completed_at:now, completed_by:user?.email||'' }).eq('id', id);
+  if(error) cqSaveError(error);
 
   // Push scheduling summary note to AxisCare client profile
   if(item?.axiscare_client_id && session?.access_token){
@@ -2646,7 +2664,7 @@ function switchTab(name, btn){
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   btn.classList.add('active');
   document.getElementById('panel-'+name).classList.add('active');
-  if(name==='orientations'){ renderOrientations(); initOrientSettings(); }
+  if(name==='orientations'){ renderOrientations(); initOrientSettings(); mergePendingBookings(); }
   if(name==='evv') { renderEVVCorrections(); loadPendingEVVSubmissions(); }
 }
 
@@ -2685,8 +2703,10 @@ const ZAPIER_AC_STATUS_WEBHOOK = "https://hooks.zapier.com/hooks/catch/28062149/
 
 async function syncToSupabase(key, data){
   try {
-    await sb.from('app_data').upsert({ key, data, updated_at: new Date().toISOString() }, { onConflict: 'key' });
-  } catch(e){ console.warn('Supabase sync:', e); }
+    const { error } = await sb.from('app_data').upsert({ key, data, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+    if(error){ console.warn('Supabase sync failed for', key, error); setSyncStatus('offline'); }
+    else setSyncStatus('ok');
+  } catch(e){ console.warn('Supabase sync:', e); setSyncStatus('offline'); }
 }
 
 async function loadFromSupabase(){
@@ -3229,7 +3249,7 @@ function openOBModal(id=null){
   const c=id?candidates.find(x=>x.id===id):null;
   const g=k=>document.getElementById(k);
   if(c){
-    g('ob-first').value=c.first;g('ob-last').value=c.last;g('ob-phone').value=c.phone||'';g('ob-oos').value=c.oos||'';
+    g('ob-first').value=c.first;g('ob-last').value=c.last;g('ob-phone').value=c.phone||'';g('ob-email').value=c.email||'';g('ob-oos').value=c.oos||'';
     g('ob-r1n').value=c.r1n||'';g('ob-r1s').value=c.r1s||'Pending';g('ob-r1-phone').value=c.r1_phone||'';g('ob-r1-email').value=c.r1_email||'';
     g('ob-r2n').value=c.r2n||'';g('ob-r2s').value=c.r2s||'Pending';g('ob-r2-phone').value=c.r2_phone||'';g('ob-r2-email').value=c.r2_email||'';
     g('ob-r3n').value=c.r3n||'';g('ob-r3s').value=c.r3s||'Pending';g('ob-r3-phone').value=c.r3_phone||'';g('ob-r3-email').value=c.r3_email||'';
@@ -3241,7 +3261,7 @@ function openOBModal(id=null){
     g('ob-fcsr').value=c.fcsr;g('ob-fcsr-date').value=c.fcsr_date;g('ob-fcsr-proof').value=c.fcsr_proof||'';
     g('ob-fp').value=c.fp;g('ob-fp-date').value=c.fp_date;g('ob-fp-proof').value=c.fp_proof||'';g('ob-notes').value=c.notes||'';
   } else {
-    ['ob-first','ob-last','ob-phone','ob-r1n','ob-r1-phone','ob-r1-email','ob-r2n','ob-r2-phone','ob-r2-email',
+    ['ob-first','ob-last','ob-phone','ob-email','ob-r1n','ob-r1-phone','ob-r1-email','ob-r2n','ob-r2-phone','ob-r2-email',
      'ob-r3n','ob-r3-phone','ob-r3-email','ob-r4n','ob-r4-phone','ob-r4-email',
      'ob-oig-date','ob-edl-date','ob-fcsr-date','ob-fp-date','ob-notes',
      'ob-r1-proof','ob-r2-proof','ob-r3-proof','ob-r4-proof','ob-oig-proof','ob-edl-proof','ob-fcsr-proof','ob-fp-proof'].forEach(k=>g(k).value='');
@@ -3257,7 +3277,7 @@ function saveOB(){
   const oldCand = editingOB ? candidates.find(x=>x.id===editingOB) : null;
   const wasReady = oldCand ? obDeriveStatus(oldCand)==='Ready for Orientation' : false;
   const wasResolved = oldCand ? (obDeriveStatus(oldCand)==='Ready for Orientation'||obDeriveStatus(oldCand)==='Needs Review') : false;
-  const d={first:g('ob-first'),last:g('ob-last'),phone:g('ob-phone'),oos:g('ob-oos'),
+  const d={first:g('ob-first'),last:g('ob-last'),phone:g('ob-phone'),email:g('ob-email'),oos:g('ob-oos'),
     r1n:g('ob-r1n'),r1s:g('ob-r1s'),r1_phone:g('ob-r1-phone'),r1_email:g('ob-r1-email'),
     r2n:g('ob-r2n'),r2s:g('ob-r2s'),r2_phone:g('ob-r2-phone'),r2_email:g('ob-r2-email'),
     r3n:g('ob-r3n'),r3s:g('ob-r3s'),r3_phone:g('ob-r3-phone'),r3_email:g('ob-r3-email'),
@@ -3292,7 +3312,7 @@ function saveOB(){
   zapFire('zapier_cand_webhook',{
     candidate_id: saved.id,
     first: saved.first, last: saved.last, full_name:`${saved.first} ${saved.last}`,
-    phone: saved.phone||'',
+    phone: saved.phone||'', email: saved.email||'',
     r1_name:saved.r1n||'', r1_status:saved.r1s||'', r1_proof:saved.r1_proof||'',
     r2_name:saved.r2n||'', r2_status:saved.r2s||'', r2_proof:saved.r2_proof||'',
     r3_name:saved.r3n||'', r3_status:saved.r3s||'', r3_proof:saved.r3_proof||'',
@@ -3320,10 +3340,11 @@ function buildBookingUrl(c){
   const encoded=btoa(JSON.stringify(available.map(s=>({
     id:s.id, date:s.date, time:s.time,
     remote:s.is_remote==='yes', link:s.video_link||'',
-    notes:s.notes||'', spots:parseInt(s.capacity)-(s.bookings||[]).length
+    notes:s.notes||'', spots:parseInt(s.capacity)-(s.bookings||[]).length,
+    dur:getOrientDuration()
   }))));
   const base = window.location.href.replace(/[^/]*$/, '');
-  return `${base}orientation-booking.html?sessions=${encoded}&first=${encodeURIComponent(c.first)}&last=${encodeURIComponent(c.last)}&phone=${encodeURIComponent(c.phone||'')}`;
+  return `${base}orientation-booking.html?sessions=${encoded}&first=${encodeURIComponent(c.first)}&last=${encodeURIComponent(c.last)}&phone=${encodeURIComponent(c.phone||'')}&id=${encodeURIComponent(c.id)}`;
 }
 
 function buildInviteMsg(c, url){
@@ -3375,6 +3396,9 @@ function openInviteModal(id){
 async function confirmSendInvite(){
   const c=candidates.find(x=>x.id===invitingId);
   if(!c.phone){alert('No phone number on file. Please edit the candidate and add a cell number first.');return;}
+  const hookUrl=(appSettings.zapier_orient_webhook||'').trim();
+  const hookReady=hookUrl && hookUrl.startsWith('http') && !hookUrl.includes('REPLACE');
+  if(!hookReady && !confirm('⚠️ The orientation invite webhook is not set up in Settings yet, so NO text message will be sent automatically.\n\nUse "Copy link only" and text the candidate yourself.\n\nMark them as Invited anyway?')) return;
   document.getElementById('inv-sending').style.display='block';
   document.getElementById('inv-actions').style.display='none';
   const url=buildBookingUrl(c);
@@ -3834,6 +3858,39 @@ function generateOrientSessions(){
   }
 }
 
+// Pull self-serve bookings from the orient_bookings table (written by the public
+// booking page as anon) and merge them into the session records the hub manages.
+async function mergePendingBookings(){
+  try {
+    const { data, error } = await sb.from('orient_bookings').select('*').eq('merged', false).order('booked_at', { ascending: true });
+    if(error){ console.warn('orient_bookings load failed — run fix-scheduling-and-bookings.sql if the table is missing:', error); return; }
+    if(!data || !data.length) return;
+    let changed = false;
+    for(const row of data){
+      const s = orientSessions.find(x => String(x.id) === String(row.session_id));
+      if(s){
+        if(!s.bookings) s.bookings = [];
+        const dup = s.bookings.some(b => b.src_id === row.id
+          || (`${b.first} ${b.last}`.toLowerCase() === `${row.first} ${row.last}`.toLowerCase() && b.booked_at === row.booked_at));
+        if(!dup){
+          s.bookings.push({
+            first: row.first, last: row.last, phone: row.phone || '',
+            candidate_id: row.candidate_id ? Number(row.candidate_id) : null,
+            booked_at: row.booked_at, attend_status: null, src_id: row.id
+          });
+          changed = true;
+        }
+      } else {
+        console.warn('Self-serve booking references a session that no longer exists:', row);
+      }
+      // Mark handled either way so orphaned rows don't re-import forever
+      const { error: updErr } = await sb.from('orient_bookings').update({ merged: true }).eq('id', row.id);
+      if(updErr){ console.warn('Could not mark booking merged:', updErr); }
+    }
+    if(changed){ saveOrientStore(); renderOrientations(); renderAlerts(); }
+  } catch(e){ console.warn('mergePendingBookings:', e); }
+}
+
 function renderOrientReadyQueue(){
   const el = document.getElementById('orient-ready-queue');
   if(!el) return;
@@ -3999,7 +4056,7 @@ function renderSessionsList(){
         <div class="sess-date-block">
           <div class="sess-dow">${dow}</div>
           <div class="sess-date">${date}${fullBadge}${calTag}</div>
-          <div class="sess-time">${fmtTime(s.time)} · 2 hours</div>
+          <div class="sess-time">${fmtTime(s.time)} · ${getOrientDuration()} hour${getOrientDuration()!==1?'s':''}</div>
           ${facilitatorTag}
           ${seriesBadge}
         </div>
@@ -4530,8 +4587,8 @@ function openProfile(first, last){
     html+=`<div style="color:var(--gray);margin-bottom:.2rem">📅 Invite not yet sent</div>`;
   }
   if(bookSess){
-    const outcomeLabel={attended:'✅ Attended',noshow:'🚫 No-Show',rescheduled:'📅 Rescheduled',canceled:'❌ Canceled'}[booking?.outcome]||'⏳ Booked';
-    const outColor={attended:'var(--green)',noshow:'var(--red)',rescheduled:'#F97316',canceled:'var(--red)'}[booking?.outcome]||'var(--navy)';
+    const outcomeLabel={attended:'✅ Attended',noshow:'🚫 No-Show',rescheduled:'📅 Rescheduled',canceled:'❌ Canceled'}[booking?.attend_status]||'⏳ Booked';
+    const outColor={attended:'var(--green)',noshow:'var(--red)',rescheduled:'#F97316',canceled:'var(--red)'}[booking?.attend_status]||'var(--navy)';
     html+=`<div>Session: <strong>${fmtD(bookSess.date)}${bookSess.time?' · '+bookSess.time:''}</strong> — <span style="color:${outColor};font-weight:600">${outcomeLabel}</span></div>`;
   } else {
     html+=`<div style="color:var(--gray)">No orientation session booked</div>`;
@@ -4759,7 +4816,7 @@ function openImportModal(){
   document.getElementById('csv-preview').style.display = 'none';
   document.getElementById('csv-import-btn').style.display = 'none';
   document.getElementById('csv-preview-btn').style.display = '';
-  document.getElementById('csv-import-modal').style.display = 'flex';
+  document.getElementById('csv-import-modal').classList.add('open');
 }
 
 function handleCSVFile(e){
@@ -4879,7 +4936,8 @@ function openBookingLinkModal(sessId){
     id:s.id, date:s.date, time:s.time,
     remote:s.is_remote==='yes', link:s.video_link||'',
     notes:s.notes||'',
-    spots:parseInt(s.capacity)-(s.bookings||[]).length
+    spots:parseInt(s.capacity)-(s.bookings||[]).length,
+    dur:getOrientDuration()
   }))));
   const url=`${window.location.href.replace('Compliance_Hub.html','').replace(/\?.*$/,'').replace(/#.*$/,'')}orientation-booking.html?sessions=${encoded}`;
   document.getElementById('bl-cand-name').textContent='Booking link for all available sessions';
@@ -4902,7 +4960,7 @@ function copyBLToClipboard(){
 const EVV_WARN_THRESHOLD    = 5;   // agency-wide yellow
 const EVV_DANGER_THRESHOLD  = 10;  // agency-wide red
 const EVV_ATTENDANT_LIMIT   = 3;   // per-attendant red flag
-const EVV_FORM_URL = 'https://hub.mo-care.com/evv-correction-form';
+const EVV_FORM_URL = 'https://sc.mo-care.com/evv-correction-form';
 
 // ── Storage ──────────────────────────────────────────────────────────
 function getEVVCorrections() {
@@ -5028,6 +5086,9 @@ function copyEVVFormLink(btn) {
 }
 
 // ── Pending submissions from Supabase ─────────────────────────────────
+// Cache of pending rows keyed by id — used by the Accept button so we don't
+// have to embed the full record (signatures included) in the onclick attribute.
+let _evvPendingCache = {};
 async function loadPendingEVVSubmissions() {
   const container = document.getElementById('evv-pending-body');
   const badge     = document.getElementById('evv-pending-badge');
@@ -5053,6 +5114,7 @@ async function loadPendingEVVSubmissions() {
     badge.textContent = data.length + ' new';
     badge.style.display = 'inline-flex';
 
+    _evvPendingCache = {};
     container.innerHTML = data.map(sub => {
       const origTime = [sub.orig_in, sub.orig_out].filter(Boolean).join(' – ') || '—';
       const newTime  = [sub.new_in,  sub.new_out ].filter(Boolean).join(' – ') || '—';
@@ -5076,7 +5138,7 @@ async function loadPendingEVVSubmissions() {
         ? `<div style="margin-top:.5rem"><div style="font-size:.68rem;color:var(--gray);margin-bottom:.2rem">${label}</div><img src="${sig}" style="max-width:180px;border:1px solid var(--border);border-radius:4px"></div>`
         : '';
 
-      const subId = JSON.stringify(sub).replace(/"/g,"'");
+      _evvPendingCache[sub.id] = sub;
       return `<div style="border:1.5px solid var(--border);border-radius:8px;padding:1rem 1.1rem;margin-bottom:.75rem;background:var(--bg)">
         <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:.5rem;margin-bottom:.65rem">
           <div>
@@ -5088,7 +5150,7 @@ async function loadPendingEVVSubmissions() {
             </div>
           </div>
           <div style="display:flex;gap:.4rem;flex-shrink:0">
-            <button class="add-btn" style="background:var(--green);font-size:.75rem;padding:.3rem .65rem" onclick='acceptEVVSubmission(${subId})'>✓ Accept &amp; Log</button>
+            <button class="add-btn" style="background:var(--green);font-size:.75rem;padding:.3rem .65rem" onclick="acceptEVVSubmission('${sub.id}')">✓ Accept &amp; Log</button>
             <button class="ibtn" style="color:var(--red);font-size:.75rem" onclick="dismissEVVSubmission('${sub.id}')">✕ Dismiss</button>
           </div>
         </div>
@@ -5110,7 +5172,9 @@ async function loadPendingEVVSubmissions() {
   }
 }
 
-async function acceptEVVSubmission(sub) {
+async function acceptEVVSubmission(subId) {
+  const sub = _evvPendingCache[subId];
+  if(!sub){ alert('Could not find this submission — click ↻ Refresh and try again.'); return; }
   const { data: { user } } = await sb.auth.getUser();
   const adminEmail = user?.email || 'unknown';
 
@@ -5136,11 +5200,12 @@ async function acceptEVVSubmission(sub) {
   saveEVVCorrections(corrections);
 
   // Mark processed + log which admin acted
-  await sb.from('evv_submissions').update({
+  const { error: procErr } = await sb.from('evv_submissions').update({
     processed:    true,
     processed_by: adminEmail,
     processed_at: new Date().toISOString()
   }).eq('id', sub.id);
+  if(procErr){ alert('Logged locally, but could not mark the submission processed in Supabase: ' + procErr.message); }
 
   await loadPendingEVVSubmissions();
   renderEVVCorrections();

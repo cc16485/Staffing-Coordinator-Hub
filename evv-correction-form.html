@@ -145,6 +145,16 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min
     </div>
     <div class="fg" style="margin-top:.75rem">
       <div class="grp">
+        <label>Original Clock-In (what the system shows)</label>
+        <input type="time" id="f-orig-in">
+      </div>
+      <div class="grp">
+        <label>Original Clock-Out (what the system shows)</label>
+        <input type="time" id="f-orig-out">
+      </div>
+    </div>
+    <div class="fg" style="margin-top:.75rem">
+      <div class="grp">
         <label>Corrected Clock-In <span class="req">*</span></label>
         <input type="time" id="f-new-in">
         <div class="field-error" id="err-new-in">Required — enter the correct time</div>
@@ -265,12 +275,15 @@ const sigState = {};
 function initSig(id) {
   const canvas = document.getElementById(id);
   const ctx = canvas.getContext('2d');
-  // Size canvas to its display size
+  const cssHeight = canvas.height; // display height from the height="" attribute
+  // Size the backing store for high-DPI screens so strokes render across the full pad
   function resize() {
+    const dpr = window.devicePixelRatio || 1;
     const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width * window.devicePixelRatio;
-    canvas.height = canvas.height || 140 * window.devicePixelRatio;
-    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+    canvas.width = rect.width * dpr;
+    canvas.height = cssHeight * dpr;
+    canvas.style.height = cssHeight + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.strokeStyle = '#1a2f4a';
     ctx.lineWidth = 2.5;
     ctx.lineCap = 'round';
@@ -440,11 +453,12 @@ async function submitForm() {
   }, 15000);
 
   try {
-    const { data, error } = await sb.from('evv_submissions').insert([payload]).select('id');
+    // Note: anon role has INSERT but not SELECT — don't use .select() here
+    const { error } = await sb.from('evv_submissions').insert([payload]);
     clearTimeout(timeout);
     if (error) throw error;
 
-    const confirmId = data?.[0]?.id?.substring(0,8).toUpperCase() || 'N/A';
+    const confirmId = Date.now().toString(16).toUpperCase().slice(-6);
     document.getElementById('confirm-id').textContent = confirmId;
     document.getElementById('form-screen').style.display = 'none';
     document.getElementById('success-screen').style.display = 'block';

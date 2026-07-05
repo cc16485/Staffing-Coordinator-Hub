@@ -144,7 +144,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min
         <div class="conf-icon">⏱</div>
         <div class="conf-txt">
           <div class="conf-lbl">Duration</div>
-          <div class="conf-val">Approximately 2 hours</div>
+          <div class="conf-val" id="conf-duration">Approximately 2 hours</div>
         </div>
       </div>
       <div class="conf-row" id="conf-loc-row">
@@ -243,7 +243,7 @@ function init(){
       <div class="sess-info">
         <div class="sess-dow-label">${dow}</div>
         <div class="sess-date-label">${dateLabel}</div>
-        <div class="sess-time-label">${timeLabel} &nbsp;·&nbsp; 2 hours</div>
+        <div class="sess-time-label">${timeLabel} &nbsp;·&nbsp; ${s.dur||2} hour${(s.dur||2)!==1?'s':''}</div>
         <div class="sess-loc-label">${locLabel}</div>
       </div>
       ${spotsLabel}
@@ -265,35 +265,38 @@ async function submitBooking(){
   btn.textContent = 'Booking… ⏳';
   btn.disabled = true;
 
-  const booking = {
-    first: firstName, last: lastName, phone: phone,
-    booked_at: new Date().toISOString(),
-    attend_status: null
-  };
-
+  // Save to the orient_bookings table — the anon key has INSERT-only access
+  // there (like the EVV form). The hub merges these into its session records.
+  // Note: no .select() after .insert() — anon has no SELECT permission.
   try {
-    // Load current sessions from Supabase, add booking, save back
-    const { data } = await sb.from('app_data').select('data').eq('key','orient_sessions').single();
-    if(data?.data){
-      const sessions = data.data;
-      const idx = sessions.findIndex(s => s.id === selectedSession.id);
-      if(idx !== -1){
-        if(!sessions[idx].bookings) sessions[idx].bookings = [];
-        sessions[idx].bookings.push(booking);
-        await sb.from('app_data').upsert({ key:'orient_sessions', data:sessions, updated_at:new Date().toISOString() }, { onConflict:'key' });
-      }
-    }
-  } catch(e){ console.warn('Supabase booking write:', e); }
+    const { error } = await sb.from('orient_bookings').insert([{
+      session_id:   String(selectedSession.id),
+      first:        firstName || 'Unknown',
+      last:         lastName  || '',
+      phone:        phone || '',
+      candidate_id: candId || null,
+      booked_at:    new Date().toISOString()
+    }]);
+    if(error) throw error;
+  } catch(e){
+    console.warn('Supabase booking write:', e);
+    btn.textContent = 'Confirm My Date →';
+    btn.disabled = false;
+    alert('Sorry — we could not save your booking. Please try again, or call/text us at (417) 234-8494 and we will get you scheduled right away.');
+    return;
+  }
 
-  // Also fire Zapier for calendar event / SMS confirmation
-  fetch(ZAPIER_BOOKING_WEBHOOK, { method:'POST', body:JSON.stringify({
-    candidate_first: firstName, candidate_last: lastName, phone: phone,
-    session_id: selectedSession.id, session_date: selectedSession.date,
-    session_time: selectedSession.time, is_remote: selectedSession.remote,
-    video_link: selectedSession.link || '',
-    location: selectedSession.remote ? (selectedSession.link||'Remote') : ADDR,
-    booked_at: new Date().toISOString()
-  })}).catch(()=>{});
+  // Also fire Zapier for calendar event / SMS confirmation (skipped until configured)
+  if(ZAPIER_BOOKING_WEBHOOK.startsWith('http') && !ZAPIER_BOOKING_WEBHOOK.includes('REPLACE')){
+    fetch(ZAPIER_BOOKING_WEBHOOK, { method:'POST', body:JSON.stringify({
+      candidate_first: firstName, candidate_last: lastName, phone: phone,
+      session_id: selectedSession.id, session_date: selectedSession.date,
+      session_time: selectedSession.time, is_remote: selectedSession.remote,
+      video_link: selectedSession.link || '',
+      location: selectedSession.remote ? (selectedSession.link||'Remote') : ADDR,
+      booked_at: new Date().toISOString()
+    })}).catch(()=>{});
+  }
 
   showConfirmation();
 }
@@ -305,6 +308,8 @@ function showConfirmation(){
   const dateLabel = fmtDateLong(selectedSession.date);
   const timeLabel = fmtTime(selectedSession.time);
   document.getElementById('conf-datetime').textContent = `${dateLabel} at ${timeLabel}`;
+  const dur = selectedSession.dur || 2;
+  document.getElementById('conf-duration').textContent = `Approximately ${dur} hour${dur!==1?'s':''}`;
 
   if(selectedSession.remote){
     document.getElementById('conf-location').textContent = 'Remote — video call';
