@@ -176,7 +176,6 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
-const ZAPIER_BOOKING_WEBHOOK = 'https://hooks.zapier.com/hooks/catch/REPLACE_ME/orient/';
 const ADDR = '1331 N Stewart Ave Ste B, Springfield MO 65802';
 
 const SB_URL = 'https://zngsgedlsxinbygwmxwn.supabase.co';
@@ -286,16 +285,17 @@ async function submitBooking(){
     return;
   }
 
-  // Also fire Zapier for calendar event / SMS confirmation (skipped until configured)
-  if(ZAPIER_BOOKING_WEBHOOK.startsWith('http') && !ZAPIER_BOOKING_WEBHOOK.includes('REPLACE')){
-    fetch(ZAPIER_BOOKING_WEBHOOK, { method:'POST', body:JSON.stringify({
-      candidate_first: firstName, candidate_last: lastName, phone: phone,
-      session_id: selectedSession.id, session_date: selectedSession.date,
-      session_time: selectedSession.time, is_remote: selectedSession.remote,
-      video_link: selectedSession.link || '',
-      location: selectedSession.remote ? (selectedSession.link||'Remote') : ADDR,
-      booked_at: new Date().toISOString()
-    })}).catch(()=>{});
+  // Send a confirmation text via the send-candidate-message edge function
+  // (uses the anon key automatically; best-effort — booking is already saved)
+  if(phone){
+    const whenLabel = `${fmtDateLong(selectedSession.date)} at ${fmtTime(selectedSession.time)}`;
+    const whereLabel = selectedSession.remote
+      ? `This is a video call${selectedSession.link ? ': ' + selectedSession.link : ' — we will send you the link'}.`
+      : `Location: ${ADDR}.`;
+    const confMsg = `You're all set, ${firstName}! 🎉 Your Caring Companions orientation is ${whenLabel}. ${whereLabel} Please bring your photo ID, Social Security card, and a voided check or bank info for direct deposit. Questions? Call/text (417) 234-8494.`;
+    sb.functions.invoke('send-candidate-message', {
+      body: { first: firstName, last: lastName, phone, message: confMsg }
+    }).catch(e => console.warn('Confirmation SMS failed:', e));
   }
 
   showConfirmation();

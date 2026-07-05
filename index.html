@@ -2699,10 +2699,30 @@ function zapFire(settingsKey, payload, json=false){
 // Zap adds a note to their AxisCare profile so care coordinators can see status without hub access
 const ZAPIER_AC_STATUS_WEBHOOK = "https://hooks.zapier.com/hooks/catch/28062149/42aqc9c/";
 
+// ── Candidate texting via Supabase edge function + GoHighLevel ────────
+// Replaces the zapier_orient/not_hired webhooks. The send-candidate-message
+// edge function upserts the contact in GoHighLevel and sends the SMS from
+// the agency number. Throws with a readable message on failure.
+async function sendCandidateSMS(payload){
+  const { data, error } = await sb.functions.invoke('send-candidate-message', { body: payload });
+  if(error){
+    let msg = error.message || 'SMS service error';
+    try { const body = await error.context.json(); if(body?.error) msg = body.error; } catch(_){}
+    throw new Error(msg);
+  }
+  if(data?.error) throw new Error(data.error);
+  return data;
+}
+
 // ── SUPABASE — client initialized at top of script ────────────────────
 
 async function syncToSupabase(key, data){
   try {
+    // Guard: NEVER write while logged out. A fresh browser starts with empty
+    // local arrays, and an unauthenticated write here can overwrite real data
+    // in Supabase (this happened — see clearSeedPeople).
+    const { data:{ session } } = await sb.auth.getSession();
+    if(!session){ console.warn('Skipped Supabase sync for', key, '— not signed in'); return; }
     const { error } = await sb.from('app_data').upsert({ key, data, updated_at: new Date().toISOString() }, { onConflict: 'key' });
     if(error){ console.warn('Supabase sync failed for', key, error); setSyncStatus('offline'); }
     else setSyncStatus('ok');
@@ -2743,9 +2763,14 @@ const SEED_CAREGIVER_NAMES = ["Jane Smith","Marcus Johnson","Angela Torres","Rob
 function clearSeedPeople(){
   if(localStorage.getItem('cc_seed_cleared')) return;
   const nm = (f,l)=>`${f} ${l}`;
+  const beforeC = candidates.length, beforeG = caregivers.length;
   candidates = candidates.filter(c=>!SEED_CANDIDATE_NAMES.includes(nm(c.first,c.last)));
   caregivers = caregivers.filter(c=>!SEED_CAREGIVER_NAMES.includes(nm(c.first,c.last)));
-  saveCandidates(); saveCaregivers();
+  // Only persist if something was actually removed — an unconditional save
+  // here pushed empty arrays to Supabase from fresh (logged-out) browsers.
+  if(candidates.length !== beforeC || caregivers.length !== beforeG){
+    saveCandidates(); saveCaregivers();
+  }
   localStorage.setItem('cc_seed_cleared','1');
 }
 
@@ -3396,24 +3421,22 @@ function openInviteModal(id){
 async function confirmSendInvite(){
   const c=candidates.find(x=>x.id===invitingId);
   if(!c.phone){alert('No phone number on file. Please edit the candidate and add a cell number first.');return;}
-  const hookUrl=(appSettings.zapier_orient_webhook||'').trim();
-  const hookReady=hookUrl && hookUrl.startsWith('http') && !hookUrl.includes('REPLACE');
-  if(!hookReady && !confirm('⚠️ The orientation invite webhook is not set up in Settings yet, so NO text message will be sent automatically.\n\nUse "Copy link only" and text the candidate yourself.\n\nMark them as Invited anyway?')) return;
   document.getElementById('inv-sending').style.display='block';
   document.getElementById('inv-actions').style.display='none';
   const url=buildBookingUrl(c);
-  const payload={
-    candidate_first: c.first,
-    candidate_last:  c.last,
-    phone:           fmtPhone(c.phone),
-    message:         buildInviteMsg(c, url),
-    booking_url:     url,
-    sent_by:         'Staffing Hub',
-    sent_at:         new Date().toISOString(),
-  };
   try {
-    await zapFire('zapier_orient_webhook', payload, true);
-  } catch(e){ console.warn('Webhook error (CORS expected — Zapier still receives it):', e); }
+    await sendCandidateSMS({
+      first: c.first, last: c.last,
+      phone: c.phone, email: c.email||'',
+      message: buildInviteMsg(c, url)
+    });
+  } catch(e){
+    if(!confirm(`⚠️ The text could NOT be sent automatically (${e.message}).\n\nUse "Copy link only" and text the candidate yourself.\n\nMark them as Invited anyway?`)){
+      document.getElementById('inv-sending').style.display='none';
+      document.getElementById('inv-actions').style.display='flex';
+      return;
+    }
+  }
   const i=candidates.findIndex(x=>x.id===invitingId);
   candidates[i].invite_sent=true;
   candidates[i].invite_sent_date=new Date().toISOString().split('T')[0];
@@ -3429,7 +3452,7 @@ function openNotHireModal(id){
   document.getElementById('not-hire-notes').value='';
   document.getElementById('not-hire-modal').classList.add('open');
 }
-function confirmNotHire(){
+async function confirmNotHire(){
   const reason=document.getElementById('not-hire-reason').value;
   if(!reason){ alert('Please select a reason.'); return; }
   const notes=document.getElementById('not-hire-notes').value.trim();
@@ -3439,16 +3462,21 @@ function confirmNotHire(){
   c.not_hired_reason=reason;
   c.not_hired_notes=notes;
   c.not_hired_date=new Date().toISOString().split('T')[0];
-  // Notify candidate via Zapier (text + email)
-  const reasonLabels={background:'Background check issue',reference:'Reference check concern',noshow:'No-show to orientation',withdrew:'Candidate withdrew',other:'Other'};
-  zapFire('zapier_not_hired_webhook',{
-    first:c.first, last:c.last, full_name:`${c.first} ${c.last}`,
-    phone:c.phone||'', email:c.email||'',
-    reason, reason_label:reasonLabels[reason]||reason,
-    notes, date:c.not_hired_date
-  }, true);
   _notHireId=null;
   saveCandidates(); closeModal('not-hire-modal'); renderOB(); renderAlerts();
+  // Offer a courtesy text (deliberately generic — never text the reason;
+  // background-check rejections have their own formal notice requirements)
+  if(c.phone && reason!=='withdrew'){
+    const msg=`Hi ${c.first}, thank you for your interest in joining Caring Companions. After careful review, we won't be moving forward with your application at this time. We appreciate the time you invested and wish you all the best. — Caring Companions (417) 234-8494`;
+    if(confirm(`Send ${c.first} a courtesy text letting them know?\n\n"${msg}"`)){
+      try {
+        await sendCandidateSMS({ first:c.first, last:c.last, phone:c.phone, email:c.email||'', message:msg });
+        alert('✅ Text sent.');
+      } catch(e){
+        alert(`⚠️ The text could not be sent (${e.message}). You may want to reach out to ${c.first} directly.`);
+      }
+    }
+  }
 }
 function reactivateOB(id){
   const c=candidates.find(x=>x.id===id);
@@ -3607,8 +3635,6 @@ document.getElementById('or-recur-end-date').addEventListener('change', updateRe
 // ── ORIENTATIONS ──────────────────────────────────────────────────────
 const ORIENT_ADDR = '1331 N Stewart Ave Ste B, Springfield MO 65802';
 const BOOKING_PAGE = 'orientation-booking.html';
-// Replace with your actual Zapier webhook for orientation bookings:
-const ZAPIER_BOOKING_WEBHOOK = 'https://hooks.zapier.com/hooks/catch/REPLACE_ME/orient/';
 
 let orientSessions = JSON.parse(localStorage.getItem('cc_orient_sessions') || '[]');
 let orientId = parseInt(localStorage.getItem('cc_orient_id') || '1');
