@@ -21,11 +21,17 @@ Deno.serve(async (req) => {
   const { data: row } = await supabase.from('app_data').select('data').eq('key', 'leads').maybeSingle()
   // deno-lint-ignore no-explicit-any
   const leads: any[] = Array.isArray(row?.data) ? row!.data : []
+  const { data: actRow } = await supabase.from('app_data').select('data').eq('key', 'activities').maybeSingle()
+  // deno-lint-ignore no-explicit-any
+  const acts: any[] = (Array.isArray(actRow?.data) ? actRow!.data : []).filter((a) => !a.done_at && a.due)
   const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' }) // YYYY-MM-DD Missouri time
   const open = leads.filter((l) => l.follow_up_due && l.status !== 'Converted' && l.status !== 'Lost')
   const overdue = open.filter((l) => l.follow_up_due < today)
   const dueToday = open.filter((l) => l.follow_up_due === today)
-  if (!overdue.length && !dueToday.length) return json({ status: 'nothing due', date: today })
+  const actsOverdue = acts.filter((a) => a.due < today)
+  const actsToday = acts.filter((a) => a.due === today)
+  if (!overdue.length && !dueToday.length && !actsOverdue.length && !actsToday.length)
+    return json({ status: 'nothing due', date: today })
 
   const line = (l: { first_name?: string; last_name?: string; phone?: string; follow_up_due?: string; follow_up_branch?: string; interest_notes?: string }) =>
     `<li><b>${l.first_name ?? ''} ${l.last_name ?? ''}</b>${l.phone ? ` — ${l.phone}` : ''}` +
@@ -35,8 +41,10 @@ Deno.serve(async (req) => {
   const html =
     `<div style="font-family:Arial,sans-serif;font-size:15px;color:#1f2a36;line-height:1.6;max-width:600px">` +
     `<h2 style="color:#0E3860;margin:0 0 10px">Lead follow-ups — ${today}</h2>` +
-    (overdue.length ? `<p><b style="color:#DC2626">⚠️ Overdue (${overdue.length}):</b></p><ul>${overdue.map(line).join('')}</ul>` : '') +
-    (dueToday.length ? `<p><b style="color:#B45309">Due today (${dueToday.length}):</b></p><ul>${dueToday.map(line).join('')}</ul>` : '') +
+    (overdue.length ? `<p><b style="color:#DC2626">⚠️ Lead follow-ups overdue (${overdue.length}):</b></p><ul>${overdue.map(line).join('')}</ul>` : '') +
+    (dueToday.length ? `<p><b style="color:#B45309">Lead follow-ups due today (${dueToday.length}):</b></p><ul>${dueToday.map(line).join('')}</ul>` : '') +
+    (actsOverdue.length ? `<p><b style="color:#DC2626">⚠️ Activities overdue (${actsOverdue.length}):</b></p><ul>${actsOverdue.map((a) => `<li>${a.title} (due ${a.due})</li>`).join('')}</ul>` : '') +
+    (actsToday.length ? `<p><b style="color:#B45309">Activities due today (${actsToday.length}):</b></p><ul>${actsToday.map((a) => `<li>${a.title}</li>`).join('')}</ul>` : '') +
     `<p>Open the <a href="https://cc.mo-care.com">Care Coordinator's Hub</a> → Leads to work the list (each lead's View Profile has the full conversation).</p></div>`
 
   const ghlToken = Deno.env.get('GHL_TOKEN')
