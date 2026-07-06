@@ -1755,9 +1755,39 @@ async function doForgotPassword(){
   const email = document.getElementById('login-email')?.value.trim()
     || prompt('Enter your email address:');
   if(!email) return;
-  const { error } = await sb.auth.resetPasswordForEmail(email);
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin + '/' });
   if(error){ alert('Error: ' + error.message); }
-  else { alert(`Password reset email sent to ${email}. Check your inbox.`); }
+  else { alert(`Reset link sent to ${email}.\nCheck your inbox (and spam). The link brings you back here to set a new password.`); }
+}
+
+/* ---- Set-new-password step (arriving from the reset email) ---- */
+sb.auth.onAuthStateChange(function(event){ if(event==='PASSWORD_RECOVERY') showSetNewPassword(); });
+function showSetNewPassword(){
+  if(document.getElementById('pwResetOverlay')) return;
+  var d=document.createElement('div');
+  d.id='pwResetOverlay';
+  d.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.78);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px';
+  d.innerHTML='<div style="background:#fff;border-radius:14px;padding:26px;width:100%;max-width:360px;font-family:inherit">'
+    +'<h2 style="margin:0 0 6px;color:#0E3860;font-size:18px">Set a new password</h2>'
+    +'<p style="margin:0 0 14px;font-size:13px;color:#64748B">Your email link signed you in — now choose a new password.</p>'
+    +'<input id="pwNew1" type="password" placeholder="New password (8+ characters)" style="width:100%;box-sizing:border-box;padding:11px;border:1.5px solid #E2E8F0;border-radius:8px;font-size:16px;margin-bottom:8px;font-family:inherit">'
+    +'<input id="pwNew2" type="password" placeholder="Type it again" style="width:100%;box-sizing:border-box;padding:11px;border:1.5px solid #E2E8F0;border-radius:8px;font-size:16px;margin-bottom:10px;font-family:inherit">'
+    +'<div id="pwErr" style="display:none;color:#DC2626;font-size:12.5px;margin-bottom:10px"></div>'
+    +'<button id="pwSaveBtn" style="width:100%;background:#0E3860;color:#fff;border:none;padding:12px;border-radius:999px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit">Save new password</button>'
+    +'</div>';
+  document.body.appendChild(d);
+  document.getElementById('pwSaveBtn').onclick=async function(){
+    var p1=document.getElementById('pwNew1').value, p2=document.getElementById('pwNew2').value, err=document.getElementById('pwErr');
+    err.style.display='none';
+    if(p1.length<8){ err.textContent='Please use at least 8 characters.'; err.style.display='block'; return; }
+    if(p1!==p2){ err.textContent='Those don\'t match — try again.'; err.style.display='block'; return; }
+    this.disabled=true; this.textContent='Saving…';
+    var res=await sb.auth.updateUser({password:p1});
+    if(res.error){ err.textContent=res.error.message; err.style.display='block'; this.disabled=false; this.textContent='Save new password'; return; }
+    d.remove();
+    alert('Password updated — you\'re signed in.');
+    window.location.reload();
+  };
 }
 
 document.getElementById('pwd').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
