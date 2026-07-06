@@ -256,7 +256,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
       <a class="logout-btn" href="https://training.mo-care.com" target="_blank" rel="noopener"
          title="Open the Training Hub — caregiver training dashboard"
          style="text-decoration:none;background:rgba(255,198,113,.22);color:var(--yellow);font-weight:600;display:inline-flex;align-items:center">🎓 Training Hub</a>
-      <button class="logout-btn" onclick="openSettings()">⚙️ Settings</button>
+      <button class="logout-btn" id="settingsBtn" onclick="openSettings()">⚙️ Settings</button>
       <button class="logout-btn" onclick="doForgotPassword()">🔑 Reset Password</button>
       <button class="logout-btn" onclick="doLogout()">Sign Out</button>
     </div>
@@ -1749,6 +1749,7 @@ document.getElementById('login-email').addEventListener('keydown',e=>{if(e.key==
       return;
     }
     await showApp();
+    isOwner().then(ok => { const b = document.getElementById('settingsBtn'); if(b && !ok) b.style.display = 'none'; });
   }
 })();
 
@@ -4750,7 +4751,21 @@ function openProfile(first, last){
 }
 
 // ── Settings ──────────────────────────────────────────────────────────
-function openSettings(){
+/* Settings are OWNER-ONLY (email-gated, follows the login — a fresh browser
+   can't reach them). The admin passcode remains as a second layer. */
+const OWNER_EMAILS = ['samantha@mo-care.com'];
+async function isOwner(){
+  try{
+    if(!sb) return false;
+    const { data:{ session } } = await sb.auth.getSession();
+    return !!session && OWNER_EMAILS.includes(String(session.user.email||'').toLowerCase());
+  }catch(e){ return false; }
+}
+async function openSettings(){
+  if(!(await isOwner())){
+    alert('Settings are owner-only. If a link or key needs updating, ask Samantha.');
+    return;
+  }
   // Gate behind admin passcode
   document.getElementById('admin-pwd-input').value='';
   document.getElementById('admin-pwd-err').style.display='none';
