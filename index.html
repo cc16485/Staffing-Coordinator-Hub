@@ -2779,6 +2779,20 @@ function renderOffers(){
       (o.personality?'<div><b>Personality/fit:</b> '+esc(o.personality)+'</div>':'')+
       (o.notes?'<div><b>Notes:</b> '+esc(o.notes)+'</div>':'')+
       '</div>'+
+      '<div style="display:flex;gap:.6rem;align-items:center;margin-top:.7rem;flex-wrap:wrap;font-size:.82rem;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:.5rem .7rem">'+
+      '<b style="color:#0E3860">Viventium:</b>'+
+      (o.viventium_entered_at
+        ? '<span style="color:#15803D;font-weight:700">entered ✓</span>'
+        : '<button class="fb" onclick="markOfferViventium(\''+esc(o.id)+'\',this)">☑ Entered in Viventium</button>')+
+      '<span style="color:#cbd5e1">→</span>'+
+      (o.step1_done_at
+        ? '<span style="color:#15803D;font-weight:700">Step 1 paperwork done ✓</span>'
+        : (o.viventium_entered_at
+            ? '<button class="fb" onclick="markOfferStep1(\''+esc(o.id)+'\',this)">☑ Step 1 done (got the notification)</button>'+
+              '<span style="color:#94a3b8">auto-reminders to them every 3 days'+
+              (o.step1_reminder_count?(' · '+o.step1_reminder_count+' sent'):'')+'</span>'
+            : '<span style="color:#94a3b8">waiting on Viventium entry</span>'))+
+      '</div>'+
       '<div style="display:flex;gap:1rem;align-items:center;margin-top:.7rem;flex-wrap:wrap;font-size:.82rem">'+
       '<span><b>Level of care:</b> suggested '+(o.level_suggested||'—')+' at interview</span>'+
       '<label style="display:flex;align-items:center;gap:.4rem">confirmed:'+
@@ -2815,6 +2829,21 @@ async function confirmOfferLevel(id,sel){
   if(v==null) return;
   try{ await offerUpdate(id,{p_level:v}); }
   catch(e){ alert('Could not save the confirmed level: '+(e&&e.message?e.message:'error')); }
+}
+async function markOfferViventium(id,btn){
+  if(btn){btn.disabled=true;btn.textContent='Saving…';}
+  try{
+    const {data:{session}}=await sb.auth.getSession();
+    await offerUpdate(id,{p_viventium:true,p_who:(session&&session.user&&session.user.email)||'staff'});
+    await loadOffers();
+  }catch(e){ alert('Could not save: '+(e&&e.message?e.message:'error')); if(btn){btn.disabled=false;btn.textContent='☑ Entered in Viventium';} }
+}
+async function markOfferStep1(id,btn){
+  if(btn){btn.disabled=true;btn.textContent='Saving…';}
+  try{
+    await offerUpdate(id,{p_step1:true});
+    await loadOffers();
+  }catch(e){ alert('Could not save: '+(e&&e.message?e.message:'error')); if(btn){btn.disabled=false;btn.textContent='☑ Step 1 done (got the notification)';} }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
