@@ -2824,14 +2824,19 @@ async function syncFromTrainingHub(btn){
     const r=await fetch(TRAINING_HUB_API,{method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},body:JSON.stringify({p_key:key})});
     const data=await r.json();
     if(!Array.isArray(data)) throw new Error((data&&data.error)?data.error:'unexpected response — is the read key correct?');
-    const norm=s=>(s||'').toLowerCase().replace(/[^a-z]/g,'');
-    const byId={}, byName={};
-    data.forEach(h=>{ if(h.axiscare_id) byId[String(h.axiscare_id)]=h; byName[norm(h.name)]=h; });
+    const norm=s=>(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z]/g,'');
+    const byId={}, byName={}, dupes={};
+    data.forEach(h=>{
+      if(h.axiscare_id) byId[String(h.axiscare_id)]=h;
+      const n=norm(h.name);
+      if(byName[n]) dupes[n]=true; else byName[n]=h;
+    });
     const day=iso=>iso?String(iso).slice(0,10):'';
     let matched=0, updated=0; const unmatched=[];
     caregivers.forEach(c=>{
-      const h=(c.axiscare_id&&byId[String(c.axiscare_id)])||byName[norm((c.first||'')+(c.last||''))];
-      if(!h){ unmatched.push(((c.first||'')+' '+(c.last||'')).trim()); return; }
+      const nkey=norm((c.first||'')+(c.last||''));
+      const h=(c.axiscare_id&&byId[String(c.axiscare_id)])||(!dupes[nkey]&&byName[nkey])||null;
+      if(!h){ unmatched.push(((c.first||'')+' '+(c.last||'')).trim()+(dupes[nkey]?' (duplicate name — match by hand once, then IDs take over)':'')); return; }
       matched++;
       let ch=false;
       if(h.axiscare_id&&c.axiscare_id!==h.axiscare_id){ c.axiscare_id=h.axiscare_id; ch=true; }
