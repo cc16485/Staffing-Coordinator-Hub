@@ -2848,6 +2848,22 @@ async function syncFromTrainingHub(btn){
       }
       if(h.hire_date&&!c.hire_date){ c.hire_date=day(h.hire_date); ch=true; }
       if(h.first_contact_date&&!c.first_contact){ c.first_contact=day(h.first_contact_date); ch=true; }
+      // OJT: the platform's 6-hour online OJT fills the online portion; the
+      // in-home portion stays manual until MMAC settles the delivery split.
+      const ojt=course('on-the-job-training');
+      if(ojt&&ojt.status==='complete'&&ojt.completed_at&&c.ojt_online!==day(ojt.completed_at)){
+        c.ojt_online=day(ojt.completed_at);
+        if(!c.ojt_online_proof) c.ojt_online_proof='https://training.mo-care.com';
+        ch=true;
+      }
+      // Annual in-service: latest date + trailing-12-month hours from the
+      // Training Hub's in-service ledger.
+      if(h.inservice_last_date){
+        if(c.annual_date!==day(h.inservice_last_date)){ c.annual_date=day(h.inservice_last_date); ch=true; }
+        const hrs=String(h.inservice_hours_12mo!=null?h.inservice_hours_12mo:'');
+        if(hrs&&c.annual_hrs!==hrs){ c.annual_hrs=hrs; ch=true; }
+        if(h.inservice_has_doc&&!c.annual_proof){ c.annual_proof='https://training.mo-care.com'; ch=true; }
+      }
       if(ch){ c.th_synced=new Date().toISOString(); updated++; }
     });
     if(updated) saveCaregivers();
