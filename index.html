@@ -266,6 +266,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
   <div id="alert-strip" style="display:none;flex-wrap:wrap;gap:.45rem;padding:.55rem 1.5rem 0;background:var(--navy)"></div>
 
   <div class="tab-bar">
+    <div class="tab" onclick="switchTab('offers',this)"><span class="ti">🤝</span> New Offers<span id="offersBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
     <div class="tab active" onclick="switchTab('onboarding',this)"><span class="ti">🔍</span> Background & References</div>
     <div class="tab" onclick="switchTab('orientations',this)"><span class="ti">📅</span> Orientations</div>
     <div class="tab" onclick="switchTab('training',this)"><span class="ti">🎓</span> Training</div>
@@ -275,6 +276,30 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
   </div>
 
   <div class="tab-content-wrap">
+
+    <!-- ═══════════════════════════════ NEW OFFERS ═══════════════════════════════ -->
+    <div class="panel" id="panel-offers">
+      <div class="tab-guide">
+        <div class="tab-guide-hdr" onclick="toggleGuide('offers')">
+          <span class="tab-guide-title">📋 How This Tab Works — Step by Step</span>
+          <span class="tab-guide-arrow" id="guide-arrow-offers">▼</span>
+        </div>
+        <div class="tab-guide-body" id="guide-body-offers">
+          <ol style="margin:.4rem 0 .6rem;padding-left:1.3rem;line-height:1.7;font-size:.85rem">
+            <li>When a care coordinator offers someone a job (📋 Offer a Job on the Team Hub), the interview record lands here automatically.</li>
+            <li>Open the record and enter the <b>attribute answers into AxisCare</b> (caregiver profile → Attributes screen — the list here is in the same order). Then click <b>Entered in AxisCare ✓</b>.</li>
+            <li>After references and verified job experience come back, set the <b>confirmed Level of Care</b> (the level from the interview is only a suggestion).</li>
+          </ol>
+        </div>
+      </div>
+      <div style="padding:0 1.5rem 2rem">
+        <div style="display:flex;align-items:center;gap:.8rem;margin:.4rem 0 1rem">
+          <h2 style="font-size:1.05rem;margin:0">Interview &amp; offer records</h2>
+          <button class="fb" onclick="loadOffers(this)">↻ Refresh</button>
+        </div>
+        <div id="offersList" style="display:flex;flex-direction:column;gap:.9rem"><div style="color:#94a3b8;font-size:.85rem">Loading…</div></div>
+      </div>
+    </div>
 
     <!-- ═══════════════════════════════ ONBOARDING ═══════════════════════════════ -->
     <div class="panel active" id="panel-onboarding">
@@ -1688,6 +1713,7 @@ async function showApp(){
   renderAll();
   loadClientQueue();
   mergePendingBookings();
+  loadOffers(); // fills the New Offers tab + red badge count
 }
 
 async function doLogin(){
@@ -2682,6 +2708,113 @@ function switchTab(name, btn){
   document.getElementById('panel-'+name).classList.add('active');
   if(name==='orientations'){ renderOrientations(); initOrientSettings(); mergePendingBookings(); }
   if(name==='evv') { renderEVVCorrections(); loadPendingEVVSubmissions(); }
+  if(name==='offers') { loadOffers(); }
+}
+
+// ── NEW OFFERS (interview records from the Team Hub "Offer a Job" form) ──
+const OFFER_ATTRS=[
+  ['alzheimers',"Alzheimer's Disease"],['bed_bound','Bed Bound'],['cats','Cats'],
+  ['dementia','Dementia'],['dogs','Dogs'],['female_caregiver','Female Caregiver'],
+  ['gait_belt','Gait Belt'],['hospice','Hospice'],['hoyer_lift','Hoyer Lift'],
+  ['live_in','Live-In'],['male_caregiver','Male Caregiver'],['parkinsons',"Parkinson's Disease Experience"],
+  ['payor_medicaid','Payor - Medicaid'],['payor_private_pay','Payor - Private Pay'],
+  ['personal_care','Personal Care'],['smoking','Smoking'],
+  ['spanish_speaking','Spanish Speaking'],['transportation','Transportation'],
+];
+let OFFERS=[];
+async function loadOffers(btn){
+  const box=document.getElementById('offersList');
+  const key=(appSettings.training_hub_key||'').trim();
+  if(!key){ box.innerHTML='<div style="color:#b45309;font-size:.85rem">Paste the Training Hub read key into ⚙️ Settings → Training Hub first.</div>'; return; }
+  if(btn){ btn.disabled=true; btn.textContent='↻ Loading…'; }
+  try{
+    const r=await fetch('https://rdqujxiycycwhskyvrwa.supabase.co/rest/v1/rpc/hub_job_offers',{
+      method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
+      body:JSON.stringify({p_key:key})});
+    const data=await r.json();
+    if(!Array.isArray(data)) throw new Error((data&&data.error)||'unexpected response');
+    OFFERS=data;
+    renderOffers();
+    updateOffersBadge();
+  }catch(e){ box.innerHTML='<div style="color:#b91c1c;font-size:.85rem">Could not load offers: '+(e&&e.message?e.message:'error')+'</div>'; }
+  finally{ if(btn){ btn.disabled=false; btn.textContent='↻ Refresh'; } }
+}
+function updateOffersBadge(){
+  const n=OFFERS.filter(o=>!o.attributes_entered_at).length;
+  const b=document.getElementById('offersBadge');
+  if(b){ b.style.display=n?'inline-block':'none'; b.textContent=n; }
+}
+function renderOffers(){
+  const esc=t=>String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const box=document.getElementById('offersList');
+  if(!OFFERS.length){ box.innerHTML='<div style="color:#94a3b8;font-size:.85rem">No offers yet — they appear here the moment a coordinator submits the Offer a Job form on the Team Hub.</div>'; return; }
+  box.innerHTML=OFFERS.map((o,i)=>{
+    const done=!!o.attributes_entered_at;
+    const attrs=o.attributes||{};
+    const attrHtml=OFFER_ATTRS.map(a=>{
+      const v=attrs[a[0]];
+      const no=v===false;
+      return '<div style="display:flex;justify-content:space-between;gap:.6rem;padding:.18rem 0;border-bottom:1px dashed #eef2f7;font-size:.8rem">'+
+        '<span>'+esc(a[1])+'</span><b style="color:'+(no?'#DC2626':'#15803D')+'">'+(no?'NO':'Yes')+'</b></div>';
+    }).join('');
+    const lvl=o.level_confirmed||'';
+    return '<div style="background:#fff;border:1px solid '+(done?'#E2E8F0':'#f59e0b')+';border-radius:12px;padding:1rem 1.2rem">'+
+      '<div style="display:flex;align-items:center;gap:.7rem;flex-wrap:wrap">'+
+      '<b style="font-size:1rem;color:#0E3860">'+esc(o.name)+'</b>'+
+      '<span style="font-size:.78rem;color:#64748B">'+esc(o.position||'Caregiver')+(o.pay_rate?' · $'+Number(o.pay_rate).toFixed(2)+'/hr':'')+' · interviewed '+esc(o.interview_date||'')+(o.offered_by?' by '+esc(o.offered_by):'')+'</span>'+
+      '<span style="flex:1"></span>'+
+      (o.axiscare_applicant_id
+        ? '<span style="font-size:.72rem;font-weight:700;color:#15803D;background:#DCFCE7;border-radius:999px;padding:.15rem .6rem">In AxisCare ✓</span>'
+        : '<span title="'+esc(o.axiscare_push_error||'')+'" style="font-size:.72rem;font-weight:700;color:#B45309;background:#FEF3C7;border-radius:999px;padding:.15rem .6rem">Add to AxisCare by hand</span>')+
+      (done
+        ? '<span style="font-size:.72rem;font-weight:700;color:#15803D;background:#DCFCE7;border-radius:999px;padding:.15rem .6rem">Attributes entered ✓'+(o.attributes_entered_by?' ('+esc(o.attributes_entered_by)+')':'')+'</span>'
+        : '<button class="fb" onclick="markOfferEntered(\''+esc(o.id)+'\',this)">☑ Entered in AxisCare</button>')+
+      '</div>'+
+      '<div style="display:flex;gap:1.2rem;flex-wrap:wrap;margin-top:.6rem;font-size:.82rem;color:#334155">'+
+      (o.phone?'<span>📱 '+esc(o.phone)+'</span>':'')+(o.email?'<span>✉️ '+esc(o.email)+'</span>':'')+
+      (o.availability?'<span>🗓 '+esc(o.availability)+'</span>':'')+
+      '</div>'+
+      '<div style="margin-top:.55rem;font-size:.82rem;color:#334155;line-height:1.5">'+
+      (o.experience?'<div><b>Experience:</b> '+esc(o.experience)+'</div>':'')+
+      (o.personality?'<div><b>Personality/fit:</b> '+esc(o.personality)+'</div>':'')+
+      (o.notes?'<div><b>Notes:</b> '+esc(o.notes)+'</div>':'')+
+      '</div>'+
+      '<div style="display:flex;gap:1rem;align-items:center;margin-top:.7rem;flex-wrap:wrap;font-size:.82rem">'+
+      '<span><b>Level of care:</b> suggested '+(o.level_suggested||'—')+' at interview</span>'+
+      '<label style="display:flex;align-items:center;gap:.4rem">confirmed:'+
+      '<select onchange="confirmOfferLevel(\''+esc(o.id)+'\',this)" style="font-family:inherit;font-size:.82rem;padding:.2rem .4rem;border:1px solid #E2E8F0;border-radius:6px">'+
+      '<option value=""'+(lvl===''?' selected':'')+'>not yet</option>'+
+      [1,2,3].map(n=>'<option value="'+n+'"'+(lvl===n?' selected':'')+'>Level '+n+'</option>').join('')+
+      '</select></label>'+
+      '<span style="color:#94a3b8">(confirm from verified experience + references)</span>'+
+      '</div>'+
+      '<details style="margin-top:.7rem"><summary style="cursor:pointer;font-size:.82rem;font-weight:700;color:#0E3860">AxisCare attribute answers — same order as the Attributes screen</summary>'+
+      '<div style="max-width:420px;margin-top:.4rem">'+attrHtml+'</div></details>'+
+      '</div>';
+  }).join('');
+}
+async function offerUpdate(id, payload){
+  const key=(appSettings.training_hub_key||'').trim();
+  const r=await fetch('https://rdqujxiycycwhskyvrwa.supabase.co/rest/v1/rpc/hub_offer_update',{
+    method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
+    body:JSON.stringify(Object.assign({p_key:key,p_id:id},payload))});
+  const data=await r.json();
+  if(!data||data.error||data.ok===false) throw new Error((data&&data.error)||'update failed');
+}
+async function markOfferEntered(id,btn){
+  if(btn){btn.disabled=true;btn.textContent='Saving…';}
+  try{
+    const {data:{session}}=await sb.auth.getSession();
+    const who=(session&&session.user&&session.user.email)||'staff';
+    await offerUpdate(id,{p_entered:true,p_who:who});
+    await loadOffers();
+  }catch(e){ alert('Could not save: '+(e&&e.message?e.message:'error')); if(btn){btn.disabled=false;btn.textContent='☑ Entered in AxisCare';} }
+}
+async function confirmOfferLevel(id,sel){
+  const v=sel.value?Number(sel.value):null;
+  if(v==null) return;
+  try{ await offerUpdate(id,{p_level:v}); }
+  catch(e){ alert('Could not save the confirmed level: '+(e&&e.message?e.message:'error')); }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
