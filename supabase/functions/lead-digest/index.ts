@@ -30,7 +30,29 @@ Deno.serve(async (req) => {
   const dueToday = open.filter((l) => l.follow_up_due === today)
   const actsOverdue = acts.filter((a) => a.due < today)
   const actsToday = acts.filter((a) => a.due === today)
-  if (!overdue.length && !dueToday.length && !actsOverdue.length && !actsToday.length)
+
+  // Client compliance clock: latest check-in per client past its next-due
+  // date, and supervisory visits past due.
+  const { data: ciRow } = await supabase.from('app_data').select('data').eq('key', 'client_checkins').maybeSingle()
+  // deno-lint-ignore no-explicit-any
+  const checkins: any[] = Array.isArray(ciRow?.data) ? ciRow!.data : []
+  const latestByClient = new Map<string, { due: string; date: string }>()
+  for (const c of checkins) {
+    if (!c.client_name) continue
+    const prev = latestByClient.get(c.client_name)
+    if (!prev || (c.checkin_date || '') > prev.date) {
+      latestByClient.set(c.client_name, { due: c.next_checkin_due || '', date: c.checkin_date || '' })
+    }
+  }
+  const checkinsOverdue = [...latestByClient.entries()]
+    .filter(([, v]) => v.due && v.due < today)
+    .map(([name, v]) => ({ name, due: v.due }))
+  const { data: svRow } = await supabase.from('app_data').select('data').eq('key', 'supervisory_visits').maybeSingle()
+  // deno-lint-ignore no-explicit-any
+  const svs: any[] = Array.isArray(svRow?.data) ? svRow!.data : []
+  const svOverdue = svs.filter((v) => v.due_date && v.due_date < today && !v.completed_date)
+
+  if (!overdue.length && !dueToday.length && !actsOverdue.length && !actsToday.length && !checkinsOverdue.length && !svOverdue.length)
     return json({ status: 'nothing due', date: today })
 
   const line = (l: { first_name?: string; last_name?: string; phone?: string; follow_up_due?: string; follow_up_branch?: string; interest_notes?: string }) =>
@@ -45,6 +67,8 @@ Deno.serve(async (req) => {
     (dueToday.length ? `<p><b style="color:#B45309">Lead follow-ups due today (${dueToday.length}):</b></p><ul>${dueToday.map(line).join('')}</ul>` : '') +
     (actsOverdue.length ? `<p><b style="color:#DC2626">⚠️ Activities overdue (${actsOverdue.length}):</b></p><ul>${actsOverdue.map((a) => `<li>${a.title} (due ${a.due})</li>`).join('')}</ul>` : '') +
     (actsToday.length ? `<p><b style="color:#B45309">Activities due today (${actsToday.length}):</b></p><ul>${actsToday.map((a) => `<li>${a.title}</li>`).join('')}</ul>` : '') +
+    (checkinsOverdue.length ? `<p><b style="color:#DC2626">💚 Client check-ins past due (${checkinsOverdue.length}):</b></p><ul>${checkinsOverdue.map((c) => `<li><b>${c.name}</b> — was due ${c.due}</li>`).join('')}</ul>` : '') +
+    (svOverdue.length ? `<p><b style="color:#DC2626">🛡 Supervisory visits past due (${svOverdue.length}):</b></p><ul>${svOverdue.map((v) => `<li><b>${v.caregiver_name ?? v.client_name ?? '?'}</b> — was due ${v.due_date}</li>`).join('')}</ul>` : '') +
     `<p>Open the <a href="https://cc.mo-care.com">Care Coordinator's Hub</a> → Leads to work the list (each lead's View Profile has the full conversation).</p></div>`
 
   const ghlToken = Deno.env.get('GHL_TOKEN')
