@@ -356,6 +356,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
         <button class="fb" onclick="trFilter('blocked',this)">⛔ Client Contact Blocked</button>
         <button class="fb" onclick="trFilter('ojt-due',this)">30-Day Training Due</button>
         <button class="fb" onclick="trFilter('annual-due',this)">Annual Due</button>
+        <button class="fb" onclick="syncFromTrainingHub(this)" title="Pull completion dates, hire dates and first-contact dates straight from training.mo-care.com">☁ Sync from Training Hub</button>
         <button class="add-btn" onclick="openCGModal('training')">+ Add Caregiver</button>
       </div>
       <div class="tbl-wrap">
@@ -1393,6 +1394,14 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     <div style="display:flex;gap:.5rem;margin-bottom:.65rem;align-items:center">
       <label style="font-size:.8rem;font-weight:500;white-space:nowrap;color:var(--navy)">Site Number:</label>
       <input type="text" id="settings-ac-site" placeholder="e.g. 10856" style="flex:1;padding:.45rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.83rem">
+    </div>
+    <div style="background:#eef6ff;border:1.5px solid #93c5fd;border-radius:10px;padding:.85rem 1rem;margin-bottom:.65rem">
+      <div style="font-size:.7rem;font-weight:700;color:#1e40af;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">🎓 Training Hub — live sync</div>
+      <p style="font-size:.78rem;color:var(--gray);margin:0 0 .5rem">Read key for the "Sync from Training Hub" button on the Training tab (pulls completion dates straight from training.mo-care.com). Ask Samantha or Claude for the key.</p>
+      <div style="display:flex;gap:.5rem;align-items:center">
+        <label style="font-size:.8rem;font-weight:500;white-space:nowrap;color:var(--navy)">Read key:</label>
+        <input type="text" id="settings-training-key" placeholder="cchub_..." style="flex:1;padding:.45rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.83rem">
+      </div>
     </div>
     <div style="background:#fff7ed;border:1.5px solid #f59e0b;border-radius:10px;padding:.85rem 1rem;margin-bottom:.65rem">
       <div style="font-size:.7rem;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">🏠 New Client Queue — AxisCare → Hub Webhook</div>
@@ -2796,6 +2805,60 @@ function saveCaregivers(){
   localStorage.setItem('cc_caregivers', JSON.stringify(caregivers));
   localStorage.setItem('cc_cg_id', String(cgId));
   syncToSupabase('caregivers', caregivers);
+}
+
+// ── TRAINING HUB LIVE SYNC ────────────────────────────────────────────
+// Pulls authoritative training data from training.mo-care.com (the system of
+// record for training) and fills this tab's fields: orientation + ALZ
+// completion dates, hire date and first-client-contact date (fill-if-empty).
+// Matches caregivers by AxisCare ID when known, otherwise by name.
+const TRAINING_HUB_API='https://rdqujxiycycwhskyvrwa.supabase.co/rest/v1/rpc/hub_training_status';
+const TRAINING_HUB_ANON='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJkcXVqeGl5Y3ljd2hza3l2cndhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMyMTg1NDgsImV4cCI6MjA5ODc5NDU0OH0.SFjAfj--b-tWrk8bMVLeM-tGwD8VBaPsEBtUAp5tPew';
+async function syncFromTrainingHub(btn){
+  const key=(appSettings.training_hub_key||'').trim();
+  if(!key){ alert('First paste the Training Hub read key into ⚙️ Settings → Training Hub.'); return; }
+  const orig=btn?btn.textContent:'';
+  if(btn){ btn.textContent='☁ Syncing…'; btn.disabled=true; }
+  try{
+    const r=await fetch(TRAINING_HUB_API,{method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},body:JSON.stringify({p_key:key})});
+    const data=await r.json();
+    if(!Array.isArray(data)) throw new Error((data&&data.error)?data.error:'unexpected response — is the read key correct?');
+    const norm=s=>(s||'').toLowerCase().replace(/[^a-z]/g,'');
+    const byId={}, byName={};
+    data.forEach(h=>{ if(h.axiscare_id) byId[String(h.axiscare_id)]=h; byName[norm(h.name)]=h; });
+    const day=iso=>iso?String(iso).slice(0,10):'';
+    let matched=0, updated=0; const unmatched=[];
+    caregivers.forEach(c=>{
+      const h=(c.axiscare_id&&byId[String(c.axiscare_id)])||byName[norm((c.first||'')+(c.last||''))];
+      if(!h){ unmatched.push(((c.first||'')+' '+(c.last||'')).trim()); return; }
+      matched++;
+      let ch=false;
+      if(h.axiscare_id&&c.axiscare_id!==h.axiscare_id){ c.axiscare_id=h.axiscare_id; ch=true; }
+      const course=slug=>(h.trainings||[]).find(t=>t.slug===slug);
+      const or=course('agency-orientation'), alz=course('dementia-care');
+      if(or&&or.status==='complete'&&or.completed_at&&c.orient_date!==day(or.completed_at)){
+        c.orient_date=day(or.completed_at);
+        if(!c.orient_proof) c.orient_proof='https://training.mo-care.com';
+        ch=true;
+      }
+      if(alz&&alz.status==='complete'&&alz.completed_at){
+        if(c.alz_date!==day(alz.completed_at)){ c.alz_date=day(alz.completed_at); ch=true; }
+        if(!(parseInt(c.alz_hrs)>=4)){ c.alz_hrs='4'; ch=true; }
+        if(!c.alz_proof){ c.alz_proof='https://training.mo-care.com'; ch=true; }
+      }
+      if(h.hire_date&&!c.hire_date){ c.hire_date=day(h.hire_date); ch=true; }
+      if(h.first_contact_date&&!c.first_contact){ c.first_contact=day(h.first_contact_date); ch=true; }
+      if(ch){ c.th_synced=new Date().toISOString(); updated++; }
+    });
+    if(updated) saveCaregivers();
+    renderTR();
+    alert('Training Hub sync complete.\n\nMatched: '+matched+' caregiver(s)\nUpdated: '+updated+
+      (unmatched.length?('\n\nNot found in the Training Hub (name spelling differs, or not active there):\n• '+unmatched.slice(0,12).join('\n• ')+(unmatched.length>12?('\n…and '+(unmatched.length-12)+' more'):'')):'\n\nAll caregivers matched ✓'));
+  }catch(e){
+    alert('Training Hub sync failed: '+((e&&e.message)?e.message:'network error'));
+  }finally{
+    if(btn){ btn.textContent=orig; btn.disabled=false; }
+  }
 }
 // ── TRAINING LOGIC ────────────────────────────────────────────────────
 function trainStatus(c){
@@ -4690,6 +4753,7 @@ document.getElementById('admin-pwd-input')?.addEventListener('keydown',e=>{if(e.
 function _openSettingsModal(){
   renderStaffUsers();
   document.getElementById('settings-ac-site').value=appSettings.axiscare_site||'';
+  if(document.getElementById('settings-training-key')) document.getElementById('settings-training-key').value=appSettings.training_hub_key||'';
   document.getElementById('settings-gdrive-client-id').value=appSettings.google_client_id||'';
   document.getElementById('settings-gdrive-folder-id').value=appSettings.google_drive_folder_id||'';
   document.getElementById('settings-gcal-id').value=appSettings.gcal_calendar_id||'';
@@ -4798,6 +4862,7 @@ function migrateOldRecipients(){
 }
 function saveSettings(){
   appSettings.axiscare_site = document.getElementById('settings-ac-site').value.trim();
+  appSettings.training_hub_key = document.getElementById('settings-training-key')?.value.trim() || appSettings.training_hub_key || '';
   const newClientId = document.getElementById('settings-gdrive-client-id').value.trim();
   appSettings.google_drive_folder_id = document.getElementById('settings-gdrive-folder-id').value.trim();
   appSettings.gcal_calendar_id = document.getElementById('settings-gcal-id').value.trim() || 'primary';
