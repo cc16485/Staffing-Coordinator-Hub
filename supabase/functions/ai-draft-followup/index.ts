@@ -126,6 +126,8 @@ const RESPONSE_SCHEMA = {
       email_collected_on_call: { type: 'boolean', description: 'True if the notes indicate an email address was already collected/known for this contact.' },
       attach_service_guide: { type: 'boolean', description: 'True if the email should reference/attach the Service Guide (usually true unless the lead is clearly cold).' },
       include_website: { type: 'boolean', description: 'True if the email should include the agency website link (usually true).' },
+      needs_summary: { type: 'string', description: "2-3 plain sentences summarizing the client's likely care needs (who needs care, what kind, frequency/hours if inferable, key risks). Written for a coordinator scanning the lead profile. Empty string unless mode summary was requested." },
+      care_flags: { type: 'array', items: { type: 'string' }, maxItems: 6, description: 'Short care-risk/need flags for the profile page, e.g. "Fall Risk", "Dementia", "Transfer Assist", "Lives Alone". Empty unless mode summary was requested.' },
     },
     required: ['branch', 'confidence_note', 'intent_tags', 'email_subject', 'email_body', 'sms_draft', 'rate_discussed', 'email_collected_on_call', 'attach_service_guide', 'include_website'],
   },
@@ -188,7 +190,7 @@ Deno.serve(async (req) => {
     if (!body || !body.lead) {
       return new Response(JSON.stringify({ error: 'Request must include a "lead" object.' }), { status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
     }
-    const mode = ['branch', 'draft', 'both'].includes(body.mode) ? body.mode : 'both';
+    const mode = ['branch', 'draft', 'both', 'summary'].includes(body.mode) ? body.mode : 'both';
     const lead = body.lead;
     if (!lead.interest_notes || !String(lead.interest_notes).trim()) {
       return new Response(JSON.stringify({ error: 'This lead has no call notes to analyze yet.' }), { status: 400, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
@@ -217,6 +219,7 @@ ${lead.interest_notes}
 
 ${mode === 'branch' ? 'Focus on branch, confidence_note, and intent_tags — you may leave draft fields minimal.' : ''}
 ${mode === 'draft' ? 'Focus on email_subject, email_body, sms_draft, rate_discussed, email_collected_on_call, attach_service_guide, include_website — you may give your best-guess branch too, but drafting is the priority.' : ''}
+${mode === 'summary' ? 'Focus on needs_summary and care_flags for the lead profile page — fill the other required fields minimally (best-guess branch, empty-string drafts are fine).' : ''}
 Sign follow-up emails/SMS as "Caring Companions" unless a specific coordinator name is given in the notes.`;
 
     // ---- 4. Call Anthropic, forcing structured tool-call output ----
