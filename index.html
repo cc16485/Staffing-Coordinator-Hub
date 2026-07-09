@@ -942,6 +942,14 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
         <div style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:1rem 1.2rem;margin-bottom:1rem">
           <div style="display:flex;gap:.6rem;flex-wrap:wrap;align-items:center">
             <label style="font-size:.82rem;font-weight:600">Report date <input type="date" id="eod-date" style="margin-left:.3rem"></label>
+            <label style="font-size:.82rem;font-weight:600">Report from
+              <select id="eod-role" style="margin-left:.3rem;font-size:.85rem">
+                <option>Staffing Coordinator</option>
+                <option>Virtual Assistant</option>
+                <option>Care Coordinator</option>
+                <option>Office / Other</option>
+              </select>
+            </label>
             <input id="eod-note" placeholder="One-line summary (optional)" style="flex:1;min-width:200px;font-size:.85rem">
             <label class="fb" style="cursor:pointer">⬆️ Choose file<input type="file" id="eod-file" style="display:none" onchange="uploadEod(this)"></label>
           </div>
@@ -2965,7 +2973,7 @@ async function uploadEod(input){
   const { error } = await sb.storage.from('lead-docs').upload(path, file);
   if(error){ st.textContent=''; alert('Upload failed: '+error.message+(String(error.message).match(/bucket/i)?' — the lead-docs storage SQL may not be run yet (ask Claude/Samantha).':'')); return; }
   let by=''; try{ const {data:{session}}=await sb.auth.getSession(); by=(session&&session.user&&session.user.email)||''; }catch(e){}
-  eodReports.unshift({ id: Date.now(), report_date: day, name: file.name, path, size: file.size, note, by, at: new Date().toISOString() });
+  eodReports.unshift({ id: Date.now(), report_date: day, role: (document.getElementById('eod-role')||{}).value||'', name: file.name, path, size: file.size, note, by, at: new Date().toISOString() });
   await syncToSupabase('eod_reports', eodReports);
   document.getElementById('eod-note').value='';
   st.textContent='✓ Uploaded';
@@ -2996,6 +3004,7 @@ function renderEod(){
     '<div style="display:flex;align-items:center;gap:.7rem;background:#fff;border:1px solid var(--border);border-radius:10px;padding:.6rem .9rem;font-size:.85rem">'
     +'<span>📄</span>'
     +'<b style="white-space:nowrap">'+esc(r.report_date)+'</b>'
+    +(r.role?'<span style="font-size:.7rem;font-weight:700;background:#E4EDF6;color:#1F517F;border-radius:999px;padding:.1rem .5rem;white-space:nowrap">'+esc(r.role)+'</span>':'')
     +'<a href="#" onclick="openEod(\''+esc(r.path)+'\');return false;" style="font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--navy)">'+esc(r.name)+'</a>'
     +(r.note?'<span style="color:#64748B;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.note)+'</span>':'')
     +'<span style="margin-left:auto;color:#94a3b8;font-size:.75rem;white-space:nowrap">'+(r.size?Math.round(r.size/1024)+' KB · ':'')+esc((r.by||'').split('@')[0])+'</span>'
