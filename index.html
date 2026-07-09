@@ -273,6 +273,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     <div class="tab" onclick="switchTab('compliance',this)"><span class="ti">✅</span> Active Compliance</div>
     <div class="tab" onclick="switchTab('scheduling',this)"><span class="ti">🗓</span> Scheduling</div>
     <div class="tab" onclick="switchTab('evv',this)"><span class="ti">📝</span> EVV Corrections</div>
+    <div class="tab" onclick="switchTab('eod',this)"><span class="ti">📄</span> End-of-Day Reports</div>
   </div>
 
   <div class="tab-content-wrap">
@@ -921,6 +922,33 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
         </div>
       </div>
 
+    </div>
+
+    <!-- ═══════════════════════════════ END-OF-DAY REPORTS ═══════════════════════════════ -->
+    <div class="panel" id="panel-eod">
+      <div class="tab-guide">
+        <div class="tab-guide-hdr" onclick="toggleGuide('eod')">
+          <span class="tab-guide-title">📋 How This Tab Works — Step by Step</span>
+          <span class="tab-guide-arrow" id="guide-arrow-eod">▼</span>
+        </div>
+        <div class="tab-guide-body" id="guide-body-eod">
+          <ol style="margin:.4rem 0 .6rem;padding-left:1.3rem;line-height:1.7;font-size:.85rem">
+            <li>At the end of each day, upload the day's report here (PDF, photo, or document) — pick the report date, add a one-line summary if helpful.</li>
+            <li>Reports are stored securely and kept forever — anyone on the office team can open them later by date.</li>
+          </ol>
+        </div>
+      </div>
+      <div style="padding:0 1.5rem 2rem">
+        <div style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:1rem 1.2rem;margin-bottom:1rem">
+          <div style="display:flex;gap:.6rem;flex-wrap:wrap;align-items:center">
+            <label style="font-size:.82rem;font-weight:600">Report date <input type="date" id="eod-date" style="margin-left:.3rem"></label>
+            <input id="eod-note" placeholder="One-line summary (optional)" style="flex:1;min-width:200px;font-size:.85rem">
+            <label class="fb" style="cursor:pointer">⬆️ Choose file<input type="file" id="eod-file" style="display:none" onchange="uploadEod(this)"></label>
+          </div>
+          <div id="eod-status" style="font-size:.78rem;color:#94a3b8;margin-top:.5rem"></div>
+        </div>
+        <div id="eod-list" style="display:flex;flex-direction:column;gap:.5rem"><div style="color:#94a3b8;font-size:.85rem">Loading…</div></div>
+      </div>
     </div>
 
   </div>
@@ -2739,6 +2767,7 @@ function switchTab(name, btn){
   if(name==='orientations'){ renderOrientations(); initOrientSettings(); mergePendingBookings(); }
   if(name==='evv') { renderEVVCorrections(); loadPendingEVVSubmissions(); }
   if(name==='offers') { loadOffers(); }
+  if(name==='eod') { renderEod(); }
 }
 
 // ── NEW OFFERS (interview records from the Team Hub "Offer a Job" form) ──
@@ -2922,6 +2951,58 @@ async function sendCandidateSMS(payload){
   return data;
 }
 
+
+// ── END-OF-DAY REPORTS (files in shared storage bucket lead-docs/eod/, metadata in app_data) ──
+async function uploadEod(input){
+  const file = input.files && input.files[0]; input.value='';
+  if(!file) return;
+  if(file.size > 25*1024*1024){ alert('That file is over 25 MB — please shrink it.'); return; }
+  const day = document.getElementById('eod-date').value || new Date().toISOString().slice(0,10);
+  const note = document.getElementById('eod-note').value.trim();
+  const st = document.getElementById('eod-status');
+  st.textContent = 'Uploading…';
+  const path = 'eod/'+day+'-'+Date.now()+'-'+file.name.replace(/[^a-zA-Z0-9._-]/g,'_');
+  const { error } = await sb.storage.from('lead-docs').upload(path, file);
+  if(error){ st.textContent=''; alert('Upload failed: '+error.message+(String(error.message).match(/bucket/i)?' — the lead-docs storage SQL may not be run yet (ask Claude/Samantha).':'')); return; }
+  let by=''; try{ const {data:{session}}=await sb.auth.getSession(); by=(session&&session.user&&session.user.email)||''; }catch(e){}
+  eodReports.unshift({ id: Date.now(), report_date: day, name: file.name, path, size: file.size, note, by, at: new Date().toISOString() });
+  await syncToSupabase('eod_reports', eodReports);
+  document.getElementById('eod-note').value='';
+  st.textContent='✓ Uploaded';
+  setTimeout(()=>{ st.textContent=''; }, 2500);
+  renderEod();
+}
+async function openEod(path){
+  const { data, error } = await sb.storage.from('lead-docs').createSignedUrl(path, 3600);
+  if(error||!data){ alert('Could not open: '+(error?error.message:'unknown')); return; }
+  window.open(data.signedUrl, '_blank', 'noopener');
+}
+async function deleteEod(id){
+  const r = eodReports.find(x=>x.id===id);
+  if(!r || !confirm('Delete the report "'+r.name+'" ('+r.report_date+')? This cannot be undone.')) return;
+  try{ await sb.storage.from('lead-docs').remove([r.path]); }catch(e){}
+  eodReports = eodReports.filter(x=>x.id!==id);
+  await syncToSupabase('eod_reports', eodReports);
+  renderEod();
+}
+function renderEod(){
+  const el = document.getElementById('eod-list');
+  const dt = document.getElementById('eod-date');
+  if(dt && !dt.value) dt.value = new Date().toISOString().slice(0,10);
+  if(!eodReports.length){ el.innerHTML='<div style="color:#94a3b8;font-size:.85rem">No reports uploaded yet — the first one lands here.</div>'; return; }
+  const esc=t=>String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const sorted=[...eodReports].sort((a,b)=> (b.report_date||'').localeCompare(a.report_date||'') || (b.at||'').localeCompare(a.at||''));
+  el.innerHTML = sorted.map(r=>
+    '<div style="display:flex;align-items:center;gap:.7rem;background:#fff;border:1px solid var(--border);border-radius:10px;padding:.6rem .9rem;font-size:.85rem">'
+    +'<span>📄</span>'
+    +'<b style="white-space:nowrap">'+esc(r.report_date)+'</b>'
+    +'<a href="#" onclick="openEod(\''+esc(r.path)+'\');return false;" style="font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--navy)">'+esc(r.name)+'</a>'
+    +(r.note?'<span style="color:#64748B;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.note)+'</span>':'')
+    +'<span style="margin-left:auto;color:#94a3b8;font-size:.75rem;white-space:nowrap">'+(r.size?Math.round(r.size/1024)+' KB · ':'')+esc((r.by||'').split('@')[0])+'</span>'
+    +'<button class="fb" onclick="deleteEod('+r.id+')" title="Delete">🗑</button>'
+    +'</div>').join('');
+}
+
 // ── SUPABASE — client initialized at top of script ────────────────────
 
 async function syncToSupabase(key, data){
@@ -2946,6 +3027,7 @@ async function loadFromSupabase(){
       if(!row.data) return;
       if(row.key==='candidates')     { candidates=row.data; obId=Math.max(obId,...candidates.map(c=>c.id+1),10); }
       if(row.key==='caregivers')     { caregivers=row.data; cgId=Math.max(cgId,...caregivers.map(c=>c.id+1),10); }
+      if(row.key==='eod_reports')    { eodReports=row.data||[]; }
       if(row.key==='orient_sessions'){ orientSessions=row.data; orientId=Math.max(orientId,...orientSessions.map(s=>s.id+1),1); }
       if(row.key==='settings')       { appSettings=row.data; localStorage.setItem('cc_settings',JSON.stringify(row.data)); }
       if(row.key==='evv_corrections'){ localStorage.setItem('cc_evv_corrections', JSON.stringify(row.data)); }
@@ -3920,6 +4002,7 @@ const ORIENT_ADDR = '1331 N Stewart Ave Ste B, Springfield MO 65802';
 const BOOKING_PAGE = 'orientation-booking.html';
 
 let orientSessions = JSON.parse(localStorage.getItem('cc_orient_sessions') || '[]');
+let eodReports = [];
 let orientId = parseInt(localStorage.getItem('cc_orient_id') || '1');
 let calViewMonth = new Date(); calViewMonth.setDate(1); calViewMonth.setHours(0,0,0,0);
 let calSelectedDate = null;
