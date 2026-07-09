@@ -5056,7 +5056,16 @@ async function openSettings(){
     alert('Settings are owner-only. If a link or key needs updating, ask Samantha.');
     return;
   }
-  // Gate behind admin passcode
+  // The real security is the owner-email check above (Supabase auth). The
+  // admin passcode is a per-browser second lock — but if none has been set on
+  // THIS browser yet (new device, cleared storage), there is nothing to match,
+  // which used to lock the owner out entirely. In that case, open directly and
+  // let her optionally set a passcode inside. (Matches the Care Coordinator Hub.)
+  if(!getAdminPwd()){
+    _openSettingsModal();
+    return;
+  }
+  // Gate behind the admin passcode when one exists on this browser.
   document.getElementById('admin-pwd-input').value='';
   document.getElementById('admin-pwd-err').style.display='none';
   document.getElementById('admin-pwd-modal').classList.add('open');
