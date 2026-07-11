@@ -1082,8 +1082,9 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
       </div>
       <div style="padding:0 1.5rem 2rem">
         <div style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:1rem 1.2rem;margin-bottom:1rem">
-          <div style="font-weight:700;font-size:.9rem;margin-bottom:.5rem">📤 Send a message to the care coordinators</div>
+          <div style="font-weight:700;font-size:.9rem;margin-bottom:.5rem">📤 Send a message</div>
           <div style="display:flex;gap:.6rem;flex-wrap:wrap;align-items:center">
+            <select id="creq-to" style="font-size:.85rem"><option value="to_coordinators">To the care coordinators</option><option value="to_owners">To the Owners (Samantha &amp; Zach)</option></select>
             <select id="creq-kind" style="font-size:.85rem"><option value="todo">To-do — needs action</option><option value="update" selected>Update — just so they know</option></select>
             <select id="creq-urgency" style="font-size:.85rem"><option>Today</option><option selected>This week</option><option>When you can</option></select>
             <input id="creq-about" placeholder="Who it's about (optional)" style="font-size:.85rem;min-width:160px">
@@ -3717,7 +3718,7 @@ function updateCoordreqBadge(){
 function renderCoordReqs(){
   const wrap=document.getElementById('coordreq-list'); if(!wrap) return;
   const inbox=STASKS.filter(t=>t.direction==='to_staffing');
-  const outbox=STASKS.filter(t=>t.direction==='to_coordinators');
+  const outbox=STASKS.filter(t=>t.direction==='to_coordinators'||t.direction==='to_owners');
   const urgRank=u=>u==='Today'?0:u==='This week'?1:2;
   const open=inbox.filter(t=>t.status==='open').sort((a,b)=>urgRank(a.urgency)-urgRank(b.urgency)||String(a.created_at).localeCompare(String(b.created_at)));
   const recentDone=inbox.filter(t=>t.status==='done').sort((a,b)=>String(b.done_at).localeCompare(String(a.done_at))).slice(0,10);
@@ -3733,7 +3734,7 @@ function renderCoordReqs(){
       +(t.about?'<b>'+creqEsc(t.about)+'</b>'+(t.caregiver?' / caregiver: <b>'+creqEsc(t.caregiver)+'</b>':'')+' — ':'')+creqEsc(t.message)
       +(t.kind==='hours'&&t.status!=='done'?'<div style="font-size:.72rem;background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;padding:.3rem .55rem;margin-top:.3rem;color:#92400E">💡 Medicaid client? Check authorized units before promising the hours — if this exceeds the authorization, send it back to the evening coordinator to request a DSDS reassessment.</div>':'')
       +'<div style="font-size:.75rem;color:#64748b;margin-top:.25rem">'
-      +(mine?'to the care coordinators':'from '+creqEsc(t.from_name||'a care coordinator'))
+      +(mine?(t.direction==='to_owners'?'to the Owners':'to the care coordinators'):'from '+creqEsc(t.from_name||'a care coordinator'))
       +' · '+new Date(t.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})
       +' · <span style="color:'+urgColor+';font-weight:600">'+creqEsc(t.urgency||'')+'</span>'
       +(t.status==='done'?' · done by '+creqEsc(t.done_by||'')+(t.reply?' · 💬 '+creqEsc(t.reply):''):'')
@@ -3781,7 +3782,7 @@ async function sendCoordReq(){
   const message=document.getElementById('creq-message').value.trim();
   if(!message){ alert('Write the message first.'); return; }
   let by=''; try{ const {data:{session}}=await sb.auth.getSession(); by=(session&&session.user&&session.user.email)||''; }catch(e){}
-  const t={ id:'st'+Date.now()+Math.random().toString(36).slice(2,7), direction:'to_coordinators',
+  const t={ id:'st'+Date.now()+Math.random().toString(36).slice(2,7), direction:document.getElementById('creq-to').value,
     kind:document.getElementById('creq-kind').value, urgency:document.getElementById('creq-urgency').value,
     about:document.getElementById('creq-about').value.trim(), lead_id:null, message,
     created_at:new Date().toISOString(), from_name:(by.split('@')[0]||'Staffing')+' (Staffing)', from_email:by,
