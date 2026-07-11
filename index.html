@@ -271,7 +271,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     <div class="tab" onclick="switchTab('orientations',this)"><span class="ti">📅</span> Orientations</div>
     <div class="tab" onclick="switchTab('training',this)"><span class="ti">🎓</span> Training</div>
     <div class="tab" onclick="switchTab('compliance',this)"><span class="ti">✅</span> Active Compliance</div>
-    <div class="tab" onclick="switchTab('scheduling',this)"><span class="ti">🗓</span> Scheduling</div>
+    <div class="tab" onclick="switchTab('scheduling',this)"><span class="ti">🗓</span> Scheduling<span id="schedBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
     <div class="tab" onclick="switchTab('evv',this)"><span class="ti">📝</span> EVV Corrections</div>
     <div class="tab" onclick="switchTab('coordreq',this)"><span class="ti">📨</span> Coordinator Requests<span id="coordreqBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
     <div class="tab" onclick="switchTab('eod',this)"><span class="ti">📄</span> End-of-Day Reports</div>
@@ -612,7 +612,11 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
           <span class="tab-guide-arrow" id="guide-arrow-scheduling">▼</span>
         </div>
         <div class="tab-guide-body" id="guide-body-scheduling">
-          <div class="guide-section-lbl" style="border-top:none;padding-top:0;margin-top:0">Your two systems</div>
+          <div class="guide-section-lbl" style="border-top:none;padding-top:0;margin-top:0">You own three queues</div>
+          <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body"><strong>New clients</strong> who need their first caregiver — they appear below when a lead converts.</div></div>
+          <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body"><strong>Every open shift in AxisCare.</strong> A shift with no caregiver assigned is yours to fill — whether it's a brand-new client or a Tuesday cancellation on a client we've had for years. The board below shows them live; red means within 48 hours.</div></div>
+          <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body"><strong>Requests about current clients</strong> — "don't send that caregiver back," "add Thursday hours," schedule changes. These arrive in the 📨 Coordinator Requests tab; do-not-return requests also build the permanent log at the bottom of this tab.</div></div>
+          <div class="guide-section-lbl">Your two systems</div>
           <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body"><strong>AxisCare</strong> is where all shifts live. Every caregiver, every client, every scheduled visit is created and managed here. This is your source of truth for the schedule.<span class="tip">Use the quick-launch button above to open AxisCare directly.</span></div></div>
           <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body"><strong>CareQB</strong> is your phone system and also supports scheduling workflows — use it for caregiver outreach, call documentation, and shift coverage calls.<span class="tip">Use the quick-launch button above to open CareQB directly.</span></div></div>
           <div class="guide-section-lbl">General rules</div>
@@ -643,6 +647,21 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
           </div>
           <span style="margin-left:auto;font-size:.8rem;opacity:.6">↗</span>
         </a>
+      </div>
+
+      <!-- Open Shifts Board (live from AxisCare) -->
+      <div style="margin-bottom:1.25rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.65rem">
+          <div style="display:flex;align-items:center;gap:.6rem">
+            <span style="font-size:1.1rem">🔴</span>
+            <div>
+              <div style="font-size:.92rem;font-weight:700;color:var(--navy)">Open Shifts — next 14 days <span id="open-shifts-count" style="color:#DC2626"></span></div>
+              <div style="font-size:.72rem;color:var(--gray)">Live from AxisCare: every scheduled visit with no caregiver assigned. Fill them in AxisCare — this board refreshes when you reopen the tab.</div>
+            </div>
+          </div>
+          <button onclick="loadOpenShifts(this)" style="padding:.32rem .75rem;background:var(--teal);color:#fff;border:none;border-radius:7px;font-size:.75rem;font-weight:600;cursor:pointer;font-family:inherit">↻ Refresh</button>
+        </div>
+        <div id="open-shifts-board"><div style="color:#94a3b8;font-size:.85rem">Loading open shifts…</div></div>
       </div>
 
       <!-- New Client Queue -->
@@ -772,6 +791,18 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
         </div>
 
       </div><!-- end scenarios -->
+
+      <!-- Do-Not-Return Log (permanent) -->
+      <div style="margin-top:1.25rem;padding:0 0 2rem">
+        <div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.65rem">
+          <span style="font-size:1.1rem">🚫</span>
+          <div>
+            <div style="font-size:.92rem;font-weight:700;color:var(--navy)">Do-Not-Return Log <span style="font-weight:500;color:var(--gray);font-size:.75rem">— permanent record</span></div>
+            <div style="font-size:.72rem;color:var(--gray)">Every client request that a caregiver not come back. Check this before assigning anyone. Entries are created when you complete a 🚫 request in Coordinator Requests, and can't be deleted — enter each one as a client-caregiver exclusion in AxisCare so the schedule physically can't pair them.</div>
+          </div>
+        </div>
+        <div id="dnr-log-list"><div style="color:#94a3b8;font-size:.85rem">Nothing on the log.</div></div>
+      </div>
     </div>
 
     <!-- ══════════════════════════════ EVV CORRECTIONS ══════════════════════════════ -->
@@ -2806,6 +2837,7 @@ function switchTab(name, btn){
   if(name==='offers') { loadOffers(); }
   if(name==='eod') { renderEod(); }
   if(name==='coordreq') { renderCoordReqs(); }
+  if(name==='scheduling') { loadOpenShifts(); renderDnrLog(); }
 }
 
 // ── NEW OFFERS (interview records from the Team Hub "Offer a Job" form) ──
@@ -2990,6 +3022,81 @@ async function sendCandidateSMS(payload){
 }
 
 
+// ── OPEN SHIFTS BOARD (live unassigned visits via axiscare-open-shifts fn) ──
+let OPEN_SHIFTS=null; // null = not loaded yet
+async function loadOpenShifts(btn){
+  const box=document.getElementById('open-shifts-board'); if(!box) return;
+  const key=(appSettings.training_hub_key||'').trim();
+  if(!key){ box.innerHTML='<div style="color:#b45309;font-size:.85rem">Paste the Training Hub read key into ⚙️ Settings → Training Hub to turn the board on.</div>'; return; }
+  if(btn){ btn.disabled=true; btn.textContent='↻ Loading…'; }
+  try{
+    const r=await fetch('https://rdqujxiycycwhskyvrwa.supabase.co/functions/v1/axiscare-open-shifts',{
+      method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
+      body:JSON.stringify({key, days:14})});
+    const data=await r.json();
+    if(data.error){
+      OPEN_SHIFTS=null;
+      box.innerHTML='<div style="color:#b91c1c;font-size:.85rem">'+creqEsc(String(data.error).includes('403')
+        ?'AxisCare said no (403) — the API token needs "Visits" read permission. In AxisCare, edit the API token and check Visits, then refresh.'
+        :'Could not load open shifts: '+data.error)+'</div>';
+      updateSchedBadge(); return;
+    }
+    OPEN_SHIFTS=data.open||[];
+    renderOpenShifts();
+  }catch(e){ box.innerHTML='<div style="color:#b91c1c;font-size:.85rem">Could not reach the open-shifts service — check your connection.</div>'; }
+  finally{ if(btn){ btn.disabled=false; btn.textContent='↻ Refresh'; } }
+}
+function renderOpenShifts(){
+  const box=document.getElementById('open-shifts-board'); if(!box) return;
+  const cnt=document.getElementById('open-shifts-count');
+  if(!OPEN_SHIFTS||!OPEN_SHIFTS.length){
+    if(cnt) cnt.textContent='';
+    box.innerHTML='<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:.75rem 1rem;font-size:.85rem;color:#166534">✅ No open shifts in the next 14 days — everything is covered.</div>';
+    updateSchedBadge(); return;
+  }
+  if(cnt) cnt.textContent='('+OPEN_SHIFTS.length+')';
+  const now=Date.now();
+  const fmt=d=>new Date(d+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+  box.innerHTML=OPEN_SHIFTS.map(s=>{
+    const hrs=(new Date(s.date+'T'+(s.start||'23:59')).getTime()-now)/3600000;
+    const color=hrs<=48?'#DC2626':hrs<=168?'#B45309':'#64748b';
+    const tag=hrs<=48?'⚠ within 48 hours':hrs<=168?'this week':'';
+    return '<div style="background:#fff;border:1px solid var(--border);border-left:4px solid '+color+';border-radius:10px;padding:.6rem 1rem;margin-bottom:.4rem;display:flex;align-items:center;gap:.8rem;flex-wrap:wrap">'
+      +'<b style="min-width:130px">'+creqEsc(s.client)+'</b>'
+      +'<span style="font-size:.85rem">'+fmt(s.date)+(s.start?' · '+creqEsc(s.start)+(s.end?'–'+creqEsc(s.end):''):'')+'</span>'
+      +(tag?'<span style="font-size:.72rem;font-weight:700;color:'+color+'">'+tag+'</span>':'')
+      +'<span style="margin-left:auto;font-size:.72rem;color:#94a3b8">fill in AxisCare ↗</span>'
+      +'</div>';
+  }).join('');
+  updateSchedBadge();
+}
+function updateSchedBadge(){
+  const b=document.getElementById('schedBadge'); if(!b) return;
+  const n=(OPEN_SHIFTS||[]).length;
+  b.style.display=n?'inline':'none'; b.textContent=n;
+}
+
+// ── DO-NOT-RETURN LOG (permanent, app_data key 'dnr_log') ──
+let DNRLOG=[];
+function renderDnrLog(){
+  const box=document.getElementById('dnr-log-list'); if(!box) return;
+  if(!DNRLOG.length){ box.innerHTML='<div style="color:#94a3b8;font-size:.85rem">Nothing on the log.</div>'; return; }
+  box.innerHTML=DNRLOG.slice().sort((a,b)=>String(b.logged_at).localeCompare(String(a.logged_at))).map(e=>
+    '<div style="background:#fff;border:1px solid #fecaca;border-left:4px solid #DC2626;border-radius:10px;padding:.6rem 1rem;margin-bottom:.4rem;font-size:.85rem">'
+    +'<b>'+creqEsc(e.caregiver||'(caregiver)')+'</b> must not return to <b>'+creqEsc(e.client||'(client)')+'</b>'
+    +(e.reason?' — '+creqEsc(e.reason):'')
+    +'<div style="font-size:.72rem;color:#64748b;margin-top:.2rem">requested by '+creqEsc(e.requested_by||'—')
+    +' · logged '+new Date(e.logged_at).toLocaleDateString()+' by '+creqEsc(e.logged_by||'—')
+    +(e.axiscare_entered?' · ✅ exclusion entered in AxisCare':' · ⚠ <a href="#" onclick="dnrMarkAxis(\''+e.id+'\');return false;">mark exclusion entered in AxisCare</a>')
+    +'</div></div>').join('');
+}
+async function dnrMarkAxis(id){
+  const e=DNRLOG.find(x=>x.id===id); if(!e) return;
+  e.axiscare_entered=true;
+  try{ await sb.rpc('upsert_app_data_item',{ target_key:'dnr_log', item:e }); }catch(err){ alert('Could not save — try again.'); e.axiscare_entered=false; }
+  renderDnrLog();
+}
+
 // ── COORDINATOR REQUESTS (shared app_data key 'staffing_tasks', written by
 //    the Care Coordinator Hub; saved atomically via upsert_app_data_item so
 //    both hubs can write at the same moment without clobbering each other) ──
@@ -3013,13 +3120,17 @@ function renderCoordReqs(){
   const urgRank=u=>u==='Today'?0:u==='This week'?1:2;
   const open=inbox.filter(t=>t.status==='open').sort((a,b)=>urgRank(a.urgency)-urgRank(b.urgency)||String(a.created_at).localeCompare(String(b.created_at)));
   const recentDone=inbox.filter(t=>t.status==='done').sort((a,b)=>String(b.done_at).localeCompare(String(a.done_at))).slice(0,10);
+  const KIND_META={ dnr:['🚫','#DC2626','Do not send back'], hours:['➕','#B45309','Add / change hours'], coverage:['🕐','#DC2626','Coverage gap'], schedule:['📅','#2F6FB0','Schedule change'], todo:['☑️','#DC2626',''], update:['ℹ️','#2F6FB0',''] };
   const row=(t,mine)=>{
     const urgColor=t.urgency==='Today'?'#DC2626':t.urgency==='This week'?'#B45309':'#64748b';
-    return '<div style="background:#fff;border:1px solid var(--border);border-left:4px solid '+(t.status==='done'?'#16a34a':(t.kind==='todo'?'#DC2626':'#2F6FB0'))+';border-radius:10px;padding:.75rem 1rem">'
+    const km=KIND_META[t.kind]||KIND_META.update;
+    return '<div style="background:#fff;border:1px solid var(--border);border-left:4px solid '+(t.status==='done'?'#16a34a':km[1])+';border-radius:10px;padding:.75rem 1rem">'
       +'<div style="display:flex;align-items:flex-start;gap:.6rem;flex-wrap:wrap">'
-      +'<span style="font-size:1.05rem">'+(t.status==='done'?'✅':(t.kind==='todo'?'☑️':'ℹ️'))+'</span>'
+      +'<span style="font-size:1.05rem">'+(t.status==='done'?'✅':km[0])+'</span>'
       +'<div style="flex:1;min-width:200px">'
-      +(t.about?'<b>'+creqEsc(t.about)+'</b> — ':'')+creqEsc(t.message)
+      +(km[2]?'<span style="font-size:.68rem;font-weight:800;letter-spacing:.03em;color:'+km[1]+';text-transform:uppercase">'+km[2]+'</span><br>':'')
+      +(t.about?'<b>'+creqEsc(t.about)+'</b>'+(t.caregiver?' / caregiver: <b>'+creqEsc(t.caregiver)+'</b>':'')+' — ':'')+creqEsc(t.message)
+      +(t.kind==='hours'&&t.status!=='done'?'<div style="font-size:.72rem;background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;padding:.3rem .55rem;margin-top:.3rem;color:#92400E">💡 Medicaid client? Check authorized units before promising the hours — if this exceeds the authorization, send it back to the evening coordinator to request a DSDS reassessment.</div>':'')
       +'<div style="font-size:.75rem;color:#64748b;margin-top:.25rem">'
       +(mine?'to the care coordinators':'from '+creqEsc(t.from_name||'a care coordinator'))
       +' · '+new Date(t.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})
@@ -3049,7 +3160,19 @@ async function creqDone(id, withReply){
   let reply='';
   if(withReply){ reply=prompt('Reply to the coordinator (they see it in their hub):','')||''; }
   let by=''; try{ const {data:{session}}=await sb.auth.getSession(); by=(session&&session.user&&session.user.email)||''; }catch(e){}
-  t.status='done'; t.done_at=new Date().toISOString(); t.done_by=by.split('@')[0]||'staffing'; if(reply.trim()) t.reply=reply.trim();
+  const who=by.split('@')[0]||'staffing';
+  // Do-not-return requests go on the permanent log the moment they're done.
+  if(t.kind==='dnr'){
+    const caregiver=t.caregiver||prompt('Which caregiver must not return? (goes on the permanent log)','')||'';
+    if(!caregiver.trim()){ alert('The Do-Not-Return log needs the caregiver\'s name — nothing was marked done.'); return; }
+    const entry={ id:'dnr'+Date.now(), client:t.about||'', caregiver:caregiver.trim(), reason:t.message||'',
+      requested_by:t.from_name||'', requested_at:t.created_at, logged_at:new Date().toISOString(), logged_by:who, axiscare_entered:false, task_id:t.id };
+    DNRLOG.push(entry);
+    try{ await sb.rpc('upsert_app_data_item',{ target_key:'dnr_log', item:entry }); }catch(e){ alert('Could not save the log entry — try again.'); DNRLOG.pop(); return; }
+    renderDnrLog();
+    alert('Added to the Do-Not-Return log ✓\n\nNow enter it in AxisCare too: open the client → Caregiver Exclusions → add '+caregiver.trim()+' — that\'s what physically blocks the schedule from pairing them.');
+  }
+  t.status='done'; t.done_at=new Date().toISOString(); t.done_by=who; if(reply.trim()) t.reply=reply.trim();
   await creqPersist(t);
   renderCoordReqs();
 }
@@ -3151,6 +3274,7 @@ async function loadFromSupabase(){
       if(row.key==='settings')       { appSettings=row.data; localStorage.setItem('cc_settings',JSON.stringify(row.data)); }
       if(row.key==='evv_corrections'){ localStorage.setItem('cc_evv_corrections', JSON.stringify(row.data)); }
       if(row.key==='staffing_tasks') { STASKS=row.data||[]; }
+      if(row.key==='dnr_log')        { DNRLOG=row.data||[]; }
     });
     updateCoordreqBadge();
     if(typeof activeTab!=='undefined' && activeTab==='coordreq') renderCoordReqs();
