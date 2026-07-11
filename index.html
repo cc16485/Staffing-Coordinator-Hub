@@ -274,6 +274,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     <div class="tab" onclick="switchTab('scheduling',this)"><span class="ti">🗓</span> Scheduling<span id="schedBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
     <div class="tab" onclick="switchTab('evv',this)"><span class="ti">📝</span> EVV Corrections</div>
     <div class="tab" onclick="switchTab('coordreq',this)"><span class="ti">📨</span> Coordinator Requests<span id="coordreqBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
+    <div class="tab" onclick="switchTab('comms',this)"><span class="ti">💬</span> Communication<span id="commsBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
     <div class="tab" onclick="switchTab('eod',this)"><span class="ti">📄</span> End-of-Day Reports</div>
   </div>
 
@@ -957,6 +958,50 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     </div>
 
     <!-- ═══════════════════════════════ END-OF-DAY REPORTS ═══════════════════════════════ -->
+    <div class="panel" id="panel-comms">
+      <div class="tab-guide">
+        <div class="tab-guide-hdr" onclick="toggleGuide('comms')">
+          <span class="tab-guide-title">📋 How This Tab Works — Step by Step</span>
+          <span class="tab-guide-arrow" id="guide-arrow-comms">▼</span>
+        </div>
+        <div class="tab-guide-body" id="guide-body-comms">
+          <ol style="margin:.4rem 0 .6rem;padding-left:1.3rem;line-height:1.7;font-size:.85rem">
+            <li><b>Automation replies</b> — when an applicant or caregiver texts back to one of our automated messages, it appears here. View the conversation, reply right from this page (no GoHighLevel login needed), or mark ✓ Done if no reply is needed.</li>
+            <li><b>Meetings</b> — request a meeting with Samantha or the care coordinators (topic + when works for you). They accept in their hub, and a <b>Join Video</b> button appears for both of you — camera, microphone and screen sharing all work right in the browser, nothing to install.</li>
+            <li>During a video call, use <b>Share screen</b> to show your screen while you talk. If Samantha needs to take the wheel and show you directly, she'll walk you through Chrome Remote Desktop (remotedesktop.google.com → Remote Support → generate a code and read it to her).</li>
+          </ol>
+        </div>
+      </div>
+      <div style="padding:0 1.5rem 2rem">
+        <div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.65rem">
+          <span style="font-size:1.1rem">📨</span>
+          <div>
+            <div style="font-size:.92rem;font-weight:700;color:var(--navy)">Automation Replies <span id="replies-count" style="color:#DC2626"></span></div>
+            <div style="font-size:.72rem;color:var(--gray)">Applicants &amp; caregivers texting back on the automation line. Reply here — no GHL seat needed.</div>
+          </div>
+          <button onclick="loadRepliesWaiting(this)" style="margin-left:auto;padding:.32rem .75rem;background:var(--teal);color:#fff;border:none;border-radius:7px;font-size:.75rem;font-weight:600;cursor:pointer;font-family:inherit">↻ Refresh</button>
+        </div>
+        <div id="repliesWaiting"><div style="color:#94a3b8;font-size:.85rem">Loading replies…</div></div>
+
+        <div style="display:flex;align-items:center;gap:.6rem;margin:1.5rem 0 .65rem">
+          <span style="font-size:1.1rem">🎥</span>
+          <div>
+            <div style="font-size:.92rem;font-weight:700;color:var(--navy)">Meetings</div>
+            <div style="font-size:.72rem;color:var(--gray)">Request a meeting — when it's accepted, both of you get a Join Video button (browser-based, with screen sharing).</div>
+          </div>
+        </div>
+        <div style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:1rem 1.2rem;margin-bottom:1rem">
+          <div style="display:flex;gap:.6rem;flex-wrap:wrap;align-items:center">
+            <select id="mtg-with" style="font-size:.85rem"><option value="samantha">With Samantha</option><option value="care">With the Care Coordinators</option><option value="team">Whole team</option></select>
+            <input id="mtg-topic" placeholder="What's it about?" style="flex:1;min-width:200px;font-size:.85rem">
+            <input id="mtg-when" placeholder="When works for you? (e.g. tomorrow 2pm)" style="min-width:220px;font-size:.85rem">
+            <button class="fb" onclick="requestMeeting('staffing')">Request</button>
+          </div>
+        </div>
+        <div id="meetings-list"><div style="color:#94a3b8;font-size:.85rem">No meetings yet.</div></div>
+      </div>
+    </div>
+
     <div class="panel" id="panel-coordreq">
       <div class="tab-guide">
         <div class="tab-guide-hdr" onclick="toggleGuide('coordreq')">
@@ -2838,6 +2883,7 @@ function switchTab(name, btn){
   if(name==='eod') { renderEod(); }
   if(name==='coordreq') { renderCoordReqs(); }
   if(name==='scheduling') { loadOpenShifts(); renderDnrLog(); }
+  if(name==='comms') { loadRepliesWaiting(); renderMeetings(); }
 }
 
 // ── NEW OFFERS (interview records from the Team Hub "Offer a Job" form) ──
@@ -3021,6 +3067,178 @@ async function sendCandidateSMS(payload){
   return data;
 }
 
+
+// ── AUTOMATION REPLIES (moved here from the Team Hub — this is the Staffing
+//    Coordinator's desk; ghl-replies/-thread/-reply fns, no GHL seat needed) ──
+let _repliesData=null, repliesExpanded=true;
+async function loadRepliesWaiting(btn){
+  const box=document.getElementById('repliesWaiting'); if(!box) return;
+  const key=(appSettings.training_hub_key||'').trim();
+  if(!key){ box.innerHTML='<div style="color:#b45309;font-size:.85rem">Paste the Training Hub read key into ⚙️ Settings → Training Hub to turn this on.</div>'; return; }
+  if(btn&&btn.tagName==='BUTTON'){ btn.disabled=true; btn.textContent='↻ Loading…'; }
+  try{
+    const r=await fetch('https://rdqujxiycycwhskyvrwa.supabase.co/functions/v1/ghl-replies',{
+      method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
+      body:JSON.stringify({key})});
+    const data=await r.json();
+    if(!data||!Array.isArray(data.replies)) throw new Error((data&&data.error)||'unexpected response');
+    _repliesData=data;
+    renderReplies();
+  }catch(e){ box.innerHTML='<div style="color:#b91c1c;font-size:.85rem">Could not load replies: '+creqEsc(e&&e.message?e.message:'error')+'</div>'; }
+  finally{ if(btn&&btn.tagName==='BUTTON'){ btn.disabled=false; btn.textContent='↻ Refresh'; } }
+}
+function renderReplies(){
+  const box=document.getElementById('repliesWaiting'), data=_repliesData;
+  const cnt=document.getElementById('replies-count');
+  if(!box||!data) return;
+  if(cnt) cnt.textContent=data.replies.length?'('+data.replies.length+(data.replies.length>=10?'+':'')+')':'';
+  updateCommsBadge();
+  if(!data.replies.length){ box.innerHTML='<div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:.75rem 1rem;font-size:.85rem;color:#166534">✅ Nothing waiting — every reply has been handled.</div>'; return; }
+  const loc=data.location_id||'Recp0AhyMh8lrtKJ9kaj';
+  const ago=ms=>{ if(!ms) return ''; const m=Math.round((Date.now()-ms)/60000); if(m<60) return m+'m ago'; const h=Math.round(m/60); if(h<24) return h+'h ago'; return Math.round(h/24)+'d ago'; };
+  box.innerHTML=data.replies.map((x,i)=>
+    '<div style="background:#fff;border:1px solid var(--border);border-left:4px solid #f59e0b;border-radius:10px;padding:.6rem 1rem;margin-bottom:.4rem">'
+    +'<div style="display:flex;align-items:center;gap:.6rem;font-size:.85rem;flex-wrap:wrap">'
+    +'<b style="color:var(--navy)">'+creqEsc(x.name)+'</b>'
+    +'<span style="color:#57606a;flex:1;min-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">“'+creqEsc(x.preview)+'”</span>'
+    +'<span style="color:#94a3b8;font-size:.72rem;white-space:nowrap">'+ago(x.at)+'</span>'
+    +'<button onclick="toggleThread('+i+')" style="font-size:.75rem;font-weight:600;color:#92400e;background:#fde68a;border:none;border-radius:6px;padding:.2rem .55rem;cursor:pointer;font-family:inherit">💬 View & reply</button>'
+    +'<button onclick="dismissReply('+i+')" id="done-'+i+'" title="No reply needed — mark it read in GHL and clear it" style="font-size:.75rem;font-weight:600;color:#166534;background:#dcfce7;border:none;border-radius:6px;padding:.2rem .55rem;cursor:pointer;font-family:inherit">✓ Done</button>'
+    +'<a href="https://app.gohighlevel.com/v2/location/'+loc+'/conversations/conversations/'+encodeURIComponent(x.id)+'" target="_blank" rel="noopener" style="font-size:.75rem;font-weight:600;color:#1e40af;white-space:nowrap;text-decoration:none;border:1px solid #93c5fd;border-radius:6px;padding:.15rem .5rem">GHL ↗</a>'
+    +'</div>'
+    +'<div id="thread-'+i+'" data-conv="'+creqEsc(x.id)+'" data-contact="'+creqEsc(x.contact_id||'')+'" data-name="'+creqEsc(x.name)+'" style="display:none;margin:.5rem 0 .3rem 1rem"></div>'
+    +'</div>').join('');
+}
+async function toggleThread(i){
+  const el=document.getElementById('thread-'+i); if(!el) return;
+  if(el.style.display!=='none'){ el.style.display='none'; return; }
+  el.style.display='block';
+  el.innerHTML='<div style="font-size:.8rem;color:#94a3b8">Loading conversation…</div>';
+  try{
+    const r=await fetch('https://rdqujxiycycwhskyvrwa.supabase.co/functions/v1/ghl-thread',{
+      method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
+      body:JSON.stringify({key:appSettings.training_hub_key,conversation_id:el.dataset.conv})});
+    const data=await r.json();
+    if(!data||!Array.isArray(data.thread)) throw new Error(data&&data.error?data.error:'no thread');
+    const fmt=iso=>{try{return new Date(iso).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}catch(e){return ''}};
+    el.innerHTML=
+      '<div style="max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:.35rem;padding:.5rem;background:#fff;border:1px solid #fcd34d;border-radius:8px">'
+      +(data.thread.length>=25?'<div style="align-self:center;font-size:.68rem;color:#94a3b8">Showing the last 25 messages — open GHL for the full history</div>':'')
+      +data.thread.map(m=>
+        '<div style="align-self:'+(m.direction==='inbound'?'flex-start':'flex-end')+';max-width:85%;background:'+(m.direction==='inbound'?'#f1f5f9':'#0E3860')+';color:'+(m.direction==='inbound'?'#1f2a36':'#fff')+';border-radius:10px;padding:.4rem .65rem;font-size:.8rem;white-space:pre-wrap">'+creqEsc(m.body)
+        +'<div style="font-size:.62rem;opacity:.65;margin-top:.15rem">'+fmt(m.at)+'</div></div>').join('')
+      +'</div>'
+      +'<div style="display:flex;gap:.4rem;margin-top:.45rem">'
+      +'<input id="reply-'+i+'" type="text" placeholder="Type a reply to '+creqEsc(el.dataset.name)+'…" style="flex:1;padding:.45rem .65rem;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.82rem" onkeydown="if(event.key===\'Enter\')sendReply('+i+')">'
+      +'<button onclick="sendReply('+i+')" style="background:var(--navy);color:#fff;border:none;border-radius:8px;padding:.45rem .9rem;font-family:inherit;font-size:.8rem;font-weight:600;cursor:pointer">Send</button>'
+      +'</div>';
+  }catch(e){ el.innerHTML='<div style="font-size:.8rem;color:#b91c1c">Could not load the conversation: '+creqEsc(e&&e.message?e.message:'error')+'</div>'; }
+}
+async function sendReply(i){
+  const el=document.getElementById('thread-'+i), input=document.getElementById('reply-'+i);
+  if(!el||!input||!input.value.trim()) return;
+  const btn=el.querySelector('button'), msg=input.value.trim();
+  if(btn){btn.textContent='Sending…';btn.disabled=true;}
+  try{
+    const r=await fetch('https://rdqujxiycycwhskyvrwa.supabase.co/functions/v1/ghl-reply',{
+      method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
+      body:JSON.stringify({key:appSettings.training_hub_key,contact_id:el.dataset.contact,message:msg})});
+    const data=await r.json();
+    if(!data||data.error) throw new Error(data&&data.error?data.error:'send failed');
+    input.value='';
+    await toggleThread(i); await toggleThread(i);
+    setTimeout(loadRepliesWaiting, 1200);
+  }catch(e){ alert('Could not send: '+(e&&e.message?e.message:'error')); }
+  finally{ if(btn){btn.textContent='Send';btn.disabled=false;} }
+}
+async function dismissReply(i){
+  const el=document.getElementById('thread-'+i), btn=document.getElementById('done-'+i);
+  if(!el) return;
+  if(!confirm('Clear "'+(el.dataset.name||'this message')+'" without replying? It will be marked read in GHL.')) return;
+  if(btn){btn.textContent='Clearing…';btn.disabled=true;}
+  try{
+    const r=await fetch('https://rdqujxiycycwhskyvrwa.supabase.co/functions/v1/ghl-reply',{
+      method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
+      body:JSON.stringify({key:appSettings.training_hub_key,action:'dismiss',conversation_id:el.dataset.conv})});
+    const data=await r.json();
+    if(!data||data.error) throw new Error(data&&data.error?data.error:'could not clear');
+    await loadRepliesWaiting();
+  }catch(e){ alert('Could not clear it: '+(e&&e.message?e.message:'error')); if(btn){btn.textContent='✓ Done';btn.disabled=false;} }
+}
+
+// ── MEETINGS (shared app_data key 'meetings' — both hubs read/write it) ──
+let MEETINGS=[];
+const MTG_ROLE='staffing'; // this hub's seat at the table
+const MTG_WHO={samantha:'Samantha',care:'the Care Coordinators',staffing:'the Staffing Coordinator',team:'the whole team'};
+function mtgJoinUrl(m){ return 'https://meet.jit.si/'+encodeURIComponent(m.room); }
+async function mtgPersist(m){
+  try{ const { error } = await sb.rpc('upsert_app_data_item',{ target_key:'meetings', item:m }); if(error) throw error; }
+  catch(e){ alert('Could not save — check your connection and try again.'); throw e; }
+}
+async function requestMeeting(role){
+  const topic=document.getElementById('mtg-topic').value.trim();
+  if(!topic){ alert('Say what the meeting is about first.'); return; }
+  let by=''; try{ const {data:{session}}=await sb.auth.getSession(); by=(session&&session.user&&session.user.email)||''; }catch(e){}
+  const m={ id:'mtg'+Date.now()+Math.random().toString(36).slice(2,6),
+    room:'CaringCompanions-'+Math.random().toString(36).slice(2,10),
+    with:document.getElementById('mtg-with').value, topic,
+    when_pref:document.getElementById('mtg-when').value.trim(),
+    requested_by_name:(by.split('@')[0]||'Staffing')+' (Staffing)', requested_by_email:by, requested_by_role:role,
+    status:'requested', scheduled_for:'', accepted_by:'', declined_reason:'', created_at:new Date().toISOString() };
+  MEETINGS.push(m);
+  await mtgPersist(m);
+  document.getElementById('mtg-topic').value=''; document.getElementById('mtg-when').value='';
+  renderMeetings();
+}
+function mtgIncoming(m){ return m.status==='requested' && m.requested_by_role!==MTG_ROLE && (m.with===MTG_ROLE||m.with==='team'); }
+function mtgInvolvesMe(m){ return m.requested_by_role===MTG_ROLE || m.with===MTG_ROLE || m.with==='team'; }
+async function acceptMeeting(id){
+  const m=MEETINGS.find(x=>x.id===id); if(!m) return;
+  const when=prompt('When is the meeting? (both hubs will show this)', m.when_pref||''); if(when===null) return;
+  let by=''; try{ const {data:{session}}=await sb.auth.getSession(); by=(session&&session.user&&session.user.email)||''; }catch(e){}
+  m.status='accepted'; m.scheduled_for=when.trim()||m.when_pref||'time TBD'; m.accepted_by=by.split('@')[0]||'staffing';
+  await mtgPersist(m); renderMeetings();
+}
+async function declineMeeting(id){
+  const m=MEETINGS.find(x=>x.id===id); if(!m) return;
+  const why=prompt('Suggest another time or say why it doesn\'t work (they\'ll see this):',''); if(why===null) return;
+  m.status='declined'; m.declined_reason=why.trim();
+  await mtgPersist(m); renderMeetings();
+}
+async function doneMeeting(id){
+  const m=MEETINGS.find(x=>x.id===id); if(!m) return;
+  m.status='done'; await mtgPersist(m); renderMeetings();
+}
+function renderMeetings(){
+  const box=document.getElementById('meetings-list'); if(!box) return;
+  const inc=MEETINGS.filter(mtgIncoming);
+  const upcoming=MEETINGS.filter(m=>m.status==='accepted'&&mtgInvolvesMe(m));
+  const mine=MEETINGS.filter(m=>m.status==='requested'&&m.requested_by_role===MTG_ROLE);
+  const recent=MEETINGS.filter(m=>(m.status==='declined'||m.status==='done')&&mtgInvolvesMe(m)).slice(-4).reverse();
+  const card=(m,inner)=>'<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:.65rem 1rem;margin-bottom:.4rem;font-size:.85rem">'
+    +'<b>'+creqEsc(m.topic)+'</b><div style="font-size:.72rem;color:#64748b;margin:.15rem 0 .35rem">'
+    +creqEsc(m.requested_by_name)+' → '+creqEsc(MTG_WHO[m.with]||m.with)
+    +(m.scheduled_for?' · 🗓 <b>'+creqEsc(m.scheduled_for)+'</b>':m.when_pref?' · suggested: '+creqEsc(m.when_pref):'')
+    +'</div>'+inner+'</div>';
+  box.innerHTML=
+    (inc.length?'<div style="font-weight:700;font-size:.85rem;margin:.2rem 0">📥 Meeting requests for you</div>'+inc.map(m=>card(m,
+      '<button class="fb" style="font-size:.75rem" onclick="acceptMeeting(\''+m.id+'\')">✓ Accept & set time</button> '
+      +'<button style="font-size:.75rem;background:#f1f5f9;border:1px solid var(--border);border-radius:7px;padding:.3rem .7rem;cursor:pointer;font-family:inherit" onclick="declineMeeting(\''+m.id+'\')">Suggest another time</button>')).join(''):'')
+    +(upcoming.length?'<div style="font-weight:700;font-size:.85rem;margin:.8rem 0 .2rem">🎥 Upcoming — join when it\'s time</div>'+upcoming.map(m=>card(m,
+      '<a href="'+mtgJoinUrl(m)+'" target="_blank" rel="noopener" style="display:inline-block;background:#16a34a;color:#fff;border-radius:7px;padding:.35rem .9rem;font-size:.78rem;font-weight:700;text-decoration:none">🎥 Join Video</a> '
+      +'<button style="font-size:.75rem;background:#f1f5f9;border:1px solid var(--border);border-radius:7px;padding:.3rem .7rem;cursor:pointer;font-family:inherit" onclick="doneMeeting(\''+m.id+'\')">Mark done</button>'
+      +'<div style="font-size:.68rem;color:#94a3b8;margin-top:.3rem">Opens in your browser — allow camera &amp; mic. The 🖥 button inside shares your screen.</div>')).join(''):'')
+    +(mine.length?'<div style="font-weight:700;font-size:.85rem;margin:.8rem 0 .2rem">⏳ Waiting for an answer</div>'+mine.map(m=>card(m,'<span style="font-size:.72rem;color:#94a3b8">requested '+new Date(m.created_at).toLocaleDateString()+'</span>')).join(''):'')
+    +(recent.length?'<div style="font-weight:700;font-size:.85rem;margin:.8rem 0 .2rem;color:#64748b">Recent</div>'+recent.map(m=>card(m,
+      m.status==='declined'?'<span style="font-size:.75rem;color:#b45309">↩ '+creqEsc(m.declined_reason||'didn\'t work — try another time')+'</span>':'<span style="font-size:.75rem;color:#166534">✓ held</span>')).join(''):'')
+    ||'<div style="color:#94a3b8;font-size:.85rem">No meetings yet — request one above.</div>';
+  updateCommsBadge();
+}
+function updateCommsBadge(){
+  const b=document.getElementById('commsBadge'); if(!b) return;
+  const n=((_repliesData&&_repliesData.replies)||[]).length + MEETINGS.filter(mtgIncoming).length;
+  b.style.display=n?'inline':'none'; b.textContent=n;
+}
 
 // ── OPEN SHIFTS BOARD (live unassigned visits via axiscare-open-shifts fn) ──
 let OPEN_SHIFTS=null; // null = not loaded yet
@@ -3275,6 +3493,7 @@ async function loadFromSupabase(){
       if(row.key==='evv_corrections'){ localStorage.setItem('cc_evv_corrections', JSON.stringify(row.data)); }
       if(row.key==='staffing_tasks') { STASKS=row.data||[]; }
       if(row.key==='dnr_log')        { DNRLOG=row.data||[]; }
+      if(row.key==='meetings')       { MEETINGS=row.data||[]; }
     });
     updateCoordreqBadge();
     if(typeof activeTab!=='undefined' && activeTab==='coordreq') renderCoordReqs();
