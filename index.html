@@ -42,6 +42,10 @@ header img{height:40px;filter:brightness(0) invert(1);background:transparent}
 /* ── Folder tabs ── */
 .tab-bar{display:flex;align-items:flex-end;padding:0 1.5rem;background:var(--navy);gap:4px}
 .tab{padding:.55rem 1.4rem;border-radius:10px 10px 0 0;font-size:.82rem;font-weight:600;cursor:pointer;border:2px solid transparent;border-bottom:none;color:rgba(255,255,255,.6);background:rgba(255,255,255,.08);transition:.15s;white-space:nowrap}
+.subbar{display:flex;gap:.35rem;padding:.45rem 1.5rem;background:#0B2C4C;overflow-x:auto}
+.subbar .tab{border-radius:999px;padding:.35rem 1rem;font-size:.76rem;border:none}
+.subbar .tab.active{background:#fff;color:var(--navy)}
+.gbadge{background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem}
 .tab:hover{color:#fff;background:rgba(255,255,255,.15)}
 .tab.active{background:var(--bg);color:var(--navy);border-color:var(--border);border-bottom-color:var(--bg);position:relative;bottom:-1px}
 .tab .ti{display:inline-block;filter:grayscale(1) brightness(6);transition:.15s}
@@ -265,23 +269,41 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
   <!-- Cross-tab alerts strip (filled by renderAlerts) -->
   <div id="alert-strip" style="display:none;flex-wrap:wrap;gap:.45rem;padding:.55rem 1.5rem 0;background:var(--navy)"></div>
 
-  <div class="tab-bar">
-    <div class="tab" onclick="switchTab('offers',this)"><span class="ti">🤝</span> New Offers<span id="offersBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
-    <div class="tab active" onclick="switchTab('onboarding',this)"><span class="ti">🔍</span> Background & References</div>
-    <div class="tab" onclick="switchTab('orientations',this)"><span class="ti">📅</span> Orientations</div>
-    <div class="tab" onclick="switchTab('training',this)"><span class="ti">🎓</span> Training</div>
-    <div class="tab" onclick="switchTab('compliance',this)"><span class="ti">✅</span> Active Compliance</div>
-    <div class="tab" onclick="switchTab('attendance',this)"><span class="ti">⏰</span> Attendance<span id="attBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
-    <div class="tab" onclick="switchTab('scheduling',this)"><span class="ti">🗓</span> Scheduling<span id="schedBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
-    <div class="tab" onclick="switchTab('evv',this)"><span class="ti">📝</span> EVV Corrections</div>
-    <div class="tab" onclick="switchTab('coordreq',this)"><span class="ti">📨</span> Coordinator Requests<span id="coordreqBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
-    <div class="tab" onclick="switchTab('comms',this)"><span class="ti">💬</span> Communication<span id="commsBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
-    <div class="tab" onclick="switchTab('eod',this)"><span class="ti">📄</span> End-of-Day Reports</div>
+  <div class="tab-bar" id="groupBar">
+    <div class="tab gtab active" data-group="home" onclick="switchGroup('home')"><span class="ti">🏠</span> Overview</div>
+    <div class="tab gtab" data-group="onboard" onclick="switchGroup('onboard')"><span class="ti">📋</span> Onboarding &amp; Compliance<span class="gbadge" id="gb-onboard" style="display:none"></span></div>
+    <div class="tab gtab" data-group="sched" onclick="switchGroup('sched')"><span class="ti">🗓</span> Scheduling<span class="gbadge" id="gb-sched" style="display:none"></span></div>
+    <div class="tab gtab" data-group="team" onclick="switchGroup('team')"><span class="ti">🤝</span> Team &amp; Reports<span class="gbadge" id="gb-team" style="display:none"></span></div>
+  </div>
+  <div class="subbar" id="sub-onboard" style="display:none">
+    <div class="tab" data-name="offers" onclick="gotoTab('offers')"><span class="ti">🤝</span> New Offers<span id="offersBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
+    <div class="tab" data-name="onboarding" onclick="gotoTab('onboarding')"><span class="ti">🔍</span> Background &amp; References</div>
+    <div class="tab" data-name="orientations" onclick="gotoTab('orientations')"><span class="ti">📅</span> Orientations</div>
+    <div class="tab" data-name="training" onclick="gotoTab('training')"><span class="ti">🎓</span> Training</div>
+    <div class="tab" data-name="compliance" onclick="gotoTab('compliance')"><span class="ti">✅</span> Active Compliance</div>
+    <div class="tab" data-name="attendance" onclick="gotoTab('attendance')"><span class="ti">⏰</span> Attendance<span id="attBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
+  </div>
+  <div class="subbar" id="sub-sched" style="display:none">
+    <div class="tab" data-name="scheduling" onclick="gotoTab('scheduling')"><span class="ti">🗓</span> Open Shifts &amp; New Clients<span id="schedBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
+    <div class="tab" data-name="evv" onclick="gotoTab('evv')"><span class="ti">📝</span> EVV Corrections</div>
+  </div>
+  <div class="subbar" id="sub-team" style="display:none">
+    <div class="tab" data-name="coordreq" onclick="gotoTab('coordreq')"><span class="ti">📨</span> Coordinator Requests<span id="coordreqBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
+    <div class="tab" data-name="comms" onclick="gotoTab('comms')"><span class="ti">💬</span> Communication<span id="commsBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
+    <div class="tab" data-name="eod" onclick="gotoTab('eod')"><span class="ti">📄</span> End-of-Day Reports</div>
   </div>
 
   <div class="tab-content-wrap">
 
     <!-- ═══════════════════════════════ NEW OFFERS ═══════════════════════════════ -->
+    <div class="panel active" id="panel-home">
+      <div style="padding:1.25rem 1.5rem 2rem">
+        <div style="font-size:1.15rem;font-weight:800;color:var(--navy);margin-bottom:.15rem" id="home-greeting">Your day at a glance</div>
+        <div style="font-size:.8rem;color:var(--gray);margin-bottom:1rem">Everything the Staffing Coordinator owns, in one screen — work it top to bottom and nothing slips.</div>
+        <div id="home-rows"><div style="color:#94a3b8;font-size:.85rem">Loading…</div></div>
+      </div>
+    </div>
+
     <div class="panel" id="panel-offers">
       <div class="tab-guide">
         <div class="tab-guide-hdr" onclick="toggleGuide('offers')">
@@ -306,7 +328,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     </div>
 
     <!-- ═══════════════════════════════ ONBOARDING ═══════════════════════════════ -->
-    <div class="panel active" id="panel-onboarding">
+    <div class="panel" id="panel-onboarding">
 
       <!-- Tab Guide -->
       <div class="tab-guide">
@@ -2948,10 +2970,11 @@ async function gcalSyncAll(){
 // ── Tabs ──────────────────────────────────────────────────────────────
 function switchTab(name, btn){
   activeTab = name;
-  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.subbar .tab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
-  btn.classList.add('active');
+  if(btn) btn.classList.add('active');
   document.getElementById('panel-'+name).classList.add('active');
+  if(name==='home') { renderStaffHome(); }
   if(name==='orientations'){ renderOrientations(); initOrientSettings(); mergePendingBookings(); }
   if(name==='evv') { renderEVVCorrections(); loadPendingEVVSubmissions(); }
   if(name==='offers') { loadOffers(); }
@@ -2960,6 +2983,78 @@ function switchTab(name, btn){
   if(name==='scheduling') { loadOpenShifts(); renderDnrLog(); }
   if(name==='comms') { loadRepliesWaiting(); renderMeetings(); }
   if(name==='attendance') { renderAttendance(); }
+}
+
+// ── GROUPED NAVIGATION + STAFFING OVERVIEW ──
+const SC_GROUPS={home:['home'],onboard:['offers','onboarding','orientations','training','compliance','attendance'],sched:['scheduling','evv'],team:['coordreq','comms','eod']};
+function groupOf(tab){ for(const g in SC_GROUPS) if(SC_GROUPS[g].includes(tab)) return g; return 'home'; }
+function showGroupChrome(g){
+  document.querySelectorAll('#groupBar .gtab').forEach(b=>b.classList.toggle('active',b.dataset.group===g));
+  document.querySelectorAll('.subbar').forEach(s=>{ s.style.display = s.id==='sub-'+g ? 'flex' : 'none'; });
+}
+function switchGroup(g){
+  showGroupChrome(g);
+  if(g==='home'){ gotoTab('home'); return; }
+  const last=localStorage.getItem('sc_last_'+g);
+  gotoTab(SC_GROUPS[g].includes(last)?last:SC_GROUPS[g][0]);
+}
+function gotoTab(name){
+  const g=groupOf(name);
+  showGroupChrome(g);
+  if(g!=='home') localStorage.setItem('sc_last_'+g,name);
+  switchTab(name, document.querySelector('.tab[data-name="'+name+'"]'));
+}
+function badgeNum(id){ const el=document.getElementById(id); return (el&&el.style.display!=='none')?(+String(el.textContent).replace(/\D/g,'')||0):0; }
+function updateGroupBadges(){
+  const set=(gid,n)=>{ const el=document.getElementById(gid); if(!el) return; el.style.display=n?'inline':'none'; el.textContent=n; };
+  set('gb-onboard', badgeNum('offersBadge')+badgeNum('attBadge'));
+  set('gb-sched', badgeNum('schedBadge'));
+  set('gb-team', badgeNum('coordreqBadge')+badgeNum('commsBadge'));
+  if(activeTab==='home') renderStaffHome();
+}
+let _homeKicked=false;
+function renderStaffHome(){
+  const box=document.getElementById('home-rows'); if(!box) return;
+  const hr=new Date().getHours();
+  document.getElementById('home-greeting').textContent=(hr<12?'Good morning':hr<17?'Good afternoon':'Good evening')+' — your day at a glance';
+  // Kick the async sources once so the counts fill themselves in.
+  if(!_homeKicked && (appSettings.training_hub_key||'').trim()){
+    _homeKicked=true;
+    try{ loadOpenShifts(); }catch(e){}
+    try{ loadOffers(); }catch(e){}
+    try{ loadRepliesWaiting(); }catch(e){}
+  }
+  const today10=new Date().toISOString().slice(0,10);
+  let blocked=0; try{ blocked=(caregivers||[]).filter(c=>{try{return !trainStatus(c).preContactDone;}catch(e){return false;}}).length; }catch(e){}
+  const attN=(typeof attCaregivers==='function')?attCaregivers().reduce((a,cg)=>a+attStatus(cg).triggers.length,0)+DISC_ACTIONS.filter(a=>a.status==='draft'||a.status==='approved').length:0;
+  const reqN=STASKS.filter(t=>t.direction==='to_staffing'&&t.status==='open').length;
+  const repN=(_repliesData&&_repliesData.replies)?_repliesData.replies.length:null;
+  const mtgN=MEETINGS.filter(mtgIncoming).length;
+  const offN=OFFERS.length?OFFERS.filter(o=>!o.attributes_entered_at).length:null;
+  const shiftN=(typeof OPEN_SHIFTS!=='undefined'&&OPEN_SHIFTS)?OPEN_SHIFTS.length:null;
+  const eodDone=(eodReports||[]).some(r=>r.report_date===today10);
+  const row=(icon,n,label,sub,tab,urgent)=>{
+    const chip=n===null?'<span style="color:#94a3b8;font-size:.8rem">…</span>'
+      :n===0?'<span style="background:#dcfce7;color:#166534;border-radius:999px;padding:.1rem .6rem;font-size:.72rem;font-weight:800">clear ✓</span>'
+      :'<span style="background:'+(urgent?'#DC2626':'#B45309')+';color:#fff;border-radius:999px;padding:.1rem .6rem;font-size:.72rem;font-weight:800">'+n+'</span>';
+    return '<div style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:.7rem 1rem;margin-bottom:.45rem;display:flex;align-items:center;gap:.8rem;flex-wrap:wrap">'
+      +'<span style="font-size:1.15rem">'+icon+'</span>'
+      +'<div style="flex:1;min-width:200px"><b style="font-size:.88rem;color:var(--navy)">'+label+'</b>'
+      +'<div style="font-size:.72rem;color:var(--gray)">'+sub+'</div></div>'+chip
+      +'<button class="fb" style="font-size:.72rem" onclick="gotoTab(\''+tab+'\')">Open →</button></div>';
+  };
+  box.innerHTML=
+    '<div style="font-size:.72rem;font-weight:800;letter-spacing:.06em;color:var(--gray);text-transform:uppercase;margin:.2rem 0 .4rem">🗓 Scheduling</div>'
+    +row('🔴',shiftN,'Open shifts — next 14 days','Every unassigned visit in AxisCare is yours to fill','scheduling',true)
+    +'<div style="font-size:.72rem;font-weight:800;letter-spacing:.06em;color:var(--gray);text-transform:uppercase;margin:.8rem 0 .4rem">📋 Onboarding &amp; Compliance</div>'
+    +row('🤝',offN,'New offers — enter AxisCare attributes','Interviewed caregivers waiting on their profile checklist','offers',false)
+    +row('⛔',blocked,'Blocked from first client contact','Orientation/dementia training incomplete — can\'t be scheduled yet','training',true)
+    +row('⏰',attN,'Attendance needs action','Write-ups due, drafted, or approved and ready to issue','attendance',true)
+    +'<div style="font-size:.72rem;font-weight:800;letter-spacing:.06em;color:var(--gray);text-transform:uppercase;margin:.8rem 0 .4rem">🤝 Team &amp; Reports</div>'
+    +row('📨',reqN,'Coordinator requests waiting','Coverage gaps, do-not-returns, hours changes from the coordinators','coordreq',true)
+    +row('💬',repN,'Automation replies waiting','Applicants & caregivers texting back on the automation line','comms',false)
+    +row('🎥',mtgN,'Meeting requests for you','Accept and both sides get the video room','comms',false)
+    +row('📄',eodDone?0:1,'End-of-day report',''+(eodDone?'Today\'s report is uploaded — nice.':'Not uploaded yet — do it before you sign off'),'eod',false);
 }
 
 // ── NEW OFFERS (interview records from the Team Hub "Offer a Job" form) ──
@@ -2994,6 +3089,7 @@ function updateOffersBadge(){
   const n=OFFERS.filter(o=>!o.attributes_entered_at).length;
   const b=document.getElementById('offersBadge');
   if(b){ b.style.display=n?'inline-block':'none'; b.textContent=n; }
+  updateGroupBadges();
 }
 function renderOffers(){
   const esc=t=>String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
@@ -3276,7 +3372,7 @@ function renderAttendance(){
 function updateAttBadge(){
   const b=document.getElementById('attBadge'); if(!b) return;
   const n=attCaregivers().reduce((acc,cg)=>acc+attStatus(cg).triggers.length,0)+DISC_ACTIONS.filter(a=>a.status==='draft'||a.status==='approved').length;
-  b.style.display=n?'inline':'none'; b.textContent=n;
+  b.style.display=n?'inline':'none'; b.textContent=n;  updateGroupBadges();
 }
 let _writeupId=null;
 function attDocBody(cg, trigger, level){
@@ -3621,7 +3717,7 @@ function renderMeetings(){
 function updateCommsBadge(){
   const b=document.getElementById('commsBadge'); if(!b) return;
   const n=((_repliesData&&_repliesData.replies)||[]).length + MEETINGS.filter(mtgIncoming).length;
-  b.style.display=n?'inline':'none'; b.textContent=n;
+  b.style.display=n?'inline':'none'; b.textContent=n;  updateGroupBadges();
 }
 
 // ── OPEN SHIFTS BOARD (live unassigned visits via axiscare-open-shifts fn) ──
@@ -3675,7 +3771,7 @@ function renderOpenShifts(){
 function updateSchedBadge(){
   const b=document.getElementById('schedBadge'); if(!b) return;
   const n=(OPEN_SHIFTS||[]).length;
-  b.style.display=n?'inline':'none'; b.textContent=n;
+  b.style.display=n?'inline':'none'; b.textContent=n;  updateGroupBadges();
 }
 
 // ── DO-NOT-RETURN LOG (permanent, app_data key 'dnr_log') ──
@@ -3713,7 +3809,7 @@ async function creqPersist(item){
 function updateCoordreqBadge(){
   const b=document.getElementById('coordreqBadge'); if(!b) return;
   const n=STASKS.filter(t=>t.direction==='to_staffing'&&t.status==='open').length;
-  b.style.display=n?'inline':'none'; b.textContent=n;
+  b.style.display=n?'inline':'none'; b.textContent=n;  updateGroupBadges();
 }
 function renderCoordReqs(){
   const wrap=document.getElementById('coordreq-list'); if(!wrap) return;
@@ -3883,6 +3979,7 @@ async function loadFromSupabase(){
     });
     updateCoordreqBadge();
     if(typeof activeTab!=='undefined' && activeTab==='coordreq') renderCoordReqs();
+    if(typeof activeTab!=='undefined' && activeTab==='home') renderStaffHome();
     setSyncStatus('ok');
   } catch(e){ console.warn('Supabase load failed, using localStorage:', e); setSyncStatus('offline'); }
 }
@@ -4469,7 +4566,7 @@ function renderAlerts(){
   if(!alerts.length){ strip.style.display='none'; return; }
   strip.style.display='flex';
   strip.innerHTML = alerts.map(a=>`
-    <span onclick="switchTab('${a.tab}', document.querySelector('.tab-bar .tab:nth-child(${['onboarding','orientations','training','compliance'].indexOf(a.tab)+1})'))" style="cursor:pointer;background:rgba(255,255,255,.1);border-left:3px solid ${a.color};border-radius:0 6px 6px 0;padding:.25rem .65rem;font-size:.72rem;color:#fff;font-weight:500;white-space:nowrap;transition:.15s" onmouseover="this.style.background='rgba(255,255,255,.18)'" onmouseout="this.style.background='rgba(255,255,255,.1)'">${a.text}</span>
+    <span onclick="gotoTab('${a.tab}')" style="cursor:pointer;background:rgba(255,255,255,.1);border-left:3px solid ${a.color};border-radius:0 6px 6px 0;padding:.25rem .65rem;font-size:.72rem;color:#fff;font-weight:500;white-space:nowrap;transition:.15s" onmouseover="this.style.background='rgba(255,255,255,.18)'" onmouseout="this.style.background='rgba(255,255,255,.1)'">${a.text}</span>
   `).join('');
 }
 
@@ -4606,7 +4703,7 @@ function openInviteModal(id){
   }).sort((a,b)=>a.date.localeCompare(b.date));
   const sessEl=document.getElementById('inv-sessions-list');
   if(!avail.length){
-    sessEl.innerHTML='<div style="padding:.75rem 1rem;font-size:.78rem;color:var(--gray);font-style:italic">No upcoming sessions with open spots. <a href="#" onclick="closeModal(\'invite-modal\');switchTab(\'orientations\',document.querySelector(\'.tab-bar .tab:nth-child(2)\'));return false" style="color:var(--teal);font-weight:600">Add a session first →</a></div>';
+    sessEl.innerHTML='<div style="padding:.75rem 1rem;font-size:.78rem;color:var(--gray);font-style:italic">No upcoming sessions with open spots. <a href="#" onclick="closeModal(\'invite-modal\');gotoTab(\'orientations\');return false" style="color:var(--teal);font-weight:600">Add a session first →</a></div>';
   } else {
     sessEl.innerHTML=avail.map(s=>{
       const d=new Date(s.date+'T00:00:00');
@@ -4865,7 +4962,7 @@ let blCandidateId = null;
 let showPastSessions = false;
 let pendingCancelSessId = null;
 let pendingCancelBookingIdx = null;
-let activeTab = 'onboarding';
+let activeTab = 'home';
 let globalSearch = '';
 let acSelected = new Set();
 
