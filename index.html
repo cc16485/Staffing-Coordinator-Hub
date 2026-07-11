@@ -1135,13 +1135,9 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 <div class="overlay" id="writeup-modal">
   <div class="modal" style="max-width:720px">
     <h3 style="color:var(--navy)" id="writeup-title">📝 Corrective Action Notice</h3>
-    <div style="font-size:.75rem;background:#fef2f2;border-radius:6px;padding:.45rem .7rem;color:#b91c1c;margin:.4rem 0 .6rem;font-weight:600">Notify Samantha before issuing. Review in a private meeting; the caregiver signs to confirm receipt (not agreement); file the signed copy in Viventium.</div>
+    <div id="writeup-notice" style="font-size:.75rem;background:#fef2f2;border-radius:6px;padding:.45rem .7rem;color:#b91c1c;margin:.4rem 0 .6rem;font-weight:600"></div>
     <textarea id="writeup-body" rows="18" style="width:100%;font-family:ui-monospace,Menlo,monospace;font-size:.78rem;line-height:1.5"></textarea>
-    <div style="display:flex;gap:.5rem;margin-top:.7rem;flex-wrap:wrap">
-      <button class="fb" onclick="printWriteup()">🖨 Print</button>
-      <button class="fb" style="background:#16a34a" onclick="issueWriteup()">✓ Mark issued</button>
-      <button onclick="document.getElementById('writeup-modal').classList.remove('open')" style="margin-left:auto;background:#f1f5f9;border:1px solid var(--border);border-radius:7px;padding:.4rem .9rem;cursor:pointer;font-family:inherit;font-size:.8rem">Close</button>
-    </div>
+    <div style="display:flex;gap:.5rem;margin-top:.7rem;flex-wrap:wrap" id="writeup-actions"></div>
   </div>
 </div>
 
@@ -3225,7 +3221,7 @@ function attStatus(cg){
     triggers.push({kind:'tardy_total',events:uncTardies,label:tardiesWin.length+' tardies in '+cfg.tardy_window+' days (policy: '+cfg.tardy_count+')'});
   const lookMs=cfg.lookback_months*30.4*86400000;
   const issued=DISC_ACTIONS.filter(a=>a.caregiver===cg&&a.status==='issued'&&now-new Date(a.issued_at).getTime()<=lookMs);
-  const drafts=DISC_ACTIONS.filter(a=>a.caregiver===cg&&a.status==='draft');
+  const drafts=DISC_ACTIONS.filter(a=>a.caregiver===cg&&(a.status==='draft'||a.status==='pending_approval'||a.status==='approved'));
   const LADDER=['Verbal Warning','Written Warning','Final Written Warning','Termination Review'];
   const nextLevel=triggers.some(t=>t.kind==='ncns')?'Termination Review':LADDER[Math.min(issued.length,3)];
   return {evs,callinsWin,tardiesWin,triggers,issued,drafts,nextLevel,
@@ -3261,7 +3257,10 @@ function renderAttendance(){
         '<div style="display:flex;align-items:center;gap:.6rem;font-size:.8rem;padding:.3rem 0;flex-wrap:wrap"><span style="color:#b91c1c;font-weight:700">→</span>'
         +'<span style="flex:1">'+creqEsc(t.label)+'</span>'
         +'<button class="fb" style="font-size:.72rem;background:#DC2626" onclick="draftWriteup(\''+creqEsc(cg).replace(/'/g,"\\'")+'\','+ti+')">📝 Draft '+creqEsc(attStatus(cg).nextLevel)+'</button></div>').join('')+'</div>':'')
-      +(s.drafts.length?s.drafts.map(a=>'<div style="font-size:.75rem;color:#92400e;margin-top:.3rem">📝 Draft ready: '+creqEsc(a.level)+' — <a href="#" onclick="openWriteup(\''+a.id+'\');return false;">review & issue</a></div>').join(''):'')
+      +(s.drafts.length?s.drafts.map(a=>{
+        const st=a.status==='pending_approval'?'⏳ with Samantha for approval':a.status==='approved'?'✅ approved — ready to issue':(a.reject_note?'↩ sent back: “'+creqEsc(a.reject_note)+'”':'📝 draft');
+        return '<div style="font-size:.75rem;color:#92400e;margin-top:.3rem">'+creqEsc(a.level)+' — '+st+' · <a href="#" onclick="openWriteup(\''+a.id+'\');return false;">open</a></div>';
+      }).join(''):'')
       +'<details style="margin-top:.45rem"><summary style="cursor:pointer;font-size:.72rem;color:#64748b">History ('+s.evs.length+' events'+(s.issued.length?', '+s.issued.length+' issued warnings':'')+')</summary>'
       +s.evs.slice().sort((a,b)=>String(b.shift_date).localeCompare(String(a.shift_date))).map(e=>
         '<div style="font-size:.75rem;padding:.2rem 0;color:#33414d">'+(TYPE_ICON[e.type]||'')+' '+e.shift_date+(e.shift_time?' '+e.shift_time:'')
@@ -3275,7 +3274,7 @@ function renderAttendance(){
 }
 function updateAttBadge(){
   const b=document.getElementById('attBadge'); if(!b) return;
-  const n=attCaregivers().reduce((acc,cg)=>acc+attStatus(cg).triggers.length,0)+DISC_ACTIONS.filter(a=>a.status==='draft').length;
+  const n=attCaregivers().reduce((acc,cg)=>acc+attStatus(cg).triggers.length,0)+DISC_ACTIONS.filter(a=>a.status==='draft'||a.status==='approved').length;
   b.style.display=n?'inline':'none'; b.textContent=n;
 }
 let _writeupId=null;
@@ -3339,7 +3338,56 @@ function openWriteup(id){
   _writeupId=id;
   document.getElementById('writeup-title').textContent='📝 '+a.level+' — '+a.caregiver;
   document.getElementById('writeup-body').value=a.body;
+  const notice=document.getElementById('writeup-notice');
+  const acts=document.getElementById('writeup-actions');
+  const closeBtn='<button onclick="document.getElementById(\'writeup-modal\').classList.remove(\'open\')" style="margin-left:auto;background:#f1f5f9;border:1px solid var(--border);border-radius:7px;padding:.4rem .9rem;cursor:pointer;font-family:inherit;font-size:.8rem">Close</button>';
+  document.getElementById('writeup-body').readOnly = a.status==='pending_approval';
+  if(a.status==='draft'){
+    notice.innerHTML='This is a draft. Edit if needed, then <b>send it to Samantha</b> — nothing can be issued without her approval.'+(a.reject_note?'<br>↩ She sent it back: “'+creqEsc(a.reject_note)+'”':'');
+    acts.innerHTML='<button class="fb" onclick="printWriteup()">🖨 Print preview</button>'
+      +'<button class="fb" style="background:#0d3a5f" onclick="sendForApproval()">📤 Send to Samantha for approval</button>'+closeBtn;
+  }else if(a.status==='pending_approval'){
+    notice.innerHTML='⏳ Waiting for Samantha\'s approval — she sees this on her Care Coordinator Hub overview. It can\'t be edited or issued until she approves.';
+    acts.innerHTML='<button class="fb" onclick="printWriteup()">🖨 Print preview</button>'+closeBtn;
+  }else if(a.status==='approved'){
+    notice.innerHTML='✅ Approved by '+creqEsc(a.approved_by||'Samantha')+'. Print it, review it privately with the caregiver, get the signature (confirms receipt, not agreement), then Mark issued — that also stamps proof onto their AxisCare record and reminds you to file in Viventium.';
+    acts.innerHTML='<button class="fb" onclick="printWriteup()">🖨 Print</button>'
+      +'<button class="fb" style="background:#16a34a" onclick="issueWriteup()">✓ Mark issued</button>'+closeBtn;
+  }else{
+    notice.innerHTML='📄 Issued '+String(a.issued_at||'').slice(0,10)+(a.ax_noted?' · ✅ proof noted on the AxisCare record':a.ax_note_error?' · ⚠ AxisCare note failed: '+creqEsc(a.ax_note_error)+' — <a href="#" onclick="pushAxNote(\''+a.id+'\');return false;">retry</a>':'');
+    acts.innerHTML='<button class="fb" onclick="printWriteup()">🖨 Print</button>'+closeBtn;
+  }
   document.getElementById('writeup-modal').classList.add('open');
+}
+async function sendForApproval(){
+  const a=DISC_ACTIONS.find(x=>x.id===_writeupId); if(!a) return;
+  a.body=document.getElementById('writeup-body').value;
+  a.status='pending_approval'; a.sent_for_approval_at=new Date().toISOString(); a.reject_note='';
+  await attPersist('discipline_actions',a);
+  document.getElementById('writeup-modal').classList.remove('open');
+  renderAttendance();
+  alert('Sent ✓ — Samantha will see it on her hub overview. You\'ll see the approval here.');
+}
+async function pushAxNote(id){
+  const a=DISC_ACTIONS.find(x=>x.id===id); if(!a) return;
+  const key=(appSettings.training_hub_key||'').trim();
+  if(!key){ a.ax_note_error='Training Hub key missing in Settings'; await attPersist('discipline_actions',a); renderAttendance(); return; }
+  const noteText='CORRECTIVE ACTION ISSUED — '+a.level+' ('+String(a.issued_at||'').slice(0,10)+')\n'
+    +'Category: Attendance & Dependability (Handbook 2U/2V)\n'
+    +'Reason: '+a.reason+'\n'
+    +'Approved by: '+(a.approved_by||'Samantha Troutman')+' · Issued by: '+(a.created_by||'staffing')+'\n'
+    +'Signed original filed in Viventium.';
+  try{
+    const r=await fetch('https://rdqujxiycycwhskyvrwa.supabase.co/functions/v1/axiscare-convert-lead',{
+      method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
+      body:JSON.stringify({key, action:'caregiver_note', caregiver_name:a.caregiver, note:noteText})});
+    const d=await r.json();
+    if(d.error) throw new Error(d.error);
+    a.ax_noted=true; a.ax_note_error='';
+  }catch(e){ a.ax_noted=false; a.ax_note_error=(e&&e.message)||'failed'; }
+  await attPersist('discipline_actions',a);
+  renderAttendance();
+  return a.ax_noted;
 }
 function printWriteup(){
   const w=window.open('','_blank');
@@ -3348,7 +3396,8 @@ function printWriteup(){
 }
 async function issueWriteup(){
   const a=DISC_ACTIONS.find(x=>x.id===_writeupId); if(!a) return;
-  if(!confirm('Mark this '+a.level+' as ISSUED to '+a.caregiver+'? Only do this after Samantha has approved it and the signed copy is in hand.')) return;
+  if(a.status!=='approved'){ alert('Samantha has to approve this first — send it to her from the draft view.'); return; }
+  if(!confirm('Mark this '+a.level+' as ISSUED to '+a.caregiver+'? Only do this once the signed copy is in hand.')) return;
   a.body=document.getElementById('writeup-body').value;
   a.status='issued'; a.issued_at=new Date().toISOString();
   await attPersist('discipline_actions',a);
@@ -3358,6 +3407,11 @@ async function issueWriteup(){
     if(e&&!e.action_id){ e.action_id=a.id; await attPersist('attendance_events',e); }
   }
   document.getElementById('writeup-modal').classList.remove('open');
+  // Proof onto the caregiver's AxisCare record — the paper trail lives where
+  // the state and the schedule live.
+  const ok=await pushAxNote(a.id);
+  alert(ok?'Issued ✓ — proof note added to '+a.caregiver+'\'s AxisCare record. File the signed original in Viventium.'
+          :'Issued ✓ — but the AxisCare note didn\'t attach ('+(a.ax_note_error||'error')+'). A retry link is on their card; file the signed original in Viventium either way.');
   renderAttendance();
 }
 async function scanClockins(btn){
