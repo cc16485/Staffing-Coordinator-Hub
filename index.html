@@ -970,7 +970,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
             <li><b>Log every attendance event the moment it happens</b> — a call-in (the hub computes the notice automatically; less than 4 hours = write-up required per Handbook 2U), a tardy, or a no-call/no-show (immediate termination review per 2U — Samantha is alerted and makes the final call).</li>
             <li>The hub counts events per caregiver and applies the corrective-action ladder from Handbook 2V the same way every time: Verbal Warning → Written Warning → Final Written Warning → Termination Review.</li>
             <li>When a write-up is due, the caregiver's card shows a red button — click it and the <b>document is drafted for you</b> with the facts, dates, history and policy language. Print it, review it with the caregiver in person, have them sign (a signature confirms receipt, not agreement), then <b>Mark issued</b> and file the signed copy in Viventium.</li>
-            <li>Every write-up is <b>approved by a care coordinator</b> in their hub before it can be issued. <b>No-call/no-show termination reviews go to Samantha</b> — she makes all final termination decisions.</li>
+            <li>Every write-up — warning or termination — is <b>approved by Samantha or Zach</b> (the owners) before it can be issued. Nobody else can approve discipline.</li>
           </ol>
         </div>
       </div>
@@ -3343,12 +3343,11 @@ function openWriteup(id){
   const closeBtn='<button onclick="document.getElementById(\'writeup-modal\').classList.remove(\'open\')" style="margin-left:auto;background:#f1f5f9;border:1px solid var(--border);border-radius:7px;padding:.4rem .9rem;cursor:pointer;font-family:inherit;font-size:.8rem">Close</button>';
   document.getElementById('writeup-body').readOnly = a.status==='pending_approval';
   if(a.status==='draft'){
-    const approver=a.level==='Termination Review'?'Samantha (termination decisions are hers)':'a care coordinator';
-    notice.innerHTML='This is a draft. Edit if needed, then <b>send it for approval</b> — '+approver+' approves it on the Care Coordinator Hub; nothing can be issued without that.'+(a.reject_note?'<br>↩ Sent back: “'+creqEsc(a.reject_note)+'”':'');
+    notice.innerHTML='This is a draft. Edit if needed, then <b>send it for approval</b> — only <b>Samantha or Zach</b> can approve discipline (they see it in the Owners Hub and the CC Hub); nothing can be issued without that.'+(a.reject_note?'<br>↩ Sent back: “'+creqEsc(a.reject_note)+'”':'');
     acts.innerHTML='<button class="fb" onclick="printWriteup()">🖨 Print preview</button>'
       +'<button class="fb" style="background:#0d3a5f" onclick="sendForApproval()">📤 Send for approval</button>'+closeBtn;
   }else if(a.status==='pending_approval'){
-    notice.innerHTML='⏳ Waiting for approval — '+(a.level==='Termination Review'?'Samantha':'the care coordinators')+' see this on the Care Coordinator Hub overview. It can\'t be edited or issued until it\'s approved.';
+    notice.innerHTML='⏳ Waiting for Samantha or Zach to approve — they see this in the Owners Hub. It can\'t be edited or issued until it\'s approved.';
     acts.innerHTML='<button class="fb" onclick="printWriteup()">🖨 Print preview</button>'+closeBtn;
   }else if(a.status==='approved'){
     notice.innerHTML='✅ Approved by '+creqEsc(a.approved_by||'a care coordinator')+'. <b>Copy notice</b> → paste into the AxisCare "Corrective Action Notice" form → send to the caregiver to e-sign in their app. Once signed, click Mark issued — that stamps the proof note on their AxisCare record too. (🖨 Print / Save as PDF if you also want a copy in Viventium.)';
@@ -3368,7 +3367,7 @@ async function sendForApproval(){
   await attPersist('discipline_actions',a);
   document.getElementById('writeup-modal').classList.remove('open');
   renderAttendance();
-  alert('Sent ✓ — '+(a.level==='Termination Review'?'Samantha':'the care coordinators')+' will see it on their hub overview. You\'ll see the approval here.');
+  alert('Sent ✓ — Samantha and Zach will see it in the Owners Hub. You\'ll see the approval here.');
 }
 async function pushAxNote(id){
   const a=DISC_ACTIONS.find(x=>x.id===id); if(!a) return;
