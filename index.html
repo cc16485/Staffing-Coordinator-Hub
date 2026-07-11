@@ -3351,8 +3351,9 @@ function openWriteup(id){
     notice.innerHTML='⏳ Waiting for approval — '+(a.level==='Termination Review'?'Samantha':'the care coordinators')+' see this on the Care Coordinator Hub overview. It can\'t be edited or issued until it\'s approved.';
     acts.innerHTML='<button class="fb" onclick="printWriteup()">🖨 Print preview</button>'+closeBtn;
   }else if(a.status==='approved'){
-    notice.innerHTML='✅ Approved by '+creqEsc(a.approved_by||'a care coordinator')+'. Print it, review it privately with the caregiver, get the signature (confirms receipt, not agreement), then Mark issued — that also stamps proof onto their AxisCare record and reminds you to file in Viventium.';
-    acts.innerHTML='<button class="fb" onclick="printWriteup()">🖨 Print</button>'
+    notice.innerHTML='✅ Approved by '+creqEsc(a.approved_by||'a care coordinator')+'. <b>Copy notice</b> → paste into the AxisCare "Corrective Action Notice" form → send to the caregiver to e-sign in their app. Once signed, click Mark issued — that stamps the proof note on their AxisCare record too. (🖨 Print / Save as PDF if you also want a copy in Viventium.)';
+    acts.innerHTML='<button class="fb" style="background:#0d3a5f" onclick="copyWriteup(this)">📋 Copy notice</button>'
+      +'<button class="fb" onclick="printWriteup()">🖨 Print / PDF</button>'
       +'<button class="fb" style="background:#16a34a" onclick="issueWriteup()">✓ Mark issued</button>'+closeBtn;
   }else{
     notice.innerHTML='📄 Issued '+String(a.issued_at||'').slice(0,10)+(a.ax_noted?' · ✅ proof noted on the AxisCare record':a.ax_note_error?' · ⚠ AxisCare note failed: '+creqEsc(a.ax_note_error)+' — <a href="#" onclick="pushAxNote(\''+a.id+'\');return false;">retry</a>':'');
@@ -3389,6 +3390,11 @@ async function pushAxNote(id){
   await attPersist('discipline_actions',a);
   renderAttendance();
   return a.ax_noted;
+}
+function copyWriteup(btn){
+  navigator.clipboard.writeText(document.getElementById('writeup-body').value)
+    .then(()=>{ btn.textContent='✓ Copied'; setTimeout(()=>{btn.textContent='📋 Copy notice';},1800); })
+    .catch(()=>{ document.getElementById('writeup-body').select(); alert('Press Cmd+C / Ctrl+C to copy.'); });
 }
 function printWriteup(){
   const w=window.open('','_blank');
