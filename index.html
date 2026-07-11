@@ -271,6 +271,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     <div class="tab" onclick="switchTab('orientations',this)"><span class="ti">📅</span> Orientations</div>
     <div class="tab" onclick="switchTab('training',this)"><span class="ti">🎓</span> Training</div>
     <div class="tab" onclick="switchTab('compliance',this)"><span class="ti">✅</span> Active Compliance</div>
+    <div class="tab" onclick="switchTab('attendance',this)"><span class="ti">⏰</span> Attendance<span id="attBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
     <div class="tab" onclick="switchTab('scheduling',this)"><span class="ti">🗓</span> Scheduling<span id="schedBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
     <div class="tab" onclick="switchTab('evv',this)"><span class="ti">📝</span> EVV Corrections</div>
     <div class="tab" onclick="switchTab('coordreq',this)"><span class="ti">📨</span> Coordinator Requests<span id="coordreqBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
@@ -958,6 +959,69 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     </div>
 
     <!-- ═══════════════════════════════ END-OF-DAY REPORTS ═══════════════════════════════ -->
+    <div class="panel" id="panel-attendance">
+      <div class="tab-guide">
+        <div class="tab-guide-hdr" onclick="toggleGuide('attendance')">
+          <span class="tab-guide-title">📋 How This Tab Works — Step by Step</span>
+          <span class="tab-guide-arrow" id="guide-arrow-attendance">▼</span>
+        </div>
+        <div class="tab-guide-body" id="guide-body-attendance">
+          <ol style="margin:.4rem 0 .6rem;padding-left:1.3rem;line-height:1.7;font-size:.85rem">
+            <li><b>Log every attendance event the moment it happens</b> — a call-in (the hub computes the notice automatically; less than 4 hours = write-up required per Handbook 2U), a tardy, or a no-call/no-show (immediate termination review per 2U — Samantha is alerted and makes the final call).</li>
+            <li>The hub counts events per caregiver and applies the corrective-action ladder from Handbook 2V the same way every time: Verbal Warning → Written Warning → Final Written Warning → Termination Review.</li>
+            <li>When a write-up is due, the caregiver's card shows a red button — click it and the <b>document is drafted for you</b> with the facts, dates, history and policy language. Print it, review it with the caregiver in person, have them sign (a signature confirms receipt, not agreement), then <b>Mark issued</b> and file the signed copy in Viventium.</li>
+            <li>Notify <b>Samantha before issuing anything</b> — she decides warnings vs. termination, always.</li>
+          </ol>
+        </div>
+      </div>
+      <div style="padding:0 1.5rem 2rem">
+        <details style="margin-bottom:1rem">
+          <summary style="cursor:pointer;font-size:.8rem;font-weight:700;color:var(--navy)">⚙️ Policy thresholds (editable — the ladder applies these consistently)</summary>
+          <div style="display:flex;gap:.9rem;flex-wrap:wrap;align-items:end;background:#fff;border:1px solid var(--border);border-radius:10px;padding:.8rem 1rem;margin-top:.5rem;font-size:.78rem">
+            <label>Notice required (hrs)<br><input type="number" id="att-set-notice" style="width:70px"></label>
+            <label>Call-ins before write-up<br><input type="number" id="att-set-ccount" style="width:70px"></label>
+            <label>…within (days)<br><input type="number" id="att-set-cwin" style="width:70px"></label>
+            <label>Tardy grace (min)<br><input type="number" id="att-set-grace" style="width:70px"></label>
+            <label>Tardies before write-up<br><input type="number" id="att-set-tcount" style="width:70px"></label>
+            <label>…within (days)<br><input type="number" id="att-set-twin" style="width:70px"></label>
+            <label>Warnings count back (months)<br><input type="number" id="att-set-look" style="width:70px"></label>
+            <button class="fb" onclick="saveAttSettings()">Save</button>
+          </div>
+        </details>
+
+        <div style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:1rem 1.2rem;margin-bottom:1rem">
+          <div style="font-weight:700;font-size:.9rem;margin-bottom:.5rem">➕ Log an attendance event</div>
+          <div style="display:flex;gap:.6rem;flex-wrap:wrap;align-items:center">
+            <select id="att-type" onchange="attTypeUi()" style="font-size:.85rem">
+              <option value="callin">📞 Call-in (can't make the shift)</option>
+              <option value="tardy">🕐 Tardy (arrived late)</option>
+              <option value="ncns">🚨 No-call / no-show</option>
+            </select>
+            <input id="att-cg" list="att-cg-list" placeholder="Caregiver name" style="min-width:170px;font-size:.85rem">
+            <datalist id="att-cg-list"></datalist>
+            <label style="font-size:.78rem;font-weight:600">Shift <input type="date" id="att-shift-date" style="font-size:.85rem"> <input type="time" id="att-shift-time" style="font-size:.85rem"></label>
+            <label style="font-size:.78rem;font-weight:600" id="att-called-wrap">They called at <input type="datetime-local" id="att-called-at" style="font-size:.85rem"></label>
+            <label style="font-size:.78rem;font-weight:600;display:none" id="att-late-wrap">Minutes late <input type="number" id="att-late-min" style="width:80px;font-size:.85rem"></label>
+            <input id="att-note" placeholder="Reason / note (optional)" style="flex:1;min-width:160px;font-size:.85rem">
+            <button class="fb" onclick="logAttEvent()">Log it</button>
+          </div>
+          <div id="att-log-hint" style="font-size:.75rem;color:#64748b;margin-top:.45rem"></div>
+        </div>
+
+        <div id="att-roster"><div style="color:#94a3b8;font-size:.85rem">No attendance events logged yet — the record starts with the first log.</div></div>
+
+        <div style="margin-top:1.25rem">
+          <div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.5rem">
+            <span style="font-size:1rem">🔎</span>
+            <div style="font-size:.85rem;font-weight:700;color:var(--navy)">Scan AxisCare clock-ins (last 7 days)</div>
+            <button onclick="scanClockins(this)" style="margin-left:auto;padding:.32rem .75rem;background:var(--teal);color:#fff;border:none;border-radius:7px;font-size:.75rem;font-weight:600;cursor:pointer;font-family:inherit">Run scan</button>
+          </div>
+          <div style="font-size:.72rem;color:#64748b;margin-bottom:.5rem">⚠ Heads-up: your EVV clock-in times don't currently flow into AxisCare's API, so most shifts show "no clock-in" even when the caregiver was there. Treat results as leads to check, not facts — confirm before logging anything.</div>
+          <div id="att-scan-results"></div>
+        </div>
+      </div>
+    </div>
+
     <div class="panel" id="panel-comms">
       <div class="tab-guide">
         <div class="tab-guide-hdr" onclick="toggleGuide('comms')">
@@ -1064,6 +1128,20 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
       </div>
     </div>
 
+  </div>
+</div>
+
+<!-- MODAL: Corrective Action write-up -->
+<div class="overlay" id="writeup-modal">
+  <div class="modal" style="max-width:720px">
+    <h3 style="color:var(--navy)" id="writeup-title">📝 Corrective Action Notice</h3>
+    <div style="font-size:.75rem;background:#fef2f2;border-radius:6px;padding:.45rem .7rem;color:#b91c1c;margin:.4rem 0 .6rem;font-weight:600">Notify Samantha before issuing. Review in a private meeting; the caregiver signs to confirm receipt (not agreement); file the signed copy in Viventium.</div>
+    <textarea id="writeup-body" rows="18" style="width:100%;font-family:ui-monospace,Menlo,monospace;font-size:.78rem;line-height:1.5"></textarea>
+    <div style="display:flex;gap:.5rem;margin-top:.7rem;flex-wrap:wrap">
+      <button class="fb" onclick="printWriteup()">🖨 Print</button>
+      <button class="fb" style="background:#16a34a" onclick="issueWriteup()">✓ Mark issued</button>
+      <button onclick="document.getElementById('writeup-modal').classList.remove('open')" style="margin-left:auto;background:#f1f5f9;border:1px solid var(--border);border-radius:7px;padding:.4rem .9rem;cursor:pointer;font-family:inherit;font-size:.8rem">Close</button>
+    </div>
   </div>
 </div>
 
@@ -2884,6 +2962,7 @@ function switchTab(name, btn){
   if(name==='coordreq') { renderCoordReqs(); }
   if(name==='scheduling') { loadOpenShifts(); renderDnrLog(); }
   if(name==='comms') { loadRepliesWaiting(); renderMeetings(); }
+  if(name==='attendance') { renderAttendance(); }
 }
 
 // ── NEW OFFERS (interview records from the Team Hub "Offer a Job" form) ──
@@ -3067,6 +3146,250 @@ async function sendCandidateSMS(payload){
   return data;
 }
 
+
+// ── ATTENDANCE & DISCIPLINE (Handbook 2U Attendance & Dependability +
+//    2V Corrective Action, applied consistently; humans issue, hub drafts) ──
+let ATT_EVENTS=[], DISC_ACTIONS=[];
+const ATT_DEFAULTS={notice_hours:4, callin_count:3, callin_window:90, tardy_grace:7, tardy_count:3, tardy_window:90, lookback_months:12};
+function attCfg(){ return Object.assign({}, ATT_DEFAULTS, appSettings.attendance||{}); }
+function saveAttSettings(){
+  appSettings.attendance={
+    notice_hours:+document.getElementById('att-set-notice').value||4,
+    callin_count:+document.getElementById('att-set-ccount').value||3,
+    callin_window:+document.getElementById('att-set-cwin').value||90,
+    tardy_grace:+document.getElementById('att-set-grace').value||7,
+    tardy_count:+document.getElementById('att-set-tcount').value||3,
+    tardy_window:+document.getElementById('att-set-twin').value||90,
+    lookback_months:+document.getElementById('att-set-look').value||12,
+  };
+  syncToSupabase('settings', appSettings);
+  renderAttendance();
+}
+function attTypeUi(){
+  const t=document.getElementById('att-type').value;
+  document.getElementById('att-called-wrap').style.display = t==='callin'?'inline':'none';
+  document.getElementById('att-late-wrap').style.display = t==='tardy'?'inline':'none';
+  document.getElementById('att-log-hint').textContent =
+    t==='ncns'?'Per Handbook 2U this is serious misconduct — logging it flags an immediate termination review and alerts Samantha.'
+    :t==='callin'?'The hub computes the notice from shift time minus call time — under '+attCfg().notice_hours+' hours = write-up required.':'';
+}
+async function attPersist(key,item){
+  try{ const { error } = await sb.rpc('upsert_app_data_item',{ target_key:key, item }); if(error) throw error; }
+  catch(e){ alert('Could not save — check your connection and try again.'); throw e; }
+}
+async function logAttEvent(){
+  const type=document.getElementById('att-type').value;
+  const cg=document.getElementById('att-cg').value.trim();
+  const sd=document.getElementById('att-shift-date').value;
+  const st=document.getElementById('att-shift-time').value;
+  if(!cg||!sd){ alert('Caregiver and shift date are required.'); return; }
+  let by=''; try{ const {data:{session}}=await sb.auth.getSession(); by=(session&&session.user&&session.user.email)||''; }catch(e){}
+  const ev={ id:'att'+Date.now(), caregiver:cg, type, shift_date:sd, shift_time:st||'',
+    note:document.getElementById('att-note').value.trim(), logged_by:by.split('@')[0]||'staffing',
+    created_at:new Date().toISOString(), action_id:null };
+  if(type==='callin'){
+    const called=document.getElementById('att-called-at').value;
+    if(called&&st){
+      const h=(new Date(sd+'T'+st).getTime()-new Date(called).getTime())/3600000;
+      ev.notice_hours=Math.round(h*10)/10;
+    }
+    ev.reported_at=called||'';
+  }
+  if(type==='tardy') ev.minutes_late=+document.getElementById('att-late-min').value||null;
+  ATT_EVENTS.push(ev);
+  await attPersist('attendance_events',ev);
+  document.getElementById('att-cg').value=''; document.getElementById('att-note').value='';
+  document.getElementById('att-late-min').value=''; document.getElementById('att-called-at').value='';
+  renderAttendance();
+  if(type==='ncns') alert('Logged. Per Handbook 2U this is an immediate termination review — it now shows on Samantha\'s manager view. Draft the notice from '+cg+'\'s card, and call Samantha before anything is issued.');
+}
+/* Pending triggers = uncovered strikes, per her rules:
+   every short-notice call-in AND every NCNS is its own trigger; hitting the
+   call-in/tardy totals inside the window is a trigger for the accumulation. */
+function attStatus(cg){
+  const cfg=attCfg(), now=Date.now();
+  const evs=ATT_EVENTS.filter(e=>e.caregiver===cg);
+  const inWin=(e,days)=>now-new Date(e.shift_date+'T00:00').getTime()<=days*86400000;
+  const uncovered=evs.filter(e=>!e.action_id);
+  const callinsWin=evs.filter(e=>e.type==='callin'&&inWin(e,cfg.callin_window));
+  const tardiesWin=evs.filter(e=>e.type==='tardy'&&inWin(e,cfg.tardy_window));
+  const triggers=[];
+  uncovered.filter(e=>e.type==='ncns').forEach(e=>triggers.push({kind:'ncns',events:[e],label:'No-call/no-show — immediate termination review'}));
+  uncovered.filter(e=>e.type==='callin'&&e.notice_hours!=null&&e.notice_hours<cfg.notice_hours)
+    .forEach(e=>triggers.push({kind:'short_notice',events:[e],label:'Call-in with only '+e.notice_hours+'h notice (policy: '+cfg.notice_hours+'h)'}));
+  const uncCallins=callinsWin.filter(e=>!e.action_id);
+  if(callinsWin.length>=cfg.callin_count&&uncCallins.length)
+    triggers.push({kind:'callin_total',events:uncCallins,label:callinsWin.length+' call-ins in '+cfg.callin_window+' days (policy: '+cfg.callin_count+')'});
+  const uncTardies=tardiesWin.filter(e=>!e.action_id);
+  if(tardiesWin.length>=cfg.tardy_count&&uncTardies.length)
+    triggers.push({kind:'tardy_total',events:uncTardies,label:tardiesWin.length+' tardies in '+cfg.tardy_window+' days (policy: '+cfg.tardy_count+')'});
+  const lookMs=cfg.lookback_months*30.4*86400000;
+  const issued=DISC_ACTIONS.filter(a=>a.caregiver===cg&&a.status==='issued'&&now-new Date(a.issued_at).getTime()<=lookMs);
+  const drafts=DISC_ACTIONS.filter(a=>a.caregiver===cg&&a.status==='draft');
+  const LADDER=['Verbal Warning','Written Warning','Final Written Warning','Termination Review'];
+  const nextLevel=triggers.some(t=>t.kind==='ncns')?'Termination Review':LADDER[Math.min(issued.length,3)];
+  return {evs,callinsWin,tardiesWin,triggers,issued,drafts,nextLevel,
+    termEligible:issued.length>=2||triggers.some(t=>t.kind==='ncns')};
+}
+function attCaregivers(){ return [...new Set(ATT_EVENTS.map(e=>e.caregiver))].sort(); }
+function renderAttendance(){
+  const cfg=attCfg();
+  ['notice','ccount','cwin','grace','tcount','twin','look'].forEach((k,i)=>{
+    const map={notice:'notice_hours',ccount:'callin_count',cwin:'callin_window',grace:'tardy_grace',tcount:'tardy_count',twin:'tardy_window',look:'lookback_months'};
+    const el=document.getElementById('att-set-'+k); if(el&&!el.value) el.value=cfg[map[k]];
+  });
+  const dl=document.getElementById('att-cg-list');
+  if(dl) dl.innerHTML=(caregivers||[]).map(c=>'<option value="'+creqEsc(((c.first||'')+' '+(c.last||'')).trim())+'">').join('');
+  if(!document.getElementById('att-shift-date').value) document.getElementById('att-shift-date').value=new Date().toISOString().slice(0,10);
+  attTypeUi();
+  const wrap=document.getElementById('att-roster'); if(!wrap) return;
+  const names=attCaregivers();
+  if(!names.length){ wrap.innerHTML='<div style="color:#94a3b8;font-size:.85rem">No attendance events logged yet — the record starts with the first log.</div>'; updateAttBadge(); return; }
+  const TYPE_ICON={callin:'📞',tardy:'🕐',ncns:'🚨'};
+  wrap.innerHTML=names.map(cg=>{
+    const s=attStatus(cg);
+    const chip=s.triggers.some(t=>t.kind==='ncns')?'<span style="background:#DC2626;color:#fff;border-radius:999px;padding:.15rem .6rem;font-size:.7rem;font-weight:800">🚨 TERMINATION REVIEW</span>'
+      :s.triggers.length?'<span style="background:#fef3c7;color:#92400e;border-radius:999px;padding:.15rem .6rem;font-size:.7rem;font-weight:800">⚠ WRITE-UP DUE</span>'
+      :s.termEligible?'<span style="background:#fee2e2;color:#b91c1c;border-radius:999px;padding:.15rem .6rem;font-size:.7rem;font-weight:800">eligible for termination on next occurrence</span>'
+      :'<span style="background:#dcfce7;color:#166534;border-radius:999px;padding:.15rem .6rem;font-size:.7rem;font-weight:700">in good standing</span>';
+    return '<div style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:.85rem 1.1rem;margin-bottom:.6rem">'
+      +'<div style="display:flex;align-items:center;gap:.7rem;flex-wrap:wrap">'
+      +'<b style="font-size:.95rem;color:var(--navy)">'+creqEsc(cg)+'</b>'+chip
+      +'<span style="margin-left:auto;font-size:.72rem;color:#64748b">'+s.callinsWin.length+' call-ins · '+s.tardiesWin.length+' tardies (window) · '+s.issued.length+' warning'+(s.issued.length===1?'':'s')+' on file</span>'
+      +'</div>'
+      +(s.triggers.length?'<div style="margin-top:.5rem">'+s.triggers.map((t,ti)=>
+        '<div style="display:flex;align-items:center;gap:.6rem;font-size:.8rem;padding:.3rem 0;flex-wrap:wrap"><span style="color:#b91c1c;font-weight:700">→</span>'
+        +'<span style="flex:1">'+creqEsc(t.label)+'</span>'
+        +'<button class="fb" style="font-size:.72rem;background:#DC2626" onclick="draftWriteup(\''+creqEsc(cg).replace(/'/g,"\\'")+'\','+ti+')">📝 Draft '+creqEsc(attStatus(cg).nextLevel)+'</button></div>').join('')+'</div>':'')
+      +(s.drafts.length?s.drafts.map(a=>'<div style="font-size:.75rem;color:#92400e;margin-top:.3rem">📝 Draft ready: '+creqEsc(a.level)+' — <a href="#" onclick="openWriteup(\''+a.id+'\');return false;">review & issue</a></div>').join(''):'')
+      +'<details style="margin-top:.45rem"><summary style="cursor:pointer;font-size:.72rem;color:#64748b">History ('+s.evs.length+' events'+(s.issued.length?', '+s.issued.length+' issued warnings':'')+')</summary>'
+      +s.evs.slice().sort((a,b)=>String(b.shift_date).localeCompare(String(a.shift_date))).map(e=>
+        '<div style="font-size:.75rem;padding:.2rem 0;color:#33414d">'+(TYPE_ICON[e.type]||'')+' '+e.shift_date+(e.shift_time?' '+e.shift_time:'')
+        +(e.type==='callin'&&e.notice_hours!=null?' · '+e.notice_hours+'h notice':'')
+        +(e.type==='tardy'&&e.minutes_late?' · '+e.minutes_late+' min late':'')
+        +(e.note?' · '+creqEsc(e.note):'')+(e.action_id?' · <span style="color:#92400e">covered by warning</span>':'')+'</div>').join('')
+      +s.issued.map(a=>'<div style="font-size:.75rem;padding:.2rem 0;color:#b91c1c">📄 '+creqEsc(a.level)+' issued '+String(a.issued_at).slice(0,10)+'</div>').join('')
+      +'</details></div>';
+  }).join('');
+  updateAttBadge();
+}
+function updateAttBadge(){
+  const b=document.getElementById('attBadge'); if(!b) return;
+  const n=attCaregivers().reduce((acc,cg)=>acc+attStatus(cg).triggers.length,0)+DISC_ACTIONS.filter(a=>a.status==='draft').length;
+  b.style.display=n?'inline':'none'; b.textContent=n;
+}
+let _writeupId=null;
+function attDocBody(cg, trigger, level){
+  const s=attStatus(cg), cfg=attCfg(), today=new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
+  const evLine=e=>'  • '+e.shift_date+(e.shift_time?' at '+e.shift_time:'')+' — '
+    +(e.type==='ncns'?'No-call/no-show':e.type==='callin'?'Call-in'+(e.notice_hours!=null?' with '+e.notice_hours+' hours notice':''):'Tardy'+(e.minutes_late?' ('+e.minutes_late+' minutes late)':''))
+    +(e.note?' — '+e.note:'');
+  return 'CARING COMPANIONS — CORRECTIVE ACTION NOTICE\n'
+    +'══════════════════════════════════════════════\n\n'
+    +'Employee:        '+cg+'\n'
+    +'Date:            '+today+'\n'
+    +'Action level:    '+level+'\n'
+    +'Category:        Attendance & Dependability (Handbook 2U)\n\n'
+    +'THIS NOTICE IS BEING ISSUED FOR:\n'+trigger.label+'\n\n'
+    +'THE FACTS:\n'+trigger.events.map(evLine).join('\n')+'\n\n'
+    +'ATTENDANCE HISTORY ('+cfg.callin_window+'-day window):\n'
+    +'  • Call-ins: '+s.callinsWin.length+'   • Tardies: '+s.tardiesWin.length+'\n'
+    +(s.issued.length?'  Prior corrective actions on file:\n'+s.issued.map(a=>'  • '+a.level+' — issued '+String(a.issued_at).slice(0,10)).join('\n')+'\n':'  No prior corrective actions on file.\n')
+    +'\nCOMPANY POLICY (Employee Handbook):\n'
+    +'  2U — Attendance & Dependability: "Notify the office as soon as possible\n'
+    +'  when unable to report to work. Whenever possible, provide at least four\n'
+    +'  (4) hours notice; early morning shifts should be reported the evening\n'
+    +'  before." A No Call / No Show "places vulnerable clients at significant\n'
+    +'  risk, is considered serious misconduct and may result in immediate\n'
+    +'  termination."\n'
+    +'  2V — Corrective Action: Coaching → Verbal Warning → Written Warning →\n'
+    +'  Final Written Warning → Suspension → Termination. The company reserves\n'
+    +'  the right to skip any step depending upon the seriousness of the\n'
+    +'  violation.\n\n'
+    +'EXPECTATION GOING FORWARD:\n'
+    +'  Report to every scheduled shift on time. If you cannot make a shift,\n'
+    +'  call the office with at least '+cfg.notice_hours+' hours notice (the evening before\n'
+    +'  for early-morning shifts).\n\n'
+    +'CONSEQUENCE OF FURTHER OCCURRENCES:\n'
+    +(level==='Termination Review'||level==='Final Written Warning'
+      ?'  Any further attendance occurrence may result in termination of\n  employment.\n\n'
+      :'  Further occurrences will result in the next step of corrective action,\n  up to and including termination of employment.\n\n')
+    +'──────────────────────────────────────────────\n'
+    +'Employee signature (confirms receipt, not agreement):\n\n'
+    +'  X ______________________________   Date: ____________\n\n'
+    +'Issued by:\n\n'
+    +'  X ______________________________   Date: ____________\n\n'
+    +'File the signed original in Viventium. Samantha Troutman must be\n'
+    +'notified before this notice is issued.\n';
+}
+async function draftWriteup(cg, triggerIdx){
+  const s=attStatus(cg);
+  const t=s.triggers[triggerIdx]; if(!t) return;
+  const level=t.kind==='ncns'?'Termination Review':s.nextLevel;
+  let by=''; try{ const {data:{session}}=await sb.auth.getSession(); by=(session&&session.user&&session.user.email)||''; }catch(e){}
+  const a={ id:'dw'+Date.now(), caregiver:cg, level, reason:t.label, event_ids:t.events.map(e=>e.id),
+    body:attDocBody(cg,t,level), status:'draft', created_at:new Date().toISOString(), created_by:by.split('@')[0]||'staffing', issued_at:null };
+  DISC_ACTIONS.push(a);
+  await attPersist('discipline_actions',a);
+  openWriteup(a.id);
+  renderAttendance();
+}
+function openWriteup(id){
+  const a=DISC_ACTIONS.find(x=>x.id===id); if(!a) return;
+  _writeupId=id;
+  document.getElementById('writeup-title').textContent='📝 '+a.level+' — '+a.caregiver;
+  document.getElementById('writeup-body').value=a.body;
+  document.getElementById('writeup-modal').classList.add('open');
+}
+function printWriteup(){
+  const w=window.open('','_blank');
+  w.document.write('<pre style="font:12px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;padding:24px">'+document.getElementById('writeup-body').value.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</pre>');
+  w.document.close(); w.print();
+}
+async function issueWriteup(){
+  const a=DISC_ACTIONS.find(x=>x.id===_writeupId); if(!a) return;
+  if(!confirm('Mark this '+a.level+' as ISSUED to '+a.caregiver+'? Only do this after Samantha has approved it and the signed copy is in hand.')) return;
+  a.body=document.getElementById('writeup-body').value;
+  a.status='issued'; a.issued_at=new Date().toISOString();
+  await attPersist('discipline_actions',a);
+  // The covered events stop re-triggering the ladder.
+  for(const eid of a.event_ids){
+    const e=ATT_EVENTS.find(x=>x.id===eid);
+    if(e&&!e.action_id){ e.action_id=a.id; await attPersist('attendance_events',e); }
+  }
+  document.getElementById('writeup-modal').classList.remove('open');
+  renderAttendance();
+}
+async function scanClockins(btn){
+  const box=document.getElementById('att-scan-results');
+  const key=(appSettings.training_hub_key||'').trim();
+  if(!key){ box.innerHTML='<div style="color:#b45309;font-size:.8rem">Paste the Training Hub read key into ⚙️ Settings first.</div>'; return; }
+  if(btn){btn.disabled=true;btn.textContent='Scanning…';}
+  try{
+    const r=await fetch('https://rdqujxiycycwhskyvrwa.supabase.co/functions/v1/axiscare-open-shifts',{
+      method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
+      body:JSON.stringify({key,mode:'clockins',days:7,grace:attCfg().tardy_grace})});
+    const d=await r.json();
+    if(d.error) throw new Error(d.error);
+    const late=(d.flagged||[]).filter(f=>!f.missing_clock_in);
+    const missing=(d.flagged||[]).filter(f=>f.missing_clock_in);
+    box.innerHTML=
+      (late.length?late.map(f=>'<div style="background:#fff;border:1px solid var(--border);border-left:4px solid #B45309;border-radius:8px;padding:.5rem .8rem;margin-bottom:.3rem;font-size:.78rem;display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">'
+        +'<b>'+creqEsc(f.caregiver)+'</b> clocked in '+f.minutes_late+' min late — '+f.date+' '+(f.scheduled||'')+' ('+creqEsc(f.client)+')'
+        +'<button class="fb" style="font-size:.7rem;margin-left:auto" onclick="prefillTardy(\''+creqEsc(f.caregiver).replace(/'/g,"\\'")+'\',\''+f.date+'\',\''+(f.scheduled||'')+'\','+f.minutes_late+')">Log as tardy</button></div>').join('')
+        :'<div style="font-size:.78rem;color:#166534">No confirmed late clock-ins found.</div>')
+      +(missing.length?'<div style="font-size:.72rem;color:#94a3b8;margin-top:.3rem">'+missing.length+' shifts had no clock-in recorded (likely the EVV gap above, not true no-shows).</div>':'');
+  }catch(e){ box.innerHTML='<div style="color:#b91c1c;font-size:.8rem">Scan failed: '+creqEsc(e&&e.message?e.message:'error')+'</div>'; }
+  finally{ if(btn){btn.disabled=false;btn.textContent='Run scan';} }
+}
+function prefillTardy(cg,date,time,mins){
+  document.getElementById('att-type').value='tardy'; attTypeUi();
+  document.getElementById('att-cg').value=cg;
+  document.getElementById('att-shift-date').value=date;
+  document.getElementById('att-shift-time').value=time;
+  document.getElementById('att-late-min').value=mins;
+  window.scrollTo({top:0,behavior:'smooth'});
+}
 
 // ── AUTOMATION REPLIES (moved here from the Team Hub — this is the Staffing
 //    Coordinator's desk; ghl-replies/-thread/-reply fns, no GHL seat needed) ──
@@ -3338,7 +3661,7 @@ function renderCoordReqs(){
   const urgRank=u=>u==='Today'?0:u==='This week'?1:2;
   const open=inbox.filter(t=>t.status==='open').sort((a,b)=>urgRank(a.urgency)-urgRank(b.urgency)||String(a.created_at).localeCompare(String(b.created_at)));
   const recentDone=inbox.filter(t=>t.status==='done').sort((a,b)=>String(b.done_at).localeCompare(String(a.done_at))).slice(0,10);
-  const KIND_META={ dnr:['🚫','#DC2626','Do not send back'], hours:['➕','#B45309','Add / change hours'], coverage:['🕐','#DC2626','Coverage gap'], schedule:['📅','#2F6FB0','Schedule change'], todo:['☑️','#DC2626',''], update:['ℹ️','#2F6FB0',''] };
+  const KIND_META={ dnr:['🚫','#DC2626','Do not send back'], hours:['➕','#B45309','Add / change hours'], coverage:['🕐','#DC2626','Coverage gap'], schedule:['📅','#2F6FB0','Schedule change'], attendance:['⏰','#B45309','Attendance issue — log it on the ⏰ Attendance tab'], todo:['☑️','#DC2626',''], update:['ℹ️','#2F6FB0',''] };
   const row=(t,mine)=>{
     const urgColor=t.urgency==='Today'?'#DC2626':t.urgency==='This week'?'#B45309':'#64748b';
     const km=KIND_META[t.kind]||KIND_META.update;
@@ -3494,6 +3817,8 @@ async function loadFromSupabase(){
       if(row.key==='staffing_tasks') { STASKS=row.data||[]; }
       if(row.key==='dnr_log')        { DNRLOG=row.data||[]; }
       if(row.key==='meetings')       { MEETINGS=row.data||[]; }
+      if(row.key==='attendance_events')  { ATT_EVENTS=row.data||[]; }
+      if(row.key==='discipline_actions') { DISC_ACTIONS=row.data||[]; }
     });
     updateCoordreqBadge();
     if(typeof activeTab!=='undefined' && activeTab==='coordreq') renderCoordReqs();
