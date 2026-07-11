@@ -273,6 +273,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     <div class="tab" onclick="switchTab('compliance',this)"><span class="ti">✅</span> Active Compliance</div>
     <div class="tab" onclick="switchTab('scheduling',this)"><span class="ti">🗓</span> Scheduling</div>
     <div class="tab" onclick="switchTab('evv',this)"><span class="ti">📝</span> EVV Corrections</div>
+    <div class="tab" onclick="switchTab('coordreq',this)"><span class="ti">📨</span> Coordinator Requests<span id="coordreqBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
     <div class="tab" onclick="switchTab('eod',this)"><span class="ti">📄</span> End-of-Day Reports</div>
   </div>
 
@@ -925,6 +926,35 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     </div>
 
     <!-- ═══════════════════════════════ END-OF-DAY REPORTS ═══════════════════════════════ -->
+    <div class="panel" id="panel-coordreq">
+      <div class="tab-guide">
+        <div class="tab-guide-hdr" onclick="toggleGuide('coordreq')">
+          <span class="tab-guide-title">📋 How This Tab Works — Step by Step</span>
+          <span class="tab-guide-arrow" id="guide-arrow-coordreq">▼</span>
+        </div>
+        <div class="tab-guide-body" id="guide-body-coordreq">
+          <ol style="margin:.4rem 0 .6rem;padding-left:1.3rem;line-height:1.7;font-size:.85rem">
+            <li>When a care coordinator takes a call that's really a scheduling matter — coverage gaps, caregiver changes, client schedule requests — they send it here from their hub with one click.</li>
+            <li><b>To-dos</b> need action from you; <b>updates</b> are just so you know. Work them top-down (Today first), add a reply if useful, and mark <b>Done ✓</b> — the coordinator sees it instantly in their hub.</li>
+            <li>Need to tell the coordinators something? Use <b>Send a message to the care coordinators</b> below — it appears on their Overview the moment they open the hub.</li>
+          </ol>
+        </div>
+      </div>
+      <div style="padding:0 1.5rem 2rem">
+        <div style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:1rem 1.2rem;margin-bottom:1rem">
+          <div style="font-weight:700;font-size:.9rem;margin-bottom:.5rem">📤 Send a message to the care coordinators</div>
+          <div style="display:flex;gap:.6rem;flex-wrap:wrap;align-items:center">
+            <select id="creq-kind" style="font-size:.85rem"><option value="todo">To-do — needs action</option><option value="update" selected>Update — just so they know</option></select>
+            <select id="creq-urgency" style="font-size:.85rem"><option>Today</option><option selected>This week</option><option>When you can</option></select>
+            <input id="creq-about" placeholder="Who it's about (optional)" style="font-size:.85rem;min-width:160px">
+            <input id="creq-message" placeholder="The message…" style="flex:1;min-width:220px;font-size:.85rem" onkeydown="if(event.key==='Enter')sendCoordReq()">
+            <button class="fb" onclick="sendCoordReq()">Send</button>
+          </div>
+        </div>
+        <div id="coordreq-list" style="display:flex;flex-direction:column;gap:.5rem"><div style="color:#94a3b8;font-size:.85rem">Loading…</div></div>
+      </div>
+    </div>
+
     <div class="panel" id="panel-eod">
       <div class="tab-guide">
         <div class="tab-guide-hdr" onclick="toggleGuide('eod')">
@@ -2775,6 +2805,7 @@ function switchTab(name, btn){
   if(name==='evv') { renderEVVCorrections(); loadPendingEVVSubmissions(); }
   if(name==='offers') { loadOffers(); }
   if(name==='eod') { renderEod(); }
+  if(name==='coordreq') { renderCoordReqs(); }
 }
 
 // ── NEW OFFERS (interview records from the Team Hub "Offer a Job" form) ──
@@ -2959,6 +2990,84 @@ async function sendCandidateSMS(payload){
 }
 
 
+// ── COORDINATOR REQUESTS (shared app_data key 'staffing_tasks', written by
+//    the Care Coordinator Hub; saved atomically via upsert_app_data_item so
+//    both hubs can write at the same moment without clobbering each other) ──
+let STASKS=[];
+const creqEsc = s => String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function creqPersist(item){
+  try{
+    const { error } = await sb.rpc('upsert_app_data_item', { target_key:'staffing_tasks', item });
+    if(error) throw error;
+  }catch(e){ alert('Could not save — check your connection and try again.'); throw e; }
+}
+function updateCoordreqBadge(){
+  const b=document.getElementById('coordreqBadge'); if(!b) return;
+  const n=STASKS.filter(t=>t.direction==='to_staffing'&&t.status==='open').length;
+  b.style.display=n?'inline':'none'; b.textContent=n;
+}
+function renderCoordReqs(){
+  const wrap=document.getElementById('coordreq-list'); if(!wrap) return;
+  const inbox=STASKS.filter(t=>t.direction==='to_staffing');
+  const outbox=STASKS.filter(t=>t.direction==='to_coordinators');
+  const urgRank=u=>u==='Today'?0:u==='This week'?1:2;
+  const open=inbox.filter(t=>t.status==='open').sort((a,b)=>urgRank(a.urgency)-urgRank(b.urgency)||String(a.created_at).localeCompare(String(b.created_at)));
+  const recentDone=inbox.filter(t=>t.status==='done').sort((a,b)=>String(b.done_at).localeCompare(String(a.done_at))).slice(0,10);
+  const row=(t,mine)=>{
+    const urgColor=t.urgency==='Today'?'#DC2626':t.urgency==='This week'?'#B45309':'#64748b';
+    return '<div style="background:#fff;border:1px solid var(--border);border-left:4px solid '+(t.status==='done'?'#16a34a':(t.kind==='todo'?'#DC2626':'#2F6FB0'))+';border-radius:10px;padding:.75rem 1rem">'
+      +'<div style="display:flex;align-items:flex-start;gap:.6rem;flex-wrap:wrap">'
+      +'<span style="font-size:1.05rem">'+(t.status==='done'?'✅':(t.kind==='todo'?'☑️':'ℹ️'))+'</span>'
+      +'<div style="flex:1;min-width:200px">'
+      +(t.about?'<b>'+creqEsc(t.about)+'</b> — ':'')+creqEsc(t.message)
+      +'<div style="font-size:.75rem;color:#64748b;margin-top:.25rem">'
+      +(mine?'to the care coordinators':'from '+creqEsc(t.from_name||'a care coordinator'))
+      +' · '+new Date(t.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})
+      +' · <span style="color:'+urgColor+';font-weight:600">'+creqEsc(t.urgency||'')+'</span>'
+      +(t.status==='done'?' · done by '+creqEsc(t.done_by||'')+(t.reply?' · 💬 '+creqEsc(t.reply):''):'')
+      +'</div></div>'
+      +(t.status==='open'&&!mine
+        ?'<span style="display:flex;gap:.4rem"><button class="fb" style="font-size:.75rem" onclick="creqDone(\''+t.id+'\',true)">Done ✓ + reply</button>'
+        +'<button class="fb" style="font-size:.75rem" onclick="creqDone(\''+t.id+'\',false)">Done ✓</button></span>'
+        :'')
+      +'</div></div>';
+  };
+  wrap.innerHTML =
+    (open.length
+      ? '<div style="font-weight:700;font-size:.85rem;margin:.2rem 0">📥 Needs your attention ('+open.length+')</div>'+open.map(t=>row(t,false)).join('')
+      : '<div style="color:#94a3b8;font-size:.85rem;padding:.4rem 0">📥 Nothing waiting from the coordinators. 🎉</div>')
+    +(outbox.filter(t=>t.status==='open').length
+      ? '<div style="font-weight:700;font-size:.85rem;margin:.8rem 0 .2rem">📤 Waiting on the coordinators</div>'+outbox.filter(t=>t.status==='open').sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).map(t=>row(t,true)).join('')
+      : '')
+    +(recentDone.length
+      ? '<div style="font-weight:700;font-size:.85rem;margin:.8rem 0 .2rem;color:#64748b">Recently completed</div>'+recentDone.map(t=>row(t,false)).join('')
+      : '');
+  updateCoordreqBadge();
+}
+async function creqDone(id, withReply){
+  const t=STASKS.find(x=>x.id===id); if(!t) return;
+  let reply='';
+  if(withReply){ reply=prompt('Reply to the coordinator (they see it in their hub):','')||''; }
+  let by=''; try{ const {data:{session}}=await sb.auth.getSession(); by=(session&&session.user&&session.user.email)||''; }catch(e){}
+  t.status='done'; t.done_at=new Date().toISOString(); t.done_by=by.split('@')[0]||'staffing'; if(reply.trim()) t.reply=reply.trim();
+  await creqPersist(t);
+  renderCoordReqs();
+}
+async function sendCoordReq(){
+  const message=document.getElementById('creq-message').value.trim();
+  if(!message){ alert('Write the message first.'); return; }
+  let by=''; try{ const {data:{session}}=await sb.auth.getSession(); by=(session&&session.user&&session.user.email)||''; }catch(e){}
+  const t={ id:'st'+Date.now()+Math.random().toString(36).slice(2,7), direction:'to_coordinators',
+    kind:document.getElementById('creq-kind').value, urgency:document.getElementById('creq-urgency').value,
+    about:document.getElementById('creq-about').value.trim(), lead_id:null, message,
+    created_at:new Date().toISOString(), from_name:(by.split('@')[0]||'Staffing')+' (Staffing)', from_email:by,
+    status:'open', done_at:null, done_by:null, reply:'' };
+  STASKS.push(t);
+  await creqPersist(t);
+  document.getElementById('creq-message').value=''; document.getElementById('creq-about').value='';
+  renderCoordReqs();
+}
+
 // ── END-OF-DAY REPORTS (files in shared storage bucket lead-docs/eod/, metadata in app_data) ──
 async function uploadEod(input){
   const file = input.files && input.files[0]; input.value='';
@@ -3041,7 +3150,10 @@ async function loadFromSupabase(){
       if(row.key==='orient_sessions'){ orientSessions=row.data; orientId=Math.max(orientId,...orientSessions.map(s=>s.id+1),1); }
       if(row.key==='settings')       { appSettings=row.data; localStorage.setItem('cc_settings',JSON.stringify(row.data)); }
       if(row.key==='evv_corrections'){ localStorage.setItem('cc_evv_corrections', JSON.stringify(row.data)); }
+      if(row.key==='staffing_tasks') { STASKS=row.data||[]; }
     });
+    updateCoordreqBadge();
+    if(typeof activeTab!=='undefined' && activeTab==='coordreq') renderCoordReqs();
     setSyncStatus('ok');
   } catch(e){ console.warn('Supabase load failed, using localStorage:', e); setSyncStatus('offline'); }
 }
