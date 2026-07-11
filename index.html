@@ -970,7 +970,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
             <li><b>Log every attendance event the moment it happens</b> — a call-in (the hub computes the notice automatically; less than 4 hours = write-up required per Handbook 2U), a tardy, or a no-call/no-show (immediate termination review per 2U — Samantha is alerted and makes the final call).</li>
             <li>The hub counts events per caregiver and applies the corrective-action ladder from Handbook 2V the same way every time: Verbal Warning → Written Warning → Final Written Warning → Termination Review.</li>
             <li>When a write-up is due, the caregiver's card shows a red button — click it and the <b>document is drafted for you</b> with the facts, dates, history and policy language. Print it, review it with the caregiver in person, have them sign (a signature confirms receipt, not agreement), then <b>Mark issued</b> and file the signed copy in Viventium.</li>
-            <li>Notify <b>Samantha before issuing anything</b> — she decides warnings vs. termination, always.</li>
+            <li>Every write-up is <b>approved by a care coordinator</b> in their hub before it can be issued. <b>No-call/no-show termination reviews go to Samantha</b> — she makes all final termination decisions.</li>
           </ol>
         </div>
       </div>
@@ -1016,7 +1016,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
             <div style="font-size:.85rem;font-weight:700;color:var(--navy)">Scan AxisCare clock-ins (last 7 days)</div>
             <button onclick="scanClockins(this)" style="margin-left:auto;padding:.32rem .75rem;background:var(--teal);color:#fff;border:none;border-radius:7px;font-size:.75rem;font-weight:600;cursor:pointer;font-family:inherit">Run scan</button>
           </div>
-          <div style="font-size:.72rem;color:#64748b;margin-bottom:.5rem">⚠ Heads-up: your EVV clock-in times don't currently flow into AxisCare's API, so most shifts show "no clock-in" even when the caregiver was there. Treat results as leads to check, not facts — confirm before logging anything.</div>
+          <div style="font-size:.72rem;color:#64748b;margin-bottom:.5rem">ℹ️ Caregivers aren't clocking in through AxisCare yet, so shifts show "no clock-in" even when they were there — treat results as leads to check, not facts. Once the team moves to AxisCare EVV, this scan becomes automatic tardiness detection.</div>
           <div id="att-scan-results"></div>
         </div>
       </div>
@@ -3258,7 +3258,7 @@ function renderAttendance(){
         +'<span style="flex:1">'+creqEsc(t.label)+'</span>'
         +'<button class="fb" style="font-size:.72rem;background:#DC2626" onclick="draftWriteup(\''+creqEsc(cg).replace(/'/g,"\\'")+'\','+ti+')">📝 Draft '+creqEsc(attStatus(cg).nextLevel)+'</button></div>').join('')+'</div>':'')
       +(s.drafts.length?s.drafts.map(a=>{
-        const st=a.status==='pending_approval'?'⏳ with Samantha for approval':a.status==='approved'?'✅ approved — ready to issue':(a.reject_note?'↩ sent back: “'+creqEsc(a.reject_note)+'”':'📝 draft');
+        const st=a.status==='pending_approval'?'⏳ awaiting approval':a.status==='approved'?'✅ approved — ready to issue':(a.reject_note?'↩ sent back: “'+creqEsc(a.reject_note)+'”':'📝 draft');
         return '<div style="font-size:.75rem;color:#92400e;margin-top:.3rem">'+creqEsc(a.level)+' — '+st+' · <a href="#" onclick="openWriteup(\''+a.id+'\');return false;">open</a></div>';
       }).join(''):'')
       +'<details style="margin-top:.45rem"><summary style="cursor:pointer;font-size:.72rem;color:#64748b">History ('+s.evs.length+' events'+(s.issued.length?', '+s.issued.length+' issued warnings':'')+')</summary>'
@@ -3343,14 +3343,15 @@ function openWriteup(id){
   const closeBtn='<button onclick="document.getElementById(\'writeup-modal\').classList.remove(\'open\')" style="margin-left:auto;background:#f1f5f9;border:1px solid var(--border);border-radius:7px;padding:.4rem .9rem;cursor:pointer;font-family:inherit;font-size:.8rem">Close</button>';
   document.getElementById('writeup-body').readOnly = a.status==='pending_approval';
   if(a.status==='draft'){
-    notice.innerHTML='This is a draft. Edit if needed, then <b>send it to Samantha</b> — nothing can be issued without her approval.'+(a.reject_note?'<br>↩ She sent it back: “'+creqEsc(a.reject_note)+'”':'');
+    const approver=a.level==='Termination Review'?'Samantha (termination decisions are hers)':'a care coordinator';
+    notice.innerHTML='This is a draft. Edit if needed, then <b>send it for approval</b> — '+approver+' approves it on the Care Coordinator Hub; nothing can be issued without that.'+(a.reject_note?'<br>↩ Sent back: “'+creqEsc(a.reject_note)+'”':'');
     acts.innerHTML='<button class="fb" onclick="printWriteup()">🖨 Print preview</button>'
-      +'<button class="fb" style="background:#0d3a5f" onclick="sendForApproval()">📤 Send to Samantha for approval</button>'+closeBtn;
+      +'<button class="fb" style="background:#0d3a5f" onclick="sendForApproval()">📤 Send for approval</button>'+closeBtn;
   }else if(a.status==='pending_approval'){
-    notice.innerHTML='⏳ Waiting for Samantha\'s approval — she sees this on her Care Coordinator Hub overview. It can\'t be edited or issued until she approves.';
+    notice.innerHTML='⏳ Waiting for approval — '+(a.level==='Termination Review'?'Samantha':'the care coordinators')+' see this on the Care Coordinator Hub overview. It can\'t be edited or issued until it\'s approved.';
     acts.innerHTML='<button class="fb" onclick="printWriteup()">🖨 Print preview</button>'+closeBtn;
   }else if(a.status==='approved'){
-    notice.innerHTML='✅ Approved by '+creqEsc(a.approved_by||'Samantha')+'. Print it, review it privately with the caregiver, get the signature (confirms receipt, not agreement), then Mark issued — that also stamps proof onto their AxisCare record and reminds you to file in Viventium.';
+    notice.innerHTML='✅ Approved by '+creqEsc(a.approved_by||'a care coordinator')+'. Print it, review it privately with the caregiver, get the signature (confirms receipt, not agreement), then Mark issued — that also stamps proof onto their AxisCare record and reminds you to file in Viventium.';
     acts.innerHTML='<button class="fb" onclick="printWriteup()">🖨 Print</button>'
       +'<button class="fb" style="background:#16a34a" onclick="issueWriteup()">✓ Mark issued</button>'+closeBtn;
   }else{
@@ -3366,7 +3367,7 @@ async function sendForApproval(){
   await attPersist('discipline_actions',a);
   document.getElementById('writeup-modal').classList.remove('open');
   renderAttendance();
-  alert('Sent ✓ — Samantha will see it on her hub overview. You\'ll see the approval here.');
+  alert('Sent ✓ — '+(a.level==='Termination Review'?'Samantha':'the care coordinators')+' will see it on their hub overview. You\'ll see the approval here.');
 }
 async function pushAxNote(id){
   const a=DISC_ACTIONS.find(x=>x.id===id); if(!a) return;
