@@ -4537,13 +4537,8 @@ function renderAlerts(){
   if(readyCount) alerts.push({color:'#22C55E', text:`${readyCount} candidate${readyCount>1?'s':''} ready for orientation — invite pending`, tab:'onboarding'});
   if(reviewCount) alerts.push({color:'#EF4444', text:`${reviewCount} candidate${reviewCount>1?'s':''} need review`, tab:'onboarding'});
 
-  // Training
-  const blocked = caregivers.filter(c=>{ const ts=trainStatus(c); return ts.overall==='Client Contact Blocked'; }).length;
-  const ojtOverdue = caregivers.filter(c=>{ const ts=trainStatus(c); return ts.thirtyPassed && !ts.thirtyDone; }).length;
-  const ojtDueSoon = caregivers.filter(c=>{ const ts=trainStatus(c); return !ts.thirtyDone && !ts.thirtyPassed && ts.thirtyDeadline && daysLeft(ts.thirtyDeadline)<=7; }).length;
-  if(blocked) alerts.push({color:'#EF4444', text:`${blocked} caregiver${blocked>1?'s':''} blocked from client contact — orientation/ALZ training incomplete`, tab:'training'});
-  if(ojtOverdue) alerts.push({color:'#F97316', text:`${ojtOverdue} caregiver${ojtOverdue>1?'s':''} OJT overdue — 30-day training deadline passed`, tab:'training'});
-  if(ojtDueSoon) alerts.push({color:'#F97316', text:`${ojtDueSoon} caregiver${ojtDueSoon>1?'s':''} OJT due within 7 days — complete remaining training`, tab:'training'});
+  // Training alerts moved into the Overview's "Blocked from first client
+  // contact" row (her request Jul 11 2026) — the banner trio was noise here.
 
   // Active Compliance
   let acOverdue=0, acDueSoon=0;
