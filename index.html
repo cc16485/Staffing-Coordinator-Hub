@@ -2952,6 +2952,17 @@ function switchTab(name, btn){
   if(name==='attendance') { renderAttendance(); }
 }
 
+async function resolveReturnedItem(hid,i){
+  const h=(HANDOFFS||[]).find(x=>x.id===hid); if(!h||!h.items[i]) return;
+  const note=prompt('Resolved ✓ — note for the record (optional):',''); if(note===null) return;
+  h.items[i].done_at=new Date().toISOString();
+  h.items[i].done_by=(window._myEmail||'staffing').split('@')[0];
+  if(note.trim()) h.items[i].done_note=note.trim();
+  try{ const { error } = await sb.rpc('upsert_app_data_item',{ target_key:'handoffs', item:h }); if(error) throw error; }
+  catch(e){ alert('Could not save — try again.'); return; }
+  renderStaffHome();
+}
+
 // ── END-OF-SHIFT HANDOFF (writes the same shared 'handoffs' key the CC hub
 //    reads — the evening/after-hours coordinator sees it in their banner) ──
 let staffHandoffDraft=[];
@@ -3111,8 +3122,19 @@ function renderStaffHome(){
       +'<div style="font-size:.72rem;color:var(--gray)">'+sub+'</div></div>'+chip
       +'<button class="fb" style="font-size:.72rem" onclick="gotoTab(\''+tab+'\')">Open →</button></div>';
   };
-  box.innerHTML=
-    '<div style="font-size:.72rem;font-weight:800;letter-spacing:.06em;color:var(--gray);text-transform:uppercase;margin:.2rem 0 .4rem">🗓 Scheduling</div>'
+  const returned=(HANDOFFS||[]).flatMap(h=>(h.items||[]).map((it,i)=>({h,it,i})))
+    .filter(x=>(x.h.from_email||'').toLowerCase()===(window._myEmail||'')&&x.it.returned_at&&!x.it.done_at);
+  const returnedHtml=returned.length
+    ? '<div style="background:#FFFBEB;border:1px solid #FDE68A;border-radius:12px;padding:.7rem 1rem;margin-bottom:.6rem">'
+      +'<b style="font-size:.85rem;color:#92400E">↩ Sent back to you from your handoff ('+returned.length+')</b>'
+      +returned.map(x=>'<div style="display:flex;align-items:flex-start;gap:.6rem;padding:.4rem 0;font-size:.8rem;flex-wrap:wrap">'
+        +'<div style="flex:1;min-width:200px">'+creqEsc(x.it.label)
+        +'<div style="font-size:.72rem;color:#92400E">'+creqEsc(x.it.returned_by||'')+': “'+creqEsc(x.it.return_note||'')+'” — it\'s yours again</div></div>'
+        +'<button class="fb" style="font-size:.72rem" onclick="resolveReturnedItem(\''+x.h.id+'\','+x.i+')">✓ Resolved</button></div>').join('')
+      +'</div>'
+    : '';
+  box.innerHTML= returnedHtml
+    +'<div style="font-size:.72rem;font-weight:800;letter-spacing:.06em;color:var(--gray);text-transform:uppercase;margin:.2rem 0 .4rem">🗓 Scheduling</div>'
     +row('🔴',shiftN,'Open shifts — next 14 days','Every unassigned visit in AxisCare is yours to fill','scheduling',true)
     +'<div style="font-size:.72rem;font-weight:800;letter-spacing:.06em;color:var(--gray);text-transform:uppercase;margin:.8rem 0 .4rem">📋 Onboarding &amp; Compliance</div>'
     +row('🤝',offN,'New offers — enter AxisCare attributes','Interviewed caregivers waiting on their profile checklist','offers',false)
@@ -3869,7 +3891,7 @@ async function dnrMarkAxis(id){
 // ── COORDINATOR REQUESTS (shared app_data key 'staffing_tasks', written by
 //    the Care Coordinator Hub; saved atomically via upsert_app_data_item so
 //    both hubs can write at the same moment without clobbering each other) ──
-let STASKS=[];
+let STASKS=[]; let HANDOFFS=[];
 const creqEsc = s => String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function creqPersist(item){
   try{
@@ -4044,6 +4066,7 @@ async function syncToSupabase(key, data){
 async function loadFromSupabase(){
   setSyncStatus('syncing');
   try {
+    try{ const {data:{session}}=await sb.auth.getSession(); window._myEmail=((session&&session.user&&session.user.email)||'').toLowerCase(); }catch(e){}
     const { data, error } = await sb.from('app_data').select('*');
     if(error || !data) { setSyncStatus('offline'); return; }
     data.forEach(row => {
@@ -4057,6 +4080,7 @@ async function loadFromSupabase(){
       if(row.key==='staffing_tasks') { STASKS=row.data||[]; }
       if(row.key==='dnr_log')        { DNRLOG=row.data||[]; }
       if(row.key==='meetings')       { MEETINGS=row.data||[]; }
+      if(row.key==='handoffs')       { HANDOFFS=row.data||[]; }
       if(row.key==='attendance_events')  { ATT_EVENTS=row.data||[]; }
       if(row.key==='discipline_actions') { DISC_ACTIONS=row.data||[]; }
     });
