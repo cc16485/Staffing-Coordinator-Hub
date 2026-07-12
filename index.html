@@ -286,6 +286,10 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
   <div class="subbar" id="sub-sched" style="display:none">
     <div class="tab" data-name="scheduling" onclick="gotoTab('scheduling')"><span class="ti">🗓</span> Open Shifts &amp; New Clients<span id="schedBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
     <div class="tab" data-name="evv" onclick="gotoTab('evv')"><span class="ti">📝</span> EVV Corrections</div>
+    <span style="margin-left:auto;display:flex;align-items:center;gap:.35rem;white-space:nowrap">
+      <a href="#" onclick="openSchedSopLink();return false" style="font-size:.78rem;font-weight:700;color:var(--navy);text-decoration:underline">📘 Scheduling SOP</a>
+      <a href="#" onclick="editSchedSopLink();return false" title="Change the SOP link" style="font-size:.72rem;color:#94a3b8;text-decoration:none">✎</a>
+    </span>
   </div>
   <div class="subbar" id="sub-team" style="display:none">
     <div class="tab" data-name="coordreq" onclick="gotoTab('coordreq')"><span class="ti">📨</span> Coordinator Requests<span id="coordreqBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
@@ -706,118 +710,6 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
         <div id="client-queue-list"></div>
       </div>
 
-      <!-- Staffing Instructions -->
-      <div style="display:flex;align-items:center;gap:.65rem;margin-bottom:.75rem;padding:.6rem .9rem;background:var(--navy);border-radius:10px">
-        <span style="font-size:1.15rem">📋</span>
-        <div>
-          <div style="font-size:.92rem;font-weight:700;color:#fff;letter-spacing:-.01em">Staffing Instructions</div>
-          <div style="font-size:.72rem;color:rgba(255,255,255,.65);margin-top:.1rem">Step-by-step guides for common staffing scenarios — click any to expand</div>
-        </div>
-      </div>
-      <div style="display:flex;flex-direction:column;gap:.75rem">
-
-        <!-- Scenario 1: New Caregiver -->
-        <div style="border:1.5px solid var(--border);border-radius:10px;overflow:hidden">
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:.7rem 1rem;background:#f8fafc;cursor:pointer;user-select:none" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block';this.querySelector('.sop-arrow').style.transform=this.nextElementSibling.style.display==='block'?'rotate(180deg)':''">
-            <div style="display:flex;align-items:center;gap:.6rem">
-              <span style="font-size:.85rem;font-weight:700;color:var(--navy)">Scheduling a New Caregiver for the First Time</span>
-            </div>
-            <span class="sop-arrow" style="font-size:.8rem;color:var(--gray);transition:transform .2s">▼</span>
-          </div>
-          <div style="display:none;padding:.9rem 1rem 1rem;border-top:1px solid var(--border)">
-            <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">Confirm in the <strong>Training tab</strong> that the caregiver has completed Agency Orientation + ALZ Training. If not, they cannot be scheduled yet.</div></div>
-            <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body">Open <strong>AxisCare</strong> and locate the caregiver's profile. Confirm their status is Active and their availability is entered correctly.</div></div>
-            <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body">Review the open shifts or the client's preferred schedule. Match the caregiver based on availability, location, and any client preferences on file.</div></div>
-            <div class="guide-step"><div class="guide-step-num">4</div><div class="guide-step-body">Create the shift in AxisCare — enter the client, caregiver, date, start/end time, and service type. Save the shift.</div></div>
-            <div class="guide-step"><div class="guide-step-num">5</div><div class="guide-step-body">Contact the caregiver to confirm the shift — via CareQB call or text. Document the confirmation in CareQB.</div></div>
-            <div class="guide-step"><div class="guide-step-num">6</div><div class="guide-step-body">Notify the client or their family of the caregiver's name and scheduled arrival time if required.</div></div>
-          </div>
-        </div>
-
-        <!-- Scenario 2: New Client -->
-        <div style="border:1.5px solid var(--border);border-radius:10px;overflow:hidden">
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:.7rem 1rem;background:#f8fafc;cursor:pointer;user-select:none" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block';this.querySelector('.sop-arrow').style.transform=this.nextElementSibling.style.display==='block'?'rotate(180deg)':''">
-            <div style="display:flex;align-items:center;gap:.6rem">
-              <span style="font-size:.85rem;font-weight:700;color:var(--navy)">Adding a New Client &amp; Setting Up Their Schedule</span>
-            </div>
-            <span class="sop-arrow" style="font-size:.8rem;color:var(--gray);transition:transform .2s">▼</span>
-          </div>
-          <div style="display:none;padding:.9rem 1rem 1rem;border-top:1px solid var(--border)">
-            <div style="font-size:.72rem;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">Care Coordinator — sets up the client in AxisCare</div>
-            <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">Confirm intake paperwork is complete and authorization/hours have been received from the payer (Medicaid, LTC insurance, VA, or private pay).</div></div>
-            <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body">Create the client profile in <strong>AxisCare</strong> — enter name, address, contact info, care plan tasks, service type, authorized hours, schedule, and any client preferences or care notes.</div></div>
-            <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body">Enter all <strong>authorizations</strong> in AxisCare — payer, service codes, authorized units/hours, and effective dates.</div></div>
-            <div class="guide-step"><div class="guide-step-num">4</div><div class="guide-step-body">Once the client is fully set up, use the <strong>"New Client Needs Scheduling"</strong> alert below to notify the Staffing Coordinator that this client is ready to be matched and scheduled.</div></div>
-            <div style="font-size:.72rem;font-weight:700;color:#b45309;text-transform:uppercase;letter-spacing:.05em;margin:.75rem 0 .5rem;border-top:1px solid var(--border);padding-top:.6rem">Staffing Coordinator — matches &amp; schedules</div>
-            <div class="guide-step"><div class="guide-step-num">5</div><div class="guide-step-body">Review the client's care plan, schedule, and location in AxisCare. Identify available caregivers who are a good match — check the Active Compliance tab to confirm they are fully compliant.</div></div>
-            <div class="guide-step"><div class="guide-step-num">6</div><div class="guide-step-body">Create recurring shifts in AxisCare for the client's approved schedule. Assign the selected caregiver to each shift.</div></div>
-            <div class="guide-step"><div class="guide-step-num">7</div><div class="guide-step-body">Call or text the caregiver via <strong>CareQB</strong> to introduce the client and confirm all shifts. Document the call.</div></div>
-            <div class="guide-step"><div class="guide-step-num">8</div><div class="guide-step-body">Notify the client or family of the assigned caregiver's name and expected start date/time.</div></div>
-          </div>
-        </div>
-
-        <!-- Scenario 3: Open/Dropped Shift -->
-        <div style="border:1.5px solid var(--border);border-radius:10px;overflow:hidden">
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:.7rem 1rem;background:#f8fafc;cursor:pointer;user-select:none" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block';this.querySelector('.sop-arrow').style.transform=this.nextElementSibling.style.display==='block'?'rotate(180deg)':''">
-            <div style="display:flex;align-items:center;gap:.6rem">
-              <span style="font-size:.85rem;font-weight:700;color:var(--navy)">Filling an Open or Dropped Shift</span>
-            </div>
-            <span class="sop-arrow" style="font-size:.8rem;color:var(--gray);transition:transform .2s">▼</span>
-          </div>
-          <div style="display:none;padding:.9rem 1rem 1rem;border-top:1px solid var(--border)">
-            <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">Identify the open shift in AxisCare — note the client, date, time, and hours. Flag it as unfilled in AxisCare if not already done.</div></div>
-            <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body">Pull a list of available caregivers for that time slot. Prioritize caregivers who have worked with that client before when possible.</div></div>
-            <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body">Begin outreach via <strong>CareQB</strong> — call or text available caregivers one at a time. Document every attempt in CareQB whether they answer or not.</div></div>
-            <div class="guide-step"><div class="guide-step-num">4</div><div class="guide-step-body">Once a caregiver confirms, update the shift in <strong>AxisCare</strong> immediately with their name. Remove the open/unfilled flag.</div></div>
-            <div class="guide-step"><div class="guide-step-num">5</div><div class="guide-step-body">Notify the client or family that coverage has been arranged. If the shift cannot be filled, escalate to <strong>Samantha</strong> right away — do not leave a client uncovered without notifying management.</div></div>
-          </div>
-        </div>
-
-        <!-- Scenario 4: Caregiver Call-Out -->
-        <div style="border:1.5px solid var(--border);border-radius:10px;overflow:hidden">
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:.7rem 1rem;background:#f8fafc;cursor:pointer;user-select:none" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block';this.querySelector('.sop-arrow').style.transform=this.nextElementSibling.style.display==='block'?'rotate(180deg)':''">
-            <div style="display:flex;align-items:center;gap:.6rem">
-              <span style="font-size:.85rem;font-weight:700;color:var(--navy)">Caregiver Call-Out Process</span>
-            </div>
-            <span class="sop-arrow" style="font-size:.8rem;color:var(--gray);transition:transform .2s">▼</span>
-          </div>
-          <div style="display:none;padding:.9rem 1rem 1rem;border-top:1px solid var(--border)">
-            <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">When a caregiver calls out, document it in <strong>CareQB</strong> immediately — note the caregiver's name, client affected, shift time, and reason given.</div></div>
-            <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body">Go to <strong>AxisCare</strong> and mark the shift as the caregiver calling out. This keeps the schedule accurate in real time.</div></div>
-            <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body">Follow the <strong>Filling an Open/Dropped Shift</strong> process above to find coverage. Time is critical — start outreach immediately.</div></div>
-            <div class="guide-step"><div class="guide-step-num">4</div><div class="guide-step-body">Contact the <strong>client or family</strong> to let them know there has been a change and provide an updated arrival time or confirmation of coverage.</div></div>
-            <div class="guide-step"><div class="guide-step-num">5</div><div class="guide-step-body">If the same caregiver has <strong>3 or more call-outs in 30 days</strong>, flag it and notify Samantha for follow-up. Excessive call-outs may need to be addressed through HR.</div></div>
-          </div>
-        </div>
-
-        <!-- Scenario 5: Disciplinary Actions -->
-        <div style="border:1.5px solid var(--border);border-radius:10px;overflow:hidden">
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:.7rem 1rem;background:#f8fafc;cursor:pointer;user-select:none" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='block'?'none':'block';this.querySelector('.sop-arrow').style.transform=this.nextElementSibling.style.display==='block'?'rotate(180deg)':''">
-            <div style="display:flex;align-items:center;gap:.6rem">
-              <span style="font-size:.85rem;font-weight:700;color:var(--navy)">Submitting a Disciplinary Action</span>
-            </div>
-            <span class="sop-arrow" style="font-size:.8rem;color:var(--gray);transition:transform .2s">▼</span>
-          </div>
-          <div style="display:none;padding:.9rem 1rem 1rem;border-top:1px solid var(--border)">
-            <div style="font-size:.75rem;background:#fef2f2;border-radius:6px;padding:.45rem .7rem;color:#b91c1c;margin-bottom:.75rem;font-weight:600">Notify Samantha before issuing any disciplinary action. Do not proceed without management awareness.</div>
-            <div class="guide-section-lbl" style="border-top:none;padding-top:0;margin-top:0">Document the incident first</div>
-            <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">Write down exactly what happened — <strong>date, time, location, what was observed or reported, and who was involved.</strong> Be factual and specific. Do not include opinions or assumptions.</div></div>
-            <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body">Note whether this is a <strong>first offense or a pattern</strong>. Check the caregiver's file or Viventium for any prior documented incidents.</div></div>
-            <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body">If the incident involved a client, <strong>document the client impact separately</strong> and notify the Care Coordinator so the client record can be updated in AxisCare if needed.</div></div>
-            <div class="guide-section-lbl">Notify management &amp; issue the write-up</div>
-            <div class="guide-step"><div class="guide-step-num">4</div><div class="guide-step-body">Notify <strong>Samantha</strong> immediately — share your written incident summary. She will decide whether to issue a verbal warning, written warning, final warning, or termination.</div></div>
-            <div class="guide-step"><div class="guide-step-num">5</div><div class="guide-step-body">Complete the <strong>Disciplinary Action Form</strong> in Viventium (or the paper form if Viventium is not yet active). Include: caregiver name, date of incident, description, type of action, corrective expectation, and consequences if behavior continues.</div></div>
-            <div class="guide-step"><div class="guide-step-num">6</div><div class="guide-step-body">Schedule a <strong>private meeting</strong> with the caregiver to review the write-up in person. They should sign the form acknowledging they received it — a signature is not an agreement, just confirmation of receipt. If they refuse to sign, note that on the form.</div></div>
-            <div class="guide-section-lbl">After the meeting</div>
-            <div class="guide-step"><div class="guide-step-num">7</div><div class="guide-step-body">Upload a copy of the signed form to the caregiver's <strong>file in Viventium</strong>. Keep a physical copy in the HR binder as well.</div></div>
-            <div class="guide-step"><div class="guide-step-num">8</div><div class="guide-step-body">Monitor going forward. If the behavior continues after a written warning, escalate immediately — do not wait. Samantha makes all final termination decisions.</div></div>
-            <div style="margin-top:.75rem;padding:.6rem .8rem;background:#f3f4f6;border-radius:7px;font-size:.75rem;color:var(--gray)">
-              <strong style="color:var(--navy)">Common reasons for disciplinary action:</strong> no-call no-show, repeated late arrivals, EVV non-compliance, unprofessional conduct, client complaint, breach of confidentiality, unauthorized tasks, or falsifying records.
-            </div>
-          </div>
-        </div>
-
-      </div><!-- end scenarios -->
 
       <!-- Do-Not-Return Log (permanent) -->
       <div style="margin-top:1.25rem;padding:0 0 2rem">
@@ -3110,6 +3002,19 @@ function editSopLink(){
   appSettings.sop_onboarding=v.trim();
   syncToSupabase('settings', appSettings);
   if(appSettings.sop_onboarding) window.open(appSettings.sop_onboarding,'_blank','noopener');
+}
+
+function openSchedSopLink(){
+  const url=(appSettings.sop_scheduling||'').trim();
+  if(url){ window.open(url,'_blank','noopener'); return; }
+  editSchedSopLink();
+}
+function editSchedSopLink(){
+  const v=prompt('Paste the link to the Scheduling SOP (Google Doc, PDF, etc.) — saved for the whole team:', appSettings.sop_scheduling||'');
+  if(v===null) return;
+  appSettings.sop_scheduling=v.trim();
+  syncToSupabase('settings', appSettings);
+  if(appSettings.sop_scheduling) window.open(appSettings.sop_scheduling,'_blank','noopener');
 }
 
 // ── GROUPED NAVIGATION + STAFFING OVERVIEW ──
