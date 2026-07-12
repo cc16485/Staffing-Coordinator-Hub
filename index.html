@@ -304,8 +304,16 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     <!-- ═══════════════════════════════ NEW OFFERS ═══════════════════════════════ -->
     <div class="panel active" id="panel-home">
       <div style="padding:1.25rem 1.5rem 2rem">
-        <div style="font-size:1.15rem;font-weight:800;color:var(--navy);margin-bottom:.15rem" id="home-greeting">Your day at a glance</div>
-        <div style="font-size:.8rem;color:var(--gray);margin-bottom:1rem">Everything the Staffing Coordinator owns, in one screen — work it top to bottom and nothing slips.</div>
+        <div style="display:flex;align-items:flex-start;gap:.8rem;flex-wrap:wrap">
+          <div style="flex:1;min-width:240px">
+            <div style="font-size:1.15rem;font-weight:800;color:var(--navy);margin-bottom:.15rem" id="home-greeting">Your day at a glance</div>
+            <div style="font-size:.8rem;color:var(--gray);margin-bottom:1rem">Everything the Staffing Coordinator owns, in one screen — work it top to bottom and nothing slips.</div>
+          </div>
+          <span style="display:flex;align-items:center;gap:.35rem;white-space:nowrap;padding-top:.3rem">
+            <a href="#" onclick="openRoleSopLink();return false" style="font-size:.8rem;font-weight:700;color:var(--navy);text-decoration:underline">📘 Job Description &amp; Daily·Weekly·Monthly Duties</a>
+            <a href="#" onclick="editRoleSopLink();return false" title="Change the link" style="font-size:.72rem;color:#94a3b8;text-decoration:none">✎</a>
+          </span>
+        </div>
         <div id="home-rows"><div style="color:#94a3b8;font-size:.85rem">Loading…</div></div>
       </div>
     </div>
@@ -3004,6 +3012,18 @@ function editSopLink(){
   if(appSettings.sop_onboarding) window.open(appSettings.sop_onboarding,'_blank','noopener');
 }
 
+function openRoleSopLink(){
+  const url=(appSettings.sop_role||'').trim();
+  if(url){ window.open(url,'_blank','noopener'); return; }
+  editRoleSopLink();
+}
+function editRoleSopLink(){
+  const v=prompt('Paste the link to the Staffing Coordinator Job Description & Duties document — saved for the whole team:', appSettings.sop_role||'');
+  if(v===null) return;
+  appSettings.sop_role=v.trim();
+  syncToSupabase('settings', appSettings);
+  if(appSettings.sop_role) window.open(appSettings.sop_role,'_blank','noopener');
+}
 function openSchedSopLink(){
   const url=(appSettings.sop_scheduling||'').trim();
   if(url){ window.open(url,'_blank','noopener'); return; }
