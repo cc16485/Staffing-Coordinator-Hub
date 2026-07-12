@@ -249,13 +249,13 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     <img src="https://images.leadconnectorhq.com/image/f_webp/q_80/r_1200/u_https://assets.cdn.filesafe.space/Recp0AhyMh8lrtKJ9kaj/media/691b9707bb3d037e0ad689bf.png" alt="Caring Companions">
     <div class="hdr-center"><h1>Staffing Hub</h1><p id="hdr-date"></p></div>
     <div class="hdr-right">
+      <span id="sync-status" style="font-size:.72rem;font-weight:600;color:#94a3b8;white-space:nowrap">☁ Synced</span>
       <div style="position:relative">
         <input type="text" id="global-search" placeholder="Search all..." oninput="onGlobalSearch(this.value)"
           style="padding:.35rem .75rem .35rem 2rem;border:1.5px solid #CBD5E1;border-radius:8px;background:#F8FAFC;color:var(--navy);font-family:inherit;font-size:.82rem;width:170px;outline:none"
-          onfocus="this.style.borderColor='rgba(255,255,255,.7)'" onblur="this.style.borderColor='rgba(255,255,255,.3)'">
+          onfocus="this.style.borderColor='var(--teal)'" onblur="this.style.borderColor='#CBD5E1'">
         <span style="position:absolute;left:.55rem;top:50%;transform:translateY(-50%);font-size:.78rem;opacity:.6;pointer-events:none">🔍</span>
       </div>
-      <span id="sync-status" style="font-size:.72rem;font-weight:600;color:#94a3b8;white-space:nowrap">☁ Synced</span>
       <button class="logout-btn" onclick="openStaffHandoff()" title="Ending your day? Pass anything time-sensitive to the evening/after-hours coordinator" style="background:var(--teal);color:#fff;border:none;font-weight:700">🔄 End my shift</button>
       <button class="logout-btn" id="settingsBtn" onclick="openSettings()">⚙️ Settings</button>
       <button class="logout-btn" onclick="doLogout()">Sign Out</button>
