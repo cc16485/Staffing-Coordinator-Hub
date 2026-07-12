@@ -297,6 +297,10 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     <div class="tab" data-name="meetings" onclick="gotoTab('meetings')"><span class="ti">🎥</span> Meetings<span id="meetingsBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
     <div class="tab" data-name="comms" onclick="gotoTab('comms')"><span class="ti">💬</span> Automation Replies<span id="commsBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
     <div class="tab" data-name="eod" onclick="gotoTab('eod')"><span class="ti">📄</span> End-of-Day Reports</div>
+    <span style="margin-left:auto;display:flex;align-items:center;gap:.35rem;white-space:nowrap">
+      <a href="#" onclick="openCommsSopLink();return false" style="font-size:.78rem;font-weight:700;color:var(--navy);text-decoration:underline">📘 Communication SOP</a>
+      <a href="#" onclick="editCommsSopLink();return false" title="Change the SOP link" style="font-size:.72rem;color:#94a3b8;text-decoration:none">✎</a>
+    </span>
   </div>
 
   <div class="tab-content-wrap">
@@ -3023,6 +3027,18 @@ function editRoleSopLink(){
   appSettings.sop_role=v.trim();
   syncToSupabase('settings', appSettings);
   if(appSettings.sop_role) window.open(appSettings.sop_role,'_blank','noopener');
+}
+function openCommsSopLink(){
+  const url=(appSettings.sop_communication||'').trim();
+  if(url){ window.open(url,'_blank','noopener'); return; }
+  editCommsSopLink();
+}
+function editCommsSopLink(){
+  const v=prompt('Paste the link to the Communication SOP (Google Doc, PDF, etc.) — saved for the whole team:', appSettings.sop_communication||'');
+  if(v===null) return;
+  appSettings.sop_communication=v.trim();
+  syncToSupabase('settings', appSettings);
+  if(appSettings.sop_communication) window.open(appSettings.sop_communication,'_blank','noopener');
 }
 function openSchedSopLink(){
   const url=(appSettings.sop_scheduling||'').trim();
