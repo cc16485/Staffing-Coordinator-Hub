@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Staffing Hub — Caring Companions</title>
+<title>Staffing Coordinator’s Hub — Caring Companions</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
@@ -231,7 +231,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 <div id="login-screen">
   <div class="login-card">
     <img src="https://images.leadconnectorhq.com/image/f_webp/q_80/r_1200/u_https://assets.cdn.filesafe.space/Recp0AhyMh8lrtKJ9kaj/media/691b9707bb3d037e0ad689bf.png" alt="Caring Companions">
-    <h2>Staffing Hub</h2>
+    <h2>Staffing Coordinator’s Hub</h2>
     <p>Caring Companions Admin Access Only</p>
     <input type="email" id="login-email" placeholder="Email address" autocomplete="email" style="margin-bottom:.75rem">
     <input type="password" id="pwd" placeholder="Password" autocomplete="current-password">
@@ -247,7 +247,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 <div id="app">
   <header>
     <img src="https://images.leadconnectorhq.com/image/f_webp/q_80/r_1200/u_https://assets.cdn.filesafe.space/Recp0AhyMh8lrtKJ9kaj/media/691b9707bb3d037e0ad689bf.png" alt="Caring Companions">
-    <div class="hdr-center"><h1>Staffing Hub</h1><p id="hdr-date"></p></div>
+    <div class="hdr-center"><h1>Staffing Coordinator’s Hub</h1><p id="hdr-date"></p></div>
     <div class="hdr-right">
       <span id="sync-status" style="font-size:.72rem;font-weight:600;color:#94a3b8;white-space:nowrap">☁ Synced</span>
       <div style="position:relative">
@@ -1939,7 +1939,7 @@ async function doLogin(){
     errEl.style.display='block';
   } else if(!hasHubAccess(data.user)){
     await sb.auth.signOut();
-    errEl.textContent = "You don't have access to Staffing Hub. Contact your owner to be granted access.";
+    errEl.textContent = "You don't have access to the Staffing Coordinator's Hub. Contact your owner to be granted access.";
     errEl.style.display='block';
   } else {
     await showApp();
@@ -2003,7 +2003,7 @@ document.getElementById('login-email').addEventListener('keydown',e=>{if(e.key==
     if(!hasHubAccess(session.user)){
       await sb.auth.signOut();
       const errEl = document.getElementById('err');
-      errEl.textContent = "You don't have access to Staffing Hub. Contact your owner to be granted access.";
+      errEl.textContent = "You don't have access to the Staffing Coordinator's Hub. Contact your owner to be granted access.";
       errEl.style.display = 'block';
       return;
     }
