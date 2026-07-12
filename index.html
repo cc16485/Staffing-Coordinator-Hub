@@ -254,6 +254,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
         <span style="position:absolute;left:.55rem;top:50%;transform:translateY(-50%);font-size:.78rem;opacity:.6;pointer-events:none">🔍</span>
       </div>
       <span id="sync-status" style="font-size:.72rem;font-weight:600;color:#94a3b8;white-space:nowrap">☁ Synced</span>
+      <button class="logout-btn" onclick="openStaffHandoff()" title="Ending your day? Pass anything time-sensitive to the evening/after-hours coordinator" style="background:rgba(84,189,184,.25);font-weight:700">🔄 End my shift</button>
       <button class="logout-btn" id="settingsBtn" onclick="openSettings()">⚙️ Settings</button>
       <button class="logout-btn" onclick="doLogout()">Sign Out</button>
     </div>
@@ -1145,6 +1146,25 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
       </div>
     </div>
 
+  </div>
+</div>
+
+<!-- MODAL: End-of-shift handoff to the evening/after-hours coordinator -->
+<div class="overlay" id="staffhandoff-modal">
+  <div class="modal" style="max-width:640px">
+    <h3 style="color:var(--navy)">🔄 Hand off to the evening coordinator</h3>
+    <p style="font-size:.78rem;color:var(--gray);margin:.3rem 0 .6rem">Everything time-sensitive below was gathered automatically. Uncheck what shouldn't carry over, add context where it helps, add anything the list missed. It appears on the evening/after-hours coordinator's hub the moment they open it.</p>
+    <div id="staffhandoff-items" style="max-height:320px;overflow-y:auto;margin:.5rem 0"></div>
+    <label style="font-size:.78rem;font-weight:700">Anything else tonight's coordinator should know?</label>
+    <textarea id="staffhandoff-note" rows="2" style="width:100%;font-size:.82rem" placeholder="e.g. Still waiting on Dana W. to confirm tomorrow's 9am — if she texts back, the shift is hers…"></textarea>
+    <div style="display:flex;gap:.4rem;margin-top:.5rem">
+      <input id="staffhandoff-custom" placeholder="Add an extra item… (+ Enter)" style="flex:1;font-size:.82rem" onkeydown="if(event.key==='Enter')addStaffHandoffItem()">
+      <button class="fb" onclick="addStaffHandoffItem()">＋ Add</button>
+    </div>
+    <div style="display:flex;gap:.5rem;margin-top:.8rem">
+      <button class="fb" style="background:#0d3a5f" onclick="postStaffHandoff()">📤 Post handoff</button>
+      <button onclick="document.getElementById('staffhandoff-modal').classList.remove('open')" style="margin-left:auto;background:#f1f5f9;border:1px solid var(--border);border-radius:7px;padding:.4rem .9rem;cursor:pointer;font-family:inherit;font-size:.8rem">Cancel</button>
+    </div>
   </div>
 </div>
 
@@ -2977,6 +2997,56 @@ function switchTab(name, btn){
   if(name==='scheduling') { loadOpenShifts(); renderDnrLog(); }
   if(name==='comms') { loadRepliesWaiting(); renderMeetings(); }
   if(name==='attendance') { renderAttendance(); }
+}
+
+// ── END-OF-SHIFT HANDOFF (writes the same shared 'handoffs' key the CC hub
+//    reads — the evening/after-hours coordinator sees it in their banner) ──
+let staffHandoffDraft=[];
+function openStaffHandoff(){
+  staffHandoffDraft=[];
+  const today10=new Date().toISOString().slice(0,10);
+  const now=Date.now();
+  (OPEN_SHIFTS||[]).forEach(s=>{
+    const hrs=(new Date(s.date+'T'+(s.start24||'23:59')).getTime()-now)/3600000;
+    if(hrs<=48) staffHandoffDraft.push({include:true,note:'',label:'🔴 OPEN SHIFT still unfilled: '+s.client+' — '+s.date+(s.start?' '+s.start:'')});
+  });
+  STASKS.filter(t=>t.direction==='to_staffing'&&t.status==='open'&&t.urgency==='Today').forEach(t=>
+    staffHandoffDraft.push({include:true,note:'',label:'📨 Unfinished TODAY request: '+(t.about?t.about+' — ':'')+String(t.message||'').slice(0,80)}));
+  OFFERS.filter(o=>!o.attributes_entered_at).slice(0,5).forEach(o=>
+    staffHandoffDraft.push({include:false,note:'',label:'🤝 New hire awaiting AxisCare attributes: '+(o.name||'')}));
+  if(!(eodReports||[]).some(r=>r.report_date===today10))
+    staffHandoffDraft.push({include:false,note:'',label:'📄 (Reminder to me) End-of-day report not uploaded yet'});
+  renderStaffHandoffDraft();
+  document.getElementById('staffhandoff-note').value='';
+  document.getElementById('staffhandoff-modal').classList.add('open');
+}
+function renderStaffHandoffDraft(){
+  document.getElementById('staffhandoff-items').innerHTML = staffHandoffDraft.length
+    ? staffHandoffDraft.map((it,i)=>'<div style="display:flex;align-items:flex-start;gap:.5rem;padding:.4rem 0;border-bottom:1px solid var(--border);font-size:.8rem">'
+      +'<input type="checkbox" style="width:auto;margin-top:.15rem" '+(it.include?'checked':'')+' onchange="staffHandoffDraft['+i+'].include=this.checked">'
+      +'<div style="flex:1;min-width:0">'+creqEsc(it.label)
+      +'<input placeholder="Context for tonight… (optional)" value="'+creqEsc(it.note||'')+'" oninput="staffHandoffDraft['+i+'].note=this.value" style="width:100%;margin-top:.25rem;font-size:.74rem;padding:.3rem .5rem">'
+      +'</div></div>').join('')
+    : '<div style="color:#94a3b8;font-size:.8rem;padding:.4rem 0">Nothing time-sensitive is open — add items below or just leave a note.</div>';
+}
+function addStaffHandoffItem(){
+  const inp=document.getElementById('staffhandoff-custom');
+  const v=inp.value.trim(); if(!v) return;
+  staffHandoffDraft.push({include:true,note:'',label:v});
+  inp.value=''; renderStaffHandoffDraft();
+}
+async function postStaffHandoff(){
+  const items=staffHandoffDraft.filter(it=>it.include).map(it=>({id:'shi'+Date.now()+Math.random().toString(36).slice(2,5),type:'custom',ref:'',label:it.label,note:(it.note||'').trim(),done_at:null,done_by:null}));
+  const note=document.getElementById('staffhandoff-note').value.trim();
+  if(!items.length&&!note){ alert('Nothing to hand off — include an item or leave a note.'); return; }
+  let by=''; try{ const {data:{session}}=await sb.auth.getSession(); by=(session&&session.user&&session.user.email)||''; }catch(e){}
+  const h={ id:'ho'+Date.now(), posted_at:new Date().toISOString(), from_email:by,
+    from_name:(by.split('@')[0]||'Staffing')+' (Staffing)', shift:'staffing',
+    items, general_note:note, ack_by:null, ack_at:null };
+  try{ const { error } = await sb.rpc('upsert_app_data_item',{ target_key:'handoffs', item:h }); if(error) throw error; }
+  catch(e){ alert('Could not post — check your connection and try again.'); return; }
+  document.getElementById('staffhandoff-modal').classList.remove('open');
+  alert('Handoff posted ✓ — the evening/after-hours coordinator sees it the moment they open their hub, and it\'s on the permanent Communication Log.');
 }
 
 // ── GROUPED NAVIGATION + STAFFING OVERVIEW ──
