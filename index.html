@@ -32,12 +32,12 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min
 
 /* ── App shell ── */
 #app{display:none}
-header{background:var(--navy);padding:.9rem 1.5rem;display:flex;align-items:center;justify-content:space-between}
-header img{height:40px;background:#fff;border-radius:10px;padding:.3rem .55rem;box-sizing:content-box;box-shadow:0 2px 8px rgba(0,0,0,.18)}
-.hdr-center h1{color:#fff;font-size:1rem;font-weight:700;text-align:center}
-.hdr-center p{color:rgba(255,255,255,.55);font-size:.72rem;text-align:center}
+header{background:#fff;border-bottom:1px solid #E2E8F0;padding:.9rem 1.5rem;display:flex;align-items:center;justify-content:space-between}
+header img{height:44px}
+.hdr-center h1{color:var(--navy);font-size:1rem;font-weight:800;text-align:center}
+.hdr-center p{color:#94a3b8;font-size:.72rem;text-align:center}
 .hdr-right{display:flex;align-items:center;gap:.75rem}
-.logout-btn{background:rgba(255,255,255,.15);color:#fff;border:none;padding:.35rem .8rem;border-radius:6px;font-family:inherit;font-size:.78rem;cursor:pointer}
+.logout-btn{background:#F1F5F9;color:var(--navy);border:1px solid #E2E8F0;padding:.35rem .8rem;border-radius:6px;font-family:inherit;font-size:.78rem;font-weight:600;cursor:pointer}
 
 /* ── Folder tabs ── */
 .tab-bar{display:flex;align-items:flex-end;padding:.85rem 1.5rem 0;background:var(--navy);gap:4px}
@@ -249,12 +249,12 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     <div class="hdr-right">
       <div style="position:relative">
         <input type="text" id="global-search" placeholder="Search all..." oninput="onGlobalSearch(this.value)"
-          style="padding:.35rem .75rem .35rem 2rem;border:1.5px solid rgba(255,255,255,.4);border-radius:8px;background:rgba(255,255,255,.92);color:var(--navy);font-family:inherit;font-size:.82rem;width:170px;outline:none"
+          style="padding:.35rem .75rem .35rem 2rem;border:1.5px solid #CBD5E1;border-radius:8px;background:#F8FAFC;color:var(--navy);font-family:inherit;font-size:.82rem;width:170px;outline:none"
           onfocus="this.style.borderColor='rgba(255,255,255,.7)'" onblur="this.style.borderColor='rgba(255,255,255,.3)'">
         <span style="position:absolute;left:.55rem;top:50%;transform:translateY(-50%);font-size:.78rem;opacity:.6;pointer-events:none">🔍</span>
       </div>
       <span id="sync-status" style="font-size:.72rem;font-weight:600;color:#94a3b8;white-space:nowrap">☁ Synced</span>
-      <button class="logout-btn" onclick="openStaffHandoff()" title="Ending your day? Pass anything time-sensitive to the evening/after-hours coordinator" style="background:rgba(84,189,184,.25);font-weight:700">🔄 End my shift</button>
+      <button class="logout-btn" onclick="openStaffHandoff()" title="Ending your day? Pass anything time-sensitive to the evening/after-hours coordinator" style="background:var(--teal);color:#fff;border:none;font-weight:700">🔄 End my shift</button>
       <button class="logout-btn" id="settingsBtn" onclick="openSettings()">⚙️ Settings</button>
       <button class="logout-btn" onclick="doLogout()">Sign Out</button>
     </div>
