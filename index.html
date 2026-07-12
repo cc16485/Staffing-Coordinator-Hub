@@ -283,7 +283,9 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
   </div>
   <div class="subbar" id="sub-team" style="display:none">
     <div class="tab" data-name="coordreq" onclick="gotoTab('coordreq')"><span class="ti">📨</span> Coordinator Requests<span id="coordreqBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
-    <div class="tab" data-name="comms" onclick="gotoTab('comms')"><span class="ti">💬</span> Communication<span id="commsBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
+    <div class="tab" data-name="sendmsg" onclick="gotoTab('sendmsg')"><span class="ti">📤</span> Send a Message</div>
+    <div class="tab" data-name="meetings" onclick="gotoTab('meetings')"><span class="ti">🎥</span> Meetings<span id="meetingsBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
+    <div class="tab" data-name="comms" onclick="gotoTab('comms')"><span class="ti">💬</span> Automation Replies<span id="commsBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
     <div class="tab" data-name="eod" onclick="gotoTab('eod')"><span class="ti">📄</span> End-of-Day Reports</div>
   </div>
 
@@ -1047,9 +1049,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
         </div>
         <div class="tab-guide-body" id="guide-body-comms">
           <ol style="margin:.4rem 0 .6rem;padding-left:1.3rem;line-height:1.7;font-size:.85rem">
-            <li><b>Automation replies</b> — when an applicant or caregiver texts back to one of our automated messages, it appears here. View the conversation, reply right from this page (no GoHighLevel login needed), or mark ✓ Done if no reply is needed.</li>
-            <li><b>Meetings</b> — request a meeting with Samantha or the care coordinators (topic + when works for you). They accept in their hub, and a <b>Join Video</b> button appears for both of you — camera, microphone and screen sharing all work right in the browser, nothing to install.</li>
-            <li>During a video call, use <b>Share screen</b> to show your screen while you talk. If Samantha needs to take the wheel and show you directly, she'll walk you through Chrome Remote Desktop (remotedesktop.google.com → Remote Support → generate a code and read it to her).</li>
+            <li>When an applicant or caregiver texts back to one of our automated messages, it appears here. View the conversation, reply right from this page (no GoHighLevel login needed), or mark ✓ Done if no reply is needed.</li>
           </ol>
         </div>
       </div>
@@ -1064,6 +1064,24 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
         </div>
         <div id="repliesWaiting"><div style="color:#94a3b8;font-size:.85rem">Loading replies…</div></div>
 
+</div>
+      </div>
+    </div>
+
+    <div class="panel" id="panel-meetings">
+      <div class="tab-guide">
+        <div class="tab-guide-hdr" onclick="toggleGuide('meetings')">
+          <span class="tab-guide-title">📋 How This Tab Works — Step by Step</span>
+          <span class="tab-guide-arrow" id="guide-arrow-meetings">▼</span>
+        </div>
+        <div class="tab-guide-body" id="guide-body-meetings">
+          <ol style="margin:.4rem 0 .6rem;padding-left:1.3rem;line-height:1.7;font-size:.85rem">
+            <li>Request a meeting with Samantha or the care coordinators (topic + when works for you). They accept in their hub, and a <b>Join Video</b> button appears for both of you — camera, microphone and screen sharing all work right in the browser, nothing to install.</li>
+            <li>During a video call, use <b>Share screen</b> to show your screen while you talk. If Samantha needs to take the wheel and show you directly, she'll walk you through Chrome Remote Desktop (remotedesktop.google.com → Remote Support → generate a code and read it to her).</li>
+          </ol>
+        </div>
+      </div>
+      <div style="padding:0 1.5rem 2rem">
         <div style="display:flex;align-items:center;gap:.6rem;margin:1.5rem 0 .65rem">
           <span style="font-size:1.1rem">🎥</span>
           <div>
@@ -1079,21 +1097,20 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
             <button class="fb" onclick="requestMeeting('staffing')">Request</button>
           </div>
         </div>
-        <div id="meetings-list"><div style="color:#94a3b8;font-size:.85rem">No meetings yet.</div></div>
+        <div id="meetings-list"><div style="color:#94a3b8;font-size:.85rem">No meetings yet.</div>
       </div>
     </div>
 
-    <div class="panel" id="panel-coordreq">
+    <div class="panel" id="panel-sendmsg">
       <div class="tab-guide">
-        <div class="tab-guide-hdr" onclick="toggleGuide('coordreq')">
+        <div class="tab-guide-hdr" onclick="toggleGuide('sendmsg')">
           <span class="tab-guide-title">📋 How This Tab Works — Step by Step</span>
-          <span class="tab-guide-arrow" id="guide-arrow-coordreq">▼</span>
+          <span class="tab-guide-arrow" id="guide-arrow-sendmsg">▼</span>
         </div>
-        <div class="tab-guide-body" id="guide-body-coordreq">
+        <div class="tab-guide-body" id="guide-body-sendmsg">
           <ol style="margin:.4rem 0 .6rem;padding-left:1.3rem;line-height:1.7;font-size:.85rem">
-            <li>When a care coordinator takes a call that's really a scheduling matter — coverage gaps, caregiver changes, client schedule requests — they send it here from their hub with one click.</li>
-            <li><b>To-dos</b> need action from you; <b>updates</b> are just so you know. Work them top-down (Today first), add a reply if useful, and mark <b>Done ✓</b> — the coordinator sees it instantly in their hub.</li>
-            <li>Need to tell the coordinators something? Use <b>Send a message to the care coordinators</b> below — it appears on their Overview the moment they open the hub.</li>
+            <li>Send a to-do or an update to <b>the care coordinators</b> (appears on their hub Overview) or to <b>the Owners</b> (appears for Samantha &amp; Zach).</li>
+            <li>Everything you send is tracked below until it's marked done — with who closed it and any reply, kept permanently.</li>
           </ol>
         </div>
       </div>
@@ -1109,6 +1126,25 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
             <button class="fb" onclick="sendCoordReq()">Send</button>
           </div>
         </div>
+        <div id="sendmsg-list" style="display:flex;flex-direction:column;gap:.5rem"><div style="color:#94a3b8;font-size:.85rem">Nothing sent yet.</div></div>
+      </div>
+    </div>
+
+    <div class="panel" id="panel-coordreq">
+      <div class="tab-guide">
+        <div class="tab-guide-hdr" onclick="toggleGuide('coordreq')">
+          <span class="tab-guide-title">📋 How This Tab Works — Step by Step</span>
+          <span class="tab-guide-arrow" id="guide-arrow-coordreq">▼</span>
+        </div>
+        <div class="tab-guide-body" id="guide-body-coordreq">
+          <ol style="margin:.4rem 0 .6rem;padding-left:1.3rem;line-height:1.7;font-size:.85rem">
+            <li>When a care coordinator takes a call that's really a scheduling matter — coverage gaps, caregiver changes, client schedule requests — they send it here from their hub with one click.</li>
+            <li><b>To-dos</b> need action from you; <b>updates</b> are just so you know. Work them top-down (Today first), add a reply if useful, and mark <b>Done ✓</b> — the coordinator sees it instantly in their hub.</li>
+            <li>Need to tell the coordinators or owners something yourself? Use the <b>📤 Send a Message</b> tab.</li>
+          </ol>
+        </div>
+      </div>
+      <div style="padding:0 1.5rem 2rem">
         <div id="coordreq-list" style="display:flex;flex-direction:column;gap:.5rem"><div style="color:#94a3b8;font-size:.85rem">Loading…</div></div>
       </div>
     </div>
@@ -2995,7 +3031,9 @@ function switchTab(name, btn){
   if(name==='eod') { renderEod(); }
   if(name==='coordreq') { renderCoordReqs(); }
   if(name==='scheduling') { loadOpenShifts(); renderDnrLog(); }
-  if(name==='comms') { loadRepliesWaiting(); renderMeetings(); }
+  if(name==='comms') { loadRepliesWaiting(); }
+  if(name==='meetings') { renderMeetings(); }
+  if(name==='sendmsg') { renderSendMsg(); }
   if(name==='attendance') { renderAttendance(); }
 }
 
@@ -3050,7 +3088,7 @@ async function postStaffHandoff(){
 }
 
 // ── GROUPED NAVIGATION + STAFFING OVERVIEW ──
-const SC_GROUPS={home:['home'],onboard:['offers','onboarding','orientations','training','compliance','attendance'],sched:['scheduling','evv'],team:['coordreq','comms','eod']};
+const SC_GROUPS={home:['home'],onboard:['offers','onboarding','orientations','training','compliance','attendance'],sched:['scheduling','evv'],team:['coordreq','sendmsg','meetings','comms','eod']};
 function groupOf(tab){ for(const g in SC_GROUPS) if(SC_GROUPS[g].includes(tab)) return g; return 'home'; }
 function showGroupChrome(g){
   document.querySelectorAll('#groupBar .gtab').forEach(b=>b.classList.toggle('active',b.dataset.group===g));
@@ -3073,7 +3111,7 @@ function updateGroupBadges(){
   const set=(gid,n)=>{ const el=document.getElementById(gid); if(!el) return; el.style.display=n?'inline':'none'; el.textContent=n; };
   set('gb-onboard', badgeNum('offersBadge')+badgeNum('attBadge'));
   set('gb-sched', badgeNum('schedBadge'));
-  set('gb-team', badgeNum('coordreqBadge')+badgeNum('commsBadge'));
+  set('gb-team', badgeNum('coordreqBadge')+badgeNum('commsBadge')+badgeNum('meetingsBadge'));
   if(activeTab==='home') renderStaffHome();
 }
 let _homeKicked=false;
@@ -3117,7 +3155,7 @@ function renderStaffHome(){
     +'<div style="font-size:.72rem;font-weight:800;letter-spacing:.06em;color:var(--gray);text-transform:uppercase;margin:.8rem 0 .4rem">🤝 Team &amp; Reports</div>'
     +row('📨',reqN,'Coordinator requests waiting','Coverage gaps, do-not-returns, hours changes from the coordinators','coordreq',true)
     +row('💬',repN,'Automation replies waiting','Applicants & caregivers texting back on the automation line','comms',false)
-    +row('🎥',mtgN,'Meeting requests for you','Accept and both sides get the video room','comms',false)
+    +row('🎥',mtgN,'Meeting requests for you','Accept and both sides get the video room','meetings',false)
     +row('📄',eodDone?0:1,'End-of-day report',''+(eodDone?'Today\'s report is uploaded — nice.':'Not uploaded yet — do it before you sign off'),'eod',false);
 }
 
@@ -3780,8 +3818,11 @@ function renderMeetings(){
 }
 function updateCommsBadge(){
   const b=document.getElementById('commsBadge'); if(!b) return;
-  const n=((_repliesData&&_repliesData.replies)||[]).length + MEETINGS.filter(mtgIncoming).length;
-  b.style.display=n?'inline':'none'; b.textContent=n;  updateGroupBadges();
+  const n=((_repliesData&&_repliesData.replies)||[]).length;
+  b.style.display=n?'inline':'none'; b.textContent=n;
+  const m=document.getElementById('meetingsBadge');
+  if(m){ const k=MEETINGS.filter(mtgIncoming).length; m.style.display=k?'inline':'none'; m.textContent=k; }
+  updateGroupBadges();
 }
 
 // ── OPEN SHIFTS BOARD (live unassigned visits via axiscare-open-shifts fn) ──
@@ -3909,9 +3950,6 @@ function renderCoordReqs(){
     (open.length
       ? '<div style="font-weight:700;font-size:.85rem;margin:.2rem 0">📥 Needs your attention ('+open.length+')</div>'+open.map(t=>row(t,false)).join('')
       : '<div style="color:#94a3b8;font-size:.85rem;padding:.4rem 0">📥 Nothing waiting from the coordinators. 🎉</div>')
-    +(outbox.filter(t=>t.status==='open').length
-      ? '<div style="font-weight:700;font-size:.85rem;margin:.8rem 0 .2rem">📤 Waiting on the coordinators</div>'+outbox.filter(t=>t.status==='open').sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).map(t=>row(t,true)).join('')
-      : '')
     +(recentDone.length
       ? '<div style="font-weight:700;font-size:.85rem;margin:.8rem 0 .2rem;color:#64748b">Recently completed</div>'+recentDone.map(t=>row(t,false)).join('')
       : '');
@@ -3938,6 +3976,21 @@ async function creqDone(id, withReply){
   await creqPersist(t);
   renderCoordReqs();
 }
+function renderSendMsg(){
+  const box=document.getElementById('sendmsg-list'); if(!box) return;
+  const sent=STASKS.filter(x=>x.direction==='to_coordinators'||x.direction==='to_owners')
+    .sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,50);
+  box.innerHTML = sent.length ? sent.map(x=>
+    '<div style="background:#fff;border:1px solid var(--border);border-left:4px solid '+(x.status==='done'?'#16a34a':'#2F6FB0')+';border-radius:10px;padding:.6rem 1rem;font-size:.82rem">'
+    +'<div>'+(x.about?'<b>'+creqEsc(x.about)+'</b> — ':'')+creqEsc(x.message||'')+'</div>'
+    +'<div style="font-size:.72rem;color:#64748b;margin-top:.2rem">'
+    +(x.direction==='to_owners'?'to the Owners':'to the care coordinators')
+    +' · '+new Date(x.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})
+    +' · '+creqEsc(x.urgency||'')
+    +(x.status==='done'?' · ✅ done by '+creqEsc(x.done_by||'')+(x.reply?' · 💬 “'+creqEsc(x.reply)+'”':''):' · ⏳ open')
+    +'</div></div>').join('')
+    : '<div style="color:#94a3b8;font-size:.85rem">Nothing sent yet — the first message you send appears here, permanently.</div>';
+}
 async function sendCoordReq(){
   const message=document.getElementById('creq-message').value.trim();
   if(!message){ alert('Write the message first.'); return; }
@@ -3950,7 +4003,7 @@ async function sendCoordReq(){
   STASKS.push(t);
   await creqPersist(t);
   document.getElementById('creq-message').value=''; document.getElementById('creq-about').value='';
-  renderCoordReqs();
+  renderSendMsg();
 }
 
 // ── END-OF-DAY REPORTS (files in shared storage bucket lead-docs/eod/, metadata in app_data) ──
