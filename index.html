@@ -255,7 +255,6 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
       </div>
       <span id="sync-status" style="font-size:.72rem;font-weight:600;color:#94a3b8;white-space:nowrap">☁ Synced</span>
       <button class="logout-btn" id="settingsBtn" onclick="openSettings()">⚙️ Settings</button>
-      <button class="logout-btn" onclick="doForgotPassword()">🔑 Reset Password</button>
       <button class="logout-btn" onclick="doLogout()">Sign Out</button>
     </div>
   </header>
@@ -2427,7 +2426,7 @@ function setupDriveButtons(){
 window.addEventListener('load', () => {
   setTimeout(() => { if(appSettings.google_client_id) gdriveInit(); setupDriveButtons(); }, 500);
 });
-// Password changes handled via Supabase — use "Reset Password" in the header.
+// Password changes handled via Supabase — "Forgot password?" on the sign-in screen.
 
 // ── Tab Guide toggle ─────────────────────────────────────────────────
 function toggleGuide(id){
