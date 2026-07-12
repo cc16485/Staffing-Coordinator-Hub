@@ -1114,19 +1114,26 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
           </ol>
         </div>
       </div>
-      <div style="padding:0 1.5rem 2rem">
-        <div style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:1rem 1.2rem;margin-bottom:1rem">
-          <div style="font-weight:700;font-size:.9rem;margin-bottom:.5rem">📤 Send a message</div>
-          <div style="display:flex;gap:.6rem;flex-wrap:wrap;align-items:center">
-            <select id="creq-to" style="font-size:.85rem"><option value="to_coordinators">To the care coordinators</option><option value="to_owners">To the Owners (Samantha &amp; Zach)</option></select>
-            <select id="creq-kind" style="font-size:.85rem"><option value="todo">To-do — needs action</option><option value="update" selected>Update — just so they know</option></select>
-            <select id="creq-urgency" style="font-size:.85rem"><option>Today</option><option selected>This week</option><option>When you can</option></select>
-            <input id="creq-about" placeholder="Who it's about (optional)" style="font-size:.85rem;min-width:160px">
-            <input id="creq-message" placeholder="The message…" style="flex:1;min-width:220px;font-size:.85rem" onkeydown="if(event.key==='Enter')sendCoordReq()">
-            <button class="fb" onclick="sendCoordReq()">Send</button>
+      <div style="padding:0 1.5rem 2rem;max-width:820px">
+        <div style="background:#fff;border:1px solid var(--border);border-radius:14px;padding:1.4rem 1.6rem;margin-bottom:1.25rem;box-shadow:0 2px 10px rgba(14,56,96,.06)">
+          <div style="font-weight:800;font-size:1.15rem;color:var(--navy)">📤 Send a message to the Caring Companions team</div>
+          <div style="font-size:.85rem;color:var(--gray);margin:.2rem 0 1rem">It lands on their hub the moment they open it, and stays tracked below until it's done.</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:.9rem;margin-bottom:.9rem">
+            <label style="font-size:.85rem;font-weight:700;color:var(--navy)">Send to<br>
+              <select id="creq-to" style="width:100%;font-size:.95rem;padding:.55rem .6rem;margin-top:.25rem"><option value="to_coordinators">The care coordinators</option><option value="to_owners">The Owners (Samantha &amp; Zach)</option></select></label>
+            <label style="font-size:.85rem;font-weight:700;color:var(--navy)">What is it?<br>
+              <select id="creq-kind" style="width:100%;font-size:.95rem;padding:.55rem .6rem;margin-top:.25rem"><option value="todo">To-do — needs action</option><option value="update" selected>Update — just so they know</option></select></label>
+            <label style="font-size:.85rem;font-weight:700;color:var(--navy)">How urgent?<br>
+              <select id="creq-urgency" style="width:100%;font-size:.95rem;padding:.55rem .6rem;margin-top:.25rem"><option>Today</option><option selected>This week</option><option>When you can</option></select></label>
           </div>
+          <label style="font-size:.85rem;font-weight:700;color:var(--navy)">Who is it about? <span style="font-weight:400;color:var(--gray)">(optional)</span><br>
+            <input id="creq-about" placeholder="e.g. Mrs. Henderson / caregiver Dana W." style="width:100%;font-size:.95rem;padding:.55rem .6rem;margin:.25rem 0 .9rem"></label>
+          <label style="font-size:.85rem;font-weight:700;color:var(--navy)">The message<br>
+            <textarea id="creq-message" rows="3" placeholder="e.g. Heads up — Dana W. is now available Tuesdays if any client needs that slot." style="width:100%;font-size:.95rem;padding:.55rem .6rem;margin-top:.25rem;font-family:inherit"></textarea></label>
+          <button class="fb" onclick="sendCoordReq()" style="margin-top:.9rem;font-size:.95rem;padding:.6rem 1.6rem;background:#0d3a5f;color:#fff;font-weight:700">Send message</button>
         </div>
-        <div id="sendmsg-list" style="display:flex;flex-direction:column;gap:.5rem"><div style="color:#94a3b8;font-size:.85rem">Nothing sent yet.</div></div>
+        <div style="font-weight:800;font-size:1rem;color:var(--navy);margin-bottom:.5rem">Sent — tracked until done</div>
+        <div id="sendmsg-list" style="display:flex;flex-direction:column;gap:.5rem"><div style="color:#94a3b8;font-size:.9rem">Nothing sent yet.</div></div>
       </div>
     </div>
 
@@ -3981,7 +3988,7 @@ function renderSendMsg(){
   const sent=STASKS.filter(x=>x.direction==='to_coordinators'||x.direction==='to_owners')
     .sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).slice(0,50);
   box.innerHTML = sent.length ? sent.map(x=>
-    '<div style="background:#fff;border:1px solid var(--border);border-left:4px solid '+(x.status==='done'?'#16a34a':'#2F6FB0')+';border-radius:10px;padding:.6rem 1rem;font-size:.82rem">'
+    '<div style="background:#fff;border:1px solid var(--border);border-left:4px solid '+(x.status==='done'?'#16a34a':'#2F6FB0')+';border-radius:10px;padding:.7rem 1rem;font-size:.92rem">'
     +'<div>'+(x.about?'<b>'+creqEsc(x.about)+'</b> — ':'')+creqEsc(x.message||'')+'</div>'
     +'<div style="font-size:.72rem;color:#64748b;margin-top:.2rem">'
     +(x.direction==='to_owners'?'to the Owners':'to the care coordinators')
