@@ -42,12 +42,12 @@ header img{height:44px}
 /* ── Folder tabs ── */
 /* File-folder group tabs on a white shelf */
 .tab-bar{display:flex;align-items:flex-end;padding:.85rem 1.5rem 0;background:#fff;gap:6px;border-bottom:1.5px solid var(--navy)}
-.tab{padding:.5rem 1.2rem;border-radius:11px 11px 0 0;font-size:.8rem;font-weight:600;cursor:pointer;border:1.5px solid var(--navy);border-bottom:none;color:#5B7085;background:#DFE7F0;transition:.15s;white-space:nowrap;position:relative;opacity:.8}
-.tab:hover{color:var(--navy);background:#E3EAF2}
+.tab{padding:.5rem 1.2rem;border-radius:11px 11px 0 0;font-size:.8rem;font-weight:700;cursor:pointer;border:1.5px solid var(--navy);border-bottom:none;color:var(--navy);background:#fff;transition:.15s;white-space:nowrap;position:relative}
+.tab:hover{background:#EFF5FA}
 .tab.active{background:var(--bg);color:var(--navy);font-weight:800;font-size:.84rem;margin-bottom:-1.5px;border-bottom:1.5px solid var(--bg);padding:.75rem 1.5rem .6rem;opacity:1;box-shadow:inset 0 3px 0 var(--teal)}
 .subbar{display:flex;gap:.35rem;padding:.7rem 1.5rem .6rem;background:var(--bg);border-bottom:1px solid #E2E8F0;overflow-x:auto}
-.subbar .tab{border-radius:999px;padding:.35rem 1rem;font-size:.76rem;border:1px solid transparent;background:#E3EAF2;color:#33506B;margin-bottom:0}
-.subbar .tab:hover{background:#D8E2ED;color:var(--navy)}
+.subbar .tab{border-radius:999px;padding:.35rem 1rem;font-size:.76rem;border:1.5px solid var(--navy);background:#fff;color:var(--navy);margin-bottom:0}
+.subbar .tab:hover{background:#EFF5FA}
 .subbar .tab.active{background:var(--navy);color:#fff;border:1px solid var(--navy);padding-top:.35rem}
 .gbadge{background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem}
 .tab .ti{display:inline-block;filter:grayscale(1) brightness(6);transition:.15s}
@@ -1065,8 +1065,6 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
           <button onclick="loadRepliesWaiting(this)" style="margin-left:auto;padding:.32rem .75rem;background:var(--teal);color:#fff;border:none;border-radius:7px;font-size:.75rem;font-weight:600;cursor:pointer;font-family:inherit">↻ Refresh</button>
         </div>
         <div id="repliesWaiting"><div style="color:#94a3b8;font-size:.85rem">Loading replies…</div></div>
-
-</div>
       </div>
     </div>
 
@@ -1099,7 +1097,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
             <button class="fb" onclick="requestMeeting('staffing')">Request</button>
           </div>
         </div>
-        <div id="meetings-list"><div style="color:#94a3b8;font-size:.85rem">No meetings yet.</div>
+        <div id="meetings-list"><div style="color:#94a3b8;font-size:.85rem">No meetings yet.</div></div>
       </div>
     </div>
 
