@@ -330,8 +330,8 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
         </div>
         <div class="tab-guide-body" id="guide-body-offers">
           <ol style="margin:.4rem 0 .6rem;padding-left:1.3rem;line-height:1.7;font-size:.85rem">
-            <li>When a care coordinator finishes an in-person interview and completes the <b>Offer a Job</b> form (on their hub's Interviews tab), the record lands here automatically — the applicant has already received their welcome text saying Viventium is coming next.</li>
-            <li><b>Your first move: enter them into Viventium</b> (steps below) — nothing else can start until the onboarding invite is sent. Then click <b>Entered in Viventium ✓</b> on the record so the Step-1 paperwork watcher starts.</li>
+            <li>When a care coordinator finishes an in-person interview and completes the <b>Offer a Job</b> form (on their hub's Interviews tab), the record lands here automatically. <b>No message has gone to the applicant yet</b> — that's yours to trigger in step 2.</li>
+            <li><b>Your first move: enter them into Viventium</b> (steps below) — nothing else can start until the onboarding invite is sent. Then click <b>Entered in Viventium ✓</b> on the record: that starts the Step-1 paperwork watcher <b>and sends the applicant their welcome text + email</b> ("watch for the Viventium email…") right as that email actually goes out.</li>
             <li>Enter the <b>attribute answers into AxisCare</b> (caregiver profile → Attributes screen — the list on the record is in the same order). Then click <b>Entered in AxisCare ✓</b>.</li>
             <li>After references and verified job experience come back, set the <b>confirmed Level of Care</b> (the interview level is only a suggestion).</li>
           </ol>
@@ -344,7 +344,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
           <div class="guide-step"><div class="guide-step-num">5</div><div class="guide-step-body"><b>Taxes:</b> Tax Type <b>W-2</b> — Work Location and State Unemployment (Missouri) are required. Then NEXT.</div></div>
           <div class="guide-step"><div class="guide-step-num">6</div><div class="guide-step-body"><b>Select the Onboarding Plan</b> — the company default plan is pre-selected; leave it unless Samantha says otherwise. NEXT.</div></div>
           <div class="guide-step"><div class="guide-step-num">7</div><div class="guide-step-body">Review the task list and click <b>SEND ONBOARDING INVITE</b>. The registration email goes to the new hire immediately — a green banner confirms it sent. (Personal Info, Contact Info and Tax Withholding are required tasks and can't be removed; use Actions → Add Tasks / Edit Sequence only if told to.)</div></div>
-          <div class="guide-step flag"><div class="guide-step-num">✓</div><div class="guide-step-body">Come straight back here and click <b>Entered in Viventium ✓</b> on their record. The hub then watches for their Step-1 paperwork — reminding them automatically and alerting Samantha if it stalls.</div></div>
+          <div class="guide-step flag"><div class="guide-step-num">✓</div><div class="guide-step-body">Come straight back here and click <b>Entered in Viventium ✓</b> on their record. That sends their welcome text + email (so the Viventium email they just got is expected, not spam) and the hub starts watching for their Step-1 paperwork — reminding them automatically and alerting Samantha if it stalls.</div></div>
         </div>
       </div>
       <div style="padding:0 1.5rem 2rem">
@@ -3314,9 +3314,15 @@ function renderOffers(){
       '</div>'+
       '<div style="display:flex;gap:.6rem;align-items:center;margin-top:.7rem;flex-wrap:wrap;font-size:.82rem;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:.5rem .7rem">'+
       '<b style="color:#0E3860">Viventium:</b>'+
+      '<button class="fb" style="font-size:.72rem" onclick="copyOfferViv(\''+esc(o.id)+'\',this)">📋 Copy for Viventium</button>'+
       (o.viventium_entered_at
         ? '<span style="color:#15803D;font-weight:700">entered ✓</span>'
         : '<button class="fb" onclick="markOfferViventium(\''+esc(o.id)+'\',this)">☑ Entered in Viventium</button>')+
+      (o.welcome_sent_at
+        ? '<span style="color:#15803D;font-size:.75rem">💬 welcome text + email sent ✓</span>'
+        : (o.viventium_entered_at
+            ? '<button class="fb" style="font-size:.72rem" onclick="sendOfferWelcome(\''+esc(o.id)+'\',this)">💬 Send welcome text + email</button><span style="color:#b45309;font-size:.72rem">not sent yet</span>'
+            : '<span style="color:#94a3b8;font-size:.72rem">💬 welcome text + email sends when you mark this</span>'))+
       '<span style="color:#cbd5e1">→</span>'+
       (o.step1_done_at
         ? '<span style="color:#15803D;font-weight:700">Step 1 paperwork done ✓</span>'
@@ -3368,8 +3374,47 @@ async function markOfferViventium(id,btn){
   try{
     const {data:{session}}=await sb.auth.getSession();
     await offerUpdate(id,{p_viventium:true,p_who:(session&&session.user&&session.user.email)||'staff'});
+    // Entering Viventium is the trigger for the applicant's welcome text +
+    // email — it tells them to watch for the Viventium invite that just went
+    // out. The function never double-sends (welcome_sent_at guard).
+    if(btn) btn.textContent='Sending welcome…';
+    try{
+      const w=await sendOfferWelcome(id,null,true);
+      if(!w.ok) alert('Viventium entry saved ✓ — but the welcome text/email did not send: '+w.error+'\n\nUse the "💬 Send welcome text + email" button on the record to retry.');
+    }catch(e){}
     await loadOffers();
   }catch(e){ alert('Could not save: '+(e&&e.message?e.message:'error')); if(btn){btn.disabled=false;btn.textContent='☑ Entered in Viventium';} }
+}
+async function sendOfferWelcome(id,btn,quiet){
+  const key=(appSettings.training_hub_key||'').trim();
+  if(!key){ if(!quiet) alert('Paste the Training Hub read key into ⚙️ Settings first.'); return {ok:false,error:'hub key missing'}; }
+  if(btn){btn.disabled=true;btn.textContent='Sending…';}
+  try{
+    const r=await fetch('https://rdqujxiycycwhskyvrwa.supabase.co/functions/v1/job-offer',{
+      method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
+      body:JSON.stringify({key, action:'send_welcome', offer_id:id})});
+    const d=await r.json();
+    if(d.error) throw new Error(d.error);
+    if(!quiet){
+      alert(d.already_sent?'Already sent earlier ✓':'Welcome '+[d.sms?'text':null,d.email?'email':null].filter(Boolean).join(' + ')+' sent ✓');
+      await loadOffers();
+    }
+    return {ok:true};
+  }catch(e){
+    const msg=(e&&e.message)||'failed';
+    if(!quiet){ alert('Could not send: '+msg); if(btn){btn.disabled=false;btn.textContent='💬 Send welcome text + email';} }
+    return {ok:false,error:msg};
+  }
+}
+function copyOfferViv(id,btn){
+  const o=OFFERS.find(x=>x.id===id); if(!o) return;
+  const txt=['Name: '+(o.name||''),'Mobile: '+(o.phone||'—'),'Email: '+(o.email||'—'),
+    'Position: '+(o.position||'Caregiver'),'Pay rate: '+(o.pay_rate?('$'+Number(o.pay_rate).toFixed(2)+'/hr'):'—'),
+    'Hire/offer date: '+(o.interview_date||''),'Offered by: '+(o.offered_by||'—'),
+    'Availability: '+(o.availability||'—')].join('\n');
+  navigator.clipboard.writeText(txt)
+    .then(()=>{ if(btn){btn.textContent='✓ Copied'; setTimeout(()=>{btn.textContent='📋 Copy for Viventium';},1800);} })
+    .catch(()=>{ alert(txt); });
 }
 async function markOfferStep1(id,btn){
   if(btn){btn.disabled=true;btn.textContent='Saving…';}
