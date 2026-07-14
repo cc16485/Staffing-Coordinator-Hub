@@ -337,13 +337,13 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
           </ol>
 
           <div class="guide-section-lbl">How to enter a new hire in Viventium</div>
-          <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">In Viventium, go to <b>MY COMPANY → Onboarding</b> (left side of the Company Dashboard), then click <b>+ Add New Hire</b> (top right).<span class="tip">Open the 📝 <b>Viventium entry sheet</b> on the offer record below — it lists every field in the same order as the Viventium screens, each with its own copy button. Copy one, paste one, next.</span></div></div>
-          <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body"><b>Personal:</b> First Name, Last Name, Email Address, Phone Type (Mobile), Phone — straight from the offer record. The email and phone must be right: that's where their onboarding invite goes.</div></div>
-          <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body"><b>Position:</b> Hire Date (the offer date), Job Title (Caregiver / CNA / Nurse per the record), Employee # (<b>AUTO-GENERATE</b>), Employee Status stays <b>Onboarding</b>, Cost Center, Employee Type (Full/Part Time from their availability).</div></div>
-          <div class="guide-step"><div class="guide-step-num">4</div><div class="guide-step-body"><b>Pay Info &amp; Rates:</b> Pay Type + Pay Frequency, then the first Rate Code defaults to <b>Base Rate</b> — enter the hourly rate discussed at the interview (it's on the record). Use <b>+ Add Pay Rate</b> only if they'll have more than one rate.</div></div>
-          <div class="guide-step"><div class="guide-step-num">5</div><div class="guide-step-body"><b>Taxes:</b> Tax Type <b>W-2</b> — Work Location and State Unemployment (Missouri) are required. Then NEXT.</div></div>
-          <div class="guide-step"><div class="guide-step-num">6</div><div class="guide-step-body"><b>Select the Onboarding Plan the coordinator picked</b> — it's on the offer record (the purple "plan:" chip in the Viventium bar), chosen at the interview. If the record says "not picked," ask the coordinator before sending. NEXT.</div></div>
-          <div class="guide-step"><div class="guide-step-num">7</div><div class="guide-step-body">Review the task list and click <b>SEND ONBOARDING INVITE</b>. The registration email goes to the new hire immediately — a green banner confirms it sent. (Personal Info, Contact Info and Tax Withholding are required tasks and can't be removed; use Actions → Add Tasks / Edit Sequence only if told to.)</div></div>
+          <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">In Viventium's left menu: <b>ONBOARDING → Dashboard</b>, then <b>+ Add New Hire</b> (top right). That opens "New Hire — Step 1 of 2."<span class="tip">Open the 📝 <b>Viventium entry sheet</b> on the offer record below — it lists every field in the same order as the screen, each with its own copy button. Copy one, paste one, next.</span></div></div>
+          <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body"><b>PERSONAL:</b> First Name, Last Name, Email Address, Phone Type (<b>Mobile</b>), Phone — all on the entry sheet. The email and phone must be right: that's where their onboarding invite goes.</div></div>
+          <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body"><b>POSITION:</b> Hire Date (the offer date), Job Title, Employee Status stays <b>Onboarding</b>, click <b>AUTO-GENERATE</b> for Employee # and Badge #, pick the <b>Department</b>, set <b>Employee Type</b> (Full/Part Time — their availability is on the sheet). Pay Group and Benefit Category stay blank unless Samantha says otherwise. Skip the Work Schedule Template.</div></div>
+          <div class="guide-step"><div class="guide-step-num">4</div><div class="guide-step-body"><b>PAY INFO &amp; RATES:</b> Pay Type <b>Hourly</b>; Pay Frequency is already <b>Weekly</b>; leave Standard Hours and Auto Pay as they are. Under RATES, Rate Code is already <b>Base Rate</b> — paste the hourly rate from the sheet into Rate. Use <b>+ ADD PAY RATE</b> only if they'll have more than one rate.</div></div>
+          <div class="guide-step"><div class="guide-step-num">5</div><div class="guide-step-body"><b>TAXES:</b> Tax Type — choose <b>W2</b>. (Caregivers are employees, never 1099.)</div></div>
+          <div class="guide-step"><div class="guide-step-num">6</div><div class="guide-step-body"><b>ONBOARDING PLAN:</b> Select a Plan → <b>Default (Default)</b> — currently the only plan. If the record's purple "plan:" chip ever names a different one, pick that. Then NEXT.</div></div>
+          <div class="guide-step"><div class="guide-step-num">7</div><div class="guide-step-body">Step 2 of 2: review the task list and click <b>SEND ONBOARDING INVITE</b>. The registration email goes to the new hire immediately — a green banner confirms it sent. (Personal Info, Contact Info and Tax Withholding are required tasks and can't be removed.)</div></div>
           <div class="guide-step flag"><div class="guide-step-num">✓</div><div class="guide-step-body">Come straight back here and click <b>Entered in Viventium ✓</b> on their record. That sends their welcome text + email (so the Viventium email they just got is expected, not spam) and the hub starts watching for their Step-1 paperwork — reminding them automatically and alerting Samantha if it stalls.</div></div>
         </div>
       </div>
@@ -3314,7 +3314,7 @@ function renderOffers(){
       '</div>'+
       '<div style="display:flex;gap:.6rem;align-items:center;margin-top:.7rem;flex-wrap:wrap;font-size:.82rem;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:.5rem .7rem">'+
       '<b style="color:#0E3860">Viventium:</b>'+
-      '<span style="background:#EDE9FE;color:#5B21B6;border-radius:999px;padding:.12rem .6rem;font-size:.72rem;font-weight:700">plan: '+esc(o.onboarding_plan||'not picked — ask the coordinator')+'</span>'+
+      '<span style="background:#EDE9FE;color:#5B21B6;border-radius:999px;padding:.12rem .6rem;font-size:.72rem;font-weight:700">plan: '+esc(o.onboarding_plan||'Default (Default)')+'</span>'+
       (o.viventium_entered_at
         ? '<span style="color:#15803D;font-weight:700">entered ✓</span>'
         : '<button class="fb" onclick="markOfferViventium(\''+esc(o.id)+'\',this)">☑ Entered in Viventium</button>')+
@@ -3408,10 +3408,9 @@ async function sendOfferWelcome(id,btn,quiet){
     return {ok:false,error:msg};
   }
 }
-// Viventium is typed field by field — no bulk paste. This sheet mirrors the
-// Add New Hire screens in order, one copy button per value. Screen-specific
-// details (Cost Center options, Pay Frequency, exact plan names) get refined
-// when Samantha shares a screenshot of her Viventium form.
+// Viventium is typed field by field — no bulk paste. This sheet mirrors her
+// actual Add New Hire screen (TR9-001, screenshots Jul 13 2026) top to bottom:
+// PERSONAL → POSITION → WORK SCHEDULE → PAY INFO → RATES → TAXES → PLAN.
 function vivSheet(o){
   const esc=t=>String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   const row=(label,val,hint)=>'<div style="display:flex;align-items:center;gap:.5rem;padding:.26rem 0;border-bottom:1px dashed #eef2f7;font-size:.8rem">'
@@ -3424,29 +3423,39 @@ function vivSheet(o){
   const nm=String(o.name||'').trim();
   const first=o.first_name||nm.split(' ')[0]||'';
   const last=o.last_name||nm.split(' ').slice(1).join(' ')||'';
-  return sec('Personal Information')
+  // Viventium's phone field is US-format; strip the +1 and punctuate.
+  const digits=String(o.phone||'').replace(/\D/g,'').replace(/^1(?=\d{10}$)/,'');
+  const phone=digits.length===10?'('+digits.slice(0,3)+') '+digits.slice(3,6)+'-'+digits.slice(6):(o.phone||'');
+  // Date picker is US-style MM/DD/YYYY.
+  const dm=String(o.interview_date||'').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const usDate=dm?dm[2]+'/'+dm[3]+'/'+dm[1]:(o.interview_date||'');
+  return sec('Personal')
     +row('First Name',first)
     +row('Last Name',last)
     +row('Email Address',o.email,'none given — their invite needs an email; ask them for one')
     +row('Phone Type',null,'select Mobile')
-    +row('Phone Number',o.phone,'none given')
+    +row('Phone',phone,'none given')
     +sec('Position')
-    +row('Hire Date',o.interview_date)
+    +row('Hire Date',usDate)
     +row('Job Title',o.position||'Caregiver')
-    +row('Employee #',null,'check AUTO-GENERATE')
     +row('Employee Status',null,'leave as Onboarding')
-    +row('Cost Center',null,'pick per company setup')
+    +row('Employee # / Badge #',null,'click AUTO-GENERATE on both')
+    +row('Department',null,'required dropdown — pick per company setup')
+    +row('Pay Group / Benefit Category',null,'leave blank unless told otherwise')
     +row('Employee Type',null,'Full/Part Time — availability: '+(o.availability||'not given'))
-    +sec('Pay Info & Rates')
-    +row('Pay Type',null,'Hourly')
-    +row('Pay Frequency',null,'company standard')
-    +row('Base Rate',o.pay_rate?Number(o.pay_rate).toFixed(2):null,'no rate on the offer — ask '+(o.offered_by||'the coordinator'))
+    +sec('Work Schedule')
+    +row('Work Schedule Template',null,'skip — leave empty')
+    +sec('Pay Info')
+    +row('Pay Type',null,'select Hourly')
+    +row('Pay Frequency',null,'Weekly — already set')
+    +row('Standard Hours / Auto Pay',null,'leave the defaults')
+    +sec('Rates')
+    +row('Rate Code',null,'Base Rate — already set')
+    +row('Rate',o.pay_rate?Number(o.pay_rate).toFixed(2):null,'no rate on the offer — ask '+(o.offered_by||'the coordinator'))
     +sec('Taxes')
-    +row('Tax Type',null,'W-2')
-    +row('Work Location',null,'the Missouri office location')
-    +row('State Unemployment',null,'Missouri')
+    +row('Tax Type',null,'choose W2')
     +sec('Onboarding Plan')
-    +row('Plan to assign',o.onboarding_plan,'not picked — ask the coordinator');
+    +row('Select a Plan',o.onboarding_plan||'Default (Default)');
 }
 function vivCopy(btn){
   navigator.clipboard.writeText(btn.dataset.v||'')
