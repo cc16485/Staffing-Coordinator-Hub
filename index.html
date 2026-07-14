@@ -337,7 +337,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
           </ol>
 
           <div class="guide-section-lbl">How to enter a new hire in Viventium</div>
-          <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">In Viventium, go to <b>MY COMPANY → Onboarding</b> (left side of the Company Dashboard), then click <b>+ Add New Hire</b> (top right).<span class="tip">The offer record below has a 📋 copy block with everything you'll type — name, phone, email, position, pay rate, offer date.</span></div></div>
+          <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body">In Viventium, go to <b>MY COMPANY → Onboarding</b> (left side of the Company Dashboard), then click <b>+ Add New Hire</b> (top right).<span class="tip">Open the 📝 <b>Viventium entry sheet</b> on the offer record below — it lists every field in the same order as the Viventium screens, each with its own copy button. Copy one, paste one, next.</span></div></div>
           <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body"><b>Personal:</b> First Name, Last Name, Email Address, Phone Type (Mobile), Phone — straight from the offer record. The email and phone must be right: that's where their onboarding invite goes.</div></div>
           <div class="guide-step"><div class="guide-step-num">3</div><div class="guide-step-body"><b>Position:</b> Hire Date (the offer date), Job Title (Caregiver / CNA / Nurse per the record), Employee # (<b>AUTO-GENERATE</b>), Employee Status stays <b>Onboarding</b>, Cost Center, Employee Type (Full/Part Time from their availability).</div></div>
           <div class="guide-step"><div class="guide-step-num">4</div><div class="guide-step-body"><b>Pay Info &amp; Rates:</b> Pay Type + Pay Frequency, then the first Rate Code defaults to <b>Base Rate</b> — enter the hourly rate discussed at the interview (it's on the record). Use <b>+ Add Pay Rate</b> only if they'll have more than one rate.</div></div>
@@ -3315,7 +3315,6 @@ function renderOffers(){
       '<div style="display:flex;gap:.6rem;align-items:center;margin-top:.7rem;flex-wrap:wrap;font-size:.82rem;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:.5rem .7rem">'+
       '<b style="color:#0E3860">Viventium:</b>'+
       '<span style="background:#EDE9FE;color:#5B21B6;border-radius:999px;padding:.12rem .6rem;font-size:.72rem;font-weight:700">plan: '+esc(o.onboarding_plan||'not picked — ask the coordinator')+'</span>'+
-      '<button class="fb" style="font-size:.72rem" onclick="copyOfferViv(\''+esc(o.id)+'\',this)">📋 Copy for Viventium</button>'+
       (o.viventium_entered_at
         ? '<span style="color:#15803D;font-weight:700">entered ✓</span>'
         : '<button class="fb" onclick="markOfferViventium(\''+esc(o.id)+'\',this)">☑ Entered in Viventium</button>')+
@@ -3342,7 +3341,9 @@ function renderOffers(){
       '</select></label>'+
       '<span style="color:#94a3b8">(confirm from verified experience + references)</span>'+
       '</div>'+
-      '<details style="margin-top:.7rem"><summary style="cursor:pointer;font-size:.82rem;font-weight:700;color:#0E3860">AxisCare attribute answers — same order as the Attributes screen</summary>'+
+      '<details style="margin-top:.7rem"><summary style="cursor:pointer;font-size:.82rem;font-weight:700;color:#5B21B6">📝 Viventium entry sheet — every field in screen order, copy one at a time</summary>'+
+      '<div style="max-width:520px;margin-top:.4rem;background:#FBFAFF;border:1px solid #EDE9FE;border-radius:8px;padding:.6rem .8rem">'+vivSheet(o)+'</div></details>'+
+      '<details style="margin-top:.5rem"><summary style="cursor:pointer;font-size:.82rem;font-weight:700;color:#0E3860">AxisCare attribute answers — same order as the Attributes screen</summary>'+
       '<div style="max-width:420px;margin-top:.4rem">'+attrHtml+'</div></details>'+
       '</div>';
   }).join('');
@@ -3407,16 +3408,50 @@ async function sendOfferWelcome(id,btn,quiet){
     return {ok:false,error:msg};
   }
 }
-function copyOfferViv(id,btn){
-  const o=OFFERS.find(x=>x.id===id); if(!o) return;
-  const txt=['Name: '+(o.name||''),'Mobile: '+(o.phone||'—'),'Email: '+(o.email||'—'),
-    'Position: '+(o.position||'Caregiver'),'Onboarding plan: '+(o.onboarding_plan||'—'),
-    'Pay rate: '+(o.pay_rate?('$'+Number(o.pay_rate).toFixed(2)+'/hr'):'—'),
-    'Hire/offer date: '+(o.interview_date||''),'Offered by: '+(o.offered_by||'—'),
-    'Availability: '+(o.availability||'—')].join('\n');
-  navigator.clipboard.writeText(txt)
-    .then(()=>{ if(btn){btn.textContent='✓ Copied'; setTimeout(()=>{btn.textContent='📋 Copy for Viventium';},1800);} })
-    .catch(()=>{ alert(txt); });
+// Viventium is typed field by field — no bulk paste. This sheet mirrors the
+// Add New Hire screens in order, one copy button per value. Screen-specific
+// details (Cost Center options, Pay Frequency, exact plan names) get refined
+// when Samantha shares a screenshot of her Viventium form.
+function vivSheet(o){
+  const esc=t=>String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  const row=(label,val,hint)=>'<div style="display:flex;align-items:center;gap:.5rem;padding:.26rem 0;border-bottom:1px dashed #eef2f7;font-size:.8rem">'
+    +'<span style="min-width:145px;color:#64748b">'+label+'</span>'
+    +(val!=null&&String(val).trim()!==''
+      ?'<b style="flex:1;word-break:break-word">'+esc(val)+'</b><button class="fb" style="font-size:.68rem;padding:.12rem .5rem;flex-shrink:0" data-v="'+esc(val)+'" onclick="vivCopy(this)">📋 copy</button>'
+      :'<span style="flex:1;color:#94a3b8;font-style:italic">'+(hint||'—')+'</span>')
+    +'</div>';
+  const sec=t=>'<div style="font-size:.68rem;font-weight:800;letter-spacing:.05em;color:#5B21B6;text-transform:uppercase;margin:.5rem 0 .1rem">'+t+'</div>';
+  const nm=String(o.name||'').trim();
+  const first=o.first_name||nm.split(' ')[0]||'';
+  const last=o.last_name||nm.split(' ').slice(1).join(' ')||'';
+  return sec('Personal Information')
+    +row('First Name',first)
+    +row('Last Name',last)
+    +row('Email Address',o.email,'none given — their invite needs an email; ask them for one')
+    +row('Phone Type',null,'select Mobile')
+    +row('Phone Number',o.phone,'none given')
+    +sec('Position')
+    +row('Hire Date',o.interview_date)
+    +row('Job Title',o.position||'Caregiver')
+    +row('Employee #',null,'check AUTO-GENERATE')
+    +row('Employee Status',null,'leave as Onboarding')
+    +row('Cost Center',null,'pick per company setup')
+    +row('Employee Type',null,'Full/Part Time — availability: '+(o.availability||'not given'))
+    +sec('Pay Info & Rates')
+    +row('Pay Type',null,'Hourly')
+    +row('Pay Frequency',null,'company standard')
+    +row('Base Rate',o.pay_rate?Number(o.pay_rate).toFixed(2):null,'no rate on the offer — ask '+(o.offered_by||'the coordinator'))
+    +sec('Taxes')
+    +row('Tax Type',null,'W-2')
+    +row('Work Location',null,'the Missouri office location')
+    +row('State Unemployment',null,'Missouri')
+    +sec('Onboarding Plan')
+    +row('Plan to assign',o.onboarding_plan,'not picked — ask the coordinator');
+}
+function vivCopy(btn){
+  navigator.clipboard.writeText(btn.dataset.v||'')
+    .then(()=>{ btn.textContent='✓'; setTimeout(()=>{btn.textContent='📋 copy';},1200); })
+    .catch(()=>{ alert(btn.dataset.v||''); });
 }
 async function markOfferStep1(id,btn){
   if(btn){btn.disabled=true;btn.textContent='Saving…';}
