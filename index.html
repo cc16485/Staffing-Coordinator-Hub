@@ -285,6 +285,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
   <div class="subbar" id="sub-sched" style="display:none">
     <div class="tab" data-name="scheduling" onclick="gotoTab('scheduling')"><span class="ti">🗓</span> Open Shifts &amp; New Clients<span id="schedBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
     <div class="tab" data-name="evv" onclick="gotoTab('evv')"><span class="ti">📝</span> EVV Corrections</div>
+    <div class="tab" data-name="checkins" onclick="gotoTab('checkins')"><span class="ti">💛</span> Client Check-Ins<span id="checkinsBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
     <span style="margin-left:auto;display:flex;align-items:center;gap:.35rem;white-space:nowrap">
       <a href="#" onclick="openSchedSopLink();return false" style="font-size:.78rem;font-weight:700;color:var(--navy);text-decoration:underline">📘 Scheduling SOP</a>
       <a href="#" onclick="editSchedSopLink();return false" title="Change the SOP link" style="font-size:.72rem;color:#94a3b8;text-decoration:none">✎</a>
@@ -743,6 +744,87 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
           </div>
         </div>
         <div id="dnr-log-list"><div style="color:#94a3b8;font-size:.85rem">Nothing on the log.</div></div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════ CLIENT CHECK-INS ══════════════════════════════ -->
+    <div class="panel" id="panel-checkins">
+
+      <!-- Tab Guide -->
+      <div class="tab-guide">
+        <div class="tab-guide-hdr" onclick="toggleGuide('checkins')">
+          <span class="tab-guide-title">📋 How This Tab Works — Client Check-In Calls</span>
+          <span class="tab-guide-arrow" id="guide-arrow-checkins">▼</span>
+        </div>
+        <div class="tab-guide-body" id="guide-body-checkins">
+          <div class="guide-step"><div class="guide-step-num">💛</div><div class="guide-step-body"><b>Why this tab exists:</b> a client will almost never call to complain about a fill-in caregiver — they just quietly get unhappy, and we find out when they leave. A 2-minute call after a shift catches it while it's fixable, and catches the wins too. Every check-in ends in one of three outcomes:</div></div>
+          <div class="guide-step"><div class="guide-step-num">⭐</div><div class="guide-step-body"><b>Favorite</b> — the client loved them. Mark the caregiver as a preferred caregiver on the client's AxisCare profile so scheduling pairs them first from now on. A fill-in who clicks is a long-term match found for free.</div></div>
+          <div class="guide-step"><div class="guide-step-num">💬</div><div class="guide-step-body"><b>Coaching</b> — something small ("she likes the dishes hand-dried," "he wants the TV on for lunch"). Pass it to the caregiver kindly — it's a preference, not a write-up — and put it on their AxisCare record with one click below so it's never lost. Small coaching is what turns a fine match into a favorite.</div></div>
+          <div class="guide-step"><div class="guide-step-num">🚫</div><div class="guide-step-body"><b>Exclusion</b> — the client doesn't want them back. Logging it here puts it straight on the permanent Do-Not-Return log, then enter the exclusion in AxisCare so the schedule physically can't pair them again.</div></div>
+          <div class="guide-section-lbl">When to call</div>
+          <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body"><b>New matches and fill-ins first</b> — anyone whose first shift with a client was in the last two weeks gets a call within a day or two of that first shift. These are the calls that save clients.</div></div>
+          <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body"><b>Everyone else about monthly</b> — a quick pulse call on long-standing matches. "Just checking in — how are things going with ___?" Two minutes, and the client feels taken care of.</div></div>
+          <div class="guide-step"><div class="guide-step-num">☎️</div><div class="guide-step-body">A script that works: <i>"Hi, this is ___ from Caring Companions — just checking in. How did things go with [caregiver] this week? Anything they could do differently that would make it even better?"</i> That last question is where the gold is.</div></div>
+        </div>
+      </div>
+
+      <!-- Who to call (live from AxisCare visits) -->
+      <div style="margin-bottom:1.25rem">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.65rem">
+          <div style="display:flex;align-items:center;gap:.6rem">
+            <span style="font-size:1.1rem">💛</span>
+            <div>
+              <div style="font-size:.92rem;font-weight:700;color:var(--navy)">Who to call — every caregiver in a client's home, last 60 days</div>
+              <div style="font-size:.72rem;color:var(--gray)">Live from AxisCare visits. 🆕 means their first shift together was in the last two weeks — call those first.</div>
+            </div>
+          </div>
+          <button onclick="loadCheckinPairs(this)" style="padding:.32rem .75rem;background:var(--teal);color:#fff;border:none;border-radius:7px;font-size:.75rem;font-weight:600;cursor:pointer;font-family:inherit">↻ Refresh</button>
+        </div>
+        <div id="ci-pairs-board"><div style="color:#94a3b8;font-size:.85rem">Loading recent client–caregiver matches…</div></div>
+      </div>
+
+      <!-- Log a check-in -->
+      <div id="ci-form" style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:1rem 1.25rem;margin-bottom:1.25rem">
+        <div style="font-size:.92rem;font-weight:700;color:var(--navy);margin-bottom:.6rem">📞 Log a check-in call</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.6rem;margin-bottom:.6rem">
+          <div><label style="font-size:.72rem;font-weight:700;color:var(--gray)">Client</label><input id="ci-client" type="text" placeholder="Client name" style="width:100%;padding:.45rem .6rem;border:1px solid var(--border);border-radius:8px;font-family:inherit;font-size:.85rem"></div>
+          <div><label style="font-size:.72rem;font-weight:700;color:var(--gray)">Caregiver</label><input id="ci-caregiver" type="text" placeholder="Caregiver name" style="width:100%;padding:.45rem .6rem;border:1px solid var(--border);border-radius:8px;font-family:inherit;font-size:.85rem"></div>
+          <div><label style="font-size:.72rem;font-weight:700;color:var(--gray)">Spoke with</label><input id="ci-spoke" type="text" placeholder="Client / daughter / son…" style="width:100%;padding:.45rem .6rem;border:1px solid var(--border);border-radius:8px;font-family:inherit;font-size:.85rem"></div>
+        </div>
+        <div style="margin-bottom:.6rem">
+          <label style="font-size:.72rem;font-weight:700;color:var(--gray)">How's it going with this caregiver?</label>
+          <select id="ci-rating" style="width:100%;max-width:340px;display:block;padding:.45rem .6rem;border:1px solid var(--border);border-radius:8px;font-family:inherit;font-size:.85rem">
+            <option value="">— pick one —</option>
+            <option value="love">⭐ They love them</option>
+            <option value="good">👍 Going fine</option>
+            <option value="concern">🚩 Some concerns</option>
+          </select>
+        </div>
+        <div style="margin-bottom:.6rem">
+          <label style="font-size:.72rem;font-weight:700;color:var(--gray)">What they said</label>
+          <textarea id="ci-notes" rows="2" placeholder="In their words — the good, the small stuff, anything off" style="width:100%;padding:.45rem .6rem;border:1px solid var(--border);border-radius:8px;font-family:inherit;font-size:.85rem;resize:vertical"></textarea>
+        </div>
+        <div style="margin-bottom:.6rem">
+          <label style="font-size:.72rem;font-weight:700;color:var(--gray)">💬 Small thing to pass along to the caregiver (optional)</label>
+          <textarea id="ci-coaching" rows="2" placeholder="e.g. Mrs. K likes the dishes hand-dried and put away, not left in the rack" style="width:100%;padding:.45rem .6rem;border:1px solid var(--border);border-radius:8px;font-family:inherit;font-size:.85rem;resize:vertical"></textarea>
+        </div>
+        <div style="display:flex;gap:1.2rem;flex-wrap:wrap;margin-bottom:.8rem;font-size:.82rem">
+          <label style="display:flex;align-items:center;gap:.35rem;cursor:pointer"><input type="checkbox" id="ci-fav"> ⭐ Make this caregiver a favorite for this client</label>
+          <label style="display:flex;align-items:center;gap:.35rem;cursor:pointer;color:#b91c1c"><input type="checkbox" id="ci-excl"> 🚫 Client doesn't want them back (goes on the permanent Do-Not-Return log)</label>
+        </div>
+        <button class="fb" style="color:#fff;font-weight:700" onclick="saveCheckin()">Save check-in ✓</button>
+      </div>
+
+      <!-- History (permanent) -->
+      <div style="margin-top:1.25rem;padding:0 0 2rem">
+        <div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.65rem">
+          <span style="font-size:1.1rem">📒</span>
+          <div>
+            <div style="font-size:.92rem;font-weight:700;color:var(--navy)">Check-in history <span style="font-weight:500;color:var(--gray);font-size:.75rem">— permanent record</span></div>
+            <div style="font-size:.72rem;color:var(--gray)">Every call, what the client said, and what we did about it. Feeds favorites, coaching notes, and the Do-Not-Return log.</div>
+          </div>
+        </div>
+        <div id="ci-history"><div style="color:#94a3b8;font-size:.85rem">No check-ins logged yet — the first one appears here.</div></div>
       </div>
     </div>
 
@@ -2960,6 +3042,7 @@ function switchTab(name, btn){
   if(name==='meetings') { renderMeetings(); }
   if(name==='sendmsg') { renderSendMsg(); }
   if(name==='attendance') { renderAttendance(); }
+  if(name==='checkins') { renderCheckins(); renderCheckinPairs(); loadCheckinPairs(); }
 }
 
 async function resolveReturnedItem(hid,i){
@@ -3075,7 +3158,7 @@ function editSchedSopLink(){
 }
 
 // ── GROUPED NAVIGATION + STAFFING OVERVIEW ──
-const SC_GROUPS={home:['home'],onboard:['offers','onboarding','orientations','training','compliance','attendance'],sched:['scheduling','evv'],team:['coordreq','sendmsg','meetings','comms','eod']};
+const SC_GROUPS={home:['home'],onboard:['offers','onboarding','orientations','training','compliance','attendance'],sched:['scheduling','evv','checkins'],team:['coordreq','sendmsg','meetings','comms','eod']};
 function groupOf(tab){ for(const g in SC_GROUPS) if(SC_GROUPS[g].includes(tab)) return g; return 'home'; }
 function showGroupChrome(g){
   document.querySelectorAll('#groupBar .gtab').forEach(b=>b.classList.toggle('active',b.dataset.group===g));
@@ -3097,7 +3180,7 @@ function badgeNum(id){ const el=document.getElementById(id); return (el&&el.styl
 function updateGroupBadges(){
   const set=(gid,n)=>{ const el=document.getElementById(gid); if(!el) return; el.style.display=n?'inline':'none'; el.textContent=n; };
   set('gb-onboard', badgeNum('offersBadge')+badgeNum('attBadge'));
-  set('gb-sched', badgeNum('schedBadge'));
+  set('gb-sched', badgeNum('schedBadge')+badgeNum('checkinsBadge'));
   set('gb-team', badgeNum('coordreqBadge')+badgeNum('commsBadge')+badgeNum('meetingsBadge'));
   if(activeTab==='home') renderStaffHome();
 }
@@ -3110,6 +3193,7 @@ function renderStaffHome(){
   if(!_homeKicked && (appSettings.training_hub_key||'').trim()){
     _homeKicked=true;
     try{ loadOpenShifts(); }catch(e){}
+    try{ loadCheckinPairs(); }catch(e){}
     try{ loadOffers(); }catch(e){}
     try{ loadRepliesWaiting(); }catch(e){}
   }
@@ -3121,6 +3205,7 @@ function renderStaffHome(){
   const mtgN=MEETINGS.filter(mtgIncoming).length;
   const offN=OFFERS.length?OFFERS.filter(o=>!o.attributes_entered_at).length:null;
   const shiftN=(typeof OPEN_SHIFTS!=='undefined'&&OPEN_SHIFTS)?OPEN_SHIFTS.length:null;
+  const ciN=CI_PAIRS?CI_PAIRS.filter(p=>ciPairInfo(p).dueNew).length:null;
   const eodDone=(eodReports||[]).some(r=>r.report_date===today10);
   const row=(icon,n,label,sub,tab,urgent)=>{
     const chip=n===null?'<span style="color:#94a3b8;font-size:.8rem">…</span>'
@@ -3146,6 +3231,7 @@ function renderStaffHome(){
   box.innerHTML= returnedHtml
     +'<div style="font-size:.72rem;font-weight:800;letter-spacing:.06em;color:var(--gray);text-transform:uppercase;margin:.2rem 0 .4rem">🗓 Scheduling</div>'
     +row('🔴',shiftN,'Open shifts — next 14 days','Every unassigned visit in AxisCare is yours to fill','scheduling',true)
+    +row('💛',ciN,'Client check-in calls — new matches','First shift in the last 2 weeks and no call yet — catch concerns early, find favorites','checkins',false)
     +'<div style="font-size:.72rem;font-weight:800;letter-spacing:.06em;color:var(--gray);text-transform:uppercase;margin:.8rem 0 .4rem">📋 Onboarding &amp; Compliance</div>'
     +row('🤝',offN,'New offers — enter AxisCare attributes','Interviewed caregivers waiting on their profile checklist','offers',false)
     +row('⛔',blocked,'Blocked from first client contact','Orientation/dementia training incomplete — can\'t be scheduled yet','training',true)
@@ -3898,6 +3984,163 @@ async function dnrMarkAxis(id){
   renderDnrLog();
 }
 
+// ── CLIENT CHECK-INS (permanent, app_data key 'client_checkins') ──
+// After a caregiver has been in a client's home — long-term match or one-shift
+// fill-in — the client gets a quick satisfaction call. Outcomes: ⭐ favorite
+// (preferred caregiver in AxisCare), 💬 coaching (small preference passed to
+// the caregiver + noted on their AxisCare record), 🚫 exclusion (Do-Not-Return
+// log + AxisCare exclusion).
+let CHECKINS=[]; let CI_PAIRS=null;
+const ciKey=(c,g)=>String(c||'').trim().toLowerCase()+'|'+String(g||'').trim().toLowerCase();
+function ciLastFor(client,caregiver){
+  const k=ciKey(client,caregiver); let best=null;
+  (CHECKINS||[]).forEach(e=>{ if(ciKey(e.client,e.caregiver)===k && (!best||String(e.at)>String(best.at))) best=e; });
+  return best;
+}
+function ciPairInfo(p){
+  const days=(iso)=>(Date.now()-new Date(iso+'T12:00:00').getTime())/86400000;
+  const newPair=days(p.first_date)<=14;
+  const last=ciLastFor(p.client,p.caregiver);
+  const dueNew=newPair && (!last||String(last.at).slice(0,10)<p.first_date);
+  const duePulse=!newPair && (!last||(Date.now()-new Date(last.at).getTime())/86400000>30);
+  return {newPair,last,dueNew,duePulse,due:dueNew||duePulse};
+}
+async function loadCheckinPairs(btn){
+  const box=document.getElementById('ci-pairs-board');
+  const key=(appSettings.training_hub_key||'').trim();
+  if(!key){ if(box) box.innerHTML='<div style="color:#b45309;font-size:.85rem">Paste the Training Hub read key into ⚙️ Settings → Training Hub to turn this board on.</div>'; return; }
+  if(btn){ btn.disabled=true; btn.textContent='↻ Loading…'; }
+  try{
+    const r=await fetch('https://rdqujxiycycwhskyvrwa.supabase.co/functions/v1/axiscare-open-shifts',{
+      method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
+      body:JSON.stringify({key, mode:'pairs', days:60})});
+    const data=await r.json();
+    if(data.error){ CI_PAIRS=null; if(box) box.innerHTML='<div style="color:#b91c1c;font-size:.85rem">Could not load matches: '+creqEsc(data.error)+'</div>'; updateCheckinsBadge(); return; }
+    CI_PAIRS=data.pairs||[];
+    renderCheckinPairs(); updateCheckinsBadge();
+    if(activeTab==='home') renderStaffHome();
+  }catch(e){ if(box) box.innerHTML='<div style="color:#b91c1c;font-size:.85rem">Could not reach the visits service — check your connection.</div>'; }
+  finally{ if(btn){ btn.disabled=false; btn.textContent='↻ Refresh'; } }
+}
+function renderCheckinPairs(){
+  const box=document.getElementById('ci-pairs-board'); if(!box||CI_PAIRS===null) return;
+  if(!CI_PAIRS.length){ box.innerHTML='<div style="color:#94a3b8;font-size:.85rem">No completed visits found in the last 60 days.</div>'; return; }
+  const fmt=d=>new Date(d+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  const rows=CI_PAIRS.map(p=>({p,i:ciPairInfo(p)}))
+    .sort((a,b)=>(b.i.dueNew-a.i.dueNew)||(b.i.duePulse-a.i.duePulse)||String(b.p.last_date).localeCompare(String(a.p.last_date)));
+  const RATE={love:'⭐',good:'👍',concern:'🚩'};
+  box.innerHTML=rows.map(({p,i})=>{
+    const border=i.dueNew?'#DC2626':i.duePulse?'#B45309':'#16a34a';
+    const tag=i.dueNew?'<span style="font-size:.7rem;font-weight:800;color:#DC2626">🆕 first shift '+fmt(p.first_date)+' — call them</span>'
+      :i.duePulse?'<span style="font-size:.7rem;font-weight:700;color:#B45309">monthly pulse call due</span>'
+      :i.last?'<span style="font-size:.7rem;font-weight:700;color:#166534">✓ checked in '+fmt(String(i.last.at).slice(0,10))+' '+(RATE[i.last.rating]||'')+'</span>':'';
+    return '<div style="background:#fff;border:1px solid var(--border);border-left:4px solid '+border+';border-radius:10px;padding:.55rem 1rem;margin-bottom:.4rem;display:flex;align-items:center;gap:.7rem;flex-wrap:wrap">'
+      +'<div style="flex:1;min-width:220px"><b style="font-size:.85rem">'+creqEsc(p.client)+'</b> <span style="color:#94a3b8">×</span> <b style="font-size:.85rem">'+creqEsc(p.caregiver)+'</b>'
+      +'<div style="font-size:.7rem;color:var(--gray)">'+p.visits+' shift'+(p.visits===1?'':'s')+' · '+p.hours+' hrs · last '+fmt(p.last_date)+'</div></div>'
+      +tag
+      +'<button class="fb" style="font-size:.72rem" onclick="ciPrefill('+creqAttr(p.client)+','+creqAttr(p.caregiver)+')">📞 Log check-in</button>'
+      +'</div>';
+  }).join('');
+}
+function creqAttr(s){ return "'"+String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;').replace(/</g,'&lt;')+"'"; }
+function ciPrefill(client,caregiver){
+  const c=document.getElementById('ci-client'), g=document.getElementById('ci-caregiver');
+  if(c) c.value=client; if(g) g.value=caregiver;
+  const f=document.getElementById('ci-form'); if(f) f.scrollIntoView({behavior:'smooth',block:'start'});
+  const s=document.getElementById('ci-spoke'); if(s) setTimeout(()=>s.focus(),350);
+}
+async function saveCheckin(){
+  const val=id=>(document.getElementById(id)?document.getElementById(id).value.trim():'');
+  const client=val('ci-client'), caregiver=val('ci-caregiver'), spoke=val('ci-spoke');
+  const rating=val('ci-rating'), notes=val('ci-notes'), coaching=val('ci-coaching');
+  const fav=document.getElementById('ci-fav').checked, excl=document.getElementById('ci-excl').checked;
+  if(!client||!caregiver){ alert('Client and caregiver names are both needed.'); return; }
+  if(!rating){ alert('Pick how it\'s going — ⭐ 👍 or 🚩.'); return; }
+  if(excl&&!notes){ alert('For a do-not-return, write what the client said in "What they said" — it goes on the permanent log.'); return; }
+  let by=''; try{ const {data:{session}}=await sb.auth.getSession(); by=(session&&session.user&&session.user.email)||''; }catch(e){}
+  const who=by.split('@')[0]||'staffing';
+  const e={ id:'ci'+Date.now()+Math.random().toString(36).slice(2,6), client, caregiver, spoke_with:spoke, rating, notes, coaching,
+    want_favorite:fav, want_exclusion:excl, at:new Date().toISOString(), by:who,
+    fav_ax_done:false, coach_ax_noted:false, coach_ax_error:'' };
+  CHECKINS.push(e);
+  try{ await sb.rpc('upsert_app_data_item',{ target_key:'client_checkins', item:e }); }
+  catch(err){ alert('Could not save — check your connection and try again.'); CHECKINS.pop(); return; }
+  if(excl){
+    const entry={ id:'dnr'+Date.now(), client, caregiver, reason:notes,
+      requested_by:(spoke||client)+' (check-in call)', requested_at:e.at, logged_at:e.at, logged_by:who, axiscare_entered:false, task_id:e.id };
+    DNRLOG.push(entry);
+    try{ await sb.rpc('upsert_app_data_item',{ target_key:'dnr_log', item:entry }); }catch(err){ DNRLOG.pop(); }
+    try{ renderDnrLog(); }catch(err){}
+    alert('Added to the permanent Do-Not-Return log ✓\n\nNow enter it in AxisCare too: open '+client+' → Caregiver Exclusions → add '+caregiver+' — that\'s what physically blocks the schedule from pairing them.');
+  }
+  if(fav){
+    alert('⭐ Nice find. Make it stick in AxisCare: open '+client+'\'s profile and mark '+caregiver+' as a preferred caregiver so scheduling pairs them first. Then click "mark done" on the entry below.');
+  }
+  ['ci-client','ci-caregiver','ci-spoke','ci-rating','ci-notes','ci-coaching'].forEach(id=>{ const el=document.getElementById(id); if(el) el.value=''; });
+  document.getElementById('ci-fav').checked=false; document.getElementById('ci-excl').checked=false;
+  renderCheckins(); renderCheckinPairs(); updateCheckinsBadge();
+}
+function renderCheckins(){
+  const box=document.getElementById('ci-history'); if(!box) return;
+  if(!(CHECKINS||[]).length){ box.innerHTML='<div style="color:#94a3b8;font-size:.85rem">No check-ins logged yet — the first one appears here.</div>'; return; }
+  const RATE={love:['⭐','#16a34a','They love them'],good:['👍','#2F6FB0','Going fine'],concern:['🚩','#DC2626','Some concerns']};
+  box.innerHTML=CHECKINS.slice().sort((a,b)=>String(b.at).localeCompare(String(a.at))).slice(0,40).map(e=>{
+    const rm=RATE[e.rating]||RATE.good;
+    let extra='';
+    if(e.coaching){
+      extra+='<div style="font-size:.78rem;background:#F0F9FF;border:1px solid #BAE6FD;border-radius:6px;padding:.35rem .6rem;margin-top:.35rem">💬 Pass along: “'+creqEsc(e.coaching)+'” — '
+        +(e.coach_ax_noted?'✅ on the caregiver\'s AxisCare record'
+          :'<a href="#" onclick="ciPushCoach(\''+e.id+'\');return false;">put it on the caregiver\'s AxisCare record</a>'
+           +(e.coach_ax_error?' <span style="color:#b91c1c">(last try failed: '+creqEsc(e.coach_ax_error)+')</span>':''))
+        +'</div>';
+    }
+    if(e.want_favorite){
+      extra+='<div style="font-size:.78rem;margin-top:.35rem">⭐ Favorite — '
+        +(e.fav_ax_done?'✅ marked preferred in AxisCare':'⚠ <a href="#" onclick="ciMarkFav(\''+e.id+'\');return false;">mark done once set as preferred caregiver in AxisCare</a>')+'</div>';
+    }
+    if(e.want_exclusion) extra+='<div style="font-size:.78rem;margin-top:.35rem;color:#b91c1c">🚫 On the Do-Not-Return log</div>';
+    return '<div style="background:#fff;border:1px solid var(--border);border-left:4px solid '+rm[1]+';border-radius:10px;padding:.65rem 1rem;margin-bottom:.45rem;font-size:.85rem">'
+      +'<b>'+creqEsc(e.client)+'</b> <span style="color:#94a3b8">×</span> <b>'+creqEsc(e.caregiver)+'</b>'
+      +' — '+rm[0]+' '+rm[2]
+      +'<div style="font-size:.72rem;color:#64748b;margin-top:.2rem">'+new Date(e.at).toLocaleDateString('en-US',{month:'short',day:'numeric'})
+      +(e.spoke_with?' · spoke with '+creqEsc(e.spoke_with):'')+' · by '+creqEsc(e.by||'')+'</div>'
+      +(e.notes?'<div style="font-size:.8rem;color:#334155;margin-top:.3rem">“'+creqEsc(e.notes)+'”</div>':'')
+      +extra+'</div>';
+  }).join('');
+}
+async function ciMarkFav(id){
+  const e=(CHECKINS||[]).find(x=>x.id===id); if(!e) return;
+  e.fav_ax_done=true;
+  try{ await sb.rpc('upsert_app_data_item',{ target_key:'client_checkins', item:e }); }catch(err){ alert('Could not save — try again.'); e.fav_ax_done=false; }
+  renderCheckins();
+}
+async function ciPushCoach(id){
+  const e=(CHECKINS||[]).find(x=>x.id===id); if(!e) return;
+  const key=(appSettings.training_hub_key||'').trim();
+  if(!key){ alert('Paste the Training Hub read key into ⚙️ Settings first.'); return; }
+  const noteText='CLIENT PREFERENCE — from a check-in call ('+String(e.at).slice(0,10)+')\n'
+    +'Client: '+e.client+(e.spoke_with?' (spoke with '+e.spoke_with+')':'')+'\n'
+    +'“'+e.coaching+'”\n'
+    +'Passed along as friendly coaching so the match stays strong. — '+(e.by||'staffing');
+  try{
+    const r=await fetch('https://rdqujxiycycwhskyvrwa.supabase.co/functions/v1/axiscare-convert-lead',{
+      method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
+      body:JSON.stringify({key, action:'caregiver_note', caregiver_name:e.caregiver, note:noteText})});
+    const d=await r.json();
+    if(d.error) throw new Error(d.error);
+    e.coach_ax_noted=true; e.coach_ax_error='';
+  }catch(err){ e.coach_ax_noted=false; e.coach_ax_error=(err&&err.message)||'failed'; }
+  try{ await sb.rpc('upsert_app_data_item',{ target_key:'client_checkins', item:e }); }catch(err){}
+  renderCheckins();
+  if(e.coach_ax_noted) alert('✅ Noted on '+e.caregiver+'\'s AxisCare record.\n\nRemember to also tell them directly — a quick friendly text or call lands better than a note they might not see.');
+  else alert('Could not attach the AxisCare note: '+e.coach_ax_error);
+}
+function updateCheckinsBadge(){
+  const b=document.getElementById('checkinsBadge'); if(!b) return;
+  const n=(CI_PAIRS||[]).filter(p=>ciPairInfo(p).dueNew).length;
+  b.style.display=n?'inline':'none'; b.textContent=n;  updateGroupBadges();
+}
+
 // ── COORDINATOR REQUESTS (shared app_data key 'staffing_tasks', written by
 //    the Care Coordinator Hub; saved atomically via upsert_app_data_item so
 //    both hubs can write at the same moment without clobbering each other) ──
@@ -4093,6 +4336,7 @@ async function loadFromSupabase(){
       if(row.key==='handoffs')       { HANDOFFS=row.data||[]; }
       if(row.key==='attendance_events')  { ATT_EVENTS=row.data||[]; }
       if(row.key==='discipline_actions') { DISC_ACTIONS=row.data||[]; }
+      if(row.key==='client_checkins')    { CHECKINS=row.data||[]; }
     });
     updateCoordreqBadge();
     if(typeof activeTab!=='undefined' && activeTab==='coordreq') renderCoordReqs();
