@@ -761,9 +761,9 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
           <div class="guide-step"><div class="guide-step-num">⭐</div><div class="guide-step-body"><b>Favorite</b> — the client loved them. Mark the caregiver as a preferred caregiver on the client's AxisCare profile so scheduling pairs them first from now on. A fill-in who clicks is a long-term match found for free.</div></div>
           <div class="guide-step"><div class="guide-step-num">💬</div><div class="guide-step-body"><b>Coaching</b> — something small ("she likes the dishes hand-dried," "he wants the TV on for lunch"). Pass it to the caregiver kindly — it's a preference, not a write-up — and put it on their AxisCare record with one click below so it's never lost. Small coaching is what turns a fine match into a favorite.</div></div>
           <div class="guide-step"><div class="guide-step-num">🚫</div><div class="guide-step-body"><b>Exclusion</b> — the client doesn't want them back. Logging it here puts it straight on the permanent Do-Not-Return log, then enter the exclusion in AxisCare so the schedule physically can't pair them again.</div></div>
-          <div class="guide-section-lbl">When to call</div>
-          <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body"><b>New matches and fill-ins first</b> — anyone whose first shift with a client was in the last two weeks gets a call within a day or two of that first shift. These are the calls that save clients.</div></div>
-          <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body"><b>Everyone else about monthly</b> — a quick pulse call on long-standing matches. "Just checking in — how are things going with ___?" Two minutes, and the client feels taken care of.</div></div>
+          <div class="guide-section-lbl">When to call — two calls per match, then done</div>
+          <div class="guide-step"><div class="guide-step-num">1</div><div class="guide-step-body"><b>After the first shift</b> — any caregiver whose first visit with a client was in the last two weeks gets a call within a day or two. These are the calls that save clients.</div></div>
+          <div class="guide-step"><div class="guide-step-num">2</div><div class="guide-step-body"><b>One good-fit follow-up about a month later</b> — "still going well with ___?" If yes, that match is set: no more scheduled calls. Only a 🚩 concerns call brings a pair back on the list (re-check about a week later to make sure it got fixed).<span class="tip">Long-standing match from before this tab existed? Click "known good match ✓" on its row instead of calling — it clears without a call.</span></div></div>
           <div class="guide-step"><div class="guide-step-num">☎️</div><div class="guide-step-body">A script that works: <i>"Hi, this is ___ from Caring Companions — just checking in. How did things go with [caregiver] this week? Anything they could do differently that would make it even better?"</i> That last question is where the gold is.</div></div>
         </div>
       </div>
@@ -775,7 +775,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
             <span style="font-size:1.1rem">💛</span>
             <div>
               <div style="font-size:.92rem;font-weight:700;color:var(--navy)">Who to call — every caregiver in a client's home, last 60 days</div>
-              <div style="font-size:.72rem;color:var(--gray)">Live from AxisCare visits. 🆕 means their first shift together was in the last two weeks — call those first.</div>
+              <div style="font-size:.72rem;color:var(--gray)">Live from AxisCare visits. Two calls per match: 🆕 first-shift call, then a good-fit follow-up a month later — after that a pair only comes back if a call raised concerns.</div>
             </div>
           </div>
           <button onclick="loadCheckinPairs(this)" style="padding:.32rem .75rem;background:var(--teal);color:#fff;border:none;border-radius:7px;font-size:.75rem;font-weight:600;cursor:pointer;font-family:inherit">↻ Refresh</button>
@@ -3205,7 +3205,7 @@ function renderStaffHome(){
   const mtgN=MEETINGS.filter(mtgIncoming).length;
   const offN=OFFERS.length?OFFERS.filter(o=>!o.attributes_entered_at).length:null;
   const shiftN=(typeof OPEN_SHIFTS!=='undefined'&&OPEN_SHIFTS)?OPEN_SHIFTS.length:null;
-  const ciN=CI_PAIRS?CI_PAIRS.filter(p=>ciPairInfo(p).dueNew).length:null;
+  const ciN=CI_PAIRS?CI_PAIRS.filter(p=>ciPairInfo(p).dueNow).length:null;
   const eodDone=(eodReports||[]).some(r=>r.report_date===today10);
   const row=(icon,n,label,sub,tab,urgent)=>{
     const chip=n===null?'<span style="color:#94a3b8;font-size:.8rem">…</span>'
@@ -3231,7 +3231,7 @@ function renderStaffHome(){
   box.innerHTML= returnedHtml
     +'<div style="font-size:.72rem;font-weight:800;letter-spacing:.06em;color:var(--gray);text-transform:uppercase;margin:.2rem 0 .4rem">🗓 Scheduling</div>'
     +row('🔴',shiftN,'Open shifts — next 14 days','Every unassigned visit in AxisCare is yours to fill','scheduling',true)
-    +row('💛',ciN,'Client check-in calls — new matches','First shift in the last 2 weeks and no call yet — catch concerns early, find favorites','checkins',false)
+    +row('💛',ciN,'Client check-in calls due','First-shift calls on new matches + concern re-checks — two calls per match, then done','checkins',false)
     +'<div style="font-size:.72rem;font-weight:800;letter-spacing:.06em;color:var(--gray);text-transform:uppercase;margin:.8rem 0 .4rem">📋 Onboarding &amp; Compliance</div>'
     +row('🤝',offN,'New offers — enter AxisCare attributes','Interviewed caregivers waiting on their profile checklist','offers',false)
     +row('⛔',blocked,'Blocked from first client contact','Orientation/dementia training incomplete — can\'t be scheduled yet','training',true)
@@ -3997,13 +3997,20 @@ function ciLastFor(client,caregiver){
   (CHECKINS||[]).forEach(e=>{ if(ciKey(e.client,e.caregiver)===k && (!best||String(e.at)>String(best.at))) best=e; });
   return best;
 }
+// Two calls per match, then done: (1) after the FIRST shift together,
+// (2) a good-fit follow-up about a month later. Only exception: a call that
+// turned up concerns gets re-checked after a week until a later call is clear.
 function ciPairInfo(p){
-  const days=(iso)=>(Date.now()-new Date(iso+'T12:00:00').getTime())/86400000;
-  const newPair=days(p.first_date)<=14;
-  const last=ciLastFor(p.client,p.caregiver);
-  const dueNew=newPair && (!last||String(last.at).slice(0,10)<p.first_date);
-  const duePulse=!newPair && (!last||(Date.now()-new Date(last.at).getTime())/86400000>30);
-  return {newPair,last,dueNew,duePulse,due:dueNew||duePulse};
+  const daysAgo=iso=>(Date.now()-new Date(iso).getTime())/86400000;
+  const newPair=daysAgo(p.first_date+'T12:00:00')<=14;
+  const k=ciKey(p.client,p.caregiver);
+  const mine=(CHECKINS||[]).filter(e=>ciKey(e.client,e.caregiver)===k).sort((a,b)=>String(a.at).localeCompare(String(b.at)));
+  const last=mine.length?mine[mine.length-1]:null;
+  let due=null; // 'first' | 'concern' | 'fit' | null
+  if(!last) due='first';
+  else if(last.rating==='concern'&&daysAgo(last.at)>=7) due='concern';
+  else if(mine.length===1&&!last.skip&&daysAgo(last.at)>=30&&String(p.last_date)>=String(last.at).slice(0,10)) due='fit';
+  return {newPair,last,count:mine.length,due,dueNow:due==='concern'||(due==='first'&&newPair)};
 }
 async function loadCheckinPairs(btn){
   const box=document.getElementById('ci-pairs-board');
@@ -4026,19 +4033,25 @@ function renderCheckinPairs(){
   const box=document.getElementById('ci-pairs-board'); if(!box||CI_PAIRS===null) return;
   if(!CI_PAIRS.length){ box.innerHTML='<div style="color:#94a3b8;font-size:.85rem">No completed visits found in the last 60 days.</div>'; return; }
   const fmt=d=>new Date(d+'T12:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  const rank=i=>i.due==='concern'?0:i.due==='first'&&i.newPair?1:i.due==='first'?2:i.due==='fit'?3:4;
   const rows=CI_PAIRS.map(p=>({p,i:ciPairInfo(p)}))
-    .sort((a,b)=>(b.i.dueNew-a.i.dueNew)||(b.i.duePulse-a.i.duePulse)||String(b.p.last_date).localeCompare(String(a.p.last_date)));
+    .sort((a,b)=>rank(a.i)-rank(b.i)||String(b.p.last_date).localeCompare(String(a.p.last_date)));
   const RATE={love:'⭐',good:'👍',concern:'🚩'};
   box.innerHTML=rows.map(({p,i})=>{
-    const border=i.dueNew?'#DC2626':i.duePulse?'#B45309':'#16a34a';
-    const tag=i.dueNew?'<span style="font-size:.7rem;font-weight:800;color:#DC2626">🆕 first shift '+fmt(p.first_date)+' — call them</span>'
-      :i.duePulse?'<span style="font-size:.7rem;font-weight:700;color:#B45309">monthly pulse call due</span>'
+    const border=i.due==='concern'?'#DC2626':i.due==='first'?(i.newPair?'#DC2626':'#B45309'):i.due==='fit'?'#B45309':'#16a34a';
+    const tag=i.due==='concern'?'<span style="font-size:.7rem;font-weight:800;color:#DC2626">🚩 concerns on '+fmt(String(i.last.at).slice(0,10))+' — check it got fixed</span>'
+      :i.due==='first'&&i.newPair?'<span style="font-size:.7rem;font-weight:800;color:#DC2626">🆕 first shift '+fmt(p.first_date)+' — call them</span>'
+      :i.due==='first'?'<span style="font-size:.7rem;font-weight:700;color:#B45309">first check-in still to do</span>'
+      :i.due==='fit'?'<span style="font-size:.7rem;font-weight:700;color:#B45309">good-fit follow-up — first call was '+fmt(String(i.last.at).slice(0,10))+'</span>'
+      :i.count>=2?'<span style="font-size:.7rem;font-weight:700;color:#166534">✓ good fit confirmed — no more calls needed</span>'
+      :i.last&&i.last.skip?'<span style="font-size:.7rem;font-weight:700;color:#166534">✓ known good match</span>'
       :i.last?'<span style="font-size:.7rem;font-weight:700;color:#166534">✓ checked in '+fmt(String(i.last.at).slice(0,10))+' '+(RATE[i.last.rating]||'')+'</span>':'';
+    const skip=i.due==='first'?'<a href="#" style="font-size:.68rem;color:#94a3b8" onclick="ciSkip('+creqAttr(p.client)+','+creqAttr(p.caregiver)+');return false;" title="No call needed — logs it as an established match">known good match ✓</a>':'';
     return '<div style="background:#fff;border:1px solid var(--border);border-left:4px solid '+border+';border-radius:10px;padding:.55rem 1rem;margin-bottom:.4rem;display:flex;align-items:center;gap:.7rem;flex-wrap:wrap">'
       +'<div style="flex:1;min-width:220px"><b style="font-size:.85rem">'+creqEsc(p.client)+'</b> <span style="color:#94a3b8">×</span> <b style="font-size:.85rem">'+creqEsc(p.caregiver)+'</b>'
       +'<div style="font-size:.7rem;color:var(--gray)">'+p.visits+' shift'+(p.visits===1?'':'s')+' · '+p.hours+' hrs · last '+fmt(p.last_date)+'</div></div>'
-      +tag
-      +'<button class="fb" style="font-size:.72rem" onclick="ciPrefill('+creqAttr(p.client)+','+creqAttr(p.caregiver)+')">📞 Log check-in</button>'
+      +tag+skip
+      +(i.due?'<button class="fb" style="font-size:.72rem" onclick="ciPrefill('+creqAttr(p.client)+','+creqAttr(p.caregiver)+')">📞 Log check-in</button>':'')
       +'</div>';
   }).join('');
 }
@@ -4103,7 +4116,7 @@ function renderCheckins(){
       +'<b>'+creqEsc(e.client)+'</b> <span style="color:#94a3b8">×</span> <b>'+creqEsc(e.caregiver)+'</b>'
       +' — '+rm[0]+' '+rm[2]
       +'<div style="font-size:.72rem;color:#64748b;margin-top:.2rem">'+new Date(e.at).toLocaleDateString('en-US',{month:'short',day:'numeric'})
-      +(e.spoke_with?' · spoke with '+creqEsc(e.spoke_with):'')+' · by '+creqEsc(e.by||'')+'</div>'
+      +(e.skip?' · marked established — no call needed':(e.spoke_with?' · spoke with '+creqEsc(e.spoke_with):''))+' · by '+creqEsc(e.by||'')+'</div>'
       +(e.notes?'<div style="font-size:.8rem;color:#334155;margin-top:.3rem">“'+creqEsc(e.notes)+'”</div>':'')
       +extra+'</div>';
   }).join('');
@@ -4135,9 +4148,20 @@ async function ciPushCoach(id){
   if(e.coach_ax_noted) alert('✅ Noted on '+e.caregiver+'\'s AxisCare record.\n\nRemember to also tell them directly — a quick friendly text or call lands better than a note they might not see.');
   else alert('Could not attach the AxisCare note: '+e.coach_ax_error);
 }
+async function ciSkip(client,caregiver){
+  if(!confirm('Mark '+client+' × '+caregiver+' as an established match that\'s already known to be good?\n\nNo call needed — it logs a ✓ and this pair won\'t come up for calls again.')) return;
+  let by=''; try{ const {data:{session}}=await sb.auth.getSession(); by=(session&&session.user&&session.user.email)||''; }catch(e){}
+  const e={ id:'ci'+Date.now()+Math.random().toString(36).slice(2,6), client, caregiver, spoke_with:'', rating:'good',
+    notes:'Marked as an established match — no call needed.', coaching:'', want_favorite:false, want_exclusion:false,
+    at:new Date().toISOString(), by:by.split('@')[0]||'staffing', skip:true, fav_ax_done:false, coach_ax_noted:false, coach_ax_error:'' };
+  CHECKINS.push(e);
+  try{ await sb.rpc('upsert_app_data_item',{ target_key:'client_checkins', item:e }); }
+  catch(err){ alert('Could not save — try again.'); CHECKINS.pop(); return; }
+  renderCheckins(); renderCheckinPairs(); updateCheckinsBadge();
+}
 function updateCheckinsBadge(){
   const b=document.getElementById('checkinsBadge'); if(!b) return;
-  const n=(CI_PAIRS||[]).filter(p=>ciPairInfo(p).dueNew).length;
+  const n=(CI_PAIRS||[]).filter(p=>ciPairInfo(p).dueNow).length;
   b.style.display=n?'inline':'none'; b.textContent=n;  updateGroupBadges();
 }
 
