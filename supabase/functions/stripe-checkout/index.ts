@@ -4,8 +4,7 @@
 // returns the hosted checkout URL. The site's "Start free trial" button calls
 // this and redirects the customer to Stripe's secure checkout page.
 //
-//   $149/mo  (plan: "standard")   |   $75/mo  (plan: "families")
-//   30-day free trial on both. Promo codes allowed.
+//   $99/mo flat (HomeTogether Connect). 30-day free trial. Promo codes allowed.
 //
 // The secret key lives ONLY here, server-side — it is never sent to the browser.
 // Secret:   STRIPE_SECRET_KEY   (Samantha sets this in Supabase → Edge Functions → Secrets)
@@ -20,7 +19,7 @@ const ALLOW = [
   "https://guide.mo-care.com",
   "http://localhost:8646",
 ];
-const PLANS: Record<string, number> = { standard: 14900, families: 7500 }; // cents
+const PLANS: Record<string, number> = { standard: 9900, families: 9900 }; // cents — $99/mo flat
 const TRIAL_DAYS = 30;
 
 function corsFor(origin: string) {
@@ -52,7 +51,7 @@ Deno.serve(async (req) => {
     form.set("line_items[0][price_data][currency]", "usd");
     form.set("line_items[0][price_data][unit_amount]", String(amount));
     form.set("line_items[0][price_data][recurring][interval]", "month");
-    form.set("line_items[0][price_data][product_data][name]", "HomeTogether" + (plan === "families" ? " (Caring Companions families)" : ""));
+    form.set("line_items[0][price_data][product_data][name]", "HomeTogether Connect");
     form.set("subscription_data[trial_period_days]", String(TRIAL_DAYS));
     form.set("allow_promotion_codes", "true");
     form.set("billing_address_collection", "auto");

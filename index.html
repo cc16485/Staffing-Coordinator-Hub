@@ -8,12 +8,12 @@
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
 :root {
-  --navy:#123A5E; --yellow:#D9A63C; --teal:#2E8577; --gold:#D9A63C; --turq:#3EC8BE;
-  --bg:#EDF1F5; --white:#fff; --gray:#64748B; --border:#E1E7EE;
+  --navy:#0D365F; --yellow:#F0A63A; --teal:#1F7A8C; --gold:#F0A63A; --turq:#8FD1C7;
+  --bg:#faf9f6; --white:#fff; --gray:#55677a; --border:#e4e1d8;
   --green:#22C55E; --green-bg:#dcfce7; --green-text:#15803d;
   --amber-bg:#fef3c7; --amber-text:#92400e;
   --red:#EF4444; --red-bg:#fee2e2; --red-text:#b91c1c;
-  --slate-bg:#f1f5f9; --slate-text:#64748b;
+  --slate-bg:#f1f5f9; --slate-text:#55677a;
   --blue-bg:#dbeafe; --blue-text:#1d4ed8;
 }
 *{box-sizing:border-box;margin:0;padding:0}
@@ -32,12 +32,12 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min
 
 /* ── App shell ── */
 #app{display:none}
-header{background:#fff;border-bottom:1px solid #E2E8F0;padding:.9rem 1.5rem;display:flex;align-items:center;justify-content:space-between}
+header{background:#fff;border-bottom:1px solid #e4e1d8;padding:.9rem 1.5rem;display:flex;align-items:center;justify-content:space-between}
 header img{height:44px}
 .hdr-center h1{color:var(--navy);font-size:1rem;font-weight:800;text-align:center}
 .hdr-center p{color:#94a3b8;font-size:.72rem;text-align:center}
 .hdr-right{display:flex;align-items:center;gap:.75rem}
-.logout-btn{background:#F1F5F9;color:var(--navy);border:1px solid #E2E8F0;padding:.35rem .8rem;border-radius:6px;font-family:inherit;font-size:.78rem;font-weight:600;cursor:pointer}
+.logout-btn{background:#F1F5F9;color:var(--navy);border:1px solid #e4e1d8;padding:.35rem .8rem;border-radius:6px;font-family:inherit;font-size:.78rem;font-weight:600;cursor:pointer}
 
 /* ── Folder tabs ── */
 /* File-folder group tabs on a white shelf */
@@ -45,7 +45,7 @@ header img{height:44px}
 .tab{padding:.5rem 1.2rem;border-radius:11px 11px 0 0;font-size:.8rem;font-weight:700;cursor:pointer;border:1.5px solid var(--navy);border-bottom:none;color:var(--navy);background:#fff;transition:.15s;white-space:nowrap;position:relative}
 .tab:hover{background:#EFF5FA}
 .tab.active{background:var(--bg);color:var(--navy);font-weight:800;font-size:.84rem;margin-bottom:-1.5px;border-bottom:1.5px solid var(--bg);padding:.75rem 1.5rem .6rem;opacity:1;box-shadow:inset 0 3px 0 var(--turq)}
-.subbar{display:flex;gap:.35rem;padding:.7rem 1.5rem .6rem;background:var(--bg);border-bottom:1px solid #E2E8F0;overflow-x:auto}
+.subbar{display:flex;gap:.35rem;padding:.7rem 1.5rem .6rem;background:var(--bg);border-bottom:1px solid #e4e1d8;overflow-x:auto}
 .subbar .tab{border-radius:999px;padding:.35rem 1rem;font-size:.76rem;border:1.5px solid var(--navy);background:#fff;color:var(--navy);margin-bottom:0}
 .subbar .tab:hover{background:#EFF5FA}
 .subbar .tab.active{background:var(--navy);color:#fff;border:1px solid var(--navy);padding-top:.35rem}
@@ -1026,7 +1026,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
             <input id="att-note" placeholder="Reason / note (optional)" style="flex:1;min-width:160px;font-size:.85rem">
             <button class="fb" onclick="logAttEvent()">Log it</button>
           </div>
-          <div id="att-log-hint" style="font-size:.75rem;color:#64748b;margin-top:.45rem"></div>
+          <div id="att-log-hint" style="font-size:.75rem;color:#55677a;margin-top:.45rem"></div>
         </div>
 
         <div id="att-roster"><div style="color:#94a3b8;font-size:.85rem">No attendance events logged yet — the record starts with the first log.</div></div>
@@ -1037,7 +1037,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
             <div style="font-size:.85rem;font-weight:700;color:var(--navy)">Scan AxisCare clock-ins (last 7 days)</div>
             <button onclick="scanClockins(this)" style="margin-left:auto;padding:.32rem .75rem;background:var(--teal);color:#fff;border:none;border-radius:7px;font-size:.75rem;font-weight:600;cursor:pointer;font-family:inherit">Run scan</button>
           </div>
-          <div style="font-size:.72rem;color:#64748b;margin-bottom:.5rem">ℹ️ Caregivers aren't clocking in through AxisCare yet, so shifts show "no clock-in" even when they were there — treat results as leads to check, not facts. Once the team moves to AxisCare EVV, this scan becomes automatic tardiness detection.</div>
+          <div style="font-size:.72rem;color:#55677a;margin-bottom:.5rem">ℹ️ Caregivers aren't clocking in through AxisCare yet, so shifts show "no clock-in" even when they were there — treat results as leads to check, not facts. Once the team moves to AxisCare EVV, this scan becomes automatic tardiness detection.</div>
           <div id="att-scan-results"></div>
         </div>
       </div>
@@ -2063,12 +2063,12 @@ function showSetNewPassword(){
   d.id='pwResetOverlay';
   d.style.cssText='position:fixed;inset:0;background:rgba(15,23,42,.78);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px';
   d.innerHTML='<div style="background:#fff;border-radius:14px;padding:26px;width:100%;max-width:360px;font-family:inherit">'
-    +'<h2 style="margin:0 0 6px;color:#0E3860;font-size:18px">Set a new password</h2>'
-    +'<p style="margin:0 0 14px;font-size:13px;color:#64748B">Your email link signed you in — now choose a new password.</p>'
-    +'<input id="pwNew1" type="password" placeholder="New password (8+ characters)" style="width:100%;box-sizing:border-box;padding:11px;border:1.5px solid #E2E8F0;border-radius:8px;font-size:16px;margin-bottom:8px;font-family:inherit">'
-    +'<input id="pwNew2" type="password" placeholder="Type it again" style="width:100%;box-sizing:border-box;padding:11px;border:1.5px solid #E2E8F0;border-radius:8px;font-size:16px;margin-bottom:10px;font-family:inherit">'
+    +'<h2 style="margin:0 0 6px;color:#0D365F;font-size:18px">Set a new password</h2>'
+    +'<p style="margin:0 0 14px;font-size:13px;color:#55677a">Your email link signed you in — now choose a new password.</p>'
+    +'<input id="pwNew1" type="password" placeholder="New password (8+ characters)" style="width:100%;box-sizing:border-box;padding:11px;border:1.5px solid #e4e1d8;border-radius:8px;font-size:16px;margin-bottom:8px;font-family:inherit">'
+    +'<input id="pwNew2" type="password" placeholder="Type it again" style="width:100%;box-sizing:border-box;padding:11px;border:1.5px solid #e4e1d8;border-radius:8px;font-size:16px;margin-bottom:10px;font-family:inherit">'
     +'<div id="pwErr" style="display:none;color:#DC2626;font-size:12.5px;margin-bottom:10px"></div>'
-    +'<button id="pwSaveBtn" style="width:100%;background:#0E3860;color:#fff;border:none;padding:12px;border-radius:999px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit">Save new password</button>'
+    +'<button id="pwSaveBtn" style="width:100%;background:#0D365F;color:#fff;border:none;padding:12px;border-radius:999px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit">Save new password</button>'
     +'</div>';
   document.body.appendChild(d);
   document.getElementById('pwSaveBtn').onclick=async function(){
@@ -3291,10 +3291,10 @@ function renderOffers(){
         '<span>'+esc(a[1])+'</span><b style="color:'+(no?'#DC2626':'#15803D')+'">'+(no?'NO':'Yes')+'</b></div>';
     }).join('');
     const lvl=o.level_confirmed||'';
-    return '<div style="background:#fff;border:1px solid '+(done?'#E2E8F0':'#f59e0b')+';border-radius:12px;padding:1rem 1.2rem">'+
+    return '<div style="background:#fff;border:1px solid '+(done?'#e4e1d8':'#f59e0b')+';border-radius:12px;padding:1rem 1.2rem">'+
       '<div style="display:flex;align-items:center;gap:.7rem;flex-wrap:wrap">'+
-      '<b style="font-size:1rem;color:#0E3860">'+esc(o.name)+'</b>'+
-      '<span style="font-size:.78rem;color:#64748B">'+esc(o.position||'Caregiver')+(o.pay_rate?' · $'+Number(o.pay_rate).toFixed(2)+'/hr':'')+' · interviewed '+esc(o.interview_date||'')+(o.offered_by?' by '+esc(o.offered_by):'')+'</span>'+
+      '<b style="font-size:1rem;color:#0D365F">'+esc(o.name)+'</b>'+
+      '<span style="font-size:.78rem;color:#55677a">'+esc(o.position||'Caregiver')+(o.pay_rate?' · $'+Number(o.pay_rate).toFixed(2)+'/hr':'')+' · interviewed '+esc(o.interview_date||'')+(o.offered_by?' by '+esc(o.offered_by):'')+'</span>'+
       '<span style="flex:1"></span>'+
       (o.axiscare_applicant_id
         ? '<span style="font-size:.72rem;font-weight:700;color:#15803D;background:#DCFCE7;border-radius:999px;padding:.15rem .6rem">In AxisCare ✓</span>'
@@ -3312,8 +3312,8 @@ function renderOffers(){
       (o.personality?'<div><b>Personality/fit:</b> '+esc(o.personality)+'</div>':'')+
       (o.notes?'<div><b>Notes:</b> '+esc(o.notes)+'</div>':'')+
       '</div>'+
-      '<div style="display:flex;gap:.6rem;align-items:center;margin-top:.7rem;flex-wrap:wrap;font-size:.82rem;background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:.5rem .7rem">'+
-      '<b style="color:#0E3860">Viventium:</b>'+
+      '<div style="display:flex;gap:.6rem;align-items:center;margin-top:.7rem;flex-wrap:wrap;font-size:.82rem;background:#F8FAFC;border:1px solid #e4e1d8;border-radius:8px;padding:.5rem .7rem">'+
+      '<b style="color:#0D365F">Viventium:</b>'+
       '<span style="background:#EDE9FE;color:#5B21B6;border-radius:999px;padding:.12rem .6rem;font-size:.72rem;font-weight:700">plan: '+esc(o.onboarding_plan||'Default (Default)')+'</span>'+
       (o.viventium_entered_at
         ? '<span style="color:#15803D;font-weight:700">entered ✓</span>'
@@ -3335,7 +3335,7 @@ function renderOffers(){
       '<div style="display:flex;gap:1rem;align-items:center;margin-top:.7rem;flex-wrap:wrap;font-size:.82rem">'+
       '<span><b>Level of care:</b> suggested '+(o.level_suggested||'—')+' at interview</span>'+
       '<label style="display:flex;align-items:center;gap:.4rem">confirmed:'+
-      '<select onchange="confirmOfferLevel(\''+esc(o.id)+'\',this)" style="font-family:inherit;font-size:.82rem;padding:.2rem .4rem;border:1px solid #E2E8F0;border-radius:6px">'+
+      '<select onchange="confirmOfferLevel(\''+esc(o.id)+'\',this)" style="font-family:inherit;font-size:.82rem;padding:.2rem .4rem;border:1px solid #e4e1d8;border-radius:6px">'+
       '<option value=""'+(lvl===''?' selected':'')+'>not yet</option>'+
       [1,2,3].map(n=>'<option value="'+n+'"'+(lvl===n?' selected':'')+'>Level '+n+'</option>').join('')+
       '</select></label>'+
@@ -3343,7 +3343,7 @@ function renderOffers(){
       '</div>'+
       '<details style="margin-top:.7rem"><summary style="cursor:pointer;font-size:.82rem;font-weight:700;color:#5B21B6">📝 Viventium entry sheet — every field in screen order, copy one at a time</summary>'+
       '<div style="max-width:520px;margin-top:.4rem;background:#FBFAFF;border:1px solid #EDE9FE;border-radius:8px;padding:.6rem .8rem">'+vivSheet(o)+'</div></details>'+
-      '<details style="margin-top:.5rem"><summary style="cursor:pointer;font-size:.82rem;font-weight:700;color:#0E3860">AxisCare attribute answers — same order as the Attributes screen</summary>'+
+      '<details style="margin-top:.5rem"><summary style="cursor:pointer;font-size:.82rem;font-weight:700;color:#0D365F">AxisCare attribute answers — same order as the Attributes screen</summary>'+
       '<div style="max-width:420px;margin-top:.4rem">'+attrHtml+'</div></details>'+
       '</div>';
   }).join('');
@@ -3414,7 +3414,7 @@ async function sendOfferWelcome(id,btn,quiet){
 function vivSheet(o){
   const esc=t=>String(t==null?'':t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   const row=(label,val,hint)=>'<div style="display:flex;align-items:center;gap:.5rem;padding:.26rem 0;border-bottom:1px dashed #eef2f7;font-size:.8rem">'
-    +'<span style="min-width:145px;color:#64748b">'+label+'</span>'
+    +'<span style="min-width:145px;color:#55677a">'+label+'</span>'
     +(val!=null&&String(val).trim()!==''
       ?'<b style="flex:1;word-break:break-word">'+esc(val)+'</b><button class="fb" style="font-size:.68rem;padding:.12rem .5rem;flex-shrink:0" data-v="'+esc(val)+'" onclick="vivCopy(this)">📋 copy</button>'
       :'<span style="flex:1;color:#94a3b8;font-style:italic">'+(hint||'—')+'</span>')
@@ -3625,7 +3625,7 @@ function renderAttendance(){
     return '<div style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:.85rem 1.1rem;margin-bottom:.6rem">'
       +'<div style="display:flex;align-items:center;gap:.7rem;flex-wrap:wrap">'
       +'<b style="font-size:.95rem;color:var(--navy)">'+creqEsc(cg)+'</b>'+chip
-      +'<span style="margin-left:auto;font-size:.72rem;color:#64748b">'+s.callinsWin.length+' call-ins · '+s.tardiesWin.length+' tardies (window) · '+s.issued.length+' warning'+(s.issued.length===1?'':'s')+' on file</span>'
+      +'<span style="margin-left:auto;font-size:.72rem;color:#55677a">'+s.callinsWin.length+' call-ins · '+s.tardiesWin.length+' tardies (window) · '+s.issued.length+' warning'+(s.issued.length===1?'':'s')+' on file</span>'
       +'</div>'
       +(s.triggers.length?'<div style="margin-top:.5rem">'+s.triggers.map((t,ti)=>
         '<div style="display:flex;align-items:center;gap:.6rem;font-size:.8rem;padding:.3rem 0;flex-wrap:wrap"><span style="color:#b91c1c;font-weight:700">→</span>'
@@ -3635,7 +3635,7 @@ function renderAttendance(){
         const st=a.status==='pending_approval'?'⏳ awaiting approval':a.status==='approved'?'✅ approved — ready to issue':(a.reject_note?'↩ sent back: “'+creqEsc(a.reject_note)+'”':'📝 draft');
         return '<div style="font-size:.75rem;color:#92400e;margin-top:.3rem">'+creqEsc(a.level)+' — '+st+' · <a href="#" onclick="openWriteup(\''+a.id+'\');return false;">open</a></div>';
       }).join(''):'')
-      +'<details style="margin-top:.45rem"><summary style="cursor:pointer;font-size:.72rem;color:#64748b">History ('+s.evs.length+' events'+(s.issued.length?', '+s.issued.length+' issued warnings':'')+')</summary>'
+      +'<details style="margin-top:.45rem"><summary style="cursor:pointer;font-size:.72rem;color:#55677a">History ('+s.evs.length+' events'+(s.issued.length?', '+s.issued.length+' issued warnings':'')+')</summary>'
       +s.evs.slice().sort((a,b)=>String(b.shift_date).localeCompare(String(a.shift_date))).map(e=>
         '<div style="font-size:.75rem;padding:.2rem 0;color:#33414d">'+(TYPE_ICON[e.type]||'')+' '+e.shift_date+(e.shift_time?' '+e.shift_time:'')
         +(e.type==='callin'&&e.notice_hours!=null?' · '+e.notice_hours+'h notice':'')
@@ -3882,7 +3882,7 @@ async function toggleThread(i){
       '<div style="max-height:260px;overflow-y:auto;display:flex;flex-direction:column;gap:.35rem;padding:.5rem;background:#fff;border:1px solid #fcd34d;border-radius:8px">'
       +(data.thread.length>=25?'<div style="align-self:center;font-size:.68rem;color:#94a3b8">Showing the last 25 messages — open GHL for the full history</div>':'')
       +data.thread.map(m=>
-        '<div style="align-self:'+(m.direction==='inbound'?'flex-start':'flex-end')+';max-width:85%;background:'+(m.direction==='inbound'?'#f1f5f9':'#0E3860')+';color:'+(m.direction==='inbound'?'#1f2a36':'#fff')+';border-radius:10px;padding:.4rem .65rem;font-size:.8rem;white-space:pre-wrap">'+creqEsc(m.body)
+        '<div style="align-self:'+(m.direction==='inbound'?'flex-start':'flex-end')+';max-width:85%;background:'+(m.direction==='inbound'?'#f1f5f9':'#0D365F')+';color:'+(m.direction==='inbound'?'#1f2a36':'#fff')+';border-radius:10px;padding:.4rem .65rem;font-size:.8rem;white-space:pre-wrap">'+creqEsc(m.body)
         +'<div style="font-size:.62rem;opacity:.65;margin-top:.15rem">'+fmt(m.at)+'</div></div>').join('')
       +'</div>'
       +'<div style="display:flex;gap:.4rem;margin-top:.45rem">'
@@ -3973,7 +3973,7 @@ function renderMeetings(){
   const mine=MEETINGS.filter(m=>m.status==='requested'&&m.requested_by_role===MTG_ROLE);
   const recent=MEETINGS.filter(m=>(m.status==='declined'||m.status==='done')&&mtgInvolvesMe(m)).slice(-4).reverse();
   const card=(m,inner)=>'<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:.65rem 1rem;margin-bottom:.4rem;font-size:.85rem">'
-    +'<b>'+creqEsc(m.topic)+'</b><div style="font-size:.72rem;color:#64748b;margin:.15rem 0 .35rem">'
+    +'<b>'+creqEsc(m.topic)+'</b><div style="font-size:.72rem;color:#55677a;margin:.15rem 0 .35rem">'
     +creqEsc(m.requested_by_name)+' → '+creqEsc(MTG_WHO[m.with]||m.with)
     +(m.scheduled_for?' · 🗓 <b>'+creqEsc(m.scheduled_for)+'</b>':m.when_pref?' · suggested: '+creqEsc(m.when_pref):'')
     +'</div>'+inner+'</div>';
@@ -3986,7 +3986,7 @@ function renderMeetings(){
       +'<button style="font-size:.75rem;background:#f1f5f9;border:1px solid var(--border);border-radius:7px;padding:.3rem .7rem;cursor:pointer;font-family:inherit" onclick="doneMeeting(\''+m.id+'\')">Mark done</button>'
       +'<div style="font-size:.68rem;color:#94a3b8;margin-top:.3rem">Opens in your browser — allow camera &amp; mic. The 🖥 button inside shares your screen.</div>')).join(''):'')
     +(mine.length?'<div style="font-weight:700;font-size:.85rem;margin:.8rem 0 .2rem">⏳ Waiting for an answer</div>'+mine.map(m=>card(m,'<span style="font-size:.72rem;color:#94a3b8">requested '+new Date(m.created_at).toLocaleDateString()+'</span>')).join(''):'')
-    +(recent.length?'<div style="font-weight:700;font-size:.85rem;margin:.8rem 0 .2rem;color:#64748b">Recent</div>'+recent.map(m=>card(m,
+    +(recent.length?'<div style="font-weight:700;font-size:.85rem;margin:.8rem 0 .2rem;color:#55677a">Recent</div>'+recent.map(m=>card(m,
       m.status==='declined'?'<span style="font-size:.75rem;color:#b45309">↩ '+creqEsc(m.declined_reason||'didn\'t work — try another time')+'</span>':'<span style="font-size:.75rem;color:#166534">✓ held</span>')).join(''):'')
     ||'<div style="color:#94a3b8;font-size:.85rem">No meetings yet — request one above.</div>';
   updateCommsBadge();
@@ -4037,7 +4037,7 @@ function renderOpenShifts(){
   const fmt=d=>new Date(d+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
   box.innerHTML=OPEN_SHIFTS.map(s=>{
     const hrs=(new Date(s.date+'T'+(s.start24||'23:59')).getTime()-now)/3600000;
-    const color=hrs<=48?'#DC2626':hrs<=168?'#B45309':'#64748b';
+    const color=hrs<=48?'#DC2626':hrs<=168?'#B45309':'#55677a';
     const tag=hrs<=48?'⚠ within 48 hours':hrs<=168?'this week':'';
     return '<div style="background:#fff;border:1px solid var(--border);border-left:4px solid '+color+';border-radius:10px;padding:.6rem 1rem;margin-bottom:.4rem;display:flex;align-items:center;gap:.8rem;flex-wrap:wrap">'
       +'<b style="min-width:130px">'+creqEsc(s.client)+'</b>'
@@ -4063,7 +4063,7 @@ function renderDnrLog(){
     '<div style="background:#fff;border:1px solid #fecaca;border-left:4px solid #DC2626;border-radius:10px;padding:.6rem 1rem;margin-bottom:.4rem;font-size:.85rem">'
     +'<b>'+creqEsc(e.caregiver||'(caregiver)')+'</b> must not return to <b>'+creqEsc(e.client||'(client)')+'</b>'
     +(e.reason?' — '+creqEsc(e.reason):'')
-    +'<div style="font-size:.72rem;color:#64748b;margin-top:.2rem">requested by '+creqEsc(e.requested_by||'—')
+    +'<div style="font-size:.72rem;color:#55677a;margin-top:.2rem">requested by '+creqEsc(e.requested_by||'—')
     +' · logged '+new Date(e.logged_at).toLocaleDateString()+' by '+creqEsc(e.logged_by||'—')
     +(e.axiscare_entered?' · ✅ exclusion entered in AxisCare':' · ⚠ <a href="#" onclick="dnrMarkAxis(\''+e.id+'\');return false;">mark exclusion entered in AxisCare</a>')
     +'</div></div>').join('');
@@ -4206,7 +4206,7 @@ function renderCheckins(){
     return '<div style="background:#fff;border:1px solid var(--border);border-left:4px solid '+rm[1]+';border-radius:10px;padding:.65rem 1rem;margin-bottom:.45rem;font-size:.85rem">'
       +'<b>'+creqEsc(e.client)+'</b> <span style="color:#94a3b8">×</span> <b>'+creqEsc(e.caregiver)+'</b>'
       +' — '+rm[0]+' '+rm[2]
-      +'<div style="font-size:.72rem;color:#64748b;margin-top:.2rem">'+new Date(e.at).toLocaleDateString('en-US',{month:'short',day:'numeric'})
+      +'<div style="font-size:.72rem;color:#55677a;margin-top:.2rem">'+new Date(e.at).toLocaleDateString('en-US',{month:'short',day:'numeric'})
       +(e.skip?' · marked established — no call needed':(e.spoke_with?' · spoke with '+creqEsc(e.spoke_with):''))+' · by '+creqEsc(e.by||'')+'</div>'
       +(e.notes?'<div style="font-size:.8rem;color:#334155;margin-top:.3rem">“'+creqEsc(e.notes)+'”</div>':'')
       +extra+'</div>';
@@ -4281,7 +4281,7 @@ function renderCoordReqs(){
   const recentDone=inbox.filter(t=>t.status==='done').sort((a,b)=>String(b.done_at).localeCompare(String(a.done_at))).slice(0,10);
   const KIND_META={ dnr:['🚫','#DC2626','Do not send back'], hours:['➕','#B45309','Add / change hours'], coverage:['🕐','#DC2626','Coverage gap'], schedule:['📅','#2F6FB0','Schedule change'], attendance:['⏰','#B45309','Attendance issue — log it on the ⏰ Attendance tab'], todo:['☑️','#DC2626',''], update:['ℹ️','#2F6FB0',''] };
   const row=(t,mine)=>{
-    const urgColor=t.urgency==='Today'?'#DC2626':t.urgency==='This week'?'#B45309':'#64748b';
+    const urgColor=t.urgency==='Today'?'#DC2626':t.urgency==='This week'?'#B45309':'#55677a';
     const km=KIND_META[t.kind]||KIND_META.update;
     return '<div style="background:#fff;border:1px solid var(--border);border-left:4px solid '+(t.status==='done'?'#16a34a':km[1])+';border-radius:10px;padding:.75rem 1rem">'
       +'<div style="display:flex;align-items:flex-start;gap:.6rem;flex-wrap:wrap">'
@@ -4290,7 +4290,7 @@ function renderCoordReqs(){
       +(km[2]?'<span style="font-size:.68rem;font-weight:800;letter-spacing:.03em;color:'+km[1]+';text-transform:uppercase">'+km[2]+'</span><br>':'')
       +(t.about?'<b>'+creqEsc(t.about)+'</b>'+(t.caregiver?' / caregiver: <b>'+creqEsc(t.caregiver)+'</b>':'')+' — ':'')+creqEsc(t.message)
       +(t.kind==='hours'&&t.status!=='done'?'<div style="font-size:.72rem;background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;padding:.3rem .55rem;margin-top:.3rem;color:#92400E">💡 Medicaid client? Check authorized units before promising the hours — if this exceeds the authorization, send it back to the evening coordinator to request a DSDS reassessment.</div>':'')
-      +'<div style="font-size:.75rem;color:#64748b;margin-top:.25rem">'
+      +'<div style="font-size:.75rem;color:#55677a;margin-top:.25rem">'
       +(mine?(t.direction==='to_owners'?'to the Owners':'to the care coordinators'):'from '+creqEsc(t.from_name||'a care coordinator'))
       +' · '+new Date(t.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})
       +' · <span style="color:'+urgColor+';font-weight:600">'+creqEsc(t.urgency||'')+'</span>'
@@ -4307,7 +4307,7 @@ function renderCoordReqs(){
       ? '<div style="font-weight:700;font-size:.85rem;margin:.2rem 0">📥 Needs your attention ('+open.length+')</div>'+open.map(t=>row(t,false)).join('')
       : '<div style="color:#94a3b8;font-size:.85rem;padding:.4rem 0">📥 Nothing waiting from the coordinators. 🎉</div>')
     +(recentDone.length
-      ? '<div style="font-weight:700;font-size:.85rem;margin:.8rem 0 .2rem;color:#64748b">Recently completed</div>'+recentDone.map(t=>row(t,false)).join('')
+      ? '<div style="font-weight:700;font-size:.85rem;margin:.8rem 0 .2rem;color:#55677a">Recently completed</div>'+recentDone.map(t=>row(t,false)).join('')
       : '');
   updateCoordreqBadge();
 }
@@ -4339,7 +4339,7 @@ function renderSendMsg(){
   box.innerHTML = sent.length ? sent.map(x=>
     '<div style="background:#fff;border:1px solid var(--border);border-left:4px solid '+(x.status==='done'?'#16a34a':'#2F6FB0')+';border-radius:10px;padding:.7rem 1rem;font-size:.92rem">'
     +'<div>'+(x.about?'<b>'+creqEsc(x.about)+'</b> — ':'')+creqEsc(x.message||'')+'</div>'
-    +'<div style="font-size:.72rem;color:#64748b;margin-top:.2rem">'
+    +'<div style="font-size:.72rem;color:#55677a;margin-top:.2rem">'
     +(x.direction==='to_owners'?'to the Owners':'to the care coordinators')
     +' · '+new Date(x.created_at).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})
     +' · '+creqEsc(x.urgency||'')
@@ -4409,7 +4409,7 @@ function renderEod(){
       +'<b style="white-space:nowrap">'+esc(r.report_date)+'</b>'
       +(r.role?'<span style="font-size:.7rem;font-weight:700;background:#E4EDF6;color:#1F517F;border-radius:999px;padding:.1rem .5rem;white-space:nowrap">'+esc(r.role)+'</span>':'')
       +'<a href="#" onclick="openEod(\''+esc(r.path)+'\');return false;" style="font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--navy)">'+esc(r.name)+'</a>'
-      +(r.note?'<span style="color:#64748B;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.note)+'</span>':'')
+      +(r.note?'<span style="color:#55677a;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r.note)+'</span>':'')
       +'<span style="margin-left:auto;color:#94a3b8;font-size:.75rem;white-space:nowrap">'+(r.size?Math.round(r.size/1024)+' KB · ':'')+esc((r.by||'').split('@')[0])+'</span>'
       +'</div>').join('')
     +'</div></details>').join('');
@@ -5291,7 +5291,7 @@ function updateMrefPreview(){
   if(!score){el.style.display='none';return;}
   const colors={Positive:'#d1fae5',Conditional:'#fef3c7',Negative:'#fee2e2'};
   const text={Positive:'✅ This reference will score as Positive',Conditional:'⚠️ This reference will score as Conditional',Negative:'❌ This reference will score as Negative'};
-  el.style.display='block';el.style.background=colors[score];el.style.color='#1e293b';el.textContent=text[score];
+  el.style.display='block';el.style.background=colors[score];el.style.color='#16283a';el.textContent=text[score];
 }
 function openManualRef(candidateId, slot){
   _mrefCandId=candidateId; _mrefSlot=slot;
