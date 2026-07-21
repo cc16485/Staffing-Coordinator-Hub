@@ -226,7 +226,8 @@ Deno.serve(async (req) => {
         '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.7;">'
         + '<p>Hi ' + esc(item.name.split(' ')[0] || item.name) + ',</p>'
         + '<p>Thanks for applying to HomeTogether Local. A real person from our Springfield team reviews every application, and we&rsquo;ll call you within 2 business days.</p>'
-        + '<p><b>What happens next:</b><br>1. A short phone chat about your experience and what you&rsquo;re looking for<br>2. An interview (video or in person)<br>3. A background check ($45, paid once, run through Checkr)<br>4. We start personally introducing you to families near you</p>'
+        + '<p><b>What happens next:</b><br>1. A short phone chat about your experience and what you&rsquo;re looking for<br>2. An interview (video or in person)<br>3. Your \u2713 Verified badge, whenever you\u2019re ready (details below)<br>4. We start personally introducing you to families near you</p>'
+        + '<p><b>About your \u2713 Verified badge:</b> signing up is free, and the background check is optional up front. It\u2019s a one-time $45, run through Checkr, and you choose when: right away to stand out from day one, or later when a family wants to hire you. Families always see which caregivers have been checked, and checked caregivers get chosen first.</p>'
         + '<p>No fees, no commissions during our founding period. Questions? Just reply, or call <a href="tel:14172348494">(417) 234-8494</a>.</p>'
         + '<p>Warmly,<br>The HomeTogether Local team</p></div>')
     }
@@ -281,13 +282,15 @@ Deno.serve(async (req) => {
     // deno-lint-ignore no-explicit-any
     const c: any = items.find((x: any) => x?.id === cid)
     if (!c) return json({ error: 'caregiver not found' }, 404)
-    if (!c.email) return json({ error: 'This caregiver has no email on file; collect one first.' }, 400)
+    const direct = !!b.direct
+    const fam = !!b.family_interested
+    if (!c.email && !direct) return json({ error: 'This caregiver has no email on file; collect one first.' }, 400)
     const sk = Deno.env.get('STRIPE_SECRET_KEY')
     if (!sk) return json({ error: 'Stripe not configured' }, 500)
 
     const form = new URLSearchParams()
     form.set('mode', 'payment')
-    form.set('customer_email', c.email)
+    if (c.email) form.set('customer_email', c.email)
     form.set('line_items[0][quantity]', '1')
     form.set('line_items[0][price_data][currency]', 'usd')
     form.set('line_items[0][price_data][unit_amount]', '4500')
@@ -308,17 +311,32 @@ Deno.serve(async (req) => {
 
     c.status = 'background check'
     c.pay_link_sent = new Date().toISOString()
-    c.notes = ((c.notes || '') + '\n$45 check payment link sent ' + new Date().toLocaleDateString('en-US') + '.').trim()
+    c.notes = ((c.notes || '') + '\n$45 check payment link ' + (direct ? 'opened by caregiver (pay-now at sign-up)' : (fam ? 'sent (family interested)' : 'sent')) + ' ' + new Date().toLocaleDateString('en-US') + '.').trim()
     await supabase.rpc('upsert_app_data_item', { target_key: 'local_caregivers', item: c })
 
-    await ghlEmail(c.email, (c.name || '').split(' ')[0] || 'there',
-      'Your HomeTogether Local background check, next step',
-      '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.7;">'
-      + '<p>Hi ' + esc((c.name || '').split(' ')[0] || 'there') + ',</p>'
-      + '<p>Great news: you\u2019re moving to the background-check step. It\u2019s a one-time <b>$45</b>, paid securely through Stripe, and it covers the full check (run through Checkr, the same service national companies use).</p>'
-      + '<p style="margin:18px 0;"><a href="' + sess.url + '" style="background:#E9A13B;color:#123;padding:14px 26px;border-radius:999px;text-decoration:none;font-weight:700;">Pay for my background check \u2192</a></p>'
-      + '<p>After payment, watch your email for a message from Checkr to complete your details. Results usually take 1-3 business days, and your \u2713 badge activates when it clears.</p>'
-      + '<p>Questions? Reply here or call <a href="tel:14172348494">(417) 234-8494</a>.</p><p>Warmly,<br>The HomeTogether Local team</p></div>')
+    const first = esc((c.name || '').split(' ')[0] || 'there')
+    const payBtn = '<p style="margin:18px 0;"><a href="' + sess.url + '" style="background:#E9A13B;color:#123;padding:14px 26px;border-radius:999px;text-decoration:none;font-weight:700;">Complete my background check ($45) \u2192</a></p>'
+    const checkrPs = '<p>After payment, watch your email for a message from Checkr to complete your details. Results usually take 1-3 business days, and your \u2713 Verified badge activates the moment it clears.</p>'
+    if (c.email && !direct) {
+      if (fam) {
+        await ghlEmail(c.email, first,
+          '\ud83c\udf89 A family would like to move forward with you',
+          '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.7;">'
+          + '<p>Hi ' + first + ',</p>'
+          + '<p>Wonderful news: <b>a family near you would like to move forward with you</b>. Before we make the introduction official, the last step is your background check. It\u2019s a one-time <b>$45</b>, paid securely through Stripe, and it earns the \u2713 Verified badge families are looking for.</p>'
+          + payBtn + checkrPs
+          + '<p>The family is excited to meet you, so the sooner the check is running, the sooner we connect you.</p>'
+          + '<p>Questions? Reply here or call <a href="tel:14172348494">(417) 234-8494</a>.</p><p>Warmly,<br>The HomeTogether Local team</p></div>')
+      } else {
+        await ghlEmail(c.email, first,
+          'Your \u2713 Verified badge, one step away',
+          '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.7;">'
+          + '<p>Hi ' + first + ',</p>'
+          + '<p>Ready to stand out? Your \u2713 Verified badge is one step away: a one-time <b>$45</b> background check, paid securely through Stripe and run through Checkr, the same service national companies use. Families see who\u2019s been checked, and checked caregivers get chosen first.</p>'
+          + payBtn + checkrPs
+          + '<p>Questions? Reply here or call <a href="tel:14172348494">(417) 234-8494</a>.</p><p>Warmly,<br>The HomeTogether Local team</p></div>')
+      }
+    }
     return json({ ok: true, link: sess.url })
   }
 
