@@ -200,9 +200,26 @@ async function computeSlots(supabase: any) {
     .filter((p: number[]) => Number.isFinite(p[0]))
     .map((p: number[]) => [p[0], Number.isFinite(p[1]) && p[1] > p[0] ? p[1] : p[0] + (settings.slot_minutes || 30) * 60000])
 
-  const busy = (await fetchBusy(settings, now, winEnd)).concat(booked)
-
   const tz = settings.timezone
+
+  // Orientation sessions (Staffing Hub -> Orientations) block this calendar
+  // too: a coordinator running orientation can't take a consultation.
+  const { data: osRow } = await supabase.from('app_data').select('data').eq('key', 'orient_sessions').maybeSingle()
+  const { data: stRow } = await supabase.from('app_data').select('data').eq('key', 'settings').maybeSingle()
+  // deno-lint-ignore no-explicit-any
+  const orientDurMs = ((parseFloat((stRow?.data as any)?.orient_config?.duration) || 2)) * 3600000
+  const orientBusy: number[][] = (Array.isArray(osRow?.data) ? osRow.data : [])
+    // deno-lint-ignore no-explicit-any
+    .filter((o: any) => o?.date && /^\d{4}-\d{2}-\d{2}$/.test(o.date) && o.status !== 'cancelled')
+    // deno-lint-ignore no-explicit-any
+    .map((o: any) => {
+      const [y, mo, d] = o.date.split('-').map(Number)
+      const [hh, mm] = String(o.time || '10:00').split(':').map(Number)
+      const start = localToUtc(tz, y, mo, d, hh || 10, mm || 0)
+      return [start, start + orientDurMs]
+    })
+
+  const busy = (await fetchBusy(settings, now, winEnd)).concat(booked, orientBusy)
   const slotMs = (settings.slot_minutes || 30) * 60000
   const days: { date: string; label: string; slots: { iso: string; label: string }[] }[] = []
   const WD_NUM: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }
