@@ -195,6 +195,11 @@ Deno.serve(async (req) => {
       work_history: clean(b.work_history, 3000),
       ref1: { name: clean(b.ref1?.name, 120), phone: clean(b.ref1?.phone, 40), rel: clean(b.ref1?.rel, 80) },
       ref2: { name: clean(b.ref2?.name, 120), phone: clean(b.ref2?.phone, 40), rel: clean(b.ref2?.rel, 80) },
+      logistics: (b.logistics && typeof b.logistics === 'object') ? {
+        license: !!b.logistics.license, transport: !!b.logistics.transport, insurance: !!b.logistics.insurance,
+        hours: clean(b.logistics.hours, 20), start: clean(b.logistics.start, 60),
+        pets: clean(b.logistics.pets, 40), smoke: clean(b.logistics.smoke, 40),
+      } : null,
       consents: (b.consents && typeof b.consents === 'object')
         ? { bg: !!b.consents.bg, refs: !!b.consents.refs, truth: !!b.consents.truth, at: new Date().toISOString() }
         : null,
@@ -216,6 +221,7 @@ Deno.serve(async (req) => {
       + (item.work_history ? '<p><b>Work history:</b> ' + esc(item.work_history) + '</p>' : '')
       + (item.ref1.name ? '<p><b>Reference 1:</b> ' + esc(item.ref1.name) + ' · ' + esc(item.ref1.phone) + (item.ref1.rel ? ' · ' + esc(item.ref1.rel) : '') + '</p>' : '')
       + (item.ref2.name ? '<p><b>Reference 2:</b> ' + esc(item.ref2.name) + ' · ' + esc(item.ref2.phone) + (item.ref2.rel ? ' · ' + esc(item.ref2.rel) : '') + '</p>' : '')
+      + (item.logistics ? '<p><b>Logistics:</b> license ' + (item.logistics.license ? 'yes' : 'no') + ', transport ' + (item.logistics.transport ? 'yes' : 'no') + ', insurance ' + (item.logistics.insurance ? 'yes' : 'no') + (item.logistics.hours ? ', ~' + esc(item.logistics.hours) + ' hrs/wk' : '') + (item.logistics.start ? ', start ' + esc(item.logistics.start) : '') + (item.logistics.pets ? ', pets: ' + esc(item.logistics.pets) : '') + (item.logistics.smoke ? ', smoke: ' + esc(item.logistics.smoke) : '') + '</p>' : '')
       + (item.consents ? '<p><b>Signed application:</b> background check authorized · references may be contacted by us and by families.</p>' : '<p style="color:#b91c1c;"><b>No signed consents on file</b> (older application form).</p>')
       + '<p style="color:#55677a;font-size:13px;">OIG exclusion screen runs automatically; the result appears on their hub card.</p>'
       + '<p style="color:#55677a;font-size:13px;">Review in the Care Coordinator Hub → HomeTogether → Local. Next steps: call, interview, background check.</p></div>')

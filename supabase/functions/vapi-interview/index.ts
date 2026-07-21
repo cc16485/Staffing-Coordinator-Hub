@@ -87,6 +87,7 @@ Deno.serve(async (req) => {
   const callerNumber = msg?.customer?.number || call?.customer?.number || ''
   const transcript = msg?.transcript || msg?.artifact?.transcript || ''
   const summary = msg?.summary || msg?.analysis?.summary || ''
+  const rubric = msg?.analysis?.structuredData || msg?.structuredData || null
   const recordingUrl = msg?.recordingUrl || msg?.artifact?.recordingUrl || msg?.stereoRecordingUrl || msg?.artifact?.stereoRecordingUrl || ''
   const startedAt = msg?.startedAt || call?.startedAt || new Date().toISOString()
   const durationSec = Math.round(Number(msg?.durationSeconds || msg?.durationSec || 0)) || null
@@ -97,6 +98,7 @@ Deno.serve(async (req) => {
     recordingUrl: String(recordingUrl || ''),
     transcript: String(transcript || '').slice(0, 20000),
     summary: String(summary || '').slice(0, 4000),
+    rubric,
     durationSec,
   }
 
