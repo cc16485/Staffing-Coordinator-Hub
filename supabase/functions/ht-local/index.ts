@@ -278,10 +278,13 @@ Deno.serve(async (req) => {
 
   if (kind === 'paylink') {
     const cid = clean(b.caregiver_id, 40)
+    const em = clean(b.email, 200).toLowerCase()
     const items = await loadItems(supabase, 'local_caregivers')
     // deno-lint-ignore no-explicit-any
     const c: any = items.find((x: any) => x?.id === cid)
-    if (!c) return json({ error: 'caregiver not found' }, 404)
+      || (em ? items.find((x: any) => String(x?.email || '').toLowerCase() === em) : undefined)
+    if (!c) return json({ error: 'We could not find an application with that email.' }, 404)
+    if (c.paid_at) return json({ error: 'Good news: this background check is already paid for. Watch your email for a message from Checkr.' }, 400)
     const direct = !!b.direct
     const fam = !!b.family_interested
     if (!c.email && !direct) return json({ error: 'This caregiver has no email on file; collect one first.' }, 400)
