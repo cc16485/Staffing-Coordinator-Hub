@@ -50,7 +50,7 @@ Deno.serve(async (req) => {
 
   const s = event.data?.object ?? {}
 
-  // ---------- HomeTogether Local: caregiver background-check payment ----------
+  // ---------- HomeTogether Hire: caregiver background-check payment ----------
   const hlId = s.metadata?.hl_caregiver_id
   if (hlId) {
     const supabaseHL = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
@@ -106,8 +106,8 @@ Deno.serve(async (req) => {
           const cid = (await up.json().catch(() => ({})))?.contact?.id
           if (cid) await fetch('https://services.leadconnectorhq.com/conversations/messages', { method: 'POST', headers: h, body: JSON.stringify({ type: 'Email', contactId: cid, subject, html }) })
         }
-        await send('samantha@mo-care.com', 'Samantha', '💳 HT Local: ' + (c.name || '') + ' paid for their background check', '<p><b>' + (c.name || '') + '</b> paid $45. ' + checkrNote + '</p><p style="color:#55677a;font-size:13px;">Hub → HomeTogether → Local.</p>')
-        if (c.email) await send(c.email, String(c.name || '').split(' ')[0] || 'there', 'Payment received, your background check is underway', '<p>Thanks, your $45 payment is in. Watch your email for a message from <b>Checkr</b> to complete your details; results usually take 1-3 business days, and your ✓ badge activates when it clears.</p><p>The HomeTogether Local team · (417) 234-8494</p>')
+        await send('samantha@mo-care.com', 'Samantha', '💳 HT Hire: ' + (c.name || '') + ' paid for their background check', '<p><b>' + (c.name || '') + '</b> paid $45. ' + checkrNote + '</p><p style="color:#55677a;font-size:13px;">Hub → HomeTogether → Local.</p>')
+        if (c.email) await send(c.email, String(c.name || '').split(' ')[0] || 'there', 'Payment received, your background check is underway', '<p>Thanks, your $45 payment is in. Watch your email for a message from <b>Checkr</b> to complete your details; results usually take 1-3 business days, and your ✓ badge activates when it clears.</p><p>The HomeTogether Hire team · (417) 234-8494</p>')
       } catch { /* stored fine */ }
     }
     return json({ received: true, local: true })

@@ -1,6 +1,6 @@
 // Supabase Edge Function: ht-local (shared hub project)
 // -----------------------------------------------------------------------------
-// Live sign-ups for HomeTogether Local (concierge caregiver matching).
+// Live sign-ups for HomeTogether Hire (concierge caregiver matching).
 //
 //   POST ?token=...  {kind:'caregiver', ...}  -> app_data 'local_caregivers'
 //   POST ?token=...  {kind:'family',    ...}  -> app_data 'local_families'
@@ -111,7 +111,7 @@ async function runOigScreen(supabase: ReturnType<typeof createClient>, caregiver
       c.notes = ((c.notes || '') + '\nOIG exclusion screen: POSSIBLE name match (' + hits.join('; ') + '). Verify identity at exclusions.oig.hhs.gov before deciding, a name match alone proves nothing.').trim()
       c.seen = false
       await ghlEmail('samantha@mo-care.com', 'Samantha',
-        '⚠️ HT Local: OIG name match for ' + c.name + ', needs a look',
+        '⚠️ HT Hire: OIG name match for ' + c.name + ', needs a look',
         '<p>The free OIG exclusion screen found a possible <b>name</b> match for <b>' + esc(c.name) + '</b>: ' + esc(hits.join('; ')) + '.</p><p>Common names trigger this often. Verify at <a href="https://exclusions.oig.hhs.gov">exclusions.oig.hhs.gov</a> before drawing any conclusion.</p>')
     } else {
       c.oig_result = 'clear'
@@ -166,7 +166,7 @@ Deno.serve(async (req) => {
         c.seen = false
         await supabase.rpc('upsert_app_data_item', { target_key: 'local_caregivers', item: c })
         await ghlEmail('samantha@mo-care.com', 'Samantha',
-          (result === 'clear' ? '\u2705' : '\u26a0\ufe0f') + ' HT Local background check: ' + (c.name || candId) + ' \u2192 ' + (result || type),
+          (result === 'clear' ? '\u2705' : '\u26a0\ufe0f') + ' HT Hire background check: ' + (c.name || candId) + ' \u2192 ' + (result || type),
           '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.6;"><p><b>' + esc(c.name || '') + '</b>: report result <b>' + esc(result || 'see Checkr') + '</b>.</p>'
           + (result === 'clear' ? '<p>Status moved to <b>cleared</b>. Next: the interview step, then activate.</p>' : '<p style="color:#a33;"><b>CONSIDER:</b> review in Checkr. If declining based on the report, FCRA requires the adverse-action process (built into Checkr). Never auto-decline.</p>')
           + '<p style="color:#55677a;font-size:13px;">Care Coordinator Hub \u2192 HomeTogether \u2192 Local.</p></div>')
@@ -211,7 +211,7 @@ Deno.serve(async (req) => {
     fireAndForget(runOigScreen(supabase, item.id))
 
     await ghlEmail('samantha@mo-care.com', 'Samantha',
-      '🧡 HomeTogether Local: new CAREGIVER application, ' + item.name,
+      '🧡 HomeTogether Hire: new CAREGIVER application, ' + item.name,
       '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.6;">'
       + '<p><b>' + esc(item.name) + '</b> · ' + esc(item.city) + (item.years ? ' · ' + esc(item.years) + ' yrs' : '') + (item.rate ? ' · ' + esc(item.rate) + '/hr' : '') + '</p>'
       + '<p>' + esc(item.phone) + (item.email ? ' · ' + esc(item.email) : '') + '</p>'
@@ -228,14 +228,14 @@ Deno.serve(async (req) => {
 
     if (item.email) {
       await ghlEmail(item.email, item.name.split(' ')[0] || item.name,
-        'We got your HomeTogether Local application',
+        'We got your HomeTogether Hire application',
         '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.7;">'
         + '<p>Hi ' + esc(item.name.split(' ')[0] || item.name) + ',</p>'
-        + '<p>Thanks for applying to HomeTogether Local. A real person from our Springfield team reviews every application, and we&rsquo;ll call you within 2 business days.</p>'
+        + '<p>Thanks for applying to HomeTogether Hire. A real person from our Springfield team reviews every application, and we&rsquo;ll call you within 2 business days.</p>'
         + '<p><b>What happens next:</b><br>1. A short phone chat about your experience and what you&rsquo;re looking for<br>2. An interview (video or in person)<br>3. Your \u2713 Verified badge, whenever you\u2019re ready (details below)<br>4. We start personally introducing you to families near you</p>'
         + '<p><b>About your \u2713 Verified badge:</b> signing up is free, and the background check is optional up front. It\u2019s a one-time $45, run through Checkr, and you choose when: right away to stand out from day one, or later when a family wants to hire you. Families always see which caregivers have been checked, and checked caregivers get chosen first.</p>'
         + '<p>No fees, no commissions during our founding period. Questions? Just reply, or call <a href="tel:14172348494">(417) 234-8494</a>.</p>'
-        + '<p>Warmly,<br>The HomeTogether Local team</p></div>')
+        + '<p>Warmly,<br>The HomeTogether Hire team</p></div>')
     }
     return json({ ok: true, id: item.id })
   }
@@ -254,7 +254,7 @@ Deno.serve(async (req) => {
     if (error) return json({ error: error.message }, 500)
 
     await ghlEmail('samantha@mo-care.com', 'Samantha',
-      '🏡 HomeTogether Local: new FAMILY request, ' + item.name + ' (' + (item.zip || 'area n/a') + ')',
+      '🏡 HomeTogether Hire: new FAMILY request, ' + item.name + ' (' + (item.zip || 'area n/a') + ')',
       '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.6;">'
       + '<p><b>' + esc(item.name) + '</b> · ' + esc(item.zip) + '</p>'
       + '<p>' + esc(item.phone) + (item.email ? ' · ' + esc(item.email) : '') + '</p>'
@@ -264,13 +264,13 @@ Deno.serve(async (req) => {
 
     if (item.email) {
       await ghlEmail(item.email, item.name.split(' ')[0] || item.name,
-        'Your HomeTogether Local request is in',
+        'Your HomeTogether Hire request is in',
         '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.7;">'
         + '<p>Hi ' + esc(item.name.split(' ')[0] || item.name) + ',</p>'
-        + '<p>Your request is with our team, a real person, not a bot. Here&rsquo;s how HomeTogether Local works:</p>'
+        + '<p>Your request is with our team, a real person, not a bot. Here&rsquo;s how HomeTogether Hire works:</p>'
         + '<p>1. A coordinator from our Springfield office calls you, usually within 2 business days<br>2. We hand-pick caregivers near ' + esc(item.zip || 'you') + ' who fit your needs, every one interviewed and background-checked by us first<br>3. We introduce you personally. You talk, you choose, you hire directly<br>4. Talking to your matches is free. No subscription, ever.</p>'
         + '<p>Need care sooner? Call us right now: <a href="tel:14172348494">(417) 234-8494</a>, available 24/7.</p>'
-        + '<p>Warmly,<br>The HomeTogether Local team</p></div>')
+        + '<p>Warmly,<br>The HomeTogether Hire team</p></div>')
     }
     return json({ ok: true, id: item.id })
   }
@@ -303,7 +303,7 @@ Deno.serve(async (req) => {
     form.set('line_items[0][quantity]', '1')
     form.set('line_items[0][price_data][currency]', 'usd')
     form.set('line_items[0][price_data][unit_amount]', '4500')
-    form.set('line_items[0][price_data][product_data][name]', 'HomeTogether Local Background Check')
+    form.set('line_items[0][price_data][product_data][name]', 'HomeTogether Hire Background Check')
     form.set('line_items[0][price_data][product_data][description]', 'One-time background check for your caregiver profile. Runs through Checkr; results typically in 1-3 business days.')
     form.set('metadata[hl_caregiver_id]', c.id)
     form.set('payment_intent_data[metadata][hl_caregiver_id]', c.id)
@@ -335,7 +335,7 @@ Deno.serve(async (req) => {
           + '<p>Wonderful news: <b>a family near you would like to move forward with you</b>. Before we make the introduction official, the last step is your background check. It\u2019s a one-time <b>$45</b>, paid securely through Stripe, and it earns the \u2713 Verified badge families are looking for.</p>'
           + payBtn + checkrPs
           + '<p>The family is excited to meet you, so the sooner the check is running, the sooner we connect you.</p>'
-          + '<p>Questions? Reply here or call <a href="tel:14172348494">(417) 234-8494</a>.</p><p>Warmly,<br>The HomeTogether Local team</p></div>')
+          + '<p>Questions? Reply here or call <a href="tel:14172348494">(417) 234-8494</a>.</p><p>Warmly,<br>The HomeTogether Hire team</p></div>')
       } else {
         await ghlEmail(c.email, first,
           'Your \u2713 Verified badge, one step away',
@@ -343,7 +343,7 @@ Deno.serve(async (req) => {
           + '<p>Hi ' + first + ',</p>'
           + '<p>Ready to stand out? Your \u2713 Verified badge is one step away: a one-time <b>$45</b> background check, paid securely through Stripe and run through Checkr, the same service national companies use. Families see who\u2019s been checked, and checked caregivers get chosen first.</p>'
           + payBtn + checkrPs
-          + '<p>Questions? Reply here or call <a href="tel:14172348494">(417) 234-8494</a>.</p><p>Warmly,<br>The HomeTogether Local team</p></div>')
+          + '<p>Questions? Reply here or call <a href="tel:14172348494">(417) 234-8494</a>.</p><p>Warmly,<br>The HomeTogether Hire team</p></div>')
       }
     }
     return json({ ok: true, link: sess.url })

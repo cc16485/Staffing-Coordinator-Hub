@@ -1,6 +1,6 @@
 // Supabase Edge Function: vapi-interview (shared hub project)
 // -----------------------------------------------------------------------------
-// Receives Vapi call webhooks for the HomeTogether Local AI phone interview.
+// Receives Vapi call webhooks for the HomeTogether Hire AI phone interview.
 // A caregiver calls the interview number, an assistant speaking in Samantha's
 // ElevenLabs voice conducts a short warm interview, and at the end of the call
 // Vapi POSTs an "end-of-call-report" here. We match the caller to their
@@ -116,7 +116,7 @@ Deno.serve(async (req) => {
     c.notes = ((c.notes || '') + '\nAI phone interview completed ' + new Date().toLocaleDateString('en-US') + (durationSec ? ' (' + Math.round(durationSec / 60) + ' min)' : '') + '.').trim()
     await supabase.rpc('upsert_app_data_item', { target_key: 'local_caregivers', item: c })
     await ghlEmail('samantha@mo-care.com', 'Samantha',
-      '🎙️ HT Local: ' + (c.name || 'a caregiver') + ' finished their AI interview',
+      '🎙️ HT Hire: ' + (c.name || 'a caregiver') + ' finished their AI interview',
       '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.6;">'
       + '<p><b>' + esc(c.name || 'A caregiver') + '</b> just completed the AI phone interview' + (durationSec ? ' (' + Math.round(durationSec / 60) + ' min)' : '') + '.</p>'
       + (recordingUrl ? '<p><a href="' + recordingUrl + '">Listen to the recording</a></p>' : '')
@@ -127,7 +127,7 @@ Deno.serve(async (req) => {
     const stray = { id: crypto.randomUUID(), ...interview }
     await supabase.rpc('upsert_app_data_item', { target_key: 'local_interviews_unmatched', item: stray })
     await ghlEmail('samantha@mo-care.com', 'Samantha',
-      '🎙️ HT Local: an AI interview came in from an unrecognized number',
+      '🎙️ HT Hire: an AI interview came in from an unrecognized number',
       '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.6;">'
       + '<p>Someone completed the AI interview from <b>' + esc(String(callerNumber || 'an unknown number')) + '</b>, which does not match any caregiver on file (they likely called from a different phone).</p>'
       + (recordingUrl ? '<p><a href="' + recordingUrl + '">Listen to the recording</a></p>' : '')
