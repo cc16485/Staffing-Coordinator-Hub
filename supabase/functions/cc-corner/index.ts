@@ -66,16 +66,21 @@ Deno.serve(async (req) => {
       // deno-lint-ignore no-explicit-any
       .filter((p: any) => p?.status === 'approved')
       // deno-lint-ignore no-explicit-any
-      .map((p: any) => ({
-        id: p.id, at: p.at, name: p.name, title: p.title, body: p.body,
-        hearts: p.hearts || 0,
+      .map((p: any) => {
         // deno-lint-ignore no-explicit-any
-        replies: (p.replies || []).filter((r: any) => r?.status === 'approved')
+        const replies = (p.replies || []).filter((r: any) => r?.status === 'approved')
           // deno-lint-ignore no-explicit-any
-          .map((r: any) => ({ id: r.id, at: r.at, name: r.name, body: r.body, team: !!r.team })),
-      }))
+          .map((r: any) => ({ id: r.id, at: r.at, name: r.name, body: r.body, team: !!r.team }))
+        // deno-lint-ignore no-explicit-any
+        const lastActivity = replies.reduce((m: string, r: any) => (r.at > m ? r.at : m), p.at || '')
+        return {
+          id: p.id, at: p.at, name: p.name, title: p.title, body: p.body,
+          hearts: p.hearts || 0, pinned: !!p.pinned, lastActivity, replies,
+        }
+      })
+      // pinned prompts first, then whichever conversation moved most recently
       // deno-lint-ignore no-explicit-any
-      .sort((a: any, b: any) => (b.at || '').localeCompare(a.at || ''))
+      .sort((a: any, b: any) => (Number(b.pinned) - Number(a.pinned)) || (b.lastActivity || '').localeCompare(a.lastActivity || ''))
       .slice(0, 60)
     const today = new Date().toISOString().slice(0, 10)
     const events = (await load('corner_events'))
@@ -147,6 +152,53 @@ Deno.serve(async (req) => {
       + '<p><b>' + name + '</b> replied to "' + (p.title || p.body.slice(0, 60)) + '":</p><p>' + body.replace(/\n/g, '<br>') + '</p>'
       + '<p style="color:#55677a;font-size:13px;">Approve or remove it in the Care Coordinator Hub &rarr; Campaigns &rarr; Community.</p></div>')
     return json({ ok: true, pending: true })
+  }
+
+  if (action === 'notify') {
+    // Called by the hub after approving a reply (or posting a team reply):
+    // emails the original poster, once per reply, if they left an email.
+    const postId = clean(b.post_id, 40)
+    const replyId = clean(b.reply_id, 40)
+    const posts = await load('corner_posts')
+    // deno-lint-ignore no-explicit-any
+    const p = posts.find((x: any) => x?.id === postId)
+    if (!p || !p.email) return json({ ok: true, notified: false })
+    // deno-lint-ignore no-explicit-any
+    const r = (p.replies || []).find((x: any) => x?.id === replyId && x?.status === 'approved')
+    if (!r || r.notified) return json({ ok: true, notified: false })
+    const ghlToken = Deno.env.get('GHL_TOKEN')
+    const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
+    let sent = false
+    if (ghlToken && ghlLocation) {
+      try {
+        const h = { Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
+        const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
+          method: 'POST', headers: h,
+          body: JSON.stringify({ locationId: ghlLocation, email: p.email, firstName: p.name || 'Friend' }),
+        })
+        const contactId = (await up.json().catch(() => ({})))?.contact?.id
+        if (contactId) {
+          const esc = (t: string) => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')
+          const sr = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+            method: 'POST', headers: h,
+            body: JSON.stringify({
+              type: 'Email', contactId,
+              subject: (r.team ? 'Caring Companions replied' : esc(r.name || 'Someone') + ' replied') + ' to your post in Caregivers Corner',
+              html: '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.7;">'
+                + '<p>Hi ' + esc(p.name || 'there') + ',</p>'
+                + '<p>' + (r.team ? 'The Caring Companions team' : esc(r.name || 'Someone')) + ' replied to your post' + (p.title ? ' “' + esc(p.title) + '”' : '') + ':</p>'
+                + '<p style="background:#EAF4F6;border-radius:10px;padding:14px 18px;">' + esc(r.body) + '</p>'
+                + '<p><a href="https://mo-care.com/caregivers-corner.html" style="color:#1F7A8C;font-weight:700;">Read and reply in Caregivers Corner &rarr;</a></p>'
+                + '<p style="color:#55677a;font-size:13px;">You got this note because you shared a post in our caregiver community and left your email. We only email you about replies to your own posts.</p></div>',
+            }),
+          })
+          sent = sr.ok
+        }
+      } catch { /* best effort */ }
+    }
+    r.notified = true
+    await supabase.rpc('upsert_app_data_item', { target_key: 'corner_posts', item: p })
+    return json({ ok: true, notified: sent })
   }
 
   return json({ error: 'unknown action' }, 400)
