@@ -10,6 +10,12 @@
 // sides get a confirmation email; Samantha gets a notification.
 // Managed in the Care Coordinator Hub -> HomeTogether -> Local tab.
 // Uses the existing HT_ORDER_TOKEN secret; no new secrets needed.
+// Also: background-check automation (Phase A):
+//   POST {kind:'paylink', caregiver_id}  (hub) -> $45 Stripe Checkout link emailed
+//   POST + Checkr webhook (?src=checkr)  -> auto status on report results
+// Secrets used: STRIPE_SECRET_KEY (exists), CHECKR_API_KEY, CHECKR_PACKAGE,
+// CHECKR_WEBHOOK_SECRET (all optional: without them the pipeline degrades to
+// clearly-labeled manual steps in the hub, never silent failure).
 // Deploy (CLI): supabase functions deploy ht-local --no-verify-jwt
 // -----------------------------------------------------------------------------
 
@@ -46,6 +52,20 @@ async function ghlEmail(to: string, firstName: string, subject: string, html: st
   } catch { return false }
 }
 
+async function loadItems(supabase: ReturnType<typeof createClient>, key: string) {
+  const { data } = await supabase.from('app_data').select('data').eq('key', key).maybeSingle()
+  return Array.isArray(data?.data) ? data.data : []
+}
+
+async function checkrHmacOk(payload: string, sig: string): Promise<boolean> {
+  const secret = Deno.env.get('CHECKR_WEBHOOK_SECRET')
+  if (!secret) return true // not configured yet: accept (endpoint is still token-gated)
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  const mac = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload))
+  const hex = Array.from(new Uint8Array(mac)).map((b) => b.toString(16).padStart(2, '0')).join('')
+  return hex === sig
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   const url = new URL(req.url)
@@ -53,13 +73,53 @@ Deno.serve(async (req) => {
   if (!expected || url.searchParams.get('token') !== expected) return json({ error: 'unauthorized' }, 401)
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
 
+  const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+
+  // ---------- Checkr webhook (?src=checkr) ----------
+  if (url.searchParams.get('src') === 'checkr') {
+    const raw = await req.text()
+    const sig = req.headers.get('x-checkr-signature') || ''
+    if (!(await checkrHmacOk(raw, sig))) return json({ error: 'bad signature' }, 400)
+    // deno-lint-ignore no-explicit-any
+    let ev: any = {}
+    try { ev = JSON.parse(raw) } catch { return json({ error: 'bad payload' }, 400) }
+    const type = String(ev.type || '')
+    // deno-lint-ignore no-explicit-any
+    const obj: any = ev.data?.object ?? {}
+    if (type === 'report.completed' || type === 'report.updated') {
+      const candId = String(obj.candidate_id || '')
+      const result = String(obj.result || obj.assessment || '')
+      const items = await loadItems(supabase, 'local_caregivers')
+      // deno-lint-ignore no-explicit-any
+      const c: any = items.find((x: any) => x?.checkr_candidate_id === candId)
+      if (c) {
+        c.checkr_result = result
+        c.checkr_report_id = String(obj.id || '')
+        if (result === 'clear') {
+          c.status = 'cleared'
+          c.notes = ((c.notes || '') + '\nBackground check CLEAR (' + new Date().toLocaleDateString('en-US') + ').').trim()
+        } else {
+          c.consider = true
+          c.notes = ((c.notes || '') + '\nBackground check returned CONSIDER. Review the report in Checkr. If declining based on it, use Checkr\u2019s adverse-action flow (FCRA requirement). Do not auto-decline.').trim()
+        }
+        c.seen = false
+        await supabase.rpc('upsert_app_data_item', { target_key: 'local_caregivers', item: c })
+        await ghlEmail('samantha@mo-care.com', 'Samantha',
+          (result === 'clear' ? '\u2705' : '\u26a0\ufe0f') + ' HT Local background check: ' + (c.name || candId) + ' \u2192 ' + (result || type),
+          '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.6;"><p><b>' + esc(c.name || '') + '</b>: report result <b>' + esc(result || 'see Checkr') + '</b>.</p>'
+          + (result === 'clear' ? '<p>Status moved to <b>cleared</b>. Next: the interview step, then activate.</p>' : '<p style="color:#a33;"><b>CONSIDER:</b> review in Checkr. If declining based on the report, FCRA requires the adverse-action process (built into Checkr). Never auto-decline.</p>')
+          + '<p style="color:#55677a;font-size:13px;">Care Coordinator Hub \u2192 HomeTogether \u2192 Local.</p></div>')
+      }
+    }
+    return json({ received: true })
+  }
+
   // deno-lint-ignore no-explicit-any
   let b: Record<string, any> = {}
   try { b = await req.json() } catch { return json({ error: 'bad payload' }, 400) }
   if (b.website) return json({ ok: true }) // honeypot
 
   const kind = clean(b.kind, 20)
-  const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
   if (kind === 'caregiver') {
     const item = {
@@ -133,6 +193,53 @@ Deno.serve(async (req) => {
         + '<p>Warmly,<br>The HomeTogether Local team</p></div>')
     }
     return json({ ok: true, id: item.id })
+  }
+
+  if (kind === 'paylink') {
+    const cid = clean(b.caregiver_id, 40)
+    const items = await loadItems(supabase, 'local_caregivers')
+    // deno-lint-ignore no-explicit-any
+    const c: any = items.find((x: any) => x?.id === cid)
+    if (!c) return json({ error: 'caregiver not found' }, 404)
+    if (!c.email) return json({ error: 'This caregiver has no email on file; collect one first.' }, 400)
+    const sk = Deno.env.get('STRIPE_SECRET_KEY')
+    if (!sk) return json({ error: 'Stripe not configured' }, 500)
+
+    const form = new URLSearchParams()
+    form.set('mode', 'payment')
+    form.set('customer_email', c.email)
+    form.set('line_items[0][quantity]', '1')
+    form.set('line_items[0][price_data][currency]', 'usd')
+    form.set('line_items[0][price_data][unit_amount]', '4500')
+    form.set('line_items[0][price_data][product_data][name]', 'HomeTogether Local Background Check')
+    form.set('line_items[0][price_data][product_data][description]', 'One-time background check for your caregiver profile. Runs through Checkr; results typically in 1-3 business days.')
+    form.set('metadata[hl_caregiver_id]', c.id)
+    form.set('payment_intent_data[metadata][hl_caregiver_id]', c.id)
+    form.set('success_url', 'https://tryhometogether.com/local.html#checkpaid')
+    form.set('cancel_url', 'https://tryhometogether.com/local.html')
+    const resp = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + sk, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: form.toString(),
+    })
+    // deno-lint-ignore no-explicit-any
+    const sess: any = await resp.json()
+    if (!resp.ok || !sess.url) return json({ error: 'Stripe: ' + (sess?.error?.message || resp.status) }, 500)
+
+    c.status = 'background check'
+    c.pay_link_sent = new Date().toISOString()
+    c.notes = ((c.notes || '') + '\n$45 check payment link sent ' + new Date().toLocaleDateString('en-US') + '.').trim()
+    await supabase.rpc('upsert_app_data_item', { target_key: 'local_caregivers', item: c })
+
+    await ghlEmail(c.email, (c.name || '').split(' ')[0] || 'there',
+      'Your HomeTogether Local background check, next step',
+      '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.7;">'
+      + '<p>Hi ' + esc((c.name || '').split(' ')[0] || 'there') + ',</p>'
+      + '<p>Great news: you\u2019re moving to the background-check step. It\u2019s a one-time <b>$45</b>, paid securely through Stripe, and it covers the full check (run through Checkr, the same service national companies use).</p>'
+      + '<p style="margin:18px 0;"><a href="' + sess.url + '" style="background:#E9A13B;color:#123;padding:14px 26px;border-radius:999px;text-decoration:none;font-weight:700;">Pay for my background check \u2192</a></p>'
+      + '<p>After payment, watch your email for a message from Checkr to complete your details. Results usually take 1-3 business days, and your \u2713 badge activates when it clears.</p>'
+      + '<p>Questions? Reply here or call <a href="tel:14172348494">(417) 234-8494</a>.</p><p>Warmly,<br>The HomeTogether Local team</p></div>')
+    return json({ ok: true, link: sess.url })
   }
 
   return json({ error: 'unknown kind' }, 400)

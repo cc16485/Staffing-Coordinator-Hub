@@ -37,7 +37,9 @@ Deno.serve(async (req) => {
   const fromName = fromRaw.replace(/<[^>]+>/, '').replace(/"/g, '').trim().slice(0, 200)
   const subject = String(d.subject ?? '').slice(0, 300)
   let text = String(d.text ?? '').trim()
-  if (!text && d.html) text = String(d.html).replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+  const htmlBody = d.html ?? d.body?.html ?? d.html_body ?? evt.html ?? ''
+  if (!text && htmlBody) text = String(htmlBody).replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+  if (!text) text = '(This email arrived without a readable text body, it is probably a heavy-design HTML email. Read it in full at resend.com -> Emails -> Receiving.)'
   text = text.slice(0, 8000)
   if (!fromEmail) return json({ error: 'no sender' }, 400)
 

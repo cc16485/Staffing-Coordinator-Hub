@@ -43,6 +43,9 @@ Deno.serve(async (req) => {
 
   const subject = String(body.subject ?? '').slice(0, 300)
   const html = String(body.html ?? '')
+  // Contact-type tag (lead / client / client-contact / caregiver / referral-partner):
+  // applied on upsert so every GHL profile says what kind of contact it is.
+  const tag = String(body.tag ?? '').trim().toLowerCase().replace(/[^a-z0-9 _-]/g, '').slice(0, 60)
   // deno-lint-ignore no-explicit-any
   const recipients: any[] = Array.isArray(body.recipients) ? body.recipients.slice(0, 25) : []
   if (!subject || !html || recipients.length === 0) return json({ error: 'subject, html and recipients are required' }, 400)
@@ -60,6 +63,7 @@ Deno.serve(async (req) => {
           locationId: ghlLocation, email,
           ...(parts[0] ? { firstName: parts[0] } : {}),
           ...(parts.length > 1 ? { lastName: parts.slice(1).join(' ') } : {}),
+          ...(tag ? { tags: [tag] } : {}),
         }),
       })
       const upJson = await up.json().catch(() => ({}))

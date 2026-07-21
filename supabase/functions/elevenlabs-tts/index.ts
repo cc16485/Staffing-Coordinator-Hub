@@ -18,6 +18,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const ALLOW = [
+  "https://mo-care.com",
+  "https://www.mo-care.com",
   "https://guide.mo-care.com",
   "https://tryhometogether.com",
   "https://cc16485.github.io",
