@@ -66,6 +66,67 @@ async function checkrHmacOk(payload: string, sig: string): Promise<boolean> {
   return hex === sig
 }
 
+// ---------- OIG exclusion screen (free, public LEIE database) ----------
+// Downloads the monthly LEIE CSV once per month into the tts-cache bucket,
+// then screens the applicant's name against it. Name-only match -> flag for
+// manual verification (never an automatic decline).
+const LEIE_URL = 'https://oig.hhs.gov/exclusions/downloadables/UPDATED.csv'
+const LEIE_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36'
+
+async function leieCsv(supabase: ReturnType<typeof createClient>): Promise<string> {
+  const path = 'oig/leie-' + new Date().toISOString().slice(0, 7) + '.csv'
+  const { data: cached } = await supabase.storage.from('tts-cache').download(path)
+  if (cached) return await cached.text()
+  const r = await fetch(LEIE_URL, { headers: { 'User-Agent': LEIE_UA } })
+  if (!r.ok) throw new Error('LEIE fetch ' + r.status)
+  const text = await r.text()
+  if (text.length < 1000000) throw new Error('LEIE file suspiciously small')
+  await supabase.storage.from('tts-cache').upload(path, new Blob([text], { type: 'text/csv' }), { upsert: true }).catch(() => {})
+  return text
+}
+
+async function runOigScreen(supabase: ReturnType<typeof createClient>, caregiverId: string) {
+  try {
+    const items = await loadItems(supabase, 'local_caregivers')
+    // deno-lint-ignore no-explicit-any
+    const c: any = items.find((x: any) => x?.id === caregiverId)
+    if (!c || !c.name) return
+    const parts = String(c.name).toUpperCase().trim().split(/\s+/)
+    const first = parts[0] || ''
+    const last = parts[parts.length - 1] || ''
+    if (!first || !last || parts.length < 2) return
+    const csv = await leieCsv(supabase)
+    const needle = '"' + last + '","' + first + '"'
+    const hits: string[] = []
+    for (const line of csv.split('\n')) {
+      if (line.toUpperCase().startsWith(needle)) {
+        const cols = line.split('","')
+        hits.push((cols[10] || '?') + ', ' + (cols[11] || '?') + ' (excluded ' + String(cols[14] || '').replace(/"/g, '') + ')')
+        if (hits.length >= 5) break
+      }
+    }
+    c.oig_checked = new Date().toISOString()
+    if (hits.length) {
+      c.oig_result = 'review'
+      c.notes = ((c.notes || '') + '\nOIG exclusion screen: POSSIBLE name match (' + hits.join('; ') + '). Verify identity at exclusions.oig.hhs.gov before deciding, a name match alone proves nothing.').trim()
+      c.seen = false
+      await ghlEmail('samantha@mo-care.com', 'Samantha',
+        '⚠️ HT Local: OIG name match for ' + c.name + ', needs a look',
+        '<p>The free OIG exclusion screen found a possible <b>name</b> match for <b>' + esc(c.name) + '</b>: ' + esc(hits.join('; ')) + '.</p><p>Common names trigger this often. Verify at <a href="https://exclusions.oig.hhs.gov">exclusions.oig.hhs.gov</a> before drawing any conclusion.</p>')
+    } else {
+      c.oig_result = 'clear'
+    }
+    await supabase.rpc('upsert_app_data_item', { target_key: 'local_caregivers', item: c })
+  } catch { /* screen is best-effort; Checkr remains the real check */ }
+}
+
+function fireAndForget(p: Promise<unknown>) {
+  // deno-lint-ignore no-explicit-any
+  const er = (globalThis as any).EdgeRuntime
+  if (er && typeof er.waitUntil === 'function') er.waitUntil(p)
+  else p.catch(() => {})
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   const url = new URL(req.url)
@@ -131,11 +192,18 @@ Deno.serve(async (req) => {
       certs: (Array.isArray(b.certs) ? b.certs : []).map((s: unknown) => clean(s, 60)).slice(0, 20),
       avail: (Array.isArray(b.avail) ? b.avail : []).map((s: unknown) => clean(s, 40)).slice(0, 14),
       bio: clean(b.bio, 2000),
+      work_history: clean(b.work_history, 3000),
+      ref1: { name: clean(b.ref1?.name, 120), phone: clean(b.ref1?.phone, 40), rel: clean(b.ref1?.rel, 80) },
+      ref2: { name: clean(b.ref2?.name, 120), phone: clean(b.ref2?.phone, 40), rel: clean(b.ref2?.rel, 80) },
+      consents: (b.consents && typeof b.consents === 'object')
+        ? { bg: !!b.consents.bg, refs: !!b.consents.refs, truth: !!b.consents.truth, at: new Date().toISOString() }
+        : null,
       status: 'applied', notes: '', seen: false,
     }
     if (!item.name || (!item.email && !item.phone)) return json({ error: 'Name plus an email or phone are required so we can reach you.' }, 400)
     const { error } = await supabase.rpc('upsert_app_data_item', { target_key: 'local_caregivers', item })
     if (error) return json({ error: error.message }, 500)
+    fireAndForget(runOigScreen(supabase, item.id))
 
     await ghlEmail('samantha@mo-care.com', 'Samantha',
       '🧡 HomeTogether Local: new CAREGIVER application, ' + item.name,
@@ -145,6 +213,11 @@ Deno.serve(async (req) => {
       + (item.skills.length ? '<p><b>Skills:</b> ' + esc(item.skills.join(', ')) + '</p>' : '')
       + (item.certs.length ? '<p><b>Certs:</b> ' + esc(item.certs.join(', ')) + '</p>' : '')
       + (item.bio ? '<p><b>Bio:</b> ' + esc(item.bio) + '</p>' : '')
+      + (item.work_history ? '<p><b>Work history:</b> ' + esc(item.work_history) + '</p>' : '')
+      + (item.ref1.name ? '<p><b>Reference 1:</b> ' + esc(item.ref1.name) + ' · ' + esc(item.ref1.phone) + (item.ref1.rel ? ' · ' + esc(item.ref1.rel) : '') + '</p>' : '')
+      + (item.ref2.name ? '<p><b>Reference 2:</b> ' + esc(item.ref2.name) + ' · ' + esc(item.ref2.phone) + (item.ref2.rel ? ' · ' + esc(item.ref2.rel) : '') + '</p>' : '')
+      + (item.consents ? '<p><b>Signed application:</b> background check authorized · references may be contacted by us and by families.</p>' : '<p style="color:#b91c1c;"><b>No signed consents on file</b> (older application form).</p>')
+      + '<p style="color:#55677a;font-size:13px;">OIG exclusion screen runs automatically; the result appears on their hub card.</p>'
       + '<p style="color:#55677a;font-size:13px;">Review in the Care Coordinator Hub → HomeTogether → Local. Next steps: call, interview, background check.</p></div>')
 
     if (item.email) {
@@ -153,7 +226,7 @@ Deno.serve(async (req) => {
         '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.7;">'
         + '<p>Hi ' + esc(item.name.split(' ')[0] || item.name) + ',</p>'
         + '<p>Thanks for applying to HomeTogether Local. A real person from our Springfield team reviews every application, and we&rsquo;ll call you within 2 business days.</p>'
-        + '<p><b>What happens next:</b><br>1. A short phone chat about your experience and what you&rsquo;re looking for<br>2. An interview (video or in person)<br>3. A background check, we cover the cost<br>4. We start personally introducing you to families near you</p>'
+        + '<p><b>What happens next:</b><br>1. A short phone chat about your experience and what you&rsquo;re looking for<br>2. An interview (video or in person)<br>3. A background check ($45, paid once, run through Checkr)<br>4. We start personally introducing you to families near you</p>'
         + '<p>No fees, no commissions during our founding period. Questions? Just reply, or call <a href="tel:14172348494">(417) 234-8494</a>.</p>'
         + '<p>Warmly,<br>The HomeTogether Local team</p></div>')
     }
@@ -193,6 +266,13 @@ Deno.serve(async (req) => {
         + '<p>Warmly,<br>The HomeTogether Local team</p></div>')
     }
     return json({ ok: true, id: item.id })
+  }
+
+  if (kind === 'oig') {
+    const cid = clean(b.caregiver_id, 40)
+    if (!cid) return json({ error: 'caregiver_id required' }, 400)
+    await runOigScreen(supabase, cid)
+    return json({ ok: true })
   }
 
   if (kind === 'paylink') {
