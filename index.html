@@ -7193,11 +7193,16 @@ function renderEVVCorrections() {
   if(emb||/[?&]embed=1/.test(location.search)) document.documentElement.classList.add('embedded');
   function applyHash(){
     var h=(location.hash||'').replace(/^#/,'').toLowerCase(); if(!h) return false;
+    var ok=false;
     try{
-      if(typeof SC_GROUPS!=='undefined' && SC_GROUPS[h]){ switchGroup(h); return true; }
-      if(document.querySelector('.tab[data-name="'+h+'"]')){ gotoTab(h); return true; }
+      if(typeof SC_GROUPS!=='undefined' && SC_GROUPS[h]){ switchGroup(h); ok=true; }
+      else if(document.querySelector('.tab[data-name="'+h+'"]')){ gotoTab(h); ok=true; }
     }catch(e){}
-    return false;
+    // Focused section mode: inside GHL each section has its own sidebar link,
+    // so the hub's own section bar is redundant — show only this section.
+    if(ok && document.documentElement.classList.contains('embedded'))
+      document.documentElement.classList.add('focused');
+    return ok;
   }
   window.addEventListener('hashchange', applyHash);
   var tries=0, iv=setInterval(function(){
@@ -7212,6 +7217,9 @@ function renderEVVCorrections() {
 /* Inside the GHL frame the sidebar already carries the brand: slim the chrome */
 html.embedded #app > header img{ display:none; }
 html.embedded #app > header{ padding-top:.4rem; padding-bottom:.4rem; }
+/* Focused section mode (deep-linked from a GHL sidebar item): GHL navigates
+   between sections, so hide the hub's own section bar; keep the sub-tabs. */
+html.embedded.focused #groupBar{ display:none; }
 </style>
 </body>
 </html>
