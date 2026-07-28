@@ -7186,5 +7186,32 @@ function renderEVVCorrections() {
   }
 }
 </script>
+<script>
+/* GHL embed polish + hash deep links (#onboard, #sched, #team, #evv, ...) */
+(function(){
+  var emb=false; try{ emb=(window.self!==window.top); }catch(e){ emb=true; }
+  if(emb||/[?&]embed=1/.test(location.search)) document.documentElement.classList.add('embedded');
+  function applyHash(){
+    var h=(location.hash||'').replace(/^#/,'').toLowerCase(); if(!h) return false;
+    try{
+      if(typeof SC_GROUPS!=='undefined' && SC_GROUPS[h]){ switchGroup(h); return true; }
+      if(document.querySelector('.tab[data-name="'+h+'"]')){ gotoTab(h); return true; }
+    }catch(e){}
+    return false;
+  }
+  window.addEventListener('hashchange', applyHash);
+  var tries=0, iv=setInterval(function(){
+    tries++;
+    var app=document.getElementById('app');
+    if(app && app.style.display==='block'){ applyHash(); clearInterval(iv); }
+    else if(tries>150) clearInterval(iv);
+  }, 400);
+})();
+</script>
+<style>
+/* Inside the GHL frame the sidebar already carries the brand: slim the chrome */
+html.embedded #app > header img{ display:none; }
+html.embedded #app > header{ padding-top:.4rem; padding-bottom:.4rem; }
+</style>
 </body>
 </html>
