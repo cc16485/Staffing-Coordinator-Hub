@@ -5153,7 +5153,9 @@ function buildBookingUrl(c){
     dur:getOrientDuration()
   }))));
   const base = window.location.href.replace(/[^/]*$/, '');
-  return `${base}orientation-booking.html?sessions=${encoded}&first=${encodeURIComponent(c.first)}&last=${encodeURIComponent(c.last)}&phone=${encodeURIComponent(c.phone||'')}&id=${encodeURIComponent(c.id)}`;
+  // email + office ride along so the GoHighLevel relay can match the contact
+  // that already exists from the offer stage, and tag the right office.
+  return `${base}orientation-booking.html?sessions=${encoded}&first=${encodeURIComponent(c.first)}&last=${encodeURIComponent(c.last)}&phone=${encodeURIComponent(c.phone||'')}&email=${encodeURIComponent(c.email||'')}&office=${encodeURIComponent(c.office||'springfield')}&id=${encodeURIComponent(c.id)}`;
 }
 
 function buildInviteMsg(c, url){

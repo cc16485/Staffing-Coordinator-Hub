@@ -187,7 +187,9 @@ const sessionsRaw = params.get('sessions');
 const firstName = params.get('first') || '';
 const lastName  = params.get('last')  || '';
 const phone     = params.get('phone') || '';
+const email     = params.get('email') || '';
 const candId    = params.get('id')    || '';
+const office    = params.get('office')|| 'springfield';
 
 let sessions = [];
 try { sessions = sessionsRaw ? JSON.parse(atob(sessionsRaw)) : []; } catch(e){ sessions=[]; }
@@ -285,18 +287,39 @@ async function submitBooking(){
     return;
   }
 
+  const whenLabel = `${fmtDateLong(selectedSession.date)} at ${fmtTime(selectedSession.time)}`;
+  const whereLabel = selectedSession.remote
+    ? `This is a video call${selectedSession.link ? ': ' + selectedSession.link : ' — we will send you the link'}.`
+    : `Location: ${ADDR}.`;
+
   // Send a confirmation text via the send-candidate-message edge function
   // (uses the anon key automatically; best-effort — booking is already saved)
   if(phone){
-    const whenLabel = `${fmtDateLong(selectedSession.date)} at ${fmtTime(selectedSession.time)}`;
-    const whereLabel = selectedSession.remote
-      ? `This is a video call${selectedSession.link ? ': ' + selectedSession.link : ' — we will send you the link'}.`
-      : `Location: ${ADDR}.`;
     const confMsg = `You're all set, ${firstName}! 🎉 Your Caring Companions orientation is ${whenLabel}. ${whereLabel} Please bring your photo ID, Social Security card, and a voided check or bank info for direct deposit. Questions? Call/text (417) 234-8494.`;
     sb.functions.invoke('send-candidate-message', {
       body: { first: firstName, last: lastName, phone, message: confMsg }
     }).catch(e => console.warn('Confirmation SMS failed:', e));
   }
+
+  // Tell GoHighLevel about the booking so it can send the day-before reminder.
+  // The confirmation above is instant and comes from here; GHL only reminds.
+  // Best-effort — the booking is already saved either way.
+  sb.functions.invoke('orientation-booked', {
+    body: {
+      first_name:        firstName,
+      last_name:         lastName,
+      phone,
+      email,
+      office,
+      candidate_id:      candId,
+      orientation_at:    `${selectedSession.date}T${selectedSession.time}:00`,
+      orientation_date:  selectedSession.date,
+      orientation_when:  whenLabel,
+      orientation_where: selectedSession.remote
+        ? (selectedSession.link ? `Video call: ${selectedSession.link}` : 'Remote — video call')
+        : ADDR
+    }
+  }).catch(e => console.warn('GHL orientation relay failed:', e));
 
   showConfirmation();
 }
