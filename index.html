@@ -4446,6 +4446,10 @@ async function loadFromSupabase(){
       if(row.key==='settings')       { appSettings=row.data; localStorage.setItem('cc_settings',JSON.stringify(row.data)); }
       if(row.key==='evv_corrections'){ localStorage.setItem('cc_evv_corrections', JSON.stringify(row.data)); }
       if(row.key==='staffing_tasks') { STASKS=row.data||[]; }
+      // One staff list across every hub. This is the same key the Care
+      // Coordinator Hub writes, so adding someone in either place is the same
+      // person — no more two lists drifting apart.
+      if(row.key==='coordinator_staff'){ SHARED_STAFF=row.data||[]; }
       if(row.key==='dnr_log')        { DNRLOG=row.data||[]; }
       if(row.key==='meetings')       { MEETINGS=row.data||[]; }
       if(row.key==='handoffs')       { HANDOFFS=row.data||[]; }
@@ -6520,14 +6524,14 @@ const NOTIF_TYPES = [
 function renderStaffUsers(){
   const list = document.getElementById('staff-users-list');
   if(!list) return;
-  const users = appSettings.staff_users || [];
+  const users = allStaff();
   if(!users.length){
-    list.innerHTML = '<div style="font-size:.8rem;color:var(--gray);padding:.5rem 0;font-style:italic">No staff added yet.</div>';
+    list.innerHTML = '<div style="font-size:.8rem;color:var(--gray);padding:.5rem 0;font-style:italic">No staff added yet. Anyone you add here also appears in the Care Coordinator Hub — it is one list now.</div>';
     return;
   }
   list.innerHTML = users.map((u,i)=>{
     const notifBadges = NOTIF_TYPES.map(n=>{
-      const on = u.notifications?.[n.key];
+      const on = notifOn(u, n.key);
       return `<button onclick="toggleStaffNotif(${i},'${n.key}')" title="${n.title}"
         style="font-size:.65rem;font-weight:700;padding:.18rem .42rem;border-radius:4px;cursor:pointer;border:1.5px solid ${on?(n.border||'transparent'):'var(--border)'};
         background:${on?n.color:'#f8fafc'};color:${on?n.tc:'#bbb'};transition:.12s">${n.label}</button>`;
@@ -6544,23 +6548,47 @@ function renderStaffUsers(){
   }).join('');
 }
 
-function toggleStaffNotif(idx, key){
-  if(!appSettings.staff_users[idx].notifications) appSettings.staff_users[idx].notifications = {};
-  appSettings.staff_users[idx].notifications[key] = !appSettings.staff_users[idx].notifications[key];
+/* Every mutation below writes the SHARED list. If the person was still only in
+   the old staff_users list, touching them moves them across — the migration
+   happens by using the thing, so there's no separate step to remember. */
+async function persistStaff(s){
+  const key=(s.email||'').toLowerCase();
+  const i=SHARED_STAFF.findIndex(x=> x.id===s.id || (key && (x.email||'').toLowerCase()===key));
+  if(i>=0) SHARED_STAFF[i]=s; else SHARED_STAFF.push(s);
+  try{
+    const { error } = await sb.rpc('upsert_app_data_item',{ target_key:'coordinator_staff', item:s });
+    if(error) throw error;
+  }catch(e){ alert('Could not save that staff change — check your connection and try again.'); }
+}
+
+async function dropLegacy(u){
+  const before=(appSettings.staff_users||[]).length;
+  appSettings.staff_users=(appSettings.staff_users||[]).filter(x=>
+    (x.email||'').toLowerCase()!==(u.email||'').toLowerCase());
+  if(appSettings.staff_users.length!==before) await syncToSupabase('settings', appSettings);
+}
+
+async function toggleStaffNotif(idx, key){
+  const u=allStaff()[idx]; if(!u) return;
+  const s={...u}; delete s._legacy;
+  if(!s.id) s.id='st'+Date.now();
+  s['notify_'+key]=!notifOn(u,key);
+  if(s.notifications) s.notifications[key]=s['notify_'+key];
+  await persistStaff(s);
+  if(u._legacy) await dropLegacy(u);
   syncAlertRecipients();
   renderStaffUsers();
 }
 
-function addStaffUser(){
+async function addStaffUser(){
   const name  = document.getElementById('new-staff-name').value.trim();
   const email = document.getElementById('new-staff-email').value.trim();
   const role  = document.getElementById('new-staff-role').value;
   if(!name||!email){ alert('Name and email are required.'); return; }
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ alert('Please enter a valid email address.'); return; }
-  if(!appSettings.staff_users) appSettings.staff_users = [];
-  const notifications = {};
-  NOTIF_TYPES.forEach(n=>{ notifications[n.key] = document.getElementById('ns-'+n.key)?.checked||false; });
-  appSettings.staff_users.push({ id: Date.now(), name, email, role, notifications });
+  const s = { id:'st'+Date.now(), name, email:email.toLowerCase(), role };
+  NOTIF_TYPES.forEach(n=>{ s['notify_'+n.key] = document.getElementById('ns-'+n.key)?.checked||false; });
+  await persistStaff(s);
   document.getElementById('new-staff-name').value='';
   document.getElementById('new-staff-email').value='';
   document.getElementById('new-staff-role').value='';
@@ -6569,24 +6597,54 @@ function addStaffUser(){
   renderStaffUsers();
 }
 
-function removeStaffUser(idx){
-  if(!confirm(`Remove ${appSettings.staff_users[idx].name}?`)) return;
-  appSettings.staff_users.splice(idx,1);
+async function removeStaffUser(idx){
+  const u=allStaff()[idx]; if(!u) return;
+  if(!confirm(`Remove ${u.name}? This removes them everywhere — both hubs read one staff list now.`)) return;
+  if(u._legacy){ await dropLegacy(u); }
+  else{
+    SHARED_STAFF=SHARED_STAFF.filter(x=>x.id!==u.id);
+    try{ await sb.rpc('delete_app_data_item',{ target_key:'coordinator_staff', item_id:u.id }); }
+    catch(e){ alert('Could not remove that person — try again.'); }
+  }
   syncAlertRecipients();
   renderStaffUsers();
 }
 
 // Keep alert_recipients in sync so existing compliance email logic still works
+/* ── ONE STAFF LIST ───────────────────────────────────────────────────────────
+   Staff used to live in two places: this hub's appSettings.staff_users and the
+   Care Coordinator Hub's shared 'coordinator_staff'. Same people, two lists,
+   silently drifting. 'coordinator_staff' is now the single list and both hubs
+   read and write it. Any leftover staff_users rows still show (marked), so
+   nothing disappears, and they merge in the moment someone is re-saved. */
+let SHARED_STAFF = [];
+
+// The two hubs named their notification flags differently. Read both.
+function notifOn(u, key){
+  return !!(u && (u['notify_'+key] || (u.notifications && u.notifications[key])));
+}
+
+function allStaff(){
+  const merged = (SHARED_STAFF||[]).slice();
+  const seen = new Set(merged.map(s=>(s.email||'').toLowerCase()).filter(Boolean));
+  (appSettings.staff_users||[]).forEach(u=>{
+    const e=(u.email||'').toLowerCase();
+    if(e && seen.has(e)) return;          // already in the shared list
+    merged.push({ ...u, _legacy:true });  // shown, flagged, not yet shared
+  });
+  return merged;
+}
+
 function syncAlertRecipients(){
-  appSettings.alert_recipients = (appSettings.staff_users||[])
-    .filter(u=>u.notifications?.comp)
+  appSettings.alert_recipients = allStaff()
+    .filter(u=>notifOn(u,'comp'))
     .map(u=>({name:u.name, email:u.email}));
 }
 
 // Helper: get emails for a given notification type
 function getNotifEmails(key){
-  return (appSettings.staff_users||[])
-    .filter(u=>u.notifications?.[key])
+  return allStaff()
+    .filter(u=>notifOn(u,key))
     .map(u=>u.email)
     .filter(Boolean);
 }
