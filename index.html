@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Staffing Coordinator’s Hub — Caring Companions</title>
+<title>Recruiting &amp; Onboarding — Caring Companions</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
@@ -230,7 +230,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 <div id="login-screen">
   <div class="login-card">
     <img src="https://images.leadconnectorhq.com/image/f_webp/q_80/r_1200/u_https://assets.cdn.filesafe.space/Recp0AhyMh8lrtKJ9kaj/media/691b9707bb3d037e0ad689bf.png" alt="Caring Companions">
-    <h2>Staffing Coordinator’s Hub</h2>
+    <h2>Recruiting &amp; Onboarding</h2>
     <p>Caring Companions Admin Access Only</p>
     <input type="email" id="login-email" placeholder="Email address" autocomplete="email" style="margin-bottom:.75rem">
     <input type="password" id="pwd" placeholder="Password" autocomplete="current-password">
@@ -246,7 +246,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 <div id="app">
   <header>
     <img src="https://images.leadconnectorhq.com/image/f_webp/q_80/r_1200/u_https://assets.cdn.filesafe.space/Recp0AhyMh8lrtKJ9kaj/media/691b9707bb3d037e0ad689bf.png" alt="Caring Companions">
-    <div class="hdr-center"><h1>Staffing Coordinator’s Hub</h1><p id="hdr-date"></p></div>
+    <div class="hdr-center"><h1>Recruiting &amp; Onboarding</h1><p id="hdr-date"></p></div>
     <div class="hdr-right">
       <span id="sync-status" style="font-size:.72rem;font-weight:600;color:#94a3b8;white-space:nowrap">☁ Synced</span>
       <div style="position:relative">
@@ -1733,6 +1733,18 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
         Body: &#123; "client_name":"...", "start_date":"...", "auth_hours":"...", "payer":"...", "schedule_notes":"...", "axiscare_client_id":"..." &#125;
       </div>
       <p style="font-size:.7rem;color:var(--gray);margin:0">Zapier maps the AxisCare client fields to the JSON body above. The client will appear instantly in the Scheduling tab for the Staffing Coordinator.</p>
+    </div>
+    <!-- Kept because these still fire from live code paths, but most are
+         leftovers from before texting moved to GoHighLevel. Labelled rather
+         than deleted: blank ones already do nothing, and quietly removing one
+         that IS in use would break it silently. -->
+    <div style="background:#FBF0DC;border:1.5px solid #C17A12;border-radius:10px;padding:.7rem .9rem;margin-bottom:.75rem">
+      <div style="font-size:.72rem;color:#8a6410;line-height:1.5">
+        <b>About the Zapier hooks below.</b> These are legacy. Candidate texting, booking
+        confirmations and orientation reminders all go through GoHighLevel now, not Zapier.
+        A blank box does nothing at all, so leaving them empty is safe and is the normal state.
+        Only fill one in if you know that specific Zap is still running.
+      </div>
     </div>
     <div style="background:#f0fffe;border:1.5px solid var(--teal);border-radius:10px;padding:.85rem 1rem;margin-bottom:.75rem">
       <div style="font-size:.7rem;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">🔗 Orientation Shift Webhook (Zapier → AxisCare)</div>
