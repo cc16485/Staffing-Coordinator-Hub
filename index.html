@@ -3037,8 +3037,28 @@ async function gcalSyncAll(){
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────
+/* One file serves several sidebar entries — Recruit, Onboarding, HR &
+   Compliance, Scheduling, Training, Coordinator Team all deep-link into it. So
+   a fixed page title is wrong for most of them: clicking "HR & Compliance" and
+   landing on a page headed "Recruiting & Onboarding" is worse than the neutral
+   name it replaced. The header names the SECTION you're in, not the file. */
+const SECTION_TITLES = {
+  home:'Recruiting &amp; Onboarding', offers:'Recruit', onboarding:'Onboarding',
+  orientations:'Orientations', training:'Training', compliance:'HR &amp; Compliance',
+  attendance:'Attendance', scheduling:'Scheduling', evv:'EVV Corrections',
+  checkins:'Check-ins', coordreq:'Coordinator Requests', sendmsg:'Send a Message',
+  meetings:'Meetings', comms:'Communication', eod:'End of Day',
+};
+function setSectionTitle(name){
+  const el=document.querySelector('.hdr-center h1');
+  if(el) el.innerHTML = SECTION_TITLES[name] || 'Caring Companions';
+  const t=String(SECTION_TITLES[name]||'').replace(/&amp;/g,'&');
+  if(t) document.title = t+' — Caring Companions';
+}
+
 function switchTab(name, btn){
   activeTab = name;
+  setSectionTitle(name);
   document.querySelectorAll('.subbar .tab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   if(btn) btn.classList.add('active');
