@@ -1002,6 +1002,14 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
         </div>
       </div>
       <div style="padding:0 1.5rem 2rem">
+        <!-- Attendance triggers draft themselves. Everything else — conduct,
+             communication, boundaries, phone use — had no route until now. -->
+        <div style="display:flex;align-items:center;gap:.7rem;flex-wrap:wrap;background:#fff;border:1px solid var(--border);border-radius:10px;padding:.7rem 1rem;margin-bottom:1rem">
+          <b style="font-size:.85rem;color:var(--navy)">Need to write someone up for something other than attendance?</b>
+          <span style="font-size:.76rem;color:var(--gray)">Conduct, communication, boundaries, phone use. The handbook wording is filled in for you.</span>
+          <span style="flex:1"></span>
+          <button class="fb" onclick="openNewWriteup()">📝 Start a write-up</button>
+        </div>
         <details style="margin-bottom:1rem">
           <summary style="cursor:pointer;font-size:.8rem;font-weight:700;color:var(--navy)">⚙️ Policy thresholds (editable — the ladder applies these consistently)</summary>
           <div style="display:flex;gap:.9rem;flex-wrap:wrap;align-items:end;background:#fff;border:1px solid var(--border);border-radius:10px;padding:.8rem 1rem;margin-top:.5rem;font-size:.78rem">
@@ -1218,6 +1226,37 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 </div>
 
 <!-- MODAL: Corrective Action write-up -->
+<!-- MODAL: start a write-up from a template (any violation, not just attendance) -->
+<div class="overlay" id="newwriteup-modal">
+  <div class="modal" style="max-width:640px">
+    <h3 style="color:var(--navy)">📝 Start a corrective action notice</h3>
+    <div style="font-size:.75rem;color:var(--gray);margin:.2rem 0 .7rem">
+      Pick the template and the facts. The notice is drafted for you with the handbook wording,
+      you review it, then it goes to Samantha or Zach for approval. Nothing is sent until they approve.
+    </div>
+    <div class="fg">
+      <div class="grp"><label>Caregiver</label>
+        <input list="hb-cg-list" id="hb-cg" placeholder="Start typing a name">
+        <datalist id="hb-cg-list"></datalist></div>
+      <div class="grp"><label>Date of incident</label><input type="date" id="hb-date"></div>
+      <div class="grp full"><label>What kind of issue</label>
+        <select id="hb-tpl" onchange="hbTplChanged()"></select></div>
+      <div class="grp full"><label>Action level</label>
+        <select id="hb-level"></select>
+        <div class="field-note" id="hb-levelnote" style="font-size:.72rem;color:var(--gray);margin-top:.25rem"></div></div>
+      <div class="grp full" id="hb-caution" style="display:none;background:var(--amber-bg);border-radius:8px;padding:.5rem .75rem;font-size:.76rem;color:var(--amber-text)"></div>
+      <div class="grp full"><label>What happened</label>
+        <div id="hb-boxes" style="display:flex;flex-direction:column;gap:.3rem;margin-bottom:.5rem"></div>
+        <textarea id="hb-details" rows="4" placeholder="Dates, times, what was said or done, who was there. Facts only — this becomes part of the employee's file." style="width:100%"></textarea></div>
+      <div class="grp full" style="font-size:.72rem;color:var(--gray)" id="hb-policy-preview"></div>
+    </div>
+    <div style="display:flex;gap:.5rem;margin-top:.8rem;flex-wrap:wrap">
+      <button class="fb" onclick="hbCreateWriteup()">Draft the notice →</button>
+      <button onclick="document.getElementById('newwriteup-modal').classList.remove('open')" style="background:#f1f5f9;border:1px solid var(--border);border-radius:7px;padding:.4rem .9rem;cursor:pointer;font-family:inherit;font-size:.8rem">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay" id="writeup-modal">
   <div class="modal" style="max-width:720px">
     <h3 style="color:var(--navy)" id="writeup-title">📝 Corrective Action Notice</h3>
@@ -3641,6 +3680,175 @@ function attStatus(cg){
     termEligible:issued.length>=2||triggers.some(t=>t.kind==='ncns')};
 }
 function attCaregivers(){ return [...new Set(ATT_EVENTS.map(e=>e.caregiver))].sort(); }
+
+/* ── WRITE-UP TEMPLATES ───────────────────────────────────────────────────────
+   Until now a write-up could only be raised from an attendance trigger, so
+   conduct, communication and boundary issues had no route at all.
+   Every quote below is verbatim from the 2025-2027 Employee Handbook with its
+   section code, checked 2026-07-29. Earlier drafts quoted the 2024-2025 manual;
+   three of those passages no longer exist and the gift language was the
+   opposite of current policy. Do not paraphrase these into something stricter
+   than the handbook actually says — that is what unravels a notice. */
+const HB_LEVELS = ['Coaching','Verbal Warning','Written Warning','Final Written Warning','Suspension','Termination Review'];
+
+const HB_TEMPLATES = {
+  callout: {
+    label:'Short-notice call-off', section:'2U — Attendance & Dependability', level:'Verbal Warning',
+    policy:['Employees are expected to: Report to work as scheduled. Arrive on time. Complete assigned shifts. Notify the office immediately if attendance issues arise. Maintain reliable attendance.',
+            'Whenever possible, notify the office at least four (4) hours before the beginning of your shift. For shifts beginning between 7:00 AM and 9:00 AM, notify the office no later than 5:00 PM the previous day, whenever reasonably possible.'],
+    boxes:['Less than 4 hours notice','7-9 AM shift, not notified by 5 PM the day before','Repeated short-notice call-offs'],
+    why:'Clients depend on scheduled care for safety and daily living. Short notice makes replacement coverage difficult and can leave a vulnerable client without the support they were promised.',
+    expect:['Report to all assigned shifts as scheduled.','Give as much notice as the circumstances allow.','Call the office directly rather than telling a coworker.','Keep transportation arrangements reliable, including a backup where possible.','Consider your availability carefully before accepting an assignment.'] },
+
+  ncns: {
+    label:'No Call / No Show', section:'2U — Attendance & Dependability', level:'Termination Review', serious:true,
+    policy:['A No Call / No Show occurs when an employee fails to report to work and fails to notify the company. Because this places vulnerable clients at significant risk, No Call / No Show incidents are considered serious misconduct and may result in immediate termination.',
+            'Employees may never leave a client without ensuring appropriate coverage or receiving authorization from the office.'],
+    boxes:['Did not report for a scheduled shift','Did not notify the office','Client was left without coverage'],
+    why:'A client expecting care received none, and the office had no opportunity to arrange a replacement. Handbook section 2V lists No Call / No Show among violations that may result in immediate termination without prior warning.',
+    expect:['This notice is a review of continued employment. Any expectations going forward will be set in that review.'] },
+
+  communicate: {
+    label:'Failure to communicate', section:'2N — Communication', level:'Verbal Warning',
+    policy:['Employees should: Return calls and messages promptly. Notify the office of concerns immediately. Report changes in client condition. Ask questions when unsure. Maintain a respectful tone. Communicate honestly.',
+            'Never assume someone else has already reported a concern.',
+            'Refer questions regarding scheduling, billing, care plans, or medical concerns to the office.',
+            'Employees must maintain a working telephone capable of receiving calls and text messages.'],
+    boxes:['Did not return office calls','Did not return office texts','Did not report a scheduling problem','Did not report a change in client condition','Did not report an incident','Arranged schedule changes directly with the client or family'],
+    why:'The office cannot coordinate care, document concerns or respond to an emergency it does not know about. Arranging things directly with a family also leaves the client with no record and no backup if the arrangement fails.',
+    expect:['Return office calls and messages promptly.','Report scheduling problems to the office as soon as you know.','Report any change in a client’s condition immediately.','Send clients and families to the office for scheduling, billing and care plan questions.','Keep a working phone that can receive calls and texts.'] },
+
+  conduct: {
+    label:'Unprofessional conduct', section:'2M — Professionalism', level:'Verbal Warning',
+    policy:['Employees are expected to conduct themselves with honesty, integrity, compassion, and respect at all times.',
+            'Professional behavior includes: Being courteous. Speaking respectfully. Maintaining appropriate boundaries. Being dependable. Following company policies. Demonstrating patience. Respecting client choices. Maintaining confidentiality.',
+            'Employees should avoid: Becoming personally involved in family conflicts. Sharing excessive personal information. Accepting inappropriate gifts. Making promises they cannot keep. Discussing company matters with clients. Speaking negatively about coworkers or previous caregivers.'],
+    boxes:['Disrespectful to office staff','Disrespectful to a coworker','Disrespectful to a client or family','Spoke negatively about coworkers or previous caregivers','Discussed company matters with a client','Inappropriate language'],
+    why:'Clients and families judge the whole agency by how one caregiver speaks and behaves. Unprofessional conduct damages trust that is difficult to rebuild, and it makes the working relationship harder for everyone on the team.',
+    expect:['Speak respectfully to clients, families, coworkers and office staff at all times.','Keep conversations client-focused and work-related.','Raise concerns about the company with the office, not with clients.','Do not speak negatively about coworkers or previous caregivers.','Maintain professional boundaries in every interaction.'] },
+
+  insub: {
+    label:'Refusing to follow direction (insubordination)', section:'2V — Corrective Action', level:'Written Warning',
+    policy:['Handbook section 2V lists Insubordination among behaviors that may result in corrective action. In plain terms, that means failure or refusal to follow reasonable directions, instructions, or policies from supervisors or agency leadership.'],
+    boxes:['Refused to perform assigned duties','Refused to follow a care plan after being directed','Refused to complete required documentation','Argued with or hung up on office staff','Ignored scheduling instructions'],
+    why:'The office is responsible for the client’s care plan and for the agency’s compliance. When direction is refused, care can fall outside what was authorised and the agency cannot stand behind it.',
+    expect:['Follow reasonable direction from the office and from agency leadership.','Complete assigned duties and required documentation.','Follow the care plan as written; raise concerns with the office rather than changing it yourself.','Bring disagreements to the office professionally and at the time.'] },
+
+  boundary: {
+    label:'Client boundaries and gifts', section:'4Q — Gifts & Gratuities', level:'Verbal Warning',
+    policy:['Many clients express appreciation through gifts or tips. While small tokens of appreciation may occasionally be appropriate, employees should never request or expect gifts.',
+            'Employees may NOT: Ask clients for money. Request gifts. Solicit donations. Pressure clients to purchase items. Accept expensive gifts or valuable property.',
+            'If a client offers large amounts of cash, jewelry, vehicles, real estate, valuable collectibles or other significant gifts, politely decline the gift and notify the office.'],
+    boxes:['Asked a client for money','Requested or solicited a gift','Accepted an expensive gift or valuable property','Did not decline and report a significant gift','Became personally involved in family conflicts','Shared excessive personal information','Made promises that could not be kept'],
+    why:'Clients are often vulnerable and depend on their caregiver. Financial involvement or over-familiarity puts them at risk, compromises judgement, and creates exposure for the caregiver as much as for the agency.',
+    expect:['Never ask for or expect money, gifts or favours from a client or family.','Politely decline any significant gift and tell the office the same day.','Keep the relationship professional and focused on care.','Do not become involved in family disagreements.'],
+    caution:'Under 4Q a small token of appreciation is NOT a violation. Do not issue this notice for one. If the concern is a pattern, describe the pattern.' },
+
+  phone: {
+    label:'Improper phone use', section:'2P — Personal Cell Phone Use', level:'Coaching',
+    policy:['Employees are expected to limit personal phone use while providing services.',
+            'Employees should not: Spend excessive time texting. Browse social media during work hours. Watch videos or stream media. Play games. Make lengthy personal phone calls.',
+            'Phones may be used for AxisCare, Electronic Visit Verification, reviewing care plans, documenting care notes, work-related communication with the office, emergencies and approved client-related communication.'],
+    boxes:['Excessive personal texting during a shift','Social media during work hours','Watching or streaming media','Lengthy personal calls','Phone use that interrupted client care'],
+    why:'A client paying for care should have the caregiver’s attention. Phone use during a shift is also visible to families, and it is one of the most common complaints agencies receive.',
+    expect:['Keep personal phone use to breaks and genuine emergencies.','Use your phone during a shift for AxisCare, EVV, care notes and office communication.','Give the client your attention for the shift they are paying for.'] },
+};
+
+function openNewWriteup(prefillCg){
+  const sel=document.getElementById('hb-tpl');
+  sel.innerHTML=hbTemplateOptions('callout');
+  document.getElementById('hb-cg').value=prefillCg||'';
+  document.getElementById('hb-date').value=new Date().toLocaleDateString('en-CA');
+  document.getElementById('hb-details').value='';
+  // caregivers on the roster, plus anyone who already has attendance history
+  const names=[...new Set([].concat(
+    (typeof caregivers!=='undefined'?caregivers:[]).map(c=>((c.first||'')+' '+(c.last||'')).trim()),
+    attCaregivers()
+  ).filter(Boolean))].sort();
+  document.getElementById('hb-cg-list').innerHTML=names.map(n=>'<option value="'+creqEsc(n)+'">').join('');
+  hbTplChanged();
+  document.getElementById('newwriteup-modal').classList.add('open');
+}
+
+function hbTplChanged(){
+  const key=document.getElementById('hb-tpl').value, t=HB_TEMPLATES[key];
+  document.getElementById('hb-level').innerHTML=hbLevelOptions(t.level);
+  document.getElementById('hb-levelnote').textContent =
+    t.serious ? 'Handbook 2V allows immediate termination for this without prior warning.'
+              : 'Suggested from the handbook. Change it if the situation warrants.';
+  const cau=document.getElementById('hb-caution');
+  if(t.caution){ cau.style.display='block'; cau.textContent='⚠️ '+t.caution; } else cau.style.display='none';
+  document.getElementById('hb-boxes').innerHTML = t.boxes.map((b,i)=>
+    '<label style="display:flex;gap:.45rem;align-items:flex-start;font-size:.8rem">'
+    +'<input type="checkbox" class="hb-box" value="'+creqEsc(b)+'" style="margin-top:.15rem"> '+creqEsc(b)+'</label>').join('');
+  document.getElementById('hb-policy-preview').innerHTML =
+    '<b>Handbook '+creqEsc(t.section)+'</b> will be quoted in full on the notice.';
+}
+
+async function hbCreateWriteup(){
+  const cg=document.getElementById('hb-cg').value.trim();
+  const key=document.getElementById('hb-tpl').value;
+  const level=document.getElementById('hb-level').value;
+  const when=document.getElementById('hb-date').value;
+  const details=document.getElementById('hb-details').value.trim();
+  const checked=[...document.querySelectorAll('.hb-box:checked')].map(b=>b.value);
+  if(!cg){ alert('Which caregiver is this about?'); return; }
+  if(!checked.length && !details){ alert('Tick what happened, or describe it. A notice with no facts on it is not usable.'); return; }
+  let by=''; try{ const {data:{session}}=await sb.auth.getSession(); by=(session&&session.user&&session.user.email)||''; }catch(e){}
+  const t=HB_TEMPLATES[key];
+  const a={ id:'hb'+Date.now(), caregiver:cg, level, reason:t.label, category:key, event_ids:[],
+    body:hbDocBody(cg,key,level,when,checked,details),
+    status:'draft', created_at:new Date().toISOString(),
+    created_by:by.split('@')[0]||'coordinator', created_by_email:by, issued_at:null };
+  DISC_ACTIONS.push(a);
+  await attPersist('discipline_actions',a);
+  document.getElementById('newwriteup-modal').classList.remove('open');
+  openWriteup(a.id);
+  renderAttendance();
+}
+
+function hbTemplateOptions(sel){
+  return Object.entries(HB_TEMPLATES).map(([k,t])=>
+    '<option value="'+k+'"'+(k===sel?' selected':'')+'>'+creqEsc(t.label)+'</option>').join('');
+}
+function hbLevelOptions(sel){
+  return HB_LEVELS.map(l=>'<option value="'+l+'"'+(l===sel?' selected':'')+'>'+l+'</option>').join('');
+}
+
+/* Builds the notice body. Same shape as the attendance one so a coordinator
+   reading either recognises it. */
+function hbDocBody(cg, tplKey, level, incidentDate, checked, details){
+  const t=HB_TEMPLATES[tplKey];
+  const today=new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
+  const wrap=(s,ind='  ')=>{ const out=[]; let line=ind;
+    s.split(/\s+/).forEach(w=>{ if((line+w).length>76){ out.push(line); line=ind; } line+=w+' '; });
+    out.push(line); return out.join('\n').replace(/\s+$/gm,''); };
+  return 'CARING COMPANIONS — CORRECTIVE ACTION NOTICE\n'
+    +'══════════════════════════════════════════════\n\n'
+    +'Employee:        '+cg+'\n'
+    +'Date of notice:  '+today+'\n'
+    +(incidentDate?'Date of incident: '+new Date(incidentDate+'T12:00:00').toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'})+'\n':'')
+    +'Action level:    '+level+'\n'
+    +'Category:        '+t.label+' (Handbook '+t.section+')\n\n'
+    +'THIS NOTICE IS BEING ISSUED FOR:\n'
+    +(checked.length?checked.map(c=>'  • '+c).join('\n')+'\n':'  • '+t.label+'\n')
+    +'\nWHAT HAPPENED:\n'+wrap(details||'(to be completed by the supervisor)')+'\n'
+    +'\nCOMPANY POLICY (Employee Handbook '+t.section+'):\n'
+    +t.policy.map(p=>wrap('"'+p+'"')).join('\n\n')+'\n'
+    +'\nWHY THIS MATTERS:\n'+wrap(t.why)+'\n'
+    +'\nWHAT WE EXPECT NOW:\n'
+    +t.expect.map((e,i)=>wrap((i+1)+'. '+e)).join('\n')+'\n'
+    +'\nFailure to demonstrate immediate and sustained improvement may result in\n'
+    +'further corrective action, up to and including termination of employment.\n'
+    +'Handbook 2V: "The company reserves the right to skip any step depending\n'
+    +'upon the seriousness of the policy violation."\n'
+    +'\nEMPLOYEE COMMENTS:\n\n\n'
+    +'\nACKNOWLEDGMENT:\n'
+    +wrap('My signature below acknowledges that this notice has been reviewed with me. My signature does not necessarily indicate agreement with its contents.')+'\n\n'
+    +'  Employee: ______________________________  Date: ____________\n'
+    +'  Supervisor: ____________________________  Date: ____________\n'
+    +'  Witness (optional): ____________________  Date: ____________\n';
+}
 function renderAttendance(){
   const cfg=attCfg();
   ['notice','ccount','cwin','grace','tcount','twin','look'].forEach((k,i)=>{
