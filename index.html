@@ -284,6 +284,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
   <div class="subbar" id="sub-hr" style="display:none">
     <div class="tab" data-name="compliance" onclick="gotoTab('compliance')"><span class="ti"><svg aria-hidden="true" style="width:1.05em;height:1.05em;vertical-align:-0.16em;display:inline-block;"><use href="icons.svg#i-check"/></svg></span> Active Compliance</div>
     <div class="tab" data-name="attendance" onclick="gotoTab('attendance')"><span class="ti"><svg aria-hidden="true" style="width:1.05em;height:1.05em;vertical-align:-0.16em;display:inline-block;"><use href="icons.svg#i-clock"/></svg></span> Attendance<span id="attBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
+    <div class="tab" data-name="writeups" onclick="gotoTab('writeups')"><span class="ti"><svg aria-hidden="true" style="width:1.05em;height:1.05em;vertical-align:-0.16em;display:inline-block;"><use href="icons.svg#i-doc"/></svg></span> Write-Ups<span id="wuBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
     <span style="margin-left:auto;display:flex;align-items:center;gap:.35rem;white-space:nowrap">
       <a href="#" onclick="openSopLink();return false" style="font-size:.78rem;font-weight:700;color:var(--navy);text-decoration:underline">📘 Onboarding &amp; Compliance SOP</a>
     </span>
@@ -986,6 +987,22 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     </div>
 
     <!-- ═══════════════════════════════ END-OF-DAY REPORTS ═══════════════════════════════ -->
+    <!-- Corrective actions in one place. They outgrew the Attendance tab the
+         moment they covered seven violation types instead of one. -->
+    <div class="panel" id="panel-writeups">
+      <div style="padding:1.2rem 1.5rem 2rem">
+        <div style="display:flex;align-items:flex-end;gap:.7rem;flex-wrap:wrap;margin-bottom:1rem">
+          <div>
+            <h2 style="margin:0;font-size:1.15rem;color:var(--navy)">Write-Ups</h2>
+            <div style="font-size:.78rem;color:var(--gray);margin-top:.2rem">Every corrective action and what stage it is at. Samantha or Zach approve before anything is issued.</div>
+          </div>
+          <span style="flex:1"></span>
+          <button class="fb" onclick="openNewWriteup()">📝 Start a write-up</button>
+        </div>
+        <div id="wuList"></div>
+      </div>
+    </div>
+
     <div class="panel" id="panel-attendance">
       <div class="tab-guide">
         <div class="tab-guide-hdr" onclick="toggleGuide('attendance')">
@@ -1002,13 +1019,9 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
         </div>
       </div>
       <div style="padding:0 1.5rem 2rem">
-        <!-- Attendance triggers draft themselves. Everything else — conduct,
-             communication, boundaries, phone use — had no route until now. -->
         <div style="display:flex;align-items:center;gap:.7rem;flex-wrap:wrap;background:#fff;border:1px solid var(--border);border-radius:10px;padding:.7rem 1rem;margin-bottom:1rem">
-          <b style="font-size:.85rem;color:var(--navy)">Need to write someone up for something other than attendance?</b>
-          <span style="font-size:.76rem;color:var(--gray)">Conduct, communication, boundaries, phone use. The handbook wording is filled in for you.</span>
-          <span style="flex:1"></span>
-          <button class="fb" onclick="openNewWriteup()">📝 Start a write-up</button>
+          <span style="font-size:.78rem;color:var(--gray)">Attendance write-ups draft themselves from the cards below. Everything else lives on the</span>
+          <a href="#" onclick="gotoTab('writeups');return false" style="font-size:.8rem;font-weight:700;color:var(--navy)">Write-Ups tab →</a>
         </div>
         <details style="margin-bottom:1rem">
           <summary style="cursor:pointer;font-size:.8rem;font-weight:700;color:var(--navy)">⚙️ Policy thresholds (editable — the ladder applies these consistently)</summary>
@@ -3090,7 +3103,7 @@ async function gcalSyncAll(){
 const SECTION_TITLES = {
   home:'Recruiting &amp; Onboarding', offers:'Recruit', onboarding:'Onboarding',
   orientations:'Orientations', training:'Training', compliance:'HR &amp; Compliance',
-  attendance:'Attendance', scheduling:'Scheduling', evv:'EVV Corrections',
+  attendance:'Attendance', writeups:'Write-Ups', scheduling:'Scheduling', evv:'EVV Corrections',
   checkins:'Check-ins', coordreq:'Coordinator Requests', sendmsg:'Send a Message',
   meetings:'Meetings', comms:'Communication', eod:'End of Day',
 };
@@ -3117,6 +3130,7 @@ function switchTab(name, btn){
   if(name==='scheduling') { loadOpenShifts(); renderDnrLog(); }
   if(name==='comms') { loadRepliesWaiting(); }
   if(name==='meetings') { renderMeetings(); }
+  if(name==='writeups'){ renderWriteups(); }
   if(name==='sendmsg') { renderSendMsg(); }
   if(name==='attendance') { renderAttendance(); }
   if(name==='checkins') { renderCheckins(); renderCheckinPairs(); loadCheckinPairs(); }
@@ -3235,7 +3249,7 @@ function editSchedSopLink(){
 }
 
 // ── GROUPED NAVIGATION + STAFFING OVERVIEW ──
-const SC_GROUPS={home:['home'],onboard:['offers','onboarding','orientations','training'],hr:['compliance','attendance'],sched:['scheduling','evv','checkins'],team:['coordreq','sendmsg','meetings','comms','eod']};
+const SC_GROUPS={home:['home'],onboard:['offers','onboarding','orientations','training'],hr:['compliance','attendance','writeups'],sched:['scheduling','evv','checkins'],team:['coordreq','sendmsg','meetings','comms','eod']};
 function groupOf(tab){ for(const g in SC_GROUPS) if(SC_GROUPS[g].includes(tab)) return g; return 'home'; }
 function showGroupChrome(g){
   document.querySelectorAll('#groupBar .gtab').forEach(b=>b.classList.toggle('active',b.dataset.group===g));
@@ -3754,6 +3768,49 @@ const HB_TEMPLATES = {
     expect:['Keep personal phone use to breaks and genuine emergencies.','Use your phone during a shift for AxisCare, EVV, care notes and office communication.','Give the client your attention for the shift they are paying for.'] },
 };
 
+/* Every corrective action, grouped by where it is stuck. Ordered by who is
+   waiting on whom: sent back to you first, then yours to finish, then waiting
+   on the owners, then ready to hand over. History last. */
+function renderWriteups(){
+  const box=document.getElementById('wuList'); if(!box) return;
+  const all=(DISC_ACTIONS||[]).slice().sort((a,b)=>String(b.created_at||'').localeCompare(String(a.created_at||'')));
+  const bucket=(f)=>all.filter(f);
+  const sentBack = bucket(a=>a.status==='draft' && a.reject_note);
+  const drafts   = bucket(a=>a.status==='draft' && !a.reject_note);
+  const waiting  = bucket(a=>a.status==='pending_approval');
+  const approved = bucket(a=>a.status==='approved');
+  const issued   = bucket(a=>a.status==='issued');
+
+  const badge=document.getElementById('wuBadge');
+  const needsMe=sentBack.length+drafts.length+approved.length;
+  if(badge){ badge.style.display=needsMe?'inline-block':'none'; badge.textContent=needsMe; }
+
+  const row=(a,note)=>'<div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;padding:.5rem 0;border-bottom:1px solid var(--border)">'
+    +'<b style="font-size:.85rem;color:var(--navy);min-width:150px">'+creqEsc(a.caregiver||'')+'</b>'
+    +'<span style="font-size:.75rem;background:var(--slate-bg);border-radius:999px;padding:.1rem .5rem">'+creqEsc(a.level||'')+'</span>'
+    +'<span style="font-size:.76rem;color:var(--gray)">'+creqEsc(a.reason||a.category||'')+'</span>'
+    +(note?'<span style="font-size:.74rem;color:#b45309">'+note+'</span>':'')
+    +'<span style="flex:1"></span>'
+    +'<span style="font-size:.72rem;color:var(--gray)">'+String(a.created_at||'').slice(0,10)+'</span>'
+    +'<button class="fb" style="font-size:.72rem;padding:.25rem .7rem" onclick="openWriteup(\''+a.id+'\')">Open</button>'
+    +'</div>';
+
+  const group=(title,rows,hint,tone)=>rows.length
+    ? '<div style="margin-bottom:1.1rem"><div style="display:flex;align-items:baseline;gap:.5rem;margin-bottom:.2rem">'
+      +'<b style="font-size:.85rem;color:'+(tone||'var(--navy)')+'">'+title+'</b>'
+      +'<span style="font-size:.74rem;color:var(--gray)">'+hint+'</span></div>'+rows+'</div>'
+    : '';
+
+  const html =
+     group('Sent back to you', sentBack.map(a=>row(a,'↩ '+creqEsc(a.reject_note||''))).join(''), 'an owner asked for changes', '#b91c1c')
+   + group('Your drafts', drafts.map(a=>row(a,'')).join(''), 'not submitted yet')
+   + group('Waiting on Samantha or Zach', waiting.map(a=>row(a,'⏳')).join(''), 'nothing is sent until they approve')
+   + group('Approved, ready to issue', approved.map(a=>row(a,'✅')).join(''), 'review it with the caregiver, get the signature, then mark issued', '#15803d')
+   + group('Issued', issued.slice(0,25).map(a=>row(a,'📄 '+String(a.issued_at||'').slice(0,10))).join(''), 'on file');
+
+  box.innerHTML = html || '<div style="font-size:.82rem;color:var(--gray)">No corrective actions on file. Use <b>Start a write-up</b> when one is needed.</div>';
+}
+
 function openNewWriteup(prefillCg){
   const sel=document.getElementById('hb-tpl');
   sel.innerHTML=hbTemplateOptions('callout');
@@ -3805,6 +3862,7 @@ async function hbCreateWriteup(){
   document.getElementById('newwriteup-modal').classList.remove('open');
   openWriteup(a.id);
   renderAttendance();
+  renderWriteups();
 }
 
 function hbTemplateOptions(sel){
@@ -3988,6 +4046,7 @@ async function sendForApproval(){
   await attPersist('discipline_actions',a);
   document.getElementById('writeup-modal').classList.remove('open');
   renderAttendance();
+  renderWriteups();
   alert('Sent ✓ — Samantha and Zach will see it in the Owners Hub. You\'ll see the approval here.');
 }
 async function pushAxNote(id){
