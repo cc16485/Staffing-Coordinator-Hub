@@ -249,7 +249,20 @@ Deno.serve(async (req) => {
     }
   }
 
-  const result = { live: cfg.live, calls_seen: calls.length, created: created.length, auto_closed: closed.length, open: open.length, notified }
+  // Diagnostics: escalation is only as good as the phone numbers behind it.
+  // Surfacing this in every sweep means "it silently told nobody" can't hide.
+  const reachable = staff.filter((s) => s.phone).length
+  const result = {
+    live: cfg.live, calls_seen: calls.length, created: created.length,
+    auto_closed: closed.length, open: open.length, notified,
+    can_notify: {
+      staff_total: staff.length,
+      staff_with_phone: reachable,
+      on_call_today: onCallNow ? (onCallNow.name || onCallNow.email || 'set') : 'nobody scheduled',
+      fallback_phone_set: !!cfg.fallback_phone,
+      ready: reachable > 0 || !!cfg.fallback_phone,
+    },
+  }
   console.log('ops-escalate', JSON.stringify(result))
   return json(result)
 })
