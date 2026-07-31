@@ -276,7 +276,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
     <div class="tab gtab active" data-group="home" onclick="switchGroup('home')"><span class="ti"><svg aria-hidden="true" style="width:1.05em;height:1.05em;vertical-align:-0.16em;display:inline-block;"><use href="icons.svg#i-home"/></svg></span> Overview</div>
     <div class="tab gtab" data-group="onboard" onclick="switchGroup('onboard')"><span class="ti"><svg aria-hidden="true" style="width:1.05em;height:1.05em;vertical-align:-0.16em;display:inline-block;"><use href="icons.svg#i-clipboard"/></svg></span> Recruiting &amp; Onboarding<span class="gbadge" id="gb-onboard" style="display:none"></span></div>
     <div class="tab gtab" data-group="hr" onclick="switchGroup('hr')"><span class="ti"><svg aria-hidden="true" style="width:1.05em;height:1.05em;vertical-align:-0.16em;display:inline-block;"><use href="icons.svg#i-shield"/></svg></span> HR &amp; Compliance<span class="gbadge" id="gb-hr" style="display:none"></span></div>
-    <div class="tab gtab" data-group="sched" onclick="switchGroup('sched')"><span class="ti"><svg aria-hidden="true" style="width:1.05em;height:1.05em;vertical-align:-0.16em;display:inline-block;"><use href="icons.svg#i-calendar"/></svg></span> Scheduling<span class="gbadge" id="gb-sched" style="display:none"></span></div>
+    <div class="tab gtab" data-group="sched" onclick="switchGroup('sched')"><span class="ti"><svg aria-hidden="true" style="width:1.05em;height:1.05em;vertical-align:-0.16em;display:inline-block;"><use href="icons.svg#i-doc"/></svg></span> EVV Corrections<span class="gbadge" id="gb-sched" style="display:none"></span></div>
     <div class="tab gtab" data-group="team" onclick="switchGroup('team')"><span class="ti"><svg aria-hidden="true" style="width:1.05em;height:1.05em;vertical-align:-0.16em;display:inline-block;"><use href="icons.svg#i-handshake"/></svg></span> Team &amp; Reports<span class="gbadge" id="gb-team" style="display:none"></span></div>
   </div>
   <div class="subbar" id="sub-onboard" style="display:none">
@@ -297,10 +297,12 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
       <a href="#" onclick="openSopLink();return false" style="font-size:.78rem;font-weight:700;color:var(--navy);text-decoration:underline">📘 Onboarding &amp; Compliance SOP</a>
     </span>
   </div>
+  <!-- 2026-07-31: Open Shifts & New Clients and Client Check-Ins moved to the
+       CC hub (New Clients under Leads, Open Shifts in Coverage Help, check-ins
+       as Care Match Check-ins). Their panels remain below, dormant, as the
+       Stage-2 fallback; only EVV Corrections stays reachable here. -->
   <div class="subbar" id="sub-sched" style="display:none">
-    <div class="tab" data-name="scheduling" onclick="gotoTab('scheduling')"><span class="ti"><svg aria-hidden="true" style="width:1.05em;height:1.05em;vertical-align:-0.16em;display:inline-block;"><use href="icons.svg#i-calendar"/></svg></span> Open Shifts &amp; New Clients<span id="schedBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
     <div class="tab" data-name="evv" onclick="gotoTab('evv')"><span class="ti"><svg aria-hidden="true" style="width:1.05em;height:1.05em;vertical-align:-0.16em;display:inline-block;"><use href="icons.svg#i-doc"/></svg></span> EVV Corrections</div>
-    <div class="tab" data-name="checkins" onclick="gotoTab('checkins')"><span class="ti"><svg aria-hidden="true" style="width:1.05em;height:1.05em;vertical-align:-0.16em;display:inline-block;"><use href="icons.svg#i-heart-honey"/></svg></span> Client Check-Ins<span id="checkinsBadge" style="display:none;background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem"></span></div>
     <span style="margin-left:auto;display:flex;align-items:center;gap:.35rem;white-space:nowrap">
       <a href="#" onclick="openSchedSopLink();return false" style="font-size:.78rem;font-weight:700;color:var(--navy);text-decoration:underline">📘 Scheduling SOP</a>
       <a href="#" onclick="editSchedSopLink();return false" title="Change the SOP link" style="font-size:.72rem;color:#A89C8B;text-decoration:none">✎</a>
@@ -3257,7 +3259,7 @@ function editSchedSopLink(){
 }
 
 // ── GROUPED NAVIGATION + STAFFING OVERVIEW ──
-const SC_GROUPS={home:['home'],onboard:['offers','onboarding','orientations','training'],hr:['compliance','attendance','writeups'],sched:['scheduling','evv','checkins'],team:['coordreq','sendmsg','meetings','comms','eod']};
+const SC_GROUPS={home:['home'],onboard:['offers','onboarding','orientations','training'],hr:['compliance','attendance','writeups'],sched:['evv'],team:['coordreq','sendmsg','meetings','comms','eod']};
 function groupOf(tab){ for(const g in SC_GROUPS) if(SC_GROUPS[g].includes(tab)) return g; return 'home'; }
 function showGroupChrome(g){
   document.querySelectorAll('#groupBar .gtab').forEach(b=>b.classList.toggle('active',b.dataset.group===g));
@@ -3270,6 +3272,9 @@ function switchGroup(g){
   gotoTab(SC_GROUPS[g].includes(last)?last:SC_GROUPS[g][0]);
 }
 function gotoTab(name){
+  // 2026-07-31: these two tabs moved to the CC hub; every old route
+  // (home rows, saved last-tab, hash links) lands on EVV instead.
+  if(name==='scheduling'||name==='checkins') name='evv';
   const g=groupOf(name);
   showGroupChrome(g);
   if(g!=='home') localStorage.setItem('sc_last_'+g,name);
@@ -3329,10 +3334,9 @@ function renderStaffHome(){
       +'</div>'
     : '';
   box.innerHTML= returnedHtml
-    +'<div style="font-size:.72rem;font-weight:800;letter-spacing:.06em;color:var(--gray);text-transform:uppercase;margin:.2rem 0 .4rem">🗓 Scheduling</div>'
-    +row('🔴',shiftN,'Open shifts — next 14 days','Every unassigned visit in AxisCare is yours to fill','scheduling',true)
-    +row('💛',ciN,'Client check-in calls due','First-shift calls on new matches + concern re-checks — two calls per match, then done','checkins',false)
-    +'<div style="font-size:.72rem;font-weight:800;letter-spacing:.06em;color:var(--gray);text-transform:uppercase;margin:.8rem 0 .4rem">📋 Onboarding &amp; Compliance</div>'
+    /* 2026-07-31: the Scheduling rows (open shifts, check-in calls) are gone —
+       that work moved to the CC hub (Coverage Help + Care Match Check-ins). */
+    +'<div style="font-size:.72rem;font-weight:800;letter-spacing:.06em;color:var(--gray);text-transform:uppercase;margin:.2rem 0 .4rem">📋 Onboarding &amp; Compliance</div>'
     +row('🤝',offN,'New offers — enter AxisCare attributes','Interviewed caregivers waiting on their profile checklist','offers',false)
     +row('⛔',blocked,'Blocked from first client contact','Orientation/dementia training incomplete — can\'t be scheduled yet','training',true)
     +row('⏰',attN,'Attendance needs action','Write-ups due, drafted, or approved and ready to issue','attendance',true)
@@ -7567,6 +7571,9 @@ function renderEVVCorrections() {
   if(emb||/[?&]embed=1/.test(location.search)) document.documentElement.classList.add('embedded');
   function applyHash(){
     var h=(location.hash||'').replace(/^#/,'').toLowerCase(); if(!h) return false;
+    // Retired tab names keep working: both moved to the CC hub 2026-07-31,
+    // and any old link into them lands on EVV Corrections here.
+    if(h==='scheduling'||h==='checkins') h='evv';
     var ok=false;
     try{
       if(typeof SC_GROUPS!=='undefined' && SC_GROUPS[h]){ switchGroup(h); ok=true; }
