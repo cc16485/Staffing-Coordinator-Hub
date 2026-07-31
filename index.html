@@ -9,11 +9,11 @@
 <style>
 :root {
   --navy:#0D365F; --yellow:#F0A63A; --teal:#1F7A8C; --gold:#F0A63A; --turq:#8FD1C7;
-  --bg:#faf9f6; --white:#fff; --gray:#55677a; --border:#e4e1d8;
+  --bg:#faf9f6; --white:#fff; --gray:#6E6559; --border:#e4e1d8;
   --green:#22C55E; --green-bg:#dcfce7; --green-text:#15803d;
   --amber-bg:#fef3c7; --amber-text:#92400e;
   --red:#EF4444; --red-bg:#fee2e2; --red-text:#b91c1c;
-  --slate-bg:#f1f5f9; --slate-text:#55677a;
+  --slate-bg:#FAF9F6; --slate-text:#6E6559;
   --blue-bg:#dbeafe; --blue-text:#1d4ed8;
 }
 *{box-sizing:border-box;margin:0;padding:0}
@@ -37,7 +37,7 @@ header img{height:44px}
 .hdr-center h1{color:#fff;font-size:1rem;font-weight:800;text-align:center}
 .hdr-center p{color:rgba(255,255,255,.72);font-size:.72rem;text-align:center}
 .hdr-right{display:flex;align-items:center;gap:.75rem}
-.logout-btn{background:#F1F5F9;color:var(--navy);border:1px solid #e4e1d8;padding:.35rem .8rem;border-radius:6px;font-family:inherit;font-size:.78rem;font-weight:600;cursor:pointer}
+.logout-btn{background:#FAF9F6;color:var(--navy);border:1px solid #e4e1d8;padding:.35rem .8rem;border-radius:6px;font-family:inherit;font-size:.78rem;font-weight:600;cursor:pointer}
 
 /* ── Folder tabs ── */
 /* File-folder group tabs on a white shelf */
@@ -190,7 +190,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 .att-btn.att-attended{background:var(--green-bg);color:var(--green-text);border-color:#86efac}
 .att-btn.att-noshow{background:var(--red-bg);color:var(--red-text);border-color:#fca5a5}
 .att-btn.att-rescheduled{background:var(--amber-bg);color:var(--amber-text);border-color:#fcd34d}
-.att-btn.att-canceled{background:var(--slate-bg);color:var(--slate-text);border-color:#cbd5e1}
+.att-btn.att-canceled{background:var(--slate-bg);color:var(--slate-text);border-color:#E8E2D8}
 .past-sess-toggle{display:flex;gap:.3rem;margin-bottom:.6rem;padding:.5rem .75rem;background:var(--bg);border-radius:8px}
 .pts-btn{flex:1;padding:.3rem .6rem;border:1.5px solid var(--border);border-radius:6px;font-family:inherit;font-size:.75rem;font-weight:600;cursor:pointer;background:var(--white);color:var(--navy);transition:.12s}
 .pts-btn.active{background:var(--navy);color:#fff;border-color:var(--navy)}
@@ -7634,6 +7634,76 @@ html.embedded .subbar .tab{font-size:13px !important;font-weight:600 !important;
 html.embedded .subbar .tab:hover{background:rgba(255,255,255,.12) !important;color:#fff !important;}
 html.embedded .subbar .tab.active{background:var(--bg) !important;color:var(--navy) !important;
   font-weight:800 !important;border:0 !important;margin-bottom:-1px !important;}
+
+/* ── Filing-cabinet tabs ──────────────────────────────────────────────────
+   Every tab is manila. The chosen one comes forward: taller, page-coloured,
+   with a shadow above it and a -1px seal to the content below. The rest sit
+   back in a darker manila so the drawer reads as full rather than empty. */
+html.embedded .subbar, .subbar {
+  background:#0D365F !important;
+  padding:9px 14px 0 !important;
+  gap:3px !important;
+  align-items:flex-end !important;
+  border-bottom:0 !important;
+  border-radius:0 !important;
+}
+html.embedded .subbar .tab, .subbar .tab {
+  background:#E5DCCB !important;              /* manila, sitting back */
+  color:rgba(13,54,95,.72) !important;
+  border:0 !important;
+  border-radius:10px 10px 0 0 !important;
+  padding:7px 16px 8px !important;
+  font-size:13px !important;
+  font-weight:600 !important;
+  box-shadow:inset 0 -3px 6px -3px rgba(0,0,0,.22) !important;   /* recessed */
+  transition:background .12s ease, padding .12s ease !important;
+}
+html.embedded .subbar .tab, .subbar .tab:hover {
+  background:#F0E9DC !important;
+  color:#0D365F !important;
+}
+html.embedded .subbar .tab.active, .subbar .tab.active {
+  background:#FAF9F6 !important;              /* same as the page = pulled forward */
+  color:#0D365F !important;
+  font-weight:800 !important;
+  padding-top:11px !important;                /* taller than its neighbours */
+  padding-bottom:9px !important;
+  margin-bottom:-1px !important;              /* seals to the content below */
+  box-shadow:0 -3px 8px -2px rgba(0,0,0,.28) !important;         /* lifted */
+  position:relative !important;
+  z-index:2 !important;
+}
+
+/* Group tabs: same manila folders, a size larger. Hierarchy comes from scale
+   and position, not from being a different kind of object. */
+.tab-bar {
+  background:#0D365F !important;
+  align-items:flex-end !important;
+  border-bottom:0 !important;
+  padding:12px 14px 0 !important;
+  gap:3px !important;
+  flex-wrap:wrap !important;
+}
+.tab-bar .tab.gtab {
+  background:#E5DCCB !important;
+  color:rgba(13,54,95,.72) !important;
+  border:0 !important;
+  border-radius:11px 11px 0 0 !important;
+  padding:8px 18px 9px !important;
+  font-weight:700 !important;
+  box-shadow:inset 0 -3px 6px -3px rgba(0,0,0,.22) !important;
+}
+.tab-bar .tab.gtab:hover { background:#F0E9DC !important; color:#0D365F !important; }
+.tab-bar .tab.gtab.active {
+  background:#FAF9F6 !important;
+  color:#0D365F !important;
+  font-weight:800 !important;
+  padding-top:12px !important;
+  margin-bottom:-1px !important;
+  box-shadow:0 -3px 8px -2px rgba(0,0,0,.28) !important;
+  position:relative !important;
+  z-index:2 !important;
+}
 </style>
 </body>
 </html>
