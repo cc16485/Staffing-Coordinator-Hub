@@ -51,7 +51,7 @@ header img{background:#fff;border-radius:10px;padding:6px 10px}
    to match .tab, which already sets a navy colour. */
 .tab-bar .tab.gtab{background:transparent;border-color:transparent;color:rgba(255,255,255,.75)}
 .tab-bar .tab.gtab:hover{background:rgba(255,255,255,.12);color:#fff}
-.tab-bar .tab.gtab.active{background:var(--bg);border-color:transparent;color:var(--navy)}
+.tab-bar .tab.gtab.active{background:var(--bg);border-color:transparent transparent var(--bg) transparent;color:var(--navy)}
 .tab{padding:.5rem 1.2rem;border-radius:11px 11px 0 0;font-size:.8rem;font-weight:700;cursor:pointer;border:1.5px solid var(--navy);border-bottom:none;color:var(--navy);background:#fff;transition:.15s;white-space:nowrap;position:relative}
 .tab:hover{background:#EFF5FA}
 .tab.active{background:var(--bg);color:var(--navy);font-weight:800;font-size:.84rem;margin-bottom:-1.5px;border-bottom:1.5px solid var(--bg);padding:.75rem 1.5rem .6rem;opacity:1;box-shadow:inset 0 3px 0 var(--turq)}
@@ -7622,6 +7622,18 @@ html.embedded .subbar .tab.active{
   background:none; color:var(--navy); border:none;
   border-bottom:2px solid var(--teal, #54BDB8); padding-top:7px;
 }
+
+/* ── Embedded in GoHighLevel: same folder tabs as standalone. See note above. ── */
+html.embedded #app > header{background:var(--navy) !important;}
+html.embedded #app > header,html.embedded #app > header *{color:#fff !important;}
+html.embedded .subbar{background:var(--navy) !important;border-bottom:0 !important;
+  padding:8px 14px 0 !important;gap:4px !important;border-radius:0 !important;align-items:flex-end !important;}
+html.embedded .subbar .tab{font-size:13px !important;font-weight:600 !important;
+  border-radius:9px 9px 0 0 !important;background:transparent !important;border:0 !important;
+  color:rgba(255,255,255,.78) !important;padding:8px 16px !important;}
+html.embedded .subbar .tab:hover{background:rgba(255,255,255,.12) !important;color:#fff !important;}
+html.embedded .subbar .tab.active{background:var(--bg) !important;color:var(--navy) !important;
+  font-weight:800 !important;border:0 !important;margin-bottom:-1px !important;}
 </style>
 </body>
 </html>
