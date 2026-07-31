@@ -50,14 +50,12 @@ header img{background:#fff;border-radius:10px;padding:6px 10px}
    page so the sub-bar below reads as belonging to that group. Specificity has
    to match .tab, which already sets a navy colour. */
 .tab-bar .tab.gtab{background:transparent;border-color:transparent;color:rgba(255,255,255,.75)}
-.tab-bar .tab.gtab:hover{background:rgba(255,255,255,.12);color:#fff}
 .tab-bar .tab.gtab.active{background:var(--bg);border-color:transparent transparent var(--bg) transparent;color:var(--navy)}
 .tab{padding:.5rem 1.2rem;border-radius:11px 11px 0 0;font-size:.8rem;font-weight:700;cursor:pointer;border:1.5px solid var(--navy);border-bottom:none;color:var(--navy);background:#fff;transition:.15s;white-space:nowrap;position:relative}
 .tab:hover{background:#EFF5FA}
 .tab.active{background:var(--bg);color:var(--navy);font-weight:800;font-size:.84rem;margin-bottom:-1.5px;border-bottom:1.5px solid var(--bg);padding:.75rem 1.5rem .6rem;opacity:1;box-shadow:inset 0 3px 0 var(--turq)}
 .subbar{display:flex;gap:.35rem;padding:.7rem 1.5rem .6rem;background:var(--bg);border-bottom:1px solid #e4e1d8;overflow-x:auto}
 .subbar .tab{border-radius:999px;padding:.35rem 1rem;font-size:.76rem;border:1.5px solid var(--navy);background:#fff;color:var(--navy);margin-bottom:0}
-.subbar .tab:hover{background:#EFF5FA}
 .subbar .tab.active{background:var(--navy);color:#fff;border:1px solid var(--navy);padding-top:.35rem}
 .gbadge{background:#DC2626;color:#fff;border-radius:999px;font-size:.68rem;font-weight:700;padding:.05rem .45rem;margin-left:.35rem}
 .tab .ti{display:inline-block}
@@ -7617,7 +7615,6 @@ html.embedded .subbar .tab{
   color:var(--gray); padding:7px 10px 6px; margin:0;
   border-bottom:2px solid transparent; transition:none;
 }
-html.embedded .subbar .tab:hover{ background:none; color:var(--navy); }
 html.embedded .subbar .tab.active{
   background:none; color:var(--navy); border:none;
   border-bottom:2px solid var(--teal, #54BDB8); padding-top:7px;
@@ -7631,7 +7628,6 @@ html.embedded .subbar{background:var(--navy) !important;border-bottom:0 !importa
 html.embedded .subbar .tab{font-size:13px !important;font-weight:600 !important;
   border-radius:9px 9px 0 0 !important;background:transparent !important;border:0 !important;
   color:rgba(255,255,255,.78) !important;padding:8px 16px !important;}
-html.embedded .subbar .tab:hover{background:rgba(255,255,255,.12) !important;color:#fff !important;}
 html.embedded .subbar .tab.active{background:var(--bg) !important;color:var(--navy) !important;
   font-weight:800 !important;border:0 !important;margin-bottom:-1px !important;}
 
@@ -7657,10 +7653,6 @@ html.embedded .subbar .tab, .subbar .tab {
   font-weight:600 !important;
   box-shadow:inset 0 -3px 6px -3px rgba(0,0,0,.22) !important;   /* recessed */
   transition:background .12s ease, padding .12s ease !important;
-}
-html.embedded .subbar .tab, .subbar .tab:hover {
-  background:#F0E9DC !important;
-  color:#0D365F !important;
 }
 html.embedded .subbar .tab.active, .subbar .tab.active {
   background:#FAF9F6 !important;              /* same as the page = pulled forward */
@@ -7693,7 +7685,6 @@ html.embedded .subbar .tab.active, .subbar .tab.active {
   font-weight:700 !important;
   box-shadow:inset 0 -3px 6px -3px rgba(0,0,0,.22) !important;
 }
-.tab-bar .tab.gtab:hover { background:#F0E9DC !important; color:#0D365F !important; }
 .tab-bar .tab.gtab.active {
   background:#FAF9F6 !important;
   color:#0D365F !important;
