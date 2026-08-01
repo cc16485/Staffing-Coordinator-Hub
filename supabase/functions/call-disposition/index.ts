@@ -78,7 +78,23 @@ Deno.serve(async (req) => {
   }
   const disposition = field('disposition') || field('call_disposition') || field('outcome')
   if (!disposition) {
-    return json({ error: 'no disposition', hint: 'The disposition field arrived empty or as an unresolved merge field. Either pick the disposition field from GHL, or hard-code the name as text in a workflow that triggers on just that disposition.' }, 400)
+    // GHL's "send a test request" fires with no real call behind it, so
+    // {{phoneCall.dispositions}} resolves to nothing — and GHL will not let the
+    // action be saved unless it gets a 200 back. Answer politely, create
+    // nothing, and leave a trace so a genuinely broken merge field is still
+    // visible in the log rather than silently doing nothing forever.
+    const supabaseT = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+    try {
+      const { data } = await supabaseT.from('app_data').select('data').eq('key', 'call_disposition_log').maybeSingle()
+      const arr = Array.isArray(data?.data) ? data!.data : []
+      arr.push({ at: new Date().toISOString(), disposition: '(none)', routed: 'no disposition — nothing created', phone_present: !!(field('phone') || field('phone_number')) })
+      await supabaseT.from('app_data').upsert({ key: 'call_disposition_log', data: arr.slice(-50), updated_at: new Date().toISOString() })
+    } catch { /* never block the response */ }
+    return json({
+      ok: true,
+      routed: 'nothing — no disposition on this request',
+      note: 'This is the expected reply to a test request. On a real call the disposition arrives and the call gets routed.',
+    })
   }
 
   const phone = field('phone') || field('phone_number')
