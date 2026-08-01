@@ -68,8 +68,11 @@ Deno.serve(async (req) => {
     const grab = (k: string) => (raw.match(new RegExp('"' + k + '"\\s*:\\s*"([^"]*)"')) || [])[1] || ''
     b = { id: grab('id'), name: grab('name'), email: grab('email'), phone: grab('phone'),
           disposition: grab('disposition'), direction: grab('direction') }
-    const nm = raw.match(/"note"\s*:\s*([\s\S]*)\}\s*$/)
-    if (nm) b.note = nm[1].trim().replace(/^"/, '').replace(/",?$/, '').trim()
+    // Whichever free-text field was put last is the one that broke the JSON, so
+    // take everything after it as its value.
+    const lastKey = raw.lastIndexOf('"transcript"') > raw.lastIndexOf('"note"') ? 'transcript' : 'note'
+    const nm = raw.match(new RegExp('"' + lastKey + '"\\s*:\\s*([\\s\\S]*)\\}\\s*$'))
+    if (nm) b[lastKey] = nm[1].trim().replace(/^"/, '').replace(/",?$/, '').trim()
   }
   // An unresolved merge field is not a value.
   const field = (k: string) => {
@@ -99,7 +102,15 @@ Deno.serve(async (req) => {
 
   const phone = field('phone') || field('phone_number')
   const email = field('email')
-  const note = field('note') || field('notes')
+  // A typed note wins when there is one, otherwise the call transcript carries
+  // the detail: "she can no longer work Thursdays" beats the label "Schedule
+  // Change". The transcript stays in our own database — nothing is sent
+  // anywhere else — so this does not raise the question the AI recap does.
+  const typedNote = field('note') || field('notes')
+  const transcript = field('transcript') || field('call_transcript')
+  const cap = (s: string, n: number) => (s.length > n ? s.slice(0, n).trim() + ` … [${s.length} characters, trimmed]` : s)
+  const note = typedNote || (transcript ? cap(transcript, 1500) : '')
+  const noteShort = typedNote || (transcript ? cap(transcript, 400) : '')
   const direction = field('direction') || 'outbound'
   let first = field('first_name') || field('firstName')
   let last = field('last_name') || field('lastName')
@@ -219,7 +230,8 @@ Deno.serve(async (req) => {
   // Any disposition on a lead means somebody actually worked it.
   lead.last_contacted_at = todayISO()
   lead.comm_log = Array.isArray(lead.comm_log) ? lead.comm_log : []
-  lead.comm_log.push({ body: `☎ ${direction} call — ${disposition}${note ? ': ' + note : ''}`, at: stamp, by })
+  lead.comm_log.push({ body: `☎ ${direction} call — ${disposition}${noteShort ? ': ' + noteShort : ''}`, at: stamp, by })
+  if (transcript && !typedNote) lead.last_call_transcript = { at: stamp, text: cap(transcript, 8000) }
 
   let outcome = 'logged'
   if (is('no answer', 'voicemail')) {
