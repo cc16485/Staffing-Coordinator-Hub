@@ -67,10 +67,13 @@ Deno.serve(async (req) => {
     // "note": as free text. (This is why note must be the LAST field.)
     const grab = (k: string) => (raw.match(new RegExp('"' + k + '"\\s*:\\s*"([^"]*)"')) || [])[1] || ''
     b = { id: grab('id'), name: grab('name'), email: grab('email'), phone: grab('phone'),
-          disposition: grab('disposition'), direction: grab('direction') }
+          disposition: grab('disposition'), direction: grab('direction'),
+          attach: raw.includes('"attach": true') || raw.includes('"attach":true') }
     // Whichever free-text field was put last is the one that broke the JSON, so
     // take everything after it as its value.
-    const lastKey = raw.lastIndexOf('"transcript"') > raw.lastIndexOf('"note"') ? 'transcript' : 'note'
+    const lastKey = ['note', 'transcript', 'summary']
+      .map((k) => [k, raw.lastIndexOf('"' + k + '"')] as [string, number])
+      .sort((a, b2) => b2[1] - a[1])[0][0]
     const nm = raw.match(new RegExp('"' + lastKey + '"\\s*:\\s*([\\s\\S]*)\\}\\s*$'))
     if (nm) b[lastKey] = nm[1].trim().replace(/^"/, '').replace(/",?$/, '').trim()
   }
@@ -89,6 +92,63 @@ Deno.serve(async (req) => {
     return v.includes('{{') ? 'unresolved merge field' : 'resolved (' + v.trim().length + ' chars)'
   }
   const received: Record<string, string> = { disposition: state('disposition'), transcript: state('transcript'), note: state('note'), phone: state('phone'), name: state('name'), detail_from: 'nothing yet' }
+  const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  const readKey = async (k: string) => {
+    const { data } = await supabase.from('app_data').select('data').eq('key', k).maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    return (Array.isArray(data?.data) ? data!.data : []) as any[]
+  }
+  const put = (k: string, item: unknown) => supabase.rpc('upsert_app_data_item', { target_key: k, item })
+
+  const callerPhone = field('phone') || field('phone_number')
+  const callerId = field('id') || field('contactId') || field('contact_id')
+
+  /* ---- Attach mode -------------------------------------------------------
+     The transcript summary lands minutes after the call, long after the
+     disposition already routed it. Delaying the routing is the wrong trade —
+     a call-off cannot wait on a transcript — so the summary catches up
+     instead: find what this caller's disposition created a few minutes ago
+     and fill in the detail that was missing. */
+  const summary = field('summary') || field('transcript_summary') || field('recap')
+  if (b.attach === true || String(b.attach).toLowerCase() === 'true' || (summary && !field('disposition'))) {
+    if (!summary) return json({ ok: true, routed: 'nothing to attach — no summary in this request' })
+    const digits = norm(callerPhone)
+    const since = Date.now() - 45 * 60 * 1000
+    const mine = (r: Record<string, unknown>) => {
+      const t = new Date(String(r.created_at || r.opened_at || 0)).getTime()
+      if (!t || t < since) return false
+      return (digits && norm(String(r.caller_phone || '')) === digits) ||
+             (!!callerId && String(r.caller_contact_id || '') === callerId)
+    }
+    const newest = (rows: Record<string, unknown>[]) =>
+      rows.filter(mine).sort((a, b2) =>
+        new Date(String(b2.created_at || b2.opened_at || 0)).getTime() -
+        new Date(String(a.created_at || a.opened_at || 0)).getTime())[0]
+
+    const item = newest(await readKey('ops_items'))
+    if (item) {
+      item.detail = [String(item.detail || '').trim(), summary].filter(Boolean).join('\n\n')
+      await put('ops_items', item)
+      return json({ ok: true, routed: 'summary attached to the Needs Attention item', title: item.title })
+    }
+    const cov = newest(await readKey('coverage_cases'))
+    if (cov) {
+      cov.note = [String(cov.note || '').trim(), summary].filter(Boolean).join('\n\n')
+      await put('coverage_cases', cov)
+      return json({ ok: true, routed: 'summary attached to the coverage case' })
+    }
+    // No item from a disposition, but it may still belong to a lead.
+    const leadRows = await readKey('leads')
+    const lead = leadRows.find((l) => digits && (norm(String(l.phone || '')) === digits || norm(String(l.client_phone || '')) === digits))
+    if (lead) {
+      lead.comm_log = Array.isArray(lead.comm_log) ? lead.comm_log : []
+      lead.comm_log.push({ body: '📝 ' + summary, at: new Date().toISOString(), by: 'call summary' })
+      await put('leads', lead)
+      return json({ ok: true, routed: 'summary added to the lead\'s conversation log' })
+    }
+    return json({ ok: true, routed: 'nothing recent to attach to — no disposition was tapped on this call' })
+  }
+
   const disposition = field('disposition') || field('call_disposition') || field('outcome')
   if (!disposition) {
     // GHL's "send a test request" fires with no real call behind it, so
@@ -111,7 +171,7 @@ Deno.serve(async (req) => {
     })
   }
 
-  const phone = field('phone') || field('phone_number')
+  const phone = callerPhone
   const email = field('email')
   // A typed note wins when there is one, otherwise the call transcript carries
   // the detail: "she can no longer work Thursdays" beats the label "Schedule
@@ -128,7 +188,7 @@ Deno.serve(async (req) => {
   // and we pull the newest one for this contact. Only notes written in the last
   // 20 minutes count, otherwise an old note would get stapled to a new call.
   let pulledNote = ''
-  const contactId = field('id') || field('contactId') || field('contact_id')
+  const contactId = callerId
   if (!typedNote && !transcript && contactId) {
     try {
       const r = await fetch(`https://services.leadconnectorhq.com/contacts/${encodeURIComponent(contactId)}/notes`, {
@@ -157,14 +217,6 @@ Deno.serve(async (req) => {
   if (!first && full) { const p = full.split(/\s+/); first = p[0]; last = last || p.slice(1).join(' ') }
   const who = [first, last].filter(Boolean).join(' ').trim() || phone || 'unknown caller'
 
-  const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-  const readKey = async (k: string) => {
-    const { data } = await supabase.from('app_data').select('data').eq('key', k).maybeSingle()
-    // deno-lint-ignore no-explicit-any
-    return (Array.isArray(data?.data) ? data!.data : []) as any[]
-  }
-  const put = (k: string, item: unknown) => supabase.rpc('upsert_app_data_item', { target_key: k, item })
-
   // Debug trail so "webhook never arrived" is distinguishable from "arrived and
   // did nothing". Metadata only — the note is not logged here.
   const logDbg = async (row: Record<string, unknown>) => {
@@ -191,6 +243,7 @@ Deno.serve(async (req) => {
       id: uid(), client: '(from call — confirm the client)', shift_date: todayISO(), shift_time: '',
       reason: 'call_off', note: [`${who} called off.`, note].filter(Boolean).join(' '),
       status: 'open', asked: [], opened_at: stamp, opened_by: by,
+      caller_phone: phone, caller_contact_id: contactId,
       resolved_at: null, resolved_how: null, covered_by: null,
     })
     created.push('coverage case')
@@ -199,6 +252,7 @@ Deno.serve(async (req) => {
   const opsItem = (kind: string, title: string, hours: number) => ({
     id: 'ops_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
     kind, title, detail: note, about: who, urgency: 'normal', status: 'open',
+    caller_phone: phone, caller_contact_id: contactId,
     created_at: stamp, due: new Date(Date.now() + hours * 3600 * 1000).toISOString(),
     owner: '', owner_name: '', created_by: by, opened_by: 'phone',
   })
