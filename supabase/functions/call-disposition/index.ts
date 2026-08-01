@@ -110,8 +110,11 @@ Deno.serve(async (req) => {
     } catch { /* logging must never break the routing */ }
   }
 
-  const D = disposition.toLowerCase().replace(/[‐-―]/g, '-').trim()
-  const is = (...names: string[]) => names.some((n) => n.toLowerCase() === D)
+  // GHL's token is {{phoneCall.dispositions}} — plural, and it can arrive as a
+  // comma-separated list if more than one was set on the call. Match against
+  // every value rather than failing the whole call on an exact-string miss.
+  const parts = disposition.split(',').map((s) => s.toLowerCase().replace(/[‐-―]/g, '-').trim()).filter(Boolean)
+  const is = (...names: string[]) => names.some((n) => parts.includes(n.toLowerCase()))
   const stamp = new Date().toISOString()
   const by = 'phone: ' + who
   const created: string[] = []
