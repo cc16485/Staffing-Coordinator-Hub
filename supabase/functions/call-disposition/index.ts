@@ -56,10 +56,30 @@ Deno.serve(async (req) => {
   const url = new URL(req.url)
   if (url.searchParams.get('token') !== Deno.env.get('CALL_DISPOSITION_TOKEN')) return json({ error: 'unauthorized' }, 401)
 
-  const b = await req.json().catch(() => ({})) as Record<string, unknown>
-  const field = (k: string) => (typeof b[k] === 'string' ? String(b[k]).trim() : '')
+  // GHL substitutes merge fields into the raw JSON body, which breaks two ways:
+  // an unresolved field arrives as the literal "{{...}}", and a note containing
+  // a quote or newline can break the JSON outright. Handle both so a real call
+  // is never lost to a formatting accident.
+  const raw = await req.text()
+  let b: Record<string, unknown> = {}
+  try { b = JSON.parse(raw) } catch {
+    // Salvage: pull the simple leading fields, then take everything after
+    // "note": as free text. (This is why note must be the LAST field.)
+    const grab = (k: string) => (raw.match(new RegExp('"' + k + '"\\s*:\\s*"([^"]*)"')) || [])[1] || ''
+    b = { id: grab('id'), name: grab('name'), email: grab('email'), phone: grab('phone'),
+          disposition: grab('disposition'), direction: grab('direction') }
+    const nm = raw.match(/"note"\s*:\s*([\s\S]*)\}\s*$/)
+    if (nm) b.note = nm[1].trim().replace(/^"/, '').replace(/",?$/, '').trim()
+  }
+  // An unresolved merge field is not a value.
+  const field = (k: string) => {
+    const v = typeof b[k] === 'string' ? String(b[k]).trim() : ''
+    return v.includes('{{') || v.includes('}}') ? '' : v
+  }
   const disposition = field('disposition') || field('call_disposition') || field('outcome')
-  if (!disposition) return json({ error: 'no disposition' }, 400)
+  if (!disposition) {
+    return json({ error: 'no disposition', hint: 'The disposition field arrived empty or as an unresolved merge field. Either pick the disposition field from GHL, or hard-code the name as text in a workflow that triggers on just that disposition.' }, 400)
+  }
 
   const phone = field('phone') || field('phone_number')
   const email = field('email')
