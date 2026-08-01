@@ -88,7 +88,7 @@ Deno.serve(async (req) => {
     if (typeof v !== 'string' || !v.trim()) return 'empty'
     return v.includes('{{') ? 'unresolved merge field' : 'resolved (' + v.trim().length + ' chars)'
   }
-  const received = { disposition: state('disposition'), transcript: state('transcript'), note: state('note'), phone: state('phone'), name: state('name') }
+  const received: Record<string, string> = { disposition: state('disposition'), transcript: state('transcript'), note: state('note'), phone: state('phone'), name: state('name'), detail_from: 'nothing yet' }
   const disposition = field('disposition') || field('call_disposition') || field('outcome')
   if (!disposition) {
     // GHL's "send a test request" fires with no real call behind it, so
@@ -121,8 +121,35 @@ Deno.serve(async (req) => {
   const transcript = field('transcript') || field('call_transcript')
 
   const cap = (s: string, n: number) => (s.length > n ? s.slice(0, n).trim() + ` … [${s.length} characters, trimmed]` : s)
-  const note = typedNote || (transcript ? cap(transcript, 1500) : '')
-  const noteShort = typedNote || (transcript ? cap(transcript, 400) : '')
+
+  // GHL exposes no merge field for a call transcript or for the note typed on
+  // the post-call screen (only AI-product transcripts and contact custom
+  // fields). So fetch the note ourselves: the coordinator taps Notes as usual,
+  // and we pull the newest one for this contact. Only notes written in the last
+  // 20 minutes count, otherwise an old note would get stapled to a new call.
+  let pulledNote = ''
+  const contactId = field('id') || field('contactId') || field('contact_id')
+  if (!typedNote && !transcript && contactId) {
+    try {
+      const r = await fetch(`https://services.leadconnectorhq.com/contacts/${encodeURIComponent(contactId)}/notes`, {
+        headers: { Authorization: `Bearer ${Deno.env.get('GHL_TOKEN')}`, Version: '2021-07-28', Accept: 'application/json' },
+      })
+      const j = await r.json().catch(() => ({}))
+      // deno-lint-ignore no-explicit-any
+      const notes: any[] = j?.notes ?? []
+      const newest = notes
+        .filter((n) => n?.body)
+        .sort((a, b) => new Date(b.dateAdded || 0).getTime() - new Date(a.dateAdded || 0).getTime())[0]
+      if (newest && Date.now() - new Date(newest.dateAdded || 0).getTime() < 20 * 60 * 1000) {
+        pulledNote = String(newest.body).trim()
+      }
+    } catch { /* a missing note must never block the routing */ }
+  }
+
+  const detail = typedNote || pulledNote || transcript || ''
+  received.detail_from = typedNote ? 'note field in the webhook body' : pulledNote ? 'note pulled from the GHL contact' : transcript ? 'transcript field' : 'no detail available'
+  const note = detail ? cap(detail, 1500) : ''
+  const noteShort = detail ? cap(detail, 400) : ''
   const direction = field('direction') || 'outbound'
   let first = field('first_name') || field('firstName')
   let last = field('last_name') || field('lastName')
