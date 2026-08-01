@@ -79,6 +79,16 @@ Deno.serve(async (req) => {
     const v = typeof b[k] === 'string' ? String(b[k]).trim() : ''
     return v.includes('{{') || v.includes('}}') ? '' : v
   }
+  // Field names in GHL are guesswork from the outside, so every reply says what
+  // actually arrived. Read this in the workflow's Execution logs: "resolved"
+  // means real text came through, "unresolved" means the merge field is wrong
+  // for this kind of call, "empty" means it resolved to nothing.
+  const state = (k: string) => {
+    const v = b[k]
+    if (typeof v !== 'string' || !v.trim()) return 'empty'
+    return v.includes('{{') ? 'unresolved merge field' : 'resolved (' + v.trim().length + ' chars)'
+  }
+  const received = { disposition: state('disposition'), transcript: state('transcript'), note: state('note'), phone: state('phone'), name: state('name') }
   const disposition = field('disposition') || field('call_disposition') || field('outcome')
   if (!disposition) {
     // GHL's "send a test request" fires with no real call behind it, so
@@ -97,6 +107,7 @@ Deno.serve(async (req) => {
       ok: true,
       routed: 'nothing — no disposition on this request',
       note: 'This is the expected reply to a test request. On a real call the disposition arrives and the call gets routed.',
+      received,
     })
   }
 
@@ -108,6 +119,7 @@ Deno.serve(async (req) => {
   // anywhere else — so this does not raise the question the AI recap does.
   const typedNote = field('note') || field('notes')
   const transcript = field('transcript') || field('call_transcript')
+
   const cap = (s: string, n: number) => (s.length > n ? s.slice(0, n).trim() + ` … [${s.length} characters, trimmed]` : s)
   const note = typedNote || (transcript ? cap(transcript, 1500) : '')
   const noteShort = typedNote || (transcript ? cap(transcript, 400) : '')
@@ -175,7 +187,7 @@ Deno.serve(async (req) => {
     await put('ops_items', opsItem('staffing_issue', `Schedule change — ${who} (update AxisCare)`, 4))
     created.push('needs-attention item (4h)')
     await logDbg({ disposition, routed: 'schedule change', matched: 'n/a' })
-    return json({ ok: true, routed: 'schedule change raised for AxisCare', created })
+    return json({ ok: true, routed: 'schedule change raised for AxisCare', created, received })
   }
 
   if (is('spam or sales', 'spam', 'sales')) {
@@ -186,14 +198,14 @@ Deno.serve(async (req) => {
       created.push('suppressed number')
     }
     await logDbg({ disposition, routed: 'suppress', matched: 'n/a' })
-    return json({ ok: true, routed: 'suppressed', created })
+    return json({ ok: true, routed: 'suppressed', created, received })
   }
 
   if (is('client call')) {
     // Deliberately quiet: a routine client question should not cry wolf on a
     // board people are meant to trust.
     await logDbg({ disposition, routed: 'logged only', matched: 'n/a' })
-    return json({ ok: true, routed: 'logged only (no alert by design)', created })
+    return json({ ok: true, routed: 'logged only (no alert by design)', created, received })
   }
 
   // ---------- everything below wants a lead ----------
@@ -224,7 +236,7 @@ Deno.serve(async (req) => {
     // Nothing to attach to. Rather than guess, leave a trace a human can act on.
     await put('ops_items', opsItem('request', `Call marked "${disposition}" — no matching record (${who})`, 24))
     await logDbg({ disposition, routed: 'unmatched', matched: 'none' })
-    return json({ ok: true, routed: 'unmatched — raised in Needs Attention', created: ['needs-attention item'] })
+    return json({ ok: true, routed: 'unmatched — raised in Needs Attention', created: ['needs-attention item'], received })
   }
 
   // Any disposition on a lead means somebody actually worked it.
@@ -284,5 +296,5 @@ Deno.serve(async (req) => {
   const { error } = await put('leads', lead)
   if (error) return json({ error: 'could not save the lead', detail: error.message }, 502)
   await logDbg({ disposition, routed: outcome, matched: 'lead', attempts: lead.contact_attempts ?? 0 })
-  return json({ ok: true, routed: outcome, lead_id: lead.id, created })
+  return json({ ok: true, routed: outcome, lead_id: lead.id, created, received })
 })
