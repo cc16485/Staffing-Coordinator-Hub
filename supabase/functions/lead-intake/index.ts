@@ -71,5 +71,31 @@ Deno.serve(async (req) => {
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const { error } = await supabase.rpc('upsert_app_data_item', { target_key: 'leads', item: lead })
   if (error) return json({ error: error.message }, 500)
+
+  // Best-effort GHL contact (Caring Companions inbound webhook) so every
+  // website lead also exists in the CRM/phone system. No-op until the
+  // GHL_HOOK_CCLEADS secret is set. `office` supports multi-location
+  // (defaults to Springfield; pass office=oklahoma from OK pages later).
+  const ghlHook = Deno.env.get('GHL_HOOK_CCLEADS')
+  if (ghlHook) {
+    const office = (pick('office') || 'springfield').toLowerCase()
+    try {
+      await fetch(ghlHook, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          first_name: lead.first_name,
+          last_name: lead.last_name,
+          email,
+          phone,
+          source: 'Caring Companions website',
+          office,
+          city: pick('city'),
+          message: (notes || '').slice(0, 900),
+        }),
+      })
+    } catch (_e) { /* never block the lead on CRM */ }
+  }
+
   return json({ status: 'lead created', id: lead.id })
 })

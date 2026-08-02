@@ -137,6 +137,25 @@ Deno.serve(async (req) => {
   let reqBody: Record<string, any> = {}
   try { reqBody = await req.json() } catch { /* GET / empty body is a normal sweep */ }
 
+  // ── Maintenance: prove the send path works ─────────────────────────────────
+  // Escalation is only useful if a text actually arrives. This fires ONE
+  // message down the exact same path a real escalation uses, so the first time
+  // it runs for real isn't at 11pm on a live missed call. Touches no data.
+  if (reqBody.test_notify) {
+    const cfgNow = { ...DEFAULTS, ...((await read('ops_settings')) || {}) }
+    // deno-lint-ignore no-explicit-any
+    const staffNow: any[] = (await read('coordinator_staff')) || []
+    const to = String(reqBody.test_notify) === 'true'
+      ? (cfgNow.fallback_phone || (staffNow.find((s) => s.phone) || {}).phone || '')
+      : String(reqBody.test_notify)
+    if (!to) return json({ error: 'no number to test with — set a backstop phone on the Admin page' }, 400)
+    try {
+      await sendSms(tok, locationId, e164(to),
+        'Caring Companions test: missed-call chasing is switched on and working. This is the only message this test sends.')
+      return json({ test_sent_to: e164(to) })
+    } catch (err) { return json({ error: 'send failed', detail: String(err) }, 502) }
+  }
+
   // ── Maintenance: close the pre-rollout backlog ─────────────────────────────
   // A list that opens showing weeks of stale items is a list people stop
   // trusting. Closing them is explicit and recorded, never silent expiry.

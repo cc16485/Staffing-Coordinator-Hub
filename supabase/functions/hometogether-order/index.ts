@@ -120,11 +120,11 @@ Deno.serve(async (req) => {
 
   const lead = {
     id: crypto.randomUUID(),
-    first_name: parts[0] || '(HomeTogether)',
+    first_name: parts[0] || '(HomeTogether TV)',
     last_name: parts.slice(1).join(' '),
     phone: order.buyer_phone,
     email: order.buyer_email,
-    source: 'HomeTogether',
+    source: 'HomeTogether TV order',
     status: 'New',
     interest_notes: notes,
     follow_up_due: today,
@@ -137,6 +137,31 @@ Deno.serve(async (req) => {
   if (o.error) return json({ error: o.error.message }, 500)
   // Best-effort lead alert — don't fail the order if the pipeline write hiccups.
   await supabase.rpc('upsert_app_data_item', { target_key: 'leads', item: lead })
+
+  // Best-effort GHL contact (HomeTogether sub-account inbound webhook).
+  // No-op until the GHL_HOOK_TV secret is set.
+  const ghlHook = Deno.env.get('GHL_HOOK_TV')
+  if (ghlHook) {
+    try {
+      await fetch(ghlHook, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          full_name: buyerName || seniorName,
+          first_name: parts[0] || seniorName,
+          last_name: parts.slice(1).join(' '),
+          email: order.buyer_email,
+          phone: order.buyer_phone,
+          program: 'HomeTogether TV',
+          type: 'tv_order',
+          tags: 'HomeTogether TV - Order',
+          source: 'HomeTogether TV order form',
+          senior_name: seniorName,
+          city: order.ship_city,
+        }),
+      })
+    } catch (_e) { /* never block the order on CRM */ }
+  }
 
   return json({ status: 'order received', id: orderId })
 })
