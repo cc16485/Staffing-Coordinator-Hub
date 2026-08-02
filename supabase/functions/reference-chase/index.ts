@@ -62,7 +62,11 @@ Deno.serve(async (req) => {
   for (const r of open) {
     const quiet = daysSince(r.sent_at)
     if (quiet >= GIVE_UP_AFTER_DAYS) toEscalate.push(r)
-    else if (quiet >= NUDGE_AFTER_DAYS && !r.reminded_at) toNudge.push(r)
+    else if (quiet >= NUDGE_AFTER_DAYS && !r.reminded_at) {
+      // No email means no automated nudge is possible, so it becomes a call now
+      // rather than after five days of silence nobody could have broken.
+      if (r.ref_email) toNudge.push(r); else toEscalate.push(r)
+    }
   }
 
   if (dry) {
@@ -73,24 +77,23 @@ Deno.serve(async (req) => {
     })
   }
 
+  /* Email only, deliberately.
+     A reference never asked us to contact them; the candidate gave us their
+     number. An automated text to a number that gave no consent is the kind of
+     thing the TCPA exists about, and the exposure is per message. Email
+     carries no equivalent rule, reaches nearly as well, and a reference with
+     no email on file simply becomes a phone call for a person, which is what
+     the escalation below is for. Texting from the office phone by hand is
+     unaffected: that is a human sending one message, not a system dialling. */
   let nudged = 0
   for (const r of toNudge) {
-    if (!ghlToken || !ghlLocation || (!r.ref_phone && !r.ref_email)) continue
+    if (!ghlToken || !ghlLocation || !r.ref_email) continue
     const url = `https://cc.mo-care.com/reference.html?r=${encodeURIComponent(r.id)}` +
       `&c=${encodeURIComponent(r.candidate_name)}&n=${encodeURIComponent(r.ref_name ?? '')}`
-    const line = `Hi ${r.ref_name ?? 'there'}, a gentle nudge from Caring Companions. ` +
-      `${r.candidate_name} is waiting on one reference to start work, and yours is the last one. ` +
-      `Two minutes: ${url} Thank you!`
-    try {
-      const contactId = await contactFor(r.ref_phone, r.ref_email, r.ref_name ?? 'Reference')
+        try {
+      const contactId = await contactFor(null, r.ref_email, r.ref_name ?? 'Reference')
       if (!contactId) continue
-      if (r.ref_phone) {
-        await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-          method: 'POST', headers: h,
-          body: JSON.stringify({ type: 'SMS', contactId, message: line }),
-        })
-      }
-      if (r.ref_email) {
+      {
         await fetch('https://services.leadconnectorhq.com/conversations/messages', {
           method: 'POST', headers: h,
           body: JSON.stringify({
