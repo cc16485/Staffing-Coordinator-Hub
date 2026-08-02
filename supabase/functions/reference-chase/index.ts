@@ -129,9 +129,11 @@ Deno.serve(async (req) => {
     if (!ghlToken || !ghlLocation) break
     const first = String(r.candidate_name || '').split(' ')[0] || 'there'
     const who = r.ref_name || 'one of your references'
+    const fixUrl = `https://cc.mo-care.com/fix-reference.html?r=${encodeURIComponent(r.id)}` +
+      `&cid=${encodeURIComponent(String(r.candidate_id))}&n=${encodeURIComponent(r.ref_name ?? '')}`
     const line = `Hi ${first}, Caring Companions here. We have not been able to reach ${who} for your reference, ` +
-      `and it is the last thing holding up your start. Could you give them a nudge? ` +
-      `If you have a better phone number or email for them, just reply here and we will try that instead.`
+      `and it is the last thing holding up your start. Give them a nudge if you can. ` +
+      `Or if you have a better number or email for them, or want to use someone else, do it here: ${fixUrl}`
     try {
       const contactId = await contactFor(r.candidate_phone, r.candidate_email, first)
       if (!contactId) continue
@@ -152,8 +154,10 @@ Deno.serve(async (req) => {
               `the last thing holding up your start with us.</p>` +
               `<p><b>Could you give them a nudge?</b> A quick message from you works better than anything we can send. ` +
               `It takes them about two minutes.</p>` +
-              `<p>If you have a better phone number or email for them, or you would rather use a different ` +
-              `reference altogether, just reply to this and we will sort it out.</p>` +
+              `<p>Or if you have a better number or email for them, or you would rather use someone else ` +
+              `entirely, tell us here and we will reach out straight away:</p>` +
+              `<p><a href="${fixUrl}" style="background:#F0A63A;color:#122F52;text-decoration:none;padding:12px 20px;` +
+              `border-radius:8px;font-weight:700;display:inline-block">Give us a different contact</a></p>` +
               `<p style="color:#57606a">Thank you,<br>Caring Companions In-Home Senior Care<br>(417) 234-8494</p></div>`,
           }),
         })
