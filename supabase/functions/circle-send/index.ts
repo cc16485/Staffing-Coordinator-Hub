@@ -4,7 +4,7 @@
 //
 // Not a group SMS thread. Everyone gets the same message at once, which is the
 // bit families actually want, and replies come back to the office line, which
-// is what "ring us if you have questions" means. It also keeps the record here
+// is what "call us if you have questions" means. It also keeps the record here
 // under the client's name instead of unlabelled in a Conversations list, which
 // was the whole complaint.
 //
