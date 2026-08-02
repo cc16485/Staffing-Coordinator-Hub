@@ -3,12 +3,16 @@
 // A reference who never answers used to look exactly like a reference who was
 // never asked. This makes silence visible and then acts on it.
 //
-//   2 days quiet  → one reminder to the reference, sent once
-//   5 days quiet  → stop asking, and tell the office to pick up the phone
+//   2 days quiet  → one reminder to the reference, by email, sent once
+//   5 days quiet  → hand it back to the APPLICANT, who has the relationship,
+//                   the reason to care, and who actually consented to hear
+//                   from us. They can nudge their own reference or give us a
+//                   better number or email.
+//   9 days quiet  → the office picks up the phone
 //
-// Deliberately one reminder, not a drip. These are strangers doing us a favour,
-// and a second nag costs more goodwill than it recovers. After that it is a
-// person's job, which is what the escalation says.
+// Deliberately one reminder to the reference, not a drip. They are strangers
+// doing us a favour and a second nag costs more goodwill than it recovers.
+// Chasing harder was never the answer; chasing the right person was.
 //
 // Runs daily by pg_cron. Supports ?dry=1 to report without sending.
 // -----------------------------------------------------------------------------
@@ -23,7 +27,8 @@ const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
 
 const NUDGE_AFTER_DAYS = 2
-const GIVE_UP_AFTER_DAYS = 5
+const ASK_APPLICANT_AFTER_DAYS = 5
+const GIVE_UP_AFTER_DAYS = 9
 const daysSince = (iso: string | null) => iso ? (Date.now() - new Date(iso).getTime()) / 86400_000 : 0
 
 Deno.serve(async (req) => {
@@ -58,22 +63,23 @@ Deno.serve(async (req) => {
   }
 
   // deno-lint-ignore no-explicit-any
-  const toNudge: any[] = [], toEscalate: any[] = []
+  const toNudge: any[] = [], toApplicant: any[] = [], toEscalate: any[] = []
   for (const r of open) {
     const quiet = daysSince(r.sent_at)
     if (quiet >= GIVE_UP_AFTER_DAYS) toEscalate.push(r)
-    else if (quiet >= NUDGE_AFTER_DAYS && !r.reminded_at) {
-      // No email means no automated nudge is possible, so it becomes a call now
-      // rather than after five days of silence nobody could have broken.
-      if (r.ref_email) toNudge.push(r); else toEscalate.push(r)
+    else if (quiet >= ASK_APPLICANT_AFTER_DAYS && !r.applicant_nudged_at) {
+      // Back to the applicant, if we can reach them. If we cannot, it is ours.
+      if (r.candidate_phone || r.candidate_email) toApplicant.push(r); else toEscalate.push(r)
     }
+    else if (quiet >= NUDGE_AFTER_DAYS && !r.reminded_at && r.ref_email) toNudge.push(r)
   }
 
   if (dry) {
     return json({
       ok: true, dry: true,
-      would_nudge: toNudge.map((r) => `${r.ref_name} (for ${r.candidate_name})`),
-      would_escalate: toEscalate.map((r) => `${r.ref_name} (for ${r.candidate_name})`),
+      would_remind_reference: toNudge.map((r) => `${r.ref_name} (for ${r.candidate_name})`),
+      would_ask_applicant: toApplicant.map((r) => `${r.candidate_name} about ${r.ref_name}`),
+      would_escalate_to_office: toEscalate.map((r) => `${r.ref_name} (for ${r.candidate_name})`),
     })
   }
 
@@ -115,6 +121,51 @@ Deno.serve(async (req) => {
     } catch { /* one failure must not stop the rest */ }
   }
 
+  /* Back to the applicant. Unlike their reference, they asked us to be in
+     touch, so a text is fine here, and it is the message most likely to
+     actually work: their job is what is waiting. */
+  let asked = 0
+  for (const r of toApplicant) {
+    if (!ghlToken || !ghlLocation) break
+    const first = String(r.candidate_name || '').split(' ')[0] || 'there'
+    const who = r.ref_name || 'one of your references'
+    const line = `Hi ${first}, Caring Companions here. We have not been able to reach ${who} for your reference, ` +
+      `and it is the last thing holding up your start. Could you give them a nudge? ` +
+      `If you have a better phone number or email for them, just reply here and we will try that instead.`
+    try {
+      const contactId = await contactFor(r.candidate_phone, r.candidate_email, first)
+      if (!contactId) continue
+      if (r.candidate_phone) {
+        await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+          method: 'POST', headers: h,
+          body: JSON.stringify({ type: 'SMS', contactId, message: line }),
+        })
+      }
+      if (r.candidate_email) {
+        await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+          method: 'POST', headers: h,
+          body: JSON.stringify({
+            type: 'Email', contactId,
+            subject: `We cannot reach ${who}`,
+            html: `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
+              `<p>Hi ${first},</p><p>We have not been able to reach <b>${who}</b> for your reference, and it is ` +
+              `the last thing holding up your start with us.</p>` +
+              `<p><b>Could you give them a nudge?</b> A quick message from you works better than anything we can send. ` +
+              `It takes them about two minutes.</p>` +
+              `<p>If you have a better phone number or email for them, or you would rather use a different ` +
+              `reference altogether, just reply to this and we will sort it out.</p>` +
+              `<p style="color:#57606a">Thank you,<br>Caring Companions In-Home Senior Care<br>(417) 234-8494</p></div>`,
+          }),
+        })
+      }
+      await supabase.from('reference_requests')
+        .update({ applicant_nudged_at: new Date().toISOString(),
+                  applicant_nudge_count: (r.applicant_nudge_count ?? 0) + 1 })
+        .eq('id', r.id)
+      asked++
+    } catch { /* one failure must not stop the rest */ }
+  }
+
   // Escalation lands in the hub's own queue, where late work already lives.
   let escalated = 0
   if (toEscalate.length) {
@@ -127,9 +178,10 @@ Deno.serve(async (req) => {
       items.push({
         id: 'ops_' + sourceId, kind: 'request', source_id: sourceId,
         title: `Reference has not replied: ${r.ref_name ?? 'reference'} for ${r.candidate_name}`,
-        detail: `Asked ${Math.floor(daysSince(r.sent_at))} days ago and reminded once. ` +
-          `Time to call them${r.ref_phone ? ' on ' + r.ref_phone : ''}. ` +
-          `Their answers can still be recorded by hand on the candidate.`,
+        detail: `Asked ${Math.floor(daysSince(r.sent_at))} days ago. Reminded once, and ` +
+          `${r.applicant_nudged_at ? r.candidate_name + ' was asked to nudge them too' : 'we could not reach ' + r.candidate_name + ' to ask them to help'}. ` +
+          `Time to call${r.ref_phone ? ' on ' + r.ref_phone : ''}, or ask ${r.candidate_name} for a different reference. ` +
+          `Answers can still be recorded by hand on the candidate.`,
         about: r.candidate_name, urgency: 'normal', status: 'open',
         created_at: new Date().toISOString(),
         due: new Date(Date.now() + 24 * 3600_000).toISOString(),
@@ -143,5 +195,5 @@ Deno.serve(async (req) => {
     }
   }
 
-  return json({ ok: true, outstanding: open.length, nudged, escalated })
+  return json({ ok: true, outstanding: open.length, reference_reminders: nudged, applicants_asked: asked, escalated })
 })
