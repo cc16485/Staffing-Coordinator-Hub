@@ -3,6 +3,10 @@
 // A reference who never answers used to look exactly like a reference who was
 // never asked. This makes silence visible and then acts on it.
 //
+//   never sent    → send the first ask (this is where every reference email
+//                   originates; the hub only ever creates the row)
+//   no email      → nothing can be sent, so it is a phone call for the office
+//                   today rather than after nine days of counting silence
 //   2 days quiet  → one reminder to the reference, by email, sent once
 //   5 days quiet  → hand it back to the APPLICANT, who has the relationship,
 //                   the reason to care, and who actually consented to hear
@@ -36,11 +40,11 @@ Deno.serve(async (req) => {
   const dry = new URL(req.url).searchParams.get('dry') === '1'
 
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  // Everything unanswered, including rows never sent. Those get sent here.
   const { data: open, error } = await supabase
     .from('reference_requests')
     .select('*')
     .is('responded_at', null)
-    .not('sent_at', 'is', null)
   if (error) return json({ error: error.message }, 500)
   if (!open?.length) return json({ ok: true, dry, nudged: 0, escalated: 0, note: 'nothing outstanding' })
 
@@ -63,8 +67,11 @@ Deno.serve(async (req) => {
   }
 
   // deno-lint-ignore no-explicit-any
-  const toNudge: any[] = [], toApplicant: any[] = [], toEscalate: any[] = []
+  const toSend: any[] = [], toNudge: any[] = [], toApplicant: any[] = [], toEscalate: any[] = []
   for (const r of open) {
+    /* Never sent. Either we can email them, or we cannot reach them at all and
+       it is a phone call for the office today rather than in nine days. */
+    if (!r.sent_at) { (r.ref_email ? toSend : toEscalate).push(r); continue }
     const quiet = daysSince(r.sent_at)
     if (quiet >= GIVE_UP_AFTER_DAYS) toEscalate.push(r)
     else if (quiet >= ASK_APPLICANT_AFTER_DAYS && !r.applicant_nudged_at) {
@@ -77,6 +84,7 @@ Deno.serve(async (req) => {
   if (dry) {
     return json({
       ok: true, dry: true,
+      would_ask_for_the_first_time: toSend.map((r) => `${r.ref_name} (for ${r.candidate_name})`),
       would_remind_reference: toNudge.map((r) => `${r.ref_name} (for ${r.candidate_name})`),
       would_ask_applicant: toApplicant.map((r) => `${r.candidate_name} about ${r.ref_name}`),
       would_escalate_to_office: toEscalate.map((r) => `${r.ref_name} (for ${r.candidate_name})`),
@@ -91,6 +99,41 @@ Deno.serve(async (req) => {
      no email on file simply becomes a phone call for a person, which is what
      the escalation below is for. Texting from the office phone by hand is
      unaffected: that is a human sending one message, not a system dialling. */
+  /* The first ask. This used to be a mailto the coordinator had to send by
+     hand, while the row was already stamped sent, so the two-day reminder was
+     often the first thing a reference ever received. */
+  let asked_first_time = 0
+  for (const r of toSend) {
+    if (!ghlToken || !ghlLocation || !r.ref_email) continue
+    const url = `https://cc.mo-care.com/reference.html?r=${encodeURIComponent(r.id)}` +
+      `&c=${encodeURIComponent(r.candidate_name)}&n=${encodeURIComponent(r.ref_name ?? '')}` +
+      (r.ref_relationship ? `&rel=${encodeURIComponent(r.ref_relationship)}` : '')
+    try {
+      const contactId = await contactFor(null, r.ref_email, r.ref_name ?? 'Reference')
+      if (!contactId) continue
+      await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+        method: 'POST', headers: h,
+        body: JSON.stringify({
+          type: 'Email', contactId,
+          subject: `A quick reference for ${r.candidate_name}`,
+          html: `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
+            `<p>Hi ${r.ref_name ?? 'there'},</p>` +
+            `<p><b>${r.candidate_name}</b> listed you as a reference for a caregiving job with us, ` +
+            `and we would be grateful for two minutes of your time.</p>` +
+            `<p>It is five questions, and there are no wrong answers. An honest middling answer ` +
+            `helps us place someone well far more than a glowing one does.</p>` +
+            `<p><a href="${url}" style="background:#F0A63A;color:#122F52;text-decoration:none;padding:12px 20px;` +
+            `border-radius:8px;font-weight:700;display:inline-block">Answer five quick questions</a></p>` +
+            `<p style="color:#57606a;font-size:13px">Or paste this into your browser: ${url}</p>` +
+            `<p style="color:#57606a">Thank you,<br>Caring Companions In-Home Senior Care<br>(417) 234-8494</p></div>`,
+        }),
+      })
+      await supabase.from('reference_requests')
+        .update({ sent_at: new Date().toISOString() }).eq('id', r.id)
+      asked_first_time++
+    } catch { /* one failure must not stop the rest */ }
+  }
+
   let nudged = 0
   for (const r of toNudge) {
     if (!ghlToken || !ghlLocation || !r.ref_email) continue
@@ -179,13 +222,22 @@ Deno.serve(async (req) => {
     for (const r of toEscalate) {
       const sourceId = 'ref_' + r.id
       if (items.some((i) => i.source_id === sourceId)) continue
+      /* Two different problems land here. One reference will not answer; the
+         other we have no way to reach. Saying which one saves a phone call. */
+      const neverSent = !r.sent_at
       items.push({
         id: 'ops_' + sourceId, kind: 'request', source_id: sourceId,
-        title: `Reference has not replied: ${r.ref_name ?? 'reference'} for ${r.candidate_name}`,
-        detail: `Asked ${Math.floor(daysSince(r.sent_at))} days ago. Reminded once, and ` +
-          `${r.applicant_nudged_at ? r.candidate_name + ' was asked to nudge them too' : 'we could not reach ' + r.candidate_name + ' to ask them to help'}. ` +
-          `Time to call${r.ref_phone ? ' on ' + r.ref_phone : ''}, or ask ${r.candidate_name} for a different reference. ` +
-          `Answers can still be recorded by hand on the candidate.`,
+        title: neverSent
+          ? `No email for this reference: ${r.ref_name ?? 'reference'} for ${r.candidate_name}`
+          : `Reference has not replied: ${r.ref_name ?? 'reference'} for ${r.candidate_name}`,
+        detail: neverSent
+          ? `${r.candidate_name} gave us no email address for them, so nothing can be sent. ` +
+            `Call them${r.ref_phone ? ' on ' + r.ref_phone : ', once you have a number'} and record the ` +
+            `answers by hand on the candidate, or ask ${r.candidate_name} for an email address.`
+          : `Asked ${Math.floor(daysSince(r.sent_at))} days ago. Reminded once, and ` +
+            `${r.applicant_nudged_at ? r.candidate_name + ' was asked to nudge them too' : 'we could not reach ' + r.candidate_name + ' to ask them to help'}. ` +
+            `Time to call${r.ref_phone ? ' on ' + r.ref_phone : ''}, or ask ${r.candidate_name} for a different reference. ` +
+            `Answers can still be recorded by hand on the candidate.`,
         about: r.candidate_name, urgency: 'normal', status: 'open',
         created_at: new Date().toISOString(),
         due: new Date(Date.now() + 24 * 3600_000).toISOString(),
@@ -199,5 +251,6 @@ Deno.serve(async (req) => {
     }
   }
 
-  return json({ ok: true, outstanding: open.length, reference_reminders: nudged, applicants_asked: asked, escalated })
+  return json({ ok: true, outstanding: open.length, asked_first_time,
+                reference_reminders: nudged, applicants_asked: asked, escalated })
 })
