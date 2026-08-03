@@ -47,6 +47,11 @@ Deno.serve(async (req) => {
   const phone = pick('phone', 'phone_number', 'mobile', 'tel')
   const email = pick('email', 'email_address')
   if (!first && !phone && !email) return json({ error: 'submission had no name, phone or email' }, 400)
+  /* Who sent them. Asked on the form as one optional line, and kept as its own
+     field rather than buried in the notes, because "which partner is actually
+     working" is a question worth being able to count. */
+  const heard = pick('heard_from', 'how_did_you_hear', 'referral_source', 'source_detail')
+
   const notes = [
     pick('message', 'notes', 'comments', 'situation', 'how_can_we_help', 'description'),
     pick('care_for', 'who_needs_care') ? 'Care for: ' + pick('care_for', 'who_needs_care') : '',
@@ -61,7 +66,8 @@ Deno.serve(async (req) => {
     last_name: last,
     phone,
     email,
-    source: 'Website',
+    source: heard ? 'Referral' : 'Website',
+    referral_source_name: heard || '',
     status: 'New',
     interest_notes: notes || 'Website form submission (no message left).',
     follow_up_due: today, // the clock starts the moment they reach out
