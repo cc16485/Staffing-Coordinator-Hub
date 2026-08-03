@@ -132,8 +132,14 @@ Deno.serve(async (req) => {
       }
     }
 
-    /* ---- we have you ---- */
-    if (!l.ack_sent_at) {
+    /* ---- we have you ----
+       Only while it is still true. "We have your message and a coordinator
+       will call you shortly" is a kind thing to hear an hour after writing in
+       and an insulting one to hear five days later, when plainly nobody did.
+       Past that window the family hears nothing further from a machine and the
+       office gets told instead, which is the honest handling of a lead that
+       has already been dropped. */
+    if (!l.ack_sent_at && age <= 12) {
       plan.acknowledge.push(`${first} (${Math.round(age)}h old)`)
       if (!dry && !quiet) {
         const line = `Hi ${first}, this is Caring Companions. We have your message and a care coordinator ` +
@@ -150,8 +156,14 @@ Deno.serve(async (req) => {
       continue                                        // one message per lead per run
     }
 
-    /* ---- still nobody has called them ---- */
-    const step = !l.nudge_1_at && age >= 24 ? 1 : !l.nudge_2_at && age >= 72 ? 2 : 0
+    /* ---- still nobody has called them ----
+       Only for leads we greeted in time. If we never acknowledged them, the
+       ladder has already missed its moment and a machine asking "is there a
+       good time to call?" a week later is worse than silence. Those belong to
+       a person, and the office has been told. */
+    const step = !l.ack_sent_at ? 0
+      : !l.nudge_1_at && age >= 24 ? 1
+      : !l.nudge_2_at && age >= 72 ? 2 : 0
     if (step) {
       plan.nudge.push(`${first} (try ${step})`)
       if (!dry && !quiet) {
