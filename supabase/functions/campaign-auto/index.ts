@@ -174,10 +174,21 @@ Deno.serve(async (req) => {
     .map((l: any) => ({ email: l.email, name: `${l.first_name || ''} ${l.last_name || ''}`.trim() }))
   audiences.monthly = dedupe([...acLeads, ...hubLeads])
   // Clients: AxisCare people with an active-looking status (not leads, not inactive).
-  audiences.clients = dedupe(acPicked.filter((c) => c.email && /active|current/i.test(c.status)))
+  audiences.clients = acPicked.filter((c) => c.email && /active|current/i.test(c.status))
   if (!audiences.clients.length) {
-    audiences.clients = dedupe(acPicked.filter((c) => c.email && !/lead|prospect|inquir|pending|inactive|discharg|deceas|former/i.test(c.status)))
+    audiences.clients = acPicked.filter((c) => c.email && !/lead|prospect|inquir|pending|inactive|discharg|deceas|former/i.test(c.status))
   }
+  /* Converting a lead drops them out of the lead calendar the same day, but
+     this audience was read only from AxisCare. So anybody converted in the hub
+     whose AxisCare record does not look "active" yet fell out of the lead
+     emails and never appeared in the client ones: silence, on the day they
+     became a customer. They are added here too, and deduped by email, so being
+     in both places cannot send anything twice. */
+  // deno-lint-ignore no-explicit-any
+  const converted = leads.filter((l: any) => l.email && l.status === 'Converted')
+    // deno-lint-ignore no-explicit-any
+    .map((l: any) => ({ email: l.email, name: `${l.first_name || ''} ${l.last_name || ''}`.trim() }))
+  audiences.clients = dedupe([...audiences.clients, ...converted])
   // Client contacts: family members attached to AxisCare clients (defensive across shapes).
   {
     const seen: { email: string; name: string }[] = []
