@@ -158,8 +158,18 @@ Deno.serve(async (req) => {
   const acClients = await acList('clients')
   const acPicked = acClients.map(pick)
   const acLeads = acPicked.filter((c) => c.email && /lead|prospect|inquir|pending/i.test(c.status))
+  /* Anybody part-way through a nurture sequence is already hearing from us on
+     their own clock, timed from the day they got in touch. Adding the monthly
+     broadcast on top means two emails a month from the same agency, sometimes
+     about the same thing: the drip's fall-prevention note and September's
+     "Most falls are preventable" would land a fortnight apart.
+
+     So the broadcast is for everyone we are NOT already talking to. When their
+     sequence finishes they fall back into it on their own. */
   // deno-lint-ignore no-explicit-any
-  const hubLeads = leads.filter((l: any) => l.email && l.status !== 'Converted' && l.status !== 'Lost')
+  const inNurture = (l: any) => !!l.nurture_started_at && !l.nurture_stopped_at
+  // deno-lint-ignore no-explicit-any
+  const hubLeads = leads.filter((l: any) => l.email && l.status !== 'Converted' && l.status !== 'Lost' && !inNurture(l))
     // deno-lint-ignore no-explicit-any
     .map((l: any) => ({ email: l.email, name: `${l.first_name || ''} ${l.last_name || ''}`.trim() }))
   audiences.monthly = dedupe([...acLeads, ...hubLeads])
