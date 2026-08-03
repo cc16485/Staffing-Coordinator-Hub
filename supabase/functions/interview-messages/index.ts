@@ -87,8 +87,8 @@ Deno.serve(async (req) => {
     (st?.photo_url ? `<img src="${st.photo_url}" alt="Our entrance" style="width:100%;border-radius:8px;margin-top:10px">` : '') +
     `</div>`
 
-  const out = { confirmed: 0, reminded_day: 0, reminded_hour: 0, nudged: 0, gave_up: 0 }
-  const plan: Record<string, string[]> = { confirm: [], day: [], hour: [], nudge: [], give_up: [] }
+  const out = { confirmed: 0, reminded_day: 0, reminded_hour: 0, nudged: 0, gave_up: 0, alerted: 0 }
+  const plan: Record<string, string[]> = { confirm: [], day: [], hour: [], nudge: [], give_up: [], alerted: [] }
 
   /* ---------------- interviews that are booked ---------------- */
   const { data: bookings, error } = await supabase
@@ -209,6 +209,56 @@ Deno.serve(async (req) => {
     const col = step === 1 ? 'nudge_1_at' : step === 2 ? 'nudge_2_at' : 'nudge_3_at'
     await supabase.from('job_applicants').update({ [col]: new Date().toISOString() }).eq('id', p.id)
     out.nudged++
+  }
+
+  /* ---------------- somebody good just applied ----------------
+     Augusta's own number was 2.6 days from applying to an interview, and speed
+     is most of what wins a caregiver. Until now a good application landed in
+     the hub and waited for a tab to be opened. This pokes the office instead.
+
+     Only for people who cleared the screen, once each, and never for anybody
+     the form already turned away. Who it goes to is a row in the database
+     rather than a name in this file, so it can change without a deploy. */
+  const { data: alertTo } = await supabase
+    .from('applicant_alerts').select('*').eq('active', true)
+
+  if ((alertTo ?? []).length) {
+    const { data: fresh } = await supabase
+      .from('job_applicants')
+      .select('id, first_name, last_name, phone, city, zip, position, channel, screen_grade, miles_out, hours_wanted, created_at')
+      .is('office_alerted_at', null)
+      .not('completed_at', 'is', null)
+      .is('decline_reason', null)
+      .in('screen_grade', ['qualified', 'review'])
+      .gte('created_at', new Date(Date.now() - 3 * 86_400_000).toISOString())
+      .order('created_at')
+      .limit(20)
+
+    for (const p of fresh ?? []) {
+      const who = `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim() || 'Someone'
+      const bits = [
+        p.city || p.zip,
+        p.miles_out != null ? `${Math.round(p.miles_out)} miles out` : null,
+        p.hours_wanted ? `wants ${p.hours_wanted} hrs` : null,
+        p.channel ? `via ${p.channel}` : null,
+      ].filter(Boolean).join(', ')
+      const grade = p.screen_grade === 'qualified' ? 'cleared the screen' : 'needs a look'
+      const line = `${who} just applied and ${grade}${bits ? ` — ${bits}` : ''}. ` +
+        `They are in the hub under Applicants.`
+
+      plan.alerted.push(who)
+      if (dry) continue
+
+      for (const t of alertTo!) {
+        const contactId = await contactFor(t.phone ?? null, t.email ?? null, t.name ?? 'Team')
+        if (!contactId) continue
+        if (t.phone) await sms(contactId, line)
+        if (t.email) await email(contactId, `New applicant: ${who}`, shell(`<p>${line}</p>`))
+      }
+      await supabase.from('job_applicants')
+        .update({ office_alerted_at: new Date().toISOString() }).eq('id', p.id)
+      out.alerted++
+    }
   }
 
   return json(dry ? { ok: true, dry: true, would: plan } : { ok: true, ...out })
