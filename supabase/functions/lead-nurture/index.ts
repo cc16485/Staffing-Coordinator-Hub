@@ -30,6 +30,40 @@ const SEQUENCES: Record<string, Step[]> = {
     { day: 45, channel: 'email', subject: "Still here when your family needs us", text:
       `Hi {first},\n\nJust a note to say we're still here. Whether it's a few hours a week of help with meals and errands, or more hands-on care, we'd be honored to help when the time is right — and if the time is never, that's okay too.\n\nCall or text anytime: ${OFFICE}.\n\nWarmly,\nThe Caring Companions team` },
   ],
+  /* The long game. Home care is rarely decided in a fortnight: families enquire
+     in March and buy in September, or after a fall, or after a discharge. The
+     not_ready drip ran out at day 45 and then went quiet forever, which is the
+     window most of these decisions actually get made in.
+
+     So this is thirteen months at roughly six-week spacing, email only, and
+     every one of them sends something genuinely useful from our own library
+     rather than asking how they are getting on. Nobody resents a fall
+     prevention checklist. Everybody resents a seventh "just checking in".
+
+     If they never come back to us, they still got help. That is the deal. */
+  long_term: [
+    { day: 60, channel: 'email', subject: 'A room-by-room home safety check', text:
+      `Hi {first},\n\nWe said we would not pester you, so this is not a sales note. It is the checklist our own coordinators use on a first visit, room by room, and most families find two or three things on it they had not thought of.\n\nhttps://mo-care.com/guides/home-safety-room-by-room\n\nUse it yourself, share it with a sibling, ignore it entirely. We are on ${OFFICE} if you ever want to talk.\n\nWarmly,\nThe Caring Companions team` },
+
+    { day: 105, channel: 'email', subject: 'What care actually costs around here', text:
+      `Hi {first},\n\nOne of the hardest parts of this is that nobody will give you a straight number. So here is ours: a calculator that shows what home care costs in southwest Missouri, next to what a facility costs, with no email required to see it.\n\nhttps://mo-care.com/cost-calculator\n\nAnd if the money is the obstacle, this is worth ten minutes: https://mo-care.com/paying-for-care\n\nWarmly,\nThe Caring Companions team` },
+
+    { day: 150, channel: 'email', subject: 'If you are the one doing the caring', text:
+      `Hi {first},\n\nWhen a family looks into care and then does not move forward, it is usually because somebody in the family took it on themselves. Often that is the person reading this.\n\nSo this one is for you rather than for them: the signs of caregiver burnout, and what actually helps.\n\nhttps://mo-care.com/guides/caregiver-burnout\n\nAsking for a few hours of help a week is not giving up. It is how people last.\n\nWarmly,\nThe Caring Companions team` },
+
+    { day: 200, channel: 'email', subject: 'The thing that changes everything is usually a fall', text:
+      `Hi {first},\n\nIn our experience the moment families call is rarely a decision. It is a fall.\n\nThis is what we would check to make one less likely, and it costs nothing to do this weekend.\n\nhttps://mo-care.com/guides/fall-prevention-at-home\n\nWarmly,\nThe Caring Companions team` },
+
+    { day: 260, channel: 'email', subject: 'Help paying for care in Missouri', text:
+      `Hi {first},\n\nTwo things families routinely do not know they qualify for.\n\nMissouri Medicaid can cover in-home care, and the rules are not as narrow as most people assume: https://mo-care.com/guides/missouri-medicaid-hcbs\n\nAnd if there is a veteran in the family, the VA benefit is real money that very few people claim: https://mo-care.com/guides/va-benefits-for-home-care\n\nWe will help you work out whether either applies, whether or not you ever use us. ${OFFICE}.\n\nWarmly,\nThe Caring Companions team` },
+
+    { day: 320, channel: 'email', subject: 'When the family does not agree', text:
+      `Hi {first},\n\nOne sibling thinks it is too soon. Another thinks it is overdue. Nobody wants to be the one who decides.\n\nThis is the planner we give families for that conversation: what to cover, in what order, and how to end it with something written down.\n\nhttps://mo-care.com/family-meeting-planner\n\nWarmly,\nThe Caring Companions team` },
+
+    { day: 400, channel: 'email', subject: 'Still here', text:
+      `Hi {first},\n\nIt has been about a year since you first got in touch, so this is the last note you will get from us unless you ask for more.\n\nEverything we have is free to use whether or not you ever call: https://mo-care.com/decision-center\n\nAnd if the time has come, we would be honoured to help. ${OFFICE}.\n\nWarmly,\nThe Caring Companions team` },
+  ],
+
   lost_reengage: [
     { day: 90, channel: 'sms', text:
       `Hi {first}, it's Caring Companions — we spoke a while back about care for your family. Circumstances change, so I wanted to check in and see how things are going. If we can help now, we'd love to: call or text ${OFFICE}. (Reply STOP to opt out.)` },
@@ -122,7 +156,22 @@ Deno.serve(async (req) => {
     if (ok) {
       l.nurture_step = stepIdx + 1
       l.nurture_last_sent_at = new Date().toISOString()
-      if (l.nurture_step >= seq.length) { l.nurture_stopped_at = l.nurture_last_sent_at; l.nurture_stop_reason = 'sequence completed'; completed++ }
+      if (l.nurture_step >= seq.length) {
+        /* The short drip used to stop at day 45 and go quiet forever, which is
+           the exact window most of these decisions get made in. It now rolls
+           into the long game, keeping the original enrolment date so the day
+           numbers carry straight on and the next note lands at day 60. Nobody
+           has to remember to move anybody across. */
+        if (l.nurture_sequence === 'not_ready') {
+          l.nurture_sequence = 'long_term'
+          l.nurture_step = 0
+          l.nurture_rolled_at = new Date().toISOString()
+        } else {
+          l.nurture_stopped_at = l.nurture_last_sent_at
+          l.nurture_stop_reason = 'sequence completed'
+          completed++
+        }
+      }
       await save(l); sent++
     }
   }
