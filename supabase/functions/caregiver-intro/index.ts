@@ -56,9 +56,25 @@ Deno.serve(async (req) => {
   const url = new URL(req.url)
   const body = await req.json().catch(() => ({}))
   const dry = url.searchParams.get('dry') === '1' || body.dry === true
-  const { profile_id, client_name, circle_id, reason = 'manual', sent_by = '' } = body
+  const { profile_id, client_name, circle_id, reason = 'manual' } = body
 
   if (!profile_id || !client_name) return json({ error: 'need a profile and a client' }, 400)
+
+  /* Verifying the JWT is not the same as knowing who it is. Supabase accepts
+     the anon key as a valid token, and the anon key is printed in the hub's
+     page source, so "verify_jwt is on" would still have let anyone who read
+     view-source call this. A message to a client's family has to come from a
+     signed-in member of staff, so this asks who the caller actually is. */
+  const authHeader = req.headers.get('Authorization') ?? ''
+  const whoClient = createClient(
+    Deno.env.get('SUPABASE_URL')!,
+    Deno.env.get('SUPABASE_ANON_KEY')!,
+    { global: { headers: { Authorization: authHeader } } },
+  )
+  const { data: { user } } = await whoClient.auth.getUser()
+  if (!user?.email) {
+    return json({ error: 'Sign in to the hub before sending to a family.' }, 401)
+  }
 
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
@@ -184,7 +200,7 @@ Deno.serve(async (req) => {
     sent_to: reachedNames.join(', ') || null,
     channel: reachable.some((c) => c.phone && c.sms_consent) && reachable.some((c) => c.email) ? 'both'
            : reachable.some((c) => c.email) ? 'email' : 'sms',
-    reason, sent_by: sent_by || null,
+    reason, sent_by: user.email,
   })
 
   return json({ ok: true, caregiver: cgName, client: client_name, reached, who: reachedNames, link })
