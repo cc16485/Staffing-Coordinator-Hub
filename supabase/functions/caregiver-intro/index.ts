@@ -53,13 +53,6 @@ function wantsThis(c: Record<string, unknown>, reason: string) {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
 
-  const url = new URL(req.url)
-  const body = await req.json().catch(() => ({}))
-  const dry = url.searchParams.get('dry') === '1' || body.dry === true
-  const { profile_id, client_name, circle_id, reason = 'manual' } = body
-
-  if (!profile_id || !client_name) return json({ error: 'need a profile and a client' }, 400)
-
   /* Verifying the JWT is not the same as knowing who it is. Supabase accepts
      the anon key as a valid token, and the anon key is printed in the hub's
      page source, so "verify_jwt is on" would still have let anyone who read
@@ -75,6 +68,14 @@ Deno.serve(async (req) => {
   if (!user?.email) {
     return json({ error: 'Sign in to the hub before sending to a family.' }, 401)
   }
+
+
+  const url = new URL(req.url)
+  const body = await req.json().catch(() => ({}))
+  const dry = url.searchParams.get('dry') === '1' || body.dry === true
+  const { profile_id, client_name, circle_id, reason = 'manual' } = body
+
+  if (!profile_id || !client_name) return json({ error: 'need a profile and a client' }, 400)
 
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
