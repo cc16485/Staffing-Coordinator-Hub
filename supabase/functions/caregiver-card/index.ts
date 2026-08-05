@@ -50,7 +50,7 @@ Deno.serve(async (req) => {
 
     const { data, error } = await supabase
       .from('caregiver_profiles')
-      .select('id, first_name, preferred_name, photo_path, video_path, years_experience, specialties, about, why_this_work, published, status')
+      .select('id, first_name, preferred_name, photo_path, video_path, experience, years_experience, specialties, about, why_this_work, published, status')
       .eq('id', id)
       .maybeSingle()
 
@@ -67,6 +67,7 @@ Deno.serve(async (req) => {
       name: data.preferred_name || data.first_name,
       photo: data.photo_path ? base + data.photo_path : null,
       video: data.video_path ? base + data.video_path : null,
+      experience: data.experience || null,
       years: data.years_experience || null,
       specialties: Array.isArray(data.specialties) ? data.specialties : [],
       about: data.about || null,
