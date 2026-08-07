@@ -120,6 +120,7 @@ Deno.serve(async (req) => {
      Best effort in every direction: the lead is already saved, so a failure
      here must never fail the request. */
   let alerted = 0
+  let acked = false
   try {
     const ghlToken = Deno.env.get('GHL_TOKEN')
     const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
@@ -127,6 +128,58 @@ Deno.serve(async (req) => {
       const h = {
         Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28',
         'Content-Type': 'application/json', Accept: 'application/json',
+      }
+      const contactFor = async (p: string, e: string, first: string) => {
+        const r = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
+          method: 'POST', headers: h,
+          body: JSON.stringify({
+            locationId: ghlLocation,
+            ...(p ? { phone: p } : {}), ...(e ? { email: e } : {}),
+            firstName: first,
+          }),
+        })
+        const j = await r.json().catch(() => ({}))
+        // deno-lint-ignore no-explicit-any
+        return ((j as any)?.contact?.id ?? (j as any)?.id ?? null) as string | null
+      }
+      const send = (contactId: string, type: 'SMS' | 'Email', payload: Record<string, unknown>) =>
+        fetch('https://services.leadconnectorhq.com/conversations/messages', {
+          method: 'POST', headers: h, body: JSON.stringify({ type, contactId, ...payload }),
+        })
+
+      /* ---- answer the family in seconds, not on the next cron run ----------
+         The greeting used to be lead-followup's job, on a schedule that runs
+         every fifteen minutes and had stopped running. Somebody who writes in
+         at 9:02 should hear back at 9:02. lead-followup still owns the nudges
+         afterwards; ack_sent_at is what tells it we already said hello, so
+         nobody gets greeted twice. */
+      if (phone || email) {
+        try {
+          const firstName = (first || 'there').replace(/\(.*\)/, '').trim() || 'there'
+          const cid = await contactFor(phone, email, firstName)
+          if (cid) {
+            const line = `Hi ${firstName}, this is Caring Companions. We have your message and a care `
+              + `coordinator will call you shortly. If you would rather not wait, we are on (417) 234-8494. `
+              + `Reply STOP to opt out.`
+            if (phone) await send(cid, 'SMS', { message: line })
+            if (email) {
+              await send(cid, 'Email', {
+                subject: 'We have your message',
+                html: '<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">'
+                  + `<p>Hi ${firstName},</p>`
+                  + '<p>Thank you for reaching out to Caring Companions. Your message is with our care '
+                  + 'coordinators and one of them will call you shortly.</p>'
+                  + '<p>If you would rather talk sooner, call us on <b>(417) 234-8494</b> and we will pick up.</p>'
+                  + '<p>There is nothing you need to do in the meantime.</p>'
+                  + '<p style="color:#57606a">Caring Companions In-Home Senior Care<br>(417) 234-8494</p></div>',
+              })
+            }
+            acked = true
+            // deno-lint-ignore no-explicit-any
+            ;(lead as any).ack_sent_at = new Date().toISOString()
+            await supabase.rpc('upsert_app_data_item', { target_key: 'leads', item: lead })
+          }
+        } catch { /* the office alert below still needs to go out */ }
       }
       // Who hears. A row in applicant_alerts so it changes without a deploy.
       // If that table or column is not there, we still tell Samantha.
@@ -199,5 +252,5 @@ Deno.serve(async (req) => {
     }
   } catch { /* the lead is saved; alerting is the bonus */ }
 
-  return json({ status: 'lead created', id: lead.id, alerted })
+  return json({ status: 'lead created', id: lead.id, acked, alerted })
 })
