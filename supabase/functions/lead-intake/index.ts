@@ -39,6 +39,14 @@ Deno.serve(async (req) => {
     }
     return ''
   }
+  // Honeypot. A field no person can see, so anything that fills it in is a bot.
+  // Answer politely and drop it on the floor: a bot that gets an error retries.
+  for (const trap of ['website', 'url', 'company_website', '_gotcha']) {
+    if (typeof body[trap] === 'string' && body[trap].trim()) {
+      return json({ status: 'lead created' })
+    }
+  }
+
   // Tolerant field mapping — website builders name fields all kinds of ways.
   let first = pick('first_name', 'firstName', 'fname')
   let last = pick('last_name', 'lastName', 'lname')
@@ -103,5 +111,93 @@ Deno.serve(async (req) => {
     } catch (_e) { /* never block the lead on CRM */ }
   }
 
-  return json({ status: 'lead created', id: lead.id })
+  /* ---- tell the office NOW, not when it goes cold -------------------------
+     This used to be nobody's job. lead-intake wrote the lead and pinged GHL,
+     and the only office alert in the system lived in lead-followup, which
+     fires when a lead is already overdue. So a lead could sit for hours with
+     nobody knowing it existed. Alerting from here means it does not depend on
+     a cron run, a GHL workflow, or anything else staying healthy.
+     Best effort in every direction: the lead is already saved, so a failure
+     here must never fail the request. */
+  let alerted = 0
+  try {
+    const ghlToken = Deno.env.get('GHL_TOKEN')
+    const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
+    if (ghlToken && ghlLocation) {
+      const h = {
+        Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28',
+        'Content-Type': 'application/json', Accept: 'application/json',
+      }
+      // Who hears. A row in applicant_alerts so it changes without a deploy.
+      // If that table or column is not there, we still tell Samantha.
+      let people: { name?: string; phone?: string | null; email?: string | null }[] = []
+      try {
+        const { data } = await supabase
+          .from('applicant_alerts').select('name, phone, email')
+          .eq('active', true).contains('alert_on', ['lead'])
+        people = data ?? []
+      } catch { /* fall through to the backstop */ }
+      if (!people.length) people = [{ name: 'Samantha', email: 'samantha@mo-care.com' }]
+
+      const who = [lead.first_name, lead.last_name].filter(Boolean).join(' ')
+      const reach = [phone, email].filter(Boolean).join(' · ')
+      const esc = (t: string) => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')
+      const noWay = !phone && !email
+
+      const subject = noWay
+        ? '🔔 New website lead — NO contact details'
+        : '🔔 New lead: ' + who + (phone ? ' · ' + phone : '')
+      const html = '<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#16283a;">'
+        + '<p style="font-size:30px;margin:0 0 8px;">🔔</p>'
+        + '<p><b style="font-size:18px;">' + esc(who) + '</b></p>'
+        + (reach ? '<p><b>Reach them:</b> ' + esc(reach) + '</p>' : '')
+        + (lead.referral_source_name ? '<p><b>Heard about us from:</b> ' + esc(lead.referral_source_name) + '</p>' : '')
+        + '<p><b>What they said:</b><br>' + esc(lead.interest_notes) + '</p>'
+        + (noWay
+          ? '<p style="background:#fdf0f0;color:#a33;border-radius:10px;padding:14px 16px;">'
+            + '<b>They left no phone and no email.</b> There is no way to reach this person. '
+            + 'If this keeps happening, the form is letting people through without contact details.</p>'
+          : '<p style="background:#EAF4F6;border-radius:10px;padding:14px 16px;">'
+            + 'The follow-up clock started the moment they hit send. First call within the hour wins these.</p>')
+        + '<p><a href="https://cc.mo-care.com/#leads" style="display:inline-block;background:#1F7A8C;color:#fff;'
+        + 'font-weight:bold;padding:11px 22px;border-radius:9px;text-decoration:none;">Open the lead &rarr;</a></p>'
+        + '</div>'
+      const sms = '🔔 New lead: ' + who + (reach ? ' — ' + reach : ' — NO phone or email left')
+        + '. ' + String(lead.interest_notes).replace(/\s+/g, ' ').slice(0, 110)
+        + ' — cc.mo-care.com/#leads'
+
+      for (const p of people) {
+        try {
+          const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
+            method: 'POST', headers: h,
+            body: JSON.stringify({
+              locationId: ghlLocation,
+              ...(p.phone ? { phone: p.phone } : {}),
+              ...(p.email ? { email: p.email } : {}),
+              firstName: (p.name || 'Team').split(' ')[0],
+            }),
+          })
+          const j = await up.json().catch(() => ({}))
+          // deno-lint-ignore no-explicit-any
+          const contactId = (j as any)?.contact?.id ?? (j as any)?.id
+          if (!contactId) continue
+          if (p.email) {
+            await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+              method: 'POST', headers: h,
+              body: JSON.stringify({ type: 'Email', contactId, subject, html }),
+            })
+          }
+          if (p.phone) {
+            await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+              method: 'POST', headers: h,
+              body: JSON.stringify({ type: 'SMS', contactId, message: sms }),
+            })
+          }
+          alerted++
+        } catch { /* one bad recipient must not stop the rest */ }
+      }
+    }
+  } catch { /* the lead is saved; alerting is the bonus */ }
+
+  return json({ status: 'lead created', id: lead.id, alerted })
 })
