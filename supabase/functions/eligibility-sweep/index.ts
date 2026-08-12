@@ -60,6 +60,77 @@ Deno.serve(async (req) => {
     return json({ error: 'eligibility-rules.js loaded but exported nothing usable' }, 502)
 
   const body = await req.json().catch(() => ({})) as Record<string, unknown>
+
+  /* ── THE JANE FIXTURE, RUN HERE RATHER THAN SIMULATED ──────────────────
+     Exercises the real rules, in the real runtime, through the same branching
+     the sweep uses. It touches no real caregiver and writes nothing. The point
+     is that "it works in Node" is not evidence about Deno importing a file
+     over the network and reaching the same conclusions. */
+  if (body.fixture === 'jane') {
+    const d = (n: number) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10)
+    const jane: any = { id: 'fixture_jane', first: 'Jane', last: 'Smith', axiscare_id: 'FIXTURE',
+      hire_date: d(-40), r1s: 'Positive', r2s: 'Positive', oig: 'CLEAR', edl: 'Clear', fcsr: 'Clear',
+      oig_date: d(-20), edl_date: d(-20), fcsr_date: d(-20), fcsr_reg_date: d(-30),
+      orient_date: d(-38), alz_date: d(-38), annual_date: '',
+      supv_date: d(-20), perf_date: d(-20), ojt_date: '', ojt_online: '', ojt_signed: '' }
+    const visits = [
+      { id: 'v1', scheduledStartDate: d(2) + 'T09:00', client: { id: 7, firstName: 'A', lastName: 'B' } },
+      { id: 'v2', scheduledStartDate: d(4) + 'T09:00', client: { id: 7, firstName: 'A', lastName: 'B' } },
+      { id: 'v3', scheduledStartDate: d(5) + 'T14:00', client: { id: 9, firstName: 'C', lastName: 'D' } }]
+    const items: Record<string, any> = {}
+    const notes: string[] = []
+    const step = (c: any, up: any[]) => {
+      const e = E.eligibility(c); E.eligRecord(c, e)
+      const bad = e.state !== 'eligible'
+      const eid = 'elig_' + c.id, sid = 'eligsched_' + c.id
+      if (bad) items[eid] = { status: 'open', priority: e.restricted ? 'high' : 'normal',
+                              domain: DOMAIN_FOR((e.reasons || []).map((r: any) => r.code)) }
+      else if (items[eid]) items[eid].status = 'done'
+      if (bad && up.length) items[sid] = { status: 'open', priority: 'high',
+                                           domain: 'scheduling_coverage', shifts: up.length }
+      else if (items[sid]) items[sid].status = 'done'
+      if (e.restricted && c.axiscare_id) {
+        const o: any = (e.lapses || []).find((l: any) => l.code === 'ojt_overdue') || {}
+        const k = 'ojt_overdue@' + (o.due || '?')
+        if (c.axiscare_note_for !== k) { notes.push(k); c.axiscare_note_for = k }
+      } else if (!bad && c.axiscare_note_for) { notes.push('cleared'); c.axiscare_note_for = null }
+      return e
+    }
+    const before = E.eligibility({ ...jane, hire_date: d(-10) })      // inside the window
+    let e = step(jane, visits)
+    const restricted = jane.eligibility_history.find((h: any) => h.event === 'restricted')
+    const snap = JSON.stringify(items), nNotes = notes.length
+    step(jane, visits)                                               // rerun, must be inert
+    const dupItems = JSON.stringify(items) !== snap, dupNotes = notes.length !== nNotes
+    jane.ojt_date = d(0); jane.ojt_online = d(0); jane.ojt_signed = 'yes'
+    const after = step(jane, visits)
+    const restoredEntry = jane.eligibility_history.find((h: any) => h.event === 'restored')
+    const checks = [
+      ['1  eligible before the deadline', before.state === 'eligible'],
+      ['2  lapses after the OJT deadline', e.state === 'lapsed'],
+      ['3  effective date is deadline-derived', !!restricted?.became_overdue &&
+          restricted.became_overdue !== new Date().toISOString().slice(0, 10)],
+      ['4  three upcoming visits detected', visits.length === 3],
+      ['5  exactly one compliance exception', !!items['elig_fixture_jane']],
+      ['6  exactly one scheduling exception', !!items['eligsched_fixture_jane']],
+      ['7  scheduling exception carries all 3', items['eligsched_fixture_jane']?.shifts === 3],
+      ['8  Staffing owns the scheduling work', items['eligsched_fixture_jane']?.domain === 'scheduling_coverage'],
+      ['9  one AxisCare restriction note', nNotes === 1],
+      ['10 rerun creates no duplicate item', !dupItems],
+      ['11 rerun sends no duplicate note', !dupNotes],
+      ['12 OJT completion restores eligibility', after.state === 'eligible'],
+      ['13 both exceptions would close', items['elig_fixture_jane'].status === 'done' &&
+          items['eligsched_fixture_jane'].status === 'done'],
+      ['14 restoration recorded in history', !!restoredEntry?.restored_on],
+    ]
+    return json({ fixture: 'jane', wrote_nothing: true,
+      passed: checks.filter(c => c[1]).length, of: checks.length,
+      checks: checks.map(c => (c[1] ? 'PASS  ' : 'FAIL  ') + c[0]),
+      lapse_date: restricted?.became_overdue, detected_at: restricted?.detected_at,
+      history: jane.eligibility_history.map((h: any) => h.event),
+      old_shifts_restored: false })
+  }
+
   const key = async (k: string) => {
     const { data } = await supabase.from('app_data').select('data').eq('key', k).maybeSingle()
     return data?.data ?? null
@@ -103,7 +174,16 @@ Deno.serve(async (req) => {
   // ── evaluate ────────────────────────────────────────────────────────────
   const now = new Date().toISOString()
   const counts = { evaluated: 0, eligible: 0, not_eligible: 0, lapsed: 0,
-                   ojt_overdue: 0, fcsr_registration_overdue: 0, with_upcoming_visits: 0 }
+                   ojt_overdue: 0, fcsr_registration_overdue: 0, with_upcoming_visits: 0,
+                   affected_visits: 0, mgmt_overdue_still_eligible: 0 }
+  // every reason, counted separately — the breakdown matters far more than a percentage
+  const byReason: Record<string, number> = {}
+  const bump = (k: string) => { byReason[k] = (byReason[k] || 0) + 1 }
+  /* Four different things look identical if you only count "ineligible".
+     This separates them from signals already in the record, so a data problem
+     is never mistaken for a compliance problem about a real person. */
+  const triage = { real: 0, missing_history: 0, bad_dates: 0, probably_former: 0 }
+  const triageNotes: Record<string, number> = {}
   const plan = { items_create: [] as any[], items_update: [] as any[], items_close: [] as any[],
                  axiscare_notes: [] as any[], caregivers_written: [] as string[] }
   const byId = (id: string) => opsItems.find(i => i.id === id)
@@ -114,11 +194,31 @@ Deno.serve(async (req) => {
     counts[e.state as 'eligible' | 'not_eligible' | 'lapsed']++
     if (e.lapses?.some((l: any) => l.code === 'ojt_overdue')) counts.ojt_overdue++
     if (e.tasks?.some((t: any) => t.code === 'fcsr_registration' && t.high)) counts.fcsr_registration_overdue++
+    if (e.state === 'eligible' && e.mgmt?.length) counts.mgmt_overdue_still_eligible++
+    for (const r of (e.reasons || [])) bump(r.code)
+
+    // ── which of the four is this, really? ───────────────────────────────
+    if (e.state !== 'eligible') {
+      const tenureDays = c.hire_date
+        ? Math.floor((Date.now() - new Date(c.hire_date + 'T00:00:00').getTime()) / 86400000) : null
+      const noHire   = !c.hire_date
+      const future   = tenureDays !== null && tenureDays < 0
+      const tenured  = tenureDays !== null && tenureDays > 365
+      const neverOriented = !c.orient_date && !c.alz_date
+      const noAxis   = !c.axiscare_id
+      let bucket: string
+      if (noHire || future) { bucket = 'bad_dates'; triage.bad_dates++ }
+      else if (tenured && neverOriented) { bucket = 'missing_history'; triage.missing_history++ }
+      else if (noAxis && tenured) { bucket = 'probably_former'; triage.probably_former++ }
+      else { bucket = 'real'; triage.real++ }
+      triageNotes[bucket + ':' + (e.reasons?.[0]?.code || 'unknown')] =
+        (triageNotes[bucket + ':' + (e.reasons?.[0]?.code || 'unknown')] || 0) + 1
+    }
 
     const cgKey = String(c.axiscare_id || '')
     const upcoming = cgKey ? (visitsByCaregiver.get(cgKey) || []) : []
     const ineligible = e.state !== 'eligible'
-    if (ineligible && upcoming.length) counts.with_upcoming_visits++
+    if (ineligible && upcoming.length) { counts.with_upcoming_visits++; counts.affected_visits += upcoming.length }
 
     // history + cached state, only when something actually changed
     const changed = E.eligRecord(c, e)
@@ -233,11 +333,17 @@ Deno.serve(async (req) => {
     mode: DRY ? 'DRY RUN — nothing was written or sent' : 'LIVE',
     axiscare: visitsError ? { ok: false, problem: visitsError } : { ok: true, caregivers_with_visits: visitsByCaregiver.size },
     counts,
+    by_reason: byReason,
+    triage: { ...triage, detail: triageNotes },
     would: {
       items_create: plan.items_create.length,
+      items_create_compliance: plan.items_create.filter(i => i.kind === 'eligibility').length,
+      items_create_scheduling: plan.items_create.filter(i => i.kind === 'eligibility_schedule').length,
       items_update: plan.items_update.length,
       items_close: plan.items_close.length,
       axiscare_notes: plan.axiscare_notes.length,
+      axiscare_restriction_notes: plan.axiscare_notes.filter(n => !n.clears).length,
+      axiscare_cleared_notes: plan.axiscare_notes.filter(n => n.clears).length,
       caregiver_records_written: plan.caregivers_written.length
     },
     wrote: LIVE ? wrote : undefined,
