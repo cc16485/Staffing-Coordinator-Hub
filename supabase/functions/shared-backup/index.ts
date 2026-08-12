@@ -6,6 +6,21 @@
 // (with the full JSON inline when small enough for an off-site copy).
 //
 // Secrets: GHL_TOKEN, GHL_LOCATION_ID  ·  Optional: BACKUP_EMAIL
+//
+// 2026-08-10 — the table list is no longer hardcoded.
+// It named three tables out of fifty-one, so Core knowledge, the recruiting
+// tables and the new operating-foundation tables were all outside the safety
+// net without anything saying so. It now asks the database what exists
+// (backup_table_list()) and snapshots everything it finds.
+//
+// Tables are read with pagination, not a row limit, so size is not a reason to
+// end up with half a table. .PARTIAL only ever appears if HARD_CAP is reached,
+// which is a runaway guard rather than a size policy. If one ever does appear,
+// it is a warning and NOT a restore point, which is why the name says so.
+//
+// Each table is uploaded and released before the next is read. Holding every
+// table in memory before uploading any of them is how a backup dies on the
+// largest table and takes the small ones down with it.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
@@ -17,7 +32,10 @@ const cors = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } })
 
-const TABLES = ['evv_submissions', 'client_queue', 'orient_bookings']
+// app_data is snapshotted separately in step 1, so it is not repeated here.
+const SKIP = new Set(['app_data'])
+const PAGE = 1_000        // PostgREST's own default ceiling. Do not raise it.
+const HARD_CAP = 500_000  // runaway guard only, not a size policy
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
@@ -42,26 +60,71 @@ Deno.serve(async (req) => {
       [`${stamp}/app_data.json`]: JSON.stringify(appData ?? [], null, 1),
     }
 
-    // 2. Standalone tables (skip any that error — schemas vary by hub age).
-    const tableCounts: Record<string, number | string> = {}
-    for (const t of TABLES) {
-      try {
-        const { data, error } = await supabase.from(t).select('*')
-        if (error) { tableCounts[t] = `skipped (${error.message.slice(0, 60)})`; continue }
-        files[`${stamp}/${t}.json`] = JSON.stringify(data ?? [], null, 1)
-        tableCounts[t] = (data ?? []).length
-      } catch { tableCounts[t] = 'skipped' }
-    }
+    // 2. Every table the database says exists, discovered at run time so a new
+    //    table is inside the safety net the moment it is created rather than
+    //    whenever someone remembers to edit this file.
+    const { data: discovered, error: listErr } = await supabase.rpc('backup_table_list')
+    if (listErr) throw new Error(`backup_table_list() failed: ${listErr.message}`)
 
-    // 3. Store snapshots in the private backups bucket.
+    const tableCounts: Record<string, number | string> = {}
+    const partial: string[] = []
     let stored = 0
-    for (const [path, content] of Object.entries(files)) {
+
+    const put = async (path: string, content: string) => {
       const { error } = await supabase.storage
         .from('backups')
         .upload(path, new Blob([content], { type: 'application/json' }), { upsert: true })
-      if (!error) stored++
-      else console.error(`backup upload failed for ${path}:`, error.message)
+      if (error) { console.error(`backup upload failed for ${path}:`, error.message); return false }
+      stored++
+      return true
     }
+
+    for (const row of (discovered ?? []) as { table_name: string; order_col: string }[]) {
+      const t = row.table_name
+      if (SKIP.has(t)) continue
+      try {
+        // PAGINATED, not truncated. A .PARTIAL file is a warning, not a restore
+        // point, so size is no longer a reason to have half a table.
+        //
+        // PAGE is 1000 because that is PostgREST's own default ceiling. Asking
+        // for 5000 returns 1000 without complaining, and a loop that stops when
+        // a page comes back "short" then declares a 2619-row table complete at
+        // 1000 rows. That is exactly what happened on 2026-08-10, and the row
+        // count audit is what caught it. So: stop on an EMPTY page, and advance
+        // by what actually arrived rather than by what was asked for.
+        //
+        // Ordered by primary key, because unordered paging lets the server
+        // return rows in a different order per request, which silently
+        // duplicates some rows and drops others.
+        const rows: unknown[] = []
+        let from = 0, truncated = false
+        for (;;) {
+          let q = supabase.from(t).select('*').range(from, from + PAGE - 1)
+          if (row.order_col) q = q.order(row.order_col, { ascending: true })
+          const { data, error } = await q
+          if (error) throw new Error(error.message)
+          const page = data ?? []
+          if (page.length === 0) break
+          rows.push(...page)
+          if (rows.length >= HARD_CAP) { truncated = true; break }
+          from += page.length
+        }
+
+        const name = truncated ? `${t}.PARTIAL` : t
+        // Written and released one table at a time. Holding fifty tables in
+        // memory before uploading any of them is how a backup dies on the
+        // largest table and takes the small ones with it.
+        await put(`${stamp}/${name}.json`, JSON.stringify(rows, null, 1))
+        tableCounts[t] = truncated ? `${rows.length} rows, PARTIAL (hit the ${HARD_CAP} guard)` : rows.length
+        if (truncated) partial.push(t)
+      } catch (e) {
+        tableCounts[t] = `skipped (${e instanceof Error ? e.message.slice(0, 80) : 'error'})`
+      }
+    }
+
+    // 3. app_data last, so it is the file most likely to survive a timeout,
+    //    and kept in memory for the off-site email copy below.
+    for (const [path, content] of Object.entries(files)) await put(path, content)
 
     // 4. Email the administrator — inline the app_data JSON when small enough
     //    so a copy exists entirely outside this database.
@@ -103,8 +166,12 @@ Deno.serve(async (req) => {
                 `<p>Weekly snapshot of the shared hub database (Team, Staffing, Care Coordinator).</p>` +
                 `<p><b>app_data keys:</b></p><ul>` +
                 Object.entries(summary).map(([k, v]) => `<li>${esc(k)}: ${v}${typeof v === 'number' ? ' records' : ''}</li>`).join('') +
-                `</ul><p><b>Tables:</b></p><ul>` +
+                `</ul><p><b>Tables (${Object.keys(tableCounts).length} found):</b></p><ul>` +
                 Object.entries(tableCounts).map(([k, v]) => `<li>${esc(k)}: ${v}${typeof v === 'number' ? ' rows' : ''}</li>`).join('') +
+                (partial.length
+                  ? `</ul><p style="color:#b45309"><b>Captured only in part:</b> ${esc(partial.join(', '))}. ` +
+                    `Those files are named .PARTIAL.json and are NOT a complete restore point for those tables.</p><ul>`
+                  : '') +
                 `</ul><p><b>Keep this email</b> — if the hubs ever lose data again (like July 5), this is the restore point.</p>` +
                 inline +
                 `</div>`,
@@ -117,7 +184,19 @@ Deno.serve(async (req) => {
       }
     }
 
-    return json({ success: true, date: stamp, stored, emailed, app_data_keys: summary, tables: tableCounts })
+    const skipped = Object.entries(tableCounts)
+      .filter(([, v]) => typeof v === 'string' && v.startsWith('skipped'))
+      .map(([k]) => k)
+
+    return json({
+      success: true, date: stamp, stored, emailed,
+      files_written: Object.keys(files).length,
+      tables_found: Object.keys(tableCounts).length,
+      tables_partial: partial,
+      tables_skipped: skipped,
+      app_data_keys: summary,
+      tables: tableCounts,
+    })
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : 'backup failed' }, 500)
   }

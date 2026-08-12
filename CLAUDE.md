@@ -43,7 +43,9 @@ primary. It is ARCHIVED as of 2026-07-29 and is ~1,900 lines behind. Never copy 
   - Auth: `sb.auth.signInWithPassword({ email, password })` — real Supabase users
   - The hub runs as `authenticated`; the two public pages run as `anon` (INSERT-only)
 - **Google APIs** — Calendar + Drive via GIS token client (`google_client_id` in Settings)
-- **AxisCare API** — site 16485, token `axc_eTXo41PuHg5MHNnaxw34WM2WVBJvN0sC` (used by edge functions via env secrets)
+- **AxisCare API** — site 16485. The token is NOT recorded here. It lives only as the
+  `AXISCARE_TOKEN` Supabase secret (both projects). This repo is PUBLIC: never paste a
+  live credential into any tracked file. Anon keys above are safe by design; nothing else is.
 - **Zapier webhooks** — stored in `appSettings`, sent via `zapFire()` (one hardcoded: `ZAPIER_AC_STATUS_WEBHOOK`)
 - **localStorage** — fallback/cache; Supabase wins on load
 
