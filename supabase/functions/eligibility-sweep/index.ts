@@ -48,9 +48,32 @@ Deno.serve(async (req) => {
   const supabase = createClient(SB, KEY)
 
   // ── the shared rules, or nothing ────────────────────────────────────────
+  /* FETCHED AND EVALUATED, NOT IMPORTED, AND THE REASON MATTERS.
+     Deno Deploy resolves remote modules at DEPLOY time, so `await import(url)`
+     of anything outside the bundle fails at runtime with "Module not found".
+     A static `import "https://…"` would work, but it would freeze the rules as
+     they were on the day this function was last deployed — and a function
+     quietly running last month's eligibility rules while the hub runs this
+     month's is precisely the drift this design exists to prevent.
+
+     So it fetches the served file and evaluates it. That is `eval` by another
+     name, and it is justified here by three things: the source is our own
+     origin over HTTPS, the file is the one the hub itself loads, and the
+     alternative is two copies that can disagree about whether a real person is
+     allowed to work.
+
+     If the fetch fails, this function stops. It never falls back to a local
+     copy, because there is no local copy to fall back to. */
   let E: any = null
+  let rulesMeta = { url: RULES_URL, bytes: 0, fetched_at: '' }
   try {
-    await import(RULES_URL + '?v=' + Math.floor(Date.now() / 3600000))
+    const r = await fetch(RULES_URL + '?v=' + Math.floor(Date.now() / 300000), {
+      headers: { 'Accept': 'application/javascript' } })
+    if (!r.ok) throw new Error('rules file responded ' + r.status)
+    const src = await r.text()
+    if (!/CCElig/.test(src)) throw new Error('fetched file does not define CCElig')
+    rulesMeta = { url: RULES_URL, bytes: src.length, fetched_at: new Date().toISOString() }
+    ;(0, eval)(src)
     E = (globalThis as any).CCElig
   } catch (err) {
     return json({ error: 'Could not load the shared eligibility rules', detail: String(err),
@@ -331,6 +354,7 @@ Deno.serve(async (req) => {
 
   return json({
     mode: DRY ? 'DRY RUN — nothing was written or sent' : 'LIVE',
+    rules: rulesMeta,
     axiscare: visitsError ? { ok: false, problem: visitsError } : { ok: true, caregivers_with_visits: visitsByCaregiver.size },
     counts,
     by_reason: byReason,
