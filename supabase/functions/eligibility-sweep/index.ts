@@ -38,7 +38,13 @@ Deno.serve(async (req) => {
   const SB = Deno.env.get('SUPABASE_URL')!
   const KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
   const site = Deno.env.get('AXISCARE_SITE_NUMBER')
-  const acTok = Deno.env.get('AXISCARE_VISITS_TOKEN') || Deno.env.get('AXISCARE_TOKEN')
+  /* The shared project holds app_data; the AxisCare secret may be set there
+     under any of the three names this estate has accumulated. Take whichever
+     exists rather than failing on a naming accident. */
+  const acTok = Deno.env.get('AXISCARE_VISITS_TOKEN')
+             || Deno.env.get('AXISCARE_TOKEN')
+             || Deno.env.get('AXISCARE_API_KEY')
+  const acSite = site || Deno.env.get('AXISCARE_SITE')
   const supabase = createClient(SB, KEY)
 
   // ── the shared rules, or nothing ────────────────────────────────────────
@@ -71,10 +77,10 @@ Deno.serve(async (req) => {
   const horizon = new Date(Date.now() + 21 * 86400000).toISOString().slice(0, 10)
   const visitsByCaregiver = new Map<string, any[]>()
   let visitsError: string | null = null
-  if (site && acTok) {
+  if (acSite && acTok) {
     try {
       let url: string | null =
-        `https://${site}.axiscare.com/api/visits?startDate=${today}&endDate=${horizon}`
+        `https://${acSite}.axiscare.com/api/visits?startDate=${today}&endDate=${horizon}`
       for (let page = 0; url && page < 12; page++) {
         const r: Response = await fetch(url, { headers: {
           Authorization: `Bearer ${acTok}`, Accept: 'application/json',
@@ -92,7 +98,7 @@ Deno.serve(async (req) => {
         url = j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
       }
     } catch (err) { visitsError = String(err) }
-  } else { visitsError = 'AxisCare not configured' }
+  } else { visitsError = 'AxisCare not configured on this project (need AXISCARE_SITE_NUMBER and a token)' }
 
   // ── evaluate ────────────────────────────────────────────────────────────
   const now = new Date().toISOString()
@@ -201,8 +207,8 @@ Deno.serve(async (req) => {
       if (!error) wrote.items++
     }
     for (const n of plan.axiscare_notes) {
-      if (!site || !acTok) break
-      const r = await fetch(`https://${site}.axiscare.com/api/notes/caregiver/${n.axiscare_id}`, {
+      if (!acSite || !acTok) break
+      const r = await fetch(`https://${acSite}.axiscare.com/api/notes/caregiver/${n.axiscare_id}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${acTok}`, Accept: 'application/json',
                    'Content-Type': 'application/json', 'X-AxisCare-Api-Version': AC_VERSION },
