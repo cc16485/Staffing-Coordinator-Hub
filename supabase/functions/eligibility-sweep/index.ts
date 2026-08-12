@@ -41,9 +41,16 @@ Deno.serve(async (req) => {
   /* The shared project holds app_data; the AxisCare secret may be set there
      under any of the three names this estate has accumulated. Take whichever
      exists rather than failing on a naming accident. */
-  const acTok = Deno.env.get('AXISCARE_VISITS_TOKEN')
-             || Deno.env.get('AXISCARE_TOKEN')
-             || Deno.env.get('AXISCARE_API_KEY')
+  /* Named explicitly, not first-of-several. Silently falling through to
+     whichever name happened to exist is how the last dry run reported
+     "0 upcoming visits" when what actually happened was a 403 — an unproven
+     zero presented as a clean result. The name used is reported, and a token
+     that cannot read visits is a FAILURE, never a zero. */
+  const AC_SECRET_NAME = 'AXISCARE_VISITS_TOKEN'
+  const acTok = Deno.env.get(AC_SECRET_NAME)
+  const acSecretPresent = !!acTok
+  const acOtherNames = ['AXISCARE_TOKEN','AXISCARE_API_KEY']
+    .filter(n => !!Deno.env.get(n))
   const acSite = site || Deno.env.get('AXISCARE_SITE')
   const supabase = createClient(SB, KEY)
 
@@ -192,11 +199,16 @@ Deno.serve(async (req) => {
         url = j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
       }
     } catch (err) { visitsError = String(err) }
-  } else { visitsError = 'AxisCare not configured on this project (need AXISCARE_SITE_NUMBER and a token)' }
+  } else {
+    visitsError = acSecretPresent
+      ? 'AXISCARE_SITE_NUMBER is not set on this project'
+      : `${AC_SECRET_NAME} is not set on this project` +
+        (acOtherNames.length ? ` (found instead: ${acOtherNames.join(', ')} — these are not used, on purpose)` : '')
+  }
 
   // ── evaluate ────────────────────────────────────────────────────────────
   const now = new Date().toISOString()
-  const counts = { evaluated: 0, eligible: 0, not_eligible: 0, lapsed: 0,
+  const counts = { evaluated: 0, eligible: 0, not_eligible: 0, lapsed: 0, needs_verification: 0,
                    ojt_overdue: 0, fcsr_registration_overdue: 0, with_upcoming_visits: 0,
                    affected_visits: 0, mgmt_overdue_still_eligible: 0 }
   // every reason, counted separately — the breakdown matters far more than a percentage
@@ -205,7 +217,7 @@ Deno.serve(async (req) => {
   /* Four different things look identical if you only count "ineligible".
      This separates them from signals already in the record, so a data problem
      is never mistaken for a compliance problem about a real person. */
-  const triage = { real: 0, missing_history: 0, bad_dates: 0, probably_former: 0 }
+  const triage = { real: 0, awaiting_verification: 0, missing_history: 0, bad_dates: 0, probably_former: 0 }
   const triageNotes: Record<string, number> = {}
   const plan = { items_create: [] as any[], items_update: [] as any[], items_close: [] as any[],
                  axiscare_notes: [] as any[], caregivers_written: [] as string[] }
@@ -214,11 +226,17 @@ Deno.serve(async (req) => {
   for (const c of active) {
     counts.evaluated++
     const e = E.eligibility(c)
-    counts[e.state as 'eligible' | 'not_eligible' | 'lapsed']++
+    // needs_verification is a real state and must be counted, or the numbers
+    // silently stop adding up to the number of caregivers evaluated.
+    counts[e.state as 'eligible' | 'not_eligible' | 'lapsed' | 'needs_verification']++
     if (e.lapses?.some((l: any) => l.code === 'ojt_overdue')) counts.ojt_overdue++
     if (e.tasks?.some((t: any) => t.code === 'fcsr_registration' && t.high)) counts.fcsr_registration_overdue++
     if (e.state === 'eligible' && e.mgmt?.length) counts.mgmt_overdue_still_eligible++
-    for (const r of (e.reasons || [])) bump(r.code)
+    /* Reasons are attributed to the caregiver's PRIMARY state, so a lapse code
+       on somebody whose primary state is Not Eligible is reported as a
+       secondary finding rather than counted into the Lapsed population. */
+    for (const r of (e.blockers || [])) bump('primary:' + r.code)
+    for (const r of (e.lapses || [])) bump((e.state === 'lapsed' ? 'primary:' : 'secondary:') + r.code)
 
     // ── which of the four is this, really? ───────────────────────────────
     if (e.state !== 'eligible') {
@@ -233,13 +251,17 @@ Deno.serve(async (req) => {
       if (noHire || future) { bucket = 'bad_dates'; triage.bad_dates++ }
       else if (tenured && neverOriented) { bucket = 'missing_history'; triage.missing_history++ }
       else if (noAxis && tenured) { bucket = 'probably_former'; triage.probably_former++ }
+      else if (e.state === 'needs_verification') { bucket = 'awaiting_verification'; triage.awaiting_verification++ }
       else { bucket = 'real'; triage.real++ }
       triageNotes[bucket + ':' + (e.reasons?.[0]?.code || 'unknown')] =
         (triageNotes[bucket + ':' + (e.reasons?.[0]?.code || 'unknown')] || 0) + 1
     }
 
     const cgKey = String(c.axiscare_id || '')
-    const upcoming = cgKey ? (visitsByCaregiver.get(cgKey) || []) : []
+    /* If the schedule lookup failed, `upcoming` is UNKNOWN, not empty. No
+       scheduling exception is raised either way, and the report says the check
+       was unavailable rather than claiming nobody is affected. */
+    const upcoming = (!visitsError && cgKey) ? (visitsByCaregiver.get(cgKey) || []) : []
     const ineligible = e.state !== 'eligible'
     if (ineligible && upcoming.length) { counts.with_upcoming_visits++; counts.affected_visits += upcoming.length }
 
@@ -253,16 +275,19 @@ Deno.serve(async (req) => {
     // ── STEP 4: the eligibility exception ─────────────────────────────────
     const eid = 'elig_' + (c.id || cgKey || who.replace(/\s+/g, '_'))
     const existing = byId(eid)
+    /* Needs-verification produces a record to find, not a compliance failure,
+       so it gets a low-priority verification item rather than an eligibility
+       exception — and never a restriction. */
     if (ineligible) {
       const item = {
-        id: eid, kind: 'eligibility', source_id: c.id || null, about: who,
+        id: eid, kind: e.state === 'needs_verification' ? 'eligibility_verify' : 'eligibility', source_id: c.id || null, about: who,
         title: e.label + ' — ' + who,
         detail: e.summary,
         next_action: e.needs_supervisor
           ? 'A supervisor has to decide on the references before this moves on.'
           : 'Clear the outstanding requirement, then eligibility restores itself.',
         status: 'open', domain: DOMAIN_FOR(codes),
-        priority: e.restricted ? 'high' : 'normal',
+        priority: e.restricted ? 'high' : (e.state === 'needs_verification' ? 'low' : 'normal'),
         created_at: existing?.created_at || now, last_activity_at: now,
         due: existing?.due || now.slice(0, 10),
         opened_by: 'eligibility-sweep',
@@ -355,7 +380,11 @@ Deno.serve(async (req) => {
   return json({
     mode: DRY ? 'DRY RUN — nothing was written or sent' : 'LIVE',
     rules: rulesMeta,
-    axiscare: visitsError ? { ok: false, problem: visitsError } : { ok: true, caregivers_with_visits: visitsByCaregiver.size },
+    axiscare: visitsError
+      ? { schedule_check: 'UNAVAILABLE', problem: visitsError, secret_name: AC_SECRET_NAME,
+          note: 'Affected-visit counts below are NOT ZERO — they are unknown.' }
+      : { schedule_check: 'SUCCESS', secret_name: AC_SECRET_NAME,
+          caregivers_with_visits: visitsByCaregiver.size },
     counts,
     by_reason: byReason,
     triage: { ...triage, detail: triageNotes },
