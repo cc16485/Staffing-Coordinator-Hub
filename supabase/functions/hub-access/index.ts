@@ -47,6 +47,11 @@ const KNOWN_HUBS: Record<string, string> = {
   team:             'Team Hub (legacy slug — do not issue)',
 }
 const CANONICAL_HUB: Record<string, string> = { team: 'team_hub' }
+/* The only values that may ever be WRITTEN into hub_access. KNOWN_HUBS is
+   wider because it also has to accept 'team' as an incoming request. Never
+   materialise a claim from Object.keys(KNOWN_HUBS) — that would write the
+   legacy slug, and the RLS policy does not recognise it. */
+const ISSUABLE_HUBS = ['care_coordinator', 'staffing', 'team_hub']
 const ACTIONS = ['invite', 'resend', 'revoke', 'restore', 'status']
 
 Deno.serve(async (req) => {
@@ -136,7 +141,13 @@ Deno.serve(async (req) => {
 
   const accessOf = (u: typeof user) => {
     const a = u?.app_metadata?.[META_KEY]
-    return Array.isArray(a) ? (a as string[]).filter((x) => KNOWN_HUBS[x]) : null
+    if (!Array.isArray(a)) return null                      // null = predates the list, means all
+    // Upgrade a legacy 'team' claim to 'team_hub' rather than merely keeping it.
+    // Keeping it would stop the strip but leave the account denied every Team
+    // Hub key, because the RLS policy only ever checks 'team_hub'.
+    return Array.from(new Set((a as string[])
+      .map((x) => CANONICAL_HUB[x] || x)
+      .filter((x) => ISSUABLE_HUBS.includes(x))))
   }
   const describe = (u: typeof user) => {
     if (!u) return { state: 'none', label: 'No account' }
@@ -205,7 +216,7 @@ Deno.serve(async (req) => {
       }
     } else if (action === 'revoke') {
       if (!user) return json({ error: 'There is no account for that address.' }, 404)
-      const current = accessOf(user) ?? Object.keys(KNOWN_HUBS)   // null meant everything
+      const current = accessOf(user) ?? [...ISSUABLE_HUBS]   // null meant everything
       const next = current.filter((h) => h !== hub)
       const { error } = await admin.auth.admin.updateUserById(user.id,
         { app_metadata: { [META_KEY]: next } })
