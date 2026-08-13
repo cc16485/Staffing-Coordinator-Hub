@@ -21,8 +21,15 @@ ASSISTED = the system creates, routes and chases; a human judges or acts.
 MANUAL BY DESIGN = human judgment should stay.
 BLOCKED = a named external dependency prevents it.
 
-Hours are estimates and marked as such. They are the weakest column here and
-should be corrected from what the office actually experiences.
+**HUMAN MINUTES/WEEK** is the column that matters most and the one we cannot
+yet fill. Every figure here is `UNMEASURED` — derived from reading code, not
+from watching the office. Once the Hub is in real use, measure it from events
+and completion history rather than guessing. The target shape is:
+
+`workflow | current human min/wk | target min/wk | automation level | exception rate`
+
+The objective is not maximum automation. It is **minimum routine administration
+per client and per caregiver**, while keeping control and quality.
 
 ---
 
@@ -155,11 +162,32 @@ every hire since it was written. Four booking systems still share one calendar.
 
 ## 8. Reference checks
 
-**BLOCKED — dead producer.** `reference_requests` has 0 rows, ever, and **no
-INSERT exists anywhere in the codebase.** `reference-chase` is a healthy
-processor over a table nothing fills. Do not schedule it until something writes.
+| | |
+|---|---|
+| **Status** | ASSISTED — built, correctly refusing to run |
+| Producer | **Candidate record `r1..r4`**, not `reference_requests` |
+| Authoritative source | Candidate record. `obDeriveStatus()` gates on `pos>=2` |
+| Decision | `references-run`, 60-day age guard, 25 per run |
+| Owner | Lead Caregiver / Krystal. Unowned items show as unassigned |
+| Work | **One evolving item per candidate**, all four slots on it |
+| Chase | 2/5/9-day ladder, chases the office |
+| Escalation | Negative or Conditional flags for judgment, never auto-chased |
+| Completion | Two Positive references, closes automatically |
+| Exit | Candidate withdraws or is rejected → item closes |
+| Health | rows seen, slots recorded, blocked-only-by-references |
 
-**Est. 2–3 hrs/wk, entirely manual today.**
+**HUMAN MINUTES/WEEK: UNMEASURED.**
+
+`reference_requests` was a duplicate store, not the missing producer. References
+are already tracked on the candidate record and that is what the hiring gate
+reads. Nothing writes to the dead table.
+
+**Dry run 2026-08-13: 1 candidate, 0 reference slots populated.** Correctly
+refused to commit. The gap is upstream — the candidate pipeline is not carrying
+reference data — not in this workflow.
+
+**Outbound to referees: channel and consent UNRESOLVED.** Automated messaging
+stays off until that policy is deliberately set.
 
 ---
 
@@ -261,17 +289,42 @@ in their UI.
 
 1. **Send the AxisCare message.** Not a build. Unblocks seven rows.
 2. **GHL read scopes.** Two minutes, unblocks caregiver recognition.
-3. **Reference-request producer** (row 8). No external dependency. Pure
-   automation of work that is fully manual today.
-4. **Business-health Home screen** (row 15). No external dependency. Converts
-   the Hub from a task manager into a control surface.
-5. **Retrofit the outreach identity gate** onto the 3 highest-risk senders —
-   `caregiver-intro`, `circle-send`, `calls-feed` — which read a phone straight
-   off a person record with no gate at all.
-6. Everything AxisCare-dependent, in the order access allows.
+3. ~~Reference workflow~~ **BUILT 2026-08-13.** Correctly refuses to run over
+   an empty producer. Waiting on reference data being recorded, not on code.
+4. **Identity/outbound safety boundary.** Enforce at the shared point in
+   `_shared/outreach.ts` rather than patching `caregiver-intro`, `circle-send`
+   and `calls-feed` independently. **NEXT.**
+5. Every other unblocked row that removes administrative work.
+6. **Business-health Home screen** (row 15) — after the underlying signals are
+   trustworthy. A dashboard over incomplete workflows reports labour rather
+   than removing it.
+7. Everything AxisCare-dependent, in the order access allows.
 
-Items 3, 4 and 5 need no external dependency and no business decision. They are
-the next build.
+---
+
+## BLOCKED BY AXISCARE
+
+Work straight down this list the moment API access opens. Nothing here needs
+rediscovering.
+
+| Row | Needs |
+|---|---|
+| 3 Start of Care | `client.created` event + `/api/clients`. Register the webhook, set `AXISCARE_WEBHOOK_SECRET`, read one real payload, then `AXISCARE_CLIENT_LIVE=1` |
+| 4 First visit | `/api/visits` with a populated `clockIn`. Field contract **unverified** |
+| 5 Client check-ins | Active client census, so the cadence has subjects |
+| 9 Scheduling, call-offs | Open shifts, assignments, call-off events. Largest labour load |
+| 11 Authorisations | Authorised hours + consumption. Needed for exhaustion warnings |
+| 12 Caregiver identity | `/api/caregivers` with phone. Settles all 56 without name matching |
+| 13 Client contacts | Whether responsible parties/emergency contacts are exposed **at all** — unknown, never reachable |
+
+**Every path returns an HTML 403 from CloudFront before reaching API routing.**
+Not a credential problem. Support message written and ready to send.
+
+## BLOCKED BY GHL PERMISSIONS
+
+| Needs | Unblocks |
+|---|---|
+| View Custom Fields, View Tags, View Opportunities | Row 12 (an employee or applicant id would be a real bridge), and the canonical tag vocabulary over 237 accumulated tags |
 
 ---
 

@@ -26,9 +26,15 @@
 //   details attached so a human sends it, and it chases the OFFICE, not the
 //   referee.
 //
-//   When outbound is switched on it must be EMAIL ONLY. A reference is a
-//   third party who never gave us permission to text them, which is precisely
-//   what the TCPA exists about, and exposure is per message.
+//   CHANNEL AND CONSENT FOR REFERENCE OUTREACH ARE UNRESOLVED. Automated
+//   outbound to referees stays OFF until that policy is deliberately set.
+//   That is a business decision, not a technical gap, and not for this file
+//   to settle.
+//
+// ONE ITEM PER CANDIDATE, never one per referee. A hiring coordinator thinks
+// "finish references for Jane Doe", not "chase referee 3". Four tasks for one
+// applicant is how a queue turns into noise. The item carries the state of
+// all four slots.
 //
 // DRY RUN BY DEFAULT. ?commit=1 to write.
 // =============================================================================
@@ -116,6 +122,7 @@ Deno.serve(async (req) => {
     candidates_with_a_negative: 0,
     too_old: 0,
     candidates_needing_work: 0,
+    closed_candidate_gone: 0,
     created: 0, updated: 0, closed: 0, capped: 0,
   }
 
@@ -124,9 +131,21 @@ Deno.serve(async (req) => {
   const today = todayCentral()
 
   for (const c of candidates) {
-    /* Still in play? A candidate who was not hired or already resolved is not
-       waiting on a reference. */
-    if (c.not_hired || clean(c.resolvedStatus)) continue
+    /* A candidate who withdrew, was rejected, or otherwise exited is not
+       waiting on a reference. CLOSE their item rather than skipping it —
+       silently ignoring the record would leave the chase open forever with
+       nobody realising the candidate is gone. */
+    if (c.not_hired || clean(c.resolvedStatus)) {
+      const gone = existing.get(`ops_ref_${c.id}`)
+      if (gone && String(gone.status || 'open') !== 'done') {
+        toWrite.push({ ...gone, status: 'done', closed_at: new Date().toISOString(),
+          closed_reason: c.not_hired
+            ? `candidate exited: ${clean(c.not_hired_reason) || 'not moving forward'}`
+            : `candidate resolved: ${clean(c.resolvedStatus)}` })
+        stats.closed_candidate_gone++
+      }
+      continue
+    }
     stats.in_play++
 
     const slots = slotsOf(c)
@@ -198,14 +217,29 @@ Deno.serve(async (req) => {
       positive_so_far: positive,
       needed: POSITIVE_REQUIRED,
       has_negative: negative.length > 0,
-      /* The referee details, so whoever picks this up does not have to go
-         looking. Email first: a reference must never be texted. */
-      referees: pending.map(s => ({
-        slot: s.n, name: s.name,
+      /* ALL FOUR SLOTS, not just the outstanding ones. A coordinator wants to
+         see the whole picture on one item:
+             Reference 1: Positive
+             Reference 2: No response, day 5
+             Reference 3: Not contacted
+             Reference 4: Conditional
+         Contact details are attached so nobody has to go looking. */
+      references: slots.map(s => ({
+        slot: s.n,
+        name: s.name || null,
+        status: s.status || 'Pending',
+        display: s.status === 'Positive' ? 'Positive'
+               : s.status === 'Negative' ? 'Negative — needs a decision'
+               : s.status === 'Conditional' ? 'Conditional — needs a decision'
+               : (s.email || s.phone)
+                   ? (age > 0 ? `No response, day ${age}` : 'Requested today')
+                   : 'Not contacted',
         email: s.email || null,
         phone: s.phone || null,
-        contact_by: s.email ? 'email' : (s.phone ? 'phone call' : 'NO CONTACT ON FILE'),
+        reachable: !!(s.email || s.phone),
       })),
+      slots_recorded: slots.length,
+      slots_empty: 4 - slots.length,
       chase_stage: stage,
       days_outstanding: age,
       due: endOfDayIso(stage >= LADDER.length ? 0 : 1),
@@ -231,9 +265,10 @@ Deno.serve(async (req) => {
     today, stats, detail: detail.slice(0, 40),
     guards: { max_age_days: MAX_AGE_DAYS, max_per_run: MAX_PER_RUN,
               positive_required: POSITIVE_REQUIRED },
-    outbound: 'NONE. This creates and chases WORK, not messages. A referee is ' +
-              'a third party who never agreed to be contacted by us, so when ' +
-              'outbound is enabled it must be email only.',
+    outbound: 'NONE. This creates and chases WORK, not messages.',
+    outbound_policy: 'UNRESOLVED — the channel and consent basis for contacting ' +
+              'a referee has not been decided. Automated outbound stays off ' +
+              'until it is.',
     producer_note: 'Read from the candidate record, which the office actually ' +
                    'fills in. reference_requests was not written to and is not ' +
                    'the source of truth.',
