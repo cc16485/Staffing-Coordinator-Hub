@@ -37,11 +37,11 @@ const GIVE_UP_AFTER_DAYS = 9
 const daysSince = (iso: string | null) => iso ? (Date.now() - new Date(iso).getTime()) / 86400_000 : 0
 
 Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   /* Chasing an employer for a favour: proactive external, so weekdays
      8am-6pm. Policy lives in _shared/outreach.ts, not here. */
   const gate = outreachGate(req, 'proactive_external', json)
   if (gate) return gate
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   const dry = new URL(req.url).searchParams.get('dry') === '1'
 
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
