@@ -85,14 +85,31 @@ async function categoryOf(code: string): Promise<any> {
 
    Returns null when no primary exists. An honestly unowned issue is better
    than one assigned to a guess, and the sweep reports it. */
-async function ownerForDomain(domain: string): Promise<string | null> {
-  const { data } = await sb.from('app_data').select('data')
-    .eq('key', 'responsibilities').maybeSingle()
-  const rows = Array.isArray(data?.data) ? data!.data : []
+async function ownerForDomain(domain: string): Promise<
+  { owner: string | null; why: string }> {
+  const { data } = await sb.from('app_data').select('key, data')
+    .in('key', ['responsibilities', 'positions'])
   // deno-lint-ignore no-explicit-any
-  const primary = (rows as any[]).find(r =>
+  const resp = (data?.find(r => r.key === 'responsibilities')?.data ?? []) as any[]
+  // deno-lint-ignore no-explicit-any
+  const pos  = (data?.find(r => r.key === 'positions')?.data ?? []) as any[]
+
+  /* 1. Which POSITION holds this domain? Responsibilities attach to positions,
+        never to people, so the answer survives somebody changing roles. */
+  const primary = resp.find(r =>
     r?.active !== false && r?.kind === 'primary' && r?.domain === domain)
-  return primary?.owner ? String(primary.owner) : null
+  if (!primary) return { owner: null, why: `no primary responsibility for domain "${domain}"` }
+  if (!primary.position) return { owner: null, why: `primary for "${domain}" has no position` }
+
+  /* 2. Who currently holds that position? Resolved at read time, on purpose. */
+  const p = pos.find(x => String(x?.id) === String(primary.position))
+  if (!p) return { owner: null, why: `position ${primary.position} not found` }
+  if (p.status !== 'filled' || !p.person) {
+    /* A vacant position is a real and meaningful answer: nobody holds this
+       work. Assigning it to a guess would hide a staffing gap. */
+    return { owner: null, why: `position "${p.title ?? primary.position}" is VACANT` }
+  }
+  return { owner: String(p.person), why: `held by ${p.person} via position "${p.title ?? ''}"` }
 }
 
 /* ── INTAKE ───────────────────────────────────────────────────────────────── */
@@ -137,7 +154,7 @@ async function intake(body: any) {
     domain: cat.default_domain,
     /* Route to the domain's primary owner. Explicit owner wins; otherwise the
        registry decides; otherwise it stays honestly unowned. */
-    owner: clean(body.owner) || await ownerForDomain(cat.default_domain),
+    owner: clean(body.owner) || (await ownerForDomain(cat.default_domain)).owner,
     source: clean(body.source) || 'manual',
     source_ref: clean(body.source_ref) || null,
   }).select('*').single()
@@ -255,12 +272,12 @@ async function sweep(commit: boolean) {
       /* Try to route it now — a domain may have gained a primary since the
          issue was raised. */
       const late = await ownerForDomain(i.domain ?? cat.default_domain)
-      if (late && commit) {
-        await sb.from('client_issue').update({ owner: late, updated_at: nowIso() }).eq('id', i.id)
-        out.actions.push(`${i.id}: routed to ${late} (${cat.label})`)
+      if (late.owner && commit) {
+        await sb.from('client_issue').update({ owner: late.owner, updated_at: nowIso() }).eq('id', i.id)
+        out.actions.push(`${i.id}: routed to ${late.owner} (${cat.label})`)
       } else {
         out.unowned++
-        out.actions.push(`${i.id}: UNOWNED — no primary for domain "${i.domain}" (${cat.label})`)
+        out.actions.push(`${i.id}: UNOWNED — ${late.why} (${cat.label})`)
       }
     }
 
