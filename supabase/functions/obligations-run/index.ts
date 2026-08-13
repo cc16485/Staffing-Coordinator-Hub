@@ -144,6 +144,7 @@ Deno.serve(async (req) => {
     ok: true, dry, live_setting: settings?.obligations_live === true,
     rules: meta, today: todayCentral(), max_age_days: maxAgeDays,
     sources_evaluated: Object.keys(result.bySource || {}),
+    rows_seen: result.rowsSeen ?? 0,
     by_source: result.bySource,
     would_create: result.create.length,
     would_close: result.stale.length,
@@ -214,6 +215,9 @@ async function logRun(supabase: any, row: Record<string, unknown>) {
         /* Present even when zero, so the Control Centre can say "ran, evaluated
            1 source, nothing to do" rather than showing a bare nothing. */
         sources_evaluated: (s.sources_evaluated || []).length,
+        /* Rows the engine actually saw. Zero with sources>0 means the source
+           is empty, not that everything is up to date. */
+        rows_seen: s.rows_seen ?? 0,
         created: s.created ?? s.would_create ?? 0,
         closed: s.closed ?? s.would_close ?? 0,
         satisfied: s.closed_done_at_source ?? 0,
