@@ -87,29 +87,49 @@ async function categoryOf(code: string): Promise<any> {
    than one assigned to a guess, and the sweep reports it. */
 async function ownerForDomain(domain: string): Promise<
   { owner: string | null; why: string }> {
-  const { data } = await sb.from('app_data').select('key, data')
-    .in('key', ['responsibilities', 'positions'])
+  const { data } = await sb.from('app_data').select('data')
+    .eq('key', 'responsibilities').maybeSingle()
   // deno-lint-ignore no-explicit-any
-  const resp = (data?.find(r => r.key === 'responsibilities')?.data ?? []) as any[]
-  // deno-lint-ignore no-explicit-any
-  const pos  = (data?.find(r => r.key === 'positions')?.data ?? []) as any[]
+  const rows = (Array.isArray(data?.data) ? data!.data : []) as any[]
 
-  /* 1. Which POSITION holds this domain? Responsibilities attach to positions,
-        never to people, so the answer survives somebody changing roles. */
-  const primary = resp.find(r =>
-    r?.active !== false && r?.kind === 'primary' && r?.domain === domain)
-  if (!primary) return { owner: null, why: `no primary responsibility for domain "${domain}"` }
-  if (!primary.position) return { owner: null, why: `primary for "${domain}" has no position` }
+  /* READ, not assumed. The registry carries `person` directly — there is no
+     position indirection, and `owner` does not exist. I guessed this three
+     different ways before reading it. */
+  const active = rows.filter(r =>
+    r?.active !== false && r?.kind === 'primary' &&
+    r?.domain === domain && r?.person)
 
-  /* 2. Who currently holds that position? Resolved at read time, on purpose. */
-  const p = pos.find(x => String(x?.id) === String(primary.position))
-  if (!p) return { owner: null, why: `position ${primary.position} not found` }
-  if (p.status !== 'filled' || !p.person) {
-    /* A vacant position is a real and meaningful answer: nobody holds this
-       work. Assigning it to a guess would hide a staffing gap. */
-    return { owner: null, why: `position "${p.title ?? primary.position}" is VACANT` }
+  if (!active.length) return { owner: null, why: `no active primary for domain "${domain}"` }
+
+  /* A domain has MANY primary responsibilities — field_quality has 26 rows,
+     one per distinct duty. They are not duplicates, so "who owns this domain"
+     is whoever holds those duties, not the first row that matches.
+
+     A TEMPORARY primary is somebody covering right now. New work should go to
+     whoever is actually covering, not to the person they are covering for. */
+  const temporary = active.filter(r => r.temporary === true)
+  const pool = temporary.length ? temporary : active
+
+  const tally = new Map<string, number>()
+  for (const r of pool) {
+    const p = String(r.person)
+    tally.set(p, (tally.get(p) ?? 0) + 1)
   }
-  return { owner: String(p.person), why: `held by ${p.person} via position "${p.title ?? ''}"` }
+  const ranked = [...tally.entries()].sort((a, b) => b[1] - a[1])
+  const [top, count] = ranked[0]
+
+  /* Two people holding equal shares of a domain is a real ambiguity, not
+     something to resolve by sort order. Say so rather than picking. */
+  if (ranked.length > 1 && ranked[1][1] === count) {
+    return { owner: null,
+      why: `"${domain}" is split between ${ranked.length} people with equal ` +
+           `duties — a person must decide who owns new work here` }
+  }
+
+  return { owner: top,
+    why: temporary.length
+      ? `${top} is currently covering "${domain}" (temporary primary)`
+      : `${top} holds ${count} of ${pool.length} primary duties in "${domain}"` }
 }
 
 /* ── INTAKE ───────────────────────────────────────────────────────────────── */
