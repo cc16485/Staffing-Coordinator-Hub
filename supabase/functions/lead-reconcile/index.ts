@@ -38,13 +38,35 @@ function normEmail(raw: unknown): string | null {
   return e.includes('@') ? e : null
 }
 
-/* Tags that suggest a contact is a CARE enquiry for Caring Companions, rather
-   than a hiring applicant or a campaign from another business line. Derived
-   from the 237 tags actually in use, not invented. Deliberately narrow: a tag
-   we are unsure about is reported separately rather than counted as a lead. */
-const CARE_LEAD_TAGS = /cc website lead|^lead$|care enquiry|care inquiry|consultation/
+/* Classification, in STRICT PRECEDENCE ORDER. The first version of this
+   checked "is it a care lead" before "is it something else", so a contact
+   carrying both a bare `lead` tag and `va lead` was counted as a care
+   enquiry. A generic tag must never beat a specific one.
+
+   Every pattern below came from the 237 tags actually in use. Nothing is
+   invented, and anything that does not match is reported as unclassifiable
+   rather than assumed to be a lead. */
+
+/* 1. NOT A REAL PERSON. Checked first, always. */
+const TEST_RECORD = /^zz|test lead|e2e|website test|do ?not ?call|\(claude/i
+
+/* 2. ALREADY A CLIENT. A current or former client is not a new enquiry, and
+      chasing one as a lead is worse than ignoring them. */
+const CLIENT_TAGS = /active client|inactive client|former client/
+
+/* 3. A DIFFERENT BUSINESS LINE OR CAMPAIGN. Beats a generic lead tag. */
+const OTHER_CAMPAIGN = /^va |va lead|va lp|va vm|^ht |hometogether|guide|cds/
+
+/* 4. HIRING. */
 const APPLICANT_TAGS = /applicant|applied|interview|orientation|hrcloud|hired|caregiver/
-const OTHER_CAMPAIGN = /^va |^ht |hometogether|guide|cds/
+
+/* 5. A REAL CARE ENQUIRY. Specific markers, not the bare word "lead", which
+      appears on thousands of contacts as generic CRM furniture. */
+const CARE_LEAD_TAGS = /cc website lead|ivr - new lead inquiry|new lead inquiry|lead - pp\/ltc|medicaid lead|lead medicaid|care enquiry|care inquiry|consultation/
+
+/* Bulk email housekeeping. Present on a contact means nothing about whether
+   they enquired — it means a campaign touched them. */
+const CAMPAIGN_NOISE = /^b-0\d\d|resubscribe|email bounced|soft resubscribe/
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
@@ -81,8 +103,10 @@ Deno.serve(async (req) => {
 
   const buckets = {
     care_lead: [] as string[],
+    already_a_client: [] as string[],
     applicant: [] as string[],
     other_campaign: [] as string[],
+    test_record: [] as string[],
     untagged: [] as string[],
     unclassifiable: [] as string[],
   }
@@ -91,28 +115,41 @@ Deno.serve(async (req) => {
 
   for (const c of contacts) {
     const tags = (Array.isArray(c.tags) ? c.tags : []).map((t: unknown) => String(t).toLowerCase())
-    const isCare = tags.some((t: string) => CARE_LEAD_TAGS.test(t))
-    const isApplicant = tags.some((t: string) => APPLICANT_TAGS.test(t))
-    const isOther = tags.some((t: string) => OTHER_CAMPAIGN.test(t))
+    const name = [c.first_name, c.last_name].filter(Boolean).join(' ').trim()
 
+    /* PRECEDENCE. Most specific wins, and a generic `lead` tag never
+       overrides a campaign, a client, or a test record. */
+    if (TEST_RECORD.test(name) || tags.some((t: string) => TEST_RECORD.test(t))) {
+      buckets.test_record.push(c.ghl_contact_id); continue
+    }
+    if (tags.some((t: string) => CLIENT_TAGS.test(t))) {
+      buckets.already_a_client.push(c.ghl_contact_id); continue
+    }
+    if (tags.some((t: string) => OTHER_CAMPAIGN.test(t))) {
+      buckets.other_campaign.push(c.ghl_contact_id); continue
+    }
+    if (tags.some((t: string) => APPLICANT_TAGS.test(t))) {
+      buckets.applicant.push(c.ghl_contact_id); continue
+    }
     if (!tags.length) { buckets.untagged.push(c.ghl_contact_id); continue }
-    if (isCare && !isApplicant) buckets.care_lead.push(c.ghl_contact_id)
-    else if (isApplicant) { buckets.applicant.push(c.ghl_contact_id); continue }
-    else if (isOther) { buckets.other_campaign.push(c.ghl_contact_id); continue }
-    else { buckets.unclassifiable.push(c.ghl_contact_id); continue }
 
-    /* Only care leads are measured against the Hub. */
+    const realTags = tags.filter((t: string) => !CAMPAIGN_NOISE.test(t))
+    if (!realTags.some((t: string) => CARE_LEAD_TAGS.test(t))) {
+      buckets.unclassifiable.push(c.ghl_contact_id); continue
+    }
+    buckets.care_lead.push(c.ghl_contact_id)
+
     const p = normPhone(c.phone), e = normEmail(c.email)
     if (!p && !e) { careLeadsNoContact++; continue }
     const known = (p && hubPhones.has(p)) || (e && hubEmails.has(e))
     if (known) { careLeadsInHub++; continue }
     careLeadsMissing++
-    if (missingSample.length < 25) {
+    if (missingSample.length < 30) {
       missingSample.push({
-        name: [c.first_name, c.last_name].filter(Boolean).join(' ').trim() || '(no name)',
+        name: name || '(no name)',
         line_last4: p ? p.slice(-4) : null,
         has_email: !!e,
-        tags: tags.slice(0, 4),
+        tags: realTags.slice(0, 4),
       })
     }
   }
@@ -141,6 +178,8 @@ Deno.serve(async (req) => {
 
     classification: {
       care_lead: buckets.care_lead.length,
+      already_a_client: buckets.already_a_client.length,
+      test_record: buckets.test_record.length,
       applicant: buckets.applicant.length,
       other_campaign: buckets.other_campaign.length,
       untagged: buckets.untagged.length,
