@@ -36,6 +36,15 @@ const fmtTime = (d: Date) =>
 // How long an applicant has been left alone, in hours.
 const hoursSince = (iso: string | null) => iso ? (Date.now() - new Date(iso).getTime()) / 3_600_000 : 0
 
+/* OUTREACH HOURS: 8am to 6pm, America/Chicago.
+   This function is scheduled every 15 minutes, around the clock, and sends SMS
+   and email to applicants. It had no hours guard at all, so a confirmation or
+   a reminder could land at 3am. Reminders are not more useful for being
+   punctual to the minute; they are less useful for waking somebody up. */
+const TZ_HOUR = () =>
+  Number(new Date().toLocaleString('en-US', { timeZone: TZ, hour: '2-digit', hour12: false }))
+const withinOutreachHours = () => { const h = TZ_HOUR(); return h >= 8 && h < 18 }
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   const dry = new URL(req.url).searchParams.get('dry') === '1'
@@ -109,6 +118,10 @@ Deno.serve(async (req) => {
     const canText = !!a.phone && a.sms_consent === true
 
     const send = async (kind: 'confirm' | 'day' | 'hour') => {
+      /* Refuse outside outreach hours rather than at each call site, so a new
+         message type added later cannot forget the rule. The item is not
+         marked sent, so it goes out on the first run after 8am. */
+      if (!withinOutreachHours()) return false
       if (!ghlToken || !ghlLocation) return false
       const contactId = await contactFor(a.phone, a.email, first)
       if (!contactId) return false

@@ -43,9 +43,13 @@ const todayCT = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Americ
 /* Office hours matter here in a way they do not for applicants. A caregiver is
    pleased to get a text at 10pm; a family who has just written "my mother fell
    again" should not get one. Anything outside 8am to 8pm Central waits. */
+/* OUTREACH HOURS: 8am to 6pm, America/Chicago.
+   Was 8am to 8pm. Samantha's rule is that nothing we send automatically may
+   land before 8 or after 6 — these are families and applicants, not a support
+   queue, and an 7:40pm text from a care company reads as an emergency. */
 function withinCallingHours() {
   const h = Number(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', hour12: false }))
-  return h >= 8 && h < 20
+  return h >= 8 && h < 18
 }
 
 Deno.serve(async (req) => {
