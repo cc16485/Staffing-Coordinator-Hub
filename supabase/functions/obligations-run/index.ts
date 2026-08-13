@@ -190,6 +190,10 @@ Deno.serve(async (req) => {
     rules: meta, eligibility_rules: rulesMeta,
     today: todayCentral(), max_age_days: maxAgeDays, max_per_run: maxPerRun,
     deferred_to_next_run: result.deferred ?? 0,
+    /* Deadlines that fell before Caring Companions became a Medicaid provider
+       on 2025-04-25. Never owed, so never asserted — counted so the absence is
+       visible rather than looking like nothing was wrong. */
+    refused_pre_enrolment: result.preEnrolment ?? 0,
     /* Why work did NOT appear, split by severity and reason. Without this,
        'work-affecting went from 11 to 0' cannot be answered from the run. */
     held_by_severity: result.heldBySeverity ?? {},
