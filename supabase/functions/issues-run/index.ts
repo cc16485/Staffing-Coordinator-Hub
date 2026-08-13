@@ -86,50 +86,47 @@ async function categoryOf(code: string): Promise<any> {
    Returns null when no primary exists. An honestly unowned issue is better
    than one assigned to a guess, and the sweep reports it. */
 async function ownerForDomain(domain: string): Promise<
-  { owner: string | null; why: string }> {
-  const { data } = await sb.from('app_data').select('data')
-    .eq('key', 'responsibilities').maybeSingle()
-  // deno-lint-ignore no-explicit-any
-  const rows = (Array.isArray(data?.data) ? data!.data : []) as any[]
+  { owner: string | null; escalation: string | null; why: string }> {
+  /* THE CANONICAL RESOLVER, and nothing else.
+     `domains` carries owner_person explicitly. That is the deliberate, visible
+     accountability record — one row, one owner, changed on purpose.
 
-  /* READ, not assumed. The registry carries `person` directly — there is no
-     position indirection, and `owner` does not exist. I guessed this three
-     different ways before reading it. */
-  const active = rows.filter(r =>
-    r?.active !== false && r?.kind === 'primary' &&
-    r?.domain === domain && r?.person)
+     An earlier version of this function ranked people by how many primary
+     responsibility rows they held. That was a business rule I invented from
+     row counts, and it would have meant that adding one duty to somebody's job
+     description silently re-routed an entire domain's work to them. Ownership
+     must change because a person changed it, not as a side effect of editing a
+     responsibility.
 
-  if (!active.length) return { owner: null, why: `no active primary for domain "${domain}"` }
+     Responsibilities answer "what does this person own, support, cover or know
+     how to do". They may explain why somebody is SUITABLE. They do not decide
+     who is ACCOUNTABLE. */
+  const { data: dom, error } = await sb.from('domains')
+    .select('code, label, owner_person, escalation_person, entity')
+    .eq('code', domain).eq('entity', 'cc_ihs').maybeSingle()
 
-  /* A domain has MANY primary responsibilities — field_quality has 26 rows,
-     one per distinct duty. They are not duplicates, so "who owns this domain"
-     is whoever holds those duties, not the first row that matches.
-
-     A TEMPORARY primary is somebody covering right now. New work should go to
-     whoever is actually covering, not to the person they are covering for. */
-  const temporary = active.filter(r => r.temporary === true)
-  const pool = temporary.length ? temporary : active
-
-  const tally = new Map<string, number>()
-  for (const r of pool) {
-    const p = String(r.person)
-    tally.set(p, (tally.get(p) ?? 0) + 1)
-  }
-  const ranked = [...tally.entries()].sort((a, b) => b[1] - a[1])
-  const [top, count] = ranked[0]
-
-  /* Two people holding equal shares of a domain is a real ambiguity, not
-     something to resolve by sort order. Say so rather than picking. */
-  if (ranked.length > 1 && ranked[1][1] === count) {
-    return { owner: null,
-      why: `"${domain}" is split between ${ranked.length} people with equal ` +
-           `duties — a person must decide who owns new work here` }
+  if (error) return { owner: null, escalation: null, why: `domains lookup failed: ${error.message}` }
+  if (!dom)  return { owner: null, escalation: null, why: `no domain record for "${domain}"` }
+  if (!dom.owner_person) {
+    return { owner: null, escalation: null,
+             why: `domain "${dom.label ?? domain}" has no owner_person set` }
   }
 
-  return { owner: top,
-    why: temporary.length
-      ? `${top} is currently covering "${domain}" (temporary primary)`
-      : `${top} holds ${count} of ${pool.length} primary duties in "${domain}"` }
+  /* owner_person is a person_id; ops_items.owner is an email. Same hop the
+     Hub makes via OPS_PEOPLE. */
+  const ids = [dom.owner_person, dom.escalation_person].filter(Boolean)
+  const { data: people } = await sb.from('persons')
+    .select('person_id, primary_email').in('person_id', ids)
+  const emailOf = (pid: unknown) =>
+    (people ?? []).find(p => p.person_id === pid)?.primary_email ?? null
+
+  const owner = emailOf(dom.owner_person)
+  if (!owner) {
+    return { owner: null, escalation: null,
+             why: `owner_person ${dom.owner_person} has no email in persons` }
+  }
+  return { owner, escalation: emailOf(dom.escalation_person),
+           why: `domains.owner_person for "${dom.label ?? domain}"` }
 }
 
 /* ── INTAKE ───────────────────────────────────────────────────────────────── */
@@ -311,7 +308,11 @@ async function sweep(commit: boolean) {
       /* ATTENTION RISES WITHOUT ACCOUNTABILITY MOVING. The coordinator stays
          owner; Krystal and Samantha simply see it. Ownership transfers only
          by deliberate handoff. */
-      const audience = [cat.notify_beyond_owner, ageH > cat.target_hours * 3 ? 'samantha' : null]
+      /* The domain record names the escalation person. Attention rises to
+         them; the owner does NOT change. */
+      const dom = await ownerForDomain(i.domain ?? cat.default_domain)
+      const audience = [dom.escalation, cat.notify_beyond_owner,
+                        ageH > cat.target_hours * 3 ? 'samantha' : null]
         .filter(Boolean).join(',')
       if (audience) {
         out.escalated++
