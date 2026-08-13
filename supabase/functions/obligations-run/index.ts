@@ -41,6 +41,11 @@ const RULES_URL = 'https://cc.mo-care.com/eligibility-rules.js'
 /* A first run must never dump a year of history on somebody. Anything that fell
    due more than this many days ago is counted and reported, not created. */
 const DEFAULT_MAX_AGE_DAYS = 45
+/* Ceiling per run. The age guard cannot stop a flood of legitimately-current
+   obligations: 56 caregivers whose records were lost in one incident all become
+   due on the same day. Deferred items arrive on the next run rather than being
+   dropped, so a first run drips in instead of dumping. */
+const DEFAULT_MAX_PER_RUN = 10
 
 /** 'YYYY-MM-DD' in the operating timezone, never the server's. */
 function todayCentral(): string {
@@ -59,6 +64,8 @@ Deno.serve(async (req) => {
   const forceDry = url.searchParams.get('dry') === '1'
   const daysParam = Number(url.searchParams.get('days'))
   const maxAgeDays = Number.isFinite(daysParam) && daysParam > 0 ? daysParam : DEFAULT_MAX_AGE_DAYS
+  const capParam = Number(url.searchParams.get('max'))
+  const maxPerRun = Number.isFinite(capParam) && capParam > 0 ? capParam : DEFAULT_MAX_PER_RUN
 
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
@@ -173,7 +180,7 @@ Deno.serve(async (req) => {
   /* ── 4. Decide. This is the shared file's job, not ours. ────────────────── */
   const result = O.evaluate({
     data, items, today: todayCentral(),
-    resolveOwner, domainOwner, ownerName, maxAgeDays,
+    resolveOwner, domainOwner, ownerName, maxAgeDays, maxPerRun,
   })
 
   const summary = {
@@ -181,7 +188,8 @@ Deno.serve(async (req) => {
     live_setting: settings?.obligations_live === true,
     live_lapses_setting: settings?.obligations_live_lapses === true,
     rules: meta, eligibility_rules: rulesMeta,
-    today: todayCentral(), max_age_days: maxAgeDays,
+    today: todayCentral(), max_age_days: maxAgeDays, max_per_run: maxPerRun,
+    deferred_to_next_run: result.deferred ?? 0,
     sources_evaluated: Object.keys(result.bySource || {}),
     rows_seen: result.rowsSeen ?? 0,
     by_source: result.bySource,
