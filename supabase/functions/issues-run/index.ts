@@ -73,6 +73,28 @@ async function categoryOf(code: string): Promise<any> {
   return data
 }
 
+
+/* ── WHO OWNS THIS? ──────────────────────────────────────────────────────────
+   Scenario 9 found every issue landing UNOWNED. A category routes to a domain,
+   but a domain is a queue, not a person, and work in a queue nobody holds is
+   work nobody does.
+
+   The Hub already resolves this: `responsibilities` carries kind='primary' per
+   domain. Reuse it rather than inventing a second mapping — a duplicate owner
+   table would drift from the real one the first time somebody changes roles.
+
+   Returns null when no primary exists. An honestly unowned issue is better
+   than one assigned to a guess, and the sweep reports it. */
+async function ownerForDomain(domain: string): Promise<string | null> {
+  const { data } = await sb.from('app_data').select('data')
+    .eq('key', 'responsibilities').maybeSingle()
+  const rows = Array.isArray(data?.data) ? data!.data : []
+  // deno-lint-ignore no-explicit-any
+  const primary = (rows as any[]).find(r =>
+    r?.active !== false && r?.kind === 'primary' && r?.domain === domain)
+  return primary?.owner ? String(primary.owner) : null
+}
+
 /* ── INTAKE ───────────────────────────────────────────────────────────────── */
 // deno-lint-ignore no-explicit-any
 async function intake(body: any) {
@@ -113,7 +135,9 @@ async function intake(body: any) {
     summary: clean(body.summary) || cat.label,
     detail: clean(body.detail) || null,
     domain: cat.default_domain,
-    owner: clean(body.owner) || null,
+    /* Route to the domain's primary owner. Explicit owner wins; otherwise the
+       registry decides; otherwise it stays honestly unowned. */
+    owner: clean(body.owner) || await ownerForDomain(cat.default_domain),
     source: clean(body.source) || 'manual',
     source_ref: clean(body.source_ref) || null,
   }).select('*').single()
@@ -227,7 +251,18 @@ async function sweep(commit: boolean) {
     if (!cat) continue
     const ageH = (Date.now() - Date.parse(i.reported_at)) / 3600000
 
-    if (!i.owner) { out.unowned++; out.actions.push(`${i.id}: UNOWNED (${cat.label})`) }
+    if (!i.owner) {
+      /* Try to route it now — a domain may have gained a primary since the
+         issue was raised. */
+      const late = await ownerForDomain(i.domain ?? cat.default_domain)
+      if (late && commit) {
+        await sb.from('client_issue').update({ owner: late, updated_at: nowIso() }).eq('id', i.id)
+        out.actions.push(`${i.id}: routed to ${late} (${cat.label})`)
+      } else {
+        out.unowned++
+        out.actions.push(`${i.id}: UNOWNED — no primary for domain "${i.domain}" (${cat.label})`)
+      }
+    }
 
     if (i.state === 'follow_up' && i.follow_up_due && i.follow_up_due <= addDays(0)) {
       out.follow_ups_due++

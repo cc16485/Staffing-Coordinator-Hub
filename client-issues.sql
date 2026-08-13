@@ -36,7 +36,12 @@
 create table if not exists issue_category (
   code                   text primary key,
   label                  text not null,
-  default_domain         text not null,   -- routes to the role that owns it
+  default_domain         text not null,   -- MUST be a real Hub domain:
+                                          -- client_care, field_quality,
+                                          -- scheduling_coverage, family_enquiries,
+                                          -- caregiver_performance,
+                                          -- recruiting_orientation.
+                                          -- An invented domain routes to nobody.
   default_urgency        text not null check (default_urgency in ('critical','high','normal','low')),
   target_hours           int  not null,   -- first response, not resolution
   follow_up_required     boolean not null default false,
@@ -123,17 +128,17 @@ insert into issue_category (code, label, default_domain, default_urgency, target
   'reason, preferences, urgency', 120),
 
 -- ── SCHEDULING AND MONEY ─────────────────────────────────────────────────────
-('coverage_concern', 'Schedule or coverage concern', 'staffing', 'high', 4,
+('coverage_concern', 'Schedule or coverage concern', 'scheduling_coverage', 'high', 4,
   false, null, null, false, false,
   'The shift is covered, or the family has agreed an alternative.',
   'which shifts, which dates', 130),
 
-('billing_hours_question', 'Billing or hours question', 'admin', 'normal', 24,
+('billing_hours_question', 'Billing or hours question', 'client_care', 'normal', 24,
   false, null, null, false, false,
   'The family understands the charge, or an error is corrected.',
   'which period, what they expected', 140),
 
-('payer_authorization', 'Payer or authorisation issue', 'admin', 'high', 8,
+('payer_authorization', 'Payer or authorisation issue', 'client_care', 'high', 8,
   true, 7, 'samantha', false, true,
   'Authorisation confirmed, extended, or service formally adjusted to match. '
   'Unpaid delivered care is the failure mode.',
