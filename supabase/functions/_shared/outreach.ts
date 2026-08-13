@@ -43,8 +43,16 @@ export type OutreachClass =
   | 'digest'
 
 export const OUTREACH_TZ = 'America/Chicago'
-export const WINDOW_START = 8   // 8am
-export const WINDOW_END = 18    // 6pm
+/* The window is [WINDOW_START, WINDOW_END) — start inclusive, end EXCLUSIVE.
+   Proven by fixture at every edge:
+     07:59:59  hold      one second early is still early
+     08:00:00  send      the first allowed instant
+     17:59:59  send      the last allowed instant
+     18:00:00  HOLD      six o'clock is the end of the window, not part of it
+   Stated here because "8am to 6pm" is ambiguous in English and unambiguous in
+   code, and the code is what runs. */
+export const WINDOW_START = 8   // 08:00 inclusive
+export const WINDOW_END = 18    // 18:00 exclusive — nothing sends at or after 6pm
 
 /** Local hour and weekday in the operating timezone, never the server's. */
 function localParts(now: Date = new Date()) {
