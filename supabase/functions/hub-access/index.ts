@@ -38,8 +38,15 @@ const META_KEY = 'hub_access'
 const KNOWN_HUBS: Record<string, string> = {
   care_coordinator: 'Care Coordinator Hub',
   staffing:         'Staffing Hub',
-  team:             'Team Hub',
+  team_hub:         'Team Hub',
+  /* 'team' is kept ONLY so accessOf() does not silently strip it from an
+     existing claim. app_data_key_hub_map and every real account use
+     'team_hub'; that is the value the RLS policy checks and the value an
+     invite must write. Anything invited as 'team' would be denied every Team
+     Hub key. */
+  team:             'Team Hub (legacy slug — do not issue)',
 }
+const CANONICAL_HUB: Record<string, string> = { team: 'team_hub' }
 const ACTIONS = ['invite', 'resend', 'revoke', 'restore', 'status']
 
 Deno.serve(async (req) => {
@@ -99,10 +106,13 @@ Deno.serve(async (req) => {
   try { body = await req.json() } catch { /* empty body is fine for status */ }
   const action = String(body.action || 'status')
   const target = String(body.target_email || '').trim().toLowerCase()
-  const hub = String(body.hub || 'care_coordinator')
+  let hub = String(body.hub || 'care_coordinator')
 
   if (!ACTIONS.includes(action)) return json({ error: `Unknown action "${action}".` }, 400)
   if (!KNOWN_HUBS[hub]) return json({ error: `Unknown hub "${hub}".` }, 400)
+  // Normalise before anything is written, so a legacy slug can be asked for
+  // but never stored.
+  hub = CANONICAL_HUB[hub] || hub
   if (!target || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(target))
     return json({ error: 'A work email address is required.' }, 400)
 
