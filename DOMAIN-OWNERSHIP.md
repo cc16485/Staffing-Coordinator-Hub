@@ -6,6 +6,27 @@ Ownership comes from `domains.owner_person` and changes only when a person
 changes it. Responsibility rows describe capacity — what somebody does, covers
 or is qualified for — and carry no routing authority.
 
+## Five distinct roles, not one
+
+The Hub currently expresses two of these. Collapsing them is how a temporary
+arrangement quietly becomes the org chart.
+
+| Role | Question it answers | In the Hub today |
+|---|---|---|
+| **Accountable owner** | Who is responsible for this process working? | `domains.owner_person` |
+| **Duty owner** | Who is handling it *right now*, by schedule or coverage? | duty windows — **not consulted by routing** |
+| **Backup** | Who takes over when the duty owner cannot? | responsibility `kind='backup'` — unused for routing |
+| **Supervisor escalation** | Who resolves exceptions the operational owner cannot? | `domains.escalation_person` |
+| **Owner authority** | What genuinely requires Samantha or Zach? | `issue_category.owner_authority` |
+
+**The accountable owner is not necessarily the person doing the work today.**
+That distinction is the whole point for `scheduling_coverage`.
+
+**Proposed, not built:** `domains` needs `owner_is_temporary` and
+`target_owner_role`. Without them a stopgap is indistinguishable from a
+decision, and "Samantha owns scheduling because we had nobody else in August
+2026" reads a year later as the intended design.
+
 Evidence: `domains` read live 2026-08-13 (`entity='cc_ihs'`). Where a
 recommendation rests on inference rather than a record, it says so.
 
@@ -97,21 +118,37 @@ arrives:
 | **SAFETY / URGENT** | May need immediate owner visibility | Samantha, always |
 | **ADMINISTRATIVE LEAKAGE** | Should never have reached her | nobody — fix the cause |
 
-**Where a second layer would genuinely help**, tested against the actual
-domains rather than theory:
+### I withdraw my earlier recommendation
 
-Krystal owns four domains and escalates to Samantha. **That escalation is
-already a supervisor escalation** — there is nobody between them, so
-"supervisor exception" and "owner decision" arrive identically. Making Krystal
-the escalation target for **Cierra's `field_quality`** and **Angiel's
-`payer_programs`** would stop those two domains at a supervisor. Their
-escalations currently skip the supervisory layer entirely and land on the CEO.
+I suggested pointing Cierra's `field_quality` and Angiel's `payer_programs`
+escalation at Krystal. **That was wrong, and wrong in a way worth naming.**
 
-That is two of ten domains fixed by a configuration change, no hiring required.
+Krystal already owns `client_care`, `caregiver_performance`, `family_enquiries`,
+`training_compliance` and `recruiting_orientation` — five domains. Adding
+supervision of Cierra and Angiel makes it seven, plus scheduling exceptions.
 
-**Do not** change escalation on the domains Krystal owns. There is nowhere for
-those to stop below Samantha until another supervisory role exists, and routing
-them elsewhere would hide them.
+**That is not scalability. That is rebuilding the bottleneck one level down.**
+Getting Samantha out of the middle is worthless if Krystal becomes the human
+router for the whole company.
+
+The observation underneath it still stands: Cierra and Angiel escalate straight
+past any supervisory layer to the CEO. But the fix is not "send it to Krystal by
+default". The real question is per domain:
+
+- Who should be **accountable**?
+- Who actually **supervises this kind of work**?
+- What exceptions can that supervisor **decide**?
+- What specifically requires **Samantha or Zach**?
+
+Those may be **different paths**. Field quality is clinical and practical.
+Payer programs is regulatory and financial. Staffing is operational and
+time-critical. There is no reason one person should sit above all three, and
+good reason they should not.
+
+**Recommendation: decide the supervisory path per domain from the duties in
+script 96, and constrain any one person to a defensible number of domains.**
+If a lane has no supervisor other than the CEO, that is a hiring signal — not a
+reason to pile it on whoever is nearest.
 
 Of the sixteen issue categories, only `suspected_abuse` is flagged
 `owner_authority`. Everything else that reaches Samantha does so through
@@ -148,10 +185,25 @@ So a second measure is needed:
 > **CEO-OWNED OPERATIONAL WORK** — routine domain work landing on Samantha
 > *before* any escalation, because she is the configured owner.
 
-Both must fall. Leakage measures whether the system is behaving. This measures
-whether the org design still requires her. **A perfectly behaving system with
-three CEO-owned domains still has a CEO bottleneck**, and only this number shows
-it.
+And a third, because the goal is not zero:
 
-Instrument it where issues and ops items are created, next to the existing
-dependency fields.
+> **OWNER DECISIONS** — work that legitimately required Samantha or Zach's
+> authority.
+
+| Measure | Target |
+|---|---|
+| CEO-owned operational work | **toward zero** |
+| Administrative leakage | **toward zero** |
+| Owner decisions | **visible and intentional — not zero** |
+
+Leakage measures whether the system is behaving. CEO-owned operational work
+measures whether the org design still requires her. Owner decisions measure
+whether she is spending her authority on things that actually need it.
+
+**A perfectly behaving system with three CEO-owned domains still has a CEO
+bottleneck**, and only the second number shows it. Together they answer whether
+this is a company that can operate without Samantha doing routine
+administration — rather than a company with more automation.
+
+Instrument all three where issues and ops items are created, next to the
+existing dependency fields.
