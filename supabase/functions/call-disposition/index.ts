@@ -256,8 +256,46 @@ Deno.serve(async (req) => {
     created_at: stamp, due: new Date(Date.now() + hours * 3600 * 1000).toISOString(),
     owner: '', owner_name: '', created_by: by, opened_by: 'phone',
   })
-  if (is('caregiver issue')) { await put('ops_items', opsItem('staffing_issue', `Caregiver issue — ${who}`, 24)); created.push('needs-attention item') }
-  if (is('client concern')) { await put('ops_items', opsItem('client_issue', `Client concern — ${who}`, 24)); created.push('needs-attention item') }
+  /* A genuine concern becomes a durable ISSUE, not a bare work item. The item
+     is still created — by the issue lifecycle — but it points at a record that
+     survives the task, carries its own action history, and cannot be closed by
+     completing one action.
+
+     Category is 'needs_triage' on purpose: the disposition says a problem
+     exists, not which kind, and the kind decides urgency, follow-up and what
+     resolution means. Guessing here would apply the wrong follow-up rule
+     silently. */
+  if (is('caregiver issue') || is('client concern')) {
+    const reportedBy = is('caregiver issue') ? 'caregiver' : 'family'
+    try {
+      const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/issues-run?intake=1`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+                   'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          category: 'needs_triage',
+          summary: `${is('caregiver issue') ? 'Caregiver' : 'Client'} concern raised by phone`,
+          client_name: who,
+          reported_by_name: who,
+          reported_by_role: reportedBy,
+          source: 'call_disposition',
+          source_ref: String(contactId ?? callerId ?? ''),
+          taken_by: 'phone',
+          /* Duplicate candidates are NOT auto-confirmed here. If an open issue
+             already covers this client the response says so and a human picks,
+             which is the whole point of the second-call case. */
+        }),
+      })
+      const j = await r.json().catch(() => ({}))
+      created.push(j?.needs_human_confirmation
+        ? 'existing issue offered — needs a person to choose'
+        : `issue ${String(j?.issue_id ?? '').slice(0, 8)}`)
+    } catch (e) {
+      console.error('issue intake failed, falling back to a work item:', e)
+      await put('ops_items', opsItem('client_issue', `Concern — ${who}`, 24))
+      created.push('needs-attention item (issue intake failed)')
+    }
+  }
   if (is('job applicant')) { await put('ops_items', opsItem('request', `Job applicant called — ${who}`, 72)); created.push('needs-attention item') }
   if (is('schedule change', 'schedule')) {
     // Clients AND caregivers call about scheduling: change a day, add weekends,

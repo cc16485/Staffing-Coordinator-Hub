@@ -145,6 +145,18 @@ insert into issue_category (code, label, default_domain, default_urgency, target
   'payer, authorisation number, hours remaining, dates', 150),
 
 -- ── NOT ACTUALLY AN ISSUE ────────────────────────────────────────────────────
+-- ── REPORTED BY PHONE, KIND NOT YET KNOWN ────────────────────────────────────
+-- A call disposition of "client concern" tells us a problem exists. It does not
+-- tell us which KIND, and the category decides urgency, follow-up and what
+-- resolution means. So the issue is created honestly unclassified and triage
+-- sets the real category. Guessing one at intake would silently apply the wrong
+-- follow-up rule.
+('needs_triage', 'Reported concern, not yet classified', 'client_care', 'high', 4,
+  false, null, null, false, false,
+  'Not resolvable while unclassified. Triage sets the real category, and that '
+  'category decides what resolution means.',
+  'who it is about, what they said, who reported it', 5),
+
 ('general_question', 'General question, not an issue', 'client_care', 'low', 48,
   false, null, null, false, false,
   'Answered.',
