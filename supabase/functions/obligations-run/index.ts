@@ -33,6 +33,11 @@ const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b, null, 2), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
 
 const OBLIG_URL = 'https://cc.mo-care.com/obligations.js'
+/* The caregiver-compliance source consumes chkStatus().nextDue from the
+   authoritative rules. Without this the source returns no rows, rows_seen reads
+   zero, and the Control Centre says its source is empty — visible rather than
+   silent, but still wrong. Loaded here so it is neither. */
+const RULES_URL = 'https://cc.mo-care.com/eligibility-rules.js'
 /* A first run must never dump a year of history on somebody. Anything that fell
    due more than this many days ago is counted and reported, not created. */
 const DEFAULT_MAX_AGE_DAYS = 45
@@ -83,6 +88,22 @@ Deno.serve(async (req) => {
       note: 'Refusing to evaluate with a second copy of the formula.',
     }, 502)
   }
+  /* Same fetch-and-eval as eligibility-sweep already proves. A failure here is
+     reported rather than fatal: client check-ins can still be evaluated, and
+     the compliance source will honestly report an empty read. */
+  let rulesMeta: Record<string, unknown> = { url: RULES_URL, bytes: 0, loaded: false }
+  try {
+    const rr = await fetch(RULES_URL + '?v=' + Math.floor(Date.now() / 300000),
+      { headers: { Accept: 'application/javascript' } })
+    if (!rr.ok) throw new Error('rules responded ' + rr.status)
+    const rsrc = await rr.text()
+    if (!/CCElig/.test(rsrc)) throw new Error('fetched file does not define CCElig')
+    ;(0, eval)(rsrc)
+    rulesMeta = { url: RULES_URL, bytes: rsrc.length, loaded: !!(globalThis as any).CCElig }
+  } catch (err) {
+    rulesMeta = { url: RULES_URL, bytes: 0, loaded: false, error: String(err) }
+  }
+
   if (!O?.evaluate) {
     await logRun(supabase, { automation: 'obligations', ok: false, started, ms: Date.now() - t0,
       error: 'obligations.js loaded but exported nothing usable' })
@@ -103,6 +124,7 @@ Deno.serve(async (req) => {
   const items = (await blob('ops_items')) || []
   const data: Record<string, unknown> = {
     client_checkins: (await blob('client_checkins')) || [],
+    caregivers: (await blob('caregivers')) || [],
   }
 
   const { data: persons } = await supabase.from('persons').select('person_id, full_name, primary_email')
@@ -142,7 +164,8 @@ Deno.serve(async (req) => {
 
   const summary = {
     ok: true, dry, live_setting: settings?.obligations_live === true,
-    rules: meta, today: todayCentral(), max_age_days: maxAgeDays,
+    rules: meta, eligibility_rules: rulesMeta,
+    today: todayCentral(), max_age_days: maxAgeDays,
     sources_evaluated: Object.keys(result.bySource || {}),
     rows_seen: result.rowsSeen ?? 0,
     by_source: result.bySource,
