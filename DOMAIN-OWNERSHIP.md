@@ -119,53 +119,166 @@ That also applies to `training_compliance`, `recruiting_orientation` and
 
 ---
 
-## Escalation, classified
+## What `escalation_person` actually means today
 
-All ten escalate to Samantha. Before adding a tier, classify what actually
-arrives:
+Traced in the Hub. **One field, three different behaviours** — exactly the
+conflation worth separating:
 
-| Type | Definition | Where it should stop |
+| Button | What the code does | Concept |
 |---|---|---|
-| **SUPERVISOR EXCEPTION** | Owner cannot resolve it; a supervisor should | **the supervisor of that lane — decided per domain, not one person** |
-| **OWNER DECISION** | Genuinely needs Samantha or Zach authority | Samantha |
-| **SAFETY / URGENT** | May need immediate owner visibility | Samantha, always |
-| **ADMINISTRATIVE LEAKAGE** | Should never have reached her | nobody — fix the cause |
+| Ask for help | sets `help_from`, comment says *"leaves accountability exactly where it was"* | **owner notification / assistance** |
+| Needs Samantha | **sets `it.owner`** — accountability transfers | **ownership handoff** |
+| Unclaimed discipline | escalation person gets *"waiting for owner approval"* | **owner decision** |
 
-### I withdraw my earlier recommendation
+So the Hub already distinguishes assistance from transfer from approval. It
+just points all three at one person per domain. The three-way split you
+described is **already half-built** — it needs three fields, not a new concept:
 
-I suggested pointing Cierra's `field_quality` and Angiel's `payer_programs`
-escalation at Krystal. **That was wrong, and wrong in a way worth naming.**
+- `assist_person` — can help; owner unchanged
+- `operational_escalation` — authority to resolve the exception
+- `owner_notify` — must know, does **not** become responsible
 
-Krystal already owns `client_care`, `caregiver_performance`, `family_enquiries`,
-`training_compliance` and `recruiting_orientation` — five domains. Adding
-supervision of Cierra and Angiel makes it seven, plus scheduling exceptions.
+---
 
-**That is not scalability. That is rebuilding the bottleneck one level down.**
-Getting Samantha out of the middle is worthless if Krystal becomes the human
-router for the whole company.
+# The ten domains
 
-The observation underneath it still stands: Cierra and Angiel escalate straight
-past any supervisory layer to the CEO. But the fix is not "send it to Krystal by
-default". The real question is per domain:
+## `scheduling_coverage` — the one that matters
 
-- Who should be **accountable**?
-- Who actually **supervises this kind of work**?
-- What exceptions can that supervisor **decide**?
-- What specifically requires **Samantha or Zach**?
+| | |
+|---|---|
+| **Current owner** | Samantha (primary marked **TEMPORARY**) |
+| **Actual work** | Four groups: (1) *daily integrity* — every shift has a confirmed caregiver; (2) *call-off response* — from reported through to covered, contacting and recording; (3) *availability upkeep* — new availability, restrictions, time off; (4) *communication and escalation* — tell client and every affected caregiver, escalate a genuinely uncovered shift |
+| **Who does it today** | Samantha owns it. Krystal holds 2 backup rows. Cierra and Angiel hold `capability` rows for direct-care coverage on call-offs |
+| **Capacity risk** | Moving it to Krystal adds the highest-volume queue to someone already holding 5 domains. **Relocates the bottleneck** |
+| **Interim owner** | **Samantha, explicitly temporary.** No current person should absorb this |
+| **Target owner role** | **`pos_staffing_c`** — already exists, already referenced by 2 duty windows |
+| **Duty coverage** | Duty windows already point at `pos_staffing_c` |
+| **Backup** | Krystal (2 backup rows), plus Cierra/Angiel for physical coverage |
+| **Escalation path** | Operational: Staffing Coordinator resolves. Owner notify: a genuinely uncovered shift |
+| **Owner-only decisions** | Refusing a shift we contracted to cover; agreeing to a rate or hours change to secure coverage; telling a client we cannot staff them |
+| **Automation opportunity** | **Most of it.** Chain 1 has 9 of 12 steps removable: classify the call-off, identify the shift, find eligible available caregivers, broadcast, record responses, fill, update AxisCare, notify the family, escalate only on failure |
 
-Those may be **different paths**. Field quality is clinical and practical.
-Payer programs is regulatory and financial. Staffing is operational and
-time-critical. There is no reason one person should sit above all three, and
-good reason they should not.
+**This is the column that changes the hire.** Do not build the Staffing
+Coordinator role around today's twelve duties. Around eight of them are
+matching, broadcasting, confirming, recording and reconciling — machine work.
 
-**Recommendation: decide the supervisory path per domain from the duties in
-script 96, and constrain any one person to a defensible number of domains.**
-If a lane has no supervisor other than the CEO, that is a hiring signal — not a
-reason to pile it on whoever is nearest.
+**The role that should exist:** owns coverage *performance*, caregiver
+relationships, judgment on difficult fills, and the exceptions automation
+cannot close. Not a person doing what Samantha does now, faster.
 
-Of the sixteen issue categories, only `suspected_abuse` is flagged
-`owner_authority`. Everything else that reaches Samantha does so through
-staleness or configuration, not because it needs her authority.
+---
+
+## `payer_programs` — correctly held, real depth
+
+| | |
+|---|---|
+| **Current owner** | Angiel |
+| **Actual work** | Three groups: (1) *case progression* — Medicaid IHS, VA, CDS through eligibility, enrolment, authorisation; (2) *record integrity* — FUSION, authorisations, enrolment data; (3) *referral relationships* — hospitals, social workers, case managers |
+| **Capacity risk** | 7 primary + 3 support + 2 qualified. Fully loaded, correctly loaded |
+| **Interim owner** | **Angiel — no change** |
+| **Target owner role** | Payer Programs lead; referral relationships may split to business development |
+| **Escalation path** | Operational: **needs a peer with payer authority, which does not exist.** Owner notify: authorisation about to lapse |
+| **Owner-only decisions** | Continuing service on an expired authorisation; accepting a case at a payer rate below cost; provider-agreement matters |
+| **Automation opportunity** | Authorisation tracking and expiry warnings — **currently nobody watches this systematically.** Blocked on AxisCare. Highest *revenue* risk in the matrix |
+
+**Referral relationships do not belong here.** Growing referral sources is
+business development, not payer administration. Flagged below.
+
+---
+
+## `field_quality` — correctly held, real depth
+
+| | |
+|---|---|
+| **Current owner** | Cierra |
+| **Actual work** | Three groups: (1) *competency* — coaching technique, OJT, early field support; (2) *surveillance* — reading care notes across active clients, spotting patterns across visits; (3) *follow-through* — carrying concerns to resolution, keeping every assigned caregiver informed |
+| **Capacity risk** | 7 primary. Also covers shifts and runs interviews. **Watch this one** |
+| **Interim owner** | **Cierra — no change** |
+| **Target owner role** | Clinical Coordinator, possibly RN |
+| **Escalation path** | Operational: clinical judgment — **no peer exists.** Owner notify: safety |
+| **Owner-only decisions** | Removing a caregiver from all clients; ending a client relationship on safety grounds |
+| **Automation opportunity** | **"Review care notes routinely across active clients" and "watch for patterns across multiple visits" is the biggest unautomated reading load in the business.** Blocked on AxisCare notes. Chain 24 in the matrix |
+
+---
+
+## Krystal's five
+
+`client_care` (2 primary + 5 support), `caregiver_performance` (1),
+`family_enquiries` (1 + 1 support), `training_compliance` (**1, TEMPORARY —
+stub**), `recruiting_orientation` (**1, TEMPORARY — stub**, with 6 `qualified`
+rows showing Cierra and Angiel actually conduct interviews and orientation).
+
+**Interim: no change.** Three of the five are thin or stubs, and her total
+primary count is 7 — the same as Angiel, Cierra and Samantha. **My earlier
+bottleneck warning was overstated.**
+
+**Automation opportunity:** monthly check-ins are cadence work the obligation
+engine already models (blocked on clients). Training compliance is the Hub's
+strongest engine already. Recruiting is the deepest existing automation.
+
+**Owner-only decisions:** terminating a caregiver; declining a client.
+
+---
+
+## `money` — retire or define
+
+**Zero active responsibilities.** An empty placeholder with the CEO's name on
+it, which inflates every CEO-ownership metric while representing no work.
+
+**Recommendation: retire it, or define it.** Leave `billing_hours_question` on
+`client_care`.
+
+## `program_administration` — undefined
+
+One TEMPORARY primary reading "Programme administration". A label.
+
+**Recommendation: route nothing here, reassign nothing.** Handing an undefined
+scope to Angiel gives her unknown work.
+
+---
+
+# Challenging the taxonomy
+
+**Retire `money`** — empty.
+
+**Define or retire `program_administration`** — a label, not a scope.
+
+**`training_compliance` and `recruiting_orientation` are stubs** whose real work
+lives elsewhere: compliance in the obligations engine, recruiting capability
+with Cierra and Angiel. Either populate them or fold them into
+`caregiver_performance` and a staffing lane.
+
+**Referral relationships are misfiled.** Building relationships with hospitals
+and case managers is business development, sitting inside payer administration
+because Angiel does both. Different work, different measure, different future
+owner.
+
+**`client_care` and `family_enquiries` may be one lane.** Same owner, adjacent
+work, one is the front door to the other. Worth asking whether the split earns
+its keep.
+
+**Honest count: ten domains, six carry real duties.**
+
+---
+
+# The recommendation, in one line per domain
+
+| Domain | Current → Interim → Target |
+|---|---|
+| `scheduling_coverage` | Samantha → **Samantha, marked temporary** → `pos_staffing_c`, scoped to exceptions and relationships |
+| `payer_programs` | Angiel → Angiel → Payer Programs lead (referrals split out) |
+| `field_quality` | Cierra → Cierra → Clinical Coordinator |
+| `client_care` | Krystal → Krystal → Care Coordinator |
+| `caregiver_performance` | Krystal → Krystal → supervisory role |
+| `family_enquiries` | Krystal → Krystal → merge into `client_care`? |
+| `training_compliance` | Krystal → Krystal → **populate or fold in** |
+| `recruiting_orientation` | Krystal → Krystal → `pos_staffing_c` |
+| `money` | Samantha → **retire or define** → — |
+| `program_administration` | Samantha → **define first** → — |
+
+**No ownership changes proposed.** The two real changes are structural: add
+`owner_is_temporary` and `target_owner_position` to `domains`, and split
+`escalation_person` into assist / operational-escalation / owner-notify.
 
 ---
 
