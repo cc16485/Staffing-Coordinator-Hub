@@ -36,75 +36,86 @@ and I do not have that yet.
 
 ---
 
-## The ten domains
+## The ten domains, from their actual duties
 
-| Domain | Current owner | What the work is | Best owner **today** | Target **at scale** | Is Samantha's ownership right? |
-|---|---|---|---|---|---|
-| `client_care` | Krystal | Client service, follow-ups, family relationship | **Krystal** | Care Coordinator, then a Client Care lead | n/a |
-| `caregiver_performance` | Krystal | Conduct, discipline, coaching outcomes | **Krystal** | Krystal — supervisory by nature | n/a |
-| `field_quality` | **Cierra** | Hands-on competency, OJT, supervisory visits | **Cierra** | Cierra, growing into Clinical Coordinator | n/a |
-| `family_enquiries` | Krystal | New enquiries, consultations, conversion | **Krystal** | Care Coordinator | n/a |
-| `recruiting_orientation` | Krystal | Hiring pipeline, interviews, orientation | **Cierra** (runs morning interviews and orientation; Krystal covers) | Staffing Coordinator | n/a |
-| `training_compliance` | Krystal | Training records, annual and Medicaid compliance | **Krystal** | Compliance-holding role | n/a |
-| `payer_programs` | **Angiel** | Medicaid, VA, CDS, authorisations, eligibility | **Angiel** | Angiel, growing into Payer Programs lead | n/a |
-| `scheduling_coverage` | **Samantha** | Call-offs, open shifts, coverage — **highest volume in the business** | see below | **Staffing Coordinator** | **No — temporary** |
-| `money` | **Samantha** | Unknown split: routine billing vs owner financial authority | see below | split, see below | **Probably only in part** |
-| `program_administration` | **Samantha** | Unknown: routine payer admin vs owner compliance | see below | see below | **Probably not** |
+Read live 2026-08-13 (script 96). **The duty counts change the picture.**
 
-**Escalation is Samantha for all ten.**
+| Domain | Owner | Real primary duties | Reading |
+|---|---|---|---|
+| `scheduling_coverage` | Samantha | **8** — richest in the business | Real, detailed, and already marked TEMPORARY |
+| `payer_programs` | Angiel | **7** — detailed | Real and correctly held |
+| `field_quality` | Cierra | **7** — detailed | Real and correctly held |
+| `client_care` | Krystal | 2 primary + 5 support | Real |
+| `caregiver_performance` | Krystal | 1 | Thin but genuine |
+| `family_enquiries` | Krystal | 1 + 1 support | Thin but genuine |
+| `training_compliance` | Krystal | **1, TEMPORARY** — "Training and compliance" | **Stub. A label, not duties** |
+| `recruiting_orientation` | Krystal | **1, TEMPORARY** + 6 qualified | **Stub.** Real capability sits with Cierra and Angiel |
+| `program_administration` | Samantha | **1, TEMPORARY** — "Programme administration" | **Stub. Undefined** |
+| `money` | Samantha | **ZERO** | **Empty. Not a domain yet** |
+
+### This corrects my earlier concern about Krystal
+
+I said she owns five domains and warned about concentration. True by count, but
+**three of her five are thin or stubs**. Primary responsibilities are almost
+evenly distributed: Krystal 7, Angiel 7, Cierra 7, Samantha 7, Zach 1.
+
+The operational depth sits with **Cierra, Angiel and Samantha**. Krystal holds
+breadth and supervision. That is a more defensible structure than the domain
+count suggested, and my bottleneck warning was overstated.
 
 ---
 
-## The three that matter
+## `money` — do not route anything here
 
-### `scheduling_coverage` — the one that costs the most
+**Zero active responsibilities.** It is a placeholder somebody created and never
+filled. Samantha "owns" nothing, because nothing is defined.
 
-Chain 1 is the highest-frequency, most urgent, most interrupt-driven work in the
-business, and nine of its twelve steps are removable. It is owned by the CEO.
+**Recommendation: leave `billing_hours_question` on `client_care`.** A family
+asking about their hours is a service conversation and Krystal's team should
+answer it. Either define what `money` contains or retire it — an empty domain
+with the CEO's name on it looks like CEO-owned work in every metric while
+representing no work at all.
 
-**Do not reassign it to make a metric look better.** Three real options:
+## `program_administration` — undefined, decide later
 
-1. **Krystal as operational owner now.** She already owns FIVE domains. Adding
-   the largest queue in the business to the person already carrying the most is
-   how the bottleneck moves rather than dissolves.
-2. **Samantha stays interim owner, explicitly marked temporary**, with a named
-   target owner recorded. Honest, changes nothing today, and makes the
-   dependency visible instead of looking like a settled design.
-3. **Use the existing duty-window or backup structure** to express who handles
-   coverage day to day without moving accountability. Script 96 shows whether
-   duty windows already do this — if they do, this is the best answer, because
-   it is the mechanism you built for exactly this question.
+One TEMPORARY primary reading "Programme administration". A label.
 
-**My recommendation: 3 if duty windows already carry it, otherwise 2.** Option 1
-moves the bottleneck rather than removing it. Note that option 3 is really the
-five-role model applied: Samantha stays *accountable* and explicitly temporary,
-while the *duty owner* is whoever is actually covering that day. What actually fixes this is the
-Staffing Coordinator hire, and until that person exists, the honest state is a
-temporary owner with a named successor.
+**Recommendation: route nothing here and do not reassign it.** Moving an
+undefined domain to Angiel would hand her an unknown scope. Define what it
+contains first — provider agreements and licensure are genuine owner work;
+routine payer administration is Angiel's.
 
-### `money` — separate authority from administration
+## `scheduling_coverage` — the model is already right
 
-**Owner authority and operational ownership are different things**, and this
-domain probably conflates them. The split:
+This is the most important finding, and it reverses my recommendation.
 
-| Work | Belongs to |
-|---|---|
-| Routine billing runs, invoices, statements | **Not the CEO.** Admin or Client Care |
-| Client billing questions | **`client_care`** — a family asking about their invoice is a service conversation |
-| Payroll questions | **Viventium and the payroll holder**, not a Hub domain |
-| Payer reimbursement issues | **`payer_programs`** — Angiel |
-| Rates, write-offs, financial commitments | **Samantha — genuine owner authority** |
+The eight primaries are real and specific: own daily schedule integrity, work
+call-offs from report through to covered, fill open shifts and record who was
+contacted, confirm accepted shifts ahead of time, keep availability current,
+communicate changes to client and every affected caregiver, escalate a genuinely
+uncovered shift rather than leaving it open.
 
-If script 96 shows `money` is mostly the first three rows, most of it should
-move and only the last row should stay.
+**Three things are already true:**
 
-### `program_administration` — needs its contents read
+1. Samantha's primary here is **already marked TEMPORARY**. The org already
+   knows this is a stopgap.
+2. A **Staffing Coordinator position already exists** — `pos_staffing_c` — and
+   **two duty windows already point at it**.
+3. Backup and capability rows already exist, including direct-care coverage for
+   call-offs.
 
-If it is routine Medicaid, VA and CDS administration, it belongs with
-**Angiel** alongside `payer_programs`. If it holds genuine compliance and owner
-decisions — provider agreements, licensure, regulatory attestations — it stays
-with Samantha, and the routine part should be split out rather than the whole
-domain moving.
+So the five-role model is **already expressed in the data**. What is missing is
+that `domains.owner_person` cannot say "temporary, target = pos_staffing_c",
+so at the domain level a stopgap looks like a decision.
+
+**Recommendation: change no ownership.** Add `owner_is_temporary` and
+`target_owner_position` to `domains`, populate them from the TEMPORARY markers
+already present, and have routing consult duty windows for the *duty owner*
+while accountability stays put. Samantha remains accountable until
+`pos_staffing_c` is filled, and the Hub says so out loud.
+
+That also applies to `training_compliance`, `recruiting_orientation` and
+`program_administration` — all three carry TEMPORARY primaries today.
 
 ---
 
