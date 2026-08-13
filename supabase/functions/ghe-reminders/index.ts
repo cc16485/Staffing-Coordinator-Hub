@@ -16,6 +16,7 @@
 // Fired by pg_cron 'daily-ghe-reminders'.
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { outreachGate } from '../_shared/outreach.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -28,22 +29,12 @@ const json = (b: unknown, s = 200) =>
 const esc = (t: string) =>
   String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
-/* OUTREACH HOURS — 8am to 6pm, America/Chicago.
-   Samantha's rule: nothing we send automatically may land before 8 or after 6.
-   Enforced at the entry point rather than at each send site, so a message type
-   added later cannot forget it. Nothing is marked as sent, so anything skipped
-   goes out on the next run inside the window. */
-const OUTREACH_TZ = 'America/Chicago'
-function withinOutreachHours() {
-  const h = Number(new Date().toLocaleString('en-US', { timeZone: OUTREACH_TZ, hour: '2-digit', hour12: false }))
-  return h >= 8 && h < 18
-}
-
 Deno.serve(async (req) => {
+  /* proactive_external: we start this, so weekdays only, 8am-6pm.
+     Policy lives in _shared/outreach.ts. */
+  const gate = outreachGate(req, 'proactive_external', json)
+  if (gate) return gate
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
-  const dryRun = new URL(req.url).searchParams.get('dry') === '1'
-  if (!dryRun && !withinOutreachHours())
-    return json({ ok: true, skipped: 'outside outreach hours (8am-6pm America/Chicago)' })
 
   const url = new URL(req.url)
   const force = url.searchParams.get('force') === '1'   // for a manual check
