@@ -64,9 +64,9 @@ business, and nine of its twelve steps are removable. It is owned by the CEO.
 
 **Do not reassign it to make a metric look better.** Three real options:
 
-1. **Krystal as operational owner now.** She already owns four domains and is
-   the supervisory layer. Adds the largest queue in the business to the person
-   already carrying the most.
+1. **Krystal as operational owner now.** She already owns FIVE domains. Adding
+   the largest queue in the business to the person already carrying the most is
+   how the bottleneck moves rather than dissolves.
 2. **Samantha stays interim owner, explicitly marked temporary**, with a named
    target owner recorded. Honest, changes nothing today, and makes the
    dependency visible instead of looking like a settled design.
@@ -76,7 +76,9 @@ business, and nine of its twelve steps are removable. It is owned by the CEO.
    it is the mechanism you built for exactly this question.
 
 **My recommendation: 3 if duty windows already carry it, otherwise 2.** Option 1
-moves the bottleneck rather than removing it. What actually fixes this is the
+moves the bottleneck rather than removing it. Note that option 3 is really the
+five-role model applied: Samantha stays *accountable* and explicitly temporary,
+while the *duty owner* is whoever is actually covering that day. What actually fixes this is the
 Staffing Coordinator hire, and until that person exists, the honest state is a
 temporary owner with a named successor.
 
@@ -113,7 +115,7 @@ arrives:
 
 | Type | Definition | Where it should stop |
 |---|---|---|
-| **SUPERVISOR EXCEPTION** | Owner cannot resolve it; a supervisor should | **Krystal** |
+| **SUPERVISOR EXCEPTION** | Owner cannot resolve it; a supervisor should | **the supervisor of that lane — decided per domain, not one person** |
 | **OWNER DECISION** | Genuinely needs Samantha or Zach authority | Samantha |
 | **SAFETY / URGENT** | May need immediate owner visibility | Samantha, always |
 | **ADMINISTRATIVE LEAKAGE** | Should never have reached her | nobody — fix the cause |
