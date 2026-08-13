@@ -35,7 +35,19 @@ const ASK_APPLICANT_AFTER_DAYS = 5
 const GIVE_UP_AFTER_DAYS = 9
 const daysSince = (iso: string | null) => iso ? (Date.now() - new Date(iso).getTime()) / 86400_000 : 0
 
+/* OUTREACH HOURS — 8am to 6pm, America/Chicago.
+   References are external people being asked for a favour, so this is external
+   outreach and follows the same rule as leads and applicants. */
+const OUTREACH_TZ = 'America/Chicago'
+function withinOutreachHours() {
+  const h = Number(new Date().toLocaleString('en-US', { timeZone: OUTREACH_TZ, hour: '2-digit', hour12: false }))
+  return h >= 8 && h < 18
+}
+
 Deno.serve(async (req) => {
+  const _dry = new URL(req.url).searchParams.get('dry') === '1'
+  if (!_dry && !withinOutreachHours())
+    return json({ ok: true, skipped: 'outside outreach hours (8am-6pm America/Chicago)' })
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   const dry = new URL(req.url).searchParams.get('dry') === '1'
 
