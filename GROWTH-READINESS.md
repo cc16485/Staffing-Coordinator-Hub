@@ -256,6 +256,44 @@ Not by ease of building.
 
 ---
 
+# What the domain ownership table revealed
+
+Read live 2026-08-13 from `domains` (entity `cc_ihs`), the canonical
+accountability record:
+
+| Domain | Owner | Escalation |
+|---|---|---|
+| caregiver_performance | Krystal | Samantha |
+| client_care | Krystal | Samantha |
+| family_enquiries | Krystal | Samantha |
+| field_quality | Cierra | Samantha |
+| **money** | **Samantha** | Samantha |
+| payer_programs | Angiel | Samantha |
+| **program_administration** | **Samantha** | Samantha |
+| recruiting_orientation | Krystal | Samantha |
+| **scheduling_coverage** | **Samantha** | Samantha |
+| training_compliance | Krystal | Samantha |
+
+**Samantha owns scheduling_coverage.** That is chain 1 — call-offs and open
+shifts — which this analysis already identified as probably the largest single
+administrative load in the business, with nine of twelve steps removable. The
+CEO is the accountable owner of the highest-volume operational queue.
+
+By the definitions we set, work reaching her there is not exception work. It is
+**administrative leakage by design**, and no instrumentation will show it as a
+problem because the routing is behaving exactly as configured.
+
+She also owns `money` and `program_administration`. Three of ten domains.
+
+**And she is the escalation person for all ten.** Every escalation in the
+business terminates at the owner. That is defensible in a small office and it
+is the thing that has to change first as it grows, because exception volume
+scales with client count while her hours do not.
+
+**This reframes the growth-readiness question.** It is not only "how much
+administrative work can be automated" but "which domains should stop being
+owned by the CEO, and who takes them". That is an org decision, not a build.
+
 # Samantha dependency
 
 The metric that matters most for growth:
