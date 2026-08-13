@@ -117,7 +117,21 @@ Deno.serve(async (req) => {
     return Array.isArray(d) ? d : (d ?? null)
   }
   const settings = (await blob('ops_settings')) || {}
-  const live = settings?.obligations_live === true && !forceDry
+
+  /* TWO SWITCHES, NOT ONE.
+     A verification task says "please check a missing record". A work-affecting
+     lapse can take a caregiver off shifts. Those carry completely different
+     risk and must not share an all-or-nothing flag.
+
+       obligations_live          the base switch. Nothing writes without it.
+       obligations_live_lapses   additionally allows work-affecting items
+
+     Stage A is obligations_live alone: verification and management-quality
+     obligations only. Stage B adds lapses once Stage A has proven itself
+     against real people. */
+  const liveBase = settings?.obligations_live === true && !forceDry
+  const liveLapses = liveBase && settings?.obligations_live_lapses === true
+  const live = liveBase
   const dry = !live
 
   /* ── 3. Source data and identity resolution. ────────────────────────────── */
@@ -163,7 +177,9 @@ Deno.serve(async (req) => {
   })
 
   const summary = {
-    ok: true, dry, live_setting: settings?.obligations_live === true,
+    ok: true, dry,
+    live_setting: settings?.obligations_live === true,
+    live_lapses_setting: settings?.obligations_live_lapses === true,
     rules: meta, eligibility_rules: rulesMeta,
     today: todayCentral(), max_age_days: maxAgeDays,
     sources_evaluated: Object.keys(result.bySource || {}),
@@ -179,6 +195,23 @@ Deno.serve(async (req) => {
     unroutable: result.unroutable,
     errors: result.errors,
     /* Named so a dry run can be read without cross-referencing ids. */
+    /* Categorised so a dry run can be read without doing the sums by hand. */
+    by_severity: (function () {
+      const t: Record<string, number> = { verification: 0, management: 0, legal: 0, other: 0 }
+      let restrictions = 0
+      for (const i of result.create) {
+        const c = (i as any).compliance
+        const k = c?.severity
+        if (k === 'verification' || k === 'management' || k === 'legal') t[k]++
+        else t.other++
+        if (c?.restriction === true) restrictions++
+      }
+      return { ...t, work_restrictions: restrictions }
+    })(),
+    restrictions_preview: result.create
+      .filter((i: any) => i?.compliance?.restriction === true)
+      .slice(0, 20)
+      .map((i: any) => ({ id: i.id, who: i.about, code: i.compliance.code, due: i.due })),
     create_preview: result.create.slice(0, 10).map((i: any) => ({ id: i.id, title: i.title, owner: i.owner, due: i.due })),
     close_preview: result.stale.slice(0, 10).map((s: any) => ({ id: s.item.id, why: s.why })),
   }
@@ -190,9 +223,15 @@ Deno.serve(async (req) => {
   }
 
   /* ── 5. Write, one item at a time, through the same RPC the browser uses. ── */
-  let created = 0, closed = 0
+  let created = 0, closed = 0, heldForStageB = 0
   const writeErrors: any[] = []
   for (const it of result.create) {
+    /* Severity decides which switch governs it. Anything that is not clearly
+       verification or management is treated as work-affecting, because the
+       safe default for an unrecognised category is the higher bar. */
+    const sev = (it as any)?.compliance?.severity
+    const isLowRisk = sev === 'verification' || sev === 'management' || sev === undefined
+    if (!isLowRisk && !liveLapses) { heldForStageB++; continue }
     const { error } = await supabase.rpc('upsert_app_data_item', { target_key: 'ops_items', item: it })
     if (error) writeErrors.push({ id: it.id, op: 'create', message: error.message }); else created++
   }
@@ -212,7 +251,11 @@ Deno.serve(async (req) => {
     if (error) writeErrors.push({ id: it.id, op: 'close', message: error.message }); else closed++
   }
 
-  const final = { ...summary, dry: false, created, closed, write_errors: writeErrors }
+  const final = { ...summary, dry: false, created, closed,
+                  held_for_stage_b: heldForStageB,
+                  stage: liveLapses ? 'B (verification, management and lapses)'
+                                    : 'A (verification and management only)',
+                  write_errors: writeErrors }
   await logRun(supabase, { automation: 'obligations', ok: writeErrors.length === 0, dry: false,
     started, ms: Date.now() - t0, summary: final })
   return json(final)
