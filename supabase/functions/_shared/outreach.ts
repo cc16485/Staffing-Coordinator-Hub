@@ -319,3 +319,75 @@ export async function outboundGate(
   }
   return { ok: true, phone: dest.phone! }
 }
+
+/**
+ * The shared contact-resolution boundary.
+ *
+ * `caregiver-intro` and `circle-send` each carried an identical, copy-pasted
+ * upsert block reading a phone straight off a person record. That duplication
+ * IS the drift problem: a rule implemented per-function does not stay uniform,
+ * which is how the outreach-hours policy ended up covering 5 of 24 senders.
+ *
+ * So this is the one place a destination becomes a GHL contact id. It applies
+ * the identity gate, then the hours policy, then upserts. A sender that uses it
+ * cannot forget either check, because there is no path through it that skips
+ * them.
+ *
+ * Returns null when the send must not happen. The reason is logged rather than
+ * thrown, so one refused recipient never aborts a batch.
+ */
+export async function contactForOutbound(
+  // deno-lint-ignore no-explicit-any
+  sb: any,
+  ghl: { token: string; locationId: string },
+  person: { phone?: unknown; email?: unknown; firstName?: unknown; lastName?: unknown },
+  kind: string,
+  opts: { selfSupplied?: boolean; now?: Date } = {},
+): Promise<{ contactId: string; phone: string | null } | null> {
+  const email = String(person.email ?? '').trim()
+  const hasPhone = !!normalisePhone(person.phone)
+
+  /* An email-only recipient carries no phone-identity risk, so the destination
+     gate does not apply — but the hours policy still does. */
+  if (hasPhone) {
+    const dest = await maySendTo(sb, person.phone, opts)
+    if (!dest.allowed) {
+      console.warn(`outbound refused [${kind}]: ${dest.reason}`)
+      return null
+    }
+  } else if (!email) {
+    console.warn(`outbound refused [${kind}]: no phone and no email`)
+    return null
+  }
+
+  const when = maySend(kind, opts.now ?? new Date())
+  if (!when.allowed) {
+    console.log(`outbound held [${kind}]: ${when.reason}`)
+    return null
+  }
+
+  const phone = normalisePhone(person.phone)
+  const res = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${ghl.token}`,
+      'Version': '2021-07-28',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      locationId: ghl.locationId,
+      ...(phone ? { phone } : {}),
+      ...(email ? { email } : {}),
+      ...(person.firstName ? { firstName: String(person.firstName) } : {}),
+      ...(person.lastName ? { lastName: String(person.lastName) } : {}),
+    }),
+  })
+  // deno-lint-ignore no-explicit-any
+  const j = await res.json().catch(() => ({})) as any
+  const contactId = j?.contact?.id ?? j?.id
+  if (!contactId) {
+    console.warn(`outbound refused [${kind}]: GHL returned no contact id`)
+    return null
+  }
+  return { contactId: String(contactId), phone }
+}

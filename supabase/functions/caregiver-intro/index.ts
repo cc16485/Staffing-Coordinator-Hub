@@ -26,6 +26,7 @@
 // Deploy: supabase functions deploy caregiver-intro
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { contactForOutbound } from '../_shared/outreach.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -153,17 +154,15 @@ Deno.serve(async (req) => {
   for (const c of reachable) {
     const first = String(c.name ?? '').split(' ')[0] || 'there'
     try {
-      const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-        method: 'POST', headers: h,
-        body: JSON.stringify({
-          locationId: ghlLocation,
-          ...(c.phone ? { phone: c.phone } : {}), ...(c.email ? { email: c.email } : {}),
-          firstName: first,
-        }),
-      })
-      const uj = await up.json().catch(() => ({}))
-      const contactId = uj?.contact?.id ?? uj?.id
-      if (!contactId) continue
+      /* Shared boundary: identity gate, then hours policy, then upsert.
+         This function used to read c.phone straight off a person record and
+         send to it with no check of any kind. */
+      const dest = await contactForOutbound(
+        supabase, { token: ghlToken!, locationId: ghlLocation! },
+        { phone: c.phone, email: c.email, firstName: first },
+        'caregiver-intro')
+      if (!dest) continue
+      const contactId = dest.contactId
 
       if (c.phone && c.sms_consent) {
         await fetch('https://services.leadconnectorhq.com/conversations/messages', {
