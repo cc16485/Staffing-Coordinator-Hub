@@ -101,7 +101,24 @@ Deno.serve(async (req) => {
   for (const l of leads) {
     // The moment a human touches it, the robot stops. Everything below is only
     // for leads nobody has picked up yet.
+    /* THE HANDOFF. Automation owns a lead only until a human touches it.
+       This checked the STATUS alone, but a coordinator who rings the family
+       and logs the call normally leaves the status as New — changing it is a
+       separate action nobody has to take. So the hub stopped chasing and this
+       kept texting, and the family got a "just checking in" message from the
+       system after a person had already spoken to them.
+
+       Mirrors opsLeadUntouched() in the hub, which is the definition of
+       record:
+           !last_contacted_at && !comm_log.length && status === 'New'
+
+       Deliberately duplicated rather than fetched. It is three stable lines,
+       and adding a network dependency to a function that sends messages trades
+       a small drift risk for a much worse failure mode. If that definition
+       changes, it changes in both places. */
     if ((l.status || 'New') !== 'New') continue
+    if (l.last_contacted_at) continue
+    if (Array.isArray(l.comm_log) && l.comm_log.length) continue
     if (l.do_not_contact) continue
     const first = (l.first_name || '').replace(/\(.*\)/, '').trim() || 'there'
     const age = hoursSince(l.created_at)
