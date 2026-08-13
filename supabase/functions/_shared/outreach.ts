@@ -178,3 +178,144 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
   'calls-feed':         { class: 'routine_internal', scheduled: false, why: 'internal call reconciliation.' },
   'resend-relay':       { class: 'reactive_external', scheduled: false, why: 'relays a message somebody composed.' },
 }
+
+/* =============================================================================
+   IDENTITY GATE — the narrowest common boundary for outbound
+   =============================================================================
+   Traced 2026-08-13: all 24 senders that can reach a person do the same two
+   things — upsert a GHL contact with a raw phone string, then post a message to
+   the contact id it returns. The destination decision is that raw string. No
+   sender consults the identity layer; the only file that touches it is the
+   backfill that populates it.
+
+   So the fix belongs here rather than in 24 places. This module already owns the
+   hours policy and already bundles, and adopting it is one import.
+
+   THE INVARIANT:
+     Identity resolution and outbound authorization are SEPARATE decisions.
+     A 'probable' phone is fine for showing an employee "Possible caller: Jane
+     Smith" — a human can ask. It is never sufficient for autonomous outbound,
+     because there is nobody in the loop to catch a wrong guess.
+
+   Why this is not merely tidy: GHL's contacts/upsert MATCHES on phone. Sending
+   to a wrong number does not just reach the wrong person, it merges them into
+   that contact and destroys the evidence that two people existed.
+============================================================================= */
+
+export type PhoneConfidence = 'confirmed' | 'probable' | 'suspect'
+
+export interface DestinationVerdict {
+  allowed: boolean
+  phone: string | null
+  confidence: PhoneConfidence | 'unknown'
+  reason: string
+  /** Safe to show a human, even when autonomous sending is refused. */
+  displayable: boolean
+}
+
+/** E.164, or null. The same normalisation the identity layer uses on write. */
+export function normalisePhone(raw: unknown): string | null {
+  const d = String(raw ?? '').replace(/\D/g, '')
+  if (d.length === 10) return '+1' + d
+  if (d.length === 11 && d.startsWith('1')) return '+' + d
+  return d.length > 11 ? '+' + d : null
+}
+
+/**
+ * May we autonomously send to this number?
+ *
+ * Answers from `phone_index` provenance. A number the identity layer has never
+ * seen is 'unknown', which is NOT the same as unsafe: plenty of legitimate
+ * destinations are supplied by the person themselves in the same request (a
+ * form submission, a Stripe checkout, an inbound reply). Those are governed by
+ * `selfSupplied`, because the person handing us their own number is a stronger
+ * signal than any database lookup.
+ *
+ * What this refuses is the dangerous case: a number we IMPORTED from somewhere
+ * on weak evidence and then treated as authoritative.
+ */
+export async function maySendTo(
+  // deno-lint-ignore no-explicit-any
+  sb: any,
+  rawPhone: unknown,
+  opts: { selfSupplied?: boolean } = {},
+): Promise<DestinationVerdict> {
+  const phone = normalisePhone(rawPhone)
+  if (!phone) {
+    return { allowed: false, phone: null, confidence: 'unknown',
+             reason: 'no usable phone number', displayable: false }
+  }
+
+  if (opts.selfSupplied) {
+    return { allowed: true, phone, confidence: 'confirmed',
+             reason: 'the person supplied this number themselves in this request',
+             displayable: true }
+  }
+
+  const { data, error } = await sb
+    .from('phone_index')
+    .select('confidence, verification_status, source_system')
+    .eq('phone', phone)
+
+  if (error) {
+    /* Fail CLOSED. If we cannot check provenance we do not send — an outage in
+       the identity layer must not silently restore the old behaviour. */
+    return { allowed: false, phone, confidence: 'unknown',
+             reason: `could not verify provenance: ${error.message}`, displayable: true }
+  }
+
+  if (!data || !data.length) {
+    return { allowed: true, phone, confidence: 'unknown',
+             reason: 'not an imported identifier — no provenance concern',
+             displayable: true }
+  }
+
+  const rejected = data.find((r: { verification_status: string }) => r.verification_status === 'rejected')
+  if (rejected) {
+    return { allowed: false, phone, confidence: 'suspect',
+             reason: 'this number was reviewed and rejected', displayable: false }
+  }
+
+  const best = data.find((r: { confidence: string }) => r.confidence === 'confirmed')
+  if (best) {
+    return { allowed: true, phone, confidence: 'confirmed',
+             reason: 'confirmed provenance', displayable: true }
+  }
+
+  const src = data[0]?.source_system ?? 'an import'
+  return {
+    allowed: false, phone, confidence: 'probable',
+    reason: `this number came from ${src} on probable evidence only. Show it to ` +
+            `a person, do not send to it automatically.`,
+    displayable: true,
+  }
+}
+
+/**
+ * The single call a sender should make. Applies BOTH gates in the right order —
+ * destination trust first, then the hours policy — and returns a Response to
+ * hand straight back when either refuses.
+ */
+export async function outboundGate(
+  // deno-lint-ignore no-explicit-any
+  sb: any,
+  rawPhone: unknown,
+  kind: string,
+  opts: { selfSupplied?: boolean; now?: Date } = {},
+): Promise<{ ok: true; phone: string } | { ok: false; response: Response }> {
+  const dest = await maySendTo(sb, rawPhone, opts)
+  if (!dest.allowed) {
+    return { ok: false, response: new Response(JSON.stringify({
+      ok: false, skipped: 'destination_not_authorised',
+      confidence: dest.confidence, reason: dest.reason,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }) }
+  }
+  const when = maySend(kind, opts.now ?? new Date())
+  if (!when.allowed) {
+    return { ok: false, response: new Response(JSON.stringify({
+      ok: false, skipped: 'outside_outreach_hours',
+      reason: when.reason, detail: when.detail,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }) }
+  }
+  return { ok: true, phone: dest.phone! }
+}
