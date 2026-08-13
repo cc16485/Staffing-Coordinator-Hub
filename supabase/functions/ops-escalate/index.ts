@@ -117,6 +117,60 @@ async function sendSms(tok: string, locationId: string, phone: string, message: 
   if (!send.ok) throw new Error('send failed ' + send.status)
 }
 
+
+/* ── SAMANTHA DEPENDENCY ─────────────────────────────────────────────────────
+   The metric that matters most for growth:
+
+       What percentage of Caring Companions operated correctly without
+       Samantha this week?
+
+   It cannot be reconstructed after the fact, so every escalation has to record
+   it as it happens. Escalation is currently the ONLY path by which work reaches
+   her, which makes this the right place to start.
+
+   The distinction that matters is not "did it reach her" but WHY:
+
+     owner_decision   something only the owner can decide. Reaching her is the
+                      system working correctly.
+     administrative   work the system or the team should have handled. Reaching
+                      her is the system FAILING, and this is the number to drive
+                      towards zero.
+
+   Today nothing separates them, so the share that should remain is
+   indistinguishable from the share that should not.
+
+   This RECORDS. It does not judge — `escalation_appropriate` is left null for a
+   human to set, because whether an escalation was warranted is a judgment about
+   how the office ran that day, not something a sweep can infer. */
+// deno-lint-ignore no-explicit-any
+function recordDependency(it: any, level: number, who: string, target: string, ageMin: number) {
+  const reachedOwner = /samantha/i.test(who) || target === 'fallback'
+  if (!reachedOwner) return
+
+  it.dependency = it.dependency || []
+  it.dependency.push({
+    reached_at: new Date().toISOString(),
+    reached: who,
+    /* Who SHOULD have held this. Empty means nobody did, which is itself the
+       finding: unowned work escalating is a routing failure, not a judgment
+       call. */
+    original_owner: it.owner || null,
+    unowned_when_it_escalated: !it.owner,
+    escalation_reason: it.owner
+      ? `owner did not respond within ${Math.round(ageMin)} minutes`
+      : 'the item had no owner to escalate from',
+    escalation_level: level,
+    /* A missed call reaching the owner is administrative by definition — it is
+       a callback nobody made, not a decision only she can take. Other kinds
+       will need their own reading as they start escalating. */
+    decision_type: it.kind === 'missed_call' ? 'administrative' : 'unclassified',
+    category: it.kind || 'unknown',
+    /* Deliberately null. A human decides whether this escalation was warranted;
+       a sweep cannot know whether the office was short-staffed that morning. */
+    escalation_appropriate: null,
+  })
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
 
@@ -258,6 +312,7 @@ Deno.serve(async (req) => {
         try {
           await sendSms(tok, locationId, e164(phone), msg)
           it.escalations.push({ level: lvl, at: new Date().toISOString(), to: who, phone: e164(phone) })
+          recordDependency(it, lvl, who, rule.to, ageMin)
           await save(it)
           notified.push({ item: it.id, level: String(lvl), to: who })
         } catch (err) { console.error('escalation send failed:', String(err)) }
