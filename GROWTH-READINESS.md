@@ -97,9 +97,23 @@ the message.
 **Both senders retrofitted onto the shared outbound boundary this session.**
 
 ## 10. Client issues and complaints
-**BROKEN.** Items exist in `ops_items` and `caller_open_work()` surfaces them on
-an inbound call, but there is **no dedicated producer** — an issue exists only
-if somebody types it. Nothing detects one from a call, a note or a pattern.
+**BROKEN — and mostly UNBLOCKED.** Splitting it properly (see
+[PROCESS-CHAINS.md](PROCESS-CHAINS.md) chain 4):
+
+- **A. Intake** — how the Hub learns of a problem: **UNBLOCKED**
+- **B. Identity** — which client: **PARTIAL**, family recognition BLOCKED
+- **C. Management** — owner, due, chase, escalate, resolve: **UNBLOCKED**;
+  `ops_items`, domains, ownership and escalation all already exist
+- **D. Detection** — issues nobody reported: **BLOCKED (AxisCare)**
+
+SYSTEM DOES: nothing today. HUMAN STILL DOES: everything, and there is **no
+structured record of client problems at all**. WHY: *simply not automated yet* —
+which makes this remaining build work, not an end state.
+
+The client can be free text until AxisCare arrives. That is a degraded identity
+link, not a fake client, and it is how the office already works on paper.
+
+**Highest-value genuinely unblocked build in the matrix.**
 
 ---
 
@@ -225,14 +239,17 @@ Not by ease of building.
    the two largest labour loads.
 2. **Add the three GHL read scopes.** Two minutes. Unblocks caregiver identity
    and the vocabulary.
-3. **Client issues producer** (row 10). No external dependency. Today an issue
-   exists only if somebody types it, so problems are invisible until they
-   escalate. High client risk, high frequency.
+3. **Client issue lifecycle** (row 10, chain 4 steps 4–11). Unblocked. No
+   structured record of client problems exists today.
 4. **Samantha-dependency instrumentation** (below). No dependency. Every
    workflow needs to start recording it before it can ever be reported.
 5. **Retrofit the remaining 22 senders** onto the shared outbound boundary.
    Policy gap; the two dangerous ones are done.
-6. **Documentation QA** (row 24). Cierra reads every care note by hand.
+6. **Referee capture** (chain 3, step 6). One form change makes an entire
+   already-built workflow useful — it is why `references-run` found zero slots.
+7. **Call-off classification** (chain 1, step 2). First removable step in the
+   most expensive chain, and it needs no AxisCare.
+8. **Documentation QA** (row 24). Cierra reads every care note by hand.
 7. Everything AxisCare-dependent, in the order access allows.
 8. **Business-health Home screen — last.** A dashboard over incomplete
    workflows reports labour rather than removing it.
@@ -278,6 +295,20 @@ Found while tracing, worth fixing, not worth a session:
 - `Tanisha Peterson` tagged both `lead` and `active client`
 
 ---
+
+# Read this with PROCESS-CHAINS.md
+
+The matrix lists workflows. [PROCESS-CHAINS.md](PROCESS-CHAINS.md) traces the
+five end-to-end processes across them, step by step, marking every step the
+office physically performs and whether it can disappear.
+
+That reordering changes the priorities. By function, the next builds looked like
+reference chasing and lead reconciliation. By chain, they are the client issue
+lifecycle, referee capture, and call-off classification — because those are
+where a person crosses four screens to do one thing.
+
+**Chain 1 (call-off → shift filled) has nine of twelve steps removable and is
+where growth hurts most**, since call-offs scale linearly with caregiver count.
 
 # The honest summary
 
