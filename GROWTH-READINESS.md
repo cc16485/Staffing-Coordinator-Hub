@@ -364,3 +364,37 @@ reviews notes). Both fixable with what we already have.
 **MANUAL BY DESIGN: 2** — payroll and the judgment calls inside hiring.
 
 The single largest lever is not a feature. It is an email to AxisCare support.
+
+---
+
+# Deferred architecture — recorded, not implemented
+
+Agreed 2026-08-13. None of these block Chain 4.
+
+**`owner_is_temporary` and `target_owner_position` on `domains`.** The TEMPORARY
+markers already exist on responsibilities; the domain record cannot express
+them, so a stopgap reads as a decision.
+
+**Splitting `escalation_person`.** It drives three materially different
+behaviours today: `help_from` (assistance, accountability explicitly unchanged),
+`needs_samantha` (ownership actually transfers), and discipline approval.
+**Inventory every call site before splitting.** A schema split without migrating
+each behaviour deliberately would be worse than the overloaded field.
+
+**Domain taxonomy cleanup.** `money` is empty. `program_administration` is a
+label. `training_compliance` and `recruiting_orientation` are stubs. Referral
+relationships are misfiled inside payer administration. `client_care` and
+`family_enquiries` may be one lane.
+
+**Cierra's reading load.** "Review care notes routinely across active clients"
+and "watch for patterns across multiple visits" is the largest unautomated
+reading load in the business. Removing it is worth more than moving
+responsibilities on an org chart — her time belongs in homes, assessing,
+training, and making quality judgments software cannot make. Blocked on AxisCare
+care notes.
+
+## The methodological lesson
+
+Counting domains was misleading. Counting responsibilities was misleading.
+Counting escalations would have been misleading. **The useful unit is the
+business process and the human judgment remaining inside it.**
