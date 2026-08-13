@@ -190,6 +190,11 @@ Deno.serve(async (req) => {
     rules: meta, eligibility_rules: rulesMeta,
     today: todayCentral(), max_age_days: maxAgeDays, max_per_run: maxPerRun,
     deferred_to_next_run: result.deferred ?? 0,
+    /* Why work did NOT appear, split by severity and reason. Without this,
+       'work-affecting went from 11 to 0' cannot be answered from the run. */
+    held_by_severity: result.heldBySeverity ?? {},
+    too_old_preview: (result.tooOld ?? []).slice(0, 15)
+      .map((t: any) => ({ id: t.id, code: t.code, severity: t.severity, due: t.due })),
     sources_evaluated: Object.keys(result.bySource || {}),
     rows_seen: result.rowsSeen ?? 0,
     by_source: result.bySource,
