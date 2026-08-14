@@ -78,9 +78,23 @@ function nameKeyOf(n: string) {
 
 // deno-lint-ignore no-explicit-any
 async function candidatesFor(_c: any) {
-  /* Who holds an office domain? Read from the canonical record, so adding a
-     coordinator never accidentally puts them in a coverage wave. */
-  const officeStaff = new Set<string>()
+  /* FOUR ELIGIBILITY STATES, not two.
+       ordinary               a field caregiver
+       office_not_eligible    holds an office domain, no coverage capability
+       office_but_capable     holds an office domain AND an explicit capability
+                              row saying they cover shifts
+       (backup/field-response is expressed the same way)
+
+     A blanket "holds an office domain" exclusion is too broad and was about to
+     remove Cierra and Angiel, who carry explicit capability rows reading
+     "Provide direct-care coverage when needed for call-offs". They have said
+     they cover shifts. The system should not overrule them.
+
+     This uses the capability model that already exists rather than inventing
+     another flag. Identity says who you are; capability says what work you may
+     perform; they stay independent. */
+  const officeDomain = new Set<string>()
+  const coverageCapable = new Set<string>()
   {
     const { data: doms } = await sb.from('domains')
       .select('owner_person, escalation_person').eq('entity', 'cc_ihs')
@@ -90,11 +104,23 @@ async function candidatesFor(_c: any) {
       const { data: ppl } = await sb.from('persons')
         .select('primary_email, full_name').in('person_id', ids)
       for (const p of (ppl ?? [])) {
-        if (p.primary_email) officeStaff.add(String(p.primary_email).toLowerCase())
-        if (p.full_name) officeStaff.add(nameKeyOf(String(p.full_name)))
+        if (p.primary_email) officeDomain.add(String(p.primary_email).toLowerCase())
+        if (p.full_name) officeDomain.add(nameKeyOf(String(p.full_name)))
       }
     }
+    /* Who has explicitly said they cover shifts? */
+    const { data: resp } = await sb.from('app_data').select('data')
+      .eq('key', 'responsibilities').maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    for (const r of (Array.isArray(resp?.data) ? resp!.data : []) as any[]) {
+      if (r?.active === false) continue
+      if (!['capability', 'backup'].includes(String(r?.kind))) continue
+      const t = String(r?.text ?? '').toLowerCase()
+      if (!/cover|coverage|call-off|call off|open shift|direct-care|direct care/.test(t)) continue
+      if (r?.person) coverageCapable.add(String(r.person).toLowerCase())
+    }
   }
+
   const { data } = await sb.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
   // deno-lint-ignore no-explicit-any
   const roster = (Array.isArray(data?.data) ? data!.data : []) as any[]
@@ -109,10 +135,15 @@ async function candidatesFor(_c: any) {
        cover a shift. Nobody who holds an active office domain is a coverage
        candidate, whatever the roster says. Their own capability rows can put
        them back in deliberately; being on the roster is not consent. */
-    if (officeStaff.has(String(cg.email || '').toLowerCase())
-        || officeStaff.has(nameKeyOf(name))) {
-      out.push({ name, skipped: 'office staff, not a field coverage candidate' }); continue
+    const key = String(cg.email || '').toLowerCase()
+    const isOffice = officeDomain.has(key) || officeDomain.has(nameKeyOf(name))
+    const isCapable = coverageCapable.has(key)
+    if (isOffice && !isCapable) {
+      out.push({ name, eligibility: 'office_not_eligible',
+                 skipped: 'holds an office domain and has no coverage capability recorded' })
+      continue
     }
+    const eligibility = isOffice ? 'office_but_capable' : 'ordinary'
     const phone = normalisePhone(cg.phone)
     if (!phone) { out.push({ name, skipped: 'no phone on file' }); continue }
 
@@ -121,6 +152,7 @@ async function candidatesFor(_c: any) {
     const verdict = await maySendTo(sb, phone)
     out.push({
       name,
+      eligibility,
       phone_last4: phone.slice(-4),
       confidence: verdict.confidence,
       may_autosend: verdict.allowed,

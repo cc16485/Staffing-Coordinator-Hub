@@ -395,6 +395,44 @@ responsibilities on an org chart — her time belongs in homes, assessing,
 training, and making quality judgments software cannot make. Blocked on AxisCare
 care notes.
 
+## ARCHITECTURE INVARIANT — safe defaults
+
+Found via `phone_index.confidence` defaulting to `'confirmed'`, which meant any
+row written without stating provenance became a number the outreach gate would
+send to.
+
+> **Missing evidence must never silently become permission.**
+
+Anything that grants trust, permission, eligibility, authority or autonomous
+action defaults to the **non-permissive** state. Trust is asserted, never
+inherited by omission.
+
+Applies to: identity confidence, sending permission, caregiver eligibility,
+approval authority, automatic assignment, and every future switch. Apply it
+whenever a workflow is touched — not as a separate audit.
+
+## FOUR INDEPENDENT QUESTIONS
+
+Kept separate because collapsing any two produces a bug that looks like a
+feature:
+
+| Question | Answered by |
+|---|---|
+| **Identity** — who is this person? | `person_identity`, `person_source_id` |
+| **Capability / eligibility** — what work may they perform? | `responsibilities` kind `capability` / `backup` |
+| **Duty** — what are they responsible for right now? | duty windows |
+| **Authority** — what may they decide? | `domains.owner_person`, `owner_authority` |
+
+Samantha and Krystal are the proof case: confirmed identity, real AxisCare
+caregiver ids, verified phones — and still not ordinary coverage candidates.
+Identity can no longer be the reason they are excluded; **eligibility** is.
+
+And the exclusion must not be blanket. Cierra and Angiel hold explicit
+`capability` rows reading *"Provide direct-care coverage when needed for
+call-offs"*. They have said they cover shifts, and the system must not overrule
+them. Four states, not two: ordinary, office-not-eligible,
+office-but-capable, backup.
+
 ## The methodological lesson
 
 Counting domains was misleading. Counting responsibilities was misleading.
