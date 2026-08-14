@@ -184,7 +184,10 @@ Deno.serve(async (req) => {
     if (p.decline_reason) continue                     // we already told them no
     const age = hoursSince(p.created_at)
     const first = p.first_name || 'there'
-    const bookUrl = 'https://mo-care.com/apply'
+    // Deep-link straight to the interview time-picker for THIS applicant, who
+    // already applied but has not booked. Sending them to bare /apply restarted
+    // the whole form (the exact "pick a time here" link that went nowhere).
+    const bookUrl = 'https://mo-care.com/apply?book=' + encodeURIComponent(String(p.id))
 
     const step =
       !p.nudge_1_at && age >= 2   ? 1 :

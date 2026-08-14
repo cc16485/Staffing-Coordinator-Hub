@@ -44,7 +44,11 @@ Deno.serve(async (req) => {
 
   const { data: st } = await supabase.from('scheduling_settings').select('phone').eq('id', 1).maybeSingle()
   const phone = st?.phone ?? '(417) 234-8494'
-  const applyUrl = 'https://mo-care.com/apply' + (slug ? '?job=' + encodeURIComponent(String(slug)) : '')
+  // Link per-recipient below. Everyone here already applied and has no booked
+  // interview (booked are filtered out), so the right next step for each is the
+  // time-picker for THEIR application, not a fresh /apply form. `slug` is no
+  // longer used for the link — the booking page does not need a job.
+  void slug
 
   // Never trust the caller's filtering for something that leaves the building.
   const cutoff = new Date(Date.now() - 30 * 86_400_000).toISOString()
@@ -77,6 +81,7 @@ Deno.serve(async (req) => {
   for (const p of eligible) {
     if (!ghlToken || !ghlLocation) break
     const first = p.first_name || 'there'
+    const applyUrl = 'https://mo-care.com/apply?book=' + encodeURIComponent(String(p.id))
     const body = `Hi ${first}, ${String(message).trim()}`
     try {
       const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
