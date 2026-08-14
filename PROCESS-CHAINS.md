@@ -72,7 +72,8 @@ available caregivers (step 5), writing the schedule back (step 9).
 | **BUILT** | Coverage case (existing), manual ask/response state (existing `covAsk`/`covAskState`), owner resolution, duty holder, candidate orchestration, `asked[]` dedupe memory, controlled waves |
 | **PROVEN** | Dry-run recipient safety and no duplicate asks, tested against the whole roster rather than only inside a case |
 | **BLOCKED** | **Autonomous sends, until trustworthy caregiver phone numbers exist.** An identity-source dependency, not a scheduling one |
-| **BLOCKED BY AXISCARE** | Shift details, availability, schedule conflict, skills, overtime, distance, assignment write-back, family notification |
+| **SUPPORTED, ACCESS-BLOCKED** | Shift details, availability, schedule conflict, **and assignment write-back** — `caregiverId` is writable on schedules and visits. See [AXISCARE-CAPABILITY.md](AXISCARE-CAPABILITY.md) |
+| **UNSUPPORTED BY AXISCARE** | Overtime, distance, required skills, client-caregiver fit — no such fields exist. Design around them permanently |
 | **REMAINS** | **Inbound reply correlation** and **failure escalation** |
 
 **Not complete.** A real caregiver response cannot yet travel back into the

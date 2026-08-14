@@ -213,6 +213,22 @@ all care notes — currently entirely manual.
 **Every path returns an HTML 403 from CloudFront before reaching API routing.
 Not a credential problem.** Support message written and ready to send.
 
+**The OpenAPI spec is now in the repo** (`axiscare-openapi.yaml`) and
+[AXISCARE-CAPABILITY.md](AXISCARE-CAPABILITY.md) is the authoritative map. It
+corrects several rows below. The critical distinction is now three states, not
+one: **UNSUPPORTED** (no endpoint exists, design around it), **SUPPORTED,
+ACCESS-BLOCKED** (documented and reachable once access returns — build the
+adapter now), and **BUILT, WAITING**.
+
+Biggest corrections: family and responsible parties ARE supported
+(`/api/clients/{clientId}/responsibleParties`), caregiver assignment write-back
+IS supported (`caregiverId` is writable), and payer is **UNSUPPORTED** —
+`Class` is `{code,label}` with no discriminator and no payer field exists
+anywhere, so `resolvePayer()` refusing is permanent design.
+
+Webhooks carry **no signature or shared secret**. Treat them as a doorbell, not
+a witness: the event triggers an authoritative API read, and the API decides.
+
 | # | Needs | What we do with it | Built | Remains | Activation test |
 |---|---|---|---|---|---|
 | 5 | `client.created` + `/api/clients` | Create the scheduling handoff, start obligations | Webhook, idempotency proven at DB level, event contract, payer resolver | Register webhook, set secret | One real payload recorded in `client_events`, no duplicate on redelivery |
