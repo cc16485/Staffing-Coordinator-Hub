@@ -140,7 +140,7 @@ async function candidatesFor(_c: any) {
     const isCapable = coverageCapable.has(key)
     if (isOffice && !isCapable) {
       out.push({ name, eligibility: 'office_not_eligible',
-                 skipped: 'holds an office domain and has no coverage capability recorded' })
+                 skipped: 'holds an office domain and no coverage capability is recorded' })
       continue
     }
     const eligibility = isOffice ? 'office_but_capable' : 'ordinary'
@@ -189,13 +189,20 @@ Deno.serve(async (req) => {
     would_pass: rosterCheck.filter(x => x.may_autosend).length,
     no_phone: rosterCheck.filter(x => x.skipped === 'no phone on file').length,
     inactive: rosterCheck.filter(x => x.skipped === 'no longer active').length,
-    office_staff: rosterCheck.filter(x => String(x.skipped ?? '').startsWith('office staff')).length,
+    /* Keyed off the structured `eligibility` field, never the message text.
+       Three counters previously matched on the skip STRING; when the wording
+       changed they all silently stopped matching, and the report said
+       "office staff: 0" directly above "holds an office domain: 2". A label
+       is for humans; a field is for code. */
+    office_not_eligible: rosterCheck.filter(x => x.eligibility === 'office_not_eligible').length,
+    office_but_capable: rosterCheck.filter(x => x.eligibility === 'office_but_capable').length,
     /* Untrusted means a phone EXISTS and failed the gate. Lumping the
        office-staff exclusion in here reported "2 phones present but
        untrusted" when those two never reached the phone check at all. */
-    untrusted: rosterCheck.filter(x => x.skipped && x.skipped !== 'no phone on file'
-                                        && x.skipped !== 'no longer active'
-                                        && !String(x.skipped).startsWith('office staff')).length,
+    /* Untrusted means a phone EXISTS and failed the gate — not that the
+       person was excluded before the phone was ever checked. */
+    untrusted: rosterCheck.filter(x => x.skipped && x.phone_last4
+                                        && x.eligibility !== 'office_not_eligible').length,
     /* Anyone who passes gets named, with where the number came from, because
        a caregiver becoming messageable is the thing to investigate. */
     passed: rosterCheck.filter(x => x.may_autosend)
@@ -209,10 +216,15 @@ Deno.serve(async (req) => {
        out inactive staff and nothing else, so it went on naming Samantha and
        Krystal in wave 1 after the office-staff exclusion was added — the same
        misleading output the exclusion existed to prevent. */
-    wave_1_if_trusted: rosterCheck
-      .filter(x => x.skipped !== 'no longer active'
-                && !String(x.skipped ?? '').startsWith('office staff'))
-      .slice(0, WAVE_SIZE).map(x => x.name),
+    /* Only people who would ACTUALLY be asked. */
+    wave_1: rosterCheck
+      .filter(x => x.may_autosend && x.eligibility !== 'office_not_eligible')
+      .slice(0, WAVE_SIZE).map(x => ({ name: x.name, eligibility: x.eligibility })),
+    /* Every non-ordinary candidate, named, so the split is visible rather
+       than inferred from a count. */
+    eligibility_breakdown: rosterCheck
+      .filter(x => x.eligibility && x.eligibility !== 'ordinary')
+      .map(x => ({ name: x.name, eligibility: x.eligibility })),
   }
 
   const detail: Array<Record<string, unknown>> = []
