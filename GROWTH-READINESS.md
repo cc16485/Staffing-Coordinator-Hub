@@ -208,7 +208,22 @@ all care notes — currently entirely manual.
 
 ---
 
-# BLOCKED BY AXISCARE — the activation queue
+# AXISCARE — ACCESS RESTORED 2026-08-13
+
+**The blocker was ours.** `AXISCARE_SITE` contained the API token instead of
+the site number, so every request reached a hostname that cannot exist. Set to
+`16485`; the hub now returns HTTP 200 with live data.
+
+Seven of fifteen rows unblock at once — Start of Care, first visits, client
+check-ins, scheduling and call-offs, authorisation data, caregiver identity and
+family contacts. Plus caregiver assignment **write-back**, which makes Chain 1
+end-to-end rather than partial.
+
+**Activate one producer at a time.** Access being restored is not permission to
+mass-enable. The order below is now an activation queue rather than a blocked
+list, and every row still needs its dry run and its read-back proof.
+
+# THE ACTIVATION QUEUE — was BLOCKED BY AXISCARE
 
 **Every path returns an HTML 403 from CloudFront before reaching API routing.
 Not a credential problem.** Support message written and ready to send.

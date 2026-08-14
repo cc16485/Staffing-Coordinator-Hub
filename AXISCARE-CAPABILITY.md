@@ -1,5 +1,29 @@
 # AxisCare capability map — authoritative
 
+> ## ACCESS RESTORED 2026-08-13 20:56
+>
+> **AxisCare was never down.** The hub's `AXISCARE_SITE` held the API **token**
+> instead of the site number, so every request went to
+> `https://axc_2CASzB3C9Qy….axiscare.com` — a hostname that cannot exist,
+> caught by wildcard DNS and refused by CloudFront before AxisCare ever saw it.
+>
+> Fixed by setting `AXISCARE_SITE=16485`. The hub now returns HTTP 200 with
+> live caregiver JSON. `AXISCARE_VISITS_TOKEN` held a Supabase project ref by
+> the same paste error and was removed so the code falls back to the correct
+> token — very likely the real cause of the visits 403 that has been blocking
+> Eligible to Work.
+>
+> **No support ticket. Nothing to ask them.**
+>
+> Three things I asserted during the outage were wrong and are corrected below:
+> access did not "break at 09:05" — the *training* project has worked
+> continuously while the *hub* project never worked at all; CloudFront was not
+> filtering our User-Agent, it was refusing a nonexistent hostname; and the
+> WordPress 404 was the same wildcard fallback, not evidence of edge filtering.
+>
+> **Everything below marked SUPPORTED, ACCESS-BLOCKED is now simply
+> AVAILABLE.**
+
 Source: `axiscare-openapi.yaml` in this repo. OpenAPI 3.1, `info.version 2025-06-25`,
 63 operations, 26 models, pulled from
 `https://static.axiscare.com/api/stoplight/reference/api.yaml`.
