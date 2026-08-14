@@ -71,8 +71,13 @@ Deno.serve(async (req) => {
   }
 
   // ---------- Vapi webhook ----------
+  // FAIL CLOSED. The old form `if (secret && …)` skipped the check entirely
+  // when VAPI_SECRET was unset, so an anonymous POST ?src=vapi with a crafted
+  // end-of-call-report could WRITE interview transcripts/scores onto a real
+  // caregiver record (matched by caller phone). Missing evidence must never
+  // become permission: no configured secret means refuse, not wave through.
   const secret = Deno.env.get('VAPI_SECRET')
-  if (secret && req.headers.get('x-vapi-secret') !== secret) return json({ error: 'unauthorized' }, 401)
+  if (!secret || req.headers.get('x-vapi-secret') !== secret) return json({ error: 'unauthorized' }, 401)
 
   // deno-lint-ignore no-explicit-any
   let payload: any = {}
