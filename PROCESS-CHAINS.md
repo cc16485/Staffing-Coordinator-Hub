@@ -138,7 +138,32 @@ client can be named as free text until AxisCare arrives — that is a *degraded
 identity link*, not a fake client, and it is exactly how the office already
 works on paper.
 
-**This is the highest-value genuinely unblocked build in the matrix.**
+## Chain 4 status, 2026-08-13
+
+| | |
+|---|---|
+| **BUILT** | Durable issue, 17 categories, action history, canonical routing, follow-up scheduling, duplicate candidates, degraded identity |
+| **DEPLOYED** | `client-issues.sql` installed; `issues-run` live; intake, triage, action and resolve in the Hub at cc.mo-care.com; Owner Home exception-only |
+| **UI-PROVEN** | 22 of 23 checks via the same endpoints the browser calls, routing verified in each recipient's own My Work filter |
+| **PRODUCERS LIVE** | Manual intake (Report a concern) and `call-disposition` for `caregiver issue` / `client concern` |
+| **BLOCKED BY AXISCARE** | **Automatic detection.** Nothing spots an issue nobody reported — care notes, visit anomalies, call-off and late-visit signals all need AxisCare |
+
+**Reported issues are operational now. Discovering unreported ones is not.**
+
+Proven end to end: routing to Cierra and Krystal in their own lists;
+`needs_triage` from a phone concern; triage reclassifying the **same** issue
+with its history intact; a second report offering the existing issue; an action
+leaving the issue open; an issue-backed item refusing the generic close; a
+14-day follow-up scheduled with a real date and only the completed check
+resolving it; staleness raising attention with ownership unchanged; a first
+name alone working with no client record manufactured.
+
+**One decision outstanding:** `payer_authorization` still routes to
+`client_care`, so Angiel's Medicaid, VA and authorisation work reaches Krystal.
+A one-line change once confirmed.
+
+**Not machine-proven:** that the buttons render and fire. Worth five minutes of
+somebody pressing Report a concern and trying to close the result the lazy way.
 
 ---
 

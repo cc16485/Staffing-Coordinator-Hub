@@ -113,7 +113,9 @@ which makes this remaining build work, not an end state.
 The client can be free text until AxisCare arrives. That is a degraded identity
 link, not a fake client, and it is how the office already works on paper.
 
-**Highest-value genuinely unblocked build in the matrix.**
+**BUILT · DEPLOYED · UI-PROVEN · PRODUCERS LIVE.** Detection of unreported
+issues remains **BLOCKED BY AXISCARE**. See [PROCESS-CHAINS.md](PROCESS-CHAINS.md)
+chain 4.
 
 ---
 
