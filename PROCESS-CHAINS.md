@@ -46,6 +46,29 @@ A human touches step 4 and step 10, and only step 12 when it fails.
 business.** It is also the one where growth hurts most: call-offs scale
 linearly with caregiver count.
 
+## Chain 1 starting point, traced 2026-08-13
+
+**Step 2 is already built.** `call-disposition` recognises `call-off` /
+`call off` / `caregiver call-off` and creates a `coverage_cases` record with
+`reason: 'call_off'`, an `asked: []` array for who was contacted, and
+`resolved_at` / `resolved_how` / `covered_by`. The shape is right.
+
+**Three unblocked gaps, none needing AxisCare:**
+
+1. **The coverage case has no owner.** Exactly the defect Chain 4 had — it
+   routes to a queue, not a person. `scheduling_coverage` resolves to Samantha
+   today, so every call-off already lands on the CEO by configuration.
+2. **No work item prompts anybody.** The case is written and nobody is told.
+3. **`asked[]` is never filled.** The field for recording who was contacted
+   exists and nothing writes to it, so the chase has no memory.
+
+**Blocked and correctly parked:** which client and shift (step 3), eligible
+available caregivers (step 5), writing the schedule back (step 9).
+
+**Start here:** owner resolution, a prompt, and outreach orchestration with
+response tracking. That is steps 6, 7, 8 and 12 — four of the nine removable
+steps — with no AxisCare dependency at all.
+
 ---
 
 # CHAIN 2 — New family → Start of Care → first follow-up
