@@ -37,21 +37,48 @@ Deno.serve(async (req) => {
 
   const SB = Deno.env.get('SUPABASE_URL')!
   const KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  const site = Deno.env.get('AXISCARE_SITE_NUMBER')
-  /* The shared project holds app_data; the AxisCare secret may be set there
-     under any of the three names this estate has accumulated. Take whichever
-     exists rather than failing on a naming accident. */
-  /* Named explicitly, not first-of-several. Silently falling through to
-     whichever name happened to exist is how the last dry run reported
-     "0 upcoming visits" when what actually happened was a 403 — an unproven
-     zero presented as a clean result. The name used is reported, and a token
-     that cannot read visits is a FAILURE, never a zero. */
-  const AC_SECRET_NAME = 'AXISCARE_VISITS_TOKEN'
+  /* ── AxisCare token: ordered, NAMED, and always reported ─────────────────
+     The original rule here was "one name only, never first-of-several",
+     written after a dry run reported "0 upcoming visits" when the truth was a
+     403 — an unproven zero presented as a clean result. That rule was right
+     about the danger and wrong about the remedy. The danger is a SILENT
+     fallback, not an ordered one. On 2026-08-13 AXISCARE_VISITS_TOKEN was
+     found to contain a Supabase project ref pasted by mistake and was removed,
+     which left this function with no token at all and the schedule check dark
+     for a second reason.
+
+     So: try the names in a fixed order, and report which one answered. An
+     ordered list that names its winner cannot hide anything. A token that
+     cannot read visits is still a FAILURE, never a zero. */
+  const AC_SECRET_ORDER = ['AXISCARE_VISITS_TOKEN', 'AXISCARE_API_KEY', 'AXISCARE_TOKEN']
+  /* AxisCare tokens observed on this account begin "axc_". That is a PREFERENCE
+     and never a rejection — one sample is not a spec — but it is enough to stop
+     a box holding something else (a Supabase project ref, as AXISCARE_VISITS_TOKEN
+     did) from shadowing the real token sitting in the next box along. */
+  const AC_SECRET_NAME = AC_SECRET_ORDER.find(n => Deno.env.get(n)?.startsWith('axc_'))
+    ?? AC_SECRET_ORDER.find(n => !!Deno.env.get(n))
+    ?? AC_SECRET_ORDER[0]
   const acTok = Deno.env.get(AC_SECRET_NAME)
   const acSecretPresent = !!acTok
-  const acOtherNames = ['AXISCARE_TOKEN','AXISCARE_API_KEY']
-    .filter(n => !!Deno.env.get(n))
-  const acSite = site || Deno.env.get('AXISCARE_SITE')
+  const acOtherNames = AC_SECRET_ORDER.filter(n => n !== AC_SECRET_NAME && !!Deno.env.get(n))
+
+  /* ── AxisCare site: same precedence as axiscare-config and axiscare-probe ──
+     Those two read AXISCARE_SITE first; this function read AXISCARE_SITE_NUMBER
+     first. AXISCARE_SITE=16485 is the value proven to answer with HTTP 200, so
+     the three now agree. Divergent precedence between callers of one API is the
+     same class of bug as a knob set in one caller and not the other. */
+  /* The whole outage was a token pasted into the site-number box, which built
+     https://axc_2CAS….axiscare.com — a hostname that cannot exist. A site
+     number is digits. So prefer the first name holding a USABLE value, and only
+     if none is usable report the first one that was set at all — a wrong value
+     in the first box must not shadow a right value in the second. */
+  const AC_SITE_ORDER = ['AXISCARE_SITE', 'AXISCARE_SITE_NUMBER']
+  const looksLikeSite = (v: string | undefined) => !!v && /^\d+$/.test(v)
+  const acSiteName = AC_SITE_ORDER.find(n => looksLikeSite(Deno.env.get(n)))
+    ?? AC_SITE_ORDER.find(n => !!Deno.env.get(n))
+    ?? AC_SITE_ORDER[0]
+  const acSiteRaw = Deno.env.get(acSiteName)
+  const acSite = looksLikeSite(acSiteRaw) ? acSiteRaw : undefined
   const supabase = createClient(SB, KEY)
 
   // ── the shared rules, or nothing ────────────────────────────────────────
@@ -200,10 +227,13 @@ Deno.serve(async (req) => {
       }
     } catch (err) { visitsError = String(err) }
   } else {
-    visitsError = acSecretPresent
-      ? 'AXISCARE_SITE_NUMBER is not set on this project'
-      : `${AC_SECRET_NAME} is not set on this project` +
-        (acOtherNames.length ? ` (found instead: ${acOtherNames.join(', ')} — these are not used, on purpose)` : '')
+    visitsError = !acSecretPresent
+      ? `no AxisCare token on this project — looked for ${AC_SECRET_ORDER.join(', ')} in that order`
+      : !acSiteRaw
+      ? `no AxisCare site number on this project — looked for ${AC_SITE_ORDER.join(', ')} in that order`
+      : `${acSiteName} is not a site number, so no valid address can be built ` +
+        `(it holds ${acSiteRaw.length} characters ending "${acSiteRaw.slice(-4)}" — ` +
+        `a site number is digits only, e.g. 16485). This is a configuration error, not AxisCare.`
   }
 
   // ── evaluate ────────────────────────────────────────────────────────────
@@ -380,10 +410,18 @@ Deno.serve(async (req) => {
   return json({
     mode: DRY ? 'DRY RUN — nothing was written or sent' : 'LIVE',
     rules: rulesMeta,
+    /* Both branches name the secret and the site variable that were actually
+       used. Two functions silently disagreeing about which variable to read is
+       what made this check dark twice. */
     axiscare: visitsError
-      ? { schedule_check: 'UNAVAILABLE', problem: visitsError, secret_name: AC_SECRET_NAME,
+      ? { schedule_check: 'UNAVAILABLE', problem: visitsError,
+          secret_name: acSecretPresent ? AC_SECRET_NAME : '(none found)',
+          site_name: acSiteRaw ? acSiteName : '(none found)',
+          site: acSite ?? '(unusable)',
           note: 'Affected-visit counts below are NOT ZERO — they are unknown.' }
       : { schedule_check: 'SUCCESS', secret_name: AC_SECRET_NAME,
+          also_present: acOtherNames.length ? acOtherNames : undefined,
+          site_name: acSiteName, site: acSite,
           caregivers_with_visits: visitsByCaregiver.size },
     counts,
     by_reason: byReason,

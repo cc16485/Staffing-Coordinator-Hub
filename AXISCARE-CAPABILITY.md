@@ -13,6 +13,27 @@
 > token — very likely the real cause of the visits 403 that has been blocking
 > Eligible to Work.
 >
+> ### One consequence of that removal, corrected the same night
+>
+> "The code falls back" was true of `axiscare-probe` and **false of
+> `eligibility-sweep`**, which read `AXISCARE_VISITS_TOKEN` by name and treated
+> anything else as a failure on purpose. Removing the secret would therefore have
+> turned the visits 403 into "not set" — the schedule check dark for a second
+> reason, and Eligible to Work still parked.
+>
+> `eligibility-sweep` now resolves the token from
+> `AXISCARE_VISITS_TOKEN → AXISCARE_API_KEY → AXISCARE_TOKEN` and the site from
+> `AXISCARE_SITE → AXISCARE_SITE_NUMBER`, **reporting which name answered in both
+> the SUCCESS and the UNAVAILABLE branch**. The original rule was right that a
+> silent fallback hides a 403 behind a zero; an ordered list that names its winner
+> hides nothing. It also refuses a site value that is not digits, and prefers a
+> token beginning `axc_`, so a wrong value in the first box cannot shadow a right
+> value in the second — the exact shape of tonight's outage.
+>
+> This also removes a precedence split: `axiscare-config` and `axiscare-probe`
+> read `AXISCARE_SITE` first while `eligibility-sweep` read `AXISCARE_SITE_NUMBER`
+> first. All three now agree.
+>
 > **No support ticket. Nothing to ask them.**
 >
 > Three things I asserted during the outage were wrong and are corrected below:

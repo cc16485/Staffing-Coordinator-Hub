@@ -34,6 +34,8 @@ const API_VERSION  = Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01'
 const GHL_KEY      = Deno.env.get('GHL_API_KEY') || ''
 const GHL_LOCATION = Deno.env.get('GHL_LOCATION_ID') || ''
 
+const dISO = (days: number) => new Date(Date.now() + days * 86400000).toISOString().slice(0, 10)
+
 /* Candidate endpoints. Some will 404 — that IS the finding. Nothing here is a
    claim that AxisCare offers it; it is a list of things worth asking for. */
 const PROBES: Array<{ path: string; why: string; token?: string }> = [
@@ -50,8 +52,11 @@ const PROBES: Array<{ path: string; why: string; token?: string }> = [
   { path: '/api/classes',                 why: 'the class vocabulary behind payer' },
   { path: '/api/payers',                  why: 'authoritative payer list' },
   { path: '/api/authorizations',          why: 'authorised hours' },
-  { path: '/api/schedules',               why: 'schedule data' },
-  { path: '/api/visits',                  why: 'visits and clock-ins', token: 'visits' },
+  /* Both endpoints REQUIRE a date range (their 422s say so verbatim), so
+     probing them bare only proves the validator runs. A ±7/14-day window
+     proves the endpoint over real data. */
+  { path: `/api/schedules?startDate=${dISO(-7)}&endDate=${dISO(14)}`, why: 'schedule data' },
+  { path: `/api/visits?startDate=${dISO(-7)}&endDate=${dISO(14)}`,    why: 'visits and clock-ins', token: 'visits' },
   { path: '/api/webhooks',                why: 'webhook self-registration' },
 ]
 
@@ -99,13 +104,35 @@ function normPhone(raw: unknown): string | null {
   return d.length > 11 ? '+' + d : null
 }
 
+/* AxisCare does not always return lists as arrays. The live probe on
+   2026-08-13 showed the real shape: {"results":{"caregivers":{"2":{...}}}} —
+   an OBJECT keyed by id. The first version of this function only accepted
+   arrays, so a full response counted as zero records and the report said
+   "reachable but EMPTY" over live data. An unproven zero, exactly the failure
+   the producer checklist bans. So: descend into the results/data envelope,
+   accept arrays, and accept keyed objects via Object.values. */
 // deno-lint-ignore no-explicit-any
 function listOf(j: any): any[] {
   if (Array.isArray(j)) return j
-  for (const k of ['results', 'data', 'items', 'clients', 'caregivers', 'contacts']) {
-    if (Array.isArray(j?.[k])) return j[k]
+  const ENTITY_KEYS = ['clients', 'caregivers', 'contacts', 'applicants',
+                       'visits', 'schedules', 'leads', 'items', 'data']
+  for (const container of [j, j?.results, j?.data]) {
+    if (!container || typeof container !== 'object') continue
+    if (Array.isArray(container)) return container
+    for (const k of ENTITY_KEYS) {
+      const v = container?.[k]
+      if (Array.isArray(v)) return v
+      if (v && typeof v === 'object') return Object.values(v)   // keyed by id
+    }
   }
   return []
+}
+
+/* True when the response says more pages exist — a one-page count presented
+   as a population is how "exactly 100 clients" nearly became a business fact. */
+// deno-lint-ignore no-explicit-any
+function hasMorePages(j: any): boolean {
+  return !!(j?.results?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPage ?? j?.nextPageUrl)
 }
 
 // deno-lint-ignore no-explicit-any
@@ -314,6 +341,8 @@ Deno.serve(async (req) => {
         fields = list.length ? [...new Set(shapeOf(list[0]))].sort() : [...new Set(shapeOf(j))].sort()
         if (list.length) captured[p.path] = list
         if (count === 0) note = 'reachable but EMPTY — an endpoint that works over no data'
+        else if (hasMorePages(j)) note =
+          `FIRST PAGE ONLY — more pages exist, so ${count} is a page size, not the population`
       } else {
         note = text.slice(0, 160)
       }
@@ -329,6 +358,35 @@ Deno.serve(async (req) => {
       fields: fields.slice(0, 60),
       note,
     })
+  }
+  /* Responsible parties are nested per client — /api/clients/{id}/responsibleParties.
+     The top-level probe 404s by design (the spec has no such route), so a real
+     verdict needs a real client id. Bare id strings and {id} objects both occur. */
+  {
+    const clientList = captured['/api/clients'] ?? captured['/api/clients?active=true'] ?? []
+    const first = clientList[0]
+    const cid = typeof first === 'object' ? (first?.id ?? first?.clientId) : first
+    if (cid != null && String(cid).length) {
+      const path = `/api/clients/${cid}/responsibleParties`
+      let status = 0, note = '', count: number | null = null, fields: string[] = []
+      try {
+        const r = await fetch(`https://${SITE}.axiscare.com${path}`, { headers: headers() })
+        status = r.status
+        const text = await r.text()
+        if (r.ok) {
+          const j = JSON.parse(text || '{}')
+          const list = listOf(j)
+          count = list.length
+          fields = list.length ? [...new Set(shapeOf(list[0]))].sort() : [...new Set(shapeOf(j))].sort()
+          if (count === 0) note = 'reachable — this client has no responsible parties on file'
+        } else note = text.slice(0, 160)
+      } catch (e) { note = e instanceof Error ? e.message : String(e) }
+      capability.push({
+        endpoint: '/api/clients/{id}/responsibleParties',
+        purpose: 'FAMILY / responsible parties (nested per client — probed with a real id)',
+        status, available: status === 200, records: count, fields: fields.slice(0, 60), note,
+      })
+    }
   }
   report.capability_map = capability
 

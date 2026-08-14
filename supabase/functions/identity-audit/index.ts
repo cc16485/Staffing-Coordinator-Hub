@@ -24,7 +24,15 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-const GHL_KEY      = Deno.env.get('GHL_API_KEY') || ''
+/* GHL_PIT is the private integration created 2026-08-13 with the read scopes
+   the original key lacks (View Custom Fields / Tags / Opportunities — the 401
+   that kept the custom-fields bridge dark). GHL_API_KEY stays untouched because
+   it powers live candidate SMS; replacing a working send key with a token whose
+   send scope is unproven is not a fix. Ordered fallback, and the report names
+   which one answered — a fallback that names its winner hides nothing. */
+const GHL_KEY_ORDER = ['GHL_PIT', 'GHL_API_KEY'] as const
+const GHL_KEY_NAME  = GHL_KEY_ORDER.find(n => !!Deno.env.get(n)) ?? 'GHL_API_KEY'
+const GHL_KEY      = Deno.env.get(GHL_KEY_NAME) || ''
 const GHL_LOCATION = Deno.env.get('GHL_LOCATION_ID') || ''
 
 const H = {
@@ -94,11 +102,13 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
   if (!GHL_KEY || !GHL_LOCATION) {
     return new Response(JSON.stringify({
-      ok: false, error: 'GHL_API_KEY or GHL_LOCATION_ID is not set',
+      ok: false,
+      error: !GHL_LOCATION ? 'GHL_LOCATION_ID is not set'
+        : `no GHL token on this project — looked for ${GHL_KEY_ORDER.join(', ')} in that order`,
     }), { status: 500, headers: { 'Content-Type': 'application/json' } })
   }
 
-  const report: Record<string, unknown> = { read_only_to_ghl: true }
+  const report: Record<string, unknown> = { read_only_to_ghl: true, ghl_token_used: GHL_KEY_NAME }
   const url  = new URL(req.url)
   const mode = url.searchParams.get('mode') || 'classify'
   const sbEarly = createClient(SUPABASE_URL, SERVICE_KEY)
@@ -109,6 +119,7 @@ Deno.serve(async (req) => {
     const tags   = await ghl(`/locations/${GHL_LOCATION}/tags`)
     const pipes  = await ghl(`/opportunities/pipelines?locationId=${GHL_LOCATION}`)
     return new Response(JSON.stringify({
+      ghl_token_used: GHL_KEY_NAME,
       inventory: {
         custom_fields: fields.ok
           // deno-lint-ignore no-explicit-any
