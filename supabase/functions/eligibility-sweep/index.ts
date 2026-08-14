@@ -118,6 +118,21 @@ Deno.serve(async (req) => {
 
   const body = await req.json().catch(() => ({})) as Record<string, unknown>
 
+  /* ── GATE (P0-1). FAIL CLOSED. ─────────────────────────────────────────
+     This function returns caregiver names, their compliance-failure reasons,
+     and the client names on their schedules. It was deployed --no-verify-jwt
+     with no gate, so the anonymous internet could read all of it (the project
+     ref is in the public repo). Require a shared secret in the body. If the
+     secret is not configured, refuse — a missing gate must never mean open.
+     Only script 46 calls this function; it sends { token }. Redeploy
+     WITHOUT --no-verify-jwt so this runs behind JWT verification too. */
+  {
+    const gate = Deno.env.get('ELIGIBILITY_SWEEP_TOKEN')
+    if (!gate || body.token !== gate) {
+      return json({ error: 'unauthorized' }, 401)
+    }
+  }
+
   /* ── THE JANE FIXTURE, RUN HERE RATHER THAN SIMULATED ──────────────────
      Exercises the real rules, in the real runtime, through the same branching
      the sweep uses. It touches no real caregiver and writes nothing. The point
