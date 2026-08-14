@@ -575,6 +575,14 @@ Deno.serve(async (req) => {
     add(clean(c.first), clean(c.last), normPhone(c.phone), clean(c.email) || null,
         'caregiver', c.active === false ? 'former' : 'active',
         'hub', 'caregiver', String(c.id ?? ''), c.hire_date ?? null)
+    /* The durable link. After the reconciliation this is what identity should
+       be built on — the Hub id is ours, the AxisCare id is the system of
+       record's, and only the second survives a roster rebuild. */
+    if (clean(c.axiscare_id)) {
+      add(clean(c.first), clean(c.last), normPhone(c.phone), clean(c.email) || null,
+          'caregiver', c.active === false ? 'former' : 'active',
+          'axiscare', 'caregiver', clean(c.axiscare_id), c.hire_date ?? null)
+    }
   }
   // deno-lint-ignore no-explicit-any
   for (const c of (byKey.get('candidates') ?? []) as any[]) {
@@ -740,9 +748,19 @@ Deno.serve(async (req) => {
       if (!error) sourceRows++
     }
     if (d.phone) {
+      /* PROVENANCE IS STATED, NEVER INHERITED. A caregiver reconciled from
+         AxisCare with independent GHL corroboration is confirmed and safe for
+         outreach. Anything else stays probable — useful for telling a human
+         who is calling, never sufficient to message them. */
+      const fromAxis = d.sources.find(x => x.system === 'axiscare')
       const { error } = await sb.from('phone_index').upsert({
         phone: d.phone, person_id: personId, kind: 'mobile',
         shared: sharedLines.has(d.phone),
+        source_system: fromAxis ? 'axiscare' : 'hub',
+        source_record_id: fromAxis ? fromAxis.source_id : null,
+        confidence: fromAxis ? 'confirmed' : 'probable',
+        verification_status: fromAxis ? 'verified' : 'unverified',
+        imported_at: new Date().toISOString(),
       }, { onConflict: 'phone,person_id' })
       if (!error) phoneRows++
     }
