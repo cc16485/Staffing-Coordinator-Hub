@@ -72,7 +72,29 @@ async function coverageOwner(): Promise<{ owner: string | null; why: string }> {
    service area, client requirements, overtime risk and existing relationship
    all need AxisCare and are reported as blocked rather than faked. */
 // deno-lint-ignore no-explicit-any
+function nameKeyOf(n: string) {
+  return n.toLowerCase().replace(/[^a-z ]/g, '').split(/\s+/).filter(Boolean).join(' ')
+}
+
+// deno-lint-ignore no-explicit-any
 async function candidatesFor(_c: any) {
+  /* Who holds an office domain? Read from the canonical record, so adding a
+     coordinator never accidentally puts them in a coverage wave. */
+  const officeStaff = new Set<string>()
+  {
+    const { data: doms } = await sb.from('domains')
+      .select('owner_person, escalation_person').eq('entity', 'cc_ihs')
+    const ids = [...new Set((doms ?? []).flatMap(d =>
+      [d.owner_person, d.escalation_person].filter(Boolean)))]
+    if (ids.length) {
+      const { data: ppl } = await sb.from('persons')
+        .select('primary_email, full_name').in('person_id', ids)
+      for (const p of (ppl ?? [])) {
+        if (p.primary_email) officeStaff.add(String(p.primary_email).toLowerCase())
+        if (p.full_name) officeStaff.add(nameKeyOf(String(p.full_name)))
+      }
+    }
+  }
   const { data } = await sb.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
   // deno-lint-ignore no-explicit-any
   const roster = (Array.isArray(data?.data) ? data!.data : []) as any[]
@@ -82,6 +104,15 @@ async function candidatesFor(_c: any) {
     const name = [clean(cg.first), clean(cg.last)].filter(Boolean).join(' ').trim()
     if (!name) continue
     if (cg.active === false) { out.push({ name, skipped: 'no longer active' }); continue }
+    /* THE ROSTER MIXES OFFICE STAFF WITH FIELD CAREGIVERS. The dry run named
+       Samantha and Krystal in wave 1 — ringing the CEO and the supervisor to
+       cover a shift. Nobody who holds an active office domain is a coverage
+       candidate, whatever the roster says. Their own capability rows can put
+       them back in deliberately; being on the roster is not consent. */
+    if (officeStaff.has(String(cg.email || '').toLowerCase())
+        || officeStaff.has(nameKeyOf(name))) {
+      out.push({ name, skipped: 'office staff, not a field coverage candidate' }); continue
+    }
     const phone = normalisePhone(cg.phone)
     if (!phone) { out.push({ name, skipped: 'no phone on file' }); continue }
 

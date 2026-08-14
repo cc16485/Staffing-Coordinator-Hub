@@ -79,6 +79,13 @@ available caregivers (step 5), writing the schedule back (step 9).
 same coverage case, and an unresolved case does not yet reliably become an
 exception. Those two are the remaining unblocked work.
 
+**Found by the dry run, and worth more than the phone gap:** wave 1 would have
+rung **Samantha and Krystal**. The caregiver roster mixes office staff with
+field staff, so candidate selection was about to offer to text the CEO and the
+supervisor to cover a shift. Anyone holding an active office domain is now
+excluded, read from the canonical `domains` record so adding a coordinator
+never puts them in a wave by accident. Being on the roster is not consent.
+
 **Do not solve the phone problem inside Chain 1.** The coverage machinery is
 correct and waiting for trusted contact data. When AxisCare or stronger GHL
 identifiers arrive, sending turns on without redesigning anything.
