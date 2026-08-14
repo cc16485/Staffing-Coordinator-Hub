@@ -157,8 +157,13 @@ Deno.serve(async (req) => {
     would_pass: rosterCheck.filter(x => x.may_autosend).length,
     no_phone: rosterCheck.filter(x => x.skipped === 'no phone on file').length,
     inactive: rosterCheck.filter(x => x.skipped === 'no longer active').length,
+    office_staff: rosterCheck.filter(x => String(x.skipped ?? '').startsWith('office staff')).length,
+    /* Untrusted means a phone EXISTS and failed the gate. Lumping the
+       office-staff exclusion in here reported "2 phones present but
+       untrusted" when those two never reached the phone check at all. */
     untrusted: rosterCheck.filter(x => x.skipped && x.skipped !== 'no phone on file'
-                                        && x.skipped !== 'no longer active').length,
+                                        && x.skipped !== 'no longer active'
+                                        && !String(x.skipped).startsWith('office staff')).length,
     /* Anyone who passes gets named, with where the number came from, because
        a caregiver becoming messageable is the thing to investigate. */
     passed: rosterCheck.filter(x => x.may_autosend)
@@ -168,8 +173,14 @@ Deno.serve(async (req) => {
       const k = String(x.skipped ?? 'eligible'); m[k] = (m[k] ?? 0) + 1; return m
     }, {})).sort((a, b) => b[1] - a[1]),
     /* Who WOULD be wave 1 if trusted numbers existed. Names the prize. */
-    wave_1_if_trusted: rosterCheck.filter(x => x.skipped !== 'no longer active')
-                                  .slice(0, WAVE_SIZE).map(x => x.name),
+    /* Only people who would ACTUALLY be asked. The previous version filtered
+       out inactive staff and nothing else, so it went on naming Samantha and
+       Krystal in wave 1 after the office-staff exclusion was added — the same
+       misleading output the exclusion existed to prevent. */
+    wave_1_if_trusted: rosterCheck
+      .filter(x => x.skipped !== 'no longer active'
+                && !String(x.skipped ?? '').startsWith('office staff'))
+      .slice(0, WAVE_SIZE).map(x => x.name),
   }
 
   const detail: Array<Record<string, unknown>> = []
