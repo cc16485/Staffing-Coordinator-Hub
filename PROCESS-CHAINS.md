@@ -65,9 +65,31 @@ linearly with caregiver count.
 **Blocked and correctly parked:** which client and shift (step 3), eligible
 available caregivers (step 5), writing the schedule back (step 9).
 
-**Start here:** owner resolution, a prompt, and outreach orchestration with
-response tracking. That is steps 6, 7, 8 and 12 — four of the nine removable
-steps — with no AxisCare dependency at all.
+## Chain 1 status, 2026-08-13
+
+| | |
+|---|---|
+| **BUILT** | Coverage case (existing), manual ask/response state (existing `covAsk`/`covAskState`), owner resolution, duty holder, candidate orchestration, `asked[]` dedupe memory, controlled waves |
+| **PROVEN** | Dry-run recipient safety and no duplicate asks, tested against the whole roster rather than only inside a case |
+| **BLOCKED** | **Autonomous sends, until trustworthy caregiver phone numbers exist.** An identity-source dependency, not a scheduling one |
+| **BLOCKED BY AXISCARE** | Shift details, availability, schedule conflict, skills, overtime, distance, assignment write-back, family notification |
+| **REMAINS** | **Inbound reply correlation** and **failure escalation** |
+
+**Not complete.** A real caregiver response cannot yet travel back into the
+same coverage case, and an unresolved case does not yet reliably become an
+exception. Those two are the remaining unblocked work.
+
+**Do not solve the phone problem inside Chain 1.** The coverage machinery is
+correct and waiting for trusted contact data. When AxisCare or stronger GHL
+identifiers arrive, sending turns on without redesigning anything.
+
+**Ranking is additive by design:** trusted identity → availability → schedule
+conflict → required skills → overtime → distance → client relationship. Only
+the first is real today; the rest attach as AxisCare exposes them.
+
+**No family notification before assignment.** Accepted caregiver → human
+selection → AxisCare assignment succeeds → *then* the family is told. Never
+before the authoritative system has committed it.
 
 ---
 

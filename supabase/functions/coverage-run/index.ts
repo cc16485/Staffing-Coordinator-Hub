@@ -115,6 +115,32 @@ Deno.serve(async (req) => {
   const items = (Array.isArray(itemRow?.data) ? itemRow!.data : []) as any[]
   const haveItem = new Set(items.map(i => String(i.id)))
 
+  /* THE GATE MUST BE TESTED EVEN WITH NO OPEN CASE.
+     The first version only evaluated candidates inside a case, so with zero
+     cases it reported "nobody passed the gate" having asked nobody. A check
+     that cannot fail is not a check. This evaluates the whole roster against
+     maySendTo() independently, so the safety result is real either way. */
+  const rosterCheck = await candidatesFor(null)
+  const gate = {
+    roster_size: rosterCheck.length,
+    would_pass: rosterCheck.filter(x => x.may_autosend).length,
+    no_phone: rosterCheck.filter(x => x.skipped === 'no phone on file').length,
+    inactive: rosterCheck.filter(x => x.skipped === 'no longer active').length,
+    untrusted: rosterCheck.filter(x => x.skipped && x.skipped !== 'no phone on file'
+                                        && x.skipped !== 'no longer active').length,
+    /* Anyone who passes gets named, with where the number came from, because
+       a caregiver becoming messageable is the thing to investigate. */
+    passed: rosterCheck.filter(x => x.may_autosend)
+                       .map(x => ({ name: x.name, confidence: x.confidence,
+                                    phone_last4: x.phone_last4 })),
+    reasons: Object.entries(rosterCheck.reduce((m: Record<string, number>, x) => {
+      const k = String(x.skipped ?? 'eligible'); m[k] = (m[k] ?? 0) + 1; return m
+    }, {})).sort((a, b) => b[1] - a[1]),
+    /* Who WOULD be wave 1 if trusted numbers existed. Names the prize. */
+    wave_1_if_trusted: rosterCheck.filter(x => x.skipped !== 'no longer active')
+                                  .slice(0, WAVE_SIZE).map(x => x.name),
+  }
+
   const detail: Array<Record<string, unknown>> = []
   const stats = { open_cases: open.length, owner_set: 0, prompts_created: 0,
                   candidates_total: 0, may_autosend: 0, blocked_no_phone: 0,
@@ -183,6 +209,7 @@ Deno.serve(async (req) => {
       'dedupe, recipient selection and state tracking.',
     coverage_owner: own,
     wave_size: WAVE_SIZE,
+    gate_evaluated_independently: gate,
     stats, detail,
     blocked_by_axiscare: [
       'which client and shift the call-off affects',
