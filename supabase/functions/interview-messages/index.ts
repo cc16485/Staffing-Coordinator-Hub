@@ -7,6 +7,13 @@
 //   day before      → reminder, text and email
 //   hour before     → short text only, address and nothing else
 //   applied, never booked → three nudges, then we stop and it becomes a call
+//   cancelled       → confirmation to the applicant with the rebook link, and
+//                     a heads-up to the office when it was the applicant's call
+//
+// Confirmations and reminders carry the applicant's own manage link
+// (mo-care.com/apply?book=<id>), where moving or cancelling is self-serve.
+// interview-cancel-reschedule.sql (care-coordinator-hub repo) installs the
+// functions and columns behind that.
 //
 // Every message carries where to come, because a reminder without an address
 // is a reminder to be lost. The hour-before one is almost entirely address.
@@ -96,8 +103,8 @@ Deno.serve(async (req) => {
     (st?.photo_url ? `<img src="${st.photo_url}" alt="Our entrance" style="width:100%;border-radius:8px;margin-top:10px">` : '') +
     `</div>`
 
-  const out = { confirmed: 0, reminded_day: 0, reminded_hour: 0, nudged: 0, gave_up: 0, alerted: 0 }
-  const plan: Record<string, string[]> = { confirm: [], day: [], hour: [], nudge: [], give_up: [], alerted: [] }
+  const out = { confirmed: 0, reminded_day: 0, reminded_hour: 0, nudged: 0, gave_up: 0, alerted: 0, cancel_notified: 0 }
+  const plan: Record<string, string[]> = { confirm: [], day: [], hour: [], nudge: [], give_up: [], alerted: [], cancelled: [] }
 
   /* ---------------- interviews that are booked ---------------- */
   const { data: bookings, error } = await supabase
@@ -116,6 +123,10 @@ Deno.serve(async (req) => {
     const untilHours = (when.getTime() - Date.now()) / 3_600_000
     const day = fmtDay(when), time = fmtTime(when)
     const canText = !!a.phone && a.sms_consent === true
+    /* The same link the nudges use: it opens on THEIR booking, with move and
+       cancel one tap away. "Call us and we will move it" was a promise with a
+       queue in front of it; this is the promise kept. */
+    const manageUrl = 'https://mo-care.com/apply?book=' + encodeURIComponent(String(b.applicant_id))
 
     const send = async (kind: 'confirm' | 'day' | 'hour') => {
       /* Refuse outside outreach hours rather than at each call site, so a new
@@ -137,11 +148,11 @@ Deno.serve(async (req) => {
         : `A reminder that your interview is <b>tomorrow, ${day} at ${time}</b>.`
       if (canText) await sms(contactId,
         `Hi ${first}, ${kind === 'confirm' ? 'your interview with Caring Companions is booked for' : 'reminder: your interview is'} ` +
-        `${day} at ${time}, at ${place}. ${note} Questions? Call ${phone}.`)
+        `${day} at ${time}, at ${place}. ${note} Need to move or cancel it? ${manageUrl} — or call ${phone}.`)
       if (a.email) await email(contactId,
         kind === 'confirm' ? `Your interview: ${day} at ${time}` : `Tomorrow: your interview at ${time}`,
         shell(`<p>Hi ${first},</p><p>${opener}</p>${whereBlock()}` +
-          `<p>It takes about 30 minutes. If anything changes, just call or text us on ${phone} and we will move it.</p>` +
+          `<p>It takes about 30 minutes. Need to move or cancel it? <a href="${manageUrl}">You can do that here</a> in a few taps, or call or text us on ${phone}.</p>` +
           `<p>We are looking forward to meeting you.</p>`))
       return true
     }
@@ -275,6 +286,63 @@ Deno.serve(async (req) => {
         .update({ office_alerted_at: new Date().toISOString() }).eq('id', p.id)
       out.alerted++
     }
+  }
+
+  /* ---------------- cancellations ----------------
+     A cancelled interview needs saying out loud twice: to the applicant, so
+     they know it is done and how to rebook, and to the office when it was the
+     applicant who cancelled, so the seat is not discovered empty on the day.
+     Pure reschedules never land here — the move stamps its own
+     cancel_notified_at, and the new booking's confirmation says it all. */
+  const { data: cx } = await supabase
+    .from('interview_bookings')
+    .select('*, job_applicants(first_name,last_name,phone,email,sms_consent)')
+    .eq('status', 'cancelled')
+    .is('cancel_notified_at', null)
+    .gte('cancelled_at', new Date(Date.now() - 7 * 86_400_000).toISOString())
+
+  for (const b of cx ?? []) {
+    // deno-lint-ignore no-explicit-any
+    const a: any = b.job_applicants
+    if (!a) continue
+    const first = a.first_name || 'there'
+    const when = new Date(b.starts_at)
+    const day = fmtDay(when), time = fmtTime(when)
+    const bookUrl = 'https://mo-care.com/apply?book=' + encodeURIComponent(String(b.applicant_id))
+
+    plan.cancelled.push(`${first} — ${day} ${time}${b.cancelled_by === 'applicant' ? ' (their call)' : ''}`)
+    if (dry) continue
+    if (!withinOutreachHours()) continue        // not stamped, so it goes out after 8am
+    if (!ghlToken || !ghlLocation) continue
+
+    const contactId = await contactFor(a.phone, a.email, first)
+    if (contactId) {
+      if (a.phone && a.sms_consent === true) await sms(contactId,
+        `Hi ${first}, your interview with Caring Companions for ${day} at ${time} is cancelled — nothing more to do. ` +
+        `Want a different time? Pick one here: ${bookUrl} or call ${phone}.`)
+      if (a.email) await email(contactId, `Your interview on ${day} is cancelled`,
+        shell(`<p>Hi ${first},</p><p>Your interview for <b>${day} at ${time}</b> is cancelled — nothing more to do on your side.</p>` +
+          `<p>If you would like a different time, <a href="${bookUrl}">pick one here</a> whenever suits you, or call us on ${phone}.</p>`))
+    }
+
+    /* The office hears about it on the same channel that announces a good
+       application. An office cancellation needs no telling — they pressed it. */
+    if (b.cancelled_by === 'applicant' && (alertTo ?? []).length) {
+      const who = `${a.first_name ?? ''} ${a.last_name ?? ''}`.trim() || 'An applicant'
+      const line = `${who} cancelled their interview for ${day} at ${time}.` +
+        (b.cancel_reason ? ` Reason: ${b.cancel_reason}.` : '') +
+        ` They have the link to rebook; they are in the hub under Applicants.`
+      for (const t of alertTo!) {
+        const cid = await contactFor(t.phone ?? null, t.email ?? null, t.name ?? 'Team')
+        if (!cid) continue
+        if (t.phone) await sms(cid, line)
+        if (t.email) await email(cid, `Interview cancelled: ${who}`, shell(`<p>${line}</p>`))
+      }
+    }
+
+    await supabase.from('interview_bookings')
+      .update({ cancel_notified_at: new Date().toISOString() }).eq('id', b.id)
+    out.cancel_notified++
   }
 
   return json(dry ? { ok: true, dry: true, would: plan } : { ok: true, ...out })
