@@ -305,6 +305,18 @@ Deno.serve(async (req) => {
     // deno-lint-ignore no-explicit-any
     const a: any = b.job_applicants
     if (!a) continue
+    /* They cancelled and then booked a new time before this run — that is a
+       reschedule in two steps, not a cancellation. Saying "your interview is
+       cancelled" next to "see you Thursday" helps nobody, so the notice is
+       swallowed and only the new booking's confirmation goes out. */
+    if (booked.has(b.applicant_id)) {
+      plan.cancelled.push(`${a.first_name || 'someone'} — rebooked already, staying quiet`)
+      if (!dry) {
+        await supabase.from('interview_bookings')
+          .update({ cancel_notified_at: new Date().toISOString() }).eq('id', b.id)
+      }
+      continue
+    }
     const first = a.first_name || 'there'
     const when = new Date(b.starts_at)
     const day = fmtDay(when), time = fmtTime(when)
