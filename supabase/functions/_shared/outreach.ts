@@ -152,8 +152,9 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
   // ── proactive, currently triggered by hand or by a schedule that is missing ─
   'applicant-reengage': { class: 'proactive_external', scheduled: false,
     why: 'we restart a conversation the applicant let go quiet.' },
-  'reference-chase':    { class: 'proactive_external', scheduled: false,
-    why: 'chasing an employer for a favour. They do not answer at weekends. NOTE: its header claims a daily cron that does not exist.' },
+  'reference-chase':    { class: 'proactive_external', scheduled: true,
+    why: 'chasing an employer for a favour. They do not answer at weekends. '
+      + 'Cron: daily-reference-chase, weekday mornings — created by cron-reference-chase.sql (care-coordinator-hub repo).' },
 
   // ── urgent internal ───────────────────────────────────────────────────────
   'ops-escalate':       { class: 'urgent_internal', scheduled: false,

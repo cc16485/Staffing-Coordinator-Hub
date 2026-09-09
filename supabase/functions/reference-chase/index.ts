@@ -18,7 +18,10 @@
 // doing us a favour and a second nag costs more goodwill than it recovers.
 // Chasing harder was never the answer; chasing the right person was.
 //
-// Runs daily by pg_cron. Supports ?dry=1 to report without sending.
+// Runs weekday mornings by pg_cron (job 'daily-reference-chase' — created by
+// cron-reference-chase.sql in the care-coordinator-hub repo), plus an
+// immediate poke from the hub whenever new reference rows are inserted.
+// Supports ?dry=1 to report without sending.
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { outreachGate } from '../_shared/outreach.ts'
