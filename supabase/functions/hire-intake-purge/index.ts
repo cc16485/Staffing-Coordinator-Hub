@@ -27,6 +27,23 @@ const json = (b: unknown, s = 200) =>
 
 const MAX_AGE_DAYS = 60
 
+/* HEARTBEAT: one replaced row under app_data 'automation_heartbeats' (fixed
+   id, never grows). This is the function where silence carries legal weight —
+   the apply page promises the SSN is deleted, and until now a purge that
+   stopped running was indistinguishable from one with nothing to purge.
+   automation-watchdog reads these every morning. Inlined so a dashboard
+   paste-deploy stays one file. */
+// deno-lint-ignore no-explicit-any
+async function beat(supabase: any, ok: boolean, note: string) {
+  try {
+    await supabase.rpc('upsert_app_data_item', {
+      target_key: 'automation_heartbeats',
+      item: { id: 'hb_hire-intake-purge', automation: 'hire-intake-purge',
+              at: new Date().toISOString(), ok, note: String(note).slice(0, 300) },
+    })
+  } catch (e) { console.error('[hire-intake-purge] heartbeat failed', e) }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   const dry = new URL(req.url).searchParams.get('dry') === '1'
@@ -40,8 +57,11 @@ Deno.serve(async (req) => {
     .select('id, first_name, last_name, created_at, screening_cleared_at')
     .not('ssn', 'is', null)
     .or(`screening_cleared_at.not.is.null,created_at.lt.${cutoff}`)
-  if (error) return json({ error: error.message }, 500)
-  if (!rows?.length) return json({ ok: true, dry, purged: 0, note: 'nothing due to be cleared' })
+  if (error) { await beat(supabase, false, 'query: ' + error.message); return json({ error: error.message }, 500) }
+  if (!rows?.length) {
+    if (!dry) await beat(supabase, true, 'nothing due to be cleared')
+    return json({ ok: true, dry, purged: 0, note: 'nothing due to be cleared' })
+  }
 
   const reason = (r: { created_at: string; screening_cleared_at: string | null }) =>
     r.screening_cleared_at ? 'screening cleared' : `${MAX_AGE_DAYS} days old`
@@ -61,5 +81,9 @@ Deno.serve(async (req) => {
       .eq('id', r.id)
     if (!e) purged++
   }
+  /* purged < of means some rows refused the update — that is a failure to
+     shout about, not a statistic to bury in an HTTP response nobody reads. */
+  await beat(supabase, purged === rows.length,
+    `purged ${purged} of ${rows.length}` + (purged === rows.length ? '' : ' — some rows would not update'))
   return json({ ok: true, purged, of: rows.length })
 })

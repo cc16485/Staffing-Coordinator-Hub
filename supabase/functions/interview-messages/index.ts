@@ -52,6 +52,23 @@ const TZ_HOUR = () =>
   Number(new Date().toLocaleString('en-US', { timeZone: TZ, hour: '2-digit', hour12: false }))
 const withinOutreachHours = () => { const h = TZ_HOUR(); return h >= 8 && h < 18 }
 
+/* HEARTBEAT. One replaced row per automation under app_data key
+   'automation_heartbeats' (fixed item id, so it never grows). A run that
+   found nothing to do still beats; a run that never happened has no beat.
+   automation-watchdog reads these every morning and tells the office which
+   is which — until now a dead cron and a quiet day looked identical.
+   Inlined rather than shared so a dashboard paste-deploy stays one file. */
+// deno-lint-ignore no-explicit-any
+async function beat(supabase: any, ok: boolean, note: string) {
+  try {
+    await supabase.rpc('upsert_app_data_item', {
+      target_key: 'automation_heartbeats',
+      item: { id: 'hb_interview-messages', automation: 'interview-messages',
+              at: new Date().toISOString(), ok, note: String(note).slice(0, 300) },
+    })
+  } catch (e) { console.error('[interview-messages] heartbeat failed', e) }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   const dry = new URL(req.url).searchParams.get('dry') === '1'
@@ -112,7 +129,7 @@ Deno.serve(async (req) => {
     .select('*, job_applicants(first_name,last_name,phone,email,sms_consent)')
     .eq('status', 'booked')
     .gte('starts_at', new Date(Date.now() - 3 * 3_600_000).toISOString())
-  if (error) return json({ error: error.message }, 500)
+  if (error) { await beat(supabase, false, 'bookings query: ' + error.message); return json({ error: error.message }, 500) }
 
   for (const b of bookings ?? []) {
     // deno-lint-ignore no-explicit-any
@@ -357,5 +374,7 @@ Deno.serve(async (req) => {
     out.cancel_notified++
   }
 
+  /* Dry runs don't beat: a manual ?dry=1 must never make a dead cron look alive. */
+  if (!dry) await beat(supabase, true, JSON.stringify(out))
   return json(dry ? { ok: true, dry: true, would: plan } : { ok: true, ...out })
 })

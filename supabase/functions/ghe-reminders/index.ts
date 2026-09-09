@@ -29,6 +29,21 @@ const json = (b: unknown, s = 200) =>
 const esc = (t: string) =>
   String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
+/* HEARTBEAT: one replaced row under app_data 'automation_heartbeats' (fixed
+   id, never grows). A quiet day still beats; a run that never happened has no
+   beat — automation-watchdog reads these every morning. Inlined so a
+   dashboard paste-deploy stays one file. */
+// deno-lint-ignore no-explicit-any
+async function beat(supabase: any, ok: boolean, note: string) {
+  try {
+    await supabase.rpc('upsert_app_data_item', {
+      target_key: 'automation_heartbeats',
+      item: { id: 'hb_ghe-reminders', automation: 'ghe-reminders',
+              at: new Date().toISOString(), ok, note: String(note).slice(0, 300) },
+    })
+  } catch (e) { console.error('[ghe-reminders] heartbeat failed', e) }
+}
+
 Deno.serve(async (req) => {
   /* proactive_external: we start this, so weekdays only, 8am-6pm.
      Policy lives in _shared/outreach.ts. */
@@ -45,10 +60,13 @@ Deno.serve(async (req) => {
   const day = now.getDate()
   const dow = now.getDay()
   const month = now.toISOString().slice(0, 7)
-  const speakToday = force || day === 1 || day === 20 || dow === 1
-  if (!speakToday) return json({ ok: true, skipped: 'quiet day — GHE nudges go out Mondays, the 1st and the 20th' })
-
+  /* Client before the quiet-day exit, so a quiet day can still beat. */
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  const speakToday = force || day === 1 || day === 20 || dow === 1
+  if (!speakToday) {
+    if (!dry) await beat(supabase, true, 'quiet day')
+    return json({ ok: true, skipped: 'quiet day — GHE nudges go out Mondays, the 1st and the 20th' })
+  }
   const read = async (k: string) => {
     const { data } = await supabase.from('app_data').select('data').eq('key', k).maybeSingle()
     // deno-lint-ignore no-explicit-any
@@ -148,6 +166,8 @@ Deno.serve(async (req) => {
     }
   }
 
+  if (!dry) await beat(supabase, true,
+    `due ${dueNow.length}, overdue ${overdue.length}, awaiting Fusion ${awaitingUpload.length}, emails ${sent}`)
   return json({
     ok: true, dry, day, month,
     due_this_month: dueNow.length, overdue: overdue.length,

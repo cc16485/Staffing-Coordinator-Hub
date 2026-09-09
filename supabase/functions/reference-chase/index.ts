@@ -39,6 +39,21 @@ const ASK_APPLICANT_AFTER_DAYS = 5
 const GIVE_UP_AFTER_DAYS = 9
 const daysSince = (iso: string | null) => iso ? (Date.now() - new Date(iso).getTime()) / 86400_000 : 0
 
+/* HEARTBEAT: one replaced row under app_data 'automation_heartbeats' (fixed
+   id, never grows). A run that found nothing still beats; a run that never
+   happened has no beat — automation-watchdog reads these every morning.
+   Inlined rather than shared so a dashboard paste-deploy stays one file. */
+// deno-lint-ignore no-explicit-any
+async function beat(supabase: any, ok: boolean, note: string) {
+  try {
+    await supabase.rpc('upsert_app_data_item', {
+      target_key: 'automation_heartbeats',
+      item: { id: 'hb_reference-chase', automation: 'reference-chase',
+              at: new Date().toISOString(), ok, note: String(note).slice(0, 300) },
+    })
+  } catch (e) { console.error('[reference-chase] heartbeat failed', e) }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   /* Chasing an employer for a favour: proactive external, so weekdays
@@ -53,8 +68,11 @@ Deno.serve(async (req) => {
     .from('reference_requests')
     .select('*')
     .is('responded_at', null)
-  if (error) return json({ error: error.message }, 500)
-  if (!open?.length) return json({ ok: true, dry, nudged: 0, escalated: 0, note: 'nothing outstanding' })
+  if (error) { await beat(supabase, false, 'query: ' + error.message); return json({ error: error.message }, 500) }
+  if (!open?.length) {
+    if (!dry) await beat(supabase, true, 'nothing outstanding')
+    return json({ ok: true, dry, nudged: 0, escalated: 0, note: 'nothing outstanding' })
+  }
 
   const ghlToken = Deno.env.get('GHL_TOKEN')
   const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
@@ -259,6 +277,8 @@ Deno.serve(async (req) => {
     }
   }
 
+  if (!dry) await beat(supabase, true,
+    `outstanding ${open.length}, first asks ${asked_first_time}, reminders ${nudged}, applicants ${asked}, escalated ${escalated}`)
   return json({ ok: true, outstanding: open.length, asked_first_time,
                 reference_reminders: nudged, applicants_asked: asked, escalated })
 })

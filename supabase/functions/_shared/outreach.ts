@@ -157,6 +157,9 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
       + 'Cron: daily-reference-chase, weekday mornings — created by cron-reference-chase.sql (care-coordinator-hub repo).' },
 
   // ── urgent internal ───────────────────────────────────────────────────────
+  'automation-watchdog': { class: 'urgent_internal', scheduled: true,
+    why: 'tells the office when a scheduled automation has gone quiet or is erroring. '
+      + 'Cron: daily-automation-watchdog, mornings — created by cron-automation-watchdog.sql (care-coordinator-hub repo).' },
   'ops-escalate':       { class: 'urgent_internal', scheduled: false,
     why: 'uncovered shifts and unresolved escalations. The 6am gap is exactly what somebody needs at 6am.' },
 
