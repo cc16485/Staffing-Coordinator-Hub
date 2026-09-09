@@ -177,7 +177,12 @@ Deno.serve(async (req) => {
     if (!b.confirmed_at) {
       plan.confirm.push(`${first} — ${day} ${time}`)
       if (!dry && await send('confirm')) {
-        await supabase.from('interview_bookings').update({ confirmed_at: new Date().toISOString() }).eq('id', b.id)
+        const stamp: Record<string, string> = { confirmed_at: new Date().toISOString() }
+        /* Booked inside the day-before window: the confirmation IS the
+           day-before notice. Without this, the next run followed it fifteen
+           minutes later with "reminder: your interview is tomorrow". */
+        if (untilHours <= 30) stamp.reminded_day_at = stamp.confirmed_at
+        await supabase.from('interview_bookings').update(stamp).eq('id', b.id)
         out.confirmed++
       }
     } else if (!b.reminded_day_at && untilHours <= 30 && untilHours > 2) {
@@ -186,7 +191,11 @@ Deno.serve(async (req) => {
         await supabase.from('interview_bookings').update({ reminded_day_at: new Date().toISOString() }).eq('id', b.id)
         out.reminded_day++
       }
-    } else if (!b.reminded_hour_at && untilHours <= 1.5 && untilHours > 0) {
+    /* The lower bound reaches 15 minutes PAST the start on purpose: for an
+       8am interview the first run the hours gate permits is 8:00, when
+       untilHours is already ≤ 0 — so the earliest interviews of the day,
+       the easiest ones to forget, were the only ones never reminded. */
+    } else if (!b.reminded_hour_at && untilHours <= 1.5 && untilHours > -0.25) {
       plan.hour.push(`${first} — ${time}`)
       if (!dry && await send('hour')) {
         await supabase.from('interview_bookings').update({ reminded_hour_at: new Date().toISOString() }).eq('id', b.id)
@@ -234,6 +243,11 @@ Deno.serve(async (req) => {
 
     plan.nudge.push(`${first} (try ${step})`)
     if (dry) continue
+    /* The one rule this file's header claims for everything, applied to the
+       one block that skipped it: a cron that runs around the clock WILL
+       otherwise text an applicant at 3am. Nothing is stamped, so held
+       nudges go out on the first run after 8am. */
+    if (!withinOutreachHours()) continue
     if (!ghlToken || !ghlLocation) continue
     const contactId = await contactFor(p.phone, p.email, first)
     if (!contactId) continue
@@ -292,6 +306,9 @@ Deno.serve(async (req) => {
 
       plan.alerted.push(who)
       if (dry) continue
+      /* Staff sleep too. A midnight application is announced at 8am, not the
+         moment it lands — office_alerted_at stays null until it really sends. */
+      if (!withinOutreachHours()) continue
 
       for (const t of alertTo!) {
         const contactId = await contactFor(t.phone ?? null, t.email ?? null, t.name ?? 'Team')
