@@ -56,7 +56,9 @@ Deno.serve(async (req) => {
     .from('job_applicants')
     .select('*')
     .in('id', ids.slice(0, 500))
-    .not('status', 'in', '("declined","hired")')
+    // 'offer' means they already said yes and may be mid-paperwork — a "new
+    // opening" text to them reads as us forgetting we hired them.
+    .not('status', 'in', '("declined","hired","offer")')
     .is('decline_reason', null)
     .or(`reengaged_at.is.null,reengaged_at.lt.${cutoff}`)
   if (error) return json({ error: error.message }, 500)
