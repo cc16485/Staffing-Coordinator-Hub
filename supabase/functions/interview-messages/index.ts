@@ -120,8 +120,8 @@ Deno.serve(async (req) => {
     (st?.photo_url ? `<img src="${st.photo_url}" alt="Our entrance" style="width:100%;border-radius:8px;margin-top:10px">` : '') +
     `</div>`
 
-  const out = { confirmed: 0, reminded_day: 0, reminded_hour: 0, nudged: 0, gave_up: 0, alerted: 0, cancel_notified: 0 }
-  const plan: Record<string, string[]> = { confirm: [], day: [], hour: [], nudge: [], give_up: [], alerted: [], cancelled: [] }
+  const out = { confirmed: 0, reminded_day: 0, reminded_hour: 0, nudged: 0, gave_up: 0, alerted: 0, cancel_notified: 0, noshow_recovery: 0 }
+  const plan: Record<string, string[]> = { confirm: [], day: [], hour: [], nudge: [], give_up: [], alerted: [], cancelled: [], noshow: [] }
 
   /* ---------------- interviews that are booked ---------------- */
   const { data: bookings, error } = await supabase
@@ -389,6 +389,60 @@ Deno.serve(async (req) => {
     await supabase.from('interview_bookings')
       .update({ cancel_notified_at: new Date().toISOString() }).eq('id', b.id)
     out.cancel_notified++
+  }
+
+  /* ---------------- no-shows ----------------
+     A no-show is the cheapest hire in the pipeline: already screened, already
+     qualified, already interviewed once. Until now they got nothing and
+     vanished. One warm text with the booking link recovers a real fraction of
+     them. The office recorded the outcome themselves, so nobody there needs
+     telling — but somebody the office has since declined, hired or pooled is
+     stamped silently rather than invited back. Requires the
+     noshow_notified_at column (interview-noshow-recovery.sql). */
+  const { data: nx } = await supabase
+    .from('interview_bookings')
+    .select('*, job_applicants(first_name,last_name,phone,email,sms_consent,status,decline_reason)')
+    .eq('status', 'noshow')
+    .is('noshow_notified_at', null)
+    .gte('starts_at', new Date(Date.now() - 7 * 86_400_000).toISOString())
+
+  for (const b of nx ?? []) {
+    // deno-lint-ignore no-explicit-any
+    const a: any = b.job_applicants
+    if (!a) continue
+    const closed = a.decline_reason || ['declined', 'hired', 'pool'].includes(a.status)
+    if (booked.has(b.applicant_id) || closed) {
+      if (!dry) await supabase.from('interview_bookings')
+        .update({ noshow_notified_at: new Date().toISOString() }).eq('id', b.id)
+      continue
+    }
+    const first = a.first_name || 'there'
+    const when = new Date(b.starts_at)
+    const day = fmtDay(when), time = fmtTime(when)
+    const bookUrl = 'https://mo-care.com/apply?book=' + encodeURIComponent(String(b.applicant_id))
+    plan.noshow.push(`${first} — ${day} ${time}`)
+    if (dry) continue
+    if (!withinOutreachHours()) continue
+    if (!ghlToken || !ghlLocation) continue
+
+    const contactId = await contactFor(a.phone, a.email, first)
+    if (!contactId) continue
+    if (a.phone && a.sms_consent === true) await sms(contactId,
+      `Hi ${first}, we missed you at your interview ${day} at ${time} — life happens. ` +
+      `If you would still like to talk about caregiving work, pick a new time here: ${bookUrl} or call ${phone}.`)
+    if (a.email) await email(contactId, 'We missed you — pick a new time?',
+      shell(`<p>Hi ${first},</p><p>We missed you at your interview on <b>${day} at ${time}</b> — life happens.</p>` +
+        `<p>If you would still like to talk about caregiving work, <a href="${bookUrl}">pick a new time here</a> ` +
+        `whenever suits you, or call us on ${phone}. We would be glad to see you.</p>`))
+
+    /* Back into play, so the booking link actually works for them — the
+       booking function refuses applications somebody has closed. */
+    await supabase.from('job_applicants')
+      .update({ status: 'reviewing', seen_at: new Date().toISOString() })
+      .eq('id', b.applicant_id).eq('status', 'noshow')
+    await supabase.from('interview_bookings')
+      .update({ noshow_notified_at: new Date().toISOString() }).eq('id', b.id)
+    out.noshow_recovery++
   }
 
   /* Dry runs don't beat: a manual ?dry=1 must never make a dead cron look alive. */
