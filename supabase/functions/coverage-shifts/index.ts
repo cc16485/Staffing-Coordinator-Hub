@@ -17,6 +17,12 @@ const json = (b: unknown, s = 200) =>
   } })
 
 const AC_VERSION = Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01'
+/* AxisCare sometimes returns entity lists keyed by id rather than as arrays
+   (axiscare-probe's listOf() defends against exactly this; the caregivers
+   census threw "object is not iterable" in production). Normalise. */
+// deno-lint-ignore no-explicit-any
+const rowsOf = (v: any): any[] => Array.isArray(v) ? v
+  : (v && typeof v === 'object') ? Object.values(v) : []
 function axisCreds() {
   const order = ['AXISCARE_VISITS_TOKEN', 'AXISCARE_API_KEY', 'AXISCARE_TOKEN']
   let token = ''
@@ -54,7 +60,7 @@ Deno.serve(async (req) => {
         if (!r.ok) return json({ error: `AxisCare responded ${r.status}` }, 502)
         // deno-lint-ignore no-explicit-any
         const j: any = await r.json().catch(() => ({}))
-        for (const g of (j?.results?.caregivers ?? j?.caregivers ?? [])) {
+        for (const g of rowsOf(j?.results?.caregivers ?? j?.caregivers)) {
           total++
           if (g?.status?.active !== true) continue
           const name = [String(g?.firstName ?? '').trim(), String(g?.lastName ?? '').trim()]
@@ -89,7 +95,7 @@ Deno.serve(async (req) => {
       if (!r.ok) return json({ error: `AxisCare responded ${r.status}` }, 502)
       // deno-lint-ignore no-explicit-any
       const j: any = await r.json().catch(() => ({}))
-      for (const v of (j?.results?.visits ?? j?.visits ?? [])) {
+      for (const v of rowsOf(j?.results?.visits ?? j?.visits)) {
         if (v?.removed) continue
         const start = String(v?.scheduledStartDate ?? v?.startDate ?? '')
         const end = String(v?.scheduledEndDate ?? v?.endDate ?? '')

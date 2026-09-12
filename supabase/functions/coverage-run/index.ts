@@ -342,7 +342,12 @@ Deno.serve(async (req) => {
           'X-AxisCare-Api-Version': AC_VERSION } })
         if (!r.ok) { censusError = `AxisCare responded ${r.status}`; break }
         const j: any = await r.json().catch(() => ({}))
-        for (const g of (j?.results?.caregivers ?? j?.caregivers ?? []))
+        /* Lists can come back keyed by id instead of as arrays — normalise
+           (the caregivers census threw "not iterable" in production). */
+        const gRows: any[] = Array.isArray(j?.results?.caregivers ?? j?.caregivers)
+          ? (j?.results?.caregivers ?? j?.caregivers)
+          : Object.values(j?.results?.caregivers ?? j?.caregivers ?? {})
+        for (const g of gRows)
           if (g?.status?.active === true && g?.id != null) axisActive.add(String(g.id))
         url = j?.results?.nextPage ?? j?.nextPage ?? null
       }
@@ -488,9 +493,12 @@ Deno.serve(async (req) => {
         .replaceAll('{client}', clientShort)
         .replaceAll('{where}', c.client_city ? ` in ${c.client_city}` : '')
         .replaceAll('{when}', when)
-      const tmpl1 = String(settings.coverage_msg_tier1 || '') ||
+      /* Message priority: this CASE's edited wording (the coordinator can
+         rewrite it in the confirm step before opening) → the agency-wide
+         settings templates → the built-in default. */
+      const tmpl1 = String(c.msg_tier1 || '') || String(settings.coverage_msg_tier1 || '') ||
         `Hi {first_name}, it's Caring Companions. {client}'s shift needs coverage: {when}. Can you take it? Reply YES or NO — questions welcome.`
-      const tmplO = String(settings.coverage_msg_other || '') ||
+      const tmplO = String(c.msg_other || '') || String(settings.coverage_msg_other || '') ||
         `Hi {first_name}, it's Caring Companions. We need a last-minute fill-in{where}: {when}. Can you take it? Reply YES or NO — questions welcome.`
       for (const x of wave) {
         /* An uncovered shift is the textbook urgent_internal: staff, 24/7. */
