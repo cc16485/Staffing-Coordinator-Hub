@@ -114,13 +114,13 @@ Deno.serve(async (req) => {
   if (b.attach === true || String(b.attach).toLowerCase() === 'true' || (summary && !field('disposition'))) {
     if (!summary) return json({ ok: true, routed: 'nothing to attach — no summary in this request' })
 
-    /* Every summarised call also goes to AxisCare: the identity layer matches
-       the number to ONE known person (client, caregiver, lead, applicant, or a
-       client contact → their client's profile) and the summary lands there as
-       a note. Unrecognised callers and shared lines are skipped, never
-       guessed. Dry-run until ops_settings.axiscare_call_notes_live is true;
-       the module logs every decision either way and must never break the
-       attach routing below. */
+    /* Every summarised call also goes to AxisCare's CALL LOG: the identity
+       layer matches the number to ONE known person (client, caregiver, lead,
+       applicant, or a client contact → tagged to their client) and the summary
+       becomes a call log entry on that profile. Unrecognised callers and
+       shared lines are skipped, never guessed. Dry-run until
+       ops_settings.axiscare_call_notes_live is true; the module logs every
+       decision either way and must never break the attach routing below. */
     let axNote: Record<string, unknown> = { outcome: 'error', detail: 'push did not run' }
     try {
       axNote = await pushCallNote(supabase, { phone: callerPhone, summary, direction: field('direction') }) as unknown as Record<string, unknown>

@@ -1,19 +1,24 @@
 // _shared/axiscare-call-note.ts
 // -----------------------------------------------------------------------------
-// Push a call's AI summary onto the matched person's AxisCare profile as a note.
+// Push a call's AI summary into AxisCare's CALL LOG, tagged to the matched
+// person's profile. (v1 posted profile Notes; the Call Log is AxisCare's
+// purpose-built record for phone calls — it carries callerName/callerPhone
+// natively, keeps Notes clean, and the entry shows both on the tagged profile
+// and in the agency-wide call log screen. POST /api/call-logs.)
 //
 // Called from call-disposition's ATTACH path (the "Call Transcript - Summarize -
 // Add to Notes" GHL workflow posts {attach:true, id, phone, summary} minutes
 // after every call). The summary here is GHL's own transcript summary — nothing
 // extra is sent to any AI provider by this module.
 //
-// WHO gets the note (identity layer decides, never GHL):
+// WHO gets tagged (identity layer decides, never GHL):
 //   phone → phone_index → exactly ONE person, or nothing happens
 //   person → person_source_id (system='axiscare', confirmed, no review flag)
 //     entity priority: client > caregiver > lead > applicant
-//   a client CONTACT (daughter, POA...) has no AxisCare notes endpoint, so the
-//     note goes on their ONE related client's profile, prefixed "Call from ..."
-//     — two related clients means we cannot know who the call was about: skip.
+//   a client CONTACT (daughter, POA...) cannot be tagged (tags support
+//     client/caregiver/lead/applicant only), so their call is logged under the
+//     caller's own name and tagged to their ONE related client — two related
+//     clients means we cannot know who the call was about: skip.
 //   a shared household line (2+ people) is never guessed: skip, and say so.
 //
 // ⚠ DRY RUN BY DEFAULT. Nothing is written to AxisCare unless app_data key
@@ -49,14 +54,20 @@ function tinyHash(s: string): string {
   return h.toString(36)
 }
 
-function chicagoNaiveNow(): string {
-  // AxisCare wants a timezone-less local timestamp: YYYY-MM-DDTHH:mm:ss
+function chicagoISONow(): string {
+  // The call-logs API wants full ISO 8601 with the offset, e.g.
+  // 2025-07-01T15:23:45-05:00. Build the Chicago wall clock plus its offset.
+  const now = new Date()
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'America/Chicago', hour12: false,
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
-  }).formatToParts(new Date()).reduce((a: Record<string, string>, p) => (a[p.type] = p.value, a), {})
-  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}`
+  }).formatToParts(now).reduce((a: Record<string, string>, p) => (a[p.type] = p.value, a), {})
+  const offRaw = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', timeZoneName: 'longOffset' })
+    .formatToParts(now).find((p) => p.type === 'timeZoneName')?.value || 'GMT-06:00'
+  const m = offRaw.match(/GMT([+-])(\d{1,2})(?::(\d{2}))?/)
+  const offset = m ? `${m[1]}${m[2].padStart(2, '0')}:${m[3] || '00'}` : '-06:00'
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}${offset}`
 }
 
 async function logEverything(supabase: any, entry: Record<string, unknown>, ok: boolean, dry: boolean) {
@@ -144,7 +155,7 @@ export async function pushCallNote(
   const links: any[] = srcRows || []
   let entity = ''
   let entityId = ''
-  let callerLine = ''
+  let relationLine = ''
   for (const t of ENTITY_PRIORITY) {
     const hit = links.find((l) => l.entity_type === t)
     if (hit) { entity = t; entityId = String(hit.source_id); break }
@@ -171,32 +182,34 @@ export async function pushCallNote(
     entity = 'client'
     entityId = String(cliSrc.source_id)
     const rel = rels.find((r) => String(r.client_person_id) === clientIds[0])?.relationship
-    callerLine = `Call from ${callerName}${rel ? ' (' + rel + ')' : ''}.`
+    relationLine = rel ? `Caller is the client's ${rel}.` : 'Caller is a contact for this client.'
   }
 
-  const note = [
-    `Phone call (${direction}), AI summary:`,
-    callerLine,
-    '',
+  const entityIdNum = Number(entityId)
+  if (!Number.isInteger(entityIdNum))
+    return finish({ outcome: 'error', detail: `AxisCare id "${entityId}" for ${callerName} is not numeric — cannot tag a call log`, dry }, { hash })
+
+  const notes = [
+    relationLine,
     summary.slice(0, 4000),
-    '',
-    'Posted automatically by the CC Hub phone system.',
-  ].filter((l, i) => l !== '' || i > 1).join('\n')
+    'Logged automatically by the CC Hub phone system.',
+  ].filter(Boolean).join('\n\n')
+  const subject = `AI call summary (${direction})`
 
   if (dry) {
     return finish({
       outcome: 'dry_run', dry,
-      detail: `would post on ${entity} ${entityId} (${callerName})`,
+      detail: `would add a call log tagged to ${entity} ${entityId} (${callerName})`,
       entity, entity_id: entityId,
-    }, { hash, would_post: note.slice(0, 500) })
+    }, { hash, would_post: notes.slice(0, 500) })
   }
 
-  // ── The write. ──
+  // ── The write: one Call Log entry, tagged to the matched profile. ──
   const token = Deno.env.get('AXISCARE_API_KEY') || Deno.env.get('AXISCARE_TOKEN') || ''
   const site = Deno.env.get('AXISCARE_SITE') || Deno.env.get('AXISCARE_SITE_NUMBER') || ''
   if (!token || !site) return finish({ outcome: 'error', detail: 'AxisCare credentials not set', dry })
   try {
-    const r = await fetch(`https://${site}.axiscare.com/api/notes/${entity}/${encodeURIComponent(entityId)}`, {
+    const r = await fetch(`https://${site}.axiscare.com/api/call-logs`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${token}`,
@@ -205,7 +218,15 @@ export async function pushCallNote(
         'Accept': 'application/json',
         'User-Agent': AXIS_UA,
       },
-      body: JSON.stringify({ note, dateTime: chicagoNaiveNow(), important: false }),
+      body: JSON.stringify({
+        callerName,
+        callerPhone: e164,
+        followUp: false,          // follow-ups are owned by the hub pipeline
+        dateTime: chicagoISONow(),
+        subject,
+        notes,
+        tags: [{ type: entity, entityId: entityIdNum }],
+      }),
     })
     const j = await r.json().catch(() => ({}))
     // Never trust a bare 200: AxisCare's envelope carries its own success flag.
@@ -216,8 +237,8 @@ export async function pushCallNote(
       }, { hash })
     return finish({
       outcome: 'posted', dry,
-      detail: `note on ${entity} ${entityId} (${callerName})`,
-      entity, entity_id: entityId, note_id: j?.results?.id,
+      detail: `call log tagged to ${entity} ${entityId} (${callerName})`,
+      entity, entity_id: entityId, note_id: j?.results?.data?.id,
     }, { hash })
   } catch (e) {
     return finish({ outcome: 'error', detail: 'AxisCare call failed: ' + String(e), dry, entity, entity_id: entityId }, { hash })
