@@ -31,6 +31,7 @@
 // attach lead outcomes to the right lead.
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { pushCallNote } from '../_shared/axiscare-call-note.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -112,6 +113,19 @@ Deno.serve(async (req) => {
   const summary = field('summary') || field('transcript_summary') || field('recap')
   if (b.attach === true || String(b.attach).toLowerCase() === 'true' || (summary && !field('disposition'))) {
     if (!summary) return json({ ok: true, routed: 'nothing to attach — no summary in this request' })
+
+    /* Every summarised call also goes to AxisCare: the identity layer matches
+       the number to ONE known person (client, caregiver, lead, applicant, or a
+       client contact → their client's profile) and the summary lands there as
+       a note. Unrecognised callers and shared lines are skipped, never
+       guessed. Dry-run until ops_settings.axiscare_call_notes_live is true;
+       the module logs every decision either way and must never break the
+       attach routing below. */
+    let axNote: Record<string, unknown> = { outcome: 'error', detail: 'push did not run' }
+    try {
+      axNote = await pushCallNote(supabase, { phone: callerPhone, summary, direction: field('direction') }) as unknown as Record<string, unknown>
+    } catch (e) { axNote = { outcome: 'error', detail: String(e) } }
+
     const digits = norm(callerPhone)
     const since = Date.now() - 45 * 60 * 1000
     const mine = (r: Record<string, unknown>) => {
@@ -129,13 +143,13 @@ Deno.serve(async (req) => {
     if (item) {
       item.detail = [String(item.detail || '').trim(), summary].filter(Boolean).join('\n\n')
       await put('ops_items', item)
-      return json({ ok: true, routed: 'summary attached to the Needs Attention item', title: item.title })
+      return json({ ok: true, routed: 'summary attached to the Needs Attention item', title: item.title, axiscare_note: axNote })
     }
     const cov = newest(await readKey('coverage_cases'))
     if (cov) {
       cov.note = [String(cov.note || '').trim(), summary].filter(Boolean).join('\n\n')
       await put('coverage_cases', cov)
-      return json({ ok: true, routed: 'summary attached to the coverage case' })
+      return json({ ok: true, routed: 'summary attached to the coverage case', axiscare_note: axNote })
     }
     // No item from a disposition, but it may still belong to a lead.
     const leadRows = await readKey('leads')
@@ -144,9 +158,9 @@ Deno.serve(async (req) => {
       lead.comm_log = Array.isArray(lead.comm_log) ? lead.comm_log : []
       lead.comm_log.push({ body: '📝 ' + summary, at: new Date().toISOString(), by: 'call summary' })
       await put('leads', lead)
-      return json({ ok: true, routed: 'summary added to the lead\'s conversation log' })
+      return json({ ok: true, routed: 'summary added to the lead\'s conversation log', axiscare_note: axNote })
     }
-    return json({ ok: true, routed: 'nothing recent to attach to — no disposition was tapped on this call' })
+    return json({ ok: true, routed: 'nothing recent to attach to — no disposition was tapped on this call', axiscare_note: axNote })
   }
 
   const disposition = field('disposition') || field('call_disposition') || field('outcome')
