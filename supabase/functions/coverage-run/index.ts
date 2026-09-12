@@ -467,10 +467,13 @@ Deno.serve(async (req) => {
          {first_name} {client} {when}. */
       const who = String(c.client || 'a client').split(/\s+/)
       const clientShort = who.length > 1 ? `${who[0]} ${who[who.length - 1][0]}.` : who[0]
-      /* City (for the anonymous wording) and the client's AxisCare profile
-         note (the Open Visit Note kept on the client — the {care} synopsis),
-         fetched once per case and cached on it. */
-      if ((!c.client_city || c.client_priority_note == null) && c.client_axiscare_id) {
+      /* City for the anonymous wording, fetched once per case and cached.
+         The client's AxisCare note is deliberately NOT pulled here any more:
+         Samantha's screenshots proved the note boxes can hold DOOR CODES and
+         entry instructions, and we cannot be certain which box the API's
+         priorityNote is. AxisCare note text only ever reaches a message via
+         the form's care box, where a person reads and trims it first. */
+      if (!c.client_city && c.client_axiscare_id) {
         try {
           const { token: acTok, site: acSite } = axisCreds()
           if (acTok && acSite) {
@@ -479,10 +482,9 @@ Deno.serve(async (req) => {
                          'X-AxisCare-Api-Version': AC_VERSION } })
             const j: any = await r.json().catch(() => ({}))
             const cl = j?.results?.client ?? j?.results ?? {}
-            c.client_city = c.client_city || (String(cl?.residentialAddress?.city ?? '') || null)
-            c.client_priority_note = String(cl?.priorityNote ?? '') || ''
+            c.client_city = String(cl?.residentialAddress?.city ?? '') || null
           }
-        } catch { /* no city/note just means the plainer wording */ }
+        } catch { /* no city just means the plainer wording */ }
       }
       /* "today 2:00-6:00 PM" reads better than a bare date. */
       const chiToday = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
@@ -495,12 +497,10 @@ Deno.serve(async (req) => {
          client (CareQB's pattern, requested by Samantha) — carried on the
          case (care_note, set/edited in the hub confirm step). Tier 1 knows
          the client, so their default stays short and synopsis-free. */
-      /* {care} priority: what the coordinator typed on THIS case → the
-         client's AxisCare profile note (capped — a 500-char note would make
-         a 4-segment SMS) → nothing. */
-      const axNote = String(c.client_priority_note || '').trim()
-      const careLine = String(c.care_note || '').trim() ||
-        (axNote.length > 220 ? axNote.slice(0, 217).trim() + '…' : axNote)
+      /* {care} comes ONLY from the case's care_note — text a person put (or
+         approved after a prefill) in the form's care box. Never straight
+         from an AxisCare note field: those can carry door codes. */
+      const careLine = String(c.care_note || '').trim()
       const fill = (tmpl: string, x: any) => tmpl
         .replaceAll('{first_name}', x.first || 'there')
         .replaceAll('{client}', clientShort)
