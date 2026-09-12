@@ -471,7 +471,10 @@ Deno.serve(async (req) => {
         if (ok) {
           askedArr.push({ id: uid(), name: x.name, phone: x.phone, channel: 'sms',
             at: nowIso(), state: 'waiting', replied_at: null,
-            tier: x.tier ?? 3, auto: true, ghl_contact_id: contact.contactId })
+            tier: x.tier ?? 3, auto: true, ghl_contact_id: contact.contactId,
+            /* Carried so assign-on-confirm knows WHO to put on the visit
+               without a name lookup that could hit the wrong roster row. */
+            axiscare_id: x.axiscare_id ?? null })
           sentThisRun++
           /* The tag is what lets the GHL reply-workflow fire ONLY for people
              we actually asked, instead of on every inbound text. */
