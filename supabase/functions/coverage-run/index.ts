@@ -27,7 +27,7 @@
 // =============================================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { maySendTo, normalisePhone } from '../_shared/outreach.ts'
+import { maySendTo, normalisePhone, contactForOutbound } from '../_shared/outreach.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const clean = (v: unknown) => String(v ?? '').trim()
@@ -152,9 +152,11 @@ async function candidatesFor(_c: any) {
     const verdict = await maySendTo(sb, phone)
     out.push({
       name,
+      first: clean(cg.first),
       eligibility,
       axiscare_id: clean(cg.axiscare_id) || null,
-      phone_last4: phone.slice(-4),
+      phone,                        // full number, for the send stage only —
+      phone_last4: phone.slice(-4), // responses expose only the last 4
       confidence: verdict.confidence,
       may_autosend: verdict.allowed,
       skipped: verdict.allowed ? null : verdict.reason,
@@ -245,6 +247,15 @@ Deno.serve(async (req) => {
   const cases = (Array.isArray(row?.data) ? row!.data : []) as any[]
   const open = cases.filter(c => c?.status === 'open')
 
+  /* The callout switch. Everything else in this function stays read-only
+     reporting regardless; only this flag lets a text leave the building. */
+  const { data: setRow } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+  // deno-lint-ignore no-explicit-any
+  const settings: any = setRow?.data ?? {}
+  const sendLive = settings.coverage_send_live === true
+  const fuseMin = Number(settings.coverage_wave_fuse_min) > 0 ? Number(settings.coverage_wave_fuse_min) : 10
+  const ghl = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
+
   const own = await coverageOwner()
   const { data: itemRow } = await sb.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
   // deno-lint-ignore no-explicit-any
@@ -301,9 +312,11 @@ Deno.serve(async (req) => {
   }
 
   const detail: Array<Record<string, unknown>> = []
-  const stats = { open_cases: open.length, owner_set: 0, prompts_created: 0,
+  // deno-lint-ignore no-explicit-any
+  const stats: any = { open_cases: open.length, owner_set: 0, prompts_created: 0,
                   candidates_total: 0, may_autosend: 0, blocked_no_phone: 0,
-                  blocked_untrusted: 0, would_ask: 0 }
+                  blocked_untrusted: 0, would_ask: 0, sent: 0, held_quiet_hours: 0,
+                  closure_notified: 0 }
 
   /* Recently-active caregivers (tier 2), fetched ONCE for the whole run. */
   const recent = open.length ? await fetchVisits(`startDate=${dISO(14)}&endDate=${dISO(0)}`)
@@ -365,6 +378,86 @@ Deno.serve(async (req) => {
                          .slice(0, WAVE_SIZE)
     stats.would_ask += wave.length
 
+    /* ── SEND STAGE — the callout engine (replacing CareQB Callouts).
+       One wave per run per case. The first wave goes as soon as the case is
+       seen; the next only after the fuse has burned with no YES. Every ask
+       lands in asked[] — the same record the manual workflow and the hub
+       read — as {name, phone, channel:'sms', at, state:'waiting', tier, auto}.
+       A YES anywhere on the case stops all further waves. */
+    let sentThisRun = 0
+    const askedArr: any[] = Array.isArray(c.asked) ? c.asked : (c.asked = [])
+    const hasYes = askedArr.some((a: any) => a.state === 'yes')
+    const newestAsk = askedArr.map((a: any) => new Date(String(a.at || 0)).getTime())
+      .sort((a: number, b: number) => b - a)[0] ?? 0
+    const fuseBurned = !newestAsk || (Date.now() - newestAsk) > fuseMin * 60000
+    /* QUIET HOURS (idea adopted from CareQB): the case opens and is
+       acknowledged at any hour, but fill-in texts hold overnight — unless the
+       shift itself starts within 3 hours, when waking people IS the job.
+       Defaults 21:00-06:00 Chicago; ops_settings.coverage_quiet_from/until. */
+    const chiHour = Number(new Date().toLocaleString('en-US',
+      { timeZone: 'America/Chicago', hour: '2-digit', hour12: false }))
+    const qFrom = Number.isFinite(Number(settings.coverage_quiet_from)) ? Number(settings.coverage_quiet_from) : 21
+    const qUntil = Number.isFinite(Number(settings.coverage_quiet_until)) ? Number(settings.coverage_quiet_until) : 6
+    const inQuiet = qFrom > qUntil ? (chiHour >= qFrom || chiHour < qUntil) : (chiHour >= qFrom && chiHour < qUntil)
+    let shiftSoon = false
+    if (c.shift_date) {
+      const startHH = String(c.shift_time || '').split('-')[0] || ''
+      const chiNow = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).replace(' ', 'T')
+      const startNaive = `${c.shift_date}T${/^\d\d:\d\d$/.test(startHH) ? startHH : '23:59'}:00`
+      const diffMs = new Date(startNaive).getTime() - new Date(chiNow).getTime()
+      shiftSoon = diffMs > 0 && diffMs < 3 * 3600000
+    }
+    const quietHold = inQuiet && !shiftSoon
+    if (quietHold && sendLive && !hasYes && wave.length) {
+      stats.held_quiet_hours = (Number(stats.held_quiet_hours) || 0) + wave.length
+    }
+    if (sendLive && !hasYes && fuseBurned && !quietHold && wave.length && ghl.token && ghl.locationId) {
+      const who = String(c.client || 'a client').split(/\s+/)
+      const clientShort = who.length > 1 ? `${who[0]} ${who[who.length - 1][0]}.` : who[0]
+      const when = [c.shift_date, c.shift_time].filter(Boolean).join(' ')
+        || 'as soon as possible — the office has details'
+      for (const x of wave) {
+        /* An uncovered shift is the textbook urgent_internal: staff, 24/7. */
+        const contact = await contactForOutbound(sb, ghl,
+          { phone: x.phone, firstName: x.first || x.name }, 'urgent_internal')
+        if (!contact) continue
+        let ok = false
+        try {
+          const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
+                       'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'SMS', contactId: contact.contactId,
+              message: `Hi ${x.first || 'there'}, it's Caring Companions. ${clientShort}'s shift needs coverage: ${when}. Can you take it? Reply YES or NO — questions welcome.` }),
+          })
+          ok = r.ok
+          if (!r.ok) console.error('callout sms', r.status, await r.text().catch(() => ''))
+        } catch (err) { console.error('callout sms failed', err) }
+        if (ok) {
+          askedArr.push({ id: uid(), name: x.name, phone: x.phone, channel: 'sms',
+            at: nowIso(), state: 'waiting', replied_at: null,
+            tier: x.tier ?? 3, auto: true, ghl_contact_id: contact.contactId })
+          sentThisRun++
+          /* The tag is what lets the GHL reply-workflow fire ONLY for people
+             we actually asked, instead of on every inbound text. */
+          try {
+            await fetch(`https://services.leadconnectorhq.com/contacts/${contact.contactId}/tags`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
+                         'Content-Type': 'application/json' },
+              body: JSON.stringify({ tags: ['coverage-asked'] }),
+            })
+          } catch { /* a missing tag only costs a stray workflow execution */ }
+        }
+      }
+      if (sentThisRun) {
+        stats.sent += sentThisRun
+        c.callout_started_at = c.callout_started_at || nowIso()
+        c.asked = askedArr
+        await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
+      }
+    }
+
     const itemId = `ops_cov_${c.id}`
     detail.push({
       case_id: c.id,
@@ -387,7 +480,8 @@ Deno.serve(async (req) => {
       this_wave: wave.map((w: any) => ({ name: w.name, tier: w.tier, why: w.tier_why })),
       next_in_line: sendable.filter((x: any) => !wave.includes(x))
         .slice(0, WAVE_SIZE * 2).map((w: any) => ({ name: w.name, tier: w.tier, why: w.tier_why })),
-      blocked: cands.filter(x => x.skipped).slice(0, 8),
+      blocked: cands.filter(x => x.skipped).slice(0, 8)
+        .map((x: any) => ({ name: x.name, skipped: x.skipped, phone_last4: x.phone_last4 })),
       prompt: haveItem.has(itemId) ? 'exists' : 'would create',
     })
 
@@ -412,12 +506,54 @@ Deno.serve(async (req) => {
     await sb.from('app_data').upsert({ key: 'coverage_cases', data: cases }, { onConflict: 'key' })
   }
 
+  /* ── CLOSURE TEXTS: when a case closes, everyone still waiting hears so.
+     "First YES wins" only feels fair if the others aren't left hanging.
+     Daytime only (8-21 Chicago) — nobody needs "it's covered" at 3am. ── */
+  if (sendLive && ghl.token && ghl.locationId) {
+    const chiHour = Number(new Date().toLocaleString('en-US',
+      { timeZone: 'America/Chicago', hour: '2-digit', hour12: false }))
+    if (chiHour >= 8 && chiHour < 21) {
+      for (const c of cases) {
+        if (c?.status === 'open' || c?.closure_notified) continue
+        const waiting = (Array.isArray(c.asked) ? c.asked : [])
+          .filter((a: any) => a.auto === true && a.state === 'waiting' && a.ghl_contact_id)
+        if (!waiting.length) continue
+        let told = 0
+        for (const a of waiting) {
+          try {
+            const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
+                         'Content-Type': 'application/json' },
+              body: JSON.stringify({ type: 'SMS', contactId: a.ghl_contact_id,
+                message: `Caring Companions: that shift is covered now — thank you! No action needed.` }),
+            })
+            if (r.ok) { a.state = 'closed_notified'; told++ }
+            /* Case over: drop the tag so future texts stop firing the
+               reply workflow (and stop costing premium executions). */
+            await fetch(`https://services.leadconnectorhq.com/contacts/${a.ghl_contact_id}/tags`, {
+              method: 'DELETE',
+              headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
+                         'Content-Type': 'application/json' },
+              body: JSON.stringify({ tags: ['coverage-asked'] }),
+            }).catch(() => {})
+          } catch { /* one failed courtesy text must not block the rest */ }
+        }
+        if (told) {
+          c.closure_notified = nowIso()
+          stats.closure_notified += told
+          await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
+        }
+      }
+    }
+  }
+
   return new Response(JSON.stringify({
-    mode: commit ? 'COMMIT (state only — no message was sent)' : 'DRY RUN',
-    sending_enabled: false,
-    why_no_sending: 'Autonomous caregiver messaging is a separate switch that does ' +
-      'not exist yet. It will not be added until a dry run proves identity, ' +
-      'dedupe, recipient selection and state tracking.',
+    mode: commit ? 'COMMIT' : 'DRY RUN (cases/items only — sending has its own switch)',
+    sending_enabled: sendLive,
+    sending_note: sendLive
+      ? `LIVE: waves of ${WAVE_SIZE} by tier, ${fuseMin}-min fuse, quiet hours hold overnight sends unless the shift starts within 3h. Replies land via coverage-reply.`
+      : 'Sending is off. Flip ops_settings.coverage_send_live to true to let waves text caregivers.',
     coverage_owner: own,
     wave_size: WAVE_SIZE,
     gate_evaluated_independently: gate,
