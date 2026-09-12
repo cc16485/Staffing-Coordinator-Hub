@@ -489,9 +489,127 @@ async function applyCaregiverPhones(stamp: string) {
   }
 }
 
+/* ── CLIENT BACKFILL FROM AXISCARE ───────────────────────────────────────────
+   The August rebuild covered caregivers only, because AxisCare was blocked and
+   caregivers were the population with a reconciled roster. Clients therefore
+   have NO identity rows, which surfaced 2026-09-12 when coverage-run's ranked
+   waves found zero clients to resolve ("worked with this client first" needs
+   the client to exist).
+
+   AxisCare is the authoritative system for clients, so unlike the GHL-era
+   phone recovery above this creates CONFIRMED links: /api/clients?active=true
+   → person_identity + person_source_id(axiscare/client, confirmed) +
+   person_role(client, active) + phone_index rows. Idempotent: an existing
+   axiscare client link means the person is reused, never duplicated. Name
+   coincidences with existing people are REPORTED, never merged — merging on
+   name alone is exactly what this layer forbids.
+
+   Dry run by default; ?commit=1 writes. Never retires anyone: a hub person
+   missing from the active pull is reported, not ended. */
+const acPhone = (raw: unknown): string | null => {
+  const d = String(raw ?? '').replace(/\D/g, '')
+  if (d.length === 10) return '+1' + d
+  if (d.length === 11 && d.startsWith('1')) return '+' + d
+  return null
+}
+
+async function backfillClientsFromAxisCare(commit: boolean) {
+  const order = ['AXISCARE_API_KEY', 'AXISCARE_TOKEN', 'AXISCARE_VISITS_TOKEN']
+  let token = ''
+  for (const n of order) { const v = Deno.env.get(n); if (v) { token = v; break } }
+  const site = Deno.env.get('AXISCARE_SITE') || Deno.env.get('AXISCARE_SITE_NUMBER') || ''
+  if (!token || !/^\d+$/.test(site)) return { error: 'AxisCare credentials not set on this project' }
+
+  // Pull the active client census, paginated.
+  const clients: any[] = []
+  let url: string | null = `https://${site}.axiscare.com/api/clients?active=true`
+  try {
+    for (let page = 0; url && page < 12; page++) {
+      const r: Response = await fetch(url, { headers: {
+        Authorization: `Bearer ${token}`, Accept: 'application/json',
+        'X-AxisCare-Api-Version': Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01' } })
+      if (!r.ok) return { error: `AxisCare responded ${r.status}`, fetched_so_far: clients.length }
+      const j: any = await r.json().catch(() => ({}))
+      for (const c of (j?.results?.clients ?? j?.clients ?? [])) clients.push(c)
+      url = j?.results?.nextPage ?? j?.nextPage ?? null
+    }
+  } catch (err) { return { error: String(err), fetched_so_far: clients.length } }
+
+  // Existing axiscare client links, so reruns create nothing.
+  const { data: links } = await sb.from('person_source_id')
+    .select('person_id, source_id').eq('system', 'axiscare').eq('entity_type', 'client')
+  const linked = new Map((links ?? []).map((l: any) => [String(l.source_id), String(l.person_id)]))
+
+  // Existing names, only to REPORT possible duplicates — never to merge.
+  const { data: ppl } = await sb.from('person_identity').select('id, display_name')
+  const nameOwners = new Map<string, string>()
+  for (const p of (ppl ?? [])) nameOwners.set(String(p.display_name).trim().toLowerCase(), String(p.id))
+
+  const out = { mode: commit ? 'COMMIT' : 'DRY RUN', axiscare_active_clients: clients.length,
+    already_linked: 0, created: 0, roles_added: 0, phones_indexed: 0, no_phone: 0,
+    skipped_no_name: 0, name_coincidences: [] as any[], errors: [] as string[] }
+
+  for (const c of clients) {
+    const axId = String(c?.id ?? '')
+    const name = [String(c?.firstName ?? '').trim(), String(c?.lastName ?? '').trim()]
+      .filter(Boolean).join(' ')
+    if (!axId || !name) { out.skipped_no_name++; continue }
+    const phones = [
+      { phone: acPhone(c?.mobilePhone), kind: 'mobile' },
+      { phone: acPhone(c?.homePhone), kind: 'home' },
+    ].filter(p => p.phone) as Array<{ phone: string; kind: string }>
+    if (!phones.length) out.no_phone++
+
+    let personId = linked.get(axId) ?? null
+    if (personId) out.already_linked++
+    else {
+      const twin = nameOwners.get(name.toLowerCase())
+      if (twin) out.name_coincidences.push({ name, axiscare_id: axId,
+        note: 'a person with this exact name already exists WITHOUT this AxisCare client id — created separately, review and merge by hand if they are the same human' })
+      if (!commit) { out.created++; continue }
+      const { data: pi, error: e1 } = await sb.from('person_identity')
+        .insert({ display_name: name, primary_phone: phones[0]?.phone ?? null })
+        .select('id').single()
+      if (e1 || !pi) { out.errors.push(`${name}: ${e1?.message ?? 'insert failed'}`); continue }
+      personId = String(pi.id)
+      const { error: e2 } = await sb.from('person_source_id').insert({
+        person_id: personId, system: 'axiscare', entity_type: 'client',
+        source_id: axId, confidence: 'confirmed', needs_review: false })
+      if (e2) { out.errors.push(`${name} link: ${e2.message}`); continue }
+      out.created++
+    }
+    if (!commit) continue
+
+    const { data: role } = await sb.from('person_role').select('id')
+      .eq('person_id', personId).eq('role', 'client').eq('status', 'active').maybeSingle()
+    if (!role) {
+      const { error: e3 } = await sb.from('person_role')
+        .insert({ person_id: personId, role: 'client', status: 'active' })
+      if (e3) out.errors.push(`${name} role: ${e3.message}`)
+      else out.roles_added++
+    }
+    for (const ph of phones) {
+      const { data: have } = await sb.from('phone_index').select('id')
+        .eq('phone', ph.phone).eq('person_id', personId).maybeSingle()
+      if (have) continue
+      const { error: e4 } = await sb.from('phone_index')
+        .insert({ phone: ph.phone, person_id: personId, kind: ph.kind })
+      if (e4) out.errors.push(`${name} phone: ${e4.message}`)
+      else out.phones_indexed++
+    }
+  }
+  return out
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
   const q = new URL(req.url).searchParams
+
+  if (q.get('clients') === '1') {
+    return new Response(JSON.stringify(
+      await backfillClientsFromAxisCare(q.get('commit') === '1'), null, 2),
+      { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
 
   if (q.get('grade') === '1') {
     return new Response(JSON.stringify(await gradeCaregiverEvidence(), null, 2),
