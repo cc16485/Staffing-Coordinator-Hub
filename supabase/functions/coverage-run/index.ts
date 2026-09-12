@@ -374,7 +374,13 @@ Deno.serve(async (req) => {
        deliberate. asked[] is the memory. */
     const alreadyAsked = new Set((c.asked ?? []).map((a: { name: string }) =>
       String(a.name || '').toLowerCase()))
+    /* Never ask the person who called off to cover their own shift — they
+       are usually tier 1 for exactly the wrong reason. */
+    const callerOff = String(c.calling_off || '').toLowerCase()
+    const callerOffId = String(c.calling_off_id || '')
     const wave = sendable.filter(x => !alreadyAsked.has(String(x.name).toLowerCase()))
+                         .filter(x => !(callerOff && String(x.name).toLowerCase() === callerOff)
+                                   && !(callerOffId && String(x.axiscare_id || '') === callerOffId))
                          .slice(0, WAVE_SIZE)
     stats.would_ask += wave.length
 

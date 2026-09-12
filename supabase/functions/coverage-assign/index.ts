@@ -108,7 +108,7 @@ Deno.serve(async (req) => {
   let visitId = String(c.axiscare_visit_id || '')
   if (!visitId) {
     if (!c.client_axiscare_id || !c.shift_date)
-      return finish('by_hand', 'this case came from a phone call and does not name an exact AxisCare visit — assign it by hand in AxisCare')
+      return finish('by_hand', 'this case has no exact AxisCare visit attached — use "Attach the real shift" on the case (or assign by hand in AxisCare)')
     const list = await ac('GET',
       `/api/visits?clientIds=${encodeURIComponent(String(c.client_axiscare_id))}&startDate=${c.shift_date}&endDate=${c.shift_date}`)
     if (!list.ok) return finish('by_hand', `could not read the client's visits (AxisCare ${list.status}) — assign by hand`)
