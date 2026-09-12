@@ -74,6 +74,33 @@ Deno.serve(async (req) => {
     return json({ caregivers_total: total, active: out.length, caregivers: out })
   }
 
+  /* Mode 3: one client's profile note, to prefill the {care} synopsis from
+     what's already maintained in AxisCare (Samantha: the client's Open Visit
+     Note is exactly this text). The API exposes `priorityNote` on the client
+     record — believed to be that field; the first prefill against a client
+     with a known note (Steve, id 13) confirms or corrects the mapping. */
+  if (b.client_lookup != null) {
+    const clId = String(b.client_lookup).trim()
+    if (!/^\d+$/.test(clId)) return json({ error: 'client_lookup must be a numeric client id' }, 400)
+    const { token, site } = axisCreds()
+    if (!token || !site) return json({ error: 'AxisCare credentials not set on this project' }, 502)
+    try {
+      const r = await fetch(`https://${site}.axiscare.com/api/clients/${encodeURIComponent(clId)}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json',
+                   'X-AxisCare-Api-Version': AC_VERSION } })
+      // deno-lint-ignore no-explicit-any
+      const j: any = await r.json().catch(() => ({}))
+      if (!r.ok || j?.success === false) return json({ error: `AxisCare responded ${r.status}` }, 502)
+      const cl = j?.results?.client ?? j?.results ?? {}
+      return json({
+        id: clId,
+        name: [String(cl?.firstName ?? '').trim(), String(cl?.lastName ?? '').trim()].filter(Boolean).join(' '),
+        city: String(cl?.residentialAddress?.city ?? '') || null,
+        priority_note: String(cl?.priorityNote ?? '') || null,
+      })
+    } catch (err) { return json({ error: String(err) }, 502) }
+  }
+
   const cgId = String(b.caregiver_axiscare_id || '').trim()
   if (!/^\d+$/.test(cgId)) return json({ error: 'caregiver_axiscare_id (numeric) required' }, 400)
   const days = Number(b.days) > 0 && Number(b.days) <= 30 ? Number(b.days) : 14

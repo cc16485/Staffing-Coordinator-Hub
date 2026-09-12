@@ -467,8 +467,10 @@ Deno.serve(async (req) => {
          {first_name} {client} {when}. */
       const who = String(c.client || 'a client').split(/\s+/)
       const clientShort = who.length > 1 ? `${who[0]} ${who[who.length - 1][0]}.` : who[0]
-      /* City for the anonymous version, fetched once per case and cached. */
-      if (!c.client_city && c.client_axiscare_id) {
+      /* City (for the anonymous wording) and the client's AxisCare profile
+         note (the Open Visit Note kept on the client — the {care} synopsis),
+         fetched once per case and cached on it. */
+      if ((!c.client_city || c.client_priority_note == null) && c.client_axiscare_id) {
         try {
           const { token: acTok, site: acSite } = axisCreds()
           if (acTok && acSite) {
@@ -477,9 +479,10 @@ Deno.serve(async (req) => {
                          'X-AxisCare-Api-Version': AC_VERSION } })
             const j: any = await r.json().catch(() => ({}))
             const cl = j?.results?.client ?? j?.results ?? {}
-            c.client_city = String(cl?.residentialAddress?.city ?? '') || null
+            c.client_city = c.client_city || (String(cl?.residentialAddress?.city ?? '') || null)
+            c.client_priority_note = String(cl?.priorityNote ?? '') || ''
           }
-        } catch { /* no city just means the plainer wording */ }
+        } catch { /* no city/note just means the plainer wording */ }
       }
       /* "today 2:00-6:00 PM" reads better than a bare date. */
       const chiToday = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
@@ -488,18 +491,30 @@ Deno.serve(async (req) => {
         : new Date(c.shift_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
       const when = [relDay, c.shift_time].filter(Boolean).join(' ')
         || 'as soon as possible — the office has details'
+      /* {care}: a one-line client synopsis for caregivers who DON'T know the
+         client (CareQB's pattern, requested by Samantha) — carried on the
+         case (care_note, set/edited in the hub confirm step). Tier 1 knows
+         the client, so their default stays short and synopsis-free. */
+      /* {care} priority: what the coordinator typed on THIS case → the
+         client's AxisCare profile note (capped — a 500-char note would make
+         a 4-segment SMS) → nothing. */
+      const axNote = String(c.client_priority_note || '').trim()
+      const careLine = String(c.care_note || '').trim() ||
+        (axNote.length > 220 ? axNote.slice(0, 217).trim() + '…' : axNote)
       const fill = (tmpl: string, x: any) => tmpl
         .replaceAll('{first_name}', x.first || 'there')
         .replaceAll('{client}', clientShort)
         .replaceAll('{where}', c.client_city ? ` in ${c.client_city}` : '')
         .replaceAll('{when}', when)
+        .replaceAll('{care}', careLine ? careLine + ' ' : '')
+        .replace(/\s{2,}/g, ' ').trim()
       /* Message priority: this CASE's edited wording (the coordinator can
          rewrite it in the confirm step before opening) → the agency-wide
          settings templates → the built-in default. */
       const tmpl1 = String(c.msg_tier1 || '') || String(settings.coverage_msg_tier1 || '') ||
-        `Hi {first_name}, it's Caring Companions. {client}'s shift needs coverage: {when}. Can you take it? Reply YES or NO — questions welcome.`
+        `Hi {first_name}, can you cover {client} {when}? It's Caring Companions — reply YES or NO.`
       const tmplO = String(c.msg_other || '') || String(settings.coverage_msg_other || '') ||
-        `Hi {first_name}, it's Caring Companions. We need a last-minute fill-in{where}: {when}. Can you take it? Reply YES or NO — questions welcome.`
+        `Hi {first_name}, it's Caring Companions. Last-minute fill-in{where}: {when}. {care}Can you take it? Reply YES or NO — questions welcome.`
       for (const x of wave) {
         /* An uncovered shift is the textbook urgent_internal: staff, 24/7. */
         const contact = await contactForOutbound(sb, ghl,
