@@ -323,6 +323,33 @@ Deno.serve(async (req) => {
                              : { rows: [], error: null }
   const recentlyActive = new Set(recent.rows.map(v => String(v?.caregiver?.id ?? '')).filter(Boolean))
 
+  /* AxisCare's ACTIVE caregiver census, once per run. The hub roster's own
+     active flag drifts (Samantha caught inactive caregivers in the picker),
+     and a coverage text to somebody who no longer works here is worse than
+     noise. Filtered on the per-row status.active boolean. If the census
+     cannot be read the waves fall back to roster-only filtering — degraded
+     and reported, never silently blocked. */
+  const axisActive = new Set<string>()
+  let censusError: string | null = null
+  if (open.length) {
+    const { token, site } = axisCreds()
+    if (!token || !site) censusError = 'AxisCare credentials not set'
+    else try {
+      let url: string | null = `https://${site}.axiscare.com/api/caregivers`
+      for (let page = 0; url && page < 12; page++) {
+        const r: Response = await fetch(url, { headers: {
+          Authorization: `Bearer ${token}`, Accept: 'application/json',
+          'X-AxisCare-Api-Version': AC_VERSION } })
+        if (!r.ok) { censusError = `AxisCare responded ${r.status}`; break }
+        const j: any = await r.json().catch(() => ({}))
+        for (const g of (j?.results?.caregivers ?? j?.caregivers ?? []))
+          if (g?.status?.active === true && g?.id != null) axisActive.add(String(g.id))
+        url = j?.results?.nextPage ?? j?.nextPage ?? null
+      }
+    } catch (err) { censusError = String(err) }
+  }
+  const censusUsable = !censusError && axisActive.size > 0
+
   for (const c of open) {
     const cands = await candidatesFor(c)
 
@@ -375,12 +402,20 @@ Deno.serve(async (req) => {
     const alreadyAsked = new Set((c.asked ?? []).map((a: { name: string }) =>
       String(a.name || '').toLowerCase()))
     /* Never ask the person who called off to cover their own shift — they
-       are usually tier 1 for exactly the wrong reason. */
+       are usually tier 1 for exactly the wrong reason. And only caregivers
+       AxisCare says are ACTIVE get asked at all (when the census is up). */
     const callerOff = String(c.calling_off || '').toLowerCase()
     const callerOffId = String(c.calling_off_id || '')
+    let inactiveSkipped = 0
     const wave = sendable.filter(x => !alreadyAsked.has(String(x.name).toLowerCase()))
                          .filter(x => !(callerOff && String(x.name).toLowerCase() === callerOff)
                                    && !(callerOffId && String(x.axiscare_id || '') === callerOffId))
+                         .filter((x: any) => {
+                           if (!censusUsable) return true
+                           const okAx = x.axiscare_id && axisActive.has(String(x.axiscare_id))
+                           if (!okAx) inactiveSkipped++
+                           return okAx
+                         })
                          .slice(0, WAVE_SIZE)
     stats.would_ask += wave.length
 
@@ -511,6 +546,9 @@ Deno.serve(async (req) => {
         : `${clientRes.status}: ${clientRes.detail} — waves fall back to tier 2/3 ranking`,
       history_error: historyError,
       recent_activity_error: recent.error,
+      axiscare_census: censusUsable
+        ? `${axisActive.size} active caregivers; ${inactiveSkipped} roster candidate(s) skipped as not active in AxisCare`
+        : `census unavailable (${censusError || 'empty'}) — roster-only filtering this run`,
       reason: c.reason,
       opened: c.opened_at,
       owner_now: c.owner ?? '(none)',

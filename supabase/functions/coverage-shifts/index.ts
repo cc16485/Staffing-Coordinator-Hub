@@ -33,6 +33,41 @@ Deno.serve(async (req) => {
 
   // deno-lint-ignore no-explicit-any
   const b: any = await req.json().catch(() => ({}))
+
+  /* Mode 2: the ACTIVE caregiver census, live from AxisCare, for the
+     "Who's calling off?" dropdown. The hub roster's active flag drifts from
+     AxisCare's, and Samantha only wants people who are actually active.
+     Filtered on the per-row status.active boolean — never a query param the
+     endpoint might silently ignore (the clients backfill taught that). */
+  if (b.list_caregivers === true) {
+    const { token, site } = axisCreds()
+    if (!token || !site) return json({ error: 'AxisCare credentials not set on this project' }, 502)
+    // deno-lint-ignore no-explicit-any
+    const out: any[] = []
+    let total = 0
+    try {
+      let url: string | null = `https://${site}.axiscare.com/api/caregivers`
+      for (let page = 0; url && page < 12; page++) {
+        const r: Response = await fetch(url, { headers: {
+          Authorization: `Bearer ${token}`, Accept: 'application/json',
+          'X-AxisCare-Api-Version': AC_VERSION } })
+        if (!r.ok) return json({ error: `AxisCare responded ${r.status}` }, 502)
+        // deno-lint-ignore no-explicit-any
+        const j: any = await r.json().catch(() => ({}))
+        for (const g of (j?.results?.caregivers ?? j?.caregivers ?? [])) {
+          total++
+          if (g?.status?.active !== true) continue
+          const name = [String(g?.firstName ?? '').trim(), String(g?.lastName ?? '').trim()]
+            .filter(Boolean).join(' ')
+          if (g?.id != null && name) out.push({ id: String(g.id), name })
+        }
+        url = j?.results?.nextPage ?? j?.nextPage ?? null
+      }
+    } catch (err) { return json({ error: String(err) }, 502) }
+    out.sort((a, b2) => a.name.localeCompare(b2.name))
+    return json({ caregivers_total: total, active: out.length, caregivers: out })
+  }
+
   const cgId = String(b.caregiver_axiscare_id || '').trim()
   if (!/^\d+$/.test(cgId)) return json({ error: 'caregiver_axiscare_id (numeric) required' }, 400)
   const days = Number(b.days) > 0 && Number(b.days) <= 30 ? Number(b.days) : 14
