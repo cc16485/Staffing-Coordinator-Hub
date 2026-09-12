@@ -95,7 +95,7 @@ async function logEverything(supabase: any, entry: Record<string, unknown>, ok: 
 
 export async function pushCallNote(
   supabase: any,
-  args: { phone: string; summary: string; direction?: string },
+  args: { phone: string; summary: string; direction?: string; ghlContactId?: string },
 ): Promise<CallNoteResult> {
   const { phone, summary } = args
   const direction = (args.direction || '').toLowerCase() === 'outbound' ? 'outbound' : 'inbound'
@@ -189,9 +189,17 @@ export async function pushCallNote(
   if (!Number.isInteger(entityIdNum))
     return finish({ outcome: 'error', detail: `AxisCare id "${entityId}" for ${callerName} is not numeric — cannot tag a call log`, dry }, { hash })
 
+  // A jump link straight to this caller's conversation (calls, recordings,
+  // texts) in the phone system, so nobody hunts for the contact by hand.
+  const ghlLoc = Deno.env.get('GHL_LOCATION_ID') || ''
+  const historyLine = (args.ghlContactId && ghlLoc)
+    ? `Full call history and recording: https://app.hirecara.com/v2/location/${ghlLoc}/contacts/detail/${args.ghlContactId}`
+    : ''
+
   const notes = [
     relationLine,
     summary.slice(0, 4000),
+    historyLine,
     'Logged automatically by the CC Hub phone system.',
   ].filter(Boolean).join('\n\n')
   const subject = `AI call summary (${direction})`

@@ -123,7 +123,7 @@ Deno.serve(async (req) => {
        decision either way and must never break the attach routing below. */
     let axNote: Record<string, unknown> = { outcome: 'error', detail: 'push did not run' }
     try {
-      axNote = await pushCallNote(supabase, { phone: callerPhone, summary, direction: field('direction') }) as unknown as Record<string, unknown>
+      axNote = await pushCallNote(supabase, { phone: callerPhone, summary, direction: field('direction'), ghlContactId: callerId }) as unknown as Record<string, unknown>
     } catch (e) { axNote = { outcome: 'error', detail: String(e) } }
 
     const digits = norm(callerPhone)
