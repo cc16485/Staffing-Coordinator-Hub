@@ -313,8 +313,14 @@ Deno.serve(async (req) => {
   for (const c of open) {
     const cands = await candidatesFor(c)
 
-    /* Tier 1: visit history with THIS client, if the client resolves. */
-    const clientRes = await resolveClientAxisId(String(c.client ?? ''))
+    /* Tier 1: visit history with THIS client, if the client resolves. A case
+       opened by coverage-watch carries the client's AxisCare id straight off
+       the visit — exact, no name matching needed. Phone-opened cases still
+       resolve their free-text name through the identity layer. */
+    const clientRes = c.client_axiscare_id
+      ? { status: 'resolved', id: String(c.client_axiscare_id),
+          detail: `AxisCare client ${c.client_axiscare_id} (from the AxisCare visit)` }
+      : await resolveClientAxisId(String(c.client ?? ''))
     const history = new Map<string, { visits: number; last: string }>()
     let historyError: string | null = null
     if (clientRes.id) {
