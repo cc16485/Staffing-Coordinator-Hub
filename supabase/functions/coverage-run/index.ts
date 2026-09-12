@@ -412,23 +412,58 @@ Deno.serve(async (req) => {
       stats.held_quiet_hours = (Number(stats.held_quiet_hours) || 0) + wave.length
     }
     if (sendLive && !hasYes && fuseBurned && !quietHold && wave.length && ghl.token && ghl.locationId) {
+      /* MESSAGE DESIGN (adopted from CareQB's template split): only tier 1 —
+         caregivers who already work with this client — get the client's name.
+         Everyone else gets "a last-minute fill-in in {city}". A text fanned
+         out to dozens of phones should not name a care recipient to people
+         who have never met them. Wording is editable without a deploy:
+         ops_settings.coverage_msg_tier1 / coverage_msg_other, placeholders
+         {first_name} {client} {when}. */
       const who = String(c.client || 'a client').split(/\s+/)
       const clientShort = who.length > 1 ? `${who[0]} ${who[who.length - 1][0]}.` : who[0]
-      const when = [c.shift_date, c.shift_time].filter(Boolean).join(' ')
+      /* City for the anonymous version, fetched once per case and cached. */
+      if (!c.client_city && c.client_axiscare_id) {
+        try {
+          const { token: acTok, site: acSite } = axisCreds()
+          if (acTok && acSite) {
+            const r = await fetch(`https://${acSite}.axiscare.com/api/clients/${encodeURIComponent(String(c.client_axiscare_id))}`, {
+              headers: { Authorization: `Bearer ${acTok}`, Accept: 'application/json',
+                         'X-AxisCare-Api-Version': AC_VERSION } })
+            const j: any = await r.json().catch(() => ({}))
+            const cl = j?.results?.client ?? j?.results ?? {}
+            c.client_city = String(cl?.residentialAddress?.city ?? '') || null
+          }
+        } catch { /* no city just means the plainer wording */ }
+      }
+      /* "today 2:00-6:00 PM" reads better than a bare date. */
+      const chiToday = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+      const relDay = !c.shift_date ? '' : c.shift_date === chiToday ? 'today'
+        : (new Date(c.shift_date + 'T12:00:00').getTime() - new Date(chiToday + 'T12:00:00').getTime() === 86400000) ? 'tomorrow'
+        : new Date(c.shift_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+      const when = [relDay, c.shift_time].filter(Boolean).join(' ')
         || 'as soon as possible — the office has details'
+      const fill = (tmpl: string, x: any) => tmpl
+        .replaceAll('{first_name}', x.first || 'there')
+        .replaceAll('{client}', clientShort)
+        .replaceAll('{where}', c.client_city ? ` in ${c.client_city}` : '')
+        .replaceAll('{when}', when)
+      const tmpl1 = String(settings.coverage_msg_tier1 || '') ||
+        `Hi {first_name}, it's Caring Companions. {client}'s shift needs coverage: {when}. Can you take it? Reply YES or NO — questions welcome.`
+      const tmplO = String(settings.coverage_msg_other || '') ||
+        `Hi {first_name}, it's Caring Companions. We need a last-minute fill-in{where}: {when}. Can you take it? Reply YES or NO — questions welcome.`
       for (const x of wave) {
         /* An uncovered shift is the textbook urgent_internal: staff, 24/7. */
         const contact = await contactForOutbound(sb, ghl,
           { phone: x.phone, firstName: x.first || x.name }, 'urgent_internal')
         if (!contact) continue
+        const message = fill(x.tier === 1 ? tmpl1 : tmplO, x)
         let ok = false
         try {
           const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
             method: 'POST',
             headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
                        'Content-Type': 'application/json' },
-            body: JSON.stringify({ type: 'SMS', contactId: contact.contactId,
-              message: `Hi ${x.first || 'there'}, it's Caring Companions. ${clientShort}'s shift needs coverage: ${when}. Can you take it? Reply YES or NO — questions welcome.` }),
+            body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message }),
           })
           ok = r.ok
           if (!r.ok) console.error('callout sms', r.status, await r.text().catch(() => ''))
@@ -515,9 +550,40 @@ Deno.serve(async (req) => {
     if (chiHour >= 8 && chiHour < 21) {
       for (const c of cases) {
         if (c?.status === 'open' || c?.closure_notified) continue
-        const waiting = (Array.isArray(c.asked) ? c.asked : [])
+        const askedList = Array.isArray(c.asked) ? c.asked : []
+        /* The winner hears they're confirmed (CareQB's "Assign to Shift"
+           message). They said yes to a shift; silence after that reads as
+           "did I get it or not?". Full client name is right here — they are
+           assigned now and need to know who they're going to. */
+        if (c.resolved_how === 'covered' && c.covered_by) {
+          const winner = askedList.find((a: any) => a.auto === true && a.state === 'yes'
+            && !a.confirm_sent && String(a.name).toLowerCase() === String(c.covered_by).toLowerCase()
+            && a.ghl_contact_id)
+          if (winner) {
+            const whenTxt = [c.shift_date, c.shift_time].filter(Boolean).join(' ')
+            try {
+              const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
+                           'Content-Type': 'application/json' },
+                body: JSON.stringify({ type: 'SMS', contactId: winner.ghl_contact_id,
+                  message: `You're confirmed${c.client ? ' for ' + c.client : ''}${whenTxt ? ', ' + whenTxt : ''}. It's on your schedule — thank you, ${String(winner.name).split(' ')[0]}!` }),
+              })
+              if (r.ok) winner.confirm_sent = true
+            } catch { /* the office confirmed by phone anyway; never block closure */ }
+          }
+        }
+        const waiting = askedList
           .filter((a: any) => a.auto === true && a.state === 'waiting' && a.ghl_contact_id)
-        if (!waiting.length) continue
+        if (!waiting.length) {
+          /* Nothing left to notify — but a just-confirmed winner must be
+             persisted or the next run would text them "confirmed" again. */
+          if (askedList.some((a: any) => a.confirm_sent)) {
+            c.closure_notified = nowIso()
+            await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
+          }
+          continue
+        }
         let told = 0
         for (const a of waiting) {
           try {
