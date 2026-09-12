@@ -520,9 +520,15 @@ async function backfillClientsFromAxisCare(commit: boolean) {
   const site = Deno.env.get('AXISCARE_SITE') || Deno.env.get('AXISCARE_SITE_NUMBER') || ''
   if (!token || !/^\d+$/.test(site)) return { error: 'AxisCare credentials not set on this project' }
 
-  // Pull the active client census, paginated.
+  /* Pull the client census, paginated, then keep ONLY the active ones.
+     Caught by Samantha on the first dry run: `?active=true` is not a real
+     filter on this endpoint (the spec's filter is `statuses`, by label), so
+     AxisCare ignored it and returned all 293 clients ever — discharged and
+     deceased included. Status labels can be customised per agency, so the
+     robust check is the boolean AxisCare puts on every row: status.active. */
   const clients: any[] = []
-  let url: string | null = `https://${site}.axiscare.com/api/clients?active=true`
+  let totalSeen = 0
+  let url: string | null = `https://${site}.axiscare.com/api/clients`
   try {
     for (let page = 0; url && page < 12; page++) {
       const r: Response = await fetch(url, { headers: {
@@ -530,7 +536,10 @@ async function backfillClientsFromAxisCare(commit: boolean) {
         'X-AxisCare-Api-Version': Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01' } })
       if (!r.ok) return { error: `AxisCare responded ${r.status}`, fetched_so_far: clients.length }
       const j: any = await r.json().catch(() => ({}))
-      for (const c of (j?.results?.clients ?? j?.clients ?? [])) clients.push(c)
+      for (const c of (j?.results?.clients ?? j?.clients ?? [])) {
+        totalSeen++
+        if (c?.status?.active === true) clients.push(c)
+      }
       url = j?.results?.nextPage ?? j?.nextPage ?? null
     }
   } catch (err) { return { error: String(err), fetched_so_far: clients.length } }
@@ -545,7 +554,8 @@ async function backfillClientsFromAxisCare(commit: boolean) {
   const nameOwners = new Map<string, string>()
   for (const p of (ppl ?? [])) nameOwners.set(String(p.display_name).trim().toLowerCase(), String(p.id))
 
-  const out = { mode: commit ? 'COMMIT' : 'DRY RUN', axiscare_active_clients: clients.length,
+  const out = { mode: commit ? 'COMMIT' : 'DRY RUN',
+    axiscare_clients_total: totalSeen, axiscare_active_clients: clients.length,
     already_linked: 0, created: 0, roles_added: 0, phones_indexed: 0, no_phone: 0,
     skipped_no_name: 0, name_coincidences: [] as any[], errors: [] as string[] }
 
