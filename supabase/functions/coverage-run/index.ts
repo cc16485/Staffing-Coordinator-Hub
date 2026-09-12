@@ -153,6 +153,7 @@ async function candidatesFor(_c: any) {
     out.push({
       name,
       eligibility,
+      axiscare_id: clean(cg.axiscare_id) || null,
       phone_last4: phone.slice(-4),
       confidence: verdict.confidence,
       may_autosend: verdict.allowed,
@@ -160,6 +161,78 @@ async function candidatesFor(_c: any) {
     })
   }
   return out
+}
+
+/* ── WAVE RANKING: worked-with-this-client first, then recently active, then
+      everyone else. This is the ordering Samantha described for a call-off
+      blast, computed from AxisCare's own visit history now that API access is
+      back. (When this engine was first written AxisCare was blocked and waves
+      were unranked roster order.)
+
+        tier 1  has visits with THIS client (most recent/most visits first)
+        tier 2  worked any shift in the last 14 days (a live field caregiver)
+        tier 3  everyone else who passes the gate
+
+      All of it read-only. If the client cannot be resolved to one AxisCare
+      id, or AxisCare cannot be reached, the run says so and falls back to
+      unranked — degraded and honest beats clever and silent. ─────────────── */
+
+const AC_VERSION = Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01'
+function axisCreds() {
+  const order = ['AXISCARE_VISITS_TOKEN', 'AXISCARE_API_KEY', 'AXISCARE_TOKEN']
+  let token = '', tokenName = ''
+  for (const n of order) { const v = Deno.env.get(n); if (v) { token = v; tokenName = n; break } }
+  const site = Deno.env.get('AXISCARE_SITE') || Deno.env.get('AXISCARE_SITE_NUMBER') || ''
+  return { token, tokenName, site: /^\d+$/.test(site) ? site : '' }
+}
+
+/** Paginated visit fetch; returns rows or an error string, never throws. */
+async function fetchVisits(params: string): Promise<{ rows: any[]; error: string | null }> {
+  const { token, site } = axisCreds()
+  if (!token || !site) return { rows: [], error: 'AxisCare credentials not set on this project' }
+  const rows: any[] = []
+  try {
+    let url: string | null = `https://${site}.axiscare.com/api/visits?${params}`
+    for (let page = 0; url && page < 12; page++) {
+      const r: Response = await fetch(url, { headers: {
+        Authorization: `Bearer ${token}`, Accept: 'application/json',
+        'X-AxisCare-Api-Version': AC_VERSION } })
+      if (!r.ok) return { rows, error: `AxisCare responded ${r.status}` }
+      const j: any = await r.json().catch(() => ({}))
+      for (const v of (j?.results?.visits ?? j?.visits ?? [])) {
+        if (v?.removed) continue
+        rows.push(v)
+      }
+      url = j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
+    }
+    return { rows, error: null }
+  } catch (err) { return { rows, error: String(err) } }
+}
+
+const dISO = (daysAgo: number) => new Date(Date.now() - daysAgo * 86400000).toISOString().slice(0, 10)
+
+/** The case's client is free text off a phone call. Resolve it to ONE
+ *  confirmed AxisCare client id through the identity layer, or say why not. */
+async function resolveClientAxisId(clientText: string):
+  Promise<{ status: string; id: string | null; detail: string }> {
+  const name = clean(clientText)
+  if (!name || /not identified|from call|confirm the client|unknown/i.test(name))
+    return { status: 'placeholder', id: null,
+             detail: 'the case does not name a real client yet — confirm the client on the case first' }
+  const { data: people } = await sb.from('person_identity')
+    .select('id, display_name').ilike('display_name', name)
+  const ids = [...new Set((people ?? []).map((p: any) => String(p.id)))]
+  if (ids.length === 0) return { status: 'not_found', id: null,
+    detail: `no person named "${name}" in the identity layer` }
+  if (ids.length > 1) return { status: 'ambiguous', id: null,
+    detail: `${ids.length} people named "${name}" — a human must pick` }
+  const { data: src } = await sb.from('person_source_id')
+    .select('source_id').eq('person_id', ids[0]).eq('system', 'axiscare')
+    .eq('entity_type', 'client').eq('confidence', 'confirmed').eq('needs_review', false)
+    .maybeSingle()
+  if (!src?.source_id) return { status: 'no_axiscare_id', id: null,
+    detail: `"${name}" is known but holds no confirmed AxisCare client id` }
+  return { status: 'resolved', id: String(src.source_id), detail: `AxisCare client ${src.source_id}` }
 }
 
 Deno.serve(async (req) => {
@@ -232,9 +305,46 @@ Deno.serve(async (req) => {
                   candidates_total: 0, may_autosend: 0, blocked_no_phone: 0,
                   blocked_untrusted: 0, would_ask: 0 }
 
+  /* Recently-active caregivers (tier 2), fetched ONCE for the whole run. */
+  const recent = open.length ? await fetchVisits(`startDate=${dISO(14)}&endDate=${dISO(0)}`)
+                             : { rows: [], error: null }
+  const recentlyActive = new Set(recent.rows.map(v => String(v?.caregiver?.id ?? '')).filter(Boolean))
+
   for (const c of open) {
     const cands = await candidatesFor(c)
-    const sendable = cands.filter(x => x.may_autosend)
+
+    /* Tier 1: visit history with THIS client, if the client resolves. */
+    const clientRes = await resolveClientAxisId(String(c.client ?? ''))
+    const history = new Map<string, { visits: number; last: string }>()
+    let historyError: string | null = null
+    if (clientRes.id) {
+      const h = await fetchVisits(
+        `startDate=${dISO(180)}&endDate=${dISO(0)}&clientIds=${encodeURIComponent(clientRes.id)}`)
+      historyError = h.error
+      for (const v of h.rows) {
+        const cg = v?.caregiver?.id
+        if (cg == null) continue
+        const k = String(cg)
+        const day = String(v?.date ?? v?.startDate ?? v?.start ?? '')
+        const cur = history.get(k) ?? { visits: 0, last: '' }
+        history.set(k, { visits: cur.visits + 1, last: day > cur.last ? day : cur.last })
+      }
+    }
+    const tierOf = (x: any): { tier: number; why: string } => {
+      const id = x.axiscare_id ? String(x.axiscare_id) : ''
+      const h = id ? history.get(id) : undefined
+      if (h) return { tier: 1, why: `${h.visits} visit${h.visits === 1 ? '' : 's'} with this client, last ${h.last || 'date unknown'}` }
+      if (id && recentlyActive.has(id)) return { tier: 2, why: 'worked a shift in the last 14 days' }
+      return { tier: 3, why: x.axiscare_id ? 'no recent or client history found' : 'no AxisCare id on the roster record' }
+    }
+    for (const x of cands) {
+      if (!x.may_autosend) continue
+      const t = tierOf(x); x.tier = t.tier; x.tier_why = t.why
+    }
+    const sendable = cands.filter(x => x.may_autosend).sort((a: any, b: any) =>
+      (a.tier - b.tier) ||
+      ((history.get(String(b.axiscare_id ?? ''))?.visits ?? 0) -
+       (history.get(String(a.axiscare_id ?? ''))?.visits ?? 0)))
     stats.candidates_total += cands.length
     stats.may_autosend += sendable.length
     stats.blocked_no_phone += cands.filter(x => x.skipped === 'no phone on file').length
@@ -253,6 +363,11 @@ Deno.serve(async (req) => {
     detail.push({
       case_id: c.id,
       client: c.client ?? '(not identified — AxisCare)',
+      client_resolution: clientRes.status === 'resolved'
+        ? clientRes.detail
+        : `${clientRes.status}: ${clientRes.detail} — waves fall back to tier 2/3 ranking`,
+      history_error: historyError,
+      recent_activity_error: recent.error,
       reason: c.reason,
       opened: c.opened_at,
       owner_now: c.owner ?? '(none)',
@@ -261,7 +376,11 @@ Deno.serve(async (req) => {
       already_asked: (c.asked ?? []).length,
       candidates_considered: cands.length,
       eligible_to_message: sendable.length,
-      this_wave: wave.map(w => w.name),
+      /* Ranked: worked-with-this-client first, then recently active, then the
+         rest — each with the reason, so a human can argue with the order. */
+      this_wave: wave.map((w: any) => ({ name: w.name, tier: w.tier, why: w.tier_why })),
+      next_in_line: sendable.filter((x: any) => !wave.includes(x))
+        .slice(0, WAVE_SIZE * 2).map((w: any) => ({ name: w.name, tier: w.tier, why: w.tier_why })),
       blocked: cands.filter(x => x.skipped).slice(0, 8),
       prompt: haveItem.has(itemId) ? 'exists' : 'would create',
     })
@@ -297,14 +416,16 @@ Deno.serve(async (req) => {
     wave_size: WAVE_SIZE,
     gate_evaluated_independently: gate,
     stats, detail,
-    blocked_by_axiscare: [
-      'which client and shift the call-off affects',
-      'caregiver availability and schedule conflicts',
+    /* AxisCare access is BACK (2026-08-13), so this list shrank: worked-with-
+       this-client ranking and recent-activity now come from real visit
+       history above. What still needs AxisCare work (or a build): */
+    blocked_or_unbuilt: [
+      'caregiver availability and schedule conflicts (schedules readable — not wired in yet)',
       'overtime risk',
       'service area and client requirements',
-      'writing the assignment back to the schedule',
-      'visit and EVV confirmation',
+      'writing the accepted assignment back to the schedule (API supports it — deliberately manual for now)',
       'family notification driven by the real schedule change',
+      'ongoing/recurring open shifts offered as ONE package instead of shift-by-shift',
     ],
   }, null, 2), { status: 200, headers: { 'Content-Type': 'application/json' } })
 })
