@@ -627,9 +627,9 @@ Deno.serve(async (req) => {
          rewrite it in the confirm step before opening) → the agency-wide
          settings templates → the built-in default. */
       const tmpl1 = String(c.msg_tier1 || '') || String(settings.coverage_msg_tier1 || '') ||
-        `Hi {first_name}, can you cover {client} {when}? It's Caring Companions — reply YES or NO.`
+        `Hi {first_name}, can you cover {client} {when}? It's Caring Companions. Reply YES or NO.`
       const tmplO = String(c.msg_other || '') || String(settings.coverage_msg_other || '') ||
-        `Hi {first_name}, it's Caring Companions. Last-minute fill-in at {address}: {when}. {care}Can you take it? Reply YES or NO — questions welcome.`
+        `Hi {first_name}, it's Caring Companions. Last-minute fill-in at {address}: {when}. {care}Can you take it? Reply YES or NO. Questions welcome.`
       for (const x of wave) {
         /* An uncovered shift is the textbook urgent_internal: staff, 24/7. */
         const contact = await contactForOutbound(sb, ghl,
@@ -757,7 +757,7 @@ Deno.serve(async (req) => {
                 headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
                            'Content-Type': 'application/json' },
                 body: JSON.stringify({ type: 'SMS', contactId: winner.ghl_contact_id,
-                  message: `You're confirmed${c.client ? ' for ' + c.client : ''}${whenTxt ? ', ' + whenTxt : ''}. It's on your schedule — thank you, ${String(winner.name).split(' ')[0]}!` }),
+                  message: `You're confirmed${c.client ? ' for ' + c.client : ''}${whenTxt ? ', ' + whenTxt : ''}. It's on your schedule. Thank you, ${String(winner.name).split(' ')[0]}!` }),
               })
               if (r.ok) winner.confirm_sent = true
             } catch { /* the office confirmed by phone anyway; never block closure */ }
@@ -782,7 +782,7 @@ Deno.serve(async (req) => {
               headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
                          'Content-Type': 'application/json' },
               body: JSON.stringify({ type: 'SMS', contactId: a.ghl_contact_id,
-                message: `Caring Companions: that shift is covered now — thank you! No action needed.` }),
+                message: `Caring Companions: that shift is covered now. Thank you! No action needed.` }),
             })
             if (r.ok) { a.state = 'closed_notified'; told++ }
             /* Case over: drop the tag so future texts stop firing the

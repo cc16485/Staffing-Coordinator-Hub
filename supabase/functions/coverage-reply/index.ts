@@ -115,11 +115,11 @@ Deno.serve(async (req) => {
     a.state = 'yes'
     if (alreadyWon) {
       routed = 'yes — but someone already won'
-      await sms(contactId || a.ghl_contact_id, `Thank you ${a.name.split(' ')[0]}! Someone grabbed it just before you — we really appreciate you answering. Next one's yours.`)
+      await sms(contactId || a.ghl_contact_id, `Thank you ${a.name.split(' ')[0]}! Someone grabbed it just before you, but we really appreciate you answering. Next one is yours.`)
     } else {
       c.pending_fill = { name: a.name, phone: a.phone, at: stamp }
       routed = 'YES — first in, office prompted to confirm'
-      await sms(contactId || a.ghl_contact_id, `Got it, ${a.name.split(' ')[0]} — thank you! The office will confirm with you shortly.`)
+      await sms(contactId || a.ghl_contact_id, `Got it, ${a.name.split(' ')[0]}. Thank you! The office will confirm with you shortly.`)
       await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
         id: `ops_covfill_${c.id}`, kind: 'coverage', coverage_case_id: c.id,
         title: `${a.name} can cover ${c.client || 'the shift'} — confirm & assign in AxisCare`,
