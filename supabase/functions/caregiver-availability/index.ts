@@ -20,8 +20,20 @@
 //     updated_at, source: 'self' | 'office' }
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { contactForOutbound } from '../_shared/outreach.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+
+function callerRole(req: Request): string {
+  try {
+    const tok = String(req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '')
+    const payload = JSON.parse(atob(tok.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+    return String(payload?.role || '')
+  } catch { return '' }
+}
+function nameKeyOf(n: string) {
+  return n.toLowerCase().replace(/[^a-z ]/g, '').split(/\s+/).filter(Boolean).join(' ')
+}
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -38,6 +50,74 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   // deno-lint-ignore no-explicit-any
   const b: any = await req.json().catch(() => ({}))
+
+  /* ── ACTION: INVITE (office only) ──────────────────────────────────────
+     Texts the availability link to active caregivers who have nothing on
+     file. Samantha's rules: ONLY between 10:00 and 17:00 Chicago (server-
+     enforced), never nurses, never anyone invited in the last 30 days,
+     capped per run, wording editable in Settings (coverage_msg_avail_invite). */
+  if (b.action === 'invite') {
+    const role = callerRole(req)
+    if (role !== 'authenticated' && role !== 'service_role')
+      return json({ error: 'a signed-in coordinator session is required' }, 403)
+    const chiHour = Number(new Date().toLocaleString('en-US',
+      { timeZone: 'America/Chicago', hour: '2-digit', hour12: false }))
+    if (chiHour < 10 || chiHour >= 17)
+      return json({ held: true, message: 'Availability invites only send between 10am and 5pm. Try again in that window.' })
+
+    const key = async (k: string) => {
+      const { data } = await sb.from('app_data').select('data').eq('key', k).maybeSingle()
+      // deno-lint-ignore no-explicit-any
+      return (Array.isArray(data?.data) ? data!.data : []) as any[]
+    }
+    const roster = await key('caregivers')
+    const av = await key('caregiver_availability')
+    const invites = await key('availability_invites')
+    const nurses = new Set((await key('nurse_staff')).map((s: any) => nameKeyOf(String(s?.name || ''))))
+    const haveAv = new Set(av.map((a: any) => String(a.id)))
+    const monthAgo = Date.now() - 30 * 864e5
+    const recentlyInvited = new Set(invites
+      .filter((i: any) => new Date(String(i.at || 0)).getTime() > monthAgo)
+      .map((i: any) => String(i.id)))
+    const settings = (await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()).data?.data ?? {}
+    const tmpl = String(settings.coverage_msg_avail_invite || '') ||
+      `Hi {first_name}, it's Caring Companions! Tell us the hours and days you WANT to work so we can offer you shifts first: cc.mo-care.com/availability It takes 30 seconds and you can update it anytime.`
+    const ghl = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
+    if (!ghl.token || !ghl.locationId) return json({ error: 'GHL credentials not set' }, 500)
+
+    const CAP = 20
+    let sent = 0, skippedGate = 0
+    const sentTo: string[] = []
+    for (const cg of roster) {
+      if (sent >= CAP) break
+      if (cg?.active === false) continue
+      const name = [String(cg.first || '').trim(), String(cg.last || '').trim()].filter(Boolean).join(' ')
+      if (!name || nurses.has(nameKeyOf(name))) continue
+      const itemId = String(cg.axiscare_id || ('roster_' + cg.id))
+      if (haveAv.has(itemId) || recentlyInvited.has(itemId)) continue
+      const contact = await contactForOutbound(sb, ghl,
+        { phone: cg.phone, firstName: cg.first || name }, 'routine_internal')
+      if (!contact) { skippedGate++; continue }
+      let ok = false
+      try {
+        const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type: 'SMS', contactId: contact.contactId,
+            message: tmpl.replaceAll('{first_name}', String(cg.first || 'there')) }),
+        })
+        ok = r.ok
+      } catch { /* skip on failure */ }
+      if (ok) {
+        sent++; sentTo.push(name)
+        await sb.rpc('upsert_app_data_item', { target_key: 'availability_invites',
+          item: { id: itemId, name, at: new Date().toISOString() } })
+      }
+    }
+    return json({ sent, sent_to: sentTo, skipped_gate: skippedGate,
+      note: sent >= CAP ? `capped at ${CAP} per run — press the button again for the next batch` : 'everyone eligible was invited' })
+  }
+
   const phone = digits10(b.phone)
   if (phone.length !== 10) return json({ error: 'enter your 10-digit phone number' }, 400)
 
