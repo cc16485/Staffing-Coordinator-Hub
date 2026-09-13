@@ -566,7 +566,14 @@ Deno.serve(async (req) => {
     const chiHour = Number(new Date().toLocaleString('en-US',
       { timeZone: 'America/Chicago', hour: '2-digit', hour12: false }))
     const qFrom = Number.isFinite(Number(settings.coverage_quiet_from)) ? Number(settings.coverage_quiet_from) : 21
-    const qUntil = Number.isFinite(Number(settings.coverage_quiet_until)) ? Number(settings.coverage_quiet_until) : 6
+    /* Two different mornings (her rule, 2026-09-12): a shift TODAY may text
+       from 6am — that urgency is real. A shift on a FUTURE day waits for a
+       civil 8am; nobody should wake to a Sunday 6am text about Monday. */
+    const chiDateNow = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+    const shiftIsToday = !c.shift_date || c.shift_date === chiDateNow
+    const qUntilSame = Number.isFinite(Number(settings.coverage_quiet_until)) ? Number(settings.coverage_quiet_until) : 6
+    const qUntilAdv = Number.isFinite(Number(settings.coverage_quiet_until_advance)) ? Number(settings.coverage_quiet_until_advance) : 8
+    const qUntil = shiftIsToday ? qUntilSame : qUntilAdv
     const inQuiet = qFrom > qUntil ? (chiHour >= qFrom || chiHour < qUntil) : (chiHour >= qFrom && chiHour < qUntil)
     let shiftSoon = false
     if (c.shift_date) {
