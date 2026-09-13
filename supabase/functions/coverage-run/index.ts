@@ -454,6 +454,35 @@ Deno.serve(async (req) => {
   }
   const censusUsable = !censusError && axisActive.size > 0
 
+  /* SUPPLY SIGNAL: what each caregiver says they want (self-maintained via
+     the availability page) versus what they are scheduled for in the next 7
+     days. Within a tier, hungrier caregivers are asked first — the person
+     wanting 15 more hours hears about the shift before the person already
+     at target. Missing data means no boost, never a penalty. */
+  const wantGap = new Map<string, number>()   // axiscare id → wanted-minus-scheduled
+  if (open.length) {
+    try {
+      const { data: avRow } = await sb.from('app_data').select('data').eq('key', 'caregiver_availability').maybeSingle()
+      const av: any[] = Array.isArray(avRow?.data) ? avRow!.data : []
+      if (av.length) {
+        const fwd = await fetchVisits(`startDate=${dISO(0)}&endDate=${dISO(-7)}`)
+        const sched = new Map<string, number>()
+        for (const v of fwd.rows) {
+          const id = v?.caregiver?.id; if (id == null) continue
+          const s = new Date(String(v?.scheduledStartDate ?? v?.startDate ?? '')).getTime()
+          const e = new Date(String(v?.scheduledEndDate ?? v?.endDate ?? '')).getTime()
+          if (Number.isFinite(s) && Number.isFinite(e) && e > s)
+            sched.set(String(id), (sched.get(String(id)) ?? 0) + (e - s) / 3600000)
+        }
+        for (const a of av) {
+          const id = String(a?.axiscare_id ?? ''); if (!id) continue
+          const target = Number(a?.target_hours)
+          if (Number.isFinite(target)) wantGap.set(id, target - (sched.get(id) ?? 0))
+        }
+      }
+    } catch { /* no boost is a fine fallback */ }
+  }
+
   for (const c of open) {
     const cands = await candidatesFor(c)
 
@@ -539,7 +568,9 @@ Deno.serve(async (req) => {
     const sendable = cands.filter(x => x.may_autosend).sort((a: any, b: any) =>
       (a.tier - b.tier) ||
       ((history.get(String(b.axiscare_id ?? ''))?.visits ?? 0) -
-       (history.get(String(a.axiscare_id ?? ''))?.visits ?? 0)))
+       (history.get(String(a.axiscare_id ?? ''))?.visits ?? 0)) ||
+      ((wantGap.get(String(b.axiscare_id ?? '')) ?? -999) -
+       (wantGap.get(String(a.axiscare_id ?? '')) ?? -999)))
     stats.candidates_total += cands.length
     stats.may_autosend += sendable.length
     stats.blocked_no_phone += cands.filter(x => x.skipped === 'no phone on file').length

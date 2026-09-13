@@ -117,6 +117,40 @@ Deno.serve(async (req) => {
     } catch (err) { return json({ error: String(err) }, 502) }
   }
 
+  /* Mode 4: Hours Watch — scheduled hours in the next 7 days per caregiver,
+     summed from the visit windows. The board pairs this with what each
+     caregiver SAYS they want (caregiver_availability) to show the gap. */
+  if (b.hours_watch === true) {
+    const { token, site } = axisCreds()
+    if (!token || !site) return json({ error: 'AxisCare credentials not set on this project' }, 502)
+    const startDate = chiToday()
+    const endDate = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10)
+    const hours = new Map<string, number>()
+    let url: string | null = `https://${site}.axiscare.com/api/visits?startDate=${startDate}&endDate=${endDate}`
+    try {
+      for (let page = 0; url && page < 12; page++) {
+        const r: Response = await fetch(url, { headers: {
+          Authorization: `Bearer ${token}`, Accept: 'application/json',
+          'X-AxisCare-Api-Version': AC_VERSION } })
+        if (!r.ok) return json({ error: `AxisCare responded ${r.status}` }, 502)
+        // deno-lint-ignore no-explicit-any
+        const j: any = await r.json().catch(() => ({}))
+        for (const v of rowsOf(j?.results?.visits ?? j?.visits)) {
+          if (v?.removed || v?.caregiver?.id == null) continue
+          const s = new Date(String(v?.scheduledStartDate ?? v?.startDate ?? '')).getTime()
+          const e = new Date(String(v?.scheduledEndDate ?? v?.endDate ?? '')).getTime()
+          if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) continue
+          const id = String(v.caregiver.id)
+          hours.set(id, (hours.get(id) ?? 0) + (e - s) / 3600000)
+        }
+        url = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
+      }
+    } catch (err) { return json({ error: String(err) }, 502) }
+    return json({ window: `${startDate} → ${endDate}`,
+      scheduled_hours: Object.fromEntries([...hours.entries()].map(([k, v]) => [k, Math.round(v * 10) / 10])),
+      ...(url ? { truncated: true } : {}) })
+  }
+
   const cgId = String(b.caregiver_axiscare_id || '').trim()
   if (!/^\d+$/.test(cgId)) return json({ error: 'caregiver_axiscare_id (numeric) required' }, 400)
   const days = Number(b.days) > 0 && Number(b.days) <= 30 ? Number(b.days) : 14
