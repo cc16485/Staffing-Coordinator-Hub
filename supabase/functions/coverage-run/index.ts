@@ -125,6 +125,17 @@ async function candidatesFor(_c: any) {
     }
   }
 
+  /* NURSES ARE NEVER COVERAGE CANDIDATES (Natasha Early got the first live
+     callout text, 2026-09-12). The nursing roster is authoritative; a nurse
+     appearing on the caregiver roster changes nothing. */
+  const nurseNames = new Set<string>()
+  {
+    const { data: ns } = await sb.from('app_data').select('data').eq('key', 'nurse_staff').maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    for (const s of (Array.isArray(ns?.data) ? ns!.data : []) as any[])
+      if (s?.name) nurseNames.add(nameKeyOf(String(s.name)))
+  }
+
   const { data } = await sb.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
   // deno-lint-ignore no-explicit-any
   const roster = (Array.isArray(data?.data) ? data!.data : []) as any[]
@@ -134,6 +145,8 @@ async function candidatesFor(_c: any) {
     const name = [clean(cg.first), clean(cg.last)].filter(Boolean).join(' ').trim()
     if (!name) continue
     if (cg.active === false) { out.push({ name, skipped: 'no longer active' }); continue }
+    if (nurseNames.has(nameKeyOf(name))) {
+      out.push({ name, skipped: 'nurse — nursing staff are never coverage candidates' }); continue }
     /* THE ROSTER MIXES OFFICE STAFF WITH FIELD CAREGIVERS. The dry run named
        Samantha and Krystal in wave 1 — ringing the CEO and the supervisor to
        cover a shift. Nobody who holds an active office domain is a coverage
@@ -356,6 +369,7 @@ Deno.serve(async (req) => {
      and reported, never silently blocked. */
   const axisActive = new Set<string>()
   const caregiverLevel = new Map<string, number>()   // axiscare id → care level 1-3
+  const nurseAxis = new Set<string>()                // nurse-classed in AxisCare
   let censusError: string | null = null
   if (open.length) {
     const { token, site } = axisCreds()
@@ -378,6 +392,11 @@ Deno.serve(async (req) => {
             axisActive.add(String(g.id))
             const lv = careLevelOf(g?.classes)
             if (lv.level != null) caregiverLevel.set(String(g.id), lv.level)
+            /* Second lock on the nurse exclusion: class wording. */
+            const clsArr = Array.isArray(g?.classes) ? g.classes
+              : (g?.classes && typeof g.classes === 'object') ? Object.values(g.classes) : []
+            if (clsArr.some((k: any) => /nurse|\bRN\b|\bLPN\b/i.test(String(k?.label ?? k?.code ?? ''))))
+              nurseAxis.add(String(g.id))
           }
         url = j?.results?.nextPage ?? j?.nextPage ?? null
       }
@@ -489,6 +508,7 @@ Deno.serve(async (req) => {
     let inactiveSkipped = 0
     let underLevelSkipped = 0
     let busySkipped = 0
+    let nurseSkipped = 0
     /* THE CARE-LEVEL LADDER (her rule): Level 1 wellness, 2 personal care,
        3 complex. A caregiver covers clients at or below their own level. A
        caregiver with NO level class is allowed through (a human still
@@ -512,6 +532,10 @@ Deno.serve(async (req) => {
                          .filter((x: any) => {
                            if (!x.axiscare_id || !busyThen.has(String(x.axiscare_id))) return true
                            busySkipped++; return false
+                         })
+                         .filter((x: any) => {
+                           if (!x.axiscare_id || !nurseAxis.has(String(x.axiscare_id))) return true
+                           nurseSkipped++; return false
                          })
                          .slice(0, WAVE_SIZE)
     stats.would_ask += wave.length
@@ -657,6 +681,7 @@ Deno.serve(async (req) => {
         ? `${axisActive.size} active caregivers; ${inactiveSkipped} roster candidate(s) skipped as not active in AxisCare`
         : `census unavailable (${censusError || 'empty'}) — roster-only filtering this run`,
       busy_check: `${busyCheck}; ${busySkipped} skipped from this wave as already working`,
+      nurse_check: `${nurseAxis.size} nurse-classed in AxisCare; ${nurseSkipped} additionally skipped from this wave (nurse-roster names are excluded before candidacy)`,
       care_level: clientLv != null
         ? `client is Level ${clientLv} (class "${c.client_care_level_from || '?'}"); ${underLevelSkipped} caregiver(s) skipped as below level; ${caregiverLevel.size} caregivers carry a level class`
         : 'no care-level class found on this client — level filter off for this case',
