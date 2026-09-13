@@ -156,6 +156,106 @@ Deno.serve(async (req) => {
     }
   }
 
+  /* ── DAILY ATTENDANCE SWEEP (her ask: track EVV misses and tardies, and
+     tell admins when someone has too many). Once per day on the first run
+     after midnight Chicago: yesterday's visits → missing clock-in, missing
+     clock-out, or a late clock-in (past the grace) become attendance
+     events, deterministic ids so reruns write nothing twice. Then rolling
+     30-day counts per caregiver: at or over the threshold raises ONE item
+     per caregiver per type per month for the admins. */
+  try {
+    const chiYesterday = new Date(Date.now() - 864e5)
+      .toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+    const { data: stateRow } = await sb.from('app_data').select('data').eq('key', 'attendance_watch_state').maybeSingle()
+    const stateArr: any[] = Array.isArray(stateRow?.data) ? stateRow!.data : []
+    const state = stateArr.find(x => x?.id === 'state') ?? { id: 'state', last_date: '' }
+    if (state.last_date !== chiYesterday) {
+      const grace = Number(settings.att_tardy_grace_min) > 0 ? Number(settings.att_tardy_grace_min) : 10
+      const { token: tk, site: st } = axisCreds()
+      const dayRows: any[] = []
+      let u: string | null = `https://${st}.axiscare.com/api/visits?startDate=${chiYesterday}&endDate=${chiYesterday}`
+      for (let page = 0; u && page < 12; page++) {
+        const r: Response = await fetch(u, { headers: {
+          Authorization: `Bearer ${tk}`, Accept: 'application/json',
+          'X-AxisCare-Api-Version': AC_VERSION } })
+        if (!r.ok) { u = null; break }
+        const j: any = await r.json().catch(() => ({}))
+        for (const v of (Array.isArray(j?.results?.visits) ? j.results.visits
+          : Object.values(j?.results?.visits ?? {}))) if (!(v as any)?.removed) dayRows.push(v)
+        u = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
+      }
+      let evLogged = 0
+      for (const v of dayRows) {
+        if (v?.caregiver?.id == null) continue
+        const cgName = [String(v?.caregiver?.firstName ?? '').trim(), String(v?.caregiver?.lastName ?? '').trim()]
+          .filter(Boolean).join(' ') || ('caregiver ' + v.caregiver.id)
+        const vid = String(v?.id ?? '').replace(/[^A-Za-z0-9]/g, '_')
+        const start = String(v?.scheduledStartDate ?? v?.startDate ?? '')
+        const shiftDate = start.slice(0, 10) || chiYesterday
+        const shiftTime = start.slice(11, 16)
+        const cin = v?.clockIn?.time, cout = v?.clockOut?.time
+        const put = (type: string, extra: Record<string, unknown> = {}) =>
+          sb.rpc('upsert_app_data_item', { target_key: 'attendance_events', item: {
+            id: `att_evv_${vid}_${type}`, caregiver: cgName, type,
+            shift_date: shiftDate, shift_time: shiftTime,
+            note: `Auto-detected from yesterday's AxisCare visit.`,
+            logged_by: 'attendance-watch', created_at: new Date().toISOString(), action_id: null, ...extra } })
+        if (!cin) { await put('evv_missing_in'); evLogged++ }
+        if (!cout) { await put('evv_missing_out'); evLogged++ }
+        if (cin && start) {
+          const lateMin = (new Date(String(cin)).getTime() - new Date(start).getTime()) / 60000
+          if (Number.isFinite(lateMin) && lateMin > grace) {
+            await put('tardy', { minutes_late: Math.round(lateMin) }); evLogged++
+          }
+        }
+      }
+      /* Rolling 30-day threshold alarms → one item per caregiver/type/month. */
+      const { data: aeRow } = await sb.from('app_data').select('data').eq('key', 'attendance_events').maybeSingle()
+      const events: any[] = Array.isArray(aeRow?.data) ? aeRow!.data : []
+      const cutoff = Date.now() - 30 * 864e5
+      const counts = new Map<string, number>()
+      for (const e of events) {
+        const t = new Date(String(e.shift_date || e.created_at || 0) + 'T12:00:00').getTime()
+        if (!Number.isFinite(t) || t < cutoff) continue
+        const bucket = e.type === 'callin' ? 'callin'
+          : e.type === 'tardy' ? 'tardy'
+          : (e.type === 'evv_missing_in' || e.type === 'evv_missing_out') ? 'evv' : null
+        if (!bucket) continue
+        const k = String(e.caregiver || '?') + '|' + bucket
+        counts.set(k, (counts.get(k) ?? 0) + 1)
+      }
+      const TH: Record<string, number> = {
+        callin: Number(settings.att_alert_callins) > 0 ? Number(settings.att_alert_callins) : 3,
+        tardy: Number(settings.att_alert_tardies) > 0 ? Number(settings.att_alert_tardies) : 3,
+        evv: Number(settings.att_alert_evv) > 0 ? Number(settings.att_alert_evv) : 3,
+      }
+      const LABEL: Record<string, string> = {
+        callin: 'call-ins', tardy: 'tardies', evv: 'EVV problems (missing clock-in/out)' }
+      const admins = (Array.isArray(settings.coverage_alert_admins) && settings.coverage_alert_admins.length)
+        ? settings.coverage_alert_admins : ['samantha@mo-care.com']
+      const ym = chiYesterday.slice(0, 7).replace('-', '')
+      for (const [k, n] of counts) {
+        const [who, bucket] = k.split('|')
+        if (n < TH[bucket]) continue
+        await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
+          id: `ops_att_${bucket}_${who.toLowerCase().replace(/[^a-z0-9]/g, '')}_${ym}`,
+          kind: 'staffing_issue',
+          title: `Attendance pattern — ${who}: ${n} ${LABEL[bucket]} in 30 days`,
+          about: who,
+          detail: `${who} has ${n} ${LABEL[bucket]} in the last 30 days (threshold ${TH[bucket]}). Review on Performance > Attendance — the write-up ladder there has the details and next step.`,
+          domain: 'scheduling_coverage', status: 'open', urgency: 'high',
+          owner: String(admins[0]), owner_name: String(admins[0]).split('@')[0],
+          created_at: new Date().toISOString(),
+          due: new Date(Date.now() + 2 * 864e5).toISOString(),
+          created_by: 'attendance-watch', opened_by: 'attendance-threshold',
+        } })
+      }
+      state.last_date = chiYesterday
+      await sb.rpc('upsert_app_data_item', { target_key: 'attendance_watch_state', item: state })
+      ;(globalThis as any).__attSwept = { day: chiYesterday, events_logged: evLogged }
+    }
+  } catch (err) { (globalThis as any).__attSwept = { error: String(err) } }
+
   const summary = {
     mode: live ? 'LIVE' : 'DRY RUN',
     window: `${startDate} → ${endDate}`,
@@ -173,6 +273,7 @@ Deno.serve(async (req) => {
     /* Every reason name seen on unassigned upcoming visits, so the exact
        trigger names can be chosen from reality instead of guessed. */
     reason_names_seen_on_unassigned: Object.fromEntries(reasonNamesSeen),
+    attendance_sweep: (globalThis as any).__attSwept ?? 'already done for yesterday',
   }
 
   try {

@@ -507,11 +507,15 @@ Deno.serve(async (req) => {
         soonA = dMs > 0 && dMs < 3 * 3600000
       }
       const smsOk = soonA || (chiHrA >= 8 && chiHrA < 21)
+      const calledAt = new Date(String(c.opened_at || Date.now()))
+        .toLocaleString('en-US', { timeZone: 'America/Chicago',
+          month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })
       const smsMsg = (String(settings.coverage_msg_admin_alert || '') ||
-        `New call-in: {client} {when}.{who} The callout engine is texting caregivers. Board: cc.mo-care.com`)
+        `New call-in: {client} {when}.{who} Called in at {called_at}. The callout engine is texting caregivers. Board: cc.mo-care.com`)
         .replaceAll('{client}', String(c.client || 'client on the case'))
         .replaceAll('{when}', whenTxt)
         .replaceAll('{who}', c.calling_off ? ` ${c.calling_off} called off.` : '')
+        .replaceAll('{called_at}', calledAt)
         .replace(/\s{2,}/g, ' ').trim()
       const { data: stRowA } = await sb.from('app_data').select('data').eq('key', 'coordinator_staff').maybeSingle()
       const staffA: any[] = Array.isArray(stRowA?.data) ? stRowA!.data : []
@@ -536,7 +540,8 @@ Deno.serve(async (req) => {
                 html: `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.6;color:#1f2a36;">`
                   + `<p><b>New call-in detected.</b></p>`
                   + `<p>Client: <b>${String(c.client || '?')}</b><br>Shift: <b>${whenTxt}</b>`
-                  + (c.calling_off ? `<br>Called off: <b>${String(c.calling_off)}</b>` : '')
+                  + (c.calling_off ? `<br>Called off: <b>${String(c.calling_off)}</b>` : '<br>Called off: (unknown — opened from an AxisCare unassignment, which does not say who)')
+                  + `<br>Called in at: <b>${calledAt}</b> (Chicago)`
                   + (c.modification_reason ? `<br>Reason: ${String(c.modification_reason)}` : '')
                   + `</p><p>The callout engine is texting qualified caregivers in waves. `
                   + `Watch replies and confirm the fill on the board: <a href="https://cc.mo-care.com">cc.mo-care.com</a> (Scheduling, Coverage Help).</p></div>` }),
@@ -566,6 +571,28 @@ Deno.serve(async (req) => {
         c.admin_alerted = freshA.admin_alerted
       }
       stats.admin_alerts = (Number(stats.admin_alerts) || 0) + alerted
+
+      /* AUTO ATTENDANCE (her ask): the call-in lands on the Performance →
+         Attendance record automatically, same shape the manual "Log it"
+         button writes — reported_at + notice_hours feed the existing
+         write-up triggers (short notice, too many in the window). Only when
+         we KNOW who called off; deterministic id = once per case. */
+      if (c.calling_off) {
+        let noticeHours: number | null = null
+        if (c.shift_date && /^\d\d:\d\d/.test(String(c.shift_time || '')) && c.opened_at) {
+          const chiOpened = new Date(String(c.opened_at))
+          const startNaive = new Date(`${c.shift_date}T${String(c.shift_time).slice(0, 5)}:00-05:00`)
+          const h = (startNaive.getTime() - chiOpened.getTime()) / 3600000
+          if (Number.isFinite(h)) noticeHours = Math.round(h * 10) / 10
+        }
+        await sb.rpc('upsert_app_data_item', { target_key: 'attendance_events', item: {
+          id: 'att_cov_' + c.id, caregiver: String(c.calling_off), type: 'callin',
+          shift_date: c.shift_date || nowIso().slice(0, 10), shift_time: String(c.shift_time || ''),
+          note: `Auto-logged from the coverage case for ${c.client || 'a client'}.`,
+          logged_by: 'coverage-engine', created_at: nowIso(), action_id: null,
+          reported_at: c.opened_at || nowIso(), notice_hours: noticeHours,
+        } })
+      }
     }
 
     /* Tier 1: visit history with THIS client, if the client resolves. A case
