@@ -405,11 +405,37 @@ Deno.serve(async (req) => {
           const j: any = await r.json().catch(() => ({}))
           const cl = j?.results?.client ?? j?.results ?? {}
           c.client_city = c.client_city || (String(cl?.residentialAddress?.city ?? '') || null)
+          c.client_street = String(cl?.residentialAddress?.streetAddress1 ?? '') || null
           const lv = careLevelOf(cl?.classes)
           c.client_care_level = lv.level          // null = no level class on the client
           c.client_care_level_from = lv.from
         }
       } catch { /* no city/level = plainer wording, no level filter */ }
+    }
+    /* WHO'S ALREADY WORKING during this shift: texting a caregiver who is on
+       another visit at that exact time wastes the wave's best minutes. One
+       same-day visits fetch; overlap on the naive HH:MM window. Overnight
+       windows (end before start) skip the check rather than guess. */
+    const busyThen = new Set<string>()
+    let busyCheck = 'no shift date/time on the case — busy check off'
+    if (c.shift_date && /^\d\d:\d\d-\d\d:\d\d$/.test(String(c.shift_time || ''))) {
+      const [shStart, shEnd] = String(c.shift_time).split('-')
+      if (shEnd <= shStart) busyCheck = 'overnight window — busy check off (cannot compare across midnight safely)'
+      else {
+        const day = await fetchVisits(`startDate=${c.shift_date}&endDate=${c.shift_date}`)
+        if (day.error) busyCheck = `could not read the day's schedule (${day.error}) — busy check off`
+        else {
+          for (const v of day.rows) {
+            const cg = v?.caregiver?.id
+            if (cg == null) continue
+            const vs = String(v?.scheduledStartDate ?? v?.startDate ?? '').slice(11, 16)
+            const ve = String(v?.scheduledEndDate ?? v?.endDate ?? '').slice(11, 16)
+            if (!vs || !ve || ve <= vs) continue
+            if (vs < shEnd && ve > shStart) busyThen.add(String(cg))
+          }
+          busyCheck = `${busyThen.size} caregiver(s) already on a visit during this window`
+        }
+      }
     }
     const history = new Map<string, { visits: number; last: string }>()
     let historyError: string | null = null
@@ -458,6 +484,7 @@ Deno.serve(async (req) => {
     const callerOffId = String(c.calling_off_id || '')
     let inactiveSkipped = 0
     let underLevelSkipped = 0
+    let busySkipped = 0
     /* THE CARE-LEVEL LADDER (her rule): Level 1 wellness, 2 personal care,
        3 complex. A caregiver covers clients at or below their own level. A
        caregiver with NO level class is allowed through (a human still
@@ -477,6 +504,10 @@ Deno.serve(async (req) => {
                            const cgLv = caregiverLevel.get(String(x.axiscare_id))
                            if (cgLv != null && cgLv < clientLv) { underLevelSkipped++; return false }
                            return true
+                         })
+                         .filter((x: any) => {
+                           if (!x.axiscare_id || !busyThen.has(String(x.axiscare_id))) return true
+                           busySkipped++; return false
                          })
                          .slice(0, WAVE_SIZE)
     stats.would_ask += wave.length
@@ -543,10 +574,17 @@ Deno.serve(async (req) => {
          approved after a prefill) in the form's care box. Never straight
          from an AxisCare note field: those can carry door codes. */
       const careLine = String(c.care_note || '').trim()
+      /* {address}: street + city (her call, 2026-09-12 — distance decides
+         whether a caregiver takes a shift, and CareQB showed the street too;
+         the name-withholding for strangers stays, an address without a name
+         is what makes that trade acceptable). */
+      const addr = [String(c.client_street || '').trim(), String(c.client_city || '').trim()]
+        .filter(Boolean).join(', ') || 'the address is with the office'
       const fill = (tmpl: string, x: any) => tmpl
         .replaceAll('{first_name}', x.first || 'there')
         .replaceAll('{client}', clientShort)
         .replaceAll('{where}', c.client_city ? ` in ${c.client_city}` : '')
+        .replaceAll('{address}', addr)
         .replaceAll('{when}', when)
         .replaceAll('{care}', careLine ? careLine + ' ' : '')
         .replace(/\s{2,}/g, ' ').trim()
@@ -556,7 +594,7 @@ Deno.serve(async (req) => {
       const tmpl1 = String(c.msg_tier1 || '') || String(settings.coverage_msg_tier1 || '') ||
         `Hi {first_name}, can you cover {client} {when}? It's Caring Companions — reply YES or NO.`
       const tmplO = String(c.msg_other || '') || String(settings.coverage_msg_other || '') ||
-        `Hi {first_name}, it's Caring Companions. Last-minute fill-in{where}: {when}. {care}Can you take it? Reply YES or NO — questions welcome.`
+        `Hi {first_name}, it's Caring Companions. Last-minute fill-in at {address}: {when}. {care}Can you take it? Reply YES or NO — questions welcome.`
       for (const x of wave) {
         /* An uncovered shift is the textbook urgent_internal: staff, 24/7. */
         const contact = await contactForOutbound(sb, ghl,
@@ -614,6 +652,7 @@ Deno.serve(async (req) => {
       axiscare_census: censusUsable
         ? `${axisActive.size} active caregivers; ${inactiveSkipped} roster candidate(s) skipped as not active in AxisCare`
         : `census unavailable (${censusError || 'empty'}) — roster-only filtering this run`,
+      busy_check: `${busyCheck}; ${busySkipped} skipped from this wave as already working`,
       care_level: clientLv != null
         ? `client is Level ${clientLv} (class "${c.client_care_level_from || '?'}"); ${underLevelSkipped} caregiver(s) skipped as below level; ${caregiverLevel.size} caregivers carry a level class`
         : 'no care-level class found on this client — level filter off for this case',
