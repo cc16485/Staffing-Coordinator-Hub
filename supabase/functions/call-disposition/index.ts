@@ -69,7 +69,8 @@ Deno.serve(async (req) => {
     const grab = (k: string) => (raw.match(new RegExp('"' + k + '"\\s*:\\s*"([^"]*)"')) || [])[1] || ''
     b = { id: grab('id'), name: grab('name'), email: grab('email'), phone: grab('phone'),
           disposition: grab('disposition'), direction: grab('direction'),
-          attach: raw.includes('"attach": true') || raw.includes('"attach":true') }
+          summary: grab('summary'),
+          attach: /"attach"\s*:\s*true/.test(raw) }
     // Whichever free-text field was put last is the one that broke the JSON, so
     // take everything after it as its value.
     const lastKey = ['note', 'transcript', 'summary']
@@ -261,6 +262,11 @@ Deno.serve(async (req) => {
       resolved_at: null, resolved_how: null, covered_by: null,
     })
     created.push('coverage case')
+    /* A call-off is DONE here. Falling through to the lead matcher minted a
+       spurious "no matching record" item on every single call-off (review
+       finding) — a caregiver calling off is never a lead. */
+    await logDbg({ disposition, routed: 'coverage case opened', matched: 'n/a' })
+    return json({ ok: true, routed: 'coverage case opened', created, received })
   }
 
   const opsItem = (kind: string, title: string, hours: number) => ({
@@ -310,7 +316,16 @@ Deno.serve(async (req) => {
       created.push('needs-attention item (issue intake failed)')
     }
   }
-  if (is('job applicant')) { await put('ops_items', opsItem('request', `Job applicant called — ${who}`, 72)); created.push('needs-attention item') }
+  if (is('caregiver issue') || is('client concern')) {
+    await logDbg({ disposition, routed: 'issue intake', matched: 'n/a' })
+    return json({ ok: true, routed: 'issue raised', created, received })
+  }
+  if (is('job applicant')) {
+    await put('ops_items', opsItem('request', `Job applicant called — ${who}`, 72))
+    created.push('needs-attention item')
+    await logDbg({ disposition, routed: 'job applicant item', matched: 'n/a' })
+    return json({ ok: true, routed: 'job applicant raised', created, received })
+  }
   if (is('schedule change', 'schedule')) {
     // Clients AND caregivers call about scheduling: change a day, add weekends,
     // give notice, drop a shift. The note carries which. The schedule itself

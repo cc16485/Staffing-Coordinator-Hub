@@ -31,11 +31,26 @@ function axisCreds() {
   return { token, site: /^\d+$/.test(site) ? site : '' }
 }
 
+function callerRole(req: Request): string {
+  try {
+    const tok = String(req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '')
+    const payload = JSON.parse(atob(tok.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+    return String(payload?.role || '')
+  } catch { return '' }
+}
+const chiToday = () => new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200, headers: {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
     'Access-Control-Allow-Methods': 'POST, OPTIONS' } })
+
+  /* The census and client notes are sensitive: only a signed-in coordinator
+     (or the service role), never the public anon key (review finding). */
+  const role = callerRole(req)
+  if (role !== 'authenticated' && role !== 'service_role')
+    return json({ error: 'a signed-in coordinator session is required' }, 403)
 
   // deno-lint-ignore no-explicit-any
   const b: any = await req.json().catch(() => ({}))
@@ -51,8 +66,8 @@ Deno.serve(async (req) => {
     // deno-lint-ignore no-explicit-any
     const out: any[] = []
     let total = 0
+    let url: string | null = `https://${site}.axiscare.com/api/caregivers`
     try {
-      let url: string | null = `https://${site}.axiscare.com/api/caregivers`
       for (let page = 0; url && page < 12; page++) {
         const r: Response = await fetch(url, { headers: {
           Authorization: `Bearer ${token}`, Accept: 'application/json',
@@ -67,11 +82,12 @@ Deno.serve(async (req) => {
             .filter(Boolean).join(' ')
           if (g?.id != null && name) out.push({ id: String(g.id), name })
         }
-        url = j?.results?.nextPage ?? j?.nextPage ?? null
+        url = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
       }
     } catch (err) { return json({ error: String(err) }, 502) }
     out.sort((a, b2) => a.name.localeCompare(b2.name))
-    return json({ caregivers_total: total, active: out.length, caregivers: out })
+    return json({ caregivers_total: total, active: out.length, caregivers: out,
+      ...(url ? { truncated: true, note: 'more pages existed than the cap — list is PARTIAL' } : {}) })
   }
 
   /* Mode 3: one client's profile note, to prefill the {care} synopsis from
@@ -108,13 +124,13 @@ Deno.serve(async (req) => {
   const { token, site } = axisCreds()
   if (!token || !site) return json({ error: 'AxisCare credentials not set on this project' }, 502)
 
-  const startDate = new Date().toISOString().slice(0, 10)
+  const startDate = chiToday()   // Chicago, not UTC: at 8pm the UTC date is tomorrow
   const endDate = new Date(Date.now() + days * 86400000).toISOString().slice(0, 10)
   // deno-lint-ignore no-explicit-any
   const out: any[] = []
+  let url: string | null =
+    `https://${site}.axiscare.com/api/visits?caregiverIds=${encodeURIComponent(cgId)}&startDate=${startDate}&endDate=${endDate}`
   try {
-    let url: string | null =
-      `https://${site}.axiscare.com/api/visits?caregiverIds=${encodeURIComponent(cgId)}&startDate=${startDate}&endDate=${endDate}`
     for (let page = 0; url && page < 6; page++) {
       const r: Response = await fetch(url, { headers: {
         Authorization: `Bearer ${token}`, Accept: 'application/json',
@@ -135,10 +151,11 @@ Deno.serve(async (req) => {
           time: [start.slice(11, 16), end.slice(11, 16)].filter(Boolean).join('-'),
         })
       }
-      url = j?.results?.nextPage ?? j?.nextPage ?? null
+      url = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
     }
   } catch (err) { return json({ error: String(err) }, 502) }
 
   out.sort((a, b2) => (a.date + a.time).localeCompare(b2.date + b2.time))
-  return json({ caregiver_axiscare_id: cgId, window: `${startDate} → ${endDate}`, shifts: out })
+  return json({ caregiver_axiscare_id: cgId, window: `${startDate} → ${endDate}`, shifts: out,
+    ...(url ? { truncated: true, note: 'more pages existed than the cap — list is PARTIAL' } : {}) })
 })

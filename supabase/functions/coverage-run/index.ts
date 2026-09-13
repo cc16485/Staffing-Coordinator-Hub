@@ -222,7 +222,7 @@ async function fetchVisits(params: string): Promise<{ rows: any[]; error: string
         if (v?.removed) continue
         rows.push(v)
       }
-      url = j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
+      url = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
     }
     return { rows, error: null }
   } catch (err) { return { rows, error: String(err) } }
@@ -282,6 +282,43 @@ async function resolveClientAxisId(clientText: string):
   return { status: 'resolved', id: String(src.source_id), detail: `AxisCare client ${src.source_id}` }
 }
 
+/* ── CONCURRENCY GUARDS (review findings 1-3, 2026-09-12 night review) ──────
+   The engine can be invoked by cron AND by hand at once, and a run spends
+   many seconds on AxisCare/GHL I/O. Guards:
+     - a soft lock key so overlapping runs exit instead of double-texting
+     - every case write re-reads the CURRENT row and merges, so a caregiver's
+       YES landing mid-run (via coverage-reply) is never clobbered by our
+       stale snapshot. upsert_app_data_item replaces the whole item; the only
+       safe write is fresh-read → merge → write. */
+async function readCaseFresh(caseId: string): Promise<any | null> {
+  const { data } = await sb.from('app_data').select('data').eq('key', 'coverage_cases').maybeSingle()
+  const arr: any[] = Array.isArray(data?.data) ? data!.data : []
+  return arr.find(x => x?.id === caseId) ?? null
+}
+async function appendAskFresh(caseId: string, entry: any): Promise<any | null> {
+  const fresh = await readCaseFresh(caseId)
+  if (!fresh) return null
+  fresh.asked = Array.isArray(fresh.asked) ? fresh.asked : []
+  if (!fresh.asked.some((a: any) => a.id === entry.id)) fresh.asked.push(entry)
+  fresh.callout_started_at = fresh.callout_started_at || nowIso()
+  await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: fresh })
+  return fresh
+}
+async function acquireRunLock(): Promise<boolean> {
+  try {
+    const { data } = await sb.from('app_data').select('data, updated_at').eq('key', 'coverage_run_lock').maybeSingle()
+    const at = data?.data?.at ? new Date(String(data.data.at)).getTime() : 0
+    if (at && Date.now() - at < 4 * 60000) return false
+    await sb.from('app_data').upsert({ key: 'coverage_run_lock',
+      data: { at: nowIso() }, updated_at: nowIso() }, { onConflict: 'key' })
+    return true
+  } catch { return true }   // a broken lock store must not stop callouts
+}
+async function releaseRunLock() {
+  try { await sb.from('app_data').upsert({ key: 'coverage_run_lock',
+    data: { at: null }, updated_at: nowIso() }, { onConflict: 'key' }) } catch { /* noop */ }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
   const q = new URL(req.url).searchParams
@@ -291,6 +328,12 @@ Deno.serve(async (req) => {
   // deno-lint-ignore no-explicit-any
   const cases = (Array.isArray(row?.data) ? row!.data : []) as any[]
   const open = cases.filter(c => c?.status === 'open')
+
+  if (open.length && !(await acquireRunLock())) {
+    return new Response(JSON.stringify({
+      mode: 'SKIPPED', reason: 'another coverage-run is in progress (soft lock under 4 minutes old)' },
+      null, 2), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
 
   /* The callout switch. Everything else in this function stays read-only
      reporting regardless; only this flag lets a text leave the building. */
@@ -405,7 +448,7 @@ Deno.serve(async (req) => {
             if (clsArr.some((k: any) => /nurse|\bRN\b|\bLPN\b/i.test(String(k?.label ?? k?.code ?? ''))))
               nurseAxis.add(String(g.id))
           }
-        url = j?.results?.nextPage ?? j?.nextPage ?? null
+        url = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
       }
     } catch (err) { censusError = String(err) }
   }
@@ -555,8 +598,12 @@ Deno.serve(async (req) => {
        A YES anywhere on the case stops all further waves. */
     let sentThisRun = 0
     const askedArr: any[] = Array.isArray(c.asked) ? c.asked : (c.asked = [])
-    const hasYes = askedArr.some((a: any) => a.state === 'yes')
+    /* Waves stop only while an ACCEPTED offer is pending. A yes-state entry
+       whose pending_fill was cleared (they changed their mind) must not
+       freeze the callout — review finding: yes-then-no deadlock. */
+    const hasYes = !!c.pending_fill
     const newestAsk = askedArr.map((a: any) => new Date(String(a.at || 0)).getTime())
+      .filter((t: number) => Number.isFinite(t))
       .sort((a: number, b: number) => b - a)[0] ?? 0
     const fuseBurned = !newestAsk || (Date.now() - newestAsk) > fuseMin * 60000
     /* QUIET HOURS (idea adopted from CareQB): the case opens and is
@@ -659,13 +706,22 @@ Deno.serve(async (req) => {
           if (!r.ok) console.error('callout sms', r.status, await r.text().catch(() => ''))
         } catch (err) { console.error('callout sms failed', err) }
         if (ok) {
-          askedArr.push({ id: uid(), name: x.name, phone: x.phone, channel: 'sms',
+          const entry = { id: uid(), name: x.name, phone: x.phone, channel: 'sms',
             at: nowIso(), state: 'waiting', replied_at: null,
             tier: x.tier ?? 3, auto: true, ghl_contact_id: contact.contactId,
             /* Carried so assign-on-confirm knows WHO to put on the visit
                without a name lookup that could hit the wrong roster row. */
-            axiscare_id: x.axiscare_id ?? null })
+            axiscare_id: x.axiscare_id ?? null }
+          /* Persist THIS ask immediately against the CURRENT row (a crash
+             mid-wave must not forget delivered texts), and stop the wave the
+             moment a YES has landed while we were sending. */
+          const fresh = await appendAskFresh(c.id, entry)
+          if (fresh) {
+            c.asked = fresh.asked; c.pending_fill = fresh.pending_fill
+            c.callout_started_at = fresh.callout_started_at
+          } else { askedArr.push(entry) }
           sentThisRun++
+          if (c.pending_fill) break   // a YES landed mid-wave; stop asking
           /* The tag is what lets the GHL reply-workflow fire ONLY for people
              we actually asked, instead of on every inbound text. */
           try {
@@ -678,12 +734,8 @@ Deno.serve(async (req) => {
           } catch { /* a missing tag only costs a stray workflow execution */ }
         }
       }
-      if (sentThisRun) {
-        stats.sent += sentThisRun
-        c.callout_started_at = c.callout_started_at || nowIso()
-        c.asked = askedArr
-        await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
-      }
+      if (sentThisRun) stats.sent += sentThisRun
+      /* No bulk end-of-wave write: every ask was persisted fresh above. */
     }
 
     const itemId = `ops_cov_${c.id}`
@@ -739,7 +791,14 @@ Deno.serve(async (req) => {
   }
 
   if (commit && stats.owner_set) {
-    await sb.from('app_data').upsert({ key: 'coverage_cases', data: cases }, { onConflict: 'key' })
+    /* Per-item writes only: a whole-array write from this run's stale
+       snapshot deleted concurrently-created cases (review finding 2). */
+    for (const c of open) {
+      if (!c.owner) continue
+      const fresh = await readCaseFresh(c.id)
+      if (fresh && !fresh.owner) { fresh.owner = c.owner
+        await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: fresh }) }
+    }
   }
 
   /* ── CLOSURE TEXTS: when a case closes, everyone still waiting hears so.
@@ -749,7 +808,9 @@ Deno.serve(async (req) => {
     const chiHour = Number(new Date().toLocaleString('en-US',
       { timeZone: 'America/Chicago', hour: '2-digit', hour12: false }))
     if (chiHour >= 8 && chiHour < 21) {
-      for (const c of cases) {
+      for (const cStale of cases) {
+        if (cStale?.status === 'open' || cStale?.closure_notified) continue
+        const c = await readCaseFresh(cStale.id) ?? cStale
         if (c?.status === 'open' || c?.closure_notified) continue
         const askedList = Array.isArray(c.asked) ? c.asked : []
         /* The winner hears they're confirmed (CareQB's "Assign to Shift"
@@ -775,7 +836,11 @@ Deno.serve(async (req) => {
                     .replaceAll('{when}', whenTxt || 'as scheduled')
                     .replace(/\s{2,}/g, ' ').trim() }),
               })
-              if (r.ok) winner.confirm_sent = true
+              if (r.ok) { winner.confirm_sent = true
+                /* Persist NOW: if the courtesy texts below all fail, the next
+                   run must not re-send "You're confirmed" (review finding 9). */
+                await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
+              }
             } catch { /* the office confirmed by phone anyway; never block closure */ }
           }
         }
@@ -821,6 +886,7 @@ Deno.serve(async (req) => {
     }
   }
 
+  await releaseRunLock()
   return new Response(JSON.stringify({
     mode: commit ? 'COMMIT' : 'DRY RUN (cases/items only — sending has its own switch)',
     sending_enabled: sendLive,

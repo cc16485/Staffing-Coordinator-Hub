@@ -45,7 +45,15 @@ export interface CallNoteResult {
   dry: boolean
 }
 
-const digitsOf = (p: string) => String(p || '').replace(/\D/g, '').slice(-10)
+/* Only a clean US number may match: a foreign or mangled number whose last
+   10 digits happen to collide with a real US number would tag the WRONG
+   person's profile with full confidence (review finding). */
+const digitsOf = (p: string) => {
+  const d = String(p || '').replace(/\D/g, '')
+  if (d.length === 10) return d
+  if (d.length === 11 && d.startsWith('1')) return d.slice(1)
+  return ''
+}
 
 // Small stable hash for dedupe — not cryptographic, just "same call, same text".
 function tinyHash(s: string): string {
@@ -219,6 +227,7 @@ export async function pushCallNote(
   try {
     const r = await fetch(`https://${site}.axiscare.com/api/call-logs`, {
       method: 'POST',
+      signal: AbortSignal.timeout(15000),
       headers: {
         'Authorization': `Bearer ${token}`,
         'X-AxisCare-Api-Version': Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01',

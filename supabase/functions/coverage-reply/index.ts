@@ -94,6 +94,10 @@ Deno.serve(async (req) => {
   const m = matches.find(x => x.a.state === 'waiting') ?? matches[0]
   if (!m) return json({ ok: true, routed: 'no open callout asked this number — nothing to attach to' })
   const { c, a } = m
+  /* Asked on TWO open callouts at once? An SMS cannot say which one they
+     mean — a human decides instead of the code guessing (review finding). */
+  const caseIds = new Set(matches.map(x => x.c.id))
+  const ambiguous = caseIds.size > 1
 
   /* CLASSIFICATION, negation first. "I can't I don't have a baby sitter
      sorry" was read as YES because /i can/ matched the front of "can't"
@@ -115,6 +119,23 @@ Deno.serve(async (req) => {
   a.reply = text.slice(0, 500)
 
   let routed = ''
+  if (ambiguous) {
+    a.replied_at = stamp
+    a.reply = text.slice(0, 500)
+    a.state = 'inquiry'
+    routed = 'reply matches two open callouts — raised for a human to place it'
+    await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
+      id: `ops_covq_multi_${norm(String(a.phone || contactId))}_${Date.now().toString(36)}`,
+      kind: 'coverage', coverage_case_id: c.id,
+      title: `${a.name} replied but is on ${caseIds.size} open callouts — which one?`,
+      about: a.name, detail: `They wrote: "${text.slice(0, 300)}". Place the answer on the right case, then update it there.`,
+      domain: 'scheduling_coverage', status: 'open', urgency: 'high',
+      created_at: stamp, due: new Date(Date.now() + 3600000).toISOString(),
+      owner: '', owner_name: '', created_by: 'coverage-reply', opened_by: 'callout',
+    } })
+    await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
+    return json({ ok: true, routed, case_id: c.id, caregiver: a.name, state: a.state })
+  }
   if (isYes) {
     const alreadyWon = c.pending_fill && c.pending_fill.name !== a.name
     a.state = 'yes'
@@ -148,6 +169,25 @@ Deno.serve(async (req) => {
     if (c.pending_fill && String(c.pending_fill.name).toLowerCase() === String(a.name).toLowerCase()) {
       delete c.pending_fill
       routed = 'no — pending fill cleared, waves resume'
+      /* If someone ELSE already said yes (they were told "someone beat you"),
+         promote the oldest standing yes instead of leaving the case frozen
+         with a yes-state and no pending fill (review finding: deadlock). The
+         office confirms with them before anything is assigned, as always. */
+      const nextYes = (Array.isArray(c.asked) ? c.asked : [])
+        .filter((x: any) => x.state === 'yes' && String(x.name).toLowerCase() !== String(a.name).toLowerCase())
+        .sort((x: any, y: any) => new Date(String(x.replied_at || 0)).getTime() - new Date(String(y.replied_at || 0)).getTime())[0]
+      if (nextYes) {
+        c.pending_fill = { name: nextYes.name, phone: nextYes.phone, at: stamp, promoted: true }
+        routed = 'no — first choice declined; next yes promoted for the office to confirm'
+        await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
+          id: `ops_covfill_${c.id}`, kind: 'coverage', coverage_case_id: c.id,
+          title: `${nextYes.name} can cover ${c.client || 'the shift'} (second in line) — confirm & assign in AxisCare`,
+          about: c.client || '', detail: `${a.name} declined after saying yes. ${nextYes.name} also said yes earlier — confirm with them before assigning.`,
+          domain: 'scheduling_coverage', status: 'open', urgency: 'high',
+          created_at: stamp, due: new Date(Date.now() + 3600000).toISOString(),
+          owner: '', owner_name: '', created_by: 'coverage-reply', opened_by: 'callout',
+        } })
+      }
     }
   } else {
     a.state = 'inquiry'

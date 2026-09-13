@@ -38,19 +38,40 @@ function axisCreds() {
   const site = Deno.env.get('AXISCARE_SITE') || Deno.env.get('AXISCARE_SITE_NUMBER') || ''
   return { token, site: /^\d+$/.test(site) ? site : '' }
 }
+/* Reject callers holding only the PUBLIC anon key: verify_jwt lets any
+   project JWT through, and the anon key is published by design. Only a
+   signed-in coordinator (role "authenticated") or the service role may
+   assign schedules or read censuses (review security finding). */
+function callerRole(req: Request): string {
+  try {
+    const tok = String(req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '')
+    const payload = JSON.parse(atob(tok.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
+    return String(payload?.role || '')
+  } catch { return '' }
+}
+
+// deno-lint-ignore no-explicit-any
+const rowsOf = (v: any): any[] => Array.isArray(v) ? v
+  : (v && typeof v === 'object') ? Object.values(v) : []
+
 // deno-lint-ignore no-explicit-any
 async function ac(method: string, path: string, body?: unknown): Promise<{ ok: boolean; status: number; j: any }> {
   const { token, site } = axisCreds()
   if (!token || !site) return { ok: false, status: 0, j: { errors: ['AxisCare credentials not set'] } }
-  const r = await fetch(`https://${site}.axiscare.com${path}`, {
-    method,
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json',
-               'X-AxisCare-Api-Version': AC_VERSION,
-               ...(body ? { 'Content-Type': 'application/json' } : {}) },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  })
-  const j = await r.json().catch(() => ({}))
-  return { ok: r.ok && j?.success !== false, status: r.status, j }
+  try {
+    const r = await fetch(`https://${site}.axiscare.com${path}`, {
+      method,
+      signal: AbortSignal.timeout(20000),
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json',
+                 'X-AxisCare-Api-Version': AC_VERSION,
+                 ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    })
+    const j = await r.json().catch(() => ({}))
+    return { ok: r.ok && j?.success !== false, status: r.status, j }
+  } catch (err) {
+    return { ok: false, status: 0, j: { errors: ['network: ' + String(err)] } }
+  }
 }
 
 Deno.serve(async (req) => {
@@ -58,6 +79,10 @@ Deno.serve(async (req) => {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
     'Access-Control-Allow-Methods': 'POST, OPTIONS' } })
+
+  const role = callerRole(req)
+  if (role !== 'authenticated' && role !== 'service_role')
+    return json({ error: 'a signed-in coordinator session is required' }, 403)
 
   // deno-lint-ignore no-explicit-any
   const b: any = await req.json().catch(() => ({}))
@@ -86,9 +111,15 @@ Deno.serve(async (req) => {
   // WHO: the winner's AxisCare caregiver id — from the ask record first,
   // else an exact-name roster match (refused if ambiguous).
   const askedList = (Array.isArray(c.asked) ? c.asked : [])
-  const winner = askedList.find((a: any) =>
-    String(a.name).toLowerCase() === String(c.covered_by).toLowerCase())
-  let cgId = winner?.axiscare_id ? String(winner.axiscare_id) : ''
+  const nameKey = (s: unknown) => String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim()
+  const winnerHits = askedList.filter((a: any) => nameKey(a.name) === nameKey(c.covered_by))
+  /* Two asked entries with the same name but DIFFERENT AxisCare ids is a
+     wrong-person write the read-back cannot catch — refuse (review finding). */
+  const winnerIds = [...new Set(winnerHits.map((a: any) => String(a.axiscare_id || '')).filter(Boolean))]
+  if (winnerIds.length > 1)
+    return finish('by_hand', `"${c.covered_by}" matches ${winnerIds.length} different asked caregivers — assign by hand in AxisCare`)
+  const winner = winnerHits[0]
+  let cgId = winnerIds[0] || ''
   if (!cgId) {
     const { data: cgRow } = await sb.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
     // deno-lint-ignore no-explicit-any
@@ -113,7 +144,7 @@ Deno.serve(async (req) => {
       `/api/visits?clientIds=${encodeURIComponent(String(c.client_axiscare_id))}&startDate=${c.shift_date}&endDate=${c.shift_date}`)
     if (!list.ok) return finish('by_hand', `could not read the client's visits (AxisCare ${list.status}) — assign by hand`)
     // deno-lint-ignore no-explicit-any
-    const un: any[] = (list.j?.results?.visits ?? []).filter((v: any) => !v?.removed && v?.caregiver?.id == null)
+    const un: any[] = rowsOf(list.j?.results?.visits ?? list.j?.visits).filter((v: any) => !v?.removed && v?.caregiver?.id == null)
     if (un.length === 1) visitId = String(un[0].id)
     else return finish('by_hand',
       un.length === 0
@@ -126,8 +157,9 @@ Deno.serve(async (req) => {
   if (!patch.ok)
     return finish('failed', `AxisCare refused the assignment (${patch.status}): ${(patch.j?.errors || []).join('; ') || 'no detail'} — assign by hand`, { visit_id: visitId, caregiver_id: cgId })
   const check = await ac('GET', `/api/visits/${encodeURIComponent(visitId)}`)
-  const onVisit = String(check.j?.results?.visit?.caregiver?.id ?? check.j?.results?.caregiver?.id ?? '')
-  if (!check.ok || onVisit !== cgId)
+  const checkRow = check.j?.results?.visit ?? rowsOf(check.j?.results?.visits ?? check.j?.visits)[0] ?? check.j?.results ?? {}
+  const onVisit = String(checkRow?.caregiver?.id ?? '')
+  if (!check.ok || Number(onVisit) !== Number(cgId) || onVisit === '')
     return finish('failed',
       `AxisCare said OK but the read-back shows caregiver "${onVisit || 'none'}" on the visit — treat as NOT assigned, do it by hand`,
       { visit_id: visitId, caregiver_id: cgId })

@@ -85,7 +85,7 @@ Deno.serve(async (req) => {
         if (v?.removed) continue
         visits.push(v)
       }
-      url = j?.results?.nextPage ?? j?.nextPage ?? null
+      url = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
     }
   } catch (err) { fetchError = String(err) }
   if (fetchError && !visits.length) return json({ error: fetchError }, 502)
@@ -94,7 +94,20 @@ Deno.serve(async (req) => {
   const { data: caseRow } = await sb.from('app_data').select('data').eq('key', 'coverage_cases').maybeSingle()
   // deno-lint-ignore no-explicit-any
   const cases: any[] = Array.isArray(caseRow?.data) ? caseRow!.data : []
-  const handled = new Set(cases.map(c => String(c.axiscare_visit_id ?? '')).filter(Boolean))
+  /* Dedupe rules (review findings 6-7):
+       - an OPEN case for the visit blocks a new one, always
+       - resolved history does NOT block: a visit legitimately unassigned
+         AGAIN (second call-off after a fill) deserves a fresh callout
+       - the new case id is DETERMINISTIC (visit id + generation), so two
+         overlapping watch runs write the SAME item and the per-item RPC
+         itself becomes the duplicate guard. */
+  const openByVisit = new Set(cases.filter(c => c?.status === 'open')
+    .map(c => String(c.axiscare_visit_id ?? '')).filter(Boolean))
+  const genByVisit = new Map<string, number>()
+  for (const cc of cases) {
+    const v = String(cc?.axiscare_visit_id ?? ''); if (!v) continue
+    genByVisit.set(v, (genByVisit.get(v) ?? 0) + 1)
+  }
 
   const nowIso = new Date().toISOString()
   const reasonNamesSeen = new Map<string, number>()
@@ -111,7 +124,7 @@ Deno.serve(async (req) => {
     const start = String(v?.scheduledStartDate ?? v?.startDate ?? '')
     if (start && new Date(start).getTime() < Date.now()) { inPast++; continue }
     const visitId = String(v?.id ?? '')
-    if (!visitId || handled.has(visitId)) { alreadyHandled++; continue }
+    if (!visitId || openByVisit.has(visitId)) { alreadyHandled++; continue }
 
     const clientName = [String(v?.client?.firstName ?? '').trim(), String(v?.client?.lastName ?? '').trim()]
       .filter(Boolean).join(' ') || '(client name missing on the visit)'
@@ -129,7 +142,7 @@ Deno.serve(async (req) => {
 
     if (live) {
       const c = {
-        id: 'cw_' + crypto.randomUUID().slice(0, 12),
+        id: 'cw_' + visitId.replace(/[^A-Za-z0-9]/g, '_') + '_g' + ((genByVisit.get(visitId) ?? 0) + 1),
         ...entry,
         reason: 'call_off',
         note: `Opened automatically: shift unassigned in AxisCare with reason "${reason}".`,
@@ -139,7 +152,7 @@ Deno.serve(async (req) => {
         resolved_at: null, resolved_how: null, covered_by: null,
       }
       const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
-      if (!error) { created++; handled.add(visitId) }
+      if (!error) { created++; openByVisit.add(visitId) }
     }
   }
 
