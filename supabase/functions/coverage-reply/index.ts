@@ -85,6 +85,11 @@ Deno.serve(async (req) => {
       if (hit) matches.push({ c, a })
     }
   }
+  // Canned responses (Settings → Callout texts) with built-in fallbacks.
+  const { data: setRow } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+  // deno-lint-ignore no-explicit-any
+  const settings: any = setRow?.data ?? {}
+
   matches.sort((x, y) => new Date(String(y.a.at || 0)).getTime() - new Date(String(x.a.at || 0)).getTime())
   const m = matches.find(x => x.a.state === 'waiting') ?? matches[0]
   if (!m) return json({ ok: true, routed: 'no open callout asked this number — nothing to attach to' })
@@ -115,11 +120,17 @@ Deno.serve(async (req) => {
     a.state = 'yes'
     if (alreadyWon) {
       routed = 'yes — but someone already won'
-      await sms(contactId || a.ghl_contact_id, `Thank you ${a.name.split(' ')[0]}! Someone grabbed it just before you, but we really appreciate you answering. Next one is yours.`)
+      await sms(contactId || a.ghl_contact_id,
+        (String(settings.coverage_msg_ack_late || '') ||
+         `Thank you {first_name}! Someone grabbed it just before you, but we really appreciate you answering. Next one is yours.`)
+        .replaceAll('{first_name}', a.name.split(' ')[0]))
     } else {
       c.pending_fill = { name: a.name, phone: a.phone, at: stamp }
       routed = 'YES — first in, office prompted to confirm'
-      await sms(contactId || a.ghl_contact_id, `Got it, ${a.name.split(' ')[0]}. Thank you! The office will confirm with you shortly.`)
+      await sms(contactId || a.ghl_contact_id,
+        (String(settings.coverage_msg_ack_yes || '') ||
+         `Got it, {first_name}. Thank you! The office will confirm with you shortly.`)
+        .replaceAll('{first_name}', a.name.split(' ')[0]))
       await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
         id: `ops_covfill_${c.id}`, kind: 'coverage', coverage_case_id: c.id,
         title: `${a.name} can cover ${c.client || 'the shift'} — confirm & assign in AxisCare`,
