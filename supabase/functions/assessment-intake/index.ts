@@ -32,7 +32,8 @@ Deno.serve(async (req) => {
     const grab = (k: string) => (raw.match(new RegExp('"' + k + '"\\s*:\\s*"([^"]*)"')) || [])[1] || ''
     b = { first_name: grab('first_name'), last_name: grab('last_name'),
           phone: grab('phone'), email: grab('email'),
-          start_time: grab('start_time'), calendar: grab('calendar') }
+          start_time: grab('start_time'), calendar: grab('calendar'),
+          appointment_id: grab('appointment_id') }
   }
   const field = (k: string) => {
     const v = typeof b[k] === 'string' ? String(b[k]).trim() : ''
@@ -83,5 +84,22 @@ Deno.serve(async (req) => {
     due: (startTime || nowIso).slice(0, 10) + 'T08:00:00',
     created_at: nowIso, created_by: 'assessment-intake', opened_by: 'booking-calendar',
   } })
+  // The hub's Team Calendar reads coordinator_busy, so a booked assessment
+  // shows up there without anyone retyping it. source+source_id dedupes GHL
+  // retries; a reschedule with the same appointment id updates in place.
+  if (startTime) {
+    const starts = new Date(startTime)
+    if (!isNaN(starts.getTime())) {
+      const which = /medicaid/i.test(field('calendar')) ? 'Medicaid assessment' : 'Assessment'
+      await sb.from('coordinator_busy').upsert({
+        coordinator_id: null,
+        source: 'ghl_assessment',
+        source_id: field('appointment_id') || 'asmt-' + lead.id + '-' + starts.toISOString().slice(0, 10),
+        starts_at: starts.toISOString(),
+        ends_at: new Date(starts.getTime() + 90 * 60000).toISOString(),
+        label: which + ': ' + who + ' (booked in GHL)',
+      }, { onConflict: 'source,source_id' })
+    }
+  }
   return json({ ok: true, routed: existing ? 'lead updated to Assessment Scheduled' : 'lead created', lead_id: lead.id })
 })
