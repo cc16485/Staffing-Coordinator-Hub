@@ -237,18 +237,25 @@ const dISO = (daysAgo: number) => new Date(Date.now() - daysAgo * 86400000).toIS
    reports WHICH class it read — never assumes the array means one thing. */
 // deno-lint-ignore no-explicit-any
 function careLevelOf(classes: any): { level: number | null; from: string | null } {
+  /* A caregiver can hold SEVERAL level classes ("Level 1 - Wellness Care"
+     AND "Level 2 - Personal Care" = can do both — Lacey Williams, caught by
+     Samantha on the first live run when first-match-wins misread her as
+     Level 1 and skipped her). The level is the HIGHEST class held. */
   const arr = Array.isArray(classes) ? classes
     : (classes && typeof classes === 'object') ? Object.values(classes) : []
+  let best: { level: number | null; from: string | null } = { level: null, from: null }
   for (const c of arr) {
     const label = String((c as any)?.label ?? (c as any)?.code ?? '')
     const t = label.toLowerCase()
     const m = t.match(/level\s*([123])/)
-    if (m) return { level: Number(m[1]), from: label }
-    if (/complex/.test(t)) return { level: 3, from: label }
-    if (/personal\s*care/.test(t)) return { level: 2, from: label }
-    if (/wellness/.test(t)) return { level: 1, from: label }
+    const lv = m ? Number(m[1])
+      : /complex/.test(t) ? 3
+      : /personal\s*care/.test(t) ? 2
+      : /wellness/.test(t) ? 1
+      : null
+    if (lv != null && (best.level == null || lv > best.level)) best = { level: lv, from: label }
   }
-  return { level: null, from: null }
+  return best
 }
 
 /** The case's client is free text off a phone call. Resolve it to ONE
