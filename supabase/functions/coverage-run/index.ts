@@ -404,7 +404,7 @@ Deno.serve(async (req) => {
   const stats: any = { open_cases: open.length, owner_set: 0, prompts_created: 0,
                   candidates_total: 0, may_autosend: 0, blocked_no_phone: 0,
                   blocked_untrusted: 0, would_ask: 0, sent: 0, held_quiet_hours: 0,
-                  closure_notified: 0, escalated: 0 }
+                  closure_notified: 0, escalated: 0, admin_alerts: 0 }
 
   /* Recently-active caregivers (tier 2), fetched ONCE for the whole run. */
   const recent = open.length ? await fetchVisits(`startDate=${dISO(14)}&endDate=${dISO(0)}`)
@@ -485,6 +485,88 @@ Deno.serve(async (req) => {
 
   for (const c of open) {
     const cands = await candidatesFor(c)
+
+    /* ── ADMIN ALERT ON DETECTION (her ask: are all admin alerted by text
+       and email when a call-in is detected? They are now.) Every NEW case,
+       from any entry point, pushes to every admin: SMS (held 21:00-08:00
+       unless the shift starts within 3 hours) and email (always — email is
+       silent). Once per case. Admin list: ops_settings.coverage_alert_admins
+       (array of emails), default Samantha + Krystal. */
+    if (!c.admin_alerted && ghl.token && ghl.locationId) {
+      const admins: string[] = (Array.isArray(settings.coverage_alert_admins)
+        && settings.coverage_alert_admins.length)
+        ? settings.coverage_alert_admins.map((e: unknown) => String(e).toLowerCase())
+        : ['samantha@mo-care.com', 'krystal@mo-care.com']
+      const whenTxt = [c.shift_date, c.shift_time].filter(Boolean).join(' ') || 'time on the case'
+      const chiHrA = Number(new Date().toLocaleString('en-US',
+        { timeZone: 'America/Chicago', hour: '2-digit', hour12: false }))
+      let soonA = false
+      if (c.shift_date && /^\d\d:\d\d/.test(String(c.shift_time || ''))) {
+        const chiNowA = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).replace(' ', 'T')
+        const dMs = new Date(`${c.shift_date}T${String(c.shift_time).slice(0, 5)}:00`).getTime() - new Date(chiNowA).getTime()
+        soonA = dMs > 0 && dMs < 3 * 3600000
+      }
+      const smsOk = soonA || (chiHrA >= 8 && chiHrA < 21)
+      const smsMsg = (String(settings.coverage_msg_admin_alert || '') ||
+        `New call-in: {client} {when}.{who} The callout engine is texting caregivers. Board: cc.mo-care.com`)
+        .replaceAll('{client}', String(c.client || 'client on the case'))
+        .replaceAll('{when}', whenTxt)
+        .replaceAll('{who}', c.calling_off ? ` ${c.calling_off} called off.` : '')
+        .replace(/\s{2,}/g, ' ').trim()
+      const { data: stRowA } = await sb.from('app_data').select('data').eq('key', 'coordinator_staff').maybeSingle()
+      const staffA: any[] = Array.isArray(stRowA?.data) ? stRowA!.data : []
+      let alerted = 0
+      for (const adm of admins) {
+        const person = staffA.find((s: any) => String(s.email || '').toLowerCase() === adm)
+        // Email always (silent), through the same GHL pipe as the 7am digest.
+        try {
+          const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ locationId: ghl.locationId, email: adm, firstName: person?.name || 'CC', lastName: 'Admin' }),
+          })
+          const uj: any = await up.json().catch(() => ({}))
+          const cid = uj?.contact?.id ?? uj?.id
+          if (cid) {
+            await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+              body: JSON.stringify({ type: 'Email', contactId: cid,
+                subject: `Call-in: ${c.client || 'coverage case'} ${whenTxt}`,
+                html: `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.6;color:#1f2a36;">`
+                  + `<p><b>New call-in detected.</b></p>`
+                  + `<p>Client: <b>${String(c.client || '?')}</b><br>Shift: <b>${whenTxt}</b>`
+                  + (c.calling_off ? `<br>Called off: <b>${String(c.calling_off)}</b>` : '')
+                  + (c.modification_reason ? `<br>Reason: ${String(c.modification_reason)}` : '')
+                  + `</p><p>The callout engine is texting qualified caregivers in waves. `
+                  + `Watch replies and confirm the fill on the board: <a href="https://cc.mo-care.com">cc.mo-care.com</a> (Scheduling, Coverage Help).</p></div>` }),
+            })
+            alerted++
+            // SMS too, when the hour allows and we have a number.
+            if (smsOk) {
+              const ph = normalisePhone(person?.phone)
+              if (ph) {
+                const contact = await contactForOutbound(sb, ghl,
+                  { phone: ph, email: adm, firstName: person?.name || adm.split('@')[0] },
+                  'urgent_internal', { selfSupplied: true })
+                if (contact) await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+                  method: 'POST',
+                  headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message: smsMsg }),
+                })
+              }
+            }
+          }
+        } catch { /* an unreachable admin must not block the callout */ }
+      }
+      const freshA = await readCaseFresh(c.id)
+      if (freshA) {
+        freshA.admin_alerted = nowIso()
+        await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: freshA })
+        c.admin_alerted = freshA.admin_alerted
+      }
+      stats.admin_alerts = (Number(stats.admin_alerts) || 0) + alerted
+    }
 
     /* Tier 1: visit history with THIS client, if the client resolves. A case
        opened by coverage-watch carries the client's AxisCare id straight off
