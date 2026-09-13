@@ -554,7 +554,7 @@ Deno.serve(async (req) => {
          ops_settings.coverage_msg_tier1 / coverage_msg_other, placeholders
          {first_name} {client} {when}. */
       const who = String(c.client || 'a client').split(/\s+/)
-      const clientShort = who.length > 1 ? `${who[0]} ${who[who.length - 1][0]}.` : who[0]
+      const clientShort = who[0]   // first name only (her call — no last initial)
       /* City and care level were fetched before the wave was built. The
          client's AxisCare NOTE text is deliberately never pulled at send
          time: note boxes can hold DOOR CODES, and {care} only ever carries
