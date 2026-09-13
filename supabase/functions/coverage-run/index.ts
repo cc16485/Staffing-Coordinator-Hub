@@ -213,6 +213,27 @@ async function fetchVisits(params: string): Promise<{ rows: any[]; error: string
 
 const dISO = (daysAgo: number) => new Date(Date.now() - daysAgo * 86400000).toISOString().slice(0, 10)
 
+/* Samantha's care-level ladder, read from AxisCare classes[] on BOTH sides:
+   Level 1 wellness, Level 2 personal care, Level 3 complex care. A caregiver
+   covers clients at or below their own level. classes[] famously mixes payers
+   in (the audited defect), so this matches known level wording only and
+   reports WHICH class it read — never assumes the array means one thing. */
+// deno-lint-ignore no-explicit-any
+function careLevelOf(classes: any): { level: number | null; from: string | null } {
+  const arr = Array.isArray(classes) ? classes
+    : (classes && typeof classes === 'object') ? Object.values(classes) : []
+  for (const c of arr) {
+    const label = String((c as any)?.label ?? (c as any)?.code ?? '')
+    const t = label.toLowerCase()
+    const m = t.match(/level\s*([123])/)
+    if (m) return { level: Number(m[1]), from: label }
+    if (/complex/.test(t)) return { level: 3, from: label }
+    if (/personal\s*care/.test(t)) return { level: 2, from: label }
+    if (/wellness/.test(t)) return { level: 1, from: label }
+  }
+  return { level: null, from: null }
+}
+
 /** The case's client is free text off a phone call. Resolve it to ONE
  *  confirmed AxisCare client id through the identity layer, or say why not. */
 async function resolveClientAxisId(clientText: string):
@@ -330,6 +351,7 @@ Deno.serve(async (req) => {
      cannot be read the waves fall back to roster-only filtering — degraded
      and reported, never silently blocked. */
   const axisActive = new Set<string>()
+  const caregiverLevel = new Map<string, number>()   // axiscare id → care level 1-3
   let censusError: string | null = null
   if (open.length) {
     const { token, site } = axisCreds()
@@ -348,7 +370,11 @@ Deno.serve(async (req) => {
           ? (j?.results?.caregivers ?? j?.caregivers)
           : Object.values(j?.results?.caregivers ?? j?.caregivers ?? {})
         for (const g of gRows)
-          if (g?.status?.active === true && g?.id != null) axisActive.add(String(g.id))
+          if (g?.status?.active === true && g?.id != null) {
+            axisActive.add(String(g.id))
+            const lv = careLevelOf(g?.classes)
+            if (lv.level != null) caregiverLevel.set(String(g.id), lv.level)
+          }
         url = j?.results?.nextPage ?? j?.nextPage ?? null
       }
     } catch (err) { censusError = String(err) }
@@ -366,6 +392,25 @@ Deno.serve(async (req) => {
       ? { status: 'resolved', id: String(c.client_axiscare_id),
           detail: `AxisCare client ${c.client_axiscare_id} (from the AxisCare visit)` }
       : await resolveClientAxisId(String(c.client ?? ''))
+    /* The client's city (for anonymous wording) and CARE LEVEL (for the
+       qualification filter) — one cached fetch, done here because the level
+       must be known BEFORE the wave is built. */
+    if ((!c.client_city || c.client_care_level === undefined) && clientRes.id) {
+      try {
+        const { token: acTok, site: acSite } = axisCreds()
+        if (acTok && acSite) {
+          const r = await fetch(`https://${acSite}.axiscare.com/api/clients/${encodeURIComponent(String(clientRes.id))}`, {
+            headers: { Authorization: `Bearer ${acTok}`, Accept: 'application/json',
+                       'X-AxisCare-Api-Version': AC_VERSION } })
+          const j: any = await r.json().catch(() => ({}))
+          const cl = j?.results?.client ?? j?.results ?? {}
+          c.client_city = c.client_city || (String(cl?.residentialAddress?.city ?? '') || null)
+          const lv = careLevelOf(cl?.classes)
+          c.client_care_level = lv.level          // null = no level class on the client
+          c.client_care_level_from = lv.from
+        }
+      } catch { /* no city/level = plainer wording, no level filter */ }
+    }
     const history = new Map<string, { visits: number; last: string }>()
     let historyError: string | null = null
     if (clientRes.id) {
@@ -412,6 +457,12 @@ Deno.serve(async (req) => {
     const callerOff = String(c.calling_off || '').toLowerCase()
     const callerOffId = String(c.calling_off_id || '')
     let inactiveSkipped = 0
+    let underLevelSkipped = 0
+    /* THE CARE-LEVEL LADDER (her rule): Level 1 wellness, 2 personal care,
+       3 complex. A caregiver covers clients at or below their own level. A
+       caregiver with NO level class is allowed through (a human still
+       confirms every fill) but a KNOWN lower level is a hard skip. */
+    const clientLv: number | null = typeof c.client_care_level === 'number' ? c.client_care_level : null
     const wave = sendable.filter(x => !alreadyAsked.has(String(x.name).toLowerCase()))
                          .filter(x => !(callerOff && String(x.name).toLowerCase() === callerOff)
                                    && !(callerOffId && String(x.axiscare_id || '') === callerOffId))
@@ -420,6 +471,12 @@ Deno.serve(async (req) => {
                            const okAx = x.axiscare_id && axisActive.has(String(x.axiscare_id))
                            if (!okAx) inactiveSkipped++
                            return okAx
+                         })
+                         .filter((x: any) => {
+                           if (clientLv == null || !x.axiscare_id) return true
+                           const cgLv = caregiverLevel.get(String(x.axiscare_id))
+                           if (cgLv != null && cgLv < clientLv) { underLevelSkipped++; return false }
+                           return true
                          })
                          .slice(0, WAVE_SIZE)
     stats.would_ask += wave.length
@@ -467,25 +524,10 @@ Deno.serve(async (req) => {
          {first_name} {client} {when}. */
       const who = String(c.client || 'a client').split(/\s+/)
       const clientShort = who.length > 1 ? `${who[0]} ${who[who.length - 1][0]}.` : who[0]
-      /* City for the anonymous wording, fetched once per case and cached.
-         The client's AxisCare note is deliberately NOT pulled here any more:
-         Samantha's screenshots proved the note boxes can hold DOOR CODES and
-         entry instructions, and we cannot be certain which box the API's
-         priorityNote is. AxisCare note text only ever reaches a message via
-         the form's care box, where a person reads and trims it first. */
-      if (!c.client_city && c.client_axiscare_id) {
-        try {
-          const { token: acTok, site: acSite } = axisCreds()
-          if (acTok && acSite) {
-            const r = await fetch(`https://${acSite}.axiscare.com/api/clients/${encodeURIComponent(String(c.client_axiscare_id))}`, {
-              headers: { Authorization: `Bearer ${acTok}`, Accept: 'application/json',
-                         'X-AxisCare-Api-Version': AC_VERSION } })
-            const j: any = await r.json().catch(() => ({}))
-            const cl = j?.results?.client ?? j?.results ?? {}
-            c.client_city = String(cl?.residentialAddress?.city ?? '') || null
-          }
-        } catch { /* no city just means the plainer wording */ }
-      }
+      /* City and care level were fetched before the wave was built. The
+         client's AxisCare NOTE text is deliberately never pulled at send
+         time: note boxes can hold DOOR CODES, and {care} only ever carries
+         what a person left in the form's care box. */
       /* "today 2:00-6:00 PM" reads better than a bare date. */
       const chiToday = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
       const relDay = !c.shift_date ? '' : c.shift_date === chiToday ? 'today'
@@ -572,6 +614,9 @@ Deno.serve(async (req) => {
       axiscare_census: censusUsable
         ? `${axisActive.size} active caregivers; ${inactiveSkipped} roster candidate(s) skipped as not active in AxisCare`
         : `census unavailable (${censusError || 'empty'}) — roster-only filtering this run`,
+      care_level: clientLv != null
+        ? `client is Level ${clientLv} (class "${c.client_care_level_from || '?'}"); ${underLevelSkipped} caregiver(s) skipped as below level; ${caregiverLevel.size} caregivers carry a level class`
+        : 'no care-level class found on this client — level filter off for this case',
       reason: c.reason,
       opened: c.opened_at,
       owner_now: c.owner ?? '(none)',
