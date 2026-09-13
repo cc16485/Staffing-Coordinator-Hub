@@ -404,7 +404,7 @@ Deno.serve(async (req) => {
   const stats: any = { open_cases: open.length, owner_set: 0, prompts_created: 0,
                   candidates_total: 0, may_autosend: 0, blocked_no_phone: 0,
                   blocked_untrusted: 0, would_ask: 0, sent: 0, held_quiet_hours: 0,
-                  closure_notified: 0 }
+                  closure_notified: 0, escalated: 0 }
 
   /* Recently-active caregivers (tier 2), fetched ONCE for the whole run. */
   const recent = open.length ? await fetchVisits(`startDate=${dISO(14)}&endDate=${dISO(0)}`)
@@ -767,6 +767,74 @@ Deno.serve(async (req) => {
       }
       if (sentThisRun) stats.sent += sentThisRun
       /* No bulk end-of-wave write: every ask was persisted fresh above. */
+    }
+
+    /* ── TIMEOUT ESCALATION: an exhausted callout must get LOUD. ─────────
+       When the bench is empty (nobody left to ask), nobody said yes, and
+       the last ask has had 20 minutes to be answered, a person takes over:
+       an URGENT item lands on whoever owns scheduling coverage right now,
+       and they get an SMS (held during 21:00-08:00 unless the shift starts
+       within 3 hours — the same courtesy rule as the callouts themselves).
+       Once per case; reopening a case clears the flag. */
+    const autoAsked = askedArr.filter((a: any) => a.auto === true)
+    const ESCALATE_AFTER_MIN = 20
+    const escalateReady = sendLive && !c.pending_fill && !c.callout_escalated_at
+      && autoAsked.length > 0 && wave.length === 0
+      && newestAsk > 0 && (Date.now() - newestAsk) > ESCALATE_AFTER_MIN * 60000
+    if (escalateReady) {
+      const own2 = own.owner || 'samantha@mo-care.com'
+      const declined = askedArr.filter((a: any) => a.state === 'no').length
+      const noReply = askedArr.filter((a: any) => a.state === 'waiting').length
+      const whenTxt = [c.shift_date, c.shift_time].filter(Boolean).join(' ') || 'time on the case'
+      await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
+        id: `ops_covesc_${c.id}`, kind: 'coverage', coverage_case_id: c.id,
+        title: `CALLOUT EXHAUSTED — ${c.client || 'shift'} ${whenTxt} still uncovered`,
+        about: c.client || '',
+        detail: `${autoAsked.length} caregivers asked: ${declined} declined, ${noReply} never answered, nobody said yes. A person needs to work this now — call people, split the shift, or tell the client.`,
+        domain: 'scheduling_coverage', status: 'open', urgency: 'high',
+        owner: own2, owner_name: own2.split('@')[0],
+        created_at: nowIso(), due: new Date(Date.now() + 3600000).toISOString(),
+        created_by: 'coverage-run', opened_by: 'callout-escalation',
+      } })
+      /* The SMS to the duty holder. Phone comes from coordinator_staff. */
+      let smsSent = false
+      const chiHr = Number(new Date().toLocaleString('en-US',
+        { timeZone: 'America/Chicago', hour: '2-digit', hour12: false }))
+      const smsAllowed = shiftSoon || (chiHr >= 8 && chiHr < 21)
+      if (smsAllowed && ghl.token && ghl.locationId) {
+        try {
+          const { data: stRow } = await sb.from('app_data').select('data').eq('key', 'coordinator_staff').maybeSingle()
+          const staff: any[] = Array.isArray(stRow?.data) ? stRow!.data : []
+          const person = staff.find((s: any) => String(s.email || '').toLowerCase() === own2.toLowerCase())
+          const phone = normalisePhone(person?.phone)
+          if (phone) {
+            const contact = await contactForOutbound(sb, ghl,
+              { phone, firstName: person?.name || own2.split('@')[0] }, 'urgent_internal', { selfSupplied: true })
+            if (contact) {
+              const msg = (String(settings.coverage_msg_escalation || '') ||
+                `Coverage alert: the callout for {client} {when} ran out of caregivers to ask ({asked} asked, nobody said yes). It needs a person now. Board: cc.mo-care.com`)
+                .replaceAll('{client}', String(c.client || 'a client'))
+                .replaceAll('{when}', whenTxt)
+                .replaceAll('{asked}', String(autoAsked.length))
+              const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
+                           'Content-Type': 'application/json' },
+                body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message: msg }),
+              })
+              smsSent = r.ok
+            }
+          }
+        } catch { /* the item is the guarantee; the SMS is the accelerant */ }
+      }
+      const fresh = await readCaseFresh(c.id)
+      if (fresh) {
+        fresh.callout_escalated_at = nowIso()
+        fresh.callout_escalation_sms = smsSent
+        await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: fresh })
+        c.callout_escalated_at = fresh.callout_escalated_at
+      }
+      stats.escalated = (Number(stats.escalated) || 0) + 1
     }
 
     const itemId = `ops_cov_${c.id}`
