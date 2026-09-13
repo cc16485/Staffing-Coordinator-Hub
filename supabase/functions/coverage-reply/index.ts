@@ -90,9 +90,21 @@ Deno.serve(async (req) => {
   if (!m) return json({ ok: true, routed: 'no open callout asked this number — nothing to attach to' })
   const { c, a } = m
 
+  /* CLASSIFICATION, negation first. "I can't I don't have a baby sitter
+     sorry" was read as YES because /i can/ matched the front of "can't"
+     (the apostrophe passes a word boundary) — Dixie Kuhn, first live
+     callout. Rules now: any negation wording makes it a NO no matter how it
+     starts; YES needs a clean affirmative with no negation anywhere; and
+     anything unclear goes to a HUMAN as a question — a wrong "inquiry" costs
+     a minute, a wrong YES freezes the callout and lies to the caregiver. */
   const t = text.toLowerCase()
-  const isYes = /^\s*(y|yes|yeah|yep|sure|i can|i'll take|ill take|absolutely)\b/.test(t)
-  const isNo = /^\s*(n|no|nope|can'?t|cannot|sorry,? (no|i can'?t))\b/.test(t)
+  const hasNeg = /(can'?t|cannot|can\s+not|won'?t|unable|not able|no way|i'?m not|don'?t think)/.test(t)
+  const isYes = !hasNeg && (
+    /^\s*(y|yes|yeah|yep|yea|sure|absolutely|definitely|of course)\b/.test(t) ||
+    /\b(i'?ll take|i can take|i can cover|i can do|i'?ll cover|i'?ll do it|count me in|i'?m available|works for me)\b/.test(t))
+  const isNo = hasNeg ||
+    /^\s*(n|no|nope|nah|sorry)\b/.test(t) ||
+    /\b(pass|not this time|next time)\b/.test(t)
   const stamp = new Date().toISOString()
   a.replied_at = stamp
   a.reply = text.slice(0, 500)
@@ -120,6 +132,12 @@ Deno.serve(async (req) => {
   } else if (isNo) {
     a.state = 'no'
     routed = 'no — recorded'
+    /* If the person we thought said yes now says no, the callout must
+       UN-freeze: clear the pending fill so waves resume next tick. */
+    if (c.pending_fill && String(c.pending_fill.name).toLowerCase() === String(a.name).toLowerCase()) {
+      delete c.pending_fill
+      routed = 'no — pending fill cleared, waves resume'
+    }
   } else {
     a.state = 'inquiry'
     routed = 'inquiry — raised for a human to answer'
