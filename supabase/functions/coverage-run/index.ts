@@ -32,6 +32,10 @@ import { maySendTo, normalisePhone, contactForOutbound } from '../_shared/outrea
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const clean = (v: unknown) => String(v ?? '').trim()
 const nowIso = () => new Date().toISOString()
+/* Used when recording an ask. Its ABSENCE was a production 500: the engine
+   sent wave-1's first text, then crashed on the undefined call before
+   persisting asked[] — so every tick re-sent the same first text. */
+const uid = () => 'ask_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7)
 
 /** How many caregivers a single wave asks. Controlled waves, not a blast: a
  *  broadcast to the whole roster costs goodwill every time it is used and
