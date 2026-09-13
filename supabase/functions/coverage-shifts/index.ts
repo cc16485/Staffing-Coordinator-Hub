@@ -117,6 +117,140 @@ Deno.serve(async (req) => {
     } catch (err) { return json({ error: String(err) }, 502) }
   }
 
+  /* Mode 5: THE INTAKE MATCHER — "who could staff Mon/Wed/Fri mornings?"
+     answered while the lead is still on the phone. Composes the live active
+     census (level classes, nurses excluded), each caregiver's self-declared
+     availability windows, their hunger for hours, and — when a client id is
+     given — their visit history with that client. Ranking: how much of the
+     asked schedule they cover, then how many hours short of target they
+     are. Caregivers with no availability on file are listed separately as
+     "worth asking" — absence of data is not a no. */
+  if (b.match && typeof b.match === 'object') {
+    const wantDays: string[] = (Array.isArray(b.match.days) ? b.match.days : [])
+      .map((d: unknown) => String(d).toLowerCase()).filter((d: string) =>
+        ['mon','tue','wed','thu','fri','sat','sun'].includes(d))
+    const wantWins: string[] = (Array.isArray(b.match.windows) ? b.match.windows : [])
+      .map((w: unknown) => String(w).toLowerCase()).filter((w: string) =>
+        ['morning','afternoon','evening','overnight'].includes(w))
+    if (!wantDays.length || !wantWins.length)
+      return json({ error: 'pick at least one day and one time window' }, 400)
+    const needLevel = [1, 2, 3].includes(Number(b.match.level)) ? Number(b.match.level) : null
+    const combos = wantDays.flatMap(d => wantWins.map(w => d + ':' + w))
+
+    const { token, site } = axisCreds()
+    if (!token || !site) return json({ error: 'AxisCare credentials not set on this project' }, 502)
+
+    // Active census with levels; nurses out.
+    const levelOf = (classes: any): number | null => {
+      let best: number | null = null
+      for (const c of rowsOf(classes)) {
+        const t = String((c as any)?.label ?? (c as any)?.code ?? '').toLowerCase()
+        const m = t.match(/level\s*([123])/)
+        const lv = m ? Number(m[1]) : /complex/.test(t) ? 3 : /personal\s*care/.test(t) ? 2 : /wellness/.test(t) ? 1 : null
+        if (lv != null && (best == null || lv > best)) best = lv
+      }
+      return best
+    }
+    const active = new Map<string, { name: string; level: number | null }>()
+    let url: string | null = `https://${site}.axiscare.com/api/caregivers`
+    try {
+      for (let page = 0; url && page < 12; page++) {
+        const r: Response = await fetch(url, { headers: {
+          Authorization: `Bearer ${token}`, Accept: 'application/json',
+          'X-AxisCare-Api-Version': AC_VERSION } })
+        if (!r.ok) return json({ error: `AxisCare responded ${r.status}` }, 502)
+        // deno-lint-ignore no-explicit-any
+        const j: any = await r.json().catch(() => ({}))
+        for (const g of rowsOf(j?.results?.caregivers ?? j?.caregivers)) {
+          if (g?.status?.active !== true || g?.id == null) continue
+          const isNurse = rowsOf(g?.classes).some((k: any) =>
+            /nurse|\bRN\b|\bLPN\b/i.test(String(k?.label ?? k?.code ?? '')))
+          if (isNurse) continue
+          const nm = [String(g?.firstName ?? '').trim(), String(g?.lastName ?? '').trim()].filter(Boolean).join(' ')
+          if (nm) active.set(String(g.id), { name: nm, level: levelOf(g?.classes) })
+        }
+        url = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
+      }
+    } catch (err) { return json({ error: String(err) }, 502) }
+
+    // Availability + scheduled next 7d + optional client history, via the DB
+    // and one visits sweep each.
+    const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2')
+    const sb2 = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+    const { data: avRow } = await sb2.from('app_data').select('data').eq('key', 'caregiver_availability').maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    const av: any[] = Array.isArray(avRow?.data) ? avRow!.data : []
+    const avById = new Map(av.map((a: any) => [String(a.axiscare_id ?? a.id), a]))
+
+    const fetchVisitRows = async (params: string): Promise<any[]> => {
+      const rows: any[] = []
+      let u: string | null = `https://${site}.axiscare.com/api/visits?${params}`
+      for (let page = 0; u && page < 12; page++) {
+        const r: Response = await fetch(u, { headers: {
+          Authorization: `Bearer ${token}`, Accept: 'application/json',
+          'X-AxisCare-Api-Version': AC_VERSION } })
+        if (!r.ok) break
+        // deno-lint-ignore no-explicit-any
+        const j: any = await r.json().catch(() => ({}))
+        for (const v of rowsOf(j?.results?.visits ?? j?.visits)) if (!v?.removed) rows.push(v)
+        u = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
+      }
+      return rows
+    }
+    const start = chiToday()
+    const end7 = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10)
+    const sched = new Map<string, number>()
+    for (const v of await fetchVisitRows(`startDate=${start}&endDate=${end7}`)) {
+      const id = v?.caregiver?.id; if (id == null) continue
+      const s = new Date(String(v?.scheduledStartDate ?? v?.startDate ?? '')).getTime()
+      const e = new Date(String(v?.scheduledEndDate ?? v?.endDate ?? '')).getTime()
+      if (Number.isFinite(s) && Number.isFinite(e) && e > s)
+        sched.set(String(id), (sched.get(String(id)) ?? 0) + (e - s) / 3600000)
+    }
+    const knowsClient = new Map<string, number>()
+    const clientId = String(b.match.client_axiscare_id ?? '').trim()
+    if (/^\d+$/.test(clientId)) {
+      const back = new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10)
+      for (const v of await fetchVisitRows(`clientIds=${clientId}&startDate=${back}&endDate=${start}`)) {
+        const id = v?.caregiver?.id; if (id == null) continue
+        knowsClient.set(String(id), (knowsClient.get(String(id)) ?? 0) + 1)
+      }
+    }
+
+    const matches: any[] = []
+    const worthAsking: any[] = []
+    for (const [id, g] of active) {
+      if (needLevel != null && g.level != null && g.level < needLevel) continue
+      const a = avById.get(id)
+      const schedH = Math.round((sched.get(id) ?? 0) * 10) / 10
+      const base = {
+        name: g.name, axiscare_id: id, level: g.level,
+        level_unknown: g.level == null,
+        scheduled_next_week: schedH,
+        knows_client_visits: knowsClient.get(id) ?? 0,
+      }
+      if (!a || !a.windows) { worthAsking.push(base); continue }
+      const have = new Set<string>()
+      for (const [d, ws] of Object.entries(a.windows as Record<string, string[]>))
+        for (const w of (ws || [])) have.add(d + ':' + w)
+      const covered = combos.filter(cb => have.has(cb))
+      if (!covered.length) continue
+      const target = Number(a.target_hours)
+      matches.push({ ...base,
+        covers: `${covered.length}/${combos.length}`,
+        covers_n: covered.length,
+        covered_slots: covered,
+        target_hours: Number.isFinite(target) ? target : null,
+        hours_short: Number.isFinite(target) ? Math.round((target - schedH) * 10) / 10 : null,
+      })
+    }
+    matches.sort((x, y) => (y.knows_client_visits - x.knows_client_visits)
+      || (y.covers_n - x.covers_n) || ((y.hours_short ?? -999) - (x.hours_short ?? -999)))
+    worthAsking.sort((x, y) => y.knows_client_visits - x.knows_client_visits)
+    return json({ asked_for: { days: wantDays, windows: wantWins, level: needLevel },
+      matches, worth_asking_no_availability: worthAsking.slice(0, 20) })
+  }
+
   /* Mode 4: Hours Watch — scheduled hours in the next 7 days per caregiver,
      summed from the visit windows. The board pairs this with what each
      caregiver SAYS they want (caregiver_availability) to show the gap. */
