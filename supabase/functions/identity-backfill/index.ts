@@ -701,9 +701,141 @@ async function linkClientsToGhl(commit: boolean) {
   return out
 }
 
+/* ── FAMILY CIRCLES FROM AXISCARE ────────────────────────────────────────────
+   AxisCare holds up to three responsible parties per client (Primary/
+   Secondary/Tertiary) with relationship, phones, email and two authorisation
+   flags. This pulls them into the hub's care_circles / circle_contacts so
+   circles fill themselves instead of being typed.
+
+   Rules (from AXISCARE-CAPABILITY.md): keep the tier and both flags as their
+   own columns, never collapse to a "family" tag, never read POA into
+   canMakeMedicalDecisions. And two of our own: NEVER set sms_consent (texting
+   consent is a question a human asks, not a field a sync copies), and never
+   overwrite a manually entered contact — matches by name fill blanks only.
+   Dry run by default; ?commit=1 writes. */
+async function syncCirclesFromAxisCare(commit: boolean) {
+  const order = ['AXISCARE_API_KEY', 'AXISCARE_TOKEN', 'AXISCARE_VISITS_TOKEN']
+  let token = ''
+  for (const n of order) { const v = Deno.env.get(n); if (v) { token = v; break } }
+  const site = Deno.env.get('AXISCARE_SITE') || Deno.env.get('AXISCARE_SITE_NUMBER') || ''
+  if (!token || !/^\d+$/.test(site)) return { error: 'AxisCare credentials not set on this project' }
+  const HEAD = { Authorization: `Bearer ${token}`, Accept: 'application/json',
+    'X-AxisCare-Api-Version': Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01' }
+
+  // Active clients from the identity layer: axiscare id + display name.
+  const { data: links } = await sb.from('person_source_id')
+    .select('person_id, source_id').eq('system', 'axiscare').eq('entity_type', 'client')
+  const pids = (links ?? []).map(l => String(l.person_id))
+  const { data: ppl } = await sb.from('person_identity').select('id, display_name').in('id', pids)
+  const nameOf = new Map((ppl ?? []).map(p => [String(p.id), String(p.display_name)]))
+
+  const { data: circles } = await sb.from('care_circles').select('id, client_name')
+  const circleByName = new Map((circles ?? []).map(c => [String(c.client_name).trim().toLowerCase(), c]))
+  const { data: contacts } = await sb.from('circle_contacts').select('*')
+  const contactsByCircle = new Map<string, any[]>()
+  for (const ct of (contacts ?? [])) {
+    const arr = contactsByCircle.get(String(ct.circle_id)) ?? []
+    arr.push(ct); contactsByCircle.set(String(ct.circle_id), arr)
+  }
+
+  // Lists can come back keyed instead of as arrays (the rowsOf lesson).
+  // deno-lint-ignore no-explicit-any
+  const rowsOf = (x: any): any[] => Array.isArray(x) ? x
+    : (x && typeof x === 'object' ? Object.values(x) : [])
+  const pickPhone = (p: Record<string, unknown>) => {
+    const phones = rowsOf(p?.phones).filter(ph => String((ph as any)?.number ?? (ph as any)?.phone ?? '').trim())
+    const mob = phones.find(ph => /mobile/i.test(String((ph as any)?.type ?? '')))
+    const first = (mob ?? phones[0]) as Record<string, unknown> | undefined
+    return first ? String(first.number ?? first.phone ?? '').trim() : ''
+  }
+
+  const out = { mode: commit ? 'COMMIT' : 'DRY RUN', clients: (links ?? []).length,
+    circles_created: 0, contacts_added: 0, contacts_updated: 0,
+    already_present: 0, clients_with_no_parties: 0, errors: [] as string[],
+    sample: [] as Array<Record<string, unknown>> }
+
+  for (const l of (links ?? [])) {
+    const clientName = nameOf.get(String(l.person_id)) ?? ''
+    if (!clientName) continue
+    // deno-lint-ignore no-explicit-any
+    let parties: any[] = []
+    try {
+      const r = await fetch(`https://${site}.axiscare.com/api/clients/${l.source_id}/responsibleParties`, { headers: HEAD })
+      if (!r.ok) { if (r.status !== 404) out.errors.push(`${clientName}: AxisCare ${r.status}`); continue }
+      // deno-lint-ignore no-explicit-any
+      const j: any = await r.json().catch(() => ({}))
+      parties = rowsOf(j?.results?.responsibleParties ?? j?.responsibleParties ?? j?.results ?? j)
+        .filter(p => String((p as any)?.name ?? '').trim())
+    } catch (err) { out.errors.push(`${clientName}: ${String(err)}`); continue }
+    if (!parties.length) { out.clients_with_no_parties++; continue }
+
+    let circle = circleByName.get(clientName.trim().toLowerCase())
+    if (!circle) {
+      if (commit) {
+        const { data, error } = await sb.from('care_circles')
+          .insert({ client_name: clientName }).select('id, client_name').single()
+        if (error || !data) { out.errors.push(`${clientName} circle: ${error?.message}`); continue }
+        circle = data
+        circleByName.set(clientName.trim().toLowerCase(), circle)
+      } else {
+        circle = { id: '(new)', client_name: clientName }
+      }
+      out.circles_created++
+    }
+
+    const mine = contactsByCircle.get(String(circle.id)) ?? []
+    for (const p of parties) {
+      const nm = String(p.name).trim()
+      const tier = Number(p.listNumber ?? parties.indexOf(p) + 1) || null
+      const row = {
+        name: nm, relationship: String(p.relationship ?? '').trim() || null,
+        phone: pickPhone(p) || null, email: String(p.email ?? '').trim() || null,
+        axiscare_list_number: tier,
+        hipaa_authorized: p.hipaaDisclosureAuthorization === true,
+        can_make_medical_decisions: p.canMakeMedicalDecisions === true,
+        source: 'axiscare',
+      }
+      const existing = mine.find(c => String(c.name ?? '').trim().toLowerCase() === nm.toLowerCase())
+      if (existing) {
+        // fill blanks only; a human's entry always wins
+        const patch: Record<string, unknown> = {}
+        for (const k of ['relationship', 'phone', 'email'] as const) {
+          if (!String(existing[k] ?? '').trim() && row[k]) patch[k] = row[k]
+        }
+        for (const k of ['axiscare_list_number', 'hipaa_authorized', 'can_make_medical_decisions'] as const) {
+          if (existing[k] == null) patch[k] = row[k]
+        }
+        if (Object.keys(patch).length) {
+          out.contacts_updated++
+          if (commit) {
+            const { error } = await sb.from('circle_contacts').update(patch).eq('id', existing.id)
+            if (error) out.errors.push(`${clientName}/${nm}: ${error.message}`)
+          }
+        } else out.already_present++
+        continue
+      }
+      out.contacts_added++
+      if (out.sample.length < 15) out.sample.push({ client: clientName, ...row })
+      if (commit) {
+        const { error } = await sb.from('circle_contacts').insert({
+          circle_id: circle.id, ...row, sms_consent: false, is_primary: tier === 1 && !mine.length,
+        })
+        if (error) out.errors.push(`${clientName}/${nm}: ${error.message}`)
+      }
+    }
+  }
+  return out
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
   const q = new URL(req.url).searchParams
+
+  if (q.get('circles') === '1') {
+    return new Response(JSON.stringify(
+      await syncCirclesFromAxisCare(q.get('commit') === '1'), null, 2),
+      { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
 
   if (q.get('ghl_clients') === '1') {
     return new Response(JSON.stringify(
