@@ -611,9 +611,105 @@ async function backfillClientsFromAxisCare(commit: boolean) {
   return out
 }
 
+/* ── LINK CLIENTS TO THEIR GHL CONTACT ───────────────────────────────────────
+   Client 360 wants one tap from a profile to the person's GHL conversation.
+   The link is looked up LIVE against GHL by phone (the scan cache is an
+   August snapshot; conversations move faster than that), and follows the
+   layer's standing rule: GHL never creates or resolves identity, it only gets
+   linked to people we already know. Phone must match exactly; a name that
+   also agrees makes the link confirmed, a name that disagrees or a shared
+   line goes to identity_review for a person to settle.
+   Dry run by default; ?commit=1 writes. */
+async function linkClientsToGhl(commit: boolean) {
+  const token = Deno.env.get('GHL_TOKEN') || Deno.env.get('GHL_API_KEY') || ''
+  const locationId = Deno.env.get('GHL_LOCATION_ID') || ''
+  if (!token || !locationId) return { error: 'GHL credentials not set on this project' }
+
+  const { data: roles } = await sb.from('person_role')
+    .select('person_id').eq('role', 'client')
+  const ids = [...new Set((roles ?? []).map(r => String(r.person_id)))]
+  if (!ids.length) return { error: 'no client roles in the identity layer — run ?clients=1 first' }
+
+  const [{ data: people }, { data: existing }] = await Promise.all([
+    sb.from('person_identity').select('id, display_name, primary_phone').in('id', ids),
+    sb.from('person_source_id').select('person_id, source_id').eq('system', 'ghl').in('person_id', ids),
+  ])
+  const already = new Set((existing ?? []).map(e => String(e.person_id)))
+
+  const out = { mode: commit ? 'COMMIT' : 'DRY RUN', clients: ids.length,
+    already_linked: already.size, linked_confirmed: 0, linked_probable: 0,
+    no_phone: 0, no_ghl_contact: 0, ambiguous_queued: 0, errors: [] as string[],
+    matches: [] as Array<Record<string, unknown>> }
+
+  for (const p of (people ?? [])) {
+    if (already.has(String(p.id))) continue
+    const phone = String(p.primary_phone ?? '')
+    const last10 = phone.replace(/\D/g, '').slice(-10)
+    if (last10.length !== 10) { out.no_phone++; continue }
+
+    // deno-lint-ignore no-explicit-any
+    let hits: any[] = []
+    try {
+      const r = await fetch('https://services.leadconnectorhq.com/contacts/?' +
+        new URLSearchParams({ locationId, query: last10, limit: '20' }), {
+        headers: { Authorization: `Bearer ${token}`, Version: '2021-07-28', Accept: 'application/json' } })
+      if (!r.ok) { out.errors.push(`${p.display_name}: GHL ${r.status}`); continue }
+      // deno-lint-ignore no-explicit-any
+      const j: any = await r.json().catch(() => ({}))
+      hits = (j?.contacts ?? []).filter((c: Record<string, unknown>) =>
+        String(c?.phone ?? '').replace(/\D/g, '').slice(-10) === last10)
+    } catch (err) { out.errors.push(`${p.display_name}: ${String(err)}`); continue }
+
+    if (!hits.length) { out.no_ghl_contact++; continue }
+
+    const nameOf = (c: Record<string, unknown>) =>
+      [String(c?.firstName ?? ''), String(c?.lastName ?? '')].filter(Boolean).join(' ').trim()
+        || String(c?.contactName ?? '')
+    const agreeing = hits.filter(c => sameNameish(nameOf(c), String(p.display_name)))
+
+    let pick: Record<string, unknown> | null = null
+    let confidence = 'probable'
+    if (agreeing.length === 1) { pick = agreeing[0]; confidence = 'confirmed' }
+    else if (hits.length === 1 && !agreeing.length) {
+      /* One contact on the line, named somebody else: a household or a GHL
+         phone-merge. Linking would point the profile at the wrong person's
+         conversation, so a human decides. */
+      out.ambiguous_queued++
+      if (commit) await sb.from('identity_review').insert({
+        reason: 'client_ghl_name_mismatch', phone,
+        detail: { client: p.display_name, ghl_says: nameOf(hits[0]), ghl_contact_id: hits[0].id } })
+      continue
+    } else {
+      out.ambiguous_queued++
+      if (commit) await sb.from('identity_review').insert({
+        reason: 'client_ghl_shared_line', phone,
+        detail: { client: p.display_name, ghl_contacts: hits.map(nameOf) } })
+      continue
+    }
+
+    out.matches.push({ client: p.display_name, ghl: nameOf(pick),
+      ghl_contact_id: pick.id, confidence })
+    if (confidence === 'confirmed') out.linked_confirmed++; else out.linked_probable++
+    if (!commit) continue
+    const { error } = await sb.from('person_source_id').upsert({
+      person_id: p.id, system: 'ghl', entity_type: 'client',
+      source_id: String(pick.id), confidence, needs_review: confidence !== 'confirmed',
+    }, { onConflict: 'person_id,system,entity_type,source_id' })
+    if (error) out.errors.push(`${p.display_name} write: ${error.message}`)
+  }
+  if (!commit) out.matches = out.matches.slice(0, 30)
+  return out
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
   const q = new URL(req.url).searchParams
+
+  if (q.get('ghl_clients') === '1') {
+    return new Response(JSON.stringify(
+      await linkClientsToGhl(q.get('commit') === '1'), null, 2),
+      { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
 
   if (q.get('clients') === '1') {
     return new Response(JSON.stringify(
