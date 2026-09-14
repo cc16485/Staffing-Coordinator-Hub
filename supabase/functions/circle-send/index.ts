@@ -66,6 +66,19 @@ Deno.serve(async (req) => {
     'Content-Type': 'application/json', Accept: 'application/json',
   }
   const text = String(body).trim()
+  /* When the recipient IS the client (clients sit in their own circles),
+     third person reads robotic: "LeeAnn's visit" becomes "your visit" and a
+     standalone "LeeAnn" becomes "you" for that one recipient only. Matched
+     on the full name so a same-first-name daughter is never rewritten. */
+  const nk = (x: unknown) => String(x ?? '').toLowerCase().replace(/[^a-z]/g, '')
+  const clientFirst = String(circle.client_name || '').trim().split(/\s+/)[0]
+  const textFor = (memberName: unknown) => {
+    if (!clientFirst || nk(memberName) !== nk(circle.client_name)) return text
+    const esc = clientFirst.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    return text
+      .replaceAll(clientFirst + "'s", 'your')
+      .replace(new RegExp('\\b' + esc + '\\b', 'g'), 'you')
+  }
 
   let reached = 0
   for (const c of reachable) {
@@ -83,7 +96,7 @@ Deno.serve(async (req) => {
       if (c.phone && c.sms_consent) {
         await fetch('https://services.leadconnectorhq.com/conversations/messages', {
           method: 'POST', headers: h,
-          body: JSON.stringify({ type: 'SMS', contactId, message: text }),
+          body: JSON.stringify({ type: 'SMS', contactId, message: textFor(c.name) }),
         })
       }
       if (c.email) {
