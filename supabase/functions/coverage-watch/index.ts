@@ -269,7 +269,8 @@ Deno.serve(async (req) => {
     const { data: nsRow } = await sb.from('app_data').select('data').eq('key', 'notes_watch_state').maybeSingle()
     const nsArr: any[] = Array.isArray(nsRow?.data) ? nsRow!.data : []
     const ns = nsArr.find((x: any) => x?.id === 'state') ?? { id: 'state', last_hour: '' }
-    if (ns.last_hour !== hourStamp) {
+    const forceNotes = new URL(req.url).searchParams.get('notes') === '1'
+    if (ns.last_hour !== hourStamp || forceNotes) {
       const { token: tk, site: st } = axisCreds()
       const chiToday = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
       const chiYest = new Date(Date.now() - 864e5)
@@ -407,6 +408,7 @@ Deno.serve(async (req) => {
        trigger names can be chosen from reality instead of guessed. */
     reason_names_seen_on_unassigned: Object.fromEntries(reasonNamesSeen),
     attendance_sweep: (globalThis as any).__attSwept ?? 'already done for yesterday',
+    notes_sweep: (globalThis as any).__noteSwept ?? 'already done this hour',
   }
 
   try {
