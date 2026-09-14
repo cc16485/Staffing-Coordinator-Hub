@@ -1052,6 +1052,77 @@ Deno.serve(async (req) => {
             } catch { /* the office confirmed by phone anyway; never block closure */ }
           }
         }
+        /* ── THE FAMILY HEARS IT FROM US ─────────────────────────────────
+           A covered case means somebody new is walking into the client's
+           home. The daughter should learn that from Caring Companions, not
+           from a stranger at the door. Texts go ONLY to circle members who
+           have explicit texting consent (sms_consent) and want caregiver-
+           change updates (wants_changes) — the sync never sets consent, a
+           person did. Same 8-21 window as every other closure text; sent
+           once per case (family_notified). Wording editable in Settings
+           (circle_msg_caregiver_change); {meet} becomes a meet-the-caregiver
+           link when an intro card exists for the covering caregiver. */
+        if (c.resolved_how === 'covered' && c.covered_by && !c.family_notified) {
+          try {
+            const firstNm = String(c.client || '').trim().toLowerCase().split(/\s+/)[0]
+            const { data: circAll } = await sb.from('care_circles')
+              .select('id, client_name').eq('active', true)
+            const circle = (circAll ?? []).find((x: any) =>
+              String(x.client_name || '').trim().toLowerCase().split(/\s+/)[0] === firstNm)
+            if (circle) {
+              const { data: mem } = await sb.from('circle_contacts')
+                .select('*').eq('circle_id', circle.id)
+              const members = (mem ?? []).filter((m: any) => m.sms_consent === true
+                && m.wants_changes !== false
+                && String(m.phone || '').replace(/\D/g, '').length >= 10)
+              if (members.length) {
+                let meet = ''
+                try {
+                  const { data: intros } = await sb.from('caregiver_intros')
+                    .select('id, name, intro')
+                  const g = (intros ?? []).find((x: any) =>
+                    String(x.name || '').trim().toLowerCase() === String(c.covered_by).trim().toLowerCase())
+                  if (g) meet = ' Meet them here: https://cc.mo-care.com/meet.html?cg=' + g.id
+                } catch { /* no intro, no link */ }
+                const whenTxt2 = [c.shift_date, c.shift_time].filter(Boolean).join(' ')
+                const famMsg = (String(settings.circle_msg_caregiver_change || '') ||
+                  `Hello, this is Caring Companions. {client}'s usual caregiver is unavailable for the visit {when}, so {caregiver} from our team will be coming instead. Everything else about the visit stays the same.{meet} Any questions at all, call us at (417) 234-8494.`)
+                  .replaceAll('{client}', String(c.client || 'your loved one'))
+                  .replaceAll('{when}', whenTxt2 || 'as scheduled')
+                  .replaceAll('{caregiver}', String(c.covered_by).split(' ')[0])
+                  .replaceAll('{meet}', meet)
+                  .replace(/\s{2,}/g, ' ').trim()
+                let famSent = 0
+                for (const m of members) {
+                  try {
+                    const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
+                      method: 'POST',
+                      headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ locationId: ghl.locationId, phone: m.phone,
+                        firstName: String(m.name || 'Family').split(' ')[0],
+                        lastName: String(m.name || '').split(' ').slice(1).join(' ') }),
+                    })
+                    const uj: any = await up.json().catch(() => ({}))
+                    const cid = uj?.contact?.id ?? uj?.id
+                    if (!cid) continue
+                    const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+                      method: 'POST',
+                      headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ type: 'SMS', contactId: cid, message: famMsg }),
+                    })
+                    if (r.ok) famSent++
+                  } catch { /* one family text failing must not block the rest */ }
+                }
+                if (famSent) {
+                  c.family_notified = nowIso()
+                  c.family_notified_count = famSent
+                  await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
+                }
+              }
+            }
+          } catch { /* family notify must never block closure */ }
+        }
+
         const waiting = askedList
           .filter((a: any) => a.auto === true && a.state === 'waiting' && a.ghl_contact_id)
         if (!waiting.length) {
