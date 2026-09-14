@@ -110,6 +110,47 @@ Deno.serve(async (req) => {
   }
 
   const nowIso = new Date().toISOString()
+
+  /* ── WHO HELD THIS VISIT? (her check, 2026-09-13: "did it show that Abigail
+     called out") AxisCare erases the caregiver the moment a visit is
+     unassigned, so by the time the watcher sees a call-off the API can no
+     longer say WHO called off. But the watcher sees every upcoming visit
+     every few minutes, so it keeps a short memory (app_data 'visit_memory',
+     server-only) of who last held each visit. When a visit turns up
+     unassigned, the case names that remembered person as calling_off, and
+     the family text can say "Abigail is unable to make it" instead of
+     "The caregiver scheduled". Entries older than 10 days get pruned a few
+     at a time so the key never grows without bound. */
+  const { data: vmRow } = await sb.from('app_data').select('data').eq('key', 'visit_memory').maybeSingle()
+  // deno-lint-ignore no-explicit-any
+  const vmItems: any[] = Array.isArray(vmRow?.data) ? vmRow!.data : []
+  // deno-lint-ignore no-explicit-any
+  const heldBy = new Map<string, any>(vmItems.map((m: any) => [String(m?.visit_id ?? ''), m]))
+  try {
+    for (const v of visits) {
+      if (v?.caregiver?.id == null) continue
+      const vid = String(v?.id ?? ''); if (!vid) continue
+      const nm = [String(v.caregiver.firstName ?? '').trim(), String(v.caregiver.lastName ?? '').trim()]
+        .filter(Boolean).join(' ')
+      if (!nm) continue
+      const prev = heldBy.get(vid)
+      if (prev && prev.caregiver === nm) continue
+      const item = { id: 'vm_' + vid.replace(/[^A-Za-z0-9]/g, '_'), visit_id: vid,
+        caregiver: nm, seen_at: nowIso }
+      heldBy.set(vid, item)
+      await sb.rpc('upsert_app_data_item', { target_key: 'visit_memory', item })
+    }
+    const cutoffVm = Date.now() - 10 * 864e5
+    let prunedVm = 0
+    for (const m of vmItems) {
+      if (prunedVm >= 25) break
+      if (m?.id && new Date(String(m?.seen_at || 0)).getTime() < cutoffVm) {
+        await sb.rpc('delete_app_data_item', { target_key: 'visit_memory', item_id: m.id })
+        prunedVm++
+      }
+    }
+  } catch { /* memory is best-effort; never block the watch */ }
+
   const reasonNamesSeen = new Map<string, number>()
   const wouldOpen: Record<string, unknown>[] = []
   let unassigned = 0, reasonMatched = 0, alreadyHandled = 0, inPast = 0, created = 0
@@ -137,6 +178,7 @@ Deno.serve(async (req) => {
       shift_date: start.slice(0, 10),
       shift_time: shiftTime,
       modification_reason: reason,
+      calling_off: String(heldBy.get(visitId)?.caregiver ?? ''),
     }
     wouldOpen.push(entry)
 
@@ -173,6 +215,25 @@ Deno.serve(async (req) => {
       if (!v || v?.caregiver?.id == null) continue
       const cgName = [String(v.caregiver.firstName ?? '').trim(), String(v.caregiver.lastName ?? '').trim()]
         .filter(Boolean).join(' ') || ('caregiver ' + v.caregiver.id)
+      /* The visit may have been RESCHEDULED when it was re-covered (Abigail's
+         8-12 became Autumn's 11:30-3:30). The case, and the family text's
+         {when}, must carry the times that are true NOW, not the snapshot
+         from the moment of the call-off. */
+      const liveStart = String(v?.scheduledStartDate ?? v?.startDate ?? '')
+      const liveEnd = String(v?.scheduledEndDate ?? v?.endDate ?? '')
+      if (liveStart) cc.shift_date = liveStart.slice(0, 10)
+      const liveTime = [liveStart, liveEnd].map((x: string) => x ? x.slice(11, 16) : '')
+        .filter(Boolean).join('-')
+      if (liveTime && liveTime !== cc.shift_time) {
+        cc.note = [String(cc.note || '').trim(),
+          `Visit time is now ${liveTime} (was ${cc.shift_time || 'unrecorded'}).`]
+          .filter(Boolean).join('\n')
+        cc.shift_time = liveTime
+      }
+      if (!cc.calling_off) {
+        const remembered = heldBy.get(String(cc.axiscare_visit_id))?.caregiver
+        if (remembered && remembered !== cgName) cc.calling_off = remembered
+      }
       cc.status = 'resolved'
       cc.resolved_at = nowIso
       cc.resolved_how = 'covered'
