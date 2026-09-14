@@ -139,7 +139,13 @@ Deno.serve(async (req) => {
   const backDays = dow === 1 ? 3 : 1
   const afterHoursStart = new Date(Date.parse(today + 'T12:00:00') - backDays * 864e5).toISOString().slice(0, 10) + ' 17:00:00'
   const bornAfterHours = (iso: unknown) => { const c = chi(iso); return !!c && c >= afterHoursStart }
-  const overnightOps = ops.filter((i) => i?.status === 'open' && bornAfterHours(i.created_at))
+  /* Overnight means PEOPLE: a banked note, a caregiver's text, a family's
+     booking. The midnight automation sweeps also stamp created_at overnight
+     and would drown the human news, so machine-born items stay in My Work. */
+  const humanBorn = (i: { created_by?: string; opened_by?: string }) =>
+    !/^automation:/.test(String(i.created_by || '')) &&
+    !/^(attendance|coverage)-watch$/.test(String(i.opened_by || ''))
+  const overnightOps = ops.filter((i) => i?.status === 'open' && bornAfterHours(i.created_at) && humanBorn(i))
   const overnightLeads = leads.filter((l) => l?.status !== 'Converted' && l?.status !== 'Lost' && bornAfterHours(l.created_at))
 
   // ── Who gets a brief ──
@@ -264,14 +270,17 @@ Deno.serve(async (req) => {
         const t12 = ((hm % 12) || 12) + ':' + c.slice(14, 16) + (hm < 12 ? 'am' : 'pm')
         return isToday ? t12 + ' this morning' : (c.slice(0, 10) === yesterday ? t12 + ' last night' : t12 + ' ' + c.slice(5, 10).replace('-', '/'))
       }
+      const onOpsTop = myOvernightOps.slice(0, 8), onLeadsTop = myOvernightLeads.slice(0, 4)
+      const onMore = Math.max(0, myOvernightOps.length - 8) + Math.max(0, myOvernightLeads.length - 4)
       body += card('🌙', 'While you were out', NAVY,
-        myOvernightOps.map((i) => row(`<b>${esc(i.about || i.title || '')}</b>` + (i.urgency === 'high' ? badge('urgent', '#FDE8E8', RED) : ''),
+        onOpsTop.map((i) => row(`<b>${esc(i.about || i.title || '')}</b>` + (i.urgency === 'high' ? badge('urgent', '#FDE8E8', RED) : ''),
           esc(String(i.detail || '').slice(0, 120)) + ' · ' + esc(when(i.created_at)) + (i.created_by ? ' · ' + esc(String(i.created_by).split('@')[0]) : ''),
           `${HUB}/#mywork`, 'Open')).join('') +
-        myOvernightLeads.map((l) => row(`<b>New lead: ${esc([l.first_name, l.last_name].filter(Boolean).join(' '))}</b>` + (l.phone ? ' · ' + telLink(l.phone) : '') + (quickish(l) ? badge('quick form', '#FFF4DE', AMBER) : ''),
+        onLeadsTop.map((l) => row(`<b>New lead: ${esc([l.first_name, l.last_name].filter(Boolean).join(' '))}</b>` + (l.phone ? ' · ' + telLink(l.phone) : '') + (quickish(l) ? badge('quick form', '#FFF4DE', AMBER) : ''),
           esc(String(l.interest_notes || '').slice(0, 110)) + ' · ' + esc(when(l.created_at)),
-          `${HUB}/#leadboard`, 'Open')).join(''),
-        'Everything that came in after 5pm' + (backDays > 1 ? ' Friday' : ' yesterday') + '.')
+          `${HUB}/#leadboard`, 'Open')).join('') +
+        (onMore > 0 ? `<div style="font-family:Arial,sans-serif;font-size:12px;color:${GRAY};padding-top:6px;">plus ${onMore} more in My Work</div>` : ''),
+        'What people sent in after 5pm' + (backDays > 1 ? ' Friday' : ' yesterday') + '.')
     }
     if (myPass.length) body += card('📝', `Passed along to you (${myPass.length})`, AMBER,
       myPass.map((i) => row(`<b>${esc(i.about || i.title || '')}</b>` + (i.urgency === 'high' ? badge('urgent', '#FDE8E8', RED) : ''),
