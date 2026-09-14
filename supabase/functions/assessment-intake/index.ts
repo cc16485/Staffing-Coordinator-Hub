@@ -18,6 +18,38 @@ const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
 const norm = (p: string) => String(p || '').replace(/\D/g, '').slice(-10)
 
+/* GHL's {{appointment.start_time}} arrives as WORDS in the location's
+   timezone ("Monday, September 14, 2026 10:00 AM"), proven by the first
+   live test booking. Parse that (and plain ISO, in case GHL ever changes
+   its mind) into a real Date, treating wordy times as America/Chicago. */
+const MONTHS: Record<string, number> = { january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
+  july: 6, august: 7, september: 8, october: 9, november: 10, december: 11 }
+function parseWhen(s: string): Date | null {
+  const t = String(s || '').trim()
+  if (!t) return null
+  if (/^\d{4}-\d{2}-\d{2}T/.test(t)) { const d = new Date(t); return isNaN(d.getTime()) ? null : d }
+  const m = t.match(/(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s+(\d{4})[,\s]+(\d{1,2}):(\d{2})\s*(am|pm)?/i)
+  if (!m) { const d = new Date(t.replace(/^[A-Za-z]+,\s*/, '')); return isNaN(d.getTime()) ? null : d }
+  let hh = parseInt(m[4], 10)
+  const ap = (m[6] || '').toLowerCase()
+  if (ap === 'pm' && hh < 12) hh += 12
+  if (ap === 'am' && hh === 12) hh = 0
+  // First guess the instant assuming CDT, then correct to the real Chicago
+  // offset for that date (handles CST in winter).
+  let d = new Date(Date.UTC(parseInt(m[3], 10), MONTHS[m[1].toLowerCase()], parseInt(m[2], 10), hh + 5, parseInt(m[5], 10)))
+  try {
+    const part = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', timeZoneName: 'longOffset' })
+      .formatToParts(d).find((p) => p.type === 'timeZoneName')?.value || 'GMT-05:00'
+    const off = part.match(/GMT([+-])(\d{2}):?(\d{2})?/)
+    if (off) {
+      const hours = (off[1] === '-' ? 1 : -1) * parseInt(off[2], 10)
+      d = new Date(Date.UTC(parseInt(m[3], 10), MONTHS[m[1].toLowerCase()], parseInt(m[2], 10), hh + hours, parseInt(m[5], 10)))
+    }
+  } catch { /* keep the CDT guess */ }
+  return isNaN(d.getTime()) ? null : d
+}
+const chiDay = (d: Date) => d.toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
   const url = new URL(req.url)
@@ -44,6 +76,7 @@ Deno.serve(async (req) => {
   const phone = field('phone')
   const email = field('email')
   const startTime = field('start_time') || field('appointment_start_time') || field('startTime')
+  const startsAt = parseWhen(startTime)
   if (!first && !phone && !email) return json({ ok: true, routed: 'nothing usable in this request — check the workflow field mapping' })
 
   const { data: row } = await sb.from('app_data').select('data').eq('key', 'leads').maybeSingle()
@@ -64,7 +97,7 @@ Deno.serve(async (req) => {
     status: 'Assessment Scheduled',
     assessment_at: startTime || existing?.assessment_at || '',
     follow_up_branch: 'ready-to-start',
-    follow_up_due: (startTime || nowIso).slice(0, 10),
+    follow_up_due: startsAt ? chiDay(startsAt) : nowIso.slice(0, 10),
     interest_notes: [String(existing?.interest_notes || '').trim(),
       `Booked a New Client Assessment${startTime ? ' for ' + startTime : ''} (via the booking calendar).`]
       .filter(Boolean).join(' '),
@@ -81,15 +114,15 @@ Deno.serve(async (req) => {
     detail: `New Client Assessment booked${startTime ? ' for ' + startTime : ''}. Prep: caregiver match ready (Hours Watch matcher), start packet, confirm the address. Lead is on the board.`,
     domain: '', status: 'open', urgency: 'high',
     owner: '', owner_name: '',
-    due: (startTime || nowIso).slice(0, 10) + 'T08:00:00',
+    due: (startsAt ? chiDay(startsAt) : nowIso.slice(0, 10)) + 'T08:00:00',
     created_at: nowIso, created_by: 'assessment-intake', opened_by: 'booking-calendar',
   } })
   // The hub's Team Calendar reads coordinator_busy, so a booked assessment
   // shows up there without anyone retyping it. source+source_id dedupes GHL
   // retries; a reschedule with the same appointment id updates in place.
-  if (startTime) {
-    const starts = new Date(startTime)
-    if (!isNaN(starts.getTime())) {
+  if (startsAt) {
+    const starts = startsAt
+    {
       const which = /medicaid/i.test(field('calendar')) ? 'Medicaid assessment' : 'Assessment'
       await sb.from('coordinator_busy').upsert({
         coordinator_id: null,
