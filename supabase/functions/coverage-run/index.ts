@@ -1090,16 +1090,28 @@ Deno.serve(async (req) => {
                    knows their caregivers by first name; being specific reads
                    as competence, being vague reads as chaos. */
                 const offFirst = String(c.calling_off || '').trim().split(/\s+/)[0]
-                const famMsg = (String(settings.circle_msg_caregiver_change || '') ||
-                  `Hello, this is Caring Companions. {off} is unable to make {client}'s visit {when}, so {caregiver} from our team will be coming instead. Everything else about the visit stays the same.{meet} Any questions at all, call us at (417) 234-8494.`)
+                /* Some circle members ARE the client (clients get listed as
+                   their own responsible party, and some live alone and take
+                   their own texts). Speak to them in the second person:
+                   "your visit", not their own name in the third person. */
+                const nameKeyFam = (x: string) => String(x || '').toLowerCase().replace(/[^a-z]/g, '')
+                const clientFirstFam = String(c.client || '').trim().split(/\s+/)[0]
+                const famTemplate = String(settings.circle_msg_caregiver_change || '') ||
+                  `Hello, this is Caring Companions. {off} is unable to make {client}'s visit {when}, so {caregiver} from our team will be coming instead. Everything else about the visit stays the same.{meet} Any questions at all, call us at (417) 234-8494.`
+                const famMsgFor = (selfIsClient: boolean) => famTemplate
                   .replaceAll('{off}', offFirst || 'The caregiver scheduled')
-                  .replaceAll('{client}', String(c.client || 'your loved one'))
+                  .replaceAll("{client}'s", selfIsClient ? 'your' : (String(c.client || 'your loved one') + "'s"))
+                  .replaceAll('{client}', selfIsClient ? 'you' : String(c.client || 'your loved one'))
                   .replaceAll('{when}', whenTxt2 || 'as scheduled')
                   .replaceAll('{caregiver}', String(c.covered_by).split(' ')[0])
                   .replaceAll('{meet}', meet)
                   .replace(/\s{2,}/g, ' ').trim()
                 let famSent = 0
                 for (const m of members) {
+                  const selfIsClient = !!clientFirstFam && (
+                    nameKeyFam(String(m.name || '').split(/\s+/)[0]) === nameKeyFam(clientFirstFam)
+                    && nameKeyFam(m.name) === nameKeyFam(String(circle.client_name || '')))
+                  const famMsg = famMsgFor(selfIsClient)
                   try {
                     const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
                       method: 'POST',
