@@ -256,6 +256,139 @@ Deno.serve(async (req) => {
     }
   } catch (err) { (globalThis as any).__attSwept = { error: String(err) } }
 
+  /* ── FLAGGED VISIT NOTES → COORDINATOR REVIEW (her call, 2026-09-13: no
+     auto-texting families about clinical notes; a person reads first). Every
+     medium/high-rated care note on yesterday's or today's visits becomes ONE
+     ops item for review. Runs at most once an hour; deterministic ids mean
+     reruns never duplicate. The exact shape AxisCare uses for note ratings
+     is not in the capability map, so this PROBES: embedded fields first,
+     then per-visit endpoints on a small sample — and reports which shape it
+     found (or that it found none) so reality, not guesswork, tunes it. */
+  try {
+    const hourStamp = new Date().toISOString().slice(0, 13)
+    const { data: nsRow } = await sb.from('app_data').select('data').eq('key', 'notes_watch_state').maybeSingle()
+    const nsArr: any[] = Array.isArray(nsRow?.data) ? nsRow!.data : []
+    const ns = nsArr.find((x: any) => x?.id === 'state') ?? { id: 'state', last_hour: '' }
+    if (ns.last_hour !== hourStamp) {
+      const { token: tk, site: st } = axisCreds()
+      const chiToday = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+      const chiYest = new Date(Date.now() - 864e5)
+        .toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+      const rows: any[] = []
+      let u2: string | null = `https://${st}.axiscare.com/api/visits?startDate=${chiYest}&endDate=${chiToday}`
+      for (let page = 0; u2 && page < 12; page++) {
+        const r: Response = await fetch(u2, { headers: {
+          Authorization: `Bearer ${tk}`, Accept: 'application/json',
+          'X-AxisCare-Api-Version': AC_VERSION } })
+        if (!r.ok) { u2 = null; break }
+        const j: any = await r.json().catch(() => ({}))
+        for (const v of (Array.isArray(j?.results?.visits) ? j.results.visits
+          : Object.values(j?.results?.visits ?? {}))) if (!(v as any)?.removed) rows.push(v)
+        u2 = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
+      }
+      const listOf = (x: any): any[] => Array.isArray(x) ? x
+        : (x && typeof x === 'object' ? Object.values(x) : [])
+      const notesOn = (v: any): { notes: any[]; shape: string } => {
+        for (const k of ['careNotes', 'visitNotes', 'notes']) {
+          const n = listOf(v?.[k]).filter(x => x && typeof x === 'object')
+          if (n.length) return { notes: n, shape: 'visit.' + k }
+        }
+        return { notes: [], shape: '' }
+      }
+      const ratingOf = (n: any): string => {
+        for (const k of ['rating', 'importance', 'priority', 'severity']) {
+          const v = n?.[k]
+          const s = typeof v === 'object' ? String(v?.name ?? v?.label ?? '') : String(v ?? '')
+          if (s.trim()) return s.trim()
+        }
+        return ''
+      }
+      const textOf = (n: any): string =>
+        String(n?.note ?? n?.text ?? n?.body ?? n?.comment ?? n?.description ?? '').trim()
+
+      let shape = '', notesSeen = 0, flagged = 0, made = 0
+      let embeddedAny = false
+      const perVisit = new Map<string, any[]>()
+      for (const v of rows) {
+        const got = notesOn(v)
+        if (got.notes.length) { embeddedAny = true; shape = shape || got.shape
+          perVisit.set(String(v?.id ?? ''), got.notes) }
+      }
+      if (!embeddedAny) {
+        /* probe the per-visit endpoints on a small sample, then fetch for all
+           only if a sample hit proves the endpoint exists */
+        let endpoint = ''
+        for (const v of rows.slice(0, 5)) {
+          for (const ep of ['careNotes', 'notes']) {
+            try {
+              const r = await fetch(`https://${st}.axiscare.com/api/visits/${v?.id}/${ep}`, { headers: {
+                Authorization: `Bearer ${tk}`, Accept: 'application/json',
+                'X-AxisCare-Api-Version': AC_VERSION } })
+              if (!r.ok) continue
+              const j: any = await r.json().catch(() => ({}))
+              const n = listOf(j?.results?.[ep] ?? j?.[ep] ?? j?.results ?? j)
+                .filter(x => x && typeof x === 'object' && (textOf(x) || ratingOf(x)))
+              if (n.length) { endpoint = ep; break }
+            } catch { /* keep probing */ }
+          }
+          if (endpoint) break
+        }
+        if (endpoint) {
+          shape = 'endpoint:/api/visits/{id}/' + endpoint
+          for (const v of rows.slice(0, 60)) {
+            try {
+              const r = await fetch(`https://${st}.axiscare.com/api/visits/${v?.id}/${endpoint}`, { headers: {
+                Authorization: `Bearer ${tk}`, Accept: 'application/json',
+                'X-AxisCare-Api-Version': AC_VERSION } })
+              if (!r.ok) continue
+              const j: any = await r.json().catch(() => ({}))
+              const n = listOf(j?.results?.[endpoint] ?? j?.[endpoint] ?? j?.results ?? j)
+                .filter(x => x && typeof x === 'object')
+              if (n.length) perVisit.set(String(v?.id ?? ''), n)
+            } catch { /* one visit failing must not stop the sweep */ }
+          }
+        }
+      }
+      for (const [vid, notes] of perVisit) {
+        const v = rows.find(x => String(x?.id ?? '') === vid)
+        const clientFirst = String(v?.client?.firstName ?? '').trim() || 'a client'
+        const cgName = [String(v?.caregiver?.firstName ?? '').trim(), String(v?.caregiver?.lastName ?? '').trim()]
+          .filter(Boolean).join(' ')
+        for (let i = 0; i < notes.length; i++) {
+          notesSeen++
+          const rating = ratingOf(notes[i])
+          if (!/med|high/i.test(rating)) continue
+          flagged++
+          const hi = /high/i.test(rating)
+          const nid = String(notes[i]?.id ?? i)
+          const txt = textOf(notes[i]).slice(0, 600)
+          const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
+            id: `ops_note_${vid.replace(/[^A-Za-z0-9]/g, '_')}_${nid.replace(/[^A-Za-z0-9]/g, '_')}`,
+            kind: 'review',
+            title: `Flagged visit note (${rating}): ${clientFirst}`,
+            about: clientFirst,
+            detail: `${cgName || 'The caregiver'} left a ${rating}-rated note on ${clientFirst}'s `
+              + `${String(v?.scheduledStartDate ?? v?.startDate ?? '').slice(0, 10)} visit:\n\n"${txt}"\n\n`
+              + `Read it, then decide whether the family should hear from us by phone. `
+              + `Their circle is on the client's profile (Client Care > Active Clients > tap the name). `
+              + `This alert never texts the family by itself.`,
+            domain: 'client_care', status: 'open', urgency: hi ? 'high' : 'normal',
+            owner: '', owner_name: '',
+            due: new Date(Date.now() + (hi ? 4 : 24) * 3600 * 1000).toISOString(),
+            created_at: new Date().toISOString(),
+            created_by: 'notes-watch', opened_by: 'flagged-visit-note',
+          } })
+          if (!error) made++
+        }
+      }
+      ns.last_hour = hourStamp
+      await sb.rpc('upsert_app_data_item', { target_key: 'notes_watch_state', item: ns })
+      ;(globalThis as any).__noteSwept = { window: `${chiYest} → ${chiToday}`,
+        visits_checked: rows.length, notes_seen: notesSeen, flagged, items_created: made,
+        shape: shape || 'NONE FOUND — no note fields on visits and no per-visit note endpoint answered; tell Claude what the capability map should say' }
+    }
+  } catch (err) { (globalThis as any).__noteSwept = { error: String(err) } }
+
   const summary = {
     mode: live ? 'LIVE' : 'DRY RUN',
     window: `${startDate} → ${endDate}`,
