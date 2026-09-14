@@ -55,6 +55,40 @@ Deno.serve(async (req) => {
   // deno-lint-ignore no-explicit-any
   const b: any = await req.json().catch(() => ({}))
 
+  /* Mode 0: TODAY'S BOARD for the hub dashboard (Samantha, 2026-09-14: "a
+     really good page for our dashboard/today"). One light pull of today's
+     visits: how many, which are still unassigned, and the first start time.
+     Read-only, coordinator-session only, same as everything else here. */
+  if (b.today_board === true) {
+    const { token, site } = axisCreds()
+    if (!token || !site) return json({ error: 'AxisCare credentials not set on this project' }, 502)
+    const day = chiToday()
+    // deno-lint-ignore no-explicit-any
+    const visits: any[] = []
+    let vurl: string | null = `https://${site}.axiscare.com/api/visits?startDate=${day}&endDate=${day}`
+    try {
+      for (let page = 0; vurl && page < 6; page++) {
+        const r: Response = await fetch(vurl, { headers: {
+          Authorization: `Bearer ${token}`, Accept: 'application/json',
+          'X-AxisCare-Api-Version': AC_VERSION } })
+        if (!r.ok) return json({ error: `AxisCare responded ${r.status}` }, 502)
+        // deno-lint-ignore no-explicit-any
+        const j: any = await r.json().catch(() => ({}))
+        for (const v of rowsOf(j?.results?.visits ?? j?.visits)) { if (!v?.removed) visits.push(v) }
+        vurl = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
+      }
+    } catch (err) { return json({ error: String(err) }, 502) }
+    const open = visits.filter((v) => v?.caregiver?.id == null)
+      .map((v) => ({
+        visit_id: v?.id != null ? String(v.id) : '',
+        time: String(v?.scheduledStartDate ?? v?.startDate ?? '').slice(11, 16),
+        end: String(v?.scheduledEndDate ?? v?.endDate ?? '').slice(11, 16),
+        client: [v?.client?.firstName, v?.client?.lastName].filter(Boolean).join(' ') || '?',
+      }))
+      .sort((a, b2) => a.time.localeCompare(b2.time))
+    return json({ date: day, total: visits.length, open })
+  }
+
   /* Mode 2: the ACTIVE caregiver census, live from AxisCare, for the
      "Who's calling off?" dropdown. The hub roster's active flag drifts from
      AxisCare's, and Samantha only wants people who are actually active.
