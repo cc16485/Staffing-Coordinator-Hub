@@ -1085,8 +1085,14 @@ Deno.serve(async (req) => {
                   if (g) meet = ' Meet them here: https://cc.mo-care.com/meet.html?cg=' + g.id
                 } catch { /* no intro, no link */ }
                 const whenTxt2 = [c.shift_date, c.shift_time].filter(Boolean).join(' ')
+                /* Name the caregiver who was actually scheduled (they may not
+                   be the "usual" one — a fill-in can call off too). The family
+                   knows their caregivers by first name; being specific reads
+                   as competence, being vague reads as chaos. */
+                const offFirst = String(c.calling_off || '').trim().split(/\s+/)[0]
                 const famMsg = (String(settings.circle_msg_caregiver_change || '') ||
-                  `Hello, this is Caring Companions. {client}'s usual caregiver is unavailable for the visit {when}, so {caregiver} from our team will be coming instead. Everything else about the visit stays the same.{meet} Any questions at all, call us at (417) 234-8494.`)
+                  `Hello, this is Caring Companions. {off} is unable to make {client}'s visit {when}, so {caregiver} from our team will be coming instead. Everything else about the visit stays the same.{meet} Any questions at all, call us at (417) 234-8494.`)
+                  .replaceAll('{off}', offFirst || 'The caregiver scheduled')
                   .replaceAll('{client}', String(c.client || 'your loved one'))
                   .replaceAll('{when}', whenTxt2 || 'as scheduled')
                   .replaceAll('{caregiver}', String(c.covered_by).split(' ')[0])
