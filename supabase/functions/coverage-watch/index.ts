@@ -156,6 +156,35 @@ Deno.serve(async (req) => {
     }
   }
 
+  /* ── COVERED OUTSIDE THE BOARD (her observation, 2026-09-13: "it could be
+     that we cover it outside the calloff board"). If an OPEN case's visit
+     shows a caregiver again in AxisCare, somebody assigned it directly there.
+     Close the case with that caregiver as covered_by — coverage-run's next
+     closure pass then sends the courtesy texts and the family circle text
+     exactly as if Confirm had been tapped on the board. Scope guard: only
+     cases that are already open (a real call-off) — a plain schedule
+     reassignment with no case never texts anybody. */
+  let coveredOutside = 0
+  try {
+    const byVisitId = new Map(visits.map(v => [String(v?.id ?? ''), v]))
+    for (const cc of cases) {
+      if (cc?.status !== 'open' || !cc?.axiscare_visit_id) continue
+      const v = byVisitId.get(String(cc.axiscare_visit_id))
+      if (!v || v?.caregiver?.id == null) continue
+      const cgName = [String(v.caregiver.firstName ?? '').trim(), String(v.caregiver.lastName ?? '').trim()]
+        .filter(Boolean).join(' ') || ('caregiver ' + v.caregiver.id)
+      cc.status = 'resolved'
+      cc.resolved_at = nowIso
+      cc.resolved_how = 'covered'
+      cc.covered_by = cgName
+      cc.note = [String(cc.note || '').trim(),
+        `Covered in AxisCare directly (assigned to ${cgName}) — closed by the watcher.`]
+        .filter(Boolean).join('\n')
+      const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: cc })
+      if (!error) coveredOutside++
+    }
+  } catch { /* never let this block the watch */ }
+
   /* ── DAILY ATTENDANCE SWEEP (her ask: track EVV misses and tardies, and
      tell admins when someone has too many). Once per day on the first run
      after midnight Chicago: yesterday's visits → missing clock-in, missing
@@ -400,6 +429,7 @@ Deno.serve(async (req) => {
     already_handled: alreadyHandled,
     started_in_past: inPast,
     cases_created: created,
+    covered_outside_the_board: coveredOutside,
     would_open: wouldOpen,
     reason_filter: configuredReasons.length
       ? { mode: 'exact names from ops_settings.coverage_watch_reasons', names: configuredReasons }
