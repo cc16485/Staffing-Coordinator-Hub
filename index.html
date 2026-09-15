@@ -877,7 +877,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
         <div style="font-size:.8rem;font-weight:700;color:var(--navy);white-space:nowrap">📋 EVV Form</div>
         <code style="font-size:.82rem;font-weight:600;color:var(--navy);background:#dde9f8;padding:.25rem .65rem;border-radius:6px;flex:1;min-width:160px">sc.mo-care.com/evv-correction-form</code>
         <button class="evv-copy-btn" onclick="copyEVVFormLink(this)">📋 Copy Link</button>
-        <div style="font-size:.75rem;color:#555">Share this link with the attendant when they need to submit a correction</div>
+        <div style="font-size:.75rem;color:#555">Share this link with the caregiver when they need to submit a correction</div>
       </div>
 
       <!-- Monthly volume monitor -->
@@ -893,7 +893,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
           </div>
           <div class="evv-stat-box">
             <div class="evv-stat-num v-green" id="evv-thresh-max-count">0</div>
-            <div class="evv-stat-lbl">Highest single-attendant count</div>
+            <div class="evv-stat-lbl">Highest single-caregiver count</div>
             <div style="font-size:.7rem;color:var(--gray);margin-top:.2rem" id="evv-thresh-max-name">—</div>
           </div>
           <div class="evv-stat-box" style="text-align:left">
@@ -901,7 +901,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
             <div style="font-size:.75rem;margin-top:.2rem">✅ Target: <strong>≥85%</strong> real-time EVV rate</div>
             <div style="font-size:.75rem;margin-top:.2rem">🟡 Agency-wide: <strong>5+</strong> corrections/month = review</div>
             <div style="font-size:.75rem;margin-top:.2rem">🔴 Agency-wide: <strong>10+</strong> = red flag</div>
-            <div style="font-size:.75rem;margin-top:.2rem">🔴 Per attendant: <strong>3+</strong>/month = red flag</div>
+            <div style="font-size:.75rem;margin-top:.2rem">🔴 Per caregiver: <strong>3+</strong>/month = red flag</div>
           </div>
         </div>
         <div id="evv-attendant-summary">
@@ -944,7 +944,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
             <thead><tr>
               <th>#</th>
               <th>Visit Date</th>
-              <th>Attendant</th>
+              <th>Caregiver</th>
               <th>Client</th>
               <th>Original Time</th>
               <th>Corrected Time</th>
@@ -971,7 +971,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
               <li>Phone was dead / no battery at clock-in or out</li>
               <li>App crashed or technical error (screenshot recommended)</li>
               <li>No cell service at client's location (rural area)</li>
-              <li>Attendant forgot to clock in or out (occasional — not recurring)</li>
+              <li>Caregiver forgot to clock in or out (occasional — not recurring)</li>
               <li>AxisCare app update caused disruption</li>
               <li>Client's home phone not available for landline EVV</li>
             </ul>
@@ -979,11 +979,11 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
           <div>
             <div style="font-weight:700;font-size:.82rem;color:var(--red-text);margin-bottom:.5rem">🚫 Red Flags — Patterns That Trigger MMAC Scrutiny</div>
             <ul style="font-size:.8rem;line-height:2;padding-left:1.1rem;color:var(--navy)">
-              <li>Same attendant requesting corrections repeatedly</li>
+              <li>Same caregiver requesting corrections repeatedly</li>
               <li>Corrections that extend shift time (not just fix a missed clock)</li>
               <li>Corrections submitted days after the visit</li>
               <li>No signed correction form on file for an adjustment</li>
-              <li>3+ corrections in one month for the same attendant</li>
+              <li>3+ corrections in one month for the same caregiver</li>
               <li>10+ corrections agency-wide in one month</li>
               <li>Pattern of corrections always on the same day/client</li>
             </ul>
@@ -1300,7 +1300,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 
       <div class="sect-lbl">Visit Details</div>
       <div class="grp">
-        <label>Attendant Name *</label>
+        <label>Caregiver Name *</label>
         <input type="text" id="evv-cor-attendant" placeholder="First Last">
       </div>
       <div class="grp">
@@ -1342,7 +1342,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
           <option>Phone was dead / no battery</option>
           <option>App crashed or technical error</option>
           <option>No cell service at client location</option>
-          <option>Attendant forgot to clock in or out</option>
+          <option>Caregiver forgot to clock in or out</option>
           <option>AxisCare app update caused disruption</option>
           <option>Client home phone unavailable</option>
           <option>Other</option>
@@ -7254,7 +7254,7 @@ function saveEVVCorrection() {
   const consumer  = document.getElementById('evv-cor-consumer').value.trim();
   const visitdate = document.getElementById('evv-cor-visitdate').value;
   if (!attendant || !consumer || !visitdate) {
-    alert('Attendant name, client name, and visit date are required.'); return;
+    alert('Caregiver name, client name, and visit date are required.'); return;
   }
   const reason = document.getElementById('evv-cor-reason').value;
   const reasonOther = document.getElementById('evv-cor-reason-other').value.trim();
@@ -7383,7 +7383,7 @@ async function loadPendingEVVSubmissions() {
         </div>
         ${sub.notes ? `<div style="font-size:.78rem;background:var(--white);border-radius:6px;padding:.4rem .65rem;margin-bottom:.3rem"><span style="color:var(--gray)">Notes:</span> ${sub.notes}</div>` : ''}
         <div style="display:flex;gap:1rem;flex-wrap:wrap">
-          ${sigHtml(sub.sig_attendant,'Attendant signature')}
+          ${sigHtml(sub.sig_attendant,'Caregiver signature')}
           ${sigHtml(sub.sig_consumer,'Client signature')}
         </div>
       </div>`;
@@ -7559,7 +7559,7 @@ function renderEVVCorrections() {
     summaryDiv.innerHTML = '<p style="font-size:.82rem;color:var(--gray)">No corrections logged this month.</p>';
   } else {
     summaryDiv.innerHTML =
-      '<div style="font-size:.72rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">This Month — By Attendant</div>' +
+      '<div style="font-size:.72rem;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">This Month — By Caregiver</div>' +
       '<div style="display:flex;flex-wrap:wrap;gap:.5rem">' +
       sorted.map(([name, count]) => {
         const color = count >= EVV_ATTENDANT_LIMIT ? 'var(--red)' : count >= 2 ? '#F97316' : 'var(--green)';

@@ -210,9 +210,10 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min
     </div>
   </div>
 
-  <!-- Section 5: Attendant signature -->
+  <!-- Section 5: Caregiver signature (internal ids keep the historical
+       "attendant" name — the evv_submissions table and the hub read them) -->
   <div class="section">
-    <div class="section-title">✍️ 5. Attendant Signature</div>
+    <div class="section-title">✍️ 5. Caregiver Signature</div>
     <p style="font-size:.8rem;color:var(--gray);margin-bottom:.75rem">
       By signing below, I certify that the information on this form is true and accurate to the best of my knowledge. I understand that falsifying EVV records is a serious violation that may result in termination and legal consequences.
     </p>
@@ -229,9 +230,11 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min
 
   <!-- Section 6: Client acknowledgment -->
   <div class="section">
-    <div class="section-title">👤 6. Client Acknowledgment</div>
+    <div class="section-title">👤 6. Client Signature (required)</div>
     <p style="font-size:.8rem;color:var(--gray);margin-bottom:.75rem">
-      If the client is present, their signature confirms they were receiving care during the corrected timeframe.
+      The client's signature confirms they were receiving care during the corrected timeframe.
+      The office cannot make any manual changes to recorded time without it, so a correction
+      submitted unsigned cannot be processed.
     </p>
     <div class="sig-wrap">
       <canvas id="sig-consumer" height="120"></canvas>
@@ -240,6 +243,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min
         <button class="sig-clear-btn" type="button" onclick="clearSig('sig-consumer')">Clear</button>
       </div>
     </div>
+    <div class="field-error" id="err-sig2" style="margin-top:.4rem">Client signature required</div>
   </div>
 
   <!-- Submit -->
@@ -393,6 +397,12 @@ function validate() {
   const hasSig = sigState['sig-attendant']?.hasContent;
   document.getElementById('err-sig').classList.toggle('show', !hasSig);
   if (!hasSig) ok = false;
+
+  // The client signature is required (policy, 2026-09-15): no manual time
+  // changes without the form completed AND signed by the client.
+  const hasSig2 = sigState['sig-consumer']?.hasContent;
+  document.getElementById('err-sig2').classList.toggle('show', !hasSig2);
+  if (!hasSig2) ok = false;
 
   return ok;
 }
