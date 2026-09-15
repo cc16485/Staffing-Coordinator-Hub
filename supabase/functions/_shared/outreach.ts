@@ -157,6 +157,14 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
       + 'Cron: daily-reference-chase, weekday mornings — created by cron-reference-chase.sql (care-coordinator-hub repo).' },
 
   // ── urgent internal ───────────────────────────────────────────────────────
+  'timekeeper-watch':   { class: 'urgent_internal', scheduled: true,
+    why: 'a caregiver with no clock-in minutes into a shift, and the office alert behind it. '
+      + 'The 6am shift needs its 6:03 nudge; a client may be standing at the door. '
+      + 'Cron: timekeeper-watch, every 2 minutes — created by cron-timekeeper.sql (~/Claude).' },
+  'shift-confirm':      { class: 'routine_internal', scheduled: true,
+    why: 'one morning text to each caregiver listing their own shifts today, deliberately '
+      + 'before the external window — it exists to surface problems before they become no-shows. '
+      + 'Cron: shift-confirm, 12:00 UTC daily — created by cron-shift-confirm.sql (~/Claude).' },
   'automation-watchdog': { class: 'urgent_internal', scheduled: true,
     why: 'tells the office when a scheduled automation has gone quiet or is erroring. '
       + 'Cron: daily-automation-watchdog, mornings — created by cron-automation-watchdog.sql (care-coordinator-hub repo).' },
@@ -304,7 +312,7 @@ export async function outboundGate(
   // deno-lint-ignore no-explicit-any
   sb: any,
   rawPhone: unknown,
-  kind: string,
+  kind: OutreachClass,
   opts: { selfSupplied?: boolean; now?: Date } = {},
 ): Promise<{ ok: true; phone: string } | { ok: false; response: Response }> {
   const dest = await maySendTo(sb, rawPhone, opts)
@@ -345,7 +353,7 @@ export async function contactForOutbound(
   sb: any,
   ghl: { token: string; locationId: string },
   person: { phone?: unknown; email?: unknown; firstName?: unknown; lastName?: unknown },
-  kind: string,
+  kind: OutreachClass,
   opts: { selfSupplied?: boolean; now?: Date } = {},
 ): Promise<{ contactId: string; phone: string | null } | null> {
   const email = String(person.email ?? '').trim()
