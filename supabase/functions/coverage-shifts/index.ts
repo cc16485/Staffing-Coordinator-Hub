@@ -361,6 +361,30 @@ Deno.serve(async (req) => {
 
   const startDate = chiToday()   // Chicago, not UTC: at 8pm the UTC date is tomorrow
   const endDate = addCalDays(startDate, days - 1)
+
+  /* Positively establish that a caregiver EXISTS, and nothing more. Probed
+     2026-09-16: GET /api/caregivers/{id} answers 200 + results for a valid
+     caregiver and an explicit 404 for a nonexistent one, while the visits
+     endpoint says the identical "No visits found" for BOTH an empty window
+     and an invalid id — so existence must be checked here, never inferred
+     from the visits response. Tri-state on purpose: true only on a 200
+     whose results object is present; false only on an explicit 404; null
+     for everything else (auth, 5xx, network, malformed) — and null FAILS
+     CLOSED into an error, because uncertainty must never become an empty
+     shift list. */
+  async function caregiverExists(id: string): Promise<boolean | null> {
+    try {
+      const r = await fetch(`https://${site}.axiscare.com/api/caregivers/${encodeURIComponent(id)}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json',
+                   'X-AxisCare-Api-Version': AC_VERSION } })
+      if (r.status === 404) return false
+      if (!r.ok) return null
+      // deno-lint-ignore no-explicit-any
+      const j: any = await r.json().catch(() => null)
+      return j?.results ? true : null
+    } catch { return null }
+  }
+
   // deno-lint-ignore no-explicit-any
   const out: any[] = []
   let url: string | null =
@@ -370,6 +394,22 @@ Deno.serve(async (req) => {
       const r: Response = await fetch(url, { headers: {
         Authorization: `Bearer ${token}`, Accept: 'application/json',
         'X-AxisCare-Api-Version': AC_VERSION } })
+      /* AxisCare 404s an EMPTY filtered result exactly like an unknown id
+         (proved by probe, see caregiverExists above). Only the INITIAL
+         request's 404 is interpreted, and only after the caregiver's
+         existence is positively confirmed does it become a normal empty
+         answer; a confirmed-missing caregiver or any unverifiable state
+         stays an error. A 404 on a later page is not an empty result and
+         keeps the plain error path. */
+      if (r.status === 404 && page === 0) {
+        const exists = await caregiverExists(cgId)
+        if (exists === true) {
+          return json({ caregiver_axiscare_id: cgId, window: `${startDate} → ${endDate}`, shifts: [] })
+        }
+        return json({ error: exists === false
+          ? `caregiver ${cgId} was not found in AxisCare`
+          : 'AxisCare responded 404 and the caregiver could not be verified — try again, or open the case by hand' }, 502)
+      }
       if (!r.ok) return json({ error: `AxisCare responded ${r.status}` }, 502)
       // deno-lint-ignore no-explicit-any
       const j: any = await r.json().catch(() => ({}))
