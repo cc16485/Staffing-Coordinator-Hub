@@ -246,6 +246,91 @@ Deno.serve(async (req) => {
     }
   } catch { /* never let this block the watch */ }
 
+  /* ── SHIFT PATTERN: ongoing or one-time? (her ask, 2026-09-16) ──────────
+     A visit id is a composite key, s=<scheduleId>:d=<date>. An open case
+     whose schedule has MORE dates on the calendar in the next 28 days is an
+     ONGOING shift; one whose date stands alone is ONE-TIME. The label
+     states what the calendar actually shows — it never guesses at
+     AxisCare's recurrence vocabulary. The raw schedule row (frequency, day,
+     endDate) rides along for display. Stamped once per case; a failed
+     fetch stamps nothing and simply retries next tick, and a tick with no
+     unstamped open case fetches nothing at all. */
+  let patternStamped = 0
+  try {
+    const patternRx = /^s=(\d+):d=\d{4}-\d\d-\d\d$/
+    const needy = cases.filter(cc => cc?.status === 'open' && !cc?.shift_pattern
+      && patternRx.test(String(cc?.axiscare_visit_id ?? '')))
+    if (needy.length && live) {   // a dry run marks nothing, this stamp included
+      // deno-lint-ignore no-explicit-any
+      const rowsIn = (j: any, key: string): any[] => {
+        if (Array.isArray(j)) return j
+        const r = j?.results ?? j
+        if (Array.isArray(r?.[key])) return r[key]
+        for (const v of Object.values(r ?? {})) if (Array.isArray(v)) return v
+        return []
+      }
+      const chiToday = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+      const farDate = new Date(Date.now() + 28 * 864e5).toISOString().slice(0, 10)
+      const datesBySchedule = new Map<string, Set<string>>()
+      let vUrl: string | null = `https://${site}.axiscare.com/api/visits?startDate=${chiToday}&endDate=${farDate}`
+      for (let page = 0; vUrl && page < 12; page++) {
+        const r: Response = await fetch(vUrl, { headers: {
+          Authorization: `Bearer ${token}`, Accept: 'application/json',
+          'X-AxisCare-Api-Version': AC_VERSION } })
+        if (!r.ok) throw new Error(`visits window ${r.status}`)
+        // deno-lint-ignore no-explicit-any
+        const j: any = await r.json().catch(() => ({}))
+        for (const v of rowsIn(j, 'visits')) {
+          if (v?.removed) continue
+          const m = patternRx.exec(String(v?.id ?? '')); if (!m) continue
+          const d = String(v.id).slice(String(v.id).indexOf(':d=') + 3)
+          if (!datesBySchedule.has(m[1])) datesBySchedule.set(m[1], new Set())
+          datesBySchedule.get(m[1])!.add(d)
+        }
+        vUrl = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
+      }
+      /* The schedule rows themselves, for the raw recurrence detail. A
+         failure here loses only the detail, never the calendar-based label. */
+      // deno-lint-ignore no-explicit-any
+      const schedRows = new Map<string, any>()
+      try {
+        let sUrl: string | null = `https://${site}.axiscare.com/api/schedules?startDate=${chiToday}&endDate=${farDate}`
+        for (let page = 0; sUrl && page < 12; page++) {
+          const r: Response = await fetch(sUrl, { headers: {
+            Authorization: `Bearer ${token}`, Accept: 'application/json',
+            'X-AxisCare-Api-Version': AC_VERSION } })
+          if (!r.ok) break
+          // deno-lint-ignore no-explicit-any
+          const j: any = await r.json().catch(() => ({}))
+          for (const s of rowsIn(j, 'schedules')) {
+            const sid = String(s?.scheduleId ?? s?.id ?? '')
+            if (sid && !schedRows.has(sid)) schedRows.set(sid, s)
+          }
+          sUrl = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
+        }
+      } catch { /* detail only */ }
+      for (const cc of needy) {
+        const sid = patternRx.exec(String(cc.axiscare_visit_id))![1]
+        const own = String(cc.shift_date || '')
+        const others = [...(datesBySchedule.get(sid) ?? [])]
+          .filter(d => d !== own && d >= chiToday).sort()
+        const s = schedRows.get(sid)
+        const weekday = /^\d{4}-\d\d-\d\d$/.test(own)
+          ? new Date(own + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long' }) : ''
+        cc.shift_pattern = {
+          kind: others.length ? 'ongoing' : 'one_time',
+          weekday, future_dates: others.slice(0, 8), more_dates: others.length,
+          window_days: 28, schedule_id: sid, checked_at: nowIso,
+          schedule: s ? { frequency: s.frequency ?? null, day: s.day ?? null,
+            start_date: s.startDate ?? null, end_date: s.endDate ?? null,
+            type: s.type ?? null } : null,
+        }
+        const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: cc })
+        if (!error) patternStamped++
+      }
+    }
+  } catch { /* pattern is a label, never a blocker — retry next tick */ }
+
   /* ── DAILY ATTENDANCE SWEEP (her ask: track EVV misses and tardies, and
      tell admins when someone has too many). Once per day on the first run
      after midnight Chicago: yesterday's visits → missing clock-in, missing
@@ -491,6 +576,7 @@ Deno.serve(async (req) => {
     started_in_past: inPast,
     cases_created: created,
     covered_outside_the_board: coveredOutside,
+    pattern_stamped: patternStamped,
     would_open: wouldOpen,
     reason_filter: configuredReasons.length
       ? { mode: 'exact names from ops_settings.coverage_watch_reasons', names: configuredReasons }
@@ -510,7 +596,8 @@ Deno.serve(async (req) => {
     await sb.rpc('upsert_app_data_item', { target_key: 'automation_heartbeats', item: {
       id: 'hb_coverage-watch', automation: 'coverage-watch', at: nowIso, ok: !fetchError,
       note: fetchError ? String(fetchError).slice(0, 120)
-        : `visits:${visits.length} candidates:${wouldOpen.length} created:${created} covered_outside:${coveredOutside}`,
+        : `visits:${visits.length} candidates:${wouldOpen.length} created:${created} covered_outside:${coveredOutside}`
+          + (patternStamped ? ` pattern:${patternStamped}` : ''),
     } })
     // deno-lint-ignore no-explicit-any
     const att: any = (globalThis as any).__attSwept, notes: any = (globalThis as any).__noteSwept

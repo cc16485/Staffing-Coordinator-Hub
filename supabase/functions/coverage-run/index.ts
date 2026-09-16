@@ -861,9 +861,19 @@ Deno.serve(async (req) => {
       /* No address on the case? The " at {address}" clause disappears whole —
          "open shift for Joel & Carol at the address is with the office" is
          what the old fallback produced, live, on 2026-09-16. Never again. */
+      /* {pattern}: what kind of shift this is, stamped on the case by the
+         watcher from the AxisCare calendar (her ask, 2026-09-16). An
+         ongoing shift is a real offer — "could become your regular Friday"
+         beats a bare fill-in ask — and a one-time shift says so. A case
+         with no stamp says nothing rather than guessing. */
+      const pat = (c.shift_pattern && typeof c.shift_pattern === 'object') ? c.shift_pattern : null
+      const patLine = pat?.kind === 'ongoing'
+        ? `This could become your regular ${pat.weekday ? pat.weekday + ' ' : ''}shift. `
+        : pat?.kind === 'one_time' ? 'One time only. ' : ''
       const fill = (tmpl: string, x: any) => tmpl
         .replaceAll(' at {address}', addr ? ` at ${addr}` : '')
         .replaceAll('{first_name}', x.first || 'there')
+        .replaceAll('{pattern}', patLine)
         .replaceAll('{client}', clientShort)
         .replaceAll('{where}', c.client_city ? ` in ${c.client_city}` : '')
         .replaceAll('{address}', addr || 'the office has the address')
@@ -877,13 +887,13 @@ Deno.serve(async (req) => {
          Saturday night is an open shift, not a last-minute fill-in). */
       const isSameDay = c.shift_date === chiToday
       const tmpl1 = String(c.msg_tier1 || '') || String(settings.coverage_msg_tier1 || '') ||
-        `Hi {first_name}, can you cover {client} {when}? It's Caring Companions. Reply YES or NO.`
+        `Hi {first_name}, can you cover {client} {when}? {pattern}It's Caring Companions. Reply YES or NO.`
       const tmplO = String(c.msg_other || '') ||
         (isSameDay
           ? (String(settings.coverage_msg_other_sameday || '') || String(settings.coverage_msg_other || '') ||
-             `Hi {first_name}, it's Caring Companions. Last-minute fill-in for {client} at {address}: {when}. {care}Can you take it? Reply YES or NO. Questions welcome.`)
+             `Hi {first_name}, it's Caring Companions. Last-minute fill-in for {client} at {address}: {when}. {pattern}{care}Can you take it? Reply YES or NO. Questions welcome.`)
           : (String(settings.coverage_msg_other_advance || '') || String(settings.coverage_msg_other || '') ||
-             `Hi {first_name}, it's Caring Companions. We have an open shift for {client} at {address}: {when}. {care}Can you take it? Reply YES or NO. Questions welcome.`))
+             `Hi {first_name}, it's Caring Companions. We have an open shift for {client} at {address}: {when}. {pattern}{care}Can you take it? Reply YES or NO. Questions welcome.`))
       for (const x of wave) {
         /* An uncovered shift is the textbook urgent_internal: staff, 24/7. */
         const contact = await contactForOutbound(sb, ghl,
