@@ -1184,6 +1184,27 @@ Deno.serve(async (req) => {
   }
 
   await releaseRunLock()
+
+  /* Heartbeat for the watchdog (automation-watchdog EXPECTED): one row,
+     replaced on every completed run, written at the END so an exception
+     anywhere above leaves the beat stale and the watchdog notices. The
+     richer automation_log row is written only when the tick actually acted:
+     at heartbeat cadence an every-tick log row would grow the shared
+     app_data array without bound. */
+  try {
+    await sb.rpc('upsert_app_data_item', { target_key: 'automation_heartbeats', item: {
+      id: 'hb_coverage-run', automation: 'coverage-run', at: nowIso(), ok: true,
+      note: `open:${open.length} sent:${stats.sent} escalated:${stats.escalated} closure:${stats.closure_notified}`,
+    } })
+    if (commit && (stats.sent || stats.escalated || stats.closure_notified || stats.prompts_created)) {
+      await sb.rpc('upsert_app_data_item', { target_key: 'automation_log', item: {
+        id: 'auto_srv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+        at: nowIso(), automation: 'coverage-run', ran_by: 'server', ok: true, dry: false,
+        rows_seen: open.length, candidates: stats.would_ask, created: stats.sent,
+      } })
+    }
+  } catch { /* logging must never block the run */ }
+
   return new Response(JSON.stringify({
     mode: commit ? 'COMMIT' : 'DRY RUN (cases/items only — sending has its own switch)',
     sending_enabled: sendLive,

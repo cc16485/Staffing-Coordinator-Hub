@@ -39,6 +39,14 @@ const EXPECTED = [
   { name: 'hire-intake-purge',  hours: 30, what: 'the SSN purge the apply page promises' },
   { name: 'ghe-reminders',      hours: 80, what: 'GHE nurse reminders' },
   { name: 'obligations',        hours: 30, what: 'compliance obligations', from: 'automation_log' },
+  /* Cara's heartbeat (crons in cron-cara-heartbeat.sql): both run every few
+     minutes, so a beat older than an hour means the cron or the function is
+     down — and with coverage_send_live on, a silent engine means waves,
+     escalations and closure texts have quietly stopped. The beats are
+     written at the END of a successful run, so cron firing into a failing
+     function still goes stale here rather than reporting healthy. */
+  { name: 'coverage-watch',     hours: 1,  what: 'AxisCare call-off detection (Cara case opening)' },
+  { name: 'coverage-run',       hours: 1,  what: 'Cara callout waves, exhaustion escalation and closure texts' },
 ]
 
 Deno.serve(async (req) => {

@@ -502,13 +502,29 @@ Deno.serve(async (req) => {
     notes_sweep: (globalThis as any).__noteSwept ?? 'already done this hour',
   }
 
+  /* Heartbeat every run (the watchdog's signal that the watcher is alive);
+     the richer automation_log row only when this tick actually did
+     something or failed — at a minutes-cadence an every-tick log row would
+     grow the shared app_data array without bound. */
   try {
-    await sb.rpc('upsert_app_data_item', { target_key: 'automation_log', item: {
-      id: 'auto_srv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-      at: nowIso, automation: 'coverage-watch', ran_by: 'server',
-      ok: !fetchError, dry: !live, duration_ms: Date.now() - t0,
-      rows_seen: visits.length, candidates: wouldOpen.length, created,
+    await sb.rpc('upsert_app_data_item', { target_key: 'automation_heartbeats', item: {
+      id: 'hb_coverage-watch', automation: 'coverage-watch', at: nowIso, ok: !fetchError,
+      note: fetchError ? String(fetchError).slice(0, 120)
+        : `visits:${visits.length} candidates:${wouldOpen.length} created:${created} covered_outside:${coveredOutside}`,
     } })
+    // deno-lint-ignore no-explicit-any
+    const att: any = (globalThis as any).__attSwept, notes: any = (globalThis as any).__noteSwept
+    const acted = created > 0 || coveredOutside > 0 || !!fetchError
+      || (att && typeof att === 'object' && (att.events_logged > 0 || att.error))
+      || (notes && typeof notes === 'object' && (notes.items_created > 0 || notes.error))
+    if (acted) {
+      await sb.rpc('upsert_app_data_item', { target_key: 'automation_log', item: {
+        id: 'auto_srv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+        at: nowIso, automation: 'coverage-watch', ran_by: 'server',
+        ok: !fetchError, dry: !live, duration_ms: Date.now() - t0,
+        rows_seen: visits.length, candidates: wouldOpen.length, created,
+      } })
+    }
   } catch { /* logging must never block the watch */ }
 
   return json(summary)
