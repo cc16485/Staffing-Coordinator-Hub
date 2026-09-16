@@ -163,6 +163,28 @@ async function candidatesFor(_c: any) {
       if (s?.name) nurseNames.add(nameKeyOf(String(s.name)))
   }
 
+  /* DO-NOT-OFFER LIST (her request, 2026-09-16): caregivers who have told
+     the office they can't take on more shifts — an SSI earnings cap is the
+     canonical case — are never texted about open shifts, whatever tier they
+     would rank. Managed in the hub's Cara tab (app_data key
+     coverage_do_not_offer). An entry may carry an `until` date: the block
+     holds THROUGH that date and expires on its own the day after (Chicago
+     calendar). Matching tries AxisCare id, then phone, then normalised
+     name — whichever the entry carries. Empty list = nothing changes.
+     A coordinator recording an ask BY HAND is not gated here: this list
+     stops Cara's automatic texting, not a human's judgment. */
+  const { data: dnoRow } = await sb.from('app_data').select('data').eq('key', 'coverage_do_not_offer').maybeSingle()
+  const dnoToday = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+  const dnoIds = new Set<string>(), dnoPhones = new Set<string>(), dnoNames = new Set<string>()
+  // deno-lint-ignore no-explicit-any
+  for (const d of (Array.isArray(dnoRow?.data) ? dnoRow!.data : []) as any[]) {
+    const until = String(d?.until || '').trim()
+    if (/^\d{4}-\d\d-\d\d$/.test(until) && until < dnoToday) continue   // block ended — offerable again
+    const id = clean(d?.axiscare_id); if (id) dnoIds.add(id)
+    const ph = normalisePhone(d?.phone); if (ph) dnoPhones.add(ph)
+    if (d?.name) dnoNames.add(nameKeyOf(String(d.name)))
+  }
+
   const { data } = await sb.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
   // deno-lint-ignore no-explicit-any
   const roster = (Array.isArray(data?.data) ? data!.data : []) as any[]
@@ -174,6 +196,11 @@ async function candidatesFor(_c: any) {
     if (cg.active === false) { out.push({ name, skipped: 'no longer active' }); continue }
     if (nurseNames.has(nameKeyOf(name))) {
       out.push({ name, skipped: 'nurse — nursing staff are never coverage candidates' }); continue }
+    if ((clean(cg.axiscare_id) && dnoIds.has(clean(cg.axiscare_id)))
+        || dnoPhones.has(normalisePhone(cg.phone) ?? '')
+        || dnoNames.has(nameKeyOf(name))) {
+      out.push({ name, eligibility: 'do_not_offer',
+                 skipped: 'asked not to be offered extra shifts (do-not-offer list)' }); continue }
     /* THE ROSTER MIXES OFFICE STAFF WITH FIELD CAREGIVERS. The dry run named
        Samantha and Krystal in wave 1 — ringing the CEO and the supervisor to
        cover a shift. Nobody who holds an active office domain is a coverage
@@ -395,6 +422,7 @@ Deno.serve(async (req) => {
        is for humans; a field is for code. */
     office_not_eligible: rosterCheck.filter(x => x.eligibility === 'office_not_eligible').length,
     office_but_capable: rosterCheck.filter(x => x.eligibility === 'office_but_capable').length,
+    do_not_offer: rosterCheck.filter(x => x.eligibility === 'do_not_offer').length,
     /* Untrusted means a phone EXISTS and failed the gate. Lumping the
        office-staff exclusion in here reported "2 phones present but
        untrusted" when those two never reached the phone check at all. */
@@ -430,6 +458,7 @@ Deno.serve(async (req) => {
   // deno-lint-ignore no-explicit-any
   const stats: any = { open_cases: open.length, owner_set: 0, prompts_created: 0,
                   candidates_total: 0, may_autosend: 0, blocked_no_phone: 0,
+                  blocked_do_not_offer: 0,
                   blocked_untrusted: 0, would_ask: 0, sent: 0, held_quiet_hours: 0,
                   closure_notified: 0, escalated: 0, admin_alerts: 0 }
 
@@ -710,8 +739,10 @@ Deno.serve(async (req) => {
     stats.candidates_total += cands.length
     stats.may_autosend += sendable.length
     stats.blocked_no_phone += cands.filter(x => x.skipped === 'no phone on file').length
+    stats.blocked_do_not_offer += cands.filter(x => x.eligibility === 'do_not_offer').length
     stats.blocked_untrusted += cands.filter(x => x.skipped && x.skipped !== 'no phone on file'
-                                                 && x.skipped !== 'no longer active').length
+                                                 && x.skipped !== 'no longer active'
+                                                 && x.eligibility !== 'do_not_offer').length
 
     /* Never ask the same person twice in the same case unless a retry is
        deliberate. asked[] is the memory. */
