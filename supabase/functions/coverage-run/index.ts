@@ -1069,12 +1069,26 @@ Deno.serve(async (req) => {
               .select('id, client_name').eq('active', true)
             const circle = (circAll ?? []).find((x: any) =>
               String(x.client_name || '').trim().toLowerCase().split(/\s+/)[0] === firstNm)
-            if (circle) {
-              const { data: mem } = await sb.from('circle_contacts')
-                .select('*').eq('circle_id', circle.id)
-              const members = (mem ?? []).filter((m: any) => m.sms_consent === true
-                && m.wants_changes !== false
-                && String(m.phone || '').replace(/\D/g, '').length >= 10)
+            /* family_notified is a STAGE-COMPLETION record, not a send tally:
+               family_notified_count says how many texts actually went (0 with
+               family_no_recipients means "complete because nobody was
+               eligible" — no circle, or no member with texting consent).
+               Without the empty-set stamp a manually-confirmed case is
+               rescanned every tick forever and the hub shows Close Loop
+               pending for a family that does not exist to notify. A transient
+               send failure to REAL members still leaves the flag unset, so
+               it retries next tick — never complete, never faked. */
+            const { data: mem } = circle ? await sb.from('circle_contacts')
+              .select('*').eq('circle_id', circle.id) : { data: [] }
+            const members = (mem ?? []).filter((m: any) => m.sms_consent === true
+              && m.wants_changes !== false
+              && String(m.phone || '').replace(/\D/g, '').length >= 10)
+            if (!members.length) {
+              c.family_notified = nowIso()
+              c.family_notified_count = 0
+              c.family_no_recipients = true
+              await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
+            } else {
               if (members.length) {
                 let meet = ''
                 try {
@@ -1110,7 +1124,7 @@ Deno.serve(async (req) => {
                 for (const m of members) {
                   const selfIsClient = !!clientFirstFam && (
                     nameKeyFam(String(m.name || '').split(/\s+/)[0]) === nameKeyFam(clientFirstFam)
-                    && nameKeyFam(m.name) === nameKeyFam(String(circle.client_name || '')))
+                    && nameKeyFam(m.name) === nameKeyFam(String(circle?.client_name || '')))
                   const famMsg = famMsgFor(selfIsClient)
                   try {
                     const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
@@ -1143,15 +1157,35 @@ Deno.serve(async (req) => {
 
         const waiting = askedList
           .filter((a: any) => a.auto === true && a.state === 'waiting' && a.ghl_contact_id)
+        /* closure_notified is the STAGE-COMPLETION record for the whole
+           closure pass — the scan gate at the top of this loop. It may only
+           be stamped once the family stage is resolved for a covered case
+           (sent, or complete-with-nobody-eligible above); stamping past a
+           transiently failed family send would silence the retry forever.
+           closure_courtesy_count carries how many courtesy texts actually
+           went; 0 with closure_no_recipients means "complete because nobody
+           was left waiting to tell" — true for a manually-confirmed case
+           with no automated asks, which must become quiescent, not rescanned
+           and shown as pending forever. */
+        const familyResolved = c.resolved_how !== 'covered' || !!c.family_notified
         if (!waiting.length) {
-          /* Nothing left to notify — but a just-confirmed winner must be
-             persisted or the next run would text them "confirmed" again. */
-          if (askedList.some((a: any) => a.confirm_sent)) {
+          if (familyResolved) {
             c.closure_notified = nowIso()
+            c.closure_courtesy_count = Number(c.closure_courtesy_count || 0)
+            if (!c.closure_courtesy_count) c.closure_no_recipients = true
             await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
           }
           continue
         }
+        /* Say what actually happened: "covered" only when it was. Telling
+           an asked caregiver a shift is covered when the case closed
+           UNCOVERED would be a fabrication — the release text for other
+           closures stays neutral. */
+        const courtesyMsg = c.resolved_how === 'covered'
+          ? (String(settings.coverage_msg_covered || '') ||
+             `Caring Companions: that shift is covered now. Thank you! No action needed.`)
+          : (String(settings.coverage_msg_closed || '') ||
+             `Caring Companions: no action needed on that earlier shift request any more. Thank you!`)
         let told = 0
         for (const a of waiting) {
           try {
@@ -1160,8 +1194,7 @@ Deno.serve(async (req) => {
               headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
                          'Content-Type': 'application/json' },
               body: JSON.stringify({ type: 'SMS', contactId: a.ghl_contact_id,
-                message: String(settings.coverage_msg_covered || '') ||
-                  `Caring Companions: that shift is covered now. Thank you! No action needed.` }),
+                message: courtesyMsg }),
             })
             if (r.ok) { a.state = 'closed_notified'; told++ }
             /* Case over: drop the tag so future texts stop firing the
@@ -1174,9 +1207,13 @@ Deno.serve(async (req) => {
             }).catch(() => {})
           } catch { /* one failed courtesy text must not block the rest */ }
         }
+        /* Delivered texts and their closed_notified states must persist even
+           when the completion stamp is deferred (family stage still owed),
+           or the next tick would text the same people again. */
         if (told) {
-          c.closure_notified = nowIso()
+          c.closure_courtesy_count = Number(c.closure_courtesy_count || 0) + told
           stats.closure_notified += told
+          if (familyResolved || c.family_notified) c.closure_notified = nowIso()
           await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
         }
       }
