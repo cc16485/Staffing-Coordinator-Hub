@@ -36,6 +36,33 @@ const nowIso = () => new Date().toISOString()
    sent wave-1's first text, then crashed on the undefined call before
    persisting asked[] — so every tick re-sent the same first text. */
 const uid = () => 'ask_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7)
+/* Texts carry clock time the way people say it: "17:00-21:00" → "5pm-9pm",
+   minutes kept only when they matter ("7:30am"). Her call, live 2026-09-16,
+   after reading the first real wave. Anything that isn't HH:MM passes through. */
+const clock12 = (t: string): string => {
+  const m = String(t || '').trim().match(/^(\d{1,2}):(\d\d)$/)
+  if (!m) return String(t || '').trim()
+  const h24 = Number(m[1]); const h = h24 % 12 || 12
+  return `${h}${m[2] === '00' ? '' : ':' + m[2]}${h24 >= 12 ? 'pm' : 'am'}`
+}
+const span12 = (span: string): string =>
+  String(span || '').trim().split('-').map(clock12).join('-')
+/* "Joel & Carol Wolverton" → "Joel & Carol"; "Patsy Smith" → "Patsy". A couple
+   shares one visit, so BOTH first names belong in a text about it — dropping
+   the trailing surname is the rule, not keeping the first word. */
+const firstNamesOf = (full: string): string => {
+  const w = String(full || '').trim().split(/\s+/).filter(Boolean)
+  return (w.length > 1 ? w.slice(0, -1) : w).join(' ')
+}
+/* Shift date the way a text should say it: today / tomorrow / "Thu, Sep 18". */
+const friendlyDay = (ymd: string): string => {
+  if (!/^\d{4}-\d\d-\d\d$/.test(String(ymd || ''))) return String(ymd || '')
+  const chiToday = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+  if (ymd === chiToday) return 'today'
+  const d = new Date(ymd + 'T12:00:00')
+  if (d.getTime() - new Date(chiToday + 'T12:00:00').getTime() === 86400000) return 'tomorrow'
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+}
 
 /** How many caregivers a single wave asks. Controlled waves, not a blast: a
  *  broadcast to the whole roster costs goodwill every time it is used and
@@ -497,7 +524,7 @@ Deno.serve(async (req) => {
         && settings.coverage_alert_admins.length)
         ? settings.coverage_alert_admins.map((e: unknown) => String(e).toLowerCase())
         : ['samantha@mo-care.com', 'krystal@mo-care.com']
-      const whenTxt = [c.shift_date, c.shift_time].filter(Boolean).join(' ') || 'time on the case'
+      const whenTxt = [c.shift_date, span12(c.shift_time)].filter(Boolean).join(' ') || 'time on the case'
       const chiHrA = Number(new Date().toLocaleString('en-US',
         { timeZone: 'America/Chicago', hour: '2-digit', hour12: false }))
       let soonA = false
@@ -772,25 +799,21 @@ Deno.serve(async (req) => {
       stats.held_quiet_hours = (Number(stats.held_quiet_hours) || 0) + wave.length
     }
     if (sendLive && !hasYes && fuseBurned && !quietHold && wave.length && ghl.token && ghl.locationId) {
-      /* MESSAGE DESIGN (adopted from CareQB's template split): only tier 1 —
-         caregivers who already work with this client — get the client's name.
-         Everyone else gets "a last-minute fill-in in {city}". A text fanned
-         out to dozens of phones should not name a care recipient to people
-         who have never met them. Wording is editable without a deploy:
-         ops_settings.coverage_msg_tier1 / coverage_msg_other, placeholders
-         {first_name} {client} {when}. */
-      const who = String(c.client || 'a client').split(/\s+/)
-      const clientShort = who[0]   // first name only (her call — no last initial)
+      /* MESSAGE DESIGN (CareQB's template split, revised live 2026-09-16):
+         EVERY caregiver's text names the client by FIRST NAME(S) — her call,
+         reading the first real wave, reversing the 09-12 stranger rule. First
+         names only, no surname: "Joel & Carol", never "Joel & Carol Wolverton".
+         Wording is editable without a deploy: ops_settings.coverage_msg_tier1 /
+         coverage_msg_other*, placeholders {first_name} {client} {when}. */
+      const clientShort = firstNamesOf(String(c.client || '')) || 'a client'
       /* City and care level were fetched before the wave was built. The
          client's AxisCare NOTE text is deliberately never pulled at send
          time: note boxes can hold DOOR CODES, and {care} only ever carries
          what a person left in the form's care box. */
-      /* "today 2:00-6:00 PM" reads better than a bare date. */
+      /* "today 5pm-9pm" reads better than a bare date and a 24-hour clock. */
       const chiToday = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
-      const relDay = !c.shift_date ? '' : c.shift_date === chiToday ? 'today'
-        : (new Date(c.shift_date + 'T12:00:00').getTime() - new Date(chiToday + 'T12:00:00').getTime() === 86400000) ? 'tomorrow'
-        : new Date(c.shift_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-      const when = [relDay, c.shift_time].filter(Boolean).join(' ')
+      const relDay = c.shift_date ? friendlyDay(c.shift_date) : ''
+      const when = [relDay, span12(c.shift_time)].filter(Boolean).join(' ')
         || 'as soon as possible — the office has details'
       /* {care}: a one-line client synopsis for caregivers who DON'T know the
          client (CareQB's pattern, requested by Samantha) — carried on the
@@ -801,9 +824,7 @@ Deno.serve(async (req) => {
          from an AxisCare note field: those can carry door codes. */
       const careLine = String(c.care_note || '').trim()
       /* {address}: street + city (her call, 2026-09-12 — distance decides
-         whether a caregiver takes a shift, and CareQB showed the street too;
-         the name-withholding for strangers stays, an address without a name
-         is what makes that trade acceptable). */
+         whether a caregiver takes a shift, and CareQB showed the street too). */
       const addr = [String(c.client_street || '').trim(), String(c.client_city || '').trim()]
         .filter(Boolean).join(', ') || 'the address is with the office'
       const fill = (tmpl: string, x: any) => tmpl
@@ -825,9 +846,9 @@ Deno.serve(async (req) => {
       const tmplO = String(c.msg_other || '') ||
         (isSameDay
           ? (String(settings.coverage_msg_other_sameday || '') || String(settings.coverage_msg_other || '') ||
-             `Hi {first_name}, it's Caring Companions. Last-minute fill-in at {address}: {when}. {care}Can you take it? Reply YES or NO. Questions welcome.`)
+             `Hi {first_name}, it's Caring Companions. Last-minute fill-in for {client} at {address}: {when}. {care}Can you take it? Reply YES or NO. Questions welcome.`)
           : (String(settings.coverage_msg_other_advance || '') || String(settings.coverage_msg_other || '') ||
-             `Hi {first_name}, it's Caring Companions. We have an open shift at {address}: {when}. {care}Can you take it? Reply YES or NO. Questions welcome.`))
+             `Hi {first_name}, it's Caring Companions. We have an open shift for {client} at {address}: {when}. {care}Can you take it? Reply YES or NO. Questions welcome.`))
       for (const x of wave) {
         /* An uncovered shift is the textbook urgent_internal: staff, 24/7. */
         const contact = await contactForOutbound(sb, ghl,
@@ -894,7 +915,7 @@ Deno.serve(async (req) => {
       const own2 = own.owner || 'samantha@mo-care.com'
       const declined = askedArr.filter((a: any) => a.state === 'no').length
       const noReply = askedArr.filter((a: any) => a.state === 'waiting').length
-      const whenTxt = [c.shift_date, c.shift_time].filter(Boolean).join(' ') || 'time on the case'
+      const whenTxt = [c.shift_date, span12(c.shift_time)].filter(Boolean).join(' ') || 'time on the case'
       await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
         id: `ops_covesc_${c.id}`, kind: 'coverage', coverage_case_id: c.id,
         title: `CALLOUT EXHAUSTED — ${c.client || 'shift'} ${whenTxt} still uncovered`,
@@ -1030,7 +1051,7 @@ Deno.serve(async (req) => {
             && !a.confirm_sent && String(a.name).toLowerCase() === String(c.covered_by).toLowerCase()
             && a.ghl_contact_id)
           if (winner) {
-            const whenTxt = [c.shift_date, c.shift_time].filter(Boolean).join(' ')
+            const whenTxt = [friendlyDay(c.shift_date), span12(c.shift_time)].filter(Boolean).join(' ')
             try {
               const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
                 method: 'POST',
@@ -1098,7 +1119,7 @@ Deno.serve(async (req) => {
                     String(x.name || '').trim().toLowerCase() === String(c.covered_by).trim().toLowerCase())
                   if (g) meet = ' Meet them here: https://cc.mo-care.com/meet.html?cg=' + g.id
                 } catch { /* no intro, no link */ }
-                const whenTxt2 = [c.shift_date, c.shift_time].filter(Boolean).join(' ')
+                const whenTxt2 = [friendlyDay(c.shift_date), span12(c.shift_time)].filter(Boolean).join(' ')
                 /* Name the caregiver who was actually scheduled (they may not
                    be the "usual" one — a fill-in can call off too). The family
                    knows their caregivers by first name; being specific reads

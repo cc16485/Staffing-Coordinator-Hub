@@ -118,7 +118,16 @@ Deno.serve(async (req) => {
         (c.pending_fill.staff_alerts && typeof c.pending_fill.staff_alerts === 'object')
           ? c.pending_fill.staff_alerts : {}
       c.pending_fill.staff_alerts = sent
-      const whenTxt = [c.shift_date, c.shift_time].filter(Boolean).join(' ') || 'the time on the case'
+      /* Same 12-hour rule as coverage-run (her call, 2026-09-16): staff read
+         "2026-09-18 5pm-9pm", never "17:00-21:00". Non-HH:MM passes through. */
+      const clock12 = (t: string): string => {
+        const m = String(t || '').trim().match(/^(\d{1,2}):(\d\d)$/)
+        if (!m) return String(t || '').trim()
+        const h24 = Number(m[1]); const h = h24 % 12 || 12
+        return `${h}${m[2] === '00' ? '' : ':' + m[2]}${h24 >= 12 ? 'pm' : 'am'}`
+      }
+      const span12 = (s: string) => String(s || '').trim().split('-').map(clock12).join('-')
+      const whenTxt = [c.shift_date, span12(c.shift_time)].filter(Boolean).join(' ') || 'the time on the case'
       const msg = (String((settings as any).coverage_msg_staff_yes || '') ||
         `Cara: {caregiver} said YES to cover {client}, {when}. Awaiting your confirmation — nothing is assigned yet. Review and confirm in Cara: https://cc.mo-care.com/#cara/case/{case}`)
         .replaceAll('{caregiver}', String(c.pending_fill.name || 'A caregiver'))
