@@ -458,7 +458,7 @@ Deno.serve(async (req) => {
   // deno-lint-ignore no-explicit-any
   const stats: any = { open_cases: open.length, owner_set: 0, prompts_created: 0,
                   candidates_total: 0, may_autosend: 0, blocked_no_phone: 0,
-                  blocked_do_not_offer: 0,
+                  blocked_do_not_offer: 0, held_census_down: 0,
                   blocked_untrusted: 0, would_ask: 0, sent: 0, held_quiet_hours: 0,
                   closure_notified: 0, escalated: 0, admin_alerts: 0 }
 
@@ -470,9 +470,13 @@ Deno.serve(async (req) => {
   /* AxisCare's ACTIVE caregiver census, once per run. The hub roster's own
      active flag drifts (Samantha caught inactive caregivers in the picker),
      and a coverage text to somebody who no longer works here is worse than
-     noise. Filtered on the per-row status.active boolean. If the census
-     cannot be read the waves fall back to roster-only filtering — degraded
-     and reported, never silently blocked. */
+     noise. Filtered on the per-row status.active boolean.
+     FAIL CLOSED (her order, 2026-09-16, after inactive caregivers were
+     texted on the first live case): "only send to caregivers who are
+     active in axiscare." A census that cannot be read now HOLDS every
+     wave — nothing sends on roster data alone — and raises a loud ops
+     item instead, because blocked-and-told beats texted-an-ex-employee.
+     The old roster-only fallback is withdrawn. */
   const axisActive = new Set<string>()
   const caregiverLevel = new Map<string, number>()   // axiscare id → care level 1-3
   const nurseAxis = new Set<string>()                // nurse-classed in AxisCare
@@ -509,6 +513,35 @@ Deno.serve(async (req) => {
     } catch (err) { censusError = String(err) }
   }
   const censusUsable = !censusError && axisActive.size > 0
+  /* Fail closed LOUDLY: with open cases and no readable census, every wave
+     holds — and a person is told, because a silent hold is a lost shift.
+     One item per Chicago day, so an hours-long outage nags once. */
+  if (open.length && !censusUsable && commit) {
+    const chiDayC = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+    try {
+      await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
+        id: `ops_cov_censusdown_${chiDayC}`, kind: 'coverage',
+        title: 'Cara is HOLDING all callouts — AxisCare caregiver census unreachable',
+        about: 'coverage callouts',
+        detail: `${open.length} open coverage case(s) are waiting. No caregiver texts go out until the active-caregiver census reads again (${censusError || 'census came back empty'}). If a shift is soon, work it by hand.`,
+        domain: 'scheduling_coverage', status: 'open', urgency: 'high',
+        owner: '', owner_name: '', created_at: nowIso(), created_by: 'coverage-run',
+        due: new Date(Date.now() + 3600000).toISOString(),
+      } })
+    } catch { /* the hold itself never depends on the alert */ }
+  }
+
+  /* Nurse-list names, once per run, for the asked_nurse_flagged diagnostic
+     (candidatesFor loads its own copy for the actual gate). */
+  const nurseNamesGlobal = new Set<string>()
+  if (open.length) {
+    try {
+      const { data: nsR } = await sb.from('app_data').select('data').eq('key', 'nurse_staff').maybeSingle()
+      // deno-lint-ignore no-explicit-any
+      for (const s of (Array.isArray(nsR?.data) ? nsR!.data : []) as any[])
+        if (s?.name) nurseNamesGlobal.add(nameKeyOf(String(s.name)))
+    } catch { /* diagnostic only */ }
+  }
 
   /* SUPPLY SIGNAL: what each caregiver says they want (self-maintained via
      the availability page) versus what they are scheduled for in the next 7
@@ -754,6 +787,7 @@ Deno.serve(async (req) => {
     const callerOff = String(c.calling_off || '').toLowerCase()
     const callerOffId = String(c.calling_off_id || '')
     let inactiveSkipped = 0
+    let censusHeld = 0
     let underLevelSkipped = 0
     let busySkipped = 0
     let nurseSkipped = 0
@@ -766,7 +800,8 @@ Deno.serve(async (req) => {
                          .filter(x => !(callerOff && String(x.name).toLowerCase() === callerOff)
                                    && !(callerOffId && String(x.axiscare_id || '') === callerOffId))
                          .filter((x: any) => {
-                           if (!censusUsable) return true
+                           /* Census down = nobody sends. Not a fallback. */
+                           if (!censusUsable) { censusHeld++; return false }
                            const okAx = x.axiscare_id && axisActive.has(String(x.axiscare_id))
                            if (!okAx) inactiveSkipped++
                            return okAx
@@ -787,6 +822,7 @@ Deno.serve(async (req) => {
                          })
                          .slice(0, WAVE_SIZE)
     stats.would_ask += wave.length
+    stats.held_census_down += censusHeld
 
     /* ── SEND STAGE — the callout engine (replacing CareQB Callouts).
        One wave per run per case. The first wave goes as soon as the case is
@@ -856,7 +892,14 @@ Deno.serve(async (req) => {
       const careLine = String(c.care_note || '').trim()
       /* {address}: street + city (her call, 2026-09-12 — distance decides
          whether a caregiver takes a shift, and CareQB showed the street too). */
-      const addr = [String(c.client_street || '').trim(), String(c.client_city || '').trim()]
+      /* Street NAME and city only, never the house number (her call,
+         2026-09-16): "1331 N Stewart Ave" texts as "N Stewart Ave". A
+         caregiver deciding on distance needs the street and the town, not
+         the client's front door. Streets that START with a number ("5th
+         Ave", "21st St") keep it — only a house-number token is dropped. */
+      const streetName = String(c.client_street || '').trim()
+        .replace(/^\d+[A-Za-z]?(?:-\w+)?\s+/, '').replace(/^\d+$/, '').trim()
+      const addr = [streetName, String(c.client_city || '').trim()]
         .filter(Boolean).join(', ')
       /* No address on the case? The " at {address}" clause disappears whole —
          "open shift for Joel & Carol at the address is with the office" is
@@ -956,7 +999,9 @@ Deno.serve(async (req) => {
        Once per case; reopening a case clears the flag. */
     const autoAsked = askedArr.filter((a: any) => a.auto === true)
     const ESCALATE_AFTER_MIN = 20
-    const escalateReady = sendLive && !c.pending_fill && !c.callout_escalated_at
+    /* A wave emptied by a census outage is a HOLD, not an exhausted
+       callout — escalating on it would tell staff a lie. */
+    const escalateReady = sendLive && censusUsable && !c.pending_fill && !c.callout_escalated_at
       && autoAsked.length > 0 && wave.length === 0
       && newestAsk > 0 && (Date.now() - newestAsk) > ESCALATE_AFTER_MIN * 60000
     if (escalateReady) {
@@ -1026,7 +1071,19 @@ Deno.serve(async (req) => {
       recent_activity_error: recent.error,
       axiscare_census: censusUsable
         ? `${axisActive.size} active caregivers; ${inactiveSkipped} roster candidate(s) skipped as not active in AxisCare`
-        : `census unavailable (${censusError || 'empty'}) — roster-only filtering this run`,
+        : `census unavailable (${censusError || 'empty'}) — ALL WAVES HELD this run (${censusHeld} candidate(s) held), nothing sends on roster data alone`,
+      /* Who has already been texted on this case but is NOT in the active
+         census now — the exact question the 2026-09-16 incident asked. */
+      asked_no_longer_active: censusUsable
+        ? (c.asked ?? []).filter((a: any) => a?.axiscare_id && !axisActive.has(String(a.axiscare_id)))
+            .map((a: any) => a.name)
+        : 'unknown — census unavailable',
+      /* And who was texted despite being nurse-classed or nurse-listed —
+         the Natasha Early question, permanently answerable. */
+      asked_nurse_flagged: (c.asked ?? []).filter((a: any) =>
+          (a?.axiscare_id && nurseAxis.has(String(a.axiscare_id)))
+          || nurseNamesGlobal.has(nameKeyOf(String(a?.name ?? ''))))
+        .map((a: any) => a.name),
       busy_check: `${busyCheck}; ${busySkipped} skipped from this wave as already working`,
       nurse_check: `${nurseAxis.size} nurse-classed in AxisCare; ${nurseSkipped} additionally skipped from this wave (nurse-roster names are excluded before candidacy)`,
       care_level: clientLv != null
@@ -1300,7 +1357,8 @@ Deno.serve(async (req) => {
   try {
     await sb.rpc('upsert_app_data_item', { target_key: 'automation_heartbeats', item: {
       id: 'hb_coverage-run', automation: 'coverage-run', at: nowIso(), ok: true,
-      note: `open:${open.length} sent:${stats.sent} escalated:${stats.escalated} closure:${stats.closure_notified}`,
+      note: `open:${open.length} sent:${stats.sent} escalated:${stats.escalated} closure:${stats.closure_notified}`
+        + (open.length ? (censusUsable ? ` census:${axisActive.size}` : ' census:DOWN-HELD') : ''),
     } })
     if (commit && (stats.sent || stats.escalated || stats.closure_notified || stats.prompts_created)) {
       await sb.rpc('upsert_app_data_item', { target_key: 'automation_log', item: {
