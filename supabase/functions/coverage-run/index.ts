@@ -861,15 +861,18 @@ Deno.serve(async (req) => {
       /* No address on the case? The " at {address}" clause disappears whole —
          "open shift for Joel & Carol at the address is with the office" is
          what the old fallback produced, live, on 2026-09-16. Never again. */
-      /* {pattern}: what kind of shift this is, stamped on the case by the
-         watcher from the AxisCare calendar (her ask, 2026-09-16). An
-         ongoing shift is a real offer — "could become your regular Friday"
-         beats a bare fill-in ask — and a one-time shift says so. A case
-         with no stamp says nothing rather than guessing. */
+      /* {pattern}: what kind of OPENING this is, stamped on the case by the
+         watcher from the AxisCare calendar (her ask 2026-09-16, corrected
+         same day: a repeating schedule whose regular caregiver only needs
+         one date off is NOT an ongoing opening). Only open_ongoing — the
+         slot's future dates have nobody — earns "could become your
+         regular"; a one-off need says "One time only."; a mixed or
+         unstamped case says nothing rather than overclaiming. The
+         withdrawn v1 'ongoing' stamp deliberately maps to silence. */
       const pat = (c.shift_pattern && typeof c.shift_pattern === 'object') ? c.shift_pattern : null
-      const patLine = pat?.kind === 'ongoing'
+      const patLine = pat?.kind === 'open_ongoing'
         ? `This could become your regular ${pat.weekday ? pat.weekday + ' ' : ''}shift. `
-        : pat?.kind === 'one_time' ? 'One time only. ' : ''
+        : (pat?.kind === 'one_time' || pat?.kind === 'one_time_cover') ? 'One time only. ' : ''
       const fill = (tmpl: string, x: any) => tmpl
         .replaceAll(' at {address}', addr ? ` at ${addr}` : '')
         .replaceAll('{first_name}', x.first || 'there')

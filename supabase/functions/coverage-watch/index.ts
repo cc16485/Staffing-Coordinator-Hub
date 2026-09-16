@@ -246,19 +246,31 @@ Deno.serve(async (req) => {
     }
   } catch { /* never let this block the watch */ }
 
-  /* ── SHIFT PATTERN: ongoing or one-time? (her ask, 2026-09-16) ──────────
-     A visit id is a composite key, s=<scheduleId>:d=<date>. An open case
-     whose schedule has MORE dates on the calendar in the next 28 days is an
-     ONGOING shift; one whose date stands alone is ONE-TIME. The label
-     states what the calendar actually shows — it never guesses at
-     AxisCare's recurrence vocabulary. The raw schedule row (frequency, day,
-     endDate) rides along for display. Stamped once per case; a failed
-     fetch stamps nothing and simply retries next tick, and a tick with no
-     unstamped open case fetches nothing at all. */
+  /* ── SHIFT PATTERN: is the OPENING ongoing, or one-time? ────────────────
+     (Her ask 2026-09-16, CORRECTED same day: "it's not OPEN ongoing — Emma
+     normally works the shift, only needs off this Friday." A repeating
+     SCHEDULE does not make the OPENING ongoing.) A visit id is a composite
+     key, s=<scheduleId>:d=<date>; the schedule's other dates in the next
+     28 days are this shift's siblings, and what matters is whether THEY
+     have a caregiver:
+       every sibling open        → open_ongoing   (nobody holds the slot —
+                                                   it could become yours)
+       every sibling covered     → one_time_cover (someone holds the slot,
+                                                   just this date needs help)
+       no siblings at all        → one_time
+       some open, some covered   → mixed          (texts stay silent)
+     The label states what the calendar actually shows — it never guesses
+     at AxisCare's recurrence vocabulary. The raw schedule row rides along
+     for display. v:2 marks this logic, so cases stamped by the withdrawn
+     schedule-repeats-means-ongoing version are re-stamped. Stamped once;
+     a failed fetch stamps nothing and retries next tick; a tick with
+     nothing to stamp fetches nothing. */
   let patternStamped = 0
   try {
     const patternRx = /^s=(\d+):d=\d{4}-\d\d-\d\d$/
-    const needy = cases.filter(cc => cc?.status === 'open' && !cc?.shift_pattern
+    // deno-lint-ignore no-explicit-any
+    const needy = cases.filter(cc => cc?.status === 'open'
+      && (!cc?.shift_pattern || (cc.shift_pattern as any).v !== 2)
       && patternRx.test(String(cc?.axiscare_visit_id ?? '')))
     if (needy.length && live) {   // a dry run marks nothing, this stamp included
       // deno-lint-ignore no-explicit-any
@@ -271,7 +283,7 @@ Deno.serve(async (req) => {
       }
       const chiToday = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
       const farDate = new Date(Date.now() + 28 * 864e5).toISOString().slice(0, 10)
-      const datesBySchedule = new Map<string, Set<string>>()
+      const sibsBySchedule = new Map<string, Map<string, { open: boolean; caregiver: string }>>()
       let vUrl: string | null = `https://${site}.axiscare.com/api/visits?startDate=${chiToday}&endDate=${farDate}`
       for (let page = 0; vUrl && page < 12; page++) {
         const r: Response = await fetch(vUrl, { headers: {
@@ -284,8 +296,12 @@ Deno.serve(async (req) => {
           if (v?.removed) continue
           const m = patternRx.exec(String(v?.id ?? '')); if (!m) continue
           const d = String(v.id).slice(String(v.id).indexOf(':d=') + 3)
-          if (!datesBySchedule.has(m[1])) datesBySchedule.set(m[1], new Set())
-          datesBySchedule.get(m[1])!.add(d)
+          if (!sibsBySchedule.has(m[1])) sibsBySchedule.set(m[1], new Map())
+          sibsBySchedule.get(m[1])!.set(d, {
+            open: v?.caregiver?.id == null,
+            caregiver: [String(v?.caregiver?.firstName ?? '').trim(),
+                        String(v?.caregiver?.lastName ?? '').trim()].filter(Boolean).join(' '),
+          })
         }
         vUrl = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
       }
@@ -312,14 +328,27 @@ Deno.serve(async (req) => {
       for (const cc of needy) {
         const sid = patternRx.exec(String(cc.axiscare_visit_id))![1]
         const own = String(cc.shift_date || '')
-        const others = [...(datesBySchedule.get(sid) ?? [])]
-          .filter(d => d !== own && d >= chiToday).sort()
+        const sibs = [...(sibsBySchedule.get(sid) ?? new Map()).entries()]
+          .filter(([d]) => d !== own && d >= chiToday)
+          .sort((a, b) => a[0] < b[0] ? -1 : 1)
+        const openDates = sibs.filter(([, x]) => x.open).map(([d]) => d)
+        const covered = sibs.filter(([, x]) => !x.open)
+        /* Who holds the slot: the caregiver on most of the covered siblings. */
+        const tally = new Map<string, number>()
+        for (const [, x] of covered) if (x.caregiver)
+          tally.set(x.caregiver, (tally.get(x.caregiver) ?? 0) + 1)
+        const regular = [...tally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null
         const s = schedRows.get(sid)
         const weekday = /^\d{4}-\d\d-\d\d$/.test(own)
           ? new Date(own + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long' }) : ''
         cc.shift_pattern = {
-          kind: others.length ? 'ongoing' : 'one_time',
-          weekday, future_dates: others.slice(0, 8), more_dates: others.length,
+          v: 2,
+          kind: sibs.length === 0 ? 'one_time'
+            : openDates.length === 0 ? 'one_time_cover'
+            : covered.length === 0 ? 'open_ongoing' : 'mixed',
+          weekday, open_dates: openDates.slice(0, 8),
+          covered_dates: covered.length, sibling_dates: sibs.length,
+          regular_caregiver: regular,
           window_days: 28, schedule_id: sid, checked_at: nowIso,
           schedule: s ? { frequency: s.frequency ?? null, day: s.day ?? null,
             start_date: s.startDate ?? null, end_date: s.endDate ?? null,
