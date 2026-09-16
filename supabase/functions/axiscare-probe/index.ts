@@ -303,6 +303,71 @@ Deno.serve(async (req) => {
       { status: 200, headers: { 'Content-Type': 'application/json' } })
   }
 
+  /* ── PICKER-404 SEMANTICS (2026-09-16, authorized, DELIBERATELY NARROW) ──
+     Exactly four fixed GET probes, nothing else reachable through this:
+       A  /api/caregivers/{valid_id}        does a valid caregiver return 200?
+       B  /api/caregivers/{invalid_id}      does a nonexistent one return 404?
+       C  the picker's filtered-visits query for the valid id over a window
+          known to hold no visits — the sanitized shape of its 404
+       D  the same visits query for the nonexistent id — compared to C
+     The only inputs are two validated integers. No path, endpoint, method,
+     header or query passthrough of any kind. Bodies are sanitized to status,
+     content type, top-level key names, field NAMES of any result object, and
+     error strings truncated with long digit runs masked. Nothing persisted,
+     nothing logged, nothing written — same charter as the rest of this file.
+     Likely temporary: remove after the picker fix is verified unless kept
+     deliberately. */
+  {
+    const u = new URL(req.url)
+    if (u.searchParams.get('picker404') === '1') {
+      if (!TOKEN || !SITE) {
+        return new Response(JSON.stringify({ error: 'no token or site configured' }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      const vid = String(u.searchParams.get('valid_id') || '')
+      const iid = String(u.searchParams.get('invalid_id') || '999999')
+      if (!/^\d{1,9}$/.test(vid) || !/^\d{1,9}$/.test(iid)) {
+        return new Response(JSON.stringify({ error: 'valid_id (and optional invalid_id) must be plain integers' }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } })
+      }
+      const day = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+      const [y, m, d] = day.split('-').map(Number)
+      const end = new Date(Date.UTC(y, m - 1, d + 6)).toISOString().slice(0, 10)
+      const probeOne = async (path: string, tokenKind?: string) => {
+        try {
+          const r = await fetch(`https://${SITE}.axiscare.com${path}`, { headers: headers(tokenKind) })
+          const text = await r.text()
+          // deno-lint-ignore no-explicit-any
+          let j: any = null
+          try { j = JSON.parse(text) } catch { /* body was not JSON */ }
+          const mask = (s: string) => String(s).replace(/\d{5,}/g, '#').slice(0, 120)
+          return {
+            status: r.status,
+            content_type: String(r.headers.get('content-type') || '').split(';')[0],
+            body_was_json: j !== null,
+            top_level_keys: j && typeof j === 'object' ? Object.keys(j).sort() : [],
+            has_results_object: !!j?.results,
+            result_field_names: j?.results && typeof j.results === 'object'
+              ? [...new Set(shapeOf(j.results))].sort().slice(0, 40) : [],
+            errors_sanitized: Array.isArray(j?.errors) ? j.errors.map(mask) : [],
+            ...(j === null ? { body_first_chars: mask(text.slice(0, 80)) } : {}),
+          }
+        } catch (e) { return { status: 0, note: e instanceof Error ? e.message : String(e) } }
+      }
+      const out = {
+        read_only: true, wrote_nothing: true,
+        purpose: 'picker-404 semantics: per-id caregiver validity + filtered-visits 404 shape',
+        window: `${day} -> ${end}`,
+        A_caregiver_valid_id: await probeOne(`/api/caregivers/${vid}`),
+        B_caregiver_invalid_id: await probeOne(`/api/caregivers/${iid}`),
+        C_visits_valid_id_zero_window: await probeOne(`/api/visits?caregiverIds=${vid}&startDate=${day}&endDate=${end}`, 'visits'),
+        D_visits_invalid_id: await probeOne(`/api/visits?caregiverIds=${iid}&startDate=${day}&endDate=${end}`, 'visits'),
+      }
+      return new Response(JSON.stringify(out, null, 2),
+        { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }
+  }
+
   const report: Record<string, unknown> = {
     read_only: true, wrote_nothing: true,
     config: {
