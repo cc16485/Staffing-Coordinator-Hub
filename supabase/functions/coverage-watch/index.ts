@@ -36,7 +36,15 @@ const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b, null, 2), { status: s, headers: { 'Content-Type': 'application/json' } })
 
 const AC_VERSION = Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01'
-const DEFAULT_REASON_RX = /call[\s-]?(in|off)/i
+/* Which modification reasons mean "this shift lost its caregiver"?
+   Call in / call off, and — since 2026-09-16, when Wanda Keltner's call-in
+   was recorded as "Staffing Change - Caregiver Change" and sat invisible —
+   caregiver change too: an UNASSIGNED upcoming visit with that reason is a
+   shift nobody is coming to, whatever the dropdown called it. Client
+   cancellations never match: a cancelled visit needs no fill. The
+   ops_settings.coverage_watch_reasons list still overrides this pattern
+   with an exact set when Samantha wants one. */
+const DEFAULT_REASON_RX = /call[\s-]?(in|off)|caregiver[\s-]?change/i
 const HORIZON_HOURS = 72
 
 function axisCreds() {
@@ -153,6 +161,10 @@ Deno.serve(async (req) => {
 
   const reasonNamesSeen = new Map<string, number>()
   const wouldOpen: Record<string, unknown>[] = []
+  /* Every unassigned upcoming visit, with WHY the watcher did or didn't
+     act — so "why didn't it catch X?" is answered by reading the response
+     instead of an investigation (the Wanda Keltner question). */
+  const unassignedDetail: Record<string, unknown>[] = []
   let unassigned = 0, reasonMatched = 0, alreadyHandled = 0, inPast = 0, created = 0
 
   for (const v of visits) {
@@ -160,6 +172,20 @@ Deno.serve(async (req) => {
     unassigned++
     const reason = String(v?.modificationReason?.name ?? '').trim()
     if (reason) reasonNamesSeen.set(reason, (reasonNamesSeen.get(reason) ?? 0) + 1)
+    {
+      const dStart = String(v?.scheduledStartDate ?? v?.startDate ?? '')
+      unassignedDetail.push({
+        client: [String(v?.client?.firstName ?? '').trim(), String(v?.client?.lastName ?? '').trim()]
+          .filter(Boolean).join(' ') || '(no client name)',
+        when: dStart, visit: String(v?.id ?? ''),
+        reason: reason || '(no modification reason)',
+        verdict: !reason ? 'ignored — no reason recorded'
+          : !reasonMatches(reason) ? 'ignored — reason does not match the filter'
+          : (dStart && new Date(dStart).getTime() < Date.now()) ? 'ignored — already started'
+          : openByVisit.has(String(v?.id ?? '')) ? 'already has an open case'
+          : 'opens a case',
+      })
+    }
     if (!reason || !reasonMatches(reason)) continue
     reasonMatched++
     const start = String(v?.scheduledStartDate ?? v?.startDate ?? '')
@@ -613,6 +639,7 @@ Deno.serve(async (req) => {
     /* Every reason name seen on unassigned upcoming visits, so the exact
        trigger names can be chosen from reality instead of guessed. */
     reason_names_seen_on_unassigned: Object.fromEntries(reasonNamesSeen),
+    unassigned_detail: unassignedDetail,
     attendance_sweep: (globalThis as any).__attSwept ?? 'already done for yesterday',
     notes_sweep: (globalThis as any).__noteSwept ?? 'already done this hour',
   }
