@@ -240,8 +240,15 @@ Deno.serve(async (req) => {
       }
       return rows
     }
+    /* The scheduling horizon is the product's Next 7 Days - the SAME window
+       hours_watch reports: Chicago today plus the following six calendar
+       dates, seven inclusive, both boundaries from the same chiToday()
+       string. The matcher must judge a caregiver's load on exactly the
+       horizon Schedule Watch displays, or the office reads one number and
+       Cara decides on another. (Was UTC now+7d: 8 dates, 9 in the Chicago
+       evening - fixed 2026-09-16, same correction as hours_watch.) */
     const start = chiToday()
-    const end7 = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10)
+    const end7 = addCalDays(start, 6)
     const sched = new Map<string, number>()
     for (const v of await fetchVisitRows(`startDate=${start}&endDate=${end7}`)) {
       const id = v?.caregiver?.id; if (id == null) continue
@@ -253,7 +260,10 @@ Deno.serve(async (req) => {
     const knowsClient = new Map<string, number>()
     const clientId = String(b.match.client_axiscare_id ?? '').trim()
     if (/^\d+$/.test(clientId)) {
-      const back = new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10)
+      /* Approximate 180-day history horizon, kept approximate on purpose -
+         but derived from the same Chicago calendar as every other boundary
+         in this mode, so the whole block speaks one calendar. */
+      const back = addCalDays(start, -180)
       for (const v of await fetchVisitRows(`clientIds=${clientId}&startDate=${back}&endDate=${start}`)) {
         const id = v?.caregiver?.id; if (id == null) continue
         knowsClient.set(String(id), (knowsClient.get(String(id)) ?? 0) + 1)
@@ -338,13 +348,19 @@ Deno.serve(async (req) => {
 
   const cgId = String(b.caregiver_axiscare_id || '').trim()
   if (!/^\d+$/.test(cgId)) return json({ error: 'caregiver_axiscare_id (numeric) required' }, 400)
+  /* CONTRACT (Samantha, 2026-09-16): `days` is the TOTAL number of local
+     calendar dates in the returned range, INCLUDING today. days:1 is today
+     only; days:7 is today through today+6; the default 14 is exactly two
+     calendar weeks. Clamped to 1..30. Both boundaries derive from the same
+     Chicago calendar date, never from the UTC clock, whose date runs a day
+     ahead of Chicago's every evening. */
   const days = Number(b.days) > 0 && Number(b.days) <= 30 ? Number(b.days) : 14
 
   const { token, site } = axisCreds()
   if (!token || !site) return json({ error: 'AxisCare credentials not set on this project' }, 502)
 
   const startDate = chiToday()   // Chicago, not UTC: at 8pm the UTC date is tomorrow
-  const endDate = new Date(Date.now() + days * 86400000).toISOString().slice(0, 10)
+  const endDate = addCalDays(startDate, days - 1)
   // deno-lint-ignore no-explicit-any
   const out: any[] = []
   let url: string | null =
