@@ -39,6 +39,15 @@ function callerRole(req: Request): string {
   } catch { return '' }
 }
 const chiToday = () => new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+/* Calendar-date arithmetic in date space only: no clock, no timezone, no DST.
+   Date.UTC normalises day overflow (month and year roll), so "2026-12-29"+6
+   is "2027-01-04" on any host in any timezone. The Chicago calendar enters
+   only through the ymd string chiToday() already produced — this helper
+   never introduces a second timezone interpretation. */
+const addCalDays = (ymd: string, n: number): string => {
+  const [y, m, d] = ymd.split('-').map(Number)
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10)
+}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200, headers: {
@@ -291,8 +300,16 @@ Deno.serve(async (req) => {
   if (b.hours_watch === true) {
     const { token, site } = axisCreds()
     if (!token || !site) return json({ error: 'AxisCare credentials not set on this project' }, 502)
+    /* NEXT 7 DAYS, the product definition (Samantha, 2026-09-16): today in
+       the agency's Chicago calendar plus the following six calendar dates,
+       exactly seven dates inclusive (Sep 15 -> Sep 21). Both boundaries come
+       from the SAME calendar. The old endDate was UTC "now + 7 days", which
+       made the span 8 dates, and 9 during the Chicago evening when the UTC
+       date is already tomorrow. AxisCare treats startDate and endDate as
+       inclusive date filters: coverage-watch's attendance sweep fetches one
+       single day as startDate === endDate and gets that day's visits. */
     const startDate = chiToday()
-    const endDate = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10)
+    const endDate = addCalDays(startDate, 6)
     const hours = new Map<string, number>()
     let url: string | null = `https://${site}.axiscare.com/api/visits?startDate=${startDate}&endDate=${endDate}`
     try {
