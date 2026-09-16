@@ -97,6 +97,14 @@ where key = 'coverage_cases'
 -- STEP 2 — THE WATCHER: every 5 minutes. Detection promise: a call-off
 -- unassignment in AxisCare becomes a case within ~5 minutes.
 -- ============================================================
+-- ⚠ LEGACY DEAD JOB (discovered at the 2026-09-16 activation gate): a
+--   'coverage-watch-5min' job already exists from the 09-12 build session,
+--   firing every 5 minutes and receiving 401 INVALID_JWT_FORMAT on every
+--   call (its stored Bearer token is a display-masked credential: 8 real
+--   characters then literal bullet characters). It has never
+--   successfully invoked anything. It MUST be unscheduled here, or this
+--   file would leave a zombie beside the real job.
+-- do $$ begin perform cron.unschedule('coverage-watch-5min'); exception when others then null; end $$;
 -- do $$ begin perform cron.unschedule('coverage-watch'); exception when others then null; end $$;
 -- select cron.schedule('coverage-watch', '*/5 * * * *', $job$
 --   select net.http_post(
@@ -114,6 +122,10 @@ where key = 'coverage_cases'
 --   and no wave, escalation or closure text ever sends.
 -- Worst-case first wave after a case opens: ~3 minutes (plus quiet hours).
 -- ============================================================
+-- ⚠ LEGACY DEAD JOB (same 401 family as the watcher's): 'coverage-run-5min'
+--   exists, fires every 5 minutes, has never authenticated, and carries no
+--   ?commit=1 anyway. Unschedule it here for the same zombie reason.
+-- do $$ begin perform cron.unschedule('coverage-run-5min'); exception when others then null; end $$;
 -- do $$ begin perform cron.unschedule('coverage-run'); exception when others then null; end $$;
 -- select cron.schedule('coverage-run', '*/3 * * * *', $job$
 --   select net.http_post(
