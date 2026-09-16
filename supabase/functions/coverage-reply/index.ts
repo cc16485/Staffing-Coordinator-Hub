@@ -87,6 +87,69 @@ Deno.serve(async (req) => {
   }
   // Canned responses (Settings → Callout texts) with built-in fallbacks.
   const { data: setRow } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+  /* ── YES → STAFF HANDOFF ALERT (approved 2026-09-16) ─────────────────────
+     When a caregiver becomes the current pending_fill, each phone in
+     ops_settings.coverage_alert_phones gets ONE text saying a human
+     confirmation is awaited. Empty or missing setting means NO staff SMS —
+     no fallback to timekeeper phones, owners, or anything hard-coded.
+     Recipients that succeeded are recorded per pending DECISION in
+     pending_fill.staff_alerts (normalised phone -> sent-at): a replayed
+     webhook re-sends only to recipients that never succeeded, while a NEW
+     decision (a promotion, or a rescind-then-yes-again) starts a fresh
+     record and alerts afresh. DELIVERY GUARANTEE, stated honestly:
+     at-least-once per recipient per decision — the successful-recipient
+     record is persisted immediately after sending, so a duplicate text to
+     staff requires BOTH that immediate write to fail AND the provider to
+     replay the webhook. A staff-alert failure of any kind never touches
+     the caregiver acknowledgment, pending_fill, the Operations Inbox item,
+     or the assignment path (coverage-assign remains the only writer). */
+  // deno-lint-ignore no-explicit-any
+  async function alertStaffOfPending(c: any) {
+    try {
+      // deno-lint-ignore no-explicit-any
+      const phones: string[] = (Array.isArray((settings as any).coverage_alert_phones)
+        ? (settings as any).coverage_alert_phones : [])
+        .map((p: unknown) => String(p ?? '').trim()).filter(Boolean)
+      if (!phones.length || !c.pending_fill) return
+      const ghlToken = Deno.env.get('GHL_TOKEN')
+      const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
+      if (!ghlToken || !ghlLocation) return
+      const sent: Record<string, string> =
+        (c.pending_fill.staff_alerts && typeof c.pending_fill.staff_alerts === 'object')
+          ? c.pending_fill.staff_alerts : {}
+      c.pending_fill.staff_alerts = sent
+      const whenTxt = [c.shift_date, c.shift_time].filter(Boolean).join(' ') || 'the time on the case'
+      const msg = (String((settings as any).coverage_msg_staff_yes || '') ||
+        `Cara: {caregiver} said YES to cover {client}, {when}. Awaiting your confirmation — nothing is assigned yet. Review and confirm in Cara: https://cc.mo-care.com/#cara/case/{case}`)
+        .replaceAll('{caregiver}', String(c.pending_fill.name || 'A caregiver'))
+        .replaceAll('{client}', String(c.client || 'the client'))
+        .replaceAll('{when}', whenTxt)
+        .replaceAll('{case}', encodeURIComponent(String(c.id)))
+      let any = false
+      for (const p of phones) {
+        const key = norm(p) || p
+        if (sent[key]) continue          // already succeeded for THIS decision
+        try {
+          const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28',
+                       'Content-Type': 'application/json' },
+            body: JSON.stringify({ locationId: ghlLocation, phone: p, firstName: 'Scheduling' }),
+          })
+          // deno-lint-ignore no-explicit-any
+          const uj: any = await up.json().catch(() => ({}))
+          const cid = uj?.contact?.id ?? uj?.id
+          if (!cid) { console.error('[coverage-reply] staff alert: no contact id for a configured phone'); continue }
+          if (await sms(cid, msg)) { sent[key] = new Date().toISOString(); any = true }
+          else console.error('[coverage-reply] staff alert send failed for one recipient')
+        } catch (e) { console.error('[coverage-reply] staff alert recipient error', e) }
+      }
+      /* Persist the successful-recipient record NOW rather than only at the
+         end of the handler: this closes the replay-duplication window to
+         the instant between a successful send and this write. */
+      if (any) await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
+    } catch (e) { console.error('[coverage-reply] staff alert block failed', e) }
+  }
   // deno-lint-ignore no-explicit-any
   const settings: any = setRow?.data ?? {}
 
@@ -146,7 +209,15 @@ Deno.serve(async (req) => {
          `Thank you {first_name}! Someone grabbed it just before you, but we really appreciate you answering. Next one is yours.`)
         .replaceAll('{first_name}', a.name.split(' ')[0]))
     } else {
-      c.pending_fill = { name: a.name, phone: a.phone, at: stamp }
+      /* A replayed YES from the SAME caregiver is the same decision: carry
+         the staff-alert record so already-notified staff are not re-texted.
+         A different caregiver (or a rescind-then-yes-again, which cleared
+         pending_fill in between) is a new decision and starts fresh. */
+      const prevAlerts = (c.pending_fill
+        && String(c.pending_fill.name).toLowerCase() === String(a.name).toLowerCase()
+        && c.pending_fill.staff_alerts) ? c.pending_fill.staff_alerts : undefined
+      c.pending_fill = { name: a.name, phone: a.phone, at: stamp,
+        ...(prevAlerts ? { staff_alerts: prevAlerts } : {}) }
       routed = 'YES — first in, office prompted to confirm'
       await sms(contactId || a.ghl_contact_id,
         (String(settings.coverage_msg_ack_yes || '') ||
@@ -160,6 +231,7 @@ Deno.serve(async (req) => {
         created_at: stamp, due: new Date(Date.now() + 3600000).toISOString(),
         owner: '', owner_name: '', created_by: 'coverage-reply', opened_by: 'callout',
       } })
+      await alertStaffOfPending(c)
     }
   } else if (isNo) {
     a.state = 'no'
@@ -187,6 +259,7 @@ Deno.serve(async (req) => {
           created_at: stamp, due: new Date(Date.now() + 3600000).toISOString(),
           owner: '', owner_name: '', created_by: 'coverage-reply', opened_by: 'callout',
         } })
+        await alertStaffOfPending(c)
       }
     }
   } else {
