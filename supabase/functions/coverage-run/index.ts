@@ -826,12 +826,16 @@ Deno.serve(async (req) => {
       /* {address}: street + city (her call, 2026-09-12 — distance decides
          whether a caregiver takes a shift, and CareQB showed the street too). */
       const addr = [String(c.client_street || '').trim(), String(c.client_city || '').trim()]
-        .filter(Boolean).join(', ') || 'the address is with the office'
+        .filter(Boolean).join(', ')
+      /* No address on the case? The " at {address}" clause disappears whole —
+         "open shift for Joel & Carol at the address is with the office" is
+         what the old fallback produced, live, on 2026-09-16. Never again. */
       const fill = (tmpl: string, x: any) => tmpl
+        .replaceAll(' at {address}', addr ? ` at ${addr}` : '')
         .replaceAll('{first_name}', x.first || 'there')
         .replaceAll('{client}', clientShort)
         .replaceAll('{where}', c.client_city ? ` in ${c.client_city}` : '')
-        .replaceAll('{address}', addr)
+        .replaceAll('{address}', addr || 'the office has the address')
         .replaceAll('{when}', when)
         .replaceAll('{care}', careLine ? careLine + ' ' : '')
         .replace(/\s{2,}/g, ' ').trim()
