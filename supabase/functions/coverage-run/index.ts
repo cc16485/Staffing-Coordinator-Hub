@@ -1196,10 +1196,11 @@ Deno.serve(async (req) => {
        A YES anywhere on the case stops all further waves. */
     let sentThisRun = 0
     const askedArr: any[] = Array.isArray(c.asked) ? c.asked : (c.asked = [])
-    /* Waves stop only while an ACCEPTED offer is pending. A yes-state entry
-       whose pending_fill was cleared (they changed their mind) must not
-       freeze the callout — review finding: yes-then-no deadlock. */
-    const hasYes = !!c.pending_fill
+    /* Waves stop while an accepted offer is pending OR any collected yes is
+       waiting on the coordinator's pick (2026-09-19: yeses are collected,
+       not first-wins — texting more people while the office is choosing
+       wastes goodwill). A yes-then-no clears the state and waves resume. */
+    const hasYes = !!c.pending_fill || askedArr.some((a: any) => a.state === 'yes')
     const newestAsk = askedArr.map((a: any) => new Date(String(a.at || 0)).getTime())
       .filter((t: number) => Number.isFinite(t))
       .sort((a: number, b: number) => b - a)[0] ?? 0
@@ -1365,7 +1366,9 @@ Deno.serve(async (req) => {
     const ESCALATE_AFTER_MIN = 20
     /* A wave emptied by a census outage is a HOLD, not an exhausted
        callout — escalating on it would tell staff a lie. */
-    const escalateReady = sendLive && censusUsable && !c.pending_fill && !c.callout_escalated_at
+    const escalateReady = sendLive && censusUsable && !c.pending_fill
+      && !askedArr.some((a: any) => a.state === 'yes')
+      && !c.callout_escalated_at
       && autoAsked.length > 0 && wave.length === 0
       && newestAsk > 0 && (Date.now() - newestAsk) > ESCALATE_AFTER_MIN * 60000
     if (escalateReady) {
@@ -1520,7 +1523,8 @@ Deno.serve(async (req) => {
            "did I get it or not?". Full client name is right here — they are
            assigned now and need to know who they're going to. */
         if (c.resolved_how === 'covered' && c.covered_by) {
-          const winner = askedList.find((a: any) => a.auto === true && a.state === 'yes'
+          const winner = askedList.find((a: any) => (a.auto === true || a.picked_by_coordinator === true)
+            && a.state === 'yes'
             && !a.confirm_sent && String(a.name).toLowerCase() === String(c.covered_by).toLowerCase()
             && a.ghl_contact_id)
           if (winner) {
@@ -1649,8 +1653,24 @@ Deno.serve(async (req) => {
           } catch { /* family notify must never block closure */ }
         }
 
-        const waiting = askedList
-          .filter((a: any) => a.auto === true && a.state === 'waiting' && a.ghl_contact_id)
+        const eligibleAsk = (a: any) => (a.auto === true || a.picked_by_coordinator === true) && a.ghl_contact_id
+        const waiting = askedList.filter((a: any) => eligibleAsk(a) && a.state === 'waiting')
+        /* COLLECT-ALL-YESES (her rule, 2026-09-19: "we want to pick the best
+           option out of all the yeses"): everyone who said yes was promised
+           a text either way, so the ones not chosen hear it warmly — never
+           via silence. On an uncovered close they get the neutral release
+           text like everyone else. */
+        let yesLosers = askedList.filter((a: any) => eligibleAsk(a) && a.state === 'yes'
+          && !a.confirm_sent
+          && String(a.name).toLowerCase() !== String(c.covered_by || '').toLowerCase())
+        /* The coordinator chose SILENCE for the not-chosen yeses at pick
+           time (covResolve dialog): mark them closed without a text so the
+           case still reaches quiescence, and send them nothing. */
+        if (c.not_chosen_silent === true && yesLosers.length) {
+          for (const a of yesLosers) { a.was_yes = true; a.state = 'closed_silent' }
+          await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
+          yesLosers = []
+        }
         /* closure_notified is the STAGE-COMPLETION record for the whole
            closure pass — the scan gate at the top of this loop. It may only
            be stamped once the family stage is resolved for a covered case
@@ -1662,7 +1682,7 @@ Deno.serve(async (req) => {
            with no automated asks, which must become quiescent, not rescanned
            and shown as pending forever. */
         const familyResolved = c.resolved_how !== 'covered' || !!c.family_notified
-        if (!waiting.length) {
+        if (!waiting.length && !yesLosers.length) {
           if (familyResolved) {
             c.closure_notified = nowIso()
             c.closure_courtesy_count = Number(c.closure_courtesy_count || 0)
@@ -1680,17 +1700,30 @@ Deno.serve(async (req) => {
              `Caring Companions: that shift is covered now. Thank you! No action needed.`)
           : (String(settings.coverage_msg_closed || '') ||
              `Caring Companions: no action needed on that earlier shift request any more. Thank you!`)
+        /* A yes that wasn't chosen deserves warmth, not the generic notice.
+           The coordinator's own wording from the pick dialog wins; then the
+           agency template; then the built-in default. */
+        const notChosenMsg = (String(c.not_chosen_msg || '')
+          || String(settings.coverage_msg_not_chosen || '') ||
+          `Caring Companions: that shift got covered this time — thank you so much for offering, {first_name}! Next one is yours.`)
         let told = 0
-        for (const a of waiting) {
+        const closureSends = [
+          ...waiting.map((a: any) => ({ a, msg: courtesyMsg })),
+          ...yesLosers.map((a: any) => ({ a,
+            msg: c.resolved_how === 'covered'
+              ? notChosenMsg.replaceAll('{first_name}', String(a.name || '').split(' ')[0])
+              : courtesyMsg })),
+        ]
+        for (const { a, msg } of closureSends) {
           try {
             const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
               method: 'POST',
               headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
                          'Content-Type': 'application/json' },
               body: JSON.stringify({ type: 'SMS', contactId: a.ghl_contact_id,
-                message: courtesyMsg }),
+                message: msg }),
             })
-            if (r.ok) { a.state = 'closed_notified'; told++ }
+            if (r.ok) { if (a.state === 'yes') a.was_yes = true; a.state = 'closed_notified'; told++ }
             /* Case over: drop the tag so future texts stop firing the
                reply workflow (and stop costing premium executions). */
             await fetch(`https://services.leadconnectorhq.com/contacts/${a.ghl_contact_id}/tags`, {

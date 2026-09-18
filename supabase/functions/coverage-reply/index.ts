@@ -104,20 +104,24 @@ Deno.serve(async (req) => {
      the caregiver acknowledgment, pending_fill, the Operations Inbox item,
      or the assignment path (coverage-assign remains the only writer). */
   // deno-lint-ignore no-explicit-any
-  async function alertStaffOfPending(c: any) {
+  async function alertStaffOfPending(c: any, yesName?: string) {
     try {
       // deno-lint-ignore no-explicit-any
       const phones: string[] = (Array.isArray((settings as any).coverage_alert_phones)
         ? (settings as any).coverage_alert_phones : [])
         .map((p: unknown) => String(p ?? '').trim()).filter(Boolean)
-      if (!phones.length || !c.pending_fill) return
+      const who = yesName || c.pending_fill?.name
+      if (!phones.length || !who) return
       const ghlToken = Deno.env.get('GHL_TOKEN')
       const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
       if (!ghlToken || !ghlLocation) return
+      /* Dedupe lives on the CASE now (collect-all-yeses has no pending_fill);
+         a legacy pending_fill's record is folded in so nobody is re-texted. */
       const sent: Record<string, string> =
-        (c.pending_fill.staff_alerts && typeof c.pending_fill.staff_alerts === 'object')
-          ? c.pending_fill.staff_alerts : {}
-      c.pending_fill.staff_alerts = sent
+        (c.yes_staff_alerts && typeof c.yes_staff_alerts === 'object') ? c.yes_staff_alerts
+        : (c.pending_fill?.staff_alerts && typeof c.pending_fill.staff_alerts === 'object')
+          ? { ...c.pending_fill.staff_alerts } : {}
+      c.yes_staff_alerts = sent
       /* Same 12-hour rule as coverage-run (her call, 2026-09-16): staff read
          "2026-09-18 5pm-9pm", never "17:00-21:00". Non-HH:MM passes through. */
       const clock12 = (t: string): string => {
@@ -129,8 +133,8 @@ Deno.serve(async (req) => {
       const span12 = (s: string) => String(s || '').trim().split('-').map(clock12).join('-')
       const whenTxt = [c.shift_date, span12(c.shift_time)].filter(Boolean).join(' ') || 'the time on the case'
       const msg = (String((settings as any).coverage_msg_staff_yes || '') ||
-        `Cara: {caregiver} said YES to cover {client}, {when}. Awaiting your confirmation — nothing is assigned yet. Review and confirm in Cara: https://cc.mo-care.com/#cara/case/{case}`)
-        .replaceAll('{caregiver}', String(c.pending_fill.name || 'A caregiver'))
+        `Cara: {caregiver} said YES to cover {client}, {when}. More yeses may come - pick the best fit on the board and confirm. Nothing is assigned and nobody has been answered. https://cc.mo-care.com/#cara/case/{case}`)
+        .replaceAll('{caregiver}', String(who))
         .replaceAll('{client}', String(c.client || 'the client'))
         .replaceAll('{when}', whenTxt)
         .replaceAll('{case}', encodeURIComponent(String(c.id)))
@@ -278,67 +282,41 @@ Deno.serve(async (req) => {
       await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
       return json({ ok: true, routed, case_id: c.id, caregiver: a.name, state: a.state })
     }
-    const alreadyWon = c.pending_fill && c.pending_fill.name !== a.name
+    /* COLLECT, DON'T CROWN (her rules, 2026-09-19): "we want to pick the
+       best option out of all the yeses" and "you don't need to respond to
+       them when they answer until we go in and manually choose." So: every
+       YES is recorded, NOTHING is texted back, no pending_fill, no
+       first-wins, no "someone grabbed it". The office picks on the board;
+       on close, the chosen one gets the confirm text and everyone else the
+       warm not-chosen text (coverage-run's closure pass sends both). */
     a.state = 'yes'
-    if (alreadyWon) {
-      routed = 'yes — but someone already won'
-      await sms(contactId || a.ghl_contact_id,
-        (String(settings.coverage_msg_ack_late || '') ||
-         `Thank you {first_name}! Someone grabbed it just before you, but we really appreciate you answering. Next one is yours.`)
-        .replaceAll('{first_name}', a.name.split(' ')[0]))
-    } else {
-      /* A replayed YES from the SAME caregiver is the same decision: carry
-         the staff-alert record so already-notified staff are not re-texted.
-         A different caregiver (or a rescind-then-yes-again, which cleared
-         pending_fill in between) is a new decision and starts fresh. */
-      const prevAlerts = (c.pending_fill
-        && String(c.pending_fill.name).toLowerCase() === String(a.name).toLowerCase()
-        && c.pending_fill.staff_alerts) ? c.pending_fill.staff_alerts : undefined
-      c.pending_fill = { name: a.name, phone: a.phone, at: stamp,
-        ...(prevAlerts ? { staff_alerts: prevAlerts } : {}) }
-      routed = 'YES — first in, office prompted to confirm'
-      await sms(contactId || a.ghl_contact_id,
-        (String(settings.coverage_msg_ack_yes || '') ||
-         `Got it, {first_name}. Thank you! The office will confirm with you shortly.`)
-        .replaceAll('{first_name}', a.name.split(' ')[0]))
-      await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
-        id: `ops_covfill_${c.id}`, kind: 'coverage', coverage_case_id: c.id,
-        title: `${a.name} can cover ${c.client || 'the shift'} — confirm & assign in AxisCare`,
-        about: c.client || '', detail: `Replied "${text.slice(0, 120)}" at ${stamp.slice(11, 16)}Z. Confirm with them, assign the visit in AxisCare, then mark the case covered.`,
-        domain: 'scheduling_coverage', status: 'open', urgency: 'high',
-        created_at: stamp, due: new Date(Date.now() + 3600000).toISOString(),
-        owner: '', owner_name: '', created_by: 'coverage-reply', opened_by: 'callout',
-      } })
-      await alertStaffOfPending(c)
-    }
+    const yeses = (Array.isArray(c.asked) ? c.asked : []).filter((x: any) => x.state === 'yes')
+    routed = `YES ${yeses.length === 1 ? '' : '(' + yeses.length + ' so far) '}— collected silently; the office picks from all the yeses`
+    await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
+      id: `ops_covfill_${c.id}`, kind: 'coverage', coverage_case_id: c.id,
+      title: yeses.length === 1
+        ? `${a.name} can cover ${c.client || 'the shift'} — pick & assign when ready`
+        : `${yeses.length} can cover ${c.client || 'the shift'} — pick the best fit & assign`,
+      about: c.client || '',
+      detail: 'Said yes so far: ' + yeses.map((x: any) =>
+          `${x.name}${x.reply ? ` ("${String(x.reply).slice(0, 60)}")` : ''}`).join('; ')
+        + '. Nobody has been answered — pick on the board and confirm; the "you\'re confirmed" and "covered this time" texts go out when the case closes.',
+      domain: 'scheduling_coverage', status: 'open', urgency: 'high',
+      created_at: stamp, due: new Date(Date.now() + 3600000).toISOString(),
+      owner: '', owner_name: '', created_by: 'coverage-reply', opened_by: 'callout',
+    } })
+    /* One office SMS per case, on the FIRST yes — the item above keeps the
+       running list; more texts per yes would be noise. */
+    if (yeses.length === 1) await alertStaffOfPending(c, a.name)
   } else if (isNo) {
     a.state = 'no'
     routed = 'no — recorded'
-    /* If the person we thought said yes now says no, the callout must
-       UN-freeze: clear the pending fill so waves resume next tick. */
+    /* Legacy: clear a pending_fill left by the old first-yes-wins flow so
+       an old case can't sit frozen on a decliner. No promotion — the
+       office picks from the standing yeses on the board. */
     if (c.pending_fill && String(c.pending_fill.name).toLowerCase() === String(a.name).toLowerCase()) {
       delete c.pending_fill
-      routed = 'no — pending fill cleared, waves resume'
-      /* If someone ELSE already said yes (they were told "someone beat you"),
-         promote the oldest standing yes instead of leaving the case frozen
-         with a yes-state and no pending fill (review finding: deadlock). The
-         office confirms with them before anything is assigned, as always. */
-      const nextYes = (Array.isArray(c.asked) ? c.asked : [])
-        .filter((x: any) => x.state === 'yes' && String(x.name).toLowerCase() !== String(a.name).toLowerCase())
-        .sort((x: any, y: any) => new Date(String(x.replied_at || 0)).getTime() - new Date(String(y.replied_at || 0)).getTime())[0]
-      if (nextYes) {
-        c.pending_fill = { name: nextYes.name, phone: nextYes.phone, at: stamp, promoted: true }
-        routed = 'no — first choice declined; next yes promoted for the office to confirm'
-        await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
-          id: `ops_covfill_${c.id}`, kind: 'coverage', coverage_case_id: c.id,
-          title: `${nextYes.name} can cover ${c.client || 'the shift'} (second in line) — confirm & assign in AxisCare`,
-          about: c.client || '', detail: `${a.name} declined after saying yes. ${nextYes.name} also said yes earlier — confirm with them before assigning.`,
-          domain: 'scheduling_coverage', status: 'open', urgency: 'high',
-          created_at: stamp, due: new Date(Date.now() + 3600000).toISOString(),
-          owner: '', owner_name: '', created_by: 'coverage-reply', opened_by: 'callout',
-        } })
-        await alertStaffOfPending(c)
-      }
+      routed = 'no — legacy pending fill cleared'
     }
   } else {
     a.state = 'inquiry'
