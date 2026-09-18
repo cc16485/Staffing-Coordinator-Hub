@@ -224,6 +224,111 @@ Deno.serve(async (req) => {
     }
   }
 
+  /* ── THE ONGOING SWEEP (her ask, 2026-09-18: "could the ongoing shifts to
+     fill be automated based off the axiscare schedule"). Once an hour (first
+     tick of the hour, or ?sweep=1), look 14 days ahead for SCHEDULES — not
+     single visits — where two or more future dates have no caregiver. That
+     is a standing opening, whatever modification reason it carries (none
+     needed: a slot that was never assigned has no reason at all, and a slot
+     held by an INACTIVE caregiver also reads null — either way nobody is
+     coming, which is exactly what the board should show). One case per
+     schedule EVER, deterministic id cwo_s<scheduleId>: if the office closed
+     it, the robot never reopens it (the close-reopen lesson). Cases open
+     silently — no admin alert; they are standing work, not a 2am emergency —
+     and land in the board's "Ongoing shifts to fill" section. Manual mode
+     means nothing texts anybody until a coordinator builds the list. */
+  const SWEEP_DAYS = 14
+  const chiMinute = Number(new Date().toLocaleString('en-US',
+    { timeZone: 'America/Chicago', minute: '2-digit' }))
+  const sweepDue = new URL(req.url).searchParams.get('sweep') === '1' || chiMinute < 5
+  const wouldOpenOngoing: Record<string, unknown>[] = []
+  let ongoingCreated = 0, ongoingSchedules = 0
+  if (sweepDue) {
+    // deno-lint-ignore no-explicit-any
+    const sweepVisits: any[] = []
+    let sUrl: string | null = `https://${site}.axiscare.com/api/visits?startDate=${startDate}`
+      + `&endDate=${new Date(Date.now() + SWEEP_DAYS * 86400000).toISOString().slice(0, 10)}`
+    try {
+      for (let page = 0; sUrl && page < 12; page++) {
+        const r: Response = await fetch(sUrl, { headers: {
+          Authorization: `Bearer ${token}`, Accept: 'application/json',
+          'X-AxisCare-Api-Version': AC_VERSION } })
+        if (!r.ok) break
+        // deno-lint-ignore no-explicit-any
+        const j: any = await r.json().catch(() => ({}))
+        const rows = Array.isArray(j?.results?.visits ?? j?.visits)
+          ? (j?.results?.visits ?? j?.visits) : Object.values(j?.results?.visits ?? j?.visits ?? {})
+        for (const v of rows) if (!v?.removed) sweepVisits.push(v)
+        sUrl = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
+      }
+      /* Group unassigned FUTURE visits by their schedule (visit ids are
+         composite "s=<scheduleId>:d=<date>" — AXISCARE-CAPABILITY.md). */
+      // deno-lint-ignore no-explicit-any
+      const bySched = new Map<string, any[]>()
+      for (const v of sweepVisits) {
+        if (v?.caregiver?.id != null) continue
+        const vid = String(v?.id ?? '')
+        const m = vid.match(/^s=([^:]+):/)
+        if (!m) continue
+        const start = String(v?.scheduledStartDate ?? v?.startDate ?? '')
+        if (!start || new Date(start).getTime() < Date.now()) continue
+        const arr = bySched.get(m[1]) ?? []
+        arr.push(v); bySched.set(m[1], arr)
+      }
+      const haveSweepCase = new Set(cases.map((cc: { id?: unknown }) => String(cc?.id ?? '')))
+      // deno-lint-ignore no-explicit-any
+      const openSchedIds = new Set(cases.filter((cc: any) => cc?.status === 'open')
+        // deno-lint-ignore no-explicit-any
+        .map((cc: any) => String(cc?.axiscare_visit_id ?? '').match(/^s=([^:]+):/)?.[1])
+        .filter(Boolean))
+      for (const [schedId, arr] of bySched) {
+        if (arr.length < 2) continue         // one lone open date is a one-off, not an opening
+        ongoingSchedules++
+        if (haveSweepCase.has(`cwo_s${schedId}`)) continue   // handled once, never reopened
+        if (openSchedIds.has(schedId)) continue              // a live case already covers this slot
+        // deno-lint-ignore no-explicit-any
+        arr.sort((a: any, b: any) => String(a?.scheduledStartDate ?? a?.startDate ?? '')
+          .localeCompare(String(b?.scheduledStartDate ?? b?.startDate ?? '')))
+        const first = arr[0]
+        const fStart = String(first?.scheduledStartDate ?? first?.startDate ?? '')
+        const fEnd = String(first?.scheduledEndDate ?? first?.endDate ?? '')
+        const dates = arr.map((v: { scheduledStartDate?: unknown; startDate?: unknown }) =>
+          String(v?.scheduledStartDate ?? v?.startDate ?? '').slice(0, 10))
+        const weekdays = [...new Set(dates.map(d =>
+          new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long' })))].join('/')
+        const clientName = [String(first?.client?.firstName ?? '').trim(), String(first?.client?.lastName ?? '').trim()]
+          .filter(Boolean).join(' ') || '(client name missing on the visit)'
+        const entry = {
+          schedule_id: schedId, client: clientName,
+          first_open_date: dates[0], open_dates: dates.length, weekdays,
+        }
+        wouldOpenOngoing.push(entry)
+        if (live) {
+          const c = {
+            id: `cwo_s${schedId}`,
+            client: clientName,
+            client_axiscare_id: first?.client?.id != null ? String(first.client.id) : null,
+            axiscare_visit_id: String(first?.id ?? ''),
+            shift_date: fStart.slice(0, 10),
+            shift_time: [fStart, fEnd].map(s => s ? s.slice(11, 16) : '').filter(Boolean).join('-'),
+            reason: 'open', calling_off: '',
+            note: `Found by the ongoing sweep: ${dates.length} upcoming ${weekdays} date${dates.length === 1 ? '' : 's'} on this schedule have no caregiver (through ${dates[dates.length - 1]}).`,
+            status: 'open', asked: [],
+            opened_at: nowIso, opened_by: 'ongoing-sweep',
+            caller_phone: '', caller_contact_id: '',
+            admin_alerted: nowIso,   // standing work, not an alarm — no call-in alert
+            shift_pattern: { v: 2, kind: 'open_ongoing', weekday: weekdays,
+              future_dates: dates.slice(0, 8), more_dates: Math.max(0, dates.length - 8),
+              window_days: SWEEP_DAYS, schedule_id: schedId, schedule: null, checked_at: nowIso },
+            resolved_at: null, resolved_how: null, covered_by: null,
+          }
+          const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
+          if (!error) { ongoingCreated++; haveSweepCase.add(c.id) }
+        }
+      }
+    } catch { /* the sweep must never break call-off detection */ }
+  }
+
   /* ── COVERED OUTSIDE THE BOARD (her observation, 2026-09-13: "it could be
      that we cover it outside the calloff board"). If an OPEN case's visit
      shows a caregiver again in AxisCare, somebody assigned it directly there.
@@ -633,6 +738,10 @@ Deno.serve(async (req) => {
     covered_outside_the_board: coveredOutside,
     pattern_stamped: patternStamped,
     would_open: wouldOpen,
+    ongoing_sweep: sweepDue
+      ? { ran: true, schedules_with_open_dates: ongoingSchedules,
+          cases_created: ongoingCreated, would_open: wouldOpenOngoing }
+      : { ran: false, note: 'runs on the first tick of each Chicago hour, or with ?sweep=1' },
     reason_filter: configuredReasons.length
       ? { mode: 'exact names from ops_settings.coverage_watch_reasons', names: configuredReasons }
       : { mode: 'default pattern', pattern: String(DEFAULT_REASON_RX) },
