@@ -165,6 +165,12 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
     why: 'one morning text to each caregiver listing their own shifts today, deliberately '
       + 'before the external window — it exists to surface problems before they become no-shows. '
       + 'Cron: shift-confirm, 12:00 UTC daily — created by cron-shift-confirm.sql (~/Claude).' },
+  'carematch-watch':    { class: 'routine_internal', scheduled: true,
+    why: 'the morning after a caregiver\'s FIRST shift with a client: one text to the '
+      + 'caregiver (staff, about their own shift) asking how it went, and one email to the '
+      + 'office saying a client check-in call is due. The client is never messaged — their '
+      + 'side of the check-in is deliberately a human phone call. '
+      + 'Cron: carematch-watch, 14:00 UTC daily — created by cron-carematch-watch.sql (care-coordinator-hub repo).' },
   'automation-watchdog': { class: 'urgent_internal', scheduled: true,
     why: 'tells the office when a scheduled automation has gone quiet or is erroring. '
       + 'Cron: daily-automation-watchdog, mornings — created by cron-automation-watchdog.sql (care-coordinator-hub repo).' },
