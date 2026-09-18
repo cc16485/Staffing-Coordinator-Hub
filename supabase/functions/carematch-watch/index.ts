@@ -177,7 +177,9 @@ Deno.serve(async (req) => {
     const phone = normalisePhone(cg?.phone)
     const first = String(cg?.first ?? '') || m.caregiver.split(' ')[0]
     const clientFirst = m.client.split(' ')[0]
-    const message = `Hi ${first}! Quick note from the Caring Companions office. How did your first shift with ${clientFirst} go? Reply right here with how it went and anything we should know to make it a great match. Thank you!`
+    /* Reads like a coordinator texting, because that is what it is standing
+       in for. Short on purpose — the reply is the point. */
+    const message = `Good morning, ${first}! How did your first shift with ${clientFirst} go?`
     if (!live) {
       wouldSend.push({ caregiver: m.caregiver, client: m.client, first_shift: m.day,
         phone_on_file: !!phone, preview: message })

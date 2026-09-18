@@ -170,7 +170,7 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
       + 'caregiver (staff, about their own shift) asking how it went, and one email to the '
       + 'office saying a client check-in call is due. The client is never messaged — their '
       + 'side of the check-in is deliberately a human phone call. '
-      + 'Cron: carematch-watch, 14:00 UTC daily — created by cron-carematch-watch.sql (care-coordinator-hub repo).' },
+      + 'Cron: carematch-watch, 15:00 UTC daily (9-10am Springfield) — created by cron-carematch-watch.sql (care-coordinator-hub repo).' },
   'automation-watchdog': { class: 'urgent_internal', scheduled: true,
     why: 'tells the office when a scheduled automation has gone quiet or is erroring. '
       + 'Cron: daily-automation-watchdog, mornings — created by cron-automation-watchdog.sql (care-coordinator-hub repo).' },
