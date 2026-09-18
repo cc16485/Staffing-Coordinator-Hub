@@ -68,6 +68,15 @@
 // coverage_alert_admins (reused for the ops item owner).
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+/* "17:00" → "5pm", minutes kept only when they matter — the same 12-hour
+   rule every other Cara text follows. Non-HH:MM passes through untouched. */
+const clock12 = (t: string): string => {
+  const m = String(t || '').trim().match(/^(\d{1,2}):(\d\d)$/)
+  if (!m) return String(t || '').trim()
+  const h24 = Number(m[1]); const h = h24 % 12 || 12
+  return `${h}${m[2] === '00' ? '' : ':' + m[2]}${h24 >= 12 ? 'pm' : 'am'}`
+}
 import { normalisePhone, contactForOutbound } from '../_shared/outreach.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
@@ -286,6 +295,9 @@ Deno.serve(async (req) => {
       .filter(Boolean).join(' ') || ('caregiver ' + v.caregiver.id)
     const clientFirst = String(v?.client?.firstName ?? '').trim() || 'your client'
     const shiftTime = start.slice(11, 16)
+    /* Texts read "5pm", never "17:00" — her standing 12-hour rule (the
+       pre-enable to-do recorded 2026-09-16, fixed before first deploy). */
+    const shiftTime12 = clock12(shiftTime)
     if (skipMatch(skips, 'clock', cgName, clientFirst)) { skippedByList++; continue }
 
     let l = ladderByVisit.get(vid)
@@ -318,7 +330,7 @@ Deno.serve(async (req) => {
         if (!contact) { refusedGate++; l.notes.push('Text refused by the outbound gate (untrusted number).'); await save(l) }
         else {
           const message = msgTmpl.replaceAll('{first_name}', String(cg?.first ?? '') || cgName.split(' ')[0])
-            .replaceAll('{client}', clientFirst).replaceAll('{time}', shiftTime)
+            .replaceAll('{client}', clientFirst).replaceAll('{time}', shiftTime12)
           let ok = false
           try {
             const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
@@ -375,7 +387,7 @@ Deno.serve(async (req) => {
         for (const p of alertPhones) {
           const contact = await contactForOutbound(sb, ghl, { phone: p, firstName: 'Office' }, 'urgent_internal')
           if (!contact) continue
-          const alertMsg = `Cara here. ${cgName} has not clocked in for ${clientFirst}'s ${shiftTime} shift `
+          const alertMsg = `Cara here. ${cgName} has not clocked in for ${clientFirst}'s ${clock12(shiftTime)} shift `
             + `(${Math.round(late)} min past start)${l.texted_at ? ', no response to my text' : ''}. `
             + `Please call ${cgName}${cgPhone ? `: ${cgPhone}` : ''}. Details in the Operations Inbox.`
           try {
@@ -424,7 +436,7 @@ Deno.serve(async (req) => {
       { phone, firstName: String(cg?.first ?? '') || cgName.split(' ')[0] }, 'urgent_internal')
     if (!contact) { refusedGate++; continue }
     const message = msgOutTmpl.replaceAll('{first_name}', String(cg?.first ?? '') || cgName.split(' ')[0])
-      .replaceAll('{client}', clientFirst).replaceAll('{time}', endTime)
+      .replaceAll('{client}', clientFirst).replaceAll('{time}', clock12(endTime))
     try {
       const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
         method: 'POST',
