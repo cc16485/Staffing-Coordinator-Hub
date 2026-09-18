@@ -28,6 +28,19 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { maySendTo, normalisePhone, contactForOutbound } from '../_shared/outreach.ts'
+import { ZIP_LL } from '../_shared/zip-centroids.ts'
+
+/* Straight-line miles between two zips' Census centroids — an honest
+   estimate for "who lives closest", never a route. Null when either zip
+   is unknown; the UI then shows the city alone. */
+function zipMiles(a: string, b: string): number | null {
+  const p = ZIP_LL[String(a || '').slice(0, 5)], q = ZIP_LL[String(b || '').slice(0, 5)]
+  if (!p || !q) return null
+  const R = 3958.8, rad = (x: number) => x * Math.PI / 180
+  const dLat = rad(q[0] - p[0]), dLon = rad(q[1] - p[1])
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(p[0])) * Math.cos(rad(q[0])) * Math.sin(dLon / 2) ** 2
+  return Math.round(2 * R * Math.asin(Math.sqrt(h)))
+}
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const clean = (v: unknown) => String(v ?? '').trim()
@@ -421,9 +434,13 @@ async function buildCandidatesForCase(c: any):
     ? { status: 'resolved', id: String(c.client_axiscare_id), detail: 'from the AxisCare visit' }
     : await resolveClientAxisId(String(c.client ?? ''))
 
-  /* Client care level + address context (cached on the case when possible). */
+  /* Client care level + address context (cached on the case when possible).
+     For an interest check the client may not exist in AxisCare at all — the
+     form's town/zip fields are the location then. */
   let clientLv: number | null = typeof c.client_care_level === 'number' ? c.client_care_level : null
-  if (clientLv == null && clientRes.id) {
+  let clientCity = String(c.client_city || '').trim()
+  let clientZip = String(c.client_zip || '').trim()
+  if ((clientLv == null || !clientZip) && clientRes.id) {
     try {
       const { token: t2, site: s2 } = axisCreds()
       if (t2 && s2) {
@@ -433,14 +450,44 @@ async function buildCandidatesForCase(c: any):
         // deno-lint-ignore no-explicit-any
         const j: any = await r.json().catch(() => ({}))
         const cl = j?.results?.client ?? j?.results ?? {}
-        clientLv = careLevelOf(cl?.classes).level
+        if (clientLv == null) clientLv = careLevelOf(cl?.classes).level
+        if (!clientCity) clientCity = String(cl?.residentialAddress?.city ?? '').trim()
+        if (!clientZip) clientZip = String(cl?.residentialAddress?.postalCode ?? cl?.residentialAddress?.zip ?? '').trim()
       }
     } catch { /* no level = filter off, same as the wave */ }
   }
 
-  /* Census (fail closed, same as the waves), level map, nurse classes. */
+  /* WHO'S ALREADY WORKING DURING THE PROPOSED HOURS (her ask, 2026-09-18,
+     for interest checks): when the case carries structured recurring hours
+     (interest_days + interest_start/end), count each caregiver's scheduled
+     visits over the next 14 days that overlap those weekday windows. A
+     caregiver with zero overlaps is genuinely free for the pattern; one
+     with several is already committed then. */
+  const busyPattern = new Map<string, number>()
+  const wantDays: string[] = Array.isArray(c.interest_days) ? c.interest_days.map((d: unknown) => String(d).toLowerCase().slice(0, 3)) : []
+  const wStart = String(c.interest_start || '').slice(0, 5), wEnd = String(c.interest_end || '').slice(0, 5)
+  let patternCheck = ''
+  if (wantDays.length && /^\d\d:\d\d$/.test(wStart) && /^\d\d:\d\d$/.test(wEnd) && wEnd > wStart) {
+    const fwd14 = await fetchVisits(`startDate=${dISO(0)}&endDate=${dISO(-14)}`)
+    for (const v of fwd14.rows) {
+      const id = v?.caregiver?.id; if (id == null) continue
+      const s = String(v?.scheduledStartDate ?? v?.startDate ?? '')
+      const e = String(v?.scheduledEndDate ?? v?.endDate ?? '')
+      const day = s.slice(0, 10); if (!day) continue
+      const wd = new Date(day + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' }).toLowerCase()
+      if (!wantDays.includes(wd)) continue
+      const vs = s.slice(11, 16), ve = e.slice(11, 16)
+      if (!vs || !ve || ve <= vs) continue
+      if (vs < wEnd && ve > wStart) busyPattern.set(String(id), (busyPattern.get(String(id)) ?? 0) + 1)
+    }
+    patternCheck = `checked ${wantDays.join('/')} ${wStart}-${wEnd} against the next 14 days${fwd14.error ? ` (schedule read failed: ${fwd14.error})` : ''}`
+  }
+
+  /* Census (fail closed, same as the waves), level map, nurse classes —
+     and each caregiver's town + zip, for the who-lives-closest sort. */
   const axisActive = new Set<string>(), nurseAxis = new Set<string>()
   const caregiverLevel = new Map<string, number>()
+  const cgCity = new Map<string, string>(), cgZip = new Map<string, string>()
   let censusError: string | null = null
   {
     const { token, site } = axisCreds()
@@ -463,6 +510,10 @@ async function buildCandidatesForCase(c: any):
             axisActive.add(String(g.id))
             const lv = careLevelOf(g?.classes)
             if (lv.level != null) caregiverLevel.set(String(g.id), lv.level)
+            const city = String(g?.residentialAddress?.city ?? '').trim()
+            const zip = String(g?.residentialAddress?.postalCode ?? g?.residentialAddress?.zip ?? '').trim()
+            if (city) cgCity.set(String(g.id), city)
+            if (zip) cgZip.set(String(g.id), zip)
             const clsArr = Array.isArray(g?.classes) ? g.classes
               : (g?.classes && typeof g.classes === 'object') ? Object.values(g.classes) : []
             // deno-lint-ignore no-explicit-any
@@ -552,26 +603,41 @@ async function buildCandidatesForCase(c: any):
     if (busyThen.has(String(x.axiscare_id))) { cut(x, 'already on another visit during this window'); continue }
     const h = history.get(String(x.axiscare_id))
     const gap = wantGap.get(String(x.axiscare_id))
+    const gid = String(x.axiscare_id)
+    const city = cgCity.get(gid) || null
+    const miles = clientZip && cgZip.get(gid) ? zipMiles(clientZip, cgZip.get(gid)!) : null
+    const sameTown = !!(city && clientCity && city.toLowerCase() === clientCity.toLowerCase())
+    const conflicts = wantDays.length ? (busyPattern.get(gid) ?? 0) : null
     const row = {
       name: x.name, first: x.first, axiscare_id: x.axiscare_id,
       phone_last4: x.phone_last4,
-      level: caregiverLevel.get(String(x.axiscare_id)) ?? null,
+      level: caregiverLevel.get(gid) ?? null,
       wants_more_hours: gap != null && gap > 0 ? Math.round(gap) : null,
-      recently_active: recentlyActive.has(String(x.axiscare_id)),
+      recently_active: recentlyActive.has(gid),
       history: h ? { visits: h.visits, last: h.last } : null,
+      city, miles, same_town: sameTown,
+      free_then: conflicts == null ? null : conflicts === 0,
+      conflicts_then: conflicts,
       why: h ? `${h.visits} visit${h.visits === 1 ? '' : 's'} with this client, last ${h.last || '?'}`
-        : recentlyActive.has(String(x.axiscare_id)) ? 'worked a shift in the last 14 days'
+        : recentlyActive.has(gid) ? 'worked a shift in the last 14 days'
         : 'active caregiver, no recent history',
     }
     if (h) group1.push(row); else group2.push(row)
   }
   group1.sort((a, b) => (b.history?.visits ?? 0) - (a.history?.visits ?? 0))
-  group2.sort((a, b) => (Number(b.recently_active) - Number(a.recently_active))
+  /* Free-for-the-hours first (when the case defines hours), then closest,
+     then the old ranking — "who could actually take this" reads top-down. */
+  group2.sort((a, b) =>
+    ((b.free_then === true ? 1 : 0) - (a.free_then === true ? 1 : 0))
+    || ((a.miles ?? 9999) - (b.miles ?? 9999))
+    || (Number(b.recently_active) - Number(a.recently_active))
     || ((b.wants_more_hours ?? -999) - (a.wants_more_hours ?? -999)))
 
   return { group1, group2, excluded, meta: {
     client_resolution: `${clientRes.status}: ${clientRes.detail}`,
     client_level: clientLv,
+    client_city: clientCity || null, client_zip: clientZip || null,
+    hours_check: patternCheck || null,
     census: censusUsable ? `${axisActive.size} active caregivers` : `UNREACHABLE (${censusError || 'empty'}) — everyone held, fail closed`,
     dnr_barred: dnr.size,
   } }
