@@ -98,6 +98,47 @@ Deno.serve(async (req) => {
     return json({ date: day, total: visits.length, open })
   }
 
+  /* Mode 0b: the LIVE SCHEDULE (her ask, 2026-09-18: recreate AxisCare's
+     real-time view inside the hub, replacing the jump-out button). EVERY
+     visit for one day — assigned or not — with clock-in state where AxisCare
+     provides it. Read-only, one day per call, defaults to today Chicago.
+     AxisCare remains the system of record; this is a window, not a copy. */
+  if (b.live_schedule === true) {
+    const { token, site } = axisCreds()
+    if (!token || !site) return json({ error: 'AxisCare credentials not set on this project' }, 502)
+    const day = /^\d{4}-\d\d-\d\d$/.test(String(b.date || '')) ? String(b.date) : chiToday()
+    // deno-lint-ignore no-explicit-any
+    const visits: any[] = []
+    let vurl: string | null = `https://${site}.axiscare.com/api/visits?startDate=${day}&endDate=${day}`
+    try {
+      for (let page = 0; vurl && page < 8; page++) {
+        const r: Response = await fetch(vurl, { headers: {
+          Authorization: `Bearer ${token}`, Accept: 'application/json',
+          'X-AxisCare-Api-Version': AC_VERSION } })
+        if (!r.ok) return json({ error: `AxisCare responded ${r.status}` }, 502)
+        // deno-lint-ignore no-explicit-any
+        const j: any = await r.json().catch(() => ({}))
+        for (const v of rowsOf(j?.results?.visits ?? j?.visits)) { if (!v?.removed) visits.push(v) }
+        vurl = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
+      }
+    } catch (err) { return json({ error: String(err) }, 502) }
+    const rows = visits.map((v) => ({
+      visit_id: v?.id != null ? String(v.id) : '',
+      time: String(v?.scheduledStartDate ?? v?.startDate ?? '').slice(11, 16),
+      end: String(v?.scheduledEndDate ?? v?.endDate ?? '').slice(11, 16),
+      client: [v?.client?.firstName, v?.client?.lastName].filter(Boolean).join(' ') || '?',
+      client_id: v?.client?.id != null ? String(v.client.id) : '',
+      caregiver: v?.caregiver?.id != null
+        ? ([v?.caregiver?.firstName, v?.caregiver?.lastName].filter(Boolean).join(' ') || ('#' + v.caregiver.id))
+        : null,
+      caregiver_id: v?.caregiver?.id != null ? String(v.caregiver.id) : '',
+      clock_in: String(v?.clockIn ?? v?.actualStartDate ?? '').slice(11, 16) || null,
+      clock_out: String(v?.clockOut ?? v?.actualEndDate ?? '').slice(11, 16) || null,
+    })).sort((a, b2) => a.time.localeCompare(b2.time) || a.client.localeCompare(b2.client))
+    return json({ date: day, total: rows.length,
+      unassigned: rows.filter((r) => !r.caregiver).length, rows })
+  }
+
   /* Mode 2: the ACTIVE caregiver census, live from AxisCare, for the
      "Who's calling off?" dropdown. The hub roster's active flag drifts from
      AxisCare's, and Samantha only wants people who are actually active.
