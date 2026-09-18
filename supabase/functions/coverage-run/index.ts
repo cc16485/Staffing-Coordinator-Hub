@@ -577,8 +577,16 @@ async function buildCandidatesForCase(c: any):
   } }
 }
 
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS',
+}
+
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
+  /* The bare-'ok' OPTIONS reply broke the hub picker on day one: the browser
+     preflights the coordinator's POST and refuses it without these headers. */
+  if (req.method === 'OPTIONS') return new Response('ok', { status: 200, headers: CORS_HEADERS })
   const q = new URL(req.url).searchParams
   const commit = q.get('commit') === '1'
 
@@ -596,11 +604,9 @@ Deno.serve(async (req) => {
     } catch { return '' } })()
     if (role !== 'authenticated' && role !== 'service_role')
       return new Response(JSON.stringify({ error: 'sign in to the hub to use the picker' }),
-        { status: 403, headers: { 'Content-Type': 'application/json' } })
+        { status: 403, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } })
     const jr = (b: unknown, s = 200) => new Response(JSON.stringify(b, null, 2),
-      { status: s, headers: { 'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' } })
+      { status: s, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } })
     const kase = await readCaseFresh(String(body.case_id || ''))
     if (!kase) return jr({ error: 'no such coverage case' }, 404)
 
