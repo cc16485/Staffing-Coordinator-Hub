@@ -134,19 +134,27 @@ Deno.serve(async (req) => {
       newly_seeded: seeded, note: 'Nothing was sent. From the next run on, a pair not in this memory means a first shift happened.' })
   }
 
-  // ── Daily run: yesterday's and today's visits, new pairs only. ──
-  const from = chiDay(-1), to = chiDay(0)
+  // ── Daily run: recent visits, new pairs only. The window reaches three
+  //    days back so a failed cron catches up, and includes today ONLY for
+  //    shifts that have already ENDED — "how did your first shift go?" must
+  //    never arrive before the shift does. ──
+  const from = chiDay(-3), to = chiDay(0)
   const { visits, error: fetchError } = await fetchVisits(site, token, from, to)
   if (fetchError && !visits.length) return json({ error: fetchError }, 502)
+  const nowChi = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).replace(' ', 'T')
 
   type NewMatch = { id: string; client: string; caregiver: string; day: string }
   const fresh: NewMatch[] = []
   const seenThisRun = new Set<string>()
+  let skippedNotEnded = 0
   for (const v of visits) {
     const p = pairIdOf(v); if (!p || seenThisRun.has(p.id)) continue
+    const end = String(v?.scheduledEndDate ?? v?.endDate ?? '')
+    const day = String(v?.scheduledStartDate ?? v?.startDate ?? from).slice(0, 10)
+    const ended = end ? end.slice(0, 16) < nowChi : day < chiDay(0)
+    if (!ended) { skippedNotEnded++; continue }
     seenThisRun.add(p.id)
     if (known.has(p.id)) continue
-    const day = String(v?.scheduledStartDate ?? v?.startDate ?? from).slice(0, 10)
     fresh.push({ ...p, day })
   }
 
@@ -213,11 +221,18 @@ Deno.serve(async (req) => {
   // ── One email to the office listing every new match: the client call is
   //    a human's job, this is the nudge that makes sure it happens. ──
   // deno-lint-ignore no-explicit-any
-  const recips: { name: string; email: string }[] = (Array.isArray(settings.morning_brief_recipients)
+  let recips: { name: string; email: string }[] = (Array.isArray(settings.morning_brief_recipients)
     ? settings.morning_brief_recipients : [])
     // deno-lint-ignore no-explicit-any
     .map((r: any) => ({ name: String(r?.name || ''), email: String(r?.email || '').toLowerCase() }))
     .filter((r) => r.email.includes('@'))
+  /* Same fallback the Morning Brief uses: an empty recipients setting must
+     mean "the owners", never "nobody hears about new matches". */
+  if (!recips.length) {
+    recips = (Deno.env.get('LEAD_DIGEST_EMAILS') || 'samantha@mo-care.com,krystal@mo-care.com')
+      .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+      .map((email) => ({ name: email.split('@')[0], email }))
+  }
   let emailed = 0
   const emailErrors: string[] = []
   if (due.length && recips.length && live) {
@@ -265,6 +280,7 @@ Deno.serve(async (req) => {
     mode: live ? 'LIVE' : 'DRY RUN — flip ops_settings.carematch_live to true to send',
     window: `${from} to ${to}`, fetch_error: fetchError,
     visits_seen: visits.length, pairs_in_window: seenThisRun.size,
+    visits_not_ended_yet: skippedNotEnded,
     new_first_shifts: fresh.length, already_checked_in: fresh.length - due.length,
     alerts_due: due.length, caregivers_texted: texted,
     skipped_no_phone: skippedNoPhone, refused_by_outbound_gate: refusedGate,
