@@ -209,6 +209,20 @@ Deno.serve(async (req) => {
     return json({ ok: true, routed, case_id: c.id, caregiver: a.name, state: a.state })
   }
   if (isYes) {
+    /* INTEREST CHECK (2026-09-19, new-client broadcasts): a YES on a
+       kind:'interest' case is collected, never promoted to pending_fill —
+       the whole point is hearing from EVERYONE who wants the hours before
+       the client meeting. Soft ack, no fill item, no staff blast. */
+    if (String(c.kind) === 'interest') {
+      a.state = 'yes'
+      routed = 'interested — collected on the case'
+      await sms(contactId || a.ghl_contact_id,
+        (String(settings.coverage_msg_ack_interest || '') ||
+         `Thank you {first_name}! Nothing is set yet — we're meeting the client first and we'll follow up with you about the hours.`)
+        .replaceAll('{first_name}', a.name.split(' ')[0]))
+      await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
+      return json({ ok: true, routed, case_id: c.id, caregiver: a.name, state: a.state })
+    }
     const alreadyWon = c.pending_fill && c.pending_fill.name !== a.name
     a.state = 'yes'
     if (alreadyWon) {

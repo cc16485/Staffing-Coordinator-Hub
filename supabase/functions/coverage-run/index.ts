@@ -373,10 +373,356 @@ async function releaseRunLock() {
     data: { at: null }, updated_at: nowIso() }, { onConflict: 'key' }) } catch { /* noop */ }
 }
 
+/* ── DO-NOT-RETURN (her rule, 2026-09-19: "be sure to take note of caregivers
+   who are marked to not send back … and never suggest them"). AxisCare's API
+   exposes NO exclusion field, so the hub's dnr_log is the enforcement point.
+   Matching is by normalised names on both sides — the log stores names, not
+   ids. Returns the set of caregiver name-keys barred from THIS client. */
+async function dnrSetFor(clientName: string): Promise<Set<string>> {
+  const barred = new Set<string>()
+  const ck = nameKeyOf(String(clientName || ''))
+  if (!ck) return barred
+  try {
+    const { data } = await sb.from('app_data').select('data').eq('key', 'dnr_log').maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    for (const e of (Array.isArray(data?.data) ? data!.data : []) as any[]) {
+      if (!e?.caregiver || !e?.client) continue
+      if (nameKeyOf(String(e.client)) === ck) barred.add(nameKeyOf(String(e.caregiver)))
+    }
+  } catch { /* an unreadable log bars nobody — the wave filter logs it */ }
+  return barred
+}
+
+/* ── THE COORDINATOR'S PICKER (the 2026-09-19 redesign: "we want Cara to
+   flag the potential call-in, then we will go and choose who to send it
+   to"). One implementation of the whole eligibility pipeline for ONE case,
+   returning it as the two groups the coordinators asked for:
+
+     group1  worked with this client (AxisCare visits, 180 days)
+     group2  a good match, never worked with this client
+     excluded  everyone else, each with the reason — Do-Not-Return names
+               are excluded here and NEVER appear in either group.
+
+   Used by action=candidates (build the list) and action=send_selected
+   (re-derived server-side before sending, so a stale or tampered browser
+   list can never text somebody the rules exclude). */
+// deno-lint-ignore no-explicit-any
+async function buildCandidatesForCase(c: any):
+  // deno-lint-ignore no-explicit-any
+  Promise<{ group1: any[]; group2: any[]; excluded: any[]; meta: Record<string, unknown> }> {
+  // deno-lint-ignore no-explicit-any
+  const excluded: any[] = []
+  const cut = (x: Record<string, unknown>, why: string) =>
+    excluded.push({ name: x.name, why })
+
+  const cands = await candidatesFor(c)
+
+  const clientRes = c.client_axiscare_id
+    ? { status: 'resolved', id: String(c.client_axiscare_id), detail: 'from the AxisCare visit' }
+    : await resolveClientAxisId(String(c.client ?? ''))
+
+  /* Client care level + address context (cached on the case when possible). */
+  let clientLv: number | null = typeof c.client_care_level === 'number' ? c.client_care_level : null
+  if (clientLv == null && clientRes.id) {
+    try {
+      const { token: t2, site: s2 } = axisCreds()
+      if (t2 && s2) {
+        const r = await fetch(`https://${s2}.axiscare.com/api/clients/${encodeURIComponent(clientRes.id)}`, {
+          headers: { Authorization: `Bearer ${t2}`, Accept: 'application/json',
+                     'X-AxisCare-Api-Version': AC_VERSION } })
+        // deno-lint-ignore no-explicit-any
+        const j: any = await r.json().catch(() => ({}))
+        const cl = j?.results?.client ?? j?.results ?? {}
+        clientLv = careLevelOf(cl?.classes).level
+      }
+    } catch { /* no level = filter off, same as the wave */ }
+  }
+
+  /* Census (fail closed, same as the waves), level map, nurse classes. */
+  const axisActive = new Set<string>(), nurseAxis = new Set<string>()
+  const caregiverLevel = new Map<string, number>()
+  let censusError: string | null = null
+  {
+    const { token, site } = axisCreds()
+    if (!token || !site) censusError = 'AxisCare credentials not set'
+    else try {
+      let url: string | null = `https://${site}.axiscare.com/api/caregivers`
+      for (let page = 0; url && page < 12; page++) {
+        const r: Response = await fetch(url, { headers: {
+          Authorization: `Bearer ${token}`, Accept: 'application/json',
+          'X-AxisCare-Api-Version': AC_VERSION } })
+        if (!r.ok) { censusError = `AxisCare responded ${r.status}`; break }
+        // deno-lint-ignore no-explicit-any
+        const j: any = await r.json().catch(() => ({}))
+        // deno-lint-ignore no-explicit-any
+        const gRows: any[] = Array.isArray(j?.results?.caregivers ?? j?.caregivers)
+          ? (j?.results?.caregivers ?? j?.caregivers)
+          : Object.values(j?.results?.caregivers ?? j?.caregivers ?? {})
+        for (const g of gRows)
+          if (g?.status?.active === true && g?.id != null) {
+            axisActive.add(String(g.id))
+            const lv = careLevelOf(g?.classes)
+            if (lv.level != null) caregiverLevel.set(String(g.id), lv.level)
+            const clsArr = Array.isArray(g?.classes) ? g.classes
+              : (g?.classes && typeof g.classes === 'object') ? Object.values(g.classes) : []
+            // deno-lint-ignore no-explicit-any
+            if (clsArr.some((k: any) => /nurse|\bRN\b|\bLPN\b/i.test(String(k?.label ?? k?.code ?? ''))))
+              nurseAxis.add(String(g.id))
+          }
+        url = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
+      }
+    } catch (err) { censusError = String(err) }
+  }
+  const censusUsable = !censusError && axisActive.size > 0
+
+  /* Busy during the shift window. */
+  const busyThen = new Set<string>()
+  if (c.shift_date && /^\d\d:\d\d-\d\d:\d\d$/.test(String(c.shift_time || ''))) {
+    const [shStart, shEnd] = String(c.shift_time).split('-')
+    if (shEnd > shStart) {
+      const day = await fetchVisits(`startDate=${c.shift_date}&endDate=${c.shift_date}`)
+      for (const v of day.rows) {
+        const cg = v?.caregiver?.id; if (cg == null) continue
+        const vs = String(v?.scheduledStartDate ?? v?.startDate ?? '').slice(11, 16)
+        const ve = String(v?.scheduledEndDate ?? v?.endDate ?? '').slice(11, 16)
+        if (vs && ve && ve > vs && vs < shEnd && ve > shStart) busyThen.add(String(cg))
+      }
+    }
+  }
+
+  /* Worked-with-this-client history (group 1) + recent activity + hunger. */
+  const history = new Map<string, { visits: number; last: string }>()
+  if (clientRes.id) {
+    const h = await fetchVisits(
+      `startDate=${dISO(180)}&endDate=${dISO(0)}&clientIds=${encodeURIComponent(clientRes.id)}`)
+    for (const v of h.rows) {
+      const cg = v?.caregiver?.id; if (cg == null) continue
+      const k = String(cg)
+      const day = String(v?.date ?? v?.startDate ?? v?.start ?? '')
+      const cur = history.get(k) ?? { visits: 0, last: '' }
+      history.set(k, { visits: cur.visits + 1, last: day > cur.last ? day : cur.last })
+    }
+  }
+  const recent = await fetchVisits(`startDate=${dISO(14)}&endDate=${dISO(0)}`)
+  const recentlyActive = new Set(recent.rows.map(v => String(v?.caregiver?.id ?? '')).filter(Boolean))
+  const wantGap = new Map<string, number>()
+  try {
+    const { data: avRow } = await sb.from('app_data').select('data').eq('key', 'caregiver_availability').maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    const av: any[] = Array.isArray(avRow?.data) ? avRow!.data : []
+    if (av.length) {
+      const fwd = await fetchVisits(`startDate=${dISO(0)}&endDate=${dISO(-7)}`)
+      const sched = new Map<string, number>()
+      for (const v of fwd.rows) {
+        const id = v?.caregiver?.id; if (id == null) continue
+        const s = new Date(String(v?.scheduledStartDate ?? v?.startDate ?? '')).getTime()
+        const e = new Date(String(v?.scheduledEndDate ?? v?.endDate ?? '')).getTime()
+        if (Number.isFinite(s) && Number.isFinite(e) && e > s)
+          sched.set(String(id), (sched.get(String(id)) ?? 0) + (e - s) / 3600000)
+      }
+      for (const a of av) {
+        const id = String(a?.axiscare_id ?? ''); if (!id) continue
+        const target = Number(a?.target_hours)
+        if (Number.isFinite(target)) wantGap.set(id, target - (sched.get(id) ?? 0))
+      }
+    }
+  } catch { /* hunger boost only */ }
+
+  const dnr = await dnrSetFor(String(c.client || ''))
+  const alreadyAsked = new Set((c.asked ?? []).map((a: { name: string }) =>
+    String(a.name || '').toLowerCase()))
+  const callerOff = String(c.calling_off || '').toLowerCase()
+  const callerOffId = String(c.calling_off_id || '')
+
+  // deno-lint-ignore no-explicit-any
+  const group1: any[] = [], group2: any[] = []
+  for (const x of cands) {
+    if (x.skipped && !x.may_autosend) { cut(x, String(x.skipped)); continue }
+    if (dnr.has(nameKeyOf(String(x.name)))) { cut(x, 'Do-Not-Return for this client — never suggested'); continue }
+    if (alreadyAsked.has(String(x.name).toLowerCase())) { cut(x, 'already asked on this case'); continue }
+    if ((callerOff && String(x.name).toLowerCase() === callerOff)
+        || (callerOffId && String(x.axiscare_id || '') === callerOffId)) { cut(x, 'the person who called off'); continue }
+    if (!censusUsable) { cut(x, 'held — AxisCare census unreachable (fail closed)'); continue }
+    if (!x.axiscare_id || !axisActive.has(String(x.axiscare_id))) { cut(x, 'not active in the AxisCare census'); continue }
+    if (nurseAxis.has(String(x.axiscare_id))) { cut(x, 'nurse-classed in AxisCare'); continue }
+    if (clientLv != null) {
+      const cgLv = caregiverLevel.get(String(x.axiscare_id))
+      if (cgLv != null && cgLv < clientLv) { cut(x, `Level ${cgLv} caregiver — client needs Level ${clientLv}`); continue }
+    }
+    if (busyThen.has(String(x.axiscare_id))) { cut(x, 'already on another visit during this window'); continue }
+    const h = history.get(String(x.axiscare_id))
+    const gap = wantGap.get(String(x.axiscare_id))
+    const row = {
+      name: x.name, first: x.first, axiscare_id: x.axiscare_id,
+      phone_last4: x.phone_last4,
+      level: caregiverLevel.get(String(x.axiscare_id)) ?? null,
+      wants_more_hours: gap != null && gap > 0 ? Math.round(gap) : null,
+      recently_active: recentlyActive.has(String(x.axiscare_id)),
+      history: h ? { visits: h.visits, last: h.last } : null,
+      why: h ? `${h.visits} visit${h.visits === 1 ? '' : 's'} with this client, last ${h.last || '?'}`
+        : recentlyActive.has(String(x.axiscare_id)) ? 'worked a shift in the last 14 days'
+        : 'active caregiver, no recent history',
+    }
+    if (h) group1.push(row); else group2.push(row)
+  }
+  group1.sort((a, b) => (b.history?.visits ?? 0) - (a.history?.visits ?? 0))
+  group2.sort((a, b) => (Number(b.recently_active) - Number(a.recently_active))
+    || ((b.wants_more_hours ?? -999) - (a.wants_more_hours ?? -999)))
+
+  return { group1, group2, excluded, meta: {
+    client_resolution: `${clientRes.status}: ${clientRes.detail}`,
+    client_level: clientLv,
+    census: censusUsable ? `${axisActive.size} active caregivers` : `UNREACHABLE (${censusError || 'empty'}) — everyone held, fail closed`,
+    dnr_barred: dnr.size,
+  } }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
   const q = new URL(req.url).searchParams
   const commit = q.get('commit') === '1'
+
+  /* ── COORDINATOR ACTIONS (2026-09-19 redesign) ─────────────────────────
+     POST {action:'candidates'|'send_selected', ...} from the hub, carrying
+     the signed-in coordinator's session JWT. The public anon key (which the
+     cron uses for plain ticks) may not drive these. */
+  // deno-lint-ignore no-explicit-any
+  let body: any = null
+  try { body = await req.clone().json() } catch { body = null }
+  if (body && typeof body.action === 'string') {
+    const role = (() => { try {
+      const tok = String(req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '')
+      return String(JSON.parse(atob(tok.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))?.role || '')
+    } catch { return '' } })()
+    if (role !== 'authenticated' && role !== 'service_role')
+      return new Response(JSON.stringify({ error: 'sign in to the hub to use the picker' }),
+        { status: 403, headers: { 'Content-Type': 'application/json' } })
+    const jr = (b: unknown, s = 200) => new Response(JSON.stringify(b, null, 2),
+      { status: s, headers: { 'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' } })
+    const kase = await readCaseFresh(String(body.case_id || ''))
+    if (!kase) return jr({ error: 'no such coverage case' }, 404)
+
+    if (body.action === 'candidates') {
+      const out = await buildCandidatesForCase(kase)
+      return jr(out)
+    }
+
+    if (body.action === 'send_selected') {
+      const wanted = new Set((Array.isArray(body.recipients) ? body.recipients : [])
+        .map((n: unknown) => String(n).toLowerCase()))
+      if (!wanted.size) return jr({ error: 'no recipients selected' }, 400)
+      const { data: setR } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+      // deno-lint-ignore no-explicit-any
+      const st: any = setR?.data ?? {}
+      if (st.coverage_send_live !== true)
+        return jr({ error: 'sending is switched off (ops_settings.coverage_send_live) — nothing sent' }, 409)
+      const ghl2 = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
+      if (!ghl2.token || !ghl2.locationId) return jr({ error: 'GHL credentials not set' }, 502)
+
+      /* Eligibility is re-derived HERE, not trusted from the browser: a name
+         that is not in group1/group2 right now cannot be texted, whatever
+         the request says. The coordinator chooses WITHIN the safe set. */
+      const pool = await buildCandidatesForCase(kase)
+      const sendable = [...pool.group1.map(x => ({ ...x, tier: 1 })),
+                        ...pool.group2.map(x => ({ ...x, tier: 3 }))]
+        .filter(x => wanted.has(String(x.name).toLowerCase()))
+      const refusedNames = [...wanted].filter(w =>
+        !sendable.some(x => String(x.name).toLowerCase() === w))
+
+      /* Phones come from the roster again (buildCandidates exposes last4
+         only); the identity + hours gates run inside contactForOutbound. */
+      const { data: rosterRow } = await sb.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
+      // deno-lint-ignore no-explicit-any
+      const roster = (Array.isArray(rosterRow?.data) ? rosterRow!.data : []) as any[]
+      const phoneOf = (nm: string) => {
+        const hit = roster.find(cg =>
+          nameKeyOf([clean(cg.first), clean(cg.last)].filter(Boolean).join(' ')) === nameKeyOf(nm))
+        return normalisePhone(hit?.phone)
+      }
+
+      const chiToday = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+      const clientShort = firstNamesOf(String(kase.client || '')) || 'a client'
+      const when = [kase.shift_date ? friendlyDay(kase.shift_date) : '', span12(kase.shift_time)]
+        .filter(Boolean).join(' ') || 'as soon as possible — the office has details'
+      const careLine = String(kase.care_note || '').trim()
+      const streetName = String(kase.client_street || '').trim()
+        .replace(/^\d+[A-Za-z]?(?:-\w+)?\s+/, '').replace(/^\d+$/, '').trim()
+      const addr = [streetName, String(kase.client_city || '').trim()].filter(Boolean).join(', ')
+      const isSameDay = kase.shift_date === chiToday
+      /* Interest checks (new-client broadcasts) speak differently: nobody is
+         "covering" anything yet — we're finding out who WANTS the hours
+         before the client meeting. One template for everyone. */
+      const tmplInt = String(kase.msg_interest || '') || String(st.coverage_msg_interest || '') ||
+        `Hi {first_name}, it's Caring Companions. We're meeting a potential new client{where}: {when}. {care}Would you be interested in these hours? Nothing is set yet - reply YES if you'd like to be considered, or NO. Questions welcome.`
+      const tmpl1 = String(kase.msg_tier1 || '') || String(st.coverage_msg_tier1 || '') ||
+        `Hi {first_name}, can you cover {client} {when}? It's Caring Companions. Reply YES or NO.`
+      const tmplO = String(kase.msg_other || '') ||
+        (isSameDay
+          ? (String(st.coverage_msg_other_sameday || '') || String(st.coverage_msg_other || '') ||
+             `Hi {first_name}, it's Caring Companions. Last-minute fill-in for {client} at {address}: {when}. {care}Can you take it? Reply YES or NO. Questions welcome.`)
+          : (String(st.coverage_msg_other_advance || '') || String(st.coverage_msg_other || '') ||
+             `Hi {first_name}, it's Caring Companions. We have an open shift for {client} at {address}: {when}. {care}Can you take it? Reply YES or NO. Questions welcome.`))
+      // deno-lint-ignore no-explicit-any
+      const fillMsg = (tmpl: string, x: any) => tmpl
+        .replaceAll(' at {address}', addr ? ` at ${addr}` : '')
+        .replaceAll('{first_name}', x.first || 'there')
+        .replaceAll('{pattern}', '')
+        .replaceAll('{client}', clientShort)
+        .replaceAll('{where}', kase.client_city ? ` in ${kase.client_city}` : '')
+        .replaceAll('{address}', addr || 'the office has the address')
+        .replaceAll('{when}', when)
+        .replaceAll('{care}', careLine ? careLine + ' ' : '')
+        .replace(/\s{2,}/g, ' ').trim()
+
+      const sent: string[] = [], failed: string[] = []
+      for (const x of sendable) {
+        const phone = phoneOf(String(x.name))
+        if (!phone) { failed.push(`${x.name} (no phone on the roster)`); continue }
+        const contact = await contactForOutbound(sb, ghl2,
+          { phone, firstName: x.first || x.name }, 'urgent_internal')
+        if (!contact) { failed.push(`${x.name} (refused by the outbound gate)`); continue }
+        const message = fillMsg(String(kase.kind) === 'interest' ? tmplInt
+          : (x.tier === 1 ? tmpl1 : tmplO), x)
+        try {
+          const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${ghl2.token}`, Version: '2021-07-28',
+                       'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message }),
+          })
+          if (!r.ok) { failed.push(`${x.name} (SMS ${r.status})`); continue }
+        } catch { failed.push(`${x.name} (send error)`); continue }
+        await appendAskFresh(String(kase.id), {
+          id: uid(), name: x.name, phone, channel: 'sms', at: nowIso(),
+          state: 'waiting', replied_at: null, tier: x.tier, auto: false,
+          picked_by_coordinator: true, ghl_contact_id: contact.contactId,
+          axiscare_id: x.axiscare_id ?? null })
+        sent.push(String(x.name))
+        try {
+          await fetch(`https://services.leadconnectorhq.com/contacts/${contact.contactId}/tags`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${ghl2.token}`, Version: '2021-07-28',
+                       'Content-Type': 'application/json' },
+            body: JSON.stringify({ tags: ['coverage-asked'] }),
+          })
+        } catch { /* a missing tag only costs reply routing */ }
+      }
+      try {
+        await sb.rpc('upsert_app_data_item', { target_key: 'automation_log', item: {
+          id: 'auto_srv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+          at: nowIso(), automation: 'coverage-run:send_selected', ran_by: 'coordinator',
+          ok: failed.length === 0, dry: false, rows_seen: sendable.length,
+          candidates: wanted.size, created: sent.length,
+        } })
+      } catch { /* logging must never block */ }
+      return jr({ sent, failed, refused_not_eligible: refusedNames,
+        note: 'Replies land on the case like any other ask — watch the board.' })
+    }
+
+    return jr({ error: `unknown action "${body.action}"` }, 400)
+  }
 
   const { data: row } = await sb.from('app_data').select('data').eq('key', 'coverage_cases').maybeSingle()
   // deno-lint-ignore no-explicit-any
@@ -395,6 +741,12 @@ Deno.serve(async (req) => {
   // deno-lint-ignore no-explicit-any
   const settings: any = setRow?.data ?? {}
   const sendLive = settings.coverage_send_live === true
+  /* MANUAL SELECTION MODE (the 2026-09-19 redesign): Cara detects and flags,
+     admins are alerted, candidates are ranked — but no caregiver is texted
+     until a coordinator builds the list in the picker and presses send.
+     "There are so many nuances that we know why someone shouldn't be sent
+     to that client sometimes." */
+  const manualSelect = settings.coverage_manual_select === true
   const fuseMin = Number(settings.coverage_wave_fuse_min) > 0 ? Number(settings.coverage_wave_fuse_min) : 10
   const ghl = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
 
@@ -581,7 +933,7 @@ Deno.serve(async (req) => {
        unless the shift starts within 3 hours) and email (always — email is
        silent). Once per case. Admin list: ops_settings.coverage_alert_admins
        (array of emails), default Samantha + Krystal. */
-    if (!c.admin_alerted && ghl.token && ghl.locationId) {
+    if (!c.admin_alerted && c.kind !== 'interest' && ghl.token && ghl.locationId) {
       const admins: string[] = (Array.isArray(settings.coverage_alert_admins)
         && settings.coverage_alert_admins.length)
         ? settings.coverage_alert_admins.map((e: unknown) => String(e).toLowerCase())
@@ -600,7 +952,9 @@ Deno.serve(async (req) => {
         .toLocaleString('en-US', { timeZone: 'America/Chicago',
           month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })
       const smsMsg = (String(settings.coverage_msg_admin_alert || '') ||
-        `New call-in: {client} {when}.{who} Called in at {called_at}. The callout engine is texting caregivers. Board: cc.mo-care.com`)
+        (manualSelect
+          ? `New call-in: {client} {when}.{who} Called in at {called_at}. Cara has the candidate list ready - choose who to ask on the board: cc.mo-care.com`
+          : `New call-in: {client} {when}.{who} Called in at {called_at}. The callout engine is texting caregivers. Board: cc.mo-care.com`))
         .replaceAll('{client}', String(c.client || 'client on the case'))
         .replaceAll('{when}', whenTxt)
         .replaceAll('{who}', c.calling_off ? ` ${c.calling_off} called off.` : '')
@@ -632,7 +986,9 @@ Deno.serve(async (req) => {
                   + (c.calling_off ? `<br>Called off: <b>${String(c.calling_off)}</b>` : '<br>Called off: (unknown — opened from an AxisCare unassignment, which does not say who)')
                   + `<br>Called in at: <b>${calledAt}</b> (Chicago)`
                   + (c.modification_reason ? `<br>Reason: ${String(c.modification_reason)}` : '')
-                  + `</p><p>The callout engine is texting qualified caregivers in waves. `
+                  + `</p><p>` + (manualSelect
+                    ? `Cara has ranked the candidates — open the case and choose who to ask (worked-with-this-client first). Nothing is texted until you press send. `
+                    : `The callout engine is texting qualified caregivers in waves. `)
                   + `Watch replies and confirm the fill on the board: <a href="https://cc.mo-care.com">cc.mo-care.com</a> (Scheduling, Coverage Help).</p></div>` }),
             })
             alerted++
@@ -786,6 +1142,10 @@ Deno.serve(async (req) => {
        AxisCare says are ACTIVE get asked at all (when the census is up). */
     const callerOff = String(c.calling_off || '').toLowerCase()
     const callerOffId = String(c.calling_off_id || '')
+    /* Do-Not-Return for THIS client (her rule): barred from every wave,
+       automatic or manual, whatever tier they would rank. */
+    const dnrBarred = await dnrSetFor(String(c.client || ''))
+    let dnrSkipped = 0
     let inactiveSkipped = 0
     let censusHeld = 0
     let underLevelSkipped = 0
@@ -797,6 +1157,10 @@ Deno.serve(async (req) => {
        confirms every fill) but a KNOWN lower level is a hard skip. */
     const clientLv: number | null = typeof c.client_care_level === 'number' ? c.client_care_level : null
     const wave = sendable.filter(x => !alreadyAsked.has(String(x.name).toLowerCase()))
+                         .filter(x => {
+                           if (!dnrBarred.has(nameKeyOf(String(x.name)))) return true
+                           dnrSkipped++; return false
+                         })
                          .filter(x => !(callerOff && String(x.name).toLowerCase() === callerOff)
                                    && !(callerOffId && String(x.axiscare_id || '') === callerOffId))
                          .filter((x: any) => {
@@ -865,7 +1229,7 @@ Deno.serve(async (req) => {
     if (quietHold && sendLive && !hasYes && wave.length) {
       stats.held_quiet_hours = (Number(stats.held_quiet_hours) || 0) + wave.length
     }
-    if (sendLive && !hasYes && fuseBurned && !quietHold && wave.length && ghl.token && ghl.locationId) {
+    if (sendLive && !manualSelect && !hasYes && fuseBurned && !quietHold && wave.length && ghl.token && ghl.locationId) {
       /* MESSAGE DESIGN (CareQB's template split, revised live 2026-09-16):
          EVERY caregiver's text names the client by FIRST NAME(S) — her call,
          reading the first real wave, reversing the 09-12 stranger rule. First
@@ -1085,6 +1449,7 @@ Deno.serve(async (req) => {
           || nurseNamesGlobal.has(nameKeyOf(String(a?.name ?? ''))))
         .map((a: any) => a.name),
       busy_check: `${busyCheck}; ${busySkipped} skipped from this wave as already working`,
+      dnr_check: `${dnrBarred.size} caregiver(s) barred from this client by the Do-Not-Return log; ${dnrSkipped} removed from this wave`,
       nurse_check: `${nurseAxis.size} nurse-classed in AxisCare; ${nurseSkipped} additionally skipped from this wave (nurse-roster names are excluded before candidacy)`,
       care_level: clientLv != null
         ? `client is Level ${clientLv} (class "${c.client_care_level_from || '?'}"); ${underLevelSkipped} caregiver(s) skipped as below level; ${caregiverLevel.size} caregivers carry a level class`
@@ -1144,6 +1509,9 @@ Deno.serve(async (req) => {
     if (chiHour >= 8 && chiHour < 21) {
       for (const cStale of cases) {
         if (cStale?.status === 'open' || cStale?.closure_notified) continue
+        /* Interest checks close by a coordinator talking to people, not by
+           "the shift was covered" texts — closure messaging is for callouts. */
+        if (String(cStale?.kind) === 'interest') continue
         const c = await readCaseFresh(cStale.id) ?? cStale
         if (c?.status === 'open' || c?.closure_notified) continue
         const askedList = Array.isArray(c.asked) ? c.asked : []
@@ -1372,7 +1740,10 @@ Deno.serve(async (req) => {
   return new Response(JSON.stringify({
     mode: commit ? 'COMMIT' : 'DRY RUN (cases/items only — sending has its own switch)',
     sending_enabled: sendLive,
-    sending_note: sendLive
+    manual_select: manualSelect,
+    sending_note: manualSelect
+      ? 'MANUAL SELECTION: Cara flags and ranks; nothing is texted until a coordinator picks recipients on the board and presses send.'
+      : sendLive
       ? `LIVE: waves of ${WAVE_SIZE} by tier, ${fuseMin}-min fuse, quiet hours hold overnight sends unless the shift starts within 3h. Replies land via coverage-reply.`
       : 'Sending is off. Flip ops_settings.coverage_send_live to true to let waves text caregivers.',
     coverage_owner: own,

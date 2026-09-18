@@ -161,7 +161,84 @@ Deno.serve(async (req) => {
       await put('leads', lead)
       return json({ ok: true, routed: 'summary added to the lead\'s conversation log', axiscare_note: axNote })
     }
-    return json({ ok: true, routed: 'nothing recent to attach to — no disposition was tapped on this call', axiscare_note: axNote })
+    /* ---- Cara's ears (2026-09-19 redesign) --------------------------------
+       A summarised call that attached to NOTHING — no disposition was tapped,
+       no lead matched — is exactly the call that used to slip through: a
+       caregiver phoning in a call-off that nobody labelled. If the caller is
+       a KNOWN caregiver (identity layer, one person on the number), ask
+       Claude whether the summary reads like a call-off. A hit creates a
+       coverage case with status 'flagged' — Cara never texts anybody off a
+       flag; a coordinator confirms it on the board first and then chooses
+       who to ask. Gated by ops_settings.coverage_flag_live (dry-logs when
+       off). Misses stay silent: a flag system that cries wolf gets ignored. */
+    let flagged: Record<string, unknown> = { checked: false }
+    try {
+      const { data: setD } = await supabase.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+      const flagLive = setD?.data?.coverage_flag_live === true
+      const digits = norm(callerPhone)
+      const anthKey = Deno.env.get('ANTHROPIC_API_KEY') || ''
+      if (digits.length === 10 && summary.length >= 30 && anthKey) {
+        const { data: phoneRows } = await supabase.from('phone_index').select('person_id').eq('phone', '+1' + digits)
+        // deno-lint-ignore no-explicit-any
+        const personIds = [...new Set((phoneRows || []).map((r: any) => String(r.person_id)))]
+        if (personIds.length === 1) {
+          const { data: srcRows } = await supabase.from('person_source_id')
+            .select('entity_type').eq('person_id', personIds[0]).eq('system', 'axiscare')
+            .eq('confidence', 'confirmed').eq('needs_review', false)
+          const isCaregiver = (srcRows || []).some((l) => l.entity_type === 'caregiver')
+          if (isCaregiver) {
+            const { data: pi } = await supabase.from('person_identity')
+              .select('display_name').eq('id', personIds[0]).maybeSingle()
+            const cgName = pi?.display_name || 'a caregiver'
+            const chiDay = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+            const flagId = `cwf_${digits}_${chiDay.replaceAll('-', '')}`
+            const existing = await readKey('coverage_cases')
+            const already = existing.some((k) => k.id === flagId
+              || (['flagged', 'open'].includes(String(k.status))
+                  && norm(String(k.caller_phone || '')) === digits
+                  && new Date(String(k.opened_at || 0)).getTime() > Date.now() - 12 * 3600 * 1000))
+            if (!already) {
+              const ai = await fetch('https://api.anthropic.com/v1/messages', {
+                method: 'POST',
+                headers: { 'x-api-key': anthKey, 'anthropic-version': '2023-06-01',
+                           'Content-Type': 'application/json' },
+                body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 300,
+                  system: 'You read one home-care phone call summary. Decide if the CALLER (a caregiver) is calling off / calling in sick / unable to work an upcoming or current shift. Scheduling questions, availability updates for future weeks, and ordinary check-ins are NOT call-offs. Answer ONLY minified JSON: {"call_off":bool,"confidence":"high"|"medium"|"low","client_name":str|null,"shift_hint":str|null,"evidence":str} where evidence quotes the deciding phrase.',
+                  messages: [{ role: 'user', content: `Caller: ${cgName} (caregiver)\nCall summary:\n${summary.slice(0, 3000)}` }] }),
+              })
+              // deno-lint-ignore no-explicit-any
+              const aj: any = await ai.json().catch(() => ({}))
+              let verdict: Record<string, unknown> = {}
+              try { verdict = JSON.parse(String(aj?.content?.[0]?.text || '{}').replace(/^```(json)?|```$/g, '').trim()) } catch { verdict = {} }
+              flagged = { checked: true, caller: cgName, verdict }
+              if (verdict.call_off === true && verdict.confidence !== 'low') {
+                if (flagLive) {
+                  await put('coverage_cases', {
+                    id: flagId, status: 'flagged', kind: 'calloff',
+                    client: String(verdict.client_name || '') || '(from call — confirm the client)',
+                    calling_off: cgName, caller_phone: callerPhone, caller_contact_id: callerId,
+                    shift_date: todayISO(), shift_time: String(verdict.shift_hint || ''),
+                    reason: 'Cara flagged this call as a possible call-off',
+                    flag_evidence: String(verdict.evidence || ''), flag_confidence: String(verdict.confidence || ''),
+                    flag_source: 'call summary', note: summary,
+                    opened_at: new Date().toISOString(), opened_by: 'cara-flag',
+                  })
+                  flagged.created = flagId
+                } else flagged.would_create = flagId
+                try {
+                  await put('automation_log', {
+                    id: 'auto_srv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+                    at: new Date().toISOString(), automation: 'cara-flag', ran_by: 'server',
+                    ok: true, dry: !flagLive, rows_seen: 1, candidates: 1, created: flagLive ? 1 : 0,
+                  })
+                } catch { /* never block */ }
+              }
+            } else flagged = { checked: true, skipped: 'a case for this caller already exists today' }
+          }
+        }
+      }
+    } catch (e) { flagged = { checked: true, error: String(e) } }
+    return json({ ok: true, routed: 'nothing recent to attach to — no disposition was tapped on this call', axiscare_note: axNote, cara_flag: flagged })
   }
 
   const disposition = field('disposition') || field('call_disposition') || field('outcome')
