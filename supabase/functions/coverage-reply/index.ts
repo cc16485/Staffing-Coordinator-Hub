@@ -209,6 +209,61 @@ Deno.serve(async (req) => {
     return json({ ok: true, routed, case_id: c.id, caregiver: a.name, state: a.state })
   }
   if (isYes) {
+    /* THE WRONG-CLIENT YES (Lacey, first live callout: "I can cover wonda
+       tomm" auto-attached to the WOLVERTON case — she was answering about
+       Wanda). Before accepting, scan the reply for a KNOWN client's first
+       name that is not this case's client. Matching is exact, or one letter
+       off on names of 5+ letters ("wonda"→Wanda), so "many" can never smear
+       into "Mary". A hit routes to a human as a question — a wrong inquiry
+       costs a minute, a wrong YES confirms somebody onto the wrong shift. */
+    try {
+      const caseTokens = new Set(String(c.client || '').toLowerCase().split(/[^a-z]+/).filter((w: string) => w.length >= 3))
+      const replyTokens = [...new Set(t.split(/[^a-z]+/).filter((w) => w.length >= 4))]
+      if (replyTokens.length) {
+        const { data: roleRows } = await sb.from('person_role').select('person_id').eq('role', 'client')
+        // deno-lint-ignore no-explicit-any
+        const ids = [...new Set((roleRows || []).map((r: any) => r.person_id))]
+        const names = new Set<string>()
+        if (ids.length) {
+          const { data: pid } = await sb.from('person_identity').select('display_name, first_name').in('id', ids)
+          for (const p of (pid || [])) {
+            for (const src of [p.first_name, String(p.display_name || '').split(/\s+/)[0]]) {
+              const w = String(src || '').toLowerCase().replace(/[^a-z]/g, '')
+              if (w.length >= 3) names.add(w)
+            }
+          }
+        }
+        const off1 = (a: string, b: string): boolean => {
+          if (a === b) return true
+          if (a.length < 5 || b.length < 5) return false
+          if (a.length === b.length) {
+            let diff = 0
+            for (let i = 0; i < a.length; i++) if (a[i] !== b[i] && ++diff > 1) return false
+            return diff === 1
+          }
+          return false
+        }
+        const strange = replyTokens.find((rt) =>
+          !caseTokens.has(rt) &&
+          [...names].some((nm) => off1(rt, nm) && !caseTokens.has(nm)))
+        if (strange) {
+          a.state = 'inquiry'
+          routed = `yes — but the reply mentions "${strange}", which reads like a different client than ${c.client || 'this case'}. Routed to a human.`
+          await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
+            id: `ops_covq_${c.id}_${norm(String(a.phone || contactId))}`,
+            kind: 'coverage', coverage_case_id: c.id,
+            title: `${a.name} said yes — but may mean a DIFFERENT client than ${c.client || '?'}`,
+            about: a.name,
+            detail: `They wrote: "${text.slice(0, 300)}". The word "${strange}" looks like another client's name. Confirm which shift they mean before accepting — reply to them in GHL Conversations, then set their answer on the right case.`,
+            domain: 'scheduling_coverage', status: 'open', urgency: 'high',
+            created_at: stamp, due: new Date(Date.now() + 3600000).toISOString(),
+            owner: '', owner_name: '', created_by: 'coverage-reply', opened_by: 'callout',
+          } })
+          await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
+          return json({ ok: true, routed, case_id: c.id, caregiver: a.name, state: a.state })
+        }
+      }
+    } catch (e) { console.error('[coverage-reply] wrong-client check failed open', e) /* an unreadable identity layer must not block a plain YES */ }
     /* INTEREST CHECK (2026-09-19, new-client broadcasts): a YES on a
        kind:'interest' case is collected, never promoted to pending_fill —
        the whole point is hearing from EVERYONE who wants the hours before
