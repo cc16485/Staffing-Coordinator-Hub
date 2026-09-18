@@ -463,7 +463,7 @@ async function buildCandidatesForCase(c: any):
      visits over the next 14 days that overlap those weekday windows. A
      caregiver with zero overlaps is genuinely free for the pattern; one
      with several is already committed then. */
-  const busyPattern = new Map<string, number>()
+  const busyPattern = new Map<string, { count: number; samples: string[] }>()
   const wantDays: string[] = Array.isArray(c.interest_days) ? c.interest_days.map((d: unknown) => String(d).toLowerCase().slice(0, 3)) : []
   const wStart = String(c.interest_start || '').slice(0, 5), wEnd = String(c.interest_end || '').slice(0, 5)
   let patternCheck = ''
@@ -478,7 +478,16 @@ async function buildCandidatesForCase(c: any):
       if (!wantDays.includes(wd)) continue
       const vs = s.slice(11, 16), ve = e.slice(11, 16)
       if (!vs || !ve || ve <= vs) continue
-      if (vs < wEnd && ve > wStart) busyPattern.set(String(id), (busyPattern.get(String(id)) ?? 0) + 1)
+      if (vs < wEnd && ve > wStart) {
+        const rec = busyPattern.get(String(id)) ?? { count: 0, samples: [] }
+        rec.count++
+        if (rec.samples.length < 2) {
+          const withWho = firstNamesOf([v?.client?.firstName, v?.client?.lastName]
+            .filter(Boolean).join(' ')) || 'another client'
+          rec.samples.push(`${wd[0].toUpperCase() + wd.slice(1)} ${span12(vs + '-' + ve)} with ${withWho}`)
+        }
+        busyPattern.set(String(id), rec)
+      }
     }
     patternCheck = `checked ${wantDays.join('/')} ${wStart}-${wEnd} against the next 14 days${fwd14.error ? ` (schedule read failed: ${fwd14.error})` : ''}`
   }
@@ -526,8 +535,12 @@ async function buildCandidatesForCase(c: any):
   }
   const censusUsable = !censusError && axisActive.size > 0
 
-  /* Busy during the shift window. */
-  const busyThen = new Set<string>()
+  /* Busy during the shift window — WITH the detail (her call, 2026-09-18:
+     "say what they are working during that time"). Busy caregivers stay in
+     the list, marked and default-unchecked, instead of vanishing into the
+     excluded pile: a coordinator may still ask someone whose nearby shift
+     ends right before. */
+  const busyThen = new Map<string, { detail: string }>()
   if (c.shift_date && /^\d\d:\d\d-\d\d:\d\d$/.test(String(c.shift_time || ''))) {
     const [shStart, shEnd] = String(c.shift_time).split('-')
     if (shEnd > shStart) {
@@ -536,7 +549,13 @@ async function buildCandidatesForCase(c: any):
         const cg = v?.caregiver?.id; if (cg == null) continue
         const vs = String(v?.scheduledStartDate ?? v?.startDate ?? '').slice(11, 16)
         const ve = String(v?.scheduledEndDate ?? v?.endDate ?? '').slice(11, 16)
-        if (vs && ve && ve > vs && vs < shEnd && ve > shStart) busyThen.add(String(cg))
+        if (vs && ve && ve > vs && vs < shEnd && ve > shStart) {
+          const withWho = firstNamesOf([v?.client?.firstName, v?.client?.lastName]
+            .filter(Boolean).join(' ')) || 'another client'
+          const prev = busyThen.get(String(cg))
+          const line = `${span12(vs + '-' + ve)} with ${withWho}`
+          busyThen.set(String(cg), { detail: prev ? prev.detail + '; ' + line : line })
+        }
       }
     }
   }
@@ -600,14 +619,22 @@ async function buildCandidatesForCase(c: any):
       const cgLv = caregiverLevel.get(String(x.axiscare_id))
       if (cgLv != null && cgLv < clientLv) { cut(x, `Level ${cgLv} caregiver — client needs Level ${clientLv}`); continue }
     }
-    if (busyThen.has(String(x.axiscare_id))) { cut(x, 'already on another visit during this window'); continue }
     const h = history.get(String(x.axiscare_id))
     const gap = wantGap.get(String(x.axiscare_id))
     const gid = String(x.axiscare_id)
     const city = cgCity.get(gid) || null
     const miles = clientZip && cgZip.get(gid) ? zipMiles(clientZip, cgZip.get(gid)!) : null
     const sameTown = !!(city && clientCity && city.toLowerCase() === clientCity.toLowerCase())
-    const conflicts = wantDays.length ? (busyPattern.get(gid) ?? 0) : null
+    const pat = wantDays.length ? busyPattern.get(gid) : undefined
+    const conflicts = wantDays.length ? (pat?.count ?? 0) : null
+    /* Already scheduled during the proposed time? They STAY on the list,
+       default-unchecked, with the red calendar saying exactly what they're
+       working — never silently hidden (her call, 2026-09-18). */
+    const single = busyThen.get(gid)
+    const working_then = single ? { count: 1, detail: single.detail }
+      : (pat && pat.count ? { count: pat.count,
+          detail: pat.samples.join('; ') + (pat.count > pat.samples.length ? ` +${pat.count - pat.samples.length} more` : '') }
+        : null)
     const row = {
       name: x.name, first: x.first, axiscare_id: x.axiscare_id,
       phone_last4: x.phone_last4,
@@ -618,17 +645,20 @@ async function buildCandidatesForCase(c: any):
       city, miles, same_town: sameTown,
       free_then: conflicts == null ? null : conflicts === 0,
       conflicts_then: conflicts,
+      working_then,
       why: h ? `${h.visits} visit${h.visits === 1 ? '' : 's'} with this client, last ${h.last || '?'}`
         : recentlyActive.has(gid) ? 'worked a shift in the last 14 days'
         : 'active caregiver, no recent history',
     }
     if (h) group1.push(row); else group2.push(row)
   }
-  group1.sort((a, b) => (b.history?.visits ?? 0) - (a.history?.visits ?? 0))
-  /* Free-for-the-hours first (when the case defines hours), then closest,
-     then the old ranking — "who could actually take this" reads top-down. */
+  /* Busy-during-the-time sinks to the bottom of its group; within the free,
+     the old ranking holds — "who could actually take this" reads top-down. */
+  group1.sort((a, b) => ((a.working_then ? 1 : 0) - (b.working_then ? 1 : 0))
+    || (b.history?.visits ?? 0) - (a.history?.visits ?? 0))
   group2.sort((a, b) =>
-    ((b.free_then === true ? 1 : 0) - (a.free_then === true ? 1 : 0))
+    ((a.working_then ? 1 : 0) - (b.working_then ? 1 : 0))
+    || ((b.free_then === true ? 1 : 0) - (a.free_then === true ? 1 : 0))
     || ((a.miles ?? 9999) - (b.miles ?? 9999))
     || (Number(b.recently_active) - Number(a.recently_active))
     || ((b.wants_more_hours ?? -999) - (a.wants_more_hours ?? -999)))
