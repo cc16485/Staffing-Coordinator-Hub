@@ -161,7 +161,15 @@ Deno.serve(async (req) => {
        Past that window the family hears nothing further from a machine and the
        office gets told instead, which is the honest handling of a lead that
        has already been dropped. */
-    if (!l.ack_sent_at && age <= 12) {
+    /* Her rule (2026-09-19): the acknowledgment belongs to the WEBSITE FORM.
+       This sweep is only the retry for a form ack that failed to send — a
+       lead somebody typed in by hand after a phone call must never get
+       "we have your message" from a robot. Form origin = the web-inquiry
+       contact event lead-intake records at creation. */
+    // deno-lint-ignore no-explicit-any
+    const webInquiry = Array.isArray(l.contact_events)
+      && l.contact_events.some((e: any) => e?.channel === 'web' && e?.outcome === 'inquiry')
+    if (!l.ack_sent_at && age <= 12 && webInquiry) {
       plan.acknowledge.push(`${first} (${Math.round(age)}h old)`)
       if (!dry && !quiet) {
         const line = `Hi ${first}, this is Caring Companions. We have your message and a care coordinator ` +
