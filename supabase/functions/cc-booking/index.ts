@@ -16,6 +16,8 @@
 // -----------------------------------------------------------------------------
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { opEvent } from '../_shared/events.ts'
+import { ldPush } from '../_shared/lead-truth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -327,6 +329,87 @@ Deno.serve(async (req) => {
   }).format(new Date(startMs)) + ' (Central)'
   const typeLabel = type === 'home' ? 'Free in-home visit' : 'Phone consultation'
 
+  /* ── THE BOOKING SEAM (2026-09-19). A consultation booked on mo-care.com
+     used to exist ONLY as a booking row — completely outside Leads. Now the
+     journey connects: match to an existing lead by phone or email; one
+     confident match links it, no match creates the lead, an ambiguous match
+     fails safely into visible human work instead of silently merging people.
+     The booking row stays the booking source of truth; nothing here can fail
+     the booking itself. */
+  let leadLinked = ''
+  try {
+    const normB = (p: unknown) => String(p || '').replace(/\D/g, '').slice(-10)
+    const digitsB = normB(phone)
+    const emailB = email.toLowerCase()
+    const { data: lr } = await supabase.from('app_data').select('data').eq('key', 'leads').maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    const leadsB: any[] = Array.isArray(lr?.data) ? lr!.data : []
+    const hitSet = new Set([
+      ...(digitsB.length === 10
+        ? leadsB.filter((l) => !l.archived && (normB(l.phone) === digitsB || normB(l.client_phone) === digitsB)) : []),
+      ...(emailB ? leadsB.filter((l) => !l.archived && String(l.email || '').toLowerCase() === emailB) : []),
+    ])
+    const hits = [...hitSet]
+    const consultDay = new Date(startMs).toLocaleDateString('en-CA', { timeZone: timezone })
+    const nowIsoB = new Date().toISOString()
+    const putB = (k: string, it: unknown) => supabase.rpc('upsert_app_data_item', { target_key: k, item: it })
+    // deno-lint-ignore no-explicit-any
+    const linkLead = async (l: any, created: boolean) => {
+      if (l.status !== 'Converted' && l.status !== 'Lost') {
+        l.status = 'Assessment Scheduled'
+        l.follow_up_branch = 'ready-to-start'
+        l.follow_up_due = consultDay
+      }
+      l.assessment_at = whenLabel
+      l.consult_booking_id = item.id
+      ldPush(l, { channel: 'web', direction: 'in', outcome: 'inquiry', actor: 'family',
+        note: `booked a ${typeLabel.toLowerCase()} for ${whenLabel}` })
+      await putB('leads', l)
+      // deno-lint-ignore no-explicit-any
+      ;(item as any).lead_id = l.id
+      await putB('consult_bookings', item)
+      const whoB = [l.first_name, l.last_name].filter(Boolean).join(' ').trim() || name
+      await putB('ops_items', {
+        id: `ops_consult_${l.id}`, kind: 'new_lead', source_id: String(l.id),
+        title: `Consultation booked — ${whoB}, ${whenLabel}`, about: whoB,
+        detail: `${typeLabel} booked on mo-care.com/book.html.` + (notes ? ` Their note: "${notes.slice(0, 300)}"` : '')
+          + (created ? ' (New family — this booking created the lead.)' : ''),
+        next_action: 'Confirm who is going, review their notes, and prepare for the consultation.',
+        phone: phone || '', domain: 'family_enquiries', status: 'open', urgency: 'high',
+        owner: '', owner_name: '', created_at: nowIsoB,
+        due: new Date(startMs).toISOString(),
+        created_by: 'cc-booking', opened_by: 'system' })
+      await opEvent(supabase, { verb: 'lead_consult_booked', item_id: String(l.id), area: 'growth_leads',
+        actor_name: whoB, summary: `${whoB} booked a ${typeLabel.toLowerCase()} — ${whenLabel}` })
+      leadLinked = created ? 'created' : 'linked'
+    }
+    if (hits.length === 1) {
+      await linkLead(hits[0], false)
+    } else if (hits.length === 0) {
+      const parts = name.split(/\s+/).filter(Boolean)
+      const fresh = {
+        id: crypto.randomUUID(),
+        first_name: parts[0] || name, last_name: parts.slice(1).join(' '),
+        phone, email, source: 'Consult booking', status: 'New',
+        interest_notes: (notes ? notes + '\n' : '') + `Booked a ${typeLabel.toLowerCase()} on book.html for ${whenLabel}.`,
+        created_at: nowIsoB,
+      }
+      await linkLead(fresh, true)
+    } else {
+      /* Ambiguous identity: never merge people silently. */
+      await putB('ops_items', {
+        id: `ops_consultmatch_${item.id}`, kind: 'request',
+        title: `Consultation booking matches ${hits.length} leads — link it by hand`,
+        about: name,
+        detail: `${name} (${phone}${email ? ', ' + email : ''}) booked a ${typeLabel.toLowerCase()} for ${whenLabel}, but the phone/email matches more than one lead. Open Leads, pick the right record (or merge the duplicates), and note the consultation there.`,
+        domain: 'family_enquiries', status: 'open', urgency: 'high',
+        owner: '', owner_name: '', created_at: nowIsoB,
+        due: new Date(Date.now() + 4 * 3600e3).toISOString(),
+        created_by: 'cc-booking', opened_by: 'system' })
+      leadLinked = 'ambiguous — raised for a human'
+    }
+  } catch (e) { console.warn('[cc-booking] lead seam failed (booking unaffected):', e) }
+
   // office notification (best effort — the booking is already saved)
   await ghlEmail('samantha@mo-care.com', 'Samantha',
     '📅 New consultation booked: ' + name + ', ' + whenLabel,
@@ -350,5 +433,5 @@ Deno.serve(async (req) => {
       + '<p>There’s nothing to prepare and nothing to sign. If you need to change the time, just call or text <a href="tel:14172348494">(417) 234-8494</a>.</p>'
       + '<p>Warmly,<br>Caring Companions In-Home Senior Care<br>1331 N Stewart Ave Ste B, Springfield, MO</p></div>')
   }
-  return json({ ok: true, id: item.id, when: whenLabel, confirmed })
+  return json({ ok: true, id: item.id, when: whenLabel, confirmed , lead: leadLinked })
 })

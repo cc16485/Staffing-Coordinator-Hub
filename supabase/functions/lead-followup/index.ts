@@ -27,6 +27,7 @@
 // Needs lead-followup.sql to have been run first.
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { ldPush } from '../_shared/lead-truth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -171,6 +172,8 @@ Deno.serve(async (req) => {
           `<p>If you would rather talk sooner, call us on <b>${OFFICE}</b> and we will pick up.</p>` +
           `<p>There is nothing you need to do in the meantime.</p>`)) {
           l.ack_sent_at = new Date().toISOString()
+          if (l.phone) ldPush(l, { channel: 'sms', direction: 'out', outcome: 'sent', actor: 'automation', note: 'acknowledgment' })
+          if (l.email) ldPush(l, { channel: 'email', direction: 'out', outcome: 'sent', actor: 'automation', note: 'acknowledgment' })
           await put(l); out.acknowledged++
         }
       }
@@ -197,6 +200,8 @@ Deno.serve(async (req) => {
           `<p>Hi ${first},</p><p>${line.replace(OFFICE, `<b>${OFFICE}</b>`)}</p>`)) {
           if (step === 1) l.nudge_1_at = new Date().toISOString()
           else l.nudge_2_at = new Date().toISOString()
+          if (l.phone) ldPush(l, { channel: 'sms', direction: 'out', outcome: 'sent', actor: 'automation', note: 'nudge ' + step })
+          if (l.email) ldPush(l, { channel: 'email', direction: 'out', outcome: 'sent', actor: 'automation', note: 'nudge ' + step })
           await put(l); out.nudged++
         }
       }

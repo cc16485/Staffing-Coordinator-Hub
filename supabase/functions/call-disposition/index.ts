@@ -32,6 +32,8 @@
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { pushCallNote } from '../_shared/axiscare-call-note.ts'
+import { opEvent } from '../_shared/events.ts'
+import { ldPush, looksLikeOptOut } from '../_shared/lead-truth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -173,6 +175,83 @@ Deno.serve(async (req) => {
                 } else out.would_flag = flagId
               }
             } else out.skipped = 'a case for this caller already exists today'
+          }
+        }
+      }
+      /* ---- FAMILY / LEAD REPLIES (2026-09-19) ---------------------------
+         Her finding: "Yes please call me" cannot live only inside GHL while
+         the operational system thinks nothing happened. If the number is NOT
+         a caregiver but matches exactly one lead, the reply becomes a
+         recorded event and a NEEDS-YOU item. Trivial texts are NOT skipped
+         here — a lead texting "Yes" is the whole point. No AI involved.
+         Replying to the family stays a human's job, in GHL. */
+      if (!out.heard && digits.length === 10 && smsText.trim().length >= 1) {
+        const { data: cgRows } = await supabase.from('phone_index').select('person_id').eq('phone', '+1' + digits)
+        let isCaregiverNum = false
+        // deno-lint-ignore no-explicit-any
+        const pids = [...new Set((cgRows || []).map((r: any) => String(r.person_id)))]
+        if (pids.length) {
+          const { data: srcAll } = await supabase.from('person_source_id')
+            .select('entity_type').in('person_id', pids).eq('system', 'axiscare')
+          isCaregiverNum = (srcAll || []).some((r) => r.entity_type === 'caregiver')
+        }
+        if (!isCaregiverNum) {
+          const leadsAll = await readKey('leads')
+          const hits = leadsAll.filter((l) => !l.archived
+            && (norm(l.phone) === digits || norm(l.client_phone) === digits))
+          if (hits.length === 1) {
+            const l = hits[0]
+            const who = [l.first_name, l.last_name].filter(Boolean).join(' ').trim() || 'A family'
+            const stamp2 = new Date().toISOString()
+            if (looksLikeOptOut(smsText)) {
+              l.do_not_contact = true
+              l.do_not_contact_at = stamp2
+              l.do_not_contact_reason = `their text: "${smsText.slice(0, 120)}"`
+              l.comm_log = Array.isArray(l.comm_log) ? l.comm_log : []
+              l.comm_log.push({ body: `🚫 Asked us to stop contacting them — "${smsText.slice(0, 200)}"`, at: stamp2, by: 'inbound text' })
+              ldPush(l, { channel: 'sms', direction: 'in', outcome: 'reply', actor: 'family', ref: smsText.slice(0, 200) })
+              await put('leads', l)
+              await put('ops_items', {
+                id: `ops_leaddnc_${l.id}`, kind: 'new_lead', source_id: String(l.id),
+                title: `${who} asked us to stop contacting them`, about: who,
+                detail: `They texted: "${smsText.slice(0, 300)}". Do-not-contact is now recorded and every automated sender skips them. Nothing else to send — this is only so a human knows.`,
+                domain: 'family_enquiries', status: 'open', urgency: 'normal',
+                owner: '', owner_name: '', created_at: stamp2,
+                due: new Date(Date.now() + 24 * 3600e3).toISOString(),
+                created_by: 'call-disposition', opened_by: 'system' })
+              await opEvent(supabase, { verb: 'lead_opted_out', item_id: String(l.id), area: 'growth_leads',
+                actor_name: who, summary: `${who} asked us to stop contacting them (recorded, senders will skip them)` })
+              out.lead_opt_out = l.id
+            } else {
+              ldPush(l, { channel: 'sms', direction: 'in', outcome: 'reply', actor: 'family', ref: smsText.slice(0, 200) })
+              l.comm_log = Array.isArray(l.comm_log) ? l.comm_log : []
+              l.comm_log.push({ body: `💬 They texted: "${smsText.slice(0, 300)}"`, at: stamp2, by: 'inbound text' })
+              await put('leads', l)
+              const day2 = stamp2.slice(0, 10).replaceAll('-', '')
+              await put('ops_items', {
+                id: `ops_leadreply_${l.id}_${day2}`, kind: 'new_lead', source_id: String(l.id),
+                coverage_case_id: '',
+                title: `${who} replied — waiting for a human response`, about: who,
+                detail: `They texted: "${smsText.slice(0, 300)}". Nobody has answered yet — reply from their conversation in GHL (open their lead profile → Conversations), then log what happened.`,
+                next_action: 'Open the lead, read the reply in Conversations, and answer as a person.',
+                phone: l.phone || '', domain: 'family_enquiries', status: 'open', urgency: 'high',
+                owner: '', owner_name: '', created_at: stamp2,
+                due: new Date(Date.now() + 3600e3).toISOString(),
+                created_by: 'call-disposition', opened_by: 'system' })
+              await opEvent(supabase, { verb: 'lead_reply_received', item_id: String(l.id), area: 'growth_leads',
+                actor_name: who, summary: `${who} replied by text — waiting for a human response` })
+              out.lead_reply = l.id
+            }
+          } else if (hits.length > 1) {
+            await put('ops_items', {
+              id: `ops_leadreply_multi_${digits}_${new Date().toISOString().slice(0, 10)}`,
+              kind: 'request', title: `A text from ${callerPhone} matches ${hits.length} leads — who is it?`,
+              detail: `They wrote: "${smsText.slice(0, 300)}". The number matches more than one lead, so nothing was recorded automatically — read it in GHL, put it on the right lead, and consider merging the duplicates.`,
+              domain: 'family_enquiries', status: 'open', urgency: 'high',
+              owner: '', owner_name: '', created_at: new Date().toISOString(),
+              due: new Date(Date.now() + 4 * 3600e3).toISOString(),
+              created_by: 'call-disposition', opened_by: 'system' })
+            out.lead_reply = 'ambiguous — raised for a human'
           }
         }
       }
@@ -544,6 +623,30 @@ Deno.serve(async (req) => {
   lead.comm_log = Array.isArray(lead.comm_log) ? lead.comm_log : []
   lead.comm_log.push({ body: `☎ ${direction} call — ${disposition}${noteShort ? ': ' + noteShort : ''}`, at: stamp, by })
   if (transcript && !typedNote) lead.last_call_transcript = { at: stamp, text: cap(transcript, 8000) }
+
+  /* CONTACT TRUTH (2026-09-19). The disposition already tells us whether a
+     human actually spoke with the family or only tried. Record that as a
+     structured event instead of letting it dissolve into `contacted`.
+     Dispositions that only exist because a conversation happened (booked,
+     ready to start, not ready, follow up, researching, not interested) are
+     CONNECTED; no-answer/voicemail are attempts; a bad number is its own
+     outcome. Referral/other stay unclassified rather than guessed. */
+  const callDir: 'in' | 'out' = /in/i.test(String(direction)) ? 'in' : 'out'
+  if (is('no answer', 'voicemail')) {
+    ldPush(lead, { channel: 'call', direction: 'out',
+      outcome: is('voicemail') ? 'voicemail' : 'no_answer', actor: 'human', by })
+  } else if (is('incorrect number', 'bad number')) {
+    ldPush(lead, { channel: 'call', direction: 'out', outcome: 'wrong_number', actor: 'human', by })
+  } else if (is('booked visit', 'booked assessment', 'requested appointment', 'ready to start',
+                'lead - not ready', 'not ready', 'family deciding', 'follow up', 'call back',
+                'researching', 'not interested')) {
+    const firstTime = !lead.first_human_contact_at
+    ldPush(lead, { channel: 'call', direction: callDir, outcome: 'connected', actor: 'human', by,
+      note: disposition })
+    if (firstTime) await opEvent(supabase, { verb: 'lead_connected', item_id: String(lead.id), area: 'growth_leads',
+      actor_name: by || 'the office',
+      summary: `First real conversation with ${[lead.first_name, lead.last_name].filter(Boolean).join(' ') || 'a lead'} (${disposition})` })
+  }
 
   let outcome = 'logged'
   if (is('no answer', 'voicemail')) {

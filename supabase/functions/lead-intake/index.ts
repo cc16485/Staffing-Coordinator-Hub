@@ -6,6 +6,8 @@
 // Accepts JSON or normal form posts. Creates leads only — can't read anything.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { opEvent } from '../_shared/events.ts'
+import { ldPush } from '../_shared/lead-truth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -81,9 +83,15 @@ Deno.serve(async (req) => {
     follow_up_due: today, // the clock starts the moment they reach out
     created_at: new Date().toISOString(),
   }
+  /* Contact truth: the inquiry itself is the first event on the record. */
+  ldPush(lead, { channel: 'web', direction: 'in', outcome: 'inquiry', actor: 'family',
+    ref: (notes || '').slice(0, 200) })
 
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const { error } = await supabase.rpc('upsert_app_data_item', { target_key: 'leads', item: lead })
+  if (!error) await opEvent(supabase, { verb: 'lead_inquiry', item_id: String(lead.id), area: 'growth_leads',
+    actor_name: [lead.first_name, lead.last_name].filter(Boolean).join(' ') || 'a family',
+    summary: `New care inquiry from ${[lead.first_name, lead.last_name].filter(Boolean).join(' ') || 'the website'} (${lead.source})` })
   if (error) return json({ error: error.message }, 500)
 
   // Best-effort GHL contact (Caring Companions inbound webhook) so every
@@ -177,6 +185,9 @@ Deno.serve(async (req) => {
             acked = true
             // deno-lint-ignore no-explicit-any
             ;(lead as any).ack_sent_at = new Date().toISOString()
+            /* Automation said hello — recorded as automation, never as contact. */
+            if (phone) ldPush(lead, { channel: 'sms', direction: 'out', outcome: 'sent', actor: 'automation', note: 'acknowledgment' })
+            if (email) ldPush(lead, { channel: 'email', direction: 'out', outcome: 'sent', actor: 'automation', note: 'acknowledgment' })
             await supabase.rpc('upsert_app_data_item', { target_key: 'leads', item: lead })
           }
         } catch { /* the office alert below still needs to go out */ }

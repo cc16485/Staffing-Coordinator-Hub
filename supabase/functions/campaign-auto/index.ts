@@ -179,7 +179,7 @@ Deno.serve(async (req) => {
   // deno-lint-ignore no-explicit-any
   const inNurture = (l: any) => !!l.nurture_started_at && !l.nurture_stopped_at
   // deno-lint-ignore no-explicit-any
-  const hubLeads = leads.filter((l: any) => l.email && l.status !== 'Converted' && l.status !== 'Lost' && !inNurture(l))
+  const hubLeads = leads.filter((l: any) => l.email && l.status !== 'Converted' && l.status !== 'Lost' && !inNurture(l) && !l.do_not_contact)
     // deno-lint-ignore no-explicit-any
     .map((l: any) => ({ email: l.email, name: `${l.first_name || ''} ${l.last_name || ''}`.trim() }))
   audiences.monthly = dedupe([...acLeads, ...hubLeads])
@@ -229,6 +229,15 @@ Deno.serve(async (req) => {
     return json({ ok: true, audience: resolveAud, recipients: audiences[resolveAud] ?? [] })
   }
 
+  /* A recorded do-not-contact removes that email from every audience — the
+     lead pool, the client pool, family contacts, all of it. Fail closed. */
+  // deno-lint-ignore no-explicit-any
+  const dncEmails = new Set(leads.filter((l: any) => l.do_not_contact && l.email)
+    // deno-lint-ignore no-explicit-any
+    .map((l: any) => String(l.email).toLowerCase()))
+  for (const k of Object.keys(audiences))
+    audiences[k] = audiences[k].filter((r) => !dncEmails.has(String(r.email).toLowerCase()))
+
   // 4. Send
   const summary: string[] = []
   let totalSent = 0
@@ -248,7 +257,18 @@ Deno.serve(async (req) => {
         const uj = await up.json().catch(() => ({}))
         const contactId = uj?.contact?.id ?? uj?.id ?? null
         if (!contactId) { failed++; continue }
-        if (uj?.contact?.dnd === true) continue // respect do-not-disturb
+        if (uj?.contact?.dnd === true) {
+          /* They pressed STOP in GHL — make the hub remember it too. */
+          // deno-lint-ignore no-explicit-any
+          const hl = leads.find((l: any) => l.email && String(l.email).toLowerCase() === String(r.email).toLowerCase())
+          if (hl && !hl.do_not_contact) {
+            hl.do_not_contact = true
+            hl.do_not_contact_at = new Date().toISOString()
+            hl.do_not_contact_reason = 'GHL DND (STOP) — synchronized by campaign-auto'
+            await supabase.rpc('upsert_app_data_item', { target_key: 'leads', item: hl })
+          }
+          continue // respect do-not-disturb
+        }
         const sr = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
           method: 'POST', headers: sendH,
           body: JSON.stringify({ type: 'Email', contactId, subject: e.subj, html: html.replace(/\{first\}/g, parts[0] || 'there') }),
