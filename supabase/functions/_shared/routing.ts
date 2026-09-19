@@ -61,6 +61,63 @@ export function routeLabel(v: string): string {
   return s
 }
 
+/* ── SEAT → HUMAN RESOLUTION (her refinement, 2026-09-19) ────────────────
+   Responsibility stays stable ("Staffing"); the HUMAN comes from whoever
+   holds the live duty window at that moment. A one-off window beats the
+   weekly pattern (that is the override mechanism). Planned windows and
+   windows with no person NEVER hold duty. No holder = "NO DUTY HOLDER",
+   loudly — never a silent guess at whoever happens to be working
+   something else. Fallbacks are an explicit, Hub-approved setting. */
+export const SEAT_DUTY: Record<string, string> = {
+  staffing_coordinator: 'staffing',
+  'duty:staffing': 'staffing',
+  'duty:after_hours': 'after_hours',
+}
+
+export type DutyResolution = { holder: string | null; lane: string; oneOff: boolean; gap: boolean }
+
+export async function resolveDuty(sb: SB, lane: string, when: Date = new Date()): Promise<DutyResolution> {
+  try {
+    const { data } = await sb.from('app_data').select('data').eq('key', 'duty_windows').maybeSingle()
+    const rows: any[] = Array.isArray(data?.data) ? data!.data : []
+    const chi = new Date(when.toLocaleString('en-US', { timeZone: 'America/Chicago' }))
+    const covers = (w: any): boolean => {
+      if (!w || w.active === false) return false
+      if (String(w.status || '') === 'planned') return false
+      if (!w.person) return false
+      if (w.start && w.end) {
+        const t = when.getTime()
+        return t >= Date.parse(w.start) && t < Date.parse(w.end)
+      }
+      const rc = w.recur || {}
+      const days: number[] = rc.days || w.days || []
+      if (days.length && days.indexOf(chi.getDay()) === -1) return false
+      const [fh, fm] = String(rc.from || w.from || '00:00').split(':').map(Number)
+      const [th, tm] = String(rc.to || w.to || '23:59').split(':').map(Number)
+      const mins = chi.getHours() * 60 + chi.getMinutes()
+      const from = fh * 60 + (fm || 0), to = th * 60 + (tm || 0)
+      return from <= to ? (mins >= from && mins < to) : (mins >= from || mins < to)
+    }
+    const live = rows.filter((w) => w.area === lane && covers(w))
+    if (!live.length) return { holder: null, lane, oneOff: false, gap: true }
+    const oneOffs = live.filter((w) => w.start && w.end)
+    const chosen = (oneOffs.length ? oneOffs : live)[0]
+    return { holder: String(chosen.person), lane, oneOff: !!oneOffs.length, gap: false }
+  } catch {
+    return { holder: null, lane, oneOff: false, gap: true }
+  }
+}
+
+/** One notify-now entry → the human it means right now, spelled honestly. */
+export async function resolveEntry(sb: SB, v: string, when?: Date): Promise<string> {
+  const lane = SEAT_DUTY[String(v || '')]
+  if (!lane) return routeLabel(v)
+  const r = await resolveDuty(sb, lane, when)
+  return r.holder
+    ? `${routeLabel(r.holder)} (on duty: ${lane}${r.oneOff ? ', one-off override' : ''})`
+    : `NO DUTY HOLDER for ${lane}`
+}
+
 export async function shadowRoute(sb: SB, o: {
   area: string
   channel: string
@@ -70,15 +127,20 @@ export async function shadowRoute(sb: SB, o: {
 }): Promise<Route> {
   const r = await routeFor(sb, o.area)
   try {
+    /* Seat and duty entries resolve to the actual human at THIS moment, so
+       the shadow log proves the resolution itself before anything is live. */
+    let nowResolved: string[] = []
+    if (r.found) nowResolved = await Promise.all(r.now.map((v) => resolveEntry(sb, v)))
     await sb.from('op_events').insert({
       actor_email: '', actor_name: 'system', verb: 'routing_shadow',
       item_id: String(o.case_id || ''), area: o.area,
       summary: (`[shadow] ${o.channel}: production notified `
         + (o.production.join(', ') || 'nobody')
         + ' · playbook notify-now says '
-        + (r.found ? (r.now.map(routeLabel).join(', ') || 'nobody') : 'NO ROW FOR THIS AREA')
+        + (r.found ? (nowResolved.join(', ') || 'nobody') : 'NO ROW FOR THIS AREA')
         + (o.note ? ' · ' + o.note : '')).slice(0, 400),
       data: { channel: o.channel, production: o.production, would_now: r.now,
+              would_now_resolved: nowResolved,
               would_daily: r.daily, esc: r.esc, found: r.found },
     })
   } catch { /* the record is an observer, never a dependency */ }
