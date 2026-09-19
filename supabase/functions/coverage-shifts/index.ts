@@ -323,11 +323,22 @@ Deno.serve(async (req) => {
         scheduled_next_week: schedH,
         knows_client_visits: knowsClient.get(id) ?? 0,
       }
-      if (!a || !a.windows) { worthAsking.push(base); continue }
+      if (!a || !a.windows) {
+        /* HER RULE (2026-09-19): no availability form on file = assumed
+           available 24/7, minus the real schedule. Absence of data is a
+           yes until their form says otherwise — they rank in the MAIN
+           list, flagged, instead of a side pile. */
+        matches.push({ ...base, covers: `${combos.length}/${combos.length}`,
+          covers_n: combos.length, covered_slots: combos,
+          assumed_available: true, target_hours: null, hours_short: null })
+        continue
+      }
       const have = new Set<string>()
       for (const [d, ws] of Object.entries(a.windows as Record<string, string[]>))
         for (const w of (ws || [])) have.add(d + ':' + w)
       const covered = combos.filter(cb => have.has(cb))
+      /* They filled the form and these hours are OUTSIDE their windows —
+         their own words narrow it, exactly as promised. */
       if (!covered.length) continue
       const target = Number(a.target_hours)
       matches.push({ ...base,
@@ -339,10 +350,12 @@ Deno.serve(async (req) => {
       })
     }
     matches.sort((x, y) => (y.knows_client_visits - x.knows_client_visits)
-      || (y.covers_n - x.covers_n) || ((y.hours_short ?? -999) - (x.hours_short ?? -999)))
-    worthAsking.sort((x, y) => y.knows_client_visits - x.knows_client_visits)
+      || (y.covers_n - x.covers_n)
+      || ((x.assumed_available ? 1 : 0) - (y.assumed_available ? 1 : 0))   // a stated yes beats an assumed one
+      || ((y.hours_short ?? -999) - (x.hours_short ?? -999)))
+    void worthAsking
     return json({ asked_for: { days: wantDays, windows: wantWins, level: needLevel },
-      matches, worth_asking_no_availability: worthAsking.slice(0, 20) })
+      matches, worth_asking_no_availability: [] })
   }
 
   /* Mode 4: Hours Watch — scheduled hours in the next 7 days per caregiver,
