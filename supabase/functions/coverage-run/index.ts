@@ -859,7 +859,7 @@ Deno.serve(async (req) => {
         const phone = phoneOf(String(x.name))
         if (!phone) { failed.push(`${x.name} (no phone on the roster)`); continue }
         const contact = await contactForOutbound(sb, ghl2,
-          { phone, firstName: x.first || x.name }, 'urgent_internal')
+          { phone, firstName: x.first || x.name }, 'urgent_internal', { audience: 'caregiver' })
         if (!contact) { failed.push(`${x.name} (refused by the outbound gate)`); continue }
         const message = fillMsg(String(kase.kind) === 'interest' ? tmplInt
           : (x.tier === 1 ? tmpl1 : tmplO), x)
@@ -1176,7 +1176,7 @@ Deno.serve(async (req) => {
               if (ph) {
                 const contact = await contactForOutbound(sb, ghl,
                   { phone: ph, email: adm, firstName: person?.name || adm.split('@')[0] },
-                  'urgent_internal', { selfSupplied: true })
+                  'urgent_internal', { selfSupplied: true, audience: 'staff' })
                 if (contact) await fetch('https://services.leadconnectorhq.com/conversations/messages', {
                   method: 'POST',
                   headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
@@ -1331,7 +1331,7 @@ Deno.serve(async (req) => {
           for (const p of phonesQ) {
             try {
               const contact = await contactForOutbound(sb, ghl,
-                { phone: p, firstName: 'Scheduling' }, 'urgent_internal', { selfSupplied: true })
+                { phone: p, firstName: 'Scheduling' }, 'urgent_internal', { selfSupplied: true, audience: 'staff' })
               if (contact) await fetch('https://services.leadconnectorhq.com/conversations/messages', {
                 method: 'POST',
                 headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
@@ -1634,7 +1634,7 @@ Deno.serve(async (req) => {
       for (const x of wave) {
         /* An uncovered shift is the textbook urgent_internal: staff, 24/7. */
         const contact = await contactForOutbound(sb, ghl,
-          { phone: x.phone, firstName: x.first || x.name }, 'urgent_internal')
+          { phone: x.phone, firstName: x.first || x.name }, 'urgent_internal', { audience: 'caregiver' })
         if (!contact) continue
         const message = fill(x.tier === 1 ? tmpl1 : tmplO, x)
         let ok = false
@@ -1725,7 +1725,7 @@ Deno.serve(async (req) => {
           const phone = normalisePhone(person?.phone)
           if (phone) {
             const contact = await contactForOutbound(sb, ghl,
-              { phone, firstName: person?.name || own2.split('@')[0] }, 'urgent_internal', { selfSupplied: true })
+              { phone, firstName: person?.name || own2.split('@')[0] }, 'urgent_internal', { selfSupplied: true, audience: 'staff' })
             if (contact) {
               const msg = (String(settings.coverage_msg_escalation || '') ||
                 `Coverage alert: the callout for {client} {when} ran out of caregivers to ask ({asked} asked, nobody said yes). It needs a person now. Board: cc.mo-care.com`)

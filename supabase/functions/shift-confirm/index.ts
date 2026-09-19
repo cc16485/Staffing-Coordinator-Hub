@@ -182,7 +182,7 @@ Deno.serve(async (req) => {
       continue
     }
     /* Staff, about their own workday, deliberately before 8am: internal. */
-    const contact = await contactForOutbound(sb, ghl, { phone, firstName: first }, 'routine_internal')
+    const contact = await contactForOutbound(sb, ghl, { phone, firstName: first }, 'routine_internal', { audience: 'caregiver' })
     if (!contact) { refusedGate++; continue }
     try {
       const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {

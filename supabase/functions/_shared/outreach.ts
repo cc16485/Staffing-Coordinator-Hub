@@ -338,6 +338,78 @@ export async function outboundGate(
   return { ok: true, phone: dest.phone! }
 }
 
+/* =============================================================================
+   THE CLIENT LINE — audience autonomy (Samantha's law, 2026-09-19)
+
+   WHO a message goes to matters more than the channel it rides. "Cara can
+   send SMS" never means "Cara can send SMS to everyone": autonomy belongs to
+   the specific capability AND the specific recipient type.
+
+   The default: automation may NOT autonomously contact clients, family
+   members, responsible parties, leads or any client contact — any channel
+   (SMS, email, calls, AI voice). Elderly clients and their families get
+   HUMANS. Automation may detect, create work, draft wording, remind the
+   right admin, prepare the number and context, and track the promise — it
+   just may not press send.
+
+   Three ways a send is allowed:
+     1. the audience is one where autonomous operational outreach is an
+        approved workflow (caregivers, applicants, staff, references);
+     2. a HUMAN initiated this exact send (a coordinator pressed the button —
+        the machine is the pen, not the author);
+     3. Samantha explicitly enabled that one specific capability
+        (explicitlyEnabled is passed by the sender that carries her switch).
+   Everything else — including a MISSING or unknown audience — is refused.
+   Fail closed.
+
+   SENDERS THAT PREDATE THIS GATE and can reach families today (audited
+   2026-09-19; they must migrate to contactForOutbound or carry their own
+   explicit switch, and NO NEW family-facing sender may be built outside it):
+     lead-followup   autonomous texts to new-lead families (cron) — awaiting
+                     Samantha's explicit keep/stop decision
+     lead-nurture    drip to families; each enrollment human-started per lead
+     campaign-auto   calendar emails incl. client audience; per-audience
+                     switches in campaign_settings, default OFF (her switches)
+     campaign-send   batch email; hub-triggered by a human
+     cc-booking / cc-417 / cc-corner / cc-memories / cc-story / cc-feedback /
+     ht-local / ht-inbound / ht-support / stripe-webhook
+                     transactional replies to a person's own submission
+     circle-send / caregiver-intro
+                     family texts, human-pressed today (now declared so)
+   ============================================================================= */
+export type Audience =
+  | 'caregiver' | 'applicant' | 'staff' | 'reference'
+  | 'client' | 'family' | 'lead' | 'referral' | 'unknown'
+
+export const AUDIENCE_AUTONOMY: Record<Audience, boolean> = {
+  caregiver: true,    // coverage asks, shift confirms, check-ins — approved workflows
+  applicant: true,    // hiring ladder — approved
+  staff: true,        // office alerts — approved
+  reference: true,    // reference-chase, EMAIL ONLY by its own law (no SMS — TCPA)
+  client: false,      // humans call clients
+  family: false,      // humans call families
+  lead: false,        // a lead IS a family that hasn't signed yet
+  referral: false,    // relationship-timed, human territory
+  unknown: false,     // unknown never gets autonomous outreach
+}
+
+export function audienceGate(
+  audience: Audience | string | undefined,
+  opts: { humanInitiated?: boolean; explicitlyEnabled?: boolean } = {},
+): { allowed: boolean; reason: string } {
+  if (opts.humanInitiated)
+    return { allowed: true, reason: 'a person chose to send this' }
+  const aud = String(audience ?? 'unknown')
+  const known = Object.prototype.hasOwnProperty.call(AUDIENCE_AUTONOMY, aud)
+  if (known && AUDIENCE_AUTONOMY[aud as Audience])
+    return { allowed: true, reason: `autonomous ${aud} outreach is an approved workflow` }
+  if (opts.explicitlyEnabled)
+    return { allowed: true, reason: `this specific capability was explicitly enabled by Samantha` }
+  return { allowed: false, reason: known
+    ? `autonomous contact with a ${aud} is not permitted — a human makes this contact, unless Samantha explicitly enables this specific capability`
+    : `recipient type not declared — unknown audiences never get autonomous outreach` }
+}
+
 /**
  * The shared contact-resolution boundary.
  *
@@ -360,8 +432,16 @@ export async function contactForOutbound(
   ghl: { token: string; locationId: string },
   person: { phone?: unknown; email?: unknown; firstName?: unknown; lastName?: unknown },
   kind: OutreachClass,
-  opts: { selfSupplied?: boolean; now?: Date } = {},
+  opts: { selfSupplied?: boolean; now?: Date; audience?: Audience;
+          humanInitiated?: boolean; explicitlyEnabled?: boolean } = {},
 ): Promise<{ contactId: string; phone: string | null } | null> {
+  /* WHO comes before HOW. A missing audience is 'unknown', and unknown is
+     refused — every sender through this boundary declares who it talks to. */
+  const who = audienceGate(opts.audience, opts)
+  if (!who.allowed) {
+    console.warn(`outbound refused [${kind}]: ${who.reason}`)
+    return null
+  }
   const email = String(person.email ?? '').trim()
   const hasPhone = !!normalisePhone(person.phone)
 

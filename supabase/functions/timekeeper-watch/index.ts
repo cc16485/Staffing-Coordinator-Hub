@@ -328,7 +328,7 @@ Deno.serve(async (req) => {
            happening right now. urgent_internal, 24/7 — a 6am shift needs its
            6:03 nudge. contactForOutbound applies the identity gate. */
         const contact = await contactForOutbound(sb, ghl,
-          { phone, firstName: String(cg?.first ?? '') || cgName.split(' ')[0] }, 'urgent_internal')
+          { phone, firstName: String(cg?.first ?? '') || cgName.split(' ')[0] }, 'urgent_internal', { audience: 'caregiver' })
         if (!contact) { refusedGate++; l.notes.push('Text refused by the outbound gate (untrusted number).'); await save(l) }
         else {
           const message = msgTmpl.replaceAll('{first_name}', String(cg?.first ?? '') || cgName.split(' ')[0])
@@ -393,7 +393,7 @@ Deno.serve(async (req) => {
         await shadowRoute(sb, { area: 'sched_clockins', channel: 'missed clock-in office SMS',
           production: alertPhones, case_id: String(l.id) })
         for (const p of alertPhones) {
-          const contact = await contactForOutbound(sb, ghl, { phone: p, firstName: 'Office' }, 'urgent_internal')
+          const contact = await contactForOutbound(sb, ghl, { phone: p, firstName: 'Office' }, 'urgent_internal', { audience: 'staff' })
           if (!contact) continue
           const alertMsg = `Cara here. ${cgName} has not clocked in for ${clientFirst}'s ${clock12(shiftTime)} shift `
             + `(${Math.round(late)} min past start)${l.texted_at ? ', no response to my text' : ''}. `
@@ -441,7 +441,7 @@ Deno.serve(async (req) => {
       continue
     }
     const contact = await contactForOutbound(sb, ghl,
-      { phone, firstName: String(cg?.first ?? '') || cgName.split(' ')[0] }, 'urgent_internal')
+      { phone, firstName: String(cg?.first ?? '') || cgName.split(' ')[0] }, 'urgent_internal', { audience: 'caregiver' })
     if (!contact) { refusedGate++; continue }
     const message = msgOutTmpl.replaceAll('{first_name}', String(cg?.first ?? '') || cgName.split(' ')[0])
       .replaceAll('{client}', clientFirst).replaceAll('{time}', clock12(endTime))
@@ -516,7 +516,7 @@ Deno.serve(async (req) => {
         const phone = normalisePhone(cg?.phone)
         if (!phone) continue
         const contact = await contactForOutbound(sb, ghl,
-          { phone, firstName: String(cg?.first ?? '') || cgName.split(' ')[0] }, 'routine_internal')
+          { phone, firstName: String(cg?.first ?? '') || cgName.split(' ')[0] }, 'routine_internal', { audience: 'caregiver' })
         if (!contact) continue
         const miss = !cin && !cout ? 'clock-in and clock-out' : !cin ? 'clock-in' : 'clock-out'
         const clientFirst = String(v?.client?.firstName ?? '').trim() || 'your client'

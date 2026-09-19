@@ -200,7 +200,7 @@ Deno.serve(async (req) => {
       first_seen: new Date().toISOString(), how: 'alerted', texted: false, emailed: false } })
     known.add(m.id)
     if (!phone) { skippedNoPhone++; continue }
-    const contact = await contactForOutbound(sb, ghl, { phone, firstName: first }, 'routine_internal')
+    const contact = await contactForOutbound(sb, ghl, { phone, firstName: first }, 'routine_internal', { audience: 'caregiver' })
     if (!contact) { refusedGate++; continue }
     try {
       const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {

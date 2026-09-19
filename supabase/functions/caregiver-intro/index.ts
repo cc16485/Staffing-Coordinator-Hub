@@ -160,7 +160,11 @@ Deno.serve(async (req) => {
       const dest = await contactForOutbound(
         supabase, { token: ghlToken!, locationId: ghlLocation! },
         { phone: c.phone, email: c.email, firstName: first },
-        'caregiver-intro')
+        'caregiver-intro',
+        /* Family recipients — a human sends this today. The planned AxisCare
+           auto-trigger will be REFUSED by the audience gate until Samantha
+           explicitly enables that capability. */
+        { audience: 'family', humanInitiated: true })
       if (!dest) continue
       const contactId = dest.contactId
 

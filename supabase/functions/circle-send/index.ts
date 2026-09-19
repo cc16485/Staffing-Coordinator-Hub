@@ -89,7 +89,9 @@ Deno.serve(async (req) => {
       const dest = await contactForOutbound(
         supabase, { token: ghlToken!, locationId: ghlLocation! },
         { phone: c.phone, email: c.email, firstName: first },
-        'circle-send')
+        'circle-send',
+        /* Family recipients — allowed because a coordinator pressed Send. */
+        { audience: 'family', humanInitiated: true })
       if (!dest) continue
       const contactId = dest.contactId
 
