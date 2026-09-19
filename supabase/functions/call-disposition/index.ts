@@ -178,13 +178,18 @@ Deno.serve(async (req) => {
           }
         }
       }
-      /* ---- FAMILY / LEAD REPLIES (2026-09-19) ---------------------------
-         Her finding: "Yes please call me" cannot live only inside GHL while
-         the operational system thinks nothing happened. If the number is NOT
-         a caregiver but matches exactly one lead, the reply becomes a
-         recorded event and a NEEDS-YOU item. Trivial texts are NOT skipped
-         here — a lead texting "Yes" is the whole point. No AI involved.
-         Replying to the family stays a human's job, in GHL. */
+      /* ---- THE ONE INBOUND PIPE (her design, 2026-09-19) -----------------
+         One GHL "Customer Replied → SMS → webhook" workflow gives the
+         operating system EARS, never a voice. Every inbound text is
+         classified by IDENTITY, in this order:
+           caregiver  → the call-off ears above (existing workflow)
+           staff      → internal chatter; noted, no item
+           one lead   → recorded reply + NEEDS-YOU for a human response
+                        (or a recorded opt-out)
+           many leads → visible reconcile work, never a silent merge
+           unknown    → human-review item, once per number per day
+         Nothing in this pipe sends anything to anyone. Trivial texts are
+         NOT skipped for leads — a lead texting "Yes" is the whole point. */
       if (!out.heard && digits.length === 10 && smsText.trim().length >= 1) {
         const { data: cgRows } = await supabase.from('phone_index').select('person_id').eq('phone', '+1' + digits)
         let isCaregiverNum = false
@@ -195,7 +200,23 @@ Deno.serve(async (req) => {
             .select('entity_type').in('person_id', pids).eq('system', 'axiscare')
           isCaregiverNum = (srcAll || []).some((r) => r.entity_type === 'caregiver')
         }
+        /* Staff and office numbers are internal — never items, never noise. */
+        let isStaffNum = false
         if (!isCaregiverNum) {
+          const { data: stfRow } = await supabase.from('app_data').select('data').eq('key', 'coordinator_staff').maybeSingle()
+          // deno-lint-ignore no-explicit-any
+          const staffPhones = new Set((Array.isArray(stfRow?.data) ? stfRow!.data : [])
+            // deno-lint-ignore no-explicit-any
+            .map((s: any) => norm(s.phone)).filter((p: string) => p.length === 10))
+          const { data: osRow } = await supabase.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+          const oPhones = osRow?.data?.coverage_alert_phones
+          if (Array.isArray(oPhones)) oPhones.forEach((p: unknown) => {
+            const d = norm(String(p ?? '')); if (d.length === 10) staffPhones.add(d)
+          })
+          isStaffNum = staffPhones.has(digits)
+          if (isStaffNum) out.staff = 'internal number — left in the GHL inbox'
+        }
+        if (!isCaregiverNum && !isStaffNum) {
           const leadsAll = await readKey('leads')
           const hits = leadsAll.filter((l) => !l.archived
             && (norm(l.phone) === digits || norm(l.client_phone) === digits))
@@ -252,6 +273,28 @@ Deno.serve(async (req) => {
               due: new Date(Date.now() + 4 * 3600e3).toISOString(),
               created_by: 'call-disposition', opened_by: 'system' })
             out.lead_reply = 'ambiguous — raised for a human'
+          } else {
+            /* UNKNOWN NUMBER — fail safely into human review, never silence.
+               A real message from a number we can't place deserves eyes;
+               spam and one-word noise stays in the GHL inbox. One item per
+               number per day, and a closed item is never resurrected. */
+            if (smsText.trim().length >= 8 && !trivial) {
+              const dayU = new Date().toISOString().slice(0, 10).replaceAll('-', '')
+              const idU = `ops_unktext_${digits}_${dayU}`
+              const itemsAll = await readKey('ops_items')
+              if (!itemsAll.some((i) => i.id === idU)) {
+                await put('ops_items', {
+                  id: idU, kind: 'request',
+                  title: `Text from an unknown number — who is this?`,
+                  about: callerPhone,
+                  detail: `${callerPhone} texted: "${smsText.slice(0, 300)}". The number matches no caregiver, no staff, and no lead. Read it in GHL — if it's a new family, add them as a lead; if it's a caregiver's new number, fix the roster.`,
+                  domain: 'office_ops', status: 'open', urgency: 'normal',
+                  owner: '', owner_name: '', created_at: new Date().toISOString(),
+                  due: new Date(Date.now() + 8 * 3600e3).toISOString(),
+                  created_by: 'call-disposition', opened_by: 'system' })
+                out.unknown = 'raised for human review'
+              } else out.unknown = 'already raised today'
+            } else out.unknown = 'short/trivial text from unknown number — left in the GHL inbox'
           }
         }
       }
