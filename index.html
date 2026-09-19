@@ -7189,9 +7189,27 @@ function getEVVCorrections() {
   try { return JSON.parse(localStorage.getItem('cc_evv_corrections')) || []; }
   catch(e) { return []; }
 }
-function saveEVVCorrections(arr) {
+async function saveEVVCorrections(arr) {
+  /* MERGE-SAFE (2026-09-19): the CC hub now also logs and updates
+     corrections (item-level upserts). A whole-array save from THIS
+     browser's cache must first fold in any entries the database has that
+     the cache doesn't — otherwise a stale tab here would silently erase
+     corrections logged over there. Entries this tab knows win by id;
+     nothing here deletes, so nothing can resurrect. */
   localStorage.setItem('cc_evv_corrections', JSON.stringify(arr));
-  syncToSupabase('evv_corrections', arr);
+  let merged = arr;
+  try {
+    const { data } = await sb.from('app_data').select('data').eq('key', 'evv_corrections').single();
+    const remote = Array.isArray(data && data.data) ? data.data : [];
+    const haveIds = new Set(arr.map(e => String(e && e.id)));
+    const extras = remote.filter(e => e && !haveIds.has(String(e.id)));
+    if (extras.length) {
+      merged = arr.concat(extras)
+        .sort((a, b) => String((b && b.loggedAt) || '').localeCompare(String((a && a.loggedAt) || '')));
+      localStorage.setItem('cc_evv_corrections', JSON.stringify(merged));
+    }
+  } catch (e) { /* offline: the local save above still holds */ }
+  syncToSupabase('evv_corrections', merged);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────
