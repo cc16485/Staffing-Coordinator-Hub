@@ -47,6 +47,20 @@ export async function routeFor(sb: SB, area: string): Promise<Route> {
   }
 }
 
+/* Row values are stable keys (emails, seat keys, duty keys). The shadow log
+   is read by humans, so keys fold back to names here. The duty keys mean:
+   resolve through duty_windows at send time — Staffing window holder, else
+   After Hours window holder, else Samantha. Resolution itself stays unbuilt
+   until routing leaves shadow; the LABEL just tells the truth about intent. */
+export function routeLabel(v: string): string {
+  const s = String(v || '')
+  if (s === 'duty:staffing') return 'whoever is on duty (Staffing)'
+  if (s === 'duty:after_hours') return 'whoever is on duty (After-hours)'
+  if (s === 'staffing_coordinator') return 'Staffing Coordinator'
+  if (s.includes('@')) { const n = s.split('@')[0]; return n.charAt(0).toUpperCase() + n.slice(1) }
+  return s
+}
+
 export async function shadowRoute(sb: SB, o: {
   area: string
   channel: string
@@ -62,7 +76,7 @@ export async function shadowRoute(sb: SB, o: {
       summary: (`[shadow] ${o.channel}: production notified `
         + (o.production.join(', ') || 'nobody')
         + ' · playbook notify-now says '
-        + (r.found ? (r.now.join(', ') || 'nobody') : 'NO ROW FOR THIS AREA')
+        + (r.found ? (r.now.map(routeLabel).join(', ') || 'nobody') : 'NO ROW FOR THIS AREA')
         + (o.note ? ' · ' + o.note : '')).slice(0, 400),
       data: { channel: o.channel, production: o.production, would_now: r.now,
               would_daily: r.daily, esc: r.esc, found: r.found },
