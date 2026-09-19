@@ -57,6 +57,37 @@ Deno.serve(async (req) => {
   const phone = pick('phone', 'phone_number', 'mobile', 'tel')
   const email = pick('email', 'email_address')
   if (!first && !phone && !email) return json({ error: 'submission had no name, phone or email' }, 400)
+
+  /* ── COURSE SIGNUPS ARE NOT CARE LEADS (her finding, 2026-09-19) ──────
+     Somebody finishing a Dementia Journey module and wanting the next one
+     gave us an email, not a care inquiry. They must never enter the lead
+     pipeline, never be told "a care coordinator will call you shortly",
+     never trip the untouched-lead alarms, and never skew conversion
+     numbers. They land on their own list, carrying exactly what they
+     asked for. Explicit kind wins; the legacy pattern (paren-tagged name,
+     no phone) catches pages published before this change. */
+  const msgRaw = pick('message', 'notes', 'comments', 'situation', 'how_can_we_help', 'description')
+  const isCourseSignup = pick('kind') === 'course_signup'
+    || (!phone && fullName.startsWith('(')
+        && /journey|academy|module|waitlist/i.test(fullName + ' ' + msgRaw))
+  if (isCourseSignup) {
+    if (!email) return json({ error: 'an email is needed' }, 400)
+    const sbC = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+    const { error: cErr } = await sbC.rpc('upsert_app_data_item', { target_key: 'course_signups', item: {
+      id: 'cs_' + crypto.randomUUID().slice(0, 12),
+      email: email.toLowerCase(),
+      course: pick('course') || (/family.academy/i.test(fullName + ' ' + msgRaw) ? 'family-academy' : 'dementia-journey'),
+      module: pick('module') || '',
+      tag: fullName || '',
+      asked_for: msgRaw.slice(0, 300) || 'course updates',
+      at: new Date().toISOString(),
+    } })
+    if (cErr) return json({ error: cErr.message }, 500)
+    /* No lead. No ack. No alerts. They get exactly the notification they
+       asked for, when a human (or an explicitly approved capability)
+       sends it. */
+    return json({ status: 'signup recorded', routed: 'course_signup' })
+  }
   /* Who sent them. Asked on the form as one optional line, and kept as its own
      field rather than buried in the notes, because "which partner is actually
      working" is a question worth being able to count. */
