@@ -201,6 +201,90 @@ Deno.serve(async (req) => {
     } catch (err) { return json({ error: String(err) }, 502) }
   }
 
+  /* Mode 6: THE TEAM-BUILDER POOL (2026-09-19, her staffing board — the
+     interactive replacement for the paper chart). ONE read hands the browser
+     everything it needs to compute per-slot fit, conflicts and running
+     hours locally while the coordinator pencils people in: the active
+     census (levels, nurses out, town+zip), every availability record
+     (windows + when it was last updated, for staleness), and each
+     caregiver's scheduled visits for the next 14 days. Read-only. */
+  if (b.team_pool === true) {
+    const { token, site } = axisCreds()
+    if (!token || !site) return json({ error: 'AxisCare credentials not set on this project' }, 502)
+    const levelOf6 = (classes: unknown): number | null => {
+      let best: number | null = null
+      for (const c of rowsOf(classes)) {
+        const t = String((c as { label?: unknown; code?: unknown })?.label ?? (c as { code?: unknown })?.code ?? '').toLowerCase()
+        const m = t.match(/level\s*([123])/)
+        const lv = m ? Number(m[1]) : /complex/.test(t) ? 3 : /personal\s*care/.test(t) ? 2 : /wellness/.test(t) ? 1 : null
+        if (lv != null && (best == null || lv > best)) best = lv
+      }
+      return best
+    }
+    // deno-lint-ignore no-explicit-any
+    const pool = new Map<string, any>()
+    let url6: string | null = `https://${site}.axiscare.com/api/caregivers`
+    try {
+      for (let page = 0; url6 && page < 12; page++) {
+        const r: Response = await fetch(url6, { headers: {
+          Authorization: `Bearer ${token}`, Accept: 'application/json',
+          'X-AxisCare-Api-Version': AC_VERSION } })
+        if (!r.ok) return json({ error: `AxisCare responded ${r.status}` }, 502)
+        // deno-lint-ignore no-explicit-any
+        const j: any = await r.json().catch(() => ({}))
+        for (const g of rowsOf(j?.results?.caregivers ?? j?.caregivers)) {
+          if (g?.status?.active !== true || g?.id == null) continue
+          // deno-lint-ignore no-explicit-any
+          if (rowsOf(g?.classes).some((k: any) => /nurse|\bRN\b|\bLPN\b/i.test(String(k?.label ?? k?.code ?? '')))) continue
+          const nm = [String(g?.firstName ?? '').trim(), String(g?.lastName ?? '').trim()].filter(Boolean).join(' ')
+          if (!nm) continue
+          pool.set(String(g.id), { axiscare_id: String(g.id), name: nm,
+            level: levelOf6(g?.classes),
+            city: String(g?.residentialAddress?.city ?? '').trim() || null,
+            zip: String(g?.residentialAddress?.postalCode ?? g?.residentialAddress?.zip ?? '').trim() || null,
+            windows: null, availability_updated: null, target_hours: null,
+            visits: [] })
+        }
+        url6 = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
+      }
+    } catch (err) { return json({ error: String(err) }, 502) }
+    const { createClient: cc6 } = await import('https://esm.sh/@supabase/supabase-js@2')
+    const sb6 = cc6(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+    const { data: avRow6 } = await sb6.from('app_data').select('data').eq('key', 'caregiver_availability').maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    for (const a of (Array.isArray(avRow6?.data) ? avRow6!.data : []) as any[]) {
+      const p = pool.get(String(a?.axiscare_id ?? ''))
+      if (!p) continue
+      p.windows = a.windows ?? null
+      p.availability_updated = a.updated_at ?? null
+      const t = Number(a.target_hours); if (Number.isFinite(t)) p.target_hours = t
+    }
+    const start6 = chiToday(), end6 = addCalDays(start6, 13)
+    let vu: string | null = `https://${site}.axiscare.com/api/visits?startDate=${start6}&endDate=${end6}`
+    try {
+      for (let page = 0; vu && page < 12; page++) {
+        const r: Response = await fetch(vu, { headers: {
+          Authorization: `Bearer ${token}`, Accept: 'application/json',
+          'X-AxisCare-Api-Version': AC_VERSION } })
+        if (!r.ok) break
+        // deno-lint-ignore no-explicit-any
+        const j: any = await r.json().catch(() => ({}))
+        for (const v of rowsOf(j?.results?.visits ?? j?.visits)) {
+          if (v?.removed || v?.caregiver?.id == null) continue
+          const p = pool.get(String(v.caregiver.id)); if (!p) continue
+          const s = String(v?.scheduledStartDate ?? v?.startDate ?? '')
+          const e = String(v?.scheduledEndDate ?? v?.endDate ?? '')
+          if (!s) continue
+          p.visits.push({ day: s.slice(0, 10), start: s.slice(11, 16), end: e.slice(11, 16),
+            client: String(v?.client?.firstName ?? '').trim() || '?' })
+        }
+        vu = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
+      }
+    } catch { /* schedules partial = conflicts partial; the board says what it has */ }
+    return json({ window: `${start6}..${end6}`, count: pool.size,
+      caregivers: [...pool.values()].sort((a, b) => a.name.localeCompare(b.name)) })
+  }
+
   /* Mode 5: THE INTAKE MATCHER — "who could staff Mon/Wed/Fri mornings?"
      answered while the lead is still on the phone. Composes the live active
      census (level classes, nurses excluded), each caregiver's self-declared
