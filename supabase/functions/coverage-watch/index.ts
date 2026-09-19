@@ -30,6 +30,7 @@
 //   Samantha can pick the exact reason names before going live.
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { opEvent } from '../_shared/events.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -237,7 +238,12 @@ Deno.serve(async (req) => {
         resolved_at: null, resolved_how: null, covered_by: null,
       }
       const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
-      if (!error) { created++; openByVisit.add(visitId) }
+      if (!error) {
+        created++; openByVisit.add(visitId)
+        await opEvent(sb, { verb: 'coverage_opened', item_id: c.id, area: 'coverage',
+          summary: `Cara opened a call-off case — ${clientName || 'a client'} ${entry.shift_date} ${entry.shift_time}`
+            + (entry.calling_off ? `, ${entry.calling_off} calling off` : '') })
+      }
     }
   }
 
@@ -340,7 +346,11 @@ Deno.serve(async (req) => {
             resolved_at: null, resolved_how: null, covered_by: null,
           }
           const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
-          if (!error) { ongoingCreated++; haveSweepCase.add(c.id) }
+          if (!error) {
+            ongoingCreated++; haveSweepCase.add(c.id)
+            await opEvent(sb, { verb: 'coverage_opened', item_id: c.id, area: 'coverage',
+              summary: `Cara opened an ongoing-shifts case — ${clientName || 'a client'}, ${dates.length} open ${weekdays} date${dates.length === 1 ? '' : 's'}` })
+          }
         }
       }
       /* ── PATTERN INTELLIGENCE (her pick #4, 2026-09-19): a slot that keeps

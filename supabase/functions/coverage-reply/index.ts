@@ -23,6 +23,7 @@
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { shadowRoute } from '../_shared/routing.ts'
+import { opEvent } from '../_shared/events.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -206,6 +207,8 @@ Deno.serve(async (req) => {
     a.reply = text.slice(0, 500)
     a.state = 'inquiry'
     routed = 'reply matches two open callouts — raised for a human to place it'
+    await opEvent(sb, { verb: 'item_created', item_id: String(c.id), area: 'coverage',
+      summary: `Cara raised: ${a.name} replied but is on ${caseIds.size} open callouts — a human places it` })
     await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
       id: `ops_covq_multi_${norm(String(a.phone || contactId))}_${Date.now().toString(36)}`,
       kind: 'coverage', coverage_case_id: c.id,
@@ -259,6 +262,8 @@ Deno.serve(async (req) => {
         if (strange) {
           a.state = 'inquiry'
           routed = `yes — but the reply mentions "${strange}", which reads like a different client than ${c.client || 'this case'}. Routed to a human.`
+          await opEvent(sb, { verb: 'item_created', item_id: String(c.id), area: 'coverage',
+            summary: `Cara raised: ${a.name} said yes but may mean a DIFFERENT client than ${c.client || '?'} — confirm before accepting` })
           await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
             id: `ops_covq_${c.id}_${norm(String(a.phone || contactId))}`,
             kind: 'coverage', coverage_case_id: c.id,
@@ -281,6 +286,9 @@ Deno.serve(async (req) => {
     if (String(c.kind) === 'interest') {
       a.state = 'yes'
       routed = 'interested — collected on the case'
+      await opEvent(sb, { verb: 'yes_received', item_id: String(c.id), area: 'coverage',
+        actor_name: String(a.name || 'a caregiver'),
+        summary: `${a.name} is interested in the ${c.client || 'new client'} hours (interest check)` })
       await sms(contactId || a.ghl_contact_id,
         (String(settings.coverage_msg_ack_interest || '') ||
          `Thank you {first_name}! Nothing is set yet — we're meeting the client first and we'll follow up with you about the hours.`)
@@ -298,6 +306,11 @@ Deno.serve(async (req) => {
     a.state = 'yes'
     const yeses = (Array.isArray(c.asked) ? c.asked : []).filter((x: any) => x.state === 'yes')
     routed = `YES ${yeses.length === 1 ? '' : '(' + yeses.length + ' so far) '}— collected silently; the office picks from all the yeses`
+    await opEvent(sb, { verb: 'yes_received', item_id: String(c.id), area: 'coverage',
+      actor_name: String(a.name || 'a caregiver'),
+      summary: `${a.name} said YES to ${c.client || 'the shift'}`
+        + ` ${[c.shift_date, c.shift_time].filter(Boolean).join(' ')}`.trimEnd()
+        + (yeses.length > 1 ? ` (${yeses.length} yeses now)` : ' (first yes)') })
     await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
       id: `ops_covfill_${c.id}`, kind: 'coverage', coverage_case_id: c.id,
       title: yeses.length === 1
@@ -327,6 +340,8 @@ Deno.serve(async (req) => {
   } else {
     a.state = 'inquiry'
     routed = 'inquiry — raised for a human to answer'
+    await opEvent(sb, { verb: 'item_created', item_id: String(c.id), area: 'coverage',
+      summary: `Cara raised: ${a.name} has a question about the ${c.client || ''} callout — "${text.slice(0, 120)}"` })
     await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
       id: `ops_covq_${c.id}_${norm(String(a.phone || contactId))}`, kind: 'coverage',
       coverage_case_id: c.id,

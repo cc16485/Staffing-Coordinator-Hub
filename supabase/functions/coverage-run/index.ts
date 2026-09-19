@@ -30,6 +30,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { maySendTo, normalisePhone, contactForOutbound } from '../_shared/outreach.ts'
 import { ZIP_LL } from '../_shared/zip-centroids.ts'
 import { shadowRoute } from '../_shared/routing.ts'
+import { opEvent } from '../_shared/events.ts'
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -1253,10 +1254,14 @@ Deno.serve(async (req) => {
         ? Number(settings.coverage_quiet_callout_min) : 30
       if (newestQ && Date.now() - newestQ > quietMin * 60000
           && String(c.quiet_nudged_for || '') !== String(newestQ)) {
+        /* First look at THIS quiet wave? The ops item and the shadow row are
+           written once per wave — a re-upsert on later ticks would resurrect
+           an item somebody already closed. */
+        const firstLookQ = String(c.quiet_suppressed_for || '') !== String(newestQ)
         // deno-lint-ignore no-explicit-any
         const noes = c.asked.filter((a: any) => a.state === 'no').length
         const whenQ = [c.shift_date, span12(c.shift_time)].filter(Boolean).join(' ') || 'the shift'
-        await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
+        if (firstLookQ) await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
           id: `ops_covquiet_${c.id}_${newestQ}`, kind: 'coverage', coverage_case_id: c.id,
           title: `Nobody's answered — ${c.client || 'shift'} ${whenQ}, ${c.asked.length} asked`,
           about: c.client || '',
@@ -1266,19 +1271,29 @@ Deno.serve(async (req) => {
           due: new Date(Date.now() + 3600000).toISOString(),
           created_by: 'coverage-run', opened_by: 'quiet-callout',
         } })
-        let soonQ = false
+        if (firstLookQ) await opEvent(sb, { verb: 'item_created', item_id: String(c.id), area: 'coverage',
+          summary: `Cara raised: nobody's answered — ${c.client || 'shift'} ${whenQ}, ${c.asked.length} asked, zero yes` })
+        let soonQ = false, minsToShiftQ = 0
         if (c.shift_date) {
           const sH = String(c.shift_time || '').split('-')[0] || '23:59'
           const chiNowQ = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).replace(' ', 'T')
           const dMs = new Date(`${c.shift_date}T${/^\d\d:\d\d$/.test(sH) ? sH : '23:59'}:00`).getTime() - new Date(chiNowQ).getTime()
           soonQ = dMs > 0 && dMs < 3 * 3600000
+          minsToShiftQ = Math.max(0, Math.round(dMs / 60000))
         }
-        /* Step 3: claim-aware suppression, on this ONE notification type. If
-           any open ops item on this case is CLAIMED, somebody is actively
-           handling it — the Needs-You item above still appears (visibility),
-           but the office phones are not texted (interruption). An unclaimed
-           case behaves exactly as it always has. */
-        let claimedByQ = ''
+        /* CLAIM-AWARE SUPPRESSION WITH A CLOCK. A claim means somebody is
+           handling this — while it stays TRUE the office phones stay quiet.
+           Truth is measured, not assumed: meaningful movement is the claim
+           itself, activity logged on the item, new asks going out, or
+           replies coming in. When a claimed case sits without movement for
+           the same window that defines "too quiet" (quietMin, the number
+           the office already runs), and the shift is inside the existing
+           under-3-hour danger window, the claim stops protecting it.
+
+           Shaped so the Playbook can take over later: staleness threshold
+           and time-to-shift are inputs here, and the sched_calloffs row's
+           escalation rule can replace quietMin once routing goes live. */
+        let claimedByQ = '', lastMoveQ = 0
         try {
           const { data: oiQ } = await sb.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
           // deno-lint-ignore no-explicit-any
@@ -1286,16 +1301,33 @@ Deno.serve(async (req) => {
           // deno-lint-ignore no-explicit-any
           const clQ = rowsQ.find((x: any) => x?.status === 'open' && x?.claimed_by
             && String(x?.coverage_case_id || '') === String(c.id))
-          claimedByQ = clQ ? String(clQ.claimed_by_name || clQ.claimed_by) : ''
-        } catch { /* unknown = behave as before */ }
+          if (clQ) {
+            claimedByQ = String(clQ.claimed_by_name || clQ.claimed_by)
+            lastMoveQ = [clQ.claimed_at, clQ.last_activity_at,
+              // deno-lint-ignore no-explicit-any
+              ...c.asked.map((a: any) => a.at), ...c.asked.map((a: any) => a.replied_at)]
+              .filter(Boolean).map((t: unknown) => new Date(String(t)).getTime())
+              .filter(Number.isFinite).sort((x: number, y: number) => y - x)[0] ?? 0
+          }
+        } catch { /* unknown = behave as before (no suppression) */ }
+        const staleMinQ = claimedByQ && lastMoveQ ? Math.round((Date.now() - lastMoveQ) / 60000) : 0
+        const claimActiveQ = !!claimedByQ && staleMinQ < quietMin
         const phonesQ: string[] = (Array.isArray(settings.coverage_alert_phones) ? settings.coverage_alert_phones : [])
           .map((p: unknown) => String(p ?? '').trim()).filter(Boolean)
-        if (soonQ) {
+        const resumingQ = !!claimedByQ && !claimActiveQ
+        if (soonQ && (firstLookQ || resumingQ)) {
           await shadowRoute(sb, { area: 'sched_calloffs', channel: 'quiet-callout office SMS',
-            production: (sendLive && !claimedByQ) ? phonesQ : [], case_id: String(c.id),
-            note: claimedByQ ? `SMS suppressed — ${claimedByQ} has it` : (sendLive ? '' : 'text sending is off') })
+            production: (sendLive && !claimActiveQ) ? phonesQ : [], case_id: String(c.id),
+            note: claimActiveQ ? `SMS suppressed — ${claimedByQ} has it (moved ${staleMinQ} min ago)`
+              : resumingQ ? `claim stale — ${claimedByQ} has it but nothing moved for ${staleMinQ} min; alert resumed`
+              : (sendLive ? '' : 'text sending is off') })
         }
-        if (soonQ && sendLive && !claimedByQ && ghl.token && ghl.locationId) {
+        if (soonQ && sendLive && !claimActiveQ && ghl.token && ghl.locationId) {
+          if (resumingQ) await opEvent(sb, { verb: 'claim_stale', item_id: String(c.id), area: 'coverage',
+            summary: `Office alert resumed — ${claimedByQ} has ${c.client || 'the shift'} but nothing has moved for ${staleMinQ} min and it starts in ${minsToShiftQ} min` })
+          const msgQ = resumingQ
+            ? `Cara: ${claimedByQ} took the ${c.client || 'open-shift'} callout (${whenQ}) but nothing has moved for ${staleMinQ} min and it starts in ${minsToShiftQ} min. Check in or jump in: cc.mo-care.com/#cara/case/${encodeURIComponent(String(c.id))}`
+            : `Cara: nobody has answered the ask for ${c.client || 'a shift'} ${whenQ} (${c.asked.length} asked, 0 yes) and it starts soon. Widen the list or start calling: cc.mo-care.com/#cara/case/${encodeURIComponent(String(c.id))}`
           for (const p of phonesQ) {
             try {
               const contact = await contactForOutbound(sb, ghl,
@@ -1304,18 +1336,32 @@ Deno.serve(async (req) => {
                 method: 'POST',
                 headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
                            'Content-Type': 'application/json' },
-                body: JSON.stringify({ type: 'SMS', contactId: contact.contactId,
-                  message: `Cara: nobody has answered the ask for ${c.client || 'a shift'} ${whenQ} (${c.asked.length} asked, 0 yes) and it starts soon. Widen the list or start calling: cc.mo-care.com/#cara/case/${encodeURIComponent(String(c.id))}` }),
+                body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message: msgQ }),
               })
             } catch { /* the item is the guarantee */ }
           }
         }
-        const freshQ = await readCaseFresh(c.id)
-        if (freshQ) {
-          freshQ.quiet_nudged_for = String(newestQ)
-          freshQ.quiet_nudged_at = nowIso()
-          await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: freshQ })
-          c.quiet_nudged_for = freshQ.quiet_nudged_for; c.quiet_nudged_at = freshQ.quiet_nudged_at
+        if (claimActiveQ) {
+          /* Held, not consumed: quiet_nudged_for stays unset so every run
+             re-measures the claim. The wave's item/shadow stay once-only via
+             quiet_suppressed_for. */
+          if (firstLookQ) {
+            const freshQ = await readCaseFresh(c.id)
+            if (freshQ) {
+              freshQ.quiet_suppressed_for = String(newestQ)
+              freshQ.quiet_suppressed_at = nowIso()
+              await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: freshQ })
+              c.quiet_suppressed_for = freshQ.quiet_suppressed_for
+            }
+          }
+        } else {
+          const freshQ = await readCaseFresh(c.id)
+          if (freshQ) {
+            freshQ.quiet_nudged_for = String(newestQ)
+            freshQ.quiet_nudged_at = nowIso()
+            await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: freshQ })
+            c.quiet_nudged_for = freshQ.quiet_nudged_for; c.quiet_nudged_at = freshQ.quiet_nudged_at
+          }
         }
       }
     }

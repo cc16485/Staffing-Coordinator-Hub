@@ -79,6 +79,7 @@ const clock12 = (t: string): string => {
 }
 import { normalisePhone, contactForOutbound } from '../_shared/outreach.ts'
 import { shadowRoute } from '../_shared/routing.ts'
+import { opEvent } from '../_shared/events.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -385,6 +386,8 @@ Deno.serve(async (req) => {
         } })
         l.office_alerted_at = nowIso
         await save(l); alerted++
+        await opEvent(sb, { verb: 'item_created', item_id: `ops_tk_${l.id}`, area: 'coverage',
+          summary: `Cara raised: NO CLOCK-IN — ${cgName} for ${clientFirst}, ${clock12(shiftTime)} shift (${Math.round(late)} min past start)` })
         /* Step 3 shadow: record what the playbook WOULD have said, next to
            what production actually did. Observers only — nothing changes. */
         await shadowRoute(sb, { area: 'sched_clockins', channel: 'missed clock-in office SMS',
