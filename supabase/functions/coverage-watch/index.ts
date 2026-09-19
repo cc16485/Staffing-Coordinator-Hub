@@ -326,6 +326,71 @@ Deno.serve(async (req) => {
           if (!error) { ongoingCreated++; haveSweepCase.add(c.id) }
         }
       }
+      /* ── PATTERN INTELLIGENCE (her pick #4, 2026-09-19): a slot that keeps
+         getting rescued ad-hoc by the SAME caregiver is a regular assignment
+         waiting to be made official. Look 21 days back: if a schedule with
+         open future dates had its last 3+ worked occurrences all covered by
+         one caregiver, suggest making them the regular — once per schedule
+         ever (a closed suggestion never reopens). */
+      try {
+        if (bySched.size) {
+          const { data: itemRow } = await sb.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+          const haveItem = new Set((Array.isArray(itemRow?.data) ? itemRow!.data : [])
+            .map((i: { id?: unknown }) => String(i?.id ?? '')))
+          // deno-lint-ignore no-explicit-any
+          const backVisits: any[] = []
+          let bu: string | null = `https://${site}.axiscare.com/api/visits?startDate=${new Date(Date.now() - 21 * 86400000).toISOString().slice(0, 10)}&endDate=${new Date(Date.now() - 86400000).toISOString().slice(0, 10)}`
+          for (let page = 0; bu && page < 12; page++) {
+            const r: Response = await fetch(bu, { headers: {
+              Authorization: `Bearer ${token}`, Accept: 'application/json',
+              'X-AxisCare-Api-Version': AC_VERSION } })
+            if (!r.ok) break
+            // deno-lint-ignore no-explicit-any
+            const j: any = await r.json().catch(() => ({}))
+            const rows2 = Array.isArray(j?.results?.visits ?? j?.visits)
+              ? (j?.results?.visits ?? j?.visits) : Object.values(j?.results?.visits ?? j?.visits ?? {})
+            for (const v of rows2) if (!v?.removed) backVisits.push(v)
+            bu = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
+          }
+          // deno-lint-ignore no-explicit-any
+          const pastBySched = new Map<string, any[]>()
+          for (const v of backVisits) {
+            const m = String(v?.id ?? '').match(/^s=([^:]+):/)
+            if (!m || !bySched.has(m[1])) continue
+            if (v?.caregiver?.id == null) continue
+            const arr = pastBySched.get(m[1]) ?? []
+            arr.push(v); pastBySched.set(m[1], arr)
+          }
+          for (const [schedId, arr] of pastBySched) {
+            const itemId = `ops_regular_s${schedId}`
+            if (haveItem.has(itemId)) continue
+            // deno-lint-ignore no-explicit-any
+            arr.sort((a: any, b: any) => String(a?.scheduledStartDate ?? a?.startDate ?? '')
+              .localeCompare(String(b?.scheduledStartDate ?? b?.startDate ?? '')))
+            const last3 = arr.slice(-3)
+            if (last3.length < 3) continue
+            const ids = [...new Set(last3.map((v) => String(v.caregiver.id)))]
+            if (ids.length !== 1) continue
+            const w = last3[last3.length - 1]
+            const cgName = [String(w.caregiver.firstName ?? '').trim(), String(w.caregiver.lastName ?? '').trim()]
+              .filter(Boolean).join(' ')
+            const clName = [String(w?.client?.firstName ?? '').trim(), String(w?.client?.lastName ?? '').trim()]
+              .filter(Boolean).join(' ') || 'the client'
+            const wd = new Date(String(w?.scheduledStartDate ?? w?.startDate ?? '').slice(0, 10) + 'T12:00:00')
+              .toLocaleDateString('en-US', { weekday: 'long' })
+            if (live) {
+              await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
+                id: itemId, kind: 'staffing',
+                title: `Make it official? ${cgName} has covered ${clName}'s ${wd} slot 3 times running`,
+                about: clName,
+                detail: `The ${wd} schedule still shows open future dates, but ${cgName} has worked its last three occurrences. If it's working for everyone, assign them as the regular in AxisCare and this stops being a weekly scramble.`,
+                domain: 'scheduling_coverage', status: 'open', urgency: 'normal',
+                created_at: nowIso, created_by: 'ongoing-sweep', owner: '', owner_name: '',
+              } })
+            }
+          }
+        }
+      } catch { /* a missed suggestion costs nothing */ }
     } catch { /* the sweep must never break call-off detection */ }
   }
 

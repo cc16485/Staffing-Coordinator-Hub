@@ -201,6 +201,196 @@ Deno.serve(async (req) => {
     } catch (err) { return json({ error: String(err) }, 502) }
   }
 
+  /* Mode 7: THE FRAGILITY FORECAST (her pick #6, 2026-09-19): score TODAY'S
+     schedule for the spots most likely to break, BEFORE they do — first
+     shifts together (pair unknown to the carematch watch), caregivers with
+     recent call-ins, repeat late-clock-in history, and back-to-back visits
+     whose drive gap is physically implausible (zip centroids, 45 mph).
+     Read-only; the hub shows it at the top of Schedule Watch's Today. */
+  if (b.fragility === true) {
+    const { token, site } = axisCreds()
+    if (!token || !site) return json({ error: 'AxisCare credentials not set on this project' }, 502)
+    const { ZIP_LL } = await import('../_shared/zip-centroids.ts')
+    const zipMi = (a: string, bz: string): number | null => {
+      const p = ZIP_LL[String(a || '').slice(0, 5)], q = ZIP_LL[String(bz || '').slice(0, 5)]
+      if (!p || !q) return null
+      const R = 3958.8, rad = (x: number) => x * Math.PI / 180
+      const dLat = rad(q[0] - p[0]), dLon = rad(q[1] - p[1])
+      const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(p[0])) * Math.cos(rad(q[0])) * Math.sin(dLon / 2) ** 2
+      return 2 * R * Math.asin(Math.sqrt(h))
+    }
+    const day = chiToday()
+    // deno-lint-ignore no-explicit-any
+    const visits: any[] = []
+    let fu: string | null = `https://${site}.axiscare.com/api/visits?startDate=${day}&endDate=${day}`
+    try {
+      for (let page = 0; fu && page < 8; page++) {
+        const r: Response = await fetch(fu, { headers: {
+          Authorization: `Bearer ${token}`, Accept: 'application/json',
+          'X-AxisCare-Api-Version': AC_VERSION } })
+        if (!r.ok) return json({ error: `AxisCare responded ${r.status}` }, 502)
+        // deno-lint-ignore no-explicit-any
+        const j: any = await r.json().catch(() => ({}))
+        for (const v of rowsOf(j?.results?.visits ?? j?.visits)) if (!v?.removed) visits.push(v)
+        fu = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
+      }
+    } catch (err) { return json({ error: String(err) }, 502) }
+    const { createClient: cc7 } = await import('https://esm.sh/@supabase/supabase-js@2')
+    const sb7 = cc7(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+    const readKey7 = async (k: string) => {
+      const { data } = await sb7.from('app_data').select('data').eq('key', k).maybeSingle()
+      // deno-lint-ignore no-explicit-any
+      return (Array.isArray(data?.data) ? data!.data : []) as any[]
+    }
+    const nk7 = (s: string) => String(s || '').toLowerCase().replace(/[^a-z]/g, '')
+    const knownPairs = new Set((await readKey7('carematch_watch_log')).map((e) => String(e?.id ?? '')))
+    const cut30 = Date.now() - 30 * 864e5
+    const callins = new Map<string, number>()
+    for (const e of await readKey7('attendance_events'))
+      if (e?.type === 'callin' && e?.caregiver && new Date(String(e.created_at || 0)).getTime() > cut30)
+        callins.set(nk7(String(e.caregiver)), (callins.get(nk7(String(e.caregiver))) ?? 0) + 1)
+    const lateHist = new Map<string, number>()
+    for (const l of await readKey7('timekeeper_cases'))
+      if (l?.kind !== 'clock_out' && l?.caregiver && new Date(String(l.opened_at || 0)).getTime() > cut30)
+        lateHist.set(nk7(String(l.caregiver)), (lateHist.get(nk7(String(l.caregiver))) ?? 0) + 1)
+    /* Client zips for the drive check — one small fetch per distinct client,
+       capped; a missing zip just skips that pair's drive math. */
+    const clientZip = new Map<string, string>()
+    const distinct = [...new Set(visits.map((v) => v?.client?.id).filter((x) => x != null).map(String))].slice(0, 40)
+    await Promise.all(distinct.map(async (cid) => {
+      try {
+        const r = await fetch(`https://${site}.axiscare.com/api/clients/${encodeURIComponent(cid)}`, {
+          headers: { Authorization: `Bearer ${token}`, Accept: 'application/json',
+                     'X-AxisCare-Api-Version': AC_VERSION } })
+        // deno-lint-ignore no-explicit-any
+        const j: any = await r.json().catch(() => ({}))
+        const cl = j?.results?.client ?? j?.results ?? {}
+        const z = String(cl?.residentialAddress?.postalCode ?? cl?.residentialAddress?.zip ?? '').trim()
+        if (z) clientZip.set(cid, z)
+      } catch { /* skip */ }
+    }))
+    const t12f = (t: string) => { const m = String(t || '').match(/^(\d\d):(\d\d)$/); if (!m) return t || ''
+      const h = Number(m[1]) % 12 || 12; return `${h}${m[2] === '00' ? '' : ':' + m[2]}${Number(m[1]) >= 12 ? 'p' : 'a'}` }
+    // deno-lint-ignore no-explicit-any
+    const risks: any[] = []
+    // deno-lint-ignore no-explicit-any
+    const byCg7 = new Map<string, any[]>()
+    for (const v of visits) {
+      if (v?.caregiver?.id == null) continue
+      const arr = byCg7.get(String(v.caregiver.id)) ?? []
+      arr.push(v); byCg7.set(String(v.caregiver.id), arr)
+      const cgName = [v.caregiver.firstName, v.caregiver.lastName].filter(Boolean).join(' ')
+      const clName = [v?.client?.firstName, v?.client?.lastName].filter(Boolean).join(' ')
+      const s = String(v?.scheduledStartDate ?? v?.startDate ?? '').slice(11, 16)
+      const pairId = (v?.client?.id != null)
+        ? `cw_c${v.client.id}_g${v.caregiver.id}` : ''
+      if (pairId && !knownPairs.has(pairId) && knownPairs.size)
+        risks.push({ kind: 'first_pair', severity: 2, time: s, caregiver: cgName, client: clName,
+          detail: `first shift together — worth a mid-shift check call` })
+      const ci = callins.get(nk7(cgName)) ?? 0
+      if (ci >= 2)
+        risks.push({ kind: 'callin_history', severity: 3, time: s, caregiver: cgName, client: clName,
+          detail: `${ci} call-ins in the last 30 days — have a backup in mind` })
+      const lh = lateHist.get(nk7(cgName)) ?? 0
+      if (lh >= 2)
+        risks.push({ kind: 'late_history', severity: 1, time: s, caregiver: cgName, client: clName,
+          detail: `${lh} missed-clock-in ladders in 30 days — watch the start` })
+    }
+    for (const [, arr] of byCg7) {
+      arr.sort((a, b) => String(a?.scheduledStartDate ?? a?.startDate ?? '')
+        .localeCompare(String(b?.scheduledStartDate ?? b?.startDate ?? '')))
+      for (let i = 1; i < arr.length; i++) {
+        const prev = arr[i - 1], cur = arr[i]
+        const pe = String(prev?.scheduledEndDate ?? prev?.endDate ?? '').slice(11, 16)
+        const cs = String(cur?.scheduledStartDate ?? cur?.startDate ?? '').slice(11, 16)
+        if (!pe || !cs) continue
+        const gap = (Number(cs.slice(0, 2)) * 60 + Number(cs.slice(3, 5)))
+          - (Number(pe.slice(0, 2)) * 60 + Number(pe.slice(3, 5)))
+        const z1 = clientZip.get(String(prev?.client?.id ?? '')), z2 = clientZip.get(String(cur?.client?.id ?? ''))
+        const mi = z1 && z2 ? zipMi(z1, z2) : null
+        const needMin = mi != null ? Math.round(mi / 45 * 60) : null
+        if (needMin != null && gap < needMin) {
+          const cgName = [cur.caregiver.firstName, cur.caregiver.lastName].filter(Boolean).join(' ')
+          risks.push({ kind: 'impossible_gap', severity: 3, time: cs, caregiver: cgName,
+            client: [cur?.client?.firstName, cur?.client?.lastName].filter(Boolean).join(' '),
+            detail: `${gap} min between visits but ~${Math.round(mi!)} mi apart (needs ~${needMin} min) — `
+              + `${t12f(pe)} to ${t12f(cs)}; the second visit will start late` })
+        }
+      }
+    }
+    risks.sort((a, b) => (b.severity - a.severity) || String(a.time).localeCompare(String(b.time)))
+    return json({ date: day, visits_scored: visits.length, risks })
+  }
+
+  /* Mode 8: TRENDS (her picks #7+#8, 2026-09-19) — the quiet-quit radar and
+     the client care-gap watch, from six weeks of visit history. */
+  if (b.trends === true) {
+    const { token, site } = axisCreds()
+    if (!token || !site) return json({ error: 'AxisCare credentials not set on this project' }, 502)
+    const start8 = addCalDays(chiToday(), -41), end8 = chiToday()
+    // deno-lint-ignore no-explicit-any
+    const visits: any[] = []
+    let tu: string | null = `https://${site}.axiscare.com/api/visits?startDate=${start8}&endDate=${end8}`
+    try {
+      for (let page = 0; tu && page < 20; page++) {
+        const r: Response = await fetch(tu, { headers: {
+          Authorization: `Bearer ${token}`, Accept: 'application/json',
+          'X-AxisCare-Api-Version': AC_VERSION } })
+        if (!r.ok) return json({ error: `AxisCare responded ${r.status}` }, 502)
+        // deno-lint-ignore no-explicit-any
+        const j: any = await r.json().catch(() => ({}))
+        for (const v of rowsOf(j?.results?.visits ?? j?.visits)) if (!v?.removed) visits.push(v)
+        tu = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
+      }
+    } catch (err) { return json({ error: String(err) }, 502) }
+    const weekOf = (d: string): number => {
+      const days = Math.floor((new Date(d + 'T12:00:00').getTime() - new Date(start8 + 'T12:00:00').getTime()) / 864e5)
+      return Math.min(5, Math.max(0, Math.floor(days / 7)))
+    }
+    const cgWeeks = new Map<string, { name: string; w: number[] }>()
+    const clWeeks = new Map<string, { name: string; w: number[] }>()
+    for (const v of visits) {
+      const s = String(v?.scheduledStartDate ?? v?.startDate ?? '')
+      const e = String(v?.scheduledEndDate ?? v?.endDate ?? '')
+      const day = s.slice(0, 10); if (!day) continue
+      const a = new Date(s).getTime(), bt = new Date(e).getTime()
+      const hrs = Number.isFinite(a) && Number.isFinite(bt) && bt > a ? (bt - a) / 36e5 : 0
+      if (!hrs) continue
+      const wk = weekOf(day)
+      if (v?.caregiver?.id != null) {
+        const k = String(v.caregiver.id)
+        const rec = cgWeeks.get(k) ?? { name: [v.caregiver.firstName, v.caregiver.lastName].filter(Boolean).join(' '), w: [0, 0, 0, 0, 0, 0] }
+        rec.w[wk] += hrs; cgWeeks.set(k, rec)
+      }
+      if (v?.client?.id != null) {
+        const k = String(v.client.id)
+        const rec = clWeeks.get(k) ?? { name: [v?.client?.firstName, v?.client?.lastName].filter(Boolean).join(' '), w: [0, 0, 0, 0, 0, 0] }
+        rec.w[wk] += hrs; clWeeks.set(k, rec)
+      }
+    }
+    const r1 = (x: number) => Math.round(x * 10) / 10
+    // deno-lint-ignore no-explicit-any
+    const falling: any[] = [], overtime: any[] = [], careGaps: any[] = []
+    for (const [, c] of cgWeeks) {
+      const early = (c.w[0] + c.w[1] + c.w[2] + c.w[3]) / 4, late = (c.w[4] + c.w[5]) / 2
+      if (early >= 8 && late < early * 0.6)
+        falling.push({ name: c.name, was: r1(early), now: r1(late),
+          detail: `${r1(early)}h/wk → ${r1(late)}h/wk — worth a conversation before they drift away` })
+      if (late > 40)
+        overtime.push({ name: c.name, now: r1(late), detail: `averaging ${r1(late)}h/wk the last two weeks — burnout and OT risk` })
+    }
+    for (const [, c] of clWeeks) {
+      const early = (c.w[0] + c.w[1] + c.w[2] + c.w[3]) / 4, late = (c.w[4] + c.w[5]) / 2
+      if (early >= 6 && late < early * 0.7)
+        careGaps.push({ name: c.name, was: r1(early), now: r1(late),
+          detail: `care delivered fell ${r1(early)}h/wk → ${r1(late)}h/wk — find out why before the family calls` })
+    }
+    falling.sort((a, b) => (a.now / Math.max(a.was, 1)) - (b.now / Math.max(b.was, 1)))
+    careGaps.sort((a, b) => (a.now / Math.max(a.was, 1)) - (b.now / Math.max(b.was, 1)))
+    return json({ window: `${start8}..${end8}`, visits_seen: visits.length,
+      falling_caregivers: falling, overtime_caregivers: overtime, client_care_gaps: careGaps })
+  }
+
   /* Mode 6: THE TEAM-BUILDER POOL (2026-09-19, her staffing board — the
      interactive replacement for the paper chart). ONE read hands the browser
      everything it needs to compute per-slot fit, conflicts and running

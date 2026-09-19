@@ -74,7 +74,15 @@ Deno.serve(async (req) => {
     const av = await key('caregiver_availability')
     const invites = await key('availability_invites')
     const nurses = new Set((await key('nurse_staff')).map((s: any) => nameKeyOf(String(s?.name || ''))))
-    const haveAv = new Set(av.map((a: any) => String(a.id)))
+    /* CURRENT availability only counts if it's fresh (her rule, 2026-09-19:
+       caregivers work multiple jobs — a 6-month-old form is fiction). A
+       record older than 90 days makes them invitable again, asking for a
+       reconfirm. */
+    const staleCut = Date.now() - 90 * 864e5
+    // deno-lint-ignore no-explicit-any
+    const haveAv = new Set(av.filter((a: any) =>
+        new Date(String(a.updated_at || 0)).getTime() > staleCut)
+      .map((a: any) => String(a.id)))
     const monthAgo = Date.now() - 30 * 864e5
     const recentlyInvited = new Set(invites
       .filter((i: any) => new Date(String(i.at || 0)).getTime() > monthAgo)

@@ -1216,6 +1216,28 @@ Deno.serve(async (req) => {
       }
     }
 
+    /* ── PRE-BUILT ASK LIST (her pick #1, 2026-09-19): in manual mode the
+       cron builds each fresh case's candidate list AHEAD of the coordinator,
+       so opening the case shows a ranked, sensibly-checked list instantly —
+       the 6am decision becomes review-and-send, not build-and-wait. Only
+       while the case has no asks yet, refreshed when older than 30 minutes;
+       once texting starts the picker's live rebuild takes over. */
+    if (commit && manualSelect && !(Array.isArray(c.asked) && c.asked.length)
+        && c.kind !== 'interest'
+        && (!c.prebuilt_at || (Date.now() - new Date(String(c.prebuilt_at)).getTime()) > 30 * 60000)) {
+      try {
+        const pb = await buildCandidatesForCase(c)
+        const fresh = await readCaseFresh(c.id)
+        if (fresh && !(Array.isArray(fresh.asked) && fresh.asked.length)) {
+          fresh.prebuilt = { group1: pb.group1, group2: pb.group2,
+            excluded: pb.excluded, meta: pb.meta }
+          fresh.prebuilt_at = nowIso()
+          await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: fresh })
+          c.prebuilt = fresh.prebuilt; c.prebuilt_at = fresh.prebuilt_at
+        }
+      } catch { /* a failed prebuild costs nothing — the picker still builds on click */ }
+    }
+
     /* Tier 1: visit history with THIS client, if the client resolves. A case
        opened by coverage-watch carries the client's AxisCare id straight off
        the visit — exact, no name matching needed. Phone-opened cases still

@@ -455,6 +455,117 @@ Deno.serve(async (req) => {
     } catch (err) { console.error('timekeeper clockout sms failed', err) }
   }
 
+  /* ── THE EVV AUTO-CHASE (her pick #9, 2026-09-19): once per morning,
+     yesterday's ended visits with no clock-in or clock-out get the signed-
+     correction-form text automatically — matching the hub's manual chase
+     exactly (same evv_followups records, so the board shows "chased" either
+     way, and a form already submitted is never chased). Saturday ~3pm, the
+     office gets one deadline nudge for still-unprocessed forms. Gated by
+     ops_settings.evv_chase_live. */
+  let evvChase: Record<string, unknown> = { ran: false }
+  try {
+    const chaseLive = settings.evv_chase_live === true
+    const chiNowS = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' })
+    const chiHourE = Number(chiNowS.slice(11, 13))
+    const todayE = chiNowS.slice(0, 10)
+    const { data: stRowE } = await sb.from('app_data').select('data').eq('key', 'evv_chase_state').maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    const chaseState: any[] = Array.isArray(stRowE?.data) ? stRowE!.data : []
+    const doneToday = chaseState.some((x) => x?.id === 'chase_' + todayE)
+    if (chaseLive && chiHourE >= 9 && !doneToday && !forceDry) {
+      const yday = new Date(Date.now() - 864e5).toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+      // deno-lint-ignore no-explicit-any
+      const yvisits: any[] = []
+      let yu: string | null = `https://${site}.axiscare.com/api/visits?startDate=${yday}&endDate=${yday}`
+      for (let page = 0; yu && page < 8; page++) {
+        const r: Response = await fetch(yu, { headers: {
+          Authorization: `Bearer ${token}`, Accept: 'application/json',
+          'X-AxisCare-Api-Version': AC_VERSION } })
+        if (!r.ok) break
+        // deno-lint-ignore no-explicit-any
+        const j: any = await r.json().catch(() => ({}))
+        for (const v of rowsOf(j?.results?.visits ?? j?.visits)) if (!v?.removed) yvisits.push(v)
+        yu = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
+      }
+      const { data: fuRow } = await sb.from('app_data').select('data').eq('key', 'evv_followups').maybeSingle()
+      const chased = new Set((Array.isArray(fuRow?.data) ? fuRow!.data : [])
+        .map((e: { id?: unknown }) => String(e?.id ?? '')))
+      const { data: subs } = await sb.from('evv_submissions').select('attendant, visitdate')
+      const subKeys = new Set((subs || []).map((s) =>
+        nameKeyOf(String(s.attendant || '')) + '|' + String(s.visitdate || '')))
+      let chasedNow = 0, skippedDone = 0
+      for (const v of yvisits) {
+        if (v?.caregiver?.id == null) continue
+        const cin = String(v?.clockIn ?? v?.actualStartDate ?? '').slice(11, 16)
+        const cout = String(v?.clockOut ?? v?.actualEndDate ?? '').slice(11, 16)
+        if (cin && cout) continue
+        const vid = String(v?.id ?? '')
+        const key = 'evv_' + yday + '_' + vid.replace(/[^A-Za-z0-9]/g, '_')
+        const cgName = [String(v.caregiver.firstName ?? '').trim(), String(v.caregiver.lastName ?? '').trim()]
+          .filter(Boolean).join(' ')
+        if (chased.has(key) || subKeys.has(nameKeyOf(cgName) + '|' + yday)) { skippedDone++; continue }
+        const cg = byAxis.get(String(v.caregiver.id)) ?? byName.get(nameKeyOf(cgName))
+        const phone = normalisePhone(cg?.phone)
+        if (!phone) continue
+        const contact = await contactForOutbound(sb, ghl,
+          { phone, firstName: String(cg?.first ?? '') || cgName.split(' ')[0] }, 'routine_internal')
+        if (!contact) continue
+        const miss = !cin && !cout ? 'clock-in and clock-out' : !cin ? 'clock-in' : 'clock-out'
+        const clientFirst = String(v?.client?.firstName ?? '').trim() || 'your client'
+        const msg = `Hi ${String(cg?.first ?? '') || cgName.split(' ')[0]}, it's the Caring Companions office. Your visit with ${clientFirst} yesterday is missing its ${miss} in AxisCare. Please complete the EVV correction form and have the client sign it: sc.mo-care.com/evv-correction-form — thank you!`
+        try {
+          const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
+                       'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message: msg }),
+          })
+          if (r.ok) {
+            chasedNow++
+            await sb.rpc('upsert_app_data_item', { target_key: 'evv_followups', item: {
+              id: key, status: 'texted', at: new Date().toISOString(), by: 'evv-chase',
+              caregiver: cgName, client: [v?.client?.firstName, v?.client?.lastName].filter(Boolean).join(' '),
+              miss: 'no ' + miss, date: yday } })
+          }
+        } catch { /* one failed chase never blocks the rest */ }
+      }
+      await sb.rpc('upsert_app_data_item', { target_key: 'evv_chase_state', item: {
+        id: 'chase_' + todayE, at: new Date().toISOString(), chased: chasedNow, already_handled: skippedDone } })
+      evvChase = { ran: true, day_checked: yday, chased: chasedNow, already_handled: skippedDone }
+    } else evvChase = { ran: false, why: !chaseLive ? 'ops_settings.evv_chase_live is off' : doneToday ? 'already ran today' : 'before 9am Chicago' }
+    /* Saturday deadline nudge: forms still unprocessed with Sunday-midnight looming. */
+    const wkday = new Date().toLocaleString('en-US', { timeZone: 'America/Chicago', weekday: 'short' })
+    if (chaseLive && wkday === 'Sat' && chiHourE >= 15 && !forceDry
+        && !chaseState.some((x) => x?.id === 'satnudge_' + todayE)) {
+      const { data: pend } = await sb.from('evv_submissions').select('id').eq('processed', false)
+      const n = (pend || []).length
+      if (n) {
+        const phones: string[] = (Array.isArray(settings.coverage_alert_phones) ? settings.coverage_alert_phones : [])
+          .map((p: unknown) => String(p ?? '').trim()).filter(Boolean)
+        for (const p of phones) {
+          try {
+            const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+              body: JSON.stringify({ locationId: ghl.locationId, phone: p, firstName: 'Scheduling' }),
+            })
+            // deno-lint-ignore no-explicit-any
+            const uj: any = await up.json().catch(() => ({}))
+            const cid = uj?.contact?.id ?? uj?.id
+            if (cid) await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+              body: JSON.stringify({ type: 'SMS', contactId: cid,
+                message: `EVV deadline: ${n} correction form${n === 1 ? '' : 's'} still waiting to be processed, and the weekly deadline is Sunday midnight. The list is on the hub's EVV tab.` }),
+            })
+          } catch { /* nudge best-effort */ }
+        }
+      }
+      await sb.rpc('upsert_app_data_item', { target_key: 'evv_chase_state', item: {
+        id: 'satnudge_' + todayE, at: new Date().toISOString(), pending: n } })
+    }
+  } catch { /* the chase must never break the timekeeper */ }
+
   const summary = {
     mode: !watchLive ? 'DRY RUN' : textLive ? 'LIVE (watch + text)' : 'LIVE (watch only — texting off)',
     day, fetch_error: fetchError,
@@ -467,6 +578,7 @@ Deno.serve(async (req) => {
         : withClockIn === 0 ? 'ZERO clock-ins visible in the API — do NOT go live until this is understood'
         : `${withClockIn}/${startedAWhile} populate — if this is well under 100%, raise timekeeper_grace_min before texting goes live`,
     },
+    evv_chase: evvChase,
     ladders_resolved: resolved, ladders_opened: opened,
     texts_sent: texted, clockout_texts_sent: textedOut, office_alerts: alerted,
     skipped_no_phone: skippedNoPhone, refused_by_outbound_gate: refusedGate,

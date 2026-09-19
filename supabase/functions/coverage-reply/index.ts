@@ -325,7 +325,35 @@ Deno.serve(async (req) => {
       id: `ops_covq_${c.id}_${norm(String(a.phone || contactId))}`, kind: 'coverage',
       coverage_case_id: c.id,
       title: `${a.name} has a question about the ${c.client || ''} callout`,
-      about: a.name, detail: `They wrote: "${text.slice(0, 300)}" — open their conversation in GHL and reply there, then update the case.`,
+      about: a.name, detail: `They wrote: "${text.slice(0, 300)}" — open their conversation in GHL and reply there, then update the case.`
+        + (function () {
+          /* CARA DRAFTS THE EASY ANSWER (her pick #3, 2026-09-19): when the
+             question is about the time or the place, the case already knows.
+             The draft rides on the ops item for one-paste sending — a human
+             still presses send, always. */
+          try {
+            const tq = text.toLowerCase()
+            const bits: string[] = []
+            if (/time|when|what day|how long|hours|start/.test(tq)) {
+              const clock12q = (t: string) => { const m = String(t || '').trim().match(/^(\d{1,2}):(\d\d)$/)
+                if (!m) return String(t || '').trim(); const h24 = Number(m[1]); const h = h24 % 12 || 12
+                return `${h}${m[2] === '00' ? '' : ':' + m[2]}${h24 >= 12 ? 'pm' : 'am'}` }
+              const span = String(c.shift_time || '').split('-').map(clock12q).join('-')
+              if (c.shift_date || span) bits.push(`It's ${[c.shift_date, span].filter(Boolean).join(', ')}`)
+            }
+            if (/where|address|town|city|far|located|location/.test(tq)) {
+              const street = String(c.client_street || '').trim().replace(/^\d+[A-Za-z]?(?:-\w+)?\s+/, '')
+              const place = [street, String(c.client_city || '').trim()].filter(Boolean).join(', ')
+              if (place) bits.push(`it's on ${place}`)
+            }
+            if (/who|which client|what client/.test(tq) && c.client) {
+              const w = String(c.client).trim().split(/\s+/)
+              bits.push(`the client is ${(w.length > 1 ? w.slice(0, -1).join(' ') : w.join(' '))}`)
+            }
+            if (!bits.length) return ''
+            return `\n\n💬 Cara's draft (paste it if it fits): "${bits.join(' — ')}. Can you take it? Reply YES or NO."`
+          } catch { return '' }
+        })(),
       domain: 'scheduling_coverage', status: 'open', urgency: 'high',
       created_at: stamp, due: new Date(Date.now() + 2 * 3600000).toISOString(),
       owner: '', owner_name: '', created_by: 'coverage-reply', opened_by: 'callout',
