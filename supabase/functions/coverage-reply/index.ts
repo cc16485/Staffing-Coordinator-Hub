@@ -22,6 +22,7 @@
 // record; the hub board reads the same field the manual workflow writes.
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { shadowRoute } from '../_shared/routing.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -161,6 +162,11 @@ Deno.serve(async (req) => {
          end of the handler: this closes the replay-duplication window to
          the instant between a successful send and this write. */
       if (any) await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
+      /* Step 3 shadow: what the playbook would have said, next to what
+         production did. Observer only. */
+      await shadowRoute(sb, { area: 'sched_calloffs', channel: 'first-YES staff SMS',
+        production: any ? phones : [], case_id: String(c.id),
+        note: any ? '' : 'nothing newly sent (deduped or send failed)' })
     } catch (e) { console.error('[coverage-reply] staff alert block failed', e) }
   }
   // deno-lint-ignore no-explicit-any

@@ -78,6 +78,7 @@ const clock12 = (t: string): string => {
   return `${h}${m[2] === '00' ? '' : ':' + m[2]}${h24 >= 12 ? 'pm' : 'am'}`
 }
 import { normalisePhone, contactForOutbound } from '../_shared/outreach.ts'
+import { shadowRoute } from '../_shared/routing.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -384,6 +385,10 @@ Deno.serve(async (req) => {
         } })
         l.office_alerted_at = nowIso
         await save(l); alerted++
+        /* Step 3 shadow: record what the playbook WOULD have said, next to
+           what production actually did. Observers only — nothing changes. */
+        await shadowRoute(sb, { area: 'sched_clockins', channel: 'missed clock-in office SMS',
+          production: alertPhones, case_id: String(l.id) })
         for (const p of alertPhones) {
           const contact = await contactForOutbound(sb, ghl, { phone: p, firstName: 'Office' }, 'urgent_internal')
           if (!contact) continue

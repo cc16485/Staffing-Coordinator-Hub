@@ -29,6 +29,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { maySendTo, normalisePhone, contactForOutbound } from '../_shared/outreach.ts'
 import { ZIP_LL } from '../_shared/zip-centroids.ts'
+import { shadowRoute } from '../_shared/routing.ts'
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -1272,9 +1273,29 @@ Deno.serve(async (req) => {
           const dMs = new Date(`${c.shift_date}T${/^\d\d:\d\d$/.test(sH) ? sH : '23:59'}:00`).getTime() - new Date(chiNowQ).getTime()
           soonQ = dMs > 0 && dMs < 3 * 3600000
         }
-        if (soonQ && sendLive && ghl.token && ghl.locationId) {
-          const phonesQ: string[] = (Array.isArray(settings.coverage_alert_phones) ? settings.coverage_alert_phones : [])
-            .map((p: unknown) => String(p ?? '').trim()).filter(Boolean)
+        /* Step 3: claim-aware suppression, on this ONE notification type. If
+           any open ops item on this case is CLAIMED, somebody is actively
+           handling it — the Needs-You item above still appears (visibility),
+           but the office phones are not texted (interruption). An unclaimed
+           case behaves exactly as it always has. */
+        let claimedByQ = ''
+        try {
+          const { data: oiQ } = await sb.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+          // deno-lint-ignore no-explicit-any
+          const rowsQ: any[] = Array.isArray(oiQ?.data) ? oiQ.data : []
+          // deno-lint-ignore no-explicit-any
+          const clQ = rowsQ.find((x: any) => x?.status === 'open' && x?.claimed_by
+            && String(x?.coverage_case_id || '') === String(c.id))
+          claimedByQ = clQ ? String(clQ.claimed_by_name || clQ.claimed_by) : ''
+        } catch { /* unknown = behave as before */ }
+        const phonesQ: string[] = (Array.isArray(settings.coverage_alert_phones) ? settings.coverage_alert_phones : [])
+          .map((p: unknown) => String(p ?? '').trim()).filter(Boolean)
+        if (soonQ) {
+          await shadowRoute(sb, { area: 'sched_calloffs', channel: 'quiet-callout office SMS',
+            production: (sendLive && !claimedByQ) ? phonesQ : [], case_id: String(c.id),
+            note: claimedByQ ? `SMS suppressed — ${claimedByQ} has it` : (sendLive ? '' : 'text sending is off') })
+        }
+        if (soonQ && sendLive && !claimedByQ && ghl.token && ghl.locationId) {
           for (const p of phonesQ) {
             try {
               const contact = await contactForOutbound(sb, ghl,
