@@ -464,10 +464,12 @@ async function buildCandidatesForCase(c: any):
      caregiver with zero overlaps is genuinely free for the pattern; one
      with several is already committed then. */
   const busyPattern = new Map<string, { count: number; samples: string[] }>()
+  const chainPattern = new Map<string, { count: number; sample: string }>()
   const wantDays: string[] = Array.isArray(c.interest_days) ? c.interest_days.map((d: unknown) => String(d).toLowerCase().slice(0, 3)) : []
   const wStart = String(c.interest_start || '').slice(0, 5), wEnd = String(c.interest_end || '').slice(0, 5)
   let patternCheck = ''
   if (wantDays.length && /^\d\d:\d\d$/.test(wStart) && /^\d\d:\d\d$/.test(wEnd) && wEnd > wStart) {
+    const mins = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5))
     const fwd14 = await fetchVisits(`startDate=${dISO(0)}&endDate=${dISO(-14)}`)
     for (const v of fwd14.rows) {
       const id = v?.caregiver?.id; if (id == null) continue
@@ -478,15 +480,27 @@ async function buildCandidatesForCase(c: any):
       if (!wantDays.includes(wd)) continue
       const vs = s.slice(11, 16), ve = e.slice(11, 16)
       if (!vs || !ve || ve <= vs) continue
+      const withWho = firstNamesOf([v?.client?.firstName, v?.client?.lastName]
+        .filter(Boolean).join(' ')) || 'another client'
       if (vs < wEnd && ve > wStart) {
         const rec = busyPattern.get(String(id)) ?? { count: 0, samples: [] }
         rec.count++
-        if (rec.samples.length < 2) {
-          const withWho = firstNamesOf([v?.client?.firstName, v?.client?.lastName]
-            .filter(Boolean).join(' ')) || 'another client'
+        if (rec.samples.length < 2)
           rec.samples.push(`${wd[0].toUpperCase() + wd.slice(1)} ${span12(vs + '-' + ve)} with ${withWho}`)
-        }
         busyPattern.set(String(id), rec)
+      } else {
+        /* Drive-chaining, recurring form: already working those weekdays
+           right before or after the proposed hours = a natural add-on. */
+        const gap = ve <= wStart ? mins(wStart) - mins(ve)
+          : vs >= wEnd ? mins(vs) - mins(wEnd) : null
+        if (gap != null && gap <= 180) {
+          const rec = chainPattern.get(String(id)) ?? { count: 0, sample: '' }
+          rec.count++
+          if (!rec.sample) rec.sample = ve <= wStart
+            ? `${wd[0].toUpperCase() + wd.slice(1)}s they finish ${clock12(ve)} with ${withWho}, right before these hours`
+            : `${wd[0].toUpperCase() + wd.slice(1)}s they start ${clock12(vs)} with ${withWho}, right after these hours`
+          chainPattern.set(String(id), rec)
+        }
       }
     }
     patternCheck = `checked ${wantDays.join('/')} ${wStart}-${wEnd} against the next 14 days${fwd14.error ? ` (schedule read failed: ${fwd14.error})` : ''}`
@@ -541,24 +555,69 @@ async function buildCandidatesForCase(c: any):
      excluded pile: a coordinator may still ask someone whose nearby shift
      ends right before. */
   const busyThen = new Map<string, { detail: string }>()
+  /* DRIVE-CHAINING (her pick #2, 2026-09-18): in rural Missouri the winner
+     is often whoever is ALREADY OUT THAT DAY. A non-overlapping visit ending
+     within 3 hours before this shift (or starting within 3 after) chains —
+     the caregiver is dressed, driving, and nearby. */
+  const chainThen = new Map<string, { detail: string; gap: number }>()
   if (c.shift_date && /^\d\d:\d\d-\d\d:\d\d$/.test(String(c.shift_time || ''))) {
     const [shStart, shEnd] = String(c.shift_time).split('-')
     if (shEnd > shStart) {
+      const mins = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5))
       const day = await fetchVisits(`startDate=${c.shift_date}&endDate=${c.shift_date}`)
       for (const v of day.rows) {
         const cg = v?.caregiver?.id; if (cg == null) continue
         const vs = String(v?.scheduledStartDate ?? v?.startDate ?? '').slice(11, 16)
         const ve = String(v?.scheduledEndDate ?? v?.endDate ?? '').slice(11, 16)
-        if (vs && ve && ve > vs && vs < shEnd && ve > shStart) {
-          const withWho = firstNamesOf([v?.client?.firstName, v?.client?.lastName]
-            .filter(Boolean).join(' ')) || 'another client'
+        if (!vs || !ve || ve <= vs) continue
+        const withWho = firstNamesOf([v?.client?.firstName, v?.client?.lastName]
+          .filter(Boolean).join(' ')) || 'another client'
+        if (vs < shEnd && ve > shStart) {
           const prev = busyThen.get(String(cg))
           const line = `${span12(vs + '-' + ve)} with ${withWho}`
           busyThen.set(String(cg), { detail: prev ? prev.detail + '; ' + line : line })
+        } else {
+          const before = ve <= shStart ? mins(shStart) - mins(ve) : null
+          const after = vs >= shEnd ? mins(vs) - mins(shEnd) : null
+          const gap = before != null ? before : after
+          if (gap != null && gap <= 180) {
+            const detail = before != null
+              ? `finishes ${clock12(ve)} with ${withWho}, ${gap ? gap + ' min' : 'right'} before this shift`
+              : `starts ${clock12(vs)} with ${withWho}, ${gap ? gap + ' min' : 'right'} after this shift`
+            const prev = chainThen.get(String(cg))
+            if (!prev || gap < prev.gap) chainThen.set(String(cg), { detail, gap })
+          }
         }
       }
     }
   }
+
+  /* MATCH REPUTATION (her pick #1): the Care Match record already knows who
+     clients love. Aggregated per caregiver — favorites, love/concern calls —
+     and matched to THIS client when the names line up. Reset/skip records
+     never count as opinions. */
+  const rep = new Map<string, { favorites: number; loves: number; concerns: number; total: number }>()
+  const thisClientRep = new Map<string, { rating: string; favorite: boolean }>()
+  try {
+    const { data: ciRow } = await sb.from('app_data').select('data').eq('key', 'client_checkins').maybeSingle()
+    const caseClientKey = nameKeyOf(String(c.client || ''))
+    // deno-lint-ignore no-explicit-any
+    for (const e of (Array.isArray(ciRow?.data) ? ciRow!.data : []) as any[]) {
+      if (!e?.caregiver || !e?.client || e.skip === true) continue
+      const k = nameKeyOf(String(e.caregiver))
+      const r = rep.get(k) ?? { favorites: 0, loves: 0, concerns: 0, total: 0 }
+      r.total++
+      if (e.rating === 'love') r.loves++
+      if (e.rating === 'concern' || e.cg_rating === 'concern') r.concerns++
+      if (e.want_favorite === true) r.favorites++
+      rep.set(k, r)
+      if (caseClientKey && nameKeyOf(String(e.client)) === caseClientKey) {
+        const cur = thisClientRep.get(k)
+        thisClientRep.set(k, { rating: String(e.rating || cur?.rating || ''),
+          favorite: e.want_favorite === true || cur?.favorite === true })
+      }
+    }
+  } catch { /* no reputation = no boost, never a block */ }
 
   /* Worked-with-this-client history (group 1) + recent activity + hunger. */
   const history = new Map<string, { visits: number; last: string }>()
@@ -635,6 +694,13 @@ async function buildCandidatesForCase(c: any):
       : (pat && pat.count ? { count: pat.count,
           detail: pat.samples.join('; ') + (pat.count > pat.samples.length ? ` +${pat.count - pat.samples.length} more` : '') }
         : null)
+    const chainRec = chainThen.get(gid)
+      ?? (chainPattern.get(gid) ? { detail: chainPattern.get(gid)!.sample
+            + (chainPattern.get(gid)!.count > 1 ? ` (${chainPattern.get(gid)!.count} days like this)` : ''),
+          gap: 0 } : undefined)
+    const nameK = nameKeyOf(String(x.name))
+    const repRec = rep.get(nameK)
+    const mine = thisClientRep.get(nameK)
     const row = {
       name: x.name, first: x.first, axiscare_id: x.axiscare_id,
       phone_last4: x.phone_last4,
@@ -646,19 +712,27 @@ async function buildCandidatesForCase(c: any):
       free_then: conflicts == null ? null : conflicts === 0,
       conflicts_then: conflicts,
       working_then,
+      chain: (!working_then && chainRec) ? { detail: chainRec.detail } : null,
+      rep: repRec ? { favorites: repRec.favorites, loves: repRec.loves,
+        concerns: repRec.concerns, total: repRec.total } : null,
+      this_client: mine ? { rating: mine.rating, favorite: mine.favorite } : null,
       why: h ? `${h.visits} visit${h.visits === 1 ? '' : 's'} with this client, last ${h.last || '?'}`
         : recentlyActive.has(gid) ? 'worked a shift in the last 14 days'
         : 'active caregiver, no recent history',
     }
     if (h) group1.push(row); else group2.push(row)
   }
-  /* Busy-during-the-time sinks to the bottom of its group; within the free,
-     the old ranking holds — "who could actually take this" reads top-down. */
+  /* Busy sinks; the client's own favorite leads their group; a chained
+     schedule beats raw distance; then the old ranking. "Who could actually
+     take this and delight the client" reads top-down. */
   group1.sort((a, b) => ((a.working_then ? 1 : 0) - (b.working_then ? 1 : 0))
+    || ((b.this_client?.favorite ? 1 : 0) - (a.this_client?.favorite ? 1 : 0))
     || (b.history?.visits ?? 0) - (a.history?.visits ?? 0))
   group2.sort((a, b) =>
     ((a.working_then ? 1 : 0) - (b.working_then ? 1 : 0))
     || ((b.free_then === true ? 1 : 0) - (a.free_then === true ? 1 : 0))
+    || ((b.chain ? 1 : 0) - (a.chain ? 1 : 0))
+    || ((b.rep?.favorites ?? 0) - (a.rep?.favorites ?? 0))
     || ((a.miles ?? 9999) - (b.miles ?? 9999))
     || (Number(b.recently_active) - Number(a.recently_active))
     || ((b.wants_more_hours ?? -999) - (a.wants_more_hours ?? -999)))
