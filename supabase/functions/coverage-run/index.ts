@@ -1238,6 +1238,67 @@ Deno.serve(async (req) => {
       } catch { /* a failed prebuild costs nothing — the picker still builds on click */ }
     }
 
+    /* ── THE QUIET-CALLOUT NUDGE (2026-09-19): in manual mode a sent ask
+       with no yes must never die silently. 30 minutes after the newest ask
+       with zero yeses, a person gets tapped — ops item always, office SMS
+       only when the shift starts within 3 hours. A new send re-arms it. */
+    if (commit && manualSelect && Array.isArray(c.asked) && c.asked.length
+        // deno-lint-ignore no-explicit-any
+        && !c.asked.some((a: any) => a.state === 'yes') && c.kind !== 'interest') {
+      // deno-lint-ignore no-explicit-any
+      const newestQ = c.asked.map((a: any) => new Date(String(a.at || 0)).getTime())
+        .filter(Number.isFinite).sort((x: number, y: number) => y - x)[0] ?? 0
+      const quietMin = Number(settings.coverage_quiet_callout_min) > 0
+        ? Number(settings.coverage_quiet_callout_min) : 30
+      if (newestQ && Date.now() - newestQ > quietMin * 60000
+          && String(c.quiet_nudged_for || '') !== String(newestQ)) {
+        // deno-lint-ignore no-explicit-any
+        const noes = c.asked.filter((a: any) => a.state === 'no').length
+        const whenQ = [c.shift_date, span12(c.shift_time)].filter(Boolean).join(' ') || 'the shift'
+        await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
+          id: `ops_covquiet_${c.id}_${newestQ}`, kind: 'coverage', coverage_case_id: c.id,
+          title: `Nobody's answered — ${c.client || 'shift'} ${whenQ}, ${c.asked.length} asked`,
+          about: c.client || '',
+          detail: `${Math.round((Date.now() - newestQ) / 60000)} min since the last ask: ${noes} no, ${c.asked.length - noes} silent, zero yes. Widen to Group 2 on the case, or start calling.`,
+          domain: 'scheduling_coverage', status: 'open', urgency: 'high',
+          owner: '', owner_name: '', created_at: nowIso(),
+          due: new Date(Date.now() + 3600000).toISOString(),
+          created_by: 'coverage-run', opened_by: 'quiet-callout',
+        } })
+        let soonQ = false
+        if (c.shift_date) {
+          const sH = String(c.shift_time || '').split('-')[0] || '23:59'
+          const chiNowQ = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).replace(' ', 'T')
+          const dMs = new Date(`${c.shift_date}T${/^\d\d:\d\d$/.test(sH) ? sH : '23:59'}:00`).getTime() - new Date(chiNowQ).getTime()
+          soonQ = dMs > 0 && dMs < 3 * 3600000
+        }
+        if (soonQ && sendLive && ghl.token && ghl.locationId) {
+          const phonesQ: string[] = (Array.isArray(settings.coverage_alert_phones) ? settings.coverage_alert_phones : [])
+            .map((p: unknown) => String(p ?? '').trim()).filter(Boolean)
+          for (const p of phonesQ) {
+            try {
+              const contact = await contactForOutbound(sb, ghl,
+                { phone: p, firstName: 'Scheduling' }, 'urgent_internal', { selfSupplied: true })
+              if (contact) await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
+                           'Content-Type': 'application/json' },
+                body: JSON.stringify({ type: 'SMS', contactId: contact.contactId,
+                  message: `Cara: nobody has answered the ask for ${c.client || 'a shift'} ${whenQ} (${c.asked.length} asked, 0 yes) and it starts soon. Widen the list or start calling: cc.mo-care.com/#cara/case/${encodeURIComponent(String(c.id))}` }),
+              })
+            } catch { /* the item is the guarantee */ }
+          }
+        }
+        const freshQ = await readCaseFresh(c.id)
+        if (freshQ) {
+          freshQ.quiet_nudged_for = String(newestQ)
+          freshQ.quiet_nudged_at = nowIso()
+          await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: freshQ })
+          c.quiet_nudged_for = freshQ.quiet_nudged_for; c.quiet_nudged_at = freshQ.quiet_nudged_at
+        }
+      }
+    }
+
     /* Tier 1: visit history with THIS client, if the client resolves. A case
        opened by coverage-watch carries the client's AxisCare id straight off
        the visit — exact, no name matching needed. Phone-opened cases still

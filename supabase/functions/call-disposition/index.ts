@@ -105,6 +105,81 @@ Deno.serve(async (req) => {
   const callerPhone = field('phone') || field('phone_number')
   const callerId = field('id') || field('contactId') || field('contact_id')
 
+  /* ---- Cara's ears, SMS edition (2026-09-19: the last piece of "monitoring
+     call transcripts AND texts"). A GHL workflow posts every inbound SMS
+     here with sms:true. The endpoint itself is the filter: only a number
+     the identity layer says is exactly ONE caregiver gets classified; a
+     hit becomes the same status:'flagged' case the call ears create —
+     confirm/dismiss on the board, texts nobody. Trivial replies (yes/no/c)
+     are the callout and confirm flows' business and are skipped unread. */
+  if (b.sms === true || String(b.sms).toLowerCase() === 'true') {
+    const smsText = field('message') || field('body') || field('text') || ''
+    const out: Record<string, unknown> = { ok: true, heard: false }
+    try {
+      const digits = norm(callerPhone)
+      const anthKey = Deno.env.get('ANTHROPIC_API_KEY') || ''
+      const trivial = /^\s*(y|yes|yeah|yep|no|nope|n|c|ok|okay|k|thanks|thank you|ty)\s*[.!]*\s*$/i.test(smsText)
+      if (digits.length === 10 && smsText.length >= 8 && !trivial && anthKey) {
+        const supabaseS = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+        const { data: setS } = await supabaseS.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+        const flagLive = setS?.data?.coverage_flag_live === true
+        const { data: phoneRows } = await supabaseS.from('phone_index').select('person_id').eq('phone', '+1' + digits)
+        // deno-lint-ignore no-explicit-any
+        const personIds = [...new Set((phoneRows || []).map((r: any) => String(r.person_id)))]
+        if (personIds.length === 1) {
+          const { data: srcRows } = await supabaseS.from('person_source_id')
+            .select('entity_type').eq('person_id', personIds[0]).eq('system', 'axiscare')
+            .eq('confidence', 'confirmed').eq('needs_review', false)
+          if ((srcRows || []).some((l) => l.entity_type === 'caregiver')) {
+            const { data: pi } = await supabaseS.from('person_identity')
+              .select('display_name').eq('id', personIds[0]).maybeSingle()
+            const cgName = pi?.display_name || 'a caregiver'
+            const chiDay = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+            const flagId = `cwf_${digits}_${chiDay.replaceAll('-', '')}`
+            const { data: caseRow } = await supabaseS.from('app_data').select('data').eq('key', 'coverage_cases').maybeSingle()
+            // deno-lint-ignore no-explicit-any
+            const existing: any[] = Array.isArray(caseRow?.data) ? caseRow!.data : []
+            const already = existing.some((k) => k.id === flagId
+              || (['flagged', 'open'].includes(String(k.status))
+                  && norm(String(k.caller_phone || '')) === digits
+                  && new Date(String(k.opened_at || 0)).getTime() > Date.now() - 12 * 3600 * 1000))
+            if (!already) {
+              const ai = await fetch('https://api.anthropic.com/v1/messages', {
+                method: 'POST',
+                headers: { 'x-api-key': anthKey, 'anthropic-version': '2023-06-01',
+                           'Content-Type': 'application/json' },
+                body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 300,
+                  system: 'You read one inbound TEXT MESSAGE from a home-care caregiver to the office. Decide if they are calling off / calling in sick / unable to work an upcoming or current shift. Availability updates for future weeks, schedule questions, running-late notes, and ordinary chat are NOT call-offs. Answer ONLY minified JSON: {"call_off":bool,"confidence":"high"|"medium"|"low","client_name":str|null,"shift_hint":str|null,"evidence":str} where evidence quotes the deciding phrase.',
+                  messages: [{ role: 'user', content: `From: ${cgName} (caregiver)\nText:\n${smsText.slice(0, 1200)}` }] }),
+              })
+              // deno-lint-ignore no-explicit-any
+              const aj: any = await ai.json().catch(() => ({}))
+              let verdict: Record<string, unknown> = {}
+              try { verdict = JSON.parse(String(aj?.content?.[0]?.text || '{}').replace(/^```(json)?|```$/g, '').trim()) } catch { verdict = {} }
+              out.heard = true; out.caller = cgName; out.verdict = verdict
+              if (verdict.call_off === true && verdict.confidence !== 'low') {
+                if (flagLive) {
+                  await supabaseS.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: {
+                    id: flagId, status: 'flagged', kind: 'calloff',
+                    client: String(verdict.client_name || '') || '(from text — confirm the client)',
+                    calling_off: cgName, caller_phone: callerPhone, caller_contact_id: callerId,
+                    shift_date: todayISO(), shift_time: String(verdict.shift_hint || ''),
+                    reason: 'Cara flagged this TEXT as a possible call-off',
+                    flag_evidence: String(verdict.evidence || ''), flag_confidence: String(verdict.confidence || ''),
+                    flag_source: 'text message', note: smsText.slice(0, 1000),
+                    opened_at: new Date().toISOString(), opened_by: 'cara-flag-sms',
+                  } })
+                  out.flagged = flagId
+                } else out.would_flag = flagId
+              }
+            } else out.skipped = 'a case for this caller already exists today'
+          }
+        }
+      }
+    } catch (e) { out.error = String(e) }
+    return json(out)
+  }
+
   /* ---- Attach mode -------------------------------------------------------
      The transcript summary lands minutes after the call, long after the
      disposition already routed it. Delaying the routing is the wrong trade —

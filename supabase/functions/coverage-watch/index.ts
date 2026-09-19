@@ -116,6 +116,18 @@ Deno.serve(async (req) => {
     const v = String(cc?.axiscare_visit_id ?? ''); if (!v) continue
     genByVisit.set(v, (genByVisit.get(v) ?? 0) + 1)
   }
+  /* THE CLOSE-REOPEN FIGHT ENDS HERE (her 2026-09-16 live lesson, fixed
+     2026-09-19): a HUMAN closing a watch case holds. No fresh generation
+     for that visit unless the visit itself has CHANGED in AxisCare since
+     the close (modifiedDate newer than resolved_at). A visit with no
+     modified timestamp stays held — a robot never overrules a person. */
+  const humanClosedAt = new Map<string, string>()
+  for (const cc of cases) {
+    const v = String(cc?.axiscare_visit_id ?? ''); if (!v) continue
+    if (cc?.status === 'open' || !cc?.resolved_at) continue
+    const prev = humanClosedAt.get(v)
+    if (!prev || String(cc.resolved_at) > prev) humanClosedAt.set(v, String(cc.resolved_at))
+  }
 
   const nowIso = new Date().toISOString()
 
@@ -192,6 +204,11 @@ Deno.serve(async (req) => {
     if (start && new Date(start).getTime() < Date.now()) { inPast++; continue }
     const visitId = String(v?.id ?? '')
     if (!visitId || openByVisit.has(visitId)) { alreadyHandled++; continue }
+    {
+      const closedAt = humanClosedAt.get(visitId)
+      const vMod = String(v?.modifiedDate ?? v?.lastModified ?? '')
+      if (closedAt && !(vMod && vMod > closedAt)) { alreadyHandled++; continue }
+    }
 
     const clientName = [String(v?.client?.firstName ?? '').trim(), String(v?.client?.lastName ?? '').trim()]
       .filter(Boolean).join(' ') || '(client name missing on the visit)'
