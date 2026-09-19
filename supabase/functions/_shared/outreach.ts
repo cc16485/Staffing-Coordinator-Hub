@@ -352,13 +352,37 @@ export async function outboundGate(
    right admin, prepare the number and context, and track the promise — it
    just may not press send.
 
-   Three ways a send is allowed:
-     1. the audience is one where autonomous operational outreach is an
-        approved workflow (caregivers, applicants, staff, references);
-     2. a HUMAN initiated this exact send (a coordinator pressed the button —
-        the machine is the pen, not the author);
-     3. Samantha explicitly enabled that one specific capability
-        (explicitlyEnabled is passed by the sender that carries her switch).
+   HER FIVE CATEGORIES (refined 2026-09-19):
+     1. EXISTING clients / family / responsible parties — human communication
+        required. Automation detects, prepares, drafts, reminds, routes,
+        tracks; it does not initiate. Only a capability she explicitly
+        enabled may send.
+     2. INBOUND PROSPECTIVE LEADS — the person just wrote to us. An immediate
+        acknowledgment may be an explicitly permitted capability (their
+        action initiated the interaction); LATER automated follow-up/nurture
+        is a SEPARATE capability needing its own explicit decision. Never
+        bundle the two under one switch.
+     3. TRANSACTIONAL RESPONSES — the recipient directly caused this exact
+        message in this same interaction (booked → confirmation; submitted →
+        receipt; requested → the link). Declared, but not outreach.
+        Transactional means RESPONSE-TO-THEIR-ACTION-NOW. It is never a
+        loophole: nothing later, nothing unprompted, nothing promotional,
+        no follow-up rides under this flag.
+     4. HUMAN-INITIATED — an authorized employee pressed Send; the machine
+        drafted or delivered. Not autonomous communication.
+     5. UNKNOWN RECIPIENT — fail closed, always.
+
+   And the permission shape is never "Cara can send SMS". It is:
+   Cara may perform THIS capability, with THIS audience, at THIS autonomy.
+   (Coverage outreach→caregiver: autonomous. Client callback→family: human.
+   Inquiry acknowledgment→lead: only as an explicitly enabled capability.)
+
+   The doors, in code:
+     humanInitiated       → allowed (category 4)
+     transactional        → allowed with declaration (category 3)
+     approved audience    → allowed (caregivers/applicants/staff/references)
+     explicitlyEnabled    → allowed (the sender carries HER switch for that
+                            one capability — never a general flag)
    Everything else — including a MISSING or unknown audience — is refused.
    Fail closed.
 
@@ -395,10 +419,13 @@ export const AUDIENCE_AUTONOMY: Record<Audience, boolean> = {
 
 export function audienceGate(
   audience: Audience | string | undefined,
-  opts: { humanInitiated?: boolean; explicitlyEnabled?: boolean } = {},
+  opts: { humanInitiated?: boolean; transactional?: boolean; explicitlyEnabled?: boolean } = {},
 ): { allowed: boolean; reason: string } {
   if (opts.humanInitiated)
     return { allowed: true, reason: 'a person chose to send this' }
+  if (opts.transactional)
+    return { allowed: true,
+      reason: 'transactional — a direct response to this person\'s own action in this interaction' }
   const aud = String(audience ?? 'unknown')
   const known = Object.prototype.hasOwnProperty.call(AUDIENCE_AUTONOMY, aud)
   if (known && AUDIENCE_AUTONOMY[aud as Audience])
