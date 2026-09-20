@@ -748,6 +748,13 @@ async function syncCirclesFromAxisCare(commit: boolean) {
     const first = (mob ?? phones[0]) as Record<string, unknown> | undefined
     return first ? String(first.number ?? first.phone ?? '').trim() : ''
   }
+  /* AxisCare boolean-ish fields arrive as '1' / '0' / '' strings.
+     True only for a positive answer; '' / missing yields null (unanswered),
+     '0' yields false (an actual no). */
+  const axYes = (v: unknown): boolean | null =>
+    (v === true || v === 1 || v === '1') ? true
+    : (v === false || v === 0 || v === '0') ? false
+    : null
 
   const out = { mode: commit ? 'COMMIT' : 'DRY RUN', clients: (links ?? []).length,
     circles_created: 0, contacts_added: 0, contacts_updated: 0,
@@ -791,8 +798,12 @@ async function syncCirclesFromAxisCare(commit: boolean) {
         name: nm, relationship: String(p.relationship ?? '').trim() || null,
         phone: pickPhone(p) || null, email: String(p.email ?? '').trim() || null,
         axiscare_list_number: tier,
-        hipaa_authorized: p.hipaaDisclosureAuthorization === true,
-        can_make_medical_decisions: p.canMakeMedicalDecisions === true,
+        /* AxisCare returns these as the STRINGS '1' / '0' / '' — comparing
+           to boolean true made both flags permanently false for everyone
+           (2026-09-20 audit). Truthy forms accepted; '' stays null, because
+           an unanswered question is not a "no". */
+        hipaa_authorized: axYes(p.hipaaDisclosureAuthorization),
+        can_make_medical_decisions: axYes(p.canMakeMedicalDecisions),
         source: 'axiscare',
       }
       const existing = mine.find(c => String(c.name ?? '').trim().toLowerCase() === nm.toLowerCase())

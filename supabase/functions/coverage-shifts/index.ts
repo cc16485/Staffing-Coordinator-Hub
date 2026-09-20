@@ -430,8 +430,11 @@ Deno.serve(async (req) => {
           if (!nm) continue
           pool.set(String(g.id), { axiscare_id: String(g.id), name: nm,
             level: levelOf6(g?.classes),
-            city: String(g?.residentialAddress?.city ?? '').trim() || null,
-            zip: String(g?.residentialAddress?.postalCode ?? g?.residentialAddress?.zip ?? '').trim() || null,
+            /* Caregivers have mailingAddress, never residentialAddress (that
+               key exists only on clients) — reading the wrong one left every
+               caregiver's city/zip null in this pool (2026-09-20 audit). */
+            city: String(g?.mailingAddress?.city ?? g?.residentialAddress?.city ?? '').trim() || null,
+            zip: String(g?.mailingAddress?.postalCode ?? g?.residentialAddress?.postalCode ?? '').trim() || null,
             windows: null, availability_updated: null, target_hours: null,
             visits: [] })
         }

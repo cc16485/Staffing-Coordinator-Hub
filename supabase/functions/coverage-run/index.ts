@@ -535,8 +535,10 @@ async function buildCandidatesForCase(c: any):
             axisActive.add(String(g.id))
             const lv = careLevelOf(g?.classes)
             if (lv.level != null) caregiverLevel.set(String(g.id), lv.level)
-            const city = String(g?.residentialAddress?.city ?? '').trim()
-            const zip = String(g?.residentialAddress?.postalCode ?? g?.residentialAddress?.zip ?? '').trim()
+            /* Caregivers carry mailingAddress, never residentialAddress —
+               the wrong key left proximity ranking blind (2026-09-20 audit). */
+            const city = String(g?.mailingAddress?.city ?? g?.residentialAddress?.city ?? '').trim()
+            const zip = String(g?.mailingAddress?.postalCode ?? g?.residentialAddress?.postalCode ?? '').trim()
             if (city) cgCity.set(String(g.id), city)
             if (zip) cgZip.set(String(g.id), zip)
             const clsArr = Array.isArray(g?.classes) ? g.classes
