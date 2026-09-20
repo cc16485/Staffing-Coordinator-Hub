@@ -192,17 +192,35 @@ Deno.serve(async (req) => {
          at 9:02 should hear back at 9:02. lead-followup still owns the nudges
          afterwards; ack_sent_at is what tells it we already said hello, so
          nobody gets greeted twice. */
-      if (phone || email) {
+      /* HER RULE, twice enforced by this block (both learned from her live
+         test, 2026-09-19):
+         1. QUIET HOURS: nothing lands before 8am or after 6pm Central. An
+            evening inquiry is greeted next morning by the sweep instead
+            (ack_sent_at stays unset, so the sweep knows to say hello).
+         2. THE TYPED NUMBER IS THE ONLY NUMBER: GHL's upsert matches by
+            email first and then texts that contact's EXISTING phone — which
+            once sent a family's greeting to the office line. So the SMS
+            goes through a PHONE-keyed contact and the email through an
+            EMAIL-keyed one; a text can only ever reach the number they
+            typed. */
+      const chiHour = Number(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', hour12: false }))
+      const withinHours = chiHour >= 8 && chiHour < 18
+      if ((phone || email) && withinHours) {
         try {
           const firstName = (first || 'there').replace(/\(.*\)/, '').trim() || 'there'
-          const cid = await contactFor(phone, email, firstName)
-          if (cid) {
-            const line = `Hi ${firstName}, this is Caring Companions. We have your message and a care `
-              + `coordinator will call you shortly. If you would rather not wait, we are on (417) 234-8494. `
-              + `Reply STOP to opt out.`
-            if (phone) await send(cid, 'SMS', { message: line })
-            if (email) {
-              await send(cid, 'Email', {
+          const line = `Hi ${firstName}, this is Caring Companions. We have your message and a care `
+            + `coordinator will call you shortly. If you would rather not wait, we are on (417) 234-8494. `
+            + `Reply STOP to opt out.`
+          let sentAny = false
+          if (phone) {
+            const cidP = await contactFor(phone, '', firstName)
+            if (cidP) { await send(cidP, 'SMS', { message: line }); sentAny = true }
+          }
+          if (email) {
+            const cidE = await contactFor('', email, firstName)
+            if (cidE) {
+              sentAny = true
+              await send(cidE, 'Email', {
                 subject: 'We have your message',
                 html: '<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">'
                   + `<p>Hi ${firstName},</p>`
@@ -213,6 +231,8 @@ Deno.serve(async (req) => {
                   + '<p style="color:#57606a">Caring Companions In-Home Senior Care<br>(417) 234-8494</p></div>',
               })
             }
+          }
+          if (sentAny) {
             acked = true
             // deno-lint-ignore no-explicit-any
             ;(lead as any).ack_sent_at = new Date().toISOString()

@@ -128,11 +128,20 @@ Deno.serve(async (req) => {
     const reach = async (message: string, subject: string, htmlBody: string) => {
       if (!ghlToken || !ghlLocation) return false
       if (!l.phone && !l.email) return false
-      const contactId = await contactFor(l.phone || null, l.email || null, first)
-      if (!contactId) return false
-      if (l.phone) await sms(contactId, message)
-      if (l.email) await email(contactId, subject, shell(htmlBody))
-      return true
+      /* Channel-keyed contacts: GHL matches by email first and texts that
+         contact's EXISTING phone, which once misdelivered a greeting. The
+         SMS contact is found by phone alone, the email contact by email
+         alone — a text can only reach the number on the lead. */
+      let ok = false
+      if (l.phone) {
+        const cidP = await contactFor(l.phone, null, first)
+        if (cidP) { await sms(cidP, message); ok = true }
+      }
+      if (l.email) {
+        const cidE = await contactFor(null, l.email, first)
+        if (cidE) { await email(cidE, subject, shell(htmlBody)); ok = true }
+      }
+      return ok
     }
 
     /* ---- and tell the office, once, the moment it is late ---- */

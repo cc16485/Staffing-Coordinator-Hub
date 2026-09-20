@@ -171,6 +171,19 @@ Deno.serve(async (req) => {
 
     const text = step.text.replace(/{first}/g, l.first_name || 'there')
     let ok = false
+    /* The reply-check contact above may be an email-matched contact whose
+       primary phone is NOT this lead's. Never text it: resolve a fresh
+       PHONE-keyed contact for SMS steps. */
+    if (step.channel === 'sms' && l.phone) {
+      try {
+        const up2 = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
+          method: 'POST', headers: sendH,
+          body: JSON.stringify({ locationId: ghlLocation, phone: l.phone, firstName: l.first_name }),
+        })
+        const uj2 = await up2.json().catch(() => ({}))
+        contactId = uj2?.contact?.id ?? uj2?.id ?? contactId
+      } catch { /* fall back to the reply-check contact */ }
+    }
     try {
       if (step.channel === 'sms' && l.phone) {
         const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
