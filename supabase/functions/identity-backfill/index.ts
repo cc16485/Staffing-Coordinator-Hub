@@ -758,7 +758,8 @@ async function syncCirclesFromAxisCare(commit: boolean) {
 
   const out = { mode: commit ? 'COMMIT' : 'DRY RUN', clients: (links ?? []).length,
     circles_created: 0, contacts_added: 0, contacts_updated: 0,
-    already_present: 0, clients_with_no_parties: 0, errors: [] as string[],
+    already_present: 0, clients_with_no_parties: 0, manual_untouched: 0,
+    errors: [] as string[],
     sample: [] as Array<Record<string, unknown>> }
 
   for (const l of (links ?? [])) {
@@ -808,6 +809,11 @@ async function syncCirclesFromAxisCare(commit: boolean) {
       }
       const existing = mine.find(c => String(c.name ?? '').trim().toLowerCase() === nm.toLowerCase())
       if (existing) {
+        /* Ownership rule (hers, 2026-09-20): a MANUALLY created contact is
+           never changed by automation — not even its blank fields — until an
+           explicit reconciliation workflow exists. Only contacts this sync
+           itself created (source='axiscare') may be refreshed from AxisCare. */
+        if (String(existing.source ?? '') !== 'axiscare') { out.manual_untouched++; continue }
         // fill blanks only; a human's entry always wins
         const patch: Record<string, unknown> = {}
         for (const k of ['relationship', 'phone', 'email'] as const) {
