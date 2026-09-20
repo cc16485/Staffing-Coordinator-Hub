@@ -356,7 +356,9 @@ export function evalCaregiver(input: {
     has(cg?.alz_date) ? S(cg?.alz_date) : 'no ALZ training date in the hub record', 'hub'))
 
   // ---- WARN ----
-  const mobile = has(F?.mobilePhone) || has(cg?.mobile_phone)
+  /* the shared-hub roster stores `phone`; the Training Platform table
+     stores `mobile_phone` — accept either alongside the AxisCare field */
+  const mobile = has(F?.mobilePhone) || has(cg?.mobile_phone) || has(cg?.phone)
   items.push(item('mobile', 'Mobile phone', 'WARN', 'api',
     mobile ? 'pass' : 'unanswered',
     mobile ? 'on file' : 'Cannot receive automated coverage offers — mobile number missing. Manual assignment may proceed.', 'axiscare'))
