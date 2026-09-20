@@ -8,8 +8,17 @@
 // write, no delete — there is nothing here that can mutate anything.
 // Exact numeric AxisCare id required (fail closed); no list mode (cannot
 // enumerate); a caregiver with no evidence gets a valid empty state.
-// Authorization: the Hub's existing boundary — a signed-in staff session or
-// service_role (same as the census and ghl-thread endpoints).
+// AUTHORIZATION INVARIANT (her explicit decision, 2026-09-20):
+//   Every valid authenticated CC Hub staff account is authorized to view
+//   internal caregiver operational knowledge. There is intentionally NO
+//   category of "authenticated Hub staff but unauthorized for caregiver
+//   knowledge."
+//   On this project, authenticated session ⇔ Hub staff account, because
+//   public signup is DISABLED (the adversarial-audit containment) and
+//   accounts are admin-created — no intermediate principal can exist.
+//   Authorization derives ONLY from the platform-verified JWT's role claim.
+//   Nothing in the body, query string, or any other header is consulted:
+//   staff=true / role=staff / hub_access=true in a request body are inert.
 // =============================================================================
 import { createClient } from 'npm:@supabase/supabase-js@2'
 
