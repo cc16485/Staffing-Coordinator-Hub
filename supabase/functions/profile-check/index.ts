@@ -71,29 +71,31 @@ function axisCreds() {
    caregiver record, fall back to paging the PROVEN list endpoint and
    matching the id — the same read coverage has used all along. */
 // deno-lint-ignore no-explicit-any
+const cgShaped = (c: any) => c && (c.status !== undefined || c.firstName !== undefined || c.lastName !== undefined)
+// deno-lint-ignore no-explicit-any
 async function axCaregiver(id: string): Promise<any> {
   try {
     // deno-lint-ignore no-explicit-any
     const one: any = await axGet(`caregivers/${id}`)
-    const looksLikeCaregiver = one && !Array.isArray(one?.caregivers) &&
-      (one.status !== undefined || one.firstName !== undefined || one.lastName !== undefined)
-    if (looksLikeCaregiver && String(one?.id ?? id) === String(id)) return one
-  } catch { /* fall through to the list */ }
+    // a bare caregiver record
+    if (cgShaped(one) && !one?.caregivers && String(one?.id ?? id) === String(id)) return one
+    // a list-style envelope ({ caregivers: … }) — AxisCare's arrays sometimes
+    // arrive as index-keyed OBJECTS, so rowsOf() everywhere, never raw for...of
+    const inner = rowsOf(one?.caregivers).find(c => String(c?.id) === String(id))
+    if (cgShaped(inner)) return inner
+  } catch { /* fall through to the proven list read */ }
   const { token, site } = axisCreds()
   if (!token || !site) return null
   let url: string | null = `https://${site}.axiscare.com/api/caregivers`
-  let pages = 0
-  while (url && pages < 12) {
-    pages++
+  for (let pages = 0; url && pages < 12; pages++) {
     const r = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json',
       'X-AxisCare-Api-Version': Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01' } })
     if (!r.ok) return null
-    const j = await r.json().catch(() => ({}))
     // deno-lint-ignore no-explicit-any
-    const res = (j as any)?.results
-    const rows = res?.caregivers ?? (Array.isArray(res) ? res : []) ?? []
-    for (const c of rows) if (String(c?.id) === String(id)) return c
-    url = res?.nextPage ?? (j as any)?.nextPage ?? null
+    const j: any = await r.json().catch(() => ({}))
+    const hit = rowsOf(j?.results?.caregivers ?? j?.caregivers).find(c => String(c?.id) === String(id))
+    if (cgShaped(hit)) return hit
+    url = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
   }
   return null
 }
