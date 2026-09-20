@@ -297,29 +297,29 @@ Deno.serve(async (req) => {
     }), { status: 200, headers: { 'Content-Type': 'application/json' } })
   }
 
-  /* IDEMPOTENCY.
-     The database guarantees this, not the application. A partial unique index
-     on axiscare_client_id means two concurrent deliveries cannot both insert:
-     one wins, the other conflicts and updates. A check-then-insert in
-     application code would still race between the check and the insert, which
-     is exactly the window a webhook retry storm lands in.
+  /* IDEMPOTENCY AND EPISODES (2026-09-20).
+     All queue creation goes through ONE database function,
+     upsert_client_launch. It is the only writer that may open a launch
+     episode, and the partial unique index (one OPEN episode per
+     axiscare_client_id) makes duplicates impossible even under a webhook
+     retry storm — a losing concurrent insert lands on the existing open row.
 
-     onConflict does an UPDATE, so a redelivery refreshes AxisCare-owned fields
-     and leaves every human checklist column untouched. */
-  const { data, error } = await sb
-    .from('client_queue')
-    .upsert({
-      client_name:        name || `Client ${clientId}`,
-      client_address:     address,
-      start_date:         startDate,
-      payer:              payerResult.payer,   // null rather than wrong
-      schedule_notes:     rec.facts.schedule_notes as string | null,
-      axiscare_client_id: clientId,
-    }, { onConflict: 'axiscare_client_id', ignoreDuplicates: false })
-    .select('id')
+     This producer is PASSIVE: if the client already has a completed launch
+     episode, the function records nothing new. A replayed client.created
+     must never resurrect finished work or open Episode 2 — only a
+     deliberate SOC handoff or a Launch Exception may do that. */
+  const { data: rpc, error } = await sb.rpc('upsert_client_launch', { p: {
+    client_name:        name || `Client ${clientId}`,
+    client_address:     address,
+    start_date:         startDate,
+    payer:              payerResult.payer,   // null rather than wrong
+    schedule_notes:     rec.facts.schedule_notes as string | null,
+    axiscare_client_id: clientId,
+    source:             'axiscare_webhook',
+  } })
 
   if (error) {
-    console.error('client_queue upsert failed:', error.message)
+    console.error('upsert_client_launch failed:', error.message)
     /* Dead letter: the event is already recorded, so nothing is lost. Mark the
        failure on it so the Control Centre can show it rather than silently
        returning 500 into AxisCare's retry queue. */
@@ -327,9 +327,10 @@ Deno.serve(async (req) => {
     return new Response('queue write failed', { status: 500 })
   }
 
-  console.log(`client ${clientId} handled — queue row ${data?.[0]?.id ?? '(existing)'}`)
+  console.log(`client ${clientId} handled — ${rpc?.action ?? 'no action'} (episode ${rpc?.episode_n ?? '-'})`)
   return new Response(JSON.stringify({
     ok: true, event: internal, axiscare_client_id: clientId,
-    queue_row: data?.[0]?.id ?? null, unresolved,
+    queue: rpc?.action ?? null, queue_row: rpc?.id ?? null, episode_n: rpc?.episode_n ?? null,
+    unresolved,
   }), { status: 200, headers: { 'Content-Type': 'application/json' } })
 })
