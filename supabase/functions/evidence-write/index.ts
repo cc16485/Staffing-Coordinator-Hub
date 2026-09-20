@@ -362,7 +362,14 @@ if (typeof Deno !== 'undefined' && Deno?.serve) {
     const existing = (await items(K_EV)).find(e => e.id === id)
     if (existing) return json({ ok: true, duplicate: true, event_id: id, note: 'idempotent replay — nothing new was written' })
     const stamp = new Date().toISOString()
-    await put(K_EV, { id, ...v.event!, recorded_at: stamp, recorded_by: email(req), registry_version: REGISTRY_VERSION })
+    /* recorded_by = the human creating THIS Evidence Foundation event (her
+       rule: never conflated with the source, never with whoever documented
+       the underlying record). An authenticated caller is always themselves;
+       a service-role caller (her deliberately-run scripts) must state the
+       human recorder explicitly — the service is never the recorder. */
+    const recorder = (r === 'service_role' && typeof body.recorded_by === 'string' && body.recorded_by.trim())
+      ? body.recorded_by.trim() : email(req)
+    await put(K_EV, { id, ...v.event!, recorded_at: stamp, recorded_by: recorder, registry_version: REGISTRY_VERSION })
     for (const l of v.links!)
       await put(K_LN, { id: `cle_${id}_${l.claim}`, axiscare_id: axid, event_id: id,
         claim: l.claim, asserts: l.asserts, note: l.note, recorded_at: stamp })
