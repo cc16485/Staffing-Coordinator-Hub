@@ -257,7 +257,45 @@ export function runSelftest() {
     && !Object.values(REGISTRY).some((d) => (d as unknown as { public_templates?: unknown[] }).public_templates?.length))
   t('empty foundation: resolving with zero evidence yields no value and no invented state',
     resolve('dementia_care.experience', []).value === null && resolve('dementia_care.experience', []).state === 'current')
+
+  // — recorder ≠ technical actor (her amendment) —
+  const r1 = recorderFor('authenticated', 'Somebody Else', 'krystal@mo-care.com')
+  t('authenticated cannot submit another person\'s recorded_by (refused, not silently corrected)', !r1.ok)
+  const r2 = recorderFor('authenticated', null, 'krystal@mo-care.com')
+  t('authenticated is stamped as themselves, via=authenticated',
+    r2.ok && r2.recorded_by === 'krystal@mo-care.com' && r2.recorded_via === 'authenticated')
+  const r3 = recorderFor('service_role', 'Samantha Troutman', 'service')
+  t('service-role may supply the explicit human recorder',
+    r3.ok && r3.recorded_by === 'Samantha Troutman')
+  t('recorded_via is server-derived from the role — no input can alter it',
+    r3.ok && r3.recorded_via === 'service_role'
+    && (() => { const x = recorderFor('authenticated', 'krystal@mo-care.com', 'krystal@mo-care.com')
+                return x.ok && x.recorded_via === 'authenticated' })())
+  const r5 = recorderFor('service_role', '', 'service')
+  t('service-role write with NO human recorder fails closed — never silently \'service\'',
+    !r5.ok && /never the recorder/.test((r5 as { error: string }).error))
   return { registry_version: REGISTRY_VERSION, total: n, passed: n - fails.length, failures: fails }
+}
+
+/* Three distinct provenance roles (her amendment, 2026-09-20):
+   source_person = who supplied the underlying information;
+   recorded_by   = the HUMAN taking responsibility for entering it into the
+                   Evidence Foundation now;
+   recorded_via  = the technical actor that authenticated to the door —
+                   SERVER-DERIVED from the JWT role, never claimable by the
+                   caller. A human-run import and a hand-entered event stay
+                   distinguishable forever. */
+export function recorderFor(role: string, bodyRecordedBy: unknown, jwtEmail: string):
+  { ok: true; recorded_by: string; recorded_via: string } | { ok: false; error: string } {
+  const via = role === 'service_role' ? 'service_role' : 'authenticated'
+  const rb = typeof bodyRecordedBy === 'string' ? bodyRecordedBy.trim() : ''
+  if (role === 'service_role') {
+    if (!rb) return { ok: false, error: 'service-role writes must state the human recorded_by — the service is never the recorder' }
+    return { ok: true, recorded_by: rb, recorded_via: via }
+  }
+  if (rb && rb !== jwtEmail)
+    return { ok: false, error: 'recorded_by must be the signed-in user — you cannot record as someone else' }
+  return { ok: true, recorded_by: jwtEmail, recorded_via: via }
 }
 
 export function eventIdFor(axid: string, clientToken: string): string {
@@ -341,7 +379,8 @@ if (typeof Deno !== 'undefined' && Deno?.serve) {
         links: [{ claim: 'dementia_care.experience', asserts: 'yes' }] })
       if (!v.ok) return json({ probe: 'validate failed', errors: v.errors }, 500)
       const id = eventIdFor('0', 'foundation-probe')
-      await put(K_EV, { id, ...v.event!, recorded_at: new Date().toISOString(), recorded_by: 'deploy-probe', registry_version: REGISTRY_VERSION })
+      await put(K_EV, { id, ...v.event!, recorded_at: new Date().toISOString(),
+        recorded_by: 'deploy-probe', recorded_via: 'service_role', registry_version: REGISTRY_VERSION })
       await put(K_LN, { id: `cle_${id}_dementia_care.experience`, axiscare_id: '0', event_id: id,
         claim: 'dementia_care.experience', asserts: 'yes', note: '', recorded_at: new Date().toISOString() })
       const claims = await recompute('0')
@@ -362,14 +401,10 @@ if (typeof Deno !== 'undefined' && Deno?.serve) {
     const existing = (await items(K_EV)).find(e => e.id === id)
     if (existing) return json({ ok: true, duplicate: true, event_id: id, note: 'idempotent replay — nothing new was written' })
     const stamp = new Date().toISOString()
-    /* recorded_by = the human creating THIS Evidence Foundation event (her
-       rule: never conflated with the source, never with whoever documented
-       the underlying record). An authenticated caller is always themselves;
-       a service-role caller (her deliberately-run scripts) must state the
-       human recorder explicitly — the service is never the recorder. */
-    const recorder = (r === 'service_role' && typeof body.recorded_by === 'string' && body.recorded_by.trim())
-      ? body.recorded_by.trim() : email(req)
-    await put(K_EV, { id, ...v.event!, recorded_at: stamp, recorded_by: recorder, registry_version: REGISTRY_VERSION })
+    const rec = recorderFor(r, body.recorded_by, email(req))
+    if (!rec.ok) return json({ ok: false, refused: true, errors: [rec.error] }, 422)
+    await put(K_EV, { id, ...v.event!, recorded_at: stamp,
+      recorded_by: rec.recorded_by, recorded_via: rec.recorded_via, registry_version: REGISTRY_VERSION })
     for (const l of v.links!)
       await put(K_LN, { id: `cle_${id}_${l.claim}`, axiscare_id: axid, event_id: id,
         claim: l.claim, asserts: l.asserts, note: l.note, recorded_at: stamp })
