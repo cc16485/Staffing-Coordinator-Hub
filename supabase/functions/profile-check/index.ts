@@ -65,6 +65,38 @@ function axisCreds() {
   const site = Deno.env.get('AXISCARE_SITE') || Deno.env.get('AXISCARE_SITE_NUMBER') || ''
   return { token, site }
 }
+/* The single-caregiver GET was never live-probed and its real response
+   shape proved not to match the spec (2026-09-20 proof run: census-active
+   caregivers read as inactive). Validate the shape; when it isn't a
+   caregiver record, fall back to paging the PROVEN list endpoint and
+   matching the id — the same read coverage has used all along. */
+// deno-lint-ignore no-explicit-any
+async function axCaregiver(id: string): Promise<any> {
+  try {
+    // deno-lint-ignore no-explicit-any
+    const one: any = await axGet(`caregivers/${id}`)
+    const looksLikeCaregiver = one && !Array.isArray(one?.caregivers) &&
+      (one.status !== undefined || one.firstName !== undefined || one.lastName !== undefined)
+    if (looksLikeCaregiver && String(one?.id ?? id) === String(id)) return one
+  } catch { /* fall through to the list */ }
+  const { token, site } = axisCreds()
+  if (!token || !site) return null
+  let url: string | null = `https://${site}.axiscare.com/api/caregivers`
+  let pages = 0
+  while (url && pages < 12) {
+    pages++
+    const r = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json',
+      'X-AxisCare-Api-Version': Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01' } })
+    if (!r.ok) return null
+    const j = await r.json().catch(() => ({}))
+    // deno-lint-ignore no-explicit-any
+    const res = (j as any)?.results
+    const rows = res?.caregivers ?? (Array.isArray(res) ? res : []) ?? []
+    for (const c of rows) if (String(c?.id) === String(id)) return c
+    url = res?.nextPage ?? (j as any)?.nextPage ?? null
+  }
+  return null
+}
 async function axGet(path: string): Promise<unknown> {
   const { token, site } = axisCreds()
   if (!token || !site) throw new Error('AxisCare credentials not set')
@@ -565,7 +597,7 @@ Deno.serve(async (req) => {
       // deno-lint-ignore no-explicit-any
       let facts: any = null
       const useId = axId || S(cg?.axiscare_id)
-      if (useId) { try { facts = await axGet(`caregivers/${useId}`) } catch { facts = null } }
+      if (useId) { try { facts = await axCaregiver(useId) } catch { facts = null } }
       const avails = await appData('caregiver_availability')
       // deno-lint-ignore no-explicit-any
       const avail = (avails as any[]).find(a => S(a.axiscare_id) === useId) ?? null
