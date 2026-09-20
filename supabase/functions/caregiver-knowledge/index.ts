@@ -50,9 +50,17 @@ function callerRole(req: Request): string {
   } catch { return '' }
 }
 
+/* The hub calls this from the BROWSER, so CORS headers are required on every
+   response including the preflight — the same lesson the census reader taught
+   (script 177): without them the page sees only "Failed to fetch". */
+const cors = { 'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS' }
+
 Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { status: 200, headers: cors })
   const json = (b: unknown, s = 200) =>
-    new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
+    new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
   const r = callerRole(req)
   if (r !== 'authenticated' && r !== 'service_role') return json({ error: 'a signed-in session is required' }, 403)
 
