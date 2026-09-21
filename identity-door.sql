@@ -54,6 +54,10 @@ create table if not exists identity_door_audit (
 alter table identity_door_audit enable row level security;
 revoke all on identity_door_audit from public, anon, authenticated;
 revoke update, delete, truncate on identity_door_audit from service_role;
+-- Default privileges grant service_role ALL on new tables (the July re-grant),
+-- which quietly left REFERENCES and TRIGGER behind. Owner-approved repair
+-- 2026-09-20 (script 204): the target is INSERT + SELECT only.
+revoke references, trigger on identity_door_audit from service_role;
 grant insert, select on identity_door_audit to service_role;
 grant usage on sequence identity_door_audit_id_seq to service_role;
 
