@@ -42,13 +42,22 @@ export const RESOLVE_SOURCES = [['hub', 'job_applicant']] as const
 export const ATTACH_SOURCES = [['axiscare', 'caregiver']] as const
 
 export type Validated =
-  | { ok: true; op: 'resolve_or_create' | 'attach_source'; args: Record<string, unknown> }
+  | { ok: true; op: 'resolve_or_create' | 'attach_source' | 'resolve_historical'; args: Record<string, unknown> }
   | { ok: false; status: number; error: string }
+
+// resolve_historical accepts NOTHING identity-bearing from the caller. The
+// approved stored ruling and live AxisCare are the only identity sources.
+export const HISTORICAL_FORBIDDEN = [
+  'person_id', 'axiscare_id', 'caregiver_id', 'system', 'entity_type', 'source_id',
+  'name', 'first_name', 'last_name', 'display_name', 'phone', 'email',
+  'ghl_contact_id', 'hire_intake_id', 'approved_by', 'approved_at', 'basis',
+  'method', 'evidence', 'attestation', 'ax_verified_epoch', 'verified',
+] as const
 
 export function validate(body: Record<string, unknown>): Validated {
   const op = String(body.op ?? '')
-  if (op !== 'resolve_or_create' && op !== 'attach_source')
-    return { ok: false, status: 400, error: 'op must be resolve_or_create or attach_source' }
+  if (op !== 'resolve_or_create' && op !== 'attach_source' && op !== 'resolve_historical')
+    return { ok: false, status: 400, error: 'op must be resolve_or_create, attach_source or resolve_historical' }
 
   const workflow = String(body.workflow ?? '')
   if (!(WORKFLOWS as readonly string[]).includes(workflow))
@@ -56,6 +65,16 @@ export function validate(body: Record<string, unknown>): Validated {
 
   const acting = String(body.acting_staff ?? '').trim()
   if (!acting) return { ok: false, status: 400, error: 'acting_staff is required for the audit record' }
+
+  if (op === 'resolve_historical') {
+    const supplied = HISTORICAL_FORBIDDEN.filter((k) => k in body)
+    if (supplied.length)
+      return { ok: false, status: 400,
+               error: 'callers may not supply identity for a historical resolution: ' + supplied.join(', ') }
+    const rid = String(body.resolution_id ?? '').trim()
+    if (!rid) return { ok: false, status: 400, error: 'resolution_id is required' }
+    return { ok: true, op, args: { resolution_id: rid, workflow, acting_staff: acting } }
+  }
 
   const system = String(body.system ?? '')
   const entity = String(body.entity_type ?? '')
@@ -134,6 +153,29 @@ export function runSelftest(): { pass: number; fail: number; failures: string[] 
                person_id: 'p', evidence: 'approved ruling hires_599' }).ok)
   t('attach of hub/job_applicant refused (resolve-only namespace)',
     !validate({ ...base, op: 'attach_source', person_id: 'p', evidence: 'e' }).ok)
+  t('resolve_historical accepted with resolution_id only',
+    validate({ op: 'resolve_historical', workflow: 'identity_remediation',
+               acting_staff: 'samantha@mo-care.com', resolution_id: 'hires_598' }).ok)
+  t('resolve_historical without resolution_id refused',
+    !validate({ op: 'resolve_historical', workflow: 'identity_remediation', acting_staff: 's' }).ok)
+  t('resolve_historical refuses caller-supplied person_id',
+    !validate({ op: 'resolve_historical', workflow: 'identity_remediation',
+                acting_staff: 's', resolution_id: 'hires_598', person_id: 'x' }).ok)
+  t('resolve_historical refuses caller-supplied name/display identity',
+    !validate({ op: 'resolve_historical', workflow: 'identity_remediation',
+                acting_staff: 's', resolution_id: 'hires_598', first_name: 'A', display_name: 'B' }).ok)
+  t('resolve_historical refuses caller-supplied caregiver id',
+    !validate({ op: 'resolve_historical', workflow: 'identity_remediation',
+                acting_staff: 's', resolution_id: 'hires_598', caregiver_id: '598' }).ok)
+  t('resolve_historical refuses caller-supplied attestation/verification',
+    !validate({ op: 'resolve_historical', workflow: 'identity_remediation',
+                acting_staff: 's', resolution_id: 'hires_598', attestation: 'aa', verified: true }).ok)
+  t('resolve_historical refuses phone/email/approval fields',
+    !validate({ op: 'resolve_historical', workflow: 'identity_remediation',
+                acting_staff: 's', resolution_id: 'hires_598', phone: '1', email: 'e', approved_by: 'me' }).ok)
+  t('resolve_historical refuses unregistered workflow',
+    !validate({ op: 'resolve_historical', workflow: 'whatever',
+                acting_staff: 's', resolution_id: 'hires_598' }).ok)
   t('jwtRole parses service_role', jwtRole('Bearer x.' + btoa(JSON.stringify({ role: 'service_role' })) + '.y') === 'service_role')
   t('jwtRole parses authenticated', jwtRole('Bearer x.' + btoa(JSON.stringify({ role: 'authenticated' })) + '.y') === 'authenticated')
   t('jwtRole handles garbage', jwtRole('Bearer nonsense') === null)
@@ -174,6 +216,90 @@ if (typeof Deno !== 'undefined' && Deno?.serve) {
 
     const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2')
     const sb = createClient(Deno!.env.get('SUPABASE_URL')!, Deno!.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+
+    if (v.op === 'resolve_historical') {
+      // The wrapper owns the live-AxisCare half of the trust boundary.
+      const rid = String(v.args.resolution_id)
+      const audit = (outcome: string, source_id: string, detail: string) =>
+        sb.from('identity_door_audit').insert({
+          op: 'resolve_historical', workflow: v.args.workflow, acting_staff: v.args.acting_staff,
+          system: 'axiscare', entity_type: 'caregiver', source_id, outcome, detail })
+
+      const { data: row } = await sb.from('app_data').select('data')
+        .eq('key', 'hiring_identity_resolutions').maybeSingle()
+      const recs: unknown[] = Array.isArray(row?.data) ? row!.data as unknown[] : []
+      const rec = recs.find((r) => (r as Record<string, unknown>)?.id === rid) as Record<string, unknown> | undefined
+      if (!rec) {
+        await audit('invalid_resolution', '', 'no such approved resolution: ' + rid)
+        return json({ outcome: 'invalid_resolution', detail: 'no such approved resolution' }, 404)
+      }
+      const axid = String(rec.axiscare_id ?? '')
+      if (!/^\d+$/.test(axid)) {
+        await audit('invalid_resolution', axid, 'resolution carries no numeric axiscare_id')
+        return json({ outcome: 'invalid_resolution', detail: 'resolution carries no numeric axiscare_id' }, 422)
+      }
+
+      // Live authoritative existence check, the proven census contract
+      // (paginated GET; ANY failure fails closed; the stale hub cache is
+      // deliberately never consulted).
+      const token = ['AXISCARE_API_KEY', 'AXISCARE_TOKEN', 'AXISCARE_VISITS_TOKEN']
+        .map((n) => Deno!.env.get(n)).find(Boolean)
+      const site = Deno!.env.get('AXISCARE_SITE') || Deno!.env.get('AXISCARE_SITE_NUMBER') || ''
+      if (!token || !/^\d+$/.test(site)) {
+        await audit('invalid_resolution', axid, 'axiscare credentials unavailable; failing closed')
+        return json({ outcome: 'invalid_resolution', detail: 'axiscare unreachable; failing closed' }, 502)
+      }
+      let found: Record<string, unknown> | null = null
+      let url: string | null = `https://${site}.axiscare.com/api/caregivers`
+      let pages = 0
+      while (url && pages < 20 && !found) {
+        pages++
+        const r = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json',
+          'X-AxisCare-Api-Version': Deno!.env.get('AXISCARE_API_VERSION') || '2023-10-01' } }).catch(() => null)
+        if (!r || !r.ok) {
+          await audit('invalid_resolution', axid, `axiscare responded ${r ? r.status : 'network error'}; failing closed`)
+          return json({ outcome: 'invalid_resolution', detail: 'axiscare unreachable; failing closed' }, 502)
+        }
+        // deno-lint-ignore no-explicit-any
+        const j: any = await r.json().catch(() => ({}))
+        const rows = j?.results?.caregivers ?? j?.caregivers ?? []
+        for (const g of Array.isArray(rows) ? rows : []) {
+          if (String(g?.id ?? '') === axid) { found = g; break }
+        }
+        url = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
+      }
+      if (!found) {
+        await audit('invalid_resolution', axid, 'caregiver not found in live AxisCare; failing closed')
+        return json({ outcome: 'invalid_resolution', detail: 'caregiver not found in live AxisCare' }, 404)
+      }
+      const first = String(found.firstName ?? found.first_name ?? found.first ?? '').trim()
+      const last = String(found.lastName ?? found.last_name ?? found.last ?? '').trim()
+
+      // The attestation binds ruling id, caregiver id, the authoritative
+      // name, and the moment of verification under AXIS_ATTEST_KEY.
+      const attKey = Deno!.env.get('AXIS_ATTEST_KEY') ?? ''
+      if (!attKey) {
+        await audit('invalid_resolution', axid, 'attestation key unavailable; failing closed')
+        return json({ outcome: 'invalid_resolution', detail: 'door not configured' }, 502)
+      }
+      const epoch = Math.floor(Date.now() / 1000)
+      const enc = new TextEncoder()
+      const cryptoKey = await crypto.subtle.importKey('raw', enc.encode(attKey),
+        { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+      const sig = await crypto.subtle.sign('HMAC', cryptoKey,
+        enc.encode(`${rid}|${axid}|${first}|${last}|${epoch}`))
+      const attestation = Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, '0')).join('')
+
+      const { data, error } = await sb.rpc('person_resolve_historical', {
+        p_resolution_id: rid, p_ax_caregiver_id: axid,
+        p_ax_first: first || null, p_ax_last: last || null,
+        p_ax_verified_epoch: epoch, p_attestation: attestation,
+        p_workflow: v.args.workflow, p_acting_staff: v.args.acting_staff,
+      })
+      if (error) return json({ error: error.message }, 500)
+      return json({ door_version: DOOR_VERSION, ...(data as Record<string, unknown>) })
+    }
+
     const fn = v.op === 'resolve_or_create' ? 'person_resolve_or_create' : 'person_attach_source'
     const { data, error } = await sb.rpc(fn, v.args)
     if (error) return json({ error: error.message }, 500)
