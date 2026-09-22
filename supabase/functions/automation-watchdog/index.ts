@@ -120,8 +120,26 @@ Deno.serve(async (req) => {
   if (problems.length && !dry && !suppressed) {
     const ghlToken = Deno.env.get('GHL_TOKEN')
     const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
-    const { data: alertTo } = await supabase.from('applicant_alerts').select('*').eq('active', true)
-    if (ghlToken && ghlLocation && (alertTo ?? []).length) {
+    /* Watchdog alerts have their own recipient list (app_data key
+       'watchdog_recipients'; her ruling 2026-09-21: watchdog problems go to
+       Samantha directly, not the office channel). applicant_alerts keeps
+       announcing applicants/leads/interviews untouched and serves only as
+       the fallback here, so a missing or emptied config can never silence
+       the watchdog entirely. */
+    // deno-lint-ignore no-explicit-any
+    let alertTo: any[] = []
+    try {
+      const { data: wr } = await supabase.from('app_data').select('data')
+        .eq('key', 'watchdog_recipients').maybeSingle()
+      alertTo = (Array.isArray(wr?.data) ? wr!.data : [])
+        // deno-lint-ignore no-explicit-any
+        .filter((x: any) => x?.active !== false && (x?.phone || x?.email))
+    } catch { /* fall through to the shared list */ }
+    if (!alertTo.length) {
+      const { data: fb } = await supabase.from('applicant_alerts').select('*').eq('active', true)
+      alertTo = fb ?? []
+    }
+    if (ghlToken && ghlLocation && alertTo.length) {
       const h = { Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28',
                   'Content-Type': 'application/json', Accept: 'application/json' }
       const line = `Hub watchdog: ${problems.length} automation problem${problems.length > 1 ? 's' : ''}. ` +
@@ -132,7 +150,7 @@ Deno.serve(async (req) => {
         `<p>Nothing here reaches applicants or clients by itself — these are background jobs that have gone quiet ` +
         `or are erroring. Tell Claude what this email says and it can dig in.</p>` +
         `<p style="color:#57606a">Caring Companions · automation watchdog</p></div>`
-      for (const t of alertTo!) {
+      for (const t of alertTo) {
         try {
           const r = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
             method: 'POST', headers: h,
