@@ -117,7 +117,15 @@ Deno.serve(async (req) => {
       }
     } catch { /* a broken state store must not silence alerts */ }
   }
-  if (problems.length && !dry && !suppressed) {
+  /* QUIET HOURS (her ruling 2026-09-21: watchdog texts were landing at all
+     hours of the day and night). Alerts respect the same 8-21 Chicago
+     window every other closure text uses. An overnight problem is not
+     lost: the send is skipped WITHOUT stamping alert_state, so the first
+     run after 8am delivers it if the problem still exists. */
+  const chiHour = Number(new Date().toLocaleString('en-US',
+    { timeZone: 'America/Chicago', hour: 'numeric', hour12: false }))
+  const quietHours = !(chiHour >= 8 && chiHour < 21)
+  if (problems.length && !dry && !suppressed && !quietHours) {
     const ghlToken = Deno.env.get('GHL_TOKEN')
     const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
     /* Watchdog alerts have their own recipient list (app_data key
@@ -192,5 +200,5 @@ Deno.serve(async (req) => {
     } catch (e) { console.error('[automation-watchdog] heartbeat failed', e) }
   }
 
-  return json({ ok: true, dry, checked: EXPECTED.length, problems, alerted, suppressed })
+  return json({ ok: true, dry, checked: EXPECTED.length, problems, alerted, suppressed, quiet_hours: quietHours })
 })
