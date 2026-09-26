@@ -145,6 +145,20 @@ function skipMatch(skips: any[], scope: string, caregiverName: string, clientFir
 const rowsOf = (v: any): any[] => Array.isArray(v) ? v
   : (v && typeof v === 'object') ? Object.values(v) : []
 
+/* AxisCare clockIn/clockOut are records {time, method, ...}; reading the record
+   as text showed "ect]" instead of a time. HH:MM on the office clock; a bare
+   string is still accepted. */
+function clockHM(c: unknown): string | null {
+  // deno-lint-ignore no-explicit-any
+  const t = c && typeof c === 'object' ? String((c as any).time ?? '') : (typeof c === 'string' ? c : '')
+  if (!t) return null
+  if (!/Z$|[+-]\d{2}:?\d{2}$/.test(t)) return t.slice(11, 16) || null
+  const d = new Date(t)
+  return Number.isFinite(d.getTime())
+    ? new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', hourCycle: 'h23', hour: '2-digit', minute: '2-digit' }).format(d)
+    : null
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
   const t0 = Date.now()
@@ -504,8 +518,8 @@ Deno.serve(async (req) => {
       let chasedNow = 0, skippedDone = 0
       for (const v of yvisits) {
         if (v?.caregiver?.id == null) continue
-        const cin = String(v?.clockIn ?? v?.actualStartDate ?? '').slice(11, 16)
-        const cout = String(v?.clockOut ?? v?.actualEndDate ?? '').slice(11, 16)
+        const cin = clockHM(v?.clockIn) ?? String(v?.actualStartDate ?? '').slice(11, 16)
+        const cout = clockHM(v?.clockOut) ?? String(v?.actualEndDate ?? '').slice(11, 16)
         if (cin && cout) continue
         const vid = String(v?.id ?? '')
         const key = 'evv_' + yday + '_' + vid.replace(/[^A-Za-z0-9]/g, '_')

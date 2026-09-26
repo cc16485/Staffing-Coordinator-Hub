@@ -49,6 +49,20 @@ const addCalDays = (ymd: string, n: number): string => {
   return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10)
 }
 
+/* AxisCare clockIn/clockOut are records {time, method, ...}; reading the record
+   as text showed "ect]" instead of a time. HH:MM on the office clock; a bare
+   string is still accepted. */
+function clockHM(c: unknown): string | null {
+  // deno-lint-ignore no-explicit-any
+  const t = c && typeof c === 'object' ? String((c as any).time ?? '') : (typeof c === 'string' ? c : '')
+  if (!t) return null
+  if (!/Z$|[+-]\d{2}:?\d{2}$/.test(t)) return t.slice(11, 16) || null
+  const d = new Date(t)
+  return Number.isFinite(d.getTime())
+    ? new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', hourCycle: 'h23', hour: '2-digit', minute: '2-digit' }).format(d)
+    : null
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200, headers: {
     'Access-Control-Allow-Origin': '*',
@@ -132,8 +146,8 @@ Deno.serve(async (req) => {
         ? ([v?.caregiver?.firstName, v?.caregiver?.lastName].filter(Boolean).join(' ') || ('#' + v.caregiver.id))
         : null,
       caregiver_id: v?.caregiver?.id != null ? String(v.caregiver.id) : '',
-      clock_in: String(v?.clockIn ?? v?.actualStartDate ?? '').slice(11, 16) || null,
-      clock_out: String(v?.clockOut ?? v?.actualEndDate ?? '').slice(11, 16) || null,
+      clock_in: clockHM(v?.clockIn) ?? (String(v?.actualStartDate ?? '').slice(11, 16) || null),
+      clock_out: clockHM(v?.clockOut) ?? (String(v?.actualEndDate ?? '').slice(11, 16) || null),
     })).sort((a, b2) => a.time.localeCompare(b2.time) || a.client.localeCompare(b2.client))
     return json({ date: day, total: rows.length,
       unassigned: rows.filter((r) => !r.caregiver).length, rows })
