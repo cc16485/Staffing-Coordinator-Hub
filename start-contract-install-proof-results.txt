@@ -1,0 +1,8 @@
+
+START CONTRACT INSTALLER · DISPOSABLE PROOF
+============================================================
+PASS  install · a migration that is not the proven build stops before anything runs
+PASS  install · installs, verifies security and unchanged Journey counts, names who can record
+PASS  install · a rerun once a contract exists stops at the guard and changes nothing
+============================================================
+ALL 3 PROOFS PASS

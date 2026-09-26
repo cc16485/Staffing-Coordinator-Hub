@@ -1,0 +1,31 @@
+
+START CONTRACT · DISPOSABLE PROOF
+============================================================
+PASS  install · an injected failure leaves nothing behind
+PASS  install · installs; self-check passes
+PASS  rollback · on an empty install removes every object
+PASS  install · reinstall, and a rerun while empty, both succeed
+PASS  door · refuses a bad seat, no person, an inactive Journey, an unknown confidence, a missing target date, no owner, a half-recorded promise, a commitment with no words, a promise dated in the future, a next update in the past, and a first contract with no next update owed
+PASS  record · an Early contract needs no date; it records version 1 and the next update owed
+PASS  record · repeating the same contract is a no-op (a double-click is harmless)
+PASS  record · changing only the next update owed adds no contract version
+PASS  record · a change supersedes the last version and keeps it; the next update owed carries over
+PASS  record · changing a commitment already made to the family needs a reason; with one, it records and keeps every earlier version
+PASS  history · the versions form one unbroken chain from the first to the current
+PASS  update · refused before a contract exists
+PASS  update · refuses a blank summary, both or neither of next-date/none-owed, a next update in the past, an update dated in the future
+PASS  update · logs what we told the family and the next update owed (owed by the commitment owner); a repeat is a no-op
+PASS  update · a final update can say nothing more is owed, and why
+PASS  record · a later contract call can schedule a new next update after 'none owed'
+PASS  record · works on a current client's Journey and from the Owner / Decision seat, recording who and which seat
+PASS  concurrency · two identical first contracts at once: one records, the other is a no-op, one root
+PASS  concurrency · two different first contracts at once serialize into one chain (recorded, then changed), never two roots
+PASS  audit · every Door call is recorded, refusals included
+PASS  append-only · versions, updates and the audit cannot be edited, deleted or truncated (even by the service role or the owner)
+PASS  security · signed-in staff read contracts and updates but cannot write them, call the Doors, or read the audit; anonymous gets nothing
+PASS  guard · with contracts present the migration refuses and changes nothing
+PASS  rollback · refuses once any contract exists
+PASS  journey · the Journey foundation is unchanged by every step above
+============================================================
+ALL 25 PROOFS PASS
+start contract migration sha256: 52c924b532dc12e300904b610bdfe35a27426cb67a6923b189735685e82a4a42
