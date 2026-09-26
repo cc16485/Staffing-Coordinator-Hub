@@ -1,0 +1,10 @@
+
+STEP 6 DRY-RUN INSTALLER · PROOF AGAINST FAKE SERVICES
+============================================================
+PASS  a function source that is not the reviewed one stops before anything runs
+PASS  if the live hub still serves the old engine (hub update not merged), it stops before deploying or running
+PASS  if the switch is already on, it refuses (this script only dry-runs)
+PASS  happy path: dry run read, My Work unchanged, logged, and the report lists what it would create
+PASS  if My Work changed during the dry run, it says so and fails
+============================================================
+ALL 5 PROOFS PASS

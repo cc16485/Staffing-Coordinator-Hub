@@ -1,0 +1,11 @@
+
+STEP 6 ON/OFF SCRIPTS · PROOF AGAINST FAKE SERVICES
+============================================================
+PASS  on · stops and changes nothing if the live engine has no work items
+PASS  on · stops and changes nothing if promise-run isn't deployed
+PASS  on · flips the switch keeping every other setting, schedules exactly one hourly job with the public key, runs live once, counts match
+PASS  on · running it again leaves one job, not two
+PASS  on · if My Work changed by more than the run reports, it says so and fails
+PASS  off · flips the switch off keeping every other setting and removes the schedule
+============================================================
+ALL 6 PROOFS PASS
