@@ -1,0 +1,8 @@
+
+STEP 2 INSTALLER · DISPOSABLE PROOF
+============================================================
+PASS  install · a migration that is not the proven build stops before anything runs
+PASS  install · installs, verifies security, the mirror rule and unchanged counts, and reports existing leads with ids (read only)
+PASS  install · a rerun once a connection exists stops at the guard and changes nothing
+============================================================
+ALL 3 PROOFS PASS
