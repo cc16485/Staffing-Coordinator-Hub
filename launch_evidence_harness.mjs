@@ -16,6 +16,7 @@ const visit = (cid, day, clocked, extra) => Object.assign({ id: 'v=' + cid + day
   scheduledStartDate: day + 'T09:00:00', scheduledEndDate: day + 'T12:00:00', removed: false, verified: clocked,
   clockIn: clocked ? { time: day + 'T09:02:00', method: 'Mobile' } : null, clockOut: clocked ? { time: day + 'T12:01:00' } : null }, extra || {});
 const AX = { '295': [visit(295, D(-4), true), visit(295, D(3), false)], '300': [visit(300, D(2), false)], '310': [visit(310, D(-3), false)] };
+const CLIENTS = new Set(['295', '300', '310', '350']);   // 350 exists but has no visits yet; 360 does not exist
 let axCalls = [], ax429 = false, pageTwo = false;
 globalThis.fetch = async (u) => {
   u = String(u);
@@ -24,10 +25,13 @@ globalThis.fetch = async (u) => {
     axCalls.push(u);
     if (ax429) return new Response('{}', { status: 429 });
     const q = new URL(u).searchParams, cid = q.get('clientIds');
+    if (!(AX[cid] || []).length) return new Response(JSON.stringify({ success: false, errors: { error: 'No visits found' } }), { status: 404 });
     if (pageTwo && !q.get('page')) return new Response(JSON.stringify({ results: { visits: [AX[cid][0]], nextPage: u + '&page=2' } }));
     if (pageTwo && q.get('page')) return new Response(JSON.stringify({ results: { visits: AX[cid].slice(1), nextPage: 'https://evil.example/api/visits' } }));
     return new Response(JSON.stringify({ results: { visits: AX[cid] || [] } }));
   }
+  const m = /^https:\/\/16485\.axiscare\.com\/api\/clients\/(\d+)$/.exec(u);
+  if (m) return CLIENTS.has(m[1]) ? new Response(JSON.stringify({ results: { id: +m[1] } })) : new Response('{}', { status: 404 });
   throw new Error('unexpected fetch ' + u);
 };
 const DB = { app_data: { ops_settings: {}, automation_log: [] }, launch_evidence: [],
@@ -114,6 +118,18 @@ ax429 = true; [st, b] = await call(ANON, { action: 'run' }); ax429 = false;
 ck('AxisCare busy (429) · the run stops early and says so in the log', b.rate_limited === true && logs().at(-1)?.rate_limited === true, b);
 [st, b] = await call(STAFF, { action: 'refresh', launch_id: DB.client_queue[3].id });
 ck('no AxisCare id yet · says so, reads nothing', b.ok === false && b.reason === 'no_axiscare_id', b);
+
+DB.client_queue.push({ id: '77777777-7777-4777-8777-777777777777', client_name: 'New No Visits', axiscare_client_id: '350', status: 'pending', episode_n: 1, start_date: D(5), added_at: D(-1) + 'T14:00:00Z' },
+                    { id: '88888888-8888-4888-8888-888888888888', client_name: 'Wrong Id', axiscare_client_id: '360', status: 'pending', episode_n: 1, added_at: D(-1) + 'T14:00:00Z' });
+[st, b] = await call(STAFF, { action: 'refresh', launch_id: '77777777-7777-4777-8777-777777777777' });
+ck('404 · a real client with no visits yet: AxisCare\'s 404 is read as "no visits", not an error',
+  b.ok === true && b.evaluation.schedule.state === 'no' && b.evaluation.first_shift.state === 'none', b);
+[st, b] = await call(STAFF, { action: 'refresh', launch_id: '88888888-8888-4888-8888-888888888888' });
+ck('404 · an AxisCare id that does not exist stays an error and says so', b.ok === false && b.reason === 'no_such_client' && /no client #360/.test(b.detail), b);
+DB.app_data.ops_settings = {};
+[st, b] = await call(SVC, { action: 'run' });
+ck('404 · in the scheduled run: the no-visits client is read, the wrong id is named in the error list',
+  b.errors === 1 && b.error_list[0].client === 'Wrong Id' && /no client #360/.test(b.error_list[0].error) && b.preview.some(p => p.client === 'New No Visits'), b);
 
 let pass = 0;
 for (const [name, ok, note] of res) { console.log((ok ? 'PASS ' : 'FAIL ') + name + (ok ? '' : '\n     ' + note)); if (ok) pass++; }

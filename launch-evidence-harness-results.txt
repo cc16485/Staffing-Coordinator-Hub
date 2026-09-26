@@ -15,5 +15,8 @@ PASS run · the owner's report (service role) sees each launch and its open ques
 PASS rerun · facts already recorded are not sent again
 PASS AxisCare busy (429) · the run stops early and says so in the log
 PASS no AxisCare id yet · says so, reads nothing
+PASS 404 · a real client with no visits yet: AxisCare's 404 is read as "no visits", not an error
+PASS 404 · an AxisCare id that does not exist stays an error and says so
+PASS 404 · in the scheduled run: the no-visits client is read, the wrong id is named in the error list
 
-17/17 passed
+20/20 passed
