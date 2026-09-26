@@ -1,0 +1,8 @@
+
+STEP 3 INSTALLER · DISPOSABLE PROOF
+============================================================
+PASS  install · a migration that is not the proven build stops before anything runs
+PASS  install · installs, verifies security, the untouched mirror and unchanged counts, and reports New Clients (read only)
+PASS  install · a rerun once an admission is recorded stops at the guard and changes nothing
+============================================================
+ALL 3 PROOFS PASS

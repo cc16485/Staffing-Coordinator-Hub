@@ -1,0 +1,26 @@
+
+STEP 3 · WHO IS THIS? (NO-LEAD ADMISSION) · DISPOSABLE PROOF
+============================================================
+PASS  install · an injected failure leaves nothing behind
+PASS  install · installs, and a rerun while unused succeeds; self-check passes
+PASS  install · the lead mirror is not touched by Step 3
+PASS  options · a case lists the unconnected inquiries it might have come from, with the lead id and a name hint only
+PASS  refusals · bad seat, no person, and no reason for having no inquiry are refused; nothing changes
+PASS  new client, no inquiry · one honest Journey: converted, began on or before the day AxisCare showed them, earlier history not observed
+PASS  new client, no inquiry · the case is confirmed and the decision is kept with the reason
+PASS  existing person with an active Journey · it is kept; nothing new is opened
+PASS  former client (earlier Journey ended) · a new Journey opens for the same person; the old one is untouched
+PASS  atomic · if the Journey step is refused (an earlier Journey has no recorded end), the identity confirmation is rolled back too
+PASS  one path for lead-sourced clients · connecting the inquiry (Step 2) closes the case; admitting it again here is refused
+PASS  options · a closed case offers no inquiries
+PASS  escalation · an AxisCare id already linked to someone escalates exactly as before; no Journey is touched
+PASS  concurrency · two people admitting the same client at once: one admits, the other is told it is done; one person, one Journey
+PASS  append-only · admission decisions cannot be edited, deleted or truncated
+PASS  security · signed-in staff read decisions and options but cannot admit or write; anonymous gets nothing
+PASS  guard · once admissions are recorded the migration refuses and changes nothing
+PASS  rollback · refuses once admissions are recorded
+PASS  journey · Journey foundation definitions unchanged
+PASS  rollback · on an unused install removes Step 3's admission objects
+============================================================
+ALL 20 PROOFS PASS
+admission-newclients migration sha256: de30096f7529064dd591cb7f20a1076ef317cf4defe82402b1f0378b7282c293
