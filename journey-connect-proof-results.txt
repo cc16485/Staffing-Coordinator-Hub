@@ -1,0 +1,29 @@
+
+STEP 2 · LEAD JOURNEY BECOMES THE CLIENT'S · DISPOSABLE PROOF
+============================================================
+PASS  install · an injected failure leaves nothing behind, including the lead mirror
+PASS  install · installs, and a rerun while unused succeeds; self-check passes
+PASS  lead mirror · the replacement differs from the deployed mirror ONLY in the Lost-after-confirmation rule
+PASS  refusals · bad seat, no person, an unknown way of confirming (a name match is not one), a missing id, an unknown lead, an id the lead doesn't carry, and a closed (lost) inquiry are refused; nothing changes
+PASS  refusals · a lead the mirror hasn't given a Journey yet is told so
+PASS  connect · typing Ruth's AxisCare id (after seeing both side by side) makes her inquiry Journey hers: same Journey, new person, converted
+PASS  connect · the person is named from AxisCare and has the client role
+PASS  connect · the Start Contract recorded while she was an inquiry is on the same Journey, untouched
+PASS  connect · the connection is recorded with who, which seat and how
+PASS  connect · repeating it is harmless: already connected, nothing new
+PASS  connect · a former client (earlier Journey ended) is recognised: no new person, the inquiry becomes their new Journey
+PASS  atomic · an AxisCare client who already has an active Journey is refused (Owner / Decision) and nothing at all is saved
+PASS  admission · an open admission case for that AxisCare id is closed as confirmed through the lead, and logged
+PASS  admission · a case escalated to Owner / Decision needs that seat; Client Intake changes nothing
+PASS  admission · Owner / Decision can connect it
+PASS  lead mirror · a Lost mark on Ruth's old lead is reported, never applied; an unconnected inquiry still closes as lost
+PASS  concurrency · two people connecting the same lead at once: one connects, the other is told it's done; one person
+PASS  append-only · connections cannot be edited, deleted or truncated
+PASS  security · signed-in staff read connections but cannot connect or write; anonymous gets nothing
+PASS  guard · once connections exist the migration refuses and changes nothing
+PASS  rollback · refuses once connections exist
+PASS  journey · Journey foundation definitions unchanged
+PASS  rollback · on an unused install removes Step 2 and restores the original lead mirror exactly
+============================================================
+ALL 23 PROOFS PASS
+journey-connect migration sha256: f70ab47ce0a888f61d6115f4252a0548c4f09daa3df77f8dc87789e5b0e9f51f
