@@ -1,0 +1,31 @@
+
+CHANGE 1 · LAUNCH EVIDENCE · DISPOSABLE PROOF
+============================================================
+PASS  install · an injected failure leaves nothing behind
+PASS  install · installs, a rerun while unused succeeds, self-check passes (incl. Springfield time for AxisCare stamps)
+PASS  engine · the real engine proposes all four facts for Peggy (first shift Sep 22)
+PASS  refusals · unknown source, no staff, no launch, nothing to record, a hand record without a reason or with two facts, an unknown launch, evidence read for a different AxisCare id, an unknown fact; nothing changes
+PASS  record · all four facts recorded and the four empty boxes ticked
+PASS  record · first shift time is the clock-in (9:02 Springfield = 14:02 UTC), not when the record was made
+PASS  record · the caregiver's name comes from AxisCare because none was typed
+PASS  record · call notes and every other launch field untouched
+PASS  record · the proof is kept: which visit, clock-in and clock-out, by the automation
+PASS  rerun · the same evidence again is harmless: nothing new, nothing changed
+PASS  hand ticks · a person's ticks, times and typed name are never replaced; the evidence is still kept (ticked = false)
+PASS  atomic · a first shift without a clock-out is refused and NOTHING from the same call is saved
+PASS  atomic · clock-out before clock-in, a clock-in in the future, and EVV without a visit are refused; nothing saved
+PASS  by hand · a first shift needs the day care began, and not a future day
+PASS  by hand · ticks the box on the day care began (noon Springfield), keeping who and why
+PASS  by hand, then AxisCare · the later AxisCare evidence is kept alongside; the hand record stands
+PASS  completed · a finished launch is never written to
+PASS  remove · the New Clients Remove button still works; the evidence stays as history
+PASS  concurrency · the card and the background run recording at the same moment: one records, the other finds it done
+PASS  append-only · evidence cannot be edited, deleted or truncated
+PASS  security · signed-in staff read the evidence but cannot record or insert it; anonymous gets nothing
+PASS  guard · once evidence exists the migration refuses and changes nothing
+PASS  rollback · refuses once evidence exists
+PASS  rollback · on an unused install removes the table and the Door
+PASS  guard · refuses (and names it) if client_queue lacks a column the Door writes
+============================================================
+ALL 25 PROOFS PASS
+launch-evidence migration sha256: fe1f10bcee11ab41a815aa249fbc8161a32114addbb61254e1b9461fda4a1e22

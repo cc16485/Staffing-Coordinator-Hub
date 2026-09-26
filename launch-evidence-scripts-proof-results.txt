@@ -1,0 +1,16 @@
+
+CHANGE 1 · INSTALL AND ON/OFF SCRIPTS · PROOF AGAINST FAKE SERVICES + REAL POSTGRES
+============================================================
+PASS  install · a migration that is not the proven build stops before anything runs
+PASS  install · a function source that is not the reviewed one stops before anything runs
+PASS  install · if the hub update is not merged yet it stops, nothing installed
+PASS  install · refuses if the switch is already on
+PASS  install · happy path: installed, CORS answered, dry run read with the preview, New Clients unchanged, nothing recorded, logged
+PASS  install · running it again while nothing is recorded is harmless
+PASS  on · switch on (other settings kept), one every-30-minutes job calling the reader with the public key, first live run matches the record count
+PASS  on · turning it on twice leaves exactly one job
+PASS  off · switch off, schedule removed, recorded evidence and ticked boxes left as they are
+PASS  on · refuses if the live hub does not serve the rules; nothing changed
+PASS  install · once evidence exists the migration guard refuses a reinstall and nothing changes
+============================================================
+ALL 11 PROOFS PASS

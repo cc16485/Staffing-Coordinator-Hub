@@ -1,0 +1,19 @@
+PASS CORS · the browser preflight is answered from day one
+PASS access · a card refresh needs a signed-in person; the scheduled run refuses a signed-in person
+PASS stops · if the hub's rules file cannot be fetched it refuses to decide, and the failed run is logged
+PASS refresh (switch off) · shows what AxisCare says, records nothing
+PASS refresh · a first launch is read from AxisCare go-live, through six weeks ahead
+PASS refresh · a returning client (episode 2) is read only from the day this launch opened
+PASS by hand · a reason is required before anything is sent to the door
+PASS by hand · goes through the door as that person, with the reason and the day care began (not behind the switch)
+PASS run (switch off) · reads each open launch with an AxisCare id, records nothing, logs counts
+PASS run · the scheduler (public key) gets counts only, no names
+PASS paging · follows AxisCare's next page, never a link to another host
+PASS completed launches are not read
+PASS run (switch on) · records Peggy's four facts through the door as the automation
+PASS run · the owner's report (service role) sees each launch and its open questions
+PASS rerun · facts already recorded are not sent again
+PASS AxisCare busy (429) · the run stops early and says so in the log
+PASS no AxisCare id yet · says so, reads nothing
+
+17/17 passed

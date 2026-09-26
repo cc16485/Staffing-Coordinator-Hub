@@ -1,0 +1,29 @@
+PASS first clocked-in-and-out visit is the first shift; Actual SOC is its clock-in date
+PASS it records all four facts and ticks the empty boxes, with the clock-in as the time
+PASS caregiver comes from AxisCare (the next assigned visit), not a typed name
+PASS EVV is proven by the first shift, with the clock-in method
+PASS schedule counts visits in the window and names the next one
+PASS verified is carried as strength, not required
+PASS scheduled and assigned but not yet clocked: schedule and caregiver only, no first shift, no Actual SOC
+PASS a past visit with a caregiver but no clock-in is flagged, never counted (even when marked verified)
+PASS clock-in without clock-out, long past the end: a question, not a start
+PASS clock-in without clock-out while the visit is still going: under way, nothing recorded yet
+PASS an earlier assigned visit with no clock-in makes the start date a question
+PASS an earlier OPEN visit (nobody assigned) is not evidence of missed care
+PASS episode 1: a clocked visit before this launch opened is a conflict for a person
+PASS a returning client: the earlier episode's visits are history, not this start
+PASS visits before AxisCare went live are never evidence either way
+PASS already ticked by hand: evidence is still recorded (so Actual SOC is the real date) but nothing is re-ticked or renamed
+PASS marked done by hand BEFORE any clock-in: a conflict, no Actual SOC
+PASS a completed launch is read but never recorded to
+PASS other clients' visits and removed visits are ignored
+PASS zoned stamps are read on Springfield's calendar (9:30pm Sep 22, not Sep 23 UTC)
+PASS a clock-in delivered as bare text is still read
+PASS no AxisCare id: nothing to read, nothing proposed
+PASS order of the API reply does not matter: earliest clock-in wins
+PASS upcoming visits with nobody assigned are counted and do not invent a caregiver
+PASS recorded by hand with a reason: its questions close and Actual SOC is the person's date
+PASS recorded by hand, then AxisCare evidence arrives: kept beside it (no tick), the hand date stands
+PASS a bare checkbox tick before the first clock-in is still a conflict (no reason was given)
+
+27/27 passed
