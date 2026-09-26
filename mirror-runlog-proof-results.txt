@@ -1,0 +1,19 @@
+
+MIRROR RUN LOG · DISPOSABLE PROOF
+============================================================
+PASS  install · an injected failure leaves nothing behind
+PASS  install · run log, parity view and wrapper install; self-check passes
+PASS  install · rerun while the log is empty succeeds
+PASS  run 1 · honest counts: every case seen; mirrored / unmapped / skipped / errors recorded; rows written; legacy untouched
+PASS  run 1 · parity measured every run (the repeat-ask case is the one known difference)
+PASS  run 2 · no legacy change: nothing written
+PASS  run 3 · a legacy change shows up as exactly the rows it caused
+PASS  overlap · a run that finds another in progress records skipped_busy and does nothing else
+PASS  failure · a mirror that cannot run still leaves a 'failed' row saying why (a dead mirror never looks healthy)
+PASS  log · one row per attempt, in order
+PASS  security · office staff can read the run log but not write it or run the mirror; anonymous gets nothing; log is append-only
+PASS  guard · with run rows present the migration refuses and changes nothing
+PASS  journey · Journey foundation unchanged
+============================================================
+ALL 13 PROOFS PASS
+runlog migration sha256: a052c9addaf4a00351f2c720e7e3db190d9a9cb82fd120778da62d7d2d24d4ad

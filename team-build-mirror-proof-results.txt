@@ -1,0 +1,28 @@
+
+TEAM BUILD MIRROR · DISPOSABLE PROOF
+============================================================
+PASS  install · an injected failure leaves nothing behind
+PASS  install · installs; self-check passes
+PASS  install · rerun while the run log is empty succeeds
+PASS  dry run · writes nothing; linked plan would mirror; an unlinked plan says to link it
+PASS  commit · one recurring need per day × shift on the linked Journey (inquiry episode), level carried
+PASS  commit · 'confirmed' becomes an assignment decided by the staff member on the cell
+PASS  commit · 'asked' becomes an open ask; 'declined' an ask with a NO; 'penciled' nothing
+PASS  commit · statuses derive correctly (filled / asked / exhausted / needs ask)
+PASS  idempotent · a second run writes nothing
+PASS  parity · needs and confirmed seats agree with the plan
+PASS  edit · a changed shift time supersedes the old need (kept) with a new 07:00 need
+PASS  edit · a removed shift cancels its needs
+PASS  edit · the replacement confirmation is assigned on the new need; the earlier one is kept, not deleted
+PASS  edit · Bob's decline is recorded as a NO on the new need's ask
+PASS  parity · still agrees after the edits
+PASS  complete · a completed plan closes its open needs as covered
+PASS  link · the plan can no longer move to another Journey
+PASS  safety · plans data never written by the mirror; Journey definitions unchanged
+PASS  run log · honest counts on a quiet run
+PASS  run log · overlap skipped and logged
+PASS  security · browser cannot run the mirror; run log readable, append-only
+PASS  guard · with run rows present the migration refuses
+============================================================
+ALL 22 PROOFS PASS
+team build mirror sha256: 32ade94acd9d5ba2b86cb2d9eeae0eb0a94a5166f84da15176989e3d8a2ea109
