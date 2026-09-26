@@ -72,8 +72,27 @@ function axisCreds() {
   return { token, site: /^\d+$/.test(site) ? site : '' }
 }
 
+/* Does this AxisCare client exist? true on a 200 with results, false only on an
+   explicit 404, null for anything else (which fails closed into an error). */
+export async function clientExists(ax: string): Promise<boolean | null> {
+  const { token, site } = axisCreds()
+  try {
+    const r = await fetch(`https://${site}.axiscare.com/api/clients/${encodeURIComponent(ax)}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': AC_VERSION } })
+    if (r.status === 404) return false
+    if (!r.ok) return null
+    // deno-lint-ignore no-explicit-any
+    const j: any = await r.json().catch(() => null)
+    return j?.results ? true : null
+  } catch { return null }
+}
+
 /* One client's visits over the launch window, every page. Throws with
-   .status 429 when AxisCare asks us to slow down. */
+   .status 429 when AxisCare asks us to slow down.
+   AxisCare answers 404 ("No visits found") both for a client with no visits
+   in the window AND for an id that does not exist (the same trap coverage-shifts
+   documents for caregivers, 2026-09-16). So a 404 on the FIRST page becomes an
+   empty list only after the client is positively confirmed to exist. */
 // deno-lint-ignore no-explicit-any
 export async function clientVisits(ax: string, from: string, to: string): Promise<any[]> {
   const { token, site } = axisCreds()
@@ -84,6 +103,12 @@ export async function clientVisits(ax: string, from: string, to: string): Promis
   const out: any[] = []
   for (let page = 0; url && page < 20; page++) {
     const r = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': AC_VERSION } })
+    if (r.status === 404 && page === 0) {
+      const exists = await clientExists(ax)
+      if (exists === true) return []
+      throw Object.assign(new Error(exists === false ? `AxisCare has no client #${ax}` : 'AxisCare answered 404 and the client could not be confirmed'),
+                          { status: exists === false ? 404 : 0 })
+    }
     if (!r.ok) throw Object.assign(new Error('AxisCare answered ' + r.status), { status: r.status })
     // deno-lint-ignore no-explicit-any
     const j: any = await r.json().catch(() => ({}))
@@ -172,7 +197,8 @@ Deno.serve(async (req) => {
     catch (e) {
       // deno-lint-ignore no-explicit-any
       const st = (e as any)?.status
-      return json({ ok: false, reason: st === 429 ? 'axiscare_busy' : 'axiscare_unreachable', detail: String((e as Error).message ?? e), live, evidence })
+      return json({ ok: false, reason: st === 429 ? 'axiscare_busy' : st === 404 ? 'no_such_client' : 'axiscare_unreachable',
+                    detail: String((e as Error).message ?? e), live, evidence })
     }
     let recorded = null
     if (live && ev.record?.length) {
@@ -228,7 +254,7 @@ Deno.serve(async (req) => {
     catch (e) {
       // deno-lint-ignore no-explicit-any
       if ((e as any)?.status === 429) { counts.rate_limited = true; break }
-      counts.errors++; errors.push({ launch: L.id, error: String((e as Error).message ?? e) }); continue
+      counts.errors++; errors.push({ launch: L.id, client: L.client_name, axiscare_client_id: L.axiscare_client_id, error: String((e as Error).message ?? e) }); continue
     }
     counts.read++
     const done = new Set(((evidence[L.id] ?? []) as { fact: string; source: string }[]).filter((x) => x.source === 'axiscare').map((x) => x.fact))
@@ -242,7 +268,7 @@ Deno.serve(async (req) => {
       // deno-lint-ignore no-explicit-any
       result = await door(L.id, String(L.axiscare_client_id).trim(), fresh, 'axiscare', AUTOMATION, null) as any
       if (result?.outcome === 'recorded') { counts.recorded += (result.recorded ?? []).length; counts.ticked += (result.ticked ?? []).length }
-      else if (result?.outcome !== 'nothing_new') { counts.errors++; errors.push({ launch: L.id, door: result }) }
+      else if (result?.outcome !== 'nothing_new') { counts.errors++; errors.push({ launch: L.id, client: L.client_name, door: result }) }
     }
     if (full) preview.push({ client: L.client_name, axiscare_client_id: L.axiscare_client_id,
       // deno-lint-ignore no-explicit-any
