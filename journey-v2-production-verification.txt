@@ -1,0 +1,43 @@
+
+STAGE 2 v2 JOURNEY FOUNDATION · PRODUCTION DEPLOYMENT + VERIFICATION
+Report 2026-09-26 04:16 UTC
+
+== 1. ARTIFACT =====================================================
+  migration sha256   2cd4cf7b97cb628ee8c4daadc432f2672dba4821d4d1ca12c881e25f27e32ea1
+  expected sha256    2cd4cf7b97cb628ee8c4daadc432f2672dba4821d4d1ca12c881e25f27e32ea1
+  expected v2 fingerprint 114105aabad43bb10a5f448a524de47a
+  ✓ artifact matches the proven build
+
+== 2. BEFORE =======================================================
+  server   PostgreSQL 17.6 on aarch64-unknown-linux-gnu, compiled by gcc (GCC) 15
+  journey fingerprint before 5429f7114fbccf5189329c206a1dd6a8  (Phase A)
+  non-Journey definitions   24a3a89dce272a7c6179b3ded0bfa703  (1696 parts)
+  non-Journey tables counted 74
+
+== 3. MIGRATION (run once) =========================================
+  ✓ committed: the empty-foundation guard and the self-check both passed
+
+== 4. VERIFICATION =================================================
+  v2 fingerprint deployed 114105aabad43bb10a5f448a524de47a
+  ✓ identical to the proven build (all 406 components)
+  inventory   tables 5/5 · views 4/4 · functions 24/24 · Doors 9/9 · triggers 11/11 · indexes 12/12 · policies 4/4
+  grants / RLS      ✓ every privilege and RLS component matches the proven build
+  Door definitions  ✓ all Door sources identical to the proven build; no definer functions
+  active states     ✓ single definition, identical source, used by the one-active index: select p_state in ('provisional','open','converted','established')
+  no seq column     ✓
+  version marker    journey_foundation v2 · episode_id is the canonical identity; no seq; lifecycle facts in episode_fact
+  Journey rows      ✓ all empty {'journey_episode': 0, 'episode_fact': 0, 'episode_source': 0, 'episode_review': 0, 'episode_door_audit': 0}
+  non-Journey definitions ✓ identical before and after (1696 parts)
+  non-Journey row counts  ✓ identical before and after (74 tables)
+
+== 5. SUMMARY ======================================================
+  ✓  1 artifact reconfirmed
+  ✓  2 migration ran once
+  ✓  3 guard and self-check passed
+  ✓  4 inventory / grants / RLS / Doors / active states / version
+  ✓  5 Journey tables empty
+  ✓  6 non-Journey definitions unchanged
+  ✓ identical  7 fingerprint
+  ✓  8 no baseline episodes / no backfill
+
+RESULT: DEPLOYED AND VERIFIED
