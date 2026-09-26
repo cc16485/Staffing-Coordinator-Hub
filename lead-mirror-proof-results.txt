@@ -1,0 +1,27 @@
+
+LEAD JOURNEY MIRROR · DISPOSABLE PROOF
+============================================================
+PASS  install · an injected failure leaves nothing behind
+PASS  install · installs; self-check passes
+PASS  install · rerun while the run log is empty succeeds
+PASS  dry run · writes nothing, leads untouched
+PASS  dry run · says what it would do (lost lead would close); a lead with no id is skipped
+PASS  commit · opens one provisional episode per lead (a repeated lead id is not duplicated)
+PASS  inquiry date · documented, in Central time (03:00 UTC on the 20th is the 19th in Springfield)
+PASS  no date · a lead with no created_at gets no begin fact (unknown, not invented)
+PASS  lost · closed as lost with an honest window (inquiry day .. the day the mirror saw it)
+PASS  identity · no person is ever set on a lead's episode
+PASS  idempotent · a second run writes nothing
+PASS  converted · stays provisional and says it is waiting for a person to confirm who it is
+PASS  parity · every lead with an episode matches its state and inquiry date
+PASS  tracks change · a lead that becomes Lost closes its episode
+PASS  divergence · a lost lead that comes back is reported, not reopened
+PASS  divergence · a lead deleted from the list is reported; its episode is left alone
+PASS  safety · leads data never written; the client baseline episode untouched; Journey definitions unchanged
+PASS  run log · honest counts on a quiet run (nothing written, parity mismatch = the returned lead L2)
+PASS  run log · overlap is skipped and logged; a mirror that cannot run is logged as failed
+PASS  security · office staff can read the run log but not run the mirror; the log is append-only
+PASS  guard · with run rows present the migration refuses
+============================================================
+ALL 21 PROOFS PASS
+lead mirror migration sha256: 62118dcb3900d870aa30bd8667e29f394b1c4819099e8a19cea647eb396fef7b

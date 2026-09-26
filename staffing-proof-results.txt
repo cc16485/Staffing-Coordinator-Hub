@@ -1,0 +1,46 @@
+
+STAGE 3 STAFFING FOUNDATION · DISPOSABLE PROOF
+======================================================================
+PASS  migration · an injected failure leaves no staffing object and the Journey untouched
+PASS  migration · installs, self-check passes
+PASS  migration · rerun on an empty install is identical
+PASS  migration · Journey foundation fingerprint unchanged; nothing outside Journey/staffing changed
+PASS  need · opens on an active episode
+PASS  need · refused on an ended episode and on an unknown one
+PASS  need · shape enforced: dated needs a date, recurring a weekday; capacity ≥ 1; visit ref format
+PASS  need · one open need per AxisCare visit (conflict names the existing need)
+PASS  need · the requirement can never be edited in place
+PASS  need · a source record maps to one need (idempotent)
+PASS  ask · a texted ask must carry its exact text
+PASS  ask · 'verbal' only for calls/in person; 'not retained' only for the legacy mirror
+PASS  ask · recorded with exact text; need shows ASKED (derived from open asks)
+PASS  ask · the same caregiver cannot have two open asks for one need
+PASS  ask · what was sent can never be edited
+PASS  reply · a YES is recorded verbatim and does NOT assign (status yes_pending, 0 assignments)
+PASS  reply · a reclassification supersedes; the original is kept
+PASS  reply · a reply can be superseded only once
+PASS  reply · replies are append-only
+PASS  assign · refused for the system seat (an assignment is a human decision)
+PASS  assign · the basis must be a YES for this need
+PASS  assign · a human decision fills seat 1; need shows FILLED
+PASS  assign · a full need refuses another assignment
+PASS  capacity · a 2-person transfer is ONE need with 2 seats; same caregiver twice refused; third refused
+PASS  release · frees the seat for a new decision; the released decision is kept, not edited
+PASS  concurrency · six simultaneous assignments to a 1-seat need: exactly one wins
+PASS  exhausted · every recorded ask ended in no / no answer and none open: derived EXHAUSTED
+PASS  exhausted · a new open ask moves it back to ASKED
+PASS  supersede · a changed slot is a NEW need (same visit); the old need keeps its original times and history
+PASS  supersede · the ask made for the old slot stays true (text kept) and is closed as superseded
+PASS  close · closing a need closes its open asks but keeps replies
+PASS  close · no new asks or assignments on a closed need (outside the legacy mirror)
+PASS  legacy mirror · history on a closed need is recorded (asks arrive closed, text marked not retained), idempotent by source
+PASS  sync · AxisCare write-back results are append-only facts
+PASS  security · signed-in users read staffing tables and views; audit hidden
+PASS  security · signed-in users cannot write or run any Door; anonymous gets nothing
+PASS  security · no staffing function runs as definer; deletes/truncates blocked
+PASS  audit · every Door type left audit rows; audit append-only
+PASS  guard · with staffing rows present the migration refuses and nothing changes
+PASS  outside · Journey foundation definitions and everything outside Journey/staffing unchanged after every step
+======================================================================
+ALL 40 PROOFS PASS
+staffing migration sha256: 5fabf82dffba9f36e6c1a4fabba6a2065360ad0eacc9400a2529667b0c5e5322

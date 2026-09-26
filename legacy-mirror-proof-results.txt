@@ -1,0 +1,30 @@
+
+LEGACY MIRROR · DISPOSABLE PROOF
+============================================================
+PASS  install · an injected failure leaves no mirror function
+PASS  install · mirror function installs; runs with caller privileges; browser cannot run it
+PASS  dry run · writes nothing and leaves legacy byte-identical
+PASS  dry run · every exclusion carries its reason; the flag is skipped
+PASS  dry run · mappable cases say what they would do
+PASS  commit · mirrors the mappable cases; a second OPEN case for the same visit is left unmapped naming the reason
+PASS  commit · a new call-off for a visit whose earlier need was covered and closed is a legitimate new need
+PASS  commit · a malformed record fails ONLY its own case (rolled back) and is reported
+PASS  commit · legacy data is never written
+PASS  call-off c1 · closed as covered; overwritten answers kept honest (yes from was_yes, 'unclear' not guessed, no reply = none)
+PASS  call-off c1 · the legacy covered_by becomes a legacy_mirror assignment based on Ann's yes, with its AxisCare sync fact
+PASS  legacy asks carry 'text not retained' honestly (never invented)
+PASS  open case c2 · derived ASKED (Dee waiting) and Eve's question recorded verbatim
+PASS  closures · dismissed -> cancelled; uncovered -> shift_passed; ongoing single weekday -> recurring Monday need
+PASS  grain · a visit case whose schedule pattern is 'open ongoing' still becomes a DATED need with its visit
+PASS  repeat ask · a second ask to the same caregiver is noted, not duplicated
+PASS  idempotent · a second run with no legacy change writes nothing
+PASS  tracks change · Dee's new YES is recorded (yes pending, NOT assigned); Eve's answer supersedes, original kept
+PASS  tracks change · legacy coverage of c2 closes the need and records Dee's assignment on her yes
+PASS  tracks change · a changed covered_by releases the old decision (kept) and records the new one
+PASS  divergence · a legacy case reopened after its need closed is reported, not forced
+PASS  parity · mirrored cases agree with legacy except the ones the report explains (reopened c12, repeat ask c14)
+PASS  parity · every legacy case appears (mirrored or 'not mirrored')
+PASS  journey · Journey foundation fingerprint unchanged
+============================================================
+ALL 24 PROOFS PASS
+mirror migration sha256: b92a3b15633c438f4a5c7dccf08cabea188301402e8c3ec7c752986362f37ead
