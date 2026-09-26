@@ -1,0 +1,143 @@
+
+STAGE 2 v2 JOURNEY FOUNDATION · DISPOSABLE PROOF
+==============================================================================
+PASS  setup · Phase A foundation installed (production starting state)
+PASS  guard · a row in Phase A episode_door_audit aborts the migration
+PASS  guard · after refusal, Phase A is byte-identical and the row remains
+PASS  guard · a row in Phase A journey_episode aborts the migration
+PASS  guard · after refusal, nothing changed
+PASS  atomic · failure injected after all objects are built rolls everything back
+PASS  atomic · a failing self-check rolls everything back
+PASS  atomic · data outside Journey untouched by the failed runs
+PASS  install · v2 migration succeeds on the empty Phase A foundation
+PASS  install · Phase A seq column is gone
+PASS  install · data outside Journey untouched
+PASS  rerun · on an empty v2 install it succeeds with an identical fingerprint
+PASS  active-state · the active set is written exactly once in the migration
+PASS  active-state · index, Doors and views all use journey_state_is_active, no copies
+PASS  resolve · first episode for a person needs its prior-history statement
+PASS  resolve · provisional -> resolved keeps the same episode_id and its sources
+PASS  baseline · opening a person's first lifecycle without a prior-history statement is refused
+PASS  baseline · established episode with prior history UNOBSERVED and an open-ended start
+PASS  no fake numbering · no seq column, and the baseline's lifetime ordinal is NULL (history not documented)
+PASS  end · a terminal state without a documented end is refused and nothing changes
+PASS  end · documented end written and episode frozen in the same call
+PASS  freeze · a direct UPDATE of the frozen row is rejected
+PASS  freeze · Doors refuse to change, void or attach to a frozen episode
+PASS  return · the same person's return is a NEW episode_id, derived after the baseline
+PASS  return · the baseline row is byte-identical after the return
+PASS  axiscare · the client id cannot be attached to an episode (person-level only)
+PASS  axiscare · one person-level id reaches BOTH lifecycles through the person, stored once
+PASS  sources · an observation-specific reference attaches once; reusing it on another episode is refused
+PASS  sources · client-event references attach; a second origin on one episode is refused
+PASS  one-active · a second active episode is refused by the Door and queued for review
+PASS  one-active · the database index blocks a second active episode even without the Door
+PASS  concurrency · a return attempt waits on the per-person lock, then gets a conflict (1 episode)
+PASS  concurrency · 5 simultaneous double-attempts each produce exactly one episode
+PASS  concurrency · two raw concurrent inserts bypassing the Door: the index lets exactly one commit
+PASS  overlap · a historical lifecycle that would overlap a known one is not created (review instead)
+PASS  overlap · opening a lifecycle inside a known one is refused and reviewed
+PASS  history · undated, half-dated or unconfirmed history creates a review and ZERO episodes
+PASS  history · lifecycles found before the baseline are created and ordered before it
+PASS  history · a lifecycle found BETWEEN two known ones is ordered between them, nothing rewritten
+PASS  no fake numbering · with prior history unobserved, no episode of the person gets a lifetime ordinal
+PASS  ordinal · a fact on a frozen lifecycle from Client Intake goes to Owner / Decision review
+PASS  ordinal · derived 1, 2 only when documented complete history orders every lifecycle
+PASS  ordinal · a discovered in-between lifecycle re-derives 1, 2, 3 without touching any row
+PASS  correction · Client Intake cannot correct frozen history; Owner / Decision can
+PASS  correction · the old fact is kept, the current truth shows the correction
+PASS  correction · a correction that would make two lifecycles overlap is refused
+PASS  correction · facts cannot be updated, deleted or truncated (service_role denied; owner blocked by trigger)
+PASS  freeze · the baseline row is still byte-identical after corrections
+PASS  void · a voided episode is excluded from order and counting
+PASS  void · an erroneous frozen record is excluded via an Owner / Decision fact; its row is unchanged
+PASS  frozen facts · consistent supporting facts from Client Intake are recorded normally
+PASS  frozen facts · supporting facts leave rows, derived order and ordinals unchanged
+PASS  frozen facts · a NEW order between frozen lifecycles needs Owner / Decision
+PASS  frozen facts · changing an accepted boundary needs Owner / Decision
+PASS  frozen facts · unmarking an erroneous record needs Owner / Decision
+PASS  frozen facts · the frozen rows stay byte-identical through all of it
+PASS  reviews · Owner / Decision items need that seat; closed reviews cannot be reopened or edited
+PASS  freeze · every frozen row rejects a direct update
+PASS  freeze · episode rows cannot be deleted or truncated, even by the owner
+PASS  browser · signed-in users can read Journey tables and views but not the audit
+PASS  browser · every direct write by a signed-in user is denied
+PASS  browser · signed-in users cannot execute any Door
+PASS  browser · anonymous users can read nothing and execute nothing
+PASS  security · no Journey function runs as definer; RLS is on for every Journey table
+PASS  audit · every Door type left audit rows
+PASS  audit · audit rows cannot be changed or deleted (service_role denied; owner blocked)
+PASS  rerun · with Journey rows present the migration refuses and nothing changes
+PASS  rollback · with Journey rows present the rollback refuses and nothing changes
+PASS  outside · outside tables and all outside definitions unchanged after every step (fixture rows added by tests excluded)
+PASS  determinism · a fresh cluster produces the identical v2 fingerprint
+PASS  rollback · on an empty install it removes every Journey object and nothing else
+PASS  recovery · the archived Phase A foundation reinstalls to its original fingerprint
+PASS  recovery · v2 installs again from there with the identical fingerprint
+==============================================================================
+ALL 73 PROOFS PASS
+
+migration sha256: 2cd4cf7b97cb628ee8c4daadc432f2672dba4821d4d1ca12c881e25f27e32ea1
+journey fingerprint (v2): 114105aabad43bb10a5f448a524de47a
+
+OBJECT INVENTORY
+  function  episode_append_only_guard()
+  function  episode_attach_source(uuid,text,text,text,text,text,text)
+  function  episode_fact_guard()
+  function  episode_open_for_person(uuid,text,text,text,date,date,date,text
+  function  episode_open_provisional(text,text,date,text,text,text)
+  function  episode_record_fact(uuid,text,text,text,date,date,date,uuid,tex
+  function  episode_record_historical(uuid,text,date,date,text,text,text,te
+  function  episode_resolve(uuid,uuid,text,text,text,text,text)
+  function  episode_review_guard()
+  function  episode_review_resolve(uuid,text,text,text,text)
+  function  episode_set_state(uuid,text,text,date,date,date,text,text,text,
+  function  episode_void(uuid,text,uuid,text,text,text)
+  function  journey_audit(text,text,text,text,uuid,uuid,text,text)
+  function  journey_block_truncate()
+  function  journey_bound_hi(text,date,date,date)
+  function  journey_bound_lo(text,date,date,date)
+  function  journey_episode_guard()
+  function  journey_lock_person(uuid)
+  function  journey_open_review(text,text,uuid,uuid,jsonb,text)
+  function  journey_overlap(uuid,date,date,date,date,uuid)
+  function  journey_seat_ok(text)
+  function  journey_state_is_active(text)
+  function  journey_state_is_frozen(text)
+  function  journey_state_is_terminal(text)
+  index     episode_door_audit_pkey
+  index     episode_fact_episode_ix
+  index     episode_fact_pkey
+  index     episode_fact_supersedes_once
+  index     episode_review_open_ix
+  index     episode_review_pkey
+  index     episode_source_one_origin_uq
+  index     episode_source_pkey
+  index     episode_source_uq
+  index     journey_episode_one_active_uq
+  index     journey_episode_person_ix
+  index     journey_episode_pkey
+  policy    episode_fact.episode_fact_read
+  policy    episode_review.episode_review_read
+  policy    episode_source.episode_source_read
+  policy    journey_episode.journey_episode_read
+  table     episode_door_audit
+  table     episode_fact
+  table     episode_review
+  table     episode_source
+  table     journey_episode
+  trigger   episode_door_audit_append_only_t
+  trigger   episode_door_audit_no_truncate
+  trigger   episode_fact_append_only_t
+  trigger   episode_fact_insert_t
+  trigger   episode_fact_no_truncate
+  trigger   episode_review_guard_t
+  trigger   episode_review_no_truncate
+  trigger   episode_source_append_only_t
+  trigger   episode_source_no_truncate
+  trigger   journey_episode_guard_t
+  trigger   journey_episode_no_truncate
+  view      episode_fact_current
+  view      episode_order
+  view      episode_range
+  view      journey_episode_current

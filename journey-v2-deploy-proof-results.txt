@@ -1,0 +1,11 @@
+
+DEPLOY SCRIPT · DISPOSABLE PROOF
+============================================================
+PASS  deploy · clean run: migration once, every verification line passes, fingerprint identical
+PASS  deploy · Journey tables empty and nothing outside Journey changed
+PASS  deploy · non-empty foundation: the guard stops it, nothing repaired, Phase A unchanged
+PASS  deploy · a different migration file is refused before anything runs
+PASS  deploy · rendering-only differences are compared by component and flagged for review, not passed or failed
+PASS  deploy · a substantive difference (a Door's source) fails verification
+============================================================
+ALL 6 PROOFS PASS
