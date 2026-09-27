@@ -1,0 +1,12 @@
+
+CHANGE 6a · INSTALL SCRIPT · PROOF AGAINST FAKE SERVICES + REAL POSTGRES
+============================================================
+PASS  a changed family-text module stops everything before it runs
+PASS  if the hub update isn't merged yet it stops, nothing changed
+PASS  happy path: migration applied, Ruth's circle (fed by the sync, exact name) linked, Charles's (typed in the office) waiting
+PASS  your approval is recorded with your words and its scope, and every other setting is kept
+PASS  the family sync is only DRY-RUN here (tonight's run applies it)
+PASS  no circle or member added or removed, consent unchanged
+PASS  running it again is harmless (only install links so far)
+============================================================
+ALL 7 PROOFS PASS

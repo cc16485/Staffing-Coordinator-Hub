@@ -39,14 +39,19 @@ Deno.serve(async (req) => {
 
   const { data: circle } = await supabase.from('care_circles').select('*').eq('id', circle_id).maybeSingle()
   if (!circle) return json({ error: 'circle not found' }, 404)
+  /* Change 6a (2026-09-27): a circle is a client's family only once a person (or
+     the AxisCare sync's own exact match) has tied it to the client. Until then it
+     is never texted or emailed from here. */
+  if (!circle.axiscare_client_id) return json({ error: 'this Family Circle is not linked to a client yet; link it first', outcome: 'not_linked' }, 409)
 
   const { data: contacts, error } = await supabase
     .from('circle_contacts').select('*').eq('circle_id', circle_id)
   if (error) return json({ error: error.message }, 500)
 
   // A change only reaches the people who asked to hear about changes.
-  const wanted = (contacts ?? []).filter((c) =>
-    kind === 'change' ? c.wants_changes !== false : c.wants_general !== false)
+  /* never someone who replied STOP, or whom AxisCare no longer lists for this client */
+  const wanted = (contacts ?? []).filter((c) => !c.stopped_at && !c.axiscare_removed_at
+    && (kind === 'change' ? c.wants_changes !== false : c.wants_general !== false))
 
   const reachable = wanted.filter((c) => (c.phone && c.sms_consent) || c.email)
   const skipped = wanted.length - reachable.length

@@ -1,0 +1,4 @@
+PASS an unlinked circle is refused
+PASS a linked circle reaches only Sue (not the STOP member, not the one AxisCare no longer lists)
+
+2/2 passed

@@ -1,0 +1,23 @@
+
+CHANGE 6a · FAMILY CIRCLES BELONG TO A CLIENT · DISPOSABLE PROOF
+============================================================
+PASS  install · an injected failure changes nothing (no columns, no links)
+PASS  install · installs; a rerun (only install links so far) succeeds; self-check passes
+PASS  install links · the sync's own exact matches are linked, spacing and capitals aside (Ruth, Ann)
+PASS  install links · a circle typed by hand is NOT linked, even with an exact name (Bo)
+PASS  install links · two circles with the same name: neither is linked (Charles)
+PASS  install links · two AxisCare clients with the same name: not linked (Sam)
+PASS  install links · recorded in the log as the install's
+PASS  link refusals · no person, a non-numeric id, an unknown circle, a client with no hub person, a client who already has a circle, a circle linked elsewhere
+PASS  link · a person links Bo's circle; who, when and how are kept, and logged
+PASS  link · repeating it is harmless
+PASS  unlink · needs a reason
+PASS  unlink then relink · both recorded with who and why
+PASS  one active circle per client · a second active circle on the same client is refused by the database
+PASS  an inactive old circle doesn't block linking the active one
+PASS  append-only · the link log can't be edited, deleted or truncated
+PASS  security · signed-in staff read the log but cannot link or write it; anonymous gets nothing
+PASS  guard · once people have linked circles the migration refuses and changes nothing
+============================================================
+ALL 17 PROOFS PASS
+family-circles-link migration sha256: e8bec696265a47a00e00a7f591642f442d9ce03d87726862d25296b24728b7fb

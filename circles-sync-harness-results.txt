@@ -1,0 +1,11 @@
+PASS dry run: counts only, nothing written
+PASS an AxisCare family member FOLLOWS AxisCare in full: new phone, email, and the old wrongly-false HIPAA flag becomes "unanswered"
+PASS someone AxisCare no longer lists is MARKED, not deleted (Ruth's old neighbor, Ann's old contact); someone who reappears is unmarked
+PASS a family member typed in the office is never touched, even when AxisCare has the same name
+PASS an unlinked circle the sync itself fed, with an exact unique name, is linked through the door (Ann)
+PASS an unlinked circle typed in the office is NOT fed or linked by name; it waits for a person (Bo)
+PASS a client with no circle gets one created already linked, and logged
+PASS a second run changes nothing
+PASS AxisCare answering with no responsible parties marks the AxisCare-sourced ones removed (office-typed untouched)
+
+9/9 passed
