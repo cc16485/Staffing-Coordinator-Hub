@@ -15,6 +15,10 @@
 // =============================================================================
 export const PROJECT_REF = 'zngsgedlsxinbygwmxwn'
 export const ENTITY = 'cc_ihs'
+/* Samantha, 2026-09-27: "I want care coordinators and staffing coordinators to have access - its a small office and
+   we all help each other." Every office role may use the campaign lookup, manual campaign send and Family Circle
+   send. A person with NO role, an unknown role, an inactive record or a finished membership is still refused. */
+export const OFFICE_ROLES = ['owner_admin', 'care_coordinator', 'staffing_coordinator']
 
 export type StaffOk = { ok: true; person_id: string; name: string; email: string; roles: string[] }
 export type StaffNo = { ok: false; status: 401 | 403 | 500; error: string }

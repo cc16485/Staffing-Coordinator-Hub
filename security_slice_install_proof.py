@@ -115,12 +115,12 @@ def sha(f): return hashlib.sha256(open(os.path.join(FNROOT, f) if f.endswith(".t
 HUBF = os.path.join(H, "_ssi_hub.html"); open(HUBF, "w").write("const HL_EP='x?token=" + PUBLIC + "';")
 res = []
 def ck(n, g, note=""): res.append((n, bool(g), "" if g else str(note)[-900:]))
-def run(shas=None):
+def run(shas=None, deploy_only=False):
     rep = os.path.join(H, "_ssi.txt")
     p = subprocess.run(["python3", "security_slice_install.py"], cwd=H, capture_output=True, text=True, env=dict(os.environ,
         SB_TOKEN="sbp_x", SB_REF="r", SB_REPORT=rep, SB_API_BASE=BASE, SB_FN_BASE=BASE, SB_HUB_URL=BASE + "/hub", SB_HUB_FILE=HUBF,
         SB_SKIP_FUNCTION="1", SB_FNROOT=FNROOT, SB_PROOF_EMAIL="owner@example.test", SB_POLL_SEC="0.2", SB_POLL_MAX="3",
-        SB_FN_SHAS=json.dumps(shas or {f: sha(f) for f in FILES})))
+        SB_FN_SHAS=json.dumps(shas or {f: sha(f) for f in FILES}), SB_DEPLOY_ONLY="1" if deploy_only else ""))
     t = open(rep).read() if os.path.exists(rep) else p.stdout + p.stderr
     if os.path.exists(rep): os.remove(rep)
     return p.returncode, t
@@ -135,7 +135,8 @@ ck("the daily job keeps its schedule and stays active, no longer carries the tok
    j[0] == "0 15 * * *" and j[1] is True and "token=" not in j[2] and "vault.decrypted_secrets" in j[2] and v[0] not in j[2], j)
 ck("nothing secret reaches the report: not the new secret, the public token, the service or anon key, or the one-time sign-in",
    all(x not in t for x in (v[0], PUBLIC, SVC, ANON, "eyJuser")) and "owner@example.test" not in t, t)
-ck("the report lists staff by first name and role only, with what each can do", "Samantha" in t and "campaigns: yes" in t and "Krystal" in t and "Family Circle send: yes" in t and "Owner" not in t, t)
+ck("the report lists staff by first name and role only; every office role can use campaigns and Family Circle",
+   "Samantha" in t and "Krystal" in t and t.count("campaigns + Family Circle send: yes") == 2 and "Owner" not in t, t)
 ck("the one-time sign-in used for the permission check was signed out", len(S["logged_out"]) == 1 and not S["sessions"], S["logged_out"])
 ck("no real circle id is printed", all(str(r[0]) not in t for r in s.run("select id from care_circles")), t)
 setup(job_active=False); rc, t = run()
@@ -147,12 +148,22 @@ ck("if a function still accepted the public token (the old code), the proof catc
 setup(); bad_sha = {f: sha(f) for f in FILES}; bad_sha["campaign-send"] = "0" * 64; rc, t = run(bad_sha)
 ck("a source that is not the reviewed build: STOP before any secret is set, any job changed, or anything deployed",
    rc == 5 and S["fn_secret"] is None and not vault() and "token=" in job()[0][2], t)
-setup(roles=(("Krystal Coord", "care_coordinator"),)); rc, t = run()
+setup(roles=(("Nora Nobody", "caregiver"),)); rc, t = run()
 ck("if nobody would be able to use campaigns, it stops and changes nothing", rc == 2 and "nobody would be able to use campaigns" in t and S["fn_secret"] is None and "token=" in job()[0][2], t)
 setup(job=False); rc, t = run()
 ck("if the daily job is missing, it stops and changes nothing", rc == 4 and S["fn_secret"] is None and not vault(), t)
 setup(); rc, t = run(); first = vault()[0]; rc2, t2 = run()
 ck("a rerun replaces the secret in both places (no duplicate Vault entry) and still passes", rc2 == 0 and len(vault()) == 1 and vault()[0] != first and vault()[0] == S["fn_secret"], t2)
+
+setup(roles=(("Samantha Owner", "owner_admin"), ("Krystal Coord", "care_coordinator"), ("Angiel Staff", "staffing_coordinator"), ("Nora Nobody", "caregiver")))
+rc, t = run(); sec1 = vault()[0]; fs1 = S["fn_secret"]; job1 = job()[0]; rc2, t2 = run(deploy_only=True)
+ck("275 (deploy only), after 274: passes, and leaves the Vault secret, the function secret and the daily job exactly as they were",
+   rc2 == 0 and "RESULT: UPDATED" in t2 and vault() == [sec1] and S["fn_secret"] == fs1 and job()[0] == job1 and "left exactly as 274 set them" in t2 and "unchanged: still reads its secret from Vault" in t2, t2)
+ck("275 lists a staffing coordinator as yes and a non-office role as no",
+   re.search(r"Angiel .*campaigns \+ Family Circle send: yes", t2) and re.search(r"Nora .*campaigns \+ Family Circle send: no", t2), t2)
+ck("275 still proves every refusal live and the scheduled path through Vault", t2.count("→ refused") >= 11 and "accepted as the scheduled run" in t2 and "✗" not in t2, t2)
+setup(); rc, t = run(deploy_only=True)
+ck("275 before 274 ever ran (no Vault secret): STOP, nothing changed", rc == 6 and "274 must run first" in t and not vault(), t)
 os.remove(HUBF); srv.shutdown(); c.close()
 print("\nDESKTOP 274 · SECURITY SLICE INSTALL · PROOF\n" + "=" * 60); ok = True
 for n, g, note in res: ok &= g; print(("PASS  " if g else "FAIL  ") + n + (("\n   └─ " + note) if note else ""))

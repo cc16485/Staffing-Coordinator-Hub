@@ -21,6 +21,8 @@ HUB_FILE = os.environ["SB_HUB_FILE"]; HUB_URL = os.environ.get("SB_HUB_URL", "ht
 PROOF_EMAIL = os.environ.get("SB_PROOF_EMAIL", "").strip().lower()
 POLL = float(os.environ.get("SB_POLL_SEC", "2")); POLL_MAX = float(os.environ.get("SB_POLL_MAX", "60"))
 DEPLOY = ["campaign-auto", "campaign-send", "circle-send"]; JOB = "daily-campaign-auto"; VAULT_NAME = "campaign_cron_secret"
+OFFICE = ["owner_admin", "care_coordinator", "staffing_coordinator"]   # her decision 2026-09-27: every office role
+DEPLOY_ONLY = os.environ.get("SB_DEPLOY_ONLY") == "1"   # 275: redeploy the functions; the secret and the daily job stay as 274 set them
 lines = []; fails = []; SECRET_VALUES = []
 def scrub(s):
     s = str(s)
@@ -60,7 +62,7 @@ def jget(b, *path):
         return d
     except Exception: return None
 
-say("SECURITY SLICE · CAMPAIGNS AND FAMILY CIRCLE · INSTALL")
+say("SECURITY SLICE · CAMPAIGNS AND FAMILY CIRCLE · " + ("OFFICE ROLES UPDATE" if DEPLOY_ONLY else "INSTALL"))
 say("Report " + dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")); say()
 if not TOKEN.startswith("sbp_"): say("✗ That is not a Supabase access token (sbp_...). Nothing was changed."); done(1)
 if not PROOF_EMAIL: say("✗ No proof sign-in address was given. Nothing was changed."); done(1)
@@ -82,17 +84,17 @@ def can(row, allowed):
     return bool(row["active"] and row["member"] and row["sign_in"] and hub_ok and any(r in allowed for r in (row["roles"] or "").split(", ")))
 say("  1a. Staff roles, and what each person will be able to do after this change:")
 for r in staff:
-    say(f"    {r['first']:<10} roles: {r['roles'] or '-':<45} campaigns: {'yes' if can(r, ['owner_admin']) else 'no ':<4} Family Circle send: {'yes' if can(r, ['owner_admin', 'care_coordinator']) else 'no'}"
+    say(f"    {r['first']:<10} roles: {r['roles'] or '-':<45} campaigns + Family Circle send: {'yes' if can(r, OFFICE) else 'no'}"
         + ("" if r["active"] and r["member"] and r["sign_in"] else "   (" + ", ".join(x for x, v in (("inactive", not r["active"]), ("not an active member", not r["member"]), ("no sign-in linked", not r["sign_in"])) if v) + ")"))
-if not any(can(r, ["owner_admin"]) for r in staff): say("✗ STOP: nobody would be able to use campaigns. Nothing was changed."); done(2)
+if not any(can(r, OFFICE) for r in staff): say("✗ STOP: nobody would be able to use campaigns. Nothing was changed."); done(2)
 before = {fn: verify_jwt(fn) for fn in DEPLOY}
 say("  1b. How each function checks callers today (kept exactly): " + ", ".join(f"{fn} {'platform sign-in check ON' if v else 'OFF' if v is False else 'UNREADABLE'}" for fn, v in before.items()))
 if any(v is None for v in before.values()): say("✗ STOP: could not read how the functions check callers. Nothing was changed."); done(3)
 ok, job = sql(f"select jobid, schedule, active, command from cron.job where jobname = {lit(JOB)}")
 if not ok or not job: say(f"✗ STOP: the daily campaign job ({JOB}) was not found: {str(job)[:160]}. Nothing was changed."); done(4)
 job = job[0]; m = re.search(r"url\s*:=\s*'([^']+)'", job["command"] or "")
-if not m or "/functions/v1/campaign-auto" not in m.group(1): say("✗ STOP: the daily campaign job does not call campaign-auto the way this installer expects. Nothing was changed."); done(4)
-old_url = m.group(1); params = [p.split("=")[0] for p in (old_url.split("?", 1)[1].split("&") if "?" in old_url else [])]
+if (not m or "/functions/v1/campaign-auto" not in m.group(1)) and not DEPLOY_ONLY: say("✗ STOP: the daily campaign job does not call campaign-auto the way this installer expects. Nothing was changed."); done(4)
+old_url = m.group(1) if m else ""; params = [p.split("=")[0] for p in (old_url.split("?", 1)[1].split("&") if "?" in old_url else [])]
 hdrs = re.findall(r"'([A-Za-z-]+)'\s*,", job["command"] or "")
 say(f"  1c. {JOB}: schedule {job['schedule']} · {'active' if job['active'] else 'PAUSED'} · URL parameters: {', '.join(params) or 'none'} · header names: {', '.join(sorted(set(hdrs))) or 'none'}")
 ok, vx = sql("""select to_regclass('vault.decrypted_secrets') is not null and exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
@@ -118,18 +120,23 @@ k = keys(); SVC = k.get("service_role", ""); ANON = k.get("anon", "")
 if not SVC or not ANON: say("  ✗ STOP: could not read the project keys. Nothing was changed."); done(5)
 SECRET_VALUES += [SVC, ANON]
 CRON_SECRET = pysecrets.token_urlsafe(48); SECRET_VALUES.append(CRON_SECRET)
-s, b = http("POST", f"{API}/v1/projects/{REF}/secrets", raw=json.dumps([{"name": "CAMPAIGN_CRON_SECRET", "value": CRON_SECRET}]).encode(), headers=MGMT())
+if DEPLOY_ONLY:
+    ok, rv = sql(f"select count(*)::int as n from vault.decrypted_secrets where name = {lit(VAULT_NAME)}")
+    if not ok or not rv or rv[0]["n"] != 1: say("  ✗ STOP: the daily job's secret is not in Vault (274 must run first). Nothing was changed."); done(6)
+    say("  ○ the server-only secret and the daily job are left exactly as 274 set them")
+s, b = (201, "") if DEPLOY_ONLY else http("POST", f"{API}/v1/projects/{REF}/secrets", raw=json.dumps([{"name": "CAMPAIGN_CRON_SECRET", "value": CRON_SECRET}]).encode(), headers=MGMT())
 if s not in (200, 201): say(f"  ✗ STOP: the server-only secret could not be set (HTTP {s}). Nothing else was changed."); done(6)
-say("  ✓ new server-only secret set for the functions (not shown)")
-ok, r = sql(f"""do $v$ begin
+if not DEPLOY_ONLY: say("  ✓ new server-only secret set for the functions (not shown)")
+ok, r = (True, []) if DEPLOY_ONLY else sql(f"""do $v$ begin
                  if exists (select 1 from vault.secrets where name = {lit(VAULT_NAME)}) then
                    perform vault.update_secret((select id from vault.secrets where name = {lit(VAULT_NAME)}), {lit(CRON_SECRET)});
                  else
                    perform vault.create_secret({lit(CRON_SECRET)}, {lit(VAULT_NAME)}, 'daily campaign job: server-only secret (security slice 2026-09-27)');
                  end if; end $v$""")
-ok2, rv = sql(f"select count(*)::int as n, bool_and(decrypted_secret = {lit(CRON_SECRET)}) as same from vault.decrypted_secrets where name = {lit(VAULT_NAME)}")
-if not ok or not ok2 or not rv or rv[0]["n"] != 1 or rv[0]["same"] is not True: say("  ✗ STOP: the secret could not be stored in Vault. Functions were not deployed."); done(6)
-say("  ✓ the same secret stored in Supabase Vault for the daily job (not shown)")
+if not DEPLOY_ONLY:
+    ok2, rv = sql(f"select count(*)::int as n, bool_and(decrypted_secret = {lit(CRON_SECRET)}) as same from vault.decrypted_secrets where name = {lit(VAULT_NAME)}")
+    if not ok or not ok2 or not rv or rv[0]["n"] != 1 or rv[0]["same"] is not True: say("  ✗ STOP: the secret could not be stored in Vault. Functions were not deployed."); done(6)
+    say("  ✓ the same secret stored in Supabase Vault for the daily job (not shown)")
 for fn in DEPLOY:
     if SKIP_FN: say(f"  (test target) would deploy {fn}" + ("" if before[fn] else " --no-verify-jwt")); continue
     p = subprocess.run([SUPA, "functions", "deploy", fn, "--project-ref", REF, "--use-api"] + ([] if before[fn] else ["--no-verify-jwt"]),
@@ -140,19 +147,25 @@ after = {fn: verify_jwt(fn) for fn in DEPLOY}
 if after != before: bad("how a function checks callers changed: " + str(after)); done(7)
 say("  ✓ all three check callers at the platform exactly as before")
 new_url = old_url.split("?", 1)[0]
+if DEPLOY_ONLY:
+    ok, j2 = sql(f"select schedule, active, command from cron.job where jobname = {lit(JOB)}"); j2 = j2[0] if ok and j2 else {}
+    cmd = j2.get("command") or ""
+    if "vault.decrypted_secrets" in cmd and "token=" not in cmd: say(f"  ✓ {JOB} unchanged: still reads its secret from Vault, schedule {j2.get('schedule')}")
+    else: bad(f"{JOB} is not in the state 274 left it in")
 keep = [p for p in (old_url.split("?", 1)[1].split("&") if "?" in old_url else []) if p and not p.startswith("token=")]
 if keep: new_url += "?" + "&".join(keep)
 command = ("select net.http_post(url := " + lit(new_url) + ", headers := jsonb_build_object('Content-Type', 'application/json', "
            "'Authorization', " + lit("Bearer " + ANON) + ", 'x-cron-secret', (select decrypted_secret from vault.decrypted_secrets where name = " + lit(VAULT_NAME) + ")), "
            "body := '{}'::jsonb, timeout_milliseconds := 120000);")
-ok, r = sql(f"select cron.schedule({lit(JOB)}, {lit(job['schedule'])}, {lit(command)}) as id")
-if ok and r and job["active"] is False: sql(f"select cron.alter_job({int(r[0]['id'])}, active := false)")   # a paused job stays paused
-ok2, j2 = sql(f"select schedule, active, command from cron.job where jobname = {lit(JOB)}")
-if not ok or not ok2 or not j2: bad("the daily job could not be updated: " + str(r)[:200]); done(8)
-j2 = j2[0]; cmd = j2["command"] or ""
-if j2["schedule"] == job["schedule"] and j2["active"] == job["active"] and "vault.decrypted_secrets" in cmd and "x-cron-secret" in cmd and "token=" not in cmd and CRON_SECRET not in cmd:
-    say(f"  ✓ {JOB} now reads its secret from Vault at run time: same schedule ({j2['schedule']}), {'active' if j2['active'] else 'paused'} as before, no token in its URL, the secret itself not in the job")
-else: bad(f"{JOB} does not look as intended after the update")
+if not DEPLOY_ONLY:
+  ok, r = sql(f"select cron.schedule({lit(JOB)}, {lit(job['schedule'])}, {lit(command)}) as id")
+  if ok and r and job["active"] is False: sql(f"select cron.alter_job({int(r[0]['id'])}, active := false)")   # a paused job stays paused
+  ok2, j2 = sql(f"select schedule, active, command from cron.job where jobname = {lit(JOB)}")
+  if not ok or not ok2 or not j2: bad("the daily job could not be updated: " + str(r)[:200]); done(8)
+  j2 = j2[0]; cmd = j2["command"] or ""
+  if j2["schedule"] == job["schedule"] and j2["active"] == job["active"] and "vault.decrypted_secrets" in cmd and "x-cron-secret" in cmd and "token=" not in cmd and CRON_SECRET not in cmd:
+      say(f"  ✓ {JOB} now reads its secret from Vault at run time: same schedule ({j2['schedule']}), {'active' if j2['active'] else 'paused'} as before, no token in its URL, the secret itself not in the job")
+  else: bad(f"{JOB} does not look as intended after the update")
 say()
 
 # ── Part 3 · live proof ────────────────────────────────────────────────────────
@@ -222,8 +235,10 @@ else:
     s, b = call("campaign-auto", "", auth=at); expect("even you cannot run the scheduled SEND from outside the schedule → refused", s, b, (403,))
     s, _ = http("POST", f"{FNB}/auth/v1/logout?scope=local", {}, {"apikey": ANON, "Authorization": "Bearer " + at})
     say("  ✓ that sign-in was signed out" if s in (200, 204) else f"  ○ sign-out answered HTTP {s}; that session expires on its own within the hour")
-say("  ○ a signed-in account WITHOUT the role is proven refused in the test harness (33/33); proving it live would need a")
+say("  ○ a signed-in account WITHOUT an office role is proven refused in the test harness (40/40); proving it live would need a")
 say("    temporary account or signing in as a coworker, which this does not do")
 say()
-say("RESULT: " + ("CLOSED · the public token no longer opens campaign audiences, campaign sending or Family Circle sending" if not fails else "CHECK THE ✗ LINES ABOVE"))
+say("RESULT: " + ("CHECK THE ✗ LINES ABOVE" if fails else
+    "UPDATED · owner/admin, care coordinators and staffing coordinators have access; the public token still opens nothing" if DEPLOY_ONLY else
+    "CLOSED · the public token no longer opens campaign audiences, campaign sending or Family Circle sending"))
 done(0 if not fails else 9)

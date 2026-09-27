@@ -20,17 +20,19 @@ const USERS = {
   'jwt-inactive': { id: 'u-inact', email: 'gone@mo-care.com', app_metadata: {} },
   'jwt-ended':    { id: 'u-ended', email: 'left@mo-care.com', app_metadata: {} },
   'jwt-otherhub': { id: 'u-other', email: 'team@mo-care.com', app_metadata: { hub_access: ['team_hub'] } },
+  'jwt-norole':   { id: 'u-norole', email: 'norole@mo-care.com', app_metadata: {} },
+  'jwt-oddrole':  { id: 'u-odd', email: 'odd@mo-care.com', app_metadata: {} },
 }
 let T, reads, sent, identityBroken
 const reset = () => {
   T = {
-    auth_identities: [['u-owner', 'p-owner'], ['u-coord', 'p-coord'], ['u-staff', 'p-staff'], ['u-inact', 'p-inact'], ['u-ended', 'p-ended'], ['u-other', 'p-owner2']]
+    auth_identities: [['u-owner', 'p-owner'], ['u-coord', 'p-coord'], ['u-staff', 'p-staff'], ['u-inact', 'p-inact'], ['u-ended', 'p-ended'], ['u-other', 'p-owner2'], ['u-norole', 'p-norole'], ['u-odd', 'p-odd']]
       .map(([a, p]) => ({ auth_user_id: a, person_id: p, project_ref: 'zngsgedlsxinbygwmxwn' })),
-    persons: [['p-owner', true, 'Olive Owner'], ['p-coord', true, 'Cora Coord'], ['p-staff', true, 'Stan Staffing'], ['p-inact', false, 'Ina Active'], ['p-ended', true, 'Ed Ended'], ['p-owner2', true, 'Otto Other']]
+    persons: [['p-owner', true, 'Olive Owner'], ['p-coord', true, 'Cora Coord'], ['p-staff', true, 'Stan Staffing'], ['p-inact', false, 'Ina Active'], ['p-ended', true, 'Ed Ended'], ['p-owner2', true, 'Otto Other'], ['p-norole', true, 'Nora Norole'], ['p-odd', true, 'Oda Odd']]
       .map(([person_id, active, full_name]) => ({ person_id, active, full_name })),
-    entity_memberships: ['p-owner', 'p-coord', 'p-staff', 'p-inact', 'p-ended', 'p-owner2']
+    entity_memberships: ['p-owner', 'p-coord', 'p-staff', 'p-inact', 'p-ended', 'p-owner2', 'p-norole', 'p-odd']
       .map((p) => ({ person_id: p, entity: 'cc_ihs', active: true, ended_at: p === 'p-ended' ? '2026-01-01' : null })),
-    staff_roles: [['p-owner', 'owner_admin'], ['p-coord', 'care_coordinator'], ['p-staff', 'staffing_coordinator'], ['p-inact', 'owner_admin'], ['p-ended', 'owner_admin'], ['p-owner2', 'owner_admin']]
+    staff_roles: [['p-owner', 'owner_admin'], ['p-coord', 'care_coordinator'], ['p-staff', 'staffing_coordinator'], ['p-inact', 'owner_admin'], ['p-ended', 'owner_admin'], ['p-owner2', 'owner_admin'], ['p-odd', 'caregiver']]
       .map(([person_id, role]) => ({ person_id, role, entity: 'cc_ihs' })),
     care_circles: [{ id: 'circle-1', client_name: 'Test Client', axiscare_client_id: '999', active: true }],
     circle_contacts: [{ id: 1, circle_id: 'circle-1', name: 'Test Daughter', phone: '4175550100', sms_consent: true, wants_general: true, wants_changes: true }],
@@ -88,8 +90,14 @@ reset(); r = await call(A, { url: AU + '?token=' + PUBLIC_TOKEN + '&resolve=clie
 ck('audience lookup with the public anon key as a sign-in: refused (401)', r.status === 401 && onlyIdentity() && nothingSent(), [r, reads])
 reset(); r = await call(A, { url: AU + '?resolve=clients', jwt: 'jwt-nobody' })
 ck('audience lookup by a signed-in account that is not staff: refused (403), only the identity check was read', r.status === 403 && onlyIdentity() && nothingSent() && !leaks(r.j), [r, reads])
-reset(); r = await call(A, { url: AU + '?resolve=clients', jwt: 'jwt-coord' })
-ck('audience lookup by a care coordinator (not owner/admin): refused (403), no audience read', r.status === 403 && onlyIdentity() && nothingSent(), [r, reads])
+for (const [who, label] of [['jwt-coord', 'a care coordinator'], ['jwt-staffing', 'a staffing coordinator']]) {
+  reset(); r = await call(A, { url: AU + '?auth_check=1', jwt: who })
+  ck(`audience lookup check by ${label}: permitted (every office role, her decision 2026-09-27), nothing read or sent`, r.status === 200 && r.j?.authorized === 'staff' && onlyIdentity() && nothingSent(), [r, reads])
+}
+for (const [who, label] of [['jwt-norole', 'an active staff member with NO role'], ['jwt-oddrole', 'someone whose only role is not an office role']]) {
+  reset(); r = await call(A, { url: AU + '?resolve=clients', jwt: who })
+  ck(`audience lookup by ${label}: refused (403), no audience read`, r.status === 403 && onlyIdentity() && nothingSent(), [r, reads])
+}
 reset(); r = await call(A, { url: AU + '?resolve=clients', jwt: 'jwt-otherhub' })
 ck('an owner whose account is limited to another hub: refused (403)', r.status === 403 && onlyIdentity(), r)
 reset(); r = await call(A, { url: AU + '?auth_check=1', jwt: 'jwt-owner' })
@@ -122,8 +130,14 @@ reset(); r = await call(S, { url: SU + '?token=' + PUBLIC_TOKEN, body: relay })
 ck('manual send with the old public page token: refused (401), nothing sent', r.status === 401 && nothingSent(), [r, sent])
 reset(); r = await call(S, { url: SU + '?token=' + PUBLIC_TOKEN, jwt: 'jwt-nobody', body: relay })
 ck('manual send by a signed-in account that is not staff: refused (403), nothing sent', r.status === 403 && nothingSent() && onlyIdentity(), [r, sent])
-reset(); r = await call(S, { url: SU, jwt: 'jwt-coord', body: relay })
-ck('manual send by a care coordinator (not owner/admin): refused (403), nothing sent', r.status === 403 && nothingSent(), r)
+for (const [who, label] of [['jwt-coord', 'a care coordinator'], ['jwt-staffing', 'a staffing coordinator']]) {
+  reset(); r = await call(S, { url: SU, jwt: who, body: { auth_check: true } })
+  ck(`manual send check by ${label}: permitted, nothing sent`, r.status === 200 && r.j?.authorized === true && nothingSent(), r)
+}
+for (const who of ['jwt-norole', 'jwt-oddrole']) {
+  reset(); r = await call(S, { url: SU, jwt: who, body: relay })
+  ck(`manual send by ${who === 'jwt-norole' ? 'a staff member with no role' : 'a non-office role'}: refused (403), nothing sent`, r.status === 403 && nothingSent(), r)
+}
 for (const who of ['jwt-inactive', 'jwt-ended']) {
   reset(); r = await call(S, { url: SU, jwt: who, body: relay })
   ck(`manual send by an owner/admin whose staff record is ${who === 'jwt-inactive' ? 'inactive' : 'ended'}: refused (403)`, r.status === 403 && nothingSent(), r)
@@ -144,8 +158,10 @@ reset(); r = await call(C, { url: CU + '?token=' + PUBLIC_TOKEN, body: msg })
 ck('Family Circle with the public page token: refused (401), nothing sent', r.status === 401 && reads.length === 0 && nothingSent(), r)
 reset(); r = await call(C, { url: CU, jwt: 'jwt-nobody', body: { ...msg, dry: true } })
 ck('Family Circle by a signed-in account that is not staff: refused (403); the circle is never read', r.status === 403 && onlyIdentity() && nothingSent() && !leaks(r.j), [r, reads])
-reset(); r = await call(C, { url: CU, jwt: 'jwt-staffing', body: msg })
-ck('Family Circle by a staffing coordinator only: refused (403)', r.status === 403 && onlyIdentity() && nothingSent(), r)
+reset(); r = await call(C, { url: CU, jwt: 'jwt-staffing', body: { circle_id: 'circle-1', auth_check: true } })
+ck('Family Circle check by a staffing coordinator: permitted, nothing read or sent', r.status === 200 && r.j?.authorized === true && onlyIdentity() && nothingSent(), r)
+reset(); r = await call(C, { url: CU, jwt: 'jwt-norole', body: msg })
+ck('Family Circle by a staff member with no role: refused (403); the circle is never read', r.status === 403 && onlyIdentity() && nothingSent(), r)
 reset(); r = await call(C, { url: CU, jwt: 'jwt-coord', body: { circle_id: 'circle-1', auth_check: true } })
 ck('Family Circle check by a care coordinator: permitted; the circle is not read and nothing is sent', r.status === 200 && r.j?.authorized === true && onlyIdentity() && nothingSent(), [r, reads])
 reset(); r = await call(C, { url: CU, jwt: 'jwt-owner', body: { ...msg, dry: true } })

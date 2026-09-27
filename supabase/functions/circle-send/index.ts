@@ -17,13 +17,13 @@
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { contactForOutbound } from '../_shared/outreach.ts'
-import { requireStaff } from '../_shared/staff-auth.ts'
+import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 
 /* Security slice (2026-09-27): this used to trust any caller who knew a circle id. It now requires a signed-in
-   Caring Companions staff member who runs office operations (owner_admin or care_coordinator), checked before the
+   Caring Companions staff member with an office role (OFFICE_ROLES), checked before the
    circle is read, before a preview is built and before anything is sent. The name recorded as the sender is the
    verified staff member, never a name the request supplies. { auth_check: true } answers and does nothing else. */
-export const CIRCLE_ROLES = ['owner_admin', 'care_coordinator']
+export const CIRCLE_ROLES = OFFICE_ROLES
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
