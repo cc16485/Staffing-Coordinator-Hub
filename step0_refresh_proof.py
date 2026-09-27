@@ -22,7 +22,8 @@ for q in [
   "create table if not exists circle_contacts (id bigserial, stopped_at timestamptz)", "insert into circle_contacts(stopped_at) values (null),(now())",
 ]: s.run(q)
 def app(k, v): s.run("insert into app_data(key,data) values (:k, cast(:v as jsonb)) on conflict (key) do update set data=excluded.data", k=k, v=json.dumps(v))
-app("ops_settings", {"coverage_alert_phones": ["+14172348494"], "timekeeper_watch_live": False, "promises_live": True, "fallback_phone": "+14175551234", "notes_blob": {"a": 1}})
+app("ops_settings", {"coverage_alert_phones": ["+14172348494"], "timekeeper_watch_live": False, "promises_live": True, "fallback_phone": "+14175551234", "notes_blob": {"a": 1},
+                      "digits_phone": "4175550007", "number_phone": 4175550008, "json_phones": "[\"+14175550009\"]", "obj_phones": [{"phone": "4175550010"}], "empty_phone": "", "null_phone": None, "weird_list": [1, 2], "a_float": 1.5, "long_text": "x" * 200, "ghl_hook_secret": "shh-do-not-print", "api_key": "k-123"})
 app("campaign_settings", [{"id": "settings", "enabled": True, "aud_clients": True, "aud_client_contacts": True}])
 app("coordinator_staff", [{"name": "Krystal Land", "email": "Krystal@mo-care.com"}, {"email": "noname@x.com"}])
 app("coverage_cases", [{"flag_source": "text message", "opened_at": "2026-09-20T10:00:00Z"}])
@@ -58,7 +59,9 @@ res = []
 def ck(n, g, note=""): res.append((n, bool(g), "" if g else str(note)[-700:]))
 ck("runs to the end with no failed query", p.returncode == 0 and "✗" not in t and "DONE" in t, t)
 ck("nothing in the database changed", s.run("select md5(string_agg(key||data::text, ',' order by key)) from app_data")[0][0] == fp0)
-ck("phone numbers print only as their last 4 digits", "…8494" in t and "…1234" in t and "4172348494" not in t and "+1417" not in t, t)
+ck("phone numbers print only as their last 4 digits, in every shape a setting can hold (list, JSON text, plain digits, a bare number, objects, empty)",
+   all(x in t for x in ("…8494", "…1234", "…0007", "…0008", "…0009", "…0010")) and not any(x in t for x in ("4172348494", "+1417", "4175550007", "4175550008")), t)
+ck("secret-looking settings never print", "shh-do-not-print" not in t and "k-123" not in t and "(set, not shown)" in t, t)
 ck("tokens inside scheduled-job commands never print", "eyJSECRETTOKEN" not in t and "lead-followup                        */15" in t and "→ lead-followup" in t, t)
 ck("switches shown; the two new 0a switches reported as not present yet", "timekeeper_watch_live" in t and "inquiry_followups_live" in t and "not present yet" in t and "(dict, not shown)" in t, t)
 ck("campaign audiences to clients and families shown as ON", "ACTIVE CLIENTS               ON" in t and "CLIENT CONTACTS (families)   ON" in t, t)

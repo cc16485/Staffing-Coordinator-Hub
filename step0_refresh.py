@@ -35,9 +35,17 @@ def last4(v):
     d = re.sub(r"\D", "", str(v or ""))
     return ("…" + d[-4:]) if len(d) >= 4 else "(none)"
 def phones(v):
-    try: arr = v if isinstance(v, list) else json.loads(v) if isinstance(v, str) else []
-    except Exception: arr = [v]
-    return ", ".join(last4(x if not isinstance(x, dict) else x.get("phone")) for x in arr) or "(not set)"
+    # a phone setting may be a list, a JSON string, a plain string or a bare number: mask whatever it is
+    if v is None or v == "" or v == []: return "(not set)"
+    if isinstance(v, str):
+        try: v = json.loads(v)
+        except Exception: pass
+    arr = v if isinstance(v, list) else [v]
+    out = []
+    for x in arr:
+        if isinstance(x, dict): x = x.get("phone") or x.get("number") or ""
+        out.append(last4(x))
+    return ", ".join(out) or "(not set)"
 
 say("STEP 0 · LIVE REFRESH · READ ONLY, nothing is changed")
 say("Report " + dt.datetime.now().strftime("%Y-%m-%d %H:%M") + " (Central, this Mac)")
@@ -62,7 +70,8 @@ else:
     settings = st[0]["data"] if isinstance(st[0]["data"], dict) else json.loads(st[0]["data"] or "{}")
     for k in sorted(settings):
         v = settings[k]
-        if "phone" in k: say(f"  {k:<40} {phones(v)}")
+        if re.search(r"token|secret|key|password|hook|auth", k, re.I): say(f"  {k:<40} (set, not shown)" if v not in (None, "", [], {}) else f"  {k:<40} (empty)")
+        elif "phone" in k or "number" in k: say(f"  {k:<40} {phones(v)}")
         elif isinstance(v, bool) or isinstance(v, (int, float)): say(f"  {k:<40} {v}")
         elif isinstance(v, str) and len(v) <= 60: say(f"  {k:<40} {v}")
         else: say(f"  {k:<40} ({type(v).__name__}, not shown)")
