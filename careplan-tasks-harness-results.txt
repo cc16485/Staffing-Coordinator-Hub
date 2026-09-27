@@ -1,0 +1,19 @@
+PASS CORS preflight answered from day one
+PASS access: a signed-in person for catalog/preview/push; the permission check is for the owner script only
+PASS catalog: AxisCare's own ACTIVE task list, alphabetical
+PASS rules: "as needed" is always "any time"; days sorted Sunday first; no days is refused
+PASS rules: one event per chosen day with the same "always / as needed" and time
+PASS preview: side by side; Bathing and Laundry are new, Dressing differs from AxisCare's version; Client Errands (AxisCare only) is listed; reads only
+PASS push: the note goes on the client; new tasks are ADDED with instructions and one event per day
+PASS push: a task AxisCare already has, differently, is LEFT ALONE without "update"; the AxisCare-only task is NOT removed
+PASS push: read back; a task the coordinator chose to leave as AxisCare has it still counts as confirmed
+PASS push with "update" on Dressing and remove on Client Errands: exactly those change
+PASS push without note text sends no note
+PASS a task no longer active in AxisCare's list is refused before sending, with a plain reason
+PASS a task with no days blocks the push until fixed; nothing is sent
+PASS no permission (403): each added task says so; the push is not "all confirmed"
+PASS no AxisCare client id on the assessment: says so; nothing sent
+PASS permission check: an empty task request on an Active client is refused as invalid, proving permission; nothing created
+PASS permission check: "not allowed" is reported as no permission
+
+17/17 passed
