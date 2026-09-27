@@ -134,3 +134,29 @@ exist (`#leadProfile`, the page is `#leadProfileView`), so the profile can stay 
   editable in the profile, absent from the list, back in the list after leaving; the board in
   the profile with a working cell editor and nothing in the Team Builder spot; the Care Match form
   borrowed and prefilled; everything handed back on Back. Hub tests still pass.
+
+## Step 4 as built (hub only): one editor per fact
+Mapped first (every editor and every reader, with which readers decide something). Changes:
+- **Payer** (editor: the intake). The assessment's payer is read-only from the intake when the family
+  has an inquiry ("From the intake. Change it on the Payer tab"); no more "Medicaid" default (new
+  option "Not recorded", plus CDS and PACE). An assessment with no inquiry keeps its own. Safe: the
+  assessment payer feeds no decision.
+- **Start date** (editor: the Start Contract). The care plan's start date shows the Start Contract
+  target read-only and saves that value (so the AxisCare note agrees). With no Start Contract the
+  plan keeps its own date. Left as its own fact on purpose: New Clients' start date, which is what
+  AxisCare recorded and drives the "start passed, no clock-in" check.
+- **Care level** (truth: AxisCare's class). Team Builder uses AxisCare's level for matching once the
+  plan's client is known through its Journey link ("Level 3 (from AxisCare)"); the typed level is
+  only for a client AxisCare doesn't have yet ("typed; not in AxisCare yet"). The intake estimate and
+  the review's finding stay their own, labeled facts.
+- **Contacts / address / DCN** (typed once at intake). Adding a nurse client fills the phone from the
+  client's record; a new GHE form fills empty DCN, birth date, county, client phone and address from
+  the CONFIRMED inquiry (by AxisCare id, never by name). Both stay editable (the nurse's GHL contact
+  and the GHE are their own records).
+- **Home notes**: Home & Life shows the intake checklist's cats / dogs / smoking answers beside the
+  home notes.
+- Not changed (and why): caller phone vs client phone vs Family Circle contacts are different
+  people; the care synopsis for callout texts already has one editor; Team Builder town/zip must stay
+  typeable for clients not linked yet. Found, for later: the hub (`cqIsMedicaid`: medicaid|ihs|dsds)
+  and the server (profile-check: medicaid|ihs|pace) test "is this Medicaid" differently.
+- Verified in the browser (fake data, nothing sent) for every item above; hub tests still pass.
