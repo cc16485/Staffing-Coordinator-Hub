@@ -9,6 +9,7 @@
 // Read-only. JWT-verified (deploy WITHOUT --no-verify-jwt); the hub calls it
 // with the signed-in coordinator's session token.
 // -----------------------------------------------------------------------------
+import { careLevelOf } from '../_shared/care-level.ts'
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: {
     'Content-Type': 'application/json',
@@ -415,16 +416,7 @@ Deno.serve(async (req) => {
   if (b.team_pool === true) {
     const { token, site } = axisCreds()
     if (!token || !site) return json({ error: 'AxisCare credentials not set on this project' }, 502)
-    const levelOf6 = (classes: unknown): number | null => {
-      let best: number | null = null
-      for (const c of rowsOf(classes)) {
-        const t = String((c as { label?: unknown; code?: unknown })?.label ?? (c as { code?: unknown })?.code ?? '').toLowerCase()
-        const m = t.match(/level\s*([123])/)
-        const lv = m ? Number(m[1]) : /complex/.test(t) ? 3 : /personal\s*care/.test(t) ? 2 : /wellness/.test(t) ? 1 : null
-        if (lv != null && (best == null || lv > best)) best = lv
-      }
-      return best
-    }
+    const levelOf6 = (classes: unknown): number | null => careLevelOf(classes).level   // Change 6b: one shared rule
     // deno-lint-ignore no-explicit-any
     const pool = new Map<string, any>()
     let url6: string | null = `https://${site}.axiscare.com/api/caregivers`
@@ -516,16 +508,7 @@ Deno.serve(async (req) => {
     if (!token || !site) return json({ error: 'AxisCare credentials not set on this project' }, 502)
 
     // Active census with levels; nurses out.
-    const levelOf = (classes: any): number | null => {
-      let best: number | null = null
-      for (const c of rowsOf(classes)) {
-        const t = String((c as any)?.label ?? (c as any)?.code ?? '').toLowerCase()
-        const m = t.match(/level\s*([123])/)
-        const lv = m ? Number(m[1]) : /complex/.test(t) ? 3 : /personal\s*care/.test(t) ? 2 : /wellness/.test(t) ? 1 : null
-        if (lv != null && (best == null || lv > best)) best = lv
-      }
-      return best
-    }
+    const levelOf = (classes: unknown): number | null => careLevelOf(classes).level   // Change 6b: one shared rule
     const active = new Map<string, { name: string; level: number | null }>()
     let url: string | null = `https://${site}.axiscare.com/api/caregivers`
     try {

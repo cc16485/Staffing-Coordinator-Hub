@@ -32,6 +32,7 @@
 // =============================================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { careLevelOf as sharedCareLevelOf } from '../_shared/care-level.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -130,16 +131,7 @@ async function opsSettings(): Promise<Record<string, unknown>> {
 // deno-lint-ignore no-explicit-any
 const rowsOf = (x: any): any[] => Array.isArray(x) ? x : (x && typeof x === 'object' ? Object.values(x) : [])
 // deno-lint-ignore no-explicit-any
-function careLevelOf(classes: any): number | null {
-  let best: number | null = null
-  for (const c of rowsOf(classes)) {
-    const t = S(c?.label ?? c?.code).toLowerCase()
-    const m = t.match(/level\s*([123])/)
-    const lv = m ? Number(m[1]) : /complex/.test(t) ? 3 : /personal\s*care/.test(t) ? 2 : /wellness/.test(t) ? 1 : null
-    if (lv != null && (best == null || lv > best)) best = lv
-  }
-  return best
-}
+function careLevelOf(classes: any): number | null { return sharedCareLevelOf(classes).level }   // Change 6b: one shared rule
 const isMedicaidLead = (lead: Record<string, unknown>) =>
   /medicaid|ihs|pace/i.test(S(lead?.funding_source))
 const isPrivatePayLead = (lead: Record<string, unknown>) =>
