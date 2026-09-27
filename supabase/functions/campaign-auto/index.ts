@@ -20,7 +20,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { outreachGate } from '../_shared/outreach.ts'
-import { requireStaff, serverSecretOk } from '../_shared/staff-auth.ts'
+import { requireStaff, serverSecretOk, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -33,9 +33,9 @@ const json = (body: unknown, status = 200) =>
 /* Security slice (2026-09-27). Two callers, two doors, and the public URL token opens neither:
      · the daily scheduled run: the server-only secret CAMPAIGN_CRON_SECRET in the x-cron-secret header (the cron
        reads it from Supabase Vault; it is never in browser code). Only this door can run the send.
-     · the Hub's audience lookup (?resolve=) and shape probe (?probe=1): a signed-in staff member with owner_admin.
+     · the Hub's audience lookup (?resolve=) and shape probe (?probe=1): a signed-in staff member with an office role (OFFICE_ROLES).
    ?auth_check=1 answers whether the caller is authorized and does nothing else. */
-export const CAMPAIGN_ROLES = ['owner_admin']
+export const CAMPAIGN_ROLES = OFFICE_ROLES
 
 const LIB_URL = 'https://caring-companions.pages.dev/email-assets/library.json'
 const ASSETS = 'https://caring-companions.pages.dev/email-assets'

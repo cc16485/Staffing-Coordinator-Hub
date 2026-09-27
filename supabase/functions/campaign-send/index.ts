@@ -9,15 +9,15 @@
 // For each recipient: upsert the GHL contact by email, then send an Email
 // message so it lands in their conversation timeline like everything else.
 //
-// Auth (security slice, 2026-09-27): a signed-in Caring Companions staff member holding owner_admin.
+// Auth (security slice, 2026-09-27): a signed-in Caring Companions staff member holding an office role (OFFICE_ROLES).
 // The public URL token that used to be enough is printed in the public Hub page; it is no longer accepted.
 // POST { auth_check: true } only answers whether the caller is authorized; nothing is read or sent.
 // -----------------------------------------------------------------------------
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { requireStaff } from '../_shared/staff-auth.ts'
+import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 
-export const CAMPAIGN_ROLES = ['owner_admin']
+export const CAMPAIGN_ROLES = OFFICE_ROLES
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
