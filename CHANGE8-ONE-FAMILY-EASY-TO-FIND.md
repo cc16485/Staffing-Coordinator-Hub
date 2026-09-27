@@ -85,3 +85,25 @@ the New Clients boxes become read-outs that tick themselves when that call is lo
 
 **Separately (asked 2026-09-27):** per-client coverage rules (only-ask list, outside backup,
 notes), tied to the AxisCare client id. Proposed as its own step after 8, or sooner.
+
+## Rulings (2026-09-27): "yes to all, start with 8c, 14 days"
+- 8c first. Stalled family-owned steps: 14 days (matches the Stuck badge). Care Match is the one
+  home for the first-shift follow-up.
+
+## 8c as built (hub only; no database or function change)
+- `famResolve(seed)`: from any one screen's record (lead id, assessment id, launch id, AxisCare id,
+  Team Builder plan id, Family Circle id) finds the rest by ids only: `lead_journey_connection`
+  (the confirmed inquiry <-> client link), `person_source_id`, `journey_episode`,
+  `team_build_link_current`, `client_queue`, `care_circles`, and the assessment's `lead_id`.
+  A lead that only CARRIES an AxisCare id is shown as "Inquiry (not confirmed)", and only when
+  exactly one lead carries it. Cached a minute.
+- The row "📞 Inquiry · 📝 Assessment · 🚀 Launch · 👤 Client 360 · 🧩 Team plan · 👪 Family" on the
+  lead profile, the assessment form, the New Clients card, Client 360, the Team Builder board and
+  each Family Circle (when opened). "You are here" is marked; a missing piece says what's missing.
+- "Schedule assessment" on a lead that has one opens it (Cancel still starts a reassessment).
+- Client 360 no longer matches by first name: an AxisCare id, else a full name held by exactly one
+  client; two clients with one name get a pick-by-AxisCare-id list. Coverage, assessments and nurse
+  history on the profile follow the same rule (nurse visits by their nurse-client id).
+- The client list files a converted lead under the person receiving care, not the caller.
+- Not built: storing the AxisCare id on Team Builder plans. The Journey link already finds it.
+- Proof: `family_links_hub_test.mjs` 26/26; all inline scripts parse; call-in plan hub test 18/18.

@@ -1,0 +1,31 @@
+
+CHANGE 8c · ONE FAMILY, ONE ROW OF LINKS · HUB TEST
+============================================================
+PASS  copy: no em dashes in the new screen text
+PASS  from the inquiry: the confirmed client, the assessment (by lead id), the open launch, the team plan (by its Journey link), the Family Circle
+PASS  from Client 360 (AxisCare id): the same family, and the confirmed inquiry
+PASS  from the Team Builder plan: through its Journey link to the inquiry, the client and the circle
+PASS  from the Family Circle: through its AxisCare id to everything else
+PASS  from the New Clients launch: the whole family
+PASS  NEVER BY NAME: an assessment typed as "Mary Smith" with no lead or AxisCare id links to nothing, even though a Mary Smith family exists
+PASS  NEVER BY NAME: a plan named "Mary Smith" with no Journey link links to nothing else
+PASS  a lead that only CARRIES an AxisCare id (never confirmed) keeps its own assessment; its "client" comes from the carried id only through a confirmed link, so none here
+PASS  from an AxisCare id that one lead carries unconfirmed: the inquiry shows, marked not confirmed
+PASS  two leads carrying the same unconfirmed AxisCare id: neither is guessed
+PASS  a second look within a minute is served from memory (no new queries)
+PASS  the row: this screen is marked "you are here"; the others are links; nothing missing
+PASS  the row: missing pieces say what is missing instead of guessing
+PASS  mounting fills the screen's slot
+PASS  each link opens its screen on that family's record
+PASS  Client 360: "Mary" alone opens nobody (it used to open the first Mary)
+PASS  Client 360: a full name held by exactly one client opens them
+PASS  Client 360: an AxisCare id opens them
+PASS  Client 360: two clients with the same full name: it asks which one (by AxisCare id), never guesses
+PASS  history matching: a record with an AxisCare id matches only that id; one without matches only a full name held by one client; a first name never
+PASS  history matching: with two Mary Smiths, a nameless-id record matches neither
+PASS  client list: the converted lead and Mary's assessment are ONE row under Mary Smith (they used to be two, one under the daughter)
+PASS  "Schedule assessment" on a lead that has one: opens the existing assessment; the lead is not changed
+PASS  ...and "Cancel" still starts a new one (a reassessment)
+PASS  a lead with no assessment starts one as before, with no question
+============================================================
+ALL 26 CHECKS PASS
