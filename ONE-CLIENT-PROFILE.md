@@ -112,3 +112,25 @@ exist (`#leadProfile`, the page is `#leadProfileView`), so the profile can stay 
   tab; a tick saves and redraws; the list shows rows only; a row opens the profile at Start of Care
   and Back returns to New Clients; a walk-in launch opens under its own name. Tests: follow-up 19,
   family links 26 (Launch now opens the profile), call-in 18, pickers 28, stalled starts 25.
+
+## Step 3 as built (hub only)
+- **Care** tab: this family's assessments (by lead id or AxisCare id) with "Open assessment" and
+  "Open care plan" / "Write the care plan" (their usual pop-ups), "＋ New assessment" (from the
+  lead, or prefilled with the client's name and AxisCare id), and care plan reviews with
+  "📝 Log a review". Saves refresh the tab.
+- **Family & Contacts** tab: the client's Family Circle, fully editable (consent, AxisCare edits,
+  send an update); "＋ Create the Family Circle" when there is none. Client 360's read-only copy
+  is gone from the page. While a profile shows a circle, the Family Circles list leaves that one
+  circle out, so no circle is drawn twice; it comes back as soon as you leave.
+- **Team & Schedule** tab: the client's Team Builder board (found through its Journey link),
+  fully workable in place; the Team Builder spot is emptied meanwhile; "← All plans" hidden.
+  Their Care Match calls, and "＋ Log a Care Match call" (prefilled with the client and AxisCare id).
+- Forms that live on other screens (the care plan review form, the Care Match call form) are
+  BORROWED into the profile while it is open and handed back when you leave (Back, another
+  client, or any hub tab), the same pattern as the guided call cockpit. Their slots sit outside
+  anything that is redrawn, so a refresh never deletes a borrowed form.
+- Verified in the browser (fake data, nothing sent): assessments, plan and reviews on Care; the
+  review form borrowed, filled and still on the page after the refresh; the circle open and
+  editable in the profile, absent from the list, back in the list after leaving; the board in
+  the profile with a working cell editor and nothing in the Team Builder spot; the Care Match form
+  borrowed and prefilled; everything handed back on Back. Hub tests still pass.
