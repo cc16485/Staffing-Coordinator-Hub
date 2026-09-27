@@ -1,0 +1,31 @@
+
+CHANGE 8b · STALLED STARTS · TEST
+============================================================
+PASS  rule: a FAMILY-owned step is not stuck at 10 days, is stuck at 15 (her ruling: 14 days)
+PASS  rule: a DSDS-owned step also gets 14 days
+PASS  rule: an office-owned step is stuck after 3 days
+PASS  rule: launch steps (now New Clients' work) never make a start stuck
+PASS  rule: escalation is 2 BUSINESS days after the due date (Friday -> Tuesday)
+PASS  scope: archived, Lost and no-start leads are left out
+PASS  the Start of Care "Stuck" badge shows exactly what it did before, on every sample start (29)
+PASS  evaluate: stuck starts become one item each; a start moving normally creates nothing
+PASS  evaluate: the item names the CLIENT, the step, the wait, and a family-specific next step; no em dashes
+PASS  evaluate: long waits are high priority (over 3x the window)
+PASS  evaluate: the same stuck start next day updates its one item (never a second)
+PASS  evaluate: moving again closes it
+PASS  evaluate: a step with no owner in the table is reported, never guessed
+PASS  hub: the page gets every name it has always used from the shared file
+PASS  hub: the page has no second copy of the rules
+PASS  server: DRY BY DEFAULT: nothing written to My Work; the run is logged; counts and previews for the owner's script
+PASS  server: the scheduler (public key) gets counts only, no names
+PASS  server: ?dry=1 writes nothing even when switched on
+PASS  server LIVE: each stuck start becomes one My Work item, owned by whoever owns that step's area
+PASS  server LIVE: a start stuck 200 days is NOT raised (listed for a person to decide); a Lost lead is left out
+PASS  server: a second run adds nothing (one item per start, ever)
+PASS  server: an update keeps what a person set on the item (their owner, their note) and refreshes the wait
+PASS  server: an open item closes by itself when the start moves again, and when the lead is marked Lost
+PASS  server: a per-run ceiling: the rest wait for the next run (counted, never dropped)
+PASS  server: if the shared rules can't be fetched it STOPS (no second copy of the rules), and says so in the log
+PASS  server: a fetched file that isn't the rules is refused
+============================================================
+ALL 26 CHECKS PASS

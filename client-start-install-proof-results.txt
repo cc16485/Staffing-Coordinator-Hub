@@ -1,0 +1,16 @@
+
+DESKTOP 259/260 · STALLED STARTS · PROOF
+============================================================
+PASS  a changed function stops before anything runs
+PASS  a live hub still serving an older client-start.js stops it (merge first); nothing scheduled or run
+PASS  answer not 'yes': installed, scheduled hourly, LEFT OFF; only the preview ran
+PASS  the preview names each stuck start, the step, who owns the wait, the window, whose list, and the escalation date
+PASS  the preview lists the too-old start for a decision, what closes, and the step with no owner (never guessed)
+PASS  a typed yes switches it on, records the approval, keeps other settings, and runs once live
+PASS  the service key is used for the runs and never printed
+PASS  if it was already on, it is paused for the preview and stays off without a yes
+PASS  a failed preview stops it; it stays off; nothing is asked
+PASS  Desktop 260 switches it off and keeps everything else
+============================================================
+ALL 10 PROOFS PASS
+shas: {"client-start-run": "899ee68bb83476d681bdfda8cf3509716a77c7475a59cdfa3cb57b85538d6717"} engine: 252b3a13c8fca84c294142ba02708789853fb186043a12bf49a365b890729bc7
