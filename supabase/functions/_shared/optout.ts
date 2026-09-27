@@ -1,0 +1,111 @@
+// =============================================================================
+// The universal opt-out check (Step 0 · 0b-1, 2026-09-27)
+// =============================================================================
+// Samantha's rule: "If any authoritative source tells us not to send on this channel, do not send."
+// This reads every source at send time and refuses if ANY says no. It does not create a new authority
+// and does not try to synchronise them; the invariant is only that no applicable sender proceeds when we
+// hold authoritative evidence of an opt-out for that channel. Every refusal is logged with its reasons.
+//
+//   Sources (all read, none replaced):
+//     ghl_dnd       GoHighLevel Do Not Disturb on the contact (all channels, or per channel)
+//     hub           the Hub's own opt-out record (contact_optout_current), including STOP and staff entries
+//     inquiry_dnc   an inquiry marked do-not-contact with this phone or email
+//     circle_stop   a Family Circle contact marked stopped with this phone
+//
+// FAIL CLOSED: if a source cannot be read, the send is refused with "could not check <source>". A family
+// message that cannot be proven permitted does not go.
+// No sender imports this yet; 0b-2 and 0b-3 wire every sender to it.
+// =============================================================================
+export type Channel = 'sms' | 'email'
+export type OptOutVerdict = { allowed: boolean; reasons: string[] }
+
+export const normPhone = (raw: unknown): string | null => {
+  const d = String(raw ?? '').replace(/\D/g, '')
+  if (d.length === 10) return '+1' + d
+  if (d.length === 11 && d.startsWith('1')) return '+' + d
+  return null
+}
+export const normEmail = (raw: unknown): string | null => {
+  const e = String(raw ?? '').trim().toLowerCase()
+  return e.includes('@') ? e : null
+}
+const last10 = (p: unknown) => String(p ?? '').replace(/\D/g, '').slice(-10)
+
+/* GHL's contact: `dnd: true` stops everything; `dndSettings.SMS/Email.status` of 'active' or 'permanent' stops one channel. */
+// deno-lint-ignore no-explicit-any
+export function ghlDnd(contact: any, channel: Channel): boolean {
+  if (!contact || typeof contact !== 'object') return false
+  if (contact.dnd === true) return true
+  const key = channel === 'sms' ? 'SMS' : 'Email'
+  const s = contact.dndSettings?.[key]?.status ?? contact.dndSettings?.[key.toLowerCase()]?.status
+  return ['active', 'permanent'].includes(String(s ?? '').toLowerCase())
+}
+
+/**
+ * May this message go to this address on this channel?
+ * `ghlContact` is the contact object GHL returned for the send (its upsert or get answer). When a sender
+ * sends through GHL but cannot supply it, pass `ghlContact: 'unknown'` and the send is refused: DND
+ * could not be checked.
+ */
+export async function optOutCheck(
+  // deno-lint-ignore no-explicit-any
+  db: any,
+  target: { channel: Channel; phone?: unknown; email?: unknown; ghlContact?: unknown | 'unknown' | null; viaGhl?: boolean },
+): Promise<OptOutVerdict> {
+  const reasons: string[] = []
+  const address = target.channel === 'sms' ? normPhone(target.phone) : normEmail(target.email)
+  if (!address) return { allowed: false, reasons: ['no usable ' + (target.channel === 'sms' ? 'phone number' : 'email address')] }
+
+  // 1. GHL Do Not Disturb
+  if (target.viaGhl !== false) {
+    if (target.ghlContact === 'unknown' || target.ghlContact === undefined) reasons.push('could not check GHL Do Not Disturb')
+    else if (ghlDnd(target.ghlContact, target.channel)) reasons.push('GHL Do Not Disturb is on for ' + target.channel)
+  }
+  // 2. the Hub's own record (latest word per address, for this channel or 'all')
+  try {
+    const { data, error } = await db.from('contact_optout_current').select('channel, opted_out, source').eq('address', address)
+    if (error) reasons.push('could not check the opt-out record')
+    else for (const r of data ?? []) {
+      if (r.opted_out === true && (r.channel === target.channel || r.channel === 'all')) reasons.push(`opted out (${r.source}, ${r.channel})`)
+    }
+  } catch { reasons.push('could not check the opt-out record') }
+  // 3. inquiries marked do-not-contact
+  try {
+    const { data, error } = await db.from('app_data').select('data').eq('key', 'leads').maybeSingle()
+    if (error) reasons.push('could not check inquiry do-not-contact')
+    else {
+      const leads = Array.isArray(data?.data) ? data.data : []
+      const hit = leads.some((l: Record<string, unknown>) => l && l.do_not_contact === true && (
+        target.channel === 'sms' ? (last10(l.phone) === last10(address) || last10(l.client_phone) === last10(address))
+                                 : String(l.email ?? '').trim().toLowerCase() === address))
+      if (hit) reasons.push('an inquiry with this ' + (target.channel === 'sms' ? 'number' : 'email') + ' is marked do-not-contact')
+    }
+  } catch { reasons.push('could not check inquiry do-not-contact') }
+  // 4. Family Circle contacts marked stopped (phone only; circle contacts are texted)
+  if (target.channel === 'sms') {
+    try {
+      const { data, error } = await db.from('circle_contacts').select('phone, stopped_at').not('stopped_at', 'is', null)
+      if (error) reasons.push('could not check Family Circle stops')
+      else if ((data ?? []).some((c: Record<string, unknown>) => last10(c.phone) === last10(address))) reasons.push('a Family Circle contact with this number is marked stopped')
+    } catch { reasons.push('could not check Family Circle stops') }
+  }
+  return { allowed: reasons.length === 0, reasons }
+}
+
+/** Record a refusal (append-only). Never throws: a failed log must not turn a refusal into a send. */
+// deno-lint-ignore no-explicit-any
+export async function logRefusal(db: any, sender: string, channel: Channel, address: unknown, reasons: string[]): Promise<void> {
+  try { await db.rpc('contact_send_refusal_log', { p_sender: sender, p_channel: channel, p_address: String(address ?? ''), p_reasons: reasons }) }
+  catch { console.warn(`[${sender}] refusal not logged: ${reasons.join('; ')}`) }
+}
+
+/** The call a sender makes: check, log a refusal, return whether it may send. */
+// deno-lint-ignore no-explicit-any
+export async function mayContact(db: any, sender: string, target: Parameters<typeof optOutCheck>[1]): Promise<boolean> {
+  const v = await optOutCheck(db, target)
+  if (!v.allowed) {
+    await logRefusal(db, sender, target.channel, target.channel === 'sms' ? target.phone : target.email, v.reasons)
+    console.warn(`[${sender}] send refused: ${v.reasons.join('; ')}`)
+  }
+  return v.allowed
+}
