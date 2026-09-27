@@ -1,0 +1,32 @@
+
+CHANGE 3 · AXISCARE STATUS REACHES THE HUB · DISPOSABLE PROOF
+============================================================
+PASS  install · an injected failure leaves nothing behind
+PASS  install · installs, a rerun while unused succeeds, self-check passes
+PASS  current status · the check's map becomes a readable copy; later checks update it; nobody is dropped by a partial read
+PASS  open · a change for a client the hub has never known is not a review (only logged)
+PASS  open · malformed changes are refused
+PASS  open · Ruth's change opens one review, tied to her and her active Journey
+PASS  open · the same change again never opens a second review
+PASS  refusals · bad seat, no person, unknown answer, no date, a future date, no reason, 'other' without a note, 'mistake' without a note, and 'returning' from Client Intake; nothing changes
+PASS  atomic · an end date before care began is refused by the Journey rules and NOTHING is saved (role still active, review still open)
+PASS  care ended · her Journey ends on the day given, with the AxisCare change and who confirmed it as the evidence
+PASS  care ended · her client role becomes former, with the day and the reason
+PASS  care ended · the answer is recorded once, with who and which seat
+PASS  care ended · answering again is refused
+PASS  on hold · nothing ends; the answer and note are kept
+PASS  mistake / nothing changed · recorded, nothing ends
+PASS  a change on a client whose care ended still reaches a person (no active Journey to tie it to)
+PASS  returning (Owner / Decision) · a NEW established Journey and a new active client role; the ended one is kept as history
+PASS  returning while a Journey is already active is refused by the Journey rules; nothing saved
+PASS  care ended when the role was already ended elsewhere: the Journey still ends, the role is not touched again
+PASS  concurrency · two people answering at once: one answer stands, the other is told it's done
+PASS  answer-once · a decided review can't be changed, deleted or truncated; an open one can't be re-pointed
+PASS  security · signed-in staff read reviews and statuses but cannot answer, open or write; anonymous gets nothing
+PASS  guard · once a review exists the migration refuses and changes nothing
+PASS  rollback · refuses once reviews exist
+PASS  journey · Journey foundation definitions unchanged
+PASS  rollback · on an unused install removes everything
+============================================================
+ALL 26 PROOFS PASS
+client-status migration sha256: 72c9c45e8f7d4ca9eeb7a975815fd51c844a69537651b9d36dec31b3262dda98
