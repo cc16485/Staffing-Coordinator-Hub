@@ -33,6 +33,7 @@ import { shadowRoute } from '../_shared/routing.ts'
 import { opEvent } from '../_shared/events.ts'
 import { notifyFamilyOfChange } from '../_shared/family-change-text.ts'
 import { careLevelOf } from '../_shared/care-level.ts'
+import { holdsAutoTexts, isMustCover, onlyAskCut, planLine, readPlan } from '../_shared/callin-plan.ts'
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -639,6 +640,9 @@ async function buildCandidatesForCase(c: any):
   } catch { /* hunger boost only */ }
 
   const dnr = await dnrSetFor(String(c.client || ''))
+  /* The client's call-in plan (2026-09-27): an only-ask list is followed exactly; a plan
+     that can't be read holds everyone rather than guess (fail closed). */
+  const planR = await readPlan(sb, clientRes.id, new Map())
   const alreadyAsked = new Set((c.asked ?? []).map((a: { name: string }) =>
     String(a.name || '').toLowerCase()))
   const callerOff = String(c.calling_off || '').toLowerCase()
@@ -649,6 +653,9 @@ async function buildCandidatesForCase(c: any):
   for (const x of cands) {
     if (x.skipped && !x.may_autosend) { cut(x, String(x.skipped)); continue }
     if (dnr.has(nameKeyOf(String(x.name)))) { cut(x, 'Do-Not-Return for this client — never suggested'); continue }
+    if (planR.error) { cut(x, "held: the client's call-in plan could not be read (fail closed)"); continue }
+    const planCut = onlyAskCut(planR.plan, x, String(c.client || planR.plan?.client_name || ''))
+    if (planCut) { cut(x, planCut); continue }
     if (alreadyAsked.has(String(x.name).toLowerCase())) { cut(x, 'already asked on this case'); continue }
     if ((callerOff && String(x.name).toLowerCase() === callerOff)
         || (callerOffId && String(x.axiscare_id || '') === callerOffId)) { cut(x, 'the person who called off'); continue }
@@ -725,6 +732,9 @@ async function buildCandidatesForCase(c: any):
     hours_check: patternCheck || null,
     census: censusUsable ? `${axisActive.size} active caregivers` : `UNREACHABLE (${censusError || 'empty'}) — everyone held, fail closed`,
     dnr_barred: dnr.size,
+    callin_plan: planR.plan ? planLine(planR.plan) : null,
+    callin_plan_note: planR.plan?.note ?? null,
+    callin_plan_unreadable: planR.error,
   } }
 }
 
@@ -1104,7 +1114,10 @@ Deno.serve(async (req) => {
         const dMs = new Date(`${c.shift_date}T${String(c.shift_time).slice(0, 5)}:00`).getTime() - new Date(chiNowA).getTime()
         soonA = dMs > 0 && dMs < 3 * 3600000
       }
-      const smsOk = soonA || (chiHrA >= 8 && chiHrA < 21)
+      /* "Must be covered, no matter what" (the client's call-in plan): the admin text goes at any hour */
+      const planA = await readPlan(sb, c.client_axiscare_id, new Map())
+      const mustA = isMustCover(planA.plan)
+      const smsOk = mustA || soonA || (chiHrA >= 8 && chiHrA < 21)
       const calledAt = new Date(String(c.opened_at || Date.now()))
         .toLocaleString('en-US', { timeZone: 'America/Chicago',
           month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })
@@ -1117,6 +1130,8 @@ Deno.serve(async (req) => {
         .replaceAll('{who}', c.calling_off ? ` ${c.calling_off} called off.` : '')
         .replaceAll('{called_at}', calledAt)
         .replace(/\s{2,}/g, ' ').trim()
+        .replace(/^/, mustA ? 'MUST BE COVERED (call-in plan). ' : '')
+      const planTxtA = planA.plan ? planLine(planA.plan) : ''
       const { data: stRowA } = await sb.from('app_data').select('data').eq('key', 'coordinator_staff').maybeSingle()
       const staffA: any[] = Array.isArray(stRowA?.data) ? stRowA!.data : []
       let alerted = 0
@@ -1136,13 +1151,15 @@ Deno.serve(async (req) => {
               method: 'POST',
               headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
               body: JSON.stringify({ type: 'Email', contactId: cid,
-                subject: `Call-in: ${c.client || 'coverage case'} ${whenTxt}`,
+                subject: `${mustA ? 'MUST COVER · ' : ''}Call-in: ${c.client || 'coverage case'} ${whenTxt}`,
                 html: `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.6;color:#1f2a36;">`
                   + `<p><b>New call-in detected.</b></p>`
                   + `<p>Client: <b>${String(c.client || '?')}</b><br>Shift: <b>${whenTxt}</b>`
                   + (c.calling_off ? `<br>Called off: <b>${String(c.calling_off)}</b>` : '<br>Called off: (unknown — opened from an AxisCare unassignment, which does not say who)')
                   + `<br>Called in at: <b>${calledAt}</b> (Chicago)`
                   + (c.modification_reason ? `<br>Reason: ${String(c.modification_reason)}` : '')
+                  + (planTxtA ? `<br>Call-in plan: <b>${planTxtA}</b>` : '')
+                  + (planA.plan?.note ? `<br>Plan note: ${String(planA.plan.note).replace(/[<>&]/g, '')}` : '')
                   + `</p><p>` + (manualSelect
                     ? `Cara has ranked the candidates — open the case and choose who to ask (worked-with-this-client first). Nothing is texted until you press send. `
                     : `The callout engine is texting qualified caregivers in waves. `)
@@ -1454,6 +1471,8 @@ Deno.serve(async (req) => {
     /* Do-Not-Return for THIS client (her rule): barred from every wave,
        automatic or manual, whatever tier they would rank. */
     const dnrBarred = await dnrSetFor(String(c.client || ''))
+    const planW = await readPlan(sb, clientRes.id, new Map())
+    let planSkipped = 0
     let dnrSkipped = 0
     let inactiveSkipped = 0
     let censusHeld = 0
@@ -1493,8 +1512,17 @@ Deno.serve(async (req) => {
                            if (!x.axiscare_id || !nurseAxis.has(String(x.axiscare_id))) return true
                            nurseSkipped++; return false
                          })
+                         .filter((x: any) => {
+                           /* the call-in plan: only-ask list, and an unreadable plan holds everyone */
+                           if (!planW.error && !onlyAskCut(planW.plan, x, String(c.client || ''))) return true
+                           planSkipped++; return false
+                         })
                          .slice(0, WAVE_SIZE)
     stats.would_ask += wave.length
+    stats.skipped_callin_plan = (Number(stats.skipped_callin_plan) || 0) + planSkipped
+    /* family covers / flexible: a person calls the family first, so no automatic texts */
+    const planHold = holdsAutoTexts(planW.plan)
+    if (planHold && wave.length) stats.held_callin_plan = (Number(stats.held_callin_plan) || 0) + wave.length
     stats.held_census_down += censusHeld
 
     /* ── SEND STAGE — the callout engine (replacing CareQB Callouts).
@@ -1539,7 +1567,7 @@ Deno.serve(async (req) => {
     if (quietHold && sendLive && !hasYes && wave.length) {
       stats.held_quiet_hours = (Number(stats.held_quiet_hours) || 0) + wave.length
     }
-    if (sendLive && !manualSelect && !hasYes && fuseBurned && !quietHold && wave.length && ghl.token && ghl.locationId) {
+    if (sendLive && !manualSelect && !planHold && !hasYes && fuseBurned && !quietHold && wave.length && ghl.token && ghl.locationId) {
       /* MESSAGE DESIGN (CareQB's template split, revised live 2026-09-16):
          EVERY caregiver's text names the client by FIRST NAME(S) — her call,
          reading the first real wave, reversing the 09-12 stranger rule. First
