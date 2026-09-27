@@ -172,7 +172,7 @@ Mapped first (every editor and every reader, with which readers decide something
   id → the right client, or the confirmed inquiry; two "Ann Jones" → the pick list. Hub tests pass
   (family-links test updated for the opener's new tab argument).
 
-## Step 5b: returning families (design approved 2026-09-27 "yes to all, go and merge"; A cut to the lock only, B to F next)
+## Step 5b: returning families (design approved 2026-09-27 "yes to all, go and merge"; A cut to the lock only, B + D built, C, E, F next)
 How a second record happens today (most likely first):
 1. A former client's family calls back; a new inquiry is entered (no check against AxisCare, and
    ~268 former AxisCare clients aren't in the hub's identity list at all); Convert creates a SECOND
@@ -216,3 +216,29 @@ hub's Sync button only shows counts); every other mode needs the service key. Th
 key checking on (Desktop 262 checks), so a faked key never reaches it. Old one-off Desktop scripts 84, 85, 86
 and 122 used the public key for other modes and will now be refused.
 Tests: `identity_backfill_lock_test.mjs` (18), `identity_backfill_lock_install_proof.py` (8). Install: Desktop 262.
+
+## Step 5b B + D as built (hub + server; Desktop 263)
+- **`client-lookup`** (new function, read only, signed-in staff only; the public key and the service key are
+  refused). Checks AxisCare live, every client current and inactive, plus every Family Circle contact (so a
+  relative's number counts). Answers with names, AxisCare numbers, status and why; never a phone number, birth
+  date or SSN. Rules in `_shared/client-lookup.ts`: own phone, a Family Circle member's phone, name + birth date
+  (and "goes by"), last name + birth date (weaker), name only (a hint). Same name with two different birth dates
+  is two people and is not shown. AxisCare's next page must be on the agency's own site.
+- **B, new inquiry** (the form and the guided call): before saving, past inquiries (phone, client phone, email,
+  name + birth date) and client-lookup. The panel "Is this family already known?" offers: Open this inquiry;
+  a current client, Open their profile (a change in care is handled there); a former client, Same family: link
+  to #id, which goes through the existing "Is this the same person?" side-by-side; A different family: save as
+  new; Go back. Replaced the caller-phone-only check (where Cancel saved anyway). An id the check filled in and
+  the person backed out of never carries over. If AxisCare can't be checked, the inquiry saves and says so.
+- **D, Convert**: AxisCare is checked BEFORE anything is created. A former client: "Use this AxisCare record"
+  (side-by-side, then the inquiry is linked and Converted, `axiscare_convert.reused_existing`, Journey connected
+  when it can be; no second client). A current client: Open their profile. If AxisCare can't be checked,
+  creating a new client needs a yes.
+- **`client-status-returning.sql`**: when AxisCare later flips the returning client to Active, "Returning client"
+  (Owner / Decision) keeps the Journey their linked inquiry opened (open / converted) instead of trying to open a
+  second one, which used to be refused. An established active Journey still refuses, as before. Only
+  `client_status_decide` is replaced; no rows move. The hub says "the Journey their new inquiry opened carries on".
+- Tests: `client_lookup_fn_test.mjs` 21, `known_family_hub_test.mjs` 24, `client_status_returning_proof.py` 33
+  (every original status-change proof plus the new cases), `known_family_install_proof.py` 6. Browser-checked
+  with fakes: the panel, Go back, link (side-by-side), backing out then "different family", Convert reuse, and
+  Convert with AxisCare down.
