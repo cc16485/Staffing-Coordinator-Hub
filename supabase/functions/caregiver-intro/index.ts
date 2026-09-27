@@ -149,37 +149,38 @@ Deno.serve(async (req) => {
     'Content-Type': 'application/json', Accept: 'application/json',
   }
 
-  let reached = 0
+  let reached = 0, optedOut = 0
   const reachedNames: string[] = []
+  const ghl = { token: ghlToken!, locationId: ghlLocation! }
+  /* 0b-2: one contact per channel, found by that channel's address alone, and the universal opt-out check.
+     Family recipients — a human sends this today. The planned AxisCare auto-trigger will be REFUSED by the
+     audience gate until Samantha explicitly enables that capability. */
+  const door = (c: Record<string, unknown>, channel: 'sms' | 'email', first: string, stop: { n: number }) =>
+    contactForOutbound(supabase, ghl, { phone: c.phone, email: c.email, firstName: first }, 'caregiver-intro',
+      { audience: 'family', humanInitiated: true, channel, sender: 'caregiver-intro', onOptOut: () => { stop.n++ } })
   for (const c of reachable) {
     const first = String(c.name ?? '').split(' ')[0] || 'there'
+    const stop = { n: 0 }
+    let any = false
     try {
-      /* Shared boundary: identity gate, then hours policy, then upsert.
-         This function used to read c.phone straight off a person record and
-         send to it with no check of any kind. */
-      const dest = await contactForOutbound(
-        supabase, { token: ghlToken!, locationId: ghlLocation! },
-        { phone: c.phone, email: c.email, firstName: first },
-        'caregiver-intro',
-        /* Family recipients — a human sends this today. The planned AxisCare
-           auto-trigger will be REFUSED by the audience gate until Samantha
-           explicitly enables that capability. */
-        { audience: 'family', humanInitiated: true })
-      if (!dest) continue
-      const contactId = dest.contactId
-
       if (c.phone && c.sms_consent) {
-        await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-          method: 'POST', headers: h,
-          body: JSON.stringify({ type: 'SMS', contactId, message: smsFor(first) }),
-        })
+        const dest = await door(c, 'sms', first, stop)
+        if (dest) {
+          const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+            method: 'POST', headers: h,
+            body: JSON.stringify({ type: 'SMS', contactId: dest.contactId, message: smsFor(first) }),
+          })
+          any = any || r.ok
+        }
       }
       if (c.email) {
-        await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-          method: 'POST', headers: h,
-          body: JSON.stringify({
-            type: 'Email', contactId,
-            subject: `${cgName} will be caring for ${client_name}`,
+        const dest = await door(c, 'email', first, stop)
+        if (dest) {
+          const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+            method: 'POST', headers: h,
+            body: JSON.stringify({
+              type: 'Email', contactId: dest.contactId,
+              subject: `${cgName} will be caring for ${client_name}`,
             html:
               `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
               `<p>Hi ${first},</p>` +
@@ -190,12 +191,14 @@ Deno.serve(async (req) => {
               `padding:11px 20px;border-radius:9px;display:inline-block;font-weight:700">Meet ${cgName}</a></p>` +
               `<p>Anything you would like us to know before the first visit, just ring.</p>` +
               `<p style="color:#57606a">Caring Companions In-Home Senior Care<br>${OFFICE}</p></div>`,
-          }),
-        })
+            }),
+          })
+          any = any || r.ok
+        }
       }
-      reached++
-      reachedNames.push(String(c.name))
     } catch (_) { /* one contact failing must not stop the rest */ }
+    if (any) { reached++; reachedNames.push(String(c.name)) }
+    if (stop.n) optedOut++
   }
 
   await supabase.from('caregiver_intro_log').insert({
@@ -207,5 +210,5 @@ Deno.serve(async (req) => {
     reason, sent_by: user.email,
   })
 
-  return json({ ok: true, caregiver: cgName, client: client_name, reached, who: reachedNames, link })
+  return json({ ok: true, caregiver: cgName, client: client_name, reached, opted_out: optedOut, who: reachedNames, link })
 })

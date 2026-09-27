@@ -21,6 +21,7 @@
 // Deploy: supabase functions deploy cc-memories --no-verify-jwt. Verify JWT OFF.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { ghlContactIfAllowed } from '../_shared/optout.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -257,15 +258,9 @@ Deno.serve(async (req) => {
       Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28',
       'Content-Type': 'application/json', Accept: 'application/json',
     }
-    const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-      method: 'POST', headers: h,
-      body: JSON.stringify({
-        locationId: ghlLocation,
-        email: client.dm_email,
-        firstName: String(client.decision_maker || '').split(' ')[0] || 'there',
-      }),
-    })
-    const contactId = (await up.json().catch(() => ({})))?.contact?.id
+    /* 0b-2: the family decision maker's email goes through the universal opt-out door */
+    const contactId = await ghlContactIfAllowed(supabase, { token: ghlToken, locationId: ghlLocation }, 'cc-memories', {
+      channel: 'email', email: client.dm_email, firstName: String(client.decision_maker || '').split(' ')[0] || 'there' })
     if (!contactId) return
     const first = String(client.name || 'your loved one').split(' ')[0]
     const site = 'https://mo-care.com/memories?c=' + encodeURIComponent(client.token)

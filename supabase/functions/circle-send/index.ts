@@ -97,45 +97,53 @@ Deno.serve(async (req) => {
       .replace(new RegExp('\\b' + esc + '\\b', 'g'), 'you')
   }
 
-  let reached = 0
+  let reached = 0, optedOut = 0
+  const ghl = { token: ghlToken!, locationId: ghlLocation! }
+  /* 0b-2: each channel gets its own contact, found by that channel's address alone, and the universal opt-out
+     check runs on it (GHL Do Not Disturb, the Hub's opt-out record, inquiry do-not-contact, Family Circle stops). */
+  const door = (c: Record<string, unknown>, channel: 'sms' | 'email', first: string, stop: { n: number }) =>
+    contactForOutbound(supabase, ghl, { phone: c.phone, email: c.email, firstName: first }, 'circle-send',
+      /* Family recipients — allowed because a coordinator pressed Send. */
+      { audience: 'family', humanInitiated: true, channel, sender: 'circle-send', onOptOut: () => { stop.n++ } })
   for (const c of reachable) {
     if (!ghlToken || !ghlLocation) break
     const first = String(c.name || '').split(' ')[0] || 'there'
+    const stop = { n: 0 }
+    let any = false
     try {
-      /* Shared boundary: identity gate, then hours policy, then upsert. */
-      const dest = await contactForOutbound(
-        supabase, { token: ghlToken!, locationId: ghlLocation! },
-        { phone: c.phone, email: c.email, firstName: first },
-        'circle-send',
-        /* Family recipients — allowed because a coordinator pressed Send. */
-        { audience: 'family', humanInitiated: true })
-      if (!dest) continue
-      const contactId = dest.contactId
-
       if (c.phone && c.sms_consent) {
-        await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-          method: 'POST', headers: h,
-          body: JSON.stringify({ type: 'SMS', contactId, message: textFor(c.name) }),
-        })
+        const dest = await door(c, 'sms', first, stop)
+        if (dest) {
+          const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+            method: 'POST', headers: h,
+            body: JSON.stringify({ type: 'SMS', contactId: dest.contactId, message: textFor(c.name) }),
+          })
+          any = any || r.ok
+        }
       }
       if (c.email) {
-        await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-          method: 'POST', headers: h,
-          body: JSON.stringify({ type: 'Email', contactId,
-            subject: kind === 'change' ? `A change to ${circle.client_name}'s care`
-                                       : `An update about ${circle.client_name}`,
-            html: `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
-              `<p>Hi ${first},</p><p>${text.replace(/\n/g, '<br>')}</p>` +
-              `<p style="color:#57606a">Caring Companions In-Home Senior Care<br>(417) 234-8494</p></div>` }),
-        })
+        const dest = await door(c, 'email', first, stop)
+        if (dest) {
+          const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+            method: 'POST', headers: h,
+            body: JSON.stringify({ type: 'Email', contactId: dest.contactId,
+              subject: kind === 'change' ? `A change to ${circle.client_name}'s care`
+                                         : `An update about ${circle.client_name}`,
+              html: `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
+                `<p>Hi ${first},</p><p>${text.replace(/\n/g, '<br>')}</p>` +
+                `<p style="color:#57606a">Caring Companions In-Home Senior Care<br>(417) 234-8494</p></div>` }),
+          })
+          any = any || r.ok
+        }
       }
-      reached++
     } catch { /* one failure must not stop the rest */ }
+    if (any) reached++
+    if (stop.n) optedOut++
   }
 
   await supabase.from('circle_messages').insert({
     circle_id, kind, body: text, sent_by: sent_by ?? null, reached, skipped,
   })
 
-  return json({ ok: true, reached, skipped, of: wanted.length })
+  return json({ ok: true, reached, skipped, opted_out: optedOut, of: wanted.length })
 })

@@ -23,12 +23,14 @@ reset(); let v = await sms();
 ck('nothing says stop: allowed, no reasons', v.allowed && v.reasons.length === 0, v);
 reset(); v = await sms({ ghlContact: { dnd: true } });
 ck('GHL Do Not Disturb (all channels) stops it', !v.allowed && /GHL Do Not Disturb/.test(v.reasons[0]), v);
-reset(); v = await sms({ ghlContact: { dndSettings: { SMS: { status: 'active' } } } }); const v2 = await mail({ ghlContact: { dndSettings: { SMS: { status: 'active' } } } });
+reset(); v = await sms({ ghlContact: { dnd: false, dndSettings: { SMS: { status: 'active' } } } }); const v2 = await mail({ ghlContact: { dnd: false, dndSettings: { SMS: { status: 'active' } } } });
 ck('GHL Do Not Disturb for texts stops a text but not an email', !v.allowed && v2.allowed, [v, v2]);
-reset(); v = await mail({ ghlContact: { dndSettings: { Email: { status: 'permanent' } } } });
+reset(); v = await mail({ ghlContact: { dnd: false, dndSettings: { Email: { status: 'permanent' } } } });
 ck('"permanent" Do Not Disturb counts too', !v.allowed, v);
 reset(); v = await sms({ ghlContact: 'unknown' }); const v3 = await sms({ ghlContact: undefined });
 ck('a GHL send whose contact could not be checked is refused (fail closed)', !v.allowed && !v3.allowed && /could not check GHL/.test(v.reasons[0]), [v, v3]);
+reset(); v = await sms({ ghlContact: { id: 'c9', dndSettings: {} } });
+ck('a GHL answer that does not say whether Do Not Disturb is on is treated as unknown and refused', !v.allowed && /could not check GHL/.test(v.reasons[0]), v);
 reset(); v = await sms({ ghlContact: undefined, viaGhl: false });
 ck('a send that does not go through GHL skips only the GHL check', v.allowed, v);
 reset(); T.contact_optout_current = [{ address: '+14175550101', channel: 'sms', opted_out: true, source: 'stop_text' }]; v = await sms(); const v4 = await mail();
@@ -58,6 +60,31 @@ ck('mayContact allows a clean send and logs nothing', ok2 === true && logged.len
 const dbLogBroken = { ...db, rpc: async () => { throw new Error('down'); } };
 reset(); const ok3 = await lib.mayContact(dbLogBroken, 'x', { channel: 'sms', phone: '4175550101', ghlContact: { dnd: true } });
 ck('a refusal whose log fails is still a refusal', ok3 === false);
+
+// ── ghlContactIfAllowed: the GHL senders' door ──
+const ghl = { token: 't', locationId: 'loc' };
+const fakeGhl = (upsertContact, getContact) => { const calls = []; const f = async (url, init) => { calls.push([init?.method, url, init?.body ? JSON.parse(init.body) : null]);
+  const body = url.endsWith('/contacts/upsert') ? { contact: upsertContact } : { contact: getContact };
+  return { ok: true, json: async () => body }; }; f.calls = calls; return f; };
+reset(); let f = fakeGhl({ id: 'c1', dnd: false }); let id = await lib.ghlContactIfAllowed(db, ghl, 'lead-intake', { channel: 'sms', phone: '417-555-0101', email: 'x@y.com', firstName: 'Dana' }, f);
+ck('door: a clean contact returns its id, and a TEXT contact is found by the phone alone (never the email)', id === 'c1' && f.calls.length === 1 && f.calls[0][2].phone === '+14175550101' && !('email' in f.calls[0][2]), f.calls);
+reset(); f = fakeGhl({ id: 'c2', dnd: false }); id = await lib.ghlContactIfAllowed(db, ghl, 'lead-intake', { channel: 'email', phone: '4175550101', email: ' Dana@X.com ' }, f);
+ck('door: an EMAIL contact is found by the email alone', id === 'c2' && f.calls[0][2].email === 'dana@x.com' && !('phone' in f.calls[0][2]), f.calls);
+reset(); f = fakeGhl({ id: 'c3', dnd: true }); id = await lib.ghlContactIfAllowed(db, ghl, 'lead-intake', { channel: 'sms', phone: '4175550101' }, f);
+ck('door: GHL Do Not Disturb on the contact: no id, refusal logged', id === null && logged.length === 1 && /Do Not Disturb is on/.test(JSON.stringify(logged[0][1].p_reasons)), logged);
+reset(); f = fakeGhl({ id: 'c4' }, { id: 'c4', dnd: false }); id = await lib.ghlContactIfAllowed(db, ghl, 'lead-intake', { channel: 'sms', phone: '4175550101' }, f);
+ck('door: when the upsert answer leaves DND out, it asks GHL for the contact and uses that answer', id === 'c4' && f.calls.length === 2 && f.calls[1][0] === 'GET' && f.calls[1][1].endsWith('/contacts/c4'), f.calls);
+reset(); f = fakeGhl({ id: 'c5' }, { id: 'c5', dnd: true }); id = await lib.ghlContactIfAllowed(db, ghl, 'lead-intake', { channel: 'sms', phone: '4175550101' }, f);
+ck('door: ...and a DND found that way still refuses', id === null && logged.length === 1, logged);
+reset(); f = fakeGhl({ id: 'c6' }, null); id = await lib.ghlContactIfAllowed(db, ghl, 'lead-intake', { channel: 'sms', phone: '4175550101' }, f);
+ck('door: if GHL never says whether DND is on, it refuses (fail closed)', id === null && /could not check GHL/.test(JSON.stringify(logged)), logged);
+reset(); id = await lib.ghlContactIfAllowed(db, ghl, 'lead-intake', { channel: 'sms', phone: '4175550101' }, async () => { throw new Error('GHL down'); });
+ck('door: GHL unreachable: refused and logged', id === null && /GHL returned no contact/.test(JSON.stringify(logged)), logged);
+reset(); T.contact_optout_current = [{ address: '+14175550101', channel: 'sms', opted_out: true, source: 'staff' }]; f = fakeGhl({ id: 'c7', dnd: false });
+id = await lib.ghlContactIfAllowed(db, ghl, 'lead-followup', { channel: 'sms', phone: '4175550101' }, f);
+ck("door: the Hub's own record refuses even when GHL says DND is off", id === null && logged[0][1].p_sender === 'lead-followup', logged);
+reset(); f = fakeGhl({ id: 'c8', dnd: false }); id = await lib.ghlContactIfAllowed(db, ghl, 'x', { channel: 'sms', phone: '12' }, f);
+ck('door: an unusable number never reaches GHL', id === null && f.calls.length === 0 && logged.length === 1);
 console.log('\n0b-1 · UNIVERSAL OPT-OUT CHECK · TEST\n' + '='.repeat(60)); let all = true;
 for (const [n, g, note] of res) { all &&= g; console.log((g ? 'PASS  ' : 'FAIL  ') + n + (note ? '\n   └─ ' + note : '')); }
 console.log('='.repeat(60)); console.log(all ? `ALL ${res.length} CHECKS PASS` : 'FAILED');

@@ -29,6 +29,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { ldPush } from '../_shared/lead-truth.ts'
 import { inquirySwitches } from '../_shared/inquiry-switches.ts'
+import { ghlContactIfAllowed, optOutCheck } from '../_shared/optout.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -88,6 +89,33 @@ Deno.serve(async (req) => {
     `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">${body}` +
     `<p style="color:#57606a">Caring Companions In-Home Senior Care<br>${OFFICE}</p></div>`
 
+  /* 0b-2 live proof, server-only: does GoHighLevel's answer carry the Do Not Disturb flag the opt-out check needs?
+     Uses the office's own first "lead waiting" alert recipient (a staff contact the office alert already upserts on
+     every run) and answers yes/no only: no names, numbers or ids leave, and nothing is sent. */
+  if (new URL(req.url).searchParams.get('probe_dnd') === '1') {
+    const svc = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
+    if (!svc || (req.headers.get('Authorization') || '') !== 'Bearer ' + svc) return json({ error: 'server only' }, 401)
+    const { data: staff } = await supabase.from('applicant_alerts').select('name, phone').eq('active', true).contains('alert_on', ['lead'])
+    // deno-lint-ignore no-explicit-any
+    const t = (staff ?? []).find((x: any) => String(x.phone || '').replace(/\D/g, '').length >= 10)
+    if (!t) return json({ probe: 'dnd', staff_contact: false })
+    const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', { method: 'POST', headers: h,
+      body: JSON.stringify({ locationId: ghlLocation, phone: t.phone, firstName: t.name ?? 'Team' }) })
+    const uj = await up.json().catch(() => ({}))
+    const id = uj?.contact?.id
+    let getHas = false
+    if (id) {
+      const g = await fetch(`https://services.leadconnectorhq.com/contacts/${encodeURIComponent(id)}`, { headers: h })
+      const gj = await g.json().catch(() => ({}))
+      getHas = typeof gj?.contact?.dnd === 'boolean'
+    }
+    /* and every source the check reads is readable here: a made-up number nobody uses must come back allowed, with
+       no "could not check" (a permissions gap would otherwise refuse every family message) */
+    const reads = await optOutCheck(supabase, { channel: 'sms', phone: '+14170000000', viaGhl: false })
+    return json({ probe: 'dnd', staff_contact: true, contact_found: !!id, upsert_has_dnd: typeof uj?.contact?.dnd === 'boolean', get_has_dnd: getHas,
+                  check_reads_ok: reads.allowed === true })
+  }
+
   const { data: row } = await supabase.from('app_data').select('data').eq('key', 'leads').maybeSingle()
   // deno-lint-ignore no-explicit-any
   const leads: any[] = Array.isArray(row?.data) ? row!.data : []
@@ -98,7 +126,7 @@ Deno.serve(async (req) => {
 
   /* Step 0 · 0a: both family-facing messages are paused unless their switch is explicitly on */
   const sw = await inquirySwitches(supabase)
-  const out = { acknowledged: 0, nudged: 0, office_alerted: 0, paused_ack: 0, paused_followups: 0 }
+  const out = { acknowledged: 0, nudged: 0, office_alerted: 0, paused_ack: 0, paused_followups: 0, optout_stopped: 0 }
   const plan: Record<string, string[]> = { acknowledge: [], nudge: [], office: [], paused_ack: [], paused_followups: [] }
   const quiet = !withinCallingHours()
 
@@ -124,6 +152,7 @@ Deno.serve(async (req) => {
     if (l.last_contacted_at) continue
     if (Array.isArray(l.comm_log) && l.comm_log.length) continue
     if (l.do_not_contact) continue
+    if (l.auto_msgs_stopped_at) continue            // 0b-2: an authority said stop; people still see the lead
     const first = (l.first_name || '').replace(/\(.*\)/, '').trim() || 'there'
     const age = hoursSince(l.created_at)
     if (age > 14 * 24) continue                      // ancient, not our business
@@ -135,14 +164,25 @@ Deno.serve(async (req) => {
          contact's EXISTING phone, which once misdelivered a greeting. The
          SMS contact is found by phone alone, the email contact by email
          alone — a text can only reach the number on the lead. */
+      /* 0b-2: each channel through the universal opt-out door. If an authority says no (GHL Do Not Disturb, a
+         STOP, a staff opt-out, do-not-contact, a Family Circle stop), automation stops messaging this lead for good
+         instead of asking again every 15 minutes; the office alert and the lead itself are untouched. */
+      const ghl = { token: ghlToken, locationId: ghlLocation }
+      const stopped: string[] = []
+      const onOptOut = (reasons: string[]) => { stopped.push(...reasons) }
       let ok = false
       if (l.phone) {
-        const cidP = await contactFor(l.phone, null, first)
-        if (cidP) { await sms(cidP, message); ok = true }
+        const cidP = await ghlContactIfAllowed(supabase, ghl, 'lead-followup', { channel: 'sms', phone: l.phone, firstName: first, onOptOut })
+        if (cidP && (await sms(cidP, message)).ok) ok = true
       }
       if (l.email) {
-        const cidE = await contactFor(null, l.email, first)
-        if (cidE) { await email(cidE, subject, shell(htmlBody)); ok = true }
+        const cidE = await ghlContactIfAllowed(supabase, ghl, 'lead-followup', { channel: 'email', email: l.email, firstName: first, onOptOut })
+        if (cidE && (await email(cidE, subject, shell(htmlBody))).ok) ok = true
+      }
+      if (!ok && stopped.length) {
+        l.auto_msgs_stopped_at = new Date().toISOString()
+        l.auto_msgs_stop_reason = 'opt-out: ' + [...new Set(stopped)].join('; ')
+        await put(l); out.optout_stopped++
       }
       return ok
     }
