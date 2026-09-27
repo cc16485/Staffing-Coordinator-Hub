@@ -34,6 +34,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { pushCallNote } from '../_shared/axiscare-call-note.ts'
 import { opEvent } from '../_shared/events.ts'
 import { ldPush, looksLikeOptOut } from '../_shared/lead-truth.ts'
+import { leadHits, returningCheck, returningItem } from '../_shared/returning.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -633,9 +634,36 @@ Deno.serve(async (req) => {
   // ---------- everything below wants a lead ----------
   const leads = await readKey('leads')
   const d = norm(phone)
-  let lead = leads.find((l) =>
-    (d && (norm(l.phone) === d || norm(l.client_phone) === d)) ||
-    (email && l.email && String(l.email).toLowerCase() === email.toLowerCase()))
+  /* 5b C: an OPEN inquiry takes the call. A Converted or archived inquiry is never changed: a call that
+     means the family wants care again starts a NEW inquiry (flagged possibly returning, one "is this the
+     same family?" item on My Work); any other call is only logged on it. A Lost inquiry keeps its
+     follow-up calls (no answer, voicemail...), but a family wanting care again gets a new inquiry too,
+     because a Lost inquiry's Journey is closed. */
+  const split = leadHits(leads, [phone], email)
+  let lead = split.open[0] || null
+  let newFlag: Awaited<ReturnType<typeof returningCheck>> = null
+  const revives = is('booked visit', 'booked assessment', 'requested appointment', 'ready to start', 'lead - not ready',
+    'not ready', 'family deciding', 'follow up', 'call back', 'researching', 'referral call')
+  if (!lead && split.closed.length) {
+    const lost = split.closed.find((l) => l.status === 'Lost' && !l.archived)
+    if (revives) {
+      lead = { id: crypto.randomUUID(), first_name: first || '(phone call)', last_name: last, phone, email,
+        source: is('referral call') ? 'Referral' : 'Inbound Call', status: 'New', created_at: stamp }
+      newFlag = await returningCheck(supabase, 'call disposition', { phones: [phone], email, first, last }, split.closed)
+      if (newFlag) lead.possibly_returning = newFlag
+      leads.push(lead)
+      created.push('new inquiry (their earlier one is closed)')
+    } else if (lost) {
+      lead = lost
+    } else {
+      const old = split.closed[0]
+      old.comm_log = Array.isArray(old.comm_log) ? old.comm_log : []
+      old.comm_log.push({ body: `☎ ${direction} call: ${disposition}${noteShort ? ", " + noteShort : ""} (logged only; this inquiry is closed)`, at: stamp, by })
+      await put('leads', old)
+      await logDbg({ disposition, routed: 'logged on a closed inquiry', matched: 'closed lead' })
+      return json({ ok: true, routed: 'logged on their closed inquiry (nothing changed)', lead_id: old.id, created, received })
+    }
+  }
 
   if (is('referral call')) {
     // Credit the referring organisation if we know them, so field work shows up
@@ -649,6 +677,8 @@ Deno.serve(async (req) => {
     if (!lead) {
       lead = { id: crypto.randomUUID(), first_name: first || '(referral call)', last_name: last, phone, email,
         source: 'Referral', referral_source_name: org?.name || who, status: 'New', created_at: stamp }
+      newFlag = await returningCheck(supabase, 'call disposition', { phones: [phone], email, first, last }, [])
+      if (newFlag) lead.possibly_returning = newFlag
       leads.push(lead)
       created.push('lead')
     }
@@ -741,6 +771,7 @@ Deno.serve(async (req) => {
 
   const { error } = await put('leads', lead)
   if (error) return json({ error: 'could not save the lead', detail: error.message }, 502)
+  if (newFlag) { await put('ops_items', returningItem(lead, newFlag, 'call disposition')); created.push('is-this-the-same-family item') }
   await logDbg({ disposition, routed: outcome, matched: 'lead', attempts: lead.contact_attempts ?? 0 })
   return json({ ok: true, routed: outcome, lead_id: lead.id, created, received })
 })

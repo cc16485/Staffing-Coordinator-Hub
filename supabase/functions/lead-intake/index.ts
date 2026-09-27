@@ -8,6 +8,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { opEvent } from '../_shared/events.ts'
 import { ldPush } from '../_shared/lead-truth.ts'
+import { leadHits, returningCheck, returningItem } from '../_shared/returning.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -119,7 +120,18 @@ Deno.serve(async (req) => {
     ref: (notes || '').slice(0, 200) })
 
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  /* 5b C: the form always makes a new inquiry (it never rewrites one). If the family may already be
+     known (an earlier inquiry, AxisCare, a Family Circle) it is flagged, and one "is this the same
+     family?" item goes on My Work. A failed check never loses the inquiry. */
+  let flag = null
+  try {
+    const { data: lr } = await supabase.from('app_data').select('data').eq('key', 'leads').maybeSingle()
+    const hits = leadHits(Array.isArray(lr?.data) ? lr!.data : [], [phone], email)
+    flag = await returningCheck(supabase, 'website form', { phones: [phone], email, first, last }, [...hits.open, ...hits.closed])
+  } catch (e) { console.warn('[lead-intake] returning check skipped:', e) }
+  if (flag) (lead as Record<string, unknown>).possibly_returning = flag
   const { error } = await supabase.rpc('upsert_app_data_item', { target_key: 'leads', item: lead })
+  if (!error && flag) await supabase.rpc('upsert_app_data_item', { target_key: 'ops_items', item: returningItem(lead, flag, 'website form') })
   if (!error) await opEvent(supabase, { verb: 'lead_inquiry', item_id: String(lead.id), area: 'growth_leads',
     actor_name: [lead.first_name, lead.last_name].filter(Boolean).join(' ') || 'a family',
     summary: `New care inquiry from ${[lead.first_name, lead.last_name].filter(Boolean).join(' ') || 'the website'} (${lead.source})` })

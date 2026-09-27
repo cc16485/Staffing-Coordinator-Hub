@@ -12,6 +12,7 @@
 // person who already exists as a lead is updated, never duplicated.
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { leadHits, returningCheck, returningItem } from '../_shared/returning.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -82,9 +83,11 @@ Deno.serve(async (req) => {
   const { data: row } = await sb.from('app_data').select('data').eq('key', 'leads').maybeSingle()
   // deno-lint-ignore no-explicit-any
   const leads: any[] = Array.isArray(row?.data) ? row!.data : []
-  const existing = leads.find((l) =>
-    (phone && l.phone && norm(l.phone) === norm(phone)) ||
-    (email && l.email && String(l.email).toLowerCase() === email.toLowerCase()))
+  /* 5b C: only an OPEN inquiry is reused; a Converted / Lost / archived one is never rewritten.
+     A new inquiry is checked for a returning family (old inquiries, AxisCare, Family Circles). */
+  const hits = leadHits(leads, [phone], email)
+  const existing = hits.open[0] || null
+  const flag = existing ? null : await returningCheck(sb, 'assessment booking', { phones: [phone], email, first, last }, hits.closed)
   const nowIso = new Date().toISOString()
   const lead = {
     ...(existing || {}),
@@ -102,9 +105,11 @@ Deno.serve(async (req) => {
       `Booked a New Client Assessment${startTime ? ' for ' + startTime : ''} (via the booking calendar).`]
       .filter(Boolean).join(' '),
     created_at: existing?.created_at || nowIso, updated_at: nowIso,
+    ...(flag ? { possibly_returning: flag } : {}),
   }
   const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'leads', item: lead })
   if (error) return json({ error: error.message }, 500)
+  if (flag) await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: returningItem(lead, flag, 'assessment booking') })
 
   const who = [first, last].filter(Boolean).join(' ') || phone || email
   await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
@@ -134,5 +139,5 @@ Deno.serve(async (req) => {
       }, { onConflict: 'source,source_id' })
     }
   }
-  return json({ ok: true, routed: existing ? 'lead updated to Assessment Scheduled' : 'lead created', lead_id: lead.id })
+  return json({ ok: true, routed: existing ? 'lead updated to Assessment Scheduled' : (flag ? 'lead created, flagged possibly returning' : 'lead created'), lead_id: lead.id })
 })
