@@ -45,7 +45,7 @@ ck('with New Clients open, the tick goes through its own save (the board updates
 reset(); t = await H.cqFollowupFromCareMatch(call({ caregiver: 'Beth Cole' }));
 ck('a fill-in\'s Care Match call ticks nothing on the launch', t.length === 0 && updates.length === 0);
 
-reset(); win.__cqRows = [QROWS[0]]; H.cqFollowupGo('Q1');
+reset(); win.__cqRows = [QROWS[0]]; await H.cqFollowupGo('Q1');
 ck('"Log the call in Care Match" opens Care Match filled in with the client, the launch caregiver and the AxisCare id',
   JSON.stringify(calls) === JSON.stringify([['tab', 'carematch'], ['prefill', 'Mary Smith', 'Dixie Ray', '501']]), calls);
 

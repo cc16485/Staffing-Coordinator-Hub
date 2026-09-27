@@ -94,3 +94,21 @@ exist (`#leadProfile`, the page is `#leadProfileView`), so the profile can stay 
   shows "fill in once they are a client"; an AxisCare-only client opens full page with no lead
   cards, and a carrier lead is flagged, not merged; Back returns to Leads / Cara; archive closes.
   Earlier hub tests still pass (family links 26, call-in plan 18, pickers 28, follow-up 19).
+
+## Step 2 as built (hub only)
+- The New Clients launch checklist lives on the profile's **Start of Care** tab (slot `cp_launch`,
+  between the inquiry's Start Contract + checklist and "Their start"): `card(c,'profile')`, always
+  open, without the card's own family / Start Contract block (the tab already shows those).
+- The **New Clients list** is rows: `card(c,'list')` = the header (name, chips, step dots, progress,
+  start date, caregiver) with "Open ›"; clicking opens `openClient({launch_id},'start')`. Completed
+  launches open the same way. No checklist is drawn twice on the page.
+- `openClient` accepts `launch_id`, finds this client's launch by AxisCare id otherwise
+  (`cqLaunchFor`), and shows a walk-in launch with no AxisCare id under its own name. The family
+  link row's "Launch" opens the profile too.
+- Every save (tick, notes, caregiver name, AxisCare read-outs, Launch complete) redraws the list, and
+  the list redraw redraws the profile's checklist (`renderProfileCard`).
+- The Care Match follow-up button works from the profile without visiting New Clients first.
+- Verified in the browser (fake data, nothing sent): 6 tick steps + 2 Care Match read-outs on the
+  tab; a tick saves and redraws; the list shows rows only; a row opens the profile at Start of Care
+  and Back returns to New Clients; a walk-in launch opens under its own name. Tests: follow-up 19,
+  family links 26 (Launch now opens the profile), call-in 18, pickers 28, stalled starts 25.
