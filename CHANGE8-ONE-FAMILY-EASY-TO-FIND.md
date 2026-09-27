@@ -107,3 +107,24 @@ notes), tied to the AxisCare client id. Proposed as its own step after 8, or soo
 - The client list files a converted lead under the person receiving care, not the caller.
 - Not built: storing the AxisCare id on Team Builder plans. The Journey link already finds it.
 - Proof: `family_links_hub_test.mjs` 26/26; all inline scripts parse; call-in plan hub test 18/18.
+
+## 8a as built (hub + obligations.js; no database or function change)
+- One client picker (`ccPickOptions`, `ccPickFill`, `ccPickParse`, `ccPickLabelFor`): the live client
+  list (`cl360Identity`), every client with an AxisCare id shown as "Name · #id", past clients marked.
+  A typed name that isn't picked is refused.
+- Client Check-ins: pick the client (stores `client_name` + `axiscare_client_id`, so due dates keep
+  working). An older record with no id opens with a note and can still be saved as it was.
+- Nurse Visits: adding a client needs a pick (new field `axiscare_client_id` on `nurse_clients`; the
+  same client can't be added twice). A client added before this shows "🔗 link to their AxisCare
+  record" on the board; a name that differs from AxisCare's asks first; who linked it and when kept.
+  Client 360 finds nurse data by that id first.
+- Care Match: logging from a pair keeps the pair's AxisCare client (the name stays exactly as the pair
+  has it, so the board's own matching is unchanged); an off-board call needs a pick. Do-not-return
+  entries carry the id too. Care Match records still never carry `client_name`, so they stay out of
+  the monthly check-in reminders.
+- obligations.js (the reminder engine the hub and the server's obligations-run share): a newer
+  check-in for the same client now closes the older record's reminder as done. Grouped by AxisCare id;
+  an older record with no id joins only when its full name maps to exactly one id. The engine works on
+  copies; records are never changed.
+- Proof: `client_pickers_test.mjs` 28/28 (the real obligations engine + the hub's own code);
+  family-links 26/26 and call-in plan 18/18 still pass; all inline scripts parse.
