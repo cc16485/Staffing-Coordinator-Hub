@@ -44,7 +44,7 @@ const ctx = { sb, DATA, esc, escapeHtmlComms: esc, document, CSS: { escape: (s) 
   tbOpen: (id) => calls.push(['plan', id]), confirm: () => confirmAnswer, persist: (k, v) => persisted.push([k, v.id, v.status]),
   cl360Roster: async () => ctx.__roster, cl360RenderInto: async (r) => calls.push(['render360', r.client_name, r.axiscare_client_id]), __roster: [],
   /* One profile (step 1): a client name opens the full-page profile for that roster row */
-  openClient: async (seed) => calls.push(['render360', seed.r.client_name, seed.r.axiscare_client_id]) };
+  openClient: async (seed, tab) => seed.launch_id ? calls.push(['launch-profile', seed.launch_id, tab]) : calls.push(['render360', seed.r.client_name, seed.r.axiscare_client_id]) };
 el('cq-body-Q1').style.display = 'none';
 const api = new Function(...Object.keys(ctx), famBlock + nameBlock + openerBlock + rosterBlock + schedBlock
   + '\nreturn { famResolve, famStripHtml, famGo, famMount, cl360NameKey, cl360UniqueName, cl360SameClient, openClientProfile, getClientRoster, scheduleAssessmentFromLead, setRoster:(r)=>{ CL360_ROSTER=r; }, FAM };')(...Object.values(ctx));
@@ -91,7 +91,7 @@ ck('mounting fills the screen\'s slot', el('famX').innerHTML.includes('Client 36
 calls.length = 0;
 api.famGo('lead', 'L1'); api.famGo('client', '501'); api.famGo('assessment', 'A1'); api.famGo('launch', 'Q1'); api.famGo('plan', 'tb1'); api.famGo('family', 'C1');
 const k = (c) => JSON.stringify(c);
-ck('each link opens its screen on that family\'s record', [['lead', 'L1'], ['tab', 'assessments'], ['assessment', 'A1', undefined], ['tab', 'clientqueue'], ['cqToggle', 'Q1'], ['tab', 'hourswatch'], ['sub', 'builder'], ['plan', 'tb1'], ['tab', 'circles']].every(c => calls.some(x => k(x) === k(c))), calls);
+ck('each link opens its screen on that family\'s record', [['lead', 'L1'], ['tab', 'assessments'], ['assessment', 'A1', undefined], ['launch-profile', 'Q1', 'start'], ['tab', 'hourswatch'], ['sub', 'builder'], ['plan', 'tb1'], ['tab', 'circles']].every(c => calls.some(x => k(x) === k(c))), calls);
 
 /* Client 360 never by first name */
 const R = [{ client_name: 'Mary Smith', axiscare_client_id: '501' }, { client_name: 'Mary Jones', axiscare_client_id: '503' }, { client_name: 'Ann Jones', axiscare_client_id: '' }];
