@@ -16,6 +16,7 @@
 // -----------------------------------------------------------------------------
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { leadHits, returningCheck, returningItem } from '../_shared/returning.ts'
 import { opEvent } from '../_shared/events.ts'
 import { ldPush } from '../_shared/lead-truth.ts'
 
@@ -344,22 +345,18 @@ Deno.serve(async (req) => {
     const { data: lr } = await supabase.from('app_data').select('data').eq('key', 'leads').maybeSingle()
     // deno-lint-ignore no-explicit-any
     const leadsB: any[] = Array.isArray(lr?.data) ? lr!.data : []
-    const hitSet = new Set([
-      ...(digitsB.length === 10
-        ? leadsB.filter((l) => !l.archived && (normB(l.phone) === digitsB || normB(l.client_phone) === digitsB)) : []),
-      ...(emailB ? leadsB.filter((l) => !l.archived && String(l.email || '').toLowerCase() === emailB) : []),
-    ])
-    const hits = [...hitSet]
+    /* 5b C: only an OPEN inquiry takes the booking; a Converted / Lost / archived one is never touched.
+       A new inquiry is checked for a returning family (old inquiries, AxisCare, Family Circles). */
+    const split = leadHits(leadsB, [phone], emailB)
+    const hits = split.open
     const consultDay = new Date(startMs).toLocaleDateString('en-CA', { timeZone: timezone })
     const nowIsoB = new Date().toISOString()
     const putB = (k: string, it: unknown) => supabase.rpc('upsert_app_data_item', { target_key: k, item: it })
     // deno-lint-ignore no-explicit-any
     const linkLead = async (l: any, created: boolean) => {
-      if (l.status !== 'Converted' && l.status !== 'Lost') {
-        l.status = 'Assessment Scheduled'
-        l.follow_up_branch = 'ready-to-start'
-        l.follow_up_due = consultDay
-      }
+      l.status = 'Assessment Scheduled'
+      l.follow_up_branch = 'ready-to-start'
+      l.follow_up_due = consultDay
       l.assessment_at = whenLabel
       l.consult_booking_id = item.id
       ldPush(l, { channel: 'web', direction: 'in', outcome: 'inquiry', actor: 'family',
@@ -394,7 +391,10 @@ Deno.serve(async (req) => {
         interest_notes: (notes ? notes + '\n' : '') + `Booked a ${typeLabel.toLowerCase()} on book.html for ${whenLabel}.`,
         created_at: nowIsoB,
       }
+      const flag = await returningCheck(supabase, 'website booking', { phones: [phone], email: emailB }, split.closed)
+      if (flag) (fresh as Record<string, unknown>).possibly_returning = flag
       await linkLead(fresh, true)
+      if (flag) await putB('ops_items', returningItem(fresh, flag, 'website booking'))
     } else {
       /* Ambiguous identity: never merge people silently. */
       await putB('ops_items', {

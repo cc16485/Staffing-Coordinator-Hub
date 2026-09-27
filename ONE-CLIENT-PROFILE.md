@@ -172,7 +172,7 @@ Mapped first (every editor and every reader, with which readers decide something
   id → the right client, or the confirmed inquiry; two "Ann Jones" → the pick list. Hub tests pass
   (family-links test updated for the opener's new tab argument).
 
-## Step 5b: returning families (design approved 2026-09-27 "yes to all, go and merge"; A cut to the lock only, B + D built, C, E, F next)
+## Step 5b: returning families (design approved 2026-09-27 "yes to all, go and merge"; A cut to the lock only, B + D + C built, E + F next)
 How a second record happens today (most likely first):
 1. A former client's family calls back; a new inquiry is entered (no check against AxisCare, and
    ~268 former AxisCare clients aren't in the hub's identity list at all); Convert creates a SECOND
@@ -242,3 +242,32 @@ Tests: `identity_backfill_lock_test.mjs` (18), `identity_backfill_lock_install_p
   (every original status-change proof plus the new cases), `known_family_install_proof.py` 6. Browser-checked
   with fakes: the panel, Go back, link (side-by-side), backing out then "different family", Convert reuse, and
   Convert with AxisCare down.
+
+## Step 5b C as built (server + hub; Desktop 264)
+The automatic front doors: the web form (`lead-intake`), the booking calendar (`assessment-intake`), the website
+scheduler (`cc-booking`), the AI phone call (`call-followup`) and call dispositions (`call-disposition`).
+- Rules in `_shared/returning.ts`. Closed = Converted, Lost or archived. Only an OPEN inquiry is ever reused; a
+  closed one is never rewritten. A NEW inquiry is checked (earlier inquiries by phone / email, and the shared
+  client-lookup: AxisCare current + former, Family Circles). Any match: `possibly_returning` on the new inquiry
+  {at, by, matches, axiscare_checked} and one My Work item `ops_returning_<lead id>` (source type `returning`,
+  domain family_enquiries). A name alone from AxisCare never raises work (it is often the caller's name, not the
+  client's). AxisCare down never loses an inquiry; the flag says it wasn't checked. Nothing contacts anyone.
+- Per door: the web form always makes a new inquiry (it never rewrote) and now flags a match, open or closed;
+  the booking calendar, scheduler and AI call reuse an open inquiry or make a new flagged one; the AI call's
+  second call ADDS to the notes instead of wiping them. Call dispositions: an open inquiry takes the call; on a
+  Converted / archived one a call meaning "wants care" makes a new flagged inquiry and anything else is only
+  logged ("not interested" can no longer mark a Converted inquiry Lost); a Lost inquiry keeps its follow-up calls
+  (no answer, voicemail) but "wants care" makes a new flagged inquiry (the Lost Journey is closed). When an open
+  and a closed inquiry share a number, the open one takes it.
+- Hub: the inquiry shows "Is this the same family?" (slot `lp_returning`) with Check and answer: the same panel
+  as at save, in review mode (the earlier inquiry: Open it / Same family; a former client: Same family: link to
+  #id through the side-by-side; a current client: Open their profile; A different family). The answer is kept on
+  `possibly_returning` (decision, decided_by, decided_at, same_as_lead / axiscare_client_id) and closes the My Work
+  item. The My Work card has "Open the inquiry". The earlier inquiry is never changed.
+- `client-lookup`'s matching moved into `_shared/client-lookup.ts` (same rules) so the doors share it.
+- Deploying: the webhooks can't sign in, so they run without sign-in checking and are gated by their own token.
+  Desktop 264 reads each function's current setting, deploys it exactly the same way, reads it back, and proves
+  each still refuses a wrong token.
+- Tests: `returning_entries_test.mjs` 26 (the real functions against fakes; fails on the old code),
+  `returning_hub_test.mjs` 10, `returning_entries_install_proof.py` 8; every earlier suite still passes.
+  Browser-checked: the banner, the panel, both answers closing the item, the My Work link.

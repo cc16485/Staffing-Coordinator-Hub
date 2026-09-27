@@ -29,6 +29,7 @@
 // BAA / scrubbing posture before pointing this at live client calls.
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { leadHits, returningCheck, returningItem } from '../_shared/returning.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -191,10 +192,11 @@ Sign follow-up messages as "Caring Companions" unless a specific coordinator nam
   const { data: row } = await supabase.from('app_data').select('data').eq('key', 'leads').maybeSingle()
   // deno-lint-ignore no-explicit-any
   const leads: any[] = Array.isArray(row?.data) ? row!.data : []
-  const norm = (p: string) => p.replace(/\D/g, '').slice(-10)
-  const existing = leads.find((l) =>
-    (email && l.email && l.email.toLowerCase() === email.toLowerCase()) ||
-    (phone && l.phone && norm(l.phone) === norm(phone)))
+  /* 5b C: only an OPEN inquiry is reused; a Converted / Lost / archived one is never rewritten.
+     A new inquiry is checked for a returning family (old inquiries, AxisCare, Family Circles). */
+  const hits = leadHits(leads, [phone], email)
+  const existing = hits.open[0] || null
+  const flag = existing ? null : await returningCheck(supabase, 'AI phone call', { phones: [phone], email }, hits.closed)
 
   const branch = BRANCH_KEYS.includes(String(out.branch)) ? String(out.branch) : 'soft-check-in'
   const nowIso = new Date().toISOString()
@@ -209,7 +211,9 @@ Sign follow-up messages as "Caring Companions" unless a specific coordinator nam
     client_first_name: String(out.client_first_name || '') || existing?.client_first_name || '',
     source: existing?.source || 'Inbound Call',
     status: existing?.status && existing.status !== 'New' ? existing.status : 'New',
-    interest_notes: String(out.interest_notes || ''),
+    /* a second call adds to the notes; it never wipes what the office already had */
+    interest_notes: [String(existing?.interest_notes || '').trim(),
+      (existing?.interest_notes ? 'Call ' + nowIso.slice(0, 10) + ': ' : '') + String(out.interest_notes || '').trim()].filter(Boolean).join('\n\n'),
     needs: Array.isArray(out.needs) ? out.needs : (existing?.needs || []),
     medical_conditions: Array.isArray(out.medical_conditions) ? out.medical_conditions : (existing?.medical_conditions || []),
     mobility: String(out.mobility || '') || existing?.mobility || '',
@@ -231,10 +235,12 @@ Sign follow-up messages as "Caring Companions" unless a specific coordinator nam
     last_call_at: nowIso,
     created_at: existing?.created_at || nowIso,
     updated_at: nowIso,
+    ...(flag ? { possibly_returning: flag } : {}),
   }
 
   const { error } = await supabase.rpc('upsert_app_data_item', { target_key: 'leads', item: lead })
   if (error) { console.error('lead upsert', error); return json({ error: error.message }, 500) }
+  if (flag) await supabase.rpc('upsert_app_data_item', { target_key: 'ops_items', item: returningItem(lead, flag, 'AI phone call') })
 
   // Drop the drafted recap into the hub's existing Post-Call Follow-Ups queue as
   // "pending_approval" so the coordinator reviews + sends it (draft-first). Reuse
@@ -277,5 +283,5 @@ Sign follow-up messages as "Caring Companions" unless a specific coordinator nam
     } catch (e) { console.error('ghl tag failed', e) }
   }
 
-  return json({ status: existing ? 'lead updated' : 'lead created', id: lead.id, branch, tagged, reused: !!existing })
+  return json({ status: existing ? 'lead updated' : 'lead created', id: lead.id, branch, tagged, reused: !!existing, possibly_returning: !!flag })
 })
