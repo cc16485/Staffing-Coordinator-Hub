@@ -42,7 +42,9 @@ const ctx = { sb, DATA, esc, escapeHtmlComms: esc, document, CSS: { escape: (s) 
   openLeadProfile: (id) => calls.push(['lead', id]), openClientProfile0: null, pdClose: () => {}, switchTab: (t) => calls.push(['tab', t]),
   openAssessmentModal: (id, l) => calls.push(['assessment', id, l && l.id]), cqToggle: (id) => calls.push(['cqToggle', id]), swSubGo: (s) => calls.push(['sub', s]),
   tbOpen: (id) => calls.push(['plan', id]), confirm: () => confirmAnswer, persist: (k, v) => persisted.push([k, v.id, v.status]),
-  cl360Roster: async () => ctx.__roster, cl360RenderInto: async (r) => calls.push(['render360', r.client_name, r.axiscare_client_id]), __roster: [] };
+  cl360Roster: async () => ctx.__roster, cl360RenderInto: async (r) => calls.push(['render360', r.client_name, r.axiscare_client_id]), __roster: [],
+  /* One profile (step 1): a client name opens the full-page profile for that roster row */
+  openClient: async (seed) => calls.push(['render360', seed.r.client_name, seed.r.axiscare_client_id]) };
 el('cq-body-Q1').style.display = 'none';
 const api = new Function(...Object.keys(ctx), famBlock + nameBlock + openerBlock + rosterBlock + schedBlock
   + '\nreturn { famResolve, famStripHtml, famGo, famMount, cl360NameKey, cl360UniqueName, cl360SameClient, openClientProfile, getClientRoster, scheduleAssessmentFromLead, setRoster:(r)=>{ CL360_ROSTER=r; }, FAM };')(...Object.values(ctx));
