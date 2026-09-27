@@ -1,0 +1,17 @@
+
+CHANGE 7b · DESKTOP 255/256 · PROOF
+============================================================
+PASS  a changed watcher source stops before anything runs (no preview, setting untouched)
+PASS  answer not 'yes': installed, LEFT OFF; only the preview ran (dry), nothing live
+PASS  the preview names the held shift, who was marked covering, and what 7b would do, in her words
+PASS  the preview shows the time format and the shift the old reading gets wrong
+PASS  no answer at all (window closed) leaves it off
+PASS  a typed yes switches 7b on and records the approval; the other settings are kept
+PASS  order: the preview ran with 7b OFF, then Cara's check ran once LIVE with 7b ON, and its result is shown
+PASS  the service key is used for the calls and never printed
+PASS  if 7b was already on, it is paused for the preview (the preview never acts) and stays off without a yes
+PASS  a preview that fails stops the install; 7b stays off; nothing is asked
+PASS  Desktop 256 switches it off, keeping everything else
+============================================================
+ALL 11 PROOFS PASS
+shas: {"coverage-watch": "47f7d15f328f69e7cd694242112bb56d75782f3921b0be87355027e7d66261ef", "_shared/held-shift.ts": "c4e16ffaadf7d928766d74d645921c6db9c09259d7149c35d80720c07ba11de5"}

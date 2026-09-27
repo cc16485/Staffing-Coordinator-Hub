@@ -1,0 +1,21 @@
+
+CHANGE 7a · DESKTOP 253 REPORT SCRIPT · PROOF
+============================================================
+PASS  a changed probe source stops before anything is called (no deploy, no probe, no queries)
+PASS  runs end to end: report written, RESULT line, exit 0
+PASS  the probe was called with the service key; the key never appears in the report
+PASS  sizes: each window listed; the 72-hour read shows 258 visits over 3 pages; the hourly load line is worked out
+PASS  changed-since: the missed clock-in is flagged ✗ with its visit id; the same-slot match is shown
+PASS  call-offs: the open call-off AxisCare didn't return is flagged ✗ with its id; the closed one passes
+PASS  D: the visit AxisCare marks as changed but the filter dropped is flagged ✗ with its id
+PASS  verdict: with a miss, it says the timed reads stay as they are
+PASS  slow-down history from the database: 2 AxisCare 429s passed on, 1 other AxisCare error; only the timed AxisCare jobs listed, with the switched-off one marked
+PASS  run history: last 24 hours only (coverage-run's 30-hour-old run is left out), failures counted
+PASS  read only: every database query was a SELECT, run as a role that can only read (a write would have failed)
+PASS  verdict: when nothing is missed, it says step 7b can be designed on it
+PASS  verdict: with nothing to test, it says to run again after a working day (never a false pass)
+PASS  verdict: when AxisCare said slow down during the probe, the report says the answers are partial
+PASS  a probe that fails is reported, and nothing else is claimed
+============================================================
+ALL 15 PROOFS PASS
+axiscare-read-probe sha256: fed746051c8e6565545d129ab80846d38c5435a956bd498114a86f5ff9ae8946
