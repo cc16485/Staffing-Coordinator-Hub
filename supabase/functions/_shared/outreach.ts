@@ -464,8 +464,8 @@ export async function contactForOutbound(
   opts: { selfSupplied?: boolean; now?: Date; audience?: Audience;
           humanInitiated?: boolean; explicitlyEnabled?: boolean;
           /* 0b-2: name the ONE channel this contact is for, and the sender. The contact is then found by that
-             channel's address alone and the universal opt-out check runs (optout.ts). Family, client, lead,
-             referral and unknown audiences MUST name it; caregiver-facing senders move over in 0b-3. */
+             channel's address alone and the universal opt-out check runs (optout.ts). Every audience except
+             staff MUST name it (0b-2 families, 0b-3 caregivers); staff alerts are exempt. */
           channel?: 'sms' | 'email'; sender?: string;
           onOptOut?: (reasons: string[]) => void | Promise<void> } = {},
 ): Promise<{ contactId: string; phone: string | null } | null> {
@@ -476,8 +476,7 @@ export async function contactForOutbound(
     console.warn(`outbound refused [${kind}]: ${who.reason}`)
     return null
   }
-  const PROTECTED = ['client', 'family', 'lead', 'referral', 'unknown']
-  if (!opts.channel && PROTECTED.includes(String(opts.audience ?? 'unknown'))) {
+  if (!opts.channel && String(opts.audience ?? 'unknown') !== 'staff') {
     console.warn(`outbound refused [${kind}]: a ${opts.audience ?? 'unknown'} send must name its channel, so the opt-out check can run`)
     return null
   }

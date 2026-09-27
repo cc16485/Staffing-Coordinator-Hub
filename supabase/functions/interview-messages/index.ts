@@ -25,6 +25,7 @@
 // Runs every 15 minutes by pg_cron. ?dry=1 reports without sending.
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { ghlContactIfAllowed } from '../_shared/optout.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -105,6 +106,20 @@ Deno.serve(async (req) => {
     fetch('https://services.leadconnectorhq.com/conversations/messages', {
       method: 'POST', headers: h, body: JSON.stringify({ type: 'Email', contactId, subject, html }),
     })
+  /* 0b-3: every message to an APPLICANT goes through the universal opt-out door, one GHL contact per channel
+     (the phone alone for a text, the email alone for an email). Staff alerts below keep contactFor. */
+  const ghlDoor = { token: ghlToken!, locationId: ghlLocation! }
+  // deno-lint-ignore no-explicit-any
+  const applicantDoor = (who: any, first: string) => ({
+    sms: async (message: string) => {
+      const id = await ghlContactIfAllowed(supabase, ghlDoor, 'interview-messages', { channel: 'sms', phone: who.phone, firstName: first })
+      if (id) await sms(id, message)
+    },
+    email: async (subject: string, html: string) => {
+      const id = await ghlContactIfAllowed(supabase, ghlDoor, 'interview-messages', { channel: 'email', email: who.email, firstName: first })
+      if (id) await email(id, subject, html)
+    },
+  })
 
   const shell = (body: string) =>
     `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">${body}` +
@@ -151,11 +166,11 @@ Deno.serve(async (req) => {
          marked sent, so it goes out on the first run after 8am. */
       if (!withinOutreachHours()) return false
       if (!ghlToken || !ghlLocation) return false
-      const contactId = await contactFor(a.phone, a.email, first)
-      if (!contactId) return false
+      const to = applicantDoor(a, first)
+      if (!to) return false
 
       if (kind === 'hour') {
-        if (canText) await sms(contactId,
+        if (canText) await to.sms(
           `Hi ${first}, your interview with Caring Companions is at ${time} today. ` +
           `We are at ${place}. ${note} See you shortly!`)
         return true
@@ -163,10 +178,10 @@ Deno.serve(async (req) => {
       const opener = kind === 'confirm'
         ? `Your interview is booked for <b>${day} at ${time}</b>.`
         : `A reminder that your interview is <b>tomorrow, ${day} at ${time}</b>.`
-      if (canText) await sms(contactId,
+      if (canText) await to.sms(
         `Hi ${first}, ${kind === 'confirm' ? 'your interview with Caring Companions is booked for' : 'reminder: your interview is'} ` +
         `${day} at ${time}, at ${place}. ${note} Need to move or cancel it? ${manageUrl} — or call ${phone}.`)
-      if (a.email) await email(contactId,
+      if (a.email) await to.email(
         kind === 'confirm' ? `Your interview: ${day} at ${time}` : `Tomorrow: your interview at ${time}`,
         shell(`<p>Hi ${first},</p><p>${opener}</p>${whereBlock()}` +
           `<p>It takes about 30 minutes. Need to move or cancel it? <a href="${manageUrl}">You can do that here</a> in a few taps, or call or text us on ${phone}.</p>` +
@@ -249,8 +264,8 @@ Deno.serve(async (req) => {
        nudges go out on the first run after 8am. */
     if (!withinOutreachHours()) continue
     if (!ghlToken || !ghlLocation) continue
-    const contactId = await contactFor(p.phone, p.email, first)
-    if (!contactId) continue
+    const to = applicantDoor(p, first)
+    if (!to) continue
 
     const line = step === 1
       ? `Hi ${first}, thanks for applying to Caring Companions. You are one step from an interview, and you can pick a time that suits you here: ${bookUrl}`
@@ -258,8 +273,8 @@ Deno.serve(async (req) => {
       ? `Hi ${first}, we still have interview times open this week if you would like one: ${bookUrl} Or call us on ${phone} and we will book it with you.`
       : `Hi ${first}, last note from us so we are not a nuisance. If you would still like to talk about caregiving work, pick a time here: ${bookUrl} or call ${phone}. We would be glad to hear from you.`
 
-    if (p.phone && p.sms_consent === true) await sms(contactId, line)
-    if (p.email) await email(contactId,
+    if (p.phone && p.sms_consent === true) await to.sms(line)
+    if (p.email) await to.email(
       step === 3 ? 'One last note from Caring Companions' : 'Pick a time to come and meet us',
       shell(`<p>Hi ${first},</p><p>${line.replace(bookUrl, `<a href="${bookUrl}">${bookUrl}</a>`)}</p>` +
         (step === 1 ? whereBlock() : '')))
@@ -361,12 +376,12 @@ Deno.serve(async (req) => {
     if (!withinOutreachHours()) continue        // not stamped, so it goes out after 8am
     if (!ghlToken || !ghlLocation) continue
 
-    const contactId = await contactFor(a.phone, a.email, first)
-    if (contactId) {
-      if (a.phone && a.sms_consent === true) await sms(contactId,
+    const to = applicantDoor(a, first)
+    if (to) {
+      if (a.phone && a.sms_consent === true) await to.sms(
         `Hi ${first}, your interview with Caring Companions for ${day} at ${time} is cancelled — nothing more to do. ` +
         `Want a different time? Pick one here: ${bookUrl} or call ${phone}.`)
-      if (a.email) await email(contactId, `Your interview on ${day} is cancelled`,
+      if (a.email) await to.email(`Your interview on ${day} is cancelled`,
         shell(`<p>Hi ${first},</p><p>Your interview for <b>${day} at ${time}</b> is cancelled — nothing more to do on your side.</p>` +
           `<p>If you would like a different time, <a href="${bookUrl}">pick one here</a> whenever suits you, or call us on ${phone}.</p>`))
     }
@@ -425,12 +440,12 @@ Deno.serve(async (req) => {
     if (!withinOutreachHours()) continue
     if (!ghlToken || !ghlLocation) continue
 
-    const contactId = await contactFor(a.phone, a.email, first)
-    if (!contactId) continue
-    if (a.phone && a.sms_consent === true) await sms(contactId,
+    const to = applicantDoor(a, first)
+    if (!to) continue
+    if (a.phone && a.sms_consent === true) await to.sms(
       `Hi ${first}, we missed you at your interview ${day} at ${time} — life happens. ` +
       `If you would still like to talk about caregiving work, pick a new time here: ${bookUrl} or call ${phone}.`)
-    if (a.email) await email(contactId, 'We missed you — pick a new time?',
+    if (a.email) await to.email('We missed you — pick a new time?',
       shell(`<p>Hi ${first},</p><p>We missed you at your interview on <b>${day} at ${time}</b> — life happens.</p>` +
         `<p>If you would still like to talk about caregiving work, <a href="${bookUrl}">pick a new time here</a> ` +
         `whenever suits you, or call us on ${phone}. We would be glad to see you.</p>`))

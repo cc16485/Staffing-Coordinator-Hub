@@ -1,3 +1,5 @@
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { mayContact } from '../_shared/optout.ts'
 // Shared-project mail relay: lets sibling projects (HomeTogether Hire) send
 // via this project's verified Resend key. Token-gated with HT_ORDER_TOKEN.
 // Only sends FROM our own verified domain addresses.
@@ -12,6 +14,11 @@ Deno.serve(async (req) => {
     const from = String(b.from ?? "HomeTogether <support@tryhometogether.com>");
     if (!ALLOWED_FROM.test(from.trim())) return new Response(JSON.stringify({ error: "from not allowed" }), { status: 400 });
     if (!b.to || !b.subject || !b.html) return new Response(JSON.stringify({ error: "to/subject/html required" }), { status: 400 });
+    /* 0b-3: the universal opt-out check before anything is relayed (Resend, not GHL: the Hub's opt-out record and
+       inquiry do-not-contact). A refusal is an answer, not an error: 200 with ok false. */
+    const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    if (!(await mayContact(db, "resend-relay", { channel: "email", email: String(b.to), viaGhl: false })))
+      return new Response(JSON.stringify({ ok: false, opted_out: true }), { status: 200, headers: { "Content-Type": "application/json" } });
     const r = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${RESEND}`, "Content-Type": "application/json" },

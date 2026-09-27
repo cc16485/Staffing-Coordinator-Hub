@@ -342,8 +342,8 @@ Deno.serve(async (req) => {
            happening right now. urgent_internal, 24/7 — a 6am shift needs its
            6:03 nudge. contactForOutbound applies the identity gate. */
         const contact = await contactForOutbound(sb, ghl,
-          { phone, firstName: String(cg?.first ?? '') || cgName.split(' ')[0] }, 'urgent_internal', { audience: 'caregiver' })
-        if (!contact) { refusedGate++; l.notes.push('Text refused by the outbound gate (untrusted number).'); await save(l) }
+          { phone, firstName: String(cg?.first ?? '') || cgName.split(' ')[0] }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'timekeeper-watch' })
+        if (!contact) { refusedGate++; l.notes.push('Text refused by the outbound gate (untrusted number, or they opted out of texts).'); await save(l) }
         else {
           const message = msgTmpl.replaceAll('{first_name}', String(cg?.first ?? '') || cgName.split(' ')[0])
             .replaceAll('{client}', clientFirst).replaceAll('{time}', shiftTime12)
@@ -455,7 +455,7 @@ Deno.serve(async (req) => {
       continue
     }
     const contact = await contactForOutbound(sb, ghl,
-      { phone, firstName: String(cg?.first ?? '') || cgName.split(' ')[0] }, 'urgent_internal', { audience: 'caregiver' })
+      { phone, firstName: String(cg?.first ?? '') || cgName.split(' ')[0] }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'timekeeper-watch' })
     if (!contact) { refusedGate++; continue }
     const message = msgOutTmpl.replaceAll('{first_name}', String(cg?.first ?? '') || cgName.split(' ')[0])
       .replaceAll('{client}', clientFirst).replaceAll('{time}', clock12(endTime))
@@ -530,7 +530,7 @@ Deno.serve(async (req) => {
         const phone = normalisePhone(cg?.phone)
         if (!phone) continue
         const contact = await contactForOutbound(sb, ghl,
-          { phone, firstName: String(cg?.first ?? '') || cgName.split(' ')[0] }, 'routine_internal', { audience: 'caregiver' })
+          { phone, firstName: String(cg?.first ?? '') || cgName.split(' ')[0] }, 'routine_internal', { audience: 'caregiver', channel: 'sms', sender: 'timekeeper-watch (EVV chase)' })
         if (!contact) continue
         const miss = !cin && !cout ? 'clock-in and clock-out' : !cin ? 'clock-in' : 'clock-out'
         const clientFirst = String(v?.client?.firstName ?? '').trim() || 'your client'

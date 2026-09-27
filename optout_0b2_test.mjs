@@ -201,7 +201,12 @@ reset()
 const miss = await outreach.contactForOutbound(globalThis.__db, { token: 'g', locationId: 'loc' }, { phone: CLEAN_P }, 'reactive_external', { audience: 'family', humanInitiated: true })
 ck('contactForOutbound · a family send that does not name its channel is refused (so no family sender can skip the opt-out check)', miss === null)
 const cg = await outreach.contactForOutbound(globalThis.__db, { token: 'g', locationId: 'loc' }, { phone: CLEAN_P }, 'urgent_internal', { audience: 'caregiver' })
-ck('contactForOutbound · caregiver sends are unchanged in this slice (0b-3 moves them)', cg && cg.contactId === 'C:' + E164(CLEAN_P))
+ck('contactForOutbound · since 0b-3, a caregiver send that does not name its channel is refused too', cg === null)
+const cg2 = await outreach.contactForOutbound(globalThis.__db, { token: 'g', locationId: 'loc' }, { phone: OPT_P }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 't' })
+const cg3 = await outreach.contactForOutbound(globalThis.__db, { token: 'g', locationId: 'loc' }, { phone: CLEAN_P }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 't' })
+ck('contactForOutbound · a caregiver who opted out is refused; a clean caregiver number goes through', cg2 === null && cg3?.contactId === 'C:' + E164(CLEAN_P))
+const st = await outreach.contactForOutbound(globalThis.__db, { token: 'g', locationId: 'loc' }, { phone: OPT_P }, 'urgent_internal', { audience: 'staff' })
+ck('contactForOutbound · staff alerts are exempt (our own team): unchanged', !!st?.contactId)
 
 console.log('\n0b-2 · FAMILY, CLIENT AND INQUIRY SENDERS · OPT-OUT TEST\n' + '='.repeat(60)); let all = true
 for (const [n, g, note] of res) { all &&= g; console.log((g ? 'PASS  ' : 'FAIL  ') + n + (note ? '\n   └─ ' + note : '')) }

@@ -19,6 +19,7 @@
 // Deploy (CLI): supabase functions deploy ht-local --no-verify-jwt
 // -----------------------------------------------------------------------------
 
+import { ghlContactIfAllowed } from '../_shared/optout.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const cors = {
@@ -38,11 +39,18 @@ async function ghlEmail(to: string, firstName: string, subject: string, html: st
   if (!ghlToken || !ghlLocation || !to) return false
   try {
     const h = { Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
-    const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-      method: 'POST', headers: h,
-      body: JSON.stringify({ locationId: ghlLocation, email: to, firstName }),
-    })
-    const contactId = (await up.json().catch(() => ({})))?.contact?.id
+    let contactId: string | null = null
+    if (!/@mo-care\.com$/i.test(String(to).trim())) {
+      /* 0b-3: a HomeTogether customer (anyone who is not our own staff) goes through the universal opt-out door */
+      const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+      contactId = await ghlContactIfAllowed(db, { token: ghlToken, locationId: ghlLocation }, 'ht-local', { channel: 'email', email: to, firstName })
+    } else {
+      const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
+        method: 'POST', headers: h,
+        body: JSON.stringify({ locationId: ghlLocation, email: to, firstName }),
+      })
+      contactId = (await up.json().catch(() => ({})))?.contact?.id ?? null
+    }
     if (!contactId) return false
     const sr = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
       method: 'POST', headers: h,
