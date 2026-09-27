@@ -6,7 +6,7 @@ const hub = fs.readFileSync(process.argv[2] || '../cc-hub-live/index.html', 'utf
 const cut = (a, b) => { const i = hub.indexOf(a), j = hub.indexOf(b, i); if (i < 0 || j < 0) throw new Error('missing ' + a); return hub.slice(i, j); };
 const famBlock = cut('/* ===================== ONE FAMILY, ONE ROW OF LINKS', '/* ── SLIDE-OVER OPENERS');
 const nameBlock = cut('let CL360_ROSTER = [];', 'async function cl360Roster');
-const openerBlock = cut('async function openClientProfile(ref){', 'function pdClose(');
+const openerBlock = cut('async function openClientProfile(ref, tab){', 'function pdClose(');
 const rosterBlock = cut('function getClientRoster(){', 'async function renderClients(');
 const schedBlock = cut('function scheduleAssessmentFromLead(leadId){', '/* ---------------- GUIDED CALL COCKPIT');
 ck('copy: no em dashes in the new screen text', ![famBlock, openerBlock].some(b => (b.match(/'[^'\n]*'/g) || []).join(' ').includes('—')));

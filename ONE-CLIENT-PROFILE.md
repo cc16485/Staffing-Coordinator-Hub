@@ -160,3 +160,44 @@ Mapped first (every editor and every reader, with which readers decide something
   typeable for clients not linked yet. Found, for later: the hub (`cqIsMedicaid`: medicaid|ihs|dsds)
   and the server (profile-check: medicaid|ihs|pace) test "is this Medicaid" differently.
 - Verified in the browser (fake data, nothing sent) for every item above; hub tests still pass.
+
+## Step 5a as built (hub only): the old separate screens retired
+- The **Client History pop-up** is gone; "View History" on the Clients list opens the client's one
+  profile on its **History** tab (`openClientHistory` → `openClientProfile(ref,'history')`).
+- **Client 360 is no longer its own profile**: its old slide-in grid layout is removed; it only ever
+  fills the profile's tabs. The slide-in remains solely for "More than one client is named …, pick
+  one" and "No profile found".
+- The profile opens from a **person id** too (their AxisCare id, else their confirmed inquiry).
+- Verified in the browser (fake data): View History by AxisCare id and by name → History tab; person
+  id → the right client, or the confirmed inquiry; two "Ann Jones" → the pick list. Hub tests pass
+  (family-links test updated for the opener's new tab argument).
+
+## Step 5b: returning families (map done, design proposed, NOT built)
+How a second record happens today (most likely first):
+1. A former client's family calls back; a new inquiry is entered (no check against AxisCare, and
+   ~268 former AxisCare clients aren't in the hub's identity list at all); Convert creates a SECOND
+   AxisCare client (it only looks for its own lead's id) and a second person.
+2. A different relative calls, or the web form is used: the hub checks only the caller's phone (and
+   Cancel saves anyway); the web form checks nothing. A second inquiry.
+3. Automatic entries (AI phone call, calendar booking, call disposition) find an OLD lead by phone and
+   rewrite it: notes overwritten, a Converted lead pushed back to "Assessment Scheduled".
+4. A current client's family asks for more hours: a new lead + Convert = a second AxisCare client;
+   typing the real AxisCare id is refused because their Journey is active, so the inquiry is stranded.
+5. "Mark as duplicate" archives the lead but leaves its Journey open.
+
+Proposed (identity stays a person's decision; software suggests, never merges):
+- A. Bring the ~268 former AxisCare clients into the hub's identity list (name, birth date, phones;
+  marked former, no Journey) so they can be recognised. Server run, dry first with counts.
+- B. "Is this family already known?" when an inquiry is saved: caller phone, client phone, email,
+  client name + birth date, across inquiries and AxisCare clients (current and former). Name alone is
+  a hint only. The person picks "same family: open their profile" or "a different family".
+- C. Automatic entries (web form, AI call, bookings) never merge or rewrite: 0 matches = new inquiry;
+  1 or more = new inquiry flagged "possibly returning" + a My Work "check if this is the same family".
+  Old Converted / Lost leads are never rewritten.
+- D. Convert looks in AxisCare first (including inactive clients): "use their existing AxisCare record"
+  instead of creating a second one. AxisCare status stays AxisCare's (the status review catches it).
+- E. A current client's family: the inquiry form says "this is a current client, open their profile"
+  (a change in care is handled there, not as a new start).
+- F. "Mark as duplicate" also closes the duplicate's empty Journey; a returning family's new inquiry
+  can be attached to their current Journey.
+Build order: A → B + D (hub) → C (server entry points) → E + F.
