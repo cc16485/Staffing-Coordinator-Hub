@@ -24,12 +24,12 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const sb = createClient(SUPABASE_URL, SERVICE_KEY)
 
-/* ── WHO MAY CALL (One client profile, step 5b-A, 2026-09-27) ────────────────
+/* ── WHO MAY CALL (2026-09-27) ────────────────
    Until now any caller holding the hub's PUBLIC key could run every mode here, including the ones
    that write identity rows and the ones that return names and phone numbers. Now:
      circles=1   the nightly Family Circle sync and the hub's "Sync" button: allowed as before, but a
                  caller without the service role gets COUNTS only (no names)
-     everything else (clients, former_clients, ghl_clients, grade, roster_roles, apply_phones,
+     everything else (clients, ghl_clients, grade, roster_roles, apply_phones,
                  recover, the default backfill): service role only (the owner's Desktop scripts). */
 export function jwtRole(authHeader: string | null): string | null {
   const m = /^Bearer\s+(.+)$/.exec(authHeader ?? '')
@@ -646,160 +646,6 @@ async function backfillClientsFromAxisCare(commit: boolean) {
   return out
 }
 
-/* ── FORMER CLIENTS (One client profile, step 5b-A, 2026-09-27) ──────────────
-   Returning families: every AxisCare client who is NOT active and has no hub person becomes one:
-   person_identity (name, main phone, birth date) + person_source_id(axiscare/client, confirmed) +
-   person_role(client, FORMER, AxisCare's status label, start and end dates) + phone_index (confirmed,
-   from AxisCare). No Journey. People already linked only get a missing birth date filled.
-   Active clients with no person are REPORTED, not created: they belong to "Who is this?".
-   Name coincidences are reported, never merged. Dry run by default; ?commit=1 writes. */
-const NOT_A_PERSON = /^(office staff|example\b|test\b|sample\b)|\b(family circle|do not use)\b/i
-const acDate = (raw: unknown): string | null => {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(raw ?? '').trim())
-  return m ? `${m[1]}-${m[2]}-${m[3]}` : null
-}
-// deno-lint-ignore no-explicit-any
-export async function backfillFormerClients(commit: boolean, fetcher: typeof fetch = fetch, db: any = sb) {
-  const order = ['AXISCARE_API_KEY', 'AXISCARE_TOKEN', 'AXISCARE_VISITS_TOKEN']
-  let token = ''
-  for (const n of order) { const v = Deno.env.get(n); if (v) { token = v; break } }
-  const site = Deno.env.get('AXISCARE_SITE') || Deno.env.get('AXISCARE_SITE_NUMBER') || ''
-  if (!token || !/^\d+$/.test(site)) return { error: 'AxisCare credentials not set on this project' }
-  // deno-lint-ignore no-explicit-any
-  const all: any[] = []
-  let url: string | null = `https://${site}.axiscare.com/api/clients`
-  try {
-    for (let page = 0; url && page < 20; page++) {
-      const r: Response = await fetcher(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json',
-        'X-AxisCare-Api-Version': Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01' } })
-      if (!r.ok) return { error: `AxisCare responded ${r.status}`, fetched_so_far: all.length }
-      // deno-lint-ignore no-explicit-any
-      const j: any = await r.json().catch(() => ({}))
-      const rows = j?.results?.clients ?? j?.clients ?? []
-      for (const c of (Array.isArray(rows) ? rows : Object.values(rows))) all.push(c)
-      const next = j?.results?.nextPage ?? j?.nextPage ?? null
-      const host = `https://${site}.axiscare.com`
-      if (next == null || next === '') url = null
-      else if (typeof next === 'string' && next.startsWith(host + '/')) url = next
-      else if (typeof next === 'string' && next.startsWith('/')) url = host + next
-      else return { error: 'AxisCare gave a next page this function does not recognise; nothing was written', fetched_so_far: all.length }
-    }
-  } catch (err) { return { error: String(err), fetched_so_far: all.length } }
-  if (url) return { error: 'AxisCare had more pages than expected; nothing was written', fetched_so_far: all.length }
-
-  /* read every row, a page at a time: a short read here would create duplicates on a rerun */
-  // deno-lint-ignore no-explicit-any
-  const readAll = async (build: () => any): Promise<{ rows: any[]; error?: string }> => {
-    // deno-lint-ignore no-explicit-any
-    const rows: any[] = []
-    for (let from = 0; from < 100000; from += 1000) {
-      const { data, error } = await build().range(from, from + 999)
-      if (error) return { rows, error: error.message }
-      rows.push(...(data ?? []))
-      if (!data || data.length < 1000) return { rows }
-    }
-    return { rows, error: 'too many rows' }
-  }
-  const L = await readAll(() => db.from('person_source_id').select('person_id, source_id').eq('system', 'axiscare').eq('entity_type', 'client').order('source_id'))
-  if (L.error) return { error: 'could not read the identity links: ' + L.error }
-  const linked = new Map(L.rows.map((l: { source_id: unknown; person_id: unknown }) => [String(l.source_id), String(l.person_id)]))
-  const P = await readAll(() => db.from('person_identity').select('id, display_name, birth_date').order('id'))
-  if (P.error) return { error: 'could not read the people: ' + P.error }
-  const ppl = P.rows
-  /* who can be texted must not change. The outreach gate allows a number that is not on file, or
-     that has a confirmed entry; it blocks one on file only as probable. So a number nobody has yet,
-     or one already confirmed, goes in as confirmed; a number on file only as probable goes in as
-     probable too (it stays blocked, and a person decides). */
-  const PH = await readAll(() => db.from('phone_index').select('phone, confidence').order('id'))
-  if (PH.error) return { error: 'could not read the phone list: ' + PH.error }
-  const phoneState = new Map<string, 'confirmed' | 'weak'>()
-  for (const r of PH.rows) {
-    const k = String(r.phone)
-    if (r.confidence === 'confirmed') phoneState.set(k, 'confirmed')
-    else if (!phoneState.has(k)) phoneState.set(k, 'weak')
-  }
-  const byId = new Map((ppl ?? []).map((p: { id: unknown }) => [String(p.id), p]))
-  const nameOwners = new Map<string, string>()
-  for (const p of (ppl ?? [])) nameOwners.set(String((p as { display_name: unknown }).display_name).trim().toLowerCase(), String((p as { id: unknown }).id))
-
-  const out = { mode: commit ? 'COMMIT' : 'DRY RUN', axiscare_clients_total: all.length,
-    former_total: 0, former_already_in_hub: 0, former_added: 0, with_phone: 0, with_birth_date: 0,
-    birth_dates_filled: 0, phones_indexed: 0, phones_shared: 0, phones_left_probable: 0, roles_added: 0, deceased: 0, skipped_no_name: 0,
-    end_date_from_axiscare: 0, end_date_unknown: 0,
-    status_labels: {} as Record<string, number>,
-    skipped_not_a_person: [] as Array<{ name: string; axiscare_id: string }>,
-    active_without_person: [] as Array<{ name: string; axiscare_id: string }>,
-    name_coincidences: [] as Array<{ name: string; axiscare_id: string }>,
-    errors: [] as string[] }
-
-  for (const c of all) {
-    const axId = String(c?.id ?? '').trim()
-    const name = [String(c?.firstName ?? '').trim(), String(c?.lastName ?? '').trim()].filter(Boolean).join(' ')
-    if (!axId || !name) { out.skipped_no_name++; continue }
-    const dob = acDate(c?.dateOfBirth)
-    const active = c?.status?.active === true
-    const label = String(c?.status?.label ?? c?.status?.name ?? (active ? 'Active' : 'Inactive')).trim() || 'Inactive'
-    const personId = linked.get(axId) ?? null
-    /* anyone already linked: only fill a missing birth date (never overwrite one) */
-    if (personId) {
-      if (!active) { out.former_total++; out.former_already_in_hub++ }
-      const p = byId.get(personId) as { birth_date?: unknown } | undefined
-      if (dob && p && !p.birth_date) {
-        out.birth_dates_filled++
-        if (commit) { const { error } = await db.from('person_identity').update({ birth_date: dob }).eq('id', personId); if (error) out.errors.push(`${name} birth date: ${error.message}`) }
-      }
-      continue
-    }
-    if (active) { out.active_without_person.push({ name, axiscare_id: axId }); continue }
-    /* AxisCare holds a few records that are not people (Office Staff, Example Family Circle, tests) */
-    if (NOT_A_PERSON.test(name)) { out.skipped_not_a_person.push({ name, axiscare_id: axId }); continue }
-    out.former_total++
-    out.status_labels[label] = (out.status_labels[label] ?? 0) + 1
-    if (/deceas/i.test(label)) out.deceased++
-    /* a former role must say when it ended. AxisCare's effectiveEndDate when it has one; otherwise
-       today, and the reason says plainly that the real date wasn't in AxisCare */
-    const endedAx = acDate(c?.effectiveEndDate)
-    const endedAt = endedAx ?? new Date().toISOString().slice(0, 10)
-    const reason = endedAx ? label : `${label} (AxisCare had no end date; this is the day the hub added them)`
-    if (endedAx) out.end_date_from_axiscare++; else out.end_date_unknown++
-    const phones = [{ phone: acPhone(c?.mobilePhone), kind: 'mobile' }, { phone: acPhone(c?.homePhone), kind: 'home' }]
-      .filter((p) => p.phone) as Array<{ phone: string; kind: string }>
-    if (phones.length) out.with_phone++
-    if (dob) out.with_birth_date++
-    const plan = phones.map((ph) => {
-      const st = phoneState.get(ph.phone)
-      return { ...ph, shared: !!st, confidence: st === 'weak' ? 'probable' : 'confirmed' }
-    })
-    for (const ph of plan) { if (ph.shared) out.phones_shared++; if (ph.confidence === 'probable') out.phones_left_probable++ }
-    if (nameOwners.get(name.toLowerCase())) out.name_coincidences.push({ name, axiscare_id: axId })
-    nameOwners.set(name.toLowerCase(), 'axiscare:' + axId)
-    out.former_added++
-    if (!commit) { for (const ph of plan) if (!phoneState.has(ph.phone)) phoneState.set(ph.phone, 'confirmed'); continue }
-    const { data: pi, error: e1 } = await db.from('person_identity')
-      .insert({ display_name: name, first_name: String(c?.firstName ?? '').trim() || null, last_name: String(c?.lastName ?? '').trim() || null,
-                primary_phone: phones[0]?.phone ?? null, birth_date: dob }).select('id').single()
-    if (e1 || !pi) { out.errors.push(`${name}: ${e1?.message ?? 'insert failed'}`); out.former_added--; continue }
-    const newId = String(pi.id)
-    const { error: e2 } = await db.from('person_source_id').insert({ person_id: newId, system: 'axiscare', entity_type: 'client',
-      source_id: axId, confidence: 'confirmed', needs_review: false })
-    if (e2) {
-      /* no link means a rerun could not recognise this person: take the new row back out */
-      await db.from('person_identity').delete().eq('id', newId)
-      out.errors.push(`${name} link: ${e2.message} (the new record was removed)`); out.former_added--; continue
-    }
-    const { error: e3 } = await db.from('person_role').insert({ person_id: newId, role: 'client', status: 'former', end_reason: reason,
-      started_at: acDate(c?.startDate), ended_at: endedAt })
-    if (e3) out.errors.push(`${name} role: ${e3.message}`); else out.roles_added++
-    for (const ph of plan) {
-      const { error: e4 } = await db.from('phone_index').insert({ phone: ph.phone, person_id: newId, kind: ph.kind, shared: ph.shared,
-        confidence: ph.confidence, source_system: 'axiscare', source_record_id: axId, imported_at: new Date().toISOString() })
-      if (e4) out.errors.push(`${name} phone: ${e4.message}`)
-      else { out.phones_indexed++; if (!phoneState.has(ph.phone)) phoneState.set(ph.phone, ph.confidence === 'confirmed' ? 'confirmed' : 'weak') }
-    }
-  }
-  return out
-}
-
 /* ── LINK CLIENTS TO THEIR GHL CONTACT ───────────────────────────────────────
    Client 360 wants one tap from a profile to the person's GHL conversation.
    The link is looked up LIVE against GHL by phone (the scan cache is an
@@ -1085,11 +931,6 @@ Deno.serve(async (req) => {
   /* every other mode writes identity rows or returns names and numbers: the owner's scripts only */
   if (!owner) return new Response(JSON.stringify({ error: 'service_role required' }), { status: 403, headers: { 'Content-Type': 'application/json' } })
 
-  if (q.get('former_clients') === '1') {
-    return new Response(JSON.stringify(
-      await backfillFormerClients(q.get('commit') === '1'), null, 2),
-      { status: 200, headers: { 'Content-Type': 'application/json' } })
-  }
 
   if (q.get('ghl_clients') === '1') {
     return new Response(JSON.stringify(
