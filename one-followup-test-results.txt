@@ -1,0 +1,24 @@
+
+CHANGE 8d · ONE FIRST-SHIFT FOLLOW-UP · TEST
+============================================================
+PASS  copy: no em dashes in the new text
+PASS  match: same client (AxisCare id), the launch's own caregiver, after the launch began
+PASS  no match: a different client with the same name (different AxisCare id)
+PASS  no match: a call about a fill-in caregiver, not the launch caregiver
+PASS  no match: a call from before this launch began (an earlier stay)
+PASS  no match: a launch with no caregiver name yet, or a call with no AxisCare id
+PASS  logging the call ticks BOTH follow-ups on the launch (client side from the client's rating, caregiver side from theirs)
+PASS  a call with only the client's side ticks only the client follow-up
+PASS  a completed launch is never touched
+PASS  an already-ticked follow-up is left as it is (nothing unticked, nothing re-stamped)
+PASS  with New Clients open, the tick goes through its own save (the board updates at once)
+PASS  a fill-in's Care Match call ticks nothing on the launch
+PASS  "Log the call in Care Match" opens Care Match filled in with the client, the launch caregiver and the AxisCare id
+PASS  card: not done yet: no checkbox, a "Log the call in Care Match" button, marked "from Care Match"
+PASS  card: before the first shift it just says "After the first shift."
+PASS  card: done: shows the Care Match call, when, by whom, and who they spoke with
+PASS  card: a matching call exists but the tick didn't land: one click "Use the Care Match call" saves exactly that follow-up
+PASS  card: an older box ticked by hand keeps showing, labelled as such
+PASS  card: with no caregiver name yet it says to add it, so the call can be matched
+============================================================
+ALL 19 CHECKS PASS
