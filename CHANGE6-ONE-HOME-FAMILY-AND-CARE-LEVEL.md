@@ -1,6 +1,6 @@
 # Change 6 · One home for the family list and for care level
 
-Approved in the audit (order 1 → 6). Mapped 2026-09-27. Decisions 2026-09-27: build 6a first, then 6b; ownership split and new fields approved. Cara's family text **approved as an exception** to the audience rule. **6a built and tested; 6b not started.**
+Approved in the audit (order 1 → 6). Mapped 2026-09-27. Decisions 2026-09-27: build 6a first, then 6b; ownership split and new fields approved. Cara's family text **approved as an exception** to the audience rule. **6a live (2026-09-27). 6b built and tested.**
 
 ## Found first: a family text can pick the wrong family (verified in code)
 
@@ -116,3 +116,29 @@ Only AxisCare's class is used for matching caregivers (Cara, profile check). The
 | Family Circles screen, link picker, edit panel, guards | checked in the browser preview |
 
 **Rollout:** merge both pull requests, then run `251`.
+
+## 6b as built (2026-09-27)
+
+- **One rule** (`_shared/care-level.ts`), used by coverage-run, coverage-shifts (both copies) and profile-check.
+  - It adds "Advanced Care" → Level 3, which the old copies missed.
+  - The hub's caregiver-directory copy now matches it, and a parity test proves they agree.
+- **Cara** re-reads an unknown client level at most hourly. It used to never re-read one.
+- **`care-level` function:**
+  - `levels`: the census of every active client's level;
+  - `client`: by AxisCare ID or Journey;
+  - `vocab`: AxisCare's classes, and how the rule reads each;
+  - `set`: replaces **only** the level class and keeps every other class exactly, then reads back. It refuses when two AxisCare classes read as the target level, and when the client holds a class naming both a payer and a level ("mixed"). In those cases the change is made in AxisCare.
+- **Hub:**
+  - **Active Clients:** the "Care level (AxisCare)" column.
+  - **Client 360:** AxisCare's level and its class, the intake estimate, and the latest review, with an "Update AxisCare's care level" link when they differ. The Client 360 level picker is retired, and old values are shown as history.
+  - **Care plan review:** when saved with a level different from AxisCare's, it offers the update.
+  - **Team Builder:** a newly linked plan with no level takes AxisCare's.
+  - **Hours Watch:** matching defaults to the client's AxisCare level.
+
+| Proof | Result |
+|---|---|
+| Rule + parity + `care-level` function (`care_level_harness.mjs`) | 13/13 |
+| Install script (`care_level_install_proof.py`) | 6/6 |
+| Active Clients column, update-and-kept classes, Client 360 level line | checked in the browser preview |
+
+**Rollout:** merge both pull requests, then `252`. It deploys, then reports how the rule reads every AxisCare class, read only.

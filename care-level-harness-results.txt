@@ -1,0 +1,15 @@
+PASS rule: "Level 2 - Personal Care" → 2; "Advanced Care" → 3 (the old copies missed it); "Complex" → 3; "Wellness" → 1; a payer → nothing
+PASS rule: the HIGHEST level class held wins, and says which class it read
+PASS parity: the hub's caregiver directory reads every sample class set exactly like the shared rule
+PASS a signed-in person is required
+PASS the owner script may READ (vocab) but never "set"
+PASS levels: every ACTIVE client's level from AxisCare (inactive left out)
+PASS client by Journey: resolves to the AxisCare client and reads its level
+PASS vocab: how the rule reads each AxisCare class
+PASS set: ONLY the level class is replaced; Medicaid and Dogs are kept exactly; read back
+PASS set: already at that level → nothing written
+PASS set: a class that names BOTH a payer and a level ("Medicaid Personal Care") → refused, nothing written
+PASS set: two AxisCare classes read as the target level → refused (never guessed)
+PASS set: AxisCare refusing (403) is reported; nothing changed
+
+13/13 passed

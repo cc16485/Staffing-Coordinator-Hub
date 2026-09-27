@@ -1,0 +1,11 @@
+
+CHANGE 6b · INSTALL SCRIPT · PROOF AGAINST FAKE SERVICES
+============================================================
+PASS  a changed shared rule stops everything
+PASS  hub not merged yet: stops
+PASS  happy path: installed; every class shown with how the rule reads it
+PASS  warns when two classes read as the same level (the update will refuse)
+PASS  counts active clients by level, the ones with no level class, and the payer+level ones
+PASS  the report only READS (vocab and levels), never set
+============================================================
+ALL 6 PROOFS PASS

@@ -32,6 +32,7 @@ import { ZIP_LL } from '../_shared/zip-centroids.ts'
 import { shadowRoute } from '../_shared/routing.ts'
 import { opEvent } from '../_shared/events.ts'
 import { notifyFamilyOfChange } from '../_shared/family-change-text.ts'
+import { careLevelOf } from '../_shared/care-level.ts'
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -300,33 +301,8 @@ async function fetchVisits(params: string): Promise<{ rows: any[]; error: string
 
 const dISO = (daysAgo: number) => new Date(Date.now() - daysAgo * 86400000).toISOString().slice(0, 10)
 
-/* Samantha's care-level ladder, read from AxisCare classes[] on BOTH sides:
-   Level 1 wellness, Level 2 personal care, Level 3 complex care. A caregiver
-   covers clients at or below their own level. classes[] famously mixes payers
-   in (the audited defect), so this matches known level wording only and
-   reports WHICH class it read — never assumes the array means one thing. */
-// deno-lint-ignore no-explicit-any
-function careLevelOf(classes: any): { level: number | null; from: string | null } {
-  /* A caregiver can hold SEVERAL level classes ("Level 1 - Wellness Care"
-     AND "Level 2 - Personal Care" = can do both — Lacey Williams, caught by
-     Samantha on the first live run when first-match-wins misread her as
-     Level 1 and skipped her). The level is the HIGHEST class held. */
-  const arr = Array.isArray(classes) ? classes
-    : (classes && typeof classes === 'object') ? Object.values(classes) : []
-  let best: { level: number | null; from: string | null } = { level: null, from: null }
-  for (const c of arr) {
-    const label = String((c as any)?.label ?? (c as any)?.code ?? '')
-    const t = label.toLowerCase()
-    const m = t.match(/level\s*([123])/)
-    const lv = m ? Number(m[1])
-      : /complex/.test(t) ? 3
-      : /personal\s*care/.test(t) ? 2
-      : /wellness/.test(t) ? 1
-      : null
-    if (lv != null && (best.level == null || lv > best.level)) best = { level: lv, from: label }
-  }
-  return best
-}
+/* The care-level rule lives in _shared/care-level.ts (Change 6b): one copy for
+   every function and the hub, highest level class held, reports the class read. */
 
 /** The case's client is free text off a phone call. Resolve it to ONE
  *  confirmed AxisCare client id through the identity layer, or say why not. */
@@ -1380,7 +1356,10 @@ Deno.serve(async (req) => {
     /* The client's city (for anonymous wording) and CARE LEVEL (for the
        qualification filter) — one cached fetch, done here because the level
        must be known BEFORE the wave is built. */
-    if ((!c.client_city || c.client_care_level === undefined) && clientRes.id) {
+    /* Change 6b: an unknown level (null) is re-read at most hourly, instead of never */
+    const levelStale = c.client_care_level === undefined
+      || (c.client_care_level === null && (!c.client_care_level_checked_at || Date.now() - Date.parse(c.client_care_level_checked_at) > 3600000))
+    if ((!c.client_city || levelStale) && clientRes.id) {
       try {
         const { token: acTok, site: acSite } = axisCreds()
         if (acTok && acSite) {
@@ -1394,6 +1373,7 @@ Deno.serve(async (req) => {
           const lv = careLevelOf(cl?.classes)
           c.client_care_level = lv.level          // null = no level class on the client
           c.client_care_level_from = lv.from
+          c.client_care_level_checked_at = new Date().toISOString()
         }
       } catch { /* no city/level = plainer wording, no level filter */ }
     }
