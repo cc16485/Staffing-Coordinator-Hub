@@ -11,7 +11,7 @@ let APP, settingsBroken = false, sent;
 const reset = (settings, leads) => { APP = { leads: JSON.parse(JSON.stringify(leads || [])), ops_items: [], ...(settings === undefined ? {} : { ops_settings: settings }) }; sent = []; settingsBroken = false; };
 const q = (t) => { const st = { f: [], op: 'select' }; const b = {
   select() { return b; }, order() { return b; }, range() { return b; }, limit() { return b; }, in() { return b; },
-  eq(c, v) { st.f.push([c, v]); return b; }, contains() { return b; },
+  eq(c, v) { st.f.push([c, v]); return b; }, contains() { return b; }, not() { return b; },
   maybeSingle() { return b.then((x) => ({ data: Array.isArray(x.data) ? (x.data[0] ?? null) : x.data, error: x.error })); },
   then(ok) {
     if (t === 'app_data') { const k = (st.f.find(([c]) => c === 'key') || [])[1];
@@ -23,7 +23,7 @@ const q = (t) => { const st = { f: [], op: 'select' }; const b = {
 globalThis.__db = { from: q, rpc: async (fn, a) => { if (fn === 'upsert_app_data_item') { const arr = (APP[a.target_key] ||= []); const i = arr.findIndex((x) => x.id === a.item.id); if (i >= 0) arr[i] = a.item; else arr.push(a.item); } return { data: null, error: null }; } };
 globalThis.fetch = async (url, o) => {
   url = String(url); const body = o && o.body ? JSON.parse(o.body) : {};
-  if (url.includes('/contacts/upsert')) return new Response(JSON.stringify({ contact: { id: 'C_' + (body.phone || body.email) } }), { status: 200 });
+  if (url.includes('/contacts/upsert')) return new Response(JSON.stringify({ contact: { id: 'C_' + (body.phone || body.email), dnd: false } }), { status: 200 });  /* real GHL answers with dnd (0b-2 proves it live) */
   if (url.includes('/conversations/messages')) { sent.push({ to: body.contactId, type: body.type, text: body.message || body.subject }); return new Response('{}', { status: 200 }); }
   if (url.includes('.axiscare.com')) return new Response(JSON.stringify({ results: { clients: [], nextPage: null } }), { status: 200 });
   return new Response('{}', { status: 200 });

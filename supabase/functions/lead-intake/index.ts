@@ -10,6 +10,7 @@ import { opEvent } from '../_shared/events.ts'
 import { ldPush } from '../_shared/lead-truth.ts'
 import { leadHits, returningCheck, returningItem } from '../_shared/returning.ts'
 import { inquirySwitches } from '../_shared/inquiry-switches.ts'
+import { ghlContactIfAllowed } from '../_shared/optout.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -181,19 +182,6 @@ Deno.serve(async (req) => {
         Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28',
         'Content-Type': 'application/json', Accept: 'application/json',
       }
-      const contactFor = async (p: string, e: string, first: string) => {
-        const r = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-          method: 'POST', headers: h,
-          body: JSON.stringify({
-            locationId: ghlLocation,
-            ...(p ? { phone: p } : {}), ...(e ? { email: e } : {}),
-            firstName: first,
-          }),
-        })
-        const j = await r.json().catch(() => ({}))
-        // deno-lint-ignore no-explicit-any
-        return ((j as any)?.contact?.id ?? (j as any)?.id ?? null) as string | null
-      }
       const send = (contactId: string, type: 'SMS' | 'Email', payload: Record<string, unknown>) =>
         fetch('https://services.leadconnectorhq.com/conversations/messages', {
           method: 'POST', headers: h, body: JSON.stringify({ type, contactId, ...payload }),
@@ -226,16 +214,18 @@ Deno.serve(async (req) => {
           const line = `Hi ${firstName}, this is Caring Companions. We have your message and a care `
             + `coordinator will call you shortly. If you would rather not wait, we are on (417) 234-8494. `
             + `Reply STOP to opt out.`
+          /* 0b-2: each channel through the universal opt-out door (GHL Do Not Disturb, the Hub's opt-out record,
+             inquiry do-not-contact, Family Circle stops); the contact is found by that channel's address alone */
+          const ghl = { token: ghlToken, locationId: ghlLocation }
           let sentAny = false
           if (phone) {
-            const cidP = await contactFor(phone, '', firstName)
-            if (cidP) { await send(cidP, 'SMS', { message: line }); sentAny = true }
+            const cidP = await ghlContactIfAllowed(supabase, ghl, 'lead-intake', { channel: 'sms', phone, firstName })
+            if (cidP && (await send(cidP, 'SMS', { message: line })).ok) sentAny = true
           }
           if (email) {
-            const cidE = await contactFor('', email, firstName)
+            const cidE = await ghlContactIfAllowed(supabase, ghl, 'lead-intake', { channel: 'email', email, firstName })
             if (cidE) {
-              sentAny = true
-              await send(cidE, 'Email', {
+              const er = await send(cidE, 'Email', {
                 subject: 'We have your message',
                 html: '<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">'
                   + `<p>Hi ${firstName},</p>`
@@ -245,6 +235,7 @@ Deno.serve(async (req) => {
                   + '<p>There is nothing you need to do in the meantime.</p>'
                   + '<p style="color:#57606a">Caring Companions In-Home Senior Care<br>(417) 234-8494</p></div>',
               })
+              if (er.ok) sentAny = true
             }
           }
           if (sentAny) {

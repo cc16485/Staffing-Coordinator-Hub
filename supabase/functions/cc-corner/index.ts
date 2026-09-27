@@ -17,6 +17,7 @@
 // -----------------------------------------------------------------------------
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { ghlContactIfAllowed } from '../_shared/optout.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -172,11 +173,9 @@ Deno.serve(async (req) => {
     if (ghlToken && ghlLocation) {
       try {
         const h = { Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
-        const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-          method: 'POST', headers: h,
-          body: JSON.stringify({ locationId: ghlLocation, email: p.email, firstName: p.name || 'Friend' }),
-        })
-        const contactId = (await up.json().catch(() => ({})))?.contact?.id
+        /* 0b-2: the poster's email goes through the universal opt-out door */
+        const contactId = await ghlContactIfAllowed(supabase, { token: ghlToken, locationId: ghlLocation }, 'cc-corner', {
+          channel: 'email', email: p.email, firstName: p.name || 'Friend' })
         if (contactId) {
           const esc = (t: string) => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')
           const sr = await fetch('https://services.leadconnectorhq.com/conversations/messages', {

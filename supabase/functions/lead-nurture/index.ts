@@ -11,6 +11,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { opEvent } from '../_shared/events.ts'
 import { ldPush } from '../_shared/lead-truth.ts'
 import { outreachGate } from '../_shared/outreach.ts'
+import { ghlContactIfAllowed } from '../_shared/optout.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -89,7 +90,7 @@ Deno.serve(async (req) => {
   const { data: row } = await supabase.from('app_data').select('data').eq('key', 'leads').maybeSingle()
   // deno-lint-ignore no-explicit-any
   const leads: any[] = Array.isArray(row?.data) ? row!.data : []
-  let sent = 0, stopped = 0, completed = 0
+  let sent = 0, stopped = 0, completed = 0, stopped_optout = 0
   // deno-lint-ignore no-explicit-any
   const save = (l: any) => supabase.rpc('upsert_app_data_item', { target_key: 'leads', item: l })
 
@@ -171,36 +172,41 @@ Deno.serve(async (req) => {
 
     const text = step.text.replace(/{first}/g, l.first_name || 'there')
     let ok = false
-    /* The reply-check contact above may be an email-matched contact whose
-       primary phone is NOT this lead's. Never text it: resolve a fresh
-       PHONE-keyed contact for SMS steps. */
-    if (step.channel === 'sms' && l.phone) {
-      try {
-        const up2 = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-          method: 'POST', headers: sendH,
-          body: JSON.stringify({ locationId: ghlLocation, phone: l.phone, firstName: l.first_name }),
-        })
-        const uj2 = await up2.json().catch(() => ({}))
-        contactId = uj2?.contact?.id ?? uj2?.id ?? contactId
-      } catch { /* fall back to the reply-check contact */ }
-    }
+    /* 0b-2: the step's ONE channel goes through the universal opt-out door, with a contact found by that channel's
+       address alone (the reply-check contact above is never messaged). If an authority says no, the drip stops
+       for this lead for good; a GHL hiccup just leaves the step for tomorrow. */
+    const refusals: string[] = []
+    const onOptOut = (reasons: string[]) => { refusals.push(...reasons) }
+    const ghl = { token: ghlToken, locationId: ghlLocation }
     try {
       if (step.channel === 'sms' && l.phone) {
-        const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-          method: 'POST', headers: sendH,
-          body: JSON.stringify({ type: 'SMS', contactId, message: text }),
-        })
-        ok = r.ok
+        const cid = await ghlContactIfAllowed(supabase, ghl, 'lead-nurture', { channel: 'sms', phone: l.phone, firstName: l.first_name, onOptOut })
+        if (cid) {
+          const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+            method: 'POST', headers: sendH,
+            body: JSON.stringify({ type: 'SMS', contactId: cid, message: text }),
+          })
+          ok = r.ok
+        }
       } else if (step.channel === 'email' && l.email) {
-        const html = `<div style="font-family:Arial,sans-serif;font-size:15px;color:#1f2a36;line-height:1.7;max-width:600px">` +
-          text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>') + `</div>`
-        const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-          method: 'POST', headers: sendH,
-          body: JSON.stringify({ type: 'Email', contactId, subject: step.subject ?? 'From Caring Companions', html }),
-        })
-        ok = r.ok
+        const cid = await ghlContactIfAllowed(supabase, ghl, 'lead-nurture', { channel: 'email', email: l.email, firstName: l.first_name, onOptOut })
+        if (cid) {
+          const html = `<div style="font-family:Arial,sans-serif;font-size:15px;color:#1f2a36;line-height:1.7;max-width:600px">` +
+            text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>') + `</div>`
+          const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+            method: 'POST', headers: sendH,
+            body: JSON.stringify({ type: 'Email', contactId: cid, subject: step.subject ?? 'From Caring Companions', html }),
+          })
+          ok = r.ok
+        }
       } else {
         ok = true // channel missing (no phone or no email) — skip the step but keep the sequence moving
+      }
+      if (!ok && refusals.length) {
+        l.nurture_stopped_at = new Date().toISOString()
+        l.nurture_stop_reason = 'opted out: ' + [...new Set(refusals)].join('; ')
+        await save(l); stopped_optout++; stopped++
+        continue
       }
     } catch { /* leave ok=false; retry tomorrow */ }
     if (ok) {
@@ -227,5 +233,5 @@ Deno.serve(async (req) => {
       await save(l); sent++
     }
   }
-  return json({ status: 'done', sent, stopped, completed })
+  return json({ status: 'done', sent, stopped, stopped_optout, completed })
 })

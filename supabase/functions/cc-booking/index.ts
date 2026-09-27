@@ -15,6 +15,7 @@
 // Uses the existing HT_ORDER_TOKEN secret; no new secrets needed.
 // -----------------------------------------------------------------------------
 
+import { ghlContactIfAllowed } from '../_shared/optout.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { leadHits, returningCheck, returningItem } from '../_shared/returning.ts'
 import { opEvent } from '../_shared/events.ts'
@@ -255,17 +256,24 @@ async function computeSlots(supabase: any) {
 }
 
 // ---------- GHL email pipe (same pattern as cc-feedback) ----------
-async function ghlEmail(to: string, firstName: string, subject: string, html: string): Promise<boolean> {
+/* 0b-2: `guard` (the family's own confirmation) sends through the universal opt-out door; office mail does not need it */
+// deno-lint-ignore no-explicit-any
+async function ghlEmail(to: string, firstName: string, subject: string, html: string, guard?: { db: any; sender: string }): Promise<boolean> {
   const ghlToken = Deno.env.get('GHL_TOKEN')
   const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
   if (!ghlToken || !ghlLocation) return false
   try {
     const h = { Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
-    const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-      method: 'POST', headers: h,
-      body: JSON.stringify({ locationId: ghlLocation, email: to, firstName }),
-    })
-    const contactId = (await up.json().catch(() => ({})))?.contact?.id
+    let contactId: string | null = null
+    if (guard) {
+      contactId = await ghlContactIfAllowed(guard.db, { token: ghlToken, locationId: ghlLocation }, guard.sender, { channel: 'email', email: to, firstName })
+    } else {
+      const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
+        method: 'POST', headers: h,
+        body: JSON.stringify({ locationId: ghlLocation, email: to, firstName }),
+      })
+      contactId = (await up.json().catch(() => ({})))?.contact?.id ?? null
+    }
     if (!contactId) return false
     const sr = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
       method: 'POST', headers: h,
@@ -431,7 +439,8 @@ Deno.serve(async (req) => {
       + '<p style="background:#EAF4F6;border-radius:10px;padding:14px 18px;"><b>' + typeLabel + '</b><br><b>' + whenLabel + '</b>'
       + (type === 'home' ? '<br>We’ll come to the address you share when we confirm by phone.' : '<br>A care coordinator will call you at ' + esc(phone) + '.') + '</p>'
       + '<p>There’s nothing to prepare and nothing to sign. If you need to change the time, just call or text <a href="tel:14172348494">(417) 234-8494</a>.</p>'
-      + '<p>Warmly,<br>Caring Companions In-Home Senior Care<br>1331 N Stewart Ave Ste B, Springfield, MO</p></div>')
+      + '<p>Warmly,<br>Caring Companions In-Home Senior Care<br>1331 N Stewart Ave Ste B, Springfield, MO</p></div>',
+      { db: supabase, sender: 'cc-booking' })
   }
   return json({ ok: true, id: item.id, when: whenLabel, confirmed , lead: leadLinked })
 })

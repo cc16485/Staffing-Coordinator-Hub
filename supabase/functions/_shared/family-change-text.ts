@@ -13,7 +13,8 @@
 //     phone number, who have not replied STOP (stopped_at), and who are still on
 //     the client's AxisCare contacts (axiscare_removed_at is empty).
 // Returns what happened; coverage-run stamps the case from it:
-//   none  -> complete, nobody to tell (reason says why)
+//   none  -> complete, nobody to tell (reason says why; 'every_member_opted_out' when the universal opt-out
+//            check refused them all, 0b-2)
 //   sent  -> complete, count texts went
 //   retry -> real recipients existed but every send failed; leave unstamped
 // =============================================================================
@@ -72,7 +73,7 @@ export async function notifyFamilyOfChange(
     .replaceAll('{meet}', meet)
     .replace(/\s{2,}/g, ' ').trim()
 
-  let sent = 0
+  let sent = 0, optedOut = 0
   for (const m of members) {
     /* some circle members ARE the client: speak to them as "you" */
     const selfIsClient = !!clientFirst && nameKey(String(m.name || '').split(/\s+/)[0]) === nameKey(clientFirst)
@@ -80,7 +81,8 @@ export async function notifyFamilyOfChange(
     try {
       const dest = await gate(sb, ghl,
         { phone: m.phone, firstName: String(m.name || 'Family').split(' ')[0], lastName: String(m.name || '').split(' ').slice(1).join(' ') },
-        'reactive_external', { audience: 'family', explicitlyEnabled: true })
+        'reactive_external', { audience: 'family', explicitlyEnabled: true, channel: 'sms',
+          sender: 'coverage-run (caregiver change text)', onOptOut: () => { optedOut++ } })
       if (!dest?.contactId) continue
       const r = await send('https://services.leadconnectorhq.com/conversations/messages', {
         method: 'POST',
@@ -90,6 +92,8 @@ export async function notifyFamilyOfChange(
       if (r.ok) sent++
     } catch { /* one family text failing must not block the rest */ }
   }
-  return sent ? { outcome: 'sent', count: sent, reason: null, circle: circle.client_name }
-              : { outcome: 'retry', count: 0, reason: 'every send failed', circle: circle.client_name }
+  if (sent) return { outcome: 'sent', count: sent, reason: null, circle: circle.client_name }
+  /* Nobody may be texted: an opt-out is an answer, not a failure, so the case is complete (no retry loop). */
+  if (optedOut === members.length) return { outcome: 'none', count: 0, reason: 'every_member_opted_out', circle: circle.client_name }
+  return { outcome: 'retry', count: 0, reason: 'every send failed', circle: circle.client_name }
 }

@@ -16,6 +16,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { ghlContactIfAllowed } from '../_shared/optout.ts'
 
 export const CAMPAIGN_ROLES = OFFICE_ROLES
 
@@ -65,18 +66,12 @@ Deno.serve(async (req) => {
     const name = String(r.name ?? '').trim()
     const parts = name.split(/\s+/).filter(Boolean)
     try {
-      const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-        method: 'POST', headers: sendH,
-        body: JSON.stringify({
-          locationId: ghlLocation, email,
-          ...(parts[0] ? { firstName: parts[0] } : {}),
-          ...(parts.length > 1 ? { lastName: parts.slice(1).join(' ') } : {}),
-          ...(tag ? { tags: [tag] } : {}),
-        }),
-      })
-      const upJson = await up.json().catch(() => ({}))
-      const contactId = upJson?.contact?.id ?? upJson?.id ?? null
-      if (!contactId) { results.push({ email, ok: false, err: 'no contact id' }); continue }
+      /* 0b-2: the universal opt-out door; the contact-type tag still rides on the upsert */
+      let optedOut = false
+      const contactId = await ghlContactIfAllowed(admin, { token: ghlToken, locationId: ghlLocation }, 'campaign-send', {
+        channel: 'email', email, firstName: parts[0], lastName: parts.slice(1).join(' '),
+        extra: tag ? { tags: [tag] } : {}, onOptOut: () => { optedOut = true } })
+      if (!contactId) { results.push({ email, ok: false, err: optedOut ? 'opted out (not sent)' : 'could not confirm they may be emailed (not sent)' }); continue }
 
       const personalHtml = html.replace(/\{first\}/g, parts[0] || 'there')
       const sr = await fetch('https://services.leadconnectorhq.com/conversations/messages', {

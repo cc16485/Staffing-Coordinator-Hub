@@ -14,7 +14,8 @@
 //
 // FAIL CLOSED: if a source cannot be read, the send is refused with "could not check <source>". A family
 // message that cannot be proven permitted does not go.
-// No sender imports this yet; 0b-2 and 0b-3 wire every sender to it.
+// 0b-2 (2026-09-27) wires every family, client, inquiry and public-person sender to it through ghlContactIfAllowed
+// (directly, or through contactForOutbound with a channel). 0b-3 wires caregiver, applicant and HomeTogether senders.
 // =============================================================================
 export type Channel = 'sms' | 'email'
 export type OptOutVerdict = { allowed: boolean; reasons: string[] }
@@ -41,6 +42,10 @@ export function ghlDnd(contact: any, channel: Channel): boolean {
   return ['active', 'permanent'].includes(String(s ?? '').toLowerCase())
 }
 
+/* We only trust a GHL contact whose answer actually carries the Do Not Disturb flag. */
+// deno-lint-ignore no-explicit-any
+export const ghlDndKnown = (contact: any): boolean => !!contact && typeof contact === 'object' && typeof contact.dnd === 'boolean'
+
 /**
  * May this message go to this address on this channel?
  * `ghlContact` is the contact object GHL returned for the send (its upsert or get answer). When a sender
@@ -56,9 +61,9 @@ export async function optOutCheck(
   const address = target.channel === 'sms' ? normPhone(target.phone) : normEmail(target.email)
   if (!address) return { allowed: false, reasons: ['no usable ' + (target.channel === 'sms' ? 'phone number' : 'email address')] }
 
-  // 1. GHL Do Not Disturb
+  // 1. GHL Do Not Disturb (a contact object without a true/false `dnd` can't prove DND is off: unknown, refused)
   if (target.viaGhl !== false) {
-    if (target.ghlContact === 'unknown' || target.ghlContact === undefined) reasons.push('could not check GHL Do Not Disturb')
+    if (!ghlDndKnown(target.ghlContact)) reasons.push('could not check GHL Do Not Disturb')
     else if (ghlDnd(target.ghlContact, target.channel)) reasons.push('GHL Do Not Disturb is on for ' + target.channel)
   }
   // 2. the Hub's own record (latest word per address, for this channel or 'all')
@@ -97,6 +102,61 @@ export async function optOutCheck(
 export async function logRefusal(db: any, sender: string, channel: Channel, address: unknown, reasons: string[]): Promise<void> {
   try { await db.rpc('contact_send_refusal_log', { p_sender: sender, p_channel: channel, p_address: String(address ?? ''), p_reasons: reasons }) }
   catch { console.warn(`[${sender}] refusal not logged: ${reasons.join('; ')}`) }
+}
+
+/**
+ * The GHL senders' door (0b-2). Finds or creates the GHL contact for ONE channel (the phone alone for a text,
+ * the email alone for an email, the rule lead-intake learned the hard way), makes sure its Do Not Disturb is
+ * known (asks GHL for the contact itself when the upsert answer leaves it out), then runs the universal check.
+ * Returns the contact id only when the message may go; null otherwise, with the refusal logged.
+ */
+export async function ghlContactIfAllowed(
+  // deno-lint-ignore no-explicit-any
+  db: any, ghl: { token: string; locationId: string }, sender: string,
+  to: { channel: Channel; phone?: unknown; email?: unknown; firstName?: unknown; lastName?: unknown;
+        /* extra GHL contact fields for the upsert, e.g. { tags: ['lead'] } */
+        extra?: Record<string, unknown>;
+        /* told when an authority said no (not when GHL simply failed): lets a sender stop retrying */
+        onOptOut?: (reasons: string[], contact: Record<string, unknown>) => void | Promise<void> },
+  send: typeof fetch = fetch,
+): Promise<string | null> {
+  const phone = to.channel === 'sms' ? normPhone(to.phone) : null
+  const email = to.channel === 'email' ? normEmail(to.email) : null
+  if (!phone && !email) {
+    await logRefusal(db, sender, to.channel, to.channel === 'sms' ? to.phone : to.email, ['no usable ' + (to.channel === 'sms' ? 'phone number' : 'email address')])
+    return null
+  }
+  const h = { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
+  // deno-lint-ignore no-explicit-any
+  let contact: any = null
+  try {
+    const r = await send('https://services.leadconnectorhq.com/contacts/upsert', {
+      method: 'POST', headers: h,
+      body: JSON.stringify({ locationId: ghl.locationId, ...(phone ? { phone } : {}), ...(email ? { email } : {}),
+        ...(to.firstName ? { firstName: String(to.firstName) } : {}), ...(to.lastName ? { lastName: String(to.lastName) } : {}),
+        ...(to.extra ?? {}) }),
+    })
+    const j = await r.json().catch(() => ({}))
+    contact = j?.contact ?? null
+    if (contact?.id && !ghlDndKnown(contact)) {
+      const g = await send(`https://services.leadconnectorhq.com/contacts/${encodeURIComponent(contact.id)}`, { method: 'GET', headers: h })
+      const gj = await g.json().catch(() => ({}))
+      if (gj?.contact?.id === contact.id) contact = gj.contact
+    }
+  } catch { contact = null }
+  if (!contact?.id) {
+    await logRefusal(db, sender, to.channel, phone ?? email, ['GHL returned no contact, so Do Not Disturb could not be checked'])
+    return null
+  }
+  const v = await optOutCheck(db, { channel: to.channel, phone, email, ghlContact: contact })
+  if (v.allowed) return String(contact.id)
+  await logRefusal(db, sender, to.channel, phone ?? email, v.reasons)
+  console.warn(`[${sender}] send refused: ${v.reasons.join('; ')}`)
+  /* an authority said no (not merely "could not check"): tell the sender, so it can stop asking every run */
+  if (to.onOptOut && v.reasons.some((r) => !r.startsWith('could not check') && !r.startsWith('no usable'))) {
+    try { await to.onOptOut(v.reasons, contact) } catch { /* the refusal stands either way */ }
+  }
+  return null
 }
 
 /** The call a sender makes: check, log a refusal, return whether it may send. */

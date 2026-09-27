@@ -21,6 +21,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { outreachGate } from '../_shared/outreach.ts'
 import { requireStaff, serverSecretOk, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { ghlContactIfAllowed } from '../_shared/optout.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -267,30 +268,27 @@ Deno.serve(async (req) => {
     if (totalSent >= cap) break
     const recips = audiences[e.aud] || []
     const html = buildEmailHTML(e)
-    let sent = 0, failed = 0
+    let sent = 0, failed = 0, optedOutOrFailed = 0
     for (const r of recips) {
       if (totalSent >= cap) break
       const parts = (r.name || '').split(/\s+/).filter(Boolean)
       try {
-        const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-          method: 'POST', headers: sendH,
-          body: JSON.stringify({ locationId: ghlLocation, email: r.email, ...(parts[0] ? { firstName: parts[0] } : {}), ...(parts.length > 1 ? { lastName: parts.slice(1).join(' ') } : {}) }),
-        })
-        const uj = await up.json().catch(() => ({}))
-        const contactId = uj?.contact?.id ?? uj?.id ?? null
-        if (!contactId) { failed++; continue }
-        if (uj?.contact?.dnd === true) {
-          /* They pressed STOP in GHL — make the hub remember it too. */
-          // deno-lint-ignore no-explicit-any
-          const hl = leads.find((l: any) => l.email && String(l.email).toLowerCase() === String(r.email).toLowerCase())
-          if (hl && !hl.do_not_contact) {
-            hl.do_not_contact = true
-            hl.do_not_contact_at = new Date().toISOString()
-            hl.do_not_contact_reason = 'GHL DND (STOP) — synchronized by campaign-auto'
-            await supabase.rpc('upsert_app_data_item', { target_key: 'leads', item: hl })
-          }
-          continue // respect do-not-disturb
-        }
+        /* 0b-2: the universal opt-out door (GHL Do Not Disturb, the Hub's opt-out record, inquiry do-not-contact).
+           A GHL Do Not Disturb is still copied onto the matching Hub inquiry, as before. */
+        const contactId = await ghlContactIfAllowed(supabase, { token: ghlToken, locationId: ghlLocation }, 'campaign-auto',
+          { channel: 'email', email: r.email, firstName: parts[0], lastName: parts.slice(1).join(' '),
+            onOptOut: async (reasons) => {
+              if (!reasons.some((x) => x.startsWith('GHL Do Not Disturb'))) return
+              // deno-lint-ignore no-explicit-any
+              const hl = leads.find((l: any) => l.email && String(l.email).toLowerCase() === String(r.email).toLowerCase())
+              if (hl && !hl.do_not_contact) {
+                hl.do_not_contact = true
+                hl.do_not_contact_at = new Date().toISOString()
+                hl.do_not_contact_reason = 'GHL DND (STOP) — synchronized by campaign-auto'
+                await supabase.rpc('upsert_app_data_item', { target_key: 'leads', item: hl })
+              }
+            } })
+        if (!contactId) { optedOutOrFailed++; continue }
         const sr = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
           method: 'POST', headers: sendH,
           body: JSON.stringify({ type: 'Email', contactId, subject: e.subj, html: html.replace(/\{first\}/g, parts[0] || 'there') }),
@@ -298,7 +296,7 @@ Deno.serve(async (req) => {
         if (sr.ok) { sent++; totalSent++ } else failed++
       } catch { failed++ }
     }
-    const item = { id: crypto.randomUUID(), at: new Date().toISOString(), key: e.key, subj: e.subj, source: 'Autopilot · ' + e.aud, sent, failed, auto: true }
+    const item = { id: crypto.randomUUID(), at: new Date().toISOString(), key: e.key, subj: e.subj, source: 'Autopilot · ' + e.aud, sent, failed, not_sent_optout_or_unreachable: optedOutOrFailed, auto: true }
     await supabase.rpc('upsert_app_data_item', { target_key: 'campaign_log', item })
     summary.push(`"${e.subj}" → ${e.aud}: ${sent} sent${failed ? ', ' + failed + ' failed' : ''}`)
   }

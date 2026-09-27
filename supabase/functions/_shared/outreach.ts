@@ -35,6 +35,8 @@
    an applicant or a reference, it is external — whatever else is true about it.
    ============================================================================= */
 
+import { ghlContactIfAllowed } from './optout.ts'
+
 export type OutreachClass =
   | 'reactive_external'
   | 'proactive_external'
@@ -460,7 +462,12 @@ export async function contactForOutbound(
   person: { phone?: unknown; email?: unknown; firstName?: unknown; lastName?: unknown },
   kind: OutreachClass,
   opts: { selfSupplied?: boolean; now?: Date; audience?: Audience;
-          humanInitiated?: boolean; explicitlyEnabled?: boolean } = {},
+          humanInitiated?: boolean; explicitlyEnabled?: boolean;
+          /* 0b-2: name the ONE channel this contact is for, and the sender. The contact is then found by that
+             channel's address alone and the universal opt-out check runs (optout.ts). Family, client, lead,
+             referral and unknown audiences MUST name it; caregiver-facing senders move over in 0b-3. */
+          channel?: 'sms' | 'email'; sender?: string;
+          onOptOut?: (reasons: string[]) => void | Promise<void> } = {},
 ): Promise<{ contactId: string; phone: string | null } | null> {
   /* WHO comes before HOW. A missing audience is 'unknown', and unknown is
      refused — every sender through this boundary declares who it talks to. */
@@ -469,8 +476,13 @@ export async function contactForOutbound(
     console.warn(`outbound refused [${kind}]: ${who.reason}`)
     return null
   }
-  const email = String(person.email ?? '').trim()
-  const hasPhone = !!normalisePhone(person.phone)
+  const PROTECTED = ['client', 'family', 'lead', 'referral', 'unknown']
+  if (!opts.channel && PROTECTED.includes(String(opts.audience ?? 'unknown'))) {
+    console.warn(`outbound refused [${kind}]: a ${opts.audience ?? 'unknown'} send must name its channel, so the opt-out check can run`)
+    return null
+  }
+  const email = opts.channel === 'sms' ? '' : String(person.email ?? '').trim()
+  const hasPhone = opts.channel === 'email' ? false : !!normalisePhone(person.phone)
 
   /* An email-only recipient carries no phone-identity risk, so the destination
      gate does not apply — but the hours policy still does. */
@@ -491,7 +503,13 @@ export async function contactForOutbound(
     return null
   }
 
-  const phone = normalisePhone(person.phone)
+  const phone = hasPhone ? normalisePhone(person.phone) : null
+  if (opts.channel) {
+    const id = await ghlContactIfAllowed(sb, ghl, opts.sender || kind, {
+      channel: opts.channel, phone: person.phone, email: person.email, firstName: person.firstName, lastName: person.lastName,
+      onOptOut: opts.onOptOut ? (r) => opts.onOptOut!(r) : undefined })
+    return id ? { contactId: id, phone } : null
+  }
   const res = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
     method: 'POST',
     headers: {
