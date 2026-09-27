@@ -1,0 +1,17 @@
+PASS CORS preflight answered from day one
+PASS access: answers need a signed-in person; the scheduled run refuses a signed-in person
+PASS dry run (switch off): counts only; nothing refreshed, scanned, opened or added to My Work
+PASS live: AxisCare's current status is copied for Active Clients
+PASS live: the admission scan runs server to server with the server key (never in the schedule)
+PASS live: one review per change on a known client; unknown clients and old changes are only counted
+PASS My Work: one item per open review, owned by the Client Care owner, asking the question
+PASS My Work: a change to "Deceased" is high priority and says nothing contacts the family automatically
+PASS rerun: no second review and no second item
+PASS answer: someone without a Journey seat is told so; nothing saved
+PASS answer: "returning client" from Client Intake needs Owner / Decision
+PASS answer: goes through the door as that person and seat, and closes the My Work item
+PASS answer: Owner / Decision can record a returning client
+PASS a review answered some other way: the next run closes its item
+PASS the day an item is due is Springfield's end of day
+
+15/15 passed

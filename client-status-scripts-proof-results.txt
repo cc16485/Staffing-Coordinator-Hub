@@ -1,0 +1,13 @@
+
+CHANGE 3 · INSTALL AND ON/OFF SCRIPTS · PROOF AGAINST FAKE SERVICES + REAL POSTGRES
+============================================================
+PASS  install · a migration that is not the proven build stops before anything runs
+PASS  install · if the hub update is not merged yet it stops
+PASS  install · refuses if the switch is already on
+PASS  install · happy path: installed, CORS, dry run with its preview; clients, Journeys and My Work unchanged; logged
+PASS  on · switch on (other settings kept), one job 5 minutes after each status check with the public key only, first live run matches
+PASS  on · turning it on twice leaves one job and no second review
+PASS  off · switch off, schedule removed, open reviews left as they are
+PASS  install · once a review exists the migration guard refuses a reinstall; nothing changes
+============================================================
+ALL 8 PROOFS PASS
