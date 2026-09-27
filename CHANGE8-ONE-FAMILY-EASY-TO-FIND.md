@@ -146,3 +146,17 @@ notes), tied to the AxisCare client id. Proposed as its own step after 8, or soo
 - Proof: `client_start_test.mjs` 26/26 (rules; the page's old badge rule matches on 29 samples;
   the page wiring; the REAL client-start-run); `client_start_install_proof.py` 10/10; earlier hub
   tests still pass.
+
+## 8d as built (hub only)
+- Care Match is the one place the 24–72h first-shift follow-up call is logged (her ruling).
+- New Clients: the two follow-up rows ("client/family", "caregiver") are read-outs marked
+  "from Care Match". Not done: "📞 Log the call in Care Match" opens Care Match filled in with the
+  client, the launch caregiver and the AxisCare id. Done: shows the call (when, by whom, who they
+  spoke with). An older hand tick stays, labelled as such.
+- Care Match save ticks a launch's follow-up only when it is the SAME client (AxisCare id), the
+  launch's OWN caregiver, logged after the launch began: client side from the client's rating,
+  caregiver side from the caregiver's. A fill-in's call, another client with the same name, an
+  earlier stay, or a completed launch are never touched; nothing is unticked.
+- If the tick can't land, the card offers "✓ Use the Care Match call from <date>" (one click).
+- No new fields or tables (the existing client_queue follow-up columns).
+- Proof: `one_followup_test.mjs` 19/19; earlier hub tests still pass.
