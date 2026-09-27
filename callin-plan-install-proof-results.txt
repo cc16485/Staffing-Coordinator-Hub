@@ -1,0 +1,14 @@
+
+DESKTOP 258 · CALL-IN PLAN INSTALL · PROOF
+============================================================
+PASS  a changed migration stops before anything runs
+PASS  a changed function stops before anything runs
+PASS  a live hub without the new screen stops it (merge first); nothing applied
+PASS  installs: migration committed with an empty table, the screen reaches its service, unsigned requests refused
+PASS  a rerun before anyone has entered a plan is harmless
+PASS  once staff have entered plans, a rerun refuses and changes nothing
+PASS  a CORS failure is reported, not hidden
+============================================================
+ALL 7 PROOFS PASS
+migration: 7af1de8c1f5f180c6842ae332e5d3159be50f0d1b44aba4fe586476835f2c41d
+shas: {"callin-plan": "a0d350327f726d76403556a1d7286bd533380d55807d514f95e084e7332976a2", "coverage-run": "62cf0c7d46b0bc0b047a9620de648f012754cb1ae6f5026f41becd28605998a5", "_shared/callin-plan.ts": "e936dc471900e6261024e6408e049e275918d8d5b131ffd560791175a70ee043"}

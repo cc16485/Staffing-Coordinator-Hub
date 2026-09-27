@@ -1,0 +1,23 @@
+
+CALL-IN PLAN · HUB SCREENS · TEST
+============================================================
+PASS  the block is present
+PASS  copy: no em dashes in the new screen text
+PASS  Client 360: shows the plan in force, who entered it, when, and who told us how
+PASS  Client 360: the full history is kept and shown (2 entries), including the first "not asked yet" entry and its note
+PASS  a note with code in it is shown as text, never run
+PASS  Client 360: nothing recorded yet says what to ask
+PASS  a client not linked to AxisCare can't hold a plan, and says so
+PASS  the form starts from the plan in force: the choice ticked, Dixie and Autumn ticked, Beth not, the backup filled, the note empty
+PASS  save: "who told us" is required, nothing is sent without it
+PASS  save: sends one entry to the call-in service with the sign-in, a request id (so a double click records once), and every field
+PASS  save: it never sends who entered it (the server takes that from the sign-in)
+PASS  save: after recording, the form closes, the history reloads (3 entries) and the board refreshes its copy
+PASS  save: a refusal is explained and the form stays open
+PASS  board: plans are loaded for OPEN cases with an AxisCare id only, in one query, and the board redraws once
+PASS  board: not reloaded again within a minute
+PASS  board: "family covers" shows its chip and the first step, and that Cara won't text on her own
+PASS  board: "must be covered" is red, and the plan shows the list, the backup, the note (as text) and a link to the full history
+PASS  board: a closed case, or a client with no plan, shows nothing extra
+============================================================
+ALL 18 CHECKS PASS

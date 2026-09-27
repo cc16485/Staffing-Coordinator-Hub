@@ -1,0 +1,16 @@
+
+CALL-IN PLAN · DISPOSABLE PROOF
+============================================================
+PASS  install · an injected failure leaves nothing behind
+PASS  install · installs; a rerun on an empty table succeeds; self-check passes
+PASS  refusals · no staff, no request id, a non-numeric client, no name, an unknown coverage choice, a bad only-ask list (two ways), a bad phone, a phone with no backup name, a note over 2000, no source, an unknown source, and an empty entry
+PASS  refusals · nothing was written
+PASS  recorded · the only-ask list is de-duplicated by AxisCare id, the phone is cleaned to 10 digits, the staff email is kept (lowercased) with their name, and who told us and how
+PASS  a double click (same request id) records once
+PASS  current plan · the latest entry per client wins; both entries stay in the history
+PASS  append-only · entries can't be edited, deleted or truncated, even by the owner
+PASS  security · signed-in staff can read the plan and its history but can't write or use the door; anonymous gets nothing; the service role can't edit
+PASS  guard · once entries exist, a rerun refuses and changes nothing
+============================================================
+ALL 10 PROOFS PASS
+client-callin-plan migration sha256: 7af1de8c1f5f180c6842ae332e5d3159be50f0d1b44aba4fe586476835f2c41d

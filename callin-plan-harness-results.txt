@@ -1,0 +1,21 @@
+
+CALL-IN PLAN · RULES + CARA · HARNESS
+============================================================
+PASS  rule: an only-ask list lets Dixie and Autumn through and names why anyone else is left out
+PASS  rule: no plan, or a plan with no only-ask list, leaves out nobody
+PASS  rule: "family covers" and "flexible" hold automatic texts; "must cover" and "if we can" don't
+PASS  rule: the one-line summary names the choice, the list and the backup with a readable phone, and leaves the note out
+PASS  copy: no em dashes in anything a person reads
+PASS  no plan: the picker offers everyone, as today
+PASS  LeeAnn's only-ask list: the picker offers ONLY Dixie and Autumn; Beth and Carl are shown as not on her list
+PASS  the picker carries the plan line and the note for the coordinator
+PASS  a plan that can't be read holds everyone (fail closed) and says why
+PASS  automatic texts follow the only-ask list: Dixie and Autumn are texted, Beth and Carl never
+PASS  "family would rather cover it": Cara starts NO automatic caregiver texts
+PASS  "flexible": Cara starts NO automatic caregiver texts either
+PASS  no plan: automatic texts go out as today
+PASS  automatic texts hold when the plan can't be read
+PASS  3 AM, no plan: the admin gets the email only (the text waits for morning), as today
+PASS  3 AM, "must be covered": the admin is texted right away, marked MUST BE COVERED, and the email says so with the plan
+============================================================
+ALL 16 CHECKS PASS

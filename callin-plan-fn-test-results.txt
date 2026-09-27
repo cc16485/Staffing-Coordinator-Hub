@@ -1,0 +1,9 @@
+
+CALLIN-PLAN FUNCTION · TEST
+============================================================
+PASS  CORS preflight answers 200 with Allow-Origin
+PASS  not signed in, anonymous, and the service key are all refused; nothing recorded
+PASS  any signed-in staff member can add; who entered it comes from their sign-in and their staff name, never the form
+PASS  only 'add' exists (nothing can edit or delete an entry)
+============================================================
+ALL 4 CHECKS PASS
