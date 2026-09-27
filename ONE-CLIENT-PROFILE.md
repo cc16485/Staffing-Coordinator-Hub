@@ -1,0 +1,96 @@
+# ONE client profile (map and plan, nothing built)
+
+Samantha, 2026-09-27: "I want clients to have ONE profile" · "the clients profile can have sub tabs
+to keep organized" · "I dont want everything spread out all over the hub".
+
+## Today: one family is spread over 9 detail screens
+| Screen | Keyed on | What it holds |
+|---|---|---|
+| Lead profile (+ intake form, guided call) | lead id | caller, client details, needs, payer + Medicaid, schedule wanted, Start of Care checklist, Start Contract, Journey status, texts/calls, AxisCare attributes, documents, nurture |
+| Client 360 (slide-over) | AxisCare id | care level, phone, care synopsis, Home & life (only editor), call-in plan, "their start", circle (read-only), timeline |
+| Client History modal | AxisCare id or name | read-only copies: lead, assessment, check-ins, reviews, Care Match |
+| New Clients launch card | queue id | launch steps, call notes, AxisCare read-outs, Start Contract (editable), follow-ups |
+| Assessment + care plan modals | assessment id | assessment, AI summary, care plan, AxisCare care tasks |
+| Care Plan Reviews card | AxisCare id or name | reviews, level change, ask caregivers |
+| Check-ins / Care Match / Nurse / GHE | various, some typed names | calls, ratings, do-not-return, nurse visits, GHE re-typed details |
+| Team Builder board | plan id | the care team grid |
+| Family Circle card | circle id | family, consent, AxisCare responsible parties |
+
+The same fact is edited in several places: care level (3 editors), payer (2), start date (3 copies),
+phone/contacts, home notes (3 holders), address/physician (re-typed on the GHE form).
+
+## The one profile
+One full page per client, opened from ANY list (Leads, Start of Care, New Clients, Clients, Care
+Match, Cara, Nurse, Family Circles, My Work). Summary on top; sub-tabs below.
+
+| Sub-tab | What lives there (one home each) |
+|---|---|
+| **Summary** | What's next / who owns it / what we're waiting on; status, level, payer, phone; open callouts; stuck start |
+| **Start of Care** | Journey + "who is this", Start of Care checklist, Start Contract + the four dates, the New Clients launch steps, first-shift follow-up |
+| **Family & Contacts** | caller + family, Family Circle (edited here), AxisCare responsible parties, texts/calls/emails, do not contact |
+| **Care** | needs + clinical from intake, assessment, care plan + AxisCare care tasks, care level (AxisCare), care plan reviews, nurse visits |
+| **Team & Schedule** | caregivers from AxisCare, Team Builder plan, Care Match calls / favorites / do-not-return, "When a caregiver calls in", callout history |
+| **Check-ins** | monthly check-ins (log here) |
+| **Payer** | payer, Medicaid DCN/county, state submission, authorization, quoted price |
+| **Home & Life** | home, pets, entrance, life story, AxisCare attributes checklist, care synopsis for callout texts |
+| **History & Documents** | timeline, earlier Journeys (a returning client), status changes, documents |
+
+**Lists find the work; the profile is where a family is worked.** The office boards stay (New
+Clients queue, Care Match pairs due, Cara call-offs, nurse board, reviews due) but every row opens
+the profile at the right tab. The Client 360 slide-over, the Client History modal and the separate
+lead page stop being separate profiles.
+
+## Who the profile is (identity)
+- From the first call the profile exists for the inquiry (lead). When a person confirms who they
+  are (Convert, "Check and connect", "Who is this?") it becomes that client's profile. Same page,
+  nothing re-typed. Identity stays a person's decision; no name matching (the Sept rule).
+- After that the profile belongs to the PERSON: a returning client has one profile with earlier
+  Journeys under History.
+- Gaps to fix along the way: current clients backfilled from AxisCare may have no Journey yet; a
+  returning family can become a duplicate (the lead de-dupe checks the caller's phone only, and
+  Convert on a new lead makes a second AxisCare client); no screen opens from a person id today.
+
+## One editor per fact
+Care level: AxisCare's class (intake estimate kept as its own labeled fact) · Payer: the Payer tab ·
+Start date: the Start Contract (the others become read-outs) · Contacts: Family & Contacts ·
+Home notes: Home & Life · Address/DCN/physician: typed once at intake, read everywhere else ·
+Caregiver team: AxisCare (the typed name becomes a read-out).
+
+## Build order (each step small, tested, reversible; no data moves in steps 1-3)
+1. The profile shell: one "open client" from any key (lead, AxisCare id, person), sub-tabs, and the
+   lead page + Client 360 sections moved into their tabs unchanged.
+2. Start of Care tab takes the New Clients launch card; the New Clients list opens it.
+3. Care, Family & Contacts, Team & Schedule, Check-ins tabs take their editors (assessment/plan,
+   circle, Team Builder, Care Match call, check-in form).
+4. One editor per fact (the list above).
+5. Retire the slide-over, the history modal and the duplicate forms; identity gaps fixed.
+
+Found along the way: archiving, marking duplicate or deleting a lead hides an element that doesn't
+exist (`#leadProfile`, the page is `#leadProfileView`), so the profile can stay on screen afterward.
+
+## Rulings (2026-09-27): "yes to all, full page, start with 1"
+
+## Step 1 as built (hub only; no database or function change)
+- `#leadProfileView` IS the one profile now: a title row (name, AxisCare # or "Inquiry · status",
+  "Past client") and 9 sub-tabs. Every lead-page card moved into its tab unchanged (all element
+  ids kept, checked line by line; only the old Back button and two layout wrappers changed).
+  The inquiry's cards (class `cp-lead`) show while there is a lead; Client 360's sections fill
+  `cp_c_*` slots in their tabs (`cl360RenderInto(r, null, 'cp_', panes)`).
+- `openClient(seed, tab)` opens it from a lead id, an AxisCare id or a roster row; a lead joins a
+  client only through a CONFIRMED Journey connection (a lead that merely carries the AxisCare id
+  shows a "check and connect" note instead). `openLeadProfile(id, tab)` and client names
+  (`openClientProfile`) both open it full page; "Back" returns to the tab you came from.
+  Start of Care list, stuck-start alert and New Clients' "check and connect" open the Start of
+  Care tab.
+- New small tabs: Check-ins (this client's monthly check-ins by AxisCare id, "Log a check-in"
+  prefilled) and Payer (the intake's payer, DCN, county, state submission, quoted price; edited in
+  the intake form for now).
+- FIXED: Client 360 never recorded which client it showed (`CL360_CURRENT[px]`), so "Save home &
+  life" (since 2026-09-13) and the call-in plan's "Add an update" silently did nothing.
+- FIXED: archive / duplicate / delete now close the page (they hid a non-existent `#leadProfile`).
+- Verified in the browser (local copy, fake data, database and server calls replaced, nothing
+  sent): lead L1 confirmed to AxisCare #501 opens one page with both parts; all 9 tabs show only
+  their own sections; Home & life saves; the call-in form opens prefilled; an inquiry-only lead
+  shows "fill in once they are a client"; an AxisCare-only client opens full page with no lead
+  cards, and a carrier lead is flagged, not merged; Back returns to Leads / Cara; archive closes.
+  Earlier hub tests still pass (family links 26, call-in plan 18, pickers 28, follow-up 19).
