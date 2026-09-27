@@ -47,9 +47,22 @@ function axisCreds() {
   return { token, site }
 }
 
+/* The project's own server secret, compared in constant time. Needed because
+   client-status-review calls this server to server with SUPABASE_SERVICE_ROLE_KEY,
+   which in the newer key format is not a JWT and so carries no role claim
+   (Change 3 turn-on, 2026-09-27: refused with 403). */
+function isServerSecret(authHeader: string | null): boolean {
+  const m = /^Bearer\s+(.+)$/.exec(authHeader ?? '')
+  const a = new TextEncoder().encode(m ? m[1] : ''), b = new TextEncoder().encode(SERVICE_KEY || '')
+  if (!a.length || !b.length || a.length !== b.length) return false
+  let d = 0
+  for (let i = 0; i < a.length; i++) d |= a[i] ^ b[i]
+  return d === 0
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200, headers: cors })
-  if (jwtRole(req.headers.get('Authorization')) !== 'service_role') {
+  if (jwtRole(req.headers.get('Authorization')) !== 'service_role' && !isServerSecret(req.headers.get('Authorization'))) {
     return json({ error: 'service_role required; this endpoint is never for browsers' }, 403)
   }
   const { token, site } = axisCreds()
