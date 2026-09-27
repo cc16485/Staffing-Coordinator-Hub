@@ -9,6 +9,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { opEvent } from '../_shared/events.ts'
 import { ldPush } from '../_shared/lead-truth.ts'
 import { leadHits, returningCheck, returningItem } from '../_shared/returning.ts'
+import { inquirySwitches } from '../_shared/inquiry-switches.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -217,7 +218,9 @@ Deno.serve(async (req) => {
             typed. */
       const chiHour = Number(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', hour12: false }))
       const withinHours = chiHour >= 8 && chiHour < 18
-      if ((phone || email) && withinHours) {
+      /* Step 0 · 0a: the acknowledgment is paused until the universal opt-out check is proven */
+      const ackLive = (await inquirySwitches(supabase)).ack
+      if ((phone || email) && withinHours && ackLive) {
         try {
           const firstName = (first || 'there').replace(/\(.*\)/, '').trim() || 'there'
           const line = `Hi ${firstName}, this is Caring Companions. We have your message and a care `
