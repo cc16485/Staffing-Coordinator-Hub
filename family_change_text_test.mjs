@@ -1,6 +1,7 @@
 // Change 6a · the approved family "caregiver changed" text: node family_change_text_test.mjs supabase/functions/_shared/family-change-text.ts
 import fs from 'fs'; import path from 'path';
-const src = fs.readFileSync(process.argv[2], 'utf8').replace(/^import \{ contactForOutbound \} from .*$/m, 'const contactForOutbound = async () => null');
+const src = fs.readFileSync(process.argv[2], 'utf8').replace(/^import \{ contactForOutbound \} from .*$/m, 'const contactForOutbound = async () => null')
+  .replace("from './covered-outside.ts'", "from '" + path.resolve(path.dirname(process.argv[2]), 'covered-outside.ts') + "'");
 const tmp = path.join(process.cwd(), '_fct_under_test.ts'); fs.writeFileSync(tmp, src);
 const M = await import(tmp); fs.unlinkSync(tmp);
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note).slice(0, 700)]);

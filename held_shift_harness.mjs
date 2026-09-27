@@ -45,7 +45,8 @@ ck('copy: no em dashes in anything a person reads', ![item.title, item.detail, i
 const src0 = fs.readFileSync(path.join(FNS, 'coverage-watch/index.ts'), 'utf8');
 const src = src0.replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
   .replace("from '../_shared/events.ts'", "from '" + path.join(FNS, '_shared/events.ts') + "'")
-  .replace("from '../_shared/held-shift.ts'", "from '" + path.join(FNS, '_shared/held-shift.ts') + "'");
+  .replace("from '../_shared/held-shift.ts'", "from '" + path.join(FNS, '_shared/held-shift.ts') + "'")
+  .replace("from '../_shared/covered-outside.ts'", "from '" + path.join(FNS, '_shared/covered-outside.ts') + "'");
 const tmp = path.join(process.cwd(), '_cw_under_test.ts'); fs.writeFileSync(tmp, src);
 let handler; const env = { SUPABASE_URL: 'http://x', SUPABASE_SERVICE_ROLE_KEY: 'k', AXISCARE_TOKEN: 't', AXISCARE_SITE: '16485' };
 globalThis.Deno = { env: { get: k => env[k] }, serve: h => { handler = h; } };

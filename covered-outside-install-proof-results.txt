@@ -1,0 +1,14 @@
+
+DESKTOP 257 · COVERED-OUTSIDE FIX · PROOF
+============================================================
+PASS  a changed source stops before anything is read or deployed
+PASS  audit: the Kurtz case is flagged SAME PERSON with its 2 family texts and 1 caregiver text
+PASS  audit: a case with no caller recorded, and one with only a first name, are marked can't-check; a real cover is ✓; a board-confirmed case is not listed
+PASS  audit total
+PASS  preview runs as ?dry=1 AFTER the audit, and explains each open case
+PASS  read only: the audit is one SELECT, run as a role that can only read
+PASS  result line names the past wrong text; the key is never printed
+PASS  a failed preview is reported (exit 5), after the audit was still written
+============================================================
+ALL 8 PROOFS PASS
+shas: {"coverage-watch": "83f3c7e2e764eab7ba2b4637a1377845ee504ef922183f2b65eb8f5209abdbf8", "coverage-run": "80a315f2fd5250017a71e71d1f225de9f1e702d7f99211c8fbd4abc0c22143e9", "_shared/covered-outside.ts": "225dcd4fd754304bd862b74a5027161d8900c13771c5a9f7d975c5f5836c4a64", "_shared/family-change-text.ts": "a9b3df821b0e6f040e64b78410288e35c40cbeea2d518fba206ed10451064fd8", "_shared/held-shift.ts": "c4e16ffaadf7d928766d74d645921c6db9c09259d7149c35d80720c07ba11de5"}
