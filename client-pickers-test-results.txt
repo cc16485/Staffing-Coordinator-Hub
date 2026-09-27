@@ -1,0 +1,33 @@
+
+CHANGE 8a · CLIENT PICKERS + ONE LIVE CHECK-IN REMINDER · TEST
+============================================================
+PASS  reminders: one record, due and not done: its reminder stays open (as before)
+PASS  reminders: a NEW check-in logged as a new record closes the older record's reminder, as "done"
+PASS  reminders: the replaced record raises no new reminder; the newer one isn't due yet
+PASS  reminders: when the newer one falls due, only it raises a reminder
+PASS  reminders: an older record with no AxisCare id joins the client by full name (only one AxisCare id has that name) and closes as done
+PASS  reminders: with TWO Mary Smiths in AxisCare, a record with no id is never guessed into either; its reminder stays
+PASS  reminders: a different client with the same name never closes Mary #501's reminder
+PASS  reminders: editing the record itself still closes it (as before)
+PASS  reminders: a Care Match call (with its new AxisCare id) is still NOT a monthly check-in
+PASS  reminders: the records themselves are never changed by the engine (it works on copies)
+PASS  copy: no em dashes in the new text (the picker, the nurse link, and every new message)
+PASS  picker: every client with an AxisCare id, shown with their number; two Mary Smiths are told apart; past clients marked; no-id clients left out
+PASS  picker: "Mary Smith · #502" means AxisCare #502; a typed name alone means nobody
+PASS  check-in: a typed name is refused ("pick from the list"); nothing saved
+PASS  check-in: a picked client saves with their name AND AxisCare id
+PASS  check-in: an older record with no AxisCare id opens with a note to pick the client
+PASS  check-in: ...but it can still be saved as it was (nothing is lost)
+PASS  nurse: adding a client needs a pick from the list
+PASS  nurse: a picked client is added with their AxisCare id
+PASS  nurse: the same AxisCare client can't be added twice
+PASS  nurse: a client added before the picker shows "link to their AxisCare record"; a linked one doesn't
+PASS  nurse: linking to an AxisCare client already on the board is refused
+PASS  nurse: a name that differs from AxisCare's asks first; "no" links nothing
+PASS  nurse: the right client links, with who linked it and when
+PASS  Care Match: logging from a pair keeps the pair's AxisCare client with the call, and the name exactly as the pair has it
+PASS  Care Match: an off-board call with a typed name is refused
+PASS  Care Match: an off-board call picked from the list saves the name and AxisCare id, and a do-not-return carries the id too
+PASS  Care Match: a pair's id is only used when the client name still matches the pair (edited names must be picked)
+============================================================
+ALL 28 CHECKS PASS
