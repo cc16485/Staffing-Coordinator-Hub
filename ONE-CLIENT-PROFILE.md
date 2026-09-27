@@ -172,7 +172,7 @@ Mapped first (every editor and every reader, with which readers decide something
   id → the right client, or the confirmed inquiry; two "Ann Jones" → the pick list. Hub tests pass
   (family-links test updated for the opener's new tab argument).
 
-## Step 5b: returning families (design approved 2026-09-27 "yes to all, go and merge"; A cut to the lock only, B + D + C built, E + F next)
+## Step 5b: returning families (design approved 2026-09-27 "yes to all, go and merge"; A cut to the lock only, B, C, D, E, F built)
 How a second record happens today (most likely first):
 1. A former client's family calls back; a new inquiry is entered (no check against AxisCare, and
    ~268 former AxisCare clients aren't in the hub's identity list at all); Convert creates a SECOND
@@ -271,3 +271,28 @@ scheduler (`cc-booking`), the AI phone call (`call-followup`) and call dispositi
 - Tests: `returning_entries_test.mjs` 26 (the real functions against fakes; fails on the old code),
   `returning_hub_test.mjs` 10, `returning_entries_install_proof.py` 8; every earlier suite still passes.
   Browser-checked: the banner, the panel, both answers closing the item, the My Work link.
+
+## Step 5b E + F as built (hub + database; Desktop 265, switch off 266)
+- **E, changes the family asked for** (client profile, Summary, slot `cp_changes`; shown only with an AxisCare id).
+  Record a request: more hours, fewer hours, a schedule change, a different caregiver, another change in care; the
+  details, who asked, how, how urgent. It is the same Staffing request as "Send to Staffing" (`staffing_tasks`,
+  direction to_staffing, so the Staffing Hub's inbox shows it unchanged), now with `axiscare_client_id`,
+  `change_kind`, `source_who`, `source_how`; only kinds the Staffing Hub knows are sent (hours, schedule, todo).
+  The card lists this client's requests (found by AxisCare id, never by name) with Staffing's reply. A Medicaid
+  client asking for more hours sees the authorized-units reminder. "Open their profile" from the inquiry-save
+  check, and "Fold into the client", open the profile with the form filled from what was typed.
+- **F, folding** (`ckFold`): on the same-family question, "Fold into it" (an open earlier inquiry: archived as
+  Duplicate of it, its notes added to the kept inquiry's log) and "Fold into the client" (a current client:
+  archived "Folded into client"). Both record `folded_into` {kind, lead_id | axiscare_client_id, by, at}, answer
+  the question and close the My Work item. Mark as duplicate now says what happens to the Journey.
+- **`lead-journey-fold.sql`**: `lead_fold_intent` (folded_into, or archived Duplicate with duplicate_of) and
+  `lead_fold_target` (the kept inquiry's active Journey, or the client's). The lead mirror (the journey-connect
+  version, one addition), when `ops_settings.lead_fold_live`: voids a folded inquiry's EMPTY Journey (provisional,
+  no person) with `episode_void`, pointing at the Journey kept; never opens one for a folded inquiry; reports a
+  folded inquiry whose Journey has a confirmed client (Owner / Decision), never touching it. Off, it behaves
+  exactly as before. The scheduled run counts voided as closed, fold_skipped as skipped; parity counts a folded,
+  voided inquiry as matching. Desktop 265 previews every Journey it would close, asks, records the approval.
+- Tests: `lead_journey_fold_proof.py` 15 (real Postgres; off = identical answers; the Lost rule and the
+  confirmed-client rule still hold; foundation unchanged), `lead_fold_install_proof.py` 7,
+  `fold_changes_hub_test.mjs` 13; every earlier suite passes. Browser-checked: the change request (prefilled,
+  sent, listed), both folds.
