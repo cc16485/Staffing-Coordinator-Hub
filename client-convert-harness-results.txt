@@ -1,0 +1,29 @@
+PASS family caller: the CLIENT gets her own name, birth date, M/F gender, full address, her own phone (home), DCN, dates and the lead tag
+PASS family caller: the caller's email and phone never go on the client; they go on Responsible Party 1 (ticked by default, HIPAA flags left blank)
+PASS assessment date is read on Springfield's calendar (9:30pm Sep 23, not Sep 24 UTC)
+PASS referral source goes as "other" with the organisation's name
+PASS the coordinator can say the client's phone is a mobile
+PASS a professional caller (case manager) is NOT added as a responsible party unless the coordinator ticks it; no client phone is invented
+PASS ...and ticking it adds them
+PASS the caller is the client (Self): their name, phone and email go on the client; no responsible party; unknown gender left blank
+PASS no client name and the caller is not the client: Convert is blocked (never the caller's name)
+PASS an incomplete or badly formed address is not sent at all, and the preview says what is missing
+PASS professional wording is recognised
+PASS the intake note keeps the attributes checklist (live-in no longer listed)
+PASS access: a signed-in person is required; the permission check is for the owner script only
+PASS preview: shows the plan from the lead as saved, reads only
+PASS convert: creates the whole client in one go, then referral, Responsible Party 1 and the intake note
+PASS convert: reads AxisCare back and reports what it now holds, plus the hand steps
+PASS retry (the hub never saved the id): finds the client it already made; no second client, no second note
+PASS AxisCare refuses the full record: the client is still created, each part added on its own, and the part it refused is named
+PASS a refused referral source doesn't block anything else
+PASS no permission to change clients (403): stops and says so; nothing else attempted
+PASS AxisCare answering "none found" with a 404 is read as no existing client
+PASS a lead already linked to an AxisCare client is refused without calling AxisCare
+PASS a blocked plan (no client name) never reaches AxisCare
+PASS two AxisCare clients already carry this lead: a person must choose; nothing is written
+PASS permission check: writes Test Client 5's own priority note back unchanged and confirms it
+PASS permission check: if #290 is not a test client it writes nothing
+PASS CORS preflight answered from day one
+
+27/27 passed

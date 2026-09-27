@@ -1,0 +1,9 @@
+
+CHANGE 2 · INSTALL SCRIPT · PROOF AGAINST FAKE SERVICES
+============================================================
+PASS  a function source that is not the reviewed one stops before anything runs
+PASS  happy path: CORS answered, the permission check runs with the server key and passes, READY
+PASS  AxisCare refuses: NOT READY, and it says not to merge the hub update
+PASS  no CORS answer: NOT READY
+============================================================
+ALL 4 PROOFS PASS
