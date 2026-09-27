@@ -1,0 +1,11 @@
+
+DESKTOP 254 · UNASSIGNED SHIFTS CHECK · PROOF
+============================================================
+PASS  uses the watcher's LATEST run (4 shifts), skipping a newer non-JSON answer
+PASS  a called-off shift whose earlier case was closed, with no open case, is flagged HELD
+PASS  a shift with an open case is not flagged
+PASS  a shift with no reason, and one already started, are not flagged
+PASS  the result line counts exactly the held shifts
+PASS  read only: every query a SELECT/WITH, run as a role that can only read
+============================================================
+ALL 6 PROOFS PASS

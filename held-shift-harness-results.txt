@@ -1,0 +1,29 @@
+
+CHANGE 7b · HELD SHIFTS · HARNESS
+============================================================
+PASS  time: a wall-clock time with no offset is Springfield time (summer, CDT = UTC-5)
+PASS  time: winter (CST = UTC-6), and a time with an offset is taken as given
+PASS  time: the visit's own timezone is used when AxisCare gives one; a nonsense zone falls back to Springfield; nonsense is NaN
+PASS  rule: changed → reopen; unchanged + covered → ask a person; unchanged + closed another way → hold; can't ask → ask a person
+PASS  changedSince: ONE read, that day only, changed since the close (to the second); the same slot under another id counts
+PASS  changedSince: AxisCare's 404 "No visits found" = no change
+PASS  changedSince: another shift that day changed, not this one = no change
+PASS  changedSince: slow-down, an error, no network and no date all read as "can't tell" (null), never as "no change"; a foreign next page is never followed
+PASS  item (covered, no caregiver): names the client, the time in Springfield, who was marked covering, the assignment result; high urgency inside 24 hours; says nobody was texted
+PASS  item (can't ask): says why and what to check; normal urgency when the shift is days away; hold and reopen raise no item
+PASS  copy: no em dashes in anything a person reads
+PASS  switched off (reopen not yet on): behaves exactly as before for held shifts: no new case, no item; the report shows what it WOULD do
+PASS  REOPEN: the held shift that changed in AxisCare after its case closed gets a fresh call-off case (generation 2), saying why
+PASS  ASK (covered, no caregiver, unchanged): no case, one high-urgency item for a person naming who was marked covering
+PASS  HOLD (closed uncovered by a person, unchanged): no case, no item, as her rule says
+PASS  ASK (AxisCare errored on the check): no case, an item saying Cara couldn't confirm; never a silent hold
+PASS  switched off: the time reading is unchanged from before, and the report lists the shifts it reads differently (the 3-hours-from-now call-off) and that AxisCare sent no offset
+PASS  TIME FIX: a call-off 3 hours from now (Springfield wall clock, no offset) opens a case; one that started an hour ago does not
+PASS  untouched: a shift with an open case, and a shift with no reason, cause no new case and no AxisCare check
+PASS  cost: exactly ONE small AxisCare check per held shift (4), none for anything else
+PASS  report: held_checks counts what was done (4 checked, 1 reopened, 2 people asked)
+PASS  second run: the reopened shift now has an open case, so it is left alone; items are never raised twice, and one a person closed stays closed
+PASS  the watcher in dry mode writes nothing at all, even with reopening switched on
+PASS  ?dry=1 writes nothing either, and still reports each held decision
+============================================================
+ALL 24 CHECKS PASS

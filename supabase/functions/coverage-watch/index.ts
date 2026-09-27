@@ -31,6 +31,7 @@
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { opEvent } from '../_shared/events.ts'
+import { changedSince, decideHeld, heldItem, visitMs } from '../_shared/held-shift.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -65,6 +66,26 @@ Deno.serve(async (req) => {
   const settings: any = setRow?.data ?? {}
   const forceDry = new URL(req.url).searchParams.get('dry') === '1'
   const live = settings.coverage_watch_live === true && !forceDry
+  /* Change 7b, off until she switches it on (ops_settings.coverage_watch_7b_live):
+     1. a held shift that changed in AxisCare since its case closed reopens, and a person
+        is asked about the ones that can't be settled;
+     2. a visit time with no offset is read as the visit's own wall clock, not UTC, when
+        deciding "already started". While off, both are only REPORTED (held_checks,
+        time_check), so the preview shows exactly what switching on would change. */
+  const reopenLive = settings.coverage_watch_7b_live === true
+  const timeDiffers = new Map<string, Record<string, unknown>>()
+  let sampleStart = ''
+  // deno-lint-ignore no-explicit-any
+  const startedNow = (v: any, stamp: string): boolean => {
+    if (!stamp) return false
+    if (!sampleStart) sampleStart = stamp
+    const fixed = visitMs(stamp, v?.timezone) < Date.now()
+    const old = new Date(stamp).getTime() < Date.now()
+    if (fixed !== old) timeDiffers.set(String(v?.id ?? ''), { visit: String(v?.id ?? ''), when: stamp,
+      client: [String(v?.client?.firstName ?? '').trim(), String(v?.client?.lastName ?? '').trim()].filter(Boolean).join(' '),
+      old_reading: old ? 'already started' : 'upcoming', correct_reading: fixed ? 'already started' : 'upcoming' })
+    return reopenLive ? fixed : old
+  }
   const configuredReasons: string[] = Array.isArray(settings.coverage_watch_reasons)
     ? settings.coverage_watch_reasons.map((r: unknown) => String(r).toLowerCase().trim()).filter(Boolean)
     : []
@@ -120,14 +141,28 @@ Deno.serve(async (req) => {
   /* THE CLOSE-REOPEN FIGHT ENDS HERE (her 2026-09-16 live lesson, fixed
      2026-09-19): a HUMAN closing a watch case holds. No fresh generation
      for that visit unless the visit itself has CHANGED in AxisCare since
-     the close (modifiedDate newer than resolved_at). A visit with no
-     modified timestamp stays held — a robot never overrules a person. */
-  const humanClosedAt = new Map<string, string>()
+     the close. Change 7b (2026-09-27): AxisCare visits carry NO modified
+     date (Desktop 253), so "changed since the close" is now asked of AxisCare
+     itself (updatedSinceDate), and the shifts it can't settle go to a person
+     (_shared/held-shift.ts). */
+  // deno-lint-ignore no-explicit-any
+  const lastClosedCase = new Map<string, any>()
   for (const cc of cases) {
     const v = String(cc?.axiscare_visit_id ?? ''); if (!v) continue
     if (cc?.status === 'open' || !cc?.resolved_at) continue
-    const prev = humanClosedAt.get(v)
-    if (!prev || String(cc.resolved_at) > prev) humanClosedAt.set(v, String(cc.resolved_at))
+    const prev = lastClosedCase.get(v)
+    if (!prev || String(cc.resolved_at) > String(prev.resolved_at)) lastClosedCase.set(v, cc)
+  }
+  const heldChecks: Record<string, unknown>[] = []
+  let reopened = 0, heldAsked = 0
+  let opsIds: Set<string> | null = null
+  const opsHas = async (id: string): Promise<boolean> => {
+    if (!opsIds) {
+      const { data, error } = await sb.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+      if (error) return true   // can't see the list: raise nothing now, the next run tries again
+      opsIds = new Set((Array.isArray(data?.data) ? data!.data : []).map((i: { id?: unknown }) => String(i?.id ?? '')))
+    }
+    return opsIds.has(id)
   }
 
   const nowIso = new Date().toISOString()
@@ -194,7 +229,7 @@ Deno.serve(async (req) => {
         reason: reason || '(no modification reason)',
         verdict: !reason ? 'ignored — no reason recorded'
           : !reasonMatches(reason) ? 'ignored — reason does not match the filter'
-          : (dStart && new Date(dStart).getTime() < Date.now()) ? 'ignored — already started'
+          : startedNow(v, dStart) ? 'ignored — already started'
           : openByVisit.has(String(v?.id ?? '')) ? 'already has an open case'
           : 'opens a case',
       })
@@ -202,15 +237,9 @@ Deno.serve(async (req) => {
     if (!reason || !reasonMatches(reason)) continue
     reasonMatched++
     const start = String(v?.scheduledStartDate ?? v?.startDate ?? '')
-    if (start && new Date(start).getTime() < Date.now()) { inPast++; continue }
+    if (startedNow(v, start)) { inPast++; continue }
     const visitId = String(v?.id ?? '')
     if (!visitId || openByVisit.has(visitId)) { alreadyHandled++; continue }
-    {
-      const closedAt = humanClosedAt.get(visitId)
-      const vMod = String(v?.modifiedDate ?? v?.lastModified ?? '')
-      if (closedAt && !(vMod && vMod > closedAt)) { alreadyHandled++; continue }
-    }
-
     const clientName = [String(v?.client?.firstName ?? '').trim(), String(v?.client?.lastName ?? '').trim()]
       .filter(Boolean).join(' ') || '(client name missing on the visit)'
     const end = String(v?.scheduledEndDate ?? v?.endDate ?? '')
@@ -224,6 +253,42 @@ Deno.serve(async (req) => {
       modification_reason: reason,
       calling_off: String(heldBy.get(visitId)?.caregiver ?? ''),
     }
+
+    /* A shift whose last case is closed (Change 7b): ask AxisCare whether it changed since. */
+    const closedCase = lastClosedCase.get(visitId)
+    let reopenNote = ''
+    if (closedCase) {
+      const chk = await changedSince(fetch, site, token, AC_VERSION, visitId, String(closedCase.resolved_at))
+      const decision = decideHeld(chk.changed, closedCase)
+      const act = live && reopenLive
+      const row: Record<string, unknown> = { client: clientName, visit: visitId, when: start, closed_case: closedCase.id ?? null,
+        closed_how: closedCase.resolved_how ?? null, covered_by: closedCase.covered_by ?? null, decision, detail: chk.detail, acted: false }
+      heldChecks.push(row)
+      const det = unassignedDetail.find((d) => d.visit === visitId)
+      if (decision === 'reopen' && act) {
+        row.acted = true; reopened++
+        reopenNote = `Opened again: the shift changed in AxisCare after the last case closed (${String(closedCase.resolved_at)}), and it has no caregiver, reason "${reason}".`
+        if (det) det.verdict = 'opens a case again (changed in AxisCare since the last case closed)'
+      } else {
+        alreadyHandled++
+        if (det) det.verdict = decision === 'reopen' ? 'held: changed since the last case closed (reopening is switched off)'
+          : decision === 'hold' ? "held: a person closed the last case and the shift hasn't changed since"
+          : decision === 'ask_covered' ? `held: marked covered but AxisCare shows no caregiver (${act ? 'a person was asked' : 'would ask a person'})`
+          : `held: couldn't ask AxisCare whether it changed (${act ? 'a person was asked' : 'would ask a person'})`
+        if (act) {
+          const admins = (Array.isArray(settings.coverage_alert_admins) && settings.coverage_alert_admins.length)
+            ? settings.coverage_alert_admins : ['samantha@mo-care.com']
+          const item = heldItem(decision, { visitId, client: clientName, startMs: visitMs(start, v?.timezone), reason,
+            lastCase: closedCase, detail: chk.detail, owner: String(admins[0]), nowIso })
+          if (item && !(await opsHas(item.id))) {
+            const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item })
+            if (!error) { row.acted = true; heldAsked++; opsIds?.add(item.id)
+              await opEvent(sb, { verb: 'coverage_held_check', item_id: item.id, area: 'coverage', summary: item.title }) }
+          }
+        }
+        continue
+      }
+    }
     wouldOpen.push(entry)
 
     if (live) {
@@ -231,7 +296,8 @@ Deno.serve(async (req) => {
         id: 'cw_' + visitId.replace(/[^A-Za-z0-9]/g, '_') + '_g' + ((genByVisit.get(visitId) ?? 0) + 1),
         ...entry,
         reason: 'call_off',
-        note: `Opened automatically: shift unassigned in AxisCare with reason "${reason}".`,
+        note: reopenNote || `Opened automatically: shift unassigned in AxisCare with reason "${reason}".`,
+        ...(reopenNote ? { reopened_after: closedCase?.id ?? null } : {}),
         status: 'open', asked: [],
         opened_at: nowIso, opened_by: 'axiscare-watch',
         caller_phone: '', caller_contact_id: '',
@@ -241,7 +307,7 @@ Deno.serve(async (req) => {
       if (!error) {
         created++; openByVisit.add(visitId)
         await opEvent(sb, { verb: 'coverage_opened', item_id: c.id, area: 'coverage',
-          summary: `Cara opened a call-off case — ${clientName || 'a client'} ${entry.shift_date} ${entry.shift_time}`
+          summary: `Cara opened a call-off case${reopenNote ? ' again' : ''} — ${clientName || 'a client'} ${entry.shift_date} ${entry.shift_time}`
             + (entry.calling_off ? `, ${entry.calling_off} calling off` : '') })
       }
     }
@@ -841,6 +907,9 @@ Deno.serve(async (req) => {
        trigger names can be chosen from reality instead of guessed. */
     reason_names_seen_on_unassigned: Object.fromEntries(reasonNamesSeen),
     unassigned_detail: unassignedDetail,
+    time_check: { fix_live: reopenLive, sample_start: sampleStart || null,
+      has_offset: sampleStart ? /Z$|[+-]\d{2}:?\d{2}$/.test(sampleStart) : null, differs: [...timeDiffers.values()] },
+    held_checks: { reopen_live: reopenLive, checked: heldChecks.length, reopened, people_asked: heldAsked, shifts: heldChecks },
     attendance_sweep: (globalThis as any).__attSwept ?? 'already done for yesterday',
     notes_sweep: (globalThis as any).__noteSwept ?? 'already done this hour',
   }
@@ -858,7 +927,7 @@ Deno.serve(async (req) => {
     } })
     // deno-lint-ignore no-explicit-any
     const att: any = (globalThis as any).__attSwept, notes: any = (globalThis as any).__noteSwept
-    const acted = created > 0 || coveredOutside > 0 || !!fetchError
+    const acted = created > 0 || coveredOutside > 0 || heldAsked > 0 || !!fetchError
       || (att && typeof att === 'object' && (att.events_logged > 0 || att.error))
       || (notes && typeof notes === 'object' && (notes.items_created > 0 || notes.error))
     if (acted) {

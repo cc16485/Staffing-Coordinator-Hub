@@ -1,0 +1,28 @@
+
+CHANGE 7a · AXISCARE READ PROBE · HARNESS
+============================================================
+PASS  CORS: the preflight answers 200 with Allow-Origin
+PASS  only the owner script: no token, anonymous, a signed-in person, and a near-miss secret are all refused (403); AxisCare never called
+PASS  the service role (legacy key or the exact new-style secret) may run it
+PASS  read only: every AxisCare request was a GET to /api/visits; the database was only read (coverage_cases), never written
+PASS  the report never carries a client or caregiver name
+PASS  windows: the next 72 hours pages through (258 visits → 3 pages), same formula as coverage-watch
+PASS  windows: today on the office clock (4 visits), and the id kinds are counted
+PASS  windows: AxisCare's 404 "No visits found" reads as zero, not an error
+PASS  A · clock-ins in the last 24h: one returned exactly, one returned as the same slot under the other id form, one MISSING and listed; the 30-hour-old one is not tested; an office-clock time with no offset reads as Springfield time
+PASS  A · clock-outs in the last 24h are tested too
+PASS  B · call-off cases in the last 7 days, split by where they stand: still open (one found; one called off 20 days ago, so NOT a miss; one with no last-changed time, a miss), closed (found); a 17-day-old case is left out
+PASS  B · an ongoing-sweep case (a shift left open long ago) is checked separately
+PASS  C · unassigned in the next 72h: with a reason (3) and without (1), each checked against changed-in-7-days; old changes are not counted as misses
+PASS  D · every visit AxisCare itself says changed in the last 24h: 4 checked, 3 returned (one as the same slot), the one the filter dropped is listed
+PASS  A stays strict: a clocked-in visit is a miss even if its own last-changed time is old
+PASS  recurring-schedule visits (s=…) returned by the 24-hour changed read are counted
+PASS  combined filter: changed-since plus a date range returns exactly "both" when AxisCare applies AND
+PASS  combined filter: if AxisCare ignored "changed since" when dates are given, the probe shows the extra visits
+PASS  fields: visit field names are listed (names only, from every visit, so clock-in fields on visit 251 still count) and a "modified" field is spotted
+PASS  429: the probe stops at once; every later read is skipped; it says so
+PASS  page cap: a read never goes past 30 pages
+PASS  a "next page" pointing anywhere but our AxisCare site is never followed (the token stays home)
+PASS  helpers: v= and s= ids for the same slot match; an office-clock time converts with the Springfield offset
+============================================================
+ALL 23 CHECKS PASS
