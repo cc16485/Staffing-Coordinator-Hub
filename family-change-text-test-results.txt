@@ -1,0 +1,12 @@
+PASS without the recorded approval nothing is sent (complete, reason not_enabled)
+PASS the circle is the one tied to the case's AxisCare id: Mary Smith's family, never the other Marys
+PASS only consenting members who want changes, have not replied STOP, and are still on AxisCare's contacts
+PASS every send goes through the shared gate as audience family, explicitly enabled
+PASS wording: names who called off, who is coming, when, the meet link; the client herself is spoken to as "you"
+PASS a case with no AxisCare client id texts nobody
+PASS a circle nobody has linked is never texted (even when the name matches exactly)
+PASS two circles linked to the same client: nobody is texted until a person fixes it
+PASS no consenting member: complete with nobody to tell
+PASS if the gate refuses every member, the case is left to retry (never faked as sent)
+
+10/10 passed

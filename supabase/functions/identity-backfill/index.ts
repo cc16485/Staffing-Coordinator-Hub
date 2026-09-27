@@ -729,8 +729,18 @@ async function syncCirclesFromAxisCare(commit: boolean) {
   const { data: ppl } = await sb.from('person_identity').select('id, display_name').in('id', pids)
   const nameOf = new Map((ppl ?? []).map(p => [String(p.id), String(p.display_name)]))
 
-  const { data: circles } = await sb.from('care_circles').select('id, client_name')
-  const circleByName = new Map((circles ?? []).map(c => [String(c.client_name).trim().toLowerCase(), c]))
+  /* Change 6a (2026-09-27): a circle belongs to a client by AxisCare id. The sync
+     finds it by id; an unlinked circle is linked here ONLY when the sync itself
+     fed it (it has an AxisCare-sourced contact) and its name exactly matches one
+     client and one active circle; a circle typed in the office waits for a person
+     (and is never fed by name any more). New circles are created already linked. */
+  const { data: circles } = await sb.from('care_circles').select('id, client_name, active, axiscare_client_id')
+  const activeCircles = (circles ?? []).filter(c => c.active !== false)
+  const circleByAx = new Map(activeCircles.filter(c => c.axiscare_client_id).map(c => [String(c.axiscare_client_id), c]))
+  const nameCount = new Map<string, number>()
+  for (const c of activeCircles) { const k = String(c.client_name ?? '').trim().toLowerCase(); nameCount.set(k, (nameCount.get(k) ?? 0) + 1) }
+  const personNameCount = new Map<string, number>()
+  for (const l of (links ?? [])) { const k = String(nameOf.get(String(l.person_id)) ?? '').trim().toLowerCase(); if (k) personNameCount.set(k, (personNameCount.get(k) ?? 0) + 1) }
   const { data: contacts } = await sb.from('circle_contacts').select('*')
   const contactsByCircle = new Map<string, any[]>()
   for (const ct of (contacts ?? [])) {
@@ -757,71 +767,87 @@ async function syncCirclesFromAxisCare(commit: boolean) {
     : null
 
   const out = { mode: commit ? 'COMMIT' : 'DRY RUN', clients: (links ?? []).length,
-    circles_created: 0, contacts_added: 0, contacts_updated: 0,
+    circles_created: 0, circles_linked: 0, waiting_for_person_link: 0, contacts_added: 0, contacts_updated: 0,
+    contacts_marked_removed: 0, contacts_back_on_axiscare: 0,
     already_present: 0, clients_with_no_parties: 0, manual_untouched: 0,
     errors: [] as string[],
     sample: [] as Array<Record<string, unknown>> }
 
   for (const l of (links ?? [])) {
+    const ax = String(l.source_id)
     const clientName = nameOf.get(String(l.person_id)) ?? ''
     if (!clientName) continue
     // deno-lint-ignore no-explicit-any
     let parties: any[] = []
     try {
-      const r = await fetch(`https://${site}.axiscare.com/api/clients/${l.source_id}/responsibleParties`, { headers: HEAD })
+      const r = await fetch(`https://${site}.axiscare.com/api/clients/${ax}/responsibleParties`, { headers: HEAD })
       if (!r.ok) { if (r.status !== 404) out.errors.push(`${clientName}: AxisCare ${r.status}`); continue }
       // deno-lint-ignore no-explicit-any
       const j: any = await r.json().catch(() => ({}))
       parties = rowsOf(j?.results?.responsibleParties ?? j?.responsibleParties ?? j?.results ?? j)
         .filter(p => String((p as any)?.name ?? '').trim())
     } catch (err) { out.errors.push(`${clientName}: ${String(err)}`); continue }
-    if (!parties.length) { out.clients_with_no_parties++; continue }
 
-    let circle = circleByName.get(clientName.trim().toLowerCase())
+    let circle = circleByAx.get(ax)
     if (!circle) {
-      if (commit) {
-        const { data, error } = await sb.from('care_circles')
-          .insert({ client_name: clientName }).select('id, client_name').single()
-        if (error || !data) { out.errors.push(`${clientName} circle: ${error?.message}`); continue }
-        circle = data
-        circleByName.set(clientName.trim().toLowerCase(), circle)
+      const nk = clientName.trim().toLowerCase()
+      const byName = activeCircles.find(c => !c.axiscare_client_id && String(c.client_name ?? '').trim().toLowerCase() === nk)
+      if (byName) {
+        const fedBySync = (contactsByCircle.get(String(byName.id)) ?? []).some(ct => String(ct.source ?? '') === 'axiscare')
+        if (!fedBySync || nameCount.get(nk) !== 1 || personNameCount.get(nk) !== 1) { out.waiting_for_person_link++; continue }
+        out.circles_linked++
+        if (commit) {
+          const { data, error } = await sb.rpc('family_circle_link', { p_circle_id: String(byName.id), p_axiscare_client_id: ax,
+            p_staff: 'automation:circles-sync', p_how: 'sync_exact' })
+          if (error || !['linked', 'already_linked'].includes(data?.outcome)) { out.errors.push(`${clientName} link: ${error?.message ?? data?.outcome}`); continue }
+        }
+        circle = { ...byName, axiscare_client_id: ax }
+        circleByAx.set(ax, circle)
       } else {
-        circle = { id: '(new)', client_name: clientName }
+        if (!parties.length) { out.clients_with_no_parties++; continue }
+        out.circles_created++
+        if (commit) {
+          const { data, error } = await sb.from('care_circles')
+            .insert({ client_name: clientName, axiscare_client_id: ax, linked_by: 'automation:circles-sync', linked_at: new Date().toISOString(), link_how: 'sync_created' })
+            .select('id, client_name, active, axiscare_client_id').single()
+          if (error || !data) { out.errors.push(`${clientName} circle: ${error?.message}`); continue }
+          await sb.from('family_circle_link_log').insert({ circle_id: String(data.id), axiscare_client_id: ax, action: 'link', staff: 'automation:circles-sync', reason: 'created by the nightly AxisCare sync' })
+          circle = data
+        } else {
+          circle = { id: '(new)', client_name: clientName, axiscare_client_id: ax }
+        }
+        circleByAx.set(ax, circle)
       }
-      out.circles_created++
     }
+    if (!parties.length) out.clients_with_no_parties++
 
     const mine = contactsByCircle.get(String(circle.id)) ?? []
+    const seen = new Set<string>()
     for (const p of parties) {
       const nm = String(p.name).trim()
+      seen.add(nm.toLowerCase())
       const tier = Number(p.listNumber ?? parties.indexOf(p) + 1) || null
       const row = {
         name: nm, relationship: String(p.relationship ?? '').trim() || null,
         phone: pickPhone(p) || null, email: String(p.email ?? '').trim() || null,
         axiscare_list_number: tier,
-        /* AxisCare returns these as the STRINGS '1' / '0' / '' — comparing
-           to boolean true made both flags permanently false for everyone
-           (2026-09-20 audit). Truthy forms accepted; '' stays null, because
-           an unanswered question is not a "no". */
+        /* '1' / '0' / '' strings: '' stays null, because an unanswered question is not a "no" */
         hipaa_authorized: axYes(p.hipaaDisclosureAuthorization),
         can_make_medical_decisions: axYes(p.canMakeMedicalDecisions),
         source: 'axiscare',
       }
       const existing = mine.find(c => String(c.name ?? '').trim().toLowerCase() === nm.toLowerCase())
       if (existing) {
-        /* Ownership rule (hers, 2026-09-20): a MANUALLY created contact is
-           never changed by automation — not even its blank fields — until an
-           explicit reconciliation workflow exists. Only contacts this sync
-           itself created (source='axiscare') may be refreshed from AxisCare. */
+        /* Her ownership rule (2026-09-20): a contact typed in the office is never
+           changed by automation. AxisCare-sourced contacts now FOLLOW AxisCare in
+           full (Change 6a): AxisCare owns the responsible parties, so its values
+           replace ours, including the old wrongly-false HIPAA flags. */
         if (String(existing.source ?? '') !== 'axiscare') { out.manual_untouched++; continue }
-        // fill blanks only; a human's entry always wins
         const patch: Record<string, unknown> = {}
-        for (const k of ['relationship', 'phone', 'email'] as const) {
-          if (!String(existing[k] ?? '').trim() && row[k]) patch[k] = row[k]
+        for (const k of ['relationship', 'phone', 'email', 'axiscare_list_number', 'hipaa_authorized', 'can_make_medical_decisions'] as const) {
+          if ((existing[k] ?? null) !== (row[k] ?? null)) patch[k] = row[k]
         }
-        for (const k of ['axiscare_list_number', 'hipaa_authorized', 'can_make_medical_decisions'] as const) {
-          if (existing[k] == null) patch[k] = row[k]
-        }
+        if (existing.axiscare_removed_at) { patch.axiscare_removed_at = null; out.contacts_back_on_axiscare++ }
         if (Object.keys(patch).length) {
           out.contacts_updated++
           if (commit) {
@@ -838,6 +864,17 @@ async function syncCirclesFromAxisCare(commit: boolean) {
           circle_id: circle.id, ...row, sms_consent: false, is_primary: tier === 1 && !mine.length,
         })
         if (error) out.errors.push(`${clientName}/${nm}: ${error.message}`)
+      }
+    }
+    /* someone AxisCare no longer lists: marked, never deleted (their texting
+       consent and history stay; the family senders leave them out) */
+    for (const ct of mine) {
+      if (String(ct.source ?? '') !== 'axiscare' || ct.axiscare_removed_at) continue
+      if (seen.has(String(ct.name ?? '').trim().toLowerCase())) continue
+      out.contacts_marked_removed++
+      if (commit) {
+        const { error } = await sb.from('circle_contacts').update({ axiscare_removed_at: new Date().toISOString() }).eq('id', ct.id)
+        if (error) out.errors.push(`${clientName}/${ct.name}: ${error.message}`)
       }
     }
   }

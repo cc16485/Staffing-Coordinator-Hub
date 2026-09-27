@@ -1,0 +1,15 @@
+PASS CORS preflight answered from day one
+PASS a signed-in person is required
+PASS link goes through the door as that person
+PASS unlink passes the reason to the door
+PASS view: AxisCare's slot side by side with the hub's copy (HIPAA yes, medical no, mobile phone)
+PASS write: AxisCare's slot keeps everything else (address, birth date, home phone, HIPAA yes, medical no); only the four fields change
+PASS write: read back, and the hub copy updated from what AxisCare now holds
+PASS write: an office-typed member is not written through "edit"; use Add to AxisCare
+PASS a circle not linked to a client: nothing is written
+PASS add: an office-typed member goes into the first FREE slot (2), is read back, and becomes AxisCare-owned
+PASS add: no free slot (AxisCare holds three) says so; nothing written
+PASS add: AxisCare already lists that name; nothing written
+PASS AxisCare refusing (403) is shown; the hub copy is not changed
+
+13/13 passed
