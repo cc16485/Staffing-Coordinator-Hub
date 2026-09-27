@@ -94,10 +94,13 @@ keys = {k.get("name"): k.get("api_key", "") for k in (jl(kb) if isinstance(jl(kb
 SVC, ANON = keys.get("service_role", ""), keys.get("anon", ""); HIDE += [SVC, ANON]
 if not SVC or not ANON: say("  ✗ STOP: could not read the project keys. Nothing was changed."); done(4)
 if not deploy(FIRST, before[FIRST]): say("  STOP. Nothing else was deployed."); done(5)
-s, b = http("POST", f"{FNB}/functions/v1/{FIRST}?probe_dnd=1", {}, {"Authorization": "Bearer " + SVC, "apikey": ANON}, timeout=90)
+if before[FIRST] is not True: say("  ✗ STOP: lead-followup must have the platform's sign-in check ON for the server-only check. Nothing else was deployed."); done(6)
+s, b = http("POST", f"{FNB}/functions/v1/{FIRST}?probe_dnd=1", {}, {"Authorization": "Bearer " + SVC, "apikey": SVC}, timeout=90)
 p = jl(b)
 say("  Live GoHighLevel check (a staff alert contact; nothing sent, answers are yes/no only):")
-if s != 200 or p.get("probe") != "dnd": bad(f"the check did not answer (HTTP {s})"); say("  STOP. Only lead-followup was deployed; its family messages are paused anyway."); done(6)
+if s != 200 or p.get("probe") != "dnd":
+    msg = (p.get("error") or p.get("message") or p.get("msg") or str(b)[:160]) if isinstance(p, dict) else str(b)[:160]
+    bad(f"the check did not answer (HTTP {s}: {msg})"); say("  STOP. Only lead-followup was deployed; its family messages are paused anyway."); done(6)
 if not p.get("staff_contact"): bad("there is no staff alert phone to check with"); say("  STOP. Only lead-followup was deployed."); done(6)
 dnd_ok = bool(p.get("upsert_has_dnd") or p.get("get_has_dnd"))
 say(f"    GHL answers with the Do Not Disturb flag: {'yes' if dnd_ok else 'NO'} (on the find-or-create answer: {'yes' if p.get('upsert_has_dnd') else 'no'}; on a direct look-up: {'yes' if p.get('get_has_dnd') else 'no'})")

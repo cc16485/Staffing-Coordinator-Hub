@@ -19,7 +19,7 @@ def setup(probe=None, ops=None, leads=None):
                  ("campaign_settings", [{"id": "settings", "enabled": True, "aud_monthly": False, "aud_caregivers": True}]),
                  ("leads", leads or [{"id": "a", "nurture_started_at": "2026-09-01"}, {"id": "b"}])):
         s.run("insert into app_data(key,data) values (:k, cast(:v as jsonb))", k=k, v=json.dumps(v))
-    S.clear(); S.update(verify={f: f in ("coverage-run", "circle-send") for f in ALL}, calls=[],
+    S.clear(); S.update(verify={f: f in ("coverage-run", "circle-send", "lead-followup") for f in ALL}, calls=[],
                         probe=probe or {"probe": "dnd", "staff_contact": True, "contact_found": True, "upsert_has_dnd": True, "get_has_dnd": True, "check_reads_ok": True})
 def J(v): return int(v) if isinstance(v, Decimal) else (v if isinstance(v, (int, float, bool, str, dict, list, type(None))) else str(v))
 class Hd(BaseHTTPRequestHandler):
@@ -42,6 +42,7 @@ class Hd(BaseHTTPRequestHandler):
             finally: cc.close()
         fn = u.path.rsplit("/", 1)[1]; S["calls"].append((fn, u.query))
         if fn == "lead-followup" and qs.get("probe_dnd"):
+            if S.get("probe_401"): return self.reply(401, {"error": "server only"})
             return self.reply(200, S["probe"]) if auth == "Bearer " + SVC else self.reply(401, {})
         if fn == "lead-followup" and qs.get("dry"):
             ops = json.loads(s.run("select data::text from app_data where key='ops_settings'")[0][0])
@@ -70,8 +71,8 @@ ops = lambda: json.loads(s.run("select data::text from app_data where key='ops_s
 setup(); rc, t = run()
 ck("happy path: DONE; lead-followup deploys first, then the GHL check, then the other ten with coverage-run last",
    rc == 0 and "RESULT: DONE" in t and deployed(t) == ALL and t.index("would deploy lead-followup") < t.index("Live GoHighLevel check") < t.index("would deploy lead-intake"), t)
-ck("each function keeps how it checks callers (circle-send and coverage-run ON, the rest off)",
-   "would deploy circle-send\n" in t + "\n" and "would deploy coverage-run" in t and "would deploy lead-intake --no-verify-jwt" in t, t)
+ck("each function keeps how it checks callers (lead-followup, circle-send and coverage-run ON, the rest off)",
+   "would deploy lead-followup\n" in t and "would deploy circle-send\n" in t + "\n" and "would deploy coverage-run" in t and "would deploy lead-intake --no-verify-jwt" in t, t)
 ck("the report shows the switches, drips in progress, the opt-out record, and the live GHL answers as yes/no",
    "inquiry greeting false" in t and "inquiries on a drip right now: 1" in t and "GHL answers with the Do Not Disturb flag: yes" in t and "every source the check reads is readable here: yes" in t, t)
 ck("nothing secret reaches the report", SVC not in t and ANON not in t, t)
@@ -85,6 +86,11 @@ setup(probe={"probe": "dnd", "staff_contact": True, "contact_found": True, "upse
 ck("if a source the check reads cannot be read in production: STOP after lead-followup", rc == 6 and deployed(t) == ["lead-followup"], t)
 setup(probe={"probe": "dnd", "staff_contact": False}); rc, t = run()
 ck("with no staff contact to check against: STOP after lead-followup (nothing is assumed)", rc == 6 and deployed(t) == ["lead-followup"], t)
+setup(); S["probe_401"] = True
+rc, t = run()
+ck("if the check is refused, the refusal message is shown (never the key) and it stops after lead-followup", rc == 6 and "HTTP 401: server only" in t and SVC not in t and deployed(t) == ["lead-followup"], t)
+setup(); S["verify"]["lead-followup"] = False; rc, t = run()
+ck("if lead-followup's platform sign-in check were off, it stops before relying on the server-role check", rc == 6 and "must have the platform's sign-in check ON" in t and deployed(t) == ["lead-followup"], t)
 setup(); bad_sha = {f: sha(f) for f in FILES}; bad_sha["_shared/optout.ts"] = "0" * 64; rc, t = run(bad_sha)
 ck("a source that is not the reviewed build: STOP before anything deploys", rc == 4 and deployed(t) == [], t)
 setup(ops={"inquiry_ack_live": True, "inquiry_followups_live": False}); rc, t = run()

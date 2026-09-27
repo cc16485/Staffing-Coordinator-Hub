@@ -94,7 +94,13 @@ Deno.serve(async (req) => {
      every run) and answers yes/no only: no names, numbers or ids leave, and nothing is sent. */
   if (new URL(req.url).searchParams.get('probe_dnd') === '1') {
     const svc = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
-    if (!svc || (req.headers.get('Authorization') || '') !== 'Bearer ' + svc) return json({ error: 'server only' }, 401)
+    const tok = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '')
+    let role: unknown = null
+    try { const b = tok.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'); role = JSON.parse(atob(b + '='.repeat((4 - b.length % 4) % 4))).role } catch { /* not a JWT */ }
+    /* The exact server key, or a server-role sign-in. lead-followup runs with the platform's sign-in check ON, so the
+       platform has already verified this token's signature before it reaches here: a service_role claim is genuine.
+       (Desktop 276's first run was refused because the key it read and this function's copy differ in form.) */
+    if (!((svc && tok === svc) || role === 'service_role')) return json({ error: 'server only' }, 401)
     const { data: staff } = await supabase.from('applicant_alerts').select('name, phone').eq('active', true).contains('alert_on', ['lead'])
     // deno-lint-ignore no-explicit-any
     const t = (staff ?? []).find((x: any) => String(x.phone || '').replace(/\D/g, '').length >= 10)

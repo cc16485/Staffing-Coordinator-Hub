@@ -101,6 +101,13 @@ ck('lead-followup · the next run does not ask again for the stopped inquiry (no
 /* ── the live GoHighLevel check (server-only, yes/no answers, sends nothing) ── */
 reset(); r = await post(h, 'https://x/functions/v1/lead-followup?probe_dnd=1', {})
 ck('DND probe · refused without the server key', r.status === 401 && SENT.length === 0, r)
+const jwt = (claims) => 'x.' + Buffer.from(JSON.stringify(claims)).toString('base64url') + '.sig'
+reset(); r = await post(h, 'https://x/functions/v1/lead-followup?probe_dnd=1', {}, { Authorization: 'Bearer ' + jwt({ role: 'authenticated', sub: 'u1' }) })
+ck('DND probe · refused for a signed-in staff token or the public anon key (not the server role)', r.status === 401 && SENT.length === 0, r)
+reset(); r = await post(h, 'https://x/functions/v1/lead-followup?probe_dnd=1', {}, { Authorization: 'Bearer ' + jwt({ role: 'anon' }) })
+ck('DND probe · refused for the anon role', r.status === 401, r)
+reset(); r = await post(h, 'https://x/functions/v1/lead-followup?probe_dnd=1', {}, { Authorization: 'Bearer ' + jwt({ role: 'service_role', iss: 'supabase' }) })
+ck('DND probe · a server-role sign-in (verified by the platform) is accepted even when it is not the same string as the function\'s key', r.status === 200 && r.j?.probe === 'dnd', r)
 reset(); r = await post(h, 'https://x/functions/v1/lead-followup?probe_dnd=1', {}, { Authorization: 'Bearer k' })
 ck('DND probe · with the server key: answers yes/no only (no names, numbers or ids), sends nothing, runs no sweep',
    r.status === 200 && r.j?.upsert_has_dnd === true && r.j?.get_has_dnd === true && r.j?.check_reads_ok === true && SENT.length === 0 && !/417|C:|Office/.test(JSON.stringify(r.j)) && !APP.leads, r)
