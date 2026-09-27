@@ -128,3 +128,21 @@ notes), tied to the AxisCare client id. Proposed as its own step after 8, or soo
   copies; records are never changed.
 - Proof: `client_pickers_test.mjs` 28/28 (the real obligations engine + the hub's own code);
   family-links 26/26 and call-in plan 18/18 still pass; all inline scripts parse.
+
+## 8b as built (hub rule file + one server check)
+- `cc-hub-live/client-start.js` (sha 252b3a13…): the Start of Care rules, moved out of the page
+  unchanged except (a) a FAMILY-owned step, like a DSDS one, gets 14 days (her ruling), (b) the
+  wait is measured from the time given. The page loads it and keeps every old name
+  (`socCurrentStep`, `socIsStuck`, `csEvaluate`, `CS_STEP_DOMAIN`…); no second copy remains.
+  Item titles name the client (not the caller) and carry no em dash.
+- `supabase/functions/client-start-run` (sha 899ee68b…): fetches the live client-start.js (stops
+  if it can't; no fallback copy), evaluates leads with a start that aren't archived or Lost, and
+  plans: new items owned by the step's area owner (domains table), at most 10 a run, a start stuck
+  over 60 days held for a person's decision; updates keep a person's owner and notes unless the
+  area moved; closes items when the start moves again, finishes, is abandoned, or the lead is
+  archived/lost. DRY unless `ops_settings.client_start_live`. Counts only for the scheduler.
+- Desktop 259 (`client_start_install.py`): sha-check, live-hub engine check, deploy, hourly
+  schedule (:35), preview, then asks; "yes" switches on and runs once. Desktop 260 switches off.
+- Proof: `client_start_test.mjs` 26/26 (rules; the page's old badge rule matches on 29 samples;
+  the page wiring; the REAL client-start-run); `client_start_install_proof.py` 10/10; earlier hub
+  tests still pass.
