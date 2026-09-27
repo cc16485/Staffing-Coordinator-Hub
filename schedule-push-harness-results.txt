@@ -1,0 +1,26 @@
+PASS CORS preflight answered from day one
+PASS access: a signed-in person for preview/create/undo; the permission check is for the owner script only
+PASS preview: one schedule per caregiver and shift, days grouped (Jane Mon/Wed/Fri mornings, Bo Mon/Wed evenings)
+PASS preview: a name that matches two AxisCare caregivers is blocked, never guessed
+PASS preview: the client comes from the plan's Journey; start date defaults to the Start Contract target; reads only
+PASS preview: services in use, the client's own first
+PASS grouping: a cell's stored AxisCare id wins over the name
+PASS grouping: unconfirmed and declined cells are never sent
+PASS create: refused without a service (nothing sent)
+PASS create: refused with a start date in the past
+PASS create: each schedule is created on its own with client, days, start date, times, service, caregiver and weekly frequency
+PASS create: AxisCare is read back and each schedule confirmed, with its ids kept for undo
+PASS a second send of the same plan is refused (double click, second person)
+PASS sent again deliberately: identical schedules already in AxisCare are skipped, never duplicated
+PASS undo: refuses a schedule this plan did not create
+PASS undo (same day): ends every schedule the plan created from its start date, so no visits remain
+PASS undo: not offered after the day of creation
+PASS a service not set up for the client (billing first): AxisCare's refusal is shown for each schedule; nothing created
+PASS an overnight shift AxisCare refuses is reported (enter by hand) and does not stop the others
+PASS no permission (403): every schedule says so; nothing created
+PASS a plan with no Journey link is blocked and says how to fix it
+PASS a person with no AxisCare client yet: the preview says so
+PASS permission check: a deliberately incomplete request is refused as incomplete, proving permission without creating anything
+PASS permission check: a "not allowed" refusal is reported as no permission
+
+24/24 passed
