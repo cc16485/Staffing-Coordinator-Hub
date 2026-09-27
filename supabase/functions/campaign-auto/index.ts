@@ -20,9 +20,22 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { outreachGate } from '../_shared/outreach.ts'
+import { requireStaff, serverSecretOk } from '../_shared/staff-auth.ts'
 
+const cors = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
 const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+  new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } })
+
+/* Security slice (2026-09-27). Two callers, two doors, and the public URL token opens neither:
+     · the daily scheduled run: the server-only secret CAMPAIGN_CRON_SECRET in the x-cron-secret header (the cron
+       reads it from Supabase Vault; it is never in browser code). Only this door can run the send.
+     · the Hub's audience lookup (?resolve=) and shape probe (?probe=1): a signed-in staff member with owner_admin.
+   ?auth_check=1 answers whether the caller is authorized and does nothing else. */
+export const CAMPAIGN_ROLES = ['owner_admin']
 
 const LIB_URL = 'https://caring-companions.pages.dev/email-assets/library.json'
 const ASSETS = 'https://caring-companions.pages.dev/email-assets'
@@ -81,9 +94,18 @@ function buildEmailHTML(e: any) {
 }
 
 Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   const url = new URL(req.url)
-  const expected = Deno.env.get('HT_SUPPORT_TOKEN') ?? Deno.env.get('HT_ORDER_TOKEN')
-  if (!expected || url.searchParams.get('token') !== expected) return json({ error: 'unauthorized' }, 401)
+  /* Who is asking comes first: before settings, audiences or GHL are touched. */
+  const server = serverSecretOk(req, 'CAMPAIGN_CRON_SECRET')
+  if (!server) {
+    const lookup = !!url.searchParams.get('resolve') || url.searchParams.get('probe') === '1' || url.searchParams.get('auth_check') === '1'
+    const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } })
+    const who = await requireStaff(admin, req, CAMPAIGN_ROLES)
+    if (!who.ok) return json({ error: who.error }, who.status)
+    if (!lookup) return json({ error: 'The campaign autopilot runs on its schedule. Staff can look up an audience here, not run the send.' }, 403)
+    if (url.searchParams.get('auth_check') === '1') return json({ ok: true, authorized: 'staff', roles: who.roles })
+  } else if (url.searchParams.get('auth_check') === '1') return json({ ok: true, authorized: 'server' })
   /* proactive_external: we start this, so weekdays only, 8am-6pm.
      Policy lives in _shared/outreach.ts. */
   const gate = outreachGate(req, 'proactive_external', json)
