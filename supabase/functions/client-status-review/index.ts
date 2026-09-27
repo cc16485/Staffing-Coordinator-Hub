@@ -153,7 +153,7 @@ Deno.serve(async (req) => {
       counts.admission_scan = r.ok ? { active: j.active ?? null, unlinked: j.unlinked ?? 0,
         // deno-lint-ignore no-explicit-any
         opened: (j.results ?? []).filter((x: any) => x.outcome === 'opened').length } : { error: 'HTTP ' + r.status }
-      if (!r.ok) { counts.errors++; errors.push({ step: 'admission_scan', status: r.status }) }
+      if (!r.ok) { counts.errors++; errors.push({ step: 'admission_scan', status: r.status, detail: String(j?.error ?? '').slice(0, 200) }) }
     } catch (e) { counts.errors++; errors.push({ step: 'admission_scan', error: String(e) }) }
   } else {
     const active = Object.keys(map).filter((k) => map[k] === 'Active')

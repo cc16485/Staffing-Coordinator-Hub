@@ -1,0 +1,9 @@
+PASS the exact server secret passes the door (then stops at missing AxisCare creds: 502)
+PASS a service-role JWT still passes
+PASS the public key is refused
+PASS a signed-in person is refused
+PASS a near-miss secret is refused
+PASS a longer string starting with the secret is refused
+PASS no header is refused
+
+7/7 passed
