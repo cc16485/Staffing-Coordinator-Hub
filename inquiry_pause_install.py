@@ -48,7 +48,7 @@ for fn, want in FN_SHAS.items():
     if got != want: say("  STOP. Nothing was run."); done(2)
 before = {fn: verify_jwt(fn) for fn in DEPLOY}
 if any(v is None for v in before.values()): say("  ✗ STOP: could not read how these functions check callers: " + str(before) + ". Nothing was changed."); done(3)
-decided = {"by": "Samantha", "decided_on": dt.date.today().isoformat(), "words": "Pause the immediate automatic inquiry acknowledgment along with the day-1 and day-3 follow-ups", "recorded_by": "Desktop 269"}
+decided = {"by": "Samantha", "decided_on": dt.date.today().isoformat(), "at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "words": "Pause the immediate automatic inquiry acknowledgment along with the day-1 and day-3 follow-ups", "recorded_by": "Desktop 269"}
 ok, r = sql("""update public.app_data set data = data || jsonb_build_object('inquiry_ack_live', false, 'inquiry_followups_live', false,
                  'inquiry_paused', '""" + json.dumps(decided).replace("'", "''") + """'::jsonb), updated_at = now()
                where key = 'ops_settings' and jsonb_typeof(data) = 'object'
