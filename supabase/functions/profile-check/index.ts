@@ -132,8 +132,11 @@ async function opsSettings(): Promise<Record<string, unknown>> {
 const rowsOf = (x: any): any[] => Array.isArray(x) ? x : (x && typeof x === 'object' ? Object.values(x) : [])
 // deno-lint-ignore no-explicit-any
 function careLevelOf(classes: any): number | null { return sharedCareLevelOf(classes).level }   // Change 6b: one shared rule
+/* Medicaid = Medicaid / IHS / DSDS, the same test as the New Clients board and the profile. PACE is NOT
+   Medicaid here: it bills private-side and sits in Krystal's book (her call 2026-08-02; PACE removed from
+   this test 2026-09-27), so a PACE client never gets the Medicaid authorization or DCN items. */
 const isMedicaidLead = (lead: Record<string, unknown>) =>
-  /medicaid|ihs|pace/i.test(S(lead?.funding_source))
+  /medicaid|ihs|dsds/i.test(S(lead?.funding_source))
 const isPrivatePayLead = (lead: Record<string, unknown>) =>
   /private/i.test(S(lead?.funding_source)) || S(lead?.funding_source) === 'ltc'
 // deno-lint-ignore no-explicit-any
@@ -462,6 +465,9 @@ function runSelfTest() {
   T('no DCN item for private pay', find(evalClient({ facts: fullFacts, parties, lead: ppLead, prof, queueRow: null }), 'dcn') == null)
   const medLead = { funding_source: 'medicaid', attributes_entered_at: 'x', soc: newSoc('A1', ['m0', 'm1', 'm2']), client_attributes: {} }
   T('DCN item appears for Medicaid', find(evalClient({ facts: fullFacts, parties, lead: medLead, prof, queueRow: null }), 'dcn') != null)
+  const paceLead = { ...medLead, funding_source: 'pace' }
+  r = evalClient({ facts: fullFacts, parties, lead: paceLead, prof, queueRow: null })
+  T('PACE is not Medicaid: no DCN item, no Medicaid authorization item', find(r, 'dcn') == null && find(r, 'medicaid_auth') == null)
   // 8 grandfathering: pre-standard SOC can never block
   const oldLead = { funding_source: 'private', client_attributes: {}, soc: { pathway: 'PP', started_at: '2026-09-01T00:00:00Z', steps: [{ id: 'p0' }] } }
   r = evalClient({ facts: { firstName: 'Old' }, parties: [], lead: oldLead, prof: {}, queueRow: null })
