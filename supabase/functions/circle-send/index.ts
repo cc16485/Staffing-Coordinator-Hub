@@ -17,6 +17,13 @@
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { contactForOutbound } from '../_shared/outreach.ts'
+import { requireStaff } from '../_shared/staff-auth.ts'
+
+/* Security slice (2026-09-27): this used to trust any caller who knew a circle id. It now requires a signed-in
+   Caring Companions staff member who runs office operations (owner_admin or care_coordinator), checked before the
+   circle is read, before a preview is built and before anything is sent. The name recorded as the sender is the
+   verified staff member, never a name the request supplies. { auth_check: true } answers and does nothing else. */
+export const CIRCLE_ROLES = ['owner_admin', 'care_coordinator']
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -29,11 +36,16 @@ const json = (b: unknown, s = 200) =>
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
 
-  const { circle_id, kind = 'update', body, sent_by, dry } = await req.json().catch(() => ({}))
+  const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } })
+  const who = await requireStaff(supabase, req, CIRCLE_ROLES)
+  if (!who.ok) return json({ error: who.error }, who.status)
+
+  const { circle_id, kind = 'update', body, dry, auth_check } = await req.json().catch(() => ({}))
+  if (auth_check === true) return json({ ok: true, authorized: true, roles: who.roles })
+  const sent_by = who.name || who.email
   if (!circle_id) return json({ error: 'no circle given' }, 400)
   if (!body || !String(body).trim()) return json({ error: 'no message given' }, 400)
 
-  const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const ghlToken = Deno.env.get('GHL_TOKEN')
   const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
 
