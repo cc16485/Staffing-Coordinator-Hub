@@ -172,7 +172,7 @@ Mapped first (every editor and every reader, with which readers decide something
   id → the right client, or the confirmed inquiry; two "Ann Jones" → the pick list. Hub tests pass
   (family-links test updated for the opener's new tab argument).
 
-## Step 5b: returning families (map done, design proposed, NOT built)
+## Step 5b: returning families (design approved 2026-09-27 "yes to all, go and merge"; A built, B to F next)
 How a second record happens today (most likely first):
 1. A former client's family calls back; a new inquiry is entered (no check against AxisCare, and
    ~268 former AxisCare clients aren't in the hub's identity list at all); Convert creates a SECOND
@@ -201,3 +201,30 @@ Proposed (identity stays a person's decision; software suggests, never merges):
 - F. "Mark as duplicate" also closes the duplicate's empty Journey; a returning family's new inquiry
   can be attached to their current Journey.
 Build order: A → B + D (hub) → C (server entry points) → E + F.
+
+## Step 5b-A as built (server; Desktop 262)
+- `identity-former-clients.sql`: adds `person_identity.birth_date` (the one new field). Additive, rerunnable.
+- `identity-backfill ?former_clients=1` (dry by default; `&commit=1` writes). For every AxisCare client that is
+  NOT active and has no hub person: one person (name, main phone, birth date), a confirmed axiscare/client link,
+  a `client` role marked **former** (AxisCare's status label as the reason; `startDate`; `effectiveEndDate`, or
+  today with the reason saying AxisCare had no end date, because a former role must carry an end date), and
+  phone_index rows from AxisCare. No Journey, no lead, nobody contacted.
+  - People already linked only get a missing birth date filled; one on file is never replaced.
+  - Active clients with no person are listed, not created ("Who is this?" territory).
+  - Same name as someone in the hub: listed, created separately, never merged.
+  - Records that aren't people (Office Staff, Example Family Circle, tests) are left out and listed.
+  - **Texting cannot change.** The outreach gate allows a number not on file or one with a confirmed entry, and
+    blocks one on file only as probable. So a new number, or one already confirmed, goes in confirmed; one on
+    file only as probable goes in probable (still blocked). Desktop 262 proves it: it records the gate's answer
+    for every number before the write and compares after.
+  - A person whose AxisCare link fails to save is removed again, so a rerun can't make a second one.
+  - Reads every existing row a page at a time (a short read would make duplicates on a rerun); AxisCare's next
+    page must be on the agency's own site or the run stops before writing.
+- **Caller lock (security gap closed).** identity-backfill had no caller check: the public key could run every
+  mode, including the ones that write identity rows and the ones that return names and numbers. Now only the
+  nightly Family Circle sync (`circles=1`) is open to the public key and signed-in staff, and they get counts
+  only (the hub's Sync button only shows counts). Every other mode needs the service key. The function stays
+  deployed with key checking on (Desktop 262 stops if it isn't), so a faked key never reaches it. Old Desktop
+  scripts 84, 85, 86 and 122 used the public key for other modes; they will now be refused (all were one-offs).
+- Tests: `identity_former_clients_test.mjs` (47, every written column checked against the real tables and the
+  end-date rule enforced), `identity_former_clients_install_proof.py` (12, real Postgres).
