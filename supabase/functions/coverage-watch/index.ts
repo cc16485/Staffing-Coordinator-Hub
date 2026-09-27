@@ -32,6 +32,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { opEvent } from '../_shared/events.ts'
 import { changedSince, decideHeld, heldItem, visitMs } from '../_shared/held-shift.ts'
+import { outsideVerdict } from '../_shared/covered-outside.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -299,7 +300,7 @@ Deno.serve(async (req) => {
         note: reopenNote || `Opened automatically: shift unassigned in AxisCare with reason "${reason}".`,
         ...(reopenNote ? { reopened_after: closedCase?.id ?? null } : {}),
         status: 'open', asked: [],
-        opened_at: nowIso, opened_by: 'axiscare-watch',
+        opened_at: nowIso, opened_by: 'axiscare-watch', seen_unassigned_at: nowIso,
         caller_phone: '', caller_contact_id: '',
         resolved_at: null, resolved_how: null, covered_by: null,
       }
@@ -494,16 +495,44 @@ Deno.serve(async (req) => {
      closure pass then sends the courtesy texts and the family circle text
      exactly as if Confirm had been tapped on the board. Scope guard: only
      cases that are already open (a real call-off) — a plain schedule
-     reassignment with no case never texts anybody. */
+     reassignment with no case never texts anybody.
+     2026-09-27 (Elizabeth Kurtz): a caregiver on the shift is a cover ONLY when
+     it is somebody other than the caregiver who called off (_shared/covered-
+     outside.ts). The caller still on the schedule, or a caregiver Cara can't
+     tell apart from the caller, leaves the case open with a note for a person.
+     And a dry run closes nothing. */
   let coveredOutside = 0
+  const outsideLeftOpen: Record<string, unknown>[] = []
   try {
     const byVisitId = new Map(visits.map(v => [String(v?.id ?? ''), v]))
     for (const cc of cases) {
       if (cc?.status !== 'open' || !cc?.axiscare_visit_id) continue
       const v = byVisitId.get(String(cc.axiscare_visit_id))
-      if (!v || v?.caregiver?.id == null) continue
+      if (!v) continue
+      if (v?.caregiver?.id == null) {
+        /* seen empty since the case opened: a later caregiver is a real cover */
+        if (live && !cc.seen_unassigned_at) {
+          cc.seen_unassigned_at = nowIso
+          await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: cc })
+        }
+        continue
+      }
       const cgName = [String(v.caregiver.firstName ?? '').trim(), String(v.caregiver.lastName ?? '').trim()]
         .filter(Boolean).join(' ') || ('caregiver ' + v.caregiver.id)
+      const verdict = outsideVerdict(cc, { id: v.caregiver.id, name: cgName })
+      if (verdict !== 'covered' || !live) {
+        outsideLeftOpen.push({ case: cc.id, caregiver_on_shift: cgName, calling_off: cc.calling_off || null, verdict, dry: !live })
+        const key = verdict + ':' + cgName
+        if (live && verdict !== 'covered' && cc.outside_hold !== key) {
+          cc.outside_hold = key
+          cc.note = [String(cc.note || '').trim(), verdict === 'caller_still_on'
+            ? `AxisCare still shows ${cgName} on this shift, the caregiver who called off, so Cara is leaving the case open. Take ${cgName.split(' ')[0]} off the shift in AxisCare, then assign whoever covers.`
+            : `AxisCare shows ${cgName} on this shift, and Cara can't tell whether they are covering or are the caregiver who called off, so the case stays open. Confirm the fill on the board.`]
+            .filter(Boolean).join('\n')
+          await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: cc })
+        }
+        continue
+      }
       /* The visit may have been RESCHEDULED when it was re-covered (Abigail's
          8-12 became Autumn's 11:30-3:30). The case, and the family text's
          {when}, must carry the times that are true NOW, not the snapshot
@@ -895,6 +924,7 @@ Deno.serve(async (req) => {
     cases_created: created,
     covered_outside_the_board: coveredOutside,
     pattern_stamped: patternStamped,
+    covered_outside_left_open: outsideLeftOpen,
     would_open: wouldOpen,
     ongoing_sweep: sweepDue
       ? { ran: true, schedules_with_open_dates: ongoingSchedules,

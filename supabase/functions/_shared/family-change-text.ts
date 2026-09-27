@@ -18,6 +18,7 @@
 //   retry -> real recipients existed but every send failed; leave unstamped
 // =============================================================================
 import { contactForOutbound } from './outreach.ts'
+import { coversThemselves } from './covered-outside.ts'
 
 export type FamilyResult = { outcome: 'none' | 'sent' | 'retry'; count: number; reason: string | null; circle: string | null }
 // deno-lint-ignore no-explicit-any
@@ -40,6 +41,8 @@ export async function notifyFamilyOfChange(
 ): Promise<FamilyResult> {
   const approval = settings?.family_caregiver_change_text_approved
   if (!approval || typeof approval !== 'object') return { outcome: 'none', count: 0, reason: 'not_enabled', circle: null }
+  /* never "Ashley can't make it, so Ashley is coming instead" (Elizabeth Kurtz, 2026-09-27) */
+  if (coversThemselves(c)) return { outcome: 'none', count: 0, reason: 'covering_caregiver_is_the_one_who_called_off', circle: null }
   const ax = String(c?.client_axiscare_id ?? '').trim()
   if (!ax) return { outcome: 'none', count: 0, reason: 'case_has_no_axiscare_id', circle: null }
   const { data: circs } = await sb.from('care_circles').select('id, client_name').eq('active', true).eq('axiscare_client_id', ax)

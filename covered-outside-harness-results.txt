@@ -1,0 +1,23 @@
+
+COVERED-OUTSIDE FIX · HARNESS
+============================================================
+PASS  rule: the SAME AxisCare caregiver id as the one who called off → still on (the Kurtz case), whatever the names say
+PASS  rule: a DIFFERENT id → covered, even with the same first name ("another Ashley")
+PASS  rule: no id, same full name (spacing and capitals aside) → still on
+PASS  rule: no id, only a first name recorded and it matches → unsure (never guessed as a cover)
+PASS  rule: no id, names clearly differ → covered
+PASS  rule: nobody recorded as calling off → covered only if the shift was seen empty first (or Cara opened it from an empty shift)
+PASS  family text: "Ashley called off, Ashley is coming" can never be sent; the case records why
+PASS  family text: a real cover still goes to the consenting, linked family (unchanged)
+PASS  DRY RUN closes nothing, not even a real cover (it used to); it lists what it left
+PASS  KURTZ: the caregiver who called off is still on the schedule → the case stays OPEN, no "covered", a note says to take her off
+PASS  first name only and it matches → stays open, a note asks a person to confirm
+PASS  another Ashley (different AxisCare id) → closed as covered by Ashley Smith (a real cover still closes)
+PASS  nobody recorded as calling off, shift never seen empty → stays open for a person
+PASS  Cara's own case (opened from an empty shift) → a later caregiver is a real cover
+PASS  the note is added once, not every five minutes
+PASS  the office takes Ashley off → Cara sees the shift empty and remembers it
+PASS  then assigns Beth → closed as covered by Beth (the family text will name the right people)
+PASS  nobody recorded: once the shift was seen empty, the next caregiver closes it as covered
+============================================================
+ALL 18 CHECKS PASS
