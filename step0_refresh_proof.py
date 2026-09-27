@@ -24,20 +24,22 @@ for q in [
 def app(k, v): s.run("insert into app_data(key,data) values (:k, cast(:v as jsonb)) on conflict (key) do update set data=excluded.data", k=k, v=json.dumps(v))
 app("ops_settings", {"coverage_alert_phones": ["+14172348494"], "timekeeper_watch_live": False, "promises_live": True, "fallback_phone": "+14175551234", "notes_blob": {"a": 1}})
 app("campaign_settings", [{"id": "settings", "enabled": True, "aud_clients": True, "aud_client_contacts": True}])
-app("coordinator_staff", [{"name": "Krystal Land", "email": "Krystal@mo-care.com"}])
+app("coordinator_staff", [{"name": "Krystal Land", "email": "Krystal@mo-care.com"}, {"email": "noname@x.com"}])
 app("coverage_cases", [{"flag_source": "text message", "opened_at": "2026-09-20T10:00:00Z"}])
 app("leads", [{"id": "L1", "do_not_contact": True, "ack_sent_at": "2026-09-25T10:00:00Z"}, {"id": "L2", "nudge_1_at": "2026-09-26T10:00:00Z"}])
 app("staffing_tasks", [{"kind": "coverage", "status": "open", "about": "Linda Carter", "message": "Ashley called out tomorrow", "from_name": "Krystal", "created_at": "2026-09-21T09:00:00Z"},
                        {"kind": "hours", "status": "open", "about": "Bill", "message": "more hours"}])
-app("duty_windows", [{"area": "staffing", "person": "", "recur": {"days": [6, 0], "from": "08:00", "to": "16:00"}}])
+app("duty_windows", [{"area": "staffing", "person": "", "recur": {"days": [6, 0], "from": "08:00", "to": "16:00"}}, {"person": "someone@x.com"}])
 app("on_call_schedule", [{"name": "Samantha Troutman", "start_date": "2026-07-28", "end_date": "2027-10-29"}])
 fp0 = s.run("select md5(string_agg(key||data::text, ',' order by key)) from app_data")[0][0]
-seen = []
+seen = []; BAD = {"on": False}
 def J(v): return int(v) if isinstance(v, Decimal) else (v if isinstance(v, (int, float, bool, str, dict, list, type(None))) else str(v))
 class Hd(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def do_POST(self):
         q = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)))["query"]; seen.append(q)
+        if BAD["on"] and "cron.job" in q:
+            b = json.dumps({"weird": 1}).encode(); self.send_response(200); self.end_headers(); self.wfile.write(b); return
         cc = c.conn()
         try:
             cc.run("set transaction read only")
@@ -64,6 +66,14 @@ ck("admin accounts and seats listed as facts, with no inference about Shared Adm
 ck("open old call-out messages listed (only kind coverage), none changed", "1 open" in t and "Linda Carter" in t and "more hours" not in t, t)
 ck("opt-out counts and inquiry-message activity reported", "do-not-contact: 1 of 2" in t and "stopped: 1 of 2" in t and "1 acknowledgments" in t and "1 day-1" in t, t)
 ck("every query sent was a read", all(q.lstrip().lower().startswith(("select", "with")) for q in seen), seen)
+ck("blank values in production data (a duty window with no area, a staff row with no name) print safely", "(no area)" in t and "(no name)" in t, t)
+BAD["on"] = True
+p2 = subprocess.run(["python3", "step0_refresh.py"], cwd=H, capture_output=True, text=True,
+                    env=dict(os.environ, SB_TOKEN="sbp_x", SB_REF="r", SB_REPORT=rep, SB_API_BASE=f"http://127.0.0.1:{srv.server_address[1]}"))
+t2 = open(rep).read() if os.path.exists(rep) else ""
+if os.path.exists(rep): os.remove(rep)
+BAD["on"] = False
+ck("an unexpected answer still leaves a report, saying what went wrong", "UNEXPECTED ERROR" in t2 and "nothing was changed" in t2 and "STEP 0" in t2, (t2, p2.stderr[-300:]))
 g = subprocess.run(["python3", "-c", "import os;os.environ.update(SB_REPORT='/dev/null');exec(open('step0_refresh.py').read().split('say(\"STEP 0')[0]);print(read('update app_data set data=null'))"], cwd=H, capture_output=True, text=True)
 ck("the read guard refuses a write", "refused: not a read-only query" in g.stdout, g.stdout + g.stderr)
 srv.shutdown(); c.close()
