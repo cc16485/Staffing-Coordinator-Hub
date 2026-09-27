@@ -28,6 +28,7 @@
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { ldPush } from '../_shared/lead-truth.ts'
+import { inquirySwitches } from '../_shared/inquiry-switches.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -95,8 +96,10 @@ Deno.serve(async (req) => {
   const { data: alertTo } = await supabase
     .from('applicant_alerts').select('*').eq('active', true).contains('alert_on', ['lead'])
 
-  const out = { acknowledged: 0, nudged: 0, office_alerted: 0 }
-  const plan: Record<string, string[]> = { acknowledge: [], nudge: [], office: [] }
+  /* Step 0 · 0a: both family-facing messages are paused unless their switch is explicitly on */
+  const sw = await inquirySwitches(supabase)
+  const out = { acknowledged: 0, nudged: 0, office_alerted: 0, paused_ack: 0, paused_followups: 0 }
+  const plan: Record<string, string[]> = { acknowledge: [], nudge: [], office: [], paused_ack: [], paused_followups: [] }
   const quiet = !withinCallingHours()
 
   for (const l of leads) {
@@ -179,6 +182,7 @@ Deno.serve(async (req) => {
     const webInquiry = Array.isArray(l.contact_events)
       && l.contact_events.some((e: any) => e?.channel === 'web' && e?.outcome === 'inquiry')
     if (!l.ack_sent_at && age <= 12 && webInquiry) {
+      if (!sw.ack) { plan.paused_ack.push(`${first} (${Math.round(age)}h old)`); out.paused_ack++; continue }
       plan.acknowledge.push(`${first} (${Math.round(age)}h old)`)
       if (!dry && !quiet) {
         const line = `Hi ${first}, this is Caring Companions. We have your message and a care coordinator ` +
@@ -206,6 +210,7 @@ Deno.serve(async (req) => {
       : !l.nudge_1_at && age >= 24 ? 1
       : !l.nudge_2_at && age >= 72 ? 2 : 0
     if (step) {
+      if (!sw.followups) { plan.paused_followups.push(`${first} (try ${step})`); out.paused_followups++; continue }
       plan.nudge.push(`${first} (try ${step})`)
       if (!dry && !quiet) {
         const line = step === 1
@@ -227,7 +232,8 @@ Deno.serve(async (req) => {
 
   }
 
+  const switches = { inquiry_ack_live: sw.ack, inquiry_followups_live: sw.followups, settings_read: sw.read_ok }
   return json(dry
-    ? { ok: true, dry: true, quiet_hours: quiet, leads_considered: leads.length, would: plan }
-    : { ok: true, quiet_hours: quiet, ...out })
+    ? { ok: true, dry: true, quiet_hours: quiet, switches, leads_considered: leads.length, would: plan }
+    : { ok: true, quiet_hours: quiet, switches, ...out })
 })
