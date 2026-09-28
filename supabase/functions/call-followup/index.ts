@@ -39,6 +39,7 @@
 // BAA / scrubbing posture before pointing this at live client calls.
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { recordCall } from '../_shared/call-record.ts'
 import { leadHits, returningCheck, returningItem } from '../_shared/returning.ts'
 
 const cors = {
@@ -257,6 +258,11 @@ Sign follow-up messages as "Caring Companions" unless a specific coordinator nam
 
   const { error } = await supabase.rpc('upsert_app_data_item', { target_key: 'leads', item: lead })
   if (error) { console.error('lead upsert', error); return json({ error: error.message }, 500) }
+  /* K1 (2026-09-28): our AI's reading of the call becomes one line of the call record (who it was with is decided
+     by the record's door from the number, not by this function) */
+  const readingText = aiSummary || String(out.needs_summary || '').trim()
+  if (readingText) await recordCall(supabase, { kind: 'ai_reading', via: 'call-followup', direction, phone: phone || inPhone,
+    ghlContactId: contactId, summary: readingText, source: 'our_ai', writtenTo: 'lead:' + String(lead.id) })
   if (flag) await supabase.rpc('upsert_app_data_item', { target_key: 'ops_items', item: returningItem(lead, flag, 'AI phone call') })
 
   // Drop the drafted recap into the hub's existing Post-Call Follow-Ups queue as
