@@ -63,6 +63,15 @@ ck('a refusal from the door (a stale save) comes back as it is, so the screen ca
 rpcAnswer = { data: null, error: { message: 'connection lost' } };
 r = await call('good', GOOD); ck('if the database fails, the answer says it was not recorded (500)', r.status === 500 && /not recorded/.test(r.body.error), r);
 ck('the function never writes a table directly: only the door', !calls.some(c => typeof c === 'string'));
+// Gate 3: the read-only "has care begun" answer
+calls.length = 0; rpcAnswer = { data: { began: true, on: '2026-09-20', basis: 'AxisCare\'s first clock-in' }, error: null };
+r = await call(null, { action: 'care_began', episode_id: EP }); ck('care_began: no sign-in is refused (401)', r.status === 401 && calls.length === 0);
+r = await call('caregiver', { action: 'care_began', episode_id: EP }); ck('care_began: a non-office staff member is refused (403)', r.status === 403 && calls.length === 0);
+r = await call('good', { action: 'care_began', episode_id: 'x' }); ck('care_began: a malformed Journey id is refused (400)', r.status === 400 && calls.length === 0);
+r = await call('good', { action: 'care_began', episode_id: EP });
+ck('care_began: office staff get the one rule\'s answer, unchanged', r.status === 200 && r.body.began === true && r.body.basis && calls[0].name === 'care_began_for_episode' && calls[0].args.p_episode_id === EP, r);
+rpcAnswer = { data: null, error: { message: 'boom' } };
+r = await call('good', { action: 'care_began', episode_id: EP }); ck('care_began: if the check fails, the answer says it could not check (never a guess)', r.status === 200 && r.body.began === null && r.body.reason === 'could_not_check', r);
 fs.unlinkSync(tmp);
 for (const [n, ok, note] of res) console.log((ok ? 'PASS' : 'FAIL') + ' · ' + n + (ok ? '' : '  ::  ' + note));
 console.log(res.filter(x => x[1]).length + '/' + res.length);

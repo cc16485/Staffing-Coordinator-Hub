@@ -1,5 +1,5 @@
 // =============================================================================
-// client-fact — active office staff record a fact about a person (Gate 2a)
+// client-fact — active office staff record a fact about a person (Gate 2a), and read "has care begun" (Gate 3)
 // =============================================================================
 // The ONLY way into the fact record. The browser cannot write facts; this is the
 // gated path:
@@ -61,7 +61,15 @@ Deno.serve(async (req) => {
   const staff = await requireStaff(sb, req, OFFICE_ROLES)
   if (!staff.ok) return json({ error: staff.error }, staff.status)
   const b = await req.json().catch(() => ({})) as Record<string, unknown>
-  if (b.action !== 'record') return json({ error: "action must be 'record'" }, 400)
+  /* Gate 3: the one "has care begun" rule, read-only, for the Hub (so the Hub and the door never disagree) */
+  if (b.action === 'care_began') {
+    const ep = uuidOrNull(b.episode_id)
+    if (!ep) return json({ error: 'episode_id is required' }, 400)
+    const { data, error } = await sb.rpc('care_began_for_episode', { p_episode_id: ep })
+    if (error) return json({ began: null, reason: 'could_not_check' }, 200)
+    return json(data)
+  }
+  if (b.action !== 'record') return json({ error: "action must be 'record' or 'care_began'" }, 400)
   const { args, error: bad } = doorArgs(b, staff.email)
   if (bad || !args) return json({ error: bad }, 400)
   const { data, error } = await sb.rpc('client_fact_record', args)
