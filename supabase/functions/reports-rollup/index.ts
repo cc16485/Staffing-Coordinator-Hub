@@ -76,7 +76,9 @@ Deno.serve(async (req) => {
   // deno-lint-ignore no-explicit-any
   for (const r of rows ?? []) D[r.key] = Array.isArray(r.data) ? r.data : []
 
-  const leads = D.leads
+  /* Lead numbers S1 (2026-09-28): a lead a person marked as spam (not a real inquiry) never counts */
+  // deno-lint-ignore no-explicit-any
+  const leads = D.leads.filter((l: any) => !(l && l.spam && typeof l.spam === 'object' && l.spam.at))
   const openish = (s: string) => !/closed|resolved|done|won|complete/i.test(s || '')
 
   const agency = {
