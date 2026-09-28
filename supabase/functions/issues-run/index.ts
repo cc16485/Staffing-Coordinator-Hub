@@ -20,6 +20,7 @@
 // =============================================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const clean = (v: unknown) => String(v ?? '').trim()
@@ -410,12 +411,39 @@ async function scenarios() {
            fixtures_remaining_after_cleanup: count ?? -1 }
 }
 
+/* SECURITY + BROWSER (2026-09-28): this answered anyone and never sent the browser's CORS headers,
+   so the Hub's "Report a concern" could not save, while anyone holding the public page key could
+   file, act on or resolve an issue. Now: office staff by their own Hub sign-in (intake, action), or
+   a server caller (the exact service key or a platform-verified service_role sign-in: call-disposition
+   files phone concerns this way). sweep and scenarios are server-only. */
+const cors = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
+function isServer(req: Request): boolean {
+  const svc = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
+  const tok = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim()
+  if (svc && tok === svc) return true
+  try {
+    const b = tok.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+    return JSON.parse(atob(b + '='.repeat((4 - b.length % 4) % 4))).role === 'service_role'
+  } catch { return false }
+}
+
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
+  if (req.method === 'OPTIONS') return new Response('ok', { status: 200, headers: cors })
   const q = new URL(req.url).searchParams
-  const body = await req.json().catch(() => ({}))
   const J = (x: unknown, s = 200) => new Response(JSON.stringify(x, null, 2),
-    { status: s, headers: { 'Content-Type': 'application/json' } })
+    { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
+  const server = isServer(req)
+  if (q.get('scenarios') === '1' || q.get('sweep') === '1') {
+    if (!server) return J({ error: 'server only' }, 401)
+  } else if (!server) {
+    const who = await requireStaff(sb, req, OFFICE_ROLES)
+    if (!who.ok) return J({ error: who.error }, who.status)
+  }
+  const body = await req.json().catch(() => ({}))
 
   if (q.get('scenarios') === '1') return J(await scenarios())
   if (q.get('intake') === '1')    return J(await intake(body))
