@@ -18,6 +18,19 @@
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
+/* C2a (2026-09-28): every change in AxisCare adds one line to axiscare_change_log (who, when, which client or caregiver,
+   the kind, how it went, a short summary; never note text). Best effort: recording never blocks the change itself. */
+// deno-lint-ignore no-explicit-any
+async function recordAxisChange(db: any, c: { kind: string; subject: 'client' | 'caregiver'; client?: string | null; caregiver?: string | null;
+  outcome: 'sent_confirmed' | 'sent' | 'refused' | 'practice'; summary: string; detail?: string | null; by: string; via: string }): Promise<boolean> {
+  try {
+    const { data, error } = await db.rpc('axiscare_change_record', { p_kind: c.kind, p_subject: c.subject, p_client: c.client ?? null,
+      p_caregiver: c.caregiver ?? null, p_outcome: c.outcome, p_summary: String(c.summary).slice(0, 200), p_detail: c.detail ? String(c.detail).slice(0, 300) : null,
+      p_by: c.by || 'unknown', p_via: c.via })
+    return !error && data?.outcome === 'recorded'
+  } catch { return false }
+}
+
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -156,6 +169,9 @@ Deno.serve(async (req) => {
       const r = await ax('DELETE', `/api/schedules/${encodeURIComponent(id)}?effectiveDate=${eff}`)
       results.push({ schedule_id: id, ok: ok2(r.status), detail: ok2(r.status) ? null : errText(r) })
     }
+    const gone = results.filter((x) => x.ok).length
+    await recordAxisChange(sb, { kind: 'schedule', subject: 'client', client: String(push.client_ax ?? ''), outcome: gone === results.length ? 'sent_confirmed' : gone ? 'sent' : 'refused',
+      summary: gone + ' of ' + results.length + ' schedule(s) removed (undo)', detail: gone === results.length ? null : (results.length - gone) + ' refused', by: email, via: 'schedule-push' })
     return json({ outcome: results.every((x) => x.ok) ? 'removed' : 'partly_removed', effective: eff, results, by: email, at: new Date().toISOString() })
   }
 
@@ -246,5 +262,10 @@ Deno.serve(async (req) => {
   })
   const record = { at: new Date().toISOString(), by: email, client_ax: clientAx, start_date: startDate, service_code: serviceCode,
     created, skipped, refused, readback_error: rb.error, confirmed }
-  return json({ outcome: refused.length ? (created.length ? 'partly_created' : 'none_created') : 'created', record })
+  const inAx = confirmed.filter((x) => x.in_axiscare).length
+  const recorded = (created.length || refused.length) ? await recordAxisChange(sb, { kind: 'schedule', subject: 'client', client: clientAx,
+    outcome: !created.length ? 'refused' : (inAx === created.length && !refused.length && !rb.error) ? 'sent_confirmed' : 'sent',
+    summary: created.length + ' schedule(s) created, ' + inAx + ' confirmed' + (refused.length ? ', ' + refused.length + ' refused' : '') + ' (from ' + startDate + ')',
+    detail: refused.length ? refused.length + ' refused by AxisCare' : (rb.error ? 'could not read back' : null), by: email, via: 'schedule-push' }) : false
+  return json({ outcome: refused.length ? (created.length ? 'partly_created' : 'none_created') : 'created', record, recorded })
 })

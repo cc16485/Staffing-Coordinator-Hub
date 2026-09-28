@@ -13,6 +13,19 @@
 //            to change it in AxisCare. Reads the client back and confirms.
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+/* C2a (2026-09-28): every change in AxisCare adds one line to axiscare_change_log (who, when, which client or caregiver,
+   the kind, how it went, a short summary; never note text). Best effort: recording never blocks the change itself. */
+// deno-lint-ignore no-explicit-any
+async function recordAxisChange(db: any, c: { kind: string; subject: 'client' | 'caregiver'; client?: string | null; caregiver?: string | null;
+  outcome: 'sent_confirmed' | 'sent' | 'refused' | 'practice'; summary: string; detail?: string | null; by: string; via: string }): Promise<boolean> {
+  try {
+    const { data, error } = await db.rpc('axiscare_change_record', { p_kind: c.kind, p_subject: c.subject, p_client: c.client ?? null,
+      p_caregiver: c.caregiver ?? null, p_outcome: c.outcome, p_summary: String(c.summary).slice(0, 200), p_detail: c.detail ? String(c.detail).slice(0, 300) : null,
+      p_by: c.by || 'unknown', p_via: c.via })
+    return !error && data?.outcome === 'recorded'
+  } catch { return false }
+}
 import { careLevelOf, levelFromLabel, LEVEL_NAMES } from '../_shared/care-level.ts'
 import { KNOWN_PAYERS } from '../_shared/client-events.ts'
 
@@ -139,11 +152,18 @@ Deno.serve(async (req) => {
   const mixed = current.map(lab).filter((c) => readsAs(c) === 'mixed')
   if (mixed.length) return json({ outcome: 'mixed_class', detail: `this client has a class that names both a payer and a level (${mixed.join(', ')}); change the level in AxisCare so the payer isn't touched` })
   const next = newClasses(current, targets[0])
+  const recDb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  const what = 'care level ' + (before.level ?? '?') + ' → ' + level
   const p = await ax('PATCH', `/api/clients/${clientAx}`, { classes: next })
-  if (!ok2(p.status)) return json({ outcome: 'refused', detail: errText(p) })
+  if (!ok2(p.status)) {
+    await recordAxisChange(recDb, { kind: 'care_level', subject: 'client', client: clientAx, outcome: 'refused', summary: what, detail: errText(p), by: email ?? '', via: 'care-level' })
+    return json({ outcome: 'refused', detail: errText(p) })
+  }
   const back = await ax('GET', `/api/clients/${clientAx}`)
   const after = view(back.json?.results?.client ?? back.json?.results)
   const kept = before.classes.filter((c) => readsAs(c) !== 'level')
   const keptOk = kept.every((c) => after.classes.includes(c))
-  return json({ outcome: after.level === level && keptOk ? 'updated' : 'updated_check', before, after, kept_classes: kept, kept_ok: keptOk, by: email })
+  const recorded = await recordAxisChange(recDb, { kind: 'care_level', subject: 'client', client: clientAx, outcome: after.level === level && keptOk ? 'sent_confirmed' : 'sent',
+    summary: what, detail: after.level === level && keptOk ? null : 'the read-back did not show it exactly', by: email ?? '', via: 'care-level' })
+  return json({ outcome: after.level === level && keptOk ? 'updated' : 'updated_check', before, after, kept_classes: kept, kept_ok: keptOk, by: email, recorded })
 })

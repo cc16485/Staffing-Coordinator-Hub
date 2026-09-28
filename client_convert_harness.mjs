@@ -55,7 +55,7 @@ const LEADS = [
   { id: 'L4', first_name: 'Kim', last_name: 'Fox', relationship: 'Son', phone: '417-555-0104', client_name_not_provided: true },
   { id: 'L5', first_name: 'Jo', last_name: 'Ng', relationship: 'Niece', client_first_name: 'Bea', client_last_name: 'Ng', axiscare_client_id: '77' },
 ];
-globalThis.__fakeCreateClient = () => ({ from: (t) => { const f = []; const p = { select() { return p; }, eq(k, v) { f.push([k, v]); return p; },
+globalThis.__fakeCreateClient = () => ({ rpc: async (n, a) => { (globalThis.__REC ||= []).push({ n, a }); return { data: { outcome: 'recorded' }, error: null }; }, from: (t) => { const f = []; const p = { select() { return p; }, eq(k, v) { f.push([k, v]); return p; },
   maybeSingle() { const key = (f.find(x => x[0] === 'key') || [])[1];
     const data = key === 'leads' ? LEADS : key === 'referral_orgs' ? [{ id: 'O1', name: 'Mercy Hospital' }] : null;
     return Promise.resolve({ data: data ? { data } : null, error: null }); } }; return p; } });
@@ -133,6 +133,10 @@ ck('permission check: if #290 is not a test client it writes nothing', b.ok === 
 let r = await handler(new Request('http://x', { method: 'OPTIONS' }));
 ck('CORS preflight answered from day one', r.status === 200 && r.headers.get('Access-Control-Allow-Origin') === '*');
 
+const RECS = (globalThis.__REC || []).filter((x) => x.n === 'axiscare_change_record').map((x) => x.a);
+const recOk = (x) => x.p_summary && x.p_summary.length <= 200 && !/\n/.test(x.p_summary) && x.p_by && x.p_via;
+ck('C2a: creating the client is recorded (who, which client, confirmed by read-back, a short summary)', RECS.some((x) => x.p_kind === 'client_created' && x.p_outcome === 'sent_confirmed' && /^\d+$/.test(x.p_client) && x.p_by === 'kat@cc.test' && x.p_via === 'client-convert' && recOk(x)), RECS);
+ck('C2a: reusing the client AxisCare already had is recorded as linked', RECS.some((x) => x.p_kind === 'client_linked' && recOk(x)), RECS.map((x) => x.p_kind));
 let pass = 0;
 for (const [name, ok, note] of res) { console.log((ok ? 'PASS ' : 'FAIL ') + name + (ok ? '' : '\n     ' + note)); if (ok) pass++; }
 console.log(`\n${pass}/${res.length} passed`);

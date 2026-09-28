@@ -36,7 +36,7 @@ globalThis.__db = { auth: { getUser: async (jwt) => { let e = ''; try { e = JSON
     update(pl) { op = 'update'; payload = pl; return p; }, maybeSingle() { return p.then(r => ({ data: (r.data || [])[0] || null, error: null })); },
     then(ok, bad) { const T = DB[t]; if (op === 'update') { T.filter(r => f.every(g => g(r))).forEach(r => Object.assign(r, payload)); return Promise.resolve({ data: null, error: null }).then(ok, bad); }
       return Promise.resolve({ data: T.filter(r => f.every(g => g(r))), error: null }).then(ok, bad); } }; return p; },
-  rpc: async (n, a) => { rpcs.push({ n, a }); return { data: { outcome: n === 'family_circle_link' ? 'linked' : n === 'people_into_care_add' ? 'added' : 'unlinked' }, error: null }; } };
+  rpc: async (n, a) => { rpcs.push({ n, a }); (globalThis.__REC ||= []).push({ n, a }); return { data: { outcome: n === 'family_circle_link' ? 'linked' : n === 'people_into_care_add' ? 'added' : 'unlinked' }, error: null }; } };
 await import(tmp); fs.unlinkSync(tmp);
 const tok = (c) => 'Bearer x.' + Buffer.from(JSON.stringify(c)).toString('base64url') + '.y';
 const KAT = tok({ role: 'authenticated', email: 'kat@cc.test' });
@@ -97,5 +97,8 @@ reset();
   ck('carry: a signed-in person without an office role is refused; a bad who, person key or missing lead is refused; the door is never called',
      st1 === 403 && st2 === 400 && st3 === 400 && st4 === 400 && rpcs.length === n, [st1, st2, st3, st4]); }
 
+{ const R2 = (globalThis.__REC || []).filter((x) => x.n === 'axiscare_change_record').map((x) => x.a);
+  ck('C2a: Family Circle sends to AxisCare are recorded as responsible-party changes (added / updated), with who', R2.some((x) => x.p_kind === 'responsible_party' && /added/.test(x.p_summary) && x.p_by === 'kat@cc.test')
+     && R2.some((x) => /updated/.test(x.p_summary)) && R2.every((x) => x.p_subject === 'client' && /^\d+$/.test(x.p_client)), R2); }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? 'PASS ' : 'FAIL ') + n + (ok ? '' : '\n     ' + note)); if (ok) pass++; }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1);

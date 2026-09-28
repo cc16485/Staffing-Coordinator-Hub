@@ -78,6 +78,19 @@ function chicagoISONow(): string {
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}${offset}`
 }
 
+/* C2a (2026-09-28): every change in AxisCare adds one line to axiscare_change_log (who, when, which client or caregiver,
+   the kind, how it went, a short summary; never note text). Best effort: recording never blocks the change itself. */
+// deno-lint-ignore no-explicit-any
+async function recordAxisChange(db: any, c: { kind: string; subject: 'client' | 'caregiver'; client?: string | null; caregiver?: string | null;
+  outcome: 'sent_confirmed' | 'sent' | 'refused' | 'practice'; summary: string; detail?: string | null; by: string; via: string }): Promise<boolean> {
+  try {
+    const { data, error } = await db.rpc('axiscare_change_record', { p_kind: c.kind, p_subject: c.subject, p_client: c.client ?? null,
+      p_caregiver: c.caregiver ?? null, p_outcome: c.outcome, p_summary: String(c.summary).slice(0, 200), p_detail: c.detail ? String(c.detail).slice(0, 300) : null,
+      p_by: c.by || 'unknown', p_via: c.via })
+    return !error && data?.outcome === 'recorded'
+  } catch { return false }
+}
+
 async function logEverything(supabase: any, entry: Record<string, unknown>, ok: boolean, dry: boolean) {
   // The dedicated log is the health trail: every call seen, every decision.
   try {
@@ -212,7 +225,13 @@ export async function pushCallNote(
   ].filter(Boolean).join('\n\n')
   const subject = `AI call summary (${direction})`
 
+  const callWhat = 'AI call summary (' + direction + '), ' + notes.length + ' characters'
+  const recCall = (outcome: 'sent' | 'refused' | 'practice', detail: string | null) => (entity === 'client' || entity === 'caregiver') && /^\d+$/.test(String(entityId))
+    ? recordAxisChange(supabase, { kind: 'call_summary', subject: entity as 'client' | 'caregiver', client: entity === 'client' ? String(entityId) : null,
+        caregiver: entity === 'caregiver' ? String(entityId) : null, outcome, summary: callWhat, detail, by: 'automation: call summary', via: 'call-disposition' })
+    : Promise.resolve(false)
   if (dry) {
+    await recCall('practice', 'a practice run: nothing was posted')
     return finish({
       outcome: 'dry_run', dry,
       detail: `would add a call log tagged to ${entity} ${entityId} (${callerName})`,
@@ -247,11 +266,13 @@ export async function pushCallNote(
     })
     const j = await r.json().catch(() => ({}))
     // Never trust a bare 200: AxisCare's envelope carries its own success flag.
+    if (!r.ok || j?.success === false) await recCall('refused', 'AxisCare refused (' + r.status + ')')
     if (!r.ok || j?.success === false)
       return finish({
         outcome: 'error', dry, entity, entity_id: entityId,
         detail: `AxisCare refused (${r.status}): ${(j?.errors || []).join('; ') || 'no detail'}`,
       }, { hash })
+    await recCall('sent', null)
     return finish({
       outcome: 'posted', dry,
       detail: `call log tagged to ${entity} ${entityId} (${callerName})`,

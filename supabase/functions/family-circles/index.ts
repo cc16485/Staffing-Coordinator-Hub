@@ -22,6 +22,19 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 
+/* C2a (2026-09-28): every change in AxisCare adds one line to axiscare_change_log (who, when, which client or caregiver,
+   the kind, how it went, a short summary; never note text). Best effort: recording never blocks the change itself. */
+// deno-lint-ignore no-explicit-any
+async function recordAxisChange(db: any, c: { kind: string; subject: 'client' | 'caregiver'; client?: string | null; caregiver?: string | null;
+  outcome: 'sent_confirmed' | 'sent' | 'refused' | 'practice'; summary: string; detail?: string | null; by: string; via: string }): Promise<boolean> {
+  try {
+    const { data, error } = await db.rpc('axiscare_change_record', { p_kind: c.kind, p_subject: c.subject, p_client: c.client ?? null,
+      p_caregiver: c.caregiver ?? null, p_outcome: c.outcome, p_summary: String(c.summary).slice(0, 200), p_detail: c.detail ? String(c.detail).slice(0, 300) : null,
+      p_by: c.by || 'unknown', p_via: c.via })
+    return !error && data?.outcome === 'recorded'
+  } catch { return false }
+}
+
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -137,14 +150,23 @@ Deno.serve(async (req) => {
     const change = { name: t(b.name) || t(current.name), relationship: t(b.relationship) || null, phone: t(b.phone) || null, email: t(b.email) || null }
     if (!change.name) return json({ outcome: 'name_required' })
     const w = await ax('PUT', `/api/clients/${cax}/responsibleParties/${Number(m.axiscare_list_number)}`, putBody(current, change))
-    if (!ok2(w.status)) return json({ outcome: 'refused', detail: errText(w) })
+    const rpWhat = 'responsible party ' + Number(m.axiscare_list_number) + ' updated'
+    if (!ok2(w.status)) {
+      await recordAxisChange(sb, { kind: 'responsible_party', subject: 'client', client: cax, outcome: 'refused', summary: rpWhat, detail: errText(w), by: email, via: 'family-circles' })
+      return json({ outcome: 'refused', detail: errText(w) })
+    }
     const back = await ax('GET', `/api/clients/${cax}/responsibleParties/${Number(m.axiscare_list_number)}`)
     const v = ok2(back.status) ? slotView(back.json?.results ?? back.json) : null
-    if (!v) return json({ outcome: 'written_unconfirmed', detail: 'AxisCare accepted it but could not be read back: ' + errText(back) })
+    if (!v) {
+      await recordAxisChange(sb, { kind: 'responsible_party', subject: 'client', client: cax, outcome: 'sent', summary: rpWhat, detail: 'accepted, but could not be read back', by: email, via: 'family-circles' })
+      return json({ outcome: 'written_unconfirmed', detail: 'AxisCare accepted it but could not be read back: ' + errText(back) })
+    }
     await sb.from('circle_contacts').update({ name: v.name, relationship: v.relationship, phone: v.phone, email: v.email,
       hipaa_authorized: v.hipaa_authorized, can_make_medical_decisions: v.can_make_medical_decisions, axiscare_removed_at: null,
       axiscare_sent_by: email, axiscare_sent_at: new Date().toISOString() }).eq('id', m.id)
     const matches = v.name === change.name && (change.phone ? v.phone === change.phone : true) && (v.email ?? null) === (change.email ?? null)
+    await recordAxisChange(sb, { kind: 'responsible_party', subject: 'client', client: cax, outcome: matches ? 'sent_confirmed' : 'sent', summary: rpWhat,
+      detail: matches ? null : 'AxisCare holds it slightly differently', by: email, via: 'family-circles' })
     return json({ outcome: matches ? 'saved' : 'saved_differently', axiscare: v, by: email })
   }
 
@@ -156,11 +178,19 @@ Deno.serve(async (req) => {
   const body = { name: t(m.name), relationship: t(m.relationship) || null, email: t(m.email) || null,
     phones: t(m.phone) ? [{ listNumber: '1', type: 'Mobile', number: t(m.phone) }] : [] }
   const w = await ax('PUT', `/api/clients/${cax}/responsibleParties/${free}`, body)
-  if (!ok2(w.status)) return json({ outcome: 'refused', detail: errText(w) })
+  const addWhat = 'responsible party ' + free + ' added'
+  if (!ok2(w.status)) {
+    await recordAxisChange(sb, { kind: 'responsible_party', subject: 'client', client: cax, outcome: 'refused', summary: addWhat, detail: errText(w), by: email, via: 'family-circles' })
+    return json({ outcome: 'refused', detail: errText(w) })
+  }
   const back = await ax('GET', `/api/clients/${cax}/responsibleParties/${free}`)
   const v = ok2(back.status) ? slotView(back.json?.results ?? back.json) : null
-  if (!v || v.name.toLowerCase() !== t(m.name).toLowerCase()) return json({ outcome: 'written_unconfirmed', detail: 'AxisCare accepted it but the read-back did not show them yet' })
+  if (!v || v.name.toLowerCase() !== t(m.name).toLowerCase()) {
+    await recordAxisChange(sb, { kind: 'responsible_party', subject: 'client', client: cax, outcome: 'sent', summary: addWhat, detail: 'accepted, but the read-back did not show them yet', by: email, via: 'family-circles' })
+    return json({ outcome: 'written_unconfirmed', detail: 'AxisCare accepted it but the read-back did not show them yet' })
+  }
   await sb.from('circle_contacts').update({ source: 'axiscare', axiscare_list_number: free, axiscare_removed_at: null,
     axiscare_sent_by: email, axiscare_sent_at: new Date().toISOString() }).eq('id', m.id)
+  await recordAxisChange(sb, { kind: 'responsible_party', subject: 'client', client: cax, outcome: 'sent_confirmed', summary: addWhat, by: email, via: 'family-circles' })
   return json({ outcome: 'added', list_number: free, axiscare: v, by: email })
 })

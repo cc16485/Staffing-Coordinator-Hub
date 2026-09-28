@@ -48,7 +48,7 @@ globalThis.fetch = async (u, o = {}) => {
   if (m === 'DELETE' && (x = /^\/api\/schedules\/(\d+)$/.exec(url.pathname))) { const s = AX.schedules.find(z => String(z.scheduleId) === x[1]); if (!s) return R(404, {}); s.ended = q.get('effectiveDate'); return new Response(null, { status: 204 }); }
   throw new Error('unexpected ' + m + ' ' + url);
 };
-globalThis.__fakeCreateClient = () => ({ from: (t) => { const f = []; const p = { select() { return p; }, eq(k, v) { f.push(r => String(r[k]) === String(v)); return p; },
+globalThis.__fakeCreateClient = () => ({ rpc: async (n, a) => { (globalThis.__REC ||= []).push({ n, a }); return { data: { outcome: 'recorded' }, error: null }; }, from: (t) => { const f = []; const p = { select() { return p; }, eq(k, v) { f.push(r => String(r[k]) === String(v)); return p; },
   maybeSingle() { let rows = t === 'app_data' ? Object.entries(DB.app_data).map(([key, data]) => ({ key, data })) : (DB[t] || []); rows = rows.filter(r => f.every(g => g(r)));
     return Promise.resolve({ data: rows[0] || null, error: null }); } }; return p; } });
 const M = await import(tmp); fs.unlinkSync(tmp);
@@ -120,6 +120,10 @@ ck('permission check: a deliberately incomplete request is refused as incomplete
 reset(); cfg.forbid = true; [s0, b] = await call(SVC, { action: 'permission_check' });
 ck('permission check: a "not allowed" refusal is reported as no permission', b.ok === false && b.status === 403, b);
 
+const RECS = (globalThis.__REC || []).filter((x) => x.n === 'axiscare_change_record').map((x) => x.a);
+const recOk = (x) => x.p_summary && x.p_summary.length <= 200 && !/\n/.test(x.p_summary) && x.p_by && x.p_via;
+ck('C2a: schedules created are recorded (how many, how many confirmed, from which date)', RECS.some((x) => x.p_kind === 'schedule' && /schedule\(s\) created, \d+ confirmed/.test(x.p_summary) && recOk(x)), RECS);
+ck('C2a: an undo is recorded too', RECS.some((x) => x.p_kind === 'schedule' && /removed \(undo\)/.test(x.p_summary)), RECS.map((x) => x.p_summary));
 let pass = 0;
 for (const [name, ok, note] of res) { console.log((ok ? 'PASS ' : 'FAIL ') + name + (ok ? '' : '\n     ' + note)); if (ok) pass++; }
 console.log(`\n${pass}/${res.length} passed`);

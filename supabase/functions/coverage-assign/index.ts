@@ -23,6 +23,19 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+
+/* C2a (2026-09-28): every change in AxisCare adds one line to axiscare_change_log (who, when, which client or caregiver,
+   the kind, how it went, a short summary; never note text). Best effort: recording never blocks the change itself. */
+// deno-lint-ignore no-explicit-any
+async function recordAxisChange(db: any, c: { kind: string; subject: 'client' | 'caregiver'; client?: string | null; caregiver?: string | null;
+  outcome: 'sent_confirmed' | 'sent' | 'refused' | 'practice'; summary: string; detail?: string | null; by: string; via: string }): Promise<boolean> {
+  try {
+    const { data, error } = await db.rpc('axiscare_change_record', { p_kind: c.kind, p_subject: c.subject, p_client: c.client ?? null,
+      p_caregiver: c.caregiver ?? null, p_outcome: c.outcome, p_summary: String(c.summary).slice(0, 200), p_detail: c.detail ? String(c.detail).slice(0, 300) : null,
+      p_by: c.by || 'unknown', p_via: c.via })
+    return !error && data?.outcome === 'recorded'
+  } catch { return false }
+}
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: {
     'Content-Type': 'application/json',
@@ -154,16 +167,24 @@ Deno.serve(async (req) => {
 
   // THE WRITE — then the read-back that decides what we call it.
   const patch = await ac('PATCH', `/api/visits/${encodeURIComponent(visitId)}`, { caregiverId: Number(cgId) })
+  const visitWhat = 'caregiver #' + cgId + ' put on visit ' + visitId + (c.shift_date ? ' (' + c.shift_date + ')' : '')
+  const cax = /^\d+$/.test(String(c.client_axiscare_id ?? '')) ? String(c.client_axiscare_id) : null
+  const rec = (outcome: 'sent_confirmed' | 'sent' | 'refused', detail: string | null) => cax
+    ? recordAxisChange(sb, { kind: 'visit_caregiver', subject: 'client', client: cax, caregiver: /^\d+$/.test(String(cgId)) ? String(cgId) : null, outcome, summary: visitWhat, detail, by: 'automation: coverage-assign', via: 'coverage-assign' })
+    : Promise.resolve(false)
+  if (!patch.ok) await rec('refused', 'AxisCare refused (' + patch.status + ')')
   if (!patch.ok)
     return finish('failed', `AxisCare refused the assignment (${patch.status}): ${(patch.j?.errors || []).join('; ') || 'no detail'} — assign by hand`, { visit_id: visitId, caregiver_id: cgId })
   const check = await ac('GET', `/api/visits/${encodeURIComponent(visitId)}`)
   const checkRow = check.j?.results?.visit ?? rowsOf(check.j?.results?.visits ?? check.j?.visits)[0] ?? check.j?.results ?? {}
   const onVisit = String(checkRow?.caregiver?.id ?? '')
+  if (!check.ok || Number(onVisit) !== Number(cgId) || onVisit === '') await rec('sent', 'AxisCare said OK but the read-back did not show them on the visit')
   if (!check.ok || Number(onVisit) !== Number(cgId) || onVisit === '')
     return finish('failed',
       `AxisCare said OK but the read-back shows caregiver "${onVisit || 'none'}" on the visit — treat as NOT assigned, do it by hand`,
       { visit_id: visitId, caregiver_id: cgId })
 
+  await rec('sent_confirmed', null)
   return finish('assigned',
     `${c.covered_by} is on the AxisCare schedule (visit ${visitId}, verified by read-back)`,
     { visit_id: visitId, caregiver_id: cgId, verified: true })

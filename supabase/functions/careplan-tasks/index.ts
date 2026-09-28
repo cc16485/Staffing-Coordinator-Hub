@@ -17,6 +17,19 @@
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
+/* C2a (2026-09-28): every change in AxisCare adds one line to axiscare_change_log (who, when, which client or caregiver,
+   the kind, how it went, a short summary; never note text). Best effort: recording never blocks the change itself. */
+// deno-lint-ignore no-explicit-any
+async function recordAxisChange(db: any, c: { kind: string; subject: 'client' | 'caregiver'; client?: string | null; caregiver?: string | null;
+  outcome: 'sent_confirmed' | 'sent' | 'refused' | 'practice'; summary: string; detail?: string | null; by: string; via: string }): Promise<boolean> {
+  try {
+    const { data, error } = await db.rpc('axiscare_change_record', { p_kind: c.kind, p_subject: c.subject, p_client: c.client ?? null,
+      p_caregiver: c.caregiver ?? null, p_outcome: c.outcome, p_summary: String(c.summary).slice(0, 200), p_detail: c.detail ? String(c.detail).slice(0, 300) : null,
+      p_by: c.by || 'unknown', p_via: c.via })
+    return !error && data?.outcome === 'recorded'
+  } catch { return false }
+}
+
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -191,6 +204,11 @@ Deno.serve(async (req) => {
     return { name: s.name, in_axiscare: !!there, as_planned: !!there && (!wantMine || sameSettings(there, s.task)) }
   })
   const allOk = steps.every((x) => x.ok) && readback.every((x) => x.in_axiscare && x.as_planned) && !after.error
-  return json({ outcome: allOk ? 'pushed' : 'partly_pushed', all_confirmed: allOk,
+  const good = readback.filter((x) => x.in_axiscare && x.as_planned).length, noteStep = steps.find((x) => x.step === 'note')
+  const recorded = await recordAxisChange(sb, { kind: 'care_tasks', subject: 'client', client: clientAx,
+    outcome: allOk ? 'sent_confirmed' : steps.some((x) => x.ok) ? 'sent' : 'refused',
+    summary: (noteStep ? 'care plan note' + (noteStep.ok ? '' : ' (refused)') + ' + ' : '') + readback.length + ' care task' + (readback.length === 1 ? '' : 's') + ', ' + good + ' confirmed',
+    detail: allOk ? null : (steps.filter((x) => !x.ok).length + ' step(s) refused' + (after.error ? '; could not read back' : '')), by: email ?? '', via: 'careplan-tasks' })
+  return json({ outcome: allOk ? 'pushed' : 'partly_pushed', all_confirmed: allOk, recorded,
     record: { at: new Date().toISOString(), by: email, client_ax: clientAx, steps, readback, readback_error: after.error } })
 })
