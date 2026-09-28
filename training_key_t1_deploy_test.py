@@ -1,7 +1,7 @@
 # T1 deploy script against a fake Supabase API, fake functions, fake live pages and a fake CLI. Nothing real is touched.
 import os, sys, json, hashlib, subprocess, tempfile, threading, shutil
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-WT="/Users/samantha/Claude/Projects/.wt-training-key/supabase/functions"; HUBP="/Users/samantha/Claude/Projects/"
+WT=os.environ.get("TRAINING_REPO", "/Users/samantha/Claude/Projects/Caring Companions Training Platform")+"/supabase/functions"; HUBP="/Users/samantha/Claude/Projects/"
 FNS=["ghl-replies","ghl-thread","ghl-nurse-assign","axiscare-open-shifts"]
 sha=lambda p: hashlib.sha256(open(p,"rb").read()).hexdigest()
 SHAS={f:sha(f"{WT}/{f}/index.ts") for f in FNS}; GATE=sha(f"{WT}/_shared/hub-gate.ts")
