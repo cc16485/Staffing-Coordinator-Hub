@@ -3498,7 +3498,7 @@ async function sendOfferWelcome(id,btn,quiet){
   if(btn){btn.disabled=true;btn.textContent='Sending…';}
   try{
     const r=await fetch('https://rdqujxiycycwhskyvrwa.supabase.co/functions/v1/job-offer',{
-      method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
+      method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'x-hub-token':await trainHubTok(),'Content-Type':'application/json'},
       body:JSON.stringify({key, action:'send_welcome', offer_id:id})});
     const d=await r.json();
     if(d.error) throw new Error(d.error);
@@ -3606,6 +3606,9 @@ function zapFire(settingsKey, payload, json=false){
 // Zap adds a note to their AxisCare profile so care coordinators can see status without hub access
 const ZAPIER_AC_STATUS_WEBHOOK = "https://hooks.zapier.com/hooks/catch/28062149/42aqc9c/";
 
+/* 2026-09-27: lead texts, GoHighLevel replies and job offers need the staff member's own Hub sign-in (x-hub-token), not
+   the shared Training key; the Training functions check it with the Hub and run the Hub's opt-out check. */
+async function trainHubTok(){ try{ const {data:{session}}=await sb.auth.getSession(); return (session&&session.access_token)||''; }catch(e){ return ''; } }
 // ── Candidate texting via Supabase edge function + GoHighLevel ────────
 // Replaces the zapier_orient/not_hired webhooks. The send-candidate-message
 // edge function upserts the contact in GoHighLevel and sends the SMS from
@@ -4217,7 +4220,7 @@ async function sendReply(i){
   if(btn){btn.textContent='Sending…';btn.disabled=true;}
   try{
     const r=await fetch('https://rdqujxiycycwhskyvrwa.supabase.co/functions/v1/ghl-reply',{
-      method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
+      method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'x-hub-token':await trainHubTok(),'Content-Type':'application/json'},
       body:JSON.stringify({key:appSettings.training_hub_key,contact_id:el.dataset.contact,message:msg})});
     const data=await r.json();
     if(!data||data.error) throw new Error(data&&data.error?data.error:'send failed');
@@ -4234,7 +4237,7 @@ async function dismissReply(i){
   if(btn){btn.textContent='Clearing…';btn.disabled=true;}
   try{
     const r=await fetch('https://rdqujxiycycwhskyvrwa.supabase.co/functions/v1/ghl-reply',{
-      method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
+      method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'x-hub-token':await trainHubTok(),'Content-Type':'application/json'},
       body:JSON.stringify({key:appSettings.training_hub_key,action:'dismiss',conversation_id:el.dataset.conv})});
     const data=await r.json();
     if(!data||data.error) throw new Error(data&&data.error?data.error:'could not clear');
