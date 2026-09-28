@@ -4165,12 +4165,11 @@ async function issueWriteup(){
 }
 async function scanClockins(btn){
   const box=document.getElementById('att-scan-results');
-  const key=(appSettings.training_hub_key||'').trim();
-  if(!key){ box.innerHTML='<div style="color:#b45309;font-size:.8rem">Paste the Training Hub read key into ⚙️ Settings first.</div>'; return; }
+  const key=(appSettings.training_hub_key||'').trim()||undefined;
   if(btn){btn.disabled=true;btn.textContent='Scanning…';}
   try{
     const r=await fetch('https://rdqujxiycycwhskyvrwa.supabase.co/functions/v1/axiscare-open-shifts',{
-      method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
+      method:'POST',headers:{'x-hub-token':await trainHubTok(),'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
       body:JSON.stringify({key,mode:'clockins',days:7,grace:attCfg().tardy_grace})});
     const d=await r.json();
     if(d.error) throw new Error(d.error);
@@ -4199,12 +4198,11 @@ function prefillTardy(cg,date,time,mins){
 let _repliesData=null, repliesExpanded=true;
 async function loadRepliesWaiting(btn){
   const box=document.getElementById('repliesWaiting'); if(!box) return;
-  const key=(appSettings.training_hub_key||'').trim();
-  if(!key){ box.innerHTML='<div style="color:#b45309;font-size:.85rem">Paste the Training Hub read key into ⚙️ Settings → Training Hub to turn this on.</div>'; return; }
+  const key=(appSettings.training_hub_key||'').trim()||undefined;
   if(btn&&btn.tagName==='BUTTON'){ btn.disabled=true; btn.textContent='↻ Loading…'; }
   try{
     const r=await fetch('https://rdqujxiycycwhskyvrwa.supabase.co/functions/v1/ghl-replies',{
-      method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
+      method:'POST',headers:{'x-hub-token':await trainHubTok(),'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
       body:JSON.stringify({key})});
     const data=await r.json();
     if(!data||!Array.isArray(data.replies)) throw new Error((data&&data.error)||'unexpected response');
@@ -4242,8 +4240,8 @@ async function toggleThread(i){
   el.innerHTML='<div style="font-size:.8rem;color:#A89C8B">Loading conversation…</div>';
   try{
     const r=await fetch('https://rdqujxiycycwhskyvrwa.supabase.co/functions/v1/ghl-thread',{
-      method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
-      body:JSON.stringify({key:appSettings.training_hub_key,conversation_id:el.dataset.conv})});
+      method:'POST',headers:{'x-hub-token':await trainHubTok(),'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
+      body:JSON.stringify({key:appSettings.training_hub_key||undefined,conversation_id:el.dataset.conv})});
     const data=await r.json();
     if(!data||!Array.isArray(data.thread)) throw new Error(data&&data.error?data.error:'no thread');
     const fmt=iso=>{try{return new Date(iso).toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}catch(e){return ''}};
@@ -4373,12 +4371,11 @@ function updateCommsBadge(){
 let OPEN_SHIFTS=null; // null = not loaded yet
 async function loadOpenShifts(btn){
   const box=document.getElementById('open-shifts-board'); if(!box) return;
-  const key=(appSettings.training_hub_key||'').trim();
-  if(!key){ box.innerHTML='<div style="color:#b45309;font-size:.85rem">Paste the Training Hub read key into ⚙️ Settings → Training Hub to turn the board on.</div>'; return; }
+  const key=(appSettings.training_hub_key||'').trim()||undefined;
   if(btn){ btn.disabled=true; btn.textContent='↻ Loading…'; }
   try{
     const r=await fetch('https://rdqujxiycycwhskyvrwa.supabase.co/functions/v1/axiscare-open-shifts',{
-      method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
+      method:'POST',headers:{'x-hub-token':await trainHubTok(),'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
       body:JSON.stringify({key, days:14})});
     const data=await r.json();
     if(data.error){
@@ -4474,12 +4471,11 @@ function ciPairInfo(p){
 }
 async function loadCheckinPairs(btn){
   const box=document.getElementById('ci-pairs-board');
-  const key=(appSettings.training_hub_key||'').trim();
-  if(!key){ if(box) box.innerHTML='<div style="color:#b45309;font-size:.85rem">Paste the Training Hub read key into ⚙️ Settings → Training Hub to turn this board on.</div>'; return; }
+  const key=(appSettings.training_hub_key||'').trim()||undefined;
   if(btn){ btn.disabled=true; btn.textContent='↻ Loading…'; }
   try{
     const r=await fetch('https://rdqujxiycycwhskyvrwa.supabase.co/functions/v1/axiscare-open-shifts',{
-      method:'POST',headers:{'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
+      method:'POST',headers:{'x-hub-token':await trainHubTok(),'apikey':TRAINING_HUB_ANON,'Authorization':'Bearer '+TRAINING_HUB_ANON,'Content-Type':'application/json'},
       body:JSON.stringify({key, mode:'pairs', days:60})});
     const data=await r.json();
     if(data.error){ CI_PAIRS=null; if(box) box.innerHTML='<div style="color:#b91c1c;font-size:.85rem">Could not load matches: '+creqEsc(data.error)+'</div>'; updateCheckinsBadge(); return; }
