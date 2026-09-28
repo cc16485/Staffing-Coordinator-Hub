@@ -20,6 +20,16 @@
 // Draft-first by design: this NEVER sends an email/SMS. The coordinator reviews
 // and sends from the hub's Post-Call Follow-Up queue. Flip to auto later.
 //
+// GATE 0 GUARD (2026-09-28, her approval): no silent AI fact writes. What the AI
+// hears about the person (relationship, client name, needs, conditions, mobility,
+// urgency, payer, rate, summary, care flags, tags, a phone or email spoken on the
+// call) is NOT written onto the lead any more. It is kept on the lead as one
+// "suggested, not reviewed" entry in ai_suggestions[], for a person to review
+// (the Living Profile's "Learned from this call", Gate 7). The raw transcript is
+// no longer stored on the lead. A new lead still gets the caller's name, phone and
+// email from GoHighLevel's contact (not from the AI), and the drafted email/text
+// still waits in the approval queue exactly as before.
+//
 // Secrets (already on shared project zngsgedlsxinbygwmxwn): ANTHROPIC_API_KEY,
 //   GHL_TOKEN, plus SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY. New: CALL_FOLLOWUP_TOKEN.
 // Deploy: supabase functions deploy call-followup --project-ref zngsgedlsxinbygwmxwn --no-verify-jwt
@@ -200,38 +210,45 @@ Sign follow-up messages as "Caring Companions" unless a specific coordinator nam
 
   const branch = BRANCH_KEYS.includes(String(out.branch)) ? String(out.branch) : 'soft-check-in'
   const nowIso = new Date().toISOString()
+  /* GATE 0 GUARD: everything the AI heard is a suggestion, never a lead field */
+  const suggestion = {
+    id: crypto.randomUUID(), at: nowIso, source: 'call-followup', reviewed: false,
+    call_direction: direction, ghl_contact_id: contactId || '',
+    fields: {
+      contact_first_name: String(out.contact_first_name || ''), contact_last_name: String(out.contact_last_name || ''),
+      relationship: String(out.relationship || ''), client_first_name: String(out.client_first_name || ''),
+      email_found: String(out.email_found || ''), phone_found: String(out.phone_found || ''),
+      needs: Array.isArray(out.needs) ? out.needs : [], medical_conditions: Array.isArray(out.medical_conditions) ? out.medical_conditions : [],
+      mobility: String(out.mobility || ''), urgency: String(out.urgency || ''), funding_source: String(out.funding_source || ''),
+      rate_discussed: String(out.rate_discussed || ''), needs_summary: String(out.needs_summary || ''),
+      care_flags: Array.isArray(out.care_flags) ? out.care_flags : [], intent_tags: Array.isArray(out.intent_tags) ? out.intent_tags : [],
+      branch, confidence_note: String(out.confidence_note || ''),
+    },
+  }
+  const aiSummary = String(out.interest_notes || '').trim()
   const lead = {
     ...(existing || {}),
     id: existing?.id || crypto.randomUUID(),
-    first_name: existing?.first_name || String(out.contact_first_name || '') || inFirst || '(phone lead)',
-    last_name: existing?.last_name || String(out.contact_last_name || '') || inLast,
-    phone: phone || existing?.phone || '',
-    email: email || existing?.email || '',
-    relationship: String(out.relationship || '') || existing?.relationship || '',
-    client_first_name: String(out.client_first_name || '') || existing?.client_first_name || '',
+    /* identity comes from GoHighLevel's own contact record, never from what the AI heard */
+    first_name: existing?.first_name || inFirst || '(phone lead)',
+    last_name: existing?.last_name || inLast || '',
+    phone: existing?.phone || inPhone || '',
+    email: existing?.email || inEmail || '',
     source: existing?.source || 'Inbound Call',
     status: existing?.status && existing.status !== 'New' ? existing.status : 'New',
-    /* a second call adds to the notes; it never wipes what the office already had */
+    /* a second call adds to the notes; it never wipes what the office already had. Labelled as unreviewed AI. */
     interest_notes: [String(existing?.interest_notes || '').trim(),
-      (existing?.interest_notes ? 'Call ' + nowIso.slice(0, 10) + ': ' : '') + String(out.interest_notes || '').trim()].filter(Boolean).join('\n\n'),
-    needs: Array.isArray(out.needs) ? out.needs : (existing?.needs || []),
-    medical_conditions: Array.isArray(out.medical_conditions) ? out.medical_conditions : (existing?.medical_conditions || []),
-    mobility: String(out.mobility || '') || existing?.mobility || '',
-    urgency: String(out.urgency || '') || existing?.urgency || '',
-    funding_source: String(out.funding_source || '') || existing?.funding_source || '',
-    rate_discussed: String(out.rate_discussed || ''),
-    follow_up_branch: branch,
-    follow_up_due: addDaysISO(BRANCH_WAIT_DAYS[branch] ?? 3),
-    intent_tags: Array.from(new Set([...(existing?.intent_tags || []), ...((out.intent_tags as string[]) || [])])),
-    ai_needs_summary: String(out.needs_summary || ''),
-    ai_care_flags: Array.isArray(out.care_flags) ? out.care_flags : [],
+      aiSummary ? 'AI call summary, not reviewed (' + nowIso.slice(0, 10) + '): ' + aiSummary : ''].filter(Boolean).join('\n\n'),
+    /* the follow-up cue is office workflow, not a fact about the person; it never replaces a date the office set */
+    follow_up_branch: existing?.follow_up_branch || branch,
+    follow_up_due: existing?.follow_up_due || addDaysISO(BRANCH_WAIT_DAYS[branch] ?? 3),
+    ai_suggestions: [...(Array.isArray(existing?.ai_suggestions) ? existing.ai_suggestions : []), suggestion].slice(-10),
     ghl_contact_id: contactId || existing?.ghl_contact_id || '',
     // --- draft-first: the recap sits here for the coordinator to approve/send ---
     draft_email_subject: String(out.email_subject || ''),
     draft_email_body: String(out.email_body || ''),
     draft_sms: String(out.sms_draft || ''),
     awaiting_followup_review: true,
-    call_transcript: transcript.slice(0, 20000),
     last_call_at: nowIso,
     created_at: existing?.created_at || nowIso,
     updated_at: nowIso,
