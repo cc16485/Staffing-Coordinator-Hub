@@ -13,6 +13,7 @@
 // Deploy:  supabase functions deploy ht-support --no-verify-jwt --project-ref zngsgedlsxinbygwmxwn
 // -----------------------------------------------------------------------------
 
+import { mayContact } from '../_shared/optout.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const cors = {
@@ -76,6 +77,11 @@ Deno.serve(async (req) => {
 
   // Confirmation email via Resend — best-effort: a mail hiccup must never lose a ticket.
   const resendKey = Deno.env.get('RESEND_API_KEY')
+  /* 0b-3: this goes out through Resend, not GHL, so the check reads every other authority (the Hub's opt-out record,
+     inquiry do-not-contact); a refusal is logged and the ticket is still saved */
+  if (resendKey && !(await mayContact(supabase, 'ht-support', { channel: 'email', email, viaGhl: false }))) {
+    return json({ ok: true, ticket_no: ticketNo })   // same answer as always: the form never learns about an opt-out
+  }
   if (resendKey) {
     const first = (name || 'there').split(/\s+/)[0]
     const esc = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')

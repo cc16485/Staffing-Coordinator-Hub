@@ -21,6 +21,7 @@
 // confirms the fill in the hub and updates AxisCare. asked[] is the one
 // record; the hub board reads the same field the manual workflow writes.
 // -----------------------------------------------------------------------------
+import { ghlStoredContactIfAllowed } from '../_shared/optout.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { shadowRoute } from '../_shared/routing.ts'
 import { opEvent } from '../_shared/events.ts'
@@ -289,7 +290,10 @@ Deno.serve(async (req) => {
       await opEvent(sb, { verb: 'yes_received', item_id: String(c.id), area: 'coverage',
         actor_name: String(a.name || 'a caregiver'),
         summary: `${a.name} is interested in the ${c.client || 'new client'} hours (interest check)` })
-      await sms(contactId || a.ghl_contact_id,
+      /* 0b-3: the caregiver's contact goes through the universal opt-out door before the acknowledgment */
+      const ackTo = await ghlStoredContactIfAllowed(sb, { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' },
+        'coverage-reply', { channel: 'sms', contactId: contactId || a.ghl_contact_id })
+      if (ackTo) await sms(ackTo,
         (String(settings.coverage_msg_ack_interest || '') ||
          `Thank you {first_name}! Nothing is set yet — we're meeting the client first and we'll follow up with you about the hours.`)
         .replaceAll('{first_name}', a.name.split(' ')[0]))

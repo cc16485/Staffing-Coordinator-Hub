@@ -13,6 +13,7 @@
 // Deploy: dashboard editor, Verify JWT OFF.
 // -----------------------------------------------------------------------------
 
+import { ghlContactIfAllowed } from '../_shared/optout.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const json = (b: unknown, s = 200) =>
@@ -102,8 +103,10 @@ Deno.serve(async (req) => {
       try {
         const h = { Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
         const send = async (to: string, first: string, subject: string, html: string) => {
-          const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', { method: 'POST', headers: h, body: JSON.stringify({ locationId: ghlLocation, email: to, firstName: first }) })
-          const cid = (await up.json().catch(() => ({})))?.contact?.id
+          /* 0b-3: a customer (anyone who is not our own staff) goes through the universal opt-out door */
+          const cid = !/@mo-care\.com$/i.test(String(to).trim())
+            ? await ghlContactIfAllowed(supabaseHL, { token: ghlToken, locationId: ghlLocation }, 'stripe-webhook', { channel: 'email', email: to, firstName: first })
+            : (await (await fetch('https://services.leadconnectorhq.com/contacts/upsert', { method: 'POST', headers: h, body: JSON.stringify({ locationId: ghlLocation, email: to, firstName: first }) })).json().catch(() => ({})))?.contact?.id
           if (cid) await fetch('https://services.leadconnectorhq.com/conversations/messages', { method: 'POST', headers: h, body: JSON.stringify({ type: 'Email', contactId: cid, subject, html }) })
         }
         await send('samantha@mo-care.com', 'Samantha', '💳 HT Hire: ' + (c.name || '') + ' paid for their background check', '<p><b>' + (c.name || '') + '</b> paid $45. ' + checkrNote + '</p><p style="color:#55677a;font-size:13px;">Hub → HomeTogether → Local.</p>')

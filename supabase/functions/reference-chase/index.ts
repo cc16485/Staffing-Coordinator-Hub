@@ -23,6 +23,7 @@
 // immediate poke from the hub whenever new reference rows are inserted.
 // Supports ?dry=1 to report without sending.
 // -----------------------------------------------------------------------------
+import { ghlContactIfAllowed } from '../_shared/optout.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { outreachGate } from '../_shared/outreach.ts'
 
@@ -83,14 +84,11 @@ Deno.serve(async (req) => {
     Accept: 'application/json',
   }
 
-  const contactFor = async (phone: string | null, email: string | null, first: string) => {
-    const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-      method: 'POST', headers: h,
-      body: JSON.stringify({ locationId: ghlLocation, ...(phone ? { phone } : {}), ...(email ? { email } : {}), firstName: first }),
-    })
-    const uj = await up.json().catch(() => ({}))
-    return uj?.contact?.id ?? uj?.id ?? null
-  }
+  /* 0b-3: references and applicants are reached through the universal opt-out door, one GHL contact per channel */
+  const ghlDoor = { token: ghlToken!, locationId: ghlLocation! }
+  const door = (channel: 'sms' | 'email', address: unknown, first: string) =>
+    ghlContactIfAllowed(supabase, ghlDoor, 'reference-chase', channel === 'sms'
+      ? { channel, phone: address, firstName: first } : { channel, email: address, firstName: first })
 
   // deno-lint-ignore no-explicit-any
   const toSend: any[] = [], toNudge: any[] = [], toApplicant: any[] = [], toEscalate: any[] = []
@@ -135,7 +133,7 @@ Deno.serve(async (req) => {
       `&c=${encodeURIComponent(r.candidate_name)}&n=${encodeURIComponent(r.ref_name ?? '')}` +
       (r.ref_relationship ? `&rel=${encodeURIComponent(r.ref_relationship)}` : '')
     try {
-      const contactId = await contactFor(null, r.ref_email, r.ref_name ?? 'Reference')
+      const contactId = await door('email', r.ref_email, r.ref_name ?? 'Reference')
       if (!contactId) continue
       await fetch('https://services.leadconnectorhq.com/conversations/messages', {
         method: 'POST', headers: h,
@@ -166,7 +164,7 @@ Deno.serve(async (req) => {
     const url = `https://cc.mo-care.com/reference.html?r=${encodeURIComponent(r.id)}` +
       `&c=${encodeURIComponent(r.candidate_name)}&n=${encodeURIComponent(r.ref_name ?? '')}`
         try {
-      const contactId = await contactFor(null, r.ref_email, r.ref_name ?? 'Reference')
+      const contactId = await door('email', r.ref_email, r.ref_name ?? 'Reference')
       if (!contactId) continue
       {
         await fetch('https://services.leadconnectorhq.com/conversations/messages', {
@@ -204,19 +202,20 @@ Deno.serve(async (req) => {
       `and it is the last thing holding up your start. Give them a nudge if you can. ` +
       `Or if you have a better number or email for them, or want to use someone else, do it here: ${fixUrl}`
     try {
-      const contactId = await contactFor(r.candidate_phone, r.candidate_email, first)
-      if (!contactId) continue
-      if (r.candidate_phone) {
+      const smsId = r.candidate_phone ? await door('sms', r.candidate_phone, first) : null
+      const mailId = r.candidate_email ? await door('email', r.candidate_email, first) : null
+      if (!smsId && !mailId) continue
+      if (smsId) {
         await fetch('https://services.leadconnectorhq.com/conversations/messages', {
           method: 'POST', headers: h,
-          body: JSON.stringify({ type: 'SMS', contactId, message: line }),
+          body: JSON.stringify({ type: 'SMS', contactId: smsId, message: line }),
         })
       }
-      if (r.candidate_email) {
+      if (mailId) {
         await fetch('https://services.leadconnectorhq.com/conversations/messages', {
           method: 'POST', headers: h,
           body: JSON.stringify({
-            type: 'Email', contactId,
+            type: 'Email', contactId: mailId,
             subject: `We cannot reach ${who}`,
             html: `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
               `<p>Hi ${first},</p><p>We have not been able to reach <b>${who}</b> for your reference, and it is ` +

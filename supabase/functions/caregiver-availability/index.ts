@@ -104,7 +104,7 @@ Deno.serve(async (req) => {
       const itemId = String(cg.axiscare_id || ('roster_' + cg.id))
       if (haveAv.has(itemId) || recentlyInvited.has(itemId)) continue
       const contact = await contactForOutbound(sb, ghl,
-        { phone: cg.phone, firstName: cg.first || name }, 'routine_internal', { audience: 'caregiver' })
+        { phone: cg.phone, firstName: cg.first || name }, 'routine_internal', { audience: 'caregiver', channel: 'sms', sender: 'caregiver-availability' })
       if (!contact) { skippedGate++; continue }
       let ok = false
       try {

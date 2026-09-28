@@ -18,6 +18,8 @@
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { outreachGate } from '../_shared/outreach.ts'
+import { ghlContactIfAllowed } from '../_shared/optout.ts'
+import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -34,11 +36,16 @@ Deno.serve(async (req) => {
   if (gate) return gate
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
 
+  /* 0b-3: this texts applicants a message the CALLER writes, so the caller must be a signed-in office staff member
+     (it trusted anyone before), checked before anything is read or sent. */
+  const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } })
+  const who = await requireStaff(supabase, req, OFFICE_ROLES)
+  if (!who.ok) return json({ error: who.error }, who.status)
+
   const { ids, message, slug, dry } = await req.json().catch(() => ({}))
   if (!Array.isArray(ids) || !ids.length) return json({ error: 'no applicants given' }, 400)
   if (!message || !String(message).trim()) return json({ error: 'no message given' }, 400)
 
-  const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const ghlToken = Deno.env.get('GHL_TOKEN')
   const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
 
@@ -86,26 +93,25 @@ Deno.serve(async (req) => {
     const applyUrl = 'https://mo-care.com/apply?book=' + encodeURIComponent(String(p.id))
     const body = `Hi ${first}, ${String(message).trim()}`
     try {
-      const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-        method: 'POST', headers: h,
-        body: JSON.stringify({ locationId: ghlLocation, ...(p.phone ? { phone: p.phone } : {}),
-          ...(p.email ? { email: p.email } : {}), firstName: first }),
-      })
-      const uj = await up.json().catch(() => ({}))
-      const contactId = uj?.contact?.id ?? uj?.id
-      if (!contactId) continue
-
+      /* 0b-3: each channel through the universal opt-out door, one GHL contact per channel */
+      const ghlDoor = { token: ghlToken, locationId: ghlLocation }
+      let reached = false
       if (p.phone && p.sms_consent === true) {
-        await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-          method: 'POST', headers: h,
-          body: JSON.stringify({ type: 'SMS', contactId,
-            message: `${body} ${applyUrl} Reply STOP to hear no more from us.` }),
-        })
+        const cid = await ghlContactIfAllowed(supabase, ghlDoor, 'applicant-reengage', { channel: 'sms', phone: p.phone, firstName: first })
+        if (cid) {
+          const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+            method: 'POST', headers: h,
+            body: JSON.stringify({ type: 'SMS', contactId: cid,
+              message: `${body} ${applyUrl} Reply STOP to hear no more from us.` }),
+          })
+          reached = reached || r.ok
+        }
       }
-      if (p.email) {
-        await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+      const eid = p.email ? await ghlContactIfAllowed(supabase, ghlDoor, 'applicant-reengage', { channel: 'email', email: p.email, firstName: first }) : null
+      if (eid) {
+        const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
           method: 'POST', headers: h,
-          body: JSON.stringify({ type: 'Email', contactId,
+          body: JSON.stringify({ type: 'Email', contactId: eid,
             subject: 'A new opening at Caring Companions',
             html: `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
               `<p>Hi ${first},</p><p>${String(message).trim()}</p>` +
@@ -115,7 +121,9 @@ Deno.serve(async (req) => {
               `If you would rather we did not get in touch again, just reply and say so.</p>` +
               `<p style="color:#57606a">Caring Companions In-Home Senior Care<br>${phone}</p></div>` }),
         })
+        reached = reached || r.ok
       }
+      if (!reached) continue
       await supabase.from('job_applicants').update({
         reengaged_at: new Date().toISOString(),
         reengage_count: (p.reengage_count ?? 0) + 1,

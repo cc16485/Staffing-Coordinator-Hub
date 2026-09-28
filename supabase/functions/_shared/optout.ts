@@ -15,7 +15,8 @@
 // FAIL CLOSED: if a source cannot be read, the send is refused with "could not check <source>". A family
 // message that cannot be proven permitted does not go.
 // 0b-2 (2026-09-27) wires every family, client, inquiry and public-person sender to it through ghlContactIfAllowed
-// (directly, or through contactForOutbound with a channel). 0b-3 wires caregiver, applicant and HomeTogether senders.
+// (directly, or through contactForOutbound with a channel). 0b-3 (2026-09-27) wires caregiver, applicant and
+// HomeTogether senders, and ghlStoredContactIfAllowed covers sends to a GHL contact id saved earlier.
 // =============================================================================
 export type Channel = 'sms' | 'email'
 export type OptOutVerdict = { allowed: boolean; reasons: string[] }
@@ -148,15 +149,54 @@ export async function ghlContactIfAllowed(
     await logRefusal(db, sender, to.channel, phone ?? email, ['GHL returned no contact, so Do Not Disturb could not be checked'])
     return null
   }
-  const v = await optOutCheck(db, { channel: to.channel, phone, email, ghlContact: contact })
+  return await decide(db, sender, to.channel, phone ?? email, contact, to.onOptOut)
+}
+
+// deno-lint-ignore no-explicit-any
+async function decide(db: any, sender: string, channel: Channel, address: string | null, contact: any,
+                      onOptOut?: (reasons: string[], contact: Record<string, unknown>) => void | Promise<void>): Promise<string | null> {
+  const v = await optOutCheck(db, { channel, phone: channel === 'sms' ? address : undefined, email: channel === 'email' ? address : undefined, ghlContact: contact })
   if (v.allowed) return String(contact.id)
-  await logRefusal(db, sender, to.channel, phone ?? email, v.reasons)
+  await logRefusal(db, sender, channel, address, v.reasons)
   console.warn(`[${sender}] send refused: ${v.reasons.join('; ')}`)
   /* an authority said no (not merely "could not check"): tell the sender, so it can stop asking every run */
-  if (to.onOptOut && v.reasons.some((r) => !r.startsWith('could not check') && !r.startsWith('no usable'))) {
-    try { await to.onOptOut(v.reasons, contact) } catch { /* the refusal stands either way */ }
+  if (onOptOut && v.reasons.some((r) => !r.startsWith('could not check') && !r.startsWith('no usable'))) {
+    try { await onOptOut(v.reasons, contact) } catch { /* the refusal stands either way */ }
   }
   return null
+}
+
+/**
+ * 0b-3: the door for a GHL contact id saved EARLIER (a coverage ask's caregiver, a webhook's contact). Nothing is
+ * created: the contact is read from GHL (its Do Not Disturb and its phone or email), then the universal check runs
+ * on that address. Returns the id only when the message may go.
+ */
+export async function ghlStoredContactIfAllowed(
+  // deno-lint-ignore no-explicit-any
+  db: any, ghl: { token: string; locationId: string }, sender: string,
+  to: { channel: Channel; contactId: unknown; onOptOut?: (reasons: string[], contact: Record<string, unknown>) => void | Promise<void> },
+  send: typeof fetch = fetch,
+): Promise<string | null> {
+  const id = String(to.contactId ?? '').trim()
+  if (!id) { await logRefusal(db, sender, to.channel, '', ['no GHL contact to send to']); return null }
+  // deno-lint-ignore no-explicit-any
+  let contact: any = null
+  try {
+    const g = await send(`https://services.leadconnectorhq.com/contacts/${encodeURIComponent(id)}`,
+      { method: 'GET', headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', Accept: 'application/json' } })
+    const gj = await g.json().catch(() => ({}))
+    if (gj?.contact?.id === id) contact = gj.contact
+  } catch { contact = null }
+  const address = to.channel === 'sms' ? normPhone(contact?.phone) : normEmail(contact?.email)
+  if (!contact) {
+    await logRefusal(db, sender, to.channel, '', ['GHL could not return this contact, so Do Not Disturb could not be checked'])
+    return null
+  }
+  if (!address) {
+    await logRefusal(db, sender, to.channel, '', ['the GHL contact has no usable ' + (to.channel === 'sms' ? 'phone number' : 'email address')])
+    return null
+  }
+  return await decide(db, sender, to.channel, address, contact, to.onOptOut)
 }
 
 /** The call a sender makes: check, log a refusal, return whether it may send. */

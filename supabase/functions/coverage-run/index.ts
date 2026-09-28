@@ -27,6 +27,7 @@
 // =============================================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { ghlStoredContactIfAllowed } from '../_shared/optout.ts'
 import { maySendTo, normalisePhone, contactForOutbound } from '../_shared/outreach.ts'
 import { ZIP_LL } from '../_shared/zip-centroids.ts'
 import { shadowRoute } from '../_shared/routing.ts'
@@ -848,8 +849,8 @@ Deno.serve(async (req) => {
         const phone = phoneOf(String(x.name))
         if (!phone) { failed.push(`${x.name} (no phone on the roster)`); continue }
         const contact = await contactForOutbound(sb, ghl2,
-          { phone, firstName: x.first || x.name }, 'urgent_internal', { audience: 'caregiver' })
-        if (!contact) { failed.push(`${x.name} (refused by the outbound gate)`); continue }
+          { phone, firstName: x.first || x.name }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'coverage-run' })
+        if (!contact) { failed.push(`${x.name} (refused by the outbound gate or opted out of texts)`); continue }
         const message = fillMsg(String(kase.kind) === 'interest' ? tmplInt
           : (x.tier === 1 ? tmpl1 : tmplO), x)
         try {
@@ -1645,7 +1646,7 @@ Deno.serve(async (req) => {
       for (const x of wave) {
         /* An uncovered shift is the textbook urgent_internal: staff, 24/7. */
         const contact = await contactForOutbound(sb, ghl,
-          { phone: x.phone, firstName: x.first || x.name }, 'urgent_internal', { audience: 'caregiver' })
+          { phone: x.phone, firstName: x.first || x.name }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'coverage-run' })
         if (!contact) continue
         const message = fill(x.tier === 1 ? tmpl1 : tmplO, x)
         let ok = false
@@ -1862,16 +1863,24 @@ Deno.serve(async (req) => {
         if (c.resolved_how === 'covered' && c.covered_by) {
           const winner = askedList.find((a: any) => (a.auto === true || a.picked_by_coordinator === true)
             && a.state === 'yes'
-            && !a.confirm_sent && String(a.name).toLowerCase() === String(c.covered_by).toLowerCase()
+            && !a.confirm_sent && !a.confirm_optout && String(a.name).toLowerCase() === String(c.covered_by).toLowerCase()
             && a.ghl_contact_id)
           if (winner) {
             const whenTxt = [friendlyDay(c.shift_date), span12(c.shift_time)].filter(Boolean).join(' ')
             try {
+              /* 0b-3: the saved contact goes through the universal opt-out door first. An opt-out is recorded on the
+                 ask (confirm_optout) so the next run does not ask again; the office confirms by phone anyway. */
+              const cid = await ghlStoredContactIfAllowed(sb, ghl, 'coverage-run (confirmed text)',
+                { channel: 'sms', contactId: winner.ghl_contact_id, onOptOut: () => { winner.confirm_optout = true } })
+              if (!cid) {
+                if (winner.confirm_optout) await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
+                throw new Error('not sent')
+              }
               const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
                 method: 'POST',
                 headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
                            'Content-Type': 'application/json' },
-                body: JSON.stringify({ type: 'SMS', contactId: winner.ghl_contact_id,
+                body: JSON.stringify({ type: 'SMS', contactId: cid,
                   message: (String(settings.coverage_msg_confirmed || '') ||
                     `You're confirmed for {client}, {when}. It's on your schedule. Thank you, {first_name}!`)
                     .replaceAll('{first_name}', String(winner.name).split(' ')[0])
@@ -1974,7 +1983,7 @@ Deno.serve(async (req) => {
         const notChosenMsg = (String(c.not_chosen_msg || '')
           || String(settings.coverage_msg_not_chosen || '') ||
           `Caring Companions: that shift got covered this time — thank you so much for offering, {first_name}! Next one is yours.`)
-        let told = 0
+        let told = 0, optedOut = 0
         const closureSends = [
           ...waiting.map((a: any) => ({ a, msg: courtesyMsg })),
           ...yesLosers.map((a: any) => ({ a,
@@ -1984,14 +1993,24 @@ Deno.serve(async (req) => {
         ]
         for (const { a, msg } of closureSends) {
           try {
-            const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
-                         'Content-Type': 'application/json' },
-              body: JSON.stringify({ type: 'SMS', contactId: a.ghl_contact_id,
-                message: msg }),
-            })
-            if (r.ok) { if (a.state === 'yes') a.was_yes = true; a.state = 'closed_notified'; told++ }
+            /* 0b-3: through the universal opt-out door. Someone who opted out is closed SILENTLY (the state the
+               coordinator's "say nothing" choice already uses, which Reopen restores), so the case still finishes
+               instead of asking again every run. */
+            let stop = false
+            const cid = await ghlStoredContactIfAllowed(sb, ghl, 'coverage-run (closure text)',
+              { channel: 'sms', contactId: a.ghl_contact_id, onOptOut: () => { stop = true } })
+            if (!cid) {
+              if (stop) { if (a.state === 'yes') a.was_yes = true; a.state = 'closed_silent'; a.optout_skipped = true; optedOut++ }
+            } else {
+              const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
+                           'Content-Type': 'application/json' },
+                body: JSON.stringify({ type: 'SMS', contactId: cid,
+                  message: msg }),
+              })
+              if (r.ok) { if (a.state === 'yes') a.was_yes = true; a.state = 'closed_notified'; told++ }
+            }
             /* Case over: drop the tag so future texts stop firing the
                reply workflow (and stop costing premium executions). */
             await fetch(`https://services.leadconnectorhq.com/contacts/${a.ghl_contact_id}/tags`, {
@@ -2005,8 +2024,9 @@ Deno.serve(async (req) => {
         /* Delivered texts and their closed_notified states must persist even
            when the completion stamp is deferred (family stage still owed),
            or the next tick would text the same people again. */
-        if (told) {
+        if (told || optedOut) {
           c.closure_courtesy_count = Number(c.closure_courtesy_count || 0) + told
+          if (optedOut) c.closure_optout_skipped = Number(c.closure_optout_skipped || 0) + optedOut
           stats.closure_notified += told
           if (familyResolved || c.family_notified) c.closure_notified = nowIso()
           await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
