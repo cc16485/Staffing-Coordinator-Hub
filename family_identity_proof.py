@@ -26,9 +26,13 @@ s.run("""create table person_relationship (id bigserial primary key, person_id u
   rank int not null default 100, active boolean not null default true, ended_at date, source text not null default 'office' check (source in ('axiscare','office')),
   unique (person_id, client_person_id, relationship), check (person_id <> client_person_id))""")
 s.run("create table phone_index (id bigserial primary key, phone text not null, person_id uuid not null references person_identity(id), kind text, shared boolean not null default false, unique (phone, person_id))")
-s.run("""create table identity_door_audit (id bigserial primary key, at timestamptz default now(), op text not null check (op in ('resolve_or_create','attach_source')),
+s.run("""create table identity_door_audit (id bigserial primary key, at timestamptz default now(), op text not null,
   workflow text not null, acting_staff text not null, system text not null, entity_type text not null, source_id text not null,
-  outcome text not null check (outcome in ('resolved_existing','created_new','conflict','invalid_source','attached','already_attached')), person_id uuid, evidence text, detail text)""")
+  outcome text not null, person_id uuid, evidence text, detail text)""")
+# as live: the historical door's lists, and rows already using them
+s.run("alter table identity_door_audit add constraint identity_door_audit_op_check check (op in ('resolve_or_create','attach_source','resolve_historical'))")
+s.run("alter table identity_door_audit add constraint identity_door_audit_outcome_check check (outcome in ('resolved_existing','created_new','conflict','invalid_source','attached','already_attached','resolved_created','already_resolved','invalid_resolution'))")
+s.run("insert into identity_door_audit (op,workflow,acting_staff,system,entity_type,source_id,outcome) values ('resolve_historical','hist','x','axiscare','client','1','resolved_created'),('attach_source','a','x','axiscare','caregiver','9','attached')")
 s.run("create table care_circles (id bigserial primary key, client_name text, active boolean, axiscare_client_id text)")
 s.run("create table circle_contacts (id bigserial primary key, circle_id bigint, name text, relationship text, phone text, source text, axiscare_removed_at timestamptz)")
 CL=s.run("insert into person_identity (display_name) values ('Ruth Client') returning id")[0][0]; CG=s.run("insert into person_identity (display_name) values ('Cara Giver') returning id")[0][0]
@@ -82,6 +86,12 @@ def err(f):
     except DatabaseError as e: return str(e)[:80]
 KAT=Connection(user="postgres",database="postgres",unix_sock=sock); KAT.run("set role authenticated")
 ck("a browser can't reach either function", err(lambda: KAT.run("select public.person_link_family_contact('1','x','x','x')")) and err(lambda: KAT.run("select public.person_end_family_contact('1','x','x','x')")))
+ck("the live values survive: historical and earlier outcomes still allowed", s.run("select pg_get_constraintdef(oid) from pg_constraint where conname='identity_door_audit_op_check'")[0][0].count("resolve_historical")==1
+   and "invalid_resolution" in s.run("select pg_get_constraintdef(oid) from pg_constraint where conname='identity_door_audit_outcome_check'")[0][0])
 rc,out=psql(RBK); ck("rollback refuses once links exist", rc!=0 and "history" in out, out[-200:])
+s.run("drop function person_link_family_contact(text,text,text,text)"); s.run("drop function person_end_family_contact(text,text,text,text)")
+s2=Connection(user="postgres",database="postgres",unix_sock=sock); s2.run("alter table identity_door_audit disable trigger all"); s2.run("delete from identity_door_audit where op in ('link_family','end_family')")
+rc,out=psql(SQL); rc2,out2=psql(RBK); d_op=s.run("select pg_get_constraintdef(oid) from pg_constraint where conname='identity_door_audit_op_check'")[0][0]
+ck("rollback while nothing is linked restores the live lists exactly (historical kept, family removed)", rc==0 and rc2==0 and "resolve_historical" in d_op and "link_family" not in d_op, [out2[-200:], d_op])
 for n_,o,dd in res: print(("PASS" if o else "FAIL")+" · "+n_+("" if o else "  :: "+dd))
 print(f"{sum(x[1] for x in res)}/{len(res)}")

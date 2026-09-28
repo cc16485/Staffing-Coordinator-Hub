@@ -26,14 +26,31 @@ do $guard$ begin
     raise exception 'family identity refused: the identity layer or the Family Circle tables are missing. Nothing was changed.'; end if;
 end $guard$;
 
--- the audit learns the two new operations and their outcomes (a deliberate allowlist change, her ruling)
-alter table public.identity_door_audit drop constraint if exists identity_door_audit_op_check;
-alter table public.identity_door_audit add constraint identity_door_audit_op_check
-  check (op in ('resolve_or_create','attach_source','link_family','end_family'));
-alter table public.identity_door_audit drop constraint if exists identity_door_audit_outcome_check;
-alter table public.identity_door_audit add constraint identity_door_audit_outcome_check
-  check (outcome in ('resolved_existing','created_new','conflict','invalid_source','attached','already_attached',
-                     'linked','already_linked','ended','refused'));
+-- the audit learns the two new operations and their outcomes (a deliberate allowlist change, her ruling). The new lists
+-- are built from what is live (every value the current rules allow, and every value already in the log) plus the new
+-- ones, so no earlier door's values can be lost.
+do $aud$
+declare v_ops text[]; v_outs text[]; c record;
+begin
+  select array_agg(distinct x order by x) into v_ops from (
+    select (regexp_matches(pg_get_constraintdef(oid), '''([^'']+)''', 'g'))[1] as x
+      from pg_constraint where conrelid = 'public.identity_door_audit'::regclass and contype = 'c' and pg_get_constraintdef(oid) ilike '%(op = any%'
+    union select op from public.identity_door_audit
+    union select unnest(array['link_family','end_family'])) t;
+  select array_agg(distinct x order by x) into v_outs from (
+    select (regexp_matches(pg_get_constraintdef(oid), '''([^'']+)''', 'g'))[1] as x
+      from pg_constraint where conrelid = 'public.identity_door_audit'::regclass and contype = 'c' and pg_get_constraintdef(oid) ilike '%(outcome = any%'
+    union select outcome from public.identity_door_audit
+    union select unnest(array['linked','already_linked','ended','refused','conflict'])) t;
+  for c in select conname from pg_constraint where conrelid = 'public.identity_door_audit'::regclass and contype = 'c'
+             and (pg_get_constraintdef(oid) ilike '%(op = any%' or pg_get_constraintdef(oid) ilike '%(outcome = any%') loop
+    execute 'alter table public.identity_door_audit drop constraint ' || quote_ident(c.conname);
+  end loop;
+  execute format('alter table public.identity_door_audit add constraint identity_door_audit_op_check check (op in (%s))',
+                 (select string_agg(quote_literal(x), ',') from unnest(v_ops) x));
+  execute format('alter table public.identity_door_audit add constraint identity_door_audit_outcome_check check (outcome in (%s))',
+                 (select string_agg(quote_literal(x), ',') from unnest(v_outs) x));
+end $aud$;
 
 create function public.person_link_family_contact(p_contact_id text, p_workflow text, p_acting_staff text, p_evidence text)
 returns jsonb language plpgsql security definer set search_path = pg_catalog, public, pg_temp as $f$

@@ -20,7 +20,10 @@ def setup(tables=True):
     root.run("create table person_source_id (id bigserial primary key, person_id uuid, system text, entity_type text, source_id text, confidence text, needs_review boolean, evidence text)")
     root.run("create table person_relationship (id bigserial primary key, person_id uuid, client_person_id uuid, relationship text, responsible_party boolean default false, active boolean default true, ended_at date, source text default 'office')")
     root.run("create table phone_index (id bigserial primary key, phone text, person_id uuid, kind text, shared boolean default false, unique(phone, person_id))")
-    root.run("create table identity_door_audit (id bigserial primary key, at timestamptz default now(), op text not null check (op in ('resolve_or_create','attach_source')), workflow text, acting_staff text, system text, entity_type text, source_id text, outcome text not null check (outcome in ('resolved_existing','created_new','conflict','invalid_source','attached','already_attached')), person_id uuid, evidence text, detail text)")
+    root.run("create table identity_door_audit (id bigserial primary key, at timestamptz default now(), op text not null, workflow text, acting_staff text, system text, entity_type text, source_id text, outcome text not null, person_id uuid, evidence text, detail text)")
+    root.run("alter table identity_door_audit add constraint identity_door_audit_op_check check (op in ('resolve_or_create','attach_source','resolve_historical'))")
+    root.run("alter table identity_door_audit add constraint identity_door_audit_outcome_check check (outcome in ('resolved_existing','created_new','conflict','invalid_source','attached','already_attached','resolved_created','already_resolved','invalid_resolution'))")
+    root.run("insert into identity_door_audit (op, workflow, acting_staff, system, entity_type, source_id, outcome) values ('resolve_historical','h','x','axiscare','client','1','resolved_created')")
     root.run("create table care_circles (id bigserial primary key, active boolean, axiscare_client_id text)")
     root.run("create table circle_contacts (id bigserial primary key, circle_id bigint, name text, phone text)")
 def runsql(q):
