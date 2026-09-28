@@ -637,8 +637,12 @@ async function backfillClientsFromAxisCare(commit: boolean) {
       const { data: have } = await sb.from('phone_index').select('id')
         .eq('phone', ph.phone).eq('person_id', personId).maybeSingle()
       if (have) continue
+      /* Provenance is stated, never inherited: this number is on the client's
+         AxisCare record, so it says so (the table's default is 'probable'). */
       const { error: e4 } = await sb.from('phone_index')
-        .insert({ phone: ph.phone, person_id: personId, kind: ph.kind })
+        .insert({ phone: ph.phone, person_id: personId, kind: ph.kind,
+                  source_system: 'axiscare', source_record_id: axId, confidence: 'confirmed',
+                  imported_at: new Date().toISOString() })
       if (e4) out.errors.push(`${name} phone: ${e4.message}`)
       else out.phones_indexed++
     }
