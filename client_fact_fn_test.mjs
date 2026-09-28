@@ -72,6 +72,16 @@ r = await call('good', { action: 'care_began', episode_id: EP });
 ck('care_began: office staff get the one rule\'s answer, unchanged', r.status === 200 && r.body.began === true && r.body.basis && calls[0].name === 'care_began_for_episode' && calls[0].args.p_episode_id === EP, r);
 rpcAnswer = { data: null, error: { message: 'boom' } };
 r = await call('good', { action: 'care_began', episode_id: EP }); ck('care_began: if the check fails, the answer says it could not check (never a guess)', r.status === 200 && r.body.began === null && r.body.reason === 'could_not_check', r);
+// Gate 4a: a person on the Journey
+calls.length = 0; rpcAnswer = { data: { outcome: 'recorded', person_key: EP, row_id: EP }, error: null };
+const P = { action: 'record_person', episode_id: EP, name: 'Tom Miller', relationship: 'son', roles: ['emergency', 7, 'billing'], phone: '417-555-0100',
+  permission: 'yes', permission_asked_by: 'Kat', permission_asked_at: '2026-09-28T15:00:00Z', change_kind: 'first', recorded_by: 'evil@x.test' };
+r = await call(null, P); ck('record_person: no sign-in is refused (401)', r.status === 401 && calls.length === 0);
+r = await call('caregiver', P); ck('record_person: a non-office staff member is refused (403)', r.status === 403 && calls.length === 0);
+r = await call('good', { ...P, person_key: 'nope' }); ck('record_person: a malformed person id is refused (400)', r.status === 400 && calls.length === 0);
+r = await call('good', P); const pa = calls[0] && calls[0].args;
+ck('record_person: office staff reach the people door once; the recorder is the sign-in, never the request', r.status === 200 && calls[0].name === 'people_on_journey_record' && pa.p_recorded_by === 'kat@cc.test', pa);
+ck('record_person: roles pass through as a list of words (anything else dropped), details as sent', pa && JSON.stringify(pa.p_roles) === '["emergency","billing"]' && pa.p_name === 'Tom Miller' && pa.p_is_caller === false && pa.p_permission_asked_at === '2026-09-28T15:00:00.000Z', pa);
 fs.unlinkSync(tmp);
 for (const [n, ok, note] of res) console.log((ok ? 'PASS' : 'FAIL') + ' · ' + n + (ok ? '' : '  ::  ' + note));
 console.log(res.filter(x => x[1]).length + '/' + res.length);
