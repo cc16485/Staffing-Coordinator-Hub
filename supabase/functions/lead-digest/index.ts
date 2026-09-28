@@ -21,8 +21,17 @@
 // same job twice (11:45 and 12:45 UTC) so 6:45am survives daylight saving;
 // the window guard and sent-marker keep it to one email per person per day.
 // ?to=email&force=1 sends one test brief regardless of time or marker.
+//
+// SECURITY (2026-09-28): ?to= and ?force= used to work for ANY caller, so anyone
+// with the link could have the admin edition (leads with phone numbers, open
+// items, today's schedule) emailed to any address. Now both need the caller's
+// own Hub sign-in with an office role, ?to= must be that person's OWN email,
+// and the admin edition goes only to someone listed as admin in the Settings
+// card. The plain scheduled run is unchanged: configured recipients only, in
+// the 6-9am window, once a day.
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -53,6 +62,11 @@ Deno.serve(async (req) => {
   const url = new URL(req.url)
   const testTo = (url.searchParams.get('to') || '').trim().toLowerCase()
   const force = url.searchParams.get('force') === '1' || !!testTo
+  if (force) {
+    const who = await requireStaff(sb, req, OFFICE_ROLES)
+    if (!who.ok) return json({ error: who.error }, who.status)
+    if (testTo && testTo !== who.email) return json({ error: 'A test brief can only go to your own email.' }, 403)
+  }
 
   const chiNow = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' })
   const today = chiNow.slice(0, 10)
@@ -164,8 +178,11 @@ Deno.serve(async (req) => {
       })
   }
   if (testTo) {
+    // your own brief: the admin edition only if the Settings card lists you as admin
     const hit = recips.find((r) => r.email === testTo)
-    recips = hit ? [hit] : [{ name: testTo.split('@')[0], email: testTo, admin: true }]
+    // deno-lint-ignore no-explicit-any
+    const p = staff.find((x: any) => String(x?.email || '').toLowerCase() === testTo)
+    recips = hit ? [hit] : [{ name: String(p?.name || testTo.split('@')[0]), email: testTo, admin: false }]
   }
 
   // ── Shared helpers ──
