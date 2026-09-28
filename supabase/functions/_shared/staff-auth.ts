@@ -68,9 +68,9 @@ export async function requireStaff(
 }
 
 /** A scheduled job's server-only secret, compared in constant time. Missing or short secret: always false. */
-export function serverSecretOk(req: Request, envName: string): boolean {
+export function serverSecretOk(req: Request, envName: string, header = 'x-cron-secret'): boolean {
   const want = Deno.env.get(envName) || ''
-  const got = req.headers.get('x-cron-secret') || ''
+  const got = req.headers.get(header) || ''
   if (want.length < 32 || got.length !== want.length) return false
   let d = 0
   for (let i = 0; i < want.length; i++) d |= want.charCodeAt(i) ^ got.charCodeAt(i)

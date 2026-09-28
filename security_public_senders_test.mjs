@@ -28,6 +28,7 @@ globalThis.__db = { from: q, rpc: async () => ({ data: null, error: null }),
   storage: { from: () => ({ upload: async () => ({ error: null }), createSignedUrl: async (p) => ({ data: { signedUrl: 'https://tp.supabase.co/storage/v1/object/sign/waiver-docs/' + p + '?token=x' } }) }) } };
 globalThis.fetch = async (url, o) => {
   url = String(url); const body = o && o.body ? JSON.parse(o.body) : {}
+  if (url.endsWith('/functions/v1/outreach-check')) return new Response(JSON.stringify({ allowed: true }), { status: 200 })   // the Hub's opt-out door (tested in optout_remaining_test.mjs)
   if (url.includes('api.resend.com')) { SENT.push({ via: 'resend', to: [].concat(body.to)[0], subject: body.subject, html: body.html }); return new Response('{"id":"x"}', { status: 200 }) }
   if (url.includes('/contacts/upsert')) return new Response(JSON.stringify({ contact: { id: 'C:' + (body.email || body.phone), dnd: false } }), { status: 200 })
   if (url.includes('/conversations/messages')) { SENT.push({ via: 'ghl', to: body.contactId, type: body.type, html: body.html }); return new Response('{}', { status: 200 }) }
@@ -36,14 +37,15 @@ globalThis.fetch = async (url, o) => {
   return new Response('{}', { status: 200 })
 }
 const ENV = { SUPABASE_URL: 'https://tp.supabase.co', SUPABASE_SERVICE_ROLE_KEY: SVC, RESEND_API_KEY: 'rk', GHL_TOKEN: 'g', GHL_LOCATION_ID: 'loc',
-  HTL_PUBLIC_TOKEN: 'htlpub_x', RELAY_SECRET, TRAINING_CRON_SECRET: CRON, HT_ORDER_TOKEN: PUBLIC, HT_SUPPORT_TOKEN: PUBLIC, AXISCARE_SITE_NUMBER: '1', AXISCARE_TOKEN: 't' }
+  HTL_PUBLIC_TOKEN: 'htlpub_x', RELAY_SECRET, OUTREACH_SECRET: 'o'.repeat(48), HUB_ANON_KEY: 'hub-anon', TRAINING_CRON_SECRET: CRON, HT_ORDER_TOKEN: PUBLIC, HT_SUPPORT_TOKEN: PUBLIC, AXISCARE_SITE_NUMBER: '1', AXISCARE_TOKEN: 't' }
 let handler; globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (h) => { handler = h; } }
 const tmpDir = fs.mkdtempSync(path.join(process.cwd(), '_psl_'))
 const noCC = (s) => s.replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
 fs.writeFileSync(path.join(tmpDir, 'guard.ts'), noCC(fs.readFileSync(path.join(TP, '_shared/guard.ts'), 'utf8')))
+fs.writeFileSync(path.join(tmpDir, 'optout-gate.ts'), fs.readFileSync(path.join(TP, '_shared/optout-gate.ts'), 'utf8'))
 const load = async (dir, name) => {
   let src = noCC(fs.readFileSync(path.join(dir, name, 'index.ts'), 'utf8'))
-    .replace("from '../_shared/guard.ts'", "from './guard.ts'").replace(/from '\.\.\/_shared\/optout\.ts'/, "from '" + path.join(process.cwd(), HUB, '_shared/optout.ts') + "'")
+    .replace("from '../_shared/guard.ts'", "from './guard.ts'").replace(/from ['"]\.\.\/_shared\/optout-gate\.ts['"]/, "from './optout-gate.ts'").replace(/from '\.\.\/_shared\/optout\.ts'/, "from '" + path.join(process.cwd(), HUB, '_shared/optout.ts') + "'")
   const tmp = path.join(tmpDir, name + '.ts'); fs.writeFileSync(tmp, src); await import(tmp + '?' + Math.random()); return handler }
 const post = async (h, url, body, headers = {}) => { const r = await h(new Request(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body ?? {}) })); let j = null; try { j = await r.json() } catch { /* */ } return { status: r.status, j } }
 try {
