@@ -72,8 +72,8 @@ Deno.serve(async (req) => {
   if (!text) return json({ ok: true, routed: 'no message text — nothing to record' })
 
   // Which callout is this an answer to? The newest open case where this
-  // phone (or contact) was auto-asked and hasn't answered yet — else the
-  // newest open case that asked them at all (people change their minds).
+  // phone (or contact) was texted and hasn't answered yet — else the
+  // newest open case that texted them at all (people change their minds).
   const { data: row } = await sb.from('app_data').select('data').eq('key', 'coverage_cases').maybeSingle()
   // deno-lint-ignore no-explicit-any
   const cases: any[] = Array.isArray(row?.data) ? row!.data : []
@@ -82,7 +82,12 @@ Deno.serve(async (req) => {
   for (const c of cases) {
     if (c?.status !== 'open') continue
     for (const a of (Array.isArray(c.asked) ? c.asked : [])) {
-      if (a.auto !== true) continue
+      /* Only asks the system actually TEXTED can be what a text answers: Cara's
+         automatic waves (auto) and the coordinator picker (picked_by_coordinator,
+         since 2026-09-19). The auto-only filter predated the picker, so every
+         picker reply found "nothing to attach to" (fixed 2026-09-28). Asks staff
+         logged by hand after a call stay out. */
+      if (a.auto !== true && a.picked_by_coordinator !== true) continue
       const hit = (digits && norm(String(a.phone || '')) === digits) ||
                   (contactId && String(a.ghl_contact_id || '') === contactId)
       if (hit) matches.push({ c, a })
