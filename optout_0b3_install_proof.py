@@ -34,7 +34,11 @@ class Hd(BaseHTTPRequestHandler):
     def reply(self, code, obj): b = json.dumps(obj).encode(); self.send_response(code); self.end_headers(); self.wfile.write(b)
     def do_GET(self):
         u = urlparse(self.path)
-        if u.path.startswith("/v1/projects/r/functions/"): return self.reply(200, {"verify_jwt": S["verify"][u.path.rsplit("/", 1)[1]]})
+        if u.path.startswith("/v1/projects/r/functions/"):
+            fn = u.path.rsplit("/", 1)[1]
+            if fn in S.get("missing", ()): return self.reply(404, {"message": "Function not found"})
+            if fn in S.get("unreadable", ()): return self.reply(500, {})
+            return self.reply(200, {"verify_jwt": S["verify"][fn]})
         if u.path == "/v1/projects/r/api-keys": return self.reply(200, [{"name": "anon", "api_key": ANON}, {"name": "service_role", "api_key": SVC}])
         self.reply(404, {})
     def do_POST(self):
@@ -85,6 +89,11 @@ setup(reengage=200); rc, t = run()
 ck("if applicant re-engage let a stranger through, the proof fails", rc == 9 and "applicant re-engage (new) answered 200" in t, t)
 setup(probe_ok=False); rc, t = run()
 ck("if GHL's direct look-up stopped carrying Do Not Disturb (the saved-contact door needs it), the proof fails", rc == 9 and "the GoHighLevel check did not pass" in t, t)
+setup(); S["missing"] = ("shift-confirm",); rc, t = run()
+ck("a function never deployed to production (shift-confirm) is skipped, not created; the other 12 deploy and it finishes DONE",
+   rc == 0 and "RESULT: DONE" in t and "shift-confirm has never been deployed" in t and "shift-confirm" not in deployed(t) and len(deployed(t)) == 12, t)
+setup(); S["unreadable"] = ("carematch-watch",); rc, t = run()
+ck("any OTHER unreadable answer still stops everything before a deploy", rc == 3 and deployed(t) == [], t)
 setup(); bad = {f: sha(f) for f in FILES}; bad["coverage-run"] = "0" * 64; rc, t = run(bad)
 ck("a source that is not the reviewed build: STOP before anything deploys", rc == 4 and deployed(t) == [], t)
 srv.shutdown(); c.close()

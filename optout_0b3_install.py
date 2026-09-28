@@ -35,8 +35,10 @@ def sql(q):
     if s not in (200, 201): return False, f"HTTP {s}: {b[:300]}"
     try: return True, json.loads(b)
     except Exception: return False, b[:300]
+MISSING = "missing"
 def verify_jwt(fn):
     s, b = http("GET", f"{API}/v1/projects/{REF}/functions/{fn}", headers=MG())
+    if s == 404: return MISSING      # never deployed to production: nothing is running there to protect
     try: v = json.loads(b).get("verify_jwt") if s == 200 else None
     except Exception: v = None
     return v if isinstance(v, bool) else None
@@ -71,7 +73,9 @@ if not ok: say("✗ STOP: could not read the opt-out record. Nothing was changed
 say(f"  opt-out record entries: {o[0]['rec']} · refusals logged so far: {o[0]['ref']}")
 before = {fn: verify_jwt(fn) for fn in DEPLOY}
 if any(v is None for v in before.values()): say("✗ STOP: could not read how these functions check callers: " + ", ".join(f for f, v in before.items() if v is None) + ". Nothing was changed."); done(3)
-say("  how each checks callers today (kept exactly): " + ", ".join(f"{fn} {'ON' if v else 'off'}" for fn, v in before.items()))
+skipped = [fn for fn, v in before.items() if v == MISSING]
+say("  how each checks callers today (kept exactly): " + ", ".join(f"{fn} {'ON' if v is True else 'off'}" for fn, v in before.items() if v != MISSING))
+for fn in skipped: say(f"  ○ {fn} has never been deployed to production (nothing of it is running): its protected code stays in the repo and is NOT deployed here")
 say()
 
 # ── Part 2 ─────────────────────────────────────────────────────────────────────
@@ -86,12 +90,12 @@ kj = jl(kb); keys = {k.get("name"): k.get("api_key", "") for k in (kj if isinsta
 SVC, ANON = keys.get("service_role", ""), keys.get("anon", ""); HIDE += [SVC, ANON]
 if not SVC or not ANON: say("  ✗ STOP: could not read the project keys. Nothing was changed."); done(4)
 deployed_at = now_utc()
-for fn in DEPLOY:
+for fn in [f for f in DEPLOY if f not in skipped]:
     if not deploy(fn, before[fn]):
         say("  STOP. The functions above this line run the new code; the rest still run the old code (no opt-out check, as before). Tell Claude today."); done(5)
 after = {fn: verify_jwt(fn) for fn in DEPLOY}
-if after != before: bad("how a function checks callers changed: " + ", ".join(f for f in DEPLOY if after.get(f) != before.get(f)))
-else: say(f"  ✓ all {len(DEPLOY)} check callers exactly as before")
+if after != before: bad("how a function checks callers changed (or one appeared): " + ", ".join(f for f in DEPLOY if after.get(f) != before.get(f)))
+else: say(f"  ✓ all {len(DEPLOY) - len(skipped)} deployed functions check callers exactly as before" + (f"; {', '.join(skipped)} still not deployed" if skipped else ""))
 say()
 
 # ── Part 3 ─────────────────────────────────────────────────────────────────────
