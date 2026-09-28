@@ -71,21 +71,19 @@ ck('family caller: the CLIENT gets her own name, birth date, M/F gender, full ad
   p.ok && p.client.firstName === 'Ruth' && p.client.dateOfBirth === '1941-03-02' && p.client.gender === 'F' && p.client.residentialAddress.state === 'MO'
   && p.client.homePhone === '417-555-0199' && !p.client.mobilePhone && p.client.medicaidNumber === '12345678' && p.client.conversionDate === '2026-09-26'
   && p.client.externalId === 'cchub-lead:L1', p);
-ck('family caller: the caller\'s email and phone never go on the client; they go on Responsible Party 1 (ticked by default, HIPAA flags left blank)',
-  !p.client.personalEmail && p.rp1 && p.rp1.name === 'Cathy Jones' && p.rp1.relationship === 'Daughter' && p.rp1.phones[0].number === '417-555-0101'
-  && p.rp1.email === 'cathy@example.com' && p.rp1_default === true && !('hipaaDisclosureAuthorization' in p.rp1) && !('canMakeMedicalDecisions' in p.rp1), p.rp1);
+ck('Gate 4b: the caller\'s email and phone never go on the client, and Convert plans no responsible party at all (the coordinator picks, in People going into care)',
+  !p.client.personalEmail && !('rp1' in p) && !('rp1_candidate' in p) && !JSON.stringify(p.client).includes('417-555-0101'), p);
 ck('assessment date is read on Springfield\'s calendar (9:30pm Sep 23, not Sep 24 UTC)', p.client.assessmentDate === '2026-09-23', p.client.assessmentDate);
 ck('referral source goes as "other" with the organisation\'s name', p.referral && p.referral.type === 'other' && p.referral.name === 'Mercy Hospital', p.referral);
 p = M.planConvert(LEADS[0], { phone_type: 'mobile' }, '2026-09-26', null);
 ck('the coordinator can say the client\'s phone is a mobile', p.client.mobilePhone === '417-555-0199' && !p.client.homePhone);
 p = M.planConvert(LEADS[1], null, '2026-09-26', null);
-ck('a professional caller (case manager) is NOT added as a responsible party unless the coordinator ticks it; no client phone is invented',
-  p.ok && p.rp1 === null && p.rp1_candidate.name === 'Pat Doe' && p.rp1_default === false && /professional/.test(p.rp1_reason) && !p.client.homePhone && !p.client.mobilePhone
-  && p.missing.some(x => /client's own phone/.test(x)), p);
-ck('...and ticking it adds them', M.planConvert(LEADS[1], { rp1: true }, '2026-09-26', null).rp1.name === 'Pat Doe');
+ck('a professional caller (case manager): no client phone is invented, and the preview says the client\'s own phone is missing',
+  p.ok && !p.client.homePhone && !p.client.mobilePhone && p.missing.some(x => /client's own phone/.test(x)), p);
+ck('...and an old page asking for Responsible Party 1 gets no responsible party', !('rp1' in M.planConvert(LEADS[1], { rp1: true }, '2026-09-26', null)));
 p = M.planConvert(LEADS[2], null, '2026-09-26', null);
 ck('the caller is the client (Self): their name, phone and email go on the client; no responsible party; unknown gender left blank',
-  p.ok && p.client.firstName === 'Sam' && p.client.homePhone === '417-555-0103' && p.client.personalEmail === 'sam@example.com' && p.rp1 === null && !p.client.gender, p);
+  p.ok && p.client.firstName === 'Sam' && p.client.homePhone === '417-555-0103' && p.client.personalEmail === 'sam@example.com' && !p.client.gender, p);
 p = M.planConvert(LEADS[3], null, '2026-09-26', null);
 ck('no client name and the caller is not the client: Convert is blocked (never the caller\'s name)', !p.ok && /own first and last name/.test(p.blockers[0]), p);
 p = M.planConvert(Object.assign({}, LEADS[0], { client_state: 'Missouri' }), null, '2026-09-26', null);
@@ -101,11 +99,11 @@ ck('access: a signed-in person is required; the permission check is for the owne
 ck('preview: shows the plan from the lead as saved, reads only', st === 200 && b.plan.client_name === 'Ruth Jones' && b.plan.referral.name === 'Mercy Hospital' && writes().length === 0 && b.existing.length === 0, b);
 reset(); [st, b] = await call(STAFF, { action: 'convert', lead_id: 'L1' });
 const cl = AX.clients[b.axiscare_client_id];
-ck('convert: creates the whole client in one go, then referral, Responsible Party 1 and the intake note',
+ck('convert: creates the whole client in one go, then the referral and the intake note; NO responsible party is written (Gate 4b)',
   b.outcome === 'created' && cl.homePhone === '417-555-0199' && cl.externalId === 'cchub-lead:L1' && cl.referredBy.name === 'Mercy Hospital'
-  && cl.rps[0].name === 'Cathy Jones' && cl.notes.length === 1 && Object.values(b.steps).every(s => s.ok), b);
+  && cl.rps.length === 0 && !calls.some(c => /responsibleParties/.test(c[1])) && cl.notes.length === 1 && Object.values(b.steps).every(s => s.ok), b);
 ck('convert: reads AxisCare back and reports what it now holds, plus the hand steps', b.readback.address && b.readback.phone && b.readback.medicaid_number
-  && b.readback.responsible_party_1 && b.readback.referral && !b.readback.email && b.hand_steps.length === 3 && b.record.by === 'kat@cc.test' && b.record.rp1 === true, b);
+  && b.readback.referral && !b.readback.email && b.hand_steps.length === 3 && b.record.by === 'kat@cc.test' && b.record.rp1 === false, b);
 const creates = () => calls.filter(c => c[0] === 'POST' && c[1] === '/api/clients').length;
 [st, b] = await call(STAFF, { action: 'convert', lead_id: 'L1' });
 ck('retry (the hub never saved the id): finds the client it already made; no second client, no second note', b.outcome === 'reused' && creates() === 1 && cl.notes.length === 1, b);
@@ -115,7 +113,7 @@ ck('AxisCare refuses the full record: the client is still created, each part add
   b.outcome === 'created' && c2.externalId === 'cchub-lead:L1' && c2.medicaidNumber === '12345678' && c2.residentialAddress && !c2.homePhone
   && b.failed_fields.length === 1 && /^phone/.test(b.failed_fields[0]) && b.steps.full_record.ok === false, b);
 reset(); cfg.referral400 = true; [st, b] = await call(STAFF, { action: 'convert', lead_id: 'L1' });
-ck('a refused referral source doesn\'t block anything else', b.outcome === 'created' && b.steps.referral.ok === false && b.steps.responsible_party.ok && b.steps.intake_note.ok, b);
+ck('a refused referral source doesn\'t block anything else', b.outcome === 'created' && b.steps.referral.ok === false && !b.steps.responsible_party && b.steps.intake_note.ok, b);
 reset(); cfg.forbid = true; [st, b] = await call(STAFF, { action: 'convert', lead_id: 'L1' });
 ck('no permission to change clients (403): stops and says so; nothing else attempted', b.outcome === 'error' && /may not change clients/.test(b.detail) && writes().length === 1, b);
 reset(); cfg.empty404 = true; [st, b] = await call(STAFF, { action: 'convert', lead_id: 'L2' });
