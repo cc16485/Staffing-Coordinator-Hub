@@ -33,7 +33,7 @@ globalThis.fetch = async (u, o = {}) => { const url = new URL(String(u)), m = (o
     if (m === 'GET') return Rs(200, { results: c });
     if (m === 'PATCH') { if (cfg.forbid) return Rs(403, { errors: ['forbidden'] }); const b = JSON.parse(o.body); patches.push(b); c.classes = b.classes.map(k => ({ code: k.code, label: k.label ?? AX.vocab.find(v => v.code === k.code)?.label })); return Rs(200, { results: {} }); } }
   throw new Error('unexpected ' + m + ' ' + url); };
-globalThis.__db = { from: (t) => { const f = []; const p = { select() { return p; }, eq() { return p; }, maybeSingle() { return Promise.resolve({ data: t === 'journey_episode' ? { person_id: 'P1' } : { source_id: '501' }, error: null }); } }; return p; } };
+globalThis.__db = { rpc: async (n, a) => { (globalThis.__REC ||= []).push({ n, a }); return { data: { outcome: 'recorded' }, error: null }; }, from: (t) => { const f = []; const p = { select() { return p; }, eq() { return p; }, maybeSingle() { return Promise.resolve({ data: t === 'journey_episode' ? { person_id: 'P1' } : { source_id: '501' }, error: null }); } }; return p; } };
 await import(tmp); fs.unlinkSync(tmp);
 const tok = (c) => 'Bearer x.' + Buffer.from(JSON.stringify(c)).toString('base64url') + '.y';
 const KAT = tok({ role: 'authenticated', email: 'kat@cc.test' });
@@ -60,5 +60,8 @@ ck('set: two AxisCare classes read as the target level → refused (never guesse
 reset(); cfg.forbid = true;
 [s0, b] = await call({ action: 'set', axiscare_client_id: '501', level: 3 });
 ck('set: AxisCare refusing (403) is reported; nothing changed', b.outcome === 'refused' && /may not change clients/.test(b.detail), b);
+const RECS = (globalThis.__REC || []).filter((x) => x.n === 'axiscare_change_record').map((x) => x.a);
+const recOk = (x) => x.p_summary && x.p_summary.length <= 200 && !/\n/.test(x.p_summary) && x.p_by && x.p_via;
+ck('C2a: a care-level change is recorded as "care level X → Y", confirmed by read-back', RECS.some((x) => x.p_kind === 'care_level' && /care level \S+ → [123]/.test(x.p_summary) && x.p_outcome === 'sent_confirmed' && recOk(x)), RECS);
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? 'PASS ' : 'FAIL ') + n + (ok ? '' : '\n     ' + note)); if (ok) pass++; }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1);

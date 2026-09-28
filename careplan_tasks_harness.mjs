@@ -44,7 +44,7 @@ globalThis.fetch = async (u, o = {}) => {
   if ((x = /^\/api\/notes\/client\/(\d+)$/.exec(url.pathname)) && m === 'POST') { AX.notes.push(body.note); return R(200, { results: {} }); }
   throw new Error('unexpected ' + m + ' ' + url);
 };
-globalThis.__fakeCreateClient = () => ({ from: (t) => { const f = []; let lim = null; const p = { select() { return p; }, eq(k, v) { f.push(r => String(r[k]) === String(v)); return p; }, limit(n) { lim = n; return p; },
+globalThis.__fakeCreateClient = () => ({ rpc: async (n, a) => { (globalThis.__REC ||= []).push({ n, a }); return { data: { outcome: 'recorded' }, error: null }; }, from: (t) => { const f = []; let lim = null; const p = { select() { return p; }, eq(k, v) { f.push(r => String(r[k]) === String(v)); return p; }, limit(n) { lim = n; return p; },
   maybeSingle() { const rows = Object.entries(DB.app_data).map(([key, data]) => ({ key, data })).filter(r => f.every(g => g(r))); return Promise.resolve({ data: rows[0] || null, error: null }); },
   then(ok, bad) { let rows = (DB[t] || []).filter(r => f.every(g => g(r))); if (lim) rows = rows.slice(0, lim); return Promise.resolve({ data: rows, error: null }).then(ok, bad); } }; return p; } });
 const M = await import(tmp); fs.unlinkSync(tmp);
@@ -99,6 +99,10 @@ ck('permission check: an empty task request on an Active client is refused as in
 reset(); cfg.forbid = true; [s0, b] = await call(SVC, { action: 'permission_check' });
 ck('permission check: "not allowed" is reported as no permission', b.ok === false && b.status === 403, b);
 
+const RECS = (globalThis.__REC || []).filter((x) => x.n === 'axiscare_change_record').map((x) => x.a);
+const recOk = (x) => x.p_summary && x.p_summary.length <= 200 && !/\n/.test(x.p_summary) && x.p_by && x.p_via;
+ck('C2a: a care-plan push is recorded with how many tasks were confirmed, never the plan text', RECS.some((x) => x.p_kind === 'care_tasks' && /care tasks?, \d+ confirmed/.test(x.p_summary) && recOk(x)) && RECS.every((x) => !/ADL|bath/i.test(x.p_summary)), RECS);
+ck('C2a: a fully confirmed push is recorded as confirmed; one AxisCare only partly took is not', RECS.some((x) => x.p_outcome === 'sent_confirmed') && RECS.some((x) => x.p_outcome !== 'sent_confirmed'), RECS.map((x) => x.p_outcome));
 let pass = 0;
 for (const [name, ok, note] of res) { console.log((ok ? 'PASS ' : 'FAIL ') + name + (ok ? '' : '\n     ' + note)); if (ok) pass++; }
 console.log(`\n${pass}/${res.length} passed`);

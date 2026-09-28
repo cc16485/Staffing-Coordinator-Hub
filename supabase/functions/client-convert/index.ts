@@ -30,6 +30,19 @@
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
+/* C2a (2026-09-28): every change in AxisCare adds one line to axiscare_change_log (who, when, which client or caregiver,
+   the kind, how it went, a short summary; never note text). Best effort: recording never blocks the change itself. */
+// deno-lint-ignore no-explicit-any
+async function recordAxisChange(db: any, c: { kind: string; subject: 'client' | 'caregiver'; client?: string | null; caregiver?: string | null;
+  outcome: 'sent_confirmed' | 'sent' | 'refused' | 'practice'; summary: string; detail?: string | null; by: string; via: string }): Promise<boolean> {
+  try {
+    const { data, error } = await db.rpc('axiscare_change_record', { p_kind: c.kind, p_subject: c.subject, p_client: c.client ?? null,
+      p_caregiver: c.caregiver ?? null, p_outcome: c.outcome, p_summary: String(c.summary).slice(0, 200), p_detail: c.detail ? String(c.detail).slice(0, 300) : null,
+      p_by: c.by || 'unknown', p_via: c.via })
+    return !error && data?.outcome === 'recorded'
+  } catch { return false }
+}
+
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -264,7 +277,12 @@ Deno.serve(async (req) => {
     referral: has(c.referredBy),
   } : null
   const hand = ['attributes (checklist in the intake note)', 'documents and the signed agreement', 'billing setup']
-  return json({ outcome, axiscare_client_id: clientId, steps, failed_fields: failedFields, readback,
+  const recorded = await recordAxisChange(sb, { kind: outcome === 'reused' ? 'client_linked' : 'client_created', subject: 'client', client: clientId,
+    outcome: readback ? 'sent_confirmed' : 'sent',
+    summary: (outcome === 'reused' ? 'linked to the client AxisCare already had' : 'client created from the inquiry')
+      + (steps.referral?.ok ? ' · referral source' : '') + (steps.intake_note?.ok ? ' · intake note' : '') + (failedFields.length ? ' · ' + failedFields.length + ' part(s) refused' : ''),
+    detail: readback ? null : 'could not be read back', by: email, via: 'client-convert' })
+  return json({ outcome, axiscare_client_id: clientId, steps, failed_fields: failedFields, readback, recorded,
                 readback_error: readback ? null : errText(rb), hand_steps: hand,
                 record: { at: new Date().toISOString(), by: email, client_id: clientId, outcome,
                           sent: Object.keys(plan.client), phone_type: choices.phone_type === 'mobile' ? 'mobile' : 'home',
