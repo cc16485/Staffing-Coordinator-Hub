@@ -275,8 +275,9 @@ async function submitBooking(){
       first:        firstName || 'Unknown',
       last:         lastName  || '',
       phone:        phone || '',
-      candidate_id: candId || null,
-      booked_at:    new Date().toISOString()
+      candidate_id: candId || null
+      /* booked_at is stamped by the database (its default), not this browser's clock: the confirmation text is
+         only sent for a booking saved in the last few minutes, so the time has to be the server's */
     }]);
     if(error) throw error;
   } catch(e){
@@ -292,12 +293,12 @@ async function submitBooking(){
     ? `This is a video call${selectedSession.link ? ': ' + selectedSession.link : ' — we will send you the link'}.`
     : `Location: ${ADDR}.`;
 
-  // Send a confirmation text via the send-candidate-message edge function
-  // (uses the anon key automatically; best-effort — booking is already saved)
+  // Ask for the booking confirmation text (security slice 2026-09-27). This page can no longer send its own
+  // wording: the server writes the fixed confirmation itself from the Hub's session record, and only for the
+  // booking just saved above. Best-effort — the booking is already saved.
   if(phone){
-    const confMsg = `You're all set, ${firstName}! 🎉 Your Caring Companions orientation is ${whenLabel}. ${whereLabel} Please bring your photo ID, Social Security card, and a voided check or bank info for direct deposit. Questions? Call/text (417) 234-8494.`;
     sb.functions.invoke('send-candidate-message', {
-      body: { first: firstName, last: lastName, phone, message: confMsg }
+      body: { kind: 'orientation_confirmation', phone, session_id: String(selectedSession.id), first: firstName }
     }).catch(e => console.warn('Confirmation SMS failed:', e));
   }
 
