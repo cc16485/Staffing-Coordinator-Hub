@@ -1,5 +1,5 @@
 // =============================================================================
-// client-fact — active office staff record a fact about a person (Gate 2a), and read "has care begun" (Gate 3)
+// client-fact — active office staff record a fact about a person (Gate 2a), read "has care begun" (Gate 3), and record people on the Journey (Gate 4a)
 // =============================================================================
 // The ONLY way into the fact record. The browser cannot write facts; this is the
 // gated path:
@@ -69,7 +69,26 @@ Deno.serve(async (req) => {
     if (error) return json({ began: null, reason: 'could_not_check' }, 200)
     return json(data)
   }
-  if (b.action !== 'record') return json({ error: "action must be 'record' or 'care_began'" }, 400)
+  /* Gate 4a: a person on the Journey (roles, how to reach them, permission to discuss care) */
+  if (b.action === 'record_person') {
+    const ep = uuidOrNull(b.episode_id), key = uuidOrNull(b.person_key), sup = uuidOrNull(b.supersedes_row_id), asked = instantOrNull(b.permission_asked_at)
+    if (!ep) return json({ error: 'episode_id is required' }, 400)
+    if (key === undefined || sup === undefined) return json({ error: 'person_key and supersedes_row_id must be ids' }, 400)
+    if (asked === undefined) return json({ error: 'permission_asked_at must be a date and time' }, 400)
+    const roles = Array.isArray(b.roles) ? b.roles.filter((x) => typeof x === 'string').slice(0, 10) : []
+    const { data, error } = await sb.rpc('people_on_journey_record', {
+      p_episode_id: ep, p_person_key: key, p_is_caller: b.is_caller === true, p_name: textOrNull(b.name, 200),
+      p_relationship: textOrNull(b.relationship, 100), p_organization: textOrNull(b.organization, 200), p_roles: roles,
+      p_phone: textOrNull(b.phone, 40), p_email: textOrNull(b.email, 200), p_reach_way: textOrNull(b.reach_way, 10),
+      p_reach_time: textOrNull(b.reach_time, 200), p_permission: textOrNull(b.permission, 20),
+      p_permission_asked_by: textOrNull(b.permission_asked_by, 200), p_permission_asked_at: asked,
+      p_change_kind: textOrNull(b.change_kind, 20), p_supersedes_row_id: sup, p_reason: textOrNull(b.reason),
+      p_recorded_by: staff.email,
+    })
+    if (error) return json({ error: 'not recorded: ' + error.message }, 500)
+    return json(data)
+  }
+  if (b.action !== 'record') return json({ error: "action must be 'record', 'record_person' or 'care_began'" }, 400)
   const { args, error: bad } = doorArgs(b, staff.email)
   if (bad || !args) return json({ error: bad }, 400)
   const { data, error } = await sb.rpc('client_fact_record', args)
