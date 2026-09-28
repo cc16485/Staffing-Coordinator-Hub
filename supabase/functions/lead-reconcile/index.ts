@@ -29,7 +29,22 @@ const clean = (v: unknown) => String(v ?? '').trim()
 
 /* WHO MAY READ THIS (2026-09-28, her go): the answer names GoHighLevel contacts (a sample with the last four digits
    of their phone), so only the owner's Desktop scripts, holding the project's private server key, may read it.
-   The Hub's public key and any staff sign-in are refused, whatever the gateway setting. Constant-time compare. */
+   The Hub's public key and any staff sign-in are refused, whatever the gateway setting. Constant-time compare first;
+   if the caller's key is a different spelling of the server key (the account settings can hand out a different but
+   genuine one), the database itself is asked: a head-only look at identity_door_audit, a table ONLY the server role
+   can read. The database checks the key's signature, so a forged or public key fails. Anything unclear fails closed. */
+export async function ownerCaller(req: Request): Promise<boolean> {
+  const auth = req.headers.get('Authorization')
+  if (ownerScriptOnly(auth, SERVICE_KEY ?? '')) return true
+  const bearer = (auth ?? '').replace(/^Bearer\s+/i, '').trim()
+  if (!bearer || bearer.length < 20) return false
+  try {
+    const probe = createClient(SUPABASE_URL, bearer, { auth: { persistSession: false, autoRefreshToken: false },
+      global: { headers: { Authorization: 'Bearer ' + bearer, apikey: bearer } } })
+    const { error } = await probe.from('identity_door_audit').select('id', { head: true, count: 'exact' }).limit(1)
+    return !error
+  } catch { return false }
+}
 export function ownerScriptOnly(authHeader: string | null, secret: string): boolean {
   const got = (authHeader ?? '').replace(/^Bearer\s+/i, '').trim()
   if (!secret || secret.length < 20 || got.length !== secret.length) return false
@@ -81,7 +96,7 @@ const CAMPAIGN_NOISE = /^b-0\d\d|resubscribe|email bounced|soft resubscribe/
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
-  if (!ownerScriptOnly(req.headers.get('Authorization'), SERVICE_KEY ?? ''))
+  if (!(await ownerCaller(req)))
     return new Response(JSON.stringify({ error: 'owner scripts only' }), { status: 403, headers: { 'Content-Type': 'application/json' } })
 
   /* Hub leads. */
