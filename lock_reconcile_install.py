@@ -26,6 +26,12 @@ def status_only(method, headers=None, body=None):
     except urllib.error.HTTPError as e: return e.code
     except Exception: return None
 
+import sys, traceback
+def _crash(t, e, tb):
+    say(); say("  ✗ STOPPED unexpectedly: " + type(e).__name__ + ": " + str(e)[:300]); say("  If this stopped before PART 2, nothing was changed.")
+    try: open(REPORT, "w").write("\n".join(lines) + "\n")
+    except Exception: pass
+sys.excepthook = _crash
 say("SECURITY · LOCK THE \"IS ANY LEAD INVISIBLE?\" FUNCTION")
 say("Report " + dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")); say()
 say("PART 1 · READ ONLY")
@@ -34,10 +40,16 @@ say("  lead-reconcile function sha256 " + got + ("  ✓ the reviewed source" if 
 if got != FN_SHA: say("  STOP. Nothing was run."); done(2)
 st, meta = api_get("/functions/lead-reconcile")
 say("  deployed now: " + (f"yes (version {meta.get('version')})" if st == 200 and isinstance(meta, dict) else f"could not read ({st})") + ". Not called.")
-st, keys = api_get("/api-keys?reveal=true")
-anon = next((k.get("api_key", "") for k in (keys or []) if k.get("name") == "anon"), "")
-svc = next((k.get("api_key", "") for k in (keys or []) if k.get("name") == "service_role"), "")
-say(("  ✓" if anon and svc else "  ✗") + " read the project's public and private keys (kept in memory only, never printed)")
+def read_keys(path):
+    st, keys = api_get(path)
+    if isinstance(keys, dict): keys = keys.get("keys") or keys.get("data") or []
+    keys = [k for k in (keys if isinstance(keys, list) else []) if isinstance(k, dict)]
+    pick = lambda n: next((str(k.get("api_key") or "") for k in keys if k.get("name") == n and k.get("api_key")), "")
+    return st, pick("anon"), pick("service_role")
+st, anon, svc = read_keys("/api-keys?reveal=true")
+if not (anon and svc): st, anon, svc = read_keys("/api-keys")
+say(("  ✓" if anon and svc else "  ✗") + " read the project's public and private keys (kept in memory only, never printed)"
+    + ("" if anon and svc else f" (the key list answered {st})"))
 if not (anon and svc): say("  STOP. Nothing was changed."); done(3)
 say(); say("PART 2 · DEPLOY")
 if SKIP_DEPLOY: say("  (test target: deploy skipped)")

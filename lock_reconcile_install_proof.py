@@ -4,13 +4,17 @@ import os, sys, json, hashlib, subprocess, tempfile, threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 H = os.path.dirname(os.path.abspath(__file__)); FN = os.path.join(H, "supabase/functions")
 SHA = hashlib.sha256(open(os.path.join(FN, "lead-reconcile/index.ts"), "rb").read()).hexdigest()
-MODE = {"locked": True}
+MODE = {"locked": True, "keys": "list"}
 class Hd(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def send(self, code, obj): b = json.dumps(obj).encode(); self.send_response(code); self.end_headers(); self.wfile.write(b)
     def do_GET(self):
         if self.path.endswith("/functions/lead-reconcile"): return self.send(200, {"version": 17, "verify_jwt": True})
-        if "/api-keys" in self.path: return self.send(200, [{"name": "anon", "api_key": "ANONKEY"}, {"name": "service_role", "api_key": "SVCKEY"}])
+        if "/api-keys" in self.path:
+            if MODE["keys"] == "error": return self.send(200, {"message": "something unexpected"})
+            if MODE["keys"] == "reveal-only" and "reveal=true" not in self.path: return self.send(200, [{"name": "anon", "api_key": "ANONKEY"}])
+            if MODE["keys"] == "no-reveal" and "reveal=true" in self.path: return self.send(400, {"message": "unknown param"})
+            return self.send(200, [{"name": "anon", "api_key": "ANONKEY"}, {"name": "service_role", "api_key": "SVCKEY"}])
         self.send(404, {})
     def do_OPTIONS(self): self.send(200, {})
     def do_POST(self):
@@ -34,6 +38,10 @@ rc, out = run(SHA); ck("locked: every line is a ✓ (no sign-in 401, public key 
 ck("no contact name is ever printed, and no key is printed", "SHOULD NEVER BE PRINTED" not in out and "ANONKEY" not in out and "SVCKEY" not in out, out)
 MODE["locked"] = False
 rc, out = run(SHA); ck("if the function were still open, the report says so (✗ public key answered) without printing what it said", rc == 6 and "✗ the Hub's public key is refused (200)" in out and "SHOULD NEVER BE PRINTED" not in out, out)
+MODE["locked"] = True; MODE["keys"] = "error"
+rc, out = run(SHA); ck("an unexpected answer from the key list: stops before deploying, and still writes a report saying so", rc == 3 and "✗ read the project's public and private keys" in out and "PART 2" not in out, out)
+MODE["keys"] = "no-reveal"
+rc, out = run(SHA); ck("if the key list doesn't take ?reveal=true, it asks again without it and carries on", rc == 0 and "RESULT: LOCKED" in out, out)
 srv.shutdown()
 for n, ok, note in res: print(("PASS" if ok else "FAIL") + " · " + n + ("" if ok else "  ::  " + note))
 print(f"{sum(1 for r in res if r[1])}/{len(res)}"); print("lead-reconcile/index.ts sha256", SHA)
