@@ -49,7 +49,7 @@ globalThis.fetch = async (url, o) => {
   if (url.includes('api.resend.com')) { RESEND.push(body.to?.[0]); return new Response('{"id":"x"}', { status: 200 }) }
   return new Response('{}', { status: 200 })
 }
-const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'k', GHL_TOKEN: 'g', GHL_LOCATION_ID: 'loc', HT_ORDER_TOKEN: 'H', HT_SUPPORT_TOKEN: 'H', RESEND_API_KEY: 'r' }
+const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'k', GHL_TOKEN: 'g', GHL_LOCATION_ID: 'loc', HT_ORDER_TOKEN: 'H', HT_SUPPORT_TOKEN: 'H', RESEND_API_KEY: 'r', RELAY_SECRET: 's'.repeat(40) }
 let handler; globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (h) => { handler = h; } }
 const load = async (name) => { const src = fs.readFileSync(`${FN}/${name}/index.ts`, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db');
   const tmp = path.join(process.cwd(), FN, name, '_t.ts'); fs.writeFileSync(tmp, src); try { await import(tmp + '?' + Math.random()); } finally { fs.unlinkSync(tmp); } return handler; };
@@ -94,7 +94,7 @@ for (const [label, email, want] of [['clean', CLEAN_E, 1], ['opted out', OPT_E, 
 /* ── resend-relay ── */
 h = await load('resend-relay')
 for (const [label, addr, want] of [['clean', CLEAN_E, 1], ['opted out', OPT_E, 0]]) {
-  reset(); r = await post(h, 'https://x/functions/v1/resend-relay', { token: 'H', from: 'HomeTogether <support@tryhometogether.com>', to: addr, subject: 'S', html: '<p>x</p>' })
+  reset(); r = await post(h, 'https://x/functions/v1/resend-relay', { from: 'HomeTogether <support@tryhometogether.com>', to: addr, subject: 'S', html: '<p>x</p>' }, { 'x-relay-secret': 's'.repeat(40) })
   ck(`resend-relay · ${label}: ${want ? 'relayed' : 'not relayed, answered ok:false opted_out (not an error)'}`, RESEND.length === want && (want ? r.j?.ok === true : r.j?.opted_out === true && r.status === 200), [r, RESEND])
 }
 
