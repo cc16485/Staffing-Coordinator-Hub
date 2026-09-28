@@ -32,6 +32,7 @@
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { pushCallNote } from '../_shared/axiscare-call-note.ts'
+import { recordCall, axiscareState } from '../_shared/call-record.ts'
 import { opEvent } from '../_shared/events.ts'
 import { ldPush, looksLikeOptOut } from '../_shared/lead-truth.ts'
 import { leadHits, returningCheck, returningItem } from '../_shared/returning.ts'
@@ -325,6 +326,10 @@ Deno.serve(async (req) => {
       axNote = await pushCallNote(supabase, { phone: callerPhone, summary, direction: field('direction'), ghlContactId: callerId }) as unknown as Record<string, unknown>
     } catch (e) { axNote = { outcome: 'error', detail: String(e) } }
 
+    /* K1 (2026-09-28): every summary also becomes one line of the call record, saying where it was written */
+    const recSummary = (writtenTo: string | null) => recordCall(supabase, { kind: 'summary', via: 'call-disposition',
+      direction: field('direction'), phone: callerPhone, ghlContactId: callerId, summary, source: 'ghl',
+      axiscare: axiscareState(axNote.outcome), axiscareDetail: String(axNote.detail || ''), writtenTo })
     const digits = norm(callerPhone)
     const since = Date.now() - 45 * 60 * 1000
     const mine = (r: Record<string, unknown>) => {
@@ -342,21 +347,27 @@ Deno.serve(async (req) => {
     if (item) {
       item.detail = [String(item.detail || '').trim(), summary].filter(Boolean).join('\n\n')
       await put('ops_items', item)
+      await recSummary('needs_attention')
       return json({ ok: true, routed: 'summary attached to the Needs Attention item', title: item.title, axiscare_note: axNote })
     }
     const cov = newest(await readKey('coverage_cases'))
     if (cov) {
       cov.note = [String(cov.note || '').trim(), summary].filter(Boolean).join('\n\n')
       await put('coverage_cases', cov)
+      await recSummary('coverage_case')
       return json({ ok: true, routed: 'summary attached to the coverage case', axiscare_note: axNote })
     }
     // No item from a disposition, but it may still belong to a lead.
+    /* K1, her rule: a summary goes to a lead only when exactly ONE lead (not archived) has this number; two leads
+       sharing a number is for a person to place, never a guess (it stays on the call record as 'several'). */
     const leadRows = await readKey('leads')
-    const lead = leadRows.find((l) => digits && (norm(String(l.phone || '')) === digits || norm(String(l.client_phone || '')) === digits))
+    const leadHitsHere = leadRows.filter((l) => digits && !l.archived && (norm(String(l.phone || '')) === digits || norm(String(l.client_phone || '')) === digits))
+    const lead = leadHitsHere.length === 1 ? leadHitsHere[0] : null
     if (lead) {
       lead.comm_log = Array.isArray(lead.comm_log) ? lead.comm_log : []
       lead.comm_log.push({ body: '📝 ' + summary, at: new Date().toISOString(), by: 'call summary' })
       await put('leads', lead)
+      await recSummary('lead:' + String(lead.id))
       return json({ ok: true, routed: 'summary added to the lead\'s conversation log', axiscare_note: axNote })
     }
     /* ---- Cara's ears (2026-09-19 redesign) --------------------------------
@@ -436,6 +447,7 @@ Deno.serve(async (req) => {
         }
       }
     } catch (e) { flagged = { checked: true, error: String(e) } }
+    await recSummary(null)
     return json({ ok: true, routed: 'nothing recent to attach to — no disposition was tapped on this call', axiscare_note: axNote, cara_flag: flagged })
   }
 
@@ -460,6 +472,10 @@ Deno.serve(async (req) => {
       received,
     })
   }
+
+  /* K1 (2026-09-28): the tapped outcome becomes one line of the call record (routing below is unchanged) */
+  await recordCall(supabase, { kind: 'outcome', via: 'call-disposition', direction: field('direction'), phone: callerPhone,
+    ghlContactId: callerId, outcome: disposition })
 
   const phone = callerPhone
   const email = field('email')
