@@ -11,10 +11,14 @@
 //               1. reuse the AxisCare client tagged cchub-lead:<lead id>, or create one
 //                  (if AxisCare refuses the full record, create the minimum and add
 //                  each part separately, so one bad field never blocks the client)
-//               2. referral source, then Responsible Party 1, each on its own
+//               2. the referral source, on its own
 //               3. the intake note (attributes checklist for hand entry), as before
-//               4. read back the client and responsible parties; report what
-//                  AxisCare holds and what is still a hand step
+//               4. read back the client; report what AxisCare holds and what is
+//                  still a hand step
+//             Gate 4b (2026-09-28): Convert no longer writes anyone as a responsible
+//             party. The coordinator picks who goes into the Family Circle and who
+//             becomes an AxisCare responsible party in "People going into care"
+//             (family-circles carry + rp_add: a click each, read back).
 //             The hub stores the report on the lead (axiscare_convert) and connects
 //             the Journey, as before.
 //   permission_check  (service role only) proves the AxisCare token may change a
@@ -64,11 +68,10 @@ const ymd = (v: unknown) => { const s = t(v); return /^\d{4}-\d{2}-\d{2}$/.test(
 export type Plan = {
   ok: boolean; blockers: string[]; missing: string[]; notes: string[]
   client: Record<string, unknown>; referral: { type: string; name: string } | null
-  rp1: Record<string, unknown> | null; rp1_candidate: Record<string, unknown> | null; rp1_default: boolean; rp1_reason: string
   external_id: string; client_name: string; contact_name: string; self: boolean
 }
 // deno-lint-ignore no-explicit-any
-export function planConvert(lead: any, choices: { phone_type?: string; rp1?: boolean } | null, today: string, refOrgName: string | null): Plan {
+export function planConvert(lead: any, choices: { phone_type?: string } | null, today: string, refOrgName: string | null): Plan {
   const L = lead || {}
   const self = isSelf(L.relationship)
   const contactName = [t(L.first_name), t(L.last_name)].filter(Boolean).join(' ')
@@ -90,28 +93,15 @@ export function planConvert(lead: any, choices: { phone_type?: string; rp1?: boo
   const phone = t(L.client_phone) || (self ? t(L.phone) : '')
   const phoneType = choices?.phone_type === 'mobile' ? 'mobile' : 'home'
   if (phone) client[phoneType === 'mobile' ? 'mobilePhone' : 'homePhone'] = phone
-  else missing.push(self ? 'phone' : 'the client\'s own phone (the caller\'s phone goes on Responsible Party 1, never on the client)')
+  else missing.push(self ? 'phone' : 'the client\'s own phone (the caller\'s phone never goes on the client)')
   if (self && t(L.email)) client.personalEmail = t(L.email)
   const dcn = t(L.dcn); if (dcn) client.medicaidNumber = dcn
   const assessed = chicagoYmd(L.assessment_at); if (assessed) client.assessmentDate = assessed
   client.conversionDate = today
   const refName = refOrgName || t(L.referral_source_name)
   const referral = refName ? { type: 'other', name: refName.slice(0, 120) } : null
-  let rp1: Record<string, unknown> | null = null, rp1Default = false, rp1Reason = ''
-  if (self) rp1Reason = 'The caller is the client, so there is no one to add.'
-  else if (!contactName) rp1Reason = 'The lead has no caller name.'
-  else {
-    const phones = t(L.phone) ? [{ listNumber: '1', type: 'Mobile', number: t(L.phone) }] : []
-    rp1 = { name: contactName, relationship: t(L.relationship) || null, phones, email: t(L.email) || null }
-    rp1Default = !isProfessional(L.relationship)
-    rp1Reason = rp1Default ? (t(L.relationship) ? t(L.relationship) + ', family or friend' : 'no relationship recorded; check before creating')
-                           : t(L.relationship) + ' looks like a professional, not family, so it starts unticked'
-  }
-  const candidate = rp1
-  const wantRp1 = choices && typeof choices.rp1 === 'boolean' ? choices.rp1 : rp1Default
-  if (!wantRp1) rp1 = null
   if (!t(L.relationship) && !self) notes.push('No relationship is recorded for the caller.')
-  return { ok: blockers.length === 0, blockers, missing, notes, client, referral, rp1, rp1_candidate: candidate, rp1_default: rp1Default, rp1_reason: rp1Reason,
+  return { ok: blockers.length === 0, blockers, missing, notes, client, referral,
            external_id: String(client.externalId), client_name: [first, last].filter(Boolean).join(' '), contact_name: contactName, self }
 }
 
@@ -212,7 +202,7 @@ Deno.serve(async (req) => {
     refOrg = o?.name ? String(o.name) : null
   }
   const today = chicagoYmd(new Date().toISOString())!
-  const choices = { phone_type: t(b.phone_type), rp1: typeof b.rp1 === 'boolean' ? b.rp1 : undefined }
+  const choices = { phone_type: t(b.phone_type) }
   const plan = planConvert(lead, choices, today, refOrg)
   const linked = t(lead.axiscare_client_id)
 
@@ -253,14 +243,10 @@ Deno.serve(async (req) => {
   clientId = String(clientId)
   const dupe = await findByExternalId(plan.external_id)
   if (dupe.ids.length > 1) steps.duplicate_check = { ok: false, detail: 'AxisCare now shows ' + dupe.ids.length + ' clients from this lead (' + dupe.ids.join(', ') + '); remove the extra one' }
-  // 2. referral, responsible party
+  // 2. referral (responsible parties are the coordinator's pick, in People going into care)
   if (plan.referral) {
     const r = await ax('PATCH', `/api/clients/${clientId}`, { referredBy: plan.referral })
     steps.referral = ok2(r.status) ? { ok: true } : { ok: false, detail: errText(r) }
-  }
-  if (plan.rp1) {
-    const r = await ax('PUT', `/api/clients/${clientId}/responsibleParties/1`, plan.rp1)
-    steps.responsible_party = ok2(r.status) ? { ok: true } : { ok: false, detail: errText(r) }
   }
   // 3. the intake note (only on a fresh create; a reuse already has it)
   if (outcome === 'created') {
@@ -270,20 +256,17 @@ Deno.serve(async (req) => {
   // 4. read back
   const rb = await ax('GET', `/api/clients/${clientId}`)
   const c = rb.json?.results?.client ?? rb.json?.results ?? null
-  const rps = await ax('GET', `/api/clients/${clientId}/responsibleParties`)
-  // deno-lint-ignore no-explicit-any
-  const rpList: any[] = Array.isArray(rps.json?.results) ? rps.json.results : (rps.json?.results?.responsibleParties ?? [])
   const has = (v: unknown) => v != null && String(typeof v === 'object' ? JSON.stringify(v) : v).replace(/[{}"\s:,]|null/g, '') !== ''
   const readback = rb.status === 200 && c ? {
     name: [c.firstName, c.lastName].filter(Boolean).join(' '), external_id: c.externalId ?? null,
     date_of_birth: has(c.dateOfBirth), gender: has(c.gender), address: has(c.residentialAddress?.streetAddress1),
     phone: has(c.homePhone) || has(c.mobilePhone), email: has(c.personalEmail), medicaid_number: has(c.medicaidNumber),
-    referral: has(c.referredBy), responsible_party_1: rpList.some((p) => String(p?.listNumber) === '1' && has(p?.name)),
+    referral: has(c.referredBy),
   } : null
   const hand = ['attributes (checklist in the intake note)', 'documents and the signed agreement', 'billing setup']
   return json({ outcome, axiscare_client_id: clientId, steps, failed_fields: failedFields, readback,
                 readback_error: readback ? null : errText(rb), hand_steps: hand,
                 record: { at: new Date().toISOString(), by: email, client_id: clientId, outcome,
                           sent: Object.keys(plan.client), phone_type: choices.phone_type === 'mobile' ? 'mobile' : 'home',
-                          rp1: !!plan.rp1, referral: !!plan.referral, steps, failed_fields: failedFields, readback } })
+                          rp1: false, referral: !!plan.referral, steps, failed_fields: failedFields, readback } })
 })

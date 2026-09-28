@@ -11,10 +11,16 @@
 //            writes AxisCare's slot (keeping everything else AxisCare holds, including the
 //            HIPAA and medical-decision answers), reads it back, and updates the member
 //   rp_add   {contact_id}                          an office-typed member into a FREE slot (1-3)
+//   carry    {lead_id, who, person_key}            Gate 4b: "People going into care". The client, the caller
+//            or a person on the Journey joins the client's Family Circle (door people_into_care_add;
+//            family need a recorded yes to permission to discuss care; texts stay off). Office roles only.
+// rp_add / rp_write note who sent the member to AxisCare and when (axiscare_sent_by / _at), so the
+// profile can say "Sent to AxisCare" apart from "From AxisCare" (the nightly sync).
 // HIPAA / medical-decision authorizations are never set from here: they are legal answers
 // recorded in AxisCare.
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -91,6 +97,18 @@ Deno.serve(async (req) => {
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const action = String(b.action ?? '')
 
+  if (action === 'carry') {
+    const staff = await requireStaff(sb, req, OFFICE_ROLES)
+    if (!staff.ok) return json({ error: staff.error }, staff.status)
+    const leadId = t(b.lead_id), who = t(b.who)
+    const key = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t(b.person_key)) ? t(b.person_key).toLowerCase() : null
+    if (!leadId || leadId.length > 80) return json({ error: 'lead_id is required' }, 400)
+    if (!['client', 'caller', 'person'].includes(who)) return json({ error: "who must be 'client', 'caller' or 'person'" }, 400)
+    if (who === 'person' && !key) return json({ error: 'person_key is required' }, 400)
+    const { data, error } = await sb.rpc('people_into_care_add', { p_lead_id: leadId, p_who: who, p_person_key: who === 'person' ? key : null, p_staff: staff.email })
+    return error ? json({ error: 'not added: ' + error.message }, 500) : json(data)
+  }
+
   if (action === 'link') {
     const { data, error } = await sb.rpc('family_circle_link', { p_circle_id: t(b.circle_id), p_axiscare_client_id: t(b.axiscare_client_id), p_staff: email, p_how: 'person' })
     return error ? json({ error: 'not linked: ' + error.message }, 500) : json(data)
@@ -124,7 +142,8 @@ Deno.serve(async (req) => {
     const v = ok2(back.status) ? slotView(back.json?.results ?? back.json) : null
     if (!v) return json({ outcome: 'written_unconfirmed', detail: 'AxisCare accepted it but could not be read back: ' + errText(back) })
     await sb.from('circle_contacts').update({ name: v.name, relationship: v.relationship, phone: v.phone, email: v.email,
-      hipaa_authorized: v.hipaa_authorized, can_make_medical_decisions: v.can_make_medical_decisions, axiscare_removed_at: null }).eq('id', m.id)
+      hipaa_authorized: v.hipaa_authorized, can_make_medical_decisions: v.can_make_medical_decisions, axiscare_removed_at: null,
+      axiscare_sent_by: email, axiscare_sent_at: new Date().toISOString() }).eq('id', m.id)
     const matches = v.name === change.name && (change.phone ? v.phone === change.phone : true) && (v.email ?? null) === (change.email ?? null)
     return json({ outcome: matches ? 'saved' : 'saved_differently', axiscare: v, by: email })
   }
@@ -141,6 +160,7 @@ Deno.serve(async (req) => {
   const back = await ax('GET', `/api/clients/${cax}/responsibleParties/${free}`)
   const v = ok2(back.status) ? slotView(back.json?.results ?? back.json) : null
   if (!v || v.name.toLowerCase() !== t(m.name).toLowerCase()) return json({ outcome: 'written_unconfirmed', detail: 'AxisCare accepted it but the read-back did not show them yet' })
-  await sb.from('circle_contacts').update({ source: 'axiscare', axiscare_list_number: free, axiscare_removed_at: null }).eq('id', m.id)
+  await sb.from('circle_contacts').update({ source: 'axiscare', axiscare_list_number: free, axiscare_removed_at: null,
+    axiscare_sent_by: email, axiscare_sent_at: new Date().toISOString() }).eq('id', m.id)
   return json({ outcome: 'added', list_number: free, axiscare: v, by: email })
 })
