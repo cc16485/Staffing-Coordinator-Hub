@@ -27,6 +27,17 @@ const sb = createClient(SUPABASE_URL, SERVICE_KEY)
 
 const clean = (v: unknown) => String(v ?? '').trim()
 
+/* WHO MAY READ THIS (2026-09-28, her go): the answer names GoHighLevel contacts (a sample with the last four digits
+   of their phone), so only the owner's Desktop scripts, holding the project's private server key, may read it.
+   The Hub's public key and any staff sign-in are refused, whatever the gateway setting. Constant-time compare. */
+export function ownerScriptOnly(authHeader: string | null, secret: string): boolean {
+  const got = (authHeader ?? '').replace(/^Bearer\s+/i, '').trim()
+  if (!secret || secret.length < 20 || got.length !== secret.length) return false
+  let diff = 0
+  for (let i = 0; i < got.length; i++) diff |= got.charCodeAt(i) ^ secret.charCodeAt(i)
+  return diff === 0
+}
+
 function normPhone(raw: unknown): string | null {
   const d = String(raw ?? '').replace(/\D/g, '')
   if (d.length === 10) return '+1' + d
@@ -70,6 +81,8 @@ const CAMPAIGN_NOISE = /^b-0\d\d|resubscribe|email bounced|soft resubscribe/
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
+  if (!ownerScriptOnly(req.headers.get('Authorization'), SERVICE_KEY ?? ''))
+    return new Response(JSON.stringify({ error: 'owner scripts only' }), { status: 403, headers: { 'Content-Type': 'application/json' } })
 
   /* Hub leads. */
   const { data: rows } = await sb.from('app_data')
