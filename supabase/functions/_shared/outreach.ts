@@ -195,6 +195,8 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
   'caregiver-intro':    { class: 'reactive_external', scheduled: false, why: 'sent when a match is made, and the family is waiting.' },
   'circle-send':        { class: 'reactive_external', scheduled: false, why: 'sent on an explicit human action.' },
   'campaign-send':      { class: 'proactive_external', scheduled: false, why: 'a campaign somebody presses send on.' },
+  'team-ask':           { class: 'urgent_internal', scheduled: false,
+    why: 'a coordinator presses send on one caregiver shift ask they read and edited; same class as the coverage picker. The composer warns before 8am and after 8pm.' },
   'calls-feed':         { class: 'routine_internal', scheduled: false, why: 'internal call reconciliation.' },
   'resend-relay':       { class: 'reactive_external', scheduled: false, why: 'relays a message somebody composed.' },
 }
