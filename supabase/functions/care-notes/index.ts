@@ -177,7 +177,7 @@ export const CONCERN_KINDS = ['a fall or injury', 'confusion or a change in beha
 const URGENT = new Set(['a fall or injury', 'safety at home', 'pain or illness'])
 /* The AI answers one question and nothing else. When it can't answer, the note is raised for a person to read. */
 // deno-lint-ignore no-explicit-any
-export async function askConcern(text: string): Promise<{ concern: boolean; kind: string; urgent: boolean; why: string; failed: boolean }> {
+export async function askConcern(text: string): Promise<{ concern: boolean; kind: string; urgent: boolean; why: string; failed: boolean; family_line?: string }> {
   const key = Deno.env.get('ANTHROPIC_API_KEY') || ''
   const raised = { concern: true, kind: 'something else worth a look', urgent: false, why: 'the AI could not read this note, so a person should', failed: true }
   if (!key) return raised
@@ -190,7 +190,11 @@ export async function askConcern(text: string): Promise<{ concern: boolean; kind
           + 'behavior, eating, medication, skin, pain, a fall or injury, a problem with the visit or caregiver, or family '
           + 'conflict. A normal day ("good spirits", "completed all tasks", "ate lunch") is NOT a concern. When unsure, it IS '
           + 'a concern. Answer ONLY minified JSON: {"concern":bool,"kind":one of ' + JSON.stringify(CONCERN_KINDS)
-          + ',"urgent":bool (true only for a fall, injury, safety risk or sudden illness),"why":string (at most 20 words, plain)}',
+          + ',"urgent":bool (true only for a fall, injury, safety risk or sudden illness),"why":string (at most 20 words, plain)'
+          + ',"family_line":string (N3: when concern is true, ONE plain sentence a coordinator could send the client\'s family: '
+          + 'what happened and how the client is now, the least detail needed, no diagnoses, no medication names, no quotes '
+          + 'from the note, first name only, e.g. "Ruth had a small fall in the bathroom this morning; she says she is okay." '
+          + 'Empty string when concern is false)}',
         messages: [{ role: 'user', content: text.slice(0, 6000) }] }) })
     if (!r.ok) return raised
     const j = await r.json().catch(() => null)
@@ -198,7 +202,8 @@ export async function askConcern(text: string): Promise<{ concern: boolean; kind
     const m = t.match(/\{[\s\S]*\}/); if (!m) return raised
     const a = JSON.parse(m[0])
     const kind = CONCERN_KINDS.includes(a.kind) ? a.kind : 'something else worth a look'
-    return { concern: a.concern === true, kind, urgent: a.urgent === true || URGENT.has(kind) && a.urgent !== false, why: String(a.why ?? '').slice(0, 200), failed: false }
+    return { concern: a.concern === true, kind, urgent: a.urgent === true || URGENT.has(kind) && a.urgent !== false, why: String(a.why ?? '').slice(0, 200), failed: false,
+      family_line: a.concern === true ? String(a.family_line ?? '').replace(/\s*\u2014\s*/g, ', ').slice(0, 240) : '' }
   } catch { return raised }
 }
 // deno-lint-ignore no-explicit-any
@@ -286,6 +291,7 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
       id, kind: 'care_note', domain: 'client_care', status: 'open', urgency: a.urgent ? 'high' : 'normal',
       title: `Possible concern on ${clientFirst}'s ${dayChi(last?.startDate ?? last?.scheduledStartDate)} visit: ${a.kind}`,
       about: clientName, caregiver: cg, client_ax: String(last?.client?.id ?? ''),
+      family_line: a.family_line || '',   /* N3: a suggested sentence for the family; the coordinator edits it */
       detail: `${cg} wrote after the ${whenChi(last?.startDate ?? last?.scheduledStartDate)} visit:\n\n`
         + (note ? `"${note}"` : '(no care note)') + (tasks.length ? '\n\n' + tasks.join('\n') : '')
         + `\n\nWhy it was flagged: ${a.why || a.kind}.\nRead it, then decide what happens next. This never contacts anyone by itself.`,

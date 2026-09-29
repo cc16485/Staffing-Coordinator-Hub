@@ -40,7 +40,12 @@ Deno.serve(async (req) => {
   const who = await requireStaff(supabase, req, CIRCLE_ROLES)
   if (!who.ok) return json({ error: who.error }, who.status)
 
-  const { circle_id, kind = 'update', body, dry, auth_check } = await req.json().catch(() => ({}))
+  const { circle_id, kind = 'update', body, dry, auth_check, contact_ids, purpose, item_id } = await req.json().catch(() => ({}))
+  /* N3 (2026-09-29): telling family about a flagged shift note. The coordinator picks who (contact_ids), and only
+     people with permission to discuss the client (AxisCare's HIPAA box) can be chosen; anyone else is refused, not
+     skipped quietly. The message is the coordinator's own words. Recorded as kind 'care_note'. */
+  const careNote = purpose === 'care_note'
+  if (careNote && (!Array.isArray(contact_ids) || !contact_ids.length)) return json({ error: 'choose who to tell' }, 400)
   if (auth_check === true) return json({ ok: true, authorized: true, roles: who.roles })
   const sent_by = who.name || who.email
   if (!circle_id) return json({ error: 'no circle given' }, 400)
@@ -62,8 +67,11 @@ Deno.serve(async (req) => {
 
   // A change only reaches the people who asked to hear about changes.
   /* never someone who replied STOP, or whom AxisCare no longer lists for this client */
+  const chosen = careNote ? new Set(contact_ids.map((x: unknown) => String(x))) : null
+  const noPermission = careNote ? (contacts ?? []).filter((c) => chosen!.has(String(c.id)) && c.hipaa_authorized !== true).map((c) => c.name) : []
+  if (careNote && noPermission.length) return json({ error: 'no permission to discuss on file for: ' + noPermission.join(', '), outcome: 'no_permission' }, 409)
   const wanted = (contacts ?? []).filter((c) => !c.stopped_at && !c.axiscare_removed_at
-    && (kind === 'change' ? c.wants_changes !== false : c.wants_general !== false))
+    && (careNote ? chosen!.has(String(c.id)) : (kind === 'change' ? c.wants_changes !== false : c.wants_general !== false)))
 
   const reachable = wanted.filter((c) => (c.phone && c.sms_consent) || c.email)
   const skipped = wanted.length - reachable.length
@@ -98,6 +106,7 @@ Deno.serve(async (req) => {
   }
 
   let reached = 0, optedOut = 0
+  const reachedNames: string[] = []
   const ghl = { token: ghlToken!, locationId: ghlLocation! }
   /* 0b-2: each channel gets its own contact, found by that channel's address alone, and the universal opt-out
      check runs on it (GHL Do Not Disturb, the Hub's opt-out record, inquiry do-not-contact, Family Circle stops). */
@@ -127,7 +136,7 @@ Deno.serve(async (req) => {
           const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
             method: 'POST', headers: h,
             body: JSON.stringify({ type: 'Email', contactId: dest.contactId,
-              subject: kind === 'change' ? `A change to ${circle.client_name}'s care`
+              subject: careNote ? `About ${circle.client_name}'s visit` : kind === 'change' ? `A change to ${circle.client_name}'s care`
                                          : `An update about ${circle.client_name}`,
               html: `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
                 `<p>Hi ${first},</p><p>${text.replace(/\n/g, '<br>')}</p>` +
@@ -137,13 +146,13 @@ Deno.serve(async (req) => {
         }
       }
     } catch { /* one failure must not stop the rest */ }
-    if (any) reached++
+    if (any) { reached++; reachedNames.push(String(c.name || '')) }
     if (stop.n) optedOut++
   }
 
   await supabase.from('circle_messages').insert({
-    circle_id, kind, body: text, sent_by: sent_by ?? null, reached, skipped,
+    circle_id, kind: careNote ? 'care_note' : kind, body: text, sent_by: sent_by ?? null, reached, skipped,
   })
 
-  return json({ ok: true, reached, skipped, opted_out: optedOut, of: wanted.length })
+  return json({ ok: true, reached, skipped, opted_out: optedOut, of: wanted.length, ...(careNote ? { reached_names: reachedNames, item_id: item_id ?? null } : {}) })
 })
