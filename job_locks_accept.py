@@ -9,6 +9,9 @@
 #                  new helpers). Anything else found live is a stop.
 import json, re, subprocess, hashlib, sys
 BASE = sys.argv[1] if len(sys.argv) > 1 else 'origin/main'
+# G2: `job_locks_accept.py <BASE> <out.json> <fn,fn,...>` builds a list for just those jobs, each expected live at BASE.
+OUT = sys.argv[2] if len(sys.argv) > 2 else 'job_locks_accept.json'
+ONLY = sys.argv[3].split(',') if len(sys.argv) > 3 else None
 DEPLOYED_FROM = {   # the commit each job was last deployed from (Desktop reports; read-only reviews 2026-09-29)
     'lead-nurture': '4ad619c', 'lead-followup': '43ff5a6', 'ghe-reminders': 'e8a096f', 'carematch-watch': 'd9494c5',
     'interview-messages': 'd9494c5', 'coverage-run': 'd9494c5', 'timekeeper-watch': 'd9494c5', 'lead-digest': 'a517b54',
@@ -45,7 +48,7 @@ def closure(commit, fn):
             todo.append('/'.join(st))
     return out
 acc = {}
-for fn, dep in DEPLOYED_FROM.items():
+for fn, dep in ({f: BASE for f in ONLY} if ONLY else DEPLOYED_FROM).items():
     b, d = closure(BASE, fn), closure(dep, fn)
     if f'{fn}/index.ts' not in b: raise SystemExit(f'{fn}: no index.ts at {BASE}')
     files = {}
@@ -55,5 +58,5 @@ for fn, dep in DEPLOYED_FROM.items():
     acc[fn] = {'deployed_from': dep, 'files': files, 'only_at_deploy': sorted(set(d) - set(b)), 'only_at_base': sorted(set(b) - set(d))}
     if d.get(f'{fn}/index.ts') != b[f'{fn}/index.ts'] and fn not in OLDER_OWN_CODE_OK:
         print(f'  note: {fn} index.ts at {dep} differs from {BASE}: live must equal {BASE} or it stops')
-json.dump(acc, open('job_locks_accept.json', 'w'), indent=1, sort_keys=True)
-print('wrote job_locks_accept.json for', len(acc), 'jobs')
+json.dump(acc, open(OUT, 'w'), indent=1, sort_keys=True)
+print('wrote', OUT, 'for', len(acc), 'jobs')

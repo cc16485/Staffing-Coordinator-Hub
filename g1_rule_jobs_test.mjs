@@ -90,9 +90,9 @@ for (const fn of G1) {
   const r = await call(h, 'https://x/functions/v1/eligibility-sweep', {}, { token: ENV.ELIGIBILITY_SWEEP_TOKEN })
   ck('G1 · eligibility-sweep: the old body password alone no longer gets in (your server key does)', r.s === 401, r)
   const src = fs.readFileSync(`${FN}/eligibility-sweep/index.ts`, 'utf8')
-  ck('G1 · eligibility-sweep: the lock is checked before the rules file is fetched', src.indexOf('jobCaller(req, false)') < src.indexOf('fetch(RULES_URL') && !/body\.token !== gate/.test(src)) }
+  ck('G1 · eligibility-sweep: the lock is checked before the rules file is fetched', src.indexOf('jobCaller(req, false)') < src.indexOf("approvedRules(supabase, 'eligibility-rules.js')") && !/body\.token !== gate/.test(src)) }
 { const src = fs.readFileSync(`${FN}/obligations-run/index.ts`, 'utf8')
-  ck('G1 · obligations-run: the lock is checked before ?max/?days are read and before the rules are fetched', src.indexOf('jobCaller(req, false)') < src.indexOf("searchParams.get('max')") && src.indexOf('jobCaller(req, false)') < src.indexOf('fetch(OBLIG_URL')) }
+  ck('G1 · obligations-run: the lock is checked before ?max/?days are read and before the rules are fetched', src.indexOf('jobCaller(req, false)') < src.indexOf("searchParams.get('max')") && src.indexOf('jobCaller(req, false)') < src.indexOf("approvedRules(supabase, 'obligations.js')")) }
 
 for (const [n, o, note] of res) console.log((o ? 'PASS' : 'FAIL') + ' · ' + n + (o ? '' : '\n   ' + note))
 console.log(res.filter((x) => x[1]).length + '/' + res.length)

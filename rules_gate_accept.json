@@ -1,0 +1,97 @@
+{
+ "client-start-run": {
+  "deployed_from": "495bf9a",
+  "files": {
+   "_shared/job-auth.ts": {
+    "base": "56227dbb1cbebd03cac64ac90cbec467a62f4419d2aeb7eee78e9d3f356b39c1",
+    "deploy": "56227dbb1cbebd03cac64ac90cbec467a62f4419d2aeb7eee78e9d3f356b39c1"
+   },
+   "_shared/staff-auth.ts": {
+    "base": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687",
+    "deploy": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687"
+   },
+   "client-start-run/index.ts": {
+    "base": "09f0e040415ae262b20273c2bf6e193f6b61d3c9b106a4203a96f98d72aefea4",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "eligibility-sweep": {
+  "deployed_from": "495bf9a",
+  "files": {
+   "_shared/job-auth.ts": {
+    "base": "56227dbb1cbebd03cac64ac90cbec467a62f4419d2aeb7eee78e9d3f356b39c1",
+    "deploy": "56227dbb1cbebd03cac64ac90cbec467a62f4419d2aeb7eee78e9d3f356b39c1"
+   },
+   "_shared/staff-auth.ts": {
+    "base": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687",
+    "deploy": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687"
+   },
+   "eligibility-sweep/index.ts": {
+    "base": "3ea47394053435c273d5dd846a614b21656f4f8d1b1a68f3cc8f04eda33564c0",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "launch-evidence": {
+  "deployed_from": "495bf9a",
+  "files": {
+   "_shared/job-auth.ts": {
+    "base": "56227dbb1cbebd03cac64ac90cbec467a62f4419d2aeb7eee78e9d3f356b39c1",
+    "deploy": "56227dbb1cbebd03cac64ac90cbec467a62f4419d2aeb7eee78e9d3f356b39c1"
+   },
+   "_shared/staff-auth.ts": {
+    "base": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687",
+    "deploy": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687"
+   },
+   "launch-evidence/index.ts": {
+    "base": "7cd5fab246f871e25c036deac7088f9018aaf0fc69207be79abcccb8be82dee4",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "obligations-run": {
+  "deployed_from": "495bf9a",
+  "files": {
+   "_shared/job-auth.ts": {
+    "base": "56227dbb1cbebd03cac64ac90cbec467a62f4419d2aeb7eee78e9d3f356b39c1",
+    "deploy": "56227dbb1cbebd03cac64ac90cbec467a62f4419d2aeb7eee78e9d3f356b39c1"
+   },
+   "_shared/staff-auth.ts": {
+    "base": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687",
+    "deploy": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687"
+   },
+   "obligations-run/index.ts": {
+    "base": "cc3d9f9d319ab1a1e66ccb4e9bd5d49d90d7488183680af79352517a6d8439e9",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "promise-run": {
+  "deployed_from": "495bf9a",
+  "files": {
+   "_shared/job-auth.ts": {
+    "base": "56227dbb1cbebd03cac64ac90cbec467a62f4419d2aeb7eee78e9d3f356b39c1",
+    "deploy": "56227dbb1cbebd03cac64ac90cbec467a62f4419d2aeb7eee78e9d3f356b39c1"
+   },
+   "_shared/staff-auth.ts": {
+    "base": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687",
+    "deploy": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687"
+   },
+   "promise-run/index.ts": {
+    "base": "0d329a11560ca63b7bf8f77ac15518789c929ab52f44c5e60b23d43ef3b306e4",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ }
+}

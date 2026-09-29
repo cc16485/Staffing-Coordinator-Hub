@@ -16,6 +16,7 @@
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
+import { approvedRules, rulesCheck } from '../_shared/approved-rules.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' }
@@ -86,6 +87,8 @@ Deno.serve(async (req) => {
   const acSiteRaw = Deno.env.get(acSiteName)
   const acSite = looksLikeSite(acSiteRaw) ? acSiteRaw : undefined
   const supabase = createClient(SB, KEY)
+  /* G2: which rules this job would run and whether each is approved (owner / schedule only; nothing is run) */
+  if (new URL(req.url).searchParams.get('rules_check') === '1') return json(await rulesCheck(supabase, ['eligibility-rules.js']))
 
   // ── the shared rules, or nothing ────────────────────────────────────────
   /* FETCHED AND EVALUATED, NOT IMPORTED, AND THE REASON MATTERS.
@@ -107,10 +110,9 @@ Deno.serve(async (req) => {
   let E: any = null
   let rulesMeta = { url: RULES_URL, bytes: 0, fetched_at: '' }
   try {
-    const r = await fetch(RULES_URL + '?v=' + Math.floor(Date.now() / 300000), {
-      headers: { 'Accept': 'application/javascript' } })
-    if (!r.ok) throw new Error('rules file responded ' + r.status)
-    const src = await r.text()
+    const g = await approvedRules(supabase, 'eligibility-rules.js')
+    if (!g.ok) throw new Error(g.error)
+    const src = g.src
     if (!/CCElig/.test(src)) throw new Error('fetched file does not define CCElig')
     rulesMeta = { url: RULES_URL, bytes: src.length, fetched_at: new Date().toISOString() }
     ;(0, eval)(src)

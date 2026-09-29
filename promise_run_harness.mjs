@@ -2,7 +2,8 @@
 import fs from 'fs'; import path from 'path'; import { pathToFileURL } from 'url';
 const FN=process.argv[2], ENGINE=process.argv[3];
 let src=fs.readFileSync(FN,'utf8').replace(/^import \{ createClient \} from .*$/m,'const createClient = globalThis.__fakeCreateClient')
-  .replace("'../_shared/job-auth.ts'","'"+path.resolve('test_stubs/job-auth-by-role.mjs')+"'");   // J2: lock stand-in (the real one: j2_job_locks_test.mjs)
+  .replace("'../_shared/job-auth.ts'","'"+path.resolve('test_stubs/job-auth-by-role.mjs')+"'")
+  .replace("'../_shared/approved-rules.ts'", "'" + path.resolve('test_stubs/approved-rules-open.mjs') + "'");   // G2: approval stand-in (the real one: g2_approved_rules_test.mjs)   // J2: lock stand-in (the real one: j2_job_locks_test.mjs)
 const tmp=path.join(path.dirname(FN)==='.'?'.':process.cwd(),'_promise_run_under_test.ts'); fs.writeFileSync(tmp,src);
 const res=[]; const ck=(n,c,note)=>res.push([n,!!c,c?'':JSON.stringify(note).slice(0,600)]);
 let handler=null; const env={SUPABASE_URL:'http://x',SUPABASE_SERVICE_ROLE_KEY:'k'};
