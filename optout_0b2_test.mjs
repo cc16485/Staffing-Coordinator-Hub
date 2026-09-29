@@ -162,7 +162,7 @@ for (const [label, email, want] of [['clean', CLEAN_E, 1], ['opted out', OPT_E, 
 h = await load('cc-corner')
 for (const [label, email, want] of [['clean', CLEAN_E, 1], ['Do Not Disturb', DND_E, 0]]) {
   reset(); APP.corner_posts = [{ id: 'p1', name: 'Poe', email, title: 'T', replies: [{ id: 'r1', status: 'approved', body: 'hi', team: true }] }]
-  r = await post(h, 'https://x/functions/v1/cc-corner?token=H', { action: 'notify', post_id: 'p1', reply_id: 'r1' })
+  r = await post(h, 'https://x/functions/v1/cc-corner?token=H', { action: 'notify', post_id: 'p1', reply_id: 'r1' }, { Authorization: 'Bearer jwt-owner' })  // S5: office staff only
   ck(`cc-corner · ${label} poster: ${want ? 'notified' : 'not notified, refusal logged'}`, to(email) === want && (want || refusedFor('cc-corner').length === 1), [r, SENT])
 }
 

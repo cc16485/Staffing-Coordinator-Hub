@@ -82,7 +82,7 @@ globalThis.fetch = async (url, o) => { url = String(url)
   if (url.includes('api.anthropic.com')) { const b = JSON.parse(o.body); const t = b.messages[0].content; AI.push(t)
     if (/AIFAIL/.test(t)) return new Response('{}', { status: 500 })
     const fall = /slipped|fell/i.test(t)
-    return new Response(JSON.stringify({ content: [{ text: JSON.stringify(fall ? { concern: true, kind: 'a fall or injury', urgent: true, why: 'She slipped and hit her arm.' } : { concern: false, kind: 'something else worth a look', urgent: false, why: 'A normal day.' }) }] }), { status: 200 }) }
+    return new Response(JSON.stringify({ content: [{ text: JSON.stringify(fall ? { concern: true, kind: 'a fall or injury', urgent: true, why: 'She slipped and hit her arm.', family_line: 'Ruth slipped in the bathroom and bumped her arm \u2014 she says she is okay.' } : { concern: false, kind: 'something else worth a look', urgent: false, why: 'A normal day.' }) }] }), { status: 200 }) }
   return f0(url, o) }
 ENV.AXISCARE_TOKEN = 'axc_x'; ENV.AXISCARE_SITE = '16485'; ENV.ANTHROPIC_API_KEY = 'sk-ant-x'; ENV.CARE_NOTES_PAUSE_MS = '0'
 let cn = await load('care-notes')
@@ -104,6 +104,7 @@ r = await run('flag=1', CRON); const it = items()
 ck('N2 · live: the fall and the unreadable note become Needs Attention items; the normal day does not', r.j.items_made === 2 && it.length === 2 && !it.some((i) => /Nora/.test(i.about)), [r.j, it.map((i) => i.title)])
 const fall = it.find((i) => /Ruth/.test(i.about))
 ck('N2 · the item shows the caregiver\'s words, the not-done task, why, the client and a link to the profile', fall && /"Ruth slipped in the bathroom/.test(fall.detail) && /Bathing: not done \("Refused"\)/.test(fall.detail) && /Why it was flagged: She slipped/.test(fall.detail) && fall.client_ax === '501' && fall.caregiver === 'Cara Giver' && /a fall or injury/.test(fall.title), fall)
+ck('N3 · the item carries a suggested family sentence (no em dash)', fall.family_line === 'Ruth slipped in the bathroom and bumped her arm, she says she is okay.', fall.family_line)
 ck('N2 · a fall is urgent: due in 4 hours; the unreadable one is normal, due in 24', fall.urgency === 'high' && (new Date(fall.due) - now) / 3600e3 < 4.1 && it.find((i) => /Xena/.test(i.about)).urgency === 'normal')
 ck('N2 · it says it never contacts anyone, and nothing was sent', /never contacts anyone/.test(fall.detail) && SENT.length === 0, SENT)
 ck('N2 · the last look is recorded, and a heartbeat', (APP.care_notes_state || [])[0] && (APP.automation_heartbeats || []).some((b) => b.automation === 'care-notes-flag'))
