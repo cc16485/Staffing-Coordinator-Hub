@@ -33,6 +33,7 @@
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { normalisePhone, contactForOutbound } from '../_shared/outreach.ts'
+import { jobCaller } from '../_shared/job-auth.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -95,6 +96,11 @@ async function fetchVisits(site: string, token: string, from: string, to: string
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
+  /* J1 (2026-09-29): only its 10am schedule or the owner's server key. Everyone else, the public key included, is refused
+     before anything is read or sent. */
+  const caller = await jobCaller(req)
+  if (!caller) return json({ error: 'not allowed' }, 401)
+  if (new URL(req.url).searchParams.get('auth_check') === '1') return json({ ok: true, caller })
   const t0 = Date.now()
   const url = new URL(req.url)
 

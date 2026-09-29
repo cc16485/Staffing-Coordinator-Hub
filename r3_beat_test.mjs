@@ -18,7 +18,7 @@ globalThis.fetch = async (url) => { url = String(url)
   return new Response('{}', { status: 200 }) }
 const ENV = { SUPABASE_URL: 'https://x', SUPABASE_SERVICE_ROLE_KEY: 'k'.repeat(40), AXISCARE_TOKEN: 'axc_x', AXISCARE_SITE: '16485', GHL_TOKEN: 'g', GHL_LOCATION_ID: 'l' }
 let handler; globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (h) => { handler = h } }
-const load = async (name) => { const src = fs.readFileSync(`${FN}/${name}/index.ts`, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
+const load = async (name) => { const src = fs.readFileSync(`${FN}/${name}/index.ts`, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db').replace(/(['"])\.\.\/_shared\/job-auth\.ts\1/, "'data:text/javascript,export const jobCaller=async()=>\\'cron\\';export const ownerCaller=async()=>false'") /* J1: these checks start where the schedule is let in; j1_job_locks_test.mjs tests the lock */
   const tmp = path.join(process.cwd(), FN, name, '_t.ts'); fs.writeFileSync(tmp, src); try { await import(tmp + '?' + Math.random()) } finally { fs.unlinkSync(tmp) } return handler }
 const call = async (h, qs) => { const r = await h(new Request('https://x/functions/v1/f?' + qs, { method: 'POST', body: '{}' })); return { s: r.status, j: await r.json().catch(() => null) } }
 const beat = () => (APP.automation_heartbeats || []).find((x) => x.automation === 'circles-sync')

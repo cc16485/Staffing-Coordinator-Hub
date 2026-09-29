@@ -40,7 +40,10 @@ const src = fs.readFileSync(path.join(FNS, 'coverage-run/index.ts'), 'utf8')
   .replace("from '../_shared/zip-centroids.ts'", "from '" + path.join(FNS, '_shared/zip-centroids.ts') + "'")
   .replace("from '../_shared/care-level.ts'", "from '" + path.join(FNS, '_shared/care-level.ts') + "'")
   .replace("from '../_shared/callin-plan.ts'", "from '" + path.join(FNS, '_shared/callin-plan.ts') + "'")
-  .replace("from '../_shared/optout.ts'", "from '" + path.join(FNS, '_shared/optout.ts') + "'");   // 0b-3
+  .replace("from '../_shared/optout.ts'", "from '" + path.join(FNS, '_shared/optout.ts') + "'")   // 0b-3
+  /* J1: the lock is tested in j1_job_locks_test.mjs; here the tick is the schedule and the picker is let in as the owner */
+  .replace("from '../_shared/job-auth.ts'", "from 'data:text/javascript,export const jobCaller=async()=>\\'cron\\';export const ownerCaller=async()=>true'")
+  .replace("from '../_shared/staff-auth.ts'", "from '" + path.join(FNS, '_shared/staff-auth.ts') + "'");
 const tmp = path.join(tmpDir, 'coverage-run.ts'); fs.writeFileSync(tmp, src);
 let handler; const env = { SUPABASE_URL: 'http://x', SUPABASE_SERVICE_ROLE_KEY: 'k', AXISCARE_TOKEN: 't', AXISCARE_SITE: '16485', GHL_TOKEN: 'g', GHL_LOCATION_ID: 'L' };
 globalThis.Deno = { env: { get: k => env[k] }, serve: h => { handler = h; } };

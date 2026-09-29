@@ -16,11 +16,17 @@
 // -----------------------------------------------------------------------------
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { jobCaller } from "../_shared/job-auth.ts";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
-Deno.serve(async () => {
+Deno.serve(async (req) => {
+  /* J1 (2026-09-29): only its daily schedule or the owner's server key. It used to run for any web request, with no
+     key at all. Everyone else is refused before anything is listed or deleted. */
+  const caller = await jobCaller(req);
+  if (!caller) return json({ error: "not allowed" }, 401);
+  if (new URL(req.url).searchParams.get("auth_check") === "1") return json({ ok: true, caller });
   const RETENTION_DAYS = Number(Deno.env.get("LTC_RETENTION_DAYS") ?? "90");
   const cutoff = Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000;
 

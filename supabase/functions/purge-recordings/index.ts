@@ -23,6 +23,7 @@
 // Needs recordings-retention.sql to have been run first.
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { jobCaller } from '../_shared/job-auth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -34,6 +35,11 @@ const json = (b: unknown, s = 200) =>
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
+  /* J1 (2026-09-29): only its daily schedule or the owner's server key. Everyone else, the public key included, is
+     refused before anything is read or deleted. */
+  const caller = await jobCaller(req)
+  if (!caller) return json({ error: 'not allowed' }, 401)
+  if (new URL(req.url).searchParams.get('auth_check') === '1') return json({ ok: true, caller })
   const dry = new URL(req.url).searchParams.get('dry') === '1'
 
   const supabase = createClient(

@@ -32,6 +32,7 @@
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { jobCaller } from '../_shared/job-auth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -66,6 +67,12 @@ Deno.serve(async (req) => {
     const who = await requireStaff(sb, req, OFFICE_ROLES)
     if (!who.ok) return json({ error: who.error }, who.status)
     if (testTo && testTo !== who.email) return json({ error: 'A test brief can only go to your own email.' }, 403)
+  } else {
+    /* J1 (2026-09-29): the plain morning run answers only its weekday schedule or the owner's server key. Everyone
+       else, the public key included, is refused before anything is read or sent. */
+    const caller = await jobCaller(req)
+    if (!caller) return json({ error: 'not allowed' }, 401)
+    if (url.searchParams.get('auth_check') === '1') return json({ ok: true, caller })
   }
 
   const chiNow = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' })
@@ -74,6 +81,9 @@ Deno.serve(async (req) => {
   const yesterday = new Date(Date.parse(today + 'T12:00:00') - 864e5).toISOString().slice(0, 10)
 
   if (!force) {
+    /* J1: weekdays only, matching its schedule (Samantha, 2026-09-29). A staff member's own test brief can go any day. */
+    const dow = new Date(Date.parse(today + 'T12:00:00Z')).getUTCDay()
+    if (dow === 0 || dow === 6) return json({ status: 'weekend, no brief', date: today })
     if (chiHour < 6 || chiHour > 9) return json({ status: 'outside the morning window', chicago: chiNow })
     const { data: st } = await sb.from('app_data').select('data').eq('key', 'morning_brief_state').maybeSingle()
     const stArr: unknown[] = Array.isArray(st?.data) ? st!.data : []
@@ -406,5 +416,9 @@ Deno.serve(async (req) => {
     await sb.rpc('upsert_app_data_item', { target_key: 'morning_brief_state',
       item: { id: 'sent_' + today, at: new Date().toISOString(), sent } })
   }
-  return json({ status: 'sent', date: today, recipients: sent, axiscare_reached: !!acToday, briefs: summaries })
+  /* J1: the scheduled run's reply carries counts, not the staff's email addresses. A staff test brief (only ever to
+     their own address) keeps it, so the Hub can say what happened. */
+  // deno-lint-ignore no-explicit-any
+  const briefs = testTo ? summaries : summaries.map(({ to: _to, ...rest }: any) => rest)
+  return json({ status: 'sent', date: today, recipients: sent, axiscare_reached: !!acToday, briefs })
 })

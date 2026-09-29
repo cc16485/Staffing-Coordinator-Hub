@@ -1,0 +1,318 @@
+{
+ "automation-watchdog": {
+  "deployed_from": "104a92e",
+  "files": {
+   "automation-watchdog/index.ts": {
+    "base": "472bb0455d59f8964b7d58b7718d4720834f2126d761baa623fe9114c6035b2b",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "caregiver-census-observe": {
+  "deployed_from": "7dfd209",
+  "files": {
+   "caregiver-census-observe/index.ts": {
+    "base": "380e3cf3eac538d5fd6af29ce5bd238f9f18bcd9391970f8b0c533e4cd98844a",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "carematch-watch": {
+  "deployed_from": "d9494c5",
+  "files": {
+   "_shared/optout.ts": {
+    "base": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937",
+    "deploy": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937"
+   },
+   "_shared/outreach.ts": {
+    "base": "34eac013e5efe74218433e7b9ec36517e839e5adad3cac2dcfe62cde6d5dc072",
+    "deploy": "5f442ac860a0ad89cc430d2bbabd676eeaf8665b365ce6d8f0ad94c5b4163aca"
+   },
+   "carematch-watch/index.ts": {
+    "base": "67770c289ba78475118b84c3d8255fec8519603f7d25500d1578395a6203d324",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "client-start-run": {
+  "deployed_from": "9499516",
+  "files": {
+   "client-start-run/index.ts": {
+    "base": "899ee68bb83476d681bdfda8cf3509716a77c7475a59cdfa3cb57b85538d6717",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "client-status-observe": {
+  "deployed_from": "defc682",
+  "files": {
+   "client-status-observe/index.ts": {
+    "base": "ba058201449d3535c36685b0d59e55f83daa25ecaf4fbc19befb2dcec65fda5d",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "client-status-review": {
+  "deployed_from": "a958c2c",
+  "files": {
+   "client-status-review/index.ts": {
+    "base": "08911b4d84318bee38fb31fb2eb0a032d5609403ee68e9edb1dd8a5b47092af6",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "coverage-run": {
+  "deployed_from": "d9494c5",
+  "files": {
+   "_shared/callin-plan.ts": {
+    "base": "e936dc471900e6261024e6408e049e275918d8d5b131ffd560791175a70ee043",
+    "deploy": "e936dc471900e6261024e6408e049e275918d8d5b131ffd560791175a70ee043"
+   },
+   "_shared/care-level.ts": {
+    "base": "c3f4c0881926df653e656562e7f5cbd7ac8fc0553b62d4839f33d0cc7cd5fef3",
+    "deploy": "c3f4c0881926df653e656562e7f5cbd7ac8fc0553b62d4839f33d0cc7cd5fef3"
+   },
+   "_shared/covered-outside.ts": {
+    "base": "225dcd4fd754304bd862b74a5027161d8900c13771c5a9f7d975c5f5836c4a64",
+    "deploy": "225dcd4fd754304bd862b74a5027161d8900c13771c5a9f7d975c5f5836c4a64"
+   },
+   "_shared/events.ts": {
+    "base": "573379c4abb9a5f44e3bf49274d86713a6bf28a1974833e2478e78c54c8cdffe",
+    "deploy": "573379c4abb9a5f44e3bf49274d86713a6bf28a1974833e2478e78c54c8cdffe"
+   },
+   "_shared/family-change-text.ts": {
+    "base": "6c4be2c077f27eedf0f98795bdcd7eb4a2d1b7baface15718a3a5a7289464767",
+    "deploy": "6c4be2c077f27eedf0f98795bdcd7eb4a2d1b7baface15718a3a5a7289464767"
+   },
+   "_shared/optout.ts": {
+    "base": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937",
+    "deploy": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937"
+   },
+   "_shared/outreach.ts": {
+    "base": "34eac013e5efe74218433e7b9ec36517e839e5adad3cac2dcfe62cde6d5dc072",
+    "deploy": "5f442ac860a0ad89cc430d2bbabd676eeaf8665b365ce6d8f0ad94c5b4163aca"
+   },
+   "_shared/routing.ts": {
+    "base": "f8531f1281e15eb76854780c9d657a1d36182b2b55633dd53fae8ff9ac5e0b5b",
+    "deploy": "f8531f1281e15eb76854780c9d657a1d36182b2b55633dd53fae8ff9ac5e0b5b"
+   },
+   "_shared/zip-centroids.ts": {
+    "base": "16f1c76e5da87afb021f5bc5d45af290e8ce57dc6b2bd34cd37d4ad0e618b933",
+    "deploy": "16f1c76e5da87afb021f5bc5d45af290e8ce57dc6b2bd34cd37d4ad0e618b933"
+   },
+   "coverage-run/index.ts": {
+    "base": "d54c61c8f44956f66df2e6224611822e6f878a8ae8c0f9ea4cb5c5e99176aa6a",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "coverage-watch": {
+  "deployed_from": "6fa9e26",
+  "files": {
+   "_shared/covered-outside.ts": {
+    "base": "225dcd4fd754304bd862b74a5027161d8900c13771c5a9f7d975c5f5836c4a64",
+    "deploy": "225dcd4fd754304bd862b74a5027161d8900c13771c5a9f7d975c5f5836c4a64"
+   },
+   "_shared/events.ts": {
+    "base": "573379c4abb9a5f44e3bf49274d86713a6bf28a1974833e2478e78c54c8cdffe",
+    "deploy": "573379c4abb9a5f44e3bf49274d86713a6bf28a1974833e2478e78c54c8cdffe"
+   },
+   "_shared/held-shift.ts": {
+    "base": "c4e16ffaadf7d928766d74d645921c6db9c09259d7149c35d80720c07ba11de5",
+    "deploy": "c4e16ffaadf7d928766d74d645921c6db9c09259d7149c35d80720c07ba11de5"
+   },
+   "coverage-watch/index.ts": {
+    "base": "b6d94ac224721a4328e0df2bf51c80265878ecd5bc92551f3318cfa65331cfc3",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "ghe-reminders": {
+  "deployed_from": "e108ff4",
+  "files": {
+   "_shared/optout.ts": {
+    "base": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937",
+    "deploy": null
+   },
+   "_shared/outreach.ts": {
+    "base": "34eac013e5efe74218433e7b9ec36517e839e5adad3cac2dcfe62cde6d5dc072",
+    "deploy": "60cccfe4353b33af25345944d42a6aed6a874dd92af98c080edc700e72c15a54"
+   },
+   "ghe-reminders/index.ts": {
+    "base": "6aa97a9be4cb4edac1b624cbc9f60d760555233dc2067921e73057b7abfec51a",
+    "deploy": null
+   }
+  },
+  "only_at_base": [
+   "_shared/optout.ts"
+  ],
+  "only_at_deploy": []
+ },
+ "interview-messages": {
+  "deployed_from": "d9494c5",
+  "files": {
+   "_shared/optout.ts": {
+    "base": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937",
+    "deploy": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937"
+   },
+   "interview-messages/index.ts": {
+    "base": "cc7b5e374bb773b55ecb5995c57035ea8cde587865acee612c65187b69b10903",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "launch-evidence": {
+  "deployed_from": "da89ed1",
+  "files": {
+   "launch-evidence/index.ts": {
+    "base": "230cb49008614c51ad1c701dbbd29656303a882142656f9182a8f8052c5ce957",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "lead-digest": {
+  "deployed_from": "a517b54",
+  "files": {
+   "_shared/staff-auth.ts": {
+    "base": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687",
+    "deploy": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687"
+   },
+   "lead-digest/index.ts": {
+    "base": "84685c689549c037ed7a3b99bf7ac36804939e7323bed0344e68dbdcd57d6dbc",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "lead-docs-retention": {
+  "deployed_from": "085b7de",
+  "files": {
+   "lead-docs-retention/index.ts": {
+    "base": "10293f20f60beb645bcd6832fc6bb8d1f41a92429e848a1f5908ad6ba23d8607",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "lead-followup": {
+  "deployed_from": "43ff5a6",
+  "files": {
+   "_shared/inquiry-switches.ts": {
+    "base": "b782eef0e9496a3c912a4d03beb5305919310b725864c5071b3a48eb71441051",
+    "deploy": "b782eef0e9496a3c912a4d03beb5305919310b725864c5071b3a48eb71441051"
+   },
+   "_shared/lead-truth.ts": {
+    "base": "678e14f2d28809e6830e017febe002e0afc73d04589cd76d847964c0c945441e",
+    "deploy": "678e14f2d28809e6830e017febe002e0afc73d04589cd76d847964c0c945441e"
+   },
+   "_shared/optout.ts": {
+    "base": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937",
+    "deploy": "e412c761228e370d84319bdf04d3592ffa9e2ff48a55d52fe84014f9a58da5fe"
+   },
+   "lead-followup/index.ts": {
+    "base": "b34b3166b823fbbd48db2d11cecce41db3c08f9dafdec530129376a6187df4d4",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "lead-nurture": {
+  "deployed_from": "4ad619c",
+  "files": {
+   "_shared/events.ts": {
+    "base": "573379c4abb9a5f44e3bf49274d86713a6bf28a1974833e2478e78c54c8cdffe",
+    "deploy": "573379c4abb9a5f44e3bf49274d86713a6bf28a1974833e2478e78c54c8cdffe"
+   },
+   "_shared/lead-truth.ts": {
+    "base": "678e14f2d28809e6830e017febe002e0afc73d04589cd76d847964c0c945441e",
+    "deploy": "678e14f2d28809e6830e017febe002e0afc73d04589cd76d847964c0c945441e"
+   },
+   "_shared/optout.ts": {
+    "base": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937",
+    "deploy": "e412c761228e370d84319bdf04d3592ffa9e2ff48a55d52fe84014f9a58da5fe"
+   },
+   "_shared/outreach.ts": {
+    "base": "34eac013e5efe74218433e7b9ec36517e839e5adad3cac2dcfe62cde6d5dc072",
+    "deploy": "823dd1220245e393ef6b26f34bb0f8aadda22175b440fe6abfd0f6b05495392b"
+   },
+   "lead-nurture/index.ts": {
+    "base": "12aef9316a9ab4e219f06e6102805eae2c676a90226c797088a68db5d8f3942a",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "promise-run": {
+  "deployed_from": "c812cc7",
+  "files": {
+   "promise-run/index.ts": {
+    "base": "d857216e949e14811ceef46d956742c128802a4d62633627c315c7b376fd890b",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "purge-recordings": {
+  "deployed_from": "b535ee2",
+  "files": {
+   "purge-recordings/index.ts": {
+    "base": "dfe7487658bcb8dbf8a8c2067262c9a43f8426282cfed3e3b1b92fc6c56a9f32",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "timekeeper-watch": {
+  "deployed_from": "d9494c5",
+  "files": {
+   "_shared/events.ts": {
+    "base": "573379c4abb9a5f44e3bf49274d86713a6bf28a1974833e2478e78c54c8cdffe",
+    "deploy": "573379c4abb9a5f44e3bf49274d86713a6bf28a1974833e2478e78c54c8cdffe"
+   },
+   "_shared/optout.ts": {
+    "base": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937",
+    "deploy": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937"
+   },
+   "_shared/outreach.ts": {
+    "base": "34eac013e5efe74218433e7b9ec36517e839e5adad3cac2dcfe62cde6d5dc072",
+    "deploy": "5f442ac860a0ad89cc430d2bbabd676eeaf8665b365ce6d8f0ad94c5b4163aca"
+   },
+   "_shared/routing.ts": {
+    "base": "f8531f1281e15eb76854780c9d657a1d36182b2b55633dd53fae8ff9ac5e0b5b",
+    "deploy": "f8531f1281e15eb76854780c9d657a1d36182b2b55633dd53fae8ff9ac5e0b5b"
+   },
+   "timekeeper-watch/index.ts": {
+    "base": "6025217fc33a94c5241f9282d4c026fd13f306b75c391fa3052c686b53d2572e",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ }
+}
