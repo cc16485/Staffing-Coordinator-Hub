@@ -23,6 +23,7 @@
 // -----------------------------------------------------------------------------
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { jobCaller } from '../_shared/job-auth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -34,6 +35,11 @@ const json = (body: unknown, status = 200) =>
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
+  /* S3 (2026-09-28): only the owner's server key (Desktop scripts). Everyone else, the public key included, is refused before anything is read. */
+  const caller = await jobCaller(req, false)
+  if (!caller) return new Response(JSON.stringify({ error: 'not allowed' }), { status: 401, headers: { 'Content-Type': 'application/json' } })
+  if (new URL(req.url).searchParams.get('auth_check') === '1')
+    return new Response(JSON.stringify({ ok: true, caller }), { status: 200, headers: { 'Content-Type': 'application/json' } })
 
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,

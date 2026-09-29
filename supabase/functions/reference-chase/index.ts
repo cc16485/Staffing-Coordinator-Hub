@@ -25,6 +25,8 @@
 // -----------------------------------------------------------------------------
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { jobCaller } from '../_shared/job-auth.ts'
+import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { outreachGate } from '../_shared/outreach.ts'
 
 const cors = {
@@ -57,6 +59,15 @@ async function beat(supabase: any, ok: boolean, note: string) {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
+  /* S3 (2026-09-28): only its weekday schedule, the owner's server key, or signed-in office staff (the Hub starts it
+     right after references are added). Everyone else, the public key included, is refused before anything is read. */
+  let caller: string | null = await jobCaller(req)
+  if (!caller) {
+    const who = await requireStaff(createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!), req, OFFICE_ROLES)
+    if (!who.ok) return json({ error: who.error }, who.status)
+    caller = 'staff'
+  }
+  if (new URL(req.url).searchParams.get('auth_check') === '1') return json({ ok: true, caller })
   /* Chasing an employer for a favour: proactive external, so weekdays
      8am-6pm. Policy lives in _shared/outreach.ts, not here. */
   const gate = outreachGate(req, 'proactive_external', json)

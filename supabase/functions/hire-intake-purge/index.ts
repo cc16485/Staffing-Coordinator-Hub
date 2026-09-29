@@ -16,6 +16,7 @@
 // Runs daily by pg_cron. Supports ?dry=1 to report without changing anything.
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { jobCaller } from '../_shared/job-auth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -46,6 +47,11 @@ async function beat(supabase: any, ok: boolean, note: string) {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
+  /* S3 (2026-09-28): only its daily schedule or the owner's server key. Everyone else, the public key included, is refused before anything is read. */
+  const caller = await jobCaller(req)
+  if (!caller) return new Response(JSON.stringify({ error: 'not allowed' }), { status: 401, headers: { 'Content-Type': 'application/json' } })
+  if (new URL(req.url).searchParams.get('auth_check') === '1')
+    return new Response(JSON.stringify({ ok: true, caller }), { status: 200, headers: { 'Content-Type': 'application/json' } })
   const dry = new URL(req.url).searchParams.get('dry') === '1'
 
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)

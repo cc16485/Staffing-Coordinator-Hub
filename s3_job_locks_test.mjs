@@ -62,37 +62,29 @@ const post = async (h, url, body, headers = {}) => { const r = await h(new Reque
 const to = (x) => SENT.filter((m) => m.to === 'C:' + x || m.to === x).length
 
 
-/* ── S2: reference-chase texts the applicant only with their yes to texts on file ── */
-const sent5 = new Date(Date.now() - 6 * 86400_000).toISOString()
-const ref = (id, extra) => ({ id, candidate_id: 'c-' + id, candidate_name: 'Ann Applicant', ref_name: 'Rita Ref', ref_email: 'rita@example.test', sent_at: sent5, reminded_at: sent5, responded_at: null, applicant_nudged_at: null, ...extra })
-const rcSetup = () => { reset()
-  T.job_applicants = [
-    { id: 'j-yes', phone: '(417) 555-0101', sms_consent: true },
-    { id: 'j-no', phone: '417-555-0404', sms_consent: false },
-    { id: 'j-twiceA', phone: '4175550505', sms_consent: true }, { id: 'j-twiceB', phone: '+1 417 555 0505', sms_consent: false } ]
-  T.reference_requests = [
-    ref('r-yes', { candidate_phone: '4175550101', candidate_email: 'yes@example.test' }),
-    ref('r-no', { candidate_phone: '4175550404', candidate_email: 'no@example.test' }),
-    ref('r-unmatched', { candidate_phone: '4175550606', candidate_email: 'un@example.test' }),
-    ref('r-mixed', { candidate_phone: '4175550505', candidate_email: 'mix@example.test' }),
-    ref('r-byid', { candidate_phone: '4175550707', candidate_email: 'byid@example.test', applicant_id: 'j-yes' }),
-    ref('r-noemail', { candidate_phone: '4175550404', candidate_email: null }) ]
-  // the harness's is('responded_at', null) filter is a no-op; every row above is unanswered
+/* ── S3: the five job functions answer only their schedule, the owner's server key, or (reference-chase) office staff ── */
+const FNS = ['shared-backup', 'backup-verify', 'reference-chase', 'hire-intake-purge', 'references-run']
+const CRON = { 'shared-backup': true, 'backup-verify': false, 'reference-chase': true, 'hire-intake-purge': true, 'references-run': false }
+const call = async (h, fn, headers) => { const r = await h(new Request(`https://x/functions/v1/${fn}?auth_check=1&dry=1`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: '{}' })); let j = null; try { j = await r.json() } catch { /* */ } return { s: r.status, j } }
+const ANON = 'eyJ' + 'a'.repeat(120)
+for (const fn of FNS) {
+  reset(); const h = await load(fn); const before = SENT.length
+  const none = await call(h, fn, {}), anon = await call(h, fn, { Authorization: 'Bearer ' + ANON, apikey: ANON }),
+        wrong = await call(h, fn, { Authorization: 'Bearer ' + ANON, 'x-cron-secret': 'x'.repeat(64) }),
+        cron = await call(h, fn, { Authorization: 'Bearer ' + ANON, 'x-cron-secret': JOBSEC }),
+        owner = await call(h, fn, { Authorization: 'Bearer ' + SVC })
+  ck(`S3 · ${fn}: no key, the public key and a wrong schedule secret are all refused`, [none, anon, wrong].every((x) => x.s === 401), [none, anon, wrong])
+  ck(`S3 · ${fn}: the owner's server key is accepted`, owner.s === 200 && owner.j?.caller === 'owner', owner)
+  ck(`S3 · ${fn}: its schedule's secret is ${CRON[fn] ? 'accepted' : 'refused (no schedule calls it)'}`, CRON[fn] ? (cron.s === 200 && cron.j?.caller === 'cron') : cron.s === 401, cron)
+  ck(`S3 · ${fn}: nothing sent or written while checking`, SENT.length === before && !(T.reference_requests || []).some((r) => r.__touched))
 }
-let rc = await load('reference-chase')
-rcSetup(); let d = await post(rc, 'https://x/functions/v1/reference-chase?dry=1', {}, { 'x-cron-secret': JOBSEC })
-ck('S2 · practice run: says who would be texted and who emailed only (1 by text: said yes; 1 by their own record)', d.j && d.j.applicant_by_text === 2 && d.j.applicant_email_only === 4
-   && d.j.would_ask_applicant.filter((x) => /text and email/.test(x)).length === 2, d.j)
-rcSetup(); let r = await post(rc, 'https://x/functions/v1/reference-chase', {}, { 'x-cron-secret': JOBSEC })
-const sms = SENT.filter((m) => m.type === 'SMS').map((m) => m.to), mail = SENT.filter((m) => m.type === 'Email').map((m) => m.to)
-ck('S2 · said yes on the form: texted and emailed', sms.includes('C:+14175550101') && mail.includes('C:yes@example.test'), SENT)
-ck('S2 · said no: email only, no text', !sms.includes('C:+14175550404') && mail.includes('C:no@example.test'), SENT)
-ck('S2 · no application with that number: email only', !sms.includes('C:+14175550606') && mail.includes('C:un@example.test'), SENT)
-ck('S2 · the same number applied twice, once without a yes: email only (never a guess)', !sms.includes('C:+14175550505') && mail.includes('C:mix@example.test'), SENT)
-ck('S2 · the row carries the applicant\'s own record: that record decides (yes → texted)', mail.includes('C:byid@example.test') && sms.includes('C:+14175550707'), SENT)
-ck('S2 · no yes and no email: nothing sent (the office picks it up at day 9)', SENT.length === 7, SENT)
-const src2 = fs.readFileSync(`${FN}/reference-chase/index.ts`, 'utf8')
-ck('S2 · the text now says "Reply STOP to opt out."', /Reply STOP to opt out\./.test(src2))
-ck('S2 · still exactly 4 sends, all through the opt-out door', (src2.match(/await door\(/g) || []).length === 4)
+reset(); let rch = await load('reference-chase')
+let st = await call(rch, 'reference-chase', { Authorization: 'Bearer jwt-owner' })
+ck('S3 · reference-chase: signed-in office staff (the Hub, after adding references) are accepted', st.s === 200 && st.j?.caller === 'staff', st)
+st = await call(rch, 'reference-chase', { Authorization: 'Bearer jwt-nobody' })
+ck('S3 · reference-chase: a sign-in that is not office staff is refused', st.s === 401 || st.s === 403, st)
+reset(); let hb = await load('shared-backup')
+st = await call(hb, 'shared-backup', { Authorization: 'Bearer jwt-owner' })
+ck('S3 · shared-backup: a staff sign-in is not enough (schedule or owner only)', st.s === 401, st)
 for (const [n, o, note] of res) console.log((o ? 'PASS' : 'FAIL') + ' · ' + n + (o ? '' : '\n   ' + note))
 console.log(res.filter((x) => x[1]).length + '/' + res.length)
