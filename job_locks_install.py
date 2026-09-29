@@ -177,7 +177,8 @@ for fn in FNS:
 if GROUP == "J2" and "caregiver-census-observe" in plan:
     ok, cr = sql("""select count(*)::int as n from cron.job_run_details d join cron.job j on j.jobid = d.jobid
                     where j.command like '%/functions/v1/caregiver-census-observe%' and d.start_time > now() - interval '14 days'""")
-    ok2, st = sql("select data->'state'->>'last_run' as last_run from app_data where key = 'caregiver_census_state'")
+    ok2, st = sql("""select (select x->>'last_run' from jsonb_array_elements(case when jsonb_typeof(data) = 'array' then data else '[]'::jsonb end) x
+                     where x->>'id' = 'state' limit 1) as last_run from app_data where key = 'caregiver_census_state'""")
     say(f"  · caregiver census: its schedule started {cr[0]['n'] if ok and cr else '?'} time(s) in 14 days; its own record of the last run that got in: "
         + ((st[0]['last_run'] or 'none') if ok2 and st else 'unreadable') + " (a run turned away leaves no record)")
 if GROUP == "J1":

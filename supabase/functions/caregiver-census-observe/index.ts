@@ -28,19 +28,17 @@ function axisCreds() {
 // deno-lint-ignore no-explicit-any
 const rowsOf = (x: any): any[] => Array.isArray(x) ? x : (x && typeof x === 'object' ? Object.values(x) : [])
 
-function callerRole(req: Request): string {
-  try {
-    const tok = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '')
-    return String(JSON.parse(atob(tok.split('.')[1] ?? ''))?.role ?? '')
-  } catch { return '' }
-}
-
 import { createClient } from 'npm:@supabase/supabase-js@2'
+import { jobCaller } from '../_shared/job-auth.ts'
 
 Deno.serve(async (req) => {
   const json = (b: unknown, s = 200) =>
     new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
-  if (callerRole(req) !== 'service_role') return json({ error: 'service role required' }, 403)
+  /* J2 (2026-09-29): its every-6-hours schedule (the vault secret) or the owner's server key. It used to demand a
+     server-role token, which its schedule (sending the public key) never had, so every scheduled run was turned away. */
+  const caller = await jobCaller(req)
+  if (!caller) return json({ error: 'not allowed' }, 401)
+  if (new URL(req.url).searchParams.get('auth_check') === '1') return json({ ok: true, caller })
 
   const { token, site } = axisCreds()
   if (!token || !/^\d+$/.test(site)) return json({ error: 'AxisCare credentials not set' }, 502)

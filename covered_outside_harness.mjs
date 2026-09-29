@@ -33,7 +33,8 @@ ck('family text: a real cover still goes to the consenting, linked family (uncha
 const src = fs.readFileSync(path.join(FNS, 'coverage-watch/index.ts'), 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
   .replace("from '../_shared/events.ts'", "from '" + path.join(FNS, '_shared/events.ts') + "'")
   .replace("from '../_shared/held-shift.ts'", "from '" + path.join(FNS, '_shared/held-shift.ts') + "'")
-  .replace("from '../_shared/covered-outside.ts'", "from '" + path.join(FNS, '_shared/covered-outside.ts') + "'");
+  .replace("from '../_shared/covered-outside.ts'", "from '" + path.join(FNS, '_shared/covered-outside.ts') + "'")
+  .replace("from '../_shared/job-auth.ts'", "from '" + path.resolve('test_stubs/job-auth-by-role.mjs') + "'");   // J2: lock stand-in (no token = the schedule)
 const tmp = path.join(process.cwd(), '_cw2_under_test.ts'); fs.writeFileSync(tmp, src);
 let handler; const env = { SUPABASE_URL: 'http://x', SUPABASE_SERVICE_ROLE_KEY: 'k', AXISCARE_TOKEN: 't', AXISCARE_SITE: '16485' };
 globalThis.Deno = { env: { get: k => env[k] }, serve: h => { handler = h; } };

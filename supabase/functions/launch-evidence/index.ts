@@ -26,6 +26,8 @@
 // for a service-role caller (the owner's report script) or signed-in staff.
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { jobCaller } from '../_shared/job-auth.ts'
+import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -122,15 +124,25 @@ export async function clientVisits(ax: string, from: string, to: string): Promis
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200, headers: cors })
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
-  const { role, email } = jwtClaims(req.headers.get('Authorization'))
   const b = await req.json().catch(() => ({})) as Record<string, unknown>
   const action = typeof b.action === 'string' ? b.action : 'run'
-  const staff = role === 'authenticated' && !!email
-  const full = role === 'service_role'
-  if (action !== 'run' && !staff) return json({ error: 'sign in to the hub first' }, 401)
-  if (action === 'run' && !['anon', 'service_role'].includes(String(role))) return json({ error: 'the scheduled run only' }, 403)
-
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  /* J2 (2026-09-29): who is calling is checked, never read from the token's own say-so.
+     refresh / record · an active office staff member (the sign-in verified with Supabase Auth, then their staff
+                        record, role and hub access). Any signed-in account used to be enough to tick a step.
+     run              · only its schedule (the vault secret) or the owner's server key. */
+  let email: string | null = null, caller: string | null = null
+  if (action === 'run') {
+    caller = await jobCaller(req)
+    if (!caller) return json({ error: 'not allowed' }, 401)
+    if (new URL(req.url).searchParams.get('auth_check') === '1') return json({ ok: true, caller })
+  } else {
+    const who = await requireStaff(sb, req, OFFICE_ROLES)
+    if (!who.ok) return json({ error: who.error }, who.status)
+    email = who.email || null
+    if (!email) return json({ error: 'sign in to the hub first' }, 401)
+  }
+  const full = caller === 'owner'
   const started = new Date().toISOString(), t0 = Date.now()
 
   /* ── the shared decision file; no local fallback ON PURPOSE ─────────────── */

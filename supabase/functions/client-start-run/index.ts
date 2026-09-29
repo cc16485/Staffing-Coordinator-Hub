@@ -21,6 +21,7 @@
 // caller (the owner's report script).
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { jobCaller } from '../_shared/job-auth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -81,9 +82,15 @@ export function plan(result: any, existingItems: any[], domainOwner: (d: string)
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
+  /* J2 (2026-09-29): only its hourly schedule or the owner's server key. Everyone else, the public key included, is refused
+     before anything is read or written. */
+  const caller = await jobCaller(req)
+  if (!caller) return json({ error: 'not allowed' }, 401)
+  if (new URL(req.url).searchParams.get('auth_check') === '1') return json({ ok: true, caller })
   const url = new URL(req.url)
   const forceDry = url.searchParams.get('dry') === '1'
-  const full = jwtRole(req.headers.get('Authorization')) === 'service_role'
+  /* names in the reply only for the owner's server key (a Desktop report), never from the token's own say-so */
+  const full = caller === 'owner'
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const started = new Date().toISOString(), t0 = Date.now()
 

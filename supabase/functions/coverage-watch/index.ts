@@ -31,6 +31,7 @@
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { opEvent } from '../_shared/events.ts'
+import { jobCaller } from '../_shared/job-auth.ts'
 import { changedSince, decideHeld, heldItem, visitMs } from '../_shared/held-shift.ts'
 import { outsideVerdict } from '../_shared/covered-outside.ts'
 
@@ -60,6 +61,11 @@ function axisCreds() {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
+  /* J2 (2026-09-29): only its every-5-minutes schedule or the owner's server key. Everyone else, the public key included, is refused
+     before anything is read or written. */
+  const caller = await jobCaller(req)
+  if (!caller) return json({ error: 'not allowed' }, 401)
+  if (new URL(req.url).searchParams.get('auth_check') === '1') return json({ ok: true, caller })
   const t0 = Date.now()
 
   const { data: setRow } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
