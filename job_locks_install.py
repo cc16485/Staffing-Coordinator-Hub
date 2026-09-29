@@ -42,6 +42,8 @@ GROUPS = {
            "keep_schedules": True, "auth_check": ["reference-chase"]},
     "N2B": {"title": "SHIFT-NOTE FLAGS · A NOTE THE AI CAN'T READ GETS ITS OWN LABEL",
             "fns": ["care-notes"], "sql": None, "accept": "flags_accept.json", "keep_schedules": True, "auth_check": [],
+            # care-notes answers an empty request with 400 "unknown request" (nothing read); its real doors are these
+            "doors": {"care-notes": [("?flag=1", {}), ("?probe=1", {}), ("", {"axiscare_client_id": "1"})]},
             "practice": ("care-notes", "?flag=1&practice=1&hours=24")},
     "J2": {"title": "J2 · THE 7 JOBS THAT ONLY UPDATE THE HUB",
            "fns": ["coverage-watch", "client-status-observe", "client-status-review", "launch-evidence", "client-start-run",
@@ -300,9 +302,10 @@ FORGED = b64({"alg": "HS256", "typ": "JWT"}) + "." + b64({"role": "service_role"
 for fn in deployed:
     if G.get("auth_check") is not None and fn not in G["auth_check"]:
         # no auth_check door: an empty call with no key or the public key must be refused before anything runs
-        r0 = http("POST", f"{FNB}/functions/v1/{fn}", {}, {})[0]; r1 = http("POST", f"{FNB}/functions/v1/{fn}", {}, {"apikey": ANON, "Authorization": "Bearer " + ANON})[0]
-        good = r0 in (401, 403) and r1 in (401, 403)
-        (say if good else bad)(("  ✓ " if good else "") + f"{fn}: no key {r0}, public key {r1} → refused (its schedule's own secret and staff sign-in are unchanged)")
+        doors = (G.get("doors") or {}).get(fn) or [("", {})]
+        got = [(http("POST", f"{FNB}/functions/v1/{fn}{qs}", body, {})[0], http("POST", f"{FNB}/functions/v1/{fn}{qs}", body, {"apikey": ANON, "Authorization": "Bearer " + ANON})[0]) for qs, body in doors]
+        good = all(a in (401, 403) and b in (401, 403) for a, b in got)
+        (say if good else bad)(("  ✓ " if good else "") + f"{fn}: " + " · ".join(f"{('its ' + (qs.strip('?').split('=')[0] or 'client read') + ' door') if len(doors) > 1 else 'no key / public key'}: {a} / {b}" for (qs, _), (a, b) in zip(doors, got)) + " → refused (its schedule's own secret and staff sign-in are unchanged)")
         continue
     U = f"{FNB}/functions/v1/{fn}?auth_check=1"
     r0 = http("POST", U, {}, {})[0]
