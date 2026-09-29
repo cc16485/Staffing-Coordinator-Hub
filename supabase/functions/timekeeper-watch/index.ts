@@ -81,6 +81,8 @@ import { normalisePhone, contactForOutbound } from '../_shared/outreach.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { shadowRoute } from '../_shared/routing.ts'
 import { opEvent } from '../_shared/events.ts'
+import { adminRecipients, textAdmin, ADMIN_DEFAULT } from '../_shared/clockin-admins.ts'
+import { makeLink, adminKey, linkExpiry } from '../_shared/clockin-links.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -170,9 +172,14 @@ Deno.serve(async (req) => {
   const forceDry = new URL(req.url).searchParams.get('dry') === '1'
   const watchLive = settings.timekeeper_watch_live === true && !forceDry
   const textLive = watchLive && settings.timekeeper_text_live === true
-  const graceMin = Number(settings.timekeeper_grace_min) > 0 ? Number(settings.timekeeper_grace_min) : 3
-  const officeAfterMin = Number(settings.timekeeper_office_after_min) > 0
-    ? Number(settings.timekeeper_office_after_min) : 7
+  /* C1 (Samantha, 2026-09-29): the caregiver's short text and the admin alerts both at 5 minutes past the start. */
+  const graceMin = Number(settings.timekeeper_grace_min) > 0 ? Number(settings.timekeeper_grace_min) : 5
+  /* The admin alert repeats every timekeeper_admin_repeat_min (5) until an admin marks it resolved, the caregiver
+     clocks in, or a coverage case covers the shift; every 30 minutes once the shift's scheduled end has passed.
+     timekeeper_admin_loop_live === true sends the texts; otherwise it is a practice run that records, on each
+     missed clock-in, exactly which texts WOULD have gone and when (the Hub shows them), and sends nothing. */
+  const repeatMin = Number(settings.timekeeper_admin_repeat_min) > 0 ? Number(settings.timekeeper_admin_repeat_min) : 5
+  const loopLive = watchLive && settings.timekeeper_admin_loop_live === true
   const outGraceMin = Number(settings.timekeeper_clockout_grace_min) > 0
     ? Number(settings.timekeeper_clockout_grace_min) : 10
   // deno-lint-ignore no-explicit-any
@@ -235,12 +242,60 @@ Deno.serve(async (req) => {
   const byVisitId = new Map(visits.map(v => [String(v?.id ?? ''), v]))
   const nowIso = new Date().toISOString()
   const admins = (Array.isArray(settings.coverage_alert_admins) && settings.coverage_alert_admins.length)
-    ? settings.coverage_alert_admins : ['samantha@mo-care.com']
-  const alertPhones: string[] = (Array.isArray(settings.timekeeper_alert_phones)
-    ? settings.timekeeper_alert_phones : []).map((p: unknown) => normalisePhone(p)).filter(Boolean) as string[]
-
+    ? settings.coverage_alert_admins : ADMIN_DEFAULT
+  const adminList = await adminRecipients(sb, settings)
+  const LINK_SECRET = Deno.env.get('HUB_JOB_SECRET') || ''
+  /* An open coverage case for this shift means someone already knows (she called off, or the office opened one):
+     no "we don't see a clock-in" text and no admin alarm for it. Matched by the AxisCare visit, or by client + date
+     + the caregiver who called off. */
+  const { data: ccRow } = await sb.from('app_data').select('data').eq('key', 'coverage_cases').maybeSingle()
   // deno-lint-ignore no-explicit-any
-  const save = (l: any) => sb.rpc('upsert_app_data_item', { target_key: 'timekeeper_cases', item: l })
+  const openCases = (Array.isArray(ccRow?.data) ? ccRow!.data : []).filter((c: any) => c?.status === 'open' && c?.kind !== 'interest')
+  // deno-lint-ignore no-explicit-any
+  const coverageFor = (visitId: string, clientAx: string | null, date: string, cgAx: string): any =>
+    // deno-lint-ignore no-explicit-any
+    openCases.find((c: any) => (visitId && String(c.axiscare_visit_id ?? '') === visitId)
+      || (clientAx && String(c.client_axiscare_id ?? '') === clientAx && String(c.shift_date ?? '') === date
+          && cgAx && String(c.calling_off_id ?? '') === cgAx)) ?? null
+  const fin: Record<string, unknown>[] = []   // final "no more reminders" texts this run (practice or live)
+  /* One text to every admin (live), or a practice record of it. Returns how many went. */
+  // deno-lint-ignore no-explicit-any
+  const toAdmins = async (l: any, stage: string, message: (link: string) => string, onlyNotSnoozed: boolean) => {
+    l.admin_loop = l.admin_loop || { started_at: nowIso, sends: [], snooze: {} }
+    const exp = linkExpiry(String(l.shift_date))
+    let n = 0, skipped = 0
+    for (const a of adminList) {
+      const ak = await adminKey(a.email)
+      if (onlyNotSnoozed && l.admin_loop.snooze?.[ak] && Date.parse(l.admin_loop.snooze[ak]) > Date.now()) { skipped++; continue }
+      if (!a.phone) { skipped++; continue }
+      const link = LINK_SECRET ? await makeLink(LINK_SECRET, String(l.id), a.email, exp) : ''
+      if (loopLive) { if (await textAdmin(sb, ghl, a, message(link))) n++ }
+      else n++
+    }
+    l.admin_loop.sends = [...(l.admin_loop.sends || []), { at: nowIso, stage, admins: n, skipped, practice: !loopLive }].slice(-60)
+    return n
+  }
+  const lateOf = (l: { shift_date?: string; shift_time?: string }) => Math.round(minutesSince(`${l.shift_date}T${String(l.shift_time).slice(0, 5)}:00`))
+
+  /* C1: the link page (clockin-alert) writes to the same records while this runs. Every save re-reads the record
+     first, so an admin's resolution, snooze or EVV send made mid-run is never overwritten by this run's older copy. */
+  // deno-lint-ignore no-explicit-any
+  const freshLadder = async (id: string): Promise<any> => {
+    const { data } = await sb.from('app_data').select('data').eq('key', 'timekeeper_cases').maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    return (Array.isArray(data?.data) ? data!.data : []).find((x: any) => x?.id === id) ?? null
+  }
+  const PAGE_FIELDS = ['resolved_at', 'resolved_how', 'resolved_by', 'resolved_by_name', 'resolved_reason', 'resolved_note', 'coverage_case_id']
+  // deno-lint-ignore no-explicit-any
+  const save = async (l: any) => {
+    const f = await freshLadder(String(l.id))
+    if (f) {
+      if (f.resolved_by) for (const k of PAGE_FIELDS) l[k] = f[k]          // a person's resolution always wins
+      if (f.evv_sent_at) { l.evv_sent_at = f.evv_sent_at; l.evv_sent_by = f.evv_sent_by }
+      if (f.admin_loop?.snooze) l.admin_loop = { ...(l.admin_loop || {}), snooze: { ...(l.admin_loop?.snooze || {}), ...f.admin_loop.snooze } }
+    }
+    return sb.rpc('upsert_app_data_item', { target_key: 'timekeeper_cases', item: l })
+  }
 
   // ── PASS 1: resolve open ladders whose world changed. ──
   let resolved = 0
@@ -258,6 +313,10 @@ Deno.serve(async (req) => {
       resolved++
       continue
     }
+    /* A missed clock-in still ringing the admins from an earlier day: today's visit list can't say anything about
+       it, so it keeps going until an admin resolves it (never quietly dropped at midnight). */
+    if (!v && l.admin_loop && l.shift_date !== day) continue
+    if (l.admin_loop) { const f = await freshLadder(String(l.id)); if (f?.resolved_at) continue }   // resolved on the link page meanwhile
     if (!v) how = 'visit_gone'
     else if (v?.clockIn?.time) how = 'clocked_in'
     else if (v?.caregiver?.id == null || String(v?.caregiver?.id) !== String(l.caregiver_axiscare_id)) how = 'visit_changed'
@@ -267,6 +326,15 @@ Deno.serve(async (req) => {
     if (how === 'clocked_in') {
       const late = minutesSince(String(v?.scheduledStartDate ?? '')) - minutesSince(String(v.clockIn.time))
       l.minutes_late = Number.isFinite(late) ? Math.max(0, Math.round(late)) : null
+    }
+    /* C1: the admins were being reminded; one last text says why it stopped. */
+    if (l.admin_loop?.sends?.length) {
+      const at12 = how === 'clocked_in' ? clock12(clockHM(v?.clockIn) || '') : ''
+      const what = how === 'clocked_in'
+        ? `${l.caregiver} clocked in at ${at12}${l.minutes_late != null ? ` (${l.minutes_late} min late)` : ''} for ${l.client_first}'s ${clock12(l.shift_time)} shift.`
+        : `${l.client_first}'s ${clock12(l.shift_time)} shift changed in AxisCare (${l.caregiver} is no longer on it).`
+      await toAdmins(l, 'final_' + how, () => `${what} No more reminders.`, false)
+      fin.push({ alert: l.id, how })
     }
     if (watchLive) {
       await save(l)
@@ -291,14 +359,12 @@ Deno.serve(async (req) => {
   // ── PASS 2: walk today's assigned, unclocked, recently-started visits. ──
   const wouldText: Record<string, unknown>[] = []
   const wouldAlert: Record<string, unknown>[] = []
-  let opened = 0, texted = 0, alerted = 0, skippedNoPhone = 0, refusedGate = 0, skippedByList = 0
+  let opened = 0, texted = 0, alerted = 0, skippedNoPhone = 0, refusedGate = 0, skippedByList = 0, skippedCoverage = 0
 
-  /* The EVV rule rides on every nudge (Samantha, 2026-09-15): the office
-     cannot make manual time changes without the correction form, completed
-     and signed by the client. The text says so and carries the form link,
-     so "just fix it for me" conversations end before they start. */
+  /* C1 (Samantha, 2026-09-29): short, at 5 minutes. No EVV form here: the form goes only when a caregiver asks to be
+     clocked in for their start time, and a person sends it from the admin's link page. No "if something's come up". */
   const msgTmpl = String(settings.timekeeper_msg || '')
-    || `Hi {first_name}, it's Cara with Caring Companions. Your shift with {client} was set to start at {time} and we don't see a clock-in yet. If you're there, please clock in through the AxisCare app now. If the clock-in was missed, we cannot make any manual changes to your time without the EVV correction form, completed and signed by the client: sc.mo-care.com/evv-correction-form. If something's come up, reply here or call the office at (417) 234-8494.`
+    || `Hi {first_name}, this is Caring Companions. We don't see a clock-in yet for your {time} shift with {client}. Please clock in now in the AxisCare app.`
 
   for (const v of visits) {
     if (v?.caregiver?.id == null || v?.clockIn?.time) continue
@@ -318,6 +384,10 @@ Deno.serve(async (req) => {
 
     let l = ladderByVisit.get(vid)
     if (l?.resolved_at) continue          // once handled, never reopened by a robot
+    /* C1: a coverage case already has this shift (she called off): no clock-in text, no admin alarm. */
+    if (!l?.texted_at && !l?.admin_loop && coverageFor(vid, v?.client?.id != null ? String(v.client.id) : null, day, String(v.caregiver.id))) {
+      skippedCoverage++; continue
+    }
     if (!l) {
       l = { id: 'tk_' + vid.replace(/[^A-Za-z0-9]/g, '_'), visit_id: vid,
         caregiver: cgName, caregiver_axiscare_id: String(v.caregiver.id),
@@ -377,54 +447,88 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Step 2: the office. Fires on the clock whether or not the text could be
-    // sent — a caregiver with no phone on file still has a client waiting.
-    if (!l.office_alerted_at && late >= graceMin + officeAfterMin) {
+    // Step 2 (C1): the admins, at the same moment as the caregiver's text. The NO CLOCK-IN item opens in Needs
+    // Attention, and the reminder loop below starts: every admin, every few minutes, until it's resolved.
+    if (!l.office_alerted_at && late >= graceMin) {
       const cg = byAxis.get(String(v.caregiver.id)) ?? byName.get(nameKeyOf(cgName))
       const cgPhone = normalisePhone(cg?.phone)
       if (watchLive) {
         await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
           id: `ops_tk_${l.id}`, kind: 'staffing_issue',
-          title: `NO CLOCK-IN — ${cgName} for ${clientFirst}, ${shiftTime} shift`,
+          title: `NO CLOCK-IN: ${cgName} for ${clientFirst}, ${clock12(shiftTime)} shift`,
           about: cgName,
-          detail: `${cgName} has not clocked in for ${clientFirst}'s ${shiftTime} visit `
+          detail: `${cgName} has not clocked in for ${clientFirst}'s ${clock12(shiftTime)} visit `
             + `(${Math.round(late)} minutes past start). `
-            + (l.texted_at ? `Cara texted at ${String(l.texted_at).slice(11, 16)} UTC with no clock-in since. ` : `No text went out (${l.no_phone ? 'no phone on the roster' : 'texting is not live'}). `)
-            + `Call ${cgName} now${cgPhone ? `: ${cgPhone}` : ' (number missing from the roster — check AxisCare)'}. `
-            + `If they cannot make it, open a coverage case on the Coverage Help board and the callout engine takes over. `
-            + `This alert closes itself the moment a clock-in appears.`,
+            + (l.texted_at ? `Cara texted ${cgName.split(' ')[0]} at ${String(l.texted_at).slice(11, 16)} UTC. ` : `No text went out to ${cgName.split(' ')[0]} (${l.no_phone ? 'no phone on the roster' : 'texting is not live'}). `)
+            + `Call ${cgName}${cgPhone ? `: ${cgPhone}` : ' (number missing from the roster, check AxisCare)'}. `
+            + `Every admin is texted a link every ${repeatMin} minutes until someone marks it resolved there; `
+            + `it also stops when a clock-in appears or a coverage case covers the shift.`,
           domain: 'scheduling_coverage', status: 'open', urgency: 'high',
           owner: String(admins[0]), owner_name: String(admins[0]).split('@')[0],
           due: new Date(Date.now() + 3600 * 1000).toISOString(),
           created_at: nowIso, created_by: 'timekeeper-watch', opened_by: 'timekeeper',
         } })
         l.office_alerted_at = nowIso
+        l.admin_loop = l.admin_loop || { started_at: nowIso, sends: [], snooze: {} }
         await save(l); alerted++
         await opEvent(sb, { verb: 'item_created', item_id: `ops_tk_${l.id}`, area: 'coverage',
-          summary: `Cara raised: NO CLOCK-IN — ${cgName} for ${clientFirst}, ${clock12(shiftTime)} shift (${Math.round(late)} min past start)` })
-        /* Step 3 shadow: record what the playbook WOULD have said, next to
-           what production actually did. Observers only — nothing changes. */
-        await shadowRoute(sb, { area: 'sched_clockins', channel: 'missed clock-in office SMS',
-          production: alertPhones, case_id: String(l.id) })
-        for (const p of alertPhones) {
-          const contact = await contactForOutbound(sb, ghl, { phone: p, firstName: 'Office' }, 'urgent_internal', { audience: 'staff' })
-          if (!contact) continue
-          const alertMsg = `Cara here. ${cgName} has not clocked in for ${clientFirst}'s ${clock12(shiftTime)} shift `
-            + `(${Math.round(late)} min past start)${l.texted_at ? ', no response to my text' : ''}. `
-            + `Please call ${cgName}${cgPhone ? `: ${cgPhone}` : ''}. Details in the Operations Inbox.`
-          try {
-            await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
-                         'Content-Type': 'application/json' },
-              body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message: alertMsg }),
-            })
-          } catch (err) { console.error('timekeeper office sms failed', err) }
-        }
+          summary: `Cara raised: NO CLOCK-IN, ${cgName} for ${clientFirst}, ${clock12(shiftTime)} shift (${Math.round(late)} min past start)` })
+        await shadowRoute(sb, { area: 'sched_clockins', channel: 'missed clock-in admin SMS',
+          production: adminList.map((a) => a.phone).filter(Boolean) as string[], case_id: String(l.id) })
       } else {
         wouldAlert.push({ caregiver: cgName, client: clientFirst, time: shiftTime,
           minutes_late: Math.round(late) })
       }
+    }
+  }
+
+  // ── PASS 2b (C1): the admin reminder loop. Every open missed clock-in whose alarm has started. ──
+  let loopSent = 0, loopDue = 0, loopStoppedCoverage = 0
+  if (watchLive) {
+    /* ladderByVisit, not ladders: it also holds the alerts opened a moment ago in PASS 2, so the first admin text
+       goes in the same run as the caregiver's. */
+    for (const l of ladderByVisit.values()) {
+      if (!l || l.kind === 'clock_out' || l.resolved_at || !l.admin_loop) continue
+      /* resolved or snoozed on the link page since this run started? */
+      const f = await freshLadder(String(l.id))
+      if (f?.resolved_at) continue
+      if (f?.admin_loop?.snooze) l.admin_loop.snooze = { ...(l.admin_loop.snooze || {}), ...f.admin_loop.snooze }
+      const v = byVisitId.get(String(l.visit_id))
+      /* Someone opened a coverage case for this shift since: it owns it now. */
+      if (coverageFor(String(l.visit_id), l.client_axiscare_id ?? null, String(l.shift_date), String(l.caregiver_axiscare_id))) {
+        l.resolved_at = nowIso; l.resolved_how = 'coverage_case'
+        if (l.admin_loop.sends?.length)
+          await toAdmins(l, 'final_coverage', () => `Coverage case opened for ${l.client_first}'s ${clock12(l.shift_time)} shift (${l.caregiver}). No more reminders.`, false)
+        await save(l); loopStoppedCoverage++
+        await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
+          id: `ops_tk_${l.id}`, kind: 'staffing_issue', status: 'resolved',
+          title: `Resolved: coverage case opened (${l.client_first} ${clock12(l.shift_time)})`, about: l.caregiver,
+          domain: 'scheduling_coverage', urgency: 'high', owner: String(admins[0]), owner_name: String(admins[0]).split('@')[0],
+          detail: `A coverage case now covers this shift, so the missed clock-in alert stopped.`,
+          created_at: l.office_alerted_at, resolved_at: nowIso, created_by: 'timekeeper-watch', opened_by: 'timekeeper' } })
+        continue
+      }
+      const late = lateOf(l)
+      const endStamp = v ? String(v?.scheduledEndDate ?? v?.endDate ?? '') : ''
+      const afterEnd = l.shift_date !== day || (endStamp ? minutesSince(endStamp) > 0 : false)
+      /* the first "shift has ended" text comes on the usual beat; after that, every 30 minutes */
+      const every = afterEnd && (l.admin_loop.sends || []).at(-1)?.stage === 'after_end' ? 30 : repeatMin
+      const last = l.admin_loop.last_sent_at ? Date.parse(l.admin_loop.last_sent_at) : 0
+      if (last && Date.now() - last < every * 60000 - 20000) continue
+      loopDue++
+      const cg = l.caregiver, cl = l.client_first, t12 = clock12(l.shift_time)
+      const first = !(l.admin_loop.sends || []).length
+      const stage = first ? 'first' : afterEnd ? 'after_end' : late >= 30 ? 'thirty' : 'repeat'
+      const msg = (link: string) => stage === 'first'
+        ? `No clock-in: ${cg} for ${cl}'s ${t12} shift (${late} min past start). Tap when it's resolved: ${link}`
+        : stage === 'after_end'
+        ? `${cl}'s ${t12} shift has ended and the missed clock-in for ${cg} is still not resolved: ${link}`
+        : stage === 'thirty'
+        ? `${late} min and still not resolved: no clock-in from ${cg} for ${cl}'s ${t12} shift. ${cl} may be without care. ${link}`
+        : `Still no clock-in: ${cg} for ${cl}'s ${t12} shift (${late} min past start). Not resolved yet: ${link}`
+      loopSent += await toAdmins(l, stage, msg, true)
+      l.admin_loop.last_sent_at = nowIso
+      await save(l)
     }
   }
 
@@ -604,20 +708,23 @@ Deno.serve(async (req) => {
     ladders_resolved: resolved, ladders_opened: opened,
     texts_sent: texted, clockout_texts_sent: textedOut, office_alerts: alerted,
     skipped_no_phone: skippedNoPhone, refused_by_outbound_gate: refusedGate,
-    skipped_by_skip_list: skippedByList,
+    skipped_by_skip_list: skippedByList, skipped_coverage_case: skippedCoverage,
+    admin_loop: { live: loopLive, due: loopDue, texts: loopSent, stopped_for_coverage: loopStoppedCoverage, final_texts: fin.length,
+                  admins: adminList.length, admins_without_phone: adminList.filter((a) => !a.phone).length,
+                  links: LINK_SECRET.length >= 32 },
     would_text: role === 'authenticated' || role === 'service_role' ? wouldText : wouldText.length,
     would_text_clockout: role === 'authenticated' || role === 'service_role' ? wouldTextOut : wouldTextOut.length,
     would_alert_office: role === 'authenticated' || role === 'service_role' ? wouldAlert : wouldAlert.length,
-    settings_in_effect: { grace_min: graceMin, office_after_min: officeAfterMin,
+    settings_in_effect: { grace_min: graceMin, admin_repeat_min: repeatMin,
       clockout_grace_min: outGraceMin, skip_list_entries: skips.length,
-      alert_phones_configured: alertPhones.length,
       switches: { timekeeper_watch_live: settings.timekeeper_watch_live === true,
-                  timekeeper_text_live: settings.timekeeper_text_live === true } },
+                  timekeeper_text_live: settings.timekeeper_text_live === true,
+                  timekeeper_admin_loop_live: settings.timekeeper_admin_loop_live === true } },
   }
 
   /* Log when something happened, plus once an hour so the watchdog can tell
      "quiet" from "dead" — 720 identical rows a day would drown the log. */
-  const acted = resolved + opened + texted + textedOut + alerted
+  const acted = resolved + opened + texted + textedOut + alerted + loopSent + fin.length
   const topOfHour = new Date().getMinutes() < 5
   if (acted || wouldText.length || wouldTextOut.length || wouldAlert.length || topOfHour) {
     try {
