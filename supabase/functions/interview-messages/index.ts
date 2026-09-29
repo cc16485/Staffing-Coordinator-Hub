@@ -230,6 +230,12 @@ Deno.serve(async (req) => {
      messages is not going to answer a fourth; they are a phone call, and
      pretending otherwise just trains people to ignore us. */
   const booked = new Set((bookings ?? []).map((b) => b.applicant_id))
+  /* PRN1 (2026-09-29): roles on the PRN track (the PRN CNA Team). A cleared PRN application gets the calendar text
+     as soon as it is finished, in the team's own words, instead of two hours later. A PRN application that is not
+     finished, needs a look or applied before gets no booking link at all: the office decides. Every other role is
+     exactly as before. Before the track column exists this finds nothing, so nothing changes. */
+  const { data: prnRoles } = await supabase.from('job_positions').select('key').eq('track', 'prn')
+  const PRN = new Set((prnRoles ?? []).map((r: { key: string }) => r.key))
   const { data: waiting } = await supabase
     .from('job_applicants')
     .select('*')
@@ -240,7 +246,11 @@ Deno.serve(async (req) => {
   for (const p of waiting ?? []) {
     if (booked.has(p.id)) continue
     if (p.decline_reason) continue                     // we already told them no
+    const prn = PRN.has(p.position)
+    if (prn && p.screen_grade !== 'qualified') continue
     const age = hoursSince(p.created_at)
+    /* Ten minutes after they finish, so somebody still choosing a time on the last screen isn't texted mid-choice. */
+    const prnReady = prn && !!p.completed_at && hoursSince(p.completed_at) >= 10 / 60
     const first = p.first_name || 'there'
     // Deep-link straight to the interview time-picker for THIS applicant, who
     // already applied but has not booked. Sending them to bare /apply restarted
@@ -248,7 +258,7 @@ Deno.serve(async (req) => {
     const bookUrl = 'https://mo-care.com/apply?book=' + encodeURIComponent(String(p.id))
 
     const step =
-      !p.nudge_1_at && age >= 2   ? 1 :
+      !p.nudge_1_at && (prn ? prnReady : age >= 2) ? 1 :
       !p.nudge_2_at && age >= 48  ? 2 :
       !p.nudge_3_at && age >= 120 ? 3 : 0
     if (!step) {
@@ -262,7 +272,7 @@ Deno.serve(async (req) => {
       continue
     }
 
-    plan.nudge.push(`${first} (try ${step})`)
+    plan.nudge.push(`${first} (try ${step}${prn ? ', PRN' : ''})`)
     if (dry) continue
     /* The one rule this file's header claims for everything, applied to the
        one block that skipped it: a cron that runs around the clock WILL
@@ -273,7 +283,9 @@ Deno.serve(async (req) => {
     const to = applicantDoor(p, first)
     if (!to) continue
 
-    const line = step === 1
+    const line = prn && step === 1
+      ? `Hi ${first}! Thanks for applying for Caring Companions' PRN CNA Team. Based on your Priority Application, we'd like to meet you. Choose an interview time here: ${bookUrl}`
+      : step === 1
       ? `Hi ${first}, thanks for applying to Caring Companions. You are one step from an interview, and you can pick a time that suits you here: ${bookUrl}`
       : step === 2
       ? `Hi ${first}, we still have interview times open this week if you would like one: ${bookUrl} Or call us on ${phone} and we will book it with you.`
@@ -281,7 +293,7 @@ Deno.serve(async (req) => {
 
     if (p.phone && p.sms_consent === true) await to.sms(line)
     if (p.email) await to.email(
-      step === 3 ? 'One last note from Caring Companions' : 'Pick a time to come and meet us',
+      step === 3 ? 'One last note from Caring Companions' : prn && step === 1 ? 'Choose your interview time: PRN CNA Team' : 'Pick a time to come and meet us',
       shell(`<p>Hi ${first},</p><p>${line.replace(bookUrl, `<a href="${bookUrl}">${bookUrl}</a>`)}</p>` +
         (step === 1 ? whereBlock() : '')))
 
@@ -322,7 +334,8 @@ Deno.serve(async (req) => {
         p.channel ? `via ${p.channel}` : null,
       ].filter(Boolean).join(', ')
       const grade = p.screen_grade === 'qualified' ? 'cleared the screen' : 'needs a look'
-      const line = `${who} just applied and ${grade}${bits ? ` — ${bits}` : ''}. ` +
+      const team = PRN.has(p.position) ? ' for the PRN CNA Team' : ''
+      const line = `${who} just applied${team} and ${grade}${bits ? ` — ${bits}` : ''}. ` +
         `They are in the hub under Applicants.`
 
       plan.alerted.push(who)

@@ -1,0 +1,25 @@
+{
+ "interview-messages": {
+  "deployed_from": "origin/main",
+  "files": {
+   "_shared/job-auth.ts": {
+    "base": "56227dbb1cbebd03cac64ac90cbec467a62f4419d2aeb7eee78e9d3f356b39c1",
+    "deploy": "56227dbb1cbebd03cac64ac90cbec467a62f4419d2aeb7eee78e9d3f356b39c1"
+   },
+   "_shared/optout.ts": {
+    "base": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937",
+    "deploy": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937"
+   },
+   "_shared/staff-auth.ts": {
+    "base": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687",
+    "deploy": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687"
+   },
+   "interview-messages/index.ts": {
+    "base": "a91cc593fd6002a65a1dd1797d5cf38b498e8993ec4daf994d5261c2b0bbc4e9",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ }
+}
