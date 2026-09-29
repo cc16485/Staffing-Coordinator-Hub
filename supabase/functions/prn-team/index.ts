@@ -50,8 +50,10 @@ const lab = (c: { label?: unknown; code?: unknown }) => String(c?.label ?? c?.co
 const slim = (c: { label?: unknown; code?: unknown }) => ({ ...(c?.code ? { code: String(c.code) } : {}), ...(c?.label ? { label: String(c.label) } : {}) })
 /* Which AxisCare classes these are. Exactly one of each must exist, or the step refuses and says so. */
 export const isPrnClass = (c: { label?: unknown; code?: unknown }) => /\bprn\b/i.test(String(c?.label ?? '')) || /\bprn\b/i.test(String(c?.code ?? ''))
-export const isCnaClass = (c: { label?: unknown; code?: unknown }) =>
-  String(c?.code ?? '').trim().toUpperCase() === 'CNA' || /\bcna\b|certified nurs\w* (aide|assistant)/i.test(String(c?.label ?? ''))
+/* A CNA can be on the PRN Team or not (her point, 2026-09-29), so the plain CNA class is separate: a class that
+   mentions PRN (her "PRN TEAM - CNA") is only ever the PRN Team class, never the CNA one. */
+export const isCnaClass = (c: { label?: unknown; code?: unknown }) => !isPrnClass(c) &&
+  (String(c?.code ?? '').trim().toUpperCase() === 'CNA' || /\bcna\b|certified nurs\w* (aide|assistant)/i.test(String(c?.label ?? '')))
 const digits10 = (s: unknown) => { const d = String(s ?? '').replace(/\D/g, ''); return d.length >= 10 ? d.slice(-10) : '' }
 const lowerEmail = (s: unknown) => String(s ?? '').trim().toLowerCase()
 /* the application's days and times, as the availability record keeps them ('daytime' is stored as 'afternoon') */
@@ -95,7 +97,7 @@ async function vocab() {
   const all = rows(v.json?.results?.classes ?? v.json?.results)
   const prn = all.filter(isPrnClass), cna = all.filter(isCnaClass)
   const why = [prn.length !== 1 ? (prn.length ? `AxisCare has ${prn.length} classes that read as PRN Team (${prn.map(lab).join(', ')})` : 'AxisCare has no PRN Team caregiver class yet') : '',
-               cna.length !== 1 ? (cna.length ? `AxisCare has ${cna.length} classes that read as CNA (${cna.map(lab).join(', ')})` : 'AxisCare has no CNA caregiver class yet') : ''].filter(Boolean)
+               cna.length !== 1 ? (cna.length ? `AxisCare has ${cna.length} plain CNA classes (${cna.map(lab).join(', ')}), so CNA is left alone` : 'AxisCare has no plain CNA caregiver class yet, so only PRN Team is added') : ''].filter(Boolean)
   return { prn: prn.length === 1 ? prn[0] : null, cna: cna.length === 1 ? cna[0] : null, why }
 }
 
@@ -228,7 +230,7 @@ Deno.serve(async (req) => {
     const [cur, v] = await Promise.all([readClasses(), vocab()])
     if (!cur.ok) return json({ error: cur.detail }, 502)
     return json({ outcome: 'ok', classes: cur.classes.map(lab), has_prn: cur.classes.some(isPrnClass), has_cna: cur.classes.some(isCnaClass),
-      ready: 'error' in v ? false : !!(v.prn && v.cna), why: 'error' in v ? [v.error] : v.why })
+      ready: 'error' in v ? false : !!v.prn, why: 'error' in v ? [v.error] : v.why })
   }
 
   if (action === 'mark') {
@@ -236,18 +238,20 @@ Deno.serve(async (req) => {
     if (tr.track !== 'prn_team') return json({ outcome: 'not_prn', detail: 'they are an ongoing caregiver now, not on the PRN Team' })
     const v = await vocab()
     if ('error' in v) return json({ outcome: 'refused', detail: v.error })
-    if (!v.prn || !v.cna) return json({ outcome: 'classes_missing', detail: v.why.join('; ') + '. Create them in AxisCare (Settings, Classes) and try again.' })
+    if (!v.prn) return json({ outcome: 'classes_missing', detail: v.why.join('; ') + '. Create it in AxisCare (Settings, Classes) and try again.' })
     const cur = await readClasses()
     if (!cur.ok) return json({ outcome: 'refused', detail: cur.detail })
-    const add = [v.prn, v.cna].filter((t) => !cur.classes.some((c) => lab(c) === lab(t)))
+    /* PRN Team always; the plain CNA class too when exactly one exists. Never the same class twice. */
+    const want = [v.prn, ...(v.cna ? [v.cna] : [])].filter((t, i, arr) => arr.findIndex((x) => lab(x) === lab(t)) === i)
+    const add = want.filter((t) => !cur.classes.some((c) => lab(c) === lab(t)))
     if (!add.length) {
       await db.from('pay_tracks').update({ axiscare_marked_at: new Date().toISOString(), axiscare_marked_by: by }).eq('applicant_id', id)
-      return json({ outcome: 'already', classes: cur.classes.map(lab) })
+      return json({ outcome: 'already', classes: cur.classes.map(lab), note: v.cna ? null : v.why.join('; ') })
     }
-    const r = await setClasses('prn_team_classes', 'PRN Team + CNA added', [...cur.classes, ...add],
-      (after) => after.some(isPrnClass) && after.some(isCnaClass), cur.classes)
+    const r = await setClasses('prn_team_classes', add.map(lab).join(' + ') + ' added', [...cur.classes, ...add],
+      (after) => add.every((t) => after.some((x) => lab(x) === lab(t))), cur.classes)
     if (r.outcome === 'updated') await db.from('pay_tracks').update({ axiscare_marked_at: new Date().toISOString(), axiscare_marked_by: by }).eq('applicant_id', id)
-    return json(r)
+    return json({ ...r, note: v.cna ? null : v.why.join('; ') })
   }
 
   if (action === 'move') {

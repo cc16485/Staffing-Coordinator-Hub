@@ -2,12 +2,16 @@
  "prn-team": {
   "deployed_from": "origin/main",
   "files": {
+   "_shared/job-auth.ts": {
+    "base": "56227dbb1cbebd03cac64ac90cbec467a62f4419d2aeb7eee78e9d3f356b39c1",
+    "deploy": "56227dbb1cbebd03cac64ac90cbec467a62f4419d2aeb7eee78e9d3f356b39c1"
+   },
    "_shared/staff-auth.ts": {
     "base": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687",
     "deploy": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687"
    },
    "prn-team/index.ts": {
-    "base": "3b676ff46ef064395285fed546002025d68c97ee4ea1675bafe636b818dd32da",
+    "base": "4f912d0ac142391f8f4bb7d0bdb0a6e415b79c176339974815e7aeec566435ba",
     "deploy": null
    }
   },

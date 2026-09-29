@@ -34,7 +34,7 @@ def fmeta(fn):
 sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
 def src_path(n): return os.path.join(FNROOT, n + ".ts") if n.startswith("_shared/") else (os.path.join(REPO, n) if n.endswith(".json") else os.path.join(FNROOT, n, "index.ts"))
 
-say("359 · THE PRN TEAM STEP RECOGNISES THE OWNER'S KEY"); say("Report " + dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")); say()
+say(os.environ.get("SB_TITLE", "359 · THE PRN TEAM STEP RECOGNISES THE OWNER'S KEY")); say("Report " + dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")); say()
 say("PART 1 · READ ONLY (nothing changes)")
 for name, want in SHAS.items():
     if sha(src_path(name)) != want: bad(f"{name} is not the reviewed build"); say("  STOP. Nothing was run."); done(2)
@@ -91,6 +91,6 @@ if sV == 200 and not jv.get("error"):
 elif sV == 200: say(f"  · the server key got in, but AxisCare's class list couldn't be read: {str(jv.get('error'))[:160]}")
 else: bad(f"the server key still can't ask ({sV})")
 say()
-say("RESULT: " + ("DONE · the PRN Team step recognises the owner's key for its one read-only question." if not fails else "CHECK THE ✗ LINES."))
+say("RESULT: " + (os.environ.get("SB_DONE", "DONE · the PRN Team step recognises the owner's key for its one read-only question.") if not fails else "CHECK THE ✗ LINES."))
 say("Rollback: redeploy prn-team from the commit before this one (Claude can).")
 done(0 if not fails else 8)
