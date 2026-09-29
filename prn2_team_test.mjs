@@ -12,7 +12,7 @@ const reset = () => {
       { id: A2, first_name: 'Mia', last_name: 'Test', phone: '4175550202', email: null, position: 'prn_cna', prn: { days: ['tue'], times: ['morning'] } },
       { id: A3, first_name: 'Ann', last_name: 'Test', phone: '4175550303', email: null, position: 'caregiver', prn: null }],
     job_positions: [{ key: 'prn_cna', track: 'prn', pay_min: 20 }, { key: 'caregiver', track: null, pay_min: 15 }],
-    pay_tracks: [], pay_track_history: [] }
+    pay_tracks: [], pay_track_history: [], prn_shift_log: [] }
   APP = { pay_rates: [{ id: 'rates', rates: { prn_cna: { min: 20, max: 20 }, cna: { min: 18, max: 18 } } }], caregiver_availability: [] }
   AXCG = { 9001: { id: 9001, mobilePhone: '417-555-0101', personalEmail: 'SARAH@example.test', classes: [{ code: 'ALZ', label: 'ALZHEIMER CERTIFIED' }, { code: 'VAC', label: 'VACCINATED' }] },
            9002: { id: 9002, mobilePhone: '4175559999', personalEmail: null, classes: [] } }
@@ -23,6 +23,8 @@ const q = (t) => { const st = { f: [], isNull: [], neq: [], inF: null, upd: null
   eq(c, v) { st.f.push([c, v]); return st.upd ? b.run() && b : b }, is(c, v) { if (v === null) st.isNull.push(c); return b },
   neq(c, v) { st.neq.push([c, v]); return b }, in(c, v) { st.inF = [c, v]; return b },
   update(o) { st.upd = o; return b },
+  insert(o) { const arr = (T[t] ||= []); if (t === 'prn_shift_log' && arr.some((x) => x.case_id === o.case_id && x.kind === o.kind && x.axiscare_caregiver_id === o.axiscare_caregiver_id))
+      return Promise.resolve({ data: null, error: { message: 'duplicate key value violates unique constraint' } }); arr.push(o); return Promise.resolve({ data: null, error: null }) },
   rows() { if (t === 'app_data') { const k = (st.f.find(([c]) => c === 'key') || [])[1]; return k in APP ? [{ key: k, data: APP[k] }] : [] }
     let r = T[t] ?? []; for (const [c, v] of st.f) r = r.filter((x) => x[c] === v); for (const c of st.isNull) r = r.filter((x) => x[c] == null)
     for (const [c, v] of st.neq) r = r.filter((x) => x[c] !== v); if (st.inF) r = r.filter((x) => st.inF[1].includes(x[st.inF[0]])); return r },
@@ -133,5 +135,19 @@ const callKey = async (body, key) => { const r = await handler(new Request('http
 r = await callKey({ action: 'vocab' }, 'svc-key'); ck('the server key can ask which classes exist (read only)', r.status === 200 && r.j.prn === 'PRN Team' && r.j.cna === 'CERTIFIED NURSES AIDE' && !PATCHES.length, r)
 r = await callKey({ action: 'move', applicant_id: A1, to: 'ongoing' }, 'svc-key'); ck('... and nothing else', r.status === 403 && !T.pay_track_history.length, r)
 STAFF.ok = false; r = await callKey({ action: 'vocab' }, 'not-the-key'); ck('any other key is treated as a person and refused without a staff sign-in', r.status === 401, r)
+/* PRN3: the shift record */
+reset(); ENV.SUPABASE_SERVICE_ROLE_KEY = 'k'
+await call({ action: 'start', applicant_id: A1 }); trk(A1).axiscare_caregiver_id = '9001'
+r = await call({ action: 'shift', axiscare_caregiver_id: '9001', case_id: 'cv1', kind: 'confirmed', shift_date: '2026-10-04' })
+ck('PRN3 shift: a PRN member confirmed on a shift is recorded, by who', r.j.outcome === 'recorded' && T.prn_shift_log.length === 1 && T.prn_shift_log[0].recorded_by === 'Krystal' && T.prn_shift_log[0].applicant_id === A1, [r, T.prn_shift_log])
+r = await call({ action: 'shift', axiscare_caregiver_id: '9001', case_id: 'cv1', kind: 'confirmed', shift_date: '2026-10-04' })
+ck('... the same shift twice is recorded once', r.j.outcome === 'already' && T.prn_shift_log.length === 1, r)
+r = await call({ action: 'shift', axiscare_caregiver_id: '9001', case_id: 'cv1', kind: 'backed_out', shift_date: '2026-10-04' })
+ck('... backing out after confirming is its own line', r.j.outcome === 'recorded' && T.prn_shift_log.length === 2 && T.prn_shift_log[1].kind === 'backed_out', r)
+trk(A1).track = 'ongoing'
+r = await call({ action: 'shift', axiscare_caregiver_id: '9001', case_id: 'cv2', kind: 'confirmed' })
+ck('... not recorded for someone who is an ongoing caregiver now', r.j.outcome === 'not_prn' && T.prn_shift_log.length === 2, r)
+r = await call({ action: 'shift', axiscare_caregiver_id: 'x', case_id: '', kind: 'maybe' }); ck('... a malformed request is refused', r.status === 400, r)
+r = await call({ action: 'list' }); ck('... and the list carries the shift record', r.j.shifts?.length === 2, r)
 for (const [n, o, d] of res) console.log((o ? 'PASS' : 'FAIL') + ' · ' + n + (o ? '' : '\n     ' + d))
 console.log(`${res.filter((x) => x[1]).length}/${res.length}`)

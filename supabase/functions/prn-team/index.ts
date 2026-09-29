@@ -17,6 +17,8 @@
 //             availability, only when they have none.
 //   classes   {applicant_id}: read-only. Their AxisCare classes, and whether PRN Team and CNA exist in AxisCare.
 //   mark      {applicant_id}: adds PRN Team and CNA in AxisCare, keeps every other class, reads it back, logs it.
+//   shift     {axiscare_caregiver_id, case_id, kind: 'confirmed'|'backed_out', shift_date} (PRN3): a PRN member was
+//             confirmed on a shift, or backed out after confirming. Kept per person and shift, never edited.
 //   move      {applicant_id, to: 'ongoing'|'prn_team', effective_date, reason, from}: the track change, then the
 //             PRN Team class off (to ongoing; CNA stays) or back on (to prn_team) in AxisCare, read back and logged.
 // =============================================================================
@@ -116,9 +118,24 @@ Deno.serve(async (req) => {
   const action = String(b.action ?? '')
 
   if (action === 'list') {
-    const [t, h] = await Promise.all([db.from('pay_tracks').select('*'), db.from('pay_track_history').select('*').order('recorded_at')])
+    const [t, h, sh] = await Promise.all([db.from('pay_tracks').select('*'), db.from('pay_track_history').select('*').order('recorded_at'),
+      db.from('prn_shift_log').select('*').order('recorded_at')])
     if (t.error || h.error) return json({ error: 'could not read the pay tracks' }, 500)
-    return json({ tracks: t.data ?? [], history: h.data ?? [] })
+    return json({ tracks: t.data ?? [], history: h.data ?? [], shifts: sh.error ? [] : (sh.data ?? []) })
+  }
+
+  /* PRN3: confirmed on a shift, or backed out after confirming. Only for someone on the PRN Team now. */
+  if (action === 'shift') {
+    const cg = typeof b.axiscare_caregiver_id === 'string' || typeof b.axiscare_caregiver_id === 'number' ? String(b.axiscare_caregiver_id).trim() : ''
+    const caseId = typeof b.case_id === 'string' ? b.case_id.trim().slice(0, 80) : ''
+    const kind = b.kind === 'confirmed' || b.kind === 'backed_out' ? b.kind : ''
+    const sd = typeof b.shift_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(b.shift_date) ? b.shift_date : null
+    if (!/^\d+$/.test(cg) || !caseId || !kind) return json({ error: 'which caregiver, which shift, and what happened?' }, 400)
+    const { data: t } = await db.from('pay_tracks').select('applicant_id, track').eq('axiscare_caregiver_id', cg).maybeSingle()
+    if (!t || t.track !== 'prn_team') return json({ outcome: 'not_prn' })
+    const { error } = await db.from('prn_shift_log').insert({ axiscare_caregiver_id: cg, applicant_id: t.applicant_id, case_id: caseId, kind, shift_date: sd, recorded_by: by })
+    if (error) return json(/duplicate|unique/i.test(error.message) ? { outcome: 'already' } : { error: 'could not record it: ' + error.message }, /duplicate|unique/i.test(error.message) ? 200 : 500)
+    return json({ outcome: 'recorded' })
   }
 
   const id = typeof b.applicant_id === 'string' && /^[0-9a-f-]{36}$/i.test(b.applicant_id) ? b.applicant_id : ''
