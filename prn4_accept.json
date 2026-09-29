@@ -1,0 +1,21 @@
+{
+ "caregiver-availability": {
+  "deployed_from": "d9494c5",
+  "files": {
+   "_shared/optout.ts": {
+    "base": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937",
+    "deploy": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937"
+   },
+   "_shared/outreach.ts": {
+    "base": "f78ffb89311ee7fbbc8f09e9f386987b59c4eaea9f9e9926fb705db560aa8912",
+    "deploy": "5f442ac860a0ad89cc430d2bbabd676eeaf8665b365ce6d8f0ad94c5b4163aca"
+   },
+   "caregiver-availability/index.ts": {
+    "base": "9e0076b90f6c4cee13be659cf799ad447354fa070c81615a834e18a42aa5c9f7",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ }
+}
