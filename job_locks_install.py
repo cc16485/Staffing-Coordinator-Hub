@@ -40,6 +40,9 @@ GROUPS = {
     "O1": {"title": "O1 · THREE SENDERS PICK UP THE OFFICE-HOURS FIX",
            "fns": ["reference-chase", "campaign-auto", "applicant-reengage"], "sql": None, "accept": "outreach_redeploy_accept.json",
            "keep_schedules": True, "auth_check": ["reference-chase"]},
+    "N2B": {"title": "SHIFT-NOTE FLAGS · A NOTE THE AI CAN'T READ GETS ITS OWN LABEL",
+            "fns": ["care-notes"], "sql": None, "accept": "flags_accept.json", "keep_schedules": True, "auth_check": [],
+            "practice": ("care-notes", "?flag=1&practice=1&hours=24")},
     "J2": {"title": "J2 · THE 7 JOBS THAT ONLY UPDATE THE HUB",
            "fns": ["coverage-watch", "client-status-observe", "client-status-review", "launch-evidence", "client-start-run",
                    "promise-run", "caregiver-census-observe"],
@@ -334,6 +337,16 @@ for fn in deployed:
             time.sleep(POLL); waited += POLL
         if got and got["status_code"] == 401: say("    ✓ even the schedules' secret from the database is refused (it has no schedule; only your key starts it)")
         else: bad(f"{fn}: the schedules' secret was not refused (" + (f"HTTP {got['status_code']}" if got else "no answer") + ")")
+# a practice run of the new build (reads and asks, saves and sends nothing), counts only
+if G.get("practice") and G["practice"][0] in deployed:
+    fn_, qs = G["practice"]
+    sP, bP = http("POST", f"{FNB}/functions/v1/{fn_}{qs}", {}, {"apikey": SVC, "Authorization": "Bearer " + SVC}, timeout=400)
+    try: jP = json.loads(bP)
+    except Exception: jP = {}
+    if sP == 200 and isinstance(jP, dict) and "asked" in jP:
+        say(f"  ✓ practice over the last day (nothing saved or sent): {jP.get('asked')} notes read · would flag {jP.get('flagged')} · the AI couldn't read {jP.get('ai_could_not_read')} (after one retry each)"
+            + (" · AxisCare asked us to slow down, so some weren't read" if jP.get("stopped_early") else ""))
+    else: bad(f"the practice run did not answer ({sP})")
 # the Hub-button doors
 extra = []
 if "coverage-run" in deployed:
@@ -358,6 +371,7 @@ for label, good, got in extra: (say if good else bad)(("  ✓ " if good else "")
 
 say()
 if fails: say("RESULT: CHECK THE ✗ LINES." + (f" Left exactly as they were: {', '.join(skipped)}." if skipped else ""))
+elif GROUP == "N2B": say("RESULT: DONE · a failed read is tried again, and a note the AI still can't read is labelled so, not filed as a concern.")
 elif GROUP == "O1": say("RESULT: DONE · the three senders now keep their office hours even when a request says it is a practice run.")
 elif GROUP == "G2": say("RESULT: DONE · the five jobs run a rules file from the Hub site only if you approved that exact version; today's five are approved.")
 elif GROUP == "G1": say("RESULT: DONE · the obligations runner and the eligibility sweep answer only your server key, checked before anything else.")

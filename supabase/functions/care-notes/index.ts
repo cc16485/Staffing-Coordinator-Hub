@@ -175,16 +175,27 @@ async function readPaced(base: string, head: Record<string, string>, id: string)
 export const CONCERN_KINDS = ['a fall or injury', 'confusion or a change in behavior', 'medication', 'eating or drinking',
   'skin or a wound', 'pain or illness', 'safety at home', 'a problem with the caregiver or the visit', 'family conflict', 'something else worth a look']
 const URGENT = new Set(['a fall or injury', 'safety at home', 'pain or illness'])
-/* The AI answers one question and nothing else. When it can't answer, the note is raised for a person to read. */
+/* The AI answers one question and nothing else. When it can't answer, the note is raised for a person to read.
+   2026-09-29 (Samantha, after 347 showed 2 of 6 flags were failed reads filed as "something else worth a look"):
+   one retry first, a larger answer allowance (the family sentence made answers longer), and a note that still can't
+   be read gets its OWN label, so it is never mistaken for a concern the AI actually saw. */
+export const UNREAD_KIND = 'the AI couldn\'t read this note'
+type Concern = { concern: boolean; kind: string; urgent: boolean; why: string; failed: boolean; family_line?: string }
+export async function askConcern(text: string, pauseMs = 2000): Promise<Concern> {
+  const first = await askConcernOnce(text)
+  if (!first.failed) return first
+  await new Promise((r) => setTimeout(r, pauseMs))
+  return await askConcernOnce(text)
+}
 // deno-lint-ignore no-explicit-any
-export async function askConcern(text: string): Promise<{ concern: boolean; kind: string; urgent: boolean; why: string; failed: boolean; family_line?: string }> {
+async function askConcernOnce(text: string): Promise<Concern> {
   const key = Deno.env.get('ANTHROPIC_API_KEY') || ''
-  const raised = { concern: true, kind: 'something else worth a look', urgent: false, why: 'the AI could not read this note, so a person should', failed: true }
+  const raised = { concern: true, kind: UNREAD_KIND, urgent: false, why: 'the AI could not read this note, so a person should', failed: true }
   if (!key) return raised
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 200, temperature: 0,
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 400, temperature: 0,
         system: 'You read one home-care caregiver\'s shift notes for a client (the care note, and notes on tasks). Decide whether '
           + 'anything in them should be read by the office today: a possible change in the client\'s health, safety, mood, '
           + 'behavior, eating, medication, skin, pain, a fall or injury, a problem with the visit or caregiver, or family '
@@ -278,7 +289,7 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
     if (have.has(id)) { out.already_flagged++; continue }
     const text = (note ? 'Care note: ' + note : 'No care note.') + (tasks.length ? '\nTasks: ' + tasks.join('; ') : '')
     out.asked++
-    const a = await askConcern(text)
+    const a = await askConcern(text, Number(Deno.env.get('CARE_NOTES_PAUSE_MS') ?? 2000))
     if (a.failed) out.ai_could_not_read++
     if (!a.concern) continue
     out.flagged++; if (a.urgent) out.urgent++
@@ -289,12 +300,14 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
     const cg = [String(last?.caregiver?.firstName ?? '').trim(), String(last?.caregiver?.lastName ?? '').trim()].filter(Boolean).join(' ') || 'The caregiver'
     const { error } = await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
       id, kind: 'care_note', domain: 'client_care', status: 'open', urgency: a.urgent ? 'high' : 'normal',
-      title: `Possible concern on ${clientFirst}'s ${dayChi(last?.startDate ?? last?.scheduledStartDate)} visit: ${a.kind}`,
+      title: a.failed ? `Please read: ${clientFirst}'s ${dayChi(last?.startDate ?? last?.scheduledStartDate)} visit note (the AI couldn't read it)`
+        : `Possible concern on ${clientFirst}'s ${dayChi(last?.startDate ?? last?.scheduledStartDate)} visit: ${a.kind}`,
       about: clientName, caregiver: cg, client_ax: String(last?.client?.id ?? ''),
       family_line: a.family_line || '',   /* N3: a suggested sentence for the family; the coordinator edits it */
       detail: `${cg} wrote after the ${whenChi(last?.startDate ?? last?.scheduledStartDate)} visit:\n\n`
         + (note ? `"${note}"` : '(no care note)') + (tasks.length ? '\n\n' + tasks.join('\n') : '')
-        + `\n\nWhy it was flagged: ${a.why || a.kind}.\nRead it, then decide what happens next. This never contacts anyone by itself.`,
+        + (a.failed ? `\n\nThe AI couldn't read this note (twice), so it hasn't judged it either way. A person should read it; close it if it's an ordinary day.`
+                    : `\n\nWhy it was flagged: ${a.why || a.kind}.`) + `\nRead it, then decide what happens next. This never contacts anyone by itself.`,
       owner: '', owner_name: '', due: new Date(now + (a.urgent ? 4 : 24) * 3600e3).toISOString(),
       created_at: new Date().toISOString(), created_by: 'care-notes', opened_by: 'care-note-flag' } })
     if (!error) out.items_made++
