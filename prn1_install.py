@@ -114,7 +114,7 @@ if S0["vault"] != 1: bad("the jobs' secret (S3) isn't there. Nothing was changed
 trig = S0["triggers"] if isinstance(S0["triggers"], list) else json.loads(S0["triggers"] or "[]")
 later = [t for t in trig if t > "zz_applicant_screen_prn" and not t.startswith("zz_applicant_screen_prn")]
 if later: bad("another trigger on applications would run after the PRN screen (unexpected). Nothing was changed."); done(4)
-say(f"  ✓ the recruiting tables and the applicant screen are there ({len(trig)} trigger{"s" if len(trig) != 1 else ""} on applications) · the PRN role and posting names are "
+say(f"  ✓ the recruiting tables and the applicant screen are there ({len(trig)} trigger{'s' if len(trig) != 1 else ''} on applications) · the PRN role and posting names are "
     + ("already PRN (an earlier run)" if S0["role_there"] or S0["post_there"] else "free"))
 
 say(); say("PART 2 · CHANGE")
