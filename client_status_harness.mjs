@@ -2,7 +2,9 @@
 // node client_status_harness.mjs supabase/functions/client-status-review/index.ts
 import fs from 'fs'; import path from 'path';
 const FN = process.argv[2];
-const src = fs.readFileSync(FN, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = globalThis.__fakeCreateClient');
+const src = fs.readFileSync(FN, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = globalThis.__fakeCreateClient')
+  /* J2: the lock and the staff check are stand-ins that follow the test token (the real ones: j2_job_locks_test.mjs) */
+  .replace("'../_shared/job-auth.ts'", "'" + path.resolve('test_stubs/job-auth-by-role.mjs') + "'").replace("'../_shared/staff-auth.ts'", "'" + path.resolve('test_stubs/staff-auth-by-claim.mjs') + "'");
 const tmp = path.join(process.cwd(), '_client_status_under_test.ts'); fs.writeFileSync(tmp, src);
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note).slice(0, 800)]);
 let handler = null; const env = { SUPABASE_URL: 'http://sb', SUPABASE_SERVICE_ROLE_KEY: 'svc-key' };
@@ -48,7 +50,7 @@ const items = () => DB.app_data.ops_items.filter(i => i.id.startsWith('csr_'));
 let r = await handler(new Request('http://x', { method: 'OPTIONS' }));
 ck('CORS preflight answered from day one', r.status === 200 && r.headers.get('Access-Control-Allow-Origin') === '*');
 let [st, b] = await call(ANON, { action: 'decide', review_id: 'x', decision: 'on_hold' }); let [st2] = await call(KAT, { action: 'run' });
-ck('access: answers need a signed-in person; the scheduled run refuses a signed-in person', st === 401 && st2 === 403);
+ck('access: answers need a signed-in person; the scheduled run refuses a signed-in person (J2: 401, not allowed)', st === 401 && st2 === 401);
 [st, b] = await call(ANON, {});
 ck('dry run (switch off): counts only; nothing refreshed, scanned, opened or added to My Work',
   b.dry === true && b.would_open === 2 && b.no_hub_person === 1 && b.too_old === 1 && b.admission_scan.would_check === 1 && writes().length === 0 && scans.length === 0 && b.preview === undefined

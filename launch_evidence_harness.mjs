@@ -2,7 +2,9 @@
 // real engine file, fake database, fake AxisCare. node launch_evidence_harness.mjs <index.ts> <launch-evidence.js>
 import fs from 'fs'; import path from 'path';
 const FN = process.argv[2], ENGINE = process.argv[3];
-const src = fs.readFileSync(FN, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = globalThis.__fakeCreateClient');
+const src = fs.readFileSync(FN, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = globalThis.__fakeCreateClient')
+  /* J2: the lock and the staff check are stand-ins that follow the test token (the real ones: j2_job_locks_test.mjs) */
+  .replace("'../_shared/job-auth.ts'", "'" + path.resolve('test_stubs/job-auth-by-role.mjs') + "'").replace("'../_shared/staff-auth.ts'", "'" + path.resolve('test_stubs/staff-auth-by-claim.mjs') + "'");
 const tmp = path.join(process.cwd(), '_launch_evidence_under_test.ts'); fs.writeFileSync(tmp, src);
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note).slice(0, 700)]);
 let handler = null; const env = { SUPABASE_URL: 'http://x', SUPABASE_SERVICE_ROLE_KEY: 'k', AXISCARE_TOKEN: 't', AXISCARE_SITE: '16485' };
@@ -74,7 +76,7 @@ let r = await handler(new Request('http://x', { method: 'OPTIONS' }));
 ck('CORS · the browser preflight is answered from day one', r.status === 200 && r.headers.get('Access-Control-Allow-Origin') === '*');
 let [st, b] = await call(ANON, { action: 'refresh', launch_id: DB.client_queue[0].id });
 let [st2] = await call(STAFF, { action: 'run' });
-ck('access · a card refresh needs a signed-in person; the scheduled run refuses a signed-in person', st === 401 && st2 === 403, [st, st2]);
+ck('access · a card refresh needs a signed-in person; the scheduled run refuses a signed-in person (J2: 401, not allowed)', st === 401 && st2 === 401, [st, st2]);
 
 engineOk = false; [st, b] = await call(ANON, { action: 'run' }); engineOk = true;
 ck('stops · if the hub\'s rules file cannot be fetched it refuses to decide, and the failed run is logged', st === 502 && logs().at(-1)?.ok === false && doorCalls().length === 0, b);

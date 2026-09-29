@@ -22,6 +22,7 @@
 // =============================================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { jobCaller } from '../_shared/job-auth.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -41,6 +42,11 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
   const json = (b: unknown, s = 200) =>
     new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
+  /* J2 (2026-09-29): only its every-6-hours schedule or the owner's server key. Everyone else, the public key included, is refused
+     before anything is read or written. */
+  const caller = await jobCaller(req)
+  if (!caller) return json({ error: 'not allowed' }, 401)
+  if (new URL(req.url).searchParams.get('auth_check') === '1') return json({ ok: true, caller })
 
   const { token, site } = axisCreds()
   if (!token || !site) return json({ error: 'AxisCare credentials not set' }, 502)

@@ -16,6 +16,8 @@
 // Replies to the scheduler (public key) with counts only.
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { jobCaller } from '../_shared/job-auth.ts'
+import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -77,11 +79,24 @@ export function chooseSeat(seats: string[], decision: string): string | null {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200, headers: cors })
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
-  const { role, email } = jwtClaims(req.headers.get('Authorization'))
   const b = await req.json().catch(() => ({})) as Record<string, unknown>
   const action = typeof b.action === 'string' ? b.action : 'run'
   const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!, SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
   const sb = createClient(SUPABASE_URL, SERVICE_KEY)
+  /* J2 (2026-09-29): who is calling is checked, never read from the token's own say-so.
+     decide · an active office staff member (the sign-in verified with Supabase Auth, then their staff record, role
+              and hub access), who must also hold the Journey seat for the answer, as before.
+     run    · only its schedule (the vault secret) or the owner's server key. */
+  let email: string | null = null, caller: string | null = null
+  if (action === 'decide') {
+    const who = await requireStaff(sb, req, OFFICE_ROLES)
+    if (!who.ok) return json({ error: who.error }, who.status)
+    email = who.email || null
+  } else {
+    caller = await jobCaller(req)
+    if (!caller) return json({ error: 'not allowed' }, 401)
+    if (new URL(req.url).searchParams.get('auth_check') === '1') return json({ ok: true, caller })
+  }
   const now = new Date(), today = chicagoDay(now), started = now.toISOString(), t0 = Date.now()
 
   const closeItem = async (reviewId: string, why: string) => {
@@ -98,7 +113,7 @@ Deno.serve(async (req) => {
 
   /* ── a person's answer ─────────────────────────────────────────────────── */
   if (action === 'decide') {
-    if (role !== 'authenticated' || !email) return json({ error: 'sign in to the hub first' }, 401)
+    if (!email) return json({ error: 'sign in to the hub first' }, 401)
     const reviewId = typeof b.review_id === 'string' && /^[0-9a-f-]{36}$/i.test(b.review_id) ? b.review_id : null
     const decision = String(b.decision ?? '')
     if (!reviewId || !DECISIONS.includes(decision)) return json({ error: 'review_id and a known answer are required' }, 400)
@@ -117,8 +132,7 @@ Deno.serve(async (req) => {
   }
 
   if (action !== 'run') return json({ error: "action must be 'run' or 'decide'" }, 400)
-  if (!['anon', 'service_role'].includes(String(role))) return json({ error: 'the scheduled run only' }, 403)
-  const full = role === 'service_role'
+  const full = caller === 'owner'
 
   const blob = async (key: string) => {
     const { data } = await sb.from('app_data').select('data').eq('key', key).maybeSingle()
