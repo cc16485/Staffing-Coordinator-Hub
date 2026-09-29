@@ -20,6 +20,7 @@
 // -----------------------------------------------------------------------------
 
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
+import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const cors = {
@@ -299,6 +300,9 @@ Deno.serve(async (req) => {
   }
 
   if (kind === 'oig') {
+    /* S5: office staff only (the Hub's screen button) */
+    const who = await requireStaff(supabase, req, OFFICE_ROLES)
+    if (!who.ok) return json({ error: who.error }, who.status)
     const cid = clean(b.caregiver_id, 40)
     if (!cid) return json({ error: 'caregiver_id required' }, 400)
     await runOigScreen(supabase, cid)
@@ -306,16 +310,34 @@ Deno.serve(async (req) => {
   }
 
   if (kind === 'paylink') {
+    /* S5 (2026-09-28): the public page token used to let anyone email an applicant a $45 link (even saying a family
+       wanted them), change their status, and learn whether an address had applied. Now:
+         · emailing the link (the Hub's buttons) needs a signed-in office staff member;
+         · the caregiver's own "Pay now" (their application id, kept in their browser) opens checkout as before;
+         · typing an email instead never shows the link or says whether it was found: if it matches an application,
+           the link is emailed to the address on file (at most once every 15 minutes);
+         · the status only moves from "applied". */
     const cid = clean(b.caregiver_id, 40)
     const em = clean(b.email, 200).toLowerCase()
-    const items = await loadItems(supabase, 'local_caregivers')
-    // deno-lint-ignore no-explicit-any
-    const c: any = items.find((x: any) => x?.id === cid)
-      || (em ? items.find((x: any) => String(x?.email || '').toLowerCase() === em) : undefined)
-    if (!c) return json({ error: 'We could not find an application with that email.' }, 404)
-    if (c.paid_at) return json({ error: 'Good news: this background check is already paid for. Watch your email for a message from Checkr.' }, 400)
     const direct = !!b.direct
     const fam = !!b.family_interested
+    const byEmail = direct && !cid && !!em
+    if (!direct || fam) {
+      const who = await requireStaff(supabase, req, OFFICE_ROLES)
+      if (!who.ok) return json({ error: who.error }, who.status)
+    }
+    if (direct && !cid && !em) return json({ error: 'Enter the email you applied with.' }, 400)
+    const items = await loadItems(supabase, 'local_caregivers')
+    // deno-lint-ignore no-explicit-any
+    const c: any = cid ? items.find((x: any) => x?.id === cid)
+      : (em ? items.find((x: any) => String(x?.email || '').toLowerCase() === em) : undefined)
+    const emailedAnswer = { ok: true, emailed: true }
+    if (byEmail) {
+      if (!c || !c.email || c.paid_at) return json(emailedAnswer)
+      if (c.pay_link_sent && Date.now() - new Date(c.pay_link_sent).getTime() < 15 * 60_000) return json(emailedAnswer)
+    }
+    if (!c) return json({ error: 'We could not find that application.' }, 404)
+    if (c.paid_at) return json({ error: 'Good news: this background check is already paid for. Watch your email for a message from Checkr.' }, 400)
     if (!c.email && !direct) return json({ error: 'This caregiver has no email on file; collect one first.' }, 400)
     const sk = Deno.env.get('STRIPE_SECRET_KEY')
     if (!sk) return json({ error: 'Stripe not configured' }, 500)
@@ -341,15 +363,15 @@ Deno.serve(async (req) => {
     const sess: any = await resp.json()
     if (!resp.ok || !sess.url) return json({ error: 'Stripe: ' + (sess?.error?.message || resp.status) }, 500)
 
-    c.status = 'background check'
+    if (!c.status || c.status === 'applied') c.status = 'background check'
     c.pay_link_sent = new Date().toISOString()
-    c.notes = ((c.notes || '') + '\n$45 check payment link ' + (direct ? 'opened by caregiver (pay-now at sign-up)' : (fam ? 'sent (family interested)' : 'sent')) + ' ' + new Date().toLocaleDateString('en-US') + '.').trim()
+    c.notes = ((c.notes || '') + '\n$45 check payment link ' + (byEmail ? 'emailed to the address on file (asked for on the sign-up page)' : direct ? 'opened by caregiver (pay-now at sign-up)' : (fam ? 'sent (family interested)' : 'sent')) + ' ' + new Date().toLocaleDateString('en-US') + '.').trim()
     await supabase.rpc('upsert_app_data_item', { target_key: 'local_caregivers', item: c })
 
     const first = esc((c.name || '').split(' ')[0] || 'there')
     const payBtn = '<p style="margin:18px 0;"><a href="' + sess.url + '" style="background:#E9A13B;color:#123;padding:14px 26px;border-radius:999px;text-decoration:none;font-weight:700;">Complete my background check ($45) \u2192</a></p>'
     const checkrPs = '<p>After payment, watch your email for a message from Checkr to complete your details. Results usually take 1-3 business days, and your \u2713 Verified badge activates the moment it clears.</p>'
-    if (c.email && !direct) {
+    if (c.email && (!direct || byEmail)) {
       if (fam) {
         await ghlEmail(c.email, first,
           '\ud83c\udf89 A family would like to move forward with you',
@@ -369,6 +391,7 @@ Deno.serve(async (req) => {
           + '<p>Questions? Reply here or call <a href="tel:14172348494">(417) 234-8494</a>.</p><p>Warmly,<br>The HomeTogether Hire team</p></div>')
       }
     }
+    if (byEmail) return json(emailedAnswer)
     return json({ ok: true, link: sess.url })
   }
 

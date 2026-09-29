@@ -18,6 +18,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
+import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -156,6 +157,10 @@ Deno.serve(async (req) => {
   }
 
   if (action === 'notify') {
+    /* S5 (2026-09-28): only signed-in office staff (the Hub, after approving a reply). The public page token alone
+       no longer starts an email. */
+    const who = await requireStaff(supabase, req, OFFICE_ROLES)
+    if (!who.ok) return json({ error: who.error }, who.status)
     // Called by the hub after approving a reply (or posting a team reply):
     // emails the original poster, once per reply, if they left an email.
     const postId = clean(b.post_id, 40)
