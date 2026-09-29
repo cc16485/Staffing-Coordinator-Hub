@@ -98,7 +98,7 @@ r = await run('flag=1&practice=1&hours=48', CRON); ck('N2 · a practice run need
 AX = []; AI = []; r = await run('flag=1&practice=1&hours=48', OWNER); const pj = r.j
 ck('N2 · practice (48 hours): reads, asks, counts; saves nothing', r.status === 200 && pj.practice === true && pj.days_with_words === 3 && pj.asked === 3 && pj.flagged === 2 && pj.urgent === 1 && pj.ai_could_not_read === 1 && pj.by_kind['a fall or injury'] === 1 && !items().length && !(APP.care_notes_state || []).length, pj)
 ck('N2 · the practice answer is counts only: no words, no names', !/slipped|Ruth|Cara|spirits/.test(JSON.stringify(pj)), pj)
-ck('N2 · the older shift (58 hours ago) is outside the window; a day with no words isn\'t asked about', !AI.some((t) => /stairs/.test(t)) && AI.length === 3, AI)
+ck('N2 · the older shift (58 hours ago) is outside the window; a day with no words isn\'t asked about', !AI.some((t) => /stairs/.test(t)) && AI.length === 4 && AI.filter((t) => /AIFAIL/.test(t)).length === 2, AI)   /* the unreadable note is tried twice (2026-09-29 retry) */
 APP.ops_settings = { care_notes_flag_live: true }; AX = []; AI = []
 r = await run('flag=1', CRON); const it = items()
 ck('N2 · live: the fall and the unreadable note become Needs Attention items; the normal day does not', r.j.items_made === 2 && it.length === 2 && !it.some((i) => /Nora/.test(i.about)), [r.j, it.map((i) => i.title)])
@@ -112,5 +112,19 @@ APP.care_notes_state = []; AI = []; r = await run('flag=1', CRON)
 ck('N2 · the same shifts again: not flagged twice', r.j.already_flagged === 2 && items().length === 2 && AI.length === 1, [r.j, AI.length])
 APP.care_notes_state = []; SLOW = true; r = await run('flag=1', CRON); SLOW = false
 ck('N2 · if AxisCare says slow down, the run stops and the last look is NOT moved on (next run retries)', r.j.stopped_early === true && !(APP.care_notes_state || []).length, r.j)
+
+/* 2026-09-29 · a failed read is retried once, and one that still fails gets its own label (not a "concern") */
+{ const src = fs.readFileSync(`${FN}/care-notes/index.ts`, 'utf8')
+  ck('N2 · the AI gets a larger answer allowance (the family sentence made answers longer)', /max_tokens: 400/.test(src))
+  const itU = items().find((x) => /AI couldn't read it/.test(x.title))
+  ck('N2 · a note the AI still can\'t read is titled "Please read ... (the AI couldn\'t read it)", not filed as "something else worth a look"', itU && /^Please read: /.test(itU.title) && !/something else worth a look/.test(itU.title) && /couldn't read this note \(twice\)/.test(itU.detail), itU)
+  let calls = 0; const f1 = globalThis.fetch
+  globalThis.fetch = async (url, o) => { if (String(url).includes('api.anthropic.com')) { calls++; if (calls === 1) return new Response('{}', { status: 529 })
+      return new Response(JSON.stringify({ content: [{ text: '{"concern":false,"kind":"something else worth a look","urgent":false,"why":"A normal day."}' }] }), { status: 200 }) } return f1(url, o) }
+  const tmp = path.join(process.cwd(), FN, 'care-notes', '_ask_t.ts')
+  fs.writeFileSync(tmp, fs.readFileSync(`${FN}/care-notes/index.ts`, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db').replace("'../_shared/job-auth.ts'", "'../_shared/_job-auth_t.ts'"))
+  let M; try { M = await import(tmp + '?' + Math.random()) } finally { fs.unlinkSync(tmp) }
+  const a = await M.askConcern('Care note: a normal day.', 0); globalThis.fetch = f1
+  ck('N2 · a hiccup on the first try: the retry reads it properly (no flag)', calls === 2 && a.failed === false && a.concern === false, { calls, a }) }
 for (const [n, o, note] of res) console.log((o ? 'PASS' : 'FAIL') + ' · ' + n + (o ? '' : '\n   ' + note))
 console.log(res.filter((x) => x[1]).length + '/' + res.length)
