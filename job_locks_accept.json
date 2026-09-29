@@ -143,6 +143,17 @@
   "only_at_base": [],
   "only_at_deploy": []
  },
+ "eligibility-sweep": {
+  "deployed_from": "d2bbdee",
+  "files": {
+   "eligibility-sweep/index.ts": {
+    "base": "27d15c2576797c5c50c8cd5bdec0dcd6f6a067709d9d1a4bc1e7d8c8d562f4a2",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
  "ghe-reminders": {
   "deployed_from": "e8a096f",
   "files": {
@@ -260,6 +271,17 @@
    },
    "lead-nurture/index.ts": {
     "base": "12aef9316a9ab4e219f06e6102805eae2c676a90226c797088a68db5d8f3942a",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "obligations-run": {
+  "deployed_from": "d2bbdee",
+  "files": {
+   "obligations-run/index.ts": {
+    "base": "13fecbf091c127ff8c48edc1cc5f3bab8bb1504d04a8e26ec1e4c77cdb7d036b",
     "deploy": null
    }
   },

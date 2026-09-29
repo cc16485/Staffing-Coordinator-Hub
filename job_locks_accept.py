@@ -15,6 +15,8 @@ DEPLOYED_FROM = {   # the commit each job was last deployed from (Desktop report
     'automation-watchdog': '104a92e', 'purge-recordings': 'b535ee2', 'lead-docs-retention': '085b7de',
     'coverage-watch': '6fa9e26', 'client-status-observe': 'defc682', 'client-status-review': 'a958c2c',
     'launch-evidence': 'da89ed1', 'client-start-run': '9499516', 'promise-run': 'c812cc7', 'caregiver-census-observe': '7dfd209',
+    # G1 (2026-09-29): the two rule jobs with no schedule; their code has not changed since before d2bbdee
+    'obligations-run': 'd2bbdee', 'eligibility-sweep': 'd2bbdee',
 }
 # 341 (2026-09-29) found ghe-reminders still running its Aug 13 GitHub version (e8a096f: own code without the Sept 9
 # heartbeat, the Aug 13 shared helper whose office-hours rule is identical). Samantha approved redeploying it with the

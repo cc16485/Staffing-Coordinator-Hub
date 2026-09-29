@@ -15,6 +15,7 @@
 // key 'ops_settings' has eligibility_sweep_live === true. Flip it deliberately.
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { jobCaller } from '../_shared/job-auth.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' }
@@ -34,6 +35,11 @@ const DOMAIN_FOR = (codes: string[]) => {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
+  /* G1 (2026-09-29): only the owner's server key (Desktop script 46 starts it; it has no schedule), checked FIRST.
+     The August password check (below, now replaced) ran only after the rules file had been downloaded and run. */
+  const caller = await jobCaller(req, false)
+  if (!caller) return json({ error: 'not allowed' }, 401)
+  if (new URL(req.url).searchParams.get('auth_check') === '1') return json({ ok: true, caller })
 
   const SB = Deno.env.get('SUPABASE_URL')!
   const KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -118,20 +124,12 @@ Deno.serve(async (req) => {
 
   const body = await req.json().catch(() => ({})) as Record<string, unknown>
 
-  /* ── GATE (P0-1). FAIL CLOSED. ─────────────────────────────────────────
+  /* ── GATE (P0-1), replaced by G1 (2026-09-29). ──────────────────────────
      This function returns caregiver names, their compliance-failure reasons,
-     and the client names on their schedules. It was deployed --no-verify-jwt
-     with no gate, so the anonymous internet could read all of it (the project
-     ref is in the public repo). Require a shared secret in the body. If the
-     secret is not configured, refuse — a missing gate must never mean open.
-     Only script 46 calls this function; it sends { token }. Redeploy
-     WITHOUT --no-verify-jwt so this runs behind JWT verification too. */
-  {
-    const gate = Deno.env.get('ELIGIBILITY_SWEEP_TOKEN')
-    if (!gate || body.token !== gate) {
-      return json({ error: 'unauthorized' }, 401)
-    }
-  }
+     and the client names on their schedules. The August fix required a shared
+     password in the body, but checked it only here, after the rules file had
+     been downloaded and run. The owner's server key is now checked at the very
+     top, before anything else happens. */
 
   /* ── THE JANE FIXTURE, RUN HERE RATHER THAN SIMULATED ──────────────────
      Exercises the real rules, in the real runtime, through the same branching

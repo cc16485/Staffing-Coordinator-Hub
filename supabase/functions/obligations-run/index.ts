@@ -24,6 +24,7 @@
 //   ?days=N  override the backlog guard for this run only
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { jobCaller } from '../_shared/job-auth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -59,6 +60,12 @@ function todayCentral(): string {
 Deno.serve(async (req) => {
   // Protocol handshake before any policy or work.
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
+  /* G1 (2026-09-29): only the owner's server key (Desktop scripts start it; it has no schedule). It used to run for
+     anyone with the public key, who could also lift ?max and ?days. Everyone else is refused before anything is
+     read, fetched or written. */
+  const caller = await jobCaller(req, false)
+  if (!caller) return json({ error: 'not allowed' }, 401)
+  if (new URL(req.url).searchParams.get('auth_check') === '1') return json({ ok: true, caller })
 
   const url = new URL(req.url)
   const forceDry = url.searchParams.get('dry') === '1'
