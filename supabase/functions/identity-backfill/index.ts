@@ -927,7 +927,21 @@ Deno.serve(async (req) => {
   const owner = jwtRole(auth) === 'service_role' || isServerSecret(auth)
 
   if (q.get('circles') === '1') {
-    const res = await syncCirclesFromAxisCare(q.get('commit') === '1')
+    const commit = q.get('commit') === '1'
+    const res = await syncCirclesFromAxisCare(commit)
+    /* R3 (2026-09-29): a real (committed) sync leaves a heartbeat, so the Hub can show when Family Circles last came
+       from AxisCare and the watchdog can flag a night it didn't run or failed. Counts only; never names. */
+    if (commit) {
+      // deno-lint-ignore no-explicit-any
+      const r: any = res
+      const errs = Array.isArray(r?.errors) ? r.errors.length : 0
+      const ok = !r?.error && errs === 0
+      try {
+        await sb.rpc('upsert_app_data_item', { target_key: 'automation_heartbeats', item: {
+          id: 'hb_circles-sync', automation: 'circles-sync', at: new Date().toISOString(), ok,
+          note: ok ? 'synced' : String(r?.error || (errs + ' error' + (errs === 1 ? '' : 's'))).slice(0, 200) } })
+      } catch (e) { console.error('[identity-backfill] circles heartbeat failed', e) }
+    }
     return new Response(JSON.stringify(owner ? res : countsOnly(res), null, 2),
       { status: 200, headers: { 'Content-Type': 'application/json' } })
   }
