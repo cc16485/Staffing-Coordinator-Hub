@@ -219,6 +219,6 @@ create trigger zz_applicant_screen_prn
 insert into public.job_positions (key, label, screener, pay_min, pay_max, pay_unit, sort, active, track, pay_ack, pay_ack_version)
 select 'prn_cna', 'PRN CNA Team', '[]'::jsonb, 20, null, 'HOUR',
        coalesce((select max(sort) from public.job_positions), 0) + 1, true, 'prn',
-       'I understand that Caring Companions PRN Team shifts are paid at $20/hour. If I choose to accept an ongoing/regular client schedule, ongoing scheduled shifts are paid at $18/hour.',
-       'PRN-PAY-2026-09'
+       'I understand that Caring Companions PRN CNA Team members are paid $20/hour.',
+       'PRN-PAY-2026-09B'
 where not exists (select 1 from public.job_positions where key = 'prn_cna');

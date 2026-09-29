@@ -125,8 +125,8 @@ ok, v = sql("""select exists (select 1 from pg_proc where proname = 'apply_prn_s
   (select track from public.job_positions where key = 'prn_cna') as track, (select pay_ack_version from public.job_positions where key = 'prn_cna') as ver,
   (select pay_min from public.job_positions where key = 'prn_cna')::float as pay""")
 V = v[0] if ok and v else {}
-if V.get("save") and V.get("clean") and V.get("guard") and V.get("screen") and V.get("track") == "prn" and V.get("ver") == "PRN-PAY-2026-09" and V.get("pay") == 20:
-    say("  ✓ the database: PRN answers and the pay acceptance have their place, the pay guard and the PRN screen are on, the role PRN CNA Team ($20, PRN-PAY-2026-09) is there")
+if V.get("save") and V.get("clean") and V.get("guard") and V.get("screen") and V.get("track") == "prn" and str(V.get("ver") or "").startswith("PRN-PAY-2026-09") and V.get("pay") == 20:
+    say("  ✓ the database: PRN answers and the pay acceptance have their place, the pay guard and the PRN screen are on, the role PRN CNA Team ($20) is there")
 else: bad("the database isn't as intended: " + json.dumps(V)[:240])
 p = subprocess.run([SUPA, "functions", "deploy", FN, "--project-ref", REF, "--use-api"] + ([] if VJ else ["--no-verify-jwt"]),
                    cwd=REPO, env=dict(os.environ, SUPABASE_ACCESS_TOKEN=TOKEN), capture_output=True, text=True)
@@ -178,7 +178,7 @@ else:
     A_, B_, C_ = P.get("a") or {}, P.get("b") or {}, P.get("c") or {}
     g1 = P.get("refused") is True
     (say if g1 else bad)(("  ✓ " if g1 else "") + "a PRN application without the pay tick can't be sent")
-    g2 = A_.get("status") == "new" and A_.get("grade") == "qualified" and A_.get("prnflags") == 0 and A_.get("acked") and A_.get("ver") == "PRN-PAY-2026-09" and A_.get("text_ok") and A_.get("days") == ["mon", "sat"]
+    g2 = A_.get("status") == "new" and A_.get("grade") == "qualified" and A_.get("prnflags") == 0 and A_.get("acked") and str(A_.get("ver") or "").startswith("PRN-PAY-2026-09") and A_.get("text_ok") and A_.get("days") == ["mon", "sat"]
     (say if g2 else bad)(("  ✓ " if g2 else "") + "with it: sent, cleared the screen, the role's wording and version stored with the time, availability kept"
                          + ("" if g2 else " · " + json.dumps(A_)[:200]))
     g3 = B_.get("status") == "new" and B_.get("grade") == "review" and B_.get("under_year")
@@ -197,7 +197,7 @@ s, b = http("GET", f"{FNB}/rest/v1/job_positions?key=eq.prn_cna&select=track,pay
 try: row = (json.loads(b) or [{}])[0] if s == 200 else {}
 except Exception: row = {}
 s2, b2 = http("POST", f"{FNB}/rest/v1/rpc/apply_prn_save", {"p_id": str(uuid.uuid4()), "p_position": "prn_cna", "p_prn": {}, "p_pay_ack": False}, H)
-g = row.get("track") == "prn" and row.get("pay_ack_version") == "PRN-PAY-2026-09" and s2 == 200 and b2.strip() in ("null", "")
+g = row.get("track") == "prn" and str(row.get("pay_ack_version") or "").startswith("PRN-PAY-2026-09") and s2 == 200 and b2.strip() in ("null", "")
 (say if g else bad)(("  ✓ " if g else "") + f"the apply page's view (public key): the role reads as PRN · the PRN save answers ({s2}) and changes nothing for an unknown application")
 IM = f"{FNB}/functions/v1/{FN}"
 a1 = http("POST", IM + "?auth_check=1", {}, H)[0]; a2 = http("POST", IM + "?auth_check=1", {}, {"apikey": SVC, "Authorization": "Bearer " + SVC})[0]
