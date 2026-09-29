@@ -24,6 +24,7 @@
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { ownerCaller } from '../_shared/job-auth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -102,10 +103,10 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200, headers: cors })
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
   const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-  /* The owner's server key may ask one read-only question, for the install proof: do PRN Team and CNA exist in AxisCare? */
-  const bearer = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim()
-  const svc = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
-  if (svc && bearer === svc) {
+  /* The owner's server key may ask one read-only question, for the install proof: do PRN Team and CNA exist in AxisCare?
+     Recognised the way the scheduled jobs recognise it (job-auth's ownerCaller): the key the Management API hands out
+     is not always character-for-character the one this function holds, so a plain comparison refused it (Desktop 356). */
+  if (await ownerCaller(req)) {
     const q = await req.clone().json().catch(() => ({})) as Record<string, unknown>
     if (q.action !== 'vocab') return json({ error: 'the server key may only ask vocab' }, 403)
     const v = await vocab()

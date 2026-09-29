@@ -1,0 +1,17 @@
+{
+ "prn-team": {
+  "deployed_from": "origin/main",
+  "files": {
+   "_shared/staff-auth.ts": {
+    "base": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687",
+    "deploy": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687"
+   },
+   "prn-team/index.ts": {
+    "base": "3b676ff46ef064395285fed546002025d68c97ee4ea1675bafe636b818dd32da",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ }
+}
