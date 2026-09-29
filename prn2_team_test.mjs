@@ -99,7 +99,7 @@ ck('link: availability they set themselves is kept, never overwritten', r.j.avai
 // AxisCare classes
 VOCAB = VOCAB.filter((v) => v.code !== 'PRNT')
 r = await call({ action: 'classes', applicant_id: A1 }); ck('classes: says PRN Team doesn\'t exist in AxisCare yet (read only)', r.j.ready === false && /no PRN Team caregiver class/.test(r.j.why.join()) && !PATCHES.length, r)
-r = await call({ action: 'mark', applicant_id: A1 }); ck('mark with the class missing: refused, says to create it, nothing changed', r.j.outcome === 'classes_missing' && /Create them in AxisCare/.test(r.j.detail) && !PATCHES.length, r)
+r = await call({ action: 'mark', applicant_id: A1 }); ck('mark with the class missing: refused, says to create it, nothing changed', r.j.outcome === 'classes_missing' && /Create it in AxisCare/.test(r.j.detail) && !PATCHES.length, r)
 VOCAB.push({ code: 'PRNT', label: 'PRN Team' })
 r = await call({ action: 'mark', applicant_id: A1 })
 ck('mark: PRN Team and CNA added, every other class kept, read back, logged, marked by who', r.j.outcome === 'updated' && labels(9001).sort().join('|') === ['ALZHEIMER CERTIFIED', 'CERTIFIED NURSES AIDE', 'PRN Team', 'VACCINATED'].sort().join('|')
@@ -138,6 +138,26 @@ const callKey = async (body, key) => { const r = await handler(new Request('http
 r = await callKey({ action: 'vocab' }, 'a-differently-formatted-owner-key'); ck('the owner\'s server key can ask which classes exist (read only), even when its format differs from the one the function holds', r.status === 200 && r.j.prn === 'PRN Team' && r.j.cna === 'CERTIFIED NURSES AIDE' && !PATCHES.length, r)
 r = await callKey({ action: 'move', applicant_id: A1, to: 'ongoing' }, 'a-differently-formatted-owner-key'); ck('... and nothing else', r.status === 403 && !T.pay_track_history.length, r)
 STAFF.ok = false; r = await callKey({ action: 'vocab' }, 'not-the-key'); ck('any other key is treated as a person and refused without a staff sign-in', r.status === 401, r)
+/* Her real AxisCare setup (359): one class "PRN TEAM - CNA"; a CNA may not be on the PRN Team, so a plain "CNA" class is separate */
+ck('"PRN TEAM - CNA" is the PRN Team class and never the CNA one; a plain "CNA" is CNA', M.isPrnClass({ label: 'PRN TEAM - CNA' }) && !M.isCnaClass({ label: 'PRN TEAM - CNA' }) && M.isCnaClass({ code: 'CNA', label: 'CNA' }))
+reset(); ENV.SUPABASE_SERVICE_ROLE_KEY = 'k'; VOCAB = [{ code: 'ALZ', label: 'ALZHEIMER CERTIFIED' }, { code: 'PRNC', label: 'PRN TEAM - CNA' }]
+await call({ action: 'start', applicant_id: A1 }); trk(A1).axiscare_caregiver_id = '9001'; AXCG[9001].classes = [{ code: 'ALZ', label: 'ALZHEIMER CERTIFIED' }]
+r = await call({ action: 'mark', applicant_id: A1 })
+ck('only the combined class exists: "PRN TEAM - CNA" is added once, and it says there is no plain CNA class yet', r.j.outcome === 'updated' && PATCHES.at(-1).classes.filter((c) => c.label === 'PRN TEAM - CNA').length === 1
+   && labels(9001).sort().join('|') === 'ALZHEIMER CERTIFIED|PRN TEAM - CNA' && /no plain CNA caregiver class yet/.test(r.j.note || ''), [r, PATCHES.at(-1)])
+VOCAB.push({ code: 'CNA', label: 'CNA' }); PATCHES = []
+r = await call({ action: 'mark', applicant_id: A1 })
+ck('once "CNA" exists too: marking adds it (PRN TEAM - CNA already there), nothing twice', r.j.outcome === 'updated' && labels(9001).sort().join('|') === 'ALZHEIMER CERTIFIED|CNA|PRN TEAM - CNA' && !r.j.note, [r, labels(9001)])
+const eff2 = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+r = await call({ action: 'move', applicant_id: A1, to: 'ongoing', effective_date: eff2, from: 'prn_team', reason: 'Transitioned to ongoing scheduled shifts' })
+ck('Move to ongoing: "PRN TEAM - CNA" comes off, "CNA" and everything else stays', r.j.axiscare.outcome === 'updated' && labels(9001).sort().join('|') === 'ALZHEIMER CERTIFIED|CNA', [r, labels(9001)])
+r = await call({ action: 'move', applicant_id: A1, to: 'prn_team', effective_date: eff2, from: 'ongoing', reason: 'Back' })
+ck('Back on the PRN Team: "PRN TEAM - CNA" goes back on, CNA kept', labels(9001).sort().join('|') === 'ALZHEIMER CERTIFIED|CNA|PRN TEAM - CNA', labels(9001))
+VOCAB = [{ code: 'CNA', label: 'CNA' }]; reset(); ENV.SUPABASE_SERVICE_ROLE_KEY = 'k'; VOCAB = [{ code: 'CNA', label: 'CNA' }]
+await call({ action: 'start', applicant_id: A1 }); trk(A1).axiscare_caregiver_id = '9001'
+r = await call({ action: 'mark', applicant_id: A1 })
+ck('no PRN Team class at all: refused, nothing changed', r.j.outcome === 'classes_missing' && !PATCHES.length, r)
+
 /* PRN3: the shift record */
 reset(); globalThis.__ownerKey = 'nobody-has-this'; ENV.SUPABASE_SERVICE_ROLE_KEY = 'k'
 await call({ action: 'start', applicant_id: A1 }); trk(A1).axiscare_caregiver_id = '9001'
