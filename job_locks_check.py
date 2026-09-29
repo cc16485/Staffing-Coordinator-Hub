@@ -46,11 +46,15 @@ def ts(x):
     except Exception: return None
 
 say("J3 · DID EVERY SCHEDULE STILL GET IN? (read only)"); now = dt.datetime.now(dt.timezone.utc); say("Report " + now.strftime("%Y-%m-%d %H:%M UTC") + " · " + ct(now)); say()
-t1, ok1 = when("Job locks J1 report.txt"); t2, ok2 = when("Job locks J2 report.txt")
-if not (t1 and ok1): bad("341's report isn't here or didn't say DONE, so there is nothing to check yet."); done(3)
+t1, ok1 = when("Job locks J1 report.txt"); t2, ok2 = when("Job locks J2 report.txt"); t1b, ok1b = when("Job locks J1b report.txt")
+j1txt = open(os.path.join(DESK, "Job locks J1 report.txt")).read() if t1 else ""
+only_ghe = t1 and not ok1 and ok1b and "Left exactly as they were: ghe-reminders." in j1txt and \
+    all(l.strip().startswith("✗ ghe-reminders: the live copy is NOT") for l in j1txt.splitlines() if l.strip().startswith("✗"))
+if not (t1 and (ok1 or only_ghe)): bad("341's report isn't here or didn't say DONE (nor 341 + 341b), so there is nothing to check yet."); done(3)
 if not (t2 and ok2): say("  · 342's report isn't here or didn't say DONE: checking the J1 jobs only"); t2 = None
-say(f"  · the J1 change ran {ct(t1)}" + (f"; the J2 change ran {ct(t2)}" if t2 else ""))
+say(f"  · the J1 change ran {ct(t1)}" + (f"; ghe-reminders followed in 341b {ct(t1b)}" if only_ghe else "") + (f"; the J2 change ran {ct(t2)}" if t2 else ""))
 since = {fn: t1 for fn in J1}; since.update({fn: t2 for fn in J2} if t2 else {})
+if only_ghe: since["ghe-reminders"] = t1b
 FNS = [fn for fn in J1 + J2 if since.get(fn)]
 
 say(); say("1 · THE DATABASE'S CALL LOG (any \"not allowed\" is a schedule being turned away)")

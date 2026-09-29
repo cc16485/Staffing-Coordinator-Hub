@@ -10,12 +10,16 @@
 import json, re, subprocess, hashlib, sys
 BASE = sys.argv[1] if len(sys.argv) > 1 else 'origin/main'
 DEPLOYED_FROM = {   # the commit each job was last deployed from (Desktop reports; read-only reviews 2026-09-29)
-    'lead-nurture': '4ad619c', 'lead-followup': '43ff5a6', 'ghe-reminders': 'e108ff4', 'carematch-watch': 'd9494c5',
+    'lead-nurture': '4ad619c', 'lead-followup': '43ff5a6', 'ghe-reminders': 'e8a096f', 'carematch-watch': 'd9494c5',
     'interview-messages': 'd9494c5', 'coverage-run': 'd9494c5', 'timekeeper-watch': 'd9494c5', 'lead-digest': 'a517b54',
     'automation-watchdog': '104a92e', 'purge-recordings': 'b535ee2', 'lead-docs-retention': '085b7de',
     'coverage-watch': '6fa9e26', 'client-status-observe': 'defc682', 'client-status-review': 'a958c2c',
     'launch-evidence': 'da89ed1', 'client-start-run': '9499516', 'promise-run': 'c812cc7', 'caregiver-census-observe': '7dfd209',
 }
+# 341 (2026-09-29) found ghe-reminders still running its Aug 13 GitHub version (e8a096f: own code without the Sept 9
+# heartbeat, the Aug 13 shared helper whose office-hours rule is identical). Samantha approved redeploying it with the
+# heartbeat (341b). For this job only, its own code may also be that reviewed Aug 13 copy.
+OLDER_OWN_CODE_OK = {'ghe-reminders'}
 FN = 'supabase/functions/'
 def show(commit, rel):
     p = subprocess.run(['git', 'show', f'{commit}:{FN}{rel}'], capture_output=True)
@@ -45,9 +49,9 @@ for fn, dep in DEPLOYED_FROM.items():
     files = {}
     for rel in sorted(set(b) | set(d)):
         # the job's own code: only BASE. a shared helper: BASE, or the copy from its last deploy (null when absent)
-        files[rel] = {'base': b.get(rel), 'deploy': None if rel.endswith('/index.ts') else d.get(rel)}
+        files[rel] = {'base': b.get(rel), 'deploy': None if rel.endswith('/index.ts') and fn not in OLDER_OWN_CODE_OK else d.get(rel)}
     acc[fn] = {'deployed_from': dep, 'files': files, 'only_at_deploy': sorted(set(d) - set(b)), 'only_at_base': sorted(set(b) - set(d))}
-    if d.get(f'{fn}/index.ts') != b[f'{fn}/index.ts']:
+    if d.get(f'{fn}/index.ts') != b[f'{fn}/index.ts'] and fn not in OLDER_OWN_CODE_OK:
         print(f'  note: {fn} index.ts at {dep} differs from {BASE}: live must equal {BASE} or it stops')
 json.dump(acc, open('job_locks_accept.json', 'w'), indent=1, sort_keys=True)
 print('wrote job_locks_accept.json for', len(acc), 'jobs')
