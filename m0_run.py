@@ -12,6 +12,7 @@ FNROOT = os.environ["SB_FNROOT"]; SHAS = json.loads(os.environ.get("SB_FN_SHAS",
 TOKEN = os.environ.get("SB_TOKEN", "").strip().strip('"').strip("'"); REF = os.environ.get("SB_REF", "zngsgedlsxinbygwmxwn")
 SUPA = os.environ.get("SB_SUPA_CLI", ""); API = os.environ.get("SB_API_BASE", "https://api.supabase.com"); FNB = os.environ.get("SB_FN_BASE", f"https://{REF}.supabase.co")
 SNAP = os.environ.get("SB_SNAPSHOT", os.path.expanduser("~/Claude/m0-notes-snapshot.json"))
+BATCH = int(os.environ.get("SB_BATCH", "30"))
 FN = "notes-audit"
 lines = []; fails = []; HIDE = []
 def say(s=""):
@@ -60,28 +61,55 @@ if STEP == "1":
     r0 = http("POST", f"{FNB}/functions/v1/{FN}?m0=1", {}, {})[0]; r1 = http("POST", f"{FNB}/functions/v1/{FN}?m0=1", {}, {"apikey": ANON, "Authorization": "Bearer " + ANON})[0]
     (say if r0 == 401 and r1 == 401 else bad)(("  ✓ " if r0 == 401 and r1 == 401 else "") + f"no key {r0}, the public key {r1} → refused")
     say(); say("PART 3 · WHAT AXISCARE SHOWS (last 14 days; counts only)")
-    s, b = http("POST", f"{FNB}/functions/v1/{FN}?m0=1&days=14", {}, H)
-    try: j = json.loads(b)
-    except Exception: j = None
-    if s != 200 or not isinstance(j, dict) or j.get("error"): bad(f"the check did not answer ({s}): " + str((j or {}).get('error') if isinstance(j, dict) else b)[:160]); done(7)
-    say(f"  window {j['window']} · visits {j['visits_listed']} · started {j['visits_started']} · read {j['visits_read']}"
-        + (" · AxisCare asked us to slow down, so some were not read" if j.get("stopped_early_slow_down") else ""))
-    say(f"  finished (clocked out): {j['visits_finished']} · started but not clocked out: {j['visits_not_clocked_out']}")
-    say(f"  how caregivers clocked in: {fmt(j.get('clock_in_methods'))}")
+    say("  reading every finished shift one at a time, in batches (this can take several minutes)…")
+    rows, clock_in, not_out, limited, off, first, batches = [], {}, 0, False, 0, None, 0
+    while off is not None and batches < 40:
+        s, b = http("POST", f"{FNB}/functions/v1/{FN}?m0=1&days=14&offset={off}&limit={BATCH}", {}, H)
+        try: j = json.loads(b)
+        except Exception: j = None
+        if s != 200 or not isinstance(j, dict) or j.get("error"): bad(f"a batch did not answer ({s}): " + str((j or {}).get('error') if isinstance(j, dict) else b)[:160]); break
+        first = first or j; batches += 1
+        rows += j.get("rows") or []; not_out += j.get("visits_not_clocked_out") or 0
+        for k2, v2 in (j.get("clock_in_methods") or {}).items(): clock_in[k2] = clock_in.get(k2, 0) + v2
+        if j.get("stopped_early_slow_down"): limited = True; break
+        off = j.get("next_offset"); time.sleep(float(os.environ.get("SB_BATCH_PAUSE", "2")))
+    if not first: done(7)
+    groups = {}
+    for r in rows: groups.setdefault(f"{r['cg']}|{r['cl']}|{r['d']}", []).append(r)
+    multi = [g for g in groups.values() if len(g) > 1]
+    same = sum(1 for g in multi if all(x["n"] for x in g) and len({x["f"] for x in g}) == 1)
+    some = sum(1 for g in multi if any(x["n"] for x in g) and not all(x["n"] for x in g))
+    diff = sum(1 for g in multi if all(x["n"] for x in g) and len({x["f"] for x in g}) > 1)
+    miss_by, with_by, per, per_np, snap = {}, {}, {}, {}, []
+    for k2, g in groups.items():
+        last = sorted(g, key=lambda x: x["e"])[-1]; m = last["o"]
+        per.setdefault(last["cg"], 0); per_np.setdefault(last["cg"], 0)
+        if any(x["n"] for x in g): with_by[m] = with_by.get(m, 0) + 1
+        else:
+            miss_by[m] = miss_by.get(m, 0) + 1; per[last["cg"]] += 1
+            if m != "phone": per_np[last["cg"]] += 1
+            snap.append({"v": last["v"], "k": k2 + "|" + m, "e": last["e"]})
+    read_total = len(rows) + not_out
+    say(f"  window {first['window']} · visits {first['visits_listed']} · started {first['visits_started']} · read {read_total} in {batches} batches"
+        + (" · AxisCare kept asking us to slow down, so the rest were not read" if limited else ""))
+    say(f"  finished (clocked out): {len(rows)} · started but not clocked out: {not_out}")
+    say(f"  how caregivers clocked in: {fmt(clock_in)}")
     say()
     say("  1 · THE COUNTING RULE")
-    say(f"    caregiver + client + day groups: {j['groups']} · with more than one visit: {j['multi_visit_groups']}")
-    say(f"      the same note came back on every visit: {j['multi_same_note_on_every_visit']} · different notes on different visits: {j['multi_different_notes']} · a note on some visits only: {j['multi_note_on_some_visits_only']}")
-    rule_ok = j["multi_visit_groups"] > 0 and j["multi_different_notes"] == 0 and j["multi_note_on_some_visits_only"] == 0
+    say(f"    caregiver + client + day groups: {len(groups)} · with more than one visit: {len(multi)}")
+    say(f"      the same note on every visit: {same} · different notes on different visits: {diff} · a note on some visits only: {some}")
+    rule_ok = len(multi) > 0 and diff == 0 and some == 0
     say("    → " + ("proven: one note per caregiver, client and day (every multi-visit day returned one shared note)" if rule_ok
-                    else "NOT proven yet: " + ("no day had more than one visit, so the rule couldn't be tested" if not j["multi_visit_groups"] else "some days carry different notes per visit; tell Claude")))
+                    else "NOT proven yet: " + ("no day had more than one visit, so the rule couldn't be tested" if not multi else "some days carry different notes per visit, or a note on only some visits; tell Claude")))
     say()
     say("  2 · SHIFTS THAT ENDED WITHOUT A NOTE")
-    say(f"    with a note: {j['groups_with_note']} · without: {j['groups_missing_note']}")
-    say(f"    without a note, by how they clocked out: {fmt(j.get('missing_by_clock_out'))}")
-    say(f"    with a note, by how they clocked out: {fmt(j.get('with_note_by_clock_out'))}")
-    say(f"    caregivers: {j['caregivers']} · with at least one missed: {j['caregivers_missing_1_plus']} · with three or more in these 14 days: {j['caregivers_missing_3_plus']} (not counting phone clock-outs: {j['caregivers_missing_3_plus_not_phone']}) · most by one caregiver: {j['most_missing_one_caregiver']}")
-    snap = j.get("snapshot") or []
+    with_n = sum(with_by.values()); miss_n = sum(miss_by.values())
+    say(f"    with a note: {with_n} · without: {miss_n}")
+    say(f"    without a note, by how they clocked out: {fmt(miss_by)}")
+    say(f"    with a note, by how they clocked out: {fmt(with_by)}")
+    c1 = sum(1 for n in per.values() if n >= 1); c3 = sum(1 for n in per.values() if n >= 3); c3np = sum(1 for n in per_np.values() if n >= 3)
+    say(f"    caregivers: {len(per)} · with at least one missed: {c1} · with three or more in these 14 days: {c3} (not counting phone clock-outs: {c3np}) · most by one caregiver: {max(per.values() or [0])}")
+    # (snap was built above from the rows)
     os.makedirs(os.path.dirname(SNAP), exist_ok=True)
     json.dump({"at": dt.datetime.now(dt.timezone.utc).isoformat(), "snapshot": snap}, open(SNAP, "w"))
     say()

@@ -13,12 +13,13 @@ add('s=3:d=a', 8, 502, 0, null, 'Telephony', 'Telephony')                       
 add('s=4:d=a', 8, 503, 3, null, 'Mobile')                                                                                   // app clock-out, no note
 add('s=5:d=a', 7, 504, 0, null, 'Web'); add('s=6:d=a', 7, 505, 3, null, 'Mobile'); add('s=7:d=a', 7, 506, 5, null, 'Mobile') // one caregiver, three misses
 add('s=8:d=a', 6, 507, 1, 'Fine', null)                                                                                    // not clocked out yet
-let CALLS = [], LATER = false
+let CALLS = [], LATER = false, SLOW = 1
 globalThis.fetch = async (url, o) => { url = String(url); CALLS.push([url, (o && o.method) || 'GET'])
   if (url.includes('/api/visits?')) return new Response(JSON.stringify({ results: { visits: Object.values(V).map(({ careNote, adls, ...r }) => r) } }), { status: 200 })
-  const m = url.match(/\/api\/visits\/([^?]+)$/); if (m && V[m[1]]) { const v = { ...V[m[1]] }; if (LATER && m[1] === 's=4:d=a') v.careNote = 'late note'; return new Response(JSON.stringify({ results: v }), { status: 200 }) }
+  const m = url.match(/\/api\/visits\/([^?]+)$/); if (m && SLOW > 0) { SLOW--; return new Response('{}', { status: 429, headers: { 'retry-after': '1' } }) }
+  if (m && V[m[1]]) { const v = { ...V[m[1]] }; if (LATER && m[1] === 's=4:d=a') v.careNote = 'late note'; return new Response(JSON.stringify({ results: v }), { status: 200 }) }
   return new Response('{}', { status: 404 }) }
-const ENV = { SUPABASE_URL: 'https://x', SUPABASE_SERVICE_ROLE_KEY: SVC, AXISCARE_TOKEN: 'axc_x', AXISCARE_SITE: '16485' }
+const ENV = { SUPABASE_URL: 'https://x', SUPABASE_SERVICE_ROLE_KEY: SVC, AXISCARE_TOKEN: 'axc_x', AXISCARE_SITE: '16485', NOTES_AUDIT_PAUSE_MS: '0' }
 let handler; globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (h) => { handler = h } }
 const src = fs.readFileSync(`${FN}/notes-audit/index.ts`, 'utf8').replace("'../_shared/job-auth.ts'", "'../_shared/_job-auth_t.ts'")
 const tmp = path.join(process.cwd(), FN, 'notes-audit', '_t.ts'); fs.writeFileSync(tmp, src)
@@ -35,6 +36,10 @@ ck('the snapshot holds AxisCare id numbers only, never a note or a name', j.snap
 LATER = true; r = await call('recheck=1', SVC, { snapshot: j.snapshot })
 ck('a day later: the one that gained a note is counted, the rest still missing', r.j.checked === 5 && r.j.now_has_note === 1 && r.j.still_missing === 4, r.j)
 r = await call('recheck=1', SVC, { snapshot: [{ v: '../../etc', k: 'x' }] }); ck('a snapshot entry that isn\'t a visit id is ignored', r.j.checked === 0, r.j)
+ck('when AxisCare says slow down, it waits and carries on (nothing lost)', j.visits_read === 8 && j.stopped_early_slow_down === false, j)
+r = await call('m0=1&offset=0&limit=3', SVC); const a1 = r.j; r = await call('m0=1&offset=3&limit=10', SVC); const a2 = r.j
+ck('in slices: the same visits in the same order, with the next place to start', a1.slice_size === 3 && a1.next_offset === 3 && a2.next_offset === null && a1.rows.length + a2.rows.length === 7, [a1.next_offset, a2.next_offset, a1.rows.length, a2.rows.length])
+ck('each row: id numbers, the day, clock-in/out method, note yes/no and a fingerprint; never the words', a1.rows.every((x) => 'f' in x && 'n' in x && !JSON.stringify(x).includes('well today')), a1.rows)
 ck('only reads: every AxisCare call is a GET', CALLS.every(([u, m]) => m === 'GET'))
 for (const [n, o, note] of res) console.log((o ? 'PASS' : 'FAIL') + ' · ' + n + (o ? '' : '\n   ' + note))
 console.log(res.filter((x) => x[1]).length + '/' + res.length)
