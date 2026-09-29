@@ -135,6 +135,21 @@ function fireAndForget(p: Promise<unknown>) {
   else p.catch(() => {})
 }
 
+/* S4 (2026-09-28): the sign-up forms are public, so their confirmation email could be sent to any address, as often
+   as anyone liked, with words typed into the form. Now it greets "Hi there", repeats nothing typed in, goes at most
+   once a day to an address, and never writes a typed-in first name onto a GoHighLevel contact. */
+// deno-lint-ignore no-explicit-any
+async function confirmedToday(supabase: any, key: string, email: string, exceptId: string): Promise<boolean> {
+  const e = String(email || '').trim().toLowerCase(); if (!e) return true
+  try {
+    const { data } = await supabase.from('app_data').select('data').eq('key', key).maybeSingle()
+    const arr = Array.isArray(data?.data) ? data.data : []
+    const since = Date.now() - 24 * 3600_000
+    // deno-lint-ignore no-explicit-any
+    return arr.some((x: any) => x && x.id !== exceptId && String(x.email || '').trim().toLowerCase() === e && new Date(x.at || 0).getTime() > since)
+  } catch { return true }   // unsure: do not send
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   const url = new URL(req.url)
@@ -234,11 +249,11 @@ Deno.serve(async (req) => {
       + '<p style="color:#55677a;font-size:13px;">OIG exclusion screen runs automatically; the result appears on their hub card.</p>'
       + '<p style="color:#55677a;font-size:13px;">Review in the Care Coordinator Hub → HomeTogether → Local. Next steps: call, interview, background check.</p></div>')
 
-    if (item.email) {
-      await ghlEmail(item.email, item.name.split(' ')[0] || item.name,
+    if (item.email && !(await confirmedToday(supabase, 'local_caregivers', item.email, item.id))) {
+      await ghlEmail(item.email, '',
         'We got your HomeTogether Hire application',
         '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.7;">'
-        + '<p>Hi ' + esc(item.name.split(' ')[0] || item.name) + ',</p>'
+        + '<p>Hi there,</p>'
         + '<p>Thanks for applying to HomeTogether Hire. A real person from our Springfield team reviews every application, and we&rsquo;ll call you within 2 business days.</p>'
         + '<p><b>What happens next:</b><br>1. A short phone chat about your experience and what you&rsquo;re looking for<br>2. An interview (video or in person)<br>3. Your \u2713 Verified badge, whenever you\u2019re ready (details below)<br>4. We start personally introducing you to families near you</p>'
         + '<p><b>About your \u2713 Verified badge:</b> signing up is free, and the background check is optional up front. It\u2019s a one-time $45, run through Checkr, and you choose when: right away to stand out from day one, or later when a family wants to hire you. Families always see which caregivers have been checked, and checked caregivers get chosen first.</p>'
@@ -270,13 +285,13 @@ Deno.serve(async (req) => {
       + (item.notes ? '<p><b>Notes:</b> ' + esc(item.notes) + '</p>' : '')
       + '<p style="color:#55677a;font-size:13px;">Review in the Care Coordinator Hub → HomeTogether → Local. Concierge promise: personal introduction within 2 business days.</p></div>')
 
-    if (item.email) {
-      await ghlEmail(item.email, item.name.split(' ')[0] || item.name,
+    if (item.email && !(await confirmedToday(supabase, 'local_families', item.email, item.id))) {
+      await ghlEmail(item.email, '',
         'Your HomeTogether Hire request is in',
         '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.7;">'
-        + '<p>Hi ' + esc(item.name.split(' ')[0] || item.name) + ',</p>'
+        + '<p>Hi there,</p>'
         + '<p>Your request is with our team, a real person, not a bot. Here&rsquo;s how HomeTogether Hire works:</p>'
-        + '<p>1. A coordinator from our Springfield office calls you, usually within 2 business days<br>2. We hand-pick caregivers near ' + esc(item.zip || 'you') + ' who fit your needs, every one interviewed and background-checked by us first<br>3. We introduce you personally. You talk, you choose, you hire directly<br>4. Talking to your matches is free. No subscription, ever.</p>'
+        + '<p>1. A coordinator from our Springfield office calls you, usually within 2 business days<br>2. We hand-pick caregivers near you who fit your needs, every one interviewed and background-checked by us first<br>3. We introduce you personally. You talk, you choose, you hire directly<br>4. Talking to your matches is free. No subscription, ever.</p>'
         + '<p>Need care sooner? Call us right now: <a href="tel:14172348494">(417) 234-8494</a>, available 24/7.</p>'
         + '<p>Warmly,<br>The HomeTogether Hire team</p></div>')
     }
