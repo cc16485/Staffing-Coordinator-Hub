@@ -16,7 +16,7 @@
    },
    "interview-messages/index.ts": {
     "base": "a91cc593fd6002a65a1dd1797d5cf38b498e8993ec4daf994d5261c2b0bbc4e9",
-    "deploy": null
+    "deploy": "cddfe8431f53611103284049e9994cb2118c507cb8ab723b9d671344a02a43f7"
    }
   },
   "only_at_base": [],
