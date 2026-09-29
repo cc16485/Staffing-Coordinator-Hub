@@ -40,27 +40,7 @@ def keys():
     except Exception: return {}
 fmt = lambda d: ", ".join(f"{k} {v}" for k, v in sorted((d or {}).items(), key=lambda x: -x[1])) or "none"
 
-say("M0 · MISSED SHIFT NOTES · " + ("FIRST LOOK" if STEP == "1" else "SECOND LOOK")); say("Report " + dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")); say()
-k = keys(); ANON, SVC = k.get("anon", ""), k.get("service_role", "")
-if not ANON or not SVC: bad("could not read the project's keys. Nothing was changed."); done(4)
-HIDE += [ANON, SVC]
-H = {"apikey": SVC, "Authorization": "Bearer " + SVC}
-
-if STEP == "1":
-    say("PART 1 · READ ONLY")
-    for name, want in SHAS.items():
-        p = os.path.join(FNROOT, "_shared", "job-auth.ts") if name == "_shared/job-auth" else os.path.join(FNROOT, name, "index.ts")
-        if hashlib.sha256(open(p, "rb").read()).hexdigest() != want: bad(f"{name} is not the reviewed build"); say("  STOP. Nothing was run."); done(2)
-    say("  ✓ the read-only function and the shared lock are the reviewed builds")
-    say(); say("PART 2 · INSTALL THE READ-ONLY CHECK")
-    p = subprocess.run([SUPA, "functions", "deploy", FN, "--project-ref", REF, "--use-api"], cwd=os.path.dirname(os.path.dirname(FNROOT)),
-                       env=dict(os.environ, SUPABASE_ACCESS_TOKEN=TOKEN), capture_output=True, text=True)
-    if p.returncode != 0: bad("deploy failed: " + (p.stderr or p.stdout)[-240:]); done(6)
-    say("  ✓ notes-audit installed (reads only; answers only your server key)")
-    time.sleep(float(os.environ.get("SB_SETTLE", "8")))
-    r0 = http("POST", f"{FNB}/functions/v1/{FN}?m0=1", {}, {})[0]; r1 = http("POST", f"{FNB}/functions/v1/{FN}?m0=1", {}, {"apikey": ANON, "Authorization": "Bearer " + ANON})[0]
-    (say if r0 == 401 and r1 == 401 else bad)(("  ✓ " if r0 == 401 and r1 == 401 else "") + f"no key {r0}, the public key {r1} → refused")
-    say(); say("PART 3 · WHAT AXISCARE SHOWS (last 14 days; counts only)")
+def read_rows():
     say("  reading every finished shift one at a time, in batches (this can take several minutes)…")
     rows, clock_in, not_out, limited, off, first, batches = [], {}, 0, False, 0, None, 0
     while off is not None and batches < 40:
@@ -73,6 +53,32 @@ if STEP == "1":
         for k2, v2 in (j.get("clock_in_methods") or {}).items(): clock_in[k2] = clock_in.get(k2, 0) + v2
         if j.get("stopped_early_slow_down"): limited = True; break
         off = j.get("next_offset"); time.sleep(float(os.environ.get("SB_BATCH_PAUSE", "2")))
+    return rows, clock_in, not_out, limited, first, batches
+
+def deploy_checked():
+    for name, want in SHAS.items():
+        p = os.path.join(FNROOT, "_shared", "job-auth.ts") if name == "_shared/job-auth" else os.path.join(FNROOT, name, "index.ts")
+        if hashlib.sha256(open(p, "rb").read()).hexdigest() != want: bad(f"{name} is not the reviewed build"); say("  STOP. Nothing was run."); done(2)
+    say("  ✓ the read-only function and the shared lock are the reviewed builds")
+    p = subprocess.run([SUPA, "functions", "deploy", FN, "--project-ref", REF, "--use-api"], cwd=os.path.dirname(os.path.dirname(FNROOT)),
+                       env=dict(os.environ, SUPABASE_ACCESS_TOKEN=TOKEN), capture_output=True, text=True)
+    if p.returncode != 0: bad("deploy failed: " + (p.stderr or p.stdout)[-240:]); done(6)
+    say("  ✓ notes-audit installed (reads only; answers only your server key)")
+    time.sleep(float(os.environ.get("SB_SETTLE", "8")))
+
+say("M0 · MISSED SHIFT NOTES · " + ("FIRST LOOK" if STEP == "1" else "SECOND LOOK")); say("Report " + dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")); say()
+k = keys(); ANON, SVC = k.get("anon", ""), k.get("service_role", "")
+if not ANON or not SVC: bad("could not read the project's keys. Nothing was changed."); done(4)
+HIDE += [ANON, SVC]
+H = {"apikey": SVC, "Authorization": "Bearer " + SVC}
+
+if STEP == "1":
+    say("PART 1 · READ ONLY AND INSTALL THE READ-ONLY CHECK")
+    deploy_checked()
+    r0 = http("POST", f"{FNB}/functions/v1/{FN}?m0=1", {}, {})[0]; r1 = http("POST", f"{FNB}/functions/v1/{FN}?m0=1", {}, {"apikey": ANON, "Authorization": "Bearer " + ANON})[0]
+    (say if r0 == 401 and r1 == 401 else bad)(("  ✓ " if r0 == 401 and r1 == 401 else "") + f"no key {r0}, the public key {r1} → refused")
+    say(); say("PART 3 · WHAT AXISCARE SHOWS (last 14 days; counts only)")
+    rows, clock_in, not_out, limited, first, batches = read_rows()
     if not first: done(7)
     groups = {}
     for r in rows: groups.setdefault(f"{r['cg']}|{r['cl']}|{r['d']}", []).append(r)
@@ -121,7 +127,8 @@ if STEP == "1":
     done(0 if not fails else 8)
 
 # ── step 2 · the second look ──
-say("PART 1 · READ ONLY")
+say("PART 1 · READ ONLY AND UPDATE THE READ-ONLY CHECK")
+deploy_checked()
 try: saved = json.load(open(SNAP))
 except Exception: saved = None
 if not saved or not isinstance(saved.get("snapshot"), list): bad("the first look's list isn't on this Mac (run 335 first)."); done(4)
@@ -152,5 +159,35 @@ say()
 if not rec: say("RESULT: no shift had ended recently enough at the first look to tell. Run 335 again soon after an evening of shifts, then 336 a day later.")
 elif j["now_has_note"] == 0: say(f"RESULT: none of the {len(rec)} recent shifts gained a note after clock-out. That supports your understanding: caregivers can't add a note once they've clocked out.")
 else: say(f"RESULT: {j['now_has_note']} shift(s) gained a note after the first look ({len(rec_gained)} of them recent). If the office didn't type them, caregivers CAN add a late note. Tell Claude what the office entered.")
+say("  (The API can't say WHO wrote a care note or when; the office holding off, or telling Claude what it entered, is what")
+say("   makes this proof. AxisCare support can also confirm whether the app lets a caregiver add a note after clock-out.)")
+say()
+say("PART 3 · WHAT \"WEB\" MEANS (last 14 days; clues only, counts only)")
+rows, clock_in, not_out, limited, first, batches = read_rows()
+by = {}
+for r in rows: by.setdefault(r["o"], []).append(r)
+def pct(n, d): return f"{n} of {d}" + (f" ({round(100*n/d)}%)" if d else "")
+for m in sorted(by, key=lambda x: -len(by[x])):
+    g = by[m]; n = len(g)
+    exact = sum(1 for r in g if r.get("sched") == 0); near = sum(1 for r in g if r.get("sched") is not None and abs(r["sched"]) <= 1)
+    say(f"  {m} clock-outs: {n}")
+    say(f"    carry GPS: {pct(sum(1 for r in g if r.get('gps')), n)} · carry an address: {pct(sum(1 for r in g if r.get('loc')), n)}")
+    say(f"    exactly on the scheduled end time: {pct(exact, n)} · within a minute: {pct(near, n)}")
+    ci = {}
+    for r in g: ci[r["i"]] = ci.get(r["i"], 0) + 1
+    say(f"    how those caregivers clocked IN: {fmt(ci)}")
+    mr = {}
+    for r in g:
+        if r.get("mr"): mr[r["mr"]] = mr.get(r["mr"], 0) + 1
+    say(f"    the office's modification reasons: {fmt(mr) if mr else 'none recorded'}")
+    say(f"    no care note: {pct(sum(1 for r in g if not r['n']), n)}")
+w = by.get("web", []); a_ = by.get("app", [])
+if w:
+    wg = sum(1 for r in w if r.get("gps")) / len(w); ag = (sum(1 for r in a_ if r.get("gps")) / len(a_)) if a_ else 0
+    we = sum(1 for r in w if r.get("sched") is not None and abs(r["sched"]) <= 1) / len(w)
+    say()
+    say("  → " + ("consistent with office-entered clock-outs: web clock-outs rarely carry GPS" + (" and usually land on the scheduled end time" if we >= 0.5 else "") + ", unlike app clock-outs." if wg < 0.2 and ag > 0.5
+                  else "not conclusive from the data: tell Claude, and ask AxisCare support what \"Web\" records."))
+say()
 say("Nothing was sent or changed. When you're done with M0, the notes-audit function can be removed (nothing else uses it).")
 done(0 if not fails else 8)

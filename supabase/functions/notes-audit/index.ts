@@ -86,7 +86,12 @@ export async function m0(days = 14, offset = 0, limit = 400) {
   const groups = new Map<string, any[]>()
   let finished = 0, notFinished = 0
   const clockIn: Record<string, number> = {}
-  const rows: { v: string; cg: string; cl: string; d: string; i: string; o: string; e: string; n: boolean; f: string }[] = []
+  /* per finished visit. Web clock-out clues (her ask: prove what "Web" means if we can): gps = the clock-out carries
+     coordinates; loc = it carries an address; mr = the office's modification reason label (agency wording, not a
+     person); sched = minutes between the clock-out and the scheduled end (0 = exactly on schedule, typical of a
+     manual entry) */
+  const rows: { v: string; cg: string; cl: string; d: string; i: string; o: string; e: string; n: boolean; f: string;
+                gps: boolean; loc: boolean; mr: string; sched: number | null }[] = []
   for (const v of out.values()) {
     const outTime = v?.clockOut?.time
     clockIn[method(v?.clockIn)] = (clockIn[method(v?.clockIn)] ?? 0) + 1
@@ -95,7 +100,11 @@ export async function m0(days = 14, offset = 0, limit = 400) {
     { const note = typeof v?.careNote === 'string' ? v.careNote.trim() : ''
       let f = 0; for (let i = 0; i < note.length; i++) f = (f * 31 + note.charCodeAt(i)) | 0
       rows.push({ v: String(v?.id ?? ''), cg: String(v?.caregiver?.id ?? '?'), cl: String(v?.client?.id ?? '?'), d: localDay(v?.startDate ?? v?.scheduledStartDate),
-        i: method(v?.clockIn), o: method(v?.clockOut), e: String(outTime), n: !!note, f: note ? (f >>> 0).toString(36) : '' }) }
+        i: method(v?.clockIn), o: method(v?.clockOut), e: String(outTime), n: !!note, f: note ? (f >>> 0).toString(36) : '',
+        gps: !!(v?.clockOut?.coordinates && (v.clockOut.coordinates.latitude || v.clockOut.coordinates.longitude)),
+        loc: !!(v?.clockOut?.location && (v.clockOut.location.streetAddress1 || v.clockOut.location.city)),
+        mr: String(v?.modificationReason?.name ?? '').slice(0, 60),
+        sched: v?.scheduledEndDate ? Math.round((new Date(String(outTime)).getTime() - new Date(String(v.scheduledEndDate)).getTime()) / 60000) : null }) }
     const k = `${v?.caregiver?.id ?? '?'}|${v?.client?.id ?? '?'}|${localDay(v?.startDate ?? v?.scheduledStartDate)}`
     if (!groups.has(k)) groups.set(k, [])
     groups.get(k)!.push(v)
