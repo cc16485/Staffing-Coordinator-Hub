@@ -7,9 +7,12 @@
 //     separate matter and is never merged with this. A phone (telephony) clock-out is not a miss by itself: only an
 //     unresolved one counts.
 //   · One obligation per caregiver + client + Central day (M0 proved AxisCare keeps one note per that group).
-//   · 1 hour after the last clock-out of the group, one text asking them to REPLY WITH the note (her words: "Since the
-//     shift has ended, the office will enter your note into AxisCare."). Texts only 8am to 9pm Central; one reminder
-//     the next morning; no reply by 6pm the next day = unresolved.
+//   · RIGHT AWAY after the last clock-out of the group (her correction, same evening: "the moment they clock out and
+//     didn't put in a note they need to get the text"; the run is every 5 minutes), one text saying they did not put in
+//     a note and asking them to text it to the office ASAP so we can put it in their shift for them. That includes a
+//     shift the office clocked out for them (web: they forgot or couldn't). Every shift needs a note the office and the
+//     family can read. Texts only 8am to 9pm Central; one reminder the next morning; no reply by 6pm the next day =
+//     unresolved.
 //   · A reply goes to Needs Attention with the words, and a PERSON taps "Put it in AxisCare" (the note is written on
 //     the visit, read back, logged). It is recorded "recovered by text" and STILL counts toward 3 in 30 days.
 //   · 3 counted misses in 30 days → a DRAFT write-up in the Write-Ups list (level suggested from their history). A
@@ -19,7 +22,7 @@
 // counted, cleared after 7 days); no text is sent, no reply is read, no write-up is drafted. ?dry=1 also reads nothing
 // into the record. Caregivers only; never clients or families. Nothing here touches pay.
 //
-//   (schedule / owner key)            the every-15-minutes run
+//   (schedule / owner key)            the every-5-minutes run
 //   {action:'enter', id, note} (staff) "Put it in AxisCare": writes the visit's care note, reads it back, logs it
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -34,9 +37,9 @@ const cors = {
 }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
 const AC_VERSION = '2023-10-01'
-export const WAIT_MIN = 60, LOOKBACK_H = 30, READ_BUDGET = 60, COUNT_DAYS = 30, DRAFT_AT = 3
-export const DEFAULT_ASK = `Hi {first_name}, this is Caring Companions. We don't see a care note for your shift with {client} today. Please reply to this text with your note for that shift. Since the shift has ended, the office will enter your note into AxisCare.`
-export const DEFAULT_REMIND = `Hi {first_name}, a reminder from Caring Companions: please reply with your care note for your shift with {client} on {day}. The office will enter it into AxisCare.`
+export const WAIT_MIN = 0, LOOKBACK_H = 30, READ_BUDGET = 60, COUNT_DAYS = 30, DRAFT_AT = 3
+export const DEFAULT_ASK = `Hi {first_name}, this is Caring Companions. You did not put in a care note for your shift with {client} today. Please text your shift note to the office as soon as possible so we can put it in your shift for you.`
+export const DEFAULT_REMIND = `Hi {first_name}, a reminder from Caring Companions: we still need your shift note for your shift with {client} on {day}. Please text it to the office as soon as possible so we can put it in your shift for you.`
 export const LADDER = ['Verbal Warning', 'Written Warning', 'Final Written Warning', 'Termination Review']
 
 // deno-lint-ignore no-explicit-any

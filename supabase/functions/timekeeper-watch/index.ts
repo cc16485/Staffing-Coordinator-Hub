@@ -541,8 +541,10 @@ Deno.serve(async (req) => {
   // ── PASS 3: clock-OUT reminders. One text, no ladder, no office step. ──
   const wouldTextOut: Record<string, unknown>[] = []
   let textedOut = 0
+  /* Missed shift notes (her ask, 2026-09-29): someone who forgot or can't clock out is asked for their shift note too,
+     so every shift has a note the office and the family can read. */
   const msgOutTmpl = String(settings.timekeeper_msg_out || '')
-    || `Hi {first_name}, it's Cara with Caring Companions. Your shift with {client} ended at {time} but there's no clock-out yet. Please clock out in the AxisCare app now. If you've already left, we cannot make any manual changes to your time without the EVV correction form, completed and signed by the client: sc.mo-care.com/evv-correction-form.`
+    || `Hi {first_name}, it's Cara with Caring Companions. Your shift with {client} ended at {time} but there's no clock-out yet. Please clock out in the AxisCare app now. If you've already left, we cannot make any manual changes to your time without the EVV correction form, completed and signed by the client: sc.mo-care.com/evv-correction-form. If you didn't put in your shift note, text it to the office now so we can put it in your shift for you.`
   for (const v of visits) {
     if (v?.caregiver?.id == null || !v?.clockIn?.time || v?.clockOut?.time) continue
     const end = String(v?.scheduledEndDate ?? v?.endDate ?? '')

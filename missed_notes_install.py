@@ -2,7 +2,7 @@
 # MISSED SHIFT NOTES M1–M3 (Desktop 361). Samantha approved 2026-09-29 ("go for the missed shift notes M0-M3",
 #   "yes to all", "go and merge").
 # Part 1 (read only): the reviewed builds; the jobs' secret is there; the missed-notes job is new (or ours).
-# Part 2: missed_notes.sql (the record); deploy missed-notes (sign-in check on); its every-15-minutes schedule (the
+# Part 2: missed_notes.sql (the record); deploy missed-notes (sign-in check on); its every-5-minutes schedule (the
 #   jobs' secret from the vault). The texts stay in PRACTICE until Samantha turns them on in Settings.
 # Part 3 (proof; nothing is sent): the job refuses outsiders and lets its schedule in; a practice look (?dry=1, counts
 #   only, records nothing); "Put it in AxisCare" refuses anyone who isn't signed-in office staff; the record isn't public.
@@ -12,7 +12,7 @@ REPORT = os.environ["SB_REPORT"]; FNROOT = os.environ["SB_FNROOT"]; SHAS = json.
 TOKEN = os.environ.get("SB_TOKEN", "").strip().strip('"').strip("'"); REF = os.environ.get("SB_REF", "zngsgedlsxinbygwmxwn")
 SUPA = os.environ.get("SB_SUPA_CLI", ""); API = os.environ.get("SB_API_BASE", "https://api.supabase.com"); FNB = os.environ.get("SB_FN_BASE", f"https://{REF}.supabase.co")
 POLL = float(os.environ.get("SB_POLL", "2")); POLL_MAX = float(os.environ.get("SB_POLL_MAX", "40"))
-VAULT_NAME = "hub_job_secret"; JOB = "missed-notes"; SCHEDULE = "*/15 * * * *"
+VAULT_NAME = "hub_job_secret"; JOB = "missed-notes"; SCHEDULE = "*/5 * * * *"
 lines = []; fails = []; HIDE = []
 def say(s=""):
     s = str(s)
@@ -92,7 +92,7 @@ ok, r = sql(f"select cron.unschedule({lit(JOB)}) where exists (select 1 from cro
 ok, r = sql(f"select cron.schedule({lit(JOB)}, {lit(SCHEDULE)}, {lit(command(URL, ANON))}) as id")
 ok2, jb = sql(f"select schedule, command from cron.job where jobname = {lit(JOB)}")
 g = ok and ok2 and jb and jb[0]["schedule"] == SCHEDULE and "x-cron-secret" in jb[0]["command"] and "vault.decrypted_secrets" in jb[0]["command"]
-(say if g else bad)(("  ✓ " if g else "") + "its schedule: every 15 minutes, carrying the jobs' secret from the vault · texts stay in PRACTICE until you turn them on in Settings, Missed care notes")
+(say if g else bad)(("  ✓ " if g else "") + "its schedule: every 5 minutes, carrying the jobs' secret from the vault · texts stay in PRACTICE until you turn them on in Settings, Missed care notes")
 
 say(); say("PART 3 · PROOF (nothing is sent)")
 time.sleep(float(os.environ.get("SB_SETTLE", "10")))
@@ -119,6 +119,6 @@ sC, bC = http("GET", f"{FNB}/rest/v1/missed_notes?select=id&limit=1", None, {"ap
 g = sC != 200 or bC.strip() in ("[]", "")
 (say if g else bad)(("  ✓ " if g else "") + f"the public can't read the missed-notes record ({sC})")
 say()
-say("RESULT: " + ("DONE · missed care notes are found every 15 minutes, in practice until you turn the texts on (Settings, Missed care notes)." if not fails else "CHECK THE ✗ LINES."))
+say("RESULT: " + ("DONE · missed care notes are found every 5 minutes, in practice until you turn the texts on (Settings, Missed care notes)." if not fails else "CHECK THE ✗ LINES."))
 say("Rollback: switch it off in Settings, or unschedule missed-notes (Claude can); the record stays.")
 done(0 if not fails else 8)

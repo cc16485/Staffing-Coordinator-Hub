@@ -21,7 +21,7 @@ const reset = () => {
   VISITS = [
     V('v1', 1, 100, 2, ''),                          // miss (app)
     V('v2', 2, 200, 2, 'Did great'),                 // has a note
-    V('v3', 3, 300, 0.5, ''),                        // clocked out 30 min ago: not yet
+    V('v3', 3, 300, 0.05, ''),                       // clocked out 3 minutes ago: texted right away (her correction)
     V('v4', 4, 400, 3, '', 'Web'),                   // miss (web, office)
     V('v5', 5, 500, null, ''),                       // still on the clock
     V('v6a', 1, 600, 5, ''), V('v6b', 1, 600, 2, ''),// two visits, same client and day: ONE obligation
@@ -78,23 +78,23 @@ const row = (cg, cl) => T.missed_notes.find((x) => x.axiscare_caregiver_id === S
 reset(); let r = await run('', {}); ck('no schedule secret and no owner key: refused, nothing read', r.s === 401 && !T.missed_notes.length, r)
 /* ── practice ── */
 reset(); r = await run()
-ck('practice (switch off): finds the misses, texts nobody', r.j.live === false && r.j.practice_found === 4 && !SENT.length
-   && T.missed_notes.length === 4 && T.missed_notes.every((x) => x.status === 'practice' && !x.counts), [r, T.missed_notes])
-ck('a shift with a note, one clocked out 30 minutes ago, and one still on the clock are not misses', !row(2, 200) && !row(3, 300) && !row(5, 500))
+ck('practice (switch off): finds the misses (including one that clocked out 3 minutes ago), texts nobody', r.j.live === false && r.j.practice_found === 5 && !SENT.length
+   && T.missed_notes.length === 5 && T.missed_notes.every((x) => x.status === 'practice' && !x.counts), [r, T.missed_notes])
+ck('a shift with a note, and one still on the clock, are not misses; one that clocked out 3 minutes ago IS (no waiting)', !row(2, 200) && !!row(3, 300) && !row(5, 500))
 ck('two visits for the same client that day are ONE obligation (read both, one row, the last clock-out)', row(1, 600)?.visit_count === 2 && row(1, 600)?.visit_id === 'v6b')
 ck('web (office) clock-out is a miss too, recorded as web; phone recorded as phone', row(4, 400)?.clock_out_method === 'web' && row(2, 700)?.clock_out_method === 'phone')
-r = await run(); ck('run again: nothing looked at twice, nothing new', r.j.groups_checked === 0 && T.missed_notes.length === 4, r)
-reset(); r = await run('?dry=1'); ck('?dry=1: counts only, nothing recorded', r.j.practice_found === 4 && !T.missed_notes.length && !APP.missed_notes_state.length, r)
+r = await run(); ck('run again: nothing looked at twice, nothing new', r.j.groups_checked === 0 && T.missed_notes.length === 5, r)
+reset(); r = await run('?dry=1'); ck('?dry=1: counts only, nothing recorded', r.j.practice_found === 5 && !T.missed_notes.length && !APP.missed_notes_state.length, r)
 /* ── live ── */
 reset(); APP.ops_settings = { missed_notes_live: true, missed_notes_live_since: new Date(NOW() - 30 * 864e5).toISOString() }
 r = await run()
 const msg1 = SENT.find((s) => s.to === 'C:+14175550001')?.msg || ''
-ck('live: 4 misses open, each texted once (the two-visit day gets one text), tagged notes-asked', r.j.missed_found === 4 && r.j.texted === 4 && SENT.length === 4
+ck('live: 5 misses open, each texted once right away (the two-visit day gets one text), tagged notes-asked', r.j.missed_found === 5 && r.j.texted === 5 && SENT.length === 5
    && T.missed_notes.every((x) => x.status === 'open' && x.texted_at) && TAGS.every((t) => t[0] === 'notes-asked'), [r, SENT])
-ck('the text: their name, the client\'s first name, reply with the note, and her line about the office entering it', /^Hi C1, this is Caring Companions\. We don't see a care note for your shift with Cl(100|600) today\. Please reply to this text with your note for that shift\. Since the shift has ended, the office will enter your note into AxisCare\.$/.test(msg1), msg1)
+ck('the text, her words: you did not put in a care note; text your shift note to the office ASAP so we can put it in your shift for you', /^Hi C1, this is Caring Companions\. You did not put in a care note for your shift with Cl(100|600) today\. Please text your shift note to the office as soon as possible so we can put it in your shift for you\.$/.test(msg1), msg1)
 reset(); APP.ops_settings = { missed_notes_live: true }; HOUR = 22; r = await run()
-ck('after 9pm: misses recorded, texts held until morning', r.j.missed_found === 4 && !SENT.length && r.j.held_hours === 4, r)
-HOUR = 8; r = await run(); ck('... and sent at 8am', r.j.texted === 4, r)
+ck('after 9pm: misses recorded, texts held until morning', r.j.missed_found === 5 && !SENT.length && r.j.held_hours === 5, r)
+HOUR = 8; r = await run(); ck('... and sent at 8am', r.j.texted === 5, r)
 /* reply */
 const iso = (agoMin) => new Date(NOW() - agoMin * 60e3 + 60e3).toISOString()
 INBOX['C:+14175550004'] = [{ direction: 'inbound', type: 1, dateAdded: iso(-1), body: 'Client was great, ate lunch, walked outside.' }]
@@ -114,7 +114,7 @@ reset(); APP.ops_settings = { missed_notes_live: true }; await run()
 for (const x of T.missed_notes) x.texted_at = new Date(NOW() - 20 * H).toISOString()
 T.missed_notes.forEach((x) => { x.texted_at = new Date(Date.parse(x.texted_at) - 864e5).toISOString() })   // texted yesterday
 SENT = []; r = await run()
-ck('the next morning: one reminder each (nobody replied)', r.j.reminded === 4 && SENT.every((s) => /a reminder from Caring Companions: please reply with your care note/.test(s.msg)), [r, SENT.slice(0, 1)])
+ck('the next morning: one reminder each (nobody replied), in her words', r.j.reminded === 5 && SENT.every((s) => /a reminder from Caring Companions: we still need your shift note .* so we can put it in your shift for you\./.test(s.msg)), [r, SENT.slice(0, 1)])
 SENT = []; r = await run(); ck('... and only one reminder', r.j.reminded === 0 && !SENT.length, r)
 for (const x of T.missed_notes) x.shift_date = chiDay(NOW() - 3 * 864e5)
 r = await run()
@@ -158,7 +158,9 @@ ck('AxisCare refuses: says so (enter it by hand), logged as refused, nothing rec
 reset(); await run(); r = await staff({ action: 'enter', id: row(1, 100).id, note: 'z' }); ck('a practice row can\'t be entered', r.s === 404, r)
 /* the rules in the source */
 const code = fs.readFileSync(`${FN}/missed-notes/index.ts`, 'utf8')
-ck('caregivers only (the do-not-text door, audience caregiver); texts 8am–9pm; nothing about pay', /audience: 'caregiver'/.test(code) && /h >= 8 && h < 21/.test(code) && !/pay_rates|\$\d/.test(code))
+ck('caregivers only (the do-not-text door, audience caregiver); texts 8am–9pm; no waiting after clock-out; nothing about pay', /audience: 'caregiver'/.test(code) && /h >= 8 && h < 21/.test(code) && M.WAIT_MIN === 0 && !/pay_rates|\$\d/.test(code))
+const tk = fs.readFileSync(`${FN}/timekeeper-watch/index.ts`, 'utf8')
+ck('the missed clock-out text now also asks for their shift note (forgot or can\'t clock out)', /If you didn't put in your shift note, text it to the office now so we can put it in your shift for you\./.test(tk))
 HOUR = null
 ck('deadline is 6pm Central the next day (summer and winter time)', new Date(M.deadlineFor('2026-10-05')).toLocaleString('en-US', { timeZone: 'America/Chicago' }) === '10/6/2026, 6:00:00 PM'
    && new Date(M.deadlineFor('2026-12-05')).toLocaleString('en-US', { timeZone: 'America/Chicago' }) === '12/6/2026, 6:00:00 PM')

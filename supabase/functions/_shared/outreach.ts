@@ -167,9 +167,9 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
       + 'The 6am shift needs its 6:03 nudge; a client may be standing at the door. '
       + 'Cron: timekeeper-watch, every 2 minutes — created by cron-timekeeper.sql (~/Claude).' },
   'missed-notes':       { class: 'routine_internal', scheduled: true,
-    why: 'a caregiver who clocked out with no care note is asked (staff, about their own shift) to reply with it, '
-      + '1 hour after clock-out, one reminder the next morning; 8am to 9pm Central only (enforced in the function). '
-      + 'Practice until ops_settings.missed_notes_live. Cron: missed-notes, every 15 minutes (Desktop 361).' },
+    why: 'a caregiver who clocked out with no care note is asked (staff, about their own shift) to text it in, '
+      + 'right after clock-out, one reminder the next morning; 8am to 9pm Central only (enforced in the function). '
+      + 'Practice until ops_settings.missed_notes_live. Cron: missed-notes, every 5 minutes (Desktop 361).' },
   'prn-reconfirm':      { class: 'routine_internal', scheduled: true,
     why: 'a PRN CNA whose availability is 60+ days old gets one check-in text with a one-tap link; weekdays 10 to 5 '
       + 'Central (enforced in the function), max 20 a day. Practice until ops_settings.prn_reconfirm_live. '
