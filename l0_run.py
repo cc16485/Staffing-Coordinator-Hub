@@ -82,6 +82,7 @@ say(f"    shifts that started: {g('shifts')} · on time (within 5 min): {g('shif
 say(f"    couldn't check: no phone on the roster {g('caregivers_no_phone_on_roster')} caregivers ({g('shifts_caregiver_no_phone')} shifts) · not found in GoHighLevel by their number {g('caregivers_not_in_ghl')} ({g('shifts_caregiver_not_in_ghl')} shifts)")
 say()
 say("  2 · TEXTS AND CALLS BEFORE A SHIFT (2 hours before the start, until they clocked in)")
+say(f"    can the Hub see their texts at all? caregivers read: {g('caregivers_read')} · texts they sent the office in these 14 days, at any time: {g('texts_read')}")
 say(f"    shifts with a text from the caregiver: {g('shifts_with_text')} · with a call: {g('shifts_with_call')} (calls are counted, not read; their words reach the Hub after Desktop 349)")
 say(f"    the AI read those texts as: running late {g('ai_late')} · can't make it {g('ai_cant_make_it')} · something else {g('ai_other')} · couldn't read {g('ai_failed')} · unsure {g('ai_unsure')}")
 say()
