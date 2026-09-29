@@ -90,6 +90,71 @@ const friendlyDay = (ymd: string): string => {
  *  stops working. */
 const WAVE_SIZE = Number(Deno.env.get('COVERAGE_WAVE_SIZE') || '5')
 
+/* ── PRN3 (2026-09-29): THE PRN CNA TEAM IS ASKED FIRST ───────────────────
+   ONE PAY TRACK AT A TIME (her rule): a PRN Team member is always $20 and an
+   ongoing caregiver is $18. Nothing here reads, writes or changes pay; it only
+   decides who is shown and asked first.
+   A PRN member FITS a call-off or one-time shift when its weekday is one of
+   their days, its start falls in one of their times of day, the time until it
+   starts is at least the notice they asked for, and they are free then. A
+   regular (ongoing) opening is not a PRN shift: taking it means moving to
+   ongoing, so PRN members are listed apart, unticked, and never in a wave. */
+/* Her positioning: accept or decline, no pressure. No pay in it: a PRN member's rate is always $20 and never changes by shift. */
+export const PRN_DEFAULT_MSG = `Hi {first_name}, it's Caring Companions. PRN opportunity: {client} at {address}, {when}. {care}Can you take it? Reply YES or NO. No pressure either way.`
+export const PRN_NOTICE_H: Record<string, number> = { same_day: 0, few_hours: 3, '24h': 24, '48h': 48 }
+const PRN_NOTICE_WORD: Record<string, string> = { few_hours: 'a few hours', '24h': '24 hours', '48h': '48 hours' }
+const DAY_WORD: Record<string, string> = { mon: 'Mondays', tue: 'Tuesdays', wed: 'Wednesdays', thu: 'Thursdays', fri: 'Fridays', sat: 'Saturdays', sun: 'Sundays' }
+const BAND_WORD: Record<string, string> = { morning: 'mornings', afternoon: 'daytimes', evening: 'evenings', overnight: 'overnights' }
+type PrnMember = { notice: string | null; windows: Record<string, string[]> | null; confirmed_at: string | null }
+// deno-lint-ignore no-explicit-any
+export function isOngoingCase(c: any): boolean {
+  return String(c?.kind) === 'interest' || c?.shift_pattern?.kind === 'open_ongoing' || String(c?.reason) === 'open'
+}
+/* Same bands as the availability page: morning 6-12, daytime (stored 'afternoon') 12-5, evening 5-10, overnight 10-6. */
+export function bandOf(hhmm: string): string {
+  const h = Number(String(hhmm).slice(0, 2))
+  return h >= 6 && h < 12 ? 'morning' : h >= 12 && h < 17 ? 'afternoon' : h >= 17 && h < 22 ? 'evening' : 'overnight'
+}
+// deno-lint-ignore no-explicit-any
+export function prnFit(c: any, p: PrnMember, busy: boolean, nowChicago?: Date): { fit: boolean; why: string | null } {
+  const date = String(c?.shift_date || ''), time = String(c?.shift_time || '')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d\d:\d\d-\d\d:\d\d$/.test(time)) return { fit: false, why: 'the shift has no date and time yet' }
+  const start = time.slice(0, 5)
+  const wd = new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' }).toLowerCase().slice(0, 3)
+  const band = bandOf(start)
+  const w = p.windows ?? {}
+  const onDay = Array.isArray(w[wd]) ? w[wd] : []
+  if (!onDay.length) return { fit: false, why: 'not available ' + (DAY_WORD[wd] || wd) }
+  if (!onDay.includes(band)) return { fit: false, why: 'not available ' + (DAY_WORD[wd] || wd) + ' ' + (BAND_WORD[band] || band) }
+  const need = PRN_NOTICE_H[String(p.notice ?? '')] ?? 0
+  if (need > 0) {
+    const now = nowChicago ?? new Date(new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).replace(' ', 'T'))
+    const hrs = (new Date(date + 'T' + start + ':00').getTime() - now.getTime()) / 3_600_000
+    if (hrs < need) return { fit: false, why: 'needs ' + (PRN_NOTICE_WORD[String(p.notice)] || need + ' hours') + "' notice" }
+  }
+  if (busy) return { fit: false, why: 'already working then' }
+  return { fit: true, why: null }
+}
+/* Active PRN Team members linked to their AxisCare caregiver record, with their notice and availability. */
+async function prnTeamLoad(): Promise<Map<string, PrnMember>> {
+  const out = new Map<string, PrnMember>()
+  try {
+    const { data: tr } = await sb.from('pay_tracks').select('applicant_id, axiscare_caregiver_id').eq('track', 'prn_team').not('axiscare_caregiver_id', 'is', null)
+    if (!tr?.length) return out
+    const { data: apps } = await sb.from('job_applicants').select('id, prn').in('id', tr.map((t: { applicant_id: string }) => t.applicant_id))
+    const { data: avRow } = await sb.from('app_data').select('data').eq('key', 'caregiver_availability').maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    const av: any[] = Array.isArray(avRow?.data) ? avRow!.data : []
+    for (const t of tr) {
+      const id = String(t.axiscare_caregiver_id)
+      const a = (apps ?? []).find((x: { id: string }) => x.id === t.applicant_id)
+      const item = av.find((x) => String(x?.axiscare_id ?? '') === id || String(x?.id ?? '') === id)
+      out.set(id, { notice: a?.prn?.notice ?? null, windows: item?.windows ?? null, confirmed_at: item?.updated_at ?? null })
+    }
+  } catch { /* no PRN data = nobody is treated as PRN; everything else unchanged */ }
+  return out
+}
+
 /* The domain that owns coverage. Resolved through the canonical record, the
    same hop Chain 4 uses — never inferred from responsibility counts. */
 async function coverageOwner(): Promise<{ owner: string | null; why: string }> {
@@ -405,7 +470,8 @@ async function dnrSetFor(clientName: string): Promise<Set<string>> {
 // deno-lint-ignore no-explicit-any
 async function buildCandidatesForCase(c: any):
   // deno-lint-ignore no-explicit-any
-  Promise<{ group1: any[]; group2: any[]; excluded: any[]; meta: Record<string, unknown> }> {
+  // deno-lint-ignore no-explicit-any
+  Promise<{ group0: any[]; group1: any[]; group2: any[]; prn_other: any[]; prn_ongoing: any[]; excluded: any[]; meta: Record<string, unknown> }> {
   // deno-lint-ignore no-explicit-any
   const excluded: any[] = []
   const cut = (x: Record<string, unknown>, why: string) =>
@@ -642,6 +708,9 @@ async function buildCandidatesForCase(c: any):
     }
   } catch { /* hunger boost only */ }
 
+  const prnTeam = await prnTeamLoad()
+  const ongoingCase = isOngoingCase(c)
+
   const dnr = await dnrSetFor(String(c.client || ''))
   /* The client's call-in plan (2026-09-27): an only-ask list is followed exactly; a plan
      that can't be read holds everyone rather than guess (fail closed). */
@@ -653,6 +722,8 @@ async function buildCandidatesForCase(c: any):
 
   // deno-lint-ignore no-explicit-any
   const group1: any[] = [], group2: any[] = []
+  // deno-lint-ignore no-explicit-any
+  const group0: any[] = [], prnOther: any[] = [], prnOngoing: any[] = []   // PRN3
   for (const x of cands) {
     if (x.skipped && !x.may_autosend) { cut(x, String(x.skipped)); continue }
     if (dnr.has(nameKeyOf(String(x.name)))) { cut(x, 'Do-Not-Return for this client — never suggested'); continue }
@@ -711,8 +782,22 @@ async function buildCandidatesForCase(c: any):
         : recentlyActive.has(gid) ? 'worked a shift in the last 14 days'
         : 'active caregiver, no recent history',
     }
+    /* PRN3: the PRN CNA Team gets its own place, never mixed into the groups everyone else is ticked from. */
+    const pm = prnTeam.get(gid)
+    if (pm) {
+      const f = prnFit(c, pm, !!working_then)
+      const withPrn = { ...row, prn: { fit: f.fit, why: f.why, notice: pm.notice, confirmed_at: pm.confirmed_at } }
+      if (ongoingCase) prnOngoing.push(withPrn)
+      else if (f.fit) group0.push(withPrn)
+      else prnOther.push(withPrn)
+      continue
+    }
     if (h) group1.push(row); else group2.push(row)
   }
+  /* PRN who fit: somebody who knows the client first, then the most recently confirmed availability, then distance. */
+  group0.sort((a, b) => ((b.history?.visits ?? 0) - (a.history?.visits ?? 0))
+    || String(b.prn?.confirmed_at || '').localeCompare(String(a.prn?.confirmed_at || ''))
+    || ((a.miles ?? 9999) - (b.miles ?? 9999)))
   /* Busy sinks; the client's own favorite leads their group; a chained
      schedule beats raw distance; then the old ranking. "Who could actually
      take this and delight the client" reads top-down. */
@@ -728,7 +813,8 @@ async function buildCandidatesForCase(c: any):
     || (Number(b.recently_active) - Number(a.recently_active))
     || ((b.wants_more_hours ?? -999) - (a.wants_more_hours ?? -999)))
 
-  return { group1, group2, excluded, meta: {
+  return { group0, group1, group2, prn_other: prnOther, prn_ongoing: prnOngoing, excluded, meta: {
+    prn_case: ongoingCase ? 'regular opening: PRN members listed apart (taking it would mean moving to ongoing at $18)' : 'call-off or one-time: PRN members who fit are asked first',
     client_resolution: `${clientRes.status}: ${clientRes.detail}`,
     client_level: clientLv,
     client_city: clientCity || null, client_zip: clientZip || null,
@@ -797,8 +883,12 @@ Deno.serve(async (req) => {
          that is not in group1/group2 right now cannot be texted, whatever
          the request says. The coordinator chooses WITHIN the safe set. */
       const pool = await buildCandidatesForCase(kase)
-      const sendable = [...pool.group1.map(x => ({ ...x, tier: 1 })),
-                        ...pool.group2.map(x => ({ ...x, tier: 3 }))]
+      const sendable = [...pool.group0.map(x => ({ ...x, tier: 0, prn_ask: true })),
+                        ...pool.prn_other.map(x => ({ ...x, tier: 0, prn_ask: true })),
+                        ...pool.group1.map(x => ({ ...x, tier: 1 })),
+                        ...pool.group2.map(x => ({ ...x, tier: 3 })),
+                        /* a regular opening asked of a PRN member is the ordinary ongoing ask, not a PRN one */
+                        ...pool.prn_ongoing.map(x => ({ ...x, tier: 3 }))]
         .filter(x => wanted.has(String(x.name).toLowerCase()))
       const refusedNames = [...wanted].filter(w =>
         !sendable.some(x => String(x.name).toLowerCase() === w))
@@ -836,6 +926,7 @@ Deno.serve(async (req) => {
              `Hi {first_name}, it's Caring Companions. Last-minute fill-in for {client} at {address}: {when}. {care}Can you take it? Reply YES or NO. Questions welcome.`)
           : (String(st.coverage_msg_other_advance || '') || String(st.coverage_msg_other || '') ||
              `Hi {first_name}, it's Caring Companions. We have an open shift for {client} at {address}: {when}. {care}Can you take it? Reply YES or NO. Questions welcome.`))
+      const tmplP = String(st.coverage_msg_prn || '') || PRN_DEFAULT_MSG
       // deno-lint-ignore no-explicit-any
       const fillMsg = (tmpl: string, x: any) => tmpl
         .replaceAll(' at {address}', addr ? ` at ${addr}` : '')
@@ -856,7 +947,7 @@ Deno.serve(async (req) => {
           { phone, firstName: x.first || x.name }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'coverage-run' })
         if (!contact) { failed.push(`${x.name} (refused by the outbound gate or opted out of texts)`); continue }
         const message = fillMsg(String(kase.kind) === 'interest' ? tmplInt
-          : (x.tier === 1 ? tmpl1 : tmplO), x)
+          : x.prn_ask ? tmplP : (x.tier === 1 ? tmpl1 : tmplO), x)
         try {
           const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
             method: 'POST',
@@ -868,7 +959,7 @@ Deno.serve(async (req) => {
         } catch { failed.push(`${x.name} (send error)`); continue }
         await appendAskFresh(String(kase.id), {
           id: uid(), name: x.name, phone, channel: 'sms', at: nowIso(),
-          state: 'waiting', replied_at: null, tier: x.tier, auto: false,
+          state: 'waiting', replied_at: null, tier: x.tier, auto: false, ...(x.prn_ask ? { prn: true } : {}),
           picked_by_coordinator: true, ghl_contact_id: contact.contactId,
           axiscare_id: x.axiscare_id ?? null })
         sent.push(String(x.name))
@@ -1078,6 +1169,8 @@ Deno.serve(async (req) => {
      days. Within a tier, hungrier caregivers are asked first — the person
      wanting 15 more hours hears about the shift before the person already
      at target. Missing data means no boost, never a penalty. */
+  /* PRN3: the PRN CNA Team, once per run. */
+  const prnTeamW = open.length ? await prnTeamLoad() : new Map<string, PrnMember>()
   const wantGap = new Map<string, number>()   // axiscare id → wanted-minus-scheduled
   if (open.length) {
     try {
@@ -1456,7 +1549,19 @@ Deno.serve(async (req) => {
       if (!x.may_autosend) continue
       const t = tierOf(x); x.tier = t.tier; x.tier_why = t.why
     }
-    const sendable = cands.filter(x => x.may_autosend).sort((a: any, b: any) =>
+    /* PRN3: for a call-off or one-time shift, PRN members who fit go first (tier 0); a PRN member who doesn't fit, or
+       any PRN member for a regular opening, is left out of the automatic waves (a person can still ask them). */
+    const ongoingW = isOngoingCase(c)
+    for (const x of cands) {
+      const pm = x.axiscare_id ? prnTeamW.get(String(x.axiscare_id)) : undefined
+      if (!pm || !x.may_autosend) continue
+      const f = prnFit(c, pm, busyThen.has(String(x.axiscare_id)))
+      if (!ongoingW && f.fit) { x.tier = 0; x.tier_why = 'PRN CNA Team, fits this shift'; x.prn_ask = true }
+      else x.prn_skip = ongoingW ? 'PRN Team: a regular opening' : 'PRN Team: ' + f.why
+    }
+    stats.prn_first = (Number(stats.prn_first) || 0) + cands.filter((x: any) => x.prn_ask).length
+    stats.prn_left_out = (Number(stats.prn_left_out) || 0) + cands.filter((x: any) => x.prn_skip).length
+    const sendable = cands.filter(x => x.may_autosend && !x.prn_skip).sort((a: any, b: any) =>
       (a.tier - b.tier) ||
       ((history.get(String(b.axiscare_id ?? ''))?.visits ?? 0) -
        (history.get(String(a.axiscare_id ?? ''))?.visits ?? 0)) ||
@@ -1647,6 +1752,7 @@ Deno.serve(async (req) => {
       const isSameDay = c.shift_date === chiToday
       const tmpl1 = String(c.msg_tier1 || '') || String(settings.coverage_msg_tier1 || '') ||
         `Hi {first_name}, can you cover {client} {when}? {pattern}It's Caring Companions. Reply YES or NO.`
+      const tmplP = String(settings.coverage_msg_prn || '') || PRN_DEFAULT_MSG
       const tmplO = String(c.msg_other || '') ||
         (isSameDay
           ? (String(settings.coverage_msg_other_sameday || '') || String(settings.coverage_msg_other || '') ||
@@ -1658,7 +1764,7 @@ Deno.serve(async (req) => {
         const contact = await contactForOutbound(sb, ghl,
           { phone: x.phone, firstName: x.first || x.name }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'coverage-run' })
         if (!contact) continue
-        const message = fill(x.tier === 1 ? tmpl1 : tmplO, x)
+        const message = fill(x.prn_ask ? tmplP : x.tier === 1 ? tmpl1 : tmplO, x)
         let ok = false
         try {
           const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
@@ -1673,7 +1779,7 @@ Deno.serve(async (req) => {
         if (ok) {
           const entry = { id: uid(), name: x.name, phone: x.phone, channel: 'sms',
             at: nowIso(), state: 'waiting', replied_at: null,
-            tier: x.tier ?? 3, auto: true, ghl_contact_id: contact.contactId,
+            tier: x.tier ?? 3, auto: true, ghl_contact_id: contact.contactId, ...(x.prn_ask ? { prn: true } : {}),
             /* Carried so assign-on-confirm knows WHO to put on the visit
                without a name lookup that could hit the wrong roster row. */
             axiscare_id: x.axiscare_id ?? null }
