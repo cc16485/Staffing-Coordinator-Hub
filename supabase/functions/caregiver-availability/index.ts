@@ -21,6 +21,7 @@
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { contactForOutbound } from '../_shared/outreach.ts'
+import { checkAvailLink } from '../_shared/prn-links.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
@@ -126,21 +127,45 @@ Deno.serve(async (req) => {
       note: sent >= CAP ? `capped at ${CAP} per run — press the button again for the next batch` : 'everyone eligible was invited' })
   }
 
-  const phone = digits10(b.phone)
-  if (phone.length !== 10) return json({ error: 'enter your 10-digit phone number' }, 400)
-
-  // Exactly ONE active roster caregiver on this number, or nothing happens.
   const { data: cgRow } = await sb.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
   // deno-lint-ignore no-explicit-any
   const roster: any[] = Array.isArray(cgRow?.data) ? cgRow!.data : []
-  const hits = roster.filter(g => g?.active !== false && digits10(g.phone) === phone)
-  if (hits.length === 0)
-    return json({ unknown: true, message: 'We could not match that number. Text or call the office and we will set you up.' })
-  if (hits.length > 1)
-    return json({ unknown: true, message: 'That number is on more than one record — call the office and we will sort it out.' })
-  const cg = hits[0]
-  const name = [String(cg.first || '').trim(), String(cg.last || '').trim()].filter(Boolean).join(' ')
-  const itemId = String(cg.axiscare_id || ('roster_' + cg.id))
+  let name = '', itemId = '', axId: string | null = null, phone = ''
+  /* PRN4 (2026-09-29): a PRN CNA's 60-day check-in text carries a sealed personal link (their caregiver number and an
+     expiry, sealed by the server), so they don't type their phone number. Anything forged or expired is refused. */
+  const viaLink = b.c != null || b.t != null
+  if (viaLink) {
+    if (!(await checkAvailLink(Deno.env.get('HUB_JOB_SECRET') ?? '', b)))
+      return json({ unknown: true, message: 'This link has expired or is not valid. Enter your phone number instead, or call the office.' }, 401)
+    axId = String(b.c)
+    const hit = roster.find(g => g?.active !== false && String(g?.axiscare_id ?? '') === axId)
+    if (hit) { name = [String(hit.first || '').trim(), String(hit.last || '').trim()].filter(Boolean).join(' '); phone = digits10(hit.phone) }
+    else {
+      const { data: tr } = await sb.from('pay_tracks').select('applicant_id').eq('axiscare_caregiver_id', axId).maybeSingle()
+      const { data: ap } = tr ? await sb.from('job_applicants').select('first_name, last_name, phone').eq('id', tr.applicant_id).maybeSingle() : { data: null }
+      if (ap) { name = [String(ap.first_name || '').trim(), String(ap.last_name || '').trim()].filter(Boolean).join(' '); phone = digits10(ap.phone) }
+    }
+    if (!name) return json({ unknown: true, message: 'We could not find you from this link. Text or call the office and we will set you up.' })
+    itemId = axId
+  } else {
+    phone = digits10(b.phone)
+    if (phone.length !== 10) return json({ error: 'enter your 10-digit phone number' }, 400)
+    // Exactly ONE active roster caregiver on this number, or nothing happens.
+    const hits = roster.filter(g => g?.active !== false && digits10(g.phone) === phone)
+    if (hits.length === 0)
+      return json({ unknown: true, message: 'We could not match that number. Text or call the office and we will set you up.' })
+    if (hits.length > 1)
+      return json({ unknown: true, message: 'That number is on more than one record — call the office and we will sort it out.' })
+    const cg = hits[0]
+    name = [String(cg.first || '').trim(), String(cg.last || '').trim()].filter(Boolean).join(' ')
+    itemId = String(cg.axiscare_id || ('roster_' + cg.id))
+    axId = cg.axiscare_id ? String(cg.axiscare_id) : null
+  }
+  /* PRN4: a PRN CNA's open check-in counts as answered however they confirm (link or phone). Best effort. */
+  const answered = async (how: string) => {
+    if (!axId) return
+    try { await sb.from('prn_checkins').update({ answered_at: new Date().toISOString(), how }).eq('axiscare_caregiver_id', axId).is('answered_at', null) } catch { /* the save itself stands */ }
+  }
 
   const { data: avRow } = await sb.from('app_data').select('data').eq('key', 'caregiver_availability').maybeSingle()
   // deno-lint-ignore no-explicit-any
@@ -158,13 +183,25 @@ Deno.serve(async (req) => {
       windows[d] = raw.map((w: unknown) => String(w)).filter((w: string) => (WINDOW_KEYS as readonly string[]).includes(w))
     }
     const item = {
-      id: itemId, name, axiscare_id: cg.axiscare_id ? String(cg.axiscare_id) : null,
-      phone_digits: phone, target_hours: target, windows,
+      id: itemId, name, axiscare_id: axId,
+      phone_digits: phone || null, target_hours: target, windows,
       updated_at: new Date().toISOString(), source: 'self',
     }
     const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'caregiver_availability', item })
     if (error) return json({ error: 'could not save — try again: ' + error.message }, 500)
+    await answered('updated')
     return json({ saved: true, name, message: `Saved, ${name.split(' ')[0]}! The office sees this right away — update it any time.` })
+  }
+
+  /* PRN4: "Still right": what's on file is confirmed as of today, nothing else changes. */
+  if (b.action === 'confirm') {
+    if (!existing || !existing.windows || !Object.values(existing.windows).some((v) => Array.isArray(v) && v.length))
+      return json({ error: 'there is nothing on file to confirm yet: choose your days and times below and save' }, 400)
+    const item = { ...existing, updated_at: new Date().toISOString(), source: 'self' }
+    const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'caregiver_availability', item })
+    if (error) return json({ error: 'could not save — try again: ' + error.message }, 500)
+    await answered('still_right')
+    return json({ confirmed: true, name, message: `Thank you, ${name.split(' ')[0]}! Your availability is confirmed.` })
   }
 
   // Default: 'get' — prefill for the form.
@@ -174,5 +211,6 @@ Deno.serve(async (req) => {
     target_hours: existing?.target_hours ?? null,
     windows: existing?.windows ?? null,
     updated_at: existing?.updated_at ?? null,
+    via_link: viaLink,
   })
 })
