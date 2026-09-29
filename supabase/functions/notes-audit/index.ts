@@ -32,26 +32,39 @@ function ctx() {
   return { ok: !!token && /^\d+$/.test(site), base: `https://${site}.axiscare.com`,
     head: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': AC_VERSION } as Record<string, string> }
 }
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+/* One visit at a time. When AxisCare says "slow down" (429) we wait as long as it asks (or 3s) and try again, up to
+   4 times. The first run read four at a time and was stopped after 34 visits. */
 // deno-lint-ignore no-explicit-any
 async function readVisit(base: string, head: Record<string, string>, id: string): Promise<{ v: any; limited: boolean }> {
-  try {
-    const r = await fetch(`${base}/api/visits/${id}`, { headers: head })
-    if (r.status === 429) return { v: null, limited: true }
-    if (!r.ok) return { v: null, limited: false }
-    const j = await r.json().catch(() => null)
-    return { v: j?.results && typeof j.results === 'object' ? j.results : null, limited: false }
-  } catch { return { v: null, limited: false } }
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const r = await fetch(`${base}/api/visits/${id}`, { headers: head })
+      if (r.status === 429) {
+        if (attempt === 4) return { v: null, limited: true }
+        const wait = Math.min(Math.max(Number(r.headers.get('retry-after')) || 3, 1), 20) * 1000
+        await sleep(wait); continue
+      }
+      if (!r.ok) return { v: null, limited: false }
+      const j = await r.json().catch(() => null)
+      return { v: j?.results && typeof j.results === 'object' ? j.results : null, limited: false }
+    } catch { return { v: null, limited: false } }
+  }
+  return { v: null, limited: true }
 }
-// four at a time, stopping on the first "slow down"
 async function readAll(base: string, head: Record<string, string>, ids: string[]) {
   // deno-lint-ignore no-explicit-any
-  const out = new Map<string, any>(); let limited = false, i = 0
-  const worker = async () => { while (!limited && i < ids.length) { const id = ids[i++]; const r = await readVisit(base, head, id); if (r.limited) { limited = true; break } if (r.v) out.set(id, r.v) } }
-  await Promise.all([worker(), worker(), worker(), worker()])
+  const out = new Map<string, any>(); let limited = false
+  for (const id of ids) {
+    const r = await readVisit(base, head, id)
+    if (r.limited) { limited = true; break }
+    if (r.v) out.set(id, r.v)
+    await sleep(Number(Deno.env.get('NOTES_AUDIT_PAUSE_MS') ?? '250'))
+  }
   return { out, limited }
 }
 
-export async function m0(days = 14) {
+export async function m0(days = 14, offset = 0, limit = 400) {
   const { ok, base, head } = ctx(); if (!ok) return { error: 'AxisCare credentials not set on this project' }
   // deno-lint-ignore no-explicit-any
   const list: any[] = []
@@ -66,21 +79,32 @@ export async function m0(days = 14) {
   }
   const now = Date.now()
   const started = list.filter((v) => { const t = new Date(v?.startDate ?? v?.scheduledStartDate ?? 0).getTime(); return t && t < now })
-  const { out, limited } = await readAll(base, head, started.slice(0, 400).map((v) => String(v?.id ?? '')))
+  started.sort((a, b) => String(a?.id ?? '').localeCompare(String(b?.id ?? '')))   /* the same order on every call */
+  const slice = started.slice(offset, offset + limit)
+  const { out, limited } = await readAll(base, head, slice.map((v) => String(v?.id ?? '')))
   // deno-lint-ignore no-explicit-any
   const groups = new Map<string, any[]>()
   let finished = 0, notFinished = 0
   const clockIn: Record<string, number> = {}
+  const rows: { v: string; cg: string; cl: string; d: string; i: string; o: string; e: string; n: boolean; f: string }[] = []
   for (const v of out.values()) {
     const outTime = v?.clockOut?.time
     clockIn[method(v?.clockIn)] = (clockIn[method(v?.clockIn)] ?? 0) + 1
     if (!outTime) { notFinished++; continue }
     finished++
+    { const note = typeof v?.careNote === 'string' ? v.careNote.trim() : ''
+      let f = 0; for (let i = 0; i < note.length; i++) f = (f * 31 + note.charCodeAt(i)) | 0
+      rows.push({ v: String(v?.id ?? ''), cg: String(v?.caregiver?.id ?? '?'), cl: String(v?.client?.id ?? '?'), d: localDay(v?.startDate ?? v?.scheduledStartDate),
+        i: method(v?.clockIn), o: method(v?.clockOut), e: String(outTime), n: !!note, f: note ? (f >>> 0).toString(36) : '' }) }
     const k = `${v?.caregiver?.id ?? '?'}|${v?.client?.id ?? '?'}|${localDay(v?.startDate ?? v?.scheduledStartDate)}`
     if (!groups.has(k)) groups.set(k, [])
     groups.get(k)!.push(v)
   }
   const r = { window: `${chiDay(-days)} to ${chiDay(0)}`, visits_listed: list.length, visits_started: started.length, visits_read: out.size,
+    offset, slice_size: slice.length, next_offset: offset + slice.length < started.length ? offset + slice.length : null,
+    /* per finished visit, for adding up across slices: AxisCare id numbers, the day, how they clocked in and out, and
+       whether a note exists and a short fingerprint of it (to compare visits on the same day) — never the words */
+    rows,
     stopped_early_slow_down: limited, visits_finished: finished, visits_not_clocked_out: notFinished, clock_in_methods: clockIn,
     groups: groups.size, multi_visit_groups: 0, multi_same_note_on_every_visit: 0, multi_different_notes: 0, multi_note_on_some_visits_only: 0,
     groups_with_note: 0, groups_missing_note: 0,
@@ -137,7 +161,8 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok')
   if ((await jobCaller(req, false)) !== 'owner') return json({ error: 'not allowed' }, 401)
   const q = new URL(req.url).searchParams
-  if (q.get('m0') === '1') return json(await m0(Math.min(Math.max(Number(q.get('days')) || 14, 1), 21)))
+  if (q.get('m0') === '1') return json(await m0(Math.min(Math.max(Number(q.get('days')) || 14, 1), 21),
+    Math.max(Number(q.get('offset')) || 0, 0), Math.min(Math.max(Number(q.get('limit')) || 400, 1), 400)))
   if (q.get('recheck') === '1') {
     // deno-lint-ignore no-explicit-any
     let b: any = {}; try { b = await req.json() } catch { b = {} }
