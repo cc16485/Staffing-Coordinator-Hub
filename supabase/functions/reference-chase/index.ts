@@ -105,12 +105,35 @@ Deno.serve(async (req) => {
     else if (quiet >= NUDGE_AFTER_DAYS && !r.reminded_at && r.ref_email) toNudge.push(r)
   }
 
+  /* S2 (2026-09-28): the applicant is texted only if they said yes to texts on the apply form
+     (job_applicants.sms_consent), as every other applicant text already requires. Their own record is used when the
+     row carries it; otherwise every application with this exact number must have said yes (never a guess). Anyone
+     else gets the email only. */
+  // deno-lint-ignore no-explicit-any
+  let apps: any[] = []
+  if (toApplicant.length) {
+    const { data: ja, error: jaErr } = await supabase.from('job_applicants').select('id, phone, sms_consent')
+    if (jaErr) { await beat(supabase, false, 'job_applicants: ' + jaErr.message); return json({ error: 'could not read text consent: ' + jaErr.message }, 500) }
+    apps = ja ?? []
+  }
+  const last10 = (v: unknown) => String(v ?? '').replace(/\D/g, '').slice(-10)
+  // deno-lint-ignore no-explicit-any
+  const textOk = (r: any): boolean => {
+    if (!r.candidate_phone) return false
+    if (r.applicant_id) { const a = apps.find((x) => String(x.id) === String(r.applicant_id)); return a?.sms_consent === true }
+    const d = last10(r.candidate_phone); if (d.length !== 10) return false
+    const same = apps.filter((x) => last10(x.phone) === d)
+    return same.length > 0 && same.every((x) => x.sms_consent === true)
+  }
+
   if (dry) {
     return json({
       ok: true, dry: true,
       would_ask_for_the_first_time: toSend.map((r) => `${r.ref_name} (for ${r.candidate_name})`),
       would_remind_reference: toNudge.map((r) => `${r.ref_name} (for ${r.candidate_name})`),
-      would_ask_applicant: toApplicant.map((r) => `${r.candidate_name} about ${r.ref_name}`),
+      would_ask_applicant: toApplicant.map((r) => `${r.candidate_name} about ${r.ref_name}` + (textOk(r) ? ' (text and email)' : ' (email only: no yes to texts on file)')),
+      applicant_by_text: toApplicant.filter(textOk).length,
+      applicant_email_only: toApplicant.filter((r) => !textOk(r)).length,
       would_escalate_to_office: toEscalate.map((r) => `${r.ref_name} (for ${r.candidate_name})`),
     })
   }
@@ -188,9 +211,8 @@ Deno.serve(async (req) => {
     } catch { /* one failure must not stop the rest */ }
   }
 
-  /* Back to the applicant. Unlike their reference, they asked us to be in
-     touch, so a text is fine here, and it is the message most likely to
-     actually work: their job is what is waiting. */
+  /* Back to the applicant, who has the relationship and the reason to care. A text only with their yes to texts on
+     file (textOk above); otherwise the email. */
   let asked = 0
   for (const r of toApplicant) {
     if (!ghlToken || !ghlLocation) break
@@ -200,9 +222,9 @@ Deno.serve(async (req) => {
       `&cid=${encodeURIComponent(String(r.candidate_id))}&n=${encodeURIComponent(r.ref_name ?? '')}`
     const line = `Hi ${first}, Caring Companions here. We have not been able to reach ${who} for your reference, ` +
       `and it is the last thing holding up your start. Give them a nudge if you can. ` +
-      `Or if you have a better number or email for them, or want to use someone else, do it here: ${fixUrl}`
+      `Or if you have a better number or email for them, or want to use someone else, do it here: ${fixUrl} Reply STOP to opt out.`
     try {
-      const smsId = r.candidate_phone ? await door('sms', r.candidate_phone, first) : null
+      const smsId = textOk(r) ? await door('sms', r.candidate_phone, first) : null
       const mailId = r.candidate_email ? await door('email', r.candidate_email, first) : null
       if (!smsId && !mailId) continue
       if (smsId) {
