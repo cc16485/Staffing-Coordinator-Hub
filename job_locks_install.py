@@ -37,6 +37,9 @@ GROUPS = {
            "unscheduled": ["obligations-run", "eligibility-sweep"], "after": "Rule jobs locked report.txt",
            "rules": {"client-start-run": ["client-start.js"], "promise-run": ["promise-engine.js"], "launch-evidence": ["launch-evidence.js"],
                      "obligations-run": ["obligations.js", "eligibility-rules.js"], "eligibility-sweep": ["eligibility-rules.js"]}},
+    "O1": {"title": "O1 · THREE SENDERS PICK UP THE OFFICE-HOURS FIX",
+           "fns": ["reference-chase", "campaign-auto", "applicant-reengage"], "sql": None, "accept": "outreach_redeploy_accept.json",
+           "keep_schedules": True, "auth_check": ["reference-chase"]},
     "J2": {"title": "J2 · THE 7 JOBS THAT ONLY UPDATE THE HUB",
            "fns": ["coverage-watch", "client-status-observe", "client-status-review", "launch-evidence", "client-start-run",
                    "promise-run", "caregiver-census-observe"],
@@ -178,7 +181,13 @@ for fn in FNS:
     why = None; m = fmeta(fn); vj = m.get("verify_jwt")
     if not isinstance(vj, bool): why = "could not read its gateway setting"
     jobs = []
-    if not why:
+    if not why and G.get("keep_schedules"):   # their schedules are already right (and campaign-auto's uses its own secret): never touched
+        for j in alljobs:
+            if not re.search(r"/functions/v1/" + re.escape(fn) + r"(?![A-Za-z0-9_-])", j.get("command") or ""): continue
+            pj = parse_job(fn, j.get("command") or "")
+            jobs.append({"name": j["jobname"], "schedule": j["schedule"], "active": j["active"], "keep": True,
+                         **({"url": pj[0], "body": pj[1], "timeout": pj[2]} if pj and "vault.decrypted_secrets where name = 'hub_job_secret'" in (j.get("command") or "") else {"noproof": True})})
+    elif not why:
         for j in alljobs:
             c = j.get("command") or ""
             if re.search(r"/functions/v1/" + re.escape(fn) + r"(?![A-Za-z0-9_-])", c):
@@ -217,7 +226,7 @@ for fn in FNS:
     p = plan[fn]
     say(f"  ✓ {fn}: live copy matches GitHub" + ((" (it is the reviewed Aug 13 GitHub version: its own code without the heartbeat, and the Aug 13 shared helper)" if "index.ts" in p["older"]
         else f" (its {', '.join(p['older'])} is the earlier reviewed copy from its last deploy)") if p["older"] else "")
-        + f" · gateway sign-in check {'on' if vj else 'off'} (kept) · " + ("no schedule (your Desktop scripts start it)" if not jobs else f"{len(jobs)} schedule{'s' if len(jobs) != 1 else ''}: "
+        + f" · gateway sign-in check {'on' if vj else 'off'} (kept) · " + ("no schedule (started by hand: your Desktop scripts or the Hub)" if not jobs else f"{len(jobs)} schedule{'s' if len(jobs) != 1 else ''}: "
         + "; ".join(f"{j['schedule']}, {'on' if j['active'] else 'paused'}" for j in jobs)))
 if GROUP == "J2" and "caregiver-census-observe" in plan:
     ok, cr = sql("""select count(*)::int as n from cron.job_run_details d join cron.job j on j.jobid = d.jobid
@@ -250,7 +259,7 @@ if G.get("sql_first"):
 for fn in FNS:
     if fn not in plan: continue
     p = plan[fn]; good = True
-    for j in p["jobs"]:
+    for j in [x for x in p["jobs"] if not x.get("keep")]:
         c = command(j["url"], j["body"], j["timeout"], ANON)
         ok, r = sql(f"select cron.schedule({lit(j['name'])}, {lit(j['schedule'])}, {lit(c)}) as id")
         if ok and r and j["active"] is False: sql(f"select cron.alter_job({int(r[0]['id'])}, active := false)")
@@ -268,7 +277,7 @@ for fn in FNS:
     after = fmeta(fn)
     if after.get("verify_jwt") != p["vj"]: bad(f"{fn}: its gateway setting changed ({after.get('verify_jwt')}). Tell Claude.")
     deployed.append(fn)
-    say(f"  ✓ {fn}: " + (f"{len(p['jobs'])} schedule{'s' if len(p['jobs']) != 1 else ''} now send{'s' if len(p['jobs']) == 1 else ''} the secret from the vault (same time and on/off) · " if p["jobs"] else "")
+    say(f"  ✓ {fn}: " + ("its schedule left exactly as it was · " if G.get("keep_schedules") and p["jobs"] else f"{len(p['jobs'])} schedule{'s' if len(p['jobs']) != 1 else ''} now send{'s' if len(p['jobs']) == 1 else ''} the secret from the vault (same time and on/off) · " if p["jobs"] else "")
         + f"deployed, now version {after.get('version')} (was {p['version']}), gateway setting kept")
 if GROUP == "J1" and G["sql"] and not G.get("sql_first"):
     ok, _ = sql(open(os.path.join(REPO, G["sql"])).read())
@@ -286,6 +295,12 @@ time.sleep(float(os.environ.get("SB_SETTLE", "10")))
 b64 = lambda o: base64.urlsafe_b64encode(json.dumps(o).encode()).decode().rstrip("=")
 FORGED = b64({"alg": "HS256", "typ": "JWT"}) + "." + b64({"role": "service_role", "iss": "supabase", "ref": REF}) + "." + "x" * 43
 for fn in deployed:
+    if G.get("auth_check") is not None and fn not in G["auth_check"]:
+        # no auth_check door: an empty call with no key or the public key must be refused before anything runs
+        r0 = http("POST", f"{FNB}/functions/v1/{fn}", {}, {})[0]; r1 = http("POST", f"{FNB}/functions/v1/{fn}", {}, {"apikey": ANON, "Authorization": "Bearer " + ANON})[0]
+        good = r0 in (401, 403) and r1 in (401, 403)
+        (say if good else bad)(("  ✓ " if good else "") + f"{fn}: no key {r0}, public key {r1} → refused (its schedule's own secret and staff sign-in are unchanged)")
+        continue
     U = f"{FNB}/functions/v1/{fn}?auth_check=1"
     r0 = http("POST", U, {}, {})[0]
     r1 = http("POST", U, {}, {"apikey": ANON, "Authorization": "Bearer " + ANON})[0]
@@ -294,7 +309,7 @@ for fn in deployed:
     s4, b4 = http("POST", U, {}, {"apikey": SVC, "Authorization": "Bearer " + SVC})
     good = all(x == 401 for x in (r0, r1, r2, r3)) and s4 == 200 and jget(b4, "caller") == "owner"
     (say if good else bad)(("  ✓ " if good else "") + f"{fn}: no key {r0}, public key {r1}, wrong secret {r2}, forged server token {r3} → refused · your server key {s4} → accepted")
-    for j in plan[fn]["jobs"]:
+    for j in [x for x in plan[fn]["jobs"] if not x.get("noproof")]:
         ok, rq = sql("select " + command(with_param(j["url"], "auth_check=1"), j["body"], None, ANON).replace("select ", "", 1).rstrip(";") + " as id")
         got = None; waited = 0.0
         while ok and rq and waited <= POLL_MAX:
@@ -343,6 +358,7 @@ for label, good, got in extra: (say if good else bad)(("  ✓ " if good else "")
 
 say()
 if fails: say("RESULT: CHECK THE ✗ LINES." + (f" Left exactly as they were: {', '.join(skipped)}." if skipped else ""))
+elif GROUP == "O1": say("RESULT: DONE · the three senders now keep their office hours even when a request says it is a practice run.")
 elif GROUP == "G2": say("RESULT: DONE · the five jobs run a rules file from the Hub site only if you approved that exact version; today's five are approved.")
 elif GROUP == "G1": say("RESULT: DONE · the obligations runner and the eligibility sweep answer only your server key, checked before anything else.")
 elif GROUP == "J1b": say("RESULT: DONE · ghe-reminders answers only its schedule and your server key, and now tells the watchdog each day it runs.")

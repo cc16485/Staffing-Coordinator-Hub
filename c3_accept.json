@@ -1,0 +1,76 @@
+{
+ "clockin-alert": {
+  "deployed_from": "origin/main",
+  "files": {
+   "_shared/clockin-admins.ts": {
+    "base": "ab63fdcdd68c5473781fd952195ecbd8d79b6683b26add08cdb688b22fe10b71",
+    "deploy": "ab63fdcdd68c5473781fd952195ecbd8d79b6683b26add08cdb688b22fe10b71"
+   },
+   "_shared/clockin-links.ts": {
+    "base": "191d85769f160f0075cc67847c87756687fdcaf821ffd58025a3110867478e58",
+    "deploy": "191d85769f160f0075cc67847c87756687fdcaf821ffd58025a3110867478e58"
+   },
+   "_shared/events.ts": {
+    "base": "573379c4abb9a5f44e3bf49274d86713a6bf28a1974833e2478e78c54c8cdffe",
+    "deploy": "573379c4abb9a5f44e3bf49274d86713a6bf28a1974833e2478e78c54c8cdffe"
+   },
+   "_shared/optout.ts": {
+    "base": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937",
+    "deploy": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937"
+   },
+   "_shared/outreach.ts": {
+    "base": "f78ffb89311ee7fbbc8f09e9f386987b59c4eaea9f9e9926fb705db560aa8912",
+    "deploy": "f78ffb89311ee7fbbc8f09e9f386987b59c4eaea9f9e9926fb705db560aa8912"
+   },
+   "clockin-alert/index.ts": {
+    "base": "45047ee6f5a5d3e5e21656b79b487865c77ae09b6d4bd95fadaedab689c38e5a",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "timekeeper-watch": {
+  "deployed_from": "origin/main",
+  "files": {
+   "_shared/clockin-admins.ts": {
+    "base": "ab63fdcdd68c5473781fd952195ecbd8d79b6683b26add08cdb688b22fe10b71",
+    "deploy": "ab63fdcdd68c5473781fd952195ecbd8d79b6683b26add08cdb688b22fe10b71"
+   },
+   "_shared/clockin-links.ts": {
+    "base": "191d85769f160f0075cc67847c87756687fdcaf821ffd58025a3110867478e58",
+    "deploy": "191d85769f160f0075cc67847c87756687fdcaf821ffd58025a3110867478e58"
+   },
+   "_shared/events.ts": {
+    "base": "573379c4abb9a5f44e3bf49274d86713a6bf28a1974833e2478e78c54c8cdffe",
+    "deploy": "573379c4abb9a5f44e3bf49274d86713a6bf28a1974833e2478e78c54c8cdffe"
+   },
+   "_shared/job-auth.ts": {
+    "base": "56227dbb1cbebd03cac64ac90cbec467a62f4419d2aeb7eee78e9d3f356b39c1",
+    "deploy": "56227dbb1cbebd03cac64ac90cbec467a62f4419d2aeb7eee78e9d3f356b39c1"
+   },
+   "_shared/optout.ts": {
+    "base": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937",
+    "deploy": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937"
+   },
+   "_shared/outreach.ts": {
+    "base": "f78ffb89311ee7fbbc8f09e9f386987b59c4eaea9f9e9926fb705db560aa8912",
+    "deploy": "f78ffb89311ee7fbbc8f09e9f386987b59c4eaea9f9e9926fb705db560aa8912"
+   },
+   "_shared/routing.ts": {
+    "base": "f8531f1281e15eb76854780c9d657a1d36182b2b55633dd53fae8ff9ac5e0b5b",
+    "deploy": "f8531f1281e15eb76854780c9d657a1d36182b2b55633dd53fae8ff9ac5e0b5b"
+   },
+   "_shared/staff-auth.ts": {
+    "base": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687",
+    "deploy": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687"
+   },
+   "timekeeper-watch/index.ts": {
+    "base": "d05d987e0f43af17bab168a143c1515659d431671e2bc254e2f879146430d77c",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ }
+}

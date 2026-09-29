@@ -293,6 +293,7 @@ Deno.serve(async (req) => {
       if (f.resolved_by) for (const k of PAGE_FIELDS) l[k] = f[k]          // a person's resolution always wins
       if (f.evv_sent_at) { l.evv_sent_at = f.evv_sent_at; l.evv_sent_by = f.evv_sent_by }
       if (f.admin_loop?.snooze) l.admin_loop = { ...(l.admin_loop || {}), snooze: { ...(l.admin_loop?.snooze || {}), ...f.admin_loop.snooze } }
+      if (Array.isArray(f.replies) && f.replies.length > (Array.isArray(l.replies) ? l.replies.length : 0)) l.replies = f.replies   // C3: her reply
     }
     return sb.rpc('upsert_app_data_item', { target_key: 'timekeeper_cases', item: l })
   }
@@ -493,6 +494,7 @@ Deno.serve(async (req) => {
       const f = await freshLadder(String(l.id))
       if (f?.resolved_at) continue
       if (f?.admin_loop?.snooze) l.admin_loop.snooze = { ...(l.admin_loop.snooze || {}), ...f.admin_loop.snooze }
+      if (Array.isArray(f?.replies)) l.replies = f.replies
       const v = byVisitId.get(String(l.visit_id))
       /* Someone opened a coverage case for this shift since: it owns it now. */
       if (coverageFor(String(l.visit_id), l.client_axiscare_id ?? null, String(l.shift_date), String(l.caregiver_axiscare_id))) {
@@ -519,13 +521,17 @@ Deno.serve(async (req) => {
       const cg = l.caregiver, cl = l.client_first, t12 = clock12(l.shift_time)
       const first = !(l.admin_loop.sends || []).length
       const stage = first ? 'first' : afterEnd ? 'after_end' : late >= 30 ? 'thirty' : 'repeat'
-      const msg = (link: string) => stage === 'first'
-        ? `No clock-in: ${cg} for ${cl}'s ${t12} shift (${late} min past start). Tap when it's resolved: ${link}`
+      /* C3: her newest reply since the last round goes into this one (clockin-reply attaches it) */
+      const lastAt = (l.admin_loop.sends || []).at(-1)?.at || ''
+      const rep = (Array.isArray(l.replies) ? l.replies : []).filter((x: { at: string }) => String(x.at) > String(lastAt)).at(-1)
+      const said = rep ? ` ${String(cg).split(' ')[0]} replied: "${String(rep.text).replace(/\s+/g, ' ').slice(0, 120)}${String(rep.text).length > 120 ? '...' : ''}".` : ''
+      const msg = (link: string) => (stage === 'first'
+        ? `No clock-in: ${cg} for ${cl}'s ${t12} shift (${late} min past start).${said} Tap when it's resolved: ${link}`
         : stage === 'after_end'
-        ? `${cl}'s ${t12} shift has ended and the missed clock-in for ${cg} is still not resolved: ${link}`
+        ? `${cl}'s ${t12} shift has ended and the missed clock-in for ${cg} is still not resolved${said ? '.' + said : ':'} ${link}`
         : stage === 'thirty'
-        ? `${late} min and still not resolved: no clock-in from ${cg} for ${cl}'s ${t12} shift. ${cl} may be without care. ${link}`
-        : `Still no clock-in: ${cg} for ${cl}'s ${t12} shift (${late} min past start). Not resolved yet: ${link}`
+        ? `${late} min and still not resolved: no clock-in from ${cg} for ${cl}'s ${t12} shift. ${cl} may be without care.${said} ${link}`
+        : `Still no clock-in: ${cg} for ${cl}'s ${t12} shift (${late} min past start).${said} Not resolved yet: ${link}`)
       loopSent += await toAdmins(l, stage, msg, true)
       l.admin_loop.last_sent_at = nowIso
       await save(l)
