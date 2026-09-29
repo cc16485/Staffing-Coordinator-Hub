@@ -11,7 +11,7 @@ import json, re, subprocess, hashlib, sys
 BASE = sys.argv[1] if len(sys.argv) > 1 else 'origin/main'
 # G2: `job_locks_accept.py <BASE> <out.json> <fn,fn,...>` builds a list for just those jobs, each expected live at BASE.
 OUT = sys.argv[2] if len(sys.argv) > 2 else 'job_locks_accept.json'
-ONLY = sys.argv[3].split(',') if len(sys.argv) > 3 else None
+ONLY = sys.argv[3].split(',') if len(sys.argv) > 3 else None   # 'fn' (expected live at BASE) or 'fn@commit' (last deployed from commit)
 DEPLOYED_FROM = {   # the commit each job was last deployed from (Desktop reports; read-only reviews 2026-09-29)
     'lead-nurture': '4ad619c', 'lead-followup': '43ff5a6', 'ghe-reminders': 'e8a096f', 'carematch-watch': 'd9494c5',
     'interview-messages': 'd9494c5', 'coverage-run': 'd9494c5', 'timekeeper-watch': 'd9494c5', 'lead-digest': 'a517b54',
@@ -48,7 +48,7 @@ def closure(commit, fn):
             todo.append('/'.join(st))
     return out
 acc = {}
-for fn, dep in ({f: BASE for f in ONLY} if ONLY else DEPLOYED_FROM).items():
+for fn, dep in (dict((x.split('@') + [BASE])[:2] for x in ONLY) if ONLY else DEPLOYED_FROM).items():
     b, d = closure(BASE, fn), closure(dep, fn)
     if f'{fn}/index.ts' not in b: raise SystemExit(f'{fn}: no index.ts at {BASE}')
     files = {}

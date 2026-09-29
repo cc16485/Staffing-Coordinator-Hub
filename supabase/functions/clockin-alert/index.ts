@@ -119,7 +119,10 @@ Deno.serve(async (req) => {
     return json({ ok: true, me: me.first, caregiver_first: cgFirst, client_first: l.client_first, shift_date: l.shift_date,
       shift_time: clock12(l.shift_time), minutes_past_start: minutesPast(String(l.shift_date), String(l.shift_time)),
       texted_at: chi12(l.texted_at), caregiver_phone: normalisePhone(cg?.phone) || null, client_phone: clientPhone,
-      practice: !loopLive, reasons: REASONS, ...status() })
+      practice: !loopLive, reasons: REASONS,
+      /* C3: what she texted back (her own words to the office) */
+      replies: (Array.isArray(l.replies) ? l.replies : []).slice(-5).map((x: { at: string; text: string }) => ({ at: chi12(x.at), text: String(x.text).slice(0, 500) })),
+      ...status() })
   }
 
   if (l.resolved_at && action !== 'evv')

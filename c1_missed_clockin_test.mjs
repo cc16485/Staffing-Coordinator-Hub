@@ -55,7 +55,8 @@ fs.writeFileSync(`${FN}/_shared/_job-auth_t.ts`, fs.readFileSync(`${FN}/_shared/
 process.on('exit', () => { try { fs.unlinkSync(`${FN}/_shared/_job-auth_t.ts`) } catch { /* */ } })
 const load = async (name) => { const src = fs.readFileSync(`${FN}/${name}/index.ts`, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db').replace("'../_shared/job-auth.ts'", "'../_shared/_job-auth_t.ts'")
   const tmp = path.join(process.cwd(), FN, name, '_t.ts'); fs.writeFileSync(tmp, src); try { await import(tmp + '?' + Math.random()); } finally { fs.unlinkSync(tmp); } return handler; };
-const TK = await load('timekeeper-watch'), CA = await load('clockin-alert')
+const TK = await load('timekeeper-watch'), CA = await load('clockin-alert'), CR = await load('clockin-reply')
+ENV.CLOCKIN_REPLY_TOKEN = 'r'.repeat(40)
 const tick = async () => { const r = await TK(new Request('https://x/functions/v1/timekeeper-watch', { method: 'POST', headers: { Authorization: 'Bearer eyJanon', 'x-cron-secret': JOBSEC } })); return r.json() }
 const page = async (body) => { const r = await CA(new Request('https://x/functions/v1/clockin-alert', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })); return { s: r.status, j: await r.json().catch(() => null) } }
 const to_ = (p) => SENT.filter((m) => String(m.to).replace(/\D/g, '').endsWith(p))
@@ -151,6 +152,22 @@ reset(); live(); at('09:05'); await tick(); at('09:10')
 tkReads = 0; READHOOK = (n) => { if (n === 1) { const l = APP.timekeeper_cases[0]; Object.assign(l, { resolved_at: 'x', resolved_by: 'sam@mo-care.com', resolved_how: 'admin', resolved_reason: 'on_the_way' }) } }
 const s6 = toSam().length; await tick(); READHOOK = null
 ck('C1 · resolved on the page mid-run: no reminder goes, and the resolution stays', toSam().length === s6 && lad().resolved_by === 'sam@mo-care.com' && lad().resolved_how === 'admin', { sent: toSam().length - s6, lad: lad() })
+
+/* ── 6b · C3: her reply to the clock-in text reaches the admins ── */
+const reply = async (body, tok = 'r'.repeat(40)) => { const r = await CR(new Request('https://x/functions/v1/clockin-reply?token=' + tok, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: typeof body === 'string' ? body : JSON.stringify(body) })); return { s: r.status, j: await r.json().catch(() => null) } }
+reset(); live(); at('09:05'); await tick()
+let rr = await reply({ id: 'C1', phone: '4175550111', name: 'Maria', message: 'x' }, 'wrong'.repeat(8)); ck('C3 · a wrong link code is refused', rr.s === 401, rr)
+at('09:06'); rr = await reply('{"id":"C1","phone":"(417) 555-0111","name":"Maria","message":"stuck in traffic, "10 min" out"}')
+ck('C3 · her reply (even with raw quotes, as GoHighLevel sends it) is attached to her open missed clock-in', rr.j?.outcome === 'attached' && lad().replies?.[0]?.text === 'stuck in traffic, "10 min" out', { rr, rep: lad().replies })
+at('09:10'); const s7 = toSam().length; await tick()
+ck('C3 · the next admin reminder carries it', toSam().length === s7 + 1 && /^Still no clock-in: Maria Lopez for Ruth's 9am shift \(10 min past start\)\. Maria replied: "stuck in traffic, "10 min" out"\. Not resolved yet: https/.test(toSam().at(-1).message), toSam().at(-1))
+at('09:15'); await tick(); ck('C3 · ... once (the round after does not repeat it)', !/replied/.test(toSam().at(-1).message), toSam().at(-1))
+{ const L7 = linkOf(toSam()[0].message); const pv = await page({ ...L7, action: 'view' }); ck('C3 · the link page shows what she said', pv.j?.replies?.[0]?.text === 'stuck in traffic, "10 min" out', pv.j) }
+rr = await reply({ id: 'C9', phone: '4175559999', name: 'Nobody', message: 'hi' }); ck('C3 · a number not on the roster is ignored', rr.j?.outcome === 'ignored', rr)
+tkReads = 0; READHOOK = (n) => { if (n === 2) { const l = APP.timekeeper_cases[0]; l.replies = [...(l.replies || []), { at: new Date(NOW).toISOString(), text: 'here now' }] } }
+at('09:20'); await tick(); READHOOK = null
+ck('C3 · a reply that arrives while a run is going is not lost', lad().replies.some((x) => x.text === 'here now'), lad().replies)
+lad().resolved_at = 'x'; rr = await reply({ id: 'C1', phone: '4175550111', name: 'Maria', message: 'later text' }); ck('C3 · with no open missed clock-in, a later text is ignored', rr.j?.outcome === 'no open missed clock-in', rr)
 
 /* ── 7 · source checks ── */
 { const tk = fs.readFileSync(`${FN}/timekeeper-watch/index.ts`, 'utf8')

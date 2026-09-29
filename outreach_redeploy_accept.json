@@ -1,0 +1,75 @@
+{
+ "applicant-reengage": {
+  "deployed_from": "d9494c5",
+  "files": {
+   "_shared/optout.ts": {
+    "base": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937",
+    "deploy": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937"
+   },
+   "_shared/outreach.ts": {
+    "base": "f78ffb89311ee7fbbc8f09e9f386987b59c4eaea9f9e9926fb705db560aa8912",
+    "deploy": "5f442ac860a0ad89cc430d2bbabd676eeaf8665b365ce6d8f0ad94c5b4163aca"
+   },
+   "_shared/staff-auth.ts": {
+    "base": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687",
+    "deploy": "9a71a9c7814e18f5d22aef44b58c6fb08a2589fadd58a4336684d4e160892ef2"
+   },
+   "applicant-reengage/index.ts": {
+    "base": "8d7006397bcd85491c0e50adc26ef81e609586e63703a1b3951a2c19dc9f227f",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "campaign-auto": {
+  "deployed_from": "4ad619c",
+  "files": {
+   "_shared/optout.ts": {
+    "base": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937",
+    "deploy": "e412c761228e370d84319bdf04d3592ffa9e2ff48a55d52fe84014f9a58da5fe"
+   },
+   "_shared/outreach.ts": {
+    "base": "f78ffb89311ee7fbbc8f09e9f386987b59c4eaea9f9e9926fb705db560aa8912",
+    "deploy": "823dd1220245e393ef6b26f34bb0f8aadda22175b440fe6abfd0f6b05495392b"
+   },
+   "_shared/staff-auth.ts": {
+    "base": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687",
+    "deploy": "9a71a9c7814e18f5d22aef44b58c6fb08a2589fadd58a4336684d4e160892ef2"
+   },
+   "campaign-auto/index.ts": {
+    "base": "ccb0388a3b5e44c3c216964131cd04f7790b2966af2cbc33ba9a43eb1ca0a03d",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ },
+ "reference-chase": {
+  "deployed_from": "d425156",
+  "files": {
+   "_shared/job-auth.ts": {
+    "base": "56227dbb1cbebd03cac64ac90cbec467a62f4419d2aeb7eee78e9d3f356b39c1",
+    "deploy": "56227dbb1cbebd03cac64ac90cbec467a62f4419d2aeb7eee78e9d3f356b39c1"
+   },
+   "_shared/optout.ts": {
+    "base": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937",
+    "deploy": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937"
+   },
+   "_shared/outreach.ts": {
+    "base": "f78ffb89311ee7fbbc8f09e9f386987b59c4eaea9f9e9926fb705db560aa8912",
+    "deploy": "34eac013e5efe74218433e7b9ec36517e839e5adad3cac2dcfe62cde6d5dc072"
+   },
+   "_shared/staff-auth.ts": {
+    "base": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687",
+    "deploy": "ac97534d57c10aff9a84684a4a02f3239335adb532edc9e2b5ea2c98745bb687"
+   },
+   "reference-chase/index.ts": {
+    "base": "bd82d1e073b30b17931261ed67806eb592f3ffdbc0f9fdf1bd178f49003de943",
+    "deploy": null
+   }
+  },
+  "only_at_base": [],
+  "only_at_deploy": []
+ }
+}
