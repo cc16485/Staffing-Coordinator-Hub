@@ -52,6 +52,9 @@ const EXPECTED = [
      function still goes stale here rather than reporting healthy. */
   { name: 'coverage-watch',     hours: 1,  what: 'AxisCare call-off detection (Cara case opening)' },
   { name: 'coverage-run',       hours: 1,  what: 'Cara callout waves, exhaustion escalation and closure texts' },
+  /* R3 (2026-09-29): the nightly Family Circle sync from AxisCare. It only started reporting on this date, so it is
+     not flagged as "never reported" before its first night. */
+  { name: 'circles-sync',       hours: 30, what: 'the nightly Family Circle sync from AxisCare', quietUntilFirst: true },
 ]
 
 Deno.serve(async (req) => {
@@ -77,6 +80,8 @@ Deno.serve(async (req) => {
       last = beats.find((b) => b?.automation === e.name) ?? null
     }
     if (!last) {
+      // deno-lint-ignore no-explicit-any
+      if ((e as any).quietUntilFirst) continue
       problems.push(`${e.name} has never reported a run — ${e.what} may not be running at all ` +
         `(expected shortly after its next scheduled run; if this persists, its cron or deploy is missing).`)
       problemNames.push(e.name + ':never')
