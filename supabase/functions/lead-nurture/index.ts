@@ -11,6 +11,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { opEvent } from '../_shared/events.ts'
 import { ldPush } from '../_shared/lead-truth.ts'
 import { outreachGate } from '../_shared/outreach.ts'
+import { jobCaller } from '../_shared/job-auth.ts'
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
 
 const cors = {
@@ -75,11 +76,16 @@ const SEQUENCES: Record<string, Step[]> = {
 }
 
 Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
+  /* J1 (2026-09-29): only its 10am schedule or the owner's server key. Everyone else, the public key included, is refused
+     before anything is read or sent. */
+  const caller = await jobCaller(req)
+  if (!caller) return json({ error: 'not allowed' }, 401)
+  if (new URL(req.url).searchParams.get('auth_check') === '1') return json({ ok: true, caller })
   /* proactive_external: we start this, so weekdays only, 8am-6pm.
-     Policy lives in _shared/outreach.ts. */
+     Policy lives in _shared/outreach.ts. This job has no practice run, so "dry" never skips the hours. */
   const gate = outreachGate(req, 'proactive_external', json)
   if (gate) return gate
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const ghlToken = Deno.env.get('GHL_TOKEN')
   const ghlLocation = Deno.env.get('GHL_LOCATION_ID')

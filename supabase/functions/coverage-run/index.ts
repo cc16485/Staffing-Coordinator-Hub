@@ -32,6 +32,8 @@ import { maySendTo, normalisePhone, contactForOutbound } from '../_shared/outrea
 import { ZIP_LL } from '../_shared/zip-centroids.ts'
 import { shadowRoute } from '../_shared/routing.ts'
 import { opEvent } from '../_shared/events.ts'
+import { jobCaller, ownerCaller } from '../_shared/job-auth.ts'
+import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { notifyFamilyOfChange } from '../_shared/family-change-text.ts'
 import { careLevelOf } from '../_shared/care-level.ts'
 import { holdsAutoTexts, isMustCover, onlyAskCut, planLine, readPlan } from '../_shared/callin-plan.ts'
@@ -760,17 +762,19 @@ Deno.serve(async (req) => {
   let body: any = null
   try { body = await req.clone().json() } catch { body = null }
   if (body && typeof body.action === 'string') {
-    const role = (() => { try {
-      const tok = String(req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '')
-      return String(JSON.parse(atob(tok.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))?.role || '')
-    } catch { return '' } })()
-    if (role !== 'authenticated' && role !== 'service_role')
-      return new Response(JSON.stringify({ error: 'sign in to the hub to use the picker' }),
-        { status: 403, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } })
     const jr = (b: unknown, s = 200) => new Response(JSON.stringify(b, null, 2),
       { status: s, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } })
+    /* J1 (2026-09-29): an active office staff member (the sign-in is checked with Supabase Auth and against their
+       staff record, role and hub access), or the owner's server key. It used to read "signed in" from the token
+       without checking who: any account on the shared project could text caregivers from here. */
+    if (!(await ownerCaller(req))) {
+      const who = await requireStaff(sb, req, OFFICE_ROLES)
+      if (!who.ok) return jr({ error: who.error }, who.status)
+    }
     const kase = await readCaseFresh(String(body.case_id || ''))
     if (!kase) return jr({ error: 'no such coverage case' }, 404)
+    /* J1: only a shift that is still open (the Hub only shows the picker for open cases). */
+    if (kase.status !== 'open') return jr({ error: 'this coverage case is no longer open, so nobody can be asked from it' }, 409)
 
     if (body.action === 'candidates') {
       const out = await buildCandidatesForCase(kase)
@@ -891,6 +895,12 @@ Deno.serve(async (req) => {
 
     return jr({ error: `unknown action "${body.action}"` }, 400)
   }
+
+  /* J1 (2026-09-29): the plain run answers only its every-3-minutes schedule or the owner's server key. Everyone
+     else, the public key included, is refused before anything is read or sent. */
+  const caller = await jobCaller(req)
+  if (!caller) return new Response(JSON.stringify({ error: 'not allowed' }), { status: 401, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } })
+  if (q.get('auth_check') === '1') return new Response(JSON.stringify({ ok: true, caller }), { headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } })
 
   const { data: row } = await sb.from('app_data').select('data').eq('key', 'coverage_cases').maybeSingle()
   // deno-lint-ignore no-explicit-any

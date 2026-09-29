@@ -24,6 +24,7 @@
 // Supports ?dry=1 to report without sending.
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { jobCaller } from '../_shared/job-auth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -59,6 +60,11 @@ const EXPECTED = [
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
+  /* J1 (2026-09-29): only its hourly schedule or the owner's server key. Everyone else, the public key included, is
+     refused before anything is read or sent, so an outside call can no longer make the watchdog look alive. */
+  const caller = await jobCaller(req)
+  if (!caller) return json({ error: 'not allowed' }, 401)
+  if (new URL(req.url).searchParams.get('auth_check') === '1') return json({ ok: true, caller })
   const dry = new URL(req.url).searchParams.get('dry') === '1'
 
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)

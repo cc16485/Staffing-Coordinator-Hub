@@ -78,6 +78,7 @@ const clock12 = (t: string): string => {
   return `${h}${m[2] === '00' ? '' : ':' + m[2]}${h24 >= 12 ? 'pm' : 'am'}`
 }
 import { normalisePhone, contactForOutbound } from '../_shared/outreach.ts'
+import { jobCaller } from '../_shared/job-auth.ts'
 import { shadowRoute } from '../_shared/routing.ts'
 import { opEvent } from '../_shared/events.ts'
 
@@ -97,14 +98,6 @@ function axisCreds() {
   for (const n of order) { const v = Deno.env.get(n); if (v) { token = v; break } }
   const site = Deno.env.get('AXISCARE_SITE') || Deno.env.get('AXISCARE_SITE_NUMBER') || ''
   return { token, site: /^\d+$/.test(site) ? site : '' }
-}
-
-function callerRole(req: Request): string {
-  try {
-    const tok = String(req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '')
-    const payload = JSON.parse(atob(tok.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
-    return String(payload?.role || '')
-  } catch { return '' }
 }
 
 /* Chicago wall clock as a naive ISO-ish string, comparable with AxisCare's
@@ -161,8 +154,15 @@ function clockHM(c: unknown): string | null {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
+  /* J1 (2026-09-29): only its every-2-minutes schedule or the owner's server key. Everyone else, the public key included, is refused
+     before anything is read or sent. */
+  const caller = await jobCaller(req)
+  if (!caller) return json({ error: 'not allowed' }, 401)
+  if (new URL(req.url).searchParams.get('auth_check') === '1') return json({ ok: true, caller })
   const t0 = Date.now()
-  const role = callerRole(req)
+  /* The full would-text lists only for the owner's server key (a practice run from a Desktop script); the schedule
+     gets counts. The role is no longer read from the token itself. */
+  const role = caller === 'owner' ? 'service_role' : 'schedule'
 
   const { data: setRow } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
   // deno-lint-ignore no-explicit-any

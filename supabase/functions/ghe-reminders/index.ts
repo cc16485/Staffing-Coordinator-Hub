@@ -17,6 +17,7 @@
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { outreachGate } from '../_shared/outreach.ts'
+import { jobCaller } from '../_shared/job-auth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -45,11 +46,16 @@ async function beat(supabase: any, ok: boolean, note: string) {
 }
 
 Deno.serve(async (req) => {
-  /* proactive_external: we start this, so weekdays only, 8am-6pm.
-     Policy lives in _shared/outreach.ts. */
-  const gate = outreachGate(req, 'proactive_external', json)
-  if (gate) return gate
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
+  /* J1 (2026-09-29): only its daily schedule or the owner's server key. Everyone else, the public key included, is refused
+     before anything is read or sent. */
+  const caller = await jobCaller(req)
+  if (!caller) return json({ error: 'not allowed' }, 401)
+  if (new URL(req.url).searchParams.get('auth_check') === '1') return json({ ok: true, caller })
+  /* proactive_external: we start this, so weekdays only, 8am-6pm.
+     Policy lives in _shared/outreach.ts. Its practice run (dry=1) really sends nothing, so it may look at any hour. */
+  const gate = outreachGate(req, 'proactive_external', json, { practiceRun: true })
+  if (gate) return gate
 
   const url = new URL(req.url)
   const force = url.searchParams.get('force') === '1'   // for a manual check

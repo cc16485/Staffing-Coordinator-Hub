@@ -117,10 +117,13 @@ export function outreachGate(
   req: Request,
   kind: OutreachClass,
   json: (b: unknown, s?: number) => Response,
+  opts: { practiceRun?: boolean } = {},
 ): Response | null {
-  // A dry run must be inspectable at any hour, and must never mark anything.
+  /* A dry run must be inspectable at any hour, and must never mark anything. J1 (2026-09-29): only a sender that
+     really does a practice run on ?dry=1 (and says so with practiceRun) skips the hours. A sender that never reads
+     "dry" used to send for real outside the hours when a request carried it; now it keeps its hours. */
   const dry = new URL(req.url).searchParams.get('dry') === '1'
-  if (dry) return null
+  if (dry && opts.practiceRun === true) return null
   const v = maySend(kind)
   if (v.allowed) return null
   return json({ ok: true, skipped: v.reason, outreach: v.detail })

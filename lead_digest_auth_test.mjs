@@ -22,15 +22,20 @@ globalThis.fetch = async (url, o) => { url = String(url); CALLS.push(url); const
   if (url.includes('/contacts/upsert')) return new Response(JSON.stringify({ contact: { id: 'C:' + body.email, email: body.email } }), { status: 200 })
   if (url.includes('/conversations/messages')) { MAIL.push({ to: body.contactId.slice(2), subject: body.subject, html: body.html }); return new Response('{}', { status: 200 }) }
   return new Response('{}', { status: 404 }) }
-const ENV = { SUPABASE_URL: 'https://x', SUPABASE_SERVICE_ROLE_KEY: 'k', GHL_TOKEN: 'g', GHL_LOCATION_ID: 'loc' }
+const JOBSEC = 'j'.repeat(64)   // J1: the schedule's vault secret
+const ENV = { SUPABASE_URL: 'https://x', SUPABASE_SERVICE_ROLE_KEY: 'k', GHL_TOKEN: 'g', GHL_LOCATION_ID: 'loc', HUB_JOB_SECRET: JOBSEC }
 let handler; globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (h) => { handler = h } }
 const F = 'supabase/functions', tmp = fs.mkdtempSync(path.join(process.cwd(), '_ld_'))
 try {
+  /* J1: the shared lock, with its database probe answered "no" (no key here is the owner's) */
+  fs.writeFileSync(path.join(tmp, 'job-auth.ts'), fs.readFileSync(path.join(F, '_shared/job-auth.ts'), 'utf8')
+    .replace(/^import \{ createClient \} from .*$/m, "const createClient = () => ({ from: () => ({ select: () => ({ limit: async () => ({ error: { message: 'denied' } }) }) }) })")
+    .replace("from './staff-auth.ts'", "from '" + path.resolve(F, '_shared/staff-auth.ts') + "'"))
   const src = fs.readFileSync(path.join(F, 'lead-digest/index.ts'), 'utf8')
     .replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
-    .replace(/from '\.\.\/_shared\/(\w[\w-]*)\.ts'/g, (_, m) => "from '" + path.resolve(F, '_shared', m + '.ts') + "'")
+    .replace(/from '\.\.\/_shared\/(\w[\w-]*)\.ts'/g, (_, m) => "from '" + (m === 'job-auth' ? path.join(tmp, 'job-auth.ts') : path.resolve(F, '_shared', m + '.ts')) + "'")
   fs.writeFileSync(path.join(tmp, 'ld.ts'), src); await import(path.join(tmp, 'ld.ts'))
-  const call = async (qs, jwt) => { const r = await handler(new Request('https://x/functions/v1/lead-digest' + qs, { headers: jwt ? { Authorization: 'Bearer ' + jwt } : {} }))
+  const call = async (qs, jwt, extra = {}) => { const r = await handler(new Request('https://x/functions/v1/lead-digest' + qs, { headers: { ...(jwt ? { Authorization: 'Bearer ' + jwt } : {}), ...extra } }))
     let j = null; try { j = await r.json() } catch { /* */ } return { status: r.status, j } }
   reset(); let r = await call('?to=outsider%40evil.test&force=1')
   ck('no sign-in, ?to= an outside address: refused (401), no email, nothing read from GoHighLevel', r.status === 401 && !MAIL.length && !CALLS.length, r)
@@ -43,8 +48,12 @@ try {
   reset(); r = await call('?to=samantha%40mo-care.com&force=1', 's'); ck('the listed admin gets the Full Picture edition', MAIL.length === 1 && MAIL[0].html.includes('Full Picture'), MAIL.map((m) => m.to))
   reset(); r = await call('?to=angiel%40mo-care.com&force=1', 'a'); ck('office staff NOT on the recipient list get the personal edition, never admin (it used to default to admin)', MAIL.length === 1 && !MAIL[0].html.includes('Full Picture'), MAIL.map((m) => m.to))
   reset(); r = await call('')
-  ck('the plain scheduled run still needs no sign-in, and only ever mails the configured recipients', r.status === 200 && (r.j.status === 'outside the morning window' || r.j.status === 'already sent today' ||
+  ck('J1: the plain morning run with no key is now refused (401), nothing read or sent', r.status === 401 && !MAIL.length && !CALLS.length, r)
+  reset(); r = await call('', 'public-anon-key'); ck('J1: the plain morning run with the public key is refused', r.status === 401 && !MAIL.length, r)
+  reset(); r = await call('', null, { 'x-cron-secret': JOBSEC })
+  ck('the schedule (its vault secret) still runs, and only ever mails the configured recipients', r.status === 200 && (/outside the morning window|already sent today|weekend/.test(r.j.status) ||
      MAIL.every((m) => ['samantha@mo-care.com', 'krystal@mo-care.com'].includes(m.to))), { r, MAIL: MAIL.map((m) => m.to) })
+  ck('J1: the scheduled reply names no staff email', !JSON.stringify(r.j).includes('@'), r.j)
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1)

@@ -30,7 +30,7 @@ globalThis.fetch = async (url, o) => {
 };
 const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'k', GHL_TOKEN: 'g', GHL_LOCATION_ID: 'loc', LEAD_INTAKE_TOKEN: 'L', AXISCARE_TOKEN: 't', AXISCARE_SITE: '16485' };
 let handler; globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (h) => { handler = h; } };
-const load = async (name) => { const src = fs.readFileSync(`${FN}/${name}/index.ts`, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db');
+const load = async (name) => { const src = fs.readFileSync(`${FN}/${name}/index.ts`, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db').replace(/(['"])\.\.\/_shared\/job-auth\.ts\1/, "'data:text/javascript,export const jobCaller=async()=>\\'cron\\';export const ownerCaller=async()=>false'") /* J1: these checks start where the schedule is let in; j1_job_locks_test.mjs tests the lock */;
   const tmp = path.join(process.cwd(), FN, name, '_t.ts'); fs.writeFileSync(tmp, src); try { await import(tmp + '?' + Math.random()); } finally { fs.unlinkSync(tmp); } return handler; };
 const hoursAgo = (h) => new Date(Date.now() - h * 3600e3).toISOString();
 const web = [{ channel: 'web', direction: 'in', outcome: 'inquiry', actor: 'family' }];
