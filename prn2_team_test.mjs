@@ -59,11 +59,14 @@ globalThis.fetch = async (url, o) => {
 const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'k', AXISCARE_TOKEN: 't', AXISCARE_SITE: '16485' }
 let handler; globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (h) => { handler = h } }
 fs.writeFileSync(`${FN}/_shared/_staff-auth_stub.ts`, "export const OFFICE_ROLES = ['owner_admin','care_coordinator','staffing_coordinator']\nexport const requireStaff = async () => globalThis.__staff()\n")
-process.on('exit', () => { try { fs.unlinkSync(`${FN}/_shared/_staff-auth_stub.ts`) } catch { /* */ } })
+/* the owner's key, as job-auth's ownerCaller recognises it (its probe is tested with the jobs) */
+fs.writeFileSync(`${FN}/_shared/_job-auth_prn.ts`, "export const ownerCaller = async (req) => (req.headers.get('Authorization') || '') === 'Bearer ' + globalThis.__ownerKey\n")
+process.on('exit', () => { for (const f of ['_staff-auth_stub.ts', '_job-auth_prn.ts']) { try { fs.unlinkSync(`${FN}/_shared/${f}`) } catch { /* */ } } })
 globalThis.__staff = () => STAFF.ok ? STAFF : { ok: false, status: 401, error: 'Sign in first.' }
 const src = fs.readFileSync(`${FN}/prn-team/index.ts`, 'utf8')
   .replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
   .replace(/(['"])\.\.\/_shared\/staff-auth\.ts\1/, "'../_shared/_staff-auth_stub.ts'")
+  .replace(/(['"])\.\.\/_shared\/job-auth\.ts\1/, "'../_shared/_job-auth_prn.ts'")
 const tmp = path.join(process.cwd(), FN, 'prn-team', '_t.ts'); fs.writeFileSync(tmp, src)
 let M; try { M = await import(tmp + '?' + Math.random()) } finally { fs.unlinkSync(tmp) }
 const call = async (body) => { const r = await handler(new Request('https://x/functions/v1/prn-team', { method: 'POST', headers: { Authorization: 'Bearer x' }, body: JSON.stringify(body) })); return { status: r.status, j: await r.json() } }
@@ -130,13 +133,13 @@ ck('no visit, shift or payroll writes anywhere in it (one rate per person, nothi
 ck('rates come from the approved Pay rates: PRN CNA Team and CNA', M.windowsFrom && /rec\?\.prn_cna\?\.min/.test(code) && /rec\?\.cna\?\.min/.test(code))
 ck('the class rules: "PRN Team" reads as PRN Team; "CERTIFIED NURSES AIDE" and code CNA read as CNA; others don\'t', M.isPrnClass({ label: 'PRN Team' }) && M.isCnaClass({ label: 'CERTIFIED NURSES AIDE' })
    && M.isCnaClass({ code: 'CNA' }) && !M.isPrnClass({ label: 'VACCINATED' }) && !M.isCnaClass({ label: 'CAREGIVER' }))
-reset(); ENV.SUPABASE_SERVICE_ROLE_KEY = 'svc-key'
+reset(); globalThis.__ownerKey = 'a-differently-formatted-owner-key'; ENV.SUPABASE_SERVICE_ROLE_KEY = 'svc-key'
 const callKey = async (body, key) => { const r = await handler(new Request('https://x/functions/v1/prn-team', { method: 'POST', headers: { Authorization: 'Bearer ' + key }, body: JSON.stringify(body) })); return { status: r.status, j: await r.json() } }
-r = await callKey({ action: 'vocab' }, 'svc-key'); ck('the server key can ask which classes exist (read only)', r.status === 200 && r.j.prn === 'PRN Team' && r.j.cna === 'CERTIFIED NURSES AIDE' && !PATCHES.length, r)
-r = await callKey({ action: 'move', applicant_id: A1, to: 'ongoing' }, 'svc-key'); ck('... and nothing else', r.status === 403 && !T.pay_track_history.length, r)
+r = await callKey({ action: 'vocab' }, 'a-differently-formatted-owner-key'); ck('the owner\'s server key can ask which classes exist (read only), even when its format differs from the one the function holds', r.status === 200 && r.j.prn === 'PRN Team' && r.j.cna === 'CERTIFIED NURSES AIDE' && !PATCHES.length, r)
+r = await callKey({ action: 'move', applicant_id: A1, to: 'ongoing' }, 'a-differently-formatted-owner-key'); ck('... and nothing else', r.status === 403 && !T.pay_track_history.length, r)
 STAFF.ok = false; r = await callKey({ action: 'vocab' }, 'not-the-key'); ck('any other key is treated as a person and refused without a staff sign-in', r.status === 401, r)
 /* PRN3: the shift record */
-reset(); ENV.SUPABASE_SERVICE_ROLE_KEY = 'k'
+reset(); globalThis.__ownerKey = 'nobody-has-this'; ENV.SUPABASE_SERVICE_ROLE_KEY = 'k'
 await call({ action: 'start', applicant_id: A1 }); trk(A1).axiscare_caregiver_id = '9001'
 r = await call({ action: 'shift', axiscare_caregiver_id: '9001', case_id: 'cv1', kind: 'confirmed', shift_date: '2026-10-04' })
 ck('PRN3 shift: a PRN member confirmed on a shift is recorded, by who', r.j.outcome === 'recorded' && T.prn_shift_log.length === 1 && T.prn_shift_log[0].recorded_by === 'Krystal' && T.prn_shift_log[0].applicant_id === A1, [r, T.prn_shift_log])
