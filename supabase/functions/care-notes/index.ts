@@ -9,12 +9,19 @@
 //                   Never a note's words, a name or a number. READ ONLY: every AxisCare call is a GET; nothing is
 //                   written anywhere; nothing is sent.
 //
-// Later steps (each with its own go) add the profile read (N1) and the flagging run (N2).
+//   POST {axiscare_client_id}   N1: signed-in office staff. The last 14 days of that client's visits, newest first:
+//                   date, caregiver, the care note (one per caregiver per day), and tasks not done or carrying a
+//                   note. Read live from AxisCare each time; nothing is stored or sent.
+//
+// A later step (its own go) adds the flagging run (N2).
 // -----------------------------------------------------------------------------
 import { jobCaller } from '../_shared/job-auth.ts'
+import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const AC_VERSION = '2023-10-01'
-const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
+const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
+const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
 function axisCreds() {
   let token = ''
   for (const n of ['AXISCARE_API_KEY', 'AXISCARE_TOKEN', 'AXISCARE_VISITS_TOKEN']) { const v = Deno.env.get(n); if (v) { token = v; break } }
@@ -78,7 +85,8 @@ export async function probe(fetchImpl?: typeof fetch) {
     if (!out.fields_on_a_visit.length) out.fields_on_a_visit = Object.keys(v).sort()
     const note = typeof v.careNote === 'string' ? v.careNote.trim() : ''
     // one care note per client + caregiver + day: count each once
-    const k = `${v?.client?.id}|${v?.caregiver?.id}|${String(v?.startDate ?? v?.scheduledStartDate ?? '').slice(0, 10)}`
+    const st0 = v?.startDate ?? v?.scheduledStartDate
+    const k = `${v?.client?.id}|${v?.caregiver?.id}|${st0 ? new Date(st0).toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10) : ''}`
     if (note && !seenNote.has(k)) { seenNote.add(k); out.with_care_note++; chars += note.length }
     const adls = rowsOf(v.adls)
     if (adls.length) out.visits_with_tasks++
@@ -96,12 +104,69 @@ export async function probe(fetchImpl?: typeof fetch) {
   return out
 }
 
+/* N1: one client's shifts, newest first. Plain visit ids work (proven by 333). */
+export async function clientNotes(ax: string, days = 14) {
+  const { token, site } = axisCreds()
+  if (!token || !/^\d+$/.test(site)) return { error: 'AxisCare credentials not set on this project' }
+  const base = `https://${site}.axiscare.com`
+  const head = { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': AC_VERSION }
+  // deno-lint-ignore no-explicit-any
+  const list: any[] = []
+  let url: string | null = `${base}/api/visits?clientIds=${encodeURIComponent(ax)}&startDate=${chiDay(-days)}&endDate=${chiDay(0)}`
+  for (let page = 0; url && page < 6; page++) {
+    const r: Response = await fetch(url, { headers: head })
+    if (r.status === 429) return { error: 'AxisCare asked us to slow down; try again in a minute' }
+    if (!r.ok) return { error: 'AxisCare answered ' + r.status }
+    // deno-lint-ignore no-explicit-any
+    const j: any = await r.json().catch(() => ({}))
+    for (const v of rowsOf(j?.results?.visits)) if (v && !v.removed && String(v?.client?.id ?? '') === String(ax)) list.push(v)
+    url = j?.results?.nextPage ?? j?.nextPage ?? null
+  }
+  const now = Date.now()
+  const started = list.filter((v) => { const t = new Date(v?.startDate ?? v?.scheduledStartDate ?? 0).getTime(); return t && t < now })
+    .sort((a, b) => String(b?.startDate ?? b?.scheduledStartDate ?? '').localeCompare(String(a?.startDate ?? a?.scheduledStartDate ?? '')))
+    .slice(0, 40)
+  const seen = new Set<string>()
+  const shifts = []
+  let slowed = false
+  for (const s of started) {
+    const { v, form } = await getVisit(base, head, String(s?.id ?? ''))
+    if (form === 'rate-limited') { slowed = true; break }
+    if (!v) continue
+    const cg = [String(v?.caregiver?.firstName ?? '').trim(), String(v?.caregiver?.lastName ?? '').trim()].filter(Boolean).join(' ')
+    /* AxisCare keeps one care note per client, caregiver and (local) visit date */
+    const st0 = v?.startDate ?? v?.scheduledStartDate
+    const day = st0 ? new Date(st0).toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10) : ''
+    const k = `${v?.caregiver?.id}|${day}`
+    const note = typeof v.careNote === 'string' ? v.careNote.trim() : ''
+    const tasks = rowsOf(v.adls).map((a) => ({ name: String(a?.name ?? a?.adlKey ?? 'Task'), status: Number(a?.status),
+      note: typeof a?.note === 'string' ? a.note.trim() : '' })).filter((a) => a.status === 0 || a.note)
+    shifts.push({ visit_id: String(v?.id ?? ''), start: v?.startDate ?? v?.scheduledStartDate ?? null, end: v?.endDate ?? v?.scheduledEndDate ?? null,
+      caregiver: cg, care_note: note && !seen.has(k) ? note : '', same_note_as_earlier_visit: !!(note && seen.has(k)),
+      tasks_not_done: tasks.filter((a) => a.status === 0).map((a) => ({ name: a.name, note: a.note })),
+      task_notes: tasks.filter((a) => a.status !== 0 && a.note).map((a) => ({ name: a.name, note: a.note })),
+      tasks_total: rowsOf(v.adls).length })
+    if (note) seen.add(k)
+  }
+  return { ok: true, days, shifts, more_than_shown: started.length < list.filter((v) => new Date(v?.startDate ?? v?.scheduledStartDate ?? 0).getTime() < now).length, slowed }
+}
+
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok')
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   const q = new URL(req.url).searchParams
   if (q.get('probe') === '1') {
     if ((await jobCaller(req, false)) !== 'owner') return json({ error: 'not allowed' }, 401)
     return json(await probe())
+  }
+  // deno-lint-ignore no-explicit-any
+  let b: any = {}
+  try { b = await req.json() } catch { b = {} }
+  const ax = String(b?.axiscare_client_id ?? '').trim()
+  if (ax) {
+    const who = await requireStaff(createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!), req, OFFICE_ROLES)
+    if (!who.ok) return json({ error: who.error }, who.status)
+    if (!/^\d+$/.test(ax)) return json({ error: 'That is not an AxisCare client number.' }, 400)
+    return json(await clientNotes(ax))
   }
   return json({ error: 'unknown request' }, 400)
 })

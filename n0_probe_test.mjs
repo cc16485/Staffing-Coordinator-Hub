@@ -18,7 +18,7 @@ globalThis.fetch = async (url) => { url = String(url); CALLS.push(url)
   return new Response('{}', { status: 404 }) }
 const ENV = { SUPABASE_URL: 'https://x', SUPABASE_SERVICE_ROLE_KEY: SVC, AXISCARE_TOKEN: 'axc_x', AXISCARE_SITE: '16485' }
 let handler; globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (h) => { handler = h } }
-const src = fs.readFileSync(`${FN}/care-notes/index.ts`, 'utf8').replace("'../_shared/job-auth.ts'", "'../_shared/_job-auth_t.ts'")
+const src = fs.readFileSync(`${FN}/care-notes/index.ts`, 'utf8').replace("'../_shared/job-auth.ts'", "'../_shared/_job-auth_t.ts'").replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => ({})')
 const tmp = path.join(process.cwd(), FN, 'care-notes', '_t.ts'); fs.writeFileSync(tmp, src)
 try { await import(tmp) } finally { fs.unlinkSync(tmp); fs.unlinkSync(`${FN}/_shared/_job-auth_t.ts`) }
 const call = async (auth) => { const r = await handler(new Request('https://x/functions/v1/care-notes?probe=1', { method: 'POST', headers: auth ? { Authorization: 'Bearer ' + auth } : {} })); return { s: r.status, j: await r.json() } }
