@@ -792,7 +792,12 @@ Deno.serve(async (req) => {
     const nsArr: any[] = Array.isArray(nsRow?.data) ? nsRow!.data : []
     const ns = nsArr.find((x: any) => x?.id === 'state') ?? { id: 'state', last_hour: '' }
     const forceNotes = new URL(req.url).searchParams.get('notes') === '1'
-    if (ns.last_hour !== hourStamp || forceNotes) {
+    /* 2026-09-29 (her call): OFF. This guessed at a rated notes field AxisCare doesn't have, so it never matched a
+       note. The care-notes function (N2) reads the real careNote every two hours and flags concerns. Only runs again
+       if the LEGACY_NOTE_SWEEP secret is set to 'on'. */
+    const legacyNotes = Deno.env.get('LEGACY_NOTE_SWEEP') === 'on'
+    if (!legacyNotes) (globalThis as any).__noteSwept = 'off (replaced by care-notes, 2026-09-29)'
+    if (legacyNotes && (ns.last_hour !== hourStamp || forceNotes)) {
       const { token: tk, site: st } = axisCreds()
       const chiToday = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
       const chiYest = new Date(Date.now() - 864e5)
