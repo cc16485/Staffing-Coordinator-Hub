@@ -25,6 +25,7 @@
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
+import { approvedRules, rulesCheck } from '../_shared/approved-rules.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -76,6 +77,8 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  /* G2: which rules this job would run and whether each is approved (owner / schedule only; nothing is run) */
+  if (new URL(req.url).searchParams.get('rules_check') === '1') return json(await rulesCheck(supabase, ['obligations.js', 'eligibility-rules.js']))
 
   const started = new Date().toISOString()
   const t0 = Date.now()
@@ -84,10 +87,9 @@ Deno.serve(async (req) => {
   let O: any = null
   let meta = { url: OBLIG_URL, bytes: 0, fetched_at: '' }
   try {
-    const r = await fetch(OBLIG_URL + '?v=' + Math.floor(Date.now() / 300000),
-      { headers: { Accept: 'application/javascript' } })
-    if (!r.ok) throw new Error('obligations.js responded ' + r.status)
-    const src = await r.text()
+    const g = await approvedRules(supabase, 'obligations.js')
+    if (!g.ok) throw new Error(g.error)
+    const src = g.src
     if (!/CCOblig/.test(src)) throw new Error('fetched file does not define CCOblig')
     meta = { url: OBLIG_URL, bytes: src.length, fetched_at: new Date().toISOString() }
     ;(0, eval)(src)
@@ -107,10 +109,9 @@ Deno.serve(async (req) => {
      the compliance source will honestly report an empty read. */
   let rulesMeta: Record<string, unknown> = { url: RULES_URL, bytes: 0, loaded: false }
   try {
-    const rr = await fetch(RULES_URL + '?v=' + Math.floor(Date.now() / 300000),
-      { headers: { Accept: 'application/javascript' } })
-    if (!rr.ok) throw new Error('rules responded ' + rr.status)
-    const rsrc = await rr.text()
+    const gr = await approvedRules(supabase, 'eligibility-rules.js')
+    if (!gr.ok) throw new Error(gr.error)
+    const rsrc = gr.src
     if (!/CCElig/.test(rsrc)) throw new Error('fetched file does not define CCElig')
     ;(0, eval)(rsrc)
     rulesMeta = { url: RULES_URL, bytes: rsrc.length, loaded: !!(globalThis as any).CCElig }

@@ -27,6 +27,7 @@
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
+import { approvedRules, rulesCheck } from '../_shared/approved-rules.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 
 const cors = {
@@ -37,7 +38,7 @@ const cors = {
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b, null, 2), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
 
-const ENGINE_URL = 'https://cc.mo-care.com/launch-evidence.js'
+const ENGINE_FILE = 'launch-evidence.js', ENGINE_URL = 'https://cc.mo-care.com/' + ENGINE_FILE
 const AC_VERSION = Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01'
 const AUTOMATION = 'automation:launch-evidence'
 const MAX_PER_RUN = 25          // launches read per scheduled run
@@ -143,15 +144,19 @@ Deno.serve(async (req) => {
     if (!email) return json({ error: 'sign in to the hub first' }, 401)
   }
   const full = caller === 'owner'
+  if (caller) {
+    /* G2: which rules this job would run and whether each is approved (owner / schedule only; nothing is run) */
+    if (new URL(req.url).searchParams.get('rules_check') === '1') return json(await rulesCheck(sb, [ENGINE_FILE]))
+  }
   const started = new Date().toISOString(), t0 = Date.now()
 
   /* ── the shared decision file; no local fallback ON PURPOSE ─────────────── */
   // deno-lint-ignore no-explicit-any
   let X: any = null
   try {
-    const r = await fetch(ENGINE_URL + '?v=' + Math.floor(Date.now() / 300000), { headers: { Accept: 'application/javascript' } })
-    if (!r.ok) throw new Error('launch-evidence.js responded ' + r.status)
-    const src = await r.text()
+    const g = await approvedRules(sb, ENGINE_FILE)
+    if (!g.ok) throw new Error(g.error)
+    const src = g.src
     if (!/CCLaunchEvidence/.test(src)) throw new Error('fetched file does not define CCLaunchEvidence')
     ;(0, eval)(src)
     // deno-lint-ignore no-explicit-any

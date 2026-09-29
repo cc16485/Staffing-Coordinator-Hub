@@ -22,6 +22,7 @@
 // ---------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
+import { approvedRules, rulesCheck } from '../_shared/approved-rules.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -31,7 +32,7 @@ const cors = {
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b, null, 2), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
 
-const ENGINE_URL = 'https://cc.mo-care.com/promise-engine.js'
+const ENGINE_FILE = 'promise-engine.js', ENGINE_URL = 'https://cc.mo-care.com/' + ENGINE_FILE
 
 export function jwtRole(authHeader: string | null): string | null {
   const m = /^Bearer\s+(.+)$/.exec(authHeader ?? '')
@@ -59,6 +60,8 @@ Deno.serve(async (req) => {
   /* names in the reply only for the owner's server key (a Desktop report), never from the token's own say-so */
   const full = caller === 'owner'
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  /* G2: which rules this job would run and whether each is approved (owner / schedule only; nothing is run) */
+  if (new URL(req.url).searchParams.get('rules_check') === '1') return json(await rulesCheck(supabase, [ENGINE_FILE]))
   const started = new Date().toISOString(), t0 = Date.now()
 
   /* ── 1. The shared decision file. No local fallback ON PURPOSE. ─────────── */
@@ -66,9 +69,9 @@ Deno.serve(async (req) => {
   let P: any = null
   let engine: Record<string, unknown> = { url: ENGINE_URL, bytes: 0 }
   try {
-    const r = await fetch(ENGINE_URL + '?v=' + Math.floor(Date.now() / 300000), { headers: { Accept: 'application/javascript' } })
-    if (!r.ok) throw new Error('promise-engine.js responded ' + r.status)
-    const src = await r.text()
+    const g = await approvedRules(supabase, ENGINE_FILE)
+    if (!g.ok) throw new Error(g.error)
+    const src = g.src
     if (!/CCPromise/.test(src) || !/workItems/.test(src)) throw new Error('fetched file does not define CCPromise.workItems')
     ;(0, eval)(src)
     // deno-lint-ignore no-explicit-any

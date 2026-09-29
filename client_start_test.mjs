@@ -68,7 +68,8 @@ ck('hub: the page has no second copy of the rules', !/function socIsStuck\(|func
 /* the REAL client-start-run */
 const FN = path.resolve('supabase/functions/client-start-run/index.ts');
 const src = fs.readFileSync(FN, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
-  .replace("'../_shared/job-auth.ts'", "'" + path.resolve('test_stubs/job-auth-by-role.mjs') + "'");   // J2: lock stand-in (the real one: j2_job_locks_test.mjs)
+  .replace("'../_shared/job-auth.ts'", "'" + path.resolve('test_stubs/job-auth-by-role.mjs') + "'")
+  .replace("'../_shared/approved-rules.ts'", "'" + path.resolve('test_stubs/approved-rules-open.mjs') + "'");   // G2: approval stand-in (the real one: g2_approved_rules_test.mjs)   // J2: lock stand-in (the real one: j2_job_locks_test.mjs)
 const tmp = path.join(process.cwd(), '_csr.ts'); fs.writeFileSync(tmp, src);
 let handler; const env = { SUPABASE_URL: 'http://x', SUPABASE_SERVICE_ROLE_KEY: 'k' };
 globalThis.Deno = { env: { get: (k) => env[k] }, serve: (h) => { handler = h; } };

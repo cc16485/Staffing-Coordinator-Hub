@@ -31,12 +31,20 @@ GROUPS = {
             "fns": ["ghe-reminders"], "sql": None},
     "G1": {"title": "G1 · THE TWO RULE JOBS THAT WEREN'T LOCKED",
            "fns": ["obligations-run", "eligibility-sweep"], "sql": None, "unscheduled": True},
+    "G2": {"title": "G2 · THE SERVER RUNS ONLY RULES YOU APPROVED",
+           "fns": ["client-start-run", "promise-run", "launch-evidence", "obligations-run", "eligibility-sweep"],
+           "sql": "g2_rules_approved.sql", "sql_first": True, "accept": "rules_gate_accept.json",
+           "unscheduled": ["obligations-run", "eligibility-sweep"], "after": "Rule jobs locked report.txt",
+           "rules": {"client-start-run": ["client-start.js"], "promise-run": ["promise-engine.js"], "launch-evidence": ["launch-evidence.js"],
+                     "obligations-run": ["obligations.js", "eligibility-rules.js"], "eligibility-sweep": ["eligibility-rules.js"]}},
     "J2": {"title": "J2 · THE 7 JOBS THAT ONLY UPDATE THE HUB",
            "fns": ["coverage-watch", "client-status-observe", "client-status-review", "launch-evidence", "client-start-run",
                    "promise-run", "caregiver-census-observe"],
            "sql": None},
 }
 G = GROUPS[GROUP]; FNS = G["fns"]
+UNSCHED = set(FNS) if G.get("unscheduled") is True else set(G.get("unscheduled") or [])
+HUBROOT = os.environ.get("SB_HUBROOT", ""); SITE = os.environ.get("SB_SITE_BASE", "https://cc.mo-care.com/")
 lines = []; fails = []; HIDE = []
 def scrub(s):
     s = str(s)
@@ -103,14 +111,14 @@ def with_param(url, p): return url + ("&" if "?" in url else "?") + p
 
 say(G["title"]); say("Report " + dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")); say()
 say("PART 1 · READ ONLY (nothing changes)")
-ACCEPT_PATH = os.path.join(REPO, "job_locks_accept.json")
+ACCEPT_PATH = os.path.join(REPO, G.get("accept", "job_locks_accept.json"))
 badb = False
 for name, want in SHAS.items():
     if name.endswith(".json") or name.endswith(".sql"): path = os.path.join(REPO, name)
     elif name.startswith("_shared/"): path = os.path.join(FNROOT, name + ".ts")
     else: path = os.path.join(FNROOT, name, "index.ts")
     if not os.path.exists(path) or sha(path) != want: bad(f"{name} is not the reviewed build"); badb = True
-need = set(FNS) | {"_shared/job-auth", "job_locks_accept.json"} | ({"_shared/outreach"} if GROUP in ("J1", "J1b") else set()) | ({G["sql"]} if G["sql"] else set())
+need = set(FNS) | {"_shared/job-auth", G.get("accept", "job_locks_accept.json")} | ({"_shared/approved-rules"} if G.get("rules") else set()) | ({"_shared/outreach"} if GROUP in ("J1", "J1b") else set()) | ({G["sql"]} if G["sql"] else set())
 if badb or not need <= set(SHAS): say("  STOP. Nothing was run."); done(2)
 say(f"  ✓ the {len(FNS)} jobs, the shared lock and the comparison list are the reviewed builds")
 def j1_clean():
@@ -127,6 +135,24 @@ if GROUP == "J2":
     why = j1_clean()
     if not why: bad("341 (J1) has not finished cleanly on this Mac (its report doesn't say DONE, nor 341 + 341b). Nothing was changed."); done(3)
     say("  ✓ " + why)
+if G.get("after"):
+    prev = os.path.expanduser("~/Desktop/" + G["after"]); txt = open(prev).read() if os.path.exists(prev) else ""
+    if "RESULT: DONE" not in txt: bad("344 has not finished cleanly on this Mac (its report doesn't say DONE). Nothing was changed."); done(3)
+    say("  ✓ 344 finished cleanly")
+RULE_FPS = {}
+if G.get("rules"):
+    files = sorted({f for fs in G["rules"].values() for f in fs})
+    for f in files:
+        lp = os.path.join(HUBROOT, f)
+        if not HUBROOT or not os.path.exists(lp): bad(f"{f}: the Hub folder's copy isn't here, so it can't be compared. Nothing was changed."); done(4)
+        try:
+            req = urllib.request.Request(SITE + f + "?nocache=" + str(int(time.time())), headers={"User-Agent": "cc-rules/1.0", "Cache-Control": "no-cache"})
+            with urllib.request.urlopen(req, timeout=60) as r: served = r.read()
+        except Exception as e: bad(f"{f}: could not download it from the Hub site ({type(e).__name__}). Nothing was changed."); done(4)
+        fs_, fl = hashlib.sha256(served).hexdigest(), sha(lp)
+        if fs_ != fl: bad(f"{f}: what cc.mo-care.com serves right now is NOT the file on GitHub (site {fs_[:12]}, GitHub {fl[:12]}). Nothing was changed: approving it would approve something unreviewed."); done(4)
+        RULE_FPS[f] = fs_
+    say("  ✓ the Hub site serves exactly GitHub's rules files: " + " · ".join(f"{f} {RULE_FPS[f][:12]}" for f in files))
 if GROUP == "J1b":
     j1 = open(os.path.expanduser("~/Desktop/Job locks J1 report.txt")).read() if os.path.exists(os.path.expanduser("~/Desktop/Job locks J1 report.txt")) else ""
     if "Left exactly as they were: ghe-reminders." not in j1: bad("341's report on this Mac doesn't show ghe-reminders left alone, so 341b has nothing to do. Nothing was changed."); done(3)
@@ -159,8 +185,8 @@ for fn in FNS:
                 p = parse_job(fn, c)
                 if not p: why = f"its schedule '{j['jobname']}' is not a single plain call of its address, so it was not touched"; break
                 jobs.append({"name": j["jobname"], "schedule": j["schedule"], "active": j["active"], "url": p[0], "body": p[1], "timeout": p[2]})
-        if not why and not jobs and not G.get("unscheduled"): why = "no schedule calls it (unexpected), so it was not touched"
-        if not why and jobs and G.get("unscheduled"): why = "a schedule calls it (unexpected: it should only be started by your Desktop scripts), so it was not touched"
+        if not why and not jobs and fn not in UNSCHED: why = "no schedule calls it (unexpected), so it was not touched"
+        if not why and jobs and fn in UNSCHED: why = "a schedule calls it (unexpected: it should only be started by your Desktop scripts), so it was not touched"
     if not why:
         tmp = tempfile.mkdtemp(prefix="jl-live-"); os.makedirs(os.path.join(tmp, "supabase"), exist_ok=True)
         d = subprocess.run([SUPA, "functions", "download", fn, "--project-ref", REF, "--use-api"], cwd=tmp,
@@ -209,6 +235,18 @@ if not plan: bad("no job can be changed safely. Nothing was changed."); done(5)
 
 say(); say("PART 2 · CHANGE")
 deployed = []
+if G.get("sql_first"):
+    ok, _ = sql(open(os.path.join(REPO, G["sql"])).read())
+    vals = ", ".join(f"({lit(f)}, {lit(h)}, {lit('G2 first approval: the file cc.mo-care.com served on ' + dt.date.today().isoformat() + ', same as GitHub')})" for f, h in RULE_FPS.items())
+    ok2, _ = sql(f"insert into public.rules_approved (file, sha256, note) values {vals} on conflict (file, sha256) do nothing")
+    ok3, rv = sql(f"""select (select count(*)::int from public.rules_approved where (file, sha256) in ({', '.join(f'({lit(f)}, {lit(h)})' for f, h in RULE_FPS.items())})) as n,
+                      has_table_privilege('anon', 'public.rules_approved', 'SELECT') or has_table_privilege('anon', 'public.rules_approved', 'INSERT')
+                      or has_table_privilege('anon', 'public.rules_approved', 'UPDATE') or has_table_privilege('anon', 'public.rules_approved', 'DELETE') as anon_any,
+                      has_table_privilege('authenticated', 'public.rules_approved', 'SELECT') or has_table_privilege('authenticated', 'public.rules_approved', 'INSERT')
+                      or has_table_privilege('authenticated', 'public.rules_approved', 'UPDATE') or has_table_privilege('authenticated', 'public.rules_approved', 'DELETE') as auth_any""")
+    if not (ok and ok2 and ok3 and rv and rv[0]["n"] == len(RULE_FPS) and rv[0]["anon_any"] is False and rv[0]["auth_any"] is False):
+        bad("the approved-rules list could not be set up exactly (" + str(rv)[:160] + "). No job was deployed."); done(5)
+    say(f"  ✓ the approved-rules list exists, only the server can read or change it, and holds today's {len(RULE_FPS)} files")
 for fn in FNS:
     if fn not in plan: continue
     p = plan[fn]; good = True
@@ -232,7 +270,7 @@ for fn in FNS:
     deployed.append(fn)
     say(f"  ✓ {fn}: " + (f"{len(p['jobs'])} schedule{'s' if len(p['jobs']) != 1 else ''} now send{'s' if len(p['jobs']) == 1 else ''} the secret from the vault (same time and on/off) · " if p["jobs"] else "")
         + f"deployed, now version {after.get('version')} (was {p['version']}), gateway setting kept")
-if GROUP == "J1" and G["sql"]:
+if GROUP == "J1" and G["sql"] and not G.get("sql_first"):
     ok, _ = sql(open(os.path.join(REPO, G["sql"])).read())
     ok2, rs2 = sql("""select (select keep_audio_days from public.recordings_settings where id = 1) as days,
                       has_table_privilege('authenticated', 'public.recordings_settings', 'UPDATE') as upd,
@@ -265,7 +303,14 @@ for fn in deployed:
             time.sleep(POLL); waited += POLL
         if got and got["status_code"] == 200 and jget(got["content"], "caller") == "cron": say(f"    ✓ its schedule '{j['name']}': the exact call from the database is accepted as the schedule (check only; nothing ran)")
         else: bad(f"{fn}: its schedule '{j['name']}' was NOT accepted (" + (f"HTTP {got['status_code']}" if got else "no answer") + "). Tell Claude: its next run would be refused.")
-    if G.get("unscheduled"):   # it has no schedule, so even the schedules' own secret must not start it
+    if G.get("rules"):
+        s5, b5 = http("POST", f"{FNB}/functions/v1/{fn}?rules_check=1", {}, {"apikey": SVC, "Authorization": "Bearer " + SVC})
+        try: rc_ = json.loads(b5)
+        except Exception: rc_ = {}
+        good = s5 == 200 and rc_.get("all_approved") is True and [x.get("file") for x in rc_.get("rules_check", [])] == G["rules"][fn] \
+            and all(RULE_FPS.get(x["file"], "")[:12] == x.get("fingerprint") for x in rc_["rules_check"])
+        (say if good else bad)(("    ✓ " if good else "") + f"{fn} runs only approved rules: " + ", ".join(f"{x.get('file')} {x.get('fingerprint')} {'approved' if x.get('approved') else 'NOT approved'}" for x in rc_.get("rules_check", [])) + ("" if good else f" (HTTP {s5})"))
+    if fn in UNSCHED:   # it has no schedule, so even the schedules' own secret must not start it
         ok, rq = sql("select " + command(U, "{}", None, ANON).replace("select ", "", 1).rstrip(";") + " as id")
         got = None; waited = 0.0
         while ok and rq and waited <= POLL_MAX:
@@ -291,10 +336,14 @@ for fn_, act in (("client-status-review", "decide"), ("launch-evidence", "record
         a = http("POST", f"{FNB}/functions/v1/{fn_}", {"action": act}, {"apikey": ANON, "Authorization": "Bearer " + ANON})[0]
         f_ = http("POST", f"{FNB}/functions/v1/{fn_}", {"action": act}, {"apikey": ANON, "Authorization": "Bearer " + FORGED})[0]
         extra.append((f"{fn_}'s Hub button ({act}): the public key and a forged token → refused", a in (401, 403) and f_ == 401, f"{a}, {f_}"))
+if G.get("rules"):
+    a, _ = http("GET", f"{FNB}/rest/v1/rules_approved?select=file", None, {"apikey": ANON, "Authorization": "Bearer " + ANON})
+    extra.append(("the approved-rules list: the public key can't read it", a in (401, 403, 404), a))
 for label, good, got in extra: (say if good else bad)(("  ✓ " if good else "") + label + ("" if good else f" (got {got})"))
 
 say()
 if fails: say("RESULT: CHECK THE ✗ LINES." + (f" Left exactly as they were: {', '.join(skipped)}." if skipped else ""))
+elif GROUP == "G2": say("RESULT: DONE · the five jobs run a rules file from the Hub site only if you approved that exact version; today's five are approved.")
 elif GROUP == "G1": say("RESULT: DONE · the obligations runner and the eligibility sweep answer only your server key, checked before anything else.")
 elif GROUP == "J1b": say("RESULT: DONE · ghe-reminders answers only its schedule and your server key, and now tells the watchdog each day it runs.")
 else: say(f"RESULT: DONE · the {len(deployed)} jobs answer only their schedules, your server key" + (" and, for Hub buttons, active office staff." if GROUP == "J1" else ", and active office staff for the Hub buttons."))
