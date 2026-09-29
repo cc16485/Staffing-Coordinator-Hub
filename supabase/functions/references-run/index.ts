@@ -40,6 +40,7 @@
 // =============================================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { jobCaller } from '../_shared/job-auth.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -97,6 +98,11 @@ function slotsOf(c: Record<string, unknown>): RefSlot[] {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
+  /* S3 (2026-09-28): only the owner's server key (Desktop scripts). Everyone else, the public key included, is refused before anything is read. */
+  const caller = await jobCaller(req, false)
+  if (!caller) return new Response(JSON.stringify({ error: 'not allowed' }), { status: 401, headers: { 'Content-Type': 'application/json' } })
+  if (new URL(req.url).searchParams.get('auth_check') === '1')
+    return new Response(JSON.stringify({ ok: true, caller }), { status: 200, headers: { 'Content-Type': 'application/json' } })
   const q = new URL(req.url).searchParams
   const commit = q.get('commit') === '1'
 

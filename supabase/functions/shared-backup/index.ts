@@ -23,6 +23,7 @@
 // largest table and takes the small ones down with it.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { jobCaller } from '../_shared/job-auth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -39,6 +40,11 @@ const HARD_CAP = 500_000  // runaway guard only, not a size policy
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
+  /* S3 (2026-09-28): only its Monday schedule or the owner's server key. Everyone else, the public key included, is refused before anything is read. */
+  const caller = await jobCaller(req)
+  if (!caller) return new Response(JSON.stringify({ error: 'not allowed' }), { status: 401, headers: { 'Content-Type': 'application/json' } })
+  if (new URL(req.url).searchParams.get('auth_check') === '1')
+    return new Response(JSON.stringify({ ok: true, caller }), { status: 200, headers: { 'Content-Type': 'application/json' } })
 
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
