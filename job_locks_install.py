@@ -29,6 +29,8 @@ GROUPS = {
            "sql": "j1_recordings_setting.sql"},
     "J1b": {"title": "J1b · GHE REMINDERS (the one job 341 left alone)",
             "fns": ["ghe-reminders"], "sql": None},
+    "G1": {"title": "G1 · THE TWO RULE JOBS THAT WEREN'T LOCKED",
+           "fns": ["obligations-run", "eligibility-sweep"], "sql": None, "unscheduled": True},
     "J2": {"title": "J2 · THE 7 JOBS THAT ONLY UPDATE THE HUB",
            "fns": ["coverage-watch", "client-status-observe", "client-status-review", "launch-evidence", "client-start-run",
                    "promise-run", "caregiver-census-observe"],
@@ -157,7 +159,8 @@ for fn in FNS:
                 p = parse_job(fn, c)
                 if not p: why = f"its schedule '{j['jobname']}' is not a single plain call of its address, so it was not touched"; break
                 jobs.append({"name": j["jobname"], "schedule": j["schedule"], "active": j["active"], "url": p[0], "body": p[1], "timeout": p[2]})
-        if not why and not jobs: why = "no schedule calls it (unexpected), so it was not touched"
+        if not why and not jobs and not G.get("unscheduled"): why = "no schedule calls it (unexpected), so it was not touched"
+        if not why and jobs and G.get("unscheduled"): why = "a schedule calls it (unexpected: it should only be started by your Desktop scripts), so it was not touched"
     if not why:
         tmp = tempfile.mkdtemp(prefix="jl-live-"); os.makedirs(os.path.join(tmp, "supabase"), exist_ok=True)
         d = subprocess.run([SUPA, "functions", "download", fn, "--project-ref", REF, "--use-api"], cwd=tmp,
@@ -188,8 +191,8 @@ for fn in FNS:
     p = plan[fn]
     say(f"  ✓ {fn}: live copy matches GitHub" + ((" (it is the reviewed Aug 13 GitHub version: its own code without the heartbeat, and the Aug 13 shared helper)" if "index.ts" in p["older"]
         else f" (its {', '.join(p['older'])} is the earlier reviewed copy from its last deploy)") if p["older"] else "")
-        + f" · gateway sign-in check {'on' if vj else 'off'} (kept) · {len(jobs)} schedule{'s' if len(jobs) != 1 else ''}: "
-        + "; ".join(f"{j['schedule']}, {'on' if j['active'] else 'paused'}" for j in jobs))
+        + f" · gateway sign-in check {'on' if vj else 'off'} (kept) · " + ("no schedule (your Desktop scripts start it)" if not jobs else f"{len(jobs)} schedule{'s' if len(jobs) != 1 else ''}: "
+        + "; ".join(f"{j['schedule']}, {'on' if j['active'] else 'paused'}" for j in jobs)))
 if GROUP == "J2" and "caregiver-census-observe" in plan:
     ok, cr = sql("""select count(*)::int as n from cron.job_run_details d join cron.job j on j.jobid = d.jobid
                     where j.command like '%/functions/v1/caregiver-census-observe%' and d.start_time > now() - interval '14 days'""")
@@ -227,7 +230,8 @@ for fn in FNS:
     after = fmeta(fn)
     if after.get("verify_jwt") != p["vj"]: bad(f"{fn}: its gateway setting changed ({after.get('verify_jwt')}). Tell Claude.")
     deployed.append(fn)
-    say(f"  ✓ {fn}: {len(p['jobs'])} schedule{'s' if len(p['jobs']) != 1 else ''} now send{'s' if len(p['jobs']) == 1 else ''} the secret from the vault (same time and on/off) · deployed, now version {after.get('version')} (was {p['version']}), gateway setting kept")
+    say(f"  ✓ {fn}: " + (f"{len(p['jobs'])} schedule{'s' if len(p['jobs']) != 1 else ''} now send{'s' if len(p['jobs']) == 1 else ''} the secret from the vault (same time and on/off) · " if p["jobs"] else "")
+        + f"deployed, now version {after.get('version')} (was {p['version']}), gateway setting kept")
 if GROUP == "J1" and G["sql"]:
     ok, _ = sql(open(os.path.join(REPO, G["sql"])).read())
     ok2, rs2 = sql("""select (select keep_audio_days from public.recordings_settings where id = 1) as days,
@@ -261,6 +265,15 @@ for fn in deployed:
             time.sleep(POLL); waited += POLL
         if got and got["status_code"] == 200 and jget(got["content"], "caller") == "cron": say(f"    ✓ its schedule '{j['name']}': the exact call from the database is accepted as the schedule (check only; nothing ran)")
         else: bad(f"{fn}: its schedule '{j['name']}' was NOT accepted (" + (f"HTTP {got['status_code']}" if got else "no answer") + "). Tell Claude: its next run would be refused.")
+    if G.get("unscheduled"):   # it has no schedule, so even the schedules' own secret must not start it
+        ok, rq = sql("select " + command(U, "{}", None, ANON).replace("select ", "", 1).rstrip(";") + " as id")
+        got = None; waited = 0.0
+        while ok and rq and waited <= POLL_MAX:
+            ok3, rr = sql(f"select status_code, content from net._http_response where id = {int(rq[0]['id'])}")
+            if ok3 and rr: got = rr[0]; break
+            time.sleep(POLL); waited += POLL
+        if got and got["status_code"] == 401: say("    ✓ even the schedules' secret from the database is refused (it has no schedule; only your key starts it)")
+        else: bad(f"{fn}: the schedules' secret was not refused (" + (f"HTTP {got['status_code']}" if got else "no answer") + ")")
 # the Hub-button doors
 extra = []
 if "coverage-run" in deployed:
@@ -282,6 +295,7 @@ for label, good, got in extra: (say if good else bad)(("  ✓ " if good else "")
 
 say()
 if fails: say("RESULT: CHECK THE ✗ LINES." + (f" Left exactly as they were: {', '.join(skipped)}." if skipped else ""))
+elif GROUP == "G1": say("RESULT: DONE · the obligations runner and the eligibility sweep answer only your server key, checked before anything else.")
 elif GROUP == "J1b": say("RESULT: DONE · ghe-reminders answers only its schedule and your server key, and now tells the watchdog each day it runs.")
 else: say(f"RESULT: DONE · the {len(deployed)} jobs answer only their schedules, your server key" + (" and, for Hub buttons, active office staff." if GROUP == "J1" else ", and active office staff for the Hub buttons."))
 say("No key, secret, token, name, number or email was printed. Rollback if ever needed: redeploy a job from the commit before this one"
