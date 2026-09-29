@@ -27,6 +27,8 @@ GROUPS = {
            "fns": ["lead-nurture", "lead-followup", "ghe-reminders", "carematch-watch", "interview-messages", "coverage-run",
                    "timekeeper-watch", "lead-digest", "automation-watchdog", "purge-recordings", "lead-docs-retention"],
            "sql": "j1_recordings_setting.sql"},
+    "J1b": {"title": "J1b · GHE REMINDERS (the one job 341 left alone)",
+            "fns": ["ghe-reminders"], "sql": None},
     "J2": {"title": "J2 · THE 7 JOBS THAT ONLY UPDATE THE HUB",
            "fns": ["coverage-watch", "client-status-observe", "client-status-review", "launch-evidence", "client-start-run",
                    "promise-run", "caregiver-census-observe"],
@@ -106,14 +108,27 @@ for name, want in SHAS.items():
     elif name.startswith("_shared/"): path = os.path.join(FNROOT, name + ".ts")
     else: path = os.path.join(FNROOT, name, "index.ts")
     if not os.path.exists(path) or sha(path) != want: bad(f"{name} is not the reviewed build"); badb = True
-need = set(FNS) | {"_shared/job-auth", "job_locks_accept.json"} | ({"_shared/outreach"} if GROUP == "J1" else set()) | ({G["sql"]} if G["sql"] else set())
+need = set(FNS) | {"_shared/job-auth", "job_locks_accept.json"} | ({"_shared/outreach"} if GROUP in ("J1", "J1b") else set()) | ({G["sql"]} if G["sql"] else set())
 if badb or not need <= set(SHAS): say("  STOP. Nothing was run."); done(2)
 say(f"  ✓ the {len(FNS)} jobs, the shared lock and the comparison list are the reviewed builds")
+def j1_clean():
+    """341 said DONE; or its only ✗ was ghe-reminders being left alone and 341b (J1b) then said DONE."""
+    rd = lambda n: open(os.path.expanduser("~/Desktop/" + n)).read() if os.path.exists(os.path.expanduser("~/Desktop/" + n)) else ""
+    j1, j1b = rd("Job locks J1 report.txt"), rd("Job locks J1b report.txt")
+    if "RESULT: DONE" in j1: return "341 (J1) finished cleanly"
+    xs = [l for l in j1.splitlines() if l.strip().startswith("✗")]
+    if j1 and xs and all(l.strip().startswith("✗ ghe-reminders: the live copy is NOT the version on GitHub") for l in xs) \
+       and "Left exactly as they were: ghe-reminders." in j1 and "RESULT: DONE" in j1b:
+        return "341 (J1) finished with only ghe-reminders left alone, and 341b (J1b) then finished cleanly"
+    return None
 if GROUP == "J2":
-    prev = os.path.expanduser("~/Desktop/Job locks J1 report.txt")
-    txt = open(prev).read() if os.path.exists(prev) else ""
-    if "RESULT: DONE" not in txt: bad("341 (J1) has not finished cleanly on this Mac (its report doesn't say DONE). Nothing was changed."); done(3)
-    say("  ✓ 341 (J1) finished cleanly")
+    why = j1_clean()
+    if not why: bad("341 (J1) has not finished cleanly on this Mac (its report doesn't say DONE, nor 341 + 341b). Nothing was changed."); done(3)
+    say("  ✓ " + why)
+if GROUP == "J1b":
+    j1 = open(os.path.expanduser("~/Desktop/Job locks J1 report.txt")).read() if os.path.exists(os.path.expanduser("~/Desktop/Job locks J1 report.txt")) else ""
+    if "Left exactly as they were: ghe-reminders." not in j1: bad("341's report on this Mac doesn't show ghe-reminders left alone, so 341b has nothing to do. Nothing was changed."); done(3)
+    say("  ✓ 341 left ghe-reminders alone; this finishes it")
 ACC = json.load(open(ACCEPT_PATH))
 ok, vx = sql(f"""select (select count(*)::int from vault.decrypted_secrets where name = {lit(VAULT_NAME)}) as v,
                         exists (select 1 from pg_extension where extname = 'pg_net') as n, exists (select 1 from pg_extension where extname = 'pg_cron') as c""")
@@ -171,7 +186,8 @@ for fn in FNS:
         shutil.rmtree(tmp, ignore_errors=True)
     if why: bad(f"{fn}: {why}. This job is left exactly as it is."); skipped.append(fn); continue
     p = plan[fn]
-    say(f"  ✓ {fn}: live copy matches GitHub" + (f" (its {', '.join(p['older'])} is the earlier reviewed copy from its last deploy)" if p["older"] else "")
+    say(f"  ✓ {fn}: live copy matches GitHub" + ((" (it is the reviewed Aug 13 GitHub version: its own code without the heartbeat, and the Aug 13 shared helper)" if "index.ts" in p["older"]
+        else f" (its {', '.join(p['older'])} is the earlier reviewed copy from its last deploy)") if p["older"] else "")
         + f" · gateway sign-in check {'on' if vj else 'off'} (kept) · {len(jobs)} schedule{'s' if len(jobs) != 1 else ''}: "
         + "; ".join(f"{j['schedule']}, {'on' if j['active'] else 'paused'}" for j in jobs))
 if GROUP == "J2" and "caregiver-census-observe" in plan:
@@ -266,6 +282,7 @@ for label, good, got in extra: (say if good else bad)(("  ✓ " if good else "")
 
 say()
 if fails: say("RESULT: CHECK THE ✗ LINES." + (f" Left exactly as they were: {', '.join(skipped)}." if skipped else ""))
+elif GROUP == "J1b": say("RESULT: DONE · ghe-reminders answers only its schedule and your server key, and now tells the watchdog each day it runs.")
 else: say(f"RESULT: DONE · the {len(deployed)} jobs answer only their schedules, your server key" + (" and, for Hub buttons, active office staff." if GROUP == "J1" else ", and active office staff for the Hub buttons."))
 say("No key, secret, token, name, number or email was printed. Rollback if ever needed: redeploy a job from the commit before this one"
     " (its schedule can stay: the old code ignores the header)" + ("; the audio setting: the rollback lines at the top of j1_recordings_setting.sql." if GROUP == "J1" else "."))

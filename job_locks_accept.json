@@ -144,7 +144,7 @@
   "only_at_deploy": []
  },
  "ghe-reminders": {
-  "deployed_from": "e108ff4",
+  "deployed_from": "e8a096f",
   "files": {
    "_shared/optout.ts": {
     "base": "dbd6ea824525833aa1dd45220986e574966e37d5fc9984fa1b86950e5a17d937",
@@ -152,11 +152,11 @@
    },
    "_shared/outreach.ts": {
     "base": "34eac013e5efe74218433e7b9ec36517e839e5adad3cac2dcfe62cde6d5dc072",
-    "deploy": "60cccfe4353b33af25345944d42a6aed6a874dd92af98c080edc700e72c15a54"
+    "deploy": "253c6bb7940fa10018c1a6b3032e86204c4d2aad238fa1da6bf72fc5f7191cb3"
    },
    "ghe-reminders/index.ts": {
     "base": "6aa97a9be4cb4edac1b624cbc9f60d760555233dc2067921e73057b7abfec51a",
-    "deploy": null
+    "deploy": "2e75ff6c1de8db76b277fb7daa0bc7417b1af6a4a9eebc34e51665c0c23008d2"
    }
   },
   "only_at_base": [
