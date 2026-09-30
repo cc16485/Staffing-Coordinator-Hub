@@ -205,6 +205,8 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
   'vapi-interview':     { class: 'reactive_external', scheduled: false, why: 'follows a call that just happened.' },
   'caregiver-intro':    { class: 'reactive_external', scheduled: false, why: 'sent when a match is made, and the family is waiting.' },
   'circle-send':        { class: 'reactive_external', scheduled: false, why: 'sent on an explicit human action.' },
+  'applicant-invite':   { class: 'reactive_external', scheduled: false,
+    why: 'somebody just phoned asking about a job; staff press Send on the fixed application-link text they asked for (Desktop 364).' },
   'campaign-send':      { class: 'proactive_external', scheduled: false, why: 'a campaign somebody presses send on.' },
   'team-ask':           { class: 'urgent_internal', scheduled: false,
     why: 'a coordinator presses send on one caregiver shift ask they read and edited; same class as the coverage picker. The composer warns before 8am and after 8pm.' },
