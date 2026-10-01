@@ -35,6 +35,7 @@
    an applicant or a reference, it is external — whatever else is true about it.
    ============================================================================= */
 
+import { reportSendProblem } from './send-problems.ts'
 import { ghlContactIfAllowed } from './optout.ts'
 
 export type OutreachClass =
@@ -488,6 +489,13 @@ export function audienceGate(
  * Returns null when the send must not happen. The reason is logged rather than
  * thrown, so one refused recipient never aborts a batch.
  */
+/* NO SILENT FAILURES (2026-10-01): a refusal here also becomes a Needs Attention card */
+// deno-lint-ignore no-explicit-any
+async function outboundProblem(sb: any, kind: OutreachClass, person: any, opts: { channel?: 'sms' | 'email'; sender?: string }, why: string) {
+  const channel = opts.channel ?? (normalisePhone(person?.phone) ? 'sms' : 'email')
+  await reportSendProblem(sb, { sender: opts.sender || String(kind), channel, address: channel === 'sms' ? person?.phone : person?.email,
+    who: [person?.firstName, person?.lastName].filter(Boolean).join(' '), reasons: [why] })
+}
 export async function contactForOutbound(
   // deno-lint-ignore no-explicit-any
   sb: any,
@@ -507,10 +515,12 @@ export async function contactForOutbound(
   const who = audienceGate(opts.audience, opts)
   if (!who.allowed) {
     console.warn(`outbound refused [${kind}]: ${who.reason}`)
+    await outboundProblem(sb, kind, person, opts, String(who.reason))
     return null
   }
   if (!opts.channel && String(opts.audience ?? 'unknown') !== 'staff') {
     console.warn(`outbound refused [${kind}]: a ${opts.audience ?? 'unknown'} send must name its channel, so the opt-out check can run`)
+    await outboundProblem(sb, kind, person, opts, String(`a ${opts.audience ?? 'unknown'} send must name its channel`))
     return null
   }
   const email = opts.channel === 'sms' ? '' : String(person.email ?? '').trim()
@@ -522,10 +532,12 @@ export async function contactForOutbound(
     const dest = await maySendTo(sb, person.phone, opts)
     if (!dest.allowed) {
       console.warn(`outbound refused [${kind}]: ${dest.reason}`)
+      await outboundProblem(sb, kind, person, opts, String(dest.reason))
       return null
     }
   } else if (!email) {
     console.warn(`outbound refused [${kind}]: no phone and no email`)
+    await outboundProblem(sb, kind, person, opts, String('no phone and no email'))
     return null
   }
 
@@ -562,6 +574,7 @@ export async function contactForOutbound(
   const contactId = j?.contact?.id ?? j?.id
   if (!contactId) {
     console.warn(`outbound refused [${kind}]: GHL returned no contact id`)
+    await outboundProblem(sb, kind, person, opts, String('GHL returned no contact id'))
     return null
   }
   return { contactId: String(contactId), phone }

@@ -2,8 +2,8 @@
 import path from 'path';
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 700)]);
 const lib = await import(path.join(process.cwd(), 'supabase/functions/_shared/optout.ts'));
-let T, broken, logged;
-const reset = () => { T = { contact_optout_current: [], leads: [], circle_contacts: [] }; broken = new Set(); logged = []; };
+let T, broken, logged, cards = [];
+const reset = () => { T = { contact_optout_current: [], leads: [], circle_contacts: [] }; broken = new Set(); logged = []; cards = []; };
 const db = { from: (t) => { const st = { f: [], notNull: null }; const b = {
   select() { return b; }, eq(c, v) { st.f.push([c, v]); return b; }, not(c) { st.notNull = c; return b; },
   maybeSingle() { return b.then((x) => ({ data: x.data?.[0] ?? null, error: x.error })); },
@@ -14,7 +14,7 @@ const db = { from: (t) => { const st = { f: [], notNull: null }; const b = {
     if (st.notNull) rows = rows.filter((r) => r[st.notNull] != null);
     return Promise.resolve({ data: rows, error: null }).then(ok);
   } }; return b; },
-  rpc: async (fn, a) => { logged.push([fn, a]); return { data: null, error: null }; } };
+  rpc: async (fn, a) => { if (fn === 'upsert_app_data_item') { cards.push(a.item); return { data: null, error: null }; } logged.push([fn, a]); return { data: null, error: null }; } };
 const clean = { id: 'c1', dnd: false, dndSettings: { SMS: { status: 'inactive' }, Email: { status: 'inactive' } } };
 const sms = (x = {}) => lib.optOutCheck(db, { channel: 'sms', phone: '(417) 555-0101', ghlContact: clean, ...x });
 const mail = (x = {}) => lib.optOutCheck(db, { channel: 'email', email: 'Dana@X.com', ghlContact: clean, ...x });
@@ -98,6 +98,38 @@ reset(); f = fakeGhl({ id: 'r5', __dnd_read: true }, null); id = await lib.ghlCo
 ck('door: the read-back mark only counts when the Hub set it, not when GHL sends it', id === null && /could not check GHL/.test(JSON.stringify(logged)) && f.calls.length === 2, [logged, f.calls]);
 reset(); v = await sms({ ghlContact: { id: 'c9' } });
 ck('a contact handed in without a read-back and without dnd is still unknown: refused', !v.allowed && /could not check GHL/.test(v.reasons[0]), v);
+// ── NO SILENT FAILURES (2026-10-01): every refusal raises one Needs Attention card ──
+reset(); f = fakeGhl({ id: 'n1' }, { id: 'n1', firstName: 'Cythenia', lastName: 'T', dndSettings: { SMS: { status: 'active' } } }); id = await lib.ghlContactIfAllowed(db, ghl, 'send-invite', { channel: 'sms', phone: '4175550101' }, f);
+ck('card: a refused training invite raises one card, named, in office words, with a next step', id === null && cards.length === 1 && cards[0].kind === 'send_problem' && cards[0].status === 'open'
+  && /Text didn't go through: orientation \/ training invite to Cythenia T/.test(cards[0].title) && /Do Not Disturb/.test(cards[0].detail) && /Next: Call them/.test(cards[0].detail) && cards[0].phone === '+14175550101' && cards[0].domain === 'caregivers', cards);
+reset(); f = fakeGhl({ id: 'n2' }, null); id = await lib.ghlContactIfAllowed(db, ghl, 'reference-chase', { channel: 'email', email: 'Ref@X.com', firstName: 'Pat' }, f);
+ck('card: "could not check" says it was held back to be safe, and shows the email', cards.length === 1 && /held the message back/.test(cards[0].detail) && /Email: ref@x.com/.test(cards[0].detail) && cards[0].urgency === 'today', cards);
+// the card reads the list first: an open card is bumped, not duplicated
+let OPS = []; const dbOps = { ...db, from: (t) => t === 'app_data' ? { select() { return this; }, eq() { return this; }, maybeSingle: async () => ({ data: { data: OPS }, error: null }) } : db.from(t),
+  rpc: async (fn, a) => { if (fn === 'upsert_app_data_item') { const i = OPS.findIndex((x) => x.id === a.item.id); if (i >= 0) OPS[i] = a.item; else OPS.push(a.item); } return { data: null, error: null }; } };
+const P = await import(path.join(process.cwd(), 'supabase/functions/_shared/send-problems.ts'));
+await P.reportSendProblem(dbOps, { sender: 'interview-messages', channel: 'sms', address: '417-555-0102', who: 'Ana', reasons: ['could not check GHL Do Not Disturb'] });
+await P.reportSendProblem(dbOps, { sender: 'interview-messages', channel: 'sms', address: '(417) 555-0102', who: 'Ana', reasons: ['could not check GHL Do Not Disturb'] });
+ck('card: the same person + message twice is ONE card, counted twice', OPS.length === 1 && OPS[0].count === 2 && /Tried 2 times/.test(OPS[0].detail), OPS);
+OPS[0].status = 'done'; OPS[0].closed_at = new Date().toISOString(); OPS[0].problem = 'opted_out';
+await P.reportSendProblem(dbOps, { sender: 'interview-messages', channel: 'sms', address: '4175550102', reasons: ['opted out (stop_text, sms)'] });
+ck('card: an opt-out a person already closed stays closed', OPS.length === 1 && OPS[0].status === 'done', OPS);
+await P.reportSendProblem(dbOps, { sender: 'interview-messages', channel: 'sms', address: '4175550102', reasons: ['error 400: bad number'], failed: true });
+ck('card: a NEW kind of failure reopens it as a fresh card', OPS.length === 1 && OPS[0].status === 'open' && OPS[0].count === 1 && OPS[0].problem === 'failed' && OPS[0].closed_at === null, OPS);
+OPS = []; for (let k = 0; k < 45; k++) await P.reportSendProblem(dbOps, { sender: 'coverage-run', channel: 'sms', address: '41755' + String(10000 + k), reasons: ['error 503'], failed: true });
+const many = OPS.find((x) => x.id === 'ops_send_many');
+ck('card: an outage is one "many messages are not going out" card after 40, not hundreds', OPS.length === 41 && many && many.count === 5 && many.urgency === 'urgent', [OPS.length, many]);
+ck('card: why-words: STOP beside a "could not check" reads as the opt-out', P.explain(['could not check Family Circle stops', 'opted out (staff, sms)'], false, 'sms').code === 'opted_out'
+  && P.explain(['could not check Family Circle stops'], false, 'sms').code === 'unchecked', null);
+// the checked send: true only on a 2xx, and a refusal raises a card
+OPS = []; let ok = await P.ghlSendChecked(dbOps, {}, 'reference-chase', { channel: 'email', contactId: 'c1', address: 'a@b.com', who: 'Pat' }, { subject: 's', html: 'h' }, async () => new Response('{"message":"Email is invalid"}', { status: 422 }));
+ck('checked send: GoHighLevel saying no returns false and raises a card with its words', ok === false && OPS.length === 1 && /error 422: Email is invalid/.test(OPS[0].detail) && OPS[0].problem === 'failed', OPS);
+OPS = []; ok = await P.ghlSendChecked(dbOps, {}, 'reference-chase', { channel: 'sms', contactId: 'c1', address: '4175550101' }, { message: 'm' }, async (u, i) => new Response(JSON.parse(i.body).type === 'SMS' ? '{}' : 'x', { status: 200 }));
+ck('checked send: a 2xx is true, no card', ok === true && OPS.length === 0, OPS);
+OPS = []; ok = await P.ghlSendChecked(dbOps, {}, 'x', { channel: 'sms', contactId: 'c1', address: '4175550101' }, { message: 'm' }, async () => { throw new Error('ECONNRESET'); });
+ck('checked send: GoHighLevel unreachable is false + a card', ok === false && /could not be reached/.test(OPS[0]?.detail), OPS);
+ok = await P.reportSendProblem({ rpc: async () => { throw new Error('x'); }, from: () => { throw new Error('y'); } }, { sender: 'x', channel: 'sms', reasons: ['r'] });
+ck('card: a broken database never throws out of the report', ok === undefined);
 console.log('\n0b-1 · UNIVERSAL OPT-OUT CHECK · TEST\n' + '='.repeat(60)); let all = true;
 for (const [n, g, note] of res) { all &&= g; console.log((g ? 'PASS  ' : 'FAIL  ') + n + (note ? '\n   └─ ' + note : '')); }
 console.log('='.repeat(60)); console.log(all ? `ALL ${res.length} CHECKS PASS` : 'FAILED');

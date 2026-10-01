@@ -123,6 +123,9 @@ const im = src('interview-messages'), rc = src('reference-chase')
 ck('scan · interview-messages: all 7 applicant sends use the door; the 4 staff alerts keep their contact',
    (im.match(/await to\.(sms|email)\(/g) || []).length === 9 && (im.match(/= applicantDoor\(/g) || []).length === 4 && !/await sms\(contactId,[^\n]*\n[^\n]*interview/i.test(im))
 ck('scan · reference-chase: references and applicants are reached only through the door', (rc.match(/await door\(/g) || []).length === 4 && !/contactFor\(/.test(rc))
+ck('scan · NO SILENT FAILURES: neither sender posts a message unchecked; every send is ghlSendChecked', !/conversations\/messages/.test(im) && !/conversations\/messages/.test(rc) && (im.match(/ghlSendChecked\(/g) || []).length === 4 && (rc.match(/ghlSendChecked\(/g) || []).length === 4)
+ck('scan · reference-chase stamps a reference asked / reminded / nudged only after GoHighLevel took it', (rc.match(/if \(!went\) continue/g) || []).length === 3 && /if \(!went\) continue\n\s+await supabase\.from\('reference_requests'\)\n\s+\.update\(\{ sent_at/.test(rc))
+ck('scan · reference-chase writes its office cards one at a time, never the whole list', !/\.upsert\(\{ key: 'ops_items'/.test(rc) && /upsert_app_data_item/.test(rc))
 
 console.log('\n0b-3 · CAREGIVER, APPLICANT AND HOMETOGETHER SENDERS · OPT-OUT TEST\n' + '='.repeat(60)); let all = true
 for (const [n, g, note] of res) { all &&= g; console.log((g ? 'PASS  ' : 'FAIL  ') + n + (note ? '\n   └─ ' + note : '')) }
