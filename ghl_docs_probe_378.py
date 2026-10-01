@@ -61,6 +61,11 @@ else:
     if not j["file_fields"]: say("    none: this account has no file fields")
     for f in j["file_fields"]: say(f"    {f['name']} · {f['caregivers_with_it']} caregiver(s) have a file · stored as {f['stored_as']}")
     say(f"  Caregivers with a file in any of them: {j['with_any_file_field']}")
+    if j.get("uploads_found_without_names"):
+        say("  UPLOADS FOUND ON CONTACTS (field names hidden from the Hub's key; hints come from the FILE names):")
+        for u in j["uploads_found_without_names"]:
+            say(f"    {u['field']} · {u['caregivers_with_it']} caregiver(s) · file names look like: " + ", ".join(f"{k} {v}" for k, v in u['file_names_look_like'].items()))
+    if j.get("media_library_latest_100"): say("  MEDIA LIBRARY latest 100 files, by name: " + ", ".join(f"{k} {v}" for k, v in j["media_library_latest_100"].items()))
     if j["doc_like_text_fields"]: say("  Other fields that sound like checks (text or dates, not files): " + ", ".join(f"{f['name']} ({f['type']})" for f in j["doc_like_text_fields"]))
     say(""); say("  CAN THE HUB DOWNLOAD THEM? (one sample per field; only the answer code, never the file)")
     if not j["download_tests"]: say("    no file to test")
