@@ -66,7 +66,8 @@ Deno.serve(async (req) => {
     .in('id', ids.slice(0, 500))
     // 'offer' means they already said yes and may be mid-paperwork — a "new
     // opening" text to them reads as us forgetting we hired them.
-    .not('status', 'in', '("declined","hired","offer")')
+    // 2026-10-01: a no-show is never told "pick an interview time" (they can't book), nor someone who has left.
+    .not('status', 'in', '("declined","hired","offer","noshow","left")')
     .is('decline_reason', null)
     .or(`reengaged_at.is.null,reengaged_at.lt.${cutoff}`)
   if (error) return json({ error: error.message }, 500)
