@@ -95,8 +95,10 @@ Deno.serve(async (req) => {
   const { data: st } = await supabase.from('scheduling_settings').select('*').eq('id', 1).maybeSingle()
   /* WORDING (2026-10-01): the interview length comes from the same setting the apply page shows (it said "about 30
      minutes" here while the page said 45). */
-  const { data: ivType } = await supabase.from('activity_types').select('minutes').eq('key', 'interview').maybeSingle()
-  const ivMins = Number(ivType?.minutes) > 0 ? Number(ivType!.minutes) : 30
+  /* 2026-10-01 (Samantha): "say 20 minutes for the interview, we want a 30 minutes slot". Applicants are told the
+     interview length (talk_minutes); minutes is the calendar slot. */
+  const { data: ivType } = await supabase.from('activity_types').select('*').eq('key', 'interview').maybeSingle()
+  const ivMins = Number(ivType?.talk_minutes) > 0 ? Number(ivType!.talk_minutes) : 20
   const place = [st?.location_line1, st?.location_line2].filter(Boolean).join(', ')
   const note = st?.note ?? ''
   const phone = st?.phone ?? '(417) 234-8494'
