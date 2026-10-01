@@ -87,7 +87,7 @@ Deno.serve(async (req) => {
   const office = sch?.phone ?? '(417) 234-8494'
   const html = `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
     `<p>Hi ${escHtml(first)},</p><p>Thanks for calling Caring Companions about our ${escHtml(pos.label)} position. ` +
-    `Here is the application. It takes about 2 minutes, and at the end you can pick an interview time.</p>` +
+    `Here is the application. It takes about 2 minutes, and at the end you can pick a time for your in-person interview at our office.</p>` +
     `<p><a href="${link}" style="background:#F0A63A;color:#122F52;text-decoration:none;padding:12px 20px;border-radius:8px;` +
     `font-weight:700;display:inline-block">Start the application</a></p>` +
     `<p style="color:#57606a">Questions? Call us at ${escHtml(office)}.<br>Caring Companions In-Home Senior Care</p></div>`

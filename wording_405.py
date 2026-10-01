@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # 405 · WORDING FIXES (guarded redeploy, used twice: the Hub, then the Training Platform). Samantha 2026-10-01:
-# "fix the wording mismatches": interview length from settings, reference nudges no longer say "the last thing",
+# "fix the wording mismatches" + "In-Person interview should say 30 minutes ... we do not do phone interviews anymore":
+# interview length from settings (set to 30), every interview message says IN-PERSON, reference nudges no longer say "the last thing",
 # the cleared-to-work text no longer says the number is unmonitored.
 # (Shared header from 403 follows.)
 # Samantha 2026-10-01:
@@ -89,6 +90,14 @@ if HUBP:
     mark = before[0]["id"]
 say(f"  ✓ {len(users)} functions include a changed file; each is redeployed only if its live copy is known code")
 
+if HUBP:
+    say(); say("PART 1b · IN-PERSON INTERVIEWS ARE 30 MINUTES (her ruling 2026-10-01)")
+    ok, r = sql("select minutes from activity_types where key = 'interview'")
+    old = r[0]["minutes"] if ok and r else None
+    ok2, _ = sql("update activity_types set minutes = 30 where key = 'interview'")
+    ok3, r3 = sql("select minutes from activity_types where key = 'interview'")
+    g = ok2 and ok3 and r3 and r3[0]["minutes"] == 30
+    (say if g else bad)(("  ✓ " if g else "") + f"interview length: was {old} minutes, now 30 (the apply page, the confirmation and each interview's calendar block use it; the office can change it under Interviews → Settings)")
 say(); say("PART 2 · CHANGE (one function at a time)")
 deployed, already, skipped, absent = [], [], [], []
 for fn in users:

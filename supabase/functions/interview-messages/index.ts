@@ -96,7 +96,7 @@ Deno.serve(async (req) => {
   /* WORDING (2026-10-01): the interview length comes from the same setting the apply page shows (it said "about 30
      minutes" here while the page said 45). */
   const { data: ivType } = await supabase.from('activity_types').select('minutes').eq('key', 'interview').maybeSingle()
-  const ivMins = Number(ivType?.minutes) > 0 ? Number(ivType!.minutes) : 45
+  const ivMins = Number(ivType?.minutes) > 0 ? Number(ivType!.minutes) : 30
   const place = [st?.location_line1, st?.location_line2].filter(Boolean).join(', ')
   const note = st?.note ?? ''
   const phone = st?.phone ?? '(417) 234-8494'
@@ -179,22 +179,26 @@ Deno.serve(async (req) => {
       const to = applicantDoor(a, first)
       if (!to) return false
 
+      /* IN PERSON (2026-10-01, Samantha: "make sure it says in-person interview, we do not do phone interviews
+         anymore... we had someone not come to their in-person interview today because they thought it was a phone
+         interview"). Every interview message says IN-PERSON, at our office, and that we will not call them. */
       if (kind === 'hour') {
         if (canText) await to.sms(
-          `Hi ${first}, your interview with Caring Companions is at ${time} today. ` +
-          `We are at ${place}. ${note} See you shortly!`)
+          `Hi ${first}, your IN-PERSON interview with Caring Companions is at ${time} today. ` +
+          `Please come to our office: ${place}. ${note} This is not a phone interview. See you shortly!`)
         return true
       }
       const opener = kind === 'confirm'
-        ? `Your interview is booked for <b>${day} at ${time}</b>.`
-        : `A reminder that your interview is <b>tomorrow, ${day} at ${time}</b>.`
+        ? `Your <b>in-person</b> interview is booked for <b>${day} at ${time}</b>.`
+        : `A reminder that your <b>in-person</b> interview is <b>tomorrow, ${day} at ${time}</b>.`
       if (canText) await to.sms(
-        `Hi ${first}, ${kind === 'confirm' ? 'your interview with Caring Companions is booked for' : 'reminder: your interview is'} ` +
-        `${day} at ${time}, at ${place}. ${note} Need to move or cancel it? ${manageUrl} — or call ${phone}.`)
+        `Hi ${first}, ${kind === 'confirm' ? 'your IN-PERSON interview with Caring Companions is booked for' : 'reminder: your IN-PERSON interview is'} ` +
+        `${day} at ${time}. Please come to our office: ${place}. ${note} This is not a phone interview, so we will not call you. ` +
+        `Need to move or cancel it? ${manageUrl} — or call ${phone}.`)
       if (a.email) await to.email(
-        kind === 'confirm' ? `Your interview: ${day} at ${time}` : `Tomorrow: your interview at ${time}`,
+        kind === 'confirm' ? `Your in-person interview: ${day} at ${time}` : `Tomorrow: your in-person interview at ${time}`,
         shell(`<p>Hi ${first},</p><p>${opener}</p>${whereBlock()}` +
-          `<p>It takes about ${ivMins} minutes. Need to move or cancel it? <a href="${manageUrl}">You can do that here</a> in a few taps, or call or text us on ${phone}.</p>` +
+          `<p><b>This is an in-person interview at our office, not a phone call</b>, and it takes about ${ivMins} minutes. Need to move or cancel it? <a href="${manageUrl}">You can do that here</a> in a few taps, or call or text us on ${phone}.</p>` +
           `<p>We are looking forward to meeting you.</p>`))
       return true
     }
@@ -288,16 +292,16 @@ Deno.serve(async (req) => {
     if (!to) continue
 
     const line = prn && step === 1
-      ? `Hi ${first}! Thanks for applying for Caring Companions' PRN CNA Team. Based on your Priority Application, we'd like to meet you. Choose an interview time here: ${bookUrl}`
+      ? `Hi ${first}! Thanks for applying for Caring Companions' PRN CNA Team. Based on your Priority Application, we'd like to meet you in person. Choose an in-person interview time at our office here: ${bookUrl}`
       : step === 1
-      ? `Hi ${first}, thanks for applying to Caring Companions. You are one step from an interview, and you can pick a time that suits you here: ${bookUrl}`
+      ? `Hi ${first}, thanks for applying to Caring Companions. You are one step from an in-person interview at our office, and you can pick a time that suits you here: ${bookUrl}`
       : step === 2
-      ? `Hi ${first}, we still have interview times open this week if you would like one: ${bookUrl} Or call us on ${phone} and we will book it with you.`
+      ? `Hi ${first}, we still have in-person interview times open at our office this week if you would like one: ${bookUrl} Or call us on ${phone} and we will book it with you.`
       : `Hi ${first}, last note from us so we are not a nuisance. If you would still like to talk about caregiving work, pick a time here: ${bookUrl} or call ${phone}. We would be glad to hear from you.`
 
     if (p.phone && p.sms_consent === true) await to.sms(line)
     if (p.email) await to.email(
-      step === 3 ? 'One last note from Caring Companions' : prn && step === 1 ? 'Choose your interview time: PRN CNA Team' : 'Pick a time to come and meet us',
+      step === 3 ? 'One last note from Caring Companions' : prn && step === 1 ? 'Choose your in-person interview time: PRN CNA Team' : 'Pick a time to come and meet us in person',
       shell(`<p>Hi ${first},</p><p>${line.replace(bookUrl, `<a href="${bookUrl}">${bookUrl}</a>`)}</p>` +
         (step === 1 ? whereBlock() : '')))
 
