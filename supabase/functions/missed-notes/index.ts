@@ -18,6 +18,8 @@
 //   · 3 counted misses in 30 days → a DRAFT write-up in the Write-Ups list (level suggested from their history). A
 //     person reviews it and sends it for approval; only Samantha or Zach can approve. Nothing is issued by the Hub.
 //   · The count starts at go-live: nothing before the switch is counted.
+//   · WEB clock-outs (the office clocked them out; 336: 0 of 22 carry GPS) are still asked for the note but NEVER count
+//     toward 3 in 30 days, replied or not (her ruling (b), 2026-10-01).
 // PRACTICE until ops_settings.missed_notes_live === true: misses are found and listed (status 'practice', never
 // counted, cleared after 7 days); no text is sent, no reply is read, no write-up is drafted. ?dry=1 also reads nothing
 // into the record. Caregivers only; never clients or families. Nothing here touches pay.
@@ -289,8 +291,8 @@ Deno.serve(async (req) => {
       const text = words.reverse().join('\n').slice(0, 2000)
       const nowIso = new Date().toISOString()
       for (const r of rows!) {
-        const phoneOut = r.clock_out_method === 'phone'
-        await db.from('missed_notes').update({ status: 'recovered', reply_text: text, replied_at: nowIso, resolved_at: nowIso, counts: !phoneOut }).eq('id', r.id).eq('status', 'open')
+        const noCount = r.clock_out_method === 'phone' || r.clock_out_method === 'web'   // web: her ruling (b), 2026-10-01
+        await db.from('missed_notes').update({ status: 'recovered', reply_text: text, replied_at: nowIso, resolved_at: nowIso, counts: !noCount }).eq('id', r.id).eq('status', 'open')
         await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id: 'ops_mnote_' + r.id, kind: 'missed_note', domain: 'caregivers', status: 'open', urgency: 'today',
           title: `Care note by text: ${r.caregiver_name || 'a caregiver'} for ${r.client_first || 'a client'} (${r.shift_date})`,
           about: r.caregiver_name || '', caregiver: r.caregiver_name || '', missed_note_id: r.id, visit_id: r.visit_id,
@@ -306,11 +308,12 @@ Deno.serve(async (req) => {
   for (const r of still ?? []) {
     if (now < deadlineFor(r.shift_date)) continue
     const nowIso = new Date().toISOString()
-    await db.from('missed_notes').update({ status: 'unresolved', resolved_at: nowIso, counts: true }).eq('id', r.id).eq('status', 'open')
+    const countsIt = r.clock_out_method !== 'web'   // web never counts (her ruling (b), 2026-10-01)
+    await db.from('missed_notes').update({ status: 'unresolved', resolved_at: nowIso, counts: countsIt }).eq('id', r.id).eq('status', 'open')
     await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id: 'ops_mnote_' + r.id, kind: 'missed_note', domain: 'caregivers', status: 'open', urgency: 'today',
       title: `No care note and no reply: ${r.caregiver_name || 'a caregiver'} for ${r.client_first || 'a client'} (${r.shift_date})`,
       about: r.caregiver_name || '', caregiver: r.caregiver_name || '', missed_note_id: r.id, visit_id: r.visit_id,
-      detail: 'They were texted and did not reply by 6pm the next day. Call them for the note; this counts as unresolved.', owner: '', due: chiDay(now),
+      detail: 'They were texted and did not reply by 6pm the next day. Call them for the note; ' + (countsIt ? 'this counts as unresolved.' : 'the office clocked this shift out (web), so it does not count toward 3 in 30 days.'), owner: '', due: chiDay(now),
       created_at: nowIso, created_by: 'missed-notes', opened_by: 'missed-notes' } })
     out.unresolved++
   }

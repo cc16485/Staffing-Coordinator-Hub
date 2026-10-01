@@ -101,7 +101,7 @@ INBOX['C:+14175550004'] = [{ direction: 'inbound', type: 1, dateAdded: iso(-1), 
 INBOX['C:+14175550002'] = [{ direction: 'inbound', type: 1, dateAdded: iso(-1), body: 'Phone shift note' }]
 r = await run()
 const r4 = row(4, 400), r7 = row(2, 700), op4 = APP.ops_items.find((x) => x.id === 'ops_mnote_' + r4.id)
-ck('a reply: recovered by text, counts, and a Needs Attention item with their words for "Put it in AxisCare"', r4.status === 'recovered' && r4.counts === true && r4.reply_text === 'Client was great, ate lunch, walked outside.'
+ck('a reply: recovered by text, and a Needs Attention item with their words for "Put it in AxisCare" (this one was a WEB clock-out, so it does NOT count: her ruling (b))', r4.status === 'recovered' && r4.counts === false && r4.reply_text === 'Client was great, ate lunch, walked outside.'
    && op4 && op4.kind === 'missed_note' && /Care note by text: C4 Test for Cl400/.test(op4.title) && op4.reply_text === r4.reply_text, [r4, op4])
 ck('a phone clock-out that replied: recovered, and does NOT count (her rule)', r7.status === 'recovered' && r7.counts === false, r7)
 reset(); APP.ops_settings = { missed_notes_live: true }; await run()
@@ -121,6 +121,11 @@ r = await run()
 const u1 = row(1, 100), opu = APP.ops_items.find((x) => x.id === 'ops_mnote_' + u1.id)
 ck('no reply by 6pm the next day: unresolved, counts, and "No care note and no reply" in Needs Attention', u1.status === 'unresolved' && u1.counts === true && opu && /No care note and no reply/.test(opu.title), [u1, opu])
 ck('a phone clock-out that never replied: unresolved, and it DOES count', row(2, 700).status === 'unresolved' && row(2, 700).counts === true)
+{ const w = row(4, 400), opw = APP.ops_items.find((x) => x.id === 'ops_mnote_' + w.id)
+  ck('a WEB clock-out that never replied: unresolved but does NOT count, and Needs Attention says why (her ruling (b))', w.clock_out_method === 'web' && w.status === 'unresolved' && w.counts === false
+     && opw && /office clocked this shift out \(web\), so it does not count/.test(opw.detail), [w, opw])
+  ck('an APP clock-out that never replied still counts', [1, 3].every((i) => { const x = T.missed_notes.find((m) => m.axiscare_caregiver_id === String(i) && m.status === 'unresolved'); return !x || x.counts === true }))
+  ck('the web clock-out was still texted for its note', !!w.texted_at, w) }
 /* 3 in 30 days → one draft */
 reset(); APP.ops_settings = { missed_notes_live: true }
 const mk = (cg, cl, d, status, meth = 'app') => T.missed_notes.push({ id: SEQ++, axiscare_caregiver_id: String(cg), axiscare_client_id: String(cl), shift_date: d, caregiver_name: 'C' + cg + ' Test', client_first: 'Cl' + cl,
