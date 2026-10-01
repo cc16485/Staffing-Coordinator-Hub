@@ -63,13 +63,18 @@ ck('a refusal whose log fails is still a refusal', ok3 === false);
 
 // ── ghlContactIfAllowed: the GHL senders' door ──
 const ghl = { token: 't', locationId: 'loc' };
-const fakeGhl = (upsertContact, getContact) => { const calls = []; const f = async (url, init) => { calls.push([init?.method, url, init?.body ? JSON.parse(init.body) : null]);
-  const body = url.endsWith('/contacts/upsert') ? { contact: upsertContact } : { contact: getContact };
+/* dup: the one-person-one-contact lookups, { 'number=+1…' | 'email=…': contactId } (none by default); byId: GET /contacts/{id} answers */
+const fakeGhl = (upsertContact, getContact, dup = {}, byId = {}) => { const calls = []; const f = async (url, init) => { calls.push([init?.method, url, init?.body ? JSON.parse(init.body) : null]);
+  let body
+  if (url.includes('/contacts/search/duplicate')) { const q = decodeURIComponent(url.split('&').slice(1).join('&')); body = dup[q] ? { contact: { id: dup[q] } } : {} }
+  else if (url.endsWith('/contacts/upsert')) body = { contact: upsertContact }
+  else { const id = decodeURIComponent(url.split('/contacts/')[1] || ''); body = init?.method === 'PUT' ? { contact: { id } } : { contact: byId[id] ?? getContact } }
   return { ok: true, json: async () => body }; }; f.calls = calls; return f; };
+const upsertOf = (f) => (f.calls.find((c) => c[1].endsWith('/contacts/upsert')) || [])[2];
 reset(); let f = fakeGhl({ id: 'c1', dnd: false }); let id = await lib.ghlContactIfAllowed(db, ghl, 'lead-intake', { channel: 'sms', phone: '417-555-0101', email: 'x@y.com', firstName: 'Dana' }, f);
-ck('door: a clean contact returns its id, and a TEXT contact is found by the phone alone (never the email)', id === 'c1' && f.calls.length === 1 && f.calls[0][2].phone === '+14175550101' && !('email' in f.calls[0][2]), f.calls);
+ck('door: a clean contact returns its id, and a TEXT contact is found by the phone alone (never the email)', id === 'c1' && upsertOf(f).phone === '+14175550101' && !('email' in upsertOf(f)) && !f.calls.some((c) => c[0] === 'PUT'), f.calls);
 reset(); f = fakeGhl({ id: 'c2', dnd: false }); id = await lib.ghlContactIfAllowed(db, ghl, 'lead-intake', { channel: 'email', phone: '4175550101', email: ' Dana@X.com ' }, f);
-ck('door: an EMAIL contact is found by the email alone', id === 'c2' && f.calls[0][2].email === 'dana@x.com' && !('phone' in f.calls[0][2]), f.calls);
+ck('door: an EMAIL contact is found by the email alone', id === 'c2' && upsertOf(f).email === 'dana@x.com' && !('phone' in upsertOf(f)), f.calls);
 reset(); f = fakeGhl({ id: 'c3', dnd: true }); id = await lib.ghlContactIfAllowed(db, ghl, 'lead-intake', { channel: 'sms', phone: '4175550101' }, f);
 ck('door: GHL Do Not Disturb on the contact: no id, refusal logged', id === null && logged.length === 1 && /Do Not Disturb is on/.test(JSON.stringify(logged[0][1].p_reasons)), logged);
 reset(); f = fakeGhl({ id: 'c4' }, { id: 'c4', dnd: false }); id = await lib.ghlContactIfAllowed(db, ghl, 'lead-intake', { channel: 'sms', phone: '4175550101' }, f);
@@ -98,6 +103,30 @@ reset(); f = fakeGhl({ id: 'r5', __dnd_read: true }, null); id = await lib.ghlCo
 ck('door: the read-back mark only counts when the Hub set it, not when GHL sends it', id === null && /could not check GHL/.test(JSON.stringify(logged)) && f.calls.length === 2, [logged, f.calls]);
 reset(); v = await sms({ ghlContact: { id: 'c9' } });
 ck('a contact handed in without a read-back and without dnd is still unknown: refused', !v.allowed && /could not check GHL/.test(v.reasons[0]), v);
+// ── ONE PERSON, ONE CONTACT (2026-10-01, her "yes, let the hub add the missing phone and email") ──
+const J = { 'number=+14175550101': '', 'email=dana@x.com': 'cE' };
+reset(); f = fakeGhl({ id: 'NEW' }, null, J, { cE: { id: 'cE', firstName: 'Dana', email: 'dana@x.com', phone: '' } });
+id = await lib.ghlContactIfAllowed(db, ghl, 'interview-messages', { channel: 'sms', phone: '417-555-0101', email: 'Dana@X.com', firstName: 'Dana' }, f);
+const put = f.calls.find((c) => c[0] === 'PUT');
+ck('join: nobody has the number, her email contact has no phone: the number is ADDED to that contact and the text goes there (no second contact)',
+  id === 'cE' && put && put[1].endsWith('/contacts/cE') && put[2].phone === '+14175550101' && Object.keys(put[2]).length === 1 && !upsertOf(f), f.calls);
+reset(); f = fakeGhl({ id: 'NEW', dnd: false }, null, J, { cE: { id: 'cE', firstName: 'Dana', email: 'dana@x.com', phone: '+14175559999', dnd: false } });
+id = await lib.ghlContactIfAllowed(db, ghl, 'interview-messages', { channel: 'sms', phone: '4175550101', email: 'dana@x.com', firstName: 'Dana' }, f);
+ck('join: that contact already holds a DIFFERENT number: never overwritten, a separate contact as before', id === 'NEW' && !f.calls.some((c) => c[0] === 'PUT') && upsertOf(f), f.calls);
+reset(); f = fakeGhl({ id: 'NEW', dnd: false }, null, J, { cE: { id: 'cE', firstName: 'Margaret', email: 'dana@x.com' } });
+id = await lib.ghlContactIfAllowed(db, ghl, 'interview-messages', { channel: 'sms', phone: '4175550101', email: 'dana@x.com', firstName: 'Dana' }, f);
+ck("join: the email's contact has a different first name (e.g. a parent's): left alone", id === 'NEW' && !f.calls.some((c) => c[0] === 'PUT'), f.calls);
+reset(); f = fakeGhl({ id: 'NEW', dnd: false }, null, { 'number=+14175550101': 'cP', 'email=dana@x.com': 'cE' });
+id = await lib.ghlContactIfAllowed(db, ghl, 'interview-messages', { channel: 'sms', phone: '4175550101', email: 'dana@x.com', firstName: 'Dana' }, f);
+ck('join: someone already has this number: the usual path, nothing added anywhere', !f.calls.some((c) => c[0] === 'PUT') && upsertOf(f), f.calls);
+reset(); f = fakeGhl({ id: 'NEW' }, null, J, { cE: { id: 'cE', firstName: 'Dana', email: 'dana@x.com', dndSettings: { SMS: { status: 'active' } } } });
+id = await lib.ghlContactIfAllowed(db, ghl, 'interview-messages', { channel: 'sms', phone: '4175550101', email: 'dana@x.com', firstName: 'Dana' }, f);
+ck('join: Do Not Disturb for texts on the joined contact still refuses the text', id === null && /Do Not Disturb is on/.test(JSON.stringify(logged)), logged);
+reset(); f = fakeGhl({ id: 'NEW', dnd: false }, null, J); const bad = async (u, i) => (String(u).includes('duplicate') ? { ok: false, json: async () => ({}) } : f(u, i));
+bad.calls = f.calls; id = await lib.ghlContactIfAllowed(db, ghl, 'interview-messages', { channel: 'sms', phone: '4175550101', email: 'dana@x.com' }, bad);
+ck('join: a lookup GHL refuses falls back to the usual path (the send is not lost)', id === 'NEW' && !f.calls.some((c) => c[0] === 'PUT'), f.calls);
+reset(); f = fakeGhl({ id: 'c1', dnd: false }, null, J); id = await lib.ghlContactIfAllowed(db, ghl, 'x', { channel: 'sms', phone: '4175550101' }, f);
+ck('join: without the other address nothing extra is looked up', id === 'c1' && f.calls.every((c) => !c[1].includes('duplicate')), f.calls);
 // ── NO SILENT FAILURES (2026-10-01): every refusal raises one Needs Attention card ──
 reset(); f = fakeGhl({ id: 'n1' }, { id: 'n1', firstName: 'Cythenia', lastName: 'T', dndSettings: { SMS: { status: 'active' } } }); id = await lib.ghlContactIfAllowed(db, ghl, 'send-invite', { channel: 'sms', phone: '4175550101' }, f);
 ck('card: a refused training invite raises one card, named, in office words, with a next step', id === null && cards.length === 1 && cards[0].kind === 'send_problem' && cards[0].status === 'open'

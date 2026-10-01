@@ -142,7 +142,21 @@ export async function ghlContactIfAllowed(
   const h = { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
   // deno-lint-ignore no-explicit-any
   let contact: any = null
+  /* ONE PERSON, ONE CONTACT (2026-10-01; Samantha: "yes, let the hub add the missing phone and email"). 391/392 found
+     people split: texts on a phone-only contact, emails on an email-only one, because each channel is looked up alone.
+     When nobody has THIS address yet but the same person's other address is on a contact whose field for this channel
+     is EMPTY and whose first name doesn't contradict, the address is added to that contact instead of creating a
+     second one. A contact already holding a different number/email is never overwritten. Do Not Disturb is still read
+     from the contact that will receive this message. Any doubt or error: the one-channel path below, as before. */
   try {
+    const joined = await joinExisting(send, h, ghl.locationId, to, phone, email)
+    if (joined) {
+      const g = await send(`https://services.leadconnectorhq.com/contacts/${encodeURIComponent(joined)}`, { method: 'GET', headers: h })
+      const gj = await g.json().catch(() => ({}))
+      if (g.ok && gj?.contact?.id === joined) contact = readContact(gj.contact)
+    }
+  } catch { contact = null }
+  if (!contact) try {
     const r = await send('https://services.leadconnectorhq.com/contacts/upsert', {
       method: 'POST', headers: h,
       body: JSON.stringify({ locationId: ghl.locationId, ...(phone ? { phone } : {}), ...(email ? { email } : {}),
@@ -163,6 +177,33 @@ export async function ghlContactIfAllowed(
     return null
   }
   return await decide(db, sender, to.channel, phone ?? email, contact, to.onOptOut, nameOf(to) || nameOf(contact))
+}
+
+const GHL = 'https://services.leadconnectorhq.com'
+const firstOf = (v: unknown) => String(v ?? '').trim().split(/\s+/)[0].toLowerCase()
+/** The contact id to add this address to, or '' (then the caller finds/creates by this address alone, as before). */
+async function joinExisting(send: typeof fetch, h: Record<string, string>, locationId: string,
+  // deno-lint-ignore no-explicit-any
+  to: any, phone: string | null, email: string | null): Promise<string> {
+  const other = phone ? normEmail(to.email) : normPhone(to.phone)
+  if (!other) return ''
+  const find = async (q: string) => {
+    const r = await send(`${GHL}/contacts/search/duplicate?locationId=${encodeURIComponent(locationId)}&${q}`, { method: 'GET', headers: h })
+    if (!r.ok) throw new Error('lookup ' + r.status)
+    const j = await r.json().catch(() => ({}))
+    return j?.contact?.id ? String(j.contact.id) : ''
+  }
+  if (await find(phone ? `number=${encodeURIComponent(phone)}` : `email=${encodeURIComponent(email!)}`)) return ''   // already has a contact
+  const id = await find(phone ? `email=${encodeURIComponent(other)}` : `number=${encodeURIComponent(other)}`)
+  if (!id) return ''
+  const g = await send(`${GHL}/contacts/${encodeURIComponent(id)}`, { method: 'GET', headers: h })
+  const c = (await g.json().catch(() => ({})))?.contact
+  if (!g.ok || c?.id !== id) return ''
+  const have = phone ? normPhone(c.phone) : normEmail(c.email)
+  if (have) return have === (phone ?? email) ? id : ''          // a DIFFERENT number/email is there: never overwrite
+  if (firstOf(to.firstName) && firstOf(c.firstName) && firstOf(to.firstName) !== firstOf(c.firstName)) return ''   // someone else's
+  const u = await send(`${GHL}/contacts/${encodeURIComponent(id)}`, { method: 'PUT', headers: h, body: JSON.stringify(phone ? { phone } : { email }) })
+  return u.ok ? id : ''
 }
 
 // deno-lint-ignore no-explicit-any

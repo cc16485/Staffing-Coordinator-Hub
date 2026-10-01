@@ -224,11 +224,11 @@ Deno.serve(async (req) => {
           const ghl = { token: ghlToken, locationId: ghlLocation }
           let sentAny = false
           if (phone) {
-            const cidP = await ghlContactIfAllowed(supabase, ghl, 'lead-intake', { channel: 'sms', phone, firstName })
+            const cidP = await ghlContactIfAllowed(supabase, ghl, 'lead-intake', { channel: 'sms', phone, email, firstName })
             if (cidP && (await send(cidP, 'SMS', { message: line }))) sentAny = true
           }
           if (email) {
-            const cidE = await ghlContactIfAllowed(supabase, ghl, 'lead-intake', { channel: 'email', email, firstName })
+            const cidE = await ghlContactIfAllowed(supabase, ghl, 'lead-intake', { channel: 'email', email, phone, firstName })
             if (cidE) {
               const er = await send(cidE, 'Email', {
                 subject: 'We have your message',

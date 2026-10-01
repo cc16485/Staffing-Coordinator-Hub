@@ -104,7 +104,7 @@ Deno.serve(async (req) => {
       const ghlDoor = { token: ghlToken, locationId: ghlLocation }
       let reached = false
       if (p.phone && p.sms_consent === true) {
-        const cid = await ghlContactIfAllowed(supabase, ghlDoor, 'applicant-reengage', { channel: 'sms', phone: p.phone, firstName: first })
+        const cid = await ghlContactIfAllowed(supabase, ghlDoor, 'applicant-reengage', { channel: 'sms', phone: p.phone, email: p.email, firstName: first })
         if (cid) {
           const ok = await ghlSendChecked(supabase, h, 'applicant-reengage', { channel: 'sms', contactId: cid, address: p.phone, who: name },
             { message: `${body} ${applyUrl} Reply STOP to hear no more from us.` })
@@ -112,7 +112,7 @@ Deno.serve(async (req) => {
           reached = reached || ok
         } else notSent.push(name + ': text held back (opted out, or could not check)')
       }
-      const eid = p.email ? await ghlContactIfAllowed(supabase, ghlDoor, 'applicant-reengage', { channel: 'email', email: p.email, firstName: first }) : null
+      const eid = p.email ? await ghlContactIfAllowed(supabase, ghlDoor, 'applicant-reengage', { channel: 'email', email: p.email, phone: p.phone, firstName: first }) : null
       if (eid) {
         const ok = await ghlSendChecked(supabase, h, 'applicant-reengage', { channel: 'email', contactId: eid, address: p.email, who: name }, {
             subject: 'A new opening at Caring Companions',
