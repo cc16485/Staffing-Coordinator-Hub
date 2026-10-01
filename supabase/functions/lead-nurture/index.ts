@@ -187,7 +187,7 @@ Deno.serve(async (req) => {
     const ghl = { token: ghlToken, locationId: ghlLocation }
     try {
       if (step.channel === 'sms' && l.phone) {
-        const cid = await ghlContactIfAllowed(supabase, ghl, 'lead-nurture', { channel: 'sms', phone: l.phone, firstName: l.first_name, onOptOut })
+        const cid = await ghlContactIfAllowed(supabase, ghl, 'lead-nurture', { channel: 'sms', phone: l.phone, email: l.email, firstName: l.first_name, onOptOut })
         if (cid) {
           /* NO SILENT FAILURES (2026-10-01): a cron send nobody watches; a refused one raises a Needs Attention card
              (the step still retries tomorrow, as before) */
@@ -195,7 +195,7 @@ Deno.serve(async (req) => {
             who: [l.first_name, l.last_name].filter(Boolean).join(' ') }, { message: text })
         }
       } else if (step.channel === 'email' && l.email) {
-        const cid = await ghlContactIfAllowed(supabase, ghl, 'lead-nurture', { channel: 'email', email: l.email, firstName: l.first_name, onOptOut })
+        const cid = await ghlContactIfAllowed(supabase, ghl, 'lead-nurture', { channel: 'email', email: l.email, phone: l.phone, firstName: l.first_name, onOptOut })
         if (cid) {
           const html = `<div style="font-family:Arial,sans-serif;font-size:15px;color:#1f2a36;line-height:1.7;max-width:600px">` +
             text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>') + `</div>`

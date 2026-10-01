@@ -185,12 +185,12 @@ Deno.serve(async (req) => {
       const onOptOut = (reasons: string[]) => { stopped.push(...reasons) }
       let ok = false
       if (l.phone) {
-        const cidP = await ghlContactIfAllowed(supabase, ghl, 'lead-followup', { channel: 'sms', phone: l.phone, firstName: first, onOptOut })
+        const cidP = await ghlContactIfAllowed(supabase, ghl, 'lead-followup', { channel: 'sms', phone: l.phone, email: l.email, firstName: first, onOptOut })
         const fam = [l.first_name, l.last_name].filter(Boolean).join(' ')
         if (cidP && (await sms(cidP, message, { sender: 'lead-followup', address: l.phone, who: fam }))) ok = true
       }
       if (l.email) {
-        const cidE = await ghlContactIfAllowed(supabase, ghl, 'lead-followup', { channel: 'email', email: l.email, firstName: first, onOptOut })
+        const cidE = await ghlContactIfAllowed(supabase, ghl, 'lead-followup', { channel: 'email', email: l.email, phone: l.phone, firstName: first, onOptOut })
         if (cidE && (await email(cidE, subject, shell(htmlBody), { sender: 'lead-followup', address: l.email,
           who: [l.first_name, l.last_name].filter(Boolean).join(' ') }))) ok = true
       }

@@ -98,9 +98,10 @@ Deno.serve(async (req) => {
 
   /* 0b-3: references and applicants are reached through the universal opt-out door, one GHL contact per channel */
   const ghlDoor = { token: ghlToken!, locationId: ghlLocation! }
-  const door = (channel: 'sms' | 'email', address: unknown, first: string) =>
+  /* other: the same person's other address, so their text and email land on ONE GHL contact (2026-10-01) */
+  const door = (channel: 'sms' | 'email', address: unknown, first: string, other?: unknown) =>
     ghlContactIfAllowed(supabase, ghlDoor, 'reference-chase', channel === 'sms'
-      ? { channel, phone: address, firstName: first } : { channel, email: address, firstName: first })
+      ? { channel, phone: address, email: other, firstName: first } : { channel, email: address, phone: other, firstName: first })
 
   // deno-lint-ignore no-explicit-any
   const toSend: any[] = [], toNudge: any[] = [], toApplicant: any[] = [], toEscalate: any[] = []
@@ -236,8 +237,8 @@ Deno.serve(async (req) => {
       `and it is the last thing holding up your start. Give them a nudge if you can. ` +
       `Or if you have a better number or email for them, or want to use someone else, do it here: ${fixUrl} Reply STOP to opt out.`
     try {
-      const smsId = textOk(r) ? await door('sms', r.candidate_phone, first) : null
-      const mailId = r.candidate_email ? await door('email', r.candidate_email, first) : null
+      const smsId = textOk(r) ? await door('sms', r.candidate_phone, first, r.candidate_email) : null
+      const mailId = r.candidate_email ? await door('email', r.candidate_email, first, r.candidate_phone) : null
       if (!smsId && !mailId) continue
       let went = false
       if (smsId) went = await ghlSendChecked(supabase, h, 'reference-chase', { channel: 'sms', contactId: smsId, address: r.candidate_phone, who: r.candidate_name }, { message: line }) || went

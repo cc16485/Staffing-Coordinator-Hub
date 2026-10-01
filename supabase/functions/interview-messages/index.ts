@@ -118,12 +118,12 @@ Deno.serve(async (req) => {
   // deno-lint-ignore no-explicit-any
   const applicantDoor = (who: any, first: string) => ({
     sms: async (message: string) => {
-      const id = await ghlContactIfAllowed(supabase, ghlDoor, 'interview-messages', { channel: 'sms', phone: who.phone, firstName: first })
+      const id = await ghlContactIfAllowed(supabase, ghlDoor, 'interview-messages', { channel: 'sms', phone: who.phone, email: who.email, firstName: first })
       /* NO SILENT FAILURES (2026-10-01): a message GoHighLevel refuses raises a Needs Attention card */
       if (id) await ghlSendChecked(supabase, h, 'interview-messages', { channel: 'sms', contactId: id, address: who.phone, who: [first, who.last_name].filter(Boolean).join(' ') }, { message })
     },
     email: async (subject: string, html: string) => {
-      const id = await ghlContactIfAllowed(supabase, ghlDoor, 'interview-messages', { channel: 'email', email: who.email, firstName: first })
+      const id = await ghlContactIfAllowed(supabase, ghlDoor, 'interview-messages', { channel: 'email', email: who.email, phone: who.phone, firstName: first })
       if (id) await ghlSendChecked(supabase, h, 'interview-messages', { channel: 'email', contactId: id, address: who.email, who: [first, who.last_name].filter(Boolean).join(' ') }, { subject, html })
     },
   })
