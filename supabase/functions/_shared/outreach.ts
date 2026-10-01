@@ -221,6 +221,8 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
   'late-alert':         { class: 'timely_external', scheduled: false,
     why: 'an admin taps "Send to the family" on a running-late alert: the Family Circle members who agreed to texts hear the '
       + 'arrival time (and, on another tap, that the caregiver arrived). 6am to 9pm. Never automatic (her decision 1).' },
+  'reference-send':     { class: 'reactive_external', scheduled: false,
+    why: 'staff press Email or Text on one reference they just spoke with; a text only after that reference said OK by phone (recorded); one text, no automatic follow-ups (Desktop 377).' },
   'applicant-invite':   { class: 'reactive_external', scheduled: false,
     why: 'somebody just phoned asking about a job; staff press Send on the fixed application-link text they asked for (Desktop 364).' },
   'campaign-send':      { class: 'proactive_external', scheduled: false, why: 'a campaign somebody presses send on.' },
