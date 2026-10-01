@@ -27,6 +27,7 @@
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { contactForOutbound } from '../_shared/outreach.ts'
+import { ghlSendChecked } from '../_shared/send-problems.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -150,7 +151,7 @@ Deno.serve(async (req) => {
   }
 
   let reached = 0, optedOut = 0
-  const reachedNames: string[] = []
+  const reachedNames: string[] = [], failedNames: string[] = []
   const ghl = { token: ghlToken!, locationId: ghlLocation! }
   /* 0b-2: one contact per channel, found by that channel's address alone, and the universal opt-out check.
      Family recipients — a human sends this today. The planned AxisCare auto-trigger will be REFUSED by the
@@ -161,25 +162,25 @@ Deno.serve(async (req) => {
   for (const c of reachable) {
     const first = String(c.name ?? '').split(' ')[0] || 'there'
     const stop = { n: 0 }
-    let any = false
+    let any = false, failed = false
     try {
       if (c.phone && c.sms_consent) {
         const dest = await door(c, 'sms', first, stop)
         if (dest) {
-          const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-            method: 'POST', headers: h,
-            body: JSON.stringify({ type: 'SMS', contactId: dest.contactId, message: smsFor(first) }),
-          })
-          any = any || r.ok
+          /* NO SILENT FAILURES (2026-10-01): a text or email GoHighLevel refuses raises a card (the reply only
+             counted the people reached, so one failed channel, or one failed person, was invisible) and is named
+             under failed in the reply */
+          const ok = await ghlSendChecked(supabase, h, 'caregiver-intro',
+            { channel: 'sms', contactId: dest.contactId, address: c.phone, who: c.name }, { message: smsFor(first) })
+          if (!ok) failed = true
+          any = any || ok
         }
       }
       if (c.email) {
         const dest = await door(c, 'email', first, stop)
         if (dest) {
-          const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-            method: 'POST', headers: h,
-            body: JSON.stringify({
-              type: 'Email', contactId: dest.contactId,
+          const ok = await ghlSendChecked(supabase, h, 'caregiver-intro',
+            { channel: 'email', contactId: dest.contactId, address: c.email, who: c.name }, {
               subject: `${cgName} will be caring for ${client_name}`,
             html:
               `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
@@ -191,13 +192,14 @@ Deno.serve(async (req) => {
               `padding:11px 20px;border-radius:9px;display:inline-block;font-weight:700">Meet ${cgName}</a></p>` +
               `<p>Anything you would like us to know before the first visit, just ring.</p>` +
               `<p style="color:#57606a">Caring Companions In-Home Senior Care<br>${OFFICE}</p></div>`,
-            }),
-          })
-          any = any || r.ok
+            })
+          if (!ok) failed = true
+          any = any || ok
         }
       }
     } catch (_) { /* one contact failing must not stop the rest */ }
     if (any) { reached++; reachedNames.push(String(c.name)) }
+    if (failed) failedNames.push(String(c.name))
     if (stop.n) optedOut++
   }
 
@@ -210,5 +212,5 @@ Deno.serve(async (req) => {
     reason, sent_by: user.email,
   })
 
-  return json({ ok: true, caregiver: cgName, client: client_name, reached, opted_out: optedOut, who: reachedNames, link })
+  return json({ ok: true, caregiver: cgName, client: client_name, reached, opted_out: optedOut, who: reachedNames, failed: failedNames, link })
 })

@@ -13,6 +13,7 @@
 // Deploy: supabase functions deploy cc-story --no-verify-jwt. Verify JWT OFF.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { ghlSendChecked } from '../_shared/send-problems.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -82,11 +83,10 @@ Deno.serve(async (req) => {
           ? '<p style="background:#EAF4F6;border-radius:8px;padding:12px 14px;">Watch it in the hub: <b>Campaigns &rarr; Feedback</b>. Press <b>Watch video</b> on their card.</p>'
           : '<p style="color:#55677a;">No video with this one, they wrote it out instead. It is in the hub under Campaigns &rarr; Feedback.</p>')
         + '<p style="color:#55677a;font-size:13px;">A thank-you is worth sending within a day. They just did you a real favor.</p></div>'
-      const sr = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-        method: 'POST', headers: h,
-        body: JSON.stringify({ type: 'Email', contactId, subject, html }),
-      })
-      return sr.ok
+      /* NO SILENT FAILURES (2026-10-01): fired from the public page with nobody in the office watching, so a notice
+         that doesn't go out raises a Needs Attention card ('staff-alert') */
+      return await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'email', contactId, address: 'samantha@mo-care.com', who: 'Samantha' },
+        { subject, html })
     } catch { return false }
   }
 

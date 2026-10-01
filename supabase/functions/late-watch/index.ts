@@ -37,6 +37,7 @@ import { jobCaller } from '../_shared/job-auth.ts'
 import { visitMs } from '../_shared/held-shift.ts'
 import { contactForOutbound } from '../_shared/outreach.ts'
 import { adminRecipients, textAdmin } from '../_shared/clockin-admins.ts'
+import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { makeLink, linkExpiry } from '../_shared/late-links.ts'
 import { eligibleMembers } from '../_shared/family-change-text.ts'
 import { DEFAULT_THANKS, DEFAULT_ASK, DEFAULT_FAMILY, FAMILY_MIN_DEFAULT, fill, clockAt, familyEligible } from '../_shared/late-notice.ts'
@@ -296,7 +297,6 @@ export async function circles(db: any, days: number, now = Date.now()) {
 
 
 /* ═════════════════════════════ L1 · the job ═════════════════════════════ */
-const GHL_SEND = 'https://services.leadconnectorhq.com/conversations/messages'
 const firstOf = (n: unknown) => String(n ?? '').trim().split(/\s+/)[0] || ''
 // deno-lint-ignore no-explicit-any
 type Visit = { id: string; cg: string; cl: string; start: number; end: number; clockIn: number | null; cgName: string; clientFirst: string; raw: any }
@@ -434,10 +434,12 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
   const { data: ccRow } = await db.from('app_data').select('data').eq('key', 'coverage_cases').maybeSingle()
   // deno-lint-ignore no-explicit-any
   const openCases = (Array.isArray(ccRow?.data) ? ccRow!.data : []).filter((c: any) => c?.status === 'open' && c?.kind !== 'interest')
-  const sendSms = async (contactId: string, message: string) => {
-    try { const r = await fetch(GHL_SEND, { method: 'POST', headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'SMS', contactId, message }) }); return r.ok } catch { return false }
-  }
+  /* NO SILENT FAILURES (2026-10-01): a caregiver text GoHighLevel refuses raises a card on Needs Attention (it is
+     still not stamped, so the next run tries again, exactly as before). The admin texts go through textAdmin, which
+     raises its own. */
+  const sendSms = (contactId: string, message: string, to: { address?: unknown; who?: unknown } = {}) =>
+    ghlSendChecked(db, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+      'late-watch', { channel: 'sms', contactId, address: to.address, who: to.who }, { message })
   // deno-lint-ignore no-explicit-any
   const wouldPush = (n: any, w: { to: string; key: string; text: string; count?: number }) => {
     const list = Array.isArray(n.would) ? n.would : []
@@ -500,7 +502,7 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
       const key = n.eta ? 'cg_thanks' : 'cg_ask'
       if (n.status !== 'practice' && cgLive && phone) {
         const contact = await contactForOutbound(db, ghl, { phone, firstName: first }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'late-watch' })
-        if (contact && await sendSms(contact.contactId, text)) { up[n.eta ? 'thanked_at' : 'asked_time_at'] = nowIso; out.cg_texts++ }
+        if (contact && await sendSms(contact.contactId, text, { address: phone, who: n.caregiver_name || cgFirst })) { up[n.eta ? 'thanked_at' : 'asked_time_at'] = nowIso; out.cg_texts++ }
       } else { const w = wouldPush(n, { to: 'caregiver', key, text }); if (w) { up.would = w; n.would = w } }
     }
 

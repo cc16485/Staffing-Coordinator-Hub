@@ -18,6 +18,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { outreachGate } from '../_shared/outreach.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
+import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -115,8 +116,12 @@ Deno.serve(async (req) => {
     'Content-Type': 'application/json',
     Accept: 'application/json',
   }
-  const mail = async (to: string, subject: string, html: string) => {
+  /* NO SILENT FAILURES (2026-10-01): a daily cron with nobody watching, and every recipient is staff (a nurse or the
+     office), so a reminder that doesn't go out raises a Needs Attention card as 'staff-alert'. A dry run still
+     returns before anything is sent or raised. */
+  const mail = async (to: string, subject: string, html: string, who?: string) => {
     if (dry || !ghlToken || !ghlLocation || !to) return false
+    const failed = (why: string) => reportSendProblem(supabase, { sender: 'staff-alert', channel: 'email', address: to, who, reasons: [why], failed: true })
     try {
       const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
         method: 'POST', headers,
@@ -124,13 +129,9 @@ Deno.serve(async (req) => {
       })
       const uj = await up.json().catch(() => ({}))
       const contactId = uj?.contact?.id ?? uj?.id
-      if (!contactId) return false
-      const em = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-        method: 'POST', headers,
-        body: JSON.stringify({ type: 'Email', contactId, subject, html }),
-      })
-      return em.ok
-    } catch { return false }
+      if (!contactId) { await failed('no GoHighLevel contact (error ' + up.status + ')'); return false }
+      return await ghlSendChecked(supabase, headers, 'staff-alert', { channel: 'email', contactId, address: to, who }, { subject, html })
+    } catch (e) { await failed('GoHighLevel could not be reached: ' + String((e as Error)?.message ?? e).slice(0, 80)); return false }
   }
 
   const list = (rows: { client: string; month: string }[]) =>
@@ -150,7 +151,7 @@ Deno.serve(async (req) => {
       (late.length ? `<p><b style="color:#B00020;">Past their window and still not done:</b></p>${list(late)}` : '') +
       (mine.length ? `<p><b>Due this month:</b></p>${list(mine)}<p>Call the client and set a time that suits you both, then fill in the GHE form in the hub when you visit.</p>` : '') +
       `<p style="color:#666;font-size:13px;">Caring Companions · Nurse Visits</p>`
-    if (await mail(email, late.length ? `GHE overdue: ${late.length} to catch up` : `GHE due this month: ${mine.length}`, html)) sent++
+    if (await mail(email, late.length ? `GHE overdue: ${late.length} to catch up` : `GHE due this month: ${mine.length}`, html, String(n.name || ''))) sent++
   }
 
   // 2. The office hears about what is late or waiting on a Fusion upload.

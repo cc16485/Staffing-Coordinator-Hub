@@ -13,6 +13,7 @@ import { ldPush } from '../_shared/lead-truth.ts'
 import { outreachGate } from '../_shared/outreach.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
+import { ghlSendChecked } from '../_shared/send-problems.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -188,22 +189,18 @@ Deno.serve(async (req) => {
       if (step.channel === 'sms' && l.phone) {
         const cid = await ghlContactIfAllowed(supabase, ghl, 'lead-nurture', { channel: 'sms', phone: l.phone, firstName: l.first_name, onOptOut })
         if (cid) {
-          const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-            method: 'POST', headers: sendH,
-            body: JSON.stringify({ type: 'SMS', contactId: cid, message: text }),
-          })
-          ok = r.ok
+          /* NO SILENT FAILURES (2026-10-01): a cron send nobody watches; a refused one raises a Needs Attention card
+             (the step still retries tomorrow, as before) */
+          ok = await ghlSendChecked(supabase, sendH, 'lead-nurture', { channel: 'sms', contactId: cid, address: l.phone,
+            who: [l.first_name, l.last_name].filter(Boolean).join(' ') }, { message: text })
         }
       } else if (step.channel === 'email' && l.email) {
         const cid = await ghlContactIfAllowed(supabase, ghl, 'lead-nurture', { channel: 'email', email: l.email, firstName: l.first_name, onOptOut })
         if (cid) {
           const html = `<div style="font-family:Arial,sans-serif;font-size:15px;color:#1f2a36;line-height:1.7;max-width:600px">` +
             text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>') + `</div>`
-          const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-            method: 'POST', headers: sendH,
-            body: JSON.stringify({ type: 'Email', contactId: cid, subject: step.subject ?? 'From Caring Companions', html }),
-          })
-          ok = r.ok
+          ok = await ghlSendChecked(supabase, sendH, 'lead-nurture', { channel: 'email', contactId: cid, address: l.email,
+            who: [l.first_name, l.last_name].filter(Boolean).join(' ') }, { subject: step.subject ?? 'From Caring Companions', html })
         }
       } else {
         ok = true // channel missing (no phone or no email) — skip the step but keep the sequence moving

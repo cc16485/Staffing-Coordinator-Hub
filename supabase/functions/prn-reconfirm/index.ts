@@ -14,6 +14,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { contactForOutbound } from '../_shared/outreach.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { makeAvailLink, availExpiry } from '../_shared/prn-links.ts'
+import { ghlSendChecked } from '../_shared/send-problems.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -88,13 +89,10 @@ Deno.serve(async (req) => {
     if (!contact) { out.refused++; continue }
     const link = await makeAvailLink(secret, d.axid, availExpiry())
     const message = tmpl.replaceAll('{first_name}', first || 'there').replaceAll('{link}', link)
-    let ok = false
-    try {
-      const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', { method: 'POST',
-        headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message }) })
-      ok = r.ok
-    } catch { ok = false }
+    /* NO SILENT FAILURES (2026-10-01): a text GoHighLevel refuses raises a card on Needs Attention (it is still not
+       recorded as sent, so the next run tries again) */
+    const ok = await ghlSendChecked(db, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+      'prn-reconfirm', { channel: 'sms', contactId: contact.contactId, address: phone, who: first }, { message })
     if (!ok) { out.failed++; continue }
     await db.from('prn_checkins').insert({ axiscare_caregiver_id: d.axid, applicant_id: d.applicant_id, sent_at: new Date().toISOString() })
     out.texted++

@@ -30,6 +30,7 @@
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { normalisePhone, contactForOutbound } from '../_shared/outreach.ts'
+import { ghlSendChecked } from '../_shared/send-problems.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -184,14 +185,11 @@ Deno.serve(async (req) => {
     /* Staff, about their own workday, deliberately before 8am: internal. */
     const contact = await contactForOutbound(sb, ghl, { phone, firstName: first }, 'routine_internal', { audience: 'caregiver', channel: 'sms', sender: 'shift-confirm' })
     if (!contact) { refusedGate++; continue }
+    /* NO SILENT FAILURES (2026-10-01): a schedule text GoHighLevel refuses raises a card on Needs Attention
+       (it is still not logged as sent, exactly as before) */
     try {
-      const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
-                   'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message }),
-      })
-      if (r.ok) {
+      if (await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+        'shift-confirm', { channel: 'sms', contactId: contact.contactId, address: phone, who: g.name }, { message })) {
         /* Persist the send BEFORE moving on — a crash mid-batch must not
            forget who was already texted (coverage-run's lesson). */
         await sb.rpc('upsert_app_data_item', { target_key: 'confirm_log', item: {
@@ -206,7 +204,7 @@ Deno.serve(async (req) => {
             body: JSON.stringify({ tags: ['confirm-asked'] }),
           })
         } catch { /* a missing tag only costs reply routing */ }
-      } else console.error('shift-confirm sms', r.status, await r.text().catch(() => ''))
+      }
     } catch (err) { console.error('shift-confirm sms failed', err) }
   }
 

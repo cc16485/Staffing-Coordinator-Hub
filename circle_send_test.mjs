@@ -3,7 +3,9 @@ import fs from 'fs'; import path from 'path';
 const src = fs.readFileSync(process.argv[2], 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
   .replace(/^import \{ contactForOutbound \} from .*$/m, 'const contactForOutbound = async () => null')
   /* the caller check (security slice) is proven in security_slice_test.mjs; here a signed-in office member is assumed */
-  .replace(/^import \{ requireStaff, OFFICE_ROLES \} from .*$/m, "const requireStaff = async () => ({ ok: true, roles: ['owner_admin'], name: 'Test Staff', email: 't@x' }); const OFFICE_ROLES = []");
+  .replace(/^import \{ requireStaff, OFFICE_ROLES \} from .*$/m, "const requireStaff = async () => ({ ok: true, roles: ['owner_admin'], name: 'Test Staff', email: 't@x' }); const OFFICE_ROLES = []")
+  /* NO SILENT FAILURES (2026-10-01): the copy runs from the repo root, so the shared send checker is imported by its real path */
+  .replace("from '../_shared/send-problems.ts'", "from '" + path.resolve('supabase/functions/_shared/send-problems.ts') + "'");
 const tmp = path.join(process.cwd(), '_cs_under_test.ts'); fs.writeFileSync(tmp, src);
 let handler; globalThis.Deno = { env: { get: () => 'x' }, serve: h => { handler = h; } };
 const DB = { care_circles: [{ id: 'C1', client_name: 'Ruth Jones', axiscare_client_id: '501' }, { id: 'C2', client_name: 'Typed Name', axiscare_client_id: null }],

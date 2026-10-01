@@ -5,6 +5,7 @@
 // Deploy: dashboard editor, Verify JWT OFF. Token-gated like the other forms.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { ghlSendChecked } from '../_shared/send-problems.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -80,11 +81,10 @@ Deno.serve(async (req) => {
           + (item.message ? '<p><b>Message:</b><br>' + esc(item.message) + '</p>' : '')
           + (kind === 'rating' && rating <= 3 ? '<p style="color:#a33;"><b>Low rating. A personal follow-up call is worth it.</b></p>' : '')
           + '<p style="color:#55677a;font-size:13px;">Also saved to the hub → Campaigns → Feedback tab.</p></div>'
-        const sr = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-          method: 'POST', headers: h,
-          body: JSON.stringify({ type: 'Email', contactId, subject, html }),
-        })
-        notified = sr.ok
+        /* NO SILENT FAILURES (2026-10-01): a public page with nobody in the office watching, so a notice that
+           doesn't go out (a low rating included) raises a Needs Attention card ('staff-alert') */
+        notified = await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'email', contactId, address: 'samantha@mo-care.com', who: 'Samantha' },
+          { subject, html })
       }
     } catch { /* stored fine; email is best effort */ }
   }

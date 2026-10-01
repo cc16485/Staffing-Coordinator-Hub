@@ -18,6 +18,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { contactForOutbound } from '../_shared/outreach.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { ghlSendChecked } from '../_shared/send-problems.ts'
 
 /* Security slice (2026-09-27): this used to trust any caller who knew a circle id. It now requires a signed-in
    Caring Companions staff member with an office role (OFFICE_ROLES), checked before the
@@ -123,26 +124,24 @@ Deno.serve(async (req) => {
       if (c.phone && c.sms_consent) {
         const dest = await door(c, 'sms', first, stop)
         if (dest) {
-          const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-            method: 'POST', headers: h,
-            body: JSON.stringify({ type: 'SMS', contactId: dest.contactId, message: textFor(c.name) }),
-          })
-          any = any || r.ok
+          /* NO SILENT FAILURES (2026-10-01): the reply only gives counts, so a refused text or email to one family
+             member (worse, one channel of two, which still counts them as reached) raises a Needs Attention card
+             naming who missed it */
+          const ok = await ghlSendChecked(supabase, h, 'circle-send', { channel: 'sms', contactId: dest.contactId, address: c.phone, who: c.name },
+            { message: textFor(c.name) })
+          any = any || ok
         }
       }
       if (c.email) {
         const dest = await door(c, 'email', first, stop)
         if (dest) {
-          const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-            method: 'POST', headers: h,
-            body: JSON.stringify({ type: 'Email', contactId: dest.contactId,
+          const ok = await ghlSendChecked(supabase, h, 'circle-send', { channel: 'email', contactId: dest.contactId, address: c.email, who: c.name }, {
               subject: careNote ? `About ${circle.client_name}'s visit` : kind === 'change' ? `A change to ${circle.client_name}'s care`
                                          : `An update about ${circle.client_name}`,
               html: `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
                 `<p>Hi ${first},</p><p>${text.replace(/\n/g, '<br>')}</p>` +
-                `<p style="color:#57606a">Caring Companions In-Home Senior Care<br>(417) 234-8494</p></div>` }),
-          })
-          any = any || r.ok
+                `<p style="color:#57606a">Caring Companions In-Home Senior Care<br>(417) 234-8494</p></div>` })
+          any = any || ok
         }
       }
     } catch { /* one failure must not stop the rest */ }

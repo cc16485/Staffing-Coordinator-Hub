@@ -33,6 +33,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
+import { reportSendProblem } from '../_shared/send-problems.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -394,6 +395,11 @@ Deno.serve(async (req) => {
       `<div style="margin-top:14px;padding:0 4px;"><a href="${HUB}/#mywork" style="display:inline-block;background:${NAVY};color:#ffffff;font-family:Arial,sans-serif;text-decoration:none;font-weight:700;font-size:13.5px;padding:10px 20px;border-radius:9px;">Start my day in the hub →</a></div>` +
       `</div><div style="text-align:center;font-family:Arial,sans-serif;color:#9aa3ad;font-size:11px;padding:12px;">Sent at 6:45am by your hub · cc.mo-care.com</div></div></div>`
 
+    /* NO SILENT FAILURES (2026-10-01): the 6:45 scheduled brief has nobody watching, so a brief that doesn't go out
+       raises a Needs Attention card (sender 'lead-digest'). A staff member's own test brief already shows its error
+       in the Hub, so it raises no card. */
+    const briefFailed = (why: string) => testTo ? Promise.resolve()
+      : reportSendProblem(sb, { sender: 'lead-digest', channel: 'email', address: r.email, who: r.name, reasons: [why], failed: true })
     try {
       const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
         method: 'POST', headers,
@@ -402,14 +408,18 @@ Deno.serve(async (req) => {
       // deno-lint-ignore no-explicit-any
       const uj: any = await up.json().catch(() => ({}))
       const contactId = uj?.contact?.id ?? uj?.id
-      if (!contactId) { summaries.push({ to: r.email, error: 'no GHL contact' }); continue }
+      if (!contactId) { summaries.push({ to: r.email, error: 'no GHL contact' }); await briefFailed('no GHL contact (error ' + up.status + ')'); continue }
       const em = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
         method: 'POST', headers,
         body: JSON.stringify({ type: 'Email', contactId, subject, html }),
       })
       if (em.ok) { sent++; summaries.push({ to: r.email, admin: r.admin, overnight: myOvernightOps.length + myOvernightLeads.length, passAlongs: myPass.length, leads: myLeads.length, priorities: myOps.length, writeUps: r.admin ? shortNotice.length : undefined, openShiftsToday: r.admin && acToday ? acToday.open.length : undefined }) }
-      else summaries.push({ to: r.email, error: 'GHL email ' + em.status })
-    } catch (e) { summaries.push({ to: r.email, error: String(e) }) }
+      else {
+        summaries.push({ to: r.email, error: 'GHL email ' + em.status })
+        const t = await em.text().catch(() => '')
+        await briefFailed('error ' + em.status + (t ? ': ' + t.slice(0, 100) : ''))
+      }
+    } catch (e) { summaries.push({ to: r.email, error: String(e) }); await briefFailed('GoHighLevel could not be reached: ' + String(e).slice(0, 80)) }
   }
 
   if (!testTo && sent > 0) {

@@ -85,6 +85,7 @@ import { adminRecipients, textAdmin, ADMIN_DEFAULT } from '../_shared/clockin-ad
 import { makeLink, adminKey, linkExpiry } from '../_shared/clockin-links.ts'
 import { lateHold, liveNotices } from '../_shared/late-notice.ts'
 import { visitMs } from '../_shared/held-shift.ts'
+import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -426,17 +427,10 @@ Deno.serve(async (req) => {
         else {
           const message = msgTmpl.replaceAll('{first_name}', String(cg?.first ?? '') || cgName.split(' ')[0])
             .replaceAll('{client}', clientFirst).replaceAll('{time}', shiftTime12)
-          let ok = false
-          try {
-            const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
-                         'Content-Type': 'application/json' },
-              body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message }),
-            })
-            ok = r.ok
-            if (!r.ok) console.error('timekeeper sms', r.status, await r.text().catch(() => ''))
-          } catch (err) { console.error('timekeeper sms failed', err) }
+          /* NO SILENT FAILURES (2026-10-01): every timekeeper text GoHighLevel refuses raises a card on Needs
+             Attention (texted_at still stays empty, so the next run tries again, exactly as before) */
+          const ok = await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+            'timekeeper-watch', { channel: 'sms', contactId: contact.contactId, address: phone, who: cgName }, { message })
           if (ok) {
             l.texted_at = nowIso; l.ghl_contact_id = contact.contactId
             await save(l); texted++
@@ -582,20 +576,15 @@ Deno.serve(async (req) => {
     const message = msgOutTmpl.replaceAll('{first_name}', String(cg?.first ?? '') || cgName.split(' ')[0])
       .replaceAll('{client}', clientFirst).replaceAll('{time}', clock12(endTime))
     try {
-      const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
-                   'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message }),
-      })
-      if (r.ok) {
+      if (await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+        'timekeeper-watch', { channel: 'sms', contactId: contact.contactId, address: phone, who: cgName }, { message })) {
         await save({ id: 'tko_' + vid.replace(/[^A-Za-z0-9]/g, '_'), kind: 'clock_out',
           visit_id: vid, caregiver: cgName, caregiver_axiscare_id: String(v.caregiver.id),
           client_first: clientFirst, shift_date: day, shift_time: endTime,
           opened_at: nowIso, texted_at: nowIso, ghl_contact_id: contact.contactId,
           resolved_at: null, resolved_how: null })
         textedOut++
-      } else console.error('timekeeper clockout sms', r.status, await r.text().catch(() => ''))
+      }
     } catch (err) { console.error('timekeeper clockout sms failed', err) }
   }
 
@@ -658,13 +647,8 @@ Deno.serve(async (req) => {
         const clientFirst = String(v?.client?.firstName ?? '').trim() || 'your client'
         const msg = `Hi ${String(cg?.first ?? '') || cgName.split(' ')[0]}, it's the Caring Companions office. Your visit with ${clientFirst} yesterday is missing its ${miss} in AxisCare. Please complete the EVV correction form and have the client sign it: sc.mo-care.com/evv-correction-form — thank you!`
         try {
-          const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
-                       'Content-Type': 'application/json' },
-            body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message: msg }),
-          })
-          if (r.ok) {
+          if (await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+            'timekeeper-watch (EVV chase)', { channel: 'sms', contactId: contact.contactId, address: phone, who: cgName }, { message: msg })) {
             chasedNow++
             await sb.rpc('upsert_app_data_item', { target_key: 'evv_followups', item: {
               id: key, status: 'texted', at: new Date().toISOString(), by: 'evv-chase',
@@ -696,13 +680,13 @@ Deno.serve(async (req) => {
             // deno-lint-ignore no-explicit-any
             const uj: any = await up.json().catch(() => ({}))
             const cid = uj?.contact?.id ?? uj?.id
-            if (cid) await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
-              body: JSON.stringify({ type: 'SMS', contactId: cid,
-                message: `EVV deadline: ${n} correction form${n === 1 ? '' : 's'} still waiting to be processed, and the weekly deadline is Sunday midnight. The list is on the hub's EVV tab.` }),
-            })
-          } catch { /* nudge best-effort */ }
+            if (cid) await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+              'staff-alert', { channel: 'sms', contactId: cid, address: p, who: 'the office (EVV deadline nudge)' },
+              { message: `EVV deadline: ${n} correction form${n === 1 ? '' : 's'} still waiting to be processed, and the weekly deadline is Sunday midnight. The list is on the hub's EVV tab.` })
+            else await reportSendProblem(sb, { sender: 'staff-alert', channel: 'sms', address: p, who: 'the office (EVV deadline nudge)',
+              reasons: ['GHL returned no contact id (status ' + up.status + ')'], failed: true })
+          } catch (e) { await reportSendProblem(sb, { sender: 'staff-alert', channel: 'sms', address: p, who: 'the office (EVV deadline nudge)',
+            reasons: ['could not send: ' + String((e as Error)?.message ?? e).slice(0, 80)], failed: true }) }
         }
       }
       await sb.rpc('upsert_app_data_item', { target_key: 'evv_chase_state', item: {

@@ -24,6 +24,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
+import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -160,12 +161,9 @@ Deno.serve(async (req) => {
             ? `<p style="font-weight:bold;margin-bottom:4px">app_data.json (full off-site copy)</p>` +
               `<pre style="font-size:10px;background:#f5f7fa;padding:10px;border-radius:6px;white-space:pre-wrap">${esc(appJson)}</pre>`
             : `<p><i>app_data snapshot too large to inline (${Math.round(appJson.length / 1024)} KB) — full copy is in the backups vault.</i></p>`
-          const em = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-            method: 'POST',
-            headers: ghlHeaders,
-            body: JSON.stringify({
-              type: 'Email',
-              contactId,
+          /* NO SILENT FAILURES (2026-10-01): the Monday backup runs with nobody watching, so a backup email that
+             doesn't go out (refused, no contact, or GoHighLevel unreachable) raises a Needs Attention card */
+          emailed = await ghlSendChecked(supabase, ghlHeaders, 'shared-backup', { channel: 'email', contactId, address: to, who: 'Hub backup' }, {
               subject: `Hub backup ${stamp} — Staffing/Team/CC hubs snapshot`,
               html:
                 `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1f2a36;line-height:1.5">` +
@@ -181,12 +179,15 @@ Deno.serve(async (req) => {
                 `</ul><p><b>Keep this email</b> — if the hubs ever lose data again (like July 5), this is the restore point.</p>` +
                 inline +
                 `</div>`,
-            }),
           })
-          emailed = em.ok
+        } else {
+          await reportSendProblem(supabase, { sender: 'shared-backup', channel: 'email', address: to, who: 'Hub backup',
+            reasons: ['no GoHighLevel contact (error ' + up.status + ')'], failed: true })
         }
       } catch (e) {
         console.error('backup email failed:', e instanceof Error ? e.message : e)
+        await reportSendProblem(supabase, { sender: 'shared-backup', channel: 'email', address: to, who: 'Hub backup',
+          reasons: ['GoHighLevel could not be reached: ' + String(e instanceof Error ? e.message : e).slice(0, 80)], failed: true })
       }
     }
 

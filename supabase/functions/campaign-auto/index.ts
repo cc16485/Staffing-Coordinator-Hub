@@ -22,6 +22,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { outreachGate } from '../_shared/outreach.ts'
 import { requireStaff, serverSecretOk, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
+import { ghlSendChecked } from '../_shared/send-problems.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -289,11 +290,11 @@ Deno.serve(async (req) => {
               }
             } })
         if (!contactId) { optedOutOrFailed++; continue }
-        const sr = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-          method: 'POST', headers: sendH,
-          body: JSON.stringify({ type: 'Email', contactId, subject: e.subj, html: html.replace(/\{first\}/g, parts[0] || 'there') }),
-        })
-        if (sr.ok) { sent++; totalSent++ } else failed++
+        /* NO SILENT FAILURES (2026-10-01): the autopilot runs on a schedule with nobody watching, so each refused
+           email raises a Needs Attention card (a GoHighLevel outage folds into one "many messages" card) */
+        const went = await ghlSendChecked(supabase, sendH, 'campaign-auto', { channel: 'email', contactId, address: r.email, who: r.name },
+          { subject: e.subj, html: html.replace(/\{first\}/g, parts[0] || 'there') })
+        if (went) { sent++; totalSent++ } else failed++
       } catch { failed++ }
     }
     const item = { id: crypto.randomUUID(), at: new Date().toISOString(), key: e.key, subj: e.subj, source: 'Autopilot · ' + e.aud, sent, failed, not_sent_optout_or_unreachable: optedOutOrFailed, auto: true }
@@ -310,12 +311,9 @@ Deno.serve(async (req) => {
       const uj = await up.json().catch(() => ({}))
       const contactId = uj?.contact?.id ?? uj?.id ?? null
       if (contactId) {
-        await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-          method: 'POST', headers: sendH,
-          body: JSON.stringify({
-            type: 'Email', contactId, subject: 'Campaign autopilot: ' + summary.length + ' email' + (summary.length > 1 ? 's' : '') + ' sent today',
+        await ghlSendChecked(supabase, sendH, 'staff-alert', { channel: 'email', contactId, address: ADMIN, who: 'Samantha' }, {
+            subject: 'Campaign autopilot: ' + summary.length + ' email' + (summary.length > 1 ? 's' : '') + ' sent today',
             html: `<div style="font-family:Arial,sans-serif;font-size:15px;color:#1f2a36;line-height:1.7;max-width:600px"><p>Your campaign autopilot ran today:</p><ul>${summary.map((s) => `<li>${s}</li>`).join('')}</ul><p>Details are in the hub under 🎯 Campaigns → Recent sends. To pause everything, flip the autopilot switch off.</p></div>`,
-          }),
         })
       }
     } catch { /* summary is best-effort */ }

@@ -32,6 +32,7 @@ import { maySendTo, normalisePhone, contactForOutbound } from '../_shared/outrea
 import { ZIP_LL } from '../_shared/zip-centroids.ts'
 import { shadowRoute } from '../_shared/routing.ts'
 import { opEvent } from '../_shared/events.ts'
+import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 import { jobCaller, ownerCaller } from '../_shared/job-auth.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { notifyFamilyOfChange } from '../_shared/family-change-text.ts'
@@ -1250,11 +1251,14 @@ Deno.serve(async (req) => {
           })
           const uj: any = await up.json().catch(() => ({}))
           const cid = uj?.contact?.id ?? uj?.id
+          /* NO SILENT FAILURES (2026-10-01): the call-in alert to an admin is automatic, so an email or text
+             GoHighLevel refuses (or a contact it can't make) raises a card on Needs Attention. When it was stamped
+             (admin_alerted) is unchanged. */
+          if (!cid) await reportSendProblem(sb, { sender: 'staff-alert', channel: 'email', address: adm, who: person?.name || adm,
+            reasons: ['GHL returned no contact id (status ' + up.status + ')'], failed: true })
           if (cid) {
-            await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
-              body: JSON.stringify({ type: 'Email', contactId: cid,
+            const wentA = await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+              'staff-alert', { channel: 'email', contactId: cid, address: adm, who: person?.name || adm }, {
                 subject: `${mustA ? 'MUST COVER · ' : ''}Call-in: ${c.client || 'coverage case'} ${whenTxt}`,
                 html: `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.6;color:#1f2a36;">`
                   + `<p><b>New call-in detected.</b></p>`
@@ -1267,9 +1271,8 @@ Deno.serve(async (req) => {
                   + `</p><p>` + (manualSelect
                     ? `Cara has ranked the candidates — open the case and choose who to ask (worked-with-this-client first). Nothing is texted until you press send. `
                     : `The callout engine is texting qualified caregivers in waves. `)
-                  + `Watch replies and confirm the fill on the board: <a href="https://cc.mo-care.com">cc.mo-care.com</a> (Scheduling, Coverage Help).</p></div>` }),
-            })
-            alerted++
+                  + `Watch replies and confirm the fill on the board: <a href="https://cc.mo-care.com">cc.mo-care.com</a> (Scheduling, Coverage Help).</p></div>` })
+            if (wentA) alerted++
             // SMS too, when the hour allows and we have a number.
             if (smsOk) {
               const ph = normalisePhone(person?.phone)
@@ -1277,15 +1280,15 @@ Deno.serve(async (req) => {
                 const contact = await contactForOutbound(sb, ghl,
                   { phone: ph, email: adm, firstName: person?.name || adm.split('@')[0] },
                   'urgent_internal', { selfSupplied: true, audience: 'staff' })
-                if (contact) await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-                  method: 'POST',
-                  headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message: smsMsg }),
-                })
+                if (contact) await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+                  'staff-alert', { channel: 'sms', contactId: contact.contactId, address: ph, who: person?.name || adm }, { message: smsMsg })
               }
             }
           }
-        } catch { /* an unreachable admin must not block the callout */ }
+        } catch (e) { /* an unreachable admin must not block the callout */
+          await reportSendProblem(sb, { sender: 'staff-alert', channel: 'email', address: adm, who: person?.name || adm,
+            reasons: ['could not send: ' + String((e as Error)?.message ?? e).slice(0, 80)], failed: true })
+        }
       }
       const freshA = await readCaseFresh(c.id)
       if (freshA) {
@@ -1432,13 +1435,12 @@ Deno.serve(async (req) => {
             try {
               const contact = await contactForOutbound(sb, ghl,
                 { phone: p, firstName: 'Scheduling' }, 'urgent_internal', { selfSupplied: true, audience: 'staff' })
-              if (contact) await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
-                           'Content-Type': 'application/json' },
-                body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message: msgQ }),
-              })
-            } catch { /* the item is the guarantee */ }
+              if (contact) await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+                'staff-alert', { channel: 'sms', contactId: contact.contactId, address: p, who: 'the office (nobody answered the ask)' }, { message: msgQ })
+            } catch (e) { /* the item is the guarantee */
+              await reportSendProblem(sb, { sender: 'staff-alert', channel: 'sms', address: p, who: 'the office (nobody answered the ask)',
+                reasons: ['could not send: ' + String((e as Error)?.message ?? e).slice(0, 80)], failed: true })
+            }
           }
         }
         if (claimActiveQ) {
@@ -1765,17 +1767,8 @@ Deno.serve(async (req) => {
           { phone: x.phone, firstName: x.first || x.name }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'coverage-run' })
         if (!contact) continue
         const message = fill(x.prn_ask ? tmplP : x.tier === 1 ? tmpl1 : tmplO, x)
-        let ok = false
-        try {
-          const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
-                       'Content-Type': 'application/json' },
-            body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message }),
-          })
-          ok = r.ok
-          if (!r.ok) console.error('callout sms', r.status, await r.text().catch(() => ''))
-        } catch (err) { console.error('callout sms failed', err) }
+        const ok = await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+          'coverage-run', { channel: 'sms', contactId: contact.contactId, address: x.phone, who: x.name }, { message })
         if (ok) {
           const entry = { id: uid(), name: x.name, phone: x.phone, channel: 'sms',
             at: nowIso(), state: 'waiting', replied_at: null,
@@ -1860,16 +1853,14 @@ Deno.serve(async (req) => {
                 .replaceAll('{client}', String(c.client || 'a client'))
                 .replaceAll('{when}', whenTxt)
                 .replaceAll('{asked}', String(autoAsked.length))
-              const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
-                           'Content-Type': 'application/json' },
-                body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message: msg }),
-              })
-              smsSent = r.ok
+              smsSent = await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+                'staff-alert', { channel: 'sms', contactId: contact.contactId, address: phone, who: person?.name || own2 }, { message: msg })
             }
           }
-        } catch { /* the item is the guarantee; the SMS is the accelerant */ }
+        } catch (e) { /* the item is the guarantee; the SMS is the accelerant */
+          await reportSendProblem(sb, { sender: 'staff-alert', channel: 'sms', address: '', who: own2,
+            reasons: ['could not send: ' + String((e as Error)?.message ?? e).slice(0, 80)], failed: true })
+        }
       }
       const fresh = await readCaseFresh(c.id)
       if (fresh) {
@@ -1992,19 +1983,15 @@ Deno.serve(async (req) => {
                 if (winner.confirm_optout) await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
                 throw new Error('not sent')
               }
-              const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
-                           'Content-Type': 'application/json' },
-                body: JSON.stringify({ type: 'SMS', contactId: cid,
+              const went = await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+                'coverage-run (confirmed text)', { channel: 'sms', contactId: cid, address: winner.phone, who: winner.name }, {
                   message: (String(settings.coverage_msg_confirmed || '') ||
                     `You're confirmed for {client}, {when}. It's on your schedule. Thank you, {first_name}!`)
                     .replaceAll('{first_name}', String(winner.name).split(' ')[0])
                     .replaceAll('{client}', String(c.client || 'the client'))
                     .replaceAll('{when}', whenTxt || 'as scheduled')
-                    .replace(/\s{2,}/g, ' ').trim() }),
-              })
-              if (r.ok) { winner.confirm_sent = true
+                    .replace(/\s{2,}/g, ' ').trim() })
+              if (went) { winner.confirm_sent = true
                 /* Persist NOW: if the courtesy texts below all fail, the next
                    run must not re-send "You're confirmed" (review finding 9). */
                 await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
@@ -2118,14 +2105,8 @@ Deno.serve(async (req) => {
             if (!cid) {
               if (stop) { if (a.state === 'yes') a.was_yes = true; a.state = 'closed_silent'; a.optout_skipped = true; optedOut++ }
             } else {
-              const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
-                           'Content-Type': 'application/json' },
-                body: JSON.stringify({ type: 'SMS', contactId: cid,
-                  message: msg }),
-              })
-              if (r.ok) { if (a.state === 'yes') a.was_yes = true; a.state = 'closed_notified'; told++ }
+              if (await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+                'coverage-run (closure text)', { channel: 'sms', contactId: cid, address: a.phone, who: a.name }, { message: msg })) { if (a.state === 'yes') a.was_yes = true; a.state = 'closed_notified'; told++ }
             }
             /* Case over: drop the tag so future texts stop firing the
                reply workflow (and stop costing premium executions). */
