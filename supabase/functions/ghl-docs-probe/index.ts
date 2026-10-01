@@ -64,9 +64,12 @@ Deno.serve(async (req) => {
     matched_in_ghl: 0, no_phone_or_email: 0, not_found: 0, with_any_file_field: 0, notes: { caregivers_with_doc_links: 0, doc_link_notes: 0, answer: 0 },
     conversations: { checked: 0, with_pdf_or_image_attachments: 0, attachments: 0 }, media_library_answer: 0, download_tests: [] as unknown[] }
 
-  for (const c of active) {
+  /* v3 (2026-10-01): run 2 hit the 150s limit doing 56 caregivers one by one; now 8 at a time, and the notes and
+     conversation counts (already answered by run 1) are skipped. */
+  // deno-lint-ignore no-explicit-any
+  const one = async (c: any) => {
     const ph = digits10(c.phone || c.mobile), em = String(c.email || '').trim().toLowerCase()
-    if (!ph && !em) { out.no_phone_or_email++; continue }
+    if (!ph && !em) { out.no_phone_or_email++; return }
     let cid = ''
     try {
       const q = ph ? `number=${encodeURIComponent('+1' + ph)}` : `email=${encodeURIComponent(em)}`
@@ -77,7 +80,7 @@ Deno.serve(async (req) => {
         if (r2.ok) cid = String((await r2.json())?.contact?.id || '')
       }
     } catch { /* counted as not found */ }
-    if (!cid) { out.not_found++; continue }
+    if (!cid) { out.not_found++; return }
     out.matched_in_ghl++
     try {
       const r = await fetch(`${GHL}/contacts/${cid}`, { headers: H(tok) })
@@ -106,32 +109,8 @@ Deno.serve(async (req) => {
         if (any) out.with_any_file_field++
       }
     } catch { /* skip */ }
-    try {
-      const r = await fetch(`${GHL}/contacts/${cid}/notes`, { headers: H(tok) }); out.notes.answer = r.status
-      if (r.ok) {
-        // deno-lint-ignore no-explicit-any
-        const notes: any[] = (await r.json())?.notes || []
-        const docNotes = notes.filter((n) => /https?:\/\//i.test(String(n.body || '')) && (DOCWORDS.test(String(n.body || '')) || /\.pdf/i.test(String(n.body || ''))))
-        if (docNotes.length) { out.notes.caregivers_with_doc_links++; out.notes.doc_link_notes += docNotes.length }
-      }
-    } catch { /* skip */ }
-    if (out.conversations.checked < 25) {
-      try {
-        const s = await fetch(`${GHL}/conversations/search?locationId=${encodeURIComponent(loc)}&contactId=${cid}&limit=1`, { headers: H(tok, '2021-04-15') })
-        const conv = s.ok ? ((await s.json())?.conversations || [])[0] : null
-        if (conv) {
-          out.conversations.checked++
-          const m = await fetch(`${GHL}/conversations/${conv.id}/messages?limit=100`, { headers: H(tok, '2021-04-15') })
-          const b = m.ok ? await m.json() : {}
-          // deno-lint-ignore no-explicit-any
-          const msgs: any[] = b?.messages?.messages || b?.messages || []
-          const att = msgs.flatMap((x) => Array.isArray(x.attachments) ? x.attachments : []).filter((u: string) => /\.(pdf|png|jpe?g|heic)(\?|$)/i.test(String(u)))
-          if (att.length) { out.conversations.with_pdf_or_image_attachments++; out.conversations.attachments += att.length }
-        }
-      } catch { /* skip */ }
-    }
   }
-
+  for (let i = 0; i < active.length; i += 8) await Promise.all(active.slice(i, i + 8).map(one))
   /* 2 · can a stored file be downloaded? one sample per field; status and type only */
   for (const f of fileFields) {
     if (!f.sample) continue

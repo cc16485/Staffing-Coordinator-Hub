@@ -71,8 +71,7 @@ else:
     if not j["download_tests"]: say("    no file to test")
     for t in j["download_tests"]: say(f"    {t['field']}: with the Hub's key {t['with_key']} · without a key {t['without_key']} · type {t.get('type','')} · stored at {t['host']}")
     n = j["notes"]; c = j["conversations"]
-    say(""); say(f"  NOTES with a document link: {n['doc_link_notes']} note(s) on {n['caregivers_with_doc_links']} caregiver(s) (answer {n['answer']})")
-    say(f"  CONVERSATIONS (first {c['checked']} caregivers): {c['attachments']} PDF/photo attachment(s) on {c['with_pdf_or_image_attachments']} caregiver(s)")
+    say("  (notes and conversation attachments were counted in the first run: 1 note, 15 attachments on 12 of 25)")
     say(f"  MEDIA LIBRARY: the Hub's key gets {j['media_library_answer']} (200 = can read it; 401/403 = no permission)")
 remove_probe()
 say(); say("RESULT: " + ("DONE · read only; the helper is gone. Tell Claude it's done." if not fails else "CHECK THE ✗ LINES."))
