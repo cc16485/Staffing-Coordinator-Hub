@@ -34,6 +34,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { reportSendProblem } from '../_shared/send-problems.ts'
+import { ghlStaffContact } from '../_shared/staff-contact.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -401,14 +402,9 @@ Deno.serve(async (req) => {
     const briefFailed = (why: string) => testTo ? Promise.resolve()
       : reportSendProblem(sb, { sender: 'lead-digest', channel: 'email', address: r.email, who: r.name, reasons: [why], failed: true })
     try {
-      const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-        method: 'POST', headers,
-        body: JSON.stringify({ locationId: ghlLocation, email: r.email, firstName: myFirst, lastName: 'CC Staff' }),
-      })
-      // deno-lint-ignore no-explicit-any
-      const uj: any = await up.json().catch(() => ({}))
-      const contactId = uj?.contact?.id ?? uj?.id
-      if (!contactId) { summaries.push({ to: r.email, error: 'no GHL contact' }); await briefFailed('no GHL contact (error ' + up.status + ')'); continue }
+      /* ONE CONTACT (2026-10-01): the brief goes to the contact found by the one-contact rule for email. */
+      const contactId = await ghlStaffContact({ token: ghlToken, locationId: ghlLocation }, { channel: 'email', email: r.email, firstName: myFirst, lastName: 'CC Staff' })
+      if (!contactId) { summaries.push({ to: r.email, error: 'no GHL contact' }); await briefFailed('no GHL contact'); continue }
       const em = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
         method: 'POST', headers,
         body: JSON.stringify({ type: 'Email', contactId, subject, html }),

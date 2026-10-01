@@ -21,6 +21,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
+import { ghlStaffContact } from '../_shared/staff-contact.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -184,11 +185,8 @@ Deno.serve(async (req) => {
       Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28',
       'Content-Type': 'application/json', Accept: 'application/json',
     }
-    const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-      method: 'POST', headers: h,
-      body: JSON.stringify({ locationId: ghlLocation, email: 'samantha@mo-care.com', firstName: 'Samantha' }),
-    })
-    const contactId = (await up.json().catch(() => ({})))?.contact?.id
+    /* ONE CONTACT (2026-10-01): Samantha's contact is found by the one-contact rule for this email channel. */
+    const contactId = await ghlStaffContact({ token: ghlToken, locationId: ghlLocation }, { channel: 'email', email: 'samantha@mo-care.com', firstName: 'Samantha' })
     if (!contactId) return
     const esc = (t: string) => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')
     const html = '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.6;">'
@@ -218,11 +216,7 @@ Deno.serve(async (req) => {
       Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28',
       'Content-Type': 'application/json', Accept: 'application/json',
     }
-    const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-      method: 'POST', headers: h,
-      body: JSON.stringify({ locationId: ghlLocation, email: 'samantha@mo-care.com', firstName: 'Samantha' }),
-    })
-    const contactId = (await up.json().catch(() => ({})))?.contact?.id
+    const contactId = await ghlStaffContact({ token: ghlToken, locationId: ghlLocation }, { channel: 'email', email: 'samantha@mo-care.com', firstName: 'Samantha' })
     if (!contactId) return
     const esc = (t: string) => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')
     const html = '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.6;">'

@@ -29,6 +29,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { reportSendProblem } from '../_shared/send-problems.ts'
+import { ghlStaffContact } from '../_shared/staff-contact.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -102,13 +103,8 @@ async function ghlCalls(tok: string, locationId: string): Promise<any[]> {
 }
 
 async function sendSms(tok: string, locationId: string, phone: string, message: string) {
-  const up = await fetch(`${GHL_BASE}/contacts/upsert`, {
-    method: 'POST',
-    headers: { ...ghlHeaders(tok), 'Content-Type': 'application/json', Version: '2021-07-28' },
-    body: JSON.stringify({ locationId, phone }),
-  })
-  const upBody = await up.json().catch(() => ({}))
-  const contactId = upBody?.contact?.id
+  /* ONE CONTACT (2026-10-01): the escalation text goes to the contact found by the one-contact rule for sms. */
+  const contactId = await ghlStaffContact({ token: tok, locationId }, { channel: 'sms', phone })
   if (!contactId) throw new Error('could not resolve a GHL contact for ' + phone)
   const send = await fetch(`${GHL_BASE}/conversations/messages`, {
     method: 'POST',

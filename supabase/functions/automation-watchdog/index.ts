@@ -26,6 +26,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
+import { ghlStaffContact } from '../_shared/staff-contact.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -174,25 +175,29 @@ Deno.serve(async (req) => {
          someone (GoHighLevel refused it, or couldn't even find their contact, e.g. an expired token) that becomes a
          Needs Attention card. A person who got nothing doesn't count as alerted, so the 6-hour suppression isn't
          stamped and the next run tries again. */
-      const unreachable = async (t: { name?: string; phone?: string; email?: string }, why: string) => {
-        if (t.phone) await reportSendProblem(supabase, { sender: 'staff-alert', channel: 'sms', address: t.phone, who: t.name, reasons: [why], failed: true })
-        if (t.email) await reportSendProblem(supabase, { sender: 'staff-alert', channel: 'email', address: t.email, who: t.name, reasons: [why], failed: true })
+      const unreachable = async (t: { name?: string; phone?: string; email?: string }, why: string, only?: 'sms' | 'email') => {
+        if (t.phone && only !== 'email') await reportSendProblem(supabase, { sender: 'staff-alert', channel: 'sms', address: t.phone, who: t.name, reasons: [why], failed: true })
+        if (t.email && only !== 'sms') await reportSendProblem(supabase, { sender: 'staff-alert', channel: 'email', address: t.email, who: t.name, reasons: [why], failed: true })
       }
       for (const t of alertTo) {
         try {
-          const r = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-            method: 'POST', headers: h,
-            body: JSON.stringify({ locationId: ghlLocation, ...(t.phone ? { phone: t.phone } : {}),
-              ...(t.email ? { email: t.email } : {}), firstName: t.name ?? 'Team' }),
-          })
-          const j = await r.json().catch(() => ({}))
-          const cid = j?.contact?.id ?? j?.id ?? null
-          if (!cid) { await unreachable(t, 'no GoHighLevel contact (error ' + r.status + ')'); continue }
+          /* ONE CONTACT (2026-10-01): the contact is found per channel (the text to the contact holding the phone,
+             the email to the contact holding the email), so a phone-only contact no longer swallows the email. */
+          const ghl = { token: ghlToken, locationId: ghlLocation }
+          const who = { phone: t.phone, email: t.email, firstName: t.name ?? 'Team' }
           let went = false
-          if (t.phone) went = await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'sms', contactId: cid, address: t.phone, who: t.name },
-            { message: line }) || went
-          if (t.email) went = await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'email', contactId: cid, address: t.email, who: t.name },
-            { subject: `Hub watchdog: ${problems.length} automation problem${problems.length > 1 ? 's' : ''}`, html }) || went
+          if (t.phone) {
+            const cid = await ghlStaffContact(ghl, { channel: 'sms', ...who })
+            if (!cid) await unreachable(t, 'no GoHighLevel contact', 'sms')
+            else went = await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'sms', contactId: cid, address: t.phone, who: t.name },
+              { message: line }) || went
+          }
+          if (t.email) {
+            const cid = await ghlStaffContact(ghl, { channel: 'email', ...who })
+            if (!cid) await unreachable(t, 'no GoHighLevel contact', 'email')
+            else went = await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'email', contactId: cid, address: t.email, who: t.name },
+              { subject: `Hub watchdog: ${problems.length} automation problem${problems.length > 1 ? 's' : ''}`, html }) || went
+          }
           if (!went) continue
           alerted++
         } catch (e) {

@@ -12,6 +12,7 @@ import { leadHits, returningCheck, returningItem } from '../_shared/returning.ts
 import { inquirySwitches } from '../_shared/inquiry-switches.ts'
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
+import { ghlStaffContact } from '../_shared/staff-contact.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -294,25 +295,19 @@ Deno.serve(async (req) => {
 
       for (const p of people) {
         try {
-          const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-            method: 'POST', headers: h,
-            body: JSON.stringify({
-              locationId: ghlLocation,
-              ...(p.phone ? { phone: p.phone } : {}),
-              ...(p.email ? { email: p.email } : {}),
-              firstName: (p.name || 'Team').split(' ')[0],
-            }),
-          })
-          const j = await up.json().catch(() => ({}))
-          // deno-lint-ignore no-explicit-any
-          const contactId = (j as any)?.contact?.id ?? (j as any)?.id
-          if (!contactId) continue
+          /* ONE CONTACT (2026-10-01): the staff member's contact is found per channel (the email to the contact
+             holding the email, the text to the contact holding the phone), so a phone-only contact no longer
+             swallows the email. */
+          const staffGhl = { token: ghlToken, locationId: ghlLocation }
+          const staffWho = { phone: p.phone, email: p.email, firstName: (p.name || 'Team').split(' ')[0] }
           let went = false
           if (p.email) {
-            went = await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'email', contactId, address: p.email, who: p.name }, { subject, html }) || went
+            const contactId = await ghlStaffContact(staffGhl, { channel: 'email', ...staffWho })
+            if (contactId) went = await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'email', contactId, address: p.email, who: p.name }, { subject, html }) || went
           }
           if (p.phone) {
-            went = await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'sms', contactId, address: p.phone, who: p.name }, { message: sms }) || went
+            const contactId = await ghlStaffContact(staffGhl, { channel: 'sms', ...staffWho })
+            if (contactId) went = await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'sms', contactId, address: p.phone, who: p.name }, { message: sms }) || went
           }
           if (went) alerted++
         } catch { /* one bad recipient must not stop the rest */ }

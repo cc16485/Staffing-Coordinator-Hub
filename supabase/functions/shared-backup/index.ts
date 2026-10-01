@@ -25,6 +25,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
+import { ghlStaffContact } from '../_shared/staff-contact.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -147,13 +148,8 @@ Deno.serve(async (req) => {
         Accept: 'application/json',
       }
       try {
-        const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-          method: 'POST',
-          headers: ghlHeaders,
-          body: JSON.stringify({ locationId: ghlLocation, email: to, firstName: 'Hub', lastName: 'Backup' }),
-        })
-        const upJson = await up.json().catch(() => ({}))
-        const contactId = upJson?.contact?.id ?? upJson?.id
+        /* ONE CONTACT (2026-10-01): the backup email goes to the contact found by the one-contact rule for email. */
+        const contactId = await ghlStaffContact({ token: ghlToken, locationId: ghlLocation }, { channel: 'email', email: to, firstName: 'Hub', lastName: 'Backup' })
         if (contactId) {
           const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
           const appJson = files[`${stamp}/app_data.json`]
@@ -182,7 +178,7 @@ Deno.serve(async (req) => {
           })
         } else {
           await reportSendProblem(supabase, { sender: 'shared-backup', channel: 'email', address: to, who: 'Hub backup',
-            reasons: ['no GoHighLevel contact (error ' + up.status + ')'], failed: true })
+            reasons: ['no GoHighLevel contact'], failed: true })
         }
       } catch (e) {
         console.error('backup email failed:', e instanceof Error ? e.message : e)

@@ -33,6 +33,7 @@ import { ZIP_LL } from '../_shared/zip-centroids.ts'
 import { shadowRoute } from '../_shared/routing.ts'
 import { opEvent } from '../_shared/events.ts'
 import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
+import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { jobCaller, ownerCaller } from '../_shared/job-auth.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { notifyFamilyOfChange } from '../_shared/family-change-text.ts'
@@ -1248,18 +1249,14 @@ Deno.serve(async (req) => {
         const person = staffA.find((s: any) => String(s.email || '').toLowerCase() === adm)
         // Email always (silent), through the same GHL pipe as the 7am digest.
         try {
-          const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
-            body: JSON.stringify({ locationId: ghl.locationId, email: adm, firstName: person?.name || 'CC', lastName: 'Admin' }),
-          })
-          const uj: any = await up.json().catch(() => ({}))
-          const cid = uj?.contact?.id ?? uj?.id
+          /* ONE CONTACT (2026-10-01): the email goes to the contact found by the one-contact rule for email (the
+             text below already finds its own through contactForOutbound). */
+          const cid = await ghlStaffContact(ghl, { channel: 'email', email: adm, phone: person?.phone, firstName: person?.name || 'CC', lastName: 'Admin' })
           /* NO SILENT FAILURES (2026-10-01): the call-in alert to an admin is automatic, so an email or text
              GoHighLevel refuses (or a contact it can't make) raises a card on Needs Attention. When it was stamped
              (admin_alerted) is unchanged. */
           if (!cid) await reportSendProblem(sb, { sender: 'staff-alert', channel: 'email', address: adm, who: person?.name || adm,
-            reasons: ['GHL returned no contact id (status ' + up.status + ')'], failed: true })
+            reasons: ['GHL returned no contact id'], failed: true })
           if (cid) {
             const wentA = await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
               'staff-alert', { channel: 'email', contactId: cid, address: adm, who: person?.name || adm }, {

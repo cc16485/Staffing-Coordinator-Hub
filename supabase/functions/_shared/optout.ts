@@ -182,7 +182,7 @@ export async function ghlContactIfAllowed(
 const GHL = 'https://services.leadconnectorhq.com'
 const firstOf = (v: unknown) => String(v ?? '').trim().split(/\s+/)[0].toLowerCase()
 /** The contact id to add this address to, or '' (then the caller finds/creates by this address alone, as before). */
-async function joinExisting(send: typeof fetch, h: Record<string, string>, locationId: string,
+export async function joinExisting(send: typeof fetch, h: Record<string, string>, locationId: string,
   // deno-lint-ignore no-explicit-any
   to: any, phone: string | null, email: string | null): Promise<string> {
   const other = phone ? normEmail(to.email) : normPhone(to.phone)

@@ -19,6 +19,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { outreachGate } from '../_shared/outreach.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
+import { ghlStaffContact } from '../_shared/staff-contact.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -123,13 +124,9 @@ Deno.serve(async (req) => {
     if (dry || !ghlToken || !ghlLocation || !to) return false
     const failed = (why: string) => reportSendProblem(supabase, { sender: 'staff-alert', channel: 'email', address: to, who, reasons: [why], failed: true })
     try {
-      const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-        method: 'POST', headers,
-        body: JSON.stringify({ locationId: ghlLocation, email: to, firstName: 'CC', lastName: 'Hub' }),
-      })
-      const uj = await up.json().catch(() => ({}))
-      const contactId = uj?.contact?.id ?? uj?.id
-      if (!contactId) { await failed('no GoHighLevel contact (error ' + up.status + ')'); return false }
+      /* ONE CONTACT (2026-10-01): the reminder goes to the contact found by the one-contact rule for email. */
+      const contactId = await ghlStaffContact({ token: ghlToken, locationId: ghlLocation }, { channel: 'email', email: to, firstName: 'CC', lastName: 'Hub' })
+      if (!contactId) { await failed('no GoHighLevel contact'); return false }
       return await ghlSendChecked(supabase, headers, 'staff-alert', { channel: 'email', contactId, address: to, who }, { subject, html })
     } catch (e) { await failed('GoHighLevel could not be reached: ' + String((e as Error)?.message ?? e).slice(0, 80)); return false }
   }
