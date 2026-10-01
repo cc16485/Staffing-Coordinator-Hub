@@ -26,7 +26,7 @@ const reset = () => {
     staff_roles: [{ person_id: 'p-owner', entity: 'cc_ihs', role: 'owner_admin' }] }
 }
 const q = (t) => { const st = { f: [], gte: [], inF: null, nn: null }; const b = {
-  select() { return b; }, order() { return b; }, limit() { return b; }, contains() { return b; }, range() { return b; }, or() { return b; }, is() { return b; },
+  select() { return b; }, ilike() { return b; }, order() { return b; }, limit() { return b; }, contains() { return b; }, range() { return b; }, or() { return b; }, is() { return b; },
   eq(c, v) { st.f.push([c, v]); return b; }, gte(c, v) { st.gte.push([c, v]); return b; }, in(c, v) { st.inF = [c, v]; return b; }, not(c) { st.nn = c; return b; },
   update(patch) { const u = { eq: (c, v) => { for (const r of (T[t] || [])) if (r[c] === v) Object.assign(r, patch); return u }, is: () => u,
     then: (ok) => Promise.resolve({ data: null, error: null }).then(ok) }; return u },

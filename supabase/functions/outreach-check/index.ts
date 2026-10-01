@@ -22,6 +22,7 @@ import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { ghlContactIfAllowed, ghlStoredContactIfAllowed, mayContact } from '../_shared/optout.ts'
 import { serverSecretOk } from '../_shared/staff-auth.ts'
 import { reportSendProblem } from '../_shared/send-problems.ts'
+import { latestTextConsent } from '../_shared/text-consent.ts'
 
 /* TRAINING PLATFORM TEXTS (2026-10-01, Samantha: "fix the training platform texts"). Two more answers for senders in
    other projects, on both doors (server secret, or a forwarded staff sign-in):
@@ -38,13 +39,8 @@ async function extraAnswer(db: any, b: Record<string, any>, sender: string): Pro
     return json({ ok: true, reported: true })
   }
   if (b.text_ok === true) {
-    const d = String(b.phone ?? '').replace(/\D/g, '').slice(-10)
-    if (d.length !== 10) return json({ text_ok: false, why: 'no usable phone number' })
-    const { data, error } = await db.from('job_applicants').select('phone, sms_consent, created_at')
-      .ilike('phone', '%' + d.slice(-4)).order('created_at', { ascending: false }).limit(50)
-    if (error) return json({ text_ok: false, why: 'could not check their application' })
-    const latest = (data ?? []).find((r: { phone?: string }) => String(r.phone ?? '').replace(/\D/g, '').slice(-10) === d)
-    return json(latest && latest.sms_consent === false ? { text_ok: false, why: 'they did not agree to texts on their application' } : { text_ok: true })
+    const c = await latestTextConsent(db, b.phone)
+    return json(c.ok ? { text_ok: true } : { text_ok: false, why: c.why })
   }
   return null
 }

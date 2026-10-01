@@ -20,6 +20,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { ghlContactIfAllowed, normPhone } from '../_shared/optout.ts'
 import { reportSendProblem } from '../_shared/send-problems.ts'
+import { latestTextConsent, inTextHours, withStop } from '../_shared/text-consent.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -65,7 +66,7 @@ Deno.serve(async (req) => {
     try {
       const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
         method: 'POST', headers: { Authorization: `Bearer ${ghlToken}`, Version: '2021-04-15', 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ type: 'SMS', contactId: cid, message }),
+        body: JSON.stringify({ type: 'SMS', contactId: cid, message: withStop(message) }),   // every text carries the opt-out line
       })
       const sb = await r.json().catch(() => ({}))
       if (r.ok) return { ok: true, contact_id: cid, message_id: sb?.messageId || sb?.msg || null }
@@ -116,6 +117,12 @@ Deno.serve(async (req) => {
   const { first, phone, message } = b
   if (!message || !phone) return json({ error: 'Missing required fields: phone and message' }, 400)
   if (!normPhone(phone)) return json({ error: `Phone number "${phone}" is not a valid 10-digit US number` }, 400)
+  /* CANDIDATE TEXT RULES (2026-10-01, Samantha "yes to both"): the orientation invite and the "not moving forward"
+     text from either hub go only 8am–6pm Central, never to someone whose application said no to texts, and end with
+     "Reply STOP to opt out." Nothing is sent otherwise, and the person who pressed Send is told why. */
+  if (!inTextHours()) return json({ error: 'Not sent: texts to candidates go 8am to 6pm Central. Send it after 8am.' }, 409)
+  const consent = await latestTextConsent(db, phone)
+  if (!consent.ok) return json({ error: 'Not sent: ' + consent.why + '. Call or email them instead.' }, 409)
   const out = await sendSms('send-candidate-message', phone, String(first || ''), String(message))
   return json(out.ok ? { success: true, contact_id: out.contact_id, message_id: out.message_id } : { error: out.error })
 })

@@ -18,8 +18,11 @@ const reset = () => {
     entity_memberships: [{ person_id: 'p1', entity: 'cc_ihs', active: true, ended_at: null }, { person_id: 'p2', entity: 'cc_ihs', active: true, ended_at: null }],
     staff_roles: [{ person_id: 'p1', entity: 'cc_ihs', role: 'staffing_coordinator' }] }
 }
+/* 2026-10-01: candidate texts only go 8am–6pm Central, so the clock is pinned to 10am Central */
+const realTLS = Date.prototype.toLocaleString;
+Date.prototype.toLocaleString = function (loc, o) { if (o && o.timeZone === 'America/Chicago' && o.hour === '2-digit' && !o.minute) return '10'; return realTLS.call(this, loc, o); };
 const q = (t) => { const st = { f: [], gte: [], nn: null }; const b = {
-  select() { return b; }, order() { return b; }, limit() { return b; }, in() { return b; }, contains() { return b; },
+  select() { return b; }, ilike() { return b; }, order() { return b; }, limit() { return b; }, in() { return b; }, contains() { return b; },
   eq(c, v) { st.f.push([c, v]); return b; }, gte(c, v) { st.gte.push([c, v]); return b; }, not(c) { st.nn = c; return b; },
   update(patch) { return { eq: (c, v) => { for (const r of (T[t] || [])) if (r[c] === v) Object.assign(r, patch); return Promise.resolve({ data: null, error: null }) } } },
   maybeSingle() { return b.then((x) => ({ data: Array.isArray(x.data) ? (x.data[0] ?? null) : x.data, error: x.error })); },
@@ -87,6 +90,22 @@ reset(); book(CLEAN_P, 7, 60e3, { confirm_sms_at: iso(3600e3) }); book(CLEAN_P, 
 ck('a second booking to the same number within 24 hours: no second text (so fake bookings cannot flood a phone)', r.j?.sent === false && SENT.length === 0, r)
 reset(); book(OPT_P, 7); r = await post({ kind: 'orientation_confirmation', phone: OPT_P, session_id: '7' })
 ck('a booking whose number replied STOP: not sent, not stamped, and the page gets the same answer as any other', SENT.length === 0 && !T.orient_bookings[0].confirm_sms_at && r.j?.sent === false && !JSON.stringify(r.j).includes('opted'), r)
+
+/* ── candidate text rules (2026-10-01, Samantha "yes to both"): orientation invite + "not moving forward" ── */
+reset(); r = await post({ first: 'Pat', phone: CLEAN_P, message: 'Your orientation invite' }, 'jwt-staff')
+ck('rules · a staff text ends with "Reply STOP to opt out."', SENT.length === 1 && /Reply STOP to opt out\.$/.test(SENT[0].text), SENT)
+reset(); r = await post({ first: 'Pat', phone: CLEAN_P, message: 'Reply STOP to stop these' }, 'jwt-staff')
+ck('rules · a text that already says STOP is not given a second one', SENT.length === 1 && (SENT[0].text.match(/STOP/g) || []).length === 1, SENT)
+reset(); T.job_applicants = [{ phone: '(417) 555-0101', sms_consent: false, created_at: '2026-09-30' }]
+r = await post({ first: 'Pat', phone: CLEAN_P, message: 'Your orientation invite' }, 'jwt-staff')
+ck("rules · their latest application said no to texts: not sent, and the office is told to call or email", r.status === 409 && SENT.length === 0 && /did not agree to texts/.test(r.j?.error), r)
+reset(); T.job_applicants = [{ phone: '4175550101', sms_consent: true, created_at: '2026-09-30' }]
+r = await post({ first: 'Pat', phone: CLEAN_P, message: 'Your orientation invite' }, 'jwt-staff'); ck('rules · they said yes: sent', SENT.length === 1, r)
+reset(); { const keep = Date.prototype.toLocaleString; Date.prototype.toLocaleString = function (loc, o) { if (o && o.timeZone === 'America/Chicago' && o.hour === '2-digit' && !o.minute) return '19'; return realTLS.call(this, loc, o); }
+  r = await post({ first: 'Pat', phone: CLEAN_P, message: 'Your orientation invite' }, 'jwt-staff'); Date.prototype.toLocaleString = keep }
+ck('rules · 7pm Central: not sent, "send it after 8am"', r.status === 409 && SENT.length === 0 && /8am to 6pm/.test(r.j?.error), r)
+reset(); book(CLEAN_P, 7); r = await post({ kind: 'orientation_confirmation', phone: CLEAN_P, session_id: '7', first: 'Cara' })
+ck('rules · the "you\'re booked" confirmation also ends with the STOP line (and still goes right away)', SENT.length === 1 && /Reply STOP to opt out\.$/.test(SENT[0].text), SENT)
 
 console.log('\nSECURITY SLICE · SEND-CANDIDATE-MESSAGE · TEST\n' + '='.repeat(60)); let all = true
 for (const [n, g, note] of res) { all &&= g; console.log((g ? 'PASS  ' : 'FAIL  ') + n + (note ? '\n   └─ ' + note : '')) }
