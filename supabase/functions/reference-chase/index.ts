@@ -209,8 +209,9 @@ Deno.serve(async (req) => {
         const went = await ghlSendChecked(supabase, h, 'reference-chase', { channel: 'email', contactId, address: r.ref_email, who: r.ref_name }, {
             subject: `A quick reference for ${r.candidate_name}`,
             html: `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
-              `<p>Hi ${r.ref_name ?? 'there'},</p><p>A gentle nudge. ${r.candidate_name} is waiting on one ` +
-              `reference before they can start, and yours is the last one we need.</p>` +
+              /* WORDING (2026-10-01): it may not be the last one, so it no longer says so */
+              `<p>Hi ${r.ref_name ?? 'there'},</p><p>A gentle nudge. ${r.candidate_name} cannot start with us until ` +
+              `their references are in, and we still need yours.</p>` +
               `<p><a href="${url}" style="background:#F0A63A;color:#122F52;text-decoration:none;padding:12px 20px;` +
               `border-radius:8px;font-weight:700;display:inline-block">Answer a few quick questions</a></p>` +
               `<p style="color:#57606a">Thank you, it genuinely helps.<br>Caring Companions In-Home Senior Care</p></div>`,
@@ -234,7 +235,7 @@ Deno.serve(async (req) => {
     const fixUrl = `https://cc.mo-care.com/fix-reference.html?r=${encodeURIComponent(r.id)}` +
       `&cid=${encodeURIComponent(String(r.candidate_id))}&n=${encodeURIComponent(r.ref_name ?? '')}`
     const line = `Hi ${first}, Caring Companions here. We have not been able to reach ${who} for your reference, ` +
-      `and it is the last thing holding up your start. Give them a nudge if you can. ` +
+      `and we need it before you can start. Give them a nudge if you can. ` +
       `Or if you have a better number or email for them, or want to use someone else, do it here: ${fixUrl} Reply STOP to opt out.`
     try {
       const smsId = textOk(r) ? await door('sms', r.candidate_phone, first, r.candidate_email) : null
@@ -246,8 +247,8 @@ Deno.serve(async (req) => {
         went = await ghlSendChecked(supabase, h, 'reference-chase', { channel: 'email', contactId: mailId, address: r.candidate_email, who: r.candidate_name }, {
             subject: `We cannot reach ${who}`,
             html: `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
-              `<p>Hi ${first},</p><p>We have not been able to reach <b>${who}</b> for your reference, and it is ` +
-              `the last thing holding up your start with us.</p>` +
+              `<p>Hi ${first},</p><p>We have not been able to reach <b>${who}</b> for your reference, and we need ` +
+              `it before you can start with us.</p>` +
               `<p><b>Could you give them a nudge?</b> A quick message from you works better than anything we can send. ` +
               `It takes them about two minutes.</p>` +
               `<p>Or if you have a better number or email for them, or you would rather use someone else ` +

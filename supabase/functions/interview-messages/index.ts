@@ -93,6 +93,10 @@ Deno.serve(async (req) => {
   }
 
   const { data: st } = await supabase.from('scheduling_settings').select('*').eq('id', 1).maybeSingle()
+  /* WORDING (2026-10-01): the interview length comes from the same setting the apply page shows (it said "about 30
+     minutes" here while the page said 45). */
+  const { data: ivType } = await supabase.from('activity_types').select('minutes').eq('key', 'interview').maybeSingle()
+  const ivMins = Number(ivType?.minutes) > 0 ? Number(ivType!.minutes) : 45
   const place = [st?.location_line1, st?.location_line2].filter(Boolean).join(', ')
   const note = st?.note ?? ''
   const phone = st?.phone ?? '(417) 234-8494'
@@ -190,7 +194,7 @@ Deno.serve(async (req) => {
       if (a.email) await to.email(
         kind === 'confirm' ? `Your interview: ${day} at ${time}` : `Tomorrow: your interview at ${time}`,
         shell(`<p>Hi ${first},</p><p>${opener}</p>${whereBlock()}` +
-          `<p>It takes about 30 minutes. Need to move or cancel it? <a href="${manageUrl}">You can do that here</a> in a few taps, or call or text us on ${phone}.</p>` +
+          `<p>It takes about ${ivMins} minutes. Need to move or cancel it? <a href="${manageUrl}">You can do that here</a> in a few taps, or call or text us on ${phone}.</p>` +
           `<p>We are looking forward to meeting you.</p>`))
       return true
     }
