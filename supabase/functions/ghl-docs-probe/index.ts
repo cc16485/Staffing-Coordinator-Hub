@@ -49,6 +49,10 @@ Deno.serve(async (req) => {
   const fieldsAll: any[] = cf.ok ? ((await cf.json())?.customFields || []) : []
   const isFile = (f: { dataType?: string }) => /FILE|SIGNATURE|UPLOAD/i.test(String(f.dataType || ''))
   const fileFields = fieldsAll.filter(isFile).map((f) => ({ id: String(f.id), name: String(f.name || ''), type: String(f.dataType || ''), filled: 0, sample: '' as string, shape: '' }))
+  /* v2: when the field list is refused, still find uploads on the contacts (values holding file links), grouped by
+     field and hinted by their FILE NAMES (edl/fcsr/oig/fingerprint), never the names of people. */
+  const unlisted: Record<string, { filled: number; hints: Record<string, number>; sample: string; shape: string }> = {}
+  const HINT = (n: string) => /edl|employee.?disqual/i.test(n) ? 'EDL' : /fcsr|family.?care.?safety/i.test(n) ? 'FCSR' : /oig|exclusion/i.test(n) ? 'OIG' : /finger|ident/i.test(n) ? 'Fingerprint' : /background|bgc|criminal/i.test(n) ? 'Background' : 'other'
   const docLikeText = fieldsAll.filter((f) => !isFile(f) && DOCWORDS.test(String(f.name || ''))).map((f) => ({ name: String(f.name), type: String(f.dataType) }))
 
   /* the Hub's caregivers: phones and emails only, to find their GoHighLevel contacts */
@@ -88,6 +92,17 @@ Deno.serve(async (req) => {
           const val = v ? (v.value ?? v.fieldValue ?? v.field_value) : null
           if (val && (typeof val !== 'string' || val.trim())) { f.filled++; any = true; if (!f.shape) f.shape = shapeOf(val); if (!f.sample) f.sample = urlsIn(val)[0] || '' }
         }
+        for (const v of vals) {
+          const id = String(v.id || ''); if (!id || fileFields.some((f) => f.id === id)) continue
+          const val = v.value ?? v.fieldValue ?? v.field_value
+          const urls = urlsIn(val); if (!urls.length) continue
+          const u = (unlisted[id] ||= { filled: 0, hints: {}, sample: '', shape: '' }); u.filled++; any = true
+          if (!u.sample) u.sample = urls[0]; if (!u.shape) u.shape = shapeOf(val)
+          const names: string[] = []
+          const walk = (x: unknown) => { if (x && typeof x === 'object') for (const [k, y] of Object.entries(x as Record<string, unknown>)) { if ((k === 'name' || k === 'originalname' || k === 'fileName') && typeof y === 'string') names.push(y); walk(y) } }
+          walk(val); urls.forEach((x) => names.push(decodeURIComponent(x.split('?')[0].split('/').pop() || '')))
+          const h = HINT(names.join(' ')); u.hints[h] = (u.hints[h] || 0) + 1
+        }
         if (any) out.with_any_file_field++
       }
     } catch { /* skip */ }
@@ -126,8 +141,26 @@ Deno.serve(async (req) => {
     t.host = (() => { try { return new URL(f.sample).host } catch { return '' } })()
     out.download_tests.push(t)
   }
+  let k = 0
+  const unlistedOut = Object.values(unlisted).sort((a, b) => b.filled - a.filled).map((u) => ({ field: 'upload field #' + (++k), caregivers_with_it: u.filled, file_names_look_like: u.hints, stored_as: u.shape, _sample: u.sample }))
+  for (const u of unlistedOut) {
+    const t: Record<string, unknown> = { field: u.field }
+    try { const a = await fetch(u._sample, { method: 'GET', headers: { Range: 'bytes=0-0' } }); t.without_key = a.status; t.type = a.headers.get('content-type') || ''; await a.body?.cancel() } catch { t.without_key = 'failed' }
+    try { const a = await fetch(u._sample, { method: 'GET', headers: { Range: 'bytes=0-0', Authorization: `Bearer ${tok}` } }); t.with_key = a.status; await a.body?.cancel() } catch { t.with_key = 'failed' }
+    t.host = (() => { try { return new URL(u._sample).host } catch { return '' } })()
+    out.download_tests.push(t)
+  }
+  // deno-lint-ignore no-explicit-any
+  ;(out as any).uploads_found_without_names = unlistedOut.map(({ _sample, ...rest }) => rest)
   out.file_fields = fileFields.map((f) => ({ name: f.name, type: f.type, caregivers_with_it: f.filled, stored_as: f.shape || '(none filled)' }))
   /* 5 · the media library */
-  try { const m = await fetch(`${GHL}/medias/files?altId=${encodeURIComponent(loc)}&altType=location&limit=1&sortBy=createdAt&sortOrder=desc&type=file`, { headers: H(tok) }); out.media_library_answer = m.status; await m.body?.cancel() } catch { /* 0 */ }
+  try {
+    const m = await fetch(`${GHL}/medias/files?altId=${encodeURIComponent(loc)}&altType=location&limit=100&sortBy=createdAt&sortOrder=desc&type=file`, { headers: H(tok) }); out.media_library_answer = m.status
+    if (m.ok) { const files = (await m.json())?.files || []; const hints: Record<string, number> = {}
+      // deno-lint-ignore no-explicit-any
+      files.forEach((f: any) => { const h = HINT(String(f.name || '')); hints[h] = (hints[h] || 0) + 1 })
+      // deno-lint-ignore no-explicit-any
+      ;(out as any).media_library_latest_100 = hints } else await m.body?.cancel()
+  } catch { /* 0 */ }
   return json({ ok: true, ...out })
 })
