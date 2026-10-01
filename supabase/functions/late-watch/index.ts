@@ -1,6 +1,21 @@
 // =============================================================================
-// late-watch — RUNNING LATE, L0: the look first (2026-09-29)
+// late-watch — RUNNING LATE (L0 the look, 2026-09-29; L1 the job, 2026-09-29 "build L1 now")
 // =============================================================================
+// L1 · THE JOB (every 5 minutes, the jobs' schedule or the owner's key; ?dry=1 records and sends nothing):
+//   1. Every caregiver with a shift starting within the look-back (default 2 hours) or started with no clock-in yet
+//      (up to 90 minutes): their texts to the office in that window, and their calls' transcripts when GoHighLevel has
+//      one. A message is read once. The AI reads everything they sent for that shift: running late / can't make it /
+//      something else, and the time they expect to arrive. It never guesses a time.
+//   2. A late notice per visit (late_notices). PRACTICE until ops_settings.late_watch_live: recorded, with what WOULD
+//      have gone (caregiver, admins, family), and nothing else happens. Live: a "Running late" card in Needs Attention,
+//      and the missed clock-in watcher holds off for them (_shared/late-notice.ts lateHold).
+//   3. Live + late_cg_reply_live: the caregiver gets one thank-you with their time, or one "About what time...?" (and
+//      a thank-you once they give one). "Can't make it" gets no automatic reply; a person calls.
+//   4. Live + late_admin_live: every admin (the call-in alert list) is texted their own link now, and again every 5
+//      minutes until someone taps Seen. When they clock in, one last text says so.
+//   5. The family is NEVER texted from here (her decision 1: a person taps "Send to the family" on the page or card;
+//      automatic only after a practice week and her word). Practice records what that text would have said.
+//   Closes itself: clocked in, the visit changed, a coverage case has the shift, or the day ended.
 // Samantha approved the Running late plan ("yes to all"): when a caregiver texts or calls to say they're running
 // late, the Hub notices, works out when they expect to arrive, texts the admins until someone taps Seen, and (per her
 // decision 1) the Family Circle hears the time, one tap first, automatic only after a practice week and her word.
@@ -13,13 +28,18 @@
 //        the time they expected to arrive; compared with when they actually clocked in.
 //   ?circles=1                        clients with shifts in the window: how many have a linked Family Circle with
 //        at least one member who could get the text (the same rule as the caregiver-change text).
-// COUNTS ONLY: never a message's words, a name, a phone number or an id. Every AxisCare and GoHighLevel call is a
+// L0 · COUNTS ONLY: never a message's words, a name, a phone number or an id. Every AxisCare and GoHighLevel call is a
 // GET; nothing is written anywhere; nothing is sent. The messages' words go only to the AI (Anthropic agreement
 // signed) and are not kept. L1 builds the real job on this file.
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { visitMs } from '../_shared/held-shift.ts'
+import { contactForOutbound } from '../_shared/outreach.ts'
+import { adminRecipients, textAdmin } from '../_shared/clockin-admins.ts'
+import { makeLink, linkExpiry } from '../_shared/late-links.ts'
+import { eligibleMembers } from '../_shared/family-change-text.ts'
+import { DEFAULT_THANKS, DEFAULT_ASK, DEFAULT_FAMILY, FAMILY_MIN_DEFAULT, fill, clockAt, familyEligible } from '../_shared/late-notice.ts'
 
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
 const AC_VERSION = '2023-10-01'
@@ -119,7 +139,15 @@ export async function readLate(shiftStart: number, texts: { at: number; body: st
 }
 
 /* ── GoHighLevel, read only: find the contact by phone, then their texts and calls since a time ── */
-type Msg = { at: number; kind: 'text' | 'call'; body: string }
+type Msg = { at: number; kind: 'text' | 'call'; body: string; id: string }
+/* A call's words, when GoHighLevel transcribed it (its "transcription" read). Anything else: no words. */
+// deno-lint-ignore no-explicit-any
+export function transcriptText(j: any): string {
+  // deno-lint-ignore no-explicit-any
+  const arr: any[] = Array.isArray(j) ? j : Array.isArray(j?.transcription) ? j.transcription : Array.isArray(j?.sentences) ? j.sentences : []
+  if (arr.length) return arr.map((x) => String(x?.transcript ?? x?.text ?? '').trim()).filter(Boolean).join(' ').slice(0, 3000)
+  return String(j?.transcript ?? j?.text ?? '').trim().slice(0, 3000)
+}
 // deno-lint-ignore no-explicit-any
 async function ghlGet(url: string, h: Record<string, string>): Promise<any> {
   for (let a = 0; a < 3; a++) {
@@ -132,7 +160,7 @@ async function ghlGet(url: string, h: Record<string, string>): Promise<any> {
   }
   return null
 }
-export async function inboundSince(phone: string, since: number): Promise<{ found: boolean; msgs: Msg[] }> {
+export async function inboundSince(phone: string, since: number, opts: { transcripts?: boolean; skip?: Set<string> } = {}): Promise<{ found: boolean; msgs: Msg[]; contactId?: string }> {
   const token = Deno.env.get('GHL_TOKEN') ?? '', loc = Deno.env.get('GHL_LOCATION_ID') ?? ''
   const h = { Authorization: `Bearer ${token}`, Version: '2021-07-28', Accept: 'application/json' }
   let cid = ''
@@ -161,15 +189,21 @@ export async function inboundSince(phone: string, since: number): Promise<{ foun
         if (at < since) { older = true; continue }
         if (x?.direction !== 'inbound') continue
         const t = String(x?.messageType ?? '')
-        if (t === 'TYPE_SMS' || (!t && Number(x?.type) === 1)) { const body = String(x?.body ?? '').trim(); if (body) msgs.push({ at, kind: 'text', body }) }
-        else if (t === 'TYPE_CALL' || t === 'TYPE_VOICEMAIL' || [3, 4, 5, 25].includes(Number(x?.type))) msgs.push({ at, kind: 'call', body: '' })
+        const id = String(x?.id ?? '')
+        if (t === 'TYPE_SMS' || (!t && Number(x?.type) === 1)) { const body = String(x?.body ?? '').trim(); if (body) msgs.push({ at, kind: 'text', body, id }) }
+        else if (t === 'TYPE_CALL' || t === 'TYPE_VOICEMAIL' || [3, 4, 5, 25].includes(Number(x?.type))) {
+          let body = ''
+          if (opts.transcripts && id && !opts.skip?.has(id))
+            body = transcriptText(await ghlGet(`${GHL}/conversations/locations/${encodeURIComponent(loc)}/messages/${encodeURIComponent(id)}/transcription`, h))
+          msgs.push({ at, kind: 'call', body, id })
+        }
       }
       const nextId = String(arr[arr.length - 1]?.id ?? '')
       if (older || !mj?.messages?.nextPage || !nextId || nextId === last) break
       last = nextId
     }
   }
-  return { found: true, msgs }
+  return { found: true, msgs, contactId: cid }
 }
 
 const add = (o: Record<string, number>, k: string, n = 1) => { o[k] = (o[k] ?? 0) + n }
@@ -234,11 +268,9 @@ export async function l0(db: any, days: number, offset: number, limit: number, n
     next_offset: offset + slice.length < cgs.length ? offset + slice.length : null, counts: c }
 }
 
-/* The same members the caregiver-change text may reach (_shared/family-change-text.ts eligibleMembers), copied here
-   so this read-only look imports no sender. */
+/* The same members the caregiver-change text may reach (her decision 3): _shared/family-change-text.ts eligibleMembers. */
 // deno-lint-ignore no-explicit-any
-export const eligible = (m: any) => m && m.sms_consent === true && m.wants_changes !== false && !m.stopped_at && !m.axiscare_removed_at
-  && String(m.phone || '').replace(/\D/g, '').length >= 10
+export const eligible = (m: any) => eligibleMembers([m]).length === 1
 // deno-lint-ignore no-explicit-any
 export async function circles(db: any, days: number, now = Date.now()) {
   const { shifts, error } = await listShifts(days, now)
@@ -262,13 +294,279 @@ export async function circles(db: any, days: number, now = Date.now()) {
   return { window: `${chiDay(now - days * 864e5)} to ${chiDay(now)}`, counts: c }
 }
 
+
+/* ═════════════════════════════ L1 · the job ═════════════════════════════ */
+const GHL_SEND = 'https://services.leadconnectorhq.com/conversations/messages'
+const firstOf = (n: unknown) => String(n ?? '').trim().split(/\s+/)[0] || ''
+// deno-lint-ignore no-explicit-any
+type Visit = { id: string; cg: string; cl: string; start: number; end: number; clockIn: number | null; cgName: string; clientFirst: string; raw: any }
+async function listVisits(fromDay: string, toDay: string): Promise<{ visits: Visit[]; error?: string }> {
+  const { ok, base, head } = axis(); if (!ok) return { visits: [], error: 'AxisCare credentials not set on this project' }
+  const visits: Visit[] = []
+  let url: string | null = `${base}/api/visits?startDate=${fromDay}&endDate=${toDay}`
+  for (let page = 0; url && page < 20; page++) {
+    const r: Response = await fetch(url, { headers: head })
+    if (!r.ok) return { visits: [], error: 'the visit list answered ' + r.status }
+    // deno-lint-ignore no-explicit-any
+    const j: any = await r.json().catch(() => ({}))
+    for (const v of rowsOf(j?.results?.visits)) {
+      if (!v || v.removed || v?.caregiver?.id == null || v?.client?.id == null) continue
+      const start = visitMs(v?.scheduledStartDate ?? v?.startDate); if (!Number.isFinite(start)) continue
+      const end = visitMs(v?.scheduledEndDate ?? v?.endDate)
+      const ci = v?.clockIn?.time ? visitMs(v.clockIn.time) : NaN
+      visits.push({ id: String(v.id), cg: String(v.caregiver.id), cl: String(v.client.id), start, end: Number.isFinite(end) ? end : start + 4 * 3600e3,
+        clockIn: Number.isFinite(ci) ? ci : null, raw: v,
+        cgName: [v.caregiver.firstName, v.caregiver.lastName].map((x: unknown) => String(x ?? '').trim()).filter(Boolean).join(' '),
+        clientFirst: firstOf(v?.client?.firstName) })
+    }
+    url = j?.results?.nextPage ?? j?.nextPage ?? null
+  }
+  return { visits }
+}
+/* Which of their shifts a message is about; ambiguous when it falls inside two shifts' windows. */
+export function placeOf(shifts: Shift[], at: number, lookMin: number): { shift: Shift | null; ambiguous: boolean } {
+  const hits = shifts.filter((s) => { const a = s.start - lookMin * MIN, b = s.clockIn != null ? Math.max(s.clockIn, s.start) : s.start + AFTER_MIN * MIN; return at >= a && at <= b })
+  if (!hits.length) return { shift: null, ambiguous: false }
+  hits.sort((x, y) => Math.abs(x.start - at) - Math.abs(y.start - at))
+  return { shift: hits[0], ambiguous: hits.length > 1 }
+}
+
+// deno-lint-ignore no-explicit-any
+export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
+  const now = opts.now ?? Date.now(), nowIso = new Date(now).toISOString(), dry = !!opts.dry
+  const { data: stRow } = await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+  // deno-lint-ignore no-explicit-any
+  const st: any = stRow?.data ?? {}
+  const live = st.late_watch_live === true && !dry
+  const cgLive = live && st.late_cg_reply_live === true
+  const adminLive = live && st.late_admin_live === true
+  const lookMin = Number(st.late_lookback_min) >= 30 && Number(st.late_lookback_min) <= 360 ? Number(st.late_lookback_min) : BEFORE_MIN
+  const famMin = Number(st.late_family_min) >= 0 && Number(st.late_family_min) <= 120 ? Number(st.late_family_min) : FAMILY_MIN_DEFAULT
+  const repeatMin = Number(st.late_admin_repeat_min) >= 2 ? Number(st.late_admin_repeat_min) : 5
+  const out = { live, dry, caregivers_watched: 0, messages_new: 0, read: 0, ai_failed: 0, notices_new: 0, notices_changed: 0,
+    cg_texts: 0, admin_texts: 0, closed: 0, no_phone: 0, not_in_ghl: 0, would: 0 }
+
+  const { visits, error } = await listVisits(chiDay(now - 12 * 3600e3), chiDay(now + lookMin * MIN))
+  if (error) return { error }
+  const byId = new Map(visits.map((v) => [v.id, v]))
+  const { data: rosterRow } = await db.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
+  // deno-lint-ignore no-explicit-any
+  const roster: any[] = Array.isArray(rosterRow?.data) ? rosterRow!.data : []
+  // deno-lint-ignore no-explicit-any
+  const rosterOf = (ax: string) => roster.find((g: any) => String(g?.axiscare_id ?? '').trim() === ax && g?.active !== false)
+  const { data: stateRow } = await db.from('app_data').select('data').eq('key', 'late_watch_state').maybeSingle()
+  // deno-lint-ignore no-explicit-any
+  const state: any = (Array.isArray(stateRow?.data) ? stateRow!.data.find((x: any) => x?.id === 'state') : null) ?? { id: 'state', read: {} }
+  const readIds: Record<string, number> = state.read ?? {}
+  for (const k of Object.keys(readIds)) if (now - readIds[k] > 3 * 864e5) delete readIds[k]
+
+  /* 1 · read: caregivers with a shift in the window and no clock-in */
+  const watched = visits.filter((v) => v.clockIn == null && now >= v.start - lookMin * MIN && now <= v.start + AFTER_MIN * MIN)
+  const cgs = [...new Set(watched.map((v) => v.cg))].slice(0, 30)
+  // deno-lint-ignore no-explicit-any
+  const { data: existingRows } = await db.from('late_notices').select('*').gte('shift_date', chiDay(now - 864e5))
+  // deno-lint-ignore no-explicit-any
+  const noticeByVisit = new Map<string, any>((existingRows ?? []).map((r: any) => [String(r.visit_id), r]))
+  for (const cg of cgs) {
+    out.caregivers_watched++
+    const g = rosterOf(cg), phone = digits10(g?.phone)
+    if (!phone) { out.no_phone++; continue }
+    const mine = visits.filter((v) => v.cg === cg).map((v) => ({ cg: v.cg, cl: v.cl, start: v.start, clockIn: v.clockIn, _v: v }))
+    const since = Math.min(...watched.filter((v) => v.cg === cg).map((v) => v.start - lookMin * MIN))
+    const { found, msgs, contactId } = await inboundSince(phone, since, { transcripts: true })
+    if (!found) { out.not_in_ghl++; continue }
+    const per = new Map<Shift, { m: Msg; amb: boolean }[]>()
+    for (const m of msgs) {
+      if (m.kind === 'call' && !m.body) continue
+      const p = placeOf(mine, m.at, lookMin)
+      if (!p.shift) continue
+      const arr = per.get(p.shift) ?? []; arr.push({ m, amb: p.ambiguous }); per.set(p.shift, arr)
+    }
+    for (const [sh, got] of per) {
+      // deno-lint-ignore no-explicit-any
+      const v = (sh as any)._v as Visit
+      if (v.clockIn != null) continue
+      const fresh = got.filter((x) => !readIds[x.m.id])
+      if (!fresh.length) continue
+      out.messages_new += fresh.length
+      got.sort((a, b) => a.m.at - b.m.at)
+      const rd = await readLate(v.start, got.map((x) => ({ at: x.m.at, body: (x.m.kind === 'call' ? '(phone call) ' : '') + x.m.body })))
+      if (rd.failed) { out.ai_failed++; continue }                 /* read again next run */
+      out.read++
+      if (!dry) for (const x of fresh) readIds[x.m.id] = now
+      const prev = noticeByVisit.get(v.id)
+      if (rd.kind === 'other' && !prev) continue
+      const said = got.map((x) => ({ at: new Date(x.m.at).toISOString(), channel: x.m.kind, text: x.m.body.slice(0, 1000) }))
+      const newest = new Date(Math.max(...fresh.map((x) => x.m.at))).toISOString()
+      const sure = rd.sure && !got.some((x) => x.amb)
+      if (!prev) {
+        if (rd.kind === 'other') continue
+        const row = { visit_id: v.id, axiscare_caregiver_id: v.cg, axiscare_client_id: v.cl, caregiver_name: v.cgName || [g?.first, g?.last].filter(Boolean).join(' '),
+          client_first: v.clientFirst || null, shift_date: chiDay(v.start), shift_start: new Date(v.start).toISOString(), kind: rd.kind,
+          status: live ? 'open' : 'practice', said, said_at: newest, eta: rd.eta != null ? new Date(rd.eta).toISOString() : null,
+          eta_by: rd.eta != null ? 'ai' : null, sure, ghl_contact_id: contactId ?? null }
+        if (dry) { out.notices_new++; continue }
+        const { data: ins } = await db.from('late_notices').insert(row).select('*').maybeSingle()
+        if (ins) { noticeByVisit.set(v.id, ins); out.notices_new++ }
+      } else {
+        if (prev.status === 'closed') continue
+        // deno-lint-ignore no-explicit-any
+        const up: any = { said, said_at: newest, sure, updated_at: nowIso }
+        if (rd.kind !== 'other' && rd.kind !== prev.kind) up.kind = rd.kind
+        /* a new time from the caregiver replaces the AI's last one; a time a PERSON set stays until the caregiver gives
+           a newer one than that person saw */
+        if (rd.eta != null && new Date(rd.eta).toISOString() !== prev.eta) {
+          const personSet = prev.eta_by && prev.eta_by !== 'ai'
+          if (!personSet || Date.parse(newest) > Date.parse(prev.updated_at ?? prev.said_at ?? 0)) { up.eta = new Date(rd.eta).toISOString(); up.eta_by = 'ai' }
+        }
+        if (dry) { out.notices_changed++; continue }
+        await db.from('late_notices').update(up).eq('id', prev.id)
+        Object.assign(prev, up); out.notices_changed++
+      }
+    }
+  }
+  if (!dry) await db.rpc('upsert_app_data_item', { target_key: 'late_watch_state', item: { id: 'state', read: readIds, at: nowIso } })
+
+  /* 2 · every notice from today: what happens next */
+  const ghl = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
+  const admins = await adminRecipients(db, st)
+  const SECRET = Deno.env.get('HUB_JOB_SECRET') || ''
+  const { data: ccRow } = await db.from('app_data').select('data').eq('key', 'coverage_cases').maybeSingle()
+  // deno-lint-ignore no-explicit-any
+  const openCases = (Array.isArray(ccRow?.data) ? ccRow!.data : []).filter((c: any) => c?.status === 'open' && c?.kind !== 'interest')
+  const sendSms = async (contactId: string, message: string) => {
+    try { const r = await fetch(GHL_SEND, { method: 'POST', headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'SMS', contactId, message }) }); return r.ok } catch { return false }
+  }
+  // deno-lint-ignore no-explicit-any
+  const wouldPush = (n: any, w: { to: string; key: string; text: string; count?: number }) => {
+    const list = Array.isArray(n.would) ? n.would : []
+    if (list.some((x: { key: string }) => x.key === w.key)) return null
+    out.would++
+    return [...list, { at: nowIso, ...w }].slice(-20)
+  }
+  if (dry) return { ok: true, ...out }
+  /* The Needs Attention card: written only when what it says changes, merged over what staff added to it. */
+  const { data: opsRow } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+  // deno-lint-ignore no-explicit-any
+  const opsNow = new Map<string, any>((Array.isArray(opsRow?.data) ? opsRow!.data : []).map((x: any) => [String(x?.id), x]))
+  // deno-lint-ignore no-explicit-any
+  const putCard = async (item: any) => {
+    const had = opsNow.get(item.id)
+    if (had && had.title === item.title && had.detail === item.detail && had.status === item.status) return
+    const merged = { ...(had ?? {}), ...item }
+    if (had?.status === 'done' && item.status === 'open' && had.title === item.title) return   /* staff closed it and nothing new */
+    await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: merged }); opsNow.set(item.id, merged)
+  }
+  for (const n of noticeByVisit.values()) {
+    if (!n || n.status === 'closed' || n.closed_at) continue
+    const v = byId.get(String(n.visit_id))
+    const startMs = Date.parse(n.shift_start)
+    const cgFirst = firstOf(n.caregiver_name) || 'the caregiver', t12 = clockAt(startMs)
+    const what = `${n.caregiver_name || 'A caregiver'} for ${n.client_first || 'a client'}'s ${t12} shift`
+    // deno-lint-ignore no-explicit-any
+    const close = async (how: string, final: string | null, extra: any = {}) => {
+      await db.from('late_notices').update({ status: n.status === 'practice' ? 'practice' : 'closed', closed_at: nowIso, closed_how: how, updated_at: nowIso, ...extra }).eq('id', n.id)
+      out.closed++
+      if (n.status === 'practice') return
+      if (final && adminLive && Array.isArray(n.admin_rounds) && n.admin_rounds.length) for (const a of admins) if (await textAdmin(db, ghl, a, final)) out.admin_texts++
+      const told = (Array.isArray(n.family) ? n.family : []).some((f: { what: string }) => f.what === 'late' || f.what === 'update')
+      const arrivedSent = (Array.isArray(n.family) ? n.family : []).some((f: { what: string }) => f.what === 'arrived')
+      const keep = how === 'clocked_in' && told && !arrivedSent
+      await putCard({ id: 'ops_late_' + n.id, kind: 'late_notice', domain: 'scheduling_coverage',
+        status: keep ? 'open' : 'resolved', urgency: keep ? 'today' : 'high', late_notice_id: n.id, caregiver: n.caregiver_name || '', about: n.caregiver_name || '',
+        title: keep ? `Tell the family: ${cgFirst} arrived at ${n.client_first}'s` : `Closed: ${what} (${how === 'clocked_in' ? 'clocked in' : how.replace(/_/g, ' ')})`,
+        detail: keep ? `${cgFirst} clocked in. ${n.client_first}'s family was told ${cgFirst} was running late; tap "Tell the family ${cgFirst} arrived" to close the loop, or mark it done.` : (final || 'Closed.'),
+        created_at: n.created_at, ...(keep ? {} : { resolved_at: nowIso }), created_by: 'late-watch', opened_by: 'late-watch' })
+    }
+    if (!v || v.cg !== String(n.axiscare_caregiver_id)) { await close('visit_changed', `${n.client_first}'s ${t12} shift changed in AxisCare (${n.caregiver_name} is no longer on it). No more running-late texts.`); continue }
+    if (v.clockIn != null) { await close('clocked_in', `${cgFirst} clocked in at ${n.client_first}'s at ${clockAt(v.clockIn)}.`, { clock_in_at: new Date(v.clockIn).toISOString() }); continue }
+    // deno-lint-ignore no-explicit-any
+    const cc = openCases.find((c: any) => String(c.axiscare_visit_id ?? '') === String(n.visit_id))
+    if (cc) { await close('coverage_case', `A coverage case has ${n.client_first}'s ${t12} shift now (${n.caregiver_name}). No more running-late texts.`, { coverage_case_id: String(cc.id) }); continue }
+    if (now > startMs + 12 * 3600e3) { await close('day_ended', null); continue }
+
+    const g = rosterOf(String(n.axiscare_caregiver_id)), phone = digits10(g?.phone)
+    const first = String(g?.first ?? '') || cgFirst
+    const etaTxt = n.eta ? clockAt(Date.parse(n.eta)) : ''
+    const lastSaid = (Array.isArray(n.said) ? n.said : []).at(-1)
+    const saidTxt = lastSaid ? `${cgFirst} ${lastSaid.channel === 'call' ? 'called' : 'texted'} at ${clockAt(Date.parse(lastSaid.at))}: "${String(lastSaid.text).replace(/\s+/g, ' ').slice(0, 140)}${String(lastSaid.text).length > 140 ? '...' : ''}"` : ''
+    // deno-lint-ignore no-explicit-any
+    const up: any = {}
+
+    /* the caregiver: one thank-you with their time, or one question (late only) */
+    if (n.kind === 'late' && !n.thanked_at && (n.eta || !n.asked_time_at)) {
+      const text = fill(n.eta ? String(st.late_msg_thanks || DEFAULT_THANKS) : String(st.late_msg_ask || DEFAULT_ASK), { first_name: first, client: n.client_first || 'your client', eta: etaTxt })
+      const key = n.eta ? 'cg_thanks' : 'cg_ask'
+      if (n.status !== 'practice' && cgLive && phone) {
+        const contact = await contactForOutbound(db, ghl, { phone, firstName: first }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'late-watch' })
+        if (contact && await sendSms(contact.contactId, text)) { up[n.eta ? 'thanked_at' : 'asked_time_at'] = nowIso; out.cg_texts++ }
+      } else { const w = wouldPush(n, { to: 'caregiver', key, text }); if (w) { up.would = w; n.would = w } }
+    }
+
+    /* the admins: now, then every few minutes until someone taps Seen */
+    if (!n.seen_at) {
+      const rounds = Array.isArray(n.admin_rounds) ? n.admin_rounds : []
+      const due = !n.admin_last_at || now - Date.parse(n.admin_last_at) >= repeatMin * MIN - 20e3
+      const lead = n.kind === 'cant_make_it' ? `Can't make it: ${what}.` : `${rounds.length ? 'Still not seen. ' : ''}Running late: ${what}.`
+      const tail = n.kind === 'cant_make_it' ? 'Tap to see it and open a coverage case:' : (etaTxt ? `Expected about ${etaTxt}.` : 'No arrival time given yet.') + ' Tap when you\'ve seen it:'
+      const msg = (link: string) => `${lead} ${saidTxt}${saidTxt ? '. ' : ''}${tail} ${link}`.replace(/\s+/g, ' ').trim()
+      if (n.status !== 'practice' && adminLive && due) {
+        let sent = 0
+        for (const a of admins) {
+          const link = SECRET ? await makeLink(SECRET, 'ln_' + n.id, a.email, linkExpiry(String(n.shift_date))) : ''
+          if (await textAdmin(db, ghl, a, msg(link))) sent++
+        }
+        up.admin_rounds = [...rounds, { at: nowIso, admins: sent }].slice(-40); up.admin_last_at = nowIso; out.admin_texts += sent
+      } else if (n.status === 'practice' || !adminLive) {
+        const w = wouldPush(n, { to: 'admins', key: 'admins_' + (n.kind) + '_' + (etaTxt || 'none'), text: msg('[their link]'), count: admins.length })
+        if (w) { up.would = w; n.would = w }
+      }
+    }
+
+    /* practice: what the family text would have said (a person would tap it; never automatic) */
+    if (n.status === 'practice') {
+      const fe = familyEligible(n, famMin)
+      if (fe.ok) {
+        const { data: circs } = await db.from('care_circles').select('id').eq('active', true).eq('axiscare_client_id', String(n.axiscare_client_id ?? ''))
+        let count = 0
+        if (circs && circs.length === 1) { const { data: mem } = await db.from('circle_contacts').select('*').eq('circle_id', circs[0].id); count = eligibleMembers(mem ?? []).length }
+        const text = fill(String(st.late_msg_family || DEFAULT_FAMILY), { caregiver: cgFirst, client: n.client_first || 'your loved one', time: t12, eta: etaTxt })
+        const w = wouldPush(n, { to: 'family', key: 'family_' + etaTxt, text: count ? text : `(nobody to tell: ${circs?.length === 1 ? 'no circle member has agreed to texts' : circs?.length ? 'two linked circles' : 'no linked Family Circle'})`, count })
+        if (w) { up.would = w; n.would = w }
+      }
+    }
+
+    /* the Needs Attention card (live) */
+    if (n.status !== 'practice') {
+      const fe = familyEligible(n, famMin)
+      await putCard({ id: 'ops_late_' + n.id, kind: 'late_notice', domain: 'scheduling_coverage',
+        status: 'open', urgency: n.seen_at ? 'today' : 'high', late_notice_id: n.id, caregiver: n.caregiver_name || '', about: n.caregiver_name || '',
+        title: n.kind === 'cant_make_it' ? `Can't make it: ${what}` : `Running late: ${what}${etaTxt ? ', about ' + etaTxt : ''}`,
+        detail: `${saidTxt}${saidTxt ? '. ' : ''}${n.kind === 'late' ? (etaTxt ? `Expected about ${etaTxt}.` : 'No arrival time yet.') : 'Open a coverage case if the shift needs covering.'}`
+          + (n.seen_at ? ` Seen by ${n.seen_by}.` : '') + (n.kind === 'late' && !fe.ok ? ` Family: ${fe.why}.` : ''),
+        created_at: n.created_at, created_by: 'late-watch', opened_by: 'late-watch' })
+    }
+    if (Object.keys(up).length) { up.updated_at = nowIso; await db.from('late_notices').update(up).eq('id', n.id) }
+  }
+  await db.from('late_notices').delete().eq('status', 'practice').lt('created_at', new Date(now - 7 * 864e5).toISOString())
+  try { await db.rpc('upsert_app_data_item', { target_key: 'automation_heartbeats', item: { id: 'hb_late-watch', automation: 'late-watch', at: nowIso, ok: true, note: JSON.stringify(out).slice(0, 300) } }) } catch { /* never blocks */ }
+  return { ok: true, ...out }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok')
-  if ((await jobCaller(req, false)) !== 'owner') return json({ error: 'not allowed' }, 401)
-  const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const q = new URL(req.url).searchParams
+  const caller = await jobCaller(req)
+  if (!caller) return json({ error: 'not allowed' }, 401)
+  if (q.get('auth_check') === '1') return json({ ok: true, caller })
+  const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const days = Math.min(Math.max(Number(q.get('days')) || 14, 1), 21)
-  if (q.get('l0') === '1') return json(await l0(db, days, Math.max(Number(q.get('offset')) || 0, 0), Math.min(Math.max(Number(q.get('limit')) || 6, 1), 20)))
-  if (q.get('circles') === '1') return json(await circles(db, days))
-  return json({ error: 'unknown request' }, 400)
+  /* the L0 looks: the owner's key only */
+  if (q.get('l0') === '1' || q.get('circles') === '1') {
+    if (caller !== 'owner') return json({ error: 'not allowed' }, 401)
+    if (q.get('l0') === '1') return json(await l0(db, days, Math.max(Number(q.get('offset')) || 0, 0), Math.min(Math.max(Number(q.get('limit')) || 6, 1), 20)))
+    return json(await circles(db, days))
+  }
+  return json(await run(db, { dry: q.get('dry') === '1' }))
 })

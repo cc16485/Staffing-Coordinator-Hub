@@ -43,6 +43,10 @@ export type OutreachClass =
   | 'urgent_internal'
   | 'routine_internal'
   | 'digest'
+  /* Running late (2026-09-29, her approval): a family text about a visit happening RIGHT NOW (the caregiver is running
+     late). Her approved hours for it are 6am to 9pm, every day, so a 6am visit's family can hear. Only the running-late
+     family text uses it, and only through the family audience gate (a person's tap). */
+  | 'timely_external'
 
 export const OUTREACH_TZ = 'America/Chicago'
 /* The window is [WINDOW_START, WINDOW_END) — start inclusive, end EXCLUSIVE.
@@ -55,6 +59,7 @@ export const OUTREACH_TZ = 'America/Chicago'
    code, and the code is what runs. */
 export const WINDOW_START = 8   // 08:00 inclusive
 export const WINDOW_END = 18    // 18:00 exclusive — nothing sends at or after 6pm
+export const TIMELY_START = 6, TIMELY_END = 21   // timely_external: 06:00 inclusive to 21:00 exclusive, every day
 
 /** Local hour and weekday in the operating timezone, never the server's. */
 function localParts(now: Date = new Date()) {
@@ -88,6 +93,10 @@ export function maySend(kind: OutreachClass, now: Date = new Date()): Verdict {
     return { allowed: true, reason: 'urgent operational alert to staff, no window', detail }
   if (kind === 'routine_internal' || kind === 'digest')
     return { allowed: true, reason: 'internal, the schedule decides', detail }
+  if (kind === 'timely_external')
+    return hour >= TIMELY_START && hour < TIMELY_END
+      ? { allowed: true, reason: 'about a visit happening now, within 6am-9pm', detail }
+      : { allowed: false, reason: `outside the hours for a visit-now family text (${TIMELY_START}:00-${TIMELY_END}:00 ${OUTREACH_TZ}, now ${hour}:00)`, detail }
 
   const inHours = hour >= WINDOW_START && hour < WINDOW_END
   if (!inHours)
@@ -170,6 +179,10 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
     why: 'a caregiver who clocked out with no care note is asked (staff, about their own shift) to text it in, '
       + 'right after clock-out, one reminder the next morning; 8am to 9pm Central only (enforced in the function). '
       + 'Practice until ops_settings.missed_notes_live. Cron: missed-notes, every 5 minutes (Desktop 361).' },
+  'late-watch':         { class: 'urgent_internal', scheduled: true,
+    why: 'a caregiver texted the office they are running late for a shift starting now: one thank-you (or one "what time?") '
+      + 'to that caregiver, and the admin alert until someone taps Seen. Never the client or family. Practice until '
+      + 'ops_settings.late_watch_live / late_cg_reply_live / late_admin_live. Cron: late-watch, every 5 minutes (Desktop 363).' },
   'prn-reconfirm':      { class: 'routine_internal', scheduled: true,
     why: 'a PRN CNA whose availability is 60+ days old gets one check-in text with a one-tap link; weekdays 10 to 5 '
       + 'Central (enforced in the function), max 20 a day. Practice until ops_settings.prn_reconfirm_live. '
@@ -205,6 +218,9 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
   'vapi-interview':     { class: 'reactive_external', scheduled: false, why: 'follows a call that just happened.' },
   'caregiver-intro':    { class: 'reactive_external', scheduled: false, why: 'sent when a match is made, and the family is waiting.' },
   'circle-send':        { class: 'reactive_external', scheduled: false, why: 'sent on an explicit human action.' },
+  'late-alert':         { class: 'timely_external', scheduled: false,
+    why: 'an admin taps "Send to the family" on a running-late alert: the Family Circle members who agreed to texts hear the '
+      + 'arrival time (and, on another tap, that the caregiver arrived). 6am to 9pm. Never automatic (her decision 1).' },
   'applicant-invite':   { class: 'reactive_external', scheduled: false,
     why: 'somebody just phoned asking about a job; staff press Send on the fixed application-link text they asked for (Desktop 364).' },
   'campaign-send':      { class: 'proactive_external', scheduled: false, why: 'a campaign somebody presses send on.' },

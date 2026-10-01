@@ -73,7 +73,7 @@ reset()
 for (const [who, hdr] of [['no key', {}], ['the schedule secret', { 'x-test': 'cron' }]]) {
   const r = await call('?l0=1', hdr); ck(`${who}: refused, nothing read`, r.s === 401 && CALLS.length === 0, r)
 }
-reset(); let r = await call('?nothing=1', { 'x-test': 'owner' }); ck('the owner key with an unknown request: 400', r.s === 400, r)
+let r
 
 /* the look */
 reset(); const all = await M.l0(db, 14, 0, 20, NOW); const c = all.counts

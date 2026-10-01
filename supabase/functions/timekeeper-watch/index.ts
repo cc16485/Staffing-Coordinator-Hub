@@ -83,6 +83,8 @@ import { shadowRoute } from '../_shared/routing.ts'
 import { opEvent } from '../_shared/events.ts'
 import { adminRecipients, textAdmin, ADMIN_DEFAULT } from '../_shared/clockin-admins.ts'
 import { makeLink, adminKey, linkExpiry } from '../_shared/clockin-links.ts'
+import { lateHold, liveNotices } from '../_shared/late-notice.ts'
+import { visitMs } from '../_shared/held-shift.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -360,7 +362,12 @@ Deno.serve(async (req) => {
   // ── PASS 2: walk today's assigned, unclocked, recently-started visits. ──
   const wouldText: Record<string, unknown>[] = []
   const wouldAlert: Record<string, unknown>[] = []
-  let opened = 0, texted = 0, alerted = 0, skippedNoPhone = 0, refusedGate = 0, skippedByList = 0, skippedCoverage = 0
+  let opened = 0, texted = 0, alerted = 0, skippedNoPhone = 0, refusedGate = 0, skippedByList = 0, skippedCoverage = 0, heldLate = 0
+  /* Running late (L1, 2026-09-29): a caregiver who told us they're running late gets no "we don't see a clock-in"
+     text, and the admins' missed clock-in alarm waits until 5 minutes after the time they gave (15 past the start if
+     they gave none). "Can't make it" never starts one: the running-late alert already has the admins. Live notices
+     only; with no running-late record this changes nothing. */
+  const lateByVisit = await liveNotices(sb, day)
 
   /* C1 (Samantha, 2026-09-29): short, at 5 minutes. No EVV form here: the form goes only when a caregiver asks to be
      clocked in for their start time, and a person sends it from the admin's link page. No "if something's come up". */
@@ -389,6 +396,7 @@ Deno.serve(async (req) => {
     if (!l?.texted_at && !l?.admin_loop && coverageFor(vid, v?.client?.id != null ? String(v.client.id) : null, day, String(v.caregiver.id))) {
       skippedCoverage++; continue
     }
+    if (!l?.texted_at && !l?.admin_loop && lateHold(lateByVisit.get(vid), visitMs(start), Date.now()) !== 'none') { heldLate++; continue }
     if (!l) {
       l = { id: 'tk_' + vid.replace(/[^A-Za-z0-9]/g, '_'), visit_id: vid,
         caregiver: cgName, caregiver_axiscare_id: String(v.caregiver.id),
@@ -524,7 +532,9 @@ Deno.serve(async (req) => {
       /* C3: her newest reply since the last round goes into this one (clockin-reply attaches it) */
       const lastAt = (l.admin_loop.sends || []).at(-1)?.at || ''
       const rep = (Array.isArray(l.replies) ? l.replies : []).filter((x: { at: string }) => String(x.at) > String(lastAt)).at(-1)
-      const said = rep ? ` ${String(cg).split(' ')[0]} replied: "${String(rep.text).replace(/\s+/g, ' ').slice(0, 120)}${String(rep.text).length > 120 ? '...' : ''}".` : ''
+      const ln = lateByVisit.get(String(l.visit_id))
+      const toldLate = ln && ln.kind === 'late' ? ` ${String(cg).split(' ')[0]} told us they're running late${ln.eta ? ', about ' + clock12(new Date(ln.eta).toLocaleString('en-GB', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', hour12: false })) : ''}.` : ''
+      const said = (stage === 'first' ? toldLate : '') + (rep ? ` ${String(cg).split(' ')[0]} replied: "${String(rep.text).replace(/\s+/g, ' ').slice(0, 120)}${String(rep.text).length > 120 ? '...' : ''}".` : '')
       const msg = (link: string) => (stage === 'first'
         ? `No clock-in: ${cg} for ${cl}'s ${t12} shift (${late} min past start).${said} Tap when it's resolved: ${link}`
         : stage === 'after_end'
@@ -716,7 +726,7 @@ Deno.serve(async (req) => {
     ladders_resolved: resolved, ladders_opened: opened,
     texts_sent: texted, clockout_texts_sent: textedOut, office_alerts: alerted,
     skipped_no_phone: skippedNoPhone, refused_by_outbound_gate: refusedGate,
-    skipped_by_skip_list: skippedByList, skipped_coverage_case: skippedCoverage,
+    skipped_by_skip_list: skippedByList, skipped_coverage_case: skippedCoverage, held_running_late: heldLate,
     admin_loop: { live: loopLive, due: loopDue, texts: loopSent, stopped_for_coverage: loopStoppedCoverage, final_texts: fin.length,
                   admins: adminList.length, admins_without_phone: adminList.filter((a) => !a.phone).length,
                   links: LINK_SECRET.length >= 32 },
