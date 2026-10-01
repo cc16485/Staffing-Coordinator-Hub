@@ -604,7 +604,12 @@ Deno.serve(async (req) => {
     const { data: stRowE } = await sb.from('app_data').select('data').eq('key', 'evv_chase_state').maybeSingle()
     // deno-lint-ignore no-explicit-any
     const chaseState: any[] = Array.isArray(stRowE?.data) ? stRowE!.data : []
-    const doneToday = chaseState.some((x) => x?.id === 'chase_' + todayE)
+    /* RETRY (2026-10-01, Samantha "yes make them retry"): a day whose chase had texts GoHighLevel refused is not
+       "done": it runs again 30+ minutes later, at most 3 runs a day. Texts that went are stamped per visit
+       (evv_followups) and never resent; an opt-out refusal is not a failure and is not retried. */
+    const stE = chaseState.find((x) => x?.id === 'chase_' + todayE)
+    const doneToday = !!stE && !(Number(stE.failed) > 0 && (Number(stE.runs) || 1) < 3
+      && Date.now() - Date.parse(String(stE.at || '')) >= 30 * 60_000)
     if (chaseLive && chiHourE >= 9 && !doneToday && !forceDry) {
       const yday = new Date(Date.now() - 864e5).toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
       // deno-lint-ignore no-explicit-any
@@ -626,7 +631,7 @@ Deno.serve(async (req) => {
       const { data: subs } = await sb.from('evv_submissions').select('attendant, visitdate')
       const subKeys = new Set((subs || []).map((s) =>
         nameKeyOf(String(s.attendant || '')) + '|' + String(s.visitdate || '')))
-      let chasedNow = 0, skippedDone = 0
+      let chasedNow = 0, skippedDone = 0, failedNow = 0
       for (const v of yvisits) {
         if (v?.caregiver?.id == null) continue
         const cin = clockHM(v?.clockIn) ?? String(v?.actualStartDate ?? '').slice(11, 16)
@@ -654,12 +659,13 @@ Deno.serve(async (req) => {
               id: key, status: 'texted', at: new Date().toISOString(), by: 'evv-chase',
               caregiver: cgName, client: [v?.client?.firstName, v?.client?.lastName].filter(Boolean).join(' '),
               miss: 'no ' + miss, date: yday } })
-          }
-        } catch { /* one failed chase never blocks the rest */ }
+          } else failedNow++
+        } catch { failedNow++ /* one failed chase never blocks the rest */ }
       }
       await sb.rpc('upsert_app_data_item', { target_key: 'evv_chase_state', item: {
-        id: 'chase_' + todayE, at: new Date().toISOString(), chased: chasedNow, already_handled: skippedDone } })
-      evvChase = { ran: true, day_checked: yday, chased: chasedNow, already_handled: skippedDone }
+        id: 'chase_' + todayE, at: new Date().toISOString(), chased: chasedNow, already_handled: skippedDone,
+        failed: failedNow, runs: (Number(stE?.runs) || 0) + 1 } })
+      evvChase = { ran: true, day_checked: yday, chased: chasedNow, already_handled: skippedDone, failed: failedNow }
     } else evvChase = { ran: false, why: !chaseLive ? 'ops_settings.evv_chase_live is off' : doneToday ? 'already ran today' : 'before 9am Chicago' }
     /* Saturday deadline nudge: forms still unprocessed with Sunday-midnight looming. */
     const wkday = new Date().toLocaleString('en-US', { timeZone: 'America/Chicago', weekday: 'short' })

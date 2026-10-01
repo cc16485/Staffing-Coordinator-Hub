@@ -204,20 +204,26 @@ Deno.serve(async (req) => {
 
     /* ---- and tell the office, once, the moment it is late ---- */
     const overdue = (l.follow_up_due && l.follow_up_due < todayCT()) || age >= 24
-    if (overdue && !l.overdue_alerted_at && (alertTo ?? []).length) {
+    /* RETRY (2026-10-01, Samantha "yes make them retry"): stamped only when at least one person in the office was
+       reached; otherwise the next run tries again, at most 3 tries, 10+ minutes apart. */
+    const overdueRetryOk = (Number(l.overdue_alert_tries) || 0) < 3
+      && (!l.overdue_alert_last_try || Date.now() - Date.parse(String(l.overdue_alert_last_try)) >= 10 * 60_000)
+    if (overdue && !l.overdue_alerted_at && overdueRetryOk && (alertTo ?? []).length) {
       const who = `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim() || 'A website lead'
       plan.office.push(who)
       if (!dry) {
         const line = `${who} came in ${Math.round(age)} hours ago and nobody has called them yet. ` +
           `${l.phone || l.email || 'no contact given'}. They are in the hub under Leads.`
+        let reached = 0
         for (const t of alertTo!) {
           const cid = await contactFor(t.phone ?? null, t.email ?? null, t.name ?? 'Team')
           if (!cid) continue
-          if (t.phone) await sms(cid, line, { sender: 'staff-alert', address: t.phone, who: t.name })
-          if (t.email) await email(cid, `Lead waiting: ${who}`, shell(`<p>${line}</p>`), { sender: 'staff-alert', address: t.email, who: t.name })
+          if (t.phone && await sms(cid, line, { sender: 'staff-alert', address: t.phone, who: t.name })) reached++
+          if (t.email && await email(cid, `Lead waiting: ${who}`, shell(`<p>${line}</p>`), { sender: 'staff-alert', address: t.email, who: t.name })) reached++
         }
-        l.overdue_alerted_at = new Date().toISOString()
-        await put(l); out.office_alerted++
+        if (reached) { l.overdue_alerted_at = new Date().toISOString(); out.office_alerted++ }
+        else { l.overdue_alert_tries = (Number(l.overdue_alert_tries) || 0) + 1; l.overdue_alert_last_try = new Date().toISOString() }
+        await put(l)
       }
     }
 

@@ -178,20 +178,21 @@ Deno.serve(async (req) => {
     if (!p || !p.email) return json({ ok: true, notified: false })
     // deno-lint-ignore no-explicit-any
     const r = (p.replies || []).find((x: any) => x?.id === replyId && x?.status === 'approved')
-    if (!r || r.notified) return json({ ok: true, notified: false })
+    if (!r || r.notified || (Number(r.notify_tries) || 0) >= 3) return json({ ok: true, notified: false })
     const ghlToken = Deno.env.get('GHL_TOKEN')
     const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
-    let sent = false
+    let sent = false, refused = false
     if (ghlToken && ghlLocation) {
       try {
         const h = { Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
         /* 0b-2: the poster's email goes through the universal opt-out door */
         const contactId = await ghlContactIfAllowed(supabase, { token: ghlToken, locationId: ghlLocation }, 'cc-corner', {
           channel: 'email', email: p.email, firstName: p.name || 'Friend' })
+        if (!contactId) refused = true   // opted out / no usable address: final, never retried
         if (contactId) {
           const esc = (t: string) => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')
-          /* the reply is stamped notified either way (unchanged), so a refused email would never be retried and the
-             Hub only hears notified:false; a card makes sure someone knows the poster didn't hear */
+          /* RETRY (2026-10-01, Samantha "yes make them retry"): if GoHighLevel refuses it, the reply is NOT stamped
+             notified; the Hub resends it the next time Caregivers Corner is opened (at most 3 tries). A card is raised. */
           sent = await ghlSendChecked(supabase, h, 'cc-corner', { channel: 'email', contactId, address: p.email, who: p.name }, {
               subject: (r.team ? 'Caring Companions replied' : esc(r.name || 'Someone') + ' replied') + ' to your post in Caregivers Corner',
               html: '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.7;">'
@@ -204,9 +205,10 @@ Deno.serve(async (req) => {
         }
       } catch { /* best effort */ }
     }
-    r.notified = true
+    if (sent || refused) { r.notified = true; delete r.notify_failed_at }
+    else { r.notify_tries = (Number(r.notify_tries) || 0) + 1; r.notify_failed_at = new Date().toISOString() }
     await supabase.rpc('upsert_app_data_item', { target_key: 'corner_posts', item: p })
-    return json({ ok: true, notified: sent })
+    return json({ ok: true, notified: sent, will_retry: !sent && !refused && r.notify_tries < 3 })
   }
 
   return json({ error: 'unknown action' }, 400)
