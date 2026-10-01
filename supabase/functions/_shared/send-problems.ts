@@ -26,6 +26,7 @@ export const SENDER_WORDS: Record<string, [string, string]> = {
   'reference-chase': ['reference request', 'caregivers'],
   'reference-send': ['reference form', 'caregivers'],
   'applicant-invite': ['application link', 'caregivers'],
+  'applicant-noshow': ['interview no-show message', 'caregivers'],
   'applicant-reengage': ['note to a past applicant', 'caregivers'],
   'send-candidate-message': ['message to a candidate', 'caregivers'],
   'send-invite': ['orientation / training invite', 'caregivers'],

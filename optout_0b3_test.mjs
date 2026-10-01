@@ -120,8 +120,8 @@ const sw = src('stripe-webhook'), hl = src('ht-local')
 ck('scan · stripe-webhook and ht-local: every non-staff email goes through the door (staff = @mo-care.com only)',
    /ghlContactIfAllowed\(supabaseHL/.test(sw) && /@mo-care\\\.com\$\/i\.test/.test(sw) && /ghlContactIfAllowed\(db, \{ token: ghlToken/.test(hl) && /@mo-care\\\.com\$\/i\.test/.test(hl))
 const im = src('interview-messages'), rc = src('reference-chase')
-ck('scan · interview-messages: all 7 applicant sends use the door; the 4 staff alerts keep their contact',
-   (im.match(/await to\.(sms|email)\(/g) || []).length === 9 && (im.match(/= applicantDoor\(/g) || []).length === 4 && !/await sms\(contactId,[^\n]*\n[^\n]*interview/i.test(im))
+ck('scan · interview-messages: every applicant send uses the door (the no-show recovery is gone); the 4 staff alerts keep their contact',
+   (im.match(/await to\.(sms|email)\(/g) || []).length === 7 && (im.match(/= applicantDoor\(/g) || []).length === 3 /* 2026-10-01: the no-show recovery text + email were removed */ && !/await sms\(contactId,[^\n]*\n[^\n]*interview/i.test(im))
 ck('scan · reference-chase: references and applicants are reached only through the door', (rc.match(/await door\(/g) || []).length === 4 && !/contactFor\(/.test(rc))
 ck('scan · NO SILENT FAILURES: neither sender posts a message unchecked; every send is ghlSendChecked', !/conversations\/messages/.test(im) && !/conversations\/messages/.test(rc) && (im.match(/ghlSendChecked\(/g) || []).length === 4 && (rc.match(/ghlSendChecked\(/g) || []).length === 4)
 ck('scan · reference-chase stamps a reference asked / reminded / nudged only after GoHighLevel took it', (rc.match(/if \(!went\) continue/g) || []).length === 3 && /if \(!went\) continue\n\s+await supabase\.from\('reference_requests'\)\n\s+\.update\(\{ sent_at/.test(rc))
