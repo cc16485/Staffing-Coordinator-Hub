@@ -20,6 +20,7 @@
 // Deploy: supabase functions deploy cc-417 --no-verify-jwt. Verify JWT OFF.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { ghlSendChecked } from '../_shared/send-problems.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -201,13 +202,11 @@ Deno.serve(async (req) => {
         : 'Nominated anonymously')
       + '. When you call, lead with that. It is a far better opening than a cold ask.</p>'
       + '<p style="color:#55677a;font-size:13px;">Also in the hub under 417 Series &rarr; Invite people.</p></div>'
-    await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-      method: 'POST', headers: h,
-      body: JSON.stringify({
-        type: 'Email', contactId,
-        subject: '👋 Someone nominated ' + (n.who_name || n.who_org) + ' for 417 Caring Community',
-        html,
-      }),
+    /* NO SILENT FAILURES (2026-10-01): both office notices fire from a public page with nobody in the office watching,
+       so a refused email raises a Needs Attention card ('staff-alert') */
+    await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'email', contactId, address: 'samantha@mo-care.com', who: 'Samantha' }, {
+      subject: '👋 Someone nominated ' + (n.who_name || n.who_org) + ' for 417 Caring Community',
+      html,
     })
   }
 
@@ -236,13 +235,9 @@ Deno.serve(async (req) => {
       + '<p style="background:#fdf3e2;border-radius:10px;padding:14px 16px;">Nothing is public yet. '
       + 'Watch it in the hub under <b>417 Series</b> and press Publish if you want it in this month\'s issue.</p>'
       + '<p style="color:#55677a;font-size:13px;">A thank-you the same day is what keeps them referring.</p></div>'
-    await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-      method: 'POST', headers: h,
-      body: JSON.stringify({
-        type: 'Email', contactId,
-        subject: '🎙️ 417 Caring Community: ' + v.name + ' at ' + v.org + ' sent one in',
-        html,
-      }),
+    await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'email', contactId, address: 'samantha@mo-care.com', who: 'Samantha' }, {
+      subject: '🎙️ 417 Caring Community: ' + v.name + ' at ' + v.org + ' sent one in',
+      html,
     })
   }
 })

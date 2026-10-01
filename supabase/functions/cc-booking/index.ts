@@ -16,6 +16,7 @@
 // -----------------------------------------------------------------------------
 
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
+import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { leadHits, returningCheck, returningItem } from '../_shared/returning.ts'
 import { opEvent } from '../_shared/events.ts'
@@ -257,8 +258,10 @@ async function computeSlots(supabase: any) {
 
 // ---------- GHL email pipe (same pattern as cc-feedback) ----------
 /* 0b-2: `guard` (the family's own confirmation) sends through the universal opt-out door; office mail does not need it */
+/* NO SILENT FAILURES (2026-10-01): nobody in the office watches a booking happen, so a refused email raises a Needs
+   Attention card through `report` (the family's confirmation is 'cc-booking', the office notice 'staff-alert'). */
 // deno-lint-ignore no-explicit-any
-async function ghlEmail(to: string, firstName: string, subject: string, html: string, guard?: { db: any; sender: string }): Promise<boolean> {
+async function ghlEmail(to: string, firstName: string, subject: string, html: string, guard?: { db: any; sender: string }, report?: { db: any; sender: string; who?: string }): Promise<boolean> {
   const ghlToken = Deno.env.get('GHL_TOKEN')
   const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
   if (!ghlToken || !ghlLocation) return false
@@ -275,6 +278,7 @@ async function ghlEmail(to: string, firstName: string, subject: string, html: st
       contactId = (await up.json().catch(() => ({})))?.contact?.id ?? null
     }
     if (!contactId) return false
+    if (report) return await ghlSendChecked(report.db, h, report.sender, { channel: 'email', contactId, address: to, who: report.who }, { subject, html })
     const sr = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
       method: 'POST', headers: h,
       body: JSON.stringify({ type: 'Email', contactId, subject, html }),
@@ -426,7 +430,8 @@ Deno.serve(async (req) => {
     + '<p><b>When:</b> ' + whenLabel + '</p>'
     + '<p><b>Name:</b> ' + esc(name) + '<br><b>Phone:</b> ' + esc(phone) + (email ? '<br><b>Email:</b> ' + esc(email) : '') + '</p>'
     + (notes ? '<p><b>Notes:</b><br>' + esc(notes) + '</p>' : '')
-    + '<p style="color:#55677a;font-size:13px;">Saved to the Care Coordinator Hub &rarr; Grow &rarr; Bookings. It also blocks that time on the public scheduler.</p></div>')
+    + '<p style="color:#55677a;font-size:13px;">Saved to the Care Coordinator Hub &rarr; Grow &rarr; Bookings. It also blocks that time on the public scheduler.</p></div>',
+    undefined, { db: supabase, sender: 'staff-alert', who: 'Samantha' })
 
   // confirmation to the family
   let confirmed = false
@@ -440,7 +445,7 @@ Deno.serve(async (req) => {
       + (type === 'home' ? '<br>We’ll come to the address you share when we confirm by phone.' : '<br>A care coordinator will call you at ' + esc(phone) + '.') + '</p>'
       + '<p>There’s nothing to prepare and nothing to sign. If you need to change the time, just call or text <a href="tel:14172348494">(417) 234-8494</a>.</p>'
       + '<p>Warmly,<br>Caring Companions In-Home Senior Care<br>1331 N Stewart Ave Ste B, Springfield, MO</p></div>',
-      { db: supabase, sender: 'cc-booking' })
+      { db: supabase, sender: 'cc-booking' }, { db: supabase, sender: 'cc-booking', who: name })
   }
   return json({ ok: true, id: item.id, when: whenLabel, confirmed , lead: leadLinked })
 })

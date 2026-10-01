@@ -11,6 +11,7 @@ import { ldPush } from '../_shared/lead-truth.ts'
 import { leadHits, returningCheck, returningItem } from '../_shared/returning.ts'
 import { inquirySwitches } from '../_shared/inquiry-switches.ts'
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
+import { ghlSendChecked } from '../_shared/send-problems.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -182,10 +183,14 @@ Deno.serve(async (req) => {
         Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28',
         'Content-Type': 'application/json', Accept: 'application/json',
       }
+      /* NO SILENT FAILURES (2026-10-01): every send here is automatic (a public form post, nobody watching), so a
+         refused send raises a Needs Attention card instead of vanishing. The family's hello is 'lead-intake';
+         the office alerts are 'staff-alert'. */
+      const leadName = [lead.first_name, lead.last_name].filter(Boolean).join(' ')
       const send = (contactId: string, type: 'SMS' | 'Email', payload: Record<string, unknown>) =>
-        fetch('https://services.leadconnectorhq.com/conversations/messages', {
-          method: 'POST', headers: h, body: JSON.stringify({ type, contactId, ...payload }),
-        })
+        ghlSendChecked(supabase, h, 'lead-intake', {
+          channel: type === 'SMS' ? 'sms' : 'email', contactId, address: type === 'SMS' ? phone : email, who: leadName,
+        }, payload)
 
       /* ---- answer the family in seconds, not on the next cron run ----------
          The greeting used to be lead-followup's job, on a schedule that runs
@@ -220,7 +225,7 @@ Deno.serve(async (req) => {
           let sentAny = false
           if (phone) {
             const cidP = await ghlContactIfAllowed(supabase, ghl, 'lead-intake', { channel: 'sms', phone, firstName })
-            if (cidP && (await send(cidP, 'SMS', { message: line })).ok) sentAny = true
+            if (cidP && (await send(cidP, 'SMS', { message: line }))) sentAny = true
           }
           if (email) {
             const cidE = await ghlContactIfAllowed(supabase, ghl, 'lead-intake', { channel: 'email', email, firstName })
@@ -235,7 +240,7 @@ Deno.serve(async (req) => {
                   + '<p>There is nothing you need to do in the meantime.</p>'
                   + '<p style="color:#57606a">Caring Companions In-Home Senior Care<br>(417) 234-8494</p></div>',
               })
-              if (er.ok) sentAny = true
+              if (er) sentAny = true
             }
           }
           if (sentAny) {
@@ -302,19 +307,14 @@ Deno.serve(async (req) => {
           // deno-lint-ignore no-explicit-any
           const contactId = (j as any)?.contact?.id ?? (j as any)?.id
           if (!contactId) continue
+          let went = false
           if (p.email) {
-            await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-              method: 'POST', headers: h,
-              body: JSON.stringify({ type: 'Email', contactId, subject, html }),
-            })
+            went = await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'email', contactId, address: p.email, who: p.name }, { subject, html }) || went
           }
           if (p.phone) {
-            await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-              method: 'POST', headers: h,
-              body: JSON.stringify({ type: 'SMS', contactId, message: sms }),
-            })
+            went = await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'sms', contactId, address: p.phone, who: p.name }, { message: sms }) || went
           }
-          alerted++
+          if (went) alerted++
         } catch { /* one bad recipient must not stop the rest */ }
       }
     }

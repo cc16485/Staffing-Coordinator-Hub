@@ -48,7 +48,8 @@ export const SENDER_WORDS: Record<string, [string, string]> = {
   'circle-send': ['Family Circle message', 'client_care'],
   'cc-memories': ['Family Circle message', 'client_care'],
   'cc-corner': ['family message', 'client_care'],
-  'ghe-reminders': ['family reminder', 'client_care'],
+  'ghe-reminders': ['reminder to the nurses / office', 'client_care'],
+  'EVV chase': ['EVV correction reminder', 'scheduling_coverage'],
   'lead-intake': ['reply to a new family lead', 'family_enquiries'],
   'lead-followup': ['family lead follow-up', 'family_enquiries'],
   'lead-nurture': ['family lead follow-up', 'family_enquiries'],
@@ -56,8 +57,18 @@ export const SENDER_WORDS: Record<string, [string, string]> = {
   'campaign-send': ['campaign message', 'family_enquiries'],
   'campaign-auto': ['campaign message', 'family_enquiries'],
   'staff-alert': ['alert to the office', 'office_ops'],
+  'family-change-text': ['caregiver-change text to the family', 'client_care'],
+  'lead-digest': ['morning brief email', 'office_ops'],
+  'shared-backup': ['weekly backup email', 'office_ops'],
 }
-const words = (sender: string): [string, string] => SENDER_WORDS[sender] ?? [sender.replace(/-/g, ' ') + ' message', 'office_ops']
+/* The Training Platform names some senders with a note in brackets: "job-offer (by <staff email>)", "sync-axiscare (welcome)".
+   Use whichever part is a known sender, and never put the bracket (which can hold a staff email) on a card. */
+export const senderKey = (sender: string): string => {
+  const m = String(sender ?? '').match(/^([^()]+?)\s*\((.*)\)\s*$/)
+  if (!m) return String(sender ?? '')
+  return SENDER_WORDS[m[2].trim()] ? m[2].trim() : m[1].trim()
+}
+const words = (sender: string): [string, string] => SENDER_WORDS[senderKey(sender)] ?? [senderKey(sender).replace(/[-_]/g, ' ').replace(/[^\w ]/g, '') + ' message', 'office_ops']
 
 /* Why, in the office's words, and what to do about it. */
 export function explain(reasons: string[], failed: boolean, channel: Channel): { code: string; why: string; next: string } {

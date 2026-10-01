@@ -19,6 +19,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -30,7 +31,10 @@ const json = (body: unknown, status = 200) =>
 
 const clean = (v: unknown, n: number) => String(v ?? '').replace(/<[^>]*>/g, '').trim().slice(0, n)
 
-async function notifySamantha(subject: string, html: string) {
+/* NO SILENT FAILURES (2026-10-01): the review notice fires from the public page with nobody in the office watching,
+   so a notice that doesn't go out raises a Needs Attention card ('staff-alert') */
+// deno-lint-ignore no-explicit-any
+async function notifySamantha(db: any, subject: string, html: string) {
   const ghlToken = Deno.env.get('GHL_TOKEN')
   const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
   if (!ghlToken || !ghlLocation) return
@@ -42,12 +46,15 @@ async function notifySamantha(subject: string, html: string) {
     })
     const contactId = (await up.json().catch(() => ({})))?.contact?.id
     if (contactId) {
-      await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-        method: 'POST', headers: h,
-        body: JSON.stringify({ type: 'Email', contactId, subject, html }),
-      })
+      await ghlSendChecked(db, h, 'staff-alert', { channel: 'email', contactId, address: 'samantha@mo-care.com', who: 'Samantha' }, { subject, html })
+    } else {
+      await reportSendProblem(db, { sender: 'staff-alert', channel: 'email', address: 'samantha@mo-care.com', who: 'Samantha',
+        reasons: ['no GoHighLevel contact (error ' + up.status + ')'], failed: true })
     }
-  } catch { /* best effort */ }
+  } catch (e) {
+    await reportSendProblem(db, { sender: 'staff-alert', channel: 'email', address: 'samantha@mo-care.com', who: 'Samantha',
+      reasons: ['GoHighLevel could not be reached: ' + String((e as Error)?.message ?? e).slice(0, 80)], failed: true })
+  }
 }
 
 Deno.serve(async (req) => {
@@ -127,7 +134,7 @@ Deno.serve(async (req) => {
     }
     const { error } = await supabase.rpc('upsert_app_data_item', { target_key: 'corner_posts', item })
     if (error) return json({ error: error.message }, 500)
-    await notifySamantha('💬 Caregivers Corner: new post awaiting review',
+    await notifySamantha(supabase, '💬 Caregivers Corner: new post awaiting review',
       '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.6;">'
       + '<p><b>' + item.name + '</b>' + (title ? ': ' + title : '') + '</p><p>' + body.replace(/\n/g, '<br>') + '</p>'
       + '<p style="color:#55677a;font-size:13px;">Approve or remove it in the Care Coordinator Hub &rarr; Campaigns &rarr; Community.</p></div>')
@@ -149,7 +156,7 @@ Deno.serve(async (req) => {
     p.pending_replies = true
     const { error } = await supabase.rpc('upsert_app_data_item', { target_key: 'corner_posts', item: p })
     if (error) return json({ error: error.message }, 500)
-    await notifySamantha('💬 Caregivers Corner: new reply awaiting review',
+    await notifySamantha(supabase, '💬 Caregivers Corner: new reply awaiting review',
       '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.6;">'
       + '<p><b>' + name + '</b> replied to "' + (p.title || p.body.slice(0, 60)) + '":</p><p>' + body.replace(/\n/g, '<br>') + '</p>'
       + '<p style="color:#55677a;font-size:13px;">Approve or remove it in the Care Coordinator Hub &rarr; Campaigns &rarr; Community.</p></div>')
@@ -183,10 +190,9 @@ Deno.serve(async (req) => {
           channel: 'email', email: p.email, firstName: p.name || 'Friend' })
         if (contactId) {
           const esc = (t: string) => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')
-          const sr = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-            method: 'POST', headers: h,
-            body: JSON.stringify({
-              type: 'Email', contactId,
+          /* the reply is stamped notified either way (unchanged), so a refused email would never be retried and the
+             Hub only hears notified:false; a card makes sure someone knows the poster didn't hear */
+          sent = await ghlSendChecked(supabase, h, 'cc-corner', { channel: 'email', contactId, address: p.email, who: p.name }, {
               subject: (r.team ? 'Caring Companions replied' : esc(r.name || 'Someone') + ' replied') + ' to your post in Caregivers Corner',
               html: '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.7;">'
                 + '<p>Hi ' + esc(p.name || 'there') + ',</p>'
@@ -194,9 +200,7 @@ Deno.serve(async (req) => {
                 + '<p style="background:#EAF4F6;border-radius:10px;padding:14px 18px;">' + esc(r.body) + '</p>'
                 + '<p><a href="https://mo-care.com/caregivers-corner.html" style="color:#1F7A8C;font-weight:700;">Read and reply in Caregivers Corner &rarr;</a></p>'
                 + '<p style="color:#55677a;font-size:13px;">You got this note because you shared a post in our caregiver community and left your email. We only email you about replies to your own posts.</p></div>',
-            }),
           })
-          sent = sr.ok
         }
       } catch { /* best effort */ }
     }

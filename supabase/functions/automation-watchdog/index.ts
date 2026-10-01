@@ -25,6 +25,7 @@
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
+import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -169,6 +170,14 @@ Deno.serve(async (req) => {
         `<p>Nothing here reaches applicants or clients by itself — these are background jobs that have gone quiet ` +
         `or are erroring. Tell Claude what this email says and it can dig in.</p>` +
         `<p style="color:#57606a">Caring Companions · automation watchdog</p></div>`
+      /* NO SILENT FAILURES (2026-10-01): the watchdog's own alert is the last line of defence, so if it can't reach
+         someone (GoHighLevel refused it, or couldn't even find their contact, e.g. an expired token) that becomes a
+         Needs Attention card. A person who got nothing doesn't count as alerted, so the 6-hour suppression isn't
+         stamped and the next run tries again. */
+      const unreachable = async (t: { name?: string; phone?: string; email?: string }, why: string) => {
+        if (t.phone) await reportSendProblem(supabase, { sender: 'staff-alert', channel: 'sms', address: t.phone, who: t.name, reasons: [why], failed: true })
+        if (t.email) await reportSendProblem(supabase, { sender: 'staff-alert', channel: 'email', address: t.email, who: t.name, reasons: [why], failed: true })
+      }
       for (const t of alertTo) {
         try {
           const r = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
@@ -178,14 +187,18 @@ Deno.serve(async (req) => {
           })
           const j = await r.json().catch(() => ({}))
           const cid = j?.contact?.id ?? j?.id ?? null
-          if (!cid) continue
-          if (t.phone) await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-            method: 'POST', headers: h, body: JSON.stringify({ type: 'SMS', contactId: cid, message: line }) })
-          if (t.email) await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-            method: 'POST', headers: h, body: JSON.stringify({ type: 'Email', contactId: cid,
-              subject: `Hub watchdog: ${problems.length} automation problem${problems.length > 1 ? 's' : ''}`, html }) })
+          if (!cid) { await unreachable(t, 'no GoHighLevel contact (error ' + r.status + ')'); continue }
+          let went = false
+          if (t.phone) went = await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'sms', contactId: cid, address: t.phone, who: t.name },
+            { message: line }) || went
+          if (t.email) went = await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'email', contactId: cid, address: t.email, who: t.name },
+            { subject: `Hub watchdog: ${problems.length} automation problem${problems.length > 1 ? 's' : ''}`, html }) || went
+          if (!went) continue
           alerted++
-        } catch (e) { console.error('[automation-watchdog] alert send failed', e) }
+        } catch (e) {
+          console.error('[automation-watchdog] alert send failed', e)
+          await unreachable(t, 'GoHighLevel could not be reached: ' + String((e as Error)?.message ?? e).slice(0, 80))
+        }
       }
       if (alerted) {
         try {

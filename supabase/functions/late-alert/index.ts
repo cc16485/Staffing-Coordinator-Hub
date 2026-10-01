@@ -31,6 +31,7 @@ import { eligibleMembers } from '../_shared/family-change-text.ts'
 import { opEvent } from '../_shared/events.ts'
 import { DEFAULT_FAMILY, DEFAULT_FAMILY_UPDATE, DEFAULT_ARRIVED, FAMILY_MIN_DEFAULT, fill, clockAt, familyEligible } from '../_shared/late-notice.ts'
 import { visitMs } from '../_shared/held-shift.ts'
+import { ghlSendChecked } from '../_shared/send-problems.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
                'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -110,12 +111,10 @@ Deno.serve(async (req) => {
       const dest = await contactForOutbound(sb, ghl, { phone: m.phone, firstName: mf, lastName: String(m.name || '').split(' ').slice(1).join(' ') },
         'timely_external', { audience: 'family', humanInitiated: true, channel: 'sms', sender: 'late-alert' })
       if (!dest) { refused++; continue }
-      try {
-        const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', { method: 'POST',
-          headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
-          body: JSON.stringify({ type: 'SMS', contactId: dest.contactId, message: `Hi ${mf}, ${text}` }) })
-        if (r.ok) count++
-      } catch { /* one member must not stop the rest */ }
+      /* NO SILENT FAILURES (2026-10-01): when one family member's text is refused but another's goes, the reply
+         still says ok, so the refused one raises a card on Needs Attention (all refused still answers an error) */
+      if (await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+        'late-alert', { channel: 'sms', contactId: dest.contactId, address: m.phone, who: m.name }, { message: `Hi ${mf}, ${text}` })) count++
     }
     if (!count) return { error: refused ? 'The texts were held or refused (outside 6am to 9pm, or they opted out of texts).' : 'The texts could not be sent. Try again, or call the family.', status: 409 }
     const fam = [...family(), { at: nowIso, by: me!.name, what: whatKind, count, text }]

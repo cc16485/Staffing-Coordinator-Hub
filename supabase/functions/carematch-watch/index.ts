@@ -34,6 +34,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { normalisePhone, contactForOutbound } from '../_shared/outreach.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
+import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -208,19 +209,16 @@ Deno.serve(async (req) => {
     if (!phone) { skippedNoPhone++; continue }
     const contact = await contactForOutbound(sb, ghl, { phone, firstName: first }, 'routine_internal', { audience: 'caregiver', channel: 'sms', sender: 'carematch-watch' })
     if (!contact) { refusedGate++; continue }
+    /* NO SILENT FAILURES (2026-10-01): a caregiver text or office email GoHighLevel refuses raises a card on Needs
+       Attention (the pair is still logged before sending, so it is not retried, exactly as before) */
     try {
-      const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28',
-                   'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message }),
-      })
-      if (r.ok) {
+      if (await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+        'carematch-watch', { channel: 'sms', contactId: contact.contactId, address: phone, who: m.caregiver }, { message })) {
         texted++
         await sb.rpc('upsert_app_data_item', { target_key: 'carematch_watch_log', item: {
           id: m.id, client: m.client, caregiver: m.caregiver, first_shift: m.day,
           first_seen: new Date().toISOString(), how: 'alerted', texted: true, emailed: false } })
-      } else console.error('carematch-watch sms', r.status, await r.text().catch(() => ''))
+      }
     } catch (err) { console.error('carematch-watch sms failed', err) }
   }
 
@@ -271,14 +269,19 @@ Deno.serve(async (req) => {
         // deno-lint-ignore no-explicit-any
         const uj: any = await up.json().catch(() => ({}))
         const contactId = uj?.contact?.id ?? uj?.id
-        if (!contactId) { emailErrors.push(`${r.email}: no GHL contact`); continue }
-        const em = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-          method: 'POST', headers,
-          body: JSON.stringify({ type: 'Email', contactId, subject, html }),
-        })
-        if (em.ok) emailed++
-        else emailErrors.push(`${r.email}: GHL email ${em.status}`)
-      } catch (e) { emailErrors.push(`${r.email}: ${String(e)}`) }
+        if (!contactId) {
+          emailErrors.push(`${r.email}: no GHL contact`)
+          await reportSendProblem(sb, { sender: 'staff-alert', channel: 'email', address: r.email, who: r.name || r.email,
+            reasons: ['GHL returned no contact id (status ' + up.status + ')'], failed: true })
+          continue
+        }
+        if (await ghlSendChecked(sb, headers, 'staff-alert', { channel: 'email', contactId, address: r.email, who: r.name || r.email }, { subject, html })) emailed++
+        else emailErrors.push(`${r.email}: GHL email refused (card raised)`)
+      } catch (e) {
+        emailErrors.push(`${r.email}: ${String(e)}`)
+        await reportSendProblem(sb, { sender: 'staff-alert', channel: 'email', address: r.email, who: r.name || r.email,
+          reasons: ['could not send: ' + String((e as Error)?.message ?? e).slice(0, 80)], failed: true })
+      }
     }
   }
 

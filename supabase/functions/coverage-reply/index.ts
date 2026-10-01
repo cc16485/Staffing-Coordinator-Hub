@@ -25,23 +25,25 @@ import { ghlStoredContactIfAllowed } from '../_shared/optout.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { shadowRoute } from '../_shared/routing.ts'
 import { opEvent } from '../_shared/events.ts'
+import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
 const norm = (p: string) => String(p || '').replace(/\D/g, '').slice(-10)
 
-async function sms(contactId: string, message: string): Promise<boolean> {
+/* NO SILENT FAILURES (2026-10-01): every text here is automatic (a webhook), so one GoHighLevel refuses (or that
+   can't go because GHL_TOKEN is missing) raises a card on Needs Attention. `to` says who it was for. */
+async function sms(contactId: string, message: string,
+                   to: { sender: string; address?: unknown; who?: unknown } = { sender: 'coverage-reply' }): Promise<boolean> {
   const token = Deno.env.get('GHL_TOKEN')
-  if (!token || !contactId) return false
-  try {
-    const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'SMS', contactId, message }),
-    })
-    return r.ok
-  } catch { return false }
+  if (!token || !contactId) {
+    await reportSendProblem(sb, { sender: to.sender, channel: 'sms', address: to.address, who: to.who,
+      reasons: [!token ? 'GoHighLevel is not set up (no token)' : 'no contact to text'], failed: true })
+    return false
+  }
+  return await ghlSendChecked(sb, { Authorization: `Bearer ${token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+    to.sender, { channel: 'sms', contactId, address: to.address, who: to.who }, { message })
 }
 
 Deno.serve(async (req) => {
@@ -160,10 +162,19 @@ Deno.serve(async (req) => {
           // deno-lint-ignore no-explicit-any
           const uj: any = await up.json().catch(() => ({}))
           const cid = uj?.contact?.id ?? uj?.id
-          if (!cid) { console.error('[coverage-reply] staff alert: no contact id for a configured phone'); continue }
-          if (await sms(cid, msg)) { sent[key] = new Date().toISOString(); any = true }
+          if (!cid) {
+            console.error('[coverage-reply] staff alert: no contact id for a configured phone')
+            await reportSendProblem(sb, { sender: 'staff-alert', channel: 'sms', address: p, who: 'the office (caregiver said YES)',
+              reasons: ['GHL returned no contact id (status ' + up.status + ')'], failed: true })
+            continue
+          }
+          if (await sms(cid, msg, { sender: 'staff-alert', address: p, who: 'the office (caregiver said YES)' })) { sent[key] = new Date().toISOString(); any = true }
           else console.error('[coverage-reply] staff alert send failed for one recipient')
-        } catch (e) { console.error('[coverage-reply] staff alert recipient error', e) }
+        } catch (e) {
+          console.error('[coverage-reply] staff alert recipient error', e)
+          await reportSendProblem(sb, { sender: 'staff-alert', channel: 'sms', address: p, who: 'the office (caregiver said YES)',
+            reasons: ['could not send: ' + String((e as Error)?.message ?? e).slice(0, 80)], failed: true })
+        }
       }
       /* Persist the successful-recipient record NOW rather than only at the
          end of the handler: this closes the replay-duplication window to
@@ -301,7 +312,7 @@ Deno.serve(async (req) => {
       if (ackTo) await sms(ackTo,
         (String(settings.coverage_msg_ack_interest || '') ||
          `Thank you {first_name}! Nothing is set yet — we're meeting the client first and we'll follow up with you about the hours.`)
-        .replaceAll('{first_name}', a.name.split(' ')[0]))
+        .replaceAll('{first_name}', a.name.split(' ')[0]), { sender: 'coverage-reply', address: a.phone || phone, who: a.name })
       await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
       return json({ ok: true, routed, case_id: c.id, caregiver: a.name, state: a.state })
     }

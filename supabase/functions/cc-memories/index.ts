@@ -22,6 +22,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
+import { ghlSendChecked } from '../_shared/send-problems.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -274,9 +275,9 @@ Deno.serve(async (req) => {
       + 'padding:12px 24px;border-radius:9px;text-decoration:none;">Watch it &rarr;</a></p>'
       + '<p style="color:#55677a;font-size:13px;">You will need the 6-digit code the office gave you. '
       + 'Recorded by ' + esc(v.player_name) + '.</p></div>'
-    await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-      method: 'POST', headers: h,
-      body: JSON.stringify({ type: 'Email', contactId, subject: 'A new memory of ' + first + ' 🎬', html }),
-    })
+    /* NO SILENT FAILURES (2026-10-01): sent in the background after a caregiver's upload, nobody in the office
+       watching, so a refused email raises a Needs Attention card */
+    await ghlSendChecked(supabase, h, 'cc-memories', { channel: 'email', contactId, address: client.dm_email, who: client.decision_maker },
+      { subject: 'A new memory of ' + first + ' 🎬', html })
   }
 })

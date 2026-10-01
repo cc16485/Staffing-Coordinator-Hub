@@ -5,6 +5,7 @@
 // shift happening right now, any hour).
 // deno-lint-ignore-file no-explicit-any
 import { normalisePhone, contactForOutbound } from './outreach.ts'
+import { ghlSendChecked, reportSendProblem } from './send-problems.ts'
 
 export const ADMIN_DEFAULT = ['samantha@mo-care.com', 'krystal@mo-care.com']
 export type Admin = { email: string; name: string; first: string; phone: string | null }
@@ -23,18 +24,24 @@ export async function adminRecipients(sb: any, settings: any): Promise<Admin[]> 
 
 export async function textAdmin(sb: any, ghl: { token: string; locationId: string }, a: Admin, message: string,
                                  send: typeof fetch = fetch): Promise<boolean> {
-  if (!a.phone || !ghl.token || !ghl.locationId) return false
+  /* NO SILENT FAILURES (2026-10-01): an admin text that cannot go (no phone on file, GoHighLevel not set up, or
+     GoHighLevel refused it) raises a card on Needs Attention as well as returning false */
+  if (!a.phone || !ghl.token || !ghl.locationId) {
+    await reportSendProblem(sb, { sender: 'staff-alert', channel: 'sms', address: a.phone ?? '', who: a.name,
+      reasons: [!a.phone ? 'no usable phone number for this admin in Coordinator staff' : 'GoHighLevel is not set up (no token or location)'], failed: !!a.phone })
+    return false
+  }
   try {
     const contact = await contactForOutbound(sb, ghl, { phone: a.phone, email: a.email, firstName: a.first },
       'urgent_internal', { selfSupplied: true, audience: 'staff' })
     if (!contact) return false
-    const r = await send('https://services.leadconnectorhq.com/conversations/messages', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message }),
-    })
-    return r.ok
-  } catch { return false }
+    return await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+      'staff-alert', { channel: 'sms', contactId: contact.contactId, address: a.phone, who: a.name }, { message }, send)
+  } catch (e) {
+    await reportSendProblem(sb, { sender: 'staff-alert', channel: 'sms', address: a.phone, who: a.name,
+      reasons: ['could not send: ' + String((e as Error)?.message ?? e).slice(0, 80)], failed: true })
+    return false
+  }
 }
 
 /** "9am", "9:30am" (her 12-hour rule, same as every Cara text). */

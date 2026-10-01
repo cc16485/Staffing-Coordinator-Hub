@@ -20,6 +20,7 @@
 // =============================================================================
 import { contactForOutbound } from './outreach.ts'
 import { coversThemselves } from './covered-outside.ts'
+import { ghlSendChecked } from './send-problems.ts'
 
 export type FamilyResult = { outcome: 'none' | 'sent' | 'retry'; count: number; reason: string | null; circle: string | null }
 // deno-lint-ignore no-explicit-any
@@ -84,12 +85,12 @@ export async function notifyFamilyOfChange(
         'reactive_external', { audience: 'family', explicitlyEnabled: true, channel: 'sms',
           sender: 'coverage-run (caregiver change text)', onOptOut: () => { optedOut++ } })
       if (!dest?.contactId) continue
-      const r = await send('https://services.leadconnectorhq.com/conversations/messages', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'SMS', contactId: dest.contactId, message: msgFor(selfIsClient) }),
-      })
-      if (r.ok) sent++
+      /* NO SILENT FAILURES (2026-10-01): sent by the coverage job with nobody watching, so a text GoHighLevel refused
+         raises a Needs Attention card naming the family member (the retry/stamp outcomes below are unchanged) */
+      const went = await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+        'family-change-text', { channel: 'sms', contactId: dest.contactId, address: m.phone, who: m.name },
+        { message: msgFor(selfIsClient) }, send)
+      if (went) sent++
     } catch { /* one family text failing must not block the rest */ }
   }
   if (sent) return { outcome: 'sent', count: sent, reason: null, circle: circle.client_name }

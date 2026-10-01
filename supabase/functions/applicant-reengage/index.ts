@@ -20,6 +20,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { outreachGate } from '../_shared/outreach.ts'
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -86,9 +87,15 @@ Deno.serve(async (req) => {
     'Content-Type': 'application/json', Accept: 'application/json',
   }
 
+  /* NO SILENT FAILURES (2026-10-01): the Hub used to hear only "sent N". Now every text or email GoHighLevel refuses
+     raises a Needs Attention card (ghlSendChecked), a text that failed beside an email that went is no longer hidden
+     inside "reached", and the answer lists who was not reached and why. Nothing about who gets it or when changed. */
+  if (eligible.length && (!ghlToken || !ghlLocation)) return json({ ok: false, error: 'Sending is not set up on the server. Nothing was sent.', sent: 0 }, 500)
   let sent = 0
+  const notSent: string[] = []
   for (const p of eligible) {
     if (!ghlToken || !ghlLocation) break
+    const name = [p.first_name, p.last_name].filter(Boolean).join(' ') || 'an applicant'
     const first = p.first_name || 'there'
     const applyUrl = 'https://mo-care.com/apply?book=' + encodeURIComponent(String(p.id))
     const body = `Hi ${first}, ${String(message).trim()}`
@@ -99,19 +106,15 @@ Deno.serve(async (req) => {
       if (p.phone && p.sms_consent === true) {
         const cid = await ghlContactIfAllowed(supabase, ghlDoor, 'applicant-reengage', { channel: 'sms', phone: p.phone, firstName: first })
         if (cid) {
-          const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-            method: 'POST', headers: h,
-            body: JSON.stringify({ type: 'SMS', contactId: cid,
-              message: `${body} ${applyUrl} Reply STOP to hear no more from us.` }),
-          })
-          reached = reached || r.ok
-        }
+          const ok = await ghlSendChecked(supabase, h, 'applicant-reengage', { channel: 'sms', contactId: cid, address: p.phone, who: name },
+            { message: `${body} ${applyUrl} Reply STOP to hear no more from us.` })
+          if (!ok) notSent.push(name + ': text refused')
+          reached = reached || ok
+        } else notSent.push(name + ': text held back (opted out, or could not check)')
       }
       const eid = p.email ? await ghlContactIfAllowed(supabase, ghlDoor, 'applicant-reengage', { channel: 'email', email: p.email, firstName: first }) : null
       if (eid) {
-        const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-          method: 'POST', headers: h,
-          body: JSON.stringify({ type: 'Email', contactId: eid,
+        const ok = await ghlSendChecked(supabase, h, 'applicant-reengage', { channel: 'email', contactId: eid, address: p.email, who: name }, {
             subject: 'A new opening at Caring Companions',
             html: `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
               `<p>Hi ${first},</p><p>${String(message).trim()}</p>` +
@@ -119,18 +122,25 @@ Deno.serve(async (req) => {
               `padding:12px 20px;border-radius:8px;font-weight:700;display:inline-block">Pick an interview time</a></p>` +
               `<p style="color:#57606a;font-size:13px">You applied with us before, which is why we thought of you. ` +
               `If you would rather we did not get in touch again, just reply and say so.</p>` +
-              `<p style="color:#57606a">Caring Companions In-Home Senior Care<br>${phone}</p></div>` }),
-        })
-        reached = reached || r.ok
-      }
+              `<p style="color:#57606a">Caring Companions In-Home Senior Care<br>${phone}</p></div>` })
+        if (!ok) notSent.push(name + ': email refused')
+        reached = reached || ok
+      } else if (p.email) notSent.push(name + ': email held back (opted out, or could not check)')
       if (!reached) continue
       await supabase.from('job_applicants').update({
         reengaged_at: new Date().toISOString(),
         reengage_count: (p.reengage_count ?? 0) + 1,
       }).eq('id', p.id)
       sent++
-    } catch { /* one failure must not stop the rest */ }
+    } catch (e) {  /* one failure must not stop the rest, but it is not silent either */
+      notSent.push(name + ': something went wrong')
+      await reportSendProblem(supabase, { sender: 'applicant-reengage', channel: p.phone && p.sms_consent === true ? 'sms' : 'email',
+        address: p.phone && p.sms_consent === true ? p.phone : p.email, who: name,
+        reasons: ['error: ' + String((e as Error)?.message ?? e).slice(0, 100)], failed: true })
+    }
   }
 
-  return json({ ok: true, sent, of: ids.length, skipped: ids.length - eligible.length })
+  return json({ ok: notSent.length === 0, sent, of: ids.length, skipped: ids.length - eligible.length,
+    not_reached: eligible.length - sent, not_sent: notSent.slice(0, 50),
+    ...(notSent.length ? { error: `${notSent.length} message${notSent.length === 1 ? '' : 's'} did not go out; each one is on Needs Attention.` } : {}) })
 })

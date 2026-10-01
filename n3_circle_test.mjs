@@ -3,7 +3,9 @@
 import fs from 'fs'; import path from 'path';
 const src = fs.readFileSync('supabase/functions/circle-send/index.ts', 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
   .replace(/^import \{ contactForOutbound \} from .*$/m, 'const contactForOutbound = async (db, ghl, to, cfg) => ({ contactId: "C:" + (cfg.channel === "sms" ? to.phone : to.email) })')
-  .replace(/^import \{ requireStaff, OFFICE_ROLES \} from .*$/m, "const requireStaff = async () => ({ ok: true, roles: ['owner_admin'], name: 'Katie Staff', email: 'k@x' }); const OFFICE_ROLES = []");
+  .replace(/^import \{ requireStaff, OFFICE_ROLES \} from .*$/m, "const requireStaff = async () => ({ ok: true, roles: ['owner_admin'], name: 'Katie Staff', email: 'k@x' }); const OFFICE_ROLES = []")
+  /* NO SILENT FAILURES (2026-10-01): the copy runs from the repo root, so the shared send checker is imported by its real path */
+  .replace("from '../_shared/send-problems.ts'", "from '" + path.resolve('supabase/functions/_shared/send-problems.ts') + "'");
 const tmp = path.join(process.cwd(), '_n3_under_test.ts'); fs.writeFileSync(tmp, src);
 let handler; globalThis.Deno = { env: { get: () => 'x' }, serve: h => { handler = h; } };
 const DB = { care_circles: [{ id: 'C1', client_name: 'Ruth Jones', axiscare_client_id: '501' }],

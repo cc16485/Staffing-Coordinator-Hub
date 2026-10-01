@@ -28,6 +28,7 @@
 // -----------------------------------------------------------------------------
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { reportSendProblem } from '../_shared/send-problems.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -315,7 +316,13 @@ Deno.serve(async (req) => {
           recordDependency(it, lvl, who, rule.to, ageMin)
           await save(it)
           notified.push({ item: it.id, level: String(lvl), to: who })
-        } catch (err) { console.error('escalation send failed:', String(err)) }
+        } catch (err) {
+          /* NO SILENT FAILURES (2026-10-01): a missed-call escalation text nobody received becomes a Needs Attention
+             card (it is not stamped, so the next sweep still retries, as before) */
+          console.error('escalation send failed:', String(err))
+          await reportSendProblem(admin, { sender: 'staff-alert', channel: 'sms', address: e164(phone), who: who.replace(/ \(on call\)$/, ''),
+            reasons: [String((err as Error)?.message ?? err).slice(0, 120)], failed: true })
+        }
       } else {
         notified.push({ item: it.id, level: String(lvl), to: who, dry_run: 'would text ' + e164(phone) })
       }

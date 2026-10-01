@@ -19,6 +19,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { ghlContactIfAllowed, normPhone } from '../_shared/optout.ts'
+import { reportSendProblem } from '../_shared/send-problems.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -51,16 +52,29 @@ Deno.serve(async (req) => {
   let b: Record<string, any> = {}
   try { b = await req.json() } catch { return json({ error: 'bad payload' }, 400) }
 
-  const sendSms = async (sender: string, phone: unknown, first: string, message: string) => {
-    if (!ghlToken || !ghlLocation) return { ok: false, error: 'GoHighLevel is not configured.' }
+  /* NO SILENT FAILURES (2026-10-01): `card` is set for the public booking confirmation, which nobody in the office
+     watches: a refused or unreachable send there raises a Needs Attention card. A staff send answers the person who
+     pressed Send with the reason instead (an error, never success). Opt-out holds already raise their own card. */
+  const sendSms = async (sender: string, phone: unknown, first: string, message: string, card?: { who?: string }) => {
+    const problem = async (why: string) => {
+      if (card) await reportSendProblem(db, { sender, channel: 'sms', address: phone, who: card.who || first, reasons: [why], failed: true })
+    }
+    if (!ghlToken || !ghlLocation) { await problem('GoHighLevel is not configured on the server'); return { ok: false, error: 'GoHighLevel is not configured.' } }
     const cid = await ghlContactIfAllowed(db, { token: ghlToken, locationId: ghlLocation }, sender, { channel: 'sms', phone, firstName: first })
     if (!cid) return { ok: false, error: 'Not sent: this number has opted out of texts, or we could not confirm it may be texted.' }
-    const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-      method: 'POST', headers: { Authorization: `Bearer ${ghlToken}`, Version: '2021-04-15', 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ type: 'SMS', contactId: cid, message }),
-    })
-    const sb = await r.json().catch(() => ({}))
-    return r.ok ? { ok: true, contact_id: cid, message_id: sb?.messageId || sb?.msg || null } : { ok: false, error: 'GoHighLevel message send failed' }
+    try {
+      const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+        method: 'POST', headers: { Authorization: `Bearer ${ghlToken}`, Version: '2021-04-15', 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ type: 'SMS', contactId: cid, message }),
+      })
+      const sb = await r.json().catch(() => ({}))
+      if (r.ok) return { ok: true, contact_id: cid, message_id: sb?.messageId || sb?.msg || null }
+      await problem(`error ${r.status}${sb?.message ? ': ' + String(sb.message).slice(0, 100) : ''}`)
+      return { ok: false, error: `GoHighLevel message send failed (${r.status})` }
+    } catch (e) {
+      await problem('GoHighLevel could not be reached: ' + String((e as Error)?.message ?? e).slice(0, 80))
+      return { ok: false, error: 'GoHighLevel could not be reached. Nothing was sent.' }
+    }
   }
 
   /* ── door 2: the public booking confirmation (fixed wording, a real booking only) ── */
@@ -89,7 +103,8 @@ Deno.serve(async (req) => {
     const where = remote ? `This is a video call${s.video_link ? ': ' + s.video_link : ' — we will send you the link'}.` : `Location: ${ADDR}.`
     const message = `You're all set, ${first}! 🎉 Your Caring Companions orientation is ${fmtDateLong(String(s.date))} at ${fmtTime(String(s.time || ''))}. ${where} ` +
       `Please bring your photo ID, Social Security card, and a voided check or bank info for direct deposit. Questions? Call/text (417) 234-8494.`
-    const out = await sendSms('send-candidate-message (booking confirmation)', booking.phone, first, message)
+    const out = await sendSms('send-candidate-message (booking confirmation)', booking.phone, first, message,
+      { who: [booking.first, booking.last].map((v) => String(v ?? '').trim()).filter(Boolean).join(' ') })
     if (out.ok) await db.from('orient_bookings').update({ confirm_sms_at: new Date().toISOString() }).eq('id', booking.id)
     return json(out.ok ? { success: true, sent: true } : { ok: true, sent: false })   // the public page never learns why
   }

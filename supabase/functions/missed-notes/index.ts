@@ -30,6 +30,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { contactForOutbound } from '../_shared/outreach.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
+import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 
 const cors = {
@@ -234,14 +235,11 @@ Deno.serve(async (req) => {
   /* 2 · texts (8am to 9pm Central): the first ask, and one reminder the next morning */
   const ghl = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
   const { data: open } = await db.from('missed_notes').select('*').eq('status', 'open')
-  const send = async (contactId: string, message: string) => {
-    try {
-      const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', { method: 'POST',
-        headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'SMS', contactId, message }) })
-      return r.ok
-    } catch { return false }
-  }
+  /* NO SILENT FAILURES (2026-10-01): a text GoHighLevel refuses raises a card on Needs Attention (it is still not
+     stamped, so the next run tries again, exactly as before) */
+  const send = (contactId: string, message: string, to: { address?: unknown; who?: unknown } = {}) =>
+    ghlSendChecked(db, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+      'missed-notes', { channel: 'sms', contactId, address: to.address, who: to.who }, { message })
   const tmplAsk = String(st.missed_notes_msg || '') || DEFAULT_ASK
   const tmplRemind = String(st.missed_notes_remind_msg || '') || DEFAULT_REMIND
   for (const r of open ?? []) {
@@ -258,7 +256,7 @@ Deno.serve(async (req) => {
       { audience: 'caregiver', channel: 'sms', sender: 'missed-notes' })
     if (!contact) { out.refused++; continue }
     const msg = fill(needFirst ? tmplAsk : tmplRemind, { first_name: firstOf(r.caregiver_name) || 'there', client: r.client_first || 'your client', day: dayWord })
-    if (!(await send(contact.contactId, msg))) continue
+    if (!(await send(contact.contactId, msg, { address: phone, who: r.caregiver_name }))) continue
     if (needFirst) {
       await db.from('missed_notes').update({ texted_at: new Date().toISOString(), ghl_contact_id: contact.contactId }).eq('id', r.id)
       out.texted++

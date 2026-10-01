@@ -31,6 +31,7 @@ import { ldPush } from '../_shared/lead-truth.ts'
 import { inquirySwitches } from '../_shared/inquiry-switches.ts'
 import { ghlContactIfAllowed, optOutCheck } from '../_shared/optout.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
+import { ghlSendChecked } from '../_shared/send-problems.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -83,14 +84,14 @@ Deno.serve(async (req) => {
     const j = await r.json().catch(() => ({}))
     return j?.contact?.id ?? j?.id ?? null
   }
-  const sms = (contactId: string, message: string) =>
-    fetch('https://services.leadconnectorhq.com/conversations/messages', {
-      method: 'POST', headers: h, body: JSON.stringify({ type: 'SMS', contactId, message }),
-    })
-  const email = (contactId: string, subject: string, html: string) =>
-    fetch('https://services.leadconnectorhq.com/conversations/messages', {
-      method: 'POST', headers: h, body: JSON.stringify({ type: 'Email', contactId, subject, html }),
-    })
+  /* NO SILENT FAILURES (2026-10-01): every send here is automatic (the 15-minute sweep), so a refused send raises a
+     Needs Attention card. Family messages are 'lead-followup'; the "lead waiting" office alert is 'staff-alert'.
+     Both return true only when GoHighLevel took the message. */
+  type To = { sender: string; address?: unknown; who?: unknown }
+  const sms = (contactId: string, message: string, to: To) =>
+    ghlSendChecked(supabase, h, to.sender, { channel: 'sms', contactId, address: to.address, who: to.who }, { message })
+  const email = (contactId: string, subject: string, html: string, to: To) =>
+    ghlSendChecked(supabase, h, to.sender, { channel: 'email', contactId, address: to.address, who: to.who }, { subject, html })
   const shell = (body: string) =>
     `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">${body}` +
     `<p style="color:#57606a">Caring Companions In-Home Senior Care<br>${OFFICE}</p></div>`
@@ -185,11 +186,13 @@ Deno.serve(async (req) => {
       let ok = false
       if (l.phone) {
         const cidP = await ghlContactIfAllowed(supabase, ghl, 'lead-followup', { channel: 'sms', phone: l.phone, firstName: first, onOptOut })
-        if (cidP && (await sms(cidP, message)).ok) ok = true
+        const fam = [l.first_name, l.last_name].filter(Boolean).join(' ')
+        if (cidP && (await sms(cidP, message, { sender: 'lead-followup', address: l.phone, who: fam }))) ok = true
       }
       if (l.email) {
         const cidE = await ghlContactIfAllowed(supabase, ghl, 'lead-followup', { channel: 'email', email: l.email, firstName: first, onOptOut })
-        if (cidE && (await email(cidE, subject, shell(htmlBody))).ok) ok = true
+        if (cidE && (await email(cidE, subject, shell(htmlBody), { sender: 'lead-followup', address: l.email,
+          who: [l.first_name, l.last_name].filter(Boolean).join(' ') }))) ok = true
       }
       if (!ok && stopped.length) {
         l.auto_msgs_stopped_at = new Date().toISOString()
@@ -210,8 +213,8 @@ Deno.serve(async (req) => {
         for (const t of alertTo!) {
           const cid = await contactFor(t.phone ?? null, t.email ?? null, t.name ?? 'Team')
           if (!cid) continue
-          if (t.phone) await sms(cid, line)
-          if (t.email) await email(cid, `Lead waiting: ${who}`, shell(`<p>${line}</p>`))
+          if (t.phone) await sms(cid, line, { sender: 'staff-alert', address: t.phone, who: t.name })
+          if (t.email) await email(cid, `Lead waiting: ${who}`, shell(`<p>${line}</p>`), { sender: 'staff-alert', address: t.email, who: t.name })
         }
         l.overdue_alerted_at = new Date().toISOString()
         await put(l); out.office_alerted++
