@@ -165,7 +165,9 @@ Deno.serve(async (req) => {
     if (!ghlToken || !ghlLocation || !r.ref_email) continue
     const url = `https://cc.mo-care.com/reference.html?r=${encodeURIComponent(r.id)}` +
       `&c=${encodeURIComponent(r.candidate_name)}&n=${encodeURIComponent(r.ref_name ?? '')}` +
-      (r.ref_relationship ? `&rel=${encodeURIComponent(r.ref_relationship)}` : '')
+      (r.ref_relationship ? `&rel=${encodeURIComponent(r.ref_relationship)}` : '') +
+      /* R1–R5 (2026-10-01): the form shows professional or personal questions */
+      (r.ref_type ? `&t=${encodeURIComponent(r.ref_type)}` : '') + (r.ref_company ? `&co=${encodeURIComponent(r.ref_company)}` : '')
     try {
       const contactId = await door('email', r.ref_email, r.ref_name ?? 'Reference')
       if (!contactId) continue
@@ -178,10 +180,10 @@ Deno.serve(async (req) => {
             `<p>Hi ${r.ref_name ?? 'there'},</p>` +
             `<p><b>${r.candidate_name}</b> listed you as a reference for a caregiving job with us, ` +
             `and we would be grateful for two minutes of your time.</p>` +
-            `<p>It is five questions, and there are no wrong answers. An honest middling answer ` +
+            `<p>It is a few quick questions, and there are no wrong answers. An honest middling answer ` +
             `helps us place someone well far more than a glowing one does.</p>` +
             `<p><a href="${url}" style="background:#F0A63A;color:#122F52;text-decoration:none;padding:12px 20px;` +
-            `border-radius:8px;font-weight:700;display:inline-block">Answer five quick questions</a></p>` +
+            `border-radius:8px;font-weight:700;display:inline-block">Answer a few quick questions</a></p>` +
             `<p style="color:#57606a;font-size:13px">Or paste this into your browser: ${url}</p>` +
             `<p style="color:#57606a">Thank you,<br>Caring Companions In-Home Senior Care<br>(417) 234-8494</p></div>`,
         }),
@@ -196,7 +198,9 @@ Deno.serve(async (req) => {
   for (const r of toNudge) {
     if (!ghlToken || !ghlLocation || !r.ref_email) continue
     const url = `https://cc.mo-care.com/reference.html?r=${encodeURIComponent(r.id)}` +
-      `&c=${encodeURIComponent(r.candidate_name)}&n=${encodeURIComponent(r.ref_name ?? '')}`
+      `&c=${encodeURIComponent(r.candidate_name)}&n=${encodeURIComponent(r.ref_name ?? '')}` +
+      (r.ref_relationship ? `&rel=${encodeURIComponent(r.ref_relationship)}` : '') +
+      (r.ref_type ? `&t=${encodeURIComponent(r.ref_type)}` : '') + (r.ref_company ? `&co=${encodeURIComponent(r.ref_company)}` : '')
         try {
       const contactId = await door('email', r.ref_email, r.ref_name ?? 'Reference')
       if (!contactId) continue
@@ -210,7 +214,7 @@ Deno.serve(async (req) => {
               `<p>Hi ${r.ref_name ?? 'there'},</p><p>A gentle nudge. ${r.candidate_name} is waiting on one ` +
               `reference before they can start, and yours is the last one we need.</p>` +
               `<p><a href="${url}" style="background:#F0A63A;color:#122F52;text-decoration:none;padding:12px 20px;` +
-              `border-radius:8px;font-weight:700;display:inline-block">Answer five quick questions</a></p>` +
+              `border-radius:8px;font-weight:700;display:inline-block">Answer a few quick questions</a></p>` +
               `<p style="color:#57606a">Thank you, it genuinely helps.<br>Caring Companions In-Home Senior Care</p></div>`,
           }),
         })
