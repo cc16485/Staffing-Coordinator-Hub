@@ -1205,7 +1205,11 @@ Deno.serve(async (req) => {
        unless the shift starts within 3 hours) and email (always — email is
        silent). Once per case. Admin list: ops_settings.coverage_alert_admins
        (array of emails), default Samantha + Krystal. */
-    if (!c.admin_alerted && c.kind !== 'interest' && ghl.token && ghl.locationId) {
+    /* RETRY (2026-10-01, Samantha "yes make them retry"): the call-in alert is stamped sent only when at least one
+       admin was reached (email or text). If nobody was, the next run tries again: at most 3 tries, 10+ minutes apart. */
+    const alertRetryOk = (Number(c.admin_alert_tries) || 0) < 3
+      && (!c.admin_alert_last_try || Date.now() - Date.parse(String(c.admin_alert_last_try)) >= 10 * 60_000)
+    if (!c.admin_alerted && alertRetryOk && c.kind !== 'interest' && ghl.token && ghl.locationId) {
       const admins: string[] = (Array.isArray(settings.coverage_alert_admins)
         && settings.coverage_alert_admins.length)
         ? settings.coverage_alert_admins.map((e: unknown) => String(e).toLowerCase())
@@ -1239,7 +1243,7 @@ Deno.serve(async (req) => {
       const planTxtA = planA.plan ? planLine(planA.plan) : ''
       const { data: stRowA } = await sb.from('app_data').select('data').eq('key', 'coordinator_staff').maybeSingle()
       const staffA: any[] = Array.isArray(stRowA?.data) ? stRowA!.data : []
-      let alerted = 0
+      let alerted = 0, reachedA = 0
       for (const adm of admins) {
         const person = staffA.find((s: any) => String(s.email || '').toLowerCase() === adm)
         // Email always (silent), through the same GHL pipe as the 7am digest.
@@ -1272,7 +1276,7 @@ Deno.serve(async (req) => {
                     ? `Cara has ranked the candidates — open the case and choose who to ask (worked-with-this-client first). Nothing is texted until you press send. `
                     : `The callout engine is texting qualified caregivers in waves. `)
                   + `Watch replies and confirm the fill on the board: <a href="https://cc.mo-care.com">cc.mo-care.com</a> (Scheduling, Coverage Help).</p></div>` })
-            if (wentA) alerted++
+            if (wentA) { alerted++; reachedA++ }
             // SMS too, when the hour allows and we have a number.
             if (smsOk) {
               const ph = normalisePhone(person?.phone)
@@ -1280,8 +1284,8 @@ Deno.serve(async (req) => {
                 const contact = await contactForOutbound(sb, ghl,
                   { phone: ph, email: adm, firstName: person?.name || adm.split('@')[0] },
                   'urgent_internal', { selfSupplied: true, audience: 'staff' })
-                if (contact) await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
-                  'staff-alert', { channel: 'sms', contactId: contact.contactId, address: ph, who: person?.name || adm }, { message: smsMsg })
+                if (contact && await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+                  'staff-alert', { channel: 'sms', contactId: contact.contactId, address: ph, who: person?.name || adm }, { message: smsMsg })) reachedA++
               }
             }
           }
@@ -1292,9 +1296,10 @@ Deno.serve(async (req) => {
       }
       const freshA = await readCaseFresh(c.id)
       if (freshA) {
-        freshA.admin_alerted = nowIso()
+        if (reachedA > 0) freshA.admin_alerted = nowIso()
+        else { freshA.admin_alert_tries = (Number(freshA.admin_alert_tries) || 0) + 1; freshA.admin_alert_last_try = nowIso() }
         await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: freshA })
-        c.admin_alerted = freshA.admin_alerted
+        c.admin_alerted = freshA.admin_alerted; c.admin_alert_tries = freshA.admin_alert_tries; c.admin_alert_last_try = freshA.admin_alert_last_try
       }
       stats.admin_alerts = (Number(stats.admin_alerts) || 0) + alerted
 
