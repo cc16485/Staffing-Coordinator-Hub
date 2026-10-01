@@ -148,6 +148,7 @@ ck('card: a NEW kind of failure reopens it as a fresh card', OPS.length === 1 &&
 OPS = []; for (let k = 0; k < 45; k++) await P.reportSendProblem(dbOps, { sender: 'coverage-run', channel: 'sms', address: '41755' + String(10000 + k), reasons: ['error 503'], failed: true });
 const many = OPS.find((x) => x.id === 'ops_send_many');
 ck('card: an outage is one "many messages are not going out" card after 40, not hundreds', OPS.length === 41 && many && many.count === 5 && many.urgency === 'urgent', [OPS.length, many]);
+ck('card: the overflow card says WHO each counted message was for (newest first, max 15)', many.recent.length === 5 && /\(417\) 551-0044/.test(many.recent[0].address) && /• .* · text · open shift text · \(417\) 551-0044 · GoHighLevel did not accept/.test(many.detail) && /close this one with Done/.test(many.detail), many);
 ck('card: why-words: STOP beside a "could not check" reads as the opt-out', P.explain(['could not check Family Circle stops', 'opted out (staff, sms)'], false, 'sms').code === 'opted_out'
   && P.explain(['could not check Family Circle stops'], false, 'sms').code === 'unchecked', null);
 // the checked send: true only on a 2xx, and a refusal raises a card
