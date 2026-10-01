@@ -107,6 +107,9 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   const url = new URL(req.url)
   if (url.searchParams.get('token') !== Deno.env.get('CALL_FOLLOWUP_TOKEN')) return json({ error: 'unauthorized' }, 401)
+  /* call-pull practice (Desktop 372, 2026-09-30): ?dry=1 reads the call and says what it WOULD do, then stops before
+     any lead, draft, call record, ops item or GoHighLevel tag is written. Only the metadata debug trail is kept. */
+  const dry = url.searchParams.get('dry') === '1'
 
   // GHL's custom webhook may substitute the raw transcript into the JSON body
   // WITHOUT escaping quotes/newlines, which breaks JSON.parse. So parse
@@ -194,7 +197,7 @@ Sign follow-up messages as "Caring Companions" unless a specific coordinator nam
 
   // Guardrail: only prospective CLIENT calls become leads.
   if (out.is_client_lead === false) {
-    return json({ status: 'skipped', reason: 'not a client lead', detail: String(out.not_lead_reason || '') })
+    return json({ status: 'skipped', reason: 'not a client lead', detail: String(out.not_lead_reason || ''), dry })
   }
 
   // Dedup: reuse an existing lead if this caller is already one (match phone/email).
@@ -207,6 +210,11 @@ Sign follow-up messages as "Caring Companions" unless a specific coordinator nam
      A new inquiry is checked for a returning family (old inquiries, AxisCare, Family Circles). */
   const hits = leadHits(leads, [phone], email)
   const existing = hits.open[0] || null
+  if (dry) {
+    const b0 = BRANCH_KEYS.includes(String(out.branch)) ? String(out.branch) : 'soft-check-in'
+    return json({ status: existing ? 'would update lead' : 'would create lead', dry: true, branch: b0,
+      would_draft_followup: true, would_tag_lead_in_ghl: !!contactId })
+  }
   const flag = existing ? null : await returningCheck(supabase, 'AI phone call', { phones: [phone], email }, hits.closed)
 
   const branch = BRANCH_KEYS.includes(String(out.branch)) ? String(out.branch) : 'soft-check-in'
