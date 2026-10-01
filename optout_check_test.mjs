@@ -85,6 +85,19 @@ id = await lib.ghlContactIfAllowed(db, ghl, 'lead-followup', { channel: 'sms', p
 ck("door: the Hub's own record refuses even when GHL says DND is off", id === null && logged[0][1].p_sender === 'lead-followup', logged);
 reset(); f = fakeGhl({ id: 'c8', dnd: false }); id = await lib.ghlContactIfAllowed(db, ghl, 'x', { channel: 'sms', phone: '12' }, f);
 ck('door: an unusable number never reaches GHL', id === null && f.calls.length === 0 && logged.length === 1);
+// ── 2026-10-01 (Desktop 382): GHL's real answer has NO dnd key unless DND is on ──
+reset(); f = fakeGhl({ id: 'r1' }, { id: 'r1', phone: '+14175550101', dndSettings: {} }); id = await lib.ghlContactIfAllowed(db, ghl, 'send-invite', { channel: 'sms', phone: '4175550101' }, f);
+ck("door: GHL's normal answer (no dnd key at all) read back by a successful GET counts as DND off: allowed", id === 'r1' && logged.length === 0, logged);
+reset(); f = fakeGhl({ id: 'r2' }, { id: 'r2' }); id = await lib.ghlContactIfAllowed(db, ghl, 'send-invite', { channel: 'email', email: 'a@b.com' }, f);
+ck('door: ...even with no dndSettings either', id === 'r2' && logged.length === 0, logged);
+reset(); f = fakeGhl({ id: 'r3' }, { id: 'r3', dndSettings: { SMS: { status: 'active' } } }); id = await lib.ghlContactIfAllowed(db, ghl, 'send-invite', { channel: 'sms', phone: '4175550101' }, f);
+ck('door: no dnd key but texts DND active: a text is still refused', id === null && /Do Not Disturb is on/.test(JSON.stringify(logged)), logged);
+reset(); f = fakeGhl({ id: 'r4' }, { id: 'someone-else' }); id = await lib.ghlContactIfAllowed(db, ghl, 'send-invite', { channel: 'sms', phone: '4175550101' }, f);
+ck('door: a GET that returns a different contact is not trusted: refused', id === null && /could not check GHL/.test(JSON.stringify(logged)), logged);
+reset(); f = fakeGhl({ id: 'r5', __dnd_read: true }, null); id = await lib.ghlContactIfAllowed(db, ghl, 'send-invite', { channel: 'sms', phone: '4175550101' }, f);
+ck('door: the read-back mark only counts when the Hub set it, not when GHL sends it', id === null && /could not check GHL/.test(JSON.stringify(logged)) && f.calls.length === 2, [logged, f.calls]);
+reset(); v = await sms({ ghlContact: { id: 'c9' } });
+ck('a contact handed in without a read-back and without dnd is still unknown: refused', !v.allowed && /could not check GHL/.test(v.reasons[0]), v);
 console.log('\n0b-1 · UNIVERSAL OPT-OUT CHECK · TEST\n' + '='.repeat(60)); let all = true;
 for (const [n, g, note] of res) { all &&= g; console.log((g ? 'PASS  ' : 'FAIL  ') + n + (note ? '\n   └─ ' + note : '')); }
 console.log('='.repeat(60)); console.log(all ? `ALL ${res.length} CHECKS PASS` : 'FAILED');

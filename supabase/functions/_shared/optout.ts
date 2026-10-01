@@ -45,7 +45,14 @@ export function ghlDnd(contact: any, channel: Channel): boolean {
 
 /* We only trust a GHL contact whose answer actually carries the Do Not Disturb flag. */
 // deno-lint-ignore no-explicit-any
-export const ghlDndKnown = (contact: any): boolean => !!contact && typeof contact === 'object' && typeof contact.dnd === 'boolean'
+export const ghlDndKnown = (contact: any): boolean => !!contact && typeof contact === 'object' &&
+  (typeof contact.dnd === 'boolean' || contact.__dnd_read === true)
+/* 2026-10-01 (Desktop 382 proved it): GoHighLevel's contact answer has NO `dnd` key unless DND is on, so insisting on a
+   true/false refused almost every send since 0b (interview reminders, reference emails, training invites...). A contact
+   returned by a SUCCESSFUL GET of that exact contact is a complete answer: no `dnd` key there means DND is off.
+   `__dnd_read` marks only that case; an upsert answer alone, or a failed GET, is still "could not check" (refused).
+   dndSettings (per channel) are still honoured by ghlDnd. */
+const readContact = (c: any) => (c && typeof c === 'object' ? { ...c, __dnd_read: true } : c)
 
 /**
  * May this message go to this address on this channel?
@@ -139,10 +146,11 @@ export async function ghlContactIfAllowed(
     })
     const j = await r.json().catch(() => ({}))
     contact = j?.contact ?? null
+    if (contact && typeof contact === 'object') delete contact.__dnd_read  // only the Hub's own read-back may set it
     if (contact?.id && !ghlDndKnown(contact)) {
       const g = await send(`https://services.leadconnectorhq.com/contacts/${encodeURIComponent(contact.id)}`, { method: 'GET', headers: h })
       const gj = await g.json().catch(() => ({}))
-      if (gj?.contact?.id === contact.id) contact = gj.contact
+      if (gj?.contact?.id === contact.id) contact = readContact(gj.contact)
     }
   } catch { contact = null }
   if (!contact?.id) {
@@ -185,7 +193,7 @@ export async function ghlStoredContactIfAllowed(
     const g = await send(`https://services.leadconnectorhq.com/contacts/${encodeURIComponent(id)}`,
       { method: 'GET', headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', Accept: 'application/json' } })
     const gj = await g.json().catch(() => ({}))
-    if (gj?.contact?.id === id) contact = gj.contact
+    if (gj?.contact?.id === id) contact = readContact(gj.contact)
   } catch { contact = null }
   const address = to.channel === 'sms' ? normPhone(contact?.phone) : normEmail(contact?.email)
   if (!contact) {

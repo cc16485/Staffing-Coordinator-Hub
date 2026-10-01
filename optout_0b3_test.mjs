@@ -39,7 +39,8 @@ globalThis.__db = { from: q,
   rpc: async (fn, a) => { if (fn === 'contact_send_refusal_log') REFUSED.push({ sender: a.p_sender, reasons: a.p_reasons }); if (fn === 'upsert_app_data_item') { const arr = (APP[a.target_key] ||= []); const i = arr.findIndex((x) => x.id === a.item.id); if (i >= 0) arr[i] = a.item; else arr.push(a.item) } return { data: null, error: null } },
   auth: { getUser: async (jwt) => jwt === 'jwt-owner' ? { data: { user: { id: 'u-owner', email: 'owner@mo-care.com', app_metadata: {} } }, error: null } : { data: { user: null }, error: { message: 'bad' } } } };
 const STORED = { 'cg-clean': { id: 'cg-clean', phone: E164(CLEAN_P), dnd: false }, 'cg-opt': { id: 'cg-opt', phone: E164(OPT_P), dnd: false },
-                 'cg-dnd': { id: 'cg-dnd', phone: E164(DND_P), dnd: true }, 'cg-nophone': { id: 'cg-nophone', dnd: false } }
+                 'cg-dnd': { id: 'cg-dnd', phone: E164(DND_P), dnd: true }, 'cg-nophone': { id: 'cg-nophone', dnd: false },
+                 'cg-real': { id: 'cg-real', phone: E164(CLEAN_P) }, 'cg-realdnd': { id: 'cg-realdnd', phone: E164(CLEAN_P), dndSettings: { SMS: { status: 'active' } } } }
 globalThis.fetch = async (url, o) => {
   url = String(url); const body = o && o.body ? JSON.parse(o.body) : {}
   if (url.includes('/contacts/upsert')) { const key = body.phone || body.email; return new Response(JSON.stringify({ contact: { id: 'C:' + key, dnd: DND.has(key) } }), { status: 200 }) }
@@ -68,6 +69,10 @@ for (const [cid, label, why] of [['cg-opt', 'whose number replied STOP (Hub reco
   ck(`saved-contact door · a contact ${label}: refused and logged${why.source.includes('opted') || why.source.includes('Disturb') ? ', and the sender is told it is an opt-out' : ''}`,
      id === null && REFUSED.length === 1 && why.test(JSON.stringify(REFUSED[0].reasons)) && told === (cid === 'cg-opt' || cid === 'cg-dnd'), [id, REFUSED, told])
 }
+reset(); id = await O.ghlStoredContactIfAllowed(globalThis.__db, ghl, 'coverage-run', { channel: 'sms', contactId: 'cg-real' })
+ck("saved-contact door · GHL's real answer (no dnd key unless DND is on) is sendable", id === 'cg-real' && REFUSED.length === 0, REFUSED)
+reset(); id = await O.ghlStoredContactIfAllowed(globalThis.__db, ghl, 'coverage-run', { channel: 'sms', contactId: 'cg-realdnd' })
+ck('saved-contact door · ...but texts-DND in that answer still refuses a text', id === null && /Do Not Disturb is on/.test(JSON.stringify(REFUSED)), REFUSED)
 reset(); id = await O.ghlStoredContactIfAllowed(globalThis.__db, ghl, 'x', { channel: 'sms', contactId: '' })
 ck('saved-contact door · no contact id: refused, nothing looked up', id === null && REFUSED.length === 1)
 
