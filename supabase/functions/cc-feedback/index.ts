@@ -6,6 +6,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
+import { ghlStaffContact } from '../_shared/staff-contact.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -62,11 +63,8 @@ Deno.serve(async (req) => {
   if (ghlToken && ghlLocation) {
     try {
       const h = { Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
-      const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-        method: 'POST', headers: h,
-        body: JSON.stringify({ locationId: ghlLocation, email: 'samantha@mo-care.com', firstName: 'Samantha' }),
-      })
-      const contactId = (await up.json().catch(() => ({})))?.contact?.id
+      /* ONE CONTACT (2026-10-01): Samantha's contact is found by the one-contact rule for this email channel. */
+      const contactId = await ghlStaffContact({ token: ghlToken, locationId: ghlLocation }, { channel: 'email', email: 'samantha@mo-care.com', firstName: 'Samantha' })
       if (contactId) {
         const starRow = (n: number) => '★★★★★☆☆☆☆☆'.slice(5 - n, 10 - n)
         const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')

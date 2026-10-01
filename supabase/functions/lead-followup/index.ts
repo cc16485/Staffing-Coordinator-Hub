@@ -32,6 +32,7 @@ import { inquirySwitches } from '../_shared/inquiry-switches.ts'
 import { ghlContactIfAllowed, optOutCheck } from '../_shared/optout.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
+import { ghlStaffContact } from '../_shared/staff-contact.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -76,14 +77,12 @@ Deno.serve(async (req) => {
     Accept: 'application/json',
   }
 
-  const contactFor = async (p: string | null, e: string | null, first: string) => {
-    const r = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-      method: 'POST', headers: h,
-      body: JSON.stringify({ locationId: ghlLocation, ...(p ? { phone: p } : {}), ...(e ? { email: e } : {}), firstName: first }),
-    })
-    const j = await r.json().catch(() => ({}))
-    return j?.contact?.id ?? j?.id ?? null
-  }
+  /* ONE CONTACT (2026-10-01): the "lead waiting" office alert finds the staff member's contact per channel (the text
+     to the contact holding the phone, the email to the contact holding the email), so a phone-only contact no longer
+     swallows the email. Replaces contactFor, which sent phone and email together in one upsert. */
+  // deno-lint-ignore no-explicit-any
+  const staffContact = (t: any, channel: 'sms' | 'email') =>
+    ghlStaffContact({ token: ghlToken!, locationId: ghlLocation! }, { channel, phone: t.phone, email: t.email, firstName: t.name ?? 'Team' })
   /* NO SILENT FAILURES (2026-10-01): every send here is automatic (the 15-minute sweep), so a refused send raises a
      Needs Attention card. Family messages are 'lead-followup'; the "lead waiting" office alert is 'staff-alert'.
      Both return true only when GoHighLevel took the message. */
@@ -216,10 +215,14 @@ Deno.serve(async (req) => {
           `${l.phone || l.email || 'no contact given'}. They are in the hub under Leads.`
         let reached = 0
         for (const t of alertTo!) {
-          const cid = await contactFor(t.phone ?? null, t.email ?? null, t.name ?? 'Team')
-          if (!cid) continue
-          if (t.phone && await sms(cid, line, { sender: 'staff-alert', address: t.phone, who: t.name })) reached++
-          if (t.email && await email(cid, `Lead waiting: ${who}`, shell(`<p>${line}</p>`), { sender: 'staff-alert', address: t.email, who: t.name })) reached++
+          if (t.phone) {
+            const cid = await staffContact(t, 'sms')
+            if (cid && await sms(cid, line, { sender: 'staff-alert', address: t.phone, who: t.name })) reached++
+          }
+          if (t.email) {
+            const cid = await staffContact(t, 'email')
+            if (cid && await email(cid, `Lead waiting: ${who}`, shell(`<p>${line}</p>`), { sender: 'staff-alert', address: t.email, who: t.name })) reached++
+          }
         }
         if (reached) { l.overdue_alerted_at = new Date().toISOString(); out.office_alerted++ }
         else { l.overdue_alert_tries = (Number(l.overdue_alert_tries) || 0) + 1; l.overdue_alert_last_try = new Date().toISOString() }

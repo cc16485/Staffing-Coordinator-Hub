@@ -26,6 +26,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { shadowRoute } from '../_shared/routing.ts'
 import { opEvent } from '../_shared/events.ts'
 import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
+import { ghlStaffContact } from '../_shared/staff-contact.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -153,19 +154,12 @@ Deno.serve(async (req) => {
         const key = norm(p) || p
         if (sent[key]) continue          // already succeeded for THIS decision
         try {
-          const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28',
-                       'Content-Type': 'application/json' },
-            body: JSON.stringify({ locationId: ghlLocation, phone: p, firstName: 'Scheduling' }),
-          })
-          // deno-lint-ignore no-explicit-any
-          const uj: any = await up.json().catch(() => ({}))
-          const cid = uj?.contact?.id ?? uj?.id
+          /* ONE CONTACT (2026-10-01): the office text goes to the contact found by the one-contact rule for sms. */
+          const cid = await ghlStaffContact({ token: String(ghlToken), locationId: String(ghlLocation) }, { channel: 'sms', phone: p, firstName: 'Scheduling' })
           if (!cid) {
             console.error('[coverage-reply] staff alert: no contact id for a configured phone')
             await reportSendProblem(sb, { sender: 'staff-alert', channel: 'sms', address: p, who: 'the office (caregiver said YES)',
-              reasons: ['GHL returned no contact id (status ' + up.status + ')'], failed: true })
+              reasons: ['GHL returned no contact id'], failed: true })
             continue
           }
           if (await sms(cid, msg, { sender: 'staff-alert', address: p, who: 'the office (caregiver said YES)' })) { sent[key] = new Date().toISOString(); any = true }

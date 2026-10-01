@@ -86,6 +86,7 @@ import { makeLink, adminKey, linkExpiry } from '../_shared/clockin-links.ts'
 import { lateHold, liveNotices } from '../_shared/late-notice.ts'
 import { visitMs } from '../_shared/held-shift.ts'
 import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
+import { ghlStaffContact } from '../_shared/staff-contact.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -678,19 +679,13 @@ Deno.serve(async (req) => {
           .map((p: unknown) => String(p ?? '').trim()).filter(Boolean)
         for (const p of phones) {
           try {
-            const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
-              body: JSON.stringify({ locationId: ghl.locationId, phone: p, firstName: 'Scheduling' }),
-            })
-            // deno-lint-ignore no-explicit-any
-            const uj: any = await up.json().catch(() => ({}))
-            const cid = uj?.contact?.id ?? uj?.id
+            /* ONE CONTACT (2026-10-01): the office text goes to the contact found by the one-contact rule for sms. */
+            const cid = await ghlStaffContact(ghl, { channel: 'sms', phone: p, firstName: 'Scheduling' })
             if (cid) await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
               'staff-alert', { channel: 'sms', contactId: cid, address: p, who: 'the office (EVV deadline nudge)' },
               { message: `EVV deadline: ${n} correction form${n === 1 ? '' : 's'} still waiting to be processed, and the weekly deadline is Sunday midnight. The list is on the hub's EVV tab.` })
             else await reportSendProblem(sb, { sender: 'staff-alert', channel: 'sms', address: p, who: 'the office (EVV deadline nudge)',
-              reasons: ['GHL returned no contact id (status ' + up.status + ')'], failed: true })
+              reasons: ['GHL returned no contact id'], failed: true })
           } catch (e) { await reportSendProblem(sb, { sender: 'staff-alert', channel: 'sms', address: p, who: 'the office (EVV deadline nudge)',
             reasons: ['could not send: ' + String((e as Error)?.message ?? e).slice(0, 80)], failed: true }) }
         }

@@ -35,6 +35,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { normalisePhone, contactForOutbound } from '../_shared/outreach.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
+import { ghlStaffContact } from '../_shared/staff-contact.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -261,18 +262,13 @@ Deno.serve(async (req) => {
                       'Content-Type': 'application/json' }
     for (const r of recips) {
       try {
-        const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-          method: 'POST', headers,
-          body: JSON.stringify({ locationId: ghl.locationId, email: r.email,
-            firstName: r.name.split(' ')[0] || r.email.split('@')[0], lastName: 'CC Staff' }),
-        })
-        // deno-lint-ignore no-explicit-any
-        const uj: any = await up.json().catch(() => ({}))
-        const contactId = uj?.contact?.id ?? uj?.id
+        /* ONE CONTACT (2026-10-01): the office email goes to the contact found by the one-contact rule for email. */
+        const contactId = await ghlStaffContact(ghl, { channel: 'email', email: r.email,
+          firstName: r.name.split(' ')[0] || r.email.split('@')[0], lastName: 'CC Staff' })
         if (!contactId) {
           emailErrors.push(`${r.email}: no GHL contact`)
           await reportSendProblem(sb, { sender: 'staff-alert', channel: 'email', address: r.email, who: r.name || r.email,
-            reasons: ['GHL returned no contact id (status ' + up.status + ')'], failed: true })
+            reasons: ['GHL returned no contact id'], failed: true })
           continue
         }
         if (await ghlSendChecked(sb, headers, 'staff-alert', { channel: 'email', contactId, address: r.email, who: r.name || r.email }, { subject, html })) emailed++

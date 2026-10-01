@@ -17,6 +17,7 @@
 
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
+import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { leadHits, returningCheck, returningItem } from '../_shared/returning.ts'
 import { opEvent } from '../_shared/events.ts'
@@ -271,11 +272,8 @@ async function ghlEmail(to: string, firstName: string, subject: string, html: st
     if (guard) {
       contactId = await ghlContactIfAllowed(guard.db, { token: ghlToken, locationId: ghlLocation }, guard.sender, { channel: 'email', email: to, firstName })
     } else {
-      const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-        method: 'POST', headers: h,
-        body: JSON.stringify({ locationId: ghlLocation, email: to, firstName }),
-      })
-      contactId = (await up.json().catch(() => ({})))?.contact?.id ?? null
+      /* ONE CONTACT (2026-10-01): the office notice's contact is found by the one-contact rule for email. */
+      contactId = await ghlStaffContact({ token: ghlToken, locationId: ghlLocation }, { channel: 'email', email: to, firstName }) || null
     }
     if (!contactId) return false
     if (report) return await ghlSendChecked(report.db, h, report.sender, { channel: 'email', contactId, address: to, who: report.who }, { subject, html })

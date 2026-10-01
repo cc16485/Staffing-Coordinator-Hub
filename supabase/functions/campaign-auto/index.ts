@@ -23,6 +23,7 @@ import { outreachGate } from '../_shared/outreach.ts'
 import { requireStaff, serverSecretOk, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
+import { ghlStaffContact } from '../_shared/staff-contact.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -305,11 +306,8 @@ Deno.serve(async (req) => {
   // 5. Tell Samantha what happened
   if (summary.length) {
     try {
-      const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-        method: 'POST', headers: sendH, body: JSON.stringify({ locationId: ghlLocation, email: ADMIN, firstName: 'Samantha' }),
-      })
-      const uj = await up.json().catch(() => ({}))
-      const contactId = uj?.contact?.id ?? uj?.id ?? null
+      /* ONE CONTACT (2026-10-01): Samantha's contact is found by the one-contact rule for this email channel. */
+      const contactId = await ghlStaffContact({ token: ghlToken, locationId: ghlLocation }, { channel: 'email', email: ADMIN, firstName: 'Samantha' })
       if (contactId) {
         await ghlSendChecked(supabase, sendH, 'staff-alert', { channel: 'email', contactId, address: ADMIN, who: 'Samantha' }, {
             subject: 'Campaign autopilot: ' + summary.length + ' email' + (summary.length > 1 ? 's' : '') + ' sent today',

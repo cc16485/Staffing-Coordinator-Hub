@@ -27,6 +27,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
+import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 
 const cors = {
@@ -97,14 +98,12 @@ Deno.serve(async (req) => {
   const phone = st?.phone ?? '(417) 234-8494'
   const mapUrl = 'https://maps.google.com/?q=' + encodeURIComponent([st?.location_name, place].filter(Boolean).join(', '))
 
-  const contactFor = async (p: string | null, e: string | null, first: string) => {
-    const r = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-      method: 'POST', headers: h,
-      body: JSON.stringify({ locationId: ghlLocation, ...(p ? { phone: p } : {}), ...(e ? { email: e } : {}), firstName: first }),
-    })
-    const j = await r.json().catch(() => ({}))
-    return j?.contact?.id ?? j?.id ?? null
-  }
+  /* ONE CONTACT (2026-10-01): an office alert finds the staff member's contact per channel (the text to the contact
+     holding the phone, the email to the contact holding the email), so a phone-only contact no longer swallows the
+     email. Replaces contactFor, which sent phone and email together in one upsert. */
+  // deno-lint-ignore no-explicit-any
+  const staffContact = (t: any, channel: 'sms' | 'email') =>
+    ghlStaffContact({ token: ghlToken!, locationId: ghlLocation! }, { channel, phone: t.phone, email: t.email, firstName: t.name ?? 'Team' })
   /* office alerts (new applicant, cancelled interview): a refused one raises a Needs Attention card too */
   // deno-lint-ignore no-explicit-any
   const sms = (contactId: string, message: string, t: any = {}) =>
@@ -113,7 +112,7 @@ Deno.serve(async (req) => {
   const email = (contactId: string, subject: string, html: string, t: any = {}) =>
     ghlSendChecked(supabase, h, 'staff-alert', { channel: 'email', contactId, address: t.email, who: t.name }, { subject, html })
   /* 0b-3: every message to an APPLICANT goes through the universal opt-out door, one GHL contact per channel
-     (the phone alone for a text, the email alone for an email). Staff alerts below keep contactFor. */
+     (the phone alone for a text, the email alone for an email). Staff alerts below use staffContact. */
   const ghlDoor = { token: ghlToken!, locationId: ghlLocation! }
   // deno-lint-ignore no-explicit-any
   const applicantDoor = (who: any, first: string) => ({
@@ -346,10 +345,8 @@ Deno.serve(async (req) => {
       if (!withinOutreachHours()) continue
 
       for (const t of alertTo!) {
-        const contactId = await contactFor(t.phone ?? null, t.email ?? null, t.name ?? 'Team')
-        if (!contactId) continue
-        if (t.phone) await sms(contactId, line, t)
-        if (t.email) await email(contactId, `New applicant: ${who}`, shell(`<p>${line}</p>`), t)
+        if (t.phone) { const cid = await staffContact(t, 'sms'); if (cid) await sms(cid, line, t) }
+        if (t.email) { const cid = await staffContact(t, 'email'); if (cid) await email(cid, `New applicant: ${who}`, shell(`<p>${line}</p>`), t) }
       }
       await supabase.from('job_applicants')
         .update({ office_alerted_at: new Date().toISOString() }).eq('id', p.id)
@@ -414,10 +411,8 @@ Deno.serve(async (req) => {
         (b.cancel_reason ? ` Reason: ${b.cancel_reason}.` : '') +
         ` They have the link to rebook; they are in the hub under Applicants.`
       for (const t of alertTo!) {
-        const cid = await contactFor(t.phone ?? null, t.email ?? null, t.name ?? 'Team')
-        if (!cid) continue
-        if (t.phone) await sms(cid, line, t)
-        if (t.email) await email(cid, `Interview cancelled: ${who}`, shell(`<p>${line}</p>`), t)
+        if (t.phone) { const cid = await staffContact(t, 'sms'); if (cid) await sms(cid, line, t) }
+        if (t.email) { const cid = await staffContact(t, 'email'); if (cid) await email(cid, `Interview cancelled: ${who}`, shell(`<p>${line}</p>`), t) }
       }
     }
 

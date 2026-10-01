@@ -36,6 +36,7 @@
    ============================================================================= */
 
 import { reportSendProblem } from './send-problems.ts'
+import { ghlStaffContact } from './staff-contact.ts'
 import { ghlContactIfAllowed } from './optout.ts'
 
 export type OutreachClass =
@@ -554,24 +555,11 @@ export async function contactForOutbound(
       onOptOut: opts.onOptOut ? (r) => opts.onOptOut!(r) : undefined })
     return id ? { contactId: id, phone } : null
   }
-  const res = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${ghl.token}`,
-      'Version': '2021-07-28',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      locationId: ghl.locationId,
-      ...(phone ? { phone } : {}),
-      ...(email ? { email } : {}),
-      ...(person.firstName ? { firstName: String(person.firstName) } : {}),
-      ...(person.lastName ? { lastName: String(person.lastName) } : {}),
-    }),
-  })
-  // deno-lint-ignore no-explicit-any
-  const j = await res.json().catch(() => ({})) as any
-  const contactId = j?.contact?.id ?? j?.id
+  /* ONE CONTACT FOR OFFICE STAFF (2026-10-01): a staff send without a named channel used to upsert phone AND email
+     together; when they sat on two contacts GHL matched the phone one, and an email to it failed ("Contact has no
+     email"). Now the contact is found for the channel this send uses (the phone when there is one, as before),
+     by the same one-contact rule as customer messages. */
+  const contactId = await ghlStaffContact(ghl, { channel: phone ? 'sms' : 'email', phone, email, firstName: person.firstName, lastName: person.lastName })
   if (!contactId) {
     console.warn(`outbound refused [${kind}]: GHL returned no contact id`)
     await outboundProblem(sb, kind, person, opts, String('GHL returned no contact id'))
