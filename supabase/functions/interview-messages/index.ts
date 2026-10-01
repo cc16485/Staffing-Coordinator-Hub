@@ -26,6 +26,7 @@
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
+import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 
 const cors = {
@@ -104,14 +105,13 @@ Deno.serve(async (req) => {
     const j = await r.json().catch(() => ({}))
     return j?.contact?.id ?? j?.id ?? null
   }
-  const sms = (contactId: string, message: string) =>
-    fetch('https://services.leadconnectorhq.com/conversations/messages', {
-      method: 'POST', headers: h, body: JSON.stringify({ type: 'SMS', contactId, message }),
-    })
-  const email = (contactId: string, subject: string, html: string) =>
-    fetch('https://services.leadconnectorhq.com/conversations/messages', {
-      method: 'POST', headers: h, body: JSON.stringify({ type: 'Email', contactId, subject, html }),
-    })
+  /* office alerts (new applicant, cancelled interview): a refused one raises a Needs Attention card too */
+  // deno-lint-ignore no-explicit-any
+  const sms = (contactId: string, message: string, t: any = {}) =>
+    ghlSendChecked(supabase, h, 'staff-alert', { channel: 'sms', contactId, address: t.phone, who: t.name }, { message })
+  // deno-lint-ignore no-explicit-any
+  const email = (contactId: string, subject: string, html: string, t: any = {}) =>
+    ghlSendChecked(supabase, h, 'staff-alert', { channel: 'email', contactId, address: t.email, who: t.name }, { subject, html })
   /* 0b-3: every message to an APPLICANT goes through the universal opt-out door, one GHL contact per channel
      (the phone alone for a text, the email alone for an email). Staff alerts below keep contactFor. */
   const ghlDoor = { token: ghlToken!, locationId: ghlLocation! }
@@ -119,11 +119,12 @@ Deno.serve(async (req) => {
   const applicantDoor = (who: any, first: string) => ({
     sms: async (message: string) => {
       const id = await ghlContactIfAllowed(supabase, ghlDoor, 'interview-messages', { channel: 'sms', phone: who.phone, firstName: first })
-      if (id) await sms(id, message)
+      /* NO SILENT FAILURES (2026-10-01): a message GoHighLevel refuses raises a Needs Attention card */
+      if (id) await ghlSendChecked(supabase, h, 'interview-messages', { channel: 'sms', contactId: id, address: who.phone, who: [first, who.last_name].filter(Boolean).join(' ') }, { message })
     },
     email: async (subject: string, html: string) => {
       const id = await ghlContactIfAllowed(supabase, ghlDoor, 'interview-messages', { channel: 'email', email: who.email, firstName: first })
-      if (id) await email(id, subject, html)
+      if (id) await ghlSendChecked(supabase, h, 'interview-messages', { channel: 'email', contactId: id, address: who.email, who: [first, who.last_name].filter(Boolean).join(' ') }, { subject, html })
     },
   })
 
@@ -347,8 +348,8 @@ Deno.serve(async (req) => {
       for (const t of alertTo!) {
         const contactId = await contactFor(t.phone ?? null, t.email ?? null, t.name ?? 'Team')
         if (!contactId) continue
-        if (t.phone) await sms(contactId, line)
-        if (t.email) await email(contactId, `New applicant: ${who}`, shell(`<p>${line}</p>`))
+        if (t.phone) await sms(contactId, line, t)
+        if (t.email) await email(contactId, `New applicant: ${who}`, shell(`<p>${line}</p>`), t)
       }
       await supabase.from('job_applicants')
         .update({ office_alerted_at: new Date().toISOString() }).eq('id', p.id)
@@ -415,8 +416,8 @@ Deno.serve(async (req) => {
       for (const t of alertTo!) {
         const cid = await contactFor(t.phone ?? null, t.email ?? null, t.name ?? 'Team')
         if (!cid) continue
-        if (t.phone) await sms(cid, line)
-        if (t.email) await email(cid, `Interview cancelled: ${who}`, shell(`<p>${line}</p>`))
+        if (t.phone) await sms(cid, line, t)
+        if (t.email) await email(cid, `Interview cancelled: ${who}`, shell(`<p>${line}</p>`), t)
       }
     }
 

@@ -18,6 +18,7 @@
 // (directly, or through contactForOutbound with a channel). 0b-3 (2026-09-27) wires caregiver, applicant and
 // HomeTogether senders, and ghlStoredContactIfAllowed covers sends to a GHL contact id saved earlier.
 // =============================================================================
+import { reportSendProblem } from './send-problems.ts'
 export type Channel = 'sms' | 'email'
 export type OptOutVerdict = { allowed: boolean; reasons: string[] }
 
@@ -107,10 +108,14 @@ export async function optOutCheck(
 
 /** Record a refusal (append-only). Never throws: a failed log must not turn a refusal into a send. */
 // deno-lint-ignore no-explicit-any
-export async function logRefusal(db: any, sender: string, channel: Channel, address: unknown, reasons: string[]): Promise<void> {
+export async function logRefusal(db: any, sender: string, channel: Channel, address: unknown, reasons: string[], who?: unknown): Promise<void> {
   try { await db.rpc('contact_send_refusal_log', { p_sender: sender, p_channel: channel, p_address: String(address ?? ''), p_reasons: reasons }) }
   catch { console.warn(`[${sender}] refusal not logged: ${reasons.join('; ')}`) }
+  /* NO SILENT FAILURES (2026-10-01): every refusal also becomes a Needs Attention card the office sees */
+  await reportSendProblem(db, { sender, channel, address, who, reasons })
 }
+// deno-lint-ignore no-explicit-any
+const nameOf = (x: any) => [x?.firstName, x?.lastName].map((v) => String(v ?? '').trim()).filter(Boolean).join(' ')
 
 /**
  * The GHL senders' door (0b-2). Finds or creates the GHL contact for ONE channel (the phone alone for a text,
@@ -131,7 +136,7 @@ export async function ghlContactIfAllowed(
   const phone = to.channel === 'sms' ? normPhone(to.phone) : null
   const email = to.channel === 'email' ? normEmail(to.email) : null
   if (!phone && !email) {
-    await logRefusal(db, sender, to.channel, to.channel === 'sms' ? to.phone : to.email, ['no usable ' + (to.channel === 'sms' ? 'phone number' : 'email address')])
+    await logRefusal(db, sender, to.channel, to.channel === 'sms' ? to.phone : to.email, ['no usable ' + (to.channel === 'sms' ? 'phone number' : 'email address')], nameOf(to))
     return null
   }
   const h = { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
@@ -154,18 +159,18 @@ export async function ghlContactIfAllowed(
     }
   } catch { contact = null }
   if (!contact?.id) {
-    await logRefusal(db, sender, to.channel, phone ?? email, ['GHL returned no contact, so Do Not Disturb could not be checked'])
+    await logRefusal(db, sender, to.channel, phone ?? email, ['GHL returned no contact, so Do Not Disturb could not be checked'], nameOf(to))
     return null
   }
-  return await decide(db, sender, to.channel, phone ?? email, contact, to.onOptOut)
+  return await decide(db, sender, to.channel, phone ?? email, contact, to.onOptOut, nameOf(to) || nameOf(contact))
 }
 
 // deno-lint-ignore no-explicit-any
 async function decide(db: any, sender: string, channel: Channel, address: string | null, contact: any,
-                      onOptOut?: (reasons: string[], contact: Record<string, unknown>) => void | Promise<void>): Promise<string | null> {
+                      onOptOut?: (reasons: string[], contact: Record<string, unknown>) => void | Promise<void>, who?: string): Promise<string | null> {
   const v = await optOutCheck(db, { channel, phone: channel === 'sms' ? address : undefined, email: channel === 'email' ? address : undefined, ghlContact: contact })
   if (v.allowed) return String(contact.id)
-  await logRefusal(db, sender, channel, address, v.reasons)
+  await logRefusal(db, sender, channel, address, v.reasons, who || nameOf(contact))
   console.warn(`[${sender}] send refused: ${v.reasons.join('; ')}`)
   /* an authority said no (not merely "could not check"): tell the sender, so it can stop asking every run */
   if (onOptOut && v.reasons.some((r) => !r.startsWith('could not check') && !r.startsWith('no usable'))) {
@@ -201,10 +206,10 @@ export async function ghlStoredContactIfAllowed(
     return null
   }
   if (!address) {
-    await logRefusal(db, sender, to.channel, '', ['the GHL contact has no usable ' + (to.channel === 'sms' ? 'phone number' : 'email address')])
+    await logRefusal(db, sender, to.channel, '', ['the GHL contact has no usable ' + (to.channel === 'sms' ? 'phone number' : 'email address')], nameOf(contact))
     return null
   }
-  return await decide(db, sender, to.channel, address, contact, to.onOptOut)
+  return await decide(db, sender, to.channel, address, contact, to.onOptOut, nameOf(contact))
 }
 
 /** The call a sender makes: check, log a refusal, return whether it may send. */

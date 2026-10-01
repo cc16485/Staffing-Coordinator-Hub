@@ -24,6 +24,7 @@
 // Supports ?dry=1 to report without sending.
 // -----------------------------------------------------------------------------
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
+import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
@@ -171,10 +172,9 @@ Deno.serve(async (req) => {
     try {
       const contactId = await door('email', r.ref_email, r.ref_name ?? 'Reference')
       if (!contactId) continue
-      await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-        method: 'POST', headers: h,
-        body: JSON.stringify({
-          type: 'Email', contactId,
+      /* NO SILENT FAILURES (2026-10-01): stamped sent only when GoHighLevel took it; a refusal raises a card and
+         the next run tries again */
+      const went = await ghlSendChecked(supabase, h, 'reference-chase', { channel: 'email', contactId, address: r.ref_email, who: r.ref_name }, {
           subject: `A quick reference for ${r.candidate_name}`,
           html: `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
             `<p>Hi ${r.ref_name ?? 'there'},</p>` +
@@ -186,8 +186,8 @@ Deno.serve(async (req) => {
             `border-radius:8px;font-weight:700;display:inline-block">Answer a few quick questions</a></p>` +
             `<p style="color:#57606a;font-size:13px">Or paste this into your browser: ${url}</p>` +
             `<p style="color:#57606a">Thank you,<br>Caring Companions In-Home Senior Care<br>(417) 234-8494</p></div>`,
-        }),
       })
+      if (!went) continue
       await supabase.from('reference_requests')
         .update({ sent_at: new Date().toISOString() }).eq('id', r.id)
       asked_first_time++
@@ -205,10 +205,7 @@ Deno.serve(async (req) => {
       const contactId = await door('email', r.ref_email, r.ref_name ?? 'Reference')
       if (!contactId) continue
       {
-        await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-          method: 'POST', headers: h,
-          body: JSON.stringify({
-            type: 'Email', contactId,
+        const went = await ghlSendChecked(supabase, h, 'reference-chase', { channel: 'email', contactId, address: r.ref_email, who: r.ref_name }, {
             subject: `A quick reference for ${r.candidate_name}`,
             html: `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
               `<p>Hi ${r.ref_name ?? 'there'},</p><p>A gentle nudge. ${r.candidate_name} is waiting on one ` +
@@ -216,8 +213,8 @@ Deno.serve(async (req) => {
               `<p><a href="${url}" style="background:#F0A63A;color:#122F52;text-decoration:none;padding:12px 20px;` +
               `border-radius:8px;font-weight:700;display:inline-block">Answer a few quick questions</a></p>` +
               `<p style="color:#57606a">Thank you, it genuinely helps.<br>Caring Companions In-Home Senior Care</p></div>`,
-          }),
         })
+        if (!went) continue
       }
       await supabase.from('reference_requests')
         .update({ reminded_at: new Date().toISOString(), reminder_count: (r.reminder_count ?? 0) + 1 })
@@ -242,17 +239,10 @@ Deno.serve(async (req) => {
       const smsId = textOk(r) ? await door('sms', r.candidate_phone, first) : null
       const mailId = r.candidate_email ? await door('email', r.candidate_email, first) : null
       if (!smsId && !mailId) continue
-      if (smsId) {
-        await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-          method: 'POST', headers: h,
-          body: JSON.stringify({ type: 'SMS', contactId: smsId, message: line }),
-        })
-      }
+      let went = false
+      if (smsId) went = await ghlSendChecked(supabase, h, 'reference-chase', { channel: 'sms', contactId: smsId, address: r.candidate_phone, who: r.candidate_name }, { message: line }) || went
       if (mailId) {
-        await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-          method: 'POST', headers: h,
-          body: JSON.stringify({
-            type: 'Email', contactId: mailId,
+        went = await ghlSendChecked(supabase, h, 'reference-chase', { channel: 'email', contactId: mailId, address: r.candidate_email, who: r.candidate_name }, {
             subject: `We cannot reach ${who}`,
             html: `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
               `<p>Hi ${first},</p><p>We have not been able to reach <b>${who}</b> for your reference, and it is ` +
@@ -264,9 +254,9 @@ Deno.serve(async (req) => {
               `<p><a href="${fixUrl}" style="background:#F0A63A;color:#122F52;text-decoration:none;padding:12px 20px;` +
               `border-radius:8px;font-weight:700;display:inline-block">Give us a different contact</a></p>` +
               `<p style="color:#57606a">Thank you,<br>Caring Companions In-Home Senior Care<br>(417) 234-8494</p></div>`,
-          }),
-        })
+        }) || went
       }
+      if (!went) continue
       await supabase.from('reference_requests')
         .update({ applicant_nudged_at: new Date().toISOString(),
                   applicant_nudge_count: (r.applicant_nudge_count ?? 0) + 1 })
@@ -287,7 +277,7 @@ Deno.serve(async (req) => {
       /* Two different problems land here. One reference will not answer; the
          other we have no way to reach. Saying which one saves a phone call. */
       const neverSent = !r.sent_at
-      items.push({
+      const item = {
         id: 'ops_' + sourceId, kind: 'request', source_id: sourceId,
         title: neverSent
           ? `No email for this reference: ${r.ref_name ?? 'reference'} for ${r.candidate_name}`
@@ -304,12 +294,11 @@ Deno.serve(async (req) => {
         created_at: new Date().toISOString(),
         due: new Date(Date.now() + 24 * 3600_000).toISOString(),
         owner: '', owner_name: '', created_by: 'reference chase', opened_by: 'system',
-      })
-      escalated++
-    }
-    if (escalated) {
-      await supabase.from('app_data')
-        .upsert({ key: 'ops_items', data: items, updated_at: new Date().toISOString() })
+      }
+      /* one item at a time (2026-10-01): writing the whole list back could erase a card another job or a person
+         added a moment earlier */
+      const { error } = await supabase.rpc('upsert_app_data_item', { target_key: 'ops_items', item })
+      if (!error) { items.push(item); escalated++ }
     }
   }
 
