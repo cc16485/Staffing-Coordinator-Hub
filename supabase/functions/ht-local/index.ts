@@ -20,6 +20,7 @@
 // -----------------------------------------------------------------------------
 
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
+import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
@@ -34,31 +35,37 @@ const json = (body: unknown, status = 200) =>
 const clean = (v: unknown, n: number) => String(v ?? '').replace(/<[^>]*>/g, '').trim().slice(0, n)
 const esc = (t: string) => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')
 
+/* NO SILENT FAILURES (2026-10-01): every email here goes out with nobody watching (a public sign-up form, the Checkr
+   webhook, the OIG screen in the background, a pay link the response never reports on), so an email GoHighLevel
+   refuses, or one that could not even be tried, raises a Needs Attention card. Customers are 'ht-local' (an opt-out
+   refusal already raises its own card at the door); alerts to the office are 'ht-local-alert'. */
 async function ghlEmail(to: string, firstName: string, subject: string, html: string): Promise<boolean> {
   const ghlToken = Deno.env.get('GHL_TOKEN')
   const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
-  if (!ghlToken || !ghlLocation || !to) return false
+  if (!to) return false
+  const staff = /@mo-care\.com$/i.test(String(to).trim())
+  const sender = staff ? 'ht-local-alert' : 'ht-local'
+  const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  const who = firstName && firstName !== 'there' ? firstName : undefined
+  const failed = (why: string) => reportSendProblem(db, { sender, channel: 'email', address: to, who, reasons: [why], failed: true })
+  if (!ghlToken || !ghlLocation) { await failed('GoHighLevel is not set up here (GHL_TOKEN / GHL_LOCATION_ID missing)'); return false }
   try {
     const h = { Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
     let contactId: string | null = null
-    if (!/@mo-care\.com$/i.test(String(to).trim())) {
+    if (!staff) {
       /* 0b-3: a HomeTogether customer (anyone who is not our own staff) goes through the universal opt-out door */
-      const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
       contactId = await ghlContactIfAllowed(db, { token: ghlToken, locationId: ghlLocation }, 'ht-local', { channel: 'email', email: to, firstName })
+      if (!contactId) return false   // the door already raised its own card
     } else {
       const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
         method: 'POST', headers: h,
         body: JSON.stringify({ locationId: ghlLocation, email: to, firstName }),
       })
       contactId = (await up.json().catch(() => ({})))?.contact?.id ?? null
+      if (!contactId) { await failed('GoHighLevel returned no contact (error ' + up.status + ')'); return false }
     }
-    if (!contactId) return false
-    const sr = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-      method: 'POST', headers: h,
-      body: JSON.stringify({ type: 'Email', contactId, subject, html }),
-    })
-    return sr.ok
-  } catch { return false }
+    return await ghlSendChecked(db, h, sender, { channel: 'email', contactId, address: to, who }, { subject, html })
+  } catch (e) { await failed('GoHighLevel could not be reached: ' + String((e as Error)?.message ?? e).slice(0, 80)); return false }
 }
 
 async function loadItems(supabase: ReturnType<typeof createClient>, key: string) {

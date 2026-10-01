@@ -13,6 +13,7 @@
 // -----------------------------------------------------------------------------
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { reportSendProblem } from '../_shared/send-problems.ts'
 
 const FORWARD_TO = 'samantha@mo-care.com'
 const json = (body: unknown, status = 200) =>
@@ -94,10 +95,16 @@ Deno.serve(async (req) => {
 
   // Forward a copy to Samantha's real inbox; replying there goes to the customer.
   const resendKey = Deno.env.get('RESEND_API_KEY')
+  /* NO SILENT FAILURES (2026-10-01): a forward that does not go out is a customer message nobody sees in their inbox,
+     so a forward Resend refuses, or that could not be tried, raises a Needs Attention card ('ht-inbound'). */
+  const lost = (why: string) => reportSendProblem(supabase, { sender: 'ht-inbound', channel: 'email', address: FORWARD_TO, who: 'Samantha',
+    reasons: [why], failed: true,
+    note: `Latest: ${fromEmail} wrote to support@ (ticket ${ticketNo}). It is saved in the Hub's Support tab, marked New: answer it from there.` })
+  if (!resendKey) await lost('Resend is not set up here (RESEND_API_KEY missing)')
   if (resendKey) {
     const esc = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     try {
-      await fetch('https://api.resend.com/emails', {
+      const fr = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -115,7 +122,12 @@ Deno.serve(async (req) => {
 </div>`,
         }),
       })
-    } catch (_e) { /* ticket already stored */ }
+      if (!fr.ok) {
+        const t = await fr.text().catch(() => '')
+        let m = ''; try { m = String(JSON.parse(t)?.message ?? '') } catch { m = t }
+        await lost('Resend error ' + fr.status + (m ? ': ' + m.slice(0, 100) : ''))
+      }
+    } catch (e) { await lost('Resend could not be reached: ' + String((e as Error)?.message ?? e).slice(0, 80)) }   // ticket already stored
   }
 
   return json({ ok: true, ticket_no: ticketNo, appended: handled })

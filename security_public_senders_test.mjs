@@ -45,7 +45,7 @@ fs.writeFileSync(path.join(tmpDir, 'guard.ts'), noCC(fs.readFileSync(path.join(T
 fs.writeFileSync(path.join(tmpDir, 'optout-gate.ts'), fs.readFileSync(path.join(TP, '_shared/optout-gate.ts'), 'utf8'))
 const load = async (dir, name) => {
   let src = noCC(fs.readFileSync(path.join(dir, name, 'index.ts'), 'utf8'))
-    .replace("from '../_shared/guard.ts'", "from './guard.ts'").replace(/from ['"]\.\.\/_shared\/optout-gate\.ts['"]/, "from './optout-gate.ts'").replace(/from '\.\.\/_shared\/optout\.ts'/, "from '" + path.join(process.cwd(), HUB, '_shared/optout.ts') + "'")
+    .replace("from '../_shared/guard.ts'", "from './guard.ts'").replace(/from ['"]\.\.\/_shared\/optout-gate\.ts['"]/, "from './optout-gate.ts'").replace(/from '\.\.\/_shared\/optout\.ts'/, "from '" + path.join(process.cwd(), HUB, '_shared/optout.ts') + "'").replace(/from '\.\.\/_shared\/send-problems\.ts'/, "from '" + path.join(process.cwd(), HUB, '_shared/send-problems.ts') + "'")
   const tmp = path.join(tmpDir, name + '.ts'); fs.writeFileSync(tmp, src); await import(tmp + '?' + Math.random()); return handler }
 const post = async (h, url, body, headers = {}) => { const r = await h(new Request(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body ?? {}) })); let j = null; try { j = await r.json() } catch { /* */ } return { status: r.status, j } }
 try {

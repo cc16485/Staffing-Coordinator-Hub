@@ -14,6 +14,7 @@
 // -----------------------------------------------------------------------------
 
 import { mayContact } from '../_shared/optout.ts'
+import { reportSendProblem } from '../_shared/send-problems.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const cors = {
@@ -98,8 +99,12 @@ Deno.serve(async (req) => {
   <p style="font-size:14px;color:#5B6B79">If you need to add anything, just reply to this email and keep the ticket number in the subject.</p>
   <p>Warmly,<br>The HomeTogether team<br><span style="color:#5B6B79;font-size:14px">A Caring Companions company · tryhometogether.com</span></p>
 </div>`
+    /* NO SILENT FAILURES (2026-10-01): the form's answer never mentions the email (the ticket is what matters), so a
+       confirmation Resend refuses, or that could not be tried, raises a Needs Attention card ('ht-support'). */
+    const failed = (why: string) => reportSendProblem(supabase, { sender: 'ht-support', channel: 'email', address: email, who: name || undefined,
+      reasons: [why], failed: true, note: `Ticket ${ticketNo}: the request is saved in the Hub's Support tab; reply from there.` })
     try {
-      await fetch('https://api.resend.com/emails', {
+      const sr = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -110,7 +115,16 @@ Deno.serve(async (req) => {
           html,
         }),
       })
-    } catch (_e) { /* ticket already saved; ignore mail errors */ }
+      if (!sr.ok) {
+        const t = await sr.text().catch(() => '')
+        let m = ''; try { m = String(JSON.parse(t)?.message ?? '') } catch { m = t }
+        await failed('Resend error ' + sr.status + (m ? ': ' + m.slice(0, 100) : ''))
+      }
+    } catch (e) { await failed('Resend could not be reached: ' + String((e as Error)?.message ?? e).slice(0, 80)) }   // ticket already saved
+  } else {
+    await reportSendProblem(supabase, { sender: 'ht-support', channel: 'email', address: email, who: name || undefined,
+      reasons: ['Resend is not set up here (RESEND_API_KEY missing)'], failed: true,
+      note: `Ticket ${ticketNo}: the request is saved in the Hub's Support tab; reply from there.` })
   }
 
   return json({ ok: true, ticket_no: ticketNo })
