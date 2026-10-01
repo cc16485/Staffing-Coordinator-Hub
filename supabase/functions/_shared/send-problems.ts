@@ -152,12 +152,22 @@ export async function reportSendProblem(db: any, p: SendProblem): Promise<void> 
       if (open >= (p.cap ?? MAX_OPEN)) {
         const many = items.find((x) => x && x.id === 'ops_send_many')
         const n = (many && isOpen(many) ? Number(many.count) || 0 : 0) + (p.count ?? 1)
+        /* 2026-10-01 (Samantha "yes do both"): the overflow card also says WHO each counted message was for (the last
+           15), so nothing on it is anonymous. */
+        const whoTxt = String(p.who ?? '').trim()
+        const addrTxt = p.channel === 'sms' ? (address.length === 12 ? `(${address.slice(2, 5)}) ${address.slice(5, 8)}-${address.slice(8)}` : address) : address
+        const recent = [{ at: now, channel: p.channel, what, who: whoTxt, address: addrTxt, why: ex.why },
+          ...((many && isOpen(many) && Array.isArray(many.recent)) ? many.recent : [])].slice(0, 15)
+        const tm = (t: string) => new Date(t).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+        const list = recent.map((r) => `• ${tm(r.at)} · ${r.channel === 'sms' ? 'text' : 'email'} · ${r.what} · ${[r.who, r.address].filter(Boolean).join(' ') || 'unknown'} · ${r.why}`).join('\n')
         await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
           ...(many && isOpen(many) ? many : { created_at: now, first_at: now, owner: await ownerFor(db, 'office_ops'), owner_name: '' }),
           id: 'ops_send_many', kind: 'send_problem', domain: 'office_ops', status: 'open', urgency: 'urgent', problem: 'many',
           title: `Many messages are not going out (${n} more since ${new Date((many && isOpen(many) && many.first_at) || now).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})`,
-          detail: `More than ${MAX_OPEN} "didn't go through" cards are open, so new ones are counted here instead.\nLatest: ${chan.toLowerCase()} · ${what} · ${ex.why}\nNext: something may be broken (often GoHighLevel). Tell Samantha, then work through the open cards.`,
-          count: n, last_at: now, due: (many && isOpen(many) && many.due) || new Date(Date.now() + 3_600_000).toISOString(),
+          detail: `More than ${MAX_OPEN} "didn't go through" cards are open, so new ones are counted here instead.\n` +
+            `Next: something may be broken (often GoHighLevel). Tell Samantha, then work through the open cards. Once fewer than ${MAX_OPEN} are open, new problems get their own card again; close this one with Done.\n` +
+            `Counted here${n > recent.length ? ` (latest ${recent.length} of ${n})` : ''}:\n${list}`,
+          recent, count: n, last_at: now, due: (many && isOpen(many) && many.due) || new Date(Date.now() + 3_600_000).toISOString(),
           created_by: 'send-problems', opened_by: 'send-problems' } })
         return
       }
