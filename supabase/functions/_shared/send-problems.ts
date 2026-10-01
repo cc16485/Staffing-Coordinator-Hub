@@ -60,6 +60,15 @@ export const SENDER_WORDS: Record<string, [string, string]> = {
   'family-change-text': ['caregiver-change text to the family', 'client_care'],
   'lead-digest': ['morning brief email', 'office_ops'],
   'shared-backup': ['weekly backup email', 'office_ops'],
+  /* HomeTogether (sister business): its failures stay on the same Needs Attention list for now (Samantha, 2026-10-01) */
+  'ht-local': ['HomeTogether Hire message', 'office_ops'],
+  'ht-local-alert': ['HomeTogether Hire alert to the office', 'office_ops'],
+  'ht-support': ['HomeTogether support email', 'office_ops'],
+  'ht-inbound': ['HomeTogether support email forwarded to the office', 'office_ops'],
+  'resend-relay': ['HomeTogether email sent through the relay', 'office_ops'],
+  'stripe-webhook': ['HomeTogether payment email', 'office_ops'],
+  'stripe-webhook-alert': ['HomeTogether payment alert to the office', 'office_ops'],
+  'vapi-interview': ['HomeTogether AI interview alert to the office', 'office_ops'],
 }
 /* The Training Platform names some senders with a note in brackets: "job-offer (by <staff email>)", "sync-axiscare (welcome)".
    Use whichever part is a known sender, and never put the bracket (which can hold a staff email) on a card. */
@@ -76,8 +85,8 @@ export function explain(reasons: string[], failed: boolean, channel: Channel): {
   /* an authority's no (STOP, Do Not Disturb) wins over a "could not check" listed beside it */
   const said = reasons.filter((x) => !/^could not check/i.test(x)).join(' · ')
   const addr = channel === 'sms' ? 'phone number' : 'email address'
-  if (failed) return { code: 'failed', why: 'GoHighLevel did not accept the message (' + r.slice(0, 120) + ').',
-    next: 'Reach them another way (call, or the other channel). If several of these appear at once, GoHighLevel may be down: tell Samantha.' }
+  if (failed) return { code: 'failed', why: (/resend/i.test(r) ? 'The email service (Resend)' : 'GoHighLevel') + ' did not accept the message (' + r.slice(0, 120) + ').',
+    next: 'Reach them another way (call, or the other channel). If several of these appear at once, ' + (/resend/i.test(r) ? 'the email service' : 'GoHighLevel') + ' may be down: tell Samantha.' }
   if (/opted out|marked stopped/i.test(said)) return { code: 'opted_out', why: 'They asked us to stop (replied STOP, or the office marked it).',
     next: 'Don\'t message them. If they still need to hear from us, call them.' }
   if (/Do Not Disturb is on/i.test(said)) return { code: 'dnd', why: 'Do Not Disturb is on for them in GoHighLevel.',

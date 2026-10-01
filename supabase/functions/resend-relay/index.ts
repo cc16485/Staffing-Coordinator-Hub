@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { mayContact } from '../_shared/optout.ts'
+import { reportSendProblem } from '../_shared/send-problems.ts'
 // Shared-project mail relay: lets sibling projects (HomeTogether Hire) send
 // via this project's verified Resend key. Only sends FROM our own verified domain addresses.
 // Security slice 2026-09-27: it used to accept the public page-source token (in any page's code), which made it an
@@ -28,12 +29,27 @@ Deno.serve(async (req) => {
     const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     if (!(await mayContact(db, "resend-relay", { channel: "email", email: String(b.to), viaGhl: false })))
       return new Response(JSON.stringify({ ok: false, opted_out: true }), { status: 200, headers: { "Content-Type": "application/json" } });
-    const r = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${RESEND}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from, to: [String(b.to)], reply_to: b.reply_to ?? "support@tryhometogether.com", subject: String(b.subject), html: String(b.html) }),
-    });
-    const txt = await r.text();
+    /* NO SILENT FAILURES (2026-10-01): the relay is called by jobs (htl-founding-emails) with nobody watching, so a
+       relay Resend refuses, or that could not be tried, raises a Needs Attention card ('resend-relay') AND still
+       answers the caller with its error, exactly as before. */
+    const lost = (why: string) => reportSendProblem(db, { sender: "resend-relay", channel: "email", address: String(b.to), reasons: [why], failed: true,
+      note: "Subject: " + String(b.subject).slice(0, 120) });
+    let r: Response;
+    try {
+      r = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${RESEND}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ from, to: [String(b.to)], reply_to: b.reply_to ?? "support@tryhometogether.com", subject: String(b.subject), html: String(b.html) }),
+      });
+    } catch (e) {
+      await lost("Resend could not be reached: " + String((e as Error)?.message ?? e).slice(0, 80));
+      throw e;
+    }
+    const txt = await r.text().catch(() => "");
+    if (!r.ok) {
+      let m = ""; try { m = String(JSON.parse(txt)?.message ?? ""); } catch { m = txt; }
+      await lost("Resend error " + r.status + (m ? ": " + m.slice(0, 100) : ""));
+    }
     return new Response(JSON.stringify({ ok: r.ok, status: r.status, body: txt.slice(0, 200) }), { status: r.ok ? 200 : 502, headers: { "Content-Type": "application/json" } });
   } catch (e) {
     return new Response(JSON.stringify({ error: String(e).slice(0, 200) }), { status: 500 });

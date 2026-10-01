@@ -22,6 +22,7 @@
 // -----------------------------------------------------------------------------
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -35,22 +36,24 @@ const esc = (t: string) => String(t || '').replace(/&/g, '&amp;').replace(/</g, 
 const digits = (v: unknown) => String(v ?? '').replace(/\D/g, '')
 const last10 = (v: unknown) => digits(v).slice(-10)
 
-async function ghlEmail(to: string, firstName: string, subject: string, html: string): Promise<boolean> {
+/* NO SILENT FAILURES (2026-10-01): this runs from Vapi's end-of-call webhook with nobody watching, so an alert email
+   GoHighLevel refuses, or one that could not even be tried, raises a Needs Attention card ('vapi-interview'). */
+// deno-lint-ignore no-explicit-any
+async function ghlEmail(db: any, to: string, firstName: string, subject: string, html: string): Promise<boolean> {
   const ghlToken = Deno.env.get('GHL_TOKEN')
   const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
-  if (!ghlToken || !ghlLocation || !to) return false
+  if (!to) return false
+  const failed = (why: string) => reportSendProblem(db, { sender: 'vapi-interview', channel: 'email', address: to, who: firstName, reasons: [why], failed: true })
+  if (!ghlToken || !ghlLocation) { await failed('GoHighLevel is not set up here (GHL_TOKEN / GHL_LOCATION_ID missing)'); return false }
   try {
     const h = { Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
     const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
       method: 'POST', headers: h, body: JSON.stringify({ locationId: ghlLocation, email: to, firstName }),
     })
     const contactId = (await up.json().catch(() => ({})))?.contact?.id
-    if (!contactId) return false
-    const sr = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-      method: 'POST', headers: h, body: JSON.stringify({ type: 'Email', contactId, subject, html }),
-    })
-    return sr.ok
-  } catch { return false }
+    if (!contactId) { await failed('GoHighLevel returned no contact (error ' + up.status + ')'); return false }
+    return await ghlSendChecked(db, h, 'vapi-interview', { channel: 'email', contactId, address: to, who: firstName }, { subject, html })
+  } catch (e) { await failed('GoHighLevel could not be reached: ' + String((e as Error)?.message ?? e).slice(0, 80)); return false }
 }
 
 Deno.serve(async (req) => {
@@ -120,7 +123,7 @@ Deno.serve(async (req) => {
     c.seen = false
     c.notes = ((c.notes || '') + '\nAI phone interview completed ' + new Date().toLocaleDateString('en-US') + (durationSec ? ' (' + Math.round(durationSec / 60) + ' min)' : '') + '.').trim()
     await supabase.rpc('upsert_app_data_item', { target_key: 'local_caregivers', item: c })
-    await ghlEmail('samantha@mo-care.com', 'Samantha',
+    await ghlEmail(supabase, 'samantha@mo-care.com', 'Samantha',
       '🎙️ HT Hire: ' + (c.name || 'a caregiver') + ' finished their AI interview',
       '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.6;">'
       + '<p><b>' + esc(c.name || 'A caregiver') + '</b> just completed the AI phone interview' + (durationSec ? ' (' + Math.round(durationSec / 60) + ' min)' : '') + '.</p>'
@@ -131,7 +134,7 @@ Deno.serve(async (req) => {
     // Unmatched: store in a holding list so nothing is lost.
     const stray = { id: crypto.randomUUID(), ...interview }
     await supabase.rpc('upsert_app_data_item', { target_key: 'local_interviews_unmatched', item: stray })
-    await ghlEmail('samantha@mo-care.com', 'Samantha',
+    await ghlEmail(supabase, 'samantha@mo-care.com', 'Samantha',
       '🎙️ HT Hire: an AI interview came in from an unrecognized number',
       '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.6;">'
       + '<p>Someone completed the AI interview from <b>' + esc(String(callerNumber || 'an unknown number')) + '</b>, which does not match any caregiver on file (they likely called from a different phone).</p>'

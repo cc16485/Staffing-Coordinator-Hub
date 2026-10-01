@@ -14,6 +14,7 @@
 // -----------------------------------------------------------------------------
 
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
+import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const json = (b: unknown, s = 200) =>
@@ -98,21 +99,28 @@ Deno.serve(async (req) => {
     await supabaseHL.rpc('upsert_app_data_item', { target_key: 'local_caregivers', item: c })
 
     // best-effort emails via GHL
+    /* NO SILENT FAILURES (2026-10-01): this is a Stripe webhook, nobody is watching, so an email GoHighLevel refuses
+       (or one that could not be tried) raises a Needs Attention card: 'stripe-webhook' for the caregiver (an opt-out
+       refusal already raises its own card at the door), 'stripe-webhook-alert' for the note to the office. */
     const ghlToken = Deno.env.get('GHL_TOKEN'); const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
-    if (ghlToken && ghlLocation) {
+    const h = { Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
+    const send = async (to: string, first: string, subject: string, html: string) => {
+      const staff = /@mo-care\.com$/i.test(String(to).trim())
+      const sender = staff ? 'stripe-webhook-alert' : 'stripe-webhook'
+      const who = first && first !== 'there' ? first : undefined
+      const failed = (why: string) => reportSendProblem(supabaseHL, { sender, channel: 'email', address: to, who, reasons: [why], failed: true })
+      if (!ghlToken || !ghlLocation) { await failed('GoHighLevel is not set up here (GHL_TOKEN / GHL_LOCATION_ID missing)'); return }
       try {
-        const h = { Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
-        const send = async (to: string, first: string, subject: string, html: string) => {
-          /* 0b-3: a customer (anyone who is not our own staff) goes through the universal opt-out door */
-          const cid = !/@mo-care\.com$/i.test(String(to).trim())
-            ? await ghlContactIfAllowed(supabaseHL, { token: ghlToken, locationId: ghlLocation }, 'stripe-webhook', { channel: 'email', email: to, firstName: first })
-            : (await (await fetch('https://services.leadconnectorhq.com/contacts/upsert', { method: 'POST', headers: h, body: JSON.stringify({ locationId: ghlLocation, email: to, firstName: first }) })).json().catch(() => ({})))?.contact?.id
-          if (cid) await fetch('https://services.leadconnectorhq.com/conversations/messages', { method: 'POST', headers: h, body: JSON.stringify({ type: 'Email', contactId: cid, subject, html }) })
-        }
-        await send('samantha@mo-care.com', 'Samantha', '💳 HT Hire: ' + (c.name || '') + ' paid for their background check', '<p><b>' + (c.name || '') + '</b> paid $45. ' + checkrNote + '</p><p style="color:#55677a;font-size:13px;">Hub → HomeTogether → Local.</p>')
-        if (c.email) await send(c.email, String(c.name || '').split(' ')[0] || 'there', 'Payment received, your background check is underway', '<p>Thanks, your $45 payment is in. Watch your email for a message from <b>Checkr</b> to complete your details; results usually take 1-3 business days, and your ✓ badge activates when it clears.</p><p>The HomeTogether Hire team · (417) 234-8494</p>')
-      } catch { /* stored fine */ }
+        /* 0b-3: a customer (anyone who is not our own staff) goes through the universal opt-out door */
+        const cid = !staff
+          ? await ghlContactIfAllowed(supabaseHL, { token: ghlToken, locationId: ghlLocation }, 'stripe-webhook', { channel: 'email', email: to, firstName: first })
+          : (await (await fetch('https://services.leadconnectorhq.com/contacts/upsert', { method: 'POST', headers: h, body: JSON.stringify({ locationId: ghlLocation, email: to, firstName: first }) })).json().catch(() => ({})))?.contact?.id
+        if (cid) await ghlSendChecked(supabaseHL, h, sender, { channel: 'email', contactId: cid, address: to, who }, { subject, html })
+        else if (staff) await failed('GoHighLevel returned no contact for this address')
+      } catch (e) { await failed('GoHighLevel could not be reached: ' + String((e as Error)?.message ?? e).slice(0, 80)) }
     }
+    await send('samantha@mo-care.com', 'Samantha', '💳 HT Hire: ' + (c.name || '') + ' paid for their background check', '<p><b>' + (c.name || '') + '</b> paid $45. ' + checkrNote + '</p><p style="color:#55677a;font-size:13px;">Hub → HomeTogether → Local.</p>')
+    if (c.email) await send(c.email, String(c.name || '').split(' ')[0] || 'there', 'Payment received, your background check is underway', '<p>Thanks, your $45 payment is in. Watch your email for a message from <b>Checkr</b> to complete your details; results usually take 1-3 business days, and your ✓ badge activates when it clears.</p><p>The HomeTogether Hire team · (417) 234-8494</p>')
     return json({ received: true, local: true })
   }
 
