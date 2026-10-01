@@ -4,7 +4,8 @@
 # Part 2: late1.sql (the record); deploy late-watch (the job, replacing the L0 look it grew from) and late-alert (the
 #   admin link page and the Needs Attention card); the job's every-5-minutes schedule (the jobs' secret from the
 #   vault). EVERYTHING STAYS IN PRACTICE until Samantha turns it on in Settings, Running late. The missed clock-in
-#   hold goes live with Desktop 349 (it deploys the missed clock-in watcher; this step does not touch it).
+#   hold: 349 ran before L1 merged, so this step deploys the missed clock-in watcher too (2026-10-01), but ONLY if the
+#   live watcher is exactly GitHub's pre-L1 version (timekeeper-watch@main); its gateway setting is kept.
 # Part 3 (proof; nothing is sent): the job refuses outsiders and lets its schedule in; a practice look (?dry=1: counts
 #   only, records nothing, sends nothing); the page refuses no link, a forged link and anyone not signed in; the
 #   record isn't public; the switches are off.
@@ -63,8 +64,9 @@ def command(url, anon):
 say("363 · RUNNING LATE (L1)"); say("Report " + dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")); say()
 say("PART 1 · READ ONLY (nothing changes)")
 for name, want in SHAS.items():
+    if name.endswith("@main"): continue
     if sha(src_path(name)) != want: bad(f"{name} is not the reviewed build"); say("  STOP. Nothing was run."); done(2)
-if not {"late-watch", "late-alert", "_shared/outreach", "_shared/late-notice", "_shared/late-links", "late1.sql"} <= set(SHAS): bad("the reviewed list is incomplete"); done(2)
+if not {"late-watch", "late-alert", "_shared/outreach", "_shared/late-notice", "_shared/late-links", "late1.sql", "timekeeper-watch", "timekeeper-watch@main"} <= set(SHAS): bad("the reviewed list is incomplete"); done(2)
 say("  ✓ the job, the page's server, the shared texting door and the record are the reviewed builds")
 ok, st = sql("""select (select count(*) from vault.decrypted_secrets where name = """ + lit(VAULT_NAME) + """)::int as vault,
   (select count(*) from cron.job where jobname = """ + lit(JOB) + """)::int as job""")
@@ -89,6 +91,31 @@ for fn in (JOB, PAGEFN):
     sN, mN = fmeta(fn)
     if (mN or {}).get("verify_jwt") is not True: bad(f"{fn}: its sign-in check isn't on ({(mN or {}).get('verify_jwt')})")
 say("  ✓ late-watch and late-alert deployed (sign-in check on)")
+# The missed clock-in watcher's running-late hold. Swapped in only over GitHub's own pre-L1 copy, never over unknown code.
+TK = "timekeeper-watch"
+sT, mT = fmeta(TK); vjT = (mT or {}).get("verify_jwt")
+tmp = tempfile.mkdtemp(prefix="tk-live-"); os.makedirs(os.path.join(tmp, "supabase"), exist_ok=True)
+d = subprocess.run([SUPA, "functions", "download", TK, "--project-ref", REF, "--use-api"], cwd=tmp, env=dict(os.environ, SUPABASE_ACCESS_TOKEN=TOKEN), capture_output=True, text=True)
+live = None
+for root, _, files in os.walk(tmp):
+    for f in files:
+        lp = os.path.join(root, f)
+        if f == "index.ts" and lp.replace(os.sep, "/").endswith("timekeeper-watch/index.ts"): live = sha(lp)
+if d.returncode != 0 or live is None or not isinstance(vjT, bool):
+    bad("couldn't read the live missed clock-in watcher, so it was NOT changed (the running-late hold isn't on yet). Tell Claude.")
+elif live == SHAS[TK]:
+    say("  ✓ the missed clock-in watcher already has the running-late hold")
+elif live != SHAS[TK + "@main"]:
+    keep = os.path.expanduser("~/Claude/tk-live-copy"); shutil.rmtree(keep, ignore_errors=True); shutil.copytree(tmp, keep)
+    bad(f"the live missed clock-in watcher is NOT GitHub's version, so it was NOT changed (the running-late hold isn't on yet). Live copy kept at {keep}. Tell Claude.")
+else:
+    p = subprocess.run([SUPA, "functions", "deploy", TK, "--project-ref", REF, "--use-api"] + ([] if vjT else ["--no-verify-jwt"]),
+                       cwd=REPO, env=dict(os.environ, SUPABASE_ACCESS_TOKEN=TOKEN), capture_output=True, text=True)
+    sN, mN = fmeta(TK)
+    if p.returncode != 0: bad("the missed clock-in watcher didn't deploy: " + (p.stderr or p.stdout)[-200:])
+    elif (mN or {}).get("verify_jwt") != vjT: bad("the missed clock-in watcher's gateway setting changed; tell Claude")
+    else: say("  ✓ the missed clock-in watcher has the running-late hold (it was exactly GitHub's copy; gateway setting kept)")
+shutil.rmtree(tmp, ignore_errors=True)
 s, kb = http("GET", f"{API}/v1/projects/{REF}/api-keys", headers=MG())
 try: keys = {k.get("name"): k.get("api_key", "") for k in json.loads(kb)}
 except Exception: keys = {}
