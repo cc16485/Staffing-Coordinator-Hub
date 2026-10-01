@@ -2,6 +2,10 @@
 // GoHighLevel, plus scans of interview-messages and the database change. node noshow_test.mjs
 import fs from 'fs'; import path from 'path'
 const FN = 'supabase/functions'; const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note ?? null).slice(0, 700)])
+/* The shared messaging code also holds applicant messages outside 8am–6pm Central, so the clock is pinned to 10am on a
+   Tuesday (the function's own hours check is stubbed separately through __hours). */
+const realTLS = Date.prototype.toLocaleString;
+Date.prototype.toLocaleString = function (loc, o) { if (o && o.hour === '2-digit' && !o.minute) return '10'; if (o && o.weekday === 'short' && !o.hour) return 'Tue'; return realTLS.call(this, loc, o); };
 let T, SENT, CARDS, UPD
 const reset = (a = {}) => { SENT = []; CARDS = []; UPD = []
   T = { job_applicants: [{ id: '11111111-1111-1111-1111-111111111111', first_name: 'Dana', last_name: 'Doe', phone: '(417) 555-0101', email: 'dana@x.com', sms_consent: true, status: 'reviewing', noshow_at: null, noshow_msg_at: null, ...a }],
