@@ -21,6 +21,33 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { ghlContactIfAllowed, ghlStoredContactIfAllowed, mayContact } from '../_shared/optout.ts'
 import { serverSecretOk } from '../_shared/staff-auth.ts'
+import { reportSendProblem } from '../_shared/send-problems.ts'
+
+/* TRAINING PLATFORM TEXTS (2026-10-01, Samantha: "fix the training platform texts"). Two more answers for senders in
+   other projects, on both doors (server secret, or a forwarded staff sign-in):
+     { report: true, sender, channel, phone? | email?, who?, why }  -> raises a "Didn't go through" card on Needs
+        Attention (NO SILENT FAILURES): the Training Platform cannot write the Hub's list itself.
+     { text_ok: true, phone }  -> { text_ok }: false only when this phone's LATEST application said no to texts
+        (job offers respect it; anyone with no application on file, e.g. an existing employee, is not affected). */
+// deno-lint-ignore no-explicit-any
+async function extraAnswer(db: any, b: Record<string, any>, sender: string): Promise<Response | null> {
+  if (b.report === true) {
+    const ch = b.channel === 'email' ? 'email' : 'sms'
+    await reportSendProblem(db, { sender, channel: ch, address: ch === 'sms' ? b.phone : b.email, who: b.who,
+      reasons: [String(b.why || 'the message did not go').slice(0, 200)], failed: true })
+    return json({ ok: true, reported: true })
+  }
+  if (b.text_ok === true) {
+    const d = String(b.phone ?? '').replace(/\D/g, '').slice(-10)
+    if (d.length !== 10) return json({ text_ok: false, why: 'no usable phone number' })
+    const { data, error } = await db.from('job_applicants').select('phone, sms_consent, created_at')
+      .ilike('phone', '%' + d.slice(-4)).order('created_at', { ascending: false }).limit(50)
+    if (error) return json({ text_ok: false, why: 'could not check their application' })
+    const latest = (data ?? []).find((r: { phone?: string }) => String(r.phone ?? '').replace(/\D/g, '').slice(-10) === d)
+    return json(latest && latest.sms_consent === false ? { text_ok: false, why: 'they did not agree to texts on their application' } : { text_ok: true })
+  }
+  return null
+}
 
 
 const cors = {
@@ -38,6 +65,8 @@ Deno.serve(async (req) => {
     if (!serverSecretOk(req, 'OUTREACH_SECRET', 'x-outreach-secret')) return json({ error: 'unauthorized' }, 401)
     // deno-lint-ignore no-explicit-any
     const s: Record<string, any> = await req.json().catch(() => ({}))
+    const extra = await extraAnswer(db, s, String(s.sender || 'other-project').slice(0, 80))
+    if (extra) return extra
     const ch = s.channel === 'email' ? 'email' : s.channel === 'sms' ? 'sms' : null
     if (!ch) return json({ error: 'channel must be sms or email' }, 400)
     const sender = String(s.sender || 'other-project').slice(0, 80)
@@ -51,6 +80,8 @@ Deno.serve(async (req) => {
   // deno-lint-ignore no-explicit-any
   const b: Record<string, any> = await req.json().catch(() => ({}))
   if (b.auth_check === true) return json({ ok: true, authorized: true, email: who.email, name: who.name, roles: who.roles })
+  const extra = await extraAnswer(db, b, String(b.sender || 'other-project').slice(0, 60))
+  if (extra) return extra
 
   const channel = b.channel === 'email' ? 'email' : b.channel === 'sms' ? 'sms' : null
   if (!channel) return json({ error: 'channel must be sms or email' }, 400)
