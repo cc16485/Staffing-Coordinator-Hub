@@ -2,7 +2,8 @@
 import fs from 'fs'; import path from 'path';
 const src = fs.readFileSync(process.argv[2], 'utf8').replace(/^import \{ contactForOutbound \} from .*$/m, 'const contactForOutbound = async () => null')
   .replace("from './covered-outside.ts'", "from '" + path.resolve(path.dirname(process.argv[2]), 'covered-outside.ts') + "'")
-  .replace("from './send-problems.ts'", "from '" + path.resolve(path.dirname(process.argv[2]), 'send-problems.ts') + "'");
+  .replace("from './send-problems.ts'", "from '" + path.resolve(path.dirname(process.argv[2]), 'send-problems.ts') + "'")
+  .replace("from './caregiver-card-link.ts'", "from '" + path.resolve(path.dirname(process.argv[2]), 'caregiver-card-link.ts') + "'");
 const tmp = path.join(process.cwd(), '_fct_under_test.ts'); fs.writeFileSync(tmp, src);
 const M = await import(tmp); fs.unlinkSync(tmp);
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note).slice(0, 700)]);
@@ -18,7 +19,8 @@ const reset = () => { DB = {
     { circle_id: 'C1', name: 'No Changes', phone: '4175550105', sms_consent: true, wants_changes: false },
     { circle_id: 'C1', name: 'Mary Smith', phone: '4175550106', sms_consent: true },
     { circle_id: 'C2', name: 'Tom Jones', phone: '4175550107', sms_consent: true }],
-  caregiver_intros: [{ id: 'g1', name: 'Jane Doe' }] }; };
+  caregiver_profiles: [{ id: '11111111-2222-4333-8444-555555555555', first_name: 'Jane', last_name: 'Doe', published: true, status: 'approved' },
+                       { id: '99999999-2222-4333-8444-555555555555', first_name: 'Jane', last_name: 'Doe', published: false, status: 'new' }] }; };
 const sb = { from: (t) => { const f = []; const p = { select() { return p; }, eq(k, v) { f.push(r => String(r[k]) === String(v)); return p; },
   then(ok, bad) { return Promise.resolve({ data: (DB[t] || []).filter(r => f.every(g => g(r))), error: null }).then(ok, bad); } }; return p; } };
 let gates, sends;
@@ -37,7 +39,13 @@ ck('only consenting members who want changes, have not replied STOP, and are sti
 ck('every send goes through the shared gate as audience family, explicitly enabled', gates.every(g => g.opts.audience === 'family' && g.opts.explicitlyEnabled === true && g.kind === 'reactive_external'), gates);
 const toSue = sends.find(x => x.contactId === 'ct_4175550101').message, toMary = sends.find(x => x.contactId === 'ct_4175550106').message;
 ck('wording: names who called off, who is coming, when, the meet link; the client herself is spoken to as "you"',
-  /Bo is unable to make Mary Smith's visit Wed, Sep 30 9am-1pm, so Jane from our team/.test(toSue) && /meet\.html\?cg=g1/.test(toSue) && /make your visit/.test(toMary), { toSue, toMary });
+  /Bo is unable to make Mary Smith's visit Wed, Sep 30 9am-1pm, so Jane from our team/.test(toSue)
+  && toSue.includes(' Meet Jane here: https://cc.mo-care.com/caregiver.html?id=11111111-2222-4333-8444-555555555555 ')
+  && !/meet\.html/.test(toSue) && /make your visit/.test(toMary), { toSue, toMary });
+reset(); DB.caregiver_profiles = [];
+r = await run(CASE, APPROVED);
+ck('2b: no published profile for the covering caregiver: the text still goes, with no link', r.outcome === 'sent' && sends.length === 2
+  && sends.every(x => !/https?:/.test(x.message) && !/Meet /.test(x.message)), sends.map(x => x.message));
 r = await run({ ...CASE, client_axiscare_id: '' }, APPROVED);
 ck('a case with no AxisCare client id texts nobody', r.outcome === 'none' && r.reason === 'case_has_no_axiscare_id' && gates.length === 0, r);
 r = await run({ ...CASE, client: 'Mary Brown', client_axiscare_id: '503' }, APPROVED);
