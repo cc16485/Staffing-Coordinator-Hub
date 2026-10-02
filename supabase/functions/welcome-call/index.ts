@@ -45,15 +45,18 @@ const shell = (body: string) => `<div style="font-family:Arial,sans-serif;font-s
   `<p style="color:#57606a">Caring Companions In-Home Senior Care<br>${OFFICE}</p></div>`
 const btn = (href: string, label: string) => `<p><a href="${href}" style="background:#F0A63A;color:#122F52;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:700;display:inline-block">${label}</a></p>`
 
-/* Her words, kept in one place so the Hub preview and the send can never differ. */
+/* 2026-10-01 Samantha: the invite must say the call is how they get set up to do their orientation from their phone or computer.
+   Her words, kept in one place so the Hub preview and the send can never differ. */
 export function inviteMessages(first: string, link: string) {
   return {
     text: withStop(`Hi ${first}, great news from Caring Companions! Your background check and references are complete. ` +
-      `Next step: book a quick 15-minute welcome video call with our office here: ${link}`),
+      `Next step: a quick 15-minute welcome video call where we show you how to complete your paid orientation from your phone or computer. ` +
+      `Book a time here: ${link}`),
     subject: 'Book your welcome call with Caring Companions',
     html: shell(`<p>Hi ${esc(first)},</p><p>Great news! Your background check and references are complete, and you are almost ready to start.</p>` +
-      `<p><b>Next step: a quick 15-minute welcome video call</b> with our office. Pick a time that suits you:</p>${btn(link, 'Book my welcome call')}` +
-      `<p>On the call we will check your ID for your employment paperwork, help you set up the AxisCare app, and go over your caregiver profile together. ` +
+      `<p><b>Next step: a quick 15-minute welcome video call</b> with our office. On the call we will show you how to complete your paid orientation ` +
+      `from your phone or computer, so you can do it from home. Pick a time that suits you:</p>${btn(link, 'Book my welcome call')}` +
+      `<p>We will also check your ID for your employment paperwork, help you set up the AxisCare app, and go over your caregiver profile together. ` +
       `Please have the <b>original ID documents</b> you uploaded in Viventium with you. You can join from your phone, no app needed.</p>`),
   }
 }
