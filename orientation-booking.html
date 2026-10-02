@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Choose Your Orientation Date — Caring Companions</title>
+<title>Choose Your Orientation Date | Caring Companions</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -95,7 +95,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min
 <div class="page-header">
   <img src="https://images.leadconnectorhq.com/image/f_webp/q_80/r_1200/u_https://assets.cdn.filesafe.space/Recp0AhyMh8lrtKJ9kaj/media/691b9707bb3d037e0ad689bf.png" alt="Caring Companions">
   <h1>Orientation Scheduling</h1>
-  <p>Caring Companions In-Home Senior Care — Springfield, MO</p>
+  <p>Caring Companions In-Home Senior Care · Springfield, MO</p>
 </div>
 <div class="accent-bar"></div>
 
@@ -117,7 +117,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min
   <div class="diff-time">
     <p>
       Don't see a time that works for you?<br>
-      <strong>No problem — just reach out and we'll find something that works.</strong><br><br>
+      <strong>No problem. Just reach out and we'll find something that works.</strong><br><br>
       📞 <a href="tel:+14172348494">(417) 234-8494</a> &nbsp;·&nbsp;
       💬 Text us at <a href="sms:+14172348494">(417) 234-8494</a> &nbsp;·&nbsp;
       ✉️ <a href="mailto:samantha@mo-care.com">samantha@mo-care.com</a>
@@ -160,9 +160,8 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min
     <div class="what-to-bring">
       <h4>What to bring</h4>
       <ul>
-        <li>Government-issued photo ID (driver's license or state ID)</li>
-        <li>Social Security card</li>
-        <li>Voided check or bank account info for direct deposit</li>
+        <!-- 415 (2026-10-02): ID documents go through Viventium Step 2; bring the originals. Same words as the confirmation text (send-candidate-message). -->
+        <li>The original ID documents you uploaded in Viventium Step 2 (for example, your photo ID)</li>
         <li>Any certifications you have (CNA, CPR, etc.)</li>
       </ul>
     </div>
@@ -235,7 +234,7 @@ function init(){
     const dow = getDow(s.date);
     const dateLabel = fmtDateLong(s.date);
     const timeLabel = fmtTime(s.time);
-    const locLabel = s.remote ? '🖥 Remote — video call' : `📍 ${ADDR}`;
+    const locLabel = s.remote ? '🖥 Video call' : `📍 ${ADDR}`;
     const spotsLabel = isFull
       ? `<span class="sess-spots spots-full">Full</span>`
       : `<span class="sess-spots spots-open">${s.spots} spot${s.spots!==1?'s':''} available</span>`;
@@ -284,13 +283,13 @@ async function submitBooking(){
     console.warn('Supabase booking write:', e);
     btn.textContent = 'Confirm My Date →';
     btn.disabled = false;
-    alert('Sorry — we could not save your booking. Please try again, or call/text us at (417) 234-8494 and we will get you scheduled right away.');
+    alert('Sorry, we could not save your booking. Please try again, or call/text us at (417) 234-8494 and we will get you scheduled right away.');
     return;
   }
 
   const whenLabel = `${fmtDateLong(selectedSession.date)} at ${fmtTime(selectedSession.time)}`;
   const whereLabel = selectedSession.remote
-    ? `This is a video call${selectedSession.link ? ': ' + selectedSession.link : ' — we will send you the link'}.`
+    ? `This is a video call${selectedSession.link ? ': ' + selectedSession.link + '.' : '. We will send you the link.'}`
     : `Location: ${ADDR}.`;
 
   // Ask for the booking confirmation text (security slice 2026-09-27). This page can no longer send its own
@@ -317,7 +316,7 @@ async function submitBooking(){
       orientation_date:  selectedSession.date,
       orientation_when:  whenLabel,
       orientation_where: selectedSession.remote
-        ? (selectedSession.link ? `Video call: ${selectedSession.link}` : 'Remote — video call')
+        ? (selectedSession.link ? `Video call: ${selectedSession.link}` : 'Video call')
         : ADDR
     }
   }).catch(e => console.warn('GHL orientation relay failed:', e));
@@ -336,7 +335,7 @@ function showConfirmation(){
   document.getElementById('conf-duration').textContent = `Approximately ${dur} hour${dur!==1?'s':''}`;
 
   if(selectedSession.remote){
-    document.getElementById('conf-location').textContent = 'Remote — video call';
+    document.getElementById('conf-location').textContent = 'Video call';
     const mapLink = document.getElementById('conf-map-link');
     if(selectedSession.link){
       mapLink.href = selectedSession.link;

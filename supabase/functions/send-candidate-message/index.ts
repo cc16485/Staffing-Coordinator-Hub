@@ -101,9 +101,14 @@ Deno.serve(async (req) => {
     if (!s || !s.date || new Date(String(s.date) + 'T23:59:59-06:00').getTime() < Date.now()) return json({ error: 'no such upcoming session' }, 404)
     const first = String(booking.first || '').trim() || 'there'
     const remote = s.is_remote === 'yes' || s.is_remote === true
-    const where = remote ? `This is a video call${s.video_link ? ': ' + s.video_link : ' — we will send you the link'}.` : `Location: ${ADDR}.`
+    /* WHAT TO BRING (415, 2026-10-02, Samantha): ID documents now go through Viventium Step 2, so the in-office
+       orientation (kept as a backup) asks for the originals of those. Social Security card and voided check are gone:
+       nothing in our code needs them (payroll and direct deposit are set up in Viventium). orientation-booking.html
+       says the same. */
+    const where = remote ? `This is a video call${s.video_link ? ': ' + s.video_link + '.' : '. We will send you the link.'}` : `Location: ${ADDR}.`
+    const bring = remote ? 'Please have ready' : 'Please bring'
     const message = `You're all set, ${first}! 🎉 Your Caring Companions orientation is ${fmtDateLong(String(s.date))} at ${fmtTime(String(s.time || ''))}. ${where} ` +
-      `Please bring your photo ID, Social Security card, and a voided check or bank info for direct deposit. Questions? Call/text (417) 234-8494.`
+      `${bring} the original ID documents you uploaded in Viventium Step 2 (for example, your photo ID). Questions? Call/text (417) 234-8494.`
     const out = await sendSms('send-candidate-message (booking confirmation)', booking.phone, first, message,
       { who: [booking.first, booking.last].map((v) => String(v ?? '').trim()).filter(Boolean).join(' ') })
     if (out.ok) await db.from('orient_bookings').update({ confirm_sms_at: new Date().toISOString() }).eq('id', booking.id)

@@ -107,6 +107,20 @@ ck('rules · 7pm Central: not sent, "send it after 8am"', r.status === 409 && SE
 reset(); book(CLEAN_P, 7); r = await post({ kind: 'orientation_confirmation', phone: CLEAN_P, session_id: '7', first: 'Cara' })
 ck('rules · the "you\'re booked" confirmation also ends with the STOP line (and still goes right away)', SENT.length === 1 && /Reply STOP to opt out\.$/.test(SENT[0].text), SENT)
 
+/* ── hiring wording 415 (2026-10-02): what to bring to the in-office orientation (the backup) ── */
+const BRING = 'the original ID documents you uploaded in Viventium Step 2 (for example, your photo ID).'
+reset(); book(CLEAN_P, 7); await post({ kind: 'orientation_confirmation', phone: CLEAN_P, session_id: '7', first: 'Cara' })
+ck('415 · in the office: "Please bring" the original ID documents from Viventium Step 2; no Social Security card, no voided check, no em dash',
+   SENT.length === 1 && SENT[0].text.includes('Please bring ' + BRING) && !/Social Security|voided|direct deposit/i.test(SENT[0].text) && !/—/.test(SENT[0].text), SENT)
+reset(); APP.orient_sessions.push({ id: 9, date: future, time: '09:00', is_remote: 'yes' }); book(CLEAN_P, 9); await post({ kind: 'orientation_confirmation', phone: CLEAN_P, session_id: '9', first: 'Cara' })
+ck('415 · a video session with no link yet: "This is a video call. We will send you the link." then "Please have ready", no em dash, never "remote"',
+   SENT.length === 1 && SENT[0].text.includes('This is a video call. We will send you the link. Please have ready ' + BRING) && !/—|\bremote/i.test(SENT[0].text), SENT)
+const page = fs.readFileSync('orientation-booking.html', 'utf8')
+ck('415 · orientation-booking.html "What to bring" says the same, and the old items are gone',
+   page.includes('<li>The original ID documents you uploaded in Viventium Step 2 (for example, your photo ID)</li>') && !/Social Security card|Voided check/i.test(page), null)
+ck('415 · orientation-booking.html shows no em dash and never says "Remote" to the applicant',
+   !/'[^'\n]*—[^'\n]*'|>[^<]*—[^<]*</.test(page.replace(/\/\/[^\n]*/g, '')) && !/['>`][^'<`\n]*\bRemote\b/.test(page), null)
+
 console.log('\nSECURITY SLICE · SEND-CANDIDATE-MESSAGE · TEST\n' + '='.repeat(60)); let all = true
 for (const [n, g, note] of res) { all &&= g; console.log((g ? 'PASS  ' : 'FAIL  ') + n + (note ? '\n   └─ ' + note : '')) }
 console.log('='.repeat(60)); console.log(all ? `ALL ${res.length} CHECKS PASS` : 'FAILED')
