@@ -20,6 +20,9 @@
 //                 link_sent_at/by and ticks "Photo link sent" on their open welcome call.
 //     'publish' / 'unpublish' {profile_id} -> publish refuses (with reasons) unless there is a photo, their permission,
 //                 and all three sections are filled with no [ask: ...] prompts left.
+//                 Publishing clears needs_review (2b: an older intro moved over, still to be checked). An older
+//                 profile that is published but needs_review keeps its personal link open, so they can add a proper
+//                 photo and give their OK while families can still see it.
 //   PUBLIC actions need only the personal token (caregiver_profiles.upload_token, never the public card id):
 //     'mine'       {t}                -> what their page shows
 //     'upload_url' {t, kind, ext}     -> a one-time signed upload link for <id>/<kind>-<time>.<ext>
@@ -68,6 +71,10 @@ export function cleanLong(v: unknown, n = MAX_TEXT): string {
     .replace(/\n{3,}/g, '\n\n').trim().slice(0, n).trim()
 }
 export const hasPrompt = (s: unknown) => /\[/.test(String(s ?? ''))
+/* A published profile locks their personal link, EXCEPT an older profile moved over from the intro list (2b,
+   needs_review): it stays live (families were already shown it) while they add a proper photo and give their OK. */
+// deno-lint-ignore no-explicit-any
+export const locked = (p: any) => !!p?.published && p?.needs_review !== true
 
 /* Her words, kept in one place so the Hub preview and the send can never differ. */
 const shell = (body: string) => `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">${body}` +
@@ -195,7 +202,7 @@ export function samePerson(app: any, who: { first?: string; phone?: string; emai
 }
 
 const APP_COLS = 'id, first_name, last_name, phone, email, position, posting_title, experience, experience_years, experience_kinds, work_history, post_interview, created_at'
-const PROFILE_COLS = 'id, candidate_id, axiscare_id, applicant_id, first_name, last_name, preferred_name, about, experience, why_this_work, years_experience, photo_path, video_path, consent, consent_at, published, status, drafted_at, drafted_by, link_sent_at, link_sent_by, submitted_at, published_at, published_by, updated_at'
+const PROFILE_COLS = 'id, candidate_id, axiscare_id, applicant_id, first_name, last_name, preferred_name, about, experience, why_this_work, years_experience, photo_path, video_path, consent, consent_at, published, status, drafted_at, drafted_by, link_sent_at, link_sent_by, submitted_at, published_at, published_by, updated_at, needs_review'
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
@@ -219,9 +226,9 @@ Deno.serve(async (req) => {
     if (action === 'mine') return json({
       first_name: p.first_name, preferred_name: p.preferred_name, about: p.about, experience: p.experience,
       why_this_work: p.why_this_work, years_experience: p.years_experience, photo_url: publicUrl(p.photo_path),
-      video_url: publicUrl(p.video_path), published: !!p.published, consent: !!p.consent,
+      video_url: publicUrl(p.video_path), published: locked(p), consent: !!p.consent,
     })
-    if (p.published) return json({ error: PUBLISHED_NOTE, published: true }, 409)
+    if (locked(p)) return json({ error: PUBLISHED_NOTE, published: true }, 409)
     const today = now.slice(0, 10)
     if (p.submit_day === today && (p.submit_count ?? 0) >= MAX_SUBMITS_PER_DAY)
       return json({ error: 'That is a lot of saves for one day. Please try again tomorrow, or call ' + OFFICE + '.' }, 429)
@@ -382,7 +389,7 @@ Deno.serve(async (req) => {
 
   if (action === 'send_link') {
     if (p.status === 'withdrawn') return json({ error: 'This profile was withdrawn.' }, 409)
-    if (p.published) return json({ error: 'Their profile is published, so their own link is locked. To change the photo, use "Replace photo" here, or Unpublish first and then send the link.' }, 409)
+    if (locked(p)) return json({ error: 'Their profile is published, so their own link is locked. To change the photo, use "Replace photo" here, or Unpublish first and then send the link.' }, 409)
     const first = p.preferred_name || p.first_name || 'there'
     const m = linkMessages(first, profileLink(p.upload_token))
     /* where to send: what the office passed, else their welcome call, else their application */
@@ -434,7 +441,7 @@ Deno.serve(async (req) => {
     const fixed = { about: noDash(p.about).trim(), experience: noDash(p.experience).trim(), why_this_work: noDash(p.why_this_work).trim() }
     const problems = publishProblems({ ...p, ...fixed })
     if (problems.length) return json({ ok: false, error: 'Not published yet:\n' + problems.join('\n'), problems }, 409)
-    const { error } = await db.from('caregiver_profiles').update({ ...fixed, published: true, status: 'approved', published_at: now, published_by: staff, updated_at: now }).eq('id', id)
+    const { error } = await db.from('caregiver_profiles').update({ ...fixed, published: true, status: 'approved', needs_review: false, published_at: now, published_by: staff, updated_at: now }).eq('id', id)
     if (error) return json({ error: error.message }, 500)
     return json({ ok: true, published: true, card: 'https://cc.mo-care.com/caregiver.html?id=' + id })
   }

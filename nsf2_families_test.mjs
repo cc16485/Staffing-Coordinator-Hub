@@ -79,13 +79,14 @@ ck('lead-intake · a refused alert is not counted as an alert that went', r.aler
   const src = fs.readFileSync(p, 'utf8')
     .replace("from './covered-outside.ts'", "from '" + path.resolve(FN, '_shared/covered-outside.ts') + "'")
     .replace("from './outreach.ts'", "from '" + path.resolve(FN, '_shared/outreach.ts') + "'")
-    .replace("from './send-problems.ts'", "from '" + path.resolve(FN, '_shared/send-problems.ts') + "'");
+    .replace("from './send-problems.ts'", "from '" + path.resolve(FN, '_shared/send-problems.ts') + "'")
+    .replace("from './caregiver-card-link.ts'", "from '" + path.resolve(FN, '_shared/caregiver-card-link.ts') + "'");
   const tmp = path.join(process.cwd(), '_nsf2f_fct.ts'); fs.writeFileSync(tmp, src);
   const M = await import(tmp); fs.unlinkSync(tmp);
   reset();
   TABLES.care_circles = [{ id: 'C1', client_name: 'Mary Smith', active: true, axiscare_client_id: '501' }];
   TABLES.circle_contacts = [{ circle_id: 'C1', name: 'Sue Smith', phone: '(417) 555-0101', sms_consent: true }];
-  TABLES.caregiver_intros = [];
+  TABLES.caregiver_profiles = [];
   const gate = async () => ({ contactId: 'ct_sue' });
   const refuse = async () => new Response(JSON.stringify({ message: 'Carrier rejected' }), { status: 400 });
   const out = await M.notifyFamilyOfChange(db, { token: 't', locationId: 'l' },

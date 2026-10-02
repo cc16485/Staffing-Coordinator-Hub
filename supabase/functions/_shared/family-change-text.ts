@@ -21,6 +21,7 @@
 import { contactForOutbound } from './outreach.ts'
 import { coversThemselves } from './covered-outside.ts'
 import { ghlSendChecked } from './send-problems.ts'
+import { findCardForCase, meetLine } from './caregiver-card-link.ts'
 
 export type FamilyResult = { outcome: 'none' | 'sent' | 'retry'; count: number; reason: string | null; circle: string | null }
 // deno-lint-ignore no-explicit-any
@@ -54,13 +55,10 @@ export async function notifyFamilyOfChange(
   const members = eligibleMembers(mem ?? [])
   if (!members.length) return { outcome: 'none', count: 0, reason: 'no_consenting_member', circle: circle.client_name }
 
-  let meet = ''
-  try {
-    const { data: intros } = await sb.from('caregiver_intros').select('id, name, intro')
-    // deno-lint-ignore no-explicit-any
-    const g = (intros ?? []).find((x: any) => String(x.name || '').trim().toLowerCase() === String(c.covered_by).trim().toLowerCase())
-    if (g) meet = ' Meet them here: https://cc.mo-care.com/meet.html?cg=' + g.id
-  } catch { /* no intro, no link */ }
+  /* 2b (2026-10-01): the link is the covering caregiver's ONE profile card (caregiver.html), found by AxisCare id
+     first, else a unique full-name match, published profiles only (caregiver-card-link.ts). No card: no link, and
+     the text still goes exactly as before. meet.html is no longer linked from anywhere. */
+  const meet = meetLine((await findCardForCase(sb, c)).profile)
   const offFirst = String(c.calling_off || '').trim().split(/\s+/)[0]
   const clientFirst = String(c.client || '').trim().split(/\s+/)[0]
   const template = String(settings.circle_msg_caregiver_change || '') ||
