@@ -45,6 +45,56 @@ async function extraAnswer(db: any, b: Record<string, any>, sender: string): Pro
   return null
 }
 
+/* PROFILE BEFORE "CLEARED" (2c-T, 2026-10-01). Samantha: "Wait for the profile": the Training Platform holds a NEW
+   HIRE's "you are cleared" text and the AxisCare Active switch until their caregiver profile is published.
+   SERVER DOOR ONLY (the same OUTREACH_SECRET the Training senders already use; no new key, nothing public):
+     { profile_check: true, axiscare_id: '<digits>' }  -> { published: boolean, new_hire: boolean }
+   published: the SAME test the Hub's own gate uses (caregiver-profile-panel.js gateFor): the profile found by AxisCare
+     id first, then by the candidate id the Hub carried over at promotion; published and not withdrawn. A name match is
+     never used.
+   new_hire: the Hub's half of eligibility-rules.js profileNewHire (welcome call on file, or the Hub's hire_date /
+     promoted_at on or after PROFILE_REQUIRED_FROM). Someone not on the Hub roster is false here; Training also applies
+     its own hire date.
+   Nothing else comes back: no ids, no names. A database error is a 500 (the caller treats it as "unknown" and holds). */
+const PROFILE_REQUIRED_FROM = '2026-10-02'   // the same line as eligibility-rules.js
+function centralYmd(iso: unknown): string {
+  if (!iso) return ''
+  const d = new Date(String(iso)); if (isNaN(d.getTime())) return ''
+  const p = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d)
+  const g = (t: string) => p.find((x) => x.type === t)?.value || ''
+  return `${g('year')}-${g('month')}-${g('day')}`
+}
+// deno-lint-ignore no-explicit-any
+async function profileAnswer(db: any, raw: unknown): Promise<Response> {
+  const ax = String(raw ?? '').trim()
+  if (!/^\d{1,12}$/.test(ax)) return json({ error: 'axiscare_id must be the AxisCare caregiver number' }, 400)
+  const ro = await db.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
+  if (ro.error) return json({ error: 'could not read the roster' }, 500)
+  // deno-lint-ignore no-explicit-any
+  const g: any = (Array.isArray(ro.data?.data) ? ro.data.data : []).find((c: any) => String(c?.axiscare_id ?? '').trim() === ax) ?? null
+  const cand = g && g.candidate_id != null && String(g.candidate_id).trim() !== '' ? String(g.candidate_id).trim() : null
+  const find = async (col: string, val: string) => {
+    const r = await db.from('caregiver_profiles').select('published,status').eq(col, val).neq('status', 'withdrawn')
+      .order('updated_at', { ascending: false }).limit(1)
+    return r.error ? { err: true, row: null } : { err: false, row: (r.data || [])[0] ?? null }
+  }
+  let hit = await find('axiscare_id', ax)
+  if (hit.err) return json({ error: 'could not read the profiles' }, 500)
+  if (!hit.row && cand) { hit = await find('candidate_id', cand); if (hit.err) return json({ error: 'could not read the profiles' }, 500) }
+  const published = !!(hit.row && hit.row.published === true && hit.row.status !== 'withdrawn')
+  let newHire = false
+  if (g) {
+    const hd = String(g.hire_date || '').slice(0, 10)
+    const pr = centralYmd(g.promoted_at)
+    newHire = (/^\d{4}-\d{2}-\d{2}$/.test(hd) && hd >= PROFILE_REQUIRED_FROM) || (!!pr && pr >= PROFILE_REQUIRED_FROM)
+    if (!newHire && cand) {
+      const w = await db.from('welcome_calls').select('status').eq('candidate_id', cand).neq('status', 'cancelled').limit(1)
+      if (w.error) return json({ error: 'could not read the welcome calls' }, 500)
+      newHire = (w.data || []).length > 0
+    }
+  }
+  return json({ published, new_hire: newHire })
+}
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -61,6 +111,7 @@ Deno.serve(async (req) => {
     if (!serverSecretOk(req, 'OUTREACH_SECRET', 'x-outreach-secret')) return json({ error: 'unauthorized' }, 401)
     // deno-lint-ignore no-explicit-any
     const s: Record<string, any> = await req.json().catch(() => ({}))
+    if (s.profile_check === true) return await profileAnswer(db, s.axiscare_id)
     const extra = await extraAnswer(db, s, String(s.sender || 'other-project').slice(0, 80))
     if (extra) return extra
     const ch = s.channel === 'email' ? 'email' : s.channel === 'sms' ? 'sms' : null
