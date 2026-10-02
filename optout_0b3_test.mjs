@@ -123,7 +123,7 @@ const im = src('interview-messages'), rc = src('reference-chase')
 ck('scan · interview-messages: every applicant send uses the door (the no-show recovery is gone); the 4 staff alerts keep their contact',
    (im.match(/await to\.(sms|email)\(/g) || []).length === 7 && (im.match(/= applicantDoor\(/g) || []).length === 3 /* 2026-10-01: the no-show recovery text + email were removed */ && !/await sms\(contactId,[^\n]*\n[^\n]*interview/i.test(im))
 ck('scan · reference-chase: references and applicants are reached only through the door', (rc.match(/await door\(/g) || []).length === 4 && !/contactFor\(/.test(rc))
-ck('scan · NO SILENT FAILURES: neither sender posts a message unchecked; every send is ghlSendChecked', !/conversations\/messages/.test(im) && !/conversations\/messages/.test(rc) && (im.match(/ghlSendChecked\(/g) || []).length === 4 && (rc.match(/ghlSendChecked\(/g) || []).length === 4)
+ck('scan · NO SILENT FAILURES: neither sender posts a message unchecked; every send is ghlSendChecked', !/conversations\/messages/.test(im) && !/conversations\/messages/.test(rc) && (im.match(/ghlSendChecked\(/g) || []).length === 6 /* +2: welcome-call text + email (2026-10-01) */ && (rc.match(/ghlSendChecked\(/g) || []).length === 4)
 ck('scan · reference-chase stamps a reference asked / reminded / nudged only after GoHighLevel took it', (rc.match(/if \(!went\) continue/g) || []).length === 3 && /if \(!went\) continue\n\s+await supabase\.from\('reference_requests'\)\n\s+\.update\(\{ sent_at/.test(rc))
 ck('scan · reference-chase writes its office cards one at a time, never the whole list', !/\.upsert\(\{ key: 'ops_items'/.test(rc) && /upsert_app_data_item/.test(rc))
 

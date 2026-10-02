@@ -27,6 +27,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
+import { latestTextConsent, withStop } from '../_shared/text-consent.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 
@@ -147,8 +148,8 @@ Deno.serve(async (req) => {
     (st?.photo_url ? `<img src="${st.photo_url}" alt="Our entrance" style="width:100%;border-radius:8px;margin-top:10px">` : '') +
     `</div>`
 
-  const out = { confirmed: 0, reminded_day: 0, reminded_hour: 0, nudged: 0, gave_up: 0, alerted: 0, cancel_notified: 0 }
-  const plan: Record<string, string[]> = { confirm: [], day: [], hour: [], nudge: [], give_up: [], alerted: [], cancelled: [] }
+  const out = { confirmed: 0, reminded_day: 0, reminded_hour: 0, nudged: 0, gave_up: 0, alerted: 0, cancel_notified: 0, welcome_confirmed: 0, welcome_reminded: 0 }
+  const plan: Record<string, string[]> = { confirm: [], day: [], hour: [], nudge: [], give_up: [], alerted: [], cancelled: [], welcome: [] }
 
   /* ---------------- interviews that are booked ---------------- */
   const { data: bookings, error } = await supabase
@@ -435,6 +436,58 @@ Deno.serve(async (req) => {
      REMOVED 2026-10-01 (Samantha): a no-show is no longer invited back automatically (the old "pick a new
      time") or put back into play. Pressing "Did not show" now marks them a No-Show and sends HER message through
      applicant-noshow; only the office can excuse it and rebook them after they call with a reason. */
+
+  /* ---------------- welcome calls (remote orientation, Desktop 407) ----------------
+     A booked 15-minute Google Meet welcome call gets a confirmation (text + email), a day-before reminder (text +
+     email) and an hour-before text, each with the shared Meet link. Texts only with their yes to texts and 8am-6pm
+     (held, not stamped, until then); every text ends with the STOP line. Sender 'welcome-call' so a refusal raises a
+     card that names it. */
+  try {
+    const { data: wcs } = await supabase.from('welcome_calls').select('*').eq('status', 'booked').not('starts_at', 'is', null)
+      .gte('starts_at', new Date(Date.now() - 30 * 60_000).toISOString())
+    const meet = String(st?.welcome_meet_url || 'https://meet.google.com/yqj-nzuo-tgp')
+    for (const w of wcs ?? []) {
+      const first = w.first_name || 'there'
+      const when = new Date(w.starts_at); const day = fmtDay(when), time = fmtTime(when)
+      const until = (when.getTime() - Date.now()) / 3_600_000
+      const manage = 'https://cc.mo-care.com/welcome.html?w=' + encodeURIComponent(w.id)
+      const kind = !w.confirmed_at ? 'confirm' : (!w.reminded_day_at && until <= 30 && until > 2) ? 'day'
+        : (!w.reminded_hour_at && until <= 1.5 && until > -0.25) ? 'hour' : ''
+      if (!kind) continue
+      plan.welcome.push(`${first}: ${kind}`)
+      if (dry || !withinOutreachHours() || !ghlToken || !ghlLocation) continue
+      const name = [w.first_name, w.last_name].filter(Boolean).join(' ')
+      const textOk = w.phone ? (await latestTextConsent(supabase, w.phone)).ok : false
+      const sendText = async (message: string) => {
+        if (!textOk) return
+        const id = await ghlContactIfAllowed(supabase, ghlDoor, 'welcome-call', { channel: 'sms', phone: w.phone, email: w.email, firstName: w.first_name, lastName: w.last_name })
+        if (id) await ghlSendChecked(supabase, h, 'welcome-call', { channel: 'sms', contactId: id, address: w.phone, who: name }, { message: withStop(message) })
+      }
+      const sendEmail = async (subject: string, html: string) => {
+        if (!w.email) return
+        const id = await ghlContactIfAllowed(supabase, ghlDoor, 'welcome-call', { channel: 'email', email: w.email, phone: w.phone, firstName: w.first_name, lastName: w.last_name })
+        if (id) await ghlSendChecked(supabase, h, 'welcome-call', { channel: 'email', contactId: id, address: w.email, who: name }, { subject, html })
+      }
+      const join = `<p><a href="${meet}" style="background:#F0A63A;color:#122F52;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:700;display:inline-block">Join the video call</a></p>`
+      if (kind === 'hour') {
+        await sendText(`Hi ${first}, your welcome video call with Caring Companions is at ${time} today. At that time, tap here to join: ${meet}`)
+        await supabase.from('welcome_calls').update({ reminded_hour_at: new Date().toISOString() }).eq('id', w.id)
+      } else {
+        const confirm = kind === 'confirm'
+        await sendText(`Hi ${first}, ${confirm ? 'your welcome video call with Caring Companions is booked for' : 'reminder: your welcome video call is'} ` +
+          `${day} at ${time}. At that time, tap this link to join from your phone: ${meet} Please have the original ID documents ` +
+          `you uploaded in Viventium with you. Need a different time? ${manage}`)
+        await sendEmail(confirm ? `Your welcome call: ${day} at ${time}` : `Tomorrow: your welcome call at ${time}`,
+          shell(`<p>Hi ${first},</p><p>${confirm ? 'Your 15-minute welcome video call is booked for' : 'A reminder that your welcome video call is'} <b>${day} at ${time}</b>.</p>` +
+            `<p>At that time, open this link on your phone or computer (no app needed):</p>${join}` +
+            `<p>Please have the <b>original ID documents</b> you uploaded in Viventium with you. Need a different time? <a href="${manage}">Pick a new one here</a>, or call us on ${phone}.</p>`))
+        const stamp: Record<string, string> = confirm ? { confirmed_at: new Date().toISOString() } : { reminded_day_at: new Date().toISOString() }
+        if (confirm && until <= 30) stamp.reminded_day_at = stamp.confirmed_at       // booked inside the day-before window
+        await supabase.from('welcome_calls').update(stamp).eq('id', w.id)
+      }
+      if (kind === 'confirm') out.welcome_confirmed++; else out.welcome_reminded++
+    }
+  } catch (e) { console.error('[interview-messages] welcome calls', e) }
 
   /* Dry runs don't beat: a manual ?dry=1 must never make a dead cron look alive. */
   if (!dry) await beat(supabase, true, JSON.stringify(out))
