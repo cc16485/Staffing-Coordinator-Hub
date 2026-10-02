@@ -34,8 +34,11 @@ import { latestTextConsent } from '../_shared/text-consent.ts'
 async function extraAnswer(db: any, b: Record<string, any>, sender: string): Promise<Response | null> {
   if (b.report === true) {
     const ch = b.channel === 'email' ? 'email' : 'sms'
+    /* ORIENTATION LINK (1b, 2026-10-01): held: true means the Training Platform held the message back itself (not in
+       AxisCare as In Training yet, Do Not Disturb, no phone or email, an opt-out list it could not check), so the card
+       explains that reason instead of saying GoHighLevel refused it. Without held it is a GoHighLevel refusal, as before. */
     await reportSendProblem(db, { sender, channel: ch, address: ch === 'sms' ? b.phone : b.email, who: b.who,
-      reasons: [String(b.why || 'the message did not go').slice(0, 200)], failed: true })
+      reasons: [String(b.why || 'the message did not go').slice(0, 300)], failed: b.held !== true })
     return json({ ok: true, reported: true })
   }
   if (b.text_ok === true) {
