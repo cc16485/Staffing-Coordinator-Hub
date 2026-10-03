@@ -237,7 +237,7 @@ ck('late: no link and no sign-in is refused, GoHighLevel never asked', p.s === 4
   ck('source · the only PUT body is { assignedTo }', (lib.match(/method: 'PUT'/g) || []).length === 1 && /JSON\.stringify\(\{ assignedTo: user\.id \}\)/.test(lib))
   ck('source · the bridge never upserts, creates or sends', !/upsert'|contacts\/upsert|conversations|contactForOutbound|\/contacts\/'\s*,\s*\{\s*method: 'POST'/.test(lib.replace(/upsert_app_data_item/g, '')))
   ck('source · the 431 lookup is still read only', !/method: '(POST|PUT|DELETE)'|upsert|conversations\/messages/.test(look))
-  ck('source · no em dash', !/—/.test(lib + fns)) }
+  ck('source · no em dash', !/\u2014/.test(lib + fns)) }
 
 let pass = 0; for (const [nm, ok, note] of res) { console.log((ok ? 'PASS ' : 'FAIL ') + nm + (ok ? '' : '\n     ' + note)); if (ok) pass++ }
 Date.now = realNow
