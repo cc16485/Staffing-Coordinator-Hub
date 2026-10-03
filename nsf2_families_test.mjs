@@ -9,7 +9,7 @@ const read = (f) => fs.readFileSync(path.join(FN, f), 'utf8');
 
 /* ── fake database: app_data key/value arrays + plain tables ── */
 let APP, TABLES;
-const reset = () => { APP = { leads: [], ops_items: [] }; TABLES = { applicant_alerts: [{ name: 'Krystal Office', phone: '4175550999', email: 'office@example.test', active: true, alert_on: ['lead'] }], circle_contacts: [], care_circles: [] }; };
+const reset = () => { APP = { leads: [], ops_items: [], ops_settings: { office_quiet_start: 0, office_quiet_end: 0 } /* 425: office quiet hours off, so this daytime test passes at any hour (quiet hours: quiet_hours_425_test.mjs) */ }; TABLES = { applicant_alerts: [{ name: 'Krystal Office', phone: '4175550999', email: 'office@example.test', active: true, alert_on: ['lead'] }], circle_contacts: [], care_circles: [] }; };
 const q = (t) => {
   const st = { f: [], op: 'select', row: null };
   const rows = () => {

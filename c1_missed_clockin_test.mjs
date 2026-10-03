@@ -82,12 +82,12 @@ at('09:07'); await tick(); ck('C1 · the caregiver is never texted twice', toCg(
 /* ── 2 · live: first text, repeats every 5, the 30-minute wording, clock-in stops it ── */
 reset(); live(); at('09:05'); await tick()
 ck('C1 · live: both admins get the first text at 5 minutes, each with their own link', toSam().length === 1 && toKry().length === 1
-   && /^No clock-in: Maria Lopez for Ruth's 9am shift \(5 min past start\)\. Tap when it's resolved: https:\/\/cc\.mo-care\.com\/clockin\.html\?/.test(toSam()[0].message)
+   && /^No clock-in: Maria Lopez for Ruth's 9am shift \(5 min past start\)\. Tap Resolved to stop these texts: https:\/\/cc\.mo-care\.com\/clockin\.html\?/.test(toSam()[0].message)
    && linkOf(toSam()[0].message)?.a !== linkOf(toKry()[0].message)?.a, SENT)
 at('09:07'); await tick(); ck('C1 · 2 minutes later: no repeat yet', toSam().length === 1, toSam())
-at('09:10'); await tick(); ck('C1 · 5 minutes later: "Still no clock-in ... Not resolved yet"', toSam().length === 2 && /^Still no clock-in: Maria Lopez for Ruth's 9am shift \(10 min past start\)\. Not resolved yet: https/.test(toSam()[1].message), toSam())
+at('09:10'); await tick(); ck('C1 · 5 minutes later: "Still no clock-in ... Tap Resolved to stop these texts"', toSam().length === 2 && /^Still no clock-in: Maria Lopez for Ruth's 9am shift \(10 min past start\)\. Tap Resolved to stop these texts: https/.test(toSam()[1].message), toSam())
 at('09:15'); await tick(); at('09:20'); await tick(); at('09:25'); await tick(); at('09:30'); await tick()
-ck('C1 · at 30 minutes the text says the client may be without care', /^30 min and still not resolved: no clock-in from Maria Lopez for Ruth's 9am shift\. Ruth may be without care\. https/.test(toSam().at(-1).message), toSam().at(-1))
+ck('C1 · at 30 minutes the text says the client may be without care (and, as the 6th text, that it is the last)', /^30 min and still not resolved: no clock-in from Maria Lopez for Ruth's 9am shift\. Ruth may be without care\. This is the last text about it \(it stays open in Needs Attention\)\. Tap Resolved when it's handled: https/.test(toSam().at(-1).message), toSam().at(-1))
 VISITS[0].clockIn = { time: '2026-09-30T09:32:00', method: 'Mobile' }; at('09:33'); const before = toSam().length; await tick()
 ck('C1 · she clocks in: every admin gets one last text and it stops', toSam().length === before + 1 && /^Maria Lopez clocked in at 9:32am \(32 min late\) for Ruth's 9am shift\. No more reminders\.$/.test(toSam().at(-1).message) && toKry().at(-1).message === toSam().at(-1).message, toSam().at(-1))
 at('09:40'); await tick(); ck('C1 · nothing more after the clock-in', toSam().length === before + 1, toSam().length)
@@ -141,7 +141,7 @@ ck('C1 · she already called off (coverage case exists): no clock-in text, no ad
 /* ── 5 · after the shift's end: every 30 minutes; and it survives midnight ── */
 reset(); live(); at('12:50'); VISITS[0].scheduledStartDate = '2026-09-30T12:45:00'; VISITS[0].scheduledEndDate = '2026-09-30T13:00:00'; await tick()
 at('13:05'); await tick(); const a5 = toSam().length
-ck('C1 · after the shift ends the text says so', /^Ruth's 12:45pm shift has ended and the missed clock-in for Maria Lopez is still not resolved: https/.test(toSam().at(-1).message), toSam().at(-1))
+ck('C1 · after the shift ends the text says so', /^Ruth's 12:45pm shift has ended and the missed clock-in for Maria Lopez is still not resolved\. Tap Resolved to stop these texts: https/.test(toSam().at(-1).message), toSam().at(-1))
 at('13:15'); await tick(); ck('C1 · after the end it slows down (no text 10 minutes later)', toSam().length === a5, toSam().length)
 at('13:36'); await tick(); ck('C1 · ... and repeats every 30 minutes', toSam().length === a5 + 1, toSam().length)
 VISITS = []; at('00:10', '2026-10-01'); await tick()
@@ -160,7 +160,7 @@ let rr = await reply({ id: 'C1', phone: '4175550111', name: 'Maria', message: 'x
 at('09:06'); rr = await reply('{"id":"C1","phone":"(417) 555-0111","name":"Maria","message":"stuck in traffic, "10 min" out"}')
 ck('C3 · her reply (even with raw quotes, as GoHighLevel sends it) is attached to her open missed clock-in', rr.j?.outcome === 'attached' && lad().replies?.[0]?.text === 'stuck in traffic, "10 min" out', { rr, rep: lad().replies })
 at('09:10'); const s7 = toSam().length; await tick()
-ck('C3 · the next admin reminder carries it', toSam().length === s7 + 1 && /^Still no clock-in: Maria Lopez for Ruth's 9am shift \(10 min past start\)\. Maria replied: "stuck in traffic, "10 min" out"\. Not resolved yet: https/.test(toSam().at(-1).message), toSam().at(-1))
+ck('C3 · the next admin reminder carries it', toSam().length === s7 + 1 && /^Still no clock-in: Maria Lopez for Ruth's 9am shift \(10 min past start\)\. Maria replied: "stuck in traffic, "10 min" out"\. Tap Resolved to stop these texts: https/.test(toSam().at(-1).message), toSam().at(-1))
 at('09:15'); await tick(); ck('C3 · ... once (the round after does not repeat it)', !/replied/.test(toSam().at(-1).message), toSam().at(-1))
 { const L7 = linkOf(toSam()[0].message); const pv = await page({ ...L7, action: 'view' }); ck('C3 · the link page shows what she said', pv.j?.replies?.[0]?.text === 'stuck in traffic, "10 min" out', pv.j) }
 rr = await reply({ id: 'C9', phone: '4175559999', name: 'Nobody', message: 'hi' }); ck('C3 · a number not on the roster is ignored', rr.j?.outcome === 'ignored', rr)

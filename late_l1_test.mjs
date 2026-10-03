@@ -230,6 +230,21 @@ ck('hold: no time holds until 20 minutes past the start', HOLD.lateHold({ kind: 
 ck("hold: can't make it skips the missed clock-in; practice and closed notices change nothing", HOLD.lateHold({ kind: 'cant_make_it', status: 'open' }, S, S) === 'skip'
   && HOLD.lateHold({ kind: 'late', status: 'practice', eta: iso(S + 60 * MIN) }, S, S + MIN) === 'none' && HOLD.lateHold({ kind: 'late', status: 'closed', eta: iso(S + 60 * MIN) }, S, S + MIN) === 'none' && HOLD.lateHold(null, S, S) === 'none')
 
+/* ── 425 · office quiet hours (2026-10-03): no admin text 8pm to 7am; the card is kept; from 7am one round ── */
+reset(); live({ late_admin_live: true, late_cg_reply_live: true }); HOUR = 3; NEXT = { kind: 'late', eta: 20, base: NOW + 30 * MIN }
+text('4175550101', 'running 20 late', NOW - 5 * MIN); let jq = await job(); n = notice('v1')
+ck('425 · 3am: no admin text; the caregiver still gets her thank-you; the Needs Attention card is up; the run says why',
+  toAdmins().length === 0 && toMaria().length === 1 && APP.ops_items.some((i) => i.id === 'ops_late_' + n.id) && jq.j.admin_held_quiet >= 1 && jq.j.office_quiet === '8pm to 7am',
+  { admins: toAdmins(), maria: toMaria(), j: jq.j })
+HOUR = 5; T.late_notices[0].admin_last_at = undefined; await job()
+ck('425 · 5am: still nothing, and no admin rounds recorded (nothing queued)', toAdmins().length === 0 && !(notice('v1').admin_rounds || []).length, notice('v1').admin_rounds)
+HOUR = 7; await job()
+ck('425 · 7am: one text to each admin (not a backlog)', toAdmins().length === 2, toAdmins())
+await job(); ck('425 · 7am: not again within 5 minutes', toAdmins().length === 2, toAdmins().length)
+HOUR = 23; L = await linkFor(n.id, 'krystal@mo-care.com'); r = await page({ ...L, action: 'seen' })
+ck('425 · 11pm: Krystal taps Seen; Samantha is not texted "Seen by Krystal" at night', r.j?.ok && notice('v1').seen_by === 'Krystal' && toAdmins().length === 2, [r.j, toAdmins()])
+HOUR = 10
+
 /* ── the family hours ── */
 const at = (h) => { HOUR = h; const v = OUT.maySend('timely_external'); return v.allowed }
 ck('family hours: 5am no, 6am yes, 8pm yes, 9pm no', !at(5) && at(6) && at(20) && !at(21)); HOUR = 10

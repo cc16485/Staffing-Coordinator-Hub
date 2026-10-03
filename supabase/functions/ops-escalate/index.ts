@@ -30,6 +30,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { reportSendProblem } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
+import { officeQuietBetween, quietWords } from '../_shared/quiet-hours.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -277,6 +278,10 @@ Deno.serve(async (req) => {
   // ── 3. escalate ────────────────────────────────────────────────────────────
   const notified: Array<Record<string, string>> = []
   const open = items.filter((i) => i.kind === 'missed_call' && i.status === 'open')
+  /* OFFICE QUIET HOURS (Samantha, 2026-10-03): no text to staff 8pm to 7am Central. A step that came due during quiet
+     hours is never texted (not now, not at 7am: no morning backlog); the missed call waits in Needs Attention. A step
+     that comes due after 7am texts as before. */
+  let heldQuiet = 0
 
   for (const it of open) {
     const ageMin = (now - Date.parse(it.created_at || '')) / 60000
@@ -289,6 +294,7 @@ Deno.serve(async (req) => {
       const rule = cfg.levels[lvl]
       if (ageMin < rule.after_min) continue
       if (it.escalations.some((e: { level: number }) => e.level === lvl)) continue
+      if (officeQuietBetween(Date.parse(it.created_at || '') + rule.after_min * 60000, now, cfg)) { heldQuiet++; continue }
 
       let phone = '', who = ''
       if (rule.to === 'owner') {
@@ -332,6 +338,7 @@ Deno.serve(async (req) => {
   const result = {
     live: cfg.live, calls_seen: calls.length, created: created.length,
     auto_closed: closed.length, open: open.length, notified,
+    office_quiet_hours: quietWords(cfg), held_for_quiet_hours: heldQuiet,
     can_notify: {
       staff_total: staff.length,
       staff_with_phone: reachable,

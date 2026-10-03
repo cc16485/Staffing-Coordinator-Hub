@@ -31,7 +31,7 @@ for (const f of CONVERTED) {
 
 /* ════ a real run: lead-intake's office alert ════ */
 let APP, TABLES;
-const reset = (staff) => { APP = { leads: [], ops_items: [] }; TABLES = { applicant_alerts: [staff], circle_contacts: [], care_circles: [] }; };
+const reset = (staff) => { APP = { leads: [], ops_items: [], ops_settings: { office_quiet_start: 0, office_quiet_end: 0 } /* 425: office quiet hours off, so this daytime test passes at any hour (quiet hours: quiet_hours_425_test.mjs) */ }; TABLES = { applicant_alerts: [staff], circle_contacts: [], care_circles: [] }; };
 const q = (t) => {
   const st = { f: [], op: 'select', row: null };
   const rows = () => {

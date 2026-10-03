@@ -27,6 +27,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
+import { officeQuietNow } from '../_shared/quiet-hours.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -179,6 +180,9 @@ Deno.serve(async (req) => {
         if (t.phone && only !== 'email') await reportSendProblem(supabase, { sender: 'staff-alert', channel: 'sms', address: t.phone, who: t.name, reasons: [why], failed: true })
         if (t.email && only !== 'sms') await reportSendProblem(supabase, { sender: 'staff-alert', channel: 'email', address: t.email, who: t.name, reasons: [why], failed: true })
       }
+      /* OFFICE QUIET HOURS (Samantha, 2026-10-03): no text 8pm to 7am Central; the email still goes. Someone with no
+         email is simply not reached until 7am (not stamped, so the next run after 7am texts them once). */
+      const quiet = await officeQuietNow(supabase)
       for (const t of alertTo) {
         try {
           /* ONE CONTACT (2026-10-01): the contact is found per channel (the text to the contact holding the phone,
@@ -186,7 +190,7 @@ Deno.serve(async (req) => {
           const ghl = { token: ghlToken, locationId: ghlLocation }
           const who = { phone: t.phone, email: t.email, firstName: t.name ?? 'Team' }
           let went = false
-          if (t.phone) {
+          if (t.phone && !quiet) {
             const cid = await ghlStaffContact(ghl, { channel: 'sms', ...who })
             if (!cid) await unreachable(t, 'no GoHighLevel contact', 'sms')
             else went = await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'sms', contactId: cid, address: t.phone, who: t.name },

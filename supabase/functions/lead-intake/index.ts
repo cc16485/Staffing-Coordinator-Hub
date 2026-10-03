@@ -13,6 +13,7 @@ import { inquirySwitches } from '../_shared/inquiry-switches.ts'
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
+import { officeQuietNow } from '../_shared/quiet-hours.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -293,6 +294,9 @@ Deno.serve(async (req) => {
         + '. ' + String(lead.interest_notes).replace(/\s+/g, ' ').slice(0, 110)
         + ' — cc.mo-care.com/#leads'
 
+      /* OFFICE QUIET HOURS (Samantha, 2026-10-03): no text to staff 8pm to 7am Central; the email still goes and the
+         lead is in the Hub. Nothing is queued for the morning (the overdue-lead alert in lead-followup still follows). */
+      const quietStaff = await officeQuietNow(supabase)
       for (const p of people) {
         try {
           /* ONE CONTACT (2026-10-01): the staff member's contact is found per channel (the email to the contact
@@ -305,7 +309,7 @@ Deno.serve(async (req) => {
             const contactId = await ghlStaffContact(staffGhl, { channel: 'email', ...staffWho })
             if (contactId) went = await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'email', contactId, address: p.email, who: p.name }, { subject, html }) || went
           }
-          if (p.phone) {
+          if (p.phone && !quietStaff) {
             const contactId = await ghlStaffContact(staffGhl, { channel: 'sms', ...staffWho })
             if (contactId) went = await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'sms', contactId, address: p.phone, who: p.name }, { message: sms }) || went
           }

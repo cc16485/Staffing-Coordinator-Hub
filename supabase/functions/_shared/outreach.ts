@@ -23,6 +23,10 @@
                          uncovered shift, an unresolved escalation. 24/7.
                          The 6am uncovered shift is exactly the thing somebody
                          needs at 6am.
+                         EXCEPT texts to the OFFICE (the office number, admins,
+                         coordinators): never 8pm to 7am Central (her rule,
+                         2026-10-03). See quiet-hours.ts. A caregiver's own
+                         shift text is not affected.
 
      routine_internal    Staff, not urgent. Any hour that is operationally
                          useful.
@@ -38,6 +42,7 @@
 import { reportSendProblem } from './send-problems.ts'
 import { ghlStaffContact } from './staff-contact.ts'
 import { ghlContactIfAllowed } from './optout.ts'
+import { officeQuietNow } from './quiet-hours.ts'
 
 export type OutreachClass =
   | 'reactive_external'
@@ -176,7 +181,8 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
   'timekeeper-watch':   { class: 'urgent_internal', scheduled: true,
     why: 'a caregiver with no clock-in minutes into a shift, and the office alert behind it. '
       + 'The 6am shift needs its 6:03 nudge; a client may be standing at the door. '
-      + 'Cron: timekeeper-watch, every 2 minutes — created by cron-timekeeper.sql (~/Claude).' },
+      + 'Cron: timekeeper-watch, every 2 minutes — created by cron-timekeeper.sql (~/Claude). '
+      + 'The ADMIN texts keep the office quiet hours (none 8pm to 7am, quiet-hours.ts, 2026-10-03); the caregiver text does not.' },
   'missed-notes':       { class: 'routine_internal', scheduled: true,
     why: 'a caregiver who clocked out with no care note is asked (staff, about their own shift) to text it in, '
       + 'right after clock-out, one reminder the next morning; 8am to 9pm Central only (enforced in the function). '
@@ -184,7 +190,8 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
   'late-watch':         { class: 'urgent_internal', scheduled: true,
     why: 'a caregiver texted the office they are running late for a shift starting now: one thank-you (or one "what time?") '
       + 'to that caregiver, and the admin alert until someone taps Seen. Never the client or family. Practice until '
-      + 'ops_settings.late_watch_live / late_cg_reply_live / late_admin_live. Cron: late-watch, every 5 minutes (Desktop 363).' },
+      + 'ops_settings.late_watch_live / late_cg_reply_live / late_admin_live. Cron: late-watch, every 5 minutes (Desktop 363). '
+      + 'Admin texts keep the office quiet hours (none 8pm to 7am).' },
   'prn-reconfirm':      { class: 'routine_internal', scheduled: true,
     why: 'a PRN CNA whose availability is 60+ days old gets one check-in text with a one-tap link; weekdays 10 to 5 '
       + 'Central (enforced in the function), max 20 a day. Practice until ops_settings.prn_reconfirm_live. '
@@ -200,10 +207,10 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
       + 'side of the check-in is deliberately a human phone call. '
       + 'Cron: carematch-watch, 15:00 UTC daily (9-10am Springfield) — created by cron-carematch-watch.sql (care-coordinator-hub repo).' },
   'automation-watchdog': { class: 'urgent_internal', scheduled: true,
-    why: 'tells the office when a scheduled automation has gone quiet or is erroring. '
+    why: 'tells the office when a scheduled automation has gone quiet or is erroring (the text keeps the office quiet hours, the email does not need to). '
       + 'Cron: daily-automation-watchdog, mornings — created by cron-automation-watchdog.sql (care-coordinator-hub repo).' },
   'ops-escalate':       { class: 'urgent_internal', scheduled: false,
-    why: 'uncovered shifts and unresolved escalations. The 6am gap is exactly what somebody needs at 6am.' },
+    why: 'missed-call escalations to staff. Office quiet hours (2026-10-03): no text 8pm to 7am, and a step that came due overnight is never texted.' },
 
   // ── reactive: fired by a webhook or a form the person just submitted ───────
   'lead-intake':        { class: 'reactive_external', scheduled: false, why: 'they just submitted the form.' },
@@ -509,6 +516,8 @@ export async function contactForOutbound(
              channel's address alone and the universal opt-out check runs (optout.ts). Every audience except
              staff MUST name it (0b-2 families, 0b-3 caregivers); staff alerts are exempt. */
           channel?: 'sms' | 'email'; sender?: string;
+          /* OFFICE QUIET HOURS (2026-10-03): only the "must be covered" call-in alert passes this (quiet-hours.ts) */
+          emergency?: boolean;
           onOptOut?: (reasons: string[]) => void | Promise<void> } = {},
 ): Promise<{ contactId: string; phone: string | null } | null> {
   /* WHO comes before HOW. A missing audience is 'unknown', and unknown is
@@ -545,6 +554,14 @@ export async function contactForOutbound(
   const when = maySend(kind, opts.now ?? new Date())
   if (!when.allowed) {
     console.log(`outbound held [${kind}]: ${when.reason}`)
+    return null
+  }
+  /* OFFICE QUIET HOURS (Samantha, 2026-10-03): no text to the office, an admin or a coordinator between 8pm and 7am
+     Central (quiet-hours.ts, ops_settings.office_quiet_start/end). Every caller also checks before it gets here, so
+     its own bookkeeping stays right; this is the backstop for any staff text that forgets. A hold, not a failure:
+     no "didn't go through" card (the alert's own Needs Attention item is where it waits). Emails are not held. */
+  if (hasPhone && String(opts.audience ?? '') === 'staff' && !opts.emergency && await officeQuietNow(sb, opts.now ?? new Date())) {
+    console.log(`outbound held [${kind}]: office quiet hours, no staff text`)
     return null
   }
 

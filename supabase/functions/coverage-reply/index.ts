@@ -27,6 +27,7 @@ import { shadowRoute } from '../_shared/routing.ts'
 import { opEvent } from '../_shared/events.ts'
 import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
+import { officeQuiet } from '../_shared/quiet-hours.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -123,6 +124,9 @@ Deno.serve(async (req) => {
         .map((p: unknown) => String(p ?? '').trim()).filter(Boolean)
       const who = yesName || c.pending_fill?.name
       if (!phones.length || !who) return
+      /* OFFICE QUIET HOURS (Samantha, 2026-10-03): no office text 8pm to 7am Central. The YES is on the case and its
+         Needs Attention item; nothing is recorded as sent and nothing is queued for the morning. */
+      if (officeQuiet(new Date(), settings)) { console.log('[coverage-reply] staff alert held: office quiet hours'); return }
       const ghlToken = Deno.env.get('GHL_TOKEN')
       const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
       if (!ghlToken || !ghlLocation) return
