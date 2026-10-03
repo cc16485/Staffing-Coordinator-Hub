@@ -41,6 +41,7 @@ import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { makeLink, linkExpiry } from '../_shared/late-links.ts'
 import { eligibleMembers } from '../_shared/family-change-text.ts'
 import { DEFAULT_THANKS, DEFAULT_ASK, DEFAULT_FAMILY, FAMILY_MIN_DEFAULT, fill, clockAt, familyEligible } from '../_shared/late-notice.ts'
+import { officeQuiet, quietWords } from '../_shared/quiet-hours.ts'
 
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
 const AC_VERSION = '2023-10-01'
@@ -344,7 +345,8 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
   const famMin = Number(st.late_family_min) >= 0 && Number(st.late_family_min) <= 120 ? Number(st.late_family_min) : FAMILY_MIN_DEFAULT
   const repeatMin = Number(st.late_admin_repeat_min) >= 2 ? Number(st.late_admin_repeat_min) : 5
   const out = { live, dry, caregivers_watched: 0, messages_new: 0, read: 0, ai_failed: 0, notices_new: 0, notices_changed: 0,
-    cg_texts: 0, admin_texts: 0, closed: 0, no_phone: 0, not_in_ghl: 0, would: 0 }
+    cg_texts: 0, admin_texts: 0, closed: 0, no_phone: 0, not_in_ghl: 0, would: 0,
+    office_quiet: false as string | false, admin_held_quiet: 0 }
 
   const { visits, error } = await listVisits(chiDay(now - 12 * 3600e3), chiDay(now + lookMin * MIN))
   if (error) return { error }
@@ -430,6 +432,11 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
   /* 2 · every notice from today: what happens next */
   const ghl = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
   const admins = await adminRecipients(db, st)
+  /* OFFICE QUIET HOURS (2026-10-03): no admin text 8pm to 7am Central. The Needs Attention card is still kept up to
+     date; the admin rounds are skipped (nothing recorded, nothing queued), so from 7am one round goes if nobody has
+     tapped Seen. The caregiver's own thank-you is not affected. */
+  const quiet = officeQuiet(new Date(now), st)
+  out.office_quiet = quiet ? quietWords(st) : false
   const SECRET = Deno.env.get('HUB_JOB_SECRET') || ''
   const { data: ccRow } = await db.from('app_data').select('data').eq('key', 'coverage_cases').maybeSingle()
   // deno-lint-ignore no-explicit-any
@@ -471,7 +478,7 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
       await db.from('late_notices').update({ status: n.status === 'practice' ? 'practice' : 'closed', closed_at: nowIso, closed_how: how, updated_at: nowIso, ...extra }).eq('id', n.id)
       out.closed++
       if (n.status === 'practice') return
-      if (final && adminLive && Array.isArray(n.admin_rounds) && n.admin_rounds.length) for (const a of admins) if (await textAdmin(db, ghl, a, final)) out.admin_texts++
+      if (final && adminLive && !quiet && Array.isArray(n.admin_rounds) && n.admin_rounds.length) for (const a of admins) if (await textAdmin(db, ghl, a, final)) out.admin_texts++
       const told = (Array.isArray(n.family) ? n.family : []).some((f: { what: string }) => f.what === 'late' || f.what === 'update')
       const arrivedSent = (Array.isArray(n.family) ? n.family : []).some((f: { what: string }) => f.what === 'arrived')
       const keep = how === 'clocked_in' && told && !arrivedSent
@@ -507,7 +514,8 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
     }
 
     /* the admins: now, then every few minutes until someone taps Seen */
-    if (!n.seen_at) {
+    if (!n.seen_at && quiet) out.admin_held_quiet++
+    if (!n.seen_at && !quiet) {
       const rounds = Array.isArray(n.admin_rounds) ? n.admin_rounds : []
       const due = !n.admin_last_at || now - Date.parse(n.admin_last_at) >= repeatMin * MIN - 20e3
       const lead = n.kind === 'cant_make_it' ? `Can't make it: ${what}.` : `${rounds.length ? 'Still not seen. ' : ''}Running late: ${what}.`

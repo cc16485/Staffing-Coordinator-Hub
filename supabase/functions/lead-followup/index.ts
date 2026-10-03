@@ -33,6 +33,7 @@ import { ghlContactIfAllowed, optOutCheck } from '../_shared/optout.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
+import { officeQuietNow } from '../_shared/quiet-hours.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -214,8 +215,11 @@ Deno.serve(async (req) => {
         const line = `${who} came in ${Math.round(age)} hours ago and nobody has called them yet. ` +
           `${l.phone || l.email || 'no contact given'}. They are in the hub under Leads.`
         let reached = 0
+        /* OFFICE QUIET HOURS (Samantha, 2026-10-03): no text to staff 8pm to 7am Central; the email still goes. With
+           nobody reached (no email on file), it is not counted as a try: the first run after 7am texts once. */
+        const quietStaff = await officeQuietNow(supabase)
         for (const t of alertTo!) {
-          if (t.phone) {
+          if (t.phone && !quietStaff) {
             const cid = await staffContact(t, 'sms')
             if (cid && await sms(cid, line, { sender: 'staff-alert', address: t.phone, who: t.name })) reached++
           }
@@ -225,6 +229,7 @@ Deno.serve(async (req) => {
           }
         }
         if (reached) { l.overdue_alerted_at = new Date().toISOString(); out.office_alerted++ }
+        else if (quietStaff) { /* waits for 7am, no try used */ }
         else { l.overdue_alert_tries = (Number(l.overdue_alert_tries) || 0) + 1; l.overdue_alert_last_try = new Date().toISOString() }
         await put(l)
       }

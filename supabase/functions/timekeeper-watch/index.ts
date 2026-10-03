@@ -87,6 +87,7 @@ import { lateHold, liveNotices } from '../_shared/late-notice.ts'
 import { visitMs } from '../_shared/held-shift.ts'
 import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
+import { officeQuiet, quietWords } from '../_shared/quiet-hours.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -184,6 +185,16 @@ Deno.serve(async (req) => {
      missed clock-in, exactly which texts WOULD have gone and when (the Hub shows them), and sends nothing. */
   const repeatMin = Number(settings.timekeeper_admin_repeat_min) > 0 ? Number(settings.timekeeper_admin_repeat_min) : 5
   const loopLive = watchLive && settings.timekeeper_admin_loop_live === true
+  /* OFFICE QUIET HOURS (Samantha, 2026-10-03, after this loop texted coordinators at 3am): no admin or office text
+     from 8pm to 7am Central (quiet-hours.ts; ops_settings.office_quiet_start/end). Overnight the NO CLOCK-IN item still
+     opens in Needs Attention; the loop skips its rounds (nothing is queued) and, from 7am, sends ONE text per admin if
+     the alert is still open, then carries on as normal. A practice run follows the same hours. */
+  const quietNow = officeQuiet(new Date(), settings)
+  const quietTxt = quietWords(settings)
+  /* SAFETY CAP (2026-10-03): at most timekeeper_admin_max_texts (6) reminder texts per alert to each admin. The last
+     one says so; the alert stays open in Needs Attention. The final "clocked in / no more reminders" text is not
+     counted, and only goes to an admin who was texted about it. */
+  const maxTexts = Number(settings.timekeeper_admin_max_texts) > 0 ? Math.floor(Number(settings.timekeeper_admin_max_texts)) : 6
   const outGraceMin = Number(settings.timekeeper_clockout_grace_min) > 0
     ? Number(settings.timekeeper_clockout_grace_min) : 10
   // deno-lint-ignore no-explicit-any
@@ -262,20 +273,33 @@ Deno.serve(async (req) => {
       || (clientAx && String(c.client_axiscare_id ?? '') === clientAx && String(c.shift_date ?? '') === date
           && cgAx && String(c.calling_off_id ?? '') === cgAx)) ?? null
   const fin: Record<string, unknown>[] = []   // final "no more reminders" texts this run (practice or live)
-  /* One text to every admin (live), or a practice record of it. Returns how many went. */
+  let quietHeld = 0, capped = 0
+  /* One text to every admin (live), or a practice record of it. Returns how many went. Nothing at all in quiet hours
+     (not even a practice record: live would not have sent it). A reminder (not final) goes only to an admin under the
+     cap; the text that reaches the cap says it is the last. */
   // deno-lint-ignore no-explicit-any
-  const toAdmins = async (l: any, stage: string, message: (link: string) => string, onlyNotSnoozed: boolean) => {
+  const toAdmins = async (l: any, stage: string, message: (link: string, last: boolean) => string, onlyNotSnoozed: boolean) => {
+    if (quietNow) { quietHeld++; return 0 }
     l.admin_loop = l.admin_loop || { started_at: nowIso, sends: [], snooze: {} }
+    const final = stage.startsWith('final')
+    const counts: Record<string, number> | undefined = l.admin_loop.texts_to
     const exp = linkExpiry(String(l.shift_date))
-    let n = 0, skipped = 0
+    let n = 0, skipped = 0, capHere = 0
     for (const a of adminList) {
       const ak = await adminKey(a.email)
       if (onlyNotSnoozed && l.admin_loop.snooze?.[ak] && Date.parse(l.admin_loop.snooze[ak]) > Date.now()) { skipped++; continue }
       if (!a.phone) { skipped++; continue }
+      const had = Number(counts?.[ak]) || 0
+      if (final && counts && !had) { skipped++; continue }          // never texted about it: nothing to stop
+      if (!final && had >= maxTexts) { skipped++; capHere++; continue }
       const link = LINK_SECRET ? await makeLink(LINK_SECRET, String(l.id), a.email, exp) : ''
-      if (loopLive) { if (await textAdmin(sb, ghl, a, message(link))) n++ }
-      else n++
+      const msg = message(link, !final && had + 1 >= maxTexts)
+      const went = loopLive ? await textAdmin(sb, ghl, a, msg) : true
+      if (went) { n++; if (!final) l.admin_loop.texts_to = { ...(l.admin_loop.texts_to || {}), [ak]: had + 1 } }
     }
+    capped += capHere
+    /* every admin has had their last text about it: nothing more is recorded (it waits in Needs Attention) */
+    if (!final && capHere && capHere === adminList.filter((a) => a.phone).length) { l.admin_loop.capped_at = l.admin_loop.capped_at || nowIso; return 0 }
     l.admin_loop.sends = [...(l.admin_loop.sends || []), { at: nowIso, stage, admins: n, skipped, practice: !loopLive }].slice(-60)
     return n
   }
@@ -333,13 +357,12 @@ Deno.serve(async (req) => {
       l.minutes_late = Number.isFinite(late) ? Math.max(0, Math.round(late)) : null
     }
     /* C1: the admins were being reminded; one last text says why it stopped. */
-    if (l.admin_loop?.sends?.length) {
+    if ((l.admin_loop?.sends || []).some((x: { admins?: number }) => Number(x?.admins) > 0)) {
       const at12 = how === 'clocked_in' ? clock12(clockHM(v?.clockIn) || '') : ''
       const what = how === 'clocked_in'
         ? `${l.caregiver} clocked in at ${at12}${l.minutes_late != null ? ` (${l.minutes_late} min late)` : ''} for ${l.client_first}'s ${clock12(l.shift_time)} shift.`
         : `${l.client_first}'s ${clock12(l.shift_time)} shift changed in AxisCare (${l.caregiver} is no longer on it).`
-      await toAdmins(l, 'final_' + how, () => `${what} No more reminders.`, false)
-      fin.push({ alert: l.id, how })
+      if (await toAdmins(l, 'final_' + how, () => `${what} No more reminders.`, false)) fin.push({ alert: l.id, how })
     }
     if (watchLive) {
       await save(l)
@@ -465,8 +488,10 @@ Deno.serve(async (req) => {
             + `(${Math.round(late)} minutes past start). `
             + (l.texted_at ? `Cara texted ${cgName.split(' ')[0]} at ${String(l.texted_at).slice(11, 16)} UTC. ` : `No text went out to ${cgName.split(' ')[0]} (${l.no_phone ? 'no phone on the roster' : 'texting is not live'}). `)
             + `Call ${cgName}${cgPhone ? `: ${cgPhone}` : ' (number missing from the roster, check AxisCare)'}. `
-            + `Every admin is texted a link every ${repeatMin} minutes until someone marks it resolved there; `
-            + `it also stops when a clock-in appears or a coverage case covers the shift.`,
+            + `Every admin is texted a link every ${repeatMin} minutes (at most ${maxTexts} texts each) until someone marks it resolved there; `
+            + `it also stops when a clock-in appears or a coverage case covers the shift. `
+            + (quietNow ? `It is quiet hours (no office texts ${quietTxt}), so nobody was texted; it waits here, and the texts start at the end of quiet hours if it is still open.`
+              : `No office texts ${quietTxt}; overnight it waits here.`),
           domain: 'scheduling_coverage', status: 'open', urgency: 'high',
           owner: String(admins[0]), owner_name: String(admins[0]).split('@')[0],
           due: new Date(Date.now() + 3600 * 1000).toISOString(),
@@ -474,6 +499,7 @@ Deno.serve(async (req) => {
         } })
         l.office_alerted_at = nowIso
         l.admin_loop = l.admin_loop || { started_at: nowIso, sends: [], snooze: {} }
+        if (quietNow) l.admin_loop.opened_in_quiet = true   // the first admin text waits for the end of quiet hours
         await save(l); alerted++
         await opEvent(sb, { verb: 'item_created', item_id: `ops_tk_${l.id}`, area: 'coverage',
           summary: `Cara raised: NO CLOCK-IN, ${cgName} for ${clientFirst}, ${clock12(shiftTime)} shift (${Math.round(late)} min past start)` })
@@ -502,7 +528,7 @@ Deno.serve(async (req) => {
       /* Someone opened a coverage case for this shift since: it owns it now. */
       if (coverageFor(String(l.visit_id), l.client_axiscare_id ?? null, String(l.shift_date), String(l.caregiver_axiscare_id))) {
         l.resolved_at = nowIso; l.resolved_how = 'coverage_case'
-        if (l.admin_loop.sends?.length)
+        if ((l.admin_loop.sends || []).some((x: { admins?: number }) => Number(x?.admins) > 0))
           await toAdmins(l, 'final_coverage', () => `Coverage case opened for ${l.client_first}'s ${clock12(l.shift_time)} shift (${l.caregiver}). No more reminders.`, false)
         await save(l); loopStoppedCoverage++
         await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
@@ -513,6 +539,8 @@ Deno.serve(async (req) => {
           created_at: l.office_alerted_at, resolved_at: nowIso, created_by: 'timekeeper-watch', opened_by: 'timekeeper' } })
         continue
       }
+      /* quiet hours: skip this round entirely (nothing recorded, nothing queued); from 7am one text if still open */
+      if (quietNow) { quietHeld++; continue }
       const late = lateOf(l)
       const endStamp = v ? String(v?.scheduledEndDate ?? v?.endDate ?? '') : ''
       const afterEnd = l.shift_date !== day || (endStamp ? minutesSince(endStamp) > 0 : false)
@@ -522,21 +550,26 @@ Deno.serve(async (req) => {
       if (last && Date.now() - last < every * 60000 - 20000) continue
       loopDue++
       const cg = l.caregiver, cl = l.client_first, t12 = clock12(l.shift_time)
-      const first = !(l.admin_loop.sends || []).length
-      const stage = first ? 'first' : afterEnd ? 'after_end' : late >= 30 ? 'thirty' : 'repeat'
+      const first = !(l.admin_loop.sends || []).some((x: { stage?: string; admins?: number }) => !String(x?.stage).startsWith('final'))
+      /* an alert opened overnight whose shift has already ended starts with the "shift has ended" wording at 7am */
+      const stage = first && !afterEnd ? 'first' : afterEnd ? 'after_end' : late >= 30 ? 'thirty' : 'repeat'
       /* C3: her newest reply since the last round goes into this one (clockin-reply attaches it) */
       const lastAt = (l.admin_loop.sends || []).at(-1)?.at || ''
       const rep = (Array.isArray(l.replies) ? l.replies : []).filter((x: { at: string }) => String(x.at) > String(lastAt)).at(-1)
       const ln = lateByVisit.get(String(l.visit_id))
       const toldLate = ln && ln.kind === 'late' ? ` ${String(cg).split(' ')[0]} told us they're running late${ln.eta ? ', about ' + clock12(new Date(ln.eta).toLocaleString('en-GB', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', hour12: false })) : ''}.` : ''
       const said = (stage === 'first' ? toldLate : '') + (rep ? ` ${String(cg).split(' ')[0]} replied: "${String(rep.text).replace(/\s+/g, ' ').slice(0, 120)}${String(rep.text).length > 120 ? '...' : ''}".` : '')
-      const msg = (link: string) => (stage === 'first'
-        ? `No clock-in: ${cg} for ${cl}'s ${t12} shift (${late} min past start).${said} Tap when it's resolved: ${link}`
+      /* how to stop it is in every text (2026-10-03); the text that reaches the cap says it is the last */
+      const stop = (last: boolean) => last
+        ? ` This is the last text about it (it stays open in Needs Attention). Tap Resolved when it's handled: `
+        : ` Tap Resolved to stop these texts: `
+      const msg = (link: string, last: boolean) => (stage === 'first'
+        ? `No clock-in: ${cg} for ${cl}'s ${t12} shift (${late} min past start).${said}${stop(last)}${link}`
         : stage === 'after_end'
-        ? `${cl}'s ${t12} shift has ended and the missed clock-in for ${cg} is still not resolved${said ? '.' + said : ':'} ${link}`
+        ? `${cl}'s ${t12} shift has ended and the missed clock-in for ${cg} is still not resolved.${said}${stop(last)}${link}`
         : stage === 'thirty'
-        ? `${late} min and still not resolved: no clock-in from ${cg} for ${cl}'s ${t12} shift. ${cl} may be without care.${said} ${link}`
-        : `Still no clock-in: ${cg} for ${cl}'s ${t12} shift (${late} min past start).${said} Not resolved yet: ${link}`)
+        ? `${late} min and still not resolved: no clock-in from ${cg} for ${cl}'s ${t12} shift. ${cl} may be without care.${said}${stop(last)}${link}`
+        : `Still no clock-in: ${cg} for ${cl}'s ${t12} shift (${late} min past start).${said}${stop(last)}${link}`).trim()
       loopSent += await toAdmins(l, stage, msg, true)
       l.admin_loop.last_sent_at = nowIso
       await save(l)
@@ -670,7 +703,8 @@ Deno.serve(async (req) => {
     } else evvChase = { ran: false, why: !chaseLive ? 'ops_settings.evv_chase_live is off' : doneToday ? 'already ran today' : 'before 9am Chicago' }
     /* Saturday deadline nudge: forms still unprocessed with Sunday-midnight looming. */
     const wkday = new Date().toLocaleString('en-US', { timeZone: 'America/Chicago', weekday: 'short' })
-    if (chaseLive && wkday === 'Sat' && chiHourE >= 15 && !forceDry
+    /* office quiet hours (2026-10-03): the office nudge never goes 8pm to 7am (not stamped, nothing queued) */
+    if (chaseLive && wkday === 'Sat' && chiHourE >= 15 && !forceDry && !quietNow
         && !chaseState.some((x) => x?.id === 'satnudge_' + todayE)) {
       const { data: pend } = await sb.from('evv_submissions').select('id').eq('processed', false)
       const n = (pend || []).length
@@ -713,13 +747,14 @@ Deno.serve(async (req) => {
     skipped_no_phone: skippedNoPhone, refused_by_outbound_gate: refusedGate,
     skipped_by_skip_list: skippedByList, skipped_coverage_case: skippedCoverage, held_running_late: heldLate,
     admin_loop: { live: loopLive, due: loopDue, texts: loopSent, stopped_for_coverage: loopStoppedCoverage, final_texts: fin.length,
+                  quiet_hours: { now: quietNow, hours: quietTxt }, held_for_quiet_hours: quietHeld, max_texts_each: maxTexts, capped,
                   admins: adminList.length, admins_without_phone: adminList.filter((a) => !a.phone).length,
                   links: LINK_SECRET.length >= 32 },
     would_text: role === 'authenticated' || role === 'service_role' ? wouldText : wouldText.length,
     would_text_clockout: role === 'authenticated' || role === 'service_role' ? wouldTextOut : wouldTextOut.length,
     would_alert_office: role === 'authenticated' || role === 'service_role' ? wouldAlert : wouldAlert.length,
     settings_in_effect: { grace_min: graceMin, admin_repeat_min: repeatMin,
-      clockout_grace_min: outGraceMin, skip_list_entries: skips.length,
+      clockout_grace_min: outGraceMin, skip_list_entries: skips.length, admin_max_texts: maxTexts, office_quiet_hours: quietTxt,
       switches: { timekeeper_watch_live: settings.timekeeper_watch_live === true,
                   timekeeper_text_live: settings.timekeeper_text_live === true,
                   timekeeper_admin_loop_live: settings.timekeeper_admin_loop_live === true } },

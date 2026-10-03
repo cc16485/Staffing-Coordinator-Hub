@@ -23,6 +23,7 @@ import { checkLink, adminKey } from '../_shared/clockin-links.ts'
 import { adminRecipients, textAdmin, clock12 } from '../_shared/clockin-admins.ts'
 import { normalisePhone, contactForOutbound } from '../_shared/outreach.ts'
 import { opEvent } from '../_shared/events.ts'
+import { officeQuiet } from '../_shared/quiet-hours.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
                'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -172,11 +173,19 @@ Deno.serve(async (req) => {
     await opEvent(sb, { verb: 'item_resolved', item_id: `ops_tk_${l.id}`, area: 'coverage',
       summary: `${me.name} resolved the missed clock-in (${l.caregiver}, ${l.client_first} ${clock12(l.shift_time)}): ${REASONS[reason]}` })
     let told = 0
-    if (loopLive && fresh.admin_loop?.sends?.length) {
+    /* office quiet hours (2026-10-03): resolving it at night tells nobody by text (8pm to 7am); they see it resolved
+       in Needs Attention. Only admins who were texted about it hear it was resolved. */
+    const quiet = officeQuiet(new Date(), settings)
+    const textedKeys = fresh.admin_loop?.texts_to
+    if (loopLive && !quiet && (fresh.admin_loop?.sends || []).some((x: { admins?: number }) => Number(x?.admins) > 0)) {
       const msg = `Resolved by ${me.first} (${what}): ${REASONS[reason]}${note ? '. ' + note : ''}${caseId ? '. Coverage case opened.' : ''}. No more reminders.`
-      for (const a of admins) if (a.email !== me.email && await textAdmin(sb, ghl, a, msg)) told++
+      for (const a of admins) {
+        if (a.email === me.email) continue
+        if (textedKeys && !(Number(textedKeys[await adminKey(a.email)]) > 0)) continue
+        if (await textAdmin(sb, ghl, a, msg)) told++
+      }
     }
-    return json({ ok: true, others_told: told, ...status() })
+    return json({ ok: true, others_told: told, ...(quiet ? { others_not_texted: 'office quiet hours' } : {}), ...status() })
   }
 
   if (action === 'evv') {

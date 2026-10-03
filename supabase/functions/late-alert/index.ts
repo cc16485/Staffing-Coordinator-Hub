@@ -32,6 +32,7 @@ import { opEvent } from '../_shared/events.ts'
 import { DEFAULT_FAMILY, DEFAULT_FAMILY_UPDATE, DEFAULT_ARRIVED, FAMILY_MIN_DEFAULT, fill, clockAt, familyEligible } from '../_shared/late-notice.ts'
 import { visitMs } from '../_shared/held-shift.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
+import { officeQuiet } from '../_shared/quiet-hours.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
                'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -126,6 +127,8 @@ Deno.serve(async (req) => {
   const tellOthers = async (msg: string) => {
     let told2 = 0
     if (!adminLive || !(Array.isArray(n.admin_rounds) && n.admin_rounds.length)) return 0
+    /* office quiet hours (2026-10-03): no admin text 8pm to 7am; they see it on the card */
+    if (officeQuiet(new Date(), st)) return 0
     for (const a of admins) if (a.email !== me!.email && await textAdmin(sb, ghl, a, msg)) told2++
     return told2
   }

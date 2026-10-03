@@ -34,6 +34,7 @@ import { shadowRoute } from '../_shared/routing.ts'
 import { opEvent } from '../_shared/events.ts'
 import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
+import { officeQuiet } from '../_shared/quiet-hours.ts'
 import { jobCaller, ownerCaller } from '../_shared/job-auth.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { notifyFamilyOfChange } from '../_shared/family-change-text.ts'
@@ -1227,7 +1228,10 @@ Deno.serve(async (req) => {
       /* "Must be covered, no matter what" (the client's call-in plan): the admin text goes at any hour */
       const planA = await readPlan(sb, c.client_axiscare_id, new Map())
       const mustA = isMustCover(planA.plan)
-      const smsOk = mustA || soonA || (chiHrA >= 8 && chiHrA < 21)
+      /* OFFICE QUIET HOURS (Samantha, 2026-10-03): no admin text 8pm to 7am Central, even for a shift starting soon.
+         The email still goes (it wakes nobody) and the case is on the board. The one exception is her own: a client
+         whose call-in plan says "must be covered, no matter what" (CALLIN-PLAN.md, "the admin text goes at any hour"). */
+      const smsOk = mustA || (!officeQuiet(new Date(), settings) && (soonA || (chiHrA >= 8 && chiHrA < 21)))
       const calledAt = new Date(String(c.opened_at || Date.now()))
         .toLocaleString('en-US', { timeZone: 'America/Chicago',
           month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })
@@ -1280,7 +1284,7 @@ Deno.serve(async (req) => {
               if (ph) {
                 const contact = await contactForOutbound(sb, ghl,
                   { phone: ph, email: adm, firstName: person?.name || adm.split('@')[0] },
-                  'urgent_internal', { selfSupplied: true, audience: 'staff' })
+                  'urgent_internal', { selfSupplied: true, audience: 'staff', emergency: mustA })
                 if (contact && await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
                   'staff-alert', { channel: 'sms', contactId: contact.contactId, address: ph, who: person?.name || adm }, { message: smsMsg })) reachedA++
               }
@@ -1420,14 +1424,17 @@ Deno.serve(async (req) => {
         const phonesQ: string[] = (Array.isArray(settings.coverage_alert_phones) ? settings.coverage_alert_phones : [])
           .map((p: unknown) => String(p ?? '').trim()).filter(Boolean)
         const resumingQ = !!claimedByQ && !claimActiveQ
+        /* office quiet hours (2026-10-03): the office text never goes 8pm to 7am; the Needs Attention item above is
+           where it waits (this wave is still marked nudged, so nothing goes out at 7am for it) */
+        const quietQ = officeQuiet(new Date(), settings)
         if (soonQ && (firstLookQ || resumingQ)) {
           await shadowRoute(sb, { area: 'sched_calloffs', channel: 'quiet-callout office SMS',
-            production: (sendLive && !claimActiveQ) ? phonesQ : [], case_id: String(c.id),
-            note: claimActiveQ ? `SMS suppressed — ${claimedByQ} has it (moved ${staleMinQ} min ago)`
+            production: (sendLive && !claimActiveQ && !quietQ) ? phonesQ : [], case_id: String(c.id),
+            note: quietQ ? 'office quiet hours: no office text, the item waits in Needs Attention' : claimActiveQ ? `SMS suppressed — ${claimedByQ} has it (moved ${staleMinQ} min ago)`
               : resumingQ ? `claim stale — ${claimedByQ} has it but nothing moved for ${staleMinQ} min; alert resumed`
               : (sendLive ? '' : 'text sending is off') })
         }
-        if (soonQ && sendLive && !claimActiveQ && ghl.token && ghl.locationId) {
+        if (soonQ && sendLive && !claimActiveQ && !quietQ && ghl.token && ghl.locationId) {
           if (resumingQ) await opEvent(sb, { verb: 'claim_stale', item_id: String(c.id), area: 'coverage',
             summary: `Office alert resumed — ${claimedByQ} has ${c.client || 'the shift'} but nothing has moved for ${staleMinQ} min and it starts in ${minsToShiftQ} min` })
           const msgQ = resumingQ
@@ -1839,7 +1846,9 @@ Deno.serve(async (req) => {
       let smsSent = false
       const chiHr = Number(new Date().toLocaleString('en-US',
         { timeZone: 'America/Chicago', hour: '2-digit', hour12: false }))
-      const smsAllowed = shiftSoon || (chiHr >= 8 && chiHr < 21)
+      /* office quiet hours (2026-10-03): never 8pm to 7am Central, even for a shift starting soon; the URGENT item above
+         is where it waits */
+      const smsAllowed = !officeQuiet(new Date(), settings) && (shiftSoon || (chiHr >= 8 && chiHr < 21))
       if (smsAllowed && ghl.token && ghl.locationId) {
         try {
           const { data: stRow } = await sb.from('app_data').select('data').eq('key', 'coordinator_staff').maybeSingle()
