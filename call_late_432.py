@@ -9,7 +9,7 @@
 #     While the running-late notices are in practice, a CALL's notice is live by itself (ops_settings.late_call_live,
 #     NEW, ON unless she turns it off): a card in Needs Attention and the call noted on the missed clock-in card.
 #   timekeeper-watch: a call that said "running late" WITH a time pauses that missed clock-in's admin texts until 5
-#     minutes after the time; then they carry on (counting toward the cap of 6). No time, or "can't make it": they
+#     minutes after the time (never past 2 hours after the start); then they carry on (counting toward the cap of 6). No time, or "can't make it": they
 #     carry on, with what the call said in the next text.
 #   clockin-alert, late-alert (the two link pages): "Mary said on your 4:31pm call: running late, about 8 minutes
 #     (around 4:39pm)", her words, the pause; "Tell the family" is a link to the running-late page, where the exact text
@@ -276,6 +276,6 @@ else: say("RESULT: DONE · a caregiver's call (you calling them, or them calling
 say("Family: only ever by a person's tap on \"Send to the family\" (the exact text and who gets it are shown first; Family Circle members who agreed to texts; "
     "10+ minutes late with a time; 6am to 9pm). The client is never texted. There is no automatic family text.")
 say("Nothing was texted, emailed or called by this installer. No setting was changed. Nothing was written to AxisCare or GoHighLevel.")
-say("Rollback (only if ever needed): turn calls off in Settings (Running late, \"Turn off calls\"): nothing is paused and call notices go back to practice. "
+say("Rollback (only if ever needed): turn calls off in Settings (Running late, \"Turn off calls\"): nothing is paused because of a call and new call notices are practice only. "
     "Full rollback: Claude redeploys the four functions from the commit before 432; the 7 columns can stay unused.")
 done(1 if fails else 0)

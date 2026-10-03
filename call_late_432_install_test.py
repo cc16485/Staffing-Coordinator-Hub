@@ -136,7 +136,7 @@ ck("no reviewed starting point: STOP", code == 2 and not dep, [code, dep])
 code, rep, dep, L = run(SB_TOKEN="nope")
 ck("no token: STOP", code == 2 and not dep, [code, dep])
 src = open(os.path.join(HERE, "call_late_432.py")).read() + open(os.path.join(HERE, "call_late_432.sql")).read()
-ck("no em dash in the installer's or the SQL's words", "—" not in src)
+ck("no em dash in the installer's or the SQL's words", "\u2014" not in src)
 ck("the installer never posts to GoHighLevel or AxisCare", not re.search(r"leadconnectorhq|axiscare\.com", open(os.path.join(HERE, "call_late_432.py")).read()))
 
 srv.shutdown()

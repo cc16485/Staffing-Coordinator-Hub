@@ -13,6 +13,8 @@
 // time, or "can't make it", the missed clock-in texts carry on as before (never guess; someone has to cover the shift).
 // Nothing is texted to anyone because of a call; the family only ever hears from a person's tap ("Send to the family").
 export const HOLD_AFTER_ETA_MIN = 5, HOLD_NO_TIME_MIN = 15
+/* 432: a call's pause never runs past 2 hours after the shift's start (a misheard time can't silence an alert for long) */
+export const HOLD_CALL_MAX_MIN = 120
 export type NoticeLite = { visit_id: string; kind: string; eta: string | null; status: string; said_at?: string | null
   call_at?: string | null; call_by?: string | null; call_by_email?: string | null; call_quote?: string | null; caregiver_name?: string | null
   client_first?: string | null; shift_start?: string | null; call_message_id?: string | null }
@@ -28,7 +30,8 @@ export function holdUntil(n: NoticeLite | null | undefined, shiftStartMs: number
   if (opts?.callOnly && (!n.call_at || !opts.callHold || n.kind !== 'late' || !n.eta)) return null
   if (n.kind !== 'late') return null
   const eta = n.eta ? Date.parse(n.eta) : NaN
-  return (Number.isFinite(eta) ? eta : shiftStartMs + HOLD_NO_TIME_MIN * 60e3) + HOLD_AFTER_ETA_MIN * 60e3
+  const until = (Number.isFinite(eta) ? eta : shiftStartMs + HOLD_NO_TIME_MIN * 60e3) + HOLD_AFTER_ETA_MIN * 60e3
+  return opts?.callOnly && Number.isFinite(shiftStartMs) ? Math.min(until, shiftStartMs + HOLD_CALL_MAX_MIN * 60e3) : until
 }
 export function lateHold(n: NoticeLite | null | undefined, shiftStartMs: number, now = Date.now(), opts?: HoldOpts): 'none' | 'skip' | 'hold' {
   if (!n || (n.status !== 'open' && n.status !== 'seen')) return 'none'

@@ -262,6 +262,7 @@ const opts = HOLD.holdOptsOf({})
 ck('rule: notices in practice + a call with a time: hold until ETA + 5', HOLD.lateHold(base, S, T_('16:43'), opts) === 'hold' && HOLD.lateHold(base, S, T_('16:44'), opts) === 'none')
 ck('rule: a call with no time, or can\'t make it, never holds while the notices are in practice', HOLD.lateHold({ ...base, eta: null }, S, T_('16:35'), opts) === 'none' && HOLD.lateHold({ ...base, kind: 'cant_make_it', eta: null }, S, T_('16:35'), opts) === 'none')
 ck('rule: a TEXT notice never holds while the notices are in practice', HOLD.lateHold({ ...base, call_at: null }, S, T_('16:35'), opts) === 'none')
+ck('rule: a call\'s pause never runs past 2 hours after the start (a misheard "9pm" can\'t silence the alert all evening)', HOLD.lateHold({ ...base, eta: iso(T_('21:00')) }, S, T_('18:29'), opts) === 'hold' && HOLD.lateHold({ ...base, eta: iso(T_('21:00')) }, S, T_('18:30'), opts) === 'none')
 ck('rule: late_call_live off: no call hold', HOLD.lateHold(base, S, T_('16:35'), HOLD.holdOptsOf({ late_call_live: false })) === 'none')
 ck('rule: with the notices live, the L1 rule is unchanged (no time holds to start + 20; can\'t make it skips)', HOLD.lateHold({ ...base, call_at: null, eta: null }, S, T_('16:49'), HOLD.holdOptsOf({ late_watch_live: true })) === 'hold'
   && HOLD.lateHold({ ...base, kind: 'cant_make_it' }, S, T_('16:35'), HOLD.holdOptsOf({ late_watch_live: true })) === 'skip')
@@ -269,8 +270,8 @@ const src = (f) => fs.readFileSync(`${FN}/${f}`, 'utf8')
 ck('no automatic family text anywhere: late-watch never sends to a family; the family send is only late-alert behind a person (humanInitiated)',
   !/late_family_auto/.test(src('late-watch/index.ts') + src('late-alert/index.ts') + src('_shared/late-notice.ts') + src('timekeeper-watch/index.ts'))
   && !/audience: 'family'/.test(src('late-watch/index.ts')) && /audience: 'family', humanInitiated: true/.test(src('late-alert/index.ts')))
-ck('no em dashes in any new wording', ![HOLD.callLine(base), HOLD.callLine({ ...base, kind: 'cant_make_it', client_first: 'April', shift_start: iso(S) }), ...SENT.map((x) => x.msg)].some((t) => /—/.test(t))
-  && !/—/.test(src('_shared/late-notice.ts')) && !/—/.test(fs.readFileSync('call_late_432.sql', 'utf8')))
+ck('no em dashes in any new wording', ![HOLD.callLine(base), HOLD.callLine({ ...base, kind: 'cant_make_it', client_first: 'April', shift_start: iso(S) }), ...SENT.map((x) => x.msg)].some((t) => /\u2014/.test(t))
+  && !/\u2014/.test(src('_shared/late-notice.ts')) && !/\u2014/.test(fs.readFileSync('call_late_432.sql', 'utf8')))
 
 for (const [nm, ok, note] of res) console.log((ok ? 'PASS' : 'FAIL') + ' · ' + nm + (ok ? '' : '\n       ' + note))
 const pass = res.filter((x) => x[1]).length; console.log(`${pass}/${res.length}`); process.exit(pass === res.length ? 0 : 1)
