@@ -7268,6 +7268,7 @@ async function loadPendingEVVSubmissions() {
             <div style="display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.35rem;align-items:center">
               <span class="badge b-blue">📅 Visit: ${sub.visitdate||'—'}</span>
               ${lateTag}
+              ${evvSigBadge(sub)}
               <span style="font-size:.72rem;color:var(--gray)">Submitted: ${submitted}</span>
             </div>
           </div>
@@ -7294,9 +7295,26 @@ async function loadPendingEVVSubmissions() {
   }
 }
 
+/* 429 (2026-10-03): a form can wait for the client's signature (signed at the caregiver's next visit, or verified by
+   phone in the Care Coordinator Hub). It cannot be accepted until then; the database refuses it too. */
+function evvSigState(sub) {
+  const k = sub && sub.client_sig_status;
+  if (k) return k;
+  return /^data:image\/(png|jpeg);base64,/.test(String((sub && sub.sig_consumer) || '')) ? 'signed' : 'waiting';
+}
+function evvSigBadge(sub) {
+  const k = evvSigState(sub);
+  if (k === 'waiting') return '<span class="badge b-red" style="font-size:.65rem">✍ Waiting for client signature</span>';
+  if (k === 'phone_verified') return '<span class="badge b-blue" style="font-size:.65rem">📞 Verified by phone</span>';
+  if (k === 'refused') return '<span class="badge b-red" style="font-size:.65rem">✋ Client declined to confirm</span>';
+  return '';
+}
 async function acceptEVVSubmission(subId) {
   const sub = _evvPendingCache[subId];
   if(!sub){ alert('Could not find this submission — click ↻ Refresh and try again.'); return; }
+  const sigK = evvSigState(sub);
+  if (sigK === 'waiting') { alert('The client has not signed yet. Wait for the next visit, or verify by phone first (Care Coordinator Hub, EVV Corrections).'); return; }
+  if (sigK === 'refused') { alert('The client declined to confirm these times, so the time cannot be corrected. Dismiss the form instead.'); return; }
   const { data: { user } } = await sb.auth.getUser();
   const adminEmail = user?.email || 'unknown';
 
@@ -7338,11 +7356,14 @@ async function dismissEVVSubmission(id) {
   if (!confirm('Dismiss this submission? It will be removed from the pending list.')) return;
   const { data: { user } } = await sb.auth.getUser();
   const adminEmail = user?.email || 'unknown';
-  await sb.from('evv_submissions').update({
+  /* 429: recorded as dismissed (the database lets a form waiting for the client be dismissed, never accepted) */
+  const { error: disErr } = await sb.from('evv_submissions').update({
     processed:    true,
     processed_by: adminEmail,
-    processed_at: new Date().toISOString()
+    processed_at: new Date().toISOString(),
+    outcome:      'dismissed'
   }).eq('id', id);
+  if (disErr) alert('Could not dismiss: ' + disErr.message);
   loadPendingEVVSubmissions();
 }
 

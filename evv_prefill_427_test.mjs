@@ -155,8 +155,8 @@ reset(); at('09:05'); await tick(); at('13:20')
 /* e · the clock-out reminder */
 reset(); VISITS[0].clockIn = { time: '2026-09-30T09:04:00' }; at('13:10'); await tick()
 { const m = toCg().at(-1)?.message || ''; const u = (m.match(EVVURL) || [''])[0]; const row = T.evv_prefill[0]
-  ck('clock-out reminder · one text, same wording, the plain link swapped for the pre-filled one', toCg().length === 1 && u && m.startsWith('Hi Maria, it\'s Cara with Caring Companions. Your shift with Ruth ended at 1pm but there\'s no clock-out yet.')
-    && m.includes(`signed by the client: ${u}. If you didn't put in your shift note`) && !m.includes('sc.mo-care.com/evv-correction-form. '), m)
+  ck('clock-out reminder · one text, same wording, the plain link swapped for the pre-filled one', toCg().length === 1 && u && m.startsWith('Hi Maria, it\'s Caring Companions. Your shift with Ruth ended at 1pm but there\'s no clock-out yet.')   /* 429 wording: before you leave */
+    && m.includes(`fill in this form before you leave and have Ruth sign it: ${u}. If you didn't put in your shift note`) && !m.includes('sc.mo-care.com/evv-correction-form. '), m)
   ck('clock-out reminder · the link carries only the token', u && noPII(u) && u.endsWith('?t=' + row?.token), u)
   ck('clock-out reminder · the row: clock-out missing, AxisCare clock-in 09:04, scheduled 09:00 to 13:00', row && row.which_missing === 'out' && row.actual_in === '09:04' && row.actual_out === null
     && row.scheduled_in === '09:00' && row.scheduled_out === '13:00' && row.client_display === 'Ruth A.' && row.visit_id === undefined && row.axiscare_visit_id === '9001', row)
@@ -165,7 +165,7 @@ reset(); VISITS[0].clockIn = { time: '2026-09-30T09:04:00' }; at('13:10'); await
 reset(); VISITS[0].clockIn = { time: '2026-09-30T09:04:00' }; APP.ops_settings.timekeeper_text_live = false; at('13:10'); await tick()
 ck('clock-out reminder in practice mode · nothing sent and no row made', SENT.length === 0 && T.evv_prefill.length === 0, { SENT, rows: T.evv_prefill })
 reset(); VISITS[0].clockIn = { time: '2026-09-30T09:04:00' }; PREFAIL = true; at('13:10'); await tick()
-ck('clock-out reminder, no pre-fill possible · it still goes with the plain link', toCg().length === 1 && toCg()[0].message.includes('signed by the client: sc.mo-care.com/evv-correction-form. If you'), toCg()[0])
+ck('clock-out reminder, no pre-fill possible · it still goes with the plain link', toCg().length === 1 && toCg()[0].message.includes('have Ruth sign it: sc.mo-care.com/evv-correction-form. If you'), toCg()[0])
 
 /* f · no new sends anywhere: the senders' send calls are exactly what they were */
 { const ex = (rel) => { try { return String(fs.readFileSync(rel, 'utf8')) } catch { return '' } }

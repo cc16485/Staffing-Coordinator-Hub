@@ -96,6 +96,13 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min
 .lock-note{font-size:.7rem;color:var(--gray);margin-top:.15rem;display:none}
 .lock-note.show{display:block}
 .pre-blank-btn{background:none;border:1px solid currentColor;border-radius:6px;padding:.25rem .65rem;font-family:inherit;font-size:.78rem;cursor:pointer;color:inherit;margin-top:.45rem}
+/* 429: the client signs at the next visit */
+.later-box{display:none;margin-top:.75rem;border:1.5px dashed var(--border);border-radius:8px;padding:.65rem .8rem;background:var(--bg)}
+.later-box.show{display:block}
+.later-box label{display:flex;gap:.55rem;align-items:flex-start;font-size:.84rem;font-weight:600;cursor:pointer}
+.later-box input{accent-color:var(--navy);margin-top:.2rem;flex-shrink:0;width:1.05rem;height:1.05rem}
+.later-note{font-size:.74rem;color:var(--gray);margin:.35rem 0 0 1.6rem;line-height:1.5}
+.later-box.on{border-color:#fcd34d;background:var(--amber-bg)}
 </style>
 </head>
 <body>
@@ -260,6 +267,12 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min
       </div>
     </div>
     <div class="field-error" id="err-sig2" style="margin-top:.4rem">Client signature required</div>
+    <!-- 429: only while the client signature is empty. Her rule: completed at the shift, or at the next visit with
+         that client; if the client doesn't sign, the office calls the client to verify. -->
+    <div class="later-box" id="later-box">
+      <label class="later-pick"><input type="checkbox" id="f-later" onchange="laterChanged()"> <span id="later-label">The client will sign at my next visit</span></label>
+      <div class="later-note" id="later-note"></div>
+    </div>
   </div>
 
   <!-- Submit -->
@@ -275,8 +288,8 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min
 <div id="success-screen">
   <div class="success-card">
     <div class="success-icon">✅</div>
-    <h2>Correction Submitted!</h2>
-    <p>Your EVV correction form has been received. Our admin team will review it and update AxisCare if approved. You do not need to do anything else.</p>
+    <h2 id="success-title">Correction Submitted!</h2>
+    <p id="success-main">Your EVV correction form has been received. Our admin team will review it and update AxisCare if approved. You do not need to do anything else.</p>
     <p><strong>Keep in mind:</strong> corrections must be submitted before <strong>Sunday Midnight</strong> to be processed for that week's payroll.</p>
     <p style="font-size:.78rem;color:var(--gray);margin-top:.5rem">Confirmation ID: <span class="ref" id="confirm-id"></span></p>
     <p style="font-size:.78rem;color:var(--gray);margin-top:.75rem">If you have questions, contact <a href="mailto:samantha@mo-care.com" style="color:var(--teal)">samantha@mo-care.com</a></p>
@@ -346,7 +359,16 @@ const EVVPRE = (function () {
     if (e === 'invalid') return { msg: 'Please check ' + (FIELD[r.field] || 'the form') + ' and try again.', blank: false };
     return { msg: 'Please check your internet connection and try again.', blank: false };
   }
-  return { token, fields, statusWords, submitWords, dateWords, time12 };
+  /* 429: "<client> will sign at my next visit" (offered only while the client signature is empty) */
+  function clientFirst(name) { const f = String(name || '').trim().split(/\s+/)[0] || ''; return f.replace(/[^A-Za-z'\-]/g, '') ? f : ''; }
+  function laterLabel(client) { const c = clientFirst(client); return (c || 'The client') + ' will sign at my next visit'; }
+  function laterNote(client) { const c = clientFirst(client) || 'the client';
+    return 'Only if ' + c + ' cannot sign right now. Send your part now. At your next visit with ' + c + ' you will get a text with a link for '
+      + c + ' to sign on your phone. The office cannot correct your time until ' + c + ' signs, or confirms by phone when the office calls.'; }
+  function laterSuccess(client, linked) { const c = clientFirst(client) || 'the client';
+    return linked ? 'Your part is sent. ' + c + ' still needs to sign. At your next visit with ' + c + ' you will get a text with a link: open it and have ' + c + ' sign on your phone. If ' + c + ' cannot sign, the office will call to verify.'
+      : 'Your part is sent. ' + c + ' still needs to sign. The office will match this form to your visit and send you a link for ' + c + ' to sign at your next visit, or call ' + c + ' to verify.'; }
+  return { token, fields, statusWords, submitWords, dateWords, time12, clientFirst, laterLabel, laterNote, laterSuccess };
 })();
 if (typeof globalThis !== 'undefined') globalThis.EVVPRE = EVVPRE;
 /* EVVPRE:end */
@@ -372,6 +394,7 @@ function preBlank(words) {
   preLock(false);
   ['attendant', 'consumer', 'visitdate', 'orig-in', 'orig-out', 'new-in', 'new-out'].forEach((k) => { document.getElementById('f-' + k).value = ''; });
   if (words) preBox('warn', escHtml(words)); else document.getElementById('pre-box').className = 'pre-box';
+  laterSync();
 }
 async function preLoad() {
   if (!PRE.token) return;
@@ -393,7 +416,23 @@ async function preLoad() {
   if (f.new_out) document.getElementById('f-new-out').value = f.new_out;
   preLock(true);
   preBox('ok', '<strong>' + escHtml(f.line) + '</strong><br>' + escHtml(f.detail));
+  laterSync();
 }
+
+/* 429: the "will sign at my next visit" choice shows only while the client signature is empty */
+function laterClient() { return (PRE.info && PRE.info.client_display) || document.getElementById('f-consumer').value; }
+function laterSync() {
+  const box = document.getElementById('later-box'), cb = document.getElementById('f-later');
+  const signed = !!(sigState['sig-consumer'] && sigState['sig-consumer'].hasContent);
+  if (signed && cb.checked) cb.checked = false;
+  box.classList.toggle('show', !signed);
+  box.classList.toggle('on', cb.checked && !signed);
+  document.getElementById('later-label').textContent = EVVPRE.laterLabel(laterClient());
+  document.getElementById('later-note').textContent = EVVPRE.laterNote(laterClient());
+  if (cb.checked) document.getElementById('err-sig2').classList.remove('show');
+}
+function laterChanged() { laterSync(); }
+document.getElementById('f-consumer').addEventListener('input', laterSync);
 
 // ── Signature canvases ────────────────────────────────────────────────
 const sigState = {};
@@ -433,7 +472,7 @@ function initSig(id) {
     const p = getPos(e); sigState[id].ctx.lineTo(p.x, p.y); sigState[id].ctx.stroke();
     sigState[id].hasContent = true;
   });
-  canvas.addEventListener('mouseup', () => { sigState[id].drawing = false; });
+  canvas.addEventListener('mouseup', () => { sigState[id].drawing = false; if (id === 'sig-consumer') laterSync(); });
   canvas.addEventListener('mouseleave', () => { sigState[id].drawing = false; });
 
   canvas.addEventListener('touchstart', e => {
@@ -447,13 +486,14 @@ function initSig(id) {
     const p = getPos(e); sigState[id].ctx.lineTo(p.x, p.y); sigState[id].ctx.stroke();
     sigState[id].hasContent = true;
   }, { passive: false });
-  canvas.addEventListener('touchend', () => { sigState[id].drawing = false; });
+  canvas.addEventListener('touchend', () => { sigState[id].drawing = false; if (id === 'sig-consumer') laterSync(); });
 }
 
 function clearSig(id) {
   const s = sigState[id];
   s.ctx.clearRect(0, 0, s.canvas.width, s.canvas.height);
   s.hasContent = false;
+  if (id === 'sig-consumer') laterSync();
 }
 
 function getSigDataURL(id) {
@@ -521,10 +561,12 @@ function validate() {
   if (!hasSig) ok = false;
 
   // The client signature is required (policy, 2026-09-15): no manual time
-  // changes without the form completed AND signed by the client.
+  // changes without the form completed AND signed by the client. 429: or the
+  // caregiver says the client signs at her next visit (the form then waits).
   const hasSig2 = sigState['sig-consumer']?.hasContent;
-  document.getElementById('err-sig2').classList.toggle('show', !hasSig2);
-  if (!hasSig2) ok = false;
+  const later = !hasSig2 && document.getElementById('f-later').checked;
+  document.getElementById('err-sig2').classList.toggle('show', !hasSig2 && !later);
+  if (!hasSig2 && !later) ok = false;
 
   return ok;
 }
@@ -570,6 +612,9 @@ async function submitForm() {
     processed:    false,
     submitted_at: new Date().toISOString()
   };
+  // 429: no client signature + "will sign at my next visit": the form is saved as waiting for the client
+  const later = !payload.sig_consumer && document.getElementById('f-later').checked;
+  const laterWho = laterClient();
 
   function showError(msg) {
     btn.disabled = false;
@@ -587,6 +632,7 @@ async function submitForm() {
   try {
     if (PRE.token && PRE.info) {
       // 427: a pre-filled link. Saved server side; the caregiver, client and visit come from the office's record.
+      if (later) payload.client_signs_later = true;   // 429: saved as waiting for the client's signature
       const { data, error } = await sb.rpc('evv_submit_prefilled', { p_token: PRE.token, p_payload: payload });
       clearTimeout(timeout);
       if (error) throw error;
@@ -609,6 +655,10 @@ async function submitForm() {
 
     const confirmId = Date.now().toString(16).toUpperCase().slice(-6);
     document.getElementById('confirm-id').textContent = confirmId;
+    if (later) {
+      document.getElementById('success-title').textContent = 'Your part is sent';
+      document.getElementById('success-main').textContent = EVVPRE.laterSuccess(laterWho, !!(PRE.token && PRE.info));
+    }
     document.getElementById('form-screen').style.display = 'none';
     document.getElementById('success-screen').style.display = 'block';
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -633,7 +683,8 @@ function preUseBlank() {
 window.addEventListener('load', () => {
   initSig('sig-attendant');
   initSig('sig-consumer');
-  preLoad();
+  laterSync();
+  preLoad().then(laterSync, laterSync);
 });
 </script>
 </body>
