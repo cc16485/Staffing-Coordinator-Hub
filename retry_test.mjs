@@ -74,8 +74,12 @@ globalThis.__ghlDown = false
 
 /* ── the three scheduled ones: the stamp now depends on someone being reached ── */
 const tk = read('timekeeper-watch'), cr = read('coverage-run'), lf = read('lead-followup')
-ck('EVV chase · a day with failed texts is not "done": rerun 30+ min later, at most 3 runs; failures counted, opt-out refusals are not',
-  /Number\(stE\.failed\) > 0 && \(Number\(stE\.runs\) \|\| 1\) < 3/.test(tk) && /30 \* 60_000/.test(tk) && /\} else failedNow\+\+/.test(tk) && /runs: \(Number\(stE\?\.runs\) \|\| 0\) \+ 1/.test(tk) && /if \(!contact\) continue/.test(tk))
+/* 429 (2026-10-03): the morning EVV chase is retired (it reached caregivers after they had left the client). Its
+   replacement, the next-visit signature text, keeps the same rule: a failed text is not stamped as sent and is tried
+   again (at most 3 tries, then a Needs Attention item); an opt-out refusal is final and not retried. */
+ck('EVV next-visit text (replaces the morning chase) · a failed text is not stamped: tried again, at most 3 tries, then an item; an opt-out refusal is final',
+  !/EVV correction form and have the client sign it/.test(tk) && /next_visit_tries/.test(tk) && /tries >= MAX_TRIES/.test(tk)
+  && /if \(ok\) \{[\s\S]{0,400}next_visit_texted_at: nowIso/.test(tk) && /if \(!contact\) \{[\s\S]{0,200}next_visit_refused_at/.test(tk))
 ck('call-in alert · stamped only when an admin was reached (email or text); else retried, 3 tries, 10+ min apart',
   /if \(reachedA > 0\) freshA\.admin_alerted = nowIso\(\)/.test(cr) && /admin_alert_tries\) \|\| 0\) < 3/.test(cr) && /if \(wentA\) \{ alerted\+\+; reachedA\+\+ \}/.test(cr) && /\)\) reachedA\+\+/.test(cr) && /!c\.admin_alerted && alertRetryOk/.test(cr))
 ck('overdue-lead alert · stamped only when someone was reached; else retried, 3 tries, 10+ min apart',

@@ -89,6 +89,7 @@ import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { officeQuiet, quietWords, afterHoursAllowed } from '../_shared/quiet-hours.ts'
 import { makePrefill, withPrefillLink, axisHm } from '../_shared/evv-prefill.ts'
+import { SIGN_DAYS, MAX_TRIES, signUrl, dateWords, nextVisitMessage, decideNextVisit, upcomingVisit, signItem } from '../_shared/evv-sign.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -588,9 +589,12 @@ Deno.serve(async (req) => {
   const wouldTextOut: Record<string, unknown>[] = []
   let textedOut = 0
   /* Missed shift notes (her ask, 2026-09-29): someone who forgot or can't clock out is asked for their shift note too,
-     so every shift has a note the office and the family can read. */
+     so every shift has a note the office and the family can read.
+     429 (Samantha, 2026-10-03: "it really needs to be completed at the time of the shift"): the reminder asks for the
+     correction form BEFORE they leave, signed by the client there. "it's Caring Companions", not "it's Cara" (she paused
+     an "it's Cara" text in Step 0). Her own wording (ops_settings.timekeeper_msg_out) is used as it is when set. */
   const msgOutTmpl = String(settings.timekeeper_msg_out || '')
-    || `Hi {first_name}, it's Cara with Caring Companions. Your shift with {client} ended at {time} but there's no clock-out yet. Please clock out in the AxisCare app now. If you've already left, we cannot make any manual changes to your time without the EVV correction form, completed and signed by the client: sc.mo-care.com/evv-correction-form. If you didn't put in your shift note, text it to the office now so we can put it in your shift for you.`
+    || `Hi {first_name}, it's Caring Companions. Your shift with {client} ended at {time} but there's no clock-out yet. Please clock out in the AxisCare app now. If you need your time corrected, fill in this form before you leave and have {client} sign it: sc.mo-care.com/evv-correction-form. If you didn't put in your shift note, text it to the office now so we can put it in your shift for you.`
   for (const v of visits) {
     if (v?.caregiver?.id == null || !v?.clockIn?.time || v?.clockOut?.time) continue
     const end = String(v?.scheduledEndDate ?? v?.endDate ?? '')
@@ -636,14 +640,130 @@ Deno.serve(async (req) => {
     } catch (err) { console.error('timekeeper clockout sms failed', err) }
   }
 
-  /* ── THE EVV AUTO-CHASE (her pick #9, 2026-09-19): once per morning,
-     yesterday's ended visits with no clock-in or clock-out get the signed-
-     correction-form text automatically — matching the hub's manual chase
-     exactly (same evv_followups records, so the board shows "chased" either
-     way, and a form already submitted is never chased). Saturday ~3pm, the
-     office gets one deadline nudge for still-unprocessed forms. Gated by
-     ops_settings.evv_chase_live. */
-  let evvChase: Record<string, unknown> = { ran: false }
+  /* ── PASS 4 (429): THE CLIENT'S SIGNATURE AT THE NEXT VISIT (Samantha, 2026-10-03: "it really needs to be completed
+     at the time of the shift that they are asking for a manual correction, or worst case scenario the next time they
+     are with that client --- if client doesnt sign we can call the client and verify over the phone").
+     A form the caregiver sent with "<client> will sign at my next visit" waits (client_sig_status 'waiting', one
+     public.evv_sign row with the client-signature link). When she is AT her next AxisCare visit with that client
+     (clocked in, 10+ minutes in, not clocked out, not 8pm to 7am) the CAREGIVER gets ONE text with the link. Never the
+     client or the family. Switch: ops_settings.evv_next_visit_live (default OFF) AND the caregiver texts
+     (timekeeper_text_live); off = practice (recorded once on the row, the Hub shows it). Once a day after 9am it looks
+     14 days ahead: no visit with that caregiver and client = a Needs Attention item "call <client> to verify". Also an
+     item when the link runs out unsigned, or the caregiver can't be texted. Writes nothing in a dry run. */
+  const nvLive = textLive && settings.evv_next_visit_live === true
+  const nextVisit: Record<string, unknown> = { live: nvLive, open: 0, texted: 0, would_text: 0, failed: 0, refused: 0, items: 0, rows_made: 0, closed: 0, looked_ahead: 0 }
+  // deno-lint-ignore no-explicit-any
+  const wouldTextNext: any[] = []
+  try {
+    const signRes = await sb.from('evv_sign').select('*')
+    const waitRes = await sb.from('evv_submissions').select('id, attendant, consumer, visitdate, new_in, new_out, processed, client_sig_status, caregiver_axiscare_id, client_axiscare_id, caregiver_linked_name, client_linked_name, axiscare_visit_id')
+      .eq('client_sig_status', 'waiting').eq('processed', false)
+    if (signRes?.error || waitRes?.error) nextVisit.skipped = 'the signature tables are not ready (429 not installed): ' + String((signRes?.error || waitRes?.error)?.message ?? '').slice(0, 120)
+    else {
+      // deno-lint-ignore no-explicit-any
+      const waiting = new Map<string, any>(((waitRes.data || []) as any[]).filter((f) => f?.client_sig_status === 'waiting' && !f?.processed).map((f) => [String(f.id), f]))
+      // deno-lint-ignore no-explicit-any
+      let signs = ((signRes.data || []) as any[])
+      /* a plain (blank) form the office has since linked to its caregiver and client: give it a link too */
+      for (const f of waiting.values()) {
+        if (!f.caregiver_axiscare_id || !f.client_axiscare_id || signs.some((x) => String(x?.submission_id) === String(f.id))) continue
+        const row = { token: crypto.randomUUID(), submission_id: String(f.id), created_by: 'timekeeper-watch (office-linked form)',
+          expires_at: new Date(Date.now() + SIGN_DAYS * 864e5).toISOString(), caregiver_axiscare_id: String(f.caregiver_axiscare_id), client_axiscare_id: String(f.client_axiscare_id),
+          caregiver_name: String(f.caregiver_linked_name || f.attendant || ''), client_display: String(f.client_linked_name || f.consumer || ''),
+          visit_date: String(f.visitdate || '').slice(0, 10) || null, visit_id: f.axiscare_visit_id ? String(f.axiscare_visit_id) : null }
+        if (watchLive) { const r = await sb.from('evv_sign').insert(row); if (!r?.error) { signs = signs.concat([row]); nextVisit.rows_made = Number(nextVisit.rows_made) + 1 } }
+      }
+      // deno-lint-ignore no-explicit-any
+      const patchSign = async (sg: any, patch: Record<string, unknown>) => { Object.assign(sg, patch); if (watchLive) await sb.from('evv_sign').update(patch).eq('token', sg.token) }
+      // deno-lint-ignore no-explicit-any
+      const raise = async (kind: 'no_visit' | 'expired' | 'not_reached', sg: any, f: any, why?: string) => {
+        if (!watchLive || sg.no_visit_item_at) return
+        await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: signItem(kind, sg, f, { owner: String(admins[0]), now: nowIso, why }) })
+        await patchSign(sg, { no_visit_item_at: nowIso, last_note: 'Needs Attention: ' + kind })
+        nextVisit.items = Number(nextVisit.items) + 1
+      }
+      const night = officeQuiet(new Date(), {})
+      const chiNow4 = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' })
+      let lookups = 0
+      for (const sg of signs) {
+        if (sg?.used_at || sg?.closed_at) continue
+        const f = waiting.get(String(sg?.submission_id))
+        if (!f) { await patchSign(sg, { closed_at: nowIso, last_note: 'closed: the form is no longer waiting for the client' }); nextVisit.closed = Number(nextVisit.closed) + 1; continue }
+        nextVisit.open = Number(nextVisit.open) + 1
+        if (Date.parse(String(sg.expires_at)) <= Date.now()) { await raise('expired', sg, f); continue }
+        if (!sg.caregiver_axiscare_id || !sg.client_axiscare_id || sg.next_visit_texted_at || sg.next_visit_refused_at) continue
+        /* once a day after 9am: is there a visit with this caregiver and client in the next 14 days? */
+        if (String(sg.next_check_day || '') !== chiNow4.slice(0, 10) && Number(chiNow4.slice(11, 13)) >= 9 && lookups < 8 && !sg.no_visit_item_at) {
+          lookups++
+          const to = new Date(Math.min(Date.parse(String(sg.expires_at)), Date.now() + SIGN_DAYS * 864e5)).toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+          // deno-lint-ignore no-explicit-any
+          const ahead: any[] = []; let aheadErr = ''
+          try {
+            let u: string | null = `https://${site}.axiscare.com/api/visits?clientIds=${encodeURIComponent(String(sg.client_axiscare_id))}&startDate=${day}&endDate=${to}`
+            for (let page = 0; u && page < 6; page++) {
+              const r: Response = await fetch(u, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': AC_VERSION } })
+              if (!r.ok) { aheadErr = `AxisCare responded ${r.status}`; break }
+              // deno-lint-ignore no-explicit-any
+              const j: any = await r.json().catch(() => ({}))
+              for (const v of rowsOf(j?.results?.visits ?? j?.visits)) if (!v?.removed) ahead.push(v)
+              u = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
+            }
+          } catch (e) { aheadErr = String(e).slice(0, 80) }
+          if (!aheadErr) {
+            nextVisit.looked_ahead = Number(nextVisit.looked_ahead) + 1
+            const up = upcomingVisit(sg, ahead, day)
+            await patchSign(sg, { next_check_day: day, next_visit_seen: up ? String(up?.scheduledStartDate ?? '').slice(0, 16) : null })
+            if (!up) { await raise('no_visit', sg, f); continue }
+          }
+        }
+        const d = decideNextVisit(sg, visits, minutesSince, night)
+        if (d.action !== 'send') continue
+        const v = d.visit
+        const cgName = String(f.caregiver_linked_name || sg.caregiver_name || f.attendant || '')
+        const cg = byAxis.get(String(sg.caregiver_axiscare_id)) ?? byName.get(nameKeyOf(cgName))
+        const first = String(cg?.first ?? '') || cgName.split(' ')[0]
+        const clientFirst = String(v?.client?.firstName ?? '').trim() || String(sg.client_display || '').split(' ')[0] || 'your client'
+        const message = nextVisitMessage(settings.evv_next_visit_msg, { first, client: clientFirst, date: dateWords(f.visitdate ?? sg.visit_date), link: signUrl(String(sg.token)) })
+        const phone = normalisePhone(cg?.phone)
+        if (!nvLive) {
+          wouldTextNext.push({ caregiver: cgName, client: clientFirst, form_date: String(f.visitdate ?? ''), visit: String(v?.id ?? ''), phone_last4: phone ? phone.slice(-4) : null })
+          nextVisit.would_text = Number(nextVisit.would_text) + 1
+          if (!sg.next_visit_practice_at) await patchSign(sg, { next_visit_practice_at: nowIso, next_visit_id: String(v?.id ?? ''),
+            next_visit_start: String(v?.scheduledStartDate ?? '').slice(0, 16), last_note: 'practice: would have texted the caregiver the signature link' })
+          continue
+        }
+        if (!phone) { await patchSign(sg, { next_visit_refused_at: nowIso, last_note: 'no phone on the roster' }); await raise('not_reached', sg, f, 'no phone on the roster'); nextVisit.refused = Number(nextVisit.refused) + 1; continue }
+        const contact = await contactForOutbound(sb, ghl, { phone, firstName: first }, 'urgent_internal',
+          { audience: 'caregiver', channel: 'sms', sender: 'timekeeper-watch (EVV next visit)' })
+        if (!contact) {   /* opted out or refused by the gate: contactForOutbound already raised a "didn't go through" card */
+          await patchSign(sg, { next_visit_refused_at: nowIso, last_note: 'text refused (opted out, or the gate refused the number)' })
+          await raise('not_reached', sg, f, 'the text was refused: opted out, or the number is not trusted'); nextVisit.refused = Number(nextVisit.refused) + 1; continue
+        }
+        /* NO SILENT FAILURES: a GoHighLevel refusal raises its own card (ghlSendChecked); tried again next run while she is there, 3 tries */
+        const ok = await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+          'timekeeper-watch (EVV next visit)', { channel: 'sms', contactId: contact.contactId, address: phone, who: cgName }, { message })
+        if (ok) {
+          /* the link stays good through this visit: at least until tomorrow */
+          const exp = new Date(Math.max(Date.parse(String(sg.expires_at)) || 0, Date.now() + 864e5)).toISOString()
+          await patchSign(sg, { next_visit_texted_at: nowIso, next_visit_id: String(v?.id ?? ''), next_visit_start: String(v?.scheduledStartDate ?? '').slice(0, 16),
+            expires_at: exp, last_note: 'texted the caregiver at the visit' })
+          nextVisit.texted = Number(nextVisit.texted) + 1
+        } else {
+          const tries = (Number(sg.next_visit_tries) || 0) + 1
+          await patchSign(sg, tries >= MAX_TRIES ? { next_visit_tries: tries, next_visit_refused_at: nowIso, last_note: `the text failed ${tries} times` } : { next_visit_tries: tries, last_note: 'the text failed; trying again' })
+          if (tries >= MAX_TRIES) await raise('not_reached', sg, f, `the text failed ${tries} times`)
+          nextVisit.failed = Number(nextVisit.failed) + 1
+        }
+      }
+    }
+  } catch (e) { nextVisit.error = String(e).slice(0, 160) /* the next-visit pass must never break the timekeeper */ }
+
+  /* ── THE EVV MORNING CHASE IS RETIRED (429, Samantha 2026-10-03). It texted yesterday's missed punches a NEW blank
+     form the next morning, after they had left the client, so the client could not sign. Her rule: the form is done
+     at the shift (the clock-out reminder above asks for it before they leave), or at the next visit with that client
+     (PASS 4, its own switch evv_next_visit_live), or the office verifies by phone. ops_settings.evv_chase_live now only
+     drives the Saturday office deadline reminder below; turning it on never texts a caregiver. */
+  const evvChase: Record<string, unknown> = { ran: false, why: 'retired in 429: no morning text; the next-visit signature text (evv_next_visit_live) replaces it' }
   try {
     const chaseLive = settings.evv_chase_live === true
     const chiNowS = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' })
@@ -652,69 +772,6 @@ Deno.serve(async (req) => {
     const { data: stRowE } = await sb.from('app_data').select('data').eq('key', 'evv_chase_state').maybeSingle()
     // deno-lint-ignore no-explicit-any
     const chaseState: any[] = Array.isArray(stRowE?.data) ? stRowE!.data : []
-    /* RETRY (2026-10-01, Samantha "yes make them retry"): a day whose chase had texts GoHighLevel refused is not
-       "done": it runs again 30+ minutes later, at most 3 runs a day. Texts that went are stamped per visit
-       (evv_followups) and never resent; an opt-out refusal is not a failure and is not retried. */
-    const stE = chaseState.find((x) => x?.id === 'chase_' + todayE)
-    const doneToday = !!stE && !(Number(stE.failed) > 0 && (Number(stE.runs) || 1) < 3
-      && Date.now() - Date.parse(String(stE.at || '')) >= 30 * 60_000)
-    if (chaseLive && chiHourE >= 9 && !doneToday && !forceDry) {
-      const yday = new Date(Date.now() - 864e5).toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
-      // deno-lint-ignore no-explicit-any
-      const yvisits: any[] = []
-      let yu: string | null = `https://${site}.axiscare.com/api/visits?startDate=${yday}&endDate=${yday}`
-      for (let page = 0; yu && page < 8; page++) {
-        const r: Response = await fetch(yu, { headers: {
-          Authorization: `Bearer ${token}`, Accept: 'application/json',
-          'X-AxisCare-Api-Version': AC_VERSION } })
-        if (!r.ok) break
-        // deno-lint-ignore no-explicit-any
-        const j: any = await r.json().catch(() => ({}))
-        for (const v of rowsOf(j?.results?.visits ?? j?.visits)) if (!v?.removed) yvisits.push(v)
-        yu = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
-      }
-      const { data: fuRow } = await sb.from('app_data').select('data').eq('key', 'evv_followups').maybeSingle()
-      const chased = new Set((Array.isArray(fuRow?.data) ? fuRow!.data : [])
-        .map((e: { id?: unknown }) => String(e?.id ?? '')))
-      const { data: subs } = await sb.from('evv_submissions').select('attendant, visitdate')
-      const subKeys = new Set((subs || []).map((s) =>
-        nameKeyOf(String(s.attendant || '')) + '|' + String(s.visitdate || '')))
-      let chasedNow = 0, skippedDone = 0, failedNow = 0
-      for (const v of yvisits) {
-        if (v?.caregiver?.id == null) continue
-        const cin = clockHM(v?.clockIn) ?? String(v?.actualStartDate ?? '').slice(11, 16)
-        const cout = clockHM(v?.clockOut) ?? String(v?.actualEndDate ?? '').slice(11, 16)
-        if (cin && cout) continue
-        const vid = String(v?.id ?? '')
-        const key = 'evv_' + yday + '_' + vid.replace(/[^A-Za-z0-9]/g, '_')
-        const cgName = [String(v.caregiver.firstName ?? '').trim(), String(v.caregiver.lastName ?? '').trim()]
-          .filter(Boolean).join(' ')
-        if (chased.has(key) || subKeys.has(nameKeyOf(cgName) + '|' + yday)) { skippedDone++; continue }
-        const cg = byAxis.get(String(v.caregiver.id)) ?? byName.get(nameKeyOf(cgName))
-        const phone = normalisePhone(cg?.phone)
-        if (!phone) continue
-        const contact = await contactForOutbound(sb, ghl,
-          { phone, firstName: String(cg?.first ?? '') || cgName.split(' ')[0] }, 'routine_internal', { audience: 'caregiver', channel: 'sms', sender: 'timekeeper-watch (EVV chase)' })
-        if (!contact) continue
-        const miss = !cin && !cout ? 'clock-in and clock-out' : !cin ? 'clock-in' : 'clock-out'
-        const clientFirst = String(v?.client?.firstName ?? '').trim() || 'your client'
-        const msg = `Hi ${String(cg?.first ?? '') || cgName.split(' ')[0]}, it's the Caring Companions office. Your visit with ${clientFirst} yesterday is missing its ${miss} in AxisCare. Please complete the EVV correction form and have the client sign it: sc.mo-care.com/evv-correction-form — thank you!`
-        try {
-          if (await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
-            'timekeeper-watch (EVV chase)', { channel: 'sms', contactId: contact.contactId, address: phone, who: cgName }, { message: msg })) {
-            chasedNow++
-            await sb.rpc('upsert_app_data_item', { target_key: 'evv_followups', item: {
-              id: key, status: 'texted', at: new Date().toISOString(), by: 'evv-chase',
-              caregiver: cgName, client: [v?.client?.firstName, v?.client?.lastName].filter(Boolean).join(' '),
-              miss: 'no ' + miss, date: yday } })
-          } else failedNow++
-        } catch { failedNow++ /* one failed chase never blocks the rest */ }
-      }
-      await sb.rpc('upsert_app_data_item', { target_key: 'evv_chase_state', item: {
-        id: 'chase_' + todayE, at: new Date().toISOString(), chased: chasedNow, already_handled: skippedDone,
-        failed: failedNow, runs: (Number(stE?.runs) || 0) + 1 } })
-      evvChase = { ran: true, day_checked: yday, chased: chasedNow, already_handled: skippedDone, failed: failedNow }
-    } else evvChase = { ran: false, why: !chaseLive ? 'ops_settings.evv_chase_live is off' : doneToday ? 'already ran today' : 'before 9am Chicago' }
     /* Saturday deadline nudge: forms still unprocessed with Sunday-midnight looming. */
     const wkday = new Date().toLocaleString('en-US', { timeZone: 'America/Chicago', weekday: 'short' })
     /* office quiet hours (2026-10-03): the office nudge never goes 8pm to 7am (not stamped, nothing queued) */
@@ -756,6 +813,8 @@ Deno.serve(async (req) => {
         : `${withClockIn}/${startedAWhile} populate — if this is well under 100%, raise timekeeper_grace_min before texting goes live`,
     },
     evv_chase: evvChase,
+    evv_next_visit: nextVisit,
+    would_text_next_visit: role === 'authenticated' || role === 'service_role' ? wouldTextNext : wouldTextNext.length,
     ladders_resolved: resolved, ladders_opened: opened,
     texts_sent: texted, clockout_texts_sent: textedOut, office_alerts: alerted,
     skipped_no_phone: skippedNoPhone, refused_by_outbound_gate: refusedGate,
@@ -772,12 +831,13 @@ Deno.serve(async (req) => {
       switches: { timekeeper_watch_live: settings.timekeeper_watch_live === true,
                   timekeeper_text_live: settings.timekeeper_text_live === true,
                   timekeeper_admin_loop_live: settings.timekeeper_admin_loop_live === true,
+                  evv_next_visit_live: settings.evv_next_visit_live === true, evv_chase_live: settings.evv_chase_live === true,
                   missed_clockin_after_hours: tkAfterHours } },
   }
 
   /* Log when something happened, plus once an hour so the watchdog can tell
      "quiet" from "dead" — 720 identical rows a day would drown the log. */
-  const acted = resolved + opened + texted + textedOut + alerted + loopSent + fin.length
+  const acted = resolved + opened + texted + textedOut + alerted + loopSent + fin.length + Number(nextVisit.texted) + Number(nextVisit.items)
   const topOfHour = new Date().getMinutes() < 5
   if (acted || wouldText.length || wouldTextOut.length || wouldAlert.length || topOfHour) {
     try {

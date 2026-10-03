@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="referrer" content="no-referrer">
+<title>EVV Correction Form: Client Signature · Caring Companions</title>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- 429 (Samantha, 2026-10-03: "it really needs to be completed at the time of the shift ... or worst case scenario the
+     next time they are with that client"). The caregiver sent her part of the EVV correction form without the client's
+     signature ("<client> will sign at my next visit"). At that next visit she gets a text with this page's link
+     (?t=<random token>, nothing else in the address). The page shows her completed part READ ONLY and asks only for the
+     client's signature. It can save nothing but the client's signature (evv_sign_submit): the caregiver's answers
+     cannot be changed here. One use; the link runs out after 14 days (then the office calls the client to verify). -->
+<style>
+:root {
+  --navy:#0D365F; --yellow:#FFC671; --teal:#54BDB8;
+  --bg:#F6F9FD; --white:#fff; --gray:#6B7280; --border:#e4e1d8;
+  --green-text:#15803d; --amber-bg:#fef3c7; --amber-text:#92400e; --red:#EF4444;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min-height:100vh}
+.form-header{background:var(--navy);padding:1.1rem 1.5rem;display:flex;align-items:center;gap:1rem}
+.form-header img{height:42px;filter:brightness(0) invert(1)}
+.form-header-text h1{color:#fff;font-size:1rem;font-weight:700}
+.form-header-text p{color:rgba(255,255,255,.6);font-size:.75rem;margin-top:.1rem}
+.form-wrap{max-width:700px;margin:1.5rem auto;padding:0 1rem 3rem}
+.section{background:var(--white);border-radius:12px;box-shadow:0 2px 12px rgba(14,56,96,.07);padding:1.25rem 1.4rem;margin-bottom:1.1rem}
+.section-title{font-size:.88rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.9rem;padding-bottom:.55rem;border-bottom:2px solid var(--yellow)}
+.intro{background:#e6f8f7;border:1.5px solid var(--teal);border-radius:10px;padding:.8rem 1rem;font-size:.9rem;line-height:1.55;margin-bottom:1.1rem}
+.row{display:flex;gap:.6rem;font-size:.86rem;padding:.25rem 0;flex-wrap:wrap}
+.row .k{min-width:150px;color:var(--gray);font-weight:600;font-size:.78rem;text-transform:uppercase;letter-spacing:.03em}
+.row .v{flex:1;min-width:160px;white-space:pre-wrap;word-break:break-word}
+.big{font-size:1.05rem;font-weight:700}
+.para{font-size:.82rem;color:var(--gray);margin-bottom:.75rem;line-height:1.55}
+.sig-img{border:1.5px solid var(--border);border-radius:8px;background:#fff;padding:.3rem}
+.sig-img img{display:block;width:100%;max-height:140px;object-fit:contain}
+.sig-wrap{border:1.5px solid var(--border);border-radius:8px;overflow:hidden;background:#fff}
+.sig-wrap canvas{display:block;width:100%;touch-action:none}
+.sig-toolbar{display:flex;justify-content:space-between;align-items:center;padding:.35rem .7rem;background:var(--bg);border-top:1px solid var(--border)}
+.sig-toolbar span{font-size:.72rem;color:var(--gray)}
+.sig-clear-btn{background:none;border:1px solid var(--border);border-radius:5px;padding:.2rem .55rem;font-size:.72rem;font-family:inherit;cursor:pointer;color:var(--navy)}
+.confirm{display:flex;gap:.6rem;align-items:flex-start;font-size:.92rem;font-weight:600;margin:.4rem 0 .9rem;cursor:pointer;line-height:1.45}
+.confirm input{accent-color:var(--navy);margin-top:.25rem;width:1.15rem;height:1.15rem;flex-shrink:0}
+.field-error{font-size:.75rem;color:var(--red);margin-top:.3rem;display:none}
+.field-error.show{display:block}
+.submit-btn{width:100%;padding:.85rem;background:var(--navy);color:#fff;border:none;border-radius:10px;font-family:inherit;font-size:1rem;font-weight:700;cursor:pointer;margin-top:.5rem}
+.submit-btn:disabled{opacity:.6;cursor:not-allowed}
+.msg{max-width:540px;margin:3rem auto;padding:1.6rem 1.8rem;background:#fff;border-radius:14px;box-shadow:0 8px 32px rgba(14,56,96,.12);font-size:.95rem;line-height:1.65;text-align:center}
+.msg h2{font-size:1.2rem;margin-bottom:.5rem}
+.msg.good h2{color:var(--green-text)}
+.msg.warn h2{color:var(--amber-text)}
+.msg a{color:var(--teal);font-weight:700}
+#err-box{display:none;margin-top:.85rem;background:#fef2f2;border:1.5px solid #fca5a5;border-radius:10px;padding:.85rem 1rem;font-size:.85rem;color:#b91c1c;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="form-header">
+  <img src="https://images.leadconnectorhq.com/image/f_webp/q_80/r_1200/u_https://assets.cdn.filesafe.space/Recp0AhyMh8lrtKJ9kaj/media/691b9707bb3d037e0ad689bf.png" alt="Caring Companions">
+  <div class="form-header-text"><h1>EVV Correction Form: Client Signature</h1><p>Caring Companions In-Home Senior Care</p></div>
+</div>
+<div id="page"><div class="msg"><h2>Loading the form...</h2></div></div>
+
+<script>
+/* EVVSIGN:start ── pure functions (tested in node) ── */
+const EVVSIGN = (function () {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  function token(search) {
+    let t = null;
+    try { t = new URLSearchParams(search || '').get('t'); } catch (e) { t = null; }
+    return t && UUID.test(t.trim()) ? t.trim().toLowerCase() : null;
+  }
+  const hm = (x) => { const m = String(x || '').match(/^(\d{1,2}):(\d{2})/); return m ? m[1].padStart(2, '0') + ':' + m[2] : ''; };
+  function time12(x) { const t = hm(x); if (!t) return ''; let h = +t.slice(0, 2); const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return h + ':' + t.slice(3) + ' ' + ap; }
+  function dateWords(d) {
+    const m = String(d || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return String(d || '');
+    return new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+  }
+  const first = (n) => String(n || '').trim().split(/\s+/)[0] || '';
+  /* evv_sign_get's answer (status ok) -> what the page shows. Read only. */
+  function view(i) {
+    i = i || {};
+    const span = [time12(i.new_in), time12(i.new_out)].filter(Boolean).join(' to ');
+    const orig = [i.orig_in ? 'clock-in ' + time12(i.orig_in) : '', i.orig_out ? 'clock-out ' + time12(i.orig_out) : ''].filter(Boolean).join(', ');
+    const tasks = String(i.tasks || '').split(/;\s*/).map((t) => t.trim()).filter(Boolean);
+    const cg = String(i.caregiver_name || 'your caregiver'), cl = String(i.client_display || '');
+    return {
+      caregiver: cg, client: cl, date: dateWords(i.visit_date), span, orig: orig || 'nothing recorded', tasks,
+      reason: String(i.reason || ''), notes: String(i.notes || ''), submitted: dateWords(i.submitted_on),
+      intro: (first(cl) ? first(cl) + ', ' : '') + first(cg) + ' filled in this EVV correction form for ' + dateWords(i.visit_date)
+        + '. Please read it, and if it is right, sign at the bottom. Your signature confirms ' + first(cg) + ' was with you during these times.',
+      confirm: 'I confirm ' + cg + ' cared for me on ' + dateWords(i.visit_date) + (span ? ' from ' + span : '') + '.',
+    };
+  }
+  /* a link that can't be used -> [title, words, kind] */
+  function statusWords(status) {
+    if (status === 'signed' || status === 'used') return ['Already signed', 'Thank you. This form is already signed, so there is nothing else to do.', 'good'];
+    if (status === 'closed') return ['Nothing to sign', 'The office has already taken care of this form, so it does not need a signature here.', 'good'];
+    if (status === 'expired') return ['This link has expired', 'Please call the office at (417) 234-8494 so we can verify the visit with you.', 'warn'];
+    if (status === 'not_found') return ['This link is not valid', 'Please check the link in the text, or call the office at (417) 234-8494.', 'warn'];
+    return ['The form could not load', 'Please check your internet connection and try again. If it keeps happening, call the office at (417) 234-8494.', 'warn'];
+  }
+  /* evv_sign_submit's answer -> null (saved) or [words, final] */
+  function submitWords(r) {
+    if (r && r.ok) return null;
+    const e = r && r.error;
+    if (e === 'signed' || e === 'used') return ['This form is already signed. Thank you.', true];
+    if (e === 'closed') return ['The office has already taken care of this form.', true];
+    if (e === 'expired') return ['This link has expired. Please call the office at (417) 234-8494.', true];
+    if (e === 'not_found') return ['This link is not valid. Please call the office at (417) 234-8494.', true];
+    if (e === 'invalid' && r.field === 'confirm') return ['Please tick the box to confirm the times.', false];
+    if (e === 'invalid' && r.field === 'sig_consumer') return ['Please sign in the box.', false];
+    return ['Please check your internet connection and try again.', false];
+  }
+  return { token, view, statusWords, submitWords, time12, dateWords };
+})();
+if (typeof globalThis !== 'undefined') globalThis.EVVSIGN = EVVSIGN;
+/* EVVSIGN:end */
+
+const SB_URL = 'https://zngsgedlsxinbygwmxwn.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpuZ3NnZWRsc3hpbmJ5Z3dteHduIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI1NDIzNDQsImV4cCI6MjA5ODExODM0NH0.L_31_UKdccyRH9n7p1GaBlZTqcJipB008H-GIvxwLxM';
+const esc = (t) => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const TOKEN = EVVSIGN.token(location.search);
+const page = document.getElementById('page');
+const sig = { drawing: false, has: false, ctx: null, canvas: null };
+function msgBox(t) { page.innerHTML = '<div class="msg ' + t[2] + '"><h2>' + esc(t[0]) + '</h2><p>' + esc(t[1]) + '</p></div>'; }
+const row = (k, v) => '<div class="row"><span class="k">' + esc(k) + '</span><span class="v">' + v + '</span></div>';
+
+function render(info) {
+  const v = EVVSIGN.view(info);
+  const safeSig = /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(String(info.sig_attendant || '')) ? info.sig_attendant : '';
+  page.innerHTML = '<div class="form-wrap">'
+    + '<div class="intro">' + esc(v.intro) + '</div>'
+    + '<div class="section"><div class="section-title">The caregiver\'s part (already filled in)</div>'
+    + row('Caregiver', '<span class="big">' + esc(v.caregiver) + '</span>') + row('Client', esc(v.client)) + row('Date of visit', esc(v.date))
+    + row('Corrected times', '<span class="big">' + esc(v.span || '(not given)') + '</span>') + row('AxisCare showed', esc(v.orig))
+    + (v.tasks.length ? row('Tasks', esc(v.tasks.join('\n'))) : '') + row('Reason', esc(v.reason)) + row('What happened', esc(v.notes))
+    + row('Sent', esc(v.submitted))
+    + (safeSig ? '<div class="row"><span class="k">Caregiver signature</span><span class="v"><div class="sig-img"><img alt="Caregiver signature" src="' + safeSig + '"></div></span></div>' : '')
+    + '<p class="para" style="margin-top:.6rem">This part cannot be changed here. If something is wrong, do not sign: call the office at (417) 234-8494.</p></div>'
+    + '<div class="section"><div class="section-title">Client Signature (required)</div>'
+    + '<p class="para">The client\'s signature confirms they were receiving care during the corrected timeframe. The office cannot make any manual changes to recorded time without it.</p>'
+    + '<label class="confirm"><input type="checkbox" id="f-confirm"> <span>' + esc(v.confirm) + '</span></label>'
+    + '<div class="field-error" id="err-confirm">Please tick the box to confirm the times.</div>'
+    + '<div class="sig-wrap"><canvas id="sig-consumer" height="140"></canvas><div class="sig-toolbar"><span>Client signs here</span>'
+    + '<button class="sig-clear-btn" type="button" onclick="clearSig()">Clear</button></div></div>'
+    + '<div class="field-error" id="err-sig">Please sign in the box.</div>'
+    + '<button class="submit-btn" id="submit-btn" type="button" onclick="submitSig()">Sign the form</button>'
+    + '<div id="err-box"></div></div></div>';
+  initSig();
+}
+
+function initSig() {
+  const canvas = document.getElementById('sig-consumer'), ctx = canvas.getContext('2d'), h = canvas.height;
+  const dpr = window.devicePixelRatio || 1, rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr; canvas.height = h * dpr; canvas.style.height = h + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.strokeStyle = '#1a2f4a'; ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  Object.assign(sig, { ctx, canvas, has: false, drawing: false });
+  const pos = (e) => { const r = canvas.getBoundingClientRect(); const s = e.touches ? e.touches[0] : e; return { x: s.clientX - r.left, y: s.clientY - r.top }; };
+  const down = (e) => { if (e.cancelable) e.preventDefault(); sig.drawing = true; const p = pos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); };
+  const move = (e) => { if (e.cancelable) e.preventDefault(); if (!sig.drawing) return; const p = pos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); sig.has = true; };
+  const up = () => { sig.drawing = false; };
+  canvas.addEventListener('mousedown', down); canvas.addEventListener('mousemove', move); canvas.addEventListener('mouseup', up); canvas.addEventListener('mouseleave', up);
+  canvas.addEventListener('touchstart', down, { passive: false }); canvas.addEventListener('touchmove', move, { passive: false }); canvas.addEventListener('touchend', up);
+}
+function clearSig() { if (!sig.ctx) return; sig.ctx.clearRect(0, 0, sig.canvas.width, sig.canvas.height); sig.has = false; }
+
+async function submitSig() {
+  const conf = document.getElementById('f-confirm').checked;
+  document.getElementById('err-confirm').classList.toggle('show', !conf);
+  document.getElementById('err-sig').classList.toggle('show', !sig.has);
+  if (!conf || !sig.has) return;
+  const btn = document.getElementById('submit-btn'), box = document.getElementById('err-box');
+  btn.disabled = true; btn.textContent = 'Saving...'; box.style.display = 'none';
+  let r = null;
+  try { const res = await window.SBC.rpc('evv_sign_submit', { p_token: TOKEN, p_payload: { confirm: true, sig_consumer: sig.canvas.toDataURL('image/png') } }); r = res && !res.error ? res.data : null; }
+  catch (e) { r = null; }
+  const bad = EVVSIGN.submitWords(r);
+  if (!bad) { msgBox(['Thank you', 'The form is signed. The office will now correct the time. You can hand the phone back.', 'good']); window.scrollTo(0, 0); return; }
+  if (bad[1]) { msgBox([bad[0], '', 'warn']); return; }
+  btn.disabled = false; btn.textContent = 'Sign the form';
+  box.textContent = bad[0]; box.style.display = 'block';
+}
+
+window.addEventListener('load', async () => {
+  if (!TOKEN) { msgBox(EVVSIGN.statusWords('not_found')); return; }
+  if (!window.supabase || !window.supabase.createClient) { msgBox(EVVSIGN.statusWords('error')); return; }
+  window.SBC = window.supabase.createClient(SB_URL, SB_KEY);
+  let res = null;
+  try { const r = await window.SBC.rpc('evv_sign_get', { p_token: TOKEN }); res = r && !r.error ? r.data : null; } catch (e) { res = null; }
+  if (!res || res.status !== 'ok') { msgBox(EVVSIGN.statusWords(res && res.status)); return; }
+  render(res);
+});
+</script>
+</body>
+</html>
