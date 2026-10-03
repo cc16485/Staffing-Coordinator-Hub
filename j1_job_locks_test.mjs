@@ -126,7 +126,7 @@ reset()
   CLOCK.sv = '2026-10-03 07:30:00'
   r = await call(h, 'https://x/functions/v1/lead-digest', H.cron)
   ck('J1 · lead-digest: the schedule on a Saturday sends nothing (weekdays only)', r.s === 200 && /weekend/.test(r.j?.status || '') && SENT.length === 0, r)
-  CLOCK.sv = '2026-10-05 07:30:00'; APP.morning_brief_state = [{ id: 'sent_2026-10-05' }]
+  CLOCK.sv = '2026-10-05 08:30:00'; APP.morning_brief_state = [{ id: 'sent_2026-10-05' }]
   r = await call(h, 'https://x/functions/v1/lead-digest', H.cron)
   ck('J1 · lead-digest: on a Monday the schedule goes on as before (here: already sent today)', r.s === 200 && r.j?.status === 'already sent today', r)
   CLOCK.sv = '2026-10-06 07:30:00'
