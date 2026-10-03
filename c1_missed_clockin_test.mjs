@@ -12,6 +12,7 @@ globalThis.Date = FakeDate
 const at = (hm, day = '2026-09-30') => { NOW = RealDate.parse(`${day}T${hm}:00-05:00`) }
 /* ── the fake world ── */
 let APP, T, SENT, VISITS, CLIENTS, READHOOK
+let GHLC = [], GHL_CALLS = []   // 431: fake GoHighLevel contacts the search can find, and every call made to GHL
 const reset = () => {
   APP = { ops_settings: { timekeeper_watch_live: true, timekeeper_text_live: true, coverage_alert_admins: ['sam@mo-care.com', 'kry@mo-care.com'] },
     caregivers: [{ id: 1, first: 'Maria', last: 'Lopez', phone: '4175550111', axiscare_id: '501', active: true }],
@@ -40,6 +41,10 @@ globalThis.__db = { from: q, auth: { getUser: async () => ({ data: { user: null 
   rpc: async (fn, a) => { if (fn === 'upsert_app_data_item') { const arr = (APP[a.target_key] ||= []); const i = arr.findIndex((x) => x.id === a.item.id); const it = JSON.parse(JSON.stringify(a.item)); if (i >= 0) arr[i] = it; else arr.push(it) } return { data: null, error: null } } }
 const PHONE_OF = {}
 globalThis.fetch = async (url, o) => { url = String(url); const body = o && o.body ? JSON.parse(o.body) : {}
+  if (url.includes('leadconnectorhq.com')) GHL_CALLS.push({ method: (o && o.method) || 'GET', url })
+  if (/leadconnectorhq\.com\/contacts\/\?/.test(url)) { const qq = new URL(url).searchParams.get('query') || ''
+    const hit = GHLC.filter((c) => (c.phone && String(c.phone).replace(/\D/g, '').endsWith(qq)) || (c.email && c.email.toLowerCase() === qq.toLowerCase()))
+    return new Response(JSON.stringify({ contacts: hit }), { status: 200 }) }
   if (url.includes('axiscare.com/api/visits?')) return new Response(JSON.stringify({ results: { visits: JSON.parse(JSON.stringify(VISITS)), nextPage: null } }), { status: 200 })
   const vm = url.match(/axiscare\.com\/api\/visits\/(\d+)/); if (vm) return new Response(JSON.stringify({ results: VISITS.find((v) => String(v.id) === vm[1]) }), { status: 200 })
   if (url.includes('axiscare.com/api/clients?')) return new Response(JSON.stringify({ results: { clients: CLIENTS } }), { status: 200 })
@@ -105,6 +110,37 @@ at('09:08'); p = await page({ ...L, action: 'view' })
 ck('page · view: first names, the time, minutes past start, numbers to call', p.s === 200 && p.j.caregiver_first === 'Maria' && p.j.client_first === 'Ruth' && p.j.shift_time === '9am' && p.j.minutes_past_start === 8
    && p.j.caregiver_phone && p.j.client_phone && p.j.open === true && p.j.me === 'Samantha', p.j)
 ck('page · view changed nothing', !lad().resolved_at && !lad().evv_sent_at)
+/* 431 · "Call in LeadConnector": the client's EXISTING GHL contact, found read-only, never created */
+{ const GL = 'https://app.leadconnectorhq.com/v2/location/loc/contacts/detail/', GW = 'https://app.hirecara.com/v2/location/loc/contacts/detail/'
+  const noWrite = () => GHL_CALLS.every((c) => c.method === 'GET') && !GHL_CALLS.some((c) => /upsert|conversations|\/tags/.test(c.url))
+  GHLC = []; GHL_CALLS = []; p = await page({ ...L, action: 'view' })
+  ck('431 · no GHL contact for the home number: no GHL button (client_ghl null), the cell number is still there', p.s === 200 && p.j.client_ghl === null && p.j.client_phone, p.j)
+  ck('431 · it searched GHL by the client\'s number and created nothing', GHL_CALLS.some((c) => /contacts\/\?.*query=4175550777/.test(c.url)) && noWrite(), GHL_CALLS)
+  GHLC = [{ id: 'gRuth1', firstName: 'Ruth', phone: '+14175550777' }]; GHL_CALLS = []; p = await page({ ...L, action: 'view' })
+  ck('431 · exactly one contact on the home number: the contact id and both links', p.j.client_ghl?.contact_id === 'gRuth1' && p.j.client_ghl.app_url === GL + 'gRuth1' && p.j.client_ghl.web_url === GW + 'gRuth1'
+     && Object.keys(p.j.client_ghl).sort().join() === 'app_url,contact_id,web_url', p.j.client_ghl)
+  ck('431 · only GET searches, never a create, update or send', GHL_CALLS.length >= 1 && noWrite(), GHL_CALLS)
+  GHLC = [{ id: 'gRuth1', phone: '+14175550777' }, { id: 'gHus2', phone: '(417) 555-0777' }]; GHL_CALLS = []; p = await page({ ...L, action: 'view' })
+  ck('431 · two contacts share the home line: no GHL button (software never picks between people)', p.j.client_ghl === null && noWrite(), p.j.client_ghl)
+  GHLC = [{ id: 'gOther', phone: '+14175559999' }]; p = await page({ ...L, action: 'view' })
+  ck('431 · a contact with a different number (search returned it loosely) is not used', p.j.client_ghl === null, p.j.client_ghl)
+  CLIENTS[0].email = 'ruth@example.com'; GHLC = [{ id: 'gRuth1', phone: '+14175550777' }, { id: 'gMail', email: 'Ruth@Example.com' }]; p = await page({ ...L, action: 'view' })
+  ck('431 · phone finds one contact, email finds another: two people, so no GHL button', p.j.client_ghl === null, p.j.client_ghl)
+  GHLC = [{ id: 'gRuth1', phone: '+14175550777', email: 'ruth@example.com' }]; p = await page({ ...L, action: 'view' })
+  ck('431 · phone and email agree on the same contact: one contact, links given', p.j.client_ghl?.contact_id === 'gRuth1', p.j.client_ghl)
+  delete CLIENTS[0].email
+  T.person_source_id = [{ person_id: 'P1', system: 'axiscare', entity_type: 'client', source_id: '701', confidence: 'confirmed', needs_review: false },
+                        { person_id: 'P1', system: 'ghl', entity_type: 'client', source_id: 'gStored', confidence: 'confirmed', needs_review: false }]
+  GHLC = []; GHL_CALLS = []; p = await page({ ...L, action: 'view' })
+  ck('431 · a GHL link the Hub already holds (confirmed) is used first, with no search', p.j.client_ghl?.contact_id === 'gStored' && p.j.client_ghl.app_url === GL + 'gStored' && !GHL_CALLS.some((c) => /4175550777/.test(c.url)), { g: p.j.client_ghl, GHL_CALLS })
+  T.person_source_id[1].confidence = 'probable'; T.person_source_id[1].needs_review = true; GHLC = [{ id: 'gRuth1', phone: '4175550777' }]; p = await page({ ...L, action: 'view' })
+  ck('431 · a link still waiting for review is not trusted; the search decides', p.j.client_ghl?.contact_id === 'gRuth1', p.j.client_ghl)
+  T.person_source_id = []; GHLC = [{ id: 'gRuth1', phone: '4175550777' }]
+  GHLC = [{ id: 'gMaria', phone: '+14175550111' }]; p = await page({ ...L, action: 'view' })
+  ck('431 · the caregiver\'s own GHL contact (exactly one on her roster number) gives her office-line links too', p.j.caregiver_ghl?.contact_id === 'gMaria' && p.j.caregiver_ghl.app_url === GL + 'gMaria' && p.j.client_ghl === null, [p.j.caregiver_ghl, p.j.client_ghl])
+  GHLC = [{ id: 'gMaria', phone: '+14175550111' }, { id: 'gMaria2', phone: '4175550111' }]; p = await page({ ...L, action: 'view' })
+  ck('431 · two contacts on the caregiver\'s number: no caregiver link', p.j.caregiver_ghl === null, p.j.caregiver_ghl)
+  ck('431 · looking up the contact changed nothing on the alert', !lad().resolved_at && !lad().evv_sent_at) }
 p = await page({ ...L, action: 'snooze' }); ck('page · snooze: 10 minutes for Samantha only', p.s === 200 && p.j.snoozed_until, p)
 at('09:10'); const s0 = toSam().length, k0 = toKry().length; await tick()
 ck('C1 · a snoozed admin is skipped; the other still gets the repeat', toSam().length === s0 && toKry().length === k0 + 1, { s: toSam().length - s0, k: toKry().length - k0 })
@@ -174,6 +210,8 @@ lad().resolved_at = 'x'; rr = await reply({ id: 'C1', phone: '4175550111', name:
   ck('source · the clock-out reminder keeps the EVV form (they have left)', /msgOutTmpl[\s\S]{0,400}evv-correction-form/.test(tk))
   ck('source · the old office-phone path is gone (it was never set)', !/timekeeper_alert_phones/.test(tk.replace(/^\/\/.*$/gm, '')))
   const ca = fs.readFileSync(`${FN}/clockin-alert/index.ts`, 'utf8')
+  const gl = fs.readFileSync(`${FN}/_shared/ghl-contact-link.ts`, 'utf8').replace(/^\s*\/\/.*$/gm, '')
+  ck('source · 431 the GHL contact lookup is read only (no POST/PUT/upsert, no message send)', !/method: '(POST|PUT|DELETE)'|upsert|conversations\/messages|contactForOutbound/.test(gl), gl.match(/method: '\w+'/g))
   ck('source · the page never texts a client or family', !/audience: 'client'|audience: 'family'/.test(ca) && (ca.match(/conversations\/messages/g) || []).length === 1) }
 
 for (const [n, o, note] of res) console.log((o ? 'PASS' : 'FAIL') + ' · ' + n + (o ? '' : '\n   ' + note))

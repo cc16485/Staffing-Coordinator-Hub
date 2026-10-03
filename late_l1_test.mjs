@@ -159,6 +159,10 @@ text('4175550101', 'running 20 late', NOW - 5 * MIN); await job(); n = notice('v
 r = await page({ ...L, action: 'view' })
 ck('view: their words, the time, one family member who can be told (STOP and "no consent" left out), the draft', r.j.ok && r.j.said[0].text === 'running 20 late' && r.j.eta && r.j.family.can === true
   && r.j.family.members === 1 && r.j.family.first_names[0] === 'Linda' && /Maria is running a little late for Ruth's .* visit today and expects to arrive around/.test(r.j.family.draft) && /4175558000$/.test(r.j.client_phone), r.j)
+ck('431 · view: the caregiver\'s one GHL contact gives office-line links; the client\'s home line has none (no button); found by GET search only',
+   r.j.caregiver_ghl?.contact_id === 'c4175550101' && r.j.caregiver_ghl.app_url === 'https://app.leadconnectorhq.com/v2/location/loc/contacts/detail/c4175550101'
+   && r.j.caregiver_ghl.web_url === 'https://app.hirecara.com/v2/location/loc/contacts/detail/c4175550101' && r.j.client_ghl === null
+   && CALLS.some((c) => c.m === 'GET' && /contacts\/\?.*query=4175558000/.test(c.url)), [r.j.caregiver_ghl, r.j.client_ghl])
 r = await page({ ...L, action: 'family', text: r.j.family.draft })
 ck('"Send to the family" (a tap): Linda only, greeted by name; recorded; counts as seen', r.j.ok && r.j.count === 1 && toFamily().length === 1 && toFamily()[0].to === 'c4175550200'
   && /^Hi Linda, A quick update from Caring Companions\. Maria is running a little late/.test(toFamily()[0].msg) && notice('v1').family[0].what === 'late' && notice('v1').seen_at, [r, SENT])

@@ -26,6 +26,7 @@ import { normalisePhone, contactForOutbound } from '../_shared/outreach.ts'
 import { opEvent } from '../_shared/events.ts'
 import { officeQuiet, afterHoursAllowed } from '../_shared/quiet-hours.ts'
 import { makePrefill, withPrefillLink, axisHm } from '../_shared/evv-prefill.ts'
+import { ghlClientLink } from '../_shared/ghl-contact-link.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
                'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -113,15 +114,22 @@ Deno.serve(async (req) => {
     const cg = await roster()
     // deno-lint-ignore no-explicit-any
     let clientPhone: string | null = null
+    let clientEmail: string | null = null
     if (l.client_axiscare_id) {
       const j = await axisGet(`clients?clientIds=${encodeURIComponent(String(l.client_axiscare_id))}`)
       // deno-lint-ignore no-explicit-any
       const c = (j?.results?.clients ?? []).find((x: any) => String(x?.id) === String(l.client_axiscare_id))
       clientPhone = normalisePhone(c?.homePhone) || normalisePhone(c?.mobilePhone) || normalisePhone(c?.otherPhone) || null
+      clientEmail = c?.email || null
     }
+    /* 431: the EXISTING GHL contacts (read only, never created) so the office calls from LeadConnector (office line) */
+    const [clientGhl, caregiverGhl] = await Promise.all([
+      ghlClientLink(sb, ghl, { axiscareClientId: l.client_axiscare_id, phone: clientPhone, email: clientEmail }),
+      ghlClientLink(null, ghl, { phone: normalisePhone(cg?.phone), email: cg?.email })])
     return json({ ok: true, me: me.first, caregiver_first: cgFirst, client_first: l.client_first, shift_date: l.shift_date,
       shift_time: clock12(l.shift_time), minutes_past_start: minutesPast(String(l.shift_date), String(l.shift_time)),
       texted_at: chi12(l.texted_at), caregiver_phone: normalisePhone(cg?.phone) || null, client_phone: clientPhone,
+      client_ghl: clientGhl, caregiver_ghl: caregiverGhl,
       practice: !loopLive, reasons: REASONS,
       /* C3: what she texted back (her own words to the office) */
       replies: (Array.isArray(l.replies) ? l.replies : []).slice(-5).map((x: { at: string; text: string }) => ({ at: chi12(x.at), text: String(x.text).slice(0, 500) })),

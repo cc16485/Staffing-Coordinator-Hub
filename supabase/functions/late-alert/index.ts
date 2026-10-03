@@ -33,6 +33,7 @@ import { DEFAULT_FAMILY, DEFAULT_FAMILY_UPDATE, DEFAULT_ARRIVED, FAMILY_MIN_DEFA
 import { visitMs } from '../_shared/held-shift.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { officeQuiet } from '../_shared/quiet-hours.ts'
+import { ghlClientLink } from '../_shared/ghl-contact-link.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
                'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -139,6 +140,7 @@ Deno.serve(async (req) => {
     // deno-lint-ignore no-explicit-any
     const g = (Array.isArray(roster) ? roster : []).find((x: any) => String(x?.axiscare_id ?? '').trim() === String(n.axiscare_caregiver_id))
     let clientPhone: string | null = null
+    let clientEmail: string | null = null
     const { token, site } = axisCreds()
     if (token && site && n.axiscare_client_id) {
       try {
@@ -148,8 +150,13 @@ Deno.serve(async (req) => {
         // deno-lint-ignore no-explicit-any
         const c = (j?.results?.clients ?? []).find((x: any) => String(x?.id) === String(n.axiscare_client_id))
         clientPhone = normalisePhone(c?.homePhone) || normalisePhone(c?.mobilePhone) || normalisePhone(c?.otherPhone) || null
+        clientEmail = c?.email || null
       } catch { /* the number is a convenience */ }
     }
+    /* 431: the EXISTING GHL contacts (read only, never created) so the office calls from LeadConnector (office line) */
+    const [clientGhl, caregiverGhl] = await Promise.all([
+      ghlClientLink(sb, ghl, { axiscareClientId: n.axiscare_client_id, phone: clientPhone, email: clientEmail }),
+      ghlClientLink(null, ghl, { phone: normalisePhone(g?.phone), email: g?.email })])
     const fe = familyEligible(n, famMin)
     const { members, why } = n.kind === 'late' ? await circleMembers() : { members: [], why: '' }
     const arrivedSent = family().some((f) => f.what === 'arrived')
@@ -161,6 +168,7 @@ Deno.serve(async (req) => {
       seen: n.seen_at ? { by: n.seen_by, at: clockAt(Date.parse(n.seen_at)) } : null,
       closed: n.closed_at ? { how: n.closed_how, clock_in: n.clock_in_at ? clockAt(Date.parse(n.clock_in_at)) : null } : null,
       caregiver_phone: normalisePhone(g?.phone) || null, client_phone: clientPhone,
+      client_ghl: clientGhl, caregiver_ghl: caregiverGhl,
       family: { can: !practice && fe.ok && members.length > 0 && !n.closed_at, why: practice ? 'practice run: family texts are not sent yet' : (!fe.ok ? fe.why : why),
         members: members.length, first_names: members.map((m) => firstOf(m.name) || 'there').slice(0, 6), draft: draft(), is_update: told(),
         sent: family().map((f) => ({ at: clockAt(Date.parse(f.at)), by: f.by, what: f.what, count: f.count })),
