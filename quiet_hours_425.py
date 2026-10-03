@@ -15,7 +15,7 @@
 # Part 2: each function that uses a changed file is redeployed, only if its live copy is today's GitHub main (or already
 #   this build), keeping its gateway setting. The office-texting ones go first.
 # Part 3 (proof, NOTHING is sent): every live copy is the reviewed build; the public key is refused; the timekeeper's
-#   sign-in check; one practice run of the timekeeper (?dry=1: reads today's AxisCare visits, writes and texts nothing)
+#   sign-in check; one practice run of the timekeeper (?dry=1: reads today's AxisCare visits, texts nobody and changes no alert)
 #   showing the quiet hours in force; the switches are exactly as they were.
 import json, os, re, hashlib, subprocess, urllib.request, urllib.error, datetime as dt, sys, tempfile, shutil
 REPORT = os.environ["SB_REPORT"]; TOKEN = os.environ.get("SB_TOKEN", "").strip().strip('"').strip("'")
@@ -215,7 +215,7 @@ if SERVICE and "timekeeper-watch" in went:
     except Exception: j3 = {}
     al = j3.get("admin_loop") or {}; qh = al.get("quiet_hours") or {}
     good = s3 == 200 and j3.get("mode") == "DRY RUN" and isinstance(qh.get("now"), bool) and qh.get("hours") and al.get("max_texts_each")
-    chk(good, f"one practice run of the timekeeper (?dry=1: reads today's visits, writes and texts nothing): office quiet hours {qh.get('hours')}"
+    chk(good, f"one practice run of the timekeeper (?dry=1: reads today's visits; texts nobody, changes no alert): office quiet hours {qh.get('hours')}"
         + (f", quiet right now: {'yes' if qh.get('now') else 'no'}; at most {al.get('max_texts_each')} admin texts per alert" if good else f" ({s3}: {str(b3)[:160]})"))
     if good: say(f"    (practice run: {j3.get('visits_seen', '?')} visits seen today, {al.get('texts', 0)} admin texts, {j3.get('texts_sent', 0)} caregiver texts; nothing is sent in a practice run)")
 else: say("  · the server key wasn't readable (or the timekeeper wasn't updated), so the timekeeper's practice run was skipped (the tests cover it)")
