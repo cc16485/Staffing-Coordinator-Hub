@@ -112,7 +112,7 @@ at('09:20'); await tick(); ck('C1 · after the snooze ends she gets them again',
 p = await page({ ...L, action: 'evv' })
 const evv = toCg().at(-1)?.message || ''
 ck('page · "Text Maria the EVV form": one text, the form link, signed by the client, no manual changes', p.s === 200 && p.j.evv_sent_at
-   && evv === "Hi Maria, to change your clock-in time we need the EVV correction form, filled out and signed by Ruth: sc.mo-care.com/evv-correction-form. We can't make any manual changes without it.", evv)
+   && /^Hi Maria, to change your clock-in time we need the EVV correction form, filled out and signed by Ruth: https:\/\/sc\.mo-care\.com\/evv-correction-form\.html\?t=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\. We can't make any manual changes without it\.$/.test(evv), evv)   // 427: pre-filled link, token only
 p = await page({ ...L, action: 'evv' }); ck('page · a second tap does not send it again', p.j?.already_sent === true && toCg().filter((m) => /evv-correction/.test(m.message)).length === 1, p)
 p = await page({ ...L, action: 'resolve', reason: 'nope' }); ck('page · resolve needs a known reason', p.s === 400, p)
 const k1 = toKry().length

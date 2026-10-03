@@ -16,6 +16,7 @@
 //             the other admins get one "Resolved by ..." text (when the admin texts are live)
 //   snooze    pauses the reminders for THIS admin for 10 minutes
 //   evv       texts the caregiver the EVV correction form, once per alert, only on this tap
+//             (427: the link opens the form pre-filled for this visit; only a random token is in the link)
 //   coverage  she's calling off: opens a coverage case for the shift (the call-in process takes over) and resolves
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -24,6 +25,7 @@ import { adminRecipients, textAdmin, clock12 } from '../_shared/clockin-admins.t
 import { normalisePhone, contactForOutbound } from '../_shared/outreach.ts'
 import { opEvent } from '../_shared/events.ts'
 import { officeQuiet, afterHoursAllowed } from '../_shared/quiet-hours.ts'
+import { makePrefill, withPrefillLink, axisHm } from '../_shared/evv-prefill.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
                'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -104,7 +106,7 @@ Deno.serve(async (req) => {
     resolved: l.resolved_at ? { at: chi12(l.resolved_at), how: l.resolved_how, by: l.resolved_by_name || null,
                                 reason: l.resolved_reason ? REASONS[l.resolved_reason] ?? null : null, note: l.resolved_note || null } : null,
     snoozed_until: l.admin_loop?.snooze?.[myKey] && Date.parse(l.admin_loop.snooze[myKey]) > Date.now() ? chi12(l.admin_loop.snooze[myKey]) : null,
-    evv_sent_at: chi12(l.evv_sent_at), coverage_case: l.coverage_case_id || null,
+    evv_sent_at: chi12(l.evv_sent_at), evv_prefilled: l.evv_prefilled === true, coverage_case: l.coverage_case_id || null,
   })
 
   if (action === 'view') {
@@ -200,7 +202,20 @@ Deno.serve(async (req) => {
     const contact = await contactForOutbound(sb, ghl, { phone, firstName: String(cg?.first ?? '') || cgFirst }, 'urgent_internal',
       { audience: 'caregiver', channel: 'sms', sender: 'clockin-alert (EVV form, sent by ' + me.first + ')' })
     if (!contact) return json({ error: `The text to ${cgFirst} was refused (an untrusted number, or they opted out of texts).` }, 409)
-    const message = `Hi ${String(cg?.first ?? '') || cgFirst}, to change your clock-in time we need the EVV correction form, filled out and signed by ${l.client_first}: sc.mo-care.com/evv-correction-form. We can't make any manual changes without it.`
+    /* 427: the link opens the form already filled in for this visit (caregiver, client first name + last initial,
+       date, scheduled times; only a random token in the link). Read from AxisCare (GET); same wording; if the pre-fill
+       can't be made, the plain form link goes as before. */
+    const vj = await axisGet(`visits/${encodeURIComponent(String(l.visit_id))}`)
+    const v = vj?.results?.visit ?? vj?.results ?? vj?.visit ?? null
+    const endStamp = String(v?.scheduledEndDate ?? v?.endDate ?? '')
+    const ended = !!endStamp && Date.parse(endStamp.slice(0, 19)) <= Date.parse(chiWall())
+    const pre = await makePrefill(sb, { visit_id: String(l.visit_id), caregiver_axiscare_id: String(l.caregiver_axiscare_id ?? ''),
+      client_axiscare_id: l.client_axiscare_id ?? (v?.client?.id != null ? String(v.client.id) : null),
+      caregiver_name: String(l.caregiver || ''), client_first: String(l.client_first || ''), client_last: String(v?.client?.lastName ?? ''),
+      visit_date: String(l.shift_date), scheduled_in: String(l.shift_time || ''), scheduled_out: endStamp.slice(11, 16) || null,
+      actual_in: axisHm(v?.clockIn), actual_out: axisHm(v?.clockOut),
+      which_missing: !v?.clockIn?.time && !v?.clockOut?.time && ended ? 'both' : 'in' }, 'clockin-alert (EVV form, sent by ' + me.first + ')')
+    const message = withPrefillLink(`Hi ${String(cg?.first ?? '') || cgFirst}, to change your clock-in time we need the EVV correction form, filled out and signed by ${l.client_first}: sc.mo-care.com/evv-correction-form. We can't make any manual changes without it.`, pre?.url ?? null)
     let ok = false
     try {
       const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', { method: 'POST',
@@ -210,7 +225,7 @@ Deno.serve(async (req) => {
     } catch { ok = false }
     if (!ok) return json({ error: 'The text could not be sent. Try again, or send the form link by hand.' }, 502)
     const f2 = (await readLadder()) || l
-    f2.evv_sent_at = new Date().toISOString(); f2.evv_sent_by = me.email
+    f2.evv_sent_at = new Date().toISOString(); f2.evv_sent_by = me.email; f2.evv_prefilled = !!pre
     await save(f2); Object.assign(l, f2)
     await opEvent(sb, { verb: 'message_sent', item_id: `ops_tk_${l.id}`, area: 'coverage',
       summary: `${me.name} texted ${l.caregiver} the EVV correction form (${l.client_first} ${clock12(l.shift_time)})` })
