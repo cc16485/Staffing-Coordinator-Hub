@@ -34,7 +34,7 @@ import { shadowRoute } from '../_shared/routing.ts'
 import { opEvent } from '../_shared/events.ts'
 import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
-import { officeQuiet } from '../_shared/quiet-hours.ts'
+import { officeQuiet, afterHoursAllowed } from '../_shared/quiet-hours.ts'
 import { jobCaller, ownerCaller } from '../_shared/job-auth.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { notifyFamilyOfChange } from '../_shared/family-change-text.ts'
@@ -1231,7 +1231,11 @@ Deno.serve(async (req) => {
       /* OFFICE QUIET HOURS (Samantha, 2026-10-03): no admin text 8pm to 7am Central, even for a shift starting soon.
          The email still goes (it wakes nobody) and the case is on the board. The one exception is her own: a client
          whose call-in plan says "must be covered, no matter what" (CALLIN-PLAN.md, "the admin text goes at any hour"). */
-      const smsOk = mustA || (!officeQuiet(new Date(), settings) && (soonA || (chiHrA >= 8 && chiHrA < 21)))
+      /* AFTER HOURS (Samantha, 2026-10-03, Desktop 426: "i want the missed clock ins to be live after hours too, that
+         and call ins"): every call-in texts the admins at any hour unless she switches ops_settings.callin_after_hours
+         off in the Hub; then the 425 rule above applies again. */
+      const callinAnyHour = afterHoursAllowed(settings, 'callin')
+      const smsOk = mustA || callinAnyHour || (!officeQuiet(new Date(), settings) && (soonA || (chiHrA >= 8 && chiHrA < 21)))
       const calledAt = new Date(String(c.opened_at || Date.now()))
         .toLocaleString('en-US', { timeZone: 'America/Chicago',
           month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })
@@ -1284,7 +1288,7 @@ Deno.serve(async (req) => {
               if (ph) {
                 const contact = await contactForOutbound(sb, ghl,
                   { phone: ph, email: adm, firstName: person?.name || adm.split('@')[0] },
-                  'urgent_internal', { selfSupplied: true, audience: 'staff', emergency: mustA })
+                  'urgent_internal', { selfSupplied: true, audience: 'staff', emergency: mustA || callinAnyHour })
                 if (contact && await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
                   'staff-alert', { channel: 'sms', contactId: contact.contactId, address: ph, who: person?.name || adm }, { message: smsMsg })) reachedA++
               }

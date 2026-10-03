@@ -26,7 +26,8 @@
                          EXCEPT texts to the OFFICE (the office number, admins,
                          coordinators): never 8pm to 7am Central (her rule,
                          2026-10-03). See quiet-hours.ts. A caregiver's own
-                         shift text is not affected.
+                         shift text is not affected. Her exceptions (426):
+                         missed clock-in and call-in admin alerts go any hour.
 
      routine_internal    Staff, not urgent. Any hour that is operationally
                          useful.
@@ -182,7 +183,8 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
     why: 'a caregiver with no clock-in minutes into a shift, and the office alert behind it. '
       + 'The 6am shift needs its 6:03 nudge; a client may be standing at the door. '
       + 'Cron: timekeeper-watch, every 2 minutes — created by cron-timekeeper.sql (~/Claude). '
-      + 'The ADMIN texts keep the office quiet hours (none 8pm to 7am, quiet-hours.ts, 2026-10-03); the caregiver text does not.' },
+      + 'The ADMIN missed clock-in texts go at any hour (her 2026-10-03 exception, ops_settings.missed_clockin_after_hours, '
+      + 'on unless set false; capped at 6 per alert); the Saturday EVV office nudge keeps the office quiet hours (none 8pm to 7am).' },
   'missed-notes':       { class: 'routine_internal', scheduled: true,
     why: 'a caregiver who clocked out with no care note is asked (staff, about their own shift) to text it in, '
       + 'right after clock-out, one reminder the next morning; 8am to 9pm Central only (enforced in the function). '
@@ -516,7 +518,8 @@ export async function contactForOutbound(
              channel's address alone and the universal opt-out check runs (optout.ts). Every audience except
              staff MUST name it (0b-2 families, 0b-3 caregivers); staff alerts are exempt. */
           channel?: 'sms' | 'email'; sender?: string;
-          /* OFFICE QUIET HOURS (2026-10-03): only the "must be covered" call-in alert passes this (quiet-hours.ts) */
+          /* OFFICE QUIET HOURS (2026-10-03): only her after-hours exceptions pass this: missed clock-in admin texts, call-in
+             admin alerts and the "must be covered" call-in (quiet-hours.ts, Desktop 426) */
           emergency?: boolean;
           onOptOut?: (reasons: string[]) => void | Promise<void> } = {},
 ): Promise<{ contactId: string; phone: string | null } | null> {
