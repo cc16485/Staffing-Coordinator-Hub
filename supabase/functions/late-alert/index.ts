@@ -24,6 +24,10 @@
 // PERSON, permanently (she likes that it keeps the office in control). There is no automatic family send.
 // 432: a notice that came from a CALL (in or out, the office line) shows "Mary said on your 4:31pm call: running late,
 //   about 8 minutes (around 4:39pm)" and her words; its time reads "from your call". Same buttons, same rules.
+// 433 (2026-10-03, her option 1) · bridge {target: 'client' | 'caregiver'}: "Call" rings the person's own phone first
+//   (the admin named in the link, or the signed-in staff member). The contact (found exactly as view finds it, never
+//   created) is assigned to them and tagged hub-call-bridge; her GoHighLevel workflow "Hub call bridge" rings them and
+//   connects the call from the business number (_shared/ghl-call-bridge.ts). Only on that tap. Nothing is texted.
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { checkLink, adminKey } from '../_shared/late-links.ts'
@@ -37,6 +41,7 @@ import { visitMs } from '../_shared/held-shift.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { officeQuiet } from '../_shared/quiet-hours.ts'
 import { ghlClientLink } from '../_shared/ghl-contact-link.ts'
+import { ghlCallBridge } from '../_shared/ghl-call-bridge.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
                'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -137,25 +142,44 @@ Deno.serve(async (req) => {
     return told2
   }
 
-  if (action === 'view') {
+  // deno-lint-ignore no-explicit-any
+  const rosterRow = async (): Promise<any> => {
     // deno-lint-ignore no-explicit-any
     const roster: any[] = (await sb.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()).data?.data ?? []
     // deno-lint-ignore no-explicit-any
-    const g = (Array.isArray(roster) ? roster : []).find((x: any) => String(x?.axiscare_id ?? '').trim() === String(n.axiscare_caregiver_id))
-    let clientPhone: string | null = null
-    let clientEmail: string | null = null
+    return (Array.isArray(roster) ? roster : []).find((x: any) => String(x?.axiscare_id ?? '').trim() === String(n.axiscare_caregiver_id))
+  }
+  /* the client's home number and email (AxisCare, GET): for the call buttons */
+  const clientContact = async (): Promise<{ phone: string | null; email: string | null }> => {
     const { token, site } = axisCreds()
-    if (token && site && n.axiscare_client_id) {
-      try {
-        const r = await fetch(`https://${site}.axiscare.com/api/clients?clientIds=${encodeURIComponent(String(n.axiscare_client_id))}`,
-          { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': AC_VERSION } })
-        const j = r.ok ? await r.json().catch(() => null) : null
-        // deno-lint-ignore no-explicit-any
-        const c = (j?.results?.clients ?? []).find((x: any) => String(x?.id) === String(n.axiscare_client_id))
-        clientPhone = normalisePhone(c?.homePhone) || normalisePhone(c?.mobilePhone) || normalisePhone(c?.otherPhone) || null
-        clientEmail = c?.email || null
-      } catch { /* the number is a convenience */ }
+    if (!(token && site && n.axiscare_client_id)) return { phone: null, email: null }
+    try {
+      const r = await fetch(`https://${site}.axiscare.com/api/clients?clientIds=${encodeURIComponent(String(n.axiscare_client_id))}`,
+        { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': AC_VERSION } })
+      const j = r.ok ? await r.json().catch(() => null) : null
+      // deno-lint-ignore no-explicit-any
+      const c = (j?.results?.clients ?? []).find((x: any) => String(x?.id) === String(n.axiscare_client_id))
+      return { phone: normalisePhone(c?.homePhone) || normalisePhone(c?.mobilePhone) || normalisePhone(c?.otherPhone) || null, email: c?.email || null }
+    } catch { return { phone: null, email: null } /* the number is a convenience */ }
+  }
+
+  /* 433: "Call" rings this person's phone first (a tap on the page or the card) */
+  if (action === 'bridge') {
+    const target = String(b.target || '')
+    if (target !== 'client' && target !== 'caregiver') return json({ error: 'Call whom?' }, 400)
+    const caller = { email: me.email, name: me.name, via: viaLink ? 'late-link' as const : 'hub' as const }
+    if (target === 'client') {
+      const cc = await clientContact()
+      return json(await ghlCallBridge(sb, ghl, st, caller, { axiscareClientId: n.axiscare_client_id, phone: cc.phone, email: cc.email, label: n.client_first }))
     }
+    const g = await rosterRow()
+    return json(await ghlCallBridge(sb, ghl, st, caller, { phone: normalisePhone(g?.phone), email: g?.email, label: cgFirst }))
+  }
+
+  if (action === 'view') {
+    const g = await rosterRow()
+    const cc = await clientContact()
+    const clientPhone = cc.phone, clientEmail = cc.email
     /* 431: the EXISTING GHL contacts (read only, never created) so the office calls from LeadConnector (office line) */
     const [clientGhl, caregiverGhl] = await Promise.all([
       ghlClientLink(sb, ghl, { axiscareClientId: n.axiscare_client_id, phone: clientPhone, email: clientEmail }),

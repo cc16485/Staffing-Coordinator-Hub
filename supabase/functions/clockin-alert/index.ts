@@ -22,6 +22,11 @@
 //   call: running late, about 8 minutes (around 4:39pm)", her words, whether this alert's texts are paused (until when),
 //   and this admin's own link to the running-late page (late.html), where a person may tell the family (a tap there,
 //   with the exact text and who gets it shown first). Nothing here sends anything to a family or a client.
+// 433 (2026-10-03, her option 1) · bridge {target: 'client' | 'caregiver'}: "Call" rings THIS admin's phone first. The
+//   link names the admin, so their email finds their GoHighLevel user; the contact (found exactly as view finds it,
+//   never created) is assigned to them and tagged hub-call-bridge, and her GoHighLevel workflow "Hub call bridge" rings
+//   them and connects the call from the business number (_shared/ghl-call-bridge.ts). Only on that tap. Nothing is
+//   texted to anyone.
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { checkLink, adminKey } from '../_shared/clockin-links.ts'
@@ -31,6 +36,7 @@ import { opEvent } from '../_shared/events.ts'
 import { officeQuiet, afterHoursAllowed } from '../_shared/quiet-hours.ts'
 import { makePrefill, withPrefillLink, axisHm } from '../_shared/evv-prefill.ts'
 import { ghlClientLink } from '../_shared/ghl-contact-link.ts'
+import { ghlCallBridge } from '../_shared/ghl-call-bridge.ts'
 import { callLine, holdUntil, holdOptsOf, clockAt, familyEligible, FAMILY_MIN_DEFAULT } from '../_shared/late-notice.ts'
 import { makeLink as makeLateLink, linkExpiry as lateLinkExpiry } from '../_shared/late-links.ts'
 
@@ -116,18 +122,32 @@ Deno.serve(async (req) => {
     evv_sent_at: chi12(l.evv_sent_at), evv_prefilled: l.evv_prefilled === true, coverage_case: l.coverage_case_id || null,
   })
 
+  /* the client's home number and email (AxisCare, GET): for the call buttons */
+  const clientContact = async (): Promise<{ phone: string | null; email: string | null }> => {
+    if (!l.client_axiscare_id) return { phone: null, email: null }
+    const j = await axisGet(`clients?clientIds=${encodeURIComponent(String(l.client_axiscare_id))}`)
+    // deno-lint-ignore no-explicit-any
+    const c = (j?.results?.clients ?? []).find((x: any) => String(x?.id) === String(l.client_axiscare_id))
+    return { phone: normalisePhone(c?.homePhone) || normalisePhone(c?.mobilePhone) || normalisePhone(c?.otherPhone) || null, email: c?.email || null }
+  }
+
+  /* 433: "Call" rings this admin's phone first (a tap on the page; works on a resolved alert too) */
+  if (action === 'bridge') {
+    const target = String(b.target || '')
+    if (target !== 'client' && target !== 'caregiver') return json({ error: 'Call whom?' }, 400)
+    const caller = { email: me.email, name: me.name, via: 'clockin-link' as const }
+    if (target === 'client') {
+      const cc = await clientContact()
+      return json(await ghlCallBridge(sb, ghl, settings, caller, { axiscareClientId: l.client_axiscare_id, phone: cc.phone, email: cc.email, label: l.client_first }))
+    }
+    const cg = await roster()
+    return json(await ghlCallBridge(sb, ghl, settings, caller, { phone: normalisePhone(cg?.phone), email: cg?.email, label: cgFirst }))
+  }
+
   if (action === 'view') {
     const cg = await roster()
-    // deno-lint-ignore no-explicit-any
-    let clientPhone: string | null = null
-    let clientEmail: string | null = null
-    if (l.client_axiscare_id) {
-      const j = await axisGet(`clients?clientIds=${encodeURIComponent(String(l.client_axiscare_id))}`)
-      // deno-lint-ignore no-explicit-any
-      const c = (j?.results?.clients ?? []).find((x: any) => String(x?.id) === String(l.client_axiscare_id))
-      clientPhone = normalisePhone(c?.homePhone) || normalisePhone(c?.mobilePhone) || normalisePhone(c?.otherPhone) || null
-      clientEmail = c?.email || null
-    }
+    const cc = await clientContact()
+    const clientPhone = cc.phone, clientEmail = cc.email
     /* 431: the EXISTING GHL contacts (read only, never created) so the office calls from LeadConnector (office line) */
     const [clientGhl, caregiverGhl] = await Promise.all([
       ghlClientLink(sb, ghl, { axiscareClientId: l.client_axiscare_id, phone: clientPhone, email: clientEmail }),
