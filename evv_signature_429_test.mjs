@@ -325,6 +325,26 @@ const PRETOK = '22222222-2222-4333-8444-555555555555'
     && E.submitWords({ ok: false, error: 'signed' })[1] === true && E.submitWords({ ok: false, error: 'expired' })[1] === true && E.submitWords({ ok: true }) === null)
 }
 
+// ── 4b · the older Staffing hub page (sc.mo-care.com) EVV list ──
+{ const idxS = fs.readFileSync('index.html', 'utf8')
+  const code = idxS.slice(idxS.indexOf('/* 429 (2026-10-03): a form can wait'), idxS.indexOf('// ── Populate month filter'))
+  const LOGGED = [], UPD = [], AL = []
+  const sub = (o) => ({ id: 'x1', attendant: 'Maria Lopez', consumer: 'Ruth A.', visitdate: '2026-09-30', new_in: '09:00', new_out: '13:00', ...o })
+  const ctx = { _evvPendingCache: {}, alert: (m) => AL.push(m), confirm: () => true, getEVVCorrections: () => [], saveEVVCorrections: (c) => LOGGED.push(c), renderEVVCorrections() {}, loadPendingEVVSubmissions: async () => {},
+    sb: { auth: { getUser: async () => ({ data: { user: { email: 'k@x.test' } } }) }, from: () => ({ update: (p) => ({ eq: async () => { UPD.push(p); return { error: null } } }) }) }, Date, String, JSON, console }
+  vm.createContext(ctx); vm.runInContext(code, ctx)
+  ctx._evvPendingCache.x1 = sub({ client_sig_status: 'waiting' }); await vm.runInContext("acceptEVVSubmission('x1')", ctx)
+  ck('sc.mo-care.com · Accept on a waiting form: the warning, nothing logged, nothing marked', /The client has not signed yet\. Wait for the next visit, or verify by phone first/.test(AL.at(-1) || '') && LOGGED.length === 0 && UPD.length === 0, AL)
+  ctx._evvPendingCache.x1 = sub({ sig_consumer: null }); await vm.runInContext("acceptEVVSubmission('x1')", ctx)
+  ck('sc.mo-care.com · an older unsigned form is treated as waiting too', LOGGED.length === 0 && UPD.length === 0)
+  ctx._evvPendingCache.x1 = sub({ client_sig_status: 'phone_verified' }); await vm.runInContext("acceptEVVSubmission('x1')", ctx)
+  ck('sc.mo-care.com · verified by phone: accepted as before', LOGGED.length === 1 && UPD.length === 1 && UPD[0].processed === true)
+  await vm.runInContext("dismissEVVSubmission('x1')", ctx)
+  ck('sc.mo-care.com · Dismiss is recorded as dismissed (the database allows that on a waiting form)', UPD.at(-1)?.outcome === 'dismissed')
+  ck('sc.mo-care.com · badges', vm.runInContext("evvSigBadge({ client_sig_status: 'waiting' })", ctx).includes('✍ Waiting for client signature') && vm.runInContext("evvSigBadge({ client_sig_status: 'phone_verified' })", ctx).includes('📞 Verified by phone')
+    && vm.runInContext("evvSigBadge({ sig_consumer: 'data:image/png;base64,AA' })", ctx) === '')
+  ck('sc.mo-care.com · no em dashes in the 429 part', !DASH.test(code.slice(0, code.indexOf('async function acceptEVVSubmission'))) && !DASH.test((code.match(/const sigK[\s\S]*?Dismiss the form instead\.'\); return; \}/) || [''])[0])) }
+
 // ── 5 · the SQL and its proofs in a real Postgres ──
 if (process.env.PGLITE) {
   const { PGlite } = await import(process.env.PGLITE)
