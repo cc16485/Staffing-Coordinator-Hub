@@ -21,6 +21,7 @@
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { ownerCaller } from '../_shared/job-auth.ts'
 import { ghlFindContact } from '../_shared/ghl-contact-link.ts'
 import { ghlCallBridge, bridgeSetup } from '../_shared/ghl-call-bridge.ts'
 
@@ -41,10 +42,11 @@ Deno.serve(async (req) => {
     // deno-lint-ignore no-explicit-any
     return (Array.isArray(data?.data) ? data!.data : []).map((s: any) => ({ email: String(s?.email || ''), name: String(s?.name || '') })).filter((s: { email: string }) => s.email) }
 
-  /* the installer's proof: the exact server key may ask 'setup' (GET only, counts only), nothing else */
-  const svc = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || ''
-  const tok = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '').trim()
-  if (svc.length >= 32 && tok.length === svc.length && [...svc].reduce((d, ch, i) => d | (ch.charCodeAt(0) ^ tok.charCodeAt(i)), 0) === 0) {
+  /* the installer's proof: the server key may ask 'setup' (GET only, counts only), nothing else. Recognised the way the
+     scheduled jobs recognise it (job-auth's ownerCaller): the key the Management API hands out is written differently
+     from this function's own copy, so a letter-for-letter compare refused it (433's proof, 2026-10-03; same as #117).
+     A staff sign-in is never taken for it (the probe table is the server's only). */
+  if (await ownerCaller(req)) {
     if (action !== 'setup') return json({ error: 'A call only starts from a person tapping Call in the Hub.' }, 403)
     const s = await bridgeSetup(sb, ghl, await settingsNow(), await staffList())
     // deno-lint-ignore no-explicit-any

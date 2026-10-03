@@ -2,7 +2,8 @@
 // and a FAKE GoHighLevel that records every call. node ghl_call_link_431_test.mjs
 import fs from 'fs'; import path from 'path';
 const DIR = path.join(path.dirname(new URL(import.meta.url).pathname), 'supabase/functions/ghl-call-link');
-const src = fs.readFileSync(path.join(DIR, 'index.ts'), 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = globalThis.__fakeCreateClient');
+const src = fs.readFileSync(path.join(DIR, 'index.ts'), 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = globalThis.__fakeCreateClient')
+  .replace(/^import \{ ownerCaller \} from .*$/m, "const ownerCaller = async (req) => (req.headers.get('Authorization') || '').replace(/^Bearer\\s+/i, '') === globalThis.Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')");
 const tmp = path.join(DIR, '_under_test.ts'); fs.writeFileSync(tmp, src);
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note ?? '').slice(0, 600)]);
 let handler = null; const env = { SUPABASE_URL: 'http://x', SUPABASE_SERVICE_ROLE_KEY: 'k', GHL_TOKEN: 'g', GHL_LOCATION_ID: 'Recp0AhyMh8lrtKJ9kaj' };

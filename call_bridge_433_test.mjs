@@ -88,11 +88,17 @@ const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 
 let handler; globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (h) => { handler = h } }
 let STAFF = null
 fs.writeFileSync(`${FN}/_shared/_staff-auth_433.ts`, "export const OFFICE_ROLES = ['owner_admin']\nexport const requireStaff = async () => globalThis.__staff()\nexport const serverSecretOk = () => false\n")
-process.on('exit', () => { try { fs.unlinkSync(`${FN}/_shared/_staff-auth_433.ts`) } catch { /* */ } })
+/* job-auth's ownerCaller, as it behaves live: the function's own copy of the server key, OR any key the database accepts as
+   the server (the Management API hands it out written differently: 433's first proof). */
+const SVC_OTHER_FORMAT = 'sb_secret_' + 'z'.repeat(40)
+fs.writeFileSync(`${FN}/_shared/_job-auth_433.ts`, "export const ownerCaller = async (req) => { const b = (req.headers.get('Authorization') || '').replace(/^Bearer\\s+/i, '').trim(); return b === globalThis.Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || b === globalThis.__svcOther }\n")
+globalThis.__svcOther = SVC_OTHER_FORMAT
+process.on('exit', () => { for (const f of ['_staff-auth_433.ts', '_job-auth_433.ts']) try { fs.unlinkSync(`${FN}/_shared/${f}`) } catch { /* */ } })
 globalThis.__staff = () => STAFF ?? { ok: false, status: 401, error: 'Sign in first.' }
 const load = async (name, stubStaff) => {
   let src = fs.readFileSync(`${FN}/${name}/index.ts`, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
   if (stubStaff) src = src.replace(/(['"])\.\.\/_shared\/staff-auth\.ts\1/, "'../_shared/_staff-auth_433.ts'")
+  src = src.replace(/(['"])\.\.\/_shared\/job-auth\.ts\1/, "'../_shared/_job-auth_433.ts'")
   const tmp = path.join(process.cwd(), FN, name, '_t433.ts'); fs.writeFileSync(tmp, src)
   try { await import(tmp + '?' + Math.random()); return handler } finally { fs.unlinkSync(tmp) }
 }
@@ -110,6 +116,7 @@ let p = await post(LINK, RUTH); ck('no sign-in: refused, GoHighLevel never asked
 p = await post(LINK, RUTH, 'anon-key'); ck('the public key: refused, GoHighLevel never asked', p.s === 401 && !CALLS.length, p)
 p = await post(LINK, RUTH, 'cg'); ck('a signed-in person without an office role: refused, GoHighLevel never asked', p.s === 403 && !CALLS.length, p)
 p = await post(LINK, RUTH, SVC); ck('the server key (anything automatic) can NEVER start a call', p.s === 403 && /person tapping Call/.test(p.j.error) && !CALLS.length, p)
+p = await post(LINK, RUTH, SVC_OTHER_FORMAT); ck('the server key written differently (as the Management API hands it out) is still the server key: refused a call (403), never treated as staff', p.s === 403 && /person tapping Call/.test(p.j.error) && !CALLS.length, p)
 ck('nothing was recorded or changed by the refusals', !T.op_events.length && !writes().length)
 
 /* ── 2 · the tap that works ── */
