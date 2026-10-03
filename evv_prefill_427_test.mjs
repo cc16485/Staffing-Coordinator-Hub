@@ -4,7 +4,7 @@
 //   PGLITE=<path to @electric-sql/pglite> node evv_prefill_427_test.mjs  also runs 422 + 427 SQL (twice) and the proof in Postgres
 import fs from 'fs'; import path from 'path'; import vm from 'vm'
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 1200)])
-const DASH = /[—―]/
+const DASH = /[\u2014\u2015]/
 const FN = 'supabase/functions'
 const sq = fs.readFileSync('evv_prefill_427.sql', 'utf8'), pf = fs.readFileSync('evv_prefill_427_proof.sql', 'utf8')
 const helper = fs.readFileSync(`${FN}/_shared/evv-prefill.ts`, 'utf8')
