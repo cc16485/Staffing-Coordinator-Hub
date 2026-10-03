@@ -158,7 +158,10 @@ def deploy(fn):
     if live[mine] != base_sha(mine) and live[mine] != sha(os.path.join(ROOT, mine)):
         bad(f"{fn}: its live code is not today's GitHub main (was something else deployed, or an earlier Desktop step not run?), NOT changed"); return False
     pinned = {pinpath(k) for k in SHAS}
-    other = [k.split("supabase/functions/", 1)[1] for k in need if k != mine and k not in pinned and (k not in live or live[k] != sha(os.path.join(ROOT, k)))]
+    # A shared file this build newly imports is not in the live copy yet: fine when it is unchanged GitHub code
+    # (same at the reviewed base and now). Anything present but different still stops. (2026-10-03 fix)
+    other = [k.split("supabase/functions/", 1)[1] for k in need if k != mine and k not in pinned
+             and ((k in live and live[k] != sha(os.path.join(ROOT, k))) or (k not in live and base_sha(k) != sha(os.path.join(ROOT, k))))]
     if other: bad(f"{fn}: live shared code differs from GitHub ({', '.join(sorted(other))[:160]}), NOT changed"); return False
     odd = [k.split("supabase/functions/", 1)[1] for k in need if k != mine and k in pinned and k in live and live[k] not in (base_sha(k), sha(os.path.join(ROOT, k)))]
     if odd: bad(f"{fn}: its live {', '.join(sorted(odd))} is neither today's GitHub main nor this build, NOT changed"); return False
