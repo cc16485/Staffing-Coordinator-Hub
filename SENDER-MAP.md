@@ -37,7 +37,7 @@ send to the wrong person, it **merges** them into the contact.
 | cc-booking | contactId only | inline | none |
 | cc-corner | contactId only | inline | none |
 | interview-messages | `p` (candidate phone) | inline | none |
-| lead-digest | contactId only | inline (7am) | none |
+| lead-digest | contactId only | inline (8am Central) | none |
 | lead-followup | `p` (lead phone) | inline | none |
 | lead-intake | `p`, `p.phone` | inline | none |
 | ops-escalate | `String(...)` staff phone | inline (24/7 by design) | none |
@@ -55,7 +55,7 @@ send to the wrong person, it **merges** them into the contact.
 | **vapi-interview** | contactId only | **none** | none |
 
 **5 of 24** use the shared module. **7** carry an inline hours check, some
-deliberately (`ops-escalate` is 24/7 by design, `lead-digest` fires at 7am).
+deliberately (`ops-escalate` is 24/7 by design, `lead-digest` fires at 8am Central).
 **12 have no hours gate at all.**
 
 That is the drift Samantha predicted: a policy implemented per-function does not

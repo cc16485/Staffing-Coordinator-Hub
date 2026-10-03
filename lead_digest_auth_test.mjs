@@ -51,7 +51,7 @@ try {
   ck('J1: the plain morning run with no key is now refused (401), nothing read or sent', r.status === 401 && !MAIL.length && !CALLS.length, r)
   reset(); r = await call('', 'public-anon-key'); ck('J1: the plain morning run with the public key is refused', r.status === 401 && !MAIL.length, r)
   reset(); r = await call('', null, { 'x-cron-secret': JOBSEC })
-  ck('the schedule (its vault secret) still runs, and only ever mails the configured recipients', r.status === 200 && (/outside the morning window|already sent today|weekend/.test(r.j.status) ||
+  ck('the schedule (its vault secret) still runs, and only ever mails the configured recipients', r.status === 200 && (/outside the morning window|not 8am in Chicago|already sent today|weekend/.test(r.j.status) ||
      MAIL.every((m) => ['samantha@mo-care.com', 'krystal@mo-care.com'].includes(m.to))), { r, MAIL: MAIL.map((m) => m.to) })
   ck('J1: the scheduled reply names no staff email', !JSON.stringify(r.j).includes('@'), r.j)
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }

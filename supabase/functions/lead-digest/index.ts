@@ -1,10 +1,13 @@
 // Supabase Edge Function: lead-digest — THE MORNING BRIEF (shared hub project)
 // -----------------------------------------------------------------------------
-// A personal 6:45am email per coordinator, and a FULL-PICTURE edition for
+// A personal 8am (Central) email per coordinator, and a FULL-PICTURE edition for
 // admins (Samantha, 2026-09-14: "a really full picture that all admin get").
 // What makes it get read: only their book, pass-alongs and quick-form leads
 // always in full, everything else ranked and capped, every line one tap.
 //
+// Everyone (2026-10-02, Samantha: "can interviews and booked assessments be on 'Today' and also be in the email"):
+// today's interviews (2pm and later marked as Samantha's interviews; ops_settings.afternoon_interviews, Hub Settings)
+// and today's booked assessments. If either can't be loaded the email SAYS so (no silent failures).
 // Personal sections: pass-alongs · while you were out (after-hours notes and
 // leads since 5pm the last workday) · leads to call (tap-to-dial) · top five
 // priorities · unowned triage · ticking clocks.
@@ -17,9 +20,10 @@
 // light up without a redesign.
 //
 // Recipients: ops_settings.morning_brief_recipients [{name,email,admin}]
-// (hub Settings card), falling back to LEAD_DIGEST_EMAILS. Cron fires the
-// same job twice (11:45 and 12:45 UTC) so 6:45am survives daylight saving;
-// the window guard and sent-marker keep it to one email per person per day.
+// (hub Settings card), falling back to LEAD_DIGEST_EMAILS. 8AM ALL YEAR (2026-10-02, was 6:45): cron fires the
+// same job twice on weekdays (13:00 and 14:00 UTC). Only the run that lands in Chicago's 8 o'clock hour sends
+// (13:00 UTC in daylight time, 14:00 UTC in standard time); the other answers "not 8am in Chicago". The sent-marker
+// (morning_brief_state sent_<date>) keeps it to one email per person per day.
 // ?to=email&force=1 sends one test brief regardless of time or marker.
 //
 // SECURITY (2026-09-28): ?to= and ?force= used to work for ANY caller, so anyone
@@ -27,8 +31,7 @@
 // items, today's schedule) emailed to any address. Now both need the caller's
 // own Hub sign-in with an office role, ?to= must be that person's OWN email,
 // and the admin edition goes only to someone listed as admin in the Settings
-// card. The plain scheduled run is unchanged: configured recipients only, in
-// the 6-9am window, once a day.
+// card. The plain scheduled run: configured recipients only, at 8am Chicago, once a day.
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
@@ -46,6 +49,104 @@ const json = (body: unknown, status = 200) =>
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string))
 const HUB = 'https://cc.mo-care.com'
+/* The brief goes out at 8am Chicago time, weekdays (Samantha, 2026-10-02: "make that email send at 8am not 7am"). */
+export const SEND_HOUR = 8
+/* Interviews at or after this Chicago time are marked as this person's (Samantha, 2026-10-02: "mark interviews 2pm and
+   after as Samantha's interviews"). Business config: Hub Settings writes ops_settings.afternoon_interviews
+   {from:'14:00', name:'Samantha'}; these are the defaults until somebody saves it. Same rule as the Hub's Today. */
+const AFTERNOON_DEFAULT = { from: '14:00', name: 'Samantha' }
+// deno-lint-ignore no-explicit-any
+export function afternoonRule(settings: any) {
+  const s = (settings && settings.afternoon_interviews) || {}
+  const from = /^\d{1,2}:\d{2}$/.test(String(s.from || '')) ? String(s.from) : AFTERNOON_DEFAULT.from
+  const name = (s.name === undefined || s.name === null) ? AFTERNOON_DEFAULT.name : String(s.name).trim()
+  const [h, m] = from.split(':').map(Number)
+  return { from, name, fromMin: h * 60 + m }
+}
+const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december']
+/* A moment as Chicago {date, min (minutes after midnight, or null)}: a timestamp, a date, a zone-less local time, or
+   GHL's words ("Monday, September 14, 2026 10:00 AM", already Chicago time). */
+export function chiParts(x: unknown): { date: string; min: number | null } | null {
+  const s = String(x || '').trim(); if (!s) return null
+  if (/^\d{4}-\d\d-\d\d$/.test(s)) return { date: s, min: null }
+  let m = s.match(/^(\d{4}-\d\d-\d\d)[T ](\d\d):(\d\d)(:\d\d(\.\d+)?)?$/)
+  if (m) return { date: m[1], min: Number(m[2]) * 60 + Number(m[3]) }
+  m = s.match(/([A-Za-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})(?:\D+?(\d{1,2}):(\d{2})\s*([AaPp])\.?[Mm])?/)
+  if (m) {
+    const mi = MONTHS.findIndex((n) => n.startsWith(m![1].toLowerCase().slice(0, 3)))
+    if (mi >= 0) {
+      const date = m[3] + '-' + String(mi + 1).padStart(2, '0') + '-' + String(m[2]).padStart(2, '0')
+      if (!m[4]) return { date, min: null }
+      return { date, min: ((Number(m[4]) % 12) + (/p/i.test(m[6]) ? 12 : 0)) * 60 + Number(m[5]) }
+    }
+  }
+  const t = Date.parse(s); if (isNaN(t)) return null
+  const c = new Date(t).toLocaleString('sv-SE', { timeZone: 'America/Chicago' })
+  return { date: c.slice(0, 10), min: Number(c.slice(11, 13)) * 60 + Number(c.slice(14, 16)) }
+}
+export const time12 = (min: number | null) => min === null ? 'time not set'
+  : ((Math.floor(min / 60) % 12) || 12) + ':' + String(min % 60).padStart(2, '0') + (min < 720 ? 'am' : 'pm')
+type Interview = { name: string; min: number | null; status: string; who: string }
+type Assessment = { name: string; min: number | null; status: string; address: string; who: string }
+/* Today's interviews (booked, done or no-show; cancelled ones are gone). Throws when the database can't answer. */
+// deno-lint-ignore no-explicit-any
+export async function interviewsOn(sb: any, day: string, rule: ReturnType<typeof afternoonRule>): Promise<Interview[]> {
+  const mid = Date.parse(day + 'T00:00:00Z')
+  const { data, error } = await sb.from('interview_bookings').select('id,applicant_id,starts_at,status')
+    .in('status', ['booked', 'attended', 'noshow'])
+    .gte('starts_at', new Date(mid - 864e5).toISOString()).lt('starts_at', new Date(mid + 2 * 864e5).toISOString())
+    .order('starts_at')
+  if (error) throw new Error(error.message || 'the interview list did not answer')
+  // deno-lint-ignore no-explicit-any
+  const rows = (data || []).map((b: any) => ({ b, p: chiParts(b.starts_at) })).filter((x: any) => x.p && x.p.date === day)
+  // deno-lint-ignore no-explicit-any
+  const ids = [...new Set(rows.map((x: any) => x.b.applicant_id).filter(Boolean))]
+  // deno-lint-ignore no-explicit-any
+  const names: Record<string, any> = {}
+  if (ids.length) {
+    const ap = await sb.from('job_applicants').select('id,first_name,last_name').in('id', ids)
+    if (ap.error) throw new Error(ap.error.message || 'the applicant list did not answer')
+    // deno-lint-ignore no-explicit-any
+    for (const a of (ap.data || [])) names[(a as any).id] = a
+  }
+  // deno-lint-ignore no-explicit-any
+  return rows.map(({ b, p }: any) => {
+    const a = names[b.applicant_id] || {}
+    return { name: [a.first_name, a.last_name].filter(Boolean).join(' ').trim() || 'Applicant', min: p.min,
+      status: b.status === 'attended' ? 'done' : b.status === 'noshow' ? 'no-show' : 'booked',
+      who: rule.name && p.min !== null && p.min >= rule.fromMin ? rule.name : '' }
+  }).sort((x: Interview, y: Interview) => (x.min ?? 9999) - (y.min ?? 9999))
+}
+/* Today's booked assessments: a visit saved in the Hub (care_assessments) or a booking on the GHL New Client
+   Assessment calendar (the inquiry's assessment_at). One family is listed once. Same rule as the Hub's Today. */
+// deno-lint-ignore no-explicit-any
+export function assessmentsOn(day: string, cas: any[], leads: any[]): Assessment[] {
+  // deno-lint-ignore no-explicit-any
+  const byId: Record<string, any> = {}; for (const l of leads) if (l) byId[l.id] = l
+  // deno-lint-ignore no-explicit-any
+  const live = (l: any) => !!l && !l.archived && l.status !== 'Lost'
+  // deno-lint-ignore no-explicit-any
+  const clientName = (l: any) => { if (!l) return ''
+    const c = !l.client_name_not_provided && (l.client_first_name || l.client_last_name) ? [l.client_first_name, l.client_last_name].filter(Boolean).join(' ').trim() : ''
+    return c || [l.first_name, l.last_name].filter(Boolean).join(' ').trim() }
+  const out: Assessment[] = [], seen = new Set<string>()
+  for (const a of cas) {
+    if (!a || !a.visit_date || /cancel/i.test(String(a.status || ''))) continue
+    const p = chiParts(a.visit_date); if (!p || p.date !== day) continue
+    const l = a.lead_id ? byId[a.lead_id] : null; if (a.lead_id && l && !live(l)) continue
+    let min = p.min
+    if (min === null && l?.assessment_at) { const lp = chiParts(l.assessment_at); if (lp && lp.date === day) min = lp.min }
+    if (l) seen.add(l.id)
+    out.push({ name: a.client_name || clientName(l) || 'Unnamed', min, status: String(a.status || 'Scheduled') === 'Scheduled' ? 'booked' : 'done',
+      address: String(a.address || l?.client_address || '').trim(), who: String(a.coordinator || '').trim() })
+  }
+  for (const l of leads) {
+    if (!live(l) || seen.has(l.id) || !l.assessment_at) continue
+    const p = chiParts(l.assessment_at); if (!p || p.date !== day) continue
+    out.push({ name: clientName(l) || 'Unnamed', min: p.min, status: 'booked', address: String(l.client_address || '').trim(), who: '' })
+  }
+  return out.sort((x, y) => (x.min ?? 9999) - (y.min ?? 9999))
+}
 const AC_VERSION = Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01'
 function axisCreds() {
   const order = ['AXISCARE_VISITS_TOKEN', 'AXISCARE_API_KEY', 'AXISCARE_TOKEN']
@@ -86,7 +187,7 @@ Deno.serve(async (req) => {
     /* J1: weekdays only, matching its schedule (Samantha, 2026-09-29). A staff member's own test brief can go any day. */
     const dow = new Date(Date.parse(today + 'T12:00:00Z')).getUTCDay()
     if (dow === 0 || dow === 6) return json({ status: 'weekend, no brief', date: today })
-    if (chiHour < 6 || chiHour > 9) return json({ status: 'outside the morning window', chicago: chiNow })
+    if (chiHour !== SEND_HOUR) return json({ status: 'not 8am in Chicago, no brief', chicago: chiNow })
     const { data: st } = await sb.from('app_data').select('data').eq('key', 'morning_brief_state').maybeSingle()
     const stArr: unknown[] = Array.isArray(st?.data) ? st!.data : []
     // deno-lint-ignore no-explicit-any
@@ -110,6 +211,17 @@ Deno.serve(async (req) => {
     const { data } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
     if (data?.data && !Array.isArray(data.data)) opsSettings = data.data
   }
+
+  // ── Booked today: interviews and assessments (everyone's brief). A load that fails is SAID in the email. ──
+  let ivToday: Interview[] = [], ivErr = ''
+  try { ivToday = await interviewsOn(sb, today, afternoonRule(opsSettings)) } catch (e) { ivErr = String((e as Error)?.message || e).slice(0, 160) }
+  let asToday: Assessment[] = [], asErr = ''
+  try {
+    const { data, error } = await sb.from('app_data').select('data').eq('key', 'care_assessments').maybeSingle()
+    if (error) throw new Error(error.message)
+    // deno-lint-ignore no-explicit-any
+    asToday = assessmentsOn(today, Array.isArray(data?.data) ? data!.data as any[] : [], leads)
+  } catch (e) { asErr = String((e as Error)?.message || e).slice(0, 160) }
 
   // ── Today in AxisCare: total visits and open (unassigned) shifts ──
   let acToday: { total: number; open: { time: string; client: string }[] } | null = null
@@ -290,7 +402,17 @@ Deno.serve(async (req) => {
     const triTop = triage.slice(0, 5)
 
     let body = ''
-    // 🌙 While you were out — first, because it is the news.
+    // 🧑‍💼 Interviews today and 🏠 Assessments today: who is coming in and where we are going, first thing.
+    const ivChip = (s: string) => s === 'no-show' ? badge('no-show', '#FDE8E8', RED) : s === 'done' ? badge('done', '#E3F4EA', '#1F6D45') : badge('booked', '#E6F4F3', '#1F6F6B')
+    if (ivErr) body += card('🧑‍💼', 'Interviews today', RED, `<div style="font-family:Arial,sans-serif;font-size:13.5px;color:${RED};">Could not load today's interviews (${esc(ivErr)}). Check the Interviews tab in the Hub before anyone arrives.</div>`)
+    else if (ivToday.length) body += card('🧑‍💼', `Interviews today (${ivToday.length})`, NAVY,
+      ivToday.map((i) => row(`<b>${esc(time12(i.min))}</b> · ${esc(i.name)}` + ivChip(i.status) + (i.who ? badge(i.who + "'s interview", '#FFF4DE', AMBER) : ''),
+        'In person at the office', `${HUB}/#today`, 'Open')).join(''))
+    if (asErr) body += card('🏠', 'Assessments today', RED, `<div style="font-family:Arial,sans-serif;font-size:13.5px;color:${RED};">Could not load today's assessments (${esc(asErr)}). Check Today in the Hub.</div>`)
+    else if (asToday.length) body += card('🏠', `Assessments today (${asToday.length})`, TEAL,
+      asToday.map((a) => row(`<b>${esc(time12(a.min))}</b> · ${esc(a.name)}` + ivChip(a.status),
+        esc([a.address || 'address not on file', a.who ? 'with ' + a.who : 'who is going is not on file'].join(' · ')), `${HUB}/#today`, 'Open')).join(''))
+    // 🌙 While you were out: the news.
     if (myOvernightOps.length || myOvernightLeads.length) {
       const when = (iso: unknown) => {
         const c = chi(iso); if (!c) return ''
@@ -344,7 +466,7 @@ Deno.serve(async (req) => {
       (evvOut.length ? row(`<b>No clock-out:</b> ${esc([...new Set(evvOut)].join(', '))}`, '', `${HUB}/#cgattendance`, 'Review') : ''))
     if (r.admin && acToday) body += card('🗓', `Today in AxisCare: ${acToday.total} visits`, TEAL,
       (acToday.open.length
-        ? acToday.open.slice(0, 6).map((o) => row(`<b style="color:${RED};">Open shift</b> ${esc(o.time)} — ${esc(o.client)}`, '', `${HUB}/#coverage`, 'Cover')).join('') +
+        ? acToday.open.slice(0, 6).map((o) => row(`<b style="color:${RED};">Open shift</b> ${esc(o.time)} · ${esc(o.client)}`, '', `${HUB}/#coverage`, 'Cover')).join('') +
           (acToday.open.length > 6 ? `<div style="font-family:Arial,sans-serif;font-size:12px;color:${GRAY};padding-top:6px;">plus ${acToday.open.length - 6} more open</div>` : '')
         : `<div style="font-family:Arial,sans-serif;font-size:13.5px;color:#1f2a36;">Every visit today has a caregiver assigned. 💪</div>`))
     const clocks: string[] = []
@@ -364,6 +486,8 @@ Deno.serve(async (req) => {
     let glance = ''
     {
       const cells: string[] = []
+      if (ivToday.length) cells.push(chip(ivToday.length, 'interviews', NAVY))
+      if (asToday.length) cells.push(chip(asToday.length, 'assessments', TEAL))
       if (myPass.length) cells.push(chip(myPass.length, 'pass-alongs', AMBER))
       if (myOvernightOps.length + myOvernightLeads.length) cells.push(chip(myOvernightOps.length + myOvernightLeads.length, 'overnight', NAVY))
       if (myLeads.length) cells.push(chip(myLeads.length, 'leads to call', NAVY))
@@ -374,6 +498,8 @@ Deno.serve(async (req) => {
     }
 
     const counts: string[] = []
+    if (ivToday.length) counts.push(`${ivToday.length} interview${ivToday.length > 1 ? 's' : ''}`)
+    if (asToday.length) counts.push(`${asToday.length} assessment${asToday.length > 1 ? 's' : ''}`)
     if (myOvernightOps.length + myOvernightLeads.length) counts.push(`${myOvernightOps.length + myOvernightLeads.length} overnight`)
     if (myPass.length) counts.push(`${myPass.length} pass-along${myPass.length > 1 ? 's' : ''}`)
     if (myLeads.length) counts.push(`${myLeads.length} lead${myLeads.length > 1 ? 's' : ''} to call`)
@@ -394,9 +520,9 @@ Deno.serve(async (req) => {
       (nothing ? `<p style="font-family:Arial,sans-serif;font-size:15px;color:#1f2a36;padding:10px 4px 0;">${good}</p>` : body) +
       `<div style="font-family:Arial,sans-serif;font-size:13px;color:${GRAY};margin-top:14px;padding:0 4px;">${nothing ? '' : good}</div>` +
       `<div style="margin-top:14px;padding:0 4px;"><a href="${HUB}/#mywork" style="display:inline-block;background:${NAVY};color:#ffffff;font-family:Arial,sans-serif;text-decoration:none;font-weight:700;font-size:13.5px;padding:10px 20px;border-radius:9px;">Start my day in the hub →</a></div>` +
-      `</div><div style="text-align:center;font-family:Arial,sans-serif;color:#9aa3ad;font-size:11px;padding:12px;">Sent at 6:45am by your hub · cc.mo-care.com</div></div></div>`
+      `</div><div style="text-align:center;font-family:Arial,sans-serif;color:#9aa3ad;font-size:11px;padding:12px;">Sent at 8am by your hub · cc.mo-care.com</div></div></div>`
 
-    /* NO SILENT FAILURES (2026-10-01): the 6:45 scheduled brief has nobody watching, so a brief that doesn't go out
+    /* NO SILENT FAILURES (2026-10-01): the 8am scheduled brief has nobody watching, so a brief that doesn't go out
        raises a Needs Attention card (sender 'lead-digest'). A staff member's own test brief already shows its error
        in the Hub, so it raises no card. */
     const briefFailed = (why: string) => testTo ? Promise.resolve()
@@ -409,7 +535,7 @@ Deno.serve(async (req) => {
         method: 'POST', headers,
         body: JSON.stringify({ type: 'Email', contactId, subject, html }),
       })
-      if (em.ok) { sent++; summaries.push({ to: r.email, admin: r.admin, overnight: myOvernightOps.length + myOvernightLeads.length, passAlongs: myPass.length, leads: myLeads.length, priorities: myOps.length, writeUps: r.admin ? shortNotice.length : undefined, openShiftsToday: r.admin && acToday ? acToday.open.length : undefined }) }
+      if (em.ok) { sent++; summaries.push({ to: r.email, admin: r.admin, interviews: ivErr ? 'not loaded' : ivToday.length, assessments: asErr ? 'not loaded' : asToday.length, overnight: myOvernightOps.length + myOvernightLeads.length, passAlongs: myPass.length, leads: myLeads.length, priorities: myOps.length, writeUps: r.admin ? shortNotice.length : undefined, openShiftsToday: r.admin && acToday ? acToday.open.length : undefined }) }
       else {
         summaries.push({ to: r.email, error: 'GHL email ' + em.status })
         const t = await em.text().catch(() => '')
