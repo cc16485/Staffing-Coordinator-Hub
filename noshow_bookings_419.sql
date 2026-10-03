@@ -10,6 +10,15 @@
 --      (trigger). Future bookings are left alone (a no-show cannot book; if one exists the office sees it).
 -- Run as one transaction.
 
+-- 2026-10-02 (first run): interview_bookings never had outcome columns. applicant-noshow (Desktop 400) and the Hub's
+-- interview outcome both write outcome_at / noshow_notified_at / outcome_notes / post_interview, so their booking
+-- update failed every time (quietly) and every marked interview stayed 'booked'. Adding them makes those writes work.
+alter table public.interview_bookings
+  add column if not exists outcome_at timestamptz,
+  add column if not exists noshow_notified_at timestamptz,
+  add column if not exists outcome_notes text,
+  add column if not exists post_interview jsonb;
+
 create or replace function public.noshow_close_bookings(p_applicant uuid)
 returns int language plpgsql security definer set search_path to 'public' as $$
 declare n int;
