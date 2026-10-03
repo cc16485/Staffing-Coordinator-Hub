@@ -18,6 +18,10 @@
 //   evv       texts the caregiver the EVV correction form, once per alert, only on this tap
 //             (427: the link opens the form pre-filled for this visit; only a random token is in the link)
 //   coverage  she's calling off: opens a coverage case for the shift (the call-in process takes over) and resolves
+// 432 (2026-10-03): when the caregiver told the office on a CALL, view also returns late_call: "Mary said on your 4:31pm
+//   call: running late, about 8 minutes (around 4:39pm)", her words, whether this alert's texts are paused (until when),
+//   and this admin's own link to the running-late page (late.html), where a person may tell the family (a tap there,
+//   with the exact text and who gets it shown first). Nothing here sends anything to a family or a client.
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { checkLink, adminKey } from '../_shared/clockin-links.ts'
@@ -27,6 +31,8 @@ import { opEvent } from '../_shared/events.ts'
 import { officeQuiet, afterHoursAllowed } from '../_shared/quiet-hours.ts'
 import { makePrefill, withPrefillLink, axisHm } from '../_shared/evv-prefill.ts'
 import { ghlClientLink } from '../_shared/ghl-contact-link.ts'
+import { callLine, holdUntil, holdOptsOf, clockAt, familyEligible, FAMILY_MIN_DEFAULT } from '../_shared/late-notice.ts'
+import { makeLink as makeLateLink, linkExpiry as lateLinkExpiry } from '../_shared/late-links.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
                'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -126,7 +132,25 @@ Deno.serve(async (req) => {
     const [clientGhl, caregiverGhl] = await Promise.all([
       ghlClientLink(sb, ghl, { axiscareClientId: l.client_axiscare_id, phone: clientPhone, email: clientEmail }),
       ghlClientLink(null, ghl, { phone: normalisePhone(cg?.phone), email: cg?.email })])
-    return json({ ok: true, me: me.first, caregiver_first: cgFirst, client_first: l.client_first, shift_date: l.shift_date,
+    /* 432: what they said on a call about this shift (the running-late notice), and this admin's running-late link */
+    // deno-lint-ignore no-explicit-any
+    let lateCall: any = null
+    try {
+      const { data: n } = await sb.from('late_notices').select('*').eq('visit_id', String(l.visit_id)).maybeSingle()
+      if (n && n.call_at) {
+        const until = holdUntil(n, Date.parse(n.shift_start), holdOptsOf(settings))
+        const famMin = Number(settings.late_family_min) >= 0 && Number(settings.late_family_min) <= 120 ? Number(settings.late_family_min) : FAMILY_MIN_DEFAULT
+        const fe = familyEligible(n, famMin)
+        const live = n.status === 'open' || n.status === 'seen'
+        lateCall = { line: callLine(n, me.email), quote: n.call_quote || null, kind: n.kind, practice: n.status === 'practice', closed: !!n.closed_at,
+          paused_until: !l.resolved_at && until != null && Date.now() < until ? clockAt(until) : null,
+          resumed_after: !l.resolved_at && until != null && Date.now() >= until ? clockAt(until) : null,
+          late_link: live && SECRET ? await makeLateLink(SECRET, 'ln_' + n.id, me.email, lateLinkExpiry(String(n.shift_date))) : null,
+          family_ok: live && n.kind === 'late' && fe.ok, family_why: n.kind === 'late' && !fe.ok ? fe.why : null,
+          family_told: (Array.isArray(n.family) ? n.family : []).length > 0 }
+      }
+    } catch { /* the page works without it */ }
+    return json({ ok: true, me: me.first, late_call: lateCall, caregiver_first: cgFirst, client_first: l.client_first, shift_date: l.shift_date,
       shift_time: clock12(l.shift_time), minutes_past_start: minutesPast(String(l.shift_date), String(l.shift_time)),
       texted_at: chi12(l.texted_at), caregiver_phone: normalisePhone(cg?.phone) || null, client_phone: clientPhone,
       client_ghl: clientGhl, caregiver_ghl: caregiverGhl,
