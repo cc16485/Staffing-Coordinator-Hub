@@ -105,7 +105,7 @@ for fn in FNS:
     if inwin and not L["refused"]: how.append("its latest start is inside the call log, where nothing was turned away")
     if how: say(f"  ✓ {fn}: started {n} time(s) since the change, last {ct(last)}; " + " and ".join(how))
     elif fn in own or fn in RUNLOG:
-        if fn == "lead-digest": say(f"  · {fn}: last started {ct(last)}; its brief only sends 6:45am on weekdays (no sent marker since the change yet, and that start is older than the call log)")
+        if fn == "lead-digest": say(f"  · {fn}: last started {ct(last)}; its brief only sends at 8am Central on weekdays (no sent marker since the change yet, and that start is older than the call log)")
         else: bad(f"{fn}: started {n} time(s) since the change (last {ct(last)}) but has no record of getting in since, and that start is older than the call log. Tell Claude.")
     else: say(f"  · {fn}: started {n} time(s) since the change, last {ct(last)}; it keeps no record of its own and that start is older than the call log, so this can't be proven here (341/342 proved its schedule's exact call is accepted)")
 
