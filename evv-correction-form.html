@@ -86,6 +86,16 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min
 .success-card h2{font-size:1.3rem;font-weight:700;color:var(--green-text);margin-bottom:.5rem}
 .success-card p{font-size:.9rem;color:var(--gray);line-height:1.7;margin-bottom:.75rem}
 .success-card .ref{font-size:.78rem;background:var(--bg);border-radius:6px;padding:.4rem .7rem;color:var(--navy);font-family:monospace;display:inline-block;margin-top:.25rem}
+
+/* 427: the pre-filled link */
+.pre-box{border-radius:10px;padding:.8rem 1rem;font-size:.85rem;line-height:1.55;margin-bottom:1.1rem;display:none}
+.pre-box.show{display:block}
+.pre-box.ok{background:#e6f8f7;border:1.5px solid var(--teal);color:var(--navy)}
+.pre-box.warn{background:var(--amber-bg);border:1.5px solid #fcd34d;color:var(--amber-text)}
+.grp input.locked{background:#f1f4f8;color:var(--navy);border-style:dashed;cursor:not-allowed}
+.lock-note{font-size:.7rem;color:var(--gray);margin-top:.15rem;display:none}
+.lock-note.show{display:block}
+.pre-blank-btn{background:none;border:1px solid currentColor;border-radius:6px;padding:.25rem .65rem;font-family:inherit;font-size:.78rem;cursor:pointer;color:inherit;margin-top:.45rem}
 </style>
 </head>
 <body>
@@ -112,6 +122,9 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min
     ⚠️ <strong>Before submitting this form:</strong> Make sure you have attempted to clock in/out correctly in the AxisCare app. This form is for legitimate errors only — it does not guarantee approval. <strong>Do not exaggerate or falsify times.</strong> Falsifying EVV records is fraud and may result in termination and legal consequences.
   </div>
 
+  <!-- 427: shown only when the link was filled in for a visit (?t=...) -->
+  <div class="pre-box" id="pre-box" role="status" aria-live="polite"></div>
+
   <!-- Section 1: Who are you -->
   <div class="section">
     <div class="section-title">👤 1. You &amp; Your Client</div>
@@ -120,11 +133,13 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min
         <label>Your Name <span class="req">*</span></label>
         <input type="text" id="f-attendant" placeholder="First Last" autocomplete="name">
         <div class="field-error" id="err-attendant">Required</div>
+        <div class="lock-note" id="lock-attendant">Filled in from your visit</div>
       </div>
       <div class="grp">
         <label>Client's Name <span class="req">*</span></label>
         <input type="text" id="f-consumer" placeholder="First Last">
         <div class="field-error" id="err-consumer">Required</div>
+        <div class="lock-note" id="lock-consumer">Filled in from your visit</div>
       </div>
     </div>
   </div>
@@ -137,6 +152,7 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min
         <label>Date of Visit <span class="req">*</span></label>
         <input type="date" id="f-visitdate">
         <div class="field-error" id="err-visitdate">Required</div>
+        <div class="lock-note" id="lock-visitdate">Filled in from your visit</div>
       </div>
       <div class="grp">
         <label>Date You Are Submitting This</label>
@@ -272,6 +288,112 @@ body{font-family:'Poppins',sans-serif;background:var(--bg);color:var(--navy);min
 const SB_URL = 'https://zngsgedlsxinbygwmxwn.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpuZ3NnZWRsc3hpbmJ5Z3dteHduIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI1NDIzNDQsImV4cCI6MjA5ODExODM0NH0.L_31_UKdccyRH9n7p1GaBlZTqcJipB008H-GIvxwLxM';
 const sb = supabase.createClient(SB_URL, SB_KEY);
+
+/* EVVPRE:start ── 427: the pre-filled link (?t=<token>) ─────────────────────
+   The link carries only a random token. The form asks the database for the few
+   words it shows (evv_prefill_get) and saves through evv_submit_prefilled, which
+   takes the caregiver, client and visit from the office's own record, never from
+   this page. Without a token, or if the link is used, expired or can't load,
+   this is the ordinary blank form. Pure functions here (tested in node). */
+const EVVPRE = (function () {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  function token(search) {
+    let t = null;
+    try { t = new URLSearchParams(search || '').get('t'); } catch (e) { t = null; }
+    return t && UUID.test(t.trim()) ? t.trim().toLowerCase() : null;
+  }
+  const hm = (x) => { const m = String(x || '').match(/^(\d{1,2}):(\d{2})/); return m ? m[1].padStart(2, '0') + ':' + m[2] : ''; };
+  function dateWords(d) {
+    const m = String(d || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return String(d || '');
+    return new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  }
+  function time12(x) { const t = hm(x); if (!t) return ''; let h = +t.slice(0, 2); const ap = h >= 12 ? 'PM' : 'AM'; h = h % 12 || 12; return h + ':' + t.slice(3) + ' ' + ap; }
+  /* info (from evv_prefill_get, status ok) -> what goes in each box. The corrected times start at the
+     scheduled times (a starting point; the caregiver changes them if they are not right). */
+  function fields(info) {
+    const i = info || {};
+    const missing = i.which_missing === 'out' ? 'clock-out' : i.which_missing === 'both' ? 'clock-in and clock-out' : 'clock-in';
+    const newIn = i.which_missing === 'out' ? (hm(i.actual_in) || hm(i.scheduled_in)) : hm(i.scheduled_in);
+    const sched = [time12(i.scheduled_in), time12(i.scheduled_out)].filter(Boolean).join(' to ');
+    const shows = [i.actual_in ? 'clock-in ' + time12(i.actual_in) : '', i.actual_out ? 'clock-out ' + time12(i.actual_out) : ''].filter(Boolean).join(', ');
+    return {
+      attendant: String(i.caregiver_name || ''), consumer: String(i.client_display || ''), visitdate: String(i.visit_date || ''),
+      orig_in: hm(i.actual_in), orig_out: hm(i.actual_out), new_in: newIn, new_out: hm(i.scheduled_out),
+      line: 'Filled in for your visit with ' + (i.client_display || 'your client') + ' on ' + dateWords(i.visit_date) + '.',
+      detail: 'AxisCare is missing your ' + missing + '.' + (sched ? ' The visit was scheduled ' + sched + '.' : '')
+        + (shows ? ' AxisCare shows ' + shows + '.' : '')
+        + ' The corrected times below start at the scheduled times. Change them to the times you really worked.',
+    };
+  }
+  /* a link that can't be used -> what the caregiver reads (the blank form is right below it) */
+  function statusWords(status) {
+    if (status === 'used') return 'This link was already used to send a form for this visit. If you need to send another one, fill in the form below.';
+    if (status === 'expired') return 'This link has expired. Please fill in the form below.';
+    if (status === 'not_found') return 'This link is not valid. Please fill in the form below.';
+    return 'We could not load your visit details. Please fill in the form below.';
+  }
+  /* evv_submit_prefilled's answer -> null (saved) or the words to show */
+  const FIELD = { new_in: 'the corrected clock-in time', new_out: 'the corrected clock-out time', orig_in: 'the original clock-in time',
+    orig_out: 'the original clock-out time', reason: 'the reason', notes: 'what happened', tasks: 'the tasks', submitdate: 'the date you are submitting this',
+    sig_attendant: 'your signature', sig_consumer: "the client's signature" };
+  function submitWords(r) {
+    if (r && r.ok) return null;
+    const e = r && r.error;
+    if (e === 'used') return { msg: 'This link was already used to send a form for this visit.', blank: true };
+    if (e === 'expired') return { msg: 'This link has expired.', blank: true };
+    if (e === 'not_found') return { msg: 'This link is not valid.', blank: true };
+    if (e === 'invalid') return { msg: 'Please check ' + (FIELD[r.field] || 'the form') + ' and try again.', blank: false };
+    return { msg: 'Please check your internet connection and try again.', blank: false };
+  }
+  return { token, fields, statusWords, submitWords, dateWords, time12 };
+})();
+if (typeof globalThis !== 'undefined') globalThis.EVVPRE = EVVPRE;
+/* EVVPRE:end */
+
+const PRE = { token: EVVPRE.token(location.search), info: null };
+const LOCKED = ['attendant', 'consumer', 'visitdate'];
+function preBox(kind, html) {
+  const box = document.getElementById('pre-box');
+  box.className = 'pre-box show ' + kind;
+  box.innerHTML = html;
+}
+function escHtml(t) { return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function preLock(on) {
+  LOCKED.forEach((k) => {
+    const el = document.getElementById('f-' + k);
+    el.readOnly = on; el.classList.toggle('locked', on);
+    document.getElementById('lock-' + k).classList.toggle('show', on);
+  });
+}
+/* back to the ordinary blank form (a used / expired link, or the caregiver asks) */
+function preBlank(words) {
+  PRE.token = null; PRE.info = null;
+  preLock(false);
+  ['attendant', 'consumer', 'visitdate', 'orig-in', 'orig-out', 'new-in', 'new-out'].forEach((k) => { document.getElementById('f-' + k).value = ''; });
+  if (words) preBox('warn', escHtml(words)); else document.getElementById('pre-box').className = 'pre-box';
+}
+async function preLoad() {
+  if (!PRE.token) return;
+  preBox('ok', 'Loading your visit details...');
+  let res = null;
+  try {
+    const r = await sb.rpc('evv_prefill_get', { p_token: PRE.token });
+    res = r && !r.error ? r.data : null;
+  } catch (e) { res = null; }
+  if (!res || res.status !== 'ok') { preBlank(EVVPRE.statusWords(res && res.status)); return; }
+  PRE.info = res;
+  const f = EVVPRE.fields(res);
+  document.getElementById('f-attendant').value = f.attendant;
+  document.getElementById('f-consumer').value = f.consumer;
+  document.getElementById('f-visitdate').value = f.visitdate;
+  if (f.orig_in) document.getElementById('f-orig-in').value = f.orig_in;
+  if (f.orig_out) document.getElementById('f-orig-out').value = f.orig_out;
+  if (f.new_in) document.getElementById('f-new-in').value = f.new_in;
+  if (f.new_out) document.getElementById('f-new-out').value = f.new_out;
+  preLock(true);
+  preBox('ok', '<strong>' + escHtml(f.line) + '</strong><br>' + escHtml(f.detail));
+}
 
 // ── Signature canvases ────────────────────────────────────────────────
 const sigState = {};
@@ -463,10 +585,27 @@ async function submitForm() {
   }, 15000);
 
   try {
+    if (PRE.token && PRE.info) {
+      // 427: a pre-filled link. Saved server side; the caregiver, client and visit come from the office's record.
+      const { data, error } = await sb.rpc('evv_submit_prefilled', { p_token: PRE.token, p_payload: payload });
+      clearTimeout(timeout);
+      if (error) throw error;
+      const bad = EVVPRE.submitWords(data);
+      if (bad) {
+        btn.disabled = false;
+        btn.textContent = 'Submit EVV Correction Form';
+        errBox.innerHTML = '<strong>Not sent.</strong> ' + escHtml(bad.msg)
+          + (bad.blank ? '<br><button type="button" class="pre-blank-btn" onclick="preUseBlank()">Use the blank form instead</button>' : '');
+        errBox.style.display = 'block';
+        errBox.scrollIntoView({ behavior:'smooth', block:'center' });
+        return;
+      }
+    } else {
     // Note: anon role has INSERT but not SELECT — don't use .select() here
     const { error } = await sb.from('evv_submissions').insert([payload]);
     clearTimeout(timeout);
     if (error) throw error;
+    }
 
     const confirmId = Date.now().toString(16).toUpperCase().slice(-6);
     document.getElementById('confirm-id').textContent = confirmId;
@@ -484,10 +623,17 @@ async function submitForm() {
   }
 }
 
+function preUseBlank() {
+  document.getElementById('submit-error').style.display = 'none';
+  preBlank('You are now filling in the blank form. Type your name, the client\'s name and the visit date.');
+  document.getElementById('f-attendant').focus();
+}
+
 // ── Init ─────────────────────────────────────────────────────────────
 window.addEventListener('load', () => {
   initSig('sig-attendant');
   initSig('sig-consumer');
+  preLoad();
 });
 </script>
 </body>

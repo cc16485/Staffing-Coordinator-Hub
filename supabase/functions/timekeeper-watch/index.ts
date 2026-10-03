@@ -88,6 +88,7 @@ import { visitMs } from '../_shared/held-shift.ts'
 import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { officeQuiet, quietWords, afterHoursAllowed } from '../_shared/quiet-hours.ts'
+import { makePrefill, withPrefillLink, axisHm } from '../_shared/evv-prefill.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -614,8 +615,14 @@ Deno.serve(async (req) => {
     const contact = await contactForOutbound(sb, ghl,
       { phone, firstName: String(cg?.first ?? '') || cgName.split(' ')[0] }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'timekeeper-watch' })
     if (!contact) { refusedGate++; continue }
-    const message = msgOutTmpl.replaceAll('{first_name}', String(cg?.first ?? '') || cgName.split(' ')[0])
-      .replaceAll('{client}', clientFirst).replaceAll('{time}', clock12(endTime))
+    /* 427: the form link in this reminder opens the form already filled in for THIS visit (only a random token in
+       the link). Same wording; if the pre-fill can't be made, the plain form link goes as before. */
+    const pre = await makePrefill(sb, { visit_id: vid, caregiver_axiscare_id: String(v.caregiver.id), client_axiscare_id: v?.client?.id != null ? String(v.client.id) : null,
+      caregiver_name: cgName, client_first: clientFirst, client_last: String(v?.client?.lastName ?? ''), visit_date: day,
+      scheduled_in: String(v?.scheduledStartDate ?? v?.startDate ?? '').slice(11, 16), scheduled_out: endTime,
+      actual_in: axisHm(v?.clockIn), actual_out: null, which_missing: 'out' }, 'timekeeper-watch (clock-out reminder)')
+    const message = withPrefillLink(msgOutTmpl.replaceAll('{first_name}', String(cg?.first ?? '') || cgName.split(' ')[0])
+      .replaceAll('{client}', clientFirst).replaceAll('{time}', clock12(endTime)), pre?.url ?? null)
     try {
       if (await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
         'timekeeper-watch', { channel: 'sms', contactId: contact.contactId, address: phone, who: cgName }, { message })) {

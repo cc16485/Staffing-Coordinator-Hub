@@ -11,6 +11,7 @@
 //                                          Several: listed for the office to pick. None: said.
 //   POST { submission_id, visit_id }       the same, for the visit the office picked
 //   POST { submission_ids: [..up to 8] }   the same for several forms (the Hub's lists check the ones waiting)
+//   (427) a form that already carries its AxisCare visit (sent from a pre-filled link) is checked against that visit.
 //
 // Stamped on the form (evv_submissions): axiscare_visit_id, axiscare_checked_at, axiscare_seen ("08:02-14:00"),
 // axiscare_done_at (set when it matches, cleared when it no longer does). Nothing else is written; nothing is sent.
@@ -92,8 +93,10 @@ export async function checkOne(db: any, submissionId: string, pickedVisit = '') 
   const visits = got.visits.map(summarize)
   let v = null
   if (pickedVisit) { v = visits.find((x) => x.id === pickedVisit) || null; if (!v) return { outcome: 'error', error: 'That visit is not one of this form\'s visits on ' + s.visitdate + '.', visits } }
+  /* 427: a form sent from a pre-filled link already carries its AxisCare visit, so that visit is used directly (no
+     guessing between visits). Only if it is no longer there that day does the usual search below apply. */
+  else if (s.axiscare_visit_id && visits.some((x) => x.id === String(s.axiscare_visit_id))) v = visits.find((x) => x.id === String(s.axiscare_visit_id)) || null
   else if (visits.length === 1) v = visits[0]
-  else if (s.axiscare_visit_id) v = visits.find((x) => x.id === String(s.axiscare_visit_id)) || null
   if (!v && visits.length > 1) return { outcome: 'several', visits, want }
   if (!v) return { outcome: 'none', others: got.others, want,
     error: `AxisCare has no visit on ${s.visitdate} for this client` + (s.caregiver_axiscare_id ? ' and caregiver' : '') + (got.others ? ` (it has ${got.others} with another caregiver)` : '') + '.' }
