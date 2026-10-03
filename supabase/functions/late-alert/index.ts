@@ -20,16 +20,19 @@
 //   skip      "Don't tell the family": recorded
 //   arrived   after they clock in, and only if the family was told: "... has arrived", same members, a person's tap
 //   coverage  they can't make it: opens a coverage case for the shift (the call-in process takes over) and closes this
-// Never automatic, never the client (her decision 2).
+// Never automatic, never the client (her decision 2). Samantha again, 2026-10-03: the family text stays ONE TAP BY A
+// PERSON, permanently (she likes that it keeps the office in control). There is no automatic family send.
+// 432: a notice that came from a CALL (in or out, the office line) shows "Mary said on your 4:31pm call: running late,
+//   about 8 minutes (around 4:39pm)" and her words; its time reads "from your call". Same buttons, same rules.
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { checkLink, adminKey } from '../_shared/late-links.ts'
 import { adminRecipients, textAdmin } from '../_shared/clockin-admins.ts'
-import { normalisePhone, contactForOutbound } from '../_shared/outreach.ts'
+import { normalisePhone, contactForOutbound, maySend } from '../_shared/outreach.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { eligibleMembers } from '../_shared/family-change-text.ts'
 import { opEvent } from '../_shared/events.ts'
-import { DEFAULT_FAMILY, DEFAULT_FAMILY_UPDATE, DEFAULT_ARRIVED, FAMILY_MIN_DEFAULT, fill, clockAt, familyEligible } from '../_shared/late-notice.ts'
+import { DEFAULT_FAMILY, DEFAULT_FAMILY_UPDATE, DEFAULT_ARRIVED, FAMILY_MIN_DEFAULT, fill, clockAt, familyEligible, callLine, holdUntil, holdOptsOf } from '../_shared/late-notice.ts'
 import { visitMs } from '../_shared/held-shift.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { officeQuiet } from '../_shared/quiet-hours.ts'
@@ -160,17 +163,27 @@ Deno.serve(async (req) => {
     const fe = familyEligible(n, famMin)
     const { members, why } = n.kind === 'late' ? await circleMembers() : { members: [], why: '' }
     const arrivedSent = family().some((f) => f.what === 'arrived')
-    return json({ ok: true, me: me.first, via_link: viaLink, practice, admin_texts_live: adminLive,
+    /* 432: the call, in the words every page uses; "your" when the person reading was on it */
+    const whose = n.call_by_email && String(n.call_by_email).toLowerCase() === String(me.email).toLowerCase() ? 'your call'
+      : n.call_by ? `${firstOf(n.call_by)}'s call` : 'the call'
+    const until = n.call_at ? holdUntil(n, startMs, holdOptsOf(st)) : null
+    const call = n.call_at ? { line: callLine(n, me.email), quote: n.call_quote || null, at: clockAt(Date.parse(n.call_at)), by: n.call_by ? firstOf(n.call_by) : null,
+      direction: n.call_direction || null,
+      missed_clockin_paused_until: !n.closed_at && until != null && Date.now() < until ? clockAt(until) : null } : null
+    const etaBy = n.eta_by === 'ai' ? (n.call_at && (Array.isArray(n.said) ? n.said : []).at(-1)?.channel === 'call' ? 'from ' + whose : 'from their message') : n.eta_by || null
+    const hoursOk = maySend('timely_external').allowed
+    return json({ ok: true, me: me.first, via_link: viaLink, practice, admin_texts_live: adminLive, call, source: n.call_at ? 'call' : 'text',
       kind: n.kind, status: n.status, caregiver_first: cgFirst, client_first: n.client_first, shift_date: n.shift_date, shift_time: t12,
       said: (Array.isArray(n.said) ? n.said : []).slice(-6).map((x: { at: string; channel: string; text: string }) => ({ at: clockAt(Date.parse(x.at)), channel: x.channel, text: String(x.text).slice(0, 1000) })),
       eta: n.eta ? clockAt(Date.parse(n.eta)) : null, eta_hhmm: n.eta ? new Date(n.eta).toLocaleString('en-GB', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', hour12: false }) : '',
-      eta_by: n.eta_by === 'ai' ? 'from their message' : n.eta_by || null, sure: n.sure,
+      eta_by: etaBy, sure: n.sure,
       seen: n.seen_at ? { by: n.seen_by, at: clockAt(Date.parse(n.seen_at)) } : null,
       closed: n.closed_at ? { how: n.closed_how, clock_in: n.clock_in_at ? clockAt(Date.parse(n.clock_in_at)) : null } : null,
       caregiver_phone: normalisePhone(g?.phone) || null, client_phone: clientPhone,
       client_ghl: clientGhl, caregiver_ghl: caregiverGhl,
       family: { can: !practice && fe.ok && members.length > 0 && !n.closed_at, why: practice ? 'practice run: family texts are not sent yet' : (!fe.ok ? fe.why : why),
         members: members.length, first_names: members.map((m) => firstOf(m.name) || 'there').slice(0, 6), draft: draft(), is_update: told(),
+        hours_ok: hoursOk, hours: '6am to 9pm',
         sent: family().map((f) => ({ at: clockAt(Date.parse(f.at)), by: f.by, what: f.what, count: f.count })),
         skipped: n.family_skipped_at ? { by: n.family_skipped_by, at: clockAt(Date.parse(n.family_skipped_at)) } : null,
         arrived_can: !practice && n.closed_how === 'clocked_in' && told() && !arrivedSent,

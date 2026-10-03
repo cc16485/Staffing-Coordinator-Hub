@@ -16,6 +16,17 @@
 //   5. The family is NEVER texted from here (her decision 1: a person taps "Send to the family" on the page or card;
 //      automatic only after a practice week and her word). Practice records what that text would have said.
 //   Closes itself: clocked in, the visit changed, a coverage case has the shift, or the day ended.
+// 432 (Samantha, 2026-10-03, her call to Mary: "she said she is running late and will be to Aprils in 8 minutes"; "yes
+//   build it"): CALLS both ways. A call the office MADE to the caregiver (outbound, answered) is read too, not only calls
+//   she made to us, and so is a caregiver whose missed clock-in alert is still open past the usual 90 minutes. The
+//   caregiver is found by her phone number on the roster (the GoHighLevel contact with exactly that number), never by a
+//   name. A call with no transcript yet is tried again on the next runs, for 30 minutes after the call; when calls never
+//   get one, the run says call transcription may be off in GoHighLevel. The notice records the call: when, who in the
+//   office was on it, and the caregiver's own words (a quote the AI copied, kept only if it is really in the transcript).
+//   While the notices are in practice, a call's notice is live by itself (ops_settings.late_call_live, ON unless she
+//   turns it off): a card in Needs Attention, the call noted on the missed clock-in card, and (late WITH a time only)
+//   the missed clock-in admin texts pause until 5 minutes after that time. Nothing is texted because of a call. The
+//   family only ever hears from a person's tap (her standing rule, confirmed again 2026-10-03: one tap, permanently).
 // Samantha approved the Running late plan ("yes to all"): when a caregiver texts or calls to say they're running
 // late, the Hub notices, works out when they expect to arrive, texts the admins until someone taps Seen, and (per her
 // decision 1) the Family Circle hears the time, one tap first, automatic only after a practice week and her word.
@@ -40,13 +51,13 @@ import { adminRecipients, textAdmin } from '../_shared/clockin-admins.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { makeLink, linkExpiry } from '../_shared/late-links.ts'
 import { eligibleMembers } from '../_shared/family-change-text.ts'
-import { DEFAULT_THANKS, DEFAULT_ASK, DEFAULT_FAMILY, FAMILY_MIN_DEFAULT, fill, clockAt, familyEligible } from '../_shared/late-notice.ts'
+import { DEFAULT_THANKS, DEFAULT_ASK, DEFAULT_FAMILY, FAMILY_MIN_DEFAULT, fill, clockAt, familyEligible, callLine, callLive, holdUntil, holdOptsOf } from '../_shared/late-notice.ts'
 import { officeQuiet, quietWords } from '../_shared/quiet-hours.ts'
 
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
 const AC_VERSION = '2023-10-01'
 const GHL = 'https://services.leadconnectorhq.com'
-export const BEFORE_MIN = 120, AFTER_MIN = 90
+export const BEFORE_MIN = 120, AFTER_MIN = 90, CALL_WAIT_MIN = 30
 const MIN = 60e3
 // deno-lint-ignore no-explicit-any
 const rowsOf = (x: any): any[] => Array.isArray(x) ? x : (x && typeof x === 'object' ? Object.values(x) : [])
@@ -106,7 +117,13 @@ export function assign<T extends { at: number }>(shifts: Shift[], msgs: T[]): Ma
 }
 
 /* ── the AI reads their texts for one shift ── */
-export type Reading = { kind: 'late' | 'cant_make_it' | 'other'; eta: number | null; sure: boolean; failed: boolean }
+export type Reading = { kind: 'late' | 'cant_make_it' | 'other'; eta: number | null; sure: boolean; failed: boolean; quote?: string | null }
+/* 432: a quote is kept only when it is really in what they said (the AI copies; it must never put words in a mouth). */
+const squash = (x: unknown) => String(x ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+export const quoteIn = (quote: unknown, said: string): string | null => {
+  const q = String(quote ?? '').replace(/\s+/g, ' ').trim().slice(0, 200)
+  return q.length >= 4 && squash(said).includes(squash(q)) && squash(q).length >= 4 ? q : null
+}
 /* "HH:MM" (24-hour, Central) on the shift's Central day, as an instant. Nonsense times come back null. */
 export function etaOn(hhmm: string, shiftStart: number): number | null {
   const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm ?? '').trim()); if (!m || +m[1] > 23 || +m[2] > 59) return null
@@ -115,33 +132,39 @@ export function etaOn(hhmm: string, shiftStart: number): number | null {
   return t
 }
 export async function readLate(shiftStart: number, texts: { at: number; body: string }[]): Promise<Reading> {
-  const failed: Reading = { kind: 'other', eta: null, sure: false, failed: true }
+  const failed: Reading = { kind: 'other', eta: null, sure: false, failed: true, quote: null }
   const key = Deno.env.get('ANTHROPIC_API_KEY') || ''
   if (!key || !texts.length) return failed
-  const lines = texts.map((t) => `[${chiClock(t.at)}] ${t.body.slice(0, 600)}`).join('\n')
+  const lines = texts.map((t) => `[${chiClock(t.at)}] ${t.body.slice(0, t.body.startsWith('(phone call)') ? 2500 : 600)}`).join('\n')
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 150, temperature: 0,
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 260, temperature: 0,
         system: 'You read texts a home-care caregiver sent the office around one shift. The shift starts at the time given. '
           + 'Decide what the texts say about THIS shift: "late" (they will be there but late), "cant_make_it" (they are not '
           + 'coming: calling off, sick, emergency), or "other" (anything else: questions, confirmations, on the way on time, '
           + 'unrelated). If late, give the time they expect to arrive as 24-hour HH:MM: "15 min late" means the start plus '
           + '15; "10 min out" or "be there in 10" means the text\'s own time plus 10; a clock time they give is that time. '
-          + 'No time given = "". sure is false when the texts are unclear. Answer ONLY minified JSON: '
-          + '{"kind":"late"|"cant_make_it"|"other","eta":"HH:MM" or "","sure":bool}',
-        messages: [{ role: 'user', content: `Shift starts ${chiClock(shiftStart)}.\nTexts (with the time each was sent):\n${lines}`.slice(0, 5000) }] }) })
+          + 'No time given = "". sure is false when the texts are unclear. '
+          + 'A line starting "(phone call)" is the transcript of a phone call between the office and the caregiver, both '
+          + 'sides, maybe labelled Speaker 1 / Speaker 2: only what the CAREGIVER says about their own arrival counts (never '
+          + 'the office person\'s guesses or questions), and "in 8 minutes" on a call means the call\'s own time plus 8. '
+          + 'quote: the caregiver\'s own words that say they are late or not coming, copied EXACTLY from the text or transcript '
+          + '(under 160 characters), or "" when there are none. Answer ONLY minified JSON: '
+          + '{"kind":"late"|"cant_make_it"|"other","eta":"HH:MM" or "","sure":bool,"quote":"..."}',
+        messages: [{ role: 'user', content: `Shift starts ${chiClock(shiftStart)}.\nTexts (with the time each was sent):\n${lines}`.slice(0, 8000) }] }) })
     if (!r.ok) return failed
     const j = await r.json().catch(() => null)
     const m = String(j?.content?.[0]?.text ?? '').match(/\{[\s\S]*\}/); if (!m) return failed
     const a = JSON.parse(m[0])
     const kind = a.kind === 'late' || a.kind === 'cant_make_it' ? a.kind : 'other'
-    return { kind, eta: kind === 'late' ? etaOn(String(a.eta ?? ''), shiftStart) : null, sure: a.sure === true, failed: false }
+    return { kind, eta: kind === 'late' ? etaOn(String(a.eta ?? ''), shiftStart) : null, sure: a.sure === true, failed: false,
+      quote: kind === 'other' ? null : quoteIn(a.quote, texts.map((t) => t.body).join('\n')) }
   } catch { return failed }
 }
 
 /* ── GoHighLevel, read only: find the contact by phone, then their texts and calls since a time ── */
-type Msg = { at: number; kind: 'text' | 'call'; body: string; id: string }
+type Msg = { at: number; kind: 'text' | 'call'; body: string; id: string; dir?: 'in' | 'out'; userId?: string; tried?: boolean; secs?: number | null }
 /* A call's words, when GoHighLevel transcribed it (its "transcription" read). Anything else: no words. */
 // deno-lint-ignore no-explicit-any
 export function transcriptText(j: any): string {
@@ -162,7 +185,7 @@ async function ghlGet(url: string, h: Record<string, string>): Promise<any> {
   }
   return null
 }
-export async function inboundSince(phone: string, since: number, opts: { transcripts?: boolean; skip?: Set<string> } = {}): Promise<{ found: boolean; msgs: Msg[]; contactId?: string }> {
+export async function inboundSince(phone: string, since: number, opts: { transcripts?: boolean; skip?: Set<string>; outboundCalls?: boolean } = {}): Promise<{ found: boolean; msgs: Msg[]; contactId?: string }> {
   const token = Deno.env.get('GHL_TOKEN') ?? '', loc = Deno.env.get('GHL_LOCATION_ID') ?? ''
   const h = { Authorization: `Bearer ${token}`, Version: '2021-07-28', Accept: 'application/json' }
   let cid = ''
@@ -189,15 +212,21 @@ export async function inboundSince(phone: string, since: number, opts: { transcr
         const at = Date.parse(String(x?.dateAdded ?? ''))
         if (!Number.isFinite(at)) continue
         if (at < since) { older = true; continue }
-        if (x?.direction !== 'inbound') continue
         const t = String(x?.messageType ?? '')
         const id = String(x?.id ?? '')
+        /* 432: a call the OFFICE made to them (answered) counts too; their texts are only ever the ones they sent */
+        const outCall = opts.outboundCalls === true && x?.direction === 'outbound' && (t === 'TYPE_CALL' || (!t && Number(x?.type) === 3))
+          && !(x?.meta?.call?.duration != null && Number(x.meta.call.duration) <= 0)
+        if (x?.direction !== 'inbound' && !outCall) continue
         if (t === 'TYPE_SMS' || (!t && Number(x?.type) === 1)) { const body = String(x?.body ?? '').trim(); if (body) msgs.push({ at, kind: 'text', body, id }) }
         else if (t === 'TYPE_CALL' || t === 'TYPE_VOICEMAIL' || [3, 4, 5, 25].includes(Number(x?.type))) {
-          let body = ''
-          if (opts.transcripts && id && !opts.skip?.has(id))
+          let body = '', tried = false
+          if (opts.transcripts && id && !opts.skip?.has(id)) {
+            tried = true
             body = transcriptText(await ghlGet(`${GHL}/conversations/locations/${encodeURIComponent(loc)}/messages/${encodeURIComponent(id)}/transcription`, h))
-          msgs.push({ at, kind: 'call', body, id })
+          }
+          const secs = x?.meta?.call?.duration != null && Number.isFinite(Number(x.meta.call.duration)) ? Number(x.meta.call.duration) : null
+          msgs.push({ at, kind: 'call', body, id, dir: outCall ? 'out' : 'in', userId: x?.userId ? String(x.userId) : undefined, tried, secs })
         }
       }
       const nextId = String(arr[arr.length - 1]?.id ?? '')
@@ -325,8 +354,9 @@ async function listVisits(fromDay: string, toDay: string): Promise<{ visits: Vis
   return { visits }
 }
 /* Which of their shifts a message is about; ambiguous when it falls inside two shifts' windows. */
-export function placeOf(shifts: Shift[], at: number, lookMin: number): { shift: Shift | null; ambiguous: boolean } {
-  const hits = shifts.filter((s) => { const a = s.start - lookMin * MIN, b = s.clockIn != null ? Math.max(s.clockIn, s.start) : s.start + AFTER_MIN * MIN; return at >= a && at <= b })
+/* 432: a shift whose missed clock-in alert is still open stays theirs until they clock in (openUntilClockIn). */
+export function placeOf(shifts: Shift[], at: number, lookMin: number, openUntilClockIn?: (s: Shift) => boolean): { shift: Shift | null; ambiguous: boolean } {
+  const hits = shifts.filter((s) => { const a = s.start - lookMin * MIN, b = s.clockIn != null ? Math.max(s.clockIn, s.start) : (openUntilClockIn?.(s) ? Infinity : s.start + AFTER_MIN * MIN); return at >= a && at <= b })
   if (!hits.length) return { shift: null, ambiguous: false }
   hits.sort((x, y) => Math.abs(x.start - at) - Math.abs(y.start - at))
   return { shift: hits[0], ambiguous: hits.length > 1 }
@@ -344,9 +374,12 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
   const lookMin = Number(st.late_lookback_min) >= 30 && Number(st.late_lookback_min) <= 360 ? Number(st.late_lookback_min) : BEFORE_MIN
   const famMin = Number(st.late_family_min) >= 0 && Number(st.late_family_min) <= 120 ? Number(st.late_family_min) : FAMILY_MIN_DEFAULT
   const repeatMin = Number(st.late_admin_repeat_min) >= 2 ? Number(st.late_admin_repeat_min) : 5
+  /* 432: a call's notice is live by itself while the notices are in practice (late_call_live, ON unless switched off) */
+  const callsLive = callLive(st) && !dry
   const out = { live, dry, caregivers_watched: 0, messages_new: 0, read: 0, ai_failed: 0, notices_new: 0, notices_changed: 0,
     cg_texts: 0, admin_texts: 0, closed: 0, no_phone: 0, not_in_ghl: 0, would: 0,
-    office_quiet: false as string | false, admin_held_quiet: 0 }
+    office_quiet: false as string | false, admin_held_quiet: 0,
+    calls_live: callsLive, calls_read: 0, calls_waiting_transcript: 0, calls_no_transcript: 0, transcripts: '' as string, missed_clockin_notes: 0 }
 
   const { visits, error } = await listVisits(chiDay(now - 12 * 3600e3), chiDay(now + lookMin * MIN))
   if (error) return { error }
@@ -361,9 +394,31 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
   const state: any = (Array.isArray(stateRow?.data) ? stateRow!.data.find((x: any) => x?.id === 'state') : null) ?? { id: 'state', read: {} }
   const readIds: Record<string, number> = state.read ?? {}
   for (const k of Object.keys(readIds)) if (now - readIds[k] > 3 * 864e5) delete readIds[k]
+  /* 432: calls still waiting for GoHighLevel's transcript (tried again for CALL_WAIT_MIN after the call, then left), and
+     the office people's names behind GoHighLevel user ids */
+  const gaveUp: Record<string, number> = state.no_transcript ?? {}
+  for (const k of Object.keys(gaveUp)) if (now - gaveUp[k] > 3 * 864e5) delete gaveUp[k]
+  const users: Record<string, { name: string; email: string; at: number }> = state.users ?? {}
+  const day = chiDay(now)
+  const tday: { day: string; got: number; none: number } = state.transcripts?.day === day ? state.transcripts : { day, got: 0, none: 0 }
+  const ghlH = { Authorization: `Bearer ${Deno.env.get('GHL_TOKEN') ?? ''}`, Version: '2021-07-28', Accept: 'application/json' }
+  const userOf = async (id?: string): Promise<{ name: string; email: string } | null> => {
+    if (!id) return null
+    const c = users[id]; if (c && now - c.at < 7 * 864e5) return c.name || c.email ? c : null
+    const j = await ghlGet(`${GHL}/users/${encodeURIComponent(id)}`, ghlH)
+    const name = String(j?.name || [j?.firstName, j?.lastName].filter(Boolean).join(' ') || '').trim(), email = String(j?.email || '').trim().toLowerCase()
+    users[id] = { name, email, at: now }
+    return name || email ? { name, email } : null
+  }
+  /* 432: open missed clock-in alerts (timekeeper-watch): their shift stays watched until they clock in */
+  const { data: tkRow } = await db.from('app_data').select('data').eq('key', 'timekeeper_cases').maybeSingle()
+  // deno-lint-ignore no-explicit-any
+  const openAlert = new Map<string, any>()
+  // deno-lint-ignore no-explicit-any
+  for (const l of (Array.isArray(tkRow?.data) ? tkRow!.data : []) as any[]) if (l && l.kind !== 'clock_out' && !l.resolved_at && l.visit_id != null) openAlert.set(String(l.visit_id), l)
 
   /* 1 · read: caregivers with a shift in the window and no clock-in */
-  const watched = visits.filter((v) => v.clockIn == null && now >= v.start - lookMin * MIN && now <= v.start + AFTER_MIN * MIN)
+  const watched = visits.filter((v) => v.clockIn == null && ((now >= v.start - lookMin * MIN && now <= v.start + AFTER_MIN * MIN) || openAlert.has(v.id)))
   const cgs = [...new Set(watched.map((v) => v.cg))].slice(0, 30)
   // deno-lint-ignore no-explicit-any
   const { data: existingRows } = await db.from('late_notices').select('*').gte('shift_date', chiDay(now - 864e5))
@@ -375,12 +430,22 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
     if (!phone) { out.no_phone++; continue }
     const mine = visits.filter((v) => v.cg === cg).map((v) => ({ cg: v.cg, cl: v.cl, start: v.start, clockIn: v.clockIn, _v: v }))
     const since = Math.min(...watched.filter((v) => v.cg === cg).map((v) => v.start - lookMin * MIN))
-    const { found, msgs, contactId } = await inboundSince(phone, since, { transcripts: true })
+    const { found, msgs, contactId } = await inboundSince(phone, since, { transcripts: true, outboundCalls: true, skip: new Set(Object.keys(gaveUp)) })
     if (!found) { out.not_in_ghl++; continue }
     const per = new Map<Shift, { m: Msg; amb: boolean }[]>()
+    // deno-lint-ignore no-explicit-any
+    const openShift = (s: Shift) => openAlert.has(String((s as any)._v?.id))
     for (const m of msgs) {
-      if (m.kind === 'call' && !m.body) continue
-      const p = placeOf(mine, m.at, lookMin)
+      if (m.kind === 'call' && !m.body) {
+        /* no transcript (yet): GoHighLevel may still be writing it. Tried again next run, for CALL_WAIT_MIN */
+        if (m.tried && !readIds[m.id]) {
+          if (now - m.at > CALL_WAIT_MIN * MIN) { if (!dry) gaveUp[m.id] = now; if (m.secs !== 0) { out.calls_no_transcript++; tday.none++ } }
+          else out.calls_waiting_transcript++
+        }
+        continue
+      }
+      if (m.kind === 'call' && !readIds[m.id]) { out.calls_read++; tday.got++ }
+      const p = placeOf(mine, m.at, lookMin, openShift)
       if (!p.shift) continue
       const arr = per.get(p.shift) ?? []; arr.push({ m, amb: p.ambiguous }); per.set(p.shift, arr)
     }
@@ -398,23 +463,35 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
       if (!dry) for (const x of fresh) readIds[x.m.id] = now
       const prev = noticeByVisit.get(v.id)
       if (rd.kind === 'other' && !prev) continue
-      const said = got.map((x) => ({ at: new Date(x.m.at).toISOString(), channel: x.m.kind, text: x.m.body.slice(0, 1000) }))
+      const said = got.map((x) => ({ at: new Date(x.m.at).toISOString(), channel: x.m.kind, text: x.m.body.slice(0, 1000), ...(x.m.kind === 'call' ? { dir: x.m.dir || 'in' } : {}) }))
       const newest = new Date(Math.max(...fresh.map((x) => x.m.at))).toISOString()
       const sure = rd.sure && !got.some((x) => x.amb)
+      /* 432: the newest call in what was read: when, which way, who in the office was on it, her own words */
+      const lastCall = got.filter((x) => x.m.kind === 'call').map((x) => x.m).at(-1)
+      // deno-lint-ignore no-explicit-any
+      let callMeta: any = {}
+      if (lastCall) {
+        const u = await userOf(lastCall.userId)
+        callMeta = { source: 'call', call_at: new Date(lastCall.at).toISOString(), call_message_id: lastCall.id, call_direction: lastCall.dir || 'in',
+          call_by: u?.name || null, call_by_email: u?.email || null, call_quote: quoteIn(rd.quote, lastCall.body) ?? (prev?.call_message_id === lastCall.id ? prev?.call_quote ?? null : null) }
+      }
+      const callNow = !!lastCall && callsLive
       if (!prev) {
         if (rd.kind === 'other') continue
         const row = { visit_id: v.id, axiscare_caregiver_id: v.cg, axiscare_client_id: v.cl, caregiver_name: v.cgName || [g?.first, g?.last].filter(Boolean).join(' '),
           client_first: v.clientFirst || null, shift_date: chiDay(v.start), shift_start: new Date(v.start).toISOString(), kind: rd.kind,
-          status: live ? 'open' : 'practice', said, said_at: newest, eta: rd.eta != null ? new Date(rd.eta).toISOString() : null,
-          eta_by: rd.eta != null ? 'ai' : null, sure, ghl_contact_id: contactId ?? null }
+          status: live || callNow ? 'open' : 'practice', said, said_at: newest, eta: rd.eta != null ? new Date(rd.eta).toISOString() : null,
+          eta_by: rd.eta != null ? 'ai' : null, sure, ghl_contact_id: contactId ?? null, ...(lastCall ? callMeta : { source: 'text' }) }
         if (dry) { out.notices_new++; continue }
         const { data: ins } = await db.from('late_notices').insert(row).select('*').maybeSingle()
         if (ins) { noticeByVisit.set(v.id, ins); out.notices_new++ }
       } else {
         if (prev.status === 'closed') continue
         // deno-lint-ignore no-explicit-any
-        const up: any = { said, said_at: newest, sure, updated_at: nowIso }
+        const up: any = { said, said_at: newest, sure, updated_at: nowIso, ...callMeta }
         if (rd.kind !== 'other' && rd.kind !== prev.kind) up.kind = rd.kind
+        /* 432: a call about a shift that was only in practice makes it live (late_call_live) */
+        if (prev.status === 'practice' && callNow) up.status = 'open'
         /* a new time from the caregiver replaces the AI's last one; a time a PERSON set stays until the caregiver gives
            a newer one than that person saw */
         if (rd.eta != null && new Date(rd.eta).toISOString() !== prev.eta) {
@@ -427,7 +504,11 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
       }
     }
   }
-  if (!dry) await db.rpc('upsert_app_data_item', { target_key: 'late_watch_state', item: { id: 'state', read: readIds, at: nowIso } })
+  /* 432: calls never getting a transcript: say so (GoHighLevel's call transcription may be off) */
+  if (tday.none >= 2 && tday.got === 0)
+    out.transcripts = `No transcript from GoHighLevel for ${tday.none} answered call(s) with caregivers today, ${CALL_WAIT_MIN} minutes or more after the call. Call transcription may be off in GoHighLevel (or not on this number), so calls can't be read for running late.`
+  else if (out.calls_no_transcript) out.transcripts = `${out.calls_no_transcript} call(s) still had no transcript ${CALL_WAIT_MIN} minutes after the call; left unread.`
+  if (!dry) await db.rpc('upsert_app_data_item', { target_key: 'late_watch_state', item: { id: 'state', read: readIds, no_transcript: gaveUp, users, transcripts: tday, at: nowIso } })
 
   /* 2 · every notice from today: what happens next */
   const ghl = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
@@ -467,6 +548,13 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
     if (had?.status === 'done' && item.status === 'open' && had.title === item.title) return   /* staff closed it and nothing new */
     await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: merged }); opsNow.set(item.id, merged)
   }
+  /* 432 · NO SILENT FAILURES: calls that never get a transcript can't be read; one card a day says so */
+  if (tday.none >= 2 && tday.got === 0 && out.transcripts)
+    await putCard({ id: 'ops_late_transcripts_' + day, kind: 'late_notice', domain: 'scheduling_coverage', status: 'open', urgency: 'today',
+      title: 'Call transcripts are not coming from GoHighLevel', about: 'Running late',
+      detail: out.transcripts + ' Texts are still read. Check GoHighLevel: Settings, Phone numbers, call recording and transcription on the office line.',
+      created_at: nowIso, created_by: 'late-watch', opened_by: 'late-watch' })
+  const hOpts = holdOptsOf(st)
   for (const n of noticeByVisit.values()) {
     if (!n || n.status === 'closed' || n.closed_at) continue
     const v = byId.get(String(n.visit_id))
@@ -499,7 +587,10 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
     const first = String(g?.first ?? '') || cgFirst
     const etaTxt = n.eta ? clockAt(Date.parse(n.eta)) : ''
     const lastSaid = (Array.isArray(n.said) ? n.said : []).at(-1)
-    const saidTxt = lastSaid ? `${cgFirst} ${lastSaid.channel === 'call' ? 'called' : 'texted'} at ${clockAt(Date.parse(lastSaid.at))}: "${String(lastSaid.text).replace(/\s+/g, ' ').slice(0, 140)}${String(lastSaid.text).length > 140 ? '...' : ''}"` : ''
+    /* 432: a call reads "Mary said on Krystal's 4:31pm call: running late, about 8 minutes (around 4:39pm)" + her words */
+    const cLine = lastSaid?.channel === 'call' && n.call_at ? callLine(n) : ''
+    const saidTxt = cLine ? cLine.replace(/\.$/, '') + (n.call_quote ? `. Word for word: "${String(n.call_quote).replace(/\s+/g, ' ').slice(0, 160)}"` : '')
+      : lastSaid ? `${cgFirst} ${lastSaid.channel === 'call' ? 'called' : 'texted'} at ${clockAt(Date.parse(lastSaid.at))}: "${String(lastSaid.text).replace(/\s+/g, ' ').slice(0, 140)}${String(lastSaid.text).length > 140 ? '...' : ''}"` : ''
     // deno-lint-ignore no-explicit-any
     const up: any = {}
 
@@ -544,6 +635,21 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
         const text = fill(String(st.late_msg_family || DEFAULT_FAMILY), { caregiver: cgFirst, client: n.client_first || 'your loved one', time: t12, eta: etaTxt })
         const w = wouldPush(n, { to: 'family', key: 'family_' + etaTxt, text: count ? text : `(nobody to tell: ${circs?.length === 1 ? 'no circle member has agreed to texts' : circs?.length ? 'two linked circles' : 'no linked Family Circle'})`, count })
         if (w) { up.would = w; n.would = w }
+      }
+    }
+
+    /* 432 · the missed clock-in card says what the call said, and whether its admin texts are paused (and until when) */
+    const tkAlert = openAlert.get(String(n.visit_id))
+    if (n.status !== 'practice' && n.call_at && tkAlert) {
+      const itemId = `ops_tk_${tkAlert.id}`, had = opsNow.get(itemId)
+      const until = holdUntil(n, startMs, hOpts)
+      const note = callLine(n) + (n.call_quote ? ` "${String(n.call_quote).replace(/\s+/g, ' ').slice(0, 160)}"` : '')
+        + (until != null && now < until ? ` The missed clock-in texts to the admins are paused until ${clockAt(until)} and start again then if there's still no clock-in.`
+          : until != null ? ` The missed clock-in texts were paused until ${clockAt(until)}; still no clock-in, so they started again.`
+          : n.kind === 'cant_make_it' ? ' Open a coverage case from the alert link if the shift needs covering.' : '')
+      if (had && had.status === 'open' && had.late_call_note !== note) {
+        const merged = { ...had, late_call_note: note, late_notice_id: n.id }
+        await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: merged }); opsNow.set(itemId, merged); out.missed_clockin_notes++
       }
     }
 

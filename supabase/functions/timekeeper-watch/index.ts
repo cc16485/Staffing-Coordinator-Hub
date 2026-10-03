@@ -83,7 +83,7 @@ import { shadowRoute } from '../_shared/routing.ts'
 import { opEvent } from '../_shared/events.ts'
 import { adminRecipients, textAdmin, ADMIN_DEFAULT } from '../_shared/clockin-admins.ts'
 import { makeLink, adminKey, linkExpiry } from '../_shared/clockin-links.ts'
-import { lateHold, liveNotices } from '../_shared/late-notice.ts'
+import { lateHold, liveNotices, holdOptsOf, holdUntil, callLine } from '../_shared/late-notice.ts'
 import { visitMs } from '../_shared/held-shift.ts'
 import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
@@ -401,6 +401,11 @@ Deno.serve(async (req) => {
      they gave none). "Can't make it" never starts one: the running-late alert already has the admins. Live notices
      only; with no running-late record this changes nothing. */
   const lateByVisit = await liveNotices(sb, day)
+  /* 432 (her call to Mary, 2026-10-03): while the running-late notices are in practice, only a CALL's notice holds, and
+     only "running late" with a time: the missed clock-in admin texts pause until 5 minutes after that time, then carry
+     on (counting toward the cap). Can't make it, or no time: they carry on as before. ops_settings.late_call_live off
+     stops call holds. */
+  const holdOpts = holdOptsOf(settings)
 
   /* C1 (Samantha, 2026-09-29): short, at 5 minutes. No EVV form here: the form goes only when a caregiver asks to be
      clocked in for their start time, and a person sends it from the admin's link page. No "if something's come up". */
@@ -429,7 +434,7 @@ Deno.serve(async (req) => {
     if (!l?.texted_at && !l?.admin_loop && coverageFor(vid, v?.client?.id != null ? String(v.client.id) : null, day, String(v.caregiver.id))) {
       skippedCoverage++; continue
     }
-    if (!l?.texted_at && !l?.admin_loop && lateHold(lateByVisit.get(vid), visitMs(start), Date.now()) !== 'none') { heldLate++; continue }
+    if (!l?.texted_at && !l?.admin_loop && lateHold(lateByVisit.get(vid), visitMs(start), Date.now(), holdOpts) !== 'none') { heldLate++; continue }
     if (!l) {
       l = { id: 'tk_' + vid.replace(/[^A-Za-z0-9]/g, '_'), visit_id: vid,
         caregiver: cgName, caregiver_axiscare_id: String(v.caregiver.id),
@@ -550,6 +555,16 @@ Deno.serve(async (req) => {
       }
       /* quiet hours: skip this round entirely (nothing recorded, nothing queued); from 7am one text if still open */
       if (loopQuiet) { quietHeld++; continue }
+      /* 432: they told us on a call (or, with the notices live, a text) they're running late, with a time: this alert's
+         admin texts wait until 5 minutes after it (recorded once on the alert, shown on the link page) */
+      const lnHold = lateByVisit.get(String(l.visit_id))
+      const vStart = v ? visitMs(String(v?.scheduledStartDate ?? v?.startDate ?? '')) : NaN
+      if (lateHold(lnHold, vStart, Date.now(), holdOpts) === 'hold') {
+        const until = holdUntil(lnHold, vStart, holdOpts)
+        const hu = until != null ? new Date(until).toISOString() : null
+        if (l.admin_loop.late_hold?.until !== hu) { l.admin_loop.late_hold = { until: hu, since: nowIso, call_at: lnHold?.call_at ?? null }; await save(l) }
+        heldLate++; continue
+      }
       const late = lateOf(l)
       const endStamp = v ? String(v?.scheduledEndDate ?? v?.endDate ?? '') : ''
       const afterEnd = l.shift_date !== day || (endStamp ? minutesSince(endStamp) > 0 : false)
@@ -567,7 +582,10 @@ Deno.serve(async (req) => {
       const rep = (Array.isArray(l.replies) ? l.replies : []).filter((x: { at: string }) => String(x.at) > String(lastAt)).at(-1)
       const ln = lateByVisit.get(String(l.visit_id))
       const toldLate = ln && ln.kind === 'late' ? ` ${String(cg).split(' ')[0]} told us they're running late${ln.eta ? ', about ' + clock12(new Date(ln.eta).toLocaleString('en-GB', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', hour12: false })) : ''}.` : ''
-      const said = (stage === 'first' ? toldLate : '') + (rep ? ` ${String(cg).split(' ')[0]} replied: "${String(rep.text).replace(/\s+/g, ' ').slice(0, 120)}${String(rep.text).length > 120 ? '...' : ''}".` : '')
+      /* 432: what a call said goes into the next text once (per call): after a pause it explains why they start again */
+      const callNew = !!ln?.call_at && l.admin_loop.call_told !== (ln.call_message_id || ln.call_at)
+      const callTxt = callNew ? ' ' + callLine(ln) : ''
+      const said = (callNew ? callTxt : stage === 'first' ? toldLate : '') + (rep ? ` ${String(cg).split(' ')[0]} replied: "${String(rep.text).replace(/\s+/g, ' ').slice(0, 120)}${String(rep.text).length > 120 ? '...' : ''}".` : '')
       /* how to stop it is in every text (2026-10-03); the text that reaches the cap says it is the last */
       const stop = (last: boolean) => last
         ? ` This is the last text about it (it stays open in Needs Attention). Tap Resolved when it's handled: `
@@ -579,7 +597,9 @@ Deno.serve(async (req) => {
         : stage === 'thirty'
         ? `${late} min and still not resolved: no clock-in from ${cg} for ${cl}'s ${t12} shift. ${cl} may be without care.${said}${stop(last)}${link}`
         : `Still no clock-in: ${cg} for ${cl}'s ${t12} shift (${late} min past start).${said}${stop(last)}${link}`).trim()
+      const sentBefore = loopSent
       loopSent += await toAdmins(l, stage, msg, true)
+      if (callNew && (loopSent > sentBefore || !loopLive)) l.admin_loop.call_told = ln!.call_message_id || ln!.call_at
       l.admin_loop.last_sent_at = nowIso
       await save(l)
     }
