@@ -23,7 +23,7 @@ export async function adminRecipients(sb: any, settings: any): Promise<Admin[]> 
 }
 
 export async function textAdmin(sb: any, ghl: { token: string; locationId: string }, a: Admin, message: string,
-                                 send: typeof fetch = fetch): Promise<boolean> {
+                                 send: typeof fetch = fetch, opts: { emergency?: boolean } = {}): Promise<boolean> {
   /* NO SILENT FAILURES (2026-10-01): an admin text that cannot go (no phone on file, GoHighLevel not set up, or
      GoHighLevel refused it) raises a card on Needs Attention as well as returning false */
   if (!a.phone || !ghl.token || !ghl.locationId) {
@@ -33,7 +33,9 @@ export async function textAdmin(sb: any, ghl: { token: string; locationId: strin
   }
   try {
     const contact = await contactForOutbound(sb, ghl, { phone: a.phone, email: a.email, firstName: a.first },
-      'urgent_internal', { selfSupplied: true, audience: 'staff' })
+      'urgent_internal', { selfSupplied: true, audience: 'staff',
+      /* AFTER HOURS (Desktop 426): the missed clock-in texts her switch allows at night (quiet-hours.ts) */
+      ...(opts.emergency ? { emergency: true } : {}) })
     if (!contact) return false
     return await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
       'staff-alert', { channel: 'sms', contactId: contact.contactId, address: a.phone, who: a.name }, { message }, send)

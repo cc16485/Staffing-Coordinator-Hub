@@ -25,9 +25,23 @@
    hours 0-23). The same hour for both turns quiet hours off (only she would set
    that). Anything else invalid falls back to the defaults, never to "no quiet".
 
-   The one exception in code today: a coverage call-in for a client whose call-in
-   plan says "must be covered, no matter what" (her approval, CALLIN-PLAN.md:
-   "the admin text goes at any hour"). Callers pass emergency: true for that alone.
+   THE EXCEPTIONS (texts that DO go at night). Everything else stays quiet.
+     1. Missed clock-ins (Samantha, 2026-10-03: "i want the missed clock ins to be
+        live after hours too, that and call ins"): the timekeeper-watch admin loop
+        (first text, repeats, still capped at timekeeper_admin_max_texts per alert)
+        and its closers ("clocked in", "coverage case opened", clockin-alert
+        "Resolved by X"), the closers only to admins who were texted about that
+        alert. Switch: ops_settings.missed_clockin_after_hours (ON unless set to
+        false). The loop itself still needs timekeeper_admin_loop_live.
+     2. Call-ins: the coverage-run call-in alert to the admins, every call-in.
+        Switch: ops_settings.callin_after_hours (ON unless set to false).
+     3. A coverage call-in for a client whose call-in plan says "must be covered,
+        no matter what" (CALLIN-PLAN.md: "the admin text goes at any hour"). Always,
+        whatever switch 2 says.
+   Callers pass emergency: true to contactForOutbound for these alone.
+   STILL QUIET 8pm to 7am: the Saturday EVV office nudge, running late (late-watch,
+   late-alert), coverage-reply YES, quiet-callout, nobody-answered and ran-out
+   office texts, ops-escalate missed calls, automation-watchdog, lead texts.
    ============================================================================= */
 // deno-lint-ignore-file no-explicit-any
 
@@ -95,3 +109,15 @@ export async function officeQuietNow(sb: any, now: Date = new Date()): Promise<b
 /** A run summary line: { quiet, hours } so a log says why nothing went. */
 export const quietInfo = (now: Date = new Date(), settings?: any) =>
   ({ quiet: officeQuiet(now, settings), hours: quietWords(settings), tz: OFFICE_TZ })
+
+/* AFTER-HOURS EXCEPTIONS (Samantha, 2026-10-03, Desktop 426): may this kind of admin alert text at night?
+   ON unless she has set the switch to false in the Hub (Settings). Only false (or "false") turns it off. */
+export type AfterHoursKind = 'missed_clockin' | 'callin'
+const AFTER_HOURS_KEY: Record<AfterHoursKind, string> = {
+  missed_clockin: 'missed_clockin_after_hours',
+  callin: 'callin_after_hours',
+}
+export function afterHoursAllowed(settings: any, kind: AfterHoursKind): boolean {
+  const v = settings?.[AFTER_HOURS_KEY[kind]]
+  return !(v === false || v === 'false')
+}

@@ -87,7 +87,7 @@ import { lateHold, liveNotices } from '../_shared/late-notice.ts'
 import { visitMs } from '../_shared/held-shift.ts'
 import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
-import { officeQuiet, quietWords } from '../_shared/quiet-hours.ts'
+import { officeQuiet, quietWords, afterHoursAllowed } from '../_shared/quiet-hours.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -191,6 +191,12 @@ Deno.serve(async (req) => {
      the alert is still open, then carries on as normal. A practice run follows the same hours. */
   const quietNow = officeQuiet(new Date(), settings)
   const quietTxt = quietWords(settings)
+  /* AFTER HOURS (Samantha, 2026-10-03, Desktop 426: "i want the missed clock ins to be live after hours too"): the
+     missed clock-in admin loop (first text, repeats, closers) keeps going at night unless she switches
+     ops_settings.missed_clockin_after_hours off in the Hub. The 6-texts cap still applies. The Saturday EVV office
+     nudge below stays under plain quietNow (it is informational). loopQuiet is the loop's own quiet. */
+  const tkAfterHours = afterHoursAllowed(settings, 'missed_clockin')
+  const loopQuiet = quietNow && !tkAfterHours
   /* SAFETY CAP (2026-10-03): at most timekeeper_admin_max_texts (6) reminder texts per alert to each admin. The last
      one says so; the alert stays open in Needs Attention. The final "clocked in / no more reminders" text is not
      counted, and only goes to an admin who was texted about it. */
@@ -279,7 +285,7 @@ Deno.serve(async (req) => {
      cap; the text that reaches the cap says it is the last. */
   // deno-lint-ignore no-explicit-any
   const toAdmins = async (l: any, stage: string, message: (link: string, last: boolean) => string, onlyNotSnoozed: boolean) => {
-    if (quietNow) { quietHeld++; return 0 }
+    if (loopQuiet) { quietHeld++; return 0 }
     l.admin_loop = l.admin_loop || { started_at: nowIso, sends: [], snooze: {} }
     const final = stage.startsWith('final')
     const counts: Record<string, number> | undefined = l.admin_loop.texts_to
@@ -294,7 +300,7 @@ Deno.serve(async (req) => {
       if (!final && had >= maxTexts) { skipped++; capHere++; continue }
       const link = LINK_SECRET ? await makeLink(LINK_SECRET, String(l.id), a.email, exp) : ''
       const msg = message(link, !final && had + 1 >= maxTexts)
-      const went = loopLive ? await textAdmin(sb, ghl, a, msg) : true
+      const went = loopLive ? await textAdmin(sb, ghl, a, msg, fetch, { emergency: tkAfterHours }) : true
       if (went) { n++; if (!final) l.admin_loop.texts_to = { ...(l.admin_loop.texts_to || {}), [ak]: had + 1 } }
     }
     capped += capHere
@@ -490,7 +496,8 @@ Deno.serve(async (req) => {
             + `Call ${cgName}${cgPhone ? `: ${cgPhone}` : ' (number missing from the roster, check AxisCare)'}. `
             + `Every admin is texted a link every ${repeatMin} minutes (at most ${maxTexts} texts each) until someone marks it resolved there; `
             + `it also stops when a clock-in appears or a coverage case covers the shift. `
-            + (quietNow ? `It is quiet hours (no office texts ${quietTxt}), so nobody was texted; it waits here, and the texts start at the end of quiet hours if it is still open.`
+            + (loopQuiet ? `It is quiet hours (no office texts ${quietTxt}), so nobody was texted; it waits here, and the texts start at the end of quiet hours if it is still open.`
+              : tkAfterHours ? `Missed clock-in texts go at any hour, including ${quietTxt}.`
               : `No office texts ${quietTxt}; overnight it waits here.`),
           domain: 'scheduling_coverage', status: 'open', urgency: 'high',
           owner: String(admins[0]), owner_name: String(admins[0]).split('@')[0],
@@ -499,7 +506,7 @@ Deno.serve(async (req) => {
         } })
         l.office_alerted_at = nowIso
         l.admin_loop = l.admin_loop || { started_at: nowIso, sends: [], snooze: {} }
-        if (quietNow) l.admin_loop.opened_in_quiet = true   // the first admin text waits for the end of quiet hours
+        if (loopQuiet) l.admin_loop.opened_in_quiet = true   // the first admin text waits for the end of quiet hours
         await save(l); alerted++
         await opEvent(sb, { verb: 'item_created', item_id: `ops_tk_${l.id}`, area: 'coverage',
           summary: `Cara raised: NO CLOCK-IN, ${cgName} for ${clientFirst}, ${clock12(shiftTime)} shift (${Math.round(late)} min past start)` })
@@ -540,7 +547,7 @@ Deno.serve(async (req) => {
         continue
       }
       /* quiet hours: skip this round entirely (nothing recorded, nothing queued); from 7am one text if still open */
-      if (quietNow) { quietHeld++; continue }
+      if (loopQuiet) { quietHeld++; continue }
       const late = lateOf(l)
       const endStamp = v ? String(v?.scheduledEndDate ?? v?.endDate ?? '') : ''
       const afterEnd = l.shift_date !== day || (endStamp ? minutesSince(endStamp) > 0 : false)
@@ -747,7 +754,7 @@ Deno.serve(async (req) => {
     skipped_no_phone: skippedNoPhone, refused_by_outbound_gate: refusedGate,
     skipped_by_skip_list: skippedByList, skipped_coverage_case: skippedCoverage, held_running_late: heldLate,
     admin_loop: { live: loopLive, due: loopDue, texts: loopSent, stopped_for_coverage: loopStoppedCoverage, final_texts: fin.length,
-                  quiet_hours: { now: quietNow, hours: quietTxt }, held_for_quiet_hours: quietHeld, max_texts_each: maxTexts, capped,
+                  quiet_hours: { now: quietNow, hours: quietTxt, missed_clockin_after_hours: tkAfterHours, loop_quiet: loopQuiet }, held_for_quiet_hours: quietHeld, max_texts_each: maxTexts, capped,
                   admins: adminList.length, admins_without_phone: adminList.filter((a) => !a.phone).length,
                   links: LINK_SECRET.length >= 32 },
     would_text: role === 'authenticated' || role === 'service_role' ? wouldText : wouldText.length,
@@ -757,7 +764,8 @@ Deno.serve(async (req) => {
       clockout_grace_min: outGraceMin, skip_list_entries: skips.length, admin_max_texts: maxTexts, office_quiet_hours: quietTxt,
       switches: { timekeeper_watch_live: settings.timekeeper_watch_live === true,
                   timekeeper_text_live: settings.timekeeper_text_live === true,
-                  timekeeper_admin_loop_live: settings.timekeeper_admin_loop_live === true } },
+                  timekeeper_admin_loop_live: settings.timekeeper_admin_loop_live === true,
+                  missed_clockin_after_hours: tkAfterHours } },
   }
 
   /* Log when something happened, plus once an hour so the watchdog can tell

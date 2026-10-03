@@ -11,6 +11,11 @@
 //    the Saturday office EVV nudge never goes at night.
 // 4) the REAL ops-escalate: a missed call at 2am is never texted (not at 2:20, not at 7:05), one at 7:10 is.
 // 5) source scans: every internal text path checks the quiet hours.
+// 426 (her word, 2026-10-03: "i want the missed clock ins to be live after hours too, that and call ins"):
+//    sections 3A to 3G run with her two switches OFF (missed_clockin_after_hours / callin_after_hours false), which is
+//    exactly the 425 behaviour; section 6 runs with the DEFAULT (switches unset = on): the missed clock-in loop texts
+//    at 3am (still capped at 6), its closers go at night only to admins who were texted, while the Saturday EVV nudge,
+//    ops-escalate and the staff backstop for everything else stay quiet.
 import fs from 'fs'; import path from 'path';
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 1400)]);
 const FN = 'supabase/functions';
@@ -58,10 +63,18 @@ ck('hours · officeQuietBetween: 7:30pm to 7:30am crosses the night; 7:05am to 7
   const b = await QH.officeQuietNow({ from: () => { throw new Error('down') } }, new RealDate('2026-10-03T08:00:00Z'))
   ck('hours · officeQuietNow reads ops_settings; a failed read uses the defaults (3am still quiet)', a === false && b === true && read === 1, { a, b, read }) }
 
-/* ════ the fake world (shared by 2, 3 and 4) ════ */
+ck('426 · afterHoursAllowed: ON unless set to false (unset, null, true, "" all on; false and "false" off), per kind',
+  QH.afterHoursAllowed({}, 'missed_clockin') && QH.afterHoursAllowed(undefined, 'callin') && QH.afterHoursAllowed({ missed_clockin_after_hours: null }, 'missed_clockin')
+  && QH.afterHoursAllowed({ missed_clockin_after_hours: true }, 'missed_clockin') && QH.afterHoursAllowed({ callin_after_hours: '' }, 'callin')
+  && !QH.afterHoursAllowed({ missed_clockin_after_hours: false }, 'missed_clockin') && !QH.afterHoursAllowed({ callin_after_hours: 'false' }, 'callin')
+  && QH.afterHoursAllowed({ missed_clockin_after_hours: false }, 'callin') && QH.afterHoursAllowed({ callin_after_hours: false }, 'missed_clockin'))
+
+/* ════ the fake world (shared by 2, 3, 4 and 6) ════ */
 let APP, T, SENT, VISITS, CLIENTS, CALLS
-const reset = () => {
-  APP = { ops_settings: { timekeeper_watch_live: true, timekeeper_text_live: true, coverage_alert_admins: ['sam@mo-care.com', 'kry@mo-care.com'] },
+/* 426: reset() = her two after-hours switches OFF (the 425 rules); reset(true) = the default (unset, so on) */
+const reset = (dflt = false) => {
+  APP = { ops_settings: { timekeeper_watch_live: true, timekeeper_text_live: true, coverage_alert_admins: ['sam@mo-care.com', 'kry@mo-care.com'],
+      ...(dflt ? {} : { missed_clockin_after_hours: false, callin_after_hours: false }) },
     caregivers: [{ id: 1, first: 'Maria', last: 'Lopez', phone: '4175550111', axiscare_id: '501', active: true }],
     coordinator_staff: [{ email: 'sam@mo-care.com', name: 'Samantha T', phone: '4175550901' }, { email: 'kry@mo-care.com', name: 'Krystal L', phone: '4175550902' }],
     timekeeper_cases: [], coverage_cases: [], ops_items: [], automation_log: [], evv_chase_state: [] }
@@ -104,9 +117,9 @@ globalThis.fetch = async (url, o) => { url = String(url); const body = o && o.bo
 {
   const O = await import(path.join(process.cwd(), FN, '_shared/outreach.ts'))
   const ghl = { token: 'g', locationId: 'loc' }
-  reset(); const night = new RealDate('2026-10-03T08:00:00Z'), day = new RealDate('2026-10-03T15:00:00Z')
+  reset(true); const night = new RealDate('2026-10-03T08:00:00Z'), day = new RealDate('2026-10-03T15:00:00Z')
   const a = await O.contactForOutbound(DB, ghl, { phone: '4175550901', firstName: 'Sam' }, 'urgent_internal', { selfSupplied: true, audience: 'staff', now: night })
-  ck('backstop · a staff text at 3am is held (no contact, so nothing can be sent)', a === null)
+  ck('backstop · a staff text at 3am is held (no contact, so nothing can be sent), even with the 426 switches at their default', a === null)
   ck('backstop · ... and it is a hold, not a failure: no "didn\'t go through" card', !(APP.ops_items || []).some((i) => i.kind === 'send_problem'), APP.ops_items)
   const b = await O.contactForOutbound(DB, ghl, { phone: '4175550901', firstName: 'Sam' }, 'urgent_internal', { selfSupplied: true, audience: 'staff', now: day })
   ck('backstop · the same staff text at 10am goes', b && b.contactId, b)
@@ -226,11 +239,11 @@ ck('ops-escalate 7:26 · a call missed at 7:10 is texted at its 15 minutes, as b
 /* ════ 5 · source scans: every internal (office, admin, coordinator) text path checks the quiet hours ════ */
 const src = (f) => fs.readFileSync(`${FN}/${f}`, 'utf8')
 const PATHS = [
-  ['timekeeper-watch/index.ts', /const quietNow = officeQuiet\(new Date\(\), settings\)/, /if \(quietNow\) \{ quietHeld\+\+; return 0 \}/, /if \(quietNow\) \{ quietHeld\+\+; continue \}/, /chiHourE >= 15 && !forceDry && !quietNow/],
-  ['clockin-alert/index.ts', /const quiet = officeQuiet\(new Date\(\), settings\)/, /loopLive && !quiet &&/],
+  ['timekeeper-watch/index.ts', /const quietNow = officeQuiet\(new Date\(\), settings\)/, /const loopQuiet = quietNow && !tkAfterHours/, /if \(loopQuiet\) \{ quietHeld\+\+; return 0 \}/, /if \(loopQuiet\) \{ quietHeld\+\+; continue \}/, /chiHourE >= 15 && !forceDry && !quietNow/],
+  ['clockin-alert/index.ts', /const quiet = officeQuiet\(new Date\(\), settings\) && !afterHours/, /loopLive && !quiet &&/],
   ['late-watch/index.ts', /const quiet = officeQuiet\(new Date\(now\), st\)/, /if \(!n\.seen_at && !quiet\)/, /final && adminLive && !quiet/],
   ['late-alert/index.ts', /if \(officeQuiet\(new Date\(\), st\)\) return 0/],
-  ['coverage-run/index.ts', /const smsOk = mustA \|\| \(!officeQuiet\(new Date\(\), settings\)/, /emergency: mustA/, /soonQ && sendLive && !claimActiveQ && !quietQ/, /const smsAllowed = !officeQuiet\(new Date\(\), settings\)/],
+  ['coverage-run/index.ts', /const smsOk = mustA \|\| callinAnyHour \|\| \(!officeQuiet\(new Date\(\), settings\)/, /emergency: mustA \|\| callinAnyHour/, /soonQ && sendLive && !claimActiveQ && !quietQ/, /const smsAllowed = !officeQuiet\(new Date\(\), settings\)/],
   ['coverage-reply/index.ts', /if \(officeQuiet\(new Date\(\), settings\)\) \{ console\.log\('\[coverage-reply\] staff alert held: office quiet hours'\); return \}/],
   ['ops-escalate/index.ts', /officeQuietBetween\(Date\.parse\(it\.created_at \|\| ''\) \+ rule\.after_min \* 60000, now, cfg\)/],
   ['automation-watchdog/index.ts', /const quiet = await officeQuietNow\(supabase\)/, /if \(t\.phone && !quiet\)/],
@@ -257,6 +270,70 @@ ck('scan · quiet-hours.ts: 8pm to 7am Central, overridable, no em dashes', /OFF
   && /office_quiet_start/.test(src('_shared/quiet-hours.ts')) && !/—/.test(src('_shared/quiet-hours.ts')))
 { const tk = src('timekeeper-watch/index.ts'); const added = tk.slice(tk.indexOf('OFFICE QUIET HOURS'), tk.indexOf('OFFICE QUIET HOURS') + 1200)
   ck('wording · the new admin texts and card words have no em dashes', !/—/.test(added) && !/—/.test(tk.slice(tk.indexOf('const stop = (last'), tk.indexOf('loopSent += await toAdmins')))) }
+
+/* ════ 6 · 426: her after-hours exceptions at their DEFAULT (switches unset = on) ════ */
+/* H1 · the 3am missed clock-in now texts the admins, and the cap of 6 still holds */
+reset(true); live(); at('03:05'); r = await tick()
+ck('426 3:05am · the caregiver still gets her own text', toCg().length === 1, SENT)
+ck('426 3:05am · each admin IS texted the first missed clock-in text at night', toSam().length === 1 && toKry().length === 1
+  && /^No clock-in: Maria Lopez for Ruth's 3am shift \(5 min past start\)\. Tap Resolved to stop these texts: https:\/\/cc\.mo-care\.com\/clockin\.html\?/.test(toSam()[0]?.message), toAdm())
+ck('426 3:05am · the Needs Attention item does NOT say "nobody was texted"; it says the texts go at any hour', item()?.status === 'open'
+  && !/nobody was texted/.test(item()?.detail || '') && /Missed clock-in texts go at any hour, including 8pm to 7am\./.test(item()?.detail || ''), item()?.detail)
+ck('426 3:05am · the run says it is quiet hours but the loop is allowed (nothing held)', r.admin_loop?.quiet_hours?.now === true && r.admin_loop.quiet_hours.missed_clockin_after_hours === true
+  && r.admin_loop.quiet_hours.loop_quiet === false && r.admin_loop.held_for_quiet_hours === 0 && r.admin_loop.texts === 2
+  && r.settings_in_effect?.switches?.missed_clockin_after_hours === true && r.settings_in_effect.switches.timekeeper_admin_loop_live === true, r.admin_loop)
+ck('426 3:05am · not marked "opened in quiet hours"', !lad()?.admin_loop?.opened_in_quiet, lad()?.admin_loop)
+for (const hm of ['03:10', '03:15', '03:20', '03:25', '03:30', '03:35', '03:40', '04:00', '05:00', '06:30']) { at(hm); await tick() }
+ck('426 night · the cap still holds: exactly 6 texts each all night', toSam().length === 6 && toKry().length === 6, { s: toSam().length, k: toKry().length })
+ck('426 night · the 6th says it is the last and it stays open in Needs Attention', /This is the last text about it \(it stays open in Needs Attention\)/.test(toSam()[5]?.message) && item()?.status === 'open' && !lad().resolved_at, toSam()[5])
+at('07:05'); await tick()
+ck('426 7:05 · no extra morning text once capped', toSam().length === 6 && toKry().length === 6, toAdm().length)
+ck('426 · no em dashes in any admin text', !SENT.some((m) => /—/.test(m.message)))
+
+/* H2 · the "clocked in" closer goes at night, only to admins who were texted */
+reset(true); live(); APP.coordinator_staff[1].phone = ''; at('03:05'); await tick()
+APP.coordinator_staff[1].phone = '4175550902'; VISITS[0].clockIn = { time: '2026-10-03T03:09:00', method: 'Mobile' }; at('03:10'); await tick()
+ck('426 3:10am · she clocks in: the admin who was texted hears it at night; the one never texted does not', toSam().length === 2 && /Maria Lopez clocked in at 3:09am .*No more reminders\.$/.test(toSam()[1]?.message) && toKry().length === 0 && lad().resolved_how === 'clocked_in', { s: toSam(), k: toKry() })
+
+/* H3 · "Resolved by" on the link page at night: only to admins who were texted */
+reset(true); live(); at('03:05'); await tick(); let L3 = linkOf(toSam()[0]?.message); at('03:20')
+p = await page({ ...L3, action: 'resolve', reason: 'on_the_way' })
+ck('426 3:20am · Samantha resolves it: Krystal (texted about it) hears "Resolved by Samantha" at night', p.s === 200 && p.j?.others_told === 1 && !p.j?.others_not_texted
+  && /^Resolved by Samantha/.test(toKry().at(-1)?.message), { j: p.j, k: toKry() })
+reset(true); live(); APP.coordinator_staff[1].phone = ''; at('03:05'); await tick(); L3 = linkOf(toSam()[0]?.message)
+APP.coordinator_staff[1].phone = '4175550902'; at('03:20'); p = await page({ ...L3, action: 'resolve', reason: 'on_the_way' })
+ck('426 3:20am · an admin never texted about it gets no "Resolved by"', p.s === 200 && p.j?.others_told === 0 && toKry().length === 0, { j: p.j, k: toKry() })
+
+/* H4 · practice (the admin loop switch OFF) at 3am: records the would-be round, sends nothing */
+reset(true); at('03:05'); await tick()
+ck('426 practice 3am · one would-be round recorded (practice), nothing sent to an admin', (lad()?.admin_loop?.sends || []).length === 1 && lad().admin_loop.sends[0].practice === true && toAdm().length === 0, lad()?.admin_loop)
+
+/* H5 · what stays quiet with the default: the Saturday EVV office nudge, and any staff text that is not an exception */
+reset(true); APP.ops_settings.evv_chase_live = true; APP.ops_settings.coverage_alert_phones = ['4175550999']; T.evv_submissions = [{ id: 1, processed: false }]; VISITS = []
+at('20:30', '2026-10-03'); await tick()
+ck('426 Saturday 8:30pm · the office EVV nudge still does not go (informational)', to_('4175550999').length === 0 && !APP.evv_chase_state.some((x) => String(x.id).startsWith('satnudge_')), SENT)
+{ const CA_ = await import(path.join(process.cwd(), FN, '_shared/clockin-admins.ts'))
+  reset(true); at('03:00'); const adm = { email: 'sam@mo-care.com', name: 'Samantha T', first: 'Samantha', phone: '4175550901' }
+  const plain = await CA_.textAdmin(DB, { token: 'g', locationId: 'loc' }, adm, 'plain')
+  const emerg = await CA_.textAdmin(DB, { token: 'g', locationId: 'loc' }, adm, 'exception', fetch, { emergency: true })
+  ck('426 textAdmin at 3am · without the exception it is held by the backstop; with { emergency } it goes', plain === false && emerg === true && toSam().length === 1 && toSam()[0].message === 'exception', toSam()) }
+
+/* H6 · sources: only the two exceptions read the switches; everything else stays on the plain quiet hours */
+{ const tk = src('timekeeper-watch/index.ts'), ca = src('clockin-alert/index.ts'), cr = src('coverage-run/index.ts')
+  ck('426 scan · timekeeper-watch: the loop texts pass the exception, the 6-text cap is untouched, the timekeeper_admin_loop_live switch is unchanged',
+    /textAdmin\(sb, ghl, a, msg, fetch, \{ emergency: tkAfterHours \}\)/.test(tk) && /const tkAfterHours = afterHoursAllowed\(settings, 'missed_clockin'\)/.test(tk)
+    && /if \(!final && had >= maxTexts\)/.test(tk) && /const loopLive = watchLive && settings\.timekeeper_admin_loop_live === true/.test(tk))
+  ck('426 scan · clockin-alert: "Resolved by" passes the exception and still only goes to texted admins',
+    /const afterHours = afterHoursAllowed\(settings, 'missed_clockin'\)/.test(ca) && /textAdmin\(sb, ghl, a, msg, fetch, \{ emergency: afterHours \}\)/.test(ca) && /if \(textedKeys && !\(Number\(textedKeys\[await adminKey\(a\.email\)\]\) > 0\)\) continue/.test(ca))
+  ck('426 scan · coverage-run: only the call-in alert reads callin_after_hours; quiet-callout and ran-out office texts are unchanged',
+    (cr.match(/afterHoursAllowed\(/g) || []).length === 1 && /const callinAnyHour = afterHoursAllowed\(settings, 'callin'\)/.test(cr)
+    && /soonQ && sendLive && !claimActiveQ && !quietQ/.test(cr) && /const smsAllowed = !officeQuiet\(new Date\(\), settings\) && \(shiftSoon/.test(cr))
+  const still = ['late-watch', 'late-alert', 'coverage-reply', 'ops-escalate', 'automation-watchdog', 'lead-intake', 'lead-followup']
+  const leaks = still.filter((d) => /afterHoursAllowed|emergency: true|\{ emergency/.test(src(`${d}/index.ts`)))
+  ck('426 scan · running late, coverage-reply YES, ops-escalate, watchdog and lead texts never use an after-hours exception', leaks.length === 0, leaks)
+  const users = fs.readdirSync(FN).filter((d) => fs.existsSync(`${FN}/${d}/index.ts`) && /afterHoursAllowed/.test(src(`${d}/index.ts`))).sort()
+  ck('426 scan · exactly three functions read the after-hours switches (timekeeper-watch, clockin-alert, coverage-run)', users.join(',') === 'clockin-alert,coverage-run,timekeeper-watch', users)
+  ck('426 scan · no em dashes in the new code', !/—/.test(src('_shared/quiet-hours.ts')) && !/—/.test(tk.slice(tk.indexOf('AFTER HOURS'), tk.indexOf('AFTER HOURS') + 600))) }
 
 for (const [n, o, note] of res) console.log((o ? 'PASS' : 'FAIL') + ' · ' + n + (o ? '' : '\n   ' + note))
 console.log(res.filter((x) => x[1]).length + '/' + res.length)

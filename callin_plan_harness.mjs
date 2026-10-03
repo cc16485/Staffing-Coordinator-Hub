@@ -27,7 +27,7 @@ ck('copy: no em dashes in anything a person reads', ![...Object.values(P.NEED_LA
 const tmpDir = path.join(process.cwd(), '_cr_tmp'); fs.rmSync(tmpDir, { recursive: true, force: true }); fs.mkdirSync(tmpDir);
 fs.writeFileSync(path.join(tmpDir, 'outreach.ts'), `export const normalisePhone = (p: unknown) => { const d = String(p ?? '').replace(/\\D/g, ''); return d.length === 10 ? d : (d.length === 11 && d[0] === '1' ? d.slice(1) : null) }
 export async function maySendTo() { return { allowed: true, confidence: 'verified', reason: null } }
-export async function contactForOutbound(_s: unknown, _g: unknown, who: any) { return { contactId: 'ct_' + (who.phone || who.email) } }`);
+export async function contactForOutbound(_s: unknown, _g: unknown, who: any, _k: unknown, opts: any = {}) { (globalThis as any).__cfo = [...((globalThis as any).__cfo || []), { phone: who.phone, audience: opts.audience, emergency: !!opts.emergency }]; return { contactId: 'ct_' + (who.phone || who.email) } }`);
 fs.writeFileSync(path.join(tmpDir, 'stubs.ts'), `export async function shadowRoute() {}
 export async function opEvent() {}
 export async function notifyFamilyOfChange() { return { outcome: 'none', count: 0, reason: 'harness', circle: null } }`);
@@ -43,7 +43,9 @@ const src = fs.readFileSync(path.join(FNS, 'coverage-run/index.ts'), 'utf8')
   .replace("from '../_shared/optout.ts'", "from '" + path.join(FNS, '_shared/optout.ts') + "'")   // 0b-3
   /* J1: the lock is tested in j1_job_locks_test.mjs; here the tick is the schedule and the picker is let in as the owner */
   .replace("from '../_shared/job-auth.ts'", "from 'data:text/javascript,export const jobCaller=async()=>\\'cron\\';export const ownerCaller=async()=>true'")
-  .replace("from '../_shared/staff-auth.ts'", "from '" + path.join(FNS, '_shared/staff-auth.ts') + "'");
+  .replace("from '../_shared/staff-auth.ts'", "from '" + path.join(FNS, '_shared/staff-auth.ts') + "'")
+  /* (426) the shared files added since (send-problems, staff-contact, quiet-hours) are the real ones */
+  .replace(/from '\.\.\/_shared\/([a-z-]+\.ts)'/g, (_m, f) => "from '" + path.join(FNS, '_shared', f) + "'");
 const tmp = path.join(tmpDir, 'coverage-run.ts'); fs.writeFileSync(tmp, src);
 let handler; const env = { SUPABASE_URL: 'http://x', SUPABASE_SERVICE_ROLE_KEY: 'k', AXISCARE_TOKEN: 't', AXISCARE_SITE: '16485', GHL_TOKEN: 'g', GHL_LOCATION_ID: 'L' };
 globalThis.Deno = { env: { get: k => env[k] }, serve: h => { handler = h; } };
@@ -125,13 +127,21 @@ ck('automatic texts hold when the plan can\'t be read', textedNames().length ===
 const RealDate = Date; const FIX = RealDate.parse('2026-09-28T08:00:00Z');
 class NightDate extends RealDate { constructor(...a) { if (a.length) super(...a); else super(FIX); } static now() { return FIX; } }
 globalThis.Date = NightDate;
-world(null, { admin_alerted: null }); T.app_data.find(r => r.key === 'ops_settings').data.coverage_send_live = false; await tick();
+const OPS = () => T.app_data.find(r => r.key === 'ops_settings').data
+/* 426 (her word, 2026-10-03: "i want the missed clock ins to be live after hours too, that and call ins"): by default
+   (callin_after_hours unset) every call-in texts the admins at any hour */
+globalThis.__cfo = []; world(null, { admin_alerted: null }); OPS().coverage_send_live = false; await tick();
+const smsDef = SENT.filter(m => m.type === 'SMS' && m.contactId === 'ct_4175550099'), mailDef = SENT.filter(m => m.type === 'Email'), cfoDef = globalThis.__cfo.filter(x => x.audience === 'staff')
+/* her switch off (callin_after_hours false): the 425 rule, the text waits for morning */
+globalThis.__cfo = []; world(null, { admin_alerted: null }); OPS().coverage_send_live = false; OPS().callin_after_hours = false; await tick();
 const smsNo = SENT.filter(m => m.type === 'SMS' && m.contactId === 'ct_4175550099'), mailNo = SENT.filter(m => m.type === 'Email');
-world({ ...plan, coverage_need: 'must_cover' }, { admin_alerted: null }); T.app_data.find(r => r.key === 'ops_settings').data.coverage_send_live = false; await tick();
+globalThis.__cfo = []; world({ ...plan, coverage_need: 'must_cover' }, { admin_alerted: null }); OPS().coverage_send_live = false; OPS().callin_after_hours = false; await tick();
 const smsMust = SENT.filter(m => m.type === 'SMS' && m.contactId === 'ct_4175550099'), mailMust = SENT.filter(m => m.type === 'Email');
 globalThis.Date = RealDate;
-ck('3 AM, no plan: the admin gets the email only (the text waits for morning), as today', smsNo.length === 0 && mailNo.length === 1, { smsNo, mailNo: mailNo.length });
-ck('3 AM, "must be covered": the admin is texted right away, marked MUST BE COVERED, and the email says so with the plan',
+ck('426 · 3 AM, no plan, default (call-ins text after hours): the admin is texted AND emailed', smsDef.length === 1 && /^New call-in: LeeAnn Walker/.test(smsDef[0].message) && mailDef.length === 1, { smsDef, mailDef: mailDef.length });
+ck('426 · ... and the text is passed as an after-hours exception (emergency) so the staff backstop lets it through', cfoDef.length === 1 && cfoDef[0].emergency === true, cfoDef);
+ck('3 AM, no plan, her switch OFF (callin_after_hours false): the admin gets the email only (the text waits for morning), as 425', smsNo.length === 0 && mailNo.length === 1, { smsNo, mailNo: mailNo.length });
+ck('3 AM, "must be covered" (even with the switch OFF): the admin is texted right away, marked MUST BE COVERED, and the email says so with the plan',
   smsMust.length === 1 && /^MUST BE COVERED \(call-in plan\)\. /.test(smsMust[0].message) && mailMust.length === 1 && /^MUST COVER · Call-in: LeeAnn Walker/.test(mailMust[0].subject)
   && mailMust[0].html.includes('Call-in plan: <b>Must be covered, no matter what · only ask Dixie Ray or Autumn Reid'), { smsMust, subj: mailMust[0]?.subject });
 
