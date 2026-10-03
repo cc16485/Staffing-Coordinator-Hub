@@ -229,6 +229,13 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 .evv-copy-btn{padding:.3rem .7rem;background:var(--teal);color:#fff;border:none;border-radius:6px;font-family:inherit;font-size:.75rem;font-weight:600;cursor:pointer;white-space:nowrap}
 .evv-copy-btn:hover{opacity:.85}
 .evv-deadline-bar{background:var(--navy);color:#fff;border-radius:8px;padding:.6rem 1rem;font-size:.8rem;display:flex;align-items:center;gap:.6rem;margin-bottom:.85rem}
+/* 418 (2026-10-02): candidates and caregivers are read-only on this page; the Caring Companions Hub (cc.mo-care.com) owns them */
+.sc-ro-banner{background:#FFF7E6;border:1px solid #FFC671;border-left:5px solid #FFC671;border-radius:10px;padding:.7rem 1rem;margin:0 0 1rem;color:#0E3860;font-size:.86rem;line-height:1.45}
+.sc-ro-banner a,#sc-ro-toast a{color:#0E3860;font-weight:700;text-decoration:underline}
+#panel-onboarding tbody button,#panel-training tbody button,#panel-compliance tbody button,
+#panel-compliance tbody input[type=checkbox],#ac-chk-all,#ac-bulk-bar,.sc-ro-hide{display:none !important}
+#sc-ro-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:99999;width:max-content;max-width:min(560px,calc(100vw - 32px));box-sizing:border-box;background:#FFF7E6;border:1px solid #FFC671;border-left:5px solid #FFC671;border-radius:10px;box-shadow:0 8px 24px rgba(14,56,96,.18);padding:.8rem 2.4rem .8rem 1rem;color:#0E3860;font-size:.88rem;line-height:1.45}
+#sc-ro-toast button{position:absolute;top:.35rem;right:.5rem;background:none;border:none;font-size:1.1rem;color:#0E3860;cursor:pointer}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
@@ -375,6 +382,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 
     <!-- ═══════════════════════════════ ONBOARDING ═══════════════════════════════ -->
     <div class="panel" id="panel-onboarding">
+      <div class="sc-ro-banner" data-sc-readonly="418"><strong>Read only.</strong> This page is read-only for candidates and caregivers. Use the Caring Companions Hub: <a href="https://cc.mo-care.com" target="_blank" rel="noopener">cc.mo-care.com</a>. Nothing you change on this page is saved.</div>
 
       <!-- Tab Guide -->
       <div class="tab-guide">
@@ -428,6 +436,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 
     <!-- ═══════════════════════════════ TRAINING ════════════════════════════════ -->
     <div class="panel" id="panel-training">
+      <div class="sc-ro-banner" data-sc-readonly="418"><strong>Read only.</strong> This page is read-only for candidates and caregivers. Use the Caring Companions Hub: <a href="https://cc.mo-care.com" target="_blank" rel="noopener">cc.mo-care.com</a>. Nothing you change on this page is saved.</div>
       <div class="tab-guide">
         <div class="tab-guide-hdr" onclick="toggleGuide('training')">
           <span class="tab-guide-title">📋 How This Tab Works — Step by Step</span>
@@ -453,9 +462,9 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
         <button class="fb" onclick="trFilter('blocked',this)">⛔ Client Contact Blocked</button>
         <button class="fb" onclick="trFilter('ojt-due',this)">30-Day Training Due</button>
         <button class="fb" onclick="trFilter('annual-due',this)">Annual Due</button>
-        <button class="fb" onclick="syncFromTrainingHub(this)" title="Pull completion dates, hire dates and first-contact dates straight from training.mo-care.com">☁ Sync from Training Hub</button>
+        <button class="fb sc-ro-hide" onclick="syncFromTrainingHub(this)" title="Pull completion dates, hire dates and first-contact dates straight from training.mo-care.com">☁ Sync from Training Hub</button>
         <a class="fb" href="https://training.mo-care.com" target="_blank" rel="noopener" title="Open the Training Hub — caregiver training dashboard" style="text-decoration:none;background:rgba(255,198,113,.35);font-weight:700">🎓 Open Training Hub ↗</a>
-        <button class="add-btn" onclick="openCGModal('training')">+ Add Caregiver</button>
+        <button class="add-btn sc-ro-hide" onclick="openCGModal('training')">+ Add Caregiver</button>
       </div>
       <div class="tbl-wrap">
         <table>
@@ -475,6 +484,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 
     <!-- ═══════════════════════════════ ACTIVE COMPLIANCE ════════════════════════ -->
     <div class="panel" id="panel-compliance">
+      <div class="sc-ro-banner" data-sc-readonly="418"><strong>Read only.</strong> This page is read-only for candidates and caregivers. Use the Caring Companions Hub: <a href="https://cc.mo-care.com" target="_blank" rel="noopener">cc.mo-care.com</a>. Nothing you change on this page is saved.</div>
       <div class="tab-guide">
         <div class="tab-guide-hdr" onclick="toggleGuide('compliance')">
           <span class="tab-guide-title">📋 How This Tab Works — Step by Step</span>
@@ -498,11 +508,11 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
         <button class="fb" onclick="acFilter('overdue',this)">Overdue</button>
         <button class="fb" onclick="acFilter('duesoon',this)">Due Soon</button>
         <button class="fb" onclick="acFilter('current',this)">All Current</button>
-        <button class="add-btn" onclick="batchOIGCheck()" style="background:var(--teal)">🔍 Batch OIG Check</button>
+        <button class="add-btn sc-ro-hide" onclick="batchOIGCheck()" style="background:var(--teal)">🔍 Batch OIG Check</button>
         <button class="add-btn" onclick="exportComplianceCSV()" style="background:var(--navy)">📥 Export CSV</button>
         <button class="add-btn" onclick="downloadCSVTemplate()" style="background:var(--navy)">📋 CSV Template</button>
-        <button class="add-btn" onclick="openImportModal()" style="background:#7c3aed">⬆ Import CSV</button>
-        <button class="add-btn" onclick="openCGModal('compliance')">+ Add Caregiver</button>
+        <button class="add-btn sc-ro-hide" onclick="openImportModal()" style="background:#7c3aed">⬆ Import CSV</button>
+        <button class="add-btn sc-ro-hide" onclick="openCGModal('compliance')">+ Add Caregiver</button>
         <input type="file" id="csv-file-input" accept=".csv" style="display:none" onchange="handleCSVFile(event)">
       </div>
       <div id="ac-bulk-bar" style="background:var(--navy);padding:.6rem 1rem;border-radius:8px 8px 0 0;align-items:center;gap:.75rem;flex-wrap:wrap;display:none">
@@ -2246,6 +2256,7 @@ async function oigCheckFromOBModal(){
 }
 
 async function batchOIGCheck(){
+  if(scPeopleReadOnly()) return;
   if(!caregivers.length){ alert('No caregivers to check.'); return; }
   document.getElementById('oig-batch-modal').classList.add('open');
   document.getElementById('oig-batch-close-btn').style.display = 'none';
@@ -4661,6 +4672,7 @@ function renderEod(){
 // ── SUPABASE — client initialized at top of script ────────────────────
 
 async function syncToSupabase(key, data){
+  if(SC_READONLY_KEYS.includes(key)){ scReadOnlyNotice(); console.warn('418: this page never saves', key); return; }
   try {
     // Guard: NEVER write while logged out. A fresh browser starts with empty
     // local arrays, and an unauthenticated write here can overwrite real data
@@ -4714,6 +4726,32 @@ function setSyncStatus(s){
   el.textContent=label; el.style.color=color;
 }
 
+// 418 (2026-10-02, Samantha): nobody uses this page for candidates or caregivers, and its whole-list saves could
+// write an old copy over the real list (how a person can vanish). These two saves now NEVER write app_data or the
+// browser copy. The edit is undone (the saved list is read again) and the page says where to go instead.
+const SC_READONLY_KEYS = ['candidates', 'caregivers'];
+function scReadOnlyNotice(){
+  // One notice at a time: shown again after it is closed, so a blocked click is never silent.
+  if(typeof document === 'undefined' || !document.body || document.getElementById('sc-ro-toast')) return;
+  const t = document.createElement('div');
+  t.id = 'sc-ro-toast'; t.setAttribute('role', 'status');
+  t.innerHTML = 'This page is read-only for candidates and caregivers. Use the Caring Companions Hub: <a href="https://cc.mo-care.com" target="_blank" rel="noopener">cc.mo-care.com</a>'
+    + '<button type="button" aria-label="Close" onclick="this.parentNode.remove()">&times;</button>';
+  document.body.appendChild(t);
+}
+function scPeopleReadOnly(){ scReadOnlyNotice(); return true; }
+async function scReloadPeople(){
+  // Throw away whatever was changed in this browser: read the saved lists again (read only).
+  try{
+    const { data, error } = await sb.from('app_data').select('key,data').in('key', SC_READONLY_KEYS);
+    if(error || !data) return;
+    data.forEach(row=>{
+      if(row.key==='candidates' && Array.isArray(row.data)) candidates = row.data;
+      if(row.key==='caregivers' && Array.isArray(row.data)) caregivers = row.data;
+    });
+    ['renderOB','renderTR','renderAC','renderAlerts'].forEach(f=>{ try{ if(typeof window[f]==='function') window[f](); }catch(e){} });
+  }catch(e){ console.warn('Could not re-read candidates/caregivers', e); }
+}
 // ── DATA — localStorage-backed ─────────────────────────────────────────
 const SEED_CANDIDATES = [];
 const SEED_CAREGIVERS = [];
@@ -4745,16 +4783,8 @@ let obId  = parseInt(localStorage.getItem('cc_ob_id')  || '10');
 let cgId  = parseInt(localStorage.getItem('cc_cg_id')  || '10');
 clearSeedPeople();
 
-function saveCandidates(){
-  localStorage.setItem('cc_candidates', JSON.stringify(candidates));
-  localStorage.setItem('cc_ob_id', String(obId));
-  syncToSupabase('candidates', candidates);
-}
-function saveCaregivers(){
-  localStorage.setItem('cc_caregivers', JSON.stringify(caregivers));
-  localStorage.setItem('cc_cg_id', String(cgId));
-  syncToSupabase('caregivers', caregivers);
-}
+function saveCandidates(){ scReadOnlyNotice(); scReloadPeople(); }
+function saveCaregivers(){ scReadOnlyNotice(); scReloadPeople(); }
 
 // ── TRAINING HUB LIVE SYNC ────────────────────────────────────────────
 // Pulls authoritative training data from training.mo-care.com (the system of
@@ -4765,6 +4795,7 @@ const TRAINING_DATA_FN='https://rdqujxiycycwhskyvrwa.supabase.co/functions/v1/hu
 const TRAINING_HUB_API=TRAINING_DATA_FN+'?action=training_status';   /* T2: your own sign-in, not the shared key */
 const TRAINING_HUB_ANON='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJkcXVqeGl5Y3ljd2hza3l2cndhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMyMTg1NDgsImV4cCI6MjA5ODc5NDU0OH0.SFjAfj--b-tWrk8bMVLeM-tGwD8VBaPsEBtUAp5tPew';
 async function syncFromTrainingHub(btn){
+  if(scPeopleReadOnly()) return;
   const orig=btn?btn.textContent:'';
   if(btn){ btn.textContent='☁ Syncing…'; btn.disabled=true; }
   try{
@@ -5302,6 +5333,7 @@ function updateAxisCareLaunchBtn(){
 let editingOB=null, editingCG=null;
 
 function openOBModal(id=null){
+  if(scPeopleReadOnly()) return;
   editingOB=id;
   document.getElementById('ob-modal-title').textContent=id?'Edit Candidate':'Add Candidate';
   const c=id?candidates.find(x=>x.id===id):null;
@@ -5329,6 +5361,7 @@ function openOBModal(id=null){
   document.getElementById('ob-modal').classList.add('open');
 }
 function saveOB(){
+  if(scPeopleReadOnly()) return;
   const g=k=>document.getElementById(k).value;
   if(!g('ob-first')||!g('ob-last')){alert('Name required.');return;}
   // Capture pre-save state
@@ -5387,6 +5420,7 @@ function buildInviteMsg(c, url){
 }
 
 function openInviteModal(id){
+  if(scPeopleReadOnly()) return;
   invitingId=id;
   const c=candidates.find(x=>x.id===id);
   document.getElementById('inv-name').textContent=`${c.first} ${c.last}`;
@@ -5454,6 +5488,7 @@ async function confirmSendInvite(){
 }
 let _notHireId=null;
 function openNotHireModal(id){
+  if(scPeopleReadOnly()) return;
   const c=candidates.find(x=>x.id===id);
   if(!c) return;
   _notHireId=id;
@@ -5463,6 +5498,7 @@ function openNotHireModal(id){
   document.getElementById('not-hire-modal').classList.add('open');
 }
 async function confirmNotHire(){
+  if(scPeopleReadOnly()) return;
   const reason=document.getElementById('not-hire-reason').value;
   if(!reason){ alert('Please select a reason.'); return; }
   const notes=document.getElementById('not-hire-notes').value.trim();
@@ -5489,6 +5525,7 @@ async function confirmNotHire(){
   }
 }
 function reactivateOB(id){
+  if(scPeopleReadOnly()) return;
   const c=candidates.find(x=>x.id===id);
   if(!c||!confirm(`Reactivate ${c.first} ${c.last}? They will return to the active pipeline.`)) return;
   delete c.not_hired; delete c.not_hired_reason; delete c.not_hired_notes; delete c.not_hired_date;
@@ -5520,6 +5557,7 @@ function updateMrefPreview(){
   el.style.display='block';el.style.background=colors[score];el.style.color='#16283a';el.textContent=text[score];
 }
 function openManualRef(candidateId, slot){
+  if(scPeopleReadOnly()) return;
   _mrefCandId=candidateId; _mrefSlot=slot;
   const c=candidates.find(x=>x.id===candidateId);
   document.getElementById('mref-title').textContent=`Record Reference ${slot} — ${c.first} ${c.last}`;
@@ -5543,6 +5581,7 @@ function openManualRef(candidateId, slot){
   document.getElementById('manual-ref-modal').classList.add('open');
 }
 function saveManualRef(){
+  if(scPeopleReadOnly()) return;
   const g=k=>document.getElementById(k).value;
   if(!g('mref-recommend')){ alert('Please select a recommendation.'); return; }
   const score=scoreManualRef(g('mref-recommend'),g('mref-reliability'),g('mref-interpersonal'),g('mref-honesty'),g('mref-concerns'));
@@ -5558,7 +5597,7 @@ function saveManualRef(){
 }
 
 let cgReturnTab='training';
-function openCGModal(tab,id=null){ cgReturnTab=tab; editingCG=id;
+function openCGModal(tab,id=null){ if(scPeopleReadOnly()) return; cgReturnTab=tab; editingCG=id;
   document.getElementById('cg-modal-title').textContent=id?'Edit Caregiver':'Add Caregiver';
   const c=id?caregivers.find(x=>x.id===id):null;
   const g=k=>document.getElementById(k);
@@ -5582,6 +5621,7 @@ function openCGModal(tab,id=null){ cgReturnTab=tab; editingCG=id;
   document.getElementById('cg-modal').classList.add('open');
 }
 function saveCG(){
+  if(scPeopleReadOnly()) return;
   const g=k=>document.getElementById(k).value;
   if(!g('cg-first')||!g('cg-last')){alert('Name required.');return;}
   // Capture pre-save state to detect status changes
@@ -6388,6 +6428,7 @@ function saveCancelDetails(){
 
 // ── Promote / Close Out / Reopen ──────────────────────────────────────
 function promoteToCaregiver(candidateId){
+  if(scPeopleReadOnly()) return;
   const c = candidates.find(x=>x.id===candidateId);
   if(!c) return;
   if(!confirm(`Promote ${c.first} ${c.last} to caregiver?\n\nThey will be added to Training & Active Compliance and removed from Background & References.`)) return;
@@ -6420,6 +6461,7 @@ function promoteToCaregiver(candidateId){
   alert(`🎉 ${c.first} ${c.last} has been promoted! They now appear in Training and Active Compliance.`);
 }
 function closeOutCandidate(candidateId){
+  if(scPeopleReadOnly()) return;
   const c = candidates.find(x=>x.id===candidateId);
   if(!c||!confirm(`Close out ${c.first} ${c.last}?\n\nThey will be hidden from regular views. You can reopen them anytime.`)) return;
   const i = candidates.findIndex(x=>x.id===candidateId);
@@ -6427,6 +6469,7 @@ function closeOutCandidate(candidateId){
   saveCandidates(); renderOB();
 }
 function reopenCandidate(candidateId){
+  if(scPeopleReadOnly()) return;
   const i = candidates.findIndex(x=>x.id===candidateId);
   if(i===-1) return;
   candidates[i].closed_out = false;
@@ -6466,6 +6509,7 @@ function updateACBulkBar(){
   }
 }
 function bulkMarkCheck(type){
+  if(scPeopleReadOnly()) return;
   if(!acSelected.size){ alert('No caregivers selected.'); return; }
   const today=new Date().toISOString().split('T')[0];
   const label={oig:'OIG',edl:'EDL',fcsr:'FCSR'}[type];
@@ -6870,6 +6914,7 @@ function downloadCSVTemplate(){
 }
 
 function openImportModal(){
+  if(scPeopleReadOnly()) return;
   document.getElementById('csv-paste-area').value = '';
   document.getElementById('csv-preview').style.display = 'none';
   document.getElementById('csv-import-btn').style.display = 'none';
@@ -6954,6 +6999,7 @@ function previewCSV(){
 }
 
 function confirmCSVImport(){
+  if(scPeopleReadOnly()) return;
   if(!_csvParsed.length) return;
   _csvParsed.forEach(d => caregivers.push({id:cgId++,...d}));
   saveCaregivers();
