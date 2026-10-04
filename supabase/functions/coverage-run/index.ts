@@ -40,7 +40,8 @@ import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { notifyFamilyOfChange } from '../_shared/family-change-text.ts'
 import { careLevelOf } from '../_shared/care-level.ts'
 import { holdsAutoTexts, isMustCover, onlyAskCut, planLine, readPlan } from '../_shared/callin-plan.ts'
-import { callinLink, withLink, rememberAlerted } from '../_shared/callin-notify.ts'
+import { callinLink, withLink, rememberAlerted, textCaseAdmins, caseWhat } from '../_shared/callin-notify.ts'
+import { reminderDue, reminderText } from '../_shared/callin-reminder.ts'
 import { adminRecipients } from '../_shared/clockin-admins.ts'
 
 /* Straight-line miles between two zips' Census centroids — an honest
@@ -1234,8 +1235,54 @@ Deno.serve(async (req) => {
     } catch { /* no boost is a fine fallback */ }
   }
 
+  /* CI3: the board's own claim on a call-in's Needs Attention item counts as "someone has it" (read once per run) */
+  // deno-lint-ignore no-explicit-any
+  let boardClaims: Set<string> | null = null
+  const boardClaimFor = async (id: string): Promise<boolean> => {
+    if (!boardClaims) {
+      boardClaims = new Set()
+      try { const { data: oi } = await sb.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+        // deno-lint-ignore no-explicit-any
+        for (const x of (Array.isArray(oi?.data) ? oi!.data : []) as any[]) if (x?.status === 'open' && x?.claimed_by && x?.coverage_case_id) boardClaims.add(String(x.coverage_case_id)) } catch { /* unknown = no claim */ }
+    }
+    return boardClaims.has(id)
+  }
+  const remPlans = new Map()
   for (const c of open) {
     const cands = await candidatesFor(c)
+
+    /* ── CI3 (2026-10-04, her decision 1): REMINDERS UNTIL SOMEONE HAS IT. Nobody tapped "I've got it", confirmed or
+       closed it: every admin who got the call-in text gets a reminder with their link, every 15 minutes, at most 4. At
+       night only for a MUST BE COVERED shift (or one within 3 hours while call-ins may text after hours). OFF until
+       ops_settings.callin_reminders_live; while off, what WOULD have gone is recorded on the case (practice). */
+    try {
+      /* only the schedule's own run (or a committed run) reminds; an owner's manual check never texts or records */
+      if ((caller === 'cron' || commit) && c.admin_alerted && c.kind !== 'interest' && !c.claimed_by) {
+        const planR = await readPlan(sb, c.client_axiscare_id, remPlans)
+        const mustR = isMustCover(planR.plan)
+        let startsInR: number | null = null
+        if (c.shift_date && /^\d\d:\d\d/.test(String(c.shift_time || ''))) {
+          const chiNowR = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).replace(' ', 'T')
+          startsInR = Math.round((new Date(`${c.shift_date}T${String(c.shift_time).slice(0, 5)}:00`).getTime() - new Date(chiNowR).getTime()) / 60000)
+        }
+        const dR = reminderDue(c, settings, { must: mustR, claimedElsewhere: await boardClaimFor(String(c.id)), startsInMin: startsInR, callinAnyHour: afterHoursAllowed(settings, 'callin') })
+        if (dR.due) {
+          const liveR = settings.callin_reminders_live === true
+          let reachedR: string[] = []
+          if (liveR && ghl.token && ghl.locationId)
+            reachedR = await textCaseAdmins(sb, ghl, settings, c, (link) => withLink(reminderText(c, caseWhat(c), dR, mustR), link),
+              { onlyAlerted: true, allIfNoneRecorded: true, emergency: dR.emergency })
+          const freshR = await readCaseFresh(c.id)
+          if (freshR && freshR.status === 'open') {
+            const list = [...(Array.isArray(freshR.callin_reminders) ? freshR.callin_reminders : []), { at: nowIso(), n: dR.n, ...(liveR ? { sent: reachedR.length } : { practice: true }) }]
+            await sb.rpc('coverage_case_patch', { p_id: String(c.id), p_patch: { callin_reminders: list }, p_expect: { status: 'open' } })
+            c.callin_reminders = list
+          }
+          if (liveR) stats.callin_reminders = (Number(stats.callin_reminders) || 0) + reachedR.length
+          else stats.callin_reminders_practice = (Number(stats.callin_reminders_practice) || 0) + 1
+        }
+      }
+    } catch (e) { console.error('[coverage-run] call-in reminder failed', e) }
 
     /* ── ADMIN ALERT ON DETECTION (her ask: are all admin alerted by text
        and email when a call-in is detected? They are now.) Every NEW case,
