@@ -76,6 +76,15 @@ ck('...the existing people are not changed at all', JSON.stringify(db.t.app_data
 ck('...each carded form is noted (so it is not carded again) but stays on the Import list (not seen)', fm('b').auto_import_result === 'card:in_bgr' && fm('b').seen_at === null && fm('e').auto_import_result === 'card:no_offer')
 r = await J.runJob(db, deps(), { caller: 'cron', runId: 'r3', now: NOW })
 ck('the next run: nothing new, nothing doubled', r.seen === 0 && db.t.app_data.find((x) => x.key === 'ops_items').data.length === 5 && db.calls.filter((c) => c[0] === 'candidate_import_apply').length === 1, r)
+// a private start link (2026-10-04): a form that came through a valid link counts as "we sent them a start link"
+{
+  const W = world(false, { forms: [form('g', { phone: '4175550888', start_offer_id: 'o9', start_link_exp: 1999999999, start_link_sig: 'A'.repeat(43) }), form('h', { phone: '4175550889', start_offer_id: 'o9', start_link_exp: 1, start_link_sig: 'bad' })] })
+  const d1 = fakeDb(W)
+  await J.runJob(d1, deps({ linkOk: async (f) => f.id === 'g' }), { caller: 'cron', runId: 'L', now: NOW })
+  const w = d1.t.intake_import_log.filter((x) => x.result === 'would')
+  ck('a form from a valid private start link: imported even though its phone matches no job offer', w.find((x) => x.intake_id === 'g')?.action === 'import', w)
+  ck('...a form whose link does not check out: still a "no job offer" card', w.find((x) => x.intake_id === 'h')?.reason === 'no_offer', w)
+}
 // failures
 for (const [label, d2, want] of [['the job offers can\'t be read', deps({ offers: async () => ({ ok: false, error: 'the Training Platform answered 503' }) }), /job offers could not be read/],
   ['the rules aren\'t approved', deps({ rules: async () => ({ ok: false, error: 'rules file not approved: intake-import-rules.js' }) }), /not approved/]]) {

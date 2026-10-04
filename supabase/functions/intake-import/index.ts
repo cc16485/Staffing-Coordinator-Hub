@@ -9,6 +9,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { approvedRules } from '../_shared/approved-rules.ts'
 import { runJob, rulesFrom, RULES_FILE, type Deps } from '../_shared/intake-import.ts'
+import { checkLink } from '../_shared/applicant-links.ts'
 
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
 
@@ -37,6 +38,8 @@ Deno.serve(async (req) => {
         return Array.isArray(rows) ? { ok: true, rows } : { ok: false, error: 'no list came back' }
       } catch (e) { return { ok: false, error: String(e).slice(0, 120) } }
     },
+    /* the private start link it came through, checked against the moment the form was sent */
+    linkOk: (f) => checkLink(Deno.env.get('HUB_JOB_SECRET') ?? '', 'start', f.start_offer_id, f.start_link_exp, f.start_link_sig, Math.floor(Date.parse(f.created_at) / 1000) || 0),
   }
   const runId = 'iim_' + new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14) + '_' + crypto.randomUUID().slice(0, 6)
   try { return json(await runJob(db, deps, { caller, runId, dry })) }
