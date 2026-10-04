@@ -115,7 +115,9 @@ if ok and st:
     say(f"  · the sweep's switch is {'ON' if st[0]['live'] == 'true' else 'off'}; {'it has a schedule' if st[0]['sched'] else 'it has no schedule (it runs only when started by hand)'}")
 NODE = shutil.which("node") or next((p for p in ("/opt/homebrew/bin/node", "/usr/local/bin/node") if os.path.exists(p)), "")
 if NODE:
-    for t in ("sweep_patch_test.mjs", "g1_rule_jobs_test.mjs", "g2_approved_rules_test.mjs"):
+    # (g2_approved_rules_test.mjs is not run here: it reads the Hub's files from a folder beside this one, which the
+    #  fresh copy this step runs from doesn't have; it doesn't cover the sweep's save either. 2026-10-04 first run.)
+    for t in ("sweep_patch_test.mjs", "g1_rule_jobs_test.mjs"):
         p = subprocess.run([NODE, t], cwd=ROOT, capture_output=True, text=True)
         last = (p.stdout.strip().splitlines() or ["(no output)"])[-1]
         if p.returncode != 0 or re.search(r"^FAIL", p.stdout, re.M): bad(f"{t} failed: {last}"); say("  STOP. Nothing was changed."); done(2)
