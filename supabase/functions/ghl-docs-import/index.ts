@@ -6,7 +6,9 @@
 // one prehire_docs row per file. Never touches any other field (no Social Security cards, birth certificates, I-9s).
 //   • Matching: Hub record → GHL contact by phone (last 10 digits), else email. Never by name.
 //   • Never overwrites: the Hub's own records are not written at all; the Hub shows an imported file only where it has
-//     none of its own. Re-runs skip files already imported (ghl_file_key).
+//     none of its own. Re-runs skip files already imported (ghl_file_key), including a file already imported under the
+//     candidate record a caregiver came from (439, 2026-10-03: moved over by caregiver connect; the Hub shows those
+//     through candidate_id, so a second copy would show twice).
 //   • mode 'practice' (default): reads only, says what it would import. mode 'live': downloads + stores.
 //   • Batches: { offset, limit } over (Hub caregivers, then open candidates), so each call stays under the time limit.
 // Every GoHighLevel request is a GET. Returns first name + last initial per person, check names, counts.
@@ -101,6 +103,8 @@ Deno.serve(async (req) => {
       const ck: Record<string, unknown> = { check: k, hub_has_doc: hubHas, result: results[k] || '' }
       ;(row.checks as unknown[]).push(ck)
       if (have.has(`${p.kind}|${pid}|${k}|${f.key}`)) { ck.state = 'already imported'; continue }
+      if (p.kind === 'caregiver' && r.candidate_id != null && r.candidate_id !== '' && have.has(`candidate|${String(r.candidate_id)}|${k}|${f.key}`)) {
+        ck.state = 'already imported (under their Background & References record)'; continue }
       if (!live) { ck.state = 'would import'; continue }
       try {
         const d = await fetch(f.url)
