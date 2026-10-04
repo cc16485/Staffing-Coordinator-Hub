@@ -17,6 +17,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { approvedRules, rulesCheck } from '../_shared/approved-rules.ts'
+import { saveSweepFields } from '../_shared/sweep-patch.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' }
@@ -413,12 +414,15 @@ Deno.serve(async (req) => {
         if (c) c.axiscare_note_for = n.clears ? null : n.event
       }
     }
-    // caregiver records last, so a failed note does not mark itself sent
+    // caregiver records last, so a failed note does not mark itself sent. Safe saves step 4 (2026-10-04): only the five
+    // fields the sweep owns are saved, and only on the record as it read it; if an office edit landed meanwhile, the
+    // fields are worked out again on the current record (never a whole record from this run's copy).
     for (const c of active) {
       if (!plan.caregivers_written.includes(c.id || `${c.first} ${c.last}`) &&
           !plan.axiscare_notes.some(n => n.axiscare_id === String(c.axiscare_id || ''))) continue
-      const { error } = await supabase.rpc('upsert_app_data_item', { target_key: 'caregivers', item: c })
-      if (!error) wrote.caregivers++
+      const noteFor = c.axiscare_note_for ?? null
+      const r = await saveSweepFields(supabase, c, (fresh: any) => { E.eligRecord(fresh, E.eligibility(fresh)); fresh.axiscare_note_for = noteFor })
+      if (r === 'saved') wrote.caregivers++
     }
   }
 
