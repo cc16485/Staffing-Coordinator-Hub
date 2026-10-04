@@ -28,6 +28,9 @@ export function reminderDue(
   const { every, max } = reminderSettings(st)
   if (!c || c.status !== 'open') return { due: false, why: 'not open' }
   if (c.kind === 'interest') return { due: false, why: 'an interest check, not a call-in' }
+  /* 436 found: the ongoing sweep's standing open shifts (weeks ahead) are cases too, stamped "alerted" only so they
+     never send a call-in text. They are not call-ins: never remind about them. */
+  if (c.opened_by === 'ongoing-sweep' || c.reason === 'open' || String(c.id || '').startsWith('cwo_')) return { due: false, why: 'standing open shifts, not a call-in' }
   if (!c.admin_alerted) return { due: false, why: 'the call-in text has not gone yet' }
   if (c.claimed_by || p.claimedElsewhere) return { due: false, why: 'someone has it' }
   // deno-lint-ignore no-explicit-any
