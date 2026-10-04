@@ -15,27 +15,25 @@
 //      unassigned visits — the answer is "assign by hand in AxisCare",
 //      never a guess. A wrong write here puts a caregiver on the wrong shift.
 //
-// Auth: JWT-verified (deploy WITHOUT --no-verify-jwt). The hub calls it with
-// the signed-in coordinator's session token, same as ai-draft-followup.
+// Auth: JWT-verified (deploy WITHOUT --no-verify-jwt). CI1 (2026-10-03): an ACTIVE OFFICE STAFF member (requireStaff,
+// OFFICE_ROLES) or the owner's server key. It used to accept any signed-in account on the shared project.
+//
+// CI1 · THE SAFE FILL (her "yes to all" on the call-ins plan): the Hub no longer saves its own copy of a confirmed case.
+//   {action:'confirm', case_id, covered_by, not_chosen?: {silent} | {msg}}  exactly one confirm wins (the case must still
+//       be open); only the fill is saved; then AxisCare, only where nobody else is on the visit (_shared/coverage-fill.ts).
+//       Already filled: {outcome:'already', covered_by, confirmed_by, ...} and nothing changes.
+//   {action:'close', case_id, how:'uncovered'|'other_way'|'client_cancelled', note?}  same one-winner rule.
+//   {case_id} (no action)  the old call: put an already-confirmed case's caregiver on AxisCare.
 // The result is stamped onto the case (c.axiscare_assignment) so the board
 // shows "on the schedule ✓" or "assign by hand: why" — silence is not a state.
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { ownerCaller } from '../_shared/job-auth.ts'
+import { confirmFill, closeCase, assignInAxis, readCase, patchCase, CLOSE_HOW } from '../_shared/coverage-fill.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
-/* C2a (2026-09-28): every change in AxisCare adds one line to axiscare_change_log (who, when, which client or caregiver,
-   the kind, how it went, a short summary; never note text). Best effort: recording never blocks the change itself. */
-// deno-lint-ignore no-explicit-any
-async function recordAxisChange(db: any, c: { kind: string; subject: 'client' | 'caregiver'; client?: string | null; caregiver?: string | null;
-  outcome: 'sent_confirmed' | 'sent' | 'refused' | 'practice'; summary: string; detail?: string | null; by: string; via: string }): Promise<boolean> {
-  try {
-    const { data, error } = await db.rpc('axiscare_change_record', { p_kind: c.kind, p_subject: c.subject, p_client: c.client ?? null,
-      p_caregiver: c.caregiver ?? null, p_outcome: c.outcome, p_summary: String(c.summary).slice(0, 200), p_detail: c.detail ? String(c.detail).slice(0, 300) : null,
-      p_by: c.by || 'unknown', p_via: c.via })
-    return !error && data?.outcome === 'recorded'
-  } catch { return false }
-}
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: {
     'Content-Type': 'application/json',
@@ -43,149 +41,56 @@ const json = (b: unknown, s = 200) =>
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   } })
 
-const AC_VERSION = Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01'
-function axisCreds() {
-  const order = ['AXISCARE_VISITS_TOKEN', 'AXISCARE_API_KEY', 'AXISCARE_TOKEN']
-  let token = ''
-  for (const n of order) { const v = Deno.env.get(n); if (v) { token = v; break } }
-  const site = Deno.env.get('AXISCARE_SITE') || Deno.env.get('AXISCARE_SITE_NUMBER') || ''
-  return { token, site: /^\d+$/.test(site) ? site : '' }
-}
-/* Reject callers holding only the PUBLIC anon key: verify_jwt lets any
-   project JWT through, and the anon key is published by design. Only a
-   signed-in coordinator (role "authenticated") or the service role may
-   assign schedules or read censuses (review security finding). */
-function callerRole(req: Request): string {
-  try {
-    const tok = String(req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '')
-    const payload = JSON.parse(atob(tok.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
-    return String(payload?.role || '')
-  } catch { return '' }
-}
-
-// deno-lint-ignore no-explicit-any
-const rowsOf = (v: any): any[] => Array.isArray(v) ? v
-  : (v && typeof v === 'object') ? Object.values(v) : []
-
-// deno-lint-ignore no-explicit-any
-async function ac(method: string, path: string, body?: unknown): Promise<{ ok: boolean; status: number; j: any }> {
-  const { token, site } = axisCreds()
-  if (!token || !site) return { ok: false, status: 0, j: { errors: ['AxisCare credentials not set'] } }
-  try {
-    const r = await fetch(`https://${site}.axiscare.com${path}`, {
-      method,
-      signal: AbortSignal.timeout(20000),
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json',
-                 'X-AxisCare-Api-Version': AC_VERSION,
-                 ...(body ? { 'Content-Type': 'application/json' } : {}) },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    })
-    const j = await r.json().catch(() => ({}))
-    return { ok: r.ok && j?.success !== false, status: r.status, j }
-  } catch (err) {
-    return { ok: false, status: 0, j: { errors: ['network: ' + String(err)] } }
-  }
-}
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200, headers: {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
     'Access-Control-Allow-Methods': 'POST, OPTIONS' } })
 
-  const role = callerRole(req)
-  if (role !== 'authenticated' && role !== 'service_role')
-    return json({ error: 'a signed-in coordinator session is required' }, 403)
+  /* CI1: an active office staff member, or the owner's server key */
+  let byName = 'the owner\'s server key'
+  if (!(await ownerCaller(req))) {
+    const who = await requireStaff(sb, req, OFFICE_ROLES)
+    if (!who.ok) return json({ error: who.error }, who.status)
+    byName = who.name || who.email || 'office staff'
+  }
 
   // deno-lint-ignore no-explicit-any
   const b: any = await req.json().catch(() => ({}))
   const caseId = String(b.case_id || '')
   if (!caseId) return json({ error: 'case_id required' }, 400)
+  const action = String(b.action || 'assign')
 
-  const { data: row } = await sb.from('app_data').select('data').eq('key', 'coverage_cases').maybeSingle()
-  // deno-lint-ignore no-explicit-any
-  const cases: any[] = Array.isArray(row?.data) ? row!.data : []
-  const c = cases.find(x => x.id === caseId)
+  if (action === 'confirm') {
+    const nc = b.not_chosen && typeof b.not_chosen === 'object'
+      ? (b.not_chosen.silent === true ? { silent: true } : (typeof b.not_chosen.msg === 'string' && b.not_chosen.msg.trim() ? { msg: b.not_chosen.msg.trim() } : undefined))
+      : undefined
+    const out = await confirmFill(sb, { caseId, coveredBy: String(b.covered_by || ''), byName, notChosen: nc })
+    await logRun(caseId, 'confirm', out.outcome, out.outcome === 'filled' ? out.axiscare.status + ': ' + out.axiscare.detail : JSON.stringify(out).slice(0, 200))
+    return json(out, out.outcome === 'not_found' ? 404 : out.outcome === 'bad_request' ? 400 : 200)
+  }
+  if (action === 'close') {
+    const out = await closeCase(sb, { caseId, how: String(b.how || '') as keyof typeof CLOSE_HOW, note: typeof b.note === 'string' ? b.note : '', byName })
+    await logRun(caseId, 'close', out.outcome, '')
+    return json(out, out.outcome === 'not_found' ? 404 : out.outcome === 'bad_request' ? 400 : 200)
+  }
+  if (action !== 'assign') return json({ error: 'unknown action' }, 400)
+
+  /* the old call: an already-confirmed case's caregiver onto AxisCare */
+  const c = await readCase(sb, caseId)
   if (!c) return json({ error: 'no such case' }, 404)
-  if (!c.covered_by) return json({ error: 'the case has no confirmed caregiver yet' }, 400)
-
-  const finish = async (status: string, detail: string, extra: Record<string, unknown> = {}) => {
-    c.axiscare_assignment = { status, detail, at: new Date().toISOString(), by: 'coverage-assign', ...extra }
-    await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
-    try {
-      await sb.rpc('upsert_app_data_item', { target_key: 'automation_log', item: {
-        id: 'auto_srv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
-        at: new Date().toISOString(), automation: 'coverage-assign', ran_by: 'server',
-        ok: status === 'assigned', dry: false, case_id: caseId, outcome: status, detail } })
-    } catch { /* logging never blocks */ }
-    return json({ status, detail, ...extra })
-  }
-
-  // WHO: the winner's AxisCare caregiver id — from the ask record first,
-  // else an exact-name roster match (refused if ambiguous).
-  const askedList = (Array.isArray(c.asked) ? c.asked : [])
-  const nameKey = (s: unknown) => String(s ?? '').toLowerCase().replace(/\s+/g, ' ').trim()
-  const winnerHits = askedList.filter((a: any) => nameKey(a.name) === nameKey(c.covered_by))
-  /* Two asked entries with the same name but DIFFERENT AxisCare ids is a
-     wrong-person write the read-back cannot catch — refuse (review finding). */
-  const winnerIds = [...new Set(winnerHits.map((a: any) => String(a.axiscare_id || '')).filter(Boolean))]
-  if (winnerIds.length > 1)
-    return finish('by_hand', `"${c.covered_by}" matches ${winnerIds.length} different asked caregivers — assign by hand in AxisCare`)
-  const winner = winnerHits[0]
-  let cgId = winnerIds[0] || ''
-  if (!cgId) {
-    const { data: cgRow } = await sb.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
-    // deno-lint-ignore no-explicit-any
-    const roster: any[] = Array.isArray(cgRow?.data) ? cgRow!.data : []
-    const nameKey = String(c.covered_by).toLowerCase().replace(/\s+/g, ' ').trim()
-    const hits = roster.filter(g =>
-      `${String(g.first || '').trim()} ${String(g.last || '').trim()}`.toLowerCase() === nameKey && g.axiscare_id)
-    if (hits.length === 1) cgId = String(hits[0].axiscare_id)
-    else return finish('by_hand',
-      hits.length === 0
-        ? `no AxisCare id found for "${c.covered_by}" — assign the visit by hand in AxisCare`
-        : `"${c.covered_by}" matches ${hits.length} roster rows — assign by hand in AxisCare`)
-  }
-  if (!/^\d+$/.test(cgId)) return finish('by_hand', `caregiver id "${cgId}" is not numeric — assign by hand in AxisCare`)
-
-  // WHICH VISIT: certain, or by hand.
-  let visitId = String(c.axiscare_visit_id || '')
-  if (!visitId) {
-    if (!c.client_axiscare_id || !c.shift_date)
-      return finish('by_hand', 'this case has no exact AxisCare visit attached — use "Attach the real shift" on the case (or assign by hand in AxisCare)')
-    const list = await ac('GET',
-      `/api/visits?clientIds=${encodeURIComponent(String(c.client_axiscare_id))}&startDate=${c.shift_date}&endDate=${c.shift_date}`)
-    if (!list.ok) return finish('by_hand', `could not read the client's visits (AxisCare ${list.status}) — assign by hand`)
-    // deno-lint-ignore no-explicit-any
-    const un: any[] = rowsOf(list.j?.results?.visits ?? list.j?.visits).filter((v: any) => !v?.removed && v?.caregiver?.id == null)
-    if (un.length === 1) visitId = String(un[0].id)
-    else return finish('by_hand',
-      un.length === 0
-        ? 'no unassigned visit found for that client on that date — it may already be assigned; check AxisCare'
-        : `${un.length} unassigned visits for that client that day — pick the right one by hand in AxisCare`)
-  }
-
-  // THE WRITE — then the read-back that decides what we call it.
-  const patch = await ac('PATCH', `/api/visits/${encodeURIComponent(visitId)}`, { caregiverId: Number(cgId) })
-  const visitWhat = 'caregiver #' + cgId + ' put on visit ' + visitId + (c.shift_date ? ' (' + c.shift_date + ')' : '')
-  const cax = /^\d+$/.test(String(c.client_axiscare_id ?? '')) ? String(c.client_axiscare_id) : null
-  const rec = (outcome: 'sent_confirmed' | 'sent' | 'refused', detail: string | null) => cax
-    ? recordAxisChange(sb, { kind: 'visit_caregiver', subject: 'client', client: cax, caregiver: /^\d+$/.test(String(cgId)) ? String(cgId) : null, outcome, summary: visitWhat, detail, by: 'automation: coverage-assign', via: 'coverage-assign' })
-    : Promise.resolve(false)
-  if (!patch.ok) await rec('refused', 'AxisCare refused (' + patch.status + ')')
-  if (!patch.ok)
-    return finish('failed', `AxisCare refused the assignment (${patch.status}): ${(patch.j?.errors || []).join('; ') || 'no detail'} — assign by hand`, { visit_id: visitId, caregiver_id: cgId })
-  const check = await ac('GET', `/api/visits/${encodeURIComponent(visitId)}`)
-  const checkRow = check.j?.results?.visit ?? rowsOf(check.j?.results?.visits ?? check.j?.visits)[0] ?? check.j?.results ?? {}
-  const onVisit = String(checkRow?.caregiver?.id ?? '')
-  if (!check.ok || Number(onVisit) !== Number(cgId) || onVisit === '') await rec('sent', 'AxisCare said OK but the read-back did not show them on the visit')
-  if (!check.ok || Number(onVisit) !== Number(cgId) || onVisit === '')
-    return finish('failed',
-      `AxisCare said OK but the read-back shows caregiver "${onVisit || 'none'}" on the visit — treat as NOT assigned, do it by hand`,
-      { visit_id: visitId, caregiver_id: cgId })
-
-  await rec('sent_confirmed', null)
-  return finish('assigned',
-    `${c.covered_by} is on the AxisCare schedule (visit ${visitId}, verified by read-back)`,
-    { visit_id: visitId, caregiver_id: cgId, verified: true })
+  if (!c.covered_by || c.resolved_how !== 'covered') return json({ error: 'the case has no confirmed caregiver yet' }, 400)
+  const axis = await assignInAxis(sb, c, byName)
+  await patchCase(sb, caseId, { axiscare_assignment: { ...axis, at: new Date().toISOString(), by: 'coverage-assign' } })
+  await logRun(caseId, 'assign', axis.status, axis.detail)
+  return json(axis)
 })
+
+async function logRun(caseId: string, what: string, outcome: string, detail: string) {
+  try {
+    await sb.rpc('upsert_app_data_item', { target_key: 'automation_log', item: {
+      id: 'auto_srv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+      at: new Date().toISOString(), automation: 'coverage-assign:' + what, ran_by: 'server',
+      ok: ['filled', 'assigned', 'already', 'closed'].includes(outcome), dry: false, case_id: caseId, outcome, detail: String(detail).slice(0, 300) } })
+  } catch { /* logging never blocks */ }
+}

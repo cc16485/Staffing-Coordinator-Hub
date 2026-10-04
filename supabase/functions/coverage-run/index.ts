@@ -422,6 +422,22 @@ async function appendAskFresh(caseId: string, entry: any): Promise<any | null> {
   await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: fresh })
   return fresh
 }
+/* CI1 (2026-10-03): the caregiver night rule, the same one the automatic waves use (9pm to 8am Chicago, from
+   ops_settings.coverage_quiet_from/until), now applied on the server to a coordinator's send too: held at night unless
+   the shift starts within 3 hours. Interest checks have no shift, so they wait for morning. */
+// deno-lint-ignore no-explicit-any
+export function caregiverNightHold(c: any, settings: any, now = new Date()): boolean {
+  const chiHour = Number(now.toLocaleString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', hour12: false }))
+  const qFrom = Number.isFinite(Number(settings?.coverage_quiet_from)) ? Number(settings.coverage_quiet_from) : 21
+  const qUntil = Number.isFinite(Number(settings?.coverage_quiet_until)) ? Number(settings.coverage_quiet_until) : 8
+  const inQuiet = qFrom > qUntil ? (chiHour >= qFrom || chiHour < qUntil) : (chiHour >= qFrom && chiHour < qUntil)
+  if (!inQuiet) return false
+  if (!c?.shift_date) return true
+  const startHH = String(c.shift_time || '').split('-')[0] || ''
+  const chiNow = now.toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).replace(' ', 'T')
+  const diffMs = new Date(`${c.shift_date}T${/^\d\d:\d\d$/.test(startHH) ? startHH : '23:59'}:00`).getTime() - new Date(chiNow).getTime()
+  return !(diffMs > 0 && diffMs < 3 * 3600000)
+}
 async function acquireRunLock(): Promise<boolean> {
   try {
     const { data } = await sb.from('app_data').select('data, updated_at').eq('key', 'coverage_run_lock').maybeSingle()
@@ -881,6 +897,9 @@ Deno.serve(async (req) => {
         return jr({ error: 'sending is switched off (ops_settings.coverage_send_live) — nothing sent' }, 409)
       const ghl2 = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
       if (!ghl2.token || !ghl2.locationId) return jr({ error: 'GHL credentials not set' }, 502)
+      /* CI1: the caregiver night rule, on the server (it used to be only a browser warning) */
+      if (caregiverNightHold(kase, st))
+        return jr({ error: 'held: caregivers are not texted 9pm to 8am unless the shift starts within 3 hours. Nothing was sent; try again from 8am, or call them.', held_night: true }, 409)
 
       /* Eligibility is re-derived HERE, not trusted from the browser: a name
          that is not in group1/group2 right now cannot be texted, whatever
@@ -942,7 +961,7 @@ Deno.serve(async (req) => {
         .replaceAll('{care}', careLine ? careLine + ' ' : '')
         .replace(/\s{2,}/g, ' ').trim()
 
-      const sent: string[] = [], failed: string[] = []
+      const sent: string[] = [], failed: string[] = [], already: string[] = []
       for (const x of sendable) {
         const phone = phoneOf(String(x.name))
         if (!phone) { failed.push(`${x.name} (no phone on the roster)`); continue }
@@ -951,6 +970,18 @@ Deno.serve(async (req) => {
         if (!contact) { failed.push(`${x.name} (refused by the outbound gate or opted out of texts)`); continue }
         const message = fillMsg(String(kase.kind) === 'interest' ? tmplInt
           : x.prn_ask ? tmplP : (x.tier === 1 ? tmpl1 : tmplO), x)
+        /* CI1: the ask is recorded BEFORE the text goes, under the case's lock, only if this person (same number or
+           AxisCare id) hasn't been asked on this case: two coordinators sending at once text them once. */
+        const ask = { id: uid(), name: x.name, phone, channel: 'sms', at: nowIso(),
+          state: 'waiting', replied_at: null, tier: x.tier, auto: false, ...(x.prn_ask ? { prn: true } : {}),
+          picked_by_coordinator: true, ghl_contact_id: contact.contactId, axiscare_id: x.axiscare_id ?? null }
+        const { data: held, error: holdErr } = await sb.rpc('coverage_case_add_ask', { p_id: String(kase.id), p_ask: ask })
+        if (holdErr || held !== 'added') {
+          if (held === 'already_asked') already.push(String(x.name))
+          else failed.push(`${x.name} (${held === 'not_open' ? 'the case closed meanwhile' : 'could not record the ask, so it was not sent'})`)
+          continue
+        }
+        let ok = false
         try {
           const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
             method: 'POST',
@@ -958,13 +989,10 @@ Deno.serve(async (req) => {
                        'Content-Type': 'application/json' },
             body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message }),
           })
-          if (!r.ok) { failed.push(`${x.name} (SMS ${r.status})`); continue }
-        } catch { failed.push(`${x.name} (send error)`); continue }
-        await appendAskFresh(String(kase.id), {
-          id: uid(), name: x.name, phone, channel: 'sms', at: nowIso(),
-          state: 'waiting', replied_at: null, tier: x.tier, auto: false, ...(x.prn_ask ? { prn: true } : {}),
-          picked_by_coordinator: true, ghl_contact_id: contact.contactId,
-          axiscare_id: x.axiscare_id ?? null })
+          ok = r.ok
+          if (!r.ok) failed.push(`${x.name} (SMS ${r.status})`)
+        } catch { failed.push(`${x.name} (send error)`) }
+        if (!ok) { await sb.rpc('coverage_case_remove_ask', { p_id: String(kase.id), p_ask_id: ask.id }); continue }
         sent.push(String(x.name))
         try {
           await fetch(`https://services.leadconnectorhq.com/contacts/${contact.contactId}/tags`, {
@@ -983,7 +1011,7 @@ Deno.serve(async (req) => {
           candidates: wanted.size, created: sent.length,
         } })
       } catch { /* logging must never block */ }
-      return jr({ sent, failed, refused_not_eligible: refusedNames,
+      return jr({ sent, failed, already_asked: already, refused_not_eligible: refusedNames,
         note: 'Replies land on the case like any other ask — watch the board.' })
     }
 
