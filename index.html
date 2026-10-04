@@ -382,7 +382,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 
     <!-- ═══════════════════════════════ ONBOARDING ═══════════════════════════════ -->
     <div class="panel" id="panel-onboarding">
-      <div class="sc-ro-banner" data-sc-readonly="418"><strong>Read only.</strong> This page is read-only for candidates and caregivers. Use the Caring Companions Hub: <a href="https://cc.mo-care.com" target="_blank" rel="noopener">cc.mo-care.com</a>. Nothing you change on this page is saved.</div>
+      <div class="sc-ro-banner" data-sc-readonly="418"><strong>Read only.</strong> This page is read only now. Use the Caring Companions Hub: <a href="https://cc.mo-care.com" target="_blank" rel="noopener">cc.mo-care.com</a>. Nothing you change on this page is saved.</div>
 
       <!-- Tab Guide -->
       <div class="tab-guide">
@@ -436,7 +436,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 
     <!-- ═══════════════════════════════ TRAINING ════════════════════════════════ -->
     <div class="panel" id="panel-training">
-      <div class="sc-ro-banner" data-sc-readonly="418"><strong>Read only.</strong> This page is read-only for candidates and caregivers. Use the Caring Companions Hub: <a href="https://cc.mo-care.com" target="_blank" rel="noopener">cc.mo-care.com</a>. Nothing you change on this page is saved.</div>
+      <div class="sc-ro-banner" data-sc-readonly="418"><strong>Read only.</strong> This page is read only now. Use the Caring Companions Hub: <a href="https://cc.mo-care.com" target="_blank" rel="noopener">cc.mo-care.com</a>. Nothing you change on this page is saved.</div>
       <div class="tab-guide">
         <div class="tab-guide-hdr" onclick="toggleGuide('training')">
           <span class="tab-guide-title">📋 How This Tab Works — Step by Step</span>
@@ -484,7 +484,7 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 
     <!-- ═══════════════════════════════ ACTIVE COMPLIANCE ════════════════════════ -->
     <div class="panel" id="panel-compliance">
-      <div class="sc-ro-banner" data-sc-readonly="418"><strong>Read only.</strong> This page is read-only for candidates and caregivers. Use the Caring Companions Hub: <a href="https://cc.mo-care.com" target="_blank" rel="noopener">cc.mo-care.com</a>. Nothing you change on this page is saved.</div>
+      <div class="sc-ro-banner" data-sc-readonly="418"><strong>Read only.</strong> This page is read only now. Use the Caring Companions Hub: <a href="https://cc.mo-care.com" target="_blank" rel="noopener">cc.mo-care.com</a>. Nothing you change on this page is saved.</div>
       <div class="tab-guide">
         <div class="tab-guide-hdr" onclick="toggleGuide('compliance')">
           <span class="tab-guide-title">📋 How This Tab Works — Step by Step</span>
@@ -2007,6 +2007,39 @@ td{padding:.7rem .9rem;font-size:.83rem;vertical-align:middle}
 const SB_URL  = 'https://zngsgedlsxinbygwmxwn.supabase.co';
 const SB_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpuZ3NnZWRsc3hpbmJ5Z3dteHduIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI1NDIzNDQsImV4cCI6MjA5ODExODM0NH0.L_31_UKdccyRH9n7p1GaBlZTqcJipB008H-GIvxwLxM';
 const sb = supabase.createClient(SB_URL, SB_KEY);
+
+// ── READ ONLY (safe saves step 3, 2026-10-04; Samantha's decision 1: "make the whole page read only, with a link to
+// cc.mo-care.com, where all of it already lives"). This page saved whole lists from its own copy and sent texts, offers
+// and AxisCare notes. Now every write and every send is refused HERE, in one place, before it leaves the browser, and
+// the page says where to go instead. Reading still works (lists, open shifts, conversations, training status).
+const SC_WRITE_FNS = ['axiscare-note', 'axiscare-push-note', 'ghl-reply', 'job-offer', 'send-candidate-message'];
+const SC_RO_MSG = 'This page is read only now. Make changes at cc.mo-care.com.';
+(function scReadOnly(){
+  const no = () => { try{ scReadOnlyNotice(); }catch(_){} return Promise.resolve({ data:null, error:{ message:SC_RO_MSG } }); };
+  const chain = () => new Proxy(function(){}, { get(_, p){
+    if(p === 'then') return (a, b) => no().then(a, b);
+    if(p === 'catch') return (b) => no().catch(b);
+    return () => chain(); } });
+  sb.rpc = () => no();
+  const from = sb.from.bind(sb);
+  sb.from = (t) => { const q = from(t); for(const m of ['insert', 'update', 'upsert', 'delete']) q[m] = () => chain(); return q; };
+  if(sb.functions) sb.functions.invoke = () => no();
+  const f = window.fetch.bind(window);
+  window.fetch = (u, o) => {
+    const url = String((u && u.url) || u || '');
+    if(/\/functions\/v1\//.test(url) && SC_WRITE_FNS.some(n => url.split('?')[0].endsWith('/functions/v1/' + n))){
+      try{ scReadOnlyNotice(); }catch(_){}
+      return Promise.resolve(new Response(JSON.stringify({ error:SC_RO_MSG }), { status:403, headers:{ 'Content-Type':'application/json' } }));
+    }
+    return f(u, o);
+  };
+  const banner = () => { if(!document.body || document.getElementById('sc-ro-top')) return;
+    const b = document.createElement('div'); b.id = 'sc-ro-top'; b.className = 'sc-ro-banner'; b.setAttribute('role', 'note');
+    b.style.cssText = 'margin:0;border-radius:0;position:sticky;top:0;z-index:9000;';
+    b.innerHTML = '<strong>Read only.</strong> This page no longer saves or sends anything. Make changes at the Caring Companions Hub: <a href="https://cc.mo-care.com" target="_blank" rel="noopener">cc.mo-care.com</a>.';
+    document.body.prepend(b); };
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', banner); else banner();
+})();
 
 // ── Admin passcode — gates Settings access ────────────────────────────
 // Stored in localStorage; set on first use via Settings.
@@ -4672,17 +4705,8 @@ function renderEod(){
 // ── SUPABASE — client initialized at top of script ────────────────────
 
 async function syncToSupabase(key, data){
-  if(SC_READONLY_KEYS.includes(key)){ scReadOnlyNotice(); console.warn('418: this page never saves', key); return; }
-  try {
-    // Guard: NEVER write while logged out. A fresh browser starts with empty
-    // local arrays, and an unauthenticated write here can overwrite real data
-    // in Supabase (this happened — see clearSeedPeople).
-    const { data:{ session } } = await sb.auth.getSession();
-    if(!session){ console.warn('Skipped Supabase sync for', key, '— not signed in'); return; }
-    const { error } = await sb.from('app_data').upsert({ key, data, updated_at: new Date().toISOString() }, { onConflict: 'key' });
-    if(error){ console.warn('Supabase sync failed for', key, error); setSyncStatus('offline'); }
-    else setSyncStatus('ok');
-  } catch(e){ console.warn('Supabase sync:', e); setSyncStatus('offline'); }
+  /* 418 refused candidates and caregivers; since safe saves step 3 (2026-10-04) this page saves nothing at all */
+  scReadOnlyNotice(); console.warn('read only: this page never saves', key); return;
 }
 
 async function loadFromSupabase(){
@@ -4735,7 +4759,7 @@ function scReadOnlyNotice(){
   if(typeof document === 'undefined' || !document.body || document.getElementById('sc-ro-toast')) return;
   const t = document.createElement('div');
   t.id = 'sc-ro-toast'; t.setAttribute('role', 'status');
-  t.innerHTML = 'This page is read-only for candidates and caregivers. Use the Caring Companions Hub: <a href="https://cc.mo-care.com" target="_blank" rel="noopener">cc.mo-care.com</a>'
+  t.innerHTML = 'This page is read only now, so that was not saved or sent. Use the Caring Companions Hub: <a href="https://cc.mo-care.com" target="_blank" rel="noopener">cc.mo-care.com</a>'
     + '<button type="button" aria-label="Close" onclick="this.parentNode.remove()">&times;</button>';
   document.body.appendChild(t);
 }

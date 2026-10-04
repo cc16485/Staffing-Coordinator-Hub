@@ -4,7 +4,7 @@
 import fs from 'fs'; import vm from 'vm'; import { execFileSync } from 'child_process'; import os from 'os'; import path from 'path'
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note ?? null).slice(0, 700)])
 const DASH = /[—―]/
-const MSG = 'This page is read-only for candidates and caregivers. Use the Caring Companions Hub: cc.mo-care.com'
+const MSG = 'This page is read only now, so that was not saved or sent. Use the Caring Companions Hub: cc.mo-care.com'   // safe saves step 3 (2026-10-04): the whole page is read only
 const html = fs.readFileSync('index.html', 'utf8')
 
 // ── 1. every inline script parses ──
@@ -66,17 +66,17 @@ ck('the generic save refuses candidates and caregivers from any path (even an em
 await vm.runInContext('syncToSupabase("settings", {a:1}); syncToSupabase("orient_sessions", []); syncToSupabase("eod_reports", []); syncToSupabase("evv_corrections", [])', ctx)
 await new Promise((r) => setTimeout(r, 20))
 const kept = CALLS.filter((c) => c.t === 'app_data' && c.op === 'upsert').map((c) => c.row.key)
-ck('other keys this page saves still save exactly as before (settings, orient_sessions, eod_reports, evv_corrections)', kept.join() === 'settings,orient_sessions,eod_reports,evv_corrections', kept)
+ck('safe saves step 3 (2026-10-04): the other lists are refused too (the whole page is read only)', kept.join() === '', kept)
 ck('scPeopleReadOnly() always says no (true = stop)', vm.runInContext('scPeopleReadOnly()', ctx) === true)
 
 // ── 3. the page itself (static) ──
 ck('no code path names candidates or caregivers in a whole-key save any more', !/syncToSupabase\(\s*['"](candidates|caregivers)['"]/.test(html) && !/target_key\s*:\s*['"](candidates|caregivers)['"]/.test(html))
-ck('the only direct app_data write is the generic save, which refuses the two keys first',
-  (html.match(/from\('app_data'\)\.(upsert|insert|update|delete)\(/g) || []).length === 1 && /async function syncToSupabase\(key, data\)\{\n  if\(SC_READONLY_KEYS\.includes\(key\)\)/.test(html))
+ck('no direct app_data write is left, and the generic save refuses everything (safe saves step 3)',
+  (html.match(/from\('app_data'\)\.(upsert|insert|update|delete)\(/g) || []).length === 0 && /async function syncToSupabase\(key, data\)\{\n  \/\*[^\n]*\*\/\n  scReadOnlyNotice\(\); console\.warn\('read only: this page never saves', key\); return;\n\}/.test(html))
 ck('the variable-key RPC (attPersist) is only ever called with attendance keys', [...html.matchAll(/attPersist\('([a-z_]+)'/g)].every((m) => ['attendance_events', 'discipline_actions'].includes(m[1])))
 for (const pid of ['onboarding', 'training', 'compliance']) {
   const m = html.match(new RegExp(`<div class="panel" id="panel-${pid}">\\s*<div class="sc-ro-banner"[^>]*>([\\s\\S]*?)</div>`))
-  ck(`banner at the top of the ${pid} tab with the exact words and the link`, m && m[1].replace(/<[^>]+>/g, '').includes(MSG) && m[1].includes('href="https://cc.mo-care.com"') && m[1].includes('Nothing you change on this page is saved'), m && m[1])
+  ck(`banner at the top of the ${pid} tab with the exact words and the link`, m && m[1].replace(/<[^>]+>/g, '').includes('This page is read only now. Use the Caring Companions Hub: cc.mo-care.com') && m[1].includes('href="https://cc.mo-care.com"') && m[1].includes('Nothing you change on this page is saved'), m && m[1])
 }
 const GUARDED = ['openOBModal', 'saveOB', 'openInviteModal', 'openNotHireModal', 'confirmNotHire', 'reactivateOB', 'openManualRef', 'saveManualRef', 'openCGModal', 'saveCG',
   'promoteToCaregiver', 'closeOutCandidate', 'reopenCandidate', 'bulkMarkCheck', 'openImportModal', 'confirmCSVImport', 'batchOIGCheck', 'syncFromTrainingHub']
