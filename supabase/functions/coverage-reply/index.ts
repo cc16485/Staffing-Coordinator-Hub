@@ -28,6 +28,8 @@ import { opEvent } from '../_shared/events.ts'
 import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { officeQuiet } from '../_shared/quiet-hours.ts'
+import { adminRecipients } from '../_shared/clockin-admins.ts'
+import { callinLink, withLink } from '../_shared/callin-notify.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -118,19 +120,19 @@ Deno.serve(async (req) => {
   // deno-lint-ignore no-explicit-any
   async function alertStaffOfPending(c: any, yesName?: string) {
     try {
-      // deno-lint-ignore no-explicit-any
-      const phones: string[] = (Array.isArray((settings as any).coverage_alert_phones)
-        ? (settings as any).coverage_alert_phones : [])
-        .map((p: unknown) => String(p ?? '').trim()).filter(Boolean)
+      /* CI2 (2026-10-03, her decision 2 on the call-ins plan): the YES goes to the call-in list (the same people as the
+         call-in text), each with their OWN link to the call-in page: Confirm, Call, Ask more, no sign-in. It used to go
+         to a list of bare phone numbers (coverage_alert_phones) with a link that needed a sign-in. */
+      const admins = (await adminRecipients(sb, settings)).filter((a) => a.phone)
       const who = yesName || c.pending_fill?.name
-      if (!phones.length || !who) return
+      if (!admins.length || !who) return
       /* OFFICE QUIET HOURS (Samantha, 2026-10-03): no office text 8pm to 7am Central. The YES is on the case and its
          Needs Attention item; nothing is recorded as sent and nothing is queued for the morning. */
       if (officeQuiet(new Date(), settings)) { console.log('[coverage-reply] staff alert held: office quiet hours'); return }
       const ghlToken = Deno.env.get('GHL_TOKEN')
       const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
       if (!ghlToken || !ghlLocation) return
-      /* Dedupe lives on the CASE now (collect-all-yeses has no pending_fill);
+      /* Dedupe lives on the CASE (collect-all-yeses has no pending_fill), one text per admin per call-in as before;
          a legacy pending_fill's record is folded in so nobody is re-texted. */
       const sent: Record<string, string> =
         (c.yes_staff_alerts && typeof c.yes_staff_alerts === 'object') ? c.yes_staff_alerts
@@ -147,41 +149,47 @@ Deno.serve(async (req) => {
       }
       const span12 = (s: string) => String(s || '').trim().split('-').map(clock12).join('-')
       const whenTxt = [c.shift_date, span12(c.shift_time)].filter(Boolean).join(' ') || 'the time on the case'
-      const msg = (String((settings as any).coverage_msg_staff_yes || '') ||
-        `Cara: {caregiver} said YES to cover {client}, {when}. More yeses may come - pick the best fit on the board and confirm. Nothing is assigned and nobody has been answered. https://cc.mo-care.com/#cara/case/{case}`)
-        .replaceAll('{caregiver}', String(who))
-        .replaceAll('{client}', String(c.client || 'the client'))
-        .replaceAll('{when}', whenTxt)
-        .replaceAll('{case}', encodeURIComponent(String(c.id)))
+      let tmpl = String((settings as any).coverage_msg_staff_yes || '') ||
+        `Cara: {caregiver} said YES to cover {client}, {when}. More yeses may come. Confirm, call, or ask more from your link: {link}`
+      /* a stored wording that ends with the old board link gets the admin's own link instead */
+      if (!/\{link\}/.test(tmpl)) tmpl = tmpl.replace(/https?:\/\/cc\.mo-care\.com\/#cara\/case\/\{case\}/, '{link}')
+      const base = tmpl.replaceAll('{caregiver}', String(who)).replaceAll('{client}', String(c.client || 'the client'))
+        .replaceAll('{when}', whenTxt).replaceAll('{case}', encodeURIComponent(String(c.id)))
       let any = false
-      for (const p of phones) {
-        const key = norm(p) || p
-        if (sent[key]) continue          // already succeeded for THIS decision
+      const reached: string[] = []
+      for (const a of admins) {
+        const key = 'yes:' + a.email
+        if (sent[key]) continue          // one text per admin per call-in (the first YES), as before per phone
         try {
           /* ONE CONTACT (2026-10-01): the office text goes to the contact found by the one-contact rule for sms. */
-          const cid = await ghlStaffContact({ token: String(ghlToken), locationId: String(ghlLocation) }, { channel: 'sms', phone: p, firstName: 'Scheduling' })
+          const cid = await ghlStaffContact({ token: String(ghlToken), locationId: String(ghlLocation) }, { channel: 'sms', phone: a.phone, email: a.email, firstName: a.first || 'Scheduling' })
           if (!cid) {
-            console.error('[coverage-reply] staff alert: no contact id for a configured phone')
-            await reportSendProblem(sb, { sender: 'staff-alert', channel: 'sms', address: p, who: 'the office (caregiver said YES)',
+            console.error('[coverage-reply] staff alert: no contact id for an admin')
+            await reportSendProblem(sb, { sender: 'staff-alert', channel: 'sms', address: String(a.phone), who: a.name || 'the office (caregiver said YES)',
               reasons: ['GHL returned no contact id'], failed: true })
             continue
           }
-          if (await sms(cid, msg, { sender: 'staff-alert', address: p, who: 'the office (caregiver said YES)' })) { sent[key] = new Date().toISOString(); any = true }
+          const msg = withLink(base, await callinLink(String(c.id), a.email, c.shift_date))
+          if (await sms(cid, msg, { sender: 'staff-alert', address: String(a.phone), who: a.name || 'the office (caregiver said YES)' })) { sent[key] = new Date().toISOString(); any = true; reached.push(a.email) }
           else console.error('[coverage-reply] staff alert send failed for one recipient')
         } catch (e) {
           console.error('[coverage-reply] staff alert recipient error', e)
-          await reportSendProblem(sb, { sender: 'staff-alert', channel: 'sms', address: p, who: 'the office (caregiver said YES)',
+          await reportSendProblem(sb, { sender: 'staff-alert', channel: 'sms', address: String(a.phone), who: a.name || 'the office (caregiver said YES)',
             reasons: ['could not send: ' + String((e as Error)?.message ?? e).slice(0, 80)], failed: true })
         }
       }
       /* Persist the successful-recipient record NOW rather than only at the
          end of the handler: this closes the replay-duplication window to
          the instant between a successful send and this write. */
-      if (any) await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
+      if (any) {
+        const had = Array.isArray(c.admin_links) ? c.admin_links.map((e: unknown) => String(e).toLowerCase()) : []
+        c.admin_links = [...new Set([...had, ...reached])]
+        await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
+      }
       /* Step 3 shadow: what the playbook would have said, next to what
          production did. Observer only. */
       await shadowRoute(sb, { area: 'sched_calloffs', channel: 'first-YES staff SMS',
-        production: any ? phones : [], case_id: String(c.id),
+        production: any ? admins.map((a) => String(a.phone)) : [], case_id: String(c.id),
         note: any ? '' : 'nothing newly sent (deduped or send failed)' })
     } catch (e) { console.error('[coverage-reply] staff alert block failed', e) }
   }

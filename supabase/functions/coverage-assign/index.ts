@@ -31,6 +31,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { ownerCaller } from '../_shared/job-auth.ts'
 import { confirmFill, closeCase, assignInAxis, readCase, patchCase, CLOSE_HOW } from '../_shared/coverage-fill.ts'
+import { textCaseAdmins, filledLine } from '../_shared/callin-notify.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
@@ -48,11 +49,20 @@ Deno.serve(async (req) => {
     'Access-Control-Allow-Methods': 'POST, OPTIONS' } })
 
   /* CI1: an active office staff member, or the owner's server key */
-  let byName = 'the owner\'s server key'
+  let byName = 'the owner\'s server key', byEmail = ''
   if (!(await ownerCaller(req))) {
     const who = await requireStaff(sb, req, OFFICE_ROLES)
     if (!who.ok) return json({ error: who.error }, who.status)
-    byName = who.name || who.email || 'office staff'
+    byName = who.name || who.email || 'office staff'; byEmail = String(who.email || '')
+  }
+  /* CI2 (her decision 4): "Filled by ..." to the other admins who got the call-in text, any hour */
+  // deno-lint-ignore no-explicit-any
+  const tellOthers = async (c: any, line: string) => {
+    try {
+      const { data: st } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+      const ghl = { token: Deno.env.get('GHL_TOKEN') || Deno.env.get('GHL_API_KEY') || '', locationId: Deno.env.get('GHL_LOCATION_ID') || '' }
+      await textCaseAdmins(sb, ghl, st?.data ?? {}, c, () => line, { except: byEmail, onlyAlerted: true, anyHour: true })
+    } catch { /* the fill is saved; this is a courtesy */ }
   }
 
   // deno-lint-ignore no-explicit-any
@@ -66,11 +76,13 @@ Deno.serve(async (req) => {
       ? (b.not_chosen.silent === true ? { silent: true } : (typeof b.not_chosen.msg === 'string' && b.not_chosen.msg.trim() ? { msg: b.not_chosen.msg.trim() } : undefined))
       : undefined
     const out = await confirmFill(sb, { caseId, coveredBy: String(b.covered_by || ''), byName, notChosen: nc })
+    if (out.outcome === 'filled') { const c2 = await readCase(sb, caseId); await tellOthers(c2, filledLine(c2, byName, { covered_by: out.covered_by })) }
     await logRun(caseId, 'confirm', out.outcome, out.outcome === 'filled' ? out.axiscare.status + ': ' + out.axiscare.detail : JSON.stringify(out).slice(0, 200))
     return json(out, out.outcome === 'not_found' ? 404 : out.outcome === 'bad_request' ? 400 : 200)
   }
   if (action === 'close') {
     const out = await closeCase(sb, { caseId, how: String(b.how || '') as keyof typeof CLOSE_HOW, note: typeof b.note === 'string' ? b.note : '', byName })
+    if (out.outcome === 'closed') { const c2 = await readCase(sb, caseId); await tellOthers(c2, filledLine(c2, byName, { how: c2?.resolved_how })) }
     await logRun(caseId, 'close', out.outcome, '')
     return json(out, out.outcome === 'not_found' ? 404 : out.outcome === 'bad_request' ? 400 : 200)
   }
