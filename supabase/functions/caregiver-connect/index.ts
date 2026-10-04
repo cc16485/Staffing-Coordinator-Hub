@@ -11,7 +11,8 @@
 //     {action:'move', axiscare_id, candidate_id}   "Move over from Background & References"
 //     {action:'new',  axiscare_id}                 "Start a new Hub record"
 //     {action:'undo', log_id}                      "Not this person"
-// The rules are the Hub's own file (caregiver-connect-rules.js), run only when its fingerprint is approved.
+// The rules are the Hub's own files (caregiver-connect-rules.js, and eligibility-rules.js for the hire snapshot), each run
+// only when its fingerprint is approved.
 // Never messages anyone; AxisCare is only read.
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -19,7 +20,7 @@ import { jobCaller } from '../_shared/job-auth.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { approvedRules } from '../_shared/approved-rules.ts'
 import { readCensus } from '../_shared/axis-census.ts'
-import { runJob, manualAction, rulesFrom, RULES_FILE, type Deps } from '../_shared/cg-connect.ts'
+import { runJob, manualAction, rulesFrom, eligFrom, RULES_FILE, ELIG_FILE, type Deps } from '../_shared/cg-connect.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -42,7 +43,9 @@ Deno.serve(async (req) => {
     rules: async () => {
       const g = await approvedRules(db, RULES_FILE)
       if (!g.ok) return { ok: false, error: g.error }
-      try { return { ok: true, C: rulesFrom(g.src) } } catch (e) { return { ok: false, error: String((e as Error).message ?? e) } }
+      const e = await approvedRules(db, ELIG_FILE)   // the hire snapshot (2026-10-04)
+      if (!e.ok) return { ok: false, error: e.error }
+      try { return { ok: true, C: rulesFrom(g.src), E: eligFrom(e.src) } } catch (x) { return { ok: false, error: String((x as Error).message ?? x) } }
     },
   }
 
