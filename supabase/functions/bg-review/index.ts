@@ -12,6 +12,7 @@
 //   result   {id, result, reason?}: the office's review result (reason: why we are not hiring, for No waiver needed)
 //   waiver   {id, step: 'wait'|'approved'|'denied', proof?}: Good Cause Waiver steps (approved clears the review)
 //   clear    {id, why}: "They're cleared"; nothing is sent
+//   note     {id, note}: a short private office note (never sent)
 //   final    {id}: sends the final notice, only when finalGate allows; the review closes as not hired
 // Its schedule (the jobs' secret): action 'due_check', weekdays 8am to 6pm Central, one Needs Attention card per
 // review whose response due date has passed with no contact recorded. Nothing is ever sent to an applicant without a
@@ -120,7 +121,7 @@ export async function dueCheck(db: Any, now: Date) {
       created_at: at, first_at: at, last_activity_at: at, opened_by: 'bg-review', created_by: 'bg-review', owner, owner_name: '',
       log: [{ at, by: 'automation', text: 'Opened when the response due date passed.' }] } })
     if (e) continue
-    await db.from('bg_reviews').update({ due_card_at: at }).eq('id', rv.id)
+    await db.from('bg_reviews').update({ due_card_at: at, history: hist(rv, 'automation', 'Response due date passed with no call recorded: Needs Attention card opened for the hiring owner. Nothing was sent and nothing was decided.') }).eq('id', rv.id)
     cards++
   }
   return { ok: true, due: due.length, cards }
@@ -246,6 +247,11 @@ Deno.serve(async (req) => {
     const r = await save({ status: 'cleared', cleared_at: now.toISOString(), cleared_by: by, cleared_why: why }, `They're cleared: ${CLEAR_WHY[why]}. Nothing was sent.`)
     if (!r && rv.due_card_at) await closeCard(db, id, by)
     return r ?? json({ ok: true, cleared: true, check, set_to: CHECKS[check].clear })
+  }
+  if (action === 'note') {
+    const note = String(b.note ?? '').replace(/\s+/g, ' ').trim().slice(0, 500)
+    if (!note) return json({ error: 'Write the note first.' }, 400)
+    return (await save({ note }, 'Office note: ' + note)) ?? json({ ok: true })
   }
   if (action === 'final') {
     const g = finalGate(rv, now)

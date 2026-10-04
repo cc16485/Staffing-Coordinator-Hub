@@ -41,6 +41,7 @@ create table if not exists public.bg_reviews (
   final_how         text,
   final_held_at     timestamptz,
   final_claim_at    timestamptz,
+  note              text,
   history           jsonb not null default '[]'::jsonb,
   updated_at        timestamptz not null default now()
 );

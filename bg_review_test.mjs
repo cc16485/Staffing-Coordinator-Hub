@@ -175,6 +175,37 @@ reset({ bg_reviews: [{ ...rv0, due_card_at: '2026-10-13T15:00:00Z' }], app_data:
 ;[s, j] = await call({ action: 'spoke', id: rv0.id })
 ck('recording "spoke with them" closes that card', T.app_data.find((x) => x.key === 'ops_items').data[0].status === 'done')
 
+/* more of the approved plan */
+reset(); [s, j] = await call({ action: 'open', candidate_id: 31, check: 'fcsr' }); const ID5 = j.id
+ck('an FCSR finding is never treated as disqualifying by itself: the review starts at "Needs review", open, nothing sent, the candidate untouched', RV().result === 'review' && RV().status === 'open' && !SENT.length && T.app_data[0].data[0].fcsr === 'Issues Found' && !T.app_data[0].data[0].not_hired)
+;[s, j] = await call({ action: 'result', id: ID5, result: 'no_waiver' })
+ck('"No waiver needed" neither clears nor rejects: still open, nothing sent, no final notice without a reason', RV().status === 'open' && RV().result === 'no_waiver' && !RV().cleared_at && !RV().final_at && !SENT.length && !B.finalGate(RV(), new Date('2027-01-01T15:00:00Z')).ok)
+;[s, j] = await call({ action: 'note', id: ID5, note: 'Called, left voicemail' })
+ck('a private office note is kept with who and when (never sent)', RV().note === 'Called, left voicemail' && RV().history.at(-1).by === 'Krystal' && /Office note: Called, left voicemail/.test(RV().history.at(-1).what) && !SENT.length)
+;[s, j] = await call({ action: 'clear', id: ID5, why: 'no_waiver' })
+ck('"No waiver needed" can end in cleared (continue hiring): nothing sent', RV().status === 'cleared' && RV().cleared_why === 'no_waiver' && RV().cleared_by === 'Krystal' && !SENT.length && j.set_to === 'Clear')
+reset(); [s, j] = await call({ action: 'open', candidate_id: 31, check: 'fcsr' }); RV().step1_at = '2026-10-05T15:00:00Z'; RV().due_date = '2026-01-05'
+;[s, j] = await call({ action: 'result', id: RV().id, result: 'no_waiver', reason: 'Not available for the hours we need' })
+;[s, j] = await call({ action: 'preview', id: RV().id, step: 'final' })
+ck('"No waiver needed" can end in Not hiring: with a private reason, the exact "our decision" message is shown first (the reason is never in it)', j.variant === 'decision' && !/hours we need/.test(JSON.stringify(j.words)) && !SENT.length, j)
+reset({ app_data: [{ key: 'candidates', data: [{ ...CAND(), edl: 'Issues Found' }] }, { key: 'ops_items', data: [] }] }); [s, j] = await call({ action: 'open', candidate_id: 31, check: 'edl' }); const IE = j.id
+;[s, j] = await call({ action: 'result', id: IE, result: 'no_waiver' })
+ck('EDL: no waiver results are possible', s === 400 && RV().result === 'review')
+;[s, j] = await call({ action: 'result', id: IE, result: 'cannot_employ' }); RV().step1_at = '2026-10-05T15:00:00Z'; RV().due_date = '2026-01-05'
+;[s, j] = await call({ action: 'final', id: IE })
+ck('EDL "Can\'t be employed": the EDL notice (Missouri law, no waiver)', T.bg_reviews[0].final_variant === 'edl' && /Employee Disqualification List/.test(SENT[1].html) && !/Good Cause/.test(SENT[1].html), SENT)
+reset(); [s, j] = await call({ action: 'open', candidate_id: 31, check: 'oig' }); const IO = j.id
+;[s, j] = await call({ action: 'result', id: IO, result: 'cannot_employ' }); RV().step1_told_at = '2026-10-05T15:00:00Z'; RV().due_date = '2026-01-05'
+;[s, j] = await call({ action: 'final', id: IO })
+ck('confirmed OIG exclusion "Can\'t be employed": the OIG notice', RV().final_variant === 'oig' && /oig\.hhs\.gov\/exclusions/.test(SENT[1].html), SENT)
+const cardsFor = (extraRv) => ({ bg_reviews: [{ ...rv0, ...extraRv, due_card_at: '2026-10-13T15:00:00Z' }], app_data: [{ key: 'candidates', data: [CAND()] }, { key: 'ops_items', data: [{ id: 'ops_bgreview_' + rv0.id, status: 'open', log: [] }] }] })
+reset(cardsFor({})); [s, j] = await call({ action: 'clear', id: rv0.id, why: 'not_them' })
+ck('clearing them closes the response due card', T.app_data.find((x) => x.key === 'ops_items').data[0].status === 'done')
+reset(cardsFor({ result: 'waiver_needed', due_date: '2026-01-05' })); [s, j] = await call({ action: 'final', id: rv0.id })
+ck('sending the final notice closes the response due card', j.not_hired && T.app_data.find((x) => x.key === 'ops_items').data[0].status === 'done', j)
+reset({ bg_reviews: [{ ...rv0 }] }); await MOD.dueCheck(globalThis.__db, new Date('2026-10-13T15:00:00Z'))
+ck('the due card is recorded in the review history, and it changes nothing else (still open, still "Needs review", nothing sent)', /Needs Attention card opened/.test(T.bg_reviews[0].history.at(-1).what) && T.bg_reviews[0].status === 'open' && T.bg_reviews[0].result === 'review' && !T.bg_reviews[0].final_at && !SENT.length)
+
 /* source checks */
 const idx = fs.readFileSync(path.join(FN, 'bg-review/index.ts'), 'utf8'), lib = fs.readFileSync(path.join(FN, '_shared/bg-review.ts'), 'utf8'), sqlT = fs.readFileSync(path.join(ROOT, 'bg_review_446.sql'), 'utf8')
 ck('no Checkr anywhere in it', !/checkr/i.test(idx + lib + sqlT))
