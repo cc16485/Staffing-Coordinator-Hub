@@ -43,15 +43,16 @@ export function withLink(template: string, link: string): string {
 export async function textCaseAdmins(
   // deno-lint-ignore no-explicit-any
   sb: any, ghl: { token: string; locationId: string }, settings: any, c: any, message: (link: string, a: Admin) => string,
-  opts: { except?: string; onlyAlerted?: boolean; anyHour?: boolean } = {}, send: typeof fetch = fetch): Promise<string[]> {
+  opts: { except?: string; onlyAlerted?: boolean; allIfNoneRecorded?: boolean; anyHour?: boolean; emergency?: boolean } = {}, send: typeof fetch = fetch): Promise<string[]> {
   const admins = await adminRecipients(sb, settings)
   const alerted = new Set((Array.isArray(c?.admin_links) ? c.admin_links : []).map((e: unknown) => String(e).toLowerCase()))
   const except = String(opts.except || '').toLowerCase()
-  const emergency = opts.anyHour === true && afterHoursAllowed(settings, 'callin')
+  /* emergency: the caller already decided this may go at night (CI3: a MUST BE COVERED reminder) */
+  const emergency = opts.emergency === true || (opts.anyHour === true && afterHoursAllowed(settings, 'callin'))
   const reached: string[] = []
   for (const a of admins) {
     if (a.email === except) continue
-    if (opts.onlyAlerted && !alerted.has(a.email)) continue
+    if (opts.onlyAlerted && !(opts.allIfNoneRecorded && !alerted.size) && !alerted.has(a.email)) continue
     const link = await callinLink(String(c.id), a.email, c.shift_date)
     if (await textAdmin(sb, ghl, a, message(link, a), send, { emergency })) reached.push(a.email)
   }

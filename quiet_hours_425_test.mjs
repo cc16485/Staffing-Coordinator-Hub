@@ -325,8 +325,8 @@ ck('426 Saturday 8:30pm · the office EVV nudge still does not go (informational
     && /if \(!final && had >= maxTexts\)/.test(tk) && /const loopLive = watchLive && settings\.timekeeper_admin_loop_live === true/.test(tk))
   ck('426 scan · clockin-alert: "Resolved by" passes the exception and still only goes to texted admins',
     /const afterHours = afterHoursAllowed\(settings, 'missed_clockin'\)/.test(ca) && /textAdmin\(sb, ghl, a, msg, fetch, \{ emergency: afterHours \}\)/.test(ca) && /if \(textedKeys && !\(Number\(textedKeys\[await adminKey\(a\.email\)\]\) > 0\)\) continue/.test(ca))
-  ck('426 scan · coverage-run: only the call-in alert reads callin_after_hours; quiet-callout and ran-out office texts are unchanged',
-    (cr.match(/afterHoursAllowed\(/g) || []).length === 1 && /const callinAnyHour = afterHoursAllowed\(settings, 'callin'\)/.test(cr)
+  ck('426 scan · coverage-run: only the call-in alert (and, CI3, its reminders) read callin_after_hours; quiet-callout and ran-out office texts are unchanged',
+    (cr.match(/afterHoursAllowed\(/g) || []).length === 2 && /const callinAnyHour = afterHoursAllowed\(settings, 'callin'\)/.test(cr) && /callinAnyHour: afterHoursAllowed\(settings, 'callin'\) \}\)/.test(cr)
     && /soonQ && sendLive && !claimActiveQ && !quietQ/.test(cr) && /const smsAllowed = !officeQuiet\(new Date\(\), settings\) && \(shiftSoon/.test(cr))
   const still = ['late-watch', 'late-alert', 'coverage-reply', 'ops-escalate', 'automation-watchdog', 'lead-intake', 'lead-followup']
   const leaks = still.filter((d) => /afterHoursAllowed|emergency: true|\{ emergency/.test(src(`${d}/index.ts`)))
