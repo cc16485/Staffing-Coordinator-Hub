@@ -126,8 +126,8 @@ ck('...the same person on the session list and the page list is reminded once', 
 ck('skipped and listed with why: no phone, and booked today (the confirmation covers it)', P.skipped.some((x) => x.who === 'Di E' && /no usable phone/.test(x.why)) && P.skipped.some((x) => x.who === 'Ed F' && /booked today/.test(x.why)), P.skipped)
 const ava = P.due.find((x) => x.who === 'Ava S'), gus = P.due.find((x) => x.who === 'Gus H')
 ck('the wording: tomorrow, day, time, the office address, what to bring, how to change it, STOP',
-  ava.text === 'Hi Ava, a reminder that your Caring Companions orientation is tomorrow, Tuesday, October 6 at 10:00 AM. Location: 1331 N Stewart Ave Ste B, Springfield MO 65802. Please bring the original ID documents you uploaded in Viventium Step 2 (for example, your photo ID). Need to change it? Call or text us at (417) 234-8494. Reply STOP to opt out.', ava.text)
-ck('a video session gives its link instead of the address', /This is a video call: https:\/\/meet\.google\.com\/abc\./.test(gus.text) && /Please have ready/.test(gus.text) && !/Stewart/.test(gus.text), gus.text)
+  ava.text === 'Hi Ava, a reminder that your in-person Caring Companions orientation at our office is tomorrow, Tuesday, October 6 at 10:00 AM. Location: 1331 N Stewart Ave Ste B, Springfield MO 65802. Please bring the original ID documents you uploaded in Viventium Step 2 (for example, your photo ID). Need to change it? Call or text us at (417) 234-8494. Reply STOP to opt out.', ava.text)
+ck('a video session gives its link instead of the address', /orientation video call is tomorrow/.test(gus.text) && /This is a video call: https:\/\/meet\.google\.com\/abc\./.test(gus.text) && /Please have ready/.test(gus.text) && !/Stewart/.test(gus.text), gus.text)
 ck('the date is worked out in Central time (11pm Central on the 4th is still the 4th)', R.central(new Date('2026-10-05T04:00:00Z')).date === '2026-10-04' && R.central(new Date('2026-10-05T15:30:00Z')).hour === 10)
 
 /* ═══ 3 · the orientation reminder: the run ═══ */

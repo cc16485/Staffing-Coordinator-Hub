@@ -1,5 +1,5 @@
 // =============================================================================
-// ORIENTATION DAY-BEFORE REMINDER, the check (445). Samantha approved 2026-10-04 ("yes to all", decision 4 of
+// OFFICE (IN-PERSON) ORIENTATION DAY-BEFORE REMINDER, the check (445). Samantha approved 2026-10-04 ("yes to all", decision 4 of
 // https://claude.ai/artifact/MQgrEVdZ8Kr65LBLsha1Aq): the Hub sends it instead of the GoHighLevel workflow
 // "Orientation booked - remind", at 10am the day before, within texting hours, with STOP, and it shows in the
 // Applicant journey and in Conversations. Then she turns the GoHighLevel workflow off.
@@ -37,7 +37,10 @@ const remoteOf = (s: any) => s?.is_remote === 'yes' || s?.is_remote === true
 export function reminderText(first: string, s: any): string {
   const link = String(s?.video_link || '').trim()
   const where = remoteOf(s) ? `This is a video call${link ? ': ' + link + '.' : '. We will send you the link.'}` : `Location: ${ADDR}.`
-  return `Hi ${first || 'there'}, a reminder that your Caring Companions orientation is tomorrow, ${fmtDay(String(s.date))} at ${fmtTime(String(s.time || ''))}. ${where} ` +
+  /* Online new hires are reminded about their welcome call (interview-messages); these sessions are the in-person
+     office orientation, the backup for someone who can't do it online (Samantha, 2026-10-04). */
+  const what = remoteOf(s) ? 'your Caring Companions orientation video call' : 'your in-person Caring Companions orientation at our office'
+  return `Hi ${first || 'there'}, a reminder that ${what} is tomorrow, ${fmtDay(String(s.date))} at ${fmtTime(String(s.time || ''))}. ${where} ` +
     `${remoteOf(s) ? 'Please have ready' : 'Please bring'} the original ID documents you uploaded in Viventium Step 2 (for example, your photo ID). ` +
     `Need to change it? Call or text us at ${OFFICE}. Reply STOP to opt out.`
 }
