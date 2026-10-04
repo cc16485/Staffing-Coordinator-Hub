@@ -183,12 +183,38 @@ const sb = supabase.createClient(SB_URL, SB_KEY);
 
 const params = new URLSearchParams(window.location.search);
 const sessionsRaw = params.get('sessions');
-const firstName = params.get('first') || '';
-const lastName  = params.get('last')  || '';
-const phone     = params.get('phone') || '';
-const email     = params.get('email') || '';
-const candId    = params.get('id')    || '';
-const office    = params.get('office')|| 'springfield';
+/* Private applicant links (2026-10-04, Samantha "yes to all"). A link now carries only the candidate's number and a
+   code (c, e, t), never their name, phone or email; this page asks the Hub's server who the code belongs to, and the
+   server saves the booking under that person, so nobody can book in someone else's name. Old links that carry the
+   details keep working until Nov 3 (her decision 2), then show "ask the office for a new link". The office's
+   all-sessions link (no person) works as before. */
+const LINK = { c: params.get('c') || '', e: params.get('e') || '', t: params.get('t') || '' };
+const HAS_CODE = !!(LINK.c && LINK.t);
+const OLD_UNTIL = Date.parse('2026-11-03T06:00:00Z');
+const HAD_DETAILS = !!(params.get('first') || params.get('phone') || params.get('email'));
+const OLD = !HAS_CODE && HAD_DETAILS && Date.now() < OLD_UNTIL;
+const EXPIRED_OLD = !HAS_CODE && HAD_DETAILS && !OLD;
+let firstName = OLD ? (params.get('first') || '') : '';
+let lastName  = OLD ? (params.get('last')  || '') : '';
+let phone     = OLD ? (params.get('phone') || '') : '';
+let email     = OLD ? (params.get('email') || '') : '';
+let candId    = OLD ? (params.get('id')    || '') : '';
+let office    = params.get('office')|| 'springfield';
+/* keep personal details out of this tab's address and history (the sessions list and the code stay, so a reload works) */
+try {
+  const keep = new URLSearchParams();
+  if (sessionsRaw) keep.set('sessions', sessionsRaw);
+  if (HAS_CODE) { keep.set('c', LINK.c); keep.set('e', LINK.e); keep.set('t', LINK.t); }
+  history.replaceState(null, '', location.pathname + (keep.toString() ? '?' + keep.toString() : ''));
+} catch(_) {}
+const LINK_NOPE = 'This link is not valid or has run out. Please ask the office for a new one: <a href="tel:+14172348494" style="color:var(--teal);font-weight:600">(417) 234-8494</a>.';
+async function openLink(){
+  const { data, error } = await sb.functions.invoke('applicant-link', { body: { action: 'open', kind: 'orient', c: LINK.c, e: LINK.e, t: LINK.t } });
+  if (error || !data || !data.ok) return false;
+  firstName = data.first || ''; lastName = data.last || ''; phone = data.phone || ''; email = data.email || '';
+  candId = data.candidate_id || LINK.c; office = data.office || office;
+  return true;
+}
 
 let sessions = [];
 try { sessions = sessionsRaw ? JSON.parse(atob(sessionsRaw)) : []; } catch(e){ sessions=[]; }
@@ -208,7 +234,13 @@ function getDow(dateStr){
   return new Date(dateStr+'T00:00:00').toLocaleDateString('en-US',{weekday:'long'});
 }
 
-function init(){
+function linkProblem(){
+  document.getElementById('sessions-list').innerHTML = '<div class="no-sessions"><p>' + LINK_NOPE + '</p></div>';
+  document.getElementById('confirm-btn').style.display = 'none';
+}
+async function init(){
+  if (EXPIRED_OLD) { linkProblem(); return; }
+  if (HAS_CODE && !(await openLink())) { linkProblem(); return; }
   // Personalize welcome message
   if(firstName){
     document.getElementById('welcome-name').textContent = `🎉 Hi, ${firstName}!`;
@@ -269,15 +301,28 @@ async function submitBooking(){
   // there (like the EVV form). The hub merges these into its session records.
   // Note: no .select() after .insert() — anon has no SELECT permission.
   try {
-    const { error } = await sb.from('orient_bookings').insert([{
-      session_id:   String(selectedSession.id),
-      first:        firstName || 'Unknown',
-      last:         lastName  || '',
-      phone:        phone || '',
-      candidate_id: candId || null
-      /* booked_at is stamped by the database (its default), not this browser's clock: the confirmation text is
-         only sent for a booking saved in the last few minutes, so the time has to be the server's */
-    }]);
+    let error = null;
+    if (OLD) {
+      ({ error } = await sb.from('orient_bookings').insert([{
+        session_id:   String(selectedSession.id),
+        first:        firstName || 'Unknown',
+        last:         lastName  || '',
+        phone:        phone || '',
+        candidate_id: candId || null
+        /* booked_at is stamped by the database (its default), not this browser's clock: the confirmation text is
+           only sent for a booking saved in the last few minutes, so the time has to be the server's */
+      }]));
+    } else {
+      /* the server saves it, under the person the private link was made for (or "Unknown" for the all-sessions link) */
+      const body = { action: 'book', session_id: String(selectedSession.id) };
+      if (HAS_CODE) Object.assign(body, { c: LINK.c, e: LINK.e, t: LINK.t });
+      const r = await sb.functions.invoke('applicant-link', { body });
+      if (r.error || !r.data || !r.data.ok) error = r.error || new Error((r.data && r.data.error) || 'not saved');
+      /* the all-sessions link (no person) never fails over the new service: it saves the old way if the server can't */
+      if (error && !HAS_CODE) {
+        ({ error } = await sb.from('orient_bookings').insert([{ session_id: String(selectedSession.id), first: 'Unknown', last: '', phone: '', candidate_id: null }]));
+      }
+    }
     if(error) throw error;
   } catch(e){
     console.warn('Supabase booking write:', e);
