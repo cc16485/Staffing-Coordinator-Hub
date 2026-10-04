@@ -254,8 +254,10 @@ begin
   out := out || jsonb_build_object('reopen_ok', a1 = 'added', 'asked_once', a2 = 'already_asked');
   raise exception 'CI1_PROOF:%', out;
 end $p$;"""
-ok, r = sql(PROOF)
-m = re.search(r"CI1_PROOF:(\{.*?\})", str(r))
+sP, bP = http("POST", f"{API}/v1/projects/{REF}/database/query", {"query": PROOF}, MG())
+try: r = json.loads(bP).get("message", "") if bP.strip().startswith("{") else bP
+except Exception: r = bP
+m = re.search(r"CI1_PROOF:(\{[^{}]*\})", str(r).replace('\\"', '"'))
 res = json.loads(m.group(1)) if m else {}
 words = {"yes_kept": "an older copy saved after a YES keeps the YES", "first_confirm_wins": "two confirms: the first wins, the second is told it's taken",
          "fill_not_undone": "an older copy can't undo a fill", "reopen_ok": "a deliberate reopen goes through", "asked_once": "the same caregiver can't be asked twice on one case"}
