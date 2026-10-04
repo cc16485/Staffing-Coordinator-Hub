@@ -28,13 +28,13 @@ type Step = { day: number; channel: 'sms' | 'email'; subject?: string; text: str
 const SEQUENCES: Record<string, Step[]> = {
   not_ready: [
     { day: 3, channel: 'sms', text:
-      `Hi {first}, it's Caring Companions. No pressure at all — just wanted you to know we're here whenever the timing feels right. Questions big or small, call or text ${OFFICE}. (Reply STOP to opt out.)` },
+      `Hi {first}, it's Caring Companions. No pressure at all. We just wanted you to know we're here whenever the timing feels right. Questions big or small, call or text ${OFFICE}. (Reply STOP to opt out.)` },
     { day: 10, channel: 'email', subject: '5 questions to ask any home care agency', text:
-      `Hi {first},\n\nWhen you were looking into care, we promised not to pester you — so just one genuinely useful thing. Whoever you end up choosing, these five questions separate great agencies from the rest:\n\n1. Are your caregivers employees (insured, background-checked, trained) — or contractors?\n2. What training do caregivers get before their first shift, and every year after?\n3. How do you match a caregiver to my family — and what if it's not a good fit?\n4. Who do I call at 9 PM on a Saturday if something goes wrong?\n5. How do you keep family in the loop between visits?\n\nWe're proud of our answers to all five, and happy to share them anytime: ${OFFICE}.\n\nWarmly,\nThe Caring Companions team` },
+      `Hi {first},\n\nWhen you were looking into care, we promised not to pester you, so here is just one genuinely useful thing. Whoever you end up choosing, these five questions separate great agencies from the rest:\n\n1. Are your caregivers employees (insured, background-checked, trained), or contractors?\n2. What training do caregivers get before their first shift, and every year after?\n3. How do you match a caregiver to my family, and what if it's not a good fit?\n4. Who do I call at 9 PM on a Saturday if something goes wrong?\n5. How do you keep family in the loop between visits?\n\nWe're proud of our answers to all five, and happy to share them anytime: ${OFFICE}.\n\nWarmly,\nThe Caring Companions team` },
     { day: 21, channel: 'sms', text:
-      `Hi {first}, Caring Companions checking in — families often tell us things change quickly. If it would help to talk through options for care at home (even just questions), we're at ${OFFICE}.` },
+      `Hi {first}, Caring Companions checking in. Families often tell us things change quickly. If it would help to talk through options for care at home (even just questions), we're at ${OFFICE}.` },
     { day: 45, channel: 'email', subject: "Still here when your family needs us", text:
-      `Hi {first},\n\nJust a note to say we're still here. Whether it's a few hours a week of help with meals and errands, or more hands-on care, we'd be honored to help when the time is right — and if the time is never, that's okay too.\n\nCall or text anytime: ${OFFICE}.\n\nWarmly,\nThe Caring Companions team` },
+      `Hi {first},\n\nJust a note to say we're still here. Whether it's a few hours a week of help with meals and errands, or more hands-on care, we'd be honored to help when the time is right, and if the time is never, that's okay too.\n\nCall or text anytime: ${OFFICE}.\n\nWarmly,\nThe Caring Companions team` },
   ],
   /* The long game. Home care is rarely decided in a fortnight: families enquire
      in March and buy in September, or after a fall, or after a discharge. The
@@ -72,7 +72,7 @@ const SEQUENCES: Record<string, Step[]> = {
 
   lost_reengage: [
     { day: 90, channel: 'sms', text:
-      `Hi {first}, it's Caring Companions — we spoke a while back about care for your family. Circumstances change, so I wanted to check in and see how things are going. If we can help now, we'd love to: call or text ${OFFICE}. (Reply STOP to opt out.)` },
+      `Hi {first}, it's Caring Companions. We spoke a while back about care for your family. Circumstances change, so I wanted to check in and see how things are going. If we can help now, we'd love to: call or text ${OFFICE}. (Reply STOP to opt out.)` },
   ],
 }
 
