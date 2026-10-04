@@ -40,6 +40,8 @@ import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { notifyFamilyOfChange } from '../_shared/family-change-text.ts'
 import { careLevelOf } from '../_shared/care-level.ts'
 import { holdsAutoTexts, isMustCover, onlyAskCut, planLine, readPlan } from '../_shared/callin-plan.ts'
+import { callinLink, withLink, rememberAlerted } from '../_shared/callin-notify.ts'
+import { adminRecipients } from '../_shared/clockin-admins.ts'
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -422,6 +424,9 @@ async function appendAskFresh(caseId: string, entry: any): Promise<any | null> {
   await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: fresh })
   return fresh
 }
+/* CI2 (2026-10-03): an office text's board address becomes the admin's own call-in link. A template that already
+   says {link} keeps it; one that ends with the board's address (cc.mo-care.com...) has it swapped for {link}. */
+const linkTemplate = (t: string) => /\{link\}/.test(t) ? t : (/(https?:\/\/)?cc\.mo-care\.com\S*\s*$/.test(t) ? t.replace(/(https?:\/\/)?cc\.mo-care\.com\S*\s*$/, '{link}') : t)
 /* CI1 (2026-10-03): the caregiver night rule, the same one the automatic waves use (9pm to 8am Chicago, from
    ops_settings.coverage_quiet_from/until), now applied on the server to a coordinator's send too: held at night unless
    the shift starts within 3 hours. Interest checks have no shift, so they wait for morning. */
@@ -872,7 +877,8 @@ Deno.serve(async (req) => {
     /* J1 (2026-09-29): an active office staff member (the sign-in is checked with Supabase Auth and against their
        staff record, role and hub access), or the owner's server key. It used to read "signed in" from the token
        without checking who: any account on the shared project could text caregivers from here. */
-    if (!(await ownerCaller(req))) {
+    const ownerCall = await ownerCaller(req)
+    if (!ownerCall) {
       const who = await requireStaff(sb, req, OFFICE_ROLES)
       if (!who.ok) return jr({ error: who.error }, who.status)
     }
@@ -974,7 +980,9 @@ Deno.serve(async (req) => {
            AxisCare id) hasn't been asked on this case: two coordinators sending at once text them once. */
         const ask = { id: uid(), name: x.name, phone, channel: 'sms', at: nowIso(),
           state: 'waiting', replied_at: null, tier: x.tier, auto: false, ...(x.prn_ask ? { prn: true } : {}),
-          picked_by_coordinator: true, ghl_contact_id: contact.contactId, axiscare_id: x.axiscare_id ?? null }
+          picked_by_coordinator: true, ghl_contact_id: contact.contactId, axiscare_id: x.axiscare_id ?? null,
+          /* CI2: who asked, when the call-in page sent it (server to server, with the owner key) */
+          ...(ownerCall && typeof body.asked_by === 'string' && body.asked_by.trim() ? { asked_by: body.asked_by.trim().slice(0, 80) } : {}) }
         const { data: held, error: holdErr } = await sb.rpc('coverage_case_add_ask', { p_id: String(kase.id), p_ask: ask })
         if (holdErr || held !== 'added') {
           if (held === 'already_asked') already.push(String(x.name))
@@ -1267,10 +1275,12 @@ Deno.serve(async (req) => {
       const calledAt = new Date(String(c.opened_at || Date.now()))
         .toLocaleString('en-US', { timeZone: 'America/Chicago',
           month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-      const smsMsg = (String(settings.coverage_msg_admin_alert || '') ||
+      /* CI2 (2026-10-03): each admin's text carries their OWN link to the call-in page (confirm, call, ask more, I've got
+         it), instead of the board's address that needed a sign-in. */
+      const smsMsg = linkTemplate(String(settings.coverage_msg_admin_alert || '') ||
         (manualSelect
-          ? `New call-in: {client} {when}.{who} Called in at {called_at}. Cara has the candidate list ready - choose who to ask on the board: cc.mo-care.com`
-          : `New call-in: {client} {when}.{who} Called in at {called_at}. The callout engine is texting caregivers. Board: cc.mo-care.com`))
+          ? `New call-in: {client} {when}.{who} Called in at {called_at}. Choose who to ask, confirm, or call from your link: {link}`
+          : `New call-in: {client} {when}.{who} Called in at {called_at}. The callout engine is texting caregivers. Your link: {link}`))
         .replaceAll('{client}', String(c.client || 'client on the case'))
         .replaceAll('{when}', whenTxt)
         .replaceAll('{who}', c.calling_off ? ` ${c.calling_off} called off.` : '')
@@ -1281,8 +1291,10 @@ Deno.serve(async (req) => {
       const { data: stRowA } = await sb.from('app_data').select('data').eq('key', 'coordinator_staff').maybeSingle()
       const staffA: any[] = Array.isArray(stRowA?.data) ? stRowA!.data : []
       let alerted = 0, reachedA = 0
+      const textedA: string[] = []
       for (const adm of admins) {
         const person = staffA.find((s: any) => String(s.email || '').toLowerCase() === adm)
+        const linkA = await callinLink(String(c.id), adm, c.shift_date)
         // Email always (silent), through the same GHL pipe as the 7am digest.
         try {
           /* ONE CONTACT (2026-10-01): the email goes to the contact found by the one-contact rule for email (the
@@ -1308,7 +1320,8 @@ Deno.serve(async (req) => {
                   + `</p><p>` + (manualSelect
                     ? `Cara has ranked the candidates — open the case and choose who to ask (worked-with-this-client first). Nothing is texted until you press send. `
                     : `The callout engine is texting qualified caregivers in waves. `)
-                  + `Watch replies and confirm the fill on the board: <a href="https://cc.mo-care.com">cc.mo-care.com</a> (Scheduling, Coverage Help).</p></div>` })
+                  + `Watch replies and confirm the fill on the board: <a href="https://cc.mo-care.com">cc.mo-care.com</a> (Scheduling, Coverage Help).</p>`
+                  + (linkA ? `<p>Or from your phone, no sign-in: <a href="${linkA}">open this call-in</a> (your own link).</p>` : '') + `</div>` })
             if (wentA) { alerted++; reachedA++ }
             // SMS too, when the hour allows and we have a number.
             if (smsOk) {
@@ -1318,7 +1331,7 @@ Deno.serve(async (req) => {
                   { phone: ph, email: adm, firstName: person?.name || adm.split('@')[0] },
                   'urgent_internal', { selfSupplied: true, audience: 'staff', emergency: mustA || callinAnyHour })
                 if (contact && await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
-                  'staff-alert', { channel: 'sms', contactId: contact.contactId, address: ph, who: person?.name || adm }, { message: smsMsg })) reachedA++
+                  'staff-alert', { channel: 'sms', contactId: contact.contactId, address: ph, who: person?.name || adm }, { message: withLink(smsMsg, linkA) })) { reachedA++; textedA.push(adm) }
               }
             }
           }
@@ -1327,6 +1340,7 @@ Deno.serve(async (req) => {
             reasons: ['could not send: ' + String((e as Error)?.message ?? e).slice(0, 80)], failed: true })
         }
       }
+      await rememberAlerted(sb, String(c.id), textedA)   /* CI2: who got the call-in text (for "Filled by" later) */
       const freshA = await readCaseFresh(c.id)
       if (freshA) {
         if (reachedA > 0) freshA.admin_alerted = nowIso()
@@ -1451,10 +1465,17 @@ Deno.serve(async (req) => {
               .filter(Number.isFinite).sort((x: number, y: number) => y - x)[0] ?? 0
           }
         } catch { /* unknown = behave as before (no suppression) */ }
+        /* CI2: "I've got it" on the call-in page is a claim too */
+        if (!claimedByQ && c.claimed_by_name) {
+          claimedByQ = String(c.claimed_by_name)
+          lastMoveQ = [c.claimed_at, ...c.asked.map((a: any) => a.at), ...c.asked.map((a: any) => a.replied_at)]
+            .filter(Boolean).map((t: unknown) => new Date(String(t)).getTime()).filter(Number.isFinite).sort((x: number, y: number) => y - x)[0] ?? 0
+        }
         const staleMinQ = claimedByQ && lastMoveQ ? Math.round((Date.now() - lastMoveQ) / 60000) : 0
         const claimActiveQ = !!claimedByQ && staleMinQ < quietMin
-        const phonesQ: string[] = (Array.isArray(settings.coverage_alert_phones) ? settings.coverage_alert_phones : [])
-          .map((p: unknown) => String(p ?? '').trim()).filter(Boolean)
+        /* CI2 (her decision 2): the call-in list, each with their own link (it was a list of bare phone numbers) */
+        const adminsQ = (await adminRecipients(sb, settings)).filter((a) => a.phone)
+        const phonesQ: string[] = adminsQ.map((a) => String(a.phone))
         const resumingQ = !!claimedByQ && !claimActiveQ
         /* office quiet hours (2026-10-03): the office text never goes 8pm to 7am; the Needs Attention item above is
            where it waits (this wave is still marked nudged, so nothing goes out at 7am for it) */
@@ -1470,19 +1491,23 @@ Deno.serve(async (req) => {
           if (resumingQ) await opEvent(sb, { verb: 'claim_stale', item_id: String(c.id), area: 'coverage',
             summary: `Office alert resumed — ${claimedByQ} has ${c.client || 'the shift'} but nothing has moved for ${staleMinQ} min and it starts in ${minsToShiftQ} min` })
           const msgQ = resumingQ
-            ? `Cara: ${claimedByQ} took the ${c.client || 'open-shift'} callout (${whenQ}) but nothing has moved for ${staleMinQ} min and it starts in ${minsToShiftQ} min. Check in or jump in: cc.mo-care.com/#cara/case/${encodeURIComponent(String(c.id))}`
-            : `Cara: nobody has answered the ask for ${c.client || 'a shift'} ${whenQ} (${c.asked.length} asked, 0 yes) and it starts soon. Widen the list or start calling: cc.mo-care.com/#cara/case/${encodeURIComponent(String(c.id))}`
-          for (const p of phonesQ) {
+            ? `Cara: ${claimedByQ} took the ${c.client || 'open-shift'} callout (${whenQ}) but nothing has moved for ${staleMinQ} min and it starts in ${minsToShiftQ} min. Check in or jump in: {link}`
+            : `Cara: nobody has answered the ask for ${c.client || 'a shift'} ${whenQ} (${c.asked.length} asked, 0 yes) and it starts soon. Ask more or start calling: {link}`
+          const textedQ: string[] = []
+          for (const a of adminsQ) {
+            const p = String(a.phone)
             try {
               const contact = await contactForOutbound(sb, ghl,
-                { phone: p, firstName: 'Scheduling' }, 'urgent_internal', { selfSupplied: true, audience: 'staff' })
-              if (contact) await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
-                'staff-alert', { channel: 'sms', contactId: contact.contactId, address: p, who: 'the office (nobody answered the ask)' }, { message: msgQ })
+                { phone: p, email: a.email, firstName: a.first || 'Scheduling' }, 'urgent_internal', { selfSupplied: true, audience: 'staff' })
+              if (contact && await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+                'staff-alert', { channel: 'sms', contactId: contact.contactId, address: p, who: a.name || 'the office (nobody answered the ask)' },
+                { message: withLink(msgQ, await callinLink(String(c.id), a.email, c.shift_date)) })) textedQ.push(a.email)
             } catch (e) { /* the item is the guarantee */
-              await reportSendProblem(sb, { sender: 'staff-alert', channel: 'sms', address: p, who: 'the office (nobody answered the ask)',
+              await reportSendProblem(sb, { sender: 'staff-alert', channel: 'sms', address: p, who: a.name || 'the office (nobody answered the ask)',
                 reasons: ['could not send: ' + String((e as Error)?.message ?? e).slice(0, 80)], failed: true })
             }
           }
+          await rememberAlerted(sb, String(c.id), textedQ)
         }
         if (claimActiveQ) {
           /* Held, not consumed: quiet_nudged_for stays unset so every run
@@ -1891,13 +1916,18 @@ Deno.serve(async (req) => {
             const contact = await contactForOutbound(sb, ghl,
               { phone, firstName: person?.name || own2.split('@')[0] }, 'urgent_internal', { selfSupplied: true, audience: 'staff' })
             if (contact) {
-              const msg = (String(settings.coverage_msg_escalation || '') ||
-                `Coverage alert: the callout for {client} {when} ran out of caregivers to ask ({asked} asked, nobody said yes). It needs a person now. Board: cc.mo-care.com`)
+              /* CI2: the owner's own call-in link when they are on the call-in list (the page only opens for that list);
+                 otherwise the board's address, as before */
+              const onListR = (await adminRecipients(sb, settings)).some((a) => a.email === own2.toLowerCase())
+              const linkR = onListR ? await callinLink(String(c.id), own2.toLowerCase(), c.shift_date) : ''
+              const msg = withLink(linkTemplate(String(settings.coverage_msg_escalation || '') ||
+                `Coverage alert: the callout for {client} {when} ran out of caregivers to ask ({asked} asked, nobody said yes). It needs a person now: {link}`), linkR)
                 .replaceAll('{client}', String(c.client || 'a client'))
                 .replaceAll('{when}', whenTxt)
                 .replaceAll('{asked}', String(autoAsked.length))
               smsSent = await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
                 'staff-alert', { channel: 'sms', contactId: contact.contactId, address: phone, who: person?.name || own2 }, { message: msg })
+              if (smsSent && onListR) await rememberAlerted(sb, String(c.id), [own2.toLowerCase()])
             }
           }
         } catch (e) { /* the item is the guarantee; the SMS is the accelerant */

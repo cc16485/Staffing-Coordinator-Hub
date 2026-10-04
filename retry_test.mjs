@@ -81,7 +81,7 @@ ck('EVV next-visit text (replaces the morning chase) · a failed text is not sta
   !/EVV correction form and have the client sign it/.test(tk) && /next_visit_tries/.test(tk) && /tries >= MAX_TRIES/.test(tk)
   && /if \(ok\) \{[\s\S]{0,400}next_visit_texted_at: nowIso/.test(tk) && /if \(!contact\) \{[\s\S]{0,200}next_visit_refused_at/.test(tk))
 ck('call-in alert · stamped only when an admin was reached (email or text); else retried, 3 tries, 10+ min apart',
-  /if \(reachedA > 0\) freshA\.admin_alerted = nowIso\(\)/.test(cr) && /admin_alert_tries\) \|\| 0\) < 3/.test(cr) && /if \(wentA\) \{ alerted\+\+; reachedA\+\+ \}/.test(cr) && /\)\) reachedA\+\+/.test(cr) && /!c\.admin_alerted && alertRetryOk/.test(cr))
+  /if \(reachedA > 0\) freshA\.admin_alerted = nowIso\(\)/.test(cr) && /admin_alert_tries\) \|\| 0\) < 3/.test(cr) && /if \(wentA\) \{ alerted\+\+; reachedA\+\+ \}/.test(cr) && /\)\) (\{ )?reachedA\+\+/.test(cr) /* CI2: the text's success also records who got it (admin_links) */ && /!c\.admin_alerted && alertRetryOk/.test(cr))
 ck('overdue-lead alert · stamped only when someone was reached; else retried, 3 tries, 10+ min apart',
   /if \(reached\) \{ l\.overdue_alerted_at = new Date\(\)\.toISOString\(\); out\.office_alerted\+\+ \}/.test(lf) && /overdue_alert_tries\) \|\| 0\) < 3/.test(lf) && /!l\.overdue_alerted_at && overdueRetryOk/.test(lf))
 let all = true; console.log('\nRETRY · TEST\n' + '='.repeat(50)); for (const [n, g, note] of res) { all &&= g; console.log((g ? 'PASS  ' : 'FAIL  ') + n + (note ? '\n   └─ ' + note : '')) }
