@@ -6,7 +6,12 @@ const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.strin
 const REC = []; let CASES = [];
 const env = { SUPABASE_URL: 'http://x', SUPABASE_SERVICE_ROLE_KEY: 'k', AXISCARE_TOKEN: 't', AXISCARE_SITE: '16485', GHL_LOCATION_ID: 'loc' };
 let handler; globalThis.Deno = { env: { get: k => env[k] }, serve: h => { handler = h; } };
-const db = { rpc: async (n, a) => { if (n === 'axiscare_change_record') REC.push(a); if (n === 'upsert_app_data_item' && a.target_key === 'coverage_cases') CASES = CASES.map((c) => c.id === a.item.id ? a.item : c); return { data: { outcome: 'recorded' }, error: null }; },
+const db = { rpc: async (n, a) => { if (n === 'axiscare_change_record') REC.push(a); if (n === 'upsert_app_data_item' && a.target_key === 'coverage_cases') CASES = CASES.map((c) => c.id === a.item.id ? a.item : c);
+  /* CI1: the one-case patch (the real one is SQL, under a lock: ci1_sql_test.py) */
+  if (n === 'coverage_case_patch') { const i = CASES.findIndex((c) => c.id === a.p_id); if (i < 0) return { data: { outcome: 'not_found' }, error: null };
+    for (const [k, v] of Object.entries(a.p_expect || {})) if ((CASES[i][k] ?? null) !== v) return { data: { outcome: 'conflict', item: CASES[i] }, error: null };
+    CASES[i] = { ...CASES[i], ...a.p_patch }; return { data: { outcome: 'ok', item: CASES[i] }, error: null }; }
+  return { data: { outcome: 'recorded' }, error: null }; },
   from: (t) => { const f = []; let single = false; const p = { select() { return p; }, eq(k, v) { f.push([k, v]); return p; }, in() { return p; }, maybeSingle() { single = true; return p; }, upsert() { return Promise.resolve({ error: null }); },
     then(ok, bad) { let data = null;
       const key = (f.find((x) => x[0] === 'key') || [])[1];
@@ -30,11 +35,16 @@ globalThis.fetch = async (u, o = {}) => { const url = new URL(String(u)), m = (o
   throw new Error('unexpected ' + m + ' ' + url); };
 // coverage-assign
 { const FN = path.join(ROOT, 'supabase/functions/coverage-assign/index.ts');
-  const src = fs.readFileSync(FN, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db');
+  /* CI1: coverage-assign now checks for an office staff sign-in (stubbed here: the staff check has its own suite) */
+  const src = fs.readFileSync(FN, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
+    .replace(/^import \{ requireStaff, OFFICE_ROLES \} from .*$/m, "const OFFICE_ROLES = []; const requireStaff = async () => globalThis.__staff")
+    .replace(/^import \{ ownerCaller \} from .*$/m, 'const ownerCaller = async () => false')
+    .replace(/'\.\.\/_shared\/coverage-fill\.ts'/, "'" + path.join(ROOT, 'supabase/functions/_shared/coverage-fill.ts') + "'");
+  globalThis.__staff = { ok: true, name: 'Kat Office', email: 'kat@cc.test' };
   const tmp = path.join(path.dirname(FN), '_under_test.ts'); fs.writeFileSync(tmp, src); await import(tmp); fs.unlinkSync(tmp); }
 const tok = 'Bearer x.' + Buffer.from(JSON.stringify({ role: 'authenticated', email: 'kat@cc.test' })).toString('base64url') + '.y';
 const assign = async () => { const r = await handler(new Request('http://x', { method: 'POST', headers: { authorization: tok }, body: JSON.stringify({ case_id: 'V1' }) })); return r.json(); };
-const mkCase = () => { CASES = [{ id: 'V1', covered_by: 'Jane Doe', asked: [{ name: 'Jane Doe', axiscare_id: '1234' }], client_axiscare_id: '501', shift_date: '2026-09-29' }]; };
+const mkCase = () => { CASES = [{ id: 'V1', status: 'done', resolved_how: 'covered', covered_by: 'Jane Doe', asked: [{ name: 'Jane Doe', axiscare_id: '1234' }], client_axiscare_id: '501', shift_date: '2026-09-29' }]; };
 mkCase(); let b = await assign();
 ck('coverage: a caregiver put on a visit and read back is recorded as confirmed, on the client, with the caregiver number', b.status === 'assigned' && REC.at(-1).p_kind === 'visit_caregiver' && REC.at(-1).p_outcome === 'sent_confirmed'
    && REC.at(-1).p_client === '501' && REC.at(-1).p_caregiver === '1234' && /caregiver #1234 put on visit 77/.test(REC.at(-1).p_summary), [b, REC.at(-1)]);

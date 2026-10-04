@@ -111,7 +111,7 @@ const allowedRaw = { 'team-ask': 1, 'coverage-run': 1, 'clockin-alert': 1 }
 const bad = files.filter(([n, s]) => raw(s) !== (allowedRaw[n] || 0)).map(([n, s]) => n + ':' + raw(s))
 ck('scan · NO SILENT FAILURES: every automatic send in the scheduling group goes through ghlSendChecked (only 3 interactive sends that already report keep a raw post)', !bad.length, bad)
 const cr = files.find(([n]) => n === 'coverage-run')[1]
-ck('scan · coverage-run\'s one raw send is the coordinator\'s send_selected, which answers with failed[]', /if \(!r\.ok\) \{ failed\.push\(`\$\{x\.name\} \(SMS \$\{r\.status\}\)`\); continue \}/.test(cr))
+ck('scan · coverage-run\'s one raw send is the coordinator\'s send_selected, which answers with failed[] (CI1: and takes back the ask it recorded first)', /if \(!r\.ok\) failed\.push\(`\$\{x\.name\} \(SMS \$\{r\.status\}\)`\)/.test(cr) && /if \(!ok\) \{ await sb\.rpc\('coverage_case_remove_ask'/.test(cr))
 const ta = files.find(([n]) => n === 'team-ask')[1], cl = files.find(([n]) => n === 'clockin-alert')[1]
 ck('scan · team-ask and the EVV form answer a refused send with an error, never ok', /if \(!sentOk\) return json\(\{ outcome: 'failed'/.test(ta) && /if \(!ok\) return json\(\{ error: 'The text could not be sent/.test(cl))
 const senders = [...new Set(files.flatMap(([, s]) => [...s.matchAll(/'([a-z][a-z-]+(?: \([^')]*\))?)', \{ channel: '|sender: '([a-z][a-z-]+(?: \([^')]*\))?)'/g)].map((m) => m[1] || m[2])))]
