@@ -16,10 +16,11 @@
 import type { Census, CensusRow } from './axis-census.ts'
 
 export const RULES_FILE = 'caregiver-connect-rules.js'
+export const ELIG_FILE = 'eligibility-rules.js'   // the hire snapshot (CCElig.hiringSnapshot), the same approved copy obligations-run runs
 export const FAILING_ID = 'ops_cgconnect_failing'
 export const itemId = (ax: string) => 'ops_cgconnect_' + ax
 
-export type Rules = { ok: true; C: any } | { ok: false; error: string }
+export type Rules = { ok: true; C: any; E: any } | { ok: false; error: string }
 export type Deps = { census: () => Promise<Census>; rules: () => Promise<Rules> }
 
 /** The approved rules file's text, run in its own scope (nothing leaks onto the server's globals). */
@@ -30,6 +31,16 @@ export function rulesFrom(src: string): any {
   if (!C || typeof C.plan !== 'function' || typeof C.movedRecord !== 'function' || typeof C.newRecord !== 'function')
     throw new Error(RULES_FILE + ' did not define the connect rules')
   return C
+}
+
+/** The approved eligibility rules, run in their own scope, for the hire snapshot only (2026-10-04, her "fix the hire
+    snapshot": a caregiver moved over gets the same snapshot the Move to caregiver button now saves). */
+export function eligFrom(src: string): any {
+  const scope: any = {}
+  new Function('globalThis', String(src))(scope)
+  const E = scope.CCElig
+  if (!E || typeof E.hiringSnapshot !== 'function') throw new Error(ELIG_FILE + ' did not define the hire snapshot')
+  return E
 }
 
 /** A record's _rev, as the database reads it (app_data_rev): a missing or odd value is 0. */
@@ -132,7 +143,7 @@ export async function runJob(db: any, deps: Deps, o: JobOpts) {
   if (!cen.ok) return fail('AxisCare could not be read (' + cen.error + '), so nothing was changed')
   const R = await deps.rules()
   if (!R.ok) return fail(R.error + ', so nothing was changed')
-  const C = R.C
+  const C = R.C, E = R.E
   let L: any, blocked: any[]
   try { L = await lists(db); blocked = await blockedPairs(db) } catch (e) { return fail(String((e as Error).message ?? e) + ', so nothing was changed') }
   const plan = C.plan(cen.rows, L.cgs, L.cands, { blocked })
@@ -176,7 +187,7 @@ export async function runJob(db: any, deps: Deps, o: JobOpts) {
     if (r?.ok) done.linked.push(String(a.ax.id))
   }
   for (const m of plan.move) {
-    const record = C.movedRecord(m.cand, m.ax, { promoted_at: at, hiring_snapshot: null, today,
+    const record = C.movedRecord(m.cand, m.ax, { promoted_at: at, hiring_snapshot: E.hiringSnapshot(m.cand), today,
       connected: { at, how: m.how, by: 'auto', from: 'background & references' } })
     const r = await apply({ op: 'move', axiscare_id: String(m.ax.id), ax_name: nm(m.ax), how: m.how, candidate_id: String(m.cand.id), cand_base_rev: rev(m.cand), record })
     if (r?.ok) done.moved.push(String(m.ax.id))
@@ -234,11 +245,11 @@ export async function manualAction(db: any, deps: Deps, staff: Staff, body: any)
   if (!ax) return { ok: false, status: 404, message: 'That caregiver was not found in AxisCare. Nothing was changed.' }
   const connected = { at, by: shown, how: 'manual' }
   let p: any
-  let C: any = null
+  let C: any = null, E: any = null
   if (action !== 'link') {
     const R = await deps.rules()
     if (!R.ok) return { ok: false, status: 503, message: 'The connect rules could not be loaded (' + R.error + '), so nothing was changed. Tell Claude.' }
-    C = R.C
+    C = R.C; E = R.E
   }
   const name = `${ax.first} ${ax.last}`.trim()
   if (action === 'link') {
@@ -252,7 +263,7 @@ export async function manualAction(db: any, deps: Deps, staff: Staff, body: any)
     const cand = L.cands.find((k: any) => k && String(k.id) === kid)
     if (!cand) return { ok: false, status: 404, message: 'They are no longer in Background & References. Nothing was changed.' }
     p = { op: 'move', axiscare_id: axId, ax_name: name, how: 'manual', candidate_id: kid, cand_base_rev: rev(cand),
-      record: C.movedRecord(cand, ax, { promoted_at: at, hiring_snapshot: null, today: at.slice(0, 10), connected: { ...connected, from: 'background & references' } }) }
+      record: C.movedRecord(cand, ax, { promoted_at: at, hiring_snapshot: E.hiringSnapshot(cand), today: at.slice(0, 10), connected: { ...connected, from: 'background & references' } }) }
   } else {
     p = { op: 'create', axiscare_id: axId, ax_name: name, how: 'manual', record: C.newRecord(ax, { connected, via: 'manual from AxisCare' }) }
   }

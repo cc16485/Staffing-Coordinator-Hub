@@ -5,10 +5,11 @@
 import fs from 'fs'; import path from 'path'
 const ROOT = path.dirname(new URL(import.meta.url).pathname), FN = path.join(ROOT, 'supabase/functions')
 const RULES_PATH = process.env.CG_RULES || path.join(ROOT, '..', 'cc-hub-live', 'caregiver-connect-rules.js')
+const ELIG_PATH = process.env.CG_ELIG || path.join(ROOT, '..', 'cc-hub-live', 'eligibility-rules.js')
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note ?? '').slice(0, 700)])
 globalThis.Deno = { env: { get: () => '' } }
 const J = await import(path.join(FN, '_shared/cg-connect.ts'))
-const SRC = fs.readFileSync(RULES_PATH, 'utf8')
+const SRC = fs.readFileSync(RULES_PATH, 'utf8'), ESRC = fs.readFileSync(ELIG_PATH, 'utf8')
 const clone = (x) => JSON.parse(JSON.stringify(x))
 
 /* ── a fake database: app_data rows, the connect tables, rpc calls recorded ── */
@@ -84,7 +85,7 @@ const world = (live, extra = {}) => ({
     { key: 'ops_items', data: extra.items ?? [{ id: 'ops_cgconnect_110', kind: 'caregiver_connect', status: 'open', title: 'Connect caregiver: Blake Hart' }] },
   ], ...extra,
 })
-const okDeps = (over = {}) => ({ census: async () => ({ ok: true, rows: clone(census), total: census.length, truncated: false }), rules: async () => ({ ok: true, C: J.rulesFrom(SRC) }), ...over })
+const okDeps = (over = {}) => ({ census: async () => ({ ok: true, rows: clone(census), total: census.length, truncated: false }), rules: async () => ({ ok: true, C: J.rulesFrom(SRC), E: J.eligFrom(ESRC) }), ...over })
 const NOW = new Date('2026-10-04T15:17:00Z')
 
 // the rules file, as the server runs it
@@ -120,11 +121,14 @@ ck("rev reads like the database's app_data_rev", J.rev({ _rev: 3 }) === 3 && J.r
   const L = ap[0]
   ck('live link: the record and the _rev the job saw, how, when', L.caregiver_id === '20' && L.base_rev === 2 && L.how === 'phone' && L.connected.by === 'auto' && L.connected.at === NOW.toISOString())
   const M = ap[1]
-  const btn = C.recordFromCandidate(clone(CASEY), '2026-09-30', '2026-09-25', { promoted_at: NOW.toISOString(), hiring_snapshot: null })
-  const strip = (x) => { const y = clone(x); delete y.axiscare_id; delete y.connected; delete y.id; return y }
+  const E = J.eligFrom(ESRC)
+  const btn = C.recordFromCandidate(clone(CASEY), '2026-09-30', '2026-09-25', { promoted_at: NOW.toISOString(), hiring_snapshot: E.hiringSnapshot(clone(CASEY)) })
+  const strip = (x) => { const y = clone(x); delete y.axiscare_id; delete y.connected; delete y.id; if (y.hiring_snapshot) delete y.hiring_snapshot.at; return y }
   ck('live move: the record is exactly the Move to caregiver record (+ AxisCare id + how), from the candidate _rev it saw', M.candidate_id === '50' && M.cand_base_rev === 4
     && JSON.stringify(strip(M.record)) === JSON.stringify(strip(btn)) && M.record.axiscare_id === '103' && M.record.connected.from === 'background & references' && M.record.hire_date === '2026-09-30', [M.record, btn])
-  ck('live move: hiring_snapshot is null, as the button saves it today', M.record.hiring_snapshot === null)
+  ck('live move: the hire snapshot is saved, as the button now saves it (why they were allowed to be hired)', M.record.hiring_snapshot && M.record.hiring_snapshot.event === 'pre_hire_clearance'
+     && M.record.hiring_snapshot.oig === 'Clear' && M.record.hiring_snapshot.refs === 'Received|||' && Array.isArray(M.record.hiring_snapshot.outstanding), M.record.hiring_snapshot)
+  ck('the hiring rules run in their own scope too (nothing left on the globals)', globalThis.CCElig === undefined)
   const N = ap[2]
   ck('live create: an empty record with their AxisCare id, "auto from AxisCare"', N.record.axiscare_id === '104' && N.record.created_via === 'auto from AxisCare' && !('prehire' in N.record) && N.record.connected.how === 'new')
   const items = db.t.app_data.find((x) => x.key === 'ops_items').data
@@ -186,7 +190,7 @@ ck("rev reads like the database's app_data_rev", J.rev({ _rev: 3 }) === 3 && J.r
   const db2 = fakeDb(world(true))
   const m = await J.manualAction(db2, okDeps(), staff, { action: 'move', axiscare_id: '103', candidate_id: '50' })
   const mp = db2.calls.find((c) => c[0] === 'caregiver_connect_apply')[1].p
-  ck('"Move over from Background & References": the button\'s record, the candidate _rev it read', m.ok && mp.op === 'move' && mp.cand_base_rev === 4 && mp.record.candidate_id === 50 && mp.record.connected.by === 'Angiel Falig', mp)
+  ck('"Move over from Background & References": the button\'s record, the candidate _rev it read', m.ok && mp.op === 'move' && mp.cand_base_rev === 4 && mp.record.candidate_id === 50 && mp.record.connected.by === 'Angiel Falig' && mp.record.hiring_snapshot && mp.record.hiring_snapshot.event === 'pre_hire_clearance', mp)
   const n = await J.manualAction(fakeDb(world(true)), okDeps(), staff, { action: 'new', axiscare_id: '105' })
   ck('"Start a new Hub record"', n.ok && /new Hub record/.test(n.message))
   const nf = await J.manualAction(fakeDb(world(true)), okDeps(), staff, { action: 'link', axiscare_id: '999', caregiver_id: '22' })
@@ -209,7 +213,7 @@ ck("rev reads like the database's app_data_rev", J.rev({ _rev: 3 }) === 3 && J.r
 const IX = fs.readFileSync(path.join(FN, 'caregiver-connect/index.ts'), 'utf8')
 ck('index: the job answers only its schedule or the owner; staff actions need an office role', /const caller = await jobCaller\(req\)\s*\n\s*if \(!caller\) return json\(\{ error: 'not allowed' \}, 401\)/.test(IX) && /requireStaff\(db, req, OFFICE_ROLES\)/.test(IX))
 ck('index: ?dry=1 is the owner\'s only', /if \(dry && caller !== 'owner'\) return json/.test(IX))
-ck('index: the rules are the approved Hub file only', /approvedRules\(db, RULES_FILE\)/.test(IX) && J.RULES_FILE === 'caregiver-connect-rules.js')
+ck('index: the rules are the approved Hub files only (connect rules + hiring rules)', /approvedRules\(db, RULES_FILE\)/.test(IX) && /approvedRules\(db, ELIG_FILE\)/.test(IX) && J.RULES_FILE === 'caregiver-connect-rules.js' && J.ELIG_FILE === 'eligibility-rules.js')
 ck('index: answers the browser (CORS on every answer, OPTIONS)', /req\.method === 'OPTIONS'/.test(IX) && /Access-Control-Allow-Origin/.test(IX))
 const all = IX + fs.readFileSync(path.join(FN, '_shared/cg-connect.ts'), 'utf8') + fs.readFileSync(path.join(FN, '_shared/axis-census.ts'), 'utf8')
 ck('sends nothing: no texting, email or AxisCare write anywhere in it', !/ghl|sendSms|send-candidate|resend|leadconnector|method:\s*'(POST|PUT|PATCH|DELETE)'/i.test(all.replace(/req\.method/g, '')))
