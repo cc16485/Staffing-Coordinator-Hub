@@ -105,6 +105,14 @@ def reviewed(root, base, shas, label, extra=()):
         if rel not in changed or not os.path.exists(os.path.join(root, rel)) or sha(os.path.join(root, rel)) != want:
             bad(f"{label}: {rel.split('functions/')[-1]} is not the reviewed build"); say("  STOP. Nothing was run."); done(2)
     return changed
+def history_shas(root, rel):
+    """every version of one file ever committed: {sha: short commit}"""
+    out = {}
+    for c in git(root, "log", "--format=%h", "--", rel).stdout.decode().split():
+        b = git(root, "show", f"{c}:{rel}")
+        if b.returncode == 0: out.setdefault(shab(b.stdout), c)
+    return out
+OLDER = {}
 def state(ref, root, base, fn, pinned):
     """'new' | 'base' | 'this' | 'other' for one live function, with its gateway setting."""
     s, m = fmeta(ref, fn)
@@ -115,6 +123,10 @@ def state(ref, root, base, fn, pinned):
     nd = need(root, fn)
     if all(k in live and live[k] == sha(os.path.join(root, k)) for k in nd): return "this", vj
     if all((k in live and live[k] == base_sha(root, base, k)) or (k not in live and base_sha(root, base, k) is None and k in pinned) for k in nd): return "base", vj
+    # 452 (first run stopped here): live can be an OLDER committed version that was never redeployed. That is still a
+    # known build, so it may be replaced; a version that was never committed (a hand edit) still stops everything.
+    hits = [history_shas(root, k).get(live.get(k, "")) for k in nd]
+    if all(hits): OLDER[fn] = ", ".join(sorted(set(hits))); return "older", vj
     return "other", vj
 def deploy(ref, root, fn, vj, label):
     p = subprocess.run([SUPA, "functions", "deploy", fn, "--project-ref", ref, "--use-api"] + ([] if vj in (True, None) else ["--no-verify-jwt"]), cwd=root, env=dict(os.environ, SUPABASE_ACCESS_TOKEN=TOKEN), capture_output=True, text=True)
@@ -141,8 +153,8 @@ say("  ✓ the two helpers and the new field are the reviewed build")
 ST = {}
 for fn in FNS:
     st, vj = state(HUB_REF, HUB, HUB_BASE, fn, pinned); ST[fn] = (st, vj)
-    if st not in ("base", "this"): bad(f"the live {fn} isn't what this was built on ({st}). Nothing was changed. Tell Claude."); done(3)
-    say(f"  ✓ {fn}: " + {"base": "live matches GitHub", "this": "already has this build (an earlier run)"}[st] + f" (gateway sign-in check {'on' if vj else 'off'})")
+    if st not in ("base", "this", "older"): bad(f"the live {fn} isn't what this was built on ({st}). Nothing was changed. Tell Claude."); done(3)
+    say(f"  ✓ {fn}: " + {"base": "live matches GitHub", "this": "already has this build (an earlier run)", "older": f"live is an older GitHub version (commit {OLDER.get(fn)}) that was never redeployed; this replaces it"}[st] + f" (gateway sign-in check {'on' if vj else 'off'})")
 NODE = shutil.which("node") or next((p for p in ("/opt/homebrew/bin/node", "/usr/local/bin/node") if os.path.exists(p)), "")
 if NODE:
     for t in ("profile_catchup_452_test.mjs", "caregiver_profile_test.mjs", "caregiver_profile_2b_test.mjs"):

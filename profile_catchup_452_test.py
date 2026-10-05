@@ -40,14 +40,15 @@ class Hd(http.server.BaseHTTPRequestHandler):
 H = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Hd); threading.Thread(target=H.serve_forever, daemon=True).start()
 URL = f"http://127.0.0.1:{H.server_address[1]}"
 tmp = tempfile.mkdtemp(prefix="t452-"); LOG = os.path.join(tmp, "log"); STATE = os.path.join(tmp, "state"); CLI = os.path.join(tmp, "supabase")
-WH = os.path.join(tmp, "wt", "hub"); WB = os.path.join(tmp, "wt", "base")
+WH = os.path.join(tmp, "wt", "hub"); WB = os.path.join(tmp, "wt", "base"); WO = os.path.join(tmp, "wt", "old")
 subprocess.run(["git", "worktree", "add", "-q", "--detach", WH, "HEAD"], cwd=HERE, check=True)
 subprocess.run(["git", "worktree", "add", "-q", "--detach", WB, BASE], cwd=HERE, check=True)
+subprocess.run(["git", "worktree", "add", "-q", "--detach", WO, "1f03a11"], cwd=HERE, check=True)   # profile-polish's first version
 open(CLI, "w").write(f"""#!/bin/sh
 cmd="$2"; fn="$3"
 echo "$*" >> "{LOG}.args"
 if [ "$cmd" = "download" ]; then
-  SRC="{WB}"; grep -qx "$fn" "{STATE}" 2>/dev/null && SRC="{WH}"
+  SRC="{WB}"; [ "$OLD_LIVE" = "$fn" ] && SRC="{WO}"; grep -qx "$fn" "{STATE}" 2>/dev/null && SRC="{WH}"
   [ -f "$SRC/supabase/functions/$fn/index.ts" ] || exit 1
   mkdir -p "supabase/functions/$fn" "supabase/functions/_shared"
   cp "$SRC/supabase/functions/$fn/index.ts" "supabase/functions/$fn/index.ts"; cp "$SRC"/supabase/functions/_shared/*.ts supabase/functions/_shared/
@@ -81,12 +82,13 @@ ck("no profile is changed by the step (only the one new field)", not any(re.sear
 ck("...and no names, emails, keys or tokens in the report", not re.search(r"eyJ|sbp_|@", r), r)
 rc, r, d, _ = run(keep=True); ck("run again: helpers already have it, nothing redeployed, still DONE (the field is safe twice)", rc == 0 and r.count("already had it") == 2 and not d and "RESULT: DONE" in r, r)
 rc, r, d, _ = run(BAD_LIVE="caregiver-profile"); ck("a live helper that isn't the GitHub version: nothing is changed at all", rc != 0 and "isn't what this was built on" in r and not d and not any("alter table" in q for q in SEEN), r)
+rc, r, d, _ = run(OLD_LIVE="profile-polish"); ck("live profile-polish is an OLDER GitHub version (the first run's stop): accepted, named, replaced, DONE", rc == 0 and "older GitHub version (commit 1f03a11)" in r and d == ["caregiver-profile", "profile-polish"] and "RESULT: DONE" in r, r)
 rc, r, d, _ = run(mode={"sqlfail": True}); ck("if the field can't be added: stops, neither helper is deployed", rc != 0 and not d and "Nothing else was changed" in r, r)
 bad = dict(HS); bad["profile-polish"] = "0" * 64
 rc, r, d, _ = run(SB_SHAS=json.dumps(bad)); ck("a helper that isn't the reviewed one: stops before anything", rc != 0 and "not the reviewed build" in r and not d, r)
 rc, r, d, _ = run(SB_SQL_SHA="0" * 64); ck("a field file that isn't the reviewed one: stops before anything", rc != 0 and "not the reviewed build" in r and not d, r)
 H.shutdown()
-for w in (WH, WB): subprocess.run(["git", "worktree", "remove", "--force", w], cwd=HERE)
+for w in (WH, WB, WO): subprocess.run(["git", "worktree", "remove", "--force", w], cwd=HERE)
 shutil.rmtree(tmp, ignore_errors=True)
 for n, ok, note in res: print(("PASS " if ok else "FAIL ") + n + ("" if ok else "\n      " + note))
 print("ALL %d CHECKS PASS" % len(res) if all(x[1] for x in res) else "FAILED"); sys.exit(0 if all(x[1] for x in res) else 1)
