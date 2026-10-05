@@ -317,7 +317,7 @@ Deno.serve(async (req) => {
         'coverage-reply', { channel: 'sms', contactId: contactId || a.ghl_contact_id })
       if (ackTo) await sms(ackTo,
         (String(settings.coverage_msg_ack_interest || '') ||
-         `Thank you {first_name}! Nothing is set yet — we're meeting the client first and we'll follow up with you about the hours.`)
+         `Thank you {first_name}! Nothing is set yet. We're meeting the client first and we'll follow up with you about the hours.`)
         .replaceAll('{first_name}', a.name.split(' ')[0]), { sender: 'coverage-reply', address: a.phone || phone, who: a.name })
       await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
       return json({ ok: true, routed, case_id: c.id, caregiver: a.name, state: a.state })
@@ -345,7 +345,7 @@ Deno.serve(async (req) => {
       about: c.client || '',
       detail: 'Said yes so far: ' + yeses.map((x: any) =>
           `${x.name}${x.reply ? ` ("${String(x.reply).slice(0, 60)}")` : ''}`).join('; ')
-        + '. Nobody has been answered — pick on the board and confirm; the "you\'re confirmed" and "covered this time" texts go out when the case closes.',
+        + '. Nobody has been answered. Pick on the board and confirm; the "you\'re confirmed" and "covered this time" texts go out when the case closes.',
       domain: 'scheduling_coverage', status: 'open', urgency: 'high',
       created_at: stamp, due: new Date(Date.now() + 3600000).toISOString(),
       owner: '', owner_name: '', created_by: 'coverage-reply', opened_by: 'callout',
@@ -398,7 +398,7 @@ Deno.serve(async (req) => {
               bits.push(`the client is ${(w.length > 1 ? w.slice(0, -1).join(' ') : w.join(' '))}`)
             }
             if (!bits.length) return ''
-            return `\n\n💬 Cara's draft (paste it if it fits): "${bits.join(' — ')}. Can you take it? Reply YES or NO."`
+            return `\n\n💬 Cara's draft (paste it if it fits): "${bits.join(', ')}. Can you take it? Reply YES or NO."`
           } catch { return '' }
         })(),
       domain: 'scheduling_coverage', status: 'open', urgency: 'high',

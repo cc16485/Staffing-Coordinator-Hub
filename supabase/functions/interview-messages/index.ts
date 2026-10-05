@@ -197,7 +197,7 @@ Deno.serve(async (req) => {
       if (canText) await to.sms(
         `Hi ${first}, ${kind === 'confirm' ? 'your IN-PERSON interview with Caring Companions is booked for' : 'reminder: your IN-PERSON interview is'} ` +
         `${day} at ${time}. Please come to our office: ${place}. ${note} This is not a phone interview, so we will not call you. ` +
-        `Need to move or cancel it? ${manageUrl} — or call ${phone}.`)
+        `Need to move or cancel it? ${manageUrl} or call ${phone}.`)
       if (a.email) await to.email(
         kind === 'confirm' ? `Your in-person interview: ${day} at ${time}` : `Tomorrow: your in-person interview at ${time}`,
         shell(`<p>Hi ${first},</p><p>${opener}</p>${whereBlock()}` +
@@ -207,7 +207,7 @@ Deno.serve(async (req) => {
     }
 
     if (!b.confirmed_at) {
-      plan.confirm.push(`${first} — ${day} ${time}`)
+      plan.confirm.push(`${first}: ${day} ${time}`)
       if (!dry && await send('confirm')) {
         const stamp: Record<string, string> = { confirmed_at: new Date().toISOString() }
         /* Booked inside the day-before window: the confirmation IS the
@@ -218,7 +218,7 @@ Deno.serve(async (req) => {
         out.confirmed++
       }
     } else if (!b.reminded_day_at && untilHours <= 30 && untilHours > 2) {
-      plan.day.push(`${first} — ${day} ${time}`)
+      plan.day.push(`${first}: ${day} ${time}`)
       if (!dry && await send('day')) {
         await supabase.from('interview_bookings').update({ reminded_day_at: new Date().toISOString() }).eq('id', b.id)
         out.reminded_day++
@@ -228,7 +228,7 @@ Deno.serve(async (req) => {
        untilHours is already ≤ 0 — so the earliest interviews of the day,
        the easiest ones to forget, were the only ones never reminded. */
     } else if (!b.reminded_hour_at && untilHours <= 1.5 && untilHours > -0.25) {
-      plan.hour.push(`${first} — ${time}`)
+      plan.hour.push(`${first}: ${time}`)
       if (!dry && await send('hour')) {
         await supabase.from('interview_bookings').update({ reminded_hour_at: new Date().toISOString() }).eq('id', b.id)
         out.reminded_hour++
@@ -387,7 +387,7 @@ Deno.serve(async (req) => {
        cancelled" next to "see you Thursday" helps nobody, so the notice is
        swallowed and only the new booking's confirmation goes out. */
     if (booked.has(b.applicant_id)) {
-      plan.cancelled.push(`${a.first_name || 'someone'} — rebooked already, staying quiet`)
+      plan.cancelled.push(`${a.first_name || 'someone'}: rebooked already, staying quiet`)
       if (!dry) {
         await supabase.from('interview_bookings')
           .update({ cancel_notified_at: new Date().toISOString() }).eq('id', b.id)
@@ -399,7 +399,7 @@ Deno.serve(async (req) => {
     const day = fmtDay(when), time = fmtTime(when)
     const bookUrl = 'https://mo-care.com/apply?book=' + encodeURIComponent(String(b.applicant_id))
 
-    plan.cancelled.push(`${first} — ${day} ${time}${b.cancelled_by === 'applicant' ? ' (their call)' : ''}`)
+    plan.cancelled.push(`${first}: ${day} ${time}${b.cancelled_by === 'applicant' ? ' (their call)' : ''}`)
     if (dry) continue
     if (!withinOutreachHours()) continue        // not stamped, so it goes out after 8am
     if (!ghlToken || !ghlLocation) continue
@@ -407,10 +407,10 @@ Deno.serve(async (req) => {
     const to = applicantDoor(a, first)
     if (to) {
       if (a.phone && a.sms_consent === true) await to.sms(
-        `Hi ${first}, your interview with Caring Companions for ${day} at ${time} is cancelled — nothing more to do. ` +
+        `Hi ${first}, your interview with Caring Companions for ${day} at ${time} is cancelled, so there is nothing more to do. ` +
         `Want a different time? Pick one here: ${bookUrl} or call ${phone}.`)
       if (a.email) await to.email(`Your interview on ${day} is cancelled`,
-        shell(`<p>Hi ${first},</p><p>Your interview for <b>${day} at ${time}</b> is cancelled — nothing more to do on your side.</p>` +
+        shell(`<p>Hi ${first},</p><p>Your interview for <b>${day} at ${time}</b> is cancelled, so there is nothing more to do on your side.</p>` +
           `<p>If you would like a different time, <a href="${bookUrl}">pick one here</a> whenever suits you, or call us on ${phone}.</p>`))
     }
 

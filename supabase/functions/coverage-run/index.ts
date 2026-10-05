@@ -936,7 +936,7 @@ Deno.serve(async (req) => {
       const chiToday = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
       const clientShort = firstNamesOf(String(kase.client || '')) || 'a client'
       const when = [kase.shift_date ? friendlyDay(kase.shift_date) : '', span12(kase.shift_time)]
-        .filter(Boolean).join(' ') || 'as soon as possible — the office has details'
+        .filter(Boolean).join(' ') || 'as soon as possible (the office has details)'
       const careLine = String(kase.care_note || '').trim()
       const streetName = String(kase.client_street || '').trim()
         .replace(/^\d+[A-Za-z]?(?:-\w+)?\s+/, '').replace(/^\d+$/, '').trim()
@@ -1365,7 +1365,7 @@ Deno.serve(async (req) => {
                   + (planTxtA ? `<br>Call-in plan: <b>${planTxtA}</b>` : '')
                   + (planA.plan?.note ? `<br>Plan note: ${String(planA.plan.note).replace(/[<>&]/g, '')}` : '')
                   + `</p><p>` + (manualSelect
-                    ? `Cara has ranked the candidates — open the case and choose who to ask (worked-with-this-client first). Nothing is texted until you press send. `
+                    ? `Cara has ranked the candidates. Open the case and choose who to ask (worked-with-this-client first). Nothing is texted until you press send. `
                     : `The callout engine is texting qualified caregivers in waves. `)
                   + `Watch replies and confirm the fill on the board: <a href="https://cc.mo-care.com">cc.mo-care.com</a> (Scheduling, Coverage Help).</p>`
                   + (linkA ? `<p>Or from your phone, no sign-in: <a href="${linkA}">open this call-in</a> (your own link).</p>` : '') + `</div>` })
@@ -1814,7 +1814,7 @@ Deno.serve(async (req) => {
       const chiToday = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
       const relDay = c.shift_date ? friendlyDay(c.shift_date) : ''
       const when = [relDay, span12(c.shift_time)].filter(Boolean).join(' ')
-        || 'as soon as possible — the office has details'
+        || 'as soon as possible (the office has details)'
       /* {care}: a one-line client synopsis for caregivers who DON'T know the
          client (CareQB's pattern, requested by Samantha) — carried on the
          case (care_note, set/edited in the hub confirm step). Tier 1 knows
@@ -2205,7 +2205,7 @@ Deno.serve(async (req) => {
            agency template; then the built-in default. */
         const notChosenMsg = (String(c.not_chosen_msg || '')
           || String(settings.coverage_msg_not_chosen || '') ||
-          `Caring Companions: that shift got covered this time — thank you so much for offering, {first_name}! Next one is yours.`)
+          `Caring Companions: that shift got covered this time. Thank you so much for offering, {first_name}! Next one is yours.`)
         let told = 0, optedOut = 0
         const closureSends = [
           ...waiting.map((a: any) => ({ a, msg: courtesyMsg })),
