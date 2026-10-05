@@ -52,7 +52,7 @@ if [ "$cmd" = "download" ]; then
   [ -f "$SRC/supabase/functions/$fn/index.ts" ] || exit 1
   mkdir -p "supabase/functions/$fn" "supabase/functions/_shared"
   cp "$SRC/supabase/functions/$fn/index.ts" "supabase/functions/$fn/index.ts"; cp "$SRC"/supabase/functions/_shared/*.ts supabase/functions/_shared/
-  if [ "$BAD_LIVE" = "$fn" ]; then echo "// hand edit" >> "supabase/functions/$fn/index.ts"; fi
+  if [ "$BAD_LIVE" = "$fn" ] && [ "$SRC" != "{WH}" ]; then echo "// hand edit" >> "supabase/functions/$fn/index.ts"; fi
   exit 0
 fi
 if [ "$cmd" = "deploy" ]; then echo "$fn" >> "{LOG}"; echo "$fn" >> "{STATE}"; exit 0; fi
