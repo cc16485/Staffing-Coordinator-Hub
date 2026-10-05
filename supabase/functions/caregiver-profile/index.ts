@@ -27,6 +27,9 @@
 //                 fills in their whole profile themselves. Finds or starts their row (AxisCare id, then their older Hub
 //                 candidate id), marks it self_complete, and empties any [ask: ...] prompt so their boxes start blank.
 //                 A published profile is left alone. No AI.
+//     'enhance'   {profile_id, phone?, email?} -> 457 "Beef it up with AI": a fuller version of the three sections from
+//                 THEIR words plus their application and interview on file. Never saved here: the office compares it
+//                 section by section and chooses. Never invents; keeps their voice.
 //   PUBLIC actions need only the personal token (caregiver_profiles.upload_token, never the public card id):
 //     'mine'       {t}                -> what their page shows
 //     'upload_url' {t, kind, ext}     -> a one-time signed upload link for <id>/<kind>-<time>.<ext>
@@ -172,6 +175,37 @@ Rules:
 
 Reply with JSON only, nothing before or after it: {"about": "...", "experience": "...", "why": "..."}`
 
+/* 457 (Samantha, 2026-10-05: "I wanted ai to help beef up the profiles a bit"; office panel; their words + application). */
+export const ENHANCE_SYSTEM = `You help Caring Companions, an in-home senior care agency in Springfield, Missouri, make a caregiver's profile a little fuller. An older adult and their family read it before a visit, to feel comfortable and remember who is coming.
+
+You get the caregiver's own three sections (what they wrote, or what the office wrote with them) and facts from their job application and interview, if any. Return the same three sections, each a little fuller and warmer:
+- "about": what they are like as a person and to have around the house
+- "experience": their experience caring for others
+- "why": why they enjoy caregiving
+
+Rules, in order of importance:
+1. Keep their voice. If a section is written as "I ...", keep it in the first person. If it is about them by first name, keep that. Never use a last name.
+2. Keep every specific detail they gave, in their plain words. "Grandma" stays "grandma". Do not make it formal or salesy.
+3. Add ONLY from the facts given: their kinds of care, years, skills and what they said in the interview. Never invent a job, a number, a skill, a hobby, a feeling or a story.
+4. Each section 3 to 5 short, warm sentences in simple everyday words. If there is truly nothing more to say, keep it as it is.
+5. Never mention anything private: age, health or disability (theirs or anyone's), background checks, drug screens, driving record, pay, work papers or immigration, interview scores, smoking or vaping, or the name of any employer, client or family member.
+6. Never mention the application, the interview, or this office. Never use an em dash.
+
+Reply with JSON only: {"about": "...", "experience": "...", "why": "..."}`
+/* The suggestion, made safe: no em dashes, no last name, capped, and any section that grew a number nobody gave goes back
+   to their own words (the model made something up). */
+// deno-lint-ignore no-explicit-any
+export function sanitiseEnhance(raw: unknown, theirs: { about: string; experience: string; why: string }, factsText: string, first = '', last = '') {
+  const d = sanitiseDraft(raw, first, last)
+  const allowed = new Set([...(theirs.about + ' ' + theirs.experience + ' ' + theirs.why + ' ' + factsText).matchAll(/\d+/g)].map((m) => m[0]))
+  const fix = (v: string, own: string) => {
+    if (!v || hasPrompt(v)) return own
+    if ([...v.matchAll(/\d+/g)].some((m) => !allowed.has(m[0]))) return own
+    return v
+  }
+  return { about: fix(d.about, theirs.about), experience: fix(d.experience, theirs.experience), why: fix(d.why, theirs.why) }
+}
+
 const SKILL_NAMES: Record<string, string> = { dementia: "Dementia and Alzheimer's care", incontinence: 'Incontinence care', transfers: 'Helping people move and transfer safely', hoyer: 'Hoyer lift', personal_care: 'Personal care' }
 const LEVEL: Record<string, string> = { some: 'some experience', lots: 'very experienced' }
 
@@ -239,6 +273,51 @@ export function samePerson(app: any, who: { first?: string; phone?: string; emai
   const f = (s: unknown) => String(s ?? '').trim().toLowerCase().slice(0, 3)
   if (who.first && f(app.first_name) && f(app.first_name) === f(who.first)) return true
   return !who.first && !who.phone && !who.email
+}
+
+/* Their application and interview answers: by applicant id, candidate id, then references / paperwork, then email, then
+   phone (as the Hub does). Shared by the draft (new hires) and Beef it up (457). */
+// deno-lint-ignore no-explicit-any
+async function findApplication(db: any, w: { applicant_id?: unknown; cand?: string; intake_id?: unknown; email?: string; phone?: string; first?: string }) {
+  // deno-lint-ignore no-explicit-any
+  let app: any = null
+  const cand = String(w.cand || ''), email = String(w.email || ''), phone = String(w.phone || '')
+  const whoIs = { first: w.first, phone, email }
+  // deno-lint-ignore no-explicit-any
+  const take = (list: any[] | null | undefined) => { const hit = (list ?? []).find((r) => samePerson(r, whoIs)); if (hit) app = hit }
+  // deno-lint-ignore no-explicit-any
+  const byIds = async (ids: any[]) => { const u = [...new Set(ids.filter((x) => x && UUID.test(String(x))))]; if (u.length) take((await db.from('job_applicants').select(APP_COLS).in('id', u)).data) }
+  try {
+    if (w.applicant_id) await byIds([w.applicant_id])
+    if (!app && cand && /^\d{1,12}$/.test(cand)) {
+      take((await db.from('job_applicants').select(APP_COLS).eq('candidate_id', Number(cand)).order('created_at', { ascending: false }).limit(5)).data)
+      // deno-lint-ignore no-explicit-any
+      if (!app) await byIds(((await db.from('reference_requests').select('applicant_id').eq('candidate_id', Number(cand)).limit(8)).data ?? []).map((r: any) => r.applicant_id))
+      // deno-lint-ignore no-explicit-any
+      if (!app) await byIds(((await db.from('hire_intake').select('applicant_id').eq('candidate_id', Number(cand)).limit(5)).data ?? []).map((r: any) => r.applicant_id))
+    }
+    if (!app && UUID.test(String(w.intake_id || '')))
+      // deno-lint-ignore no-explicit-any
+      await byIds(((await db.from('hire_intake').select('applicant_id').eq('id', String(w.intake_id)).limit(1)).data ?? []).map((r: any) => r.applicant_id))
+    if (!app && email) take((await db.from('job_applicants').select(APP_COLS).ilike('email', email).order('created_at', { ascending: false }).limit(5)).data)
+    const d10 = phone.replace(/\D/g, '').slice(-10)
+    if (!app && d10.length === 10) {
+      const { data } = await db.from('job_applicants').select(APP_COLS).ilike('phone', '%' + d10.slice(-4)).order('created_at', { ascending: false }).limit(25)
+      // deno-lint-ignore no-explicit-any
+      take((data ?? []).filter((r: any) => String(r.phone ?? '').replace(/\D/g, '').slice(-10) === d10))
+    }
+  } catch { /* no application on file */ }
+  /* the interview questions they answered, by id, so the AI sees the question and their answer together */
+  const qs: Record<string, string> = {}
+  const qids = Object.keys(app?.post_interview?.script || {}).filter((k) => UUID.test(k))
+  if (qids.length) {
+    try {
+      const { data } = await db.from('interview_questions').select('id, question, kind').in('id', qids)
+      // deno-lint-ignore no-explicit-any
+      for (const q of data ?? []) if ((q as any).kind !== 'yesno') qs[(q as any).id] = clean((q as any).question, 200)
+    } catch { /* answers without their questions are left out */ }
+  }
+  return { app, qs }
 }
 
 const APP_COLS = 'id, first_name, last_name, phone, email, position, posting_title, experience, experience_years, experience_kinds, work_history, post_interview, created_at'
@@ -348,45 +427,7 @@ Deno.serve(async (req) => {
     if (p?.published) return json({ error: 'Their profile is published. Unpublish it first if you want to redo the draft.' }, 409)
     if (p && p.drafted_at && !b.redo) return json({ ok: true, reused: true, profile: p })
 
-    /* their application: by candidate id, then references / paperwork, then email, then phone (as the Hub does) */
-    // deno-lint-ignore no-explicit-any
-    let app: any = null
-    const whoIs = { first, phone, email }
-    // deno-lint-ignore no-explicit-any
-    const take = (list: any[] | null | undefined) => { const hit = (list ?? []).find((r) => samePerson(r, whoIs)); if (hit) app = hit }
-    // deno-lint-ignore no-explicit-any
-    const byIds = async (ids: any[]) => { const u = [...new Set(ids.filter((x) => x && UUID.test(String(x))))]; if (u.length) take((await db.from('job_applicants').select(APP_COLS).in('id', u)).data) }
-    try {
-      if (p?.applicant_id) await byIds([p.applicant_id])
-      if (!app && cand && /^\d{1,12}$/.test(cand)) {
-        take((await db.from('job_applicants').select(APP_COLS).eq('candidate_id', Number(cand)).order('created_at', { ascending: false }).limit(5)).data)
-        // deno-lint-ignore no-explicit-any
-        if (!app) await byIds(((await db.from('reference_requests').select('applicant_id').eq('candidate_id', Number(cand)).limit(8)).data ?? []).map((r: any) => r.applicant_id))
-        // deno-lint-ignore no-explicit-any
-        if (!app) await byIds(((await db.from('hire_intake').select('applicant_id').eq('candidate_id', Number(cand)).limit(5)).data ?? []).map((r: any) => r.applicant_id))
-      }
-      if (!app && UUID.test(String(b.intake_id || '')))
-        // deno-lint-ignore no-explicit-any
-        await byIds(((await db.from('hire_intake').select('applicant_id').eq('id', String(b.intake_id)).limit(1)).data ?? []).map((r: any) => r.applicant_id))
-      if (!app && email) take((await db.from('job_applicants').select(APP_COLS).ilike('email', email).order('created_at', { ascending: false }).limit(5)).data)
-      const d10 = phone.replace(/\D/g, '').slice(-10)
-      if (!app && d10.length === 10) {
-        const { data } = await db.from('job_applicants').select(APP_COLS).ilike('phone', '%' + d10.slice(-4)).order('created_at', { ascending: false }).limit(25)
-        // deno-lint-ignore no-explicit-any
-        take((data ?? []).filter((r: any) => String(r.phone ?? '').replace(/\D/g, '').slice(-10) === d10))
-      }
-    } catch { /* no application: the draft is all prompts */ }
-
-    /* the interview questions they answered, by id, so the AI sees the question and their answer together */
-    const qs: Record<string, string> = {}
-    const qids = Object.keys(app?.post_interview?.script || {}).filter((k) => UUID.test(k))
-    if (qids.length) {
-      try {
-        const { data } = await db.from('interview_questions').select('id, question, kind').in('id', qids)
-        // deno-lint-ignore no-explicit-any
-        for (const q of data ?? []) if ((q as any).kind !== 'yesno') qs[(q as any).id] = clean((q as any).question, 200)
-      } catch { /* answers without their questions are left out */ }
-    }
+    const { app, qs } = await findApplication(db, { applicant_id: p?.applicant_id, cand, intake_id: b.intake_id, email, phone, first })
     const facts = applicationFacts(first, app, qs)
     let draft = { about: PROMPTS.about, experience: PROMPTS.experience, why: PROMPTS.why }, aiNote = ''
     const key = Deno.env.get('ANTHROPIC_API_KEY')
@@ -455,6 +496,32 @@ Deno.serve(async (req) => {
   if (!UUID.test(id)) return json({ error: 'Which profile?' }, 400)
   const { data: p } = await db.from('caregiver_profiles').select(PROFILE_COLS + ', upload_token').eq('id', id).maybeSingle()
   if (!p) return json({ error: 'That profile was not found.' }, 404)
+
+  if (action === 'enhance') {
+    const theirs = { about: String(p.about ?? '').trim(), experience: String(p.experience ?? '').trim(), why: String(p.why_this_work ?? '').trim() }
+    if (!theirs.about && !theirs.experience && !theirs.why) return json({ error: 'There are no words yet to build on. They fill in their profile first.' }, 409)
+    const first = p.preferred_name || p.first_name || ''
+    const { app, qs } = await findApplication(db, { applicant_id: p.applicant_id, cand: p.candidate_id || '', email: clean(b.email, 120).toLowerCase(), phone: clean(b.phone, 30), first })
+    const facts = applicationFacts(first, app, qs)
+    const key = Deno.env.get('ANTHROPIC_API_KEY')
+    if (!key) return json({ error: 'The AI is not switched on.' }, 503)
+    const strip = (t: string) => t.replace(/\[[^\]]*\]/g, '').trim()
+    try {
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({ model: AI_MODEL, max_tokens: 1200, temperature: 0.4, system: ENHANCE_SYSTEM,
+          messages: [{ role: 'user', content: 'Their profile now:\n' + JSON.stringify({ about: strip(theirs.about), experience: strip(theirs.experience), why: strip(theirs.why) }, null, 2)
+            + '\n\nFacts from their application and interview:\n' + JSON.stringify(facts, null, 2) }] }),
+      })
+      if (!r.ok) throw new Error('AI ' + r.status)
+      const j = await r.json()
+      const suggestion = sanitiseEnhance(String(j?.content?.[0]?.text ?? ''), theirs, JSON.stringify(facts), first, p.last_name || '')
+      return json({ ok: true, suggestion, application_found: !!app })
+    } catch (e) {
+      console.error('enhance failed', String((e as Error)?.message ?? e))
+      return json({ error: 'The AI could not help just now. Try again in a minute.' }, 502)
+    }
+  }
 
   if (action === 'send_link') {
     if (p.status === 'withdrawn') return json({ error: 'This profile was withdrawn.' }, 409)
