@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 # Desktop 351 · EMAIL: mo-care.com proves its email, and Hub sign-in emails go out properly (E1 check + E2 + E3).
 # Samantha approved 2026-09-29 ("yes to all": Resend with a send-only key, noreply@mo-care.com, she adds the DNS
-# records in Cloudflare, DMARC watch-only for two weeks).
+# records, DMARC watch-only for two weeks). 2026-10-04: the records live in GoHighLevel (Settings, Domains & URL Redirects,
+# DNS records: mo-care.com was bought through GoHighLevel), and Resend now gives CNAMEs for send/rsend (forge.rmta.net)
+# instead of an MX and a TXT; both the newer and the older Resend setups are accepted.
 # Part 1 (read only): public DNS lookups (Cloudflare's resolver) confirm the records she added: SPF for Google, Google's
-#   DKIM, DMARC in watch-only mode, and Resend's records (MX + SPF on send.mo-care.com, resend._domainkey). If any is
+#   DKIM, DMARC in watch-only mode, and Resend's records (resend._domainkey, plus send/rsend CNAMEs, or the older MX +
+#   SPF on send.mo-care.com). If any is
 #   missing, it stops before changing anything and says which.
 # Part 2: she pastes the Resend send-only key into the prompt (never printed or saved to disk). Supabase's sign-in
 #   email setting is switched to Resend (smtp.resend.com, as "Caring Companions <noreply@mo-care.com>"), the hourly
@@ -51,8 +54,12 @@ checks = [
     ("DKIM: Google's signature", any(t.startswith("v=DKIM1") and "p=" in t for t in dns("google._domainkey." + DOMAIN, "TXT")), "the TXT from Google Admin at google._domainkey"),
     ("DMARC: watch-only, reports to you", any(t.startswith("v=DMARC1") and re.search(r"p=none", t) for t in dns("_dmarc." + DOMAIN, "TXT")), "TXT at _dmarc starting v=DMARC1; p=none"),
     ("Resend: DKIM", any("p=" in t for t in dns("resend._domainkey." + DOMAIN, "TXT")), "the resend._domainkey TXT from Resend"),
-    ("Resend: bounce address (MX on send.mo-care.com)", any("amazonses.com" in m or "resend" in m for m in dns("send." + DOMAIN, "MX")), "the MX record on send from Resend"),
-    ("Resend: SPF on send.mo-care.com", any(t.startswith("v=spf1") and "amazonses.com" in t for t in dns("send." + DOMAIN, "TXT")), "the TXT on send from Resend"),
+    ("Resend: bounce address (send.mo-care.com)", any(re.search(r"rmta\.net\.?$|resend", c) for c in dns("send." + DOMAIN, "CNAME"))
+        or any("amazonses.com" in m or "resend" in m for m in dns("send." + DOMAIN, "MX")), "the send record from Resend (a CNAME, or an MX on older setups)"),
+    ("Resend: sending permission (send.mo-care.com)", any(re.search(r"rmta\.net\.?$|resend", c) for c in dns("send." + DOMAIN, "CNAME"))
+        or any(t.startswith("v=spf1") and "amazonses.com" in t for t in dns("send." + DOMAIN, "TXT")), "the send record from Resend"),
+    ("Resend: rsend.mo-care.com (newer Resend setups)", any(re.search(r"rmta\.net\.?$|resend", c) for c in dns("rsend." + DOMAIN, "CNAME"))
+        or not any(re.search(r"rmta\.net", c) for c in dns("send." + DOMAIN, "CNAME")), "the rsend CNAME from Resend"),
 ]
 missing = []
 for label, ok, need in checks:
@@ -60,7 +67,7 @@ for label, ok, need in checks:
     if not ok: missing.append(label)
 if dns(DOMAIN, "MX") and not any("google" in m for m in dns(DOMAIN, "MX")): bad("mo-care.com's mail servers aren't Google any more (unexpected). Nothing was changed.")
 if missing or fails:
-    say(); say("RESULT: NOT YET · nothing was changed. Add the missing records in Cloudflare (DNS can take a few minutes to show), then run 351 again."); done(3)
+    say(); say("RESULT: NOT YET · nothing was changed. Add the missing records in GoHighLevel (Settings, Domains & URL Redirects, DNS records; they can take a few minutes to show), then run 351 again."); done(3)
 s, b = http("GET", f"{API}/v1/projects/{REF}/config/auth", headers=MG())
 try: cfg = json.loads(b) if s == 200 else None
 except Exception: cfg = None
