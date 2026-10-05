@@ -155,7 +155,7 @@ say("  ✓ the importer, the profile helper and the new table are the reviewed b
 ST = {}
 for fn in FNS:
     st, vj = state(HUB_REF, HUB, HUB_BASE, fn, pinned); ST[fn] = (st, vj)
-    okst = ("new", "this") if fn == "step1-import" else ("base", "this", "older")
+    okst = ("new", "base", "this") if fn == "step1-import" else ("base", "this", "older")
     if st not in okst: bad(f"the live {fn} isn't what this was built on ({st}). Nothing was changed. Tell Claude."); done(3)
     say(f"  ✓ {fn}: " + {"new": "is new", "base": "live matches GitHub", "this": "already has this build (an earlier run)", "older": f"live is an older GitHub version (commit {OLDER.get(fn)})"}[st])
 NODE = shutil.which("node") or next((p for p in ("/opt/homebrew/bin/node", "/usr/local/bin/node") if os.path.exists(p)), "")
@@ -201,18 +201,21 @@ def batch(mode, offset):
     except Exception: j = {}
     return s, j
 def show(p):
-    f = p.get("found") or {}
-    return f"{p.get('who')}: {p.get('state')}" + (f" (their words {f.get('own_words',0)}/5 · jobs {f.get('jobs',0)} · matching {f.get('matching',0)} · availability {f.get('availability',0)} · favorites {f.get('favorites',0)})" if f else "")
+    f = p.get("found") or {}; sh = p.get("shape") or {}
+    return (f"{p.get('who')}: {p.get('state')}" + (f" (their words {f.get('own_words',0)}/5 · jobs {f.get('jobs',0)} · matching {f.get('matching',0)} · availability {f.get('availability',0)} · favorites {f.get('favorites',0)})" if f else "")
+            + (f" [reply: {sh.get('blocks')} · {sh.get('chars')} characters · {sh.get('out_tokens')} tokens · stopped: {sh.get('stop')} · JSON: {'yes' if sh.get('parsed') else 'no'} · keys: {sh.get('keys') or '-'}]" if sh else ""))
 say("  Practice read (nothing saved; counts only):")
 off, seen, tries = 0, 0, 0
-while off is not None and seen < 2 and tries < 12:
+tried = 0
+while off is not None and tried < 2 and tries < 14:
     s, j = batch("practice", off); tries += 1
     if s != 200 or not j.get("ok"): bad(f"the practice read didn't answer ({s}): {str(j.get('error', ''))[:160]}"); break
     for p in j.get("people", []):
         say("    " + show(p))
-        if p.get("state") == "would save": seen += 1
+        if p.get("shape"): tried += 1
+        if p.get("state") == "would save": seen += 1      # 458b: only a read that found details counts (the first run counted empty ones)
     off = j.get("next")
-if fails or not seen: say("  STOP before saving anything. Tell Claude." if fails else "  · no Step 1 PDF was read in the practice, so nothing will be saved. Tell Claude."); done(8)
+if fails or not seen: say("  STOP before saving anything. Tell Claude." if fails else "  ✗ the practice read found no details in the PDFs it read, so nothing will be saved. Tell Claude (the [reply: ...] lines say why)."); done(8)
 if ASK:
     try: a = input("  The practice read worked. Read and save every caregiver's Step 1 application now (it takes a while)? Type yes and press Enter: ").strip().lower()
     except EOFError: a = ""
@@ -224,6 +227,7 @@ while off is not None:
     if s != 200 or not j.get("ok"): bad(f"stopped at caregiver {off + 1} ({s}): {str(j.get('error', ''))[:160]}. Run this again to carry on; done ones are skipped."); break
     for p in j.get("people", []):
         st = str(p.get("state", "")); key = "saved" if st == "saved" else "already read" if st == "already read" else st.split(" (")[0]
+        if st.startswith("read, but nothing came out"): say("    " + show(p))
         tally[key] = tally.get(key, 0) + 1
         if st == "saved" or st.startswith(("failed", "not saved", "the AI could not", "not read")): say("    " + show(p))
     off = j.get("next")

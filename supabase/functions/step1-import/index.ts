@@ -63,7 +63,7 @@ const pick = (v: unknown, allowed: string[]) => [...new Set((Array.isArray(v) ? 
 const dayMap = (v: Any) => { const o: Record<string, string> = {}; for (const d of DAYS) { const t = txt(v?.[d], 40); if (t && !/\d{3,}/.test(t.replace(/\d{1,2}:\d{2}/g, ''))) o[d] = t } return o }
 export function cleanFacts(raw: unknown): Any {
   let o: Any = raw
-  if (typeof raw === 'string') { const s = raw.indexOf('{'), e = raw.lastIndexOf('}'); try { o = s >= 0 && e > s ? JSON.parse(raw.slice(s, e + 1)) : {} } catch { o = {} } }
+  if (typeof raw === 'string') { const t = raw.replace(/```(?:json)?/gi, ''); const s = t.indexOf('{'), e = t.lastIndexOf('}'); try { o = s >= 0 && e > s ? JSON.parse(t.slice(s, e + 1)) : {} } catch { o = {} } }
   o = o && typeof o === 'object' ? o : {}
   const w = o.own_words || {}, x = o.experience || {}, m = o.matching || {}, a = o.availability || {}, f = o.favorites || {}
   const out: Any = {
@@ -80,6 +80,17 @@ export function cleanFacts(raw: unknown): Any {
   }
   return out
 }
+/* 458b: does the reply hold a JSON object at all (yes/no only) */
+export function parsedOk(raw: string): boolean {
+  const t = String(raw || '').replace(/```(?:json)?/gi, ''); const s = t.indexOf('{'), e = t.lastIndexOf('}')
+  try { return s >= 0 && e > s && typeof JSON.parse(t.slice(s, e + 1)) === 'object' } catch { return false }
+}
+/* the reply's top-level key NAMES only (to see a shape mismatch), never values */
+export function topKeys(raw: string): string {
+  const t = String(raw || '').replace(/```(?:json)?/gi, ''); const s = t.indexOf('{'), e = t.lastIndexOf('}')
+  try { const o = JSON.parse(t.slice(s, e + 1)); return Object.keys(o || {}).slice(0, 8).map((k) => k.replace(/[^\w ]/g, '').slice(0, 24)).join(',') } catch { return '' }
+}
+export const total = (g: Any) => Object.values(g || {}).reduce((a: number, v: Any) => a + (Number(v) || 0), 0)
 /* how full each group is (counts only, for the report) */
 export function groupsFilled(fx: Any) {
   const n = (o: Any) => Object.values(o || {}).filter((v) => v != null && v !== '' && !(Array.isArray(v) && !v.length) && !(typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length)).length
@@ -112,8 +123,9 @@ Deno.serve(async (req) => {
   const { data } = await db.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
   const cgs: Any[] = (Array.isArray(data?.data) ? data!.data : []).filter((g: Any) => g && g.id != null)
   const slice = cgs.slice(offset, offset + limit)
-  const { data: have } = await db.from('caregiver_application_facts').select('hub_caregiver_id, ghl_file_key')
-  const done = new Map((have ?? []).map((r: Any) => [String(r.hub_caregiver_id), String(r.ghl_file_key || '')]))
+  /* 458b: a record whose details came back empty (the first run) is NOT done: read it again */
+  const { data: have } = await db.from('caregiver_application_facts').select('hub_caregiver_id, ghl_file_key, facts')
+  const done = new Map((have ?? []).filter((r: Any) => total(groupsFilled(cleanFacts(r.facts || {}))) > 0).map((r: Any) => [String(r.hub_caregiver_id), String(r.ghl_file_key || '')]))
   const rows: Any[] = []
   for (const g of slice) {
     const row: Any = { who: short(g.first, g.last) }; rows.push(row)
@@ -139,12 +151,18 @@ Deno.serve(async (req) => {
       let b64 = ''; for (let i = 0; i < buf.length; i += 0x8000) b64 += String.fromCharCode(...buf.subarray(i, i + 0x8000))
       const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST',
         headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: MODEL, max_tokens: 4000, system: EXTRACT_SYSTEM,
+        body: JSON.stringify({ model: MODEL, max_tokens: 12000, system: EXTRACT_SYSTEM,
           messages: [{ role: 'user', content: [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: btoa(b64) } },
             { type: 'text', text: 'Copy out only the approved details, as JSON.' }] }] }) })
       if (!r.ok) { const e: Any = await r.json().catch(() => ({})); row.state = `the AI could not read it (${r.status}: ${String(e?.error?.message || '').replace(/\d{3,}/g, '#').slice(0, 120)})`; continue }
-      const fx = cleanFacts(String((await r.json())?.content?.[0]?.text ?? ''))
+      /* 458b: the first run read content[0] only. Take every text block, and say the answer's SHAPE (never its words). */
+      const rj: Any = await r.json()
+      const blocks: Any[] = Array.isArray(rj?.content) ? rj.content : []
+      const text = blocks.filter((x) => x?.type === 'text').map((x) => String(x.text || '')).join('\n')
+      const fx = cleanFacts(text)
       row.found = groupsFilled(fx)
+      row.shape = { stop: String(rj?.stop_reason || ''), blocks: blocks.map((x) => String(x?.type || '?')).join('+'), chars: text.length, parsed: parsedOk(text), keys: topKeys(text), out_tokens: Number(rj?.usage?.output_tokens) || 0 }
+      if (total(row.found) === 0) { row.state = 'read, but nothing came out (see shape)'; continue }
       if (!live) { row.state = 'would save'; continue }
       const { error } = await db.from('caregiver_application_facts').upsert({ hub_caregiver_id: String(g.id), axiscare_id: g.axiscare_id ? String(g.axiscare_id) : null,
         candidate_id: g.candidate_id != null && g.candidate_id !== '' ? String(g.candidate_id) : null, ghl_contact_id: cid, ghl_file_key: f.key,
