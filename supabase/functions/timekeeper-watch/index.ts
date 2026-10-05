@@ -87,6 +87,7 @@ import { lateHold, liveNotices, holdOptsOf, holdUntil, callLine } from '../_shar
 import { visitMs } from '../_shared/held-shift.ts'
 import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 import { tkShiftEnded } from '../_shared/loops.ts'
+import { ESCALATE, onDuty } from '../_shared/duty.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { officeQuiet, quietWords, afterHoursAllowed } from '../_shared/quiet-hours.ts'
 import { makePrefill, withPrefillLink, axisHm } from '../_shared/evv-prefill.ts'
@@ -272,6 +273,40 @@ Deno.serve(async (req) => {
   const admins = (Array.isArray(settings.coverage_alert_admins) && settings.coverage_alert_admins.length)
     ? settings.coverage_alert_admins : ADMIN_DEFAULT
   const adminList = await adminRecipients(sb, settings)
+  /* Today cockpit Phase 3 (2026-10-05): with ops_settings.routing_live, the missed clock-in texts go to whoever holds
+     the STAFFING seat now (the duty schedule), and after 15 minutes nobody has taken it, also to whoever holds the
+     OWNER ESCALATION seat, daytime only. Nobody on Staffing with a phone on file = everyone on the list, as before
+     (never silent). Off = the whole admin list, exactly as before. */
+  const routingLive = settings.routing_live === true && !forceDry
+  // deno-lint-ignore no-explicit-any
+  let recipientsFor = (_l: any) => adminList
+  // deno-lint-ignore no-explicit-any
+  const routeInfo: Record<string, any> = { live: routingLive }
+  if (routingLive) {
+    const rd = async (k: string) => { const { data } = await sb.from('app_data').select('data').eq('key', k).maybeSingle(); return Array.isArray(data?.data) ? data!.data : [] }
+    const [dw, pos, cs, oi] = await Promise.all([rd('duty_windows'), rd('positions'), rd('coordinator_staff'), rd('ops_items')])
+    const seats = onDuty(dw, settings, new Date(), pos)
+    // deno-lint-ignore no-explicit-any
+    const adminFor = (email: string) => { const p = cs.find((x: any) => String(x?.email || '').trim().toLowerCase() === email)
+      const name = String(p?.name || email.split('@')[0]); return { email, name, first: name.split(/\s+/)[0], phone: normalisePhone(p?.phone) || null } }
+    // deno-lint-ignore no-explicit-any
+    const opsById = new Map(oi.map((x: any) => [String(x?.id), x]))
+    const onStaffing = seats.staffing.person ? adminFor(seats.staffing.person) : null
+    routeInfo.staffing = onStaffing ? { first: onStaffing.first, has_phone: !!onStaffing.phone, from: seats.staffing.source } : null
+    routeInfo.escalation_first = seats.escalation.person ? adminFor(seats.escalation.person).first : null
+    // deno-lint-ignore no-explicit-any
+    recipientsFor = (l: any) => {
+      if (!onStaffing?.phone) return adminList
+      const list = [onStaffing]
+      const it = opsById.get(`ops_tk_${l.id}`)
+      const mins = (Date.now() - Date.parse(String(l.office_alerted_at || nowIso))) / 60000
+      const e = seats.escalation.person
+      if (e && e !== onStaffing.email && !it?.claimed_by && mins >= ESCALATE.urgentAfterMin && !quietNow) {
+        const ea = adminFor(e); if (ea.phone) list.push(ea)
+      }
+      return list
+    }
+  }
   const LINK_SECRET = Deno.env.get('HUB_JOB_SECRET') || ''
   /* An open coverage case for this shift means someone already knows (she called off, or the office opened one):
      no "we don't see a clock-in" text and no admin alarm for it. Matched by the AxisCare visit, or by client + date
@@ -298,7 +333,9 @@ Deno.serve(async (req) => {
     const counts: Record<string, number> | undefined = l.admin_loop.texts_to
     const exp = linkExpiry(String(l.shift_date))
     let n = 0, skipped = 0, capHere = 0
-    for (const a of adminList) {
+    /* a final "no more reminders" text goes to everyone who was texted about it */
+    const recips = final ? [...new Map([...adminList, ...recipientsFor(l)].map((a) => [a.email, a])).values()] : recipientsFor(l)
+    for (const a of recips) {
       const ak = await adminKey(a.email)
       if (onlyNotSnoozed && l.admin_loop.snooze?.[ak] && Date.parse(l.admin_loop.snooze[ak]) > Date.now()) { skipped++; continue }
       if (!a.phone) { skipped++; continue }
@@ -312,7 +349,7 @@ Deno.serve(async (req) => {
     }
     capped += capHere
     /* every admin has had their last text about it: nothing more is recorded (it waits in Needs Attention) */
-    if (!final && capHere && capHere === adminList.filter((a) => a.phone).length) { l.admin_loop.capped_at = l.admin_loop.capped_at || nowIso; return 0 }
+    if (!final && capHere && capHere === recips.filter((a) => a.phone).length) { l.admin_loop.capped_at = l.admin_loop.capped_at || nowIso; return 0 }
     l.admin_loop.sends = [...(l.admin_loop.sends || []), { at: nowIso, stage, admins: n, skipped, practice: !loopLive }].slice(-60)
     return n
   }
@@ -858,6 +895,7 @@ Deno.serve(async (req) => {
   } catch { /* the chase must never break the timekeeper */ }
 
   const summary = {
+    routing: routeInfo,
     evv_fix: { live: loopsLive && watchLive, became_evv_fix: evvFix },
     mode: !watchLive ? 'DRY RUN' : textLive ? 'LIVE (watch + text)' : 'LIVE (watch only — texting off)',
     day, fetch_error: fetchError,

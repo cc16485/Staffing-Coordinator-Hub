@@ -2056,6 +2056,13 @@ Deno.serve(async (req) => {
         points_at: 'coverage_case', updated_at: nowIso(),
         created_at: c.opened_at || nowIso(),
       }
+      /* Phase 3 (2026-10-05): this card is rewritten every run. Keep what PEOPLE (and routing) did to it: who owns it,
+         who took it, its history, and any escalation. Before this, Take it on an Uncovered shift card was undone within
+         3 minutes. */
+      const prevItem = items.find((x: any) => String(x?.id) === itemId)
+      if (prevItem) for (const k of ['owner', 'owner_name', 'owner_history', 'claimed_by', 'claimed_by_name', 'claimed_at', 'started_at',
+        'history', 'routed', 'escalation', 'sub_state', 'waiting_on', 'check_back', 'help_from', 'help_asked_at', 'domain_set_by'])
+        if (prevItem[k] !== undefined && prevItem[k] !== null && prevItem[k] !== '') (item as any)[k] = prevItem[k]
       await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item })
       if (!haveItem.has(itemId)) stats.prompts_created++
     }
