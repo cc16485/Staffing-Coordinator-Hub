@@ -83,6 +83,16 @@ ck("...and no names, emails, keys or tokens in the report", not re.search(r"eyJ|
 rc, r, d, _ = run(keep=True); ck("run again: helpers already have it, nothing redeployed, still DONE (the field is safe twice)", rc == 0 and r.count("already had it") == 2 and not d and "RESULT: DONE" in r, r)
 rc, r, d, _ = run(BAD_LIVE="caregiver-profile"); ck("a live helper that isn't the GitHub version: nothing is changed at all", rc != 0 and "isn't what this was built on" in r and not d and not any("alter table" in q for q in SEEN), r)
 rc, r, d, _ = run(OLD_LIVE="profile-polish"); ck("live profile-polish is an OLDER GitHub version (the first run's stop): accepted, named, replaced, DONE", rc == 0 and "older GitHub version (commit 1f03a11)" in r and d == ["caregiver-profile", "profile-polish"] and "RESULT: DONE" in r, r)
+# 452b: a hand-edited live copy is accepted ONLY with its exact fingerprint
+import tempfile as _tf
+def handsha(fn):
+    tdir = _tf.mkdtemp(); os.makedirs(os.path.join(tdir, "supabase"), exist_ok=True)
+    subprocess.run([CLI, "functions", "download", fn], cwd=tdir, env=dict(os.environ, BAD_LIVE=fn), capture_output=True)
+    return sha(os.path.join(tdir, "supabase/functions", fn, "index.ts"))
+FP = handsha("profile-polish")[:12]
+rc, r, d, _ = run(BAD_LIVE="profile-polish", SB_LIVE_OK=json.dumps({"profile-polish": FP})); ck("the exact copy she looked at (by fingerprint): accepted, named, replaced, DONE", rc == 0 and f"you looked at in 452b (fingerprint {FP}" in r and d == ["caregiver-profile", "profile-polish"] and "RESULT: DONE" in r, r)
+rc, r, d, _ = run(BAD_LIVE="profile-polish", SB_LIVE_OK=json.dumps({"profile-polish": "0" * 12})); ck("a different unknown copy: still stops, nothing changed", rc != 0 and "isn't what this was built on" in r and not d, r)
+rc, r, d, _ = run(BAD_LIVE="caregiver-profile", SB_LIVE_OK=json.dumps({"profile-polish": FP})); ck("the fingerprint never excuses the OTHER helper", rc != 0 and not d, r)
 rc, r, d, _ = run(mode={"sqlfail": True}); ck("if the field can't be added: stops, neither helper is deployed", rc != 0 and not d and "Nothing else was changed" in r, r)
 bad = dict(HS); bad["profile-polish"] = "0" * 64
 rc, r, d, _ = run(SB_SHAS=json.dumps(bad)); ck("a helper that isn't the reviewed one: stops before anything", rc != 0 and "not the reviewed build" in r and not d, r)

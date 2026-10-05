@@ -113,6 +113,10 @@ def history_shas(root, rel):
         if b.returncode == 0: out.setdefault(shab(b.stdout), c)
     return out
 OLDER = {}
+# 452b (2026-10-05): she looked at the live profile-polish. It was an unsaved earlier draft of the instructions for the
+# unused "ask a question" mode; nothing worth keeping. SB_LIVE_OK = {fn: fingerprint (sha256 prefix)} accepts exactly
+# that copy; any other unknown copy still stops everything.
+LIVE_OK = json.loads(os.environ.get("SB_LIVE_OK") or "{}")
 def state(ref, root, base, fn, pinned):
     """'new' | 'base' | 'this' | 'other' for one live function, with its gateway setting."""
     s, m = fmeta(ref, fn)
@@ -127,6 +131,8 @@ def state(ref, root, base, fn, pinned):
     # known build, so it may be replaced; a version that was never committed (a hand edit) still stops everything.
     hits = [history_shas(root, k).get(live.get(k, "")) for k in nd]
     if all(hits): OLDER[fn] = ", ".join(sorted(set(hits))); return "older", vj
+    want = str(LIVE_OK.get(fn, ""))
+    if len(want) >= 12 and all(live.get(k, "").startswith(want) if k.endswith(f"/{fn}/index.ts") else live.get(k) == base_sha(root, base, k) for k in nd): return "seen", vj
     return "other", vj
 def deploy(ref, root, fn, vj, label):
     p = subprocess.run([SUPA, "functions", "deploy", fn, "--project-ref", ref, "--use-api"] + ([] if vj in (True, None) else ["--no-verify-jwt"]), cwd=root, env=dict(os.environ, SUPABASE_ACCESS_TOKEN=TOKEN), capture_output=True, text=True)
@@ -153,8 +159,9 @@ say("  ✓ the two helpers and the new field are the reviewed build")
 ST = {}
 for fn in FNS:
     st, vj = state(HUB_REF, HUB, HUB_BASE, fn, pinned); ST[fn] = (st, vj)
-    if st not in ("base", "this", "older"): bad(f"the live {fn} isn't what this was built on ({st}). Nothing was changed. Tell Claude."); done(3)
-    say(f"  ✓ {fn}: " + {"base": "live matches GitHub", "this": "already has this build (an earlier run)", "older": f"live is an older GitHub version (commit {OLDER.get(fn)}) that was never redeployed; this replaces it"}[st] + f" (gateway sign-in check {'on' if vj else 'off'})")
+    if st not in ("base", "this", "older", "seen"): bad(f"the live {fn} isn't what this was built on ({st}). Nothing was changed. Tell Claude."); done(3)
+    say(f"  ✓ {fn}: " + {"base": "live matches GitHub", "this": "already has this build (an earlier run)", "older": f"live is an older GitHub version (commit {OLDER.get(fn)}) that was never redeployed; this replaces it",
+        "seen": f"live is the copy you looked at in 452b (fingerprint {LIVE_OK.get(fn)}, an unsaved older draft); this replaces it"}[st] + f" (gateway sign-in check {'on' if vj else 'off'})")
 NODE = shutil.which("node") or next((p for p in ("/opt/homebrew/bin/node", "/usr/local/bin/node") if os.path.exists(p)), "")
 if NODE:
     for t in ("profile_catchup_452_test.mjs", "caregiver_profile_test.mjs", "caregiver_profile_2b_test.mjs"):
