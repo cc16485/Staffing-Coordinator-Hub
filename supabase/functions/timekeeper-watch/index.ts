@@ -86,6 +86,7 @@ import { makeLink, adminKey, linkExpiry } from '../_shared/clockin-links.ts'
 import { lateHold, liveNotices, holdOptsOf, holdUntil, callLine } from '../_shared/late-notice.ts'
 import { visitMs } from '../_shared/held-shift.ts'
 import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
+import { tkShiftEnded } from '../_shared/loops.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { officeQuiet, quietWords, afterHoursAllowed } from '../_shared/quiet-hours.ts'
 import { makePrefill, withPrefillLink, axisHm } from '../_shared/evv-prefill.ts'
@@ -178,6 +179,10 @@ Deno.serve(async (req) => {
   const settings: any = setRow?.data ?? {}
   const forceDry = new URL(req.url).searchParams.get('dry') === '1'
   const watchLive = settings.timekeeper_watch_live === true && !forceDry
+  /* Today cockpit Phase 2 (2026-10-05): a missed clock-in whose shift has ended becomes ONE "EVV fix needed" item and
+     the admin texts stop. Off until ops_settings.loops_close_live; while off, the summary lists what would change. */
+  const loopsLive = settings.loops_close_live === true && !forceDry
+  const evvFix: Record<string, unknown>[] = []
   const textLive = watchLive && settings.timekeeper_text_live === true
   /* C1 (Samantha, 2026-09-29): the caregiver's short text and the admin alerts both at 5 minutes past the start. */
   const graceMin = Number(settings.timekeeper_grace_min) > 0 ? Number(settings.timekeeper_grace_min) : 5
@@ -348,6 +353,38 @@ Deno.serve(async (req) => {
       l.resolved_at = nowIso; l.resolved_how = how
       if (watchLive) await save(l)
       resolved++
+      continue
+    }
+    /* Phase 2: the shift is over and nobody clocked in. The emergency becomes the next real step, an "EVV fix needed"
+       item for the same owner, and the admin texts stop (no final text: the item says it all, and nothing is sent at
+       night). Not dropped: the work moves. */
+    /* (only while the same caregiver is still on the visit: a changed visit is resolved as visit_changed below) */
+    const sameCg = !v || String(v?.caregiver?.id ?? '') === String(l.caregiver_axiscare_id ?? '')
+    if (sameCg && !(v?.clockIn?.time) && tkShiftEnded(l, v, day, Date.now(), (st) => visitMs(st))) {
+      const fixId = `ops_evvfix_${String(l.visit_id).replace(/[^A-Za-z0-9]/g, '_')}`
+      evvFix.push({ alert: l.id, caregiver: l.caregiver, client: l.client_first, shift: `${l.shift_date} ${l.shift_time}`, item: fixId, live: loopsLive && watchLive })
+      if (loopsLive && watchLive) {
+        const f = await freshLadder(String(l.id)); if (f?.resolved_at) continue          // a person resolved it meanwhile
+        l.resolved_at = nowIso; l.resolved_how = 'became_evv_fix'; l.evv_fix_item = fixId
+        await save(l)
+        const owner = String(admins[0] || '')
+        await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
+          id: `ops_tk_${l.id}`, kind: 'staffing_issue', status: 'resolved', resolved_at: nowIso, resolved_how: 'became_evv_fix',
+          title: `Shift over: now an EVV fix (${l.client_first} ${clock12(l.shift_time)})`, about: l.caregiver,
+          domain: 'scheduling_coverage', urgency: 'high', owner, owner_name: owner.split('@')[0],
+          detail: `The shift ended with no clock-in, so this alert became an "EVV fix needed" item and the admin texts stopped.`,
+          created_at: l.office_alerted_at, created_by: 'timekeeper-watch', opened_by: 'timekeeper' } })
+        await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
+          id: fixId, kind: 'evv_fix', status: 'open', domain: 'scheduling_coverage', urgency: 'today',
+          title: `EVV fix needed: ${l.caregiver}, ${l.client_first}'s ${clock12(l.shift_time)} shift (${l.shift_date}) had no clock-in`,
+          about: l.caregiver, visit_id: String(l.visit_id), shift_date: l.shift_date, shift_time: l.shift_time,
+          detail: `The shift ended and AxisCare still shows no clock-in for ${l.caregiver}. If the visit happened, get the EVV `
+            + `correction (Schedule Watch › Missing EVV has "Text the EVV form"; the client signs). If it did not happen, record `
+            + `what happened (a call-off or no-show) on the caregiver's attendance. When the clock-in is fixed in AxisCare, mark this Done.`,
+          owner, owner_name: owner.split('@')[0], due: new Date(Date.now() + 4 * 3600000).toISOString(),
+          created_at: nowIso, created_by: 'timekeeper-watch', opened_by: 'loops', from_alert: `ops_tk_${l.id}` } })
+        resolved++
+      }
       continue
     }
     /* A missed clock-in still ringing the admins from an earlier day: today's visit list can't say anything about
@@ -821,6 +858,7 @@ Deno.serve(async (req) => {
   } catch { /* the chase must never break the timekeeper */ }
 
   const summary = {
+    evv_fix: { live: loopsLive && watchLive, became_evv_fix: evvFix },
     mode: !watchLive ? 'DRY RUN' : textLive ? 'LIVE (watch + text)' : 'LIVE (watch only — texting off)',
     day, fetch_error: fetchError,
     visits_seen: visits.length,

@@ -43,6 +43,7 @@ import { holdsAutoTexts, isMustCover, onlyAskCut, planLine, readPlan } from '../
 import { callinLink, withLink, rememberAlerted, textCaseAdmins, caseWhat } from '../_shared/callin-notify.ts'
 import { reminderDue, reminderText } from '../_shared/callin-reminder.ts'
 import { adminRecipients } from '../_shared/clockin-admins.ts'
+import { caseEnded, chiNowNaive } from '../_shared/loops.ts'
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -1795,10 +1796,13 @@ Deno.serve(async (req) => {
       shiftSoon = diffMs > 0 && diffMs < 3 * 3600000
     }
     const quietHold = inQuiet && !shiftSoon
+    /* Phase 2 (2026-10-05): never ask caregivers to cover a shift that is already over. */
+    const shiftOver = caseEnded(c, chiNowNaive(), 0)
+    if (shiftOver && sendLive && !hasYes && wave.length) stats.held_shift_over = (Number(stats.held_shift_over) || 0) + wave.length
     if (quietHold && sendLive && !hasYes && wave.length) {
       stats.held_quiet_hours = (Number(stats.held_quiet_hours) || 0) + wave.length
     }
-    if (sendLive && !manualSelect && !planHold && !hasYes && fuseBurned && !quietHold && wave.length && ghl.token && ghl.locationId) {
+    if (sendLive && !manualSelect && !planHold && !hasYes && fuseBurned && !quietHold && !shiftOver && wave.length && ghl.token && ghl.locationId) {
       /* MESSAGE DESIGN (CareQB's template split, revised live 2026-09-16):
          EVERY caregiver's text names the client by FIRST NAME(S) — her call,
          reading the first real wave, reversing the 09-12 stranger rule. First
