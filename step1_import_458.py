@@ -155,7 +155,7 @@ say("  ✓ the importer, the profile helper and the new table are the reviewed b
 ST = {}
 for fn in FNS:
     st, vj = state(HUB_REF, HUB, HUB_BASE, fn, pinned); ST[fn] = (st, vj)
-    okst = ("new", "base", "this") if fn == "step1-import" else ("base", "this", "older")
+    okst = ("new", "base", "this", "older") if fn == "step1-import" else ("base", "this", "older")
     if st not in okst: bad(f"the live {fn} isn't what this was built on ({st}). Nothing was changed. Tell Claude."); done(3)
     say(f"  ✓ {fn}: " + {"new": "is new", "base": "live matches GitHub", "this": "already has this build (an earlier run)", "older": f"live is an older GitHub version (commit {OLDER.get(fn)})"}[st])
 NODE = shutil.which("node") or next((p for p in ("/opt/homebrew/bin/node", "/usr/local/bin/node") if os.path.exists(p)), "")

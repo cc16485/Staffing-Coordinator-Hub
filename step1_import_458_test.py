@@ -4,7 +4,7 @@
 import json, os, re, subprocess, sys, tempfile, threading, http.server, hashlib, shutil
 HERE = os.path.dirname(os.path.abspath(__file__)); REF = "zngsgedlsxinbygwmxwn"
 sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
-BASE = os.environ.get("HUB_BASE") or "8191cd7c17781c17c0909f6b6e45eb660f1e7e9c"   # the base 455 pins
+BASE = os.environ.get("HUB_BASE") or "4fde651ca3a27764f3c32cc1dc5321bb42187f9e"   # the base 455 pins
 res = []; ck = lambda n, c, note="": res.append((n, bool(c), "" if c else str(note)[:1500]))
 ANONK, SVCK = "eyJanon" + REF, "eyJsvc" + REF
 VJ = {"caregiver-profile": False, "step1-import": True}
