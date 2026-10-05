@@ -34,6 +34,8 @@ import { opEvent } from '../_shared/events.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { changedSince, decideHeld, heldItem, visitMs } from '../_shared/held-shift.ts'
 import { outsideVerdict } from '../_shared/covered-outside.ts'
+import { attendanceCard, caseEnded, caseWhen, chiNowNaive, evvDayStats, evvWeek, familyCallNeeded, itemsToCloseForCases,
+  markNoClosureTexts, pastCaseVerdict, weekOf } from '../_shared/loops.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -80,6 +82,10 @@ Deno.serve(async (req) => {
         deciding "already started". While off, both are only REPORTED (held_checks,
         time_check), so the preview shows exactly what switching on would change. */
   const reopenLive = settings.coverage_watch_7b_live === true
+  /* Today cockpit Phase 2 (2026-10-05): the Hub closes its own loops. Off until ops_settings.loops_close_live; while
+     off, the summary's "loops" section says exactly what WOULD close, open or be asked, and nothing is written. */
+  const loopsLive = settings.loops_close_live === true && !forceDry
+  const loopsSince = String(settings.loops_close_since || '')
   const timeDiffers = new Map<string, Record<string, unknown>>()
   let sampleStart = ''
   // deno-lint-ignore no-explicit-any
@@ -570,6 +576,117 @@ Deno.serve(async (req) => {
     }
   } catch { /* never let this block the watch */ }
 
+  /* ── PHASE 2 · LOOPS THE HUB CLOSES BY ITSELF (2026-10-05) ───────────────
+     1. A case whose shift is over: AxisCare shows who clocked in → closed (covered / covered other way), with NO
+        closure texts; AxisCare can't say → the case leaves the board as 'needs_outcome' and ONE card asks a person
+        "Was it covered?". Before this, past cases stayed open for ever (the covered-outside check only sees today
+        and the next 72 hours).
+     2. Cards tied to a case (coverage_case_id) close when the case is no longer open.
+     3. A case closed as uncovered gets one "call the family" card for a person (never a text).
+     Nothing here sends a message. */
+  // deno-lint-ignore no-explicit-any
+  const loops: any = { live: loopsLive, cases_closed: [], asked: [], items_closed: 0, family_calls: [], errors: [] }
+  let opsItems: any[] = []
+  const domainOwnerCache: Record<string, string> = {}
+  const domainOwner = async (code: string): Promise<string> => {
+    if (code in domainOwnerCache) return domainOwnerCache[code]
+    let e = ''
+    try {
+      const { data: dom } = await sb.from('domains').select('owner_person').eq('code', code).eq('entity', 'cc_ihs').maybeSingle()
+      if (dom?.owner_person) {
+        const { data: pp } = await sb.from('persons').select('primary_email').eq('person_id', dom.owner_person).maybeSingle()
+        e = String(pp?.primary_email ?? '').toLowerCase()
+      }
+    } catch { e = '' }
+    return (domainOwnerCache[code] = e)
+  }
+  try {
+    const { data: oiRow } = await sb.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+    opsItems = Array.isArray(oiRow?.data) ? oiRow!.data : []
+    const itemIds = new Set(opsItems.map((i: any) => String(i?.id)))
+    const chiNow = chiNowNaive()
+    const ended = cases.filter((cc: any) => cc?.status === 'open' && String(cc?.kind) !== 'interest' && caseEnded(cc, chiNow))
+    /* AxisCare, for the dates of finished shifts in the last 14 days (older ones go straight to a person) */
+    const oldest = new Date(Date.now() - 14 * 864e5).toISOString().slice(0, 10)
+    const dates = [...new Set(ended.map((cc: any) => String(cc.shift_date)).filter((d: string) => d >= oldest))].sort()
+    const pastById = new Map<string, any>()
+    let pastFetched = false
+    if (dates.length) {
+      const { token: tk, site: st } = axisCreds()
+      let u: string | null = `https://${st}.axiscare.com/api/visits?startDate=${dates[0]}&endDate=${dates[dates.length - 1]}`
+      try {
+        for (let page = 0; u && page < 20; page++) {
+          const r: Response = await fetch(u, { headers: { Authorization: `Bearer ${tk}`, Accept: 'application/json', 'X-AxisCare-Api-Version': AC_VERSION } })
+          if (!r.ok) { loops.errors.push(`AxisCare ${r.status} reading past shifts`); u = null; break }
+          const j: any = await r.json().catch(() => ({}))
+          for (const v of (Array.isArray(j?.results?.visits) ? j.results.visits : Object.values(j?.results?.visits ?? {})))
+            if (!(v as any)?.removed) pastById.set(String((v as any)?.id ?? ''), v)
+          u = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
+        }
+        pastFetched = !loops.errors.length
+      } catch (e) { loops.errors.push('AxisCare unreachable reading past shifts: ' + String(e).slice(0, 80)) }
+    }
+    for (const cc of ended) {
+      const inRange = pastFetched && String(cc.shift_date) >= oldest
+      const verdict = inRange && cc.axiscare_visit_id ? pastCaseVerdict(cc, pastById.get(String(cc.axiscare_visit_id)), outsideVerdict)
+        : { how: null, why: inRange ? 'the case has no AxisCare visit' : (String(cc.shift_date) < oldest ? 'the shift is more than 14 days old' : 'AxisCare could not be read') }
+      if (verdict.how) {
+        loops.cases_closed.push({ case: cc.id, client: cc.client || null, how: verdict.how, why: verdict.why })
+        if (!loopsLive) continue
+        cc.status = 'resolved'; cc.resolved_at = nowIso; cc.resolved_how = verdict.how; cc.covered_by = verdict.covered_by
+        cc.resolved_by = 'cara'; cc.closed_after_shift = true
+        markNoClosureTexts(cc, nowIso, 'Closed by Cara after the shift was over, from AxisCare; no texts sent.')
+        cc.note = [String(cc.note || '').trim(), `After the shift: ${verdict.why}, so Cara closed the case (${verdict.how.replace(/_/g, ' ')}). No texts were sent.`].filter(Boolean).join('\n')
+        await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: cc })
+      } else {
+        const qid = `ops_covq_${cc.id}`
+        loops.asked.push({ case: cc.id, client: cc.client || null, why: verdict.why, card: itemIds.has(qid) ? 'exists' : 'new' })
+        if (!loopsLive) continue
+        cc.status = 'needs_outcome'; cc.outcome_asked_at = nowIso; cc.closed_after_shift = true
+        markNoClosureTexts(cc, nowIso, 'The shift was over before the case closed; no texts sent.')
+        cc.note = [String(cc.note || '').trim(), `After the shift: ${verdict.why}. A person is asked whether it was covered.`].filter(Boolean).join('\n')
+        await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: cc })
+        if (!itemIds.has(qid)) {
+          const owner = String(cc.owner || '').toLowerCase() || await domainOwner('scheduling_coverage')
+          await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
+            id: qid, kind: 'coverage_outcome', case_id: cc.id, status: 'open', domain: 'scheduling_coverage',
+            title: `Was ${cc.client || 'the client'}'s shift covered? (${caseWhen(cc)})`, about: cc.client || '',
+            detail: `The shift is over and ${verdict.why}. Tell the Hub what happened so the record and the reports are right. `
+              + `If nobody covered it, the Hub asks a person to call the family; it never contacts them by itself.`,
+            owner, owner_name: '', urgency: 'today', due: new Date(Date.now() + 4 * 3600000).toISOString(),
+            created_at: nowIso, created_by: 'coverage-watch', opened_by: 'loops' } })
+          itemIds.add(qid)
+        }
+      }
+    }
+    /* 2. cards that belong to a closed case */
+    const caseById = new Map(cases.map((cc: any) => [String(cc?.id), cc]))
+    for (const it of itemsToCloseForCases(opsItems, caseById)) {
+      const cc = caseById.get(String(it.coverage_case_id))
+      loops.items_closed++
+      if (!loopsLive) continue
+      await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...it, status: 'resolved', resolved_at: nowIso,
+        resolved_how: 'case_closed', close_note: `The coverage case closed (${String(cc?.resolved_how || cc?.status || '').replace(/_/g, ' ')}), so this closed with it.` } })
+    }
+    /* 3. uncovered: a person calls the family */
+    for (const cc of cases) {
+      if (!familyCallNeeded(cc, loopsSince, Date.now())) continue
+      const fid = `ops_famcall_${cc.id}`
+      loops.family_calls.push({ case: cc.id, client: cc.client || null, card: itemIds.has(fid) ? 'exists' : 'new' })
+      if (!loopsLive || itemIds.has(fid)) continue
+      const owner = String(cc.owner || '').toLowerCase() || await domainOwner('scheduling_coverage')
+      await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
+        id: fid, kind: 'family_call', case_id: cc.id, status: 'open', domain: 'scheduling_coverage',
+        title: `Call ${cc.client || 'the client'}'s family: the ${caseWhen(cc)} shift wasn't covered`, about: cc.client || '',
+        detail: 'Nobody covered this shift. A person calls the family; the Hub never contacts them by itself. Record the call on this card.',
+        owner, owner_name: '', urgency: 'urgent', due: new Date(Date.now() + 3600000).toISOString(),
+        created_at: nowIso, created_by: 'coverage-watch', opened_by: 'loops' } })
+      cc.family_call_item = fid
+      await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: cc })
+      itemIds.add(fid)
+    }
+  } catch (e) { loops.errors.push(String(e).slice(0, 160)) }
+
   /* ── SHIFT PATTERN: is the OPENING ongoing, or one-time? ────────────────
      (Her ask 2026-09-16, CORRECTED same day: "it's not OPEN ongoing — Emma
      normally works the shift, only needs off this Friday." A repeating
@@ -713,6 +830,10 @@ Deno.serve(async (req) => {
         u = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
       }
       let evLogged = 0
+      /* Phase 2: the day's EVV totals per caregiver (visits worked, visits with both clock-in and clock-out). The
+         weekly Caregiver EVV Review is computed from these. Recorded every night, live or not: it is a count. */
+      await sb.rpc('upsert_app_data_item', { target_key: 'evv_daily_stats', item: {
+        id: `evvd_${chiYesterday}`, date: chiYesterday, by: evvDayStats(dayRows), at: new Date().toISOString() } })
       for (const v of dayRows) {
         if (v?.caregiver?.id == null) continue
         const cgName = [String(v?.caregiver?.firstName ?? '').trim(), String(v?.caregiver?.lastName ?? '').trim()]
@@ -762,11 +883,27 @@ Deno.serve(async (req) => {
       const admins = (Array.isArray(settings.coverage_alert_admins) && settings.coverage_alert_admins.length)
         ? settings.coverage_alert_admins : ['samantha@mo-care.com']
       const ym = chiYesterday.slice(0, 7).replace('-', '')
+      /* Phase 2 (live): no nightly EVV cards (they become the weekly review below), and a call-in / tardy card keeps
+         a person's handling: an open card keeps its owner and history; a closed one reopens only if the count rose. */
+      const { data: oiNow } = await sb.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+      const itemsNow: any[] = Array.isArray(oiNow?.data) ? oiNow!.data : []
+      const byIdNow = new Map(itemsNow.map((i: any) => [String(i?.id), i]))
+      const attPlan: Record<string, unknown> = { evv_cards_closed: 0, kept_closed: 0 }
+      if (loopsLive) {
+        for (const it of itemsNow) {
+          if (!it || it.status !== 'open' || !/^ops_att_evv_/.test(String(it.id))) continue
+          await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...it, status: 'resolved', resolved_at: new Date().toISOString(),
+            resolved_how: 'replaced_by_weekly_review', close_note: 'Replaced by the weekly Caregiver EVV Review.' } })
+          ;(attPlan.evv_cards_closed as number)++
+        }
+      } else attPlan.evv_cards_would_close = itemsNow.filter((i: any) => i?.status === 'open' && /^ops_att_evv_/.test(String(i?.id))).length
       for (const [k, n] of counts) {
         const [who, bucket] = k.split('|')
         if (n < TH[bucket]) continue
-        await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
-          id: `ops_att_${bucket}_${who.toLowerCase().replace(/[^a-z0-9]/g, '')}_${ym}`,
+        if (loopsLive && bucket === 'evv') continue
+        const attId = `ops_att_${bucket}_${who.toLowerCase().replace(/[^a-z0-9]/g, '')}_${ym}`
+        const attFresh = {
+          id: attId,
           kind: 'staffing_issue',
           title: `Attendance pattern — ${who}: ${n} ${LABEL[bucket]} in 30 days`,
           about: who,
@@ -776,13 +913,58 @@ Deno.serve(async (req) => {
           created_at: new Date().toISOString(),
           due: new Date(Date.now() + 2 * 864e5).toISOString(),
           created_by: 'attendance-watch', opened_by: 'attendance-threshold',
-        } })
+        }
+        const attItem = loopsLive ? attendanceCard(byIdNow.get(attId), attFresh, n) : attFresh
+        if (!attItem) { (attPlan.kept_closed as number)++; continue }
+        await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: attItem })
       }
+      ;(globalThis as any).__attPlan = attPlan
       state.last_date = chiYesterday
       await sb.rpc('upsert_app_data_item', { target_key: 'attendance_watch_state', item: state })
       ;(globalThis as any).__attSwept = { day: chiYesterday, events_logged: evLogged }
     }
   } catch (err) { (globalThis as any).__attSwept = { error: String(err) } }
+
+  /* ── PHASE 2 · THE WEEKLY CAREGIVER EVV REVIEW (her decision, 2026-10-05) ──
+     One card a week instead of nightly EVV cards: caregivers whose visits last week (Mon-Sun) had a complete EVV
+     (clock-in AND clock-out) less than the expectation (ops_settings.evv_expectation_pct, 90 unless set), owned by
+     whoever owns caregiver performance (domains), so the role decides, not a name. Made on the first run after Sunday
+     ends; ?evv_review=1 shows it on demand (written only when live). No card when nobody is under. */
+  try {
+    const chiToday = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+    const isMonday = new Date(chiToday + 'T12:00:00Z').getUTCDay() === 1
+    const force = new URL(req.url).searchParams.get('evv_review') === '1'
+    if (isMonday || force) {
+      const lastSunday = (() => { const d = new Date(chiToday + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 7) % 7 || 7)); return d.toISOString().slice(0, 10) })()
+      const wk = weekOf(lastSunday)
+      const rid = `ops_evvrev_${wk.start}`
+      const { data: oiR } = await sb.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+      const have = (Array.isArray(oiR?.data) ? oiR!.data : []).some((i: any) => String(i?.id) === rid)
+      const { data: stR } = await sb.from('app_data').select('data').eq('key', 'evv_daily_stats').maybeSingle()
+      const days = (Array.isArray(stR?.data) ? stR!.data : []).filter((d: any) => wk.dates.includes(String(d?.date)))
+      const pct = Number(settings.evv_expectation_pct) > 0 ? Number(settings.evv_expectation_pct) : 90
+      const r = evvWeek(days, pct)
+      const owner = await domainOwner('caregiver_performance')
+      const md = (x: string) => new Date(x + 'T12:00:00Z').toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' })
+      const plan: Record<string, unknown> = { week: `${wk.start} → ${wk.end}`, days_with_data: r.days, caregivers_checked: r.checked,
+        below: r.below.map((b) => `${b.name}: ${b.complete} of ${b.visits} (${b.pct}%)`), owner: owner || '(caregiver performance has no owner set)',
+        card: have ? 'already made' : (r.days && r.below.length ? (loopsLive ? 'made' : 'would make') : 'none needed') }
+      if (loopsLive && !have && r.days && r.below.length) {
+        await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
+          id: rid, kind: 'evv_review', domain: 'caregiver_performance', status: 'open', urgency: 'normal',
+          title: `Caregiver EVV Review, week of ${md(wk.start)}: ${r.below.length} below ${pct}%`,
+          about: `${r.below.length} caregiver${r.below.length === 1 ? '' : 's'}`,
+          detail: `Visits last week (${md(wk.start)} to ${md(wk.end)}) with a complete EVV (clock-in and clock-out), for caregivers under our ${pct}% expectation:\n`
+            + r.below.map((b) => `• ${b.name}: ${b.complete} of ${b.visits} visits (${b.pct}%)`).join('\n')
+            + (r.days < 7 ? `\n(Based on ${r.days} of 7 days; the daily counts started recently.)` : '')
+            + `\n\nReview each on Performance › Attendance and decide the next step. This replaces the nightly EVV cards.`,
+          below: r.below, week_start: wk.start, expectation_pct: pct,
+          owner, owner_name: '', due: new Date(Date.now() + 2 * 864e5).toISOString(),
+          created_at: new Date().toISOString(), created_by: 'coverage-watch', opened_by: 'loops' } })
+      }
+      ;(globalThis as any).__evvReview = plan
+    }
+  } catch (err) { (globalThis as any).__evvReview = { error: String(err).slice(0, 160) } }
 
   /* ── FLAGGED VISIT NOTES → COORDINATOR REVIEW (her call, 2026-09-13: no
      auto-texting families about clinical notes; a person reads first). Every
@@ -952,6 +1134,9 @@ Deno.serve(async (req) => {
       has_offset: sampleStart ? /Z$|[+-]\d{2}:?\d{2}$/.test(sampleStart) : null, differs: [...timeDiffers.values()] },
     held_checks: { reopen_live: reopenLive, checked: heldChecks.length, reopened, people_asked: heldAsked, shifts: heldChecks },
     attendance_sweep: (globalThis as any).__attSwept ?? 'already done for yesterday',
+    attendance_cards: (globalThis as any).__attPlan ?? null,
+    evv_review: (globalThis as any).__evvReview ?? 'made on Mondays (or ?evv_review=1)',
+    loops,
     notes_sweep: (globalThis as any).__noteSwept ?? 'already done this hour',
   }
 
