@@ -15,5 +15,6 @@ ck('looks at no more than 2 PDFs; the field name is exact', M.LOOK_MAX === 2 && 
 ck('the AI is told labels only, never answers', /report ONLY the form's structure, never what anyone wrote/.test(M.LOOK_SYSTEM) && /Never include anything filled in/.test(M.LOOK_SYSTEM))
 const f = fs.readFileSync('supabase/functions/step1-look/index.ts', 'utf8')
 ck('it writes nothing: no insert, update, upsert, storage upload or delete', !/\.(insert|update|upsert|upload|remove|delete)\(/.test(f) && !/method: '(POST|PUT|DELETE)'[^}]*leadconnectorhq/.test(f))
+ck('no temperature setting (claude-sonnet-5-5 refuses it: the 400 on the first two runs)', !/temperature/.test(f.replace(/\/\/.*$/gm, '')))
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note)); if (ok) pass++ }
 console.log(pass === res.length ? `ALL ${res.length} CHECKS PASS` : `${res.length - pass} OF ${res.length} FAILED`); process.exit(pass === res.length ? 0 : 1)

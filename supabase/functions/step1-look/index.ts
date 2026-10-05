@@ -102,7 +102,7 @@ Deno.serve(async (req) => {
     let b64 = ''; for (let i = 0; i < buf.length; i += 0x8000) b64 += String.fromCharCode(...buf.subarray(i, i + 0x8000))
     const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-sonnet-5-5', max_tokens: 4000, temperature: 0, system: LOOK_SYSTEM,
+      body: JSON.stringify({ model: 'claude-sonnet-5-5', max_tokens: 4000, system: LOOK_SYSTEM,   // 457c: this model refuses a temperature setting
         messages: [{ role: 'user', content: [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: btoa(b64) } },
           { type: 'text', text: 'List the sections and question labels of this form. Labels only, never answers.' }] }] }) })
     /* 457b: the first run got a bare 400 twice. Say why (the AI's own reason, numbers and links scrubbed) and the size. */
