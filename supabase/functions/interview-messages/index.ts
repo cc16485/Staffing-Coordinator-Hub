@@ -149,7 +149,7 @@ Deno.serve(async (req) => {
     `</div>`
 
   const out = { confirmed: 0, reminded_day: 0, reminded_hour: 0, nudged: 0, gave_up: 0, alerted: 0, cancel_notified: 0, welcome_confirmed: 0, welcome_reminded: 0 }
-  const plan: Record<string, string[]> = { confirm: [], day: [], hour: [], nudge: [], give_up: [], alerted: [], cancelled: [], welcome: [] }
+  const plan: Record<string, string[]> = { confirm: [], day: [], hour: [], nudge: [], give_up: [], alerted: [], cancelled: [], welcome: [], held: [] }
 
   /* ---------------- interviews that are booked ---------------- */
   const { data: bookings, error } = await supabase
@@ -257,6 +257,20 @@ Deno.serve(async (req) => {
   for (const p of waiting ?? []) {
     if (booked.has(p.id)) continue
     if (p.decline_reason) continue                     // we already told them no
+    /* 461 (2026-10-05, Shakira Sutton applied twice and booked twice): a repeat application is not invited to book when the
+       person already holds an interview under another application, or applied again after the office chose not to move
+       forward (Samantha: "reapply with us reviewing first": the office reviews and approves first). Before 461 is installed
+       these answer nothing, so nothing changes. */
+    /* Amanda Peak (same day): on the do-not-rehire list, so never invited to book, even on a first application. */
+    {
+      const dup = !!(p.duplicate_of || p.screen_grade === 'duplicate')
+      const [rv, el] = await Promise.all([supabase.rpc('applicant_review_reason', { p: p.id }),
+        dup ? supabase.rpc('applicant_person_booked_elsewhere', { p: p.id }) : Promise.resolve({ data: false })])
+      if (rv.data || el.data === true) {
+        plan.held.push(`${p.first_name || 'someone'}: ${rv.data === 'dnr' ? 'on the do-not-rehire list' : rv.data ? 'waiting for the office to review' : 'already booked under another application'}`)
+        continue
+      }
+    }
     const prn = PRN.has(p.position)
     if (prn && p.screen_grade !== 'qualified') continue
     const age = hoursSince(p.created_at)
@@ -337,6 +351,8 @@ Deno.serve(async (req) => {
       .limit(20)
 
     for (const p of fresh ?? []) {
+      /* 461: on the do-not-rehire list (or applied again after "not moving forward"): the alert below says so instead. */
+      if (p.screen_grade === 'review') { const { data: why } = await supabase.rpc('applicant_review_reason', { p: p.id }); if (why) continue }
       const who = `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim() || 'Someone'
       const bits = [
         p.city || p.zip,
@@ -361,6 +377,42 @@ Deno.serve(async (req) => {
       }
       await supabase.from('job_applicants')
         .update({ office_alerted_at: new Date().toISOString() }).eq('id', p.id)
+      out.alerted++
+    }
+  }
+
+  /* ---------------- applied again after "not moving forward", or on the do-not-rehire list ----------------
+     461 (Samantha: "reapply with us reviewing first"; Amanda Peak, told by phone she could not be rehired, applied several
+     times). They cannot book, so the office is told once, in office hours, by the same people and channels as a new
+     applicant. */
+  if ((alertTo ?? []).length) {
+    const { data: again } = await supabase
+      .from('job_applicants')
+      .select('id, first_name, last_name, position, created_at')
+      .is('office_alerted_at', null)
+      .not('completed_at', 'is', null)
+      .is('decline_reason', null)
+      .in('screen_grade', ['duplicate', 'review'])
+      .gte('created_at', new Date(Date.now() - 3 * 86_400_000).toISOString())
+      .order('created_at')
+      .limit(100)
+    for (const p of again ?? []) {
+      const { data: why } = await supabase.rpc('applicant_review_reason', { p: p.id })
+      if (!why) continue
+      const who = `${p.first_name ?? ''} ${p.last_name ?? ''}`.trim() || 'Someone'
+      const line = why === 'dnr'
+        ? `${who} applied. They are on your do-not-rehire list, so they cannot book an interview and get no booking reminders. ` +
+          `Nothing was sent to them. If that has changed, take them off the list in the hub (Recruit, Do not rehire).`
+        : `${who} applied again. You chose not to move forward with them before, so they cannot book an interview ` +
+          `until you review it. It is in the hub under Applicants, Everyone: press "Approve, let them book" if you want to see them.`
+      plan.alerted.push(who + (why === 'dnr' ? ' (on the do-not-rehire list)' : ' (applied again, needs review)'))
+      if (dry) continue
+      if (!withinOutreachHours()) continue
+      for (const t of alertTo!) {
+        if (t.phone) { const cid = await staffContact(t, 'sms'); if (cid) await sms(cid, line, t) }
+        if (t.email) { const cid = await staffContact(t, 'email'); if (cid) await email(cid, why === 'dnr' ? `Do-not-rehire applicant: ${who}` : `Applied again: ${who}`, shell(`<p>${line}</p>`), t) }
+      }
+      await supabase.from('job_applicants').update({ office_alerted_at: new Date().toISOString() }).eq('id', p.id)
       out.alerted++
     }
   }
