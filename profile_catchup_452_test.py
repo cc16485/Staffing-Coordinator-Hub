@@ -86,6 +86,7 @@ rc, r, d, _ = run(OLD_LIVE="profile-polish"); ck("live profile-polish is an OLDE
 # 452b: a hand-edited live copy is accepted ONLY with its exact fingerprint
 import tempfile as _tf
 def handsha(fn):
+    open(STATE, "w").close()   # "live" = the GitHub base plus the hand edit, as at the start of a run
     tdir = _tf.mkdtemp(); os.makedirs(os.path.join(tdir, "supabase"), exist_ok=True)
     subprocess.run([CLI, "functions", "download", fn], cwd=tdir, env=dict(os.environ, BAD_LIVE=fn), capture_output=True)
     return sha(os.path.join(tdir, "supabase/functions", fn, "index.ts"))
