@@ -7,7 +7,7 @@ const CG = [{ id: 101, first: 'Joyce', last: 'Kim', phone: '4175550101', email: 
   { id: 102, first: 'Nora', last: 'Nofile', phone: '4175550102' }, { id: 103, first: 'Ed', last: 'Nophone' }, { id: 104, first: 'Done', last: 'Before', phone: '4175550104' }]
 const q = (t) => { let up = null; const b = { select() { return b }, eq() { return b }, maybeSingle() { return Promise.resolve({ data: t === 'app_data' ? { data: CG } : null, error: null }) },
   upsert(r, o) { SAVED.push({ r, o }); return Promise.resolve({ error: null }) },
-  then(ok) { return Promise.resolve({ data: t === 'caregiver_application_facts' ? [{ hub_caregiver_id: '104', ghl_file_key: 'fileD' }] : [], error: null }).then(ok) } }; return b }
+  then(ok) { return Promise.resolve({ data: t === 'caregiver_application_facts' ? [{ hub_caregiver_id: '104', ghl_file_key: 'fileD', facts: { own_words: { hobbies: 'Gardening' } } }, { hub_caregiver_id: '101', ghl_file_key: 'fileB', facts: { own_words: {} } }] : [], error: null }).then(ok) } }; return b }
 globalThis.__db = { from: q }
 globalThis.fetch = async (url, o) => { url = String(url); GHLCALLS.push((o?.method || 'GET') + ' ' + url.replace(/\?.*/, ''))
   if (url.includes('/customFields')) return new Response(JSON.stringify({ customFields: [{ id: 'F1', name: '📄 Upload Step 1 Application Packet ' }] }), { status: 200 })
@@ -16,7 +16,7 @@ globalThis.fetch = async (url, o) => { url = String(url); GHLCALLS.push((o?.meth
   if (url.endsWith('/contacts/C2')) return new Response(JSON.stringify({ contact: { customFields: [] } }), { status: 200 })
   if (url.endsWith('/contacts/C4')) return new Response(JSON.stringify({ contact: { customFields: [{ id: 'F1', value: { fileD: { url: 'https://files/d.pdf' } } }] } }), { status: 200 })
   if (url.startsWith('https://files/')) return new Response(new Uint8Array([37, 80, 68, 70, 45, 49, 46, 52]), { status: 200, headers: { 'content-type': 'application/pdf' } })
-  if (url.includes('api.anthropic.com')) { AI.push(JSON.parse(o.body)); return new Response(JSON.stringify({ content: [{ type: 'text', text: AI_REPLY }] }), { status: 200 }) }
+  if (url.includes('api.anthropic.com')) { AI.push(JSON.parse(o.body)); return new Response(JSON.stringify({ stop_reason: 'end_turn', usage: { output_tokens: 900 }, content: globalThis.__thinking ? [{ type: 'thinking', thinking: '...' }, { type: 'text', text: '```json\n' + AI_REPLY.replace(/^Here you go: /, '') + '\n```' }] : [{ type: 'text', text: AI_REPLY }] }), { status: 200 }) }
   return new Response('{}', { status: 404 }) }
 let handler; globalThis.Deno = { env: { get: (k) => ({ SUPABASE_URL: 'https://sb', SUPABASE_SERVICE_ROLE_KEY: 'k', GHL_TOKEN: 'g', GHL_LOCATION_ID: 'loc', ANTHROPIC_API_KEY: 'a' })[k] }, serve: (h) => { handler = h } }
 const FN = 'supabase/functions/step1-import/index.ts'
@@ -58,5 +58,14 @@ ck('a PDF already read (same GoHighLevel file) is skipped', r.people[0].state ==
 globalThis.__owner = false; ;[s, r] = await call({}); ck('anyone but the owner: refused', s === 401)
 const sql = fs.readFileSync('caregiver_application_facts_458.sql', 'utf8')
 ck('SQL: office staff read only, the server writes, the public nothing; safe twice', /revoke all privileges on public\.caregiver_application_facts from anon, authenticated;/.test(sql) && /grant select on public\.caregiver_application_facts to authenticated;/.test(sql) && /create table if not exists/.test(sql) && !/drop table|truncate|delete from/i.test(sql.replace(/--.*$/gm, '')))
+// ── 458b: what broke the first run ──
+globalThis.__owner = true; SAVED = []; globalThis.__thinking = true
+;[s, r] = await call({ mode: 'live', offset: 0, limit: 1 })
+ck('458b: a reply whose first part is not text (and is wrapped in a code fence) is still read; Joyce\'s EMPTY first-run record is read again', r.people[0].state === 'saved' && SAVED.length === 1 && SAVED[0].r.facts.own_words.hobbies, r.people[0])
+ck('458b: the report says the reply\'s shape (block types, size, stop, JSON yes/no, key names), never its words', r.people[0].shape.blocks === 'thinking+text' && r.people[0].shape.parsed === true && /own_words,experience/.test(r.people[0].shape.keys) && !/Snickers|stories/.test(JSON.stringify(r.people[0].shape)), r.people[0].shape)
+globalThis.__thinking = false; SAVED = []; const keep = AI_REPLY; AI_REPLY = 'I am sorry, I cannot help with that document.'
+;[s, r] = await call({ mode: 'live', offset: 0, limit: 1 })
+ck('458b: a reply with no details is NOT saved; it says so, with its shape', /read, but nothing came out/.test(r.people[0].state) && SAVED.length === 0 && r.people[0].shape.parsed === false, r.people[0])
+AI_REPLY = keep
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note)); if (ok) pass++ }
 console.log(pass === res.length ? `ALL ${res.length} CHECKS PASS` : `${res.length - pass} OF ${res.length} FAILED`); process.exit(pass === res.length ? 0 : 1)
