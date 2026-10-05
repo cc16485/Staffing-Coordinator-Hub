@@ -3,7 +3,7 @@
 ## What This Is
 A single-page internal operations hub for **Caring Companions In-Home Senior Care** (Springfield, MO).
 Deployed at **sc.mo-care.com** via GitHub Pages — repo **cc16485/Staffing-Coordinator-Hub** (hub.mo-care.com is the separate team-hub landing page; cc.mo-care.com is the care-coordinator hub).
-Primary file: `index.html` (~7,300 lines). All functionality is in this one file — no build step, no framework.
+**2026-10-04: the staff page (index.html) is RETIRED** and is now a short "moved to the Care Coordinator Hub" page (the old page is in git history, last full version before this commit). The public pages stay live because texts link to them: evv-correction-form.html, evv-client-sign.html, orientation-booking.html. The Supabase functions in this repo are still the Hub's server.
 
 ✅ **This folder IS the live source.** It is a git clone of cc16485/Staffing-Coordinator-Hub;
 pushing to `main` deploys to sc.mo-care.com via GitHub Pages. Edit here, commit, push.

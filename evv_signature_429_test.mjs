@@ -326,7 +326,8 @@ const PRETOK = '22222222-2222-4333-8444-555555555555'
 }
 
 // ── 4b · the older Staffing hub page (sc.mo-care.com) EVV list ──
-{ const idxS = fs.readFileSync('index.html', 'utf8')
+{ /* the old staff page was retired 2026-10-04; this checks its last full version */
+  const idxS = (await import('child_process')).execSync('git show 7b3243acfab29714f9a124a02720fcf63425134a:index.html', { encoding: 'utf8', maxBuffer: 64e6 })
   const code = idxS.slice(idxS.indexOf('/* 429 (2026-10-03): a form can wait'), idxS.indexOf('// ── Populate month filter'))
   const LOGGED = [], UPD = [], AL = []
   const sub = (o) => ({ id: 'x1', attendant: 'Maria Lopez', consumer: 'Ruth A.', visitdate: '2026-09-30', new_in: '09:00', new_out: '13:00', ...o })

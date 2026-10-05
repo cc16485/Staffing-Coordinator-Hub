@@ -2,7 +2,9 @@
 // Supabase client and fetch. node sc_read_only_test.mjs
 import fs from 'fs'; import path from 'path'; import vm from 'vm'
 const ROOT = path.dirname(new URL(import.meta.url).pathname)
-const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8')
+/* the staff page was retired 2026-10-04 (now a short "moved" page); this checks its last full version, and below, the moved page */
+const html = (await import('child_process')).execSync('git show 7b3243acfab29714f9a124a02720fcf63425134a:index.html', { cwd: ROOT, encoding: 'utf8', maxBuffer: 64e6 })
+const MOVED = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8')
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note ?? '').slice(0, 500)])
 const a = html.indexOf('// ── READ ONLY (safe saves step 3'), b = html.indexOf('// ── Admin passcode', a)
 const block = html.slice(a, b)
@@ -42,5 +44,7 @@ ck('the read-only banner is at the top of the page with the link', body.children
 ck('the page creates no other Supabase client that could get round it', (html.match(/createClient\(/g) || []).length === 1)
 ck('every server call the page makes is either refused or a read', [...html.matchAll(/functions\/v1\/([a-z0-9-]+)/g)].map((m) => m[1]).every((n) => ['axiscare-note', 'axiscare-push-note', 'ghl-reply', 'job-offer', 'axiscare-open-shifts', 'coverage-shifts', 'ghl-replies', 'ghl-thread', 'hub-training-data'].includes(n)))
 ck('no em dash in the block', !/—/.test(block))
+ck('the retired page that replaced it (2026-10-04) has no Supabase, no form and no script: it only points to the Care Coordinator Hub', !/supabase|createClient|<script|<form|<input/i.test(MOVED) && /https:\/\/cc\.mo-care\.com\/#cgbackground/.test(MOVED))
+ck('the public pages texts link to are still here', ['evv-correction-form.html', 'evv-client-sign.html', 'orientation-booking.html'].every((f) => fs.existsSync(path.join(ROOT, f))))
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? 'PASS ' : 'FAIL ') + n + (ok ? '' : '\n     ' + note)); if (ok) pass++ }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1)
