@@ -58,7 +58,7 @@ if s != 200 or not j.get("ok"):
 else:
     say(f"  Hub caregivers: {j['caregivers']} · looked up: {j['looked_up']} · with a Step 1 PDF: {j['with_file']} (it stops after 2 PDFs)")
     for i, f in enumerate(j["files"], 1):
-        say(f"  PDF {i}: {f.get('result')}" + (f" · {f.get('pages')} pages · {f.get('kb')} KB · {f.get('sections')} sections" if f.get('result') == 'read' else ""))
+        say(f"  PDF {i}: {f.get('result')}" + (f" · {f.get('pages')} pages · {f.get('kb')} KB · {f.get('sections')} sections" if f.get('result') == 'read' else (f" · {f.get('kb')} KB · starts with {f.get('head')!r}" if f.get('kb') is not None else "")))
     say(""); say("  WHAT THE FORM ASKS (labels only, never anyone's answers):")
     if not j["sections"]: say("    (nothing could be read)")
     for sec in j["sections"]:

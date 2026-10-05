@@ -105,7 +105,14 @@ Deno.serve(async (req) => {
       body: JSON.stringify({ model: 'claude-sonnet-5-5', max_tokens: 4000, temperature: 0, system: LOOK_SYSTEM,
         messages: [{ role: 'user', content: [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: btoa(b64) } },
           { type: 'text', text: 'List the sections and question labels of this form. Labels only, never answers.' }] }] }) })
-    if (!r.ok) { out.files.push({ result: `the AI could not read it (${r.status})`, kb: Math.round(buf.byteLength / 1024) }); continue }
+    /* 457b: the first run got a bare 400 twice. Say why (the AI's own reason, numbers and links scrubbed) and the size. */
+    if (!r.ok) {
+      // deno-lint-ignore no-explicit-any
+      const e: any = await r.json().catch(() => ({}))
+      const why = String(e?.error?.message || e?.error?.type || '').replace(/https?:\/\/\S+/g, '(link)').replace(/\d{3,}/g, '#').slice(0, 220)
+      out.files.push({ result: `the AI could not read it (${r.status}${why ? ': ' + why : ''})`, kb: Math.round(buf.byteLength / 1024), head: new TextDecoder().decode(buf.subarray(0, 8)).replace(/[^\x20-\x7e]/g, '?') })
+      continue
+    }
     const look = cleanLook(String((await r.json())?.content?.[0]?.text ?? ''))
     out.files.push({ result: 'read', kb: Math.round(buf.byteLength / 1024), pages: look.pages, sections: look.sections.length })
     for (const s of look.sections) { const set = seen.get(s.title) ?? new Set<string>(); s.labels.forEach((l) => set.add(l)); seen.set(s.title, set) }
