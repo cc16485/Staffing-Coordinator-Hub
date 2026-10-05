@@ -58,7 +58,7 @@ export function txt(v: unknown, n = 600): string | null {
   return PRIVATE.test(t) ? null : t
 }
 const yn = (v: unknown) => { const t = String(v ?? '').toLowerCase().trim(); return t === 'yes' || t === 'no' ? t : t === 'with training' ? 'with training' : null }
-const num = (v: unknown, max: number) => { const n = Number(v); return Number.isFinite(n) && n >= 0 && n <= max ? Math.round(n) : null }
+const num = (v: unknown, max: number) => { if (v == null || String(v).trim() === '') return null; const n = Number(v); return Number.isFinite(n) && n >= 0 && n <= max ? Math.round(n) : null }   // 458c: a blank is blank, never 0
 const pick = (v: unknown, allowed: string[]) => [...new Set((Array.isArray(v) ? v : []).map((x) => String(x).toLowerCase().trim().replace(/[\s/-]+/g, '_')).filter((x) => allowed.includes(x)))]
 const dayMap = (v: Any) => { const o: Record<string, string> = {}; for (const d of DAYS) { const t = txt(v?.[d], 40); if (t && !/\d{3,}/.test(t.replace(/\d{1,2}:\d{2}/g, ''))) o[d] = t } return o }
 export function cleanFacts(raw: unknown): Any {

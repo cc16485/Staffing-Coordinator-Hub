@@ -215,7 +215,11 @@ while off is not None and tried < 2 and tries < 14:
         if p.get("shape"): tried += 1
         if p.get("state") == "would save": seen += 1      # 458b: only a read that found details counts (the first run counted empty ones)
     off = j.get("next")
-if fails or not seen: say("  STOP before saving anything. Tell Claude." if fails else "  ✗ the practice read found no details in the PDFs it read, so nothing will be saved. Tell Claude (the [reply: ...] lines say why)."); done(8)
+if fails or not seen:
+    if fails: say("  STOP before saving anything. Tell Claude.")
+    elif not tried: say("  ✗ the practice didn't read any PDF (every one it came to was marked as already read, or had none), so nothing will be saved. Tell Claude.")
+    else: say("  ✗ the practice read found no details in the PDFs it read, so nothing will be saved. Tell Claude (the [reply: ...] lines say why).")
+    done(8)
 if ASK:
     try: a = input("  The practice read worked. Read and save every caregiver's Step 1 application now (it takes a while)? Type yes and press Enter: ").strip().lower()
     except EOFError: a = ""
