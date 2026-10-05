@@ -102,7 +102,7 @@ export function escalationDue(i: Any, now: Date, ctx: { minsToShift?: number | n
   { level: 'urgent' | 'overdue'; why: string } | null {
   if (!i || i.status !== 'open' || i.claimed_by || parked(i, now)) return null
   const who = ctx.ownerFirst || (i.owner ? 'The owner' : 'Nobody')
-  const since = Date.parse(String(i.routed?.at || i.created_at || ''))
+  const since = Date.parse(String(i.created_at || ''))            // the clock starts when the problem appeared, not when it was routed
   const age = Number.isFinite(since) ? (now.getTime() - since) / 60000 : 0
   const m = ctx.minsToShift
   if (isStaffingItem(i) && i.kind === 'coverage' && m != null && m <= ESCALATE.shiftSoonMin && age >= ESCALATE.shiftSoonAfterMin)
