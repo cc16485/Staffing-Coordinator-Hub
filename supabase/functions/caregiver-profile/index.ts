@@ -23,10 +23,18 @@
 //                 Publishing clears needs_review (2b: an older intro moved over, still to be checked). An older
 //                 profile that is published but needs_review keeps its personal link open, so they can add a proper
 //                 photo and give their OK while families can still see it.
+//     'catchup'   {axiscare_id, first, last, legacy_candidate_id?} -> 452: a CURRENT caregiver (already working with us)
+//                 fills in their whole profile themselves. Finds or starts their row (AxisCare id, then their older Hub
+//                 candidate id), marks it self_complete, and empties any [ask: ...] prompt so their boxes start blank.
+//                 A published profile is left alone. No AI.
 //   PUBLIC actions need only the personal token (caregiver_profiles.upload_token, never the public card id):
 //     'mine'       {t}                -> what their page shows
 //     'upload_url' {t, kind, ext}     -> a one-time signed upload link for <id>/<kind>-<time>.<ext>
 //     'submit'     {t, preferred_name, about, experience, why_this_work, photo_path, video_path, consent}
+// 452 (Samantha, 2026-10-05: "i need the current active caregivers to fully complete their own caregiver profile and
+// submit the photo and video as well"): a self_complete profile gets its own text and email, its page asks three
+// questions with empty boxes, and it can only be sent (and published) with all three answers, a photo AND a video,
+// and their permission. New hires are unchanged.
 // The WORDING of every message is fixed here; the caller never supplies message text. No em dashes anywhere.
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -96,6 +104,36 @@ export function linkMessages(first: string, link: string) {
   }
 }
 
+/* 452: current caregivers write it themselves. Her words, one place, so the Hub preview and the send never differ. */
+export function catchupMessages(first: string, link: string) {
+  return {
+    text: withStop(`Hi ${first}, it's Caring Companions! We're adding a short profile that our families see before you visit, so they know who's coming. ` +
+      `Please fill it in yourself here: ${link} Answer 3 short questions in your own words, and add a friendly photo and a short hello video. It takes about 10 minutes.`),
+    subject: 'Your Caring Companions profile: 3 questions, a photo and a short video',
+    html: shell(`<p>Hi ${esc(first)},</p>` +
+      `<p>We're adding a short profile that our families see before you visit, so they know a friendly face is coming. Please fill yours in yourself. It takes about 10 minutes:</p>` +
+      `<ol><li><b>Answer 3 short questions in your own words:</b> what families should know about you, who you have cared for, and what you enjoy most about caregiving.</li>` +
+      `<li><b>Add a friendly photo of yourself.</b> A phone selfie in good light, from the shoulders up, is perfect.</li>` +
+      `<li><b>Add a short hello video</b> of about 30 seconds. Say hi and one thing you love about caregiving.</li></ol>` +
+      btn(link, 'Fill in my profile') +
+      `<p>This link is just for you, so please do not share it. Questions? Call us at ${OFFICE}.</p>`),
+  }
+}
+/* 452: what a current caregiver still has to add before their profile can be sent. Their words to read. */
+// deno-lint-ignore no-explicit-any
+export function selfCompleteMissing(p: any): string[] {
+  const out: string[] = []
+  const parts: [string, string][] = [['about', 'what families should know about you'], ['experience', 'who you have cared for'], ['why_this_work', 'what you enjoy most about caregiving']]
+  for (const [k, label] of parts) {
+    const v = String(p?.[k] ?? '').trim()
+    if (!v || hasPrompt(v)) out.push(`your answer about ${label}`)
+  }
+  if (!p?.photo_path) out.push('a photo of yourself')
+  if (!p?.video_path) out.push('a short hello video')
+  if (p?.consent !== true) out.push('your permission (the box at the bottom)')
+  return out
+}
+
 /* What stops a profile going in front of a family. Plain reasons the office can act on. */
 // deno-lint-ignore no-explicit-any
 export function publishProblems(p: any): string[] {
@@ -104,6 +142,7 @@ export function publishProblems(p: any): string[] {
   if (p.status === 'withdrawn') out.push('This profile was withdrawn. They took their permission back.')
   if (!p.photo_path) out.push('No photo yet. They add it from their photo link (Send photo link).')
   if (p.consent !== true) out.push('They have not given permission yet. They tick the box on their profile page.')
+  if (p.self_complete === true && !p.video_path) out.push('No video yet. For a current caregiver the hello video is required; they add it from their profile link.')
   const parts: [string, string][] = [['about', 'About me'], ['experience', 'Experience caring for others'], ['why_this_work', 'Why they enjoy caregiving']]
   for (const [k, label] of parts) {
     const v = String(p[k] ?? '').trim()
@@ -202,7 +241,7 @@ export function samePerson(app: any, who: { first?: string; phone?: string; emai
 }
 
 const APP_COLS = 'id, first_name, last_name, phone, email, position, posting_title, experience, experience_years, experience_kinds, work_history, post_interview, created_at'
-const PROFILE_COLS = 'id, candidate_id, axiscare_id, applicant_id, first_name, last_name, preferred_name, about, experience, why_this_work, years_experience, photo_path, video_path, consent, consent_at, published, status, drafted_at, drafted_by, link_sent_at, link_sent_by, submitted_at, published_at, published_by, updated_at, needs_review'
+const PROFILE_COLS = 'id, candidate_id, axiscare_id, applicant_id, first_name, last_name, preferred_name, about, experience, why_this_work, years_experience, photo_path, video_path, consent, consent_at, published, status, drafted_at, drafted_by, link_sent_at, link_sent_by, submitted_at, published_at, published_by, updated_at, needs_review, self_complete'
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
@@ -226,7 +265,7 @@ Deno.serve(async (req) => {
     if (action === 'mine') return json({
       first_name: p.first_name, preferred_name: p.preferred_name, about: p.about, experience: p.experience,
       why_this_work: p.why_this_work, years_experience: p.years_experience, photo_url: publicUrl(p.photo_path),
-      video_url: publicUrl(p.video_path), published: locked(p), consent: !!p.consent,
+      video_url: publicUrl(p.video_path), published: locked(p), consent: !!p.consent, self_complete: p.self_complete === true,
     })
     if (locked(p)) return json({ error: PUBLISHED_NOTE, published: true }, 409)
     const today = now.slice(0, 10)
@@ -277,6 +316,11 @@ Deno.serve(async (req) => {
     }
     if (b.consent === true) { patch.consent = true; if (!p.consent) patch.consent_at = now }
     else if (b.consent === false) { patch.consent = false; patch.consent_at = null }
+    /* 452: a current caregiver's profile is only sent complete (the page checks too; this is the server's word). */
+    if (p.self_complete === true) {
+      const missing = selfCompleteMissing({ ...p, ...patch })
+      if (missing.length) return json({ error: 'Not sent yet. Please add ' + missing.join(', ') + '.' }, 400)
+    }
     const { error: ue } = await db.from('caregiver_profiles').update(patch).eq('id', p.id)
     if (ue) return json({ error: 'That did not save. Please try again, or call ' + OFFICE + '.' }, 500)
     if (old.length) { try { await db.storage.from(BUCKET).remove(old) } catch { /* the old file stays; harmless */ } }
@@ -382,6 +426,29 @@ Deno.serve(async (req) => {
     return json({ ok: true, profile: p, application_found: !!app, note: aiNote || undefined })
   }
 
+  if (action === 'catchup') {
+    const axid = clean(b.axiscare_id, 40), legacy = clean(b.legacy_candidate_id, 40)
+    const first = clean(b.first, 40), last = clean(b.last, 60)
+    if (!axid) return json({ error: 'Which caregiver? (their AxisCare id)' }, 400)
+    if (!first) return json({ error: 'They need a first name on their record first.' }, 400)
+    // deno-lint-ignore no-explicit-any
+    let p: any = (await db.from('caregiver_profiles').select(PROFILE_COLS).eq('axiscare_id', axid).neq('status', 'withdrawn').limit(1)).data?.[0] ?? null
+    if (!p && legacy) p = (await db.from('caregiver_profiles').select(PROFILE_COLS).eq('candidate_id', legacy).neq('status', 'withdrawn').limit(1)).data?.[0] ?? null
+    if (p && locked(p)) return json({ ok: true, skipped: 'published', profile: p })
+    const blank = (v: unknown) => (hasPrompt(v) ? null : (v ?? null))
+    if (p) {
+      const { data, error } = await db.from('caregiver_profiles').update({ self_complete: true, axiscare_id: axid,
+        about: blank(p.about), experience: blank(p.experience), why_this_work: blank(p.why_this_work), updated_at: now })
+        .eq('id', p.id).select(PROFILE_COLS).single()
+      if (error) return json({ error: error.message }, 500)
+      return json({ ok: true, profile: data })
+    }
+    const { data, error } = await db.from('caregiver_profiles').insert({ axiscare_id: axid, candidate_id: legacy || null, first_name: first,
+      last_name: last || null, status: 'new', published: false, consent: false, self_complete: true, updated_at: now }).select(PROFILE_COLS).single()
+    if (error) return json({ error: /duplicate|unique/i.test(error.message) ? 'Someone just started their profile. Refresh and try again.' : error.message }, 500)
+    return json({ ok: true, profile: data, started: true })
+  }
+
   const id = String(b.profile_id || '')
   if (!UUID.test(id)) return json({ error: 'Which profile?' }, 400)
   const { data: p } = await db.from('caregiver_profiles').select(PROFILE_COLS + ', upload_token').eq('id', id).maybeSingle()
@@ -391,7 +458,7 @@ Deno.serve(async (req) => {
     if (p.status === 'withdrawn') return json({ error: 'This profile was withdrawn.' }, 409)
     if (locked(p)) return json({ error: 'Their profile is published, so their own link is locked. To change the photo, use "Replace photo" here, or Unpublish first and then send the link.' }, 409)
     const first = p.preferred_name || p.first_name || 'there'
-    const m = linkMessages(first, profileLink(p.upload_token))
+    const m = (p.self_complete === true ? catchupMessages : linkMessages)(first, profileLink(p.upload_token))
     /* where to send: what the office passed, else their welcome call, else their application */
     let phone = clean(b.phone, 30), email = clean(b.email, 120).toLowerCase()
     if ((!phone || !email) && p.candidate_id) {

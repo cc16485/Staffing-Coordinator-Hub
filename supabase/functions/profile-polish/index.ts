@@ -26,6 +26,12 @@
 // answer general questions, because the only thing it is asked to do is
 // return a corrected copy of the text it was given.
 //
+// 452 (Samantha, 2026-10-05, asked "should we let ai help them write it", answered "yes add help me say it"): a third
+// mode, 'say', for the caregiver who types a few rough words and freezes. It turns ONLY what they typed into two or
+// three plain sentences in their own voice (first person), never adding a fact, a number, a job or a story, and the
+// page shows both versions so they pick ("Use this" / "Keep mine"). Spelling stays its own button. Guards below: the
+// answer may not grow far past what they gave, and any number in it must be one they typed.
+//
 // Deploy: supabase functions deploy profile-polish --no-verify-jwt
 // -----------------------------------------------------------------------------
 
@@ -62,6 +68,25 @@ Only if it is genuinely thin, one bare line with nothing specific in it, ask ONE
 
 Return only the word ENOUGH, or only the question. No preamble, no explanation.`
 
+/* 452: "Help me say it". Their notes become a few sentences in their voice. Nothing new is added. */
+export const SAY_SYSTEM = `A home care worker is filling in a short profile about themselves that families read before a visit. They typed a few rough words in answer to one question. Turn ONLY those words into two or three short, plain sentences in their own voice.
+
+Rules, in order of importance:
+1. First person ("I", "my"), as if they wrote it. Never their surname.
+2. Use ONLY what they typed. Never add a fact, a job, a number of years, a skill, a hobby, a feeling or a story they did not give. If they gave little, write little.
+3. Keep their plain, everyday words. "Grandma" stays "grandma". No sales talk, no big claims, no flourish at the end.
+4. Two or three short sentences at most. Shorter is fine.
+5. Never include anything a family should not see: surnames, addresses, phone numbers, employers' names, or anyone's health details.
+6. Never use an em dash. Use commas or periods.
+
+Return only the sentences. No preamble, no explanation, no quotation marks.`
+/* Did the model add a number they never typed? Then it invented something. */
+export function sayAddsNumbers(input: string, out: string): boolean {
+  const had = new Set((input.match(/\d+/g) ?? []))
+  return (out.match(/\d+/g) ?? []).some((n) => !had.has(n))
+}
+export const noDash = (s: string) => String(s ?? '').replace(/\s*[\u2014\u2015]\s*/g, ', ').replace(/,\s*([.!?])/g, '$1').trim()
+
 const SYSTEM = `You correct spelling, punctuation and capitalisation in short pieces of writing by home care workers describing themselves. You are a spellchecker, not an editor.
 
 Rules, in order of importance:
@@ -80,7 +105,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
 
   try {
-    const { text, mode = 'spelling' } = await req.json().catch(() => ({}))
+    const { text, mode = 'spelling', question: q } = await req.json().catch(() => ({}))
     if (typeof text !== 'string' || !text.trim()) {
       return json({ error: 'Nothing to check.' }, 400)
     }
@@ -92,7 +117,8 @@ Deno.serve(async (req) => {
     const apiKey = Deno.env.get('ANTHROPIC_API_KEY')
     if (!apiKey) return json({ error: 'Spellcheck is not switched on yet.' }, 503)
 
-    const asking = mode === 'ask'
+    const asking = mode === 'ask', saying = mode === 'say'
+    const question = typeof q === 'string' ? q.replace(/[\u0000-\u001f<>]/g, ' ').trim().slice(0, 140) : ''
 
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -103,12 +129,12 @@ Deno.serve(async (req) => {
       },
       body: JSON.stringify({
         model: AI_MODEL,
-        max_tokens: asking ? 60 : 700,
+        max_tokens: asking ? 60 : saying ? 300 : 700,
         // Spelling has right answers. A question has several good ones, but not
         // so many that it should wander.
-        temperature: asking ? 0.4 : 0,
-        system: asking ? ASK_SYSTEM : SYSTEM,
-        messages: [{ role: 'user', content: text }],
+        temperature: asking ? 0.4 : saying ? 0.3 : 0,
+        system: asking ? ASK_SYSTEM : saying ? SAY_SYSTEM : SYSTEM,
+        messages: [{ role: 'user', content: saying ? (question ? 'The question: ' + question + '\n\nWhat they typed: ' : '') + text : text }],
       }),
     })
 
@@ -121,6 +147,17 @@ Deno.serve(async (req) => {
     const body = await res.json()
     const out = (body?.content?.[0]?.text ?? '').trim()
     if (!out) return json({ error: 'Spellcheck came back empty.' }, 502)
+
+    if (saying) {
+      /* Their words, a little tidier. Much longer than they gave, or a number they never typed, means the model made
+         something up: hand back nothing rather than words that are not theirs. */
+      const said = noDash(out).replace(/^["'\s]+|["'\s]+$/g, '')
+      if (said.length > Math.max(420, text.length * 4) || sayAddsNumbers(text, said)) {
+        console.warn('say rejected', said.length, text.length)
+        return json({ error: 'Could not help with that one. What you typed is fine to keep.' }, 422)
+      }
+      return json({ said })
+    }
 
     if (asking) {
       // A question, or nothing. Anything longer than a question is the model
