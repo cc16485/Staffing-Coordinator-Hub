@@ -42,6 +42,8 @@ class Hd(http.server.BaseHTTPRequestHandler):
             mode, off = body.get("mode"), int(body.get("offset") or 0)
             if M.get("broken"): return self._send(500, {"error": "boom"})
             sh = {"stop": "end_turn", "blocks": "text", "chars": 1800, "out_tokens": 700, "parsed": True, "keys": "own_words,experience"}
+            if M.get("allread"):
+                return self._send(200, {"ok": True, "live": mode == "live", "total": 4, "offset": off, "next": off + 1 if off + 1 < 4 else None, "people": [{"who": "P" + str(off), "state": "already read"}]})
             if M.get("empty"):
                 people = [{"who": "Joyce K.", "state": "read, but nothing came out (see shape)", "found": {"own_words": 0, "jobs": 0, "matching": 0, "availability": 0, "favorites": 0}, "shape": dict(sh, parsed=False, keys="")},
                           {"who": "Nora N.", "state": "no Step 1 PDF in GoHighLevel"}, {"who": "Ann O.", "state": "read, but nothing came out (see shape)", "shape": dict(sh, parsed=False)}, {"who": "Ed N.", "state": "no phone or email in the Hub"}]
@@ -93,7 +95,7 @@ def run(keep=False, mode=None, stdin="yes\n", **over):
 rc, r, d, args = run(); print(r)
 ck("DONE: the table, both helpers, a practice read, your yes, then everyone read", rc == 0 and "RESULT: DONE" in r and d == ["caregiver-profile", "step1-import"] and "✗" not in r, r)
 ck("the profile helper keeps its gateway setting; the new importer gets the sign-in gate (owner key only)", re.search(r"deploy caregiver-profile .*--no-verify-jwt", args) and not re.search(r"deploy step1-import .*--no-verify-jwt", args), args)
-ck("the tests ran here (fake data only)", all(t_ in r for t_ in ("step1_import_458_test.mjs: ALL 18", "beef_457_test.mjs: ALL 11", "hide_455_test.mjs: ALL 10")), r)
+ck("the tests ran here (fake data only)", all(t_ in r for t_ in ("step1_import_458_test.mjs: ALL 20", "beef_457_test.mjs: ALL 11", "hide_455_test.mjs: ALL 10")), r)
 ck("the practice read stops after 2 PDFs and shows counts and the reply's shape only", r.count("would save") == 2 and "Joyce K.: would save (their words 5/5 · jobs 2" in r and "[reply: text · 1800 characters" in r, r)
 ck("then everyone, one at a time, with a summary", "Summary: saved 2" in r and "3 caregivers now have their Step 1 application" in r, r)
 ck("the only calls to the importer: one refused public call, practice batches, live batches", [c_[2].get("mode") for c_ in CALLS if "/step1-import" in c_[0]].count("live") == 5, CALLS)
@@ -104,6 +106,7 @@ rc, r, d, _ = run(mode={"nokeys": True}); ck("no GoHighLevel or AI key: stops be
 rc, r, d, _ = run(BAD_LIVE="caregiver-profile"); ck("a live profile helper that isn't on GitHub: nothing is changed", rc != 0 and not d, r)
 rc, r, d, _ = run(mode={"sqlfail": True}); ck("if the table can't go in: stops, neither helper is deployed", rc != 0 and not d, r)
 rc, r, d, _ = run(mode={"empty": True}); ck("458b: the practice reads PDFs but finds no details: STOPS before your yes, nothing saved, the reply's shape shown", rc != 0 and "found no details" in r and "JSON: no" in r and not any(c_[2].get("mode") == "live" and "Bearer " + SVCK == c_[1] for c_ in CALLS), r)
+rc, r, d, _ = run(mode={"allread": True}); ck("458c: the practice reads no PDF at all (all marked already read): says exactly that and stops, nothing saved", rc != 0 and "didn't read any PDF" in r, r)
 rc, r, d, _ = run(mode={"broken": True}); ck("if the practice read fails: nothing is saved, it says so", rc != 0 and "practice read didn't answer" in r and "STOP before saving" in r, r)
 H.shutdown()
 for w in (WH, WB, WO): subprocess.run(["git", "worktree", "remove", "--force", w], cwd=HERE)

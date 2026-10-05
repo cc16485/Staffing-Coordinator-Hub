@@ -7,7 +7,7 @@ const CG = [{ id: 101, first: 'Joyce', last: 'Kim', phone: '4175550101', email: 
   { id: 102, first: 'Nora', last: 'Nofile', phone: '4175550102' }, { id: 103, first: 'Ed', last: 'Nophone' }, { id: 104, first: 'Done', last: 'Before', phone: '4175550104' }]
 const q = (t) => { let up = null; const b = { select() { return b }, eq() { return b }, maybeSingle() { return Promise.resolve({ data: t === 'app_data' ? { data: CG } : null, error: null }) },
   upsert(r, o) { SAVED.push({ r, o }); return Promise.resolve({ error: null }) },
-  then(ok) { return Promise.resolve({ data: t === 'caregiver_application_facts' ? [{ hub_caregiver_id: '104', ghl_file_key: 'fileD', facts: { own_words: { hobbies: 'Gardening' } } }, { hub_caregiver_id: '101', ghl_file_key: 'fileB', facts: { own_words: {} } }] : [], error: null }).then(ok) } }; return b }
+  then(ok) { return Promise.resolve({ data: t === 'caregiver_application_facts' ? [{ hub_caregiver_id: '104', ghl_file_key: 'fileD', facts: { own_words: { hobbies: 'Gardening' } } }, { hub_caregiver_id: '101', ghl_file_key: 'fileB', facts: JSON.parse(JSON.stringify(globalThis.__emptyFacts || {})) }] : [], error: null }).then(ok) } }; return b }
 globalThis.__db = { from: q }
 globalThis.fetch = async (url, o) => { url = String(url); GHLCALLS.push((o?.method || 'GET') + ' ' + url.replace(/\?.*/, ''))
   if (url.includes('/customFields')) return new Response(JSON.stringify({ customFields: [{ id: 'F1', name: '📄 Upload Step 1 Application Packet ' }] }), { status: 200 })
@@ -23,6 +23,7 @@ const FN = 'supabase/functions/step1-import/index.ts'
 const src = fs.readFileSync(FN, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db').replace(/^import \{ ownerCaller \} from .*$/m, 'const ownerCaller = async () => globalThis.__owner')
 const tmp = path.join(process.cwd(), 'supabase/functions/step1-import/_t.ts'); fs.writeFileSync(tmp, src)
 let M; try { M = await import(tmp) } finally { fs.unlinkSync(tmp) }
+globalThis.__emptyFacts = M.cleanFacts('{}')   // exactly what the first 458 run saved for the 48 empty records
 globalThis.__owner = true
 const call = async (body) => { const r = await handler(new Request('https://x/f', { method: 'POST', body: JSON.stringify(body) })); return [r.status, await r.json()] }
 AI_REPLY = 'Here you go: ' + JSON.stringify({
@@ -58,6 +59,10 @@ ck('a PDF already read (same GoHighLevel file) is skipped', r.people[0].state ==
 globalThis.__owner = false; ;[s, r] = await call({}); ck('anyone but the owner: refused', s === 401)
 const sql = fs.readFileSync('caregiver_application_facts_458.sql', 'utf8')
 ck('SQL: office staff read only, the server writes, the public nothing; safe twice', /revoke all privileges on public\.caregiver_application_facts from anon, authenticated;/.test(sql) && /grant select on public\.caregiver_application_facts to authenticated;/.test(sql) && /create table if not exists/.test(sql) && !/drop table|truncate|delete from/i.test(sql.replace(/--.*$/gm, '')))
+// ── 458c: a STORED empty record (all its blanks saved as null) must count as empty, so it is read again ──
+const storedEmpty = JSON.parse(JSON.stringify(M.cleanFacts('{}')))
+ck('458c: an empty record that was saved (blanks as null) still counts as empty: hours and miles stay blank, never 0', M.total(M.groupsFilled(M.cleanFacts(storedEmpty))) === 0 && M.cleanFacts(storedEmpty).matching.travel_miles === null && M.cleanFacts(storedEmpty).availability.hours_ideal === null, M.groupsFilled(M.cleanFacts(storedEmpty)))
+ck('458c: a real 0 is still kept as 0', M.cleanFacts({ matching: { travel_miles: 0 } }).matching.travel_miles === 0)
 // ── 458b: what broke the first run ──
 globalThis.__owner = true; SAVED = []; globalThis.__thinking = true
 ;[s, r] = await call({ mode: 'live', offset: 0, limit: 1 })
