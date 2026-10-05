@@ -142,7 +142,8 @@ export function publishProblems(p: any): string[] {
   if (p.status === 'withdrawn') out.push('This profile was withdrawn. They took their permission back.')
   if (!p.photo_path) out.push('No photo yet. They add it from their photo link (Send photo link).')
   if (p.consent !== true) out.push('They have not given permission yet. They tick the box on their profile page.')
-  if (p.self_complete === true && !p.video_path) out.push('No video yet. For a current caregiver the hello video is required; they add it from their profile link.')
+  /* 455: a video the office chose to hide counts as decided: it does not hold up publishing */
+  if (p.self_complete === true && !p.video_path && p.video_hidden !== true) out.push('No video yet. For a current caregiver the hello video is required; they add it from their profile link.')
   const parts: [string, string][] = [['about', 'About me'], ['experience', 'Experience caring for others'], ['why_this_work', 'Why they enjoy caregiving']]
   for (const [k, label] of parts) {
     const v = String(p[k] ?? '').trim()
@@ -241,7 +242,7 @@ export function samePerson(app: any, who: { first?: string; phone?: string; emai
 }
 
 const APP_COLS = 'id, first_name, last_name, phone, email, position, posting_title, experience, experience_years, experience_kinds, work_history, post_interview, created_at'
-const PROFILE_COLS = 'id, candidate_id, axiscare_id, applicant_id, first_name, last_name, preferred_name, about, experience, why_this_work, years_experience, photo_path, video_path, consent, consent_at, published, status, drafted_at, drafted_by, link_sent_at, link_sent_by, submitted_at, published_at, published_by, updated_at, needs_review, self_complete'
+const PROFILE_COLS = 'id, candidate_id, axiscare_id, applicant_id, first_name, last_name, preferred_name, about, experience, why_this_work, years_experience, photo_path, video_path, consent, consent_at, published, status, drafted_at, drafted_by, link_sent_at, link_sent_by, submitted_at, published_at, published_by, updated_at, needs_review, self_complete, photo_hidden, video_hidden'
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
@@ -311,6 +312,7 @@ Deno.serve(async (req) => {
       if (path !== p[key]) {
         if (!(await exists(path))) return json({ error: `That ${kind} did not finish uploading. Please choose it again.` }, 400)
         patch[key] = path
+        patch[kind + '_hidden'] = false        // 455: a new photo or video they send is shown (the office can hide it again)
         if (p[key] && String(p[key]).startsWith(p.id + '/')) old.push(p[key])
       }
     }

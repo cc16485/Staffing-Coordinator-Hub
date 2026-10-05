@@ -19,6 +19,9 @@
 //      roster id, the AxisCare id, the candidate id, the personal link token,
 //      the consent trail, or anything else on the row.
 //
+// 455 (Samantha, 2026-10-05: "i want to be able to choose to hide a photo or video from a caregivers profile"): the office
+// can hide the photo or the video (photo_hidden / video_hidden). A hidden one is simply left off the card; the file is kept.
+//
 // Deploy: supabase functions deploy caregiver-card --no-verify-jwt
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -34,7 +37,7 @@ const json = (b: unknown, s = 200) =>
 const BUCKET = 'caregiver-profiles'
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const LEGACY = /^[A-Za-z0-9_-]{1,64}$/
-const COLS = 'id, first_name, last_name, preferred_name, photo_path, photo_url, video_path, experience, years_experience, specialties, about, why_this_work, published, status'
+const COLS = 'id, first_name, last_name, preferred_name, photo_path, photo_url, video_path, experience, years_experience, specialties, about, why_this_work, published, status, photo_hidden, video_hidden'
 
 /* 2b (2026-10-01). The card a family sees: "Sarah T.", never more of the last name than its initial, and never the
    roster id, AxisCare id, candidate id, personal link token, consent trail or anything else on the row. Exported for
@@ -49,8 +52,8 @@ export function cardPayload(data: any, storageBase: string) {
     id: data.id,
     name: first && li ? `${first} ${li}.` : first,
     first: first.split(/\s+/)[0] || first,
-    photo: data.photo_path ? storageBase + data.photo_path : (/^https:\/\/[^\s"'<>]+$/i.test(ext) ? ext : null),
-    video: data.video_path ? storageBase + data.video_path : null,
+    photo: data.photo_hidden === true ? null : data.photo_path ? storageBase + data.photo_path : (/^https:\/\/[^\s"'<>]+$/i.test(ext) ? ext : null),
+    video: data.video_hidden === true ? null : data.video_path ? storageBase + data.video_path : null,
     experience: data.experience || null,
     years: data.years_experience || null,
     specialties: Array.isArray(data.specialties) ? data.specialties : [],
