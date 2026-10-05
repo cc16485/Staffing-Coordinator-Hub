@@ -275,6 +275,25 @@ export function samePerson(app: any, who: { first?: string; phone?: string; emai
   return !who.first && !who.phone && !who.email
 }
 
+/* 458: the family-appropriate parts of their Step 1 application (caregiver_application_facts, read from GoHighLevel by
+   step1-import): their own words, hobbies, job titles and duties, education level. Never the matching answers, availability or
+   favorites (those are for the office), and the import already never keeps anything private. */
+// deno-lint-ignore no-explicit-any
+export async function step1Facts(db: any, p: any) {
+  try {
+    // deno-lint-ignore no-explicit-any
+    let row: any = null
+    if (p?.axiscare_id) row = (await db.from('caregiver_application_facts').select('facts').eq('axiscare_id', String(p.axiscare_id)).limit(1)).data?.[0] ?? null
+    if (!row && p?.candidate_id) row = (await db.from('caregiver_application_facts').select('facts').eq('candidate_id', String(p.candidate_id)).limit(1)).data?.[0] ?? null
+    const f = row?.facts; if (!f) return null
+    // deno-lint-ignore no-explicit-any
+    const w = f.own_words || {}, jobs = (f.experience?.jobs || []).map((j: any) => ({ title: j.title, years: [j.from, j.to].filter(Boolean).join(' to '), duties: j.duties }))
+    const out = { in_their_words: { what_interests_them: w.interest, their_qualities: w.qualities, why_caring_companions: w.why_us, conversation: w.conversation }, hobbies: w.hobbies, past_jobs: jobs,
+      education: f.experience?.education?.highest || null }
+    return JSON.stringify(out).length > 40 ? out : null
+  } catch { return null }
+}
+
 /* Their application and interview answers: by applicant id, candidate id, then references / paperwork, then email, then
    phone (as the Hub does). Shared by the draft (new hires) and Beef it up (457). */
 // deno-lint-ignore no-explicit-any
@@ -438,7 +457,7 @@ Deno.serve(async (req) => {
         const r = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-          body: JSON.stringify({ model: AI_MODEL, max_tokens: 900, temperature: 0.4, system: DRAFT_SYSTEM,
+          body: JSON.stringify({ model: AI_MODEL, max_tokens: 900, system: DRAFT_SYSTEM,   // 458: no temperature (this model refuses it; every draft was failing)
             messages: [{ role: 'user', content: 'Facts about this caregiver:\n' + JSON.stringify(facts, null, 2) }] }),
         })
         if (!r.ok) throw new Error('AI ' + r.status)
@@ -502,21 +521,25 @@ Deno.serve(async (req) => {
     if (!theirs.about && !theirs.experience && !theirs.why) return json({ error: 'There are no words yet to build on. They fill in their profile first.' }, 409)
     const first = p.preferred_name || p.first_name || ''
     const { app, qs } = await findApplication(db, { applicant_id: p.applicant_id, cand: p.candidate_id || '', email: clean(b.email, 120).toLowerCase(), phone: clean(b.phone, 30), first })
-    const facts = applicationFacts(first, app, qs)
+    // deno-lint-ignore no-explicit-any
+    const facts: Record<string, any> = applicationFacts(first, app, qs)
+    /* 458: what they wrote on their Step 1 application (from GoHighLevel), the family-appropriate parts only */
+    const s1 = await step1Facts(db, p)
+    if (s1) facts.from_their_step1_application = s1
     const key = Deno.env.get('ANTHROPIC_API_KEY')
     if (!key) return json({ error: 'The AI is not switched on.' }, 503)
     const strip = (t: string) => t.replace(/\[[^\]]*\]/g, '').trim()
     try {
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: AI_MODEL, max_tokens: 1200, temperature: 0.4, system: ENHANCE_SYSTEM,
+        body: JSON.stringify({ model: AI_MODEL, max_tokens: 1200, system: ENHANCE_SYSTEM,
           messages: [{ role: 'user', content: 'Their profile now:\n' + JSON.stringify({ about: strip(theirs.about), experience: strip(theirs.experience), why: strip(theirs.why) }, null, 2)
             + '\n\nFacts from their application and interview:\n' + JSON.stringify(facts, null, 2) }] }),
       })
       if (!r.ok) throw new Error('AI ' + r.status)
       const j = await r.json()
       const suggestion = sanitiseEnhance(String(j?.content?.[0]?.text ?? ''), theirs, JSON.stringify(facts), first, p.last_name || '')
-      return json({ ok: true, suggestion, application_found: !!app })
+      return json({ ok: true, suggestion, application_found: !!app || !!s1, step1_found: !!s1 })
     } catch (e) {
       console.error('enhance failed', String((e as Error)?.message ?? e))
       return json({ error: 'The AI could not help just now. Try again in a minute.' }, 502)

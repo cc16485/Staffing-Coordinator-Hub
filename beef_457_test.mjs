@@ -53,6 +53,10 @@ const g = { id: uuid(), upload_token: uuid(), first_name: 'Grace', last_name: 'H
 T.caregiver_profiles.push(g)
 T.job_applicants.push({ id: '11111111-1111-4111-8111-111111111111', first_name: 'Grace', phone: '4175550111', email: 'grace@example.com', experience_years: '3-5', experience_kinds: ['Memory care'],
   experience: 'Worked in assisted living.', work_history: [{ employer: 'Sunny Acres', role: 'Caregiver', from: '2021', current: true }], created_at: '2026-01-01' })
+T.caregiver_application_facts = [{ axiscare_id: '7001', facts: { own_words: { interest: 'I love hearing their stories.', qualities: 'Patient', why_us: null, conversation: 'yes', hobbies: 'Gardening and baking' },
+  experience: { jobs: [{ title: 'CNA', from: '2019', to: '2023', duties: 'Bathing and meals' }], education: { highest: 'high school' } },
+  matching: { smoker: 'yes', services: ['dementia_care'] }, availability: { hours_ideal: 25 }, favorites: { candy_bar: 'Snickers' } } }]
+g.axiscare_id = '7001'
 AI.length = 0
 AI_REPLY = JSON.stringify({ about: "I'm from Ozark and I love to cook. I'm easy to be around.", experience: 'I took care of my grandma, and I have 3-5 years in memory care at assisted living.', why: 'I like helping people feel at home.' })
 const before = JSON.stringify(g)
@@ -61,6 +65,7 @@ ck('a fuller version comes back, from their words', s === 200 && r.suggestion &&
 ck('nothing is saved: the office compares and chooses', JSON.stringify(g) === before)
 const sent = AI[0] && AI[0].messages[0].content
 ck('the AI gets their words and their application facts (no employer name, no phone)', /I took care of my grandma/.test(sent) && /Memory care/.test(sent) && /assisted living/.test(sent) && !/Sunny Acres|5550111|grace@example/.test(sent), sent)
+ck('their Step 1 application reaches the AI: their words, hobbies, past jobs; never matching answers, availability or favorites', /Gardening and baking/.test(sent) && /I love hearing their stories/.test(sent) && /Bathing and meals/.test(sent) && !/Snickers|smoker|hours_ideal|dementia_care/.test(sent), sent)
 ck('the AI is told: keep their voice, keep their details, only given facts, nothing private, no em dash', /Keep their voice/.test(AI[0].system) && /Keep every specific detail/.test(AI[0].system) && /Add ONLY from the facts given/.test(AI[0].system) && /Never mention anything private/.test(AI[0].system) && /Never use an em dash/.test(AI[0].system))
 AI_REPLY = JSON.stringify({ about: 'I am from Ozark and I have cooked for 20 years.', experience: 'Grandma Hill was my first.', why: '' })
 ;[s, r] = await call({ action: 'enhance', profile_id: g.id })
@@ -73,6 +78,7 @@ globalThis.__staff = { ok: false, status: 401, error: 'Please sign in.' }
 ;[s, r] = await call({ action: 'enhance', profile_id: g.id }); ck('not signed-in office staff: refused', s === 401)
 globalThis.__staff = STAFF
 const fsrc = fs.readFileSync(`${FN}/caregiver-profile/index.ts`, 'utf8')
+ck('no temperature setting anywhere (claude-sonnet-5-5 refuses it; every AI draft was failing)', !/temperature/.test(fsrc.replace(/\/\/.*$/gm, '')) && !('temperature' in AI[0]))
 ck('the draft and Beef it up share one application lookup', (fsrc.match(/await findApplication\(db,/g) || []).length === 2)
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note)); if (ok) pass++ }
 console.log(pass === res.length ? `ALL ${res.length} CHECKS PASS` : `${res.length - pass} OF ${res.length} FAILED`); process.exit(pass === res.length ? 0 : 1)
