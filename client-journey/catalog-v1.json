@@ -1,0 +1,1294 @@
+{
+ "version": 1,
+ "steps": [
+  {
+   "key": "intake.payer",
+   "sort": 10,
+   "stage": "intake",
+   "title": "Identify the payer",
+   "owner_role": "care_coordinator",
+   "proof": "answer",
+   "payers": [],
+   "after": [],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Ask who will pay for care: the family, Medicaid, the VA, a long-term care policy, or something else.",
+    "CDS (self-directed) is a different program: send those families to caringcds.com instead of starting here.",
+    "Pick the payer. For Other, write the payer or source; an owner reviews it next."
+   ],
+   "due": {
+    "days": 1,
+    "business": true
+   },
+   "answer": {
+    "fields": [
+     {
+      "key": "payer",
+      "label": "Payer",
+      "type": "select",
+      "options": [
+       {
+        "v": "private",
+        "l": "Private Pay"
+       },
+       {
+        "v": "medicaid",
+        "l": "Medicaid IHS / HCBS"
+       },
+       {
+        "v": "va",
+        "l": "VA Community Care"
+       },
+       {
+        "v": "ltc",
+        "l": "Long-Term Care Insurance"
+       },
+       {
+        "v": "other",
+        "l": "Other"
+       }
+      ]
+     },
+     {
+      "key": "other_name",
+      "label": "Which payer or source?",
+      "type": "text",
+      "show_if": {
+       "payer": "other"
+      }
+     }
+    ]
+   },
+   "on_answer": {
+    "set_payer": "payer"
+   }
+  },
+  {
+   "key": "intake.basics",
+   "sort": 20,
+   "stage": "intake",
+   "title": "Confirm the client's basics",
+   "owner_role": "care_coordinator",
+   "proof": "verified",
+   "payers": [],
+   "after": [],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Open Lead intake on this profile.",
+    "Fill in the client's name, date of birth, home address and phone.",
+    "The Hub ticks this step by itself once all four are on the profile."
+   ],
+   "due": {
+    "days": 2,
+    "business": true
+   },
+   "verify": "lead_basics"
+  },
+  {
+   "key": "intake.other_review",
+   "sort": 30,
+   "stage": "intake",
+   "title": "Owner reviews the Other payer",
+   "owner_role": "owner",
+   "proof": "answer",
+   "payers": [
+    "other"
+   ],
+   "after": [
+    "intake.payer"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Read who the payer is and what the family said.",
+    "Decide whether we can accept it and how billing will work.",
+    "Write how billing will work (or why not). It stays on the record."
+   ],
+   "due": {
+    "days": 2,
+    "business": true
+   },
+   "rule": {
+    "field": "decision",
+    "op": "==",
+    "value": "decline",
+    "outcome": "stop",
+    "message": "An owner declined this payer."
+   },
+   "answer": {
+    "fields": [
+     {
+      "key": "decision",
+      "label": "Decision",
+      "type": "select",
+      "options": [
+       {
+        "v": "accept",
+        "l": "Go ahead: we can work with this payer"
+       },
+       {
+        "v": "decline",
+        "l": "Decline"
+       }
+      ]
+     },
+     {
+      "key": "how",
+      "label": "How billing will work / why",
+      "type": "text"
+     }
+    ]
+   },
+   "exception_kind": "payer_setup"
+  },
+  {
+   "key": "med.emomed",
+   "sort": 40,
+   "stage": "prechecks",
+   "title": "Check eMOMED eligibility",
+   "owner_role": "care_coordinator",
+   "proof": "proof",
+   "payers": [
+    "medicaid"
+   ],
+   "after": [
+    "intake.payer"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Sign in to eMOMED.",
+    "Look up the client by DCN (or name and date of birth).",
+    "Check the eligibility for the current month.",
+    "Take a screenshot of the eligibility screen.",
+    "Attach it here, enter the date and the result."
+   ],
+   "due": {
+    "days": 1,
+    "business": true
+   },
+   "rule": {
+    "field": "result",
+    "op": "==",
+    "value": "not_eligible",
+    "outcome": "stop",
+    "message": "Not eligible in eMOMED. The journey stops here unless an owner allows an exception."
+   },
+   "answer": {
+    "fields": [
+     {
+      "key": "checked_on",
+      "label": "Date checked",
+      "type": "date"
+     },
+     {
+      "key": "result",
+      "label": "Result",
+      "type": "select",
+      "options": [
+       {
+        "v": "eligible",
+        "l": "Eligible"
+       },
+       {
+        "v": "not_eligible",
+        "l": "Not eligible"
+       },
+       {
+        "v": "pending",
+        "l": "Pending / unclear"
+       }
+      ]
+     }
+    ]
+   },
+   "exception_kind": "hard_stop"
+  },
+  {
+   "key": "med.fusion",
+   "sort": 50,
+   "stage": "prechecks",
+   "title": "Review FUSION: care plan, authorization, notes and history",
+   "owner_role": "care_coordinator",
+   "proof": "proof",
+   "payers": [
+    "medicaid"
+   ],
+   "after": [
+    "med.emomed"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Open the client in FUSION.",
+    "Read the care plan.",
+    "Read the authorization and services.",
+    "Read the notes and history all the way back, including provider changes and any 21-day notices.",
+    "Save or screenshot what you reviewed and attach it here.",
+    "Tick each part you reviewed. Write anything concerning."
+   ],
+   "due": {
+    "days": 1,
+    "business": true
+   },
+   "answer": {
+    "fields": [
+     {
+      "key": "checked_on",
+      "label": "Date reviewed",
+      "type": "date"
+     },
+     {
+      "key": "careplan",
+      "label": "I reviewed the care plan",
+      "type": "check"
+     },
+     {
+      "key": "authorization",
+      "label": "I reviewed the authorization and services",
+      "type": "check"
+     },
+     {
+      "key": "notes_history",
+      "label": "I reviewed the FUSION notes and history, not only the care plan",
+      "type": "check"
+     },
+     {
+      "key": "provider_changes",
+      "label": "I reviewed provider-change information",
+      "type": "check"
+     },
+     {
+      "key": "concerns",
+      "label": "Anything concerning in the history?",
+      "type": "text",
+      "required": false
+     }
+    ]
+   }
+  },
+  {
+   "key": "med.notices",
+   "sort": 60,
+   "stage": "prechecks",
+   "title": "Count the prior 21-day notices",
+   "owner_role": "care_coordinator",
+   "proof": "answer",
+   "payers": [
+    "medicaid"
+   ],
+   "after": [
+    "med.fusion"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Use the FUSION notes and history you just reviewed.",
+    "Count every prior 21-day notice (a provider ending services with notice).",
+    "0 or 1 continues. 2 or more stops: only an owner can allow an exception, with a written reason."
+   ],
+   "due": {
+    "days": 1,
+    "business": true
+   },
+   "rule": {
+    "field": "count",
+    "op": ">=",
+    "value": 2,
+    "outcome": "stop",
+    "message": "2 or more prior 21-day notices: do not accept. Only an owner (Samantha or Zachary) can allow an exception."
+   },
+   "answer": {
+    "fields": [
+     {
+      "key": "count",
+      "label": "How many prior 21-day notices are documented?",
+      "type": "number"
+     }
+    ]
+   },
+   "exception_kind": "hard_stop"
+  },
+  {
+   "key": "med.careplan",
+   "sort": 70,
+   "stage": "prechecks",
+   "title": "Upload and review the Medicaid care plan",
+   "owner_role": "care_coordinator",
+   "proof": "proof",
+   "payers": [
+    "medicaid"
+   ],
+   "after": [
+    "med.notices"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Download the care plan from FUSION.",
+    "Attach it here.",
+    "Read it for: authorized services and hours, days and times, ADLs, transfers (Hoyer, sit-to-stand, gait belt), mobility and fall risk, dementia, behaviors or safety, and location.",
+    "Enter the authorized hours per week and whether we can staff it."
+   ],
+   "due": {
+    "days": 1,
+    "business": true
+   },
+   "answer": {
+    "fields": [
+     {
+      "key": "hours_week",
+      "label": "Authorized hours per week",
+      "type": "number"
+     },
+     {
+      "key": "reviewed",
+      "label": "I reviewed services, hours, ADLs, transfers and equipment, mobility, fall risk, dementia, behaviors and location",
+      "type": "check"
+     },
+     {
+      "key": "feasible",
+      "label": "Can we staff this?",
+      "type": "select",
+      "options": [
+       {
+        "v": "yes",
+        "l": "Yes"
+       },
+       {
+        "v": "no",
+        "l": "No"
+       },
+       {
+        "v": "unsure",
+        "l": "Not sure"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "key": "med.decision",
+   "sort": 80,
+   "stage": "prechecks",
+   "title": "Decide whether to assess",
+   "owner_role": "care_coordinator",
+   "proof": "answer",
+   "payers": [
+    "medicaid"
+   ],
+   "after": [
+    "med.careplan"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Scheduling the assessment does not mean we accept the client.",
+    "If the review raised no reason to stop, choose Move forward and call to book the in-person assessment.",
+    "If we shouldn't take the case, choose Decline and say why."
+   ],
+   "due": {
+    "days": 1,
+    "business": true
+   },
+   "rule": {
+    "field": "decision",
+    "op": "==",
+    "value": "decline",
+    "outcome": "stop",
+    "message": "Declined before assessment."
+   },
+   "answer": {
+    "fields": [
+     {
+      "key": "decision",
+      "label": "Decision",
+      "type": "select",
+      "options": [
+       {
+        "v": "assess",
+        "l": "Move forward: schedule the in-person assessment"
+       },
+       {
+        "v": "decline",
+        "l": "Decline before assessment"
+       }
+      ]
+     },
+     {
+      "key": "why",
+      "label": "Why",
+      "type": "text",
+      "required": false
+     }
+    ]
+   },
+   "exception_kind": "unusual_acceptance"
+  },
+  {
+   "key": "va.referral",
+   "sort": 90,
+   "stage": "prechecks",
+   "title": "Receive the VA referral and authorization",
+   "owner_role": "care_coordinator",
+   "proof": "proof",
+   "payers": [
+    "va"
+   ],
+   "after": [
+    "intake.payer"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Get the referral and authorization from VA Community Care (HSRM).",
+    "Attach it here and enter the referral number and authorized hours."
+   ],
+   "due": {
+    "days": 2,
+    "business": true
+   },
+   "answer": {
+    "fields": [
+     {
+      "key": "referral_number",
+      "label": "Referral / authorization number",
+      "type": "text"
+     },
+     {
+      "key": "hours_week",
+      "label": "Authorized hours per week",
+      "type": "number"
+     }
+    ]
+   }
+  },
+  {
+   "key": "ltc.policy",
+   "sort": 100,
+   "stage": "prechecks",
+   "title": "Review the policy and confirm benefits with the carrier",
+   "owner_role": "care_coordinator",
+   "proof": "proof",
+   "payers": [
+    "ltc"
+   ],
+   "after": [
+    "intake.payer"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Read the policy (the Hub's LTC policy reader can help).",
+    "Call the carrier to confirm benefits, the elimination period and claim steps.",
+    "Attach the policy or the carrier's confirmation and enter what they said."
+   ],
+   "due": {
+    "days": 2,
+    "business": true
+   },
+   "answer": {
+    "fields": [
+     {
+      "key": "daily_benefit",
+      "label": "Daily / monthly benefit",
+      "type": "text"
+     },
+     {
+      "key": "elimination",
+      "label": "Elimination period",
+      "type": "text"
+     },
+     {
+      "key": "carrier_confirmed",
+      "label": "Benefits confirmed with the carrier",
+      "type": "check"
+     }
+    ]
+   }
+  },
+  {
+   "key": "asmt.book",
+   "sort": 110,
+   "stage": "assessment",
+   "title": "Book the in-home assessment",
+   "owner_role": "care_coordinator",
+   "proof": "verified",
+   "payers": [],
+   "after": [
+    "intake.payer",
+    "med.decision",
+    "va.referral",
+    "ltc.policy",
+    "intake.other_review"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Call the family and agree a time for the in-person assessment.",
+    "Book it from this profile (Book the visit).",
+    "The Hub ticks this step by itself once the visit is booked."
+   ],
+   "due": {
+    "days": 2,
+    "business": true
+   },
+   "verify": "assessment_booked"
+  },
+  {
+   "key": "asmt.outcome",
+   "sort": 120,
+   "stage": "assessment",
+   "title": "Record the assessment outcome",
+   "owner_role": "care_coordinator",
+   "proof": "answer",
+   "payers": [],
+   "after": [
+    "asmt.book"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "After the visit, record what happened.",
+    "Wants to think about it / Follow-up needed: choose it and set a check-back date, so they come back to you.",
+    "Needs management review: an owner decides next."
+   ],
+   "due": {
+    "days": 1,
+    "business": true
+   },
+   "rule": {
+    "field": "outcome",
+    "op": "in",
+    "value": [
+     "client_declined",
+     "cc_declined"
+    ],
+    "outcome": "stop",
+    "message": "Not moving forward after the assessment."
+   },
+   "answer": {
+    "fields": [
+     {
+      "key": "outcome",
+      "label": "Outcome",
+      "type": "select",
+      "options": [
+       {
+        "v": "signed",
+        "l": "Signed / accepted: start care"
+       },
+       {
+        "v": "think",
+        "l": "Wants to think about it"
+       },
+       {
+        "v": "followup",
+        "l": "Follow-up needed"
+       },
+       {
+        "v": "client_declined",
+        "l": "Client declined"
+       },
+       {
+        "v": "cc_declined",
+        "l": "Caring Companions declined"
+       },
+       {
+        "v": "review",
+        "l": "Needs management review"
+       }
+      ]
+     },
+     {
+      "key": "assessed_on",
+      "label": "Assessment date",
+      "type": "date"
+     }
+    ]
+   },
+   "exception_kind": "unusual_acceptance"
+  },
+  {
+   "key": "docs.agreement",
+   "sort": 130,
+   "stage": "signed",
+   "title": "Service agreement signed and on file",
+   "owner_role": "care_coordinator",
+   "proof": "proof",
+   "payers": [],
+   "after": [
+    "asmt.outcome"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Have the client or responsible party sign the service agreement.",
+    "Scan or photograph it and attach it here."
+   ],
+   "due": {
+    "days": 1,
+    "business": true
+   }
+  },
+  {
+   "key": "docs.rights",
+   "sort": 140,
+   "stage": "signed",
+   "title": "Client rights signed and on file",
+   "owner_role": "care_coordinator",
+   "proof": "proof",
+   "payers": [],
+   "after": [
+    "asmt.outcome"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Attach the signed client rights."
+   ],
+   "due": {
+    "days": 1,
+    "business": true
+   }
+  },
+  {
+   "key": "docs.assessment",
+   "sort": 150,
+   "stage": "signed",
+   "title": "Assessment on file",
+   "owner_role": "care_coordinator",
+   "proof": "proof",
+   "payers": [],
+   "after": [
+    "asmt.outcome"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Attach the completed assessment."
+   ],
+   "due": {
+    "days": 1,
+    "business": true
+   }
+  },
+  {
+   "key": "ax.client",
+   "sort": 160,
+   "stage": "axiscare",
+   "title": "Create the client in AxisCare",
+   "owner_role": "care_coordinator",
+   "proof": "verified",
+   "payers": [],
+   "after": [
+    "asmt.outcome"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Check the profile's name, DOB, address and phone are right.",
+    "Use Convert to AxisCare on this profile (or Use this AxisCare record if AxisCare already has them).",
+    "The Hub ticks this step by itself once it can read the client back from AxisCare."
+   ],
+   "due": {
+    "days": 1,
+    "business": true
+   },
+   "verify": "axiscare_client"
+  },
+  {
+   "key": "ax.contacts",
+   "sort": 170,
+   "stage": "axiscare",
+   "title": "Responsible parties and emergency contacts in AxisCare",
+   "owner_role": "care_coordinator",
+   "proof": "confirmed",
+   "payers": [],
+   "after": [
+    "ax.client"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Open the client in AxisCare.",
+    "Go to the client's Responsible Parties.",
+    "Add each responsible party and emergency contact with phone, relationship and whether they can make medical decisions.",
+    "Save, then confirm here."
+   ],
+   "due": {
+    "days": 1,
+    "business": true
+   }
+  },
+  {
+   "key": "ax.tasks",
+   "sort": 180,
+   "stage": "axiscare",
+   "title": "Care tasks in AxisCare",
+   "owner_role": "care_coordinator",
+   "proof": "confirmed",
+   "payers": [],
+   "after": [
+    "ax.client"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Send the care plan tasks from the Care tab, or add them in AxisCare under the client's ADLs.",
+    "Confirm here."
+   ],
+   "due": {
+    "days": 2,
+    "business": true
+   }
+  },
+  {
+   "key": "ax.details",
+   "sort": 190,
+   "stage": "axiscare",
+   "title": "Allergies, medications and attributes in AxisCare",
+   "owner_role": "care_coordinator",
+   "proof": "confirmed",
+   "payers": [],
+   "after": [
+    "ax.client"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Open the client in AxisCare.",
+    "Enter allergies, medications and diagnoses.",
+    "Set attributes (pets, smoking, dementia, gender preference, language).",
+    "Add the mailing address if it differs.",
+    "Confirm here."
+   ],
+   "due": {
+    "days": 2,
+    "business": true
+   }
+  },
+  {
+   "key": "ax.docs",
+   "sort": 200,
+   "stage": "axiscare",
+   "title": "Signed documents uploaded to AxisCare",
+   "owner_role": "care_coordinator",
+   "proof": "confirmed",
+   "payers": [],
+   "after": [
+    "ax.client",
+    "docs.agreement",
+    "docs.rights"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Open the client in AxisCare, Documents.",
+    "Upload the service agreement, client rights, assessment (and the Medicaid care plan).",
+    "Confirm here."
+   ],
+   "due": {
+    "days": 2,
+    "business": true
+   }
+  },
+  {
+   "key": "pay.private",
+   "sort": 210,
+   "stage": "billing",
+   "title": "Private pay setup: rate, billing contact, payment method",
+   "owner_role": "care_coordinator",
+   "proof": "confirmed",
+   "payers": [
+    "private"
+   ],
+   "after": [
+    "ax.client"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Agree the rate and service level (it's in the service agreement).",
+    "Set the billing contact and payment method (and autopay if they chose it).",
+    "Set up billing for the client in AxisCare.",
+    "Confirm here."
+   ],
+   "due": {
+    "days": 2,
+    "business": true
+   },
+   "exception_kind": "payer_setup"
+  },
+  {
+   "key": "pay.auth",
+   "sort": 220,
+   "stage": "billing",
+   "title": "Record the authorization",
+   "owner_role": "care_coordinator",
+   "proof": "answer",
+   "payers": [
+    "medicaid",
+    "va"
+   ],
+   "after": [
+    "ax.client"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Take the service, hours and dates from the authorization.",
+    "Enter them in AxisCare on the client's authorization.",
+    "Record them here: the schedule is checked against these hours."
+   ],
+   "due": {
+    "days": 2,
+    "business": true
+   },
+   "answer": {
+    "fields": [
+     {
+      "key": "service",
+      "label": "Service",
+      "type": "text"
+     },
+     {
+      "key": "hours_week",
+      "label": "Authorized hours per week",
+      "type": "number"
+     },
+     {
+      "key": "from",
+      "label": "Effective from",
+      "type": "date"
+     },
+     {
+      "key": "to",
+      "label": "Effective to",
+      "type": "date",
+      "required": false
+     },
+     {
+      "key": "in_axiscare",
+      "label": "Entered in AxisCare",
+      "type": "check"
+     }
+    ]
+   },
+   "exception_kind": "authorization"
+  },
+  {
+   "key": "pay.ltc",
+   "sort": 230,
+   "stage": "billing",
+   "title": "LTC billing and claims setup",
+   "owner_role": "care_coordinator",
+   "proof": "confirmed",
+   "payers": [
+    "ltc"
+   ],
+   "after": [
+    "ax.client"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Set up who files claims and how often.",
+    "Set the private-pay portion (elimination period) if any.",
+    "Confirm here."
+   ],
+   "due": {
+    "days": 2,
+    "business": true
+   },
+   "exception_kind": "payer_setup"
+  },
+  {
+   "key": "pay.other",
+   "sort": 240,
+   "stage": "billing",
+   "title": "Billing set up the way the owner decided",
+   "owner_role": "care_coordinator",
+   "proof": "confirmed",
+   "payers": [
+    "other"
+   ],
+   "after": [
+    "ax.client"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Follow the owner's note on the Other payer step.",
+    "Confirm here."
+   ],
+   "due": {
+    "days": 2,
+    "business": true
+   }
+  },
+  {
+   "key": "pay.axiscare",
+   "sort": 250,
+   "stage": "billing",
+   "title": "Payer set up in AxisCare",
+   "owner_role": "care_coordinator",
+   "proof": "confirmed",
+   "payers": [],
+   "after": [
+    "ax.client"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Open the client in AxisCare, Billing.",
+    "Add the payer and the service the client is authorized for.",
+    "Confirm here."
+   ],
+   "due": {
+    "days": 2,
+    "business": true
+   },
+   "exception_kind": "payer_setup"
+  },
+  {
+   "key": "sched.requested",
+   "sort": 260,
+   "stage": "schedule",
+   "title": "Confirm the requested schedule",
+   "owner_role": "care_coordinator",
+   "proof": "answer",
+   "payers": [],
+   "after": [
+    "asmt.outcome"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Write what the client needs, not who we have: every day and time.",
+    "Enter the hours per week and the start date.",
+    "For Medicaid and VA, the hours must fit the authorization."
+   ],
+   "due": {
+    "days": 1,
+    "business": true
+   },
+   "rule": {
+    "field": "hours_week",
+    "op": ">",
+    "ref": "pay.auth.hours_week",
+    "outcome": "stop",
+    "message": "The requested hours are above the authorized hours. Fix the schedule or get an owner's exception."
+   },
+   "answer": {
+    "fields": [
+     {
+      "key": "hours_week",
+      "label": "Requested hours per week",
+      "type": "number"
+     },
+     {
+      "key": "days",
+      "label": "Days and times",
+      "type": "text"
+     },
+     {
+      "key": "start",
+      "label": "Start date",
+      "type": "date"
+     }
+    ]
+   },
+   "exception_kind": "authorization",
+   "on_answer": {
+    "set_target_start": "start"
+   }
+  },
+  {
+   "key": "sched.axiscare",
+   "sort": 270,
+   "stage": "schedule",
+   "title": "Enter the full schedule in AxisCare, open shifts included",
+   "owner_role": "care_coordinator",
+   "proof": "confirmed",
+   "payers": [],
+   "after": [
+    "sched.requested",
+    "ax.client"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Open the client in AxisCare, Schedule.",
+    "Create every shift the client needs.",
+    "Shifts with nobody yet: leave the caregiver empty so they show as open.",
+    "Confirm here."
+   ],
+   "due": {
+    "days": 1,
+    "business": true
+   }
+  },
+  {
+   "key": "team.staffed",
+   "sort": 280,
+   "stage": "team",
+   "title": "Staff every shift",
+   "owner_role": "staffing_coordinator",
+   "proof": "confirmed",
+   "payers": [],
+   "after": [
+    "sched.axiscare"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Open the Team tab.",
+    "For each open shift, find and confirm a caregiver (Text several helps).",
+    "Confirm here once no shift in the first two weeks is open."
+   ],
+   "due": {
+    "before_start": 2
+   }
+  },
+  {
+   "key": "team.briefed",
+   "sort": 290,
+   "stage": "team",
+   "title": "Brief the caregivers on the client",
+   "owner_role": "staffing_coordinator",
+   "proof": "confirmed",
+   "payers": [],
+   "after": [
+    "team.staffed"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Call each caregiver on the team: care needs, home, family, what matters to the client.",
+    "Confirm here."
+   ],
+   "due": {
+    "before_start": 1
+   }
+  },
+  {
+   "key": "ready.family",
+   "sort": 300,
+   "stage": "ready",
+   "title": "Tell the family the start plan",
+   "owner_role": "care_coordinator",
+   "proof": "confirmed",
+   "payers": [],
+   "after": [
+    "sched.axiscare"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Call the family: start date, who is coming, what to expect.",
+    "Record the exact words on the Start Contract.",
+    "Confirm here."
+   ],
+   "due": {
+    "before_start": 2
+   }
+  },
+  {
+   "key": "ready.state",
+   "sort": 310,
+   "stage": "ready",
+   "title": "Notify the state as required",
+   "owner_role": "care_coordinator",
+   "proof": "confirmed",
+   "payers": [
+    "medicaid"
+   ],
+   "after": [
+    "sched.axiscare"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Notify DSDS of the start as the program requires.",
+    "Confirm here."
+   ],
+   "due": {
+    "before_start": 1
+   }
+  },
+  {
+   "key": "fw.first_visit",
+   "sort": 320,
+   "stage": "firstweek",
+   "title": "First visit happened",
+   "owner_role": "hub",
+   "proof": "verified",
+   "payers": [],
+   "after": [
+    "team.staffed"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "The Hub ticks this once AxisCare shows the first clock-in.",
+    "If it can't see it, confirm by hand with a reason."
+   ],
+   "verify": "first_visit"
+  },
+  {
+   "key": "fw.note",
+   "sort": 330,
+   "stage": "firstweek",
+   "title": "Review the first shift note",
+   "owner_role": "care_coordinator",
+   "proof": "confirmed",
+   "payers": [],
+   "after": [
+    "fw.first_visit"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Read the first visit's care note (the profile shows it under From the shifts).",
+    "Confirm here."
+   ],
+   "due": {
+    "days": 1,
+    "business": true
+   }
+  },
+  {
+   "key": "fw.family",
+   "sort": 340,
+   "stage": "firstweek",
+   "title": "Call the family after the first visit",
+   "owner_role": "care_coordinator",
+   "proof": "confirmed",
+   "payers": [],
+   "after": [
+    "fw.first_visit"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Call the family: how did it go? Anything to change?",
+    "Confirm here with what they said."
+   ],
+   "due": {
+    "days": 1,
+    "business": true
+   }
+  },
+  {
+   "key": "fw.caregiver",
+   "sort": 350,
+   "stage": "firstweek",
+   "title": "Get the caregiver's feedback",
+   "owner_role": "staffing_coordinator",
+   "proof": "confirmed",
+   "payers": [],
+   "after": [
+    "fw.first_visit"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Call the caregiver: how did it go?",
+    "Confirm here."
+   ],
+   "due": {
+    "days": 2,
+    "business": true
+   }
+  },
+  {
+   "key": "fw.changes",
+   "sort": 360,
+   "stage": "firstweek",
+   "title": "Address care plan changes",
+   "owner_role": "care_coordinator",
+   "proof": "confirmed",
+   "payers": [],
+   "after": [
+    "fw.family",
+    "fw.caregiver"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Make any changes the first week showed (tasks, times, notes).",
+    "Confirm here (or note that none were needed)."
+   ],
+   "due": {
+    "days": 3,
+    "business": true
+   }
+  },
+  {
+   "key": "fw.open",
+   "sort": 370,
+   "stage": "firstweek",
+   "title": "Address any remaining open shifts",
+   "owner_role": "staffing_coordinator",
+   "proof": "confirmed",
+   "payers": [],
+   "after": [
+    "fw.first_visit"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Check the Team tab for open shifts in the next two weeks.",
+    "Fill them or set a plan.",
+    "Confirm here."
+   ],
+   "due": {
+    "days": 5,
+    "business": true
+   }
+  },
+  {
+   "key": "active.complete",
+   "sort": 380,
+   "stage": "active",
+   "title": "Complete start of care",
+   "owner_role": "care_coordinator",
+   "proof": "confirmed",
+   "payers": [],
+   "after": [
+    "fw.note",
+    "fw.family",
+    "fw.caregiver",
+    "fw.changes",
+    "fw.open",
+    "ready.family",
+    "ready.state",
+    "team.briefed",
+    "ax.contacts",
+    "ax.tasks",
+    "ax.details",
+    "ax.docs",
+    "pay.private",
+    "pay.auth",
+    "pay.ltc",
+    "pay.other",
+    "pay.axiscare",
+    "docs.assessment"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "Everything above is done.",
+    "Complete start of care: the client becomes Active. The journey stays on the profile as the record of how they started."
+   ],
+   "due": {
+    "days": 2,
+    "business": true
+   }
+  }
+ ]
+}
