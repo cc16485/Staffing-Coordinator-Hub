@@ -23,6 +23,7 @@ def setup(c):
     c.run("grant usage on schema public, auth to anon, authenticated, service_role")
     # the project's default privileges (010): new tables come with extras for the browser roles
     c.run("alter default privileges in schema public grant all on tables to anon, authenticated")
+    c.run("alter default privileges in schema public grant execute on functions to anon, authenticated, service_role")
     c.run("create table auth.users(id uuid primary key, email text, raw_app_meta_data jsonb, raw_user_meta_data jsonb)")
     c.run("""create function auth.uid() returns uuid language sql stable as $$
       select coalesce(nullif(current_setting('request.jwt.claim.sub', true), ''), (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'))::uuid $$""")
