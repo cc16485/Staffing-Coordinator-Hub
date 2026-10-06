@@ -19,6 +19,13 @@
 //                   item showing the caregiver's words (her ruling, 2026-09-29) and a link to the profile. It
 //                   never contacts anyone. It does nothing until ops_settings.care_notes_flag_live is true.
 //   POST ?flag=1&practice=1&hours=48   the owner's key: the same reading and asking, COUNTS ONLY, nothing saved.
+//
+//   My Desk 6b (2026-10-06, her go on Stage 6): the same run also asks a second, separate question of each note: did
+//                   the client or family SAY something kind? A yes, with the words copied exactly from the note (checked
+//                   here, word for word), becomes a SUGGESTION in the Kind Words jar: it waits for an owner or
+//                   coordinator to say "yes, that's kind" (kind_word_decide), and only then is it in the jar and on
+//                   desks. Nothing until ops_settings.kind_words_suggest_live is true; a practice run counts it.
+//                   It never contacts anyone, and the caregiver is never told by the Hub.
 // -----------------------------------------------------------------------------
 import { jobCaller } from '../_shared/job-auth.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
@@ -217,6 +224,39 @@ async function askConcernOnce(text: string): Promise<Concern> {
       family_line: a.concern === true ? String(a.family_line ?? '').replace(/\s*\u2014\s*/g, ', ').slice(0, 240) : '' }
   } catch { return raised }
 }
+/* My Desk 6b: kind words in a shift note. A separate question so the concern answer above is never changed by it.
+   The quote must be the note's own words: anything the AI wrote itself is thrown away (kindRead checks it). */
+export const KIND_WHO = ['the client', 'a family member', 'someone else']
+type Kind = { kind: boolean; quote: string; who: string; failed: boolean }
+const squash = (x: string) => String(x ?? '').toLowerCase().replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"').replace(/\s+/g, ' ').trim()
+export function quoteInNote(quote: string, text: string) {
+  const q = squash(quote).replace(/^["'\s]+|["'\s.]+$/g, '')
+  return q.length >= 8 && squash(text).includes(q)
+}
+export async function askKind(text: string): Promise<Kind> {
+  const key = Deno.env.get('ANTHROPIC_API_KEY') || ''
+  const none = { kind: false, quote: '', who: '', failed: true }
+  if (!key) return none
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST',
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 300, temperature: 0,
+        system: 'You read one home-care caregiver\'s shift notes for a client. Find KIND WORDS: something warm, grateful or '
+          + 'loving that the client or a family member SAID about the caregiver, the visit or the company (for example the '
+          + 'note says "Ruth told me she loves when I come" or "her daughter thanked us for the help"). The caregiver '
+          + 'describing the day or their own work is NOT kind words, and neither is an ordinary good day ("in good spirits", '
+          + '"enjoyed lunch"). When unsure, it is NOT. Answer ONLY minified JSON: {"kind":bool,"quote":string (the kind '
+          + 'words copied EXACTLY, letter for letter, from the note: one or two sentences, at most 40 words; empty when kind '
+          + 'is false),"who":one of ' + JSON.stringify(KIND_WHO) + ' (who said it)}',
+        messages: [{ role: 'user', content: text.slice(0, 6000) }] }) })
+    if (!r.ok) return none
+    const j = await r.json().catch(() => null)
+    const m = String(j?.content?.[0]?.text ?? '').match(/\{[\s\S]*\}/); if (!m) return none
+    const a = JSON.parse(m[0])
+    return { kind: a.kind === true, quote: String(a.quote ?? '').trim().slice(0, 600), who: KIND_WHO.includes(a.who) ? a.who : 'someone else', failed: false }
+  } catch { return none }
+}
+
 // deno-lint-ignore no-explicit-any
 async function readKey(db: any, key: string): Promise<any[]> {
   const { data } = await db.from('app_data').select('data').eq('key', key).maybeSingle()
@@ -231,6 +271,7 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
   if (!token || !/^\d+$/.test(site)) return { error: 'AxisCare credentials not set on this project' }
   const { data: os } = await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
   const live = os?.data?.care_notes_flag_live === true   /* the switch, like coverage_flag_live */
+  const kindLive = os?.data?.kind_words_suggest_live === true   /* My Desk 6b: its own switch (Owners Hub Admin page) */
   if (!opts.practice && !live) return { ok: true, off: true, note: 'switched off (ops_settings.care_notes_flag_live is not true)' }
   const state = (await readKey(db, 'care_notes_state')).find((x) => x?.id === 'state') ?? { id: 'state', last_look: '' }
   const now = Date.now()
@@ -251,7 +292,8 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
     url = j?.results?.nextPage ?? j?.nextPage ?? null
   }
   const out = { ok: true, practice: opts.practice, window_hours: Math.round((now - since) / 3600e3), visits_finished: 0, read: 0, stopped_early: false,
-    days_with_words: 0, already_flagged: 0, asked: 0, flagged: 0, urgent: 0, ai_could_not_read: 0, by_kind: {} as Record<string, number>, items_made: 0 }
+    days_with_words: 0, already_flagged: 0, asked: 0, flagged: 0, urgent: 0, ai_could_not_read: 0, by_kind: {} as Record<string, number>, items_made: 0,
+    kind_switch: kindLive, kind_asked: 0, kind_found: 0, kind_not_in_note: 0, kind_ai_failed: 0, kind_already: 0, kind_suggested: 0 }
   // deno-lint-ignore no-explicit-any
   const groups = new Map<string, any[]>()
   /* read only the visits that could have finished since the last look: the list carries clock-out times when it has
@@ -286,8 +328,9 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
     if (!note && !tasks.length) continue      // no words to read (a missing note is the missed-notes work, not this)
     out.days_with_words++
     const id = 'ops_carenote_' + k.replace(/[^A-Za-z0-9]/g, '_')
-    if (have.has(id)) { out.already_flagged++; continue }
     const text = (note ? 'Care note: ' + note : 'No care note.') + (tasks.length ? '\nTasks: ' + tasks.join('; ') : '')
+    if (opts.practice || kindLive) await kindPass(db, opts.practice, k, text, last, out)
+    if (have.has(id)) { out.already_flagged++; continue }
     out.asked++
     const a = await askConcern(text, Number(Deno.env.get('CARE_NOTES_PAUSE_MS') ?? 2000))
     if (a.failed) out.ai_could_not_read++
@@ -315,9 +358,37 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
   if (!opts.practice) {
     if (!out.stopped_early) await db.rpc('upsert_app_data_item', { target_key: 'care_notes_state', item: { id: 'state', last_look: new Date(now).toISOString() } })
     try { await db.rpc('upsert_app_data_item', { target_key: 'automation_heartbeats', item: { id: 'hb_care-notes-flag', automation: 'care-notes-flag',
-      at: new Date().toISOString(), ok: !out.stopped_early, note: `${out.flagged} flagged of ${out.asked} read` + (out.stopped_early ? '; AxisCare asked us to slow down' : '') } }) } catch { /* a beat must not stop the run */ }
+      at: new Date().toISOString(), ok: !out.stopped_early, note: `${out.flagged} flagged of ${out.asked} read` + (kindLive ? `; ${out.kind_suggested} kind word${out.kind_suggested === 1 ? '' : 's'} suggested` : '') + (out.stopped_early ? '; AxisCare asked us to slow down' : '') } }) } catch { /* a beat must not stop the run */ }
   }
   return out
+}
+
+/* My Desk 6b: one caregiver-client-day's kind words become a suggestion waiting for a person's yes (never straight into
+   the jar). Counted only in practice. Once per day's note: a run that re-reads the same shifts finds it already there. */
+// deno-lint-ignore no-explicit-any
+async function kindPass(db: any, practice: boolean, k: string, text: string, last: any, out: any) {
+  const ref = 'carenote:' + k
+  if (!practice) {
+    const { data: had } = await db.from('kind_words').select('id').eq('source_ref', ref).limit(1)
+    if (Array.isArray(had) && had.length) { out.kind_already++; return }
+  }
+  out.kind_asked++
+  const a = await askKind(text)
+  if (a.failed) { out.kind_ai_failed++; return }
+  if (!a.kind || !a.quote) return
+  if (!quoteInNote(a.quote, text)) { out.kind_not_in_note++; return }   /* only the note's own words, never the AI's */
+  out.kind_found++
+  if (practice) return
+  const clientFirst = String(last?.client?.firstName ?? '').trim()
+  const clientName = [clientFirst, String(last?.client?.lastName ?? '').trim()].filter(Boolean).join(' ')
+  const cg = [String(last?.caregiver?.firstName ?? '').trim(), String(last?.caregiver?.lastName ?? '').trim()].filter(Boolean).join(' ')
+  const who = a.who === 'the client' ? (clientFirst || 'The client') : a.who === 'a family member' ? (clientFirst ? clientFirst + '\'s family' : 'The family')
+    : (clientFirst ? 'Someone at ' + clientFirst + '\'s visit' : 'Someone at a visit')
+  const { error } = await db.from('kind_words').insert({ quote: a.quote.replace(/^["\u201C]+|["\u201D]+$/g, '').trim(), who: who.slice(0, 200),
+    about: cg.slice(0, 200), about_role: cg ? 'caregiver' : '', source: 'shift_note', source_ref: ref,
+    said_on: k.split('|')[2] || null, link: last?.client?.id ? { type: 'client', ax: String(last.client.id), name: (clientName || 'the client').slice(0, 80) } : null,
+    status: 'suggested', suggested_by: 'care-notes' })
+  if (!error) out.kind_suggested++
 }
 
 Deno.serve(async (req) => {
