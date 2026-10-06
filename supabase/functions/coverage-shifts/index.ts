@@ -122,11 +122,23 @@ Deno.serve(async (req) => {
     const { token, site } = axisCreds()
     if (!token || !site) return json({ error: 'AxisCare credentials not set on this project' }, 502)
     const day = /^\d{4}-\d\d-\d\d$/.test(String(b.date || '')) ? String(b.date) : chiToday()
+    /* Calendar views (2026-10-06, Samantha: "can it be in a daily/weekly/month calendar"): an optional range, start..end,
+       at most 42 days (a month grid), read the same way as one day. Without a range it is the one day, as before. */
+    const isYmd = (x: unknown) => /^\d{4}-\d\d-\d\d$/.test(String(x || ''))
+    let from = day, to = day
+    if (isYmd(b.start) && isYmd(b.end)) {
+      from = String(b.start); to = String(b.end)
+      if (to < from) return json({ error: 'the end date is before the start date' }, 400)
+      if (addCalDays(from, 41) < to) return json({ error: 'pick at most 42 days at a time' }, 400)
+    }
+    const ranged = from !== to
     // deno-lint-ignore no-explicit-any
     const visits: any[] = []
-    let vurl: string | null = `https://${site}.axiscare.com/api/visits?startDate=${day}&endDate=${day}`
+    let vurl: string | null = `https://${site}.axiscare.com/api/visits?startDate=${from}&endDate=${to}`
+    let more = false
     try {
-      for (let page = 0; vurl && page < 8; page++) {
+      for (let page = 0; vurl; page++) {
+        if (page >= (ranged ? 60 : 8)) { more = true; break }
         const r: Response = await fetch(vurl, { headers: {
           Authorization: `Bearer ${token}`, Accept: 'application/json',
           'X-AxisCare-Api-Version': AC_VERSION } })
@@ -139,6 +151,7 @@ Deno.serve(async (req) => {
     } catch (err) { return json({ error: String(err) }, 502) }
     const rows = visits.map((v) => ({
       visit_id: v?.id != null ? String(v.id) : '',
+      date: String(v?.scheduledStartDate ?? v?.startDate ?? '').slice(0, 10) || from,
       time: String(v?.scheduledStartDate ?? v?.startDate ?? '').slice(11, 16),
       end: String(v?.scheduledEndDate ?? v?.endDate ?? '').slice(11, 16),
       client: [v?.client?.firstName, v?.client?.lastName].filter(Boolean).join(' ') || '?',
@@ -149,9 +162,10 @@ Deno.serve(async (req) => {
       caregiver_id: v?.caregiver?.id != null ? String(v.caregiver.id) : '',
       clock_in: clockHM(v?.clockIn) ?? (String(v?.actualStartDate ?? '').slice(11, 16) || null),
       clock_out: clockHM(v?.clockOut) ?? (String(v?.actualEndDate ?? '').slice(11, 16) || null),
-    })).sort((a, b2) => a.time.localeCompare(b2.time) || a.client.localeCompare(b2.client))
-    return json({ date: day, total: rows.length,
-      unassigned: rows.filter((r) => !r.caregiver).length, rows })
+    })).sort((a, b2) => a.date.localeCompare(b2.date) || a.time.localeCompare(b2.time) || a.client.localeCompare(b2.client))
+    return json({ date: from, start: from, end: to, total: rows.length,
+      unassigned: rows.filter((r) => !r.caregiver).length, rows,
+      ...(more ? { partial: 'AxisCare had more visits than one read can hold; pick a shorter range to see them all' } : {}) })
   }
 
   /* Mode 2: the ACTIVE caregiver census, live from AxisCare, for the
