@@ -46,6 +46,7 @@ export const SENDER_WORDS: Record<string, [string, string]> = {
   'coverage-reply': ['open shift reply', 'scheduling_coverage'],
   'shift-confirm': ['shift confirmation', 'scheduling_coverage'],
   'team-ask': ['Team Builder text', 'scheduling_coverage'],
+  'kind-tell': ['kind words text to a caregiver', 'caregivers'],
   'carematch-watch': ['care match message', 'scheduling_coverage'],
   'late-watch': ['running-late message', 'scheduling_coverage'],
   'late-alert': ['running-late message', 'scheduling_coverage'],
