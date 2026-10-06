@@ -187,7 +187,8 @@ async function refreshCards(db: Any, j: Any, view: Any, pp: Any, st: Any) {
   const want = new Map<string, Any>(), now = new Date().toISOString(), ref = refOf(j)
   for (const c of cards) {
     const id = cardId(j.journey_id, c.owner)
-    const urgent = c.kind === 'attention', high = c.kind === 'blocked' && c.start_in != null && c.start_in <= 7
+    /* Act Now: needs attention, or blocked with the start date within 7 days */
+    const urgent = c.kind === 'attention' || (c.kind === 'blocked' && c.start_in != null && c.start_in <= 7), high = c.kind === 'blocked'
     want.set(id, { id, kind: 'journey', status: 'open', source_type: 'journey', journey_id: j.journey_id, step_key: c.step_key, card_kind: c.kind,
       title: cardText(c), about: j.client_name, detail: (c.also?.length ? 'Also ready: ' + c.also.join(' · ') : ''),
       link: '#p/' + ref + '/start/' + c.step_key, owner: c.owner, owner_name: pp.names[c.owner] || c.owner,
@@ -263,6 +264,7 @@ Deno.serve(async (req) => {
     if (!leadId && !axId) return json({ error: 'which person?' }, 400)
     const had = await load(db, leadId ? { lead_id: leadId } : { axiscare_client_id: axId })
     if (had) return json({ outcome: 'exists', journey_id: had.j.journey_id })
+    if (st.client_journey_live !== true && b.is_test !== true) return json({ outcome: 'off', error: 'Client journeys are switched off: only TEST journeys can be started.' }, 409)
     const lead = await leadOf(db, leadId)
     const pay = payerFrom(b.payer ?? lead?.funding_source)
     if (pay === 'cds') return json({ outcome: 'cds', error: 'CDS is its own program and does not use this journey.' }, 422)

@@ -135,7 +135,8 @@ try {
   ck('the Care Coordinator completes start of care (no owner approval needed): Active, cards closed', r.j.status === 'active' && T.client_journey[0].status === 'active' && !open().length && ev(J2, 'became_active').length === 1, r.j)
   // switch
   reset(false); r = await call({ action: 'open', lead_id: 'L1' }); ck('switched off: a Care Coordinator is refused', r.status === 409)
-  r = await call({ action: 'open', lead_id: 'L1', is_test: true }, 'sam'); ck('...an owner can still test (a TEST journey)', r.j.outcome === 'created' && T.client_journey[0].is_test === true)
+  r = await call({ action: 'open', lead_id: 'L1' }, 'sam'); ck('...an owner can\'t start a real journey while off', r.j.outcome === 'off' && !T.client_journey.length)
+  r = await call({ action: 'open', lead_id: 'L1', is_test: true }, 'sam'); ck('...but can start a TEST journey to try it', r.j.outcome === 'created' && T.client_journey[0].is_test === true)
   r = await call({ action: 'sweep' }, null, { 'x-cron-secret': ENV.HUB_JOB_SECRET }); ck('...and the sweep does nothing while off', r.j.live === false)
   ck('nothing ever texted or emailed (no outside calls but AxisCare reads)', true)
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
