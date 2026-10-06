@@ -23,6 +23,7 @@ const MAX_OPEN = 40
 export const SENDER_WORDS: Record<string, [string, string]> = {
   // sender: [what the message was, the domain whose owner gets the card]
   'interview-messages': ['interview confirmation / reminder', 'caregivers'],
+  'talk-notify': ['To talk about email to staff', 'client_care'],
   'reference-chase': ['reference request', 'caregivers'],
   'reference-send': ['reference form', 'caregivers'],
   'applicant-invite': ['application link', 'caregivers'],
