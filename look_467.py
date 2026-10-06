@@ -15,6 +15,12 @@ def say(s=""):
     s = re.sub(r"\(?\b\d{3}\)?[ .\-]?\d{3}[ .\-]\d{4}\b", "(a number)", s)
     print(s, flush=True); lines.append(s)
 def done(c): open(REPORT, "w").write("\n".join(lines) + "\n"); raise SystemExit(c)
+import sys
+def _crash(tp, e, tb):
+    say(); say("  ✗ STOPPED: " + type(e).__name__ + ": " + str(e)[:200] + " (nothing was changed). Tell Claude.")
+    try: open(REPORT, "w").write("\n".join(lines) + "\n")
+    except Exception: pass
+sys.excepthook = _crash
 def sql(q):
     req = urllib.request.Request(f"{API}/v1/projects/{REF}/database/query", data=json.dumps({"query": q}).encode(), method="POST",
                                  headers={"Content-Type": "application/json", "Authorization": "Bearer " + TOKEN, "User-Agent": "cc-467/1.0"})
@@ -25,13 +31,21 @@ say("467 · WHAT IS SITTING IN NEEDS ATTENTION (read only)"); say("Report " + dt
 if not TOKEN.startswith("sbp_"): say("✗ no Supabase access token. Nothing was read."); done(2)
 r = sql("select data from app_data where key = 'ops_items'")
 if not r: say("✗ couldn't read Needs Attention. Nothing was changed."); done(3)
-items = r[0]["data"]
+items = r[0]["data"] if r and isinstance(r, list) and r[0] else []
 if isinstance(items, str): items = json.loads(items)
+if isinstance(items, dict): items = list(items.values())
 items = [i for i in (items or []) if isinstance(i, dict)]
 now = dt.datetime.now(dt.timezone.utc)
 def t(x):
-    try: return dt.datetime.fromisoformat(str(x).replace("Z", "+00:00"))
-    except Exception: return None
+    if not x: return None
+    v = str(x).strip().replace("Z", "+00:00")
+    try: d = dt.datetime.fromisoformat(v)
+    except Exception:
+        try: d = dt.datetime.fromisoformat(v[:19])
+        except Exception:
+            try: d = dt.datetime.fromisoformat(v[:10] + "T12:00:00")
+            except Exception: return None
+    return d if d.tzinfo else d.replace(tzinfo=dt.timezone.utc)   # a time with no zone: read as UTC
 def chi(x):
     d = t(x)
     return (d - dt.timedelta(hours=5)).strftime("%b %d %I:%M%p").replace(" 0", " ") if d else "?"
@@ -46,30 +60,30 @@ for i in op:
     b["no due time" if d is None else "not late" if d <= 0 else "under a day late" if d < 1 else "1-7 days late" if d <= 7 else "more than a week late"] += 1
 say("  · " + " · ".join(f"{k}: {v}" for k, v in b.items()))
 kinds = {}
-for i in op: k = i.get("kind") or "?"; kinds.setdefault(k, [0, 0]); kinds[k][0] += 1; kinds[k][1] += 1 if (late(i) or 0) > 7 else 0
+for i in op: k = str(i.get("kind") or "?"); kinds.setdefault(k, [0, 0]); kinds[k][0] += 1; kinds[k][1] += 1 if (late(i) or 0) > 7 else 0
 say("  · by kind (open, of which more than a week late):")
 for k, (n, o) in sorted(kinds.items(), key=lambda x: -x[1][0]): say(f"      {k}: {n}" + (f" ({o} more than a week late)" if o else ""))
 say(); say("B · THE SAME THING MORE THAN ONCE (open, same kind + client + title)")
 g = {}
-for i in op: g.setdefault((i.get("kind"), (i.get("about") or "").strip().lower(), (i.get("title") or "").strip().lower()), []).append(i)
+for i in op: g.setdefault((str(i.get("kind")), str(i.get("about") or "").strip().lower(), str(i.get("title") or "").strip().lower()), []).append(i)
 dup = {k: v for k, v in g.items() if len(v) > 1}
 if not dup: say("  · none")
 for (k, a, ti), v in sorted(dup.items(), key=lambda x: -len(x[1])):
     say(f"  · {len(v)}× [{k}] {v[0].get('title') or v[0].get('about') or '(no title)'}")
     for i in sorted(v, key=lambda x: str(x.get('created_at'))):
-        say(f"      made {chi(i.get('created_at'))} by {i.get('created_by') or i.get('opened_by') or '?'} ({i.get('opened_by') or i.get('source') or '?'}) · due {chi(i.get('due'))} · owner {(i.get('owner_name') or i.get('owner') or 'nobody').split('@')[0]} · id …{str(i.get('id'))[-18:]}")
+        say(f"      made {chi(i.get('created_at'))} by {i.get('created_by') or i.get('opened_by') or '?'} ({i.get('opened_by') or i.get('source') or '?'}) · due {chi(i.get('due'))} · owner {str(i.get('owner_name') or i.get('owner') or 'nobody').split('@')[0]} · id …{str(i.get('id'))[-18:]}")
 say(); say("C · EVERY OPEN ITEM ABOUT ASHLEY GRUSS")
-ash = [i for i in op if "ashley gruss" in ((i.get("about") or "") + " " + (i.get("title") or "")).lower()]
+ash = [i for i in op if "ashley gruss" in (str(i.get("about") or "") + " " + str(i.get("title") or "")).lower()]
 if not ash: say("  · none open now")
 for i in sorted(ash, key=lambda x: str(x.get('created_at'))):
     say(f"  · [{i.get('kind')}] {i.get('title') or '(no title)'}")
-    say(f"      made {chi(i.get('created_at'))} by {i.get('created_by') or '?'} ({i.get('opened_by') or i.get('source') or '?'}) · due {chi(i.get('due'))} · owner {(i.get('owner_name') or i.get('owner') or 'nobody').split('@')[0]} · id …{str(i.get('id'))[-30:]}")
+    say(f"      made {chi(i.get('created_at'))} by {i.get('created_by') or '?'} ({i.get('opened_by') or i.get('source') or '?'}) · due {chi(i.get('due'))} · owner {str(i.get('owner_name') or i.get('owner') or 'nobody').split('@')[0]} · id …{str(i.get('id'))[-30:]}")
 say(); say("D · TEST ITEMS, AND THE OLDEST MORE THAN A WEEK LATE")
-tests = [i for i in op if re.match(r"\s*test\b", (i.get("title") or ""), re.I)]
+tests = [i for i in op if re.match(r"\s*test\b", str(i.get("title") or ""), re.I)]
 say(f"  · open items whose title starts with TEST: {len(tests)}")
 for i in tests: say(f"      [{i.get('kind')}] {i.get('title')} · made {chi(i.get('created_at'))} by {i.get('created_by') or '?'}")
 old = sorted([i for i in op if (late(i) or 0) > 7], key=lambda i: str(i.get('due')))
 say(f"  · more than a week late: {len(old)}. The oldest 20:")
-for i in old[:20]: say(f"      due {chi(i.get('due'))} · [{i.get('kind')}] {(i.get('title') or i.get('about') or '(no title)')[:90]} · owner {(i.get('owner_name') or i.get('owner') or 'nobody').split('@')[0]}")
+for i in old[:20]: say(f"      due {chi(i.get('due'))} · [{i.get('kind')}] {str(i.get('title') or i.get('about') or '(no title)')[:90]} · owner {str(i.get('owner_name') or i.get('owner') or 'nobody').split('@')[0]}")
 say(); say("Nothing was changed, texted or emailed.")
 done(0)
