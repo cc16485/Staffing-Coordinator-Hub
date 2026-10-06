@@ -266,6 +266,15 @@ const whenChi = (iso: unknown) => { try { return new Date(String(iso)).toLocaleS
 const dayChi = (iso: unknown) => { try { return new Date(String(iso)).toLocaleString('en-US', { timeZone: 'America/Chicago', weekday: 'short', month: 'short', day: 'numeric' }) } catch { return '' } }
 
 // deno-lint-ignore no-explicit-any
+export async function clientCareOwner(db: any): Promise<{ email: string; name: string }> {
+  try {
+    const { data: dom } = await db.from('domains').select('owner_person').eq('code', 'client_care').eq('entity', 'cc_ihs').maybeSingle()
+    if (!dom?.owner_person) return { email: '', name: '' }
+    const { data: pp } = await db.from('persons').select('primary_email,full_name').eq('person_id', dom.owner_person).maybeSingle()
+    return { email: String(pp?.primary_email ?? '').toLowerCase(), name: String(pp?.full_name ?? '') }
+  } catch { return { email: '', name: '' } }
+}
+// deno-lint-ignore no-explicit-any
 export async function flagRun(db: any, opts: { practice: boolean; hours?: number }) {
   const { token, site } = axisCreds()
   if (!token || !/^\d+$/.test(site)) return { error: 'AxisCare credentials not set on this project' }
@@ -315,6 +324,9 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
     if (!groups.has(k)) groups.set(k, []); groups.get(k)!.push(v)
   }
   const items = opts.practice ? [] : await readKey(db, 'ops_items')
+  /* 468 (Samantha 2026-10-06, after 467 showed 30 open flags with nobody on them): a new flag lands on whoever owns
+     Client Care (Hub Settings > who owns what), not on nobody. No owner set there = unassigned, as before. */
+  const cc = opts.practice ? { email:'', name:'' } : await clientCareOwner(db)
   const have = new Set(items.map((i) => String(i?.id ?? '')))
   for (const [k, vs] of groups) {
     const last = vs.slice().sort((a, b) => String(a?.clockOut?.time ?? '').localeCompare(String(b?.clockOut?.time ?? ''))).pop()
@@ -351,7 +363,7 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
         + (note ? `"${note}"` : '(no care note)') + (tasks.length ? '\n\n' + tasks.join('\n') : '')
         + (a.failed ? `\n\nThe AI couldn't read this note (twice), so it hasn't judged it either way. A person should read it; close it if it's an ordinary day.`
                     : `\n\nWhy it was flagged: ${a.why || a.kind}.`) + `\nRead it, then decide what happens next. This never contacts anyone by itself.`,
-      owner: '', owner_name: '', due: new Date(now + (a.urgent ? 4 : 24) * 3600e3).toISOString(),
+      owner: cc.email, owner_name: cc.name, due: new Date(now + (a.urgent ? 4 : 24) * 3600e3).toISOString(),
       created_at: new Date().toISOString(), created_by: 'care-notes', opened_by: 'care-note-flag' } })
     if (!error) out.items_made++
   }

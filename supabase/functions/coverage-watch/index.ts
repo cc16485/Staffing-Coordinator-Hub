@@ -34,7 +34,7 @@ import { opEvent } from '../_shared/events.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { changedSince, decideHeld, heldItem, visitMs } from '../_shared/held-shift.ts'
 import { outsideVerdict } from '../_shared/covered-outside.ts'
-import { attendanceCard, caseEnded, caseWhen, chiNowNaive, evvDayStats, evvWeek, familyCallNeeded, itemsToCloseForCases,
+import { attendanceCard, caseEnded, caseWhen, shiftAhead, chiNowNaive, evvDayStats, evvWeek, familyCallNeeded, itemsToCloseForCases,
   markNoClosureTexts, pastCaseVerdict, weekOf } from '../_shared/loops.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
@@ -675,10 +675,12 @@ Deno.serve(async (req) => {
       loops.family_calls.push({ case: cc.id, client: cc.client || null, card: itemIds.has(fid) ? 'exists' : 'new' })
       if (!loopsLive || itemIds.has(fid)) continue
       const owner = String(cc.owner || '').toLowerCase() || await domainOwner('scheduling_coverage')
+      /* 468: a shift closed as not covered before it happens "won't be covered"; one already past "wasn't covered" */
+      const ahead = shiftAhead(cc, Date.now())
       await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
         id: fid, kind: 'family_call', case_id: cc.id, status: 'open', domain: 'scheduling_coverage',
-        title: `Call ${cc.client || 'the client'}'s family: the ${caseWhen(cc)} shift wasn't covered`, about: cc.client || '',
-        detail: 'Nobody covered this shift. A person calls the family; the Hub never contacts them by itself. Record the call on this card.',
+        title: `Call ${cc.client || 'the client'}'s family: the ${caseWhen(cc)} shift ${ahead ? "won't be" : "wasn't"} covered`, about: cc.client || '',
+        detail: (ahead ? 'Nobody is covering this shift.' : 'Nobody covered this shift.') + ' A person calls the family; the Hub never contacts them by itself. Record the call on this card.',
         owner, owner_name: '', urgency: 'urgent', due: new Date(Date.now() + 3600000).toISOString(),
         created_at: nowIso, created_by: 'coverage-watch', opened_by: 'loops' } })
       cc.family_call_item = fid

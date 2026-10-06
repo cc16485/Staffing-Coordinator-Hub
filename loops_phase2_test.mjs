@@ -124,6 +124,7 @@ ck('on · the case card closes with its case (Resolved, says why); the future ca
    && /closed \(covered\)/.test(item('ops_cov_c1').close_note) && item('ops_cov_c4').status === 'open' && item('ops_cov_c6').status === 'resolved', APP.ops_items)
 ck('on · not covered (after the switch-on): ONE urgent "call the family" card for a person', item('ops_famcall_c6')?.kind === 'family_call' && item('ops_famcall_c6').urgency === 'urgent'
    && /never contacts them by itself/.test(item('ops_famcall_c6').detail) && kase('c6').family_call_item === 'ops_famcall_c6', item('ops_famcall_c6'))
+ck('468 · ...a shift that already happened says "wasn\'t covered"', /the Tue, Oct 6, 7am-9am shift wasn't covered$/.test(item('ops_famcall_c6').title) && /^Nobody covered this shift/.test(item('ops_famcall_c6').detail), item('ops_famcall_c6').title)
 ck('on · an uncovered case from before the switch-on is left alone', !item('ops_famcall_c7'))
 const n1 = APP.ops_items.length; r = await run(CW)
 ck('on · running again changes nothing (no duplicates, nobody re-asked)', APP.ops_items.length === n1 && r.loops.cases_closed.length === 0 && r.loops.asked.length === 0 && r.loops.items_closed === 0, r.loops)
@@ -180,6 +181,11 @@ ck('tk on · a visit that changed caregiver is still "visit changed", not an EVV
 /* ── 6 · coverage-run never asks caregivers about a shift that is over ── */
 const CRsrc = fs.readFileSync(`${FN}/coverage-run/index.ts`, 'utf8')
 ck('coverage-run · the wave send checks the shift is not over', /!quietHold && !shiftOver && wave\.length/.test(CRsrc) && /const shiftOver = caseEnded\(c, chiNowNaive\(\), 0\)/.test(CRsrc))
+/* 468: a shift closed as not covered before it happens "won't be covered" (the Oct 8 / Oct 9 Ashley cards) */
+ck('468 · shiftAhead: a shift two days out is ahead; this morning\'s 7am shift (now 8:35am Chicago) is not; no date is not', L.shiftAhead({ shift_date:'2026-10-08', shift_time:'14:30-17:30' }, Date.parse('2026-10-06T13:35:00Z')) === true
+   && L.shiftAhead({ shift_date:'2026-10-06', shift_time:'07:00-09:00' }, Date.parse('2026-10-06T13:35:00Z')) === false && L.shiftAhead({}, Date.now()) === false
+   && L.shiftAhead({ shift_date:'2026-10-06', shift_time:'14:30-17:30' }, Date.parse('2026-10-06T13:35:00Z')) === true)
+ck('468 · the family-call card says "won\'t be covered" for a shift still ahead, "wasn\'t covered" after', /\$\{ahead \? "won't be" : "wasn't"\} covered/.test(fs.readFileSync(`${FN}/coverage-watch/index.ts`, 'utf8')))
 ck('source · the new rules never send anything', !/ghlSend|conversations\/messages|textAdmin|fetch\(/.test(fs.readFileSync(`${FN}/_shared/loops.ts`, 'utf8')))
 
 for (const [n, ok, note] of res) console.log((ok ? 'PASS' : 'FAIL') + ' · ' + n + (ok ? '' : '  ' + note))
