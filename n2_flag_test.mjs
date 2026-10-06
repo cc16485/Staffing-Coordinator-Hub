@@ -80,6 +80,7 @@ globalThis.fetch = async (url, o) => { url = String(url)
     const m = url.match(/\/api\/visits\/([^/?]+)$/); if (m && V[m[1]]) return new Response(JSON.stringify({ results: V[m[1]] }), { status: 200 })
     return new Response('{}', { status: 404 }) }
   if (url.includes('api.anthropic.com')) { const b = JSON.parse(o.body); const t = b.messages[0].content
+    if (/how soon/.test(b.system)) return new Response(JSON.stringify({ content: [{ text: '{"level":"none"}' }] }), { status: 200 })   /* red/yellow levels: tested in shift_note_levels_test.mjs */
     if (/KIND WORDS/.test(b.system)) return new Response(JSON.stringify({ content: [{ text: '{"kind":false,"quote":"","who":"the client"}' }] }), { status: 200 })   /* My Desk 6b's own question: tested in my_desk_466_test.mjs */
     AI.push(t)
     if (/AIFAIL/.test(t)) return new Response('{}', { status: 500 })

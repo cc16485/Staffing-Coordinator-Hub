@@ -20,6 +20,18 @@
 //                   never contacts anyone. It does nothing until ops_settings.care_notes_flag_live is true.
 //   POST ?flag=1&practice=1&hours=48   the owner's key: the same reading and asking, COUNTS ONLY, nothing saved.
 //
+//   RED AND YELLOW FLAGS (2026-10-06, Samantha: "more clear on why they are listed... is it a yellow or red flag", "a
+//                   better flow on what to do"; she approved the mockup and every recommendation). With
+//                   ops_settings.care_notes_levels_live on, the AI gives a LEVEL instead of yes/no: red (act today: a fall
+//                   or injury, safety at home, sudden illness or bad pain, medication, signs of neglect or abuse), yellow
+//                   (look within 24 hours: a change in eating, mood, confusion, skin, sleep, mild pain, refused care,
+//                   family conflict, a problem with the visit) or none (a normal day: no card; "something else worth a
+//                   look" is gone). It also gives the one sentence of why, and the caregiver's own words that caused it
+//                   (kept only if they are really in the note, so the Hub can highlight them). 3 yellow flags for one
+//                   client in 14 days become one red flag ("pattern"). Red flags also show on the Incidents owner's My
+//                   Work (also_for). With ops_settings.care_notes_red_text_live on, a red flag texts the Client Care owner
+//                   one short line, 8am to 9pm only. A practice run counts reds and yellows (and the old yes/no, to compare).
+//
 //   My Desk 6b (2026-10-06, her go on Stage 6): the same run also asks a second, separate question of each note: did
 //                   the client or family SAY something kind? A yes, with the words copied exactly from the note (checked
 //                   here, word for word), becomes a SUGGESTION in the Kind Words jar: it waits for an owner or
@@ -30,6 +42,8 @@
 import { jobCaller } from '../_shared/job-auth.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { textAdmin, type Admin } from '../_shared/clockin-admins.ts'
+import { normalisePhone } from '../_shared/outreach.ts'
 
 const AC_VERSION = '2023-10-01'
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -224,6 +238,77 @@ async function askConcernOnce(text: string): Promise<Concern> {
       family_line: a.concern === true ? String(a.family_line ?? '').replace(/\s*\u2014\s*/g, ', ').slice(0, 240) : '' }
   } catch { return raised }
 }
+/* Red / yellow / none (see the top). The kinds a flag may name; nothing vague. */
+export const LEVEL_KINDS = ['a fall or injury', 'safety at home', 'sudden illness or pain', 'medication', 'signs of neglect or abuse',
+  'confusion or a change in behavior', 'mood', 'eating or drinking', 'skin or a wound', 'sleep', 'refused care', 'family conflict',
+  'a problem with the caregiver or the visit']
+export const RED_KINDS = new Set(['a fall or injury', 'safety at home', 'sudden illness or pain', 'medication', 'signs of neglect or abuse'])
+type Level = { level: 'red' | 'yellow' | 'none'; kind: string; why: string; trigger: string; family_line: string; failed: boolean }
+export async function askLevel(text: string, pauseMs = 2000): Promise<Level> {
+  const first = await askLevelOnce(text)
+  if (!first.failed) return first
+  await new Promise((r) => setTimeout(r, pauseMs))
+  return await askLevelOnce(text)
+}
+async function askLevelOnce(text: string): Promise<Level> {
+  const key = Deno.env.get('ANTHROPIC_API_KEY') || ''
+  const failed: Level = { level: 'yellow', kind: '', why: '', trigger: '', family_line: '', failed: true }
+  if (!key) return failed
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST',
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 450, temperature: 0,
+        system: 'You read one home-care caregiver\'s shift notes for a client (the care note, and notes on tasks) and decide how soon '
+          + 'the office must look. "red" = act today: a fall or injury, a safety risk at home, sudden illness or bad or new pain, a '
+          + 'medication mistake or missed medication, signs of neglect, abuse or exploitation. "yellow" = look within 24 hours: a '
+          + 'specific change in eating or drinking, mood, confusion or behavior, skin or a wound, sleep, mild pain or illness, care '
+          + 'the client refused, family conflict, or a problem with the visit or the caregiver. "none" = an ordinary day, including '
+          + 'anything vague ("a bit tired", "quiet day") with no specific change named. Never flag an ordinary day. Answer ONLY '
+          + 'minified JSON: {"level":"red"|"yellow"|"none","kind":one of ' + JSON.stringify(LEVEL_KINDS) + ' (empty when none),'
+          + '"why":string (ONE plain sentence, at most 18 words, starting with the client\'s first name, saying what happened; '
+          + 'empty when none),"trigger":string (the words in the note that caused this, copied EXACTLY, at most 25 words; empty '
+          + 'when none),"family_line":string (when not none, ONE plain sentence a coordinator could send the client\'s family: '
+          + 'what happened and how the client is now, the least detail needed, no diagnoses, no medication names, no quotes, '
+          + 'first name only; empty when none)}',
+        messages: [{ role: 'user', content: text.slice(0, 6000) }] }) })
+    if (!r.ok) return failed
+    const j = await r.json().catch(() => null)
+    const m = String(j?.content?.[0]?.text ?? '').match(/\{[\s\S]*\}/); if (!m) return failed
+    const a = JSON.parse(m[0])
+    let level = a.level === 'red' || a.level === 'yellow' ? a.level : 'none'
+    if (level === 'yellow' && RED_KINDS.has(a.kind)) level = 'red'   /* her list: these are always act-today */
+    if (level === 'none') return { level, kind: '', why: '', trigger: '', family_line: '', failed: false }
+    const kind = LEVEL_KINDS.includes(a.kind) ? a.kind : (level === 'red' ? 'sudden illness or pain' : 'a problem with the caregiver or the visit')
+    const trig = String(a.trigger ?? '').trim()
+    return { level, kind, why: String(a.why ?? '').replace(/\s*\u2014\s*/g, ', ').slice(0, 200), trigger: trig && quoteInNote(trig, text) ? trig.slice(0, 300) : '',
+      family_line: String(a.family_line ?? '').replace(/\s*\u2014\s*/g, ', ').slice(0, 240), failed: false }
+  } catch { return failed }
+}
+/* How many flags this client has had in 14 days, and how many of them yellow (the pattern rule: a 3rd yellow = red). */
+// deno-lint-ignore no-explicit-any
+export function recentFlags(items: any[], clientAx: string, nowMs: number) {
+  const since = nowMs - 14 * 864e5
+  const mine = (items || []).filter((i) => i?.kind === 'care_note' && String(i?.client_ax ?? '') === clientAx && clientAx && Date.parse(String(i?.created_at ?? '')) >= since)
+  return { flags: mine.length, yellows: mine.filter((i) => i?.level === 'yellow').length }
+}
+/* the caregiver's phone, from the Hub's caregiver list (AxisCare id first, then the name) */
+// deno-lint-ignore no-explicit-any
+function caregiverPhone(cgs: any[], ax: string, name: string): string {
+  const n = name.trim().toLowerCase()
+  const c = cgs.find((x) => ax && String(x?.axiscare_id ?? '') === ax) || cgs.find((x) => n && `${x?.first ?? ''} ${x?.last ?? ''}`.trim().toLowerCase() === n)
+  return String(c?.phone ?? '').trim()
+}
+// deno-lint-ignore no-explicit-any
+async function domainOwnerEmail(db: any, code: string): Promise<string> {
+  try {
+    const { data: dom } = await db.from('domains').select('owner_person').eq('code', code).eq('entity', 'cc_ihs').maybeSingle()
+    if (!dom?.owner_person) return ''
+    const { data: pp } = await db.from('persons').select('primary_email').eq('person_id', dom.owner_person).maybeSingle()
+    return String(pp?.primary_email ?? '').toLowerCase()
+  } catch { return '' }
+}
+const chiHour = (ms: number) => Number(new Date(ms).toLocaleString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', hour12: false })) % 24
+
 /* My Desk 6b: kind words in a shift note. A separate question so the concern answer above is never changed by it.
    The quote must be the note's own words: anything the AI wrote itself is thrown away (kindRead checks it). */
 export const KIND_WHO = ['the client', 'a family member', 'someone else']
@@ -281,6 +366,8 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
   const { data: os } = await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
   const live = os?.data?.care_notes_flag_live === true   /* the switch, like coverage_flag_live */
   const kindLive = os?.data?.kind_words_suggest_live === true   /* My Desk 6b: its own switch (Owners Hub Admin page) */
+  const levelsLive = os?.data?.care_notes_levels_live === true   /* red / yellow flags (her switch, Owners Hub Admin page) */
+  const redTextLive = levelsLive && os?.data?.care_notes_red_text_live === true
   if (!opts.practice && !live) return { ok: true, off: true, note: 'switched off (ops_settings.care_notes_flag_live is not true)' }
   const state = (await readKey(db, 'care_notes_state')).find((x) => x?.id === 'state') ?? { id: 'state', last_look: '' }
   const now = Date.now()
@@ -302,6 +389,7 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
   }
   const out = { ok: true, practice: opts.practice, window_hours: Math.round((now - since) / 3600e3), visits_finished: 0, read: 0, stopped_early: false,
     days_with_words: 0, already_flagged: 0, asked: 0, flagged: 0, urgent: 0, ai_could_not_read: 0, by_kind: {} as Record<string, number>, items_made: 0,
+    levels_switch: levelsLive, red_text_switch: redTextLive, red: 0, yellow: 0, normal_day: 0, pattern_red: 0, red_texts: 0, by_level_kind: {} as Record<string, number>,
     kind_switch: kindLive, kind_asked: 0, kind_found: 0, kind_not_in_note: 0, kind_ai_failed: 0, kind_already: 0, kind_suggested: 0 }
   // deno-lint-ignore no-explicit-any
   const groups = new Map<string, any[]>()
@@ -323,7 +411,10 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
     const k = `${v?.caregiver?.id ?? '?'}|${v?.client?.id ?? '?'}|${new Date(v?.startDate ?? v?.scheduledStartDate).toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)}`
     if (!groups.has(k)) groups.set(k, []); groups.get(k)!.push(v)
   }
-  const items = opts.practice ? [] : await readKey(db, 'ops_items')
+  const items = await readKey(db, 'ops_items')   /* read in practice too (the pattern count); practice writes nothing */
+  const useLevels = opts.practice || levelsLive
+  const cgs = useLevels && !opts.practice ? await readKey(db, 'caregivers') : []
+  const incidents = levelsLive && !opts.practice ? await domainOwnerEmail(db, 'incidents') : ''
   /* 468 (Samantha 2026-10-06, after 467 showed 30 open flags with nobody on them): a new flag lands on whoever owns
      Client Care (Hub Settings > who owns what), not on nobody. No owner set there = unassigned, as before. */
   const cc = opts.practice ? { email:'', name:'' } : await clientCareOwner(db)
@@ -342,7 +433,8 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
     const id = 'ops_carenote_' + k.replace(/[^A-Za-z0-9]/g, '_')
     const text = (note ? 'Care note: ' + note : 'No care note.') + (tasks.length ? '\nTasks: ' + tasks.join('; ') : '')
     if (opts.practice || kindLive) await kindPass(db, opts.practice, k, text, last, out)
-    if (have.has(id)) { out.already_flagged++; continue }
+    if (have.has(id) && !opts.practice) { out.already_flagged++; continue }
+    if (useLevels) { await levelPass(db, opts, { id, k, text, note, tasks, last, items, cc, cgs, incidents, redTextLive, now, out, have }); if (!opts.practice) continue }
     out.asked++
     const a = await askConcern(text, Number(Deno.env.get('CARE_NOTES_PAUSE_MS') ?? 2000))
     if (a.failed) out.ai_could_not_read++
@@ -370,9 +462,63 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
   if (!opts.practice) {
     if (!out.stopped_early) await db.rpc('upsert_app_data_item', { target_key: 'care_notes_state', item: { id: 'state', last_look: new Date(now).toISOString() } })
     try { await db.rpc('upsert_app_data_item', { target_key: 'automation_heartbeats', item: { id: 'hb_care-notes-flag', automation: 'care-notes-flag',
-      at: new Date().toISOString(), ok: !out.stopped_early, note: `${out.flagged} flagged of ${out.asked} read` + (kindLive ? `; ${out.kind_suggested} kind word${out.kind_suggested === 1 ? '' : 's'} suggested` : '') + (out.stopped_early ? '; AxisCare asked us to slow down' : '') } }) } catch { /* a beat must not stop the run */ }
+      at: new Date().toISOString(), ok: !out.stopped_early, note: (levelsLive ? `${out.red} red, ${out.yellow} yellow of ${out.red + out.yellow + out.normal_day} read` : `${out.flagged} flagged of ${out.asked} read`) + (kindLive ? `; ${out.kind_suggested} kind word${out.kind_suggested === 1 ? '' : 's'} suggested` : '') + (out.stopped_early ? '; AxisCare asked us to slow down' : '') } }) } catch { /* a beat must not stop the run */ }
   }
   return out
+}
+
+/* One caregiver-client-day's words, read for a level. A red or yellow becomes a card (never in practice). */
+// deno-lint-ignore no-explicit-any
+async function levelPass(db: any, opts: { practice: boolean }, c: any) {
+  const { id, text, note, tasks, last, items, cc, cgs, incidents, redTextLive, now, out } = c
+  const a = await askLevel(text, Number(Deno.env.get('CARE_NOTES_PAUSE_MS') ?? 2000))
+  if (a.failed) out.ai_could_not_read++
+  if (!a.failed && a.level === 'none') { out.normal_day++; return }
+  const clientAx = String(last?.client?.id ?? '')
+  const past = recentFlags(items, clientAx, now)
+  let level: 'red' | 'yellow' | 'unread' = a.failed ? 'unread' : a.level as 'red' | 'yellow'
+  let pattern = 0
+  if (level === 'yellow' && past.yellows + 1 >= 3) { level = 'red'; pattern = past.yellows + 1; out.pattern_red++ }
+  if (level === 'red') out.red++; else if (level === 'yellow') out.yellow++
+  if (!a.failed) out.by_level_kind[`${level} · ${a.kind}`] = (out.by_level_kind[`${level} · ${a.kind}`] ?? 0) + 1
+  if (opts.practice) return
+  const clientFirst = String(last?.client?.firstName ?? '').trim() || 'the client'
+  const clientName = [clientFirst, String(last?.client?.lastName ?? '').trim()].filter(Boolean).join(' ')
+  const cg = [String(last?.caregiver?.firstName ?? '').trim(), String(last?.caregiver?.lastName ?? '').trim()].filter(Boolean).join(' ') || 'The caregiver'
+  const cgAx = String(last?.caregiver?.id ?? '')
+  const day = dayChi(last?.startDate ?? last?.scheduledStartDate)
+  const why = a.failed ? 'The AI couldn\'t read this note (twice), so a person should.' : (pattern ? `Pattern: ${pattern} concerns for ${clientFirst} in 2 weeks. ` : '') + (a.why || a.kind)
+  const also = level === 'red' && incidents && incidents !== cc.email ? [incidents] : []
+  const item = {
+    id, kind: 'care_note', domain: 'client_care', status: 'open', level, flag_kind: a.kind || '', why, trigger: a.trigger || '',
+    pattern_count: pattern || 0, flags_14d: past.flags + 1,
+    urgency: level === 'red' ? 'urgent' : 'normal',
+    title: level === 'unread' ? `Please read: ${clientFirst}'s ${day} visit note (the AI couldn't read it)`
+      : `${level === 'red' ? 'Red' : 'Yellow'} flag: ${clientFirst}'s ${day} visit, ${a.kind}`,
+    about: clientName, caregiver: cg, caregiver_ax: cgAx, caregiver_phone: caregiverPhone(cgs, cgAx, cg), client_ax: clientAx, visit_day: day,
+    family_line: a.family_line || '',
+    detail: `${cg} wrote after the ${whenChi(last?.startDate ?? last?.scheduledStartDate)} visit:\n\n` + (note ? `"${note}"` : '(no care note)')
+      + (tasks.length ? '\n\n' + tasks.join('\n') : '') + `\n\nWhy it's here: ${why}\nThis never contacts anyone by itself.`,
+    owner: cc.email, owner_name: cc.name, also_for: also,
+    due: new Date(now + (level === 'red' ? 4 : 24) * 3600e3).toISOString(),
+    created_at: new Date().toISOString(), created_by: 'care-notes', opened_by: 'care-note-flag' }
+  const { error } = await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item })
+  if (error) return
+  out.items_made++; items.push(item)
+  /* one short text to the Client Care owner for a red flag, 8am to 9pm only (her rule: no office texts at night) */
+  const h = chiHour(Date.now())
+  if (level === 'red' && redTextLive && cc.email && h >= 8 && h < 21) {
+    try {
+      const { data } = await db.from('app_data').select('data').eq('key', 'coordinator_staff').maybeSingle()
+      // deno-lint-ignore no-explicit-any
+      const p = (Array.isArray(data?.data) ? data.data : []).find((x: any) => String(x?.email ?? '').toLowerCase() === cc.email)
+      const name = String(p?.name || cc.name || cc.email.split('@')[0])
+      const admin: Admin = { email: cc.email, name, first: name.split(/\s+/)[0], phone: normalisePhone(p?.phone) || null }
+      const ghl = { token: Deno.env.get('GHL_TOKEN') || Deno.env.get('GHL_API_KEY') || '', locationId: Deno.env.get('GHL_LOCATION_ID') || '' }
+      const msg = `Red flag on ${clientFirst}'s ${day} visit (${a.kind || 'a pattern'}): ${String(why).slice(0, 120)} It's on your My Work: https://cc.mo-care.com/#mywork`
+      if (await textAdmin(db, ghl, admin, msg)) { out.red_texts++; await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...item, texted_to: cc.email, texted_at: new Date().toISOString() } }) }
+    } catch { /* the card is there either way; a failed text raises its own card */ }
+  }
 }
 
 /* My Desk 6b: one caregiver-client-day's kind words become a suggestion waiting for a person's yes (never straight into
