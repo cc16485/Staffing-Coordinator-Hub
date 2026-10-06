@@ -1,7 +1,6 @@
-// Step 0 · 0b-3 · caregiver, applicant and HomeTogether senders go through the universal opt-out check.
-// Real functions against a fake database and fake GoHighLevel/Resend where they can run outside production; the new
-// saved-contact door tested directly; and a source scan of the heavy scheduled senders so no send can skip the door.
-// node optout_0b3_test.mjs
+// My Desk 6b (Desktop 466): kind words in shift notes become SUGGESTIONS waiting for a person's yes.
+// The real care-notes function against a fake database, a fake AxisCare and a fake AI (harness from n2_flag_test.mjs).
+// node my_desk_466_test.mjs
 import fs from 'fs'; import path from 'path';
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 900)]);
 const FN = 'supabase/functions';
@@ -63,70 +62,79 @@ const to = (x) => SENT.filter((m) => m.to === 'C:' + x || m.to === x).length
 
 
 
-/* ── N2: flag concerning shift notes ── */
+
 const now = Date.now(), hAgo = (h) => new Date(now - h * 3600e3).toISOString()
 const V = {
-  f: { id: 'f', client: { id: 501, firstName: 'Ruth', lastName: 'Test' }, caregiver: { id: 9, firstName: 'Cara', lastName: 'Giver' }, startDate: hAgo(5), clockOut: { time: hAgo(3), method: 'Mobile' }, careNote: 'Ruth slipped in the bathroom and hit her arm, says she is fine.', adls: [{ name: 'Bathing', status: 0, note: 'Refused' }] },
-  n: { id: 'n', client: { id: 502, firstName: 'Nora', lastName: 'Fine' }, caregiver: { id: 8, firstName: 'Ben', lastName: 'Helper' }, startDate: hAgo(6), clockOut: { time: hAgo(4), method: 'Mobile' }, careNote: 'Nora was in good spirits, ate lunch, completed all tasks.', adls: [] },
-  x: { id: 'x', client: { id: 503, firstName: 'Xena', lastName: 'Odd' }, caregiver: { id: 7, firstName: 'Al', lastName: 'Aide' }, startDate: hAgo(7), clockOut: { time: hAgo(5), method: 'Web' }, careNote: 'AIFAIL something odd', adls: [] },
-  e: { id: 'e', client: { id: 504, firstName: 'Ed', lastName: 'Empty' }, caregiver: { id: 6, firstName: 'Di', lastName: 'Aide' }, startDate: hAgo(8), clockOut: { time: hAgo(6), method: 'Mobile' }, careNote: null, adls: [{ name: 'Meals', status: 1, note: '' }] },
-  o: { id: 'o', client: { id: 505, firstName: 'Old', lastName: 'Visit' }, caregiver: { id: 5, firstName: 'Ola', lastName: 'Aide' }, startDate: hAgo(60), clockOut: { time: hAgo(58), method: 'Mobile' }, careNote: 'Fell down the stairs', adls: [] } }
-let AX = [], AI = [], SLOW = false
+  k: { id: 'k', client: { id: 601, firstName: 'Ruth', lastName: 'Kind' }, caregiver: { id: 9, firstName: 'Cara', lastName: 'Giver' }, startDate: hAgo(5), clockOut: { time: hAgo(3) },
+       careNote: 'Helped Ruth with her bath. Ruth told me "you are the best part of my week" and hugged me.', adls: [] },
+  f: { id: 'f', client: { id: 602, firstName: 'Faye', lastName: 'Family' }, caregiver: { id: 8, firstName: 'Ben', lastName: 'Helper' }, startDate: hAgo(6), clockOut: { time: hAgo(4) },
+       careNote: 'Her daughter called and said thank you so much for taking such good care of mom. Faye slipped in the kitchen.', adls: [] },
+  m: { id: 'm', client: { id: 603, firstName: 'Mo', lastName: 'Made' }, caregiver: { id: 7, firstName: 'Al', lastName: 'Aide' }, startDate: hAgo(7), clockOut: { time: hAgo(5) },
+       careNote: 'MADEUP Mo had a quiet day.', adls: [] },
+  n: { id: 'n', client: { id: 604, firstName: 'Nora', lastName: 'Fine' }, caregiver: { id: 6, firstName: 'Di', lastName: 'Aide' }, startDate: hAgo(8), clockOut: { time: hAgo(6) },
+       careNote: 'Nora was in good spirits, ate lunch.', adls: [] },
+  x: { id: 'x', client: { id: 605, firstName: 'Xena', lastName: 'Odd' }, caregiver: { id: 5, firstName: 'Ola', lastName: 'Aide' }, startDate: hAgo(9), clockOut: { time: hAgo(7) },
+       careNote: 'KINDFAIL a normal visit', adls: [] } }
+let ASK = { concern: 0, kind: 0 }
 const f0 = globalThis.fetch
 globalThis.fetch = async (url, o) => { url = String(url)
-  if (url.includes('axiscare.com')) { AX.push(url)
+  if (url.includes('axiscare.com')) {
     if (url.includes('/api/visits?')) return new Response(JSON.stringify({ results: { visits: Object.values(V).map(({ careNote, adls, ...r }) => r) } }), { status: 200 })
-    if (SLOW) return new Response('{}', { status: 429, headers: { 'retry-after': '1' } })
     const m = url.match(/\/api\/visits\/([^/?]+)$/); if (m && V[m[1]]) return new Response(JSON.stringify({ results: V[m[1]] }), { status: 200 })
     return new Response('{}', { status: 404 }) }
   if (url.includes('api.anthropic.com')) { const b = JSON.parse(o.body); const t = b.messages[0].content
-    if (/KIND WORDS/.test(b.system)) return new Response(JSON.stringify({ content: [{ text: '{"kind":false,"quote":"","who":"the client"}' }] }), { status: 200 })   /* My Desk 6b's own question: tested in my_desk_466_test.mjs */
-    AI.push(t)
-    if (/AIFAIL/.test(t)) return new Response('{}', { status: 500 })
-    const fall = /slipped|fell/i.test(t)
-    return new Response(JSON.stringify({ content: [{ text: JSON.stringify(fall ? { concern: true, kind: 'a fall or injury', urgent: true, why: 'She slipped and hit her arm.', family_line: 'Ruth slipped in the bathroom and bumped her arm \u2014 she says she is okay.' } : { concern: false, kind: 'something else worth a look', urgent: false, why: 'A normal day.' }) }] }), { status: 200 }) }
+    if (/KIND WORDS/.test(b.system)) { ASK.kind++
+      if (/KINDFAIL/.test(t)) return new Response('{}', { status: 500 })
+      if (/best part/.test(t)) return new Response(JSON.stringify({ content: [{ text: '{"kind":true,"quote":"you are the best part of my week","who":"the client"}' }] }), { status: 200 })
+      if (/daughter/.test(t)) return new Response(JSON.stringify({ content: [{ text: '{"kind":true,"quote":"thank you so much for taking such good care of mom.","who":"a family member"}' }] }), { status: 200 })
+      if (/MADEUP/.test(t)) return new Response(JSON.stringify({ content: [{ text: '{"kind":true,"quote":"Mo said Cara is a wonderful caregiver","who":"the client"}' }] }), { status: 200 })
+      return new Response(JSON.stringify({ content: [{ text: '{"kind":false,"quote":"","who":"the client"}' }] }), { status: 200 }) }
+    ASK.concern++
+    const fall = /slipped/i.test(t)
+    return new Response(JSON.stringify({ content: [{ text: JSON.stringify(fall ? { concern: true, kind: 'a fall or injury', urgent: true, why: 'A slip.', family_line: 'Faye slipped.' } : { concern: false, kind: 'something else worth a look', urgent: false, why: 'A normal day.' }) }] }), { status: 200 }) }
   return f0(url, o) }
 ENV.AXISCARE_TOKEN = 'axc_x'; ENV.AXISCARE_SITE = '16485'; ENV.ANTHROPIC_API_KEY = 'sk-ant-x'; ENV.CARE_NOTES_PAUSE_MS = '0'
-let cn = await load('care-notes')
+const cn = await load('care-notes')
 const run = (qs, headers) => post(cn, 'https://x/functions/v1/care-notes?' + qs, {}, headers)
 const ANON = 'eyJ' + 'a'.repeat(120)
 const CRON = { Authorization: 'Bearer ' + ANON, 'x-cron-secret': JOBSEC }, OWNER = { Authorization: 'Bearer ' + SVC }
-const items = () => (APP.ops_items || []).filter((i) => i.kind === 'care_note')
-reset(); APP.ops_settings = { care_notes_flag_live: false }
-let r = await run('flag=1', CRON)
-ck('N2 · switched off: the schedule\'s run does nothing (no AxisCare, no AI)', r.j && r.j.off === true && AX.length === 0 && AI.length === 0, r.j)
-r = await run('flag=1', { Authorization: 'Bearer ' + ANON }); ck('N2 · the public key: refused', r.status === 401)
-r = await run('flag=1&practice=1&hours=48', CRON); ck('N2 · a practice run needs the owner\'s key (not the schedule\'s)', r.status === 401)
-AX = []; AI = []; r = await run('flag=1&practice=1&hours=48', OWNER); const pj = r.j
-ck('N2 · practice (48 hours): reads, asks, counts; saves nothing', r.status === 200 && pj.practice === true && pj.days_with_words === 3 && pj.asked === 3 && pj.flagged === 2 && pj.urgent === 1 && pj.ai_could_not_read === 1 && pj.by_kind['a fall or injury'] === 1 && !items().length && !(APP.care_notes_state || []).length, pj)
-ck('N2 · the practice answer is counts only: no words, no names', !/slipped|Ruth|Cara|spirits/.test(JSON.stringify(pj)), pj)
-ck('N2 · the older shift (58 hours ago) is outside the window; a day with no words isn\'t asked about', !AI.some((t) => /stairs/.test(t)) && AI.length === 4 && AI.filter((t) => /AIFAIL/.test(t)).length === 2, AI)   /* the unreadable note is tried twice (2026-09-29 retry) */
-APP.ops_settings = { care_notes_flag_live: true }; AX = []; AI = []
-r = await run('flag=1', CRON); const it = items()
-ck('N2 · live: the fall and the unreadable note become Needs Attention items; the normal day does not', r.j.items_made === 2 && it.length === 2 && !it.some((i) => /Nora/.test(i.about)), [r.j, it.map((i) => i.title)])
-const fall = it.find((i) => /Ruth/.test(i.about))
-ck('N2 · the item shows the caregiver\'s words, the not-done task, why, the client and a link to the profile', fall && /"Ruth slipped in the bathroom/.test(fall.detail) && /Bathing: not done \("Refused"\)/.test(fall.detail) && /Why it was flagged: She slipped/.test(fall.detail) && fall.client_ax === '501' && fall.caregiver === 'Cara Giver' && /a fall or injury/.test(fall.title), fall)
-ck('N3 · the item carries a suggested family sentence (no em dash)', fall.family_line === 'Ruth slipped in the bathroom and bumped her arm, she says she is okay.', fall.family_line)
-ck('N2 · a fall is urgent: due in 4 hours; the unreadable one is normal, due in 24', fall.urgency === 'high' && (new Date(fall.due) - now) / 3600e3 < 4.1 && it.find((i) => /Xena/.test(i.about)).urgency === 'normal')
-ck('N2 · it says it never contacts anyone, and nothing was sent', /never contacts anyone/.test(fall.detail) && SENT.length === 0, SENT)
-ck('N2 · the last look is recorded, and a heartbeat', (APP.care_notes_state || [])[0] && (APP.automation_heartbeats || []).some((b) => b.automation === 'care-notes-flag'))
-APP.care_notes_state = []; AI = []; r = await run('flag=1', CRON)
-ck('N2 · the same shifts again: not flagged twice', r.j.already_flagged === 2 && items().length === 2 && AI.length === 1, [r.j, AI.length])
-APP.care_notes_state = []; SLOW = true; r = await run('flag=1', CRON); SLOW = false
-ck('N2 · if AxisCare says slow down, the run stops and the last look is NOT moved on (next run retries)', r.j.stopped_early === true && !(APP.care_notes_state || []).length, r.j)
+const KW = () => T.kind_words || []
 
-/* 2026-09-29 · a failed read is retried once, and one that still fails gets its own label (not a "concern") */
+reset(); T.kind_words = []; APP.ops_settings = { care_notes_flag_live: true }
+let r = await run('flag=1', CRON)
+ck('switch off (kind_words_suggest_live not set): the shift-note run never asks about kind words, saves none', r.j && r.j.kind_switch === false && ASK.kind === 0 && KW().length === 0 && r.j.items_made === 1, [r.j, ASK])
+ck('...and the concern flags work exactly as before', (APP.ops_items || []).filter((i) => i.kind === 'care_note').length === 1)
+
+reset(); T.kind_words = []; APP.ops_settings = { care_notes_flag_live: false }; ASK = { concern: 0, kind: 0 }
+r = await run('flag=1&practice=1&hours=48', OWNER); const pj = r.j
+ck('practice: asks about kind words even with both switches off; counts only', pj && pj.kind_asked === 5 && pj.kind_found === 2 && pj.kind_not_in_note === 1 && pj.kind_ai_failed === 1 && pj.kind_suggested === 0, pj)
+ck('practice: nothing saved anywhere', KW().length === 0 && !(APP.ops_items || []).length && !(APP.care_notes_state || []).length)
+ck('practice answer is counts only: no words, no names', !/best part|Ruth|Cara|daughter|Faye/.test(JSON.stringify(pj)), pj)
+
+reset(); T.kind_words = []; APP.ops_settings = { care_notes_flag_live: true, kind_words_suggest_live: true }; ASK = { concern: 0, kind: 0 }
+r = await run('flag=1', CRON); const lj = r.j
+ck('switch on: two suggestions are made (the client\'s words, the daughter\'s words)', lj.kind_suggested === 2 && KW().length === 2, [lj, KW()])
+const kr = KW().find((k) => /best part/.test(k.quote)), kf = KW().find((k) => /daughter|mom/.test(k.quote))
+ck('...each is a SUGGESTION waiting for a person (never straight into the jar), from the shift-note reader', KW().every((k) => k.status === 'suggested' && k.suggested_by === 'care-notes' && k.source === 'shift_note' && !k.created_by && !k.decided_by), KW())
+ck('...the client\'s own words, letter for letter, quotes taken off', kr && kr.quote === 'you are the best part of my week' && kr.who === 'Ruth', kr)
+ck('...about the caregiver, with a paperclip to the client (so it goes to Client Care and the owners on a yes)', kr.about === 'Cara Giver' && kr.about_role === 'caregiver' && kr.link && kr.link.type === 'client' && kr.link.ax === '601' && kr.link.name === 'Ruth Kind', kr)
+ck('...a family member\'s words say "Faye\'s family"; dated the visit day; one per caregiver-client-day', kf && kf.who === "Faye's family" && /^\d{4}-\d{2}-\d{2}$/.test(kf.said_on) && kf.source_ref === 'carenote:8|602|' + kf.said_on, kf)
+ck('a quote the AI wrote itself (not in the note) is thrown away', !KW().some((k) => /wonderful/.test(k.quote)) && lj.kind_not_in_note === 1, lj)
+ck('a note that has both a concern and kind words gets both (the fall is still flagged)', (APP.ops_items || []).some((i) => /Faye/.test(i.about)), APP.ops_items)
+ck('nothing was texted or emailed', SENT.length === 0 && RESEND.length === 0)
+ck('the heartbeat says how many kind words were suggested', (APP.automation_heartbeats || []).some((b) => /2 kind words suggested/.test(b.note)), APP.automation_heartbeats)
+APP.care_notes_state = []; ASK = { concern: 0, kind: 0 }
+r = await run('flag=1', CRON)
+ck('the same shifts read again: no second suggestion, and the AI is not asked again for them', KW().length === 2 && r.j.kind_already === 2 && ASK.kind === 3, [r.j, ASK])
+
 { const src = fs.readFileSync(`${FN}/care-notes/index.ts`, 'utf8')
-  ck('N2 · the AI gets a larger answer allowance (the family sentence made answers longer)', /max_tokens: 400/.test(src))
-  const itU = items().find((x) => /AI couldn't read it/.test(x.title))
-  ck('N2 · a note the AI still can\'t read is titled "Please read ... (the AI couldn\'t read it)", not filed as "something else worth a look"', itU && /^Please read: /.test(itU.title) && !/something else worth a look/.test(itU.title) && /couldn't read this note \(twice\)/.test(itU.detail), itU)
-  let calls = 0; const f1 = globalThis.fetch
-  globalThis.fetch = async (url, o) => { if (String(url).includes('api.anthropic.com')) { calls++; if (calls === 1) return new Response('{}', { status: 529 })
-      return new Response(JSON.stringify({ content: [{ text: '{"concern":false,"kind":"something else worth a look","urgent":false,"why":"A normal day."}' }] }), { status: 200 }) } return f1(url, o) }
-  const tmp = path.join(process.cwd(), FN, 'care-notes', '_ask_t.ts')
-  fs.writeFileSync(tmp, fs.readFileSync(`${FN}/care-notes/index.ts`, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db').replace("'../_shared/job-auth.ts'", "'../_shared/_job-auth_t.ts'"))
+  const tmp = path.join(process.cwd(), FN, 'care-notes', '_q_t.ts')
+  fs.writeFileSync(tmp, src.replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db').replace("'../_shared/job-auth.ts'", "'../_shared/_job-auth_t.ts'"))
   let M; try { M = await import(tmp + '?' + Math.random()) } finally { fs.unlinkSync(tmp) }
-  const a = await M.askConcern('Care note: a normal day.', 0); globalThis.fetch = f1
-  ck('N2 · a hiccup on the first try: the retry reads it properly (no flag)', calls === 2 && a.failed === false && a.concern === false, { calls, a }) }
+  ck('quote check: curly quotes, spacing and capitals don\'t matter; a few letters are not enough; words not in the note are refused',
+    M.quoteInNote('“You are the  best part”', 'she said you are the best part of my week') && !M.quoteInNote('so kind', 'so kind of her') && !M.quoteInNote('the best caregiver ever', 'a normal day'))
+  ck('the kind-words question is its own: the concern question\'s words are unchanged', /When unsure, it IS '\s*\+ 'a concern/.test(src) && /When unsure, it is NOT/.test(src)) }
+
 for (const [n, o, note] of res) console.log((o ? 'PASS' : 'FAIL') + ' · ' + n + (o ? '' : '\n   ' + note))
 console.log(res.filter((x) => x[1]).length + '/' + res.length)
+process.exitCode = res.every((x) => x[1]) ? 0 : 1
