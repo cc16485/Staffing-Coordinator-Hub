@@ -104,8 +104,8 @@ const setup = () => { reset(); T.kind_words = []
   APP.coordinator_staff = [{ email: 'krystal@mo-care.com', name: 'Krystal Land', phone: '4175550123' }]
   APP.ops_items = [ { id: 'old1', kind: 'care_note', level: 'yellow', client_ax: '603', status: 'done', created_at: hAgo(24 * 3) }, { id: 'old2', kind: 'care_note', level: 'yellow', client_ax: '603', status: 'open', created_at: hAgo(24 * 9) }, { id: 'old3', kind: 'care_note', level: 'yellow', client_ax: '603', status: 'done', created_at: hAgo(24 * 20) } ]
   ASK = { level: 0, old: 0 } }
-const realNow = Date.now
-const atHour = (h) => { const d = new Date(); const chi = Number(d.toLocaleString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', hour12: false })) % 24; const shift = (h - chi) * 3600e3; Date.now = () => realNow() + shift }
+const realNow = Date.now; let SHIFT = 0
+const atHour = (h) => { const d = new Date(); const chi = Number(d.toLocaleString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', hour12: false })) % 24; const shift = (h - chi) * 3600e3; SHIFT = shift; Date.now = () => realNow() + shift }
 
 setup(); APP.ops_settings = { care_notes_flag_live: true }
 let r = await run('flag=1', CRON)
@@ -119,12 +119,12 @@ ck('...and saves nothing, sends nothing; counts only', cards().length === 3 && !
 setup(); APP.ops_settings = { care_notes_flag_live: true, care_notes_levels_live: true }
 atHour(10); r = await run('flag=1', CRON); Date.now = realNow
 const R = card(601), Y = card(602), P = card(603), W = card(605), X = card(606)
-ck('a fall is a RED flag: title, level, why, due in 4 hours, urgent', R && R.level === 'red' && R.title === "Red flag: Ruth's " + R.visit_day + ' visit, a fall or injury' && R.why === 'Ruth slipped getting out of the bath and hit her arm.' && R.urgency === 'urgent' && (Date.parse(R.due) - Date.now()) / 3600e3 < 4.1, R)
+ck('a fall is a RED flag: title, level, why, due in 4 hours, urgent', R && R.level === 'red' && R.title === "Red flag: Ruth's " + R.visit_day + ' visit, a fall or injury' && R.why === 'Ruth slipped getting out of the bath and hit her arm.' && R.urgency === 'urgent' && Math.abs((Date.parse(R.due) - Date.parse(R.created_at) - SHIFT) / 3600e3 - 4) < 0.1, R)
 ck("...the caregiver's own words that caused it are kept, to highlight", R.trigger === 'Ruth slipped getting out and hit her arm on the sink' && R.detail.includes('"Helped with bath. Ruth slipped'), R.trigger)
 ck('...it goes to Client Care (Krystal) and also shows on the Incidents owner\'s My Work (Samantha)', R.owner === 'krystal@mo-care.com' && JSON.stringify(R.also_for) === '["samantha@mo-care.com"]', [R.owner, R.also_for])
 ck("...it carries the caregiver's number (for Call the caregiver, from the office line) and the client", R.caregiver_phone === '4175550909' && R.caregiver === 'Kim Aide' && R.client_ax === '601' && R.flags_14d === 1)
 ck('...the family sentence has no em dash', R.family_line === 'Ruth slipped after her bath and bumped her arm, she says she is okay.', R.family_line)
-ck('eating less is a YELLOW flag: due in 24 hours, only Client Care', Y && Y.level === 'yellow' && /^Yellow flag: Patsy's .* visit, eating or drinking$/.test(Y.title) && !Y.also_for.length && (Date.parse(Y.due) - Date.now()) / 3600e3 > 23, Y)
+ck('eating less is a YELLOW flag: due in 24 hours, only Client Care', Y && Y.level === 'yellow' && /^Yellow flag: Patsy's .* visit, eating or drinking$/.test(Y.title) && !Y.also_for.length && Math.abs((Date.parse(Y.due) - Date.parse(Y.created_at) - SHIFT) / 3600e3 - 24) < 0.1, Y)
 ck('a normal day makes no card at all', !card(604))
 ck('the 3rd yellow for one client in 14 days becomes ONE red flag, saying it is a pattern', P && P.level === 'red' && P.pattern_count === 3 && /^Pattern: 3 concerns for Mo in 2 weeks\. /.test(P.why) && P.flags_14d === 3, P)
 ck('words the AI made up are never highlighted (no trigger kept)', W && W.trigger === '', W && W.trigger)
@@ -140,6 +140,27 @@ ck('texts on, 10pm: no text at night (the card is still there)', r.j.red_texts =
 ck('the heartbeat says red and yellow', (APP.automation_heartbeats || []).some((b) => /2 red, 2 yellow/.test(b.note)), APP.automation_heartbeats)
 APP.care_notes_state = []; ASK = { level: 0, old: 0 }; r = await run('flag=1', CRON)
 ck('the same shifts again: no second card, the AI is not asked again', r.j.already_flagged === 5 && ASK.level === 1, [r.j, ASK])
+
+/* ── 472: re-read the open older flags ── */
+setup(); APP.ops_settings = { care_notes_flag_live: true, care_notes_levels_live: true }
+APP.ops_items.push(
+  { id: 'ops_carenote_old_r', kind: 'care_note', status: 'open', client_ax: '601', about: 'Ruth Barnes', urgency: 'high', due: new Date(now + 20 * 3600e3).toISOString(), owner: 'krystal@mo-care.com', created_at: hAgo(12),
+    title: "Possible concern on Ruth's Tue, Oct 6 visit: a fall or injury", detail: 'Kim Aide wrote after the Tue, Oct 6, 9:00 AM visit:\n\n"Helped with bath. Ruth slipped getting out and hit her arm on the sink, says she is fine."\n\nWhy it was flagged: x.\nRead it.', history: [] },
+  { id: 'ops_carenote_old_n', kind: 'care_note', status: 'open', client_ax: '604', about: 'Nora Fine', created_at: hAgo(12), owner: 'krystal@mo-care.com',
+    title: "Possible concern on Nora's Mon, Oct 5 visit: something else worth a look", detail: 'Al wrote after the visit:\n\n"Nora was in good spirits, a quiet day."\n\nWhy it was flagged: x.' },
+  { id: 'ops_carenote_done', kind: 'care_note', status: 'done', about: 'Done One', detail: '"Ruth slipped getting out and hit her arm on the sink"' },
+  { id: 'ops_carenote_new', kind: 'care_note', status: 'open', level: 'yellow', about: 'Already New', detail: '"x"' })
+ASK = { level: 0, old: 0 }
+r = await post(cn, 'https://x/functions/v1/care-notes?regrade=1&practice=1', {}, OWNER)
+ck('472 · re-read practice: counts only, changes nothing', r.j.looked === 2 && r.j.red === 1 && r.j.normal_day === 1 && r.j.changed === 0 && !cards().find((c) => c.id === 'ops_carenote_old_r').level, r.j)
+r = await post(cn, 'https://x/functions/v1/care-notes?regrade=1', {}, CRON)
+ck('472 · only the owner\'s key can re-read (not the schedule\'s, not the public key)', r.status === 401)
+r = await post(cn, 'https://x/functions/v1/care-notes?regrade=1', {}, OWNER)
+const RR = cards().find((c) => c.id === 'ops_carenote_old_r'), NN = cards().find((c) => c.id === 'ops_carenote_old_n')
+ck('472 · an older fall flag becomes a RED flag: level, why, the words, the Incidents owner, day kept in the title', RR.level === 'red' && RR.title === "Red flag: Ruth's Tue, Oct 6 visit, a fall or injury" && RR.why === 'Ruth slipped getting out of the bath and hit her arm.' && RR.trigger === 'Ruth slipped getting out and hit her arm on the sink' && JSON.stringify(RR.also_for) === '["samantha@mo-care.com"]' && RR.urgency === 'urgent', RR)
+ck('472 · ...its due time only moves sooner (4 hours), and its history says it was re-read', (Date.parse(RR.due) - Date.now()) / 3600e3 < 4.1 && /Re-read with the new rules: red flag/.test(RR.history.at(-1).text))
+ck('472 · an ordinary day is left open and unchanged, and listed for a person to close', NN.status === 'open' && !NN.level && r.j.cards.some((c) => c.client === 'Nora' && /ordinary day/.test(c.level)), [NN, r.j.cards])
+ck('472 · done flags and flags that already have a level are not touched; nothing sent', r.j.looked === 2 && r.j.changed === 1 && cards().find((c) => c.id === 'ops_carenote_new').level === 'yellow' && !SENT.length, r.j)
 
 for (const [n, o, note] of res) console.log((o ? 'PASS' : 'FAIL') + ' · ' + n + (o ? '' : '\n   ' + note))
 console.log(res.filter((x) => x[1]).length + '/' + res.length)
