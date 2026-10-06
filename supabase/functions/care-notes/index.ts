@@ -521,6 +521,60 @@ async function levelPass(db: any, opts: { practice: boolean }, c: any) {
   }
 }
 
+/* RE-READ (Desktop 472, Samantha 2026-10-06: "make the re-read step"): the shift-note flags that are open and were made
+   before red and yellow existed get the same red / yellow / none question, from the caregiver's words already on the card.
+   Red or yellow: the card gets its level, why, the words that caused it, and (red) the Incidents owner; its due time only
+   ever moves sooner. None (the new rules call it an ordinary day): left open and unchanged, listed for a person to close.
+   Sends nothing. Practice: counts only. */
+// deno-lint-ignore no-explicit-any
+export function textFromCard(it: any): string {
+  const d = String(it?.detail ?? '')
+  const m = /"([\s\S]*?)"(?:\n|$)/.exec(d)
+  const note = m ? m[1].trim() : ''
+  const tasks = d.split('\n').filter((l) => /: not done|: "/.test(l) && !l.startsWith('"'))
+  if (!note && !tasks.length) return ''
+  return (note ? 'Care note: ' + note : 'No care note.') + (tasks.length ? '\nTasks: ' + tasks.join('; ') : '')
+}
+// deno-lint-ignore no-explicit-any
+export async function regradeRun(db: any, opts: { practice: boolean }) {
+  const items = await readKey(db, 'ops_items')
+  const incidents = opts.practice ? '' : await domainOwnerEmail(db, 'incidents')
+  // deno-lint-ignore no-explicit-any
+  const olds = items.filter((i: any) => i?.kind === 'care_note' && i?.status === 'open' && !i?.level)
+  // deno-lint-ignore no-explicit-any
+  const out = { ok: true, practice: opts.practice, looked: olds.length, red: 0, yellow: 0, normal_day: 0, unread: 0, no_words: 0, changed: 0, cards: [] as any[] }
+  const now = Date.now()
+  for (const it of olds) {
+    const text = textFromCard(it)
+    const first = String(it?.about ?? '').trim().split(/\s+/)[0] || 'a client'
+    if (!text) { out.no_words++; out.cards.push({ client: first, level: 'no words on the card' }); continue }
+    const a = await askLevel(text, Number(Deno.env.get('CARE_NOTES_PAUSE_MS') ?? 2000))
+    if (!a.failed && a.level === 'none') { out.normal_day++; out.cards.push({ client: first, level: 'ordinary day (left open for you to close)', title: String(it.title ?? '').slice(0, 90) }); continue }
+    // deno-lint-ignore no-explicit-any
+    const past = recentFlags(items.filter((x: any) => x?.id !== it.id), String(it?.client_ax ?? ''), now)
+    let level: 'red' | 'yellow' | 'unread' = a.failed ? 'unread' : a.level as 'red' | 'yellow'
+    let pattern = 0
+    if (level === 'yellow' && past.yellows + 1 >= 3) { level = 'red'; pattern = past.yellows + 1 }
+    if (level === 'red') out.red++; else if (level === 'yellow') out.yellow++; else out.unread++
+    out.cards.push({ client: first, level, kind: a.kind || '' })
+    if (opts.practice) continue
+    const day = String(it?.title ?? '').match(/'s ([A-Z][a-z]{2}, [A-Z][a-z]{2} \d{1,2}) visit/)?.[1] || ''
+    const why = a.failed ? 'The AI couldn\'t read this note (twice), so a person should.' : (pattern ? `Pattern: ${pattern} concerns for ${first} in 2 weeks. ` : '') + (a.why || a.kind)
+    const soon = new Date(now + (level === 'red' ? 4 : 24) * 3600e3).toISOString()
+    const due = it.due && String(it.due) < soon ? it.due : soon
+    const owner = String(it.owner ?? '').toLowerCase()
+    const item = { ...it, level, flag_kind: a.kind || '', why, trigger: a.trigger || '', pattern_count: pattern || 0, flags_14d: past.flags + 1,
+      urgency: level === 'red' ? 'urgent' : (it.urgency === 'high' ? 'normal' : (it.urgency || 'normal')), due, visit_day: it.visit_day || day,
+      title: level === 'unread' ? it.title : `${level === 'red' ? 'Red' : 'Yellow'} flag: ${first}'s ${day ? day + ' ' : ''}visit, ${a.kind}`,
+      also_for: level === 'red' && incidents && incidents !== owner ? [incidents] : [],
+      family_line: it.family_line || a.family_line || '', regraded_at: new Date().toISOString(),
+      history: (Array.isArray(it.history) ? it.history : []).concat([{ at: new Date().toISOString(), by: 'Shift-note re-read (Desktop 472)', text: `Re-read with the new rules: ${level === 'unread' ? 'the AI couldn\'t read it' : level + ' flag'}` }]) }
+    const { error } = await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item })
+    if (!error) out.changed++
+  }
+  return out
+}
+
 /* My Desk 6b: one caregiver-client-day's kind words become a suggestion waiting for a person's yes (never straight into
    the jar). Counted only in practice. Once per day's note: a run that re-reads the same shifts finds it already there. */
 // deno-lint-ignore no-explicit-any
@@ -558,6 +612,11 @@ Deno.serve(async (req) => {
     if (!caller || (practice && caller !== 'owner')) return json({ error: 'not allowed' }, 401)
     const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
     return json(await flagRun(db, { practice, hours: Math.min(Math.max(Number(q.get('hours')) || 48, 1), 96) }))
+  }
+  if (q.get('regrade') === '1') {
+    if ((await jobCaller(req, false)) !== 'owner') return json({ error: 'not allowed' }, 401)
+    const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+    return json(await regradeRun(db, { practice: q.get('practice') === '1' }))
   }
   if (q.get('probe') === '1') {
     if ((await jobCaller(req, false)) !== 'owner') return json({ error: 'not allowed' }, 401)
