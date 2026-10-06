@@ -110,6 +110,25 @@ try {
   r = await send({ caregiver_axiscare_id: '', caregiver_name: 'Nobody Here', cells: ['mon|s1'] }); ck('not on the roster: no number, nothing sent', r.j.outcome === 'no_phone' && !CALLS.length, r)
   reset(); T.app_data[0].data[0].cells['mon|s1'] = { name: 'Sam Twin', status: 'penciled' }
   r = await send({ caregiver_axiscare_id: '', caregiver_name: 'Sam Twin', cells: ['mon|s1'] }); ck('two roster people share the name and no id: never guessed, nothing sent', r.j.outcome === 'no_phone' && !CALLS.length, r)
+  // Stage 2: several people on a shift
+  reset(); T.app_data[0].data[0].options = { 'mon|s1': [{ id: 'o1', name: 'Dee Dnd', cg_ax_id: '33', status: 'maybe' }, { id: 'o2', name: 'Opal Out', cg_ax_id: '22', status: 'penciled' }, { id: 'o3', name: 'Ann Applicant', applicant_id: 'a1', status: 'penciled' }],
+    'tue|s1': [{ id: 'o4', name: 'Sam Twin', status: 'no_reply' }] }
+  T.app_data[1].data.push({ first: 'Lia', last: 'Listed', phone: '4175550707', axiscare_id: '55' })
+  T.app_data[0].data[0].options['mon|s1'].push({ id: 'o5', name: 'Lia Listed', cg_ax_id: '55', status: 'maybe' })
+  r = await send({ caregiver_axiscare_id: '55', caregiver_name: 'Lia Listed', cells: ['mon|s1'], message: 'Hi Lia, Mon 9-5?', ask_id: 'ask-0010-abcd' })
+  const lia = plan1().options['mon|s1'].find((o) => o.id === 'o5')
+  ck('someone listed on a shift (not the main person) can be texted about it', r.j.outcome === 'sent' && SENT.length === 1 && SENT[0].to === 'C:+14175550707', { r, SENT })
+  ck('...their own entry becomes "asked" by text; the main person is untouched', lia.status === 'asked' && lia.ask_id === 'ask-0010-abcd' && lia.ask_channel === 'sms' && plan1().cells['mon|s1'].status === 'penciled' && !plan1().cells['mon|s1'].ask_id, plan1())
+  r = await send({ caregiver_axiscare_id: '55', caregiver_name: 'Lia Listed', cells: ['tue|s1'], message: 'Hi', ask_id: 'ask-0011-abcd' })
+  ck('...but not about a shift they are not listed on', r.j.outcome === 'board_changed' && SENT.length === 1, r)
+  r = await send({ caregiver_axiscare_id: '22', caregiver_name: 'Opal Out', cells: ['mon|s1'], message: 'Hi', ask_id: 'ask-0012-abcd' })
+  ck('...a listed person who opted out is still refused', r.j.outcome === 'refused' && SENT.length === 1, r)
+  r = await send({ caregiver_axiscare_id: '', caregiver_name: 'Ann Applicant', cells: ['mon|s1'], message: 'Hi', ask_id: 'ask-0013-abcd' })
+  ck('...an offered applicant (not on the roster) is never texted from here', ['board_changed', 'no_phone'].includes(r.j.outcome) && SENT.length === 1, r)
+  reset(); T.app_data[0].data[0].options = { 'mon|s1': [{ id: 'o9', name: 'Ariel Smith', cg_ax_id: '11', status: 'no_reply' }] }
+  T.app_data[0].data[0].cells['mon|s1'] = { name: 'Rex Rejected', status: 'yes', cg_ax_id: '44' }
+  r = await send({ cells: ['mon|s1'], ask_id: 'ask-0014-abcd' })
+  ck('a "no reply" can be asked again, even when someone else is already the Yes', r.j.outcome === 'sent' && plan1().options['mon|s1'][0].status === 'asked' && plan1().cells['mon|s1'].status === 'yes', { r, p: plan1() })
   reset(); r = await call({ action: 'send', plan_id: 'nope', caregiver_name: 'x', cells: ['mon|s1'], message: 'hi', ask_id: 'ask-0003-abcd' }); ck('unknown plan: 404', r.status === 404 && !CALLS.length)
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }

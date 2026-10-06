@@ -21,6 +21,9 @@
 // Office roles only (owner / care coordinator / staffing coordinator), from the
 // person's own Hub sign-in. Switch: ops_settings.team_ask_live must be true.
 // Replies are NOT attached here (part 2): they land in GoHighLevel as today.
+// Stage 2 (2026-10-06, Samantha: "build texting several people at once"): a shift can list several people (the main one in
+// plan.cells, the others in plan.options). Anyone listed on a shift can be asked about it, and the board's "Text several"
+// sends one text per person through this same function, so every text gets every check on its own.
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
@@ -55,6 +58,15 @@ export function rosterFind(roster: Any[], axId: string, name: string): Any | nul
   const byName = roster.filter((cg) => nameKey(full(cg)) === nameKey(name))
   return byName.length === 1 ? byName[0] : null
 }
+
+/** This caregiver's place on a shift: the main person, or one of the others listed (Stage 2). */
+export function entryFor(plan: Any, k: string, axId: string, name: string): Any | null {
+  const c = (plan?.cells ?? {})[k]
+  if (cellIsTheirs(c, axId, name)) return c
+  const opts = Array.isArray(plan?.options?.[k]) ? plan.options[k] : []
+  return opts.find((o: Any) => !o?.applicant_id && cellIsTheirs(o, axId, name)) ?? null
+}
+export const ASKABLE = ['penciled', 'asked', 'no', 'maybe', 'no_reply']
 
 /** Does this cell (still) name this caregiver? An AxisCare id on both sides must agree; otherwise the name must. */
 export function cellIsTheirs(cell: Any, axId: string, name: string): boolean {
@@ -152,9 +164,9 @@ Deno.serve(async (req) => {
     const [d, s] = k.split('|')
     if (!DAYS.includes(d) || !(plan.days ?? []).includes(d) || !slots.has(s))
       return json({ outcome: 'board_changed', error: 'A shift you picked is no longer on this board. Refresh and try again.' }, 409)
-    const c = (plan.cells ?? {})[k]
-    if (!cellIsTheirs(c, axId, cgName) || !['penciled', 'asked', 'no'].includes(String(c.status)))
-      return json({ outcome: 'board_changed', error: `The ${k.split('|')[0]} shift no longer has ${cgName || 'this caregiver'} penciled in. Refresh and try again.` }, 409)
+    const c = entryFor(plan, k, axId, cgName)
+    if (!c || !ASKABLE.includes(String(c.status)))
+      return json({ outcome: 'board_changed', error: `The ${k.split('|')[0]} shift no longer has ${cgName || 'this caregiver'} on it to ask. Refresh and try again.` }, 409)
   }
   if (!cg) return json({ outcome: 'no_phone', error: `${cgName || 'This caregiver'} is not on the roster by AxisCare id or a unique name, so there is no number to text.` }, 422)
   if (!phone) return json({ outcome: 'no_phone', error: `${cgName} has no usable phone number on the roster.` }, 422)
@@ -196,8 +208,8 @@ Deno.serve(async (req) => {
       if (!fresh.asks.some((a: Any) => a?.id === askId)) fresh.asks.push(ask)
       fresh.cells = fresh.cells ?? {}
       for (const k of cells) {
-        const c = fresh.cells[k]
-        if (cellIsTheirs(c, axId, cgName) && c.status !== 'yes') {
+        const c = entryFor(fresh, k, axId, cgName)
+        if (c && c.status !== 'yes') {
           c.status = 'asked'; c.at = at; c.by = who.name; c.ask_id = askId; c.ask_channel = 'sms'
         }
       }
