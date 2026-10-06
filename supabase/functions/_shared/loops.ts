@@ -46,6 +46,13 @@ export function caseEnded(c: Any, chiNow: string, graceMin = 30): boolean {
   return Date.parse(chiNow + ':00Z') >= endMs
 }
 
+/** 468: has the shift not started yet? (a case closed as not covered ahead of time: "won't be covered") */
+export function shiftAhead(c: Any, nowMs: number = Date.now()): boolean {
+  const date = String(c?.shift_date ?? ''); if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false
+  const m = /^(\d{2}:\d{2})/.exec(String(c?.shift_time ?? '').trim())
+  return chiNowNaive(new Date(nowMs)) < `${date}T${m ? m[1] : '00:00'}`
+}
+
 /** What AxisCare says about a finished shift. outside(c, cg) is _shared/covered-outside.ts's outsideVerdict. */
 export function pastCaseVerdict(c: Any, visit: Any | undefined,
   outside: (c: Any, cg: { id: unknown; name: string }) => string): { how: 'covered' | 'covered_other_way' | null; covered_by?: string; why: string } {

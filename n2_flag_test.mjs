@@ -102,10 +102,12 @@ ck('N2 · practice (48 hours): reads, asks, counts; saves nothing', r.status ===
 ck('N2 · the practice answer is counts only: no words, no names', !/slipped|Ruth|Cara|spirits/.test(JSON.stringify(pj)), pj)
 ck('N2 · the older shift (58 hours ago) is outside the window; a day with no words isn\'t asked about', !AI.some((t) => /stairs/.test(t)) && AI.length === 4 && AI.filter((t) => /AIFAIL/.test(t)).length === 2, AI)   /* the unreadable note is tried twice (2026-09-29 retry) */
 APP.ops_settings = { care_notes_flag_live: true }; AX = []; AI = []
+T.domains = [{ code: 'client_care', entity: 'cc_ihs', owner_person: 'p-kry' }]; T.persons.push({ person_id: 'p-kry', active: true, full_name: 'Krystal Land', primary_email: 'Krystal@mo-care.com' })
 r = await run('flag=1', CRON); const it = items()
 ck('N2 · live: the fall and the unreadable note become Needs Attention items; the normal day does not', r.j.items_made === 2 && it.length === 2 && !it.some((i) => /Nora/.test(i.about)), [r.j, it.map((i) => i.title)])
 const fall = it.find((i) => /Ruth/.test(i.about))
 ck('N2 · the item shows the caregiver\'s words, the not-done task, why, the client and a link to the profile', fall && /"Ruth slipped in the bathroom/.test(fall.detail) && /Bathing: not done \("Refused"\)/.test(fall.detail) && /Why it was flagged: She slipped/.test(fall.detail) && fall.client_ax === '501' && fall.caregiver === 'Cara Giver' && /a fall or injury/.test(fall.title), fall)
+ck('468 · a new flag lands on whoever owns Client Care (not on nobody)', fall.owner === 'krystal@mo-care.com' && fall.owner_name === 'Krystal Land', [fall.owner, fall.owner_name])
 ck('N3 · the item carries a suggested family sentence (no em dash)', fall.family_line === 'Ruth slipped in the bathroom and bumped her arm, she says she is okay.', fall.family_line)
 ck('N2 · a fall is urgent: due in 4 hours; the unreadable one is normal, due in 24', fall.urgency === 'high' && (new Date(fall.due) - now) / 3600e3 < 4.1 && it.find((i) => /Xena/.test(i.about)).urgency === 'normal')
 ck('N2 · it says it never contacts anyone, and nothing was sent', /never contacts anyone/.test(fall.detail) && SENT.length === 0, SENT)
