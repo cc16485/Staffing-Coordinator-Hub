@@ -249,7 +249,9 @@
       }
     }
     FORM_KEYS.concat(['desired_start_kind']).forEach(k => { delete patch[k]; });
+    const prevState = target.state_status;
     Object.assign(target, patch);
+    if('state_status' in patch) markAuthorized(target, prevState);
     FORM_KEYS.forEach(k => { delete target[k]; });
     return target;
   }
@@ -390,6 +392,30 @@
     if(done) return { kind:'plan', day:done.visit_date || t };
     return null;
   }
+  /* ── Stage 4: authorization is an EVENT, and the state has a clock ──────────────────────────────────────────────────
+     The Payer tab setting "where the state is" to authorized stamps authorization_received_at once (markAuthorized). Until a
+     person has reached out after it, the family is "Authorized today · call the family" at the top of the board and on My
+     Work. The 10/21-day DSDS rule the old State Submissions list kept (amber at 10 days, red at 21) lives on the waiting row:
+     at 21 days with the state the row comes up as "call DSDS", and "Called DSDS" restarts that clock. */
+  function markAuthorized(l, prevStatus, nowIso){
+    const now = nowIso || new Date().toISOString();
+    if(!l || l.state_status !== 'authorized' || prevStatus === 'authorized' || l.authorization_received_at) return false;
+    l.authorization_received_at = now;
+    l.comm_log = Array.isArray(l.comm_log) ? l.comm_log : [];
+    l.comm_log.push({ body:'Authorization received from the state', at:now, kind:'authorization_received' });
+    return true;
+  }
+  function authorizationPending(l){
+    if(!l || !l.authorization_received_at) return false;
+    const after = lastWhere(l, e => e && e.actor === 'human' && e.direction === 'out' && e.at > l.authorization_received_at);
+    return !after;
+  }
+  const DSDS_AMBER_DAYS = 10, DSDS_RED_DAYS = 21;
+  /* days the state has had it, counted from the submission (or the waiting record's since), restarted by "Called DSDS" */
+  function stateDays(l, w, today){
+    const since = (l.dsds_called_at && chicago(l.dsds_called_at).ymd) || (w && w.since) || (l.state_submitted ? String(l.state_submitted).slice(0, 10) : null);
+    return since && isYmd(since) ? Math.max(0, daysBetween(since, today)) : null;
+  }
   function boardRow(l, ctx){
     ctx = Object.assign({ now:new Date().toISOString() }, ctx || {}); ctx.lead = l;
     const now = ctx.now, today = ctx.today || chicago(now).ymd, stage = ctx.stage || 'new', hours = ctx.hours || responseHours({});
@@ -428,6 +454,11 @@
       }
       if(!kept && p > now) return R('later', 0, p, { big:clockWords(p), sub:'callback we promised', tone:'navy' }, { text:'Call ' + callerFirst + ' back', sub:last }, CALL, [LOG], 'promise_future');
     }
+    if(authorizationPending(l)){
+      const d = chicago(l.authorization_received_at).ymd;
+      return R('now', 4, l.authorization_received_at, { big:'Authorized ' + dayWords(d, today), sub:'the state said yes: call the family', tone:'green' },
+        { text:'Call ' + callerFirst + ': authorized, pick a start week', sub:last }, CALL, [LOG], 'authorized');
+    }
     if(asm && asm.kind === 'plan') return R('now', 6, asm.day, { big:'Assessment done ' + dayWords(asm.day, today), sub:'plan not written', tone:'amber' }, { text:'Write the care plan', sub:last }, { kind:'open_asmt', label:'Open assessment' }, [CALL], 'asmt_plan');
     if(asm && asm.kind === 'booked'){
       const big = asm.timed ? clockWords(asm.iso) : dayCap(dayWords(asm.day, today));
@@ -443,8 +474,14 @@
       const nextText = w.reason === 'state' ? 'Check Fusion, then call the family' : w.reason === 'family_decision' ? 'Call ' + callerFirst + ': have they decided?' : w.reason === 'unable_to_reach' ? 'One more try, then the next step' : 'Check in with ' + callerFirst;
       return R('now', 8, w.check_back, { big:lateDays ? 'Check back ' + lateDays + (lateDays === 1 ? ' day' : ' days') + ' late' : 'Check back today', sub:on + ' since ' + dayWords(w.since || today, today), tone:lateDays ? 'red' : 'amber' }, { text:nextText, sub:(w.note || last) }, CALL, [LOG, FU], 'check_back_due');
     }
-    if(w) return R('waiting', 0, w.check_back || '9999', { big:WAITING[w.reason].on, sub:w.since ? 'since ' + dayWords(w.since, today) : '', tone:'muted' },
-      { text:(w.check_back ? 'Next check ' + dayCap(dayWords(w.check_back, today)) : 'Set a check-back date'), sub:(w.note || last) }, w.check_back ? { kind:'open', label:'Open' } : FU, [CALL], 'waiting');
+    if(w){
+      const sd = w.reason === 'state' ? stateDays(l, w, today) : null;
+      if(sd != null && sd >= DSDS_RED_DAYS) return R('now', 8, w.since || today, { big:'With the state ' + sd + ' days', sub:'call DSDS (the 21-day rule)', tone:'red' },
+        { text:'Call DSDS about the authorization, then ' + callerFirst, sub:(w.note || last) }, CALL, [{ kind:'dsds', label:'Called DSDS' }, LOG], 'dsds_21');
+      const sub = (w.since ? 'since ' + dayWords(w.since, today) : '') + (sd != null && sd >= DSDS_AMBER_DAYS ? ' · ' + sd + ' days, follow up soon' : '');
+      return R('waiting', 0, w.check_back || '9999', { big:WAITING[w.reason].on, sub, tone:sd != null && sd >= DSDS_AMBER_DAYS ? 'amber' : 'muted' },
+        { text:(w.check_back ? 'Next check ' + dayCap(dayWords(w.check_back, today)) : 'Set a check-back date'), sub:(w.note || last) }, w.check_back ? { kind:'open', label:'Open' } : FU, w.reason === 'state' ? [{ kind:'dsds', label:'Called DSDS' }, CALL] : [CALL], 'waiting');
+    }
     if(stage === 'new' && fa && !fa.running) return R('later', 0, fa.start, { big:clockWords(fa.start), sub:'first call · ' + fa.came_in, tone:'navy' }, { text:'Call ' + callerFirst + ' when we open', sub:fa.ack }, CALL, [LOG], 'new_before_open');
     const fu = String(l.follow_up_due || '').slice(0, 10);
     if(fu && fu < today){
@@ -455,8 +492,12 @@
       const iso = chicagoInstant(fu, String(l.follow_up_time || '09:00'));
       return R('later', 2, iso, { big:l.follow_up_time ? clockWords(iso) : (fu === today ? 'Today' : dayCap(dayWords(fu, today))), sub:'follow-up' + (l.follow_up_note ? ': ' + String(l.follow_up_note).slice(0, 60) : l.follow_up_time ? '' : ' (no time set)'), tone:'navy' }, { text:l.follow_up_note ? String(l.follow_up_note) : (jn ? jn.title : 'Follow up with ' + callerFirst), sub:last }, CALL, [LOG, FU], 'followup_future');
     }
-    if(l.funding_source === 'medicaid' && ['submitted', 'assessed'].indexOf(String(l.state_status || '')) > -1)
-      return R('waiting', 1, '9999', { big:'The state', sub:l.state_submitted ? 'since ' + dayWords(String(l.state_submitted).slice(0, 10), today) : 'submitted', tone:'muted' }, { text:'Set a check-back date', sub:last }, FU, [CALL], 'waiting_state_nodate');
+    if(l.funding_source === 'medicaid' && ['submitted', 'assessed'].indexOf(String(l.state_status || '')) > -1){
+      const sd = stateDays(l, null, today);
+      if(sd != null && sd >= DSDS_RED_DAYS) return R('now', 8, String(l.state_submitted).slice(0, 10), { big:'With the state ' + sd + ' days', sub:'call DSDS (the 21-day rule)', tone:'red' },
+        { text:'Call DSDS about the authorization, then ' + callerFirst, sub:last }, CALL, [{ kind:'dsds', label:'Called DSDS' }, FU], 'dsds_21');
+      return R('waiting', 1, '9999', { big:'The state', sub:(l.state_submitted ? 'since ' + dayWords(String(l.state_submitted).slice(0, 10), today) : 'submitted') + (sd != null && sd >= DSDS_AMBER_DAYS ? ' · ' + sd + ' days, follow up soon' : ''), tone:sd != null && sd >= DSDS_AMBER_DAYS ? 'amber' : 'muted' }, { text:'Set a check-back date', sub:last }, FU, [CALL], 'waiting_state_nodate');
+    }
     if(stage === 'reaching_out') return R('now', 9, now, { big:'No next step', sub:aw || 'tried, not reached', tone:'amber' }, { text:'Try ' + callerFirst + ' again, or set a follow-up', sub:last }, CALL, [LOG, FU], 'no_next_step');
     return R('now', 9, now, { big:'No next step', sub:'nothing scheduled', tone:'amber' }, { text:jn ? jn.title : 'Set the next step with ' + callerFirst, sub:last }, FU, [CALL, LOG], 'no_next_step');
   }
@@ -491,7 +532,8 @@
     ymd, addDays, daysBetween, dayWords, desiredStart, desiredStartWords, startRank, schedule, daysWords, scheduleWords, whyCalled,
     waiting, waitingProblems, defaultCheckBack, checkBackDue, lostKey, lostRecord, missing, toForm, compose, migrationPatch,
     responseHours, chicago, chicagoInstant, inResponseHours, nextOpening, clockStart, firstAttemptDue, clockWords, cameInWords, openingWords, callBackWords,
-    firstAttemptState, medianFirstAttemptMinutes, PAYER_WORDS, lastEventWords, replyPending, boardRow, boardSort, dayHeader };
+    firstAttemptState, medianFirstAttemptMinutes, PAYER_WORDS, lastEventWords, replyPending, boardRow, boardSort, dayHeader,
+    markAuthorized, authorizationPending, stateDays, DSDS_AMBER_DAYS, DSDS_RED_DAYS };
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   root.LeadRules = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
