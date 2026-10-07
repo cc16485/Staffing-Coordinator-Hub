@@ -350,6 +350,129 @@
     const mid = Math.floor(xs.length / 2); return xs.length % 2 ? xs[mid] : Math.round((xs[mid - 1] + xs[mid]) / 2);
   }
 
+  /* ── the board (Stage 2, her brief 2026-10-06: "who needs me right now, and what exactly do I need to do") ──────────
+     One row per family before they say yes, in one of three groups:
+       now      Need you now: anything a person has to do now, most urgent first (a rank per reason)
+       later    Scheduled: a real time or day that has not come yet, in order
+       waiting  Waiting: something outside the office has to happen first; always with a check-back date
+     ctx = { now, today, hours, stage (leadStage word), name, assessments:[{visit_date,status}], journey_next:{title,why}|null,
+             payer_label }. Pure: the page only draws what comes back. */
+  const PAYER_WORDS = { private:'Private pay', ltc:'LTC insurance', va:'VA', cds:'CDS', medicaid:'Medicaid IHS', other:'Other payer' };
+  function minsWords(m){ m = Math.max(0, Math.round(m)); if(m < 60) return m + ' min'; const h = Math.floor(m / 60), r = m % 60; return h + ' h' + (r ? ' ' + r + ' min' : ''); }
+  function whenWords(iso, now){ const c = chicago(iso), n = chicago(now); if(c.ymd === n.ymd) return clockWords(iso); const back = daysBetween(c.ymd, n.ymd); return (back > 1 && back < 7 ? DAY_SHORT[c.dow] : dayWords(c.ymd, n.ymd)) + ' ' + clockWords(iso); }
+  function dayCap(s){ return s.charAt(0).toUpperCase() + s.slice(1); }
+  function evts(l){ return Array.isArray(l && l.contact_events) ? l.contact_events : []; }
+  function lastWhere(l, pred){ const e = evts(l); for(let i = e.length - 1; i >= 0; i--) if(pred(e[i])) return e[i]; return null; }
+  function lastHumanOut(l){ return lastWhere(l, e => e && e.actor === 'human' && e.direction === 'out'); }
+  function replyPending(l){
+    if(!l || !l.family_last_reply_at) return false;
+    const after = lastWhere(l, e => e && e.actor === 'human' && e.direction === 'out' && e.at > l.family_last_reply_at);
+    return !after;
+  }
+  /* "Last: voicemail Tue 8:12 am" · "Last: 14-min call Thu 3:40 pm" · "They texted Tue 10:47 am" */
+  function lastEventWords(l, now){
+    const h = lastHumanOut(l), f = lastWhere(l, e => e && e.direction === 'in' && e.actor === 'family' && e.outcome !== 'inquiry');
+    const pick = (h && f) ? (h.at > f.at ? h : f) : (h || f);
+    if(!pick) return '';
+    if(pick === f) return 'They ' + (f.channel === 'call' ? 'called' : f.channel === 'email' ? 'emailed' : 'texted') + ' ' + whenWords(f.at, now);
+    const o = String(h.outcome || '').replace('_', ' ');
+    const dur = h.duration_s ? Math.round(h.duration_s / 60) + '-min ' : '';
+    const what = o === 'connected' ? dur + 'call, we talked' : o === 'requested callback' ? 'they asked us to call back' : o === 'sent' ? (h.channel === 'sms' ? 'we texted' : 'we emailed') : o;
+    return 'Last: ' + what + ' ' + whenWords(h.at, now) + (h.note ? ' · "' + String(h.note).slice(0, 80) + '"' : '');
+  }
+  function attemptsWords(l){ const n = evts(l).filter(e => e && e.actor === 'human' && e.direction === 'out' && e.channel === 'call' && (e.outcome === 'voicemail' || e.outcome === 'no_answer')).length || Number(l && l.contact_attempts) || 0; return n ? (n + ' ' + (n === 1 ? 'try' : 'tries') + ', not reached') : ''; }
+  function asmtNext(ctx){
+    const t = ctx.today, list = (ctx.assessments || []).slice();
+    const booked = list.filter(a => a && a.status === 'Scheduled' && a.visit_date && a.visit_date >= t).sort((a, b) => a.visit_date.localeCompare(b.visit_date))[0];
+    if(booked) return { kind:'booked', day:booked.visit_date, iso:chicagoInstant(booked.visit_date, '09:00') };
+    if(ctx.lead && ctx.lead.assessment_at && String(ctx.lead.assessment_at) >= ctx.now) return { kind:'booked', day:chicago(ctx.lead.assessment_at).ymd, iso:new Date(ctx.lead.assessment_at).toISOString(), timed:true };
+    const done = list.find(a => a && (a.status === 'Completed — Awaiting Plan' || (a.status === 'Scheduled' && a.visit_date && a.visit_date < t)));
+    if(done) return { kind:'plan', day:done.visit_date || t };
+    return null;
+  }
+  function boardRow(l, ctx){
+    ctx = Object.assign({ now:new Date().toISOString() }, ctx || {}); ctx.lead = l;
+    const now = ctx.now, today = ctx.today || chicago(now).ymd, stage = ctx.stage || 'new', hours = ctx.hours || responseHours({});
+    const name = ctx.name || String((l.client_first_name || '') + ' ' + (l.client_last_name || '')).trim() || String((l.first_name || '') + ' ' + (l.last_name || '')).trim() || '(no name)';
+    const caller = String((l.first_name || '') + ' ' + (l.last_name || '')).trim(), callerFirst = (l.first_name || '').trim() || 'them';
+    const clientFirst = (l.client_first_name || '').trim();
+    const why = whyCalled(l) || (l.relationship ? dayCap(String(l.relationship).toLowerCase()) + ' calling' + (clientFirst && clientFirst !== caller ? ' about ' + clientFirst : '') : (caller && caller !== name ? caller + ' called' : ''));
+    const pay = l.funding_source ? (ctx.payer_label || PAYER_WORDS[l.funding_source] || l.funding_source) : '';
+    const need = [desiredStartWords(l, today), pay, scheduleWords(l), String(l.client_city || '').trim()].filter(Boolean);
+    const src = [l.source, ctx.referral || l.referral_source_name].filter(Boolean).join(' · ');
+    const last = [lastEventWords(l, now), src, l.phone].filter(Boolean).join(' · ');
+    const chips = missing(l, stage).map(m => ({ text:m.short, tone:'missing' }));
+    if(l.do_not_contact) chips.unshift({ text:'do not contact', tone:'bad' });
+    const aw = attemptsWords(l); if(aw && stage === 'reaching_out') chips.push({ text:aw, tone:'warn' });
+    const fa = firstAttemptState(l, hours, now), w = waiting(l), jn = ctx.journey_next, asm = asmtNext(ctx);
+    const R = (group, rank, sort, when, next, primary, secondary, reason) => ({ group, rank, sort, when, next, primary, secondary:secondary || [], reason,
+      name, why, need:need.join(' · '), last, chips, owner:String(l.assigned_coordinator || '').trim() });
+    const CALL = { kind:'call', label:'Call' }, LOG = { kind:'log', label:'Log call' }, FU = { kind:'followup', label:'Set follow-up' }, SCH = { kind:'schedule', label:'Schedule assessment' };
+    /* ── Need you now ── */
+    if(stage === 'new' && fa && fa.running && !fa.attempted){
+      const big = 'NEW · ' + minsWords(fa.open_minutes);
+      if(fa.overdue) return R('now', 0, now, { big, sub:'OVERDUE: first call was due at 5 minutes', tone:'red' }, { text:'Call ' + callerFirst + ': first attempt', sub:dayCap(fa.came_in) + ' · ' + fa.ack }, CALL, [LOG], 'new_overdue');
+      return R('now', 1, now, { big, sub:'first call due in ' + Math.max(0, FIRST_ATTEMPT_MINUTES - fa.open_minutes) + ' min', tone:'red' }, { text:'Call ' + callerFirst + ': first attempt', sub:dayCap(fa.came_in) + ' · ' + fa.ack }, CALL, [LOG], 'new_running');
+    }
+    if(replyPending(l)){
+      const mins = Math.round((Date.parse(now) - Date.parse(l.family_last_reply_at)) / 60000);
+      const big = 'Replied ' + (mins < 60 ? mins + ' min ago' : chicago(l.family_last_reply_at).ymd === chicago(now).ymd ? 'at ' + clockWords(l.family_last_reply_at) : whenWords(l.family_last_reply_at, now));
+      return R('now', 2, l.family_last_reply_at, { big, sub:'waiting for a person to answer', tone:'red' }, { text:'Answer ' + callerFirst, sub:last }, { kind:'text', label:'Text back' }, [CALL, LOG], 'replied');
+    }
+    if(l.promised_callback_at){
+      const p = new Date(l.promised_callback_at).toISOString(), h = lastHumanOut(l);
+      const kept = h && h.at >= p;
+      if(!kept && p <= now){
+        const late = Math.round((Date.parse(now) - Date.parse(p)) / 60000);
+        return R('now', 3, p, { big:'Call promised ' + whenWords(p, now), sub:minsWords(late) + ' late', tone:'red' }, { text:'Call ' + callerFirst + ' back: we said ' + whenWords(p, now), sub:last }, CALL, [LOG, SCH], 'promise_late');
+      }
+      if(!kept && p > now) return R('later', 0, p, { big:clockWords(p), sub:'callback we promised', tone:'navy' }, { text:'Call ' + callerFirst + ' back', sub:last }, CALL, [LOG], 'promise_future');
+    }
+    if(asm && asm.kind === 'plan') return R('now', 6, asm.day, { big:'Assessment done ' + dayWords(asm.day, today), sub:'plan not written', tone:'amber' }, { text:'Write the care plan', sub:last }, { kind:'open_asmt', label:'Open assessment' }, [CALL], 'asmt_plan');
+    if(asm && asm.kind === 'booked'){
+      const big = asm.timed ? clockWords(asm.iso) : dayCap(dayWords(asm.day, today));
+      return R('later', 1, asm.iso, { big, sub:'assessment at the home', tone:'navy' }, { text:'Do the assessment, then the outcome', sub:last }, { kind:'open_asmt', label:'Open assessment' }, [CALL], 'asmt_booked');
+    }
+    const urgent = startRank(l, today) <= 1;
+    if(urgent && !w && ['reaching_out', 'connected', 'deciding', 'assessment'].indexOf(stage) > -1){
+      const words = desiredStartWords(l, today);
+      return R('now', 5, now, { big:words, sub:'assessment not booked yet', tone:'amber' }, { text:'Book the assessment' + (/by /.test(words) ? ' before ' + words.split('by ')[1] : ' now'), sub:last }, SCH, [CALL, LOG], 'urgent_start');
+    }
+    if(w && w.check_back && w.check_back <= today){
+      const lateDays = daysBetween(w.check_back, today), on = WAITING[w.reason].on;
+      const nextText = w.reason === 'state' ? 'Check Fusion, then call the family' : w.reason === 'family_decision' ? 'Call ' + callerFirst + ': have they decided?' : w.reason === 'unable_to_reach' ? 'One more try, then the next step' : 'Check in with ' + callerFirst;
+      return R('now', 8, w.check_back, { big:lateDays ? 'Check back ' + lateDays + (lateDays === 1 ? ' day' : ' days') + ' late' : 'Check back today', sub:on + ' since ' + dayWords(w.since || today, today), tone:lateDays ? 'red' : 'amber' }, { text:nextText, sub:(w.note || last) }, CALL, [LOG, FU], 'check_back_due');
+    }
+    if(w) return R('waiting', 0, w.check_back || '9999', { big:WAITING[w.reason].on, sub:w.since ? 'since ' + dayWords(w.since, today) : '', tone:'muted' },
+      { text:(w.check_back ? 'Next check ' + dayCap(dayWords(w.check_back, today)) : 'Set a check-back date'), sub:(w.note || last) }, w.check_back ? { kind:'open', label:'Open' } : FU, [CALL], 'waiting');
+    if(stage === 'new' && fa && !fa.running) return R('later', 0, fa.start, { big:clockWords(fa.start), sub:'first call · ' + fa.came_in, tone:'navy' }, { text:'Call ' + callerFirst + ' when we open', sub:fa.ack }, CALL, [LOG], 'new_before_open');
+    const fu = String(l.follow_up_due || '').slice(0, 10);
+    if(fu && fu < today){
+      const d = daysBetween(fu, today);
+      return R('now', 7, fu, { big:'Follow-up ' + d + (d === 1 ? ' day' : ' days') + ' late', sub:'was due ' + dayWords(fu, today), tone:'red' }, { text:jn ? jn.title : 'Follow up with ' + callerFirst, sub:last }, CALL, [LOG, FU], 'followup_late');
+    }
+    if(fu && fu >= today){
+      const iso = chicagoInstant(fu, String(l.follow_up_time || '09:00'));
+      return R('later', 2, iso, { big:l.follow_up_time ? clockWords(iso) : (fu === today ? 'Today' : dayCap(dayWords(fu, today))), sub:'follow-up' + (l.follow_up_note ? ': ' + String(l.follow_up_note).slice(0, 60) : l.follow_up_time ? '' : ' (no time set)'), tone:'navy' }, { text:l.follow_up_note ? String(l.follow_up_note) : (jn ? jn.title : 'Follow up with ' + callerFirst), sub:last }, CALL, [LOG, FU], 'followup_future');
+    }
+    if(l.funding_source === 'medicaid' && ['submitted', 'assessed'].indexOf(String(l.state_status || '')) > -1)
+      return R('waiting', 1, '9999', { big:'The state', sub:l.state_submitted ? 'since ' + dayWords(String(l.state_submitted).slice(0, 10), today) : 'submitted', tone:'muted' }, { text:'Set a check-back date', sub:last }, FU, [CALL], 'waiting_state_nodate');
+    if(stage === 'reaching_out') return R('now', 9, now, { big:'No next step', sub:aw || 'tried, not reached', tone:'amber' }, { text:'Try ' + callerFirst + ' again, or set a follow-up', sub:last }, CALL, [LOG, FU], 'no_next_step');
+    return R('now', 9, now, { big:'No next step', sub:'nothing scheduled', tone:'amber' }, { text:jn ? jn.title : 'Set the next step with ' + callerFirst, sub:last }, FU, [CALL, LOG], 'no_next_step');
+  }
+  /* the group order and the within-group order */
+  function boardSort(a, b){
+    const g = { now:0, later:1, waiting:2 };
+    return (g[a.group] - g[b.group]) || (a.group === 'now' ? (a.rank - b.rank) || String(a.sort).localeCompare(String(b.sort)) : String(a.sort).localeCompare(String(b.sort)) || (a.rank - b.rank));
+  }
+  /* "Today" · "Tomorrow" · "Thursday" · "Oct 20": the Scheduled group's day headers */
+  function dayHeader(sortIso, today){
+    const d = /^\d{4}-\d{2}-\d{2}$/.test(String(sortIso)) ? String(sortIso) : chicago(sortIso).ymd;
+    const n = daysBetween(today, d); if(n <= 0) return 'Today'; if(n === 1) return 'Tomorrow';
+    if(n < 7) return ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][new Date(d + 'T12:00:00Z').getUTCDay()];
+    return MONTH_SHORT[new Date(d + 'T12:00:00Z').getUTCMonth()] + ' ' + new Date(d + 'T12:00:00Z').getUTCDate();
+  }
+
   /* ── the move-over (installer): what an old lead gets, as a patch, or null when nothing is missing ─────────────── */
   function migrationPatch(l, today){
     const p = {}; today = today || ymd(new Date());
@@ -368,7 +491,7 @@
     ymd, addDays, daysBetween, dayWords, desiredStart, desiredStartWords, startRank, schedule, daysWords, scheduleWords, whyCalled,
     waiting, waitingProblems, defaultCheckBack, checkBackDue, lostKey, lostRecord, missing, toForm, compose, migrationPatch,
     responseHours, chicago, chicagoInstant, inResponseHours, nextOpening, clockStart, firstAttemptDue, clockWords, cameInWords, openingWords, callBackWords,
-    firstAttemptState, medianFirstAttemptMinutes };
+    firstAttemptState, medianFirstAttemptMinutes, PAYER_WORDS, lastEventWords, replyPending, boardRow, boardSort, dayHeader };
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   root.LeadRules = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
