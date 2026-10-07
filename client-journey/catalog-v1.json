@@ -1034,7 +1034,7 @@
    "stage": "schedule",
    "title": "Enter the full schedule in AxisCare, open shifts included",
    "owner_role": "care_coordinator",
-   "proof": "confirmed",
+   "proof": "verified",
    "payers": [],
    "after": [
     "sched.requested",
@@ -1046,12 +1046,13 @@
     "Open the client in AxisCare, Schedule.",
     "Create every shift the client needs.",
     "Shifts with nobody yet: leave the caregiver empty so they show as open.",
-    "Confirm here."
+    "The Hub ticks this itself once the shifts show in AxisCare (it reads the two weeks from the start date)."
    ],
    "due": {
     "days": 1,
     "business": true
-   }
+   },
+   "verify": "schedule_entered"
   },
   {
    "key": "team.staffed",
@@ -1059,7 +1060,7 @@
    "stage": "team",
    "title": "Staff every shift",
    "owner_role": "staffing_coordinator",
-   "proof": "confirmed",
+   "proof": "verified",
    "payers": [],
    "after": [
     "sched.axiscare"
@@ -1068,12 +1069,13 @@
    "active": true,
    "howto": [
     "Open the Team tab.",
-    "For each open shift, find and confirm a caregiver (Text several helps).",
-    "Confirm here once no shift in the first two weeks is open."
+    "For each open shift, find and confirm a caregiver (Text several helps), and put them on the shift in AxisCare.",
+    "The Hub reads AxisCare and shows which shifts in the first two weeks still have nobody. It ticks this itself once every one has a caregiver."
    ],
    "due": {
     "before_start": 2
-   }
+   },
+   "verify": "shifts_staffed"
   },
   {
    "key": "team.briefed",

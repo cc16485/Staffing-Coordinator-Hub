@@ -5,6 +5,10 @@
 #  · campaign-auto: the daily autopilot never emails open leads, clients or family contacts by itself (her rule). When one
 #    of those emails is due it puts one card on Samantha's My Work to send it herself from Campaigns. Caregivers unchanged.
 #  · each function keeps its gateway sign-in setting exactly as it is now (read first, deployed to match, checked after).
+#  · the new client's shifts (her note the same day: "read if we did put a caregiver in the shifts or if they are still
+#    unassigned"): two catalog steps become the Hub's own checks, changing ONLY proof, verify and how-to on those two:
+#    sched.axiscare (ticks when the shifts show in AxisCare) and team.staffed (shows "2 of 10 shifts still have no
+#    caregiver" with when; ticks when none are open). Read from AxisCare, the two weeks from the start date.
 #  (The other two fixes, the worded booking date and the "Waiting to be matched" list, are Hub page changes: no step.)
 import json, os, re, hashlib, subprocess, urllib.request, urllib.error, datetime as dt, sys, tempfile, shutil
 REPORT = os.environ["SB_REPORT"]; FNROOT = os.environ["SB_FNROOT"]; SHAS = json.loads(os.environ.get("SB_FN_SHAS", "{}"))
@@ -64,7 +68,7 @@ say("496 · FOUR AUDIT FIXES (care ended closes the journey; families never emai
 say("PART 1 · READ ONLY (nothing changes)")
 if not TOKEN.startswith("sbp_"): bad("no Supabase access token"); done(2)
 for name, want in SHAS.items():
-    p_ = os.path.join(FNROOT, "_shared", name.split("/", 1)[1]) if name.startswith("_shared/") else os.path.join(FNROOT, name, "index.ts")
+    p_ = os.path.join(CJDIR, name.split("/", 1)[1]) if name.startswith("client-journey/") else os.path.join(FNROOT, "_shared", name.split("/", 1)[1]) if name.startswith("_shared/") else os.path.join(FNROOT, name, "index.ts")
     have = sha(p_) if os.path.exists(p_) else "(missing)"
     chk(have == want, f"{name} is the reviewed build" if have == want else f"{name} is not the reviewed build: nothing runs")
 if fails: say(); say("  RESULT: STOPPED before anything changed."); done(2)
@@ -87,6 +91,13 @@ ok, r = sql("""select j.client_name, r.end_reason, r.ended_at from public.client
 ended = r if ok else []
 if not ok: bad("could not read which journeys' clients have ended care: " + str(r)[:200])
 say(f"  · journeys whose client's care has already ended (closed on the next 10-minute check): {len(ended)}" + ("" if not ended else ": " + ", ".join(f"{x['client_name']} ({x.get('end_reason') or 'ended'})" for x in ended)))
+CAT = {d["key"]: d for d in json.load(open(os.path.join(CJDIR, "catalog-v1.json")))["steps"]}
+SHIFT_STEPS = ["sched.axiscare", "team.staffed"]
+ok, r = sql("select key, def->>'proof' as proof, def->>'verify' as verify from public.client_journey_step_def where key in ('sched.axiscare','team.staffed') order by key")
+cur = {x["key"]: x for x in (r if ok else [])}
+for k in SHIFT_STEPS:
+    if k not in cur: bad(f"the step {k} is not in the live catalog"); continue
+    say(f"  · {k}: now " + ("checked by the Hub (" + str(cur[k]['verify']) + ")" if cur[k]["proof"] == "verified" else "ticked by a person") + f" → will be checked by the Hub ({CAT[k]['verify']})")
 ok, r = sql("select count(*)::int as n from public.client_admission_case where status = 'open'")
 say(f"  · AxisCare clients waiting to be matched (now shown on Client Care → Starting care): {r[0]['n'] if ok and r else '?'}")
 VJ = {}
@@ -97,6 +108,11 @@ for fn in FNS:
 if fails: say(); say("  RESULT: STOPPED before anything changed."); done(3)
 
 say(); say("PART 2 · CHANGE")
+for k in SHIFT_STEPS:
+    patch = {"proof": CAT[k]["proof"], "verify": CAT[k]["verify"], "howto": CAT[k]["howto"]}
+    ok, r = sql(f"update public.client_journey_step_def set def = def || {lit(json.dumps(patch))}::jsonb, updated_at = now(), updated_by = 'Desktop 496' where key = {lit(k)} returning key")
+    chk(ok and r, f"{k}: now checked by the Hub from AxisCare (only proof, verify and how-to changed; the rest kept as it is)")
+if fails: say("  RESULT: STOPPED before deploying (the step changes above stay)."); done(5)
 for fn in FNS:
     p = subprocess.run([SUPA, "functions", "deploy", fn, "--project-ref", REF, "--use-api"] + ([] if VJ[fn] else ["--no-verify-jwt"]), cwd=ROOT, env=dict(os.environ, SUPABASE_ACCESS_TOKEN=TOKEN), capture_output=True, text=True)
     okd, livef = live_files(fn)
@@ -112,7 +128,9 @@ say(); say("PART 3 · PROOF (nothing is texted or emailed)")
 for fn in FNS:
     okd2, live2 = live_files(fn)
     chk(okd2 and live2.get(f"supabase/functions/{fn}/index.ts") == sha(os.path.join(FNROOT, fn, "index.ts")), f"the live {fn} is this build")
+ok, r = sql("select key, def->>'verify' as verify from public.client_journey_step_def where key in ('sched.axiscare','team.staffed')")
+chk(ok and {x["key"]: x["verify"] for x in r} == {k: CAT[k]["verify"] for k in SHIFT_STEPS}, "the two shift steps read back as checked by the Hub")
 say()
-say("RESULT: " + ("DONE · The next 10-minute check closes journeys for clients whose care ended. The campaign autopilot now puts any lead, client or family email on your My Work for you to send; it never sends those by itself." if not fails else "CHECK THE ✗ LINES."))
+say("RESULT: " + ("DONE · The next 10-minute check closes journeys for clients whose care ended. The campaign autopilot now puts any lead, client or family email on your My Work for you to send; it never sends those by itself. A new client's schedule and staffing steps now read their shifts from AxisCare." if not fails else "CHECK THE ✗ LINES."))
 say("Nothing was texted or emailed by this step.")
 done(0 if not fails else 8)

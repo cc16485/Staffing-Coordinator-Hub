@@ -67,7 +67,7 @@ try {
     .replace(/from '\.\.\/_shared\/([\w-]+)\.ts'/g, (_, m) => "from '" + path.join(process.cwd(), F, '_shared', m + '.ts') + "'")
     .replace("import '../_shared/journey-rules.js'", "import '" + path.join(process.cwd(), F, '_shared', 'journey-rules.js') + "'")
     .replace("import '../_shared/lead-rules.js'", "import '" + path.join(process.cwd(), F, '_shared', 'lead-rules.js') + "'")
-  fs.writeFileSync(path.join(tmp, 'cj.ts'), src); await import(path.join(tmp, 'cj.ts'))
+  fs.writeFileSync(path.join(tmp, 'cj.ts'), src); const MOD = await import(path.join(tmp, 'cj.ts')); globalThis.shiftFactsT = (v) => MOD.shiftFacts(v, 'a', 'b')
   const call = async (body, jwt = 'an', hdr = {}) => { const r = await handler(new Request('https://x/f', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(jwt ? { Authorization: 'Bearer ' + jwt } : {}), ...hdr }, body: JSON.stringify(body) })); return { status: r.status, j: await r.json() } }
   const cards = () => T.app_data.find((r) => r.key === 'ops_items').data.filter((x) => x.kind === 'journey')
   const open = (who) => cards().filter((c) => c.status === 'open' && (!who || c.owner === who))
@@ -241,6 +241,33 @@ try {
   r = await call({ action: 'sweep' }, null, job); ck('...and it happens once', r.j.care_ended === 0 && ev(JE2.journey_id, 'closed').length === 1)
   r = await call({ action: 'list', include_active: true })
   ck('the list carries closed journeys with their reason (for the stage words)', (r.j.journeys || []).some((x) => x.journey_id === JE2.journey_id && x.status === 'closed' && /Care ended/.test(x.closed_reason)), r.j)
+
+  // the new client's shifts (2026-10-07): the schedule step and "Staff every shift" read AxisCare
+  reset(); setOps({ client_journey_live: true })
+  r = await call({ action: 'adopt', people: [{ axiscare_client_id: '296', client_name: 'Edward Anderson', payer: 'private' }] }, null, job)
+  const JSH = T.client_journey[0], LATER = ['schedule', 'team', 'ready', 'firstweek', 'active']
+  for (const d of CAT) if (!LATER.includes(d.stage) && !step(JSH.journey_id, d.key).state) T.client_journey_step.push({ journey_id: JSH.journey_id, step_key: d.key, state: 'complete', version: 1 })
+  T.client_journey_step.filter((x) => x.journey_id === JSH.journey_id && !['sched.axiscare'].includes(x.step_key) && CAT.find((d) => d.key === x.step_key && !LATER.includes(d.stage))).forEach((x) => { x.state = 'complete' })
+  T.client_journey_step.push({ journey_id: JSH.journey_id, step_key: 'sched.requested', state: 'complete', version: 1, answer: { start: R_add(3) } })
+  const day = (n, h) => R_add(n) + 'T' + h + ':00:00'
+  AX.visits = []
+  r = await call({ action: 'sweep' }, null, job)
+  ck('shifts: nothing in AxisCare yet, the schedule step stays up and says so', step(JSH.journey_id, 'sched.axiscare').state !== 'complete' && step(JSH.journey_id, 'sched.axiscare').evidence?.shifts?.total === 0, step(JSH.journey_id, 'sched.axiscare'))
+  AX.visits = [{ id: 1, scheduledStartDate: day(1, '09'), caregiver: { id: 7 } }, { id: 2, scheduledStartDate: day(2, '09'), caregiver: null }, { id: 3, scheduledStartDate: day(3, '16') }]
+  r = await call({ action: 'sweep' }, null, job)
+  ck('...shifts entered in AxisCare: the schedule step ticks itself, saying how many', step(JSH.journey_id, 'sched.axiscare').state === 'complete' && /3 shifts/.test(step(JSH.journey_id, 'sched.axiscare').evidence?.verified?.detail || ''), step(JSH.journey_id, 'sched.axiscare'))
+  r = await call({ action: 'sweep' }, null, job)
+  const tf = step(JSH.journey_id, 'team.staffed')
+  ck('"Staff every shift" reads AxisCare: 2 of 3 shifts still have no caregiver, with when', tf.state !== 'complete' && tf.evidence?.shifts?.unassigned === 2 && tf.evidence.shifts.total === 3 && tf.evidence.shifts.open_at.length === 2, tf)
+  const sc = open().find((c) => c.journey_id === JSH.journey_id && c.step_key === 'team.staffed')
+  ck('...the My Work card says it in words', sc && /2 of 3 shifts in the two weeks from .* still have no caregiver/.test(sc.detail), open())
+  r = await call({ action: 'list', include_active: true })
+  ck('...and so does the list (Starting care, the profile)', (r.j.journeys || []).some((x) => x.journey_id === JSH.journey_id && x.next && x.next.key === 'team.staffed' && /2 of 3/.test(x.next.shift_words)), r.j)
+  AX.visits = AX.visits.map((v) => ({ ...v, caregiver: { id: 9 } }))
+  r = await call({ action: 'sweep' }, null, job)
+  ck('every shift has a caregiver: the step ticks itself ("Every one of the 3 shifts … has a caregiver")', step(JSH.journey_id, 'team.staffed').state === 'complete' && /Every one of the 3 shifts/.test(step(JSH.journey_id, 'team.staffed').evidence?.verified?.detail || ''), step(JSH.journey_id, 'team.staffed'))
+  AX.visits = [{ id: 5, scheduledStartDate: day(2, '09'), caregiver: null, removed: true }, { id: 6, scheduledStartDate: day(2, '10'), caregiver: { id: 1 } }]
+  ck('...a removed shift never counts', JSON.stringify(shiftFactsT(AX.visits)) && shiftFactsT(AX.visits).total === 1 && shiftFactsT(AX.visits).unassigned === 0)
   ck('nothing ever texted or emailed (no outside calls but AxisCare reads)', true)
 
   /* ── FIRST SHIFT ON THE INQUIRY (2026-10-07) ── */

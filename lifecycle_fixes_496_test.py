@@ -43,7 +43,7 @@ URL = f"http://127.0.0.1:{H.server_address[1]}"
 T = tempfile.mkdtemp(prefix="reh496-"); W = os.path.join(T, "hub")
 subprocess.run(["git", "worktree", "add", "-q", "--detach", W, COMMIT], cwd=HERE, check=True)
 FNROOT = os.path.join(W, "supabase", "functions"); sha = lambda p_: hashlib.sha256(open(p_, "rb").read()).hexdigest()
-PINS = {"client-journey": sha(os.path.join(FNROOT, "client-journey", "index.ts")), "campaign-auto": sha(os.path.join(FNROOT, "campaign-auto", "index.ts")), "_shared/lead-rules.js": sha(os.path.join(FNROOT, "_shared", "lead-rules.js"))}
+PINS = {"client-journey": sha(os.path.join(FNROOT, "client-journey", "index.ts")), "campaign-auto": sha(os.path.join(FNROOT, "campaign-auto", "index.ts")), "_shared/lead-rules.js": sha(os.path.join(FNROOT, "_shared", "lead-rules.js")), "client-journey/catalog-v1.json": sha(os.path.join(W, "client-journey", "catalog-v1.json"))}
 CAT = json.load(open(os.path.join(W, "client-journey", "catalog-v1.json")))["steps"]
 OLD = [dict(s, after=(["asmt.outcome"] if s["key"] in ("docs.agreement", "docs.rights", "docs.assessment", "ax.client") else s["after"])) for s in CAT if s["key"] != "signed.yes"]   # the catalog as 482 installed it
 LOG = os.path.join(T, "deploys.txt"); CLI = os.path.join(T, "supabase")
@@ -73,7 +73,11 @@ def fresh(with_yes=False):
     c.run("drop schema if exists vault cascade; create schema vault; create table vault.decrypted_secrets(name text, decrypted_secret text)")
     c.run("drop schema if exists net cascade; create schema net"); c.close()
     c = conn(); c.run(open(os.path.join(W, "client-journey", "client-journey.sql")).read())
-    for s in (CAT if with_yes else OLD): c.run("insert into public.client_journey_step_def (key, catalog_version, def, active, updated_by) values (:k, 1, :d::jsonb, true, 'seed')", k=s["key"], d=json.dumps(s))
+    for s in (CAT if with_yes else OLD):
+        s = dict(s)
+        if s["key"] in ("sched.axiscare", "team.staffed"): s = dict(s, proof="confirmed"); s.pop("verify", None)
+        if s["key"] == "team.staffed": s["title"] = "Staff every shift (edited)"
+        c.run("insert into public.client_journey_step_def (key, catalog_version, def, active, updated_by) values (:k, 1, :d::jsonb, true, 'seed')", k=s["key"], d=json.dumps(s))
     c.run("insert into public.client_journey (lead_id, client_name, payer, assigned_cc, created_by) values ('a1', 'Tommy Fortner', 'medicaid', 'krystal@mo-care.com', 'hub')")
     c.run("insert into public.client_journey (axiscare_client_id, client_name, payer, assigned_cc, created_by) values ('296', 'Edward Anderson', 'private', 'krystal@mo-care.com', 'hub'), ('295', 'Peggy Thomason', null, 'krystal@mo-care.com', 'hub')")
     c.run("create table public.person_source_id(person_id text, system text, entity_type text, source_id text)")
@@ -103,6 +107,9 @@ try:
     ck("...it lists the journey that will close (Edward Anderson, deceased) and not the one still in care", "(closed on the next 10-minute check): 1: Edward Anderson (deceased)" in out and "Peggy" not in out.split("10-minute check")[1].split("\n")[0], out)
     ck("...and counts the clients waiting to be matched", "waiting to be matched (now shown on Client Care → Starting care): 1" in out, out)
     ck("...nothing in the database changed (the closing happens in the 10-minute check)", db("select count(*) from public.client_journey where status = 'closed'") == 0, out)
+    ck("the two shift steps are now checked by the Hub; only proof, verify and how-to changed (an owner's edited title is kept)", db("select def->>'verify' from public.client_journey_step_def where key='team.staffed'") == "shifts_staffed"
+       and db("select def->>'verify' from public.client_journey_step_def where key='sched.axiscare'") == "schedule_entered" and db("select def->>'title' from public.client_journey_step_def where key='team.staffed'") == "Staff every shift (edited)", out)
+    ck("...the report says what each was and what it is now", "team.staffed: now ticked by a person → will be checked by the Hub (shifts_staffed)" in out and "read back as checked by the Hub" in out, out)
     fresh(True); open(os.path.join(T, "fail"), "w").write("1"); code, out = run()
     ck("a failed deploy stops and says what stays", code == 6 and "did not deploy cleanly" in out and "stay" in out, out)
 finally:
