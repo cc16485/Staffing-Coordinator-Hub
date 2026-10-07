@@ -176,6 +176,35 @@ async function leadOf(db: Any, leadId: string | null): Promise<Any | null> {
   const { data } = await db.from('app_data').select('data').eq('key', 'leads').maybeSingle()
   return (Array.isArray(data?.data) ? data.data : []).find((l: Any) => String(l?.id) === String(leadId)) ?? null
 }
+/* ── the new client's shifts in AxisCare (Samantha 2026-10-07: "read if we did put a caregiver in the shifts or if they
+   are still unassigned for new client who is onboarding"). The two weeks from the start date (or today, if later). ── */
+export const SHIFT_DAYS = 14
+export function shiftWindow(j: Any, today_: string) { const from = j.target_start && j.target_start > today_ ? j.target_start : today_; return { from, to: R.addDays(from, SHIFT_DAYS - 1) } }
+export function shiftFacts(visits: Any[], from: string, to: string) {
+  const rows = (visits || []).filter((v: Any) => v && !v.removed).map((v: Any) => ({ at: String(v.scheduledStartDate ?? v.startDate ?? ''), cg: v?.caregiver?.id != null }))
+    .filter((x: Any) => x.at).sort((a: Any, b: Any) => a.at.localeCompare(b.at))
+  const open = rows.filter((x: Any) => !x.cg)
+  return { from, to, total: rows.length, unassigned: open.length, open_at: open.slice(0, 6).map((x: Any) => x.at.slice(0, 16)) }
+}
+async function clientVisits(ax: Any, id: string, from: string, to: string): Promise<Any[] | null> {
+  const out: Any[] = []
+  let path: string | null = `/api/visits?clientIds=${id}&startDate=${from}&endDate=${to}`
+  for (let page = 0; path && page < 6; page++) {
+    const r = await ax(path); if (!r || r.status !== 200) return null
+    const vs = r.json?.results?.visits ?? r.json?.visits ?? []
+    out.push(...(Array.isArray(vs) ? vs : Object.values(vs)))
+    const nx = r.json?.results?.nextPage ?? r.json?.nextPage ?? null
+    path = nx ? String(nx).replace(/^https?:\/\/[^/]+/, '') : null
+  }
+  return out
+}
+/** the words staff see: "3 of 10 shifts in the two weeks from Oct 12 still have no caregiver" */
+export function shiftWords(f: Any) {
+  if (!f) return ''
+  if (!f.total) return 'No shifts in AxisCare yet for the two weeks from ' + f.from
+  if (!f.unassigned) return 'Every one of the ' + f.total + ' shift' + (f.total === 1 ? '' : 's') + ' in the two weeks from ' + f.from + ' has a caregiver'
+  return f.unassigned + ' of ' + f.total + ' shift' + (f.total === 1 ? '' : 's') + ' in the two weeks from ' + f.from + ' still ' + (f.unassigned === 1 ? 'has' : 'have') + ' no caregiver'
+}
 export const VERIFY: Record<string, (x: Any) => Promise<Any | null>> = {
   lead_basics: async ({ lead }) => {
     if (!lead) return null
@@ -193,6 +222,20 @@ export const VERIFY: Record<string, (x: Any) => Promise<Any | null>> = {
     if (!/^\d+$/.test(id)) return null
     const r = await ax(`/api/clients/${id}`)
     return r && r.status === 200 ? { detail: 'AxisCare client #' + id + ' read back', axiscare_client_id: id } : null
+  },
+  /* the schedule is in AxisCare: at least one shift in the window. Otherwise the step stays up, saying so. */
+  schedule_entered: async ({ j, ax }) => {
+    if (!j.axiscare_client_id) return null
+    const w = shiftWindow(j, today()), vs = await clientVisits(ax, j.axiscare_client_id, w.from, w.to); if (!vs) return null
+    const f = shiftFacts(vs, w.from, w.to)
+    return f.total ? { detail: 'The schedule is in AxisCare: ' + f.total + ' shift' + (f.total === 1 ? '' : 's') + ' in the two weeks from ' + w.from, facts: f } : { pending: true, facts: f }
+  },
+  /* every shift in the window has a caregiver. Until then the step shows how many are still open, and when. */
+  shifts_staffed: async ({ j, ax }) => {
+    if (!j.axiscare_client_id) return null
+    const w = shiftWindow(j, today()), vs = await clientVisits(ax, j.axiscare_client_id, w.from, w.to); if (!vs) return null
+    const f = shiftFacts(vs, w.from, w.to)
+    return f.total && !f.unassigned ? { detail: shiftWords(f), facts: f } : { pending: true, facts: f }
   },
   first_visit: async ({ j, ax }) => {
     if (!j.axiscare_client_id) return null
@@ -226,8 +269,16 @@ async function settle(db: Any, j: Any, steps: Any[], dfs: Any[], pp: Any, st: An
     }
     if (r.def.proof === 'verified' && ['ready', 'attention'].includes(r.status) && r.def.verify && VERIFY[r.def.verify] && opts.verify !== false) {
       const ok = await VERIFY[r.def.verify]({ j, lead, ax, db })
+      /* not done yet, but the Hub can say how far along it is (the shifts): keep that on the step when it changes */
+      if (ok && ok.pending) {
+        const was = (r.st.evidence || {}).shifts
+        if (ok.facts && JSON.stringify(was ? { ...was, checked_at: undefined } : null) !== JSON.stringify({ ...ok.facts, checked_at: undefined })) {
+          await putStep(db, j.journey_id, r.key, { ...stripRow(r.st), evidence: { ...(r.st.evidence || {}), shifts: { ...ok.facts, checked_at: now } } }); changed++
+        }
+        continue
+      }
       if (ok) {
-        await putStep(db, j.journey_id, r.key, { ...stripRow(r.st), state: 'complete', evidence: { ...(r.st.evidence || {}), verified: { at: now, detail: ok.detail } },
+        await putStep(db, j.journey_id, r.key, { ...stripRow(r.st), state: 'complete', evidence: { ...(r.st.evidence || {}), verified: { at: now, detail: ok.detail }, ...(ok.facts ? { shifts: { ...ok.facts, checked_at: now } } : {}) },
           completed_by: 'hub', completed_by_name: 'The Hub (verified)', completed_at: now })
         if (ok.axiscare_client_id && !j.axiscare_client_id) { await db.from('client_journey').update({ axiscare_client_id: ok.axiscare_client_id, updated_at: now }).eq('journey_id', j.journey_id); j.axiscare_client_id = ok.axiscare_client_id }
         await event(db, j.journey_id, r.key, { email: 'hub', name: 'The Hub' }, 'verified', { detail: ok.detail }); changed++
@@ -288,7 +339,8 @@ async function refreshCards(db: Any, j: Any, view: Any, pp: Any, st: Any) {
     const famLine = nx ? LR.nextWords(nx, now) : ''
     want.set(id, { id, kind: 'journey', status: 'open', source_type: 'journey', journey_id: j.journey_id, step_key: c.step_key, card_kind: famDue ? 'attention' : c.kind,
       title: famDue ? 'NEEDS ATTENTION: ' + famLine : cardText(c), about: j.client_name,
-      detail: [famDue ? 'Next step: ' + c.title : (famLine ? 'With the family: ' + famLine : ''), (c.also?.length ? 'Also ready: ' + c.also.join(' · ') : '')].filter(Boolean).join(' · '),
+      detail: [famDue ? 'Next step: ' + c.title : (famLine ? 'With the family: ' + famLine : ''), shiftWords(((view.rows || []).find((x: Any) => x.key === c.step_key)?.st?.evidence || {}).shifts), (c.also?.length ? 'Also ready: ' + c.also.join(' · ') : '')].filter(Boolean).join(' · '),
+      shifts: ((view.rows || []).find((x: Any) => x.key === c.step_key)?.st?.evidence || {}).shifts ?? null,
       link: '#p/' + ref + '/start/' + c.step_key, owner: c.owner, owner_name: pp.names[c.owner] || c.owner,
       urgency: urgent ? 'urgent' : high ? 'high' : 'normal',
       due: famDue ? nx.at : ((urgent ? today() : (c.due || null)) ? new Date((urgent ? today() : c.due) + 'T17:00:00-05:00').toISOString() : null),
@@ -352,6 +404,46 @@ async function autoOpenClose(db: Any, dfs: Any[], pp: Any, st: Any) {
   return { opened, closed }
 }
 
+/** CARE ENDED (2026-10-07 audit fix): when a person answered an AxisCare status change "care ended" (client_status_decide
+ *  makes the client role 'former'), the start-of-care journey stops too: it closes with the reason, its My Work cards are
+ *  put away, and its First shift launch is finished so the client's next episode can open one. A journey whose client
+ *  still has an active role is never touched. */
+export function endedPlan(js: Any[], links: Any[], roles: Any[]) {
+  const personOf = new Map(links.map((x: Any) => [String(x.source_id), x.person_id]))
+  const out: Any[] = []
+  for (const j of js) {
+    if (j.is_test || !j.axiscare_client_id || !['open', 'active'].includes(j.status)) continue
+    const pid = personOf.get(String(j.axiscare_client_id)); if (!pid) continue
+    const mine = roles.filter((r: Any) => r.person_id === pid && r.role === 'client')
+    if (!mine.length || mine.some((r: Any) => r.status === 'active')) continue
+    const last = mine.slice().sort((a: Any, b: Any) => String(b.ended_at || '').localeCompare(String(a.ended_at || '')))[0]
+    out.push({ j, why: 'Care ended' + (last?.end_reason ? ' (' + last.end_reason + ')' : '') + (last?.ended_at ? ' on ' + String(last.ended_at).slice(0, 10) : '') })
+  }
+  return out
+}
+async function closeEnded(db: Any, dfs: Any[], pp: Any, st: Any) {
+  const { data: js } = await db.from('client_journey').select('*').in('status', ['open', 'active']).not('axiscare_client_id', 'is', null)
+  const ax = [...new Set((js ?? []).filter((j: Any) => !j.is_test).map((j: Any) => String(j.axiscare_client_id)))]
+  if (!ax.length) return 0
+  const { data: links } = await db.from('person_source_id').select('person_id, source_id').eq('system', 'axiscare').eq('entity_type', 'client').in('source_id', ax)
+  const pids = [...new Set((links ?? []).map((x: Any) => x.person_id))]
+  const { data: roles } = pids.length ? await db.from('person_role').select('person_id, role, status, ended_at, end_reason').in('person_id', pids).eq('role', 'client') : { data: [] }
+  const now = new Date().toISOString(); let n = 0
+  for (const c of endedPlan(js ?? [], links ?? [], roles ?? [])) {
+    await db.from('client_journey').update({ status: 'closed', closed_reason: c.why, updated_at: now }).eq('journey_id', c.j.journey_id)
+    await event(db, c.j.journey_id, null, HUB, 'closed', { care_ended: true }, c.why)
+    if (c.j.launch_id) {
+      const { data: q } = await db.from('client_queue').select('id, status').eq('id', c.j.launch_id).maybeSingle()
+      if (q && q.status !== 'complete') {
+        const { error } = await db.from('client_queue').update({ status: 'complete', completed_at: now, launch_completed_at: now, exception_reason: c.why + ': closed by the client journey' }).eq('id', c.j.launch_id)
+        await event(db, c.j.journey_id, null, HUB, error ? 'launch_failed' : 'launch_completed', error ? { error: String(error.message).slice(0, 300) } : { launch_id: c.j.launch_id, care_ended: true })
+      }
+    }
+    const full = await load(db, { journey_id: c.j.journey_id }); if (full) await refreshCards(db, full.j, R.compute(dfs, full.j, full.steps, ctxFor(pp, st)), pp, st); n++
+  }
+  return n
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200, headers: cors })
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
@@ -371,7 +463,7 @@ Deno.serve(async (req) => {
         await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...it, status: 'done', closed_at: now, closed_by: 'journey', close_note: 'Client journeys were switched off' } }); put++ }
       return json({ ok: true, live: false, note: 'client_journey_live is off: nothing swept', cards_put_away: put })
     }
-    const auto = await autoOpenClose(db, dfs, pp, st)
+    const auto = await autoOpenClose(db, dfs, pp, st), care_ended = await closeEnded(db, dfs, pp, st)
     const { data: js } = await db.from('client_journey').select('*').in('status', ['open', 'active'])
     let n = 0, cards = 0, launches = 0
     for (const j of js ?? []) {
@@ -379,7 +471,7 @@ Deno.serve(async (req) => {
       const { data: steps } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
       const out = await settle(db, j, steps ?? [], dfs, pp, st, j.status === 'active' ? { verify: false } : {}); n++; cards += out.cards.wrote + out.cards.closed; if (out.launch) launches++
     }
-    return json({ ok: true, journeys: n, card_changes: cards, launch_changes: launches, ...auto })
+    return json({ ok: true, journeys: n, card_changes: cards, launch_changes: launches, care_ended, ...auto })
   }
   /* ── THEY SAID YES (Leads intake desk, Stage 3; Samantha 2026-10-06: "move them directly from Leads into the Client
      Journey… carry everything… record the conversion event… land on the first incomplete required step… safely
@@ -476,15 +568,16 @@ Deno.serve(async (req) => {
   if (st.client_journey_live !== true && !isOwner) return json({ error: 'Client journeys are switched off right now.' }, 409)
 
   if (b.action === 'list') {
-    const { data: js } = await db.from('client_journey').select('*').in('status', b.include_active ? ['open', 'active'] : ['open']).limit(500)
+    const { data: js } = await db.from('client_journey').select('*').in('status', b.include_active ? ['open', 'active', 'closed'] : ['open']).limit(1000)
     const ids = (js ?? []).map((j: Any) => j.journey_id)
     const { data: steps } = ids.length ? await db.from('client_journey_step').select('*').in('journey_id', ids) : { data: [] }
     const ctx = ctxFor(pp, st)
     return json({ journeys: (js ?? []).map((j: Any) => {
       const v = R.compute(dfs, j, (steps ?? []).filter((s: Any) => s.journey_id === j.journey_id), ctx)
       return { journey_id: j.journey_id, ref: refOf(j), client_name: j.client_name, payer: j.payer, status: j.status, stage: v.stage, stage_label: v.stageLabel,
-        target_start: j.target_start, assigned_cc: j.assigned_cc, is_test: j.is_test, lead_id: j.lead_id, axiscare_client_id: j.axiscare_client_id, launch_id: j.launch_id ?? null,
-        next: v.next ? { key: v.next.key, title: v.next.def.title, status: v.next.status, why: v.next.attention || v.next.why || '', owner: v.next.owner.email } : null, stopped: !!v.stop }
+        target_start: j.target_start, assigned_cc: j.assigned_cc, is_test: j.is_test, lead_id: j.lead_id, axiscare_client_id: j.axiscare_client_id, launch_id: j.launch_id ?? null, closed_reason: j.closed_reason ?? null,
+        next: v.next ? { key: v.next.key, title: v.next.def.title, status: v.next.status, why: v.next.attention || v.next.why || '', owner: v.next.owner.email,
+          shifts: v.next.st?.evidence?.shifts ?? null, shift_words: shiftWords(v.next.st?.evidence?.shifts) } : null, stopped: !!v.stop }
     }) })
   }
 

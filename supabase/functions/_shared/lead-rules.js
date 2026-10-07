@@ -276,8 +276,38 @@
     return { days:days.slice().sort(), start:h.start, end:h.end, source:'setting' };
   }
   /* the Chicago wall clock for an instant: { ymd, hm, min (since midnight), dow } */
+  /* a time as the booking page writes it, in words with no year ("Monday, October 12 at 9:00 AM (Central)"), read as
+     Chicago time in the year that puts it nearest today. Anything else that isn't a date is null (2026-10-07: one worded
+     booking used to stop the whole Leads board drawing). */
+  const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+  function wordsWhen(v, nowMs){
+    const m = /([A-Za-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?(?:\s*(?:at|,|@)?\s*(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?)?/i.exec(String(v || ''));
+    if(!m) return null;
+    const mi = MONTHS.findIndex(x => x.indexOf(m[1].toLowerCase()) === 0 && m[1].length >= 3); if(mi < 0) return null;
+    let h = m[4] ? Number(m[4]) % 12 + (/p/i.test(m[6] || '') ? 12 : 0) : 9; const mm = m[5] || '00';
+    const pad = n => String(n).padStart(2, '0'), day = y => y + '-' + pad(mi + 1) + '-' + pad(Number(m[2]));
+    const now = nowMs == null ? Date.now() : nowMs, base = new Date(now).getUTCFullYear();
+    const years = m[3] ? [Number(m[3])] : [base - 1, base, base + 1];
+    let best = null;
+    for(const y of years){ const t = Date.parse(chicagoInstantSafe(day(y), pad(h) + ':' + mm)); if(isNaN(t)) continue; if(best === null || Math.abs(t - now) < Math.abs(best - now)) best = t; }
+    return best === null ? null : new Date(best).toISOString();
+  }
+  function chicagoInstantSafe(dayS, hm){
+    for(const off of ['-05:00', '-06:00']){ const t = Date.parse(dayS + 'T' + hm + ':00' + off); if(isNaN(t)) continue;
+      const p = {}; new Intl.DateTimeFormat('en-US', { timeZone:TZ, hourCycle:'h23', year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }).formatToParts(new Date(t)).forEach(x => { p[x.type] = x.value; });
+      if(p.year + '-' + p.month + '-' + p.day === dayS && String(Number(p.hour) % 24).padStart(2, '0') + ':' + p.minute === hm) return new Date(t).toISOString(); }
+    const t = Date.parse(dayS + 'T' + hm + ':00-06:00'); return isNaN(t) ? '' : new Date(t).toISOString();
+  }
+  /* any stored time (an ISO stamp, a Date, a number, or the booking page's words) as an ISO string, or null */
+  function whenISO(v, nowMs){
+    if(v === null || v === undefined || v === '') return null;
+    const t = v instanceof Date ? v.getTime() : typeof v === 'number' ? v : (/^\d{4}-\d{2}-\d{2}/.test(String(v)) ? Date.parse(String(v)) : NaN);
+    if(!isNaN(t)) return new Date(t).toISOString();
+    return wordsWhen(v, nowMs);
+  }
   function chicago(iso){
-    const d = new Date(iso);
+    let d = new Date(iso);
+    if(isNaN(d.getTime())){ const w = whenISO(iso); d = new Date(w || 0); if(!w) return { ymd:'', hm:'', min:0, dow:-1, bad:true }; }
     const p = {}; new Intl.DateTimeFormat('en-US', { timeZone:TZ, hourCycle:'h23', year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', weekday:'short' })
       .formatToParts(d).forEach(x => { p[x.type] = x.value; });
     const hour = Number(p.hour) % 24;
@@ -450,7 +480,9 @@
     const t = ctx.today, list = (ctx.assessments || []).slice();
     const booked = list.filter(a => a && a.status === 'Scheduled' && a.visit_date && a.visit_date >= t).sort((a, b) => a.visit_date.localeCompare(b.visit_date))[0];
     if(booked) return { kind:'booked', day:booked.visit_date, iso:chicagoInstant(booked.visit_date, '09:00') };
-    if(ctx.lead && ctx.lead.assessment_at && String(ctx.lead.assessment_at) >= ctx.now) return { kind:'booked', day:chicago(ctx.lead.assessment_at).ymd, iso:new Date(ctx.lead.assessment_at).toISOString(), timed:true };
+    const at = ctx.lead && ctx.lead.assessment_at ? whenISO(ctx.lead.assessment_at, Date.parse(ctx.now)) : null;
+    if(at && at >= ctx.now) return { kind:'booked', day:chicago(at).ymd, iso:at, timed:true };
+    if(at && !list.length && at < ctx.now) return { kind:'plan', day:chicago(at).ymd };
     const done = list.find(a => a && (a.status === 'Completed — Awaiting Plan' || (a.status === 'Scheduled' && a.visit_date && a.visit_date < t)));
     if(done) return { kind:'plan', day:done.visit_date || t };
     return null;
@@ -1011,7 +1043,7 @@
     return { asked:true, total:pool.length, count:fits.length, same_town:same, days:s.days, cats:cats || [], ask, words, thin:fits.length < 2 };
   }
 
-  const api = { START_KINDS, START_LABEL, LEGACY_URGENCY, DAYS, WAITING, WAITING_KEYS, LOST, LOST_LABEL, LOST_STAFFING, REQ_BY_STAGE, FORM_KEYS,
+  const api = { whenISO, START_KINDS, START_LABEL, LEGACY_URGENCY, DAYS, WAITING, WAITING_KEYS, LOST, LOST_LABEL, LOST_STAFFING, REQ_BY_STAGE, FORM_KEYS,
     RESPONSE_HOURS_DEFAULT, FIRST_ATTEMPT_MINUTES,
     ymd, addDays, daysBetween, dayWords, desiredStart, desiredStartWords, startRank, schedule, daysWords, scheduleWords, whyCalled,
     waiting, waitingProblems, defaultCheckBack, checkBackDue, lostKey, lostRecord, missing, toForm, compose, migrationPatch,
