@@ -535,6 +535,10 @@
       const words = desiredStartWords(l, today), disch = fl.find(f => f.key === 'urgent_discharge');
       return R('now', disch ? 4.5 : 5, now, { big:words, sub:disch ? (disch.text.split(':')[0].toLowerCase() + ', assessment not booked') : 'assessment not booked yet', tone:disch ? 'red' : 'amber' }, { text:'Book the assessment' + (/by /.test(words) ? ' before ' + words.split('by ')[1] : ' now'), sub:last }, SCH, [CALL, LOG], 'urgent_start');
     }
+    /* item 5: 45 days with the state (the case manager call and the bridge-hours offer) outranks the 21-day DSDS call */
+    const ml = medicaidLong(l, ctx);
+    if(ml) return R('now', 7.5, w && w.since || today, { big:'With the state ' + ml.days + ' days', sub:ml.bridge_offered ? 'bridge hours offered; call the case manager' : 'call the case manager, offer private bridge hours', tone:'red' },
+      { text:'Call the case manager about ' + (clientFirst || 'the authorization') + ', then ' + callerFirst + (ml.bridge_offered ? '' : ': offer private hours while the state decides'), sub:(w && w.note) || last }, CALL, [{ kind:'case_manager', label:'Called the case manager' }].concat(ml.bridge_offered ? [] : [{ kind:'bridge', label:'Offered bridge hours' }]), 'medicaid_45');
     if(w && w.check_back && w.check_back <= today){
       const lateDays = daysBetween(w.check_back, today), on = WAITING[w.reason].on;
       const nextText = w.reason === 'state' ? 'Check Fusion, then call the family' : w.reason === 'family_decision' ? 'Call ' + callerFirst + ': have they decided?' : w.reason === 'unable_to_reach' ? 'One more try, then the next step' : 'Check in with ' + callerFirst;
@@ -564,7 +568,16 @@
         { text:'Call DSDS about the authorization, then ' + callerFirst, sub:last }, CALL, [{ kind:'dsds', label:'Called DSDS' }, FU], 'dsds_21');
       return R('waiting', 1, '9999', { big:'The state', sub:(l.state_submitted ? 'since ' + dayWords(String(l.state_submitted).slice(0, 10), today) : 'submitted') + (sd != null && sd >= DSDS_AMBER_DAYS ? ' · ' + sd + ' days, follow up soon' : ''), tone:sd != null && sd >= DSDS_AMBER_DAYS ? 'amber' : 'muted' }, { text:'Set a check-back date', sub:last }, FU, [CALL], 'waiting_state_nodate');
     }
-    if(stage === 'reaching_out') return R('now', 9, now, { big:'No next step', sub:aw || 'tried, not reached', tone:'amber' }, { text:'Try ' + callerFirst + ' again, or set a follow-up', sub:last }, CALL, [LOG, FU], 'no_next_step');
+    /* item 5: the assessment is overdue for how soon they need care; a decision with no reason after 7 days */
+    const ao = assessmentOverdue(l, ctx);
+    if(ao) return R('now', 5.5, now, { big:'Assessment overdue', sub:ao.days + ' days since we talked; target ' + ao.target, tone:'amber' }, { text:'Book the assessment with ' + callerFirst + ', or say what we are waiting on', sub:last }, SCH, [CALL, { kind:'waiting', label:'Waiting on…' }], 'asmt_overdue');
+    const ds = decisionStale(l, ctx);
+    if(ds) return R('now', 6.8, now, { big:'Deciding ' + ds.days + ' days', sub:'over ' + DECISION_DAYS + ': it needs a reason', tone:'amber' }, { text:'What are we waiting on with ' + callerFirst + '? Give it a reason, or mark it lost', sub:last }, { kind:'waiting', label:'Waiting on…' }, [CALL, { kind:'lost', label:'Mark lost…' }], 'decision_stale');
+    if(stage === 'reaching_out'){
+      const cn = cadenceNext(l, ctx);
+      if(cn && cn.step === 'park') return R('now', 9, now, { big:'No next step', sub:aw || 'tried, not reached', tone:'amber' }, { text:cn.words, sub:last }, { kind:'waiting', label:'Waiting on…' }, [CALL, LOG], 'no_next_step');
+      return R('now', 9, now, { big:'No next step', sub:aw || 'tried, not reached', tone:'amber' }, { text:cn ? cn.words : 'Try ' + callerFirst + ' again, or set a follow-up', sub:last }, CALL, [cn ? { kind:'followup', label:'Set follow-up', suggest:{ day:cn.day, time:cn.time } } : FU, LOG], 'no_next_step');
+    }
     return R('now', 9, now, { big:'No next step', sub:'nothing scheduled', tone:'amber' }, { text:jn ? jn.title : 'Set the next step with ' + callerFirst, sub:last }, FU, [CALL, LOG], 'no_next_step');
   }
   /* the group order and the within-group order */
@@ -665,6 +678,71 @@
     const rows = real.map(l => ({ id:l.id, owner:String(l.assigned_coordinator || '').trim().split(/\s+/)[0] || 'Nobody', missing:missing(l, stage(l)) })).filter(r => r.missing.length);
     const byOwner = {}; rows.forEach(r => { byOwner[r.owner] = (byOwner[r.owner] || 0) + 1; });
     return { count:rows.length, by_owner:byOwner, rows };
+  }
+
+  /* ── THE SMALL RULES (item 5 of her design, 2026-10-07) ─────────────────────────────────────────────────────────────────
+     decision over 7 days needs a reason · the assessment is overdue by how soon they need care · 45 days with the state
+     means a call to the case manager and an offer of private bridge hours · the contact cadence is a SUGGESTED next try
+     on the owner's desk (today, later today, Day 1, Day 3, Day 7, then park as unable to reach), never a message ·
+     at the yes: what carried forward, and what goes out now as drafts. */
+  const ASMT_TARGET_DAYS = { 0:1, 1:2, 2:5, 3:14, 4:14 };   /* days from the first real conversation to a booked assessment, by how soon they need care */
+  const DECISION_DAYS = 7;
+  function daysSinceContact(l, today){ return l && l.first_human_contact_at ? daysBetween(chicago(l.first_human_contact_at).ymd, today) : null; }
+  /* talked, nothing booked, not waiting, and past the target for their urgency */
+  function assessmentOverdue(l, ctx){
+    ctx = ctx || {}; const today = ctx.today || ymd(new Date());
+    if(!l || !l.first_human_contact_at || l.said_yes_at || String(l.status || '') === 'Lost' || waiting(l)) return null;
+    const asm = asmtNext(Object.assign({}, ctx, { lead:l, now:ctx.now || new Date().toISOString(), today })); if(asm) return null;
+    if((ctx.assessments || []).some(a => a && /complete/i.test(String(a.status || '')))) return null;
+    const target = ASMT_TARGET_DAYS[startRank(l, today)], d = daysSinceContact(l, today);
+    return d != null && d > target ? { days:d, target } : null;
+  }
+  /* reached, no assessment, no promise, no waiting reason, and more than 7 days deciding: give it a reason */
+  function decisionStale(l, ctx){
+    ctx = ctx || {}; const today = ctx.today || ymd(new Date());
+    if(!l || !l.first_human_contact_at || l.said_yes_at || String(l.status || '') === 'Lost' || waiting(l) || l.promised_callback_at) return null;
+    const asm = asmtNext(Object.assign({}, ctx, { lead:l, now:ctx.now || new Date().toISOString(), today })); if(asm) return null;
+    const d = daysSinceContact(l, today);
+    return d != null && d > DECISION_DAYS ? { days:d } : null;
+  }
+  /* the suggested next try for a family we have not reached (a suggestion on the desk; the person sets it) */
+  function cadenceNext(l, ctx){
+    ctx = ctx || {}; const now = ctx.now || new Date().toISOString(), today = ctx.today || chicago(now).ymd;
+    if(!l || l.first_human_contact_at || l.said_yes_at || String(l.status || '') === 'Lost' || waiting(l)) return null;
+    const tries = evts(l).filter(e => e && e.actor === 'human' && e.direction === 'out').length || Number(l.contact_attempts) || 0;
+    const last = lastHumanOut(l); if(!tries || !last) return null;
+    const lastDay = chicago(last.at).ymd, c = chicago(now);
+    if(tries === 1){ const hm = Number(c.hm.slice(0, 2)); return hm < 15 && lastDay === today ? { step:'later today', day:today, time:(String(hm + 3).padStart(2, '0')) + ':00', words:'Try again later today, a different time of day often lands (2nd try)' } : { step:'day 1', day:addDays(lastDay, 1), time:'09:00', words:'Try again tomorrow morning (2nd try)' }; }
+    if(tries === 2) return { step:'day 1', day:addDays(lastDay, 1), time:'', words:'Try again ' + dayWords(addDays(lastDay, 1), today) + ' (3rd try), a text with two assessment times helps' };
+    if(tries === 3) return { step:'day 3', day:addDays(lastDay, 2), time:'', words:'One more try ' + dayWords(addDays(lastDay, 2), today) + ' (4th), then a closing-the-loop call' };
+    if(tries === 4) return { step:'day 7', day:addDays(lastDay, 4), time:'', words:'Closing-the-loop call ' + dayWords(addDays(lastDay, 4), today) + ' (5th try)' };
+    return { step:'park', day:null, time:'', words:'Five tries and no answer: park them as unable to reach (check back in 14 days)' };
+  }
+  /* 45 days with the state: the case manager gets a call and the family an offer of private bridge hours */
+  function medicaidLong(l, ctx){
+    ctx = ctx || {}; const today = ctx.today || ymd(new Date());
+    if(!l || l.funding_source !== 'medicaid' || l.said_yes_at || String(l.status || '') === 'Lost') return null;
+    const w = waiting(l); const on = (w && w.reason === 'state') || ['submitted', 'assessed'].indexOf(String(l.state_status || '')) > -1; if(!on) return null;
+    const d = stateDays(l, w, today); if(d == null || d < MEDICAID_LONG_DAYS) return null;
+    const called = l.case_manager_called_at && daysBetween(chicago(l.case_manager_called_at).ymd, today) < 7;
+    return called ? null : { days:d, bridge_offered:!!l.bridge_hours_offered_at };
+  }
+  /* at the yes: what carried forward (read only) and what goes out now (drafts a person sends) */
+  function carriedForward(l, ctx){
+    ctx = ctx || {}; const today = ctx.today || ymd(new Date()), org = ctx.org || null, d = iso => iso ? dayWords(chicago(iso).ymd, today) : '';
+    const parts = [];
+    const src = [l.source, partnerName(l, org), SUBTYPE_LABEL[referralSubtype(l, org)] || ''].filter(Boolean).join(' · ');
+    parts.push((src || 'Inquiry') + (l.created_at ? ' ' + d(l.created_at) : ''));
+    if(l.first_human_contact_at) parts.push('reached ' + d(l.first_human_contact_at));
+    if(l.assessment_at) parts.push('assessment ' + d(l.assessment_at));
+    if(l.said_yes_at) parts.push('yes ' + d(l.said_yes_at));
+    const pay = l.funding_source ? PAYER_WORDS[l.funding_source] || l.funding_source : '';
+    return parts.join(' → ') + (pay ? ' · ' + pay : '') + (desiredStartWords(l, today) ? ' · ' + desiredStartWords(l, today).replace(/^\w/, c => c.toLowerCase()) : '') + (scheduleWords(l) ? ' · ' + scheduleWords(l) : '');
+  }
+  function yesThanks(l, ctx){
+    ctx = ctx || {}; const client = (l.client_first_name || '').trim(), caller = (l.first_name || '').trim();
+    const v = { first:caller || 'there', client:client && client !== caller ? client : 'your loved one', me:String(ctx.me || 'your Care Coordinator').split(' ')[0] };
+    return fill(String((ctx.scripts && ctx.scripts.yes_thanks) || SCRIPT_DEFAULT.yes_thanks), v);
   }
 
   /* ── the move-over (installer): what an old lead gets, as a patch, or null when nothing is missing ─────────────── */
@@ -855,9 +933,9 @@
   }
   /* the script line for the moment the board row says we are in. Her words are the defaults; Settings can replace each
      one (ctx.scripts {key:text}). Fill-ins: {first} {client} {me} {when} {why} {start} {referral}. Never sent by itself. */
-  const SCRIPT_KEYS = ['first_call', 'voicemail', 'replied', 'promise', 'authorized', 'check_back_state', 'check_back_family', 'unable_to_reach', 'asmt_booked', 'urgent_start', 'followup'];
+  const SCRIPT_KEYS = ['first_call', 'voicemail', 'replied', 'promise', 'authorized', 'check_back_state', 'check_back_family', 'unable_to_reach', 'asmt_booked', 'urgent_start', 'followup', 'yes_thanks'];
   const SCRIPT_LABEL = { first_call:'First call', voicemail:'Voicemail', replied:'They replied', promise:'The call we promised', authorized:'The state authorized', check_back_state:'Check-back, waiting on the state',
-    check_back_family:'Check-back, family deciding or not ready', unable_to_reach:'Unable to reach, one more try', asmt_booked:'Assessment confirmation', urgent_start:'Needs care soon, book the visit', followup:'A follow-up' };
+    check_back_family:'Check-back, family deciding or not ready', unable_to_reach:'Unable to reach, one more try', asmt_booked:'Assessment confirmation', urgent_start:'Needs care soon, book the visit', followup:'A follow-up', yes_thanks:'Thank-you text when they say yes (goes out only when you send it)' };
   const SCRIPT_DEFAULT = {
     first_call:'Hi {first}, this is {me} with Caring Companions. Thank you for reaching out about care for {client}. I would love to hear what is going on and what a typical day looks like, and then I can tell you how we would help.',
     voicemail:'Hi {first}, this is {me} with Caring Companions returning your message about care for {client}. I am sorry I missed you. I will try again shortly, or call me back at (417) 234-8494 whenever works for you.',
@@ -870,6 +948,7 @@
     asmt_booked:'Hi {first}, confirming our visit {when} at the home. I will bring the paperwork; if you can, have a list of medications handy.',
     urgent_start:'Hi {first}, you mentioned you {start}. The next step is a short visit at the home so we match the right caregiver. I have [two times]; which works for you?',
     followup:'Hi {first}, this is {me} with Caring Companions following up{why}.',
+    yes_thanks:'Hi {first}, thank you for choosing Caring Companions for {client}. I am {me}, your Care Coordinator, and I will walk you through everything from here. Your caregiver introduction and start date are next; you will hear from me, not a machine. Call or text me any time at (417) 234-8494.',
   };
   const SCRIPT_HINT = {
     first_call:{ Website:'They filled in the website form; they may not remember every detail, so start from what they wrote.', Phone:'They called us first; pick up where that call left off.', Referral:'{referral} sent them; say so, families trust the hand-off.' },
@@ -934,7 +1013,8 @@
     firstAttemptState, medianFirstAttemptMinutes, PAYER_WORDS, lastEventWords, replyPending, boardRow, boardSort, dayHeader,
     markAuthorized, authorizationPending, stateDays, DSDS_AMBER_DAYS, DSDS_RED_DAYS, median, ownerNumbers, periodNumbers, leadNext, nextWords, setNext, STATUSES, setStatus, statusBeforeLost,
     STEP_KEYS, steps, timeline, SCRIPT_KEYS, SCRIPT_LABEL, SCRIPT_DEFAULT, scriptFor, timeCats, staffingLook, whenWords, RUNGS_DEFAULT, RUNG_WORDS, rungSettings, rungsDue, stampRung,
-    SUBTYPE_LABEL, SUBTYPE_KEYS, PROFESSIONAL, referralSubtype, flags, PARTNER_KINDS, PARTNER_LABEL, PARTNER_DEFAULT, partnerName, partnerLoop, recordPartnerMsg, MEDICAID_LONG_DAYS, medicaidPipeline, missingRequired };
+    SUBTYPE_LABEL, SUBTYPE_KEYS, PROFESSIONAL, referralSubtype, flags, PARTNER_KINDS, PARTNER_LABEL, PARTNER_DEFAULT, partnerName, partnerLoop, recordPartnerMsg, MEDICAID_LONG_DAYS, medicaidPipeline, missingRequired,
+    ASMT_TARGET_DAYS, DECISION_DAYS, assessmentOverdue, decisionStale, cadenceNext, medicaidLong, carriedForward, yesThanks };
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   root.LeadRules = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
