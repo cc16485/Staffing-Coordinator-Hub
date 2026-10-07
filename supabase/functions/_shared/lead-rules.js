@@ -391,6 +391,30 @@
     return l;
   }
 
+  /* ── ONE STATUS WRITER (clean-up 6.7, 2026-10-07): the stored status is a consequence of what happened ───────────────
+     lead.status stays stored (the server reads it), but nothing sets it by hand any more: a logged conversation makes it
+     Contacted, a booking makes it Assessment Scheduled, They said yes / an AxisCare client makes it Converted, a reason makes
+     it Lost. Every change goes through setStatus(), which keeps status_history (who, when, why) and stamps the dates. */
+  const STATUSES = ['New', 'Contacted', 'Assessment Scheduled', 'Converted', 'Lost'];
+  function setStatus(l, to, o){
+    o = o || {}; if(!l) return false;
+    if(STATUSES.indexOf(to) < 0) throw new Error('not a lead status: ' + to);
+    const from = String(l.status || 'New'); if(from === to) return false;
+    const at = o.at || new Date().toISOString();
+    l.status = to;
+    l.status_history = (Array.isArray(l.status_history) ? l.status_history : []).concat([{ at, from, to, by:String(o.by || ''), why:String(o.why || '') }]).slice(-50);
+    if(to === 'Converted' && !l.converted_at) l.converted_at = at;
+    if(to === 'Lost' && !l.lost_at) l.lost_at = at;
+    if(from === 'Lost' && to !== 'Lost') l.lost_undone_at = at;
+    return true;
+  }
+  /* the status a lead had before it was Lost (for "not lost after all") */
+  function statusBeforeLost(l){
+    const h = Array.isArray(l && l.status_history) ? l.status_history : [];
+    for(let i = h.length - 1; i >= 0; i--) if(h[i].to === 'Lost' && STATUSES.indexOf(h[i].from) > -1 && h[i].from !== 'Lost') return h[i].from;
+    return l && l.first_human_contact_at ? 'Contacted' : 'New';
+  }
+
   /* ── the board (Stage 2, her brief 2026-10-06: "who needs me right now, and what exactly do I need to do") ──────────
      One row per family before they say yes, in one of three groups:
        now      Need you now: anything a person has to do now, most urgent first (a rank per reason)
@@ -613,7 +637,7 @@
     waiting, waitingProblems, defaultCheckBack, checkBackDue, lostKey, lostRecord, missing, toForm, compose, migrationPatch,
     responseHours, chicago, chicagoInstant, inResponseHours, nextOpening, clockStart, firstAttemptDue, clockWords, cameInWords, openingWords, callBackWords,
     firstAttemptState, medianFirstAttemptMinutes, PAYER_WORDS, lastEventWords, replyPending, boardRow, boardSort, dayHeader,
-    markAuthorized, authorizationPending, stateDays, DSDS_AMBER_DAYS, DSDS_RED_DAYS, median, ownerNumbers, periodNumbers, leadNext, nextWords, setNext };
+    markAuthorized, authorizationPending, stateDays, DSDS_AMBER_DAYS, DSDS_RED_DAYS, median, ownerNumbers, periodNumbers, leadNext, nextWords, setNext, STATUSES, setStatus, statusBeforeLost };
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   root.LeadRules = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
