@@ -614,20 +614,57 @@
     const byReason = {};
     lost.forEach(l => { const k = lostKey(l) || 'other'; const r = byReason[k] = byReason[k] || { key:k, label:LOST_LABEL[k] || (k === 'spam' ? 'Spam' : k === 'not_ready_legacy' ? 'Not ready yet (older reason)' : 'Other'), count:0, hours:0, towns:{} };
       r.count++; r.hours += hoursOf(l); const town = String((l.lost_schedule && l.lost_schedule.city) || l.client_city || '').trim(); if(town && LOST_STAFFING.indexOf(k) > -1) r.towns[town] = (r.towns[town] || 0) + 1; });
+    /* item 4 (2026-10-07): the funnel for this period's inquiries, by source, and the team columns (late at 5, misses at 30, backup takes) */
+    const assessed = l => !!(l.assessment_at || (l.status && ['New', 'Contacted', 'Lost'].indexOf(l.status) < 0) || (Array.isArray(l.contact_events) && false));
+    const won = l => !!(l.said_yes_at || l.status === 'Converted');
+    const funnel = { inquiries:came.length, contacted:came.filter(l => l.first_human_contact_at).length, assessed:came.filter(assessed).length, won:came.filter(won).length, started:came.filter(l => l.first_shift_at).length };
+    const sources = {};
+    came.forEach(l => { const src = String(l.source || 'Other').trim() || 'Other'; const sub = src === 'Referral' ? (SUBTYPE_LABEL[l.referral_subtype] || (opts && opts.orgs && l.referral_org_id && SUBTYPE_LABEL[referralSubtype(l, opts.orgs[l.referral_org_id])]) || '') : '';
+      const k = src + (sub ? ' · ' + sub : ''); const r = sources[k] = sources[k] || { source:k, inquiries:0, contacted:0, won:0, started:0, hours:0 };
+      r.inquiries++; if(l.first_human_contact_at) r.contacted++; if(won(l)) r.won++; if(l.first_shift_at){ r.started++; r.hours += hoursOf(l); } });
     const owners = {};
-    came.forEach(l => { const o = String(l.assigned_coordinator || '').trim().split(/\s+/)[0] || 'Nobody'; const r = owners[o] = owners[o] || { owner:o, inquiries:0, mins:[], reached_24h:0, never_attempted:0, said_yes:0 };
-      r.inquiries++; const m = mins(l); if(m != null) r.mins.push(m); if(reached24.indexOf(l) > -1) r.reached_24h++; if(stale.indexOf(l) > -1) r.never_attempted++; if(l.said_yes_at) r.said_yes++; });
+    came.forEach(l => { const o = String(l.assigned_coordinator || '').trim().split(/\s+/)[0] || 'Nobody'; const r = owners[o] = owners[o] || { owner:o, inquiries:0, mins:[], reached_24h:0, never_attempted:0, said_yes:0, late:0, misses:0, took:0 };
+      r.inquiries++; const m = mins(l); if(m != null) r.mins.push(m); if(reached24.indexOf(l) > -1) r.reached_24h++; if(stale.indexOf(l) > -1) r.never_attempted++; if(l.said_yes_at) r.said_yes++;
+      if(l.rungs && l.rungs.owner_at) r.late++; });
+    /* a miss is counted against the owner at the time (speed_miss.owner is their email; fold back to a first name through opts.names {email:name}); a backup who took an inquiry gets the take */
+    const nameOf = e => { const n = opts && opts.names && opts.names[String(e || '').toLowerCase()]; const f = (n ? String(n) : String(e || '').split('@')[0]).split(/\s+/)[0]; return f.charAt(0).toUpperCase() + f.slice(1); };
+    came.forEach(l => { if(l.speed_miss && l.speed_miss.owner){ const o = nameOf(l.speed_miss.owner); const r = owners[o] = owners[o] || { owner:o, inquiries:0, mins:[], reached_24h:0, never_attempted:0, said_yes:0, late:0, misses:0, took:0 }; r.misses++; }
+      (Array.isArray(l.comm_log) ? l.comm_log : []).forEach(n => { if(n && n.kind === 'owner' && /took this inquiry/.test(String(n.body || ''))){ const o = String(n.body).split(' ')[0]; const r = owners[o] = owners[o] || { owner:o, inquiries:0, mins:[], reached_24h:0, never_attempted:0, said_yes:0, late:0, misses:0, took:0 }; r.took++; } }); });
     return { from, to, inquiries:came.length, attempted:attempted.length, median_first_attempt_min:median(came.map(mins)), reached_24h:reached24.length,
       reached_24h_pct:came.length ? Math.round(reached24.length / came.length * 100) : null, never_attempted:stale.length, buckets,
       said_yes:yes.length, inquiry_to_yes_median_days:median(toYes), started:started.length, yes_to_first_shift_median_days:median(yesToShift), lost:lost.length, lost_after_yes:lostAfterYes.length,
       by_partner:Object.values(partners).map(r => ({ key:r.key, name:r.name, type:r.type, sent:r.sent, reached_24h:r.reached_24h, assessed:r.assessed, said_yes:r.said_yes, started:r.started, days_to_start_median:median(r.days_to_start), hours:r.hours })).sort((a, b) => b.sent - a.sent || b.started - a.started),
       lost_hours_week:lost.reduce((a, l) => a + hoursOf(l), 0), by_reason:Object.values(byReason).sort((a, b) => b.hours - a.hours || b.count - a.count),
-      by_owner:Object.values(owners).map(o => ({ owner:o.owner, inquiries:o.inquiries, median_first_attempt_min:median(o.mins), reached_24h:o.reached_24h, never_attempted:o.never_attempted, said_yes:o.said_yes })).sort((a, b) => b.inquiries - a.inquiries) };
+      funnel, by_source:Object.values(sources).sort((a, b) => b.inquiries - a.inquiries),
+      by_owner:Object.values(owners).map(o => ({ owner:o.owner, inquiries:o.inquiries, median_first_attempt_min:median(o.mins), reached_24h:o.reached_24h, never_attempted:o.never_attempted, said_yes:o.said_yes, late:o.late, misses:o.misses, took:o.took })).sort((a, b) => b.inquiries - a.inquiries) };
   }
   function ownerNumbers(leads, hours, opts){
     opts = opts || {}; const now = opts.now || new Date().toISOString(), days = Number(opts.days) || 30;
     const to = now, from = new Date(Date.parse(now) - days * 864e5).toISOString(), before = new Date(Date.parse(from) - days * 864e5).toISOString();
     return { days, now:periodNumbers(leads, hours, from, to, now, opts), prior:periodNumbers(leads, hours, before, from, now, opts) };
+  }
+
+  /* item 4 (2026-10-07): the Medicaid pipeline right now: who is waiting on the state, who heard from us this week, who is
+     over 45 days (the case-manager call), who was offered private bridge hours, and the hours a week waiting */
+  const MEDICAID_LONG_DAYS = 45;
+  function medicaidPipeline(leads, today, nowIso){
+    today = today || ymd(new Date()); const now = nowIso || new Date().toISOString();
+    const real = (leads || []).filter(l => l && !(l.spam && l.spam.at) && !l.archived && l.funding_source === 'medicaid' && !l.said_yes_at && !l.first_shift_at && String(l.status || '') !== 'Lost');
+    const waitingL = real.filter(l => { const w = waiting(l); return (w && w.reason === 'state') || ['submitted', 'assessed'].indexOf(String(l.state_status || '')) > -1; });
+    const weekAgo = new Date(Date.parse(now) - 7 * 864e5).toISOString();
+    const touched = l => evts(l).some(e => e && e.actor === 'human' && e.direction === 'out' && e.at >= weekAgo) || (Array.isArray(l.partner_msgs) && l.partner_msgs.some(m => m && m.at >= weekAgo));
+    const days = l => stateDays(l, waiting(l), today);
+    const over = waitingL.filter(l => { const d = days(l); return d != null && d >= MEDICAID_LONG_DAYS; });
+    return { waiting:waitingL.length, checked_in_week:waitingL.filter(touched).length, over_45:over.length, bridge_offered:waitingL.filter(l => l.bridge_hours_offered_at).length,
+      hours_week:waitingL.reduce((a, l) => a + hoursOf(l), 0), median_days:median(waitingL.map(days)), long_days:MEDICAID_LONG_DAYS };
+  }
+  /* "N missing required": across the working inquiries, how many are missing something their stage needs (the manager chip) */
+  function missingRequired(leads, stageOf){
+    const real = (leads || []).filter(l => l && !(l.spam && l.spam.at) && !l.archived && !l.said_yes_at && ['Lost', 'Converted'].indexOf(String(l.status || '')) < 0);
+    const stage = l => (typeof stageOf === 'function' && stageOf(l)) || (l.assessment_at ? 'assessment' : l.first_human_contact_at ? 'deciding' : 'new');
+    const rows = real.map(l => ({ id:l.id, owner:String(l.assigned_coordinator || '').trim().split(/\s+/)[0] || 'Nobody', missing:missing(l, stage(l)) })).filter(r => r.missing.length);
+    const byOwner = {}; rows.forEach(r => { byOwner[r.owner] = (byOwner[r.owner] || 0) + 1; });
+    return { count:rows.length, by_owner:byOwner, rows };
   }
 
   /* ── the move-over (installer): what an old lead gets, as a patch, or null when nothing is missing ─────────────── */
@@ -897,7 +934,7 @@
     firstAttemptState, medianFirstAttemptMinutes, PAYER_WORDS, lastEventWords, replyPending, boardRow, boardSort, dayHeader,
     markAuthorized, authorizationPending, stateDays, DSDS_AMBER_DAYS, DSDS_RED_DAYS, median, ownerNumbers, periodNumbers, leadNext, nextWords, setNext, STATUSES, setStatus, statusBeforeLost,
     STEP_KEYS, steps, timeline, SCRIPT_KEYS, SCRIPT_LABEL, SCRIPT_DEFAULT, scriptFor, timeCats, staffingLook, whenWords, RUNGS_DEFAULT, RUNG_WORDS, rungSettings, rungsDue, stampRung,
-    SUBTYPE_LABEL, SUBTYPE_KEYS, PROFESSIONAL, referralSubtype, flags, PARTNER_KINDS, PARTNER_LABEL, PARTNER_DEFAULT, partnerName, partnerLoop, recordPartnerMsg };
+    SUBTYPE_LABEL, SUBTYPE_KEYS, PROFESSIONAL, referralSubtype, flags, PARTNER_KINDS, PARTNER_LABEL, PARTNER_DEFAULT, partnerName, partnerLoop, recordPartnerMsg, MEDICAID_LONG_DAYS, medicaidPipeline, missingRequired };
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   root.LeadRules = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
