@@ -114,8 +114,9 @@ try:
     fresh(); code, out = run(SB_FN_SHAS=json.dumps(dict(PINS, **{"client-journey/move-over.sql": "0" * 64})))
     ck("a changed build is refused before anything runs", code == 2 and "not the reviewed build" in out and not deployed(), out)
     fresh(angiel=False); code, out = run()
-    ck("Angiel has no office role: stops before changing anything, and says how to fix it", code == 4 and "Give her one on the Owners Hub Admin page" in out and not deployed()
-       and db("select data->>'client_start_live' from app_data where key='ops_settings'") == "true" and db("select count(*) from cron.job where jobname='client-start-run'") == 1, out)
+    ck("Angiel hasn't started (no office role): Medicaid and VA go to Krystal for now, and the report says so", code == 0 and "Angiel hasn't started yet" in out and "everyone to Krystal for now" in out
+       and db("select data->'client_journey_routing' from app_data where key='ops_settings'") == {k: "krystal@mo-care.com" for k in ("medicaid", "va", "private", "ltc", "other", "unknown")}
+       and "journey started: Tommy Fortner · Krystal" in out, out)
     fresh(); code, out = run()
     ck("DONE", code == 0 and "RESULT: DONE" in out and deployed(), out)
     ck("...routing saved: Medicaid and VA to Angiel, the rest to Krystal; the older job's switch off; the client journeys switch untouched (off)",
