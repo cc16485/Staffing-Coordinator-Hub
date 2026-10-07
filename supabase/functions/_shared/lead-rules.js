@@ -514,6 +514,45 @@
     return MONTH_SHORT[new Date(d + 'T12:00:00Z').getUTCMonth()] + ' ' + new Date(d + 'T12:00:00Z').getUTCDate();
   }
 
+  /* ── the owners' numbers (Stage 5): what the Owners Hub shows about lead response and losses ───────────────────────
+     Counts only, from facts the earlier stages write; no names leave this function except the owners' first names.
+     A period = inquiries that came in during it (spam never counts). Speed is measured from the clock start (lead
+     response hours), never from a 9 pm form post. */
+  function median(xs){ const a = xs.filter(x => x != null && !isNaN(x)).sort((p, q) => p - q); if(!a.length) return null; const m = Math.floor(a.length / 2); return a.length % 2 ? a[m] : Math.round((a[m - 1] + a[m]) / 2); }
+  function hoursOf(l){ const s = schedule(l); if(l && l.lost_schedule && l.lost_schedule.hours_per_week) return Number(l.lost_schedule.hours_per_week) || 0; return s && s.hours_per_week ? Number(s.hours_per_week) || 0 : 0; }
+  function periodNumbers(leads, hours, from, to, now){
+    const inP = iso => iso && String(new Date(iso).toISOString()) >= from && String(new Date(iso).toISOString()) < to;
+    const real = (leads || []).filter(l => l && !(l.spam && l.spam.at));
+    const came = real.filter(l => inP(l.created_at));
+    const mins = l => { const st = clockStart(l, hours); return st && l.first_human_attempt_at ? Math.max(0, Math.round((Date.parse(l.first_human_attempt_at) - Date.parse(st)) / 60000)) : null; };
+    const attempted = came.filter(l => l.first_human_attempt_at);
+    const reached24 = came.filter(l => l.first_human_contact_at && (Date.parse(l.first_human_contact_at) - Date.parse(clockStart(l, hours))) <= 24 * 36e5);
+    const stale = came.filter(l => !l.first_human_attempt_at && !l.said_yes_at && l.status !== 'Lost' && (Date.parse(now) - Date.parse(clockStart(l, hours))) > 24 * 36e5);
+    const bucket = m => m == null ? 'never' : m <= 5 ? '≤5 min' : m <= 15 ? '5–15 min' : m <= 60 ? '15–60 min' : m <= 240 ? '1–4 h' : 'over 4 h';
+    const buckets = { '≤5 min':0, '5–15 min':0, '15–60 min':0, '1–4 h':0, 'over 4 h':0, 'never':0 };
+    came.forEach(l => { buckets[bucket(mins(l))]++; });
+    const yes = real.filter(l => inP(l.said_yes_at || (l.status === 'Converted' ? l.converted_at : null)));
+    const toYes = yes.map(l => l.created_at ? daysBetween(chicago(l.created_at).ymd, chicago(l.said_yes_at || l.converted_at).ymd) : null);
+    const lost = real.filter(l => l.status === 'Lost' && inP(l.lost_at || (inP(l.created_at) ? l.created_at : null)));
+    const lostAfterYes = lost.filter(l => l.said_yes_at || l.said_yes_undone === undefined && l.converted_at && l.lost_at && l.converted_at < l.lost_at);
+    const byReason = {};
+    lost.forEach(l => { const k = lostKey(l) || 'other'; const r = byReason[k] = byReason[k] || { key:k, label:LOST_LABEL[k] || (k === 'spam' ? 'Spam' : k === 'not_ready_legacy' ? 'Not ready yet (older reason)' : 'Other'), count:0, hours:0, towns:{} };
+      r.count++; r.hours += hoursOf(l); const town = String((l.lost_schedule && l.lost_schedule.city) || l.client_city || '').trim(); if(town && LOST_STAFFING.indexOf(k) > -1) r.towns[town] = (r.towns[town] || 0) + 1; });
+    const owners = {};
+    came.forEach(l => { const o = String(l.assigned_coordinator || '').trim().split(/\s+/)[0] || 'Nobody'; const r = owners[o] = owners[o] || { owner:o, inquiries:0, mins:[], reached_24h:0, never_attempted:0, said_yes:0 };
+      r.inquiries++; const m = mins(l); if(m != null) r.mins.push(m); if(reached24.indexOf(l) > -1) r.reached_24h++; if(stale.indexOf(l) > -1) r.never_attempted++; if(l.said_yes_at) r.said_yes++; });
+    return { from, to, inquiries:came.length, attempted:attempted.length, median_first_attempt_min:median(came.map(mins)), reached_24h:reached24.length,
+      reached_24h_pct:came.length ? Math.round(reached24.length / came.length * 100) : null, never_attempted:stale.length, buckets,
+      said_yes:yes.length, inquiry_to_yes_median_days:median(toYes), lost:lost.length, lost_after_yes:lostAfterYes.length,
+      lost_hours_week:lost.reduce((a, l) => a + hoursOf(l), 0), by_reason:Object.values(byReason).sort((a, b) => b.hours - a.hours || b.count - a.count),
+      by_owner:Object.values(owners).map(o => ({ owner:o.owner, inquiries:o.inquiries, median_first_attempt_min:median(o.mins), reached_24h:o.reached_24h, never_attempted:o.never_attempted, said_yes:o.said_yes })).sort((a, b) => b.inquiries - a.inquiries) };
+  }
+  function ownerNumbers(leads, hours, opts){
+    opts = opts || {}; const now = opts.now || new Date().toISOString(), days = Number(opts.days) || 30;
+    const to = now, from = new Date(Date.parse(now) - days * 864e5).toISOString(), before = new Date(Date.parse(from) - days * 864e5).toISOString();
+    return { days, now:periodNumbers(leads, hours, from, to, now), prior:periodNumbers(leads, hours, before, from, now) };
+  }
+
   /* ── the move-over (installer): what an old lead gets, as a patch, or null when nothing is missing ─────────────── */
   function migrationPatch(l, today){
     const p = {}; today = today || ymd(new Date());
@@ -533,7 +572,7 @@
     waiting, waitingProblems, defaultCheckBack, checkBackDue, lostKey, lostRecord, missing, toForm, compose, migrationPatch,
     responseHours, chicago, chicagoInstant, inResponseHours, nextOpening, clockStart, firstAttemptDue, clockWords, cameInWords, openingWords, callBackWords,
     firstAttemptState, medianFirstAttemptMinutes, PAYER_WORDS, lastEventWords, replyPending, boardRow, boardSort, dayHeader,
-    markAuthorized, authorizationPending, stateDays, DSDS_AMBER_DAYS, DSDS_RED_DAYS };
+    markAuthorized, authorizationPending, stateDays, DSDS_AMBER_DAYS, DSDS_RED_DAYS, median, ownerNumbers, periodNumbers };
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   root.LeadRules = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
