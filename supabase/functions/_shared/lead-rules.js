@@ -254,6 +254,93 @@
     return target;
   }
 
+  /* ── lead response hours and the first-attempt clock (Stage 1, her rules 2026-10-06) ─────────────────────────────
+     A new inquiry inside our lead-response hours gets a first human attempt within 5 minutes. Outside them the family
+     gets the acknowledgment at once and the clock starts when coverage opens, so a 9 pm inquiry is not red all night
+     and reads "came in last night at 9:02 pm" at 8 am. The hours are a setting (ops_settings.lead_response_hours),
+     never hard-coded here: { days:[1..5], start:'08:00', end:'18:00' } with days 0 = Sunday … 6 = Saturday. */
+  const RESPONSE_HOURS_DEFAULT = { days:[1, 2, 3, 4, 5], start:'08:00', end:'18:00' };
+  const FIRST_ATTEMPT_MINUTES = 5;
+  const TZ = 'America/Chicago';
+  function isHm(s){ return /^([01]\d|2[0-3]):[0-5]\d$/.test(String(s || '')); }
+  function hmMin(s){ const [h, m] = String(s).split(':').map(Number); return h * 60 + m; }
+  /* the setting, cleaned, else the default */
+  function responseHours(settings){
+    const h = settings && settings.lead_response_hours;
+    if(!h || typeof h !== 'object') return Object.assign({ source:'default' }, RESPONSE_HOURS_DEFAULT);
+    const days = Array.isArray(h.days) ? h.days.map(Number).filter(d => d >= 0 && d <= 6) : [];
+    if(!days.length || !isHm(h.start) || !isHm(h.end) || hmMin(h.start) >= hmMin(h.end)) return Object.assign({ source:'default' }, RESPONSE_HOURS_DEFAULT);
+    return { days:days.slice().sort(), start:h.start, end:h.end, source:'setting' };
+  }
+  /* the Chicago wall clock for an instant: { ymd, hm, min (since midnight), dow } */
+  function chicago(iso){
+    const d = new Date(iso);
+    const p = {}; new Intl.DateTimeFormat('en-US', { timeZone:TZ, hourCycle:'h23', year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', weekday:'short' })
+      .formatToParts(d).forEach(x => { p[x.type] = x.value; });
+    const hour = Number(p.hour) % 24;
+    return { ymd:p.year + '-' + p.month + '-' + p.day, hm:String(hour).padStart(2, '0') + ':' + p.minute, min:hour * 60 + Number(p.minute),
+      dow:['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(p.weekday) };
+  }
+  /* the instant for a Chicago wall-clock time (CDT or CST, whichever renders back to the same clock) */
+  function chicagoInstant(day, hm){
+    for(const off of ['-05:00', '-06:00']){ const t = Date.parse(day + 'T' + hm + ':00' + off); const c = chicago(t); if(c.ymd === day && c.hm === hm) return new Date(t).toISOString(); }
+    return new Date(Date.parse(day + 'T' + hm + ':00-06:00')).toISOString();
+  }
+  function inResponseHours(iso, hours){
+    const c = chicago(iso); return hours.days.indexOf(c.dow) > -1 && c.min >= hmMin(hours.start) && c.min < hmMin(hours.end);
+  }
+  /* the next moment coverage opens at or after iso (iso itself when we are open) */
+  function nextOpening(iso, hours){
+    if(inResponseHours(iso, hours)) return new Date(iso).toISOString();
+    let c = chicago(iso), day = c.ymd;
+    if(hours.days.indexOf(c.dow) > -1 && c.min < hmMin(hours.start)) return chicagoInstant(day, hours.start);
+    for(let i = 1; i <= 8; i++){ day = addDays(day, 1); const dow = new Date(day + 'T12:00:00Z').getUTCDay(); if(hours.days.indexOf(dow) > -1) return chicagoInstant(day, hours.start); }
+    return chicagoInstant(addDays(c.ymd, 1), hours.start);
+  }
+  function clockStart(lead, hours){ return lead && lead.created_at ? nextOpening(lead.created_at, hours) : null; }
+  function firstAttemptDue(lead, hours){ const s = clockStart(lead, hours); return s ? new Date(Date.parse(s) + FIRST_ATTEMPT_MINUTES * 60000).toISOString() : null; }
+  function clockWords(iso){ const c = chicago(iso); const h = Number(c.hm.slice(0, 2)), m = c.hm.slice(3); return ((h % 12) || 12) + (m === '00' ? '' : ':' + m) + ' ' + (h < 12 ? 'am' : 'pm'); }
+  /* "came in 12 min ago" · "came in at 9:02 am" · "came in last night at 9:02 pm" · "came in Sat at 10:15 am" */
+  function cameInWords(createdIso, nowIso){
+    const now = nowIso || new Date().toISOString(), c = chicago(createdIso), n = chicago(now);
+    const mins = Math.round((Date.parse(now) - Date.parse(createdIso)) / 60000);
+    if(c.ymd === n.ymd) return mins < 60 ? 'came in ' + Math.max(0, mins) + ' min ago' : 'came in at ' + clockWords(createdIso);
+    if(addDays(c.ymd, 1) === n.ymd) return (c.min >= 17 * 60 ? 'came in last night at ' : 'came in yesterday at ') + clockWords(createdIso);
+    const back = daysBetween(c.ymd, n.ymd);
+    return 'came in ' + (back < 7 ? DAY_SHORT[c.dow] : dayWords(c.ymd, n.ymd)) + ' at ' + clockWords(createdIso);
+  }
+  /* "we open at 8 am" · "we open Monday at 8 am", for the after-hours acknowledgment */
+  function openingWords(iso, hours){
+    const o = nextOpening(iso, hours), c = chicago(iso), oc = chicago(o);
+    const DAYNAME = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    if(oc.ymd === c.ymd) return 'we open at ' + clockWords(o);
+    if(oc.ymd === addDays(c.ymd, 1)) return 'we open tomorrow at ' + clockWords(o);
+    return 'we open ' + DAYNAME[oc.dow] + ' at ' + clockWords(o);
+  }
+  /* everything the card and the board say about a new lead's clock */
+  function firstAttemptState(lead, hours, nowIso){
+    const now = nowIso || new Date().toISOString();
+    if(!lead || !lead.created_at) return null;
+    const start = clockStart(lead, hours), due = firstAttemptDue(lead, hours);
+    const afterHours = start !== new Date(lead.created_at).toISOString();
+    const attempted = !!lead.first_human_attempt_at;
+    const running = Date.parse(now) >= Date.parse(start);
+    const openMin = running ? Math.round((Date.parse(now) - Date.parse(start)) / 60000) : 0;
+    const overdue = !attempted && running && Date.parse(now) > Date.parse(due);
+    return { start, due, after_hours:afterHours, attempted, running, open_minutes:openMin, overdue, late_minutes:overdue ? openMin - FIRST_ATTEMPT_MINUTES : 0,
+      came_in:cameInWords(lead.created_at, now), ack:lead.ack_sent_at ? 'auto-acknowledged ' + (afterHours ? 'immediately' : 'at ' + clockWords(lead.ack_sent_at)) : 'no acknowledgment went out',
+      starts_words:running ? '' : 'the clock starts ' + (chicago(start).ymd === chicago(now).ymd ? 'at ' : dayWords(chicago(start).ymd, chicago(now).ymd) + ' at ') + clockWords(start) };
+  }
+  /* minutes from the clock start to the first human attempt, for the inquiries whose clock started today (an overnight
+     inquiry counts on the morning the office had it); null with no data */
+  function medianFirstAttemptMinutes(leads, hours, todayYmd){
+    const t = todayYmd || ymd(new Date());
+    const xs = (leads || []).filter(l => l && l.created_at && l.first_human_attempt_at && chicago(clockStart(l, hours)).ymd === t)
+      .map(l => Math.max(0, Math.round((Date.parse(l.first_human_attempt_at) - Date.parse(clockStart(l, hours))) / 60000))).sort((a, b) => a - b);
+    if(!xs.length) return null;
+    const mid = Math.floor(xs.length / 2); return xs.length % 2 ? xs[mid] : Math.round((xs[mid - 1] + xs[mid]) / 2);
+  }
+
   /* ── the move-over (installer): what an old lead gets, as a patch, or null when nothing is missing ─────────────── */
   function migrationPatch(l, today){
     const p = {}; today = today || ymd(new Date());
@@ -268,8 +355,11 @@
   }
 
   const api = { START_KINDS, START_LABEL, LEGACY_URGENCY, DAYS, WAITING, WAITING_KEYS, LOST, LOST_LABEL, LOST_STAFFING, REQ_BY_STAGE, FORM_KEYS,
+    RESPONSE_HOURS_DEFAULT, FIRST_ATTEMPT_MINUTES,
     ymd, addDays, daysBetween, dayWords, desiredStart, desiredStartWords, startRank, schedule, daysWords, scheduleWords, whyCalled,
-    waiting, waitingProblems, defaultCheckBack, checkBackDue, lostKey, lostRecord, missing, toForm, compose, migrationPatch };
+    waiting, waitingProblems, defaultCheckBack, checkBackDue, lostKey, lostRecord, missing, toForm, compose, migrationPatch,
+    responseHours, chicago, chicagoInstant, inResponseHours, nextOpening, clockStart, firstAttemptDue, clockWords, cameInWords, openingWords,
+    firstAttemptState, medianFirstAttemptMinutes };
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   root.LeadRules = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
