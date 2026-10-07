@@ -1,3 +1,6 @@
+// RETIRED 2026-10-07 (Samantha: "in home care every situation is so different"): Desktop 491 unscheduled this function's
+// daily job, stopped every running sequence and deleted the function from Supabase. The code stays here as history only.
+// Never redeploy it; a family's next touch is a person's call (clean-up 6.3).
 // Supabase Edge Function: lead-nurture (shared hub project)
 // The overnight hustle: pre-approved drip sequences for leads, sent through
 // GoHighLevel by a daily cron (10 AM Central). Two sequences:

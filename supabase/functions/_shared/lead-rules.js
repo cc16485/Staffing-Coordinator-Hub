@@ -234,7 +234,7 @@
       const hraw = 'number_of_hours' in patch ? patch.number_of_hours : (prev.hours_per_week == null ? '' : prev.hours_per_week);
       const h = hraw === '' || hraw == null ? null : Number(hraw);
       target.schedule = (days.length || times || h) ? { days, times, hours_per_week:isNaN(h) ? null : h } : null;
-      if(days.length) patch.days_needed = daysWords(days);   /* the old field keeps reading right for anything not yet moved over */
+      /* clean-up 6.4 (2026-10-07): the old days_needed text is history now; nothing writes it (schedule() still reads it when there is no new shape) */
     }
     if('waiting_reason' in patch){
       const reason = patch.waiting_reason;
@@ -498,6 +498,8 @@
       return R('now', 4, l.authorization_received_at, { big:'Authorized ' + dayWords(d, today), sub:'the state said yes: call the family', tone:'green' },
         { text:'Call ' + callerFirst + ': authorized, pick a start week', sub:last }, CALL, [LOG], 'authorized');
     }
+    if(ctx.drafts && ctx.drafts.length) return R('now', 6.5, now, { big:'Draft ready', sub:'an AI follow-up is waiting for your approval', tone:'amber' },
+      { text:'Review the draft, then send or drop it', sub:last }, { kind:'draft', label:'Review draft', id:ctx.drafts[0] }, [CALL, LOG], 'draft_ready');
     if(asm && asm.kind === 'plan') return R('now', 6, asm.day, { big:'Assessment done ' + dayWords(asm.day, today), sub:'plan not written', tone:'amber' }, { text:'Write the care plan', sub:last }, { kind:'open_asmt', label:'Open assessment' }, [CALL], 'asmt_plan');
     if(asm && asm.kind === 'booked'){
       const big = asm.timed ? clockWords(asm.iso) : dayCap(dayWords(asm.day, today));
