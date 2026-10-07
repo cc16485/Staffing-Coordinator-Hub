@@ -28,6 +28,7 @@ import { requireStaff, serverSecretOk, OFFICE_ROLES } from '../_shared/staff-aut
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
+import { loadGuard, verdict } from '../_shared/audience-guard.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -234,11 +235,10 @@ Deno.serve(async (req) => {
     // deno-lint-ignore no-explicit-any
     .map((l: any) => ({ email: l.email, name: `${l.first_name || ''} ${l.last_name || ''}`.trim() }))
   audiences.monthly = dedupe([...acLeads, ...hubLeads])
-  // Clients: AxisCare people with an active-looking status (not leads, not inactive).
-  audiences.clients = acPicked.filter((c) => c.email && /active|current/i.test(c.status))
-  if (!audiences.clients.length) {
-    audiences.clients = acPicked.filter((c) => c.email && !/lead|prospect|inquir|pending|inactive|discharg|deceas|former/i.test(c.status))
-  }
+  /* Clients (2026-10-07 safety fix): every AxisCare client and every won inquiry is a candidate; the audience guard below
+     keeps only people tied to an ACTIVE or STARTING client. The old "if nobody looks active, take everyone" fallback is
+     gone: it put past and deceased clients' families on the list. */
+  audiences.clients = acPicked.filter((c) => c.email)
   /* Converting a lead drops them out of the lead calendar the same day, but
      this audience was read only from AxisCare. So anybody converted in the hub
      whose AxisCare record does not look "active" yet fell out of the lead
@@ -273,6 +273,16 @@ Deno.serve(async (req) => {
       // deno-lint-ignore no-explicit-any
       .map((c: any) => ({ email: c.email, name: c.name || `${c.first_name || ''} ${c.last_name || ''}`.trim() })))
   } catch { audiences.caregivers = [] }
+  /* THE AUDIENCE GUARD: never anyone tied to a deceased, past or paused client; client and family lists only people tied
+     to an active or starting client. If AxisCare can't be read, the client and family lists are empty for this run. */
+  {
+    const g = await loadGuard(supabase)
+    const TAG: Record<string, string> = { monthly: 'lead', clients: 'client', client_contacts: 'client-contact', caregivers: 'caregiver' }
+    for (const k of Object.keys(TAG)) {
+      if (!g.axOk && (k === 'clients' || k === 'client_contacts')) { audiences[k] = []; continue }
+      audiences[k] = audiences[k].filter((r) => verdict(g.stateOf(r.email), TAG[k]).ok)
+    }
+  }
 
   // Hub helper: return an audience list without sending.
   const resolveAud = url.searchParams.get('resolve')

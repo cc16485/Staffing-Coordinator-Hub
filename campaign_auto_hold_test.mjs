@@ -29,6 +29,7 @@ try {
     .replace("'../_shared/optout.ts'", "'" + stub('optout', 'export const ghlContactIfAllowed = async (_s, _c, _w, o) => "cid-" + o.email') + "'")
     .replace("'../_shared/send-problems.ts'", "'" + stub('send', 'export const ghlSendChecked = async (_s, _h, who, o, m) => { globalThis.__sent.push({ who, to: o.address, subject: m.subject }); return true }') + "'")
     .replace("'../_shared/staff-contact.ts'", "'" + stub('staffc', 'export const ghlStaffContact = async () => "sam"') + "'")
+    .replace("'../_shared/audience-guard.ts'", "'" + path.resolve(F, '_shared/audience-guard.ts') + "'")
   /* make today's date the window for '__TODAY__' */
   src = src.replace("const WINDOWS: Record<string, [string, string]> = {", "const WINDOWS: Record<string, [string, string]> = { '__TODAY__': ['" + mmdd + "', '" + mmdd + "'],")
   fs.writeFileSync(path.join(tmp, 'ca.ts'), src); globalThis.__sent = []
