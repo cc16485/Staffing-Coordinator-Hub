@@ -642,13 +642,145 @@
     return Object.keys(p).length ? p : null;
   }
 
+  /* ── THE LEAD WORKSPACE (her design's screen 2, built 2026-10-07): what the profile's Overview says before the yes ─────
+     Five steps with dates, the one timeline, a script line for the moment the board says we are in, and "can we staff
+     it?" from the caregivers' own availability. All pure; the page only draws. Nothing here sends anything. */
+  const STEP_KEYS = ['new', 'reaching', 'reached', 'assessment', 'yes'];
+  const STEP_LABEL = { new:'New', reaching:'Reaching out', reached:'Reached', assessment:'Assessment', yes:'Yes' };
+  function steps(l, ctx){
+    ctx = Object.assign({ now:new Date().toISOString() }, ctx || {}); ctx.lead = l;
+    const now = ctx.now, today = ctx.today || chicago(now).ymd, hours = ctx.hours || responseHours({});
+    const fa = firstAttemptState(l, hours, now), asm = asmtNext(ctx);
+    const tries = evts(l).filter(e => e && e.actor === 'human' && e.direction === 'out' && e.channel === 'call').length;
+    const lastTry = lastHumanOut(l);
+    const out = [];
+    out.push({ key:'new', done:true, words:(l.created_at ? dayCap(cameInWords(l.created_at, now)).replace(/^Came in /, '') : '') + (fa ? ' · ' + fa.ack : '') });
+    out.push({ key:'reaching', done:!!l.first_human_attempt_at, words:l.first_human_attempt_at ? (lastTry ? (lastTry.outcome === 'sent' ? (lastTry.channel === 'email' ? 'emailed' : 'texted') : String(lastTry.outcome || '').replace(/_/g, ' ')) + ' ' + whenWords(lastTry.at, now) : whenWords(l.first_human_attempt_at, now)) + (tries ? ' · ' + tries + (tries === 1 ? ' try' : ' tries') : '') : 'nobody has tried yet' });
+    out.push({ key:'reached', done:!!l.first_human_contact_at, words:l.first_human_contact_at ? 'talked ' + whenWords(l.first_human_contact_at, now) : 'a real conversation' });
+    const asmDone = (ctx.assessments || []).find(a => a && (a.status === 'Completed — Awaiting Plan' || /complete/i.test(String(a.status || '')) || (a.status === 'Scheduled' && a.visit_date && a.visit_date < today)));
+    out.push({ key:'assessment', done:!!asmDone, words:asmDone ? 'done ' + dayWords(asmDone.visit_date || today, today) : asm && asm.kind === 'booked' ? 'booked ' + dayWords(asm.day, today) : 'not booked' });
+    out.push({ key:'yes', done:!!l.said_yes_at, words:l.said_yes_at ? dayWords(chicago(l.said_yes_at).ymd, today) : 'then Getting ready' });
+    const lost = String(l.status || '') === 'Lost';
+    let cur = out.findIndex(s => !s.done); if(cur < 0) cur = out.length - 1;
+    out.forEach((s, i) => { s.label = STEP_LABEL[s.key]; s.state = s.done ? 'done' : (i === cur && !lost ? 'now' : 'todo'); });
+    return out;
+  }
+  /* every call, text, email, automatic message and change on this family, newest first; names from ctx.names {email:name} */
+  function timeline(l, ctx){
+    ctx = Object.assign({ now:new Date().toISOString() }, ctx || {});
+    const names = ctx.names || {}, who = e => { if(!e) return ''; const k = String(e).toLowerCase(); if(names[k]) return String(names[k]).split(' ')[0]; const p = k.split('@')[0]; return p ? p.charAt(0).toUpperCase() + p.slice(1) : ''; };
+    const items = [], push = (at, kind, text, sub) => { if(at && !isNaN(Date.parse(at))) items.push({ at:new Date(at).toISOString(), kind, text, sub:sub || '' }); };
+    const src = [l.source, ctx.referral || l.referral_source_name].filter(Boolean).join(' · ');
+    const inq = evts(l).find(e => e && e.channel === 'web' && e.outcome === 'inquiry');
+    push(l.created_at, 'inquiry', 'Inquiry' + (src ? ' from ' + src : '') + (l.assigned_coordinator ? ' · to ' + String(l.assigned_coordinator).split(' ')[0] : ''), (inq && (inq.note || inq.ref)) || whyCalled(l));
+    let ackAt = null, ackHow = [];
+    evts(l).forEach(e => {
+      if(!e || !e.at) return;
+      if(e.channel === 'web' && e.outcome === 'inquiry') return;
+      if(e.actor === 'automation'){ if(/acknowledg/i.test(String(e.note || ''))){ ackAt = ackAt || e.at; ackHow.push(e.channel === 'email' ? 'email' : 'text'); return; } push(e.at, 'auto', 'The Hub ' + (e.channel === 'email' ? 'emailed' : 'texted') + (e.note ? ': ' + e.note : ''), ''); return; }
+      if(e.direction === 'in'){ push(e.at, 'family', 'They ' + (e.channel === 'call' ? 'called' : e.channel === 'email' ? 'emailed' : 'texted'), e.ref || e.note || ''); return; }
+      if(e.channel === 'call'){ const o = String(e.outcome || '').replace(/_/g, ' '); push(e.at, e.outcome === 'connected' ? 'talked' : 'try', (who(e.by) || 'We') + ' called · ' + (o === 'connected' ? 'we talked' + (e.duration_s ? ' ' + Math.round(e.duration_s / 60) + ' min' : '') : o === 'requested callback' ? 'they asked us to call back' : o), e.note || ''); return; }
+      push(e.at, 'sent', (who(e.by) || 'We') + (e.channel === 'email' ? ' emailed' : ' texted'), e.ref || e.note || '');
+    });
+    if(ackAt || l.ack_sent_at) push(ackAt || l.ack_sent_at, 'auto', 'Acknowledged by the Hub' + (ackHow.length ? ' by ' + [...new Set(ackHow)].join(' and ') : ''), l.ack_kind === 'after_hours' ? 'after hours: a coordinator will call when we open' : '');
+    (Array.isArray(l.comm_log) ? l.comm_log : []).forEach(n => {
+      if(!n || !n.at) return; const b = String(n.body || '');
+      if(/^☎ call/.test(b) || n.kind === 'authorization_received' && l.authorization_received_at) return;   /* the call is on the events already; authorization is below */
+      push(n.at, n.kind === 'dsds_called' ? 'talked' : /^🤝/.test(b) ? 'promise' : 'note', (who(n.by) ? who(n.by) + ': ' : '') + b.replace(/^[^\w(]+\s*/, ''), '');
+    });
+    if(l.authorization_received_at) push(l.authorization_received_at, 'auto', 'Authorization received from the state', '');
+    (Array.isArray(l.status_history) ? l.status_history : []).forEach(h => {
+      if(!h || !h.at) return;
+      if(h.to === 'Lost') push(h.at, 'stage', 'Marked lost' + (who(h.by) ? ' by ' + who(h.by) : ''), h.why || '');
+      else if(h.from === 'Lost') push(h.at, 'stage', 'Not lost after all' + (who(h.by) ? ' by ' + who(h.by) : ''), '');
+    });
+    if(l.said_yes_at) push(l.said_yes_at, 'stage', 'They said yes' + (l.said_yes_by_name ? ' · marked by ' + String(l.said_yes_by_name).split(' ')[0] : ''), '');
+    const fa = firstAttemptState(l, ctx.hours || responseHours({}), ctx.now);
+    if(fa && fa.after_hours && fa.running) push(fa.start, 'clock', 'Lead response hours opened', 'first call due ' + clockWords(fa.due));
+    items.sort((a, b) => b.at.localeCompare(a.at));
+    return items.slice(0, 80);
+  }
+  /* the script line for the moment the board row says we are in. Her words are the defaults; Settings can replace each
+     one (ctx.scripts {key:text}). Fill-ins: {first} {client} {me} {when} {why} {start} {referral}. Never sent by itself. */
+  const SCRIPT_KEYS = ['first_call', 'voicemail', 'replied', 'promise', 'authorized', 'check_back_state', 'check_back_family', 'unable_to_reach', 'asmt_booked', 'urgent_start', 'followup'];
+  const SCRIPT_LABEL = { first_call:'First call', voicemail:'Voicemail', replied:'They replied', promise:'The call we promised', authorized:'The state authorized', check_back_state:'Check-back, waiting on the state',
+    check_back_family:'Check-back, family deciding or not ready', unable_to_reach:'Unable to reach, one more try', asmt_booked:'Assessment confirmation', urgent_start:'Needs care soon, book the visit', followup:'A follow-up' };
+  const SCRIPT_DEFAULT = {
+    first_call:'Hi {first}, this is {me} with Caring Companions. Thank you for reaching out about care for {client}. I would love to hear what is going on and what a typical day looks like, and then I can tell you how we would help.',
+    voicemail:'Hi {first}, this is {me} with Caring Companions returning your message about care for {client}. I am sorry I missed you. I will try again shortly, or call me back at (417) 234-8494 whenever works for you.',
+    replied:'Hi {first}, thank you for getting back to me. [Answer what they asked.] If it is easier, tell me a good time to call and I will make sure it is me on the line.',
+    promise:'Hi {first}, this is {me} with Caring Companions. You asked us to call {when}. Is now still a good time?',
+    authorized:'Hi {first}, good news: the state has authorized hours for {client}. Let us pick the week care starts and the caregiver we would like to introduce.',
+    check_back_state:'Hi {first}, I am checking in about the Medicaid authorization for {client}. We are still waiting on the state; I will keep after them and keep you posted. Has anything changed on your side?',
+    check_back_family:'Hi {first}, I said I would check back with you around now about {client}. Have you had a chance to think it over? No pressure either way; I am happy to answer anything that came up.',
+    unable_to_reach:'Hi {first}, this is {me} with Caring Companions. We have tried a few times to reach you about {client}. If you still need help, call or text (417) 234-8494. If things have changed, that is okay too, just let us know.',
+    asmt_booked:'Hi {first}, confirming our visit {when} at the home. I will bring the paperwork; if you can, have a list of medications handy.',
+    urgent_start:'Hi {first}, you mentioned you {start}. The next step is a short visit at the home so we match the right caregiver. I have [two times]; which works for you?',
+    followup:'Hi {first}, this is {me} with Caring Companions following up{why}.',
+  };
+  const SCRIPT_HINT = {
+    first_call:{ Website:'They filled in the website form; they may not remember every detail, so start from what they wrote.', Phone:'They called us first; pick up where that call left off.', Referral:'{referral} sent them; say so, families trust the hand-off.' },
+    draft_ready:'Read the AI draft as if you wrote it; change anything that does not sound like you. Nothing goes out until you send it.',
+    asmt_plan:'Write the care plan from the visit, then call {first} to walk through it and agree the start date.',
+    no_next_step:'Decide the next step with {first}: another try today, a follow-up on a date, or Waiting on something outside the office.',
+    dsds_21:'Call DSDS about the authorization first; then tell {first} what they said and when we check again.',
+    check_back_state:'Check Fusion before you call, so you are not asking the family what the state already told us.',
+  };
+  function fill(t, v){ return String(t || '').replace(/\{(\w+)\}/g, (m, k) => (v[k] == null ? m : v[k])); }
+  function scriptFor(l, row, ctx){
+    ctx = ctx || {}; const reason = row && row.reason || '', w = waiting(l), nx = leadNext(l, ctx.now);
+    const byWait = r => r === 'state' ? 'check_back_state' : r === 'unable_to_reach' ? 'unable_to_reach' : 'check_back_family';
+    const key = /^new_/.test(reason) ? 'first_call' : reason === 'replied' ? 'replied' : /^promise/.test(reason) ? 'promise' : reason === 'authorized' ? 'authorized'
+      : (reason === 'check_back_due' || reason === 'waiting') ? byWait(w && w.reason) : reason === 'asmt_booked' ? 'asmt_booked' : reason === 'urgent_start' ? 'urgent_start'
+      : /^followup/.test(reason) ? 'followup' : reason === 'no_next_step' && (ctx.stage === 'reaching_out') ? 'voicemail' : null;
+    const client = (l.client_first_name || '').trim(), caller = (l.first_name || '').trim();
+    const v = { first:caller || 'there', client:client && client !== caller ? client : 'your loved one', me:(ctx.me || 'a Care Coordinator').split(' ')[0],
+      when:nx && (nx.kind === 'promise' || reason === 'asmt_booked') ? whenWords(nx.at, ctx.now || new Date().toISOString()) : (row && row.when && row.when.big) || 'as we said',
+      why:nx && nx.kind === 'follow_up' && nx.why ? ' on ' + String(nx.why).replace(/[.?!]+$/, '') : '', start:String(desiredStartWords(l, ctx.today) || 'need care soon').toLowerCase().replace(/^needs /, 'need ').replace(/^wants /, 'want '),
+      referral:ctx.referral || l.referral_source_name || 'A partner' };
+    if(reason === 'asmt_booked' && ctx.assessments){ const a = asmtNext(Object.assign({}, ctx, { lead:l })); if(a && a.kind === 'booked') v.when = a.timed ? whenWords(a.iso, ctx.now || new Date().toISOString()) : dayWords(a.day, ctx.today || chicago(ctx.now || new Date().toISOString()).ymd); }
+    const over = ctx.scripts && key && String(ctx.scripts[key] || '').trim();
+    const text = key ? fill(over || SCRIPT_DEFAULT[key], v) : '';
+    let hint = SCRIPT_HINT[reason] || (key === 'first_call' ? SCRIPT_HINT.first_call[l.source] || '' : key === 'check_back_state' ? SCRIPT_HINT.check_back_state : '');
+    if(typeof hint !== 'string') hint = '';
+    return { key, title:key ? SCRIPT_LABEL[key] : '', text, hint:fill(hint, v), custom:!!over };
+  }
+  /* "Can we staff it?": the requested days and times against what caregivers say they are available for. people =
+     [{ name, town, windows:{mon:['morning',…]} }] (the availability page's own shape). Counts only, no names. */
+  const WIN_SPANS = [['morning', 6, 12], ['afternoon', 12, 17], ['evening', 17, 22], ['overnight', 22, 30], ['overnight', -2, 6]];
+  function timeCats(text){
+    const t = String(text || '').toLowerCase(); if(!t) return null;
+    const m = [...t.matchAll(/(\d{1,2})(?::(\d\d))?\s*(a\.?m|p\.?m)?/g)].map(x => { let h = Number(x[1]); const ap = (x[3] || '').replace('.', ''); if(ap === 'pm' && h < 12) h += 12; if(ap === 'am' && h === 12) h = 0; return h; }).filter(h => h >= 0 && h <= 24);
+    if(m.length >= 2){ let a = m[0], b = m[1]; if(b <= a) b += 24;
+      /* a window counts when the shift spends 2 hours in it (9 to 1 is a morning shift, not a daytime one); else the biggest */
+      const ov = {}; WIN_SPANS.forEach(sp => { const o = Math.min(b, sp[2]) - Math.max(a, sp[1]); if(o > 0) ov[sp[0]] = (ov[sp[0]] || 0) + o; });
+      const cats = Object.keys(ov).filter(k => ov[k] >= 2); if(cats.length) return cats;
+      const best = Object.keys(ov).sort((x, y) => ov[y] - ov[x])[0]; return best ? [best] : null; }
+    const cats = []; if(/morning|a\.?m\b/.test(t)) cats.push('morning'); if(/afternoon|mid.?day|daytime|lunch/.test(t)) cats.push('afternoon'); if(/evening|dinner|bed ?time|night(?!s? ?shift)/.test(t) && !/overnight/.test(t)) cats.push('evening'); if(/overnight|night ?shift|24/.test(t)) cats.push('overnight');
+    return cats.length ? cats : null;
+  }
+  function staffingLook(l, people, opts){
+    opts = opts || {}; const s = schedule(l), town = String((l && l.client_city) || '').trim().toLowerCase();
+    const pool = (people || []).filter(p => p && p.windows && Object.keys(p.windows).some(d => Array.isArray(p.windows[d]) && p.windows[d].length));
+    if(!s || (!s.days.length && !s.times)) return { asked:false, total:pool.length, count:0, same_town:0, words:'No schedule asked yet, so there is nothing to check against the caregivers.' };
+    if(!pool.length) return { asked:true, total:0, count:0, same_town:0, words:'No caregiver availability is on file yet (caregivers set it at cc.mo-care.com/availability).' };
+    const days = (s.days.length ? s.days : DAYS).map(d => d.toLowerCase()), cats = timeCats(s.times);
+    const fits = pool.filter(p => days.every(d => { const w = p.windows[d] || []; return cats ? cats.every(c => w.indexOf(c) > -1) : w.length > 0; }));
+    const same = town ? fits.filter(p => String(p.town || p.city || '').trim().toLowerCase() === town).length : 0;
+    const ask = [s.days.length ? daysWords(s.days) : 'every day', cats ? [...new Set(cats)].map(c => c === 'afternoon' ? 'daytimes' : c + 's').join(' and ') : (s.times || '')].filter(Boolean).join(' ');
+    const words = fits.length ? fits.length + (fits.length === 1 ? ' caregiver says they are' : ' caregivers say they are') + ' available ' + ask + (town ? ' · ' + same + ' in ' + (l.client_city || '').trim() : '') + ' · of ' + pool.length + ' with availability on file'
+      : 'Nobody has said they are available ' + ask + ' (of ' + pool.length + ' with availability on file). Staffing this takes a conversation before we promise a start.';
+    return { asked:true, total:pool.length, count:fits.length, same_town:same, days:s.days, cats:cats || [], words, thin:fits.length < 2 };
+  }
+
   const api = { START_KINDS, START_LABEL, LEGACY_URGENCY, DAYS, WAITING, WAITING_KEYS, LOST, LOST_LABEL, LOST_STAFFING, REQ_BY_STAGE, FORM_KEYS,
     RESPONSE_HOURS_DEFAULT, FIRST_ATTEMPT_MINUTES,
     ymd, addDays, daysBetween, dayWords, desiredStart, desiredStartWords, startRank, schedule, daysWords, scheduleWords, whyCalled,
     waiting, waitingProblems, defaultCheckBack, checkBackDue, lostKey, lostRecord, missing, toForm, compose, migrationPatch,
     responseHours, chicago, chicagoInstant, inResponseHours, nextOpening, clockStart, firstAttemptDue, clockWords, cameInWords, openingWords, callBackWords,
     firstAttemptState, medianFirstAttemptMinutes, PAYER_WORDS, lastEventWords, replyPending, boardRow, boardSort, dayHeader,
-    markAuthorized, authorizationPending, stateDays, DSDS_AMBER_DAYS, DSDS_RED_DAYS, median, ownerNumbers, periodNumbers, leadNext, nextWords, setNext, STATUSES, setStatus, statusBeforeLost };
+    markAuthorized, authorizationPending, stateDays, DSDS_AMBER_DAYS, DSDS_RED_DAYS, median, ownerNumbers, periodNumbers, leadNext, nextWords, setNext, STATUSES, setStatus, statusBeforeLost,
+    STEP_KEYS, steps, timeline, SCRIPT_KEYS, SCRIPT_LABEL, SCRIPT_DEFAULT, scriptFor, timeCats, staffingLook, whenWords };
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   root.LeadRules = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
