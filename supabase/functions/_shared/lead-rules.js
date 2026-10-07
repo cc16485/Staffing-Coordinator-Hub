@@ -491,6 +491,7 @@
     const src = [l.source, ctx.referral || l.referral_source_name].filter(Boolean).join(' · ');
     const last = [lastEventWords(l, now), src, l.phone].filter(Boolean).join(' · ');
     const chips = missing(l, stage).map(m => ({ text:m.short, tone:'missing' }));
+    const fl = flags(l, ctx); fl.forEach(f => chips.unshift({ text:f.text, tone:f.tone, key:f.key }));
     if(l.do_not_contact) chips.unshift({ text:'do not contact', tone:'bad' });
     const aw = attemptsWords(l); if(aw && stage === 'reaching_out') chips.push({ text:aw, tone:'warn' });
     const fa = firstAttemptState(l, hours, now), w = waiting(l), jn = ctx.journey_next, asm = asmtNext(ctx);
@@ -531,8 +532,8 @@
     }
     const urgent = startRank(l, today) <= 1;
     if(urgent && !w && ['reaching_out', 'connected', 'deciding', 'assessment'].indexOf(stage) > -1){
-      const words = desiredStartWords(l, today);
-      return R('now', 5, now, { big:words, sub:'assessment not booked yet', tone:'amber' }, { text:'Book the assessment' + (/by /.test(words) ? ' before ' + words.split('by ')[1] : ' now'), sub:last }, SCH, [CALL, LOG], 'urgent_start');
+      const words = desiredStartWords(l, today), disch = fl.find(f => f.key === 'urgent_discharge');
+      return R('now', disch ? 4.5 : 5, now, { big:words, sub:disch ? (disch.text.split(':')[0].toLowerCase() + ', assessment not booked') : 'assessment not booked yet', tone:disch ? 'red' : 'amber' }, { text:'Book the assessment' + (/by /.test(words) ? ' before ' + words.split('by ')[1] : ' now'), sub:last }, SCH, [CALL, LOG], 'urgent_start');
     }
     if(w && w.check_back && w.check_back <= today){
       const lateDays = daysBetween(w.check_back, today), on = WAITING[w.reason].on;
@@ -679,6 +680,81 @@
   }
   const RUNG_WORDS = { owner:'the owner', backup:'the backup', manager:'Owner Escalation' };
 
+  /* ── REFERRAL SUBTYPE, THE TWO FLAGS, AND THE PARTNER LOOP (item 3 of her design, 2026-10-07) ─────────────────────────
+     subtype   who sent them, when a professional did: hospital · snf_rehab · case_manager · community · apfm · other.
+               Stamped on the inquiry (referral_subtype) or read from the partner's record type.
+     flags     urgent_discharge: a hospital or rehab referral who needs care within 3 days, until the assessment is done.
+               staffing_risk: the requested days and times find fewer than 2 caregivers available (their own windows),
+               until a Team Builder plan is linked (pre-matched).
+     loop      what the referrer hears from us: a receipt when we reach the family, the assessment date, the outcome, and
+               a weekly line to case managers while Medicaid is pending. ALWAYS a draft a person sends (her audience law);
+               this only says which message is due and offers the words (Settings can replace them). */
+  const SUBTYPE_LABEL = { hospital:'Hospital', snf_rehab:'Rehab / skilled nursing', case_manager:'Case manager', community:'Community', apfm:'A Place for Mom', other:'Other professional' };
+  const SUBTYPE_KEYS = Object.keys(SUBTYPE_LABEL);
+  const PROFESSIONAL = ['hospital', 'snf_rehab', 'case_manager', 'apfm', 'other'];
+  function referralSubtype(l, org){
+    if(!l) return '';
+    if(SUBTYPE_KEYS.indexOf(l.referral_subtype) > -1) return l.referral_subtype;
+    const t = String((org && org.type) || '').toLowerCase();
+    if(!t) return '';
+    if(/hospital/.test(t)) return 'hospital';
+    if(/rehab|skilled|nursing/.test(t)) return 'snf_rehab';
+    if(/physician|hospice|case|social/.test(t)) return 'case_manager';
+    if(/assisted|senior|community|church|center/.test(t)) return 'community';
+    return 'other';
+  }
+  function flags(l, ctx){
+    ctx = ctx || {}; const today = ctx.today || ymd(new Date()), out = [];
+    const sub = referralSubtype(l, ctx.org);
+    const asmDone = (ctx.assessments || []).some(a => a && (/complete/i.test(String(a.status || '')) || (a.status === 'Scheduled' && a.visit_date && a.visit_date < today)));
+    if((sub === 'hospital' || sub === 'snf_rehab') && startRank(l, today) <= 1 && !asmDone)
+      out.push({ key:'urgent_discharge', tone:'bad', text:(sub === 'hospital' ? 'Hospital discharge' : 'Rehab discharge') + ': ' + String(desiredStartWords(l, today) || 'Needs care now').replace(/^\w/, c => c.toLowerCase()), why:'a discharge referral who needs care within days; the assessment is the next step' });
+    if(ctx.people && !ctx.pre_matched){
+      const look = staffingLook(l, ctx.people);
+      if(look.asked && look.total && look.count < 2) out.push({ key:'staffing_risk', tone:'warn', text:'Staffing risk: ' + (look.count ? '1 caregiver' : 'nobody') + ' available ' + look.ask, why:'the requested days and times find ' + (look.count ? 'only one caregiver' : 'no caregiver') + ' with that window; talk to Staffing before promising a start' });
+    }
+    return out;
+  }
+  const PARTNER_KINDS = ['receipt', 'assessment', 'outcome_started', 'outcome_lost', 'weekly'];
+  const PARTNER_LABEL = { receipt:'We reached the family', assessment:'Assessment scheduled', outcome_started:'The family chose us', outcome_lost:'The family did not start with us', weekly:'Weekly status while Medicaid is pending' };
+  const PARTNER_DEFAULT = {
+    receipt:'Hi {partner}, this is {me} with Caring Companions. Thank you for sending {client} our way. We reached {family} today and are setting up a time to visit the home. I will keep you posted.',
+    assessment:'Hi {partner}, a quick update on {client}: our in-home assessment is set for {day}. I will let you know how it goes and when care can start.',
+    outcome_started:'Hi {partner}, good news: {client} chose Caring Companions{start}. Thank you again for the referral. If anything changes on your end, call or text me any time.',
+    outcome_lost:'Hi {partner}, closing the loop on {client}: care did not start with us ({reason}). Thank you for thinking of us, and please keep us in mind for the next family.',
+    weekly:'Hi {partner}, our weekly note on {client}: we are still waiting on the state for the Medicaid authorization ({days} days so far). We are ready to start the week it comes through. Anything you can do to nudge it along helps.',
+  };
+  function partnerName(l, org){ return (org && org.name) || String((l && l.referral_source_name) || '').trim() || ''; }
+  function partnerLoop(l, ctx){
+    ctx = ctx || {}; const today = ctx.today || ymd(new Date()), org = ctx.org || null, name = partnerName(l, org);
+    if(!name) return { partner:null, sent:[], due:[] };
+    const sub = referralSubtype(l, org), sent = Array.isArray(l.partner_msgs) ? l.partner_msgs.slice() : [];
+    const has = k => sent.some(m => m && m.kind === k);
+    const lastAt = sent.length ? sent.map(m => m.at).sort().slice(-1)[0] : null;
+    const client = String(((l.client_first_name || '') + ' ' + (l.client_last_name || '')).trim() || 'the family'), family = String((l.first_name || '').trim() || 'the family');
+    const contact = String((org && org.people) || '').split(/[,(]/)[0].trim().split(/\s+/)[0] || 'there';
+    const over = ctx.templates || {}, tpl = k => String(over[k] || PARTNER_DEFAULT[k]);
+    const v = { partner:contact, me:String(ctx.me || 'the Care Coordinator').split(' ')[0], client, family, day:'', start:'', reason:'', days:'' };
+    const due = [];
+    if(l.first_human_contact_at && !has('receipt')) due.push({ kind:'receipt', title:PARTNER_LABEL.receipt, text:fill(tpl('receipt'), v) });
+    const asm = asmtNext(Object.assign({}, ctx, { lead:l, now:ctx.now || new Date().toISOString(), today }));
+    if(asm && asm.kind === 'booked' && !has('assessment')) due.push({ kind:'assessment', title:PARTNER_LABEL.assessment, text:fill(tpl('assessment'), Object.assign({}, v, { day:dayWords(asm.day, today) })) });
+    if(l.said_yes_at && !has('outcome_started')) due.push({ kind:'outcome_started', title:PARTNER_LABEL.outcome_started, text:fill(tpl('outcome_started'), Object.assign({}, v, { start:l.first_shift_at ? '; care started ' + dayWords(chicago(l.first_shift_at).ymd, today) : ', and we are getting ready to start' })) });
+    if(String(l.status || '') === 'Lost' && !has('outcome_lost')) due.push({ kind:'outcome_lost', title:PARTNER_LABEL.outcome_lost, text:fill(tpl('outcome_lost'), Object.assign({}, v, { reason:(LOST_LABEL[lostKey(l)] || String(l.lost_reason || 'their decision')).toLowerCase() })) });
+    const w = waiting(l);
+    if(PROFESSIONAL.indexOf(sub) > -1 && l.funding_source === 'medicaid' && w && w.reason === 'state' && !l.said_yes_at && String(l.status || '') !== 'Lost'){
+      const since = lastAt && lastAt > (w.since || '') ? chicago(lastAt).ymd : (w.since || today);
+      if(daysBetween(since, today) >= 7) due.push({ kind:'weekly', title:PARTNER_LABEL.weekly, text:fill(tpl('weekly'), Object.assign({}, v, { days:String(stateDays(l, w, today) == null ? daysBetween(w.since || today, today) : stateDays(l, w, today)) })) });
+    }
+    return { partner:{ name, subtype:sub, label:SUBTYPE_LABEL[sub] || '', professional:PROFESSIONAL.indexOf(sub) > -1 }, sent:sent.sort((a, b) => String(b.at).localeCompare(String(a.at))), due };
+  }
+  /* a person sent (or said) something to the referrer: recorded on the inquiry; the timeline and the loop read it */
+  function recordPartnerMsg(l, m, nowIso){
+    const at = nowIso || new Date().toISOString(); m = m || {};
+    l.partner_msgs = (Array.isArray(l.partner_msgs) ? l.partner_msgs : []).concat([{ at, kind:String(m.kind || 'note'), channel:String(m.channel || 'email'), to:String(m.to || ''), text:String(m.text || '').slice(0, 1500), by:String(m.by || '') }]).slice(-50);
+    return l;
+  }
+
   /* ── THE LEAD WORKSPACE (her design's screen 2, built 2026-10-07): what the profile's Overview says before the yes ─────
      Five steps with dates, the one timeline, a script line for the moment the board says we are in, and "can we staff
      it?" from the caregivers' own availability. All pure; the page only draws. Nothing here sends anything. */
@@ -733,6 +809,7 @@
       if(h.to === 'Lost') push(h.at, 'stage', 'Marked lost' + (who(h.by) ? ' by ' + who(h.by) : ''), h.why || '');
       else if(h.from === 'Lost') push(h.at, 'stage', 'Not lost after all' + (who(h.by) ? ' by ' + who(h.by) : ''), '');
     });
+    (Array.isArray(l.partner_msgs) ? l.partner_msgs : []).forEach(m => { if(m && m.at) push(m.at, 'sent', (who(m.by) || 'We') + (m.channel === 'email' ? ' emailed ' : m.channel === 'call' ? ' called ' : ' texted ') + (m.to || 'the referrer') + ': ' + (PARTNER_LABEL[m.kind] || 'an update').toLowerCase(), m.text || ''); });
     if(l.said_yes_at) push(l.said_yes_at, 'stage', 'They said yes' + (l.said_yes_by_name ? ' · marked by ' + String(l.said_yes_by_name).split(' ')[0] : ''), '');
     const fa = firstAttemptState(l, ctx.hours || responseHours({}), ctx.now);
     if(fa && fa.after_hours && fa.running) push(fa.start, 'clock', 'Lead response hours opened', 'first call due ' + clockWords(fa.due));
@@ -809,7 +886,7 @@
     const ask = [s.days.length ? daysWords(s.days) : 'every day', cats ? [...new Set(cats)].map(c => c === 'afternoon' ? 'daytimes' : c + 's').join(' and ') : (s.times || '')].filter(Boolean).join(' ');
     const words = fits.length ? fits.length + (fits.length === 1 ? ' caregiver says they are' : ' caregivers say they are') + ' available ' + ask + (town ? ' · ' + same + ' in ' + (l.client_city || '').trim() : '') + ' · of ' + pool.length + ' with availability on file'
       : 'Nobody has said they are available ' + ask + ' (of ' + pool.length + ' with availability on file). Staffing this takes a conversation before we promise a start.';
-    return { asked:true, total:pool.length, count:fits.length, same_town:same, days:s.days, cats:cats || [], words, thin:fits.length < 2 };
+    return { asked:true, total:pool.length, count:fits.length, same_town:same, days:s.days, cats:cats || [], ask, words, thin:fits.length < 2 };
   }
 
   const api = { START_KINDS, START_LABEL, LEGACY_URGENCY, DAYS, WAITING, WAITING_KEYS, LOST, LOST_LABEL, LOST_STAFFING, REQ_BY_STAGE, FORM_KEYS,
@@ -819,7 +896,8 @@
     responseHours, chicago, chicagoInstant, inResponseHours, nextOpening, clockStart, firstAttemptDue, clockWords, cameInWords, openingWords, callBackWords,
     firstAttemptState, medianFirstAttemptMinutes, PAYER_WORDS, lastEventWords, replyPending, boardRow, boardSort, dayHeader,
     markAuthorized, authorizationPending, stateDays, DSDS_AMBER_DAYS, DSDS_RED_DAYS, median, ownerNumbers, periodNumbers, leadNext, nextWords, setNext, STATUSES, setStatus, statusBeforeLost,
-    STEP_KEYS, steps, timeline, SCRIPT_KEYS, SCRIPT_LABEL, SCRIPT_DEFAULT, scriptFor, timeCats, staffingLook, whenWords, RUNGS_DEFAULT, RUNG_WORDS, rungSettings, rungsDue, stampRung };
+    STEP_KEYS, steps, timeline, SCRIPT_KEYS, SCRIPT_LABEL, SCRIPT_DEFAULT, scriptFor, timeCats, staffingLook, whenWords, RUNGS_DEFAULT, RUNG_WORDS, rungSettings, rungsDue, stampRung,
+    SUBTYPE_LABEL, SUBTYPE_KEYS, PROFESSIONAL, referralSubtype, flags, PARTNER_KINDS, PARTNER_LABEL, PARTNER_DEFAULT, partnerName, partnerLoop, recordPartnerMsg };
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   root.LeadRules = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
