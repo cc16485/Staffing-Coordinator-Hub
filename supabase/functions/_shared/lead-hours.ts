@@ -24,7 +24,8 @@ export async function leadResponseHours(db: any): Promise<ResponseHours> {
 }
 
 /** Are lead response hours open at this moment, and if not, when do they open ("we open tomorrow at 8 am")? */
-export function leadHoursNow(hours: ResponseHours, now: Date = new Date()): { open: boolean; opens: string; opening_at: string } {
+export function leadHoursNow(hours: ResponseHours, now: Date = new Date()): { open: boolean; opens: string; call_back: string; opening_at: string } {
   const iso = now.toISOString()
-  return { open: !!LeadRules.inResponseHours(iso, hours), opens: String(LeadRules.openingWords(iso, hours)), opening_at: String(LeadRules.nextOpening(iso, hours)) }
+  return { open: !!LeadRules.inResponseHours(iso, hours), opens: String(LeadRules.openingWords(iso, hours)),
+    call_back: String(LeadRules.callBackWords(iso, hours)), opening_at: String(LeadRules.nextOpening(iso, hours)) }
 }

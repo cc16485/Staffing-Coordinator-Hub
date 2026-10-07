@@ -220,13 +220,14 @@ Deno.serve(async (req) => {
       if ((phone || email) && ackLive) {
         try {
           const firstName = (first || 'there').replace(/\(.*\)/, '').trim() || 'there'
+          /* Her words (2026-10-07). {next_open_time} = "tomorrow after 8 am" / "after 8 am" / "Saturday after 8 am". */
           const line = hoursNow.open
-            ? `Hi ${firstName}, this is Caring Companions. We have your message and a care `
-              + `coordinator will call you shortly. If you would rather not wait, we are on (417) 234-8494. `
-              + `Reply STOP to opt out.`
-            : `Hi ${firstName}, this is Caring Companions. We have your message. Our office is closed right now and `
-              + `${hoursNow.opens}; a care coordinator will call you then. If it cannot wait, call us on (417) 234-8494. `
-              + `Reply STOP to opt out.`
+            ? `Hi ${firstName}, this is Caring Companions. Thank you for reaching out about care. We received your request, `
+              + `and a Care Coordinator will be calling you shortly to learn more about how we can help. `
+              + `If you need to reach us sooner, please call (417) 234-8494. Reply STOP to opt out.`
+            : `Hi ${firstName}, this is Caring Companions. Thank you for reaching out about care. We received your request, `
+              + `and a Care Coordinator will call you ${hoursNow.call_back} to learn more about how we can help. `
+              + `If you need assistance before then, please call us at (417) 234-8494. Reply STOP to opt out.`
           /* 0b-2: each channel through the universal opt-out door (GHL Do Not Disturb, the Hub's opt-out record,
              inquiry do-not-contact, Family Circle stops); the contact is found by that channel's address alone */
           const ghl = { token: ghlToken, locationId: ghlLocation }
@@ -239,16 +240,16 @@ Deno.serve(async (req) => {
             const cidE = await ghlContactIfAllowed(supabase, ghl, 'lead-intake', { channel: 'email', email, phone, firstName })
             if (cidE) {
               const er = await send(cidE, 'Email', {
-                subject: 'We have your message',
+                subject: 'We received your request',
                 html: '<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">'
                   + `<p>Hi ${firstName},</p>`
                   + (hoursNow.open
-                    ? '<p>Thank you for reaching out to Caring Companions. Your message is with our care '
-                      + 'coordinators and one of them will call you shortly.</p>'
-                      + '<p>If you would rather talk sooner, call us on <b>(417) 234-8494</b> and we will pick up.</p>'
-                    : '<p>Thank you for reaching out to Caring Companions. We have your message. Our office is closed '
-                      + `right now and ${hoursNow.opens}; a care coordinator will call you then.</p>`
-                      + '<p>If it cannot wait, call us on <b>(417) 234-8494</b>.</p>')
+                    ? '<p>Thank you for reaching out about care. We received your request, and a Care Coordinator '
+                      + 'will be calling you shortly to learn more about how we can help.</p>'
+                      + '<p>If you need to reach us sooner, please call <b>(417) 234-8494</b>.</p>'
+                    : '<p>Thank you for reaching out about care. We received your request, and a Care Coordinator '
+                      + `will call you ${hoursNow.call_back} to learn more about how we can help.</p>`
+                      + '<p>If you need assistance before then, please call us at <b>(417) 234-8494</b>.</p>')
                   + '<p>There is nothing you need to do in the meantime.</p>'
                   + '<p style="color:#57606a">Caring Companions In-Home Senior Care<br>(417) 234-8494</p></div>',
               })

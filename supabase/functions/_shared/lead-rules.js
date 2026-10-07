@@ -258,8 +258,9 @@
      A new inquiry inside our lead-response hours gets a first human attempt within 5 minutes. Outside them the family
      gets the acknowledgment at once and the clock starts when coverage opens, so a 9 pm inquiry is not red all night
      and reads "came in last night at 9:02 pm" at 8 am. The hours are a setting (ops_settings.lead_response_hours),
-     never hard-coded here: { days:[1..5], start:'08:00', end:'18:00' } with days 0 = Sunday … 6 = Saturday. */
-  const RESPONSE_HOURS_DEFAULT = { days:[1, 2, 3, 4, 5], start:'08:00', end:'18:00' };
+     never hard-coded here: { days:[0..6], start:'08:00', end:'18:00' } with days 0 = Sunday … 6 = Saturday. Her default
+     (2026-10-07): every day of the week, 8 am to 6 pm; only the evenings are off. */
+  const RESPONSE_HOURS_DEFAULT = { days:[0, 1, 2, 3, 4, 5, 6], start:'08:00', end:'18:00' };
   const FIRST_ATTEMPT_MINUTES = 5;
   const TZ = 'America/Chicago';
   function isHm(s){ return /^([01]\d|2[0-3]):[0-5]\d$/.test(String(s || '')); }
@@ -317,6 +318,14 @@
     if(oc.ymd === addDays(c.ymd, 1)) return 'we open tomorrow at ' + clockWords(o);
     return 'we open ' + DAYNAME[oc.dow] + ' at ' + clockWords(o);
   }
+  /* "after 8 am" · "tomorrow after 8 am" · "Saturday after 8 am": when the coordinator will call, for her acknowledgment */
+  function callBackWords(iso, hours){
+    const o = nextOpening(iso, hours), c = chicago(iso), oc = chicago(o);
+    const DAYNAME = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    if(oc.ymd === c.ymd) return 'after ' + clockWords(o);
+    if(oc.ymd === addDays(c.ymd, 1)) return 'tomorrow after ' + clockWords(o);
+    return DAYNAME[oc.dow] + ' after ' + clockWords(o);
+  }
   /* everything the card and the board say about a new lead's clock */
   function firstAttemptState(lead, hours, nowIso){
     const now = nowIso || new Date().toISOString();
@@ -358,7 +367,7 @@
     RESPONSE_HOURS_DEFAULT, FIRST_ATTEMPT_MINUTES,
     ymd, addDays, daysBetween, dayWords, desiredStart, desiredStartWords, startRank, schedule, daysWords, scheduleWords, whyCalled,
     waiting, waitingProblems, defaultCheckBack, checkBackDue, lostKey, lostRecord, missing, toForm, compose, migrationPatch,
-    responseHours, chicago, chicagoInstant, inResponseHours, nextOpening, clockStart, firstAttemptDue, clockWords, cameInWords, openingWords,
+    responseHours, chicago, chicagoInstant, inResponseHours, nextOpening, clockStart, firstAttemptDue, clockWords, cameInWords, openingWords, callBackWords,
     firstAttemptState, medianFirstAttemptMinutes };
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   root.LeadRules = api;

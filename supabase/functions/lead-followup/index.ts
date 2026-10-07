@@ -254,12 +254,14 @@ Deno.serve(async (req) => {
       if (!sw.ack) { plan.paused_ack.push(`${first} (${Math.round(age)}h old)`); out.paused_ack++; continue }
       plan.acknowledge.push(`${first} (${Math.round(age)}h old)`)
       if (!dry && !quiet) {
-        const line = `Hi ${first}, this is Caring Companions. We have your message and a care coordinator ` +
-          `will call you shortly. If you would rather not wait, we are on ${OFFICE}. Reply STOP to opt out.`
-        if (await reach(line, 'We have your message',
-          `<p>Hi ${first},</p><p>Thank you for reaching out to Caring Companions. Your message is with our ` +
-          `care coordinators and one of them will call you shortly.</p>` +
-          `<p>If you would rather talk sooner, call us on <b>${OFFICE}</b> and we will pick up.</p>` +
+        /* her words (2026-10-07), the same as lead-intake's open-hours acknowledgment (this retry only runs in hours) */
+        const line = `Hi ${first}, this is Caring Companions. Thank you for reaching out about care. We received your request, ` +
+          `and a Care Coordinator will be calling you shortly to learn more about how we can help. ` +
+          `If you need to reach us sooner, please call ${OFFICE}. Reply STOP to opt out.`
+        if (await reach(line, 'We received your request',
+          `<p>Hi ${first},</p><p>Thank you for reaching out about care. We received your request, and a Care Coordinator ` +
+          `will be calling you shortly to learn more about how we can help.</p>` +
+          `<p>If you need to reach us sooner, please call <b>${OFFICE}</b>.</p>` +
           `<p>There is nothing you need to do in the meantime.</p>`)) {
           l.ack_sent_at = new Date().toISOString()
           if (l.phone) ldPush(l, { channel: 'sms', direction: 'out', outcome: 'sent', actor: 'automation', note: 'acknowledgment' })
