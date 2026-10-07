@@ -139,8 +139,8 @@ Deno.serve(async (req) => {
 
   /* Step 0 · 0a: both family-facing messages are paused unless their switch is explicitly on */
   const sw = await inquirySwitches(supabase)
-  const out = { acknowledged: 0, nudged: 0, office_alerted: 0, paused_ack: 0, paused_followups: 0, optout_stopped: 0 }
-  const plan: Record<string, string[]> = { acknowledge: [], nudge: [], office: [], paused_ack: [], paused_followups: [] }
+  const out = { acknowledged: 0, office_alerted: 0, paused_ack: 0, optout_stopped: 0 }
+  const plan: Record<string, string[]> = { acknowledge: [], office: [], paused_ack: [] }
   const quiet = !withinCallingHours()
 
   for (const l of leads) {
@@ -272,38 +272,13 @@ Deno.serve(async (req) => {
       continue                                        // one message per lead per run
     }
 
-    /* ---- still nobody has called them ----
-       Only for leads we greeted in time. If we never acknowledged them, the
-       ladder has already missed its moment and a machine asking "is there a
-       good time to call?" a week later is worse than silence. Those belong to
-       a person, and the office has been told. */
-    const step = !l.ack_sent_at ? 0
-      : !l.nudge_1_at && age >= 24 ? 1
-      : !l.nudge_2_at && age >= 72 ? 2 : 0
-    if (step) {
-      if (!sw.followups) { plan.paused_followups.push(`${first} (try ${step})`); out.paused_followups++; continue }
-      plan.nudge.push(`${first} (try ${step})`)
-      if (!dry && !quiet) {
-        const line = step === 1
-          ? `Hi ${first}, Caring Companions again. We do not want to lose track of you. ` +
-            `Is there a good time to call, or would you rather ring us on ${OFFICE}?`
-          : `Hi ${first}, last note from us so we are not a nuisance. If you would still like to talk about ` +
-            `care for your family, we are on ${OFFICE} any time, and we would be glad to hear from you.`
-        if (await reach(line, step === 1 ? 'Is there a good time to call?' : 'One last note from Caring Companions',
-          `<p>Hi ${first},</p><p>${line.replace(OFFICE, `<b>${OFFICE}</b>`)}</p>`)) {
-          if (step === 1) l.nudge_1_at = new Date().toISOString()
-          else l.nudge_2_at = new Date().toISOString()
-          if (l.phone) ldPush(l, { channel: 'sms', direction: 'out', outcome: 'sent', actor: 'automation', note: 'nudge ' + step })
-          if (l.email) ldPush(l, { channel: 'email', direction: 'out', outcome: 'sent', actor: 'automation', note: 'nudge ' + step })
-          await put(l); out.nudged++
-        }
-      }
-      continue
-    }
+    /* The Day 1 / Day 3 nudges that used to follow here were removed on her word (2026-10-07): "in home care every
+       situation is so different." A family nobody has reached is a person's call, shown on the Leads board as Need you
+       now; the Hub sends nothing more by itself. */
 
   }
 
-  const switches = { inquiry_ack_live: sw.ack, inquiry_followups_live: sw.followups, settings_read: sw.read_ok }
+  const switches = { inquiry_ack_live: sw.ack, settings_read: sw.read_ok, nudges: 'removed 2026-10-07' }
   return json(dry
     ? { ok: true, dry: true, quiet_hours: quiet, switches, leads_considered: leads.length, would: plan }
     : { ok: true, quiet_hours: quiet, switches, ...out })
