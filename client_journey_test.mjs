@@ -19,7 +19,7 @@ const R_add = (n) => new Date(Date.now() + n * 864e5).toLocaleString('sv-SE', { 
 const clone = (x) => JSON.parse(JSON.stringify(x))
 function q(t) {
   const st = { f: [], ins: [], op: 'select', patch: null, row: null, single: false }
-  const match = (r) => st.f.every(([k, v, how]) => how === 'in' ? v.includes(r[k]) : how === 'neq' ? r[k] !== v : String(r[k]) === String(v))
+  const match = (r) => st.f.every(([k, v, how]) => how === 'in' ? v.includes(r[k]) : how === 'neq' ? r[k] !== v : how === 'notnull' ? r[k] !== null && r[k] !== undefined : String(r[k]) === String(v))
   const run = () => {
     T[t] = T[t] || []
     if (st.op === 'insert') { const rows = (Array.isArray(st.row) ? st.row : [st.row]).map((r) => ({ ...r }))
@@ -37,7 +37,7 @@ function q(t) {
     if (st.order) rows = rows.slice().sort((a, b) => (st.order.asc ? 1 : -1) * String(a[st.order.k]).localeCompare(String(b[st.order.k])))
     return { data: st.single ? (rows[0] ? clone(rows[0]) : null) : clone(rows), error: null }
   }
-  const b = { select() { return b }, eq(k, v) { st.f.push([k, v]); return b }, neq(k, v) { st.f.push([k, v, 'neq']); return b }, in(k, v) { st.f.push([k, v, 'in']); return b }, order(k, o) { st.order = { k, asc: o?.ascending !== false }; return b }, limit() { return b },
+  const b = { select() { return b }, eq(k, v) { st.f.push([k, v]); return b }, neq(k, v) { st.f.push([k, v, 'neq']); return b }, not(k, op, v) { st.f.push([k, null, 'notnull']); return b }, in(k, v) { st.f.push([k, v, 'in']); return b }, order(k, o) { st.order = { k, asc: o?.ascending !== false }; return b }, limit() { return b },
     insert(row) { st.op = 'insert'; st.row = row; return b }, upsert(row) { st.op = 'upsert'; st.row = row; return b }, update(p) { st.op = 'update'; st.patch = p; return b },
     single() { st.single = true; return Promise.resolve(run()) }, maybeSingle() { st.single = true; return Promise.resolve(run()) }, then(ok, ko) { return Promise.resolve(run()).then(ok, ko) } }
   return b
@@ -223,6 +223,24 @@ try {
   ck('...a launch already open for that client (from AxisCare) is picked up, not duplicated', T.client_queue.length === 1 && String(T.client_journey[0].launch_id) === '7', [T.client_queue, T.client_journey[0]])
   reset(); T.client_queue = []; r = await call({ action: 'open', lead_id: 'L1', is_test: true }, 'sam')
   ck('a TEST journey never touches a launch', !T.client_queue.length)
+
+  // care ended (2026-10-07 audit): a client whose role ended closes their journey, its cards and its launch
+  reset(); T.client_queue = []
+  r = await call({ action: 'adopt', people: [{ axiscare_client_id: '296', client_name: 'Edward Anderson', payer: 'private' }, { axiscare_client_id: '297', client_name: 'Still Here', payer: 'private' }] }, null, job)
+  const JE2 = T.client_journey.find((j) => j.axiscare_client_id === '296'), JS2 = T.client_journey.find((j) => j.axiscare_client_id === '297')
+  T.client_queue.push({ id: 41, axiscare_client_id: '296', status: 'open' }); JE2.launch_id = 41
+  T.person_source_id = [{ person_id: 'pe', source_id: '296', system: 'axiscare', entity_type: 'client' }, { person_id: 'ps', source_id: '297', system: 'axiscare', entity_type: 'client' }]
+  T.person_role = [{ person_id: 'pe', role: 'client', status: 'active' }, { person_id: 'ps', role: 'client', status: 'active' }]
+  r = await call({ action: 'sweep' }, null, job)
+  ck('care still going: the sweep closes nothing', r.j.care_ended === 0 && JE2.status === 'open' && open().some((c) => c.journey_id === JE2.journey_id), r.j)
+  T.person_role[0] = { person_id: 'pe', role: 'client', status: 'former', ended_at: '2026-10-07', end_reason: 'deceased' }
+  r = await call({ action: 'sweep' }, null, job)
+  ck('care ended (AxisCare status answered "care ended"): the journey closes with the reason', r.j.care_ended === 1 && JE2.status === 'closed' && /Care ended \(deceased\) on 2026-10-07/.test(JE2.closed_reason) && ev(JE2.journey_id, 'closed').length === 1, [r.j, JE2])
+  ck('...its My Work cards are put away and its First shift launch is finished', !open().some((c) => c.journey_id === JE2.journey_id) && T.client_queue[0].status === 'complete' && /Care ended/.test(T.client_queue[0].exception_reason), [open(), T.client_queue])
+  ck('...the other client (care still going) is untouched', JS2.status === 'open' && open().some((c) => c.journey_id === JS2.journey_id))
+  r = await call({ action: 'sweep' }, null, job); ck('...and it happens once', r.j.care_ended === 0 && ev(JE2.journey_id, 'closed').length === 1)
+  r = await call({ action: 'list', include_active: true })
+  ck('the list carries closed journeys with their reason (for the stage words)', (r.j.journeys || []).some((x) => x.journey_id === JE2.journey_id && x.status === 'closed' && /Care ended/.test(x.closed_reason)), r.j)
   ck('nothing ever texted or emailed (no outside calls but AxisCare reads)', true)
 
   /* ── FIRST SHIFT ON THE INQUIRY (2026-10-07) ── */

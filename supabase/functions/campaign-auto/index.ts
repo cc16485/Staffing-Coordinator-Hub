@@ -6,6 +6,10 @@
 //   monthly    -> open leads in the CC Hub
 //   clients    -> active clients from AxisCare (fallback: converted leads)
 //   caregivers -> the caregiver roster synced from AxisCare
+// FAMILIES ARE NEVER EMAILED BY THE SCHEDULE (2026-10-07 audit, her rule: automation never contacts clients, families or
+// leads by itself). When an email for leads, clients or client contacts is due, the autopilot sends nothing to them: it
+// puts one My Work card on Samantha's list ("ready for you to send") and a person sends it from Campaigns. Only the
+// caregiver audience (staff) is still sent on the schedule.
 // Referral-partner emails stay manual (relationship-timed, not calendar-timed).
 //
 // Safety rails: master switch + per-audience switches live in app_data
@@ -150,7 +154,29 @@ Deno.serve(async (req) => {
     if (!w) return false
     return mmdd >= w[0] && mmdd <= w[1] && !alreadySent(e.key)
   })
-  if (!due.length && !sideMode) return json({ ok: true, due: 0, note: 'nothing due today' })
+  /* families, clients and leads: held for a person (see the header) */
+  const FAMILY_AUDIENCES = ['monthly', 'clients', 'client_contacts']
+  const AUD_WORDS: Record<string, string> = { monthly: 'open leads', clients: 'clients', client_contacts: "clients' family contacts" }
+  // deno-lint-ignore no-explicit-any
+  const held = sideMode ? [] : due.filter((e: any) => FAMILY_AUDIENCES.includes(e.aud))
+  for (let i = due.length - 1; i >= 0; i--) if (FAMILY_AUDIENCES.includes(due[i].aud)) due.splice(i, 1)
+  const heldWords: string[] = []
+  if (held.length) {
+    const items = await getKey('ops_items')
+    const nowIso = new Date().toISOString()
+    for (const e of held) {
+      const id = 'ops_camp_' + String(e.key).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 60) + '_' + year
+      // deno-lint-ignore no-explicit-any
+      if (items.some((x: any) => x && x.id === id)) continue
+      await supabase.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
+        id, kind: 'review', status: 'open', owner: ADMIN, owner_name: 'Samantha', urgency: 'normal', created_at: nowIso, opened_by: 'campaign-auto', source_type: 'campaign',
+        due: new Date(chicago + 'T17:00:00-05:00').toISOString(), title: 'Campaign ready for you to send: "' + e.subj + '"',
+        detail: 'Due now for ' + (AUD_WORDS[e.aud] || e.aud) + '. The autopilot never emails families, clients or leads by itself. Open Campaigns, check it, and press Send (or skip it this year).',
+        link: '#campaigns', campaign_key: e.key, campaign_audience: e.aud } })
+      heldWords.push(`"${e.subj}" → ${AUD_WORDS[e.aud] || e.aud}: waiting for you to send (on your My Work)`)
+    }
+  }
+  if (!due.length && !sideMode) return json({ ok: true, due: 0, held: heldWords.length, note: heldWords.length ? 'family emails held for a person' : 'nothing due today' })
 
   // 3. Audiences
   const dedupe = (arr: { email: string; name: string }[]) => {
@@ -264,7 +290,7 @@ Deno.serve(async (req) => {
     audiences[k] = audiences[k].filter((r) => !dncEmails.has(String(r.email).toLowerCase()))
 
   // 4. Send
-  const summary: string[] = []
+  const summary: string[] = [...heldWords]
   let totalSent = 0
   for (const e of due) {
     if (totalSent >= cap) break
@@ -310,11 +336,11 @@ Deno.serve(async (req) => {
       const contactId = await ghlStaffContact({ token: ghlToken, locationId: ghlLocation }, { channel: 'email', email: ADMIN, firstName: 'Samantha' })
       if (contactId) {
         await ghlSendChecked(supabase, sendH, 'staff-alert', { channel: 'email', contactId, address: ADMIN, who: 'Samantha' }, {
-            subject: 'Campaign autopilot: ' + summary.length + ' email' + (summary.length > 1 ? 's' : '') + ' sent today',
+            subject: 'Campaign autopilot: ' + summary.length + ' email' + (summary.length > 1 ? 's' : '') + ' today',
             html: `<div style="font-family:Arial,sans-serif;font-size:15px;color:#1f2a36;line-height:1.7;max-width:600px"><p>Your campaign autopilot ran today:</p><ul>${summary.map((s) => `<li>${s}</li>`).join('')}</ul><p>Details are in the hub under 🎯 Campaigns → Recent sends. To pause everything, flip the autopilot switch off.</p></div>`,
         })
       }
     } catch { /* summary is best-effort */ }
   }
-  return json({ ok: true, due: due.length, totalSent, summary })
+  return json({ ok: true, due: due.length, held: heldWords.length, totalSent, summary })
 })

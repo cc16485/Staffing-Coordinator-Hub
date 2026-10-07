@@ -352,6 +352,46 @@ async function autoOpenClose(db: Any, dfs: Any[], pp: Any, st: Any) {
   return { opened, closed }
 }
 
+/** CARE ENDED (2026-10-07 audit fix): when a person answered an AxisCare status change "care ended" (client_status_decide
+ *  makes the client role 'former'), the start-of-care journey stops too: it closes with the reason, its My Work cards are
+ *  put away, and its First shift launch is finished so the client's next episode can open one. A journey whose client
+ *  still has an active role is never touched. */
+export function endedPlan(js: Any[], links: Any[], roles: Any[]) {
+  const personOf = new Map(links.map((x: Any) => [String(x.source_id), x.person_id]))
+  const out: Any[] = []
+  for (const j of js) {
+    if (j.is_test || !j.axiscare_client_id || !['open', 'active'].includes(j.status)) continue
+    const pid = personOf.get(String(j.axiscare_client_id)); if (!pid) continue
+    const mine = roles.filter((r: Any) => r.person_id === pid && r.role === 'client')
+    if (!mine.length || mine.some((r: Any) => r.status === 'active')) continue
+    const last = mine.slice().sort((a: Any, b: Any) => String(b.ended_at || '').localeCompare(String(a.ended_at || '')))[0]
+    out.push({ j, why: 'Care ended' + (last?.end_reason ? ' (' + last.end_reason + ')' : '') + (last?.ended_at ? ' on ' + String(last.ended_at).slice(0, 10) : '') })
+  }
+  return out
+}
+async function closeEnded(db: Any, dfs: Any[], pp: Any, st: Any) {
+  const { data: js } = await db.from('client_journey').select('*').in('status', ['open', 'active']).not('axiscare_client_id', 'is', null)
+  const ax = [...new Set((js ?? []).filter((j: Any) => !j.is_test).map((j: Any) => String(j.axiscare_client_id)))]
+  if (!ax.length) return 0
+  const { data: links } = await db.from('person_source_id').select('person_id, source_id').eq('system', 'axiscare').eq('entity_type', 'client').in('source_id', ax)
+  const pids = [...new Set((links ?? []).map((x: Any) => x.person_id))]
+  const { data: roles } = pids.length ? await db.from('person_role').select('person_id, role, status, ended_at, end_reason').in('person_id', pids).eq('role', 'client') : { data: [] }
+  const now = new Date().toISOString(); let n = 0
+  for (const c of endedPlan(js ?? [], links ?? [], roles ?? [])) {
+    await db.from('client_journey').update({ status: 'closed', closed_reason: c.why, updated_at: now }).eq('journey_id', c.j.journey_id)
+    await event(db, c.j.journey_id, null, HUB, 'closed', { care_ended: true }, c.why)
+    if (c.j.launch_id) {
+      const { data: q } = await db.from('client_queue').select('id, status').eq('id', c.j.launch_id).maybeSingle()
+      if (q && q.status !== 'complete') {
+        const { error } = await db.from('client_queue').update({ status: 'complete', completed_at: now, launch_completed_at: now, exception_reason: c.why + ': closed by the client journey' }).eq('id', c.j.launch_id)
+        await event(db, c.j.journey_id, null, HUB, error ? 'launch_failed' : 'launch_completed', error ? { error: String(error.message).slice(0, 300) } : { launch_id: c.j.launch_id, care_ended: true })
+      }
+    }
+    const full = await load(db, { journey_id: c.j.journey_id }); if (full) await refreshCards(db, full.j, R.compute(dfs, full.j, full.steps, ctxFor(pp, st)), pp, st); n++
+  }
+  return n
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200, headers: cors })
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
@@ -371,7 +411,7 @@ Deno.serve(async (req) => {
         await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...it, status: 'done', closed_at: now, closed_by: 'journey', close_note: 'Client journeys were switched off' } }); put++ }
       return json({ ok: true, live: false, note: 'client_journey_live is off: nothing swept', cards_put_away: put })
     }
-    const auto = await autoOpenClose(db, dfs, pp, st)
+    const auto = await autoOpenClose(db, dfs, pp, st), care_ended = await closeEnded(db, dfs, pp, st)
     const { data: js } = await db.from('client_journey').select('*').in('status', ['open', 'active'])
     let n = 0, cards = 0, launches = 0
     for (const j of js ?? []) {
@@ -379,7 +419,7 @@ Deno.serve(async (req) => {
       const { data: steps } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
       const out = await settle(db, j, steps ?? [], dfs, pp, st, j.status === 'active' ? { verify: false } : {}); n++; cards += out.cards.wrote + out.cards.closed; if (out.launch) launches++
     }
-    return json({ ok: true, journeys: n, card_changes: cards, launch_changes: launches, ...auto })
+    return json({ ok: true, journeys: n, card_changes: cards, launch_changes: launches, care_ended, ...auto })
   }
   /* ── THEY SAID YES (Leads intake desk, Stage 3; Samantha 2026-10-06: "move them directly from Leads into the Client
      Journey… carry everything… record the conversion event… land on the first incomplete required step… safely
@@ -476,14 +516,14 @@ Deno.serve(async (req) => {
   if (st.client_journey_live !== true && !isOwner) return json({ error: 'Client journeys are switched off right now.' }, 409)
 
   if (b.action === 'list') {
-    const { data: js } = await db.from('client_journey').select('*').in('status', b.include_active ? ['open', 'active'] : ['open']).limit(500)
+    const { data: js } = await db.from('client_journey').select('*').in('status', b.include_active ? ['open', 'active', 'closed'] : ['open']).limit(1000)
     const ids = (js ?? []).map((j: Any) => j.journey_id)
     const { data: steps } = ids.length ? await db.from('client_journey_step').select('*').in('journey_id', ids) : { data: [] }
     const ctx = ctxFor(pp, st)
     return json({ journeys: (js ?? []).map((j: Any) => {
       const v = R.compute(dfs, j, (steps ?? []).filter((s: Any) => s.journey_id === j.journey_id), ctx)
       return { journey_id: j.journey_id, ref: refOf(j), client_name: j.client_name, payer: j.payer, status: j.status, stage: v.stage, stage_label: v.stageLabel,
-        target_start: j.target_start, assigned_cc: j.assigned_cc, is_test: j.is_test, lead_id: j.lead_id, axiscare_client_id: j.axiscare_client_id, launch_id: j.launch_id ?? null,
+        target_start: j.target_start, assigned_cc: j.assigned_cc, is_test: j.is_test, lead_id: j.lead_id, axiscare_client_id: j.axiscare_client_id, launch_id: j.launch_id ?? null, closed_reason: j.closed_reason ?? null,
         next: v.next ? { key: v.next.key, title: v.next.def.title, status: v.next.status, why: v.next.attention || v.next.why || '', owner: v.next.owner.email } : null, stopped: !!v.stop }
     }) })
   }
