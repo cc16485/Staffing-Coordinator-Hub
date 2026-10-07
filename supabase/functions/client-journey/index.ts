@@ -266,22 +266,36 @@ async function refreshCards(db: Any, j: Any, view: Any, pp: Any, st: Any) {
   const items: Any[] = Array.isArray(row?.data) ? row.data : []
   const prefix = 'ops_jr_' + j.journey_id.replace(/-/g, '').slice(0, 12) + '_'
   const want = new Map<string, Any>(), now = new Date().toISOString(), ref = refOf(j)
+  /* ONE CARD PER FAMILY (clean-up 6.1, 2026-10-07): the journey card is the family's one card, so it also carries the
+     one date the lead has with the family (leadNext: a promised call, a check-back, a follow-up). When that date is due,
+     the card says the family's call first and the step second, and goes to Act Now; the inquiry card closes below. */
+  const lead = j.lead_id && cards.length ? await leadOf(db, j.lead_id) : null
+  const nx = lead ? LR.leadNext(lead, now) : null
   for (const c of cards) {
     const id = cardId(j.journey_id, c.owner)
-    /* Act Now: needs attention, or blocked with the start date within 7 days */
-    const urgent = c.kind === 'attention' || (c.kind === 'blocked' && c.start_in != null && c.start_in <= 7), high = c.kind === 'blocked'
-    want.set(id, { id, kind: 'journey', status: 'open', source_type: 'journey', journey_id: j.journey_id, step_key: c.step_key, card_kind: c.kind,
-      title: cardText(c), about: j.client_name, detail: (c.also?.length ? 'Also ready: ' + c.also.join(' · ') : ''),
+    /* Act Now: needs attention, or blocked with the start date within 7 days, or the family's date is due */
+    const famDue = !!(nx && nx.due && c.owner === lc(j.assigned_cc || c.owner))
+    const urgent = famDue || c.kind === 'attention' || (c.kind === 'blocked' && c.start_in != null && c.start_in <= 7), high = c.kind === 'blocked'
+    const famLine = nx ? LR.nextWords(nx, now) : ''
+    want.set(id, { id, kind: 'journey', status: 'open', source_type: 'journey', journey_id: j.journey_id, step_key: c.step_key, card_kind: famDue ? 'attention' : c.kind,
+      title: famDue ? 'NEEDS ATTENTION: ' + famLine : cardText(c), about: j.client_name,
+      detail: [famDue ? 'Next step: ' + c.title : (famLine ? 'With the family: ' + famLine : ''), (c.also?.length ? 'Also ready: ' + c.also.join(' · ') : '')].filter(Boolean).join(' · '),
       link: '#p/' + ref + '/start/' + c.step_key, owner: c.owner, owner_name: pp.names[c.owner] || c.owner,
       urgency: urgent ? 'urgent' : high ? 'high' : 'normal',
-      due: (urgent ? today() : (c.due || null)) ? new Date((urgent ? today() : c.due) + 'T17:00:00-05:00').toISOString() : null,
-      sub_state: c.kind === 'waiting' ? 'waiting' : null, waiting_on: c.kind === 'waiting' ? (c.waiting_on || 'someone outside') : null, check_back: c.kind === 'waiting' ? c.check_back : null,
+      due: famDue ? nx.at : ((urgent ? today() : (c.due || null)) ? new Date((urgent ? today() : c.due) + 'T17:00:00-05:00').toISOString() : null),
+      lead_next: nx ? { kind: nx.kind, at: nx.at } : null,
+      sub_state: c.kind === 'waiting' && !famDue ? 'waiting' : null, waiting_on: c.kind === 'waiting' && !famDue ? (c.waiting_on || 'someone outside') : null, check_back: c.kind === 'waiting' && !famDue ? c.check_back : null,
       start_in: c.start_in, is_test: !!j.is_test, created_by: 'journey', opened_by: 'journey' })
   }
   let wrote = 0, closed = 0
+  /* the inquiry card (ops_lead_<lead id>) hands over to the journey card: one family, one card */
+  if (j.lead_id && want.size) {
+    const inq = items.find((x) => x?.id === 'ops_lead_' + j.lead_id && x.status === 'open')
+    if (inq) { await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...inq, status: 'done', closed_at: now, closed_by: 'journey', auto_closed_reason: 'The client journey card carries this family now' } }); closed++ }
+  }
   for (const [id, it] of want) {
     const cur = items.find((x) => x?.id === id)
-    const same = cur && cur.status === 'open' && ['title', 'detail', 'link', 'owner', 'urgency', 'due', 'sub_state', 'check_back', 'step_key', 'card_kind'].every((k) => JSON.stringify(cur[k] ?? null) === JSON.stringify(it[k] ?? null))
+    const same = cur && cur.status === 'open' && ['title', 'detail', 'link', 'owner', 'urgency', 'due', 'sub_state', 'check_back', 'step_key', 'card_kind', 'lead_next'].every((k) => JSON.stringify(cur[k] ?? null) === JSON.stringify(it[k] ?? null))
     if (same) continue
     const out = cur ? { ...cur, ...it, updated_at: now } : { ...it, created_at: now }
     if (cur && cur.status !== 'open') { out.status = 'open'; out.reopened_at = now }

@@ -352,6 +352,45 @@
     const mid = Math.floor(xs.length / 2); return xs.length % 2 ? xs[mid] : Math.round((xs[mid - 1] + xs[mid]) / 2);
   }
 
+  /* ── ONE NEXT (clean-up 6.2, 2026-10-07): the one date a lead carries with the family ─────────────────────────────────
+     The record still holds the fields the Hub always had (promised_callback_at, follow_up_due + time + note, waiting.check_back),
+     but there is ONE reader, leadNext(), and ONE writer, setNext(). A promise (they asked us to call at a time) outranks a
+     check-back (we parked them until a date), which outranks a plain follow-up. The board, My Work and the journey card all
+     read leadNext(); nothing else decides what the next date is. */
+  function leadNext(l, nowIso){
+    const now = nowIso || new Date().toISOString(); if(!l) return null;
+    const fin = (o) => { o.due = Date.parse(o.at) <= Date.parse(now); o.late_minutes = o.due ? Math.round((Date.parse(now) - Date.parse(o.at)) / 60000) : 0; o.day = chicago(o.at).ymd; return o; };
+    if(l.promised_callback_at){
+      const p = new Date(l.promised_callback_at).toISOString(), h = lastHumanOut(l);
+      if(!(h && h.at >= p)) return fin({ kind:'promise', at:p, why:'they asked us to call then' });
+    }
+    const w = waiting(l);
+    if(w && w.check_back) return fin({ kind:'check_back', at:chicagoInstant(w.check_back, '09:00'), why:WAITING[w.reason].on, reason:w.reason, note:w.note || '' });
+    const fu = String(l.follow_up_due || '').slice(0, 10);
+    if(isYmd(fu)) return fin({ kind:'follow_up', at:chicagoInstant(fu, isHm(l.follow_up_time) ? l.follow_up_time : '09:00'), timed:isHm(l.follow_up_time), why:String(l.follow_up_note || '').trim() });
+    return null;
+  }
+  /* "Call back: we said Tue 9 am (1 h 10 min late)" · "Check back day: the state" · "Follow up: Did Genworth send the policy?" */
+  function nextWords(nx, nowIso){
+    if(!nx) return ''; const now = nowIso || new Date().toISOString();
+    if(nx.kind === 'promise') return 'Call back: we said ' + whenWords(nx.at, now) + (nx.due && nx.late_minutes > 0 ? ' (' + minsWords(nx.late_minutes) + ' late)' : '');
+    if(nx.kind === 'check_back') return (nx.due ? 'Check back day: ' : 'Check back ' + dayWords(nx.day, chicago(now).ymd) + ': ') + String(nx.why).toLowerCase() + (nx.note ? ' · ' + nx.note : '');
+    return 'Follow up' + (nx.due ? '' : ' ' + dayWords(nx.day, chicago(now).ymd) + (nx.timed ? ' ' + clockWords(nx.at) : '')) + (nx.why ? ': ' + nx.why : '');
+  }
+  /* the one writer. kind: follow_up | promise | check_back | clear. day YYYY-MM-DD, time HH:MM (optional), why (a few words). */
+  function setNext(l, o, nowIso){
+    const now = nowIso || new Date().toISOString(); o = o || {};
+    if(o.kind === 'clear'){ l.follow_up_due = null; l.follow_up_time = null; l.follow_up_note = null; return l; }
+    if(!isYmd(o.day)) throw new Error('setNext needs a day (YYYY-MM-DD)');
+    const time = isHm(o.time) ? o.time : null, why = String(o.why || '').trim() || null;
+    if(o.kind === 'promise'){ l.promised_callback_at = o.day + 'T' + (time || '09:00') + ':00'; l.follow_up_due = o.day; l.follow_up_time = time; if(why) l.follow_up_note = why; return l; }
+    if(o.kind === 'check_back'){ if(!l.waiting || !WAITING[l.waiting.reason]) throw new Error('a check-back needs a waiting record'); l.waiting.check_back = o.day; if(why) l.waiting.note = why; return l; }
+    /* follow_up */
+    l.follow_up_due = o.day; l.follow_up_time = time; l.follow_up_note = why;
+    if(l.waiting && WAITING[l.waiting.reason]) l.waiting.check_back = o.day;   /* a follow-up on a waiting family IS its check-back */
+    return l;
+  }
+
   /* ── the board (Stage 2, her brief 2026-10-06: "who needs me right now, and what exactly do I need to do") ──────────
      One row per family before they say yes, in one of three groups:
        now      Need you now: anything a person has to do now, most urgent first (a rank per reason)
@@ -572,7 +611,7 @@
     waiting, waitingProblems, defaultCheckBack, checkBackDue, lostKey, lostRecord, missing, toForm, compose, migrationPatch,
     responseHours, chicago, chicagoInstant, inResponseHours, nextOpening, clockStart, firstAttemptDue, clockWords, cameInWords, openingWords, callBackWords,
     firstAttemptState, medianFirstAttemptMinutes, PAYER_WORDS, lastEventWords, replyPending, boardRow, boardSort, dayHeader,
-    markAuthorized, authorizationPending, stateDays, DSDS_AMBER_DAYS, DSDS_RED_DAYS, median, ownerNumbers, periodNumbers };
+    markAuthorized, authorizationPending, stateDays, DSDS_AMBER_DAYS, DSDS_RED_DAYS, median, ownerNumbers, periodNumbers, leadNext, nextWords, setNext };
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   root.LeadRules = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
