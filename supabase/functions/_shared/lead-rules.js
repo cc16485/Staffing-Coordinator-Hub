@@ -642,6 +642,43 @@
     return Object.keys(p).length ? p : null;
   }
 
+  /* ── SPEED-TO-LEAD RUNGS (item 2 of her design, her "yes to all" 2026-10-07) ─────────────────────────────────────────
+     5 minutes with no human attempt: the owner (one text, the board is already red). 15: the backup's desk, one text,
+     Take it. 30: one notice to the Owner Escalation seat, and a counted miss against the owner. One per rung per lead,
+     never repeated (stamped on lead.rungs). The clock is the lead-response-hours clock, so nothing runs at night. The
+     server (lead-watch) decides WHO from the duty schedule; this decides WHETHER and WHICH, so the Hub shows the same. */
+  const RUNGS_DEFAULT = { backup_min:15, manager_min:30 };
+  function rungSettings(settings){
+    const r = (settings && settings.lead_rungs) || {};
+    const n = (v, d, lo) => { const x = Math.round(Number(v)); return Number.isFinite(x) && x >= lo && x <= 240 ? x : d; };
+    const backup = n(r.backup_min, RUNGS_DEFAULT.backup_min, FIRST_ATTEMPT_MINUTES + 1);
+    return { backup_min:backup, manager_min:Math.max(n(r.manager_min, RUNGS_DEFAULT.manager_min, backup + 1), backup + 1) };
+  }
+  /* the rungs due now and not yet stamped: [{level:'owner'|'backup'|'manager', minutes}] (empty when the clock is not
+     running, a person has tried, the lead is lost/archived/spam, or the clock started more than a day ago: the 24-hour
+     "lead waiting" alert owns that) */
+  function rungsDue(l, ctx){
+    ctx = ctx || {}; const now = ctx.now || new Date().toISOString(), hours = ctx.hours || responseHours({}), set = rungSettings(ctx.settings);
+    if(!l || l.archived || l.spam || l.is_spam || ['Lost', 'Converted'].indexOf(String(l.status || '')) > -1 || l.said_yes_at) return [];
+    const fa = firstAttemptState(l, hours, now);
+    if(!fa || !fa.running || fa.attempted) return [];
+    if(fa.open_minutes > 24 * 60) return [];
+    const st = l.rungs || {};
+    const out = [];
+    if(fa.open_minutes >= FIRST_ATTEMPT_MINUTES && !st.owner_at) out.push({ level:'owner', minutes:FIRST_ATTEMPT_MINUTES });
+    if(fa.open_minutes >= set.backup_min && !st.backup_at) out.push({ level:'backup', minutes:set.backup_min });
+    if(fa.open_minutes >= set.manager_min && !st.manager_at) out.push({ level:'manager', minutes:set.manager_min });
+    return out;
+  }
+  /* the stamp: who was told, when, and at 30 the miss against the owner (for the owners' team numbers) */
+  function stampRung(l, level, o, nowIso){
+    const at = nowIso || new Date().toISOString(); o = o || {};
+    l.rungs = Object.assign({}, l.rungs || {}, { [level + '_at']:at, [level + '_to']:String(o.to || ''), [level + '_sent']:o.sent !== false });
+    if(level === 'manager' && !l.speed_miss) l.speed_miss = { at, owner:String(o.owner || l.assigned_coordinator || ''), minutes:Number(o.minutes) || RUNGS_DEFAULT.manager_min };
+    return l;
+  }
+  const RUNG_WORDS = { owner:'the owner', backup:'the backup', manager:'Owner Escalation' };
+
   /* ── THE LEAD WORKSPACE (her design's screen 2, built 2026-10-07): what the profile's Overview says before the yes ─────
      Five steps with dates, the one timeline, a script line for the moment the board says we are in, and "can we staff
      it?" from the caregivers' own availability. All pure; the page only draws. Nothing here sends anything. */
@@ -689,6 +726,8 @@
       push(n.at, n.kind === 'dsds_called' ? 'talked' : /^🤝/.test(b) ? 'promise' : 'note', (who(n.by) ? who(n.by) + ': ' : '') + b.replace(/^[^\w(]+\s*/, ''), '');
     });
     if(l.authorization_received_at) push(l.authorization_received_at, 'auto', 'Authorization received from the state', '');
+    const rg = l.rungs || {};
+    ['owner', 'backup', 'manager'].forEach(k => { if(rg[k + '_at']) push(rg[k + '_at'], 'auto', (rg[k + '_sent'] === false ? 'Could not text ' : 'Texted ') + (who(rg[k + '_to']) || RUNG_WORDS[k]) + (k === 'owner' ? ' at 5 minutes, nobody had called' : k === 'backup' ? ': on the backup\'s desk, nobody had called' : ': Owner Escalation told, counted as a miss'), ''); });
     (Array.isArray(l.status_history) ? l.status_history : []).forEach(h => {
       if(!h || !h.at) return;
       if(h.to === 'Lost') push(h.at, 'stage', 'Marked lost' + (who(h.by) ? ' by ' + who(h.by) : ''), h.why || '');
@@ -780,7 +819,7 @@
     responseHours, chicago, chicagoInstant, inResponseHours, nextOpening, clockStart, firstAttemptDue, clockWords, cameInWords, openingWords, callBackWords,
     firstAttemptState, medianFirstAttemptMinutes, PAYER_WORDS, lastEventWords, replyPending, boardRow, boardSort, dayHeader,
     markAuthorized, authorizationPending, stateDays, DSDS_AMBER_DAYS, DSDS_RED_DAYS, median, ownerNumbers, periodNumbers, leadNext, nextWords, setNext, STATUSES, setStatus, statusBeforeLost,
-    STEP_KEYS, steps, timeline, SCRIPT_KEYS, SCRIPT_LABEL, SCRIPT_DEFAULT, scriptFor, timeCats, staffingLook, whenWords };
+    STEP_KEYS, steps, timeline, SCRIPT_KEYS, SCRIPT_LABEL, SCRIPT_DEFAULT, scriptFor, timeCats, staffingLook, whenWords, RUNGS_DEFAULT, RUNG_WORDS, rungSettings, rungsDue, stampRung };
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   root.LeadRules = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
