@@ -14,6 +14,7 @@ import { ghlContactIfAllowed } from '../_shared/optout.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { officeQuietNow } from '../_shared/quiet-hours.ts'
+import { leadResponseHours, leadHoursNow } from '../_shared/lead-hours.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -200,27 +201,33 @@ Deno.serve(async (req) => {
          at 9:02 should hear back at 9:02. lead-followup still owns the nudges
          afterwards; ack_sent_at is what tells it we already said hello, so
          nobody gets greeted twice. */
-      /* HER RULE, twice enforced by this block (both learned from her live
-         test, 2026-09-19):
-         1. QUIET HOURS: nothing lands before 8am or after 6pm Central. An
-            evening inquiry is greeted next morning by the sweep instead
-            (ack_sent_at stays unset, so the sweep knows to say hello).
-         2. THE TYPED NUMBER IS THE ONLY NUMBER: GHL's upsert matches by
+      /* HER RULES for this block:
+         1. ANY HOUR, ONE MESSAGE (2026-10-06, Leads intake desk Stage 1): the acknowledgment goes out the
+            moment the form lands, day or night. After lead response hours it is worded for after hours and
+            names when we open (ops_settings.lead_response_hours through _shared/lead-rules.js, the same
+            file the Hub page runs). It is the ONLY automatic message a family gets outside those hours;
+            the 5-minute first-call clock on the office's card starts when the hours open. This replaces
+            the 2026-09-19 rule that held the greeting until 8am.
+         2. THE TYPED NUMBER IS THE ONLY NUMBER (2026-09-19): GHL's upsert matches by
             email first and then texts that contact's EXISTING phone — which
             once sent a family's greeting to the office line. So the SMS
             goes through a PHONE-keyed contact and the email through an
             EMAIL-keyed one; a text can only ever reach the number they
             typed. */
-      const chiHour = Number(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', hour12: false }))
-      const withinHours = chiHour >= 8 && chiHour < 18
+      const hoursNow = leadHoursNow(await leadResponseHours(supabase))
       /* Step 0 · 0a: the acknowledgment is paused until the universal opt-out check is proven */
       const ackLive = (await inquirySwitches(supabase)).ack
-      if ((phone || email) && withinHours && ackLive) {
+      if ((phone || email) && ackLive) {
         try {
           const firstName = (first || 'there').replace(/\(.*\)/, '').trim() || 'there'
-          const line = `Hi ${firstName}, this is Caring Companions. We have your message and a care `
-            + `coordinator will call you shortly. If you would rather not wait, we are on (417) 234-8494. `
-            + `Reply STOP to opt out.`
+          /* Her words (2026-10-07). {next_open_time} = "tomorrow after 8 am" / "after 8 am" / "Saturday after 8 am". */
+          const line = hoursNow.open
+            ? `Hi ${firstName}, this is Caring Companions. Thank you for reaching out about care. We received your request, `
+              + `and a Care Coordinator will be calling you shortly to learn more about how we can help. `
+              + `If you need to reach us sooner, please call (417) 234-8494. Reply STOP to opt out.`
+            : `Hi ${firstName}, this is Caring Companions. Thank you for reaching out about care. We received your request, `
+              + `and a Care Coordinator will call you ${hoursNow.call_back} to learn more about how we can help. `
+              + `If you need assistance before then, please call us at (417) 234-8494. Reply STOP to opt out.`
           /* 0b-2: each channel through the universal opt-out door (GHL Do Not Disturb, the Hub's opt-out record,
              inquiry do-not-contact, Family Circle stops); the contact is found by that channel's address alone */
           const ghl = { token: ghlToken, locationId: ghlLocation }
@@ -233,12 +240,16 @@ Deno.serve(async (req) => {
             const cidE = await ghlContactIfAllowed(supabase, ghl, 'lead-intake', { channel: 'email', email, phone, firstName })
             if (cidE) {
               const er = await send(cidE, 'Email', {
-                subject: 'We have your message',
+                subject: 'We received your request',
                 html: '<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">'
                   + `<p>Hi ${firstName},</p>`
-                  + '<p>Thank you for reaching out to Caring Companions. Your message is with our care '
-                  + 'coordinators and one of them will call you shortly.</p>'
-                  + '<p>If you would rather talk sooner, call us on <b>(417) 234-8494</b> and we will pick up.</p>'
+                  + (hoursNow.open
+                    ? '<p>Thank you for reaching out about care. We received your request, and a Care Coordinator '
+                      + 'will be calling you shortly to learn more about how we can help.</p>'
+                      + '<p>If you need to reach us sooner, please call <b>(417) 234-8494</b>.</p>'
+                    : '<p>Thank you for reaching out about care. We received your request, and a Care Coordinator '
+                      + `will call you ${hoursNow.call_back} to learn more about how we can help.</p>`
+                      + '<p>If you need assistance before then, please call us at <b>(417) 234-8494</b>.</p>')
                   + '<p>There is nothing you need to do in the meantime.</p>'
                   + '<p style="color:#57606a">Caring Companions In-Home Senior Care<br>(417) 234-8494</p></div>',
               })
@@ -249,6 +260,8 @@ Deno.serve(async (req) => {
             acked = true
             // deno-lint-ignore no-explicit-any
             ;(lead as any).ack_sent_at = new Date().toISOString()
+            // deno-lint-ignore no-explicit-any
+            ;(lead as any).ack_kind = hoursNow.open ? 'open' : 'after_hours'
             /* Automation said hello — recorded as automation, never as contact. */
             if (phone) ldPush(lead, { channel: 'sms', direction: 'out', outcome: 'sent', actor: 'automation', note: 'acknowledgment' })
             if (email) ldPush(lead, { channel: 'email', direction: 'out', outcome: 'sent', actor: 'automation', note: 'acknowledgment' })
