@@ -14,7 +14,18 @@
 //   set_start  the target start date
 //   upload_url / file_url   short-lived links for proof files (private bucket client-journey-files)
 //   list       a summary per open journey (stage, next step, owner) for the Getting ready lists
-//   sweep      (job) stamp when steps became ready, run the Hub's checks (verified steps), refresh My Work cards
+//   sweep      (job) stamp when steps became ready, run the Hub's checks (verified steps), refresh My Work cards,
+//              start journeys for new leads once someone has talked to them, close journeys whose lead was lost or archived
+//   adopt      (job, the move-over 484) start journeys for the named real leads and AxisCare clients, switch on or off
+// The move-over (483/484, Samantha 2026-10-06):
+//   ROUTING: who gets a journey nobody chose is a RULE in Settings (client_journey_routing: payer -> Care Coordinator,
+//            'unknown' while the payer isn't known). Her rule: Medicaid and VA to Angiel, everything else to Krystal.
+//            A journey routed while the payer was unknown moves to the right person once the payer is answered.
+//   BRIDGE:  the rest of the Hub still reads the First shift launch (client_queue): the launch evidence, when care
+//            began, one open episode per client. So when a journey reaches the Team stage with an AxisCare client, it
+//            opens (or picks up) that client's launch through upsert_client_launch, and when the journey becomes Active
+//            it completes that launch. The Hub shows the journey in its place, never both.
+//   While the switch is off, a real journey writes no My Work cards and touches no launch: only TEST journeys do.
 // Every change writes the permanent history (client_journey_event) and refreshes that person's My Work cards: one card per
 // person per owner, the next step even before anything is late. Nothing here texts, emails or calls anyone.
 // =============================================================================
@@ -61,6 +72,71 @@ async function people(db: Any): Promise<{ owners: string[]; staffing: string[]; 
   const names: Record<string, string> = {}; Object.values(byId).forEach((p: Any) => { names[lc(p.primary_email)] = p.full_name || p.primary_email })
   const office = new Set<string>([...of('owner_admin'), ...of('care_coordinator'), ...of('staffing_coordinator')])
   return { owners: of('owner_admin'), staffing: of('staffing_coordinator'), cc: of('care_coordinator'), names, office }
+}
+/** the routing RULE: an explicit choice, else the lead's own coordinator, else the payer route in Settings, else the
+ *  default in Settings, else whoever opened it. Every person named must hold an office role, or the next rule decides. */
+export function routeCc(pp: Any, st: Any, payer: string | null, lead: Any, asked: string, opener: string): { cc: string; how: string } {
+  const ok = (e: unknown) => { const x = lc(e); return x && pp.office.has(x) ? x : '' }
+  if (ok(asked)) return { cc: ok(asked), how: 'chosen' }
+  const lc0 = lc(lead?.assigned_coordinator)
+  if (lc0) {
+    const hit = [...pp.office].find((e: string) => e === lc0 || lc(pp.names[e]) === lc0 || lc(pp.names[e]).split(' ')[0] === lc0.split(' ')[0] || e.split('@')[0] === lc0.split('@')[0])
+    if (hit) return { cc: hit, how: 'lead coordinator' }
+  }
+  const routes = st?.client_journey_routing && typeof st.client_journey_routing === 'object' ? st.client_journey_routing : {}
+  const r = ok(routes[payer || 'unknown'])
+  if (r) return { cc: r, how: payer ? 'routing' : 'routing (payer not known yet)' }
+  if (ok(st?.client_journey_default_cc)) return { cc: ok(st.client_journey_default_cc), how: 'default in Settings' }
+  return { cc: lc(opener) || pp.owners[0] || '', how: 'opened by' }
+}
+const nameOf = (lead: Any) => String([lead?.client_first_name, lead?.client_last_name].filter(Boolean).join(' ') || [lead?.first_name, lead?.last_name].filter(Boolean).join(' ') || '').trim()
+const live = (st: Any) => st?.client_journey_live === true
+/** start one journey (the Hub's Start button, the sweep for a new lead, and the move-over all come through here) */
+async function openOne(db: Any, dfs: Any[], pp: Any, st: Any, who: Any, o: { lead: Any; leadId: string | null; axId: string | null; payer?: unknown; name?: string; asked?: string; is_test?: boolean; how?: string }) {
+  const pay = payerFrom(o.payer ?? o.lead?.funding_source)
+  if (pay === 'cds') return { outcome: 'cds', error: 'CDS is its own program and does not use this journey.', code: 422 }
+  const name = String(o.name || nameOf(o.lead)).trim()
+  if (!name) return { outcome: 'no_name', error: 'The client needs a name first.', code: 400 }
+  const r = routeCc(pp, st, pay, o.lead, o.asked || '', who.email)
+  const row = { lead_id: o.leadId, axiscare_client_id: o.axId || (o.lead && /^\d+$/.test(String(o.lead.axiscare_client_id || '').trim()) ? String(o.lead.axiscare_client_id).trim() : null),
+    client_name: name, payer: pay, assigned_cc: r.cc, assigned_how: r.how, created_by: who.email, is_test: o.is_test === true }
+  const { data: j, error } = await db.from('client_journey').insert(row).select('*').single()
+  if (error) return { outcome: 'error', error: 'Could not start the journey: ' + error.message, code: 500 }
+  await event(db, j.journey_id, null, who, 'created', { assigned_cc: r.cc, payer: pay, how: r.how, started: o.how || 'by hand' })
+  if (pay) {
+    await putStep(db, j.journey_id, 'intake.payer', { state: 'complete', answer: { payer: pay }, evidence: { note: 'From the inquiry' }, completed_by: who.email, completed_by_name: who.name, completed_at: new Date().toISOString() })
+    await event(db, j.journey_id, 'intake.payer', who, 'completed', { answer: { payer: pay }, from: 'the inquiry' })
+  }
+  const fresh = await load(db, { journey_id: j.journey_id })
+  const out = await settle(db, fresh!.j, fresh!.steps, dfs, pp, st)
+  return { outcome: 'created', journey_id: j.journey_id, ref: refOf(j), stage: out.view.stage, assigned_cc: r.cc, how: r.how, code: 200 }
+}
+const HUB = { email: 'hub', name: 'The Hub' }
+/* ── the bridge to the First shift launch (client_queue) ── */
+export const TEAM_AT = 'team'
+async function bridge(db: Any, j: Any, view: Any, st: Any): Promise<string | null> {
+  if (j.is_test || !live(st) || !j.axiscare_client_id) return null
+  const now = new Date().toISOString()
+  const at = R.STAGES.indexOf(view.stage), team = R.STAGES.indexOf(TEAM_AT)
+  if (!j.launch_id && j.status === 'open' && at >= team) {
+    const { data, error } = await db.rpc('upsert_client_launch', { p: { client_name: j.client_name, payer: j.payer, axiscare_client_id: j.axiscare_client_id,
+      start_date: j.target_start || null, source: 'journey', created_by: 'client journey' } })
+    if (error) { await event(db, j.journey_id, null, HUB, 'launch_failed', { error: String(error.message).slice(0, 300) }); return 'failed' }
+    let id = data?.id ?? null
+    if (!id) { const { data: q } = await db.from('client_queue').select('id').eq('axiscare_client_id', j.axiscare_client_id).neq('status', 'complete').limit(1); id = q?.[0]?.id ?? null }
+    if (id) { await db.from('client_journey').update({ launch_id: id, updated_at: now }).eq('journey_id', j.journey_id); j.launch_id = id
+      await event(db, j.journey_id, null, HUB, 'launch_linked', { launch_id: id, action: data?.action ?? null, episode_n: data?.episode_n ?? null }); return 'linked' }
+    return null
+  }
+  if (j.launch_id && j.status === 'active') {
+    const { data: q } = await db.from('client_queue').select('id, status').eq('id', j.launch_id).maybeSingle()
+    if (q && q.status !== 'complete') {
+      const { error } = await db.from('client_queue').update({ status: 'complete', completed_at: now, launch_completed_at: now }).eq('id', j.launch_id)
+      await event(db, j.journey_id, null, HUB, error ? 'launch_failed' : 'launch_completed', error ? { error: String(error.message).slice(0, 300) } : { launch_id: j.launch_id })
+      return error ? 'failed' : 'completed'
+    }
+  }
+  return null
 }
 async function settings(db: Any): Promise<Any> {
   const { data } = await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
@@ -160,8 +236,9 @@ async function settle(db: Any, j: Any, steps: Any[], dfs: Any[], pp: Any, st: An
     await db.from('client_journey').update({ status: 'active', updated_at: now }).eq('journey_id', j.journey_id); j.status = 'active'
     await event(db, j.journey_id, null, { email: 'hub', name: 'The Hub' }, 'became_active', {})
   }
+  const launch = await bridge(db, j, view, st)
   const cards = await refreshCards(db, j, view, pp, st)
-  return { view, cards, changed }
+  return { view, cards, changed, launch }
 }
 const stripRow = (s: Any) => { const o = { ...s }; delete o.journey_id; delete o.step_key; delete o.version; delete o.updated_at; return o }
 
@@ -178,7 +255,8 @@ export function cardText(c: Any) {
 }
 async function refreshCards(db: Any, j: Any, view: Any, pp: Any, st: Any) {
   const ctx = ctxFor(pp, st)
-  let cards = j.status === 'open' ? R.cardsFor(j, view, ctx) : []
+  /* switched off: a real journey shows nobody anything yet (TEST journeys still do, for the owner trying it) */
+  let cards = j.status === 'open' && (j.is_test || live(st)) ? R.cardsFor(j, view, ctx) : []
   /* nobody assigned: the owners get it, saying so */
   cards = cards.flatMap((c: Any) => c.owner ? [c] : pp.owners.map((o: string) => ({ ...c, owner: o, why: 'Nobody is assigned: ' + (c.why || 'assign a Care Coordinator') })))
   const { data: row } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
@@ -212,6 +290,42 @@ async function refreshCards(db: Any, j: Any, view: Any, pp: Any, st: Any) {
   return { open: want.size, wrote, closed }
 }
 
+async function allLeads(db: Any): Promise<Any[]> {
+  const { data } = await db.from('app_data').select('data').eq('key', 'leads').maybeSingle()
+  return (Array.isArray(data?.data) ? data.data : []).filter((l: Any) => l && l.id != null)
+}
+/** NEW LEADS (after the move-over): a journey starts once someone has talked to them (status past New; a brand-new lead is
+ *  the New lead card's job). Leads that already existed at the move-over never start by themselves: the move-over chose
+ *  those, and anyone else gets the Start button. A lead marked Lost or archived closes its open journey. */
+export function autoPlan(leads: Any[], js: Any[], cutover: Any) {
+  const pre = new Set((Array.isArray(cutover?.lead_ids) ? cutover.lead_ids : []).map(String))
+  const byLead = new Map(js.filter((j: Any) => j.lead_id).map((j: Any) => [String(j.lead_id), j]))
+  const open: Any[] = [], close: Any[] = []
+  if (!cutover?.at) return { open, close }
+  for (const l of leads) {
+    const id = String(l.id), j = byLead.get(id) as Any
+    const gone = l.archived || l.status === 'Lost'
+    if (j) { if (gone && j.status === 'open' && !j.is_test) close.push({ j, why: l.archived ? 'The lead was archived' : 'The lead was marked Lost' }); continue }
+    if (gone || l.is_test || pre.has(id) || !l.status || l.status === 'New') continue
+    if (payerFrom(l.funding_source) === 'cds' || !nameOf(l)) continue
+    open.push(l)
+  }
+  return { open: open.slice(0, 10), close }
+}
+async function autoOpenClose(db: Any, dfs: Any[], pp: Any, st: Any) {
+  const [{ data: cut }, leads, { data: js }] = await Promise.all([db.from('app_data').select('data').eq('key', 'client_journey_cutover').maybeSingle(), allLeads(db),
+    db.from('client_journey').select('journey_id, lead_id, status, is_test')])
+  const plan = autoPlan(leads, js ?? [], cut?.data), now = new Date().toISOString()
+  let opened = 0, closed = 0
+  for (const l of plan.open) { const r = await openOne(db, dfs, pp, st, HUB, { lead: l, leadId: String(l.id), axId: null, how: 'the lead was contacted' }); if (r.outcome === 'created') opened++ }
+  for (const c of plan.close) {
+    await db.from('client_journey').update({ status: 'closed', closed_reason: c.why, updated_at: now }).eq('journey_id', c.j.journey_id)
+    await event(db, c.j.journey_id, null, HUB, 'closed', {}, c.why)
+    const full = await load(db, { journey_id: c.j.journey_id }); if (full) await refreshCards(db, full.j, R.compute(dfs, full.j, full.steps, ctxFor(pp, st)), pp, st); closed++
+  }
+  return { opened, closed }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200, headers: cors })
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
@@ -222,14 +336,39 @@ Deno.serve(async (req) => {
   if (b.action === 'sweep') {
     if (!(await jobCaller(req))) return json({ error: 'not allowed' }, 403)
     const [dfs, pp, st] = await Promise.all([defs(db), people(db), settings(db)])
-    if (st.client_journey_live !== true) return json({ ok: true, live: false, note: 'client_journey_live is off: nothing swept' })
-    const { data: js } = await db.from('client_journey').select('*').eq('status', 'open')
-    let n = 0, cards = 0
-    for (const j of js ?? []) {
-      const { data: steps } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
-      const out = await settle(db, j, steps ?? [], dfs, pp, st); n++; cards += out.cards.wrote + out.cards.closed
+    if (st.client_journey_live !== true) {
+      /* switched off: real journeys show nobody anything, so their open My Work cards are put away (they come back on the
+         first sweep after it is turned on again). TEST journeys keep theirs. */
+      const { data: row } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle(), now = new Date().toISOString()
+      let put = 0
+      for (const it of (Array.isArray(row?.data) ? row.data : []).filter((x: Any) => x?.kind === 'journey' && x.status === 'open' && !x.is_test)) {
+        await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...it, status: 'done', closed_at: now, closed_by: 'journey', close_note: 'Client journeys were switched off' } }); put++ }
+      return json({ ok: true, live: false, note: 'client_journey_live is off: nothing swept', cards_put_away: put })
     }
-    return json({ ok: true, journeys: n, card_changes: cards })
+    const auto = await autoOpenClose(db, dfs, pp, st)
+    const { data: js } = await db.from('client_journey').select('*').in('status', ['open', 'active'])
+    let n = 0, cards = 0, launches = 0
+    for (const j of js ?? []) {
+      if (j.status === 'active' && !j.launch_id) continue
+      const { data: steps } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
+      const out = await settle(db, j, steps ?? [], dfs, pp, st, j.status === 'active' ? { verify: false } : {}); n++; cards += out.cards.wrote + out.cards.closed; if (out.launch) launches++
+    }
+    return json({ ok: true, journeys: n, card_changes: cards, launch_changes: launches, ...auto })
+  }
+  if (b.action === 'adopt') {
+    if (!(await jobCaller(req))) return json({ error: 'not allowed' }, 403)
+    const [dfs, pp, st] = await Promise.all([defs(db), people(db), settings(db)])
+    const leads = await allLeads(db), out: Any[] = []
+    for (const x of Array.isArray(b.people) ? b.people.slice(0, 50) : []) {
+      const leadId = x.lead_id != null ? String(x.lead_id) : null, axId = x.axiscare_client_id ? String(x.axiscare_client_id) : null
+      const had = await load(db, leadId ? { lead_id: leadId } : { axiscare_client_id: axId })
+      if (had) { out.push({ ...x, outcome: 'exists', journey_id: had.j.journey_id }); continue }
+      const lead = leadId ? leads.find((l: Any) => String(l?.id) === leadId) ?? null : null
+      if (leadId && !lead) { out.push({ ...x, outcome: 'no_such_lead' }); continue }
+      const r = await openOne(db, dfs, pp, st, { email: 'hub', name: 'The move-over (484)' }, { lead, leadId, axId, payer: x.payer, name: x.client_name, how: 'the move-over' })
+      out.push({ ...x, ...r })
+    }
+    return json({ ok: true, adopted: out })
   }
 
   const who = await requireStaff(db, req, OFFICE_ROLES)
@@ -246,7 +385,7 @@ Deno.serve(async (req) => {
     return json({ journeys: (js ?? []).map((j: Any) => {
       const v = R.compute(dfs, j, (steps ?? []).filter((s: Any) => s.journey_id === j.journey_id), ctx)
       return { journey_id: j.journey_id, ref: refOf(j), client_name: j.client_name, payer: j.payer, status: j.status, stage: v.stage, stage_label: v.stageLabel,
-        target_start: j.target_start, assigned_cc: j.assigned_cc, is_test: j.is_test,
+        target_start: j.target_start, assigned_cc: j.assigned_cc, is_test: j.is_test, lead_id: j.lead_id, axiscare_client_id: j.axiscare_client_id, launch_id: j.launch_id ?? null,
         next: v.next ? { key: v.next.key, title: v.next.def.title, status: v.next.status, why: v.next.attention || v.next.why || '', owner: v.next.owner.email } : null, stopped: !!v.stop }
     }) })
   }
@@ -266,26 +405,8 @@ Deno.serve(async (req) => {
     if (had) return json({ outcome: 'exists', journey_id: had.j.journey_id })
     if (st.client_journey_live !== true && b.is_test !== true) return json({ outcome: 'off', error: 'Client journeys are switched off: only TEST journeys can be started.' }, 409)
     const lead = await leadOf(db, leadId)
-    const pay = payerFrom(b.payer ?? lead?.funding_source)
-    if (pay === 'cds') return json({ outcome: 'cds', error: 'CDS is its own program and does not use this journey.' }, 422)
-    const name = String(b.client_name || [lead?.client_first_name, lead?.client_last_name].filter(Boolean).join(' ') || [lead?.first_name, lead?.last_name].filter(Boolean).join(' ') || '').trim()
-    if (!name) return json({ error: 'The client needs a name first.' }, 400)
-    /* the routing RULE picks the assigned Care Coordinator (not the journey): an explicit choice, else the lead's assigned
-       coordinator if they hold an office role, else the default in Settings, else whoever opened it */
-    const asked = lc(b.assigned_cc), leadCc = Object.keys(pp.names).find((e) => lc(pp.names[e]) === lc(lead?.assigned_coordinator) || e === lc(lead?.assigned_coordinator))
-    const cc = (asked && pp.office.has(asked) && asked) || (leadCc && pp.office.has(leadCc) && leadCc) || (lc(st.client_journey_default_cc) && pp.office.has(lc(st.client_journey_default_cc)) && lc(st.client_journey_default_cc)) || who.email
-    const row = { lead_id: leadId, axiscare_client_id: axId || (lead && /^\d+$/.test(String(lead.axiscare_client_id || '')) ? String(lead.axiscare_client_id) : null),
-      client_name: name, payer: pay, assigned_cc: cc, created_by: who.email, is_test: b.is_test === true }
-    const { data: j, error } = await db.from('client_journey').insert(row).select('*').single()
-    if (error) return json({ error: 'Could not start the journey: ' + error.message }, 500)
-    await event(db, j.journey_id, null, who, 'created', { assigned_cc: cc, payer: pay, how: asked ? 'chosen' : leadCc ? 'lead coordinator' : st.client_journey_default_cc ? 'default in Settings' : 'opened by' })
-    if (pay) {
-      await putStep(db, j.journey_id, 'intake.payer', { state: 'complete', answer: { payer: pay }, evidence: { note: 'From the inquiry' }, completed_by: who.email, completed_by_name: who.name, completed_at: new Date().toISOString() })
-      await event(db, j.journey_id, 'intake.payer', who, 'completed', { answer: { payer: pay }, from: 'the inquiry' })
-    }
-    const fresh = await load(db, { journey_id: j.journey_id })
-    const out = await settle(db, fresh!.j, fresh!.steps, dfs, pp, st)
-    return json({ outcome: 'created', journey_id: j.journey_id, ref: refOf(j), stage: out.view.stage })
+    const r = await openOne(db, dfs, pp, st, who, { lead, leadId, axId, payer: b.payer, name: b.client_name, asked: lc(b.assigned_cc), is_test: b.is_test === true })
+    return json(r, r.code)
   }
 
   const got = await load(db, b)
@@ -296,7 +417,7 @@ Deno.serve(async (req) => {
   if (b.action === 'assign_cc') {
     const to = lc(b.email); if (!pp.office.has(to)) return json({ error: 'Pick someone with an office role.' }, 400)
     if (to === lc(j.assigned_cc)) return json({ outcome: 'same' })
-    await db.from('client_journey').update({ assigned_cc: to, updated_at: now }).eq('journey_id', j.journey_id)
+    await db.from('client_journey').update({ assigned_cc: to, assigned_how: 'chosen', updated_at: now }).eq('journey_id', j.journey_id)
     await event(db, j.journey_id, null, who, 'reassigned_cc', { from: j.assigned_cc, to }, b.reason || null)
     j.assigned_cc = to
     const out = await settle(db, j, got.steps, dfs, pp, st, { verify: false })
@@ -348,7 +469,15 @@ Deno.serve(async (req) => {
     await event(db, j.journey_id, key, who, b.manual_reason ? 'confirmed_by_hand' : 'completed', { answer, files, note: b.note || null }, b.manual_reason || null)
     const oa = row.def.on_answer || {}
     if (oa.set_payer && answer[oa.set_payer]) { const p = PAYERS.includes(answer[oa.set_payer]) ? answer[oa.set_payer] : null
-      if (p) { await db.from('client_journey').update({ payer: p, payer_other: p === 'other' ? String(answer.other_name || '').slice(0, 200) : null, updated_at: now }).eq('journey_id', j.journey_id); j.payer = p } }
+      if (p) { await db.from('client_journey').update({ payer: p, payer_other: p === 'other' ? String(answer.other_name || '').slice(0, 200) : null, updated_at: now }).eq('journey_id', j.journey_id); j.payer = p
+        /* routed before anyone knew the payer: now the payer's route decides (a person's own choice is never overridden) */
+        if (String(j.assigned_how || '').startsWith('routing')) {
+          const r = routeCc(pp, st, p, null, '', who.email)
+          if (r.how === 'routing' && r.cc !== lc(j.assigned_cc)) {
+            await db.from('client_journey').update({ assigned_cc: r.cc, assigned_how: 'routing', updated_at: now }).eq('journey_id', j.journey_id)
+            await event(db, j.journey_id, null, HUB, 'reassigned_cc', { from: j.assigned_cc, to: r.cc, how: 'routing by payer' }); j.assigned_cc = r.cc; j.assigned_how = 'routing'
+          }
+        } } }
     if (oa.set_target_start && /^\d{4}-\d{2}-\d{2}$/.test(String(answer[oa.set_target_start] || ''))) { await db.from('client_journey').update({ target_start: answer[oa.set_target_start], updated_at: now }).eq('journey_id', j.journey_id); j.target_start = answer[oa.set_target_start] }
   } else if (op === 'wait') {
     const cb = String(b.check_back || '')

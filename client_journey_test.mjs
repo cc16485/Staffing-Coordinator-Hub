@@ -15,10 +15,11 @@ const reset = (live = true) => { FILES = new Set(); AX = { clients: { '296': tru
       .map(([person_id, full_name, primary_email]) => ({ person_id, full_name, primary_email, active: true })),
     entity_memberships: ['p-kr', 'p-an', 'p-sam', 'p-sal'].map((person_id) => ({ person_id, entity: 'cc_ihs', active: true, ended_at: null })),
     staff_roles: [['p-kr', 'care_coordinator'], ['p-an', 'care_coordinator'], ['p-sam', 'owner_admin'], ['p-sal', 'staffing_coordinator']].map(([person_id, role]) => ({ person_id, entity: 'cc_ihs', role })) } }
+const R_add = (n) => new Date(Date.now() + n * 864e5).toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
 const clone = (x) => JSON.parse(JSON.stringify(x))
 function q(t) {
   const st = { f: [], ins: [], op: 'select', patch: null, row: null, single: false }
-  const match = (r) => st.f.every(([k, v, how]) => how === 'in' ? v.includes(r[k]) : r[k] === v)
+  const match = (r) => st.f.every(([k, v, how]) => how === 'in' ? v.includes(r[k]) : how === 'neq' ? r[k] !== v : String(r[k]) === String(v))
   const run = () => {
     T[t] = T[t] || []
     if (st.op === 'insert') { const rows = (Array.isArray(st.row) ? st.row : [st.row]).map((r) => ({ ...r }))
@@ -36,13 +37,18 @@ function q(t) {
     if (st.order) rows = rows.slice().sort((a, b) => (st.order.asc ? 1 : -1) * String(a[st.order.k]).localeCompare(String(b[st.order.k])))
     return { data: st.single ? (rows[0] ? clone(rows[0]) : null) : clone(rows), error: null }
   }
-  const b = { select() { return b }, eq(k, v) { st.f.push([k, v]); return b }, in(k, v) { st.f.push([k, v, 'in']); return b }, order(k, o) { st.order = { k, asc: o?.ascending !== false }; return b }, limit() { return b },
+  const b = { select() { return b }, eq(k, v) { st.f.push([k, v]); return b }, neq(k, v) { st.f.push([k, v, 'neq']); return b }, in(k, v) { st.f.push([k, v, 'in']); return b }, order(k, o) { st.order = { k, asc: o?.ascending !== false }; return b }, limit() { return b },
     insert(row) { st.op = 'insert'; st.row = row; return b }, upsert(row) { st.op = 'upsert'; st.row = row; return b }, update(p) { st.op = 'update'; st.patch = p; return b },
     single() { st.single = true; return Promise.resolve(run()) }, maybeSingle() { st.single = true; return Promise.resolve(run()) }, then(ok, ko) { return Promise.resolve(run()).then(ok, ko) } }
   return b
 }
 globalThis.__db = { from: q,
-  rpc: async (fn, a) => { if (fn === 'upsert_app_data_item') { const row = T.app_data.find((r) => r.key === a.target_key); const i = row.data.findIndex((x) => x.id === a.item.id); if (i >= 0) row.data[i] = clone(a.item); else row.data.push(clone(a.item)) } return { data: null, error: null } },
+  rpc: async (fn, a) => {
+    if (fn === 'upsert_client_launch') { T.client_queue = T.client_queue || []; const o = T.client_queue.find((x) => x.axiscare_client_id === a.p.axiscare_client_id && x.status !== 'complete')
+      if (o) return { data: { id: o.id, action: 'exists', episode_n: o.episode_n }, error: null }
+      const n = T.client_queue.filter((x) => x.axiscare_client_id === a.p.axiscare_client_id).length + 1, row = { id: 100 + T.client_queue.length, ...a.p, status: 'open', episode_n: n }
+      T.client_queue.push(row); return { data: { id: row.id, action: 'created', episode_n: n }, error: null } }
+    if (fn === 'upsert_app_data_item') { const row = T.app_data.find((r) => r.key === a.target_key); const i = row.data.findIndex((x) => x.id === a.item.id); if (i >= 0) row.data[i] = clone(a.item); else row.data.push(clone(a.item)) } return { data: null, error: null } },
   storage: { from: () => ({ createSignedUploadUrl: async (p) => ({ data: { token: 't', signedUrl: 'https://up/' + p }, error: null }), createSignedUrl: async (p) => ({ data: { signedUrl: 'https://view/' + p }, error: null }),
     list: async (dir, o) => ({ data: [...FILES].filter((f) => f.startsWith(dir + '/')).map((f) => ({ name: f.slice(dir.length + 1) })).filter((x) => !o?.search || x.name === o.search), error: null }) }) },
   auth: { getUser: async (jwt) => ({ kr: 'u-kr', an: 'u-an', sam: 'u-sam', sal: 'u-sal' }[jwt] ? { data: { user: { id: { kr: 'u-kr', an: 'u-an', sam: 'u-sam', sal: 'u-sal' }[jwt], email: { kr: 'krystal@mo-care.com', an: 'angie@mo-care.com', sam: 'sam@mo-care.com', sal: 'sally@mo-care.com' }[jwt], app_metadata: {} } }, error: null } : { data: { user: null }, error: { message: 'bad' } }) } }
@@ -138,10 +144,88 @@ try {
   r = await call({ action: 'open', lead_id: 'L1' }, 'sam'); ck('...an owner can\'t start a real journey while off', r.j.outcome === 'off' && !T.client_journey.length)
   r = await call({ action: 'open', lead_id: 'L1', is_test: true }, 'sam'); ck('...but can start a TEST journey to try it', r.j.outcome === 'created' && T.client_journey[0].is_test === true)
   r = await call({ action: 'sweep' }, null, { 'x-cron-secret': ENV.HUB_JOB_SECRET }); ck('...and the sweep does nothing while off', r.j.live === false)
+
+  // ── the move-over (483/484) ──
+  const job = { 'x-cron-secret': ENV.HUB_JOB_SECRET }
+  const ROUTES = { medicaid: 'angie@mo-care.com', va: 'angie@mo-care.com', private: 'krystal@mo-care.com', ltc: 'krystal@mo-care.com', other: 'krystal@mo-care.com', unknown: 'krystal@mo-care.com' }
+  const setOps = (o) => Object.assign(T.app_data.find((r) => r.key === 'ops_settings').data, o)
+  const leadsRow = () => T.app_data.find((r) => r.key === 'leads').data
+  reset(); setOps({ client_journey_routing: ROUTES })
+  leadsRow().push({ id: 'L4', client_first_name: 'Val', client_last_name: 'Vet', funding_source: 'VA', status: 'Contacted' }, { id: 'L5', client_first_name: 'Nan', client_last_name: 'Known', status: 'Contacted' },
+    { id: 'L6', client_first_name: 'Kim', client_last_name: 'Kry', funding_source: 'private', assigned_coordinator: 'Krystal', status: 'New' })
+  r = await call({ action: 'open', lead_id: 'L4' }); let JV = T.client_journey.find((j) => j.lead_id === 'L4')
+  ck('routing: nobody assigned, VA goes to Angie by the payer route', JV.assigned_cc === 'angie@mo-care.com' && JV.assigned_how === 'routing', JV)
+  r = await call({ action: 'open', lead_id: 'L6' }); let JK = T.client_journey.find((j) => j.lead_id === 'L6')
+  ck('routing: a lead whose coordinator is written as a first name ("Krystal") keeps that coordinator', JK.assigned_cc === 'krystal@mo-care.com' && JK.assigned_how === 'lead coordinator', JK)
+  r = await call({ action: 'open', lead_id: 'L5' }); let JN = T.client_journey.find((j) => j.lead_id === 'L5')
+  ck('routing: payer not known yet goes to the unknown route (Krystal)', JN.assigned_cc === 'krystal@mo-care.com' && /payer not known/.test(JN.assigned_how) && step(JN.journey_id, 'intake.payer').state !== 'complete', JN)
+  r = await call({ action: 'apply', journey_id: JN.journey_id, step_key: 'intake.payer', op: 'complete', answer: { payer: 'medicaid' } }, 'kr')
+  JN = T.client_journey.find((j) => j.lead_id === 'L5')
+  ck('...once the payer is answered (Medicaid) it moves to Angie, and the history says why', JN.assigned_cc === 'angie@mo-care.com' && ev(JN.journey_id, 'reassigned_cc').some((e) => e.detail.how === 'routing by payer'), [JN, ev(JN.journey_id)])
+  ck('...Krystal\'s card closes, Angie\'s opens', !open('krystal@mo-care.com').some((c) => c.journey_id === JN.journey_id) && open('angie@mo-care.com').some((c) => c.journey_id === JN.journey_id), open())
+  r = await call({ action: 'assign_cc', journey_id: JV.journey_id, email: 'krystal@mo-care.com' })
+  r = await call({ action: 'apply', journey_id: JV.journey_id, step_key: 'va.referral', op: 'wait', waiting_on: 'VA', check_back: R_add(1) })
+  ck('a person\'s own choice is never re-routed', T.client_journey.find((j) => j.lead_id === 'L4').assigned_cc === 'krystal@mo-care.com' && T.client_journey.find((j) => j.lead_id === 'L4').assigned_how === 'chosen')
+  setOps({ client_journey_routing: { ...ROUTES, medicaid: 'nobody@else.com' } }); r = await call({ action: 'open', lead_id: 'L1' }, 'sam')
+  ck('a route to someone without an office role is skipped (the lead coordinator or next rule decides)', T.client_journey.find((j) => j.lead_id === 'L1').assigned_cc === 'angie@mo-care.com')
+
+  // adopt: the move-over starts the chosen real people, even while switched off, and shows nobody anything yet
+  reset(false); setOps({ client_journey_routing: ROUTES })
+  r = await call({ action: 'adopt', people: [{ lead_id: 'L2' }] }); ck('adopt: a page caller is refused (job secret or owner key only)', r.status === 403)
+  r = await call({ action: 'adopt', people: [{ lead_id: 'L2' }, { axiscare_client_id: '296', client_name: 'Edward Anderson' }, { lead_id: 'L3' }, { lead_id: 'NOPE' }] }, null, job)
+  const ad = r.j.adopted || []
+  ck('adopt: Pat (private) and Ed (AxisCare only) start; CDS refused; a missing lead says so', ad[0]?.outcome === 'created' && ad[1]?.outcome === 'created' && ad[2]?.outcome === 'cds' && ad[3]?.outcome === 'no_such_lead' && T.client_journey.length === 2, ad)
+  const JE = T.client_journey.find((j) => j.axiscare_client_id === '296')
+  ck('...Ed: payer unknown, routed to Krystal, AxisCare client verified by reading it back', JE.assigned_cc === 'krystal@mo-care.com' && step(JE.journey_id, 'intake.payer').state !== 'complete', [JE, T.client_journey_step.filter((x) => x.journey_id === JE.journey_id).map((x) => x.step_key + ':' + x.state)])
+  ck('...switched off: no My Work cards for real journeys yet', open().length === 0, open())
+  r = await call({ action: 'adopt', people: [{ lead_id: 'L2' }] }, null, job); ck('adopt again: never a second journey', r.j.adopted[0].outcome === 'exists' && T.client_journey.length === 2)
+  setOps({ client_journey_live: true }); r = await call({ action: 'sweep' }, null, job)
+  ck('switch on: the next sweep writes their cards (Pat to Krystal, Ed to Krystal)', open('krystal@mo-care.com').length === 2, open())
+  setOps({ client_journey_live: false }); r = await call({ action: 'sweep' }, null, job)
+  ck('switch off again: the sweep puts their cards away', r.j.cards_put_away === 2 && open().length === 0, [r.j, open()])
+  setOps({ client_journey_live: true }); r = await call({ action: 'sweep' }, null, job)
+  ck('...and on again: they come back', open('krystal@mo-care.com').length === 2, open())
+
+  // new leads after the move-over: start once contacted; old ones never by themselves; lost/archived close
+  reset(); setOps({ client_journey_routing: ROUTES })
+  T.app_data.push({ key: 'client_journey_cutover', data: { at: '2026-10-07T00:00:00Z', lead_ids: ['L1', 'L2', 'L3'] } })
+  leadsRow().forEach((l) => { l.status = 'Contacted' })
+  leadsRow().push({ id: 'N1', client_first_name: 'New', client_last_name: 'Uncalled', funding_source: 'private', status: 'New' }, { id: 'N2', client_first_name: 'Now', client_last_name: 'Talked', funding_source: 'medicaid', status: 'Contacted' },
+    { id: 'N3', client_first_name: 'Cd', client_last_name: 'S', funding_source: 'CDS', status: 'Contacted' }, { id: 'N4', client_first_name: 'Te', client_last_name: 'St', status: 'Contacted', is_test: true })
+  r = await call({ action: 'sweep' }, null, job)
+  ck('sweep: a new lead someone has talked to starts by itself (routed by payer)', r.j.opened === 1 && T.client_journey.length === 1 && T.client_journey[0].lead_id === 'N2' && T.client_journey[0].assigned_cc === 'angie@mo-care.com', [r.j, T.client_journey])
+  ck('...a New (uncalled) lead, a CDS lead, a TEST lead and the leads that existed at the move-over do not', !T.client_journey.some((j) => ['N1', 'N3', 'N4', 'L1', 'L2', 'L3'].includes(j.lead_id)))
+  ck('...the history says how it started', ev(T.client_journey[0].journey_id, 'created')[0]?.detail?.started === 'the lead was contacted')
+  leadsRow().find((l) => l.id === 'N2').status = 'Lost'; r = await call({ action: 'sweep' }, null, job)
+  ck('the lead is marked Lost: the journey closes with the reason, and its card closes', r.j.closed === 1 && T.client_journey[0].status === 'closed' && /Lost/.test(T.client_journey[0].closed_reason) && !open().length, [r.j, open()])
+  r = await call({ action: 'sweep' }, null, job); ck('...and it does not start again', T.client_journey.length === 1 && r.j.opened === 0)
+  reset(); r = await call({ action: 'sweep' }, null, job); ck('no move-over record yet: the sweep starts nobody by itself', r.j.opened === 0 && !T.client_journey.length)
+
+  // the bridge to the First shift launch
+  reset(); setOps({ client_journey_routing: ROUTES }); T.client_queue = []
+  r = await call({ action: 'adopt', people: [{ axiscare_client_id: '296', client_name: 'Edward Anderson', payer: 'private' }] }, null, job)
+  const JB = T.client_journey[0], TEAM = 7
+  for (const d of CAT) if (['intake', 'prechecks', 'assessment', 'signed', 'axiscare', 'billing', 'schedule'].includes(d.stage) && !step(JB.journey_id, d.key).state) T.client_journey_step.push({ journey_id: JB.journey_id, step_key: d.key, state: 'complete', completed_at: new Date().toISOString() })
+  T.client_journey_step.filter((x) => x.journey_id === JB.journey_id).forEach((x) => { x.state = 'complete' })
+  r = await call({ action: 'sweep' }, null, job)
+  ck('bridge: at the Team stage with an AxisCare client, the journey opens the First shift launch (one row, source journey)', T.client_queue.length === 1 && T.client_queue[0].source === 'journey' && String(T.client_journey[0].launch_id) === String(T.client_queue[0].id) && ev(JB.journey_id, 'launch_linked').length === 1, [T.client_queue, T.client_journey[0]])
+  r = await call({ action: 'sweep' }, null, job); ck('...the next sweep does not open another', T.client_queue.length === 1 && ev(JB.journey_id, 'launch_linked').length === 1)
+  for (const d of CAT) if (!step(JB.journey_id, d.key).state) T.client_journey_step.push({ journey_id: JB.journey_id, step_key: d.key, state: 'complete', completed_at: new Date().toISOString() })
+  T.client_journey_step.filter((x) => x.journey_id === JB.journey_id).forEach((x) => { x.state = 'complete' })
+  r = await call({ action: 'refresh', journey_id: JB.journey_id })
+  ck('...the journey becomes Active and completes the launch (so a returning client can get a new episode later)', T.client_journey[0].status === 'active' && T.client_queue[0].status === 'complete' && T.client_queue[0].launch_completed_at && ev(JB.journey_id, 'launch_completed').length === 1, [T.client_journey[0], T.client_queue])
+  reset(); T.client_queue = [{ id: 7, axiscare_client_id: '296', status: 'open', episode_n: 1, source: 'axiscare_webhook' }]
+  r = await call({ action: 'adopt', people: [{ axiscare_client_id: '296', client_name: 'Edward Anderson', payer: 'private' }] }, null, job)
+  T.client_journey_step.push(...CAT.filter((d) => !['team', 'ready', 'firstweek', 'active'].includes(d.stage) && !step(T.client_journey[0].journey_id, d.key).state).map((d) => ({ journey_id: T.client_journey[0].journey_id, step_key: d.key, state: 'complete' })))
+  T.client_journey_step.forEach((x) => { x.state = 'complete' })
+  r = await call({ action: 'sweep' }, null, job)
+  ck('...a launch already open for that client (from AxisCare) is picked up, not duplicated', T.client_queue.length === 1 && String(T.client_journey[0].launch_id) === '7', [T.client_queue, T.client_journey[0]])
+  reset(); T.client_queue = []; r = await call({ action: 'open', lead_id: 'L1', is_test: true }, 'sam')
+  ck('a TEST journey never touches a launch', !T.client_queue.length)
   ck('nothing ever texted or emailed (no outside calls but AxisCare reads)', true)
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
-console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1)
 // the page and the server must run the SAME rules file
 { const hub = path.join(process.cwd(), '..', 'cc-hub-live', 'journey-rules.js')
   if (fs.existsSync(hub)) { const same = fs.readFileSync(hub, 'utf8') === fs.readFileSync(path.join(F, '_shared', 'journey-rules.js'), 'utf8'); console.log((same ? '  ✓ ' : '  ✗ ') + 'the Hub page and the server run the same journey-rules.js'); if (!same) process.exitCode = 1 } }
+console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length && !process.exitCode ? 0 : 1)
