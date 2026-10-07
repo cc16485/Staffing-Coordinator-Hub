@@ -3,7 +3,7 @@
 # holding the real journey tables and the first catalog, a fake Management API and a fake supabase CLI. Never touches a real project.
 # (python3 leads_stage3_492_test.py; REHEARSE_COMMIT pins a commit)
 import json, os, re, subprocess, sys, tempfile, threading, http.server, hashlib, shutil
-FNS = ["client-journey", "client-status-review", "identity-backfill", "obligations-run", "campaign-send", "campaign-auto", "timekeeper-watch", "late-watch", "coverage-watch", "coverage-reply", "coverage-run", "missed-notes", "carematch-watch"]
+FNS = ["client-journey", "client-status-review", "obligations-run", "campaign-send", "campaign-auto", "timekeeper-watch", "late-watch", "coverage-watch", "coverage-reply", "coverage-run", "missed-notes", "carematch-watch"]
 VJ0 = {f: f in ("client-journey", "client-status-review", "obligations-run") for f in FNS}; PATCHED = []
 HERE = os.path.dirname(os.path.abspath(__file__))
 src = open(os.path.join(HERE, "my_desk_463_sql_test.py")).read()
@@ -109,9 +109,10 @@ try:
     fresh(True); code, out = run(SB_FN_SHAS=json.dumps(dict(PINS, **{"client-journey/care.ts": "0" * 64})))
     ck("a changed build is refused before anything runs", code == 2 and "not the reviewed build" in out and "deploy" not in log(), out)
     fresh(True); open(os.path.join(T, "drift"), "w").write("1"); code, out = run()
-    ck("a live function that differs from the reviewed main (someone else's unreleased change): STOPS before anything changes", code == 3 and "late-watch: the live copy differs from the reviewed main" in out and "deploy" not in log() and db("select count(*) from information_schema.tables where table_name = 'client_pause'") == 0, out)
+    ck("a live function that differs from the reviewed main (someone else's unreleased change): STOPS before anything changes", code == 3 and "late-watch: the live copy changed since the 498a look" in out and "deploy" not in log() and db("select count(*) from information_schema.tables where table_name = 'client_pause'") == 0, out)
     fresh(True); M.update({("vj_" + f): VJ0[f] for f in FNS}); code, out = run()
-    ck("DONE: the database part, then all 13 functions, each checked live", code == 0 and "RESULT: DONE" in out and log().count("functions deploy") == 13 and out.count("deployed: the live copy is this reviewed build") == 13, out)
+    ck("DONE: the database part, then all 12 functions, each checked live", code == 0 and "RESULT: DONE" in out and log().count("functions deploy") == 12 and out.count("deployed: the live copy is this reviewed build") == 12, out)
+    ck("identity-backfill (taken down by 441) is never deployed or read", "identity-backfill" not in log() and "identity-backfill" not in out, log())
     ck("...each kept its gateway sign-in setting", all(M["vj_" + f] == VJ0[f] for f in FNS), M)
     ck("...one journey per episode now (the old one-per-person rule is gone), records permanent and server-only", "one journey per episode" in out and "can't be deleted or rewritten" in out and "can read or change them directly" in out
        and db("select count(*) from pg_indexes where indexname = 'client_journey_one_open_ax'") == 1 and db("select count(*) from pg_constraint where conname = 'client_journey_axiscare_client_id_key'") == 0, out)
