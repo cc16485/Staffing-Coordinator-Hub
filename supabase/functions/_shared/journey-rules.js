@@ -107,7 +107,9 @@
     const required = rows.filter(r => r.def.required !== false);
     const next = required.find(r => ['ready', 'blocked', 'attention'].indexOf(r.status) > -1)
       || required.find(r => r.status === 'waiting') || null;
-    const alsoReady = open.filter(r => r !== next);
+    /* a quiet step (def.quiet) is up but never nags: no "also ready" line and no My Work card. The yes is one: it is the
+       family's move, and the office presses it when it happens. */
+    const alsoReady = open.filter(r => r !== next && !r.def.quiet);
     const comingNext = rows.filter(r => r.status === 'later' && !r.stop).slice(0, 3);
     const complete = required.length > 0 && required.every(r => DONE.indexOf(r.status) > -1);
     const stage = complete ? 'active' : next ? next.def.stage : (rows.find(r => r.status === 'later') || {}).def ? rows.find(r => r.status === 'later').def.stage : 'intake';
@@ -144,6 +146,7 @@
     const add = (email, r) => { if(!email) return; if(!by.has(email)) by.set(email, []); by.get(email).push(r); };
     view.rows.forEach(r => {
       if(['ready', 'blocked', 'attention', 'waiting'].indexOf(r.status) < 0) return;
+      if(r.def.quiet && r.status === 'ready') return;   /* a quiet step waits for a person without a card */
       const target = r.status === 'blocked' && r.unblock_role === 'owner' ? { emails:(ctx && ctx.owner_emails) || [] } : r.owner;
       if(target.email) add(target.email, r);
       else if(target.emails && target.emails.length) target.emails.forEach(e => add(String(e).toLowerCase(), r));

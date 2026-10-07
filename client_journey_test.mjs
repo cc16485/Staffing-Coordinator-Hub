@@ -66,6 +66,7 @@ try {
     .replace("'../_shared/job-auth.ts'", "'" + path.join(tmp, 'job-auth.ts') + "'")
     .replace(/from '\.\.\/_shared\/([\w-]+)\.ts'/g, (_, m) => "from '" + path.join(process.cwd(), F, '_shared', m + '.ts') + "'")
     .replace("import '../_shared/journey-rules.js'", "import '" + path.join(process.cwd(), F, '_shared', 'journey-rules.js') + "'")
+    .replace("import '../_shared/lead-rules.js'", "import '" + path.join(process.cwd(), F, '_shared', 'lead-rules.js') + "'")
   fs.writeFileSync(path.join(tmp, 'cj.ts'), src); await import(path.join(tmp, 'cj.ts'))
   const call = async (body, jwt = 'an', hdr = {}) => { const r = await handler(new Request('https://x/f', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(jwt ? { Authorization: 'Bearer ' + jwt } : {}), ...hdr }, body: JSON.stringify(body) })); return { status: r.status, j: await r.json() } }
   const cards = () => T.app_data.find((r) => r.key === 'ops_items').data.filter((x) => x.kind === 'journey')
@@ -223,6 +224,41 @@ try {
   reset(); T.client_queue = []; r = await call({ action: 'open', lead_id: 'L1', is_test: true }, 'sam')
   ck('a TEST journey never touches a launch', !T.client_queue.length)
   ck('nothing ever texted or emailed (no outside calls but AxisCare reads)', true)
+
+  /* ── THEY SAID YES (Stage 3) ── */
+  const LEADS = () => T.app_data.find((r) => r.key === 'leads').data, LD = (id) => LEADS().find((l) => l.id === id)
+  reset(); r = await call({ action: 'said_yes', lead_id: 'L2' })
+  ck('yes on an inquiry missing its facts: refused, names what is missing, no journey started', r.j.outcome === 'missing' && /why they called|when they want care|schedule|town/i.test(r.j.error) && !T.client_journey.length, r.j)
+  Object.assign(LD('L2'), { why_called: 'Daughter looking for care for her mom', desired_start: { kind: 'this_week' }, schedule: { days: ['Mon'], times: '9-1', hours_per_week: 8 }, client_city: 'Nixa', first_name: 'Diane', status: 'Contacted' })
+  r = await call({ action: 'said_yes', lead_id: 'L2' })
+  const JY = T.client_journey.find((j) => j.lead_id === 'L2')
+  ck('yes on a complete private-pay inquiry with no journey yet: a journey is opened and the yes recorded', r.j.outcome === 'yes' && JY && step(JY.journey_id, 'signed.yes').state === 'complete' && step(JY.journey_id, 'intake.payer').state === 'complete', r.j)
+  ck('...the said_yes event says who and when', ev(JY.journey_id, 'said_yes').length === 1 && ev(JY.journey_id, 'said_yes')[0].actor_email === 'angie@mo-care.com' && ev(JY.journey_id, 'said_yes')[0].detail.marked_by, ev(JY.journey_id))
+  ck('...the inquiry: said_yes_at/by, status Converted (was Contacted), a history line, converted_at set', LD('L2').said_yes_at && LD('L2').said_yes_by === 'angie@mo-care.com' && LD('L2').status === 'Converted' && LD('L2').said_yes_prev_status === 'Contacted' && LD('L2').comm_log.some((c) => /They said yes · marked by/.test(c.body)) && LD('L2').converted_at, LD('L2'))
+  ck('...the answer lands the coordinator on the next required step (the client basics, verified), with the ref', r.j.next && r.j.next.key === 'intake.basics' && r.j.ref === 'LL2' && r.j.live === true, r.j)
+  r = await call({ action: 'said_yes', lead_id: 'L2' }); ck('yes twice: already', r.j.outcome === 'already')
+  r = await call({ action: 'undo_yes', lead_id: 'L2', reason: 'slip' })
+  ck('undo within a day by the office: the step reopens, the event is kept, the inquiry goes back to Contacted with converted_at cleared and a history line', r.j.outcome === 'undone' && step(JY.journey_id, 'signed.yes').state === 'open' && ev(JY.journey_id, 'said_yes_undone').length === 1 && ev(JY.journey_id, 'said_yes').length === 1
+    && LD('L2').status === 'Contacted' && !LD('L2').said_yes_at && !LD('L2').converted_at && LD('L2').said_yes_undone && LD('L2').comm_log.some((c) => /undone by/.test(c.body)), [r.j, LD('L2'), step(JY.journey_id, 'signed.yes')])
+  r = await call({ action: 'undo_yes', lead_id: 'L2' }); ck('undo again: refused, not marked', r.j.outcome === 'refused')
+  /* undo after a day: office refused, owner allowed */
+  r = await call({ action: 'said_yes', lead_id: 'L2' }); LD('L2').said_yes_at = new Date(Date.now() - 30 * 36e5).toISOString()
+  r = await call({ action: 'undo_yes', lead_id: 'L2', reason: 'late' }); ck('undo after 24 hours by a Care Coordinator: refused, owners only', r.j.outcome === 'refused' && /owner/.test(r.j.error), r.j)
+  r = await call({ action: 'undo_yes', lead_id: 'L2', reason: 'late' }, 'sam'); ck('...an owner can', r.j.outcome === 'undone' && LD('L2').status === 'Contacted')
+  /* undo refused once later work was done by hand */
+  r = await call({ action: 'said_yes', lead_id: 'L2' }); const fy = await upload(JY.journey_id, 'docs.rights', 'rights.pdf')
+  r = await call({ action: 'apply', journey_id: JY.journey_id, step_key: 'docs.rights', op: 'complete', files: [fy] }); ck('after the yes, the signed documents are up (they hang off the yes now)', r.j.outcome === 'saved', r.j)
+  r = await call({ action: 'undo_yes', lead_id: 'L2', reason: 'slip' }); ck('undo once a later step was done by hand: refused and names the step', r.j.outcome === 'refused' && /Client rights/.test(r.j.error), r.j)
+  /* the hard stop: 2 notices stop the yes */
+  reset(); Object.assign(LD('L1'), { why_called: 'x', desired_start: { kind: 'asap' }, schedule: { days: ['Mon'], times: '', hours_per_week: 10 }, client_city: 'Springfield', first_name: 'Carla' })
+  r = await call({ action: 'open', lead_id: 'L1' }); const J1b = T.client_journey[0]
+  for (const [k, a] of [['intake.basics', null], ['med.emomed', { checked_on: '2026-10-05', result: 'eligible' }], ['med.fusion', { reviewed: true }], ['med.notices', { count: 2 }]])
+    T.client_journey_step.push({ journey_id: J1b.journey_id, step_key: k, state: 'complete', answer: a, evidence: k === 'med.emomed' ? { files: ['f'] } : null, completed_by: 'angie@mo-care.com', completed_at: new Date().toISOString(), version: 1 })
+  r = await call({ action: 'said_yes', lead_id: 'L1' }); ck('a Medicaid family with 2 prior notices: the yes is stopped at the notices step (owner exception needed)', r.j.outcome === 'stopped' && r.j.step === 'med.notices' && !LD('L1').said_yes_at, r.j)
+  /* CDS never */
+  reset(); Object.assign(LD('L3'), { why_called: 'x', desired_start: { kind: 'asap' }, schedule: { days: ['Mon'], times: '', hours_per_week: 10 }, client_city: 'x', first_name: 'C' })
+  r = await call({ action: 'said_yes', lead_id: 'L3' }); ck('CDS: the yes is refused (its own program)', r.j.outcome === 'cds' && !LD('L3').said_yes_at, r.j)
+  reset(); r = await call({ action: 'said_yes', lead_id: 'L2' }, null); ck('no sign-in: refused', r.status === 401)
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
 // the page and the server must run the SAME rules file

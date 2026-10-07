@@ -33,11 +33,14 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import '../_shared/journey-rules.js'
+import '../_shared/lead-rules.js'
 
 // deno-lint-ignore no-explicit-any
 type Any = any
 // deno-lint-ignore no-explicit-any
 const R: Any = (globalThis as any).JourneyRules
+// deno-lint-ignore no-explicit-any
+const LR: Any = (globalThis as any).LeadRules
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
 const BUCKET = 'client-journey-files'
@@ -354,6 +357,76 @@ Deno.serve(async (req) => {
       const out = await settle(db, j, steps ?? [], dfs, pp, st, j.status === 'active' ? { verify: false } : {}); n++; cards += out.cards.wrote + out.cards.closed; if (out.launch) launches++
     }
     return json({ ok: true, journeys: n, card_changes: cards, launch_changes: launches, ...auto })
+  }
+  /* ── THEY SAID YES (Leads intake desk, Stage 3; Samantha 2026-10-06: "move them directly from Leads into the Client
+     Journey… carry everything… record the conversion event… land on the first incomplete required step… safely
+     reversible"). The yes is a STEP on the family's existing journey (signed.yes), never a hand-off to a new record: the
+     profile is the same before and after. Needs: the facts required at yes (payer, start, schedule, who the client is, why)
+     and no hard stop on the journey (2+ notices without an owner exception). Writes the step, a said_yes event with who
+     and when, and on the lead: said_yes_at/by, status Converted (what the Hub already means by "won"), a history line. */
+  if (b.action === 'said_yes' || b.action === 'undo_yes') {
+    const who = await requireStaff(db, req, OFFICE_ROLES as unknown as string[]); if (!who.ok) return json({ error: who.error }, who.status)
+    const [dfs, pp, st] = await Promise.all([defs(db), people(db), settings(db)])
+    const isOwner = who.roles.includes('owner_admin')
+    const leadId = String(b.lead_id || ''); if (!leadId) return json({ error: 'lead_id is required' }, 400)
+    const lead = await leadOf(db, leadId); if (!lead) return json({ error: 'That inquiry was not found.' }, 404)
+    const now = new Date().toISOString(), actor = { email: who.email, name: who.name }
+    const stamp = (l: Any) => { l.comm_log = Array.isArray(l.comm_log) ? l.comm_log : []; return l }
+    if (b.action === 'said_yes') {
+      if (lead.said_yes_at) return json({ outcome: 'already', error: 'Already marked: they said yes ' + String(lead.said_yes_at).slice(0, 10) + '.' }, 409)
+      const missing = LR.missing(lead, 'yes')
+      if (missing.length) return json({ outcome: 'missing', error: 'Before the yes counts, the inquiry needs: ' + missing.map((m: Any) => m.label.toLowerCase()).join(', ') + '.', missing }, 422)
+      let got = await load(db, { lead_id: leadId })
+      if (!got) {
+        const o = await openOne(db, dfs, pp, st, actor, { lead, leadId, axId: null, how: 'they said yes', is_test: b.is_test === true || lead.is_test === true })
+        if (o.outcome !== 'created') return json({ outcome: o.outcome, error: o.error }, o.code || 500)
+        got = await load(db, { journey_id: o.journey_id })
+      }
+      const { j } = got!
+      /* the payer step: answered from the inquiry if the journey never got it */
+      const pay = payerFrom(lead.funding_source)
+      if (pay && pay !== 'cds' && !got!.steps.some((x: Any) => x.step_key === 'intake.payer' && R.DONE.includes(x.state))) {
+        await putStep(db, j.journey_id, 'intake.payer', { state: 'complete', answer: { payer: pay }, evidence: { note: 'From the inquiry' }, completed_by: who.email, completed_by_name: who.name, completed_at: now })
+        if (!j.payer) { await db.from('client_journey').update({ payer: pay, updated_at: now }).eq('journey_id', j.journey_id); j.payer = pay }
+        got = await load(db, { journey_id: j.journey_id })
+      }
+      const view = R.compute(dfs, j, got!.steps, ctxFor(pp, st))
+      if (view.stop) return json({ outcome: 'stopped', error: 'The journey is stopped at "' + view.stop.def.title + '": ' + view.stop.why + ' Only an owner exception lets it continue.', step: view.stop.key, ref: refOf(j) }, 422)
+      const row = view.rows.find((r: Any) => r.key === 'signed.yes')
+      if (!row) return json({ error: 'The catalog has no "Family chose Caring Companions" step. Run the Stage 3 installer.' }, 500)
+      if (row.status === 'later') return json({ outcome: 'refused', error: row.why || 'Not its turn yet.', step: 'signed.yes', ref: refOf(j) }, 422)
+      if (!R.DONE.includes(row.st.state)) {
+        await putStep(db, j.journey_id, 'signed.yes', { ...stripRow(row.st), state: 'complete', evidence: { confirmed: { by: who.email, at: now } }, completed_by: who.email, completed_by_name: who.name, completed_at: now })
+      }
+      await event(db, j.journey_id, 'signed.yes', actor, 'said_yes', { lead_id: leadId, marked_by: who.name, at: now })
+      const l2 = stamp({ ...lead, said_yes_at: now, said_yes_by: who.email, said_yes_by_name: who.name, said_yes_prev_status: lead.status || 'New', status: 'Converted', converted_at: lead.converted_at || now })
+      l2.comm_log.push({ body: 'They said yes · marked by ' + who.name, at: now, by: who.email, kind: 'said_yes' })
+      const { error: le } = await db.rpc('upsert_app_data_item', { target_key: 'leads', item: l2 }); if (le) return json({ error: 'The step is saved but the inquiry could not be updated: ' + le.message }, 500)
+      const fresh = await load(db, { journey_id: j.journey_id }); const out = await settle(db, fresh!.j, fresh!.steps, dfs, pp, st)
+      return json({ outcome: 'yes', ref: refOf(fresh!.j), journey_id: j.journey_id, stage: out.view.stage, live: st.client_journey_live === true,
+        next: out.view.next ? { key: out.view.next.key, title: out.view.next.def.title, status: out.view.next.status } : null })
+    }
+    /* undo: within 24 hours by anyone in the office, later only an owner; refused once a later step has been done by hand */
+    if (!lead.said_yes_at) return json({ outcome: 'refused', error: 'This family is not marked as having said yes.' }, 422)
+    const ageH = (Date.parse(now) - Date.parse(lead.said_yes_at)) / 36e5
+    if (ageH > 24 && !isOwner) return json({ outcome: 'refused', error: 'More than a day has passed. Only an owner (Samantha or Zachary) can undo a yes now.' }, 403)
+    const got = await load(db, { lead_id: leadId })
+    if (got) {
+      const yesDef = dfs.find((d: Any) => d.key === 'signed.yes'), yesSort = Number(yesDef?.sort ?? 125)
+      const later = got.steps.filter((x: Any) => R.DONE.includes(x.state) && x.completed_by && x.completed_by !== 'hub' && Number((dfs.find((d: Any) => d.key === x.step_key) || {}).sort ?? 0) > yesSort)
+      if (later.length) { const t = (dfs.find((d: Any) => d.key === later[0].step_key) || {}).title || later[0].step_key; return json({ outcome: 'refused', error: 'Work has been done since the yes ("' + t + '"). Reopen that step first if this really was a mistake.', step: later[0].step_key }, 422) }
+      const yesStep = got.steps.find((x: Any) => x.step_key === 'signed.yes')
+      if (yesStep && R.DONE.includes(yesStep.state)) {
+        await putStep(db, got.j.journey_id, 'signed.yes', { ...stripRow(yesStep), state: 'open', completed_by: null, completed_by_name: null, completed_at: null, evidence: null })
+        await event(db, got.j.journey_id, 'signed.yes', actor, 'said_yes_undone', { was: { by: yesStep.completed_by, at: yesStep.completed_at } }, String(b.reason || 'pressed by mistake').slice(0, 300))
+      }
+    }
+    const l3 = stamp({ ...lead, status: lead.said_yes_prev_status || 'Contacted', said_yes_at: null, said_yes_by: null, said_yes_by_name: null, said_yes_undone: { at: now, by: who.email, was_at: lead.said_yes_at } })
+    if (lead.converted_at && String(lead.converted_at) >= String(lead.said_yes_at) && !String(lead.axiscare_client_id || '').trim()) l3.converted_at = null
+    l3.comm_log.push({ body: 'They said yes was undone by ' + who.name + (b.reason ? ' · ' + String(b.reason).slice(0, 200) : ''), at: now, by: who.email, kind: 'said_yes_undone' })
+    const { error: ue } = await db.rpc('upsert_app_data_item', { target_key: 'leads', item: l3 }); if (ue) return json({ error: 'Could not update the inquiry: ' + ue.message }, 500)
+    if (got) { const fresh = await load(db, { journey_id: got.j.journey_id }); await settle(db, fresh!.j, fresh!.steps, dfs, pp, st) }
+    return json({ outcome: 'undone', status: l3.status })
   }
   if (b.action === 'adopt') {
     if (!(await jobCaller(req))) return json({ error: 'not allowed' }, 403)

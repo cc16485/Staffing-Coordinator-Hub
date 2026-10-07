@@ -1,5 +1,5 @@
 {
- "version": 1,
+ "version": 2,
  "steps": [
   {
    "key": "intake.payer",
@@ -613,6 +613,27 @@
    "exception_kind": "unusual_acceptance"
   },
   {
+   "key": "signed.yes",
+   "sort": 125,
+   "stage": "signed",
+   "title": "Family chose Caring Companions",
+   "owner_role": "care_coordinator",
+   "proof": "confirmed",
+   "payers": [],
+   "after": [
+    "intake.payer"
+   ],
+   "required": true,
+   "active": true,
+   "howto": [
+    "When the family says yes, press They said yes on the Leads board or here.",
+    "It records who marked it and when, moves the family off the Leads board into Getting ready, and lands you on the next step.",
+    "Pressed by mistake? Undo within 24 hours (an owner can undo later). Nothing is re-typed: this is the same profile."
+   ],
+   "due": null,
+   "quiet": true
+  },
+  {
    "key": "docs.agreement",
    "sort": 130,
    "stage": "signed",
@@ -621,7 +642,7 @@
    "proof": "proof",
    "payers": [],
    "after": [
-    "asmt.outcome"
+    "signed.yes"
    ],
    "required": true,
    "active": true,
@@ -643,7 +664,7 @@
    "proof": "proof",
    "payers": [],
    "after": [
-    "asmt.outcome"
+    "signed.yes"
    ],
    "required": true,
    "active": true,
@@ -664,7 +685,7 @@
    "proof": "proof",
    "payers": [],
    "after": [
-    "asmt.outcome"
+    "signed.yes"
    ],
    "required": true,
    "active": true,
@@ -685,7 +706,7 @@
    "proof": "verified",
    "payers": [],
    "after": [
-    "asmt.outcome"
+    "signed.yes"
    ],
    "required": true,
    "active": true,
