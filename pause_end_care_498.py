@@ -2,16 +2,17 @@
 # 498 · PAUSE CARE AND END CARE (Samantha approved 2026-10-07). The database part (client-journey/client-care.sql: pause and
 # care-change records, one journey per episode, the end and return steps) and 13 functions: client-journey (the care
 # actions), client-status-review (past clients: a card only when AxisCare shows them Active again; cards go to the client's
-# Care Coordinator), identity-backfill (never reactivates a past client; Family Circles only for current clients),
+# Care Coordinator),
 # obligations-run (no check-in work for paused or ended clients), campaign-send / campaign-auto (paused = left out), and the
 # shift jobs (timekeeper-watch, late-watch, coverage-watch, coverage-reply, coverage-run, missed-notes, carematch-watch) which
-# skip paused and ended clients. Part 1 STOPS if any live function differs from the last reviewed main, so nobody else's
-# unreleased change goes out with this. Each keeps its gateway sign-in setting. Nothing is imported; nothing is sent.
+# skip paused and ended clients. identity-backfill is NOT deployed: it was taken down on purpose by 441 (2026-10-04) and stays
+# down. Part 1 STOPS if any live file differs from exactly what the 498a look saw live (SB_BASE_SHAS, every file shown to be
+# merged code), so nobody else's unreleased change goes out with this. Each keeps its gateway sign-in setting. Nothing is imported; nothing is sent.
 import json, os, re, hashlib, subprocess, urllib.request, urllib.error, datetime as dt, sys, tempfile, shutil
 REPORT = os.environ["SB_REPORT"]; FNROOT = os.environ["SB_FNROOT"]; SHAS = json.loads(os.environ.get("SB_FN_SHAS", "{}")); BASE = json.loads(os.environ.get("SB_BASE_SHAS", "{}"))
 TOKEN = os.environ.get("SB_TOKEN", "").strip().strip('"').strip("'"); REF = os.environ.get("SB_REF", "zngsgedlsxinbygwmxwn")
 SUPA = os.environ.get("SB_SUPA_CLI", ""); API = os.environ.get("SB_API_BASE", "https://api.supabase.com")
-ROOT = os.path.dirname(os.path.dirname(FNROOT)); CJDIR = os.path.join(ROOT, "client-journey"); FNS = ["client-journey", "client-status-review", "identity-backfill", "obligations-run", "campaign-send", "campaign-auto", "timekeeper-watch", "late-watch", "coverage-watch", "coverage-reply", "coverage-run", "missed-notes", "carematch-watch"]; FN = FNS[0]
+ROOT = os.path.dirname(os.path.dirname(FNROOT)); CJDIR = os.path.join(ROOT, "client-journey"); FNS = ["client-journey", "client-status-review", "obligations-run", "campaign-send", "campaign-auto", "timekeeper-watch", "late-watch", "coverage-watch", "coverage-reply", "coverage-run", "missed-notes", "carematch-watch"]; FN = FNS[0]
 lines = []; fails = []
 def say(s=""):
     s = re.sub(r"(sbp_|eyJ|sb_secret_|sb_publishable_)[A-Za-z0-9._\-]+", "(hidden)", str(s)); print(s, flush=True); lines.append(s)
@@ -71,7 +72,7 @@ for name, want in SHAS.items():
 if fails: say(); say("  RESULT: STOPPED before anything changed."); done(2)
 if not (SUPA and os.path.exists(SUPA)): bad("supabase CLI not found"); say("  RESULT: STOPPED before anything changed."); done(2)
 
-# nobody else's unreleased work goes out with this: every live function must match the last reviewed main (or this build)
+# nobody else's unreleased work goes out with this: every live file must be exactly what 498a saw (all merged code), or this build
 VJ = {}
 for fn in FNS:
     sx, mx = fmeta(fn)
@@ -81,7 +82,7 @@ for fn in FNS:
     if not okd: bad(f"{fn}: the live copy could not be downloaded"); continue
     odd = [k for k in need(fn) if k in livef and livef[k] != BASE.get(k) and livef[k] != sha(os.path.join(ROOT, k))]
     odd += [k for k in need(fn) if k not in livef and BASE.get(k)]
-    chk(not odd, f"{fn} (version {mx.get('version', '?')}): live matches the reviewed main, so only this change goes out" if not odd else f"{fn}: the live copy differs from the reviewed main ({', '.join(odd)[:200]}); deploying would also ship someone else's unreleased change")
+    chk(not odd, f"{fn} (version {mx.get('version', '?')}): live is exactly what the 498a look saw (merged code), so only reviewed code goes out" if not odd else f"{fn}: the live copy changed since the 498a look ({', '.join(odd)[:200]}); deploying would also ship someone else's unreleased change")
 if fails: say(); say("  RESULT: STOPPED before anything changed. Tell Claude which line."); done(3)
 ok, r = sql("select count(*)::int as n from information_schema.tables where table_schema = 'public' and table_name in ('client_pause','client_care_change')")
 say("  · pause and care-change tables: " + ("already there (kept)" if ok and r and r[0]["n"] == 2 else "new"))
