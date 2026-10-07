@@ -591,7 +591,7 @@ async function backfillClientsFromAxisCare(commit: boolean) {
 
   const out = { mode: commit ? 'COMMIT' : 'DRY RUN',
     axiscare_clients_total: totalSeen, axiscare_active_clients: clients.length,
-    already_linked: 0, created: 0, roles_added: 0, phones_indexed: 0, no_phone: 0,
+    already_linked: 0, created: 0, roles_added: 0, past_left_for_a_person: 0, phones_indexed: 0, no_phone: 0,
     skipped_no_name: 0, name_coincidences: [] as any[], errors: [] as string[] }
 
   for (const c of clients) {
@@ -627,7 +627,12 @@ async function backfillClientsFromAxisCare(commit: boolean) {
 
     const { data: role } = await sb.from('person_role').select('id')
       .eq('person_id', personId).eq('role', 'client').eq('status', 'active').maybeSingle()
-    if (!role) {
+    /* A PAST CLIENT IS NEVER MADE ACTIVE AGAIN HERE (Samantha 2026-10-07): if AxisCare shows a past client Active again,
+       the status review opens one card and a person decides whether to start a new episode. */
+    const { data: pastRole } = role ? { data: null } : await sb.from('person_role').select('id')
+      .eq('person_id', personId).eq('role', 'client').neq('status', 'active').limit(1).maybeSingle()
+    if (!role && pastRole) { out.past_left_for_a_person++ }
+    else if (!role) {
       const { error: e3 } = await sb.from('person_role')
         .insert({ person_id: personId, role: 'client', status: 'active' })
       if (e3) out.errors.push(`${name} role: ${e3.message}`)
@@ -808,14 +813,20 @@ async function syncCirclesFromAxisCare(commit: boolean) {
   const out = { mode: commit ? 'COMMIT' : 'DRY RUN', clients: (links ?? []).length,
     circles_created: 0, circles_linked: 0, waiting_for_person_link: 0, contacts_added: 0, contacts_updated: 0,
     contacts_marked_removed: 0, contacts_back_on_axiscare: 0,
-    already_present: 0, clients_with_no_parties: 0, manual_untouched: 0,
+    already_present: 0, clients_with_no_parties: 0, manual_untouched: 0, skipped_past: 0,
     errors: [] as string[],
     sample: [] as Array<Record<string, unknown>> }
 
+  /* PAST AND DECEASED CLIENTS (Samantha 2026-10-07): the sync only keeps Family Circles for CURRENT clients (an active client
+     role). A past or deceased client gets no new circle and no new contacts; nothing already there is removed. */
+  const { data: curRoles } = await sb.from('person_role').select('person_id').eq('role', 'client').eq('status', 'active')
+  const current = new Set((curRoles ?? []).map((r) => String(r.person_id)))
+  out.skipped_past = 0
   for (const l of (links ?? [])) {
     const ax = String(l.source_id)
     const clientName = nameOf.get(String(l.person_id)) ?? ''
     if (!clientName) continue
+    if (!current.has(String(l.person_id))) { out.skipped_past++; continue }
     // deno-lint-ignore no-explicit-any
     let parties: any[] = []
     try {

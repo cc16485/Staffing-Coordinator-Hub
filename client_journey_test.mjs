@@ -19,12 +19,12 @@ const R_add = (n) => new Date(Date.now() + n * 864e5).toLocaleString('sv-SE', { 
 const clone = (x) => JSON.parse(JSON.stringify(x))
 function q(t) {
   const st = { f: [], ins: [], op: 'select', patch: null, row: null, single: false }
-  const match = (r) => st.f.every(([k, v, how]) => how === 'in' ? v.includes(r[k]) : how === 'neq' ? r[k] !== v : how === 'notnull' ? r[k] !== null && r[k] !== undefined : String(r[k]) === String(v))
+  const match = (r) => st.f.every(([k, v, how]) => how === 'in' ? v.includes(r[k]) : how === 'neq' ? r[k] !== v : how === 'lte' ? String(r[k]) <= String(v) : how === 'notnull' ? r[k] !== null && r[k] !== undefined : String(r[k]) === String(v))
   const run = () => {
     T[t] = T[t] || []
     if (st.op === 'insert') { const rows = (Array.isArray(st.row) ? st.row : [st.row]).map((r) => ({ ...r }))
       for (const r of rows) {
-        if (t === 'client_journey') { if (T[t].some((x) => (r.lead_id && x.lead_id === r.lead_id) || (r.axiscare_client_id && x.axiscare_client_id === r.axiscare_client_id))) return { data: null, error: { message: 'duplicate' } }
+        if (t === 'client_journey') { if (T[t].some((x) => x.status !== 'closed' && ((r.lead_id && x.lead_id === r.lead_id) || (r.axiscare_client_id && x.axiscare_client_id === r.axiscare_client_id)))) return { data: null, error: { message: 'duplicate' } }
           Object.assign(r, { journey_id: uid(), status: 'open', created_at: new Date().toISOString() }) }
         if (t === 'client_journey_event') { r.id = T[t].length + 1; r.at = new Date().toISOString(); r.is_test = !!(T.client_journey.find((j) => j.journey_id === r.journey_id) || {}).is_test }
         T[t].push(r) }
@@ -37,7 +37,7 @@ function q(t) {
     if (st.order) rows = rows.slice().sort((a, b) => (st.order.asc ? 1 : -1) * String(a[st.order.k]).localeCompare(String(b[st.order.k])))
     return { data: st.single ? (rows[0] ? clone(rows[0]) : null) : clone(rows), error: null }
   }
-  const b = { select() { return b }, eq(k, v) { st.f.push([k, v]); return b }, neq(k, v) { st.f.push([k, v, 'neq']); return b }, not(k, op, v) { st.f.push([k, null, 'notnull']); return b }, in(k, v) { st.f.push([k, v, 'in']); return b }, order(k, o) { st.order = { k, asc: o?.ascending !== false }; return b }, limit() { return b },
+  const b = { select() { return b }, eq(k, v) { st.f.push([k, v]); return b }, neq(k, v) { st.f.push([k, v, 'neq']); return b }, lte(k, v) { st.f.push([k, v, 'lte']); return b }, not(k, op, v) { st.f.push([k, null, 'notnull']); return b }, in(k, v) { st.f.push([k, v, 'in']); return b }, order(k, o) { st.order = { k, asc: o?.ascending !== false }; return b }, limit() { return b },
     insert(row) { st.op = 'insert'; st.row = row; return b }, upsert(row) { st.op = 'upsert'; st.row = row; return b }, update(p) { st.op = 'update'; st.patch = p; return b },
     single() { st.single = true; return Promise.resolve(run()) }, maybeSingle() { st.single = true; return Promise.resolve(run()) }, then(ok, ko) { return Promise.resolve(run()).then(ok, ko) } }
   return b
@@ -67,6 +67,7 @@ try {
     .replace(/from '\.\.\/_shared\/([\w-]+)\.ts'/g, (_, m) => "from '" + path.join(process.cwd(), F, '_shared', m + '.ts') + "'")
     .replace("import '../_shared/journey-rules.js'", "import '" + path.join(process.cwd(), F, '_shared', 'journey-rules.js') + "'")
     .replace("import '../_shared/lead-rules.js'", "import '" + path.join(process.cwd(), F, '_shared', 'lead-rules.js') + "'")
+  fs.copyFileSync(path.join(F, 'client-journey/care.ts'), path.join(tmp, 'care.ts'))
   fs.writeFileSync(path.join(tmp, 'cj.ts'), src); const MOD = await import(path.join(tmp, 'cj.ts')); globalThis.shiftFactsT = (v) => MOD.shiftFacts(v, 'a', 'b')
   const call = async (body, jwt = 'an', hdr = {}) => { const r = await handler(new Request('https://x/f', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(jwt ? { Authorization: 'Bearer ' + jwt } : {}), ...hdr }, body: JSON.stringify(body) })); return { status: r.status, j: await r.json() } }
   const cards = () => T.app_data.find((r) => r.key === 'ops_items').data.filter((x) => x.kind === 'journey')

@@ -34,6 +34,8 @@ import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import '../_shared/journey-rules.js'
 import '../_shared/lead-rules.js'
+import { careAction, pausedAx } from './care.ts'
+import { loadQuiet } from '../_shared/client-quiet.ts'
 
 // deno-lint-ignore no-explicit-any
 type Any = any
@@ -150,12 +152,15 @@ function ctxFor(pp: Any, st: Any) {
   return { today: today(), owner_emails: pp.owners, staffing_email: staffing }
 }
 async function load(db: Any, by: Any): Promise<{ j: Any; steps: Any[] } | null> {
+  /* one journey per EPISODE (2026-10-07): a person can have several; the one that counts is the open one, else the latest */
   let q = db.from('client_journey').select('*')
   if (by.journey_id) q = q.eq('journey_id', String(by.journey_id))
   else if (by.axiscare_client_id) q = q.eq('axiscare_client_id', String(by.axiscare_client_id))
   else if (by.lead_id) q = q.eq('lead_id', String(by.lead_id))
   else return null
-  const { data: j } = await q.maybeSingle()
+  const { data: rows } = await q.order('created_at', { ascending: false })
+  const list: Any[] = Array.isArray(rows) ? rows : rows ? [rows] : []
+  const j = list.find((x: Any) => x.status !== 'closed') ?? list[0] ?? null
   if (!j) return null
   const { data: steps } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
   return { j, steps: steps ?? [] }
@@ -319,7 +324,9 @@ export function cardText(c: Any) {
 async function refreshCards(db: Any, j: Any, view: Any, pp: Any, st: Any) {
   const ctx = ctxFor(pp, st)
   /* switched off: a real journey shows nobody anything yet (TEST journeys still do, for the owner trying it) */
-  let cards = j.status === 'open' && (j.is_test || live(st)) ? R.cardsFor(j, view, ctx) : []
+  /* paused (Pause care): the journey's cards step aside; the one "Is care restarting?" card speaks for the client */
+  const paused = j.axiscare_client_id ? (await pausedAx(db)).has(String(j.axiscare_client_id)) : false
+  let cards = j.status === 'open' && !paused && (j.is_test || live(st)) ? R.cardsFor(j, view, ctx) : []
   /* nobody assigned: the owners get it, saying so */
   cards = cards.flatMap((c: Any) => c.owner ? [c] : pp.owners.map((o: string) => ({ ...c, owner: o, why: 'Nobody is assigned: ' + (c.why || 'assign a Care Coordinator') })))
   const { data: row } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
@@ -444,6 +451,22 @@ async function closeEnded(db: Any, dfs: Any[], pp: Any, st: Any) {
   return n
 }
 
+/** a paused client's follow-up date has come: their "Is care restarting?" card comes off Waiting and onto today's list */
+async function pauseDue(db: Any) {
+  const { data: ps } = await db.from('client_pause').select('*').eq('status', 'open').lte('followup_date', today())
+  if (!ps?.length) return 0
+  const { data: row } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+  const items: Any[] = Array.isArray(row?.data) ? row.data : []
+  let n = 0
+  for (const p of ps) {
+    const it = items.find((x: Any) => x?.id === 'ops_pause_' + String(p.pause_id).replace(/-/g, '').slice(0, 12))
+    if (!it || it.status !== 'open' || !it.sub_state) continue
+    await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...it, sub_state: null, waiting_on: null, check_back: null, urgency: 'high',
+      title: 'Follow up today: is care restarting for ' + (p.client_name || it.about) + '?', updated_at: new Date().toISOString() } }); n++
+  }
+  return n
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200, headers: cors })
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
@@ -463,7 +486,7 @@ Deno.serve(async (req) => {
         await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...it, status: 'done', closed_at: now, closed_by: 'journey', close_note: 'Client journeys were switched off' } }); put++ }
       return json({ ok: true, live: false, note: 'client_journey_live is off: nothing swept', cards_put_away: put })
     }
-    const auto = await autoOpenClose(db, dfs, pp, st), care_ended = await closeEnded(db, dfs, pp, st)
+    const auto = await autoOpenClose(db, dfs, pp, st), care_ended = await closeEnded(db, dfs, pp, st), pause_due = await pauseDue(db)
     const { data: js } = await db.from('client_journey').select('*').in('status', ['open', 'active'])
     let n = 0, cards = 0, launches = 0
     for (const j of js ?? []) {
@@ -471,7 +494,7 @@ Deno.serve(async (req) => {
       const { data: steps } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
       const out = await settle(db, j, steps ?? [], dfs, pp, st, j.status === 'active' ? { verify: false } : {}); n++; cards += out.cards.wrote + out.cards.closed; if (out.launch) launches++
     }
-    return json({ ok: true, journeys: n, card_changes: cards, launch_changes: launches, care_ended, ...auto })
+    return json({ ok: true, journeys: n, card_changes: cards, launch_changes: launches, care_ended, pause_due, ...auto })
   }
   /* ── THEY SAID YES (Leads intake desk, Stage 3; Samantha 2026-10-06: "move them directly from Leads into the Client
      Journey… carry everything… record the conversion event… land on the first incomplete required step… safely
@@ -565,6 +588,11 @@ Deno.serve(async (req) => {
   if (!who.ok) return json({ error: who.error }, who.status)
   const isOwner = who.roles.includes('owner_admin')
   const [dfs, pp, st] = await Promise.all([defs(db), people(db), settings(db)])
+  /* PAUSE CARE / END CARE (care.ts): Care Coordinators and owners; works whether or not journeys are switched on */
+  if (String(b.action || '').startsWith('care_')) {
+    const out = await careAction({ db, b, who, isOwner, pp, st, dfs, R, load, event, refreshCards, ctxFor, today, routeCc, openOne })
+    return json(out.body, out.status || 200)
+  }
   if (st.client_journey_live !== true && !isOwner) return json({ error: 'Client journeys are switched off right now.' }, 409)
 
   if (b.action === 'list') {
@@ -572,7 +600,9 @@ Deno.serve(async (req) => {
     const ids = (js ?? []).map((j: Any) => j.journey_id)
     const { data: steps } = ids.length ? await db.from('client_journey_step').select('*').in('journey_id', ids) : { data: [] }
     const ctx = ctxFor(pp, st)
-    return json({ journeys: (js ?? []).map((j: Any) => {
+    const quiet = [...(await loadQuiet(db))]
+    const { data: paused } = await db.from('client_pause').select('axiscare_client_id, client_name, paused_from, followup_date, reason, owner_email').eq('status', 'open')
+    return json({ quiet, paused: paused ?? [], journeys: (js ?? []).map((j: Any) => {
       const v = R.compute(dfs, j, (steps ?? []).filter((s: Any) => s.journey_id === j.journey_id), ctx)
       return { journey_id: j.journey_id, ref: refOf(j), client_name: j.client_name, payer: j.payer, status: j.status, stage: v.stage, stage_label: v.stageLabel,
         target_start: j.target_start, assigned_cc: j.assigned_cc, is_test: j.is_test, lead_id: j.lead_id, axiscare_client_id: j.axiscare_client_id, launch_id: j.launch_id ?? null, closed_reason: j.closed_reason ?? null,

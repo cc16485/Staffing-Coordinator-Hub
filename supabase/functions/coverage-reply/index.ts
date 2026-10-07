@@ -256,7 +256,8 @@ Deno.serve(async (req) => {
       const caseTokens = new Set(String(c.client || '').toLowerCase().split(/[^a-z]+/).filter((w: string) => w.length >= 3))
       const replyTokens = [...new Set(t.split(/[^a-z]+/).filter((w) => w.length >= 4))]
       if (replyTokens.length) {
-        const { data: roleRows } = await sb.from('person_role').select('person_id').eq('role', 'client')
+        /* current clients only (2026-10-07): a past client's name can't make a caregiver's reply look like another client */
+        const { data: roleRows } = await sb.from('person_role').select('person_id').eq('role', 'client').eq('status', 'active')
         // deno-lint-ignore no-explicit-any
         const ids = [...new Set((roleRows || []).map((r: any) => r.person_id))]
         const names = new Set<string>()
