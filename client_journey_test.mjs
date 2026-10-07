@@ -227,6 +227,22 @@ try {
 
   /* ── THEY SAID YES (Stage 3) ── */
   const LEADS = () => T.app_data.find((r) => r.key === 'leads').data, LD = (id) => LEADS().find((l) => l.id === id)
+  /* ── ONE CARD PER FAMILY, ONE NEXT (clean-up 6.1 / 6.2) ── */
+  const LDc = (id) => T.app_data.find((r) => r.key === 'leads').data.find((l) => l.id === id)
+  reset(); T.app_data.find((r) => r.key === 'ops_items').data.push({ id: 'ops_lead_L1', kind: 'new_lead', source_id: 'L1', status: 'open', title: 'New lead: Linda', owner: 'angie@mo-care.com' })
+  Object.assign(LDc('L1'), { promised_callback_at: new Date(Date.now() - 70 * 60000).toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).replace(' ', 'T'), contact_events: [] })   /* Central wall-clock, as the Hub stores it */
+  r = await call({ action: 'open', lead_id: 'L1' }); const JC = T.client_journey.find((j) => j.lead_id === 'L1')
+  const inq = () => T.app_data.find((r) => r.key === 'ops_items').data.find((x) => x.id === 'ops_lead_L1')
+  ck('opening a journey for a lead closes its inquiry card: one family, one card', inq().status === 'done' && inq().closed_by === 'journey' && /journey card carries/.test(inq().auto_closed_reason), inq())
+  let jc = open('angie@mo-care.com')[0]
+  ck('...the journey card carries the lead\'s one date: a promised call 70 min late reads NEEDS ATTENTION "Call back: we said …", urgent, due at the promise, with the step as the second line', jc && jc.card_kind === 'attention' && /^NEEDS ATTENTION: Call back: we said /.test(jc.title) && /late\)$/.test(jc.title) && jc.urgency === 'urgent' && /^Next step: /.test(jc.detail) && jc.lead_next && jc.lead_next.kind === 'promise', jc)
+  LDc('L1').contact_events.push({ at: new Date().toISOString(), actor: 'human', direction: 'out', channel: 'call', outcome: 'connected' }); LDc('L1').follow_up_due = R_add(3); LDc('L1').follow_up_note = 'send the rates'
+  r = await call({ action: 'refresh', journey_id: JC.journey_id }); jc = open('angie@mo-care.com')[0]
+  ck('...once the call happened and a follow-up is set for 3 days out: back to a normal Next card, "With the family: Follow up …: send the rates" on the second line', jc.card_kind === 'next' && /^Next: /.test(jc.title) && /With the family: Follow up .*: send the rates/.test(jc.detail) && jc.urgency === 'normal' && jc.lead_next.kind === 'follow_up', jc)
+  reset(); r = await call({ action: 'open', lead_id: 'L1' }); ck('a lead with no date: the journey card is as before, no family line', !/With the family/.test(open('angie@mo-care.com')[0].detail) && open('angie@mo-care.com')[0].lead_next === null, open())
+  reset(false); T.app_data.find((r) => r.key === 'ops_items').data.push({ id: 'ops_lead_L1', kind: 'new_lead', source_id: 'L1', status: 'open', title: 'New lead: Linda' })
+  r = await call({ action: 'open', lead_id: 'L1' }); ck('journeys switched off: no journey card, so the inquiry card stays open (nothing handed over to nobody)', inq().status === 'open' && !open().length)
+
   reset(); r = await call({ action: 'said_yes', lead_id: 'L2' })
   ck('yes on an inquiry missing its facts: refused, names what is missing, no journey started', r.j.outcome === 'missing' && /why they called|when they want care|schedule|town/i.test(r.j.error) && !T.client_journey.length, r.j)
   Object.assign(LD('L2'), { why_called: 'Daughter looking for care for her mom', desired_start: { kind: 'this_week' }, schedule: { days: ['Mon'], times: '9-1', hours_per_week: 8 }, client_city: 'Nixa', first_name: 'Diane', status: 'Contacted' })
