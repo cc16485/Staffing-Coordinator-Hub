@@ -235,6 +235,15 @@ async function settle(db: Any, j: Any, steps: Any[], dfs: Any[], pp: Any, st: An
     }
   }
   if (changed) { const fresh = await load(db, { journey_id: j.journey_id }); if (fresh) { steps = fresh.steps; view = R.compute(dfs, j, steps, ctx) } }
+  /* FIRST SHIFT ON THE INQUIRY (2026-10-07): once the journey has the first visit (verified from AxisCare, or confirmed by hand),
+     the lead carries first_shift_at, so the Owners Hub can say inquiry → yes → first shift without reading journey tables. */
+  const fv = steps.find((s: Any) => s.step_key === 'fw.first_visit' && R.DONE.includes(s.state))
+  if (fv && lead && !lead.first_shift_at) {
+    const at = (fv.evidence && fv.evidence.verified && fv.evidence.verified.at) || fv.completed_at || now
+    const l2 = { ...lead, first_shift_at: at, comm_log: [...(Array.isArray(lead.comm_log) ? lead.comm_log : []), { body: 'First shift happened (from the client journey)', at, kind: 'first_shift' }] }
+    await db.rpc('upsert_app_data_item', { target_key: 'leads', item: l2 }); lead.first_shift_at = at
+    await event(db, j.journey_id, 'fw.first_visit', { email: 'hub', name: 'The Hub' }, 'first_shift_stamped', { at })
+  }
   if (view.complete && j.status === 'open' && steps.some((s: Any) => s.step_key === 'active.complete' && s.state === 'complete')) {
     await db.from('client_journey').update({ status: 'active', updated_at: now }).eq('journey_id', j.journey_id); j.status = 'active'
     await event(db, j.journey_id, null, { email: 'hub', name: 'The Hub' }, 'became_active', {})

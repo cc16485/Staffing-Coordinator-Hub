@@ -225,6 +225,15 @@ try {
   ck('a TEST journey never touches a launch', !T.client_queue.length)
   ck('nothing ever texted or emailed (no outside calls but AxisCare reads)', true)
 
+  /* ── FIRST SHIFT ON THE INQUIRY (2026-10-07) ── */
+  const LDf = (id) => T.app_data.find((r) => r.key === 'leads').data.find((l) => l.id === id)
+  reset(); r = await call({ action: 'open', lead_id: 'L1' }); const JF = T.client_journey.find((j) => j.lead_id === 'L1')
+  T.client_journey_step.push({ journey_id: JF.journey_id, step_key: 'fw.first_visit', state: 'complete', evidence: { verified: { at: '2026-10-05T14:00:00Z', detail: 'First clock-in seen' } }, completed_by: 'hub', completed_at: '2026-10-05T14:05:00Z', version: 1 })
+  r = await call({ action: 'refresh', journey_id: JF.journey_id })
+  ck('once the journey has the first visit, the inquiry carries first_shift_at (the AxisCare clock-in time) with a history line, and an event says so', LDf('L1').first_shift_at === '2026-10-05T14:00:00Z' && LDf('L1').comm_log.some((c) => c.kind === 'first_shift') && ev(JF.journey_id, 'first_shift_stamped').length === 1, [LDf('L1'), ev(JF.journey_id)])
+  r = await call({ action: 'refresh', journey_id: JF.journey_id })
+  ck('...stamped once, never again', LDf('L1').comm_log.filter((c) => c.kind === 'first_shift').length === 1 && ev(JF.journey_id, 'first_shift_stamped').length === 1)
+
   /* ── THEY SAID YES (Stage 3) ── */
   const LEADS = () => T.app_data.find((r) => r.key === 'leads').data, LD = (id) => LEADS().find((l) => l.id === id)
   /* ── ONE CARD PER FAMILY, ONE NEXT (clean-up 6.1 / 6.2) ── */
