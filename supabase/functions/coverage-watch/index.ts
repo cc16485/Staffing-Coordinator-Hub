@@ -36,6 +36,7 @@ import { changedSince, decideHeld, heldItem, visitMs } from '../_shared/held-shi
 import { outsideVerdict } from '../_shared/covered-outside.ts'
 import { attendanceCard, caseEnded, caseWhen, shiftAhead, chiNowNaive, evvDayStats, evvWeek, familyCallNeeded, itemsToCloseForCases,
   markNoClosureTexts, pastCaseVerdict, weekOf } from '../_shared/loops.ts'
+import { loadQuiet, isQuiet } from '../_shared/client-quiet.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -62,6 +63,7 @@ function axisCreds() {
 }
 
 Deno.serve(async (req) => {
+  await loadQuiet(sb)   // Pause care / End care: paused and ended clients' visits are skipped
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
   /* J2 (2026-09-29): only its every-5-minutes schedule or the owner's server key. Everyone else, the public key included, is refused
      before anything is read or written. */
@@ -125,7 +127,7 @@ Deno.serve(async (req) => {
       // deno-lint-ignore no-explicit-any
       const j: any = await r.json().catch(() => ({}))
       for (const v of (j?.results?.visits ?? j?.visits ?? [])) {
-        if (v?.removed) continue
+        if (v?.removed || isQuiet(v)) continue
         visits.push(v)
       }
       url = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
@@ -360,7 +362,7 @@ Deno.serve(async (req) => {
         const j: any = await r.json().catch(() => ({}))
         const rows = Array.isArray(j?.results?.visits ?? j?.visits)
           ? (j?.results?.visits ?? j?.visits) : Object.values(j?.results?.visits ?? j?.visits ?? {})
-        for (const v of rows) if (!v?.removed) sweepVisits.push(v)
+        for (const v of rows) if (!v?.removed && !isQuiet(v)) sweepVisits.push(v)
         sUrl = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
       }
       /* Group unassigned FUTURE visits by their schedule (visit ids are

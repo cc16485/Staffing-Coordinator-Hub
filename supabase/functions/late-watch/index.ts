@@ -53,6 +53,7 @@ import { makeLink, linkExpiry } from '../_shared/late-links.ts'
 import { eligibleMembers } from '../_shared/family-change-text.ts'
 import { DEFAULT_THANKS, DEFAULT_ASK, DEFAULT_FAMILY, FAMILY_MIN_DEFAULT, fill, clockAt, familyEligible, callLine, callLive, holdUntil, holdOptsOf } from '../_shared/late-notice.ts'
 import { officeQuiet, quietWords } from '../_shared/quiet-hours.ts'
+import { loadQuiet, isQuiet } from '../_shared/client-quiet.ts'
 
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
 const AC_VERSION = '2023-10-01'
@@ -86,7 +87,7 @@ export async function listShifts(days: number, now = Date.now()): Promise<{ shif
     // deno-lint-ignore no-explicit-any
     const j: any = await r.json().catch(() => ({}))
     for (const v of rowsOf(j?.results?.visits)) {
-      if (!v || v.removed || v?.caregiver?.id == null || v?.client?.id == null) continue
+      if (!v || v.removed || isQuiet(v) || v?.caregiver?.id == null || v?.client?.id == null) continue
       const start = visitMs(v?.scheduledStartDate ?? v?.startDate)
       if (!Number.isFinite(start) || start > now) continue
       const ci = v?.clockIn?.time ? visitMs(v.clockIn.time) : NaN
@@ -340,7 +341,7 @@ async function listVisits(fromDay: string, toDay: string): Promise<{ visits: Vis
     // deno-lint-ignore no-explicit-any
     const j: any = await r.json().catch(() => ({}))
     for (const v of rowsOf(j?.results?.visits)) {
-      if (!v || v.removed || v?.caregiver?.id == null || v?.client?.id == null) continue
+      if (!v || v.removed || isQuiet(v) || v?.caregiver?.id == null || v?.client?.id == null) continue
       const start = visitMs(v?.scheduledStartDate ?? v?.startDate); if (!Number.isFinite(start)) continue
       const end = visitMs(v?.scheduledEndDate ?? v?.endDate)
       const ci = v?.clockIn?.time ? visitMs(v.clockIn.time) : NaN
@@ -677,6 +678,7 @@ Deno.serve(async (req) => {
   if (!caller) return json({ error: 'not allowed' }, 401)
   if (q.get('auth_check') === '1') return json({ ok: true, caller })
   const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  await loadQuiet(db)   // Pause care / End care: paused and ended clients' visits are skipped
   const days = Math.min(Math.max(Number(q.get('days')) || 14, 1), 21)
   /* the L0 looks: the owner's key only */
   if (q.get('l0') === '1' || q.get('circles') === '1') {

@@ -390,7 +390,13 @@ async function resolveClientAxisId(clientText: string):
              detail: 'the case does not name a real client yet — confirm the client on the case first' }
   const { data: people } = await sb.from('person_identity')
     .select('id, display_name').ilike('display_name', name)
-  const ids = [...new Set((people ?? []).map((p: any) => String(p.id)))]
+  let ids = [...new Set((people ?? []).map((p: any) => String(p.id)))]
+  /* a namesake who is a PAST client never makes a current client "ambiguous" (2026-10-07: historical clients) */
+  if (ids.length > 1) {
+    const { data: cur } = await sb.from('person_role').select('person_id').eq('role', 'client').eq('status', 'active').in('person_id', ids)
+    const curIds = [...new Set((cur ?? []).map((r: any) => String(r.person_id)))]
+    if (curIds.length) ids = curIds
+  }
   if (ids.length === 0) return { status: 'not_found', id: null,
     detail: `no person named "${name}" in the identity layer` }
   if (ids.length > 1) return { status: 'ambiguous', id: null,

@@ -26,6 +26,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { approvedRules, rulesCheck } from '../_shared/approved-rules.ts'
+import { loadQuiet } from '../_shared/client-quiet.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -154,6 +155,8 @@ Deno.serve(async (req) => {
   const data: Record<string, unknown> = {
     client_checkins: (await blob('client_checkins')) || [],
     caregivers: (await blob('caregivers')) || [],
+    /* Pause care / End care (2026-10-07): paused and ended clients get no check-in work */
+    quiet_clients: [...(await loadQuiet(supabase))],
   }
 
   const { data: persons } = await supabase.from('persons').select('person_id, full_name, primary_email')

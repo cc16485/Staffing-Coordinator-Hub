@@ -32,6 +32,7 @@ import { contactForOutbound } from '../_shared/outreach.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { loadQuiet, isQuiet } from '../_shared/client-quiet.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -115,6 +116,7 @@ export function draftBody(name: string, level: string, misses: any[]): string {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  await loadQuiet(db)   // Pause care / End care: paused and ended clients' visits are skipped
   const body = await req.clone().json().catch(() => ({})) as Record<string, unknown>
 
   /* ── "Put it in AxisCare" (office staff; a person's tap) ── */
@@ -170,7 +172,7 @@ Deno.serve(async (req) => {
     if (!r.ok) return json({ error: 'the visit list answered ' + r.status }, 502)
     // deno-lint-ignore no-explicit-any
     const j: any = await r.json().catch(() => ({}))
-    for (const v of rowsOf(j?.results?.visits)) if (v && !v.removed) list.push(v)
+    for (const v of rowsOf(j?.results?.visits)) if (v && !v.removed && !isQuiet(v)) list.push(v)
     url = j?.results?.nextPage ?? j?.nextPage ?? null
   }
   // deno-lint-ignore no-explicit-any

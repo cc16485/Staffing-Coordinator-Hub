@@ -54,16 +54,20 @@ export function endOfDayChicago(ymd: string): string {
   return new Date(guess - (wall - guess)).toISOString()
 }
 // deno-lint-ignore no-explicit-any
-export function reviewItem(rv: any, name: string, owner: string, today: string) {
+export function reviewItem(rv: any, name: string, owner: string, today: string, prev?: { ended_at?: string | null; end_reason?: string | null } | null) {
   const seen = String(rv.observed_at ?? '').slice(0, 10)
   const deceased = /deceas/i.test(String(rv.new_label))
+  /* a PAST client AxisCare shows Active again (2026-10-07): say plainly we served them before, and their last episode */
+  const back = !!prev && /^active$/i.test(String(rv.new_label || '').trim())
   return {
     id: 'csr_' + rv.review_id, kind: 'status_review', status: 'open',
-    title: `AxisCare changed ${name} from ${rv.old_label ?? '?'} to ${rv.new_label}`,
+    title: back ? `We served ${name} before. AxisCare shows them Active again: start a new episode?` : `AxisCare changed ${name} from ${rv.old_label ?? '?'} to ${rv.new_label}`,
     about: name,
-    detail: `Seen by the status check on ${seen}. Nothing in the hub changes until someone answers what happened.`
+    detail: back
+      ? `Last time: care ended ${prev!.ended_at ? String(prev!.ended_at).slice(0, 10) : '(date not recorded)'}${prev!.end_reason ? ' (' + prev!.end_reason + ')' : ''}. Seen by the status check on ${seen}. Nothing starts until a person confirms the return; their earlier history stays as it is.`
+      : `Seen by the status check on ${seen}. Nothing in the hub changes until someone answers what happened.`
       + (deceased ? ' Nothing contacts the family automatically; any call is a person\'s decision.' : ''),
-    next_action: 'Open it and answer: care ended, on hold, AxisCare mistake, or returning client. Answering closes this.',
+    next_action: back ? 'Open it: confirm they are returning (a new episode on the same person), or say AxisCare is wrong.' : 'Open it and answer: care ended, on hold, AxisCare mistake, or returning client. Answering closes this.',
     urgency: deceased ? 'high' : 'normal', due: endOfDayChicago(today), domain: 'client_care', owner,
     created_at: null, last_activity_at: null, opened_by: 'system', created_by: AUTOMATION,
     source: { type: 'status_review', id: rv.review_id, review_id: rv.review_id, axiscare_client_id: rv.axiscare_client_id, person_id: rv.person_id },
@@ -150,7 +154,7 @@ Deno.serve(async (req) => {
   const transitions = log.filter((x) => typeof x?.id === 'string' && x.id.startsWith('tr_'))
   const counts = { census: Object.keys(map).length, transitions_seen: transitions.length, current_refreshed: 0,
                    admission_scan: null as unknown, already_reviewed: 0, too_old: 0, no_hub_person: 0, would_open: 0, opened: 0,
-                   items_created: 0, items_closed: 0, open_reviews: 0, errors: 0 }
+                   items_created: 0, items_closed: 0, open_reviews: 0, errors: 0, past_quiet: 0 }
   const errors: unknown[] = []
 
   // 1. AxisCare's current status, for Active Clients
@@ -188,10 +192,25 @@ Deno.serve(async (req) => {
   const axIds = [...new Set(fresh.map((t) => String(t.axiscare_client_id)))]
   const { data: hubLinks } = axIds.length ? await sb.from('person_source_id').select('source_id').eq('system', 'axiscare').eq('entity_type', 'client').in('source_id', axIds) : { data: [] }
   const known = new Set((hubLinks ?? []).map((l) => String(l.source_id)))
+  /* PAST AND DECEASED CLIENTS (Samantha 2026-10-07): a change for someone whose care has already ended opens a card
+     ONLY when AxisCare shows them Active again (one card: start a new episode?). Never for a deceased client, and never
+     for any other change (Inactive to Deceased, and so on): no reactivation prompts, no routine follow-up. */
+  const { data: pastLinks } = axIds.length ? await sb.from('person_source_id').select('person_id, source_id').eq('system', 'axiscare').eq('entity_type', 'client').in('source_id', axIds) : { data: [] }
+  const pastPids = [...new Set((pastLinks ?? []).map((l) => String(l.person_id)))]
+  const { data: pastRoles } = pastPids.length ? await sb.from('person_role').select('person_id, status, end_reason').eq('role', 'client').in('person_id', pastPids) : { data: [] }
+  const careOf = (ax: string): 'current' | 'past' | 'deceased' => {
+    const pids = (pastLinks ?? []).filter((l) => String(l.source_id) === ax).map((l) => String(l.person_id))
+    const rs = (pastRoles ?? []).filter((r) => pids.includes(String(r.person_id)))
+    if (!rs.length || rs.some((r) => r.status === 'active')) return 'current'
+    return rs.some((r) => /deceas/i.test(String(r.end_reason || ''))) ? 'deceased' : 'past'
+  }
+  // deno-lint-ignore no-explicit-any
+  const quietPast = (t: any) => { const c = careOf(String(t.axiscare_client_id)); return c === 'deceased' || (c === 'past' && !/^active$/i.test(String(t.new_status_label || '').trim())) }
   // deno-lint-ignore no-explicit-any
   const preview: any[] = []
   for (const t of fresh) {
     if (!known.has(String(t.axiscare_client_id))) { counts.no_hub_person++; continue }
+    if (quietPast(t)) { counts.past_quiet = (counts.past_quiet || 0) + 1; continue }
     counts.would_open++
     if (full) preview.push({ axiscare_client_id: t.axiscare_client_id, change: `${t.old_status_label} -> ${t.new_status_label}`, seen: String(t.observed_at).slice(0, 10) })
     if (!live) continue
@@ -217,11 +236,17 @@ Deno.serve(async (req) => {
     const d = (domains ?? []).find((x: any) => x.code === 'client_care') as any
     // deno-lint-ignore no-explicit-any
     const owner = d?.owner_person ? String((persons ?? []).find((p: any) => p.person_id === d.owner_person)?.primary_email || '').toLowerCase() : ''
+    /* the client's own Care Coordinator gets the card (their journey's), else whoever owns Client Care */
+    const { data: cjs } = await sb.from('client_journey').select('axiscare_client_id, assigned_cc, created_at').not('axiscare_client_id', 'is', null).order('created_at', { ascending: false })
+    const ccOf = (ax: string) => String((cjs ?? []).find((j) => String(j.axiscare_client_id) === String(ax) && j.assigned_cc)?.assigned_cc || '').toLowerCase()
+    const { data: rolesNow } = pids.length ? await sb.from('person_role').select('person_id, status, ended_at, end_reason').eq('role', 'client').in('person_id', pids) : { data: [] }
+    const prevOf = (pid: string) => { const rs = (rolesNow ?? []).filter((r) => String(r.person_id) === String(pid)); if (!rs.length || rs.some((r) => r.status === 'active')) return null
+      return rs.slice().sort((a, b2) => String(b2.ended_at || '').localeCompare(String(a.ended_at || '')))[0] }
     for (const rv of rows) {
       const it = byId.get('csr_' + rv.review_id)
       if (rv.status === 'open' && !it) {
         const at = new Date().toISOString()
-        const item = { ...reviewItem(rv, nameOf(rv.person_id), owner, today), created_at: at, last_activity_at: at,
+        const item = { ...reviewItem(rv, nameOf(rv.person_id), ccOf(rv.axiscare_client_id) || owner, today, prevOf(rv.person_id)), axiscare_client_id: String(rv.axiscare_client_id), created_at: at, last_activity_at: at,
           history: [{ at, by: 'automation', text: 'Opened because AxisCare changed this client\'s status' }] }
         const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item })
         if (error) { counts.errors++; errors.push({ step: 'item', review: rv.review_id, error: error.message }) } else counts.items_created++

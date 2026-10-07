@@ -92,6 +92,7 @@ import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { officeQuiet, quietWords, afterHoursAllowed } from '../_shared/quiet-hours.ts'
 import { makePrefill, withPrefillLink, axisHm } from '../_shared/evv-prefill.ts'
 import { SIGN_DAYS, MAX_TRIES, signUrl, dateWords, nextVisitMessage, decideNextVisit, upcomingVisit, signItem } from '../_shared/evv-sign.ts'
+import { loadQuiet, isQuiet } from '../_shared/client-quiet.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -164,6 +165,7 @@ function clockHM(c: unknown): string | null {
 }
 
 Deno.serve(async (req) => {
+  await loadQuiet(sb)   // Pause care / End care: paused and ended clients' visits are skipped
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
   /* J1 (2026-09-29): only its every-2-minutes schedule or the owner's server key. Everyone else, the public key included, is refused
      before anything is read or sent. */
@@ -233,7 +235,7 @@ Deno.serve(async (req) => {
       if (!r.ok) { fetchError = `AxisCare responded ${r.status}`; break }
       // deno-lint-ignore no-explicit-any
       const j: any = await r.json().catch(() => ({}))
-      for (const v of rowsOf(j?.results?.visits ?? j?.visits)) if (!v?.removed) visits.push(v)
+      for (const v of rowsOf(j?.results?.visits ?? j?.visits)) if (!v?.removed && !isQuiet(v)) visits.push(v)
       url = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
     }
   } catch (err) { fetchError = String(err) }

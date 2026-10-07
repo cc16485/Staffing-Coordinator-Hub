@@ -36,6 +36,7 @@ import { normalisePhone, contactForOutbound } from '../_shared/outreach.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
+import { loadQuiet, isQuiet } from '../_shared/client-quiet.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -89,7 +90,7 @@ async function fetchVisits(site: string, token: string, from: string, to: string
       if (!r.ok) return { visits, error: `AxisCare responded ${r.status}` }
       // deno-lint-ignore no-explicit-any
       const j: any = await r.json().catch(() => ({}))
-      for (const v of rowsOf(j?.results?.visits ?? j?.visits)) if (!v?.removed) visits.push(v)
+      for (const v of rowsOf(j?.results?.visits ?? j?.visits)) if (!v?.removed && !isQuiet(v)) visits.push(v)
       url = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
     }
     return { visits, error: null }
@@ -97,6 +98,7 @@ async function fetchVisits(site: string, token: string, from: string, to: string
 }
 
 Deno.serve(async (req) => {
+  await loadQuiet(sb)   // Pause care / End care: paused and ended clients' visits are skipped
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
   /* J1 (2026-09-29): only its 10am schedule or the owner's server key. Everyone else, the public key included, is refused
      before anything is read or sent. */

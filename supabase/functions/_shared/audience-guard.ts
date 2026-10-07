@@ -42,7 +42,7 @@ const isEmail = (e: unknown) => /@/.test(String(e ?? ''))
 const emailsOf = (x: Any) => [x?.personalEmail, x?.email, x?.workEmail, x?.otherEmail].filter(isEmail).map(lc)
 
 /** pure: every input already loaded -> email -> state (strictest) */
-export function classify(inp: { axClients: Any[]; links: Any[]; roles: Any[]; circles: Any[]; contacts: Any[]; leads: Any[]; journeys: Any[] }) {
+export function classify(inp: { axClients: Any[]; links: Any[]; roles: Any[]; circles: Any[]; contacts: Any[]; leads: Any[]; journeys: Any[]; pauses?: Any[] }) {
   const byAx = new Map<string, CareState>()
   for (const c of inp.axClients || []) { const id = String(c?.id ?? ''), st = axState(c); if (id && st) byAx.set(id, st) }
   /* the Hub's own record of a client: an ended or deceased role overrides an AxisCare "Active" */
@@ -53,10 +53,15 @@ export function classify(inp: { axClients: Any[]; links: Any[]; roles: Any[]; ci
     const cur = byAx.get(ax) ?? null
     byAx.set(ax, rs === 'active' && cur && cur !== 'active' ? cur : (rs === 'active' ? (cur ?? 'active') : stricter(cur, rs)!))
   }
+  /* Pause care (2026-10-07): an open pause is the state Paused, whatever AxisCare says */
+  for (const p of inp.pauses || []) { const ax = String(p.axiscare_client_id ?? ''); if (ax) byAx.set(ax, stricter(byAx.get(ax) ?? null, 'paused')!) }
   /* a start of care under way (said yes, journey open) counts as starting, unless anything else is stricter */
   const journeyByLead = new Map<string, Any>(); for (const j of inp.journeys || []) { if (j.lead_id) journeyByLead.set(String(j.lead_id), j) }
+  /* a returning client has an older, closed journey and a new one: the new (not closed) one is what counts */
+  const openAx = new Set((inp.journeys || []).filter((j: Any) => !j.is_test && j.axiscare_client_id && j.status !== 'closed').map((j: Any) => String(j.axiscare_client_id)))
   for (const j of inp.journeys || []) {
     if (j.is_test || !j.axiscare_client_id) continue
+    if (j.status === 'closed' && openAx.has(String(j.axiscare_client_id))) continue
     const ax = String(j.axiscare_client_id), cur = byAx.get(ax) ?? null
     /* only a journey closed because CARE ENDED makes a past client; one closed because the inquiry was lost never started care */
     if (j.status === 'closed') { if (/^Care ended/.test(j.closed_reason || '')) byAx.set(ax, stricter(cur, /deceas/i.test(j.closed_reason || '') ? 'deceased' : 'past')!) }
@@ -114,12 +119,13 @@ export async function loadGuard(db: Any): Promise<{ stateOf: (email: string) => 
     } catch { axOk = false }
   }
   const sel = async (t: string, cols: string, f?: (q: Any) => Any) => { try { let q = db.from(t).select(cols); if (f) q = f(q); const { data } = await q; return data ?? [] } catch { return [] } }
-  const [links, roles, circles, contacts, journeys, leadRow] = await Promise.all([
+  const [links, roles, circles, contacts, journeys, pauses, leadRow] = await Promise.all([
     sel('person_source_id', 'person_id, source_id', (q) => q.eq('system', 'axiscare').eq('entity_type', 'client')),
     sel('person_role', 'person_id, role, status, end_reason', (q) => q.eq('role', 'client')),
     sel('care_circles', 'id, axiscare_client_id'), sel('circle_contacts', 'circle_id, email'),
     sel('client_journey', 'lead_id, axiscare_client_id, status, closed_reason, is_test'),
+    sel('client_pause', 'axiscare_client_id', (q) => q.eq('status', 'open')),
     (async () => { try { const { data } = await db.from('app_data').select('data').eq('key', 'leads').maybeSingle(); return Array.isArray(data?.data) ? data.data : [] } catch { return [] } })()])
-  const map = classify({ axClients, links, roles, circles, contacts, leads: leadRow, journeys })
+  const map = classify({ axClients, links, roles, circles, contacts, leads: leadRow, journeys, pauses })
   return { stateOf: (e: string) => map.get(lc(e)) ?? null, axOk }
 }
