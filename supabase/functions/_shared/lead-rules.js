@@ -585,7 +585,7 @@
      response hours), never from a 9 pm form post. */
   function median(xs){ const a = xs.filter(x => x != null && !isNaN(x)).sort((p, q) => p - q); if(!a.length) return null; const m = Math.floor(a.length / 2); return a.length % 2 ? a[m] : Math.round((a[m - 1] + a[m]) / 2); }
   function hoursOf(l){ const s = schedule(l); if(l && l.lost_schedule && l.lost_schedule.hours_per_week) return Number(l.lost_schedule.hours_per_week) || 0; return s && s.hours_per_week ? Number(s.hours_per_week) || 0 : 0; }
-  function periodNumbers(leads, hours, from, to, now){
+  function periodNumbers(leads, hours, from, to, now, opts){
     const inP = iso => iso && String(new Date(iso).toISOString()) >= from && String(new Date(iso).toISOString()) < to;
     const real = (leads || []).filter(l => l && !(l.spam && l.spam.at));
     const came = real.filter(l => inP(l.created_at));
@@ -598,6 +598,16 @@
     came.forEach(l => { buckets[bucket(mins(l))]++; });
     const yes = real.filter(l => inP(l.said_yes_at || (l.status === 'Converted' ? l.converted_at : null)));
     const toYes = yes.map(l => l.created_at ? daysBetween(chicago(l.created_at).ymd, chicago(l.said_yes_at || l.converted_at).ymd) : null);
+    /* started = first shift happened in the period (first_shift_at, stamped by the client journey when AxisCare shows the first clock-in) */
+    const started = real.filter(l => inP(l.first_shift_at));
+    const yesToShift = started.map(l => (l.said_yes_at || l.converted_at) ? daysBetween(chicago(l.said_yes_at || l.converted_at).ymd, chicago(l.first_shift_at).ymd) : null);
+    /* referral partners (the Hub's referral_orgs, by id; else the typed referral name) */
+    const orgs = (opts && opts.orgs) || {};
+    const partners = {};
+    came.forEach(l => { const key = l.referral_org_id ? 'org:' + l.referral_org_id : (String(l.referral_source_name || '').trim() ? 'name:' + String(l.referral_source_name).trim().toLowerCase() : null); if(!key) return;
+      const o = orgs[l.referral_org_id] || {}; const r = partners[key] = partners[key] || { key, name:o.name || String(l.referral_source_name || '').trim(), type:o.type || '', sent:0, reached_24h:0, assessed:0, said_yes:0, started:0, days_to_start:[], hours:0 };
+      r.sent++; if(reached24.indexOf(l) > -1) r.reached_24h++; if(l.assessment_at || (l.status && l.status !== 'New' && l.status !== 'Contacted' && l.status !== 'Lost')) r.assessed++; if(l.said_yes_at || l.status === 'Converted') r.said_yes++;
+      if(l.first_shift_at){ r.started++; r.hours += hoursOf(l); r.days_to_start.push(daysBetween(chicago(l.created_at).ymd, chicago(l.first_shift_at).ymd)); } });
     const lost = real.filter(l => l.status === 'Lost' && inP(l.lost_at || (inP(l.created_at) ? l.created_at : null)));
     const lostAfterYes = lost.filter(l => l.said_yes_at || l.said_yes_undone === undefined && l.converted_at && l.lost_at && l.converted_at < l.lost_at);
     const byReason = {};
@@ -608,14 +618,15 @@
       r.inquiries++; const m = mins(l); if(m != null) r.mins.push(m); if(reached24.indexOf(l) > -1) r.reached_24h++; if(stale.indexOf(l) > -1) r.never_attempted++; if(l.said_yes_at) r.said_yes++; });
     return { from, to, inquiries:came.length, attempted:attempted.length, median_first_attempt_min:median(came.map(mins)), reached_24h:reached24.length,
       reached_24h_pct:came.length ? Math.round(reached24.length / came.length * 100) : null, never_attempted:stale.length, buckets,
-      said_yes:yes.length, inquiry_to_yes_median_days:median(toYes), lost:lost.length, lost_after_yes:lostAfterYes.length,
+      said_yes:yes.length, inquiry_to_yes_median_days:median(toYes), started:started.length, yes_to_first_shift_median_days:median(yesToShift), lost:lost.length, lost_after_yes:lostAfterYes.length,
+      by_partner:Object.values(partners).map(r => ({ key:r.key, name:r.name, type:r.type, sent:r.sent, reached_24h:r.reached_24h, assessed:r.assessed, said_yes:r.said_yes, started:r.started, days_to_start_median:median(r.days_to_start), hours:r.hours })).sort((a, b) => b.sent - a.sent || b.started - a.started),
       lost_hours_week:lost.reduce((a, l) => a + hoursOf(l), 0), by_reason:Object.values(byReason).sort((a, b) => b.hours - a.hours || b.count - a.count),
       by_owner:Object.values(owners).map(o => ({ owner:o.owner, inquiries:o.inquiries, median_first_attempt_min:median(o.mins), reached_24h:o.reached_24h, never_attempted:o.never_attempted, said_yes:o.said_yes })).sort((a, b) => b.inquiries - a.inquiries) };
   }
   function ownerNumbers(leads, hours, opts){
     opts = opts || {}; const now = opts.now || new Date().toISOString(), days = Number(opts.days) || 30;
     const to = now, from = new Date(Date.parse(now) - days * 864e5).toISOString(), before = new Date(Date.parse(from) - days * 864e5).toISOString();
-    return { days, now:periodNumbers(leads, hours, from, to, now), prior:periodNumbers(leads, hours, before, from, now) };
+    return { days, now:periodNumbers(leads, hours, from, to, now, opts), prior:periodNumbers(leads, hours, before, from, now, opts) };
   }
 
   /* ── the move-over (installer): what an old lead gets, as a patch, or null when nothing is missing ─────────────── */

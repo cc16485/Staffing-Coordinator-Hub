@@ -29,6 +29,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { ldPush } from '../_shared/lead-truth.ts'
 import { inquirySwitches } from '../_shared/inquiry-switches.ts'
+import '../_shared/lead-rules.js'
+// deno-lint-ignore no-explicit-any
+const LR: any = (globalThis as any).LeadRules
 import { ghlContactIfAllowed, optOutCheck } from '../_shared/optout.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
@@ -278,8 +281,31 @@ Deno.serve(async (req) => {
 
   }
 
+  /* UN-PARKING (2026-10-07): a parked inquiry card (sub_state waiting) comes back the moment the family's one date is due
+     (leadNext: a promised call, a check-back, a follow-up), with the words the Hub would use. The Hub page does the same
+     when someone opens it; this does it every run, so an 8 am check-back is on My Work before anyone opens the Hub. */
+  let unparked = 0, retimed = 0
+  try {
+    const { data: ir } = await supabase.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    const items: any[] = Array.isArray(ir?.data) ? ir!.data : []
+    const nowIso = new Date().toISOString()
+    for (const it of items.filter((x) => x?.kind === 'new_lead' && String(x.id || '').startsWith('ops_lead_') && x.status === 'open')) {
+      const l = leads.find((x) => String(x.id) === String(it.source_id)); if (!l) continue
+      const nx = LR.leadNext(l, nowIso); if (!nx) continue
+      if (it.sub_state === 'waiting' && nx.due) {
+        const words = LR.nextWords(nx, nowIso)
+        const up = { ...it, sub_state: null, waiting_on: null, check_back: null, due: nx.at, urgency: nx.kind === 'promise' ? 'high' : it.urgency, next_action: words + '.', last_activity_at: nowIso,
+          history: [...(Array.isArray(it.history) ? it.history : []), { at: nowIso, by: 'system', text: 'Back on My Work: ' + words }].slice(-40) }
+        if (!dry) await supabase.rpc('upsert_app_data_item', { target_key: 'ops_items', item: up }); unparked++; plan.office.push('un-park ' + (l.first_name || l.id))
+      } else if (it.sub_state === 'waiting' && !nx.due && it.check_back !== nx.day) {
+        if (!dry) await supabase.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...it, check_back: nx.day, due: nx.at, last_activity_at: nowIso } }); retimed++
+      }
+    }
+  } catch (e) { console.warn('[lead-followup] un-parking skipped:', e) }
+
   const switches = { inquiry_ack_live: sw.ack, settings_read: sw.read_ok, nudges: 'removed 2026-10-07' }
   return json(dry
     ? { ok: true, dry: true, quiet_hours: quiet, switches, leads_considered: leads.length, would: plan }
-    : { ok: true, quiet_hours: quiet, switches, ...out })
+    : { ok: true, quiet_hours: quiet, switches, ...out, unparked, retimed })
 })

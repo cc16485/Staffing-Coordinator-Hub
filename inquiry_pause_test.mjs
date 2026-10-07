@@ -69,6 +69,24 @@ ck('web form, switch absent: the inquiry is saved and the office is told, but no
 reset({ inquiry_ack_live: true }, []); r = await form();
 ck('web form, switch on: the greeting goes out as before (text and email)', sent.filter((m) => /Thank you for reaching out about care|We received your request/.test(m.text || '')).length === 2 && !!APP.leads[0].ack_sent_at, sent);
 
+/* un-parking (2026-10-07): a parked inquiry card comes back the moment the family's date is due, every run */
+{
+  h = await load('lead-followup');   /* the form checks above left h on lead-intake */
+  const dayAgo = new Date(Date.now() - 86400e3).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' }), inTwo = new Date(Date.now() + 2 * 86400e3).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+  reset({ inquiry_ack_live: false }, [
+    { id: 'p1', first_name: 'Carla', status: 'Contacted', created_at: hoursAgo(200), last_contacted_at: dayAgo, comm_log: [{ at: 'x' }], waiting: { reason: 'state', since: dayAgo, check_back: dayAgo } },
+    { id: 'p2', first_name: 'Tom', status: 'Contacted', created_at: hoursAgo(200), last_contacted_at: dayAgo, comm_log: [{ at: 'x' }], follow_up_due: inTwo } ]);
+  APP.ops_items = [
+    { id: 'ops_lead_p1', kind: 'new_lead', source_id: 'p1', status: 'open', sub_state: 'waiting', waiting_on: 'the state, until ' + dayAgo, check_back: dayAgo, urgency: 'normal', next_action: 'Waiting…' },
+    { id: 'ops_lead_p2', kind: 'new_lead', source_id: 'p2', status: 'open', sub_state: 'waiting', waiting_on: 'the family, until yesterday', check_back: dayAgo, urgency: 'normal' } ];
+  let r2 = await run();
+  const c1 = APP.ops_items.find((x) => x.id === 'ops_lead_p1'), c2 = APP.ops_items.find((x) => x.id === 'ops_lead_p2');
+  ck('a parked card whose check-back has arrived is un-parked with the words a person needs, and a history line', r2.unparked === 1 && c1.sub_state === null && !c1.check_back && /^Check back day: the state\.$/.test(c1.next_action) && c1.history.some((x) => /Back on My Work/.test(x.text)), [r2, c1]);
+  ck('a parked card whose date moved is re-timed, not un-parked', r2.retimed === 1 && c2.sub_state === 'waiting' && c2.check_back === inTwo, c2);
+  APP.ops_items[0].sub_state = 'waiting'; APP.ops_items[0].check_back = dayAgo; r2 = await run('?dry=1');
+  ck('a dry run names what it would un-park and changes nothing', r2.dry && r2.would.office.some((x) => /un-park Carla/.test(x)) && APP.ops_items[0].sub_state === 'waiting', r2);
+}
+
 Date.prototype.toLocaleString = realTLS;
 console.log('\nSTEP 0 · 0a · INQUIRY MESSAGES PAUSED · TEST\n' + '='.repeat(60)); let all = true;
 for (const [n, g, note] of res) { all &&= g; console.log((g ? 'PASS  ' : 'FAIL  ') + n + (note ? '\n   └─ ' + note : '')); }
