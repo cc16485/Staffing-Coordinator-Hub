@@ -832,13 +832,17 @@
   }
   const PARTNER_KINDS = ['receipt', 'assessment', 'outcome_started', 'outcome_lost', 'weekly'];
   const PARTNER_LABEL = { receipt:'We reached the family', assessment:'Assessment scheduled', outcome_started:'The family chose us', outcome_lost:'The family did not start with us', weekly:'Weekly status while Medicaid is pending' };
-  const PARTNER_DEFAULT = {
-    receipt:'Hi {partner}, this is {me} with Caring Companions. Thank you for sending {client} our way. We reached {family} today and are setting up a time to visit the home. I will keep you posted.',
-    assessment:'Hi {partner}, a quick update on {client}: our in-home assessment is set for {day}. I will let you know how it goes and when care can start.',
-    outcome_started:'Hi {partner}, good news: {client} chose Caring Companions{start}. Thank you again for the referral. If anything changes on your end, call or text me any time.',
-    outcome_lost:'Hi {partner}, closing the loop on {client}: care did not start with us ({reason}). Thank you for thinking of us, and please keep us in mind for the next family.',
-    weekly:'Hi {partner}, our weekly note on {client}: we are still waiting on the state for the Medicaid authorization ({days} days so far). We are ready to start the week it comes through. Anything you can do to nudge it along helps.',
+  const PARTNER_DEFAULT = {   /* her words (reviewed 2026-10-07): drafts a person reads and sends */
+    receipt:'Hi {partner}, this is {me} with Caring Companions. Thank you for referring {client} to us. We connected with {family} today and are working with the family on next steps. I will keep you updated as things move forward.',
+    assessment:'Hi {partner}, a quick update on {client}: we connected with the family and have the in-home assessment scheduled for {day}. After the visit, I will let you know where things stand and the anticipated next step toward starting care.',
+    outcome_started:'Hi {partner}, good news. {client}\'s family has chosen Caring Companions, and we are moving forward with care. The anticipated start is {start}. Thank you again for trusting us with your referral. We will take good care of them.',
+    outcome_lost:'Hi {partner}, I wanted to close the loop on {client}. Care will not be starting with Caring Companions at this time. {reason} Thank you for thinking of us, and please keep us in mind whenever another family needs help.',
+    weekly:'Hi {partner}, our weekly update on {client}: the Medicaid authorization is still pending with the state ({days} days so far). We are staying in touch with the family while they wait and are prepared to move to the next step once authorization is received. I will continue to keep you posted.',
   };
+  /* the reason a referral partner hears: brief and appropriate to share; never the family's private details */
+  const LOST_SHARE = { could_not_staff:'We were not able to staff the requested schedule.', outside_area:'The home is outside our service area.', price:'The family chose not to move forward at this time.', minimum_hours:'The family chose not to move forward at this time.',
+    chose_agency:'The family chose another option.', chose_facility:'The family chose another option.', family_providing:'Family is providing the care for now.', discharge_changed:'The discharge plan changed.',
+    medicaid_issue:'A Medicaid eligibility or program issue came up.', va_issue:'A VA authorization issue came up.', unable_to_reach:'We were not able to reach the family.', no_longer_needs:'The family no longer needs in-home care.' };
   function partnerName(l, org){ return (org && org.name) || String((l && l.referral_source_name) || '').trim() || ''; }
   function partnerLoop(l, ctx){
     ctx = ctx || {}; const today = ctx.today || ymd(new Date()), org = ctx.org || null, name = partnerName(l, org);
@@ -854,8 +858,8 @@
     if(l.first_human_contact_at && !has('receipt')) due.push({ kind:'receipt', title:PARTNER_LABEL.receipt, text:fill(tpl('receipt'), v) });
     const asm = asmtNext(Object.assign({}, ctx, { lead:l, now:ctx.now || new Date().toISOString(), today }));
     if(asm && asm.kind === 'booked' && !has('assessment')) due.push({ kind:'assessment', title:PARTNER_LABEL.assessment, text:fill(tpl('assessment'), Object.assign({}, v, { day:dayWords(asm.day, today) })) });
-    if(l.said_yes_at && !has('outcome_started')) due.push({ kind:'outcome_started', title:PARTNER_LABEL.outcome_started, text:fill(tpl('outcome_started'), Object.assign({}, v, { start:l.first_shift_at ? '; care started ' + dayWords(chicago(l.first_shift_at).ymd, today) : ', and we are getting ready to start' })) });
-    if(String(l.status || '') === 'Lost' && !has('outcome_lost')) due.push({ kind:'outcome_lost', title:PARTNER_LABEL.outcome_lost, text:fill(tpl('outcome_lost'), Object.assign({}, v, { reason:(LOST_LABEL[lostKey(l)] || String(l.lost_reason || 'their decision')).toLowerCase() })) });
+    if(l.said_yes_at && !has('outcome_started')) due.push({ kind:'outcome_started', title:PARTNER_LABEL.outcome_started, text:fill(tpl('outcome_started'), Object.assign({}, v, { start:l.first_shift_at ? 'already behind us: care began ' + dayWords(chicago(l.first_shift_at).ymd, today) : 'being set up now, once the schedule and caregiver are confirmed' })) });
+    if(String(l.status || '') === 'Lost' && !has('outcome_lost')) due.push({ kind:'outcome_lost', title:PARTNER_LABEL.outcome_lost, text:fill(tpl('outcome_lost'), Object.assign({}, v, { reason:LOST_SHARE[lostKey(l)] || 'The family decided not to move forward at this time.' })) });
     const w = waiting(l);
     if(PROFESSIONAL.indexOf(sub) > -1 && l.funding_source === 'medicaid' && w && w.reason === 'state' && !l.said_yes_at && String(l.status || '') !== 'Lost'){
       const since = lastAt && lastAt > (w.since || '') ? chicago(lastAt).ymd : (w.since || today);
@@ -936,19 +940,19 @@
   const SCRIPT_KEYS = ['first_call', 'voicemail', 'replied', 'promise', 'authorized', 'check_back_state', 'check_back_family', 'unable_to_reach', 'asmt_booked', 'urgent_start', 'followup', 'yes_thanks'];
   const SCRIPT_LABEL = { first_call:'First call', voicemail:'Voicemail', replied:'They replied', promise:'The call we promised', authorized:'The state authorized', check_back_state:'Check-back, waiting on the state',
     check_back_family:'Check-back, family deciding or not ready', unable_to_reach:'Unable to reach, one more try', asmt_booked:'Assessment confirmation', urgent_start:'Needs care soon, book the visit', followup:'A follow-up', yes_thanks:'Thank-you text when they say yes (goes out only when you send it)' };
-  const SCRIPT_DEFAULT = {
-    first_call:'Hi {first}, this is {me} with Caring Companions. Thank you for reaching out about care for {client}. I would love to hear what is going on and what a typical day looks like, and then I can tell you how we would help.',
-    voicemail:'Hi {first}, this is {me} with Caring Companions returning your message about care for {client}. I am sorry I missed you. I will try again shortly, or call me back at (417) 234-8494 whenever works for you.',
-    replied:'Hi {first}, thank you for getting back to me. [Answer what they asked.] If it is easier, tell me a good time to call and I will make sure it is me on the line.',
-    promise:'Hi {first}, this is {me} with Caring Companions. You asked us to call {when}. Is now still a good time?',
-    authorized:'Hi {first}, good news: the state has authorized hours for {client}. Let us pick the week care starts and the caregiver we would like to introduce.',
-    check_back_state:'Hi {first}, I am checking in about the Medicaid authorization for {client}. We are still waiting on the state; I will keep after them and keep you posted. Has anything changed on your side?',
-    check_back_family:'Hi {first}, I said I would check back with you around now about {client}. Have you had a chance to think it over? No pressure either way; I am happy to answer anything that came up.',
-    unable_to_reach:'Hi {first}, this is {me} with Caring Companions. We have tried a few times to reach you about {client}. If you still need help, call or text (417) 234-8494. If things have changed, that is okay too, just let us know.',
-    asmt_booked:'Hi {first}, confirming our visit {when} at the home. I will bring the paperwork; if you can, have a list of medications handy.',
-    urgent_start:'Hi {first}, you mentioned you {start}. The next step is a short visit at the home so we match the right caregiver. I have [two times]; which works for you?',
-    followup:'Hi {first}, this is {me} with Caring Companions following up{why}.',
-    yes_thanks:'Hi {first}, thank you for choosing Caring Companions for {client}. I am {me}, your Care Coordinator, and I will walk you through everything from here. Your caregiver introduction and start date are next; you will hear from me, not a machine. Call or text me any time at (417) 234-8494.',
+  const SCRIPT_DEFAULT = {   /* her words (reviewed 2026-10-07): conversation starters, never sent by themselves */
+    first_call:'Hi {first}, this is {me} with Caring Companions. Thank you for reaching out about care for {client}. I would love to learn a little more about what is going on, what help would make things easier right now, and what you are hoping care could look like. Then I can walk you through how we may be able to help.',
+    voicemail:'Hi {first}, this is {me} with Caring Companions. I am following up about care for {client}. I am sorry I missed you. I would be happy to answer any questions and learn a little more about what kind of help you are looking for. You can call or text me back at (417) 234-8494. I will also try you again soon.',
+    replied:'Hi {first}, thank you for getting back to me. [Answer their question.] I would be happy to help you figure out the next step for {client}. If it would be easier to talk, send me a good time to call and I will do my best to make it work.',
+    promise:'Hi {first}, this is {me} with Caring Companions. I promised I would follow up with you {when} about care for {client}. Is now still a good time to talk?',
+    authorized:'Hi {first}, good news. We received the authorization for {client}\'s care. The next step is for us to confirm the care schedule and work on the right caregiver match. I would like to go over the authorized hours with you and talk about when you would like care to begin.',
+    check_back_state:'Hi {first}, I wanted to check in about {client}. We are still waiting for the Medicaid authorization from the state, but I have not forgotten about you. Has anything changed with {client}\'s needs or the schedule you are hoping for while we wait? I will keep you updated as soon as we receive anything new.',
+    check_back_family:'Hi {first}, I wanted to check back in about care for {client}. Have you had a chance to think about what would work best for your family? There is no pressure at all. If questions have come up or the situation has changed, I am happy to help.',
+    unable_to_reach:'Hi {first}, this is {me} with Caring Companions. I have tried to reach you a few times about care for {client}, and I know things can get busy. I do not want to keep bothering you, so I will make this my last check-in for now. If you still need help, now or later, just call or text us at (417) 234-8494. We would be happy to help.',
+    asmt_booked:'Hi {first}, just confirming our visit {when} to meet with you and {client}. We will talk through what help is needed, the schedule that would work best, and what is important to you in a caregiver. If you have a current medication list, please have it handy. We look forward to meeting you.',
+    urgent_start:'Hi {first}, since you are hoping to start care {start}, I would like to get your in-home visit scheduled so we can learn more about {client}\'s needs and start working on the right caregiver match. I have [option 1] or [option 2] available. Would either of those work for you?',
+    followup:'Hi {first}, this is {me} with Caring Companions. I wanted to follow up about {client}{why}. How are things going?',
+    yes_thanks:'Hi {first}, thank you for choosing Caring Companions to care for {client}. I am {me}, your Care Coordinator, and I will be here to help you through the process. Our next steps are to finalize the care schedule, match the right caregiver, and make sure everyone is ready for a great first day. I will keep you updated along the way, and you can always call or text us at (417) 234-8494 if you need anything.',
   };
   const SCRIPT_HINT = {
     first_call:{ Website:'They filled in the website form; they may not remember every detail, so start from what they wrote.', Phone:'They called us first; pick up where that call left off.', Referral:'{referral} sent them; say so, families trust the hand-off.' },
@@ -958,6 +962,8 @@
     dsds_21:'Call DSDS about the authorization first; then tell {first} what they said and when we check again.',
     check_back_state:'Check Fusion before you call, so you are not asking the family what the state already told us.',
   };
+  /* "by Fri" · "this week" · "as soon as possible" · "soon": the timing words alone, for "hoping to start care {start}" */
+  function startTiming(l, today){ const w = desiredStartWords(l, today); if(!w) return 'soon'; if(/planning/i.test(w)) return 'when the time is right'; return w.replace(/^(Needs|Wants|Wanted) care /, '').replace(/^\w/, c => c.toLowerCase()); }
   function fill(t, v){ return String(t || '').replace(/\{(\w+)\}/g, (m, k) => (v[k] == null ? m : v[k])); }
   function scriptFor(l, row, ctx){
     ctx = ctx || {}; const reason = row && row.reason || '', w = waiting(l), nx = leadNext(l, ctx.now);
@@ -968,7 +974,7 @@
     const client = (l.client_first_name || '').trim(), caller = (l.first_name || '').trim();
     const v = { first:caller || 'there', client:client && client !== caller ? client : 'your loved one', me:(ctx.me || 'a Care Coordinator').split(' ')[0],
       when:nx && (nx.kind === 'promise' || reason === 'asmt_booked') ? whenWords(nx.at, ctx.now || new Date().toISOString()) : (row && row.when && row.when.big) || 'as we said',
-      why:nx && nx.kind === 'follow_up' && nx.why ? ' on ' + String(nx.why).replace(/[.?!]+$/, '') : '', start:String(desiredStartWords(l, ctx.today) || 'need care soon').toLowerCase().replace(/^needs /, 'need ').replace(/^wants /, 'want '),
+      why:nx && nx.kind === 'follow_up' && nx.why ? ': ' + String(nx.why).replace(/[.?!]+$/, '') : '', start:startTiming(l, ctx.today),
       referral:ctx.referral || l.referral_source_name || 'A partner' };
     if(reason === 'asmt_booked' && ctx.assessments){ const a = asmtNext(Object.assign({}, ctx, { lead:l })); if(a && a.kind === 'booked') v.when = a.timed ? whenWords(a.iso, ctx.now || new Date().toISOString()) : dayWords(a.day, ctx.today || chicago(ctx.now || new Date().toISOString()).ymd); }
     const over = ctx.scripts && key && String(ctx.scripts[key] || '').trim();
