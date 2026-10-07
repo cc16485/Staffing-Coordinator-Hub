@@ -413,7 +413,8 @@ Deno.serve(async (req) => {
         await putStep(db, j.journey_id, 'signed.yes', { ...stripRow(row.st), state: 'complete', evidence: { confirmed: { by: who.email, at: now } }, completed_by: who.email, completed_by_name: who.name, completed_at: now })
       }
       await event(db, j.journey_id, 'signed.yes', actor, 'said_yes', { lead_id: leadId, marked_by: who.name, at: now })
-      const l2 = stamp({ ...lead, said_yes_at: now, said_yes_by: who.email, said_yes_by_name: who.name, said_yes_prev_status: lead.status || 'New', status: 'Converted', converted_at: lead.converted_at || now })
+      const l2 = stamp({ ...lead, said_yes_at: now, said_yes_by: who.email, said_yes_by_name: who.name, said_yes_prev_status: lead.status || 'New' })
+      LR.setStatus(l2, 'Converted', { by: who.email, why: 'they said yes', at: now })
       l2.comm_log.push({ body: 'They said yes · marked by ' + who.name, at: now, by: who.email, kind: 'said_yes' })
       const { error: le } = await db.rpc('upsert_app_data_item', { target_key: 'leads', item: l2 }); if (le) return json({ error: 'The step is saved but the inquiry could not be updated: ' + le.message }, 500)
       const fresh = await load(db, { journey_id: j.journey_id }); const out = await settle(db, fresh!.j, fresh!.steps, dfs, pp, st)
@@ -435,7 +436,8 @@ Deno.serve(async (req) => {
         await event(db, got.j.journey_id, 'signed.yes', actor, 'said_yes_undone', { was: { by: yesStep.completed_by, at: yesStep.completed_at } }, String(b.reason || 'pressed by mistake').slice(0, 300))
       }
     }
-    const l3 = stamp({ ...lead, status: lead.said_yes_prev_status || 'Contacted', said_yes_at: null, said_yes_by: null, said_yes_by_name: null, said_yes_undone: { at: now, by: who.email, was_at: lead.said_yes_at } })
+    const l3 = stamp({ ...lead, said_yes_at: null, said_yes_by: null, said_yes_by_name: null, said_yes_undone: { at: now, by: who.email, was_at: lead.said_yes_at } })
+    LR.setStatus(l3, lead.said_yes_prev_status || 'Contacted', { by: who.email, why: 'they said yes was undone' + (b.reason ? ': ' + String(b.reason).slice(0, 120) : ''), at: now })
     if (lead.converted_at && String(lead.converted_at) >= String(lead.said_yes_at) && !String(lead.axiscare_client_id || '').trim()) l3.converted_at = null
     l3.comm_log.push({ body: 'They said yes was undone by ' + who.name + (b.reason ? ' · ' + String(b.reason).slice(0, 200) : ''), at: now, by: who.email, kind: 'said_yes_undone' })
     const { error: ue } = await db.rpc('upsert_app_data_item', { target_key: 'leads', item: l3 }); if (ue) return json({ error: 'Could not update the inquiry: ' + ue.message }, 500)

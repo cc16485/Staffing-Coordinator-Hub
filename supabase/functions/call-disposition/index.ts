@@ -35,6 +35,9 @@ import { pushCallNote } from '../_shared/axiscare-call-note.ts'
 import { recordCall, axiscareState } from '../_shared/call-record.ts'
 import { opEvent } from '../_shared/events.ts'
 import { ldPush, looksLikeOptOut } from '../_shared/lead-truth.ts'
+import '../_shared/lead-rules.js'
+// deno-lint-ignore no-explicit-any
+const LR: any = (globalThis as any).LeadRules
 import { leadHits, returningCheck, returningItem } from '../_shared/returning.ts'
 
 const cors = {
@@ -749,31 +752,31 @@ Deno.serve(async (req) => {
       outcome = `attempt ${lead.contact_attempts}, retry ${lead.follow_up_due}`
     }
   } else if (is('booked visit', 'booked assessment')) {
-    lead.status = 'Assessment Scheduled'; lead.follow_up_branch = 'ready-to-start'
+    LR.setStatus(lead, 'Assessment Scheduled', { by, why: 'call outcome: booked', at: stamp }); lead.follow_up_branch = 'ready-to-start'
     lead.follow_up_due = todayISO(); lead.contact_attempts = 0
     outcome = 'assessment scheduled'
   } else if (is('requested appointment', 'ready to start')) {
     lead.follow_up_branch = 'ready-to-start'; lead.follow_up_due = todayISO()
-    lead.status = lead.status === 'New' ? 'Contacted' : lead.status; lead.contact_attempts = 0
+    if (lead.status === 'New') LR.setStatus(lead, 'Contacted', { by, why: 'call outcome: ' + disposition, at: stamp }); lead.contact_attempts = 0
     outcome = 'hot — due today'
   } else if (is('lead - not ready', 'not ready', 'family deciding')) {
     lead.follow_up_branch = 'family-decision'; lead.follow_up_due = addDays(5)
-    lead.status = lead.status === 'New' ? 'Contacted' : lead.status; lead.contact_attempts = 0
+    if (lead.status === 'New') LR.setStatus(lead, 'Contacted', { by, why: 'call outcome: ' + disposition, at: stamp }); lead.contact_attempts = 0
     outcome = 'back in 5 days'
   } else if (is('follow up', 'call back')) {
     lead.follow_up_branch = 'call-back-next-week'; lead.follow_up_due = addDays(7)
-    lead.status = lead.status === 'New' ? 'Contacted' : lead.status; lead.contact_attempts = 0
+    if (lead.status === 'New') LR.setStatus(lead, 'Contacted', { by, why: 'call outcome: ' + disposition, at: stamp }); lead.contact_attempts = 0
     outcome = 'back in 7 days'
   } else if (is('researching')) {
     lead.follow_up_branch = 'soft-check-in'; lead.follow_up_due = addDays(3)
-    lead.status = lead.status === 'New' ? 'Contacted' : lead.status; lead.contact_attempts = 0
+    if (lead.status === 'New') LR.setStatus(lead, 'Contacted', { by, why: 'call outcome: ' + disposition, at: stamp }); lead.contact_attempts = 0
     outcome = 'back in 3 days'
   } else if (is('not interested')) {
-    lead.status = 'Lost'; lead.lost_reason = lead.lost_reason || 'Not interested'
+    lead.lost_reason = lead.lost_reason || 'Not interested'; LR.setStatus(lead, 'Lost', { by, why: lead.lost_reason, at: stamp })
     lead.lost_at = stamp; lead.follow_up_branch = 'cold-lead'; lead.follow_up_due = addDays(30)
     outcome = 'lost — cold nurture'
   } else if (is('send to cds', 'sent to cds')) {
-    lead.status = 'Lost'; lead.lost_reason = 'Referred to CDS'; lead.lost_at = stamp
+    lead.lost_reason = 'Referred to CDS'; LR.setStatus(lead, 'Lost', { by, why: 'Referred to CDS', at: stamp }); lead.lost_at = stamp
     lead.follow_up_due = ''; lead.follow_up_branch = ''
     outcome = 'referred to CDS'
   } else if (is('incorrect number', 'bad number')) {
@@ -781,7 +784,6 @@ Deno.serve(async (req) => {
     lead.comm_log.push({ body: '⚠ Number reported incorrect on a call — needs a good number.', at: stamp, by })
     outcome = 'flagged bad number'
   } else if (is('referral call')) {
-    lead.status = lead.status === 'New' ? 'New' : lead.status
     lead.follow_up_due = todayISO(); outcome = 'referral logged'
   }
 

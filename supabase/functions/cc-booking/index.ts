@@ -22,6 +22,9 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { leadHits, returningCheck, returningItem } from '../_shared/returning.ts'
 import { opEvent } from '../_shared/events.ts'
 import { ldPush } from '../_shared/lead-truth.ts'
+import '../_shared/lead-rules.js'
+// deno-lint-ignore no-explicit-any
+const LR: any = (globalThis as any).LeadRules
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -364,7 +367,7 @@ Deno.serve(async (req) => {
     const putB = (k: string, it: unknown) => supabase.rpc('upsert_app_data_item', { target_key: k, item: it })
     // deno-lint-ignore no-explicit-any
     const linkLead = async (l: any, created: boolean) => {
-      l.status = 'Assessment Scheduled'
+      LR.setStatus(l, 'Assessment Scheduled', { by: 'cc-booking', why: 'assessment booked online' + (created ? ' (new inquiry)' : ''), at: nowIsoB })
       l.follow_up_branch = 'ready-to-start'
       l.follow_up_due = consultDay
       l.assessment_at = whenLabel
