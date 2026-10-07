@@ -94,9 +94,12 @@ def person(first):
     return hit[0]["email"] if len(hit) == 1 else None
 KRY, ANG = person("Krystal"), person("Angiel")
 chk(bool(KRY), "Krystal has an office role (gets Private Pay, LTC, Other, and payer not known yet)" if KRY else "Krystal doesn't have exactly one office role in the Hub")
-chk(bool(ANG), "Angiel has an office role (gets Medicaid and VA)" if ANG else "Angiel doesn't have an office role in the Hub yet. Give her one on the Owners Hub Admin page, Team, then run this again")
-if not (KRY and ANG): say("  STOP. Nothing was changed."); done(4)
-ROUTES = {"medicaid": ANG, "va": ANG, "private": KRY, "ltc": KRY, "other": KRY, "unknown": KRY}
+if not KRY: say("  STOP. Nothing was changed."); done(4)
+# Samantha 2026-10-06: "angiel hasn't started yet". Until Angiel has a Hub sign-in and an office role, Medicaid and VA go
+# to Krystal too; switch them to Angiel in Hub settings, Client journeys, once she starts (no Desktop step needed).
+if ANG: say("  ✓ Angiel has an office role (gets Medicaid and VA)")
+else: say("  · Angiel hasn't started yet (no Hub sign-in), so Medicaid and VA go to Krystal for now")
+ROUTES = {"medicaid": ANG or KRY, "va": ANG or KRY, "private": KRY, "ltc": KRY, "other": KRY, "unknown": KRY}
 ops = blob("ops_settings") or {}
 say("  · client journeys switch: " + ("ON (left as it is)" if ops.get("client_journey_live") is True else "OFF (stays off; you turn it on from the Admin page)"))
 say("  · the older 'start is stuck' job (client-start-run): " + ("ON, will be turned off" if ops.get("client_start_live") is True else "already off"))
@@ -128,7 +131,8 @@ if p.returncode != 0: bad("deploy failed: " + (p.stderr or p.stdout)[-240:]); sa
 say("  ✓ the client-journey service updated (routing by payer, new leads start once contacted, the First shift bridge)")
 patch = {"client_journey_routing": ROUTES, "client_start_live": False}
 ok, r = sql(f"update public.app_data set data = coalesce(data, '{{}}'::jsonb) || {lit(json.dumps(patch))}::jsonb where key = 'ops_settings' returning 1")
-chk(ok and r, "who gets a new client: Medicaid and VA to Angiel; Private Pay, LTC, Other and payer not known yet to Krystal (change it in Hub settings, Client journeys)")
+chk(ok and r, ("who gets a new client: Medicaid and VA to Angiel; Private Pay, LTC, Other and payer not known yet to Krystal" if ANG else
+               "who gets a new client: everyone to Krystal for now. When Angiel starts, set Medicaid and VA to her in Hub settings, Client journeys") + " (change it there any time)")
 chk(ok and r, "the older 'start is stuck' items are off")
 if old_job:
     ok, r = sql(f"select cron.unschedule({lit(OLD_JOB)})"); chk(ok, "the older client-start-run job is unscheduled")
