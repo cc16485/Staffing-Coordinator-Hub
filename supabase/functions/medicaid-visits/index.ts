@@ -15,6 +15,10 @@
 //     Programs); they close themselves once a visit is delivered again
 //   · from the 1st → a "monthly visit review" card for the Medicaid coordinator for last month, cleared in the Hub when
 //     she signs it
+//   · ADW RESPITE (2026-10-08, "we only do basic, no advanced yet"): for clients with our respite line, the schedule from
+//     this week's Monday to two weeks ahead is checked too: a week over 49 respite hours or the month over 868 units, respite
+//     overlapping another visit, or advanced respite booked (we don't provide it) → a card for Staffing and one for the
+//     Medicaid coordinator, closing themselves once the schedule is fixed (HCBS Manual 3.50; Provider Bulletin 49-03)
 // Nobody outside the office is contacted. Nothing in AxisCare or Fusion is changed.
 // -----------------------------------------------------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -65,6 +69,7 @@ async function ownerOf(db: Any, code: string): Promise<string> {
   return OWNER
 }
 const lastDay = (m: string) => new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7), 0)).getUTCDate()
+const addDaysYmd = (d: string, n: number) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10) }
 const prevMonth = (m: string) => { let y = +m.slice(0, 4), mo = +m.slice(5, 7) - 1; if (mo < 1) { mo = 12; y-- } return y + '-' + String(mo).padStart(2, '0') }
 
 Deno.serve(async (req) => {
@@ -90,7 +95,7 @@ Deno.serve(async (req) => {
   }
   const ax = axFetcher(), staffing = await ownerOf(db, 'scheduling_coverage'), medicaid = await ownerOf(db, 'payer_programs')
   const months = day <= 5 ? [prevMonth(month), month] : [month]
-  const out: Any = { ok: true, dry, live, clients: cur.size, months, checked: 0, axiscare_failed: 0, at_risk: [], reviews: [], cards: [], staffing, medicaid }
+  const out: Any = { ok: true, dry, live, clients: cur.size, months, checked: 0, axiscare_failed: 0, at_risk: [], reviews: [], respite: [], cards: [], staffing, medicaid }
   const cards: Any[] = []
   const items = async () => ((await read('ops_items')) || []) as Any[]
   for (const [axId, plan] of cur) {
@@ -112,6 +117,29 @@ Deno.serve(async (req) => {
             detail: words + '. The state treats 1 week or 3 scheduled visits in a row without service, without the client\'s consent, as a risk (19 CSR 15-7.021(4)(A)5). ' + what + ' This card closes itself once a visit is delivered.',
             due: nowIso, link: '#p/A' + axId + '/payer', created_at: nowIso, updated_at: nowIso })
           else cards.push({ id: cid, close_if_open: true, kind: 'visit_risk', status: 'done', done_at: nowIso, done_by: 'The Hub (a visit was delivered)', updated_at: nowIso })
+        }
+        /* ADW respite: this week's Monday to two weeks ahead (the schedule), for clients with our respite line */
+        if ((plan.services || []).some((x: Any) => x && x.ours && x.kind === 'adw_respite')) {
+          const from = VR.weekStart(today), to = addDaysYmd(today, 14)
+          const rvs = await ax(axId, from < m + '-01' ? from : m + '-01', to)
+          if (rvs === null) out.axiscare_failed++
+          else {
+            const rc = VR.respiteCheck(rvs, nowIso, month); item.respite = { ...rc, from: from < m + '-01' ? from : m + '-01', to }
+            const probs: string[] = []
+            if (rc.over_weeks.length) probs.push('respite booked over the 49-hour weekly limit: ' + rc.over_weeks.map((w: Any) => 'week of ' + w.week + ' has ' + w.hours + ' hours').join('; '))
+            if (rc.month_over) probs.push('respite this month comes to ' + rc.month_units + ' units, over the 868-unit monthly limit')
+            if (rc.overlaps.length) probs.push('respite overlaps another visit on ' + Array.from(new Set(rc.overlaps.map((x: Any) => x.day))).join(', ') + ' (respite can\'t be at the same time as another service)')
+            if (rc.advanced.length) probs.push('ADVANCED respite is booked on ' + rc.advanced.map((x: Any) => x.day + (x.caregiver ? ' with ' + x.caregiver : '')).join(', ') + ', and we only provide basic respite')
+            if (probs.length) out.respite.push({ name: item.name, problems: probs })
+            for (const [who, suffix] of [[staffing, 'staff'], [medicaid, 'med']] as const) {
+              const cid = `ops_resp_${axId}_${suffix}`
+              if (probs.length) cards.push({ id: cid, kind: 'respite_limit', status: 'open', urgency: 'high', owner: who, domain: suffix === 'staff' ? 'scheduling_coverage' : 'payer_programs',
+                title: `Respite schedule: ${item.name}`, about: item.name, axiscare_client_id: axId,
+                detail: probs.join('. ') + '. Fix the schedule in AxisCare (HCBS Manual 3.50; Provider Bulletin 49-03). This card closes itself once the schedule is within the limits.',
+                due: nowIso, link: '#p/A' + axId + '/payer', created_at: nowIso, updated_at: nowIso })
+              else cards.push({ id: cid, close_if_open: true, kind: 'respite_limit', status: 'done', done_at: nowIso, done_by: 'The Hub (the respite schedule is within the limits)', updated_at: nowIso })
+            }
+          }
         }
       } else if (!prev.review || !prev.review.signed_at) {
         out.reviews.push({ name: item.name, month: m })

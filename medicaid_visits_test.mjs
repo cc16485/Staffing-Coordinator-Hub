@@ -79,6 +79,23 @@ try {
   ck('AxisCare doesn\'t answer: nothing is assumed (nothing written, no card), the heartbeat says so', r.j.axiscare_failed === 2 && T.app_data.find((x) => x.key === 'visit_watch').data.length === 0 && cards().length === 0 && /AxisCare failed 2/.test(T.app_data.find((x) => x.key === 'automation_heartbeats').data[0].note), r.j)
   reset(true); r = await run('?dry=1')
   ck('a practice run (dry=1) writes nothing and reports who is at risk', T.app_data.find((x) => x.key === 'visit_watch').data.length === 0 && cards().length === 0 && r.j.at_risk.length === 1 && r.j.at_risk[0].name === 'Ann Risk', r.j)
+
+  /* ADW respite (we only do basic) */
+  const rsv = (day, h1, h2, o = {}) => Object.assign({ id: 'r' + day + h1, scheduledStartDate: day + 'T' + h1 + ':00:00Z', scheduledEndDate: day + 'T' + h2 + ':00:00Z', service: { procedureCode: 'S5150', description: 'Basic Respite' }, caregiver: { firstName: 'Ana', lastName: 'Ruiz' } }, o)
+  const resp = () => { T.app_data.find((x) => x.key === 'medicaid_plans').data.push(plan('5', 'Rae Respite', { services: [{ ours: true, kind: 'adw_respite', units: [{ start: '2026-10-01', code: 'S5150', units: 400 }] }] })) }
+  reset(true); resp(); AX['5'] = ['2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24', '2026-10-25'].map((d) => rsv(d, '12', '22')); at('2026-10-20T20:00:00Z'); r = await run()
+  const rw = W('vw_5_2026-10')
+  ck('respite: the schedule ahead is read (this Monday to 2 weeks out) and the week of Oct 19 booked for 50 hours is over 49', CALLS.some((c) => /^5 2026-10-01\.\.2026-11-03/.test(c)) && rw.respite && rw.respite.over_weeks[0].week === '2026-10-19' && rw.respite.over_weeks[0].hours === 50, [CALLS, rw.respite])
+  const rcards = cards('respite_limit')
+  ck('...a card for Staffing and one for the Medicaid coordinator: fix the schedule in AxisCare, citing the limit', rcards.length === 2 && rcards.some((c) => c.owner === 'sally@mo-care.com') && rcards.some((c) => c.owner === 'angiel@mo-care.com') && rcards.every((c) => /49-hour weekly limit: week of 2026-10-19 has 50 hours/.test(c.detail) && /Provider Bulletin 49-03/.test(c.detail)), rcards)
+  AX['5'] = AX['5'].slice(0, 4); at('2026-10-20T21:00:00Z'); await run()
+  ck('...once the schedule is cut to 40 hours, both cards close themselves', cards('respite_limit').every((c) => c.status === 'done' && /within the limits/.test(c.done_by)))
+  reset(true); resp(); AX['5'] = [rsv('2026-10-22', '14', '18'), vis('5', '2026-10-22'), rsv('2026-10-23', '14', '16', { service: { procedureCode: 'S5150 TF', description: 'Advanced Respite' } })]; r = await run()
+  const rc2 = cards('respite_limit')[0]
+  ck('respite overlapping personal care, and advanced respite booked (we only do basic): both named on the card', /overlaps another visit on 2026-10-22/.test(rc2.detail) && /ADVANCED respite is booked on 2026-10-23 with Ana Ruiz/.test(rc2.detail), rc2)
+  ck('...the practice report lists the respite problems', r.j.respite.length === 1 && r.j.respite[0].name === 'Rae Respite')
+  reset(true); r = await run()
+  ck('clients without our respite line: no extra AxisCare read, no respite card', !CALLS.some((c) => /2026-11-03/.test(c)) && !cards('respite_limit').length)
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, okk, d] of res) { console.log((okk ? 'PASS  ' : 'FAIL  ') + n + (okk ? '' : '  ' + d)); if (okk) pass++ }
 console.log(`\n${pass} passed, ${res.length - pass} failed`); process.exit(pass === res.length ? 0 : 1)
