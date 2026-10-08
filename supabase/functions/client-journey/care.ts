@@ -129,7 +129,7 @@ export async function careAction(c: Any): Promise<{ body: Any; status?: number }
   if (b.action === 'care_state') {
     return { body: { axiscare_client_id: ax, person_id: personId, client_name: name, state, pause: pauseRow ?? null, payer,
       episodes: js.map((j: Any) => ({ journey_id: j.journey_id, episode_n: j.episode_n ?? 1, status: j.status, closed_reason: j.closed_reason ?? null, created_at: j.created_at, assigned_cc: j.assigned_cc })),
-      roles: (roles ?? []).map((r: Any) => ({ status: r.status, started_at: r.started_at ?? null, ended_at: r.ended_at ?? null, end_reason: r.end_reason ?? null })),
+      roles: (roles ?? []).map((r: Any) => ({ status: r.status, started_at: r.started_at ?? null, ended_at: r.ended_at ?? null, ended_date_basis: r.ended_date_basis ?? null, end_reason: r.end_reason ?? null })),
       changes: changes ?? [], can: { pause: can && ['active', 'starting'].includes(state), resume: can && state === 'paused', end: can && ['active', 'starting', 'paused'].includes(state),
         return: isOwner && state === 'past' }, reasons: { end: END_REASONS, pause: PAUSE_REASONS } } }
   }
