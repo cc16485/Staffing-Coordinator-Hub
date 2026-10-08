@@ -38,7 +38,7 @@ echo "$@" >> {LOG}
 [ -f {T}/fail ] && [ "$2" = "deploy" ] && {{ echo boom >&2; exit 1; }}
 if [ "$2" = "deploy" ]; then touch {T}/deployed_$3; curl -s -o /dev/null -X POST "{URL}/bump?fn=$3&novj=$(echo "$@" | grep -c -- --no-verify-jwt)"; exit 0; fi
 if [ "$2" = "download" ]; then SRC={LIVE}/supabase/functions; [ -f {T}/deployed_$3 ] && SRC={FNROOT}
-  mkdir -p supabase/functions; cp -R $SRC/$3 supabase/functions/; cp -R $SRC/_shared supabase/functions/; [ -f {T}/drift ] && echo "// hand edit" >> supabase/functions/_shared/lead-rules.js; exit 0; fi
+  mkdir -p supabase/functions; cp -R $SRC/$3 supabase/functions/; cp -R $SRC/_shared supabase/functions/; [ -f {T}/drift ] && echo "// hand edit" >> supabase/functions/_shared/visit-rules.js; exit 0; fi
 exit 0
 """); os.chmod(CLI, 0o755)
 def fresh(vj=True):
