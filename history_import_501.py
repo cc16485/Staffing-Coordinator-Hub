@@ -91,17 +91,22 @@ if not (s == 200 and j.get("mode") == ("look" if look else "import")):
 remove_fn()
 ni = j["not_imported"]
 say(f"  · AxisCare holds {j['axiscare_total']} clients ever: " + ", ".join(f"{v} {k}" for k, v in sorted(j["by_label"].items(), key=lambda x: -x[1])))
-say(f"  · current clients (left alone): {j['active']} · not clients (leads, prospects): {j['not_clients']} · already in the Hub (left alone): {j['already_in_hub']}")
+say(f"  · current clients (left alone): {j['active']} · not clients (leads, prospects): {j['not_clients']} · past clients already in the Hub (left alone): {j['already_in_hub']}")
+say(f"  · the Hub already holds {j['axiscare_clients_linked_in_hub']} of AxisCare's clients; it read all {j['hub_people_read']} people in the Hub to check names")
 say(f"  {'·' if look else '✓'} {'would come in' if look else 'came in'} as past clients: {j['to_import'] if look else j['imported']} ({j['to_import_past']} past, {j['to_import_deceased']} deceased)")
 say(f"      end date from AxisCare (exact): {j['with_axiscare_end_date']} · no usable AxisCare end date, so 'on or before {j['today']}': {j['on_or_before']}")
 say("      no phone, email, journey, card or task for any of them; no sympathy-card task for the deceased")
 if j["twins_in_axiscare"]: say("      ○ same name twice in AxisCare (kept as separate people, nothing merged): " + names(j["twins_in_axiscare"]))
 say("  · NOT brought in, for a person to decide (nothing is guessed):")
 say("      no start date in AxisCare (may never have started care): " + str(len(ni["no_start_date"])) + (": " + names(ni["no_start_date"]) if ni["no_start_date"] else ""))
+say("      test or example records (never imported): " + str(len(ni["test_records"])) + (": " + names(ni["test_records"]) if ni["test_records"] else ""))
 say("      same name as someone already in the Hub (same human? a person decides): " + str(len(ni["same_name_as_someone_in_hub"])) + (": " + names(ni["same_name_as_someone_in_hub"]) if ni["same_name_as_someone_in_hub"] else ""))
 say("      on hold in AxisCare, not in the Hub: " + str(len(ni["on_hold_in_axiscare"])) + (": " + names(ni["on_hold_in_axiscare"]) if ni["on_hold_in_axiscare"] else ""))
 if ni["no_name"]: say(f"      no name in AxisCare: {ni['no_name']}")
 if j["older_backfill_same_day_end"]: say(f"  ○ {j['older_backfill_same_day_end']} past client(s) already in the Hub show an end date equal to their start date (an older backfill's habit). Not changed; tell Claude if you want them reviewed.")
+say(); say("  " + ("WHO WOULD COME IN" if look else "WHO CAME IN") + f" ({len(j['import_list'])}): name · AxisCare status · care started · care ended")
+for x in sorted(j["import_list"], key=lambda x: x["name"].lower()):
+    say(f"      {x['name']} · {x['label']} · {x['started_at']} · " + (x["ended_at"] if x["ended_date_basis"] == "exact" else f"on or before {x['ended_at']} (no AxisCare end date)"))
 if j.get("errors"): bad(f"{len(j['errors'])} could not be added (each taken back whole): " + "; ".join(j["errors"])[:400])
 
 if not look:

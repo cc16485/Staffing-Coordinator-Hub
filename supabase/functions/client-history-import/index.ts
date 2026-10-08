@@ -14,6 +14,8 @@
 //   · no reason is invented: deceased says deceased; everyone else's reason stays empty ("not recorded in AxisCare")
 //   · no phone or email is copied, so a family calling or a campaign list can never be matched to them by mistake
 //   · imported deceased clients get NO sympathy-card task (her answer 2026-10-08); no journey, card or task for anyone
+//   · a test or example record (Test, Example, Sample, Demo...) is never imported (listed)
+//   · AxisCare's own "Out of Service Area" status is kept as the reason; no other reason is invented
 //   · a client already in the Hub is never touched (their status changes are the status review's job)
 // Only the owner's Desktop script (the server key) can call it. ?commit=1 imports; anything else only looks.
 // =====================================================================================================================
@@ -30,14 +32,15 @@ const norm = (s: unknown) => String(s ?? '').trim().replace(/\s+/g, ' ').toLower
 export function plan(axClients: Any[], links: Any[], people: Any[], today: string) {
   const linked = new Set((links || []).map((l: Any) => String(l.source_id)))
   const names = new Map<string, string>(); for (const p of people || []) names.set(norm(p.display_name), String(p.display_name))
-  const out = { total: 0, active: 0, not_clients: 0, on_hold_not_in_hub: [] as Any[], already_in_hub: 0,
-    import: [] as Any[], no_start_date: [] as Any[], same_name: [] as Any[], no_name: 0, by_label: {} as Record<string, number> }
+  const out = { total: 0, active: 0, not_clients: 0, on_hold_not_in_hub: [] as Any[], already_in_hub: 0, linked_total: 0,
+    import: [] as Any[], no_start_date: [] as Any[], same_name: [] as Any[], test_names: [] as Any[], no_name: 0, by_label: {} as Record<string, number> }
   const seenNames = new Map<string, number>()
   for (const c of axClients || []) {
     out.total++
     const label = String((typeof c?.status === 'object' && c?.status ? (c.status.label ?? c.status.name) : c?.status) ?? '').trim() || '(no status)'
     out.by_label[label] = (out.by_label[label] || 0) + 1
     const st = axState(c), ax = String(c?.id ?? '')
+    if (ax && linked.has(ax)) out.linked_total++
     const first = String(c?.firstName ?? '').trim(), last = String(c?.lastName ?? '').trim(), name = [first, last].filter(Boolean).join(' ')
     if (st === 'active') { out.active++; continue }
     if (st === null) { out.not_clients++; continue }
@@ -45,6 +48,8 @@ export function plan(axClients: Any[], links: Any[], people: Any[], today: strin
     if (linked.has(ax)) { out.already_in_hub++; continue }
     if (st === 'paused') { out.on_hold_not_in_hub.push({ ax, name, label }); continue }
     if (!name) { out.no_name++; continue }
+    /* a test or example record is never a client we served (listed, never imported) */
+    if (/\b(test|example|sample|demo|dummy|fake)\b/i.test(name)) { out.test_names.push({ ax, name, first, last, label, state: st }); continue }
     const started = ymd(c?.startDate) ?? ymd(c?.conversionDate)
     const row = { ax, name, first, last, label, state: st }
     if (!started) { out.no_start_date.push(row); continue }
@@ -53,7 +58,8 @@ export function plan(axClients: Any[], links: Any[], people: Any[], today: strin
     const end = ymd(c?.effectiveEndDate)
     const exact = !!end && end <= today && end >= started
     out.import.push({ ...row, started_at: started, ended_at: exact ? end : today, ended_date_basis: exact ? 'exact' : 'on_or_before',
-      end_reason: st === 'deceased' ? 'deceased' : null })
+      /* only a reason AxisCare itself records: its status "Out of Service Area"; otherwise none (never invented) */
+      end_reason: st === 'deceased' ? 'deceased' : /out of service area/i.test(label) ? 'Out of our service area (AxisCare status)' : null })
   }
   /* two AxisCare clients with the same name and no Hub person: still not the same human by assumption, but say so */
   for (const r of out.import) if ((seenNames.get(norm(r.name)) || 0) > 1) r.twin_in_axiscare = true
@@ -82,14 +88,25 @@ Deno.serve(async (req) => {
   } catch (e) { return json({ error: 'AxisCare could not be read (' + String(e).slice(0, 120) + '); nothing was imported' }, 502) }
   if (!axClients.length) return json({ error: 'AxisCare returned no clients; nothing was imported' }, 502)
 
-  const { data: links, error: e1 } = await db.from('person_source_id').select('source_id').eq('system', 'axiscare').eq('entity_type', 'client')
-  const { data: people, error: e2 } = await db.from('person_identity').select('display_name')
-  if (e1 || e2) return json({ error: 'the Hub people could not be read; nothing was imported' }, 500)
+  /* every row, page by page (one read stops at 1,000 rows) */
+  const all = async (t: string, cols: string, f?: (q: Any) => Any): Promise<Any[] | null> => {
+    const rows: Any[] = []
+    for (let from = 0; from < 200000; from += 1000) {
+      let q = db.from(t).select(cols); if (f) q = f(q)
+      const { data, error } = await q.order('id', { ascending: true }).range(from, from + 999)
+      if (error) return null
+      rows.push(...(data ?? [])); if (!data || data.length < 1000) break
+    }
+    return rows
+  }
+  const links = await all('person_source_id', 'id, source_id', (q) => q.eq('system', 'axiscare').eq('entity_type', 'client'))
+  const people = await all('person_identity', 'id, display_name')
+  if (!links || !people) return json({ error: 'the Hub people could not be read; nothing was imported' }, 500)
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago' }).format(new Date())
   const p = plan(axClients, links ?? [], people ?? [], today)
 
   /* the older backfill's mark: an ended role whose end date equals its start date (reported only, never changed here) */
-  const { data: oldRoles } = await db.from('person_role').select('started_at, ended_at').eq('role', 'client').eq('status', 'former')
+  const oldRoles = await all('person_role', 'id, started_at, ended_at', (q) => q.eq('role', 'client').eq('status', 'former'))
   const oldSameDay = (oldRoles ?? []).filter((r: Any) => r.started_at && r.ended_at && String(r.started_at) === String(r.ended_at)).length
 
   const done: Any[] = [], errors: string[] = []
@@ -110,12 +127,13 @@ Deno.serve(async (req) => {
   }
   const brief = (xs: Any[]) => xs.map((x: Any) => ({ ax: x.ax, name: x.name, label: x.label, ...(x.hub_name ? { hub_name: x.hub_name } : {}) }))
   return json({ mode: commit ? 'import' : 'look', today, axiscare_total: p.total, by_label: p.by_label, active: p.active, not_clients: p.not_clients,
-    already_in_hub: p.already_in_hub, to_import: p.import.length,
+    already_in_hub: p.already_in_hub, axiscare_clients_linked_in_hub: p.linked_total, hub_people_read: people.length, to_import: p.import.length,
+    import_list: p.import.map((x: Any) => ({ ax: x.ax, name: x.name, label: x.label, started_at: x.started_at, ended_at: x.ended_at, ended_date_basis: x.ended_date_basis })),
     to_import_past: p.import.filter((x: Any) => x.state === 'past').length, to_import_deceased: p.import.filter((x: Any) => x.state === 'deceased').length,
     with_axiscare_end_date: p.import.filter((x: Any) => x.ended_date_basis === 'exact').length,
     on_or_before: p.import.filter((x: Any) => x.ended_date_basis === 'on_or_before').length,
     twins_in_axiscare: brief(p.import.filter((x: Any) => x.twin_in_axiscare)),
-    not_imported: { no_start_date: brief(p.no_start_date), same_name_as_someone_in_hub: brief(p.same_name), on_hold_in_axiscare: p.on_hold_not_in_hub, no_name: p.no_name },
+    not_imported: { no_start_date: brief(p.no_start_date), same_name_as_someone_in_hub: brief(p.same_name), test_records: brief(p.test_names), on_hold_in_axiscare: p.on_hold_not_in_hub, no_name: p.no_name },
     older_backfill_same_day_end: oldSameDay,
     imported: commit ? done.length : 0, imported_ax: commit ? done : [], errors })
 })

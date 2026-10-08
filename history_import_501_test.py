@@ -11,9 +11,11 @@ REF = "zngsgedlsxinbygwmxwn"; COMMIT = os.environ.get("REHEARSE_COMMIT") or subp
 res = []; ck = lambda n, c, note="": res.append((n, bool(c), "" if c else str(note)[:1500]))
 S = {"exists": False, "deleted": 0, "calls": [], "fn_status": 200, "no_delete": False}
 LOOK = {"mode": "look", "today": "2026-10-08", "axiscare_total": 293, "by_label": {"Active": 60, "Inactive": 180, "Deceased": 40, "Lead": 13}, "active": 60, "not_clients": 13,
-        "already_in_hub": 70, "to_import": 2, "to_import_past": 1, "to_import_deceased": 1, "with_axiscare_end_date": 1, "on_or_before": 1, "twins_in_axiscare": [],
+        "already_in_hub": 70, "axiscare_clients_linked_in_hub": 96, "hub_people_read": 1450, "to_import": 2,
+        "import_list": [{"ax": "30", "name": "Ivan Past", "label": "Inactive", "started_at": "2023-01-01", "ended_at": "2024-02-10", "ended_date_basis": "exact"},
+                        {"ax": "31", "name": "Dora Gone", "label": "Deceased", "started_at": "2023-01-01", "ended_at": "2026-10-08", "ended_date_basis": "on_or_before"}], "to_import_past": 1, "to_import_deceased": 1, "with_axiscare_end_date": 1, "on_or_before": 1, "twins_in_axiscare": [],
         "not_imported": {"no_start_date": [{"ax": "40", "name": "Nora Nodate", "label": "Inactive"}], "same_name_as_someone_in_hub": [{"ax": "41", "name": "Ruth Same", "label": "Inactive", "hub_name": "Ruth Same"}],
-                         "on_hold_in_axiscare": [], "no_name": 0}, "older_backfill_same_day_end": 3, "imported": 0, "imported_ax": [], "errors": []}
+                         "test_records": [{"ax": "42", "name": "Test Client 9", "label": "Inactive"}], "on_hold_in_axiscare": [], "no_name": 0}, "older_backfill_same_day_end": 3, "imported": 0, "imported_ax": [], "errors": []}
 def q1(sql_, **kw):
     c = conn()
     try: rows = c.run(sql_, **kw); cols = [x["name"] for x in (c.columns or [])]; return [dict(zip(cols, r)) for r in (rows or [])]
@@ -98,7 +100,8 @@ try:
     ck("501a look: done, nothing written", code == 0 and "LOOK DONE" in out and people() == 0 and all("commit=1" not in c for c in S["calls"]), out)
     ck("...the function was deployed for the run (gateway off; it checks the server key itself) and deleted again", "--no-verify-jwt" in log() and S["deleted"] == 1 and not S["exists"] and "deleted again" in out, out)
     ck("...the report says who would come in and who stays out, with names and why", "would come in as past clients: 2 (1 past, 1 deceased)" in out and "Nora Nodate (Inactive)" in out and "Ruth Same (Inactive)" in out
-       and "no sympathy-card task" in out and "end date equal to their start date" in out, out)
+       and "no sympathy-card task" in out and "end date equal to their start date" in out
+       and "Test Client 9 (Inactive)" in out and "read all 1450 people" in out and "Dora Gone · Deceased · 2023-01-01 · on or before 2026-10-08 (no AxisCare end date)" in out and "Ivan Past · Inactive · 2023-01-01 · 2024-02-10" in out, out)
     ck("...no key or token in the report", not re.search(r"eyJ|sbp_", out), out)
     fresh(); code, out = run("import")
     ck("501 import: done, 2 past clients in, proven", code == 0 and "RESULT: DONE · 2 past clients" in out and people() == 2 and "✗" not in out, out)
