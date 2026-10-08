@@ -20,10 +20,11 @@ const CLIENTS = [{ id: 7, mobilePhone: '4175550107' }, { id: 6 }, { id: 2 }, { i
 let AXDOWN = false; const CALLS = []
 globalThis.fetch = async (url) => { url = String(url); CALLS.push(url)
   if (AXDOWN) return new Response('no', { status: 503 })
+  if (globalThis.__slow > 0 && /responsibleParties/.test(url)) { globalThis.__slow--; return new Response('slow', { status: 429 }) }
   const m = /\/api\/clients\/(\d+)\/responsibleParties/.exec(url); if (m) return new Response(JSON.stringify({ results: { responsibleParties: PARTIES[m[1]] || [] } }), { status: 200 })
   if (/\/api\/clients$/.test(url)) return new Response(JSON.stringify({ results: { clients: CLIENTS, nextPage: null } }), { status: 200 })
   return new Response('{}', { status: 404 }) }
-let handler; globalThis.Deno = { env: { get: (k) => ({ SUPABASE_URL: 'http://x', SUPABASE_SERVICE_ROLE_KEY: 'svc', AXISCARE_TOKEN: 't', AXISCARE_SITE: '16485' })[k] }, serve: (h) => { handler = h } }
+let handler; globalThis.Deno = { env: { get: (k) => ({ SUPABASE_URL: 'http://x', SUPABASE_SERVICE_ROLE_KEY: 'svc', AXISCARE_TOKEN: 't', AXISCARE_SITE: '16485', PF_SLOW_MS: '5' })[k] }, serve: (h) => { handler = h } }
 try {
   const ja = path.join(tmp, 'job-auth.ts'); fs.writeFileSync(ja, "export async function ownerCaller(req){ return req.headers.get('Authorization') === 'Bearer svc' }")
   const src = fs.readFileSync(path.join(F, 'past-families-look/index.ts'), 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db').replace("'../_shared/job-auth.ts'", JSON.stringify(ja))
@@ -44,8 +45,10 @@ try {
   ck('the answer has no phone number or email address in it', !/555|@x\.com|0102/.test(JSON.stringify(r.j)), JSON.stringify(r.j).slice(0, 300))
   ck('it writes nothing', WRITES.length === 0, WRITES)
   ck('AxisCare is only asked by client number (never by name or phone)', CALLS.every((u) => /\/api\/clients(\/\d+\/responsibleParties)?$/.test(u)) && !CALLS.some((u) => /Dee|\/3\/responsibleParties/.test(u)), CALLS)
+  globalThis.__slow = 2; r = await call()
+  ck('AxisCare says "slow down" (429) twice: it waits, tries again, and the answers come through', r.j.axiscare_errors === 0 && r.j.reachable === 3 && r.j.axiscare_answers['429'] >= 2, r.j)
   AXDOWN = true; r = await call()
-  ck('AxisCare unreadable: the families count as unknown and it says so (errors counted)', r.s === 200 && r.j.axiscare_errors === 4, r.j)
+  ck('AxisCare unreadable: those families are "not checked" (not counted as unreachable), and it says so', r.s === 200 && r.j.axiscare_errors === 4 && r.j.unknown === 4 && r.j.unreachable === 0, r.j)
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1)
