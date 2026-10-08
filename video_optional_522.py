@@ -82,8 +82,12 @@ for fn in FNS:   # nobody else's unreleased work goes out: live must match the r
     if not (sx == 200 and mx and isinstance(mx.get("verify_jwt"), bool)): bad(f"{fn} could not be read ({sx})"); continue
     VJ[fn] = mx["verify_jwt"]; okd, livef = live_files(fn)
     if not okd: bad(f"{fn}: the live copy could not be downloaded"); continue
-    odd = [k for k in need(fn) if livef.get(k) != BASEP.get(k) and livef.get(k) != sha(os.path.join(ROOT, k))]
-    say(f"  ✓ {fn} (version {mx.get('version', '?')}): live matches the reviewed main, so only this change goes out") if not odd else bad(f"{fn}: the live copy differs from the reviewed main ({', '.join(odd)[:200]}); nothing runs")
+    # a live file may be today's main, this build, or any earlier version that was on main (a function deployed before a
+    # shared file changed): all reviewed. Only a file that was never on main stops the step.
+    okv = lambda k: livef.get(k) == sha(os.path.join(ROOT, k)) or livef.get(k) in (BASEP.get(k) if isinstance(BASEP.get(k), list) else [BASEP.get(k)])
+    odd = [k for k in need(fn) if not okv(k)]
+    older = [k for k in need(fn) if livef.get(k) != sha(os.path.join(ROOT, k))]
+    say(f"  ✓ {fn} (version {mx.get('version', '?')}): the live copy is reviewed code" + (f" (an earlier main version of {', '.join(older)}; this deploy brings it up to date)" if older else " (today's main), so only this change goes out")) if not odd else bad(f"{fn}: the live copy has a file that was never on main ({', '.join(odd)[:200]}); nothing runs")
 if fails: say(); say("  RESULT: STOPPED before anything changed. Tell Claude which line."); done(3)
 ok, r = sql("select count(*) as n from caregiver_profiles where self_complete = true and published = false and status <> 'withdrawn' and submitted_at is not null and photo_path is not null and consent = true and video_path is null")
 say(f"  · current caregivers whose profile was sent in complete except the video (held back until now): {r[0]['n'] if ok and r else '?'}. After this, the office can publish them.")
