@@ -265,6 +265,23 @@ export function evalClient(input: {
   return { items, grandfathered }
 }
 
+/* ── fix 4 of 4 (Samantha, 2026-10-08): the skills the office records today live in app_data caregiver_overlay
+   (keyed by AxisCare id: skills{key:{have,evidence,by,at}}, spanish_ability), not on the roster record this check
+   used to read. The overlay is laid over the roster copy, skill by skill, so a skill recorded today reaches the
+   readiness check. Pure, so it is self-tested below. ── */
+export function withOverlay(cg: Record<string, unknown> | null, ov: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!ov) return cg
+  const base = (cg ?? {}) as Record<string, unknown>
+  // deno-lint-ignore no-explicit-any
+  const ovSkills = ((ov as any).skills && typeof (ov as any).skills === 'object') ? (ov as any).skills as Record<string, unknown> : {}
+  // deno-lint-ignore no-explicit-any
+  const baseSkills = ((base as any).skills && typeof (base as any).skills === 'object') ? (base as any).skills as Record<string, unknown> : {}
+  const out: Record<string, unknown> = { ...base, skills: { ...baseSkills, ...ovSkills } }
+  if (has((ov as Record<string, unknown>).spanish_ability)) out.spanish_ability = (ov as Record<string, unknown>).spanish_ability
+  if (cg == null && !has(out.axiscare_id) && has((ov as Record<string, unknown>).axiscare_id)) out.axiscare_id = (ov as Record<string, unknown>).axiscare_id
+  return out
+}
+
 /* ═══ CAREGIVER EVALUATOR (pure) ═════════════════════════════════════════ */
 export function evalCaregiver(input: {
   // deno-lint-ignore no-explicit-any
@@ -423,6 +440,22 @@ function runSelfTest() {
   const results: Array<{ fixture: string; pass: boolean; got?: string }> = []
   const T = (fixture: string, pass: boolean, got = '') => results.push({ fixture, pass, got })
   const find = (r: { items: Item[] }, code: string) => r.items.find(i => i.code === code)
+
+  // fix 4 of 4: the overlay is laid over the roster copy, skill by skill
+  {
+    const roster = { axiscare_id: '9', skills: { transfers_gait_belt: { have: 'no' }, ok_dogs: { have: 'no' } }, spanish_ability: 'basic' }
+    const ov = { axiscare_id: '9', skills: { transfers_gait_belt: { have: 'yes', evidence: 'observed' }, hoyer_lift: { have: 'yes' } }, spanish_ability: 'fluent' }
+    // deno-lint-ignore no-explicit-any
+    const m = withOverlay(roster, ov) as any
+    T('overlay skill wins over the old roster copy', m.skills.transfers_gait_belt.have === 'yes' && m.skills.transfers_gait_belt.evidence === 'observed')
+    T('a roster skill the overlay does not mention is kept', m.skills.ok_dogs.have === 'no')
+    T('a skill only in the overlay is added', m.skills.hoyer_lift.have === 'yes')
+    T('spanish ability comes from the overlay when recorded there', m.spanish_ability === 'fluent')
+    T('no overlay leaves the roster record untouched', withOverlay(roster, null) === roster)
+    // deno-lint-ignore no-explicit-any
+    const m2 = withOverlay(roster, { axiscare_id: '9', skills: {} }) as any
+    T('an empty overlay keeps the roster spanish ability', m2.spanish_ability === 'basic' && m2.skills.transfers_gait_belt.have === 'no')
+  }
 
   const fullFacts = { firstName: 'Test', lastName: 'Client', mobilePhone: '417', dateOfBirth: '1940-01-01',
     residentialAddress: { streetAddress1: '1 Main', city: 'Springfield', postalCode: '65802' },
@@ -601,6 +634,11 @@ Deno.serve(async (req) => {
       const avails = await appData('caregiver_availability')
       // deno-lint-ignore no-explicit-any
       const avail = (avails as any[]).find(a => S(a.axiscare_id) === useId) ?? null
+      /* fix 4 of 4: the office's skills record (caregiver_overlay) over the roster copy */
+      const overlays = useId ? await appData('caregiver_overlay') : []
+      // deno-lint-ignore no-explicit-any
+      const overlay = (overlays as any[]).find(o => S(o.axiscare_id) === useId) ?? null
+      const cgEval = withOverlay(cg as Record<string, unknown> | null, overlay)
 
       let clientCtx = null
       if (b.caregiver_eval.client_lead_id || b.caregiver_eval.client_axiscare_id) {
@@ -625,7 +663,7 @@ Deno.serve(async (req) => {
           .eq('axiscare_client_id', cax).neq('status', 'complete').limit(1).maybeSingle() : { data: null }
         clientCtx = { lead, clientFacts, dnrHit, queueRow: qr }
       }
-      const { items } = evalCaregiver({ facts, cg, avail, clientCtx })
+      const { items } = evalCaregiver({ facts, cg: cgEval, avail, clientCtx })
       const wb = wouldBlock(items, false)
       return json({ shadow: true, entity: 'caregiver', axiscare_id: useId || null, enforcement, items,
         would_block: { assignment: wb.ready_for_staffing, first_shift: wb.first_shift, grandfathered: false },
