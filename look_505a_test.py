@@ -41,17 +41,17 @@ def run():
     env = dict(os.environ, SB_REPORT=rep, SB_TOKEN="sbp_fake", SB_API_BASE=URL, SB_SUPA_CLI=CLI, SB_FNROOT=FNROOT)
     p = subprocess.run([sys.executable, os.path.join(W, "look_505a.py")], env=env, capture_output=True, text=True, timeout=600)
     return p.returncode, (open(rep).read() if os.path.exists(rep) else p.stdout + p.stderr)
-OLD = subprocess.run(["git", "log", "--format=%H", "-2", COMMIT, "--", "supabase/functions/_shared/outreach.ts"], cwd=HERE, capture_output=True, text=True).stdout.split()[1]
+OLD = subprocess.run(["git", "log", "--format=%H", "-2", COMMIT, "--", "supabase/functions/_shared/lead-rules.js"], cwd=HERE, capture_output=True, text=True).stdout.split()[1]
 try:
     fresh(); code, out = run()
     ck("live = main: every function same, nothing unreleased", code == 0 and "Nothing unreleased is live" in out and out.count("same as the reviewed main, nothing else") == 1, out)
-    ck("...the LIVE SHAS block is there for pinning", "LIVE SHAS" in out and json.loads(out.strip().split("\n")[-1]).get("supabase/functions/_shared/outreach.ts"), out[-400:])
+    ck("...the LIVE SHAS block is there for pinning", "LIVE SHAS" in out and json.loads(out.strip().split("\n")[-1]).get("supabase/functions/_shared/lead-rules.js"), out[-400:])
     ck("...only downloads ran, nothing was deployed", "deploy" not in open(LOG).read(), open(LOG).read())
-    fresh(); open(os.path.join(LIVE, "_shared", "outreach.ts"), "wb").write(subprocess.run(["git", "show", f"{OLD}:supabase/functions/_shared/outreach.ts"], cwd=HERE, capture_output=True).stdout)
+    fresh(); open(os.path.join(LIVE, "_shared", "lead-rules.js"), "wb").write(subprocess.run(["git", "show", f"{OLD}:supabase/functions/_shared/lead-rules.js"], cwd=HERE, capture_output=True).stdout)
     code, out = run()
-    ck("an older merged outreach.ts is named as older merged code, with its date and change", "outreach.ts: an OLDER merged version, from" in out and OLD[:7] in out and "Nothing unreleased is live" in out, out)
-    fresh(); open(os.path.join(LIVE, "_shared", "outreach.ts"), "a").write("\n// a hand edit nobody merged\n"); code, out = run()
-    ck("a never-merged outreach.ts is flagged and 505 stays stopped", "outreach.ts: NOT any version ever merged" in out and "505 stays stopped" in out, out)
+    ck("an older merged lead-rules.js is named as older merged code, with its date and change", "lead-rules.js: an OLDER merged version, from" in out and OLD[:7] in out and "Nothing unreleased is live" in out, out)
+    fresh(); open(os.path.join(LIVE, "_shared", "lead-rules.js"), "a").write("\n// a hand edit nobody merged\n"); code, out = run()
+    ck("a never-merged lead-rules.js is flagged and 505 stays stopped", "lead-rules.js: NOT any version ever merged" in out and "505 stays stopped" in out, out)
     fresh(); S["flaky"] = {"lead-intake": 2}; code, out = run()
     ck("a server hiccup on lead-intake is retried and read", "lead-intake (version 12" in out and "could not be read" not in out and "Nothing unreleased is live" in out, out)
     fresh(); S["flaky"] = {"lead-intake": 9}; code, out = run()
