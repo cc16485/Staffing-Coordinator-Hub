@@ -856,6 +856,9 @@
     const asmDone = (ctx.assessments || []).some(a => a && (/complete/i.test(String(a.status || '')) || (a.status === 'Scheduled' && a.visit_date && a.visit_date < today)));
     if((sub === 'hospital' || sub === 'snf_rehab') && startRank(l, today) <= 1 && !asmDone)
       out.push({ key:'urgent_discharge', tone:'bad', text:(sub === 'hospital' ? 'Hospital discharge' : 'Rehab discharge') + ': ' + String(desiredStartWords(l, today) || 'Needs care now').replace(/^\w/, c => c.toLowerCase()), why:'a discharge referral who needs care within days; the assessment is the next step' });
+    /* Web referrals (2026-10-08): a professional marked it Urgent on mo-care.com. Red until someone has reached the referrer or the family. */
+    if(l.referral_urgency === 'urgent' && !l.first_human_contact_at)
+      out.push({ key:'urgent_referral', tone:'bad', text:'Urgent referral: call ' + (String((l.referrer && l.referrer.name) || '').trim().split(/\s+/)[0] || 'the referrer') + ' now', why:'the referring professional marked it urgent on the website' });
     if(ctx.people && !ctx.pre_matched){
       const look = staffingLook(l, ctx.people);
       if(look.asked && look.total && look.count < 2) out.push({ key:'staffing_risk', tone:'warn', text:'Staffing risk: ' + (look.count ? '1 caregiver' : 'nobody') + ' available ' + look.ask, why:'the requested days and times find ' + (look.count ? 'only one caregiver' : 'no caregiver') + ' with that window; talk to Staffing before promising a start' });
@@ -883,7 +886,8 @@
     const has = k => sent.some(m => m && m.kind === k);
     const lastAt = sent.length ? sent.map(m => m.at).sort().slice(-1)[0] : null;
     const client = String(((l.client_first_name || '') + ' ' + (l.client_last_name || '')).trim() || 'the family'), family = String((l.first_name || '').trim() || 'the family');
-    const contact = String((org && org.people) || '').split(/[,(]/)[0].trim().split(/\s+/)[0] || 'there';
+    /* the person who referred (a web referral names them) comes first, then the partner record's people line */
+    const contact = String((l.referrer && l.referrer.name) || '').trim().split(/\s+/)[0] || String((org && org.people) || '').split(/[,(]/)[0].trim().split(/\s+/)[0] || 'there';
     const over = ctx.templates || {}, tpl = k => String(over[k] || PARTNER_DEFAULT[k]);
     const v = { partner:contact, me:String(ctx.me || 'the Care Coordinator').split(' ')[0], client, family, day:'', start:'', reason:'', days:'' };
     const due = [];
