@@ -259,9 +259,9 @@ export async function careAction(c: Any): Promise<{ body: Any; status?: number }
       return { body: { outcome: 'ended', change_id: ch.change_id, role: roleRes, closed_work: closedWork, sympathy } }
     }
     if (b.action === 'care_return') {
-      if (state === 'deceased') return err('This client died. A new episode can\'t be started.')
-      if (state !== 'past') return err('Only a past client can start a new episode.')
-      if (!isOwner) return err('Starting a new episode for a returning client is an owner\'s decision.', 403)
+      if (state === 'deceased') return err('This client died. Care can\'t be resumed.')
+      if (state !== 'past') return err('Only a past client\'s care can be resumed this way.')
+      if (!isOwner) return err('Resuming care for a returning client is an owner\'s decision.', 403)
       const eff = isYmd(b.effective_date) && b.effective_date <= today() ? b.effective_date : today()
       if (b.review_id) {
         const { data, error } = await db.rpc('client_status_decide', { p_review_id: b.review_id, p_decision: 'returning', p_date: eff, p_reason: null,
@@ -272,7 +272,7 @@ export async function careAction(c: Any): Promise<{ body: Any; status?: number }
         if (error || data?.outcome !== 'returned') return err('The return could not be recorded: ' + (error?.message || JSON.stringify(data)))
       }
       const o = await openOne(db, dfs, pp, st, actor, { lead: null, leadId: null, axId: ax, payer: latest?.payer ?? null, name, asked: lc(latest?.assigned_cc || ''), how: 'a returning client, confirmed by ' + who.name })
-      if (o.outcome !== 'created') return err('The new episode could not be opened: ' + (o.error || o.outcome))
+      if (o.outcome !== 'created') return err('Care could not be resumed: ' + (o.error || o.outcome))
       await db.from('client_journey').update({ episode_n: (latest?.episode_n ?? 1) + 1, previous_journey_id: latest?.journey_id ?? null }).eq('journey_id', o.journey_id)
       const ch = await record({ kind: 'return', explanation: String(b.explanation || '').trim() || null, effective_date: eff, journey_id: o.journey_id, notified_by: String(b.notified_by || '').slice(0, 200) || null })
       return { body: { outcome: 'returned', change_id: ch.change_id, journey_id: o.journey_id, episode_n: (latest?.episode_n ?? 1) + 1 } }

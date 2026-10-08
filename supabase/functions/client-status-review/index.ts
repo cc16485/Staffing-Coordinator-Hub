@@ -61,13 +61,13 @@ export function reviewItem(rv: any, name: string, owner: string, today: string, 
   const back = !!prev && /^active$/i.test(String(rv.new_label || '').trim())
   return {
     id: 'csr_' + rv.review_id, kind: 'status_review', status: 'open',
-    title: back ? `We served ${name} before. AxisCare shows them Active again: start a new episode?` : `AxisCare changed ${name} from ${rv.old_label ?? '?'} to ${rv.new_label}`,
+    title: back ? `We served ${name} before. AxisCare shows them Active again: resume care?` : `AxisCare changed ${name} from ${rv.old_label ?? '?'} to ${rv.new_label}`,
     about: name,
     detail: back
       ? `Last time: care ended ${prev!.ended_at ? (prev!.ended_date_basis === 'on_or_before' ? 'on or before ' + String(prev!.ended_at).slice(0, 10) + ' (exact date not recorded in AxisCare)' : String(prev!.ended_at).slice(0, 10)) : '(date not recorded)'}${prev!.end_reason ? ' (' + prev!.end_reason + ')' : ''}. Seen by the status check on ${seen}. Nothing starts until a person confirms the return; their earlier history stays as it is.`
       : `Seen by the status check on ${seen}. Nothing in the hub changes until someone answers what happened.`
       + (deceased ? ' Nothing contacts the family automatically; any call is a person\'s decision.' : ''),
-    next_action: back ? 'Open it: confirm they are returning (a new episode on the same person), or say AxisCare is wrong.' : 'Open it and answer: care ended, on hold, AxisCare mistake, or returning client. Answering closes this.',
+    next_action: back ? 'Open it: confirm they are returning (Resume care, on the same person), or say AxisCare is wrong.' : 'Open it and answer: care ended, on hold, AxisCare mistake, or returning client. Answering closes this.',
     urgency: deceased ? 'high' : 'normal', due: endOfDayChicago(today), domain: 'client_care', owner,
     created_at: null, last_activity_at: null, opened_by: 'system', created_by: AUTOMATION,
     source: { type: 'status_review', id: rv.review_id, review_id: rv.review_id, axiscare_client_id: rv.axiscare_client_id, person_id: rv.person_id },
