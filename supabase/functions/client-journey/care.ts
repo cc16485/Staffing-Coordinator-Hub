@@ -14,6 +14,8 @@
 //                  review too (review_id): an AxisCare change never ends care by itself.
 //   care_return    a past client comes back, ONLY when a person confirms it (an owner, as before): a NEW episode and a new
 //                  journey on the same person; the old ones stay as they were
+//   care_end_date  correct a past or deceased client's end date (Samantha 2026-10-08), with how we know; the date becomes
+//                  exact and the old one stays in the permanent care history
 //   care_checklist / care_upload_url / care_file_url   the Medicaid checklist: tick, not needed (why), proof files
 // =====================================================================================================================
 // deno-lint-ignore no-explicit-any
@@ -131,7 +133,7 @@ export async function careAction(c: Any): Promise<{ body: Any; status?: number }
       episodes: js.map((j: Any) => ({ journey_id: j.journey_id, episode_n: j.episode_n ?? 1, status: j.status, closed_reason: j.closed_reason ?? null, created_at: j.created_at, assigned_cc: j.assigned_cc })),
       roles: (roles ?? []).map((r: Any) => ({ status: r.status, started_at: r.started_at ?? null, ended_at: r.ended_at ?? null, ended_date_basis: r.ended_date_basis ?? null, end_reason: r.end_reason ?? null })),
       changes: changes ?? [], can: { pause: can && ['active', 'starting'].includes(state), resume: can && state === 'paused', end: can && ['active', 'starting', 'paused'].includes(state),
-        return: isOwner && state === 'past' }, reasons: { end: END_REASONS, pause: PAUSE_REASONS } } }
+        return: isOwner && state === 'past', end_date: can && ['past', 'deceased'].includes(state) }, reasons: { end: END_REASONS, pause: PAUSE_REASONS } } }
   }
   if (!can) return err('Only a Care Coordinator or an owner can pause or end care.', 403)
 
@@ -257,6 +259,20 @@ export async function careAction(c: Any): Promise<{ body: Any; status?: number }
         }
       }
       return { body: { outcome: 'ended', change_id: ch.change_id, role: roleRes, closed_work: closedWork, sympathy } }
+    }
+    if (b.action === 'care_end_date') {
+      if (!['past', 'deceased'].includes(state)) return err('Only a past client\'s end date can be corrected.')
+      if (!isYmd(b.effective_date) || b.effective_date > today()) return err('The end date (the last day of service, not in the future) is required.')
+      const how = String(b.explanation || '').trim(); if (!how) return err('Say how you know the date (e.g. AxisCare notes, the family, the discharge letter).')
+      const role = (roles ?? []).filter((r: Any) => r.role === 'client' && r.status !== 'active').sort((a: Any, c: Any) => String(c.ended_at || '').localeCompare(String(a.ended_at || '')))[0]
+      if (!role) return err('No ended client record was found for this person.')
+      if (role.started_at && b.effective_date < String(role.started_at).slice(0, 10)) return err('The end date can\'t be before care started (' + String(role.started_at).slice(0, 10) + ').')
+      const was = role.ended_at ? (role.ended_date_basis === 'on_or_before' ? 'on or before ' : '') + String(role.ended_at).slice(0, 10) : 'not recorded'
+      const { error } = await db.from('person_role').update({ ended_at: b.effective_date, ended_date_basis: 'exact', updated_at: now }).eq('id', role.id)
+      if (error) return err('Could not correct the date: ' + error.message, 500)
+      const ch = await record({ kind: 'end_date', explanation: 'Was ' + was + '. How we know: ' + how, effective_date: b.effective_date,
+        notified_by: String(b.notified_by || '').slice(0, 200) || null, journey_id: latest?.journey_id ?? null })
+      return { body: { outcome: 'corrected', change_id: ch.change_id, was } }
     }
     if (b.action === 'care_return') {
       if (state === 'deceased') return err('This client died. Care can\'t be resumed.')
