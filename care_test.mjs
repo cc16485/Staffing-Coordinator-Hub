@@ -94,7 +94,7 @@ try {
   const job = { 'x-cron-secret': ENV.HUB_JOB_SECRET }
   const setup = () => { reset(); Object.assign(T, {
       person_source_id: [{ person_id: 'p-ed', system: 'axiscare', entity_type: 'client', source_id: '296' }, { person_id: 'p-old', system: 'axiscare', entity_type: 'client', source_id: '410' }, { person_id: 'p-gone', system: 'axiscare', entity_type: 'client', source_id: '411' }],
-      person_role: [{ person_id: 'p-ed', role: 'client', status: 'active' }, { person_id: 'p-old', role: 'client', status: 'former', ended_at: '2025-03-01', end_reason: 'Moved out of our service area' }, { person_id: 'p-gone', role: 'client', status: 'former', ended_at: '2026-01-02', end_reason: 'deceased' }],
+      person_role: [{ id: 1, person_id: 'p-ed', role: 'client', status: 'active' }, { id: 2, person_id: 'p-old', role: 'client', status: 'former', ended_at: '2025-03-01', end_reason: 'Moved out of our service area' }, { id: 3, person_id: 'p-gone', role: 'client', status: 'former', ended_at: '2026-01-02', end_reason: 'deceased' }],
       person_identity: [{ id: 'p-ed', display_name: 'Edward Anderson' }, { id: 'p-old', display_name: 'Olive Past' }, { id: 'p-gone', display_name: 'Gil Gone' }],
       client_pause: [], client_care_change: [], client_queue: [], client_status_review: [] })
     T.app_data.push({ key: 'client_checkins', data: [{ id: 'ci1', client_name: 'Edward Anderson', axiscare_client_id: '296', next_checkin_due: '2026-10-01', checkin_date: '2026-09-01' }] })
@@ -160,6 +160,27 @@ try {
   ck('...his state reads Past, with every change in order (pause, resume, end) and his journey kept', r.j.state === 'past' && r.j.changes.map((c) => c.kind).join() === 'pause,resume,end' && r.j.episodes.length === 1 && r.j.episodes[0].status === 'closed', r.j)
   r = await call({ action: 'sweep' }, null, job)
   ck('...the next sweep changes nothing about him (no new cards, no reopened journey)', T.client_journey[0].status === 'closed' && jcards().length === 0)
+
+  // END DATE FIX (Samantha 2026-10-08): a past client's end date can be corrected, with how we know; the old date stays in the history
+  const edRole = () => T.person_role.find((x) => x.person_id === 'p-ed' && x.status === 'former')
+  edRole().ended_date_basis = 'on_or_before'; const wasEnd = edRole().ended_at
+  r = await call({ action: 'care_state', axiscare_client_id: '296' }, 'an')
+  ck('end date fix: a Care Coordinator may correct a past client\'s end date', r.j.can.end_date === true, r.j.can)
+  r = await call({ action: 'care_end_date', axiscare_client_id: '296', effective_date: R_add(-3) }, 'an')
+  ck('...it needs how we know', r.j.outcome === 'refused' && /how you know/.test(r.j.error), r.j)
+  r = await call({ action: 'care_end_date', axiscare_client_id: '296', effective_date: R_add(2), explanation: 'family' }, 'an')
+  ck('...not a future date', r.j.outcome === 'refused', r.j)
+  r = await call({ action: 'care_end_date', axiscare_client_id: '296', effective_date: R_add(-3), explanation: 'the discharge letter' }, 'sal')
+  ck('...Staffing can\'t', r.status === 403, r.j)
+  edRole().started_at = R_add(-10)
+  r = await call({ action: 'care_end_date', axiscare_client_id: '296', effective_date: R_add(-20), explanation: 'family' }, 'an')
+  ck('...not before care started', r.j.outcome === 'refused' && /before care started/.test(r.j.error), r.j)
+  r = await call({ action: 'care_end_date', axiscare_client_id: '296', effective_date: R_add(-3), explanation: 'the discharge letter' }, 'an')
+  const EDC = T.client_care_change.find((c) => c.kind === 'end_date')
+  ck('...corrected: the date is exact now', r.j.outcome === 'corrected' && edRole().ended_at === R_add(-3) && edRole().ended_date_basis === 'exact', [r.j, edRole()])
+  ck('...the permanent history keeps the old date, how we know, and who', EDC && EDC.explanation === 'Was on or before ' + String(wasEnd).slice(0, 10) + '. How we know: the discharge letter' && EDC.made_by === 'angie@mo-care.com' && EDC.effective_date === R_add(-3), EDC)
+  ck('...only HIS role changed (other past clients untouched)', T.person_role.find((x) => x.person_id === 'p-old').ended_at === '2025-03-01')
+  ck('...he is still Past (nothing else changed): no journey reopened, no card', T.client_journey[0].status === 'closed' && jcards().length === 0 && T.person_role.filter((x) => x.person_id === 'p-ed').length === 1)
 
   // 7 · RETURN (a person approves; the same person, a new episode)
   r = await call({ action: 'care_return', axiscare_client_id: '296' }, 'an')
