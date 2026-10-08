@@ -649,11 +649,28 @@
     const yesToShift = started.map(l => (l.said_yes_at || l.converted_at) ? daysBetween(chicago(l.said_yes_at || l.converted_at).ymd, chicago(l.first_shift_at).ymd) : null);
     /* referral partners (the Hub's referral_orgs, by id; else the typed referral name) */
     const orgs = (opts && opts.orgs) || {};
-    const partners = {};
-    came.forEach(l => { const key = l.referral_org_id ? 'org:' + l.referral_org_id : (String(l.referral_source_name || '').trim() ? 'name:' + String(l.referral_source_name).trim().toLowerCase() : null); if(!key) return;
-      const o = orgs[l.referral_org_id] || {}; const r = partners[key] = partners[key] || { key, name:o.name || String(l.referral_source_name || '').trim(), type:o.type || '', sent:0, reached_24h:0, assessed:0, said_yes:0, started:0, days_to_start:[], hours:0 };
-      r.sent++; if(reached24.indexOf(l) > -1) r.reached_24h++; if(l.assessment_at || (l.status && l.status !== 'New' && l.status !== 'Contacted' && l.status !== 'Lost')) r.assessed++; if(l.said_yes_at || l.status === 'Converted') r.said_yes++;
-      if(l.first_shift_at){ r.started++; r.hours += hoursOf(l); r.days_to_start.push(daysBetween(chicago(l.created_at).ymd, chicago(l.first_shift_at).ymd)); } });
+    const partners = {}, people = {};
+    /* Step 6 (2026-10-08): by partner AND by the person who referred. Names typed without a partner link are grouped with
+       punctuation and spacing ignored ("St Johns" = "St. Johns"). Each row: sent, how fast we first tried to reach the family,
+       reached in 24 hours, assessed, said yes, started (the first clock-in), days to start, weekly hours, still open, and why
+       the rest did not start. Counts follow the referrals RECEIVED in the period (a referral sent last month that starts this
+       week counts last month). */
+    const nk = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const blank = (key, name, type) => ({ key, name, type, sent:0, reached_24h:0, assessed:0, said_yes:0, started:0, days_to_start:[], hours:0, mins:[], open:0, lost:0, lost_reasons:{} });
+    const tally = (r, l) => { r.sent++; if(reached24.indexOf(l) > -1) r.reached_24h++; const m = mins(l); if(m != null) r.mins.push(m);
+      if(l.assessment_at || (l.status && l.status !== 'New' && l.status !== 'Contacted' && l.status !== 'Lost')) r.assessed++; if(l.said_yes_at || l.status === 'Converted') r.said_yes++;
+      if(l.first_shift_at){ r.started++; r.hours += hoursOf(l); r.days_to_start.push(daysBetween(chicago(l.created_at).ymd, chicago(l.first_shift_at).ymd)); }
+      else if(l.status === 'Lost'){ r.lost++; const k = lostKey(l) || 'other'; r.lost_reasons[k] = (r.lost_reasons[k] || 0) + 1; }
+      else if(!l.archived) r.open++; };
+    came.forEach(l => { const key = l.referral_org_id ? 'org:' + l.referral_org_id : (nk(l.referral_source_name) ? 'name:' + nk(l.referral_source_name) : null); if(!key) return;
+      const o = orgs[l.referral_org_id] || {}; tally(partners[key] = partners[key] || blank(key, o.name || String(l.referral_source_name || '').trim(), o.type || ''), l);
+      if(l.referral_contact_id){ const c = ((o.contacts || []).find(x => x && x.id === l.referral_contact_id)) || {};
+        const pk = 'person:' + l.referral_contact_id; const r = people[pk] = people[pk] || blank(pk, c.name || 'Someone at ' + (o.name || 'a partner'), o.name || ''); tally(r, l); } });
+    const shape = r => ({ key:r.key, name:r.name, type:r.type, sent:r.sent, reached_24h:r.reached_24h, first_attempt_median_min:median(r.mins), assessed:r.assessed, said_yes:r.said_yes, started:r.started,
+      days_to_start_median:median(r.days_to_start), hours:r.hours, open:r.open, lost:r.lost,
+      lost_reasons:Object.entries(r.lost_reasons).map(([k, n]) => ({ key:k, label:LOST_LABEL[k] || (k === 'not_ready_legacy' ? 'Not ready yet (older reason)' : 'Other'), count:n })).sort((a, b) => b.count - a.count) });
+    /* starts that can't be credited: a referral that started care with no partner recorded */
+    const unlinkedStarts = real.filter(l => inP(l.first_shift_at) && l.source === 'Referral' && !l.referral_org_id).map(l => ({ id:l.id, name:String(l.referral_source_name || '').trim(), started:chicago(l.first_shift_at).ymd }));
     const lost = real.filter(l => l.status === 'Lost' && inP(l.lost_at || (inP(l.created_at) ? l.created_at : null)));
     const lostAfterYes = lost.filter(l => l.said_yes_at || l.said_yes_undone === undefined && l.converted_at && l.lost_at && l.converted_at < l.lost_at);
     const byReason = {};
@@ -678,7 +695,8 @@
     return { from, to, inquiries:came.length, attempted:attempted.length, median_first_attempt_min:median(came.map(mins)), reached_24h:reached24.length,
       reached_24h_pct:came.length ? Math.round(reached24.length / came.length * 100) : null, never_attempted:stale.length, buckets,
       said_yes:yes.length, inquiry_to_yes_median_days:median(toYes), started:started.length, yes_to_first_shift_median_days:median(yesToShift), lost:lost.length, lost_after_yes:lostAfterYes.length,
-      by_partner:Object.values(partners).map(r => ({ key:r.key, name:r.name, type:r.type, sent:r.sent, reached_24h:r.reached_24h, assessed:r.assessed, said_yes:r.said_yes, started:r.started, days_to_start_median:median(r.days_to_start), hours:r.hours })).sort((a, b) => b.sent - a.sent || b.started - a.started),
+      basis:'referrals received in the period', unlinked_starts:unlinkedStarts, by_contact:Object.values(people).map(shape).sort((a, b) => b.sent - a.sent || b.started - a.started || a.name.localeCompare(b.name)),
+      by_partner:Object.values(partners).map(shape).sort((a, b) => b.sent - a.sent || b.started - a.started),
       lost_hours_week:lost.reduce((a, l) => a + hoursOf(l), 0), by_reason:Object.values(byReason).sort((a, b) => b.hours - a.hours || b.count - a.count),
       funnel, by_source:Object.values(sources).sort((a, b) => b.inquiries - a.inquiries),
       by_owner:Object.values(owners).map(o => ({ owner:o.owner, inquiries:o.inquiries, median_first_attempt_min:median(o.mins), reached_24h:o.reached_24h, never_attempted:o.never_attempted, said_yes:o.said_yes, late:o.late, misses:o.misses, took:o.took })).sort((a, b) => b.inquiries - a.inquiries) };

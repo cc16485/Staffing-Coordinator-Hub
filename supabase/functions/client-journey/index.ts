@@ -181,6 +181,52 @@ async function leadOf(db: Any, leadId: string | null): Promise<Any | null> {
   const { data } = await db.from('app_data').select('data').eq('key', 'leads').maybeSingle()
   return (Array.isArray(data?.data) ? data.data : []).find((l: Any) => String(l?.id) === String(leadId)) ?? null
 }
+/* ── THE FIRST SHIFT, FROM AXISCARE'S CLOCK-IN (Referral Partner Desk Step 6, 2026-10-08) ──────────────────────────────
+   "Started care" means one thing everywhere: the first clock-in in AxisCare. Before this, first_shift_at was written only by
+   the journey (so only while Client journeys was on) and carried the moment the Hub NOTICED the visit, not when it happened.
+   Every sweep (journeys on or off) now looks, for a few inquiries at a time, at clients who said yes: their AxisCare visits
+   from just before the yes, in 28-day slices up to today, and the earliest one with a real clock-in. That time is the first
+   shift (first_shift_source 'axiscare_clock_in'); a journey's earlier stamp is corrected to it. No clock-in yet: looked at
+   again tomorrow. Clients who started before AxisCare (WellSky) have no clock-ins there: their start stays unrecorded,
+   never guessed. Reads AxisCare only; writes only these fields on the inquiry, re-read just before saving. */
+export function firstClockIn(visits: Any[]): string | null {
+  const at = (v: Any) => { const c = v?.clockIn; const s = typeof c === 'string' ? c : (c && (c.time || c.date || c.at)) || v?.actualStartDate || null; return s && !isNaN(Date.parse(s)) ? new Date(s).toISOString() : null }
+  const xs = (visits || []).filter((v: Any) => v && !v.removed).map(at).filter(Boolean).sort() as string[]
+  return xs[0] || null
+}
+async function stampFirstShifts(db: Any, ax: (p: string) => Promise<Any>, limit = 15): Promise<{ looked: number; stamped: number; corrected: number }> {
+  const out = { looked: 0, stamped: 0, corrected: 0 }
+  const { data: lr } = await db.from('app_data').select('data').eq('key', 'leads').maybeSingle()
+  const leads: Any[] = Array.isArray(lr?.data) ? lr.data : []
+  const { data: js } = await db.from('client_journey').select('lead_id, axiscare_client_id').not('lead_id', 'is', null)
+  const axOf = new Map((js ?? []).filter((j: Any) => j.axiscare_client_id).map((j: Any) => [String(j.lead_id), String(j.axiscare_client_id)]))
+  const dayAgo = new Date(Date.now() - 20 * 36e5).toISOString(), now = new Date().toISOString(), t = today()
+  const due = leads.filter((l: Any) => l && !(l.spam && l.spam.at) && (l.said_yes_at || l.status === 'Converted') && l.first_shift_source !== 'axiscare_clock_in'
+    && /^\d+$/.test(String(l.axiscare_client_id || axOf.get(String(l.id)) || '')) && !(l.first_shift_checked_at && l.first_shift_checked_at > dayAgo))
+    .sort((a: Any, b: Any) => String(a.first_shift_checked_at || '').localeCompare(String(b.first_shift_checked_at || ''))).slice(0, limit)
+  for (const l of due) {
+    out.looked++
+    const id = String(l.axiscare_client_id || axOf.get(String(l.id))), began = String(l.said_yes_at || l.converted_at || l.created_at || t).slice(0, 10)
+    let from = R.addDays(began, -3), found: string | null = null, ok = true
+    for (let i = 0; i < 8 && from <= t && !found; i++) {
+      const to = R.addDays(from, 27) > t ? t : R.addDays(from, 27)
+      const r = await ax(`/api/visits?clientIds=${id}&startDate=${from}&endDate=${to}`)
+      if (!r || r.status !== 200) { ok = false; break }
+      const vs = r.json?.results?.visits ?? r.json?.visits ?? []
+      found = firstClockIn(Array.isArray(vs) ? vs : Object.values(vs)); from = R.addDays(to, 1)
+    }
+    if (!ok) continue   /* AxisCare didn't answer: nothing written, looked at again next run */
+    const { data: fresh } = await db.from('app_data').select('data').eq('key', 'leads').maybeSingle()
+    const cur = (Array.isArray(fresh?.data) ? fresh.data : []).find((x: Any) => String(x?.id) === String(l.id)); if (!cur) continue
+    if (found) {
+      const had = cur.first_shift_at || null
+      const l2 = { ...cur, first_shift_at: found, first_shift_source: 'axiscare_clock_in', first_shift_checked_at: now,
+        comm_log: [...(Array.isArray(cur.comm_log) ? cur.comm_log : []), { body: had ? 'First shift corrected to the first clock-in in AxisCare (' + found.slice(0, 10) + '; the Hub had ' + String(had).slice(0, 10) + ')' : 'First shift: the first clock-in in AxisCare (' + found.slice(0, 10) + ')', at: now, kind: 'first_shift' }] }
+      await db.rpc('upsert_app_data_item', { target_key: 'leads', item: l2 }); if (had) out.corrected++; else out.stamped++
+    } else await db.rpc('upsert_app_data_item', { target_key: 'leads', item: { ...cur, first_shift_checked_at: now } })
+  }
+  return out
+}
 /* ── the new client's shifts in AxisCare (Samantha 2026-10-07: "read if we did put a caregiver in the shifts or if they
    are still unassigned for new client who is onboarding"). The two weeks from the start date (or today, if later). ── */
 export const SHIFT_DAYS = 14
@@ -296,7 +342,7 @@ async function settle(db: Any, j: Any, steps: Any[], dfs: Any[], pp: Any, st: An
   const fv = steps.find((s: Any) => s.step_key === 'fw.first_visit' && R.DONE.includes(s.state))
   if (fv && lead && !lead.first_shift_at) {
     const at = (fv.evidence && fv.evidence.verified && fv.evidence.verified.at) || fv.completed_at || now
-    const l2 = { ...lead, first_shift_at: at, comm_log: [...(Array.isArray(lead.comm_log) ? lead.comm_log : []), { body: 'First shift happened (from the client journey)', at, kind: 'first_shift' }] }
+    const l2 = { ...lead, first_shift_at: at, first_shift_source: 'journey', comm_log: [...(Array.isArray(lead.comm_log) ? lead.comm_log : []), { body: 'First shift happened (from the client journey)', at, kind: 'first_shift' }] }
     await db.rpc('upsert_app_data_item', { target_key: 'leads', item: l2 }); lead.first_shift_at = at
     await event(db, j.journey_id, 'fw.first_visit', { email: 'hub', name: 'The Hub' }, 'first_shift_stamped', { at })
   }
@@ -477,6 +523,9 @@ Deno.serve(async (req) => {
   if (b.action === 'sweep') {
     if (!(await jobCaller(req))) return json({ error: 'not allowed' }, 403)
     const [dfs, pp, st] = await Promise.all([defs(db), people(db), settings(db)])
+    /* Step 6: the first clock-in, whether or not journeys are on */
+    let first_shifts: Any = null
+    try { first_shifts = await stampFirstShifts(db, axFetcher()) } catch (e) { first_shifts = { error: String((e as Error).message || e).slice(0, 200) } }
     if (st.client_journey_live !== true) {
       /* switched off: real journeys show nobody anything, so their open My Work cards are put away (they come back on the
          first sweep after it is turned on again). TEST journeys keep theirs. */
@@ -484,7 +533,7 @@ Deno.serve(async (req) => {
       let put = 0
       for (const it of (Array.isArray(row?.data) ? row.data : []).filter((x: Any) => x?.kind === 'journey' && x.status === 'open' && !x.is_test)) {
         await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...it, status: 'done', closed_at: now, closed_by: 'journey', close_note: 'Client journeys were switched off' } }); put++ }
-      return json({ ok: true, live: false, note: 'client_journey_live is off: nothing swept', cards_put_away: put })
+      return json({ ok: true, live: false, note: 'client_journey_live is off: nothing swept', cards_put_away: put, first_shifts })
     }
     const auto = await autoOpenClose(db, dfs, pp, st), care_ended = await closeEnded(db, dfs, pp, st), pause_due = await pauseDue(db)
     const { data: js } = await db.from('client_journey').select('*').in('status', ['open', 'active'])
@@ -494,7 +543,7 @@ Deno.serve(async (req) => {
       const { data: steps } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
       const out = await settle(db, j, steps ?? [], dfs, pp, st, j.status === 'active' ? { verify: false } : {}); n++; cards += out.cards.wrote + out.cards.closed; if (out.launch) launches++
     }
-    return json({ ok: true, journeys: n, card_changes: cards, launch_changes: launches, care_ended, pause_due, ...auto })
+    return json({ ok: true, journeys: n, card_changes: cards, launch_changes: launches, care_ended, pause_due, first_shifts, ...auto })
   }
   /* ── THEY SAID YES (Leads intake desk, Stage 3; Samantha 2026-10-06: "move them directly from Leads into the Client
      Journey… carry everything… record the conversion event… land on the first incomplete required step… safely
