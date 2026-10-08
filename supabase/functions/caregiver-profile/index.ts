@@ -23,6 +23,8 @@
 //                 Publishing clears needs_review (2b: an older intro moved over, still to be checked). An older
 //                 profile that is published but needs_review keeps its personal link open, so they can add a proper
 //                 photo and give their OK while families can still see it.
+//     'notice'    {kind:'video_optional', axiscare_id, first, last, phone, email, dry?} -> 522: one text and email saying the
+//                 hello video is now optional; once per caregiver (app_data cgp_notices); dry answers the words only
 //     'catchup'   {axiscare_id, first, last, legacy_candidate_id?} -> 452: a CURRENT caregiver (already working with us)
 //                 fills in their whole profile themselves. Finds or starts their row (AxisCare id, then their older Hub
 //                 candidate id), marks it self_complete, and empties any [ask: ...] prompt so their boxes start blank.
@@ -36,7 +38,8 @@
 //     'submit'     {t, preferred_name, about, experience, why_this_work, photo_path, video_path, consent}
 // 452 (Samantha, 2026-10-05: "i need the current active caregivers to fully complete their own caregiver profile and
 // submit the photo and video as well"): a self_complete profile gets its own text and email, its page asks three
-// questions with empty boxes, and it can only be sent (and published) with all three answers, a photo AND a video,
+// questions with empty boxes, and it can only be sent (and published) with all three answers and a photo (the video
+// is optional for everyone since 522, 2026-10-08),
 // and their permission. New hires are unchanged.
 // The WORDING of every message is fixed here; the caller never supplies message text. No em dashes anywhere.
 // =============================================================================
@@ -111,15 +114,29 @@ export function linkMessages(first: string, link: string) {
 export function catchupMessages(first: string, link: string) {
   return {
     text: withStop(`Hi ${first}, it's Caring Companions! We're adding a short profile that our families see before you visit, so they know who's coming. ` +
-      `Please fill it in yourself here: ${link} Answer 3 short questions in your own words, and add a friendly photo and a short hello video. It takes about 10 minutes.`),
-    subject: 'Your Caring Companions profile: 3 questions, a photo and a short video',
+      `Please fill it in yourself here: ${link} Answer 3 short questions in your own words, and add a friendly photo (and a short hello video if you like). It takes about 10 minutes.`),
+    subject: 'Your Caring Companions profile: 3 questions and a photo',
     html: shell(`<p>Hi ${esc(first)},</p>` +
       `<p>We're adding a short profile that our families see before you visit, so they know a friendly face is coming. Please fill yours in yourself. It takes about 10 minutes:</p>` +
       `<ol><li><b>Answer 3 short questions in your own words:</b> what families should know about you, who you have cared for, and what you enjoy most about caregiving.</li>` +
       `<li><b>Add a friendly photo of yourself.</b> A phone selfie in good light, from the shoulders up, is perfect.</li>` +
-      `<li><b>Add a short hello video</b> of about 30 seconds. Say hi and one thing you love about caregiving.</li></ol>` +
+      `<li><b>If you like, add a short hello video</b> of about 30 seconds. Say hi and one thing you love about caregiving. This one is optional.</li></ol>` +
       btn(link, 'Fill in my profile') +
       `<p>This link is just for you, so please do not share it. Questions? Call us at ${OFFICE}.</p>`),
+  }
+}
+/* 522 (Samantha, 2026-10-08): "the video is now optional", one text and email to each current caregiver, once. Her words,
+   one place, so the Hub preview and the send never differ. */
+export function videoOptionalMessages(first: string) {
+  return {
+    text: withStop(`Hi ${first}, it's Caring Companions! A quick update on your caregiver profile: the short hello video is now optional. ` +
+      `A friendly photo is all we need, so if you would rather not be on camera, just skip the video. ` +
+      `If you still need to finish your profile, use the link we sent you, or call or text the office at ${OFFICE} and we will send a new one. Thank you!`),
+    subject: 'Your caregiver profile: the hello video is now optional',
+    html: shell(`<p>Hi ${esc(first)},</p>` +
+      `<p>A quick update on your caregiver profile: <b>the short hello video is now optional.</b> A friendly photo is all we need, so if you would rather not be on camera, just skip the video.</p>` +
+      `<p>If you still need to finish your profile, use the link we texted and emailed you. If you cannot find it, call or text the office at ${OFFICE} and we will send a new one.</p>` +
+      `<p>Thank you!</p>`),
   }
 }
 /* 452: what a current caregiver still has to add before their profile can be sent. Their words to read. */
@@ -132,7 +149,6 @@ export function selfCompleteMissing(p: any): string[] {
     if (!v || hasPrompt(v)) out.push(`your answer about ${label}`)
   }
   if (!p?.photo_path) out.push('a photo of yourself')
-  if (!p?.video_path) out.push('a short hello video')
   if (p?.consent !== true) out.push('your permission (the box at the bottom)')
   return out
 }
@@ -145,8 +161,7 @@ export function publishProblems(p: any): string[] {
   if (p.status === 'withdrawn') out.push('This profile was withdrawn. They took their permission back.')
   if (!p.photo_path) out.push('No photo yet. They add it from their photo link (Send photo link).')
   if (p.consent !== true) out.push('They have not given permission yet. They tick the box on their profile page.')
-  /* 455: a video the office chose to hide counts as decided: it does not hold up publishing */
-  if (p.self_complete === true && !p.video_path && p.video_hidden !== true) out.push('No video yet. For a current caregiver the hello video is required; they add it from their profile link.')
+  /* 522 (Samantha, 2026-10-08): the hello video is optional for everyone, current caregivers too. */
   const parts: [string, string][] = [['about', 'About me'], ['experience', 'Experience caring for others'], ['why_this_work', 'Why they enjoy caregiving']]
   for (const [k, label] of parts) {
     const v = String(p[k] ?? '').trim()
@@ -431,6 +446,51 @@ Deno.serve(async (req) => {
   const who = await requireStaff(db, req, OFFICE_ROLES)
   if (!who.ok) return json({ error: who.error }, who.status)
   const staff = who.name || who.email
+
+  /* ── 522: the "video is now optional" notice, one caregiver per call, never twice (app_data cgp_notices) ── */
+  if (action === 'notice') {
+    if (String(b.kind || '') !== 'video_optional') return json({ error: 'Which notice?' }, 400)
+    const axid = clean(b.axiscare_id, 40), first = clean(b.first, 40) || 'there', last = clean(b.last, 60)
+    const phone = clean(b.phone, 30), email = clean(b.email, 120).toLowerCase()
+    const m = videoOptionalMessages(first)
+    if (b.dry) return json({ ok: true, dry: true, text: m.text, subject: m.subject, html: m.html })
+    if (!axid) return json({ error: 'Which caregiver?' }, 400)
+    const key = 'video_optional:' + axid
+    const { data: st } = await db.from('app_data').select('data').eq('key', 'cgp_notices').maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    const had = (Array.isArray(st?.data) ? st.data : []).find((x: any) => x && x.id === key)
+    if (had) return json({ ok: true, already: true, at: had.at || null, texted: false, emailed: false, not_sent: [] })
+    if (!phone && !email) return json({ ok: true, texted: false, emailed: false, not_sent: ['no mobile or email on file'] })
+    const ghl = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
+    const H = { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
+    const notSent: string[] = []; let texted = false, emailed = false
+    const name = [first, last].filter(Boolean).join(' ')
+    if (!ghl.token || !ghl.locationId) notSent.push('texting is not set up on the server')
+    else {
+      if (phone) {
+        const c = await latestTextConsent(db, phone)
+        if (!inTextHours()) notSent.push('text: texts go 8am to 6pm Central' + (email ? ' (the email still went)' : ''))
+        else if (!c.ok) notSent.push('text: ' + c.why)
+        else {
+          const cid = await ghlContactIfAllowed(db, ghl, 'caregiver-profile', { channel: 'sms', phone, email, firstName: first, lastName: last })
+          if (!cid) notSent.push('text: they opted out, or the number could not be confirmed')
+          else if (!(texted = await ghlSendChecked(db, H, 'caregiver-profile', { channel: 'sms', contactId: cid, address: phone, who: name }, { message: m.text })))
+            notSent.push('text: GoHighLevel did not accept it (a card is on Needs Attention)')
+        }
+      }
+      if (email) {
+        const cid = await ghlContactIfAllowed(db, ghl, 'caregiver-profile', { channel: 'email', email, phone, firstName: first, lastName: last })
+        if (!cid) notSent.push('email: they opted out, or the address could not be confirmed')
+        else if (!(emailed = await ghlSendChecked(db, H, 'caregiver-profile', { channel: 'email', contactId: cid, address: email, who: name }, { subject: m.subject, html: m.html })))
+          notSent.push('email: GoHighLevel did not accept it (a card is on Needs Attention)')
+      }
+    }
+    if (texted || emailed) {
+      const { error } = await db.rpc('upsert_app_data_item', { target_key: 'cgp_notices', item: { id: key, kind: 'video_optional', axiscare_id: axid, who: name, at: now, by: staff, texted, emailed } })
+      if (error) notSent.push('sent, but it could not be written down (' + String(error.message ?? error).slice(0, 80) + '), so do not press again today')
+    }
+    return json({ ok: true, texted, emailed, not_sent: notSent })
+  }
 
   if (action === 'draft') {
     /* a new hire is keyed by their Hub candidate id; a current employee by their AxisCare caregiver id */

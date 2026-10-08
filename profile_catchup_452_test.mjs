@@ -53,16 +53,16 @@ const DONE = (p) => ({ ...p })
 const tok = '11111111-2222-4333-8444-555555555555'
 const cm = M.catchupMessages('Dana', M.profileLink(tok)), lm = M.linkMessages('Dana', M.profileLink(tok))
 ck('current caregiver text: her wording, their own link, 3 questions + photo + video, STOP line',
-  cm.text === "Hi Dana, it's Caring Companions! We're adding a short profile that our families see before you visit, so they know who's coming. Please fill it in yourself here: https://cc.mo-care.com/caregiver-profile.html?t=" + tok + " Answer 3 short questions in your own words, and add a friendly photo and a short hello video. It takes about 10 minutes. Reply STOP to opt out.", cm.text)
-ck('current caregiver email: subject, the three steps, the button to their link, no "we wrote"', cm.subject === 'Your Caring Companions profile: 3 questions, a photo and a short video'
-  && /Answer 3 short questions in your own words/.test(cm.html) && /Add a short hello video/.test(cm.html) && cm.html.includes('?t=' + tok) && /Fill in my profile/.test(cm.html) && !/we wrote/i.test(cm.html + cm.text), cm.html)
+  cm.text === "Hi Dana, it's Caring Companions! We're adding a short profile that our families see before you visit, so they know who's coming. Please fill it in yourself here: https://cc.mo-care.com/caregiver-profile.html?t=" + tok + " Answer 3 short questions in your own words, and add a friendly photo (and a short hello video if you like). It takes about 10 minutes. Reply STOP to opt out.", cm.text)
+ck('current caregiver email: subject, the three steps, the button to their link, no "we wrote"', cm.subject === 'Your Caring Companions profile: 3 questions and a photo'
+  && /Answer 3 short questions in your own words/.test(cm.html) && /If you like, add a short hello video/.test(cm.html) && cm.html.includes('?t=' + tok) && /Fill in my profile/.test(cm.html) && !/we wrote/i.test(cm.html + cm.text), cm.html)
 ck('new hires keep their wording', /check the words we wrote about you/.test(lm.text) && lm.subject === 'Add your photo to your Caring Companions profile')
 ck('no em dash in anything new', !DASH.test(cm.text + cm.subject + cm.html) && !DASH.test(M.selfCompleteMissing({}).join()))
 const full = { about: 'I grew up in Ozark.', experience: 'I cared for my grandma for 4 years.', why_this_work: 'I love the stories.', photo_path: 'x/photo-1.jpg', video_path: 'x/video-1.mp4', consent: true, status: 'new' }
 ck('complete: nothing missing', M.selfCompleteMissing(full).length === 0)
 const miss = M.selfCompleteMissing({ ...full, why_this_work: '[ask: what they enjoy]', video_path: null, consent: false, about: '' })
-ck('missing pieces are named in their words: an empty or [bracket] answer, the video, the permission', miss.length === 4 && /what families should know about you/.test(miss.join()) && /enjoy most/.test(miss.join()) && /hello video/.test(miss.join()) && /permission/.test(miss.join()), miss)
-ck('publishing a current caregiver needs the video too', M.publishProblems({ ...full, self_complete: true, video_path: null }).some((x) => /video is required/.test(x)) && M.publishProblems({ ...full, self_complete: true }).length === 0)
+ck('missing pieces are named in their words: an empty or [bracket] answer, the permission (the video is optional since 522)', miss.length === 3 && /what families should know about you/.test(miss.join()) && /enjoy most/.test(miss.join()) && !/hello video/.test(miss.join()) && /permission/.test(miss.join()), miss)
+ck('publishing a current caregiver does not need the video (522)', !M.publishProblems({ ...full, self_complete: true, video_path: null }).some((x) => /video is required/.test(x)) && M.publishProblems({ ...full, self_complete: true }).length === 0)
 ck('a new hire still publishes without a video', M.publishProblems({ ...full, video_path: null }).length === 0)
 
 // ── catchup (office) ──
@@ -95,8 +95,8 @@ ck('sent: one text and one email with the current-caregiver wording, link_sent s
 ;[s, r] = await call({ action: 'mine', t: j.upload_token })
 ck('their page is told this is a current caregiver (self_complete)', s === 200 && r.self_complete === true && !r.about)
 OBJECTS.add(j.id + '/photo-1700000000000.jpg')
-;[s, r] = await call({ action: 'submit', t: j.upload_token, about: 'I grew up in Ozark.', experience: 'My grandma, 4 years.', why_this_work: 'The stories.', photo_path: j.id + '/photo-1700000000000.jpg', consent: true })
-ck('submit without the video: refused, nothing saved, says what is missing', s === 400 && /a short hello video/.test(r.error) && !j.submitted_at && !j.about, r)
+;[s, r] = await call({ action: 'submit', t: j.upload_token, about: 'I grew up in Ozark.', experience: 'My grandma, 4 years.', why_this_work: 'The stories.', photo_path: j.id + '/photo-1700000000000.jpg' })
+ck('submit without the video: the video is never what is missing (522); only the permission is', s === 400 && /permission/.test(r.error) && !/video/.test(r.error), r)
 OBJECTS.add(j.id + '/video-1700000000001.mp4')
 ;[s, r] = await call({ action: 'submit', t: j.upload_token, about: '', experience: 'My grandma, 4 years.', why_this_work: 'The stories.', photo_path: j.id + '/photo-1700000000000.jpg', video_path: j.id + '/video-1700000000001.mp4', consent: true })
 ck('submit with an empty answer: refused, names it', s === 400 && /what families should know about you/.test(r.error), r)
