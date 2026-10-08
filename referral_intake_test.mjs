@@ -37,6 +37,8 @@ globalThis.fetch = async (url, o = {}) => { url = String(url); const body = o.bo
   if (url === 'https://hook.example/ghl') { GHLHOOK.push(body); return new Response('{}', { status: 200 }) }
   if (/contacts\/search|contacts\/upsert|duplicate/.test(url)) return new Response(JSON.stringify({ contact: { id: 'c-' + (body.phone || body.email || 'x') }, contacts: [{ id: 'c-' + (body.phone || body.email || 'x'), dnd: false }] }), { status: 200 })
   if (/conversations\/messages/.test(url)) { SENT.push(body); return new Response(JSON.stringify({ messageId: 'm1' }), { status: 200 }) }
+  /* a successful read of one contact, Do Not Disturb off: the opt-out door lets a send through (so the family's acknowledgment really can go) */
+  if (/\/contacts\/[^/?]+$/.test(url) && (!o.method || o.method === 'GET')) return new Response(JSON.stringify({ contact: { id: decodeURIComponent(url.split('/').pop()), dnd: false } }), { status: 200 })
   return new Response(JSON.stringify({ contacts: [], contact: { id: 'c-any' } }), { status: 200 }) }
 const ENV = { SUPABASE_URL: 'http://x', SUPABASE_SERVICE_ROLE_KEY: 'k', LEAD_INTAKE_TOKEN: 'tok', GHL_TOKEN: 'g', GHL_LOCATION_ID: 'loc', GHL_HOOK_CCLEADS: 'https://hook.example/ghl' }
 let handler; globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (h) => { handler = h } }
@@ -56,7 +58,9 @@ try {
   ck('...the referrer is kept apart (name, organization, type, phone), never as the family', L.referrer.name === 'Lisa Marsh' && L.referrer.org === 'Mercy Hospital' && L.referrer.phone === '417-555-0111' && L.referrer.type_label === 'Hospital / Discharge Planner', L.referrer)
   ck('...linked to the existing partner (one exact name match), subtype hospital, urgency urgent', L.referral_org_id === 'org-mercy' && L.referral_subtype === 'hospital' && L.referral_urgency === 'urgent' && !L.referral_org_suggest, L)
   ck('...the notes carry the situation, who referred, the urgency and how to reach the referrer', /hip replacement/.test(L.interest_notes) && /Referred by Lisa Marsh, Mercy Hospital \(Hospital \/ Discharge Planner\)/.test(L.interest_notes) && /Urgency: Urgent/.test(L.interest_notes) && /Reach the referrer: 417-555-0111/.test(L.interest_notes))
-  ck('...NOTHING goes to the referrer: no acknowledgment (even with the switch on), no GoHighLevel lead contact', !SENT.some((m) => /Thank you for reaching out about care/.test(m.message || m.html || '')) && GHLHOOK.length === 0, { SENT, GHLHOOK })
+  ck('...NOTHING goes to the referrer: no acknowledgment (the switch is on and sends are allowed), no GoHighLevel lead contact', !SENT.some((m) => /reaching out about care|We received your request/.test(m.message || m.html || m.subject || '')) && GHLHOOK.length === 0, { SENT, GHLHOOK })
+  const noRef = JSON.stringify(Object.assign({}, L, { referrer: null, interest_notes: '' }))
+  ck('...the referrer\'s name, phone and organization appear ONLY in "referrer" and the notes, never in the family fields', !/417-555-0111|5550111|Lisa|Marsh/.test(noRef) && L.phone === '' && L.email === '' && !L.client_phone, noRef)
   ck('...the office is told: "URGENT referral from Lisa Marsh, Mercy Hospital", with the referrer\'s number', SENT.some((m) => /URGENT referral from Lisa Marsh, Mercy Hospital/.test(m.subject || m.message || '')) && SENT.some((m) => /417-555-0111/.test(m.html || m.message || '')), SENT.map((m) => m.subject || m.message))
   ck('...no "same family?" check against the referrer (no phone or email on the lead)', !L.possibly_returning && !T.app_data.find((x) => x.key === 'ops_items').data.length)
   ck('...the partner list is untouched', JSON.stringify(T.app_data.find((x) => x.key === 'referral_orgs').data) === JSON.stringify(ORGS))
@@ -84,7 +88,9 @@ try {
   /* 7 · family forms are unchanged */
   reset(); r = await post({ name: 'Mary Jones', phone: '4175550333', message: 'Help for my dad' })
   L = leads()[0]
-  ck('a family\'s own inquiry is unchanged: Website, their name and phone, the GoHighLevel contact', L.source === 'Website' && L.phone === '4175550333' && L.first_name === 'Mary' && GHLHOOK.length === 1 && r.j.status === 'lead created', [L, r.j, GHLHOOK.length])
+  ck('a family\'s own inquiry is unchanged: Website, their name and phone, the GoHighLevel contact, and their acknowledgment DOES go (so the referral test above proves something)', L.source === 'Website' && L.phone === '4175550333' && L.first_name === 'Mary' && GHLHOOK.length === 1 && r.j.status === 'lead created' && r.j.acked === true && SENT.some((m) => /Hi Mary, this is Caring Companions\. Thank you for reaching out about care/.test(m.message || '')), [L, r.j, GHLHOOK.length, SENT.map((m) => m.message || m.subject)])
+  r = await post(REF({ client_initials: 'B.C.' }))
+  ck('a referral arriving after that family inquiry is never matched to the family, nor the family to it', !leads()[1].possibly_returning && leads()[0].phone === '4175550333' && leads()[1].phone === '' && leads().length === 2)
   reset(); r = await post({ name: 'Ann Lee', phone: '4175550444', message: 'Mom needs help', heard_from: 'Mercy Hospital' })
   ck('a family who says a partner sent them: still Referral by name, as before', leads()[0].source === 'Referral' && leads()[0].referral_source_name === 'Mercy Hospital' && leads()[0].phone === '4175550444')
   reset(); r = await post({ kind: 'course_signup', email: 'x@y.com', course: 'dementia-journey' })
