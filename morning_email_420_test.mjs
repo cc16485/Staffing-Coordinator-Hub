@@ -64,6 +64,12 @@ try {
     const r = await handler(new Request('https://x/functions/v1/lead-digest', { headers: { 'x-cron-secret': JOBSEC } }))
     let j = null; try { j = await r.json() } catch { /* */ } return { status: r.status, j } }
 
+  // ---- 2026-10-07: the Hub's assessment form now has a visit time; it is the assessment's time in the brief too ----
+  const vt = M.assessmentsOn('2026-10-02', [{ id: 'A9', client_name: 'Gus Hub', visit_date: '2026-10-02', visit_time: '11:30', status: 'Scheduled' }], [])
+  ck('a Hub visit time is the assessment\'s time in the brief (11:30am)', vt.length === 1 && vt[0].min === 11 * 60 + 30, vt)
+  const lx = M.assessmentsOn('2026-10-02', [{ id: 'A8', lead_id: 'LY', client_name: 'Old Record', visit_date: '2026-10-02', status: 'Scheduled' }], [{ id: 'LY', assessment_at: 'Friday, October 2, 2026 9:00 AM' }])
+  ck('...an older record without one still takes GoHighLevel\'s booked time (9:00am)', lx.length === 1 && lx[0].min === 9 * 60, lx)
+
   // ---- 8am all year ----
   let r = await cron('2026-10-02T13:00:00Z')
   ck('summer (CDT): the 13:00 UTC run is 8am in Chicago and sends one brief per recipient', r.status === 200 && r.j.status === 'sent' && MAIL.length === 2, { r, n: MAIL.length })
