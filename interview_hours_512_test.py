@@ -33,8 +33,8 @@ create table activity_types (key text, label text, minutes int, per_slot int, le
 insert into activity_types values ('interview','Interview',30,1,20,14,true);
 insert into coordinators (id, name) values ('00000000-0000-4000-8000-0000000000a1', 'Krystal');
 insert into coordinator_availability (coordinator_id, activity, day_of_week, start_time, end_time)
-  select '00000000-0000-4000-8000-0000000000a1', 'interview', d, '08:00', '17:00' from generate_series(1,5) d
-  union all select '00000000-0000-4000-8000-0000000000a1', 'assessment', d, '08:00', '13:00' from generate_series(1,5) d;
+  select '00000000-0000-4000-8000-0000000000a1'::uuid, 'interview', d, '08:00'::time, '17:00'::time from generate_series(1,5) d
+  union all select '00000000-0000-4000-8000-0000000000a1'::uuid, 'assessment', d, '08:00'::time, '13:00'::time from generate_series(1,5) d;
 """
 def fresh(extra=""):
     d = tempfile.mkdtemp(prefix="db512-", dir=tmp); STATE["dir"] = d
