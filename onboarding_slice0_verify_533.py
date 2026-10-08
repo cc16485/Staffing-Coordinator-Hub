@@ -67,7 +67,7 @@ say(); say("PART 3 · EVERY OFFER ON THE OLD PATH")
 r = counts(TRN, "select coalesce(onboarding_path,'(missing)') as p, count(*) as n from public.job_offers group by 1 order by 1", "offers by path")
 if r is not None: say("  ✓ offers by path: " + ", ".join(f"{x['p']} {x['n']}" for x in r)) if all(x["p"] == "old" for x in r) else bad("an offer is not on the old path: " + json.dumps(r))
 ok_, t_ = sql(TRN, "do $p$ declare v_id uuid; v_ok text; begin select id into v_id from public.job_offers limit 1; if v_id is null then raise exception using message = 'no offers'; end if; begin update public.job_offers set onboarding_path = 'new' where id = v_id; v_ok := 'ALLOWED'; exception when others then v_ok := 'refused: ' || sqlerrm; end; raise exception using message = v_ok; end $p$")
-say("  ✓ the trigger refuses a change to the path") if (not ok_) and "refused" in str(t_) else (say("  · no offers to test the trigger on") if (not ok_) and "no offers" in str(t_) else bad(f"the trigger did not refuse a change: {t_}"))
+say("  ✓ the trigger refuses a change to the path") if (not ok_) and "refused" in str(t_) and "set once at Send Offer" in str(t_) else (say("  · no offers to test the trigger on") if (not ok_) and "no offers" in str(t_) else bad(f"the trigger did not refuse a change (or the column is not there yet): {str(t_)[:160]}"))
 say(); say("PART 4 · THE LIVE FUNCTIONS")
 for ref, fn in ((HUB, "onboarding-permissions"), (HUB, "outreach-check"), (HUB, "caregiver-hiring-history"), (TRN, "job-offer")):
     sx, mx = fmeta(ref, fn)
