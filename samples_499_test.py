@@ -91,7 +91,7 @@ try:
     c.run("insert into person_source_id (person_id, system, entity_type, source_id) values ('00000000-0000-0000-0000-000000000009', 'axiscare', 'client', '9900001')"); c.close()
     code, out = run(); code2, out2 = run("remove")
     ck("a real person on 9900001: both add and remove refuse, nothing changes", code == 2 and code2 == 2 and "belongs to a real person" in out and count() == {"p": 2, "s": 2, "r": 1}, out + out2)
-    fresh(); c = conn(); c.run("alter table person_identity add column must_have text not null"); c.close(); code, out = run()
+    fresh(); c = conn(); c.run("alter table person_identity add column must_have text default 'x' not null; alter table person_identity alter column must_have drop default"); c.close(); code, out = run()
     ck("a required column it doesn't fill: stops before adding anything", code == 2 and "person_identity.must_have" in out and count()["p"] == 1, out)
     fresh(); code, out = run(SB_TOKEN="nope")
     ck("no token: nothing runs", code == 2 and count()["p"] == 1, out)
