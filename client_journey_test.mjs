@@ -330,6 +330,24 @@ try {
   reset(); Object.assign(LD('L3'), { why_called: 'x', desired_start: { kind: 'asap' }, schedule: { days: ['Mon'], times: '', hours_per_week: 10 }, client_city: 'x', first_name: 'C' })
   r = await call({ action: 'said_yes', lead_id: 'L3' }); ck('CDS: the yes is refused (its own program)', r.j.outcome === 'cds' && !LD('L3').said_yes_at, r.j)
   reset(); r = await call({ action: 'said_yes', lead_id: 'L2' }, null); ck('no sign-in: refused', r.status === 401)
+
+  /* STEP 6 (2026-10-08): the first shift is the first clock-in in AxisCare, journeys on or off */
+  const job6 = { 'x-cron-secret': ENV.HUB_JOB_SECRET }, LDS = () => T.app_data.find((x) => x.key === 'leads').data, LD6 = (id) => LDS().find((x) => x.id === id)
+  reset(false)
+  LDS().push({ id: 'Y1', client_first_name: 'Yes', said_yes_at: '2026-09-20T10:00:00Z', axiscare_client_id: '296' },
+    { id: 'Y2', client_first_name: 'Journey', said_yes_at: '2026-09-20T10:00:00Z', axiscare_client_id: '297', first_shift_at: '2026-10-03T15:00:00Z', first_shift_source: 'journey' },
+    { id: 'Y3', client_first_name: 'NoAx', said_yes_at: '2026-09-20T10:00:00Z' }, { id: 'Y4', client_first_name: 'Spam', said_yes_at: '2026-09-20T10:00:00Z', axiscare_client_id: '298', spam: { at: '2026-09-21' } },
+    { id: 'Y5', client_first_name: 'NotYes', axiscare_client_id: '299' })
+  AX.visits = [{ id: 'a', scheduledStartDate: '2026-09-29T08:00:00', clockIn: { time: '2026-09-29T13:07:00Z' } }, { id: 'b', scheduledStartDate: '2026-09-28T08:00:00' }, { id: 'c', removed: true, clockIn: { time: '2026-09-25T13:00:00Z' } }]
+  r = await call({ action: 'sweep' }, null, job6)
+  ck('step 6: with journeys OFF, the first shift is still found: the earliest real clock-in (not a removed visit, not one never clocked)', r.j.live === false && LD6('Y1').first_shift_at === '2026-09-29T13:07:00.000Z' && LD6('Y1').first_shift_source === 'axiscare_clock_in', [r.j.first_shifts, LD6('Y1')])
+  ck('...a journey\'s stamp (the moment it noticed) is corrected to the clock-in, and the inquiry says so', LD6('Y2').first_shift_at === '2026-09-29T13:07:00.000Z' && /corrected to the first clock-in in AxisCare \(2026-09-29; the Hub had 2026-10-03\)/.test(LD6('Y2').comm_log.slice(-1)[0].body) && r.j.first_shifts.corrected === 1, LD6('Y2'))
+  ck('...not looked at: no AxisCare client, spam, or not yet a yes', !LD6('Y3').first_shift_checked_at && !LD6('Y4').first_shift_checked_at && !LD6('Y5').first_shift_checked_at)
+  reset(false); LDS().push({ id: 'Y6', said_yes_at: '2026-10-01T10:00:00Z', axiscare_client_id: '296' }); AX.visits = [{ id: 'd', scheduledStartDate: '2026-10-09T08:00:00' }]
+  r = await call({ action: 'sweep' }, null, job6)
+  ck('...no clock-in yet: nothing stamped, looked at again tomorrow (not every run)', !LD6('Y6').first_shift_at && LD6('Y6').first_shift_checked_at && r.j.first_shifts.looked === 1, LD6('Y6'))
+  r = await call({ action: 'sweep' }, null, job6); ck('...the next run skips it', r.j.first_shifts.looked === 0, r.j.first_shifts)
+  ck('...firstClockIn reads a plain time too, and nothing when there is none', MOD.firstClockIn([{ clockIn: '2026-10-02T14:00:00Z' }, { clockIn: { time: '2026-10-01T14:00:00Z' } }]) === '2026-10-01T14:00:00.000Z' && MOD.firstClockIn([{ scheduledStartDate: 'x' }]) === null)
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
 // the page and the server must run the SAME rules file
