@@ -13,6 +13,13 @@
      visit while visits were scheduled → a card for Staffing and the Medicaid coordinator
    · the monthly review (19 CSR 15-7.021(18)(L),(21)(A),(24)(A)3): delivered vs authorized with the reason for each visit
      not delivered and a written explanation of any difference, signed by the Medicaid coordinator (her pick: Angiel)
+   ADW RESPITE (Samantha 2026-10-08: "we only do basic, no advanced yet"):
+   · basic and advanced respite together: at most 49 hours a week and 868 units a month, from July 1 2026 (HCBS Manual 3.50
+     rev. Jul 2026; Provider Bulletin 49-03); respite can't overlap another service at the same time (MAN 3.50). Checked on
+     the schedule ahead (scheduled time) and on what happened (clocked time), so a week booked over the limit shows before it
+     happens. A respite visit = the state's code S5150, or "respite" in the AxisCare service.
+   · Caring Companions does not provide ADVANCED respite yet (it needs RN training sign-off per caregiver, ADW Provider
+     Manual 2.6): any advanced respite visit booked (S5150 with TF, or "advanced" in the service) is flagged.
    ============================================================================= */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -96,5 +103,40 @@
     return { ok: true, rec: { explanation: ex, signed_name: t(f.signed_name).trim(), signed_by: ctx.me || '', signed_at: ctx.at || '' } };
   }
 
-  return { RISK_IN_A_ROW, RISK_DAYS, authorized, isCare, classify, monthSummary, risk, reviewNeeds, signReview, chiDay };
+  /* ── ADW respite ── */
+  const WEEK_HOURS = 49, MONTH_UNITS = 868;
+  const svcText = v => { const s = (v && v.service) || {}; return [s.procedureCode, s.code, s.description, v && v.serviceCode].map(t).join(' '); };
+  function isRespite(v) { return !!v && !v.removed && /S5150|respite/i.test(svcText(v)); }
+  function isAdvancedRespite(v) { return isRespite(v) && (/S5150\s*-?\s*TF\b|\bTF\b/i.test(svcText(v)) || /advanced/i.test(svcText(v))); }
+  const weekStart = day => { const d = new Date(day + 'T12:00:00Z'), w = (d.getUTCDay() + 6) % 7; d.setUTCDate(d.getUTCDate() - w); return d.toISOString().slice(0, 10); };
+  /** minutes a respite visit counts for: clocked when it happened, scheduled when it is still ahead, nothing when it was not delivered */
+  function respiteMinutes(v, nowIso) {
+    const c = classify(v, nowIso);
+    if (c.state === 'delivered') return c.minutes;
+    if (c.state === 'upcoming' || c.state === 'in_progress') return c.scheduled;
+    return 0;
+  }
+  /**
+   * the respite checks for one client over a stretch of days (the schedule ahead and what happened):
+   * weeks over 49 hours, the month over 868 units, respite overlapping another visit, advanced respite booked.
+   */
+  function respiteCheck(visits, nowIso, month) {
+    const all = (visits || []).filter(v => v && !v.removed), rs = all.filter(isRespite);
+    const weeks = {}; let monthMin = 0;
+    for (const v of rs) {
+      const day = chiDay(when(v)), m = respiteMinutes(v, nowIso);
+      const wk = weekStart(day); weeks[wk] = (weeks[wk] || 0) + m;
+      if (day.slice(0, 7) === month) monthMin += m;
+    }
+    const weekRows = Object.keys(weeks).sort().map(k => ({ week: k, hours: Math.round(weeks[k] / 6) / 10, over: weeks[k] > WEEK_HOURS * 60 }));
+    const span = v => [Date.parse(v.scheduledStartDate || v.startDate), Date.parse(v.scheduledEndDate || v.endDate)];
+    const overlaps = [];
+    for (const r of rs) { const [a, b] = span(r); if (isNaN(a) || isNaN(b)) continue;
+      for (const o of all) { if (o === r || isRespite(o)) continue; const [c, d] = span(o); if (!isNaN(c) && !isNaN(d) && a < d && c < b) overlaps.push({ day: chiDay(when(r)), respite: t(r.id), other: t(o.id), other_service: t(((o.service || {}).description) || codeOf(o)) }); } }
+    const advanced = rs.filter(isAdvancedRespite).map(v => ({ id: t(v.id), day: chiDay(when(v)), caregiver: v.caregiver ? [v.caregiver.firstName, v.caregiver.lastName].filter(Boolean).join(' ') : '' }));
+    const monthUnits = Math.floor(monthMin / 15);
+    return { any: rs.length > 0, weeks: weekRows, over_weeks: weekRows.filter(w => w.over), month, month_units: monthUnits, month_over: monthUnits > MONTH_UNITS, overlaps, advanced };
+  }
+
+  return { RISK_IN_A_ROW, RISK_DAYS, authorized, isCare, classify, monthSummary, risk, reviewNeeds, signReview, chiDay, WEEK_HOURS, MONTH_UNITS, isRespite, isAdvancedRespite, weekStart, respiteCheck };
 });
