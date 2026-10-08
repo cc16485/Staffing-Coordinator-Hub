@@ -88,13 +88,13 @@ say(f"      not now: {j['ended_last_30_days']} ended in the last 30 days (this i
 say(f"  · eligible (ended 1 month to 3 years ago): {j['eligible']}")
 say(f"      reachable: {j['reachable']} · by text (a mobile number): {j['by_text']} · by email: {j['by_email']} · nobody to reach: {j['unreachable']}")
 if j.get("family_contact_only_self"): say(f"      {j['family_contact_only_self']} have no family listed in AxisCare, only the client's own number or email")
-if j.get("axiscare_errors"): say(f"      ○ AxisCare didn't answer for {j['axiscare_errors']} of them; those count as not reachable here")
+if j.get("axiscare_errors"): say(f"      ○ AxisCare still didn't answer for {j['axiscare_errors']} of them after waiting and retrying ({', '.join(f'{v}× {k}' for k, v in (j.get('axiscare_answers') or {}).items())}); they're listed as \"not checked\", not as unreachable")
 say(); say(f"  THE ELIGIBLE PAST FAMILIES ({len(j['list'])}): client · care ended · who we could reach")
 for x in j["list"]:
     how = []
     if x["family"]: how.append(f"{x['family']} family contact(s): {x['family_mobile']} mobile, {x['family_email']} email")
     if x["own_mobile"] or x["own_email"]: how.append("the client's own " + " and ".join(w for w, v in (("mobile", x["own_mobile"]), ("email", x["own_email"])) if v))
-    say(f"      {x['name']} · {x['ended_at']} · " + ("; ".join(how) if x["reachable"] else "nobody to reach"))
+    say(f"      {x['name']} · {x['ended_at']} · " + ("not checked (AxisCare didn't answer)" if x.get("unknown") else "; ".join(how) if x["reachable"] else "nobody to reach"))
 say()
 if fails: say("RESULT: CHECK THE ✗ LINES ABOVE"); done(9)
 say(f"RESULT: LOOK DONE · {j['reachable']} of {j['eligible']} eligible past families could be reached ({j['by_text']} by text, {j['by_email']} by email). Nothing was written, texted or emailed. Tell Claude \"ran 504a\".")

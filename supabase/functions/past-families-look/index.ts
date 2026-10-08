@@ -77,25 +77,31 @@ Deno.serve(async (req) => {
     }
   } catch { /* the families below still count */ }
   /* each eligible past client's responsible parties (read only), five at a time */
-  const list: Any[] = []; let axErrors = 0
+  const list: Any[] = []; let axErrors = 0; const axStatus: Record<string, number> = {}
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms)), SLOW = Number(Deno.env.get('PF_SLOW_MS') ?? 1500)
   const one = async (p: Any) => {
-    let parties: Any[] = []
-    try {
-      const r = await fetch(`https://${site}.axiscare.com/api/clients/${p.ax}/responsibleParties`, { headers: HEAD })
-      if (r.ok) { const j: Any = await r.json().catch(() => ({})); parties = rowsOf(j?.results?.responsibleParties ?? j?.responsibleParties ?? j?.results ?? j).filter((x: Any) => String(x?.name ?? '').trim()) }
-      else if (r.status !== 404) axErrors++
-    } catch { axErrors++ }
+    let parties: Any[] = [], known = false
+    /* one family at a time; when AxisCare says "slow down" (429) or hiccups (5xx), wait and try again, up to four times */
+    for (let i = 0; i < 4 && !known; i++) {
+      try {
+        const r = await fetch(`https://${site}.axiscare.com/api/clients/${p.ax}/responsibleParties`, { headers: HEAD })
+        if (r.ok) { const j: Any = await r.json().catch(() => ({})); parties = rowsOf(j?.results?.responsibleParties ?? j?.responsibleParties ?? j?.results ?? j).filter((x: Any) => String(x?.name ?? '').trim()); known = true }
+        else if (r.status === 404) known = true
+        else { axStatus[r.status] = (axStatus[r.status] || 0) + 1; if (r.status !== 429 && r.status < 500) break; await sleep(SLOW * (i + 1)) }
+      } catch { axStatus.network = (axStatus.network || 0) + 1; await sleep(SLOW * (i + 1)) }
+    }
+    if (!known) { axErrors++; list.push({ name: nameOf.get(p.person_id) || 'AxisCare #' + p.ax, ended_at: p.ended_at, unknown: true, reachable: false, family: 0, family_mobile: 0, family_email: 0, own_mobile: false, own_email: false }); return }
     const fam = parties.map((x: Any) => ({ phone: phonesOf(x), email: !!emailOf(x) }))
     const s = self.get(p.ax) || {}, own = { phone: phonesOf(s), email: !!emailOf(s) }
     list.push({ name: nameOf.get(p.person_id) || 'AxisCare #' + p.ax, ended_at: p.ended_at, basis: p.basis || 'exact', end_reason: p.end_reason || null,
       family: fam.length, family_mobile: fam.filter((f) => f.phone.mobile).length, family_email: fam.filter((f) => f.email).length,
       own_mobile: own.phone.mobile, own_email: own.email, reachable: fam.some((f) => f.phone.mobile || f.email) || own.phone.mobile || own.email })
   }
-  for (let i = 0; i < e.eligible.length; i += 5) await Promise.all(e.eligible.slice(i, i + 5).map(one))
+  for (const p of e.eligible) { await one(p); await sleep(SLOW / 6) }
   list.sort((a, b) => String(b.ended_at).localeCompare(String(a.ended_at)))
   return json({ mode: 'look', today, past_total: past.length, deceased: e.deceased, ended_last_30_days: e.too_recent, ended_over_3_years: e.too_old, no_end_date: e.no_date,
     eligible: list.length, reachable: list.filter((x) => x.reachable).length,
     by_text: list.filter((x) => x.family_mobile || x.own_mobile).length, by_email: list.filter((x) => x.family_email || x.own_email).length,
-    family_contact_only_self: list.filter((x) => !x.family && (x.own_mobile || x.own_email)).length, unreachable: list.filter((x) => !x.reachable).length,
-    axiscare_errors: axErrors, list })
+    family_contact_only_self: list.filter((x) => !x.family && (x.own_mobile || x.own_email)).length, unreachable: list.filter((x) => !x.reachable && !x.unknown).length,
+    axiscare_errors: axErrors, axiscare_answers: axStatus, unknown: list.filter((x) => x.unknown).length, list })
 })
