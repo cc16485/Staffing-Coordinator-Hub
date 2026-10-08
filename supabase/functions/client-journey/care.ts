@@ -24,7 +24,37 @@ type Any = any
 export const END_REASONS: Record<string, string> = {
   other_provider: 'Chose another provider', moved_out: 'Moved out of our service area', facility: 'Admitted to a facility',
   beyond_scope: 'Needs exceed our scope', unable_to_staff: 'Unable to staff', requested_discharge: 'Client or family requested discharge',
-  auth_ended: 'Medicaid or authorization ended', deceased: 'Deceased', other: 'Other' }
+  auth_ended: 'Medicaid or authorization ended', deceased: 'Deceased',
+  /* Medicaid intake slice B (2026-10-08): the two other ways WE end services (19 CSR 15-7.021(16)(C),(D)) */
+  noncompliance: 'Does not follow the care plan (we are ending services)', safety: 'Threats or abuse toward our staff (we are ending services)', other: 'Other' }
+/* Medicaid intake slice B (Samantha 2026-10-08, her approved matrix): the discharge rules by reason.
+   notice21: we end services while they still need care → written notice to the participant or family AND to DSDS at least
+     21 days before the last day; care continues for the 21 days or until DSDS arranges other care (19 CSR 15-7.021(16)(D)).
+     Her rule: an owner approves, and the Hub won't record an end sooner unless DSDS arranged other care first.
+   immediate: death, a facility, no longer needs our services, threats or abuse → written notice to DSDS right away
+     ((16)(B),(C)). Never blocks recording what happened; the checklist step stays open until a person ticks it.
+   dsds: DSDS closed the case → stop right away ((16)(A)). choice: the participant chose another provider or to stop. */
+export const DISCHARGE_RULE: Record<string, string> = { beyond_scope: 'notice21', unable_to_staff: 'notice21', noncompliance: 'notice21',
+  deceased: 'immediate', facility: 'immediate', moved_out: 'immediate', safety: 'immediate', auth_ended: 'dsds', other_provider: 'choice', requested_discharge: 'choice', other: 'choice' }
+const addDaysYmd = (d: string, n: number) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10) }
+/** pure: may this Medicaid end be recorded? (only the 21-day reasons are ever refused) */
+export function dischargeCheck(reason: string, b: Any, isOwner: boolean, today_: string): { ok: boolean; why?: string; earliest?: string; done?: Record<string, string> } {
+  const rule = DISCHARGE_RULE[reason] || 'choice', ymd = (d: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(d ?? '')) ? String(d) : ''
+  const eff = ymd(b.effective_date), np = ymd(b.notice_participant_on), nd = ymd(b.notice_dsds_on), dn = ymd(b.dsds_notice_on), arr = ymd(b.dsds_arranged_on)
+  if (rule === 'notice21') {
+    if (!isOwner) return { ok: false, why: 'Ending Medicaid services while the client still needs care needs an owner: ask Samantha to record it.' }
+    if (!np || !nd) return { ok: false, why: 'Enter the dates the 21-day written notice went to the participant or family, and to DSDS.' }
+    if (np > today_ || nd > today_) return { ok: false, why: 'A notice date can\'t be in the future.' }
+    const earliest = addDaysYmd([np, nd].sort()[1], 21)
+    if (eff < earliest) {
+      if (!arr) return { ok: false, earliest, why: 'The last day can\'t be before ' + earliest + ' (21 days after both notices), unless DSDS arranged other care sooner: enter that date.' }
+      if (arr > eff) return { ok: false, earliest, why: 'The last day can\'t be before DSDS\'s other arrangement (' + arr + ').' }
+    }
+    return { ok: true, earliest, done: { notice_21: np, dsds_written: nd } }
+  }
+  if (rule === 'immediate' && dn) return { ok: true, done: { dsds_written: dn } }
+  return { ok: true, done: {} }
+}
 export const PAUSE_REASONS: Record<string, string> = { hospital: 'Hospital stay', rehab: 'Rehab or skilled nursing stay', family_away: 'Family away', other: 'Other' }
 /* the older AxisCare-review answer words, for client_status_decide (the exact reason is kept on the change and the role) */
 const LEGACY: Record<string, string> = { other_provider: 'discharged', moved_out: 'moved', facility: 'facility', beyond_scope: 'discharged', unable_to_staff: 'discharged',
@@ -39,13 +69,19 @@ export function checklistFor(kind: string, reason: string, payer: string | null)
   const out: Any[] = []
   if (!med) return out
   if (kind === 'end') {
-    const immediate = ['deceased', 'facility'].includes(reason)
-    out.push(item('dsds_written', 'Tell DSDS in writing', immediate ? '19 CSR 15-7.021(16)(B)' : '19 CSR 15-7.021(16)(B) or (16)(D)',
-      immediate ? 'Right away: the participant died or entered a facility. Ask that services be discontinued.'
-        : 'Right away if they no longer need services; at least 21 days before the last day if we are ending services while they still need care.', WAITING))
-    if (!immediate) {
-      out.push(item('notice_21', '21-day written notice to the participant or family', '19 CSR 15-7.021(16)(D)', 'Only when we end services while they still need care (not when they chose another provider or moved).', WAITING))
-      out.push(item('continue_21', 'Keep providing care for the 21 days, or until DSDS arranges another provider', '19 CSR 15-7.021(16)(D)', 'Only when the 21-day notice applies.'))
+    const rule = DISCHARGE_RULE[reason] || 'choice'
+    if (rule === 'notice21') {
+      out.push(item('notice_21', '21-day written notice to the participant or family', '19 CSR 15-7.021(16)(D)', 'At least 21 days before the last day: we are ending services while they still need care. Keep a copy.'))
+      out.push(item('dsds_written', '21-day written notice to DSDS', '19 CSR 15-7.021(16)(D)', 'At least 21 days before the last day, at the same time as the participant\'s notice. Keep a copy.'))
+      out.push(item('continue_21', 'Keep providing care for the 21 days, or until DSDS arranges another provider', '19 CSR 15-7.021(16)(D)', 'Care does not stop early unless DSDS has arranged other care.'))
+    } else if (rule === 'immediate') {
+      out.push(item('dsds_written', 'Tell DSDS in writing, right away', reason === 'safety' ? '19 CSR 15-7.021(16)(C)' : '19 CSR 15-7.021(16)(B)',
+        reason === 'safety' ? 'Right away: threats or abuse toward staff. DSDS and we decide together whether services continue.'
+          : 'Right away: the participant ' + (reason === 'deceased' ? 'died' : reason === 'facility' ? 'entered a facility' : 'no longer needs our services') + '. Ask that services be discontinued.'))
+    } else if (rule === 'dsds') {
+      out.push(item('dsds_closed', 'Stop services from the date DSDS closed the case, and note that date from Fusion', '19 CSR 15-7.021(16)(A); MAN 4.40', 'DSDS closed the case: services stop right away.'))
+    } else {
+      out.push(item('dsds_written', 'Make sure DSDS knows', '19 CSR 15-7.021(16)(B); MAN 4.20', 'The participant chose another provider or to stop: DSDS moves or closes the case (the participant calls 866-835-3505). If they no longer need services, tell DSDS in writing.'))
     }
     out.push(item('records', 'Keep this record (5 years)', '19 CSR 15-7.021(24)', 'The Hub keeps this change and its proof permanently.'))
   }
@@ -125,7 +161,17 @@ export async function careAction(c: Any): Promise<{ body: Any; status?: number }
   const latest = js.length ? js[js.length - 1] : null
   const name = String(b.client_name || person?.display_name || latest?.client_name || ('AxisCare client #' + ax)).trim()
   const state = careState(roles ?? [], pauseRow, js)
-  const payer = (current || latest)?.payer ?? null
+  let payer = (current || latest)?.payer ?? null
+  /* Medicaid intake slice B: a Medicaid care plan uploaded in the Hub (app_data medicaid_plans) with our IHS/ADW services
+     also makes this a Medicaid client, so existing clients with no journey get the right discharge rules */
+  if (payer !== 'medicaid') {
+    try {
+      const { data: mp } = await db.from('app_data').select('data').eq('key', 'medicaid_plans').maybeSingle()
+      const has = (Array.isArray(mp?.data) ? mp.data : []).some((p: Any) => p && p.kind === 'plan' && String(p.axiscare_client_id || '') === ax
+        && (p.services || []).some((x: Any) => x && x.ours && ['ihs', 'adw'].includes(String(x.program || ''))))
+      if (has) payer = 'medicaid'
+    } catch { /* keep the journey's payer */ }
+  }
   const ccOf = () => lc(current?.assigned_cc || latest?.assigned_cc || '') || who.email
 
   if (b.action === 'care_state') {
@@ -133,7 +179,7 @@ export async function careAction(c: Any): Promise<{ body: Any; status?: number }
       episodes: js.map((j: Any) => ({ journey_id: j.journey_id, episode_n: j.episode_n ?? 1, status: j.status, closed_reason: j.closed_reason ?? null, created_at: j.created_at, assigned_cc: j.assigned_cc })),
       roles: (roles ?? []).map((r: Any) => ({ status: r.status, started_at: r.started_at ?? null, ended_at: r.ended_at ?? null, ended_date_basis: r.ended_date_basis ?? null, end_reason: r.end_reason ?? null })),
       changes: changes ?? [], can: { pause: can && ['active', 'starting'].includes(state), resume: can && state === 'paused', end: can && ['active', 'starting', 'paused'].includes(state),
-        return: isOwner && state === 'past', end_date: can && ['past', 'deceased'].includes(state) }, reasons: { end: END_REASONS, pause: PAUSE_REASONS } } }
+        return: isOwner && state === 'past', end_date: can && ['past', 'deceased'].includes(state) }, reasons: { end: END_REASONS, pause: PAUSE_REASONS }, discharge: DISCHARGE_RULE } }
   }
   if (!can) return err('Only a Care Coordinator or an owner can pause or end care.', 403)
 
@@ -213,6 +259,8 @@ export async function careAction(c: Any): Promise<{ body: Any; status?: number }
       if (!END_REASONS[reason]) return err('Pick why care ended.')
       if (reason === 'other' && !explanation) return err('Explain why care ended.')
       if (!isYmd(b.effective_date) || b.effective_date > today()) return err('The effective date (the last day of service, not in the future) is required.')
+      const dc = payer === 'medicaid' ? dischargeCheck(reason, b, isOwner, today()) : { ok: true, done: {} as Record<string, string> }
+      if (!dc.ok) return err(dc.why || 'Not allowed.')
       const label = END_REASONS[reason], seat = isOwner ? 'owner_decision' : 'client_intake'
       const evid = 'Care ended (' + label + ') on ' + b.effective_date + ', recorded by ' + who.name + (explanation ? ': ' + explanation : '') + (b.notified_by ? ' · told by ' + b.notified_by : '')
       let roleRes: Any = null
@@ -227,8 +275,11 @@ export async function careAction(c: Any): Promise<{ body: Any; status?: number }
         if (error || data?.outcome !== 'ended') return err('Care could not be ended: ' + (error?.message || JSON.stringify(data)))
         roleRes = data
       }
+      /* the notice dates entered at End care tick their steps (who, when, how); nothing else is ticked for a person */
+      const cl = checklistFor('end', reason, payer).map((x: Any) => dc.done && dc.done[x.key] ? { ...x, state: 'done', on: dc.done[x.key], how: 'Date entered when care was ended', by: who.email, by_name: who.name, at: now } : x)
+      if (payer === 'medicaid' && DISCHARGE_RULE[reason] === 'notice21' && isYmd(b.dsds_arranged_on)) cl.forEach((x: Any) => { if (x.key === 'continue_21') Object.assign(x, { state: 'done', on: b.dsds_arranged_on, how: 'DSDS arranged other care', by: who.email, by_name: who.name, at: now }) })
       const ch = await record({ kind: 'end', reason, explanation: explanation || null, effective_date: b.effective_date, notified_by: String(b.notified_by || '').slice(0, 200) || null,
-        journey_id: (current || latest)?.journey_id ?? null, checklist: checklistFor('end', reason, payer) })
+        journey_id: (current || latest)?.journey_id ?? null, checklist: cl })
       if (pauseRow) { await db.from('client_pause').update({ status: 'closed', closed_change: ch.change_id, closed_kind: 'ended', closed_at: now }).eq('pause_id', pauseRow.pause_id); await closeCard(restartCardId(pauseRow), 'Care ended ' + b.effective_date) }
       /* the journey and its First shift launch close with the reason; nothing is deleted */
       const why = 'Care ended (' + (reason === 'deceased' ? 'deceased' : label) + ') on ' + b.effective_date
