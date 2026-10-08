@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
 # 499 · PAST AND DECEASED PREVIEWS (Samantha 2026-10-07: "show me the actual Past and Deceased previews in the Hub before
-# importing the historical clients"). Adds TWO sample people, clearly named TEST, shaped exactly like an imported historical
-# client: a person, their AxisCare client number and a client role that has ended. Nothing else: no journey, no card, no
-# check-in, no family contact, no AxisCare change. Their AxisCare numbers (9900001, 9900002) are far outside the real range.
-# Imported history only says what AxisCare has, so neither has an end date or reason ("not recorded in AxisCare"); the
-# deceased one carries only the word deceased.
+# importing the historical clients"). First, her "On or before" decision (2026-10-08): an ended client role must have a date;
+# when AxisCare has none, we store the date we first saw them inactive and mark it on_or_before (client-journey/
+# ended-date-basis.sql), and client-journey + client-status-review pass that mark on so the Hub never shows it as exact.
+# Then TWO sample people, clearly named TEST, shaped exactly like an imported historical client: a person, their AxisCare
+# client number and a client role that ended "on or before" today. Nothing else: no journey, no card, no check-in, no family
+# contact, no AxisCare change. Their AxisCare numbers (9900001, 9900002) are far outside the real range. No reason is
+# recorded (AxisCare has none); the deceased one carries only the word deceased.
 #   SB_MODE=add     (Desktop 499) adds them, then proves on the live server how the Hub sees them: Past and Deceased,
 #                   no Pause / End buttons, left out of every shift job and every campaign.
 #   SB_MODE=remove  (Desktop 499b, after her look) removes exactly these two people and nothing else.
 # Nothing is texted or emailed; nobody outside the office can see them.
-import json, os, re, subprocess, urllib.request, urllib.error, datetime as dt, sys
+import json, os, re, subprocess, urllib.request, urllib.error, datetime as dt, sys, hashlib, tempfile, shutil, time
 REPORT = os.environ["SB_REPORT"]; MODE = os.environ.get("SB_MODE", "add")
 TOKEN = os.environ.get("SB_TOKEN", "").strip().strip('"').strip("'"); REF = os.environ.get("SB_REF", "zngsgedlsxinbygwmxwn")
 API = os.environ.get("SB_API_BASE", "https://api.supabase.com"); BASE = os.environ.get("SB_FN_BASE", f"https://{REF}.supabase.co")
 PROOF_EMAIL = os.environ.get("SB_PROOF_EMAIL", "samantha@mo-care.com").lower()
+SUPA = os.environ.get("SB_SUPA_CLI", ""); FNROOT = os.environ.get("SB_FNROOT", ""); SHAS = json.loads(os.environ.get("SB_FN_SHAS", "{}")); BASEP = json.loads(os.environ.get("SB_BASE_SHAS", "{}"))
+ROOT = os.path.dirname(os.path.dirname(FNROOT)) if FNROOT else ""; FNS = ["client-journey", "client-status-review"]
+from zoneinfo import ZoneInfo
+CHI = dt.datetime.now(ZoneInfo("America/Chicago")).strftime("%Y-%m-%d")   # today in Springfield; stored as "on or before", never shown as exact
 SAMPLES = [("9900001", "TEST Past Sample", "Past", None), ("9900002", "TEST Deceased Sample", "Deceased", "deceased")]
 EVID = "TEST sample for the 499 Past/Deceased preview; removed by 499b"
 lines = []; fails = []; HIDE = []
@@ -45,7 +51,39 @@ def sql(q):
     except Exception: return False, b[:300]
 lit = lambda v: "null" if v is None else "'" + str(v).replace("'", "''") + "'"
 AXS = ", ".join(lit(a) for a, *_ in SAMPLES); NAMES = ", ".join(lit(n) for _, n, *_ in SAMPLES)
-STATE_SQL = f"""select s.source_id as ax, p.display_name as name, r.status, r.ended_at::text as ended_at, r.end_reason
+sha = lambda p_: hashlib.sha256(open(p_, "rb").read()).hexdigest()
+def deps(path, seen):
+    if path in seen or not os.path.exists(path): return
+    seen.add(path)
+    for m in re.findall(r"""from\s+['"](\.{1,2}/[^'"]+)['"]|import\s+['"](\.{1,2}/[^'"]+)['"]""", open(path).read()):
+        deps(os.path.normpath(os.path.join(os.path.dirname(path), m[0] or m[1])), seen)
+def need(fn):
+    s = set(); deps(os.path.join(FNROOT, fn, "index.ts"), s)
+    return {os.path.relpath(x, ROOT).replace(os.sep, "/") for x in s}
+def fmeta(fn):
+    s = None
+    for i in range(4):
+        s, b = http("GET", f"{API}/v1/projects/{REF}/functions/{fn}", headers=MG())
+        if s == 200:
+            try: return s, json.loads(b)
+            except Exception: pass
+        if s == 404: return s, None
+        time.sleep(3 * (i + 1))
+    return s, None
+def live_files(fn):
+    for i in range(3):
+        tmp = tempfile.mkdtemp(prefix="cc499-"); os.makedirs(os.path.join(tmp, "supabase"), exist_ok=True)
+        d = subprocess.run([SUPA, "functions", "download", fn, "--project-ref", REF, "--use-api"], cwd=tmp, env=dict(os.environ, SUPABASE_ACCESS_TOKEN=TOKEN), capture_output=True, text=True)
+        live = {}
+        for r_, _, files in os.walk(tmp):
+            for f in files:
+                lp = os.path.join(r_, f).replace(os.sep, "/")
+                if "/functions/" in lp: live["supabase/functions/" + lp.split("/functions/", 1)[1]] = sha(lp)
+        shutil.rmtree(tmp, ignore_errors=True)
+        if d.returncode == 0 and live: return True, live
+        time.sleep(3 * (i + 1))
+    return False, {}
+STATE_SQL = f"""select s.source_id as ax, p.display_name as name, r.status, r.ended_at::text as ended_at, to_jsonb(r)->>'ended_date_basis' as ended_date_basis, r.end_reason
   from public.person_source_id s join public.person_identity p on p.id = s.person_id
   left join public.person_role r on r.person_id = s.person_id and r.role = 'client'
   where s.system = 'axiscare' and s.entity_type = 'client' and s.source_id in ({AXS}) order by s.source_id"""
@@ -87,28 +125,56 @@ if not ok or missing: bad("the people tables need something this doesn't fill in
 say("  ✓ the people tables take exactly what an imported client has")
 if len(have) == 2: say("  · the two samples are already here (kept as they are)")
 else: say("  ✓ AxisCare numbers 9900001 and 9900002 are free")
+for name, want in SHAS.items():
+    p_ = os.path.join(ROOT, "client-journey", name.split("/", 1)[1]) if name.endswith(".sql") else os.path.join(FNROOT, name)
+    have_ = sha(p_) if os.path.exists(p_) else "(missing)"
+    say(f"  ✓ {name} is the reviewed build") if have_ == want else bad(f"{name} is not the reviewed build: nothing runs")
+if fails: say(); say("  RESULT: STOPPED before anything changed."); done(2)
+if not (SUPA and os.path.exists(SUPA)): bad("supabase CLI not found"); done(2)
+VJ = {}
+for fn in FNS:   # nobody else's unreleased work goes out: live must be exactly what 498 put there, or this build
+    sx, mx = fmeta(fn)
+    if not (sx == 200 and mx and isinstance(mx.get("verify_jwt"), bool)): bad(f"{fn} could not be read ({sx})"); continue
+    VJ[fn] = mx["verify_jwt"]; okd, livef = live_files(fn)
+    if not okd: bad(f"{fn}: the live copy could not be downloaded"); continue
+    odd = [k for k in need(fn) if livef.get(k) != BASEP.get(k) and livef.get(k) != sha(os.path.join(ROOT, k))]
+    say(f"  ✓ {fn} (version {mx.get('version', '?')}): live is what 498 deployed, so only this change goes out") if not odd else bad(f"{fn}: the live copy changed since 498 ({', '.join(odd)[:200]}); nothing runs")
+if fails: say(); say("  RESULT: STOPPED before anything changed. Tell Claude which line."); done(3)
 
+say(); say("PART 2 · CHANGE")
+ok, r = sql(open(os.path.join(ROOT, "client-journey", "ended-date-basis.sql")).read())
+if not ok: bad("the on-or-before mark didn't install: " + str(r)); say("  STOP. Nothing else was changed."); done(5)
+say("  ✓ an end date can now be marked 'on or before' (when AxisCare had no end date)")
+for fn in FNS:
+    p = subprocess.run([SUPA, "functions", "deploy", fn, "--project-ref", REF, "--use-api"] + ([] if VJ[fn] else ["--no-verify-jwt"]), cwd=ROOT, env=dict(os.environ, SUPABASE_ACCESS_TOKEN=TOKEN), capture_output=True, text=True)
+    okd, livef = live_files(fn)
+    good = p.returncode == 0 and okd and all(livef.get(k) == sha(os.path.join(ROOT, k)) for k in need(fn))
+    say(f"  ✓ {fn} deployed: the live copy is this reviewed build") if good else bad(f"{fn} did not deploy cleanly: " + (p.stderr or p.stdout)[-200:])
+    if fails: say("  RESULT: STOPPED (what deployed above stays; the samples were not added). Tell Claude."); done(6)
+    sN, mN = fmeta(fn)
+    if (mN or {}).get("verify_jwt") != VJ[fn]:
+        http("PATCH", f"{API}/v1/projects/{REF}/functions/{fn}", {"verify_jwt": VJ[fn]}, MG()); sN, mN = fmeta(fn)
+    say(f"  ✓ {fn}: version {(mN or {}).get('version', '?')}, gateway sign-in check {'on' if VJ[fn] else 'off'} as before") if (mN or {}).get("verify_jwt") == VJ[fn] else bad(f"{fn}: the gateway setting did not come back")
 if len(have) < 2:
-    say(); say("PART 2 · CHANGE")
     q = ["begin;"]
     for ax, name, _, reason in SAMPLES:
         if ax in have: continue
         first, last = name.split(" ", 1)
         q.append(f"""with p as (insert into public.person_identity (display_name, first_name, last_name) values ({lit(name)}, {lit(first)}, {lit(last)}) returning id),
           s as (insert into public.person_source_id (person_id, system, entity_type, source_id, confidence, evidence) select id, 'axiscare', 'client', {lit(ax)}, 'confirmed', {lit(EVID)} from p returning person_id)
-          insert into public.person_role (person_id, role, status, ended_at, end_reason) select person_id, 'client', 'former', null, {lit(reason)} from s;""")
+          insert into public.person_role (person_id, role, status, ended_at, ended_date_basis, end_reason) select person_id, 'client', 'former', {lit(CHI)}, 'on_or_before', {lit(reason)} from s;""")
     q.append("commit;")
     ok, r = sql("\n".join(q))
     if not ok: bad("could not add them: " + str(r)); say("  Nothing was added (all or nothing)."); done(5)
     say("  ✓ added TEST Past Sample (AxisCare 9900001) and TEST Deceased Sample (AxisCare 9900002): a person, the number, an ended client role")
-    say("  · neither has an end date or reason, like most imported history; the deceased one says only deceased")
+    say(f"  · both ended 'on or before' {CHI} (the day we first saw them inactive), exact date not recorded; no reason; the deceased one says only deceased")
 
 say(); say("PART 3 · PROOF on the live server (nothing is texted or emailed)")
 ok, r = sql(STATE_SQL); rows = {x["ax"]: x for x in (r if ok else [])}
 for ax, name, _, reason in SAMPLES:
     x = rows.get(ax) or {}
-    good = x.get("status") == "former" and x.get("ended_at") is None and (x.get("end_reason") or None) == reason
-    say(f"  ✓ {name}: client role ended, no date, " + ("reason deceased" if reason else "no reason") + " (as imported)") if good else bad(f"{name} is not as expected: {x}")
+    good = x.get("status") == "former" and x.get("ended_at") and x.get("ended_date_basis") == "on_or_before" and (x.get("end_reason") or None) == reason
+    say(f"  ✓ {name}: client role ended on or before {x.get('ended_at')}, " + ("reason deceased" if reason else "no reason") + " (as imported)") if good else bad(f"{name} is not as expected: {x}")
 # the shift jobs' quiet list (_shared/client-quiet.ts, the same query): both must be on it
 ok, r = sql(f"""with ended as (select person_id from public.person_role where role = 'client' group by person_id having not bool_or(status = 'active'))
   select count(*)::int as n from public.person_source_id where system = 'axiscare' and entity_type = 'client' and source_id in ({AXS}) and person_id in (select person_id from ended)""")
@@ -130,8 +196,9 @@ else:
     for ax, name, want, reason in SAMPLES:
         s, b = http("POST", f"{BASE}/functions/v1/client-journey", {"action": "care_state", "axiscare_client_id": ax}, H); d = jl(b)
         st, can = d.get("state"), d.get("can") or {}
-        good = s == 200 and st == want.lower() and not can.get("pause") and not can.get("end") and not can.get("resume")
-        say(f"  ✓ {name}: the profile reads {want}, with no Pause care or End care button" + ("; Start a new episode only for an owner" if want == "Past" else "; no new episode, ever")) if good else bad(f"{name}: the profile answered {s} {str(b)[:200]}")
+        rl = [x for x in (d.get("roles") or []) if x.get("status") != "active"]
+        good = s == 200 and st == want.lower() and not can.get("pause") and not can.get("end") and not can.get("resume") and rl and rl[-1].get("ended_date_basis") == "on_or_before"
+        say(f"  ✓ {name}: the profile reads {want}, ended on or before (never an exact date), with no Pause care or End care button" + ("; Start a new episode only for an owner" if want == "Past" else "; no new episode, ever")) if good else bad(f"{name}: the profile answered {s} {str(b)[:200]}")
     # campaigns: these samples have no email at all (no family contact was added), so no list can hold them
     s, _ = http("POST", f"{BASE}/auth/v1/logout?scope=local", {}, H)
     say("  ✓ that sign-in was signed out" if s in (200, 204) else f"  ○ sign-out answered {s}; the session expires on its own within the hour")

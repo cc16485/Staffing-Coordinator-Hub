@@ -424,7 +424,7 @@ export function endedPlan(js: Any[], links: Any[], roles: Any[]) {
     const mine = roles.filter((r: Any) => r.person_id === pid && r.role === 'client')
     if (!mine.length || mine.some((r: Any) => r.status === 'active')) continue
     const last = mine.slice().sort((a: Any, b: Any) => String(b.ended_at || '').localeCompare(String(a.ended_at || '')))[0]
-    out.push({ j, why: 'Care ended' + (last?.end_reason ? ' (' + last.end_reason + ')' : '') + (last?.ended_at ? ' on ' + String(last.ended_at).slice(0, 10) : '') })
+    out.push({ j, why: 'Care ended' + (last?.end_reason ? ' (' + last.end_reason + ')' : '') + (last?.ended_at ? (last.ended_date_basis === 'on_or_before' ? ' on or before ' : ' on ') + String(last.ended_at).slice(0, 10) : '') })
   }
   return out
 }
@@ -434,7 +434,7 @@ async function closeEnded(db: Any, dfs: Any[], pp: Any, st: Any) {
   if (!ax.length) return 0
   const { data: links } = await db.from('person_source_id').select('person_id, source_id').eq('system', 'axiscare').eq('entity_type', 'client').in('source_id', ax)
   const pids = [...new Set((links ?? []).map((x: Any) => x.person_id))]
-  const { data: roles } = pids.length ? await db.from('person_role').select('person_id, role, status, ended_at, end_reason').in('person_id', pids).eq('role', 'client') : { data: [] }
+  const { data: roles } = pids.length ? await db.from('person_role').select('person_id, role, status, ended_at, ended_date_basis, end_reason').in('person_id', pids).eq('role', 'client') : { data: [] }
   const now = new Date().toISOString(); let n = 0
   for (const c of endedPlan(js ?? [], links ?? [], roles ?? [])) {
     await db.from('client_journey').update({ status: 'closed', closed_reason: c.why, updated_at: now }).eq('journey_id', c.j.journey_id)

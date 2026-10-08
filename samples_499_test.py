@@ -9,7 +9,7 @@ exec(src[:src.index("c = conn(); setup(c)")])
 from pg8000.native import DatabaseError
 REF = "zngsgedlsxinbygwmxwn"; COMMIT = os.environ.get("REHEARSE_COMMIT") or subprocess.run(["git", "rev-parse", "HEAD"], cwd=HERE, capture_output=True, text=True).stdout.strip()
 res = []; ck = lambda n, c, note="": res.append((n, bool(c), "" if c else str(note)[:1500]))
-S = {"signed_out": 0, "extra_col": False}
+S = {"signed_out": 0, "extra_col": False}; M = {"version": 20}; VJ0 = {"client-journey": True, "client-status-review": True}; PATCHED = []
 def q1(sql_, **kw):
     c = conn()
     try: rows = c.run(sql_, **kw); cols = [x["name"] for x in (c.columns or [])]; return [dict(zip(cols, r)) for r in (rows or [])]
@@ -18,7 +18,14 @@ class Hd(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def _send(self, code, body):
         b = json.dumps(body, default=str).encode(); self.send_response(code); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(b)
+    def do_PATCH(self):
+        mm = re.match(f"/v1/projects/{REF}/functions/([\\w-]+)$", self.path); raw = self.rfile.read(int(self.headers.get("Content-Length", 0) or 0))
+        if mm: PATCHED.append(mm.group(1)); M["vj_" + mm.group(1)] = json.loads(raw).get("verify_jwt"); return self._send(200, {})
+        self._send(404, {})
     def do_GET(self):
+        mm = re.match(f"/v1/projects/{REF}/functions/([\\w-]+)$", self.path)
+        if mm and mm.group(1) in VJ0 and self.headers.get("Authorization") == "Bearer sbp_fake":
+            return self._send(200, {"version": M["version"], "verify_jwt": M.setdefault("vj_" + mm.group(1), VJ0[mm.group(1)])})
         if self.path.startswith(f"/v1/projects/{REF}/api-keys?reveal=true") and self.headers.get("Authorization") == "Bearer sbp_fake":
             return self._send(200, [{"name": "anon", "api_key": "eyJanon"}, {"name": "service_role", "api_key": "eyJsvc"}])
         self._send(404, {})
@@ -37,19 +44,37 @@ class Hd(http.server.BaseHTTPRequestHandler):
             finally: cc.close()
         if self.path == "/auth/v1/admin/generate_link": return self._send(200, {"properties": {"hashed_token": "h1"}}) if self.headers.get("apikey") == "eyJsvc" else self._send(401, {})
         if self.path == "/auth/v1/verify": return self._send(200, {"access_token": "eyJme"}) if body.get("token_hash") == "h1" else self._send(400, {})
+        if self.path.startswith("/bump"): M["version"] += 1; q = dict(x.split("=") for x in self.path.split("?", 1)[1].split("&")); M["vj_" + q["fn"]] = (q.get("novj") == "0"); return self._send(200, {})
         if self.path.startswith("/auth/v1/logout"): S["signed_out"] += 1; return self._send(204, {})
         if self.path == "/functions/v1/client-journey":
             if self.headers.get("Authorization") != "Bearer eyJme": return self._send(401, {"error": "sign in"})
-            rs = q1("""select r.status, r.end_reason from person_source_id s join person_role r on r.person_id = s.person_id and r.role = 'client'
+            rs = q1("""select r.status, r.end_reason, r.ended_at::text as ended_at, to_jsonb(r)->>'ended_date_basis' as ended_date_basis from person_source_id s join person_role r on r.person_id = s.person_id and r.role = 'client'
                        where s.system = 'axiscare' and s.entity_type = 'client' and s.source_id = :a""", a=str(body.get("axiscare_client_id")))
             st = "deceased" if any("deceas" in str(r["end_reason"] or "").lower() for r in rs) and not any(r["status"] == "active" for r in rs) else \
                  "active" if any(r["status"] == "active" for r in rs) else "past" if rs else "unknown"
-            return self._send(200, {"state": st, "can": {"pause": st in ("active", "starting"), "end": st in ("active", "starting", "paused"), "resume": False, "return": st == "past"}})
+            return self._send(200, {"state": st, "roles": rs, "can": {"pause": st in ("active", "starting"), "end": st in ("active", "starting", "paused"), "resume": False, "return": st == "past"}})
         self._send(404, {})
 H = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Hd); threading.Thread(target=H.serve_forever, daemon=True).start()
 URL = f"http://127.0.0.1:{H.server_address[1]}"
 T = tempfile.mkdtemp(prefix="reh499-"); W = os.path.join(T, "hub")
 subprocess.run(["git", "worktree", "add", "-q", "--detach", W, COMMIT], cwd=HERE, check=True)
+BASEC = os.environ.get("REHEARSE_BASE") or subprocess.run(["git", "merge-base", COMMIT, "origin/main"], cwd=HERE, capture_output=True, text=True).stdout.strip()
+LIVE = os.path.join(T, "live"); subprocess.run(["git", "worktree", "add", "-q", "--detach", LIVE, BASEC], cwd=HERE, check=True)
+FNROOT = os.path.join(W, "supabase", "functions"); import hashlib; sha = lambda p_: hashlib.sha256(open(p_, "rb").read()).hexdigest()
+BASE = {}
+for r_, _, fs_ in os.walk(os.path.join(LIVE, "supabase", "functions")):
+    for f_ in fs_: p_ = os.path.join(r_, f_); BASE["supabase/functions/" + os.path.relpath(p_, os.path.join(LIVE, "supabase", "functions")).replace(os.sep, "/")] = sha(p_)
+PINS = {"client-journey/index.ts": sha(os.path.join(FNROOT, "client-journey", "index.ts")), "client-journey/care.ts": sha(os.path.join(FNROOT, "client-journey", "care.ts")),
+        "client-status-review/index.ts": sha(os.path.join(FNROOT, "client-status-review", "index.ts")), "client-journey/ended-date-basis.sql": sha(os.path.join(W, "client-journey", "ended-date-basis.sql"))}
+LOG = os.path.join(T, "cli.txt"); CLI = os.path.join(T, "supabase")
+open(CLI, "w").write(f"""#!/bin/sh
+echo "$@" >> {LOG}
+[ -f {T}/fail ] && [ "$2" = "deploy" ] && {{ echo boom >&2; exit 1; }}
+if [ "$2" = "deploy" ]; then touch {T}/deployed_$3; curl -s -o /dev/null -X POST "{URL}/bump?fn=$3&novj=$(echo "$@" | grep -c -- --no-verify-jwt)"; exit 0; fi
+if [ "$2" = "download" ]; then SRC={LIVE}/supabase/functions; [ -f {T}/deployed_$3 ] && SRC={FNROOT}
+  mkdir -p supabase/functions; cp -R $SRC/$3 supabase/functions/; cp -R $SRC/_shared supabase/functions/; [ -f {T}/drift ] && echo "// hand edit" >> supabase/functions/_shared/lead-rules.js; exit 0; fi
+exit 0
+"""); os.chmod(CLI, 0o755)
 def fresh():
     c = conn(); setup(c)
     for t in ("person_role", "person_source_id", "person_identity"): c.run(f"drop table if exists public.{t} cascade")
@@ -58,15 +83,19 @@ def fresh():
       entity_type text not null, source_id text not null, confidence text not null default 'confirmed', needs_review boolean not null default false, evidence text)""")
     c.run("create unique index person_source_axiscare_uniq on public.person_source_id (entity_type, source_id) where system = 'axiscare'")
     c.run("""create table public.person_role (id bigserial primary key, person_id uuid not null references public.person_identity(id), role text not null,
-      status text not null default 'active' check (status in ('active','former','prospective')), started_at date, ended_at date, end_reason text, updated_at timestamptz not null default now())""")
+      status text not null default 'active' check (status in ('active','former','prospective')), started_at date, ended_at date, end_reason text, updated_at timestamptz not null default now(),
+      check (status <> 'former' or ended_at is not null))""")
     c.run("insert into public.person_identity (id, display_name) values ('00000000-0000-0000-0000-000000000001', 'Edward Anderson')")
     c.run("insert into public.person_source_id (person_id, system, entity_type, source_id) values ('00000000-0000-0000-0000-000000000001', 'axiscare', 'client', '296')")
     c.run("insert into public.person_role (person_id, role, status) values ('00000000-0000-0000-0000-000000000001', 'client', 'active')")
-    c.close(); S["signed_out"] = 0
+    c.close(); S["signed_out"] = 0; M.update({"version": 20}); [M.pop(k) for k in list(M) if k.startswith("vj_")]
+    for f in [LOG, os.path.join(T, "fail"), os.path.join(T, "drift")] + [os.path.join(T, "deployed_" + x) for x in VJ0]:
+        if os.path.exists(f): os.remove(f)
 def run(mode="add", **over):
     rep = os.path.join(T, "report.txt")
     if os.path.exists(rep): os.remove(rep)
-    env = dict(os.environ, SB_REPORT=rep, SB_TOKEN="sbp_fake", SB_API_BASE=URL, SB_FN_BASE=URL, SB_MODE=mode); env.update(over)
+    env = dict(os.environ, SB_REPORT=rep, SB_TOKEN="sbp_fake", SB_API_BASE=URL, SB_FN_BASE=URL, SB_MODE=mode, SB_SUPA_CLI=CLI, SB_FNROOT=FNROOT,
+               SB_FN_SHAS=json.dumps(PINS), SB_BASE_SHAS=json.dumps(BASE)); env.update(over)
     p = subprocess.run([sys.executable, os.path.join(W, "samples_499.py")], env=env, capture_output=True, text=True, timeout=300)
     return p.returncode, (open(rep).read() if os.path.exists(rep) else p.stdout + p.stderr)
 count = lambda: q1("select (select count(*) from person_identity)::int as p, (select count(*) from person_source_id)::int as s, (select count(*) from person_role)::int as r")[0]
@@ -74,9 +103,12 @@ try:
     fresh(); code, out = run()
     ck("DONE: two samples added and proven", code == 0 and "RESULT: DONE" in out and "✗" not in out, out)
     ck("...exactly two people, two numbers, two roles added; Edward untouched", count() == {"p": 3, "s": 3, "r": 3} and q1("select status from person_role where person_id = '00000000-0000-0000-0000-000000000001'")[0]["status"] == "active", count())
+    import datetime as _dt; from zoneinfo import ZoneInfo; TODAY = _dt.datetime.now(ZoneInfo("America/Chicago")).date()
     rows = q1("select s.source_id, p.display_name, r.status, r.ended_at, r.end_reason from person_source_id s join person_identity p on p.id = s.person_id join person_role r on r.person_id = p.id where s.source_id like '99%' order by 1")
-    ck("...Past: ended role, no date, no reason; Deceased: ended role, no date, 'deceased'", [(x["source_id"], x["display_name"], x["status"], x["ended_at"], x["end_reason"]) for x in rows]
-       == [("9900001", "TEST Past Sample", "former", None, None), ("9900002", "TEST Deceased Sample", "former", None, "deceased")], rows)
+    ck("...Past: ended on or before today, no reason; Deceased: the same, 'deceased'", [(x["source_id"], x["display_name"], x["status"], x["ended_at"], x["end_reason"]) for x in rows]
+       == [("9900001", "TEST Past Sample", "former", TODAY, None), ("9900002", "TEST Deceased Sample", "former", TODAY, "deceased")], rows)
+    ck("...both marked on_or_before (never shown as exact)", [x["b"] for x in q1("select ended_date_basis as b from person_role where person_id <> '00000000-0000-0000-0000-000000000001'")] == ["on_or_before"] * 2)
+    ck("...the two functions deployed, each kept its gateway setting, nothing else deployed", open(LOG).read().count("functions deploy") == 2 and M.get("vj_client-journey") is True and M.get("vj_client-status-review") is True, open(LOG).read())
     ck("...the profile reads Past and Deceased with no Pause or End", "TEST Past Sample: the profile reads Past" in out and "TEST Deceased Sample: the profile reads Deceased" in out, out)
     ck("...both on the shift jobs' quiet list", "both are on the list every shift job skips" in out, out)
     ck("...the in-run sign-in was signed out, and no key or token is in the report", S["signed_out"] == 1 and not re.search(r"eyJ|sbp_", out), out)
@@ -93,10 +125,16 @@ try:
     ck("a real person on 9900001: both add and remove refuse, nothing changes", code == 2 and code2 == 2 and "belongs to a real person" in out and count() == {"p": 2, "s": 2, "r": 1}, out + out2)
     fresh(); c = conn(); c.run("alter table person_identity add column must_have text default 'x' not null; alter table person_identity alter column must_have drop default"); c.close(); code, out = run()
     ck("a required column it doesn't fill: stops before adding anything", code == 2 and "person_identity.must_have" in out and count()["p"] == 1, out)
+    fresh(); open(os.path.join(T, "drift"), "w").write("1"); code, out = run()
+    ck("a live function changed since 498: stops before anything changes", code == 3 and "changed since 498" in out and count()["p"] == 1 and "deploy" not in open(LOG).read(), out)
+    fresh(); open(os.path.join(T, "fail"), "w").write("1"); code, out = run()
+    ck("a failed deploy stops and the samples are not added", code == 6 and "did not deploy cleanly" in out and count()["p"] == 1, out)
+    fresh(); code, out = run(SB_FN_SHAS=json.dumps(dict(PINS, **{"client-journey/care.ts": "0" * 64})))
+    ck("a changed build is refused before anything runs", code == 2 and "not the reviewed build" in out and count()["p"] == 1, out)
     fresh(); code, out = run(SB_TOKEN="nope")
     ck("no token: nothing runs", code == 2 and count()["p"] == 1, out)
 finally:
-    subprocess.run(["git", "worktree", "remove", "--force", W], cwd=HERE); shutil.rmtree(T, ignore_errors=True); H.shutdown()
+    subprocess.run(["git", "worktree", "remove", "--force", W], cwd=HERE); subprocess.run(["git", "worktree", "remove", "--force", LIVE], cwd=HERE); shutil.rmtree(T, ignore_errors=True); H.shutdown()
 for n, okk, d_ in res: print(("PASS" if okk else "FAIL"), "·", n, d_)
 print(f"{sum(1 for x in res if x[1])} passed, {sum(1 for x in res if not x[1])} failed")
 raise SystemExit(0 if all(x[1] for x in res) else 1)

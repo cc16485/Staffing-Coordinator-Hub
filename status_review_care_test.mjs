@@ -51,7 +51,7 @@ try {
   fs.writeFileSync(path.join(tmp, 'staff-auth.ts'), "export const OFFICE_ROLES = []; export async function requireStaff(){ return { ok: false, status: 401, error: 'no' } }")
   const src = fs.readFileSync(path.join(F, 'client-status-review/index.ts'), 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
     .replace("'../_shared/job-auth.ts'", "'" + path.join(tmp, 'job-auth.ts') + "'").replace("'../_shared/staff-auth.ts'", "'" + path.join(tmp, 'staff-auth.ts') + "'")
-  fs.writeFileSync(path.join(tmp, 'sr.ts'), src); await import(path.join(tmp, 'sr.ts'))
+  fs.writeFileSync(path.join(tmp, 'sr.ts'), src); const SR = await import(path.join(tmp, 'sr.ts'))
   reset()
   const r = await handler(new Request('https://x', { method: 'POST', headers: { 'x-cron-secret': ENV.HUB_JOB_SECRET }, body: JSON.stringify({ action: 'run' }) })); const j = await r.json()
   const items = T.app_data.find((x) => x.key === 'ops_items').data
@@ -62,6 +62,8 @@ try {
   ck('a DECEASED client AxisCare shows Active again: no card at all (no reactivation prompts)', !byAx('411') && !T.client_status_review.some((x) => x.axiscare_client_id === '411'))
   ck('a past client turned Deceased in AxisCare: no card (no routine follow-up)', !byAx('412') && !T.client_status_review.some((x) => x.axiscare_client_id === '412'))
   ck('...the run says how many past or deceased changes it left quiet', j.past_quiet === 2, j)
+  const ob = SR.reviewItem({ review_id: 'x', new_label: 'Active', old_label: 'Inactive', observed_at: '2026-10-08' }, 'Ida Imported', 'k@x', '2026-10-08', { ended_at: '2026-10-08', ended_date_basis: 'on_or_before', end_reason: null })
+  ck('499 · an imported past client with no AxisCare end date: "care ended on or before 2026-10-08 (exact date not recorded in AxisCare)", never as exact', /care ended on or before 2026-10-08 \(exact date not recorded in AxisCare\)/.test(ob.detail), ob.detail)
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1)

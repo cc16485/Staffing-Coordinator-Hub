@@ -54,7 +54,7 @@ export function endOfDayChicago(ymd: string): string {
   return new Date(guess - (wall - guess)).toISOString()
 }
 // deno-lint-ignore no-explicit-any
-export function reviewItem(rv: any, name: string, owner: string, today: string, prev?: { ended_at?: string | null; end_reason?: string | null } | null) {
+export function reviewItem(rv: any, name: string, owner: string, today: string, prev?: { ended_at?: string | null; ended_date_basis?: string | null; end_reason?: string | null } | null) {
   const seen = String(rv.observed_at ?? '').slice(0, 10)
   const deceased = /deceas/i.test(String(rv.new_label))
   /* a PAST client AxisCare shows Active again (2026-10-07): say plainly we served them before, and their last episode */
@@ -64,7 +64,7 @@ export function reviewItem(rv: any, name: string, owner: string, today: string, 
     title: back ? `We served ${name} before. AxisCare shows them Active again: start a new episode?` : `AxisCare changed ${name} from ${rv.old_label ?? '?'} to ${rv.new_label}`,
     about: name,
     detail: back
-      ? `Last time: care ended ${prev!.ended_at ? String(prev!.ended_at).slice(0, 10) : '(date not recorded)'}${prev!.end_reason ? ' (' + prev!.end_reason + ')' : ''}. Seen by the status check on ${seen}. Nothing starts until a person confirms the return; their earlier history stays as it is.`
+      ? `Last time: care ended ${prev!.ended_at ? (prev!.ended_date_basis === 'on_or_before' ? 'on or before ' + String(prev!.ended_at).slice(0, 10) + ' (exact date not recorded in AxisCare)' : String(prev!.ended_at).slice(0, 10)) : '(date not recorded)'}${prev!.end_reason ? ' (' + prev!.end_reason + ')' : ''}. Seen by the status check on ${seen}. Nothing starts until a person confirms the return; their earlier history stays as it is.`
       : `Seen by the status check on ${seen}. Nothing in the hub changes until someone answers what happened.`
       + (deceased ? ' Nothing contacts the family automatically; any call is a person\'s decision.' : ''),
     next_action: back ? 'Open it: confirm they are returning (a new episode on the same person), or say AxisCare is wrong.' : 'Open it and answer: care ended, on hold, AxisCare mistake, or returning client. Answering closes this.',
@@ -239,7 +239,7 @@ Deno.serve(async (req) => {
     /* the client's own Care Coordinator gets the card (their journey's), else whoever owns Client Care */
     const { data: cjs } = await sb.from('client_journey').select('axiscare_client_id, assigned_cc, created_at').not('axiscare_client_id', 'is', null).order('created_at', { ascending: false })
     const ccOf = (ax: string) => String((cjs ?? []).find((j) => String(j.axiscare_client_id) === String(ax) && j.assigned_cc)?.assigned_cc || '').toLowerCase()
-    const { data: rolesNow } = pids.length ? await sb.from('person_role').select('person_id, status, ended_at, end_reason').eq('role', 'client').in('person_id', pids) : { data: [] }
+    const { data: rolesNow } = pids.length ? await sb.from('person_role').select('person_id, status, ended_at, ended_date_basis, end_reason').eq('role', 'client').in('person_id', pids) : { data: [] }
     const prevOf = (pid: string) => { const rs = (rolesNow ?? []).filter((r) => String(r.person_id) === String(pid)); if (!rs.length || rs.some((r) => r.status === 'active')) return null
       return rs.slice().sort((a, b2) => String(b2.ended_at || '').localeCompare(String(a.ended_at || '')))[0] }
     for (const rv of rows) {
