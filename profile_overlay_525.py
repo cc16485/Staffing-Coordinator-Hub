@@ -103,12 +103,19 @@ for fn in FNS:
         http("PATCH", f"{API}/v1/projects/{REF}/functions/{fn}", {"verify_jwt": VJ[fn]}, MG()); sN, mN = fmeta(fn)
     say(f"  ✓ {fn}: version {(mN or {}).get('version', '?')}, gateway sign-in check {'on' if VJ[fn] else 'off'} as before") if (mN or {}).get("verify_jwt") == VJ[fn] else bad(f"{fn}: the gateway setting did not come back")
 say(); say("PART 3 · PROOF (the live self-test; nothing is sent or changed)")
-s_, b_ = http("GET", f"{BASE}/functions/v1/profile-check?selftest=1", headers={"apikey": "", "Authorization": "Bearer "})
+# the function sits behind the gateway's sign-in check, so the self-test is read with the project's public (anon) key
+sk, kb = http("GET", f"{API}/v1/projects/{REF}/api-keys", headers=MG()); ANON = ""
+try: ANON = next((k.get("api_key", "") for k in json.loads(kb) if k.get("name") == "anon"), "")
+except Exception: ANON = ""
+HIDE.append(ANON)
+s_, b_ = http("GET", f"{BASE}/functions/v1/profile-check?selftest=1", headers={"apikey": ANON, "Authorization": "Bearer " + ANON})
 try:
-    j = json.loads(b_); rows = j.get("results", j) if isinstance(j, dict) else j
-    bad_rows = [r for r in rows if not r.get("pass")]
-    over = [r for r in rows if "overlay" in str(r.get("fixture", "")).lower()]
-    say(f"  ✓ the live self-test passes: {len(rows)} checks, {len(over)} of them the new overlay cases") if s_ == 200 and rows and not bad_rows and over else bad(f"the live self-test did not pass cleanly (HTTP {s_}; failing: {[r.get('fixture') for r in bad_rows][:5]}; overlay cases seen: {len(over)})")
+    j = json.loads(b_) if b_ and b_[:1] in "[{" else {}
+    rows = j.get("results", j) if isinstance(j, dict) else j
+    rows = rows if isinstance(rows, list) else []
+    bad_rows = [r for r in rows if not (isinstance(r, dict) and r.get("pass"))]
+    over = [r for r in rows if isinstance(r, dict) and "overlay" in str(r.get("fixture", "")).lower()]
+    say(f"  ✓ the live self-test passes: {len(rows)} checks, {len(over)} of them the new overlay cases") if s_ == 200 and rows and not bad_rows and over else bad(f"the live self-test did not pass cleanly (HTTP {s_}; failing: {[r.get('fixture') for r in bad_rows if isinstance(r, dict)][:5]}; overlay cases seen: {len(over)})")
 except Exception as e: bad(f"the live self-test could not be read ({s_}: {str(e)[:80]})")
 say("  · tested before deploying with 9 checks on the real code against a stand-in database (overlay wins per skill, overlay-only skills seen, roster answers kept, Spanish from the overlay, no overlay = as before, no sending code)")
 say()
