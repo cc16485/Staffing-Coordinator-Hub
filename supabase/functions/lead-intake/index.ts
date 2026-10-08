@@ -56,6 +56,97 @@ Deno.serve(async (req) => {
     }
   }
 
+  /* ── A PROFESSIONAL REFERRAL (mo-care.com "Refer a client", 2026-10-08) ─────────────────────────────────────────────
+     Her finding: the form used to send the REFERRER as the lead, so a discharge planner's own phone became "the family",
+     the partner and urgency were buried in the notes, and the lead counted as Website. Now (kind: professional_referral):
+       · the person needing care is the lead (initials only, as the form asks); the family's number isn't known yet
+       · the professional is kept apart as lead.referrer (name, organization, type, phone or email), never as a family,
+         never matched as a returning family, never greeted by the family acknowledgment, never sent to GoHighLevel as a
+         lead contact, and never sent anything automatic (every partner message is a person's, her rule)
+       · source Referral, the partner subtype, and the urgency (Urgent turns the Leads board card red until someone calls)
+       · the partner record is linked ONLY on one exact match (same name, or same phone); otherwise the lead says "new
+         partner to confirm" and nothing in Referrers is created or changed
+     The office alert goes out as for any inquiry, saying it's a referral, from whom, and how urgent. */
+  if (pick('kind') === 'professional_referral') {
+    const rName = pick('referrer_name'), rOrg = pick('referrer_org'), rType = pick('referrer_type')
+    const rContact = pick('referrer_contact', 'referrer_phone', 'referrer_email')
+    const rEmail = /@/.test(rContact) ? rContact.toLowerCase() : pick('referrer_email').toLowerCase()
+    const rPhone = !/@/.test(rContact) ? rContact : pick('referrer_phone')
+    if (!rName && !rPhone && !rEmail) return json({ error: 'the referral needs the referrer\'s name, phone or email' }, 400)
+    const initials = pick('client_initials', 'care_for').replace(/[^A-Za-z.\s-]/g, '').slice(0, 12).trim()
+    const situation = pick('situation', 'message')
+    const urg = (() => { const u = pick('urgency').toLowerCase(); return /urgent/.test(u) ? 'urgent' : /week/.test(u) ? 'within_week' : 'routine' })()
+    const SUB: Record<string, string> = { hospital: 'hospital', snf: 'snf_rehab', 'case-manager': 'case_manager', physician: 'case_manager', hospice: 'case_manager',
+      church: 'community', 'home-health': 'other', 'elder-law': 'other', financial: 'other', realtor: 'other' }
+    const TYPE_LABEL: Record<string, string> = { hospital: 'Hospital / Discharge Planner', physician: 'Physician', 'case-manager': 'Case Manager', snf: 'Skilled Nursing Facility',
+      'home-health': 'Home Health Agency', hospice: 'Hospice Organization', 'elder-law': 'Elder Law Attorney', financial: 'Financial Planner', realtor: 'Realtor', church: 'Faith Community' }
+    const sbR = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+    /* the partner: one exact match by name, else one by phone; never a guess, never a new record */
+    const norm = (s: unknown) => String(s ?? '').toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, ' ').trim()
+    const dig = (s: unknown) => String(s ?? '').replace(/\D/g, '').slice(-10)
+    let orgId: string | null = null
+    try {
+      const { data: od } = await sbR.from('app_data').select('data').eq('key', 'referral_orgs').maybeSingle()
+      const orgs: Record<string, unknown>[] = Array.isArray(od?.data) ? od!.data : []
+      const byName = rOrg ? orgs.filter((o) => norm(o.name) === norm(rOrg)) : []
+      const byPhone = !byName.length && dig(rPhone).length === 10 ? orgs.filter((o) => dig(o.phone) === dig(rPhone)) : []
+      const hit = byName.length === 1 ? byName : byPhone.length === 1 ? byPhone : []
+      if (hit.length === 1) orgId = String(hit[0].id)
+    } catch { /* unlinked is safe: a person links it */ }
+    const now = new Date().toISOString(), today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+    const typeLabel = TYPE_LABEL[rType] || ''
+    const lead: Record<string, unknown> = {
+      id: crypto.randomUUID(), first_name: initials || 'Referral', last_name: '', phone: '', email: '',
+      client_first_name: initials || '', family_contact_unknown: true,
+      source: 'Referral', referral_source_name: rOrg || rName, referral_subtype: SUB[rType] || 'other', referral_urgency: urg,
+      referrer: { name: rName, org: rOrg, type: rType, type_label: typeLabel, phone: rPhone, email: rEmail },
+      ...(orgId ? { referral_org_id: orgId } : rOrg ? { referral_org_suggest: { name: rOrg, type: typeLabel } } : {}),
+      status: 'New',
+      interest_notes: [situation, 'Referred by ' + [rName, rOrg].filter(Boolean).join(', ') + (typeLabel ? ' (' + typeLabel + ')' : '') + '.',
+        'Urgency: ' + ({ urgent: 'Urgent', within_week: 'Within a week', routine: 'Routine' } as Record<string, string>)[urg] + '.',
+        'Reach the referrer: ' + ([rPhone, rEmail].filter(Boolean).join(' · ') || 'no contact left') + '. We don\'t have the family\'s number yet.'].filter(Boolean).join('\n'),
+      follow_up_due: today, created_at: now,
+    }
+    ldPush(lead, { channel: 'web', direction: 'in', outcome: 'inquiry', actor: 'partner', ref: ('referral from ' + (rOrg || rName)).slice(0, 200) })
+    const { error: rErr } = await sbR.rpc('upsert_app_data_item', { target_key: 'leads', item: lead })
+    if (rErr) return json({ error: rErr.message }, 500)
+    await opEvent(sbR, { verb: 'lead_inquiry', item_id: String(lead.id), area: 'growth_leads', actor_name: rName || rOrg || 'a referral partner',
+      summary: `New ${urg === 'urgent' ? 'URGENT ' : ''}referral from ${[rName, rOrg].filter(Boolean).join(', ') || 'a partner'}` })
+    /* the office hears now, like any inquiry (quiet hours for texts; the email always goes) */
+    let alertedR = 0
+    try {
+      const ghlToken = Deno.env.get('GHL_TOKEN'), ghlLocation = Deno.env.get('GHL_LOCATION_ID')
+      if (ghlToken && ghlLocation) {
+        const h = { Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
+        let people: { name?: string; phone?: string | null; email?: string | null }[] = []
+        try { const { data } = await sbR.from('applicant_alerts').select('name, phone, email').eq('active', true).contains('alert_on', ['lead']); people = data ?? [] } catch { /* backstop */ }
+        if (!people.length) people = [{ name: 'Samantha', email: 'samantha@mo-care.com' }]
+        const esc = (s: string) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')
+        const from = [rName, rOrg].filter(Boolean).join(', ') || 'a referral partner', reach = [rPhone, rEmail].filter(Boolean).join(' · ')
+        const subject = (urg === 'urgent' ? 'URGENT referral from ' : 'New referral from ') + from
+        const html = '<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#16283a;">'
+          + '<p><b style="font-size:18px;">' + esc(subject) + '</b></p>'
+          + '<p><b>Referrer:</b> ' + esc(from) + (typeLabel ? ' (' + esc(typeLabel) + ')' : '') + (reach ? '<br><b>Reach them:</b> ' + esc(reach) : '') + '</p>'
+          + '<p><b>Client:</b> ' + esc(initials || 'initials not given') + '<br><b>Urgency:</b> ' + esc(({ urgent: 'Urgent', within_week: 'Within a week', routine: 'Routine' } as Record<string, string>)[urg]) + '</p>'
+          + (situation ? '<p><b>Situation:</b><br>' + esc(situation) + '</p>' : '')
+          + '<p style="background:#EAF4F6;border-radius:10px;padding:14px 16px;">Call the referrer for the family\'s contact. Nothing has been sent to them.</p>'
+          + '<p><a href="https://cc.mo-care.com/#leads" style="display:inline-block;background:#1F7A8C;color:#fff;font-weight:bold;padding:11px 22px;border-radius:9px;text-decoration:none;">Open the lead &rarr;</a></p></div>'
+        const sms = subject + (reach ? '. Reach them: ' + reach : '') + '. cc.mo-care.com/#leads'
+        const quietStaff = await officeQuietNow(sbR)
+        for (const p of people) {
+          try {
+            const staffGhl = { token: ghlToken, locationId: ghlLocation }, staffWho = { phone: p.phone, email: p.email, firstName: (p.name || 'Team').split(' ')[0] }
+            let went = false
+            if (p.email) { const cid = await ghlStaffContact(staffGhl, { channel: 'email', ...staffWho }); if (cid) went = await ghlSendChecked(sbR, h, 'staff-alert', { channel: 'email', contactId: cid, address: p.email, who: p.name }, { subject, html }) || went }
+            if (p.phone && !quietStaff) { const cid = await ghlStaffContact(staffGhl, { channel: 'sms', ...staffWho }); if (cid) went = await ghlSendChecked(sbR, h, 'staff-alert', { channel: 'sms', contactId: cid, address: p.phone, who: p.name }, { message: sms }) || went }
+            if (went) alertedR++
+          } catch { /* next */ }
+        }
+      }
+    } catch { /* the lead is saved */ }
+    return json({ status: 'referral received', id: lead.id, linked: !!orgId, urgency: urg, alerted: alertedR })
+  }
+
   // Tolerant field mapping — website builders name fields all kinds of ways.
   let first = pick('first_name', 'firstName', 'fname')
   let last = pick('last_name', 'lastName', 'lname')
