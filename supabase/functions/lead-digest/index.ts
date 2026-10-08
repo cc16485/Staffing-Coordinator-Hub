@@ -135,7 +135,9 @@ export function assessmentsOn(day: string, cas: any[], leads: any[]): Assessment
     const p = chiParts(a.visit_date); if (!p || p.date !== day) continue
     const l = a.lead_id ? byId[a.lead_id] : null; if (a.lead_id && l && !live(l)) continue
     let min = p.min
-    if (min === null && l?.assessment_at) { const lp = chiParts(l.assessment_at); if (lp && lp.date === day) min = lp.min }
+    const vt = /^(\d{1,2}):(\d{2})/.exec(String(a.visit_time || ''))   // 2026-10-07: the Hub form's visit time (same rule as the Hub's btAssessmentsOn)
+    if (vt) min = Number(vt[1]) * 60 + Number(vt[2])
+    else if (min === null && l?.assessment_at) { const lp = chiParts(l.assessment_at); if (lp && lp.date === day) min = lp.min }
     if (l) seen.add(l.id)
     out.push({ name: a.client_name || clientName(l) || 'Unnamed', min, status: String(a.status || 'Scheduled') === 'Scheduled' ? 'booked' : 'done',
       address: String(a.address || l?.client_address || '').trim(), who: String(a.coordinator || '').trim() })
