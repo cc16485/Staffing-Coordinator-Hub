@@ -98,7 +98,7 @@ Deno.serve(async (req) => {
   if (!OF_URL || !OF_KEY) offer = { found: false, error: 'offers-project connection not configured — run the deploy script' }
   else {
     const resp = await fetch(`${OF_URL}/rest/v1/job_offers?axiscare_applicant_id=eq.${axid}`
-      + `&select=id,created_at,offered_by,interview_date,position,level_suggested,level_confirmed,availability,experience,personality,notes,attributes,attributes_entered_by`,
+      + `&select=id,created_at,offered_by,interview_date,position,level_suggested,level_confirmed,availability,experience,personality,notes,attributes,attributes_entered_by,onboarding_path`,
       { headers: { apikey: OF_KEY, Authorization: `Bearer ${OF_KEY}` } })
     // deno-lint-ignore no-explicit-any
     const rows: any[] = resp.ok ? await resp.json() : []
@@ -107,6 +107,7 @@ Deno.serve(async (req) => {
       const o = rows[0]
       const attrs = (typeof o.attributes === 'string' ? JSON.parse(o.attributes || '{}') : o.attributes) || {}
       offer = { found: true, record_id: o.id,
+        onboarding_path: o.onboarding_path === 'new' ? 'new' : 'old',   // Slice 0 (2026-10-08): shown on the applicant page, decided nowhere here
         interview_date: o.interview_date, interviewer: o.offered_by,
         position: o.position, level_suggested: o.level_suggested,
         level_confirmed: o.level_confirmed ?? null,   // preserved honestly, even when unset
