@@ -64,7 +64,7 @@ ck('card: a hidden photo is left off, and the older photo address is not used in
 ck('card: the server reads the two hide fields', /photo_hidden, video_hidden'/.test(fs.readFileSync(`${FN}/caregiver-card/index.ts`, 'utf8')))
 // ── publishing and their page ──
 const full = { about: 'a', experience: 'b', why_this_work: 'c', photo_path: 'x/photo-1.jpg', consent: true, status: 'new', self_complete: true }
-ck('a current caregiver with NO video: still not published', M.publishProblems({ ...full }).some((x) => /video is required/.test(x)))
+ck('a current caregiver with NO video: publishes (522, the video is optional)', !M.publishProblems({ ...full }).some((x) => /video is required/.test(x)))
 ck('...but if the office hid their video, it does not hold publishing up', M.publishProblems({ ...full, video_path: 'x/video-1.mp4', video_hidden: true }).length === 0 && M.publishProblems({ ...full, video_hidden: true }).length === 0)
 const g = { id: uuid(), upload_token: uuid(), first_name: 'Grace', status: 'new', published: false, self_complete: true, about: 'a', experience: 'b', why_this_work: 'c', photo_path: null, video_path: null, video_hidden: true, photo_hidden: true, consent: true }
 T.caregiver_profiles.push(g); g.photo_path = g.id + '/photo-1700000000000.jpg'; OBJECTS.add(g.photo_path); OBJECTS.add(g.id + '/video-1700000000005.mp4')

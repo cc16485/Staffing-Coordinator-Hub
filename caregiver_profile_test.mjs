@@ -187,8 +187,8 @@ ck('SQL: the new columns, one live profile per candidate, a unique personal toke
 ck('the family card is unchanged: published and not withdrawn only, and never the token', /!data\.published \|\| data\.status === 'withdrawn'/.test(card) && !/upload_token/.test(card))
 ck('a refused profile-link message reads as a known message on a Needs Attention card (SENDER_WORDS)', /'caregiver-profile': \['caregiver profile link', 'caregivers'\]/.test(sp))
 const fsrc = fs.readFileSync(`${FN}/caregiver-profile/index.ts`, 'utf8')
-ck('NO SILENT FAILURES: every message goes through the opt-out door and ghlSendChecked (2 each), nothing posts unchecked',
-  (fsrc.match(/ghlSendChecked\(/g) || []).length === 2 && (fsrc.match(/ghlContactIfAllowed\(/g) || []).length === 2 && !/conversations\/messages/.test(fsrc))
+ck('NO SILENT FAILURES: every message goes through the opt-out door and ghlSendChecked (2 for the link, 2 for the 522 notice), nothing posts unchecked',
+  (fsrc.match(/ghlSendChecked\(/g) || []).length === 4 && (fsrc.match(/ghlContactIfAllowed\(/g) || []).length === 4 && !/conversations\/messages/.test(fsrc))
 ck('office actions check the signed-in staff member themselves (the function is deployed without the gateway check)', /const who = await requireStaff\(db, req, OFFICE_ROLES\)/.test(fsrc)
   && fsrc.indexOf("['mine', 'upload_url', 'submit'].includes(action)") < fsrc.indexOf('const who = await requireStaff'))
 ck('CORS from day one: the cors headers and an OPTIONS answer', /'Access-Control-Allow-Origin': '\*'/.test(fsrc) && /req\.method === 'OPTIONS'/.test(fsrc))
