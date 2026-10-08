@@ -218,6 +218,39 @@ try {
   ck('6 · Paused: his family drops out of client, family, lead and pasted campaigns the moment care is paused', before6 && ['client', 'client-contact', 'lead', ''].every((tag) => !GUARD.verdict(gx.stateOf('daughter@x.com'), tag).ok), gx.stateOf('daughter@x.com'))
   await call({ action: 'care_resume', axiscare_client_id: '296' }, 'an'); gx = await GUARD.loadGuard(globalThis.__db)
   ck('6 · ...and comes back on resume', GUARD.verdict(gx.stateOf('daughter@x.com'), 'client').ok)
+
+  // 7 · MEDICAID DISCHARGE RULES (Medicaid intake slice B, 2026-10-08, her approved matrix)
+  const C = await import(path.join(tmp, 'care.ts'))
+  setup(); await call({ action: 'adopt', people: [{ axiscare_client_id: '296', client_name: 'Edward Anderson', payer: 'medicaid' }] }, null, job)
+  T.client_journey[0].assigned_cc = 'krystal@mo-care.com'
+  r = await call({ action: 'care_end', axiscare_client_id: '296', reason: 'unable_to_staff', effective_date: R_add(0) }, 'an')
+  ck('7 · Medicaid, ending services while they still need care: a Care Coordinator can\'t record it, an owner must', r.j.outcome === 'refused' && /needs an owner/.test(r.j.error) && !T.client_care_change.some((c) => c.kind === 'end'), r.j)
+  r = await call({ action: 'care_end', axiscare_client_id: '296', reason: 'unable_to_staff', effective_date: R_add(0) }, 'sam')
+  ck('7 · ...the owner must enter the dates the 21-day notice went to the participant or family, and to DSDS', r.j.outcome === 'refused' && /21-day written notice went to the participant or family, and to DSDS/.test(r.j.error), r.j)
+  r = await call({ action: 'care_end', axiscare_client_id: '296', reason: 'unable_to_staff', effective_date: R_add(0), notice_participant_on: R_add(-10), notice_dsds_on: R_add(-9) }, 'sam')
+  ck('7 · ...the last day can\'t be before 21 days after both notices', r.j.outcome === 'refused' && r.j.error.includes("can't be before " + R_add(12)), r.j)
+  r = await call({ action: 'care_end', axiscare_client_id: '296', reason: 'unable_to_staff', effective_date: R_add(0), notice_participant_on: R_add(-10), notice_dsds_on: R_add(-9), dsds_arranged_on: R_add(-1) }, 'sam')
+  const E7 = T.client_care_change.find((c) => c.kind === 'end'), st7 = (k) => (E7.checklist.find((x) => x.key === k) || {})
+  ck('7 · ...unless DSDS arranged other care sooner: then it ends, and the steps are ticked from the dates (who, when)', r.j.outcome === 'ended' && st7('notice_21').state === 'done' && st7('notice_21').on === R_add(-10) && st7('dsds_written').on === R_add(-9) && st7('continue_21').state === 'done' && st7('continue_21').how === 'DSDS arranged other care' && st7('notice_21').by === 'sam@mo-care.com', E7.checklist)
+  ck('7 · ...the 21-day checklist cites (16)(D) and no longer says "waiting on DSDS"', E7.checklist.filter((x) => x.key !== 'records').every((x) => /\(16\)\(D\)/.test(x.rule) && !/waiting on DSDS/.test(x.note_needed + x.when)), E7.checklist)
+  // a client with no journey: the Medicaid care plan uploaded in the Hub makes them Medicaid
+  setup(); T.app_data.push({ key: 'medicaid_plans', data: [{ id: 'mcp_296', kind: 'plan', axiscare_client_id: '296', services: [{ ours: true, program: 'ihs', kind: 'pc' }] }] })
+  r = await call({ action: 'care_end', axiscare_client_id: '296', reason: 'beyond_scope', effective_date: R_add(0) }, 'an')
+  ck('7 · No journey, but a Medicaid care plan uploaded in the Hub: the same rule applies', r.j.outcome === 'refused' && /needs an owner/.test(r.j.error), r.j)
+  r = await call({ action: 'care_end', axiscare_client_id: '296', reason: 'beyond_scope', effective_date: R_add(0), notice_participant_on: R_add(-25), notice_dsds_on: R_add(-24) }, 'sam')
+  ck('7 · ...with both notices 21+ days before the last day, the owner records it', r.j.outcome === 'ended', r.j)
+  // immediate reasons never block; a DSDS notice date ticks its step
+  setup(); T.app_data.push({ key: 'medicaid_plans', data: [{ id: 'mcp_296', kind: 'plan', axiscare_client_id: '296', services: [{ ours: true, program: 'ihs', kind: 'pc' }] }] })
+  r = await call({ action: 'care_end', axiscare_client_id: '296', reason: 'facility', effective_date: R_add(0), dsds_notice_on: R_add(0) }, 'an')
+  const E8 = T.client_care_change.find((c) => c.kind === 'end')
+  ck('7 · A facility move: a Care Coordinator records it (never blocked), and the DSDS notice date ticks "Tell DSDS in writing, right away" (16)(B)', r.j.outcome === 'ended' && E8.checklist[0].key === 'dsds_written' && E8.checklist[0].state === 'done' && /\(16\)\(B\)/.test(E8.checklist[0].rule) && /Right away/.test(E8.checklist[0].when), E8.checklist)
+  // private pay: no Medicaid rule
+  setup(); await call({ action: 'adopt', people: [{ axiscare_client_id: '296', client_name: 'Edward Anderson', payer: 'private' }] }, null, job)
+  r = await call({ action: 'care_end', axiscare_client_id: '296', reason: 'unable_to_staff', effective_date: R_add(0) }, 'an')
+  ck('7 · Private pay: no Medicaid discharge rule, a Care Coordinator records it', r.j.outcome === 'ended' && !T.client_care_change.find((c) => c.kind === 'end').checklist.length, r.j)
+  ck('7 · the rule map: unable to staff / beyond scope / noncompliance = 21 days; deceased / facility / moved / safety = right away; authorization ended = DSDS closed; chose another provider = their choice',
+    ['unable_to_staff', 'beyond_scope', 'noncompliance'].every((k) => C.DISCHARGE_RULE[k] === 'notice21') && ['deceased', 'facility', 'moved_out', 'safety'].every((k) => C.DISCHARGE_RULE[k] === 'immediate') && C.DISCHARGE_RULE.auth_ended === 'dsds' && C.DISCHARGE_RULE.other_provider === 'choice')
+  ck('7 · a notice date in the future is refused', /can't be in the future/.test(C.dischargeCheck('noncompliance', { effective_date: R_add(30), notice_participant_on: R_add(1), notice_dsds_on: R_add(0) }, true, R_add(0)).why || ''))
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1)
