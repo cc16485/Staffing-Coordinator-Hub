@@ -45,6 +45,21 @@ async function extraAnswer(db: any, b: Record<string, any>, sender: string): Pro
     const c = await latestTextConsent(db, b.phone)
     return json(c.ok ? { text_ok: true } : { text_ok: false, why: c.why })
   }
+  /* ONBOARDING PATH (Slice 0, Samantha approved 2026-10-08). The Training Platform's job-offer function asks, with the
+     staff member's own sign-in, which onboarding path an offer made on `offer_date` belongs to. One source of truth:
+     ops_settings.onboarding_switch_date on the Owners Hub Admin page. Blank (every day until she sets it in slice 9):
+     'old'. Set: 'new' for offers dated on or after it, 'old' before. The date is the Chicago date; the answer is
+     computed here so no browser copy of the settings can decide it. Nothing is written. */
+  if (b.onboarding_path === true) {
+    const { data: row, error } = await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+    if (error) return json({ error: 'could not read the onboarding switch date: ' + error.message }, 500)
+    const sw = row?.data?.onboarding_switch_date
+    const switch_date = typeof sw === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(sw) ? sw : null
+    const asked = typeof b.offer_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(b.offer_date) ? b.offer_date : null
+    const offer_date = asked || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
+    const path = switch_date && offer_date >= switch_date ? 'new' : 'old'
+    return json({ onboarding_path: path, switch_date, offer_date })
+  }
   return null
 }
 
