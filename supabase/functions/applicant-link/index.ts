@@ -16,6 +16,7 @@
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { serverSecretOk } from '../_shared/staff-auth.ts'   // SLICE 1d: the server door for the Step 1 sender
 import { checkLink, makeOfferLink, makeOrientLink, makeStartLink, okId, type Kind } from '../_shared/applicant-links.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -64,6 +65,16 @@ Deno.serve(async (req) => {
   const action = S(b.action, 20)
   try {
     if (action === 'mint') {
+      /* SLICE 1d (2026-10-09): the Step 1 sender in the Training Platform runs with no staff behind it (it fires from the
+         caregiver's signature and from a scheduled retry), so the SERVER DOOR (x-outreach-secret, the same server-only
+         value the other projects use) may mint the START link only. Everything else still needs a signed-in office person. */
+      if (req.headers.get('x-outreach-secret')) {
+        if (!serverSecretOk(req, 'OUTREACH_SECRET', 'x-outreach-secret')) return json({ ok: false, error: 'unauthorized' }, 401)
+        if (b.kind !== 'start') return json({ ok: false, error: 'the server door mints start links only' }, 403)
+        const id = S(b.offer_id, 64)
+        if (!okId('start', id)) return json({ ok: false, error: 'Which job offer?' }, 400)
+        return json({ ok: true, url: await makeStartLink(secret, id) })
+      }
       const staff = await requireStaff(db, req, OFFICE_ROLES)
       if (!staff.ok) return json({ ok: false, error: staff.error }, staff.status)
       if (b.kind === 'start') {

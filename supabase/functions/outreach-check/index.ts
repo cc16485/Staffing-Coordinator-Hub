@@ -69,12 +69,14 @@ async function extraAnswer(db: any, b: Record<string, any>, sender: string, who:
     const path = switch_date && offer_date >= switch_date ? 'new' : 'old'
     const offer_expires_at = dueNextBusinessDay(offer_date + 'T12:00:00Z', row?.data?.company_holidays, 17, OFFER_LINK_BUSINESS_DAYS)
     const offer_send_live = row?.data?.offer_send_live === true
+    /* SLICE 1d (2026-10-09): whether the Step 1 link sends itself after the signature (Admin switch; off = practice) */
+    const step1_auto_live = row?.data?.step1_auto_live === true
     let may_reoffer = false
     if (who?.person_id) {
       const { data: pr } = await db.from('app_data').select('data').eq('key', PERM_KEY).maybeSingle()
       may_reoffer = mayApprove(normalizePerms(pr?.data), 'advance', { person_id: who.person_id, roles: who.roles })
     }
-    return json({ onboarding_path: path, switch_date, offer_date, offer_expires_at, offer_link_business_days: OFFER_LINK_BUSINESS_DAYS, offer_send_live, may_reoffer })
+    return json({ onboarding_path: path, switch_date, offer_date, offer_expires_at, offer_link_business_days: OFFER_LINK_BUSINESS_DAYS, offer_send_live, step1_auto_live, may_reoffer })
   }
   return null
 }

@@ -27,6 +27,7 @@ const src = fs.readFileSync(path.join(FN, 'applicant-link/index.ts'), 'utf8')
   .replace(/^import \{ createClient \}.*$/m, 'const createClient = (..._a: any[]) => (globalThis as any).__db;')
   .replace(/^import \{ requireStaff, OFFICE_ROLES \}.*$/m, "const OFFICE_ROLES = ['x']; const requireStaff = async (_d: any, req: Request) => req.headers.get('Authorization') === 'Bearer staff' ? { ok: true, name: 'Kat', email: 'k@x' } : { ok: false, status: 401, error: 'Sign in first.' };")
   .replace("'../_shared/applicant-links.ts'", "'" + path.join(FN, '_shared/applicant-links.ts') + "'")
+  .replace("'../_shared/staff-auth.ts'   // SLICE 1d", "'" + path.join(FN, '_shared/staff-auth.ts') + "'   // SLICE 1d")
 const tmp = path.join(os.tmpdir(), 'applicant_link_test_' + process.pid + '.ts'); fs.writeFileSync(tmp, src); await import(tmp); fs.unlinkSync(tmp)
 const T = { inserted: [], cands: [{ id: 17, first: 'Ava', last: 'Applicant', phone: '4175550199', email: 'ava@x.com', office: 'springfield' }], sessions: [{ id: 's1', date: '2026-10-10' }] }
 globalThis.__db = { from: (t) => { const b = { select() { return b }, eq(k, v) { b.k = v; return b },

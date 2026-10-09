@@ -7,7 +7,7 @@ const ROOT = path.dirname(new URL(import.meta.url).pathname), FN = path.join(ROO
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note ?? '').slice(0, 400)]);
 const L = await import(path.join(FN, '_shared/applicant-links.ts'));
 const SECRET = 'test-secret-'.repeat(4), NOW = Math.floor(Date.now() / 1000), OID = '0f1e2d3c-4b5a-4968-8777-66554433aabb', OID2 = '1f1e2d3c-4b5a-4968-8777-66554433aabb';
-const env = { SUPABASE_URL: 'http://x', SUPABASE_SERVICE_ROLE_KEY: 'svc', HUB_JOB_SECRET: SECRET, OFFERS_PROJECT_URL: 'https://train.test', OFFERS_SERVICE_ROLE_KEY: 'ok' };
+const env = { OUTREACH_SECRET: 'o'.repeat(40), SUPABASE_URL: 'http://x', SUPABASE_SERVICE_ROLE_KEY: 'svc', HUB_JOB_SECRET: SECRET, OFFERS_PROJECT_URL: 'https://train.test', OFFERS_SERVICE_ROLE_KEY: 'ok' };
 let handler = null; globalThis.Deno = { env: { get: (k) => env[k] }, serve: (h) => { handler = h; } };
 const mk = (over = {}) => ({ id: OID, first_name: 'Test', last_name: 'Applicant', position: 'Caregiver', pay_rate: 16, hours_type: 'PRN', classification: 'prn', onboarding_path: 'new', offer_status: 'sent', offer_version: null, pd_version: null,
   offer_sent_at: '2026-10-09T15:00:00Z', offer_sent_by: 'Krystal Land', offer_expires_at: new Date((NOW + 5 * 86400) * 1000).toISOString(), offer_viewed_at: null, offer_signed_at: null, offer_signer_name: null, pd_signed_at: null, offer_declined_at: null, offer_withdrawn_at: null, offer_pdf_path: null, pd_pdf_path: null, offered_by: 'Krystal', created_at: '2026-10-09T15:00:00Z', phone: '4175550199', email: 'x@y', notes: 'secret', ...over });
@@ -16,7 +16,10 @@ const guardOk = (row, guard) => {
   if (!guard) return true;
   for (const [k, v] of new URLSearchParams(guard.replace(/^&/, ''))) { if (v === 'is.null' && row[k] != null) return false; const m = /^not\.in\.\((.*)\)$/.exec(v); if (m && m[1].split(',').includes(String(row[k]))) return false; }
   return true; };
+const KICKS = [];
 globalThis.fetch = async (u, o = {}) => { const url = new URL(String(u)), m = (o.method || 'GET').toUpperCase(); const R = (s, b) => new Response(JSON.stringify(b), { status: s });
+  /* SLICE 1d: the kick to the Training Platform's job-offer server door once both documents are signed */
+  if (url.hostname === 'rdqujxiycycwhskyvrwa.supabase.co' && url.pathname === '/functions/v1/job-offer') { KICKS.push({ body: JSON.parse(o.body), secret: o.headers['x-outreach-secret'], auth: o.headers.Authorization || null }); return R(200, { ok: true, status: 'practice' }); }
   if (url.hostname !== 'train.test') throw new Error('unexpected ' + u);
   if (url.pathname === '/rest/v1/job_offers') { const id = (url.searchParams.get('id') || '').replace('eq.', ''); const row = OFFERS[id];
     if (m === 'GET') return R(200, row ? [row] : []);
@@ -44,6 +47,7 @@ r = await call({ action: 'sign', o: OID, e: lk.e, t: lk.t, doc: 'pd', typed_name
 r = await call({ action: 'sign', o: OID, e: lk.e, t: lk.t, doc: 'offer', typed_name: 'Test Applicant' }); ck('no consent, no signature', r.status === 400 && /agree to sign/.test(r.j.error), r);
 r = await call({ action: 'sign', o: OID, e: lk.e, t: lk.t, doc: 'offer', typed_name: 'Test', consent: true }); ck('a single name is refused', r.status === 400, r);
 r = await call({ action: 'sign', o: OID, e: lk.e, t: lk.t, doc: 'offer', typed_name: 'Test Applicant', consent: true });
+ck('the offer alone does not kick Step 1 (not both signed yet)', KICKS.length === 0 && r.j.step1 && r.j.step1.kicked === false, [KICKS, r.j.step1]);
 ck('the offer signs: time, name, device, version 1, event with fingerprint, PDF stored, copy link, not yet accepted', r.status === 200 && r.j.ok && r.j.doc === 'offer' && r.j.version === 1 && !r.j.accepted && /signed\.test/.test(r.j.copy_url) && OFFERS[OID].offer_signed_at && OFFERS[OID].offer_signer_name === 'Test Applicant' && OFFERS[OID].offer_signer_ip === '203.0.113.9' && OFFERS[OID].offer_version === 1 && EVENTS.some((e) => e.kind === 'signed' && e.fingerprint === r.j.fingerprint && e.detail.typed_name === 'Test Applicant') && Object.keys(FILES).length === 1 && OFFERS[OID].offer_pdf_path && OFFERS[OID].offer_status === 'viewed', [r, OFFERS[OID]]);
 const pdfRaw = Buffer.from(Object.values(FILES)[0].bytes).toString('latin1'); const pdf = [...pdfRaw.matchAll(/\((.*?)\) Tj/g)].map((m) => m[1].replace(/\\([()\\])/g, '$1')).join(' ');
 ck('the stored PDF is the branded letter: exact terms, letterhead fonts and logo, the signature record, no signature for Samantha', /no minimum number of hours per week is guaranteed/.test(pdf) && /\$16\.00 per hour/.test(pdf) && /drug screening required by Caring Companions' screening policy/.test(pdf) && /ELECTRONIC SIGNATURE/.test(pdf) && /Test Applicant/.test(pdf) && /Signed electronically with consent given on the signing page/.test(pdf) && /Fingerprint [0-9a-f]{64}/.test(pdf) && /Poppins-Regular/.test(pdfRaw) && /DCTDecode/.test(pdfRaw) && !/Signature:|signature image/i.test(pdf) && Object.values(FILES)[0].opts.upsert === false && Object.values(FILES)[0].opts.contentType === 'application/pdf');
@@ -54,6 +58,7 @@ realRow.offer_signed_at = '2026-10-09T16:00:00Z';
 r = await call({ action: 'sign', o: OID, e: lk.e, t: lk.t, doc: 'offer', typed_name: 'Test Applicant', consent: true }); globalThis.fetch = origGet;
 ck('a race (signed between read and save) is refused by the guarded save, no second event or PDF', r.status === 409 && EVENTS.filter((e) => e.kind === 'signed').length === 1 && Object.keys(FILES).length === 1, r);
 r = await call({ action: 'sign', o: OID, e: lk.e, t: lk.t, doc: 'pd', typed_name: 'Test Applicant', consent: true });
+ck('both signed: the Training Platform is kicked once with the shared secret, offer id only (no page data, no key), and the page is told', KICKS.length === 1 && KICKS[0].secret === 'o'.repeat(40) && KICKS[0].body.action === 'step1_send' && KICKS[0].body.offer_id === OID && Object.keys(KICKS[0].body).length === 2 && KICKS[0].auth === null && r.j.step1 && r.j.step1.kicked === true, [KICKS, r.j.step1]);
 ck('the position description signs second: its own event, version, PDF; the offer becomes accepted', r.status === 200 && r.j.doc === 'pd' && r.j.accepted === true && OFFERS[OID].pd_signed_at && OFFERS[OID].pd_version === 1 && OFFERS[OID].offer_status === 'accepted' && EVENTS.some((e) => e.kind === 'pd_signed') && Object.keys(FILES).length === 2 && OFFERS[OID].pd_pdf_path, [r, OFFERS[OID]]);
 r = await call({ action: 'copies', o: OID, e: lk.e, t: lk.t }); ck('the caregiver gets short-lived links to both signed copies', r.status === 200 && r.j.copies.offer && r.j.copies.pd && r.j.expires_in === 600, r);
 r = await call({ action: 'view', o: OID, e: lk.e, t: lk.t }); ck('view after both signatures shows both signed (resume shows the finished state)', r.j.state.offer_signed_at && r.j.state.pd_signed_at && r.j.state.status === 'accepted');
