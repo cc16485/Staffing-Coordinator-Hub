@@ -89,14 +89,16 @@ export class BrandPdf {
   hr(color: RGB = RULE, gap = 10) { this.ensure(gap * 2); this.y -= gap; this.line(ML, this.y, PAGE_W - MR, this.y, color, 0.8); this.y -= gap }
   /** the signature area: the typed name over a line with a small caps label, plus date and audit lines */
   signatureArea(typedName: string, signedWhen: string, audit: string[]) {
-    const h = 128 + audit.length * 11; this.ensure(h)
+    // every audit line is wrapped to the text width (a browser name can be 150 characters), so the block's height is known before it is placed
+    const auditLines = audit.flatMap((a) => wrap(a, 'R', 7.5, PAGE_W - MR - ML))
+    const h = 128 + auditLines.length * 11; this.ensure(h)
     this.y -= 24; this.textAt(typedName, ML + 4, this.y, 'S', 17, NAVY); this.line(ML, this.y - 6, PAGE_W - MR, this.y - 6, MUTED, 0.6)
     this.y -= 17; this.textAt('ELECTRONIC SIGNATURE', ML, this.y, 'S', 7.5, MUTED, 1.2)
     this.y -= 24; this.textAt(typedName, ML + 4, this.y, 'R', 12, TEXT); this.line(ML, this.y - 6, PAGE_W - MR, this.y - 6, MUTED, 0.6)
     this.y -= 17; this.textAt('PRINTED NAME', ML, this.y, 'S', 7.5, MUTED, 1.2)
     this.y -= 24; this.textAt(signedWhen, ML + 4, this.y, 'R', 12, TEXT); this.line(ML, this.y - 6, ML + 300, this.y - 6, MUTED, 0.6)
     this.y -= 17; this.textAt('DATE AND TIME SIGNED', ML, this.y, 'S', 7.5, MUTED, 1.2)
-    this.y -= 12; for (const a of audit) { this.y -= 11; this.textAt(a, ML, this.y, 'R', 7.5, MUTED) }
+    this.y -= 12; for (const a of auditLines) { this.y -= 11; this.textAt(a, ML, this.y, 'R', 7.5, MUTED) }
     this.y -= 6
   }
   /** the company letterhead (page 1) or the slim running header (later pages) */
