@@ -23,6 +23,15 @@ import { ghlContactIfAllowed, ghlStoredContactIfAllowed, mayContact } from '../_
 import { serverSecretOk } from '../_shared/staff-auth.ts'
 import { reportSendProblem } from '../_shared/send-problems.ts'
 import { latestTextConsent } from '../_shared/text-consent.ts'
+/* SLICE 1c (Samantha: "start slice 1c", 2026-10-09): the same onboarding_path answer also carries what the Training
+   Platform's job-offer needs for an offer on the NEW path, so Training never computes a holiday or reads a Hub setting
+   itself: the offer's expiry (seven business days after the offer date, 5pm Central, on the company calendar; her
+   ruling of October 8), whether offer sending is live (ops_settings.offer_send_live; off = practice, nothing goes out)
+   and whether the signed-in caller may re-offer over an open duplicate (the Approve to Advance list plus the owners,
+   by identity). The server door gets the expiry and the switch but never may_reoffer. Nothing is written. */
+import { dueNextBusinessDay } from '../_shared/business-days.ts'
+import { PERM_KEY, normalizePerms, mayApprove } from '../_shared/onboarding-permissions.ts'
+export const OFFER_LINK_BUSINESS_DAYS = 7
 
 /* TRAINING PLATFORM TEXTS (2026-10-01, Samantha: "fix the training platform texts"). Two more answers for senders in
    other projects, on both doors (server secret, or a forwarded staff sign-in):
@@ -31,7 +40,7 @@ import { latestTextConsent } from '../_shared/text-consent.ts'
      { text_ok: true, phone }  -> { text_ok }: false only when this phone's LATEST application said no to texts
         (job offers respect it; anyone with no application on file, e.g. an existing employee, is not affected). */
 // deno-lint-ignore no-explicit-any
-async function extraAnswer(db: any, b: Record<string, any>, sender: string): Promise<Response | null> {
+async function extraAnswer(db: any, b: Record<string, any>, sender: string, who: { person_id: string; roles: string[] } | null = null): Promise<Response | null> {
   if (b.report === true) {
     const ch = b.channel === 'email' ? 'email' : 'sms'
     /* ORIENTATION LINK (1b, 2026-10-01): held: true means the Training Platform held the message back itself (not in
@@ -58,7 +67,14 @@ async function extraAnswer(db: any, b: Record<string, any>, sender: string): Pro
     const asked = typeof b.offer_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(b.offer_date) ? b.offer_date : null
     const offer_date = asked || new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
     const path = switch_date && offer_date >= switch_date ? 'new' : 'old'
-    return json({ onboarding_path: path, switch_date, offer_date })
+    const offer_expires_at = dueNextBusinessDay(offer_date + 'T12:00:00Z', row?.data?.company_holidays, 17, OFFER_LINK_BUSINESS_DAYS)
+    const offer_send_live = row?.data?.offer_send_live === true
+    let may_reoffer = false
+    if (who?.person_id) {
+      const { data: pr } = await db.from('app_data').select('data').eq('key', PERM_KEY).maybeSingle()
+      may_reoffer = mayApprove(normalizePerms(pr?.data), 'advance', { person_id: who.person_id, roles: who.roles })
+    }
+    return json({ onboarding_path: path, switch_date, offer_date, offer_expires_at, offer_link_business_days: OFFER_LINK_BUSINESS_DAYS, offer_send_live, may_reoffer })
   }
   return null
 }
@@ -145,7 +161,7 @@ Deno.serve(async (req) => {
   // deno-lint-ignore no-explicit-any
   const b: Record<string, any> = await req.json().catch(() => ({}))
   if (b.auth_check === true) return json({ ok: true, authorized: true, email: who.email, name: who.name, roles: who.roles })
-  const extra = await extraAnswer(db, b, String(b.sender || 'other-project').slice(0, 60))
+  const extra = await extraAnswer(db, b, String(b.sender || 'other-project').slice(0, 60), { person_id: who.person_id, roles: who.roles })
   if (extra) return extra
 
   const channel = b.channel === 'email' ? 'email' : b.channel === 'sms' ? 'sms' : null
