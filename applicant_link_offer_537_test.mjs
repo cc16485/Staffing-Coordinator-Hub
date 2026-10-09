@@ -48,7 +48,9 @@ OFFERS[OID].offer_expires_at = new Date((NOW - 10) * 1000).toISOString(); r = aw
 process.env.OUTREACH_SECRET = 'o'.repeat(40); globalThis.Deno.env.get = ((g) => (k) => k === 'OUTREACH_SECRET' ? 'o'.repeat(40) : g(k))(globalThis.Deno.env.get);
 const srv = async (body, sec) => { const r = await handler(new Request('http://x/applicant-link', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-outreach-secret': sec }, body: JSON.stringify(body) })); return { status: r.status, j: await r.json() }; };
 r = await srv({ action: 'mint', kind: 'start', offer_id: OID }, 'o'.repeat(40)); ck('the server door (right secret) mints a start link for the Step 1 sender', r.status === 200 && r.j.ok && /start\.html\?o=/.test(r.j.url), r);
-r = await srv({ action: 'mint', kind: 'offer', offer_id: OID, exp: q.e }, 'o'.repeat(40)); ck('the server door is refused an offer link (start links only)', r.status === 403, r);
+r = await srv({ action: 'mint', kind: 'offer', offer_id: OID, exp: q.e }, 'o'.repeat(40)); ck('the server door mints an offer link with the offer\'s own expiry (for the reminders)', r.status === 200 && r.j.ok && /offer\.html\?o=/.test(r.j.url), r);
+r = await srv({ action: 'mint', kind: 'offer', offer_id: OID }, 'o'.repeat(40)); ck('the server door is refused an offer link without the expiry (no default life)', r.status === 400, r);
+r = await srv({ action: 'mint', kind: 'orient', candidate_id: '12', sessions: 'x' }, 'o'.repeat(40)); ck('the server door is refused an orientation link', r.status === 403, r);
 r = await srv({ action: 'mint', kind: 'start', offer_id: OID }, 'x'.repeat(40)); ck('a wrong secret is refused', r.status === 401, r);
 r = await srv({ action: 'open', kind: 'start', o: OID, e: q.e, t: q.t }, 'o'.repeat(40)); ck('the server door cannot open a link (mint only)', r.status !== 200, r);
 for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note));
