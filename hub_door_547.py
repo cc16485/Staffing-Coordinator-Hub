@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# 545 · SLICE 1c, THE HUB DOOR (Samantha: "start slice 1c", 2026-10-09). Hub project. Replaces the outreach-check function
+# 547 · SLICE 1c, THE HUB DOOR (Samantha: "start slice 1c", 2026-10-09). Hub project. Replaces the outreach-check function
 # with the reviewed build: its onboarding_path answer now also carries the offer expiry, the offer_send_live switch and
 # may_reoffer. Nothing else changes; nothing is sent; no record changes. The switch stays off (practice).
 import os, json
-os.environ.setdefault("SB_STEP", "545")
+os.environ.setdefault("SB_STEP", "547")
 from cc_step_lib import *
 REF = "zngsgedlsxinbygwmxwn"; FN = "outreach-check"
 start("SLICE 1c: THE HUB DOOR ANSWERS THE OFFER EXPIRY, THE SWITCH AND MAY-REOFFER")
