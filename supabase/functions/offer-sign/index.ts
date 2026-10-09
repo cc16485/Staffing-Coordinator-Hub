@@ -108,11 +108,15 @@ Deno.serve(async (req) => {
     const gone = dead(o); if (gone) return gone
     if (action === 'view') {
       const r = await render(o)
+      /* the page must never claim a message was sent: the Step 1 automation (Slice 1d) is live only when the Admin switch
+         step1_auto_live is on; until then the page says so, and in testing it says plainly that nothing is sent */
+      let automation_live = false
+      try { const { data: st } = await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle(); automation_live = st?.data?.step1_auto_live === true } catch { automation_live = false }
       if (!o.offer_viewed_at) {
         const n = await T.patch(id, { offer_viewed_at: new Date().toISOString(), ...(o.offer_status === 'sent' ? { offer_status: 'viewed' } : {}) }, '&offer_viewed_at=is.null')
         if (n) await T.event({ offer_id: id, kind: 'viewed', by_who: 'caregiver', channel: 'page', doc_version: OFFER_DOC_VERSION, fingerprint: r.offer_fp, detail: { ip: ipOf(req), agent: agentOf(req) } })
       }
-      return json({ ok: true, first: r.fields.first, state: state(o), versions: { offer: OFFER_DOC_VERSION, pd: PD_DOC_VERSION }, fingerprints: { offer: r.offer_fp, pd: r.pd_fp }, offer: r.offer, pd: r.pd })
+      return json({ ok: true, first: r.fields.first, state: state(o), automation_live, test_mode: !automation_live, versions: { offer: OFFER_DOC_VERSION, pd: PD_DOC_VERSION }, fingerprints: { offer: r.offer_fp, pd: r.pd_fp }, offer: r.offer, pd: r.pd })
     }
     if (action === 'copies') {
       const out: Record<string, string> = {}

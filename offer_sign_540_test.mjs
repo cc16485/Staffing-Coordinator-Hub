@@ -11,7 +11,7 @@ const env = { SUPABASE_URL: 'http://x', SUPABASE_SERVICE_ROLE_KEY: 'svc', HUB_JO
 let handler = null; globalThis.Deno = { env: { get: (k) => env[k] }, serve: (h) => { handler = h; } };
 const mk = (over = {}) => ({ id: OID, first_name: 'Test', last_name: 'Applicant', position: 'Caregiver', pay_rate: 16, hours_type: 'PRN', classification: 'prn', onboarding_path: 'new', offer_status: 'sent', offer_version: null, pd_version: null,
   offer_sent_at: '2026-10-09T15:00:00Z', offer_sent_by: 'Krystal Land', offer_expires_at: new Date((NOW + 5 * 86400) * 1000).toISOString(), offer_viewed_at: null, offer_signed_at: null, offer_signer_name: null, pd_signed_at: null, offer_declined_at: null, offer_withdrawn_at: null, offer_pdf_path: null, pd_pdf_path: null, offered_by: 'Krystal', created_at: '2026-10-09T15:00:00Z', phone: '4175550199', email: 'x@y', notes: 'secret', ...over });
-let OFFERS = { [OID]: mk() }; let EVENTS = []; let FILES = {}; let LOG = []; let PATCHES = [];
+let OFFERS = { [OID]: mk() }; let EVENTS = []; let FILES = {}; let LOG = []; let PATCHES = []; let OPS = {};
 const guardOk = (row, guard) => {
   if (!guard) return true;
   for (const [k, v] of new URLSearchParams(guard.replace(/^&/, ''))) { if (v === 'is.null' && row[k] != null) return false; const m = /^not\.in\.\((.*)\)$/.exec(v); if (m && m[1].split(',').includes(String(row[k]))) return false; }
@@ -26,7 +26,7 @@ globalThis.fetch = async (u, o = {}) => { const url = new URL(String(u)), m = (o
 globalThis.__fakeCreateClient = () => ({
   storage: { from: (bucket) => ({ upload: async (p, bytes, opts) => { if (FILES[p] && !opts.upsert) return { error: { message: 'The resource already exists' } }; FILES[p] = { bucket, bytes, opts }; return { data: { path: p }, error: null }; },
     createSignedUrl: async (p, secs) => FILES[p] ? { data: { signedUrl: 'https://signed.test/' + p + '?exp=' + secs }, error: null } : { data: null, error: { message: 'not found' } } }) },
-  from: (t) => ({ insert: async (r) => { if (t === 'document_access_log') LOG.push(r); return { error: null }; } }),
+  from: (t) => { const b = { select() { return b; }, eq() { return b; }, maybeSingle: async () => ({ data: t === 'app_data' ? { data: OPS } : null, error: null }), insert: async (r) => { if (t === 'document_access_log') LOG.push(r); return { error: null }; } }; return b; },
   auth: { getUser: async (jwt) => jwt === 'staff' ? { data: { user: { id: 'u1', email: 'krystal@mo-care.com', app_metadata: {} } } } : { data: null, error: { message: 'no' } } } });
 let src = fs.readFileSync(path.join(FN, 'offer-sign/index.ts'), 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = globalThis.__fakeCreateClient');
 src = src.replace(/^import \{ requireStaff, OFFICE_ROLES \} from .*$/m, "const OFFICE_ROLES = ['owner_admin','care_coordinator','staffing_coordinator']; const requireStaff = async (db, req) => (req.headers.get('Authorization') === 'Bearer staff') ? { ok: true, person_id: 'p1', name: 'Krystal Land', email: 'krystal@mo-care.com', roles: ['staffing_coordinator'] } : { ok: false, status: 401, error: 'Sign in first.' }");
@@ -38,6 +38,7 @@ const lk = await linkFor(OID, NOW + 5 * 86400);
 let r = await call({ action: 'view', o: OID, e: lk.e, t: 'x'.repeat(43) }); ck('a forged link gets nothing', r.status === 401 && !r.j.offer, r);
 r = await call({ action: 'view', o: OID, e: lk.e, t: lk.t });
 ck('view: both documents rendered, the state, versions and fingerprints, no phone/email/notes', r.status === 200 && r.j.ok && r.j.first === 'Test' && r.j.offer.length > 30 && r.j.pd.length > 25 && r.j.versions.offer === 1 && /^[0-9a-f]{64}$/.test(r.j.fingerprints.pd) && !JSON.stringify(r.j).includes('4175550199') && !JSON.stringify(r.j).includes('secret'), r.j && Object.keys(r.j));
+ck('view says the Step 1 automation is NOT live (test mode) while the switch is off, and live only when it is on', r.j.automation_live === false && r.j.test_mode === true && (OPS = { step1_auto_live: true }, (await call({ action: 'view', o: OID, e: lk.e, t: lk.t })).j.automation_live === true) && (OPS = {}, true));
 ck('view marks viewed once with one event; a second view adds none', OFFERS[OID].offer_viewed_at && OFFERS[OID].offer_status === 'viewed' && EVENTS.filter((e) => e.kind === 'viewed').length === 1 && (await call({ action: 'view', o: OID, e: lk.e, t: lk.t }), EVENTS.filter((e) => e.kind === 'viewed').length === 1), EVENTS);
 r = await call({ action: 'sign', o: OID, e: lk.e, t: lk.t, doc: 'pd', typed_name: 'Test Applicant', consent: true }); ck('the position description cannot be signed before the offer', r.status === 409 && /offer letter first/.test(r.j.error), r);
 r = await call({ action: 'sign', o: OID, e: lk.e, t: lk.t, doc: 'offer', typed_name: 'Test Applicant' }); ck('no consent, no signature', r.status === 400 && /agree to sign/.test(r.j.error), r);
