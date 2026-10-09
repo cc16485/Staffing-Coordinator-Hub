@@ -11,7 +11,7 @@ const OID = '0f1e2d3c-4b5a-4968-8777-66554433aabb';
 const exp7 = NOW + 7 * 86400;
 const u = await L.makeOfferLink(SECRET, OID, exp7); const q = Object.fromEntries(new URL(u).searchParams);
 ck('the offer link points at offer.html with id, expiry and code and nothing personal', u.startsWith('https://cc.mo-care.com/offer.html?') && q.o === OID && Number(q.e) === exp7 && /^[A-Za-z0-9_-]{43}$/.test(q.t) && !/name|phone|email/.test(u), u);
-ck('the expiry is the offer\'s own, never past the 30-day cap', Number(new URL(await L.makeOfferLink(SECRET, OID, NOW + 90 * 86400)).searchParams.get('e')) <= L.expiry(NOW) + 5 && Number(new URL(await L.makeOfferLink(SECRET, OID, 0)).searchParams.get('e')) >= NOW + 29 * 86400);
+ck('the expiry is the offer\'s own: missing, past, or beyond 30 days is refused, never defaulted', (await L.makeOfferLink(SECRET, OID, NOW + 90 * 86400)) === null && (await L.makeOfferLink(SECRET, OID, 0)) === null && (await L.makeOfferLink(SECRET, OID, NOW - 60)) === null && (await L.makeOfferLink(SECRET, OID, NaN)) === null && Number(new URL(await L.makeOfferLink(SECRET, OID, NOW + 3 * 86400)).searchParams.get('e')) === NOW + 3 * 86400);
 ck('a good offer link checks; the same code is refused for a start link, an altered id, an altered expiry, or after expiry', await L.checkLink(SECRET, 'offer', OID, q.e, q.t) && !(await L.checkLink(SECRET, 'start', OID, q.e, q.t)) && !(await L.checkLink(SECRET, 'offer', OID.replace('0f', '1f'), q.e, q.t)) && !(await L.checkLink(SECRET, 'offer', OID, Number(q.e) + 1, q.t)) && !(await L.checkLink(SECRET, 'offer', OID, q.e, q.t, exp7 + 1)));
 ck('start and orient links are unchanged', (await L.makeStartLink(SECRET, OID)).startsWith('https://cc.mo-care.com/start.html?o=') && (await L.makeOrientLink(SECRET, '123', 'abc')).startsWith('https://sc.mo-care.com/orientation-booking.html?'));
 // the function
@@ -35,6 +35,8 @@ let r = await call({ action: 'mint', kind: 'offer', offer_id: OID, exp: NOW + 5 
 r = await call({ action: 'mint', kind: 'offer', offer_id: OID, exp: NOW + 5 * 86400 }, 'staff'); ck('a staff member mints an offer link for a real offer', r.status === 200 && r.j.ok && r.j.url.startsWith('https://cc.mo-care.com/offer.html?o=' + OID), r);
 const link = r.j && r.j.url ? Object.fromEntries(new URL(r.j.url).searchParams) : {};
 r = await call({ action: 'mint', kind: 'offer', offer_id: 'not-an-id' }, 'staff'); ck('a bad offer id is refused', r.status === 400, r);
+r = await call({ action: 'mint', kind: 'offer', offer_id: OID }, 'staff'); ck('minting without the offer expiry is refused (no default life)', r.status === 400 && /expiry/.test(r.j.error), r);
+r = await call({ action: 'mint', kind: 'offer', offer_id: OID, exp: NOW + 60 * 86400 }, 'staff'); ck('an expiry beyond 30 days is refused', r.status === 400, r);
 r = await call({ action: 'mint', kind: 'offer', offer_id: OID.replace('0f', '1f') }, 'staff'); ck('an unknown offer is refused', r.status === 404, r);
 r = await call({ action: 'open', kind: 'offer', o: OID, e: link.e, t: link.t }); ck('opening with the minted link returns the letter fields and nothing personal', r.status === 200 && r.j.first === 'Ava' && r.j.position === 'Caregiver' && r.j.pay_rate === 16 && r.j.classification === 'prn' && r.j.status === 'sent' && !('phone' in r.j) && !('email' in r.j) && !('notes' in r.j), r.j);
 ck('the letter read asks the Training Platform for the letter columns only (no phone, email or notes)', ASKED.some((s) => /select=id,first_name,last_name,position/.test(s) && !/phone|email|notes/.test(s)), ASKED);

@@ -76,7 +76,9 @@ Deno.serve(async (req) => {
         if (!okId('offer', id)) return json({ ok: false, error: 'Which job offer?' }, 400)
         if (!(await offer(id))) return json({ ok: false, error: 'That offer is not on file.' }, 404)
         const exp = Number(b.exp)
-        return json({ ok: true, url: await makeOfferLink(secret, id, Number.isInteger(exp) ? exp : 0) })
+        const url = await makeOfferLink(secret, id, exp)
+        if (!url) return json({ ok: false, error: 'An offer link needs the offer\'s own expiry (in the future, at most 30 days out); it is never given a default life.' }, 400)
+        return json({ ok: true, url })
       }
       if (b.kind === 'orient') {
         const id = S(b.candidate_id, 12), sessions = String(b.sessions ?? '')

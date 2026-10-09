@@ -32,12 +32,12 @@ export async function makeStartLink(secret: string, offerId: string, exp = expir
   const t = await sign(secret, 'start', offerId, exp)
   return `${START_BASE}?o=${encodeURIComponent(offerId)}&e=${exp}&t=${t}`
 }
-/** The offer link: exp = the offer's expiry (seconds), never longer than LINK_DAYS from now. */
-export async function makeOfferLink(secret: string, offerId: string, exp: number): Promise<string> {
-  const cap = expiry()
-  const e = Number.isInteger(exp) && exp > 0 && exp <= cap ? exp : cap
-  const t = await sign(secret, 'offer', offerId, e)
-  return `${OFFER_BASE}?o=${encodeURIComponent(offerId)}&e=${e}&t=${t}`
+/** The offer link dies with the offer: exp = the offer's own expiry (seconds). It must be in the future and no later
+ *  than LINK_DAYS from now; anything else is refused (null), never stretched to a default. */
+export async function makeOfferLink(secret: string, offerId: string, exp: number, nowSec = Math.floor(Date.now() / 1000)): Promise<string | null> {
+  if (!Number.isInteger(exp) || exp <= nowSec || exp > expiry(nowSec)) return null
+  const t = await sign(secret, 'offer', offerId, exp)
+  return `${OFFER_BASE}?o=${encodeURIComponent(offerId)}&e=${exp}&t=${t}`
 }
 export async function makeOrientLink(secret: string, candidateId: string, sessions: string, exp = expiry()): Promise<string> {
   const t = await sign(secret, 'orient', candidateId, exp)
