@@ -43,6 +43,12 @@ ROLES = ['staffing_coordinator']; PID = 'p1';
 r = await ask({ onboarding_path: true, offer_date: '2026-10-09' }, 'nobody', { 'x-outreach-secret': 'x'.repeat(40) });
 ck('the server door gets the expiry and the switch but never may_reoffer', r.status === 200 && r.j.offer_expires_at === '2026-10-20T22:00:00.000Z' && r.j.offer_send_live === false && r.j.may_reoffer === false, r.j);
 r = await ask({ onboarding_path: true }, 'nobody'); ck('no sign-in and no secret: refused', r.status === 401 || r.status === 403);
+/* SLICE 1e: reminder days from the Admin page, the reminders switch */
+OPS = {}; r = await ask({ onboarding_path: true }); ck('reminder days default to 2 and 5; reminders are practice until the switch is on', JSON.stringify(r.j.offer_reminder_days) === '[2,5]' && r.j.offer_reminders_live === false, r.j);
+OPS = { onboarding: { offer_days: [3, 6] }, offer_reminders_live: true }; r = await ask({ onboarding_path: true }); ck('the Admin page days are used, the switch on', JSON.stringify(r.j.offer_reminder_days) === '[3,6]' && r.j.offer_reminders_live === true, r.j);
+OPS = { onboarding: { offer_days: [5, 2] } }; r = await ask({ onboarding_path: true }); ck('days out of order fall back to the approved 2 and 5', JSON.stringify(r.j.offer_reminder_days) === '[2,5]', r.j);
+OPS = { onboarding: { offer_days: ['x', 40] } }; r = await ask({ onboarding_path: true }); ck('junk days fall back to the approved 2 and 5', JSON.stringify(r.j.offer_reminder_days) === '[2,5]', r.j);
+OPS = {};
 ck('nothing was written', writes === 0, writes);
 for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note));
 const bad = res.filter((x) => !x[1]).length; console.log(`${res.length - bad}/${res.length} passed`); process.exit(bad ? 1 : 0);

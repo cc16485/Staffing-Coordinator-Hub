@@ -71,12 +71,18 @@ async function extraAnswer(db: any, b: Record<string, any>, sender: string, who:
     const offer_send_live = row?.data?.offer_send_live === true
     /* SLICE 1d (2026-10-09): whether the Step 1 link sends itself after the signature (Admin switch; off = practice) */
     const step1_auto_live = row?.data?.step1_auto_live === true
+    /* SLICE 1e (2026-10-09): the offer reminders. Days after sending from the Admin page (ops_settings.onboarding.offer_days,
+       approved 2 and 5), whole days 1 to 30, two of them; the switch offer_reminders_live (off = practice). */
+    const rawDays = Array.isArray(row?.data?.onboarding?.offer_days) ? row.data.onboarding.offer_days : []
+    const days = rawDays.map((x: unknown) => Number(x)).filter((n: number) => Number.isInteger(n) && n >= 1 && n <= 30).slice(0, 2)
+    const offer_reminder_days = days.length === 2 && days[0] < days[1] ? days : [2, 5]
+    const offer_reminders_live = row?.data?.offer_reminders_live === true
     let may_reoffer = false
     if (who?.person_id) {
       const { data: pr } = await db.from('app_data').select('data').eq('key', PERM_KEY).maybeSingle()
       may_reoffer = mayApprove(normalizePerms(pr?.data), 'advance', { person_id: who.person_id, roles: who.roles })
     }
-    return json({ onboarding_path: path, switch_date, offer_date, offer_expires_at, offer_link_business_days: OFFER_LINK_BUSINESS_DAYS, offer_send_live, step1_auto_live, may_reoffer })
+    return json({ onboarding_path: path, switch_date, offer_date, offer_expires_at, offer_link_business_days: OFFER_LINK_BUSINESS_DAYS, offer_send_live, step1_auto_live, offer_reminder_days, offer_reminders_live, may_reoffer })
   }
   return null
 }

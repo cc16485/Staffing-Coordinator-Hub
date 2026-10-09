@@ -70,9 +70,16 @@ Deno.serve(async (req) => {
          value the other projects use) may mint the START link only. Everything else still needs a signed-in office person. */
       if (req.headers.get('x-outreach-secret')) {
         if (!serverSecretOk(req, 'OUTREACH_SECRET', 'x-outreach-secret')) return json({ ok: false, error: 'unauthorized' }, 401)
-        if (b.kind !== 'start') return json({ ok: false, error: 'the server door mints start links only' }, 403)
+        /* SLICE 1e: the reminders (a scheduled run, no staff) also need the OFFER link, always with the offer's own expiry */
+        if (b.kind !== 'start' && b.kind !== 'offer') return json({ ok: false, error: 'the server door mints start and offer links only' }, 403)
         const id = S(b.offer_id, 64)
         if (!okId('start', id)) return json({ ok: false, error: 'Which job offer?' }, 400)
+        if (b.kind === 'offer') {
+          if (!(await offer(id))) return json({ ok: false, error: 'That offer is not on file.' }, 404)
+          const url = await makeOfferLink(secret, id, Number(b.exp))
+          if (!url) return json({ ok: false, error: 'An offer link needs the offer\'s own expiry (in the future, at most 30 days out); it is never given a default life.' }, 400)
+          return json({ ok: true, url })
+        }
         return json({ ok: true, url: await makeStartLink(secret, id) })
       }
       const staff = await requireStaff(db, req, OFFICE_ROLES)
