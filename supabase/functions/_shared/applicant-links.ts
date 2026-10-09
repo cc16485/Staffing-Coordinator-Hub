@@ -8,8 +8,12 @@
 export const START_BASE = 'https://cc.mo-care.com/start.html'
 export const ORIENT_BASE = 'https://sc.mo-care.com/orientation-booking.html'
 export const LINK_DAYS = 30
+/* SLICE 1a (Samantha approved 2026-10-08): the offer-and-sign link. https://cc.mo-care.com/offer.html?o=<job offer id>&e=<expiry>&t=<code>
+   Same code design; the expiry is the OFFER's own expiry (seven business days on the company holiday calendar), passed
+   in by the caller, so the link dies with the offer. Nothing sends it yet (Slice 1c). */
+export const OFFER_BASE = 'https://cc.mo-care.com/offer.html'
 const PURPOSE = 'cc-applicant-link-v1'
-export type Kind = 'start' | 'orient'
+export type Kind = 'start' | 'orient' | 'offer'
 
 const enc = new TextEncoder()
 const b64url = (b: ArrayBuffer) => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
@@ -18,7 +22,7 @@ async function hmac(secret: string, msg: string): Promise<string> {
   return b64url(await crypto.subtle.sign('HMAC', k, enc.encode(msg)))
 }
 export const okId = (kind: Kind, id: unknown) =>
-  kind === 'start' ? /^[0-9a-f-]{8,64}$/i.test(String(id ?? '')) : /^[0-9]{1,12}$/.test(String(id ?? ''))
+  (kind === 'start' || kind === 'offer') ? /^[0-9a-f-]{8,64}$/i.test(String(id ?? '')) : /^[0-9]{1,12}$/.test(String(id ?? ''))
 export function expiry(nowSec = Math.floor(Date.now() / 1000)): number { return nowSec + LINK_DAYS * 86400 }
 
 export async function sign(secret: string, kind: Kind, id: string, exp: number): Promise<string> {
@@ -27,6 +31,13 @@ export async function sign(secret: string, kind: Kind, id: string, exp: number):
 export async function makeStartLink(secret: string, offerId: string, exp = expiry()): Promise<string> {
   const t = await sign(secret, 'start', offerId, exp)
   return `${START_BASE}?o=${encodeURIComponent(offerId)}&e=${exp}&t=${t}`
+}
+/** The offer link: exp = the offer's expiry (seconds), never longer than LINK_DAYS from now. */
+export async function makeOfferLink(secret: string, offerId: string, exp: number): Promise<string> {
+  const cap = expiry()
+  const e = Number.isInteger(exp) && exp > 0 && exp <= cap ? exp : cap
+  const t = await sign(secret, 'offer', offerId, e)
+  return `${OFFER_BASE}?o=${encodeURIComponent(offerId)}&e=${e}&t=${t}`
 }
 export async function makeOrientLink(secret: string, candidateId: string, sessions: string, exp = expiry()): Promise<string> {
   const t = await sign(secret, 'orient', candidateId, exp)
