@@ -83,6 +83,11 @@ ev = counts(HUB, f"select at, actor_email, verb, summary from public.op_events w
 if ev is not None:
     for e in ev[:30]: say(f"  · {str(e['at'])[:16]} {e['actor_email']}: {e['summary']}")
     say(f"  ✓ {len(ev)} onboarding event(s) since the snapshot")
+# every other setting or switch change since the snapshot, with who did it, so a flipped switch is never a mystery
+oth = counts(HUB, f"select at, actor_email, verb, summary from public.op_events where at >= {lit(since)} and verb = 'setting_changed' and not (summary ilike '%onboarding%' or summary ilike '%company holidays%' or summary ilike '%Viventium Step 2 checklist%') order by at", "other setting changes")
+if oth is not None:
+    for e in oth[:30]: say(f"  · {str(e['at'])[:16]} {e['actor_email']}: {e['summary']}")
+    say(f"  ✓ {len(oth)} other setting or switch change(s) since the snapshot" + (", each with who did it above" if oth else ""))
 say(); say("PART 6 · NOTHING ELSE CHANGED (against the snapshot)")
 if not snap: say("  · no snapshot found on the Desktop (the 'before' step was not run), so there is nothing to compare")
 else:
