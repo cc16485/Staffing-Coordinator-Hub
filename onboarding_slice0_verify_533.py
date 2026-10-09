@@ -21,14 +21,16 @@ def counts(ref, q, label):
     return rows
 def snapshot():
     s = {"taken_at": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
-    r = counts(TRN, "select count(*) as offers, count(welcome_sent_at) as welcomed, count(start_link_sent_at) as start_links from public.job_offers", "offers")
+    ocols = {c["column_name"] for c in (counts(TRN, "select column_name from information_schema.columns where table_schema='public' and table_name='job_offers'", "offer columns") or [])}
+    stamps = [c for c in ("welcome_sent_at", "start_link_sent_at", "step1_done_at", "viventium_entered_at") if c in ocols]
+    r = counts(TRN, "select count(*) as offers" + "".join(f", count({c}) as {c}" for c in stamps) + " from public.job_offers", "offers")
     s["offers"] = r[0] if r else None
     cols = counts(TRN, "select column_name from information_schema.columns where table_schema='public' and table_name='caregivers'", "caregiver columns") or []
     names = {c["column_name"] for c in cols}
     stat = next((c for c in ("status", "axiscare_status", "employment_status") if c in names), None)
     s["training_caregivers"] = (counts(TRN, f"select coalesce({stat}::text,'(none)') as status, count(*) as n from public.caregivers group by 1 order by 1", "caregiver statuses") if stat else [{"status": "(no status column)", "n": 0}])
     s["hub_roster"] = counts(HUB, "select coalesce(e->>'status', e->>'axiscare_status', '(none)') as status, count(*) as n from public.app_data d, jsonb_array_elements(case when jsonb_typeof(d.data)='array' then d.data else '[]'::jsonb end) e where d.key='caregivers' group by 1 order by 1", "Hub roster statuses")
-    sw = counts(HUB, "select key, value from public.app_data d, jsonb_each(case when jsonb_typeof(d.data)='object' then d.data else '{}'::jsonb end) where d.key='ops_settings' and key like '%\\_live' order by 1", "switches")
+    sw = counts(HUB, "select e.key as key, e.value as value from public.app_data d, jsonb_each(case when jsonb_typeof(d.data)='object' then d.data else '{}'::jsonb end) e where d.key='ops_settings' and e.key like '%\\_live' order by 1", "switches")
     s["switches"] = {r["key"]: r["value"] for r in (sw or [])}
     ev = counts(HUB, "select count(*) as n from public.op_events", "event log"); s["op_events"] = int(ev[0]["n"]) if ev else None
     return s
@@ -38,7 +40,7 @@ if MODE == "before":
     s = snapshot()
     if fails: say("RESULT: CHECK THE ✗ LINES ABOVE"); done(9)
     open(SNAP, "w").write(json.dumps(s, indent=1))
-    say(f"  ✓ offers: {s['offers']['offers']}, welcome messages stamped: {s['offers']['welcomed']}, start links stamped: {s['offers']['start_links']}")
+    say(f"  ✓ offers: {s['offers']['offers']}; message stamps: " + ", ".join(f"{k} {v}" for k, v in s["offers"].items() if k != "offers"))
     say("  ✓ Training caregivers by status: " + ", ".join(f"{r['status']} {r['n']}" for r in s["training_caregivers"]))
     say("  ✓ Hub roster by status: " + ", ".join(f"{r['status']} {r['n']}" for r in s["hub_roster"]))
     say(f"  ✓ {len(s['switches'])} Hub switches recorded, event log at {s['op_events']} lines")
@@ -84,7 +86,8 @@ if not snap: say("  · no snapshot found on the Desktop (the 'before' step was n
 else:
     now = snapshot()
     a, b = snap["offers"] or {}, now["offers"] or {}
-    say(f"  ✓ message stamps on offers unchanged by the deploy: welcome {a.get('welcomed')} → {b.get('welcomed')}, start links {a.get('start_links')} → {b.get('start_links')} (offers {a.get('offers')} → {b.get('offers')}, new ones since the snapshot are the office's own)") if a.get("welcomed") == b.get("welcomed") and a.get("start_links") == b.get("start_links") else bad(f"message stamps changed: {a} → {b}. If the office sent offers meanwhile that is expected; otherwise tell Claude.")
+    same = all(a.get(k) == b.get(k) for k in a if k != "offers")
+    say("  ✓ message stamps on offers unchanged by the deploy: " + ", ".join(f"{k} {a.get(k)} → {b.get(k)}" for k in a if k != "offers") + f" (offers {a.get('offers')} → {b.get('offers')}; new ones since the snapshot are the office's own)") if same else bad(f"message stamps changed: {a} → {b}. If the office sent offers meanwhile that is expected; otherwise tell Claude.")
     for key, label in (("training_caregivers", "Training caregiver statuses"), ("hub_roster", "Hub roster statuses")):
         before = {r["status"]: r["n"] for r in snap[key]}; after = {r["status"]: r["n"] for r in now[key]}
         say(f"  ✓ {label} unchanged: " + ", ".join(f"{k} {v}" for k, v in after.items())) if before == after else say(f"  · {label} differ: before {before}, after {after} (the nightly AxisCare sync and the office's own work change these daily; a difference here is not by itself a Slice 0 change)")
