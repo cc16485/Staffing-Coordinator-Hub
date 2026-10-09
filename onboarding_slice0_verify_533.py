@@ -27,8 +27,10 @@ def snapshot():
     s["offers"] = r[0] if r else None
     cols = counts(TRN, "select column_name from information_schema.columns where table_schema='public' and table_name='caregivers'", "caregiver columns") or []
     names = {c["column_name"] for c in cols}
-    stat = next((c for c in ("status", "axiscare_status", "employment_status") if c in names), None)
+    stat = next((c for c in ("status", "axiscare_status", "employment_status", "active") if c in names), None)
+    # the Training sync keeps AxisCare's active flag as `active` (true = an active caregiver in AxisCare), not a status name
     s["training_caregivers"] = (counts(TRN, f"select coalesce({stat}::text,'(none)') as status, count(*) as n from public.caregivers group by 1 order by 1", "caregiver statuses") if stat else [{"status": "(no status column)", "n": 0}])
+    if stat == "active": s["training_caregivers"] = [{"status": "active in AxisCare" if r["status"] == "true" else "inactive in AxisCare" if r["status"] == "false" else r["status"], "n": r["n"]} for r in s["training_caregivers"]]
     s["hub_roster"] = counts(HUB, "select coalesce(e->>'status', e->>'axiscare_status', '(none)') as status, count(*) as n from public.app_data d, jsonb_array_elements(case when jsonb_typeof(d.data)='array' then d.data else '[]'::jsonb end) e where d.key='caregivers' group by 1 order by 1", "Hub roster statuses")
     sw = counts(HUB, "select e.key as key, e.value as value from public.app_data d, jsonb_each(case when jsonb_typeof(d.data)='object' then d.data else '{}'::jsonb end) e where d.key='ops_settings' and e.key like '%\\_live' order by 1", "switches")
     s["switches"] = {r["key"]: r["value"] for r in (sw or [])}
