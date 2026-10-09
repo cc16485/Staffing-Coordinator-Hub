@@ -1031,6 +1031,75 @@ Deno.serve(async (req) => {
         note: 'Replies land on the case like any other ask — watch the board.' })
     }
 
+    if (body.action === 'follow_up') {
+      /* FOLLOW UP WITH THE PEOPLE ALREADY ASKED (her ask 2026-10-09: "a way to send a follow up text just to the
+         people we have already sent to, so we don't have to remember who we asked", a nudge or a bonus). Recipients
+         come from this case's own asked[] and nowhere else: a person this case TEXTED (a Cara wave or the picker)
+         who has not said yes. One text in the office's words, {first_name} filled per person, through the same
+         outbound gate (identity + opt-out) and the same send check (a refused text raises a card, never silent).
+         Recorded on the case as followups[] so asked[], which replies write, is never overwritten. The night hold
+         applies like any other caregiver text. */
+      const wantedIds = new Set((Array.isArray(body.ask_ids) ? body.ask_ids : []).map((x: unknown) => String(x)))
+      if (!wantedIds.size) return jr({ error: 'nobody selected' }, 400)
+      const text = String(body.message || '').replace(/\s+/g, ' ').trim()
+      if (!text) return jr({ error: 'the text is empty' }, 400)
+      if (text.length > 600) return jr({ error: 'the text is too long (600 characters is already a 4-part text)' }, 400)
+      if (text.includes('—')) return jr({ error: 'caregiver texts never carry an em dash (use a comma or a period)' }, 400)
+      const { data: setF } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+      // deno-lint-ignore no-explicit-any
+      const stF: any = setF?.data ?? {}
+      if (stF.coverage_send_live !== true)
+        return jr({ error: 'sending is switched off (ops_settings.coverage_send_live) — nothing sent' }, 409)
+      const ghlF = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
+      if (!ghlF.token || !ghlF.locationId) return jr({ error: 'GHL credentials not set' }, 502)
+      if (caregiverNightHold(kase, stF))
+        return jr({ error: 'held: caregivers are not texted 9pm to 8am unless the shift starts within 3 hours. Nothing was sent; try again from 8am, or call them.', held_night: true }, 409)
+      // deno-lint-ignore no-explicit-any
+      const askedF: any[] = Array.isArray(kase.asked) ? kase.asked : []
+      const skipped: string[] = []
+      const unknown = [...wantedIds].filter((id) => !askedF.some((a) => String(a?.id) === id))
+      const sendableF = askedF.filter((a) => wantedIds.has(String(a?.id))).filter((a) => {
+        if (a.state === 'yes') { skipped.push(`${a.name} (said yes: confirm them instead)`); return false }
+        if (a.auto !== true && a.picked_by_coordinator !== true) { skipped.push(`${a.name} (asked by phone, not by text)`); return false }
+        if (!normalisePhone(a.phone)) { skipped.push(`${a.name} (no number on the ask)`); return false }
+        return true
+      })
+      const by = typeof body.by === 'string' ? body.by.trim().slice(0, 80) : ''
+      const headersF = { Authorization: `Bearer ${ghlF.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' }
+      const sentF: string[] = [], sentIds: string[] = [], failedF: string[] = []
+      for (const a of sendableF) {
+        const phone = normalisePhone(a.phone)
+        const first = clean(a.name).split(/\s+/)[0] || 'there'
+        const contact = await contactForOutbound(sb, ghlF,
+          { phone, firstName: first }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'coverage-run' })
+        if (!contact) { failedF.push(`${a.name} (refused by the outbound gate or opted out of texts)`); continue }
+        const message = text.replaceAll('{first_name}', first)
+        const ok = await ghlSendChecked(sb, headersF, 'coverage-run',
+          { channel: 'sms', contactId: contact.contactId, address: phone, who: a.name }, { message })
+        if (!ok) { failedF.push(`${a.name} (the text was refused; see Send problems)`); continue }
+        sentF.push(String(a.name)); sentIds.push(String(a.id))
+      }
+      if (sentIds.length) {
+        /* Recorded even if the case closed while the texts went: they were sent. */
+        const fresh = await readCaseFresh(String(kase.id))
+        const list = [...(Array.isArray(fresh?.followups) ? fresh.followups : []),
+          { id: 'fu_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), at: nowIso(), by, text,
+            ask_ids: sentIds, names: sentF }]
+        const { error: patchErr } = await sb.rpc('coverage_case_patch', { p_id: String(kase.id), p_patch: { followups: list }, p_expect: {} })
+        if (patchErr) console.warn(`[coverage-run] follow_up sent but not recorded on ${kase.id}: ${String(patchErr.message || patchErr).slice(0, 160)}`)
+      }
+      try {
+        await sb.rpc('upsert_app_data_item', { target_key: 'automation_log', item: {
+          id: 'auto_srv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+          at: nowIso(), automation: 'coverage-run:follow_up', ran_by: 'coordinator',
+          ok: failedF.length === 0, dry: false, rows_seen: sendableF.length,
+          candidates: wantedIds.size, created: sentF.length,
+        } })
+      } catch { /* logging must never block */ }
+      return jr({ sent: sentF, failed: failedF, skipped, unknown,
+        note: 'Replies land on the case like any other ask — watch the board.' })
+    }
+
     return jr({ error: `unknown action "${body.action}"` }, 400)
   }
 
