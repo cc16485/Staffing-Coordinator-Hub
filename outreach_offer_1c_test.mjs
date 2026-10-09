@@ -7,7 +7,7 @@ const ROOT = path.dirname(new URL(import.meta.url).pathname), FN = path.join(ROO
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note ?? '').slice(0, 400)]);
 const env = { SUPABASE_URL: 'http://x', SUPABASE_SERVICE_ROLE_KEY: 'svc', OUTREACH_SECRET: 'x'.repeat(40) };
 let handler = null; globalThis.Deno = { env: { get: (k) => env[k] }, serve: (h) => { handler = h; } };
-let OPS = {}, PERMS = null, ROLES = ['staffing_coordinator'], PID = 'p1'; let writes = 0;
+const CARDS = []; let OPS = {}, PERMS = null, ROLES = ['staffing_coordinator'], PID = 'p1'; let writes = 0;
 globalThis.__fakeCreateClient = () => ({
   auth: { getUser: async (jwt) => jwt === 'staff' ? { data: { user: { id: 'u1', email: 'krystal@mo-care.com', app_metadata: {} } } } : { data: null, error: { message: 'bad' } } },
   from: (table) => { const f = []; const b = {
@@ -20,7 +20,7 @@ globalThis.__fakeCreateClient = () => ({
     then(ok) { if (table === 'auth_identities') return Promise.resolve({ data: [{ person_id: PID }], error: null }).then(ok);
       if (table === 'staff_roles') return Promise.resolve({ data: ROLES.map((role) => ({ role })), error: null }).then(ok);
       return Promise.resolve({ data: [], error: null }).then(ok); } }; return b; },
-  rpc: async () => { writes++; return { data: null, error: null }; },
+  rpc: async (name, args) => { writes++; if (name === 'upsert_app_data_item') CARDS.push(args.item); return { data: null, error: null }; },
 });
 const src = fs.readFileSync(path.join(FN, 'outreach-check/index.ts'), 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = globalThis.__fakeCreateClient');
 const tmp = path.join(FN, 'outreach-check', '_t1c.ts'); fs.writeFileSync(tmp, src);
@@ -50,5 +50,12 @@ OPS = { onboarding: { offer_days: [5, 2] } }; r = await ask({ onboarding_path: t
 OPS = { onboarding: { offer_days: ['x', 40] } }; r = await ask({ onboarding_path: true }); ck('junk days fall back to the approved 2 and 5', JSON.stringify(r.j.offer_reminder_days) === '[2,5]', r.j);
 OPS = {};
 ck('nothing was written', writes === 0, writes);
+/* SLICE 1f: an offer card of its own kind through the report door */
+r = await ask({ report: true, sender: 'job-offer reminders', channel: 'sms', phone: '4175550101', who: 'Ava Applicant', why: 'Offer not signed: call Ava Applicant. Sent Oct 1, no signature after 7 days.', kind: 'offer_unsigned', offer_id: 'o-77', title: 'Offer not signed: call Ava Applicant' });
+ck('a report with an offer kind becomes an Offer not signed card (not a didn\'t-go-through card), with the offer id, the name and the phone', r.status === 200 && r.j.kind === 'offer_unsigned' && CARDS.length === 1 && CARDS[0].kind === 'offer_unsigned' && CARDS[0].id === 'ops_offer_unsigned_' + CARDS[0].id.split('_').pop() && CARDS[0].offer_id === 'o-77' && CARDS[0].title === 'Offer not signed: call Ava Applicant' && CARDS[0].who === 'Ava Applicant' && CARDS[0].phone === '+14175550101' && CARDS[0].domain === 'caregivers' && CARDS[0].status === 'open', [r.j, CARDS]);
+r = await ask({ report: true, sender: 'job-offer step1', channel: 'email', email: 'ava@x.com', who: 'Ava Applicant', why: 'Step 1 did not reach them after 3 tries.', kind: 'offer_delivery', offer_id: 'o-77', title: 'Step 1 did not reach Ava Applicant' });
+ck('a delivery card is its own card (a different id from the unsigned one)', CARDS.length === 2 && CARDS[1].kind === 'offer_delivery' && CARDS[1].id !== CARDS[0].id, CARDS);
+r = await ask({ report: true, sender: 'job-offer', channel: 'sms', phone: '4175550101', who: 'Ava Applicant', why: 'GoHighLevel refused it', kind: 'nonsense', offer_id: 'o-77' });
+ck('an unknown kind falls back to the didn\'t-go-through card', r.status === 200 && r.j.reported === true && !r.j.kind, r.j);
 for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note));
 const bad = res.filter((x) => !x[1]).length; console.log(`${res.length - bad}/${res.length} passed`); process.exit(bad ? 1 : 0);
