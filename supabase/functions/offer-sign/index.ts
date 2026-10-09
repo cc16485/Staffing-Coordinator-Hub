@@ -52,6 +52,21 @@ function trn() {
     },
   }
 }
+/* SLICE 1d: tell the Training Platform's job-offer function (its server door) that this offer is fully signed. 8 seconds at
+   most; the answer is recorded for the page but never trusted for anything else. */
+const TRAINING_JOB_OFFER = 'https://rdqujxiycycwhskyvrwa.supabase.co/functions/v1/job-offer'
+async function kickStep1(offerId: string): Promise<{ kicked: boolean; status?: string; why?: string }> {
+  const secret = Deno.env.get('OUTREACH_SECRET') ?? ''
+  if (secret.length < 32) return { kicked: false, why: 'the server secret is not set' }
+  try {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 8000)
+    const r = await fetch(TRAINING_JOB_OFFER, { method: 'POST', signal: ctl.signal, headers: { 'Content-Type': 'application/json', 'x-outreach-secret': secret },
+      body: JSON.stringify({ action: 'step1_send', offer_id: offerId }) })
+    clearTimeout(t)
+    const j = await r.json().catch(() => ({}))
+    return r.ok ? { kicked: true, status: S(j?.status, 40) || 'ok' } : { kicked: false, why: S(j?.error, 160) || 'the Training Platform answered ' + r.status }
+  } catch (e) { return { kicked: false, why: S((e as Error)?.message, 120) || 'could not reach the Training Platform' } }
+}
 const ipOf = (req: Request) => S(req.headers.get('cf-connecting-ip') || (req.headers.get('x-forwarded-for') || '').split(',')[0], 64)
 const agentOf = (req: Request) => S(req.headers.get('user-agent'), 200)
 // deno-lint-ignore no-explicit-any
@@ -154,8 +169,12 @@ Deno.serve(async (req) => {
       // 3. both signed = accepted (Step 1 is Slice 1d and reads this)
       const both = doc === 'pd' || !!o.pd_signed_at
       if (both) await T.patch(id, { offer_status: 'accepted' }, '&offer_status=not.in.(withdrawn,declined,expired)')
+      /* SLICE 1d (2026-10-09): the moment both documents are signed, the Training Platform is told to send Step 1. It reads
+         the SAVED record (never this page), sends once, retries on its own, and writes every row of the trail. This kick is
+         a courtesy for speed: the scheduled run finds any signed offer whose Step 1 did not go, so a lost kick loses nothing. */
+      const step1 = both ? await kickStep1(id) : { kicked: false, why: 'not both signed yet' }
       const { data: cp } = await db.storage.from(BUCKET).createSignedUrl(path, 600)
-      return json({ ok: true, doc, signed_at: now, version, fingerprint: fp, accepted: both, copy_url: cp?.signedUrl ?? null })
+      return json({ ok: true, doc, signed_at: now, version, fingerprint: fp, accepted: both, step1, copy_url: cp?.signedUrl ?? null })
     }
     return json({ ok: false, error: 'Unknown action.' }, 400)
   } catch (e) {

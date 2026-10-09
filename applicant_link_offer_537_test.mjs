@@ -26,7 +26,7 @@ const STAFF = { ok: true, person_id: 'p1', name: 'Krystal', email: 'krystal@mo-c
 globalThis.__fakeCreateClient = () => ({ from: () => { const b = { select() { return b; }, eq() { return b; }, maybeSingle: async () => ({ data: null, error: null }), insert: async () => ({ error: null }) }; return b; },
   auth: { getUser: async (jwt) => jwt === 'staff' ? { data: { user: { id: 'u1', email: 'krystal@mo-care.com', app_metadata: {} } } } : { data: null, error: { message: 'no' } } } });
 let src = fs.readFileSync(path.join(FN, 'applicant-link/index.ts'), 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = globalThis.__fakeCreateClient');
-src = src.replace(/^import \{ requireStaff, OFFICE_ROLES \} from .*$/m, "const OFFICE_ROLES = ['owner_admin','care_coordinator','staffing_coordinator']; const requireStaff = async (db, req) => (req.headers.get('Authorization') === 'Bearer staff') ? globalThis.__STAFF : { ok: false, status: 401, error: 'Sign in first.' }");
+src = src.replace("'../_shared/staff-auth.ts'   // SLICE 1d", "'" + path.join(FN, '_shared/staff-auth.ts') + "'   // SLICE 1d").replace(/^import \{ requireStaff, OFFICE_ROLES \} from .*$/m, "const OFFICE_ROLES = ['owner_admin','care_coordinator','staffing_coordinator']; const requireStaff = async (db, req) => (req.headers.get('Authorization') === 'Bearer staff') ? globalThis.__STAFF : { ok: false, status: 401, error: 'Sign in first.' }");
 globalThis.__STAFF = STAFF;
 const tmp = path.join(FN, 'applicant-link', '_t537.ts'); fs.writeFileSync(tmp, src);
 try { await import(tmp); } finally { fs.unlinkSync(tmp); }
@@ -44,5 +44,12 @@ r = await call({ action: 'open', kind: 'offer', o: OID, e: link.e, t: 'x'.repeat
 r = await call({ action: 'open', kind: 'start', o: OID, e: link.e, t: link.t }); ck('an offer code does not open the start form', r.status === 401, r);
 OFFERS[OID].offer_withdrawn_at = '2026-10-10T00:00:00Z'; r = await call({ action: 'open', kind: 'offer', o: OID, e: link.e, t: link.t }); ck('a withdrawn offer answers like a dead link', r.status === 410 && !r.j.first, r); delete OFFERS[OID].offer_withdrawn_at;
 OFFERS[OID].offer_expires_at = new Date((NOW - 10) * 1000).toISOString(); r = await call({ action: 'open', kind: 'offer', o: OID, e: link.e, t: link.t }); ck('an expired offer answers like a dead link even if the code is still in date', r.status === 410, r);
+/* SLICE 1d: the server door mints START links only, with the shared secret */
+process.env.OUTREACH_SECRET = 'o'.repeat(40); globalThis.Deno.env.get = ((g) => (k) => k === 'OUTREACH_SECRET' ? 'o'.repeat(40) : g(k))(globalThis.Deno.env.get);
+const srv = async (body, sec) => { const r = await handler(new Request('http://x/applicant-link', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-outreach-secret': sec }, body: JSON.stringify(body) })); return { status: r.status, j: await r.json() }; };
+r = await srv({ action: 'mint', kind: 'start', offer_id: OID }, 'o'.repeat(40)); ck('the server door (right secret) mints a start link for the Step 1 sender', r.status === 200 && r.j.ok && /start\.html\?o=/.test(r.j.url), r);
+r = await srv({ action: 'mint', kind: 'offer', offer_id: OID, exp: q.e }, 'o'.repeat(40)); ck('the server door is refused an offer link (start links only)', r.status === 403, r);
+r = await srv({ action: 'mint', kind: 'start', offer_id: OID }, 'x'.repeat(40)); ck('a wrong secret is refused', r.status === 401, r);
+r = await srv({ action: 'open', kind: 'start', o: OID, e: q.e, t: q.t }, 'o'.repeat(40)); ck('the server door cannot open a link (mint only)', r.status !== 200, r);
 for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note));
 const bad = res.filter((x) => !x[1]).length; console.log(`${res.length - bad}/${res.length} passed`); process.exit(bad ? 1 : 0);
