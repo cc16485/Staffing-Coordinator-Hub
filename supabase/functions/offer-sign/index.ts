@@ -21,13 +21,14 @@ import { checkLink } from '../_shared/applicant-links.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { offerLetter, positionDescription, canonical, fingerprint, longDate, longDateTime, OFFER_DOC_VERSION, PD_DOC_VERSION, CLASSIFICATIONS, type Fields } from '../_shared/offer-documents.ts'
 import { offerLetterPdf, positionDescriptionPdf } from '../_shared/brand-pdf.ts'
+import { raiseOfferCard } from '../_shared/send-problems.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
 const S = (v: unknown, n = 120) => String(v ?? '').trim().slice(0, n)
 const NOPE = { ok: false, error: 'This link is not valid or has run out. Please ask the office for a new one: (417) 234-8494.' }
 export const BUCKET = 'onboarding-documents'
-const COLS = 'id,first_name,last_name,position,pay_rate,hours_type,classification,onboarding_path,offer_status,offer_version,pd_version,offer_sent_at,offer_sent_by,offer_expires_at,offer_viewed_at,offer_signed_at,offer_signer_name,pd_signed_at,offer_declined_at,offer_withdrawn_at,offer_pdf_path,pd_pdf_path,offered_by,created_at'
+const COLS = 'id,first_name,last_name,phone,email,position,pay_rate,hours_type,classification,onboarding_path,offer_status,offer_version,pd_version,offer_sent_at,offer_sent_by,offer_expires_at,offer_viewed_at,offer_signed_at,offer_signer_name,pd_signed_at,offer_declined_at,offer_withdrawn_at,offer_pdf_path,pd_pdf_path,offered_by,created_at'
 
 function trn() {
   const url = Deno.env.get('OFFERS_PROJECT_URL') ?? '', key = Deno.env.get('OFFERS_SERVICE_ROLE_KEY') ?? ''
@@ -132,6 +133,21 @@ Deno.serve(async (req) => {
         if (n) await T.event({ offer_id: id, kind: 'viewed', by_who: 'caregiver', channel: 'page', doc_version: OFFER_DOC_VERSION, fingerprint: r.offer_fp, detail: { ip: ipOf(req), agent: agentOf(req) } })
       }
       return json({ ok: true, first: r.fields.first, state: state(o), automation_live, test_mode: !automation_live, versions: { offer: OFFER_DOC_VERSION, pd: PD_DOC_VERSION }, fingerprints: { offer: r.offer_fp, pd: r.pd_fp }, offer: r.offer, pd: r.pd })
+    }
+    /* SLICE 1f (2026-10-09): the small Decline link on the signing page. Only before the offer letter is signed; records
+       who (the link holder), when and an optional note; the link dies with it; the office gets an "Offer declined" card.
+       A declined offer never blocks a new one (the duplicate rule, Slice 1c). */
+    if (action === 'decline') {
+      if (o.offer_signed_at) return json({ ok: false, error: 'The offer letter is already signed, so it cannot be declined here. Call the office: (417) 234-8494.' }, 409)
+      const note = S(b.note, 300)
+      const now = new Date().toISOString()
+      const n = await T.patch(id, { offer_declined_at: now, offer_decline_note: note || null, offer_status: 'declined' }, '&offer_declined_at=is.null')
+      if (!n) return json({ ok: true, already: true })
+      await T.event({ offer_id: id, kind: 'declined', by_who: 'caregiver', channel: 'page', doc_version: OFFER_DOC_VERSION, detail: { note: note || null, ip: ipOf(req), agent: agentOf(req) } })
+      const f = fieldsOf(o); const who = `${f.first} ${f.last}`.trim()
+      await raiseOfferCard(db, { kind: 'offer_declined', offer_id: id, who, phone: o.phone, email: o.email, urgency: 'today',
+        title: `Offer declined: ${who}`, detail: `They pressed Decline on the signing page${note ? `: "${note}"` : ''}.\nNext: call them if you want to understand why; a declined offer never blocks a new one.` })
+      return json({ ok: true, declined_at: now })
     }
     if (action === 'copies') {
       const out: Record<string, string> = {}

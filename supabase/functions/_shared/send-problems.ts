@@ -222,3 +222,33 @@ export async function ghlSendChecked(
   await reportSendProblem(db, { sender, channel: to.channel, address: to.address, who: to.who, reasons: [why], failed: true })
   return false
 }
+
+/* SLICE 1f (Samantha: "start slice 1f", 2026-10-09): the three offer cards on Needs Attention, each its own kind so the office
+   reads them for what they are (not as a text that didn't go through): offer_declined (the applicant pressed Decline on
+   the signing page), offer_unsigned (day 7 unsigned, or expired unsigned), offer_delivery (Step 1 or the offer link gave
+   up after its retries). One card per offer and kind; a card a person closed stays closed. Never throws. */
+export type OfferCard = { kind: 'offer_declined' | 'offer_unsigned' | 'offer_delivery'; offer_id: string; who: string; title: string; detail: string; phone?: unknown; email?: unknown; urgency?: 'urgent' | 'today' | 'normal' }
+// deno-lint-ignore no-explicit-any
+export async function raiseOfferCard(db: any, c: OfferCard): Promise<void> {
+  try {
+    if (!db || typeof db.rpc !== 'function' || typeof db.from !== 'function') return
+    const id = 'ops_offer_' + c.kind.replace('offer_', '') + '_' + hash(c.offer_id)
+    const now = new Date().toISOString()
+    const { data: row } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    const items: any[] = Array.isArray(row?.data) ? row.data : []
+    const prev = items.find((x) => x && x.id === id)
+    const isOpen = (x: { status?: string }) => x && x.status !== 'done' && x.status !== 'resolved'
+    if (prev && !isOpen(prev)) return   // a person already saw and closed it
+    const item = {
+      ...(prev && isOpen(prev) ? prev : { owner: await ownerFor(db, 'caregivers'), owner_name: '', created_at: now, first_at: now }),
+      id, kind: c.kind, domain: 'caregivers', status: 'open', urgency: c.urgency ?? 'today',
+      title: c.title, detail: c.detail, who: c.who, offer_id: c.offer_id,
+      phone: c.phone ? normAddr('sms', c.phone) : (prev?.phone ?? ''), email: c.email ? String(c.email).trim().toLowerCase() : (prev?.email ?? ''),
+      last_at: now, due: (prev && isOpen(prev) && prev.due) || new Date(Date.now() + 24 * 3_600_000).toISOString(),
+      closed_at: null, closed_by: null, close_note: null, resolved_at: null,
+      created_by: 'offer-cards', opened_by: 'offer-cards',
+    }
+    await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item })
+  } catch (e) { console.warn(`[send-problems] could not raise an offer card (${c.kind}): ${String(e).slice(0, 160)}`) }
+}

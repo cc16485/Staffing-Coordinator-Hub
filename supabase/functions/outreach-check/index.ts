@@ -21,7 +21,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { ghlContactIfAllowed, ghlStoredContactIfAllowed, mayContact } from '../_shared/optout.ts'
 import { serverSecretOk } from '../_shared/staff-auth.ts'
-import { reportSendProblem } from '../_shared/send-problems.ts'
+import { reportSendProblem, raiseOfferCard } from '../_shared/send-problems.ts'
 import { latestTextConsent } from '../_shared/text-consent.ts'
 /* SLICE 1c (Samantha: "start slice 1c", 2026-10-09): the same onboarding_path answer also carries what the Training
    Platform's job-offer needs for an offer on the NEW path, so Training never computes a holiday or reads a Hub setting
@@ -43,6 +43,14 @@ export const OFFER_LINK_BUSINESS_DAYS = 7
 async function extraAnswer(db: any, b: Record<string, any>, sender: string, who: { person_id: string; roles: string[] } | null = null): Promise<Response | null> {
   if (b.report === true) {
     const ch = b.channel === 'email' ? 'email' : 'sms'
+    /* SLICE 1f: the Training Platform's offer cards carry their own kind (declined / unsigned / delivery) and land on
+       Needs Attention as what they are; everything else stays a "Didn't go through" card */
+    if (['offer_declined', 'offer_unsigned', 'offer_delivery'].includes(String(b.kind || '')) && b.offer_id) {
+      const who = String(b.who || '').trim().slice(0, 120)
+      await raiseOfferCard(db, { kind: b.kind, offer_id: String(b.offer_id).slice(0, 64), who, phone: b.phone, email: b.email,
+        title: String(b.title || b.why || '').slice(0, 160), detail: String(b.why || '').slice(0, 600), urgency: b.urgency === 'urgent' ? 'urgent' : 'today' })
+      return json({ ok: true, reported: true, kind: b.kind })
+    }
     /* ORIENTATION LINK (1b, 2026-10-01): held: true means the Training Platform held the message back itself (not in
        AxisCare as In Training yet, Do Not Disturb, no phone or email, an opt-out list it could not check), so the card
        explains that reason instead of saying GoHighLevel refused it. Without held it is a GoHighLevel refusal, as before. */

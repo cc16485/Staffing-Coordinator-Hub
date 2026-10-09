@@ -26,7 +26,9 @@ globalThis.fetch = async (u, o = {}) => { const url = new URL(String(u)), m = (o
     if (m === 'PATCH') { const guard = url.search.replace(/^\?id=eq\.[^&]*/, ''); const body = JSON.parse(o.body); PATCHES.push({ guard, body }); if (!row || !guardOk(row, guard)) return R(200, []); Object.assign(row, body); return R(200, [row]); } }
   if (url.pathname === '/rest/v1/offer_events' && m === 'POST') { EVENTS.push(JSON.parse(o.body)); return R(201, null); }
   throw new Error('unexpected ' + m + ' ' + u); };
+const CARDS = [];
 globalThis.__fakeCreateClient = () => ({
+  rpc: async (name, args) => { if (name === 'upsert_app_data_item') CARDS.push(args.item); return { data: null, error: null }; },
   storage: { from: (bucket) => ({ upload: async (p, bytes, opts) => { if (FILES[p] && !opts.upsert) return { error: { message: 'The resource already exists' } }; FILES[p] = { bucket, bytes, opts }; return { data: { path: p }, error: null }; },
     createSignedUrl: async (p, secs) => FILES[p] ? { data: { signedUrl: 'https://signed.test/' + p + '?exp=' + secs }, error: null } : { data: null, error: { message: 'not found' } } }) },
   from: (t) => { const b = { select() { return b; }, eq() { return b; }, maybeSingle: async () => ({ data: t === 'app_data' ? { data: OPS } : null, error: null }), insert: async (r) => { if (t === 'document_access_log') LOG.push(r); return { error: null }; } }; return b; },
@@ -75,5 +77,12 @@ OFFERS[OID2] = mk({ id: OID2, classification: 'lead', hours_type: null }); r = a
 r = await call({ action: 'open', offer_id: OID, doc: 'offer' }); ck('a staff open needs a sign-in', r.status === 401, r);
 r = await call({ action: 'open', offer_id: OID, doc: 'offer' }, 'staff'); ck('a signed-in staff member gets a 5-minute link and the open is logged with who, what and where from', r.status === 200 && /signed\.test/.test(r.j.url) && r.j.expires_in === 300 && LOG.length === 1 && LOG[0].by_email === 'krystal@mo-care.com' && LOG[0].doc === 'offer' && LOG[0].ip === '203.0.113.9', [r, LOG]);
 r = await call({ action: 'open', offer_id: OID2, doc: 'pd' }, 'staff'); ck('an unsigned document cannot be opened', r.status === 404, r);
+/* SLICE 1f: the Decline link */
+const OID3 = '0f1e2d3c-4b5a-4968-8777-66554433ccdd'; OFFERS[OID3] = mk({ id: OID3, phone: '4175550133', email: 'd@x.test' }); const lk3 = await linkFor(OID3, NOW + 5 * 86400);
+r = await call({ action: 'decline', o: OID3, e: lk3.e, t: lk3.t, note: 'took another job' });
+ck('decline before signing: recorded with the note, status declined, a declined event by the caregiver, an "Offer declined" card with the name and the note', r.status === 200 && r.j.ok && OFFERS[OID3].offer_declined_at && OFFERS[OID3].offer_decline_note === 'took another job' && OFFERS[OID3].offer_status === 'declined' && EVENTS.some((e) => e.offer_id === OID3 && e.kind === 'declined' && e.by_who === 'caregiver' && e.detail.note === 'took another job') && CARDS.some((c) => c.kind === 'offer_declined' && c.offer_id === OID3 && /^Offer declined: Test Applicant/.test(c.title) && /took another job/.test(c.detail) && c.domain === 'caregivers'), [r, OFFERS[OID3], CARDS, EVENTS.filter((e) => e.offer_id === OID3)]);
+r = await call({ action: 'view', o: OID3, e: lk3.e, t: lk3.t }); ck('after a decline the link is dead (no longer open)', r.status === 410, r);
+r = await call({ action: 'decline', o: OID3, e: lk3.e, t: lk3.t }); ck('declining twice does nothing more', r.status === 410, r);
+r = await call({ action: 'decline', o: OID, e: lk.e, t: lk.t }); ck('a signed offer cannot be declined from the page', r.status === 409 && /already signed/.test(r.j.error), r);
 for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note));
 const bad = res.filter((x) => !x[1]).length; console.log(`${res.length - bad}/${res.length} passed`); process.exit(bad ? 1 : 0);
