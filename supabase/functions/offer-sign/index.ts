@@ -20,7 +20,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { checkLink } from '../_shared/applicant-links.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { offerLetter, positionDescription, canonical, fingerprint, longDate, longDateTime, OFFER_DOC_VERSION, PD_DOC_VERSION, CLASSIFICATIONS, type Fields } from '../_shared/offer-documents.ts'
-import { makePdf, type PdfBlock } from '../_shared/simple-pdf.ts'
+import { offerLetterPdf, positionDescriptionPdf } from '../_shared/brand-pdf.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -143,11 +143,10 @@ Deno.serve(async (req) => {
       const n = await T.patch(id, cols, doc === 'offer' ? '&offer_signed_at=is.null' : '&pd_signed_at=is.null')
       if (!n) return json({ ok: false, error: 'This document was just signed. A signed document is never changed.', already: true }, 409)
       await T.event({ offer_id: id, kind: doc === 'offer' ? 'signed' : 'pd_signed', by_who: 'caregiver', channel: 'page', doc_version: version, fingerprint: fp, detail: { typed_name: name, ip, agent, consent: true, signed_at: now } })
-      // 2. the PDF: the exact text as rendered, plus its signature page; written once, never overwritten
-      const blocks: PdfBlock[] = [{ k: 'title', t: doc === 'offer' ? 'Offer of employment' : 'Caregiver position description' }, ...(doc === 'offer' ? r.offer : r.pd), { k: 'gap', t: '' }, { k: 'h', t: 'ELECTRONIC SIGNATURE' },
-        { k: 'p', t: `Signed electronically by ${name}` }, { k: 'p', t: `On ${longDateTime(now)} (${now} UTC)` }, { k: 'p', t: 'Consent to sign electronically: given on this page before signing.' },
-        { k: 'small', t: `Device address ${ip || 'not recorded'} · Browser ${agent || 'not recorded'}` }, { k: 'small', t: `Document: ${doc === 'offer' ? 'Offer of employment' : 'Caregiver position description'}, version ${version}, fingerprint ${fp}` }, { k: 'small', t: `Offer record ${id}` }]
-      const bytes = makePdf(blocks, { title: `${doc === 'offer' ? 'Offer of employment' : 'Position description'} - ${r.fields.first} ${r.fields.last}` })
+      // 2. the PDF: the exact text as rendered, in the company letterhead, with the signature and its audit record;
+      //    written once, never overwritten
+      const sig = { typedName: name, signedAtCentral: longDateTime(now), signedAtUtc: now, ip, agent, version, fingerprint: fp, offerId: id, docName: doc === 'offer' ? 'Offer of employment' : `${r.fields.position} position description` }
+      const bytes = doc === 'offer' ? offerLetterPdf(r.offer, r.fields.first, r.fields.last, sig) : positionDescriptionPdf(r.pd, r.fields.first, r.fields.last, sig)
       const path = `offers/${id}/${doc}-v${version}-${now.replace(/[:.]/g, '-')}.pdf`
       const up = await db.storage.from(BUCKET).upload(path, bytes, { contentType: 'application/pdf', upsert: false })
       if (up.error) { await T.event({ offer_id: id, kind: doc === 'offer' ? 'signed' : 'pd_signed', by_who: 'system', channel: 'page', doc_version: version, fingerprint: fp, result: 'pdf_failed', detail: { error: String(up.error.message || up.error) } }); return json({ ok: false, error: 'Your signature was recorded, but the copy could not be stored. The office will fix this; nothing more is needed from you.' }, 500) }
