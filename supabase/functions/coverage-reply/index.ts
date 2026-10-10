@@ -230,7 +230,7 @@ Deno.serve(async (req) => {
     a.reply = text.slice(0, 500)
     a.state = 'inquiry'
     routed = 'reply matches two open callouts — raised for a human to place it'
-    await opEvent(sb, { verb: 'item_created', item_id: String(c.id), area: 'coverage',
+    await opEvent(sb, { job: 'coverage-reply', verb: 'item_created', item_id: String(c.id), area: 'coverage',
       summary: `Cara raised: ${a.name} replied but is on ${caseIds.size} open callouts — a human places it` })
     await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
       id: `ops_covq_multi_${norm(String(a.phone || contactId))}_${Date.now().toString(36)}`,
@@ -286,7 +286,7 @@ Deno.serve(async (req) => {
         if (strange) {
           a.state = 'inquiry'
           routed = `yes — but the reply mentions "${strange}", which reads like a different client than ${c.client || 'this case'}. Routed to a human.`
-          await opEvent(sb, { verb: 'item_created', item_id: String(c.id), area: 'coverage',
+          await opEvent(sb, { job: 'coverage-reply', verb: 'item_created', item_id: String(c.id), area: 'coverage',
             summary: `Cara raised: ${a.name} said yes but may mean a DIFFERENT client than ${c.client || '?'} — confirm before accepting` })
           await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
             id: `ops_covq_${c.id}_${norm(String(a.phone || contactId))}`,
@@ -376,7 +376,7 @@ Deno.serve(async (req) => {
   } else {
     a.state = 'inquiry'
     routed = 'inquiry — raised for a human to answer'
-    await opEvent(sb, { verb: 'item_created', item_id: String(c.id), area: 'coverage',
+    await opEvent(sb, { job: 'coverage-reply', verb: 'item_created', item_id: String(c.id), area: 'coverage',
       summary: `Cara raised: ${a.name} has a question about the ${c.client || ''} callout — "${text.slice(0, 120)}"` })
     await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
       id: `ops_covq_${c.id}_${norm(String(a.phone || contactId))}`, kind: 'coverage',

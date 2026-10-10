@@ -14,6 +14,7 @@
 // -----------------------------------------------------------------------------
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { requireStaff } from '../_shared/staff-auth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -59,9 +60,10 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
 
   const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-  const jwt = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '')
-  const { data: u } = await admin.auth.getUser(jwt)
-  const email = (u?.user?.email || '').toLowerCase()
+  /* Slice 1 (2026-10-10): an active owner_admin of Caring Companions, by their staff record, AND on the owners list. */
+  const who = await requireStaff(admin, req, ['owner_admin'])
+  if (!who.ok) return json({ error: who.error }, who.status)
+  const email = who.email
   const owners = (Deno.env.get('REPORTS_OWNERS') ?? 'samantha@mo-care.com,zach@mo-care.com')
     .toLowerCase().split(',').map((s) => s.trim()).filter(Boolean)
   if (!email || !owners.includes(email)) return json({ error: 'Reports are for owners.' }, 403)

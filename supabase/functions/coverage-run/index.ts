@@ -1555,7 +1555,7 @@ Deno.serve(async (req) => {
           due: new Date(Date.now() + 3600000).toISOString(),
           created_by: 'coverage-run', opened_by: 'quiet-callout',
         } })
-        if (firstLookQ) await opEvent(sb, { verb: 'item_created', item_id: String(c.id), area: 'coverage',
+        if (firstLookQ) await opEvent(sb, { job: 'coverage-run', verb: 'item_created', item_id: String(c.id), area: 'coverage',
           summary: `Cara raised: nobody's answered — ${c.client || 'shift'} ${whenQ}, ${c.asked.length} asked, zero yes` })
         let soonQ = false, minsToShiftQ = 0
         if (c.shift_date) {
@@ -1617,7 +1617,7 @@ Deno.serve(async (req) => {
               : (sendLive ? '' : 'text sending is off') })
         }
         if (soonQ && sendLive && !claimActiveQ && !quietQ && ghl.token && ghl.locationId) {
-          if (resumingQ) await opEvent(sb, { verb: 'claim_stale', item_id: String(c.id), area: 'coverage',
+          if (resumingQ) await opEvent(sb, { job: 'coverage-run', verb: 'claim_stale', item_id: String(c.id), area: 'coverage',
             summary: `Office alert resumed — ${claimedByQ} has ${c.client || 'the shift'} but nothing has moved for ${staleMinQ} min and it starts in ${minsToShiftQ} min` })
           const msgQ = resumingQ
             ? `Cara: ${claimedByQ} took the ${c.client || 'open-shift'} callout (${whenQ}) but nothing has moved for ${staleMinQ} min and it starts in ${minsToShiftQ} min. Check in or jump in: {link}`

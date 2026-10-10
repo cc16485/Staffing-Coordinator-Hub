@@ -591,7 +591,7 @@ Deno.serve(async (req) => {
         l.admin_loop = l.admin_loop || { started_at: nowIso, sends: [], snooze: {} }
         if (loopQuiet) l.admin_loop.opened_in_quiet = true   // the first admin text waits for the end of quiet hours
         await save(l); alerted++
-        await opEvent(sb, { verb: 'item_created', item_id: `ops_tk_${l.id}`, area: 'coverage',
+        await opEvent(sb, { job: 'timekeeper-watch', verb: 'item_created', item_id: `ops_tk_${l.id}`, area: 'coverage',
           summary: `Cara raised: NO CLOCK-IN, ${cgName} for ${clientFirst}, ${clock12(shiftTime)} shift (${Math.round(late)} min past start)` })
         await shadowRoute(sb, { area: 'sched_clockins', channel: 'missed clock-in admin SMS',
           production: adminList.map((a) => a.phone).filter(Boolean) as string[], case_id: String(l.id) })

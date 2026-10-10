@@ -215,7 +215,7 @@ Deno.serve(async (req) => {
           note: `Opened from the missed clock-in alert by ${me.name}${note ? ': ' + note : ''}.`,
           status: 'open', asked: [], opened_at: new Date().toISOString(), opened_by: me.name,
           resolved_at: null, resolved_how: null, covered_by: null } })
-        await opEvent(sb, { verb: 'coverage_opened', item_id: caseId, area: 'coverage',
+        await opEvent(sb, { actor_email: me.email, actor_name: me.name, via: 'link', verb: 'coverage_opened', item_id: caseId, area: 'coverage',
           summary: `${me.name} opened a call-off case from the missed clock-in alert: ${clientName} ${l.shift_date} ${clock12(l.shift_time)}, ${l.caregiver} calling off` })
       }
     }
@@ -224,7 +224,7 @@ Deno.serve(async (req) => {
       ...(caseId ? { coverage_case_id: caseId } : {}) })
     await save(fresh); Object.assign(l, fresh)
     await closeItem(`${me.name} marked it resolved from the text link: ${REASONS[reason]}${note ? '. Note: ' + note : ''}${caseId ? '. A coverage case is open for the shift.' : ''}`)
-    await opEvent(sb, { verb: 'item_resolved', item_id: `ops_tk_${l.id}`, area: 'coverage',
+    await opEvent(sb, { actor_email: me.email, actor_name: me.name, via: 'link', verb: 'item_resolved', item_id: `ops_tk_${l.id}`, area: 'coverage',
       summary: `${me.name} resolved the missed clock-in (${l.caregiver}, ${l.client_first} ${clock12(l.shift_time)}): ${REASONS[reason]}` })
     let told = 0
     /* office quiet hours (2026-10-03): resolving it at night tells nobody by text (8pm to 7am); they see it resolved
@@ -279,7 +279,7 @@ Deno.serve(async (req) => {
     const f2 = (await readLadder()) || l
     f2.evv_sent_at = new Date().toISOString(); f2.evv_sent_by = me.email; f2.evv_prefilled = !!pre
     await save(f2); Object.assign(l, f2)
-    await opEvent(sb, { verb: 'message_sent', item_id: `ops_tk_${l.id}`, area: 'coverage',
+    await opEvent(sb, { actor_email: me.email, actor_name: me.name, via: 'link', verb: 'message_sent', item_id: `ops_tk_${l.id}`, area: 'coverage',
       summary: `${me.name} texted ${l.caregiver} the EVV correction form (${l.client_first} ${clock12(l.shift_time)})` })
     return json({ ok: true, ...status() })
   }

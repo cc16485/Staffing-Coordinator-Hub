@@ -298,7 +298,7 @@ Deno.serve(async (req) => {
           if (item && !(await opsHas(item.id))) {
             const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item })
             if (!error) { row.acted = true; heldAsked++; opsIds?.add(item.id)
-              await opEvent(sb, { verb: 'coverage_held_check', item_id: item.id, area: 'coverage', summary: item.title }) }
+              await opEvent(sb, { job: 'coverage-watch', verb: 'coverage_held_check', item_id: item.id, area: 'coverage', summary: item.title }) }
           }
         }
         continue
@@ -321,7 +321,7 @@ Deno.serve(async (req) => {
       const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
       if (!error) {
         created++; openByVisit.add(visitId)
-        await opEvent(sb, { verb: 'coverage_opened', item_id: c.id, area: 'coverage',
+        await opEvent(sb, { job: 'coverage-watch', verb: 'coverage_opened', item_id: c.id, area: 'coverage',
           summary: `Cara opened a call-off case${reopenNote ? ' again' : ''} — ${clientName || 'a client'} ${entry.shift_date} ${entry.shift_time}`
             + (entry.calling_off ? `, ${entry.calling_off} calling off` : '') })
       }
@@ -429,7 +429,7 @@ Deno.serve(async (req) => {
           const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
           if (!error) {
             ongoingCreated++; haveSweepCase.add(c.id)
-            await opEvent(sb, { verb: 'coverage_opened', item_id: c.id, area: 'coverage',
+            await opEvent(sb, { job: 'coverage-watch', verb: 'coverage_opened', item_id: c.id, area: 'coverage',
               summary: `Cara opened an ongoing-shifts case — ${clientName || 'a client'}, ${dates.length} open ${weekdays} date${dates.length === 1 ? '' : 's'}` })
           }
         }
