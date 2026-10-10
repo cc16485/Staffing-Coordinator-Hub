@@ -22,8 +22,10 @@
 // max_age_hours exists so switching it on doesn't blast a backlog of old
 // missed calls at everyone.
 //
-// Auth: ?token=OPS_ESCALATE_TOKEN (a scheduler calls this, not a browser).
-// Secrets: OPS_ESCALATE_TOKEN, GHL_TOKEN (or GHL_API_KEY), GHL_LOCATION_ID.
+// Auth (Phase 0, 2026-10-10): its own schedule, carrying the vault secret (x-cron-secret = HUB_JOB_SECRET), or the
+// owner's server key. The old ?token=OPS_ESCALATE_TOKEN in the URL is no longer accepted. ?auth_check=1 answers who
+// the caller is and does nothing else.
+// Secrets: HUB_JOB_SECRET, GHL_TOKEN (or GHL_API_KEY), GHL_LOCATION_ID.
 // Deploy: supabase functions deploy ops-escalate --project-ref zngsgedlsxinbygwmxwn --no-verify-jwt
 // -----------------------------------------------------------------------------
 
@@ -31,6 +33,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { reportSendProblem } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { officeQuietBetween, quietWords } from '../_shared/quiet-hours.ts'
+import { jobCaller } from '../_shared/job-auth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -173,8 +176,9 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
 
   const url = new URL(req.url)
-  const expected = Deno.env.get('OPS_ESCALATE_TOKEN')
-  if (!expected || url.searchParams.get('token') !== expected) return json({ error: 'unauthorized' }, 401)
+  const caller = await jobCaller(req)
+  if (!caller) return json({ error: 'unauthorized' }, 401)
+  if (url.searchParams.get('auth_check') === '1') return json({ ok: true, caller })
 
   const tok = Deno.env.get('GHL_TOKEN') || Deno.env.get('GHL_API_KEY')
   const locationId = Deno.env.get('GHL_LOCATION_ID')

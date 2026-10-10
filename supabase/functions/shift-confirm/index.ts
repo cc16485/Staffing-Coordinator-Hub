@@ -31,6 +31,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { normalisePhone, contactForOutbound } from '../_shared/outreach.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
+import { jobCaller } from '../_shared/job-auth.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -43,13 +44,6 @@ function axisCreds() {
   for (const n of order) { const v = Deno.env.get(n); if (v) { token = v; break } }
   const site = Deno.env.get('AXISCARE_SITE') || Deno.env.get('AXISCARE_SITE_NUMBER') || ''
   return { token, site: /^\d+$/.test(site) ? site : '' }
-}
-function callerRole(req: Request): string {
-  try {
-    const tok = String(req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '')
-    const payload = JSON.parse(atob(tok.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')))
-    return String(payload?.role || '')
-  } catch { return '' }
 }
 const chiToday = () => new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
 const nameKeyOf = (s: string) => s.toLowerCase().replace(/[^a-z]/g, '')
@@ -86,7 +80,11 @@ function skipMatch(skips: any[], caregiverName: string, clientFirst: string): bo
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
   const t0 = Date.now()
-  const role = callerRole(req)
+  /* Phase 0 (2026-10-10): only its own schedule (the vault secret) or the owner's server key may start this; a
+     caller with the public key used to be answered too. ?auth_check=1 answers who the caller is and does nothing. */
+  const caller = await jobCaller(req)
+  if (!caller) return json({ error: 'Not allowed.' }, 401)
+  if (new URL(req.url).searchParams.get('auth_check') === '1') return json({ ok: true, caller })
 
   const { data: setRow } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
   // deno-lint-ignore no-explicit-any
@@ -216,7 +214,7 @@ Deno.serve(async (req) => {
     sent, already_sent_today: skippedAlreadySent,
     skipped_no_phone: skippedNoPhone, refused_by_outbound_gate: refusedGate,
     visits_hidden_by_skip_list: skippedVisits,
-    would_send: role === 'authenticated' || role === 'service_role' ? wouldSend : wouldSend.length,
+    would_send: caller === 'owner' ? wouldSend : wouldSend.length,
   }
 
   try {
