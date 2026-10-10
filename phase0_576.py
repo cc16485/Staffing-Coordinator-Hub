@@ -17,7 +17,7 @@
 #     only by an owner_admin, enforced in the database. Applied only when both owners resolve to owner_admin with Hub
 #     access; otherwise skipped and said so.
 # Nothing is sent. No switch changes. No permission is widened. Rollback lines are at the end of the report.
-import os, json, re, time, shutil, subprocess
+import os, json, re, time, shutil, subprocess, tempfile
 os.environ.setdefault("SB_STEP", "576")
 from cc_step_lib import *
 REF = "zngsgedlsxinbygwmxwn"; TR = "rdqujxiycycwhskyvrwa"; BASE = f"https://{REF}.supabase.co"
@@ -59,7 +59,7 @@ for fn in ("lead-nurture", "client-start-run"):
 # Decision 3: the Hub becomes the long-term orientation reminder. Read-only picture of where that stands.
 ok_, orr = sql(REF, "select coalesce((data->>'orient_remind_live')::boolean, false) as live from app_data where key = 'ops_settings'")
 ok2, orj = sql(REF, "select jobname, schedule, active from cron.job where command ilike '%orientation-remind%'")
-ok3, orn = sql(REF, "select count(*)::int as n, max(created_at) as last from orient_remind_runs")
+ok3, orn = sql(REF, "select count(*)::int as n, max(at) as last from orient_remind_runs")
 say(f"  · Hub orientation reminder (orientation-remind): switch orient_remind_live is {'ON' if ok_ and orr and orr[0]['live'] else 'OFF'}; schedule {'present (' + orj[0]['schedule'] + (', active' if orj[0]['active'] else ', paused') + ')' if ok2 and orj else 'MISSING'}; " + (f"{orn[0]['n']} reminder runs recorded, last {str(orn[0]['last'] or 'never')[:16]}" if ok3 and orn else "run log unreadable"))
 say("    → while the switch is OFF, GoHighLevel's workflow still sends the day-before text (orientation-booked relays each real booking once). Turning the switch ON (Owners Hub Admin) makes the Hub remind and stops new relays. Retiring orientation-booked and the GHL workflow comes after that is proven.")
 
@@ -75,12 +75,14 @@ for j in JOBS:
 if not any("shift-confirm" in (j["command"] or "") for j in JOBS): say("  · no schedule calls shift-confirm (the morning shift text is not scheduled on this project)")
 if not any("ops-escalate" in (j["command"] or "") for j in JOBS): say("  · no schedule calls ops-escalate (it does not run on its own today; the auth change only closes a door)")
 
-VJ = {}
+VJ = {}; SKIP = []
 for fn in STAFF_FNS + JOB_FNS:
     sx, mx = fmeta(REF, fn)
     if sx == 200 and mx and isinstance(mx.get("verify_jwt"), bool): VJ[fn] = mx["verify_jwt"]; say(f"  ✓ {fn} is live at version {mx.get('version', '?')} (gateway sign-in check {'on' if VJ[fn] else 'off'}, kept)")
     elif sx == 404 and fn in ("oig-check", "ghl-attach-doc"): VJ[fn] = True; say(f"  · {fn} is not on the Hub project yet: it will be created (gateway sign-in check on)")
+    elif sx == 404 and fn in JOB_FNS: SKIP.append(fn); say(f"  · {fn} is not deployed on the Hub project at all (the first run of 576 found this): nothing to secure, skipped. It is never created by this step.")
     else: bad(f"{fn} is not live or unreadable: {sx}")
+JOB_FNS = [f for f in JOB_FNS if f not in SKIP]
 for fn in ("ghl-attach-doc", "oig-check", "ai-ltc-policy"):
     sx, mx = fmeta(TR, fn)
     say(f"  · Training project: {fn} is {'live (version ' + str((mx or {}).get('version', '?')) + ')' if sx == 200 else 'not there'}")
@@ -89,7 +91,17 @@ sx, _ = fmeta(TR, "ghl-attach-doc")
 if sx == 200:
     okd, lf = live_files(TR, "ghl-attach-doc")
     TR_ATTACH_OLD = okd and lf.get("supabase/functions/ghl-attach-doc/index.ts") == OLD_ATTACH_SHA
-    say(f"  {'✓' if TR_ATTACH_OLD else '·'} Training project's ghl-attach-doc is {'exactly the retired shared-key build → removed in Part 2' if TR_ATTACH_OLD else 'NOT the build this step knows → left alone; tell Claude'}")
+    marks = ""
+    if okd and not TR_ATTACH_OLD:
+        tmp_ = tempfile.mkdtemp(prefix="cc576tr-"); os.makedirs(os.path.join(tmp_, "supabase"), exist_ok=True)
+        subprocess.run([SUPA, "functions", "download", "ghl-attach-doc", "--project-ref", TR, "--use-api"], cwd=tmp_, env=dict(os.environ, SUPABASE_ACCESS_TOKEN=TOKEN), capture_output=True, text=True)
+        txt = ""
+        for r_, _, fs_ in os.walk(tmp_):
+            for f_ in fs_:
+                if f_ == "index.ts": txt = open(os.path.join(r_, f_), errors="replace").read()
+        shutil.rmtree(tmp_, ignore_errors=True)
+        marks = ", ".join(m for m, pat in (("still wants the retired shared key", "hub_read_key"), ("checks the Hub sign-in (x-hub-token)", "x-hub-token"), ("upserts GoHighLevel contacts", "contacts/upsert")) if pat in txt) or "no known markers"
+    say(f"  {'✓' if TR_ATTACH_OLD else '·'} Training project's ghl-attach-doc is {'exactly the retired shared-key build → removed in Part 2' if TR_ATTACH_OLD else 'a different build (' + marks + ') → left alone this run; once the Hub calls its own copy (CC Hub PR 290), this one is unused and retires in a later step'}")
 sx, mx = fmeta(REF, "axiscare-push-note")
 say(f"  · axiscare-push-note (the New Clients schedule-note call the scan flagged) is {'LIVE on the Hub project (version ' + str((mx or {}).get('version', '?')) + ') though it is in no repo: listed for your automation review, untouched here' if sx == 200 else 'not deployed: the Hub call to it fails quietly today; clean-up item, untouched here'}")
 
