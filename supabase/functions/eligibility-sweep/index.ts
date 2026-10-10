@@ -39,7 +39,8 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   /* G1 (2026-09-29): only the owner's server key (Desktop script 46 starts it; it has no schedule), checked FIRST.
      The August password check (below, now replaced) ran only after the rules file had been downloaded and run. */
-  const caller = await jobCaller(req, false)
+  /* SLICE 6 (2026-10-10): the nightly schedule may call it too (x-cron-secret); dry unless eligibility_sweep_live */
+  const caller = await jobCaller(req)
   if (!caller) return json({ error: 'not allowed' }, 401)
   if (new URL(req.url).searchParams.get('auth_check') === '1') return json({ ok: true, caller })
 

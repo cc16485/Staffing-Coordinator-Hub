@@ -65,7 +65,8 @@ Deno.serve(async (req) => {
   /* G1 (2026-09-29): only the owner's server key (Desktop scripts start it; it has no schedule). It used to run for
      anyone with the public key, who could also lift ?max and ?days. Everyone else is refused before anything is
      read, fetched or written. */
-  const caller = await jobCaller(req, false)
+  /* SLICE 6 (2026-10-10): the nightly schedule may call it too (x-cron-secret); practice unless obligations_live */
+  const caller = await jobCaller(req)
   if (!caller) return json({ error: 'not allowed' }, 401)
   if (new URL(req.url).searchParams.get('auth_check') === '1') return json({ ok: true, caller })
 
