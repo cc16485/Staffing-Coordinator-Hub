@@ -22,6 +22,7 @@ import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { offerLetter, positionDescription, canonical, fingerprint, longDate, longDateTime, OFFER_DOC_VERSION, PD_DOC_VERSION, CLASSIFICATIONS, type Fields } from '../_shared/offer-documents.ts'
 import { offerLetterPdf, positionDescriptionPdf } from '../_shared/brand-pdf.ts'
 import { raiseOfferCard } from '../_shared/send-problems.ts'
+import { startCaregiverJourney } from '../_shared/caregiver-journey.ts'   /* SLICE 3b */
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -189,8 +190,11 @@ Deno.serve(async (req) => {
          the SAVED record (never this page), sends once, retries on its own, and writes every row of the trail. This kick is
          a courtesy for speed: the scheduled run finds any signed offer whose Step 1 did not go, so a lost kick loses nothing. */
       const step1 = both ? await kickStep1(id) : { kicked: false, why: 'not both signed yet' }
+      /* SLICE 3b: the readiness card starts now (idempotent; a failure never undoes the signature) */
+      let journey: Record<string, unknown> = { started: false }
+      if (both) { try { journey = await startCaregiverJourney(db, { id, first_name: o.first_name, last_name: o.last_name }, 'offer-sign') } catch (e) { journey = { started: false, error: String((e as Error).message || e).slice(0, 120) } } }
       const { data: cp } = await db.storage.from(BUCKET).createSignedUrl(path, 600)
-      return json({ ok: true, doc, signed_at: now, version, fingerprint: fp, accepted: both, step1, copy_url: cp?.signedUrl ?? null })
+      return json({ ok: true, doc, signed_at: now, version, fingerprint: fp, accepted: both, step1, journey, copy_url: cp?.signedUrl ?? null })
     }
     return json({ ok: false, error: 'Unknown action.' }, 400)
   } catch (e) {

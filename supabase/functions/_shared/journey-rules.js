@@ -15,8 +15,14 @@
 (function(root){
   'use strict';
   const STAGES = ['intake', 'prechecks', 'assessment', 'signed', 'axiscare', 'billing', 'schedule', 'team', 'ready', 'firstweek', 'active'];
+  /* SLICE 3b (2026-10-10): the caregiver journey (offer to Approved to Work) runs on the same tables and this same file; its
+     stages are its own, and a step applies only to its own subject (client or caregiver), never across. */
+  const CG_STAGES = ['offer', 'step1', 'screening', 'approval', 'step2', 'orientation', 'training', 'ready', 'active'];
   const STAGE_LABEL = { intake:'Intake', prechecks:'Pre-checks', assessment:'Assessment', signed:'Signed', axiscare:'AxisCare', billing:'Billing/Auth',
-    schedule:'Schedule', team:'Team', ready:'Ready', firstweek:'First week', active:'Active' };
+    schedule:'Schedule', team:'Team', ready:'Ready', firstweek:'First week', active:'Active',
+    offer:'Offer', step1:'Step 1', screening:'Screening', approval:'Approval', step2:'Step 2 (Viventium)', orientation:'Orientation', training:'Training' };
+  const subjectOf = j => (j && j.subject === 'caregiver') ? 'caregiver' : 'client';
+  const stagesFor = j => subjectOf(j) === 'caregiver' ? CG_STAGES : STAGES;
   const PAYERS = { private:'Private Pay', medicaid:'Medicaid IHS / HCBS', va:'VA Community Care', ltc:'Long-Term Care Insurance', other:'Other' };
   const ROLE_LABEL = { care_coordinator:'Care Coordinator', staffing_coordinator:'Staffing Coordinator', owner:'Owner', hub:'The Hub' };
   const DONE = ['complete', 'not_needed', 'exception'];
@@ -31,11 +37,23 @@
   function addBusinessDays(day, n){ let d = day, left = n; while(left > 0){ d = addDays(d, 1); const wd = new Date(d + 'T12:00:00Z').getUTCDay(); if(wd !== 0 && wd !== 6) left--; } return d; }
   function daysBetween(a, b){ return Math.round((Date.parse(b + 'T12:00:00Z') - Date.parse(a + 'T12:00:00Z')) / 864e5); }
 
-  function applies(def, j){
+  function applies(def, j, ctx){
     if(!def || def.active === false) return false;
+    if((def.subject || 'client') !== subjectOf(j)) return false;   /* 3b: never across subjects */
+    /* 3b: a caregiver step that applies only to some people (lived outside Missouri, claims a credential, will drive, after
+       year one): every named fact must be known and true; an unknown fact means the step is not shown yet */
+    if(def.applies && typeof def.applies === 'object'){
+      const facts = (ctx && ctx.facts) || {};
+      if(!Object.keys(def.applies).every(k => facts[k] === def.applies[k])) return false;
+    }
     const p = Array.isArray(def.payers) ? def.payers : [];
     if(!p.length) return true;
     return !!j.payer && p.indexOf(j.payer) > -1;
+  }
+  /* 3b: a completed step whose evidence has a life (expires_after_days) counts as done only while it is still in date */
+  function expiredOn(def, st, today){
+    const n = def && def.expires_after_days; if(!n || !st || st.state !== 'complete' || !st.completed_at) return null;
+    const until = addDays(ymd(st.completed_at), Number(n)); return until < today ? until : null;
   }
   /* an answer rule: { field, op, value, outcome:'stop', message } — e.g. prior 21-day notices >= 2 stops */
   /* a rule can compare with another step's answer: ref "pay.auth.hours_week" (requested hours above authorized hours) */
@@ -51,9 +69,11 @@
     return hit ? { outcome:r.outcome || 'stop', message:r.message || 'This answer stops the journey.' } : null;
   }
   /* when a step is due: N (business) days after it became ready, or N days before the target start */
-  function dueOf(def, st, j){
+  function dueOf(def, st, j, byKey){
     const d = def && def.due; if(!d) return null;
     if(d.before_start != null && j.target_start) return addDays(j.target_start, -Number(d.before_start));
+    /* 3b: N days after another step was completed (the OJT clock runs from orientation completion, her decision 7) */
+    if(d.from && d.days != null){ const o = byKey && byKey[d.from]; if(!o || !o.completed_at) return null; return d.business ? addBusinessDays(ymd(o.completed_at), Number(d.days)) : addDays(ymd(o.completed_at), Number(d.days)); }
     const since = st && st.ready_since ? ymd(st.ready_since) : null;
     if(d.days != null && since) return d.business ? addBusinessDays(since, Number(d.days)) : addDays(since, Number(d.days));
     return null;
@@ -73,8 +93,8 @@
     ctx = ctx || {};
     const today = ctx.today || ymd(Date.now());
     const byKey = {}; (steps || []).forEach(s => { if(s && s.step_key) byKey[s.step_key] = s; });
-    const list = (defs || []).filter(d => applies(d, j)).slice().sort((a, b) => (a.sort || 0) - (b.sort || 0));
-    const doneKeys = new Set(list.filter(d => DONE.indexOf((byKey[d.key] || {}).state) > -1 && !(ruleHit(d, byKey[d.key], byKey) && byKey[d.key].state !== 'exception')).map(d => d.key));
+    const list = (defs || []).filter(d => applies(d, j, ctx)).slice().sort((a, b) => (a.sort || 0) - (b.sort || 0));
+    const doneKeys = new Set(list.filter(d => DONE.indexOf((byKey[d.key] || {}).state) > -1 && !(ruleHit(d, byKey[d.key], byKey) && byKey[d.key].state !== 'exception') && !expiredOn(d, byKey[d.key], today)).map(d => d.key));
     let stop = null;
     const startSoon = j.target_start ? daysBetween(today, j.target_start) : null;
     const rows = list.map(def => {
@@ -83,11 +103,13 @@
       const r = { key:def.key, def, st, owner, due:null, status:'later', why:'', back:false };
       const hit = ruleHit(def, st, byKey);
       if(hit && st.state !== 'exception'){ r.status = 'blocked'; r.stop = true; r.why = hit.message; if(!stop) stop = r; return r; }
+      const exp = expiredOn(def, st, today);
+      if(exp){ r.status = 'attention'; r.expired = exp; r.attention = 'Expired on ' + exp + ': due again'; r.why = r.attention; return r; }
       if(DONE.indexOf(st.state) > -1){ r.status = st.state; return r; }
       if(stop){ r.status = 'later'; r.why = 'Stopped: ' + stop.def.title; return r; }
       const waitingOn = (def.after || []).filter(k => list.some(d => d.key === k) && !doneKeys.has(k));
       if(waitingOn.length){ r.status = 'later'; r.why = 'After: ' + waitingOn.map(k => (list.find(d => d.key === k) || {}).title).join(', '); return r; }
-      r.due = dueOf(def, st, j);
+      r.due = dueOf(def, st, j, byKey);
       if(st.state === 'waiting'){
         if(st.check_back && st.check_back <= today){ r.status = 'attention'; r.back = true; r.why = 'Back from waiting' + (st.waiting_on ? ' on ' + st.waiting_on : ''); }
         else { r.status = 'waiting'; r.why = 'Waiting' + (st.waiting_on ? ' on ' + st.waiting_on : '') + (st.check_back ? ' · back ' + st.check_back : ''); }
@@ -97,7 +119,7 @@
       else r.status = 'ready';
       /* attention is worked out from dates: late, or the start date is close and an administrative step is still open */
       if(r.due && r.due < today){ r.attention = 'Late since ' + r.due; }
-      else if(startSoon != null && startSoon <= 3 && STAGES.indexOf(def.stage) < STAGES.indexOf('team') && def.required !== false){
+      else if(startSoon != null && startSoon <= 3 && subjectOf(j) === 'client' && STAGES.indexOf(def.stage) < STAGES.indexOf('team') && def.required !== false){
         r.attention = startSoon < 0 ? 'Start date has passed' : startSoon === 0 ? 'Starts today' : 'Start date in ' + startSoon + ' day' + (startSoon === 1 ? '' : 's');
       }
       if(r.attention && r.status === 'ready') r.status = 'attention';
@@ -112,8 +134,9 @@
     const alsoReady = open.filter(r => r !== next && !r.def.quiet);
     const comingNext = rows.filter(r => r.status === 'later' && !r.stop).slice(0, 3);
     const complete = required.length > 0 && required.every(r => DONE.indexOf(r.status) > -1);
-    const stage = complete ? 'active' : next ? next.def.stage : (rows.find(r => r.status === 'later') || {}).def ? rows.find(r => r.status === 'later').def.stage : 'intake';
-    const stageKeys = STAGES.filter(s => s === 'active' || rows.some(r => r.def.stage === s));
+    const ST = stagesFor(j);
+    const stage = complete ? 'active' : next ? next.def.stage : (rows.find(r => r.status === 'later') || {}).def ? rows.find(r => r.status === 'later').def.stage : ST[0];
+    const stageKeys = ST.filter(s => s === 'active' || rows.some(r => r.def.stage === s));
     const rail = stageKeys.map(s => {
       const rs = rows.filter(r => r.def.stage === s && r.def.required !== false);
       const state = s === 'active' ? (complete ? 'done' : 'todo')
@@ -165,7 +188,7 @@
     return out;
   }
 
-  const api = { STAGES, STAGE_LABEL, PAYERS, ROLE_LABEL, PROOF_LABEL, EXCEPTION_KINDS, DONE, ymd, addDays, addBusinessDays, daysBetween,
+  const api = { STAGES, CG_STAGES, stagesFor, subjectOf, expiredOn, STAGE_LABEL, PAYERS, ROLE_LABEL, PROOF_LABEL, EXCEPTION_KINDS, DONE, ymd, addDays, addBusinessDays, daysBetween,
     applies, ruleHit, dueOf, ownerOf, compute, canComplete, cardsFor, shown };
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   root.JourneyRules = api;
