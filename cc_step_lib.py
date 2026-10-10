@@ -42,7 +42,9 @@ sha = lambda p_: hashlib.sha256(open(p_, "rb").read()).hexdigest()
 def deps(path, seen):
     if path in seen or not os.path.exists(path): return
     seen.add(path)
-    for m in re.findall(r"""from\s+['"](\.{1,2}/[^'"]+)['"]|import\s+['"](\.{1,2}/[^'"]+)['"]""", open(path).read()):
+    # a type-only import (import type { X } from './y.ts') is dropped by the bundler and never uploaded, so it is not a file the live copy must hold (574 found this with brand-pdf.ts)
+    src = "\n".join(l for l in open(path).read().split("\n") if not re.match(r"\s*import\s+type\b", l))
+    for m in re.findall(r"""from\s+['"](\.{1,2}/[^'"]+)['"]|import\s+['"](\.{1,2}/[^'"]+)['"]""", src):
         deps(os.path.normpath(os.path.join(os.path.dirname(path), m[0] or m[1])), seen)
 def need(fnroot, fn):
     root = os.path.dirname(os.path.dirname(fnroot)); s = set(); deps(os.path.join(fnroot, fn, "index.ts"), s)
