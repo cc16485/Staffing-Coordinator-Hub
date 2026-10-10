@@ -45,11 +45,12 @@ Deno.serve(async (req) => {
     const insider = isOwner(me) || isMember(perms.work, me.person_id) || isMember(perms.advance, me.person_id)
     return {
       ok: true, version: perms.version,
-      advance: perms.advance, work: perms.work,
+      advance: perms.advance, work: perms.work, screening: perms.screening,
       history: insider ? perms.history.slice(-100) : [],
       me: { person_id: me.person_id, email: me.email, name: me.name,
         may_approve_advance: mayApprove(perms, 'advance', me), may_approve_work: mayApprove(perms, 'work', me),
-        may_change_advance: mayChange(perms, 'advance', me), may_change_work: mayChange(perms, 'work', me) },
+        may_change_advance: mayChange(perms, 'advance', me), may_change_work: mayChange(perms, 'work', me),
+        may_reveal_identity: mayApprove(perms, 'screening', me), may_change_screening: mayChange(perms, 'screening', me) },
     }
   }
 
@@ -58,12 +59,13 @@ Deno.serve(async (req) => {
   if (action === 'get') return json(answer(cur.perms))
   if (action !== 'add' && action !== 'remove') return json({ error: "action must be 'get', 'add' or 'remove'" }, 400)
   const kind = String(b.kind || '') as Kind
-  if (!KINDS.includes(kind)) return json({ error: "kind must be 'advance' or 'work'" }, 400)
+  if (!KINDS.includes(kind)) return json({ error: "kind must be 'advance', 'work' or 'screening'" }, 400)
   const pid = String(b.person_id || '').trim()
   if (!pid) return json({ error: 'person_id is required' }, 400)
   if (!mayChange(cur.perms, kind, me)) {
     return json({ error: kind === 'work'
       ? 'Only someone already on the Approve to Work list can change it.'
+      : kind === 'screening' ? 'Only an owner can change the screening staff list.'
       : 'Only an owner can change the Approve to Advance list.' }, 403)
   }
   const { data: p, error: pe } = await db.from('persons').select('person_id, full_name, primary_email, active').eq('person_id', pid).maybeSingle()
