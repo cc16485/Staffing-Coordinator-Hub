@@ -313,13 +313,22 @@ Deno.serve(async (req) => {
       await opEvent(sb, { verb: 'yes_received', item_id: String(c.id), area: 'coverage',
         actor_name: String(a.name || 'a caregiver'),
         summary: `${a.name} is interested in the ${c.client || 'new client'} hours (interest check)` })
-      /* 0b-3: the caregiver's contact goes through the universal opt-out door before the acknowledgment */
-      const ackTo = await ghlStoredContactIfAllowed(sb, { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' },
-        'coverage-reply', { channel: 'sms', contactId: contactId || a.ghl_contact_id })
-      if (ackTo) await sms(ackTo,
-        (String(settings.coverage_msg_ack_interest || '') ||
-         `Thank you {first_name}! Nothing is set yet. We're meeting the client first and we'll follow up with you about the hours.`)
-        .replaceAll('{first_name}', a.name.split(' ')[0]), { sender: 'coverage-reply', address: a.phone || phone, who: a.name })
+      /* AUTO-REPLY SWITCH (Samantha, 2026-10-10, on the "Dad" new-client ask: "turn off the responses that say we haven't
+         met the client yet"): the soft acknowledgment goes only while ops_settings.coverage_ack_interest_live is true
+         (Owners Hub Admin page, "Auto-reply to a new-client ask"). Off, and when the switch is missing: the YES is still
+         collected and shown on the case; nothing is texted back, and the case says so (no silent skip). */
+      if (settings.coverage_ack_interest_live === true) {
+        /* 0b-3: the caregiver's contact goes through the universal opt-out door before the acknowledgment */
+        const ackTo = await ghlStoredContactIfAllowed(sb, { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' },
+          'coverage-reply', { channel: 'sms', contactId: contactId || a.ghl_contact_id })
+        if (ackTo) await sms(ackTo,
+          (String(settings.coverage_msg_ack_interest || '') ||
+           `Thank you {first_name}! Nothing is set yet. We're meeting the client first and we'll follow up with you about the hours.`)
+          .replaceAll('{first_name}', a.name.split(' ')[0]), { sender: 'coverage-reply', address: a.phone || phone, who: a.name })
+      } else {
+        routed += ' (no auto-reply: the switch is off)'
+        a.ack_skipped = 'switch off'
+      }
       await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
       return json({ ok: true, routed, case_id: c.id, caregiver: a.name, state: a.state })
     }
