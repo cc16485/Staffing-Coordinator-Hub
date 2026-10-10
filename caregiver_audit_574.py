@@ -28,8 +28,8 @@ def lit(v): return "'" + str(v).replace("'", "''") + "'"
 ok_, cur = sql(REF, f"select sha256, approved_at from public.rules_approved where file = {lit(RULES_FILE)} order by approved_at desc")
 if ok_: say(f"  · {len(cur)} approved fingerprint(s) for {RULES_FILE}; the reviewed Slice 6 build is {RULES_FP[:12]}" + (" (already approved)" if any(r['sha256'] == RULES_FP for r in cur) else ""))
 else: bad(f"could not read the approved rules: {cur}")
-s_, b_ = http("GET", f"https://cc.mo-care.com/{RULES_FILE}?v=574", raw=True)
-live_fp = hashlib.sha256(b_).hexdigest() if s_ == 200 else None
+s_, b_ = http("GET", f"https://cc.mo-care.com/{RULES_FILE}?v=574")
+live_fp = hashlib.sha256((b_ if isinstance(b_, bytes) else str(b_).encode("utf-8")).hexdigest() if s_ == 200 else None
 say(f"  · cc.mo-care.com serves {live_fp[:12] if live_fp else '(unreadable)'}" + (" = the reviewed build (Hub PR merged)" if live_fp == RULES_FP else " (the Hub PR is not merged yet, or Pages has not rebuilt; expected before the merge)"))
 ok_, sw = sql(REF, "select coalesce(data->>'training_sync_live', 'not set') as t, coalesce(data->>'oig_monthly_live', 'not set') as o, coalesce(data->>'audit_sweep_live', 'not set') as a, coalesce(data->>'eligibility_sweep_live', 'not set') as e, coalesce(data->>'obligations_live', 'not set') as ob, coalesce(data->>'onboarding_switch_date', '') as d from public.app_data where key = 'ops_settings'")
 if ok_ and sw: say(f"  ✓ the switches: Training sync {sw[0]['t']}, OIG monthly {sw[0]['o']}, audit tasks {sw[0]['a']}, eligibility sweep {sw[0]['e']}, obligations {sw[0]['ob']} (practice unless true); the onboarding switch date is {'NOT set' if not sw[0]['d'] else sw[0]['d']}")
