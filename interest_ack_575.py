@@ -109,7 +109,26 @@ def state(ref, root, base, fn, pinned):
     nd = need(root, fn)
     if all(k in live and live[k] == sha(os.path.join(root, k)) for k in nd): return "this", vj
     if all((k in live and live[k] == base_sha(root, base, k)) or (k not in live and base_sha(root, base, k) is None and k in pinned) for k in nd): return "base", vj
-    return "other", vj
+    # Not the base. Say exactly which piece differs, and whether it is an OLDER merged version (reviewed code that main has
+    # since moved past, as the 498a look found for outreach.ts / send-problems.ts) or something never merged (someone's
+    # unreleased change, which must not ship). The first run of 575 stopped here with no detail (2026-10-10).
+    older = True
+    for k in sorted(nd):
+        if k not in live: DETAIL.append(f"{k.split('functions/')[-1]}: not in the live copy"); older = False; continue
+        if live[k] == base_sha(root, base, k): continue
+        hit = merged_version(root, base, k, live[k])
+        if hit: DETAIL.append(f"{k.split('functions/')[-1]}: an OLDER merged version ({hit}); the reviewed current one goes out with this step")
+        else: DETAIL.append(f"{k.split('functions/')[-1]}: differs from EVERY merged version (unreleased code). Not shipping over it."); older = False
+    return ("older" if older else "other"), vj
+DETAIL = []
+def merged_version(root, base, rel, want):
+    """The merged commit (on or before base) whose version of rel has this sha, or None."""
+    log = git(root, "log", "--format=%h %ad %s", "--date=short", base, "--", rel).stdout.decode().splitlines()
+    for line in log[:60]:
+        h = line.split(" ", 1)[0]
+        b = git(root, "show", f"{h}:{rel}")
+        if b.returncode == 0 and shab(b.stdout) == want: return line[:90]
+    return None
 def deploy(ref, root, fn, vj, label):
     p = subprocess.run([SUPA, "functions", "deploy", fn, "--project-ref", ref, "--use-api"] + ([] if vj in (True, None) else ["--no-verify-jwt"]), cwd=root, env=dict(os.environ, SUPABASE_ACCESS_TOKEN=TOKEN), capture_output=True, text=True)
     okd, live = live_files(ref, fn)
@@ -135,9 +154,10 @@ other = sorted(k for k in need(HUB, FN) if k not in pinned and base_sha(HUB, HUB
 if other: bad(f"other changes merged since the review touch {FN} ({', '.join(other)[:200]}). Ask Claude to refresh 575."); say("  STOP. Nothing was run."); done(2)
 say("  ✓ the updated function is the reviewed build")
 st, vj = state(HUB_REF, HUB, HUB_BASE, FN, pinned)
-if st not in ("base", "this"): bad(f"the live {FN} is not the build this change was reviewed against ({st}). Nothing was changed. Tell Claude."); done(3)
+for d in DETAIL: say("      · " + d)
+if st not in ("base", "older", "this"): bad(f"the live {FN} is not the build this change was reviewed against ({st}). Nothing was changed. Tell Claude."); done(3)
 if not isinstance(vj, bool): bad(f"could not read how {FN} is deployed. Nothing was changed."); done(3)
-say(f"  ✓ {FN}: " + ("is the build this was reviewed against" if st == "base" else "already has this build (an earlier run)") + f" (gateway sign-in check {'on' if vj else 'off'}, kept as is)")
+say(f"  ✓ {FN}: " + ("is the build this was reviewed against" if st == "base" else "carries older merged (reviewed) pieces that move to the current reviewed ones with this step" if st == "older" else "already has this build (an earlier run)") + f" (gateway sign-in check {'on' if vj else 'off'}, kept as is)")
 NODE = shutil.which("node") or next((p for p in ("/opt/homebrew/bin/node", "/usr/local/bin/node") if os.path.exists(p)), "")
 if NODE:
     for t in ("coverage_reply_interest_ack_test.mjs", "coverage_reply_picker_test.mjs"):
