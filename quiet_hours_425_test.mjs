@@ -224,7 +224,8 @@ at('15:05', '2026-10-03'); await tick()
 ck('Saturday 3:05pm · the office EVV nudge goes as before', to_('4175550999').length === 1, SENT)
 
 /* ════ 4 · the real ops-escalate (missed calls) ════ */
-const sweep = async () => { const r = await OE(new Request('https://x/functions/v1/ops-escalate?token=' + 'o'.repeat(40), { method: 'POST' })); return r.json() }
+/* 576: ops-escalate answers its schedule by the vault secret (x-cron-secret), no longer a token in the URL. */
+const sweep = async () => { const r = await OE(new Request('https://x/functions/v1/ops-escalate', { method: 'POST', headers: { Authorization: 'Bearer eyJanon', 'x-cron-secret': JOBSEC } })); return r.json() }
 const missed = (id, hm, day = '2026-10-03') => ({ id, messageType: 'TYPE_CALL', direction: 'inbound', from: '+14175550333', contactId: 'k1', meta: { call: { duration: 0, status: 'no-answer' } }, dateAdded: new RealDate(RealDate.parse(`${day}T${hm}:00-05:00`)).toISOString() })
 reset(); APP.ops_settings = { live: true, levels: [{ after_min: 15, to: 'owner' }, { after_min: 45, to: 'fallback' }], fallback_phone: '+14175550944' }
 APP.ops_items = []; CALLS = [missed('call1', '02:00')]

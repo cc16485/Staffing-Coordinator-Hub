@@ -75,7 +75,7 @@ async function loadItems(supabase: ReturnType<typeof createClient>, key: string)
 
 async function checkrHmacOk(payload: string, sig: string): Promise<boolean> {
   const secret = Deno.env.get('CHECKR_WEBHOOK_SECRET')
-  if (!secret) return true // not configured yet: accept (endpoint is still token-gated)
+  if (!secret) return false // Phase 0 (2026-10-10): no secret set means no result is trusted. Set CHECKR_WEBHOOK_SECRET first.
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
   const mac = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload))
   const hex = Array.from(new Uint8Array(mac)).map((b) => b.toString(16).padStart(2, '0')).join('')

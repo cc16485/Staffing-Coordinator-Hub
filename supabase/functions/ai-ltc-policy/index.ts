@@ -13,6 +13,9 @@
 // and renders the JSON `fields` it returns.
 // -----------------------------------------------------------------------------
 
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { requireStaff, OFFICE_ROLES } from "../_shared/staff-auth.ts";
+
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
 const MODEL = "claude-sonnet-5";
 
@@ -88,6 +91,13 @@ Deno.serve(async (req) => {
       status: 405,
       headers: { ...CORS, "content-type": "application/json" },
     });
+  }
+  /* Phase 0 (2026-10-10): a policy carries a client's name and benefits. Only a signed-in office member may send
+     one to the model; the public key alone used to be enough. */
+  const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const who = await requireStaff(admin, req, OFFICE_ROLES);
+  if (!who.ok) {
+    return new Response(JSON.stringify({ error: who.error }), { status: who.status, headers: { ...CORS, "content-type": "application/json" } });
   }
   try {
     if (!ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY not set");

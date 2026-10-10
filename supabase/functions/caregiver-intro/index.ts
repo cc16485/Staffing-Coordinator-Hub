@@ -27,6 +27,7 @@
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { contactForOutbound } from '../_shared/outreach.ts'
+import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 
 const cors = {
@@ -55,22 +56,12 @@ function wantsThis(c: Record<string, unknown>, reason: string) {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
 
-  /* Verifying the JWT is not the same as knowing who it is. Supabase accepts
-     the anon key as a valid token, and the anon key is printed in the hub's
-     page source, so "verify_jwt is on" would still have let anyone who read
-     view-source call this. A message to a client's family has to come from a
-     signed-in member of staff, so this asks who the caller actually is. */
-  const authHeader = req.headers.get('Authorization') ?? ''
-  const whoClient = createClient(
-    Deno.env.get('SUPABASE_URL')!,
-    Deno.env.get('SUPABASE_ANON_KEY')!,
-    { global: { headers: { Authorization: authHeader } } },
-  )
-  const { data: { user } } = await whoClient.auth.getUser()
-  if (!user?.email) {
-    return json({ error: 'Sign in to the hub before sending to a family.' }, 401)
-  }
-
+  /* A message to a client's family has to come from a signed-in member of staff holding an office role, checked
+     the same way as circle-send (Phase 0, 2026-10-10: this used to accept any signed-in account, which is weaker
+     than the other family senders). */
+  const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  const who = await requireStaff(supabase, req, OFFICE_ROLES)
+  if (!who.ok) return json({ error: who.error }, who.status)
 
   const url = new URL(req.url)
   const body = await req.json().catch(() => ({}))
@@ -78,8 +69,6 @@ Deno.serve(async (req) => {
   const { profile_id, client_name, circle_id, reason = 'manual' } = body
 
   if (!profile_id || !client_name) return json({ error: 'need a profile and a client' }, 400)
-
-  const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 
   // Only a profile the office has approved is ever sent.
   const { data: p } = await supabase
@@ -209,7 +198,7 @@ Deno.serve(async (req) => {
     sent_to: reachedNames.join(', ') || null,
     channel: reachable.some((c) => c.phone && c.sms_consent) && reachable.some((c) => c.email) ? 'both'
            : reachable.some((c) => c.email) ? 'email' : 'sms',
-    reason, sent_by: user.email,
+    reason, sent_by: who.email,
   })
 
   return json({ ok: true, caregiver: cgName, client: client_name, reached, opted_out: optedOut, who: reachedNames, failed: failedNames, link })
