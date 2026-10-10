@@ -24,6 +24,7 @@
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { caregiverGate } from '../_shared/caregiver-journey.ts'   /* SLICE 3b */
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { latestTextConsent, inTextHours, withStop } from '../_shared/text-consent.ts'
@@ -138,6 +139,9 @@ Deno.serve(async (req) => {
     if (!cand) return json({ error: 'which candidate?' }, 400)
     const row = { first_name: clean(b.first, 40), last_name: clean(b.last, 60), phone: clean(b.phone, 30) || null, email: clean(b.email, 120).toLowerCase() || null }
     if (!row.phone && !row.email) return json({ error: 'They need a phone number or an email first.' }, 400)
+    /* SLICE 3b: on the new path the welcome call waits for Approve to Advance (the old path has no card and is untouched) */
+    const gate = await caregiverGate(db, { candidate_id: cand }, 'cg.approve.advance')
+    if (!gate.allowed) return json({ error: gate.why, gate: 'cg.approve.advance' }, 409)
     const { data: open } = await db.from('welcome_calls').select('*').eq('candidate_id', cand).in('status', ['invited', 'booked', 'noshow']).order('invited_at', { ascending: false }).limit(1)
     let w = open?.[0]
     if (w) { await db.from('welcome_calls').update({ ...row, updated_at: new Date().toISOString() }).eq('id', w.id); w = { ...w, ...row } }

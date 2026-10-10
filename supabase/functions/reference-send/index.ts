@@ -15,6 +15,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { contactForOutbound, maySend } from '../_shared/outreach.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { caregiverGate } from '../_shared/caregiver-journey.ts'   /* SLICE 3b */
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -53,6 +54,8 @@ Deno.serve(async (req) => {
   const { data: r } = await db.from('reference_requests').select('*').eq('id', id).maybeSingle()
   if (!r) return json({ error: 'That reference request was not found.' }, 404)
   if (r.responded_at) return json({ error: 'They already answered. Nothing was sent.' }, 409)
+  /* SLICE 3b: on the new path nothing reaches a reference before the signed reference consent (the old path is untouched) */
+  if (r.candidate_id != null) { const gate = await caregiverGate(db, { candidate_id: r.candidate_id }, 'cg.step1.references'); if (!gate.allowed) return json({ error: gate.why, gate: 'cg.step1.references' }, 409) }
   const now = new Date().toISOString()
   const by = who.name || who.email
   // deno-lint-ignore no-explicit-any
