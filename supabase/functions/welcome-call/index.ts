@@ -24,6 +24,7 @@
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { jobCaller } from '../_shared/job-auth.ts'   /* SLICE 4: the Step 2 server's door */
 import { caregiverGate } from '../_shared/caregiver-journey.ts'   /* SLICE 3b */
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
@@ -96,12 +97,20 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
   const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } })
-  const who = await requireStaff(db, req, OFFICE_ROLES)
-  if (!who.ok) return json({ error: who.error }, who.status)
   // deno-lint-ignore no-explicit-any
   const b: any = await req.json().catch(() => ({}))
-  const action = String(b.action || 'preview')
-  const staff = who.name || who.email
+  let action = String(b.action || 'preview')
+  /* SLICE 4 (2026-10-10, option A): at Verify Viventium Step 2 Complete the Step 2 server sends the invitation itself, through
+     this same path (same words, same gate, same opt-out door), on the job secret. Nobody else may use this door. */
+  let staff = ''
+  if (action === 'invite_auto') {
+    if (!(await jobCaller(req))) return json({ error: 'not allowed' }, 401)
+    staff = 'The Hub (Step 2 verified' + (b.by ? ' by ' + clean(b.by, 80) : '') + ')'; action = 'invite'
+  } else {
+    const who = await requireStaff(db, req, OFFICE_ROLES)
+    if (!who.ok) return json({ error: who.error }, who.status)
+    staff = who.name || who.email
+  }
 
   if (action === 'preview') return json({ ok: true, ...inviteMessages(clean(b.first, 40) || 'there', bookLink('…')) })
 
