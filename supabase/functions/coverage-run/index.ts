@@ -44,6 +44,8 @@ import { callinLink, withLink, rememberAlerted, textCaseAdmins, caseWhat } from 
 import { reminderDue, reminderText } from '../_shared/callin-reminder.ts'
 import { adminRecipients } from '../_shared/clockin-admins.ts'
 import { caseEnded, chiNowNaive } from '../_shared/loops.ts'
+/* SLICE 5 (2026-10-10): a new hire with a readiness card is never offered a shift until Approved to Work and AxisCare read back Active */
+import { workLock, LOCK_WHY } from '../_shared/work-lock.ts'
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -751,6 +753,8 @@ async function buildCandidatesForCase(c: any):
     String(a.name || '').toLowerCase()))
   const callerOff = String(c.calling_off || '').toLowerCase()
   const callerOffId = String(c.calling_off_id || '')
+  /* SLICE 5: the scheduling lock from the readiness cards (new path only); an unreadable lock holds everyone (fail closed) */
+  const lock = await workLock(sb)
 
   // deno-lint-ignore no-explicit-any
   const group1: any[] = [], group2: any[] = []
@@ -767,6 +771,8 @@ async function buildCandidatesForCase(c: any):
         || (callerOffId && String(x.axiscare_id || '') === callerOffId)) { cut(x, 'the person who called off'); continue }
     if (!censusUsable) { cut(x, 'held — AxisCare census unreachable (fail closed)'); continue }
     if (!x.axiscare_id || !axisActive.has(String(x.axiscare_id))) { cut(x, 'not active in the AxisCare census'); continue }
+    if (!lock.ok) { cut(x, 'held: ' + lock.why + ' (fail closed)'); continue }
+    if (lock.axis.has(String(x.axiscare_id)) || (x.offer_id && lock.offers.has(String(x.offer_id)))) { cut(x, LOCK_WHY); continue }
     if (nurseAxis.has(String(x.axiscare_id))) { cut(x, 'nurse-classed in AxisCare'); continue }
     if (clientLv != null) {
       const cgLv = caregiverLevel.get(String(x.axiscare_id))
