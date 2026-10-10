@@ -85,12 +85,16 @@ async function extraAnswer(db: any, b: Record<string, any>, sender: string, who:
     const days = rawDays.map((x: unknown) => Number(x)).filter((n: number) => Number.isInteger(n) && n >= 1 && n <= 30).slice(0, 2)
     const offer_reminder_days = days.length === 2 && days[0] < days[1] ? days : [2, 5]
     const offer_reminders_live = row?.data?.offer_reminders_live === true
+    /* SLICE 2d (2026-10-10): the Step 1 reminder days (ops_settings.onboarding.step1_days, default 2 and 4) */
+    const raw1 = Array.isArray(row?.data?.onboarding?.step1_days) ? row.data.onboarding.step1_days : []
+    const d1s = raw1.map((x: unknown) => Number(x)).filter((n: number) => Number.isInteger(n) && n >= 1 && n <= 30).slice(0, 2)
+    const step1_reminder_days = d1s.length === 2 && d1s[0] < d1s[1] ? d1s : [2, 4]
     let may_reoffer = false
     if (who?.person_id) {
       const { data: pr } = await db.from('app_data').select('data').eq('key', PERM_KEY).maybeSingle()
       may_reoffer = mayApprove(normalizePerms(pr?.data), 'advance', { person_id: who.person_id, roles: who.roles })
     }
-    return json({ onboarding_path: path, switch_date, offer_date, offer_expires_at, offer_link_business_days: OFFER_LINK_BUSINESS_DAYS, offer_send_live, step1_auto_live, offer_reminder_days, offer_reminders_live, may_reoffer })
+    return json({ onboarding_path: path, switch_date, offer_date, offer_expires_at, offer_link_business_days: OFFER_LINK_BUSINESS_DAYS, offer_send_live, step1_auto_live, offer_reminder_days, offer_reminders_live, step1_reminder_days, may_reoffer })
   }
   return null
 }

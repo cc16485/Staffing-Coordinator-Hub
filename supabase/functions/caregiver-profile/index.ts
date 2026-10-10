@@ -309,6 +309,32 @@ export async function step1Facts(db: any, p: any) {
   } catch { return null }
 }
 
+/* SLICE 2d (2026-10-10): what they said on their Step 1 forms (the Hub's own, signed on the phone), the family-appropriate
+   parts: preferred name, experience, specialties they are comfortable with, languages, the levels they are willing to accept
+   (their own words, never a verified level). Found by the person's offer: the candidate or caregiver record carries offer_id. */
+// deno-lint-ignore no-explicit-any
+export async function step1FormFacts(db: any, p: any) {
+  try {
+    let offerId = ''
+    for (const key of ['candidates', 'caregivers']) {
+      const { data } = await db.from('app_data').select('data').eq('key', key).maybeSingle()
+      const rows = Array.isArray(data?.data) ? data.data : []
+      // deno-lint-ignore no-explicit-any
+      const hit = rows.find((r: any) => (p?.candidate_id && String(r?.id) === String(p.candidate_id) && key === 'candidates') || (p?.axiscare_id && String(r?.axiscare_id || '') === String(p.axiscare_id)) || (p?.candidate_id && String(r?.candidate_id || '') === String(p.candidate_id)))
+      if (hit?.offer_id) { offerId = String(hit.offer_id); break }
+    }
+    if (!offerId) return null
+    const { data: f } = await db.from('step1_forms').select('answers, signatures').eq('offer_id', offerId).maybeSingle()
+    const a = f?.answers; if (!a || typeof a !== 'object') return null
+    const sig = (f?.signatures || {}) as Record<string, unknown>
+    const yes = (m: unknown) => m && typeof m === 'object' ? Object.entries(m as Record<string, string>).filter(([, v]) => v === 'Yes').map(([k]) => k) : []
+    const levels = [1, 2, 3].filter((n) => a['level' + n] === 'Yes').map((n) => 'Level ' + n)
+    const out = { preferred_name: a.preferred_name || null, experience: a.experience || null, comfortable_with: yes(a.specialties), languages: Array.isArray(a.languages) ? a.languages : [],
+      willing_levels_in_their_words: levels, signed: Object.keys(sig), note: 'their own answers on the signed Step 1 forms; a level here is what they said, never a verified or approved level' }
+    return JSON.stringify(out).length > 60 ? out : null
+  } catch { return null }
+}
+
 /* Their application and interview answers: by applicant id, candidate id, then references / paperwork, then email, then
    phone (as the Hub does). Shared by the draft (new hires) and Beef it up (457). */
 // deno-lint-ignore no-explicit-any
@@ -508,6 +534,7 @@ Deno.serve(async (req) => {
 
     const { app, qs } = await findApplication(db, { applicant_id: p?.applicant_id, cand, intake_id: b.intake_id, email, phone, first })
     const facts = applicationFacts(first, app, qs)
+    const s1f = await step1FormFacts(db, p || { candidate_id: cand, axiscare_id: axid }); if (s1f) facts.from_their_step1_forms = s1f   /* SLICE 2d */
     let draft = { about: PROMPTS.about, experience: PROMPTS.experience, why: PROMPTS.why }, aiNote = ''
     const key = Deno.env.get('ANTHROPIC_API_KEY')
     if (!app) aiNote = 'No online application was found for them, so the draft is all questions to ask on the call.'
@@ -586,6 +613,7 @@ Deno.serve(async (req) => {
     /* 458: what they wrote on their Step 1 application (from GoHighLevel), the family-appropriate parts only */
     const s1 = await step1Facts(db, p)
     if (s1) facts.from_their_step1_application = s1
+    const s1f = await step1FormFacts(db, p); if (s1f) facts.from_their_step1_forms = s1f   /* SLICE 2d */
     const key = Deno.env.get('ANTHROPIC_API_KEY')
     if (!key) return json({ error: 'The AI is not switched on.' }, 503)
     const strip = (t: string) => t.replace(/\[[^\]]*\]/g, '').trim()
