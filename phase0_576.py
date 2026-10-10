@@ -11,8 +11,8 @@
 #   · shift-confirm, ops-escalate: answer only their own schedule (vault secret) or the owner key; the URL token is gone.
 #     Their schedules are re-pointed to carry the vault secret in the same run, so the morning shift text keeps going.
 #     If the vault secret is missing, these two are NOT deployed and nothing about them changes.
-#   · ht-local: a Checkr result with no webhook secret configured is refused. Deployed only when the secret exists,
-#     otherwise skipped and said so (current behaviour stays until the secret is set).
+#   · ht-local: NOT deployed by this step (Samantha, 2026-10-10: "do not deploy the fail-closed change until the secret
+#     and webhook delivery are verified"). This step only reports whether CHECKR_WEBHOOK_SECRET exists.
 #   · owner_keys_lock_576.sql: the Owners Hub's finance, budget, offboarding and file-audit keys readable and writable
 #     only by an owner_admin, enforced in the database. Applied only when both owners resolve to owner_admin with Hub
 #     access; otherwise skipped and said so.
@@ -46,7 +46,22 @@ if SEC is None: bad("could not list the Hub project's secrets"); done(3)
 for n, why in (("HUB_JOB_SECRET", "the job secret"), ("GHL_TOKEN", "GoHighLevel"), ("GHL_LOCATION_ID", "GoHighLevel location"), ("ELEVENLABS_API_KEY", "the transcriber"), ("ANTHROPIC_API_KEY", "the model")):
     say(f"  {'✓' if n in SEC or (n == 'GHL_TOKEN' and 'GHL_API_KEY' in SEC) else '·'} {why} secret is {'set' if n in SEC or (n == 'GHL_TOKEN' and 'GHL_API_KEY' in SEC) else 'NOT set'} on the Hub project")
 CHECKR = "CHECKR_WEBHOOK_SECRET" in SEC
-say(f"  {'✓' if CHECKR else '·'} CHECKR_WEBHOOK_SECRET is {'set: ht-local goes out with the fail-closed check' if CHECKR else 'NOT set: ht-local is SKIPPED this run (a Checkr result would otherwise be refused from now on). Set it in Checkr → Webhooks and in Supabase secrets, then run 576 again.'}")
+say(f"  · CHECKR_WEBHOOK_SECRET is {'set' if CHECKR else 'NOT set'} on the Hub project. ht-local is not touched by this step either way (your decision 4: the fail-closed check goes live in a later step, after the secret and Checkr's delivery are verified).")
+# Decision 2: the two dead functions may be deleted only once nothing schedules or calls them.
+ok_, dead = sql(REF, "select jobname, schedule, active from cron.job where command ilike '%lead-nurture%' or command ilike '%client-start-run%' order by jobname")
+if ok_:
+    say("  ✓ no schedule calls lead-nurture or client-start-run (safe to delete their code)" if not dead else "  ✗ a schedule still calls " + ", ".join(f"{d['jobname']} ({d['schedule']}, {'active' if d['active'] else 'paused'})" for d in dead))
+    if dead: fails.append("dead-code schedules")
+else: say(f"  · could not read the schedules for the dead functions: {dead}")
+for fn in ("lead-nurture", "client-start-run"):
+    sx, mx = fmeta(REF, fn)
+    say(f"  · {fn} is {'still deployed (version ' + str((mx or {}).get('version', '?')) + '); code deletion comes with its removal' if sx == 200 else 'not deployed on the Hub project'}")
+# Decision 3: the Hub becomes the long-term orientation reminder. Read-only picture of where that stands.
+ok_, orr = sql(REF, "select coalesce((data->>'orient_remind_live')::boolean, false) as live from app_data where key = 'ops_settings'")
+ok2, orj = sql(REF, "select jobname, schedule, active from cron.job where command ilike '%orientation-remind%'")
+ok3, orn = sql(REF, "select count(*)::int as n, max(created_at) as last from orient_remind_runs")
+say(f"  · Hub orientation reminder (orientation-remind): switch orient_remind_live is {'ON' if ok_ and orr and orr[0]['live'] else 'OFF'}; schedule {'present (' + orj[0]['schedule'] + (', active' if orj[0]['active'] else ', paused') + ')' if ok2 and orj else 'MISSING'}; " + (f"{orn[0]['n']} reminder runs recorded, last {str(orn[0]['last'] or 'never')[:16]}" if ok3 and orn else "run log unreadable"))
+say("    → while the switch is OFF, GoHighLevel's workflow still sends the day-before text (orientation-booked relays each real booking once). Turning the switch ON (Owners Hub Admin) makes the Hub remind and stops new relays. Retiring orientation-booked and the GHL workflow comes after that is proven.")
 
 ok_, vlt = sql(REF, "select count(*)::int as n from vault.decrypted_secrets where name = 'hub_job_secret'")
 VAULT = bool(ok_ and vlt and vlt[0]["n"] == 1)
@@ -61,7 +76,7 @@ if not any("shift-confirm" in (j["command"] or "") for j in JOBS): say("  · no 
 if not any("ops-escalate" in (j["command"] or "") for j in JOBS): say("  · no schedule calls ops-escalate (it does not run on its own today; the auth change only closes a door)")
 
 VJ = {}
-for fn in STAFF_FNS + JOB_FNS + ["ht-local"]:
+for fn in STAFF_FNS + JOB_FNS:
     sx, mx = fmeta(REF, fn)
     if sx == 200 and mx and isinstance(mx.get("verify_jwt"), bool): VJ[fn] = mx["verify_jwt"]; say(f"  ✓ {fn} is live at version {mx.get('version', '?')} (gateway sign-in check {'on' if VJ[fn] else 'off'}, kept)")
     elif sx == 404 and fn in ("oig-check", "ghl-attach-doc"): VJ[fn] = True; say(f"  · {fn} is not on the Hub project yet: it will be created (gateway sign-in check on)")
@@ -93,7 +108,7 @@ if ok_:
         say(f"  {'✓' if good else '✗'} owner {e.split('@')[0]}: " + ("owner_admin with Hub access" if good else "NO sign-in" if r is None else "not owner_admin in staff_roles" if not r["owner"] else "no Care Coordinator Hub access"))
 say(f"  {'✓' if LOCK_OK else '✗'} the owner-keys rule {'can be applied' if LOCK_OK else 'is SKIPPED this run (both owners must be owner_admin with Hub access, and desk_is_owner() must exist), nothing about app_data changes'}")
 if fails: say(); say("  RESULT: STOPPED before anything changed. Tell Claude which line."); done(3)
-say("  · what changes: " + ", ".join(STAFF_FNS + (JOB_FNS if VAULT else []) + (["ht-local"] if CHECKR else [])) + (" + the owner-keys rule" if LOCK_OK else "") + (" + the Training-project copy of ghl-attach-doc removed" if TR_ATTACH_OLD else "") + ". Nothing is sent; no switch changes.")
+say("  · what changes: " + ", ".join(STAFF_FNS + (JOB_FNS if VAULT else [])) + (" + the owner-keys rule" if LOCK_OK else "") + (" + the Training-project copy of ghl-attach-doc removed" if TR_ATTACH_OLD else "") + ". Nothing is sent; no switch changes.")
 
 say(); say("PART 2 · CHANGE")
 for fn in STAFF_FNS:
@@ -114,9 +129,7 @@ if VAULT:
         okr, r_ = sql(REF, "select cron.unschedule(" + lit(j["jobname"]) + "); select cron.schedule(" + lit(j["jobname"]) + ", " + lit(j["schedule"]) + ", " + lit(cmd) + ");")
         say(f"  ✓ schedule '{j['jobname']}' re-pointed to carry the vault secret (same {j['schedule']})") if okr else bad(f"schedule '{j['jobname']}' could not be re-pointed: {r_}")
 else: say("  · shift-confirm and ops-escalate: not deployed (vault secret missing)")
-if CHECKR:
-    if not deploy(REF, FNROOT, "ht-local", VJ["ht-local"]): say("  RESULT: STOPPED. Tell Claude."); done(6)
-else: say("  · ht-local: skipped (no CHECKR_WEBHOOK_SECRET yet)")
+say("  · ht-local: not deployed by this step (decision 4)")
 if LOCK_OK:
     okr, r_ = sql(REF, open(os.path.join(ROOT, "owner_keys_lock_576.sql")).read())
     say("  ✓ the owner-keys rule is in place (finance, budget, offboarding, file audits: owners only, in the database)") if okr else bad(f"owner-keys rule: {r_}")
@@ -152,6 +165,7 @@ if VAULT:
 if LOCK_OK:
     ok_, n_ = sql(REF, "select count(*)::int as n from pg_policies where schemaname = 'public' and tablename = 'app_data' and policyname like 'app_data_owner_keys_%' and permissive = 'RESTRICTIVE'")
     say("  ✓ the four owner-keys rules are on app_data") if ok_ and n_ and n_[0]["n"] == 4 else bad("the owner-keys rules did not all land")
+say("  · ht-local (Checkr fail-closed) stays as it is until its own step; the 32 tests cover it already.")
 say("  · tested before deploying: 32 checks (no sign-in, public key, non-office role refused on five functions; shift-confirm and ops-escalate refuse the public key and the URL token and accept only the vault secret or the owner key; a Checkr result with no secret is refused, a forged signature is refused, a real one passes; filing a document writes one op_events row without the email or phone).")
 say()
 if fails: say("RESULT: CHECK THE ✗ LINES ABOVE"); done(9)

@@ -16,7 +16,7 @@ The inventory scans read a local clone that was 77 commits behind. Re-checked ag
 | 4 | orientation-booked: public-key relay into a GHL workflow | Already fixed (live fix 562, 2026-10-09): relays only a real booking saved in the last 15 minutes, once, never while the Hub's own reminder is on. | Nothing. Listed in the automation review for the "one reminder system" decision. |
 | 5 | shift-confirm answers any caller with the public key; ops-escalate on a URL token | Open. | Both answer only `jobCaller` (the vault secret `hub_job_secret` as `x-cron-secret`, or the owner's server key). `?auth_check=1` answers who the caller is and does nothing. 576 re-points any schedule that calls them to carry the vault secret in the same run. If the vault secret is missing, neither is deployed. |
 | 6 | Owners Hub records protected only by a client-side email list | Open. | `owner_keys_lock_576.sql`: four restrictive rules on `app_data` for finance_snapshots, owner_settings, budget_lines, budget_actuals, offboardings, file_audits, using `public.desk_is_owner()`. `discipline_actions` is deliberately NOT locked: coordinators issue and read write-ups through it. Applied only when both owners resolve to owner_admin with Hub access. |
-| 7 | Checkr webhook accepts results when its secret is unset | Open. | `checkrHmacOk` returns false with no secret. ht-local is deployed only when `CHECKR_WEBHOOK_SECRET` exists, otherwise skipped and reported, so nothing changes until the secret is set. |
+| 7 | Checkr webhook accepts results when its secret is unset | Open. | `checkrHmacOk` returns false with no secret (in the repo, tested). Samantha's decision 4 (2026-10-10): NOT deployed by 576; it goes live in its own step after `CHECKR_WEBHOOK_SECRET` is set and Checkr's delivery is verified. 576 only reports whether the secret exists. |
 | 8 | New Clients schedule-note push calls a different Supabase project | Misread by the scan: it is the same project. The real issue is that it calls `axiscare-push-note`, a function in no repo. | Nothing. 576 reports whether that function is live. If it is, it goes on the automation review (an untracked AxisCare writer); if not, the Hub call is dead code for P2 clean-up. |
 
 Also found while here: the inventory's sender register gap, the browser-composed caregiver texts and the free-text
@@ -44,6 +44,14 @@ Regression: caregiver_profile_2b, nsf2_families, nsf2_scheduling, nsf3_hometoget
 s5_staff, staff_alerts_one_contact all pass as before. optout_0b2 fails 4 checks on main before this change (not
 touched). quiet_hours_425 had one pre-existing failure on main (the "scan" check); its ops-escalate calls were updated
 to the new auth and pass.
+
+## Decisions recorded 2026-10-10 (after the report)
+
+1. Deploy order approved; final CC Hub merge only after the production checks, schedules and workflows are confirmed.
+2. lead-nurture and client-start-run code may be deleted once 576 confirms no schedule or caller; history stays in git.
+3. The Hub (orientation-remind) is the long-term orientation reminder. 576 reports the switch, schedule and run log; the switch is turned on by Samantha; orientation-booked and the GHL workflow retire only after it is proven with no duplicates and no gap.
+4. Checkr is in use. The fail-closed change waits for the secret and verified delivery (its own step).
+5. coverage-run stays autonomous for caregiver outreach under coverage_send_live, opt-out, escalation and audit; no wider authority, never clients or families.
 
 ## Order
 
