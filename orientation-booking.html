@@ -351,6 +351,7 @@ async function submitBooking(){
   // Best-effort — the booking is already saved either way.
   sb.functions.invoke('orientation-booked', {
     body: {
+      session_id:        String(selectedSession.id),
       first_name:        firstName,
       last_name:         lastName,
       phone,

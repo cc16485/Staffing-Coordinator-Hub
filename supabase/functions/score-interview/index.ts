@@ -18,6 +18,7 @@
 // Deploy:  supabase functions deploy score-interview
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 
 const AI_MODEL = 'claude-haiku-4-5-20251001'
 const cors = {
@@ -34,13 +35,17 @@ Deno.serve(async (req) => {
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY')
   if (!apiKey) return json({ error: 'ANTHROPIC_API_KEY is not set on this project' }, 500)
 
-  const { recording_id } = await req.json().catch(() => ({}))
-  if (!recording_id) return json({ error: 'no recording given' }, 400)
-
   const supabase = createClient(
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   )
+  /* Live fix 2026-10-09 (Samantha): this ran for any caller with the public key. Office staff only, by their own
+     sign-in, like every other privileged Hub action. It reads interview recordings, spends AI credits and writes turns. */
+  const who = await requireStaff(supabase, req, OFFICE_ROLES)
+  if (!who.ok) return json({ error: who.error }, who.status)
+
+  const { recording_id } = await req.json().catch(() => ({}))
+  if (!recording_id) return json({ error: 'no recording given' }, 400)
 
   const { data: rec } = await supabase
     .from('recordings').select('*').eq('id', recording_id).maybeSingle()

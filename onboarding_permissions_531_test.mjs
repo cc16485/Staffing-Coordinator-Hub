@@ -81,12 +81,10 @@ r = await call('sam', { action: 'add', kind: 'advance', person_id: 'p-nobody' })
 r = await call('sam', { action: 'remove', kind: 'work', person_id: 'p-zach' }); r = await call('sam', { action: 'remove', kind: 'work', person_id: 'p-sam' }); ck('the work list cannot be emptied', r.status === 400 && /cannot be emptied/.test(r.j.error) && DB.row.work.length === 1, r);
 DB.raceOnce = true; const before = DB.saves; r = await call('sam', { action: 'add', kind: 'work', person_id: 'p-zach' }); ck('a save that loses the race is retried from a fresh read', r.status === 200 && DB.saves === before + 2 && DB.row.work.length === 2, r);
 r = await call('sam', { action: 'add', kind: 'nope', person_id: 'p-zach' }); ck('an unknown list is refused', r.status === 400, r);
-for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note));
-const bad = res.filter((x) => !x[1]).length; console.log(`${res.length - bad}/${res.length} passed`); process.exit(bad ? 1 : 0);
-
 r = await call('kry', { action: 'add', kind: 'screening', person_id: 'p-kry' }); ck('a coordinator cannot put herself on the screening list', r.status === 403 && /screening staff/.test(r.j.error || ''), r);
 r = await call('sam', { action: 'add', kind: 'screening', person_id: 'p-kry' }); ck('an owner adds Krystal to screening staff: saved, logged, the answer carries the list', r.status === 200 && r.j.screening.length === 1 && /screening staff/.test(DB.events.at(-1).summary || ''), r.j);
 r = await call('kry', { action: 'get' }); ck('Krystal now sees may_reveal_identity true and may_change_screening false; Samantha the reverse', r.status === 200 && r.j.me.may_reveal_identity === true && r.j.me.may_change_screening === false, r.j);
 r = await call('sam', { action: 'get' }); ck('an owner by title may change the screening list but not reveal', r.j.me.may_reveal_identity === false && r.j.me.may_change_screening === true, r.j);
 r = await call('sam', { action: 'add', kind: 'nope', person_id: 'p-kry' }); ck('the kind error names all three lists', r.status === 400 && /'screening'/.test(r.j.error), r);
-
+for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note));
+const bad = res.filter((x) => !x[1]).length; console.log(`${res.length - bad}/${res.length} passed`); process.exit(bad ? 1 : 0);
