@@ -52,7 +52,12 @@
   }
   /* 3b: a completed step whose evidence has a life (expires_after_days) counts as done only while it is still in date */
   function expiredOn(def, st, today){
-    const n = def && def.expires_after_days; if(!n || !st || st.state !== 'complete' || !st.completed_at) return null;
+    if(!st || st.state !== 'complete') return null;
+    /* SLICE 6 (2026-10-10): an expiry recorded on the evidence (a credential's own expiry date) counts first; else the
+       catalog's interval from the completion date */
+    const ev = st.evidence && typeof st.evidence.expires === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(st.evidence.expires) ? st.evidence.expires : null;
+    if(ev) return ev < today ? ev : null;
+    const n = def && def.expires_after_days; if(!n || !st.completed_at) return null;
     const until = addDays(ymd(st.completed_at), Number(n)); return until < today ? until : null;
   }
   /* an answer rule: { field, op, value, outcome:'stop', message } — e.g. prior 21-day notices >= 2 stops */

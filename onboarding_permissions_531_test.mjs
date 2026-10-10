@@ -26,6 +26,13 @@ const rm1 = P.applyChange(base(), 'work', 'remove', { person_id: 'p-zach', email
 ck('the work list can lose one member but never its last', rm1.ok && rm1.next.work.length === 1 && !P.applyChange(rm1.next, 'work', 'remove', { person_id: 'p-sam', email: '', name: '' }, SAM, 'x').ok);
 ck('the original record is never mutated', base().version === 3 && add.next !== base());
 
+/* SLICE 6 (2026-10-10): the Audit export list (who may run the personnel-file export; owners always may; owners change it) */
+ck('6 · an older record without an audit_export list reads as an empty one', Array.isArray(base().audit_export) && base().audit_export.length === 0);
+ck('6 · owners may export without being listed; a coordinator may not until listed', P.mayApprove(base(), 'audit_export', SAM) && !P.mayApprove(base(), 'audit_export', KRY));
+const ax6 = P.applyChange(base(), 'audit_export', 'add', { person_id: 'p-kry', email: 'krystal@mo-care.com', name: 'Krystal' }, SAM, '2026-10-10T15:00:00Z');
+ck('6 · an owner adds Krystal to the Audit export list: she may export; the history names the list', ax6.ok && P.mayApprove(ax6.next, 'audit_export', KRY) && ax6.next.history[0].kind === 'audit_export' && /Audit export/.test(ax6.changed), ax6);
+ck('6 · only an owner changes the Audit export list', P.mayChange(base(), 'audit_export', ZACH) && !P.mayChange(base(), 'audit_export', KRY));
+ck('6 · the other lists are untouched by the change', ax6.ok && ax6.next.work.length === 2 && ax6.next.advance.length === 1 && ax6.next.screening.length === 0);
 /* SLICE 2a: the screening staff list (who may reveal a Social Security number, date of birth or license number) */
 ck('an older saved record without a screening list reads as an empty one', Array.isArray(base().screening) && base().screening.length === 0);
 ck('nobody may reveal identity details until named: not an owner by title, not a coordinator', !P.mayApprove(base(), 'screening', SAM) && !P.mayApprove(base(), 'screening', KRY));
