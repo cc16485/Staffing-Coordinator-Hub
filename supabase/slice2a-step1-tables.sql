@@ -10,7 +10,8 @@
 --   step1_identity  the lock (section 19): the Social Security number, date of birth and driver's license number as
 --                   ciphertext sealed in the function (AES-256-GCM, key only in the function secret STEP1_KEK), the last
 --                   four digits, the address, when captured, when to purge, when purged, how many reveals. Server only.
---                   The reveal is logged in document_access_log (doc = 'identity'), which is already append-only.
+--                   A reveal is allowed only to named screening staff (Admin page list), expires in five minutes, and is
+--                   logged in document_access_log (doc = 'identity'), which is already append-only.
 -- Rollback (slice2a-step1-tables-rollback.sql): nothing is dropped and no row is deleted; the tables stay empty and
 -- unreachable, which is exactly their state before any function uses them.
 -- ============================================================================
@@ -82,7 +83,7 @@ create table if not exists public.step1_identity (
   reveals integer not null default 0,
   updated_at timestamptz not null default now()
 );
-comment on table public.step1_identity is '2a · the lock (section 19): sealed SSN, date of birth and license number, last four digits, address; purged 60 days after the checks clear; server only; every reveal logged in document_access_log';
+comment on table public.step1_identity is '2a · the lock (section 19): sealed SSN, date of birth and license number, last four digits, address; purge window to be set once the retention requirement is verified; server only; reveals only by named screening staff, each logged in document_access_log and expiring in five minutes';
 drop trigger if exists trg_step1_identity_no_delete on public.step1_identity;
 create trigger trg_step1_identity_no_delete before delete on public.step1_identity for each row execute function public.step1_no_delete();
 drop trigger if exists trg_step1_identity_no_truncate on public.step1_identity;

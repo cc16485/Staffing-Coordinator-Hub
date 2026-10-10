@@ -44,7 +44,7 @@ ok_, sec = http("GET", f"{API}/v1/projects/{REF}/secrets", headers=MG())
 names = {x.get("name") for x in (json.loads(sec) if ok_ == 200 and sec.startswith("[") else [])}
 say("  ✓ STEP1_KEK is set") if "STEP1_KEK" in names else bad("STEP1_KEK is not set")
 ok_, c = sql(REF, "select count(*)::int as n from public.step1_forms"); say(f"  ✓ step1_forms holds {c[0]['n']} row(s) (nothing writes it yet)") if ok_ else bad(f"count: {c}")
-say("  · tested before running: 19 checks on the forms' wording against her rulings, 8 on this SQL's shape.")
+say("  · tested before running: 25 checks on the forms' wording and the reveal rules against her rulings, 8 on this SQL's shape.")
 say()
 if fails: say("RESULT: CHECK THE ✗ LINES ABOVE"); done(9)
 say("RESULT: DONE · the Step 1 tables and the lock's key are in place. Nothing was sent; nothing reads them yet."); done(0)

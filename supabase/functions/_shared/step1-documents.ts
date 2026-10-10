@@ -9,7 +9,7 @@
 // wording is stored with every signature. Nothing here holds an answer: answers are merged at render time (2b/2c).
 // Two forms carry a status other than 'proposed': the FCRA disclosure is a DRAFT FOR COUNSEL (her decision 7) and the
 // screening package list is TO CONFIRM (her decision 4). Fictional practice only until each is approved.
-export const STEP1_VERSION = 2   // her form decisions of October 9 (late): six forms revised to version 2; the FCRA draft stays version 1
+export const STEP1_VERSION = 3   // her operational decisions of October 9 (late): the vehicle form and the EDL/FCSR consent at version 3; four forms at version 2; the FCRA draft at version 1
 export type FormKey = 'employee_application' | 'reference_consent' | 'fcra_disclosure' | 'edl_fcsr_consent' | 'availability' | 'experience' | 'vehicle'
 export type FormStatus = 'proposed' | 'draft_for_counsel' | 'to_confirm'
 export type Item = { id: string; label: string; kind: 'text' | 'yesno' | 'choice' | 'multi' | 'date' | 'statement' | 'table' | 'number' | 'initials' | 'photo'; options?: string[]; required?: boolean; note?: string; locked?: boolean }
@@ -108,7 +108,7 @@ export const FORMS: Record<FormKey, Form> = {
     certification: ['I have read the disclosure above and I authorize the Company to obtain consumer reports about me.'],
   },
   edl_fcsr_consent: {
-    key: 'edl_fcsr_consent', screen: '5b', title: 'Missouri Employee Disqualification List and Family Care Safety Registry Consent', version: 2, status: 'to_confirm', signature: 'typed',
+    key: 'edl_fcsr_consent', screen: '5b', title: 'Missouri Employee Disqualification List and Family Care Safety Registry Consent', version: 3, status: 'proposed', signature: 'typed',
     sections: [
       /* v2 (her decision 4): the EDL search and the FCSR registration and screening are separate paragraphs; what Missouri
          requires is labelled as such, and what is Caring Companions' own policy is labelled as such (frequency to confirm) */
@@ -118,8 +118,9 @@ export const FORMS: Record<FormKey, Form> = {
       { h: 'Family Care Safety Registry (a Missouri requirement)', p: [
         'Missouri requires every in-home services worker to be registered with the Family Care Safety Registry (FCSR) and requires the Company to request a background screening through it before I have contact with any participant (19 CSR 15-7.021(19)(F); RSMo 192.2495). I register with the FCSR myself, with my Social Security number; the Company may pay the registration fee and then requests my screening.',
       ] },
-      { h: 'Rechecks (Caring Companions policy)', p: [
-        'As its own policy, Caring Companions rechecks the EDL quarterly and re-verifies employability annually during employment. [Frequency to be confirmed by Samantha.]',
+      /* v3 (her decision 3): monthly EDL, annual FCSR, as agency policy, beside anything the law or a payer requires */
+      { h: 'Rechecks (Caring Companions policy, not a Missouri interval)', p: [
+        'As its own policy, Caring Companions rechecks the Employee Disqualification List every month and requests a new Family Care Safety Registry screening every year during employment, in addition to the initial checks and any other checks required by applicable law or by a payer agreement. These frequencies are the agency\'s policy; Missouri sets the initial checks and the ongoing EDL monitoring, not these intervals.',
       ] },
       { h: 'Consent', p: [
         /* her decision 3: one consent sentence; the standalone FCRA disclosure stays on its own screen and is never folded in here */
@@ -198,11 +199,12 @@ export const FORMS: Record<FormKey, Form> = {
     ],
   },
   vehicle: {
-    key: 'vehicle', screen: '8', title: 'Responsibility for Personal Vehicle Insurance & Transportation Standards', version: 2, status: 'to_confirm', signature: 'typed',
+    key: 'vehicle', screen: '8', title: 'Responsibility for Personal Vehicle Insurance & Transportation Standards', version: 3, status: 'to_confirm', signature: 'typed',
     sections: [
       { h: 'Your driving details', p: ['From your application: whether you have a valid license, insurance and your own transportation. Correct anything that has changed.'], items: [
         yesno('has_license', 'I have a current, valid driver\'s license'), yesno('has_insurance', 'I have active automobile liability insurance'), yesno('has_transport', 'I have reliable transportation of my own'),
-        { id: 'license_number', label: 'Driver\'s license number', kind: 'text', locked: true, note: 'Needed for the Motor Vehicle Record check if you will transport clients. Kept encrypted; your record says "on file, ending" with the last four characters.' },
+        /* v3 (her decision 1): the MVR is not described as an existing check */
+        { id: 'license_number', label: 'Driver\'s license number', kind: 'text', locked: true, note: 'Needed so the office can verify your license and driving record before you are approved to transport clients. Kept encrypted; your record says "on file, ending" with the last four characters.' },
         { id: 'license_state', label: 'License state', kind: 'choice', options: STATES }, { id: 'license_expires', label: 'License expiration date', kind: 'date' },
         /* her decision 5 and section 21: proof is an option, the photo is truly optional */
         { id: 'insurance_proof', label: 'Proof of insurance', kind: 'choice', options: ['I have provided proof of current personal automobile insurance coverage to Caring Companions', 'I will provide proof of current personal automobile insurance coverage to Caring Companions before orientation'], required: true },
@@ -215,11 +217,12 @@ export const FORMS: Record<FormKey, Form> = {
         /* v2 (her decision 7): the indemnification clause is removed pending counsel review */
       ] },
       /* v2: the coverage requirement and the payer list are kept as today's form states them and marked for her confirmation */
-      { h: 'Required Standards for Transporting Clients', p: ['Employees who transport clients must meet all of the following requirements: Maintain a current, valid driver\'s license. Maintain active automobile liability insurance meeting or exceeding Missouri\'s minimum requirements. [Coverage requirement to be confirmed by Samantha.] Successfully pass a Motor Vehicle Record (MVR) check. Use only a personally owned or legally authorized private vehicle approved by the agency. Transport clients only when authorized in the client\'s Care Plan and permitted by the applicable payer (Private Pay, Missouri Medicaid HCBS, or VA Community Care Network (VA CCN)). [Transportation restrictions to be confirmed by Samantha.]'] },
+      /* v3 (her decisions 4 and 5): the insurance requirement, the transportation conditions, and no authorization from Step 1 answers */
+      { h: 'Required Standards for Transporting Clients', p: ['Employees who transport clients must meet all of the following requirements: Maintain a current, valid driver\'s license. Maintain current automobile liability insurance that meets at least Missouri\'s legal minimums and that permits transporting clients as part of paid caregiving. [Whether additional limits or coverage are required is being confirmed with the Company\'s insurance agent.] Have an acceptable driving record, verified by a Motor Vehicle Record check ordered by the office. Complete any transportation training the Company requires. Use only a personally owned or legally authorized private vehicle approved by the agency.', 'A caregiver may transport a client only when the client\'s Care Plan authorizes it, the payer permits it (Private Pay, Missouri Medicaid HCBS, or VA Community Care Network (VA CCN)), and the office has approved both the caregiver and the vehicle. No caregiver is authorized to drive clients based on their answers in Step 1 alone.'] },
       { h: 'Vehicle Safety & Condition Requirements', p: ['Any vehicle used to transport clients must be safe, operational, and well-maintained, including properly functioning: headlights, taillights, and turn signals; windshield and windshield wipers; brakes and seat belts; heater and air conditioning; tires properly inflated with a minimum of 1/8 inch tread depth at the point of greatest wear. The vehicle must also be clean and free of trash or clutter, and free of leaking oil, gasoline, or other fluids.'] },
       { h: 'Driver Conduct & Safety Expectations', p: ['While transporting clients, I agree to: Not smoke, vape, text, email, or use a mobile device while driving. Not drive while fatigued, ill, impaired, or under the influence of alcohol, drugs, or medications that affect driving ability. Obey all traffic laws and operate the vehicle in a safe, defensive manner. Transport only the authorized client (no unauthorized passengers). Avoid driving in unsafe weather or road conditions. Never operate a client\'s vehicle unless expressly authorized in writing by the agency.'] },
       { h: 'Accident & Incident Reporting', p: ['I agree to immediately notify Caring Companions of any accident, traffic citation, or incident that occurs while transporting a client. I will comply with all legal reporting requirements and understand that I may not transport clients again until cleared by the agency.'] },
-      { h: 'Agency Rights & Acknowledgment', p: ['I understand that Caring Companions reserves the right to approve, suspend, or revoke driving privileges at any time based on safety concerns, compliance issues, insurance status, or policy violations. Failure to comply with this policy may result in disciplinary action, up to and including termination. Driving duties are assigned only after the office has verified my license, insurance and Motor Vehicle Record.'] },
+      { h: 'Agency Rights & Acknowledgment', p: ['I understand that Caring Companions reserves the right to approve, suspend, or revoke driving privileges at any time based on safety concerns, compliance issues, insurance status, or policy violations. Failure to comply with this policy may result in disciplinary action, up to and including termination. Driving duties are assigned only after the office has verified my license, my insurance and my driving record, and has approved me and my vehicle.'] },
       { h: 'Driver Acknowledgment', p: ['If you choose the second option, you will not be asked to transport clients, and the office will send you the Non-Driver Agreement to sign with your Step 2 paperwork.'], items: [{ id: 'driver_ack', label: 'Choose one', kind: 'choice', options: ['I meet all requirements and request approval to transport clients.', 'I do not meet the requirements and will inform my supervisor and sign a Non-Driver Agreement.'], required: true }] },
     ],
     certification: ['I have read this policy and the acknowledgment I chose above is true.'],

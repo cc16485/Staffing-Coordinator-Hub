@@ -26,6 +26,15 @@ const rm1 = P.applyChange(base(), 'work', 'remove', { person_id: 'p-zach', email
 ck('the work list can lose one member but never its last', rm1.ok && rm1.next.work.length === 1 && !P.applyChange(rm1.next, 'work', 'remove', { person_id: 'p-sam', email: '', name: '' }, SAM, 'x').ok);
 ck('the original record is never mutated', base().version === 3 && add.next !== base());
 
+/* SLICE 2a: the screening staff list (who may reveal a Social Security number, date of birth or license number) */
+ck('an older saved record without a screening list reads as an empty one', Array.isArray(base().screening) && base().screening.length === 0);
+ck('nobody may reveal identity details until named: not an owner by title, not a coordinator', !P.mayApprove(base(), 'screening', SAM) && !P.mayApprove(base(), 'screening', KRY));
+ck('only an owner changes the screening list', P.mayChange(base(), 'screening', SAM) && !P.mayChange(base(), 'screening', KRY));
+const scr = P.applyChange(base(), 'screening', 'add', KRY, SAM, '2026-10-09T15:00:00Z');
+ck('adding Krystal to screening staff touches that list only and writes a history line of kind screening', scr.ok && scr.next.screening.length === 1 && scr.next.advance.length === 1 && scr.next.work.length === 2 && scr.next.history[0].kind === 'screening');
+ck('once named, Krystal may reveal; Samantha still may not by title', P.mayApprove(scr.next, 'screening', KRY) && !P.mayApprove(scr.next, 'screening', SAM));
+ck('the screening list may be emptied again (unlike Approve to Work)', P.applyChange(scr.next, 'screening', 'remove', KRY, SAM, 'x').ok && P.applyChange(scr.next, 'screening', 'remove', KRY, SAM, 'x').next.screening.length === 0);
+
 // the function itself
 const env = { SUPABASE_URL: 'http://x', SUPABASE_SERVICE_ROLE_KEY: 'svc' };
 let handler = null; globalThis.Deno = { env: { get: (k) => env[k] }, serve: (h) => { handler = h; } };
@@ -74,3 +83,10 @@ DB.raceOnce = true; const before = DB.saves; r = await call('sam', { action: 'ad
 r = await call('sam', { action: 'add', kind: 'nope', person_id: 'p-zach' }); ck('an unknown list is refused', r.status === 400, r);
 for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note));
 const bad = res.filter((x) => !x[1]).length; console.log(`${res.length - bad}/${res.length} passed`); process.exit(bad ? 1 : 0);
+
+r = await call('kry', { action: 'add', kind: 'screening', person_id: 'p-kry' }); ck('a coordinator cannot put herself on the screening list', r.status === 403 && /screening staff/.test(r.j.error || ''), r);
+r = await call('sam', { action: 'add', kind: 'screening', person_id: 'p-kry' }); ck('an owner adds Krystal to screening staff: saved, logged, the answer carries the list', r.status === 200 && r.j.screening.length === 1 && /screening staff/.test(DB.events.at(-1).summary || ''), r.j);
+r = await call('kry', { action: 'get' }); ck('Krystal now sees may_reveal_identity true and may_change_screening false; Samantha the reverse', r.status === 200 && r.j.me.may_reveal_identity === true && r.j.me.may_change_screening === false, r.j);
+r = await call('sam', { action: 'get' }); ck('an owner by title may change the screening list but not reveal', r.j.me.may_reveal_identity === false && r.j.me.may_change_screening === true, r.j);
+r = await call('sam', { action: 'add', kind: 'nope', person_id: 'p-kry' }); ck('the kind error names all three lists', r.status === 400 && /'screening'/.test(r.j.error), r);
+
