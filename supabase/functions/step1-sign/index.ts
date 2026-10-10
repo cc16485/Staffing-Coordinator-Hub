@@ -16,6 +16,8 @@
 //                                                              answer is there; the PDF written once; the trail rows written
 //   { action: 'copies',   o, e, t }                         -> short-lived links to the caregiver's own signed PDFs
 //   { action: 'open', offer_id, form }  (signed-in staff)   -> a short-lived link to a stored PDF, logged
+//   { action: 'screening', offer_id }   (signed-in staff)   -> SLICE 2c: what is on file, the registration facts, may this caller reveal
+//   { action: 'reveal', offer_id, field, reason } (screening staff only) -> SLICE 2c: one sealed value, once, for five minutes, logged
 // HER RULES BUILT IN: nothing here sends a text or an email; a signed form is never changed (the database trigger and the
 // write guard both refuse); the SSN, date of birth and license number never land in answers, logs or the PDF; the test
 // gate of Slice 1b holds (only offers on the NEW onboarding path, none real until the switch date); no form is approved
@@ -24,7 +26,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { checkLink } from '../_shared/applicant-links.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { FORMS, FORM_ORDER, formFingerprint, REFERENCES_REQUIRED, APPROVED_FOR_REAL, MATCHING_FACTS, type FormKey, type Item, type Form } from '../_shared/step1-documents.ts'
-import { seal, last4, ssnLooksValid } from '../_shared/step1-crypto.ts'
+import { seal, open as unseal, last4, ssnLooksValid, REVEAL_TTL_MS, REVEAL_FIELDS, REVEAL_PERMISSION, type RevealField } from '../_shared/step1-crypto.ts'
+import { PERM_KEY, normalizePerms, mayApprove } from '../_shared/onboarding-permissions.ts'
 import { step1FormPdf, type IdentityState } from '../_shared/step1-pdf.ts'
 import { longDateTime } from '../_shared/offer-documents.ts'
 
@@ -185,6 +188,50 @@ Deno.serve(async (req) => {
       if (error || !data?.signedUrl) return json({ ok: false, error: 'Could not open the document.' }, 500)
       await db.from('document_access_log').insert({ offer_id: id, doc: 'step1:' + form, path, by_person: staff.person_id, by_email: staff.email, by_name: staff.name, ip: ipOf(req) })
       return json({ ok: true, url: data.signedUrl, expires_in: 300 })
+    }
+    /* ───── SLICE 2c (Samantha "start slice 2c", 2026-10-10): the screening desk and the identity reveal ─────
+       Office staff by their own sign-in. `screening` tells the desk what is on file and whether this caller may reveal;
+       `reveal` opens ONE sealed field for a person on the Admin page's Screening staff list (decision 6), with a reason,
+       for REVEAL_TTL_MS; the log row, the reveal count and the trail row are written, the value is in none of them. */
+    if (action === 'screening' || action === 'reveal') {
+      const staff = await requireStaff(db, req, OFFICE_ROLES)
+      if (!staff.ok) return json({ ok: false, error: staff.error }, staff.status)
+      const oid = S(b.offer_id, 64)
+      if (!/^[0-9a-f-]{8,64}$/i.test(oid)) return json({ ok: false, error: 'Which offer?' }, 400)
+      const { data: permRow } = await db.from('app_data').select('data').eq('key', PERM_KEY).maybeSingle()
+      const perms = normalizePerms(permRow?.data)
+      const mayReveal = mayApprove(perms, REVEAL_PERMISSION, { person_id: staff.person_id, roles: staff.roles, email: staff.email })
+      const { data: idr } = await db.from('step1_identity').select('ssn_last4,dob_sealed,ssn_sealed,license_sealed,license_last4,license_state,license_expires,address1,address2,city,state,zip,captured_at,purge_after,purged_at,reveals').eq('offer_id', oid).maybeSingle()
+      if (action === 'screening') {
+        const o = await trn().get(oid)
+        const { data: fr } = await db.from('step1_forms').select('answers,signatures,completed_at').eq('offer_id', oid).maybeSingle()
+        const { data: log } = await db.from('document_access_log').select('at,doc,by_name,by_email,reason').eq('offer_id', oid).like('doc', 'identity:%').order('at', { ascending: false }).limit(10)
+        const a = (fr?.answers || {}) as Record<string, unknown>
+        return json({ ok: true, may_reveal: mayReveal, ttl_seconds: REVEAL_TTL_MS / 1000, fields: REVEAL_FIELDS,
+          identity: idr ? { ...identState(idr), license_state: idr.license_state, license_expires: idr.license_expires, captured_at: idr.captured_at, reveals: idr.reveals, purged_at: idr.purged_at, purge_after: idr.purge_after } : null,
+          facts: { first: S(o?.first_name, 60), last: S(o?.last_name, 60), phone: S(o?.phone, 30), email: S(o?.email, 160), preferred_name: S(a.preferred_name, 80), other_names: S(a.other_names, 200),
+            lived_outside_mo: a.lived_outside_mo ?? null, states_lived: Array.isArray(a.states_lived) ? a.states_lived : [], address: [a.address1, a.address2, [a.city, a.state, a.zip].filter(Boolean).join(' ')].map((x) => S(x, 120)).filter(Boolean).join(', ') },
+          consent_signed_at: (fr?.signatures as Record<string, { at?: string }> | undefined)?.edl_fcsr_consent?.at ?? null, step1_completed_at: fr?.completed_at ?? null, reveals_log: log ?? [] })
+      }
+      // reveal
+      if (!mayReveal) return json({ ok: false, error: 'Only a person named on the Admin page\'s Screening staff list may reveal identity details. Ask an owner to add you there.' }, 403)
+      const field = S(b.field, 10) as RevealField
+      if (!REVEAL_FIELDS.includes(field)) return json({ ok: false, error: 'Which field: ssn, dob or license?' }, 400)
+      const reason = S(b.reason, 200)
+      if (reason.length < 5) return json({ ok: false, error: 'Please say why (at least five characters): for example "FCSR registration" or "EDL check".' }, 400)
+      if (!idr) return json({ ok: false, error: 'Nothing is on file for this offer yet.' }, 404)
+      if (idr.purged_at) return json({ ok: false, error: 'These details were purged on ' + String(idr.purged_at).slice(0, 10) + '.' }, 410)
+      const sealed = field === 'ssn' ? idr.ssn_sealed : field === 'dob' ? idr.dob_sealed : idr.license_sealed
+      if (!sealed) return json({ ok: false, error: 'That detail is not on file yet.' }, 404)
+      if (kek.length < 40) return json({ ok: false, error: 'The lock is not set up on the server.' }, 500)
+      let value = ''
+      try { value = await unseal(kek, oid, sealed) } catch { return json({ ok: false, error: 'The sealed value could not be opened. Tell Claude.' }, 500) }
+      const at = new Date().toISOString()
+      const { error: lErr } = await db.from('document_access_log').insert({ offer_id: oid, doc: 'identity:' + field, path: '(sealed; revealed for ' + (REVEAL_TTL_MS / 60000) + ' minutes)', by_person: staff.person_id, by_email: staff.email, by_name: staff.name, ip: ipOf(req), reason })
+      if (lErr) return json({ ok: false, error: 'The reveal could not be logged, so nothing is shown.' }, 500)
+      await db.from('step1_identity').update({ reveals: Number(idr.reveals || 0) + 1, updated_at: at }).eq('offer_id', oid)
+      try { await trn().event({ offer_id: oid, kind: 'identity_revealed', by_who: 'staff', channel: 'hub', detail: { field, by_name: staff.name, by_email: staff.email, reason } }) } catch { /* the log row is the record; the trail is a courtesy */ }
+      return json({ ok: true, field, value, revealed_at: at, expires_in: REVEAL_TTL_MS / 1000, by: staff.name })
     }
     const id = S(b.o, 64)
     if (!(await checkLink(secret, 'step1', id, b.e, b.t))) return json(NOPE, 401)

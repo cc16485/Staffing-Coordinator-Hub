@@ -26,7 +26,7 @@ globalThis.fetch = async (url, o = {}) => {
   throw new Error('unexpected fetch ' + u)
 }
 /* ── a tiny table store with the query shapes the function uses ── */
-let DB = { step1_forms: [], step1_identity: [], job_applicants: [], document_access_log: [], auth_identities: [], persons: [], entity_memberships: [], staff_roles: [] }
+let DB = { step1_forms: [], step1_identity: [], job_applicants: [], document_access_log: [], auth_identities: [], persons: [], entity_memberships: [], staff_roles: [], app_data: [] }
 const STORE = {}
 const getPath = (r, p) => p.split('->').reduce((a, k) => a == null ? undefined : a[k], r)
 function table(name) {
@@ -35,7 +35,7 @@ function table(name) {
     const match = (r) => filters.every((f) => f(r))
     const run = () => {
       if (mode === 'select') { let out = rows().filter(match); if (opts.order) out = [...out].reverse(); if (opts.limit) out = out.slice(0, opts.limit); return out.map((r) => JSON.parse(JSON.stringify(r))) }
-      if (mode === 'insert') { const r = { ...payload }; if (name === 'step1_forms') Object.assign(r, { answers: {}, signatures: {}, pdfs: {}, ...r }); if (rows().some((x) => x.offer_id === r.offer_id)) throw Object.assign(new Error('duplicate key'), { code: '23505' }); rows().push(r); return [r] }
+      if (mode === 'insert') { const r = { ...payload }; if (name === 'step1_forms') Object.assign(r, { answers: {}, signatures: {}, pdfs: {}, ...r }); if ((name === 'step1_forms' || name === 'step1_identity') && rows().some((x) => x.offer_id === r.offer_id)) throw Object.assign(new Error('duplicate key'), { code: '23505' }); rows().push(r); return [r] }
       if (mode === 'upsert') { const i = rows().findIndex((x) => x.offer_id === payload.offer_id); if (i >= 0) Object.assign(rows()[i], payload); else rows().push({ ...payload }); return [rows()[i >= 0 ? i : rows().length - 1]] }
       if (mode === 'update') { const out = []; for (const r of rows()) if (match(r)) {
         if (name === 'step1_forms') { for (const k of Object.keys(r.signatures || {})) if (payload.signatures && JSON.stringify(payload.signatures[k]) !== JSON.stringify(r.signatures[k])) throw new Error('trigger: signature never changed')
@@ -46,6 +46,7 @@ function table(name) {
       eq: (k, v) => q(mode, payload, [...filters, (r) => String(getPath(r, k)) === String(v)], opts),
       is: (k, v) => q(mode, payload, [...filters, (r) => (v === null ? getPath(r, k) == null : getPath(r, k) === v)], opts),
       filter: (k, op, v) => q(mode, payload, [...filters, (r) => op === 'is' && v === null ? getPath(r, k) == null : false], opts),
+      like: (k, v) => q(mode, payload, [...filters, (r) => { const pat = '^' + String(v).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*') + '$'; return new RegExp(pat).test(String(getPath(r, k) ?? '')) }], opts),
       ilike: (k, v) => q(mode, payload, [...filters, (r) => { const pat = '^' + String(v).toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*') + '$'; return new RegExp(pat).test(String(r[k] ?? '').toLowerCase()) }], opts),
       order: () => q(mode, payload, filters, { ...opts, order: true }), limit: (n) => q(mode, payload, filters, { ...opts, limit: n }),
       select: () => q(mode, payload, filters, opts),
@@ -161,6 +162,38 @@ r = await call({ action: 'open', offer_id: OID, form: 'vehicle' }); ck('open wit
 DB.auth_identities = [{ auth_user_id: 'u1', person_id: 'p1', project_ref: 'zngsgedlsxinbygwmxwn' }]; DB.persons = [{ person_id: 'p1', full_name: 'Krystal', active: true }]; DB.entity_memberships = [{ person_id: 'p1', entity: 'cc_ihs', active: true, ended_at: null }]; DB.staff_roles = [{ person_id: 'p1', entity: 'cc_ihs', role: 'staffing_coordinator' }]
 r = await call({ action: 'open', offer_id: OID, form: 'vehicle' }, { Authorization: 'Bearer staff' })
 ck('a signed-in coordinator opens a stored PDF and the open is logged with the form name', r.status === 200 && /signed\/step1\//.test(r.j.url) && DB.document_access_log.length === 1 && DB.document_access_log[0].doc === 'step1:vehicle' && DB.document_access_log[0].by_name === 'Krystal', { r, log: DB.document_access_log })
+
+
+/* ═══ SLICE 2c: the screening desk and the reveal ═══ */
+const STAFF = { Authorization: 'Bearer staff' }
+DB.app_data = [{ key: 'onboarding_permissions', data: { version: 1, advance: [], work: [{ person_id: 'p-sam' }], screening: [], history: [] } }]
+r = await call({ action: 'screening', offer_id: OID })
+ck('screening without a sign-in is refused', r.status === 401, r)
+r = await call({ action: 'screening', offer_id: OID }, STAFF)
+ck('screening: what is on file (last four only), the registration facts, the consent time, and may_reveal false for a coordinator not on the list', r.status === 200 && r.j.identity.ssn === 'ending 3456' && r.j.identity.dob === true && r.j.identity.license === 'ending 6789' && r.j.facts.first === 'Ava' && /12 Oak St/.test(r.j.facts.address) && r.j.consent_signed_at && r.j.may_reveal === false && r.j.ttl_seconds === 300 && !JSON.stringify(r.j).includes('529123456'), r.j)
+r = await call({ action: 'reveal', offer_id: OID, field: 'ssn', reason: 'FCSR registration' }, STAFF)
+ck('reveal by someone not on the Screening staff list: refused (403), no log row', r.status === 403 && /Screening staff list/.test(r.j.error) && DB.document_access_log.filter((l) => /^identity:/.test(l.doc)).length === 0, r)
+DB.app_data[0].data.screening = [{ person_id: 'p1', email: 'k@mo-care.com', name: 'Krystal' }]
+r = await call({ action: 'reveal', offer_id: OID, field: 'ssn', reason: 'FCSR' }, STAFF)
+ck('a reason shorter than five characters is refused', r.status === 400 && /why/.test(r.j.error), r)
+r = await call({ action: 'reveal', offer_id: OID, field: 'name', reason: 'FCSR registration' }, STAFF)
+ck('an unknown field is refused', r.status === 400, r)
+const evBefore = EVENTS.length
+r = await call({ action: 'reveal', offer_id: OID, field: 'ssn', reason: 'FCSR registration' }, STAFF)
+ck('on the list: the SSN comes back once, five-minute life, with who and when', r.status === 200 && r.j.value === '529123456' && r.j.expires_in === 300 && r.j.by === 'Krystal', { status: r.status, j: { ...r.j, value: r.j && r.j.value ? '(present)' : null } })
+const lg = DB.document_access_log.filter((l) => /^identity:/.test(l.doc))
+ck('...logged with field, who and the reason, the value in no row; the reveal count is 1; the trail has identity_revealed without the value', lg.length === 1 && lg[0].doc === 'identity:ssn' && lg[0].by_name === 'Krystal' && lg[0].reason === 'FCSR registration' && !JSON.stringify(lg).includes('529123456') && DB.step1_identity[0].reveals === 1 && EVENTS.length === evBefore + 1 && EVENTS.at(-1).kind === 'identity_revealed' && EVENTS.at(-1).detail.field === 'ssn' && !JSON.stringify(EVENTS).includes('529123456'), { lg, ev: EVENTS.at(-1) })
+r = await call({ action: 'reveal', offer_id: OID, field: 'dob', reason: 'FCSR registration' }, STAFF)
+ck('the date of birth reveals on its own request', r.status === 200 && r.j.value === '1990-05-05' && DB.step1_identity[0].reveals === 2, { status: r.status })
+r = await call({ action: 'reveal', offer_id: OID, field: 'license', reason: 'Driving record check' }, STAFF)
+ck('the license number reveals on its own request', r.status === 200 && r.j.value === 'M123456789', { status: r.status })
+r = await call({ action: 'screening', offer_id: OID }, STAFF)
+ck('the desk now sees may_reveal true and the three reveals in the log, newest first, with reasons', r.j.may_reveal === true && r.j.reveals_log.length === 3 && r.j.reveals_log.every((l) => l.reason) && r.j.identity.reveals === 3, r.j.reveals_log)
+r = await call({ action: 'reveal', offer_id: '22222222-2222-4222-8222-222222222222', field: 'ssn', reason: 'FCSR registration' }, STAFF)
+ck('an offer with nothing on file: 404', r.status === 404, r)
+DB.step1_identity[0].purged_at = '2027-01-01T00:00:00Z'
+r = await call({ action: 'reveal', offer_id: OID, field: 'ssn', reason: 'FCSR registration' }, STAFF)
+ck('a purged record reveals nothing (410)', r.status === 410, r); DB.step1_identity[0].purged_at = null
 
 globalThis.fetch = realFetch
 for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note))
