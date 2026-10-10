@@ -14,7 +14,7 @@ const clone = (x) => JSON.parse(JSON.stringify(x))
 
 /* ── a fake database: app_data rows, the connect tables, rpc calls recorded ── */
 function fakeDb(init) {
-  const t = { app_data: clone(init.app_data), caregiver_connect_runs: [], caregiver_connect_log: clone(init.log ?? []),
+  const t = { app_data: clone(init.app_data), step1_forms: clone(init.step1_forms ?? []), caregiver_connect_runs: [], caregiver_connect_log: clone(init.log ?? []),
     caregiver_connect_blocked: clone(init.blocked ?? []), domains: [{ code: 'caregivers', entity: 'cc_ihs', owner_person: 'p1' }], persons: [{ person_id: 'p1', primary_email: 'angiel@mo-care.com' }] }
   const calls = []
   const applyResults = init.applyResults ?? {}
@@ -218,5 +218,22 @@ ck('index: answers the browser (CORS on every answer, OPTIONS)', /req\.method ==
 const all = IX + fs.readFileSync(path.join(FN, '_shared/cg-connect.ts'), 'utf8') + fs.readFileSync(path.join(FN, '_shared/axis-census.ts'), 'utf8')
 ck('sends nothing: no texting, email or AxisCare write anywhere in it', !/ghl|sendSms|send-candidate|resend|leadconnector|method:\s*'(POST|PUT|PATCH|DELETE)'/i.test(all.replace(/req\.method/g, '')))
 ck('no em dash', !/—/.test(all))
+/* ═══ SLICE 2e: a live move lands the Step 1 availability and skills through the item door ═══ */
+{
+  const cand = { ...CASEY, id: 60, first: 'Ava', last: 'Lee', phone: '417.555.0109', offer_id: 'off-9', _rev: 2 }
+  const census = [{ id: '109', first: 'Ava', last: 'Lee', mobile: '1-417-555-0109', active: true }]
+  const db = fakeDb({ app_data: [{ key: 'candidates', data: [cand] }, { key: 'caregivers', data: [] }, { key: 'caregiver_availability', data: [] }, { key: 'caregiver_overlay', data: [] }, { key: 'ops_settings', data: { cg_connect_live: true } }, { key: 'ops_items', data: [] }],
+    step1_forms: [{ offer_id: 'off-9', answers: { windows: { Monday: { Morning: true } }, hours_ideal: 25, level2: 'Yes', specialties: { "Alzheimer's disease": 'Yes' }, matching_facts: {}, languages: ['English'] }, signatures: { availability: { at: 'x' }, experience: { at: 'x' } } }] })
+  const r = await J.runJob(db, okDeps({ census: async () => ({ ok: true, rows: census, total: census.length, truncated: false }) }), { caller: 'cron', runId: 'r-2e', now: NOW })
+  const ups = db.calls.filter((c) => c[0] === 'upsert_app_data_item').map((c) => c[1])
+  const avail = ups.find((u) => u.target_key === 'caregiver_availability'), ov = ups.find((u) => u.target_key === 'caregiver_overlay')
+  ck('2e live move: availability landed for the new roster id with source step1 and the Monday morning window', r.moved === 1 && avail && avail.item.source === 'step1' && avail.item.axiscare_id === '109' && JSON.stringify(avail.item.windows.mon) === '["morning"]' && avail.item.target_hours === 25, { r, ups: ups.map((u) => u.target_key) })
+  ck('2e live move: the overlay got personal_care and dementia_care as attested by Step 1, and the languages', ov && ov.item.axiscare_id === '109' && ov.item.skills.personal_care.have === 'yes' && ov.item.skills.dementia_care.evidence === 'attested' && ov.item.skills.dementia_care.by === 'Step 1 (their own answers)' && JSON.stringify(ov.item.languages) === '["English"]', ov)
+  ck('2e: the job summary carries the landing per AxisCare id', r.landed && r.landed['109'] && r.landed['109'].availability === 'landed', r.landed)
+  const db2 = fakeDb({ app_data: [{ key: 'candidates', data: [cand] }, { key: 'caregivers', data: [] }, { key: 'caregiver_availability', data: [] }, { key: 'caregiver_overlay', data: [] }, { key: 'ops_settings', data: { cg_connect_live: false } }, { key: 'ops_items', data: [] }],
+    step1_forms: [{ offer_id: 'off-9', answers: { windows: { Monday: { Morning: true } } }, signatures: { availability: { at: 'x' } } }] })
+  const r2 = await J.runJob(db2, okDeps({ census: async () => ({ ok: true, rows: census, total: census.length, truncated: false }) }), { caller: 'cron', runId: 'r-2e-p', now: NOW })
+  ck('2e practice: nothing lands (no move happened)', r2.mode === 'practice' && !db2.calls.some((c) => c[0] === 'upsert_app_data_item'), db2.calls.map((c) => c[0]))
+}
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? 'PASS ' : 'FAIL ') + n + (ok ? '' : '\n     ' + note)); if (ok) pass++ }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1)

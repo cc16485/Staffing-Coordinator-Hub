@@ -14,6 +14,7 @@
 // =============================================================================
 // deno-lint-ignore-file no-explicit-any
 import type { Census, CensusRow } from './axis-census.ts'
+import { landAtConnect } from './step1-landing.ts'   /* SLICE 2e */
 
 export const RULES_FILE = 'caregiver-connect-rules.js'
 export const ELIG_FILE = 'eligibility-rules.js'   // the hire snapshot (CCElig.hiringSnapshot), the same approved copy obligations-run runs
@@ -190,7 +191,7 @@ export async function runJob(db: any, deps: Deps, o: JobOpts) {
     const record = C.movedRecord(m.cand, m.ax, { promoted_at: at, hiring_snapshot: E.hiringSnapshot(m.cand), today,
       connected: { at, how: m.how, by: 'auto', from: 'background & references' } })
     const r = await apply({ op: 'move', axiscare_id: String(m.ax.id), ax_name: nm(m.ax), how: m.how, candidate_id: String(m.cand.id), cand_base_rev: rev(m.cand), record })
-    if (r?.ok) done.moved.push(String(m.ax.id))
+    if (r?.ok) { done.moved.push(String(m.ax.id)); /* SLICE 2e: their Step 1 availability and skills land now that they have an AxisCare id */ (done as any).landed = { ...((done as any).landed || {}), [String(m.ax.id)]: await landAtConnect(db, m.cand, r.caregiver_id ?? record.id ?? '', m.ax, at) } }
   }
   for (const c of plan.create) {
     const record = C.newRecord(c.ax, { connected: { at, by: 'auto', how: 'new' }, via: 'auto from AxisCare' })
@@ -213,9 +214,10 @@ export async function runJob(db: any, deps: Deps, o: JobOpts) {
   }
   try { await closeItem(db, items, FAILING_ID, 'automation', 'Running again.') } catch { /* next run */ }
   const out = { linked: done.linked.length, moved: done.moved.length, created: done.created.length, review: plan.review.length, refused }
+  const landed = (done as any).landed as Record<string, unknown> | undefined   /* SLICE 2e: what Step 1 landed per moved person (answered, not stored on the run row) */
   await recordRun(db, { run_id: o.runId, mode, caller: o.caller, ok: errors.length === 0, census_total: counts.census_total, census_active: counts.census_active,
     ...out, error: errors.length ? errors.slice(0, 3).join(' · ').slice(0, 300) : null, note })
-  return { ok: errors.length === 0, mode, census_total: counts.census_total, census_active: counts.census_active, ...out, truncated: cen.truncated, ...(errors.length ? { errors } : {}) }
+  return { ok: errors.length === 0, mode, census_total: counts.census_total, census_active: counts.census_active, ...out, truncated: cen.truncated, ...(landed ? { landed } : {}), ...(errors.length ? { errors } : {}) }
 }
 
 // ── the Connect card and "Not this person" (a signed-in office person) ──
@@ -252,6 +254,7 @@ export async function manualAction(db: any, deps: Deps, staff: Staff, body: any)
     C = R.C; E = R.E
   }
   const name = `${ax.first} ${ax.last}`.trim()
+  let movedCand: any = null   /* SLICE 2e: the Background & References record a move came from */
   if (action === 'link') {
     const cid = String(body?.caregiver_id ?? '')
     if (!cid) return { ok: false, status: 400, message: 'Which Hub record? Nothing was changed.' }
@@ -262,6 +265,7 @@ export async function manualAction(db: any, deps: Deps, staff: Staff, body: any)
     try { L = await lists(db) } catch { return { ok: false, status: 500, message: 'Background & References could not be read, so nothing was changed.' } }
     const cand = L.cands.find((k: any) => k && String(k.id) === kid)
     if (!cand) return { ok: false, status: 404, message: 'They are no longer in Background & References. Nothing was changed.' }
+    movedCand = cand
     p = { op: 'move', axiscare_id: axId, ax_name: name, how: 'manual', candidate_id: kid, cand_base_rev: rev(cand),
       record: C.movedRecord(cand, ax, { promoted_at: at, hiring_snapshot: E.hiringSnapshot(cand), today: at.slice(0, 10), connected: { ...connected, from: 'background & references' } }) }
   } else {
@@ -271,6 +275,10 @@ export async function manualAction(db: any, deps: Deps, staff: Staff, body: any)
   if (error) return { ok: false, status: 500, message: 'That did not go through: ' + String(error.message ?? error).slice(0, 120) }
   if (!data?.ok) return { ok: false, status: 409, message: String(data?.message ?? 'Nothing was changed.') }
   try { const L = await lists(db); await closeItem(db, L.items, itemId(axId), shown, 'Connected on the Connect card.') } catch { /* the next hourly run closes it */ }
-  return { ok: true, caregiver_id: data.caregiver_id, log_id: data.log_id,
-    message: action === 'link' ? 'Connected.' : action === 'move' ? 'Moved over from Background & References and connected.' : 'A new Hub record was started and connected.' }
+  /* SLICE 2e: on a move, their Step 1 availability and skills land now that they have an AxisCare id */
+  let landed: Record<string, unknown> | null = null
+  if (action === 'move' && movedCand) landed = await landAtConnect(db, movedCand, data.caregiver_id, ax, at)
+  const landedWords = landed ? (landed.availability === 'landed' || (Array.isArray(landed.skills) && landed.skills.length) ? ` Their Step 1 ${[landed.availability === 'landed' ? 'availability' : '', Array.isArray(landed.skills) && landed.skills.length ? 'skills (' + landed.skills.length + ')' : ''].filter(Boolean).join(' and ')} landed on the record.` : (landed.why === 'no Step 1 record' ? '' : ` (Step 1 landing: ${landed.availability}${landed.error ? ', ' + landed.error : ''}.)`)) : ''
+  return { ok: true, caregiver_id: data.caregiver_id, log_id: data.log_id, landed,
+    message: (action === 'link' ? 'Connected.' : action === 'move' ? 'Moved over from Background & References and connected.' : 'A new Hub record was started and connected.') + landedWords }
 }
