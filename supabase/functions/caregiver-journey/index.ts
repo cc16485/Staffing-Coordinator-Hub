@@ -21,6 +21,11 @@
 //   { action: 'retry_axiscare', journey_id }   (staff)   after "Approval recorded, AxisCare update failed": the same update again
 //   { action: 'training_report', axiscare_id, courses } (server door: x-outreach-secret, the Training Platform)  the pre-service
 //                                                          courses done, verified onto the card; Training sends nothing itself
+//   { action: 'nightly' }                      (job)     SLICE 6, once a night: the Training Platform's facts onto the roster
+//                                                          (training_sync_live), the monthly OIG re-check with retained results
+//                                                          (oig_monthly_live), every open AND approved card re-verified with its
+//                                                          expiries written as events and owned tasks (audit_sweep_live);
+//                                                          off = practice: counts in the automation log, nothing written
 //   { action: 'sweep' }                        (job)     every open caregiver journey: verify the rows the records satisfy,
 //                                                          keep the roster's work_lock true until the stamp and the read-back,
 //                                                          raise the Ready for Final Approval card, send a held cleared text
@@ -35,6 +40,9 @@ import { saveSweepFields } from '../_shared/sweep-patch.ts'
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { latestTextConsent, inTextHours, withStop } from '../_shared/text-consent.ts'
+import { saveAuditFields } from '../_shared/sweep-patch.ts'
+import { loadLeie, matchLeie, oigEvidence, oigDue, OIG_INTERVAL_DAYS } from '../_shared/oig-leie.ts'
+import { readTraining, certificateRef, syncPatch } from '../_shared/training-sync.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret, x-outreach-secret', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -99,7 +107,7 @@ const ctxFor = (f: Facts, st: Any) => ({ today: new Date().toLocaleString('sv-SE
 const dates = (f: Facts) => { const o = f.roster?.orient_date ? String(f.roster.orient_date).slice(0, 10) : null, h = f.roster?.hire_date ? String(f.roster.hire_date).slice(0, 10) : null; return { orientation: o, axiscare_hire: h, differ: !!(o && h && o !== h) } }
 
 /* ── the Needs Attention cards (ops_items), raised and closed by the readiness server; a card a person closed stays closed ── */
-async function raiseCard(db: Any, c: { id: string; kind: string; title: string; detail: string; who: string; offer_id: string; urgency: 'urgent' | 'today' | 'normal' }) {
+async function raiseCard(db: Any, c: { id: string; kind: string; title: string; detail: string; who: string; offer_id: string; urgency: 'urgent' | 'today' | 'normal' }, extra: { owner?: string; owner_name?: string; due?: string } = {}) {
   try {
     const now = new Date().toISOString()
     const { data: row } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
@@ -107,19 +115,20 @@ async function raiseCard(db: Any, c: { id: string; kind: string; title: string; 
     const prev = items.find((x) => x && x.id === c.id)
     const isOpen = (x: Any) => x && x.status !== 'done' && x.status !== 'resolved'
     if (prev && !isOpen(prev)) return
-    const item = { ...(prev && isOpen(prev) ? prev : { owner: '', owner_name: '', created_at: now, first_at: now }), id: c.id, kind: c.kind, domain: 'caregivers', status: 'open', urgency: c.urgency,
-      title: c.title, detail: c.detail, who: c.who, offer_id: c.offer_id, last_at: now, due: (prev && isOpen(prev) && prev.due) || new Date(Date.now() + 24 * 3_600_000).toISOString(),
+    const item = { ...(prev && isOpen(prev) ? prev : { owner: extra.owner || '', owner_name: extra.owner_name || '', created_at: now, first_at: now }), id: c.id, kind: c.kind, domain: c.kind === 'requirement_expired' ? 'training_compliance' : 'caregivers', status: 'open', urgency: c.urgency,
+      title: c.title, detail: c.detail, who: c.who, offer_id: c.offer_id, last_at: now, due: (prev && isOpen(prev) && prev.due) || (extra.due ? extra.due + 'T17:00:00Z' : new Date(Date.now() + 24 * 3_600_000).toISOString()),
       closed_at: null, closed_by: null, close_note: null, resolved_at: null, created_by: 'caregiver-journey', opened_by: 'caregiver-journey' }
     await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item })
   } catch (e) { console.warn('[caregiver-journey] could not raise a card: ' + String(e).slice(0, 160)) }
 }
-async function closeCard(db: Any, id: string, note: string) {
+async function closeCard(db: Any, id: string, note: string, onClosed?: () => void) {
   try {
     const { data: row } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
     const prev = (Array.isArray(row?.data) ? row.data : []).find((x: Any) => x && x.id === id)
     if (!prev || prev.status === 'done' || prev.status === 'resolved') return
     const now = new Date().toISOString()
     await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...prev, status: 'done', closed_at: now, closed_by: 'caregiver-journey', close_reason: note, last_activity_at: now } })
+    if (onClosed) onClosed()
   } catch (e) { console.warn('[caregiver-journey] could not close a card: ' + String(e).slice(0, 160)) }
 }
 /** the six roster fields this server owns, saved through the sweep's own door (only those fields, only if unchanged since read) */
@@ -247,6 +256,105 @@ Deno.serve(async (req) => {
   const action = S(b.action, 20)
   try {
     const dfs = await defs(db)
+    /* ── SLICE 6: the nightly audit ── */
+    if (action === 'nightly') {
+      const caller = await jobCaller(req)
+      if (!caller) return json({ error: 'the nightly audit is for the schedule or an owner' }, 401)
+      const st = await settings(db), now = new Date().toISOString(), today = now.slice(0, 10), t0 = Date.now()
+      const live = { training: st.training_sync_live === true, oig: st.oig_monthly_live === true, audit: st.audit_sweep_live === true }
+      const out: Any = { ok: true, live, training: { matched: 0, would_update: 0, updated: 0, skipped: 0, why: null }, oig: { due: 0, checked: 0, clear: 0, matches: 0, written: 0, why: null }, cards: { looked_at: 0, changed: 0, expired_new: 0, tasks_raised: 0, tasks_closed: 0 }, errors: [] as string[] }
+      const { data: row } = await db.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
+      const roster: Any[] = Array.isArray(row?.data) ? row.data : []
+      const active = roster.filter((c) => c && c.active !== false && !c.not_hired)
+      /* 1. the Training Platform's facts */
+      try {
+        const T = await readTraining()
+        if (!T.ok) out.training.why = T.why
+        else {
+          const byAx = new Map<string, Any>(); for (const h of T.rows) if (digits(h.axiscare_id)) byAx.set(digits(h.axiscare_id), h)
+          for (const c of active) {
+            const h = byAx.get(digits(c.axiscare_id)); if (!h) continue
+            out.training.matched++
+            const tid = T.ids.get(digits(c.axiscare_id)) || ''
+            const certs: Record<string, string | null> = {}
+            const cert = (slug: string) => (slug in certs ? certs[slug] : null)
+            /* only ask for a certificate when a date or proof would be written (a listing per caregiver, not per night for everyone) */
+            const dry = syncPatch(c, h, now, () => null); if (!dry) continue
+            if (!live.training) { out.training.would_update++; continue }
+            for (const slug of ['agency-orientation', 'dementia-care', 'on-the-job-training']) if (tid) certs[slug] = await certificateRef(tid, slug)
+            const patch = syncPatch(c, h, now, cert); if (!patch) continue
+            const r = await saveAuditFields(db, { ...c, ...patch }, (fresh: Any) => { const again = syncPatch(fresh, h, now, cert); Object.assign(fresh, again || {}) })
+            if (r === 'saved') out.training.updated++; else out.training.skipped++
+          }
+        }
+      } catch (e) { out.errors.push('training: ' + String((e as Error)?.message ?? e).slice(0, 160)) }
+      /* 2. the monthly OIG re-check with retained results (never a verdict: a match is a review) */
+      try {
+        const due = active.filter((c) => c.hire_date && (c.first || c.last) && oigDue(c.oig_date, today))
+        out.oig.due = due.length
+        if (due.length) {
+          const leie = await loadLeie()
+          const { data: fresh } = await db.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
+          const latest: Any[] = Array.isArray(fresh?.data) ? fresh.data : []
+          for (const c0 of due.slice(0, 80)) {
+            const c = latest.find((x) => String(x?.id) === String(c0.id)) || c0
+            const r = matchLeie(leie, c.first, c.last); out.oig.checked++
+            const ev = oigEvidence(r, now)
+            if (!live.oig) { if (r.clear) out.oig.clear++; else out.oig.matches++; continue }
+            const path = `bgcheck/cg-${c.id}/oig-${Date.now()}-leie-result.json`
+            let proof: string | null = null
+            try { const up = await db.storage.from('lead-docs').upload(path, new Blob([JSON.stringify({ ...ev, caregiver_id: c.id }, null, 2)], { type: 'application/json' }), { contentType: 'application/json', upsert: false }); if (!up.error) proof = path } catch { proof = null }
+            if (r.clear) {
+              out.oig.clear++
+              const patch: Any = { oig: 'CLEAR', oig_date: today, oig_evidence: ev, ...(proof ? { oig_proof: proof } : {}) }
+              const s_ = await saveAuditFields(db, { ...c, ...patch }, (f: Any) => Object.assign(f, patch)); if (s_ === 'saved') out.oig.written++
+              await closeCard(db, 'oig_match_' + c.id, 'A later monthly check was clear.')
+            } else {
+              out.oig.matches++
+              const patch: Any = { oig_evidence: ev, ...(proof ? { oig_proof: proof } : {}) }   // the date is NOT moved: the check is not clear until a person reviews it
+              const s_ = await saveAuditFields(db, { ...c, ...patch }, (f: Any) => Object.assign(f, patch)); if (s_ === 'saved') out.oig.written++
+              await raiseCard(db, { id: 'oig_match_' + c.id, kind: 'oig_match_review', urgency: 'urgent', who: `${c.first || ''} ${c.last || ''}`.trim(), offer_id: String(c.offer_id || ''), title: 'Possible OIG exclusion match: ' + `${c.first || ''} ${c.last || ''}`.trim(), detail: `The monthly LEIE check found ${r.matches.length} name match(es). Nothing was decided: screening staff review the match against date of birth and state, record the result on the record and keep the evidence. Until then the record is not treated as clear.` })
+              if (c.offer_id) { const got = await load(db, { offer_id: c.offer_id }); if (got && ['open', 'active'].includes(got.j.status)) { const cur = got.steps.find((x: Any) => x.step_key === 'cg.check.oig'); if (!cur || cur.state !== 'blocked') { await putStep(db, got.j.journey_id, 'cg.check.oig', { state: 'blocked', blocked_reason: 'Possible OIG match on the monthly check: review before anything else moves.', evidence: { ...(cur?.evidence || {}), flagged: { match_count: r.matches.length, at: now } } }); await event(db, got.j.journey_id, 'cg.check.oig', {}, 'blocked', { match_count: r.matches.length, monthly: true }, 'Possible OIG match on the monthly check') } } }
+            }
+          }
+        }
+      } catch (e) { out.oig.why = String((e as Error)?.message ?? e).slice(0, 160); out.errors.push('oig: ' + out.oig.why) }
+      /* 3. every open and approved card: re-verify, then the expiries as permanent events and owned tasks */
+      try {
+        const T = trn()
+        const { data: persons } = await db.from('persons').select('person_id, full_name, primary_email')
+        const { data: domains } = await db.from('domains').select('code, owner_person, entity').eq('entity', 'cc_ihs')
+        const emailOf = (pid: unknown) => String((persons || []).find((p: Any) => p.person_id === pid)?.primary_email || '').toLowerCase()
+        const nameOf_ = (email: string) => String((persons || []).find((p: Any) => String(p.primary_email || '').toLowerCase() === email)?.full_name || email)
+        const dom = (domains || []).find((d: Any) => d.code === 'training_compliance')
+        const ownerEmail = (dom?.owner_person ? emailOf(dom.owner_person) : '') || S(st.staffing_email, 160).toLowerCase() || ''
+        const { data: js } = await db.from('client_journey').select('*').eq('subject', 'caregiver').in('status', ['open', 'active']).limit(1000)
+        for (const j of js ?? []) {
+          out.cards.looked_at++
+          const { data: steps } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
+          const f = await facts(db, j, T)
+          out.cards.changed += await applyVerdicts(db, j, steps ?? [], f, now)
+          const { data: fresh } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
+          const view = R.compute(dfs, j, fresh ?? [], ctxFor(f, st))
+          const { data: evs } = await db.from('client_journey_event').select('step_key, kind, detail').eq('journey_id', j.journey_id).eq('kind', 'expired')
+          for (const r of view.rows || []) {
+            const id = 'cj_exp_' + j.journey_id + '_' + r.key.replace(/\./g, '_')
+            if (r.expired) {
+              const seen = (evs ?? []).some((e: Any) => e.step_key === r.key && e.detail?.until === r.expired)
+              if (!seen) { await event(db, j.journey_id, r.key, {}, 'expired', { until: r.expired, title: r.def.title }); out.cards.expired_new++ }
+              if (live.audit) {
+                const legal = r.def.required !== false && ['screening', 'training', 'ready'].includes(String(r.def.stage))
+                await raiseCard(db, { id, kind: 'requirement_expired', urgency: legal ? 'urgent' : 'today', who: j.client_name, offer_id: j.offer_id, title: 'Expired: ' + r.def.title + ' · ' + j.client_name, detail: `Expired on ${r.expired}. ${r.def.howto || 'Record the new result with its proof on their readiness card.'} Owner: ${ownerEmail ? nameOf_(ownerEmail) : 'unassigned'}.` }, ownerEmail ? { owner: ownerEmail, owner_name: nameOf_(ownerEmail), due: r.expired } : { due: r.expired })
+                out.cards.tasks_raised++
+              }
+            } else if (live.audit) { const before = out.cards.tasks_closed; await closeCard(db, id, 'Current again: ' + r.def.title + '.', () => { out.cards.tasks_closed = before + 1 }) }
+          }
+        }
+      } catch (e) { out.errors.push('cards: ' + String((e as Error)?.message ?? e).slice(0, 160)) }
+      out.ms = Date.now() - t0
+      try { await db.rpc('upsert_app_data_item', { target_key: 'automation_log', item: { id: 'auto_srv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), at: now, automation: 'caregiver_audit', ran_by: 'server', ok: !out.errors.length, dry: !(live.training || live.oig || live.audit), duration_ms: out.ms, summary: { training: out.training, oig: out.oig, cards: out.cards, live }, errors: out.errors.length, error: out.errors.join(' | ') || null } }) } catch (e) { console.error('[caregiver-journey] could not write the run log', e) }
+      return json(out)
+    }
     if (action === 'sweep') {
       const caller = await jobCaller(req)
       if (!caller) return json({ error: 'the sweep is for the schedule or an owner' }, 401)
@@ -297,6 +405,7 @@ Deno.serve(async (req) => {
     const who = await requireStaff(db, req, OFFICE_ROLES)
     if (!who.ok) return json({ error: who.error }, who.status)
     const P = await perms(db), st = await settings(db), isOwner = (who.roles || []).includes('owner_admin')
+    const mayExport = mayApprove(P, 'audit_export', { person_id: who.person_id, roles: who.roles || [], email: who.email })
     if (action === 'list') {
       const T = trn()
       const { data: js } = await db.from('client_journey').select('*').eq('subject', 'caregiver').in('status', ['open', 'active']).order('created_at', { ascending: false }).limit(200)
@@ -309,7 +418,7 @@ Deno.serve(async (req) => {
       }
       void T; return json({ ok: true, rows, may_approve_work: mayApprove(P, 'work', { person_id: who.person_id, roles: who.roles || [], email: who.email }) })
     }
-    const answerFor = async (jid: string, f: Facts) => { const fresh = await load(db, { journey_id: jid }); const v = R.compute(dfs, fresh!.j, fresh!.steps, ctxFor(f, st)); const { data: ev } = await db.from('client_journey_event').select('*').eq('journey_id', jid).order('at', { ascending: false }).limit(200); const may: Record<string, boolean> = {}; for (const r of v.rows) may[r.key] = mayDo(r.def, who, P); return json({ ok: true, journey: fresh!.j, steps: fresh!.steps, view: v, events: ev ?? [], may, is_owner: isOwner, approve: approveState(v, f, st, who, P), facts: { lived_outside_mo: f.lived_outside_mo ?? null, claims_cna_or_hha: f.claims_cna_or_hha ?? null, drives_clients: f.drives_clients ?? null, dates: dates(f) } }) }
+    const answerFor = async (jid: string, f: Facts) => { const fresh = await load(db, { journey_id: jid }); const v = R.compute(dfs, fresh!.j, fresh!.steps, ctxFor(f, st)); const { data: ev } = await db.from('client_journey_event').select('*').eq('journey_id', jid).order('at', { ascending: false }).limit(200); const may: Record<string, boolean> = {}; for (const r of v.rows) may[r.key] = mayDo(r.def, who, P); return json({ ok: true, journey: fresh!.j, steps: fresh!.steps, view: v, events: ev ?? [], may, is_owner: isOwner, may_export: mayExport, approve: approveState(v, f, st, who, P), facts: { lived_outside_mo: f.lived_outside_mo ?? null, claims_cna_or_hha: f.claims_cna_or_hha ?? null, drives_clients: f.drives_clients ?? null, dates: dates(f) } }) }
     if (action === 'get') {
       const got = await load(db, b); if (!got) return json({ ok: true, journey: null })
       const f = await facts(db, got.j, trn())
