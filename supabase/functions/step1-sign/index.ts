@@ -168,6 +168,37 @@ export function prefillFrom(app: any, interview: any): Record<string, { value: u
   return out
 }
 
+/* ───── SLICE 2d (Samantha "start slice 2d", 2026-10-10): what a signed form lands on the Background & References row ─────
+   Through step1_land_apply (server-only, fills blanks, allowed fields only, one history row). The office never retypes a
+   reference or a residence answer again. */
+const yesno = (v: unknown) => v === 'yes' ? 'yes' : v === 'no' ? 'no' : null
+export function landingPatch(form: FormKey, a: Record<string, unknown>, at: string): Record<string, unknown> | null {
+  const stamp = { step1_landed: { [form]: at } }
+  if (form === 'employee_application') {
+    const oos = yesno(a.lived_outside_mo); const p: Record<string, unknown> = { ...stamp }
+    if (oos) p.oos = oos
+    if (oos === 'yes') p.fp = 'Required'
+    if (a.no_employer_history === 'yes') p.no_employer_history = true
+    if (Array.isArray(a.states_lived) && a.states_lived.length) (p.step1_landed as Record<string, unknown>).states_lived = a.states_lived
+    return p
+  }
+  if (form === 'reference_consent') {
+    const p: Record<string, unknown> = { ...stamp }; let n = 0
+    const rows = (v: unknown) => (Array.isArray(v) ? v : []) as string[][]
+    for (const r of rows(a.professional_refs)) { if (n >= 4 || !S(r[0])) continue; n++; Object.assign(p, { [`r${n}n`]: S(r[0], 80), [`r${n}_company`]: S(r[1], 80), [`r${n}_rel`]: S(r[2], 80), [`r${n}_phone`]: S(r[3], 30), [`r${n}_email`]: S(r[4], 160), [`r${n}_type`]: 'professional', [`r${n}s`]: 'Pending' }) }
+    for (const r of rows(a.personal_refs)) { if (n >= 4 || !S(r[0])) continue; n++; Object.assign(p, { [`r${n}n`]: S(r[0], 80), [`r${n}_rel`]: S(r[1], 80), [`r${n}_phone`]: S(r[2], 30), [`r${n}_email`]: S(r[3], 160), [`r${n}_type`]: 'personal', [`r${n}s`]: 'Pending' }) }
+    ;(p.step1_landed as Record<string, unknown>).references = n
+    return n ? p : null
+  }
+  return null
+}
+// deno-lint-ignore no-explicit-any
+async function land(db: any, offerId: string, patch: Record<string, unknown> | null, by: string): Promise<Record<string, unknown>> {
+  if (!patch) return { skipped: true }
+  try { const { data, error } = await db.rpc('step1_land_apply', { p_offer_id: offerId, p_patch: patch, p_by: by }); return error ? { ok: false, error: String(error.message || error).slice(0, 160) } : (data ?? { ok: false }) }
+  catch (e) { return { ok: false, error: String((e as Error).message || e).slice(0, 160) } }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
@@ -360,8 +391,12 @@ Deno.serve(async (req) => {
         done = !!fin?.length
         if (done) { await T.event({ offer_id: id, kind: 'step1_done', by_who: 'caregiver', channel: 'page', detail: { forms: FORM_ORDER.length, ip, agent } }); await T.patch(id, { step1_done_at: at }, '&step1_done_at=is.null') }
       }
+      /* SLICE 2d: land what this form holds for the office, then the done stamp with the last one */
+      const landed = await land(db, id, landingPatch(form, answers, at), 'step1 ' + form)
+      const landedDone = done ? await land(db, id, { step1_done_at: at, step1_landed: { done: at } }, 'step1 done') : { skipped: true }
+      if (landed.ok === false || landedDone.ok === false) await T.event({ offer_id: id, kind: 'step1_signed', by_who: 'system', channel: 'page', result: 'landing_failed', detail: { form, landed, landedDone } })
       const cp = pdfOk ? await db.storage.from(BUCKET).createSignedUrl(path, 600) : { data: null }
-      return json({ ok: true, form, signed_at: at, version, fingerprint: fp, pdf: pdfOk, copy_url: cp.data?.signedUrl ?? null, done, signed_count: Object.keys(sigs).length + 1, form_count: FORM_ORDER.length })
+      return json({ ok: true, form, signed_at: at, version, fingerprint: fp, pdf: pdfOk, copy_url: cp.data?.signedUrl ?? null, done, signed_count: Object.keys(sigs).length + 1, form_count: FORM_ORDER.length, landed, landed_done: landedDone })
     }
     return json({ ok: false, error: 'Unknown action.' }, 400)
   } catch (e) {

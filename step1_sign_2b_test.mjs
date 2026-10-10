@@ -58,7 +58,8 @@ function table(name) {
   return { select: () => q('select'), insert: (p) => q('insert', p), upsert: (p) => q('upsert', p), update: (p) => q('update', p) }
 }
 const storage = { from: () => ({ upload: async (p, bytes, o) => { if (STORE[p] && !o?.upsert) return { error: { message: 'exists' } }; STORE[p] = bytes; return { data: { path: p }, error: null } }, createSignedUrl: async (p) => ({ data: STORE[p] ? { signedUrl: 'https://signed/' + p } : null, error: STORE[p] ? null : { message: 'no' } }) }) }
-globalThis.__fakeCreateClient = () => ({ from: table, storage, auth: { getUser: async (jwt) => jwt === 'staff' ? { data: { user: { id: 'u1', email: 'k@mo-care.com', app_metadata: {} } }, error: null } : { data: null, error: { message: 'bad' } } } })
+const RPCS = []
+globalThis.__fakeCreateClient = () => ({ from: table, storage, rpc: async (name, args) => { RPCS.push({ name, args }); if (name !== 'step1_land_apply') return { data: null, error: { message: 'unexpected ' + name } }; return { data: { ok: true, candidate_id: '901', filled: Object.keys(args.p_patch) }, error: null } }, auth: { getUser: async (jwt) => jwt === 'staff' ? { data: { user: { id: 'u1', email: 'k@mo-care.com', app_metadata: {} } }, error: null } : { data: null, error: { message: 'bad' } } } })
 const src = fs.readFileSync(path.join(FN, 'step1-sign/index.ts'), 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = globalThis.__fakeCreateClient')
 const tmp = path.join(FN, 'step1-sign', '_t2b.ts'); fs.writeFileSync(tmp, src)
 let M; try { M = await import(tmp) } finally { fs.unlinkSync(tmp) }
@@ -194,6 +195,18 @@ ck('an offer with nothing on file: 404', r.status === 404, r)
 DB.step1_identity[0].purged_at = '2027-01-01T00:00:00Z'
 r = await call({ action: 'reveal', offer_id: OID, field: 'ssn', reason: 'FCSR registration' }, STAFF)
 ck('a purged record reveals nothing (410)', r.status === 410, r); DB.step1_identity[0].purged_at = null
+
+
+/* ═══ SLICE 2d: what a signed form lands on the Background & References row ═══ */
+const LP = M.landingPatch
+ck('landingPatch: the application lands lived-outside (yes), fingerprints Required, the states and no-employer flag, stamped', (() => { const p = LP('employee_application', { lived_outside_mo: 'yes', states_lived: ['KS'], no_employer_history: 'yes' }, '2026-10-10T03:00:00Z'); return p.oos === 'yes' && p.fp === 'Required' && p.no_employer_history === true && p.step1_landed.employee_application === '2026-10-10T03:00:00Z' && p.step1_landed.states_lived[0] === 'KS' })())
+ck('landingPatch: lived outside no: oos no, no fingerprints key', (() => { const p = LP('employee_application', { lived_outside_mo: 'no' }, 'x'); return p.oos === 'no' && !('fp' in p) })())
+ck('landingPatch: references land as slots 1 to 4, professional first with company, personal with relationship, status Pending, typed', (() => { const p = LP('reference_consent', { professional_refs: [['Jane Boss', 'Home Helpers', 'Supervisor', '417-555-0202', 'jane@hh.com'], ['Tom Lead', 'Visiting Angels', 'Manager', '417-555-0303', '']], personal_refs: [['Sue Friend', 'Friend', '417-555-0404', ''], ['Bob Neighbor', 'Neighbor', '417-555-0505', '']] }, 'x'); return p.r1n === 'Jane Boss' && p.r1_company === 'Home Helpers' && p.r1_type === 'professional' && p.r1s === 'Pending' && p.r3n === 'Sue Friend' && p.r3_rel === 'Friend' && p.r3_type === 'personal' && p.r4n === 'Bob Neighbor' && p.step1_landed.references === 4 })())
+ck('landingPatch: a fifth reference never lands (four slots); an empty name is skipped', (() => { const p = LP('reference_consent', { professional_refs: [['A', '', '', '', ''], ['', '', '', '', ''], ['B', '', '', '', '']], personal_refs: [['C', '', '', ''], ['D', '', '', ''], ['E', '', '', '']] }, 'x'); return p.r1n === 'A' && p.r2n === 'B' && p.r3n === 'C' && p.r4n === 'D' && !('r5n' in p) && p.step1_landed.references === 4 })())
+ck('landingPatch: the other forms land nothing on the row', LP('availability', { hours_ideal: 30 }, 'x') === null && LP('fcra_disclosure', {}, 'x') === null)
+const landCalls = RPCS.filter((r) => r.name === 'step1_land_apply')
+ck('during the signing run above, the door was called for the application, the references and the done stamp, with the offer id', landCalls.length === 3 && landCalls.every((r) => r.args.p_offer_id === OID) && landCalls[0].args.p_patch.oos === 'yes' && landCalls[1].args.p_patch.r1n === 'Jane Boss' && landCalls[1].args.p_patch.r2n === 'Tom Lead' && landCalls[2].args.p_patch.step1_done_at, landCalls.map((r) => Object.keys(r.args.p_patch)))
+ck('the door is never asked to land the SSN, date of birth, license number or address', !landCalls.some((r) => Object.keys(r.args.p_patch).some((k) => /ssn|dob|license|address|city|zip/.test(k))))
 
 globalThis.fetch = realFetch
 for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note))
