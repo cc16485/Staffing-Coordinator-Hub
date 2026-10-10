@@ -3,7 +3,9 @@
 // takes the current record, works the fields out again on it (recompute), and tries again; it never saves a whole
 // caregiver record from its own copy, so an office edit made during a run is never undone.
 // deno-lint-ignore-file no-explicit-any
-export const SWEEP_FIELDS = ['eligibility_history', 'eligibility_state', 'eligibility_reason', 'eligibility_at', 'axiscare_note_for']
+export const SWEEP_FIELDS = ['eligibility_history', 'eligibility_state', 'eligibility_reason', 'eligibility_at', 'axiscare_note_for',
+  /* SLICE 5 (2026-10-10): the six fields the readiness server owns (Approve to Work, the AxisCare read-back, the scheduling lock) */
+  'approved_to_work_at', 'approved_to_work_by', 'axiscare_status_active', 'axiscare_status_label', 'axiscare_status_at', 'work_lock']
 export const rev = (x: any) => (/^[0-9]{1,15}$/.test(String(x?._rev ?? '')) ? Number(x._rev) : 0)
 const pick = (r: any) => Object.fromEntries(SWEEP_FIELDS.filter((k) => k in r).map((k) => [k, r[k] === undefined ? null : r[k]]))
 

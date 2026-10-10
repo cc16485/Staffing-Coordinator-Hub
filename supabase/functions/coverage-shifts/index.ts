@@ -494,7 +494,13 @@ Deno.serve(async (req) => {
         vu = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
       }
     } catch { /* schedules partial = conflicts partial; the board says what it has */ }
-    return json({ window: `${start6}..${end6}`, count: pool.size,
+    /* SLICE 5: the scheduling lock, from the readiness cards (new path only). Flagged on the row, never hidden (her rule:
+       "I need to be able to choose any active caregiver"); the Staffing Sheet and coverage count a locked person out.
+       FAIL CLOSED: an unreadable lock holds the whole pool rather than guess. */
+    const lock6 = await workLock(sb6)
+    if (!lock6.ok) return json({ error: 'held: ' + lock6.why + ' (fail closed; nothing is offered until the readiness cards can be read)' }, 503)
+    for (const p of pool.values()) { p.work_locked = lock6.axis.has(String(p.axiscare_id)); if (p.work_locked) p.work_lock_why = LOCK_WHY }
+    return json({ window: `${start6}..${end6}`, count: pool.size, locked: [...pool.values()].filter((p) => p.work_locked).length,
       caregivers: [...pool.values()].sort((a, b) => a.name.localeCompare(b.name)) })
   }
 
