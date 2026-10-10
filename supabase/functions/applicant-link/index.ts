@@ -17,7 +17,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { serverSecretOk } from '../_shared/staff-auth.ts'   // SLICE 1d: the server door for the Step 1 sender
-import { checkLink, makeOfferLink, makeOrientLink, makeStartLink, okId, type Kind } from '../_shared/applicant-links.ts'
+import { checkLink, makeOfferLink, makeOrientLink, makeStartLink, okId, type Kind, makeStep1Link } from '../_shared/applicant-links.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -71,7 +71,8 @@ Deno.serve(async (req) => {
       if (req.headers.get('x-outreach-secret')) {
         if (!serverSecretOk(req, 'OUTREACH_SECRET', 'x-outreach-secret')) return json({ ok: false, error: 'unauthorized' }, 401)
         /* SLICE 1e: the reminders (a scheduled run, no staff) also need the OFFER link, always with the offer's own expiry */
-        if (b.kind !== 'start' && b.kind !== 'offer') return json({ ok: false, error: 'the server door mints start and offer links only' }, 403)
+        /* SLICE 2b: the Step 1 sender mints the Step 1 link the same way */
+        if (b.kind !== 'start' && b.kind !== 'offer' && b.kind !== 'step1') return json({ ok: false, error: 'the server door mints start, offer and step1 links only' }, 403)
         const id = S(b.offer_id, 64)
         if (!okId('start', id)) return json({ ok: false, error: 'Which job offer?' }, 400)
         if (b.kind === 'offer') {
@@ -80,6 +81,7 @@ Deno.serve(async (req) => {
           if (!url) return json({ ok: false, error: 'An offer link needs the offer\'s own expiry (in the future, at most 30 days out); it is never given a default life.' }, 400)
           return json({ ok: true, url })
         }
+        if (b.kind === 'step1') { if (!(await offer(id))) return json({ ok: false, error: 'That offer is not on file.' }, 404); return json({ ok: true, url: await makeStep1Link(secret, id) }) }
         return json({ ok: true, url: await makeStartLink(secret, id) })
       }
       const staff = await requireStaff(db, req, OFFICE_ROLES)
@@ -97,6 +99,12 @@ Deno.serve(async (req) => {
         const url = await makeOfferLink(secret, id, exp)
         if (!url) return json({ ok: false, error: 'An offer link needs the offer\'s own expiry (in the future, at most 30 days out); it is never given a default life.' }, 400)
         return json({ ok: true, url })
+      }
+      if (b.kind === 'step1') {
+        const id = S(b.offer_id, 64)
+        if (!okId('step1', id)) return json({ ok: false, error: 'Which job offer?' }, 400)
+        if (!(await offer(id))) return json({ ok: false, error: 'That offer is not on file.' }, 404)
+        return json({ ok: true, url: await makeStep1Link(secret, id) })
       }
       if (b.kind === 'orient') {
         const id = S(b.candidate_id, 12), sessions = String(b.sessions ?? '')

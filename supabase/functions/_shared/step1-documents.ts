@@ -60,7 +60,8 @@ export const FORMS: Record<FormKey, Form> = {
       { h: 'High School', items: [text('hs_name', 'School Name'), text('hs_years', 'Years Attended'), yesno('hs_grad', 'Did you Graduate?', { required: false })] },
       { h: 'Vocational / Technical', items: [text('vo_name', 'School Name'), text('vo_years', 'Years Attended'), yesno('vo_grad', 'Did you Graduate?', { required: false }), text('vo_program', 'Program')] },
       { h: 'College / University', items: [text('co_name', 'School Name'), text('co_years', 'Years Attended'), yesno('co_grad', 'Did you Graduate?', { required: false }), text('co_major', 'Major')] },
-      { h: 'Other Licenses / Certification', items: [yesno('cna', 'CNA License?'), yesno('hha', 'HHA Certification?'), text('license_number', 'If yes, License Number'), { id: 'license_expires', label: 'Expiration Date', kind: 'date' }] },
+      /* 2b: these ids are cert_number / cert_expires, not license_number / license_expires: the driver's license on the vehicle form is a different fact and the two must never share an answer */
+      { h: 'Other Licenses / Certification', items: [yesno('cna', 'CNA License?'), yesno('hha', 'HHA Certification?'), text('cert_number', 'If yes, License Number'), { id: 'cert_expires', label: 'Expiration Date', kind: 'date' }] },
       /* v2 (her decision): no "violation of the law" line; neutral, lawful criminal-history wording */
       { h: 'Criminal Record / Driving Record', p: ['Please answer these completely and honestly. A conviction is not an automatic bar to employment: we consider the nature of the offense, how long ago it happened, and whether it relates to the work. Your answers are considered together with the background checks described later in Step 1. You do not need to list any record that has been expunged or sealed.'], items: [
         yesno('moving_violations', 'Have you had any moving traffic violations?'), text('moving_violations_detail', 'If yes, please describe.'),
