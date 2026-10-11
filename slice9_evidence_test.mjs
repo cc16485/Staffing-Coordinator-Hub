@@ -212,6 +212,17 @@ insert into public.app_data (key, data) values
   const kept = (await db.query(`select policyname, cmd from public.evidence_storage_rule_removed order by id`)).rows
   ck('the four removed rules are kept for the rollback (installing twice did not add them again)', kept.length === 4, kept)
 
+  // ── 9b. the 584 installer's probe, run here exactly as written: it reports and leaves nothing behind ──
+  await db.exec(`insert into public.app_data (key, data) values ('candidates', '[]') on conflict (key) do nothing`)
+  const PROBE = /PROBE = r"""([\s\S]*?)"""/.exec(fs.readFileSync('slice9_evidence_584.py', 'utf8'))[1]
+  const evBefore = (await db.query(`select count(*)::int n from public.evidence_history`)).rows[0].n
+  const gBefore = (await db.query(`select data from public.app_data where key = 'ghe_forms'`)).rows[0].data
+  let pmsg = ''; try { await db.exec(PROBE); pmsg = 'no exception' } catch (x) { pmsg = x.message }
+  const parts = pmsg.split('PROBE_RESULT|')[1]?.split('|') || []
+  ck('the installer probe: 2 history lines for the probe applicant, the GHE change and removal refused, the bg history guard refused', parts[0] === '2' && /answers cannot change/.test(parts[2]) && /cannot be removed/.test(parts[3]) && /can only have lines added/.test(parts[4]), pmsg)
+  const evAfter = (await db.query(`select count(*)::int n from public.evidence_history`)).rows[0].n
+  const gAfter = (await db.query(`select data from public.app_data where key = 'ghe_forms'`)).rows[0].data
+  ck('...and everything it did was rolled back', evAfter === evBefore && JSON.stringify(gAfter) === JSON.stringify(gBefore), [evBefore, evAfter])
   // ── 10. rollback ──
   const before = (await db.query(`select count(*)::int n from public.evidence_history`)).rows[0].n
   await db.exec(rb)
