@@ -16,8 +16,10 @@ export const OFFER_BASE = 'https://cc.mo-care.com/offer.html'
    Same code design, 30 days; the Step 1 server also refuses it once the offer is withdrawn or declined. Fictional offers only
    until the switch date (the new-path gate). */
 export const STEP1_BASE = 'https://cc.mo-care.com/step1.html'
+/* SLICE 4 (2026-10-10): the caregiver's private "I finished Step 2" link; the id is their Background & References row */
+export const STEP2_BASE = 'https://cc.mo-care.com/step2.html'
 const PURPOSE = 'cc-applicant-link-v1'
-export type Kind = 'start' | 'orient' | 'offer' | 'step1'
+export type Kind = 'start' | 'orient' | 'offer' | 'step1' | 'step2'
 
 const enc = new TextEncoder()
 const b64url = (b: ArrayBuffer) => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
@@ -46,6 +48,10 @@ export async function makeOfferLink(secret: string, offerId: string, exp: number
 export async function makeStep1Link(secret: string, offerId: string, exp = expiry()): Promise<string> {
   const t = await sign(secret, 'step1', offerId, exp)
   return `${STEP1_BASE}?o=${encodeURIComponent(offerId)}&e=${exp}&t=${t}`
+}
+export async function makeStep2Link(secret: string, candidateId: string, exp = expiry()): Promise<string> {
+  const t = await sign(secret, 'step2', candidateId, exp)
+  return `${STEP2_BASE}?c=${encodeURIComponent(candidateId)}&e=${exp}&t=${t}`
 }
 export async function makeOrientLink(secret: string, candidateId: string, sessions: string, exp = expiry()): Promise<string> {
   const t = await sign(secret, 'orient', candidateId, exp)
