@@ -142,11 +142,35 @@ export async function careAction(c: Any): Promise<{ body: Any; status?: number }
     if (!['done', 'not_needed', 'open'].includes(state)) return err('done, not_needed or open', 400)
     if (state === 'not_needed' && !String(b.note || '').trim()) return err('Say why this step is not needed.')
     if (state === 'done' && !String(b.note || '').trim() && !(Array.isArray(b.files) && b.files.length) && !String(b.how || '').trim()) return err('Say how it was done, or attach the proof.')
-    Object.assign(it, { state, note: String(b.note || '').slice(0, 1000), how: String(b.how || '').slice(0, 300), on: isYmd(b.on) ? b.on : null,
+    /* SLICE 9 (Samantha "yes to all", 2026-10-11): a step already recorded (done or not needed) can be reopened or changed
+       only with a reason, and what it said before is kept on the step (earlier) and as a journey event. The value history
+       (evidence_history) also keeps every checklist version. */
+    const was = it.state || 'open', reopen = was !== 'open' && was !== state
+    if (was !== 'open' && was === state) {
+      /* the same answer again: only more proof can be added; what was recorded stays as it was */
+      const more = (Array.isArray(b.files) ? b.files : []).map(String).filter((p: string) => p.startsWith(`care/${ch.change_id}/${it.key}/`))
+      if (!more.length) return err('This step is already recorded as ' + (was === 'done' ? 'done' : 'not needed') + '. To change it, reopen it with a reason.')
+      it.files = [...(it.files || []), ...more]
+      it.files_added = [...(Array.isArray(it.files_added) ? it.files_added : []), { at: now, by: who.email, files: more }]
+      const { error } = await db.from('client_care_change').update({ checklist: list, updated_at: now }).eq('change_id', ch.change_id)
+      if (error) return err('Could not save: ' + error.message, 500)
+      return { body: { outcome: 'saved', checklist: list } }
+    }
+    const why = String(b.reason || '').trim()
+    if (reopen && why.length < 10) return err('Say why this recorded step is being ' + (state === 'open' ? 'reopened' : 'changed') + ' (at least a few words). What it said before is kept.')
+    if (reopen) {
+      const before = { ...it }; delete before.earlier
+      it.earlier = [...(Array.isArray(it.earlier) ? it.earlier : []), { ...before, replaced_at: now, replaced_by: who.email, replaced_by_name: who.name, reason: why.slice(0, 500) }]
+    }
+    if (state === 'open') Object.assign(it, { state, note: '', how: '', on: null, by: who.email, by_name: who.name, at: now, reopened: { at: now, by: who.email, reason: why.slice(0, 500) } })
+    else Object.assign(it, { state, note: String(b.note || '').slice(0, 1000), how: String(b.how || '').slice(0, 300), on: isYmd(b.on) ? b.on : null,
       files: [...(it.files || []), ...((Array.isArray(b.files) ? b.files : []).map(String).filter((p: string) => p.startsWith(`care/${ch.change_id}/${it.key}/`)))],
       by: who.email, by_name: who.name, at: now })
     const { error } = await db.from('client_care_change').update({ checklist: list, updated_at: now }).eq('change_id', ch.change_id)
     if (error) return err('Could not save: ' + error.message, 500)
+    if (reopen && ch.journey_id) {
+      try { await event(db, ch.journey_id, null, actor, 'care_checklist_reopened', { change_id: ch.change_id, item: it.key, from: was, to: state }, why.slice(0, 500)) } catch { /* the step and the value history already hold it */ }
+    }
     return { body: { outcome: 'saved', checklist: list } }
   }
 

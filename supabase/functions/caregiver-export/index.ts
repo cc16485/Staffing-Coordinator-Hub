@@ -16,6 +16,7 @@ import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { PERM_KEY, normalizePerms, mayApprove } from '../_shared/onboarding-permissions.ts'
 import { R, facts } from '../_shared/caregiver-journey.ts'
 import { BrandPdf, COMPANY_RIGHT, FOOTER, NAVY, MUTED, RULE } from '../_shared/brand-pdf.ts'
+import { evidenceRows, rewind, evidenceLine, EVIDENCE_NOTE } from '../_shared/evidence.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -100,7 +101,11 @@ Deno.serve(async (req) => {
     pdf.headerFn = (p, f) => p.letterhead(COMPANY_RIGHT, f); pdf.letterhead(COMPANY_RIGHT, true)
     pdf.para('Caregiver personnel file (read-only export)', { font: 'B', size: 18, color: NAVY, lh: 23, after: 2 })
     pdf.para(`${name} · ${asOf ? 'as of the end of ' + asOf + ' · ' : ''}exported ${central(now)} Central by ${who.name || who.email} · reason: ${reason}`, { size: 8.5, color: MUTED, after: 2 })
-    if (asOf) pdf.para('As of a past date: each requirement shows the last event recorded by then; the history stops there; the roster dates below are the values on the record now (the record keeps no earlier values).', { size: 8.5, color: MUTED, after: 6 })
+    /* SLICE 9: the value history of this person's roster record (and their applicant record, when it carries one) */
+    const evSrc = rec ? [{ source: 'app_data:caregivers', ids: [String(rec.id)] }, { source: 'app_data:candidates', ids: [String(rec.candidate_id || rec.from_candidate || '')] }] : []
+    const evRows = rec ? await evidenceRows(db, evSrc) : []
+    if (rec && asOf) { const was = rewind(rec, evRows, 'app_data:caregivers', String(rec.id), cutoff); rec = was || { id: rec.id } }
+    if (asOf) pdf.para('As of a past date: each requirement shows the last event recorded by then; the history stops there; the roster dates below are the values the record held at that time, rebuilt from the evidence history. ' + EVIDENCE_NOTE, { size: 8.5, color: MUTED, after: 6 })
     pdf.para('Every line comes from the Hub records as they stand now. Nothing here was typed for this export. Identity details (Social Security number, date of birth, license number) are sealed and never printed. Proof files are listed by reference; the links that came with this export open for five minutes and every open is logged.', { size: 8.5, color: MUTED, after: 8 })
     if (rec) {
       pdf.heading('Record')
@@ -163,6 +168,13 @@ Deno.serve(async (req) => {
         pdf.hr(RULE, 8); pdf.heading('Eligibility history (the sweep)')
         for (const h of rec.eligibility_history.filter((x: Any) => upto(x?.at)).slice(-100)) pdf.para(`${central(h.at)} · ${S(h.event || h.state, 40)} · ${S(h.reason, 200)}`, { size: 8, color: MUTED, lh: 11, after: 1 })
       }
+    }
+    if (rec) {
+      const shown = evRows.filter((r) => upto(r.at))
+      pdf.hr(RULE, 8); pdf.heading('Evidence changes (before and after)' + (asOf ? ' up to ' + asOf : ''))
+      pdf.para(EVIDENCE_NOTE, { size: 8, color: MUTED, lh: 11, after: 2 })
+      if (!shown.length) pdf.para('No evidence value has changed since then.', { size: 8.5, color: MUTED, lh: 12, after: 1 })
+      for (const r of shown.slice(-300)) pdf.para(`${central(r.at)} · ${evidenceLine(r, r.source === 'app_data:candidates' ? 'applicant record' : '')}`, { size: 8, color: MUTED, lh: 11, after: 1 })
     }
     const bytes = pdf.build()
     const path = `exports/${subjectId.replace(/[^a-zA-Z0-9:_-]/g, '_')}/${now.replace(/[:.]/g, '-')}-${crypto.randomUUID().slice(0, 8)}.pdf`

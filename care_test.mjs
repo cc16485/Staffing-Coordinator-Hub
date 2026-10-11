@@ -156,6 +156,21 @@ try {
   ck('...ticking a checklist step needs how it was done or proof', r.j.outcome === 'refused')
   r = await call({ action: 'care_checklist', change_id: EC.change_id, item: 'dsds_written', state: 'done', how: 'PCCP Request Form', on: R_add(0) }, 'an')
   ck('...ticked: who, when, how, kept on the change', T.client_care_change.find((c) => c.kind === 'end').checklist[0].state === 'done' && T.client_care_change.find((c) => c.kind === 'end').checklist[0].by === 'angie@mo-care.com')
+  // SLICE 9: a recorded step is reopened only with a reason; what it said before stays on the step and as a journey event
+  const ECk = () => T.client_care_change.find((c) => c.kind === 'end').checklist[0]
+  r = await call({ action: 'care_checklist', change_id: EC.change_id, item: 'dsds_written', state: 'done', how: 'again' }, 'an')
+  ck('slice 9 · ticking a done step again with nothing new is refused (it says to reopen with a reason)', r.j.outcome === 'refused' && /reopen it with a reason/.test(r.j.error), r.j)
+  r = await call({ action: 'care_checklist', change_id: EC.change_id, item: 'dsds_written', state: 'done', files: ['care/' + EC.change_id + '/dsds_written/1-fax.pdf'] }, 'an')
+  ck('slice 9 · more proof can be added to a done step; what was recorded stays', r.j.outcome === 'saved' && ECk().how === 'PCCP Request Form' && ECk().files.length === 1 && ECk().files_added.length === 1, ECk())
+  r = await call({ action: 'care_checklist', change_id: EC.change_id, item: 'dsds_written', state: 'open' }, 'an')
+  ck('slice 9 · reopening a done step needs a reason', r.j.outcome === 'refused' && /being reopened/.test(r.j.error), r.j)
+  const evN = T.client_journey_event.length
+  r = await call({ action: 'care_checklist', change_id: EC.change_id, item: 'dsds_written', state: 'open', reason: 'The fax did not go through, sending again' }, 'an')
+  ck('slice 9 · reopened with a reason: open again, the earlier record kept on the step with who and why', r.j.outcome === 'saved' && ECk().state === 'open' && ECk().earlier.length === 1 && ECk().earlier[0].state === 'done' && ECk().earlier[0].how === 'PCCP Request Form' && /fax did not go through/.test(ECk().earlier[0].reason) && ECk().earlier[0].replaced_by === 'angie@mo-care.com', ECk())
+  const evR = T.client_journey_event.slice(evN).find((e) => e.kind === 'care_checklist_reopened')
+  ck('slice 9 · ...and a journey event says so', !!evR && evR.detail.from === 'done' && evR.detail.to === 'open' && /fax/.test(evR.reason), T.client_journey_event.slice(evN))
+  r = await call({ action: 'care_checklist', change_id: EC.change_id, item: 'dsds_written', state: 'done', how: 'PCCP Request Form, faxed again', on: R_add(0) }, 'an')
+  ck('slice 9 · then recorded done again, with both records kept', r.j.outcome === 'saved' && ECk().state === 'done' && ECk().earlier.length === 1, ECk())
   r = await call({ action: 'care_state', axiscare_client_id: '296' }, 'an')
   ck('...his state reads Past, with every change in order (pause, resume, end) and his journey kept', r.j.state === 'past' && r.j.changes.map((c) => c.kind).join() === 'pause,resume,end' && r.j.episodes.length === 1 && r.j.episodes[0].status === 'closed', r.j)
   r = await call({ action: 'sweep' }, null, job)
