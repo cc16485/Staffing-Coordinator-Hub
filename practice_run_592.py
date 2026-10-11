@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-# 586 · SLICE 10, THE PRACTICE RUN: PAT'S LINKS AND WHERE PAT STANDS (read only; run it as often as you like).
+# 592 · SLICE 10, THE PRACTICE RUN: PAT'S LINKS AND WHERE PAT STANDS (read only; run it as often as you like).
 # The Hub records the Step 2 message and the welcome call invitation in practice without sending them, so the links a real
 # hire would get by text are printed here for your phone. Nothing changes; nothing is sent.
 import os, re
-os.environ.setdefault("SB_STEP", "586")
+os.environ.setdefault("SB_STEP", "592")
 from cc_step_lib import *
 from practice_run_lib import *
 start("SLICE 10, THE PRACTICE RUN: PAT'S LINKS (read only)")
 o = offer()
-if not o: bad("no practice-run offer found: run 585 first"); done(3)
+if not o: bad("no practice-run offer found: run 591 first"); done(3)
 oid = str(o['id'])
 say(f"THE OFFER  {o['first_name']} {o['last_name']} · {o['offer_status']}" + (" · WITHDRAWN" if o.get('offer_withdrawn_at') else ""))
 say(f"  offer letter signed: {o.get('offer_signed_at') or 'not yet'} · position description signed: {o.get('pd_signed_at') or 'not yet'} · Step 1 done: {o.get('step1_done_at') or 'not yet'}")

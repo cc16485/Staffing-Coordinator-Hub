@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# 588 · SLICE 10, THE PRACTICE RUN: THE REPORT (Samantha's decisions 5a and 6). Hub and Training.
+# 594 · SLICE 10, THE PRACTICE RUN: THE REPORT (Samantha's decisions 5a and 6). Hub and Training.
 # First runs the nightly passes once, the way their schedules do (every switch is off, so they only count and record), so the
 # run finishes in one sitting; the real overnight runs confirm it the next morning. Then reads back everything Pat's run left:
 # the offer trail, Step 1, the Hub record, the readiness card with every row, event and earlier version, the value history,
@@ -7,12 +7,12 @@
 # records; saves every PDF into the Desktop folder; reads back every live version, switch and schedule; and ticks the
 # retirement list in the plan against what the run did. Writes run.json (made-up data only) for the offline screenshots.
 import os, json, datetime as dt, re
-os.environ.setdefault("SB_STEP", "588")
+os.environ.setdefault("SB_STEP", "594")
 from cc_step_lib import *
 from practice_run_lib import *
 start("SLICE 10, THE PRACTICE RUN: THE REPORT")
 o = offer()
-if not o: bad("no practice-run offer found: run 585 first"); done(3)
+if not o: bad("no practice-run offer found: run 591 first"); done(3)
 oid = str(o['id']); ANON, SVC = keys(); TSVC = trn_service()
 if not SVC: bad("could not read the project's server key"); done(3)
 DUMP = {"offer": o}
@@ -151,4 +151,4 @@ open(os.path.join(OUT, "run.json"), "w").write(json.dumps(DUMP, default=str, ind
 say("  · run.json saved for the offline screenshots (made-up data only)")
 say()
 if fails: say("RESULT: CHECK THE ✗ LINES ABOVE (the report is still complete)"); done(9)
-say("RESULT: DONE · the practice-run record for you and counsel is this report and the folder 'Slice 10 practice run'. Nothing was sent. Tell Claude \"ran 588\"; run 589 (close-out) when you have read it."); done(0)
+say("RESULT: DONE · the practice-run record for you and counsel is this report and the folder 'Slice 10 practice run'. Nothing was sent. Tell Claude \"ran 594\"; run 595 (close-out) when you have read it."); done(0)

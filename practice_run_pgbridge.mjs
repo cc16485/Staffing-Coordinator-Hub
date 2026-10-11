@@ -1,5 +1,5 @@
 // A local stand-in for the Supabase management API's SQL endpoint, backed by two real Postgres databases (PGlite): one for the
-// Hub project, one for Training. Used only by practice_run_test.py to rehearse the 585-589 Desktop steps. Never touches the
+// Hub project, one for Training. Used only by practice_run_test.py to rehearse the 591-595 Desktop steps. Never touches the
 // network beyond localhost.  PGLITE=<path> node practice_run_pgbridge.mjs <port>
 import http from 'http'
 const { PGlite } = await import(process.env.PGLITE)

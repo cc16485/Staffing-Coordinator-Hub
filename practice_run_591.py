@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# 585 · SLICE 10, THE PRACTICE RUN: SET-UP (Samantha "yes to all" + "approve the two fixes", 2026-10-11). Hub and Training.
+# 591 · SLICE 10, THE PRACTICE RUN: SET-UP (Samantha "yes to all" + "approve the two fixes", 2026-10-11). Hub and Training.
 # 1. Deploys the practice-address guard (a 555-0180..0189 number or an @practice.invalid email is never texted, emailed or
 #    added to GoHighLevel) to the nine Hub services the run passes through, each only when its live copy is main's build
 #    apart from the two changed files, so nobody else's live work is overwritten.
@@ -7,7 +7,7 @@
 #    date is set and no AxisCare applicant is made). Every switch stays off. Nothing is sent to anyone.
 # 3. Writes the station guide to the Desktop folder "Slice 10 practice run".
 import os, json, datetime as dt
-os.environ.setdefault("SB_STEP", "585")
+os.environ.setdefault("SB_STEP", "591")
 from cc_step_lib import *
 from practice_run_lib import *
 FNS = ["outreach-check", "welcome-call", "interview-messages", "step2-handoff", "reference-chase", "reference-send", "caregiver-profile", "ghl-attach-doc", "caregiver-journey"]
@@ -28,7 +28,7 @@ ok_, n = sql(TRN, f"select count(*) filter (where offered_by = {lit(LABEL)} and 
                   f"or (lower(first_name) = 'pat' and lower(last_name) = 'practice'))::int as clash, "
                   f"count(*) filter (where onboarding_path = 'new' and offered_by not in ('Slice 1b test', 'Slice 1g rehearsal', {lit(LABEL)}))::int as real_new from public.job_offers")
 if not ok_: bad(f"could not read the offers: {n}"); done(3)
-if int(n[0]['open_run']): bad("a practice-run offer is already open: run 589 (close-out) first, or carry on with the one you have")
+if int(n[0]['open_run']): bad("a practice-run offer is already open: run 595 (close-out) first, or carry on with the one you have")
 elif int(n[0]['clash']): bad("an offer already uses Pat Practice's name, number or email; tell Claude")
 else: say("  ✓ no offer uses Pat Practice's name, number (417-555-0183) or email")
 say(f"  ✓ no real offer is on the new path ({n[0]['real_new']})") if int(n[0]['real_new']) == 0 else bad(f"{n[0]['real_new']} real offer(s) are on the new path; tell Claude")
@@ -70,7 +70,7 @@ ok_, r_ = sql(TRN, f"""insert into public.job_offers (first_name, last_name, pho
           'MADE-UP practice-run hire for Slice 10; never a real person. Reachable only at practice addresses, which nothing ever contacts.') returning id""")
 if not ok_ or not r_: bad(f"could not create the offer: {r_}"); done(7)
 oid = r_[0]['id']
-ok2, _ = sql(TRN, f"""insert into public.offer_events (offer_id, kind, by_who, channel, doc_version, detail) values ({lit(oid)}, 'sent', 'office', null, 1, '{{"step": "585", "practice": true, "made_up": true}}')""")
+ok2, _ = sql(TRN, f"""insert into public.offer_events (offer_id, kind, by_who, channel, doc_version, detail) values ({lit(oid)}, 'sent', 'office', null, 1, '{{"step": "591", "practice": true, "made_up": true}}')""")
 say(f"  ✓ Pat Practice's offer created on the new path ({oid[:8]}…, expires {exp[:10]})" + ("" if ok2 else "; its sent event was NOT written (tell Claude)"))
 
 say(); say("PART 3 · PROOF (nothing is sent)")
@@ -81,7 +81,7 @@ for fn in FNS:
 GUIDE = f"""SLICE 10 PRACTICE RUN · THE STATIONS (Pat Practice, made up; nothing is ever sent to them)
 Pat's practice addresses: phone 417-555-0183, email {EMAIL}. Every sender refuses them.
 When a screen asks for something about Pat, make it up. References: phones 417-555-0184 to 417-555-0187, emails ref1@practice.invalid to ref4@practice.invalid.
-Need a link (Step 2 DONE page, welcome call booking)? Run 586 (read only) at any time: it prints Pat's current links.
+Need a link (Step 2 DONE page, welcome call booking)? Run 592 (read only) at any time: it prints Pat's current links.
 
  1. Hub > Offers > Open offers: Pat Practice (New path). Signing link > scan the QR with your phone > sign the offer letter, then the position description.
  2. Same card: Next step "Move to Background & References" (or Background & References > Offered strip > Add to the table).
@@ -90,20 +90,20 @@ Need a link (Step 2 DONE page, welcome call booking)? Run 586 (read only) at any
  4. Background & References, Pat's row: Run OIG (the real federal list, a made-up name). Record EDL and FCSR: first press Clear WITHOUT a proof file
     (it must refuse), then with "Practice proof.pdf" from this folder. Record answer: two references Positive (one professional).
  5. ☰ Readiness on Pat's row: read the card; Confirm "Approve to Advance".
- 6. Orientations tab > Ready for Orientation > Pat: "Record Step 2 sent" (Practice: recorded, not sent). Run 586 for the DONE link > open it on your
+ 6. Orientations tab > Ready for Orientation > Pat: "Record Step 2 sent" (Practice: recorded, not sent). Run 592 for the DONE link > open it on your
     phone > tap that you finished. Back in the Hub: "✓ Verify", tick every item including I-9 Section 2.
- 7. Pat's row: "📹 Invite to welcome call" (the text and email are refused for a practice address; that is the point). Run 586 for the booking
+ 7. Pat's row: "📹 Invite to welcome call" (the text and email are refused for a practice address; that is the point). Run 592 for the booking
     link > book a time on your phone > in the Hub the welcome call shows Booked > "Welcome call done – send orientation link". Pat moves to the
     caregiver roster; the orientation link cannot match a made-up person in AxisCare, so a "Didn't go through" card appears: expected.
- 8. Run 587 (training): it records Pat's orientation, Dementia course and online hours as test completions in the Training Platform and sends
-    the real completion notice to the Hub.
+ 8. Run 593 (training): it records Pat's orientation and Dementia course as test completions in the Training Platform and sends the
+    real completion notice to the Hub. (On-the-job training is due 30 days after hire and is not part of Approve to Work.)
  9. Caregivers > Training (or Compliance): ☰ Readiness on Pat's row. "Caregiver profile published": Not needed, reason "made-up practice hire, no profile".
 10. Copy sheets: ⎘ on AxisCare attributes and availability (read them; nothing to enter for a made-up person).
 11. Approve to Work (you must be on the Approve to Work list). AxisCare Active and the cleared text are recorded as practice.
 12. Evidence: ✏️ on Pat's roster row, change the orientation date by one day and save. Then ⇩ Personnel file (PDF) on the card: once for today,
     once "as of" yesterday.
-13. Run 588 (report, read only): the whole trail, PDFs and the retirement checks into this folder; it runs the nightly passes once in practice.
-14. Tell Claude "ran 588". After you have read the report, run 589 (close-out).
+13. Run 594 (report, read only): the whole trail, PDFs and the retirement checks into this folder; it runs the nightly passes once in practice.
+14. Tell Claude "ran 594". After you have read the report, run 595 (close-out).
 """
 os.makedirs(OUT, exist_ok=True); open(os.path.join(OUT, "Stations.txt"), "w").write(GUIDE)
 PROOF_PDF = b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj 2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj 3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj 4 0 obj<</Length 74>>stream\nBT /F1 18 Tf 72 700 Td (PRACTICE PROOF for a made-up hire. Not a real check.) Tj ET\nendstream endobj 5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n"

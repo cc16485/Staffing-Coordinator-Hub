@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# 587 · SLICE 10, THE PRACTICE RUN: TRAINING (station 8; Samantha's decision 2a). Training and Hub.
+# 593 · SLICE 10, THE PRACTICE RUN: TRAINING (station 8; Samantha's decision 2a). Training and Hub.
 # Pat cannot take the courses for real, so this records them as test completions the way a finished course does:
 #   1. a Training caregiver row for Pat (made-up AxisCare number 990000183, In Training), which assigns the courses as for
 #      any new hire; orientation and the Dementia course marked complete with their completion rows (hours from the course);
@@ -8,14 +8,14 @@
 #      On the new path it reports to the Hub's readiness card and sends nothing.
 # Refuses unless Pat signed both documents, finished Step 1 and is on the caregiver roster (welcome call done).
 import os, json
-os.environ.setdefault("SB_STEP", "587")
+os.environ.setdefault("SB_STEP", "593")
 from cc_step_lib import *
 from practice_run_lib import *
 KNOWN_TRN_TRIGGERS = {"trg_assign_onboarding"}
 start("SLICE 10, THE PRACTICE RUN: TRAINING (test completions for Pat)")
 say("PART 1 · READ ONLY (nothing changes)")
 o = offer()
-if not o: bad("no practice-run offer found: run 585 first"); done(3)
+if not o: bad("no practice-run offer found: run 591 first"); done(3)
 oid = str(o['id'])
 if o.get('offer_withdrawn_at'): bad("Pat's offer is withdrawn (the run was closed)")
 say("  ✓ Pat signed both documents and finished Step 1") if o.get('offer_signed_at') and o.get('pd_signed_at') and o.get('step1_done_at') else bad("Pat has not signed both documents and finished Step 1 yet (stations 1 to 3)")

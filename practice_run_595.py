@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# 589 · SLICE 10, THE PRACTICE RUN: CLOSE-OUT (run it after you have read the 588 report). Hub and Training.
+# 595 · SLICE 10, THE PRACTICE RUN: CLOSE-OUT (run it after you have read the 594 report). Hub and Training.
 # Pat Practice is made up, so nothing of Pat's should keep counting anywhere:
 #   · the offer is withdrawn (its links stop working) with a 'withdrawn' event on the trail;
 #   · Pat's Training row is set inactive (its training link stops working; the completions stay);
@@ -11,7 +11,7 @@
 #     history and the evidence value history; no history line, PDF, trail event or log row is deleted.
 # Nothing is sent.
 import os, json
-os.environ.setdefault("SB_STEP", "589")
+os.environ.setdefault("SB_STEP", "595")
 from cc_step_lib import *
 from practice_run_lib import *
 start("SLICE 10, THE PRACTICE RUN: CLOSE-OUT")
@@ -33,13 +33,13 @@ if fails: say(); say("  RESULT: STOPPED before anything changed."); done(3)
 say(); say("PART 2 · CHANGE (Pat only)")
 if not o.get('offer_withdrawn_at'):
     ok_, _ = sql(TRN, f"update public.job_offers set offer_status = 'withdrawn', offer_withdrawn_at = now(), offer_withdrawn_by = {lit(LABEL)}, offer_withdraw_reason = 'practice run finished (made-up hire)' where id = {lit(oid)} and offered_by = {lit(LABEL)}")
-    ok2, _ = sql(TRN, f"""insert into public.offer_events (offer_id, kind, by_who, channel, doc_version, detail) values ({lit(oid)}, 'withdrawn', 'office', null, 1, '{{"step": "589", "practice": true, "reason": "practice run finished"}}')""")
+    ok2, _ = sql(TRN, f"""insert into public.offer_events (offer_id, kind, by_who, channel, doc_version, detail) values ({lit(oid)}, 'withdrawn', 'office', null, 1, '{{"step": "595", "practice": true, "reason": "practice run finished"}}')""")
     say("  ✓ the offer is withdrawn (its signing and Step 1 links stop working)") if ok_ and ok2 else bad("could not withdraw the offer")
 ok_, _ = sql(TRN, f"update public.caregivers set active = false, updated_at = now() where axiscare_id = {lit(AXID)} and name = 'Pat Practice'")
 say("  ✓ Pat's Training row is inactive (completions kept)") if ok_ else bad("could not set the Training row inactive")
 if j and j['status'] != 'closed':
     ok_, _ = sql(HUB, f"update public.client_journey set status = 'closed', closed_reason = 'Practice run finished (made-up hire)', updated_at = now() where journey_id = {lit(j['journey_id'])} and subject = 'caregiver'")
-    ok2, _ = sql(HUB, f"insert into public.client_journey_event (journey_id, actor_email, actor_name, kind, detail, reason) values ({lit(j['journey_id'])}, 'hub', 'The practice run (589)', 'closed', '{{\"practice\": true}}', 'Practice run finished (made-up hire)')")
+    ok2, _ = sql(HUB, f"insert into public.client_journey_event (journey_id, actor_email, actor_name, kind, detail, reason) values ({lit(j['journey_id'])}, 'hub', 'The practice run (595)', 'closed', '{{\"practice\": true}}', 'Practice run finished (made-up hire)')")
     say("  ✓ the readiness card is closed, with a 'closed' event") if ok_ and ok2 else bad("could not close the readiness card")
 ids = [str(r.get('id')) for lst in rows.values() for r in lst] + ([j['journey_id']] if j else []) + [oid]
 cond = " or ".join(f"x::text ilike {lit('%' + i + '%')}" for i in ids if i) + " or x::text ilike '%Pat Practice%'"
