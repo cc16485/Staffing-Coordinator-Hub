@@ -5,7 +5,10 @@
 // The texts live here, versioned, so every rendered page and every PDF comes from the same approved words. A change to
 // one word is a new version number and a new approval; the fingerprint (SHA-256 of the canonical text as rendered for
 // one person) is stored with every signature, so the exact wording signed is permanently identifiable.
-export const OFFER_DOC_VERSION = 1
+// Offer letter version 2 (Samantha 2026-10-11, "yes" to the new version): one sentence only, "a short welcome video call"
+// became "a short Orientation Video Call" (the new name she chose). Letters signed as version 1 keep their stored PDF and
+// fingerprint; version 1's words are in this file's history (git). The position description stays version 1.
+export const OFFER_DOC_VERSION = 2
 export const PD_DOC_VERSION = 1
 export type Block = { k: 'h' | 'p' | 'li' | 'small' | 'q'; t: string }
 export type Fields = {
@@ -50,7 +53,7 @@ export function offerLetter(f: Fields): Block[] {
     { k: 'p', t: 'This job offer is the first step of your onboarding. After you accept and sign, your Step 1 paperwork is sent to you automatically by text and email once your signed offer is saved, and you complete it on your phone.' },
     { k: 'p', t: "These initial documents are important because they give Caring Companions permission to begin your pre-employment process, including your background check, reference checks, motor vehicle record review (when your duties include driving), and any drug screening required by Caring Companions' screening policy." },
     { k: 'p', t: 'The sooner you complete this first step, the sooner we can begin these required checks.' },
-    { k: 'p', t: 'Once your pre-employment screenings have been completed successfully, you will receive a text to book a short welcome video call, and your paid orientation and training link right after it.' },
+    { k: 'p', t: 'Once your pre-employment screenings have been completed successfully, you will receive a text to book a short Orientation Video Call, and your paid orientation and training link right after it.' },
     { k: 'p', t: "If you have any questions along the way, we're happy to help. Just give our office a call at (417) 234-8494." },
     { k: 'h', t: 'EMPLOYMENT RELATIONSHIP' },
     { k: 'q', t: 'Employment with Caring Companions is at will. This means that either you or the Company may end the employment relationship at any time, with or without notice, and with or without cause, as permitted by applicable law.' },

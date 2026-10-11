@@ -14,7 +14,7 @@ ck('her phone with someone else\'s email: NOT a test person (a real person could
 ck('anyone else: not a test person', !T.testPerson(st, { phone: '4175551234', email: 'a@b.com' }) && !T.testPerson(st, {}))
 ck('an empty list: nobody is a test person', !T.testPerson({}, { phone: '4175932789' }) && !T.testPerson({ test_people: { phones: [], emails: [] } }, { phone: '4175932789' }))
 const s2 = fs.readFileSync(path.join(FN, 'step2-handoff/index.ts'), 'utf8'), cj = fs.readFileSync(path.join(FN, 'caregiver-journey/index.ts'), 'utf8'), oc = fs.readFileSync(path.join(FN, 'outreach-check/index.ts'), 'utf8')
-ck('Step 2: the message, its receipt, its reminders and the automatic welcome call invitation each let a test person through', (s2.match(/testPerson\(st, (c|p\.rec)\)/g) || []).length === 5)
+ck('Step 2: the message, its receipt, its reminders and the automatic Orientation Video Call invitation each let a test person through', (s2.match(/testPerson\(st, (c|p\.rec)\)/g) || []).length === 5)
 ck('the cleared text (and the held one in the sweep) lets a test person through', (cj.match(/testPerson\(st, \{/g) || []).length === 2)
 ck('Training is told the list with the switches', /test_phones: tl\.phones, test_emails: tl\.emails/.test(oc))
 ck('never AxisCare: no AxisCare gate looks at the list', !/approve_work_axiscare_live[^\n]*testPerson|axiscare_hire_date_live[^\n]*testPerson|axiscare_level_live[^\n]*testPerson/.test(cj))

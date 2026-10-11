@@ -31,6 +31,8 @@ import { latestTextConsent, withStop } from '../_shared/text-consent.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { texts, emails, interviewerLabel, isGoodbye, REPLY_TAG } from '../_shared/applicant-words.ts'
+import { classify } from '../_shared/reply-classify.ts'
+import { inboundTextsSince } from '../_shared/ghl-inbox.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -188,7 +190,7 @@ Deno.serve(async (req) => {
     `</div>`
 
   const out = { confirmed: 0, reminded_day: 0, reminded_hour: 0, nudged: 0, gave_up: 0, alerted: 0, cancel_notified: 0, welcome_confirmed: 0, welcome_reminded: 0 }
-  const plan: Record<string, string[]> = { confirm: [], day: [], hour: [], nudge: [], give_up: [], alerted: [], cancelled: [], welcome: [], held: [] }
+  const plan: Record<string, string[]> = { confirm: [], day: [], hour: [], nudge: [], give_up: [], alerted: [], cancelled: [], welcome: [], held: [], replies: [] }
 
   /* ---------------- interviews that are booked ---------------- */
   const { data: bookings, error } = await supabase
@@ -320,11 +322,60 @@ Deno.serve(async (req) => {
     }
   }
 
+  /* ---------------- their replies to the YES / NO question (588) ----------------
+     Samantha, 2026-10-11: "if they reply no they aren't coming to the interview the next day, make sure that opens up the
+     interview spot for someone else", then "build the hub version" (no GoHighLevel workflow). Every run, for each booked
+     interview that was asked (reminded_day_at) and starts within the next 36 hours, read their texts since the question
+     (or since the last reply we acted on). The latest clear answer decides: NO cancels it and frees the time (the
+     cancellation text below then goes, 8am to 6pm); YES is kept on the booking. Anything else changes nothing and becomes
+     a Needs Attention item with their words. If their texts can't be read, nothing happens. Any hour: nothing is sent here. */
+  const cancelledByReply = new Set<string>()   // so this run's cancellation text still goes (not 'rebooked already')
+  if (V2 && ghlToken && ghlLocation) {
+    const soon = new Date(Date.now() + 36 * 3_600_000).toISOString(), justBefore = new Date(Date.now() - 30 * 60_000).toISOString()
+    for (const b of bookings ?? []) {
+      // deno-lint-ignore no-explicit-any
+      const a: any = b.job_applicants
+      if (!a || !b.reminded_day_at || b.starts_at > soon || b.starts_at < justBefore) continue
+      const since = [b.reminded_day_at, b.reply_at].filter(Boolean).sort().pop() as string
+      const got = await inboundTextsSince(ghlToken, ghlLocation, a.phone, since)
+      if (!got.ok || !got.texts.length) continue
+      const first = a.first_name || 'there'
+      const words = got.texts.map((t) => t.body).join(' / ').slice(0, 300)
+      const clear = got.texts.map((t) => classify(t.body)).filter((k) => k !== 'other')
+      const kind = clear.length ? clear[clear.length - 1] : 'other'
+      plan.replies.push(`${first}: ${kind}`)
+      if (dry) continue
+      if (kind === 'no') {
+        const { data: r, error } = await supabase.rpc('interview_cancel_by_reply', { p_booking: b.id, p_words: words })
+        if (!error && r?.cancelled) cancelledByReply.add(String(b.id))
+        if (error || !r?.cancelled) {
+          await supabase.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
+            id: 'ops_ivreply_' + String(b.id), kind: 'interview_reply', domain: 'hiring', status: 'open', urgency: 'high',
+            title: `${[a.first_name, a.last_name].filter(Boolean).join(' ') || 'An applicant'} said NO to their interview (${fmtDay(new Date(b.starts_at))} ${fmtTime(new Date(b.starts_at))}), but it could not be cancelled automatically`,
+            about: '', detail: `They replied "${words}". Please cancel it in the Hub so the time opens up.`,
+            created_at: new Date().toISOString(), due: new Date(Date.now() + 2 * 3600e3).toISOString(),
+            owner: '', owner_name: '', created_by: 'interview-messages', opened_by: 'interview reminder reply' } })
+        }
+        continue
+      }
+      await supabase.rpc('interview_record_reply', { p_booking: b.id, p_kind: kind, p_words: words })
+      if (kind === 'other') {
+        const last = got.texts[got.texts.length - 1].at
+        await supabase.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
+          id: 'ops_ivreply_' + String(b.id) + '_' + Date.parse(last), kind: 'interview_reply', domain: 'hiring', status: 'open', urgency: 'normal',
+          title: `${[a.first_name, a.last_name].filter(Boolean).join(' ') || 'An applicant'} replied about their interview (${fmtDay(new Date(b.starts_at))} ${fmtTime(new Date(b.starts_at))}): please answer`,
+          about: '', detail: `They replied "${words}". Nothing was changed. Please answer them (their texts are on their Hub page and in GoHighLevel).`,
+          created_at: new Date().toISOString(), due: new Date(Date.now() + 2 * 3600e3).toISOString(),
+          owner: '', owner_name: '', created_by: 'interview-messages', opened_by: 'interview reminder reply' } })
+      }
+    }
+  }
+
   /* ---------------- applied, never booked ----------------
      Three tries over five days, then we stop. Somebody who has ignored three
      messages is not going to answer a fourth; they are a phone call, and
      pretending otherwise just trains people to ignore us. */
-  const booked = new Set((bookings ?? []).map((b) => b.applicant_id))
+  const booked = new Set((bookings ?? []).filter((b) => !cancelledByReply.has(String(b.id))).map((b) => b.applicant_id))
   /* PRN1 (2026-09-29): roles on the PRN track (the PRN CNA Team). A cleared PRN application gets the calendar text
      as soon as it is finished, in the team's own words, instead of two hours later. A PRN application that is not
      finished, needs a look or applied before gets no booking link at all: the office decides. Every other role is
@@ -630,8 +681,8 @@ Deno.serve(async (req) => {
      time") or put back into play. Pressing "Did not show" now marks them a No-Show and sends HER message through
      applicant-noshow; only the office can excuse it and rebook them after they call with a reason. */
 
-  /* ---------------- welcome calls (remote orientation, Desktop 407) ----------------
-     A booked 15-minute Google Meet welcome call gets a confirmation (text + email), a day-before reminder (text +
+  /* ---------------- Orientation Video Calls (remote orientation, Desktop 407) ----------------
+     A booked 15-minute Google Meet Orientation Video Call gets a confirmation (text + email), a day-before reminder (text +
      email) and an hour-before text, each with the shared Meet link. Texts only with their yes to texts and 8am-6pm
      (held, not stamped, until then); every text ends with the STOP line. Sender 'welcome-call' so a refusal raises a
      card that names it. */
@@ -666,20 +717,20 @@ Deno.serve(async (req) => {
       const wcol = kind === 'confirm' ? 'confirmed_at' : kind === 'day' ? 'reminded_day_at' : 'reminded_hour_at'
       if (!(await claim('welcome_calls', w.id, wcol, kind === 'confirm' && until <= 30 ? { reminded_day_at: new Date().toISOString() } : {}))) continue
       if (kind === 'hour') {
-        await sendText(`Hi ${first}, your welcome video call with Caring Companions is at ${time} today. At that time, tap here to join: ${meet}`)
+        await sendText(`Hi ${first}, your Orientation Video Call with Caring Companions is at ${time} today. At that time, tap here to join: ${meet}`)
       } else {
         const confirm = kind === 'confirm'
-        await sendText(`Hi ${first}, ${confirm ? 'your welcome video call with Caring Companions is booked for' : 'reminder: your welcome video call is'} ` +
+        await sendText(`Hi ${first}, ${confirm ? 'your Orientation Video Call with Caring Companions is booked for' : 'reminder: your Orientation Video Call is'} ` +
           `${day} at ${time}. At that time, tap this link to join from your phone: ${meet} Please have the original ID documents ` +
           `you uploaded in Viventium with you. Need a different time? ${manage}`)
-        await sendEmail(confirm ? `Your welcome call: ${day} at ${time}` : `Tomorrow: your welcome call at ${time}`,
-          shell(`<p>Hi ${first},</p><p>${confirm ? 'Your 15-minute welcome video call is booked for' : 'A reminder that your welcome video call is'} <b>${day} at ${time}</b>.</p>` +
+        await sendEmail(confirm ? `Your Orientation Video Call: ${day} at ${time}` : `Tomorrow: your Orientation Video Call at ${time}`,
+          shell(`<p>Hi ${first},</p><p>${confirm ? 'Your 15-minute Orientation Video Call is booked for' : 'A reminder that your Orientation Video Call is'} <b>${day} at ${time}</b>.</p>` +
             `<p>At that time, open this link on your phone or computer (no app needed):</p>${join}` +
             `<p>Please have the <b>original ID documents</b> you uploaded in Viventium with you. Need a different time? <a href="${manage}">Pick a new one here</a>, or call us on ${phone}.</p>`))
       }
       if (kind === 'confirm') out.welcome_confirmed++; else out.welcome_reminded++
     }
-  } catch (e) { console.error('[interview-messages] welcome calls', e) }
+  } catch (e) { console.error('[interview-messages] Orientation Video Calls', e) }
 
   /* Dry runs don't beat: a manual ?dry=1 must never make a dead cron look alive. */
   if (!dry) await beat(supabase, true, JSON.stringify(out))

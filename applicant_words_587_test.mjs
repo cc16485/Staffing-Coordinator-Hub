@@ -41,11 +41,11 @@ ck('names are escaped in emails', !E.invite(c({ first: '<b>x</b>' }), 2).html.in
 
 // how a reply is read: only an unmistakable NO cancels
 const src = fs.readFileSync('supabase/functions/interview-reply/index.ts', 'utf8')
-const fnSrc = src.slice(src.indexOf('export function classify'), src.indexOf('Deno.serve'))
+const fnSrc = fs.readFileSync('supabase/functions/_shared/reply-classify.ts', 'utf8').replace(/^\/\*\*[\s\S]*?\*\/\n/, '')
 const classify = new Function(fnSrc.replace('export function classify(message: string): \'no\' | \'yes\' | \'other\'', 'return function classify(message)').replace(/: 'no' \| 'yes' \| 'other'/g, ''))()
 const cases = {
   no: ['No', 'no.', 'NO', 'Nope', 'nah', 'No sorry', 'Sorry no', "I can't make it", "I can't make it tomorrow, sorry", 'cannot make it', "No I can't make it", "won't be able to make it".replace("won't be able to make it", "I won't make it"),
-       "I'm not coming", 'Not coming tomorrow', 'Need to cancel', 'please cancel', 'Cancel', 'I have to cancel my interview', "Unfortunately I can't come"],
+       "I'm not coming", 'Not coming tomorrow', "Actually I can't make it", "Sorry, I'm not coming", 'Need to cancel', 'please cancel', 'Cancel', 'I have to cancel my interview', "Unfortunately I can't come"],
   yes: ['Yes', 'yes!', 'Y', 'Yep', 'Okay', 'ok thanks', "I'll be there", 'Yes see you tomorrow', 'confirmed'],
   other: ['No problem, see you then', 'no worries see you tomorrow', "I'm running late", 'Can I move it?', "can't make it, can I reschedule?", 'Can we do another time',
           'Who is this', 'yes but I might be late', 'no, but can I come at 2 instead', '', 'Maybe', 'What do I bring?', 'Yes no', '👍'],

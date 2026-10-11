@@ -1,5 +1,5 @@
 // SLICE 4 · the step2-handoff function (Viventium Step 2: Record Sent, the caregiver's DONE by link and by text reply, Verify with
-// the Admin checklist, undo, the 15-minute pass) and the welcome-call server door, against a fake database, a fake GoHighLevel
+// the Admin checklist, undo, the 15-minute pass) and the Orientation Video Call server door, against a fake database, a fake GoHighLevel
 // and a settable clock. Nothing real is touched. against a fake database (the real caregiver catalog from the 3a migration file, the real rules file),
 // a fake Training Platform, a fake AxisCare, a fake GoHighLevel and a settable clock. Nothing real is touched. node step2_handoff_575_test.mjs
 import fs from 'fs'; import path from 'path'
@@ -194,10 +194,10 @@ ck('undo sent while a DONE stands: refused (later steps first)', r.status === 40
 DB.app_data.find((x) => x.key === 'ops_settings').data.wc_auto_invite_live = true
 GHL.messages.length = 0
 r = await call({ action: 'verify', candidate_id: '903', ticked: ['I-9 Section 1', 'Federal W-4'] }, 'kry')
-ck('Verify with the invitation switch on: welcome-call is called through its server door; a welcome_calls row invited by "The Hub (Step 2 verified by Krystal)"; the invitation text and email go in today\'s words; recorded on the record and the card', r.status === 200 && r.j.invite.state === 'sent' && r.j.invite.texted === true && DB.welcome_calls.length === 1 && DB.welcome_calls[0].candidate_id === '903' && /The Hub \(Step 2 verified by Krystal\)/.test(DB.welcome_calls[0].invited_by) && GHL.messages.some((m) => m.type === 'SMS' && /welcome/i.test(m.message)) && cand(903).step2_invite.state === 'sent' && evs(OID2, 'welcome_invite_sent').length === 1, { r: r.j, wc: DB.welcome_calls, msgs: GHL.messages.map((m) => m.type) })
+ck('Verify with the invitation switch on: Orientation Video Call is called through its server door; a welcome_calls row invited by "The Hub (Step 2 verified by Krystal)"; the invitation text and email go in today\'s words; recorded on the record and the card', r.status === 200 && r.j.invite.state === 'sent' && r.j.invite.texted === true && DB.welcome_calls.length === 1 && DB.welcome_calls[0].candidate_id === '903' && /The Hub \(Step 2 verified by Krystal\)/.test(DB.welcome_calls[0].invited_by) && GHL.messages.some((m) => m.type === 'SMS' && /welcome/i.test(m.message)) && cand(903).step2_invite.state === 'sent' && evs(OID2, 'welcome_invite_sent').length === 1, { r: r.j, wc: DB.welcome_calls, msgs: GHL.messages.map((m) => m.type) })
 ck('the stalled card for Ben closed at verification', ops().find((i) => i.id === 'step2_stalled_903').status === 'done')
 r = await WC(new Request('http://x/functions/v1/welcome-call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'invite_auto', candidate_id: '903' }) }))
-ck('the welcome-call server door refuses a caller without the job secret', r.status === 401)
+ck('the Orientation Video Call server door refuses a caller without the job secret', r.status === 401)
 /* ═══ still open ═══ */
 cand(901).step2_verified_at = null
 r = await call({ action: 'still_open', candidate_id: '901', task: 'Missouri W-4', preview: true }, 'cc')

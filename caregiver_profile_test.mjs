@@ -118,7 +118,7 @@ T.welcome_calls = [{ id: 'w1', candidate_id: '42', status: 'booked', phone: '(41
 ck('send_link preview: the exact text and email with their personal link, nothing sent, nothing stamped', s === 200 && j.dry && j.text.includes('caregiver-profile.html?t=' + p.upload_token)
   && j.to.phone && !SENT.length && !p.link_sent_at, j)
 ;[s, j] = await call({ action: 'send_link', profile_id: p.id })
-ck('send_link: a text + email through GoHighLevel, link_sent stamped, "Photo link sent" ticked on the open welcome call only',
+ck('send_link: a text + email through GoHighLevel, link_sent stamped, "Photo link sent" ticked on the open Orientation Video Call only',
   j.texted && j.emailed && texts().length === 1 && emails().length === 1 && texts()[0].message.includes('?t=' + p.upload_token) && p.link_sent_by === 'Krystal'
   && T.welcome_calls[0].photo_link_sent === true && T.welcome_calls[1].photo_link_sent === false, [j, T.welcome_calls])
 SENT = []; HOUR = '19'; ;[s, j] = await call({ action: 'send_link', profile_id: p.id }); HOUR = '10'

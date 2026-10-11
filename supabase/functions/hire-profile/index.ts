@@ -4,7 +4,7 @@
 // of all signed documents should be saved in the main profile... we need to be able to look at the profile and see it all").
 //
 // Nothing is copied: every time and every document already lives in its own permanent record (the offer trail, Step 1,
-// Background & References, the readiness card and its history, Step 2, the welcome call, references, training, AxisCare,
+// Background & References, the readiness card and its history, Step 2, the Orientation Video Call, references, training, AxisCare,
 // refused sends, logged opens, the evidence value history). This reads them all, for ONE person, into one profile:
 //   { action: 'get', offer_id | candidate_id | caregiver_id | applicant_id }   who they are, where they are, the timeline
 //        (every send, receipt and completion, oldest first, with who), and every signed document and proof
@@ -35,7 +35,7 @@ const STAMPS: Record<string, [string, string]> = {
   addedAt: ['done', 'Into Background & References'], step1_done_at: ['done', 'Step 1 complete (on their record)'], oig_date: ['done', 'OIG exclusion check recorded'], edl_date: ['done', 'EDL check recorded'],
   fcsr_date: ['done', 'FCSR check recorded'], casenet_date: ['done', 'Case.net court records search recorded'], fp_date: ['done', 'Fingerprint check recorded'], fcsr_reg_date: ['done', 'FCSR registration recorded'], step2_sent_at: ['sent', 'Step 2 (Viventium) sent'],
   step2_resent_at: ['sent', 'Step 2 sent again'], step2_done_at: ['received', 'They said Step 2 is done'], step2_verified_at: ['done', 'Step 2 verified in Viventium'], step2_still_open_at: ['sent', 'Step 2 still-open message'],
-  welcome_invited_at: ['sent', 'Invited to the welcome call'], approved_to_work_at: ['done', 'Approved to Work'], hire_date: ['done', 'Hire date'], orient_date: ['done', 'Orientation completed'],
+  welcome_invited_at: ['sent', 'Invited to the Orientation Video Call'], approved_to_work_at: ['done', 'Approved to Work'], hire_date: ['done', 'Hire date'], orient_date: ['done', 'Orientation completed'],
   alz_date: ['done', 'Dementia course completed'], ojt_date: ['done', 'On-the-job training completed'], annual_date: ['done', 'Annual training'], first_contact: ['done', 'First client visit'] }
 const PROOFS: Array<[string, string]> = [['oig_proof', 'OIG check proof'], ['edl_proof', 'EDL check proof'], ['fcsr_proof', 'FCSR check proof'], ['casenet_proof', 'Case.net search result'], ['fp_proof', 'Fingerprint check proof'], ['dl_proof', "Driver's license"],
   ['cna_proof', 'CNA credential'], ['auto_ins_proof', 'Auto insurance'], ['orient_proof', 'Orientation certificate'], ['alz_proof', 'Dementia course certificate'], ['ojt_online_proof', 'On-the-job training (online)'], ['annual_proof', 'Annual training'],
@@ -134,7 +134,7 @@ export async function timeline(db: Any, T: Any, p: Any) {
   const candId = p.cand?.id ?? p.rec?.candidate_id
   if (candId != null) {
     const { data: wc } = await db.from('welcome_calls').select('*').eq('candidate_id', String(candId)).order('invited_at', { ascending: true })
-    for (const w of wc ?? []) { push(w.invited_at, 'sent', 'Welcome call invitation', w.invited_by); push(w.booked_at, 'received', 'They booked the welcome call' + (w.starts_at ? ' for ' + w.starts_at : '')); push(w.confirmed_at, 'sent', 'Welcome call confirmation'); push(w.reminded_day_at, 'sent', 'Welcome call reminder (day before)'); push(w.reminded_hour_at, 'sent', 'Welcome call reminder (hour before)'); push(w.done_at, 'done', 'Welcome call done', w.done_by) }
+    for (const w of wc ?? []) { push(w.invited_at, 'sent', 'Orientation Video Call invitation', w.invited_by); push(w.booked_at, 'received', 'They booked the Orientation Video Call' + (w.starts_at ? ' for ' + w.starts_at : '')); push(w.confirmed_at, 'sent', 'Orientation Video Call confirmation'); push(w.reminded_day_at, 'sent', 'Orientation Video Call reminder (day before)'); push(w.reminded_hour_at, 'sent', 'Orientation Video Call reminder (hour before)'); push(w.done_at, 'done', 'Orientation Video Call done', w.done_by) }
     const { data: rr } = await db.from('reference_requests').select('*').eq('candidate_id', String(candId))
     for (const r of rr ?? []) for (const [k, v] of Object.entries(r)) if (/_at$/.test(k) && v && k !== 'updated_at') push(v, /responded|answer|received/.test(k) ? 'received' : /sent|emailed|texted/.test(k) ? 'sent' : 'done', 'Reference ' + (r.slot ?? '') + (r.ref_name ? ' (' + S(r.ref_name, 60) + ')' : '') + ': ' + words(k))
   }
