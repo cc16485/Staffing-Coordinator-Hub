@@ -199,6 +199,48 @@ async function land(db: any, offerId: string, patch: Record<string, unknown> | n
   catch (e) { return { ok: false, error: String((e as Error).message || e).slice(0, 160) } }
 }
 
+/* ───── STEP 1 BEFORE CHECKS (Samantha 2026-10-11, "yes to all") ─────
+   Step 1 complete: the server puts them into Background & References (step1_candidate_create: the record is made, or an
+   unlinked record with the same phone or name is linked, never two), records it on the readiness card, and raises ONE
+   Needs Attention card for whoever owns Recruiting & Orientation on the Admin page: start the checks and references now
+   that their signed permission is in. Never throws; what it did comes back for the trail. */
+// deno-lint-ignore no-explicit-any
+async function enterChecks(db: any, offerId: string, who: Record<string, string>, o: any, at: string): Promise<Record<string, unknown>> {
+  const name = `${who.first} ${who.last}`.trim() || 'a new hire'
+  const record = { first: who.first, last: who.last, phone: who.phone, email: who.email, oos: '', fp: 'N/A', oig: 'Pending', edl: 'Pending', fcsr: 'Pending',
+    r1s: 'Pending', r2s: 'Pending', r3s: 'Pending', r4s: 'Pending', onboarding_path: 'new', position: who.position || 'Caregiver',
+    notes: 'Into Background & References when their Step 1 was complete' + (o?.offered_by ? ' (offer by ' + S(o.offered_by, 60) + ')' : '') + '.',
+    invite_sent: false, invite_sent_date: '', addedAt: at, added_by: 'Step 1 complete (the Hub)' }
+  let made: Record<string, unknown> = { ok: false }
+  try { const { data, error } = await db.rpc('step1_candidate_create', { p_offer_id: offerId, p_record: record }); made = error ? { ok: false, error: String(error.message || error).slice(0, 160) } : (data ?? { ok: false }) }
+  catch (e) { made = { ok: false, error: String((e as Error).message || e).slice(0, 160) } }
+  try {
+    const { data: j } = await db.from('client_journey').select('journey_id').eq('subject', 'caregiver').eq('offer_id', offerId).neq('status', 'closed').maybeSingle()
+    if (j?.journey_id) await db.from('client_journey_event').insert({ journey_id: j.journey_id, actor_email: 'hub', actor_name: 'The Hub', kind: 'step1_complete',
+      detail: { at, background_and_references: made.how || (made.ok ? 'in' : 'failed'), candidate_id: made.id ?? null }, reason: 'Step 1 complete: their signed permission is in' })
+  } catch { /* the trail on the offer still has step1_done */ }
+  if (made.ok !== true) return made
+  try {
+    let owner = { email: '', name: '' }
+    try {
+      const { data: d } = await db.from('domains').select('owner_person').eq('entity', 'cc_ihs').eq('code', 'recruiting_orientation').maybeSingle()
+      if (d?.owner_person) { const { data: p } = await db.from('persons').select('full_name, primary_email').eq('person_id', d.owner_person).maybeSingle(); if (p?.primary_email) owner = { email: String(p.primary_email).toLowerCase(), name: S(p.full_name, 80) } }
+    } catch { /* unowned: the card still shows on Needs Attention */ }
+    const now = new Date().toISOString(), cid = 's1done_' + offerId
+    const { data: row } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    if (!(Array.isArray(row?.data) ? row.data : []).some((x: any) => x && x.id === cid)) {
+      await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id: cid, kind: 'step1_complete', domain: 'recruiting_orientation', status: 'open', urgency: 'today',
+        title: 'Step 1 complete: start background checks and references for ' + name,
+        detail: name + ' signed every Step 1 form, including the reference consent, the background check disclosure and the EDL and FCSR consent. They are now in Background & References: run the checks and contact the references.',
+        who: name, offer_id: offerId, candidate_id: made.id ?? null, owner: owner.email, owner_name: owner.name, created_at: now, first_at: now, last_at: now,
+        due: new Date(Date.now() + 24 * 3_600_000).toISOString(), created_by: 'step1-sign', opened_by: 'step1-sign' } })
+      made.card = cid
+    }
+  } catch { made.card = 'not raised' }
+  return made
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
@@ -391,10 +433,23 @@ Deno.serve(async (req) => {
         done = !!fin?.length
         if (done) { await T.event({ offer_id: id, kind: 'step1_done', by_who: 'caregiver', channel: 'page', detail: { forms: FORM_ORDER.length, ip, agent } }); await T.patch(id, { step1_done_at: at }, '&step1_done_at=is.null') }
       }
-      /* SLICE 2d: land what this form holds for the office, then the done stamp with the last one */
-      const landed = await land(db, id, landingPatch(form, answers, at), 'step1 ' + form)
+      /* SLICE 2d: land what this form holds for the office, then the done stamp with the last one.
+         STEP 1 BEFORE CHECKS (Samantha 2026-10-11): on the new path nobody is in Background & References before Step 1 is
+         complete, so a form signed before then usually has no record to land on yet: that is expected, not a failure. The
+         last signature puts them in (the server, never the office), lands every form, and tells Recruiting to start. */
+      let landed = await land(db, id, landingPatch(form, answers, at), 'step1 ' + form)
+      if (!done && landed.ok === false && landed.reason === 'no_candidate') landed = { skipped: true, why: 'not in Background & References until Step 1 is complete' }
+      let entered: Record<string, unknown> = { skipped: true }
+      if (done) {
+        entered = await enterChecks(db, id, who, o, at)
+        /* a record made or linked just now never saw the earlier forms: land them all now (an existing one already has them) */
+        if (entered.ok === true && entered.how !== 'already') {
+          for (const f of FORM_ORDER) { const p = landingPatch(f, answers, String(sigs[f]?.at || at)); if (p && f !== form) await land(db, id, p, 'step1 ' + f + ' (at completion)') }
+          if (landed.ok !== true) landed = await land(db, id, landingPatch(form, answers, at), 'step1 ' + form + ' (at completion)')
+        }
+      }
       const landedDone = done ? await land(db, id, { step1_done_at: at, step1_landed: { done: at } }, 'step1 done') : { skipped: true }
-      if (landed.ok === false || landedDone.ok === false) await T.event({ offer_id: id, kind: 'step1_signed', by_who: 'system', channel: 'page', result: 'landing_failed', detail: { form, landed, landedDone } })
+      if (landed.ok === false || landedDone.ok === false || entered.ok === false) await T.event({ offer_id: id, kind: 'step1_signed', by_who: 'system', channel: 'page', result: 'landing_failed', detail: { form, landed, landedDone, entered } })
       const cp = pdfOk ? await db.storage.from(BUCKET).createSignedUrl(path, 600) : { data: null }
       return json({ ok: true, form, signed_at: at, version, fingerprint: fp, pdf: pdfOk, copy_url: cp.data?.signedUrl ?? null, done, signed_count: Object.keys(sigs).length + 1, form_count: FORM_ORDER.length, landed, landed_done: landedDone })
     }

@@ -55,6 +55,7 @@ const ROSTER_ROWS: Array<[string, string, string, string | null, string | null]>
   ['Employee Disqualification List check', 'edl_date', 'edl_proof', 'edl_status', 'monthly (agency policy)'],
   ['Family Care Safety Registry check', 'fcsr_date', 'fcsr_proof', 'fcsr_status', 'yearly'],
   ['FCSR registration', 'fcsr_reg_date', 'fcsr_reg_proof', null, null],
+  ['Case.net court records search (Missouri)', 'casenet_date', 'casenet_proof', 'casenet', null],
   ['Fingerprint background check', 'fp_date', 'fp_proof', 'fp', null],
   ['Supervisory visit', 'supv_date', 'supv_proof', null, 'yearly (management)'],
   ['Performance review', 'perf_date', 'perf_proof', null, 'yearly (management)'],

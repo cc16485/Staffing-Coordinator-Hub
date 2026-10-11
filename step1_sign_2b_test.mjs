@@ -59,7 +59,13 @@ function table(name) {
 }
 const storage = { from: () => ({ upload: async (p, bytes, o) => { if (STORE[p] && !o?.upsert) return { error: { message: 'exists' } }; STORE[p] = bytes; return { data: { path: p }, error: null } }, createSignedUrl: async (p) => ({ data: STORE[p] ? { signedUrl: 'https://signed/' + p } : null, error: STORE[p] ? null : { message: 'no' } }) }) }
 const RPCS = []
-globalThis.__fakeCreateClient = () => ({ from: table, storage, rpc: async (name, args) => { RPCS.push({ name, args }); if (name !== 'step1_land_apply') return { data: null, error: { message: 'unexpected ' + name } }; return { data: { ok: true, candidate_id: '901', filled: Object.keys(args.p_patch) }, error: null } }, auth: { getUser: async (jwt) => jwt === 'staff' ? { data: { user: { id: 'u1', email: 'k@mo-care.com', app_metadata: {} } }, error: null } : { data: null, error: { message: 'bad' } } } })
+globalThis.__fakeCreateClient = () => ({ from: table, storage, rpc: async (name, args) => { RPCS.push({ name, args })
+  /* STEP 1 BEFORE CHECKS: NO_CAND = nobody in Background & References yet (the new rule); the door then makes the record */
+  if (name === 'step1_candidate_create') { const was = globalThis.NO_CAND; globalThis.NO_CAND = false; return { data: was ? { ok: true, created: true, how: 'created', id: 902 } : { ok: true, created: false, how: 'already', id: '901' }, error: null } }
+  if (name === 'upsert_app_data_item') { (globalThis.CARDS = globalThis.CARDS || []).push(args.item); return { data: null, error: null } }
+  if (name !== 'step1_land_apply') return { data: null, error: { message: 'unexpected ' + name } }
+  if (globalThis.NO_CAND) return { data: { ok: false, reason: 'no_candidate' }, error: null }
+  return { data: { ok: true, candidate_id: '901', filled: Object.keys(args.p_patch) }, error: null } }, auth: { getUser: async (jwt) => jwt === 'staff' ? { data: { user: { id: 'u1', email: 'k@mo-care.com', app_metadata: {} } }, error: null } : { data: null, error: { message: 'bad' } } } })
 const src = fs.readFileSync(path.join(FN, 'step1-sign/index.ts'), 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = globalThis.__fakeCreateClient')
 const tmp = path.join(FN, 'step1-sign', '_t2b.ts'); fs.writeFileSync(tmp, src)
 let M; try { M = await import(tmp) } finally { fs.unlinkSync(tmp) }
@@ -68,7 +74,10 @@ const OID = '11111111-2222-4333-8444-555555555555'
 const base = () => ({ id: OID, first_name: 'Ava', last_name: 'Lee', phone: '(417) 555-0101', email: 'ava@example.com', position: 'Caregiver', onboarding_path: 'new', offer_status: 'accepted', offer_signed_at: '2026-10-09T15:00:00Z', pd_signed_at: '2026-10-09T15:05:00Z', offer_withdrawn_at: null, offer_declined_at: null, step1_sent_at: '2026-10-09T15:06:00Z', step1_done_at: null })
 const exp = L.expiry(); const tok = await L.sign(SECRET, 'step1', OID, exp)
 const link = { o: OID, e: exp, t: tok }
-const call = async (body, headers = {}) => { const r = await handler(new Request('http://x/step1-sign', { method: 'POST', headers: { 'Content-Type': 'application/json', 'user-agent': 'TestPhone', ...headers }, body: JSON.stringify(body) })); let j = null; try { j = await r.json() } catch {} return { status: r.status, j } }
+const REPLAY = []
+const call = async (body, headers = {}) => { const r = await handler(new Request('http://x/step1-sign', { method: 'POST', headers: { 'Content-Type': 'application/json', 'user-agent': 'TestPhone', ...headers }, body: JSON.stringify(body) })); let j = null; try { j = await r.json() } catch {}
+  if (r.status === 200 && body.o && ['begin', 'save', 'identity', 'sign'].includes(body.action)) REPLAY.push(JSON.parse(JSON.stringify(body)))
+  return { status: r.status, j } }
 
 /* ═══ the door ═══ */
 let r = await call({ action: 'view', o: OID, e: exp, t: 'x'.repeat(43) })
@@ -207,6 +216,32 @@ ck('landingPatch: the other forms land nothing on the row', LP('availability', {
 const landCalls = RPCS.filter((r) => r.name === 'step1_land_apply')
 ck('during the signing run above, the door was called for the application, the references and the done stamp, with the offer id', landCalls.length === 3 && landCalls.every((r) => r.args.p_offer_id === OID) && landCalls[0].args.p_patch.oos === 'yes' && landCalls[1].args.p_patch.r1n === 'Jane Boss' && landCalls[1].args.p_patch.r2n === 'Tom Lead' && landCalls[2].args.p_patch.step1_done_at, landCalls.map((r) => Object.keys(r.args.p_patch)))
 ck('the door is never asked to land the SSN, date of birth, license number or address', !landCalls.some((r) => Object.keys(r.args.p_patch).some((k) => /ssn|dob|license|address|city|zip/.test(k))))
+
+/* ═══ STEP 1 BEFORE CHECKS (Samantha 2026-10-11): a second made-up hire who is NOT in Background & References signs the same
+   way; nothing lands before the last form (and nothing calls that a failure); the last form puts them in, lands every form
+   and raises the "start the checks" card for Recruiting & Orientation ═══ */
+{
+  const OID2 = '22222222-3333-4444-8555-666666666666'
+  OFFERS[OID2] = { ...base(), id: OID2, first_name: 'Bo', last_name: 'Newhire', phone: '(417) 555-0182', email: 'bo@practice.invalid' }
+  const exp2 = L.expiry(); const link2 = { o: OID2, e: exp2, t: await L.sign(SECRET, 'step1', OID2, exp2) }
+  globalThis.NO_CAND = true; globalThis.CARDS = []
+  const rp0 = RPCS.length, ev0 = EVENTS.length
+  await call({ action: 'view', ...link2 })
+  const steps = REPLAY.filter((b) => b.o === OID).map((b) => ({ ...b, ...link2 }))
+  let created = -1, last = null
+  for (const b of steps) { const out = await call(b); if (b.action === 'sign') last = out; if (created < 0 && RPCS.slice(rp0).some((r) => r.name === 'step1_candidate_create')) created = RPCS.length }
+  const mine = RPCS.slice(rp0)
+  const cc = mine.filter((r) => r.name === 'step1_candidate_create')
+  ck('before checks: every form signed for the second hire (the replay reached Step 1 complete)', last && last.status === 200 && last.j && last.j.done === true, last)
+  ck('before checks: Background & References is entered exactly once, by the server, at the last signature, with the offer\'s person', cc.length === 1 && cc[0].args.p_offer_id === OID2 && cc[0].args.p_record.first === 'Bo' && cc[0].args.p_record.onboarding_path === 'new' && cc[0].args.p_record.oig === 'Pending', cc)
+  ck('before checks: no "landing failed" on the trail for the forms signed before then', !EVENTS.slice(ev0).some((e) => e.offer_id === OID2 && e.result === 'landing_failed'), EVENTS.slice(ev0).filter((e) => e.result))
+  const after = mine.slice(mine.indexOf(cc[0]) + 1).filter((r) => r.name === 'step1_land_apply' && r.args.p_offer_id === OID2)
+  const keys = after.map((r) => Object.keys(r.args.p_patch).join(','))
+  ck('before checks: after entering, every earlier form lands (the application and the four references) and then the done stamp', keys.some((k) => /oos/.test(k)) && keys.some((k) => /r4n/.test(k)) && keys.some((k) => /step1_done_at/.test(k)), keys)
+  const card = (globalThis.CARDS || []).find((c) => c.id === 's1done_' + OID2)
+  ck('before checks: ONE card for Recruiting & Orientation: start background checks and references', card && card.domain === 'recruiting_orientation' && /Step 1 complete: start background checks and references for Bo Newhire/.test(card.title) && /signed permission|consent/.test(card.detail) && (globalThis.CARDS || []).filter((c) => c.id === card.id).length === 1, globalThis.CARDS)
+  ck('before checks: the card says nothing with an em dash', card && !/—/.test(card.title + card.detail))
+}
 
 globalThis.fetch = realFetch
 for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note))
