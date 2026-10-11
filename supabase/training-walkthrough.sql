@@ -1,12 +1,12 @@
 -- =============================================================================
 -- TRAINING WALKTHROUGH (Samantha 2026-10-11: "I would like for our staff to also put their info in to experience it, as a
--- training, set up inside the applicant journey tab"; "yes to all": any office staff, through the welcome call, ends by itself
+-- training, set up inside the applicant journey tab"; "yes to all": any office staff, through the Orientation Video Call, ends by itself
 -- after 14 days, their records shown with "(TRAINING)"). Hub project. Three server-only doors:
 --   test_people_add(phone, email)      adds to ops_settings.test_people in one statement (never a stale copy); says what it added
 --   test_people_remove(phone, email)   takes them off again (the walkthrough removes only what it added)
 --   training_walkthrough_close(offer_id, reason)   ends ONE walkthrough on the Hub side: the records carrying that offer id and
 --     "(TRAINING)" come off the working lists (the change and value histories keep them), the readiness card closes with an event,
---     its cards are marked done, an open welcome call is cancelled and its time in the shared room freed. Nothing is deleted from
+--     its cards are marked done, an open Orientation Video Call is cancelled and its time in the shared room freed. Nothing is deleted from
 --     any history.
 -- Rollback: training-walkthrough-rollback.sql drops the three (what they did stays).
 -- =============================================================================

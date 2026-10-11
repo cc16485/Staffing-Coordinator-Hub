@@ -46,7 +46,7 @@ if (process.env.PGLITE) {
   const ev = (await db.query(`select kind, actor_name, reason from public.client_journey_event`)).rows
   ck('close: its readiness card closed with a "closed" event; the other one open', js.find((x) => x.offer_id === OFF).status === 'closed' && js.find((x) => x.offer_id === OTHER).status === 'open' && ev.length === 1 && ev[0].kind === 'closed' && /Kay/.test(ev[0].reason), [js, ev])
   const wc = (await db.query(`select candidate_id, status from public.welcome_calls order by candidate_id, status`)).rows, busy = (await db.query(`select source_id from public.coordinator_busy`)).rows
-  ck('close: its booked welcome call cancelled and its time freed; a done call and another person\'s call untouched', r.welcome_calls_cancelled === 1 && wc.map((x) => x.candidate_id + ':' + x.status).join() === '12:booked,121:cancelled,121:done' && busy.length === 1 && busy[0].source_id.startsWith('d0d0'), [wc, busy])
+  ck('close: its booked Orientation Video Call cancelled and its time freed; a done call and another person\'s call untouched', r.welcome_calls_cancelled === 1 && wc.map((x) => x.candidate_id + ':' + x.status).join() === '12:booked,121:cancelled,121:done' && busy.length === 1 && busy[0].source_id.startsWith('d0d0'), [wc, busy])
   r = (await q1('select public.training_walkthrough_close($1, $2) as r', [OFF, 'again'])).r
   ck('close again: nothing more to do, no second event', r.records_off_lists === 0 && r.cards_closed === 0 && (await db.query(`select 1 from public.client_journey_event`)).rows.length === 1, r)
   let err = ''; try { await q1('select public.training_walkthrough_close($1, $2) as r', ['', 'x']) } catch (e) { err = e.message }

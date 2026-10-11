@@ -1,12 +1,12 @@
 // =============================================================================
 // training-walkthrough · TRY THE NEW-HIRE JOURNEY YOURSELF (Samantha 2026-10-11: "I would like for our staff to also put their
 // info in to experience it, as a training, set up inside the applicant journey tab"; "yes to all": any office staff; through the
-// welcome call; it ends by itself after 14 days; their records show "(TRAINING)").
+// Orientation Video Call; it ends by itself after 14 days; their records show "(TRAINING)").
 //   { action: 'start', first, phone, email }   office staff, their OWN phone and email: the phone and email go on the Admin
 //        page's test list (so the onboarding messages reach them even with the switches off), a new-path offer is made for
 //        "<first> (TRAINING)" and its real offer link is sent to them. One open walkthrough per staff member.
 //   { action: 'end', offer_id }                the person who started it or an owner: the offer withdrawn, the Hub records off
-//        the working lists, the card closed, cards done, an open welcome call cancelled, their phone and email off the test
+//        the working lists, the card closed, cards done, an open Orientation Video Call cancelled, their phone and email off the test
 //        list (only what this walkthrough added). Every history stays.
 //   { action: 'list' }                         the open walkthroughs (the Applicant journey tab shows them)
 //   { action: 'sweep' }                        (the daily schedule) ends every walkthrough past its 14 days
