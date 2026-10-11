@@ -155,7 +155,7 @@ export const FORMS: Record<FormKey, Form> = {
         { id: 'hours_ideal', label: 'Requested hours per week: Ideal', kind: 'number', required: true }, { id: 'hours_min', label: 'Minimum I can accept', kind: 'number', required: true }, { id: 'hours_max', label: 'Maximum available', kind: 'number', required: true },
       ] },
       { h: 'Scheduling preferences', p: ['I am willing to work:'], items: [
-        { id: 'shift_prefs', label: 'Shifts', kind: 'multi', options: ['Morning shifts', 'Afternoon shifts', 'Evening shifts', 'Overnight shifts', 'Weekends', 'Holidays', 'Short notice / same-day assignments'] },
+        { id: 'shift_prefs', label: 'Shifts', kind: 'multi', options: ['Morning shifts', 'Afternoon shifts', 'Evening shifts', 'Overnight shifts', 'Weekends', 'Holidays', 'Short notice / same-day assignments'], required: true },
         text('overnight_nights', 'Overnight shifts: which nights?'),
       ] },
       { h: 'Travel', items: [{ id: 'max_miles', label: 'Maximum distance I\'m willing to travel', kind: 'choice', options: ['10 miles', '20 miles', '30 miles', '40+ miles'], required: true }] },
