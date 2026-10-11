@@ -3,7 +3,7 @@
 # as a training, set up inside the applicant journey tab"; "yes to all": any office staff, through the welcome call, ends by
 # itself after 14 days, records shown with "(TRAINING)"). Hub project. Adds three server-only database doors (the test list in one
 # statement, and the Hub side of ending a walkthrough), deploys the new training-walkthrough service and step1-sign (its card says
-# TRAINING), and schedules the daily sweep that ends walkthroughs after 14 days. Needs 598 and 599 first (the test list is how a
+# TRAINING), and schedules the daily sweep that ends walkthroughs after 14 days. Needs 598 and 601 first (the test list is how a
 # walkthrough's messages reach the staff member). Nothing is sent; no existing record changes; nobody is on a walkthrough yet.
 import os, json, subprocess, hashlib
 os.environ.setdefault("SB_STEP", "600")
@@ -42,7 +42,7 @@ for fn in FNS:
     else: say(f"  ✓ {fn} is live at version {mx.get('version', '?')}" + (f": brought up to main ({short(differ)})" if differ else ""))
 okl, livef = live_files(REF, "outreach-check")
 if okl and any(k.endswith("_shared/test-people.ts") for k in livef): say("  ✓ 598 is in (the Hub tells Training the test list)")
-else: bad("598 has not run yet (outreach-check does not know the test list). Run 598, then 599, then this.")
+else: bad("598 has not run yet (outreach-check does not know the test list). Run 598 first.")
 ok_, st = sql(REF, "select coalesce(data->'test_people', '{}'::jsonb) as tp, (select count(*)::int from vault.decrypted_secrets where name = 'hub_job_secret') as vault from public.app_data where key = 'ops_settings'")
 if ok_ and st:
     say(f"  · the test list now: {len(st[0]['tp'].get('phones') or [])} phone(s), {len(st[0]['tp'].get('emails') or [])} email(s) (each walkthrough adds its own and takes it off again)")
