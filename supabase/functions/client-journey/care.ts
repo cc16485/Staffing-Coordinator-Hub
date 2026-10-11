@@ -109,6 +109,8 @@ export function careState(roles: Any[], pause: Any | null, journeys: Any[]): str
 
 export async function careAction(c: Any): Promise<{ body: Any; status?: number }> {
   const { db, b, who, isOwner, pp, st, dfs, R, load, event, refreshCards, ctxFor, today, routeCc, openOne } = c
+  /* SLICE 8: client document opens are logged (the logger comes from index.ts, so this file stays importable on its own) */
+  const logOpen = c.logOpen || (async () => true), clientSubject = c.clientSubject || ((ax: Any, _l: Any, j: Any) => 'client:' + (ax || 'J' + j))
   const can = isOwner || (who.roles || []).includes('care_coordinator')
   const ax = String(b.axiscare_client_id ?? '').trim()
   const err = (m: string, s = 422, outcome = 'refused') => ({ body: { outcome, error: m }, status: s })
@@ -131,6 +133,7 @@ export async function careAction(c: Any): Promise<{ body: Any; status?: number }
       const path = String(b.path || ''); if (!path.startsWith(`care/${ch.change_id}/`)) return err('not this change\'s file', 403)
       const { data, error } = await db.storage.from('client-journey-files').createSignedUrl(path, 600)
       if (error) return err('Could not open the file.', 500)
+      await logOpen(db, { subject: clientSubject(ch.axiscare_client_id, null, ch.journey_id), doc: 'care-file', path, who: { person_id: who.person_id, email: who.email, name: who.name }, reason: 'opened on a care change' })
       return { body: { url: data.signedUrl } }
     }
     const list = (ch.checklist || []).map((x: Any) => ({ ...x }))

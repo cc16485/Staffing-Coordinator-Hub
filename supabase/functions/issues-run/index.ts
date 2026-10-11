@@ -210,6 +210,8 @@ async function recordAction(body: any) {
   const next = clean(body.state) || issue.state
   // deno-lint-ignore no-explicit-any
   const patch: any = { state: next, updated_at: nowIso() }
+  // deno-lint-ignore no-explicit-any
+  let patch_answer: any = null
   if (body.waiting_on !== undefined) patch.waiting_on = clean(body.waiting_on) || null
   if (body.owner) patch.owner = clean(body.owner)
 
@@ -217,6 +219,19 @@ async function recordAction(body: any) {
      If the category requires a follow-up, "resolved" is refused and the issue
      moves to follow_up with a date. The problem is not addressed until somebody
      confirms it stayed addressed. */
+  /* SLICE 8 (Samantha "yes to all", 2026-10-11): a grievance is resolved only with the written answer attached (a file the
+     Hub stored under grievance/<issue id>/ in the private client bucket) or a recorded reason it was answered in person.
+     The first resolution needs it; a later step (the follow-up) keeps what was recorded. */
+  if (issue.category === 'grievance' && (next === 'resolved' || next === 'follow_up_done') && !issue.resolution_doc && !issue.resolution_in_person) {
+    const doc = clean(body.resolution_doc), inPerson = clean(body.in_person_reason)
+    if (doc) {
+      if (!doc.startsWith(`grievance/${issue.id}/`)) return { error: 'That file is not this grievance\'s written answer.' }
+      const dir = doc.slice(0, doc.lastIndexOf('/')), name = doc.slice(doc.lastIndexOf('/') + 1)
+      const { data: files } = await sb.storage.from('client-journey-files').list(dir, { search: name })
+      if (!(files || []).some((f: { name: string }) => f.name === name)) return { error: 'The written answer did not finish uploading. Attach it again.' }
+    } else if (inPerson.length < 10) return { error: 'Attach the written answer, or say why it was given in person (a sentence). Nothing was changed.', needs: 'grievance_answer' }
+    patch_answer = doc ? { resolution_doc: doc, resolution_how: 'written' } : { resolution_in_person: inPerson, resolution_how: 'in_person' }
+  }
   let followUpScheduled: string | null = null
   if (next === 'resolved') {
     if (cat.follow_up_required && !issue.follow_up_done) {
@@ -244,6 +259,7 @@ async function recordAction(body: any) {
                           : (clean(body.samantha_reason) || 'administrative_leakage')
   }
 
+  if (patch_answer) Object.assign(patch, patch_answer)
   const { data: updated, error } = await sb.from('client_issue')
     .update(patch).eq('id', issue.id).select('*').single()
   if (error) return { error: error.message }

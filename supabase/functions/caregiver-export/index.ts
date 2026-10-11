@@ -9,6 +9,8 @@
 //   onboarding-documents bucket (exports/...), never overwritten, and comes back as a five-minute link.
 //   EVERY export and every proof link is a row in document_access_log (doc 'export' / 'export-proof', with the reason).
 //   Nothing is changed; no identity value is ever printed (the sealed Step 1 fields stay sealed).
+//   SLICE 8 (2026-10-11): as_of (YYYY-MM-DD) prints what the card said at the end of that day: the last event recorded for
+//   each requirement by then, the history up to then, the eligibility history up to then; roster dates are current values.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { PERM_KEY, normalizePerms, mayApprove } from '../_shared/onboarding-permissions.ts'
@@ -73,6 +75,7 @@ Deno.serve(async (req) => {
     const action = S(b.action, 20) || 'export'
     if (action !== 'export') return json({ error: 'Unknown action.' }, 400)
     const reason = S(b.reason, 200) || 'audit export'
+    const asOf = /^\d{4}-\d{2}-\d{2}$/.test(S(b.as_of, 10)) ? S(b.as_of, 10) : '', cutoff = asOf ? asOf + 'T23:59:59.999-05:00' : '', upto = (iso: unknown) => !asOf || (!!iso && String(iso) <= cutoff)
     const now = new Date().toISOString(), ip = req.headers.get('x-forwarded-for') || req.headers.get('cf-connecting-ip') || ''
     const { data: rosterRow } = await db.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
     const roster: Any[] = Array.isArray(rosterRow?.data) ? rosterRow.data : []
@@ -96,7 +99,8 @@ Deno.serve(async (req) => {
     const pdf = new BrandPdf(`Personnel file - ${name}`); pdf.footer(FOOTER)
     pdf.headerFn = (p, f) => p.letterhead(COMPANY_RIGHT, f); pdf.letterhead(COMPANY_RIGHT, true)
     pdf.para('Caregiver personnel file (read-only export)', { font: 'B', size: 18, color: NAVY, lh: 23, after: 2 })
-    pdf.para(`${name} · exported ${central(now)} Central by ${who.name || who.email} · reason: ${reason}`, { size: 8.5, color: MUTED, after: 2 })
+    pdf.para(`${name} · ${asOf ? 'as of the end of ' + asOf + ' · ' : ''}exported ${central(now)} Central by ${who.name || who.email} · reason: ${reason}`, { size: 8.5, color: MUTED, after: 2 })
+    if (asOf) pdf.para('As of a past date: each requirement shows the last event recorded by then; the history stops there; the roster dates below are the values on the record now (the record keeps no earlier values).', { size: 8.5, color: MUTED, after: 6 })
     pdf.para('Every line comes from the Hub records as they stand now. Nothing here was typed for this export. Identity details (Social Security number, date of birth, license number) are sealed and never printed. Proof files are listed by reference; the links that came with this export open for five minutes and every open is logged.', { size: 8.5, color: MUTED, after: 8 })
     if (rec) {
       pdf.heading('Record')
@@ -117,7 +121,17 @@ Deno.serve(async (req) => {
       pdf.labelled('Card started:', central(j.created_at) + ' (both offer documents signed)', { after: 2 })
       pdf.labelled('Approved to Work:', aw?.st?.state === 'complete' ? `${central(aw.st.completed_at)} by ${S(aw.st.completed_by_name || aw.st.completed_by)}` : 'not yet', { after: 2 })
       pdf.labelled('AxisCare Active read back:', ax?.st?.state === 'complete' ? central(ax.st.completed_at) : (ax?.st?.state === 'blocked' ? S(ax.st.blocked_reason, 200) : 'not yet'), { after: 6 })
-      for (const stage of view.rail || []) {
+      const { data: evAll } = await db.from('client_journey_event').select('*').eq('journey_id', j.journey_id).order('at', { ascending: true }).limit(1000)
+      const evUpto = (evAll ?? []).filter((e: Any) => upto(e.at))
+      if (asOf) {
+        pdf.heading('Requirements as of ' + asOf)
+        for (const r of view.rows || []) {
+          const last = [...evUpto].reverse().find((e: Any) => e.step_key === r.key)
+          pdf.para(`${r.def.title}${r.def.required === false ? ' (optional)' : ''}`, { font: 'B', size: 9.5, lh: 13, after: 1 })
+          pdf.para(last ? `last recorded: ${last.kind} · ${central(last.at)} · ${S(last.actor_name || last.actor_email, 60)}${last.reason ? ' · "' + S(last.reason, 160) + '"' : ''}` : 'nothing recorded by then', { size: 8.5, color: MUTED, lh: 12, after: 2 })
+        }
+      }
+      for (const stage of asOf ? [] : (view.rail || [])) {
         const rows = (view.rows || []).filter((r: Any) => r.def.stage === stage.key); if (!rows.length) continue
         pdf.heading(String(stage.label).toUpperCase())
         for (const r of rows) {
@@ -131,9 +145,8 @@ Deno.serve(async (req) => {
           pdf.y -= 3
         }
       }
-      const { data: evs } = await db.from('client_journey_event').select('*').eq('journey_id', j.journey_id).order('at', { ascending: true }).limit(400)
-      pdf.hr(RULE, 8); pdf.heading('History (permanent, in order)')
-      for (const e of evs ?? []) pdf.para(`${central(e.at)} · ${e.kind}${e.step_key ? ' · ' + e.step_key : ''} · ${S(e.actor_name || e.actor_email, 60)}${e.reason ? ' · "' + S(e.reason, 160) + '"' : ''}`, { size: 8, color: MUTED, lh: 11, after: 1 })
+      pdf.hr(RULE, 8); pdf.heading('History (permanent, in order)' + (asOf ? ' up to ' + asOf : ''))
+      for (const e of evUpto) pdf.para(`${central(e.at)} · ${e.kind}${e.step_key ? ' · ' + e.step_key : ''} · ${S(e.actor_name || e.actor_email, 60)}${e.reason ? ' · "' + S(e.reason, 160) + '"' : ''}`, { size: 8, color: MUTED, lh: 11, after: 1 })
     }
     if (rec) {
       pdf.hr(RULE, 8); pdf.heading(j ? 'Roster record (dates and proofs)' : 'Requirements on the record')
@@ -148,15 +161,15 @@ Deno.serve(async (req) => {
       }
       if (Array.isArray(rec.eligibility_history) && rec.eligibility_history.length) {
         pdf.hr(RULE, 8); pdf.heading('Eligibility history (the sweep)')
-        for (const h of rec.eligibility_history.slice(-100)) pdf.para(`${central(h.at)} · ${S(h.event || h.state, 40)} · ${S(h.reason, 200)}`, { size: 8, color: MUTED, lh: 11, after: 1 })
+        for (const h of rec.eligibility_history.filter((x: Any) => upto(x?.at)).slice(-100)) pdf.para(`${central(h.at)} · ${S(h.event || h.state, 40)} · ${S(h.reason, 200)}`, { size: 8, color: MUTED, lh: 11, after: 1 })
       }
     }
     const bytes = pdf.build()
-    const path = `exports/${subjectId.replace(/[^a-zA-Z0-9:_-]/g, '_')}/${now.replace(/[:.]/g, '-')}.pdf`
+    const path = `exports/${subjectId.replace(/[^a-zA-Z0-9:_-]/g, '_')}/${now.replace(/[:.]/g, '-')}-${crypto.randomUUID().slice(0, 8)}.pdf`
     const up = await db.storage.from(BUCKET).upload(path, bytes, { contentType: 'application/pdf', upsert: false })
     if (up.error) return json({ error: 'The export could not be stored: ' + up.error.message }, 500)
     const { data: su } = await db.storage.from(BUCKET).createSignedUrl(path, LINK_SECONDS)
-    const logs: Any[] = [{ at: now, offer_id: subjectId, doc: 'export', path, by_person: who.person_id, by_email: who.email, by_name: who.name, ip, reason }]
+    const logs: Any[] = [{ at: now, offer_id: subjectId, doc: 'export', path, by_person: who.person_id, by_email: who.email, by_name: who.name, ip, reason: asOf ? reason + ' (as of ' + asOf + ')' : reason }]
     /* the proof links: five minutes each, every one logged */
     const links: Array<{ label: string; url: string | null; ref: string }> = []
     const seen = new Set<string>()
@@ -171,7 +184,7 @@ Deno.serve(async (req) => {
     }
     const { error: le } = await db.from('document_access_log').insert(logs)
     if (le) return json({ error: 'The export was built but could not be logged, so it was not released: ' + le.message }, 500)
-    return json({ ok: true, name, url: su?.signedUrl ?? null, path, expires_in: LINK_SECONDS, proofs: links, logged: logs.length })
+    return json({ ok: true, name, as_of: asOf || null, url: su?.signedUrl ?? null, path, expires_in: LINK_SECONDS, proofs: links, logged: logs.length })
   } catch (e) {
     return json({ error: 'Something went wrong: ' + ((e as Error).message || 'error') + '. Nothing was changed.' }, 500)
   }
