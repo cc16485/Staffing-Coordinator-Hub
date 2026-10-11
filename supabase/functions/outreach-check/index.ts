@@ -31,6 +31,7 @@ import { latestTextConsent } from '../_shared/text-consent.ts'
    by identity). The server door gets the expiry and the switch but never may_reoffer. Nothing is written. */
 import { dueNextBusinessDay } from '../_shared/business-days.ts'
 import { PERM_KEY, normalizePerms, mayApprove } from '../_shared/onboarding-permissions.ts'
+import { testLists } from '../_shared/test-people.ts'
 export const OFFER_LINK_BUSINESS_DAYS = 7
 
 /* TRAINING PLATFORM TEXTS (2026-10-01, Samantha: "fix the training platform texts"). Two more answers for senders in
@@ -94,7 +95,9 @@ async function extraAnswer(db: any, b: Record<string, any>, sender: string, who:
       const { data: pr } = await db.from('app_data').select('data').eq('key', PERM_KEY).maybeSingle()
       may_reoffer = mayApprove(normalizePerms(pr?.data), 'advance', { person_id: who.person_id, roles: who.roles })
     }
-    return json({ onboarding_path: path, switch_date, offer_date, offer_expires_at, offer_link_business_days: OFFER_LINK_BUSINESS_DAYS, offer_send_live, step1_auto_live, offer_reminder_days, offer_reminders_live, step1_reminder_days, may_reoffer })
+    /* TEST PEOPLE (2026-10-11): the Admin page's short list; Training sends a person reachable only at these even with a switch off */
+    const tl = testLists(row?.data)
+    return json({ onboarding_path: path, switch_date, offer_date, offer_expires_at, offer_link_business_days: OFFER_LINK_BUSINESS_DAYS, offer_send_live, step1_auto_live, offer_reminder_days, offer_reminders_live, step1_reminder_days, may_reoffer, test_phones: tl.phones, test_emails: tl.emails })
   }
   return null
 }
