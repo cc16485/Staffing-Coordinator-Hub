@@ -48,6 +48,7 @@ import { latestTextConsent, inTextHours, withStop } from '../_shared/text-consen
 import { saveAuditFields } from '../_shared/sweep-patch.ts'
 import { loadLeie, matchLeie, oigEvidence, oigDue, OIG_INTERVAL_DAYS } from '../_shared/oig-leie.ts'
 import { readTraining, certificateRef, syncPatch } from '../_shared/training-sync.ts'
+import { testPerson } from '../_shared/test-people.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret, x-outreach-secret', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -195,7 +196,7 @@ async function clearedTextStep(db: Any, j: Any, f: Facts, st: Any, who: { email?
   const now = new Date().toISOString(), first = nameOf(f, j), words = clearedText(first)
   const phone = S(f.roster?.phone || f.offer?.phone, 40), email = S(f.roster?.email || f.offer?.email, 160)
   let text: Any
-  if (st?.approve_work_text_live !== true) { text = { state: 'practice', at: now, words }; await event(db, j.journey_id, WORK_KEY, who, 'cleared_text_practice', { words, phone_on_file: !!phone }) }
+  if (st?.approve_work_text_live !== true && !testPerson(st, { phone, email })) { text = { state: 'practice', at: now, words }; await event(db, j.journey_id, WORK_KEY, who, 'cleared_text_practice', { words, phone_on_file: !!phone }) }
   else if (!inTextHours()) { text = { state: 'due', at: now }; await event(db, j.journey_id, WORK_KEY, who, 'cleared_text_due', { why: 'texts go 8am to 6pm Central; the sweep sends it in hours' }) }
   else if (!phone) { text = { state: 'failed', at: now, why: 'no phone number on file' }; await event(db, j.journey_id, WORK_KEY, who, 'cleared_text_failed', {}, 'no phone number on file') }
   else {
@@ -420,7 +421,7 @@ Deno.serve(async (req) => {
         /* Ready for Final Approval: one card for the Approve to Work list, closed at the press */
         if (a.ready_for_final) { await raiseCard(db, { id: 'cj_final_' + j.journey_id, kind: 'final_approval', urgency: 'today', who: j.client_name, offer_id: j.offer_id, title: 'Ready for final approval: ' + j.client_name, detail: 'Every requirement on their readiness card is complete. An owner on the Approve to Work list opens the card and presses Approve to Work.' }); (out.cards as number)++ }
         /* a cleared text held after hours goes now, in hours, with the switch on */
-        if (a.approved && a.axiscare.state === 'confirmed' && a.text?.state === 'due' && st.approve_work_text_live === true && inTextHours()) { const t = await clearedTextStep(db, j, f, st, {}); if (t.state === 'sent') (out.texts_sent as number)++ }
+        if (a.approved && a.axiscare.state === 'confirmed' && a.text?.state === 'due' && (st.approve_work_text_live === true || testPerson(st, { phone: f.roster?.phone || f.offer?.phone, email: f.roster?.email || f.offer?.email })) && inTextHours()) { const t = await clearedTextStep(db, j, f, st, {}); if (t.state === 'sent') (out.texts_sent as number)++ }
         if (view.complete && j.status === 'open') { await db.from('client_journey').update({ status: 'active', updated_at: now }).eq('journey_id', j.journey_id); await event(db, j.journey_id, null, {}, 'complete', { all: true }); (out.completed as number)++ }
       }
       return json({ ok: true, ...out })

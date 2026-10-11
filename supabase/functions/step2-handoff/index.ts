@@ -36,6 +36,7 @@ import { latestTextConsent, inTextHours } from '../_shared/text-consent.ts'
 import { makeStep2Link, checkLink } from '../_shared/applicant-links.ts'
 import { dueNextBusinessDay, centralYmd } from '../_shared/business-days.ts'
 import { sentMessages, reminderMessages, receiptText, stillOpenText, isDoneReply, rowFor, stateOf, reminderDue } from '../_shared/step2.ts'
+import { testPerson } from '../_shared/test-people.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -154,7 +155,7 @@ async function reportDone(db: Any, p: Person, how: 'link' | 'reply' | 'office', 
   const jr = await journeyFor(db, p.rec); if (jr) await event(db, jr.j.journey_id, null, who, 'step2_reported', { how })
   let receipt: Any = { state: 'none' }
   if (how !== 'office' && jr) {
-    if (st.step2_send_live !== true) receipt = { state: 'practice', at: now, words: receiptText(p.rec.first || 'there') }
+    if (st.step2_send_live !== true && !testPerson(st, p.rec)) receipt = { state: 'practice', at: now, words: receiptText(p.rec.first || 'there') }
     else { const r = await deliver(db, p.rec, { text: receiptText(p.rec.first || 'there') }, 'step2-handoff', send); receipt = { state: r.texted ? 'sent' : 'failed', at: now, why: r.not_sent.join('; ') || null } }
     await patch(db, p, { step2_receipt: receipt })
   }
@@ -234,10 +235,10 @@ Deno.serve(async (req) => {
           const d = jr ? reminderDue(c, o.step2_days, today, (iso) => centralYmd(iso)) : 0
           if (d) {
             const rem = { ...(c.step2_reminders && typeof c.step2_reminders === 'object' ? c.step2_reminders : {}) }
-            if (st.step2_reminders_live === true) { const r = await deliver(db, c, reminderMessages(c.first || 'there', await doneLink(cid)), 'step2-handoff'); rem['d' + d] = { at: now, texted: r.texted, emailed: r.emailed, not_sent: r.not_sent }; out.reminders_sent++ }
+            if (st.step2_reminders_live === true || testPerson(st, c)) { const r = await deliver(db, c, reminderMessages(c.first || 'there', await doneLink(cid)), 'step2-handoff'); rem['d' + d] = { at: now, texted: r.texted, emailed: r.emailed, not_sent: r.not_sent }; out.reminders_sent++ }
             else { rem['d' + d] = { at: now, practice: true }; out.reminders_practice++ }
             await patch(db, p, { step2_reminders: rem })
-            if (jr) await event(db, jr.j.journey_id, null, {}, 'step2_reminder', { day: d, practice: st.step2_reminders_live !== true })
+            if (jr) await event(db, jr.j.journey_id, null, {}, 'step2_reminder', { day: d, practice: st.step2_reminders_live !== true && !testPerson(st, c) })
           }
           const elapsed = Math.floor((Date.parse(today + 'T00:00:00Z') - Date.parse(centralYmd(c.step2_sent_at) + 'T00:00:00Z')) / 86400000)
           if (elapsed >= STALL_DAYS) { await raiseCard(db, { id: 'step2_stalled_' + cid, kind: 'step2_stalled', urgency: 'today', who: name, candidate_id: cid, owner, title: 'Step 2 not finished: call ' + name, detail: `Step 2 was recorded sent ${centralYmd(c.step2_sent_at)} and no DONE has come in ${elapsed} days${jr ? ' (the two reminders have gone)' : ''}. Call them, then record what you learn.` }); out.cards++ }
@@ -272,7 +273,7 @@ Deno.serve(async (req) => {
       let msg: Any = { state: 'none' }
       if (jr) {
         const m = sentMessages(c.first || 'there', await doneLink(cid))
-        if (st.step2_send_live !== true) msg = { state: 'practice', at: now, text: m.text, subject: m.subject }
+        if (st.step2_send_live !== true && !testPerson(st, c)) msg = { state: 'practice', at: now, text: m.text, subject: m.subject }
         else { const r = await deliver(db, c, m, 'step2-handoff'); msg = { state: r.texted || r.emailed ? 'sent' : 'failed', at: now, texted: r.texted, emailed: r.emailed, not_sent: r.not_sent } }
         fields.step2_msg = msg
       }
@@ -308,7 +309,7 @@ Deno.serve(async (req) => {
       }
       let invite: Any = { state: 'none' }
       if (jr) {
-        if (st.wc_auto_invite_live !== true) { invite = { state: 'practice', at: now, why: 'wc_auto_invite_live is off: the invitation was not sent; press Invite to welcome call yourself' } }
+        if (st.wc_auto_invite_live !== true && !testPerson(st, c)) { invite = { state: 'practice', at: now, why: 'wc_auto_invite_live is off: the invitation was not sent; press Invite to welcome call yourself' } }
         else {
           try {
             const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/welcome-call`, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: Deno.env.get('SUPABASE_ANON_KEY') ?? '', Authorization: 'Bearer ' + (Deno.env.get('SUPABASE_ANON_KEY') ?? ''), 'x-cron-secret': Deno.env.get('HUB_JOB_SECRET') ?? '' }, body: JSON.stringify({ action: 'invite_auto', candidate_id: cid, first: c.first || '', last: c.last || '', phone: c.phone || '', email: c.email || '', by: who.name || who.email }) })
