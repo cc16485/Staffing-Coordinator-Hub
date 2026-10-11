@@ -71,10 +71,15 @@ for fn in FNS:
     okl, livef = live_files(HUB, fn)
     if not okl: bad(f"could not read {fn}'s live files"); continue
     differ = [k for k in need(FNROOT, fn) if k not in CHANGED and livef.get(k) != sha(os.path.join(ROOT, k))]
-    unknown = [k for k in differ if not in_history(k, livef.get(k))]
+    # a file main's build needs but the live copy does not hold at all: the live copy is an older build made before the
+    # service used that file (nothing of anyone's is there to overwrite)
+    missing = [k for k in differ if livef.get(k) is None]
+    unknown = [k for k in differ if livef.get(k) is not None and not in_history(k, livef.get(k))]
     short = lambda ks: ', '.join(d.split('/')[-2] + '/' + d.split('/')[-1] for d in ks[:4])
     if unknown: bad(f"{fn}'s live copy holds {short(unknown)} in a version that was never on main (someone's unmerged work); deploying would overwrite it. Tell Claude.")
-    elif differ: say(f"  ✓ {fn} is live at version {mx.get('version', '?')}: main's build apart from the guard and older versions (from main's own history) of {short(differ)}, which this deploy brings up to main")
+    elif differ: say(f"  ✓ {fn} is live at version {mx.get('version', '?')}: main's build apart from the guard"
+                     + (f"; older versions (from main's own history) of {short([d for d in differ if d not in missing])}" if [d for d in differ if d not in missing] else "")
+                     + (f"; built before it used {short(missing)}" if missing else "") + ". This deploy brings it up to main.")
     else: say(f"  ✓ {fn} is live at version {mx.get('version', '?')} and is main's build apart from the guard")
 say("  · what changes: the guard on nine Hub services, and one made-up offer for Pat Practice with its 'sent' event. Nothing is sent to anyone.")
 if fails: say(); say("  RESULT: STOPPED before anything changed. Tell Claude which line."); done(3)

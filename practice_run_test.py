@@ -74,11 +74,18 @@ q(HUB, "update public.app_data set data = data - 'onboarding_switch_date' where 
 LIVE_OVERRIDE["welcome-call"] = {"supabase/functions/_shared/caregiver-journey.ts": "f" * 64}
 code, txt = run("591")
 ck("591 refuses when a service's live copy holds a version never on main (someone's unmerged work)", code == 3 and "never on main" in txt and not DEPLOYED and not q(TRN, "select id from public.job_offers"), txt[-700:])
+# ── a live copy built before the service used a file (the file is simply not there): brought up to main ──
+def fake_live_missing(ref, fn):
+    ok_, d = fake_live(ref, fn)
+    if fn == "ghl-attach-doc": d.pop("supabase/functions/_shared/send-problems.ts", None); d.pop("supabase/functions/_shared/verbs.js", None)
+    return ok_, d
+L.live_files = fake_live_missing
 # ── an older live copy (a version from main's own history): brought up to main ──
 LIVE_OVERRIDE["welcome-call"] = {"supabase/functions/_shared/caregiver-journey.ts": OLD_CJ}
 # ── 2. the set-up ──
 code, txt = run("591")
 ck("591 says which older shared files it brings up to main", "older versions (from main's own history) of _shared/caregiver-journey.ts" in txt, txt[-900:])
+ck("591: a live copy missing files main now uses (built before it used them) is brought up to main, not refused", "built before it used _shared/send-problems.ts" in txt or "built before it used _shared/verbs.js" in txt, txt[-900:])
 o = q(TRN, "select * from public.job_offers")
 ck("591: the guard deployed to the nine services, then ONE offer for Pat on the new path with its sent event", code == 0 and len(DEPLOYED) == 9 and len(o) == 1 and o[0]['onboarding_path'] == 'new' and o[0]['phone'] == '4175550183' and o[0]['email'] == 'pat.practice@practice.invalid'
    and q(TRN, "select count(*)::int n from public.offer_events where kind = 'sent'")[0]['n'] == 1, txt[-900:])
