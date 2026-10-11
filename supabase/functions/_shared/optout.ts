@@ -34,6 +34,29 @@ export const normEmail = (raw: unknown): string | null => {
 }
 const last10 = (p: unknown) => String(p ?? '').replace(/\D/g, '').slice(-10)
 
+/* PRACTICE ADDRESSES (Samantha "approve the two fixes", 2026-10-11, before the practice run): a phone number whose last seven
+   digits are 555-0180 to 555-0189 (inside the 555-01xx range set aside for fiction, kept apart from the 555-01xx numbers the
+   tests use for pretend real people) or an email ending @practice.invalid (.invalid can never be delivered) is a practice
+   address for a made-up hire. It is never texted, emailed or added to GoHighLevel, by any sender, whatever any switch says.
+   The refusal is logged (contact_send_refusal_log) without a Needs Attention card, because nothing failed. */
+export const PRACTICE_WHY = 'a practice address (555-0180 to 555-0189, or @practice.invalid): never contacted'
+export function practicePhone(raw: unknown): boolean {
+  const d = String(raw ?? '').replace(/\D/g, '')
+  return d.length >= 7 && /^555018\d$/.test(d.slice(-7))
+}
+export function practiceEmail(raw: unknown): boolean {
+  const e = String(raw ?? '').trim().toLowerCase()
+  return /@(?:[a-z0-9-]+\.)*practice\.invalid$/.test(e)
+}
+export const practiceAddress = (channel: Channel, phone: unknown, email: unknown): boolean =>
+  channel === 'sms' ? practicePhone(phone) : practiceEmail(email)
+/** a person reachable only at practice addresses (each address given is a practice one, and at least one is given) */
+export function practicePerson(phone: unknown, email: unknown): boolean {
+  const p = String(phone ?? '').trim(), e = String(email ?? '').trim()
+  if (!p && !e) return false
+  return (!p || practicePhone(p)) && (!e || practiceEmail(e))
+}
+
 /* GHL's contact: `dnd: true` stops everything; `dndSettings.SMS/Email.status` of 'active' or 'permanent' stops one channel. */
 // deno-lint-ignore no-explicit-any
 export function ghlDnd(contact: any, channel: Channel): boolean {
@@ -69,6 +92,7 @@ export async function optOutCheck(
   const reasons: string[] = []
   const address = target.channel === 'sms' ? normPhone(target.phone) : normEmail(target.email)
   if (!address) return { allowed: false, reasons: ['no usable ' + (target.channel === 'sms' ? 'phone number' : 'email address')] }
+  if (practiceAddress(target.channel, target.phone, target.email)) return { allowed: false, reasons: [PRACTICE_WHY] }
 
   // 1. GHL Do Not Disturb (a contact object without a true/false `dnd` can't prove DND is off: unknown, refused)
   if (target.viaGhl !== false) {
@@ -111,6 +135,7 @@ export async function optOutCheck(
 export async function logRefusal(db: any, sender: string, channel: Channel, address: unknown, reasons: string[], who?: unknown): Promise<void> {
   try { await db.rpc('contact_send_refusal_log', { p_sender: sender, p_channel: channel, p_address: String(address ?? ''), p_reasons: reasons }) }
   catch { console.warn(`[${sender}] refusal not logged: ${reasons.join('; ')}`) }
+  if (reasons.length && reasons.every((r) => r === PRACTICE_WHY)) return   /* a practice address: logged, no card (nothing failed) */
   /* NO SILENT FAILURES (2026-10-01): every refusal also becomes a Needs Attention card the office sees */
   await reportSendProblem(db, { sender, channel, address, who, reasons })
 }
@@ -139,6 +164,8 @@ export async function ghlContactIfAllowed(
     await logRefusal(db, sender, to.channel, to.channel === 'sms' ? to.phone : to.email, ['no usable ' + (to.channel === 'sms' ? 'phone number' : 'email address')], nameOf(to))
     return null
   }
+  /* a practice address never reaches GoHighLevel: refused before any contact is looked up or made */
+  if (practiceAddress(to.channel, phone, email)) { await logRefusal(db, sender, to.channel, phone ?? email, [PRACTICE_WHY], nameOf(to)); return null }
   const h = { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
   // deno-lint-ignore no-explicit-any
   let contact: any = null
@@ -250,6 +277,7 @@ export async function ghlStoredContactIfAllowed(
     await logRefusal(db, sender, to.channel, '', ['the GHL contact has no usable ' + (to.channel === 'sms' ? 'phone number' : 'email address')], nameOf(contact))
     return null
   }
+  if (practiceAddress(to.channel, address, address)) { await logRefusal(db, sender, to.channel, address, [PRACTICE_WHY], nameOf(contact)); return null }
   return await decide(db, sender, to.channel, address, contact, to.onOptOut, nameOf(contact))
 }
 

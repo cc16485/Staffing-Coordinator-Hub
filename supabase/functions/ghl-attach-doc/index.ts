@@ -18,6 +18,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { opEvent } from '../_shared/events.ts'
+import { practicePerson, PRACTICE_WHY } from '../_shared/optout.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -48,6 +49,9 @@ Deno.serve(async (req) => {
   if (!email && !phone && !givenContact) return json({ error: 'need an email or a phone to find the contact' }, 400)
   if (!probe && !/^https:\/\//i.test(fileUrl)) return json({ error: 'need a signed file link (https)' }, 400)
 
+  /* PRACTICE ADDRESSES (2026-10-11): a person reachable only at practice addresses (555-01xx, example or test email) is never
+     added to GoHighLevel. The proof stays in the Hub; this answers that nothing was filed, and why. */
+  if (!probe && !givenContact && practicePerson(phone, email)) return json({ ok: true, skipped: 'practice', why: PRACTICE_WHY })
   const token = Deno.env.get('GHL_TOKEN') || Deno.env.get('GHL_API_KEY') || ''
   const loc = Deno.env.get('GHL_LOCATION_ID') || ''
   if (!token || !loc) return json({ error: 'GoHighLevel is not configured on this project' }, 500)
