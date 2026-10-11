@@ -20,10 +20,13 @@ const reset = (apps, { roles = true } = {}) => {
 }
 const q = (t) => { const st = { f: [], isNull: [], inF: null, nn: [] }; const b = {
   select() { return b; }, order() { return b; }, limit() { return b; }, gte() { return b; }, lte() { return b; },
-  eq(c, v) { st.f.push([c, v]); return b; }, in(c, v) { st.inF = [c, v]; return b; },
+  eq(c, v) { st.f.push([c, v]); return b; }, ilike(c, p) { st.like = [c, String(p).replace(/%/g, '')]; return b; }, in(c, v) { st.inF = [c, v]; return b; },
   is(c, v) { if (v === null) st.isNull.push(c); return b; }, not(c, op, v) { if (op === 'is' && v === null) st.nn.push(c); return b; },
-  update(obj) { return { eq: (c, v) => { for (const r of T[t] ?? []) if (r[c] === v) Object.assign(r, obj); return Promise.resolve({ data: null, error: null }) },
-                         in: () => Promise.resolve({ data: null, error: null }) } },
+  /* 586: updates chain (.eq / .is(col, null) / .select) like supabase-js, so a claim-before-send only wins when the stamp is still empty */
+  update(obj) { const f = [], nul = []; let skip = false; const u = {
+    eq(c, v) { f.push([c, v]); return u; }, is(c, v) { if (v === null) nul.push(c); return u; }, in() { skip = true; return u; }, select() { return u; },
+    then(ok) { const hit = []; if (!skip) for (const r of T[t] ?? []) if (f.every(([c, v]) => r[c] === v) && nul.every((c) => r[c] == null)) { Object.assign(r, obj); hit.push({ id: r.id }); }
+      return Promise.resolve({ data: hit, error: null }).then(ok); } }; return u; },
   maybeSingle() { return b.then((x) => ({ data: Array.isArray(x.data) ? (x.data[0] ?? null) : x.data, error: x.error })); },
   then(ok) {
     let rows = T[t] ?? []
@@ -31,6 +34,7 @@ const q = (t) => { const st = { f: [], isNull: [], inF: null, nn: [] }; const b 
     for (const c of st.isNull) rows = rows.filter((r) => r[c] == null)
     for (const c of st.nn) rows = rows.filter((r) => r[c] != null)
     if (st.inF) rows = rows.filter((r) => st.inF[1].includes(r[st.inF[0]]))
+    if (st.like) rows = rows.filter((r) => String(r[st.like[0]] ?? '').includes(st.like[1]))
     return Promise.resolve({ data: rows, error: null }).then(ok);
   } }; return b; };
 let RV = {}, EL = {}
