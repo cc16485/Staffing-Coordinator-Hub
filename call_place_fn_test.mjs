@@ -10,20 +10,25 @@ const USERS = { good: { id: 'u1', email: 'Kat@CC.test', app_metadata: { hub_acce
 const DB = { auth_identities: [{ auth_user_id: 'u1', project_ref: 'zngsgedlsxinbygwmxwn', person_id: 'p1' }, { auth_user_id: 'u5', project_ref: 'zngsgedlsxinbygwmxwn', person_id: 'p5' }],
   persons: [{ person_id: 'p1', full_name: 'Kat', active: true }, { person_id: 'p5', full_name: 'Cg', active: true }],
   entity_memberships: [{ person_id: 'p1', entity: 'cc_ihs', active: true, ended_at: null }, { person_id: 'p5', entity: 'cc_ihs', active: true, ended_at: null }],
-  staff_roles: [{ person_id: 'p1', entity: 'cc_ihs', role: 'care_coordinator' }, { person_id: 'p5', entity: 'cc_ihs', role: 'caregiver' }] };
+  staff_roles: [{ person_id: 'p1', entity: 'cc_ihs', role: 'care_coordinator' }, { person_id: 'p5', entity: 'cc_ihs', role: 'caregiver' }],
+  action_authority: ['client_fact.record', 'client_fact.record_person', 'client_fact.care_began', 'call_place.place'].map((a) => ({ action: a, actor_kind: 'person', actor_id: '', level: 'allowed', roles: ['owner_admin', 'care_coordinator', 'staffing_coordinator'] })),   // Slice 3: who may comes from the authority table
+};
+const EVENTS = [];
 const RPC = [];
 globalThis.__fakeCreateClient = () => ({
   auth: { getUser: async (jwt) => USERS[jwt] ? { data: { user: USERS[jwt] }, error: null } : { data: null, error: { message: 'bad jwt' } } },
   from: (tb) => { const f = []; let single = false; const p = { select() { return p; }, eq(k, v) { f.push(r => String(r[k]) === String(v)); return p; },
-      maybeSingle() { single = true; return p; }, then(ok, bad) { const rows = (DB[tb] || []).filter(r => f.every(fn => fn(r))); return Promise.resolve({ data: single ? (rows[0] || null) : rows, error: null }).then(ok, bad); } }; return p; },
+      maybeSingle() { single = true; return p; }, insert(row) { EVENTS.push({ tb, row }); return Promise.resolve({ data: null, error: null }); }, then(ok, bad) { const rows = (DB[tb] || []).filter(r => f.every(fn => fn(r))); return Promise.resolve({ data: single ? (rows[0] || null) : rows, error: null }).then(ok, bad); } }; return p; },
   rpc: async (n, a) => { RPC.push({ n, a }); return { data: a.p_decision === 'lead' && a.p_lead === 'NOPE' ? { outcome: 'refused', reason: 'that inquiry is not on file' } : { outcome: 'placed', lines: a.p_ids.length }, error: null }; } });
 await import(tmp); fs.unlinkSync(tmp);
 const call = async (who, body) => { const r = await handler(new Request('http://x', { method: 'POST', headers: who ? { Authorization: 'Bearer ' + who } : {}, body: JSON.stringify(body) })); return [r.status, await r.json()]; };
 let r = await handler(new Request('http://x', { method: 'OPTIONS' })); ck('a browser preflight answers, with CORS', r.status === 200 && r.headers.get('Access-Control-Allow-Origin') === '*');
 let [s, b] = await call(null, { call_ids: [1], decision: 'not_ours' }); ck('no sign-in: refused, nothing placed', s === 401 && !RPC.length, [s, b]);
 [s, b] = await call('caregiver', { call_ids: [1], decision: 'not_ours' }); ck('a signed-in person without an office role: refused', s === 403 && !RPC.length, [s, b]);
-[s, b] = await call('good', { call_ids: [3, 4], decision: 'client', person_id: '11111111-2222-3333-4444-555555555555', axiscare_client_id: '501', lead_id: 'IGNORED', placed_by: 'someone else' });
+[s, b] = await call('good', { call_ids: [3, 4], decision: 'client', person_id: '11111111-2222-3333-4444-555555555555', axiscare_client_id: '501', lead_id: 'IGNORED' });
 ck('office staff place a call; who placed it is their sign-in, never the page', s === 200 && b.outcome === 'placed' && RPC[0].a.p_by === 'kat@cc.test' && RPC[0].a.p_lead === null && RPC[0].a.p_axiscare_client === '501', [s, b, RPC[0]]);
+ck('Slice 3: the placement is recorded (started + call_placed, the placer from the sign-in)', EVENTS.length === 2 && EVENTS.every((e) => e.tb === 'op_events' && e.row.actor_email === 'kat@cc.test') && EVENTS[1].row.verb === 'call_placed', EVENTS);
+{ const m = RPC.length; const [s3, b3] = await call('good', { call_ids: [3], decision: 'not_ours', placed_by: 'someone else' }); ck('Slice 3: a placer named in the request is refused by name', s3 === 400 && b3.field === 'placed_by' && RPC.length === m, [s3, b3]); }
 [s, b] = await call('good', { call_ids: [5], decision: 'lead', lead_id: 'NOPE' }); ck('a refusal from the door comes back as a refusal', s === 400 && b.outcome === 'refused', [s, b]);
 const n = RPC.length; [s, b] = await call('good', { call_ids: [], decision: 'not_ours' }); ck('no call lines: refused before the door', s === 400 && RPC.length === n, b);
 [s, b] = await call('good', { call_ids: [1], decision: 'merge' }); ck('an unknown decision: refused before the door', s === 400 && RPC.length === n, b);

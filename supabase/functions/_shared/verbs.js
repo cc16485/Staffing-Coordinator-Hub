@@ -81,9 +81,16 @@
     /* calls */
     call_bridge:         { label: 'placed a call',          area: 'comms',      severity: 'fyi' },
     call_bridge_failed:  { label: 'call could not be placed',area: 'comms',     severity: 'fyi' },
+    /* actions behind the door (Slice 3) */
+    fact_recorded:       { label: 'recorded a fact',        area: 'clients',    severity: 'fyi' },
+    person_recorded:     { label: 'recorded a person on the Journey', area: 'clients', severity: 'fyi' },
+    call_placed:         { label: 'placed a call on a profile', area: 'comms',  severity: 'fyi' },
+    authority_changed:   { label: 'changed who may do what',area: 'admin',      severity: 'ack' },
     /* diagnostics: never shown as "what happened while you were out" */
     routing_shadow:      { label: 'routing shadow',         area: 'admin',      severity: 'fyi', diagnostic: true },
-    record_started:      { label: 'record started',         area: 'admin',      severity: 'fyi', diagnostic: true }
+    record_started:      { label: 'record started',         area: 'admin',      severity: 'fyi', diagnostic: true },
+    action_refused:      { label: 'was refused',            area: 'admin',      severity: 'fyi', diagnostic: true },
+    action_failed:       { label: 'could not finish',       area: 'admin',      severity: 'fyi', diagnostic: true }
   };
   var api = {
     VERBS: V,
