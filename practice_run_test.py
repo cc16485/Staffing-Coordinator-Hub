@@ -42,14 +42,16 @@ def fake_http(method, url, body=None, headers=None, timeout=120):
 L.http = fake_http
 L.fmeta = lambda ref, fn: (200, {"verify_jwt": fn not in ("ghl-attach-doc",), "version": 7})
 LIVE_OVERRIDE = {}
+GUARDED = set()   # services whose live copy already has the guard (after a deploy)
+OLD_OPTOUT = hashlib.sha256(subprocess.run(["git", "-C", ROOT, "show", "f818a78:supabase/functions/_shared/optout.ts"], capture_output=True).stdout).hexdigest()
 def fake_live(ref, fn):
     d = {k: L.sha(os.path.join(ROOT, k)) for k in L.need(FNROOT, fn)}
+    if fn not in GUARDED: d["supabase/functions/_shared/optout.ts"] = OLD_OPTOUT   # before 591: the live copy is the older, unguarded one
     d.update(LIVE_OVERRIDE.get(fn, {})); return True, d
 L.live_files = fake_live
-import hashlib
 OLD_CJ = hashlib.sha256(subprocess.run(["git", "-C", ROOT, "show", "958c8098e9c1a2917dec8834ecd1c5239bab576b:supabase/functions/_shared/caregiver-journey.ts"], capture_output=True).stdout).hexdigest()
 DEPLOYED = []
-def fake_deploy(ref, fnroot, fn, vj): DEPLOYED.append(fn); L.say(f"  ✓ {fn} deployed (rehearsal)"); return True
+def fake_deploy(ref, fnroot, fn, vj): DEPLOYED.append(fn); GUARDED.add(fn); L.say(f"  ✓ {fn} deployed (rehearsal)"); return True
 L.deploy = fake_deploy
 import practice_run_lib as P
 P.save_object = lambda base, svc, bucket, path, name: (os.makedirs(P.OUT, exist_ok=True) or open(os.path.join(P.OUT, name), "wb").write(b"%PDF fake") or 9)
@@ -92,8 +94,10 @@ ck("591: the guard deployed to the nine services, then ONE offer for Pat on the 
 ck("591: says you are not on the Approve to Work list", "not on the Approve to Work list" in txt)
 ck("591: the station guide and the practice proof PDF are in the folder", os.path.exists(os.path.join(P.OUT, "Stations.txt")) and open(os.path.join(P.OUT, "Practice proof.pdf"), "rb").read().startswith(b"%PDF"))
 ck("591: no real person, no em dash in the guide", "—" not in open(os.path.join(P.OUT, "Stations.txt")).read())
+n_dep = len(DEPLOYED)
 code, txt = run("591")
 ck("591 again: refuses (a practice-run offer is already open)", code == 3 and "already open" in txt)
+ck("591 again: the services that already have the guard are not redeployed", len(DEPLOYED) == n_dep and txt.count("already has the guard live") == 9, txt[-600:])
 oid = o[0]['id']
 # ── stations 1-7, as the Hub would leave them ──
 q(TRN, f"update public.job_offers set offer_signed_at = now(), pd_signed_at = now(), offer_signer_name = 'Pat Practice', step1_done_at = now(), offer_pdf_path = 'offers/{oid}/offer.pdf', pd_pdf_path = 'offers/{oid}/pd.pdf' where id = '{oid}'")
@@ -110,6 +114,7 @@ ck("592 (read only): prints the Step 2 DONE link and the welcome call booking li
 code, txt = run("593")
 ck("593 refuses until Pat is on the caregiver roster (welcome call done)", code == 3 and "not on the caregiver roster" in txt and not q(TRN, "select id from public.caregivers"), txt[-500:])
 q(HUB, "update public.welcome_calls set status = 'done', done_at = now()")
+q(HUB, "insert into public.welcome_calls (candidate_id, phone, status) values ('42', '4175550183', 'booked')")   # a second, still booked (to prove the close-out cancels it)
 q(HUB, f"""update public.app_data set data = (select jsonb_agg(x) from jsonb_array_elements(data) x where x->>'id' <> '42') where key = 'candidates'""")
 q(HUB, f"""update public.app_data set data = data || jsonb_build_array(jsonb_build_object('id', 99, 'first', 'Pat', 'last', 'Practice', 'phone', '4175550183', 'offer_id', '{oid}', 'candidate_id', 42,
   'step2_msg', jsonb_build_object('state', 'practice', 'text', 'x'), 'step2_sent_at', '2026-10-11', 'step2_verified_at', '2026-10-11')) where key = 'caregivers'""")
@@ -146,6 +151,12 @@ ck("595: only Pat's records came off the lists; the real people stay; the value 
    and q(HUB, "select count(*)::int n from public.evidence_history where change = 'removed' and record_id = '99'")[0]['n'] == 1)
 code, txt = run("595")
 ck("595 again: safe (nothing more to do, nothing broken)", code == 0 and q(TRN, "select count(*)::int n from public.offer_events where kind = 'withdrawn'")[0]['n'] == 1, txt[-500:])
+# ── a fresh Pat after the close-out (the corrected flow is re-run from the start) ──
+n_dep = len(DEPLOYED)
+code, txt = run("591")
+offs = q(TRN, "select offer_status, offer_withdrawn_at from public.job_offers order by created_at")
+ck("595: Pat's open welcome call is cancelled", q(HUB, "select count(*)::int n from public.welcome_calls where status = 'booked'")[0]['n'] == 0)
+ck("591 after the close-out: a fresh Pat (the withdrawn practice offer does not block), nothing redeployed", code == 0 and len(offs) == 2 and offs[0]['offer_withdrawn_at'] and offs[1]['offer_status'] == 'sent' and len(DEPLOYED) == n_dep, txt[-700:])
 srv.terminate()
 for n, ok_, note in res: print(("PASS  " if ok_ else "FAIL  ") + n + ("" if ok_ else "\n      " + note))
 bad = [r for r in res if not r[1]]; print(f"{len(res) - len(bad)}/{len(res)} passed"); sys.exit(1 if bad else 0)

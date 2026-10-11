@@ -36,6 +36,12 @@ if not o.get('offer_withdrawn_at'):
     ok2, _ = sql(TRN, f"""insert into public.offer_events (offer_id, kind, by_who, channel, doc_version, detail) values ({lit(oid)}, 'withdrawn', 'office', null, 1, '{{"step": "595", "practice": true, "reason": "practice run finished"}}')""")
     say("  ✓ the offer is withdrawn (its signing and Step 1 links stop working)") if ok_ and ok2 else bad("could not withdraw the offer")
 ok_, _ = sql(TRN, f"update public.caregivers set active = false, updated_at = now() where axiscare_id = {lit(AXID)} and name = 'Pat Practice'")
+cid_all = [str(r.get('candidate_id') or r.get('id')) for lst in rows.values() for r in lst]
+if cid_all:
+    ok_w, wl = sql(HUB, f"update public.welcome_calls set status = 'cancelled', closed_reason = 'practice run finished (made-up hire)', updated_at = now() where candidate_id in ({','.join(lit(c) for c in cid_all)}) and status in ('invited', 'booked', 'noshow') and right(regexp_replace(coalesce(phone, ''), '\\D', '', 'g'), 10) = {lit(PHONE)} returning id")
+    # the shared room's time a booked call held goes back on offer, exactly as the Hub's own done / reschedule does
+    for w_ in (wl if ok_w else []): sql(HUB, f"delete from public.coordinator_busy where source = 'welcome_call' and source_id = {lit(str(w_['id']))}")
+    say(f"  ✓ Pat's open welcome call cancelled ({len(wl) if ok_w else 0}); its time in the shared room is free again") if ok_w else bad("could not cancel Pat's welcome call")
 say("  ✓ Pat's Training row is inactive (completions kept)") if ok_ else bad("could not set the Training row inactive")
 if j and j['status'] != 'closed':
     ok_, _ = sql(HUB, f"update public.client_journey set status = 'closed', closed_reason = 'Practice run finished (made-up hire)', updated_at = now() where journey_id = {lit(j['journey_id'])} and subject = 'caregiver'")
