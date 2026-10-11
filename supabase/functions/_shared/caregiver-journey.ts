@@ -94,6 +94,8 @@ export function verifyRows(f: Facts, now = new Date().toISOString()): Verdict[] 
   if (r.annual_date) out.push({ key: 'cg.training.annual', state: 'complete', at: iso(r.annual_date) || now, evidence: { date: r.annual_date, hours: r.annual_hrs ?? null } })
   if (f.profile_published_at) out.push({ key: 'cg.profile.published', state: 'complete', at: iso(f.profile_published_at) || now, evidence: { published_at: f.profile_published_at } })
   if (r.axiscare_id && r.axiscare_status_active === true) out.push({ key: 'cg.axiscare.active', state: 'complete', at: now, evidence: { axiscare_id: r.axiscare_id } })
+  /* SLICE 7: the caregiver record exists in AxisCare once the connect job linked it to the roster record (the office hired them by hand) */
+  if (r.axiscare_id && (r.connected || r.axiscare_status_label)) out.push({ key: 'cg.axiscare.in_training', state: 'complete', at: iso(r.connected?.at || r.connected_at || r.promoted_at) || now, evidence: { axiscare_id: r.axiscare_id, status: r.axiscare_status_label || 'connected', connected: r.connected || null } })
   return out
 }
 
