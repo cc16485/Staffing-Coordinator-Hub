@@ -17,8 +17,9 @@
 --   · applicant_screen_by_office(...): the office records the answers it got on the phone (hand-entered people never
 --     saw the form), with who and when, and finishes the application. A no stays a no: it cannot clear a decline.
 --   · Answers are locked once given (Samantha: "Existing screening answers cannot be accidentally overwritten by office
---     staff"): a trigger refuses any change to a given answer or a decline, from any screen. The one exception is the
---     applicant still filling in the form (status 'partial'), who may change a yes before finishing. A no is final.
+--     staff"): a trigger refuses any change to a given answer, from any screen. The one exception is the applicant still
+--     filling in the form (status 'partial'), who may change a yes before finishing. A no is final. The office's own
+--     decisions (decline reason, reactivate) are not touched.
 --   · Bookings are guarded at the table too: a booking row can only become 'booked' through interview_book, which runs
 --     the screening rule, so a direct write cannot get round it. One booking at a time per person (a lock).
 --   · interview_bookings.booked_by: 'applicant' or the office user's email, for the audit history.
@@ -91,7 +92,7 @@ revoke all on function public.applicant_screen_by_office(uuid, boolean, boolean,
 grant execute on function public.applicant_screen_by_office(uuid, boolean, boolean, boolean, boolean, boolean) to authenticated;
 
 -- Answers already given stay as given. Applies to every route (Hub screens, the API, other functions). The applicant
--- still filling in the form may change a yes before finishing; a no (and any decline) is final. A deliberate correction
+-- still filling in the form may change a yes before finishing; a no is final. A deliberate correction
 -- is possible only from the SQL editor with: set local cc.screening_correction = 'on';
 create or replace function public.job_applicants_screen_guard()
  returns trigger language plpgsql set search_path to 'public' as $f$
@@ -109,13 +110,13 @@ begin
       raise exception 'SCREENING_LOCKED: % was already answered; answers already given cannot be changed', k;
     end if;
   end loop;
-  if old.decline_reason is not null and new.decline_reason is distinct from old.decline_reason then
-    raise exception 'SCREENING_LOCKED: this application was declined by a screening answer; that cannot be undone here';
-  end if;
+  -- decline_reason is NOT locked: the office writes it ("Not moving forward", "not a fit after interview") and clears it
+  -- when it reactivates someone (Hub apSetStatus / apOutcome). A screening no stays a no through the locked answers
+  -- above, so a reactivated "under 18" is still not bookable.
   return new;
 end $f$;
 drop trigger if exists job_applicants_screen_guard on public.job_applicants;
-create trigger job_applicants_screen_guard before update of age_ok, work_auth, has_transport, prn, decline_reason
+create trigger job_applicants_screen_guard before update of age_ok, work_auth, has_transport, prn
   on public.job_applicants for each row execute function public.job_applicants_screen_guard();
 
 -- An interview already booked before 586 may still be moved (by them online, or by the office) without the questions:
