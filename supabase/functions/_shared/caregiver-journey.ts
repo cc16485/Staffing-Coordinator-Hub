@@ -75,7 +75,8 @@ export function verifyRows(f: Facts, now = new Date().toISOString()): Verdict[] 
   }
   if (sigs.reference_consent?.at && sigs.fcra_disclosure?.at && sigs.edl_fcsr_consent?.at) { const at = [sigs.reference_consent.at, sigs.fcra_disclosure.at, sigs.edl_fcsr_consent.at].sort().pop(); out.push({ key: 'cg.consent.checks', state: 'complete', at: iso(at) || now, evidence: { forms: ['reference_consent', 'fcra_disclosure', 'edl_fcsr_consent'] } }) }
   /* the checks: a result with its date and document, recorded on the row (proof required since 2c) */
-  const checks: [string, string, string][] = [['cg.check.oig', 'oig', 'oig'], ['cg.check.edl', 'edl', 'edl'], ['cg.check.fcsr', 'fcsr', 'fcsr'], ['cg.check.fingerprints', 'fp', 'fp']]
+  /* CASE.NET (Samantha 2026-10-11): the Missouri courts name search is one of the background checks, recorded the same way */
+  const checks: [string, string, string][] = [['cg.check.oig', 'oig', 'oig'], ['cg.check.edl', 'edl', 'edl'], ['cg.check.fcsr', 'fcsr', 'fcsr'], ['cg.check.casenet', 'casenet', 'casenet'], ['cg.check.fingerprints', 'fp', 'fp']]
   for (const [key, field, _] of checks) {
     const res = c[field] ?? c[field + '_status'], date = c[field + '_date'], proof = c[field + '_proof']
     if (clear(res) && date) out.push({ key, state: 'complete', at: iso(date) || now, evidence: { result: res, date, document: proof || null, ...(field === 'oig' && c.oig_evidence ? { leie: c.oig_evidence } : {}), from: f.candidate ? 'background & references row' : 'roster record' } })

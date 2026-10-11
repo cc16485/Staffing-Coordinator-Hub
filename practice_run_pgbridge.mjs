@@ -16,7 +16,8 @@ create table public.client_journey_event (id bigserial primary key, journey_id u
 create table public.journey_row_version (id bigserial primary key, journey_id uuid, step_key text, saved_at timestamptz default now());
 create table public.evidence_history (id bigserial primary key, at timestamptz default now(), source text, record_id text, change text, field text, old_value jsonb, new_value jsonb, actor text default 'server');
 create table public.app_data_item_change (id bigserial primary key, at timestamptz default now(), key text, record_id text);
-create table public.welcome_calls (id uuid primary key default gen_random_uuid(), candidate_id text, phone text, status text, invited_at timestamptz default now(), starts_at timestamptz, done_at timestamptz, done_by text);
+create table public.welcome_calls (id uuid primary key default gen_random_uuid(), candidate_id text, phone text, status text, invited_at timestamptz default now(), starts_at timestamptz, done_at timestamptz, done_by text, closed_reason text, updated_at timestamptz default now());
+create table public.coordinator_busy (id bigserial primary key, source text, source_id text, starts_at timestamptz, ends_at timestamptz);
 create table public.step1_forms (offer_id uuid primary key, started_at timestamptz, completed_at timestamptz, current_screen text, answers jsonb default '{}', signatures jsonb default '{}', pdfs jsonb default '{}', esign_consent_at timestamptz);
 create table public.step1_identity (offer_id uuid primary key, ssn_last4 text, license_last4 text, license_state text, captured_at timestamptz default now(), purge_after timestamptz, reveals int default 0);
 create table public.contact_send_refusal (id bigserial primary key, at timestamptz default now(), sender text, channel text, address text, reasons jsonb);

@@ -39,8 +39,8 @@ say("  · also shown (not used by the run): " + ", ".join(f"{k} {'on' if st.get(
 sd = str(st.get("onboarding_switch_date") or "")
 say("  ✓ the switch date is not set: real offers stay on the old path") if not sd else bad(f"the switch date is set ({sd}); tell Claude before a practice run")
 ok_, n = sql(TRN, f"select count(*) filter (where offered_by = {lit(LABEL)} and offer_withdrawn_at is null)::int as open_run, "
-                  f"count(*) filter (where right(regexp_replace(coalesce(phone, ''), '\\D', '', 'g'), 10) = {lit(PHONE)} or lower(coalesce(email, '')) = {lit(EMAIL)} "
-                  f"or (lower(first_name) = 'pat' and lower(last_name) = 'practice'))::int as clash, "
+                  f"count(*) filter (where (right(regexp_replace(coalesce(phone, ''), '\\D', '', 'g'), 10) = {lit(PHONE)} or lower(coalesce(email, '')) = {lit(EMAIL)} "
+                  f"or (lower(first_name) = 'pat' and lower(last_name) = 'practice')) and not (offered_by = {lit(LABEL)} and offer_withdrawn_at is not null))::int as clash, "
                   f"count(*) filter (where onboarding_path = 'new' and offered_by not in ('Slice 1b test', 'Slice 1g rehearsal', {lit(LABEL)}))::int as real_new from public.job_offers")
 if not ok_: bad(f"could not read the offers: {n}"); done(3)
 if int(n[0]['open_run']): bad("a practice-run offer is already open: run 595 (close-out) first, or carry on with the one you have")
@@ -51,9 +51,9 @@ ok_, h = sql(HUB, f"select count(*)::int as n from public.app_data, jsonb_array_
                   f"right(regexp_replace(coalesce(x->>'phone', ''), '\\D', '', 'g'), 10) = {lit(PHONE)} or (lower(x->>'first') = 'pat' and lower(x->>'last') = 'practice') "
                   f"or x->>'axiscare_id' = {lit(AXID)})")
 say("  ✓ no Hub record uses Pat's name, number or the made-up AxisCare number 990000183") if ok_ and int(h[0]['n']) == 0 else bad(f"a Hub record already uses Pat's details: {h}")
-ok_, t = sql(TRN, f"select count(*)::int as n from public.caregivers where axiscare_id = {lit(AXID)} or right(regexp_replace(coalesce(mobile_phone, ''), '\\D', '', 'g'), 10) = {lit(PHONE)}")
-say("  ✓ no Training caregiver uses the made-up AxisCare number or Pat's number") if ok_ and int(t[0]['n']) == 0 else bad(f"a Training caregiver already uses them: {t}")
-ok_, wc = sql(HUB, f"select count(*)::int as n from public.welcome_calls where right(regexp_replace(coalesce(phone, ''), '\\D', '', 'g'), 10) = {lit(PHONE)}")
+ok_, t = sql(TRN, f"select count(*)::int as n from public.caregivers where (axiscare_id = {lit(AXID)} or right(regexp_replace(coalesce(mobile_phone, ''), '\\D', '', 'g'), 10) = {lit(PHONE)}) and not (name = 'Pat Practice' and emp_id = 'PRACTICE-0183' and active = false)")
+say("  ✓ no Training caregiver uses the made-up AxisCare number or Pat's number (an earlier run's closed Pat row is reused by 593)") if ok_ and int(t[0]['n']) == 0 else bad(f"a Training caregiver already uses them: {t}")
+ok_, wc = sql(HUB, f"select count(*)::int as n from public.welcome_calls where right(regexp_replace(coalesce(phone, ''), '\\D', '', 'g'), 10) = {lit(PHONE)} and status in ('invited', 'booked', 'noshow')")
 if ok_ and int(wc[0]['n']): bad("a welcome call already uses Pat's number; tell Claude")
 ok_, pm = sql(HUB, "select data from public.app_data where key = 'onboarding_permissions'")
 perms = (pm[0]['data'] or {}) if ok_ and pm else {}
@@ -63,13 +63,17 @@ say(f"  · Approve to Work list: {names('work')} (owners are NOT automatic)")
 say(f"  · Screening list: {names('screening')}")
 if not any(str(m.get('email', '')).lower() == 'samantha@mo-care.com' for m in (perms.get('work') or [])):
     say("  ! you are not on the Approve to Work list: add yourself on the Admin page before station 11 (only someone already on it can add, or ask Zachary)")
-VJ = {}
+VJ = {}; SKIP = set()
 for fn in FNS:
     sx, mx = fmeta(HUB, fn)
     if not (sx == 200 and mx and isinstance(mx.get("verify_jwt"), bool)): bad(f"{fn} is not live or unreadable: {sx}"); continue
     VJ[fn] = mx["verify_jwt"]
     okl, livef = live_files(HUB, fn)
     if not okl: bad(f"could not read {fn}'s live files"); continue
+    # the guard already live in this service (an earlier 591): nothing to deploy, so nobody else's newer main work is pushed
+    # out early (another session's interview-messages change needs its own step first)
+    if all(livef.get(k) == sha(os.path.join(ROOT, k)) for k in CHANGED if k in need(FNROOT, fn)):
+        SKIP.add(fn); say(f"  ✓ {fn} already has the guard live (version {mx.get('version', '?')}): not redeployed"); continue
     differ = [k for k in need(FNROOT, fn) if k not in CHANGED and livef.get(k) != sha(os.path.join(ROOT, k))]
     # a file main's build needs but the live copy does not hold at all: the live copy is an older build made before the
     # service used that file (nothing of anyone's is there to overwrite)
@@ -86,6 +90,7 @@ if fails: say(); say("  RESULT: STOPPED before anything changed. Tell Claude whi
 
 say(); say("PART 2 · CHANGE")
 for fn in FNS:
+    if fn in SKIP: continue
     if not deploy(HUB, FNROOT, fn, VJ[fn]): say("  RESULT: STOPPED. The guard is on the services listed above; tell Claude."); done(6)
 now = dt.datetime.now(dt.timezone.utc); exp = (now + dt.timedelta(days=9)).replace(hour=22, minute=0, second=0, microsecond=0).isoformat()
 ok_, r_ = sql(TRN, f"""insert into public.job_offers (first_name, last_name, phone, email, position, pay_rate, hours_type, interview_date, offered_by, onboarding_path, classification, offer_status, offer_version, pd_version, offer_sent_at, offer_sent_by, offer_expires_at, created_at, notes)
@@ -106,18 +111,24 @@ Pat's practice addresses: phone 417-555-0183, email {EMAIL}. Every sender refuse
 When a screen asks for something about Pat, make it up. References: phones 417-555-0184 to 417-555-0187, emails ref1@practice.invalid to ref4@practice.invalid.
 Need a link (Step 2 DONE page, welcome call booking)? Run 592 (read only) at any time: it prints Pat's current links.
 
- 1. Hub > Offers > Open offers: Pat Practice (New path). Signing link > scan the QR with your phone > sign the offer letter, then the position description.
- 2. Same card: Next step "Move to Background & References" (or Background & References > Offered strip > Add to the table).
- 3. Same card: Step 1 link > your phone > the nine screens. Made-up identity: SSN 123-45-6789, date of birth 1990-01-01, license S12345678 (MO).
-    Two professional and two personal references with the numbers and emails above. Sign. The B&R row then says Step 1 done.
- 4. Background & References, Pat's row: Run OIG (the real federal list, a made-up name). Record EDL and FCSR: first press Clear WITHOUT a proof file
-    (it must refuse), then with "Practice proof.pdf" from this folder. Record answer: two references Positive (one professional).
- 5. ☰ Readiness on Pat's row: read the card; Confirm "Approve to Advance".
- 6. Orientations tab > Ready for Orientation > Pat: "Record Step 2 sent" (Practice: recorded, not sent). Run 592 for the DONE link > open it on your
+ 1. Hub > Offers > Open offers: Pat Practice (New path). 👤 Profile opens Pat's main profile at any time (every send, receipt and completion,
+    and every signed document). Signing link > scan the QR with your phone > sign the offer letter, then the position description.
+ 2. Same card: the next step reads "Their Step 1 · Sent automatically when they signed" with how far Pat is (practice: recorded, not sent).
+    There is NO button to move Pat into Background & References: that happens by itself when Step 1 is complete.
+    Step 1 link > your phone > the nine screens. Made-up identity: SSN 123-45-6789, date of birth 1990-01-01, license S12345678 (MO).
+    Two professional and two personal references with the numbers and emails above. Sign every form.
+    The moment the last form is signed, Pat appears in Background & References by itself and a Needs Attention card says
+    "Step 1 complete: start background checks and references for Pat Practice". Watch the offer card's Step 1 line count up as you sign.
+ 3. Background & References, Pat's row: Run OIG (the real federal list, a made-up name). Record EDL and FCSR: first press Clear WITHOUT a proof
+    file (it must refuse), then with "Practice proof.pdf" from this folder. Search Case.net (it opens the court site; search "Pat Practice";
+    nothing will be found), then Record Case.net: Clear, today, "Practice proof.pdf". Record answer: two references Positive (one professional).
+ 4. ☰ Readiness on Pat's row: read the card; Confirm "Approve to Advance" (it waits for OIG, EDL, FCSR, Case.net and the references).
+ 5. Orientations tab > Ready for Orientation > Pat: "Record Step 2 sent" (Practice: recorded, not sent). Run 592 for the DONE link > open it on your
     phone > tap that you finished. Back in the Hub: "✓ Verify", tick every item including I-9 Section 2.
- 7. Pat's row: "📹 Invite to welcome call" (the text and email are refused for a practice address; that is the point). Run 592 for the booking
+ 6. Pat's row: "📹 Invite to welcome call" (the text and email are refused for a practice address; that is the point). Run 592 for the booking
     link > book a time on your phone > in the Hub the welcome call shows Booked > "Welcome call done – send orientation link". Pat moves to the
     caregiver roster; the orientation link cannot match a made-up person in AxisCare, so a "Didn't go through" card appears: expected.
+ 7. Pat's 👤 Profile: check that every step so far is on the timeline with its time, and every signed document opens.
  8. Run 593 (training): it records Pat's orientation and Dementia course as test completions in the Training Platform and sends the
     real completion notice to the Hub. (On-the-job training is due 30 days after hire and is not part of Approve to Work.)
  9. Caregivers > Training (or Compliance): ☰ Readiness on Pat's row. "Caregiver profile published": Not needed, reason "made-up practice hire, no profile".

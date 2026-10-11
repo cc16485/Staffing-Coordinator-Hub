@@ -39,7 +39,10 @@ say("  · what changes: one Training row for Pat (made up), two test completions
 if fails: say(); say("  RESULT: STOPPED before anything changed. Tell Claude which line."); done(3)
 
 say(); say("PART 2 · CHANGE (Pat only)")
-if existing: cgid = existing['id']
+if existing:
+    cgid = existing['id']
+    # an earlier run's Pat row (closed by 595): open it again for this run, as a new hire who has not reported yet
+    sql(TRN, f"update public.caregivers set active = true, status_label = 'In Training', cleared_reported_at = null, cleared_notified_at = null, cleared_hold_note = null, updated_at = now() where id = {lit(cgid)} and name = 'Pat Practice'")
 else:
     ok_, r_ = sql(TRN, f"""insert into public.caregivers (emp_id, axiscare_id, name, hire_date, active, mobile_phone, email, status_label)
       values ('PRACTICE-0183', {lit(AXID)}, 'Pat Practice', current_date, true, {lit(PHONE)}, {lit(EMAIL)}, 'In Training') returning id""")
