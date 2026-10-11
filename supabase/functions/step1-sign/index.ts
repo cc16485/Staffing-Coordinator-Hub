@@ -135,7 +135,22 @@ export function missing(form: FormKey, a: Record<string, unknown>, ident: Identi
     need('personal_refs', per >= REFERENCES_REQUIRED.personal, `${REFERENCES_REQUIRED.personal} personal references`)
   }
   if (form === 'edl_fcsr_consent') { need('ssn', !!ident.ssn, 'Social Security number'); need('dob', ident.dob, 'Date of birth') }
-  if (form === 'availability') { const w = a.windows; need('windows', !!w && typeof w === 'object' && Object.values(w as Record<string, Record<string, unknown>>).some((d) => d && Object.values(d).some((x) => x === true)), 'At least one day of availability') }
+  /* 2026-10-11 (Samantha, station 2: "everything needs to be required"): every day answered (a time or Not available), a shift
+     choice, the nights when overnights are chosen; every row of both yes/no grids; the other language when it is chosen. */
+  if (form === 'availability') {
+    const w = (a.windows && typeof a.windows === 'object' ? a.windows : {}) as Record<string, Record<string, unknown>>
+    const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].filter((d) => !(w[d] && Object.entries(w[d]).some(([k, x]) => k !== 'Hours (optional)' && x === true)))
+    need('windows', days.length === 0, days.length === 7 ? 'Your availability for every day (a time, or Not available)' : 'Your availability for ' + days.join(', ') + ' (a time, or Not available)')
+    if (Array.isArray(a.shift_prefs) && a.shift_prefs.includes('Overnight shifts')) need('overnight_nights', !empty(a.overnight_nights))
+  }
+  if (form === 'experience') {
+    for (const id of ['specialties', 'matching_facts']) {
+      const it = itemsOf(f).find((i) => i.id === id), m = (a[id] && typeof a[id] === 'object' ? a[id] : {}) as Record<string, unknown>
+      const left = (it?.options || []).filter((o) => !m[o])
+      if (left.length && !empty(a[id])) need(id, false, (it?.label || id) + ': answer every row (' + left.join(', ') + ')')
+    }
+    if (Array.isArray(a.languages) && a.languages.includes('Another language')) need('languages_other', !empty(a.languages_other))
+  }
   if (form === 'vehicle' && typeof a.driver_ack === 'string' && a.driver_ack === (FORMS.vehicle.sections.at(-1)?.items?.[0]?.options?.[0] ?? '')) {
     need('license_number', !!ident.license, "Driver's license number"); need('license_state', !empty(a.license_state)); need('license_expires', !empty(a.license_expires))
   }

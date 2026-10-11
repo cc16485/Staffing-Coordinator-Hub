@@ -93,6 +93,7 @@ r = await call({ action: 'view', ...link }); ck('a withdrawn offer: dead link (4
 OFFERS[OID] = base()
 DB.job_applicants = [{ id: 'a1', email: 'AVA@example.com', phone: '417-555-0101', lived_outside_mo: true, has_license: true, has_insurance: false, experience_years: 3, availability: 'Weekday mornings', created_at: '2026-09-01', post_interview: { cats: 'yes', dogs: 'no', client_smokes: 'no', drive_clients: 'yes', skills: { dementia: 'some' }, travel_areas: 'Springfield and Nixa' } }]
 r = await call({ action: 'view', ...link })
+if (process.env.DUMP_VIEW) (await import('fs')).writeFileSync(process.env.DUMP_VIEW, JSON.stringify(r.j))   /* for the Step 1 page look */
 ck('view: ok, seven forms with fingerprints, test mode, screen 1, nothing signed', r.status === 200 && r.j.forms.length === 7 && r.j.forms.every((f) => /^[0-9a-f]{64}$/.test(f.fingerprint) && f.approved_for_real === false) && r.j.test_mode === true && r.j.current_screen === '1' && r.j.signed_count === 0, r.j && { s: r.status, e: r.j.error })
 ck('view: the record exists once and the trail has step1_started', DB.step1_forms.length === 1 && EVENTS.filter((e) => e.kind === 'step1_started').length === 1)
 ck('view: prefill from the application (lived outside MO, license, insurance, 2 to 5 years) and the interview (cats yes, dogs not, driving yes, dementia specialties), each with its source', r.j.prefill.lived_outside_mo?.value === 'yes' && r.j.prefill.has_insurance?.value === 'no' && r.j.prefill.experience?.value === '2 to 5 years' && r.j.prefill.experience.from === 'your application' && r.j.prefill.matching_facts?.value['Homes with cats'] === 'Yes' && r.j.prefill.matching_facts.value['Homes with dogs'] === 'Not at this time' && r.j.prefill.specialties?.value["Alzheimer's disease"] === 'Yes' && r.j.hints.travel === 'Springfield and Nixa', r.j.prefill)
@@ -156,10 +157,20 @@ ck('the consent PDF shows "On file, ending 3456" and never the number', Buffer.f
 
 /* ═══ availability (initials), experience, vehicle, done ═══ */
 await call({ action: 'save', ...link, screen: '6', answers: { windows: { Monday: { Morning: true, Afternoon: true, 'Hours (optional)': '7-3' }, Tuesday: { 'Not available': true } }, hours_ideal: 30, hours_min: 20, hours_max: 40, shift_prefs: ['Morning shifts'], max_miles: '20 miles', open_shift_texts: 'yes', text_consent: 'yes' } })
+/* 2026-10-11: every day must be answered (a time or Not available); overnights need the nights */
+r = await call({ action: 'sign', ...link, form: 'availability', typed_name: 'Ava Lee', consent: true, initials: 'al' })
+ck('only Monday and Tuesday answered: refused, naming Wednesday to Sunday', r.status === 400 && /Wednesday, Thursday, Friday, Saturday, Sunday/.test(r.j.error), r)
+await call({ action: 'save', ...link, screen: '6', answers: { windows: { Monday: { Morning: true, Afternoon: true, 'Hours (optional)': '7-3' }, Tuesday: { 'Not available': true }, Wednesday: { Morning: true }, Thursday: { Morning: true }, Friday: { Evening: true }, Saturday: { 'Not available': true }, Sunday: { 'Not available': true } }, shift_prefs: ['Morning shifts', 'Overnight shifts'] } })
+r = await call({ action: 'sign', ...link, form: 'availability', typed_name: 'Ava Lee', consent: true, initials: 'al' })
+ck('overnight shifts chosen without the nights: refused', r.status === 400 && /Overnight shifts: which nights/.test(r.j.error), r)
+await call({ action: 'save', ...link, screen: '6', answers: { shift_prefs: ['Morning shifts'] } })
 r = await call({ action: 'sign', ...link, form: 'availability', typed_name: 'Ava Lee', consent: true })
 ck('the availability form needs initials beside the AxisCare line', r.status === 400 && /initials/.test(r.j.error), r)
 r = await call({ action: 'sign', ...link, form: 'availability', typed_name: 'Ava Lee', consent: true, initials: 'al' }); ck('availability signs with initials (stored upper-case)', r.status === 200 && DB.step1_forms[0].answers.initials === 'AL', r)
 await call({ action: 'save', ...link, screen: '7', answers: { level1: 'Yes', level2: 'Yes', level3: 'Not at this time', specialties: { "Alzheimer's disease": 'Yes' }, matching_facts: { 'Homes with cats': 'Yes' }, languages: ['English', 'Spanish'], experience: '2 to 5 years', preferred_levels: 'Levels 1 & 2' } })
+r = await call({ action: 'sign', ...link, form: 'experience', typed_name: 'Ava Lee', consent: true })
+ck('one row of each yes/no grid answered: refused, naming the rows left', r.status === 400 && /Client population: answer every row \(Other dementias/.test(r.j.error) && /Comfortable with: answer every row/.test(r.j.error), r)
+await call({ action: 'save', ...link, screen: '7', answers: { specialties: Object.fromEntries(D.SPECIALTIES.map((x, i) => [x, i % 2 ? 'Not at this time' : 'Yes'])), matching_facts: Object.fromEntries(D.MATCHING_FACTS.map((m, i) => [m.label, i % 2 ? 'Yes' : 'Not at this time'])) } })
 r = await call({ action: 'sign', ...link, form: 'experience', typed_name: 'Ava Lee', consent: true }); ck('experience signs', r.status === 200, r)
 const driverYes = D.FORMS.vehicle.sections.at(-1).items[0].options[0]
 await call({ action: 'save', ...link, screen: '8', answers: { has_license: 'yes', has_insurance: 'yes', has_transport: 'yes', insurance_proof: D.FORMS.vehicle.sections[0].items.find((i) => i.id === 'insurance_proof').options[1], driver_ack: driverYes, license_state: 'MO', license_expires: '2029-01-01' } })
