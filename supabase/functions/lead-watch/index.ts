@@ -230,7 +230,7 @@ Deno.serve(async (req) => {
         if (r.level === 'manager' && who) { it.escalation = { to: who, to_name: P.nameOf(who), seat: 'owner_escalation', level: 'urgent', why: `nobody has called this family in ${mins} minutes`, at: nowIso }; it.urgency = 'high'
           it.history = [...(Array.isArray(it.history) ? it.history : []), { at: nowIso, by: 'Cara', text: `Escalated to ${P.nameOf(who)}: nobody has called in ${mins} minutes (a miss)` }]; await put('ops_items', it) }
       }
-      try { await opEvent(sb, { verb: 'lead_rung', item_id: String(l.id), area: 'growth_leads', summary: `${r.level === 'owner' ? 'Owner' : r.level === 'backup' ? 'Backup' : 'Owner Escalation'} told at ${mins} minutes: nobody has called ${family}${who ? ' (' + firstOf(P.nameOf(who)) + (sent ? '' : ', text failed') + ')' : ' (nobody to tell)'}` }) } catch { /* nicety */ }
+      try { await opEvent(sb, { job: 'lead-watch', verb: 'lead_rung', item_id: String(l.id), area: 'growth_leads', summary: `${r.level === 'owner' ? 'Owner' : r.level === 'backup' ? 'Backup' : 'Owner Escalation'} told at ${mins} minutes: nobody has called ${family}${who ? ' (' + firstOf(P.nameOf(who)) + (sent ? '' : ', text failed') + ')' : ' (nobody to tell)'}` }) } catch { /* nicety */ }
     }
     if (dirty && live) { await put('leads', l); plan.written++ }
   }

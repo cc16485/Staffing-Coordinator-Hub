@@ -105,7 +105,7 @@ Deno.serve(async (req) => {
       if (!error) {
         plan.written++
         if (x.escalation && x.escalation.at === nowIso)
-          try { await opEvent(sb, { verb: 'item_escalated', item_id: id, area: String(x.domain || ''), summary: `Escalated to ${x.escalation.to_name}: ${x.escalation.why}` }) } catch { /* the record is a nicety */ }
+          try { await opEvent(sb, { job: 'work-route', verb: 'item_escalated', item_id: id, area: String(x.domain || ''), summary: `Escalated to ${x.escalation.to_name}: ${x.escalation.why}` }) } catch { /* the record is a nicety */ }
       }
     }
   }

@@ -15,6 +15,7 @@
 // -----------------------------------------------------------------------------
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -90,9 +91,9 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
 
   const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
-  const jwt = (req.headers.get('Authorization') || '').replace(/^Bearer\s+/i, '')
-  const { data: u } = await admin.auth.getUser(jwt)
-  if (!u?.user) return json({ error: 'sign in required' }, 401)
+  /* Slice 1 (2026-10-10): office members of Caring Companions only. Any sign-in on the shared project used to do. */
+  const who = await requireStaff(admin, req, OFFICE_ROLES)
+  if (!who.ok) return json({ error: who.error }, who.status)
 
   const { data: row } = await admin.from('app_data').select('data').eq('key', 'interview_calendars').maybeSingle()
   // deno-lint-ignore no-explicit-any

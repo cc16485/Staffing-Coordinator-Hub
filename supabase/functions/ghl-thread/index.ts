@@ -16,6 +16,7 @@
 // Deploy: supabase functions deploy ghl-thread (JWT ON — hub users only).
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -33,14 +34,11 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
 
-  // Signed-in hub staff only. This reads real conversations.
-  const auth = req.headers.get('Authorization') || ''
-  if (!auth.startsWith('Bearer ')) return json({ error: 'unauthorized' }, 401)
-  const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
-    global: { headers: { Authorization: auth } },
-  })
-  const { data: who } = await supabase.auth.getUser()
-  if (!who?.user) return json({ error: 'unauthorized' }, 401)
+  /* Office members of Caring Companions only: this reads real conversations. Slice 1 (2026-10-10): it used to accept
+     any signed-in account on the shared project. */
+  const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  const who = await requireStaff(admin, req, OFFICE_ROLES)
+  if (!who.ok) return json({ error: who.error }, who.status)
 
   const tok = Deno.env.get('GHL_TOKEN')
   const loc = Deno.env.get('GHL_LOCATION_ID')
