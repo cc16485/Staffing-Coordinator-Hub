@@ -41,15 +41,28 @@ the authority of every person and job is exactly what it was.
 the code writes is in the vocabulary (server and Hub); the four feeds refuse no sign-in, a Training-platform sign-in and a
 caregiver account, and admit an office member (reports: owners only). The step re-runs it before anything changes.
 
-## Deploy order
+## Deploy order (no gap for the pages)
 
-1. Merge the Staffing-Coordinator-Hub pull request.
-2. Run **578 Slice 1 one record.command**; read the report. It proves the owner cannot rewrite or delete a row, pages hold
-   SELECT only, the only rule is the office read rule, the server can still append, the feeds refuse an unsigned caller.
-3. Merge the care-coordinator-hub and team-hub pull requests (pages write through the door).
+The pages call the door and fall back to the old direct insert while the door does not exist yet, so the pages go first
+and no event is lost in either order.
 
-Between steps 2 and 3 the pages' own event writes are refused by the database (console note only); the server's records
-are unaffected. Keep the gap short.
+1. Merge the care-coordinator-hub and team-hub pull requests (pages write through the door when it exists, directly until then).
+2. Merge the Staffing-Coordinator-Hub pull request.
+3. Run **578 Slice 1 one record.command**; read the report. It proves: the owner cannot rewrite or delete a row; pages hold
+   SELECT only; the only rule is the office read rule; the server can still append; the door refuses a caller with no
+   session; two callers with the same request id get exactly one `started` row; the feeds refuse an unsigned caller.
+4. Samantha opens the Hub once and checks that Since You Left still reads (the only check the step cannot make without a
+   person's sign-in).
+
+## Safeguards in the step
+
+- Part 1 is read only and stops the step if any file is not the reviewed build, any test fails, a needed helper is
+  missing, or any of the eleven functions is not live. Nothing changes before Part 2.
+- The SQL runs as one request, which Postgres wraps in one transaction: either every change lands or none does, and the
+  table stays exactly as it was. The guards, the door and the rules are created together.
+- Each function deploy is fingerprint-verified; a deploy that does not match stops the step with the record already hardened
+  and every earlier function in place. The server's own writers never stop recording: their grant (insert) is kept.
+- Nothing is sent, no switch changes, no existing row changes, no authority changes.
 
 ## Rollback
 
