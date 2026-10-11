@@ -31,6 +31,7 @@
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { logOpen, clientSubject, ipOf } from '../_shared/doc-log.ts'   /* SLICE 8: client document opens are logged */
 import { jobCaller } from '../_shared/job-auth.ts'
 import '../_shared/journey-rules.js'
 import '../_shared/lead-rules.js'
@@ -153,7 +154,8 @@ function ctxFor(pp: Any, st: Any) {
 }
 async function load(db: Any, by: Any): Promise<{ j: Any; steps: Any[] } | null> {
   /* one journey per EPISODE (2026-10-07): a person can have several; the one that counts is the open one, else the latest */
-  let q = db.from('client_journey').select('*')
+  /* SLICE 8 fix: client journeys only (the table also holds caregiver readiness cards since Slice 3a) */
+  let q = db.from('client_journey').select('*').eq('subject', 'client')
   if (by.journey_id) q = q.eq('journey_id', String(by.journey_id))
   else if (by.axiscare_client_id) q = q.eq('axiscare_client_id', String(by.axiscare_client_id))
   else if (by.lead_id) q = q.eq('lead_id', String(by.lead_id))
@@ -198,7 +200,7 @@ async function stampFirstShifts(db: Any, ax: (p: string) => Promise<Any>, limit 
   const out = { looked: 0, stamped: 0, corrected: 0 }
   const { data: lr } = await db.from('app_data').select('data').eq('key', 'leads').maybeSingle()
   const leads: Any[] = Array.isArray(lr?.data) ? lr.data : []
-  const { data: js } = await db.from('client_journey').select('lead_id, axiscare_client_id').not('lead_id', 'is', null)
+  const { data: js } = await db.from('client_journey').select('lead_id, axiscare_client_id').eq('subject', 'client').not('lead_id', 'is', null)
   const axOf = new Map((js ?? []).filter((j: Any) => j.axiscare_client_id).map((j: Any) => [String(j.lead_id), String(j.axiscare_client_id)]))
   const dayAgo = new Date(Date.now() - 20 * 36e5).toISOString(), now = new Date().toISOString(), t = today()
   const due = leads.filter((l: Any) => l && !(l.spam && l.spam.at) && (l.said_yes_at || l.status === 'Converted') && l.first_shift_source !== 'axiscare_clock_in'
@@ -445,7 +447,7 @@ export function autoPlan(leads: Any[], js: Any[], cutover: Any) {
 }
 async function autoOpenClose(db: Any, dfs: Any[], pp: Any, st: Any) {
   const [{ data: cut }, leads, { data: js }] = await Promise.all([db.from('app_data').select('data').eq('key', 'client_journey_cutover').maybeSingle(), allLeads(db),
-    db.from('client_journey').select('journey_id, lead_id, status, is_test')])
+    db.from('client_journey').select('journey_id, lead_id, status, is_test').eq('subject', 'client')])
   const plan = autoPlan(leads, js ?? [], cut?.data), now = new Date().toISOString()
   let opened = 0, closed = 0
   for (const l of plan.open) { const r = await openOne(db, dfs, pp, st, HUB, { lead: l, leadId: String(l.id), axId: null, how: 'the lead was contacted' }); if (r.outcome === 'created') opened++ }
@@ -475,7 +477,7 @@ export function endedPlan(js: Any[], links: Any[], roles: Any[]) {
   return out
 }
 async function closeEnded(db: Any, dfs: Any[], pp: Any, st: Any) {
-  const { data: js } = await db.from('client_journey').select('*').in('status', ['open', 'active']).not('axiscare_client_id', 'is', null)
+  const { data: js } = await db.from('client_journey').select('*').eq('subject', 'client').in('status', ['open', 'active']).not('axiscare_client_id', 'is', null)
   const ax = [...new Set((js ?? []).filter((j: Any) => !j.is_test).map((j: Any) => String(j.axiscare_client_id)))]
   if (!ax.length) return 0
   const { data: links } = await db.from('person_source_id').select('person_id, source_id').eq('system', 'axiscare').eq('entity_type', 'client').in('source_id', ax)
@@ -536,7 +538,7 @@ Deno.serve(async (req) => {
       return json({ ok: true, live: false, note: 'client_journey_live is off: nothing swept', cards_put_away: put, first_shifts })
     }
     const auto = await autoOpenClose(db, dfs, pp, st), care_ended = await closeEnded(db, dfs, pp, st), pause_due = await pauseDue(db)
-    const { data: js } = await db.from('client_journey').select('*').in('status', ['open', 'active'])
+    const { data: js } = await db.from('client_journey').select('*').eq('subject', 'client').in('status', ['open', 'active'])
     let n = 0, cards = 0, launches = 0
     for (const j of js ?? []) {
       if (j.status === 'active' && !j.launch_id) continue
@@ -639,13 +641,13 @@ Deno.serve(async (req) => {
   const [dfs, pp, st] = await Promise.all([defs(db), people(db), settings(db)])
   /* PAUSE CARE / END CARE (care.ts): Care Coordinators and owners; works whether or not journeys are switched on */
   if (String(b.action || '').startsWith('care_')) {
-    const out = await careAction({ db, b, who, isOwner, pp, st, dfs, R, load, event, refreshCards, ctxFor, today, routeCc, openOne })
+    const out = await careAction({ db, b, who, isOwner, pp, st, dfs, R, load, event, refreshCards, ctxFor, today, routeCc, openOne, logOpen, clientSubject })
     return json(out.body, out.status || 200)
   }
   if (st.client_journey_live !== true && !isOwner) return json({ error: 'Client journeys are switched off right now.' }, 409)
 
   if (b.action === 'list') {
-    const { data: js } = await db.from('client_journey').select('*').in('status', b.include_active ? ['open', 'active', 'closed'] : ['open']).limit(1000)
+    const { data: js } = await db.from('client_journey').select('*').eq('subject', 'client').in('status', b.include_active ? ['open', 'active', 'closed'] : ['open']).limit(1000)
     const ids = (js ?? []).map((j: Any) => j.journey_id)
     const { data: steps } = ids.length ? await db.from('client_journey_step').select('*').in('journey_id', ids) : { data: [] }
     const ctx = ctxFor(pp, st)
@@ -712,6 +714,7 @@ Deno.serve(async (req) => {
     const path = String(b.path || ''); if (!path.startsWith(j.journey_id + '/')) return json({ error: 'not this journey\'s file' }, 403)
     const { data, error } = await db.storage.from(BUCKET).createSignedUrl(path, 600)
     if (error) return json({ error: 'Could not open the file.' }, 500)
+    await logOpen(db, { subject: clientSubject(j.axiscare_client_id, j.lead_id, j.journey_id), doc: 'journey-file', path, who: { person_id: who.person_id, email: who.email, name: who.name }, reason: 'opened on the client journey', ip: ipOf(req) })
     return json({ url: data.signedUrl })
   }
   if (b.action === 'refresh') { const out = await settle(db, j, got.steps, dfs, pp, st); return json({ outcome: 'ok', changed: out.changed, cards: out.cards }) }

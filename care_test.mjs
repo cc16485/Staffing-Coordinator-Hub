@@ -42,7 +42,7 @@ function q(t) {
     return { data: st.single ? (rows[0] ? clone(rows[0]) : null) : clone(rows), error: null }
   }
   const b = { select() { return b }, eq(k, v) { st.f.push([k, v]); return b }, neq(k, v) { st.f.push([k, v, 'neq']); return b }, lte(k, v) { st.f.push([k, v, 'lte']); return b }, limit() { return b }, not(k, op, v) { st.f.push([k, null, 'notnull']); return b }, in(k, v) { st.f.push([k, v, 'in']); return b }, order(k, o) { st.order = { k, asc: o?.ascending !== false }; return b }, limit() { return b },
-    insert(row) { st.op = 'insert'; st.row = row; return b }, upsert(row) { st.op = 'upsert'; st.row = row; return b }, update(p) { st.op = 'update'; st.patch = p; return b },
+    insert(row) { st.op = 'insert'; st.row = (t === 'client_journey' && row && !Array.isArray(row) && !row.subject) ? { subject: 'client', ...row } : row; return b },   /* the table default since 3a: subject client */ upsert(row) { st.op = 'upsert'; st.row = row; return b }, update(p) { st.op = 'update'; st.patch = p; return b },
     single() { st.single = true; return Promise.resolve(run()) }, maybeSingle() { st.single = true; return Promise.resolve(run()) }, then(ok, ko) { return Promise.resolve(run()).then(ok, ko) } }
   return b
 }
