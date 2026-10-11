@@ -1,7 +1,7 @@
 // =============================================================================
 // step2-handoff · SLICE 4 (Samantha "go", 2026-10-10): Viventium Step 2 without an integration. Three audited office actions
 // replace the two ticks; the caregiver reports DONE by link or text; the office verifies with the Admin checklist; the
-// welcome-call invitation follows (option A). Nothing here reads Viventium; a caregiver's DONE never equals verification.
+// Orientation Video Call invitation follows (option A). Nothing here reads Viventium; a caregiver's DONE never equals verification.
 // =============================================================================
 //   staff (signed-in office person):
 //   { action: 'sent', candidate_id, note?, resend? }   Record Viventium Step 2 Sent (refused before Approve to Advance on the
@@ -14,7 +14,7 @@
 //                                                      checklist as ticked (the Admin list, versioned); ticked items confirm
 //                                                      the matching readiness-card rows in that person's name; I-9 Section 2
 //                                                      is its own line (the person who examined the documents) and confirms
-//                                                      nothing else. Then the welcome-call invitation (wc_auto_invite_live,
+//                                                      nothing else. Then the Orientation Video Call invitation (wc_auto_invite_live,
 //                                                      else practice) through welcome-call's own door, same words and gates.
 //   { action: 'still_open', candidate_id, task, preview? }   the office message when a task is still open (preview first)
 //   { action: 'undo', candidate_id, which: 'sent'|'reported'|'verified', reason }   who and why; sends nothing; deletes nothing
@@ -309,17 +309,17 @@ Deno.serve(async (req) => {
       }
       let invite: Any = { state: 'none' }
       if (jr) {
-        if (st.wc_auto_invite_live !== true && !testPerson(st, c)) { invite = { state: 'practice', at: now, why: 'wc_auto_invite_live is off: the invitation was not sent; press Invite to welcome call yourself' } }
+        if (st.wc_auto_invite_live !== true && !testPerson(st, c)) { invite = { state: 'practice', at: now, why: 'wc_auto_invite_live is off: the invitation was not sent; press Invite to Orientation Video Call yourself' } }
         else {
           try {
             const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/welcome-call`, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: Deno.env.get('SUPABASE_ANON_KEY') ?? '', Authorization: 'Bearer ' + (Deno.env.get('SUPABASE_ANON_KEY') ?? ''), 'x-cron-secret': Deno.env.get('HUB_JOB_SECRET') ?? '' }, body: JSON.stringify({ action: 'invite_auto', candidate_id: cid, first: c.first || '', last: c.last || '', phone: c.phone || '', email: c.email || '', by: who.name || who.email }) })
             const j = await r.json().catch(() => ({}))
-            invite = r.ok && j?.ok ? { state: j.texted || j.emailed ? 'sent' : 'failed', at: now, texted: !!j.texted, emailed: !!j.emailed, not_sent: j.not_sent || [], id: j.id || null } : { state: 'failed', at: now, why: j?.error || ('welcome-call answered ' + r.status) }
+            invite = r.ok && j?.ok ? { state: j.texted || j.emailed ? 'sent' : 'failed', at: now, texted: !!j.texted, emailed: !!j.emailed, not_sent: j.not_sent || [], id: j.id || null } : { state: 'failed', at: now, why: j?.error || ('Orientation Video Call answered ' + r.status) }
           } catch (e) { invite = { state: 'failed', at: now, why: 'could not reach welcome-call: ' + String((e as Error)?.message ?? e).slice(0, 120) } }
         }
         fields.step2_invite = invite
         await event(db, jr.j.journey_id, null, actor, 'welcome_invite_' + invite.state, invite)
-        if (invite.state === 'failed') await raiseCard(db, { id: 'step2_invite_' + cid, kind: 'send_problem', urgency: 'today', who: name, candidate_id: cid, owner: S(st.staffing_email, 160).toLowerCase(), title: 'Welcome-call invitation did not go to ' + name, detail: String(invite.why || (invite.not_sent || []).join('; ') || 'refused') + '. Press Invite to welcome call on the Orientations tab.' })
+        if (invite.state === 'failed') await raiseCard(db, { id: 'step2_invite_' + cid, kind: 'send_problem', urgency: 'today', who: name, candidate_id: cid, owner: S(st.staffing_email, 160).toLowerCase(), title: 'Orientation Video Call invitation did not go to ' + name, detail: String(invite.why || (invite.not_sent || []).join('; ') || 'refused') + '. Press Invite to Orientation Video Call on the Orientations tab.' })
       }
       if (!(await patch(db, p, fields))) return json({ error: 'Someone else changed this record at the same moment. Open it again and retry.' }, 409)
       for (const k of ['step2_notsent_', 'step2_verify_', 'step2_stalled_', 'step2_early_']) await closeCard(db, k + cid, 'Step 2 verified.')

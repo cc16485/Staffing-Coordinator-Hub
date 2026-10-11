@@ -160,7 +160,7 @@ DB.app_data.find((x) => x.key === 'caregivers').data = [{ id: 207, candidate_id:
 DB.app_data.find((x) => x.key === 'candidates').data = []
 DB.caregiver_profiles = [{ id: 'pr1', candidate_id: '207', published: true, published_at: '2026-10-13T00:00:00Z', status: 'published' }]
 r = await call({ action: 'sweep' }, 'cron')
-ck('sweep 4 (after the move to the roster): welcome call, orientation, dementia, OJT, the profile AND the AxisCare record (connected) verified from the records', ['cg.welcome.call', 'cg.training.orientation', 'cg.training.dementia', 'cg.training.ojt', 'cg.profile.published', 'cg.axiscare.in_training'].every((k) => st(k)?.state === 'complete') && st('cg.axiscare.in_training').evidence.axiscare_id === '9001', steps().filter((x) => x.state !== 'complete').map((x) => x.step_key + ':' + x.state))
+ck('sweep 4 (after the move to the roster): Orientation Video Call, orientation, dementia, OJT, the profile AND the AxisCare record (connected) verified from the records', ['cg.welcome.call', 'cg.training.orientation', 'cg.training.dementia', 'cg.training.ojt', 'cg.profile.published', 'cg.axiscare.in_training'].every((k) => st(k)?.state === 'complete') && st('cg.axiscare.in_training').evidence.axiscare_id === '9001', steps().filter((x) => x.state !== 'complete').map((x) => x.step_key + ':' + x.state))
 /* SLICE 7: the copy sheets, then the two office ticks */
 r = await call({ action: 'copy_sheet', journey_id: JID, which: 'attributes' }, 'kry')
 ck('attributes copy sheet: the Step 1 answers in AxisCare order (CNA claimed, drives clients, lived outside Missouri not on it), the default level', r.status === 200 && r.j.rows.some((x) => x.label === 'CNA / HHA (claimed)' && x.value === 'Yes') && r.j.rows.some((x) => x.label === 'Drives clients' && /transport/.test(x.value)) && r.j.rows.some((x) => x.label === 'Approved Level of Care' && /Level 1/.test(x.value)) && !r.j.rows.some((x) => /Missouri/.test(x.label)), r.j)
@@ -255,7 +255,7 @@ ck('the same report again: nothing re-applied', r.status === 200 && r.j.applied.
 DB.client_journey_step.push({ journey_id: JID2, step_key: 'cg.welcome.call', state: 'complete', completed_at: '2026-10-08T15:00:00Z', completed_by: 'hub', version: 1 })
 DB.app_data.find((x) => x.key === 'caregivers').data.find((x) => x.id === 208).axiscare_id = null
 await call({ action: 'sweep' }, 'cron')
-ck('SLICE 7 nudge: Ben\'s welcome call done Thursday, no AxisCare record connected by Monday 5pm: "Not hired in AxisCare yet", owned by the Staffing Coordinator', ops().some((i) => i.id === 'cj_axhire_' + JID2 && i.owner === 'krystal@mo-care.com' && /Not hired in AxisCare yet: Ben Ray/.test(i.title)), ops().filter((i) => /axhire/.test(i.id)))
+ck('SLICE 7 nudge: Ben\'s Orientation Video Call done Thursday, no AxisCare record connected by Monday 5pm: "Not hired in AxisCare yet", owned by the Staffing Coordinator', ops().some((i) => i.id === 'cj_axhire_' + JID2 && i.owner === 'krystal@mo-care.com' && /Not hired in AxisCare yet: Ben Ray/.test(i.title)), ops().filter((i) => /axhire/.test(i.id)))
 DB.app_data.find((x) => x.key === 'caregivers').data.find((x) => x.id === 208).axiscare_id = '9002'; DB.app_data.find((x) => x.key === 'caregivers').data.find((x) => x.id === 208).connected = { at: '2026-10-13T15:00:00Z' }
 await call({ action: 'sweep' }, 'cron')
 ck('once connected, the AxisCare record row verifies and the nudge closes', st2('cg.axiscare.in_training')?.state === 'complete' && ops().find((i) => i.id === 'cj_axhire_' + JID2).status === 'done')

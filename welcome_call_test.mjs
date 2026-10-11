@@ -1,4 +1,4 @@
-// Remote orientation slice 1a (Desktop 407): welcome-call run for real against a fake database and GoHighLevel, plus
+// Remote orientation slice 1a (Desktop 407): Orientation Video Call run for real against a fake database and GoHighLevel, plus
 // scans of the SQL and the interview-messages reminders. node welcome_call_test.mjs
 import fs from 'fs'; import path from 'path'
 const FN = 'supabase/functions'; const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note ?? null).slice(0, 700)])
@@ -39,7 +39,7 @@ reset(); globalThis.__staff = { ok: false, status: 401, error: 'Sign in first.' 
 let [s, j] = await call(CAND); ck('not signed-in office staff: refused, nothing sent', s === 401 && !SENT.length && !T.welcome_calls.length, j)
 globalThis.__staff = { ok: true, email: 'krystal@mo-care.com', name: 'Krystal' }
 reset(); ;[s, j] = await call({ action: 'preview', first: 'Dana' })
-ck('preview: the invite text with the STOP line, nothing sent', /Hi Dana, great news from Caring Companions!.*15-minute welcome video call/.test(j.text) && /Reply STOP to opt out\.$/.test(j.text) && !SENT.length, j)
+ck('preview: the invite text with the STOP line, nothing sent', /Hi Dana, great news from Caring Companions!.*15-minute Orientation Video Call/.test(j.text) && /Reply STOP to opt out\.$/.test(j.text) && !SENT.length, j)
 reset(); ;[s, j] = await call(CAND)
 const w = T.welcome_calls[0]
 ck('invite: an invitation record, and a text + email with their own booking link', s === 200 && w && w.candidate_id === '42' && w.invited_by === 'Krystal' && texts().length === 1 && emails().length === 1 && texts()[0].message.includes('welcome.html?w=' + w.id) && j.texted && j.emailed, [j, T.welcome_calls])
@@ -56,7 +56,7 @@ ck('reschedule (Step 2 not done): time freed, invitation open again, they are to
 SENT = []; ;[s, j] = await call({ action: 'noshow', id }); ck('did not show: marked, a rebook link goes', T.welcome_calls[0].status === 'noshow' && /we missed you/.test(texts()[0]?.message), SENT)
 // call them now
 SENT = []; T.coordinator_busy = [{ source: 'welcome_call', source_id: 'someone-else', starts_at: new Date(Date.now() - 60_000).toISOString(), ends_at: new Date(Date.now() + 10 * 60_000).toISOString() }]
-;[s, j] = await call({ action: 'now', id }); ck('call them now while another welcome call is in the shared room: refused, nothing sent', s === 409 && !SENT.length, j)
+;[s, j] = await call({ action: 'now', id }); ck('call them now while another Orientation Video Call is in the shared room: refused, nothing sent', s === 409 && !SENT.length, j)
 T.coordinator_busy = []; ;[s, j] = await call({ action: 'now', id })
 ck('call them now: "opening right now" text + email with the Meet link; their booking untouched', s === 200 && /opening right now/.test(texts()[0]?.message) && texts()[0].message.includes('meet.google.com/yqj-nzuo-tgp') && emails().length === 1 && T.welcome_calls[0].status === 'noshow', [j, SENT])
 // done frees a later booked time
@@ -64,7 +64,7 @@ Object.assign(T.welcome_calls[0], { status: 'booked' }); T.coordinator_busy = [{
 ;[s, j] = await call({ action: 'done', id }); ck('done: marked with who and when, and a later time they held goes back on offer', T.welcome_calls[0].status === 'done' && T.welcome_calls[0].done_by === 'Krystal' && !T.coordinator_busy.length, T.welcome_calls[0])
 
 const sq = fs.readFileSync('welcome_calls.sql', 'utf8'), im = fs.readFileSync(`${FN}/interview-messages/index.ts`, 'utf8')
-ck('SQL: times are interview hours in 15-minute steps, never over an interview, a welcome call or an all-staff block', /av\.activity = 'interview'/.test(sq) && /interval '15 minutes'/.test(sq) && /cb\.coordinator_id is null or cb\.source in \('interview', 'welcome_call'\)/.test(sq))
+ck('SQL: times are interview hours in 15-minute steps, never over an interview, an Orientation Video Call or an all-staff block', /av\.activity = 'interview'/.test(sq) && /interval '15 minutes'/.test(sq) && /cb\.coordinator_id is null or cb\.source in \('interview', 'welcome_call'\)/.test(sq))
 ck('SQL: a booked call blocks everyone (coordinator_id null), so no interview can be booked over it', /insert into public\.coordinator_busy \(coordinator_id, starts_at, ends_at, source, source_id, label\)\s+values \(null,/.test(sq))
 ck('SQL: the public page can only book, read and cancel its own invitation (anon has no table access)', /revoke all on public\.welcome_calls from anon/.test(sq) && /grant execute on function public\.welcome_book\(uuid, timestamptz\) to anon/.test(sq))
 ck('reminders: confirmation, day-before, hour-before with the Meet link, 8am-6pm, yes-to-texts, STOP line', /welcome_calls'\)\.select\('\*'\)\.eq\('status', 'booked'\)/.test(im) && /withStop\(message\)/.test(im) && /latestTextConsent\(supabase, w\.phone\)/.test(im) && /!withinOutreachHours\(\)/.test(im))

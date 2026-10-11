@@ -109,7 +109,7 @@ async function extraAnswer(db: any, b: Record<string, any>, sender: string, who:
    published: the SAME test the Hub's own gate uses (caregiver-profile-panel.js gateFor): the profile found by AxisCare
      id first, then by the candidate id the Hub carried over at promotion; published and not withdrawn. A name match is
      never used.
-   new_hire: the Hub's half of eligibility-rules.js profileNewHire (welcome call on file, or the Hub's hire_date /
+   new_hire: the Hub's half of eligibility-rules.js profileNewHire (Orientation Video Call on file, or the Hub's hire_date /
      promoted_at on or after PROFILE_REQUIRED_FROM). Someone not on the Hub roster is false here; Training also applies
      its own hire date.
    Nothing else comes back: no ids, no names. A database error is a 500 (the caller treats it as "unknown" and holds). */
@@ -146,7 +146,7 @@ async function profileAnswer(db: any, raw: unknown): Promise<Response> {
     newHire = (/^\d{4}-\d{2}-\d{2}$/.test(hd) && hd >= PROFILE_REQUIRED_FROM) || (!!pr && pr >= PROFILE_REQUIRED_FROM)
     if (!newHire && cand) {
       const w = await db.from('welcome_calls').select('status').eq('candidate_id', cand).neq('status', 'cancelled').limit(1)
-      if (w.error) return json({ error: 'could not read the welcome calls' }, 500)
+      if (w.error) return json({ error: 'could not read the Orientation Video Calls' }, 500)
       newHire = (w.data || []).length > 0
     }
   }
