@@ -36,6 +36,17 @@ export function ssnLooksValid(s: string): boolean {
   if (/^(\d)\1{8}$/.test(d) || d === '123456789' || d.startsWith('000') || d.startsWith('666') || d.startsWith('9') || d.slice(3, 5) === '00' || d.slice(5) === '0000') return false
   return true
 }
+/* PRACTICE AND TRAINING HIRES (Samantha 2026-10-11, station 2: "it wont let me save my social security number"; 123-45-6789 is
+   refused above on purpose). The Social Security Administration reserved 987-65-4320 to 987-65-4329 for advertising; they are
+   never issued to anyone. They are accepted ONLY on a practice-run or staff-training offer, never on a real hire. */
+export const PRACTICE_SSN = /^98765432\d$/
+export const PRACTICE_OFFERS = ['Slice 10 practice run', 'Training walkthrough']
+export function practiceOffer(o: { offered_by?: unknown; last_name?: unknown } | null | undefined): boolean {
+  return !!o && (PRACTICE_OFFERS.includes(String(o.offered_by ?? '')) || /\(TRAINING\)/.test(String(o.last_name ?? '')))
+}
+export function ssnAllowed(s: string, practice: boolean): boolean {
+  return ssnLooksValid(s) || (practice && PRACTICE_SSN.test(digitsOnly(s)))
+}
 
 /** Decision 6: how long a revealed value may stay on a screening staff member's screen. Five minutes. */
 export const REVEAL_TTL_MS = 5 * 60 * 1000

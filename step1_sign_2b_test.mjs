@@ -132,6 +132,13 @@ r = await call({ action: 'sign', ...link, form: 'fcra_disclosure', typed_name: '
 /* ═══ identity: sealed, never in answers, last four only ═══ */
 r = await call({ action: 'sign', ...link, form: 'edl_fcsr_consent', typed_name: 'Ava Lee', consent: true })
 ck('the consent cannot be signed without the sealed SSN and date of birth and the address', r.status === 400 && /Social Security number/.test(r.j.error) && /Date of birth/.test(r.j.error), r)
+/* 2026-10-11: the SSA's never-issued advertising numbers (987-65-4320 to 4329) only on a practice or training offer */
+r = await call({ action: 'identity', ...link, ssn: '987-65-4321', ssn2: '987-65-4321' })
+ck('a real hire: 987-65-4321 is refused, and no practice hint is shown', r.status === 400 && !/987-65-4321/.test(r.j.error) && DB.step1_identity.length === 0, r)
+OFFERS[OID].offered_by = 'Slice 10 practice run'
+r = await call({ action: 'identity', ...link, ssn: '123-45-6789', ssn2: '123-45-6789' })
+ck('a practice hire: 123-45-6789 is still refused, and the hint names 987-65-4321', r.status === 400 && /987-65-4321/.test(r.j.error) && DB.step1_identity.length === 0, r)
+delete OFFERS[OID].offered_by
 r = await call({ action: 'identity', ...link, ssn: '529-12-3456', ssn2: '529-12-3457', dob: '1990-05-05' })
 ck('two different SSNs are refused', r.status === 400 && DB.step1_identity.length === 0, r)
 r = await call({ action: 'identity', ...link, ssn: '529-12-3456', ssn2: '529-12-3456', dob: '2015-05-05' })
