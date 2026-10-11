@@ -30,6 +30,7 @@ import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { latestTextConsent, withStop } from '../_shared/text-consent.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
+import { texts, emails, interviewerLabel, isGoodbye, REPLY_TAG } from '../_shared/applicant-words.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -105,6 +106,21 @@ Deno.serve(async (req) => {
   const phone = st?.phone ?? '(417) 234-8494'
   const mapUrl = 'https://maps.google.com/?q=' + encodeURIComponent([st?.location_name, place].filter(Boolean).join(', '))
 
+  /* 587 (Samantha, 2026-10-11): the warmer messages, new timing, YES/NO, the entrance photo, the cancel reasons.
+     OFF (ops_settings.applicant_msgs_v2_live, Owners Hub Admin page): everything below works exactly as before.
+     applicant_msgs_krystal_named: Krystal signs and is named once she agrees; until then "the Caring Companions Team". */
+  const { data: opsRow } = await supabase.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+  // deno-lint-ignore no-explicit-any
+  const ops: any = opsRow?.data && typeof opsRow.data === 'object' && !Array.isArray(opsRow.data) ? opsRow.data : {}
+  const V2 = ops.applicant_msgs_v2_live === true
+  const krystalNamed = ops.applicant_msgs_krystal_named === true
+  const { data: coords } = await supabase.from('coordinators').select('id, name')
+  // deno-lint-ignore no-explicit-any
+  const coordName = new Map((coords ?? []).map((c: any) => [String(c.id), c.name]))
+  const ctx = (first: string, link: string) =>
+    ({ first, link, krystalNamed, mins: ivMins, phone, place, note, mapUrl, photoUrl: st?.photo_url || null })
+  const fmtWeekday = (d: Date) => d.toLocaleDateString('en-US', { weekday: 'long', timeZone: TZ })
+
   /* ONE CONTACT (2026-10-01): an office alert finds the staff member's contact per channel (the text to the contact
      holding the phone, the email to the contact holding the email), so a phone-only contact no longer swallows the
      email. Replaces contactFor, which sent phone and email together in one upsert. */
@@ -123,10 +139,16 @@ Deno.serve(async (req) => {
   const ghlDoor = { token: ghlToken!, locationId: ghlLocation! }
   // deno-lint-ignore no-explicit-any
   const applicantDoor = (who: any, first: string) => ({
-    sms: async (message: string) => {
+    /* 587: opts.photo turns it into a picture text (the hour-before entrance photo); opts.tag marks their GoHighLevel
+       contact so a YES/NO reply reaches interview-reply (a missing tag only costs reply routing). */
+    sms: async (message: string, opts: { photo?: string | null; tag?: string } = {}) => {
       const id = await ghlContactIfAllowed(supabase, ghlDoor, 'interview-messages', { channel: 'sms', phone: who.phone, email: who.email, firstName: first })
       /* NO SILENT FAILURES (2026-10-01): a message GoHighLevel refuses raises a Needs Attention card */
-      if (id) await ghlSendChecked(supabase, h, 'interview-messages', { channel: 'sms', contactId: id, address: who.phone, who: [first, who.last_name].filter(Boolean).join(' ') }, { message })
+      if (id) await ghlSendChecked(supabase, h, 'interview-messages', { channel: 'sms', contactId: id, address: who.phone, who: [first, who.last_name].filter(Boolean).join(' ') },
+        opts.photo ? { message, attachments: [opts.photo] } : { message })
+      if (id && opts.tag) {
+        try { await fetch(`https://services.leadconnectorhq.com/contacts/${encodeURIComponent(id)}/tags`, { method: 'POST', headers: h, body: JSON.stringify({ tags: [opts.tag] }) }) } catch { /* reply routing only */ }
+      }
     },
     email: async (subject: string, html: string) => {
       const id = await ghlContactIfAllowed(supabase, ghlDoor, 'interview-messages', { channel: 'email', email: who.email, phone: who.phone, firstName: first })
@@ -188,6 +210,56 @@ Deno.serve(async (req) => {
        cancel one tap away. "Call us and we will move it" was a promise with a
        queue in front of it; this is the promise kept. */
     const manageUrl = 'https://mo-care.com/apply?book=' + encodeURIComponent(String(b.applicant_id))
+
+    if (V2) {
+      /* 587: confirmation EMAIL right away, any hour (her decision); every TEXT 8am to 6pm. The confirmation counts as
+         the day-before notice when it is inside 30 hours, and then asks YES / NO itself (her short-notice choice). */
+      const c = ctx(first, manageUrl)
+      const who = interviewerLabel(coordName.get(String(b.coordinator_id)), krystalNamed)
+      const ready = !!ghlToken && !!ghlLocation
+      const now = () => new Date().toISOString()
+      if (!b.confirmed_at && !b.confirm_email_at && a.email) {
+        plan.confirm.push(`${first}: email`)
+        if (!dry && ready) {
+          const to = applicantDoor(a, first)
+          if (to && await claim('interview_bookings', b.id, 'confirm_email_at')) { const e = emails.confirm(c, who, day, time); await to.email(e.subject, e.html) }
+        }
+      }
+      if (!b.confirmed_at) {
+        plan.confirm.push(`${first}: ${day} ${time}`)
+        if (dry || !ready || !withinOutreachHours()) continue
+        const to = applicantDoor(a, first); if (!to) continue
+        const ask = untilHours <= 30
+        if (!(await claim('interview_bookings', b.id, 'confirmed_at', ask ? { reminded_day_at: now(), reminded_2day_at: now() } : untilHours <= 50 ? { reminded_2day_at: now() } : {}))) continue
+        if (await textOk(a)) await to.sms(texts.confirm(c, who, day, time, ask), ask ? { tag: REPLY_TAG } : {})
+        out.confirmed++
+      } else if (!b.reminded_2day_at && untilHours <= 50 && untilHours > 30 && (when.getTime() - Date.parse(b.created_at)) >= 72 * 3_600_000) {
+        plan.day.push(`${first}: 2 days before`)
+        if (dry || !ready || !withinOutreachHours()) continue
+        const to = applicantDoor(a, first); if (!to) continue
+        if (!(await claim('interview_bookings', b.id, 'reminded_2day_at'))) continue
+        if (await textOk(a)) await to.sms(texts.twoDays(c, fmtWeekday(when), time))
+        if (a.email) { const e = emails.twoDays(c, fmtWeekday(when), time); await to.email(e.subject, e.html) }
+      } else if (!b.reminded_day_at && untilHours <= 30 && untilHours > 2) {
+        plan.day.push(`${first}: ${day} ${time}`)
+        if (dry || !ready || !withinOutreachHours()) continue
+        const to = applicantDoor(a, first); if (!to) continue
+        if (!(await claim('interview_bookings', b.id, 'reminded_day_at'))) continue
+        if (await textOk(a)) await to.sms(texts.dayBefore(c, time), { tag: REPLY_TAG })
+        if (a.email) { const e = emails.dayBefore(c, day, time); await to.email(e.subject, e.html) }
+        out.reminded_day++
+      } else if (!b.reminded_hour_at && untilHours <= 1.5 && untilHours > -0.25) {
+        plan.hour.push(`${first}: ${time}`)
+        if (dry || !ready || !withinOutreachHours()) continue
+        const to = applicantDoor(a, first); if (!to) continue
+        if (!(await claim('interview_bookings', b.id, 'reminded_hour_at'))) continue
+        /* the entrance photo goes with this one text only (her call: keep the others plain, no extra picture-text cost) */
+        if (await textOk(a)) await to.sms(texts.hour(c, time), { photo: c.photoUrl })
+        else if (a.email) { const e = emails.hour(c, time); await to.email(e.subject, e.html) }
+        out.reminded_hour++
+      }
+      continue
+    }
 
     const send = async (kind: 'confirm' | 'day' | 'hour', col: string, extra: Record<string, string> = {}) => {
       /* Refuse outside outreach hours rather than at each call site, so a new
@@ -305,6 +377,45 @@ Deno.serve(async (req) => {
         plan.held.push(`${first}: ${st.error ? 'follow-ups paused, the stop rule could not be read' : 'no follow-up, ' + st.data}`)
         continue
       }
+    }
+
+    if (V2) {
+      const c = ctx(first, bookUrl)
+      if (!p.completed_at) {
+        /* 587: didn't finish. Two "finish your application" messages (30 minutes, then the next day), then nothing.
+           Only new starts (last 3 days) that the older follow-ups never wrote to. Their link reopens the step they
+           left; 586 keeps them from booking until they finish. */
+        if (p.status !== 'partial' || p.nudge_1_at || age > 72) continue
+        const fstep = !p.finish_nudge_1_at && age >= 0.5 ? 1 : !p.finish_nudge_2_at && p.finish_nudge_1_at && age >= 24 ? 2 : 0
+        if (!fstep) continue
+        plan.nudge.push(`${first} (finish ${fstep})`)
+        if (dry || !withinOutreachHours() || !ghlToken || !ghlLocation) continue
+        const to = applicantDoor(p, first); if (!to) continue
+        if (!(await claim('job_applicants', p.id, fstep === 1 ? 'finish_nudge_1_at' : 'finish_nudge_2_at'))) continue
+        if (await textOk(p)) await to.sms(fstep === 1 ? texts.finish1(c) : texts.finish2(c))
+        if (p.email) { const e = emails.finish(c, fstep === 2); await to.email(e.subject, e.html) }
+        out.nudged++
+        continue
+      }
+      /* 587: finished, didn't book. 10 minutes after finishing, then the next day, day 3, a last note on day 6. */
+      const fa = hoursSince(p.completed_at)
+      const vstep = !p.nudge_1_at && fa >= 10 / 60 ? 1 : !p.nudge_2_at && fa >= 24 ? 2 : !p.nudge_3_at && fa >= 72 ? 3 : !p.nudge_4_at && fa >= 144 ? 4 : 0
+      if (!vstep) {
+        if (p.nudge_4_at && fa >= 168) {   // a week after finishing, after the last note: we stop
+          plan.give_up.push(first + ' ' + (p.last_name || ''))
+          if (!dry) { await supabase.from('job_applicants').update({ gave_up_at: new Date().toISOString() }).eq('id', p.id); out.gave_up++ }
+        }
+        continue
+      }
+      plan.nudge.push(`${first} (try ${vstep}${prn ? ', PRN' : ''})`)
+      if (dry || !withinOutreachHours() || !ghlToken || !ghlLocation) continue
+      const to = applicantDoor(p, first); if (!to) continue
+      if (!(await claim('job_applicants', p.id, ['nudge_1_at', 'nudge_2_at', 'nudge_3_at', 'nudge_4_at'][vstep - 1]))) continue
+      const t = vstep === 1 ? (prn ? texts.invite1Prn(c) : texts.invite1(c)) : vstep === 2 ? texts.invite2(c) : vstep === 3 ? texts.invite3(c) : texts.invite4(c)
+      if (await textOk(p)) await to.sms(t)
+      if (p.email) { const e = emails.invite(c, vstep as 1 | 2 | 3 | 4, prn); await to.email(e.subject, e.html) }
+      out.nudged++
+      continue
     }
 
     const step =
@@ -482,7 +593,14 @@ Deno.serve(async (req) => {
     if (!(await claim('interview_bookings', b.id, 'cancel_notified_at'))) continue
 
     const to = applicantDoor(a, first)
-    if (to) {
+    if (to && V2) {
+      /* 587: why they cancelled decides the words. Found another job / not interested: a warm goodbye, no push to
+         rebook. Anything else (schedule, transportation, a NO to the reminder, no reason): their link to a new time. */
+      const c = ctx(first, bookUrl)
+      const bye = isGoodbye(b.cancel_kind)
+      if (await textOk(a)) await to.sms(bye ? texts.goodbye(c) : texts.cancelled(c, day, time))
+      if (a.email) { const e = bye ? emails.goodbye(c) : emails.cancelled(c, day, time); await to.email(e.subject, e.html) }
+    } else if (to) {
       if (await textOk(a)) await to.sms(
         `Hi ${first}, your interview with Caring Companions for ${day} at ${time} is cancelled, so there is nothing more to do. ` +
         `Want a different time? Pick one here: ${bookUrl} or call ${phone}.`)
