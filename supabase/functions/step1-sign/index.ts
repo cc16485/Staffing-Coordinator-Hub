@@ -231,8 +231,9 @@ async function enterChecks(db: any, offerId: string, who: Record<string, string>
     // deno-lint-ignore no-explicit-any
     if (!(Array.isArray(row?.data) ? row.data : []).some((x: any) => x && x.id === cid)) {
       await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id: cid, kind: 'step1_complete', domain: 'recruiting_orientation', status: 'open', urgency: 'today',
-        title: 'Step 1 complete: start background checks and references for ' + name,
-        detail: name + ' signed every Step 1 form, including the reference consent, the background check disclosure and the EDL and FCSR consent. They are now in Background & References: run the checks and contact the references.',
+        /* TRAINING WALKTHROUGH (2026-10-11): a staff member trying the journey on their own phone; the card says so */
+        title: (/\(TRAINING\)/.test(name) ? 'TRAINING: ' : '') + 'Step 1 complete: start background checks and references for ' + name,
+        detail: (/\(TRAINING\)/.test(name) ? 'A staff training walkthrough (made-up identity): try the checks if you like; nothing real is needed. ' : '') + name + ' signed every Step 1 form, including the reference consent, the background check disclosure and the EDL and FCSR consent. They are now in Background & References: run the checks and contact the references.',
         who: name, offer_id: offerId, candidate_id: made.id ?? null, owner: owner.email, owner_name: owner.name, created_at: now, first_at: now, last_at: now,
         due: new Date(Date.now() + 24 * 3_600_000).toISOString(), created_by: 'step1-sign', opened_by: 'step1-sign' } })
       made.card = cid
