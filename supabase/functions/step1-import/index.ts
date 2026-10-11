@@ -31,7 +31,7 @@ const short = (f: unknown, l: unknown) => [String(f || '').trim(), String(l || '
 type Any = any
 
 export const SERVICES = ['companionship', 'housekeeping', 'errands_shopping', 'meal_preparation', 'laundry', 'transportation', 'activities', 'medication_reminders', 'dementia_care']
-export const SHIFTS = ['mornings', 'afternoons', 'evenings', 'overnights', 'live_in', 'weekdays', 'weekends']
+export const SHIFTS = ['mornings', 'afternoons', 'evenings', 'overnights', 'weekdays', 'weekends']   // live-in left 2026-09-17
 export const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
 export const FAVORITES = ['candy_bar', 'soft_drink', 'snack', 'sandwich', 'food', 'dessert', 'restaurant', 'store', 'music', 'movies', 'sports_team', 'flower', 'gift_card_places']
 
