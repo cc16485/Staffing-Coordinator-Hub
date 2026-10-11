@@ -9,7 +9,7 @@ import os, json, subprocess, hashlib
 os.environ.setdefault("SB_STEP", "600")
 from cc_step_lib import *
 REF = "zngsgedlsxinbygwmxwn"; FNS = ["training-walkthrough", "step1-sign"]
-JOB = "training-walkthrough-sweep"; SCHEDULE = "0 14 * * *"; VAULT_NAME = "hub_job_secret"; HER_PHONE = "4175932789"
+JOB = "training-walkthrough-sweep"; SCHEDULE = "0 14 * * *"; VAULT_NAME = "hub_job_secret"
 _HIST = {}
 def in_history(rel, live_sha):
     if not live_sha: return False
@@ -45,8 +45,7 @@ if okl and any(k.endswith("_shared/test-people.ts") for k in livef): say("  ✓ 
 else: bad("598 has not run yet (outreach-check does not know the test list). Run 598, then 599, then this.")
 ok_, st = sql(REF, "select coalesce(data->'test_people', '{}'::jsonb) as tp, (select count(*)::int from vault.decrypted_secrets where name = 'hub_job_secret') as vault from public.app_data where key = 'ops_settings'")
 if ok_ and st:
-    if HER_PHONE in json.dumps(st[0]['tp']): say("  ✓ 599 is in (your phone is on the test list)")
-    else: bad("599 has not run yet (your phone is not on the test list). Run 599 first.")
+    say(f"  · the test list now: {len(st[0]['tp'].get('phones') or [])} phone(s), {len(st[0]['tp'].get('emails') or [])} email(s) (each walkthrough adds its own and takes it off again)")
     say("  ✓ the job secret is in the Vault") if int(st[0]['vault']) == 1 else bad("the Vault does not hold hub_job_secret (tell Claude)")
 else: bad(f"could not read the settings: {st}")
 s_, b_ = http("GET", f"{API}/v1/projects/{REF}/secrets", headers=MG())
