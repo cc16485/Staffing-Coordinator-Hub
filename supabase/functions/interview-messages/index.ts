@@ -282,6 +282,19 @@ Deno.serve(async (req) => {
     // the whole form (the exact "pick a time here" link that went nowhere).
     const bookUrl = 'https://mo-care.com/apply?book=' + encodeURIComponent(String(p.id))
 
+    /* 586 (Samantha, 2026-10-11: "Make sure follow-ups stop when someone books, withdraws, opts out or becomes
+       ineligible"). One rule in the database, per person across all their applications: booked, cancelled their own
+       interview, the office cancelled it, a no to a required question, or no longer an open application. If the rule
+       cannot be read, nothing goes (a missed nudge is better than a wrong one). Opt-outs are still checked by the door
+       at the moment of sending, per channel, as before. */
+    {
+      const st = await supabase.rpc('applicant_followup_stop', { p: p.id })
+      if (st.error || st.data) {
+        plan.held.push(`${first}: ${st.error ? 'follow-ups paused, the stop rule could not be read' : 'no follow-up, ' + st.data}`)
+        continue
+      }
+    }
+
     const step =
       !p.nudge_1_at && (prn ? prnReady : age >= 2) ? 1 :
       !p.nudge_2_at && age >= 48  ? 2 :
