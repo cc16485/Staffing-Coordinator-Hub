@@ -12,6 +12,21 @@ from cc_step_lib import *
 from practice_run_lib import *
 FNS = ["outreach-check", "welcome-call", "interview-messages", "step2-handoff", "reference-chase", "reference-send", "caregiver-profile", "ghl-attach-doc", "caregiver-journey"]
 CHANGED = {"supabase/functions/_shared/optout.ts", "supabase/functions/ghl-attach-doc/index.ts"}
+import subprocess, hashlib
+_HIST = {}
+def in_history(rel, live_sha):
+    """True when this exact file content was committed on main at some point (the live copy is just older than main)"""
+    if not live_sha: return False
+    if rel not in _HIST:
+        shas = set()
+        try:
+            commits = subprocess.run(["git", "-C", ROOT, "log", "--format=%H", "--", rel], capture_output=True, text=True, timeout=120).stdout.split()
+            for c in commits:
+                b = subprocess.run(["git", "-C", ROOT, "show", f"{c}:{rel}"], capture_output=True, timeout=60).stdout
+                if b: shas.add(hashlib.sha256(b).hexdigest())
+        except Exception: pass
+        _HIST[rel] = shas
+    return live_sha in _HIST[rel]
 start("SLICE 10, THE PRACTICE RUN: SET-UP (one made-up hire)")
 say("PART 1 · READ ONLY (nothing changes)")
 if not (SUPA and os.path.exists(SUPA)): bad("supabase CLI not found"); done(2)
@@ -56,7 +71,10 @@ for fn in FNS:
     okl, livef = live_files(HUB, fn)
     if not okl: bad(f"could not read {fn}'s live files"); continue
     differ = [k for k in need(FNROOT, fn) if k not in CHANGED and livef.get(k) != sha(os.path.join(ROOT, k))]
-    if differ: bad(f"{fn}'s live copy holds a change that is not main's build ({', '.join(d.split('/')[-2] + '/' + d.split('/')[-1] for d in differ[:3])}); deploying would overwrite it. Tell Claude.")
+    unknown = [k for k in differ if not in_history(k, livef.get(k))]
+    short = lambda ks: ', '.join(d.split('/')[-2] + '/' + d.split('/')[-1] for d in ks[:4])
+    if unknown: bad(f"{fn}'s live copy holds {short(unknown)} in a version that was never on main (someone's unmerged work); deploying would overwrite it. Tell Claude.")
+    elif differ: say(f"  ✓ {fn} is live at version {mx.get('version', '?')}: main's build apart from the guard and older versions (from main's own history) of {short(differ)}, which this deploy brings up to main")
     else: say(f"  ✓ {fn} is live at version {mx.get('version', '?')} and is main's build apart from the guard")
 say("  · what changes: the guard on nine Hub services, and one made-up offer for Pat Practice with its 'sent' event. Nothing is sent to anyone.")
 if fails: say(); say("  RESULT: STOPPED before anything changed. Tell Claude which line."); done(3)

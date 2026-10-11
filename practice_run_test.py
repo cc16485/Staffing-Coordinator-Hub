@@ -41,7 +41,13 @@ def fake_http(method, url, body=None, headers=None, timeout=120):
     return 200, '{"ok":true,"practice":true}'
 L.http = fake_http
 L.fmeta = lambda ref, fn: (200, {"verify_jwt": fn not in ("ghl-attach-doc",), "version": 7})
-L.live_files = lambda ref, fn: (True, {k: L.sha(os.path.join(ROOT, k)) for k in L.need(FNROOT, fn)})
+LIVE_OVERRIDE = {}
+def fake_live(ref, fn):
+    d = {k: L.sha(os.path.join(ROOT, k)) for k in L.need(FNROOT, fn)}
+    d.update(LIVE_OVERRIDE.get(fn, {})); return True, d
+L.live_files = fake_live
+import hashlib
+OLD_CJ = hashlib.sha256(subprocess.run(["git", "-C", ROOT, "show", "958c8098e9c1a2917dec8834ecd1c5239bab576b:supabase/functions/_shared/caregiver-journey.ts"], capture_output=True).stdout).hexdigest()
 DEPLOYED = []
 def fake_deploy(ref, fnroot, fn, vj): DEPLOYED.append(fn); L.say(f"  ✓ {fn} deployed (rehearsal)"); return True
 L.deploy = fake_deploy
@@ -64,8 +70,15 @@ q(HUB, "update public.app_data set data = data || '{\"onboarding_switch_date\": 
 code, txt = run("591")
 ck("591 refuses while the switch date is set", code == 3 and "switch date is set" in txt, txt[-400:])
 q(HUB, "update public.app_data set data = data - 'onboarding_switch_date' where key = 'ops_settings'")
+# ── an unmerged change live on a service: the set-up stops before anything changes ──
+LIVE_OVERRIDE["welcome-call"] = {"supabase/functions/_shared/caregiver-journey.ts": "f" * 64}
+code, txt = run("591")
+ck("591 refuses when a service's live copy holds a version never on main (someone's unmerged work)", code == 3 and "never on main" in txt and not DEPLOYED and not q(TRN, "select id from public.job_offers"), txt[-700:])
+# ── an older live copy (a version from main's own history): brought up to main ──
+LIVE_OVERRIDE["welcome-call"] = {"supabase/functions/_shared/caregiver-journey.ts": OLD_CJ}
 # ── 2. the set-up ──
 code, txt = run("591")
+ck("591 says which older shared files it brings up to main", "older versions (from main's own history) of _shared/caregiver-journey.ts" in txt, txt[-900:])
 o = q(TRN, "select * from public.job_offers")
 ck("591: the guard deployed to the nine services, then ONE offer for Pat on the new path with its sent event", code == 0 and len(DEPLOYED) == 9 and len(o) == 1 and o[0]['onboarding_path'] == 'new' and o[0]['phone'] == '4175550183' and o[0]['email'] == 'pat.practice@practice.invalid'
    and q(TRN, "select count(*)::int n from public.offer_events where kind = 'sent'")[0]['n'] == 1, txt[-900:])
