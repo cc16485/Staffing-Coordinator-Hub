@@ -31,6 +31,7 @@ import { ax } from '../_shared/axiscare-caregiver.ts'
 import { dueNextBusinessDay, centralYmd } from '../_shared/business-days.ts'
 import { logOpen, clientSubject, ipOf } from '../_shared/doc-log.ts'
 import { BrandPdf, COMPANY_RIGHT, FOOTER, NAVY, MUTED, RULE } from '../_shared/brand-pdf.ts'
+import { evidenceRows, evidenceLine, EVIDENCE_NOTE } from '../_shared/evidence.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -289,18 +290,36 @@ async function exportClient(db: Any, b: Any, who: Any, opener: Any, ip: string):
       } }
     /* care changes, pauses, the launch evidence */
     const [{ data: cc }, { data: pz }, { data: le }] = await Promise.all([db.from('client_care_change').select('*').eq('axiscare_client_id', axId), db.from('client_pause').select('*').eq('axiscare_client_id', axId), db.from('launch_evidence').select('*').eq('axiscare_client_id', axId)])
-    const ccs = (cc ?? []).filter((x: Any) => upto(x.created_at)), pzs = (pz ?? []).filter((x: Any) => upto(x.created_at)), les = (le ?? []).filter((x: Any) => upto(x.recorded_at))
+    const ccs = (cc ?? []).filter((x: Any) => upto(x.made_at)), pzs = (pz ?? []).filter((x: Any) => upto(x.paused_from)), les = (le ?? []).filter((x: Any) => upto(x.recorded_at))
     if (ccs.length || pzs.length) { pdf.hr(RULE, 8); pdf.heading('Care changes and pauses')
       for (const x of ccs) {
-        pdf.para(`${S(x.kind)} · recorded ${central(x.created_at)} by ${S(x.created_by_name || x.created_by)}${x.effective_date ? ' · effective ' + usd(x.effective_date) : ''}${x.reason ? ' · ' + S(x.reason, 120) : ''}${x.explanation ? ': ' + S(x.explanation, 200) : ''}`, { size: 8.5, lh: 12, after: 1 })
+        pdf.para(`${S(x.kind)} · recorded ${central(x.made_at)} by ${S(x.made_by_name || x.made_by)}${x.effective_date ? ' · effective ' + usd(x.effective_date) : ''}${x.reason ? ' · ' + S(x.reason, 120) : ''}${x.explanation ? ': ' + S(x.explanation, 200) : ''}`, { size: 8.5, lh: 12, after: 1 })
         for (const it of Array.isArray(x.checklist) ? x.checklist : []) { pdf.para(`  ${S(it.label || it.key, 120)}: ${S(it.state || 'open')}${it.on ? ' ' + usd(it.on) : ''}${it.by ? ' by ' + S(it.by, 60) : ''}${it.note ? ' · ' + S(it.note, 120) : ''}`, { size: 8, color: MUTED, lh: 11, after: 1 }); for (const f of Array.isArray(it.files) ? it.files : []) { const p = typeof f === 'string' ? f : f?.path; if (p) proofs.push({ label: 'Care change: ' + S(it.label || it.key, 60), bucket: BUCKET, path: p }) } }
       }
-      for (const x of pzs) pdf.para(`Pause ${usd(x.from_date || x.starts_on || x.created_at)} to ${usd(x.to_date || x.ends_on || '')} · ${S(x.reason, 160)} · by ${S(x.created_by_name || x.created_by)}`, { size: 8.5, color: MUTED, lh: 12, after: 1 }) }
+      for (const x of pzs) pdf.para(`Pause from ${usd(x.paused_from)} · follow up ${usd(x.followup_date)} · ${S(x.reason, 160)}${x.explanation ? ': ' + S(x.explanation, 160) : ''} · ${x.status === 'closed' && upto(x.closed_at) ? S(x.closed_kind || 'closed') + ' ' + central(x.closed_at) : 'open'}`, { size: 8.5, color: MUTED, lh: 12, after: 1 }) }
     if (les.length) { pdf.hr(RULE, 8); pdf.heading('Start-of-care evidence (write-once)')
       for (const x of les) pdf.para(`${S(x.fact)} · ${S(x.source)} · ${central(x.recorded_at)} by ${S(x.recorded_by)}${x.reason ? ' · ' + S(x.reason, 160) : ''}`, { size: 8.5, color: MUTED, lh: 12, after: 1 }) }
   }
   /* inquiry documents */
   if (lead && Array.isArray(lead.docs)) for (const d of lead.docs.filter((x: Any) => upto(x?.at))) if (d?.path) proofs.push({ label: 'Inquiry document: ' + S(d.slot) + ' ' + S(d.name, 60), bucket: 'lead-docs', path: d.path })
+  /* SLICE 9: the value history of this client's evidence: Medicaid plans, care changes and their checklists, signed EVV
+     forms and GHE forms (signatures and answers as fingerprints only) */
+  {
+    const evWant: Array<{ source: string; ids: string[] }> = [{ source: 'app_data:medicaid_plans', ids: myPlans.map((p) => String(p.id)) }]
+    if (axId) {
+      const [{ data: ccIds }, { data: evvIds }] = await Promise.all([db.from('client_care_change').select('change_id').eq('axiscare_client_id', axId), db.from('evv_submissions').select('id').eq('client_axiscare_id', axId)])
+      evWant.push({ source: 'client_care_change', ids: (ccIds ?? []).map((x: Any) => String(x.change_id)) }, { source: 'evv_submissions', ids: (evvIds ?? []).map((x: Any) => String(x.id)) })
+      const [nc, gf] = await Promise.all([list(db, 'nurse_clients'), list(db, 'ghe_forms')])
+      const ncIds = new Set(nc.filter((x) => String(x?.axiscare_client_id || '') === axId).map((x) => String(x.id)))
+      evWant.push({ source: 'app_data:ghe_forms', ids: gf.filter((g) => g && ncIds.has(String(g.client_id || ''))).map((g) => String(g.id)) })
+    }
+    const LBL: Record<string, string> = { 'app_data:medicaid_plans': 'Medicaid plan', client_care_change: 'care change', evv_submissions: 'EVV form', 'app_data:ghe_forms': 'GHE form' }
+    const shown = (await evidenceRows(db, evWant)).filter((r) => upto(r.at))
+    pdf.hr(RULE, 8); pdf.heading('Evidence changes (before and after)' + (asOf ? ' up to ' + usd(asOf) : ''))
+    pdf.para(EVIDENCE_NOTE, { size: 8, color: MUTED, lh: 11, after: 2 })
+    if (!shown.length) pdf.para('No evidence value has changed since then.', { size: 8.5, color: MUTED, lh: 12, after: 1 })
+    for (const r of shown.slice(-300)) pdf.para(`${central(r.at)} · ${evidenceLine(r, LBL[r.source] || r.source)}`, { size: 8, color: MUTED, lh: 11, after: 1 })
+  }
   if (!journeys.length && !myPlans.length) pdf.para('No client journey and no Medicaid plan on file for this client' + (asOf ? ' as of ' + usd(asOf) : '') + '.', { size: 9, after: 4 })
   const bytes = pdf.build()
   const path = `exports/${subject.replace(/[^a-zA-Z0-9:_-]/g, '_')}/${now.replace(/[:.]/g, '-')}-${crypto.randomUUID().slice(0, 8)}.pdf`
