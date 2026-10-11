@@ -51,6 +51,11 @@ create index if not exists op_events_item_idx    on public.op_events (item_id, a
 create index if not exists op_events_actor_idx   on public.op_events (actor_email, at desc);
 create index if not exists op_events_action_idx  on public.op_events (action, at desc) where action <> '';
 create index if not exists op_events_request_idx on public.op_events (request_id) where request_id <> '';
+-- Concurrency control (Samantha, 2026-10-10: two simultaneous requests must never execute the same action twice).
+-- A contract writes its 'started' row BEFORE any effect. Only one 'started' row may exist per request id, so of two
+-- callers racing with the same id, the database lets exactly one through; the other sees a unique-key refusal and
+-- answers 'already' without doing anything. The later 'done' / 'refused' / 'uncertain' row carries the same request id.
+create unique index if not exists op_events_request_started_uq on public.op_events (request_id) where request_id <> '' and outcome = 'started';
 
 -- 4 · append-only for everyone --------------------------------------------------------------------------------------
 create or replace function public.op_events_keep() returns trigger
@@ -134,5 +139,8 @@ do $v$ begin
   end if;
   if not (select relrowsecurity from pg_class where oid = 'public.op_events'::regclass) then
     raise exception '578 self-check: row security is off on op_events';
+  end if;
+  if not exists (select 1 from pg_indexes where schemaname = 'public' and tablename = 'op_events' and indexname = 'op_events_request_started_uq') then
+    raise exception '578 self-check: the one-started-row-per-request rule is missing';
   end if;
 end $v$;
