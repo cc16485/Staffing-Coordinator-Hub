@@ -11,14 +11,14 @@ const esc = (s: string) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, 
 
 /* Moment 6: after Record Viventium Step 2 Sent (automatic after the office confirmation) */
 export function sentMessages(first: string, doneLink: string) {
-  const text = withStop(`Hi ${first}, great news from Caring Companions: your background check and references are complete! Step 2 is your payroll and tax paperwork in Viventium, our secure payroll system. Watch your email for a message from Viventium today and finish each task there. When every task is done, tell us here: ${doneLink} or reply DONE to this text. Then we book your welcome call.`)
+  const text = withStop(`Hi ${first}, great news from Caring Companions: your background check and references are complete! Step 2 is your payroll and tax paperwork in Viventium, our secure payroll system. Watch your email for a message from Viventium today and finish each task there. When every task is done, tell us here: ${doneLink} or reply DONE to this text. Then we book your Orientation Video Call.`)
   const subject = 'Step 2: your paperwork in Viventium'
   const html = `<div style="font-family:Arial,sans-serif;font-size:16px;line-height:1.5;color:#16283a;max-width:600px">
 <p>Hi ${esc(first)}, great news from Caring Companions: your background check and references are complete!</p>
 <p>Step 2 is your payroll and tax paperwork in Viventium, our secure payroll system. Watch your email for a message from Viventium today and finish each task there.</p>
 <p>When every task is done, tell us here:</p>
 <p><a href="${esc(doneLink)}" style="display:inline-block;background:#F0A63A;color:#122F52;font-weight:800;padding:12px 20px;border-radius:10px;text-decoration:none">I finished Step 2</a></p>
-<p>Then we book your welcome call. Questions? Call or text the office at ${OFFICE}.</p>
+<p>Then we book your Orientation Video Call. Questions? Call or text the office at ${OFFICE}.</p>
 <p>Caring Companions</p></div>`
   return { text, subject, html }
 }
@@ -34,7 +34,7 @@ export function reminderMessages(first: string, doneLink: string) {
   return { text, subject, html }
 }
 /* Moment 8: the receipt for DONE (text only; it never says verified) */
-export const receiptText = (first: string) => withStop(`Thank you, ${first}! We will check your Viventium tasks and text you the link to book your welcome call, usually within one business day.`)
+export const receiptText = (first: string) => withStop(`Thank you, ${first}! We will check your Viventium tasks and text you the link to book your Orientation Video Call, usually within one business day.`)
 /* Office-sent, with a preview, when verification finds a task open */
 export const stillOpenText = (first: string, task: string, doneLink: string) => withStop(`Hi ${first}, thank you for letting us know. Viventium still shows a task open on your Step 2: ${task}. Could you log back in and finish it, then tap DONE again here: ${doneLink} Call or text ${OFFICE} if you are stuck.`)
 

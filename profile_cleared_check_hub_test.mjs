@@ -58,9 +58,9 @@ ROSTER = [{ axiscare_id: '502', candidate_id: 'c-88', hire_date: '2026-09-20', p
 ROSTER = [{ axiscare_id: '502', candidate_id: 'c-88', hire_date: '2026-09-20', promoted_at: '2026-10-02T04:30:00Z' }]
 ;[s, j] = await post(P('502')); ck('promoted 11:30pm Oct 1 Central is NOT a new hire by that stamp', j.new_hire === false, j)
 CALLS = [{ candidate_id: 'c-88', status: 'booked' }]
-;[s, j] = await post(P('502')); ck('a welcome call on file makes a new hire', j.new_hire === true, j)
+;[s, j] = await post(P('502')); ck('an Orientation Video Call on file makes a new hire', j.new_hire === true, j)
 CALLS = [{ candidate_id: 'c-88', status: 'cancelled' }]
-;[s, j] = await post(P('502')); ck('a cancelled welcome call does not', j.new_hire === false, j)
+;[s, j] = await post(P('502')); ck('a cancelled Orientation Video Call does not', j.new_hire === false, j)
 ROSTER = [{ axiscare_id: '503', hire_date: '2019-04-01' }]; CALLS = []
 ;[s, j] = await post(P('503')); ck('a current caregiver (hired 2019): new_hire false', j.new_hire === false && j.published === false, j)
 

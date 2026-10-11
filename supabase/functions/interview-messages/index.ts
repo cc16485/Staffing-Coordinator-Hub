@@ -630,8 +630,8 @@ Deno.serve(async (req) => {
      time") or put back into play. Pressing "Did not show" now marks them a No-Show and sends HER message through
      applicant-noshow; only the office can excuse it and rebook them after they call with a reason. */
 
-  /* ---------------- welcome calls (remote orientation, Desktop 407) ----------------
-     A booked 15-minute Google Meet welcome call gets a confirmation (text + email), a day-before reminder (text +
+  /* ---------------- Orientation Video Calls (remote orientation, Desktop 407) ----------------
+     A booked 15-minute Google Meet Orientation Video Call gets a confirmation (text + email), a day-before reminder (text +
      email) and an hour-before text, each with the shared Meet link. Texts only with their yes to texts and 8am-6pm
      (held, not stamped, until then); every text ends with the STOP line. Sender 'welcome-call' so a refusal raises a
      card that names it. */
@@ -666,20 +666,20 @@ Deno.serve(async (req) => {
       const wcol = kind === 'confirm' ? 'confirmed_at' : kind === 'day' ? 'reminded_day_at' : 'reminded_hour_at'
       if (!(await claim('welcome_calls', w.id, wcol, kind === 'confirm' && until <= 30 ? { reminded_day_at: new Date().toISOString() } : {}))) continue
       if (kind === 'hour') {
-        await sendText(`Hi ${first}, your welcome video call with Caring Companions is at ${time} today. At that time, tap here to join: ${meet}`)
+        await sendText(`Hi ${first}, your Orientation Video Call with Caring Companions is at ${time} today. At that time, tap here to join: ${meet}`)
       } else {
         const confirm = kind === 'confirm'
-        await sendText(`Hi ${first}, ${confirm ? 'your welcome video call with Caring Companions is booked for' : 'reminder: your welcome video call is'} ` +
+        await sendText(`Hi ${first}, ${confirm ? 'your Orientation Video Call with Caring Companions is booked for' : 'reminder: your Orientation Video Call is'} ` +
           `${day} at ${time}. At that time, tap this link to join from your phone: ${meet} Please have the original ID documents ` +
           `you uploaded in Viventium with you. Need a different time? ${manage}`)
-        await sendEmail(confirm ? `Your welcome call: ${day} at ${time}` : `Tomorrow: your welcome call at ${time}`,
-          shell(`<p>Hi ${first},</p><p>${confirm ? 'Your 15-minute welcome video call is booked for' : 'A reminder that your welcome video call is'} <b>${day} at ${time}</b>.</p>` +
+        await sendEmail(confirm ? `Your Orientation Video Call: ${day} at ${time}` : `Tomorrow: your Orientation Video Call at ${time}`,
+          shell(`<p>Hi ${first},</p><p>${confirm ? 'Your 15-minute Orientation Video Call is booked for' : 'A reminder that your Orientation Video Call is'} <b>${day} at ${time}</b>.</p>` +
             `<p>At that time, open this link on your phone or computer (no app needed):</p>${join}` +
             `<p>Please have the <b>original ID documents</b> you uploaded in Viventium with you. Need a different time? <a href="${manage}">Pick a new one here</a>, or call us on ${phone}.</p>`))
       }
       if (kind === 'confirm') out.welcome_confirmed++; else out.welcome_reminded++
     }
-  } catch (e) { console.error('[interview-messages] welcome calls', e) }
+  } catch (e) { console.error('[interview-messages] Orientation Video Calls', e) }
 
   /* Dry runs don't beat: a manual ?dry=1 must never make a dead cron look alive. */
   if (!dry) await beat(supabase, true, JSON.stringify(out))

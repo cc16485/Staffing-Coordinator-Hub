@@ -3,7 +3,7 @@
 // =============================================================================
 // Samantha: ONE profile for both "introduce your caregiver" and "caregiver change" (those messages are 2b). The card
 // shows a photo, first name + last initial, about me, experience caring for others and why they enjoy caregiving, so a
-// senior feels comfortable and remembers who is coming. The office drafts it ahead of the welcome call (AI, from their
+// senior feels comfortable and remembers who is coming. The office drafts it ahead of the Orientation Video Call (AI, from their
 // application and in-person interview), reads it to them on the call, types what they add or change, then sends their
 // personal link: a photo is REQUIRED, a short video is encouraged. New hires need a published profile before working
 // (that gate is 2c; it checks caregiver_profiles.published / caregiver_profile_published()).
@@ -17,7 +17,7 @@
 //     'send_link' {profile_id, phone?, email?, dry?} -> dry: the exact text + email (nothing sent). Otherwise texts +
 //                 emails their personal link (same rules as welcome-call: texts 8am-6pm Central, never to someone whose
 //                 application said no to texts, STOP line; email always; every refusal raises a card), stamps
-//                 link_sent_at/by and ticks "Photo link sent" on their open welcome call.
+//                 link_sent_at/by and ticks "Photo link sent" on their open Orientation Video Call.
 //     'publish' / 'unpublish' {profile_id} -> publish refuses (with reasons) unless there is a photo, their permission,
 //                 and all three sections are filled with no [ask: ...] prompts left.
 //                 Publishing clears needs_review (2b: an older intro moved over, still to be checked). An older
@@ -639,7 +639,7 @@ Deno.serve(async (req) => {
     if (locked(p)) return json({ error: 'Their profile is published, so their own link is locked. To change the photo, use "Replace photo" here, or Unpublish first and then send the link.' }, 409)
     const first = p.preferred_name || p.first_name || 'there'
     const m = (p.self_complete === true ? catchupMessages : linkMessages)(first, profileLink(p.upload_token))
-    /* where to send: what the office passed, else their welcome call, else their application */
+    /* where to send: what the office passed, else their Orientation Video Call, else their application */
     let phone = clean(b.phone, 30), email = clean(b.email, 120).toLowerCase()
     if ((!phone || !email) && p.candidate_id) {
       const { data: wc } = await db.from('welcome_calls').select('phone, email').eq('candidate_id', p.candidate_id).order('invited_at', { ascending: false }).limit(1)
