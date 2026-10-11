@@ -26,7 +26,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { checkLink } from '../_shared/applicant-links.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { FORMS, FORM_ORDER, formFingerprint, REFERENCES_REQUIRED, APPROVED_FOR_REAL, MATCHING_FACTS, type FormKey, type Item, type Form } from '../_shared/step1-documents.ts'
-import { seal, open as unseal, last4, ssnLooksValid, REVEAL_TTL_MS, REVEAL_FIELDS, REVEAL_PERMISSION, type RevealField } from '../_shared/step1-crypto.ts'
+import { seal, open as unseal, last4, ssnLooksValid, REVEAL_TTL_MS, REVEAL_FIELDS, REVEAL_PERMISSION, type RevealField, ssnAllowed, practiceOffer } from '../_shared/step1-crypto.ts'
 import { PERM_KEY, normalizePerms, mayApprove } from '../_shared/onboarding-permissions.ts'
 import { step1FormPdf, type IdentityState } from '../_shared/step1-pdf.ts'
 import { longDateTime } from '../_shared/offer-documents.ts'
@@ -39,7 +39,7 @@ export const BUCKET = 'onboarding-documents'
 export const SCREENS = ['1', '2', '3', '4', '5a', '5b', '6', '7', '8', '9']
 export const IDENTITY_IDS = ['ssn', 'dob', 'license_number']
 const MAP_TABLES = new Set(['windows', 'specialties', 'matching_facts'])
-const COLS = 'id,first_name,last_name,phone,email,position,onboarding_path,offer_status,offer_signed_at,pd_signed_at,offer_withdrawn_at,offer_declined_at,step1_sent_at,step1_done_at'
+const COLS = 'id,first_name,last_name,phone,email,position,offered_by,onboarding_path,offer_status,offer_signed_at,pd_signed_at,offer_withdrawn_at,offer_declined_at,step1_sent_at,step1_done_at'
 
 function trn() {
   const url = Deno.env.get('OFFERS_PROJECT_URL') ?? '', key = Deno.env.get('OFFERS_SERVICE_ROLE_KEY') ?? ''
@@ -371,7 +371,7 @@ Deno.serve(async (req) => {
         if (sigs.edl_fcsr_consent) return json({ ok: false, error: 'The consent form is already signed, so the Social Security number and date of birth cannot change here. Call the office: (417) 234-8494.' }, 409)
         const ssn = digits(b.ssn), ssn2 = digits(b.ssn2)
         if (ssn !== ssn2) return json({ ok: false, error: 'The two Social Security numbers do not match. Please type it twice, digits only.' }, 400)
-        if (!ssnLooksValid(ssn)) return json({ ok: false, error: 'That does not look like a Social Security number. Please check it.' }, 400)
+        if (!ssnAllowed(ssn, practiceOffer(o))) return json({ ok: false, error: 'That does not look like a Social Security number. Please check it.' + (practiceOffer(o) ? ' For a practice or training hire, use 987-65-4321 (a number never issued to anyone).' : '') }, 400)
         upd.ssn_sealed = await seal(kek, id, ssn); upd.ssn_last4 = last4(ssn); did.push('ssn')
       }
       if (b.dob != null) {
