@@ -1,5 +1,6 @@
 -- screening_gate_586_rollback.sql: puts interview_book back as 512 installed it and interview_mine as 461 installed it,
--- and removes the three 586 functions. The screened_by / screened_at columns stay (harmless; they keep who answered).
+-- and removes the 586 functions and both guards. The new columns stay (harmless; screened_by/screened_at/booked_by keep
+-- the audit history, and screen_grandfathered does nothing without 586).
 begin;
 
 CREATE OR REPLACE FUNCTION public.interview_book(p_applicant uuid, p_starts timestamp with time zone)
@@ -131,6 +132,11 @@ begin
     'blocked', v_blocked);
 end $function$;
 
+drop trigger if exists interview_bookings_screen_guard on public.interview_bookings;
+drop trigger if exists job_applicants_screen_guard on public.job_applicants;
+drop function if exists public.interview_bookings_screen_guard();
+drop function if exists public.job_applicants_screen_guard();
+drop function if exists public.applicant_grandfathered_move(uuid);
 drop function if exists public.applicant_followup_stop(uuid);
 drop function if exists public.applicant_screen_by_office(uuid, boolean, boolean, boolean, boolean, boolean);
 drop function if exists public.applicant_screening_gap(uuid);

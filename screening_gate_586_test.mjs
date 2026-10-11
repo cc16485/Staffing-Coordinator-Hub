@@ -51,8 +51,18 @@ const mine = async (a) => (await q(`select interview_mine($1) m`, [a]))[0].m
 // ---- before 586: the gap is real
 const before = await app({ ans: null })
 ck('(set-up) BEFORE 586 a step-1-only application CAN book: the gap is real', (await tryBook(before)) === null)
+const preBooking = (await q(`select id, starts_at from interview_bookings where applicant_id = $1 and status = 'booked'`, [before]))[0]
 
 await ex(fs.readFileSync('screening_gate_586.sql', 'utf8').replace(/^notify .*$/m, ''))
+
+// ---- interviews already booked stay as they are
+const pre = (await q(`select status, screen_grandfathered g, starts_at from interview_bookings where id = $1`, [preBooking.id]))[0]
+ck('an interview booked before 586 is untouched (still booked, same time) and marked as existing', pre.status === 'booked' && pre.g === true && +pre.starts_at === +preBooking.starts_at, pre)
+await asRole('anon')
+const mvPre = await err(`select interview_reschedule($1, ${day(slot++, 9)}, 'applicant')`, [before])
+const preNow = await q(`select status, screen_grandfathered g, booked_by from interview_bookings where applicant_id = $1 order by created_at`, [before])
+ck('...they can still move it online like before, and the new time keeps the mark', mvPre === null && preNow.filter((x) => x.status === 'booked').length === 1 && preNow.find((x) => x.status === 'booked').g === true, { mvPre, preNow })
+ck('...but they cannot add a second booking on top (still one live booking)', (await q(`select count(*)::int n from interview_bookings where applicant_id = $1 and status = 'booked'`, [before]))[0].n === 1)
 
 // ---- the public (their link / the form)
 await asRole('anon')
@@ -77,11 +87,11 @@ const prnNotCna = await app({ done: true, status: 'new', position: 'prn_cna', pr
 ck('PRN role, not a CNA: refused as ineligible', /SCREEN_FIRST: ineligible/.test(await tryBook(prnNotCna) || ''))
 
 // a move goes through interview_book too, and a refused move keeps the old booking
-await ex(`update job_applicants set has_transport = null where id = '${done}'`)
+await ex(`begin; set local cc.screening_correction = 'on'; update job_applicants set has_transport = null where id = '${done}'; commit;`)   // fixture only
 const mv = await err(`select interview_reschedule($1, ${day(slot++, 11)}, 'applicant')`, [done])
 const still = await q(`select status from interview_bookings where applicant_id = $1 order by created_at`, [done])
 ck('a move by someone whose answers are missing is refused, and their booking stays', /SCREEN_FIRST/.test(mv || '') && still.length === 1 && still[0].status === 'booked', { mv, still })
-await ex(`update job_applicants set has_transport = true where id = '${done}'`)
+await ex(`begin; set local cc.screening_correction = 'on'; update job_applicants set has_transport = true where id = '${done}'; commit;`)   // fixture only
 
 // the public cannot use the office's door or read the helpers
 ck('the public cannot record answers as the office', /sign in first|permission/.test(await err(`select applicant_screen_by_office($1, true, true, true)`, [step1]) || ''))
@@ -103,11 +113,42 @@ const r2 = (await q(`select status, completed_at is not null c from job_applican
 ck('office finishing a step-1 application by phone: finished, moved to reviewing, bookable', g2 === null && r2.status === 'reviewing' && r2.c, { g2, r2 })
 const g3 = (await q(`select applicant_screen_by_office($1, true, true, true) g`, [decl]))[0].g
 ck('office answers cannot clear a decline', g3 === 'ineligible')
-const g4 = (await q(`select applicant_screen_by_office($1, false, true, true) g`, [step2]))[0].g
-ck('an office no stays a no (ineligible, not bookable)', g4 === 'ineligible' && /ineligible/.test(await tryBook(step2) || ''))
+const phoneNo = await app({ ans: null })
+const g4 = (await q(`select applicant_screen_by_office($1, false, true, true) g`, [phoneNo]))[0].g
+ck('an office no stays a no (ineligible, not bookable)', g4 === 'ineligible' && /ineligible/.test(await tryBook(phoneNo) || ''))
 ck('all three answers are needed from the office', /all three/.test(await err(`select applicant_screen_by_office($1, true, null, true)`, [prnNo]) || ''))
 const gP = (await q(`select applicant_screen_by_office($1, true, true, true, true, true) g`, [prnNo]))[0].g
 ck('office PRN answers (CNA yes) fill the PRN questions', gP === null)
+
+// ---- audit: who booked
+ck('booked_by: the form/link records "applicant"', (await q(`select booked_by from interview_bookings where applicant_id = $1 and status = 'booked'`, [done]))[0].booked_by === 'applicant')
+ck('booked_by: an office booking records the office user', (await q(`select booked_by from interview_bookings where applicant_id = $1 and status = 'booked'`, [hand]))[0].booked_by === 'krystal@mo-care.com')
+
+// ---- answers already given cannot be overwritten
+const locked = await app({ done: true, status: 'new' })
+ck('office cannot change an answer the applicant gave (function refuses and names it)', /SCREENING_LOCKED/.test(await err(`select applicant_screen_by_office($1, false, true, true)`, [locked]) || ''))
+ck('the same answers again is fine (nothing changes)', (await q(`select applicant_screen_by_office($1, true, true, true) g`, [locked]))[0].g === null)
+ck('a direct edit by a signed-in user is refused too (any Hub screen)', /SCREENING_LOCKED/.test(await err(`update job_applicants set has_transport = false where id = $1`, [locked]) || ''))
+ck('a decline cannot be cleared', /SCREENING_LOCKED/.test(await err(`update job_applicants set decline_reason = null where id = $1`, [decl]) || ''))
+await asRole('anon')
+const filling = await app({})   // partial, answered yes
+ck('the applicant still filling in the form may change a yes before finishing', (await err(`update job_applicants set has_transport = false where id = $1`, [filling])) === null)
+ck('...but a no is final, even for them', /SCREENING_LOCKED/.test(await err(`update job_applicants set has_transport = true where id = $1`, [filling]) || ''))
+ck('...and an old link still cannot book them (ineligible)', /SCREEN_FIRST: ineligible/.test(await tryBook(filling) || ''))
+await asRole('authenticated', 'krystal@mo-care.com')
+ck('the office cannot fill around a no either', /SCREENING_LOCKED/.test(await err(`select applicant_screen_by_office($1, true, true, true)`, [filling]) || ''))
+await ex(`begin; set local cc.screening_correction = 'on'; update job_applicants set has_transport = true where id = '${filling}'; commit;`)
+ck('a deliberate correction from the SQL editor is still possible (and only that way)', (await q(`select has_transport t from job_applicants where id = $1`, [filling]))[0].t === true)
+await ex(`update job_applicants set has_transport = false where id = '${filling}'`).catch(() => {})
+
+// ---- no booking route around the rule
+ck('a direct insert of a booking is refused (only interview_book can book)', /SCREEN_FIRST/.test(await err(`insert into interview_bookings (applicant_id, starts_at, ends_at) values ($1, now() + interval '3 days', now() + interval '3 days 30 minutes')`, [step2]) || ''))
+const cxApp = await app({ done: true, status: 'new' }); await tryBook(cxApp)
+await q(`select interview_cancel($1, 'test', 'office')`, [cxApp])
+const cxRow = (await q(`select id from interview_bookings where applicant_id = $1 and status = 'cancelled' limit 1`, [cxApp]))[0]
+ck('turning a cancelled booking back into a booked one directly is refused', /SCREEN_FIRST/.test(await err(`update interview_bookings set status = 'booked' where id = $1`, [cxRow.id]) || ''))
+ck('nobody can set the "booked before 586" mark', /SCREENING_LOCKED/.test(await err(`update interview_bookings set screen_grandfathered = true where id = $1`, [cxRow.id]) || ''))
+ck('stamping a booking (the reminders) still works', (await err(`update interview_bookings set reminded_day_at = now() where applicant_id = $1 and status = 'booked'`, [done])) === null)
 
 // ---- follow-ups stop
 const stop = async (a) => (await q(`select applicant_followup_stop($1) s`, [a]))[0].s
@@ -137,9 +178,23 @@ const b2 = (await q(`select pg_get_functiondef('public.interview_book(uuid,times
 const m2 = (await q(`select pg_get_functiondef('public.interview_mine(uuid)'::regprocedure) d`))[0].d
 ck('ROLLBACK puts interview_book back exactly as 512 had it', b2 === book512)
 ck('ROLLBACK puts interview_mine back exactly as 461 had it', m2 === mine461)
-ck('ROLLBACK removes the three 586 functions', (await q(`select count(*)::int n from pg_proc where proname in ('applicant_screening_gap','applicant_screen_by_office','applicant_followup_stop')`))[0].n === 0)
+ck('ROLLBACK removes the 586 functions and both guards', (await q(`select count(*)::int n from pg_proc where proname in ('applicant_screening_gap','applicant_screen_by_office','applicant_followup_stop','applicant_grandfathered_move','job_applicants_screen_guard','interview_bookings_screen_guard')`))[0].n === 0
+  && (await q(`select count(*)::int n from pg_trigger where tgname like '%screen_guard'`))[0].n === 0)
+ck('after ROLLBACK, booking works as before 586 (the existing booking route is intact)', (await tryBook(await app({ done: true, status: 'new' }))) === null)
 const sql = fs.readFileSync('screening_gate_586.sql', 'utf8')
-ck('586 is one transaction and drops nothing', /^begin;$/m.test(sql) && /^commit;$/m.test(sql) && !/\bdrop\b/i.test(sql.replace(/--.*$/gm, '')))
+const drops = sql.replace(/--.*$/gm, '').match(/^.*\bdrop\b.*$/gim) || []
+ck('586 is one transaction and drops nothing but its own two triggers (so running it twice is safe)', /^begin;$/m.test(sql) && /^commit;$/m.test(sql)
+  && drops.length === 2 && drops.every((l) => /drop trigger if exists (job_applicants|interview_bookings)_screen_guard/.test(l)), drops)
+const S586 = fs.readFileSync('screening_gate_586.sql', 'utf8').replace(/^notify .*$/m, '')
+await ex(S586); const exErr = async (t) => { try { await ex(t); return null } catch (e) { return String(e.message) } }
+const reErr = await exErr(S586); ck('installing 586 a second time on top of itself works', reErr === null, reErr)
+await ex(fs.readFileSync('screening_gate_586_rollback.sql', 'utf8').replace(/^notify .*$/m, ''))
+// a deployment that fails part way changes nothing: the whole file is one transaction
+const broken = S586.replace(/^commit;$/m, 'select 1/0;\ncommit;')
+const bErr = await exErr(broken); await ex('rollback').catch(() => {})
+const b3 = (await q(`select pg_get_functiondef('public.interview_book(uuid,timestamptz)'::regprocedure) d`))[0].d
+ck('a failed deployment leaves everything exactly as it was (no half install)', !!bErr && b3 === book512
+  && (await q(`select count(*)::int n from pg_proc where proname = 'applicant_screening_gap'`))[0].n === 0, bErr)
 
 let pass = 0; for (const [nm, ok, note] of res) { console.log((ok ? 'PASS  ' : 'FAIL  ') + nm + (ok ? '' : '  ' + note)); if (ok) pass++ }
 console.log(pass === res.length ? `ALL ${res.length} CHECKS PASS` : `${res.length - pass} OF ${res.length} FAILED`); process.exit(pass === res.length ? 0 : 1)

@@ -16,6 +16,14 @@
 --   · interview_mine: their link says 'screen_first' (and whether the form can still be finished) instead of times.
 --   · applicant_screen_by_office(...): the office records the answers it got on the phone (hand-entered people never
 --     saw the form), with who and when, and finishes the application. A no stays a no: it cannot clear a decline.
+--   · Answers are locked once given (Samantha: "Existing screening answers cannot be accidentally overwritten by office
+--     staff"): a trigger refuses any change to a given answer or a decline, from any screen. The one exception is the
+--     applicant still filling in the form (status 'partial'), who may change a yes before finishing. A no is final.
+--   · Bookings are guarded at the table too: a booking row can only become 'booked' through interview_book, which runs
+--     the screening rule, so a direct write cannot get round it. One booking at a time per person (a lock).
+--   · interview_bookings.booked_by: 'applicant' or the office user's email, for the audit history.
+--   · Interviews already booked stay exactly as they are, including being moved online (they are marked
+--     screen_grandfathered at install; nobody else can set that mark).
 --   · applicant_followup_stop(p): why the "pick a time" follow-ups must not go (booked, withdrew, cancelled by the
 --     office, ineligible, closed). Opt-outs are checked at the moment of sending, as now.
 -- Interviews already booked are left exactly as they are. Built on interview_book as installed by 512 and interview_mine
@@ -25,6 +33,8 @@ begin;
 
 alter table public.job_applicants add column if not exists screened_by text;
 alter table public.job_applicants add column if not exists screened_at timestamptz;
+alter table public.interview_bookings add column if not exists booked_by text;
+alter table public.interview_bookings add column if not exists screen_grandfathered boolean not null default false;
 
 create or replace function public.applicant_screening_gap(p uuid)
  returns text language sql stable security definer set search_path to 'public' as $f$
@@ -54,11 +64,21 @@ begin
     raise exception 'all three answers are needed';
   end if;
   v_by := coalesce(nullif(auth.jwt()->>'email',''), 'office');
+  -- Fill only: an answer already on file (from the form or an earlier call) is never changed here. A different answer
+  -- is refused and named, so a mis-click cannot quietly undo what the applicant said.
+  if exists (select 1 from public.job_applicants a where a.id = p and (
+       (a.age_ok is not null and a.age_ok is distinct from p_age_ok)
+    or (a.work_auth is not null and a.work_auth is distinct from p_work_auth)
+    or (a.has_transport is not null and a.has_transport is distinct from p_has_transport)
+    or (p_prn_cna is not null and a.prn ? 'cna' and (a.prn->>'cna')::boolean is distinct from p_prn_cna)
+    or (p_prn_one_year is not null and a.prn ? 'one_year' and (a.prn->>'one_year')::boolean is distinct from p_prn_one_year)))
+  then raise exception 'SCREENING_LOCKED: an answer is already on file and is different; answers already given cannot be changed'; end if;
   update public.job_applicants a set
-    age_ok = p_age_ok, work_auth = p_work_auth, has_transport = p_has_transport,
+    age_ok = coalesce(a.age_ok, p_age_ok), work_auth = coalesce(a.work_auth, p_work_auth),
+    has_transport = coalesce(a.has_transport, p_has_transport),
     prn = case when exists (select 1 from public.job_positions jp where jp.key = a.position and jp.track = 'prn')
                 and (p_prn_cna is not null or p_prn_one_year is not null)
-               then coalesce(a.prn, '{}'::jsonb) || jsonb_strip_nulls(jsonb_build_object('cna', p_prn_cna, 'one_year', p_prn_one_year))
+               then jsonb_strip_nulls(jsonb_build_object('cna', p_prn_cna, 'one_year', p_prn_one_year)) || coalesce(a.prn, '{}'::jsonb)
                else a.prn end,
     completed_at = coalesce(a.completed_at, now()),
     status = case when a.status = 'partial' then 'reviewing' else a.status end,
@@ -69,6 +89,73 @@ begin
 end $f$;
 revoke all on function public.applicant_screen_by_office(uuid, boolean, boolean, boolean, boolean, boolean) from public, anon;
 grant execute on function public.applicant_screen_by_office(uuid, boolean, boolean, boolean, boolean, boolean) to authenticated;
+
+-- Answers already given stay as given. Applies to every route (Hub screens, the API, other functions). The applicant
+-- still filling in the form may change a yes before finishing; a no (and any decline) is final. A deliberate correction
+-- is possible only from the SQL editor with: set local cc.screening_correction = 'on';
+create or replace function public.job_applicants_screen_guard()
+ returns trigger language plpgsql set search_path to 'public' as $f$
+declare
+  v_form boolean := old.status = 'partial' and coalesce(auth.role(),'anon') <> 'authenticated';
+  v_old boolean; v_new boolean; k text;
+begin
+  if coalesce(current_setting('cc.screening_correction', true), '') = 'on' then return new; end if;
+  foreach k in array array['age_ok','work_auth','has_transport','prn_cna','prn_one_year'] loop
+    v_old := case k when 'age_ok' then old.age_ok when 'work_auth' then old.work_auth when 'has_transport' then old.has_transport
+                    when 'prn_cna' then (old.prn->>'cna')::boolean else (old.prn->>'one_year')::boolean end;
+    v_new := case k when 'age_ok' then new.age_ok when 'work_auth' then new.work_auth when 'has_transport' then new.has_transport
+                    when 'prn_cna' then (new.prn->>'cna')::boolean else (new.prn->>'one_year')::boolean end;
+    if v_old is not null and v_new is distinct from v_old and not (v_form and v_old) then
+      raise exception 'SCREENING_LOCKED: % was already answered; answers already given cannot be changed', k;
+    end if;
+  end loop;
+  if old.decline_reason is not null and new.decline_reason is distinct from old.decline_reason then
+    raise exception 'SCREENING_LOCKED: this application was declined by a screening answer; that cannot be undone here';
+  end if;
+  return new;
+end $f$;
+drop trigger if exists job_applicants_screen_guard on public.job_applicants;
+create trigger job_applicants_screen_guard before update of age_ok, work_auth, has_transport, prn, decline_reason
+  on public.job_applicants for each row execute function public.job_applicants_screen_guard();
+
+-- An interview already booked before 586 may still be moved (by them online, or by the office) without the questions:
+-- "keep the existing bookings unchanged". True while they hold one, or inside the move that just let it go.
+create or replace function public.applicant_grandfathered_move(p uuid)
+ returns boolean language sql stable security definer set search_path to 'public' as $f$
+  select exists (select 1 from public.interview_bookings b
+                  where b.applicant_id in (select public.applicant_person_ids(p)) and b.screen_grandfathered
+                    and (b.status = 'booked' or (b.status = 'cancelled' and b.cancelled_by = 'reschedule' and b.cancelled_at = now())))
+$f$;
+revoke all on function public.applicant_grandfathered_move(uuid) from public, anon, authenticated;
+
+-- A booking row only becomes 'booked' through interview_book (which runs the screening rule and marks the moment it
+-- has). A direct insert or update by anyone else is refused, and nobody but the install can set the grandfathered mark.
+create or replace function public.interview_bookings_screen_guard()
+ returns trigger language plpgsql set search_path to 'public' as $f$
+declare v_ok boolean := coalesce(current_setting('cc.screen_checked', true), '') = new.applicant_id::text;
+        v_corr boolean := coalesce(current_setting('cc.screening_correction', true), '') = 'on';
+begin
+  if v_corr then return new; end if;
+  if tg_op = 'UPDATE' and new.screen_grandfathered is distinct from old.screen_grandfathered then
+    raise exception 'SCREENING_LOCKED: the grandfathered mark is set only at install';
+  end if;
+  if new.status = 'booked' and (tg_op = 'INSERT' or old.status is distinct from 'booked') and not v_ok then
+    raise exception 'SCREEN_FIRST: bookings are made through interview_book only';
+  end if;
+  if tg_op = 'INSERT' and new.screen_grandfathered and not v_ok then
+    raise exception 'SCREENING_LOCKED: the grandfathered mark is set only at install';
+  end if;
+  return new;
+end $f$;
+drop trigger if exists interview_bookings_screen_guard on public.interview_bookings;
+create trigger interview_bookings_screen_guard before insert or update on public.interview_bookings
+  for each row execute function public.interview_bookings_screen_guard();
+
+-- Existing interviews keep working exactly as before (see applicant_grandfathered_move).
+set local cc.screening_correction = 'on';
+update public.interview_bookings b set screen_grandfathered = true
+ where b.status = 'booked' and public.applicant_screening_gap(b.applicant_id) is not null;
+set local cc.screening_correction = 'off';
 
 -- Why the "pick a time" follow-ups must stop for this application (null = they may go). Checked on every run, per person
 -- (all of their applications), so a booking or a cancel under another application counts too.
@@ -102,7 +189,7 @@ AS $function$
 declare
   a public.activity_types;
   v_id uuid; v_who uuid; v_end timestamptz; v_ok boolean;
-  v_gap text;
+  v_gap text; v_gf boolean;
 begin
   select * into a from public.activity_types where key = 'interview';
   v_end := p_starts + (a.minutes || ' minutes')::interval;
@@ -121,7 +208,12 @@ begin
   -- interview booking, even if someone opens a booking link directly"). Every door comes through here: the form, their
   -- link, a move (interview_reschedule calls this), and the office's Book a time.
   v_gap := public.applicant_screening_gap(p_applicant);
-  if v_gap is not null then raise exception 'SCREEN_FIRST: %', v_gap; end if;
+  v_gf  := v_gap is not null and public.applicant_grandfathered_move(p_applicant);   -- an interview booked before 586
+  if v_gap is not null and not v_gf then raise exception 'SCREEN_FIRST: %', v_gap; end if;
+  -- One booking at a time per person: two taps, two tabs, or the office and the applicant at the same moment queue
+  -- here instead of both booking.
+  perform pg_advisory_xact_lock(hashtext('interview_book:' || (select min(x::text) from public.applicant_person_ids(p_applicant) x)));
+  perform set_config('cc.screen_checked', p_applicant::text, true);   -- lets the booking-table guard know the rule ran
 
   -- 461 (Samantha: "reapply with us reviewing first"): applied again after the office chose not to move forward. They
   -- cannot book until the office approves this application (Hub: Approve, let them book). Replaces the older check that
@@ -175,8 +267,11 @@ begin
   delete from public.coordinator_busy
    where source = 'interview' and source_id in (select x::text from public.applicant_person_ids(p_applicant) x);
 
-  insert into public.interview_bookings (applicant_id, coordinator_id, starts_at, ends_at)
-  values (p_applicant, v_who, p_starts, v_end) returning id into v_id;
+  insert into public.interview_bookings (applicant_id, coordinator_id, starts_at, ends_at, booked_by, screen_grandfathered)
+  values (p_applicant, v_who, p_starts, v_end,
+          case when coalesce(auth.role(),'anon') = 'authenticated' then coalesce(nullif(auth.jwt()->>'email',''), 'office') else 'applicant' end,
+          coalesce(v_gf, false))
+  returning id into v_id;
 
   insert into public.coordinator_busy (coordinator_id, starts_at, ends_at, source, source_id, label)
   values (v_who, p_starts, v_end, 'interview', p_applicant::text,

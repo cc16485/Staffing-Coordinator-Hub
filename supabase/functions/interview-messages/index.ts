@@ -134,6 +134,23 @@ Deno.serve(async (req) => {
     },
   })
 
+  /* 586 (Samantha, 2026-10-11: "Duplicate messages and duplicate bookings are prevented"). CLAIM BEFORE SENDING: the
+     "sent" stamp goes on first, and only if it is still empty, so two runs that overlap (or a stamp that failed to save
+     after a send, which used to mean the same message again 15 minutes later) can never send a message twice. If the
+     claim cannot be written, nothing is sent. A send that GoHighLevel refuses after the claim is not retried; it raises a
+     Needs Attention card as before (no silent failures). */
+  const claim = async (table: string, id: unknown, col: string, extra: Record<string, string> = {}) => {
+    const { data, error } = await supabase.from(table).update({ [col]: new Date().toISOString(), ...extra })
+      .eq('id', id).is(col, null).select('id')
+    const won = !error && Array.isArray(data) && data.length === 1
+    if (!won) plan.held.push(`not sent (${table}.${col}): ${error ? 'the sent mark could not be saved' : 'already sent by another run'}`)
+    return won
+  }
+  /* 586: a text to an applicant needs THIS application's yes to texts AND their latest application's (a later "no"
+     wins), checked the same way as the office's own texts. Opt-outs are checked per channel by the door as it sends. */
+  // deno-lint-ignore no-explicit-any
+  const textOk = async (who: any) => !!who.phone && who.sms_consent === true && (await latestTextConsent(supabase, who.phone)).ok
+
   const shell = (body: string) =>
     `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">${body}` +
     `<p style="color:#57606a">Caring Companions In-Home Senior Care<br>${phone}</p></div>`
@@ -167,13 +184,12 @@ Deno.serve(async (req) => {
     const when = new Date(b.starts_at)
     const untilHours = (when.getTime() - Date.now()) / 3_600_000
     const day = fmtDay(when), time = fmtTime(when)
-    const canText = !!a.phone && a.sms_consent === true
     /* The same link the nudges use: it opens on THEIR booking, with move and
        cancel one tap away. "Call us and we will move it" was a promise with a
        queue in front of it; this is the promise kept. */
     const manageUrl = 'https://mo-care.com/apply?book=' + encodeURIComponent(String(b.applicant_id))
 
-    const send = async (kind: 'confirm' | 'day' | 'hour') => {
+    const send = async (kind: 'confirm' | 'day' | 'hour', col: string, extra: Record<string, string> = {}) => {
       /* Refuse outside outreach hours rather than at each call site, so a new
          message type added later cannot forget the rule. The item is not
          marked sent, so it goes out on the first run after 8am. */
@@ -181,6 +197,8 @@ Deno.serve(async (req) => {
       if (!ghlToken || !ghlLocation) return false
       const to = applicantDoor(a, first)
       if (!to) return false
+      if (!(await claim('interview_bookings', b.id, col, extra))) return false
+      const canText = await textOk(a)
 
       /* IN PERSON (2026-10-01, Samantha: "make sure it says in-person interview, we do not do phone interviews
          anymore... we had someone not come to their in-person interview today because they thought it was a phone
@@ -208,19 +226,14 @@ Deno.serve(async (req) => {
 
     if (!b.confirmed_at) {
       plan.confirm.push(`${first}: ${day} ${time}`)
-      if (!dry && await send('confirm')) {
-        const stamp: Record<string, string> = { confirmed_at: new Date().toISOString() }
-        /* Booked inside the day-before window: the confirmation IS the
-           day-before notice. Without this, the next run followed it fifteen
-           minutes later with "reminder: your interview is tomorrow". */
-        if (untilHours <= 30) stamp.reminded_day_at = stamp.confirmed_at
-        await supabase.from('interview_bookings').update(stamp).eq('id', b.id)
+      /* Booked inside the day-before window: the confirmation IS the day-before notice (stamped with it). Without
+         this, the next run followed it fifteen minutes later with "reminder: your interview is tomorrow". */
+      if (!dry && await send('confirm', 'confirmed_at', untilHours <= 30 ? { reminded_day_at: new Date().toISOString() } : {})) {
         out.confirmed++
       }
     } else if (!b.reminded_day_at && untilHours <= 30 && untilHours > 2) {
       plan.day.push(`${first}: ${day} ${time}`)
-      if (!dry && await send('day')) {
-        await supabase.from('interview_bookings').update({ reminded_day_at: new Date().toISOString() }).eq('id', b.id)
+      if (!dry && await send('day', 'reminded_day_at')) {
         out.reminded_day++
       }
     /* The lower bound reaches 15 minutes PAST the start on purpose: for an
@@ -229,8 +242,7 @@ Deno.serve(async (req) => {
        the easiest ones to forget, were the only ones never reminded. */
     } else if (!b.reminded_hour_at && untilHours <= 1.5 && untilHours > -0.25) {
       plan.hour.push(`${first}: ${time}`)
-      if (!dry && await send('hour')) {
-        await supabase.from('interview_bookings').update({ reminded_hour_at: new Date().toISOString() }).eq('id', b.id)
+      if (!dry && await send('hour', 'reminded_hour_at')) {
         out.reminded_hour++
       }
     }
@@ -320,6 +332,8 @@ Deno.serve(async (req) => {
     if (!ghlToken || !ghlLocation) continue
     const to = applicantDoor(p, first)
     if (!to) continue
+    const col = step === 1 ? 'nudge_1_at' : step === 2 ? 'nudge_2_at' : 'nudge_3_at'
+    if (!(await claim('job_applicants', p.id, col))) continue
 
     const line = prn && step === 1
       ? `Hi ${first}! Thanks for applying for Caring Companions' PRN CNA Team. Based on your Priority Application, we'd like to meet you in person. Choose an in-person interview time at our office here: ${bookUrl}`
@@ -329,14 +343,12 @@ Deno.serve(async (req) => {
       ? `Hi ${first}, we still have in-person interview times open at our office this week if you would like one: ${bookUrl} Or call us on ${phone} and we will book it with you.`
       : `Hi ${first}, last note from us so we are not a nuisance. If you would still like to talk about caregiving work, pick a time here: ${bookUrl} or call ${phone}. We would be glad to hear from you.`
 
-    if (p.phone && p.sms_consent === true) await to.sms(line)
+    if (await textOk(p)) await to.sms(line)
     if (p.email) await to.email(
       step === 3 ? 'One last note from Caring Companions' : prn && step === 1 ? 'Choose your in-person interview time: PRN CNA Team' : 'Pick a time to come and meet us in person',
       shell(`<p>Hi ${first},</p><p>${line.replace(bookUrl, `<a href="${bookUrl}">${bookUrl}</a>`)}</p>` +
         (step === 1 ? whereBlock() : '')))
 
-    const col = step === 1 ? 'nudge_1_at' : step === 2 ? 'nudge_2_at' : 'nudge_3_at'
-    await supabase.from('job_applicants').update({ [col]: new Date().toISOString() }).eq('id', p.id)
     out.nudged++
   }
 
@@ -383,13 +395,12 @@ Deno.serve(async (req) => {
       /* Staff sleep too. A midnight application is announced at 8am, not the
          moment it lands — office_alerted_at stays null until it really sends. */
       if (!withinOutreachHours()) continue
+      if (!(await claim('job_applicants', p.id, 'office_alerted_at'))) continue
 
       for (const t of alertTo!) {
         if (t.phone) { const cid = await staffContact(t, 'sms'); if (cid) await sms(cid, line, t) }
         if (t.email) { const cid = await staffContact(t, 'email'); if (cid) await email(cid, `New applicant: ${who}`, shell(`<p>${line}</p>`), t) }
       }
-      await supabase.from('job_applicants')
-        .update({ office_alerted_at: new Date().toISOString() }).eq('id', p.id)
       out.alerted++
     }
   }
@@ -421,11 +432,11 @@ Deno.serve(async (req) => {
       plan.alerted.push(who + (why === 'dnr' ? ' (on the do-not-rehire list)' : ' (applied again, needs review)'))
       if (dry) continue
       if (!withinOutreachHours()) continue
+      if (!(await claim('job_applicants', p.id, 'office_alerted_at'))) continue
       for (const t of alertTo!) {
         if (t.phone) { const cid = await staffContact(t, 'sms'); if (cid) await sms(cid, line, t) }
         if (t.email) { const cid = await staffContact(t, 'email'); if (cid) await email(cid, why === 'dnr' ? `Do-not-rehire applicant: ${who}` : `Applied again: ${who}`, shell(`<p>${line}</p>`), t) }
       }
-      await supabase.from('job_applicants').update({ office_alerted_at: new Date().toISOString() }).eq('id', p.id)
       out.alerted++
     }
   }
@@ -468,10 +479,11 @@ Deno.serve(async (req) => {
     if (dry) continue
     if (!withinOutreachHours()) continue        // not stamped, so it goes out after 8am
     if (!ghlToken || !ghlLocation) continue
+    if (!(await claim('interview_bookings', b.id, 'cancel_notified_at'))) continue
 
     const to = applicantDoor(a, first)
     if (to) {
-      if (a.phone && a.sms_consent === true) await to.sms(
+      if (await textOk(a)) await to.sms(
         `Hi ${first}, your interview with Caring Companions for ${day} at ${time} is cancelled, so there is nothing more to do. ` +
         `Want a different time? Pick one here: ${bookUrl} or call ${phone}.`)
       if (a.email) await to.email(`Your interview on ${day} is cancelled`,
@@ -492,8 +504,6 @@ Deno.serve(async (req) => {
       }
     }
 
-    await supabase.from('interview_bookings')
-      .update({ cancel_notified_at: new Date().toISOString() }).eq('id', b.id)
     out.cancel_notified++
   }
 
@@ -534,9 +544,11 @@ Deno.serve(async (req) => {
         if (id) await ghlSendChecked(supabase, h, 'welcome-call', { channel: 'email', contactId: id, address: w.email, who: name }, { subject, html })
       }
       const join = `<p><a href="${meet}" style="background:#F0A63A;color:#122F52;text-decoration:none;padding:12px 20px;border-radius:8px;font-weight:700;display:inline-block">Join the video call</a></p>`
+      /* 586: claimed first, like everything above */
+      const wcol = kind === 'confirm' ? 'confirmed_at' : kind === 'day' ? 'reminded_day_at' : 'reminded_hour_at'
+      if (!(await claim('welcome_calls', w.id, wcol, kind === 'confirm' && until <= 30 ? { reminded_day_at: new Date().toISOString() } : {}))) continue
       if (kind === 'hour') {
         await sendText(`Hi ${first}, your welcome video call with Caring Companions is at ${time} today. At that time, tap here to join: ${meet}`)
-        await supabase.from('welcome_calls').update({ reminded_hour_at: new Date().toISOString() }).eq('id', w.id)
       } else {
         const confirm = kind === 'confirm'
         await sendText(`Hi ${first}, ${confirm ? 'your welcome video call with Caring Companions is booked for' : 'reminder: your welcome video call is'} ` +
@@ -546,9 +558,6 @@ Deno.serve(async (req) => {
           shell(`<p>Hi ${first},</p><p>${confirm ? 'Your 15-minute welcome video call is booked for' : 'A reminder that your welcome video call is'} <b>${day} at ${time}</b>.</p>` +
             `<p>At that time, open this link on your phone or computer (no app needed):</p>${join}` +
             `<p>Please have the <b>original ID documents</b> you uploaded in Viventium with you. Need a different time? <a href="${manage}">Pick a new one here</a>, or call us on ${phone}.</p>`))
-        const stamp: Record<string, string> = confirm ? { confirmed_at: new Date().toISOString() } : { reminded_day_at: new Date().toISOString() }
-        if (confirm && until <= 30) stamp.reminded_day_at = stamp.confirmed_at       // booked inside the day-before window
-        await supabase.from('welcome_calls').update(stamp).eq('id', w.id)
       }
       if (kind === 'confirm') out.welcome_confirmed++; else out.welcome_reminded++
     }

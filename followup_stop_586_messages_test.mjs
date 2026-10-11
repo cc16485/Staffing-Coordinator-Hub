@@ -22,10 +22,13 @@ const reset = (apps, { roles = true } = {}) => {
 }
 const q = (t) => { const st = { f: [], isNull: [], inF: null, nn: [] }; const b = {
   select() { return b; }, order() { return b; }, limit() { return b; }, gte() { return b; }, lte() { return b; },
-  eq(c, v) { st.f.push([c, v]); return b; }, in(c, v) { st.inF = [c, v]; return b; },
+  eq(c, v) { st.f.push([c, v]); return b; }, ilike(c, p) { st.like = [c, String(p).replace(/%/g, '')]; return b; }, in(c, v) { st.inF = [c, v]; return b; },
   is(c, v) { if (v === null) st.isNull.push(c); return b; }, not(c, op, v) { if (op === 'is' && v === null) st.nn.push(c); return b; },
-  update(obj) { return { eq: (c, v) => { for (const r of T[t] ?? []) if (r[c] === v) Object.assign(r, obj); return Promise.resolve({ data: null, error: null }) },
-                         in: () => Promise.resolve({ data: null, error: null }) } },
+  /* 586: updates chain (.eq / .is(col, null) / .select) like supabase-js, so a claim-before-send only wins when the stamp is still empty */
+  update(obj) { const f = [], nul = []; let skip = false; const u = {
+    eq(c, v) { f.push([c, v]); return u; }, is(c, v) { if (v === null) nul.push(c); return u; }, in() { skip = true; return u; }, select() { return u; },
+    then(ok) { const hit = []; if (!skip) for (const r of T[t] ?? []) if (f.every(([c, v]) => r[c] === v) && nul.every((c) => r[c] == null)) { Object.assign(r, obj); hit.push({ id: r.id }); }
+      return Promise.resolve({ data: hit, error: null }).then(ok); } }; return u; },
   maybeSingle() { return b.then((x) => ({ data: Array.isArray(x.data) ? (x.data[0] ?? null) : x.data, error: x.error })); },
   then(ok) {
     let rows = T[t] ?? []
@@ -33,6 +36,7 @@ const q = (t) => { const st = { f: [], isNull: [], inF: null, nn: [] }; const b 
     for (const c of st.isNull) rows = rows.filter((r) => r[c] == null)
     for (const c of st.nn) rows = rows.filter((r) => r[c] != null)
     if (st.inF) rows = rows.filter((r) => st.inF[1].includes(r[st.inF[0]]))
+    if (st.like) rows = rows.filter((r) => String(r[st.like[0]] ?? '').includes(st.like[1]))
     return Promise.resolve({ data: rows, error: null }).then(ok);
   } }; return b; };
 let RV = {}, EL = {}, STOP = {}, STOP_ERR = false
@@ -76,8 +80,42 @@ ck('the stop rule cannot be read: nothing goes (fails closed), and a practice ru
 STOP_ERR = false
 reset([C('Later1', { created_at: ago(60 * 50), nudge_1_at: ago(60 * 48) })]); STOP = { Later1: 'booked' }; await run()
 ck('a later follow-up (the 2-day one) stops too', toThem().length === 0 && !T.job_applicants[0].nudge_2_at, SENT)
-const src586 = fs.readFileSync(`${FN}/interview-messages/index.ts`, 'utf8')
-ck('no em dash in anything new', !/\u2014|—/.test(src586.split('586 (Samantha')[1].split('const step')[0]))
+import('child_process').then(() => {})
+const added = (await import('child_process')).execSync('git diff origin/main -- ' + FN + '/interview-messages/index.ts').toString().split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++'))
+ck('no em dash in any line 586 adds', added.length > 0 && !added.some((l) => l.includes('\u2014')), added.filter((l) => l.includes('\u2014')))
+
+// ---- 586: duplicates, consent, cancellations
+const soon = (h) => new Date(Date.now() + h * 3_600_000).toISOString()
+const BK = (id, o) => ({ id: 'bk-' + id, applicant_id: id, status: 'booked', starts_at: soon(48), confirmed_at: null, reminded_day_at: null, reminded_hour_at: null,
+  job_applicants: { first_name: id, last_name: 'Test', phone: '41755501' + String(id.length).padStart(2, '0'), email: id + '@example.com', sms_consent: true }, ...o })
+STOP = {}
+reset([C('Dup1', { status: 'new' })]); T.interview_bookings = [BK('Dup1')]; await run()
+const first1 = toThem().length; await run()
+ck('a booking confirmation goes once (text + email), and a second run sends nothing more', first1 === 2 && toThem().length === 2 && !!T.interview_bookings[0].confirmed_at, SENT)
+reset([C('Race1', { status: 'new' })]); T.interview_bookings = [BK('Race1')]; await Promise.all([run(), run()])
+ck('two runs at the same moment: the confirmation still goes once', toThem().length === 2, SENT)
+reset([C('Nudge2x')]); await Promise.all([run(), run()])
+ck('two runs at the same moment: a follow-up still goes once', texts('Nudge2x').length === 1, SENT)
+reset([C('Later2', { status: 'new' })]); T.interview_bookings = [BK('Later2', { confirmed_at: soon(-1) })]
+T.job_applicants.push({ ...T.job_applicants[0], id: 'Later2-new', created_at: ago(5), sms_consent: false })
+await run()
+ck('consent: a later application that said no to texts wins (no text; the email still goes)',
+  toThem().filter((m) => m.type === 'SMS').length === 0, SENT)
+reset([C('NoTxt', { sms_consent: false })]); await run()
+ck('consent: no yes to texts on the application, no follow-up text', texts('NoTxt').length === 0, SENT)
+HOUR = '19'; reset([C('Night1')]); T.interview_bookings = []; await run()
+ck('quiet hours: nothing goes at 7pm, and nothing is marked sent (it goes after 8am)', toThem().length === 0 && !T.job_applicants[0].nudge_1_at, SENT)
+HOUR = '10'
+// they cancel: no reminders for that appointment, one cancel notice with a way to rebook, no restart of the follow-ups
+reset([C('Cx1', { status: 'new', nudge_1_at: null })])
+T.interview_bookings = [BK('Cx1', { status: 'cancelled', cancelled_by: 'applicant', cancelled_at: ago(10), cancel_notified_at: null, confirmed_at: ago(600) })]
+STOP = { Cx1: 'withdrew (cancelled their interview)' }
+await run(); await run()
+const cxTexts = texts('Cx1')
+ck('they cancel: one cancellation notice, with their link to pick a new time', cxTexts.length === 1 && /cancelled/.test(cxTexts[0].msg) && /apply\?book=Cx1/.test(cxTexts[0].msg), cxTexts)
+ck('...no reminders for the cancelled appointment', !T.interview_bookings[0].reminded_day_at && !T.interview_bookings[0].reminded_hour_at)
+ck('...and the "pick a time" follow-ups do not start again', !T.job_applicants[0].nudge_1_at && !cxTexts.some((m) => /one step from/.test(m.msg)), cxTexts)
+STOP = {}
 
 let pass = 0; for (const [nm, ok, note] of res) { console.log((ok ? 'PASS  ' : 'FAIL  ') + nm + (ok ? '' : '  ' + note)); if (ok) pass++ }
 console.log(pass === res.length ? `ALL ${res.length} CHECKS PASS` : `${res.length - pass} OF ${res.length} FAILED`); process.exit(pass === res.length ? 0 : 1)
