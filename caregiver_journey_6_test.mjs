@@ -1,4 +1,5 @@
-// SLICE 6 · the caregiver-journey function (3b + 5 behaviour kept) plus the nightly audit (Training sync, monthly OIG with retained
+// SLICE 7 · the caregiver-journey function (3b + 5 + 6 behaviour kept) plus AxisCare preparation (hire date and level class
+// written once after the Active read-back, copy sheets, the hire nudge), the nightly audit (Training sync, monthly OIG with retained
 // results, expiries as events and owned tasks) and the caregiver-export function against a fake database (the real caregiver catalog from the 3a migration file, the real rules file),
 // a fake Training Platform, a fake AxisCare, a fake GoHighLevel and a settable clock. Nothing real is touched. node caregiver_journey_6_test.mjs
 import fs from 'fs'; import path from 'path'
@@ -11,7 +12,7 @@ const RealDate = Date; let NOW = RealDate.parse('2026-10-12T15:00:00Z')   // 10a
 class FakeDate extends RealDate { constructor(...a) { if (a.length) super(...a); else super(NOW) } static now() { return NOW } }
 globalThis.Date = FakeDate; const at = (iso) => { NOW = RealDate.parse(iso) }
 /* fake AxisCare + GoHighLevel, every call counted */
-const AX = { patch: 200, label: 'Active', active: true, hireDate: '2026-10-12', calls: [] }
+const AX = { patch: 200, label: 'Active', active: true, hireDate: '2026-10-12', classes: [{ code: 'CNA', label: 'CNA' }], calls: [] }
 const GHL = { messages: [], contacts: 0 }
 const TRN = { rows: [], calls: [], lists: [] }
 const LEIE = { downloads: 0, csv: '"LASTNAME","FIRSTNAME","MIDNAME","BUSNAME","GENERAL","SPECIALTY","UPIN","NPI","DOB","ADDRESS","CITY","STATE","ZIP","EXCLTYPE","EXCLDATE","REINDATE","WAIVERDATE","WVRSTATE"\n"RAY","BEN","T","","NURSE","","","0","19800101","1 MAIN","TULSA","OK","74101","1128b4","20200101","00000000","00000000",""\n"LEE","AVERY","","","","","","0","19900101","","","","","1128a1","20100101","00000000","00000000",""\n' }
@@ -20,13 +21,16 @@ let handler = null; globalThis.Deno = { env: { get: (k) => env[k] }, serve: (h) 
 /* the real caregiver catalog, from the migration file */
 const sql = fs.readFileSync(path.join(ROOT, 'supabase/slice3a-journey-caregiver-subject.sql'), 'utf8')
 const DEFS = [...sql.matchAll(/values \('([^']+)', 1, '(.*)'::jsonb, false/g)].map((m) => ({ key: m[1], catalog_version: 1, def: JSON.parse(m[2].replace(/''/g, "'")), active: true }))
+const sql7 = fs.readFileSync(path.join(ROOT, 'supabase/slice7-axiscare-prep.sql'), 'utf8')
+for (const m of sql7.matchAll(/values \('([^']+)', 1, '(.*)'::jsonb, true/g)) DEFS.push({ key: m[1], catalog_version: 1, def: JSON.parse(m[2].replace(/''/g, "'").replace(/\\u0027/g, "'")), active: true })
 /* fake Training REST */
 const OFFERS = {}
 globalThis.fetch = async (url, o = {}) => { const u = String(url), m = (o.method || 'GET').toUpperCase()
   if (u.startsWith('http://trn/rest/v1/job_offers')) { const id = decodeURIComponent(/id=eq\.([^&]+)/.exec(u)[1]); return new Response(JSON.stringify(OFFERS[id] ? [OFFERS[id]] : []), { status: 200 }) }
+  if (u === 'https://16485.axiscare.com/api/classes/caregiver') return new Response(JSON.stringify({ results: { classes: [{ code: 'L1', label: 'Level 1 Wellness' }, { code: 'L2', label: 'Level 2 Personal Care' }, { code: 'L3', label: 'Level 3 Advanced Care' }, { code: 'PRN', label: 'PRN Team' }, { code: 'CNA', label: 'CNA' }] } }), { status: 200 })
   if (u.startsWith('https://16485.axiscare.com/api/caregivers/')) { const id = u.split('/').pop(); AX.calls.push(m + ' ' + id + (o.body ? ' ' + o.body : ''))
-    if (m === 'PATCH') return new Response(AX.patch === 200 ? JSON.stringify({ results: { caregiver: { id: Number(id) } } }) : JSON.stringify({ errors: ['Status not found'] }), { status: AX.patch })
-    return new Response(JSON.stringify({ results: { caregiver: { id: Number(id), status: { active: AX.active, label: AX.label }, hireDate: AX.hireDate } } }), { status: 200 }) }
+    if (m === 'PATCH') { if (AX.patch === 200 && o.body) { const b = JSON.parse(o.body); if (b.hireDate) AX.hireDate = b.hireDate; if (b.classes) AX.classes = b.classes } return new Response(AX.patch === 200 ? JSON.stringify({ results: { caregiver: { id: Number(id) } } }) : JSON.stringify({ errors: ['Status not found'] }), { status: AX.patch }) }
+    return new Response(JSON.stringify({ results: { caregiver: { id: Number(id), status: { active: AX.active, label: AX.label }, hireDate: AX.hireDate, classes: AX.classes || [] } } }), { status: 200 }) }
   if (u === 'http://trn/rest/v1/app_settings?key=eq.hub_read_key&select=value') return new Response(JSON.stringify([{ value: { key: 'rk' } }]), { status: 200 })
   if (u === 'http://trn/rest/v1/rpc/hub_training_status') { TRN.calls.push(JSON.parse(o.body)); return new Response(JSON.stringify(TRN.rows), { status: 200 }) }
   if (u === 'http://trn/rest/v1/caregivers?select=id,axiscare_id&active=eq.true') return new Response(JSON.stringify([{ id: 't-ava', axiscare_id: '9001' }, { id: 't-ben', axiscare_id: '9002' }]), { status: 200 })
@@ -65,7 +69,7 @@ function table(name) {
   }
   return { select: () => q('select'), insert: (p) => q('insert', p), upsert: (p) => q('upsert', p), update: (p) => q('update', p) }
 }
-const KINDS = ['client_created','client_linked','client_updated','responsible_party','care_level','care_tasks','care_plan_note','client_note','caregiver_note','schedule','visit_caregiver','call_summary','scheduling_note','caregiver_status','prn_team_classes']
+const KINDS = ['client_created','client_linked','client_updated','responsible_party','care_level','care_tasks','care_plan_note','client_note','caregiver_note','schedule','visit_caregiver','call_summary','scheduling_note','caregiver_status','prn_team_classes','caregiver_hire_date','caregiver_level']
 const OWNED = ['eligibility_history', 'eligibility_state', 'eligibility_reason', 'eligibility_at', 'axiscare_note_for', 'approved_to_work_at', 'approved_to_work_by', 'axiscare_status_active', 'axiscare_status_label', 'axiscare_status_at', 'work_lock']
 async function rpc(name, a) {
   if (name === 'axiscare_change_record') { if (!KINDS.includes(a.p_kind) || !['sent_confirmed','sent','refused','practice'].includes(a.p_outcome) || !/^\d+$/.test(String(a.p_caregiver ?? ''))) return { data: { outcome: 'refused', reason: 'check' }, error: null }; DB.axiscare_change_log.push({ id: DB.axiscare_change_log.length + 1, at: new Date().toISOString(), kind: a.p_kind, caregiver: a.p_caregiver, outcome: a.p_outcome, summary: a.p_summary, detail: a.p_detail, by: a.p_by, via: a.p_via }); return { data: { outcome: 'recorded', id: DB.axiscare_change_log.length }, error: null } }
@@ -152,11 +156,21 @@ for (const k of ['i9_s1', 'mo_w4', 'direct_deposit', 'handbook', 'participant_ri
 r = await call({ action: 'confirm', journey_id: JID, step_key: 'cg.i9.section2' }, 'kry')
 ck('I-9 Section 2 after Section 1, its own confirmation', r.status === 200 && st('cg.i9.section2').state === 'complete')
 DB.welcome_calls = [{ id: 'w1', candidate_id: '901', status: 'done', done_at: '2026-10-11T15:00:00Z', invited_at: '2026-10-10' }]
-DB.app_data.find((x) => x.key === 'caregivers').data = [{ id: 207, candidate_id: 901, first: 'Ava', last: 'Lee', offer_id: OID, axiscare_id: '9001', hire_date: '2026-10-12', orient_date: '2026-10-12', alz_date: '2026-10-13', ojt_date: '2026-10-20', ojt_online: '2026-10-20', ojt_signed: 'yes' }]
+DB.app_data.find((x) => x.key === 'caregivers').data = [{ id: 207, candidate_id: 901, first: 'Ava', last: 'Lee', offer_id: OID, axiscare_id: '9001', connected: { at: '2026-10-12T16:00:00Z', how: 'link' }, hire_date: '2026-10-12', orient_date: '2026-10-12', alz_date: '2026-10-13', ojt_date: '2026-10-20', ojt_online: '2026-10-20', ojt_signed: 'yes' }]
 DB.app_data.find((x) => x.key === 'candidates').data = []
 DB.caregiver_profiles = [{ id: 'pr1', candidate_id: '207', published: true, published_at: '2026-10-13T00:00:00Z', status: 'published' }]
 r = await call({ action: 'sweep' }, 'cron')
-ck('sweep 4 (after the move to the roster): welcome call, orientation, dementia, OJT and the profile verified from the records', ['cg.welcome.call', 'cg.training.orientation', 'cg.training.dementia', 'cg.training.ojt', 'cg.profile.published'].every((k) => st(k)?.state === 'complete'), steps().filter((x) => x.state !== 'complete').map((x) => x.step_key + ':' + x.state))
+ck('sweep 4 (after the move to the roster): welcome call, orientation, dementia, OJT, the profile AND the AxisCare record (connected) verified from the records', ['cg.welcome.call', 'cg.training.orientation', 'cg.training.dementia', 'cg.training.ojt', 'cg.profile.published', 'cg.axiscare.in_training'].every((k) => st(k)?.state === 'complete') && st('cg.axiscare.in_training').evidence.axiscare_id === '9001', steps().filter((x) => x.state !== 'complete').map((x) => x.step_key + ':' + x.state))
+/* SLICE 7: the copy sheets, then the two office ticks */
+r = await call({ action: 'copy_sheet', journey_id: JID, which: 'attributes' }, 'kry')
+ck('attributes copy sheet: the Step 1 answers in AxisCare order (CNA claimed, drives clients, lived outside Missouri not on it), the default level', r.status === 200 && r.j.rows.some((x) => x.label === 'CNA / HHA (claimed)' && x.value === 'Yes') && r.j.rows.some((x) => x.label === 'Drives clients' && /transport/.test(x.value)) && r.j.rows.some((x) => x.label === 'Approved Level of Care' && /Level 1/.test(x.value)) && !r.j.rows.some((x) => /Missouri/.test(x.label)), r.j)
+r = await call({ action: 'copy_sheet', journey_id: JID, which: 'availability' }, 'kry')
+ck('availability copy sheet: no grid in this Step 1, so it says so', r.status === 200 && r.j.rows.length === 0 && /no answers/.test(r.j.note), r.j)
+r = await call({ action: 'copy_sheet', journey_id: JID, which: 'x' }, 'kry')
+ck('an unknown sheet is refused', r.status === 400)
+r = await call({ action: 'confirm', journey_id: JID, step_key: 'cg.axiscare.attributes' }, 'kry')
+ck('the office ticks Attributes entered in AxisCare (after the record exists)', r.status === 200 && st('cg.axiscare.attributes').completed_by === 'krystal@mo-care.com', r)
+await call({ action: 'confirm', journey_id: JID, step_key: 'cg.axiscare.availability' }, 'kry')
 r = await call({ action: 'get', offer_id: OID }, 'sam')
 ck('the dates line: employment start = orientation completion 2026-10-12, AxisCare hire 2026-10-12, no difference; Approve to Work is now ready and Samantha (Work list) may', r.j.facts.dates.orientation === '2026-10-12' && r.j.facts.dates.differ === false && r.j.view.rows.find((x) => x.key === 'cg.approve.work').status === 'ready' && r.j.may['cg.approve.work'] === true, { dates: r.j.facts.dates, aw: r.j.view.rows.find((x) => x.key === 'cg.approve.work').status })
 /* ═══ SLICE 5: Ready for Final Approval, the lock, the press, AxisCare, the text, the Training report ═══ */
@@ -200,8 +214,8 @@ ck('the sweep never un-blocks the AxisCare row from a stale roster flag', st('cg
 /* live: AxisCare accepts, read-back Active, after hours, hire date differs */
 AX.patch = 200; AX.hireDate = '2026-10-11'; at('2026-10-13T02:00:00Z')   // 9pm Chicago
 r = await call({ action: 'retry_axiscare', journey_id: JID }, 'cc')
-ck('retry with AxisCare accepting: PATCH then GET read back Active; the row completes with the label; sent_confirmed in the change log; the roster reads Active and UNLOCKED; the failed card closes', r.status === 200 && r.j.result.outcome === 'confirmed' && AX.calls.slice(-2).join('|') === 'PATCH 9001 {"status":"Active"}|GET 9001' && st('cg.axiscare.active').state === 'complete' && st('cg.axiscare.active').evidence.label === 'Active' && st('cg.axiscare.active').evidence.read_back_at && DB.axiscare_change_log[2].outcome === 'sent_confirmed' && roster().axiscare_status_active === true && roster().work_lock === false && ops().find((i) => i.id === 'cj_axfail_' + JID).status === 'done' && r.j.approve.locked === false && r.j.approve.axiscare.state === 'confirmed', { r: r.j.result, ax: AX.calls, st: st('cg.axiscare.active'), roster: roster() })
-ck('hire date differs (AxisCare 2026-10-11, orientation 2026-10-12): an event and a card, nothing written to AxisCare', ev('hire_date_differs').length === 1 && ops().some((i) => i.id === 'cj_hiredate_' + JID && /2026-10-11/.test(i.detail)) && !AX.calls.some((c) => /hireDate/.test(c)), ops().map((i) => i.id))
+ck('retry with AxisCare accepting: PATCH then GET read back Active; the row completes with the label; sent_confirmed in the change log; the roster reads Active and UNLOCKED; the failed card closes', r.status === 200 && r.j.result.outcome === 'confirmed' && AX.calls.includes('PATCH 9001 {"status":"Active"}') && AX.calls.indexOf('GET 9001') > AX.calls.indexOf('PATCH 9001 {"status":"Active"}') && st('cg.axiscare.active').state === 'complete' && st('cg.axiscare.active').evidence.label === 'Active' && st('cg.axiscare.active').evidence.read_back_at && DB.axiscare_change_log[2].outcome === 'sent_confirmed' && roster().axiscare_status_active === true && roster().work_lock === false && ops().find((i) => i.id === 'cj_axfail_' + JID).status === 'done' && r.j.approve.locked === false && r.j.approve.axiscare.state === 'confirmed', { r: r.j.result, ax: AX.calls, st: st('cg.axiscare.active'), roster: roster() })
+ck('hire date differs (AxisCare 2026-10-11, orientation 2026-10-12), the write switches off: PRACTICE for the hire date and the level class (two practice change-log rows), an event and a card, nothing written', ev('hire_date_differs').length === 1 && ops().some((i) => i.id === 'cj_hiredate_' + JID && /switch is off/.test(i.detail) && /2026-10-11/.test(i.detail)) && !AX.calls.some((c) => /hireDate|classes/.test(c)) && r.j.result.prep.hire_date === 'practice' && r.j.result.prep.level === 'practice' && DB.axiscare_change_log.filter((x) => x.kind === 'caregiver_hire_date' && x.outcome === 'practice').length === 1 && DB.axiscare_change_log.filter((x) => x.kind === 'caregiver_level' && x.outcome === 'practice').length === 1 && r.j.approve.prep.hire_date.state === 'practice' && st('cg.axiscare.hire_date')?.state !== 'complete', { prep: r.j.result.prep, log: DB.axiscare_change_log.map((x) => x.kind + ':' + x.outcome), cards: ops().map((i) => i.id) })
 ck('after hours: the text is DUE (held), not sent', r.j.approve.text.state === 'due' && GHL.messages.length === 0 && ev('cleared_text_due').length === 1, r.j.approve.text)
 L = await WL.workLock(db)
 ck('workLock: unlocked after the stamp and the read-back', L.ok && !L.axis.has('9001') && !L.offers.has(OID), L)
@@ -213,6 +227,16 @@ await call({ action: 'sweep' }, 'cron')
 ck('sweep again: no second text', GHL.messages.length === 1)
 r = await call({ action: 'list' }, 'sam')
 ck('list: approved, AxisCare confirmed, unlocked, may_approve_work for Samantha', r.j.rows[0].approved_to_work === true && r.j.rows[0].axiscare === 'confirmed' && r.j.rows[0].locked === false && r.j.may_approve_work === true, r.j)
+/* ═══ SLICE 7: the preparation writes, switches on, by Retry ═══ */
+DB.app_data.find((x) => x.key === 'ops_settings').data.axiscare_hire_date_live = true; DB.app_data.find((x) => x.key === 'ops_settings').data.axiscare_level_live = true
+AX.calls.length = 0
+r = await call({ action: 'retry_axiscare', journey_id: JID }, 'cc')
+ck('Retry with Active already read back and the switches on: the hire date written to the orientation date and read back; the Level 1 class added, CNA kept, read back; both rows complete; two sent_confirmed change-log rows; the hire-date card closes; the roster hire date now says the orientation date', r.status === 200 && r.j.result.outcome === 'prep' && r.j.result.prep.hire_date === 'confirmed' && r.j.result.prep.level === 'confirmed' && AX.calls.some((c) => c === 'PATCH 9001 {"hireDate":"2026-10-12"}') && AX.calls.some((c) => /PATCH 9001 \{"classes":\[\{"code":"CNA","label":"CNA"\},\{"code":"L1","label":"Level 1 Wellness"\}\]\}/.test(c)) && st('cg.axiscare.hire_date').state === 'complete' && st('cg.axiscare.hire_date').evidence.read === '2026-10-12' && st('cg.axiscare.level').state === 'complete' && /Level 1/.test(st('cg.axiscare.level').evidence.read) && DB.axiscare_change_log.filter((x) => x.outcome === 'sent_confirmed' && ['caregiver_hire_date', 'caregiver_level'].includes(x.kind)).length === 2 && ops().find((i) => i.id === 'cj_hiredate_' + JID).status === 'done' && roster().hire_date === '2026-10-12' && r.j.approve.prep.level.state === 'confirmed', { r: r.j.result, ax: AX.calls, hd: st('cg.axiscare.hire_date'), lv: st('cg.axiscare.level'), roster: roster().hire_date })
+r = await call({ action: 'retry_axiscare', journey_id: JID }, 'cc')
+ck('Retry again: nothing left to do', r.status === 409 && /hire date and the level class/.test(r.j.error), r)
+AX.patch = 400
+/* a failed level write on a fresh press is a blocked row with a card and Retry (shown on another person below) */
+AX.patch = 200
 /* ═══ the Training Platform's report (new path): verified onto a fresh card, server door only ═══ */
 const OID2 = '22222222-2222-4333-8444-555555555555'
 OFFERS[OID2] = { id: OID2, first_name: 'Ben', last_name: 'Ray', phone: '4175550101', offer_signed_at: '2026-10-11T20:00:00Z', pd_signed_at: '2026-10-11T20:05:00Z', offer_version: 1, pd_version: 1, offer_status: 'accepted', onboarding_path: 'new' }
@@ -228,6 +252,13 @@ r = await rep({ action: 'training_report', axiscare_id: '9002', courses: [{ slug
 ck('training_report with the secret: orientation (complete) and dementia (waived) verified onto Ben\'s card as reported by the Training Platform, OJT ignored (needs the signed form), the journey learns the AxisCare number', r.status === 200 && r.j.journey === true && r.j.applied.join(',') === 'cg.training.orientation,cg.training.dementia' && st2('cg.training.orientation').completed_by === 'training-platform' && st2('cg.training.orientation').completed_at === '2026-10-13T16:00:00.000Z' && st2('cg.training.dementia').evidence.status === 'waived' && !st2('cg.training.ojt') && DB.client_journey[1].axiscare_caregiver_id === '9002', { r: r.j, s: st2('cg.training.orientation') })
 r = await rep({ action: 'training_report', axiscare_id: '9002', courses: [{ slug: 'agency-orientation', status: 'complete', completed_at: '2026-10-13T16:00:00Z' }] }, env.OUTREACH_SECRET)
 ck('the same report again: nothing re-applied', r.status === 200 && r.j.applied.length === 0)
+DB.client_journey_step.push({ journey_id: JID2, step_key: 'cg.welcome.call', state: 'complete', completed_at: '2026-10-08T15:00:00Z', completed_by: 'hub', version: 1 })
+DB.app_data.find((x) => x.key === 'caregivers').data.find((x) => x.id === 208).axiscare_id = null
+await call({ action: 'sweep' }, 'cron')
+ck('SLICE 7 nudge: Ben\'s welcome call done Thursday, no AxisCare record connected by Monday 5pm: "Not hired in AxisCare yet", owned by the Staffing Coordinator', ops().some((i) => i.id === 'cj_axhire_' + JID2 && i.owner === 'krystal@mo-care.com' && /Not hired in AxisCare yet: Ben Ray/.test(i.title)), ops().filter((i) => /axhire/.test(i.id)))
+DB.app_data.find((x) => x.key === 'caregivers').data.find((x) => x.id === 208).axiscare_id = '9002'; DB.app_data.find((x) => x.key === 'caregivers').data.find((x) => x.id === 208).connected = { at: '2026-10-13T15:00:00Z' }
+await call({ action: 'sweep' }, 'cron')
+ck('once connected, the AxisCare record row verifies and the nudge closes', st2('cg.axiscare.in_training')?.state === 'complete' && ops().find((i) => i.id === 'cj_axhire_' + JID2).status === 'done')
 r = await rep({ action: 'training_report', axiscare_id: '7777', courses: [] }, env.OUTREACH_SECRET)
 ck('a report for an AxisCare number with no card (the old path): journey false, nothing written', r.status === 200 && r.j.journey === false)
 L = await WL.workLock(db)

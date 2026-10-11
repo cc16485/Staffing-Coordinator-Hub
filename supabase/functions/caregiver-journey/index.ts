@@ -19,6 +19,10 @@
 //                                                          reads it back; Approved to Work shows only after the read-back;
 //                                                          then the cleared text (approve_work_text_live, else practice)
 //   { action: 'retry_axiscare', journey_id }   (staff)   after "Approval recorded, AxisCare update failed": the same update again
+//   { action: 'copy_sheet', journey_id, which: 'attributes' | 'availability' }  (staff)  SLICE 7: the Step 1 answers laid out
+//                                                          in AxisCare's order, for the office to type in (AxisCare has no door)
+//   SLICE 7: after AxisCare reads back Active, the hire date (orientation completion) and the approved Level of Care class are
+//   written once each, read back and logged (axiscare_hire_date_live, axiscare_level_live; else practice); retry redoes them.
 //   { action: 'training_report', axiscare_id, courses } (server door: x-outreach-secret, the Training Platform)  the pre-service
 //                                                          courses done, verified onto the card; Training sends nothing itself
 //   { action: 'nightly' }                      (job)     SLICE 6, once a night: the Training Platform's facts onto the roster
@@ -35,7 +39,8 @@ import { requireStaff, OFFICE_ROLES, serverSecretOk } from '../_shared/staff-aut
 import { jobCaller } from '../_shared/job-auth.ts'
 import { PERM_KEY, normalizePerms, mayApprove } from '../_shared/onboarding-permissions.ts'
 import { R, facts, verifyRows, type Facts } from '../_shared/caregiver-journey.ts'
-import { setCaregiverActive } from '../_shared/axiscare-caregiver.ts'
+import { setCaregiverActive, setCaregiverHireDate, setCaregiverLevel } from '../_shared/axiscare-caregiver.ts'
+import { dueNextBusinessDay } from '../_shared/business-days.ts'
 import { saveSweepFields } from '../_shared/sweep-patch.ts'
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
@@ -171,14 +176,16 @@ function approveState(view: Any, f: Facts, st: Any, who: Any, P: Any) {
   const blocked = rows.filter((r) => r.status === 'blocked' && r.key !== AX_KEY).map((r) => r.def.title)
   const ready_for_final = !approved && !!aw && ['ready', 'attention'].includes(aw.status) && !blocked.length
   const lvl = f.candidate?.care_level_approved ?? f.roster?.care_level_approved ?? null
+  const prepOf = (key: string) => { const r = rows.find((x) => x.key === key); if (!r) return { state: 'n/a' }; const e = r.st?.evidence || {}; return r.st && DONE.includes(r.st.state) ? { state: 'confirmed', at: r.st.completed_at, read: e.read ?? null, unchanged: !!e.unchanged } : r.st?.state === 'blocked' ? { state: 'failed', detail: r.st.blocked_reason } : e.practice ? { state: 'practice', at: e.practice.at } : { state: 'pending' } }
   return {
     ready_for_final, approved, approved_at: approved ? aw.st.completed_at : null, approved_by: approved ? (aw.st.completed_by_name || aw.st.completed_by) : null,
+    prep: { hire_date: prepOf('cg.axiscare.hire_date'), level: prepOf('cg.axiscare.level') },
     axiscare, text: aw?.st?.evidence?.text || null, blocked,
     locked: !(approved && axDone), lock_why: !(approved && axDone) ? 'Scheduling stays locked until Approved to Work and AxisCare reads back Active.' : null,
     level_of_care: lvl ? { level: String(lvl), source: 'recorded on the Background and References row' } : { level: 'Level 1', source: 'the default: nothing higher is recorded' },
     may_approve_work: !!who && mayApprove(P, 'work', { person_id: who.person_id, roles: who.roles || [], email: who.email }),
     may_retry: approved && !axDone,
-    switches: { axiscare_live: st?.approve_work_axiscare_live === true, text_live: st?.approve_work_text_live === true },
+    switches: { axiscare_live: st?.approve_work_axiscare_live === true, text_live: st?.approve_work_text_live === true, hire_date_live: st?.axiscare_hire_date_live === true, level_live: st?.axiscare_level_live === true },
   }
 }
 const nameOf = (f: Facts, j: Any) => S(f.offer?.first_name || f.roster?.first || f.candidate?.first || String(j?.client_name || '').split(' ')[0], 40)
@@ -212,6 +219,41 @@ async function clearedTextStep(db: Any, j: Any, f: Facts, st: Any, who: { email?
   return text
 }
 
+/* ── SLICE 7: after AxisCare reads back Active, the hire date and the approved level class, each written once, read back, logged ── */
+const levelNumber = (lvl: unknown) => { const m = String(lvl ?? '').match(/([123])/); return m ? Number(m[1]) : 1 }
+async function prepAxis(db: Any, j: Any, f: Facts, st: Any, who: { email?: string; name?: string }, axId: string, send: typeof fetch = fetch): Promise<Any> {
+  const now = new Date().toISOString(), out: Any = {}
+  const settle = async (key: string, r: Any, evidence: Any, failTitle: string) => {
+    if (r.outcome === 'confirmed' || r.outcome === 'unchanged') {
+      await putStep(db, j.journey_id, key, { state: 'complete', evidence: { verified: { at: now, by: 'hub' }, ...evidence, read: r.read ?? null, unchanged: r.outcome === 'unchanged', recorded: !!r.recorded }, completed_by: 'hub', completed_by_name: 'The Hub (AxisCare read back)', completed_at: now, blocked_reason: null })
+      await event(db, j.journey_id, key, who, 'verified', { ...evidence, read: r.read ?? null, unchanged: r.outcome === 'unchanged' })
+      await closeCard(db, 'cj_prep_' + key.replace(/\./g, '_') + '_' + j.journey_id, 'AxisCare read it back.')
+    } else if (r.outcome === 'practice') {
+      await mergeEvidence(db, j.journey_id, key, { practice: { at: now, by: who.email || 'hub', recorded: !!r.recorded } })
+      await event(db, j.journey_id, key, who, 'axiscare_practice', { ...evidence, why: 'the switch is off: nothing was written to AxisCare' })
+    } else {
+      const reason = failTitle + ': ' + (r.detail || r.outcome)
+      await putStep(db, j.journey_id, key, { state: 'blocked', blocked_reason: reason })
+      await event(db, j.journey_id, key, who, 'axiscare_failed', { ...evidence, detail: r.detail || r.outcome }, reason)
+      await raiseCard(db, { id: 'cj_prep_' + key.replace(/\./g, '_') + '_' + j.journey_id, kind: 'axiscare_prep_failed', urgency: 'today', who: j.client_name, offer_id: j.offer_id, title: failTitle + ': ' + j.client_name, detail: (r.detail || r.outcome) + ' Open their readiness card and press Retry, or set it in AxisCare by hand and press Retry to read it back.' })
+    }
+    return r.outcome
+  }
+  /* the hire date = orientation completion (decision 7) */
+  const d = dates(f)
+  if (d.orientation) {
+    const r = await setCaregiverHireDate(db, axId, d.orientation, who.email || 'hub', 'caregiver-journey', st?.axiscare_hire_date_live === true, send)
+    out.hire_date = await settle('cg.axiscare.hire_date', r, { axiscare_id: axId, hire_date: d.orientation }, 'AxisCare hire date not set')
+    if (r.outcome === 'confirmed' || r.outcome === 'unchanged') { if (f.roster && f.roster.hire_date !== d.orientation) await saveAuditFields(db, { ...f.roster, hire_date: d.orientation }, (fresh: Any) => { fresh.hire_date = d.orientation }); await closeCard(db, 'cj_hiredate_' + j.journey_id, 'AxisCare hire date now matches orientation completion.') }
+    else if (r.outcome === 'practice') { const axHire = (r.read as string | null) || f.roster?.hire_date || null; if (axHire && axHire !== d.orientation) { await event(db, j.journey_id, AX_KEY, who, 'hire_date_differs', { axiscare_hire_date: axHire, orientation: d.orientation }); await raiseCard(db, { id: 'cj_hiredate_' + j.journey_id, kind: 'hire_date_check', urgency: 'today', who: j.client_name, offer_id: j.offer_id, title: 'Hire date differs from orientation: ' + j.client_name, detail: `AxisCare hire date ${axHire}; orientation completed ${d.orientation} (the employment start date by policy). The write switch is off, so nothing was written; reconcile in AxisCare or turn the switch on and press Retry.` }) } }
+  } else out.hire_date = 'no_orientation_date'
+  /* the approved Level of Care class */
+  const lvl = levelNumber(f.candidate?.care_level_approved ?? f.roster?.care_level_approved ?? 'Level 1')
+  const r2 = await setCaregiverLevel(db, axId, lvl, who.email || 'hub', 'caregiver-journey', st?.axiscare_level_live === true, send)
+  out.level = await settle('cg.axiscare.level', r2, { axiscare_id: axId, level: lvl, classes: r2.classes ?? null }, 'AxisCare level class not set')
+  return out
+}
+
 /** AxisCare Active after the stamp: the one update, read back, recorded; then the cleared text. Also the Retry. */
 async function activate(db: Any, j: Any, f: Facts, st: Any, who: { email?: string; name?: string }, send: typeof fetch = fetch): Promise<Any> {
   const now = new Date().toISOString(), axId = digits(f.roster?.axiscare_id)
@@ -230,13 +272,9 @@ async function activate(db: Any, j: Any, f: Facts, st: Any, who: { email?: strin
     await rosterPatch(db, f.roster, { axiscare_status_active: true, axiscare_status_label: r.label || 'Active', axiscare_status_at: now, work_lock: false })
     await closeCard(db, 'cj_axfail_' + j.journey_id, 'AxisCare read back Active.')
     await closeCard(db, 'cj_final_' + j.journey_id, 'Approved to Work.')
-    const d = dates(f)
-    if (r.hire_date && d.orientation && r.hire_date !== d.orientation) {
-      await event(db, j.journey_id, AX_KEY, who, 'hire_date_differs', { axiscare_hire_date: r.hire_date, orientation: d.orientation })
-      await raiseCard(db, { id: 'cj_hiredate_' + j.journey_id, kind: 'hire_date_check', urgency: 'today', who: j.client_name, offer_id: j.offer_id, title: 'Hire date differs from orientation: ' + j.client_name, detail: `AxisCare hire date ${r.hire_date}; orientation completed ${d.orientation} (the employment start date by policy). Reconcile in AxisCare; nothing was written there.` })
-    }
+    const prep = await prepAxis(db, j, f, st, who, axId, send)
     const text = await clearedTextStep(db, j, f, st, who, send)
-    return { outcome: 'confirmed', label: r.label, text }
+    return { outcome: 'confirmed', label: r.label, text, prep }
   }
   if (r.outcome === 'practice') {
     await mergeEvidence(db, j.journey_id, AX_KEY, { practice: { at: now, by: who.email || 'hub', recorded: r.recorded } })
@@ -373,6 +411,12 @@ Deno.serve(async (req) => {
         if (axId && !j.axiscare_caregiver_id) { const { error } = await db.from('client_journey').update({ axiscare_caregiver_id: axId, updated_at: now }).eq('journey_id', j.journey_id); if (error) console.warn('[caregiver-journey] axiscare id not saved: ' + error.message) }
         /* the roster's work_lock: true until the stamp and the read-back (the Hub page and the Staffing Sheet read it) */
         if (f.roster && (f.roster.work_lock === true) !== a.locked) { if ((await rosterPatch(db, f.roster, { work_lock: a.locked })) === 'saved') (out.locks as number)++ }
+        /* SLICE 7: the welcome call is done but the office has not hired them in AxisCare two business days later */
+        const wc = (view.rows || []).find((r: Any) => r.key === 'cg.welcome.call'), inAx = (view.rows || []).find((r: Any) => r.key === 'cg.axiscare.in_training')
+        if (wc?.st && DONE.includes(wc.st.state) && wc.st.completed_at && inAx && !DONE.includes(inAx.status)) {
+          const due = dueNextBusinessDay(wc.st.completed_at, st.company_holidays, 17, 2)
+          if (due < now) { await raiseCard(db, { id: 'cj_axhire_' + j.journey_id, kind: 'axiscare_hire_missing', urgency: 'today', who: j.client_name, offer_id: j.offer_id, title: 'Not hired in AxisCare yet: ' + j.client_name, detail: `Welcome call done ${wc.st.completed_at.slice(0, 10)}; AxisCare still has no caregiver record connected to them. Hire the applicant in AxisCare (In Training); the hourly connect job links the record and this card closes.` }, { owner: S(st.staffing_email, 160).toLowerCase() || '', due }); (out.cards as number)++ }
+        } else if (inAx && DONE.includes(inAx.status)) await closeCard(db, 'cj_axhire_' + j.journey_id, 'Connected to their AxisCare record.')
         /* Ready for Final Approval: one card for the Approve to Work list, closed at the press */
         if (a.ready_for_final) { await raiseCard(db, { id: 'cj_final_' + j.journey_id, kind: 'final_approval', urgency: 'today', who: j.client_name, offer_id: j.offer_id, title: 'Ready for final approval: ' + j.client_name, detail: 'Every requirement on their readiness card is complete. An owner on the Approve to Work list opens the card and presses Approve to Work.' }); (out.cards as number)++ }
         /* a cleared text held after hours goes now, in hours, with the switch on */
@@ -443,12 +487,35 @@ Deno.serve(async (req) => {
       const res = await answerFor(got.j.journey_id, f); const body = await res.json()
       return json({ ...body, result: r })
     }
+    if (action === 'copy_sheet') {
+      const which = S(b.which, 20); const a: Any = f.step1?.answers || {}
+      const txt = (v: unknown): string => v == null || v === '' ? '' : Array.isArray(v) ? v.map(txt).filter(Boolean).join(', ') : typeof v === 'object' ? Object.entries(v as Record<string, unknown>).map(([k, x]) => { const t = txt(x); return t ? `${k}: ${t}` : '' }).filter(Boolean).join('; ') : String(v)
+      const yn = (v: unknown) => v === 'yes' ? 'Yes' : v === 'no' ? 'No' : txt(v)
+      let rows: Array<{ label: string; value: string }> = []
+      if (which === 'attributes') rows = [
+        ['Languages', txt(a.languages)], ['Comfortable with cats', yn(a.cats)], ['Comfortable with dogs', yn(a.dogs)], ['Smoking', txt(a.smoking)], ['Transportation', txt(a.transportation)], ['Drives clients', f.drives_clients === true ? 'Requests approval to transport clients' : f.drives_clients === false ? 'No' : ''],
+        ['Hoyer lift', yn(a.hoyer_lift)], ['Gait belt / transfers', yn(a.gait_belt)], ['Bed-bound care', yn(a.bed_bound)], ['Level 1 willing', yn(a.level1)], ['Level 2 willing', yn(a.level2)], ['Level 3 willing', yn(a.level3)], ['Preferred levels', txt(a.preferred_levels)], ['Specialties', txt(a.specialties)],
+        ['Prefers a male caregiver client?', yn(a.male_caregiver)], ['Prefers a female caregiver client?', yn(a.female_caregiver)], ['Experience (claimed, not verified)', txt(a.experience)], ['CNA / HHA (claimed)', f.claims_cna_or_hha === true ? 'Yes' : f.claims_cna_or_hha === false ? 'No' : ''], ['Approved Level of Care', String((f.candidate?.care_level_approved ?? f.roster?.care_level_approved) || 'Level 1 (default)')],
+      ].map(([label, value]) => ({ label, value })).filter((r) => r.value)
+      else if (which === 'availability') {
+        const grid = a.windows && typeof a.windows === 'object' && !Array.isArray(a.windows) ? a.windows as Record<string, Record<string, unknown>> : {}
+        for (const [day, row] of Object.entries(grid)) { const t = txt(row); if (t) rows.push({ label: day, value: t }) }
+        for (const [label, v] of [['Ideal hours a week', a.hours_ideal], ['Minimum hours', a.hours_min], ['Maximum hours', a.hours_max], ['Max miles', a.max_miles], ['Shift preferences', a.shift_prefs]] as Array<[string, unknown]>) { const t = txt(v); if (t) rows.push({ label, value: t }) }
+      } else return json({ error: 'Which sheet?' }, 400)
+      return json({ ok: true, which, name: got.j.client_name, rows, note: rows.length ? 'From their signed Step 1 answers. Type these on the AxisCare screen in this order, then confirm the row.' : 'Their Step 1 holds no answers for this sheet yet.' })
+    }
     if (action === 'retry_axiscare') {
       const a = approveState(view, f, st, who, P)
       if (!a.approved) return json({ error: 'Approve to Work first.' }, 409)
-      if (a.axiscare.state === 'confirmed') return json({ error: 'AxisCare already reads back Active.' }, 409)
-      await event(db, got.j.journey_id, AX_KEY, actor, 'axiscare_retry', {})
-      const r = await activate(db, got.j, f, st, actor)
+      let r: Any
+      if (a.axiscare.state === 'confirmed') {
+        if (['confirmed', 'n/a'].includes(a.prep.hire_date.state) && ['confirmed', 'n/a'].includes(a.prep.level.state)) return json({ error: 'AxisCare already reads back Active, the hire date and the level class.' }, 409)
+        await event(db, got.j.journey_id, AX_KEY, actor, 'axiscare_prep_retry', {})
+        r = { outcome: 'prep', prep: await prepAxis(db, got.j, f, st, actor, digits(f.roster?.axiscare_id)) }
+      } else {
+        await event(db, got.j.journey_id, AX_KEY, actor, 'axiscare_retry', {})
+        r = await activate(db, got.j, f, st, actor)
+      }
       const res = await answerFor(got.j.journey_id, f); const body = await res.json()
       return json({ ...body, result: r })
     }

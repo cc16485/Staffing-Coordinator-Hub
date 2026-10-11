@@ -73,3 +73,53 @@ export async function setCaregiverActive(db: any, id: string, by: string, via: s
   return good ? { outcome: 'confirmed', label: back.label, active: true, hire_date: back.hire_date, recorded }
     : { outcome: 'sent', detail: back.ok ? `AxisCare accepted the change but reads back "${back.label || 'no label'}"` : back.detail, label: back.ok ? back.label : undefined, active: back.ok ? back.active : undefined, recorded }
 }
+
+/* ── SLICE 7 (Samantha "yes to all", 2026-10-10): the hire date and the approved Level of Care class, each written once by the
+   caregiver's own record, read back, one change-log row per outcome; practice while the Admin switch is off. ── */
+import { levelFromLabel, careLevelOf, LEVEL_NAMES } from './care-level.ts'
+const rowsOf = (v: any): any[] => Array.isArray(v) ? v : (v && typeof v === 'object' ? Object.values(v) : [])
+const slim = (c: { label?: unknown; code?: unknown }) => ({ ...(c?.code ? { code: String(c.code) } : {}), ...(c?.label ? { label: String(c.label) } : {}) })
+export type Outcome = { outcome: 'confirmed' | 'sent' | 'refused' | 'practice' | 'no_credentials' | 'unchanged'; detail?: string; recorded: boolean; read?: unknown }
+
+/** The AxisCare hire date set to the employment start date (orientation completion, decision 7). Unchanged when it already matches. */
+export async function setCaregiverHireDate(db: any, id: string, ymd: string, by: string, via: string, live: boolean, send: typeof fetch = fetch): Promise<Outcome> {
+  const cg = String(id)
+  if (!/^\d{1,12}$/.test(cg) || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return { outcome: 'refused', detail: 'not an AxisCare caregiver number or date', recorded: false }
+  const before = await readCaregiverStatus(cg, send)
+  if (before.ok && before.hire_date === ymd) return { outcome: 'unchanged', recorded: false, read: ymd }
+  if (!live) { const recorded = await recordAxisChange(db, { kind: 'caregiver_hire_date', caregiver: cg, outcome: 'practice', summary: `Approve to Work: would set the hire date to ${ymd} (practice, switch off)`, detail: before.ok ? `AxisCare holds ${before.hire_date || 'no date'}` : before.detail, by, via }); return { outcome: 'practice', recorded, read: before.ok ? before.hire_date : null } }
+  const { token, site } = axisCreds()
+  if (!token || !site) return { outcome: 'no_credentials', detail: 'AxisCare credentials are not set on this project', recorded: false }
+  const p = await ax('PATCH', `/api/caregivers/${cg}`, { hireDate: ymd }, send)
+  if (!ok2(p.status)) { const recorded = await recordAxisChange(db, { kind: 'caregiver_hire_date', caregiver: cg, outcome: 'refused', summary: `Approve to Work: set the hire date to ${ymd}`, detail: errText(p), by, via }); return { outcome: 'refused', detail: errText(p), recorded } }
+  const back = await readCaregiverStatus(cg, send)
+  const good = back.ok && back.hire_date === ymd
+  const recorded = await recordAxisChange(db, { kind: 'caregiver_hire_date', caregiver: cg, outcome: good ? 'sent_confirmed' : 'sent', summary: `Approve to Work: set the hire date to ${ymd}`, detail: good ? `read back: ${ymd}` : (back.ok ? `read back: ${back.hire_date || 'no date'}` : back.detail), by, via })
+  return good ? { outcome: 'confirmed', recorded, read: ymd } : { outcome: 'sent', detail: back.ok ? `AxisCare accepted it but reads back ${back.hire_date || 'no date'}` : back.detail, recorded, read: back.ok ? back.hire_date : null }
+}
+/** The approved Level of Care as the caregiver's level class: every other class kept; the level classes replaced by the one approved. */
+export async function setCaregiverLevel(db: any, id: string, level: number, by: string, via: string, live: boolean, send: typeof fetch = fetch): Promise<Outcome & { classes?: string[] }> {
+  const cg = String(id)
+  if (!/^\d{1,12}$/.test(cg) || ![1, 2, 3].includes(level)) return { outcome: 'refused', detail: 'not an AxisCare caregiver number or level', recorded: false }
+  const g = await ax('GET', `/api/caregivers/${cg}`, undefined, send); const c = cgOf(g)
+  if (!ok2(g.status) || !c) return { outcome: 'refused', detail: 'could not read the caregiver in AxisCare: ' + errText(g), recorded: false }
+  const have = rowsOf(c.classes); const cur = careLevelOf(have)
+  if (cur.level === level && have.filter((x: any) => levelFromLabel(x?.label ?? x?.code) != null).length === 1) return { outcome: 'unchanged', recorded: false, read: cur.from, classes: have.map((x: any) => String(x?.label ?? x?.code ?? '')) }
+  const v = await ax('GET', '/api/classes/caregiver', undefined, send)
+  if (!ok2(v.status)) return { outcome: 'refused', detail: "could not read AxisCare's caregiver class list: " + errText(v), recorded: false }
+  const all = rowsOf(v.json?.results?.classes ?? v.json?.results ?? v.json?.classes)
+  const want = all.filter((x: any) => levelFromLabel(x?.label ?? x?.code) === level)
+  if (want.length !== 1) return { outcome: 'refused', detail: want.length ? `AxisCare has ${want.length} classes that read as Level ${level}` : `AxisCare has no class that reads as Level ${level} (${LEVEL_NAMES[level]})`, recorded: false }
+  const next = [...have.filter((x: any) => levelFromLabel(x?.label ?? x?.code) == null).map(slim), slim(want[0])]
+  const summary = `Approve to Work: set the Level of Care class to ${String(want[0].label ?? want[0].code)}`
+  if (!live) { const recorded = await recordAxisChange(db, { kind: 'caregiver_level', caregiver: cg, outcome: 'practice', summary: summary + ' (practice, switch off)', detail: `AxisCare holds ${cur.from || 'no level class'}`, by, via }); return { outcome: 'practice', recorded, read: cur.from } }
+  const { token, site } = axisCreds()
+  if (!token || !site) return { outcome: 'no_credentials', detail: 'AxisCare credentials are not set on this project', recorded: false }
+  const p = await ax('PATCH', `/api/caregivers/${cg}`, { classes: next }, send)
+  if (!ok2(p.status)) { const recorded = await recordAxisChange(db, { kind: 'caregiver_level', caregiver: cg, outcome: 'refused', summary, detail: errText(p), by, via }); return { outcome: 'refused', detail: errText(p), recorded } }
+  const g2 = await ax('GET', `/api/caregivers/${cg}`, undefined, send); const c2 = cgOf(g2); const after = rowsOf(c2?.classes)
+  const kept = have.filter((x: any) => levelFromLabel(x?.label ?? x?.code) == null).every((x: any) => after.some((y: any) => String(y?.label ?? y?.code) === String(x?.label ?? x?.code)))
+  const good = ok2(g2.status) && careLevelOf(after).level === level && kept
+  const recorded = await recordAxisChange(db, { kind: 'caregiver_level', caregiver: cg, outcome: good ? 'sent_confirmed' : 'sent', summary, detail: good ? 'read back: ' + after.map((x: any) => String(x?.label ?? x?.code)).join(', ') : 'the read-back did not show it exactly', by, via })
+  return good ? { outcome: 'confirmed', recorded, read: careLevelOf(after).from, classes: after.map((x: any) => String(x?.label ?? x?.code ?? '')) } : { outcome: 'sent', detail: 'AxisCare accepted the change but the read-back did not show it exactly', recorded, classes: after.map((x: any) => String(x?.label ?? x?.code ?? '')) }
+}
