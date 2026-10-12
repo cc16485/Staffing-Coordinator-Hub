@@ -193,8 +193,8 @@ try {
 
 
   // ---------------- the library editor and suggestions ----------------
-  reset(); r = await call({ action: 'library' }); ck('library: a care coordinator is refused', r.status === 403, r)
-  r = await call({ action: 'library' }, 'sa'); ck('library (owner): every topic, the retired one too', r.status === 200 && r.j.library.length === 3 && r.j.library.some((t) => t.key === 'old' && t.active === false), r.j)
+  reset(); r = await call({ action: 'library' }); ck('library: the whole office can read it (Care Library tab), only an owner can edit', r.status === 200 && r.j.can_edit === false && r.j.library.length === 3 && r.j.categories.includes('eating'), r)
+  r = await call({ action: 'library' }, 'sa'); ck('library (owner): every topic, the retired one too', r.status === 200 && r.j.can_edit === true && r.j.library.length === 3 && r.j.library.some((t) => t.key === 'old' && t.active === false), r.j)
   r = await call({ action: 'get', ax: '900' }); ck('get says a care coordinator cannot edit the library', r.j.can_edit_library === false, r.j)
   r = await call({ action: 'get', ax: '900' }, 'sa'); ck('...and the owner can', r.j.can_edit_library === true, r.j)
   r = await call({ action: 'topic_save', key: 'turning', title: 'Turning again', is_new: true, videos: [] }, 'sa'); ck('a new topic whose name is taken: refused, the old one untouched', r.status === 409 && T.care_topics.find((t) => t.key === 'turning').title === 'Turning and repositioning', r)
@@ -242,6 +242,46 @@ try {
     pv = await call({ action: 'preview', packet_id: pid }, null); ck('preview without signing in: refused (401)', pv.status === 401, pv)
     pv = await call({ action: 'preview', packet_id: 'nope' }); ck('preview with no packet id: asks which', pv.status === 400, pv)
     pv = await call({ action: 'preview', packet_id: '00000000-0000-0000-0000-000000000000' }); ck('preview of a packet that is gone: says so', pv.status === 404, pv) }
+  // ---- the Care Library (2026-10-12): her OK on every topic and video before any caregiver sees it ----
+  reset(); T.care_topics.push({ key: 'gait_belt', title: 'Using a gait belt', notes: 'Hold the belt, not their arm.', active: true, pending: true, category: 'moving', flag: '',
+    videos: [{ title: 'Gait belt basics', url: 'https://www.youtube.com/watch?v=AAAAAAAAAAA', status: 'pending', why: 'clear' }, { title: 'Walking with a gait belt', url: 'https://www.youtube.com/watch?v=BBBBBBBBBBB', status: 'pending' }] })
+  T.care_topics.find((t) => t.key === 'turning').videos.push({ title: 'Researched, waiting', url: 'https://www.youtube.com/watch?v=CCCCCCCCCCC', status: 'pending' })
+  r = await call({ action: 'get', ax: '900' })
+  ck('a topic waiting for her OK is never offered for a packet', r.status === 200 && !r.j.topics.some((t) => t.key === 'gait_belt'), r.j.topics.map((t) => t.key))
+  ck('a waiting video on an approved topic is not offered; videos with no status (approved before statuses) still are', (() => { const t = r.j.topics.find((x) => x.key === 'turning'); return t && t.videos.length >= 1 && !t.videos.some((v) => v.url.includes('CCCCCCCCCCC')) })(), r.j.topics)
+  r = await save({ items: [{ topic: 'turning', notes: '' }, { topic: 'gait_belt', notes: '' }] })
+  ck('a packet cannot pick up a waiting topic (the save is refused, nothing saved)', r.status >= 400 && !T.care_packets.length, r)
+  await save({ items: [{ topic: 'turning', notes: '' }] })
+  { const pid = T.care_packets[0].id; const pv = await call({ action: 'preview', packet_id: pid })
+    ck('the caregiver page never shows a waiting video', pv.status === 200 && !JSON.stringify(pv.j).includes('CCCCCCCCCCC'), pv.j) }
+  T.care_topics.find((t) => t.key === 'turning').videos[0] = { ...T.care_topics.find((t) => t.key === 'turning').videos[0], approved_by: 'sa@mo-care.com', approved_at: '2026-10-12', why: 'office research note' }
+  T.care_topics.find((t) => t.key === 'turning').review_note = 'check the accent'
+  { const pv = await call({ action: 'preview', packet_id: T.care_packets[0].id }); const j = JSON.stringify(pv.j)
+    ck('the caregiver page never gets who approved a video, the research note or the office note', pv.status === 200 && !j.includes('sa@mo-care.com') && !j.includes('office research note') && !j.includes('check the accent'), pv.j) }
+  r = await call({ action: 'review', key: 'gait_belt', url: 'https://www.youtube.com/watch?v=AAAAAAAAAAA', decision: 'approve' }); ck('review: a care coordinator cannot approve', r.status === 403, r)
+  r = await call({ action: 'review', key: 'gait_belt', url: 'https://www.youtube.com/watch?v=AAAAAAAAAAA', decision: 'approve' }, 'sa')
+  { const v = T.care_topics.find((t) => t.key === 'gait_belt').videos[0]
+    ck('review: she approves one video, stamped with her and the time by the server', r.status === 200 && v.status === 'approved' && v.approved_by === 'sa@mo-care.com' && !!v.approved_at && EVENTS.some((e) => e.verb === 'care_topic_reviewed'), v) }
+  r = await call({ action: 'review', key: 'gait_belt', url: 'https://www.youtube.com/watch?v=BBBBBBBBBBB', decision: 'remove' }, 'sa')
+  ck('review: she removes one video', T.care_topics.find((t) => t.key === 'gait_belt').videos.length === 1, T.care_topics.find((t) => t.key === 'gait_belt').videos)
+  r = await call({ action: 'get', ax: '900' }); ck('approving a video does not approve the topic', !r.j.topics.some((t) => t.key === 'gait_belt'))
+  r = await call({ action: 'review', key: 'gait_belt', decision: 'approve' }, 'sa')
+  { const t = T.care_topics.find((x) => x.key === 'gait_belt'); ck('review: she approves the topic, stamped', t.pending === false && t.approved_by === 'sa@mo-care.com', t) }
+  r = await call({ action: 'get', ax: '900' }); ck('an approved topic is offered, with only its approved video', (() => { const t = r.j.topics.find((x) => x.key === 'gait_belt'); return t && t.videos.length === 1 && t.videos[0].url.includes('AAAAAAAAAAA') })(), r.j.topics)
+  r = await call({ action: 'review', key: 'gait_belt', decision: 'remove' }, 'sa'); r = await call({ action: 'get', ax: '900' }); ck('review: removing a topic takes it out of the library offer', !r.j.topics.some((t) => t.key === 'gait_belt'))
+  r = await call({ action: 'review', key: 'nope', decision: 'approve' }, 'sa'); ck('review: a topic that is gone says so', r.status === 404, r)
+  r = await call({ action: 'review', key: 'turning', url: 'https://x/none', decision: 'approve' }, 'sa'); ck('review: a video no longer there says so', r.status === 404, r)
+  r = await call({ action: 'review', key: 'turning', decision: 'maybe' }, 'sa'); ck('review: only approve or remove', r.status === 400, r)
+  // the browser cannot forge an approval stamp; saving keeps the earlier stamp; a waiting one stays waiting
+  r = await call({ action: 'topic_save', key: 'turning', title: 'Turning and repositioning', category: 'moving', videos: [
+    { title: 'Researched, waiting', url: 'https://www.youtube.com/watch?v=CCCCCCCCCCC', status: 'pending', approved_by: 'forged@x.com' },
+    { title: 'Mine', url: 'https://www.youtube.com/watch?v=DDDDDDDDDDD', approved_by: 'forged@x.com', approved_at: '2000-01-01' }] }, 'sa')
+  { const vs = T.care_topics.find((t) => t.key === 'turning').videos
+    ck('topic_save: a waiting video stays waiting with no stamp; a video she adds herself is approved with HER stamp, never one from the browser', r.status === 200 && vs[0].status === 'pending' && !vs[0].approved_by && vs[1].status === 'approved' && vs[1].approved_by === 'sa@mo-care.com' && vs[1].approved_at !== '2000-01-01', vs) }
+  r = await call({ action: 'topic_save', key: 'turning', title: 'Turning and repositioning', category: 'nonsense', videos: [] }, 'sa'); ck('topic_save: an unknown group is refused', r.status === 400, r)
+  r = await call({ action: 'topic_save', key: 'diet_x', title: 'A diet', category: 'eating', flag: 'Follow the care plan.', is_new: true, videos: [] }, 'sa')
+  { const t = T.care_topics.find((x) => x.key === 'diet_x'); ck('topic_save: a new topic she writes is in its group, has its warning line, and is approved by her', t && t.category === 'eating' && t.flag === 'Follow the care plan.' && t.pending === false && t.approved_by === 'sa@mo-care.com', t) }
+  ck('M.stampVideos keeps an older approval, stamps a new one, clears a waiting one', (() => { const out = M.stampVideos([{ url: 'a', status: 'approved' }, { url: 'b', status: 'approved' }, { url: 'c', status: 'pending' }], [{ url: 'a', status: 'approved', approved_by: 'x', approved_at: '2026-01-01' }], 'sa', 'NOW'); return out[0].approved_by === 'x' && out[1].approved_by === 'sa' && out[1].approved_at === 'NOW' && out[2].approved_by === null })())
   reset(); FAIL = 'care_packets'; r = await call({ action: 'get', ax: '900' }); ck('a database failure: a plain error, not a crash', r.status === 500 && /went wrong/.test(r.j.error), r)
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 const bad = res.filter((x) => !x[1])

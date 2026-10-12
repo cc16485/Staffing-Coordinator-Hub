@@ -50,6 +50,7 @@
     care_packet_sent:    { label: 'texted a caregiver packet', area: 'clients', severity: 'fyi' },
     care_packet_send_refused: { label: 'caregiver packet text not sent', area: 'clients', severity: 'fyi' },
     care_topic_saved:    { label: 'saved a care how-to topic', area: 'admin',   severity: 'fyi' },
+    care_topic_reviewed: { label: 'approved or removed a Care Library item', area: 'admin', severity: 'fyi' },
     /* scheduling */
     coverage_opened:     { label: 'opened a call-off case', area: 'scheduling', severity: 'action' },
     coverage_interest_opened: { label: 'opened a new-client ask', area: 'scheduling', severity: 'fyi' },

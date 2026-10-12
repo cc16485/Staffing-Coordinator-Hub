@@ -21,7 +21,9 @@
 //     'topic_save' {key, title, notes, videos:[{title, url, publisher?, minutes?}], active?, is_new?} -> owner only: the
 //                  how-to library (the editor on the card, 2026-10-12). is_new refuses a name already taken. Retired
 //                  (active false): not offered for new packets; packets that have it keep it.
-//     'library'    -> owner only: every topic, retired ones too, for the editor.
+//     'library'    -> every topic, waiting and retired ones too, for the Care Library tab (whole office reads; can_edit = owner).
+//     'review'     {key, url?, decision:'approve'|'remove'} -> owner only: her OK on one video, or on a whole topic. Only
+//                  approved videos in approved topics ever reach a caregiver (topics Claude researched arrive waiting).
 //     'suggest'    {ax?, lead_id?, about} -> topics from the library the AI thinks fit, each with one line of why, from
 //                  their newest care plan, their intake answers and the About notes (never medications). Saves nothing.
 //     'preview'    {packet_id} -> exactly what a caregiver's page shows for the saved packet (draft or ready). No link
@@ -60,6 +62,12 @@ const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: 
 type Any = any
 
 export const MAX_ABOUT = 2000, MAX_NOTES = 2000, MAX_ITEMS = 12, MAX_VIDEOS = 8, UPCOMING_DAYS = 14
+/* The Care Library (2026-10-12): the tab's groups, and what "approved" means. A video with no status is one she approved
+   before statuses existed. Only approved videos in approved, active topics ever reach a caregiver. */
+export const CATEGORIES = ['moving', 'personal', 'eating', 'conditions', 'signs', 'other'] as const
+export const videoApproved = (v: Any) => !v?.status || v.status === 'approved'
+export const offered = (t: Any) => t.active !== false && !t.pending
+const forCaregivers = (t: Any) => ({ ...t, videos: (t.videos ?? []).filter(videoApproved) })
 export const BAD_LINK = 'This link is not valid or has expired. Please call the office at (417) 234-8494 for a new one.'
 
 /* Samantha: never an em dash in anything a person reads. */
@@ -106,9 +114,21 @@ export function cleanVideos(v: unknown): { ok: true; videos: Any[] } | { ok: fal
     if (u.protocol !== 'https:') return { ok: false, error: `Videos must be https links: ${url.slice(0, 80)}` }
     const title = clean(x?.title, 120)
     if (!title) return { ok: false, error: 'Every video needs a title.' }
-    out.push({ title, url: u.toString(), publisher: clean(x?.publisher, 80), minutes: Number.isFinite(Number(x?.minutes)) && Number(x.minutes) > 0 ? Math.round(Number(x.minutes)) : null })
+    out.push({ title, url: u.toString(), publisher: clean(x?.publisher, 80), minutes: Number.isFinite(Number(x?.minutes)) && Number(x.minutes) > 0 ? Math.round(Number(x.minutes)) : null,
+      status: x?.status === 'pending' ? 'pending' : 'approved', why: clean(x?.why, 200) })
   }
   return { ok: true, videos: out }
+}
+/** Who approved each video, and when, always set here (never by the browser): a video newly approved gets her stamp, one
+    approved before keeps its stamp, one waiting has none. */
+export function stampVideos(next: Any[], before: Any[], email: string, now: string): Any[] {
+  const old = new Map((before ?? []).map((x: Any) => [String(x?.url), x]))
+  return next.map((x) => {
+    const o: Any = old.get(x.url)
+    if (x.status !== 'approved') return { ...x, approved_by: null, approved_at: null }
+    if (o && videoApproved(o) && (o.approved_at || !o.status)) return { ...x, approved_by: o.approved_by ?? null, approved_at: o.approved_at ?? null }
+    return { ...x, approved_by: email, approved_at: now }
+  })
 }
 export function vimeoId(url: string): string | null {
   try {
@@ -124,6 +144,8 @@ export function embedOf(url: string): string | null {
   return null
 }
 export const withEmbed = (v: Any) => ({ ...v, embed: embedOf(v.url) })
+/** What a caregiver's page gets for one video: never who approved it or the office's research note. */
+const forPage = (v: Any) => ({ title: v.title, url: v.url, publisher: v.publisher ?? '', minutes: v.minutes ?? null, embed: embedOf(v.url) })
 
 /** Has the packet's content (what a caregiver reads) changed? Then it is a new version. */
 export const contentOf = (p: Any) => JSON.stringify({ client_first: p.client_first ?? '', about: p.about ?? '', items: p.items ?? [] })
@@ -228,12 +250,13 @@ async function findPacket(sb: Any, ax: string, lead: string): Promise<Any | null
 async function topics(sb: Any, all = false): Promise<Any[]> {
   const { data, error } = all ? await sb.from('care_topics').select('*') : await sb.from('care_topics').select('*').eq('active', true)
   if (error) throw error
-  return (data ?? []).sort((a: Any, b: Any) => String(a.title).localeCompare(String(b.title)))
+  const rows = (data ?? []).sort((a: Any, b: Any) => String(a.title).localeCompare(String(b.title)))
+  return all ? rows : rows.filter(offered).map(forCaregivers)   // packets only ever offer what she approved
 }
 /** The topics as the caregiver's page shows them (a retired topic stays in packets that already have it). */
 async function pageItems(sb: Any, p: Any): Promise<Any[]> {
   const byKey = new Map((await topics(sb, true)).map((t) => [t.key, t]))
-  return (p.items ?? []).map((it: Any) => { const t = byKey.get(it.topic); return t ? { title: t.title, notes: it.notes || t.notes || '', videos: (t.videos ?? []).map(withEmbed) } : null }).filter(Boolean)
+  return (p.items ?? []).map((it: Any) => { const t = byKey.get(it.topic); return t ? { title: t.title, notes: it.notes || t.notes || '', videos: (t.videos ?? []).filter(videoApproved).map(forPage) } : null }).filter(Boolean)
 }
 async function recipients(sb: Any, packetId: string): Promise<Any[]> {
   const { data, error } = await sb.from('care_packet_recipients').select('id, caregiver_axiscare_id, caregiver_name, link_made_at, link_made_by, ack_version, ack_at, last_sent_at, last_sent_by, last_send_kind, send_count').eq('packet_id', packetId)
@@ -451,10 +474,19 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
       if (!title) return json({ error: 'The topic needs a title.' }, 400)
       const v = cleanVideos(b.videos ?? [])
       if (!v.ok) return json({ error: v.error }, 400)
-      const { data: had, error: e0 } = await sb.from('care_topics').select('key, title').eq('key', key).limit(1)
+      const { data: had, error: e0 } = await sb.from('care_topics').select('*').eq('key', key).limit(1)
       if (e0) throw e0
       if (b.is_new === true && had?.length) return json({ outcome: 'exists', error: `There is already a topic with that name ("${had[0].title}"). Edit that one, or pick another name.` }, 409)
-      const row = { key, title, notes: cleanLong(b.notes, MAX_NOTES), videos: v.videos, active: b.active !== false, updated_by: who.email, updated_at: new Date().toISOString() }
+      const now = new Date().toISOString(), prev = had?.[0] ?? null
+      const category = b.category === undefined ? (prev?.category ?? 'other') : String(b.category)
+      if (!(CATEGORIES as readonly string[]).includes(category)) return json({ error: 'Pick a group for this topic.' }, 400)
+      const row: Any = { key, title, notes: cleanLong(b.notes, MAX_NOTES), videos: stampVideos(v.videos, prev?.videos ?? [], who.email, now), active: b.active !== false,
+        category, flag: b.flag === undefined ? (prev?.flag ?? '') : cleanLong(b.flag, 400),
+        review_note: b.review_note === undefined ? (prev?.review_note ?? '') : cleanLong(b.review_note, 1000), updated_by: who.email, updated_at: now }
+      /* an owner saving a topic approves it (a topic she writes herself is hers); one still waiting stays waiting unless she says so */
+      const pending = b.pending === undefined ? !!prev?.pending : b.pending === true
+      row.pending = pending
+      if (!pending && (prev?.pending || !prev)) { row.approved_by = who.email; row.approved_at = now }
       const { error } = await sb.from('care_topics').upsert(row, { onConflict: 'key' })
       if (error) throw error
       await opEvent(sb, { verb: 'care_topic_saved', actor_email: who.email, actor_name: who.name, via: 'hub', item_id: 'care_topic:' + key,
@@ -463,9 +495,38 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
     }
 
     /* The library editor (owner only): every topic, retired ones too. */
-    if (action === 'library') {
-      if (!who.roles.includes('owner_admin')) return json({ error: 'Only an owner can change the how-to library.' }, 403)
-      return json({ library: await topics(sb, true) })
+    if (action === 'library') {   // the Care Library tab: the whole office reads it; only an owner changes or approves (2026-10-12)
+      return json({ library: await topics(sb, true), can_edit: who.roles.includes('owner_admin'), categories: CATEGORIES })
+    }
+
+    /* Her OK in the Care Library tab (2026-10-12, "approve in the tab"): approve or remove one video, or approve or remove a
+       whole topic. Owner only. Only approved videos in approved topics ever reach a caregiver. */
+    if (action === 'review') {
+      if (!who.roles.includes('owner_admin')) return json({ error: 'Only an owner can approve the Care Library.' }, 403)
+      const key = String(b.key ?? ''), url = b.url == null ? '' : String(b.url), decision = String(b.decision ?? '')
+      if (!['approve', 'remove'].includes(decision)) return json({ error: 'Approve or remove?' }, 400)
+      const { data: had, error: e0 } = await sb.from('care_topics').select('*').eq('key', key).limit(1)
+      if (e0) throw e0
+      const t = had?.[0]
+      if (!t) return json({ error: 'That topic is gone. Reload.' }, 404)
+      const now = new Date().toISOString(), patch: Any = { updated_by: who.email, updated_at: now }
+      let summary = ''
+      if (url) {
+        const vids: Any[] = t.videos ?? [], i = vids.findIndex((x: Any) => String(x?.url) === url)
+        if (i < 0) return json({ error: 'That video is no longer on this topic. Reload.' }, 404)
+        if (decision === 'approve') { vids[i] = { ...vids[i], status: 'approved', approved_by: who.email, approved_at: now }; summary = `approved the video "${vids[i].title}" for "${t.title}"` }
+        else { summary = `removed the video "${vids[i].title}" from "${t.title}"`; vids.splice(i, 1) }
+        patch.videos = vids
+      } else if (decision === 'approve') {
+        Object.assign(patch, { pending: false, active: true, approved_by: who.email, approved_at: now }); summary = `approved the topic "${t.title}" for packets`
+      } else {
+        Object.assign(patch, { active: false }); summary = `removed the topic "${t.title}" from the library`
+      }
+      const { error } = await sb.from('care_topics').update(patch).eq('key', key)
+      if (error) throw error
+      await opEvent(sb, { verb: 'care_topic_reviewed', actor_email: who.email, actor_name: who.name, via: 'hub', item_id: 'care_topic:' + key, summary, outcome: 'done',
+        data: { key, url: url || null, decision } })
+      return json({ outcome: 'saved', library: await topics(sb, true) })
     }
 
     /* Suggest topics (2026-10-12): reads what we know about the client (their newest care plan, their intake answers, and the
