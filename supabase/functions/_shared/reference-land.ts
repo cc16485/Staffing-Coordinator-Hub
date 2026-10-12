@@ -28,6 +28,16 @@ export const NO_LANDING_YET = "the Hub's rules file does not have the reference 
 export const rev = (x: any) => (/^[0-9]{1,15}$/.test(String(x?._rev ?? '')) ? Number(x._rev) : 0)
 const nameOf = (c: any) => `${c?.first ?? ''} ${c?.last ?? ''}`.trim()
 const notHired = (c: any) => !!c?.not_hired && c.not_hired !== 'false'
+/** Her rule, no silent overwrites: the office already recorded this reference (an answers record that did not come from
+ *  the online form, or a status set by hand with no answers record). Such a slot is never landed on; the online answer
+ *  waits for someone to look (the Sync button). A blank or Pending slot, or one whose answers came from the online form
+ *  (a re-answer), lands. */
+export function officeRecorded(c: any, n: number): boolean {
+  const m = c?.['r' + n + '_manual'], s = String(c?.['r' + n + 's'] ?? '')
+  const hasManual = m != null && m !== ''
+  if (hasManual) return typeof m !== 'object' || Array.isArray(m) || m.via !== 'Online form'
+  return ['Positive', 'Conditional', 'Negative'].includes(s)
+}
 const ageDays = (iso: string, now: Date) => { const t = Date.parse(iso); return Number.isFinite(t) ? (now.getTime() - t) / 86_400_000 : Infinity }
 
 const SKIP_WHY: Record<string, string> = {
@@ -35,12 +45,13 @@ const SKIP_WHY: Record<string, string> = {
   duplicate_id: 'two people in Background & References share this number',
   bad_slot: 'the reference has no slot 1 to 4',
   not_hired: 'the person is marked not hired',
+  office_recorded: 'the office already recorded this reference; the online answer waits for someone to look (Sync button)',
   changed: 'the person kept changing while it tried; it tries again next run',
 }
 
 export type Plan = {
   request_id: string; candidate_id: string; name: string; slot: number; current_status: string; score: string
-  responded_at: string; negative: boolean; alert: 'opens' | 'held_too_old' | 'none'; replaces_status: boolean
+  responded_at: string; negative: boolean; alert: 'opens' | 'held_too_old' | 'none'
 }
 export type Skip = { request_id: string; candidate_id: string; slot: unknown; reason: string; why: string }
 
@@ -75,6 +86,7 @@ export function plan(rows: any[], candidates: any[], E: any, now: Date): { plans
     if (hits.length > 1) { skip(r, 'duplicate_id'); continue }
     const c = hits[0]
     if (notHired(c)) { skip(r, 'not_hired'); continue }
+    if (officeRecorded(c, n)) { skip(r, 'office_recorded'); continue }
     const lp = E.refAnswerPatch(c, r)
     if (!lp) { skip(r, 'bad_slot'); continue }
     const cur = String(c['r' + n + 's'] ?? '')
@@ -83,7 +95,6 @@ export function plan(rows: any[], candidates: any[], E: any, now: Date): { plans
     plans.push({ r, c, p: {
       request_id: String(r.id), candidate_id: String(c.id), name: nameOf(c), slot: n, current_status: cur || '(blank)', score: lp.score,
       responded_at: String(r.responded_at ?? ''), negative, alert: negative ? (old ? 'held_too_old' : 'opens') : 'none',
-      replaces_status: ['Positive', 'Conditional', 'Negative'].includes(cur) && cur !== lp.score,
     } })
   }
   return { plans, skipped }
@@ -111,7 +122,7 @@ export async function report(db: any, E: any, now = new Date()) {
   return { ok: true, mode: 'report', wrote_nothing: true,
     counts: { seen: rows.length, would_land: would.length, waiting_for_next_run: Math.max(0, plans.length - BATCH_LIMIT), skipped: skipped.length,
       negatives: would.filter((p) => p.negative).length, alerts_would_open: would.filter((p) => p.alert === 'opens').length,
-      alerts_held_too_old: would.filter((p) => p.alert === 'held_too_old').length, would_replace_a_status: would.filter((p) => p.replaces_status).length },
+      alerts_held_too_old: would.filter((p) => p.alert === 'held_too_old').length, office_recorded_waiting: skipped.filter((x) => x.reason === 'office_recorded').length },
     would_land: would, skipped,
     limits: { batch: BATCH_LIMIT, negative_alert_max_age_days: NEGATIVE_ALERT_MAX_AGE_DAYS } }
 }
@@ -121,6 +132,7 @@ async function landOne(db: any, E: any, r: any, c0: any): Promise<{ ok: true; c:
   let c = c0
   for (let i = 0; i < DOOR_TRIES; i++) {
     if (notHired(c)) return { ok: false, reason: 'not_hired' }
+    const lp0 = Number(r?.slot); if (officeRecorded(c, lp0)) return { ok: false, reason: 'office_recorded' }
     const lp = E.refAnswerPatch(c, r); if (!lp) return { ok: false, reason: 'bad_slot' }
     const { data, error } = await db.rpc('reference_land_apply', { p_candidate_id: String(c.id), p_slot: lp.slot, p_base_rev: rev(c), p_patch: lp.set, p_by: LANDED_BY })
     if (error) return { ok: false, reason: 'error', error: String(error.message || error).slice(0, 200) }

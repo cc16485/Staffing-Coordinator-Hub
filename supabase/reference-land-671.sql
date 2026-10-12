@@ -7,6 +7,9 @@
 --   * only if nobody changed that person since the job read them (_rev, the 421 per-person counter). If they did, it
 --     answers 'changed' with the current record and saves nothing; the job works the answer out again on it;
 --   * refuses (saves nothing) if the person is gone, two people share the number, or the person is marked not hired;
+--   * no silent overwrites (her rule): refuses 'office_recorded' when the office already recorded this reference (an
+--     answers record not from the online form, or a status set by hand with no answers record). A blank or Pending
+--     slot, or one whose answers came from the online form (a re-answer), lands;
 --   * nothing different: answers ok with no save (so a second landing of the same answer changes nothing);
 --   * one history line tagged origin 'reference-land' (as step1_land_apply does), besides the database's own line.
 -- The _rev is set by the database (app_data_version_t), as for every other save. Runs as its owner so the 442 people
@@ -19,7 +22,7 @@ language plpgsql security definer
 set search_path = pg_catalog, public, pg_temp
 set lock_timeout = '5s'
 as $fn$
-declare cd jsonb; rec jsonb; idx int := -1; i int; n int := 0; k text; v jsonb; changed text[] := '{}'; allowed text[]; outd jsonb; v_rev bigint;
+declare cd jsonb; rec jsonb; m jsonb; idx int := -1; i int; n int := 0; k text; v jsonb; changed text[] := '{}'; allowed text[]; outd jsonb; v_rev bigint;
 begin
   if p_candidate_id is null or p_candidate_id = '' or p_patch is null or jsonb_typeof(p_patch) <> 'object' then
     raise exception 'reference_land_apply: a person number and the fields are needed' using errcode = '22023';
@@ -52,6 +55,12 @@ begin
   if n > 1 then return jsonb_build_object('ok', false, 'reason', 'duplicate_id'); end if;
   rec := cd->idx;
   if coalesce(rec->>'not_hired', '') not in ('', 'false') then return jsonb_build_object('ok', false, 'reason', 'not_hired'); end if;
+  m := rec->('r'||p_slot||'_manual');
+  if (m is not null and jsonb_typeof(m) <> 'null' and m <> '""'::jsonb
+        and (jsonb_typeof(m) <> 'object' or (m->>'via') is distinct from 'Online form'))
+     or ((m is null or jsonb_typeof(m) = 'null' or m = '""'::jsonb) and coalesce(rec->>('r'||p_slot||'s'), '') in ('Positive', 'Conditional', 'Negative')) then
+    return jsonb_build_object('ok', false, 'reason', 'office_recorded');
+  end if;
   if public.app_data_rev(rec) <> coalesce(p_base_rev, -1) then
     return jsonb_build_object('ok', false, 'reason', 'changed', 'current_record', rec);
   end if;

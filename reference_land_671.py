@@ -109,11 +109,10 @@ elif s5 == 200 and j.get("ok"):
     k = j.get("counts", {})
     say(f"  · answered and not landed yet: {k.get('seen', 0)}; would land: {k.get('would_land', 0)}" + (f" (and {k.get('waiting_for_next_run')} more on the next run)" if k.get("waiting_for_next_run") else "") + f"; skipped: {k.get('skipped', 0)}")
     say(f"  · negative answers: {k.get('negatives', 0)}; a card for today would open for {k.get('alerts_would_open', 0)}; held back because the answer is older than {j.get('limits', {}).get('negative_alert_max_age_days', 14)} days: {k.get('alerts_held_too_old', 0)}")
-    if k.get("would_replace_a_status"): say(f"  · {k['would_replace_a_status']} would replace a status the office already recorded on that slot (marked below)")
+    if k.get("office_recorded_waiting"): say(f"  · {k['office_recorded_waiting']} wait for someone to look because the office already recorded that reference (nothing is overwritten; listed under skipped)")
     for w in j.get("would_land", []):
         say(f"    {w.get('name') or '(no name)'} · reference {w.get('slot')} · now {w.get('current_status')} → {w.get('score')} · answered {str(w.get('responded_at'))[:10]}"
-            + (" · opens a card for today" if w.get("alert") == "opens" else " · no card (older than the limit)" if w.get("alert") == "held_too_old" else "")
-            + (" · REPLACES the office's status" if w.get("replaces_status") else ""))
+            + (" · opens a card for today" if w.get("alert") == "opens" else " · no card (older than the limit)" if w.get("alert") == "held_too_old" else ""))
     for s in j.get("skipped", []): say(f"    skipped: request {str(s.get('request_id'))[:8]} (person {s.get('candidate_id')}, slot {s.get('slot')}): {s.get('why')}")
 else: bad(f"the report answered {s5}: {str(b5)[:300]}")
 ok_c2, c2 = sql(REF, COUNT_Q + ", coalesce((select data->>'ref_land_live' from public.app_data where key = 'ops_settings'), 'not set') as sw")
@@ -122,7 +121,7 @@ if ok_c2 and ok_c:
     say(f"  ✓ Background & References is unchanged ({c2[0]['cands']} people, same save time) and no reference answer was marked landed") if same else bad(f"something changed: {c2}")
     say(f"  ✓ the switch is still off ({c2[0]['sw']})") if str(c2[0]['sw']) != "true" else bad("the switch is on")
 else: bad(f"could not count again: {c2}")
-say("  · tested before deploying: 41 checks on the job and the door, 19 on this step rehearsed (the switch off changes nothing; the report writes nothing; answers land only through the door; a negative opens one card, never two; an old negative lands with no card; an unapproved rules file is refused; no send path; the door in a real Postgres).")
+say("  · tested before deploying: 47 checks on the job and the door (an office-recorded reference is never overwritten), 20 on this step rehearsed (the switch off changes nothing; the report writes nothing; answers land only through the door; a negative opens one card, never two; an old negative lands with no card; an unapproved rules file is refused; a reference the office already recorded is never overwritten; no send path; the door in a real Postgres).")
 say()
 if fails: say("RESULT: CHECK THE ✗ LINES ABOVE"); done(9)
 say("RESULT: DONE · the door, the job and its 15-minute schedule are in; the switch is off, so nothing lands yet. Nothing was sent; no person's record changed.")

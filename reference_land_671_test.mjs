@@ -169,10 +169,27 @@ DB.app_data.candidates = Array.from({ length: SH.BATCH_LIMIT + 7 }, (_, i) => ({
 c = await call({ mode: 'apply' }, CRON)
 ck('first activation cannot flood: at most ' + SH.BATCH_LIMIT + ' land in one run, the rest wait', c.j.landed === SH.BATCH_LIMIT && c.j.waiting_for_next_run === 7, c.j)
 
-/* the office already recorded a status on that slot: the landing replaces it (as the Hub button does) and the report marks it */
-{ const vm = await import('vm'); const ctx = {}; vm.createContext(ctx); vm.runInContext(RULES_NEW, ctx); const E = ctx.CCElig
-  const P = SH.plan([ans({ n: 50, candidate_id: 'k1', slot: 1, recommend: 'no' })], [{ id: 'k1', first: 'Kay', last: 'Kept', r1n: 'Office Name', r1s: 'Positive' }], E, new Date())
-  ck('a slot the office already marked Positive: the report says the answer would replace it, and the office\'s reference name is kept', P.plans[0].p.replaces_status === true && P.plans[0].p.current_status === 'Positive' && E.refAnswerPatch({ id: 'k1', r1n: 'Office Name' }, { slot: 1, ref_name: 'Other' }).set.r1n === 'Office Name', P.plans[0].p) }
+/* her rule, no silent overwrites: a reference the office already recorded is never landed on; the answer waits */
+reset({ reference_requests: [ans({ n: 20, candidate_id: 'k1', slot: 1, recommend: 'no', concerns: 'serious' }), ans({ n: 21, candidate_id: 'k2', slot: 1, recommend: 'no' }), ans({ n: 22, candidate_id: 'k3', slot: 1, recommend: 'reservations' })] })
+DB.app_data.candidates = [{ id: 'k1', first: 'Kay', last: 'Phone', _rev: 1, r1n: 'Office Name', r1s: 'Positive', r1_manual: { staff: 'Krystal', via: 'Phone', date: '2026-10-01', recommend: 'yes' } },
+  { id: 'k2', first: 'Hal', last: 'Hand', _rev: 1, r1n: 'Set By Hand', r1s: 'Conditional' },
+  { id: 'k3', first: 'Rae', last: 'Again', _rev: 1, r1n: 'Ref 22', r1s: 'Positive', r1_manual: { staff: 'answered by the reference', via: 'Online form', date: '2026-10-01', recommend: 'yes' } }]
+const K = clone(DB.app_data.candidates)
+c = await call({ mode: 'report' }, OWNER)
+ck('report: an office phone answer and a hand-set status show under skipped with her words; the online re-answer would land', c.j.counts.would_land === 1 && c.j.would_land[0].request_id === 'q22' && c.j.counts.office_recorded_waiting === 2
+  && ['q20', 'q21'].every((id) => c.j.skipped.find((x) => x.request_id === id)?.why === 'the office already recorded this reference; the online answer waits for someone to look (Sync button)') && !JSON.stringify(c.j).includes('replaces'), c.j)
+DB.app_data.ops_settings.ref_land_live = true; c = await call({ mode: 'apply' }, CRON)
+const kk = (id) => DB.app_data.candidates.find((x) => x.id === id), mergedQ = (id) => DB.reference_requests.find((r) => r.id === id).merged_at
+ck('office phone answer kept: the door is not called, the status and the answers record are untouched, no card, the row waits (merged_at unset)', JSON.stringify(kk('k1')) === JSON.stringify(K[0]) && !DOOR_CALLS.some((d) => d.p_candidate_id === 'k1') && !mergedQ('q20') && !DB.app_data.ops_items.some((x) => x.id === 'ops_negref_q20'), [kk('k1'), DOOR_CALLS])
+ck('hand-set status kept: the door is not called, Conditional stays, the row waits', JSON.stringify(kk('k2')) === JSON.stringify(K[1]) && !DOOR_CALLS.some((d) => d.p_candidate_id === 'k2') && !mergedQ('q21'), kk('k2'))
+ck('online re-answer still lands: Positive becomes Conditional from the new form, the row is marked', kk('k3').r1s === 'Conditional' && kk('k3').r1_manual.recommend === 'reservations' && !!mergedQ('q22') && c.j.landed === 1 && c.j.skipped === 2, [kk('k3'), c.j])
+/* the office records a phone answer while the run is working: the fresh record is checked again before the door */
+reset({ reference_requests: [ans({ n: 23, candidate_id: 'k4', slot: 1 })] }); DB.app_data.ops_settings.ref_land_live = true
+DB.app_data.candidates = [{ id: 'k4', first: 'Lou', last: 'Late', _rev: 1, r1n: '', r1s: 'Pending' }]
+const realRpc = globalThis.__fake.rpc; let once = true
+globalThis.__fake.rpc = async (n, a) => { if (n === 'reference_land_apply' && once) { once = false; Object.assign(DB.app_data.candidates[0], { r1s: 'Positive', r1_manual: { via: 'Phone' }, _rev: 2 }) } return realRpc(n, a) }
+c = await call({ mode: 'apply' }, CRON); globalThis.__fake.rpc = realRpc
+ck('the office records the reference by phone during the run: the retry sees it and stops; their answer is kept, the row waits', DB.app_data.candidates[0].r1s === 'Positive' && DB.app_data.candidates[0].r1_manual.via === 'Phone' && DOOR_CALLS.length === 1 && !mergedQ('q23') && c.j.skipped_rows.some((x) => x.reason === 'office_recorded'), [c.j, DOOR_CALLS])
 
 /* ── 4. the door in a real Postgres ── */
 if (process.env.PGLITE) {
@@ -183,7 +200,7 @@ if (process.env.PGLITE) {
     create table public.app_data (key text primary key, data jsonb, updated_at timestamptz default now(), version bigint not null default 0);
     create table public.app_data_item_change (id bigserial primary key, at timestamptz default now(), key text, record_id text, change text, fields_changed text[], bulk_removed boolean, actor text, role text, origin text, names text, error text);
     ${revFns}
-    insert into public.app_data (key, data) values ('candidates', '[{"id": "c1", "first": "Ann", "last": "Able", "r1s": "Pending", "r2n": "Old Boss", "r2s": "Positive"}, {"id": "c2", "first": "Bo", "not_hired": true}, {"id": "d", "first": "X"}, {"id": "d", "first": "Y"}]');`)
+    insert into public.app_data (key, data) values ('candidates', '[{"id": "c1", "first": "Ann", "last": "Able", "r1s": "Pending", "r2n": "Old Boss", "r2s": "Positive"}, {"id": "c2", "first": "Bo", "not_hired": true}, {"id": "d", "first": "X"}, {"id": "d", "first": "Y"}, {"id": "c5", "first": "Kay", "r1s": "Positive", "r1_manual": {"via": "Phone", "staff": "Krystal"}}, {"id": "c7", "first": "Rae", "r1s": "Positive", "r1_manual": {"via": "Online form"}}]');`)
   await pg.exec(SQL); await pg.exec(SQL)
   const q1 = async (s, a) => (await pg.query(s, a)).rows[0]
   const door = async (id, slot, base, patch) => (await q1('select public.reference_land_apply($1, $2, $3, $4::jsonb) as r', [id, slot, base, JSON.stringify(patch)])).r
@@ -199,6 +216,9 @@ if (process.env.PGLITE) {
   r = await door('c1', 1, 1, patch)
   ck('door: the same answer again changes nothing (no save, no history line)', r.ok && r.unchanged && (await q1(`select version from public.app_data where key = 'candidates'`)).version === v0 && (await q1(`select count(*)::int as n from public.app_data_item_change`)).n === 1, r)
   ck('door: a person not in the list, two people sharing a number, a not-hired person: refused', (await door('nobody', 1, 0, { r1s: 'Positive' })).reason === 'no_candidate' && (await door('d', 1, 0, { r1s: 'Positive' })).reason === 'duplicate_id' && (await door('c2', 1, 0, { r1s: 'Positive' })).reason === 'not_hired')
+  ck('door: no silent overwrites: an office phone answer and a hand-set status are refused (office_recorded), nothing saved', (await door('c5', 1, 0, { r1s: 'Negative' })).reason === 'office_recorded' && (await door('c1', 2, 1, { r2s: 'Negative' })).reason === 'office_recorded' && (await cand('c5')).r1s === 'Positive' && (await cand('c1')).r2s === 'Positive')
+  r = await door('c7', 1, 0, { r1s: 'Conditional', r1_manual: { via: 'Online form', recommend: 'reservations' } })
+  ck('door: an online re-answer lands', r.ok && (await cand('c7')).r1s === 'Conditional', r)
   const refuses = async (slot, p) => { try { await door('c1', slot, 1, p); return false } catch { return true } }
   ck('door: refuses any other field (the person\'s name, another slot, an SSN), a slot outside 1 to 4, a made-up status, answers that are not a record',
     await refuses(1, { first: 'Hacked' }) && await refuses(1, { r2s: 'Positive' }) && await refuses(1, { ssn: '1' }) && await refuses(5, { r5s: 'Positive' }) && await refuses(1, { r1s: 'Great' }) && await refuses(1, { r1_manual: 'x' }) && (await cand('c1')).first === 'Ann')

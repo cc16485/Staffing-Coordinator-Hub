@@ -7,10 +7,10 @@ sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
 res = []; ck = lambda n, c, note="": res.append((n, bool(c), "" if c else str(note)[:900]))
 FP = "a0d4d5e47ac82f08e35028b10db68a4d21f73902ce28908f7b2fa3d3b94fc671"
 S = {}; M = {}
-REPORT = {"ok": True, "mode": "report", "wrote_nothing": True, "counts": {"seen": 3, "would_land": 2, "waiting_for_next_run": 0, "skipped": 1, "negatives": 1, "alerts_would_open": 1, "alerts_held_too_old": 0, "would_replace_a_status": 0},
-          "would_land": [{"request_id": "q1", "candidate_id": "c1", "name": "Ann Able", "slot": 1, "current_status": "Pending", "score": "Positive", "responded_at": "2026-10-11T10:00:00Z", "negative": False, "alert": "none", "replaces_status": False},
-                         {"request_id": "q2", "candidate_id": "c2", "name": "Bo Bright", "slot": 2, "current_status": "(blank)", "score": "Negative", "responded_at": "2026-10-10T10:00:00Z", "negative": True, "alert": "opens", "replaces_status": False}],
-          "skipped": [{"request_id": "q3aaaaaaaa", "candidate_id": "c9", "slot": 1, "reason": "not_hired", "why": "the person is marked not hired"}], "limits": {"batch": 50, "negative_alert_max_age_days": 14}}
+REPORT = {"ok": True, "mode": "report", "wrote_nothing": True, "counts": {"seen": 4, "would_land": 2, "waiting_for_next_run": 0, "skipped": 2, "negatives": 1, "alerts_would_open": 1, "alerts_held_too_old": 0, "office_recorded_waiting": 1},
+          "would_land": [{"request_id": "q1", "candidate_id": "c1", "name": "Ann Able", "slot": 1, "current_status": "Pending", "score": "Positive", "responded_at": "2026-10-11T10:00:00Z", "negative": False, "alert": "none"},
+                         {"request_id": "q2", "candidate_id": "c2", "name": "Bo Bright", "slot": 2, "current_status": "(blank)", "score": "Negative", "responded_at": "2026-10-10T10:00:00Z", "negative": True, "alert": "opens"}],
+          "skipped": [{"request_id": "q3aaaaaaaa", "candidate_id": "c9", "slot": 1, "reason": "not_hired", "why": "the person is marked not hired"}, {"request_id": "q4bbbbbbbb", "candidate_id": "c8", "slot": 2, "reason": "office_recorded", "why": "the office already recorded this reference; the online answer waits for someone to look (Sync button)"}], "limits": {"batch": 50, "negative_alert_max_age_days": 14}}
 def reset(**m):
     S.clear(); S.update(sql=[], posts=[]); M.clear()
     M.update(dict(vault=1, sw=None, elig=2, cols=4, install="ok", door_ssn_refused=True, anon_ok=False, old_rules=False, changed=False, fnlive=404), **m)
@@ -91,6 +91,7 @@ ck("the switch is never set by the step", not any("ref_land_live" in q and re.se
 ck("the report is printed with names, scores, the card it would open, and the skipped reason", "Ann Able · reference 1 · now Pending → Positive" in out and "Bo Bright · reference 2 · now (blank) → Negative" in out and "opens a card for today" in out and "the person is marked not hired" in out, out)
 ck("proofs pass: refuses a stranger, switch-off run changes nothing, door refuses ssn, server only, nothing changed", "refuses a caller with neither" in out and "a run changes nothing" in out and "refuses a field" in out and "only the server may call the door" in out and "is unchanged" in out and "still off" in out, out)
 ck("the report and the switch-off check run as the owner's server key; no key is printed", all(a == "Bearer eyJsvcKEY" for p_, a, b in S["posts"] if b.get("mode") and a != "Bearer ") and "eyJsvcKEY" not in out and "eyJanonKEY" not in out and "sbp_test" not in out, out)
+ck("an office-recorded reference shows under skipped in her words, counted, and nothing says REPLACES", "1 wait for someone to look because the office already recorded that reference" in out and "skipped: request q4bbbbbb (person c8, slot 2): the office already recorded this reference; the online answer waits for someone to look (Sync button)" in out and "REPLACES" not in out, out)
 c, out = run(old_rules=True)
 ck("the Hub still serves the old rules file: the report says so in her words, still DONE", c == 0 and "does not have the reference landing yet; merge the Hub pull request and run the report again" in out, out)
 c, out = run(sw="true")
