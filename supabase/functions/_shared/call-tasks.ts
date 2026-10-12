@@ -11,7 +11,7 @@
 // the Hub's domains and the Staffing seat, Client Journey, leads, staffing plans and visit changes checked, up to 8 cards.
 // =============================================================================
 
-export const VERSION = 'v11-2026-10-12'   // v11: jobs for different parts of the office are separate cards, never merged   // v8: a change in a client's condition is client care (the Hub's care_condition routing), not an incident; v9: praise goes to Kind Words, never a card (her decision); v10: GoHighLevel texts read too, and each card carries its prepared actions (ask the client or family first when a visit changes)
+export const VERSION = 'v12-2026-10-12'   // v11: jobs for different parts of the office are separate cards, never merged; v12: summaries never quote people or carry health reasons the work does not need   // v8: a change in a client's condition is client care (the Hub's care_condition routing), not an incident; v9: praise goes to Kind Words, never a card (her decision); v10: GoHighLevel texts read too, and each card carries its prepared actions (ask the client or family first when a visit changes)
 export const MODEL = 'claude-sonnet-5-5'
 export const MAX_CARDS = 8, MAX_ITEMS = 12
 export const AREAS = ['scheduling', 'evv_timekeeping', 'payroll', 'client_care', 'caregiver_performance', 'safety_incident',
@@ -42,7 +42,7 @@ export const TOOL = {
     type: 'object', additionalProperties: false,
     required: ['summary', 'caller_role', 'about', 'understood', 'commitments', 'is_voicemail', 'items', 'resolves', 'no_task_reason'],
     properties: {
-      summary: str('Two to four sentences: who called, what they wanted, what was said or agreed. No phone numbers or email addresses; only the health detail the work needs.'),
+      summary: str('Two to four sentences in your own words: who called or texted, what they wanted, what was said or agreed. Never quote anyone word for word. No phone numbers or email addresses. Leave out health details and personal reasons (a caregiver\'s own health, why someone said no) unless the work itself needs them.'),
       caller_role: { type: 'string', enum: [...ROLES], description: 'Who the office was talking with.' },
       about: str('Who the call was about, with what they are to us when known (for example "Steve Algiere, client"). Empty when unclear.'),
       understood: { type: 'array', items: { type: 'string' }, description: 'The facts from the call that matter for the work, one short line each (up to six).' },
@@ -101,7 +101,7 @@ export const SYSTEM = `You are the office-awareness employee of Caring Companion
 What matters most: the coordinators should have less to remember, and their work list should not fill up with cards nobody needs. A card earns its place only when a person at Caring Companions must do something, nobody has it yet, and it would otherwise depend on someone remembering.
 
 Work through the call like an experienced coordinator:
-1. Summarize the call and note the facts that matter for the work.
+1. Summarize the call in your own words and note the facts that matter for the work. Never quote anyone word for word, and leave out health details and personal reasons that do not change the work (a caregiver declining hours "because of my health" is simply a caregiver declining hours).
 2. List every responsibility the call created for the office, including the ones that need no card. A call can create several unrelated responsibilities (for example a schedule change, a payroll question and a concern about a caregiver); list each separately so none is lost. Never merge two jobs that belong to different parts of the office into one card (for example a concern about a caregiver and a scheduling request in the same call are two cards: caregiver_performance and scheduling), so each reaches its own owner.
 3. Tell promises apart. "We will have Angel call you Monday" is something we agreed to do. "I will call you tomorrow to confirm" is something the caller will do, and leaves the arrangement awaiting confirmation. "Maybe we will add Saturdays" is the caller considering, not a request. Only something we agreed to do, or a request we must answer, is work for the office; a pending confirmation can be part of a card's why (for example "he will call Monday to confirm"). Never treat a request as a promise or a pattern as a policy.
 4. For each responsibility, check the request before deciding. The Hub already runs established workflows: call-off cases (they ask caregivers and fill the shift), missed clock-in cases, running-late alerts, lead follow-up, the Client Journey steps for new clients, staffing plans, visit changes, and the open cards in Needs Attention. When one of those listed in the request already has the work, the decision is already_in_workflow and you name it; do not create duplicate work or a way around it. The request also lists the call-off and missed clock-in cases for that day's visits whoever is calling; a call about one of those visits (same client and day, even if a name is spelled differently) is already in that workflow. Only when a caregiver called off and the request lists nothing at all about that visit is it a new card: "Open a call-off case for ...".
