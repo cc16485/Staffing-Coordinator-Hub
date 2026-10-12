@@ -19,6 +19,7 @@
 // =============================================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { jobCaller } from '../_shared/job-auth.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -548,7 +549,9 @@ const acPhone = (raw: unknown): string | null => {
   return null
 }
 
-async function backfillClientsFromAxisCare(commit: boolean) {
+/* skipTwins (the 6-hourly sync, 2026-10-12): a new AxisCare client whose exact name a Hub person already holds is
+   LEFT for a person to connect, never created alongside. The Clients directory shows them as "not connected yet". */
+async function backfillClientsFromAxisCare(commit: boolean, skipTwins = false) {
   const order = ['AXISCARE_API_KEY', 'AXISCARE_TOKEN', 'AXISCARE_VISITS_TOKEN']
   let token = ''
   for (const n of order) { const v = Deno.env.get(n); if (v) { token = v; break } }
@@ -610,7 +613,9 @@ async function backfillClientsFromAxisCare(commit: boolean) {
     else {
       const twin = nameOwners.get(name.toLowerCase())
       if (twin) out.name_coincidences.push({ name, axiscare_id: axId,
-        note: 'a person with this exact name already exists WITHOUT this AxisCare client id — created separately, review and merge by hand if they are the same human' })
+        note: skipTwins ? 'a person with this exact name already exists WITHOUT this AxisCare client id — left unconnected for a person to check'
+          : 'a person with this exact name already exists WITHOUT this AxisCare client id — created separately, review and merge by hand if they are the same human' })
+      if (twin && skipTwins) continue
       if (!commit) { out.created++; continue }
       const { data: pi, error: e1 } = await sb.from('person_identity')
         .insert({ display_name: name, primary_phone: phones[0]?.phone ?? null })
@@ -954,6 +959,33 @@ Deno.serve(async (req) => {
       } catch (e) { console.error('[identity-backfill] circles heartbeat failed', e) }
     }
     return new Response(JSON.stringify(owner ? res : countsOnly(res), null, 2),
+      { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
+
+  /* THE CLIENT SYNC (2026-10-12, Samantha: "dan has not been pulled over from Axiscare"). Clients only reached the
+     Hub through Convert or the one-time ?clients=1 run (Desktop 122), so anyone added straight into AxisCare after
+     that never arrived. Every 6 hours its schedule (or the owner's script) adds each ACTIVE AxisCare client the Hub
+     doesn't have yet. Never makes a past client active again, never creates beside a same-name person, never ends
+     anyone. Counts only in the answer and the heartbeat; never names. */
+  if (q.get('client_sync') === '1') {
+    const who = await jobCaller(req)
+    if (!who) return new Response(JSON.stringify({ error: 'not allowed' }), { status: 401, headers: { 'Content-Type': 'application/json' } })
+    if (q.get('auth_check') === '1') return new Response(JSON.stringify({ ok: true, caller: who }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    const commit = q.get('dry') !== '1'
+    // deno-lint-ignore no-explicit-any
+    const res: any = await backfillClientsFromAxisCare(commit, true)
+    const errs = Array.isArray(res?.errors) ? res.errors.length : 0
+    const ok = !res?.error && errs === 0
+    if (commit) {
+      try {
+        await sb.rpc('upsert_app_data_item', { target_key: 'automation_heartbeats', item: {
+          id: 'hb_client-sync', automation: 'client-sync', at: new Date().toISOString(), ok,
+          note: ok ? ((res?.created ?? 0) + ' new client' + ((res?.created ?? 0) === 1 ? '' : 's') + ' added, '
+                      + (res?.name_coincidences?.length ?? 0) + ' left to connect by hand')
+                   : String(res?.error || (errs + ' error' + (errs === 1 ? '' : 's'))).slice(0, 200) } })
+      } catch (e) { console.error('[identity-backfill] client-sync heartbeat failed', e) }
+    }
+    return new Response(JSON.stringify({ ...countsOnly(res), ok }, null, 2),
       { status: 200, headers: { 'Content-Type': 'application/json' } })
   }
 
