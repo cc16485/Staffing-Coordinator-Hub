@@ -19,6 +19,7 @@ import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { logOpen, ipOf } from '../_shared/doc-log.ts'
 import { evidenceLine } from '../_shared/evidence.ts'
 import { experienceSummary } from '../_shared/step1-experience.ts'
+import { applicantStatus } from '../_shared/applicant-status.ts'
 type Any = any
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -206,19 +207,25 @@ Deno.serve(async (req) => {
     const [tl, docs] = await Promise.all([timeline(db, T, p), documents(db, p)])
     /* 2026-10-11 (Samantha: everything collected must feed the matching profile, not a document to search): the skills
        picture from their Step 1 answers and their references' task-by-task answers. Read only; nothing is decided here. */
-    let experience: Any = null
+    let experience: Any = null, status: Any = null
     try {
       const candId = p.cand?.id ?? p.rec?.candidate_id
-      const [{ data: f }, { data: rr }] = await Promise.all([
-        p.offerId ? db.from('step1_forms').select('answers, practice').eq('offer_id', p.offerId).maybeSingle() : Promise.resolve({ data: null }),
-        candId != null ? db.from('reference_requests').select('*').eq('candidate_id', String(candId)).order('slot') : Promise.resolve({ data: [] })])
+      const [{ data: f }, { data: rr }, { data: bk }] = await Promise.all([
+        p.offerId ? db.from('step1_forms').select('answers, practice, signatures, started_at, completed_at').eq('offer_id', p.offerId).maybeSingle() : Promise.resolve({ data: null }),
+        candId != null ? db.from('reference_requests').select('*').eq('candidate_id', String(candId)).order('slot') : Promise.resolve({ data: [] }),
+        p.app?.id ? db.from('interview_bookings').select('id, starts_at, status, created_at').eq('applicant_id', p.app.id) : Promise.resolve({ data: [] })])
       if (f?.answers) experience = { ...experienceSummary(f.answers, rr ?? []), practice: !!f.practice }
-    } catch { experience = null }
+      /* 2026-10-11 (Samantha: done, current, submitted, signed or outstanding, missing, next and who): read only */
+      let owner: Any = null
+      try { const { data: d } = await db.from('domains').select('owner_person').eq('entity', 'cc_ihs').eq('code', 'recruiting_orientation').maybeSingle()
+        if (d?.owner_person) { const { data: pp } = await db.from('persons').select('full_name').eq('person_id', d.owner_person).maybeSingle(); owner = { name: S(pp?.full_name, 80) } } } catch { owner = null }
+      status = applicantStatus({ app: p.app, bookings: bk ?? [], offer: p.offer, step1: f, cand: p.cand, rec: p.rec, journey: p.journey, refs: rr ?? [], experience, owner })
+    } catch { experience = experience || null }
     const o = p.offer || {}
     return json({ ok: true, name: p.name || '(no name)', phone: p.phone, email: p.email, where: whereNow(p),
       ids: { offer_id: p.offerId || null, candidate_id: p.cand?.id ?? p.rec?.candidate_id ?? null, caregiver_id: p.rec?.id ?? null, applicant_id: p.app?.id ?? null, journey_id: p.journey?.journey_id ?? null, axiscare_id: p.rec?.axiscare_id ?? null },
       path: o.onboarding_path || p.cand?.onboarding_path || null, position: o.position || p.app?.position || null, pay_rate: o.pay_rate ?? null,
-      timeline: tl, documents: docs, experience })
+      timeline: tl, documents: docs, experience, status })
   } catch (e) {
     return json({ error: 'Something went wrong: ' + ((e as Error).message || 'error') + '. Nothing was changed.' }, 500)
   }
