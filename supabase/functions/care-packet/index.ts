@@ -64,7 +64,7 @@ type Any = any
 export const MAX_ABOUT = 2000, MAX_NOTES = 2000, MAX_ITEMS = 12, MAX_VIDEOS = 8, UPCOMING_DAYS = 14
 /* The Care Library (2026-10-12): the tab's groups, and what "approved" means. A video with no status is one she approved
    before statuses existed. Only approved videos in approved, active topics ever reach a caregiver. */
-export const CATEGORIES = ['moving', 'personal', 'eating', 'conditions', 'signs', 'other'] as const
+export const CATEGORIES = ['bedbound', 'moving', 'personal', 'eating', 'conditions', 'signs', 'other'] as const
 export const videoApproved = (v: Any) => !v?.status || v.status === 'approved'
 export const offered = (t: Any) => t.active !== false && !t.pending
 const forCaregivers = (t: Any) => ({ ...t, videos: (t.videos ?? []).filter(videoApproved) })
