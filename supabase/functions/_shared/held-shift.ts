@@ -110,3 +110,34 @@ export function heldItem(decision: HeldDecision, x: {
     axiscare_visit_id: x.visitId, case_id: c.id ?? null,
   }
 }
+
+/* Archived call-offs (Desktop 625/626, her 2026-10-12 testing clean-up) still count as HANDLED. Moving a case to
+   coverage_cases_archive must not let the watcher open it again: the archive joins the history the watcher reads
+   for "handled once, never reopened" and "a closed case holds", but never its list of open cases to work. An
+   archived case that was still open counts as closed at the time it was archived. */
+// deno-lint-ignore no-explicit-any
+export function caseHistory(cases: any[], archived: any[]): any[] {
+  const closed = (Array.isArray(archived) ? archived : []).filter((c) => c && typeof c === 'object').map((c) => ({
+    ...c,
+    status: ['open', 'by_hand', 'assigned'].includes(String(c.status)) ? 'archived' : c.status,
+    resolved_at: c.resolved_at || c.archived_at || null,
+    resolved_how: c.resolved_how || 'archived',
+  }))
+  return [...(Array.isArray(cases) ? cases : []), ...closed]
+}
+
+/* The hourly sweep opens one "ongoing" case for a schedule with several open dates. A schedule whose call-offs were
+   archived while still open is left alone for one sweep window (the dates it would find are the ones just archived);
+   after that, open dates on it are new and the sweep looks again. A real call-off still opens through the visit path. */
+// deno-lint-ignore no-explicit-any
+export function archivedSchedules(history: any[], days: number, nowMs: number): Set<string> {
+  const out = new Set<string>()
+  for (const c of Array.isArray(history) ? history : []) {
+    if (c?.status !== 'archived') continue
+    const at = Date.parse(String(c.resolved_at ?? ''))
+    if (!Number.isFinite(at) || nowMs - at >= days * 864e5) continue
+    const m = slotKey(c.axiscare_visit_id).match(/^s=([^:]+):/)
+    if (m) out.add(m[1])
+  }
+  return out
+}

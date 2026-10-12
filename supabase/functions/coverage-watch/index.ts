@@ -32,7 +32,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { opEvent } from '../_shared/events.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
-import { changedSince, decideHeld, heldItem, visitMs } from '../_shared/held-shift.ts'
+import { archivedSchedules, caseHistory, changedSince, decideHeld, heldItem, visitMs } from '../_shared/held-shift.ts'
 import { outsideVerdict } from '../_shared/covered-outside.ts'
 import { attendanceCard, caseEnded, caseWhen, shiftAhead, chiNowNaive, evvDayStats, evvWeek, familyCallNeeded, itemsToCloseForCases,
   markNoClosureTexts, pastCaseVerdict, weekOf } from '../_shared/loops.ts'
@@ -139,6 +139,11 @@ Deno.serve(async (req) => {
   const { data: caseRow } = await sb.from('app_data').select('data').eq('key', 'coverage_cases').maybeSingle()
   // deno-lint-ignore no-explicit-any
   const cases: any[] = Array.isArray(caseRow?.data) ? caseRow!.data : []
+  /* Archived cases are history too (her testing clean-up, 2026-10-12): they block a fresh case the same way a
+     closed one does, but they are never worked as open. */
+  const { data: archRow } = await sb.from('app_data').select('data').eq('key', 'coverage_cases_archive').maybeSingle()
+  // deno-lint-ignore no-explicit-any
+  const history: any[] = caseHistory(cases, Array.isArray(archRow?.data) ? archRow!.data : [])
   /* Dedupe rules (review findings 6-7):
        - an OPEN case for the visit blocks a new one, always
        - resolved history does NOT block: a visit legitimately unassigned
@@ -149,7 +154,7 @@ Deno.serve(async (req) => {
   const openByVisit = new Set(cases.filter(c => c?.status === 'open')
     .map(c => String(c.axiscare_visit_id ?? '')).filter(Boolean))
   const genByVisit = new Map<string, number>()
-  for (const cc of cases) {
+  for (const cc of history) {
     const v = String(cc?.axiscare_visit_id ?? ''); if (!v) continue
     genByVisit.set(v, (genByVisit.get(v) ?? 0) + 1)
   }
@@ -162,7 +167,7 @@ Deno.serve(async (req) => {
      (_shared/held-shift.ts). */
   // deno-lint-ignore no-explicit-any
   const lastClosedCase = new Map<string, any>()
-  for (const cc of cases) {
+  for (const cc of history) {
     const v = String(cc?.axiscare_visit_id ?? ''); if (!v) continue
     if (cc?.status === 'open' || !cc?.resolved_at) continue
     const prev = lastClosedCase.get(v)
@@ -379,17 +384,19 @@ Deno.serve(async (req) => {
         const arr = bySched.get(m[1]) ?? []
         arr.push(v); bySched.set(m[1], arr)
       }
-      const haveSweepCase = new Set(cases.map((cc: { id?: unknown }) => String(cc?.id ?? '')))
+      const haveSweepCase = new Set(history.map((cc: { id?: unknown }) => String(cc?.id ?? '')))
       // deno-lint-ignore no-explicit-any
       const openSchedIds = new Set(cases.filter((cc: any) => cc?.status === 'open')
         // deno-lint-ignore no-explicit-any
         .map((cc: any) => String(cc?.axiscare_visit_id ?? '').match(/^s=([^:]+):/)?.[1])
         .filter(Boolean))
+      const archivedSchedIds = archivedSchedules(history, SWEEP_DAYS, Date.now())
       for (const [schedId, arr] of bySched) {
         if (arr.length < 2) continue         // one lone open date is a one-off, not an opening
         ongoingSchedules++
         if (haveSweepCase.has(`cwo_s${schedId}`)) continue   // handled once, never reopened
         if (openSchedIds.has(schedId)) continue              // a live case already covers this slot
+        if (archivedSchedIds.has(schedId)) continue          // its call-offs were archived inside the sweep window
         // deno-lint-ignore no-explicit-any
         arr.sort((a: any, b: any) => String(a?.scheduledStartDate ?? a?.startDate ?? '')
           .localeCompare(String(b?.scheduledStartDate ?? b?.startDate ?? '')))
