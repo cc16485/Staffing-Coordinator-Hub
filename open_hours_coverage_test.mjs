@@ -119,5 +119,11 @@ ck('...the next press texts the other 7', r.sent.length === 7 && r.remaining ===
 fresh({ open_hours_live: true }); APP.staffing_plans = [{ ...PLAN, city: '' }]; r = await act({ action: 'open_hours', plan_id: 'p1', mode: 'send' })
 ck('no town on the plan: refused (the text names the town)', /add the town/.test(r.error) && SENT.length === 0, r)
 
+fresh({ open_hours_live: true }); APP.coverage_cases.push({ id: 'cov_old_dad', kind: 'interest', open_hours: true, plan_id: 'p1', status: 'open', client: 'Dad', client_city: 'Nixa',
+  slots: PLAN.slots, offered: [], asked: [{ id: 'q1', name: 'Sarah Prn', phone: '+14175550101', axiscare_id: '9001', state: 'yes', picked_by_coordinator: true }] })
+r = await act({ action: 'open_hours', plan_id: 'p1', mode: 'send' })
+const old = APP.coverage_cases.find((x) => x.id === 'cov_old_dad')
+ck('a Cara new-client check turned into this plan keeps its answers: the rest are added to IT, Sarah isn\'t texted again, no second ask', r.case_id === 'cov_old_dad' && old.asked.length === 5 && !SENT.some((x) => /Sarah/.test(x.msg)) && !C(), [r, old.asked.map((a) => a.name)])
+
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1)

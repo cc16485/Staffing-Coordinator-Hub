@@ -448,7 +448,11 @@ async function openHours(body: any, whoName: string, jr: (b: unknown, s?: number
   const { data: setR } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
   // deno-lint-ignore no-explicit-any
   const st: any = setR?.data ?? {}
-  const caseId = 'cwh_' + planId.replace(/[^A-Za-z0-9_-]/g, '_')
+  /* the plan's ask: cwh_<plan>, or an older Cara new-client check the office turned into this plan (linked by plan_id) */
+  const { data: allC } = await sb.from('app_data').select('data').eq('key', 'coverage_cases').maybeSingle()
+  // deno-lint-ignore no-explicit-any
+  const linked = (Array.isArray(allC?.data) ? allC!.data : []).find((x: any) => x && x.open_hours === true && String(x.plan_id) === planId && x.status === 'open')
+  const caseId = linked ? String(linked.id) : 'cwh_' + planId.replace(/[^A-Za-z0-9_-]/g, '_')
   const existing = await readCaseFresh(caseId)
   if (existing && existing.status !== 'open') return jr({ error: 'this plan\'s open-hours ask is closed' }, 409)
   const starts = slots.map((x: { start: string }) => x.start).sort(), ends = slots.map((x: { end: string }) => x.end).sort()
