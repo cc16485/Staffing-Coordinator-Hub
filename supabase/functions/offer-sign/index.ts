@@ -77,6 +77,10 @@ function fieldsOf(o: any): Fields {
   return { first: S(o.first_name, 60), last: S(o.last_name, 60), position: S(o.position, 80) || 'Caregiver', pay_rate: Number(o.pay_rate) || 0, classification: cls,
     date: longDate(o.offer_sent_at || o.created_at), expires: o.offer_expires_at ? longDate(o.offer_expires_at) : '', issued_by: S(o.offer_sent_by || o.offered_by, 120) || 'the office', issued_at: longDateTime(o.offer_sent_at || o.created_at) }
 }
+/** The preview's made-up offer: an example rate (marked as an example on the page), part-time, issued by the office. */
+export function previewFields(now: Date, exp: Date): Fields {
+  return { first: 'Pat', last: 'Preview', position: 'Caregiver', pay_rate: 16, classification: 'part_time', date: longDate(now.toISOString()), expires: longDate(exp.toISOString()), issued_by: 'the office (preview)', issued_at: longDateTime(now.toISOString()) }
+}
 // deno-lint-ignore no-explicit-any
 function dead(o: any): Response | null {
   if (o.onboarding_path !== 'new') return json({ ...NOPE, why: 'not on the new path' }, 404)   // the Slice 1b test gate
@@ -116,6 +120,16 @@ Deno.serve(async (req) => {
       if (error || !data?.signedUrl) return json({ ok: false, error: 'Could not open the document.' }, 500)
       await db.from('document_access_log').insert({ offer_id: id, doc, path, by_person: staff.person_id, by_email: staff.email, by_name: staff.name, ip: ipOf(req) })
       return json({ ok: true, url: data.signedUrl, expires_in: 300 })
+    }
+    /* PREVIEW (Samantha 2026-10-11: the whole applicant experience in Applicants Journey, "the actual applicant-facing screens",
+       read-only or safely simulated). Public, no link: the same letter and position description builders for the made-up Pat
+       Preview, with an example rate and classification. No offer is read or written; nothing is sent; signing happens only in
+       the page's own memory. */
+    if (action === 'preview') {
+      const now = new Date(), exp = new Date(now.getTime() + 7 * 86_400_000)
+      const f = previewFields(now, exp)
+      return json({ ok: true, preview: true, first: f.first, state: { status: 'sent', offer_signed_at: null, offer_signer_name: null, pd_signed_at: null, expires_at: exp.toISOString(), viewed_at: null },
+        automation_live: false, test_mode: true, versions: { offer: OFFER_DOC_VERSION, pd: PD_DOC_VERSION }, offer: offerLetter(f), pd: positionDescription(f) })
     }
     // everything else needs the caregiver's own link
     const id = S(b.o, 64)
