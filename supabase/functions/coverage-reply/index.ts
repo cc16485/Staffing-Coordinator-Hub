@@ -30,6 +30,7 @@ import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { officeQuiet } from '../_shared/quiet-hours.ts'
 import { adminRecipients } from '../_shared/clockin-admins.ts'
 import { callinLink, withLink } from '../_shared/callin-notify.ts'
+import { OPEN_HOURS_ACK_DEFAULT, offeredCells, readByWords, readOpenHoursReply } from '../_shared/open-hours.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -221,6 +222,7 @@ Deno.serve(async (req) => {
     /^\s*(n|no|nope|nah|sorry)\b/.test(t) ||
     /\b(pass|not this time|next time)\b/.test(t)
   const stamp = new Date().toISOString()
+  const prevReply = String(a.reply || '')
   a.replied_at = stamp
   a.reply = text.slice(0, 500)
 
@@ -243,6 +245,48 @@ Deno.serve(async (req) => {
     } })
     await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
     return json({ ok: true, routed, case_id: c.id, caregiver: a.name, state: a.state })
+  }
+  /* OPEN HOURS (2026-10-12, her ask: "have the ai help put the answers into three boxes: yellow is questions, red is
+     no, green is yes but also organize which days"). The AI reads the answer against the squares the text offered
+     (ops_settings.open_hours_ai_live); a second text from the same person is read together with the first. Without
+     the AI, the plain word rules: a clear yes to all of it, a no, and everything else waits in yellow for a person.
+     Nothing is assigned. The only text back is the thank-you to a YES (open_hours_ack_live, her decision 4). */
+  if (c.open_hours === true) {
+    const offered = Array.isArray(c.offered) && c.offered.length ? c.offered : offeredCells(c.interest_days || [], c.slots || [])
+    const said = (prevReply && prevReply !== text ? prevReply + '\n' : '') + text
+    let rd = settings.open_hours_ai_live === true ? await readOpenHoursReply(said, offered) : null
+    a.read_by = rd && !rd.failed ? 'ai' : (rd ? 'words (the AI did not answer)' : 'words (the AI switch is off)')
+    if (!rd || rd.failed) rd = readByWords(said, offered)
+    a.reply = said.slice(-500)
+    a.state = rd.answer === 'yes' ? 'yes' : rd.answer === 'no' ? 'no' : 'inquiry'
+    a.yes_cells = rd.cells; a.any_time = rd.any; a.ai_quote = rd.quote; a.read_why = rd.why || null
+    routed = `open hours: ${rd.answer}${rd.cells.length ? ' (' + rd.cells.length + ' squares)' : ''}, read by ${a.read_by}`
+    const firstAnswer = !prevReply
+    if (a.state === 'yes') {
+      await opEvent(sb, { verb: 'yes_received', item_id: String(c.id), area: 'coverage', actor_name: String(a.name || 'a caregiver'),
+        summary: `${a.name} wants some of the open hours in ${c.client_city || 'town'}` })
+      if (firstAnswer && settings.open_hours_ack_live === true) {
+        const ackTo = await ghlStoredContactIfAllowed(sb, { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' },
+          'coverage-reply', { channel: 'sms', contactId: contactId || a.ghl_contact_id })
+        if (ackTo) { await sms(ackTo, (String(settings.open_hours_ack_msg || '') || OPEN_HOURS_ACK_DEFAULT).replaceAll('{first_name}', String(a.name).split(' ')[0]),
+          { sender: 'coverage-reply', address: a.phone || phone, who: a.name }); a.ack_at = stamp }
+      } else if (firstAnswer) a.ack_skipped = 'switch off'
+    }
+    if (a.state === 'inquiry') {
+      /* ONE office item per open-hours ask, kept up to date: a whole-team text can bring many questions, and the
+         Team Builder board is where they're answered. */
+      const qs = (Array.isArray(c.asked) ? c.asked : []).filter((x: any) => x.state === 'inquiry')
+      await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
+        id: `ops_openq_${c.id}`, kind: 'coverage', coverage_case_id: c.id, plan_id: c.plan_id || null,
+        title: `${qs.length} question${qs.length === 1 ? '' : 's'} about the open hours in ${c.client_city || 'town'}`,
+        about: c.client || '', detail: qs.map((x: any) => `${x.name}: "${String(x.reply || '').slice(0, 120)}"`).join('; ').slice(0, 900)
+          + '. Answer them from the office line, then mark each one on the Team Builder plan.',
+        domain: 'scheduling_coverage', status: 'open', urgency: 'normal', created_at: stamp,
+        due: new Date(Date.now() + 4 * 3600000).toISOString(), owner: '', owner_name: '', created_by: 'coverage-reply', opened_by: 'open-hours',
+      } })
+    }
+    await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
+    return json({ ok: true, routed, case_id: c.id, caregiver: a.name, state: a.state, cells: a.yes_cells })
   }
   if (isYes) {
     /* THE WRONG-CLIENT YES (Lacey, first live callout: "I can cover wonda
