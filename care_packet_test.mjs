@@ -3,14 +3,16 @@
 import fs from 'fs'; import path from 'path'
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 700)])
 const SECRET = 'x'.repeat(40)
-let T, EVENTS, FAIL
+let T, EVENTS, FAIL, SENT, GHL_FAIL, CALLS
 const TOPICS = () => [
   { key: 'turning', title: 'Turning and repositioning', notes: 'Turn every 2 hours.', active: true, videos: [{ title: 'Lie on the side', url: 'https://www.youtube.com/watch?v=6M5_eTPUWpo', publisher: 'The Hospice Care Plan', minutes: 5 }] },
   { key: 'purewick_male', title: 'PureWick (male)', notes: 'Check it every 2 hours.', active: true, videos: [{ title: 'PureWick Male in-service', url: 'https://vimeo.com/968970613', publisher: 'BD', minutes: 6 }, { title: 'IFU', url: 'https://example.com/ifu.pdf' }] },
   { key: 'old', title: 'Retired topic', notes: '', active: false, videos: [] }]
-const reset = () => { EVENTS = []; FAIL = null; T = {
+const reset = () => { EVENTS = []; FAIL = null; SENT = []; GHL_FAIL = false; CALLS = []; T = {
   care_topics: TOPICS(), care_packets: [], care_packet_recipients: [], care_packet_acks: [],
-  app_data: [{ key: 'caregivers', data: [{ first: 'Ariel', last: 'Smith', axiscare_id: '11' }, { first: 'Twin', last: 'One', axiscare_id: '99' }, { first: 'Twin', last: 'Two', axiscare_id: '99' }] }],
+  app_data: [{ key: 'caregivers', data: [{ first: 'Ariel', last: 'Smith', axiscare_id: '11', phone: '4175550101' }, { first: 'Opal', last: 'Out', axiscare_id: '22', phone: '4175550202' }, { first: 'Nora', last: 'Nophone', axiscare_id: '33' }, { first: 'Twin', last: 'One', axiscare_id: '99' }, { first: 'Twin', last: 'Two', axiscare_id: '99' }] },
+    { key: 'ops_settings', data: { care_packet_send_live: true } }, { key: 'ops_items', data: [] }],
+  contact_optout_current: [{ address: '+14175550202', channel: 'sms', opted_out: true, source: 'stop_text' }], phone_index: [], circle_contacts: [],
   auth_identities: [{ auth_user_id: 'u-kr', project_ref: 'zngsgedlsxinbygwmxwn', person_id: 'p-kr' }, { auth_user_id: 'u-sa', project_ref: 'zngsgedlsxinbygwmxwn', person_id: 'p-sa' }, { auth_user_id: 'u-cg', project_ref: 'zngsgedlsxinbygwmxwn', person_id: 'p-cg' }],
   persons: [{ person_id: 'p-kr', full_name: 'Krystal Office', active: true }, { person_id: 'p-sa', full_name: 'Samantha Owner', active: true }, { person_id: 'p-cg', full_name: 'Cara Giver', active: true }],
   entity_memberships: ['p-kr', 'p-sa', 'p-cg'].map((p) => ({ person_id: p, entity: 'cc_ihs', active: true, ended_at: null })),
@@ -25,14 +27,17 @@ const q = (t) => { const st = { f: [], op: 'select', row: null, sel: false }; co
     if (st.op === 'update') { const hit = rows.filter(match); hit.forEach((r) => Object.assign(r, st.row)); return { data: clone(hit), error: null } }
     if (st.op === 'upsert') { const r = rows.find((x) => x.key === st.row.key); if (r) Object.assign(r, st.row); else rows.push({ ...st.row }); return { data: null, error: null } }
     return { data: clone(rows.filter(match)), error: null } }
-  const b = { select() { st.sel = true; return b }, eq(c, v) { st.f.push([c, v]); return b }, limit() { return b }, order() { return b }, in() { return b },
+  const b = { select() { st.sel = true; return b }, eq(c, v) { st.f.push([c, v]); return b }, limit() { return b }, order() { return b }, in() { return b }, not() { return b }, or() { return b }, gte() { return b }, is() { return b }, neq() { return b },
     insert(r) { st.op = 'insert'; st.row = r; return b }, update(r) { st.op = 'update'; st.row = r; return b }, upsert(r) { st.op = 'upsert'; st.row = r; return b },
     maybeSingle() { const r = run(); return Promise.resolve({ data: r.data ? r.data[0] ?? null : null, error: r.error }) },
     then(ok, no) { return Promise.resolve(run()).then(ok, no) } }; return b }
-globalThis.__db = { from: q, rpc: async () => ({ data: null, error: null }),
+globalThis.__db = { from: q, rpc: async (fn, a) => { if (fn === 'upsert_app_data_item') { const row = T.app_data.find((r) => r.key === a.target_key); const i = row.data.findIndex((x) => x.id === a.item.id); if (i >= 0) row.data[i] = a.item; else row.data.push(a.item) } return { data: null, error: null } },
   auth: { getUser: async (jwt) => ({ kr: 'u-kr', sa: 'u-sa', cg: 'u-cg' })[jwt] ? { data: { user: { id: ({ kr: 'u-kr', sa: 'u-sa', cg: 'u-cg' })[jwt], email: jwt + '@mo-care.com', app_metadata: {} } }, error: null } : { data: { user: null }, error: { message: 'bad' } } } }
-globalThis.fetch = async () => { throw new Error('nothing here may reach the network') }
-const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'k', HUB_JOB_SECRET: SECRET }
+globalThis.fetch = async (url, o) => { url = String(url); CALLS.push(url); const body = o && o.body ? JSON.parse(o.body) : {}
+  if (url.includes('/contacts/upsert')) return new Response(JSON.stringify({ contact: { id: 'C:' + body.phone, dnd: false } }), { status: 200 })
+  if (url.includes('/conversations/messages')) { if (GHL_FAIL) return new Response('{"message":"nope"}', { status: 500 }); SENT.push({ to: body.contactId, text: body.message }); return new Response('{}', { status: 200 }) }
+  return new Response('{}', { status: 404 }) }
+const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'k', HUB_JOB_SECRET: SECRET, GHL_TOKEN: 'g', GHL_LOCATION_ID: 'loc' }
 let handler; globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (h) => { handler = h } }
 const F = 'supabase/functions', tmp = fs.mkdtempSync(path.join(process.cwd(), '_cpk_'))
 try {
@@ -120,6 +125,47 @@ try {
   r = await call({ action: 'topic_save', key: 'commode', title: 'Bedside commode', notes: 'Lock the wheels — always.', videos: [{ title: 'Pivot to commode', url: 'https://www.youtube.com/watch?v=FpAHPstotL0', publisher: 'Hospice of the Piedmont', minutes: '4' }] }, 'sa')
   const tc = T.care_topics.find((t) => t.key === 'commode')
   ck('the owner adds a topic: saved, no em dash, minutes a number', r.status === 200 && tc && !/—/.test(tc.notes) && tc.videos[0].minutes === 4, { r, tc })
+
+
+  // ---------------- Step 2: texting the packet ----------------
+  const ready = async () => { reset(); await save(); return T.care_packets[0].id }
+  const sendTo = (pid, ax = '11', id = 'send-0001-abcd', jwt = 'kr') => call({ action: 'send', packet_id: pid, caregiver_axiscare_id: ax, send_id: id }, jwt)
+  let pid2 = await ready()
+  r = await call({ action: 'send_draft', packet_id: pid2, caregiver_axiscare_id: '11' })
+  ck('draft: the exact first text with "(their link)", phone last 4, not opted out, nothing sent and no row made',
+    r.status === 200 && r.j.kind === 'first' && r.j.text.startsWith("Hi Ariel, it's Caring Companions. Before you work with Dan, please watch this short care packet and tap I understand: (their link)") && /Reply STOP to opt out\.$/.test(r.j.text) && r.j.phone_last4 === '0101' && r.j.opted_out === false && !SENT.length && !T.care_packet_recipients.length, r.j)
+  ck('the texts carry no health words (only the first name and the link)', !/hospice|catheter|purewick|cancer|bed ?sore|commode|brief/i.test(['first', 'reminder', 'updated'].map((k) => M.packetText(k, 'Ariel', 'Dan', 'L')).join(' ')))
+  ck('no em dash in any of the three texts', !/[—―]/.test(['first', 'reminder', 'updated'].map((k) => M.packetText(k, 'Ariel', 'Dan', 'L')).join(' ')))
+  r = await call({ action: 'send_draft', packet_id: pid2, caregiver_axiscare_id: '22' }); ck('draft for an opted-out caregiver says so', r.j.opted_out === true, r.j)
+  r = await sendTo(pid2, '11', 'send-0001-abcd', null); ck('send with no sign-in: refused (401), nothing sent', r.status === 401 && !SENT.length, r)
+  r = await sendTo(pid2, '11', 'send-0001-abcd', 'cg'); ck('send from a caregiver account: refused (403), nothing sent', r.status === 403 && !SENT.length, r)
+  T.app_data.find((x) => x.key === 'ops_settings').data.care_packet_send_live = false
+  r = await sendTo(pid2); ck('switch off: refused (409) with "use Get their link", nothing sent', r.status === 409 && r.j.outcome === 'off' && /Get their link/.test(r.j.error) && !SENT.length && !CALLS.length, r)
+  T.app_data.find((x) => x.key === 'ops_settings').data.care_packet_send_live = true
+  r = await sendTo(pid2, '11', 'bad id'); ck('a malformed send id: refused', r.status === 400 && !SENT.length, r)
+  r = await sendTo(pid2)
+  const rc = T.care_packet_recipients[0]
+  ck('send: ONE text to Ariel\'s roster number with her own link, recorded on her row (first, by who, count 1), on the record',
+    r.j.outcome === 'sent' && SENT.length === 1 && SENT[0].to === 'C:+14175550101' && SENT[0].text.includes('https://cc.mo-care.com/packet.html?i=' + rc.id) &&
+    rc.last_send_kind === 'first' && rc.last_sent_by === 'kr@mo-care.com' && rc.send_count === 1 && EVENTS.some((e) => e.verb === 'care_packet_sent'), { r: r.j, rc, SENT })
+  const lk = Object.fromEntries(new URL(SENT[0].text.match(/https:\S+/)[0]).searchParams)
+  r = await call({ action: 'view', ...lk }, null); ck('the link in the text opens her packet', r.status === 200 && r.j.caregiver_first === 'Ariel', r)
+  r = await sendTo(pid2); ck('the same send pressed twice: "already_sent", one text only', r.j.outcome === 'already_sent' && SENT.length === 1, r.j)
+  r = await call({ action: 'send_draft', packet_id: pid2, caregiver_axiscare_id: '11' }); ck('after the first text, the next one is a reminder', r.j.kind === 'reminder' && r.j.text.includes('a reminder from Caring Companions'), r.j)
+  r = await sendTo(pid2, '11', 'send-0002-abcd'); ck('remind: a second text (reminder), count 2', r.j.outcome === 'sent' && SENT.length === 2 && T.care_packet_recipients[0].send_count === 2 && T.care_packet_recipients[0].last_send_kind === 'reminder', r.j)
+  await call({ action: 'ack', ...lk, version: T.care_packets[0].version }, null)
+  r = await sendTo(pid2, '11', 'send-0003-abcd'); ck('she confirmed this version: nothing to send (409), no text', r.status === 409 && r.j.outcome === 'confirmed' && SENT.length === 2, r)
+  await save({ about: 'Changed', base_version: T.care_packets[0].version })
+  r = await call({ action: 'send_draft', packet_id: pid2, caregiver_axiscare_id: '11' }); ck('after an edit, her text is the "updated" one', r.j.kind === 'updated' && /was updated/.test(r.j.text), r.j)
+  r = await sendTo(pid2, '22', 'send-0004-abcd')
+  ck('an opted-out caregiver: refused with the reason, nothing sent, on the record', r.status === 422 && r.j.outcome === 'refused' && /asked not to get texts/.test(r.j.error) && SENT.length === 2 && EVENTS.some((e) => e.verb === 'care_packet_send_refused'), r)
+  r = await sendTo(pid2, '33', 'send-0005-abcd'); ck('no phone on the roster: refused, nothing sent', r.status === 422 && r.j.outcome === 'no_phone' && SENT.length === 2, r)
+  pid2 = await ready(); GHL_FAIL = true
+  r = await sendTo(pid2, '11', 'send-0006-abcd')
+  const card = T.app_data.find((x) => x.key === 'ops_items').data.find((x) => x.kind === 'send_problem')
+  ck('GoHighLevel refuses: "not sent", a Needs Attention card names the packet text and Ariel, her row not marked as texted',
+    r.j.outcome === 'failed' && card && /caregiver packet text/.test(card.title) && /Ariel Smith/.test(card.title) && !T.care_packet_recipients[0].last_sent_at, { r: r.j, card, rec: T.care_packet_recipients[0] })
+  ck('the office evening line: 8am to 8pm Central', M.inOfficeTextHours(new Date('2026-10-12T14:00:00Z')) && !M.inOfficeTextHours(new Date('2026-10-13T02:30:00Z')) && !M.inOfficeTextHours(new Date('2026-10-12T12:30:00Z')))
 
   // helpers
   ck('YouTube ids from watch, youtu.be and shorts links; anything else no player', M.youtubeId('https://youtu.be/6M5_eTPUWpo') === '6M5_eTPUWpo' && M.youtubeId('https://www.youtube.com/shorts/6M5_eTPUWpo') === '6M5_eTPUWpo' && M.youtubeId('https://evil.com/watch?v=6M5_eTPUWpo') === null)

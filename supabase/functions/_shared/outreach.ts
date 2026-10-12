@@ -241,6 +241,8 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
     why: 'a coordinator presses send on one caregiver shift ask they read and edited; same class as the coverage picker. The composer warns before 8am and after 8pm.' },
   'kind-tell':          { class: 'urgent_internal', scheduled: false,
     why: 'staff press Send on one thank-you text to a caregiver with the kind words a client or family said about them, after reading and editing it (Desktop 474). The composer warns before 8am and after 8pm.' },
+  'care-packet':        { class: 'urgent_internal', scheduled: false,
+    why: 'staff press Send on one fixed text to one caregiver with their own link to a client\'s care packet (first, reminder or updated), after seeing the exact words; the link holds the care details, the text never does (Desktop 661). The card warns before 8am and from 8pm.' },
   'calls-feed':         { class: 'routine_internal', scheduled: false, why: 'internal call reconciliation.' },
   'resend-relay':       { class: 'reactive_external', scheduled: false, why: 'relays a message somebody composed.' },
 }
