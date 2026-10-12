@@ -66,7 +66,7 @@ export const PAY_SOURCES = ['Consumer Directed Services (CDS) or another Medicai
 export const EXPERIENCE_MATTERS = [
   /* 2026-10-11 (her ask): say plainly that everyone stays at Level 1 until experience is verified, and why that matters. Matches
      the experience form's certification ("Everyone starts at Level 1 ... once the office verifies your previous experience"). */
-  'Everyone starts at Level 1, and you stay at Level 1 unless we can verify your experience. Verified experience can qualify you for Level 2 or Level 3, which means more clients we can match you with.',
+  'Everyone starts at Level 1. If we can\'t verify your experience, it doesn\'t count, and you stay at Level 1. Verified experience can qualify you for Level 2 or Level 3, which means more clients we can match you with.',
   "Help us give you credit for your experience! Please list people who can confirm the care you've provided, including former supervisors, private clients, or professionals who have seen your work.",
   'The more experience we can confirm, the better we can recognize your skills and consider you for assignments that fit your abilities.',
 ]
@@ -110,7 +110,7 @@ export const FORMS: Record<FormKey, Form> = {
       ] },
       /* v3 (2026-10-11, her approval of the previews): her "Your experience matters!" words first; a card per job with the
          tasks done there, the lift type, and what they would want a refresher on; family or private-client care as its own
-         optional card, kept as self-reported until someone confirms it (never discounted for lack of a confirmer). */
+         optional card, kept on the record as self-reported, counting toward a level only once confirmed (her rule: "if we can't verify it, it doesn't count"). */
       { h: 'Your experience matters!', p: EXPERIENCE_MATTERS, tone: 'cheer' },
       { h: 'Your work history', p: ['Please list your jobs, most recent first (up to three is plenty). If you have never been employed, tick the box below. Please check every detail; we use these to verify you.'], items: [
         { id: 'jobs', label: 'Your jobs', kind: 'cards', max: 6, add: 'Add another job', fields: [
@@ -127,7 +127,7 @@ export const FORMS: Record<FormKey, Form> = {
         yesno('no_employer_history', 'I have no previous employer to list.', { required: false }),
       ] },
       { h: 'Family or private-client care (optional)', p: ["Many great caregivers learned by caring for a family member or a private client. Tell us about it. We'll use this information, along with references and other qualifications, to better understand your experience.",
-        'If someone outside your own family saw your care (a hospice or home health nurse, a therapist, a case manager, or the client\'s family), add them so we can confirm it. If no one can yet, we still keep it on your record as experience you told us about.'], items: [
+        'If someone outside your own family saw your care (a hospice or home health nurse, a therapist, a case manager, or the client\'s family), add them so we can confirm it. Care we cannot confirm stays on your record, but it does not count toward your level.'], items: [
         { id: 'family_care', label: 'Care you gave a family member or private client', kind: 'cards', max: 4, add: 'Add family or private-client care', fields: [
           { k: 'who', label: 'Who did you care for?', kind: 'choice', options: ['A family member', 'A private client'], required: true },
           { k: 'relationship', label: 'Your relationship to them, or how you found this client (optional)', kind: 'text' },
