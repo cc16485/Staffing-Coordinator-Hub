@@ -7,7 +7,7 @@ import fs from 'fs'; import path from 'path'
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 700)])
 const F = 'supabase/functions'
 const SERVICE = 'service'.repeat(6)
-const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: SERVICE, GHL_TOKEN: 'ghl-tok', GHL_LOCATION_ID: 'loc1', ANTHROPIC_API_KEY: 'sk-test', HUB_JOB_SECRET: 'j'.repeat(40) }
+const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: SERVICE, GHL_TOKEN: 'ghl-tok', GHL_LOCATION_ID: 'loc1', ANTHROPIC_API_KEY: 'sk-test', HUB_JOB_SECRET: 'j'.repeat(40), AXISCARE_API_KEY: 'ax-tok', AXISCARE_SITE: '12345' }
 let handler; globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (h) => { handler = h } }
 const tmp = fs.mkdtempSync(path.join(process.cwd(), '_ct_'))
 const rewrite = (src) => src.replace(/^import \{ createClient \} from ['"]https:\/\/esm\.sh\/@supabase\/supabase-js@2['"];?$/m, 'const createClient = globalThis.__fakeCreateClient;')
@@ -18,7 +18,7 @@ for (const f of fs.readdirSync(path.join(F, '_shared'))) fs.writeFileSync(path.j
 const STEVE = 'a4b036e3-587e-4b76-bdeb-27357b461a3c'
 const VM = 'Speaker 1: Hi, this is Steve. I am calling to arrange a ride. Please call me back at 417 555 0467. Thank you.'
 const CALL = 'Speaker 0: Caring Companions, this is Samantha.\nSpeaker 1: My license expired, I need a new one and a Real ID. I need someone to take me to the DMV and help me get in. Can Angiel fit a couple of hours this week?\nSpeaker 0: We will work it out.\nSpeaker 1: I will call you tomorrow to confirm. Email me at steve@example.com.'
-let DB, AI, GH, FAILAI
+let DB, AI, GH, FAILAI, TEXTS, AXV
 function reset() {
   DB = {
     app_data: [{ key: 'ops_settings', data: { call_tasks_practice: true, call_tasks_since: '2026-10-09T00:00:00Z', call_pull_since: '2026-09-30T15:08:54Z' } },
@@ -34,6 +34,7 @@ function reset() {
     client_journey_step_def: [{ key: 'intake.payer', def: { title: 'Identify the payer' }, active: true }], client_journey: [], client_journey_step: [],
   }
   AI = []; FAILAI = null
+  TEXTS = []; AXV = {}
   GH = { transcripts: { ipoVD64wn8dUcDyPdjqW: VM, gMcTDQ5WoAXMHUmrCbdN: CALL }, msg: { ipoVD64wn8dUcDyPdjqW: 'c1', gMcTDQ5WoAXMHUmrCbdN: 'c1' }, contacts: { c1: { firstName: 'Steve', lastName: 'Algiere', phone: '+14175550467', email: 'steve@example.com' } }, calls: [] }
 }
 let rid = 0
@@ -41,6 +42,7 @@ globalThis.__fakeCreateClient = () => ({
   auth: { getUser: async () => ({ data: null, error: { message: 'no' } }) },
   rpc: async (fn, args) => {
     if (fn === 'upsert_app_data_item') { DB.heartbeats.push(args); DB.writes.push(args.target_key); return { data: null, error: null } }
+    if (fn === 'call_who' && globalThis.__WHO) { const w = globalThis.__WHO(String(args.p_phone)); if (w) return { data: w, error: null } }
     if (fn === 'call_who') return { data: String(args.p_phone).endsWith('0467') ? { match: 'one', person_id: STEVE, lead_id: null, name: 'Steve Algiere', roles: ['client'] } : { match: 'none' }, error: null }
     return { data: null, error: { message: 'unknown rpc ' + fn } }
   },
@@ -82,8 +84,11 @@ globalThis.__FakeAnthropic = class { constructor(o) { this.key = o.apiKey; this.
   const id = Object.keys(ANSWERS_V7).find((k) => req.messages[0].content.includes(k === 'ipoVD64wn8dUcDyPdjqW' ? 'calling to arrange a ride' : 'license expired'))
   const a = typeof ANSWERS_V7[id] === 'function' ? ANSWERS_V7[id](req) : ANSWERS_V7[id]
   return { stop_reason: 'tool_use', content: [{ type: 'text', text: '' }, { type: 'tool_use', name: 'submit_followups', input: a }] } } } } } }
-globalThis.fetch = async (url) => { url = String(url); GH.calls.push(url)
+globalThis.fetch = async (url, o) => { url = String(url); GH.calls.push(url + (o && o.method && o.method !== 'GET' ? ' ' + o.method : ''))
   let m
+  if (url.includes('axiscare.com/api/visits?')) { const k = Object.keys(AXV).find((x) => url.includes(x)); return new Response(JSON.stringify({ results: { visits: k ? AXV[k] : [] } }), { status: 200 }) }
+  if (url.includes('/conversations/search?')) return new Response(JSON.stringify({ conversations: TEXTS.map((c) => ({ id: c.id, contactId: c.contactId, phone: c.phone, fullName: c.name, lastMessageDate: Date.parse(c.msgs.at(-1).dateAdded) })) }), { status: 200 })
+  if ((m = url.match(/\/conversations\/([^/]+)\/messages\?limit=30$/))) { const c = TEXTS.find((x) => x.id === m[1]); return new Response(JSON.stringify({ messages: { messages: c ? c.msgs : [] } }), { status: 200 }) }
   if ((m = url.match(/\/messages\/([^/]+)\/transcription$/))) return GH.transcripts[m[1]] ? new Response(JSON.stringify([{ sentenceIndex: 0, transcript: GH.transcripts[m[1]] }]), { status: 200 }) : new Response('{}', { status: 404 })
   if ((m = url.match(/\/conversations\/messages\/([^/?]+)$/))) return new Response(JSON.stringify({ message: { id: m[1], contactId: GH.msg[m[1]] } }), { status: 200 })
   if ((m = url.match(/\/contacts\/([^/?]+)$/))) return GH.contacts[m[1]] ? new Response(JSON.stringify({ contact: GH.contacts[m[1]] }), { status: 200 }) : new Response('{}', { status: 404 })
@@ -100,7 +105,7 @@ try {
   ck('request: Claude Sonnet 5.5, effort medium, strict tool, tool_choice auto, refusal fallback on', req.model === 'claude-sonnet-5-5' && req.output_config.effort === 'medium' && req.tools[0].strict === true && req.tool_choice.type === 'auto' && req.fallbacks === 'default' && JSON.stringify(req.betas) === '["server-side-fallback-2026-07-01"]')
   ck('request: no thinking or sampling setting, one user message', !('thinking' in req) && !('temperature' in req) && req.messages.length === 1)
   const schemaTxt = JSON.stringify(lib.TOOL.input_schema)
-  ck('the tool schema is strict-safe: every object closed, every field required, no length or count keywords', !/maxItems|maxLength|minLength|pattern|format/.test(schemaTxt) && (schemaTxt.match(/"additionalProperties":false/g) || []).length === 4)
+  ck('the tool schema is strict-safe: every object closed, every field required, no length or count keywords', !/maxItems|maxLength|minLength|pattern|format/.test(schemaTxt) && (schemaTxt.match(/"additionalProperties":false/g) || []).length === 5)
   ck('v7 schema: summary, understood, promises told apart, every responsibility with a decision, urgency, reason', ['summary', 'understood', 'commitments', 'items', 'decision', 'urgency', 'reason', 'caller_considering', 'awaiting_confirmation', 'already_in_workflow', 'done_on_call', 'caller_owns'].every((w) => schemaTxt.includes(w)))
   ck('v7 prompt carries her eight points', [/several unrelated responsibilities/, /Tell promises apart/, /something the caller will do/, /caller considering, not a request/, /established workflows/, /Client Journey steps/, /do not create duplicate work or a way around it/,
     /Urgency is not routine/, /not by who answered the phone/, /less to remember/, /should not fill up with cards nobody needs/].every((re) => re.test(lib.SYSTEM)), lib.SYSTEM.slice(0, 300))
@@ -166,7 +171,7 @@ try {
   ck('the call answers the voicemail (a made-up one dropped)', JSON.stringify(call.resolves) === '[{"message_id":"ipoVD64wn8dUcDyPdjqW","task_index":0}]', call.resolves)
   ck('nothing is kept that it must not keep: no transcript lines, phone number or email in any reading', !/Speaker \d|take me to the DMV|help me get in|417|0467|example\.com/.test(JSON.stringify(DB.call_task_reading)), JSON.stringify(DB.call_task_reading).match(/.{30}(Speaker \d|417|0467|example\.com).{30}/g))
   ck('PRACTICE: nothing is written to Work (no ops_items), only the readings and a heartbeat', !DB.writes.includes('ops_items') && DB.writes.every((w) => ['call_task_reading', 'automation_heartbeats'].includes(w)), DB.writes)
-  ck('every GoHighLevel request is a read, to its message, transcript and contact endpoints', GH.calls.length === 6 && GH.calls.every((u) => /services\.leadconnectorhq\.com\/(conversations\/messages\/|conversations\/locations\/loc1\/messages\/.*\/transcription|contacts\/)/.test(u)), GH.calls)
+  ck('every GoHighLevel request is a read (GET), to its message, transcript, contact and conversation endpoints', GH.calls.length === 7 && GH.calls.every((u) => !/ (POST|PUT|PATCH|DELETE)$/.test(u) && /services\.leadconnectorhq\.com\/(conversations\/messages\/|conversations\/locations\/loc1\/messages\/.*\/transcription|contacts\/|conversations\/search)/.test(u)), GH.calls)
   const ai0 = AI.length
   ;[s, j] = await run(h, 'cron')
   ck('the next run reads nothing twice', s === 200 && j.read === 0 && AI.length === ai0, [s, j])
@@ -189,6 +194,48 @@ try {
   reset()
   ;[s, j] = await run(h, 'owner', { message_ids: ['gMcTDQ5WoAXMHUmrCbdN'] })
   ck('the owner can name a call to read again', s === 200 && j.read === 1, [s, j])
+  // ── v10: GoHighLevel texts, and prepared steps with the visit from AxisCare ──
+  const DIXIE = '11111111-0000-4000-8000-00000000d1x1'.replace('x', '0')
+  reset(); DB.call_pull_seen = []
+  const ago = (min) => new Date(Date.now() - min * 60e3).toISOString()
+  const tmw = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.now() + 864e5))
+  DB.app_data[0].data.call_tasks_since = ago(600)
+  TEXTS = [
+    { id: 'cvD', contactId: 'cD', phone: '+14175550990', name: 'Dixie Kuhn', msgs: [
+      { id: 'm0', direction: 'outbound', type: 1, messageType: 'TYPE_SMS', body: 'Hi Dixie, thank you for covering.', dateAdded: ago(300) },
+      { id: 'm1', direction: 'inbound', type: 1, messageType: 'TYPE_SMS', body: 'Can I move my shift tomorrow with LeeAnn to 7-11am? Call me at 417-555-0990', dateAdded: ago(40) },
+      { id: 'm2', direction: 'inbound', type: 1, messageType: 'TYPE_SMS', body: 'If not thats ok', dateAdded: ago(38) }] },
+    { id: 'cvA', contactId: 'cA', phone: '+14175550991', name: 'Amy Ack', msgs: [{ id: 'a1', direction: 'inbound', type: 1, messageType: 'TYPE_SMS', body: 'Ok thanks!', dateAdded: ago(30) }] },
+    { id: 'cvT', contactId: 'cT', phone: '+14175550992', name: 'Tom Typing', msgs: [{ id: 't1', direction: 'inbound', type: 1, messageType: 'TYPE_SMS', body: 'Hey I need to ask about', dateAdded: ago(3) }] }]
+  globalThis.__WHO = (ph) => ph.endsWith('0990') ? { match: 'one', person_id: DIXIE, name: 'Dixie Kuhn', roles: ['caregiver'] } : null
+  DB.person_source_id = [{ person_id: DIXIE, system: 'axiscare', entity_type: 'caregiver', source_id: '777', needs_review: false }]
+  AXV = { 'caregiverIds=777': [{ id: 9001, client: { id: 55, firstName: 'LeeAnn', lastName: 'Walker' }, caregiver: { id: 777, firstName: 'Dixie', lastName: 'Kuhn' }, scheduledStartDate: tmw + 'T08:00:00', scheduledEndDate: tmw + 'T12:00:00' }],
+    'clientIds=55': [{ id: 9001, client: { id: 55 }, caregiver: { id: 777, firstName: 'Dixie', lastName: 'Kuhn' }, scheduledStartDate: tmw + 'T08:00:00' }, { id: 9002, client: { id: 55 }, caregiver: { id: 778, firstName: 'Tanya', lastName: 'Brooks' }, scheduledStartDate: tmw + 'T13:00:00' }] }
+  globalThis.__EVAL_ANSWER = (r) => base({ caller_role: 'caregiver', summary: 'Dixie asks to move tomorrow with LeeAnn to 7-11.', items: [item({ title: "Move Dixie's visit with LeeAnn tomorrow to 7-11", area: 'scheduling', urgency: 'today',
+    actions: [{ kind: 'axiscare_visit_change', step: 1, to: 'AxisCare', draft: '', date: tmw, start: '07:00', end: '11:00', client_name: 'LeeAnn', waits_for_yes: false },
+      { kind: 'text_caregiver', step: 2, to: 'Dixie Kuhn', draft: 'All set, tomorrow with LeeAnn is 7-11. Call 417-555-0101 with questions.', date: '', start: '', end: '', client_name: '', waits_for_yes: false },
+      { kind: 'text_client_caregivers', step: 3, to: "LeeAnn's caregivers", draft: 'FYI LeeAnn tomorrow is 7-11.', date: '', start: '', end: '', client_name: 'LeeAnn', waits_for_yes: false }] })] })
+  const h10 = h
+  ;[s, j] = await run(h10, 'cron')
+  const tx = DB.call_task_reading.filter((r) => r.channel === 'text')
+  ck('v10 texts: Dixie\'s burst is read (after 10 quiet minutes), "Ok thanks!" needs no reading, and someone still typing is left for later', s === 200 && j.texts_read === 2 && j.text_skipped === 1 && tx.length === 2
+    && tx.some((r) => r.message_id === 'sms:m2' && r.who_name === 'Dixie Kuhn') && tx.some((r) => r.message_id === 'sms:a1' && r.model === 'none' && /acknowledgement/.test(r.no_task_reason)) && !tx.some((r) => r.message_id === 'sms:t1'), [j, tx.map((r) => r.message_id)])
+  const tAI = AI.find((r) => /Text conversation/.test(r.messages[0].content))
+  ck('v10 texts: the reader gets the thread oldest first, Them and Office, as a conversation (not a call)', tAI && /<conversation>/.test(tAI.messages[0].content) && /Office: Hi Dixie, thank you for covering\./.test(tAI.messages[0].content) && /Them: Can I move my shift tomorrow with LeeAnn to 7-11am\?/.test(tAI.messages[0].content), tAI && tAI.messages[0].content.slice(0, 700))
+  const dx = tx.find((r) => r.message_id === 'sms:m2'), acts = dx.tasks[0].actions
+  ck('v10 her rule, held in code: a caregiver\'s visit change starts by asking LeeAnn or her family, and the change and the texts wait for their yes', acts.map((a) => a.kind).join() === 'ask_client_family_permission,axiscare_visit_change,text_caregiver,text_client_caregivers'
+    && acts[0].waits_for_yes === false && acts.slice(1).every((a) => a.waits_for_yes) && /LeeAnn/.test(acts[0].to), acts)
+  ck('v10: the Hub finds the real visit in AxisCare (Dixie with LeeAnn Walker tomorrow 08:00-12:00) and shows the change to 07:00-11:00', acts[1].resolved && acts[1].resolved.found === true && acts[1].resolved.visit.client === 'LeeAnn Walker' && acts[1].resolved.visit.start === '08:00' && acts[1].resolved.after.start === '07:00' && acts[1].resolved.after.end === '11:00', acts[1])
+  ck('v10: "text LeeAnn\'s caregivers" lists the caregivers on her schedule from AxisCare', JSON.stringify(acts[3].resolved && acts[3].resolved.caregivers) === '["Dixie Kuhn","Tanya Brooks"]', acts[3])
+  ck('v10: no text body, phone number or email is kept; drafts are scrubbed', !/Can I move my shift|If not thats ok|417-555|0990|0101/.test(JSON.stringify(tx)), JSON.stringify(tx).match(/.{30}(417-555|0990|0101|Can I move).{30}/g))
+  ck('v10: AxisCare is only read; GoHighLevel only read; nothing written to Work', GH.calls.filter((u) => u.includes('axiscare.com')).every((u) => /\/api\/visits\?/.test(u) && !/ (POST|PATCH|PUT)$/.test(u)) && GH.calls.every((u) => !/ (POST|PUT|PATCH|DELETE)$/.test(u)) && !DB.writes.includes('ops_items'), GH.calls)
+  const rr2 = AI.length; [s, j] = await run(h10, 'cron')
+  ck('v10: the next run reads no text twice', j.texts_read === 0 && AI.length === rr2, j)
+  globalThis.__WHO = null; globalThis.__EVAL_ANSWER = null
+  const fam = lib.cleanActions([{ kind: 'axiscare_visit_change', step: 1, date: '2026-10-14', start: '09:00', end: '13:00', client_name: 'Margaret', to: '', draft: '', waits_for_yes: false }], 'family')
+  ck('v10: when the client or family asked for the change themselves, no permission step is added', fam.length === 1 && fam[0].kind === 'axiscare_visit_change' && fam[0].waits_for_yes === false, fam)
+  ck('v10: steps are limited to five, kinds and times made safe', lib.cleanActions(Array.from({ length: 8 }, () => ({ kind: 'zzz', start: '25:99' })), 'client').length === 5 && lib.cleanActions([{ kind: 'zzz', start: '25:99' }], 'client')[0].kind === 'call_back' && lib.cleanActions([{ kind: 'zzz', start: '25:99' }], 'client')[0].start === '')
+  ck('v10: a short acknowledgement or opt-out word is recognized; a real request is not', ['ok', 'Ok thanks!', 'yes', 'STOP', '👍'].every((x) => lib.ACK.test(x)) && !lib.ACK.test('ok can I switch Friday to Saturday?'))
   // the test bench
   reset(); globalThis.__EVAL_ANSWER = (r) => base({ caller_role: 'family', summary: 'eval', items: [item({ title: 'Add Saturday hours for Mrs Example', area: 'scheduling', urgency: 'this_week' })] })
   ;[s, j] = await run(h, 'owner', { eval: [{ id: 'e1', call_at: '2026-10-13T15:00:00Z', direction: 'in', seconds: 90, caller: 'Daughter', who: { match: 'none' }, transcript: 'we would like Saturdays', context: { leads: [] } }] })
@@ -198,7 +245,7 @@ try {
   ck('the test bench is the owner\'s only (the schedule is refused)', s === 403, [s, j])
   globalThis.__EVAL_ANSWER = null
   const src = fs.readFileSync(path.join(F, 'call-tasks/index.ts'), 'utf8')
-  ck('the function never sends: no POST to GoHighLevel, no Resend, no texts', !/method:\s*'POST'|resend|\/conversations\/messages'\s*,|sms/i.test(src.replace(/^\/\/.*$/gm, '')))
+  ck('the function never sends: no POST to GoHighLevel, no Resend, no texts', !/method:\s*'(POST|PUT|PATCH|DELETE)'|resend|\/messages\/send/i.test(src.replace(/^\/\/.*$/gm, '')))
   ck('owners come from the Hub (domains, the Staffing seat), handed to clean(); the AI is never asked for a person', /staffingAt\(hub, s\.call_at\)/.test(src) && /from\('domains'\)/.test(src) && !/owner_name|assign to/i.test(JSON.stringify(lib.TOOL)))
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 

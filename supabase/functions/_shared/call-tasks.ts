@@ -11,7 +11,7 @@
 // the Hub's domains and the Staffing seat, Client Journey, leads, staffing plans and visit changes checked, up to 8 cards.
 // =============================================================================
 
-export const VERSION = 'v9-2026-10-12'   // v8: a change in a client's condition is client care (the Hub's care_condition routing), not an incident; v9: praise goes to Kind Words, never a card (her decision)
+export const VERSION = 'v10-2026-10-12'   // v8: a change in a client's condition is client care (the Hub's care_condition routing), not an incident; v9: praise goes to Kind Words, never a card (her decision); v10: GoHighLevel texts read too, and each card carries its prepared actions (ask the client or family first when a visit changes)
 export const MODEL = 'claude-sonnet-5-5'
 export const MAX_CARDS = 8, MAX_ITEMS = 12
 export const AREAS = ['scheduling', 'evv_timekeeping', 'payroll', 'client_care', 'caregiver_performance', 'safety_incident',
@@ -21,6 +21,10 @@ export const ROLES = ['client', 'family', 'caregiver', 'applicant', 'referral_pa
 export const DECISIONS = ['new_card', 'add_to_existing_card', 'already_in_workflow', 'kind_words', 'done_on_call', 'caller_owns', 'not_needed'] as const
 export const URGENCY = ['now', 'today', 'this_week', 'routine'] as const
 export const PROMISE = ['we_agreed', 'caller_will', 'caller_considering', 'awaiting_confirmation'] as const
+/** What a card can carry ready to do (a person presses each one; in practice they are only shown). */
+export const ACTIONS = ['ask_client_family_permission', 'axiscare_visit_change', 'text_caregiver', 'text_client_caregivers', 'text_family_update', 'call_back', 'open_calloff_case'] as const
+/** A text that is only an acknowledgement or an opt-out word: no reading needed. */
+export const ACK = /^\s*(?:(?:yes|yeah|yep|no|nope|y|n|ok|okay|k|kk|thanks|thank you|thank u|ty|thx|got it|will do|sounds good|great|perfect|stop|unsubscribe|👍|🙏|❤️|😊)[\s,.!]*)+$/iu
 /** Which Hub domain owns an area (domains table). Scheduling and EVV go to whoever holds the Staffing seat at that hour. */
 export const AREA_DOMAIN: Record<string, string> = {
   scheduling: 'seat:staffing', evv_timekeeping: 'seat:staffing', payroll: 'money', client_care: 'client_care',
@@ -67,6 +71,20 @@ export const TOOL = {
             due: str('YYYY-MM-DD when the work has a date, judged from the call date; otherwise empty.'),
             reason: str('One sentence: why this is or is not a card.'),
             quote: str('When kind_words: the kind words in a sentence or two, close to how the caller said them, and who they are about. Otherwise empty.'),
+            actions: {
+              type: 'array', description: 'For a card: the work prepared so a person only checks it and presses each step, in order. Empty when not a card or nothing can be prepared.',
+              items: { type: 'object', additionalProperties: false, required: ['kind', 'step', 'to', 'draft', 'date', 'start', 'end', 'client_name', 'waits_for_yes'], properties: {
+                kind: { type: 'string', enum: [...ACTIONS], description: 'ask_client_family_permission: a message asking the client or family to OK a change before it is made. axiscare_visit_change: change a visit\'s day or time in AxisCare. text_caregiver: a text to the caregiver this is about. text_client_caregivers: one text to every caregiver on that client\'s schedule. text_family_update: an update to the client or family. call_back: call the person back. open_calloff_case: open a call-off case for a visit.' },
+                step: { type: 'integer', description: 'Order, starting at 1.' },
+                to: str('Who it goes to, in words (for example "Dixie Kuhn", "LeeAnn Walker or her family", "LeeAnn Walker\'s caregivers").'),
+                draft: str('For a text or message: the words, short, warm, from Caring Companions; for a family, in a caring voice that never promises a caregiver, a start date or staffing. No phone numbers or emails. Empty for other kinds.'),
+                date: str('For a visit change: the visit\'s day as YYYY-MM-DD. Otherwise empty.'),
+                start: str('For a visit change: the new start time as HH:MM (24-hour), as asked. Otherwise empty.'),
+                end: str('For a visit change: the new end time as HH:MM (24-hour), as asked. Otherwise empty.'),
+                client_name: str('For a visit change or a text to a client\'s caregivers: the client\'s name as said. Otherwise empty.'),
+                waits_for_yes: { type: 'boolean', description: 'True when this step must wait for the client\'s or family\'s yes from an earlier step.' },
+              } },
+            },
           } },
       },
       resolves: {
@@ -90,6 +108,10 @@ Work through the call like an experienced coordinator:
 5. Urgency is not routine. A client safety concern, a visit that is uncovered or about to be missed, a caregiver who cannot make a shift today or tomorrow, or a family's immediate need is urgency now or today, never routine, even when it is also in a workflow.
 6. Choose the area by what the work is, not by who answered the phone: scheduling (visits, coverage, availability, time off, rides with a caregiver), evv_timekeeping (clock-in and clock-out corrections, EVV forms), payroll (pay questions), client_care (care plan, family updates, concerns about care, and a change in a client's condition such as new confusion, not eating or new symptoms: urgency today), caregiver_performance (a concern about a caregiver), safety_incident (a fall, an injury, abuse or neglect, or a danger right now; a change in condition without an injury or immediate danger is client_care), family_enquiries (a new family or a family question before care starts), referral_partner (a referral partner's referral, information request or follow-up), payer_programs (Medicaid, VA, authorizations, enrollment), recruiting (applicants, interviews, orientation), field_quality (hands-on advanced care questions), training_compliance (training, certifications), office_admin (anything else for the office). The Hub assigns the owner from the area.
 
+Prepare the work. For each card, list the steps a coordinator would take, ready to press, in order (actions). Caring Companions often must ask the client or family for permission before a visit changes: when a caregiver or anyone other than the client or family asks to move, shorten or swap a visit, the first step is ask_client_family_permission (a short draft asking them to OK it), then axiscare_visit_change and any message confirming it wait for that yes (waits_for_yes true). When the client or family asked for the change themselves, no permission step is needed. Name the new day and times exactly as asked. Draft every message in a few warm sentences. You only prepare: a person reviews, edits and presses each step, and the Hub finds the people, numbers and visits.
+
+This may be a phone call or a text conversation. In a text conversation, read the newest texts from the person in the light of the messages before them; earlier messages are context, and work they created was handled when they arrived.
+
 How to write a card:
 - The title reads like a coordinator's note: verb first, who, what, when. Under 90 characters. No diagnoses, medicines or health details in the title.
 - The why gives a coworker what they need to act, including any promise made or confirmation pending. Never include a phone number or an email address.
@@ -107,12 +129,13 @@ Always answer by calling submit_followups exactly once.`
 export type Who = { match: 'one' | 'several' | 'none'; person_id?: string | null; lead_id?: string | null; name?: string | null; roles?: string[] }
 export type OpenCard = { id: string; title: string; created_at?: string }
 export type Earlier = { message_id: string; call_at: string; tasks: Array<{ title: string }> }
-export type CallIn = { message_id: string; call_at: string; direction: 'in' | 'out'; seconds: number; caller: string; transcript: string }
+export type CallIn = { message_id: string; call_at: string; direction: 'in' | 'out'; seconds: number; caller: string; transcript: string; channel?: 'call' | 'text' }
 /** What the Hub's own systems and workflows already have, one line each in the office's words. */
 export type Related = { kind: 'card' | 'callout_case' | 'clockin_case' | 'day_case' | 'workflow'; line: string }
 export type Owner = { name: string; via: string }
-export type Item = { responsibility: string; decision: string; workflow: string; card_id: string; title: string; why: string; area: string; urgency: string; due: string; reason: string; quote?: string; owner?: Owner }
-export type Task = { title: string; why: string; area: string; due: string; add_to_card_id: string; urgency?: string; owner?: Owner; voicemail?: boolean }
+export type Action = { kind: string; step: number; to: string; draft: string; date: string; start: string; end: string; client_name: string; waits_for_yes: boolean; resolved?: Record<string, unknown> }
+export type Item = { responsibility: string; decision: string; workflow: string; card_id: string; title: string; why: string; area: string; urgency: string; due: string; reason: string; quote?: string; actions?: Action[]; owner?: Owner }
+export type Task = { title: string; why: string; area: string; due: string; add_to_card_id: string; urgency?: string; owner?: Owner; voicemail?: boolean; actions?: Action[] }
 export type Reading = {
   call_type: string; is_voicemail: boolean; tasks: Task[]; resolves: Array<{ message_id: string; task_index: number }>; no_task_reason: string
   detail: { summary: string; about: string; understood: string[]; commitments: Array<{ what: string; kind: string; when: string }>; items: Item[] }
@@ -131,8 +154,10 @@ export function userMessage(c: CallIn, who: Who, open: OpenCard[], earlier: Earl
     ? `The phone system's identity records say this number belongs to ${who.name || 'a known person'}${(who.roles || []).length ? ', ' + (who.roles || []).map((r) => ROLE_WORDS[r] || r).join(' and ') : ''}.`
     : who.match === 'several' ? 'This number is shared by more than one person in our records, so who it was is not certain.'
     : 'This number is not in our records.'
+  const text = c.channel === 'text'
   const lines = [
-    `Call: ${chicago(c.call_at)} (Central time), ${c.direction === 'in' ? 'inbound (they called us)' : 'outbound (we called them)'}, ${Math.round(c.seconds)} seconds.`,
+    text ? `Text conversation: the newest texts from this person arrived ${chicago(c.call_at)} (Central time). Messages are oldest first.`
+      : `Call: ${chicago(c.call_at)} (Central time), ${c.direction === 'in' ? 'inbound (they called us)' : 'outbound (we called them)'}, ${Math.round(c.seconds)} seconds.`,
     `The phone system's contact name: ${c.caller || 'unknown'}.`,
     whoLine,
     open.length ? 'Open cards already in Needs Attention for this person:\n' + open.map((o) => `- id ${o.id}: ${o.title}`).join('\n') : 'No open cards in Needs Attention for this person.',
@@ -140,7 +165,7 @@ export function userMessage(c: CallIn, who: Who, open: OpenCard[], earlier: Earl
       : 'The Hub\'s systems and workflows have nothing for this person around the time of this call (no call-off or missed clock-in case, lead follow-up, Client Journey, staffing plan, visit change or recent card).',
     earlier.length ? 'Cards suggested from earlier calls with this number in the last day:\n' + earlier.map((e) => e.tasks.map((t, i) => `- message_id ${e.message_id}, task_index ${i} (${chicago(e.call_at)}): ${t.title}`).join('\n')).join('\n')
       : 'No earlier suggested cards for this number in the last day.',
-    '<transcript>\n' + c.transcript.slice(0, 60000) + '\n</transcript>',
+    text ? '<conversation>\n' + c.transcript.slice(0, 30000) + '\n</conversation>' : '<transcript>\n' + c.transcript.slice(0, 60000) + '\n</transcript>',
   ]
   return lines.join('\n\n')
 }
@@ -167,6 +192,34 @@ export const OPEN_CASE = /^Open a call-off case\b/i
 /** A card that only passes on praise or thanks: Kind Words' job (her decision 2026-10-12). */
 export const PRAISE = /\b(pass (on |along )?(the |her |his |their )?(thanks|thank[- ]you|compliment|praise|kind words)|(thanks|compliment|praise|kind words) (on )?to (the )?caregiver|share (the )?(compliment|praise|kind words))\b/i
 
+const HHMM = (v: unknown) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(v || '')) ? String(v) : ''
+/** The prepared steps, held to her rules in code: known kinds, real dates and times, drafts scrubbed, at most five, in
+ *  order, and her rule: a visit change that the client or family did not ask for waits for their yes (a permission step
+ *  is put first when the model left it out). */
+// deno-lint-ignore no-explicit-any
+export function cleanActions(raw: any, role: string): Action[] {
+  let a: Action[] = (Array.isArray(raw) ? raw : []).slice(0, 5).map((x: Any, i: number) => ({
+    kind: pick(x?.kind, ACTIONS, 'call_back'), step: Number.isInteger(x?.step) && x.step > 0 ? x.step : i + 1, to: scrub(x?.to, 120), draft: scrub(x?.draft, 480),
+    date: /^\d{4}-\d{2}-\d{2}$/.test(String(x?.date || '')) && !isNaN(Date.parse(x.date)) ? String(x.date) : '', start: HHMM(x?.start), end: HHMM(x?.end),
+    client_name: scrub(x?.client_name, 120), waits_for_yes: x?.waits_for_yes === true,
+  })).sort((p, q) => p.step - q.step)
+  const change = a.findIndex((x) => x.kind === 'axiscare_visit_change')
+  const familyAsked = role === 'client' || role === 'family'
+  if (change > -1 && !familyAsked) {
+    const ask = a.findIndex((x) => x.kind === 'ask_client_family_permission')
+    if (ask === -1 || ask > change) {
+      const c = a[change]
+      a = [{ kind: 'ask_client_family_permission', step: 1, to: (c.client_name ? c.client_name + ' or their family' : 'the client or family'), draft: '', date: c.date, start: c.start, end: c.end, client_name: c.client_name, waits_for_yes: false },
+        ...a.filter((x) => x.kind !== 'ask_client_family_permission')]
+    }
+    let seenAsk = false
+    a = a.map((x) => { if (x.kind === 'ask_client_family_permission') { seenAsk = true; return { ...x, waits_for_yes: false } } return seenAsk && x.kind !== 'call_back' ? { ...x, waits_for_yes: true } : x })
+  }
+  return a.map((x, i) => ({ ...x, step: i + 1 }))
+}
+// deno-lint-ignore no-explicit-any
+type Any = any
+
 /** Who owns an area right now: the Staffing seat at the call's hour for scheduling and EVV, else the domain owner. */
 export function ownerFor(area: string, owners: { domains: Record<string, string>; staffing?: string }): Owner {
   const d = AREA_DOMAIN[area] || 'program_administration'
@@ -192,6 +245,7 @@ export function clean(raw: unknown, open: OpenCard[], earlier: Earlier[], relate
     card_id: openIds.has(String(t?.card_id || '')) ? String(t.card_id) : '', title: scrub(t?.title, 90), why: scrub(t?.why, 400),
     area: pick(t?.area, AREAS, 'office_admin'), urgency: pick(t?.urgency, URGENCY, 'routine'),
     due: /^\d{4}-\d{2}-\d{2}$/.test(String(t?.due || '')) && !isNaN(Date.parse(t.due)) ? t.due : '', reason: scrub(t?.reason, 240), quote: scrub(t?.quote, 600),
+    actions: cleanActions(t?.actions, role),
   }))
   items = items.map((it) => {
     if (it.decision === 'add_to_existing_card' && !it.card_id) it = { ...it, decision: 'new_card', reason: it.reason + ' (the card it named is not open, so a new one)' }
@@ -203,12 +257,13 @@ export function clean(raw: unknown, open: OpenCard[], earlier: Earlier[], relate
     if (it.decision === 'new_card' && PRAISE.test(it.title + ' ' + it.responsibility))
       it = { ...it, decision: 'kind_words', quote: it.quote || it.why || it.responsibility, reason: 'Praise goes to Kind Words as a suggestion, not a card.' }
     if (it.decision === 'kind_words') it = { ...it, title: '', urgency: 'routine', due: '' }
+    if (!(it.decision === 'new_card' || it.decision === 'add_to_existing_card')) it = { ...it, actions: [] }
     if (it.decision === 'new_card' && role === 'new_client_inquiry' && it.area === 'family_enquiries')
       it = { ...it, decision: 'already_in_workflow', workflow: it.workflow || 'lead follow-up', reason: 'A new client inquiry goes to the lead workflow.' }
     return it.decision === 'new_card' || it.decision === 'add_to_existing_card' ? { ...it, owner: ownerFor(it.area, owners) } : it
   })
   const cards = items.filter((it) => it.decision === 'new_card').slice(0, MAX_CARDS)
-  const tasks: Task[] = cards.map((it) => ({ title: it.title, why: it.why, area: it.area, due: it.due, add_to_card_id: '', urgency: it.urgency, owner: it.owner }))
+  const tasks: Task[] = cards.map((it) => ({ title: it.title, why: it.why, area: it.area, due: it.due, add_to_card_id: '', urgency: it.urgency, owner: it.owner, actions: it.actions || [] }))
   const known = new Map(earlier.map((e) => [e.message_id, e.tasks.length]))
   // deno-lint-ignore no-explicit-any
   const resolves = (Array.isArray(r.resolves) ? r.resolves : []).filter((x: any) => known.has(String(x?.message_id)) && Number.isInteger(x?.task_index)

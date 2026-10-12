@@ -90,6 +90,13 @@ export const SCENARIOS = [
       steps: [{ journey_id: 'j-new', step_key: 'intake.payer', state: 'open', waiting_on: 'family' }] },
     transcript: T('O: Caring Companions.', 'C: This is Ruth Lane\'s son. You asked how Mom will pay. She has Medicaid, her number is on the card, I can read it to you.', 'O: Thank you, I will note that on her file.'),
     expect: { cards: [0, 1], decisions: ['already_in_workflow'] } },
+  // texts (v10)
+  { id: 't1-caregiver-move-visit', group: 'texts', channel: 'text', who: { match: 'one', person_id: 'p-dk', name: 'Dixie Kuhn', roles: ['caregiver'] }, caller: 'Dixie K.', direction: 'in',
+    transcript: '[Mon 3:02 PM] Office: Thank you for covering Saturday, Dixie!\n[Tue 9:40 AM] Them: Can I move my shift tomorrow with LeeAnn to 7-11am instead of 8-12?\n[Tue 9:41 AM] Them: If not thats ok',
+    expect: { cards: [1, 1], areas: ['scheduling'], firstAction: 'ask_client_family_permission', hasAction: 'axiscare_visit_change' } },
+  { id: 't2-family-asks-change', group: 'texts', channel: 'text', who: LISA, caller: 'Lisa H.', direction: 'in',
+    transcript: '[Tue 8:15 AM] Them: Hi, could Mom\'s Thursday visit be 10 to 2 this week instead of 9 to 1? She has a dentist at 9.',
+    expect: { cards: [1, 1], areas: ['scheduling'], hasAction: 'axiscare_visit_change', noAction: 'ask_client_family_permission' } },
   // nothing to do
   { id: 'n1-wrong-number', group: 'none', who: NONE, caller: 'Unknown', direction: 'in',
     transcript: T('O: Caring Companions.', 'C: Is this the pharmacy?', 'O: No, sorry, wrong number.'),
@@ -110,6 +117,10 @@ function score(s, r) {
   if (e.commit) out.push({ ok: e.commit.some((k) => kinds.includes(k)), what: 'promise ' + e.commit.join('/'), got: kinds.join(',') })
   if (e.due) out.push({ ok: tasks.some((t) => t.due === e.due), what: 'due ' + e.due, got: tasks.map((t) => t.due).join(',') })
   if (e.titleIncludes) out.push({ ok: tasks.some((t) => e.titleIncludes.test(t.title)), what: 'title ' + e.titleIncludes, got: tasks.map((t) => t.title).join(' | ') })
+  const acts = tasks.flatMap((t) => t.actions || [])
+  if (e.firstAction) out.push({ ok: acts.length && acts[0].kind === e.firstAction, what: 'first step ' + e.firstAction, got: acts.map((a) => a.kind).join(',') })
+  if (e.hasAction) out.push({ ok: acts.some((a) => a.kind === e.hasAction), what: 'a step ' + e.hasAction, got: acts.map((a) => a.kind).join(',') })
+  if (e.noAction) out.push({ ok: !acts.some((a) => a.kind === e.noAction), what: 'no step ' + e.noAction, got: acts.map((a) => a.kind).join(',') })
   out.push({ ok: tasks.every((t) => t.owner && t.owner.name), what: 'every card has an owner', got: tasks.map((t) => t.owner && t.owner.name).join(',') })
   return out
 }
@@ -121,7 +132,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const list = SCENARIOS.filter((s) => !only.length || only.includes(s.id))
   const all = []
   for (let i = 0; i < list.length; i += 5) {
-    const batch = list.slice(i, i + 5).map((s) => ({ id: s.id, call_at: s.call_at || AT, direction: s.direction, seconds: 120, caller: s.caller, who: s.who, transcript: s.transcript, context: s.context || {}, staffing: 'Samantha Troutman' }))
+    const batch = list.slice(i, i + 5).map((s) => ({ id: s.id, channel: s.channel || 'call', call_at: s.call_at || AT, direction: s.direction, seconds: s.channel === 'text' ? 0 : 120, caller: s.caller, who: s.who, transcript: s.transcript, context: s.context || {}, staffing: 'Samantha Troutman' }))
     const r = await fetch(`${BASE}/functions/v1/call-tasks`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + KEY, apikey: KEY }, body: JSON.stringify({ eval: batch }) })
     const j = await r.json().catch(() => ({}))
     if (!r.ok) { console.log('bench answered', r.status, JSON.stringify(j).slice(0, 200)); process.exit(1) }
