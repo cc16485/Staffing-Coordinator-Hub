@@ -1,7 +1,8 @@
 // End-to-end test of the launch-evidence edge function under Node: real function code,
 // real engine file, fake database, fake AxisCare. node launch_evidence_harness.mjs <index.ts> <launch-evidence.js>
 import fs from 'fs'; import path from 'path';
-const FN = process.argv[2], ENGINE = process.argv[3];
+// with no arguments: the repo's function and the Hub's engine file (HUB_ROOT, else ../cc-hub-live)
+const FN = process.argv[2] || 'supabase/functions/launch-evidence/index.ts', ENGINE = process.argv[3] || path.join(process.env.HUB_ROOT || '../cc-hub-live', 'launch-evidence.js');
 const src = fs.readFileSync(FN, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = globalThis.__fakeCreateClient')
   /* J2: the lock and the staff check are stand-ins that follow the test token (the real ones: j2_job_locks_test.mjs) */
   .replace("'../_shared/job-auth.ts'", "'" + path.resolve('test_stubs/job-auth-by-role.mjs') + "'").replace("'../_shared/staff-auth.ts'", "'" + path.resolve('test_stubs/staff-auth-by-claim.mjs') + "'")

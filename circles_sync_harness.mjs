@@ -1,6 +1,7 @@
 // Change 6a · identity-backfill ?circles=1 under Node: real function code, fake database, fake AxisCare.
 // node circles_sync_harness.mjs supabase/functions/identity-backfill/index.ts
 import fs from 'fs'; import path from 'path';
+if (!process.argv[2]) process.argv[2] = 'supabase/functions/identity-backfill/index.ts'   // the documented command above
 const src = fs.readFileSync(process.argv[2], 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__fakeDb');
 const tmp = path.join(process.cwd(), '_ib_under_test.ts'); fs.writeFileSync(tmp, src);
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note).slice(0, 900)]);
@@ -20,7 +21,10 @@ const reset = () => {
       { id: 3, circle_id: 'C1', name: 'Pastor Tim', source: 'office', phone: '999' },
       { id: 4, circle_id: 'C1', name: 'Dave Jones', source: 'axiscare', axiscare_removed_at: '2026-09-01' },
       { id: 5, circle_id: 'C2', name: 'Someone', source: 'axiscare' }],
-    family_circle_link_log: [] };
+    family_circle_link_log: [],
+    /* 498 (2026-10-07, 8b4a1c0) made the sync keep circles for CURRENT clients only (an active client role), so the four
+       clients here are current; a past client is proven in circles_sync_664_test.mjs */
+    person_role: ['P1', 'P2', 'P3', 'P4'].map(person_id => ({ person_id, role: 'client', status: 'active' })) };
   RP = { '501': [{ listNumber: '1', name: 'Cathy Jones', relationship: 'Daughter', phones: [{ type: 'Mobile', number: '222' }], email: 'cathy@x', hipaaDisclosureAuthorization: '', canMakeMedicalDecisions: '1' },
       { listNumber: '2', name: 'Dave Jones', relationship: 'Son', phones: [] }, { listNumber: '3', name: 'Pastor Tim', relationship: 'Pastor', phones: [{ type: 'Home', number: '555' }] }],
     '502': [{ listNumber: '1', name: 'New Person', phones: [{ type: 'Mobile', number: '333' }] }], '503': [{ listNumber: '1', name: 'Bo Kid', phones: [] }],

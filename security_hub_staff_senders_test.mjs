@@ -42,7 +42,8 @@ const tmp = fs.mkdtempSync(path.join(process.cwd(), '_hss_'))
 const noCC = (s) => s.replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
 fs.writeFileSync(path.join(tmp, 'hub-gate.ts'), fs.readFileSync(path.join(TP, '_shared/hub-gate.ts'), 'utf8'))
 const load = async (dir, name) => { let s = noCC(fs.readFileSync(path.join(dir, name, 'index.ts'), 'utf8')).replace("from '../_shared/hub-gate.ts'", "from './hub-gate.ts'")
-  s = s.replace(/from '\.\.\/_shared\/(staff-auth|optout)\.ts'/g, (_, m) => "from '" + path.join(process.cwd(), HUBF, '_shared', m + '.ts') + "'")
+  /* the Hub's functions take every shared file from the Hub (outreach-check gained send-problems, text-consent and more since) */
+  if (dir === HUBF) s = s.replace(/from '\.\.\/_shared\/([\w.-]+\.(?:ts|js))'/g, (_, m) => "from '" + path.join(process.cwd(), HUBF, '_shared', m) + "'")
   const f = path.join(tmp, name + '.ts'); fs.writeFileSync(f, s); await import(f + '?' + Math.random()); return handler }
 const post = async (h, body, hubTok) => { const hd = { 'Content-Type': 'application/json', Authorization: 'Bearer training-anon' }; if (hubTok) hd['x-hub-token'] = hubTok
   const r = await h(new Request('https://tp/functions/v1/x', { method: 'POST', headers: hd, body: JSON.stringify(body) })); let j = null; try { j = await r.json() } catch { /* */ } return { status: r.status, j } }

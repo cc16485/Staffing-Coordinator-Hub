@@ -1,13 +1,16 @@
 // Change 6b · the shared care-level rule + the care-level function under Node (fake AxisCare).
 // node care_level_harness.mjs supabase/functions/_shared/care-level.ts supabase/functions/care-level/index.ts
 import fs from 'fs'; import path from 'path';
+// with no arguments it runs on the repo's own files (the documented command above)
+if (!process.argv[2]) process.argv[2] = 'supabase/functions/_shared/care-level.ts'
+if (!process.argv[3]) process.argv[3] = 'supabase/functions/care-level/index.ts'
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note).slice(0, 900)]);
 const R = await import(path.resolve(process.argv[2]));
 ck('rule: "Level 2 - Personal Care" → 2; "Advanced Care" → 3 (the old copies missed it); "Complex" → 3; "Wellness" → 1; a payer → nothing',
   R.levelFromLabel('Level 2 - Personal Care') === 2 && R.levelFromLabel('Advanced Care') === 3 && R.levelFromLabel('Complex Care') === 3 && R.levelFromLabel('Wellness Care') === 1 && R.levelFromLabel('Medicaid') === null);
 ck('rule: the HIGHEST level class held wins, and says which class it read', JSON.stringify(R.careLevelOf([{ label: 'Level 1 - Wellness Care' }, { label: 'Level 2 - Personal Care' }, { label: 'Medicaid' }])) === JSON.stringify({ level: 2, from: 'Level 2 - Personal Care' }));
 // the hub's copy must read the same (parity)
-const hub = fs.readFileSync(path.resolve('../cc-hub-live/index.html'), 'utf8');
+const hub = fs.readFileSync(path.resolve(process.env.HUB_ROOT || '../cc-hub-live', 'index.html'), 'utf8');
 const hubFn = new Function(hub.slice(hub.indexOf('function cgdLevelOf(classes){'), hub.indexOf('function cgdAvailFor(')) + '; return cgdLevelOf;')();
 const corpus = [['Level 1 - Wellness Care'], ['Level 2 - Personal Care'], ['Level 3 - Complex Care'], ['Advanced Care'], ['Personal Care', 'Wellness'], ['Medicaid'], ['CDS'], [], ['level3'], ['Complex'], ['Private Pay', 'Level 2']];
 ck('parity: the hub\'s caregiver directory reads every sample class set exactly like the shared rule', corpus.every(cs => hubFn(cs) === R.careLevelOf(cs.map(l => ({ label: l }))).level), corpus.map(cs => [cs, hubFn(cs), R.careLevelOf(cs.map(l => ({ label: l }))).level]));
