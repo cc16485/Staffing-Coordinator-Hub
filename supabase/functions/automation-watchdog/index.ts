@@ -59,6 +59,12 @@ const EXPECTED = [
   /* R3 (2026-09-29): the nightly Family Circle sync from AxisCare. It only started reporting on this date, so it is
      not flagged as "never reported" before its first night. */
   { name: 'circles-sync',       hours: 30, what: 'the nightly Family Circle sync from AxisCare', quietUntilFirst: true },
+  /* 650 v13 (2026-10-12, "make sure nothing ever falls through the cracks"): both run every 10 minutes. call-pull fetches
+     the answered calls and their transcripts (the new-client lead reader rides on it); call-tasks reads every call and
+     text for follow-up work and watches the promises. A beat older than an hour means calls are going unread. call-tasks
+     fails its beat only when the run itself broke (a reading or promise could not be saved, GoHighLevel's search failed). */
+  { name: 'call-pull',          hours: 1,  what: 'fetching answered calls and transcripts (the new-client lead reader)' },
+  { name: 'call-tasks',         hours: 1,  what: 'the AI employee reading calls and texts for follow-up work and watching promises' },
 ]
 
 Deno.serve(async (req) => {

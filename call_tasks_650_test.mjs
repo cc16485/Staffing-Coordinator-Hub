@@ -27,8 +27,8 @@ function reset() {
       { message_id: 'ipoVD64wn8dUcDyPdjqW', call_at: '2026-10-11T23:36:00Z', direction: 'in', seconds: 20, caller: 'Steve A.', stage: 'done' },
       { message_id: 'gMcTDQ5WoAXMHUmrCbdN', call_at: '2026-10-11T23:37:00Z', direction: 'out', seconds: 136, caller: 'Steve A.', stage: 'done' },
       { message_id: 'oldcall0001', call_at: '2026-10-01T15:00:00Z', direction: 'in', seconds: 50, caller: 'Old C.', stage: 'done' },
-      { message_id: 'notdone0001', call_at: '2026-10-11T20:00:00Z', direction: 'in', seconds: 50, caller: 'Err E.', stage: 'error' }],
-    call_task_reading: [], heartbeats: [], writes: [],
+      { message_id: 'notdone0001', call_at: '2026-10-11T20:00:00Z', direction: 'in', seconds: 50, caller: 'Err E.', stage: 'pending' }],
+    call_task_reading: [], call_promise_watch: [], call_record: [], heartbeats: [], writes: [],
     domains: [{ code: 'client_care', owner_person: 'pk', active: true }, { code: 'scheduling_coverage', owner_person: 'ps', active: true }, { code: 'money', owner_person: 'ps', active: true }, { code: 'payer_programs', owner_person: 'pa', active: true }, { code: 'family_enquiries', owner_person: 'pk', active: true }, { code: 'incidents', owner_person: 'ps', active: true }, { code: 'program_administration', owner_person: 'ps', active: true }],
     persons: [{ person_id: 'pk', full_name: 'Krystal Land', primary_email: 'krystal@cc.test' }, { person_id: 'ps', full_name: 'Samantha Troutman', primary_email: 'samantha@cc.test' }, { person_id: 'pa', full_name: 'Angiel Falig', primary_email: 'angiel@cc.test' }],
     client_journey_step_def: [{ key: 'intake.payer', def: { title: 'Identify the payer' }, active: true }], client_journey: [], client_journey_step: [],
@@ -48,9 +48,13 @@ globalThis.__fakeCreateClient = () => ({
   },
   from: (tb) => { const f = []; let single = false, ord = null, lim = null
     const p = { select() { return p }, eq(k, v) { f.push((r) => String(r[k]) === String(v)); return p }, in(k, v) { f.push((r) => v.map(String).includes(String(r[k]))); return p },
-      gte(k, v) { f.push((r) => String(r[k]) >= String(v)); return p }, lt(k, v) { f.push((r) => String(r[k]) < String(v)); return p },
+      gte(k, v) { f.push((r) => String(r[k]) >= String(v)); return p }, lt(k, v) { f.push((r) => String(r[k]) < String(v)); return p }, gt(k, v) { f.push((r) => String(r[k]) > String(v)); return p },
+      update(vals) { return { eq: (k, v) => { DB.writes.push(tb); if (globalThis.__SAVEFAIL === tb) return Promise.resolve({ error: { message: 'down' } }); for (const r of DB[tb] || []) if (String(r[k]) === String(v)) Object.assign(r, JSON.parse(JSON.stringify(vals))); return Promise.resolve({ error: null }) } } },
       order(k, o) { ord = [k, o?.ascending !== false]; return p }, limit(n) { lim = n; return p }, maybeSingle() { single = true; return p }, not(k, op, v) { f.push((r) => r[k] !== null && r[k] !== undefined); return p },
-      insert(row) { DB.writes.push(tb); if (tb === 'call_task_reading') { if (DB.call_task_reading.some((r) => r.message_id === row.message_id && r.version === row.version)) return Promise.resolve({ error: { message: 'duplicate key' } }); DB.call_task_reading.push({ id: ++rid, ...JSON.parse(JSON.stringify(row)) }) } return Promise.resolve({ error: null }) },
+      insert(row) { DB.writes.push(tb); if (globalThis.__SAVEFAIL === tb) return Promise.resolve({ error: { message: 'database down' } })
+        if (tb === 'call_task_reading') { if (DB.call_task_reading.some((r) => r.message_id === row.message_id && r.version === row.version && (r.attempt || 1) === (row.attempt || 1))) return Promise.resolve({ error: { message: 'duplicate key' } }); DB.call_task_reading.push({ id: ++rid, read_at: new Date().toISOString(), ...JSON.parse(JSON.stringify(row)) }) }
+        else if (tb === 'call_promise_watch') { if (DB.call_promise_watch.some((r) => r.message_id === row.message_id && r.idx === row.idx)) return Promise.resolve({ error: { message: 'duplicate key' } }); DB.call_promise_watch.push({ id: ++rid, checks: 0, evidence: [], checked_at: null, last_activity_at: null, why: null, ...JSON.parse(JSON.stringify(row)) }) }
+        return Promise.resolve({ error: null }) },
       then(ok, bad) { let rows = (DB[tb] || []).filter((r) => f.every((fn) => fn(r))); if (ord) rows = rows.slice().sort((a, b) => (String(a[ord[0]]) < String(b[ord[0]]) ? -1 : 1) * (ord[1] ? 1 : -1)); if (lim) rows = rows.slice(0, lim)
         return Promise.resolve({ data: single ? (rows[0] || null) : rows, error: null }).then(ok, bad) } }
     return p },
@@ -76,6 +80,7 @@ const ANSWERS = {
     resolves: /message_id ipoVD64wn8dUcDyPdjqW, task_index 0/.test(req.messages[0].content) ? [{ message_id: 'ipoVD64wn8dUcDyPdjqW', task_index: 0 }, { message_id: 'bogus', task_index: 0 }] : [], no_task_reason: '' }),
 }
 globalThis.__FakeAnthropic = class { constructor(o) { this.key = o.apiKey; this.beta = { messages: { create: async (req) => { AI.push(req)
+  if (req.tools[0].name === 'submit_promise_check') { if (globalThis.__CHECK) return { stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'submit_promise_check', input: globalThis.__CHECK(req) }] }; return { stop_reason: 'end_turn', content: [] } }
   if (FAILAI === 'refusal') return { stop_reason: 'refusal', stop_details: { category: 'general_harms' }, content: [] }
   if (FAILAI === 'throw') throw new Error('overloaded')
   if (FAILAI === 'textonce' && req.messages.length === 1) return { stop_reason: 'end_turn', content: [{ type: 'text', text: 'I think the cards are...' }] }
@@ -87,8 +92,8 @@ globalThis.__FakeAnthropic = class { constructor(o) { this.key = o.apiKey; this.
 globalThis.fetch = async (url, o) => { url = String(url); GH.calls.push(url + (o && o.method && o.method !== 'GET' ? ' ' + o.method : ''))
   let m
   if (url.includes('axiscare.com/api/visits?')) { const k = Object.keys(AXV).find((x) => url.includes(x)); return new Response(JSON.stringify({ results: { visits: k ? AXV[k] : [] } }), { status: 200 }) }
-  if (url.includes('/conversations/search?')) return new Response(JSON.stringify({ conversations: TEXTS.map((c) => ({ id: c.id, contactId: c.contactId, phone: c.phone, fullName: c.name, lastMessageDate: Date.parse(c.msgs.at(-1).dateAdded) })) }), { status: 200 })
-  if ((m = url.match(/\/conversations\/([^/]+)\/messages\?limit=30$/))) { const c = TEXTS.find((x) => x.id === m[1]); return new Response(JSON.stringify({ messages: { messages: c ? c.msgs : [] } }), { status: 200 }) }
+  if (url.includes('/conversations/search?')) return new Response(JSON.stringify({ conversations: TEXTS.filter((c) => !url.includes('contactId=') || url.includes('contactId=' + c.contactId + '&')).map((c) => ({ id: c.id, contactId: c.contactId, phone: c.phone, fullName: c.name, lastMessageDate: Date.parse(c.msgs.at(-1).dateAdded) })) }), { status: 200 })
+  if ((m = url.match(/\/conversations\/([^/]+)\/messages\?limit=\d+$/))) { const c = TEXTS.find((x) => x.id === m[1]); return new Response(JSON.stringify({ messages: { messages: c ? c.msgs : [] } }), { status: 200 }) }
   if ((m = url.match(/\/messages\/([^/]+)\/transcription$/))) return GH.transcripts[m[1]] ? new Response(JSON.stringify([{ sentenceIndex: 0, transcript: GH.transcripts[m[1]] }]), { status: 200 }) : new Response('{}', { status: 404 })
   if ((m = url.match(/\/conversations\/messages\/([^/?]+)$/))) return new Response(JSON.stringify({ message: { id: m[1], contactId: GH.msg[m[1]] } }), { status: 200 })
   if ((m = url.match(/\/contacts\/([^/?]+)$/))) return GH.contacts[m[1]] ? new Response(JSON.stringify({ contact: GH.contacts[m[1]] }), { status: 200 }) : new Response('{}', { status: 404 })
@@ -163,7 +168,7 @@ try {
   let [s, j] = await run(h, null)
   ck('no key and no schedule secret: refused (401), nothing read', s === 401 && !AI.length, [s, j])
   ;[s, j] = await run(h, 'cron')
-  ck('the schedule runs it: both of Steve\'s calls read (oldest first), the error-stage and pre-start calls left alone', s === 200 && j.read === 2 && DB.call_task_reading.map((r) => r.message_id).join() === 'ipoVD64wn8dUcDyPdjqW,gMcTDQ5WoAXMHUmrCbdN', [s, j])
+  ck('the schedule runs it: both of Steve\'s calls read (oldest first), a call call-pull is still working on and pre-start calls left alone', s === 200 && j.read === 2 && DB.call_task_reading.map((r) => r.message_id).join() === 'ipoVD64wn8dUcDyPdjqW,gMcTDQ5WoAXMHUmrCbdN', [s, j])
   const [vm, call] = DB.call_task_reading
   ck('the voicemail: one would-be card "Call Steve Algiere back...", urgency today, owner from the Staffing seat or the scheduling owner, practice mode', vm.mode === 'practice' && vm.tasks.length === 1 && /Call Steve Algiere back/.test(vm.tasks[0].title) && vm.tasks[0].urgency === 'today' && vm.tasks[0].owner.name === 'Samantha Troutman' && vm.tasks[0].voicemail === true, vm.tasks)
   ck('the call: matched by the identity layer; the summary, what was understood and the promises are kept (we agreed vs caller will)', call.who_name === 'Steve Algiere' && /DMV/.test(call.detail.summary) && call.detail.understood.length === 2
@@ -172,8 +177,8 @@ try {
     && call.tasks[0].urgency === 'this_week' && call.tasks[0].owner.name && call.detail.items.length === 3 && call.detail.items[1].decision === 'caller_owns', [call.tasks, call.detail.items])
   ck('the call answers the voicemail (a made-up one dropped)', JSON.stringify(call.resolves) === '[{"message_id":"ipoVD64wn8dUcDyPdjqW","task_index":0}]', call.resolves)
   ck('nothing is kept that it must not keep: no transcript lines, phone number or email in any reading', !/Speaker \d|take me to the DMV|help me get in|417|0467|example\.com/.test(JSON.stringify(DB.call_task_reading)), JSON.stringify(DB.call_task_reading).match(/.{30}(Speaker \d|417|0467|example\.com).{30}/g))
-  ck('PRACTICE: nothing is written to Work (no ops_items), only the readings and a heartbeat', !DB.writes.includes('ops_items') && DB.writes.every((w) => ['call_task_reading', 'automation_heartbeats'].includes(w)), DB.writes)
-  ck('every GoHighLevel request is a read (GET), to its message, transcript, contact and conversation endpoints', GH.calls.length === 7 && GH.calls.every((u) => !/ (POST|PUT|PATCH|DELETE)$/.test(u) && /services\.leadconnectorhq\.com\/(conversations\/messages\/|conversations\/locations\/loc1\/messages\/.*\/transcription|contacts\/|conversations\/search)/.test(u)), GH.calls)
+  ck('PRACTICE: nothing is written to Work (no ops_items), only the readings and a heartbeat', !DB.writes.includes('ops_items') && DB.writes.every((w) => ['call_task_reading', 'call_promise_watch', 'automation_heartbeats'].includes(w)), DB.writes)
+  ck('every GoHighLevel request is a read (GET), to its message, transcript, contact and conversation endpoints', GH.calls.length === 8 && GH.calls.every((u) => !/ (POST|PUT|PATCH|DELETE)$/.test(u) && /services\.leadconnectorhq\.com\/(conversations\/messages\/|conversations\/locations\/loc1\/messages\/.*\/transcription|contacts\/|conversations\/search)/.test(u)), GH.calls)
   const ai0 = AI.length
   ;[s, j] = await run(h, 'cron')
   ck('the next run reads nothing twice', s === 200 && j.read === 0 && AI.length === ai0, [s, j])
@@ -190,12 +195,101 @@ try {
   reset(); FAILAI = 'textonce'
   ;[s, j] = await run(h, 'cron')
   ck('the model answers in text once: one retry and both calls get their reading', j.read === 2 && j.errors === 0 && AI.filter((r) => r.messages.length === 3).length === 2, [j, AI.map((r) => r.messages.length)])
+  reset(); delete GH.transcripts.gMcTDQ5WoAXMHUmrCbdN; DB.call_pull_seen[1].call_at = new Date(Date.now() - 20 * 60e3).toISOString()
+  ;[s, j] = await run(h, 'cron')
+  ck('no transcript yet (a call 20 minutes old): that call is left for the next run', j.no_transcript === 1 && DB.call_task_reading.length === 1, [s, j])
+  // ── v13: no silent failures ──
   reset(); delete GH.transcripts.gMcTDQ5WoAXMHUmrCbdN
   ;[s, j] = await run(h, 'cron')
-  ck('no transcript yet: that call is left for the next run', j.no_transcript === 1 && DB.call_task_reading.length === 1, [s, j])
+  const nt = DB.call_task_reading.find((r) => r.message_id === 'gMcTDQ5WoAXMHUmrCbdN')
+  ck('v13: a call with still no transcript after 2 hours gets a reading saying so (never quietly missing), final, no AI asked about it', nt && /no transcript for this call \(136 seconds\)\. Listen to the recording/.test(nt.error) && nt.attempt === 3 && nt.model === 'none' && j.failed === 1 && AI.length === 1, [j, nt])
+  ;[s, j] = await run(h, 'cron')
+  ck('v13: and it is not read again', j.read === 0, j)
+  reset(); DB.call_pull_seen[3].stage = 'no_transcript'; DB.call_pull_seen[3].call_at = new Date(Date.now() - 30 * 60e3).toISOString(); DB.call_pull_seen[3].message_id = 'nott0000001'
+  ;[s, j] = await run(h, 'cron')
+  ck('v13: a call call-pull marked "no transcript" gets its reading too', DB.call_task_reading.some((r) => r.message_id === 'nott0000001' && /no transcript/.test(r.error)), DB.call_task_reading.map((r) => [r.message_id, r.error]))
+  reset(); DB.call_pull_seen[3].stage = 'error'; DB.call_pull_seen[3].message_id = 'gMcTDQ5WoAXMHUmrCbdN'; DB.call_pull_seen.splice(1, 1)
+  ;[s, j] = await run(h, 'cron')
+  ck('v13: a call the lead reader failed on (call-pull "error") is still read for follow-up work', DB.call_task_reading.some((r) => r.message_id === 'gMcTDQ5WoAXMHUmrCbdN' && !r.error && r.tasks.length), DB.call_task_reading.map((r) => [r.message_id, r.error]))
+  reset(); FAILAI = 'throw'
+  ;[s, j] = await run(h, 'cron')
+  ck('v13: a reading that fails is kept as try 1, and the run does not fail (heartbeat healthy)', DB.call_task_reading.length === 2 && DB.call_task_reading.every((r) => r.attempt === 1 && /overloaded/.test(r.error)) && j.could_not_read === 2 && j.failed === 0 && DB.heartbeats.at(-1).item.ok === true, [j, DB.heartbeats.at(-1)])
+  ;[s, j] = await run(h, 'cron')
+  ck('v13: it is not tried again within 30 minutes', j.read === 0, j)
+  FAILAI = null; for (const r of DB.call_task_reading) r.read_at = new Date(Date.now() - 31 * 60e3).toISOString()
+  ;[s, j] = await run(h, 'cron')
+  ck('v13: 30 minutes later it is tried again (try 2), works, and every try is kept', j.read === 2 && DB.call_task_reading.length === 4 && DB.call_task_reading.filter((r) => r.attempt === 2 && !r.error).length === 2, DB.call_task_reading.map((r) => [r.message_id, r.attempt, r.error]))
+  ;[s, j] = await run(h, 'cron')
+  ck('v13: once one try worked, it is never read again', j.read === 0, j)
+  reset(); FAILAI = 'throw'
+  for (let k = 0; k < 4; k++) { ;[s, j] = await run(h, 'cron'); for (const r of DB.call_task_reading) r.read_at = new Date(Date.now() - 31 * 60e3).toISOString() }
+  ck('v13: after 3 failed tries it stops (counted as failed, shown on the Practice tab), never a 4th', DB.call_task_reading.length === 6 && Math.max(...DB.call_task_reading.map((r) => r.attempt)) === 3, DB.call_task_reading.map((r) => [r.message_id, r.attempt]))
+  reset(); globalThis.__SAVEFAIL = 'call_task_reading'
+  ;[s, j] = await run(h, 'cron')
+  globalThis.__SAVEFAIL = null
+  ck('v13: when a reading cannot be saved, the heartbeat fails, so the watchdog tells the office', DB.heartbeats.at(-1).item.ok === false && j.save_failed === 2, [j, DB.heartbeats.at(-1)])
   reset()
   ;[s, j] = await run(h, 'owner', { message_ids: ['gMcTDQ5WoAXMHUmrCbdN'] })
   ck('the owner can name a call to read again', s === 200 && j.read === 1, [s, j])
+  // ── v13: the promise watch ──
+  ck('v13 dueFor: a promise the office made with no time said is due the next business day (a Sunday call: Monday; a Friday call: Monday)', lib.dueFor({ kind: 'we_agreed', when: '' }, '2026-10-11T23:37:00Z') === '2026-10-12' && lib.dueFor({ kind: 'we_agreed', when: '' }, '2026-10-16T15:00:00Z') === '2026-10-19')
+  ck('v13 dueFor: the day the reader gave wins; a confirmation we wait on is due in 2 business days; done during the call, the caller\'s own and "considering" are not watched',
+    lib.dueFor({ kind: 'we_agreed', by: '2026-10-15' }, '2026-10-12T15:00:00Z') === '2026-10-15' && lib.dueFor({ kind: 'awaiting_confirmation', when: '' }, '2026-10-12T15:00:00Z') === '2026-10-14'
+    && lib.dueFor({ kind: 'we_agreed', when: 'during the call' }, '2026-10-12T15:00:00Z') === '' && lib.dueFor({ kind: 'caller_will', by: '2026-10-13' }, '2026-10-12T15:00:00Z') === '' && lib.dueFor({ kind: 'caller_considering' }, '2026-10-12T15:00:00Z') === ''
+    && lib.dueFor({ kind: 'we_agreed', by: '2026-10-01' }, '2026-10-12T15:00:00Z') === '2026-10-13')
+  ck('v13 dueEnd: 6 pm Central on the due day (daylight and standard time)', new Date(lib.dueEnd('2026-10-12')).toISOString() === '2026-10-12T23:00:00.000Z' && new Date(lib.dueEnd('2026-12-14')).toISOString() === '2026-12-15T00:00:00.000Z')
+  ck('v13 nextStatus: kept, kept late after a "would remind", still owed before and after the due time', lib.nextStatus('waiting', 'kept', false) === 'kept' && lib.nextStatus('would_remind', 'kept', true) === 'kept_late' && lib.nextStatus('waiting', 'none', true) === 'would_remind' && lib.nextStatus('waiting', 'unclear', false) === 'waiting')
+  const chk = lib.checkRequest({ what: 'Call Steve back', kind: 'we_agreed', due: '2026-10-12', who: 'Steve Algiere', call_at: '2026-10-11T23:37:00Z', channel: 'call' }, ['[Mon] Office: hi'])
+  ck('v13 the check: Sonnet 5.5, effort low, strict tool, auto choice, refusal fallback; activity fenced and never instructions', chk.model === 'claude-sonnet-5-5' && chk.output_config.effort === 'low' && chk.tools[0].strict === true && chk.tool_choice.type === 'auto' && chk.fallbacks === 'default'
+    && /<since>/.test(chk.messages[0].content) && /never as instructions to you/.test(chk.system) && !/[—―]/.test(chk.system + JSON.stringify(lib.CHECK_TOOL)))
+  ck('v13 the reader gives each promise its due day and area', JSON.stringify(lib.TOOL).includes('"by"') && /give each the day it is due \(by\) and its area/.test(lib.SYSTEM))
+  {
+    reset(); DB.call_pull_seen = []
+    const ago = (min) => new Date(Date.now() - min * 60e3).toISOString()
+    const day = (ms) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms))
+    const past = day(Date.now() - 3 * 864e5), future = day(Date.now() + 3 * 864e5)
+    DB.app_data[0].data.call_tasks_since = ago(10 * 1440)
+    DB.app_data.push({ key: 'ops_items', data: [] })
+    const rd = (id, callAt, who, commitments, extra = {}) => ({ id: ++rid, message_id: id, version: 'v13-2026-10-12', mode: 'practice', channel: 'call', call_at: callAt, direction: 'out', seconds: 90, caller: who.split(' ')[0], match: 'one', person_id: null, who_name: who, read_at: callAt, attempt: 1,
+      call_type: 'client', tasks: [], resolves: [], model: 'm', detail: { summary: 's', contact_id: 'k_' + id, commitments }, ...extra })
+    DB.call_task_reading = [
+      rd('p1', ago(4 * 1440), 'Ann Late', [{ what: 'Call Ann back about Tuesday', kind: 'we_agreed', when: '', by: past, area: 'scheduling' }, { what: 'Ann may add Saturdays', kind: 'caller_considering', when: '', by: '', area: 'scheduling' }]),
+      rd('p2', ago(60), 'Bea Kept', [{ what: 'Text Bea the new schedule', kind: 'we_agreed', when: 'tomorrow', by: future, area: 'client_care' }]),
+      rd('p3', ago(4 * 1440), 'Cal Owed', [{ what: 'Hear back from Cal\'s daughter about Thursdays', kind: 'awaiting_confirmation', when: '', by: past, area: 'family_enquiries' }]),
+      rd('p4', ago(4 * 1440), 'Dee Done', [{ what: 'Changed her end time', kind: 'we_agreed', when: 'during the call', by: '', area: 'scheduling' }]),
+      rd('p5', ago(4 * 1440), 'Eve Gone', [{ what: 'Call Eve', kind: 'we_agreed', when: '', by: past, area: 'scheduling' }]),
+      { ...rd('p6', ago(30), 'Fay Error', [{ what: 'x', kind: 'we_agreed', when: '', by: future, area: 'scheduling' }]), error: 'overloaded' }]
+    TEXTS = [{ id: 'cvB', contactId: 'k_p2', phone: '', name: 'Bea Kept', msgs: [{ id: 'b1', direction: 'outbound', type: 1, messageType: 'TYPE_SMS', body: 'Hi Bea! Your new schedule: Mon and Wed 9 to 1. Call 417-555-0100 with questions.', dateAdded: ago(20) }] },
+      { id: 'cvC', contactId: 'k_p3', phone: '', name: 'Cal Owed', msgs: [{ id: 'c1', direction: 'outbound', type: 1, messageType: 'TYPE_SMS', body: 'Reminder: your visit is tomorrow at 9.', source: 'workflow', dateAdded: ago(2000) }] }]
+    const asked = []
+    globalThis.__CHECK = (req) => { asked.push(req.messages[0].content); return /Bea/.test(req.messages[0].content) ? { status: 'kept', why: 'The office texted Bea her new schedule.', evidence: ['Office text: new schedule sent, call 417-555-0100'] } : { status: 'not_yet', why: 'Only an automatic reminder since.', evidence: [] } }
+    const h2 = h
+    ;[s, j] = await run(h2, 'cron')
+    const W = (id) => DB.call_promise_watch.filter((w) => w.message_id === id)
+    ck('v13 watch: every promise the office made gets a row with its due day and owner from the Hub; "considering", finished-on-the-call and failed readings get none',
+      W('p1').length === 1 && W('p1')[0].due === past && W('p1')[0].owner.name && W('p2').length === 1 && W('p4').length === 0 && W('p6').length === 0 && W('p2')[0].owner.name === 'Krystal Land', DB.call_promise_watch.map((w) => [w.message_id, w.idx, w.due, w.status, w.owner]))
+    ck('v13 watch: past due with nothing since: would remind (no AI needed), saying why', W('p1')[0].status === 'would_remind' && /Nothing with them since the promise/.test(W('p1')[0].why) && !asked.some((a) => /Ann/.test(a)), W('p1')[0])
+    ck('v13 watch: the office texted after the promise: the check says kept (before it was even due), with evidence and no phone number kept', W('p2')[0].status === 'kept' && W('p2')[0].evidence.length === 1 && !/417|555/.test(JSON.stringify(DB.call_promise_watch)), W('p2')[0])
+    ck('v13 watch: only an automatic reminder since: the check is told it was automatic, and it stays owed (would remind)', W('p3')[0].status === 'would_remind' && asked.some((a) => /Office \(automatic\): Reminder/.test(a)), [W('p3')[0], asked])
+    ck('v13 watch: every status change is in the history; the run counts what it found', W('p1')[0].history.at(-1).status === 'would_remind' && W('p2')[0].history.map((x) => x.status).join() === 'waiting,kept' && j.promises >= 3 && j.promises_kept === 1 && j.would_remind === 3, [j, W('p2')[0].history])
+    const n0 = asked.length, c0 = W('p3')[0].checks
+    ck('v13 watch: Eve\'s promise is watched', W('p5').length === 1 && W('p5')[0].status === 'would_remind', W('p5'))
+    DB.call_task_reading.push({ ...rd('p5', ago(4 * 1440), 'Eve Gone', []), version: 'v14-x', read_at: ago(1) })
+    ;[s, j] = await run(h2, 'cron')
+    ck('v13 watch: a newer reading without the promise drops it, with the change in its history', W('p5')[0].status === 'dropped' && /no longer has this promise/.test(W('p5')[0].history.at(-1).why), W('p5'))
+    ck('v13 watch: checked at most hourly; nothing new, no new AI question', asked.length === n0 && W('p3')[0].checks === c0, [asked.length, W('p3')[0].checks])
+    W('p3')[0].checked_at = ago(61)
+    TEXTS[1].msgs.push({ id: 'c2', direction: 'inbound', type: 1, messageType: 'TYPE_SMS', body: 'Thursdays are fine', dateAdded: ago(10) })
+    globalThis.__CHECK = () => ({ status: 'kept', why: 'The daughter confirmed Thursdays.', evidence: ['Their text: Thursdays fine'] })
+    ;[s, j] = await run(h2, 'cron')
+    ck('v13 watch: an answer after it was due: kept late', W('p3')[0].status === 'kept_late' && W('p3')[0].history.map((x) => x.status).join() === 'waiting,would_remind,kept_late', W('p3')[0])
+    ck('v13 watch: practice only: nothing written to Work, nothing sent', !DB.writes.includes('ops_items') && GH.calls.every((u) => !/ (POST|PUT|PATCH|DELETE)$/.test(u)), DB.writes)
+    W('p1')[0].checked_at = ago(61); globalThis.__SAVEFAIL = 'call_promise_watch'
+    ;[s, j] = await run(h2, 'cron')
+    globalThis.__SAVEFAIL = null
+    ck('v13 watch: if the watch cannot save, the heartbeat fails (the watchdog tells the office)', DB.heartbeats.at(-1).item.ok === false, DB.heartbeats.at(-1))
+    globalThis.__CHECK = null
+  }
   // ── v10: GoHighLevel texts, and prepared steps with the visit from AxisCare ──
   const DIXIE = '11111111-0000-4000-8000-00000000d1x1'.replace('x', '0')
   reset(); DB.call_pull_seen = []
@@ -270,8 +364,9 @@ insert into public.phone_index values ('+14175550467', '${STEVE}'), ('+141755509
 insert into public.person_source_id values ('${STEVE}', 'client', false), ('${STEVE}', 'caregiver', true);
 insert into public.app_data values ('leads', '[{"id":"L9","first_name":"Lena","last_name":"Lead","phone":"(417) 555-0123"},{"id":"L8","first_name":"Old","last_name":"Gone","phone":"4175550888","archived":true}]');`)
   const sq = fs.readFileSync('call_tasks_650.sql', 'utf8'), sq7 = fs.readFileSync('call_tasks_650_v7.sql', 'utf8')
-  await db.exec(sq); await db.exec(sq); await db.exec(sq7); await db.exec(sq7)
-  ck('PGLITE: 650 and v7 install, and install again', true)
+  const sq10 = fs.readFileSync('call_tasks_650_v10.sql', 'utf8'), sq13 = fs.readFileSync('call_tasks_650_v13.sql', 'utf8')
+  await db.exec(sq); await db.exec(sq); await db.exec(sq7); await db.exec(sq7); await db.exec(sq10); await db.exec(sq13); await db.exec(sq13)
+  ck('PGLITE: 650, v7, v10 and v13 install, and install again', true)
   const who = async (p) => (await db.query('select public.call_who($1) as w', [p])).rows[0].w
   let w = await who('+1 (417) 555-0467')
   ck('PGLITE: call_who: Steve\'s number is Steve Algiere, a client (a source still needing review is not counted)', w.match === 'one' && w.person_id === STEVE && w.name === 'Steve Algiere' && JSON.stringify(w.roles) === '["client"]', w)
@@ -282,8 +377,24 @@ insert into public.app_data values ('leads', '[{"id":"L9","first_name":"Lena","l
   await db.exec(`insert into public.call_task_reading (message_id, version, mode, match, call_type, model, tasks) values ('msg0001','v1','practice','none','other','x','[{"title":"Call Ann"}]')`)
   ck('PGLITE: readings are append-only (update, delete, truncate refused), even for the owner', (await tryQ(`update public.call_task_reading set call_type = 'x'`)).includes('append-only') && (await tryQ('delete from public.call_task_reading')).includes('append-only') && (await tryQ('truncate public.call_task_reading')).includes('append-only'))
   ck('PGLITE v7: up to 8 cards fit, 9 do not; detail must be an object', (await tryQ(`insert into public.call_task_reading (message_id, version, mode, match, call_type, model, tasks, detail) values ('msg0008','v1','practice','none','other','x','[1,2,3,4,5,6,7,8]','{"summary":"s"}')`)) === 'ok' && (await tryQ(`insert into public.call_task_reading (message_id, version, mode, match, call_type, model, tasks) values ('msg0009','v1','practice','none','other','x','[1,2,3,4,5,6,7,8,9]')`)).startsWith('refused') && (await tryQ(`insert into public.call_task_reading (message_id, version, mode, match, call_type, model, detail) values ('msg0010','v1','practice','none','other','x','[1]')`)).startsWith('refused'))
-  ck('PGLITE: one reading per call per version', (await tryQ(`insert into public.call_task_reading (message_id, version, mode, match, call_type, model) values ('msg0001','v1','practice','none','other','x')`)).startsWith('refused')
-)
+  ck('PGLITE v13: one reading per call per version per try; a second try fits; tries go 1 to 5', (await tryQ(`insert into public.call_task_reading (message_id, version, mode, match, call_type, model) values ('msg0001','v1','practice','none','other','x')`)).startsWith('refused')
+    && (await tryQ(`insert into public.call_task_reading (message_id, version, mode, match, call_type, model, attempt) values ('msg0001','v1','practice','none','other','x',2)`)) === 'ok'
+    && (await tryQ(`insert into public.call_task_reading (message_id, version, mode, match, call_type, model, attempt) values ('msg0001','v1','practice','none','other','x',6)`)).startsWith('refused'))
+  const pw = `insert into public.call_promise_watch (message_id, idx, version, call_at, what, kind, area, due) values ('msg0001', 0, 'v13', now(), 'Call Steve Monday', 'we_agreed', 'scheduling', '2026-10-12')`
+  ck('PGLITE v13: the promise watch keeps we-agreed and awaiting-confirmation promises only, one row per promise', (await tryQ(pw, 'set local role service_role')) === 'ok'
+    && (await tryQ(pw.replace("'we_agreed'", "'caller_considering'"), 'set local role service_role')).startsWith('refused')
+    && (await tryQ(pw + '; ' + pw, 'set local role service_role')).startsWith('refused'))
+  ck('PGLITE v13: the server can insert and update promises but never delete them; an office page can read, not write; anon cannot read',
+    (await tryQ(`update public.call_promise_watch set status = 'kept'`, pw + '; set local role service_role')) === 'ok'
+    && (await tryQ('delete from public.call_promise_watch', pw + '; set local role service_role')).includes('permission denied')
+    && (await tryQ('select * from public.call_promise_watch', 'set local role authenticated')) === 'ok'
+    && (await tryQ(`update public.call_promise_watch set status = 'kept'`, 'set local role authenticated')).includes('permission denied')
+    && (await tryQ('select * from public.call_promise_watch', 'set local role anon')).includes('permission denied'))
+  ck('PGLITE v13: a status outside waiting, kept, kept late, would remind, dropped is refused', (await tryQ(pw.replace("'2026-10-12')", "'2026-10-12'); update public.call_promise_watch set status = 'reminded'"), 'set local role service_role')).startsWith('refused'))
+  const rb13 = fs.readFileSync('call_tasks_650_v13_rollback.sql', 'utf8').replace(/^begin;|commit;\s*$/gm, '')
+  ck('PGLITE v13: the v13 rollback refuses while a message has two tries', (await tryQ(rb13, `insert into public.call_task_reading (message_id, version, mode, match, call_type, model, attempt) values ('msg0001','v1','practice','none','other','x',2)`)).includes('rollback refused'))
+  await db.exec(fs.readFileSync('call_tasks_650_v13_rollback.sql', 'utf8'))
+  ck('PGLITE v13: otherwise the rollback removes the promise watch and the try number', (await db.query(`select to_regclass('public.call_promise_watch') is null as a, not exists (select 1 from information_schema.columns where table_name = 'call_task_reading' and column_name = 'attempt') as b`)).rows.every((r) => r.a && r.b))
   ck('PGLITE: an office page can read; it cannot write; anon cannot read; pages cannot look up phone numbers', (await tryQ('select * from public.call_task_reading', "set local role authenticated; select set_config('test.uid', '00000000-0000-4000-8000-000000000001', true);")) === 'ok'
     && (await tryQ(`insert into public.call_task_reading (message_id, version, mode, match, call_type, model) values ('msg0003','v1','practice','none','other','x')`, 'set local role authenticated')).includes('permission denied')
     && (await tryQ('select * from public.call_task_reading', 'set local role anon')).includes('permission denied')
