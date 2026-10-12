@@ -12,7 +12,7 @@ const ago = (mins) => new Date(Date.now() - mins * 60_000).toISOString()
 let T, SENT
 const reset = (apps, { roles = true } = {}) => {
   SENT = []
-  T = { contact_optout_current: [], circle_contacts: [], phone_index: [], interview_bookings: [], applicant_alerts: [{ name: 'Office', phone: '4175550999', active: true }],
+  T = { contact_optout_current: [], circle_contacts: [], phone_index: [], interview_bookings: [], applicant_alerts: [{ name: 'Office', phone: '4175550999', email: 'office@mo-care.test', active: true }],
     scheduling_settings: [{ id: 1, phone: '(417) 234-8494', location_line1: '1331 N Stewart Ave', location_name: 'Caring Companions' }],
     job_positions: roles ? [{ key: 'caregiver', track: null }, { key: 'prn_cna', track: 'prn' }] : [],
     job_applicants: apps }
@@ -87,11 +87,14 @@ reset([A('Sarah', { created_at: ago(300) })], { roles: false }); await run()
 m = texts('Sarah'); ck('before the database step (no PRN roles found): everyone is treated exactly as today', m.length === 1 && m[0].msg.startsWith('Hi Sarah, thanks for applying to Caring Companions.'), m)
 // the office alert
 reset([A('Sarah', { office_alerted_at: null })]); await run()
-const office = SENT.filter((x) => x.type === 'SMS' && String(x.to).includes('4175550999'))
-ck('the office hears "applied for the PRN CNA Team and cleared the screen"', office.length === 1 && /Sarah Test just applied for the PRN CNA Team and cleared the screen/.test(office[0].msg), office)
+/* the "just applied" office alert is EMAIL ONLY (Samantha 2026-10-12: "email only not text on the admin just applied office alert") */
+const office = SENT.filter((x) => String(x.to).includes('office@mo-care.test'))
+ck('the office hears "applied for the PRN CNA Team and cleared the screen", by email, and is not texted', office.length === 1 && office[0].type === 'Email' && /Sarah Test just applied for the PRN CNA Team and cleared the screen/.test(office[0].msg)
+   && !SENT.some((x) => x.type === 'SMS' && String(x.to).includes('4175550999')), SENT)
 reset([A('Ann', { position: 'caregiver', office_alerted_at: null })]); await run()
-const off2 = SENT.filter((x) => x.type === 'SMS' && String(x.to).includes('4175550999'))
-ck('... and a caregiver alert reads exactly as before', off2.length === 1 && /^Ann Test just applied and cleared the screen/.test(off2[0].msg), off2)
+const off2 = SENT.filter((x) => String(x.to).includes('office@mo-care.test'))
+ck('... and a caregiver alert reads as before (by email; no em dash)', off2.length === 1 && /Ann Test just applied and cleared the screen/.test(off2[0].msg) && !/\u2014/.test(off2[0].msg)
+   && !SENT.some((x) => x.type === 'SMS' && String(x.to).includes('4175550999')), off2)
 reset([A('Sarah')]); j = await run(true)
 ck('a practice run lists it and sends nothing', SENT.length === 0 && (j.would?.nudge || []).some((x) => /PRN/.test(x)), j)
 for (const [n, o, d] of res) console.log((o ? 'PASS' : 'FAIL') + ' · ' + n + (o ? '' : '\n     ' + d))
