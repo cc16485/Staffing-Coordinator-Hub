@@ -3,10 +3,12 @@
 # caregivers" and "dan has not been pulled over from Axiscare!", then yes to the plan.
 #   Why Dan was missing: clients only reached the Hub through Convert or the one-time ?clients=1 run (Desktop 122);
 #   nothing ran it again, so anyone added straight into AxisCare after September never arrived.
-#   identity-backfill (changed): a new ?client_sync=1 mode its schedule may call: adds each ACTIVE AxisCare client the
-#     Hub doesn't have yet. Never re-activates a past client, never creates beside a same-name person, never ends anyone.
+#   client-sync (new): the client part of identity-backfill, on its own. identity-backfill itself was taken down on
+#     purpose by 441 (safe saves decision 3) and STAYS down: this step checks that and never deploys it. client-sync adds
+#     each ACTIVE AxisCare client the Hub doesn't have yet. Never re-activates a past client, never creates beside a
+#     same-name person, never ends anyone, never touches the caregiver or candidate lists.
 #   client-census-report (new): the Clients directory's read of AxisCare (office staff only, read only, no phones).
-# Part 1 (read only): the reviewed build; the tests pass here; identity-backfill live is the build before this one;
+# Part 1 (read only): the reviewed build; the tests pass here; both functions are new (or this build); identity-backfill is still down;
 #   the jobs' secret is there. Part 2: deploy both, catch up now (adds the missing clients), schedule every 6 hours.
 #   Part 3 (proof): live copies are the reviewed build; both refuse outsiders; the schedule gets in; a second look adds nobody.
 # Prints counts only: no name, number, email, key or secret.
@@ -17,7 +19,7 @@ HUB_REF = "zngsgedlsxinbygwmxwn"
 HUB = os.environ["SB_REPO"]; HUB_BASE = os.environ.get("SB_BASE", "")
 HUB_SHAS = json.loads(os.environ["SB_SHAS"])
 FNB = os.environ.get("SB_FN_BASE", f"https://{HUB_REF}.supabase.co")
-VAULT_NAME = "hub_job_secret"; SCHEDULE = "17 */6 * * *"; SYNC = "identity-backfill"; CENSUS = "client-census-report"; JOB = "client-sync"
+VAULT_NAME = "hub_job_secret"; SCHEDULE = "17 */6 * * *"; SYNC = "client-sync"; GONE = "identity-backfill"; CENSUS = "client-census-report"; JOB = "client-sync"
 POLL = float(os.environ.get("SB_POLL", "2")); POLL_MAX = float(os.environ.get("SB_POLL_MAX", "40"))
 lines = []; fails = []; HIDE = []
 def say(s=""):
@@ -132,21 +134,6 @@ def command(url, anon):
             "body := '{}'::jsonb, timeout_milliseconds := 120000);")
 
 
-def state_sync():
-    """identity-backfill: 'this' (already this build) | 'base' (every live file is the build before) | other."""
-    s, m = None, None
-    for i in range(4):   # the management API sometimes answers a lookup oddly; ask again before deciding
-        s, m = fmeta(HUB_REF, SYNC)
-        if s in (200, 404): break
-        time.sleep(3 * (i + 1))
-    if s == 404: return "missing (the server says there is no such function)", None
-    vj = (m or {}).get("verify_jwt")   # an odd answer: read the live code itself, like the other installers do
-    okd, live = live_files(HUB_REF, SYNC)
-    if not okd or not live: return f"unreadable (lookup answered {s}, download {'worked' if okd else 'failed'})", vj
-    if not isinstance(vj, bool): vj = True   # its setting couldn't be read; deploy() sets it and checks it after
-    if all(k in live and live[k] == sha(os.path.join(HUB, k)) for k in need(HUB, SYNC)): return "this", vj
-    if all(base_sha(HUB, HUB_BASE, k) == v for k, v in live.items()): return "base", vj
-    return "other", vj
 def jcall(url, key, timeout=200):
     s, b = http("POST", url, {}, {"apikey": key, "Authorization": "Bearer " + key}, timeout)
     try: return s, json.loads(b)
@@ -169,15 +156,12 @@ if NODE:
         if p.returncode != 0 or re.search(r"^FAIL", p.stdout, re.M): bad(f"{t} failed: {last}"); say("  STOP. Nothing was changed."); done(2)
         say(f"  ✓ {t}: {last.strip()}")
 else: say("  · node is not on this Mac, so the tests were not re-run here (they passed when built)")
-st1, vj1 = state_sync()
-if st1 not in ("base", "this"):
-    if st1 == "other":
-        okd, live = live_files(HUB_REF, SYNC)
-        diff = sorted(k.split("functions/")[-1] for k, v in live.items() if base_sha(HUB, HUB_BASE, k) != v)
-        bad("identity-backfill on the server isn't the build this was made from (live files that differ: " + (", ".join(diff)[:200] or "none listed") + "). Nothing was changed. Tell Claude.")
-    else: bad(f"identity-backfill on the server: {st1}. Nothing was changed. Tell Claude.")
-    done(3)
-say("  ✓ identity-backfill: " + ("the build before this one" if st1 == "base" else "already this build (an earlier run)"))
+gs, _ = fmeta(HUB_REF, GONE)
+if gs != 404: bad(f"identity-backfill is expected to be down (441) but the server answered {gs}. Nothing was changed. Tell Claude."); done(3)
+say("  ✓ identity-backfill is still down, as 441 left it (this step never deploys it)")
+st1, vj1 = state(HUB_REF, HUB, HUB_BASE, SYNC, pinned)
+if st1 not in ("new", "this"): bad(f"a {SYNC} function already exists and isn't this build ({st1}). Nothing was changed. Tell Claude."); done(3)
+say(f"  ✓ {SYNC}: " + ("is new" if st1 == "new" else "already this build"))
 st2, vj2 = state(HUB_REF, HUB, HUB_BASE, CENSUS, pinned)
 if st2 not in ("new", "this"): bad(f"a {CENSUS} function already exists and isn't this build. Nothing was changed. Tell Claude."); done(3)
 say(f"  ✓ {CENSUS}: " + ("is new" if st2 == "new" else "already this build"))
@@ -194,11 +178,11 @@ if ok and c0: say(f"  · before: {c0[0]['a']} current client(s) in the Hub")
 
 say(); say("PART 2 · CHANGE")
 if st1 == "this": say(f"  ✓ {SYNC} already had it")
-elif not deploy(HUB_REF, HUB, SYNC, vj1, "Hub"): say("  STOP. Tell Claude."); done(6)
+elif not deploy(HUB_REF, HUB, SYNC, True, "Hub"): say("  STOP. Tell Claude."); done(6)
 if st2 == "this": say(f"  ✓ {CENSUS} already had it")
 elif not deploy(HUB_REF, HUB, CENSUS, True, "Hub"): say("  STOP. Tell Claude."); done(6)
 time.sleep(float(os.environ.get("SB_SETTLE", "8")))
-SYNC_URL = f"{FNB}/functions/v1/{SYNC}?client_sync=1"
+SYNC_URL = f"{FNB}/functions/v1/{SYNC}"
 sC, j = jcall(SYNC_URL, SERVICE)
 if sC == 200 and j.get("ok") is True:
     say(f"  ✓ caught up now: {j.get('axiscare_active_clients', '?')} active in AxisCare, {j.get('already_linked', 0)} already in the Hub, {j.get('created', 0)} added")
@@ -208,7 +192,7 @@ else: bad(f"the catch-up didn't answer as expected ({sC}): " + str(j.get("error"
 sql(f"select cron.unschedule({lit(JOB)}) where exists (select 1 from cron.job where jobname = {lit(JOB)})")
 ok, r = sql(f"select cron.schedule({lit(JOB)}, {lit(SCHEDULE)}, {lit(command(SYNC_URL, ANON))}) as id")
 ok2, jb = sql(f"select schedule, command from cron.job where jobname = {lit(JOB)}")
-chk(ok and ok2 and jb and jb[0]["schedule"] == SCHEDULE and "x-cron-secret" in jb[0]["command"] and "vault.decrypted_secrets" in jb[0]["command"] and "client_sync=1" in jb[0]["command"],
+chk(ok and ok2 and jb and jb[0]["schedule"] == SCHEDULE and "x-cron-secret" in jb[0]["command"] and "vault.decrypted_secrets" in jb[0]["command"] and "/functions/v1/client-sync" in jb[0]["command"],
     "the client sync: every 6 hours, carrying the jobs' secret from the vault")
 
 say(); say("PART 3 · PROOF")
@@ -221,17 +205,18 @@ d1 = http("POST", CEN_URL, {}, A)[0]; d2 = http("POST", SYNC_URL, {}, A)[0]
 chk(d1 in (401, 403) and d2 == 401, f"both refuse the public key (census {d1}, sync {d2})")
 c1 = http("OPTIONS", CEN_URL, None, {"Origin": "https://cc.mo-care.com", "Access-Control-Request-Method": "POST"})[0]
 chk(c1 == 200, f"the Clients tab can reach the census ({c1})")
-ok, rq = sql(command(SYNC_URL + "&auth_check=1", ANON).rstrip(";") + " as id")
+ok, rq = sql(command(SYNC_URL + "?auth_check=1", ANON).rstrip(";") + " as id")
 got = None; waited = 0.0
 while ok and rq and waited <= POLL_MAX:
     ok3, rr = sql(f"select status_code, content from net._http_response where id = {int(rq[0]['id'])}")
     if ok3 and rr: got = rr[0]; break
     time.sleep(POLL); waited += POLL
 chk(got and got["status_code"] == 200 and jget(got["content"], "caller") == "cron", "its schedule gets in" + ("" if got and got["status_code"] == 200 else f" ({got['status_code'] if got else 'no answer'})"))
-sD, j2 = jcall(SYNC_URL + "&dry=1", SERVICE)
+sD, j2 = jcall(SYNC_URL + "?dry=1", SERVICE)
 chk(sD == 200 and j2.get("created") == 0, f"a second look finds nobody missing ({j2.get('created', '?')} to add)")
 ok, hb = sql("select count(*)::int as n from app_data, jsonb_array_elements(case when jsonb_typeof(data) = 'array' then data else '[]'::jsonb end) e where key = 'automation_heartbeats' and e->>'id' = 'hb_client-sync'")
 chk(ok and hb and hb[0]["n"] == 1, "it left a heartbeat the watchdog can read")
+chk(fmeta(HUB_REF, GONE)[0] == 404, "identity-backfill is still down")
 ok, c1 = sql(CNT)
 if ok and c1 and c0: say(f"  · after: {c1[0]['a']} current client(s) in the Hub (was {c0[0]['a']})")
 say()
