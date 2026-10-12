@@ -144,18 +144,21 @@ def live_is_base(fn):
     okd, live = live_files(HUB_REF, fn)
     if not okd or not live or not isinstance(vj, bool): return f"unreadable (lookup {s})", vj, []
     if all(k in live and live[k] == sha(os.path.join(HUB, k)) for k in need(HUB, fn)): return "this", vj, []
-    diff = sorted(k.split("functions/")[-1] for k, v in live.items() if base_sha(HUB, HUB_BASE, k) != v)
+    diff = sorted(k.split("functions/")[-1] for k, v in live.items() if base_sha(HUB, HUB_BASE, k) != v and not (k in EXTRA and v == sha(os.path.join(HUB, k))))
     return ("base" if not diff else "other"), vj, diff
 
 say("644 · NOTHING HAPPENS FOR OFFICE STAFF"); say("Report " + dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")); say()
 say("PART 1 · READ ONLY (nothing changes)")
 if not TOKEN.startswith("sbp_"): bad("no Supabase access token"); done(2)
-reviewed(HUB, HUB_BASE, HUB_SHAS, "the Hub server")
-pinned = {pinpath(k) for k in HUB_SHAS}
+# reviewed changes merged by others since the base, which these functions may carry (path -> sha), e.g. #400's one-line
+# verbs.js label (2026-10-12): named here, so they go out on purpose and nothing else rides along
+EXTRA = json.loads(os.environ.get("SB_EXTRA", "{}"))
+reviewed(HUB, HUB_BASE, HUB_SHAS, "the Hub server", list(EXTRA.items()))
+pinned = {pinpath(k) for k in HUB_SHAS} | set(EXTRA)
 for fn in FNS:
     other = sorted(k for k in need(HUB, fn) if k not in pinned and base_sha(HUB, HUB_BASE, k) != sha(os.path.join(HUB, k)))
     if other: bad(f"other changes merged since the review touch {fn} ({', '.join(other)[:200]}). Ask Claude to refresh 644."); say("  STOP. Nothing was run."); done(2)
-say(f"  ✓ the {len(HUB_SHAS)} changed files are the reviewed build")
+say(f"  ✓ the {len(HUB_SHAS)} changed files are the reviewed build" + (f", plus {len(EXTRA)} reviewed change(s) merged by others: " + ", ".join(k.split("functions/")[-1] for k in EXTRA) if EXTRA else ""))
 NODE = shutil.which("node") or next((p for p in ("/opt/homebrew/bin/node", "/usr/local/bin/node") if os.path.exists(p)), "")
 if NODE:
     for t in ("not_clients_test.mjs", "client_sync_test.mjs", "circles_sync_664_test.mjs", "status_review_care_test.mjs", "audience_guard_test.mjs", "campaign_auto_hold_test.mjs"):
