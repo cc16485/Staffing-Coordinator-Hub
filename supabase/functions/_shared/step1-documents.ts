@@ -64,7 +64,9 @@ export const PAY_SOURCES = ['Consumer Directed Services (CDS) or another Medicai
 /** Her words (2026-10-11), at the top of Work History and next to every reference's contact boxes. No pay wording here (her
     ruling the same day: "let's just not say anything about pay rate when we're getting the experience and determining care level"). */
 export const EXPERIENCE_MATTERS = [
-  'The experience we can verify helps us determine your qualifications and which clients we can match you with.',
+  /* 2026-10-11 (her ask): say plainly that everyone stays at Level 1 until experience is verified, and why that matters. Matches
+     the experience form's certification ("Everyone starts at Level 1 ... once the office verifies your previous experience"). */
+  'Everyone starts at Level 1, and you stay at Level 1 unless we can verify your experience. Verified experience can qualify you for Level 2 or Level 3, which means more clients we can match you with.',
   "Help us give you credit for your experience! Please list people who can confirm the care you've provided, including former supervisors, private clients, or professionals who have seen your work.",
   'The more experience we can confirm, the better we can recognize your skills and consider you for assignments that fit your abilities.',
 ]
