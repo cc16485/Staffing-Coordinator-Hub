@@ -61,13 +61,14 @@ export const SKILL_GROUPS: { h: string; skills: [string, string][] }[] = [
 export const SKILLS: Record<string, string> = Object.fromEntries(SKILL_GROUPS.flatMap((g) => g.skills))
 export const LIFT_TYPES = ['Full-body sling', 'Sit-to-stand', 'Other']
 export const PAY_SOURCES = ['Consumer Directed Services (CDS) or another Medicaid program', 'A VA program', 'The client or family paid me directly', 'Not paid', 'Other']
-/** Her words (2026-10-11), at the top of Work History and next to every reference's contact boxes. */
+/** Her words (2026-10-11), at the top of Work History and next to every reference's contact boxes. No pay wording here (her
+    ruling the same day: "let's just not say anything about pay rate when we're getting the experience and determining care level"). */
 export const EXPERIENCE_MATTERS = [
-  'The experience we can verify helps us determine your qualifications, starting pay rate, and which clients we can match you with.',
+  'The experience we can verify helps us determine your qualifications and which clients we can match you with.',
   "Help us give you credit for your experience! Please list people who can confirm the care you've provided, including former supervisors, private clients, or professionals who have seen your work.",
   'The more experience we can confirm, the better we can recognize your skills and consider you for assignments that fit your abilities.',
 ]
-export const REFERENCE_REMINDER = 'Please provide accurate contact information for someone who knows your work. We use verified experience when determining qualifications, pay, and client matches. A reference we cannot reach may mean we cannot yet give you credit for that experience.'
+export const REFERENCE_REMINDER = 'Please provide accurate contact information for someone who knows your work. We use verified experience when determining qualifications and client matches. A reference we cannot reach may mean we cannot yet give you credit for that experience.'
 const TASK_FIELDS: Field[] = [
   { k: 'tasks', label: 'What did you do yourself?', kind: 'skills', note: 'Tick only what you did yourself. We may ask the person who saw your work to confirm it.' },
   { k: 'lifts', label: 'Which kind of lift?', kind: 'lifts', options: LIFT_TYPES },

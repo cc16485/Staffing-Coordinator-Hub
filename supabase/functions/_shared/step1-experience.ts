@@ -83,5 +83,5 @@ export function experienceSummary(a: Record<string, unknown> | null | undefined,
   const has = entries.length > 0 || skills.length > 0
   return { has, entries, skills, restrictions, strengths, references: asked, backups,
     counts: { confirmed: conf.length, supported: skills.filter((l) => l.standing === 'supported').length, self_reported: skills.filter((l) => l.standing === 'self_reported').length, questioned: skills.filter((l) => l.standing === 'questioned').length },
-    note: 'Their own words and their references\' answers. Nothing here sets a level, a qualification, a match or a pay rate.' }
+    note: 'Their own words and their references\' answers. Nothing here sets a level, a qualification or a match.' }
 }

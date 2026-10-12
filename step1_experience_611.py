@@ -77,7 +77,7 @@ s_, b_ = http("POST", f"https://{REF}.supabase.co/functions/v1/reference-tasks",
 say(f"  ✓ reference-tasks answers ({s_}) and needs the public key like every page") if s_ and s_ < 500 else bad(f"reference-tasks answered {s_}")
 okr, rr = sql(REF, "select count(*) as n from public.reference_requests where task_confirm is not null")
 if okr: say(f"  ✓ reference requests with task answers: {rr[0]['n']} (none until a practice hire's reference answers)")
-say("  · tested before deploying: Step 1 experience and references (45), Step 1 signing (72), the forms (25), the landing (13), the main profile (15), and on a phone: the new screens and the reference form, practice and real (27), the original Step 1 look (19).")
+say("  · tested before deploying: Step 1 experience and references (46), Step 1 signing (72), the forms (25), the landing (13), the main profile (15), and on a phone: the new screens and the reference form, practice and real (27), the original Step 1 look (19).")
 say()
 if fails: say("RESULT: CHECK THE ✗ LINES ABOVE"); done(9)
 say("RESULT: DONE · practice hires now see the version 3 work history and references, their references see task questions, and the profile shows Skills and experience. Real hires, real reference requests and matching are unchanged. Nothing was sent."); done(0)
