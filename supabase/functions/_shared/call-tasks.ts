@@ -7,7 +7,7 @@
 // no health detail in a title; no phone number or email kept; Observed (the call) vs Suggested (the card) kept apart.
 // =============================================================================
 
-export const VERSION = 'v3-2026-10-12'   // v2: the Hub's own call-off, missed clock-in and recent cards are given to the reader (no duplicates); v3: none at all when a Hub case covers that visit, and one retry when the model answers in text
+export const VERSION = 'v4-2026-10-12'   // v2: the Hub's own call-off, missed clock-in and recent cards are given to the reader (no duplicates); v3: none at all when a Hub case covers that visit, and one retry when the model answers in text; v4: the reader sees only what existed 20 minutes after the call (a replay is what live would have seen)
 export const MODEL = 'claude-sonnet-5-5'
 export const AREAS = ['scheduling', 'client_care', 'recruiting', 'caregiver_support', 'admin', 'leads'] as const
 export const CALL_TYPES = ['client_or_family', 'caregiver', 'applicant', 'referral_partner', 'new_client_inquiry', 'vendor',
@@ -197,9 +197,20 @@ export const shortName = (f: unknown, l: unknown) =>
   [String(f || '').trim(), String(l || '').trim().slice(0, 1)].filter(Boolean).join(' ') + (String(l || '').trim() ? '.' : '')
 
 /** The Hub's own records for this person around the call, in the office's words: cards made from 12 hours before to
- *  2 hours after the call (any status, by a person or a system), missed clock-in cases within a day of it, and call-off
+ *  20 minutes after the call (any status, by a person or a system), missed clock-in cases within a day of it, and call-off
  *  cases for that week. Matched by the identity layer's full name, never by first name alone. Pointers to work, no notes. */
 // deno-lint-ignore no-explicit-any
+export const SEEN_AFTER_MS = 20 * 60e3   // the reader runs within about 15 minutes of a call; it sees nothing made later than this
+/** Open cards about this person as the reader would see them live: open now, and made no later than 20 minutes after the call. */
+// deno-lint-ignore no-explicit-any
+export function openCards(name: string, callAt: string, ops: any[], done: Set<string>): OpenCard[] {
+  const nm = String(name || '').trim().toLowerCase(); const t = Date.parse(callAt)
+  if (!nm || !Number.isFinite(t)) return []
+  return (ops || []).filter((o) => o && !done.has(String(o.status || '')) && String(o.about || '').trim().toLowerCase() === nm
+      && !(Date.parse(String(o.created_at || '')) > t + SEEN_AFTER_MS))
+    .slice(-8).map((o) => ({ id: String(o.id), title: String(o.title || '').slice(0, 140), created_at: o.created_at }))
+}
+
 export function related(name: string, callAt: string, ops: any[], coverage: any[], timekeeper: any[]): Related[] {
   const nm = String(name || '').trim().toLowerCase()
   if (!nm) return []
@@ -212,7 +223,7 @@ export function related(name: string, callAt: string, ops: any[], coverage: any[
   for (const o of ops || []) {
     if (!o || lc(o.about) !== nm) continue
     const c = Date.parse(String(o.created_at || ''))
-    if (!(c >= t - 12 * 3600e3 && c <= t + 2 * 3600e3)) continue
+    if (!(c >= t - 12 * 3600e3 && c <= t + SEEN_AFTER_MS)) continue
     const by = String(o.created_by || '')
     out.push({ kind: 'card', line: `${String(o.status || 'open')} card made by ${by.includes('@') || /\s/.test(by) ? 'a person' : 'the Hub (' + (by || 'a job') + ')'} at ${hm(o.created_at)}: ${String(o.title || '').slice(0, 140)}` })
   }

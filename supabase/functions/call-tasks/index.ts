@@ -14,7 +14,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import Anthropic from 'npm:@anthropic-ai/sdk'
 import { jobCaller } from '../_shared/job-auth.ts'
-import { VERSION, MODEL, request, retryRequest, clean, answerOf, transcriptText, shortName, related as relatedOf, type CallIn, type Who, type OpenCard, type Earlier } from '../_shared/call-tasks.ts'
+import { VERSION, MODEL, request, retryRequest, clean, answerOf, openCards, transcriptText, shortName, related as relatedOf, type CallIn, type Who, type OpenCard, type Earlier } from '../_shared/call-tasks.ts'
 
 const GHL = 'https://services.leadconnectorhq.com'
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
@@ -97,8 +97,7 @@ Deno.serve(async (req) => {
       row.caller = row.caller || shortName(ct.firstName, ct.lastName) || null
       /* 4 · open cards about this person, and earlier suggestions for this number in the last day */
       const name = String(who.name || '').trim().toLowerCase()
-      const open: OpenCard[] = name ? ops.filter((o) => o && !DONE.has(String(o.status || '')) && String(o.about || '').trim().toLowerCase() === name)
-        .slice(-8).map((o) => ({ id: String(o.id), title: String(o.title || '').slice(0, 140), created_at: o.created_at })) : []
+      const open: OpenCard[] = openCards(name, s.call_at, ops, DONE)   // as live would see them: nothing made more than 20 minutes after the call
       let earlier: Earlier[] = []
       if (who.match === 'one' && (who.person_id || who.lead_id)) {
         const from = new Date(Date.parse(s.call_at) - 24 * 3600e3).toISOString()
