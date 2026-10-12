@@ -7,7 +7,7 @@
 // no health detail in a title; no phone number or email kept; Observed (the call) vs Suggested (the card) kept apart.
 // =============================================================================
 
-export const VERSION = 'v2-2026-10-12'   // v2: the Hub's own call-off, missed clock-in and recent cards are given to the reader (no duplicates)
+export const VERSION = 'v3-2026-10-12'   // v2: the Hub's own call-off, missed clock-in and recent cards are given to the reader (no duplicates); v3: none at all when a Hub case covers that visit, and one retry when the model answers in text
 export const MODEL = 'claude-sonnet-5-5'
 export const AREAS = ['scheduling', 'client_care', 'recruiting', 'caregiver_support', 'admin', 'leads'] as const
 export const CALL_TYPES = ['client_or_family', 'caregiver', 'applicant', 'referral_partner', 'new_client_inquiry', 'vendor',
@@ -63,7 +63,7 @@ Not a card:
 - small talk
 - a new client asking about care for the first time (that has its own workflow: call_type new_client_inquiry, no cards)
 - work already covered by an open card listed in the request (put that card's id in add_to_card_id instead of making a new card, and only if the call adds something new)
-- work the Hub's own systems already handle. The Hub runs its own systems for call-offs and open shifts (a call-off case asks caregivers and fills the shift), missed clock-ins and caregivers running late. When the request lists a call-off case, a missed clock-in case or a card from one of those systems for this person, do not make a card to cover or fill the shift, find a replacement, or chase the clock-in or the late caregiver: that system is doing it. Make a card only for something else the call asked for. If a caregiver called off and the request lists no call-off case for that shift, make one card: "Open a call-off case for ..."
+- work the Hub's own systems already handle. The Hub runs its own systems for call-offs and open shifts (a call-off case asks caregivers and fills the shift), missed clock-ins and caregivers running late. When the request lists a call-off case, a missed clock-in case or a card from one of those systems for this person, do not make a card to cover or fill the shift, find a replacement, or chase the clock-in or the late caregiver: that system is doing it, so do not make "open a call-off case" either. Make a card only for something else the call asked for. Only when a caregiver called off and the request lists nothing at all from the Hub about that visit (no call-off case, no missed clock-in case, no card), make one card: "Open a call-off case for ..."
 
 How to write a card:
 - One card per distinct piece of work, at most three. Most calls need zero or one.
@@ -150,7 +150,7 @@ export function clean(raw: unknown, open: OpenCard[], earlier: Earlier[], relate
   /* the Hub's call-off and clock-in systems have it: drop a card that would duplicate them (held in code, not only asked) */
   const hasCase = related.some((r) => r.kind !== 'card' || /call-?off|clock-?in|late|cover/i.test(r.line))
   let dropped = 0
-  if (hasCase) tasks = tasks.filter((t) => { const dup = SYSTEM_WORK.test(t.title) && !OPEN_CASE.test(t.title); if (dup) dropped++; return !dup })
+  if (hasCase) tasks = tasks.filter((t) => { const dup = SYSTEM_WORK.test(t.title) || OPEN_CASE.test(t.title); if (dup) dropped++; return !dup })
   const known = new Map(earlier.map((e) => [e.message_id, e.tasks.length]))
   // deno-lint-ignore no-explicit-any
   const resolves = (Array.isArray(r.resolves) ? r.resolves : []).filter((x: any) => known.has(String(x?.message_id)) && Number.isInteger(x?.task_index)
@@ -184,6 +184,12 @@ export function transcriptText(t: any): string {
       const ch = p?.mediaChannel ?? p?.channel ?? p?.speaker
       return (ch != null && ch !== '' ? `Speaker ${ch}: ` : '') + words
     }).filter(Boolean).join('\n')
+}
+
+/** The follow-up turn when the model answered in text instead of calling the tool: its answer back unchanged, then the ask. */
+// deno-lint-ignore no-explicit-any
+export function retryRequest(first: any, resp: any) {
+  return { ...first, messages: [...first.messages, { role: 'assistant', content: resp.content }, { role: 'user', content: 'Please give your answer by calling submit_followups now (an empty tasks list is fine).' }] }
 }
 
 /** Shortened name as call_pull_seen keeps it. */

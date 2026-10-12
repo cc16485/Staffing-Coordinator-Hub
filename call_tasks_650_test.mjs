@@ -60,6 +60,8 @@ const ANSWERS = {
 globalThis.__FakeAnthropic = class { constructor(o) { this.key = o.apiKey; this.beta = { messages: { create: async (req) => { AI.push(req)
   if (FAILAI === 'refusal') return { stop_reason: 'refusal', stop_details: { category: 'general_harms' }, content: [] }
   if (FAILAI === 'throw') throw new Error('overloaded')
+  if (FAILAI === 'textonce' && req.messages.length === 1) return { stop_reason: 'end_turn', content: [{ type: 'text', text: 'I think the cards are...' }] }
+  if (FAILAI === 'textalways') return { stop_reason: 'end_turn', content: [{ type: 'text', text: 'no tool' }] }
   const id = Object.keys(ANSWERS).find((k) => req.messages[0].content.includes(k === 'ipoVD64wn8dUcDyPdjqW' ? 'calling to arrange a ride' : 'license expired'))
   const a = typeof ANSWERS[id] === 'function' ? ANSWERS[id](req) : ANSWERS[id]
   return { stop_reason: 'tool_use', content: [{ type: 'text', text: '' }, { type: 'tool_use', name: 'submit_followups', input: a }] } } } } } }
@@ -125,6 +127,13 @@ try {
   reset(); FAILAI = 'throw'
   ;[s, j] = await run(h, 'cron')
   ck('the model is unreachable: recorded as an error, the run still finishes', s === 200 && j.errors === 2 && DB.call_task_reading.every((r) => /overloaded/.test(r.error)), [s, j])
+  reset(); FAILAI = 'textonce'
+  ;[s, j] = await run(h, 'cron')
+  ck('v3: the model answers in text once: one retry (its answer sent back, then the ask), and both calls get their cards', j.read === 2 && j.errors === 0 && AI.length === 4 && AI.filter((r) => r.messages.length === 3).length === 2
+    && DB.call_task_reading.every((r) => !r.error && r.tasks.length === 1), [j, AI.map((r) => r.messages.length), DB.call_task_reading.map((r) => r.error)])
+  reset(); FAILAI = 'textalways'
+  ;[s, j] = await run(h, 'cron')
+  ck('v3: still text after the retry: recorded once as an error, never a third try', j.errors === 2 && AI.length === 4 && DB.call_task_reading.every((r) => /did not submit/.test(r.error)), [j, AI.length])
   reset(); delete GH.transcripts.gMcTDQ5WoAXMHUmrCbdN
   ;[s, j] = await run(h, 'cron')
   ck('no transcript yet: that call is left for the next run (no reading row)', j.no_transcript === 1 && DB.call_task_reading.length === 1, [s, j])
@@ -135,7 +144,7 @@ try {
   ;[s, j] = await run(h, 'cron', { message_ids: ['oldcall0001'] })
   ck('the schedule cannot name calls (only the owner can)', DB.call_task_reading.every((r) => r.message_id !== 'oldcall0001'), DB.call_task_reading)
   // ── 5. v2: the Hub's own call-off and clock-in systems are given to the reader, and a duplicate card is dropped ──
-  ck('v2: the reader version moved on, so every call is read again with the new rule', lib.VERSION === 'v2-2026-10-12')
+  ck('v3: the reader version moved on, so every call is read again with the new rule', lib.VERSION === 'v3-2026-10-12')
   const OPS = [{ id: 'tk', about: 'Dixie Kuhn', status: 'done', created_by: 'timekeeper-watch', created_at: '2026-10-10T13:06:00Z', title: 'Resolved: Dixie Kuhn, LeeAnn 8am (missed clock-in)' },
     { id: 'cr', about: 'Dixie Kuhn', status: 'done', created_by: 'coverage-reply', created_at: '2026-10-10T13:09:00Z', title: 'Dixie Kuhn has a question about the Dan Probstfield callout' },
     { id: 'old', about: 'Dixie Kuhn', status: 'done', created_by: 'x', created_at: '2026-10-08T13:09:00Z', title: 'Too old' },
@@ -159,7 +168,12 @@ try {
   cd = lib.clean({ ...dixie, tasks: [dixie.tasks[0]] }, [], [], rel)
   ck('clean: when that was the only card, the reading says the Hub\'s systems already have it', cd.tasks.length === 0 && /call-off and clock-in systems already have this/.test(cd.no_task_reason), cd)
   ck('clean: with no Hub case listed, a call-off card stays (it is the only way the call-off reaches anyone)', lib.clean(dixie, [], [], []).tasks.length === 2)
-  ck('clean: "Open a call-off case for ..." is never dropped, and other cards are untouched', lib.clean({ ...dixie, tasks: [{ title: 'Open a call-off case for Dixie Kuhn, LeeAnn 8am', why: '', area: 'scheduling', due: '', add_to_card_id: '' }, { title: 'Call Steve back about a ride', why: '', area: 'scheduling', due: '', add_to_card_id: '' }] }, [], [], rel).tasks.length === 2)
+  const oc = [{ title: "Open a call-off case for Dixie Kuhn, LeeAnn's 8am shift on Oct 10", why: '', area: 'scheduling', due: '', add_to_card_id: '' }, { title: 'Call Steve back about a ride', why: '', area: 'scheduling', due: '', add_to_card_id: '' }]
+  ck('v3 clean: with a Hub case for that visit, even "Open a call-off case" is dropped (the live v2 reading made exactly that card); other cards untouched', lib.clean({ ...dixie, tasks: oc }, [], [], rel).tasks.map((x) => x.title).join() === 'Call Steve back about a ride')
+  ck('v3 clean: with nothing from the Hub, "Open a call-off case" stays', lib.clean({ ...dixie, tasks: oc }, [], [], []).tasks.length === 2)
+  ck('v3 prompt: no "open a call-off case" when the Hub has the visit; only when nothing at all is listed', /so do not make "open a call-off case" either/.test(lib.SYSTEM) && /lists nothing at all from the Hub about that visit/.test(lib.SYSTEM))
+  const rr = lib.retryRequest({ model: 'm', messages: [{ role: 'user', content: 'call' }] }, { content: [{ type: 'thinking', thinking: '', signature: 's' }, { type: 'text', text: 'Here are the cards...' }] })
+  ck('v3 retry: the text answer goes back unchanged (thinking block included), then one plain ask to call the tool', rr.messages.length === 3 && rr.messages[1].role === 'assistant' && rr.messages[1].content[0].type === 'thinking' && /calling submit_followups now/.test(rr.messages[2].content) && rr.model === 'm')
   ck('the function hands the Hub\'s cards, call-off cases and clock-in cases to the reader', /relatedOf\(String\(who\.name \|\| ''\), s\.call_at, ops, byKey\.coverage_cases \|\| \[\], byKey\.timekeeper_cases \|\| \[\]\)/.test(fs.readFileSync(path.join(F, 'call-tasks/index.ts'), 'utf8'))
     && /clean\(got\.input, open, earlier, related\)/.test(fs.readFileSync(path.join(F, 'call-tasks/index.ts'), 'utf8')))
   const src = fs.readFileSync(path.join(F, 'call-tasks/index.ts'), 'utf8')

@@ -14,7 +14,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import Anthropic from 'npm:@anthropic-ai/sdk'
 import { jobCaller } from '../_shared/job-auth.ts'
-import { VERSION, MODEL, request, clean, answerOf, transcriptText, shortName, related as relatedOf, type CallIn, type Who, type OpenCard, type Earlier } from '../_shared/call-tasks.ts'
+import { VERSION, MODEL, request, retryRequest, clean, answerOf, transcriptText, shortName, related as relatedOf, type CallIn, type Who, type OpenCard, type Earlier } from '../_shared/call-tasks.ts'
 
 const GHL = 'https://services.leadconnectorhq.com'
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
@@ -112,8 +112,15 @@ Deno.serve(async (req) => {
       /* 5 · the reading */
       const call: CallIn = { message_id: s.message_id, call_at: s.call_at, direction: row.direction, seconds: Number(s.seconds || 0), caller: row.caller || '', transcript: text }
       // deno-lint-ignore no-explicit-any
-      const resp = await (ai.beta.messages as any).create(request(call, who, open, earlier, related))
-      const got = answerOf(resp)
+      const req1 = request(call, who, open, earlier, related)
+      // deno-lint-ignore no-explicit-any
+      let resp = await (ai.beta.messages as any).create(req1)
+      let got = answerOf(resp)
+      if (got.error && resp?.stop_reason !== 'refusal' && Array.isArray(resp?.content) && /did not submit/.test(got.error)) {
+        // deno-lint-ignore no-explicit-any
+        resp = await (ai.beta.messages as any).create(retryRequest(req1, resp))   // once: it answered in text instead of the tool
+        got = answerOf(resp)
+      }
       if (got.error) { row.error = got.error.slice(0, 300); out.errors++ }
       else {
         const r = clean(got.input, open, earlier, related)
