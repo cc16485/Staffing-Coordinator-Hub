@@ -36,7 +36,8 @@ globalThis.__fakeCreateClient = () => ({
 let src = fs.readFileSync(path.join(FN, 'offer-sign/index.ts'), 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = globalThis.__fakeCreateClient');
 src = src.replace(/^import \{ requireStaff, OFFICE_ROLES \} from .*$/m, "const OFFICE_ROLES = ['owner_admin','care_coordinator','staffing_coordinator']; const requireStaff = async (db, req) => (req.headers.get('Authorization') === 'Bearer staff') ? { ok: true, person_id: 'p1', name: 'Krystal Land', email: 'krystal@mo-care.com', roles: ['staffing_coordinator'] } : { ok: false, status: 401, error: 'Sign in first.' }");
 const tmp = path.join(FN, 'offer-sign', '_t540.ts'); fs.writeFileSync(tmp, src);
-try { await import(tmp); } finally { fs.unlinkSync(tmp); }
+let M; try { M = await import(tmp); } finally { fs.unlinkSync(tmp); }
+const D = await import(path.join(FN, "_shared/offer-documents.ts"));
 const call = async (body, tok, headers = {}) => { const r = await handler(new Request('http://x/offer-sign', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-forwarded-for': '203.0.113.9', 'user-agent': 'TestPhone/1.0', ...(tok ? { Authorization: 'Bearer ' + tok } : {}), ...headers }, body: JSON.stringify(body) })); return { status: r.status, j: await r.json() }; };
 const linkFor = async (id, expSec) => { const u = await L.makeOfferLink(SECRET, id, expSec); return Object.fromEntries(new URL(u).searchParams); };
 const lk = await linkFor(OID, NOW + 5 * 86400);
@@ -85,4 +86,10 @@ r = await call({ action: 'view', o: OID3, e: lk3.e, t: lk3.t }); ck('after a dec
 r = await call({ action: 'decline', o: OID3, e: lk3.e, t: lk3.t }); ck('declining twice does nothing more', r.status === 410, r);
 r = await call({ action: 'decline', o: OID, e: lk.e, t: lk.t }); ck('a signed offer cannot be declined from the page', r.status === 409 && /already signed/.test(r.j.error), r);
 for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note));
+/* PREVIEW (2026-10-11): the whole applicant experience in Applicants Journey; public, read-only */
+{ const before = JSON.stringify({ OFFERS, EVENTS: EVENTS.length, FILES: Object.keys(FILES).length, PATCHES: PATCHES.length, OPS })
+  const p = await call({ action: 'preview' })
+  ck('preview: no link; the real offer letter and position description for Pat Preview, nothing signed, test mode', p.status === 200 && p.j.preview === true && p.j.first === 'Pat' && Array.isArray(p.j.offer) && p.j.offer.length > 5 && Array.isArray(p.j.pd) && p.j.pd.length > 5 && !p.j.state.offer_signed_at && p.j.test_mode === true, p.j)
+  ck('preview: the letter is built by the same builder as a real offer (same blocks for the same fields)', JSON.stringify(p.j.offer.filter((b) => b.k === 'h').map((b) => b.t)) === JSON.stringify(D.offerLetter(M.previewFields(new Date(), new Date())).filter((b) => b.k === 'h').map((b) => b.t)))
+  ck('preview: no offer read or written, no event, no file, no card', JSON.stringify({ OFFERS, EVENTS: EVENTS.length, FILES: Object.keys(FILES).length, PATCHES: PATCHES.length, OPS }) === before) }
 const bad = res.filter((x) => !x[1]).length; console.log(`${res.length - bad}/${res.length} passed`); process.exit(bad ? 1 : 0);
