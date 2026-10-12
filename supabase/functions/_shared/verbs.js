@@ -96,6 +96,7 @@
     routing_shadow:      { label: 'routing shadow',         area: 'admin',      severity: 'fyi', diagnostic: true },
     record_started:      { label: 'record started',         area: 'admin',      severity: 'fyi', diagnostic: true },
     action_refused:      { label: 'was refused',            area: 'admin',      severity: 'fyi', diagnostic: true },
+    care_packet_watch_run: { label: 'checked caregiver packets before shifts', area: 'clients', severity: 'fyi', diagnostic: true },
     action_failed:       { label: 'could not finish',       area: 'admin',      severity: 'fyi', diagnostic: true }
   };
   var api = {
