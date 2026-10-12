@@ -10,6 +10,12 @@
 //     response period, not a federal waiting period.
 //   Step 2 the final notice: only after Step 1 (or "told them by phone or in person"), a picked result that allows it,
 //     the response due date passed or "spoke with them", and not while waiting on a Good Cause Waiver.
+//
+// ONE STEP (Samantha, 2026-10-11: "we are not required to make the background check a two step process", then "cut the
+// background notice to one step"). We use no consumer reporting agency (the screening company was dropped 2026-10-04), so the federal
+// two-step does not apply. The office reads the result, picks the review result, and sends ONE notice (the final notice
+// below). "Something came up" and the 5 business day response period are retired: the step1 and told actions refuse,
+// and finalGate no longer waits for them. Waiting on a Good Cause Waiver still holds the notice.
 // Pure functions only, so the tests run exactly what the server runs.
 // =============================================================================
 // deno-lint-ignore-file no-explicit-any
@@ -93,10 +99,8 @@ export function finalGate(rv: any, now: Date): { ok: boolean; why?: string; vari
   if (!rv) return { ok: false, why: 'no review' }
   if (rv.status === 'waiting_waiver') return { ok: false, why: 'They are waiting on their Good Cause Waiver. Record the waiver decision first.' }
   if (rv.status !== 'open') return { ok: false, why: 'This review is already closed.' }
-  if (!rv.step1_at && !rv.step1_told_at) return { ok: false, why: 'Send "Something came up" first (or record that you told them by phone or in person).' }
   const variant = variantFor(rv.check_key, rv.result)
   if (!variant) return { ok: false, why: 'Pick the review result first (Waiver needed, No waiver needed or Can\'t be employed).' }
   if (rv.result === 'no_waiver' && !String(rv.decision_reason || '').trim()) return { ok: false, why: 'No waiver is needed, so write down why we are not hiring them first.' }
-  if (!rv.spoke_at && !duePassed(rv.due_date, now)) return { ok: false, why: `Available after ${fmtLong(String(rv.due_date))} (their response due date), or once you record that you spoke with them.` }
   return { ok: true, variant }
 }
