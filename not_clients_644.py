@@ -145,7 +145,9 @@ def live_is_base(fn):
     if not okd or not live or not isinstance(vj, bool): return f"unreadable (lookup {s})", vj, []
     if all(k in live and live[k] == sha(os.path.join(HUB, k)) for k in need(HUB, fn)): return "this", vj, []
     diff = sorted(k.split("functions/")[-1] for k, v in live.items() if base_sha(HUB, HUB_BASE, k) != v and not (k in EXTRA and v == sha(os.path.join(HUB, k))))
-    return ("base" if not diff else "other"), vj, diff
+    carried = [d for d in diff if "supabase/functions/" + d in CARRY]
+    rest = [d for d in diff if d not in carried]
+    return ("base" if not rest else "other"), vj, (rest or carried)
 
 say("644 · NOTHING HAPPENS FOR OFFICE STAFF"); say("Report " + dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")); say()
 say("PART 1 · READ ONLY (nothing changes)")
@@ -153,6 +155,11 @@ if not TOKEN.startswith("sbp_"): bad("no Supabase access token"); done(2)
 # reviewed changes merged by others since the base, which these functions may carry (path -> sha), e.g. #400's one-line
 # verbs.js label (2026-10-12): named here, so they go out on purpose and nothing else rides along
 EXTRA = json.loads(os.environ.get("SB_EXTRA", "{}"))
+# shared files whose live copies in these jobs are older than main, from other sessions' approved, merged work that was
+# deployed only with their own jobs (her "send them along", 2026-10-12): the practice-address guard (optout.ts), archived
+# call-offs (held-shift.ts), caregiver packets 1-3 (outreach.ts, send-problems.ts, verbs.js). They go out on purpose and are
+# named in the report; any other live difference still stops the step.
+CARRY = set(json.loads(os.environ.get("SB_CARRY", "[]")))
 reviewed(HUB, HUB_BASE, HUB_SHAS, "the Hub server", list(EXTRA.items()))
 pinned = {pinpath(k) for k in HUB_SHAS} | set(EXTRA)
 for fn in FNS:
@@ -167,11 +174,16 @@ if NODE:
         if p.returncode != 0 or re.search(r"^FAIL", p.stdout, re.M): bad(f"{t} failed: {last}"); say("  STOP. Nothing was changed."); done(2)
         say(f"  ✓ {t}: {last.strip()}")
 else: say("  · node is not on this Mac, so the tests were not re-run here (they passed when built)")
-ST = {}
+ST = {}; CARRIED = {}; SKIP = []
 for fn in FNS:
     st, vj, diff = live_is_base(fn); ST[fn] = (st, vj)
+    if st == "missing": SKIP.append(fn); continue   # not installed on the server: left alone, never installed by this step
+    if st == "base" and diff: CARRIED[fn] = diff
     if st not in ("base", "this"):
         bad(f"{fn} on the server: {st}" + (f" (live files that differ from main: {', '.join(diff)[:200]})" if diff else ""))
+FNS = [f for f in FNS if f not in SKIP]
+if SKIP: say("  · not installed on the server, so left alone (nothing runs there): " + ", ".join(SKIP))
+for fn, d in CARRIED.items(): say(f"  · {fn} also gets main's newer {', '.join(d)} (approved work from other sessions)")
 if fails: say("  STOP. Nothing was changed. Tell Claude."); done(3)
 say(f"  ✓ all {len(FNS)} functions on the server are main's build from before this change" + (f" ({sum(1 for v in ST.values() if v[0] == 'this')} already this build)" if any(v[0] == 'this' for v in ST.values()) else ""))
 ok, cur = sql("select data->'not_client_ax' as nc from app_data where key = 'ops_settings'")
@@ -199,5 +211,5 @@ if not any("gateway" in f for f in fails): say("  ✓ every function kept its ga
 say()
 say("RESULT: " + ("DONE · from the next run of each job, nothing happens for Office Staff: no texts, alerts, cards, flags, circles, campaigns or review asks." if not fails else "PARTLY DONE · the ✗ lines above need Claude."))
 say("Nothing was run, texted or emailed by this step, and no record was changed.")
-say("Rollback: Claude redeploys the 19 functions from main's build before this change.")
+say(f"Rollback: Claude redeploys the {len(FNS)} functions from main's build before this change.")
 done(0 if not fails else 8)
