@@ -78,7 +78,8 @@ export function buildDarkReport(x: DarkIn): Any {
   const freeFor = (cgId: string, v: Any) => {
     const s = day(v), e = end(v); const overlap = (byCg.get(cgId) || []).find((w: Any) => w !== v && day(w) < e && end(w) > s)
     if (overlap) return { free: false, reason: 'Overlaps another visit ' + day(overlap).slice(11, 16) + ' to ' + end(overlap).slice(11, 16) }
-    const a = avail.get(cgId); if (!a?.windows) { gaps.no_availability++; return { free: true, reason: '', note: 'No availability on file' } }
+    /* Samantha 2026-10-12: "we need to assume 24 hour availability if they have not put it in" */
+    const a = avail.get(cgId); if (!a?.windows) { gaps.no_availability++; return { free: true, reason: '', note: 'No availability on file: assumed available any time' } }
     const d = DAYS[new Date(s.slice(0, 10) + 'T12:00:00Z').getUTCDay()], slot = slotOf(s.slice(11, 16))
     if (slot && Array.isArray(a.windows[d]) && !a.windows[d].includes(slot)) return { free: false, reason: 'Outside the availability they gave us (' + d + ' ' + slot + ')' }
     return { free: true, reason: '' }
@@ -120,6 +121,6 @@ export function buildDarkReport(x: DarkIn): Any {
   const hist = [...rowsOf(x.previous?.history), { at: x.now, ...counts, clients_incomplete: clients.incomplete, clients_flagged: clients.flagged }].slice(-30)
   return { version: 1, at: x.now, rule_version: M.VERSION, fingerprints: x.fingerprints || {}, window: { from: x.now.slice(0, 10), days: 14 }, counts, clients, rows, replay: { cases: replay.length, covered_ready: replay.filter((r) => r.covered_group === 'ready').length, rows: replay.slice(0, 200) },
     gaps: { ...gaps, restrictions_said: gaps.restrictions_said.length, no_journey_clients: gaps.no_journey_clients.length },
-    notes: ['A report only: no visit, schedule, caregiver, client, card or text was touched.', 'The replay judges past call-offs with today\'s records.', 'Restrictions written in words are shown, never enforced; cleared to drive is not recorded yet.'],
+    notes: ['A report only: no visit, schedule, caregiver, client, card or text was touched.', 'The replay judges past call-offs with today\'s records.', 'Restrictions written in words are shown, never enforced; cleared to drive is not recorded yet.', 'A caregiver with no availability on file is assumed available any time (24 hours).'],
     history: hist }
 }
