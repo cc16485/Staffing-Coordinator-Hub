@@ -63,13 +63,14 @@ function axisCreds() {
 }
 
 Deno.serve(async (req) => {
-  await loadQuiet(sb)   // Pause care / End care: paused and ended clients' visits are skipped
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
   /* J2 (2026-09-29): only its every-5-minutes schedule or the owner's server key. Everyone else, the public key included, is refused
      before anything is read or written. */
   const caller = await jobCaller(req)
   if (!caller) return json({ error: 'not allowed' }, 401)
   if (new URL(req.url).searchParams.get('auth_check') === '1') return json({ ok: true, caller })
+  /* J1: read only after the caller is known (2026-10-12; it used to run first, so a refused call still read the list) */
+  await loadQuiet(sb)   // Pause care / End care: paused and ended clients' visits are skipped
   const t0 = Date.now()
 
   const { data: setRow } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()

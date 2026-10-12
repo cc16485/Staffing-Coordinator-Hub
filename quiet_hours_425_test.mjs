@@ -251,13 +251,20 @@ const PATHS = [
   ['lead-intake/index.ts', /const quietStaff = await officeQuietNow\(supabase\)/, /if \(p\.phone && !quietStaff\)/],
   ['lead-followup/index.ts', /const quietStaff = await officeQuietNow\(supabase\)/, /if \(t\.phone && !quietStaff\)/, /else if \(quietStaff\)/],
   ['_shared/outreach.ts', /String\(opts\.audience \?\? ''\) === 'staff' && !opts\.emergency && await officeQuietNow\(sb, opts\.now \?\? new Date\(\)\)/],
+  /* lead-watch (494, speed to lead, 2026-10-07): every rung text waits for 7am in quiet hours */
+  ['lead-watch/index.ts', /quiet = officeQuiet\(now, settings\)/, /if \(quiet\) \{ plan\.waiting_quiet\+\+; continue \}/, /if \(!quiet\) await text\(/],
 ]
 for (const [f, ...res_] of PATHS) { const s = src(f); ck(`scan · ${f}: imports quiet-hours.ts and checks it at every office text`, /from '\.\.?\/(_shared\/)?quiet-hours\.ts'/.test(s) && res_.every((re) => re.test(s)), res_.filter((re) => !re.test(s)).map(String)) }
 { const s = src('interview-messages/index.ts')
   ck('scan · interview-messages: its office texts (new applicant, applicant cancelled) already only go 8am to 6pm',
     (s.match(/if \(!withinOutreachHours\(\)\) continue/g) || []).length >= 2 && /const withinOutreachHours = \(\) => \{ const h = TZ_HOUR\(\); return h >= 8 && h < 18 \}/.test(s)) }
 /* every file that texts a staff member (staff-alert over sms, textAdmin, ghlStaffContact for sms, a staff contactForOutbound) is on the list above */
-const KNOWN = new Set([...PATHS.map(([f]) => f.split('/')[0]), 'interview-messages', '_shared'])
+/* care-notes (470): its one red-flag text goes through textAdmin with NO emergency flag, so the shared staff gate
+   (_shared/outreach.ts, scanned above) holds it 8pm to 7am; it also keeps to 8am to 9pm itself */
+{ const s = src('care-notes/index.ts')
+  ck('scan · care-notes: the red-flag text is an ordinary staff text (no emergency), so office quiet hours hold it',
+    /await textAdmin\(db, ghl, admin, msg\)\)/.test(s) && !/textAdmin\([^)]*emergency/.test(s) && /h >= 8 && h < 21/.test(s)) }
+const KNOWN = new Set([...PATHS.map(([f]) => f.split('/')[0]), 'interview-messages', 'care-notes', '_shared'])
 const offenders = []
 for (const d of fs.readdirSync(FN)) {
   const f = `${FN}/${d}/index.ts`; if (!fs.existsSync(f)) continue

@@ -165,13 +165,14 @@ function clockHM(c: unknown): string | null {
 }
 
 Deno.serve(async (req) => {
-  await loadQuiet(sb)   // Pause care / End care: paused and ended clients' visits are skipped
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
   /* J1 (2026-09-29): only its every-2-minutes schedule or the owner's server key. Everyone else, the public key included, is refused
      before anything is read or sent. */
   const caller = await jobCaller(req)
   if (!caller) return json({ error: 'not allowed' }, 401)
   if (new URL(req.url).searchParams.get('auth_check') === '1') return json({ ok: true, caller })
+  /* J1: read only after the caller is known (2026-10-12; it used to run first, so a refused call still read the list) */
+  await loadQuiet(sb)   // Pause care / End care: paused and ended clients' visits are skipped
   const t0 = Date.now()
   /* The full would-text lists only for the owner's server key (a practice run from a Desktop script); the schedule
      gets counts. The role is no longer read from the token itself. */
