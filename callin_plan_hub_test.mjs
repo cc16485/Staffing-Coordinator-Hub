@@ -2,14 +2,15 @@
 // node callin_plan_hub_test.mjs ../cc-hub-live/index.html
 import fs from 'fs';
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 900)]);
-const hub = fs.readFileSync(process.argv[2] || '../cc-hub-live/index.html', 'utf8');
+const hub = fs.readFileSync(process.argv[2] || (process.env.HUB_ROOT ? process.env.HUB_ROOT + '/index.html' : '../cc-hub-live/index.html'), 'utf8');
 const block = hub.slice(hub.indexOf('/* ===================== "WHEN A CAREGIVER CALLS IN"'), hub.indexOf('/* ── SLIDE-OVER OPENERS'));
 ck('the block is present', block.length > 2000);
 const visible = block.match(/'[^'\n]*'/g).join(' ');
 ck('copy: no em dashes in the new screen text', !visible.includes('—'));
 
 /* fakes */
-const els = {}; const el = (id) => (els[id] = els[id] || { id, innerHTML: '', value: '', dataset: {}, disabled: false, textContent: '' });
+const els = {}; /* style: the backup picker (cipFillPeople, Gate 4b cdb077b in the Hub) hides itself when nobody is known */
+const el = (id) => (els[id] = els[id] || { id, innerHTML: '', value: '', dataset: {}, disabled: false, textContent: '', style: {} });
 let radio = null, checked = [];
 const document = { getElementById: (id) => el(id), querySelector: (q) => (q.includes('cipNeed') && radio != null ? { value: radio } : null),
   querySelectorAll: (q) => (q.includes('cipCgs') && q.includes(':checked') ? checked : []) };

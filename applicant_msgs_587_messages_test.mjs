@@ -162,7 +162,8 @@ HOUR = '19'; reset([C('Late1', { created_at: ago(30), completed_at: ago(15) })])
 ck('7pm: no follow-up text or email, nothing marked (goes after 8am)', toThem().length === 0 && !T.job_applicants[0].nudge_1_at); HOUR = '10'
 reset([C('NoTx', { created_at: ago(30), completed_at: ago(15), sms_consent: false, email: 'notx@example.com' })]); await run()
 ck('no yes to texts: email only', texts('NoTx').length === 0 && mails().length === 1)
-const added = (await import('child_process')).execSync('git diff origin/main -- ' + FN + '/interview-messages/index.ts').toString().split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++'))
+/* 587 is merged (ed818d9), so a diff against origin/main is empty: read the lines the 587 commit itself added */
+const added = (await import('child_process')).execSync('git show --format= ed818d9 -- ' + FN + '/interview-messages/index.ts').toString().split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++'))
 ck('no em dash in any line 587 adds', added.length > 0 && !added.some((l) => l.includes('—')), added.filter((l) => l.includes('—')))
 
 let pass = 0; for (const [nm, ok, note] of res) { console.log((ok ? 'PASS  ' : 'FAIL  ') + nm + (ok ? '' : '  ' + note)); if (ok) pass++ }
