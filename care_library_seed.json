@@ -1,0 +1,1132 @@
+[
+ {
+  "key": "fall_prevention",
+  "title": "Preventing falls at home",
+  "category": "moving",
+  "flag": "",
+  "notes": "Most falls happen at home, and most can be prevented. On every visit, look for loose rugs, cords, clutter, poor lighting and wet floors, and fix what you can. Make sure your client wears shoes or socks with grip. Remind them to sit up and stand up slowly, and to wait a moment before walking.",
+  "review_note": "The Mayo Clinic list opens with reviewing medications with the doctor (not a caregiver task).",
+  "videos": [
+   {
+    "title": "Fall Prevention and Home Safety Tips",
+    "url": "https://www.youtube.com/watch?v=eZaHwbde_z8",
+    "publisher": "Hennepin Healthcare (Minneapolis public hospital system)",
+    "minutes": 6,
+    "status": "pending",
+    "why": "Walks room by room through a real home pointing out trip hazards."
+   },
+   {
+    "title": "Tips to Prevent Falls and Stay Independent as You Age",
+    "url": "https://www.youtube.com/watch?v=aMIvtq2jrDk",
+    "publisher": "National Institute on Aging (NIH)",
+    "minutes": 2,
+    "status": "pending",
+    "why": "Short federal overview of home safety changes and habits."
+   },
+   {
+    "title": "Tips on preventing falls at home",
+    "url": "https://www.youtube.com/watch?v=LU5yEEWc5zc",
+    "publisher": "Mayo Clinic",
+    "minutes": 2,
+    "status": "pending",
+    "why": "Shoes, lighting, clutter and taking your time."
+   }
+  ]
+ },
+ {
+  "key": "after_fall",
+  "title": "After a fall: do not lift",
+  "category": "moving",
+  "flag": "CC rule: never lift or help up a client who has fallen. Keep them comfortable on the floor, call 911 if they are hurt or you are not sure, and call the office every time.",
+  "notes": "If your client falls, do not try to lift them or help them up, even if they ask. Stay with them, check for pain, bleeding or a bump on the head, and keep them comfortable and warm on the floor with a pillow and blanket. Call 911 if they are hurt or if you are not sure. Call the office every time, even if they seem fine.",
+  "review_note": "Only one video fits your never-lift rule: nearly every other 'after a fall' video teaches helping the person up, so all were rejected. This one is told from a family member's view and says 'call hospice'; the notes say call the office. Could not confirm who runs the Eden channel. A short video of you explaining the rule may serve better.",
+  "videos": [
+   {
+    "title": "What should I do if my loved one falls?",
+    "url": "https://www.youtube.com/watch?v=iRYH6XILaxM",
+    "publisher": "Hospice and Palliative Care with Eden (hospice staff member)",
+    "minutes": 1,
+    "status": "pending",
+    "why": "Says plainly 'I cannot lift her up', checks her, gives a pillow and blanket, looks for a head bump, calls for help."
+   }
+  ]
+ },
+ {
+  "key": "gait_belt",
+  "title": "Using a gait belt",
+  "category": "moving",
+  "flag": "",
+  "notes": "A gait belt gives you a safe, steady place to hold so you never pull on your client's arms or clothes. Put it snug around the waist, over clothing, with room for two fingers underneath. Hold it from behind or the side with an underhand grip while they stand and walk. Take it off when you are done.",
+  "review_note": "EquipMeOT's description links to products it sells. Rejected a Hospice Care Plan gait belt video because the client hugs the caregiver around the shoulders.",
+  "videos": [
+   {
+    "title": "How to Use a Gait Belt | Transfer Belt",
+    "url": "https://www.youtube.com/watch?v=fKcADt8fEpg",
+    "publisher": "EquipMeOT (occupational therapist)",
+    "minutes": 7,
+    "status": "pending",
+    "why": "Belt types, putting it on, placement, the two-finger fit and how to hold it."
+   },
+   {
+    "title": "Contact Guard using a Gate Belt, Preventing a Fall.",
+    "url": "https://www.youtube.com/watch?v=KziiwT8VVCM",
+    "publisher": "Caregiving 101, Dave Leffmann PT (licensed physical therapist)",
+    "minutes": 5,
+    "status": "pending",
+    "why": "Belt on, buckle to the side, standing with a walker and walking beside someone."
+   }
+  ]
+ },
+ {
+  "key": "stand_pivot",
+  "title": "Bed to chair: the stand-pivot transfer",
+  "category": "moving",
+  "flag": "",
+  "notes": "Before you move anyone, lock the wheelchair brakes, move the footrests out of the way, and put the chair close and at an angle. Have your client scoot forward with feet flat, put on the gait belt, and count to three together. Let them push up with their own arms, turn with small steps, and lower them slowly until they feel the seat. If they cannot bear weight, stop and call the office.",
+  "review_note": "The Open RN video is set in a facility; the skill is the same at home.",
+  "videos": [
+   {
+    "title": "How to do a Assisted Stand Pivot Transfer",
+    "url": "https://www.youtube.com/watch?v=71WzN6oO6s4",
+    "publisher": "Farmington Valley VNA (home health and hospice agency)",
+    "minutes": 2,
+    "status": "pending",
+    "why": "Scooting forward, knees guarding, gripping the gait belt, count of three, turn and sit."
+   },
+   {
+    "title": "Transfer From Bed to Chair with a Gait Belt",
+    "url": "https://www.youtube.com/watch?v=pyoHSHef90c",
+    "publisher": "Open RN (Chippewa Valley Technical College nursing assistant program)",
+    "minutes": 4,
+    "status": "pending",
+    "why": "Full bed to wheelchair transfer: sitting up, checking for dizziness, belt on, standing, pivoting."
+   }
+  ]
+ },
+ {
+  "key": "walker_cane",
+  "title": "Walkers and canes",
+  "category": "moving",
+  "flag": "",
+  "notes": "A walker or cane only helps if it is used the right way. The handle should be about wrist height when your client's arms hang down. Their cane goes in the hand opposite the weak leg. When you walk with them, stay close on their weaker side, a little behind, and use a gait belt if they need hands-on help.",
+  "review_note": "These are aimed at the person using the device, not the caregiver. AskDoctorJo is a clinician's own channel.",
+  "videos": [
+   {
+    "title": "How to Use a Walker Correctly - Ask Doctor Jo",
+    "url": "https://www.youtube.com/watch?v=cleZfOrgEIk",
+    "publisher": "AskDoctorJo (licensed Doctor of Physical Therapy)",
+    "minutes": 5,
+    "status": "pending",
+    "why": "Correct walker height, stepping into the walker, common mistakes."
+   },
+   {
+    "title": "How to Walk with a Cane Correctly - Ask Doctor Jo",
+    "url": "https://www.youtube.com/watch?v=sFMEmG6YKDI",
+    "publisher": "AskDoctorJo (licensed Doctor of Physical Therapy)",
+    "minutes": 3,
+    "status": "pending",
+    "why": "Which hand holds the cane and correct height."
+   },
+   {
+    "title": "How to Use a Cane for Better Balance",
+    "url": "https://www.youtube.com/watch?v=oGmquoFBiDU",
+    "publisher": "Orthopedic One (Diane Fleming, DPT, geriatric clinical specialist)",
+    "minutes": 3,
+    "status": "pending",
+    "why": "Fitting a cane, walking with it, and stairs."
+   }
+  ]
+ },
+ {
+  "key": "wheelchair",
+  "title": "Wheelchair safety",
+  "category": "moving",
+  "flag": "",
+  "notes": "Lock both brakes every time your client gets in or out of the wheelchair. Use the footrests when you push so feet do not drag, and ask them to keep their hands in their lap through doorways. Go slowly on ramps and curbs, and never hang heavy bags on the back handles, because the chair can tip.",
+  "review_note": "The first video is British.",
+  "videos": [
+   {
+    "title": "Wheelchair Safety Tips | How to Use a Wheelchair Safely",
+    "url": "https://www.youtube.com/watch?v=8lQQ5KO3vCI",
+    "publisher": "Nightingale Hammerson (UK care home charity)",
+    "minutes": 6,
+    "status": "pending",
+    "why": "Footwear, blankets away from wheels, ramps, doorways, curbs and talking to the rider."
+   },
+   {
+    "title": "How To Use Wheelchair Safely",
+    "url": "https://www.youtube.com/watch?v=PUWBQHt5FPo",
+    "publisher": "Hosparus Health (nonprofit hospice, Kentucky)",
+    "minutes": 2,
+    "status": "pending",
+    "why": "Brakes on before every transfer, footrests, hands in lap through doorways."
+   },
+   {
+    "title": "Craig Hospital Wheelchair Skills: How to Assist with Going Up and Down a Curb",
+    "url": "https://www.youtube.com/watch?v=dd242o2ozK0",
+    "publisher": "Craig Hospital (Denver rehabilitation hospital)",
+    "minutes": 2,
+    "status": "pending",
+    "why": "One-person demo of handling a wheelchair up and down a curb."
+   }
+  ]
+ },
+ {
+  "key": "car_transfer",
+  "title": "Getting in and out of a car",
+  "category": "moving",
+  "flag": "",
+  "notes": "Push the car seat all the way back and open the door wide first. Have your client back up until they feel the seat behind their legs, sit down first, then swing their legs in. Protect their head from the door frame. Never let them pull on the car door, because it moves.",
+  "review_note": "Handicare ends with a short sales plug for a swivel cushion. Left out a Singapore hospital video that says 'lift them'.",
+  "videos": [
+   {
+    "title": "Care Partner Support Tips:  Getting In and Out of the Car",
+    "url": "https://www.youtube.com/watch?v=te4SW_0Af8k",
+    "publisher": "Teepa Snow's Positive Approach to Care",
+    "minutes": 9,
+    "status": "pending",
+    "why": "How to cue and guide someone, especially with dementia, into and out of a car."
+   },
+   {
+    "title": "How to Help Transfer Someone Into and Out of a Vehicle",
+    "url": "https://www.youtube.com/watch?v=woGxDFZ0J84",
+    "publisher": "Handicare North America (patient handling equipment maker)",
+    "minutes": 2,
+    "status": "pending",
+    "why": "Chair angled to the car, hold the door frame not the door, stand, pivot, sit, protect the head."
+   }
+  ]
+ },
+ {
+  "key": "shower_safety",
+  "title": "Shower and tub safety (transfer bench, grab bars)",
+  "category": "moving",
+  "flag": "",
+  "notes": "The bathroom is where many falls happen. Before a shower, put a non-slip mat in the tub and a dry mat outside it, and have towels and clothes within reach. Your client should sit on the shower chair or transfer bench and hold grab bars, never towel racks. Check the water temperature first and stay close the whole time.",
+  "review_note": "The second video mentions an Ontario tax credit that does not apply here.",
+  "videos": [
+   {
+    "title": "Bath transfer bench (with audio descriptions)",
+    "url": "https://www.youtube.com/watch?v=jXG9ll9qqNI",
+    "publisher": "The Royal Melbourne Hospital (occupational therapist)",
+    "minutes": 2,
+    "status": "pending",
+    "why": "Setting up a tub transfer bench, sitting, then swinging the legs over."
+   },
+   {
+    "title": "OT-V Episode 4:  Bathroom Safety",
+    "url": "https://www.youtube.com/watch?v=sqhYovn2gUI",
+    "publisher": "Entwistle Power Occupational Therapy (Ontario OT practice)",
+    "minutes": 4,
+    "status": "pending",
+    "why": "Grab bars, shower seats, handheld shower, non-slip mats and transfer benches."
+   }
+  ]
+ },
+ {
+  "key": "body_mechanics",
+  "title": "Protecting your back",
+  "category": "moving",
+  "flag": "",
+  "notes": "Your back has to last your whole career, so protect it on every move. Stand close, feet apart, knees bent and back straight, and let your legs do the work. Turn your feet instead of twisting your body. If a move feels like too much for one person, stop and call the office.",
+  "review_note": "The FCA video says 'lift' in places; it does not show lifting someone off the floor.",
+  "videos": [
+   {
+    "title": "Ch. 1: Transfer Skills (Caregiver College Video Series)",
+    "url": "https://www.youtube.com/watch?v=oB0uPouIcXo",
+    "publisher": "Family Caregiver Alliance",
+    "minutes": 6,
+    "status": "pending",
+    "why": "Stance, let your legs do the work, pivot don't twist, never arms around your neck."
+   },
+   {
+    "title": "Physical Therapist Shows How To Keep Your Back Safe While Lifting Someone",
+    "url": "https://www.youtube.com/watch?v=05Wfb7llZI8",
+    "publisher": "Caregiving 101, Dave Leffmann PT (licensed physical therapist)",
+    "minutes": 7,
+    "status": "pending",
+    "why": "Finding a neutral back and using it while helping someone move."
+   },
+   {
+    "title": "Body Mechanics - Caregiver Skills Video Series",
+    "url": "https://www.youtube.com/watch?v=eiE1wxNoxLs",
+    "publisher": "Upward Care (with the Alamo Area Council of Governments)",
+    "minutes": 2,
+    "status": "pending",
+    "why": "Quick refresher on alignment, wide base and low center of gravity."
+   }
+  ]
+ },
+ {
+  "key": "hoyer",
+  "title": "Mechanical (Hoyer) lift",
+  "category": "moving",
+  "flag": "Medicaid clients: any lift transfer is an advanced personal care task a nurse must certify. CC does not offer it, so a Medicaid client who needs a lift is flagged to the office, not matched. Private pay: only when the care plan says so.",
+  "notes": "A Hoyer lift is only used when your client's care plan says so, and only after the office has trained you on that client's lift and sling. Always follow the lift maker's instructions, use the right sling for that lift, and check the straps and hooks before every lift.",
+  "review_note": "Match the video to the lift actually in the home (Joerns makes several models). Whether one caregiver may run a lift alone is your rule to set; the notes do not say.",
+  "videos": [
+   {
+    "title": "TRAINING | Hoyer® HML 400",
+    "url": "https://www.youtube.com/watch?v=x1gHW4Ho8DY",
+    "publisher": "Joerns Healthcare (maker of Hoyer lifts)",
+    "minutes": 8,
+    "status": "pending",
+    "why": "Manufacturer training on a common home-care hydraulic lift."
+   },
+   {
+    "title": "Transfer from Bed to Chair with a Mechanical Lift",
+    "url": "https://www.youtube.com/watch?v=sqkE7MNndyE",
+    "publisher": "Open RN (Chippewa Valley Technical College nursing assistant program)",
+    "minutes": 7,
+    "status": "pending",
+    "why": "Positioning the sling and moving bed to chair with a lift."
+   }
+  ]
+ },
+ {
+  "key": "bed_bath",
+  "title": "Giving a bed bath",
+  "category": "personal",
+  "flag": "",
+  "notes": "A bed bath is for someone who can't safely get to the tub or shower. Keep them covered, keep the room warm, and only uncover the part you are washing. Go from cleanest to dirtiest, and look at the skin as you go. Tell the office about any red spots, sores or rashes.",
+  "review_note": "The third video runs about 12 minutes and is filmed in a facility. Optional.",
+  "videos": [
+   {
+    "title": "How to give a Bed Bath in the Home - Tips for Caregivers",
+    "url": "https://www.youtube.com/watch?v=HRfFdgch968",
+    "publisher": "CareChannel (SE Health, Canadian nonprofit home care)",
+    "minutes": 5,
+    "status": "pending",
+    "why": "Filmed for home caregivers. A full bath in bed while keeping the person covered and the sheets dry."
+   },
+   {
+    "title": "How to Give a Bed Bath - Tips for Caregivers",
+    "url": "https://www.youtube.com/watch?v=hPqARcqOVTI",
+    "publisher": "Hosparus Health (nonprofit hospice, Kentucky)",
+    "minutes": 7,
+    "status": "pending",
+    "why": "A hospice CNA teaches it step by step, with privacy and warmth."
+   },
+   {
+    "title": "Full Bed Bath",
+    "url": "https://www.youtube.com/watch?v=j5GYMOvjjtk",
+    "publisher": "Open RN (Chippewa Valley Technical College nurse aide program)",
+    "minutes": 12,
+    "status": "pending",
+    "why": "The most complete demo of the washing order and skin checks."
+   }
+  ]
+ },
+ {
+  "key": "shower_help",
+  "title": "Helping with a shower",
+  "category": "personal",
+  "flag": "",
+  "notes": "Get everything ready before they undress: towels, soap, clean clothes and the shower chair. Check the water on your own wrist first. Let them sit and do as much as they can for themselves. Keep a towel over them so they don't feel exposed.",
+  "review_note": "",
+  "videos": [
+   {
+    "title": "How To Assist Someone With A Shower",
+    "url": "https://www.youtube.com/watch?v=awrSKeHYTOM",
+    "publisher": "CareChannel (SE Health)",
+    "minutes": 4,
+    "status": "pending",
+    "why": "A short home-setting demo of getting set up and helping someone shower."
+   },
+   {
+    "title": "Ch. 4: Bathing & Dressing (Caregiver College Video Series)",
+    "url": "https://www.youtube.com/watch?v=lvQtjY3-bcE",
+    "publisher": "Family Caregiver Alliance",
+    "minutes": 7,
+    "status": "pending",
+    "why": "Bathing safety, shower chairs and protecting dignity."
+   }
+  ]
+ },
+ {
+  "key": "oral_care",
+  "title": "Mouth care and dentures",
+  "category": "personal",
+  "flag": "",
+  "notes": "Clean teeth twice a day, using a soft brush and gentle strokes. If they wear dentures, take them out and clean them over a sink lined with a towel so they won't break if dropped. Store them in water in their own labeled cup. Tell the office about any mouth sores, bleeding or pain.",
+  "review_note": "",
+  "videos": [
+   {
+    "title": "How to Provide Oral Hygiene- Tips for Caregivers",
+    "url": "https://www.youtube.com/watch?v=yah-g1ppALU",
+    "publisher": "Hosparus Health (nonprofit hospice, Kentucky)",
+    "minutes": 3,
+    "status": "pending",
+    "why": "A hospice CNA shows how to brush someone else's teeth."
+   },
+   {
+    "title": "Denture Care",
+    "url": "https://www.youtube.com/watch?v=kDWlh3lRGnk",
+    "publisher": "Open RN (Chippewa Valley Technical College nurse aide program)",
+    "minutes": 3,
+    "status": "pending",
+    "why": "Cleaning dentures over a padded sink and storing them in a labeled cup."
+   }
+  ]
+ },
+ {
+  "key": "dressing",
+  "title": "Dressing someone with a weak side",
+  "category": "personal",
+  "flag": "",
+  "notes": "When one side is weak, remember: dress the weak side first, and undress the strong side first. Move the weak arm or leg gently and never pull or twist it. Let them help with the strong side as much as they can.",
+  "review_note": "The LACC video is a state-exam skill demo, so it looks staged. Unique Senior Care may be a UK provider ('carer').",
+  "videos": [
+   {
+    "title": "How to Help Someone Dress with an Affected Side",
+    "url": "https://www.youtube.com/watch?v=4DIhSJAlDR4",
+    "publisher": "Unique Senior Care (home care provider, learning and development manager)",
+    "minutes": 4,
+    "status": "pending",
+    "why": "Upper and lower body dressing after a stroke, with dignity and independence."
+   },
+   {
+    "title": "LACC - CNA Skill #9 - Dresses Client with Affected (Weak) Right Arm",
+    "url": "https://www.youtube.com/watch?v=lY2cWg4aH84",
+    "publisher": "Los Angeles Career College (state-approved CNA program)",
+    "minutes": 2,
+    "status": "pending",
+    "why": "Short, clear demo of weak arm in first and strong arm out first."
+   }
+  ]
+ },
+ {
+  "key": "grooming",
+  "title": "Shaving, hair and grooming",
+  "category": "personal",
+  "flag": "",
+  "notes": "An electric razor is the safest choice, especially for anyone on blood thinners. Ask how they like their hair and face done, and let them look in the mirror. If they can't get to the sink, you can wash their hair in bed with a basin and towels.",
+  "review_note": "Could not tell if 'Helping Someone Shave' uses a blade razor; check before approving. Whether CC caregivers may use blade razors is your rule to set (the notes only say electric is safest).",
+  "videos": [
+   {
+    "title": "Shaving With an Electric Razor",
+    "url": "https://www.youtube.com/watch?v=ShawTlxf1o8",
+    "publisher": "Open RN (Chippewa Valley Technical College nurse aide program)",
+    "minutes": 4,
+    "status": "pending",
+    "why": "Electric razor shaving, step by step."
+   },
+   {
+    "title": "How To Wash someone's  Hair In Bed",
+    "url": "https://www.youtube.com/watch?v=JIa3oqkfCDo",
+    "publisher": "CareChannel (SE Health)",
+    "minutes": 3,
+    "status": "pending",
+    "why": "Washing hair in bed at home."
+   },
+   {
+    "title": "Helping Someone Shave",
+    "url": "https://www.youtube.com/watch?v=o0JX3DwHKbU",
+    "publisher": "CareChannel (SE Health)",
+    "minutes": 4,
+    "status": "pending",
+    "why": "Home-setting shaving tips for caregivers."
+   }
+  ]
+ },
+ {
+  "key": "brief_standing",
+  "title": "Changing a brief standing up",
+  "category": "personal",
+  "flag": "",
+  "notes": "If they can stand with support, have them hold a grab bar, counter or walker while you work. Wear gloves, clean front to back, and check the skin for redness. Talk them through each step so they know what's coming. If they get tired or wobbly, help them sit right away.",
+  "review_note": "Weakest topic: no strong standing-brief video from a top publisher. The McCormick video shows a pull-up style product, not a tab brief. A good Medline demo exists but is posted by a retailer with shop links, so it was left out.",
+  "videos": [
+   {
+    "title": "Changing an Incontinence Product without Removing Shoes and Pants",
+    "url": "https://www.youtube.com/watch?v=n9lRSGaX6R4",
+    "publisher": "McCormick Care Group (senior services)",
+    "minutes": 2,
+    "status": "pending",
+    "why": "Changing a pull-up style product while the person stands, without taking off shoes and pants."
+   },
+   {
+    "title": "Ch. 5: Toileting & Incontinence (Caregiver College Video Series)",
+    "url": "https://www.youtube.com/watch?v=4DvYE12CM0c",
+    "publisher": "Family Caregiver Alliance",
+    "minutes": 5,
+    "status": "pending",
+    "why": "General toileting and incontinence help with dignity. Not specific to standing."
+   }
+  ]
+ },
+ {
+  "key": "hand_hygiene",
+  "title": "Handwashing and gloves",
+  "category": "personal",
+  "flag": "",
+  "notes": "Wash your hands when you arrive, before and after personal care, and before you leave. Scrub for at least 20 seconds, including between your fingers and under your nails. Put on fresh gloves for each task. Take them off so the dirty side folds inward, then wash your hands again.",
+  "review_note": "",
+  "videos": [
+   {
+    "title": "Hand Hygiene With Soap and Water",
+    "url": "https://www.youtube.com/watch?v=w29Ad7Cmsxo",
+    "publisher": "Open RN (Chippewa Valley Technical College nurse aide program)",
+    "minutes": 2,
+    "status": "pending",
+    "why": "Proper handwashing technique."
+   },
+   {
+    "title": "How to safely put on and take off gloves",
+    "url": "https://www.youtube.com/watch?v=xy9xxpscSQw",
+    "publisher": "UT Physicians (UTHealth Houston)",
+    "minutes": 2,
+    "status": "pending",
+    "why": "Gloves on and off without touching the dirty outside."
+   }
+  ]
+ },
+ {
+  "key": "uti_signs",
+  "title": "Signs of a urinary tract infection",
+  "category": "signs",
+  "flag": "",
+  "notes": "In older adults, a UTI often doesn't look like a UTI. The first sign may be new confusion, more falls, sleepiness or acting unlike themselves. You might also notice strong-smelling or cloudy urine, or more accidents than usual. Report any sudden change to the office the same day. Don't wait for it to pass.",
+  "review_note": "No strong short video from a top publisher. CarDon is a company channel; the UC Irvine video is 26 minutes. Watch both for treatment or medication talk.",
+  "videos": [
+   {
+    "title": "Understanding UTIs in Seniors: Symptoms, Treatment & Prevention Tips for Elderly Health",
+    "url": "https://www.youtube.com/watch?v=Fcew8yletYY",
+    "publisher": "CarDon & Associates (Indiana senior living), with a nurse practitioner",
+    "minutes": 7,
+    "status": "pending",
+    "why": "UTIs in older adults often show up as confusion, agitation, falls or mood change."
+   },
+   {
+    "title": "UCI/IHSS  Caregiver Education: How to Care for Older Adults with a Urinary Tract Infection (English)",
+    "url": "https://www.youtube.com/watch?v=AAxqCltJhfI",
+    "publisher": "UC Irvine Geriatrics (made for California in-home caregivers)",
+    "minutes": 26,
+    "status": "pending",
+    "why": "Written for paid in-home caregivers. Very trustworthy, but long."
+   }
+  ]
+ },
+ {
+  "key": "hydration",
+  "title": "Helping someone drink enough",
+  "category": "eating",
+  "flag": "",
+  "notes": "Older adults often don't feel thirsty, so they can get dehydrated without noticing. Watch for dark urine, dry mouth, dizziness, constipation or new confusion. Offer small drinks often and drink with them. Try foods with lots of water, like soup or fruit. If the care plan limits fluids, follow the plan. Tell the office if they are drinking very little.",
+  "review_note": "Dementia Careblazers is a clinician's own channel, not an organization.",
+  "videos": [
+   {
+    "title": "5 Signs of Dehydration",
+    "url": "https://www.youtube.com/watch?v=vmEwjaYORBQ",
+    "publisher": "AARP",
+    "minutes": 2,
+    "status": "pending",
+    "why": "Short, clear list of dehydration signs in older adults."
+   },
+   {
+    "title": "How To Get Someone With Dementia To Drink Water",
+    "url": "https://www.youtube.com/watch?v=25rqpX63ja4",
+    "publisher": "Dementia Careblazers (Dr. Natali Edmonds, licensed clinical psychologist)",
+    "minutes": 8,
+    "status": "pending",
+    "why": "Eight practical tips to encourage fluids."
+   }
+  ]
+ },
+ {
+  "key": "swallowing",
+  "title": "Safe swallowing and choking signs",
+  "category": "eating",
+  "flag": "",
+  "notes": "Some clients have trouble swallowing, and food or drink can go down the wrong way. Always help your client sit fully upright to eat and for at least 30 minutes after. Offer small bites and sips, and go slow. If you see coughing, choking, a wet or gurgly voice, or watery eyes during meals, call the office right away, and call 911 if they cannot breathe or speak.",
+  "review_note": "KTPH is a Singapore hospital, so accents and some terms are non-US. Gaylord 'What is Dysphagia' is optional third pick; drop it if you want only two.",
+  "videos": [
+   {
+    "title": "How to Feed Someone with Difficulty Swallowing - Tips for Caregivers",
+    "url": "https://www.youtube.com/watch?v=zOersaSRAqc",
+    "publisher": "Hosparus Health (nonprofit hospice and palliative care, Kentucky)",
+    "minutes": 3,
+    "status": "pending",
+    "why": "Short, caregiver-focused tips on safe positioning and pacing at meals."
+   },
+   {
+    "title": "Dysphagia - Safe feeding strategies",
+    "url": "https://www.youtube.com/watch?v=hCh6BEK8Jvs",
+    "publisher": "KTPH (Khoo Teck Puat Hospital, Singapore public hospital)",
+    "minutes": 5,
+    "status": "pending",
+    "why": "Clear demo of upright sitting, small bites, and watching for coughing or a wet voice."
+   },
+   {
+    "title": "Gaylord's Dysphagia Education Series: What is Dysphagia?",
+    "url": "https://www.youtube.com/watch?v=iLTfXJCasqM",
+    "publisher": "Gaylord Specialty Healthcare / Gaylord Hospital (Connecticut rehab hospital)",
+    "minutes": 6,
+    "status": "pending",
+    "why": "Explains what swallowing trouble is and the warning signs to watch for."
+   }
+  ]
+ },
+ {
+  "key": "thickened_liquids",
+  "title": "Thickened liquids",
+  "category": "eating",
+  "flag": "",
+  "notes": "If your client's care plan says thickened liquids, every drink must be thickened, including water, coffee, and juice. Use the exact level the plan says, like mildly thick or moderately thick. Follow the directions on the thickener can for how much to use, stir well, and let it sit the time it says. Never give a thin drink to someone who needs thickened ones.",
+  "review_note": "Gaylord video may use older terms (nectar-thick, honey-thick) next to IDDSI levels. The Chesterfield video is UK and uses a UK thickener brand; scoop amounts differ by brand, so caregivers must follow the label on the client's own product. The IDDSI flow test needs a 10 mL syringe; decide whether you want caregivers doing it.",
+  "videos": [
+   {
+    "title": "Gaylord's Dysphagia Education Series: Thickened Liquids",
+    "url": "https://www.youtube.com/watch?v=3-iVUCmWNG0",
+    "publisher": "Gaylord Specialty Healthcare / Gaylord Hospital (speech-language pathologist Rac",
+    "minutes": 6,
+    "status": "pending",
+    "why": "US speech pathologist shows how to thicken drinks and covers pre-thickened drinks sold in stores."
+   },
+   {
+    "title": "How to thicken fluids: levels 1 to 4 - Chesterfield Royal Hospital NHS Foundation Trust",
+    "url": "https://www.youtube.com/watch?v=hzdXykWPrXE",
+    "publisher": "Chesterfield Royal Hospital (UK NHS hospital)",
+    "minutes": 5,
+    "status": "pending",
+    "why": "Demonstrates all four IDDSI drink levels step by step."
+   },
+   {
+    "title": "IDDSI Flow Test Instructions",
+    "url": "https://www.youtube.com/watch?v=--KHFRql39M",
+    "publisher": "IDDSI (International Dysphagia Diet Standardisation Initiative, the official sta",
+    "minutes": 1,
+    "status": "pending",
+    "why": "Official 1-minute check that a drink is the right thickness."
+   }
+  ]
+ },
+ {
+  "key": "texture_diets",
+  "title": "Soft, minced and pureed food",
+  "category": "eating",
+  "flag": "",
+  "notes": "Some clients need softer food so they can swallow safely. Your client's care plan will say which level, such as soft and bite-sized, minced and moist, or pureed. Make the food match that level every time, with no hard bits, skins, or dry crumbs. Pureed food can still look nice: puree each food separately, keep the colors apart on the plate, and add a little sauce or gravy for flavor.",
+  "review_note": "None of the strongest picks focus mainly on making puree look appetizing; that tip is covered in the notes. Product-pitch puree videos were excluded.",
+  "videos": [
+   {
+    "title": "Gaylord's Dysphagia Education Series: Pureed Foods",
+    "url": "https://www.youtube.com/watch?v=KeYxoxZE3eM",
+    "publisher": "Gaylord Specialty Healthcare / Gaylord Hospital (Connecticut rehab hospital)",
+    "minutes": 10,
+    "status": "pending",
+    "why": "Shows how to puree real meals smoothly at home with no lumps."
+   },
+   {
+    "title": "Minced and Moist Sandwich",
+    "url": "https://www.youtube.com/watch?v=W7bOufqmz18",
+    "publisher": "IDDSI (official standards body)",
+    "minutes": 4,
+    "status": "pending",
+    "why": "Official demo of making a normal food into minced and moist (Level 5)."
+   },
+   {
+    "title": "IDDSI Food Level Testing (Level 5 Minced and Moist)",
+    "url": "https://www.youtube.com/watch?v=piC6Uuua97A",
+    "publisher": "Dorset HealthCare University NHS Foundation Trust (UK NHS)",
+    "minutes": 3,
+    "status": "pending",
+    "why": "Simple fork and spoon checks so you know the texture is right."
+   }
+  ]
+ },
+ {
+  "key": "diabetic_diet",
+  "title": "Diabetic meals and low blood sugar",
+  "category": "eating",
+  "flag": "",
+  "notes": "For clients with diabetes, follow the meal plan in their care plan. A simple guide is the plate: half vegetables, a quarter protein, and a quarter starch or fruit, with water or a sugar-free drink. Watch for low blood sugar signs like shaking, sweating, confusion, or acting unlike themselves, and for high blood sugar signs like extreme thirst, peeing a lot, or unusual tiredness. Follow the client's care plan, call the office, and call 911 if they pass out or cannot swallow.",
+  "review_note": "The low blood sugar video may mention glucagon or medication; caregivers must not give it. Watch it and decide, or swap in Rapides Regional 'Dish on Diabetes - The 15:15 Rule' (youtube.com/watch?v=OoiX6jx48L8, nurse educator) if your care plans use the 15-15 rule.",
+  "videos": [
+   {
+    "title": "Diabetes Basics: Create Your Plate",
+    "url": "https://www.youtube.com/watch?v=A6LZijdsGu0",
+    "publisher": "American Diabetes Association",
+    "minutes": 2,
+    "status": "pending",
+    "why": "The official plate method: half veggies, a quarter protein, a quarter carbs."
+   },
+   {
+    "title": "The Plate Method: English",
+    "url": "https://www.youtube.com/watch?v=3cvuNO-59cc",
+    "publisher": "Boston Medical Center (academic hospital)",
+    "minutes": 4,
+    "status": "pending",
+    "why": "A bit more detail on building a balanced plate and what counts as carbs."
+   },
+   {
+    "title": "Hypoglycemia: What to do During a Low Blood Sugar Emergency",
+    "url": "https://www.youtube.com/watch?v=C6xXMo6L71s",
+    "publisher": "American Association of Clinical Endocrinology (national endocrinologist associa",
+    "minutes": 2,
+    "status": "pending",
+    "why": "Signs of low blood sugar and what to do in an emergency."
+   }
+  ]
+ },
+ {
+  "key": "low_sodium",
+  "title": "Low-salt cooking (heart failure, blood pressure)",
+  "category": "eating",
+  "flag": "",
+  "notes": "Many clients with heart failure or high blood pressure need less salt, so follow the limit in their care plan. When you shop, check the label for sodium and pick low-sodium or no-salt-added foods. Cook with herbs, lemon, garlic, and pepper instead of salt, and go easy on canned soups, deli meat, and frozen dinners. Tell the office if you notice new swelling in the feet or legs, fast weight gain, or more trouble breathing.",
+  "review_note": "The heart failure videos may briefly mention fluid limits or medicines; caregivers follow the care plan only.",
+  "videos": [
+   {
+    "title": "Heart failure: Nutrition and diet considerations | Ohio State Medical Center",
+    "url": "https://www.youtube.com/watch?v=gbfAXCuoOSk",
+    "publisher": "Ohio State Wexner Medical Center (academic health system)",
+    "minutes": 4,
+    "status": "pending",
+    "why": "Explains why salt matters in heart failure and practical food choices."
+   },
+   {
+    "title": "Sodium and heart failure nutrition",
+    "url": "https://www.youtube.com/watch?v=NYXVSOTXSI4",
+    "publisher": "Prisma Health (South Carolina health system)",
+    "minutes": 8,
+    "status": "pending",
+    "why": "Walks through hidden salt, swaps, and cooking with less."
+   },
+   {
+    "title": "Tips on Reading Labels and Grocery Shopping",
+    "url": "https://www.youtube.com/watch?v=PQQgkqL0o4s",
+    "publisher": "American Heart Association",
+    "minutes": 1,
+    "status": "pending",
+    "why": "Quick tips for spotting salt on food labels while you shop."
+   }
+  ]
+ },
+ {
+  "key": "kidney_diet",
+  "title": "Kidney (renal) diet basics",
+  "category": "eating",
+  "flag": "",
+  "notes": "Clients with kidney disease often have limits on salt, potassium, phosphorus, and sometimes how much they drink. These limits are different for each person, so always follow your client's own care plan and don't guess. Foods like bananas, potatoes, oranges, tomatoes, dairy, and dark colas can be high in potassium or phosphorus. If your client has a fluid limit, help them track it, and tell the office about swelling, shortness of breath, or fast weight gain.",
+  "review_note": "The fluid video is aimed at dialysis patients; only keep it if you have dialysis clients.",
+  "videos": [
+   {
+    "title": "An Introduction to the Renal Diet",
+    "url": "https://www.youtube.com/watch?v=aQzp6Tan5A4",
+    "publisher": "DaVita Kidney Care (DaVita Kitchen)",
+    "minutes": 3,
+    "status": "pending",
+    "why": "Clear overview of sodium, potassium, phosphorus, and fluid on a kidney diet."
+   },
+   {
+    "title": "What should I eat if I have chronic kidney disease?",
+    "url": "https://www.youtube.com/watch?v=5bv82bVnm2Q",
+    "publisher": "National Kidney Foundation",
+    "minutes": 1,
+    "status": "pending",
+    "why": "Short, trusted summary of kidney-friendly eating."
+   },
+   {
+    "title": "Fluid management and control for kidney disease patients on dialysis",
+    "url": "https://www.youtube.com/watch?v=IwKiJSO2zG4",
+    "publisher": "American Kidney Fund",
+    "minutes": 3,
+    "status": "pending",
+    "why": "Practical tips for clients on dialysis who have a fluid limit."
+   }
+  ]
+ },
+ {
+  "key": "feeding_help",
+  "title": "Helping someone eat",
+  "category": "eating",
+  "flag": "",
+  "notes": "When you help someone eat, sit down at their eye level, not standing over them. Let them do as much as they can on their own, and use special spoons, cups, or plates if they have them. Give small bites, wait until each bite is swallowed, and talk with them like it's a normal meal. For clients with dementia, keep it calm and simple, offer one food at a time, and use gentle cues.",
+  "review_note": "",
+  "videos": [
+   {
+    "title": "Preparing Clients for Meals and Assistance with Feeding",
+    "url": "https://www.youtube.com/watch?v=Yt3EelUdy60",
+    "publisher": "Open RN (Wisconsin Technical College System nursing education)",
+    "minutes": 4,
+    "status": "pending",
+    "why": "Step by step: get the client ready, sit at eye level, pace bites, protect dignity."
+   },
+   {
+    "title": "Mealtime Tips for Persons with Dementia",
+    "url": "https://www.youtube.com/watch?v=tujTZK0s804",
+    "publisher": "Abe's Garden (nonprofit memory care center, Nashville)",
+    "minutes": 6,
+    "status": "pending",
+    "why": "Dementia mealtime tips like simple plates, cues, and a calm setting."
+   },
+   {
+    "title": "Adaptive Eating Devices",
+    "url": "https://www.youtube.com/watch?v=VlG2v6OYsW8",
+    "publisher": "UAMS (University of Arkansas for Medical Sciences)",
+    "minutes": 4,
+    "status": "pending",
+    "why": "Shows built-up utensils, plate guards, and cups that help people feed themselves."
+   }
+  ]
+ },
+ {
+  "key": "weight_loss",
+  "title": "Poor appetite and weight loss",
+  "category": "eating",
+  "flag": "",
+  "notes": "Many older adults lose their appetite, and losing weight without trying can be a sign that something is wrong. Offer small meals and snacks often instead of three big meals, and serve foods they like. Eating together, a pleasant setting, and something to drink nearby can help. Tell the office if your client is eating much less, skipping meals, has clothes getting loose, or seems weaker.",
+  "review_note": "Neither video is a how-to for encouraging eating; the tips are in the notes.",
+  "videos": [
+   {
+    "title": "Courtney Pelitera - Fast5: Malnutrition in Older Adults",
+    "url": "https://www.youtube.com/watch?v=Eiuhh0JLoik",
+    "publisher": "WakeMed Health & Hospitals (registered dietitian)",
+    "minutes": 3,
+    "status": "pending",
+    "why": "Dietitian covers poor eating, weight loss, and dehydration in older adults."
+   },
+   {
+    "title": "Malnutrition: A Hidden Epidemic in Older Adults",
+    "url": "https://www.youtube.com/watch?v=iPNZKyXqN1U",
+    "publisher": "Alliance for Aging Research (national nonprofit)",
+    "minutes": 6,
+    "status": "pending",
+    "why": "Who is at risk and the warning signs to notice and report."
+   }
+  ]
+ },
+ {
+  "key": "dementia_communication",
+  "title": "Talking with someone who has dementia",
+  "category": "conditions",
+  "flag": "",
+  "notes": "Always come from the front, slowly, so the person sees you before you get close. Say their name, smile, and use short, simple words. If they say something that is not true, do not argue or correct them. Go along with their feelings and gently guide them to something else.",
+  "review_note": "Teepa video 2 is 11 minutes. Alzheimer Society of Canada is Canadian; the US Alzheimer's Association channel had only long webinars.",
+  "videos": [
+   {
+    "title": "Communicating with Someone Who Has Alzheimers or Dementia",
+    "url": "https://www.youtube.com/watch?v=VWZmGAUS4VQ",
+    "publisher": "Teepa Snow's Positive Approach to Care",
+    "minutes": 3,
+    "status": "pending",
+    "why": "Short Teepa Snow basics: approach from the front, keep words simple, do not argue."
+   },
+   {
+    "title": "Time with Teepa - Stop Nagging, Start Connecting: A Real Demo of the Positive Physical Approach",
+    "url": "https://www.youtube.com/watch?v=881-Hl6ku_I",
+    "publisher": "Teepa Snow's Positive Approach to Care",
+    "minutes": 11,
+    "status": "pending",
+    "why": "Live demo of the Positive Physical Approach step by step."
+   },
+   {
+    "title": "5 communication tips for dementia",
+    "url": "https://www.youtube.com/watch?v=yBBa2Pw_JBs",
+    "publisher": "Alzheimer Society of Canada",
+    "minutes": 2,
+    "status": "pending",
+    "why": "Quick backup with five simple tips that match PAC."
+   }
+  ]
+ },
+ {
+  "key": "dementia_distress",
+  "title": "Sundowning, wandering and distress",
+  "category": "conditions",
+  "flag": "",
+  "notes": "Many people with dementia get more upset or restless in the late afternoon and evening. Keep the day calm and on a routine, turn on lights before dark, and offer a snack, a drink, or a walk. If they want to leave, do not block or argue, go with them and gently redirect. If they leave the home and you cannot find them, call 911 right away, then call the office.",
+  "review_note": "Check that the 911 line matches your missing-client procedure. All-PAC swap available: Teepa 'Is It Wandering, or Something Else?' (youtube.com/watch?v=oV4En0ovUyU).",
+  "videos": [
+   {
+    "title": "Time with Teepa – Is This Sundowning?",
+    "url": "https://www.youtube.com/watch?v=6coRTwkOt_Y",
+    "publisher": "Teepa Snow's Positive Approach to Care",
+    "minutes": 5,
+    "status": "pending",
+    "why": "Teepa explains late-day distress and what is behind it."
+   },
+   {
+    "title": "Caregiver Training: Wandering | UCLA Alzheimer's and Dementia Care Program",
+    "url": "https://www.youtube.com/watch?v=Sw0yEB508mI",
+    "publisher": "UCLA Health",
+    "minutes": 4,
+    "status": "pending",
+    "why": "Acted scene: calmly redirecting someone who wants to leave, plus safety steps."
+   },
+   {
+    "title": "Caregiver Training: Sundowning | UCLA Alzheimer's and Dementia Care Program",
+    "url": "https://www.youtube.com/watch?v=kskiEKghjAE",
+    "publisher": "UCLA Health",
+    "minutes": 4,
+    "status": "pending",
+    "why": "Routines, light and calm redirecting in the late afternoon."
+   }
+  ]
+ },
+ {
+  "key": "dementia_personal_care",
+  "title": "Bathing and personal care with dementia",
+  "category": "conditions",
+  "flag": "",
+  "notes": "Bathing can feel cold, scary, and embarrassing for someone with dementia. Get everything ready first, keep the room warm, and keep them covered with a towel. Use Hand-under-Hand so they feel in control, and go one small step at a time. If they say no, stop, wait a bit, and try again later or another way.",
+  "review_note": "",
+  "videos": [
+   {
+    "title": "Bathing and Dementia - with Teepa Snow of Positive Approach to Care (PAC)",
+    "url": "https://www.youtube.com/watch?v=iKT9YIVPREE",
+    "publisher": "Teepa Snow's Positive Approach to Care",
+    "minutes": 5,
+    "status": "pending",
+    "why": "Making bathing feel safe instead of scary."
+   },
+   {
+    "title": "Time with Teepa: How to Hand-under-Hand to Connect and Assist a Person Living with Dementia",
+    "url": "https://www.youtube.com/watch?v=vvm2RSFMZeY",
+    "publisher": "Teepa Snow's Positive Approach to Care",
+    "minutes": 6,
+    "status": "pending",
+    "why": "Teaches the Hand-under-Hand hold used for all personal care."
+   },
+   {
+    "title": "Caregiver Training: Refusal to Bathe | UCLA Alzheimer's and Dementia Care",
+    "url": "https://www.youtube.com/watch?v=sl3Dc1kERto",
+    "publisher": "UCLA Health",
+    "minutes": 4,
+    "status": "pending",
+    "why": "What to do when the person says no to a bath."
+   }
+  ]
+ },
+ {
+  "key": "parkinsons",
+  "title": "Helping someone with Parkinson's",
+  "category": "conditions",
+  "flag": "",
+  "notes": "People with Parkinson's can suddenly freeze, as if their feet are stuck to the floor. Never pull or push them. Stay calm and give a simple cue, like counting out loud, marching in place, or stepping over a line on the floor. Clear clutter and rugs, and watch closely during turns and doorways, where falls happen most. If they fall, do not lift them. Keep them comfortable, call 911 if they are hurt, and call the office.",
+  "review_note": "The fall-prevention video may mention medication timing (awareness only).",
+  "videos": [
+   {
+    "title": "Tips to Manage Freezing in Parkinson's Disease | Parkinson's Foundation",
+    "url": "https://www.youtube.com/watch?v=NFc7mFTt2Sk",
+    "publisher": "Parkinson's Foundation",
+    "minutes": 3,
+    "status": "pending",
+    "why": "Simple cues that help someone get unstuck when their feet freeze."
+   },
+   {
+    "title": "How can caregivers help with freezing episodes?",
+    "url": "https://www.youtube.com/watch?v=BcSANzeSPD8",
+    "publisher": "Parkinson's Foundation",
+    "minutes": 4,
+    "status": "pending",
+    "why": "What to do and not do during a freeze."
+   },
+   {
+    "title": "How to Prevent Falls in Parkinson's Disease | Parkinson's Foundation",
+    "url": "https://www.youtube.com/watch?v=zixzEN7qNCM",
+    "publisher": "Parkinson's Foundation",
+    "minutes": 5,
+    "status": "pending",
+    "why": "Fall risk and home safety."
+   }
+  ]
+ },
+ {
+  "key": "stroke",
+  "title": "Caring for someone after a stroke",
+  "category": "conditions",
+  "flag": "",
+  "notes": "After a stroke, one side of the body may be weak, and the person may not notice things on that side. Stand on their weak side when you help them walk, and put things where they can see them. If talking is hard for them, speak slowly, ask yes or no questions, and give them time to answer. If you see new stroke signs, like a drooping face or new weakness, call 911 right away.",
+  "review_note": "No good short positioning video from a top US source; positioning follows the therapist's plan.",
+  "videos": [
+   {
+    "title": "One-sided Neglect for Stroke Survivors",
+    "url": "https://www.youtube.com/watch?v=j7CVf4-dO1Y",
+    "publisher": "Michigan Medicine (University of Michigan)",
+    "minutes": 5,
+    "status": "pending",
+    "why": "Why a survivor may ignore their weak side and how to help."
+   },
+   {
+    "title": "7 Communication Tips For Talking With Someone With Aphasia",
+    "url": "https://www.youtube.com/watch?v=zkhlMrjsnyo",
+    "publisher": "National Aphasia Association",
+    "minutes": 3,
+    "status": "pending",
+    "why": "Simple ways to talk with someone who has trouble with words."
+   },
+   {
+    "title": "Tips for Stroke Survivors: Making Your Home Safe",
+    "url": "https://www.youtube.com/watch?v=XS357HiGea4",
+    "publisher": "American Heart Association",
+    "minutes": 3,
+    "status": "pending",
+    "why": "Home safety and fall prevention after a stroke."
+   }
+  ]
+ },
+ {
+  "key": "oxygen_safety",
+  "title": "Oxygen safety at home",
+  "category": "conditions",
+  "flag": "Never change the oxygen setting. Only the client's nurse or doctor changes it.",
+  "notes": "Oxygen makes fire burn very fast. Never allow smoking, candles, gas stoves, or open flames near the oxygen, and keep it at least 10 feet away from heat. Keep tubing out of walkways so no one trips. Never change the oxygen setting yourself. If something seems wrong with the machine or their breathing, call the office, and call 911 if they are struggling to breathe.",
+  "review_note": "The American Lung Association video is aimed at patients and may talk about flow rate; drop it if it suggests changing settings.",
+  "videos": [
+   {
+    "title": "Atrium Health Safety Tips for Avoiding Oxygen Fires at Home",
+    "url": "https://www.youtube.com/watch?v=4gCNxse5vFk",
+    "publisher": "Atrium Health",
+    "minutes": 7,
+    "status": "pending",
+    "why": "No flames, no smoking, and fire safety around home oxygen."
+   },
+   {
+    "title": "Home Oxygen & Smoking Fires: Common & Preventable",
+    "url": "https://www.youtube.com/watch?v=ZDLIyjwtNrg",
+    "publisher": "Portland Fire & Rescue",
+    "minutes": 2,
+    "status": "pending",
+    "why": "Short, memorable look at how fast oxygen fires start."
+   },
+   {
+    "title": "Things to Know When Using Oxygen Therapy",
+    "url": "https://www.youtube.com/watch?v=XwcEukKWuhQ",
+    "publisher": "American Lung Association",
+    "minutes": 3,
+    "status": "pending",
+    "why": "Everyday oxygen basics."
+   }
+  ]
+ },
+ {
+  "key": "heart_failure",
+  "title": "Heart failure: signs to report",
+  "category": "conditions",
+  "flag": "",
+  "notes": "With heart failure, small changes can mean the body is holding fluid. Write down their weight at the same time each morning if that is in the care plan. Call the office if they gain 2 to 3 pounds in a day or 5 pounds in a week, or if you see new swelling, more coughing, or more trouble breathing when lying down. Call 911 for chest pain, severe trouble breathing, or fainting.",
+  "review_note": "The 2-3 lb / 5 lb thresholds are common AHA guidance; check against your care-plan wording.",
+  "videos": [
+   {
+    "title": "Heart Failure Warning Signs and Symptoms",
+    "url": "https://www.youtube.com/watch?v=52eMwhf8UfI",
+    "publisher": "American Heart Association",
+    "minutes": 2,
+    "status": "pending",
+    "why": "Quick list of the signs to watch for."
+   },
+   {
+    "title": "Heart Failure Warning Signs: How to Know When to Call Your Doctor",
+    "url": "https://www.youtube.com/watch?v=o4O25rZ4NtY",
+    "publisher": "University of Maryland Medical System",
+    "minutes": 2,
+    "status": "pending",
+    "why": "Daily weight, swelling, and when to call."
+   }
+  ]
+ },
+ {
+  "key": "copd",
+  "title": "COPD and shortness of breath",
+  "category": "conditions",
+  "flag": "",
+  "notes": "When someone with COPD gets short of breath, help them sit up, lean forward a little, and breathe in through the nose and out slowly through pursed lips. Plan the day so hard tasks are spread out, with rests in between. Call the office if they are more breathless than usual, coughing more, or the mucus changes color. Call 911 if they cannot catch their breath, are confused, or their lips turn blue or gray.",
+  "review_note": "The flare-up video may mention rescue inhalers (awareness only).",
+  "videos": [
+   {
+    "title": "Pursed Lip Breathing",
+    "url": "https://www.youtube.com/watch?v=7kpJ0QlRss4",
+    "publisher": "American Lung Association",
+    "minutes": 2,
+    "status": "pending",
+    "why": "The breathing technique you can coach during breathlessness."
+   },
+   {
+    "title": "Energy Conservation for Pulmonary Rehab",
+    "url": "https://www.youtube.com/watch?v=Bo1PYDmYhss",
+    "publisher": "OhioHealth",
+    "minutes": 6,
+    "status": "pending",
+    "why": "How to pace activities and save energy."
+   },
+   {
+    "title": "COPD \"Flare-ups\"",
+    "url": "https://www.youtube.com/watch?v=XHL05K1RB94",
+    "publisher": "OhioHealth",
+    "minutes": 5,
+    "status": "pending",
+    "why": "Signs that COPD is getting worse and needs a call."
+   }
+  ]
+ },
+ {
+  "key": "change_in_condition",
+  "title": "When to call the office or 911",
+  "category": "signs",
+  "flag": "",
+  "notes": "You know your client best, so trust yourself when something seems different. If they seem less alert, eat or drink less, are weaker, or just are not acting like themselves, call the office right away. Call 911 first for stroke signs (BE FAST), chest pain, trouble breathing, a bad fall, or sudden confusion, then call the office.",
+  "review_note": "AHA teaches F.A.S.T., UC San Diego teaches BE FAST; pick one for a single message. Stop and Watch was made for nursing homes but carries over.",
+  "videos": [
+   {
+    "title": "Know the Signs of a Stroke - BE FAST",
+    "url": "https://www.youtube.com/watch?v=iAWCLR8h97E",
+    "publisher": "UC San Diego Health",
+    "minutes": 2,
+    "status": "pending",
+    "why": "Teaches BE FAST (Balance, Eyes, Face, Arm, Speech, Time)."
+   },
+   {
+    "title": "Ideas that Work - Stop and Watch",
+    "url": "https://www.youtube.com/watch?v=12OGLdmR3UI",
+    "publisher": "Health Quality Innovators (Medicare quality improvement organization)",
+    "minutes": 7,
+    "status": "pending",
+    "why": "The INTERACT Stop and Watch early-warning tool for aides."
+   },
+   {
+    "title": "Spot a Stroke F.A.S.T",
+    "url": "https://www.youtube.com/watch?v=z6N3fHJch20",
+    "publisher": "American Heart Association",
+    "minutes": 2,
+    "status": "pending",
+    "why": "Short backup on stroke signs."
+   }
+  ]
+ },
+ {
+  "key": "infection_signs",
+  "title": "Spotting infection early in older adults",
+  "category": "signs",
+  "flag": "",
+  "notes": "Older adults often do not get a fever when they have an infection. Instead, you may see new confusion, more sleepiness, weakness, falls, not eating, or changes when they use the bathroom. These changes can come on fast, so call the office the same day you notice them. Call 911 if they are very hard to wake, struggling to breathe, or seem very sick.",
+  "review_note": "The delirium video is from a cancer center, so some examples are about cancer patients.",
+  "videos": [
+   {
+    "title": "Sepsis in Older Americans: Saving Lives through Early Recognition",
+    "url": "https://www.youtube.com/watch?v=a0gbxCVgukw",
+    "publisher": "Alliance for Aging Research",
+    "minutes": 5,
+    "status": "pending",
+    "why": "How infection can turn serious quickly in older adults, and the early signs."
+   },
+   {
+    "title": "Delirium: A Guide for Caregivers",
+    "url": "https://www.youtube.com/watch?v=B33YESMFWOU",
+    "publisher": "Memorial Sloan Kettering Cancer Center",
+    "minutes": 6,
+    "status": "pending",
+    "why": "Sudden confusion, often caused by infection, and what caregivers notice first."
+   },
+   {
+    "title": "Four Ways to Get Ahead of Sepsis",
+    "url": "https://www.youtube.com/watch?v=MMCh5EEJv-I",
+    "publisher": "CDC",
+    "minutes": 2,
+    "status": "pending",
+    "why": "Short CDC overview of preventing and spotting sepsis."
+   }
+  ]
+ }
+]
