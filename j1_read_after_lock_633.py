@@ -10,6 +10,13 @@ from cc_step_lib import *
 REF = "zngsgedlsxinbygwmxwn"; FNS = ["carematch-watch", "coverage-watch", "timekeeper-watch"]
 BEFORE = json.loads(os.environ.get("SB_BEFORE_SHAS", "{}"))
 KNOWN_578 = {"_shared/events.ts", "_shared/verbs.js"}
+REFS = ["coverage-run", "coverage-reply", "coverage-watch", "team-ask"]   # reinstalled today (629-632) from main
+_LIVE = {}
+def LIVE_ELSEWHERE(fn):
+    if fn not in _LIVE:
+        ok, lf = live_files(REF, fn)
+        _LIVE[fn] = {(k[len("supabase/functions/"):] if k.startswith("supabase/functions/") else k): h for k, h in lf.items()} if ok else {}
+    return _LIVE[fn]
 start("THREE WATCHERS CHECK THE CALLER FIRST")
 say("PART 1 · READ ONLY (nothing changes)")
 if not (SUPA and os.path.exists(SUPA)): bad("supabase CLI not found"); done(2)
@@ -30,6 +37,14 @@ for fn in FNS:
     # (Desktop 578 ran 2026-10-11 02:43 UTC); a function 578 didn't redeploy still carries the older one
     known = [k for k in drift + extra if k in KNOWN_578]
     drift = [k for k in drift if k not in KNOWN_578]; extra = [k for k in extra if k not in KNOWN_578]
+    # a shared file that differs only because this function wasn't reinstalled since a merged change: allowed when the
+    # EXACT build version is already running in another live function (checked live, now); anything else still stops
+    for k in [x for x in drift + extra if x.startswith("_shared/")]:
+        want = sha(os.path.join(FNROOT, k))
+        where = next((r for r in REFS if LIVE_ELSEWHERE(r).get(k) == want), None)
+        if where:
+            say(f"  · {fn}: {k} is the version already live in {where}; it comes along")
+            drift = [d for d in drift if d != k]; extra = [e for e in extra if e != k]
     if known and not (drift or extra): say(f"  · {fn} also brings the shared record helper from 578 ({', '.join(known)}), live in 11 other functions since Oct 11")
     if drift or extra: bad(f"{fn}: the live copy is not what main had before this change ({', '.join(drift + extra)[:200]}); stopping so nothing unreleased goes live")
     else: say(f"  ✓ {fn} (version {meta[fn].get('version', '?')}) matches main before this change; {'the moved line and the 578 helper go live' if known else 'only the moved line goes live'}")
