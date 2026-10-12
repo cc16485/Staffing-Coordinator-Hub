@@ -11,14 +11,14 @@
 // the Hub's domains and the Staffing seat, Client Journey, leads, staffing plans and visit changes checked, up to 8 cards.
 // =============================================================================
 
-export const VERSION = 'v8-2026-10-12'   // v8: a change in a client's condition is client care (the Hub's care_condition routing), not an incident
+export const VERSION = 'v9-2026-10-12'   // v8: a change in a client's condition is client care (the Hub's care_condition routing), not an incident; v9: praise goes to Kind Words, never a card (her decision)
 export const MODEL = 'claude-sonnet-5-5'
 export const MAX_CARDS = 8, MAX_ITEMS = 12
 export const AREAS = ['scheduling', 'evv_timekeeping', 'payroll', 'client_care', 'caregiver_performance', 'safety_incident',
   'family_enquiries', 'referral_partner', 'payer_programs', 'recruiting', 'field_quality', 'training_compliance', 'office_admin'] as const
 export const ROLES = ['client', 'family', 'caregiver', 'applicant', 'referral_partner', 'new_client_inquiry', 'vendor',
   'wrong_number_or_spam', 'internal', 'other'] as const
-export const DECISIONS = ['new_card', 'add_to_existing_card', 'already_in_workflow', 'done_on_call', 'caller_owns', 'not_needed'] as const
+export const DECISIONS = ['new_card', 'add_to_existing_card', 'already_in_workflow', 'kind_words', 'done_on_call', 'caller_owns', 'not_needed'] as const
 export const URGENCY = ['now', 'today', 'this_week', 'routine'] as const
 export const PROMISE = ['we_agreed', 'caller_will', 'caller_considering', 'awaiting_confirmation'] as const
 /** Which Hub domain owns an area (domains table). Scheduling and EVV go to whoever holds the Staffing seat at that hour. */
@@ -54,10 +54,10 @@ export const TOOL = {
       items: {
         type: 'array', description: 'EVERY responsibility the call created for the office, each with a decision. Include the ones that need no card, with why.',
         items: { type: 'object', additionalProperties: false,
-          required: ['responsibility', 'decision', 'workflow', 'card_id', 'title', 'why', 'area', 'urgency', 'due', 'reason'],
+          required: ['responsibility', 'decision', 'workflow', 'card_id', 'title', 'why', 'area', 'urgency', 'due', 'reason', 'quote'],
           properties: {
             responsibility: str('What the office must do, in a few words.'),
-            decision: { type: 'string', enum: [...DECISIONS], description: 'new_card: nobody has it yet and a person must do it. add_to_existing_card: an open card listed in the request already has it and this call adds something. already_in_workflow: a Hub system or workflow listed in the request already has it. done_on_call: finished during the call. caller_owns: the caller will do it. not_needed: nothing to do.' },
+            decision: { type: 'string', enum: [...DECISIONS], description: 'new_card: nobody has it yet and a person must do it. add_to_existing_card: an open card listed in the request already has it and this call adds something. already_in_workflow: a Hub system or workflow listed in the request already has it. kind_words: praise or thanks for a caregiver or the office, which goes to the Kind Words jar as a suggestion, never a card. done_on_call: finished during the call. caller_owns: the caller will do it. not_needed: nothing to do.' },
             workflow: str('When already_in_workflow: which one, as listed in the request (for example "call-off case", "missed clock-in case", "lead follow-up", "Client Journey: Identify the payer"). Otherwise empty.'),
             card_id: str('When add_to_existing_card: that card\'s id from the request. Otherwise empty.'),
             title: str('For a card: what to do, verb first, who, what, when, under 90 characters. No diagnoses, medicines or health details. Empty when not a card.'),
@@ -66,6 +66,7 @@ export const TOOL = {
             urgency: { type: 'string', enum: [...URGENCY], description: 'now: client safety, an uncovered or about-to-be-missed visit, a caregiver who cannot make a shift today or tomorrow, an immediate family need. today: must happen today. this_week: has a time this week. routine: no time pressure.' },
             due: str('YYYY-MM-DD when the work has a date, judged from the call date; otherwise empty.'),
             reason: str('One sentence: why this is or is not a card.'),
+            quote: str('When kind_words: the kind words in a sentence or two, close to how the caller said them, and who they are about. Otherwise empty.'),
           } },
       },
       resolves: {
@@ -95,6 +96,7 @@ How to write a card:
 - The due date comes from what was said, judged from the call's date and weekday: "this week" is that Friday, "tomorrow" is the next day. Leave it empty when nothing was said.
 - A voicemail that asks for a call back or something specific is a card, unless an earlier suggested card or a later call in the request shows it was answered.
 - If this call answers a request from an earlier call listed in the request, list that earlier card in resolves.
+- Praise or thanks for a caregiver or the office ("Tanya has been a blessing") goes to Kind Words, never a card, even when the office said it would pass it on: decision kind_words, with the kind words in quote. If the same call also raises work, that work is listed separately.
 - A new client asking about care for the first time has its own workflow: caller_role new_client_inquiry, decision already_in_workflow (lead follow-up), unless the call also created separate work.
 - Never invent anything the call does not say. If the transcript is too garbled to tell, make no cards and say so.
 
@@ -109,7 +111,7 @@ export type CallIn = { message_id: string; call_at: string; direction: 'in' | 'o
 /** What the Hub's own systems and workflows already have, one line each in the office's words. */
 export type Related = { kind: 'card' | 'callout_case' | 'clockin_case' | 'day_case' | 'workflow'; line: string }
 export type Owner = { name: string; via: string }
-export type Item = { responsibility: string; decision: string; workflow: string; card_id: string; title: string; why: string; area: string; urgency: string; due: string; reason: string; owner?: Owner }
+export type Item = { responsibility: string; decision: string; workflow: string; card_id: string; title: string; why: string; area: string; urgency: string; due: string; reason: string; quote?: string; owner?: Owner }
 export type Task = { title: string; why: string; area: string; due: string; add_to_card_id: string; urgency?: string; owner?: Owner; voicemail?: boolean }
 export type Reading = {
   call_type: string; is_voicemail: boolean; tasks: Task[]; resolves: Array<{ message_id: string; task_index: number }>; no_task_reason: string
@@ -162,6 +164,8 @@ const pick = <T extends readonly string[]>(v: unknown, list: T, dflt: T[number])
 /** A card that would cover a shift, find a replacement, or chase a clock-in or a late caregiver: the Hub's own systems' work. */
 export const SYSTEM_WORK = /\b(cover(ing)?|coverage|fill(ing)?|replace(ment)?|find (someone|a caregiver|a sub))\b[^.]*\b(shift|visit)s?\b|\b(call(ed)?[- ]?off|clock[- ]?in|running late)\b/i
 export const OPEN_CASE = /^Open a call-off case\b/i
+/** A card that only passes on praise or thanks: Kind Words' job (her decision 2026-10-12). */
+export const PRAISE = /\b(pass (on |along )?(the |her |his |their )?(thanks|thank[- ]you|compliment|praise|kind words)|(thanks|compliment|praise|kind words) (on )?to (the )?caregiver|share (the )?(compliment|praise|kind words))\b/i
 
 /** Who owns an area right now: the Staffing seat at the call's hour for scheduling and EVV, else the domain owner. */
 export function ownerFor(area: string, owners: { domains: Record<string, string>; staffing?: string }): Owner {
@@ -187,7 +191,7 @@ export function clean(raw: unknown, open: OpenCard[], earlier: Earlier[], relate
     responsibility: scrub(t?.responsibility, 160), decision: pick(t?.decision, DECISIONS, 'not_needed'), workflow: scrub(t?.workflow, 120),
     card_id: openIds.has(String(t?.card_id || '')) ? String(t.card_id) : '', title: scrub(t?.title, 90), why: scrub(t?.why, 400),
     area: pick(t?.area, AREAS, 'office_admin'), urgency: pick(t?.urgency, URGENCY, 'routine'),
-    due: /^\d{4}-\d{2}-\d{2}$/.test(String(t?.due || '')) && !isNaN(Date.parse(t.due)) ? t.due : '', reason: scrub(t?.reason, 240),
+    due: /^\d{4}-\d{2}-\d{2}$/.test(String(t?.due || '')) && !isNaN(Date.parse(t.due)) ? t.due : '', reason: scrub(t?.reason, 240), quote: scrub(t?.quote, 600),
   }))
   items = items.map((it) => {
     if (it.decision === 'add_to_existing_card' && !it.card_id) it = { ...it, decision: 'new_card', reason: it.reason + ' (the card it named is not open, so a new one)' }
@@ -195,6 +199,10 @@ export function clean(raw: unknown, open: OpenCard[], earlier: Earlier[], relate
     /* held in code: the Hub's call-off and clock-in systems have it; a new client inquiry has the lead workflow */
     if (it.decision === 'new_card' && hasCase && (SYSTEM_WORK.test(it.title) || OPEN_CASE.test(it.title)))
       it = { ...it, decision: 'already_in_workflow', workflow: it.workflow || 'the Hub\'s call-off and clock-in systems', reason: 'The Hub\'s call-off or missed clock-in case already has this visit.' }
+    /* held in code (her decision 2026-10-12): praise goes to Kind Words, never a card */
+    if (it.decision === 'new_card' && PRAISE.test(it.title + ' ' + it.responsibility))
+      it = { ...it, decision: 'kind_words', quote: it.quote || it.why || it.responsibility, reason: 'Praise goes to Kind Words as a suggestion, not a card.' }
+    if (it.decision === 'kind_words') it = { ...it, title: '', urgency: 'routine', due: '' }
     if (it.decision === 'new_card' && role === 'new_client_inquiry' && it.area === 'family_enquiries')
       it = { ...it, decision: 'already_in_workflow', workflow: it.workflow || 'lead follow-up', reason: 'A new client inquiry goes to the lead workflow.' }
     return it.decision === 'new_card' || it.decision === 'add_to_existing_card' ? { ...it, owner: ownerFor(it.area, owners) } : it

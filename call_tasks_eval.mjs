@@ -96,7 +96,7 @@ export const SCENARIOS = [
     expect: { cards: [0, 0] } },
   { id: 'n2-thank-you', group: 'none', who: LISA, caller: 'Lisa H.', direction: 'in',
     transcript: T('O: Caring Companions.', 'C: Just calling to say thank you, Tanya has been a blessing.', 'O: That is so kind, I will pass it on to her.'),
-    expect: { cards: [0, 1] } },
+    expect: { cards: [0, 0], decisions: ['kind_words'] } },   // her decision 2026-10-12: praise goes to Kind Words
 ]
 
 function score(s, r) {
