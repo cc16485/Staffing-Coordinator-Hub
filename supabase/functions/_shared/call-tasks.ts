@@ -7,7 +7,7 @@
 // no health detail in a title; no phone number or email kept; Observed (the call) vs Suggested (the card) kept apart.
 // =============================================================================
 
-export const VERSION = 'v4-2026-10-12'   // v2: the Hub's own call-off, missed clock-in and recent cards are given to the reader (no duplicates); v3: none at all when a Hub case covers that visit, and one retry when the model answers in text; v4: the reader sees only what existed 20 minutes after the call (a replay is what live would have seen)
+export const VERSION = 'v5-2026-10-12'   // v2: the Hub's own call-off, missed clock-in and recent cards are given to the reader (no duplicates); v3: none at all when a Hub case covers that visit, and one retry when the model answers in text; v4: the reader sees only what existed 20 minutes after the call (a replay is what live would have seen); v5: every call-off and missed clock-in case for that day's visits, whoever is calling
 export const MODEL = 'claude-sonnet-5-5'
 export const AREAS = ['scheduling', 'client_care', 'recruiting', 'caregiver_support', 'admin', 'leads'] as const
 export const CALL_TYPES = ['client_or_family', 'caregiver', 'applicant', 'referral_partner', 'new_client_inquiry', 'vendor',
@@ -63,7 +63,7 @@ Not a card:
 - small talk
 - a new client asking about care for the first time (that has its own workflow: call_type new_client_inquiry, no cards)
 - work already covered by an open card listed in the request (put that card's id in add_to_card_id instead of making a new card, and only if the call adds something new)
-- work the Hub's own systems already handle. The Hub runs its own systems for call-offs and open shifts (a call-off case asks caregivers and fills the shift), missed clock-ins and caregivers running late. When the request lists a call-off case, a missed clock-in case or a card from one of those systems for this person, do not make a card to cover or fill the shift, find a replacement, or chase the clock-in or the late caregiver: that system is doing it, so do not make "open a call-off case" either. Make a card only for something else the call asked for. Only when a caregiver called off and the request lists nothing at all from the Hub about that visit (no call-off case, no missed clock-in case, no card), make one card: "Open a call-off case for ..."
+- work the Hub's own systems already handle. The Hub runs its own systems for call-offs and open shifts (a call-off case asks caregivers and fills the shift), missed clock-ins and caregivers running late. When the request lists a call-off case, a missed clock-in case or a card from one of those systems for this person, do not make a card to cover or fill the shift, find a replacement, or chase the clock-in or the late caregiver: that system is doing it, so do not make "open a call-off case" either. The request also lists the call-off and missed clock-in cases the Hub has for that day's visits, whoever is calling: when the call is about one of those visits (the same client and day, even if a name is spelled differently), the Hub has that visit too. Make a card only for something else the call asked for. Only when a caregiver called off and the request lists nothing at all from the Hub about that visit (no call-off case, no missed clock-in case, no card), make one card: "Open a call-off case for ..."
 
 How to write a card:
 - One card per distinct piece of work, at most three. Most calls need zero or one.
@@ -82,7 +82,7 @@ export type Who = { match: 'one' | 'several' | 'none'; person_id?: string | null
 export type OpenCard = { id: string; title: string; created_at?: string }
 export type Earlier = { message_id: string; call_at: string; tasks: Array<{ title: string }> }
 /** What the Hub's own systems already have for this person around the call: one line each, already in the office's words. */
-export type Related = { kind: 'card' | 'callout_case' | 'clockin_case'; line: string }
+export type Related = { kind: 'card' | 'callout_case' | 'clockin_case' | 'day_case'; line: string }
 export type CallIn = { message_id: string; call_at: string; direction: 'in' | 'out'; seconds: number; caller: string; transcript: string }
 export type Task = { title: string; why: string; area: string; due: string; add_to_card_id: string }
 export type Reading = { call_type: string; is_voicemail: boolean; tasks: Task[]; resolves: Array<{ message_id: string; task_index: number }>; no_task_reason: string }
@@ -105,7 +105,7 @@ export function userMessage(c: CallIn, who: Who, open: OpenCard[], earlier: Earl
     `The phone system's contact name: ${c.caller || 'unknown'}.`,
     whoLine,
     open.length ? 'Open cards already in Work for this person:\n' + open.map((o) => `- id ${o.id}: ${o.title}`).join('\n') : 'No open cards in Work for this person.',
-    related.length ? 'What the Hub\'s own systems already have for this person around the time of this call:\n' + related.slice(0, 15).map((r) => '- ' + r.line).join('\n')
+    related.length ? 'What the Hub\'s own systems already have for this person, and for that day\'s visits, around the time of this call:\n' + related.slice(0, 20).map((r) => '- ' + r.line).join('\n')
       : 'The Hub\'s own systems have no call-off case, missed clock-in case or recent card for this person around the time of this call.',
     earlier.length ? 'Cards suggested from earlier calls with this number in the last day:\n' + earlier.map((e) => e.tasks.map((t, i) => `- message_id ${e.message_id}, task_index ${i} (${chicago(e.call_at)}): ${t.title}`).join('\n')).join('\n')
       : 'No earlier suggested cards for this number in the last day.',
@@ -148,7 +148,7 @@ export function clean(raw: unknown, open: OpenCard[], earlier: Earlier[], relate
   })).filter((t: Task) => t.title.length >= 4).slice(0, 3)
   if (call_type === 'new_client_inquiry') tasks = []          // the lead workflow has those
   /* the Hub's call-off and clock-in systems have it: drop a card that would duplicate them (held in code, not only asked) */
-  const hasCase = related.some((r) => r.kind !== 'card' || /call-?off|clock-?in|late|cover/i.test(r.line))
+  const hasCase = related.some((r) => (r.kind === 'callout_case' || r.kind === 'clockin_case') || (r.kind === 'card' && /call-?off|clock-?in|late|cover/i.test(r.line)))   // person-matched only; a day_case is for the reader to judge
   let dropped = 0
   if (hasCase) tasks = tasks.filter((t) => { const dup = SYSTEM_WORK.test(t.title) || OPEN_CASE.test(t.title); if (dup) dropped++; return !dup })
   const known = new Map(earlier.map((e) => [e.message_id, e.tasks.length]))
@@ -239,5 +239,18 @@ export function related(name: string, callAt: string, ops: any[], coverage: any[
     if (sd < dm1 || sd > dp7) continue
     out.push({ kind: 'callout_case', line: `call-off case: ${v.client || 'a client'}'s ${v.shift_time || ''} visit on ${sd}${v.calling_off ? ', ' + v.calling_off + ' calling off' : ''}${v.covered_by ? ', covered by ' + v.covered_by : ''}, ${String(v.status || 'open')}` })
   }
-  return out.slice(0, 15)
+  /* v5: that day's call-off and missed clock-in cases for any visit, as they stood 20 minutes after the call (whoever is calling) */
+  const d0 = day(t), seen = (iso: unknown) => !(Date.parse(String(iso || '')) > t + SEEN_AFTER_MS)
+  const have = new Set(out.map((r) => r.line))
+  for (const k of timekeeper || []) {
+    if (!k || String(k.shift_date || '') !== d0 || !seen(k.opened_at)) continue
+    const line = `today's missed clock-in case: ${k.caregiver || 'a caregiver'} at ${k.client_first || 'a client'}'s ${k.shift_time || ''} visit on ${d0}`
+    if (![...have].some((h) => h.includes(`${k.caregiver} at ${k.client_first}'s ${k.shift_time || ''} visit on ${d0}`))) out.push({ kind: 'day_case', line })
+  }
+  for (const v of coverage || []) {
+    if (!v || String(v.shift_date || '') !== d0 || !seen(v.opened_at)) continue
+    const line = `today's call-off case: ${v.client || 'a client'}'s ${v.shift_time || ''} visit on ${d0}${v.calling_off ? ', ' + v.calling_off + ' calling off' : ''}`
+    if (![...have].some((h) => h.includes(`${v.client || 'a client'}'s ${v.shift_time || ''} visit on ${d0}`))) out.push({ kind: 'day_case', line })
+  }
+  return out.slice(0, 20)
 }
