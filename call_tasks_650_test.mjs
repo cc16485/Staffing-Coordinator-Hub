@@ -134,6 +134,34 @@ try {
   reset()
   ;[s, j] = await run(h, 'cron', { message_ids: ['oldcall0001'] })
   ck('the schedule cannot name calls (only the owner can)', DB.call_task_reading.every((r) => r.message_id !== 'oldcall0001'), DB.call_task_reading)
+  // ── 5. v2: the Hub's own call-off and clock-in systems are given to the reader, and a duplicate card is dropped ──
+  ck('v2: the reader version moved on, so every call is read again with the new rule', lib.VERSION === 'v2-2026-10-12')
+  const OPS = [{ id: 'tk', about: 'Dixie Kuhn', status: 'done', created_by: 'timekeeper-watch', created_at: '2026-10-10T13:06:00Z', title: 'Resolved: Dixie Kuhn, LeeAnn 8am (missed clock-in)' },
+    { id: 'cr', about: 'Dixie Kuhn', status: 'done', created_by: 'coverage-reply', created_at: '2026-10-10T13:09:00Z', title: 'Dixie Kuhn has a question about the Dan Probstfield callout' },
+    { id: 'old', about: 'Dixie Kuhn', status: 'done', created_by: 'x', created_at: '2026-10-08T13:09:00Z', title: 'Too old' },
+    { id: 'oth', about: 'Dixie Smith', status: 'open', created_by: 'x', created_at: '2026-10-10T13:00:00Z', title: 'Another Dixie' }]
+  const TK = [{ caregiver: 'Dixie Kuhn', client_first: 'LeeAnn', shift_date: '2026-10-10', shift_time: '08:00', resolved_at: '2026-10-10T13:24:43Z', resolved_how: 'admin' },
+    { caregiver: 'Dixie Kuhn', client_first: 'LeeAnn', shift_date: '2026-09-23', shift_time: '08:00', resolved_at: 'x', resolved_how: 'visit_gone' }]
+  const COV = [{ client: 'Dan Probstfield', calling_off: '', shift_date: '2026-10-14', shift_time: '08:00-12:00', status: 'open' }, { client: 'Edward Anderson', calling_off: 'Dixie Kuhn', shift_date: '2026-10-11', shift_time: '09:00-14:00', status: 'open' }]
+  const rel = lib.related('Dixie Kuhn', '2026-10-10T13:11:00Z', OPS, COV, TK)
+  ck('related: the two Hub cards made minutes before the call (closed now), the missed clock-in case that day, and the call-off case she is calling off; nothing older, no other Dixie, no case for someone else',
+    rel.length === 4 && rel.filter((r) => r.kind === 'card').map((r) => r.line).join('|').includes('the Hub (timekeeper-watch)') && rel.some((r) => r.kind === 'clockin_case' && /2026-10-10, resolved \(admin\)/.test(r.line))
+    && rel.some((r) => r.kind === 'callout_case' && /Dixie Kuhn calling off/.test(r.line)) && !/Too old|Another Dixie|Probstfield's/.test(JSON.stringify(rel)), rel)
+  ck('related: a first name alone never matches, and no name means nothing', lib.related('Dixie', '2026-10-10T13:11:00Z', OPS, COV, TK).length === 0 && lib.related('', '2026-10-10T13:11:00Z', OPS, COV, TK).length === 0)
+  const um = lib.userMessage({ message_id: 'd1', call_at: '2026-10-10T13:11:00Z', direction: 'out', seconds: 90, caller: 'Dixie K.', transcript: 't' }, { match: 'one', name: 'Dixie Kuhn', roles: ['caregiver'] }, [], [], rel)
+  ck('the reader is told what the Hub already has, and the prompt says call-offs, clock-ins and late caregivers are those systems\' work', /What the Hub's own systems already have for this person/.test(um) && /missed clock-in case: Dixie Kuhn at LeeAnn's 08:00 visit/.test(um)
+    && /do not make a card to cover or fill the shift, find a replacement, or chase the clock-in/.test(lib.SYSTEM) && /Open a call-off case for/.test(lib.SYSTEM), um)
+  const dixie = { call_type: 'caregiver', is_voicemail: false, no_task_reason: '', resolves: [], tasks: [
+    { title: "Cover Dixie Kuhn's missed shift today; she called out", why: 'w', area: 'scheduling', due: '2026-10-10', add_to_card_id: '' },
+    { title: 'Check office phone line after number transfer; calls not going through', why: 'w', area: 'admin', due: '2026-10-10', add_to_card_id: '' }] }
+  let cd = lib.clean(dixie, [], [], rel)
+  ck('clean: with the Hub\'s case listed, the "cover her shift" card is dropped (held in code) and the phone-line card stays', cd.tasks.length === 1 && /phone line/.test(cd.tasks[0].title), cd)
+  cd = lib.clean({ ...dixie, tasks: [dixie.tasks[0]] }, [], [], rel)
+  ck('clean: when that was the only card, the reading says the Hub\'s systems already have it', cd.tasks.length === 0 && /call-off and clock-in systems already have this/.test(cd.no_task_reason), cd)
+  ck('clean: with no Hub case listed, a call-off card stays (it is the only way the call-off reaches anyone)', lib.clean(dixie, [], [], []).tasks.length === 2)
+  ck('clean: "Open a call-off case for ..." is never dropped, and other cards are untouched', lib.clean({ ...dixie, tasks: [{ title: 'Open a call-off case for Dixie Kuhn, LeeAnn 8am', why: '', area: 'scheduling', due: '', add_to_card_id: '' }, { title: 'Call Steve back about a ride', why: '', area: 'scheduling', due: '', add_to_card_id: '' }] }, [], [], rel).tasks.length === 2)
+  ck('the function hands the Hub\'s cards, call-off cases and clock-in cases to the reader', /relatedOf\(String\(who\.name \|\| ''\), s\.call_at, ops, byKey\.coverage_cases \|\| \[\], byKey\.timekeeper_cases \|\| \[\]\)/.test(fs.readFileSync(path.join(F, 'call-tasks/index.ts'), 'utf8'))
+    && /clean\(got\.input, open, earlier, related\)/.test(fs.readFileSync(path.join(F, 'call-tasks/index.ts'), 'utf8')))
   const src = fs.readFileSync(path.join(F, 'call-tasks/index.ts'), 'utf8')
   ck('the function never sends: no POST to GoHighLevel, no Resend, no texts', !/method:\s*'POST'|resend|\/conversations\/messages'\s*,|sms/i.test(src.replace(/^\/\/.*$/gm, '')))
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
