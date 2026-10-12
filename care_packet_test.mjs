@@ -232,6 +232,16 @@ try {
   // helpers
   ck('YouTube ids from watch, youtu.be and shorts links; anything else no player', M.youtubeId('https://youtu.be/6M5_eTPUWpo') === '6M5_eTPUWpo' && M.youtubeId('https://www.youtube.com/shorts/6M5_eTPUWpo') === '6M5_eTPUWpo' && M.youtubeId('https://evil.com/watch?v=6M5_eTPUWpo') === null)
   ck('Vimeo plays on the page; a PDF opens as a link', M.embedOf('https://vimeo.com/968970613') === 'https://player.vimeo.com/video/968970613?dnt=1' && M.embedOf('https://example.com/ifu.pdf') === null)
+  // preview (2026-10-12): what the caregiver page shows, for the office, draft or ready; records nothing
+  reset(); await save({ ready: false }); { const pid = T.care_packets[0].id, before = JSON.stringify([T.care_packet_recipients, T.care_packet_acks || [], EVENTS.length])
+    let pv = await call({ action: 'preview', packet_id: pid })
+    ck('preview: a draft shows exactly what caregivers will see (notes, topic with its videos), marked as a preview and not ready', pv.status === 200 && pv.j.preview === true && pv.j.ready === false && pv.j.client_first === 'Dan' && /hospice/.test(pv.j.about) && pv.j.items.length === 1 && pv.j.items[0].notes === 'Every 2 hours, left, back, right.' && Array.isArray(pv.j.items[0].videos) && pv.j.items[0].videos.length > 0 && pv.j.acknowledged === false, pv)
+    ck('preview: makes no link, records no confirmation, no event, texts nobody', JSON.stringify([T.care_packet_recipients, T.care_packet_acks || [], EVENTS.length]) === before && !SENT.length)
+    await save({ ready: true, base_version: 1 }); pv = await call({ action: 'preview', packet_id: pid }); ck('preview: a ready packet says ready', pv.status === 200 && pv.j.ready === true, pv)
+    pv = await call({ action: 'preview', packet_id: pid }, 'cg'); ck('preview from a caregiver account: refused (403)', pv.status === 403, pv)
+    pv = await call({ action: 'preview', packet_id: pid }, null); ck('preview without signing in: refused (401)', pv.status === 401, pv)
+    pv = await call({ action: 'preview', packet_id: 'nope' }); ck('preview with no packet id: asks which', pv.status === 400, pv)
+    pv = await call({ action: 'preview', packet_id: '00000000-0000-0000-0000-000000000000' }); ck('preview of a packet that is gone: says so', pv.status === 404, pv) }
   reset(); FAIL = 'care_packets'; r = await call({ action: 'get', ax: '900' }); ck('a database failure: a plain error, not a crash', r.status === 500 && /went wrong/.test(r.j.error), r)
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 const bad = res.filter((x) => !x[1])
