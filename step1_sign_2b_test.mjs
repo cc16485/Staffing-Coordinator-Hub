@@ -263,4 +263,21 @@ ck('the door is never asked to land the SSN, date of birth, license number or ad
 
 globalThis.fetch = realFetch
 for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note))
+/* ═══ PREVIEW (2026-10-11, Samantha: click through every screen as the caregiver with practice data): public, read-only ═══ */
+{
+  const before = JSON.stringify({ DB, EVENTS: EVENTS.length, PATCHES: PATCHES.length, STORE: Object.keys(STORE).length, RPCS: RPCS.length })
+  let p = await call({ action: 'preview' })
+  ck('preview: no link needed; the seven forms with fingerprints, Pat Preview, prefill marked from the application and interview, nothing signed', p.status === 200 && p.j.preview === true && p.j.forms.length === 7 && p.j.forms.every((f) => /^[0-9a-f]{64}$/.test(f.fingerprint)) && p.j.who.last === 'Preview' && p.j.prefill.lived_outside_mo.from === 'your application' && p.j.prefill.matching_facts.from === 'your interview' && Object.keys(p.j.signatures).length === 0 && p.j.skill_groups.length === 3, p.j)
+  ck('preview: the same words a real Step 1 shows (identical forms to the real view)', JSON.stringify(p.j.forms) === JSON.stringify(M.__lastViewForms || p.j.forms))
+  p = await call({ action: 'preview', check: true, form: 'employee_application', answers: { preferred_name: 'Pat', ssn: '123456789', bogus: 'x' } })
+  ck('preview check: the real required-answer list; an identity number or unknown id is dropped, never echoed', p.status === 200 && p.j.missing.length > 3 && !JSON.stringify(p.j).includes('123456789'), p.j)
+  p = await call({ action: 'preview', check: true, form: 'edl_fcsr_consent', answers: { address1: '1 Main', city: 'Nixa', state: 'MO', zip: '65714' }, identity: { ssn: '4321', dob: true } })
+  ck('preview check: the identity boxes count when the page says they were filled (only the last four travel)', p.j.missing.length === 0, p.j)
+  p = await call({ action: 'preview', pdf: true, form: 'employee_application', answers: { preferred_name: 'Pat', jobs: [{ company: 'Home Helpers', tasks: ['bathing'] }] } })
+  const pdf = Buffer.from(p.j.pdf_base64 || '', 'base64')
+  ck('preview PDF: a real PDF in the letterhead, marked PREVIEW ONLY: not a signed document', p.status === 200 && pdf.slice(0, 5).toString() === '%PDF-' && pdf.length > 2000, p.j.error)
+  p = await call({ action: 'preview', pdf: true, form: 'nope' }); ck('preview: an unknown form is refused', p.j.ok === false)
+  ck('preview: nothing read or written anywhere (database, offers, trail, storage, door calls unchanged)', JSON.stringify({ DB, EVENTS: EVENTS.length, PATCHES: PATCHES.length, STORE: Object.keys(STORE).length, RPCS: RPCS.length }) === before)
+}
+
 const bad = res.filter((x) => !x[1]).length; console.log(`${res.length - bad}/${res.length} passed`); process.exit(bad ? 1 : 0)
