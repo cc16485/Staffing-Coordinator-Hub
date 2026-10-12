@@ -82,7 +82,7 @@ const where = (c: Ctx) =>
 const expect = (c: Ctx) =>
   `<div style="background:${CREAM};border-radius:10px;padding:14px 16px;margin:16px 0">` +
   `<div style="font-size:11.5px;font-weight:bold;letter-spacing:.06em;text-transform:uppercase;color:${HONEY}">What to expect</div>` +
-  `<div style="margin-top:4px">A friendly conversation about you and the work, about ${c.mins} minutes. There's nothing to fill out. If you have a résumé or certifications you're welcome to bring them, but you don't need to.</div></div>`
+  `<div style="margin-top:4px">A friendly conversation about you and the work, about ${c.mins} minutes. There's nothing to fill out. If you have a résumé or certifications you're welcome to bring them, but you don't need to. We may ask if we can record our conversation so we can listen instead of taking notes.</div></div>`
 const h = (t: string) => `<h1 style="font-family:Georgia,serif;font-size:23px;color:${NAVY};margin:0 0 10px">${esc(t)}</h1>`
 const p = (t: string) => `<p style="margin:0 0 10px">${t}</p>`
 const sign = (c: Ctx) => p(esc(signoff(c)))
