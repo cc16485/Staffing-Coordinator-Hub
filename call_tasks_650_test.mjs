@@ -144,19 +144,19 @@ try {
   ;[s, j] = await run(h, 'cron', { message_ids: ['oldcall0001'] })
   ck('the schedule cannot name calls (only the owner can)', DB.call_task_reading.every((r) => r.message_id !== 'oldcall0001'), DB.call_task_reading)
   // ── 5. v2: the Hub's own call-off and clock-in systems are given to the reader, and a duplicate card is dropped ──
-  ck('v4: the reader version moved on, so every call is read again with the new rule', lib.VERSION === 'v4-2026-10-12')
+  ck('v5: the reader version moved on, so every call is read again with the new rule', lib.VERSION === 'v5-2026-10-12')
   const OPS = [{ id: 'tk', about: 'Dixie Kuhn', status: 'done', created_by: 'timekeeper-watch', created_at: '2026-10-10T13:06:00Z', title: 'Resolved: Dixie Kuhn, LeeAnn 8am (missed clock-in)' },
     { id: 'cr', about: 'Dixie Kuhn', status: 'done', created_by: 'coverage-reply', created_at: '2026-10-10T13:09:00Z', title: 'Dixie Kuhn has a question about the Dan Probstfield callout' },
     { id: 'old', about: 'Dixie Kuhn', status: 'done', created_by: 'x', created_at: '2026-10-08T13:09:00Z', title: 'Too old' },
     { id: 'oth', about: 'Dixie Smith', status: 'open', created_by: 'x', created_at: '2026-10-10T13:00:00Z', title: 'Another Dixie' }]
-  const TK = [{ caregiver: 'Dixie Kuhn', client_first: 'LeeAnn', shift_date: '2026-10-10', shift_time: '08:00', resolved_at: '2026-10-10T13:24:43Z', resolved_how: 'admin' },
+  const TK = [{ caregiver: 'Dixie Kuhn', client_first: 'LeeAnn', shift_date: '2026-10-10', shift_time: '08:00', opened_at: '2026-10-10T13:05:00Z', resolved_at: '2026-10-10T13:24:43Z', resolved_how: 'admin' },
     { caregiver: 'Dixie Kuhn', client_first: 'LeeAnn', shift_date: '2026-09-23', shift_time: '08:00', resolved_at: 'x', resolved_how: 'visit_gone' }]
   const COV = [{ client: 'Dan Probstfield', calling_off: '', shift_date: '2026-10-14', shift_time: '08:00-12:00', status: 'open' }, { client: 'Edward Anderson', calling_off: 'Dixie Kuhn', shift_date: '2026-10-11', shift_time: '09:00-14:00', status: 'open' }]
   const rel = lib.related('Dixie Kuhn', '2026-10-10T13:11:00Z', OPS, COV, TK)
   ck('related: the two Hub cards made minutes before the call (closed now), the missed clock-in case that day, and the call-off case she is calling off; nothing older, no other Dixie, no case for someone else',
-    rel.length === 4 && rel.filter((r) => r.kind === 'card').map((r) => r.line).join('|').includes('the Hub (timekeeper-watch)') && rel.some((r) => r.kind === 'clockin_case' && /2026-10-10, resolved \(admin\)/.test(r.line))
+    rel.filter((r) => r.kind !== 'day_case').length === 4 && rel.filter((r) => r.kind === 'card').map((r) => r.line).join('|').includes('the Hub (timekeeper-watch)') && rel.some((r) => r.kind === 'clockin_case' && /2026-10-10, resolved \(admin\)/.test(r.line))
     && rel.some((r) => r.kind === 'callout_case' && /Dixie Kuhn calling off/.test(r.line)) && !/Too old|Another Dixie|Probstfield's/.test(JSON.stringify(rel)), rel)
-  ck('related: a first name alone never matches, and no name means nothing', lib.related('Dixie', '2026-10-10T13:11:00Z', OPS, COV, TK).length === 0 && lib.related('', '2026-10-10T13:11:00Z', OPS, COV, TK).length === 0)
+  ck('related: a first name alone never matches the person\'s own records (only that day\'s cases, which are for any caller), and no name means nothing', lib.related('Dixie', '2026-10-10T13:11:00Z', OPS, COV, TK).every((r) => r.kind === 'day_case') && lib.related('', '2026-10-10T13:11:00Z', OPS, COV, TK).length === 0)
   const um = lib.userMessage({ message_id: 'd1', call_at: '2026-10-10T13:11:00Z', direction: 'out', seconds: 90, caller: 'Dixie K.', transcript: 't' }, { match: 'one', name: 'Dixie Kuhn', roles: ['caregiver'] }, [], [], rel)
   ck('the reader is told what the Hub already has, and the prompt says call-offs, clock-ins and late caregivers are those systems\' work', /What the Hub's own systems already have for this person/.test(um) && /missed clock-in case: Dixie Kuhn at LeeAnn's 08:00 visit/.test(um)
     && /do not make a card to cover or fill the shift, find a replacement, or chase the clock-in/.test(lib.SYSTEM) && /Open a call-off case for/.test(lib.SYSTEM), um)
@@ -176,6 +176,15 @@ try {
   ck('v3 retry: the text answer goes back unchanged (thinking block included), then one plain ask to call the tool', rr.messages.length === 3 && rr.messages[1].role === 'assistant' && rr.messages[1].content[0].type === 'thinking' && /calling submit_followups now/.test(rr.messages[2].content) && rr.model === 'm')
   ck('the function hands the Hub\'s cards, call-off cases and clock-in cases to the reader', /relatedOf\(String\(who\.name \|\| ''\), s\.call_at, ops, byKey\.coverage_cases \|\| \[\], byKey\.timekeeper_cases \|\| \[\]\)/.test(fs.readFileSync(path.join(F, 'call-tasks/index.ts'), 'utf8'))
     && /clean\(got\.input, open, earlier, related\)/.test(fs.readFileSync(path.join(F, 'call-tasks/index.ts'), 'utf8')))
+  const relA = lib.related('', '2026-10-10T13:13:00Z', OPS, COV, TK)
+  const relA2 = lib.related('Autumn Reed', '2026-10-10T13:13:00Z', OPS, COV, TK)
+  ck('v5: a caller who is not the caregiver (Autumn) still hears about that day\'s missed clock-in case for LeeAnn\'s 8am visit', relA2.length === 1 && relA2[0].kind === 'day_case' && /today's missed clock-in case: Dixie Kuhn at LeeAnn's 08:00 visit on 2026-10-10/.test(relA2[0].line), relA2)
+  ck('v5: no name still means nothing (an unknown caller is not given the day\'s cases by name)', relA.length === 0)
+  ck('v5: the day\'s case is not listed twice for Dixie herself', lib.related('Dixie Kuhn', '2026-10-10T13:11:00Z', OPS, COV, TK).filter((r) => /LeeAnn's 08:00 visit on 2026-10-10/.test(r.line)).length === 1)
+  ck('v5: a case opened after the call is not shown to the reading', lib.related('Autumn Reed', '2026-10-10T12:00:00Z', OPS, COV, TK).length === 0)
+  const autumn = { call_type: 'caregiver', is_voicemail: true, resolves: [], no_task_reason: '', tasks: [{ title: "Open a call-off case for Leanne's visit today; Autumn asked to call back", why: '', area: 'scheduling', due: '', add_to_card_id: '' }] }
+  ck('v5: a day_case alone does not make the code drop a card (the reader judges; a different visit\'s call-off must still get through)', lib.clean(autumn, [], [], relA2).tasks.length === 1)
+  ck('v5 prompt: the day\'s cases count, even when a name is spelled differently', /the call-off and missed clock-in cases the Hub has for that day's visits, whoever is calling/.test(lib.SYSTEM) && /even if a name is spelled differently/.test(lib.SYSTEM))
   const SAM = [{ id: 'ops_mv4nasn0', about: 'Steve Algiere', status: 'open', created_by: 'Samantha Troutman', created_at: '2026-10-12T02:41:02Z', title: 'Schedule Angiel for 2-3 hours with Steve' },
     { id: 'early', about: 'Steve Algiere', status: 'open', created_by: 'x', created_at: '2026-10-11T23:50:00Z', title: 'Made 13 minutes after' }]
   const oc4 = lib.openCards('Steve Algiere', '2026-10-11T23:37:00Z', SAM, new Set(['done']))
