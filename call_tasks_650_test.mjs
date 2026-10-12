@@ -1,4 +1,4 @@
-// 650 · call follow-up cards, practice. Under Node against the REAL call-tasks function and _shared/call-tasks.ts with a
+// 650 v7 · call follow-up cards, practice (her eight points, 2026-10-12). Under Node against the REAL call-tasks function and _shared/call-tasks.ts with a
 // stand-in database, GoHighLevel and model: Steve's two calls of 2026-10-11 replayed; nothing written to Work; no
 // transcript, phone or email kept; the request follows the current API (Sonnet 5.5, strict tool, auto choice, fallback).
 //   node call_tasks_650_test.mjs
@@ -29,6 +29,9 @@ function reset() {
       { message_id: 'oldcall0001', call_at: '2026-10-01T15:00:00Z', direction: 'in', seconds: 50, caller: 'Old C.', stage: 'done' },
       { message_id: 'notdone0001', call_at: '2026-10-11T20:00:00Z', direction: 'in', seconds: 50, caller: 'Err E.', stage: 'error' }],
     call_task_reading: [], heartbeats: [], writes: [],
+    domains: [{ code: 'client_care', owner_person: 'pk', active: true }, { code: 'scheduling_coverage', owner_person: 'ps', active: true }, { code: 'money', owner_person: 'ps', active: true }, { code: 'payer_programs', owner_person: 'pa', active: true }, { code: 'family_enquiries', owner_person: 'pk', active: true }, { code: 'incidents', owner_person: 'ps', active: true }, { code: 'program_administration', owner_person: 'ps', active: true }],
+    persons: [{ person_id: 'pk', full_name: 'Krystal Land', primary_email: 'krystal@cc.test' }, { person_id: 'ps', full_name: 'Samantha Troutman', primary_email: 'samantha@cc.test' }, { person_id: 'pa', full_name: 'Angiel Falig', primary_email: 'angiel@cc.test' }],
+    client_journey_step_def: [{ key: 'intake.payer', def: { title: 'Identify the payer' }, active: true }], client_journey: [], client_journey_step: [],
   }
   AI = []; FAILAI = null
   GH = { transcripts: { ipoVD64wn8dUcDyPdjqW: VM, gMcTDQ5WoAXMHUmrCbdN: CALL }, msg: { ipoVD64wn8dUcDyPdjqW: 'c1', gMcTDQ5WoAXMHUmrCbdN: 'c1' }, contacts: { c1: { firstName: 'Steve', lastName: 'Algiere', phone: '+14175550467', email: 'steve@example.com' } }, calls: [] }
@@ -44,12 +47,25 @@ globalThis.__fakeCreateClient = () => ({
   from: (tb) => { const f = []; let single = false, ord = null, lim = null
     const p = { select() { return p }, eq(k, v) { f.push((r) => String(r[k]) === String(v)); return p }, in(k, v) { f.push((r) => v.map(String).includes(String(r[k]))); return p },
       gte(k, v) { f.push((r) => String(r[k]) >= String(v)); return p }, lt(k, v) { f.push((r) => String(r[k]) < String(v)); return p },
-      order(k, o) { ord = [k, o?.ascending !== false]; return p }, limit(n) { lim = n; return p }, maybeSingle() { single = true; return p },
+      order(k, o) { ord = [k, o?.ascending !== false]; return p }, limit(n) { lim = n; return p }, maybeSingle() { single = true; return p }, not(k, op, v) { f.push((r) => r[k] !== null && r[k] !== undefined); return p },
       insert(row) { DB.writes.push(tb); if (tb === 'call_task_reading') { if (DB.call_task_reading.some((r) => r.message_id === row.message_id && r.version === row.version)) return Promise.resolve({ error: { message: 'duplicate key' } }); DB.call_task_reading.push({ id: ++rid, ...JSON.parse(JSON.stringify(row)) }) } return Promise.resolve({ error: null }) },
       then(ok, bad) { let rows = (DB[tb] || []).filter((r) => f.every((fn) => fn(r))); if (ord) rows = rows.slice().sort((a, b) => (String(a[ord[0]]) < String(b[ord[0]]) ? -1 : 1) * (ord[1] ? 1 : -1)); if (lim) rows = rows.slice(0, lim)
         return Promise.resolve({ data: single ? (rows[0] || null) : rows, error: null }).then(ok, bad) } }
     return p },
 })
+const item = (o) => Object.assign({ responsibility: o.title || 'r', decision: 'new_card', workflow: '', card_id: '', title: '', why: '', area: 'scheduling', urgency: 'routine', due: '', reason: 'r' }, o)
+const base = (o) => Object.assign({ summary: 's', caller_role: 'client', about: '', understood: [], commitments: [], is_voicemail: false, items: [], resolves: [], no_task_reason: '' }, o)
+const ANSWERS_V7 = {
+  ipoVD64wn8dUcDyPdjqW: base({ summary: 'Steve left a voicemail asking to arrange a ride and asked to be called back at 417-555-0467.', is_voicemail: true, about: 'Steve Algiere, client',
+    items: [item({ title: 'Call Steve Algiere back about arranging a ride', why: 'Voicemail: Steve wants to arrange a ride.', due: '2026-10-12', urgency: 'today', reason: 'He asked for a call back.' })] }),
+  gMcTDQ5WoAXMHUmrCbdN: (req) => base({ summary: 'Steve needs someone to take him to the DMV for a new license and Real ID this week. Email steve@example.com.', about: 'Steve Algiere, client',
+    understood: ['License expired', 'Wants Angiel for a couple of hours this week'],
+    commitments: [{ what: 'Steve will call tomorrow to confirm the time', kind: 'caller_will', when: 'Monday' }, { what: 'We will work out a time with Angiel', kind: 'we_agreed', when: 'this week' }],
+    items: [item({ title: 'Schedule Angiel 2-3 hours with Steve this week: DMV trip for his new license', why: 'His license expired; he will call Monday to confirm. Email steve@example.com.', due: '2026-10-16', urgency: 'this_week', reason: 'We agreed to arrange it and nobody has it.' }),
+      item({ responsibility: 'Wait for Steve to confirm', decision: 'caller_owns', area: 'scheduling', reason: 'He said he will call.' }),
+      item({ title: 'x', area: 'nonsense', due: 'Friday', decision: 'add_to_existing_card', card_id: 'ops_made_up' })],
+    resolves: /message_id ipoVD64wn8dUcDyPdjqW, task_index 0/.test(req.messages[0].content) ? [{ message_id: 'ipoVD64wn8dUcDyPdjqW', task_index: 0 }, { message_id: 'bogus', task_index: 0 }] : [] }),
+}
 const ANSWERS = {
   ipoVD64wn8dUcDyPdjqW: { call_type: 'client_or_family', is_voicemail: true, tasks: [{ title: 'Call Steve Algiere back about arranging a ride', why: 'Voicemail: Steve wants to arrange a ride and asked to be called back at 417-555-0467.', area: 'scheduling', due: '2026-10-12', add_to_card_id: '' }], resolves: [], no_task_reason: '' },
   gMcTDQ5WoAXMHUmrCbdN: (req) => ({ call_type: 'client_or_family', is_voicemail: false,
@@ -62,8 +78,9 @@ globalThis.__FakeAnthropic = class { constructor(o) { this.key = o.apiKey; this.
   if (FAILAI === 'throw') throw new Error('overloaded')
   if (FAILAI === 'textonce' && req.messages.length === 1) return { stop_reason: 'end_turn', content: [{ type: 'text', text: 'I think the cards are...' }] }
   if (FAILAI === 'textalways') return { stop_reason: 'end_turn', content: [{ type: 'text', text: 'no tool' }] }
-  const id = Object.keys(ANSWERS).find((k) => req.messages[0].content.includes(k === 'ipoVD64wn8dUcDyPdjqW' ? 'calling to arrange a ride' : 'license expired'))
-  const a = typeof ANSWERS[id] === 'function' ? ANSWERS[id](req) : ANSWERS[id]
+  if (globalThis.__EVAL_ANSWER) return { stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'submit_followups', input: globalThis.__EVAL_ANSWER(req) }] }
+  const id = Object.keys(ANSWERS_V7).find((k) => req.messages[0].content.includes(k === 'ipoVD64wn8dUcDyPdjqW' ? 'calling to arrange a ride' : 'license expired'))
+  const a = typeof ANSWERS_V7[id] === 'function' ? ANSWERS_V7[id](req) : ANSWERS_V7[id]
   return { stop_reason: 'tool_use', content: [{ type: 'text', text: '' }, { type: 'tool_use', name: 'submit_followups', input: a }] } } } } } }
 globalThis.fetch = async (url) => { url = String(url); GH.calls.push(url)
   let m
@@ -80,119 +97,104 @@ try {
   const lib = await import(path.join(tmp, '_shared', 'call-tasks.ts'))
   // ── 1. the request follows the current API ──
   const req = lib.request({ message_id: 'm1', call_at: '2026-10-11T23:37:00Z', direction: 'out', seconds: 136, caller: 'Steve A.', transcript: 'hi' }, { match: 'one', name: 'Steve Algiere', roles: ['client'] }, [], [])
-  ck('request: Claude Sonnet 5.5, effort medium, strict tool, tool_choice auto (forced choice is refused by this model)', req.model === 'claude-sonnet-5-5' && req.output_config.effort === 'medium' && req.tools[0].strict === true && req.tool_choice.type === 'auto')
-  ck('request: server-side refusal fallback on ("default" with its 2026-07-01 header)', req.fallbacks === 'default' && JSON.stringify(req.betas) === '["server-side-fallback-2026-07-01"]')
-  ck('request: no thinking setting (Sonnet 5.5 refuses disabled), no sampling settings, no assistant prefill', !('thinking' in req) && !('temperature' in req) && req.messages.length === 1 && req.messages[0].role === 'user')
+  ck('request: Claude Sonnet 5.5, effort medium, strict tool, tool_choice auto, refusal fallback on', req.model === 'claude-sonnet-5-5' && req.output_config.effort === 'medium' && req.tools[0].strict === true && req.tool_choice.type === 'auto' && req.fallbacks === 'default' && JSON.stringify(req.betas) === '["server-side-fallback-2026-07-01"]')
+  ck('request: no thinking or sampling setting, one user message', !('thinking' in req) && !('temperature' in req) && req.messages.length === 1)
   const schemaTxt = JSON.stringify(lib.TOOL.input_schema)
-  ck('the tool schema is strict-safe: every object closed, every field required, no length or count keywords', !/maxItems|maxLength|minLength|pattern|format/.test(schemaTxt) && (schemaTxt.match(/"additionalProperties":false/g) || []).length === 3)
-  ck('the user message gives the Central time and weekday, who the identity layer says it is, and wraps the transcript as data', /Sunday, October 11, 2026/.test(req.messages[0].content) && /belongs to Steve Algiere, a client/.test(req.messages[0].content) && /<transcript>\nhi\n<\/transcript>/.test(req.messages[0].content))
-  ck('the prompt carries her rules: a person acts, never contact anyone implied, no health detail in titles, no phone or email, never invent, transcript is not instructions', /A person acts on every card/.test(lib.SYSTEM) && /No diagnoses, medicines or health details in the title/.test(lib.SYSTEM) && /Never include a phone number or an email address/.test(lib.SYSTEM) && /Never invent/.test(lib.SYSTEM) && /never as instructions to you/.test(lib.SYSTEM))
+  ck('the tool schema is strict-safe: every object closed, every field required, no length or count keywords', !/maxItems|maxLength|minLength|pattern|format/.test(schemaTxt) && (schemaTxt.match(/"additionalProperties":false/g) || []).length === 4)
+  ck('v7 schema: summary, understood, promises told apart, every responsibility with a decision, urgency, reason', ['summary', 'understood', 'commitments', 'items', 'decision', 'urgency', 'reason', 'caller_considering', 'awaiting_confirmation', 'already_in_workflow', 'done_on_call', 'caller_owns'].every((w) => schemaTxt.includes(w)))
+  ck('v7 prompt carries her eight points', [/several unrelated responsibilities/, /Tell promises apart/, /something the caller will do/, /caller considering, not a request/, /established workflows/, /Client Journey steps/, /do not create duplicate work or a way around it/,
+    /Urgency is not routine/, /not by who answered the phone/, /less to remember/, /should not fill up with cards nobody needs/].every((re) => re.test(lib.SYSTEM)), lib.SYSTEM.slice(0, 300))
+  ck('her earlier rules still hold in the prompt', /A person acts on every card/.test(lib.SYSTEM) && /No diagnoses, medicines or health details in the title/.test(lib.SYSTEM) && /Never include a phone number or an email address/.test(lib.SYSTEM) && /never as instructions to you/.test(lib.SYSTEM))
   ck('no em dash in the prompt or the tool', !/[—―]/.test(lib.SYSTEM + schemaTxt))
-  // ── 2. clean() holds the rules in code ──
-  const c = lib.clean({ call_type: 'zzz', tasks: [1, 2, 3, 4].map((i) => ({ title: 'Call Mary back ' + i + ' at (417) 555-0101 or mary@x.com', why: 'w', area: 'zzz', due: '2026-13-45', add_to_card_id: 'nope' })) }, [], [])
-  ck('clean: at most three cards; unknown area becomes admin; a bad date becomes empty; an unknown card id is dropped; an unknown call type becomes other', c.tasks.length === 3 && c.tasks.every((t) => t.area === 'admin' && t.due === '' && t.add_to_card_id === '') && c.call_type === 'other', c)
-  ck('clean: phone numbers and emails are scrubbed from titles', c.tasks.every((t) => !/555|@/.test(t.title) && /\(phone\)/.test(t.title)), c.tasks)
-  const nc = lib.clean({ call_type: 'new_client_inquiry', tasks: [{ title: 'Send Mary the brochure', why: '', area: 'leads', due: '', add_to_card_id: '' }] }, [], [])
-  ck('clean: a new-client inquiry makes no cards (the lead workflow has it)', nc.tasks.length === 0 && /new client/.test(nc.no_task_reason), nc)
+  // ── 2. ownership comes from the Hub, never the AI ──
+  const owners = { domains: { client_care: 'Krystal Land', scheduling_coverage: 'Samantha Troutman', money: 'Samantha Troutman', payer_programs: 'Angiel Falig', incidents: 'Samantha Troutman', family_enquiries: 'Krystal Land', program_administration: 'Samantha Troutman' }, staffing: 'Krystal Land' }
+  ck('owner: scheduling and EVV go to whoever holds the Staffing seat at that hour', lib.ownerFor('scheduling', owners).name === 'Krystal Land' && /Staffing seat/.test(lib.ownerFor('evv_timekeeping', owners).via))
+  ck('owner: no seat holder: the scheduling domain owner', lib.ownerFor('scheduling', { domains: owners.domains }).name === 'Samantha Troutman')
+  ck('owner: authorizations to the payer programs owner, a concern about care to client care, payroll to money, safety to incidents', lib.ownerFor('payer_programs', owners).name === 'Angiel Falig' && lib.ownerFor('client_care', owners).name === 'Krystal Land'
+    && lib.ownerFor('payroll', owners).name === 'Samantha Troutman' && lib.ownerFor('safety_incident', owners).name === 'Samantha Troutman')
+  // ── 3. clean() holds her rules in code ──
+  const multi = base({ caller_role: 'caregiver', items: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((i) => item({ title: 'Distinct job ' + i + ' call (417) 555-0101 or mary@x.com', area: ['payroll', 'scheduling', 'caregiver_performance', 'evv_timekeeping'][i % 4] })) })
+  let c = lib.clean(multi, [], [], [], owners)
+  ck('v7 clean: a call with many unrelated jobs keeps up to 8 cards (was 3), each with its own owner', c.tasks.length === 8 && c.tasks.every((t) => t.owner && t.owner.name) && new Set(c.tasks.map((t) => t.area)).size === 4, c.tasks.map((t) => [t.area, t.owner && t.owner.name]))
+  ck('clean: phone numbers and emails are scrubbed', c.tasks.every((t) => !/555|@/.test(t.title)))
+  const bad = lib.clean(base({ caller_role: 'zzz', items: [item({ title: 'Call Mary', area: 'zzz', urgency: 'zzz', due: '2026-13-45', decision: 'zzz' })] }), [], [], [], owners)
+  ck('clean: unknown role, area, urgency, decision and dates are made safe (a bad decision is not a card)', bad.call_type === 'other' && bad.detail.items[0].area === 'office_admin' && bad.detail.items[0].urgency === 'routine' && bad.detail.items[0].decision === 'not_needed' && bad.tasks.length === 0, bad)
+  const nc = lib.clean(base({ caller_role: 'new_client_inquiry', items: [item({ title: 'Send Mary the brochure', area: 'family_enquiries' }), item({ title: 'Tell Iris her check came', area: 'payroll' })] }), [], [], [], owners)
+  ck('clean: a new client inquiry goes to the lead workflow, but separate work in the same call still gets its card', nc.tasks.length === 1 && /check came/.test(nc.tasks[0].title) && nc.detail.items[0].decision === 'already_in_workflow' && /lead/.test(nc.detail.items[0].workflow), nc.detail.items)
+  const keepAll = lib.clean(base({ items: [item({ title: 'Call Ann', decision: 'new_card' }), item({ responsibility: 'Change her Tuesday', decision: 'done_on_call', reason: 'Changed on the call' }), item({ responsibility: 'Caller will bring the form', decision: 'caller_owns' })] }), [], [], [], owners)
+  ck('v7 clean: every responsibility is kept with its decision and reason (only new cards become cards)', keepAll.detail.items.length === 3 && keepAll.tasks.length === 1 && keepAll.detail.items[1].decision === 'done_on_call' && keepAll.detail.items[1].reason === 'Changed on the call')
+  const addTo = lib.clean(base({ items: [item({ title: 'Add Saturday', decision: 'add_to_existing_card', card_id: 'ops_x' }), item({ title: 'Add Sunday', decision: 'add_to_existing_card', card_id: 'not_open' })] }), [{ id: 'ops_x', title: 'Steve hours' }], [], [], owners)
+  ck('v7 clean: "add to an existing card" only for a card that is really open; otherwise it becomes a new card', addTo.detail.items[0].decision === 'add_to_existing_card' && addTo.detail.items[0].card_id === 'ops_x' && addTo.detail.items[1].decision === 'new_card' && addTo.tasks.length === 1)
+  const prom = lib.clean(base({ commitments: [{ what: 'We will call Monday', kind: 'we_agreed', when: 'Monday' }, { what: 'Maybe Saturdays', kind: 'caller_considering', when: '' }, { what: 'x', kind: 'zzz', when: '' }] }), [], [], [], owners)
+  ck('v7 clean: promises keep their kind (we agreed / caller considering); an unknown kind becomes awaiting confirmation', prom.detail.commitments.map((x) => x.kind).join() === 'we_agreed,caller_considering,awaiting_confirmation')
   ck('answerOf: a refusal and a missing tool call are errors, never cards', /declined/.test(lib.answerOf({ stop_reason: 'refusal', content: [] }).error) && /did not submit/.test(lib.answerOf({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'hi' }] }).error))
+  // ── 4. the Hub's workflows ──
+  const OPS = [{ id: 'tk', about: 'Dixie Kuhn', status: 'done', created_by: 'timekeeper-watch', created_at: '2026-10-10T13:06:00Z', title: 'Resolved: Dixie Kuhn, LeeAnn 8am (missed clock-in)' }]
+  const TK = [{ caregiver: 'Dixie Kuhn', client_first: 'LeeAnn', shift_date: '2026-10-10', shift_time: '08:00', opened_at: '2026-10-10T13:05:00Z', resolved_at: '2026-10-10T13:24:43Z', resolved_how: 'admin' }]
+  const rel = lib.related('Dixie Kuhn', '2026-10-10T13:11:00Z', OPS, [], TK)
+  const dixie = base({ caller_role: 'caregiver', items: [item({ title: "Cover Dixie Kuhn's missed shift today; she called out", urgency: 'now' }), item({ title: 'Check office phone line after number transfer', area: 'office_admin' })] })
+  c = lib.clean(dixie, [], [], rel, owners)
+  ck('clean: with the Hub\'s case listed, "cover her shift" becomes already in the workflow (shown with why, not a card); the phone-line card stays', c.tasks.length === 1 && /phone line/.test(c.tasks[0].title)
+    && c.detail.items[0].decision === 'already_in_workflow' && /call-off or missed clock-in case/.test(c.detail.items[0].reason), c.detail.items)
+  ck('clean: with no Hub case, a call-off still becomes a card (and keeps its urgency now)', lib.clean(dixie, [], [], [], owners).tasks.length === 2 && lib.clean(dixie, [], [], [], owners).tasks[0].urgency === 'now')
+  const wf = lib.workflows('Steve Algiere', '2026-10-11T23:37:00Z', { lead: { first_name: 'Mary', last_name: 'Lead', status: 'Contacted', follow_up_due: '2026-10-14', follow_up_branch: 'family-decision' },
+    journeys: [{ journey_id: 'j1', client_name: 'Steve Algiere', status: 'open', target_start: '2026-10-20' }], steps: [{ journey_id: 'j1', step_key: 'intake.payer', state: 'open', waiting_on: 'family' }, { journey_id: 'j1', step_key: 'done.one', state: 'complete' }],
+    stepTitles: { 'intake.payer': 'Identify the payer' }, staffing: [{ client: 'Steve Algiere', status: 'searching', days: 'Mon, Wed' }], leads: [{ first_name: 'Nora', last_name: 'New', referral_source_name: 'Mercy Home Health', status: 'New', created_at: '2026-10-11T23:40:00Z' }, { first_name: 'Old', created_at: '2026-10-01T00:00:00Z' }] })
+  ck('v7 workflows: the lead and its follow-up, the open Client Journey steps (by their titles), the staffing plan, and a lead created around the call (a referral)', wf.length === 4 && /lead follow-up: Mary Lead is a lead, status Contacted, follow-up due 2026-10-14/.test(wf[0].line)
+    && /Client Journey for Steve Algiere .*open steps Identify the payer \(waiting on family\)/.test(wf[1].line) && !/done\.one/.test(wf[1].line) && /staffing plan for Steve Algiere: searching/.test(wf[2].line) && /referred by Mercy Home Health/.test(wf[3].line), wf)
+  const um = lib.userMessage({ message_id: 'x', call_at: '2026-10-11T23:37:00Z', direction: 'out', seconds: 60, caller: 'S', transcript: 't' }, { match: 'one', name: 'Steve Algiere', roles: ['client'] }, [], [], [...rel, ...wf])
+  ck('the reader is told the Hub\'s workflows before it decides', /What the Hub's own systems and workflows already have/.test(um) && /Client Journey for Steve Algiere/.test(um) && /missed clock-in case/.test(um))
 
-  // ── 3. the function, on Steve's two calls ──
+  // ── 5. the function, on Steve's two calls ──
   reset()
   const h = await load('call-tasks')
   let [s, j] = await run(h, null)
   ck('no key and no schedule secret: refused (401), nothing read', s === 401 && !AI.length, [s, j])
   ;[s, j] = await run(h, 'cron')
-  ck('the schedule runs it: both of Steve\'s calls read (oldest first), the error-stage and pre-start calls left alone', s === 200 && j.read === 2 && DB.call_task_reading.map((r) => r.message_id).join() === 'ipoVD64wn8dUcDyPdjqW,gMcTDQ5WoAXMHUmrCbdN', [s, j, DB.call_task_reading.map((r) => r.message_id)])
+  ck('the schedule runs it: both of Steve\'s calls read (oldest first), the error-stage and pre-start calls left alone', s === 200 && j.read === 2 && DB.call_task_reading.map((r) => r.message_id).join() === 'ipoVD64wn8dUcDyPdjqW,gMcTDQ5WoAXMHUmrCbdN', [s, j])
   const [vm, call] = DB.call_task_reading
-  ck('the voicemail: one would-be card "Call Steve Algiere back about arranging a ride", marked voicemail, practice mode', vm.mode === 'practice' && vm.tasks.length === 1 && /Call Steve Algiere back/.test(vm.tasks[0].title) && vm.tasks[0].voicemail === true, vm)
-  ck('the call: matched to Steve Algiere (client) by the identity layer, not by the AI', call.match === 'one' && call.person_id === STEVE && call.who_name === 'Steve Algiere' && JSON.stringify(call.who_roles) === '["client"]', call)
-  ck('the call: one would-be card, "Schedule Angiel 2-3 hours with Steve this week: DMV trip...", due Friday Oct 16, scheduling; the junk second card dropped', call.tasks.length === 1 && /^Schedule Angiel 2-3 hours with Steve this week/.test(call.tasks[0].title) && call.tasks[0].due === '2026-10-16' && call.tasks[0].area === 'scheduling' && call.tasks[0].add_to_card_id === '', call.tasks)
-  ck('the call answers the voicemail: resolves names the voicemail card (a made-up one dropped)', JSON.stringify(call.resolves) === '[{"message_id":"ipoVD64wn8dUcDyPdjqW","task_index":0}]', call.resolves)
-  ck('the second reading was told about the first (earlier suggestions for this person)', /message_id ipoVD64wn8dUcDyPdjqW, task_index 0/.test(AI[1].messages[0].content))
-  ck('the model was told about Steve\'s open cards only (his done card and other people\'s cards are not "open for this person")', /No open cards in Work for this person/.test(AI[1].messages[0].content), AI[1].messages[0].content.slice(0, 600))
-  ck('nothing is kept that it must not keep: no transcript lines, phone number or email in any reading (the card reason is allowed)', !/Speaker \d|take me to the DMV|help me get in|417|0467|example\.com/.test(JSON.stringify(DB.call_task_reading)), JSON.stringify(DB.call_task_reading).match(/.{30}(Speaker \d|take me to the DMV|417|0467|example\.com).{30}/g))
-  ck('PRACTICE: nothing is written to Work (no ops_items), only the readings and a heartbeat', !DB.writes.includes('ops_items') && DB.writes.filter((w) => w === 'call_task_reading').length === 2 && DB.writes.every((w) => ['call_task_reading', 'automation_heartbeats'].includes(w)), DB.writes)
-  ck('every GoHighLevel request is a read (GET), to its message, transcript and contact endpoints', GH.calls.length === 6 && GH.calls.every((u) => /services\.leadconnectorhq\.com\/(conversations\/messages\/|conversations\/locations\/loc1\/messages\/.*\/transcription|contacts\/)/.test(u)), GH.calls)
+  ck('the voicemail: one would-be card "Call Steve Algiere back...", urgency today, owner from the Staffing seat or the scheduling owner, practice mode', vm.mode === 'practice' && vm.tasks.length === 1 && /Call Steve Algiere back/.test(vm.tasks[0].title) && vm.tasks[0].urgency === 'today' && vm.tasks[0].owner.name === 'Samantha Troutman' && vm.tasks[0].voicemail === true, vm.tasks)
+  ck('the call: matched by the identity layer; the summary, what was understood and the promises are kept (we agreed vs caller will)', call.who_name === 'Steve Algiere' && /DMV/.test(call.detail.summary) && call.detail.understood.length === 2
+    && call.detail.commitments.map((x) => x.kind).join() === 'caller_will,we_agreed', call.detail)
+  ck('the call: one card ("Schedule Angiel ... DMV trip"), due Fri Oct 16, this week, owner and why; the "wait for Steve" item kept as the caller\'s with no card; the junk item made safe', call.tasks.length === 2 && /^Schedule Angiel 2-3 hours with Steve this week/.test(call.tasks[0].title) && call.tasks[0].due === '2026-10-16'
+    && call.tasks[0].urgency === 'this_week' && call.tasks[0].owner.name && call.detail.items.length === 3 && call.detail.items[1].decision === 'caller_owns', [call.tasks, call.detail.items])
+  ck('the call answers the voicemail (a made-up one dropped)', JSON.stringify(call.resolves) === '[{"message_id":"ipoVD64wn8dUcDyPdjqW","task_index":0}]', call.resolves)
+  ck('nothing is kept that it must not keep: no transcript lines, phone number or email in any reading', !/Speaker \d|take me to the DMV|help me get in|417|0467|example\.com/.test(JSON.stringify(DB.call_task_reading)), JSON.stringify(DB.call_task_reading).match(/.{30}(Speaker \d|417|0467|example\.com).{30}/g))
+  ck('PRACTICE: nothing is written to Work (no ops_items), only the readings and a heartbeat', !DB.writes.includes('ops_items') && DB.writes.every((w) => ['call_task_reading', 'automation_heartbeats'].includes(w)), DB.writes)
+  ck('every GoHighLevel request is a read, to its message, transcript and contact endpoints', GH.calls.length === 6 && GH.calls.every((u) => /services\.leadconnectorhq\.com\/(conversations\/messages\/|conversations\/locations\/loc1\/messages\/.*\/transcription|contacts\/)/.test(u)), GH.calls)
   const ai0 = AI.length
   ;[s, j] = await run(h, 'cron')
   ck('the next run reads nothing twice', s === 200 && j.read === 0 && AI.length === ai0, [s, j])
-
-  // ── 4. switches, failures, the owner's re-read ──
+  // ── 6. switches, failures, retries, the owner's tools ──
   reset(); DB.app_data[0].data.call_tasks_practice = false
   ;[s, j] = await run(h, 'cron')
-  ck('practice switch off: reads nothing, says off', s === 200 && j.off === true && !AI.length && !DB.call_task_reading.length, [s, j])
+  ck('practice switch off: reads nothing, says off', s === 200 && j.off === true && !AI.length, [s, j])
   reset(); FAILAI = 'refusal'
   ;[s, j] = await run(h, 'cron')
-  ck('the model declines: the reading records why, no cards, and it is not retried every 10 minutes', j.errors === 2 && DB.call_task_reading.every((r) => /declined/.test(r.error) && !r.tasks.length), DB.call_task_reading)
+  ck('the model declines: recorded once, no cards', j.errors === 2 && DB.call_task_reading.every((r) => /declined/.test(r.error) && !r.tasks.length), DB.call_task_reading)
   reset(); FAILAI = 'throw'
   ;[s, j] = await run(h, 'cron')
-  ck('the model is unreachable: recorded as an error, the run still finishes', s === 200 && j.errors === 2 && DB.call_task_reading.every((r) => /overloaded/.test(r.error)), [s, j])
+  ck('the model is unreachable: recorded as an error, the run still finishes', s === 200 && j.errors === 2, [s, j])
   reset(); FAILAI = 'textonce'
   ;[s, j] = await run(h, 'cron')
-  ck('v3: the model answers in text once: one retry (its answer sent back, then the ask), and both calls get their cards', j.read === 2 && j.errors === 0 && AI.length === 4 && AI.filter((r) => r.messages.length === 3).length === 2
-    && DB.call_task_reading.every((r) => !r.error && r.tasks.length === 1), [j, AI.map((r) => r.messages.length), DB.call_task_reading.map((r) => r.error)])
-  reset(); FAILAI = 'textalways'
-  ;[s, j] = await run(h, 'cron')
-  ck('v3: still text after the retry: recorded once as an error, never a third try', j.errors === 2 && AI.length === 4 && DB.call_task_reading.every((r) => /did not submit/.test(r.error)), [j, AI.length])
+  ck('the model answers in text once: one retry and both calls get their reading', j.read === 2 && j.errors === 0 && AI.filter((r) => r.messages.length === 3).length === 2, [j, AI.map((r) => r.messages.length)])
   reset(); delete GH.transcripts.gMcTDQ5WoAXMHUmrCbdN
   ;[s, j] = await run(h, 'cron')
-  ck('no transcript yet: that call is left for the next run (no reading row)', j.no_transcript === 1 && DB.call_task_reading.length === 1, [s, j])
+  ck('no transcript yet: that call is left for the next run', j.no_transcript === 1 && DB.call_task_reading.length === 1, [s, j])
   reset()
   ;[s, j] = await run(h, 'owner', { message_ids: ['gMcTDQ5WoAXMHUmrCbdN'] })
-  ck('the owner can name a call to read (the replay the Desktop step uses)', s === 200 && j.read === 1 && DB.call_task_reading[0].message_id === 'gMcTDQ5WoAXMHUmrCbdN', [s, j])
-  reset()
-  ;[s, j] = await run(h, 'cron', { message_ids: ['oldcall0001'] })
-  ck('the schedule cannot name calls (only the owner can)', DB.call_task_reading.every((r) => r.message_id !== 'oldcall0001'), DB.call_task_reading)
-  // ── 5. v2: the Hub's own call-off and clock-in systems are given to the reader, and a duplicate card is dropped ──
-  ck('v6: the reader version moved on, so every call is read again with the new rule', lib.VERSION === 'v6-2026-10-12')
-  const OPS = [{ id: 'tk', about: 'Dixie Kuhn', status: 'done', created_by: 'timekeeper-watch', created_at: '2026-10-10T13:06:00Z', title: 'Resolved: Dixie Kuhn, LeeAnn 8am (missed clock-in)' },
-    { id: 'cr', about: 'Dixie Kuhn', status: 'done', created_by: 'coverage-reply', created_at: '2026-10-10T13:09:00Z', title: 'Dixie Kuhn has a question about the Dan Probstfield callout' },
-    { id: 'old', about: 'Dixie Kuhn', status: 'done', created_by: 'x', created_at: '2026-10-08T13:09:00Z', title: 'Too old' },
-    { id: 'oth', about: 'Dixie Smith', status: 'open', created_by: 'x', created_at: '2026-10-10T13:00:00Z', title: 'Another Dixie' }]
-  const TK = [{ caregiver: 'Dixie Kuhn', client_first: 'LeeAnn', shift_date: '2026-10-10', shift_time: '08:00', opened_at: '2026-10-10T13:05:00Z', resolved_at: '2026-10-10T13:24:43Z', resolved_how: 'admin' },
-    { caregiver: 'Dixie Kuhn', client_first: 'LeeAnn', shift_date: '2026-09-23', shift_time: '08:00', resolved_at: 'x', resolved_how: 'visit_gone' }]
-  const COV = [{ client: 'Dan Probstfield', calling_off: '', shift_date: '2026-10-14', shift_time: '08:00-12:00', status: 'open' }, { client: 'Edward Anderson', calling_off: 'Dixie Kuhn', shift_date: '2026-10-11', shift_time: '09:00-14:00', status: 'open' }]
-  const rel = lib.related('Dixie Kuhn', '2026-10-10T13:11:00Z', OPS, COV, TK)
-  ck('related: the two Hub cards made minutes before the call (closed now), the missed clock-in case that day, and the call-off case she is calling off; nothing older, no other Dixie, no case for someone else',
-    rel.filter((r) => r.kind !== 'day_case').length === 4 && rel.filter((r) => r.kind === 'card').map((r) => r.line).join('|').includes('the Hub (timekeeper-watch)') && rel.some((r) => r.kind === 'clockin_case' && /2026-10-10, resolved \(admin\)/.test(r.line))
-    && rel.some((r) => r.kind === 'callout_case' && /Dixie Kuhn calling off/.test(r.line)) && !/Too old|Another Dixie|Probstfield's/.test(JSON.stringify(rel)), rel)
-  ck('related: a first name alone never matches the person\'s own records (only that day\'s cases, which are for any caller)', lib.related('Dixie', '2026-10-10T13:11:00Z', OPS, COV, TK).every((r) => r.kind === 'day_case'))
-  const um = lib.userMessage({ message_id: 'd1', call_at: '2026-10-10T13:11:00Z', direction: 'out', seconds: 90, caller: 'Dixie K.', transcript: 't' }, { match: 'one', name: 'Dixie Kuhn', roles: ['caregiver'] }, [], [], rel)
-  ck('the reader is told what the Hub already has, and the prompt says call-offs, clock-ins and late caregivers are those systems\' work', /What the Hub's own systems already have for this person/.test(um) && /missed clock-in case: Dixie Kuhn at LeeAnn's 08:00 visit/.test(um)
-    && /do not make a card to cover or fill the shift, find a replacement, or chase the clock-in/.test(lib.SYSTEM) && /Open a call-off case for/.test(lib.SYSTEM), um)
-  const dixie = { call_type: 'caregiver', is_voicemail: false, no_task_reason: '', resolves: [], tasks: [
-    { title: "Cover Dixie Kuhn's missed shift today; she called out", why: 'w', area: 'scheduling', due: '2026-10-10', add_to_card_id: '' },
-    { title: 'Check office phone line after number transfer; calls not going through', why: 'w', area: 'admin', due: '2026-10-10', add_to_card_id: '' }] }
-  let cd = lib.clean(dixie, [], [], rel)
-  ck('clean: with the Hub\'s case listed, the "cover her shift" card is dropped (held in code) and the phone-line card stays', cd.tasks.length === 1 && /phone line/.test(cd.tasks[0].title), cd)
-  cd = lib.clean({ ...dixie, tasks: [dixie.tasks[0]] }, [], [], rel)
-  ck('clean: when that was the only card, the reading says the Hub\'s systems already have it', cd.tasks.length === 0 && /call-off and clock-in systems already have this/.test(cd.no_task_reason), cd)
-  ck('clean: with no Hub case listed, a call-off card stays (it is the only way the call-off reaches anyone)', lib.clean(dixie, [], [], []).tasks.length === 2)
-  const oc = [{ title: "Open a call-off case for Dixie Kuhn, LeeAnn's 8am shift on Oct 10", why: '', area: 'scheduling', due: '', add_to_card_id: '' }, { title: 'Call Steve back about a ride', why: '', area: 'scheduling', due: '', add_to_card_id: '' }]
-  ck('v3 clean: with a Hub case for that visit, even "Open a call-off case" is dropped (the live v2 reading made exactly that card); other cards untouched', lib.clean({ ...dixie, tasks: oc }, [], [], rel).tasks.map((x) => x.title).join() === 'Call Steve back about a ride')
-  ck('v3 clean: with nothing from the Hub, "Open a call-off case" stays', lib.clean({ ...dixie, tasks: oc }, [], [], []).tasks.length === 2)
-  ck('v3 prompt: no "open a call-off case" when the Hub has the visit; only when nothing at all is listed', /so do not make "open a call-off case" either/.test(lib.SYSTEM) && /lists nothing at all from the Hub about that visit/.test(lib.SYSTEM))
-  const rr = lib.retryRequest({ model: 'm', messages: [{ role: 'user', content: 'call' }] }, { content: [{ type: 'thinking', thinking: '', signature: 's' }, { type: 'text', text: 'Here are the cards...' }] })
-  ck('v3 retry: the text answer goes back unchanged (thinking block included), then one plain ask to call the tool', rr.messages.length === 3 && rr.messages[1].role === 'assistant' && rr.messages[1].content[0].type === 'thinking' && /calling submit_followups now/.test(rr.messages[2].content) && rr.model === 'm')
-  ck('the function hands the Hub\'s cards, call-off cases and clock-in cases to the reader', /relatedOf\(String\(who\.name \|\| ''\), s\.call_at, ops, byKey\.coverage_cases \|\| \[\], byKey\.timekeeper_cases \|\| \[\]\)/.test(fs.readFileSync(path.join(F, 'call-tasks/index.ts'), 'utf8'))
-    && /clean\(got\.input, open, earlier, related\)/.test(fs.readFileSync(path.join(F, 'call-tasks/index.ts'), 'utf8')))
-  const relA = lib.related('', '2026-10-10T13:13:00Z', OPS, COV, TK)
-  const relA2 = lib.related('Autumn Reed', '2026-10-10T13:13:00Z', OPS, COV, TK)
-  ck('v5: a caller who is not the caregiver (Autumn) still hears about that day\'s missed clock-in case for LeeAnn\'s 8am visit', relA2.length === 1 && relA2[0].kind === 'day_case' && /today's missed clock-in case: Dixie Kuhn at LeeAnn's 08:00 visit on 2026-10-10/.test(relA2[0].line), relA2)
-  ck('v6: a number not in our records (Autumn, as she really is) still hears that day\'s cases, and nothing person-specific', relA.length === 1 && relA[0].kind === 'day_case' && /LeeAnn's 08:00 visit/.test(relA[0].line), relA)
-  ck('v5: the day\'s case is not listed twice for Dixie herself', lib.related('Dixie Kuhn', '2026-10-10T13:11:00Z', OPS, COV, TK).filter((r) => /LeeAnn's 08:00 visit on 2026-10-10/.test(r.line)).length === 1)
-  ck('v5: a case opened after the call is not shown to the reading', lib.related('Autumn Reed', '2026-10-10T12:00:00Z', OPS, COV, TK).length === 0)
-  const autumn = { call_type: 'caregiver', is_voicemail: true, resolves: [], no_task_reason: '', tasks: [{ title: "Open a call-off case for Leanne's visit today; Autumn asked to call back", why: '', area: 'scheduling', due: '', add_to_card_id: '' }] }
-  ck('v5: a day_case alone does not make the code drop a card (the reader judges; a different visit\'s call-off must still get through)', lib.clean(autumn, [], [], relA2).tasks.length === 1)
-  ck('v5 prompt: the day\'s cases count, even when a name is spelled differently', /the call-off and missed clock-in cases the Hub has for that day's visits, whoever is calling/.test(lib.SYSTEM) && /even if a name is spelled differently/.test(lib.SYSTEM))
-  const SAM = [{ id: 'ops_mv4nasn0', about: 'Steve Algiere', status: 'open', created_by: 'Samantha Troutman', created_at: '2026-10-12T02:41:02Z', title: 'Schedule Angiel for 2-3 hours with Steve' },
-    { id: 'early', about: 'Steve Algiere', status: 'open', created_by: 'x', created_at: '2026-10-11T23:50:00Z', title: 'Made 13 minutes after' }]
-  const oc4 = lib.openCards('Steve Algiere', '2026-10-11T23:37:00Z', SAM, new Set(['done']))
-  ck('v4: a replay sees only cards made within 20 minutes of the call (your 9:41 pm card is not shown to the 6:37 pm reading; a card 13 minutes after is)', oc4.map((o) => o.id).join() === 'early', oc4)
-  ck('v4: the Hub records it is told about stop at 20 minutes after the call too', lib.related('Steve Algiere', '2026-10-11T23:37:00Z', SAM, [], []).length === 1 && /Made 13 minutes after/.test(lib.related('Steve Algiere', '2026-10-11T23:37:00Z', SAM, [], [])[0].line))
-  ck('v4: the function uses openCards (live view) for open cards', /const open: OpenCard\[\] = openCards\(name, s\.call_at, ops, DONE\)/.test(fs.readFileSync(path.join(F, 'call-tasks/index.ts'), 'utf8')))
+  ck('the owner can name a call to read again', s === 200 && j.read === 1, [s, j])
+  // the test bench
+  reset(); globalThis.__EVAL_ANSWER = (r) => base({ caller_role: 'family', summary: 'eval', items: [item({ title: 'Add Saturday hours for Mrs Example', area: 'scheduling', urgency: 'this_week' })] })
+  ;[s, j] = await run(h, 'owner', { eval: [{ id: 'e1', call_at: '2026-10-13T15:00:00Z', direction: 'in', seconds: 90, caller: 'Daughter', who: { match: 'none' }, transcript: 'we would like Saturdays', context: { leads: [] } }] })
+  ck('the test bench (owner): a made-up call is read and answered; nothing is stored or read from GoHighLevel', s === 200 && j.results.length === 1 && j.results[0].reading.tasks[0].title === 'Add Saturday hours for Mrs Example' && j.results[0].reading.tasks[0].owner.name
+    && !DB.call_task_reading.length && !GH.calls.length && !DB.writes.length, [s, j, DB.writes])
+  ;[s, j] = await run(h, 'cron', { eval: [{ id: 'e1', call_at: '2026-10-13T15:00:00Z', transcript: 'x' }] })
+  ck('the test bench is the owner\'s only (the schedule is refused)', s === 403, [s, j])
+  globalThis.__EVAL_ANSWER = null
   const src = fs.readFileSync(path.join(F, 'call-tasks/index.ts'), 'utf8')
   ck('the function never sends: no POST to GoHighLevel, no Resend, no texts', !/method:\s*'POST'|resend|\/conversations\/messages'\s*,|sms/i.test(src.replace(/^\/\/.*$/gm, '')))
+  ck('owners come from the Hub (domains, the Staffing seat), handed to clean(); the AI is never asked for a person', /staffingAt\(hub, s\.call_at\)/.test(src) && /from\('domains'\)/.test(src) && !/owner_name|assign to/i.test(JSON.stringify(lib.TOOL)))
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 
 // ── 5. the SQL in a real Postgres ──
@@ -213,9 +215,9 @@ insert into public.person_identity values ('${STEVE}', 'Steve Algiere'), ('00000
 insert into public.phone_index values ('+14175550467', '${STEVE}'), ('+14175550999', '00000000-0000-4000-8000-0000000000aa'), ('+14175550999', '00000000-0000-4000-8000-0000000000bb');
 insert into public.person_source_id values ('${STEVE}', 'client', false), ('${STEVE}', 'caregiver', true);
 insert into public.app_data values ('leads', '[{"id":"L9","first_name":"Lena","last_name":"Lead","phone":"(417) 555-0123"},{"id":"L8","first_name":"Old","last_name":"Gone","phone":"4175550888","archived":true}]');`)
-  const sq = fs.readFileSync('call_tasks_650.sql', 'utf8')
-  await db.exec(sq); await db.exec(sq)
-  ck('PGLITE: 650 installs, and installs again', true)
+  const sq = fs.readFileSync('call_tasks_650.sql', 'utf8'), sq7 = fs.readFileSync('call_tasks_650_v7.sql', 'utf8')
+  await db.exec(sq); await db.exec(sq); await db.exec(sq7); await db.exec(sq7)
+  ck('PGLITE: 650 and v7 install, and install again', true)
   const who = async (p) => (await db.query('select public.call_who($1) as w', [p])).rows[0].w
   let w = await who('+1 (417) 555-0467')
   ck('PGLITE: call_who: Steve\'s number is Steve Algiere, a client (a source still needing review is not counted)', w.match === 'one' && w.person_id === STEVE && w.name === 'Steve Algiere' && JSON.stringify(w.roles) === '["client"]', w)
@@ -225,8 +227,9 @@ insert into public.app_data values ('leads', '[{"id":"L9","first_name":"Lena","l
   const tryQ = async (q, setup = '') => { await db.exec('begin'); try { if (setup) await db.exec(setup); await db.exec(q); return 'ok' } catch (e) { return 'refused: ' + e.message } finally { await db.exec('rollback') } }
   await db.exec(`insert into public.call_task_reading (message_id, version, mode, match, call_type, model, tasks) values ('msg0001','v1','practice','none','other','x','[{"title":"Call Ann"}]')`)
   ck('PGLITE: readings are append-only (update, delete, truncate refused), even for the owner', (await tryQ(`update public.call_task_reading set call_type = 'x'`)).includes('append-only') && (await tryQ('delete from public.call_task_reading')).includes('append-only') && (await tryQ('truncate public.call_task_reading')).includes('append-only'))
-  ck('PGLITE: one reading per call per version; at most three cards', (await tryQ(`insert into public.call_task_reading (message_id, version, mode, match, call_type, model) values ('msg0001','v1','practice','none','other','x')`)).startsWith('refused')
-    && (await tryQ(`insert into public.call_task_reading (message_id, version, mode, match, call_type, model, tasks) values ('msg0002','v1','practice','none','other','x','[1,2,3,4]')`)).startsWith('refused'))
+  ck('PGLITE v7: up to 8 cards fit, 9 do not; detail must be an object', (await tryQ(`insert into public.call_task_reading (message_id, version, mode, match, call_type, model, tasks, detail) values ('msg0008','v1','practice','none','other','x','[1,2,3,4,5,6,7,8]','{"summary":"s"}')`)) === 'ok' && (await tryQ(`insert into public.call_task_reading (message_id, version, mode, match, call_type, model, tasks) values ('msg0009','v1','practice','none','other','x','[1,2,3,4,5,6,7,8,9]')`)).startsWith('refused') && (await tryQ(`insert into public.call_task_reading (message_id, version, mode, match, call_type, model, detail) values ('msg0010','v1','practice','none','other','x','[1]')`)).startsWith('refused'))
+  ck('PGLITE: one reading per call per version', (await tryQ(`insert into public.call_task_reading (message_id, version, mode, match, call_type, model) values ('msg0001','v1','practice','none','other','x')`)).startsWith('refused')
+)
   ck('PGLITE: an office page can read; it cannot write; anon cannot read; pages cannot look up phone numbers', (await tryQ('select * from public.call_task_reading', "set local role authenticated; select set_config('test.uid', '00000000-0000-4000-8000-000000000001', true);")) === 'ok'
     && (await tryQ(`insert into public.call_task_reading (message_id, version, mode, match, call_type, model) values ('msg0003','v1','practice','none','other','x')`, 'set local role authenticated')).includes('permission denied')
     && (await tryQ('select * from public.call_task_reading', 'set local role anon')).includes('permission denied')
