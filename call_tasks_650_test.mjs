@@ -1,8 +1,8 @@
-// 583 · call follow-up cards, practice. Under Node against the REAL call-tasks function and _shared/call-tasks.ts with a
+// 650 · call follow-up cards, practice. Under Node against the REAL call-tasks function and _shared/call-tasks.ts with a
 // stand-in database, GoHighLevel and model: Steve's two calls of 2026-10-11 replayed; nothing written to Work; no
 // transcript, phone or email kept; the request follows the current API (Sonnet 5.5, strict tool, auto choice, fallback).
-//   node call_tasks_583_test.mjs
-//   PGLITE=<path to @electric-sql/pglite/dist/index.js> node call_tasks_583_test.mjs   also runs the 583 SQL in a real Postgres
+//   node call_tasks_650_test.mjs
+//   PGLITE=<path to @electric-sql/pglite/dist/index.js> node call_tasks_650_test.mjs   also runs the 650 SQL in a real Postgres
 import fs from 'fs'; import path from 'path'
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 700)])
 const F = 'supabase/functions'
@@ -156,9 +156,9 @@ insert into public.person_identity values ('${STEVE}', 'Steve Algiere'), ('00000
 insert into public.phone_index values ('+14175550467', '${STEVE}'), ('+14175550999', '00000000-0000-4000-8000-0000000000aa'), ('+14175550999', '00000000-0000-4000-8000-0000000000bb');
 insert into public.person_source_id values ('${STEVE}', 'client', false), ('${STEVE}', 'caregiver', true);
 insert into public.app_data values ('leads', '[{"id":"L9","first_name":"Lena","last_name":"Lead","phone":"(417) 555-0123"},{"id":"L8","first_name":"Old","last_name":"Gone","phone":"4175550888","archived":true}]');`)
-  const sq = fs.readFileSync('call_tasks_583.sql', 'utf8')
+  const sq = fs.readFileSync('call_tasks_650.sql', 'utf8')
   await db.exec(sq); await db.exec(sq)
-  ck('PGLITE: 583 installs, and installs again', true)
+  ck('PGLITE: 650 installs, and installs again', true)
   const who = async (p) => (await db.query('select public.call_who($1) as w', [p])).rows[0].w
   let w = await who('+1 (417) 555-0467')
   ck('PGLITE: call_who: Steve\'s number is Steve Algiere, a client (a source still needing review is not counted)', w.match === 'one' && w.person_id === STEVE && w.name === 'Steve Algiere' && JSON.stringify(w.roles) === '["client"]', w)
@@ -175,7 +175,7 @@ insert into public.app_data values ('leads', '[{"id":"L9","first_name":"Lena","l
     && (await tryQ('select * from public.call_task_reading', 'set local role anon')).includes('permission denied')
     && (await tryQ(`select public.call_who('4175550467')`, 'set local role authenticated')).includes('permission denied'))
   ck('PGLITE: the server can insert and read', (await tryQ(`insert into public.call_task_reading (message_id, version, mode, match, call_type, model) values ('msg0004','v1','practice','none','other','x')`, 'set local role service_role')) === 'ok')
-  await db.exec(fs.readFileSync('call_tasks_583_rollback.sql', 'utf8'))
+  await db.exec(fs.readFileSync('call_tasks_650_rollback.sql', 'utf8'))
   ck('PGLITE: the rollback removes the table and the lookup', (await db.query(`select to_regclass('public.call_task_reading') is null as a, to_regprocedure('public.call_who(text)') is null as b`)).rows[0].a)
 } else console.log('(PGLITE not set: the real-Postgres run of the SQL is skipped)')
 

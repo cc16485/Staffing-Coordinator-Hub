@@ -1,5 +1,5 @@
 -- =============================================================================
--- 583 · CALL FOLLOW-UP CARDS, PRACTICE (slice A, approved 2026-10-12, decisions 1-4)
+-- 650 · CALL FOLLOW-UP CARDS, PRACTICE (slice A, approved 2026-10-12, decisions 1-4)
 -- =============================================================================
 -- The AI employee reads every answered call (call-tasks, every 10 minutes, after call-pull) and writes down the
 -- follow-up cards it WOULD make. In practice nothing reaches Work's Needs Attention: the readings are shown on a
@@ -12,16 +12,16 @@
 --   call_who(phone)     who a phone number belongs to, the same rule as the call record (one person, one lead, or
 --                       nobody; two or more is 'several', never a guess), plus the name and what they are to us.
 -- Append-only. Office roles read; the server writes; nobody changes or deletes a row. Sends nothing.
--- One transaction. Safe to run again. Rollback: call_tasks_583_rollback.sql.
+-- One transaction. Safe to run again. Rollback: call_tasks_650_rollback.sql.
 -- =============================================================================
 begin;
 
 do $pre$
 begin
-  if to_regclass('public.call_pull_seen') is null then raise exception '583 refused: call_pull_seen is missing (372). Nothing was changed.'; end if;
+  if to_regclass('public.call_pull_seen') is null then raise exception '650 refused: call_pull_seen is missing (372). Nothing was changed.'; end if;
   if to_regclass('public.phone_index') is null or to_regclass('public.person_identity') is null then
-    raise exception '583 refused: the identity layer (phone_index, person_identity) is missing. Nothing was changed.'; end if;
-  if to_regprocedure('public.hub_office_ok()') is null then raise exception '583 refused: hub_office_ok() is missing (578). Nothing was changed.'; end if;
+    raise exception '650 refused: the identity layer (phone_index, person_identity) is missing. Nothing was changed.'; end if;
+  if to_regprocedure('public.hub_office_ok()') is null then raise exception '650 refused: hub_office_ok() is missing (578). Nothing was changed.'; end if;
 end $pre$;
 
 create table if not exists public.call_task_reading (
@@ -47,12 +47,12 @@ create table if not exists public.call_task_reading (
   error          text check (error is null or length(error) <= 300),
   unique (message_id, version)
 );
-comment on table public.call_task_reading is '583 · what the AI employee read in each call and the follow-up cards it would make (practice) or made (live). No transcript, phone or email.';
+comment on table public.call_task_reading is '650 · what the AI employee read in each call and the follow-up cards it would make (practice) or made (live). No transcript, phone or email.';
 create index if not exists call_task_reading_call_ix on public.call_task_reading (call_at desc);
 create index if not exists call_task_reading_person_ix on public.call_task_reading (person_id, call_at desc) where person_id is not null;
 
 create or replace function public.call_task_reading_keep() returns trigger language plpgsql as $$
-begin raise exception 'call_task_reading is append-only: % is not allowed (583)', tg_op using errcode = 'P0001'; end $$;
+begin raise exception 'call_task_reading is append-only: % is not allowed (650)', tg_op using errcode = 'P0001'; end $$;
 drop trigger if exists call_task_reading_keep_row on public.call_task_reading;
 create trigger call_task_reading_keep_row before update or delete on public.call_task_reading for each row execute function public.call_task_reading_keep();
 drop trigger if exists call_task_reading_keep_table on public.call_task_reading;
@@ -101,14 +101,14 @@ revoke all on function public.call_task_reading_keep() from public, anon, authen
 
 do $v$
 begin
-  if not (select relrowsecurity from pg_class where oid = 'public.call_task_reading'::regclass) then raise exception '583 self-check: row security is off'; end if;
+  if not (select relrowsecurity from pg_class where oid = 'public.call_task_reading'::regclass) then raise exception '650 self-check: row security is off'; end if;
   if exists (select 1 from information_schema.role_table_grants where table_schema = 'public' and table_name = 'call_task_reading'
               and (grantee in ('anon', 'PUBLIC') or (grantee = 'authenticated' and privilege_type <> 'SELECT')
                    or (grantee = 'service_role' and privilege_type not in ('SELECT', 'INSERT')))) then
-    raise exception '583 self-check: someone could change the readings, or anon could read them';
+    raise exception '650 self-check: someone could change the readings, or anon could read them';
   end if;
-  if has_function_privilege('authenticated', 'public.call_who(text)', 'execute') then raise exception '583 self-check: pages could look up phone numbers'; end if;
-  raise notice '583 installed: the call follow-up readings (practice)';
+  if has_function_privilege('authenticated', 'public.call_who(text)', 'execute') then raise exception '650 self-check: pages could look up phone numbers'; end if;
+  raise notice '650 installed: the call follow-up readings (practice)';
 end $v$;
 
 commit;

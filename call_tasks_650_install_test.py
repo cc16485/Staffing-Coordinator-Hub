@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Rehearsal of 583 (call_tasks_583.py) against a FAKE Supabase (management API, the function, REST) and a FAKE supabase
-# CLI. Never touches a real project.   python3 call_tasks_583_install_test.py
+# Rehearsal of 650 (call_tasks_650.py) against a FAKE Supabase (management API, the function, REST) and a FAKE supabase
+# CLI. Never touches a real project.   python3 call_tasks_650_install_test.py
 import json, os, re, subprocess, tempfile, threading, http.server, hashlib, shutil
 HERE = os.path.dirname(os.path.abspath(__file__))
 sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
@@ -34,8 +34,8 @@ class H(http.server.BaseHTTPRequestHandler):
             r = M["runs"].pop(0) if M["runs"] else {"read": 0, "cards": 0, "errors": 0}
             return self._send(200, dict(ok=True, **r))
         q = body["query"]; S["sql"].append(q)
-        if q.lstrip().startswith("-- ====") and "583 · CALL FOLLOW-UP CARDS" in q:
-            return self._send(400, {"message": "ERROR: 583 refused"}) if M["install"] == "fail" else self._send(201, [])
+        if q.lstrip().startswith("-- ====") and "650 · CALL FOLLOW-UP CARDS" in q:
+            return self._send(400, {"message": "ERROR: 650 refused"}) if M["install"] == "fail" else self._send(201, [])
         if "vault.decrypted_secrets where name" in q and "count(*)" in q: return self._send(200, [{"n": M["vault"]}])
         if "to_regclass('public.call_pull_seen')" in q: return self._send(200, [{"seen": M["pre"], "ident": True, "office": True, "recent": 7, "already": False}])
         if q.startswith("update public.app_data set data = data || jsonb_build_object('call_tasks_practice'"): return self._send(200, [{"p": "true", "s": "2026-10-09T15:00:00Z", "live": None}])
@@ -52,7 +52,7 @@ class H(http.server.BaseHTTPRequestHandler):
         return self._send(400, {"message": "unexpected query " + q[:120]})
 srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H); threading.Thread(target=srv.serve_forever, daemon=True).start()
 URL = f"http://127.0.0.1:{srv.server_address[1]}"
-tmp = tempfile.mkdtemp(prefix="t583-")
+tmp = tempfile.mkdtemp(prefix="t650-")
 FAKEBIN = os.path.join(tmp, "bin"); os.makedirs(FAKEBIN); LOG = os.path.join(tmp, "cli.log")
 open(os.path.join(FAKEBIN, "node"), "w").write("#!/bin/sh\necho '39/39 passed'\n")
 open(os.path.join(FAKEBIN, "supabase"), "w").write(f"""#!/usr/bin/env python3
@@ -66,21 +66,21 @@ sys.exit(1)
 for f in ("node", "supabase"): os.chmod(os.path.join(FAKEBIN, f), 0o755)
 FN = ["call-tasks/index.ts", "_shared/call-tasks.ts", "_shared/job-auth.ts", "_shared/staff-auth.ts"]
 FNSHAS = {f: sha(os.path.join(HERE, "supabase/functions", f)) for f in FN}
-SQLSHAS = {f: sha(os.path.join(HERE, f)) for f in ("call_tasks_583.sql", "call_tasks_583_rollback.sql")}
+SQLSHAS = {f: sha(os.path.join(HERE, f)) for f in ("call_tasks_650.sql", "call_tasks_650_rollback.sql")}
 def run(env_over=None, **mode):
     reset(**mode); rep = os.path.join(tmp, "r.txt")
     if os.path.exists(LOG): os.remove(LOG)
     env = dict(os.environ, PATH=FAKEBIN + ":/usr/bin:/bin", SB_TOKEN="sbp_test", SB_REPORT=rep, SB_API_BASE=URL, SB_FN_BASE=URL, SB_SUPA_CLI=os.path.join(FAKEBIN, "supabase"),
                SB_FNROOT=os.path.join(HERE, "supabase/functions"), SB_SETTLE="0", SB_POLL="0", SB_FN_SHAS=json.dumps(FNSHAS), SB_SQL_SHAS=json.dumps(SQLSHAS), PYTHONPATH=HERE)
     env.update(env_over or {})
-    p = subprocess.run(["python3", os.path.join(HERE, "call_tasks_583.py")], env=env, capture_output=True, text=True, timeout=120)
+    p = subprocess.run(["python3", os.path.join(HERE, "call_tasks_650.py")], env=env, capture_output=True, text=True, timeout=120)
     return p.returncode, (open(rep).read() if os.path.exists(rep) else p.stdout + p.stderr)
-installed = lambda: any(q.lstrip().startswith("-- ====") and "583 · CALL FOLLOW-UP CARDS" in q for q in S["sql"])
+installed = lambda: any(q.lstrip().startswith("-- ====") and "650 · CALL FOLLOW-UP CARDS" in q for q in S["sql"])
 cli = lambda: open(LOG).read() if os.path.exists(LOG) else ""
 c, out = run()
 ck("happy path: exit 0, RESULT: DONE", c == 0 and "RESULT: DONE" in out, out)
 ck("order: table, then the reader deployed (call-pull's gateway setting kept), then practice on and the schedule", installed() and "functions deploy call-tasks" in cli() and "--no-verify-jwt" not in cli()
-   and [i for i, q in enumerate(S["sql"]) if "583 · CALL FOLLOW-UP CARDS" in q][0] < [i for i, q in enumerate(S["sql"]) if "call_tasks_practice', true" in q][0], cli())
+   and [i for i, q in enumerate(S["sql"]) if "650 · CALL FOLLOW-UP CARDS" in q][0] < [i for i, q in enumerate(S["sql"]) if "call_tasks_practice', true" in q][0], cli())
 ck("practice is turned on and cards in Work stay off; the schedule is 5 minutes after call-pull", "practice reading is ON" in out and "Cards in Work: OFF" in out and "5 minutes after call-pull" in out, out)
 ck("proofs: public key refused, schedule gets in", "refuses the public key (401)" in out and "its schedule gets in" in out, out)
 ck("the first reading runs as the owner, 6 calls a run, until nothing is left", [b for _, _, b in S["posts"] if b.get("limit")] == [{"limit": 6}] * 2 and all(a == "Bearer eyJsvcKEY" for p_, a, b in S["posts"] if b.get("limit")), S["posts"])

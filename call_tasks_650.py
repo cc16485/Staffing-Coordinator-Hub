@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# 583 · CALL FOLLOW-UP CARDS, PRACTICE (slice A; Samantha approved 2026-10-12, "yes to all four, build"). Hub project.
+# 650 · CALL FOLLOW-UP CARDS, PRACTICE (slice A; Samantha approved 2026-10-12, "yes to all four, build"). Hub project.
 #   PART 1 (read only): the reviewed build (fingerprints), the tests on her Mac, the secrets and the vault secret the
 #     reader needs, the pieces it stands on (call_pull_seen, the identity layer, the office test), call-pull's gateway.
-#   PART 2 (one transaction): call_tasks_583.sql: the readings table (append-only, office read) and call_who().
+#   PART 2 (one transaction): call_tasks_650.sql: the readings table (append-only, office read) and call_who().
 #   PART 3: call-tasks deployed, fingerprint-checked, with call-pull's gateway setting.
 #   PART 4: practice ON (ops_settings.call_tasks_practice, the Owners Hub switch), reading from 3 days ago, and the
 #     10-minute schedule (5 minutes after call-pull) with the jobs' vault secret.
@@ -10,7 +10,7 @@
 #     would have made is listed below; NOTHING was added to Work; no transcript, phone or email is kept.
 # Nothing is sent to anyone. No card is made. Each call read costs a few cents (Claude Sonnet 5.5).
 import os, json, re, shutil, subprocess, time, datetime as dt
-os.environ.setdefault("SB_STEP", "583")
+os.environ.setdefault("SB_STEP", "650")
 from cc_step_lib import *
 REF = "zngsgedlsxinbygwmxwn"; BASE = os.environ.get("SB_FN_BASE", f"https://{REF}.supabase.co")
 JOB = "call-tasks"; SCHEDULE = "5-59/10 * * * *"; VAULT = "hub_job_secret"
@@ -32,10 +32,10 @@ for f, want in json.loads(os.environ.get("SB_SQL_SHAS", "{}")).items():
 if fails or not os.environ.get("SB_SQL_SHAS"): say("  RESULT: STOPPED before anything changed."); done(2)
 NODE = shutil.which("node") or next((p for p in ("/opt/homebrew/bin/node", "/usr/local/bin/node") if os.path.exists(p)), "")
 if NODE:
-    p = subprocess.run([NODE, "call_tasks_583_test.mjs"], cwd=ROOT, capture_output=True, text=True)
+    p = subprocess.run([NODE, "call_tasks_650_test.mjs"], cwd=ROOT, capture_output=True, text=True)
     last = (p.stdout.strip().splitlines() or ["(no output)"])[-1]
-    if p.returncode != 0 or re.search(r"^FAIL", p.stdout, re.M): bad(f"call_tasks_583_test.mjs failed: {last}"); say("  STOP. Nothing was changed."); done(2)
-    say(f"  ✓ call_tasks_583_test.mjs: {last.strip()}")
+    if p.returncode != 0 or re.search(r"^FAIL", p.stdout, re.M): bad(f"call_tasks_650_test.mjs failed: {last}"); say("  STOP. Nothing was changed."); done(2)
+    say(f"  ✓ call_tasks_650_test.mjs: {last.strip()}")
 else: say("  · node is not on this Mac, so the tests were not re-run here (they passed when built)")
 s_, b_ = http("GET", f"{API}/v1/projects/{REF}/secrets", headers=MG())
 names = {x.get("name") for x in (jl(b_) if s_ == 200 and isinstance(jl(b_), list) else [])}
@@ -49,7 +49,7 @@ ok_, pre = sql(REF, "select to_regclass('public.call_pull_seen') is not null as 
                "to_regclass('public.call_task_reading') is not null as already")
 pre = pre[0] if ok_ and pre else {}
 (say if pre.get("seen") and pre.get("ident") and pre.get("office") else bad)(("  ✓ the calls the Hub already fetched, the identity layer and the office test are there" ) if pre.get("seen") and pre.get("ident") and pre.get("office") else f"a piece it stands on is missing: {pre}")
-say(f"  · answered calls in the last 3 days, ready to read: {pre.get('recent', '?')}" + ("; 583 ran before (running it again is safe)" if pre.get("already") else ""))
+say(f"  · answered calls in the last 3 days, ready to read: {pre.get('recent', '?')}" + ("; 650 ran before (running it again is safe)" if pre.get("already") else ""))
 ok_, lv = sql(REF, "select data->>'call_tasks_live' as live from public.app_data where key = 'ops_settings'")
 if ok_ and lv and lv[0]["live"] == "true": bad("call_tasks_live is on, but nothing reads it yet; it should be off until slice C (turn it off, then run this again)")
 sP, mP = fmeta(REF, "call-pull")
@@ -58,7 +58,7 @@ VJ = (mP or {}).get("verify_jwt")
 if fails: say(); say("  RESULT: STOPPED before anything changed. Tell Claude which line."); done(3)
 
 say(); say("PART 2 · CHANGE (one transaction)")
-okr, r_ = sql(REF, open(os.path.join(ROOT, "call_tasks_583.sql")).read())
+okr, r_ = sql(REF, open(os.path.join(ROOT, "call_tasks_650.sql")).read())
 if not okr: bad(f"the readings table could not be installed (one transaction, so nothing changed): {str(r_)[:300]}"); say("  RESULT: STOPPED. Tell Claude."); done(5)
 say("  ✓ the readings table (append-only, office read) and the number lookup are in place")
 
@@ -125,5 +125,5 @@ g = sC != 200 or bC.strip() in ("[]", "")
 say()
 if fails: say("RESULT: CHECK THE ✗ LINES ABOVE"); done(9)
 say("RESULT: DONE · practice is on. Open the Hub, My Work, \"Call follow-ups (practice)\" (once the Hub update is live) to compare the AI's cards with the ones people made. After a week, tell Claude what you see.")
-say("Rollback (only if ever needed): turn practice off on the Owners Hub Admin page (Calls), Claude unschedules call-tasks, then call_tasks_583_rollback.sql.")
+say("Rollback (only if ever needed): turn practice off on the Owners Hub Admin page (Calls), Claude unschedules call-tasks, then call_tasks_650_rollback.sql.")
 done(0)
