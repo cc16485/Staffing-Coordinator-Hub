@@ -49,7 +49,8 @@ import { axVisitsReader, chiDay, standing, upcomingByCaregiver } from '../_share
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  // 2026-10-12: x-cc-via + x-cc-employee too. The Hub's callAction sends x-cc-via, and without it the browser blocked every call (card said "Failed to fetch").
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cc-via, x-cc-employee',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })

@@ -56,6 +56,7 @@ try {
   const save = (x = {}, jwt = 'kr') => call({ action: 'save', ax: '900', client_first: 'Dan', about: 'On hospice. Call hospice first.', items: [{ topic: 'turning', notes: 'Every 2 hours, left, back, right.' }], ready: true, base_version: null, ...x }, jwt)
 
   reset(); let r = await call(null, null, 'OPTIONS'); ck('browser preflight answered with CORS headers', r.h.get('access-control-allow-origin') === '*')
+  ck('preflight allows the headers the Hub\'s callAction sends (x-cc-via), or every Hub call fails to fetch', /\bx-cc-via\b/.test(r.h.get('access-control-allow-headers') || '') && /\bauthorization\b/.test(r.h.get('access-control-allow-headers') || ''))
   reset(); r = await call({ action: 'get', ax: '900' }, null); ck('office action with no sign-in: refused (401)', r.status === 401, r)
   reset(); r = await call({ action: 'get', ax: '900' }, 'cg'); ck('a caregiver account (no office role): refused (403)', r.status === 403, r)
   reset(); r = await call({ action: 'get' }); ck('no client named: refused', r.status === 400, r)
