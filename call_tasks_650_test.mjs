@@ -144,7 +144,7 @@ try {
   ;[s, j] = await run(h, 'cron', { message_ids: ['oldcall0001'] })
   ck('the schedule cannot name calls (only the owner can)', DB.call_task_reading.every((r) => r.message_id !== 'oldcall0001'), DB.call_task_reading)
   // ── 5. v2: the Hub's own call-off and clock-in systems are given to the reader, and a duplicate card is dropped ──
-  ck('v3: the reader version moved on, so every call is read again with the new rule', lib.VERSION === 'v3-2026-10-12')
+  ck('v4: the reader version moved on, so every call is read again with the new rule', lib.VERSION === 'v4-2026-10-12')
   const OPS = [{ id: 'tk', about: 'Dixie Kuhn', status: 'done', created_by: 'timekeeper-watch', created_at: '2026-10-10T13:06:00Z', title: 'Resolved: Dixie Kuhn, LeeAnn 8am (missed clock-in)' },
     { id: 'cr', about: 'Dixie Kuhn', status: 'done', created_by: 'coverage-reply', created_at: '2026-10-10T13:09:00Z', title: 'Dixie Kuhn has a question about the Dan Probstfield callout' },
     { id: 'old', about: 'Dixie Kuhn', status: 'done', created_by: 'x', created_at: '2026-10-08T13:09:00Z', title: 'Too old' },
@@ -176,6 +176,12 @@ try {
   ck('v3 retry: the text answer goes back unchanged (thinking block included), then one plain ask to call the tool', rr.messages.length === 3 && rr.messages[1].role === 'assistant' && rr.messages[1].content[0].type === 'thinking' && /calling submit_followups now/.test(rr.messages[2].content) && rr.model === 'm')
   ck('the function hands the Hub\'s cards, call-off cases and clock-in cases to the reader', /relatedOf\(String\(who\.name \|\| ''\), s\.call_at, ops, byKey\.coverage_cases \|\| \[\], byKey\.timekeeper_cases \|\| \[\]\)/.test(fs.readFileSync(path.join(F, 'call-tasks/index.ts'), 'utf8'))
     && /clean\(got\.input, open, earlier, related\)/.test(fs.readFileSync(path.join(F, 'call-tasks/index.ts'), 'utf8')))
+  const SAM = [{ id: 'ops_mv4nasn0', about: 'Steve Algiere', status: 'open', created_by: 'Samantha Troutman', created_at: '2026-10-12T02:41:02Z', title: 'Schedule Angiel for 2-3 hours with Steve' },
+    { id: 'early', about: 'Steve Algiere', status: 'open', created_by: 'x', created_at: '2026-10-11T23:50:00Z', title: 'Made 13 minutes after' }]
+  const oc4 = lib.openCards('Steve Algiere', '2026-10-11T23:37:00Z', SAM, new Set(['done']))
+  ck('v4: a replay sees only cards made within 20 minutes of the call (your 9:41 pm card is not shown to the 6:37 pm reading; a card 13 minutes after is)', oc4.map((o) => o.id).join() === 'early', oc4)
+  ck('v4: the Hub records it is told about stop at 20 minutes after the call too', lib.related('Steve Algiere', '2026-10-11T23:37:00Z', SAM, [], []).length === 1 && /Made 13 minutes after/.test(lib.related('Steve Algiere', '2026-10-11T23:37:00Z', SAM, [], [])[0].line))
+  ck('v4: the function uses openCards (live view) for open cards', /const open: OpenCard\[\] = openCards\(name, s\.call_at, ops, DONE\)/.test(fs.readFileSync(path.join(F, 'call-tasks/index.ts'), 'utf8')))
   const src = fs.readFileSync(path.join(F, 'call-tasks/index.ts'), 'utf8')
   ck('the function never sends: no POST to GoHighLevel, no Resend, no texts', !/method:\s*'POST'|resend|\/conversations\/messages'\s*,|sms/i.test(src.replace(/^\/\/.*$/gm, '')))
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
