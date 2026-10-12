@@ -30,6 +30,7 @@ import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { contactForOutbound, maySendTo, normalisePhone } from '../_shared/outreach.ts'
 import { optOutCheck } from '../_shared/optout.ts'
 import { opEvent } from '../_shared/events.ts'
+import { shiftAskBlock } from '../_shared/shift-ask-gate.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -73,6 +74,18 @@ export function cellIsTheirs(cell: Any, axId: string, name: string): boolean {
   if (!cell || !cell.name) return false
   if (axId && cell.cg_ax_id) return String(cell.cg_ax_id) === axId
   return nameKey(cell.name) === nameKey(name)
+}
+
+/* Whose Do Not Return list applies: the linked Journey's person when there is one, else the name typed on the plan. */
+async function clientNameOf(sb: Any, plan: Any): Promise<string> {
+  try {
+    const { data: link } = await sb.from('team_build_link_current').select('episode_id').eq('plan_id', plan.id).maybeSingle()
+    if (link?.episode_id) {
+      const { data: ep } = await sb.from('journey_episode').select('person_id').eq('episode_id', link.episode_id).maybeSingle()
+      if (ep?.person_id) { const { data: pi } = await sb.from('person_identity').select('display_name').eq('id', ep.person_id).maybeSingle(); if (pi?.display_name) return String(pi.display_name) }
+    }
+  } catch { /* the typed name is the fallback */ }
+  return String(plan.client || '')
 }
 
 async function readPlans(sb: Any): Promise<Any[]> {
@@ -137,8 +150,10 @@ Deno.serve(async (req) => {
       const v = await optOutCheck(sb, { channel: 'sms', phone, viaGhl: false })
       optedOut = v.allowed ? [] : v.reasons
     }
+    /* step 3 (2026-10-12): the same checks Cara's picker makes, shown before anyone writes a text */
+    const blocked = await shiftAskBlock(sb, { cg, name: cgName, axId, client: await clientNameOf(sb, plan), roster })
     return json({
-      live,
+      live, blocked,
       caregiver: { first: first(cg ? cg.first || cgName : cgName), on_roster: !!cg, phone_last4: phone ? phone.slice(-4) : null, opt_out: optedOut },
       client: { first: clientFirst, town: plan.city || null, start_target: target, care_line: care, linked: !!link?.episode_id },
       template: String(st.team_ask_msg || '') || DEFAULT_TEMPLATE,
@@ -171,6 +186,14 @@ Deno.serve(async (req) => {
   if (!cg) return json({ outcome: 'no_phone', error: `${cgName || 'This caregiver'} is not on the roster by AxisCare id or a unique name, so there is no number to text.` }, 422)
   if (!phone) return json({ outcome: 'no_phone', error: `${cgName} has no usable phone number on the roster.` }, 422)
 
+  /* step 3 (2026-10-12): Cara's checks, on the server, before anything goes: No shift texts, this client's Do Not
+     Return list, active in AxisCare, new-hire readiness (fails closed). */
+  const blocked = await shiftAskBlock(sb, { cg, name: cgName, axId, client: await clientNameOf(sb, plan), roster })
+  if (blocked) {
+    await opEvent(sb, { verb: 'team_ask_refused', actor_name: who.name, actor_email: who.email, item_id: planId, area: 'scheduling',
+      summary: `Text to ${cgName} not sent`, data: { plan_id: planId, caregiver_axiscare_id: axId || null, cells, why: blocked } })
+    return json({ outcome: 'refused', error: `Not sent: ${blocked}. Nothing was marked as asked.` }, 422)
+  }
   const ghl = { token: Deno.env.get('GHL_TOKEN') || Deno.env.get('GHL_API_KEY') || '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
   if (!ghl.token || !ghl.locationId) return json({ error: 'GoHighLevel is not configured. Nothing was sent.' }, 502)
   // the number's provenance, read first only so a refusal can say which check said no
