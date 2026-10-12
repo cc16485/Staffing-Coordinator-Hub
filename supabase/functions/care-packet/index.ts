@@ -19,6 +19,8 @@
 //     'link'       {packet_id, caregiver_axiscare_id} -> that caregiver's personal link (the packet must be ready and
 //                  the caregiver on the roster by AxisCare id). NOTHING is texted here: in Step 1 the office copies it.
 //     'topic_save' {key, title, notes, videos:[{title, url, publisher?, minutes?}]} -> owner only: the how-to library.
+//     'upcoming'   {packet_id} -> Step 3: each caregiver with a visit with this client in the next 14 days (AxisCare, read
+//                  live) and where they stand: confirmed / older version / texted / link only / none. Reads only.
 //     STEP 2 (Samantha "build step 2", 2026-10-12; Cara never texts on her own, so a person presses Send every time):
 //     'send_draft' {packet_id, caregiver_axiscare_id} -> the exact text (link shown as "(their link)"), which kind (first /
 //                  reminder / updated, or none: they already confirmed), phone last 4, opt-out, evening warning. Reads only.
@@ -38,6 +40,7 @@ import { checkLink, linkExpiry, makeLink, newRecipientId } from '../_shared/pack
 import { contactForOutbound, maySendTo, normalisePhone } from '../_shared/outreach.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { withStop } from '../_shared/text-consent.ts'
+import { axVisitsReader, chiDay, standing, upcomingByCaregiver } from '../_shared/packet-visits.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -48,7 +51,7 @@ const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: 
 // deno-lint-ignore no-explicit-any
 type Any = any
 
-export const MAX_ABOUT = 2000, MAX_NOTES = 2000, MAX_ITEMS = 12, MAX_VIDEOS = 8
+export const MAX_ABOUT = 2000, MAX_NOTES = 2000, MAX_ITEMS = 12, MAX_VIDEOS = 8, UPCOMING_DAYS = 14
 export const BAD_LINK = 'This link is not valid or has expired. Please call the office at (417) 234-8494 for a new one.'
 
 /* Samantha: never an em dash in anything a person reads. */
@@ -218,6 +221,22 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
       if (!clientKey(ax, lead)) return json({ error: 'Which client?' }, 400)
       const p = await findPacket(sb, ax, lead)
       return json({ packet: p, topics: await topics(sb), recipients: p ? await recipients(sb, p.id) : [] })
+    }
+
+    /* Step 3: who is coming up with this client in the next 14 days (AxisCare, read live, nothing stored), and where each
+       stands on the packet. A client not in AxisCare yet, or AxisCare not answering, says so (never "nobody"). */
+    if (action === 'upcoming') {
+      const pid = String(b.packet_id ?? '')
+      if (!/^[0-9a-f-]{36}$/i.test(pid)) return json({ error: 'Which packet?' }, 400)
+      const { data: pp, error: e1 } = await sb.from('care_packets').select('*').eq('id', pid).limit(1)
+      if (e1) throw e1
+      const p = pp?.[0]
+      if (!p) return json({ error: 'That packet is gone. Reload.' }, 404)
+      if (!p.axiscare_client_id) return json({ outcome: 'not_in_axiscare', upcoming: [] })
+      const visits = await axVisitsReader()(String(p.axiscare_client_id), chiDay(0), chiDay(UPCOMING_DAYS))
+      if (!visits) return json({ outcome: 'unreadable', error: 'AxisCare did not answer, so the schedule could not be checked. Try again in a minute.', upcoming: [] })
+      const recs = await recipients(sb, p.id), byAx = new Map(recs.map((r: Any) => [String(r.caregiver_axiscare_id), r]))
+      return json({ outcome: 'ok', days: UPCOMING_DAYS, upcoming: upcomingByCaregiver(visits, String(p.axiscare_client_id)).map((u) => ({ ...u, standing: standing(byAx.get(u.caregiver_axiscare_id), p.version) })) })
     }
 
     if (action === 'save') {

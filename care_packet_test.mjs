@@ -3,7 +3,7 @@
 import fs from 'fs'; import path from 'path'
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 700)])
 const SECRET = 'x'.repeat(40)
-let T, EVENTS, FAIL, SENT, GHL_FAIL, CALLS
+let T, EVENTS, FAIL, SENT, GHL_FAIL, CALLS, VISITS = [], AX_FAIL = false
 const TOPICS = () => [
   { key: 'turning', title: 'Turning and repositioning', notes: 'Turn every 2 hours.', active: true, videos: [{ title: 'Lie on the side', url: 'https://www.youtube.com/watch?v=6M5_eTPUWpo', publisher: 'The Hospice Care Plan', minutes: 5 }] },
   { key: 'purewick_male', title: 'PureWick (male)', notes: 'Check it every 2 hours.', active: true, videos: [{ title: 'PureWick Male in-service', url: 'https://vimeo.com/968970613', publisher: 'BD', minutes: 6 }, { title: 'IFU', url: 'https://example.com/ifu.pdf' }] },
@@ -34,10 +34,11 @@ const q = (t) => { const st = { f: [], op: 'select', row: null, sel: false }; co
 globalThis.__db = { from: q, rpc: async (fn, a) => { if (fn === 'upsert_app_data_item') { const row = T.app_data.find((r) => r.key === a.target_key); const i = row.data.findIndex((x) => x.id === a.item.id); if (i >= 0) row.data[i] = a.item; else row.data.push(a.item) } return { data: null, error: null } },
   auth: { getUser: async (jwt) => ({ kr: 'u-kr', sa: 'u-sa', cg: 'u-cg' })[jwt] ? { data: { user: { id: ({ kr: 'u-kr', sa: 'u-sa', cg: 'u-cg' })[jwt], email: jwt + '@mo-care.com', app_metadata: {} } }, error: null } : { data: { user: null }, error: { message: 'bad' } } } }
 globalThis.fetch = async (url, o) => { url = String(url); CALLS.push(url); const body = o && o.body ? JSON.parse(o.body) : {}
+  if (url.includes('axiscare.com/api/visits')) return AX_FAIL ? new Response('{}', { status: 500 }) : new Response(JSON.stringify({ results: { visits: VISITS, nextPage: null } }), { status: 200 })
   if (url.includes('/contacts/upsert')) return new Response(JSON.stringify({ contact: { id: 'C:' + body.phone, dnd: false } }), { status: 200 })
   if (url.includes('/conversations/messages')) { if (GHL_FAIL) return new Response('{"message":"nope"}', { status: 500 }); SENT.push({ to: body.contactId, text: body.message }); return new Response('{}', { status: 200 }) }
   return new Response('{}', { status: 404 }) }
-const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'k', HUB_JOB_SECRET: SECRET, GHL_TOKEN: 'g', GHL_LOCATION_ID: 'loc' }
+const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'k', HUB_JOB_SECRET: SECRET, GHL_TOKEN: 'g', GHL_LOCATION_ID: 'loc', AXISCARE_TOKEN: 'ax', AXISCARE_SITE: '16485' }
 let handler; globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (h) => { handler = h } }
 const F = 'supabase/functions', tmp = fs.mkdtempSync(path.join(process.cwd(), '_cpk_'))
 try {
@@ -166,6 +167,27 @@ try {
   ck('GoHighLevel refuses: "not sent", a Needs Attention card names the packet text and Ariel, her row not marked as texted',
     r.j.outcome === 'failed' && card && /caregiver packet text/.test(card.title) && /Ariel Smith/.test(card.title) && !T.care_packet_recipients[0].last_sent_at, { r: r.j, card, rec: T.care_packet_recipients[0] })
   ck('the office evening line: 8am to 8pm Central', M.inOfficeTextHours(new Date('2026-10-12T14:00:00Z')) && !M.inOfficeTextHours(new Date('2026-10-13T02:30:00Z')) && !M.inOfficeTextHours(new Date('2026-10-12T12:30:00Z')))
+
+
+  // ---------------- Step 3: who is coming up ----------------
+  const soon = (h) => new Date(Date.now() + h * 3600000).toISOString()
+  let pid3 = await ready()
+  VISITS = [{ id: 1, client: { id: '900' }, caregiver: { id: '11', firstName: 'Ariel', lastName: 'Smith' }, scheduledStartDate: soon(30) },
+            { id: 2, client: { id: '900' }, caregiver: { id: '11', firstName: 'Ariel', lastName: 'Smith' }, scheduledStartDate: soon(6) },
+            { id: 3, client: { id: '900' }, caregiver: { id: '12', firstName: 'Bea', lastName: 'Jones' }, scheduledStartDate: soon(50) },
+            { id: 4, client: { id: '900' }, caregiver: { id: '13', firstName: 'Past', lastName: 'Visit' }, scheduledStartDate: soon(-2) },
+            { id: 5, client: { id: '900' }, caregiver: null, scheduledStartDate: soon(10) },
+            { id: 6, client: { id: '900' }, caregiver: { id: '14', firstName: 'Gone', lastName: 'Removed' }, scheduledStartDate: soon(12), removed: true }]
+  r = await call({ action: 'upcoming', packet_id: pid3 }, null); ck('upcoming without sign-in: refused', r.status === 401, r)
+  r = await call({ action: 'upcoming', packet_id: pid3 })
+  ck('upcoming: each caregiver once with their NEXT visit, soonest first; past, removed and open shifts left out; nobody sent anything yet',
+    r.j.outcome === 'ok' && r.j.upcoming.map((u) => u.caregiver_name).join() === 'Ariel Smith,Bea Jones' && r.j.upcoming[0].next_start === new Date(Date.parse(VISITS[1].scheduledStartDate)).toISOString() && r.j.upcoming.every((u) => u.standing === 'none'), r.j)
+  await sendTo(pid3, '11', 'send-0101-abcd')
+  r = await call({ action: 'upcoming', packet_id: pid3 }); ck('after the text: Ariel shows "texted"', r.j.upcoming[0].standing === 'texted', r.j)
+  AX_FAIL = true; r = await call({ action: 'upcoming', packet_id: pid3 }); AX_FAIL = false
+  ck('AxisCare not answering: says so (never "nobody is coming")', r.j.outcome === 'unreadable' && /AxisCare did not answer/.test(r.j.error), r.j)
+  reset(); await call({ action: 'save', lead_id: 'L9', client_first: 'Lee', about: '', items: [{ topic: 'turning', notes: '' }], ready: true, base_version: null })
+  r = await call({ action: 'upcoming', packet_id: T.care_packets[0].id }); ck('a lead not yet in AxisCare: "not in AxisCare", AxisCare never asked', r.j.outcome === 'not_in_axiscare' && !CALLS.some((u) => u.includes('axiscare')), r.j)
 
   // helpers
   ck('YouTube ids from watch, youtu.be and shorts links; anything else no player', M.youtubeId('https://youtu.be/6M5_eTPUWpo') === '6M5_eTPUWpo' && M.youtubeId('https://www.youtube.com/shorts/6M5_eTPUWpo') === '6M5_eTPUWpo' && M.youtubeId('https://evil.com/watch?v=6M5_eTPUWpo') === null)
