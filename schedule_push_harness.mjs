@@ -1,6 +1,7 @@
 // Change 4 · schedule-push under Node: real function code, fake database, fake AxisCare (one record per day,
 // caregiver by name, inactive clients hidden). node schedule_push_harness.mjs supabase/functions/schedule-push/index.ts
 import fs from 'fs'; import path from 'path';
+if (!process.argv[2]) process.argv[2] = 'supabase/functions/schedule-push/index.ts';   // plain `node schedule_push_harness.mjs` runs the real function
 const FN = process.argv[2];
 const src = fs.readFileSync(FN, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = globalThis.__fakeCreateClient');
 const tmp = path.join(process.cwd(), '_schedule_push_under_test.ts'); fs.writeFileSync(tmp, src);

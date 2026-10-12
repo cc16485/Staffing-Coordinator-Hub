@@ -1,7 +1,7 @@
 // Change 2 · client-convert under Node: the field mapping, and the real function against a fake AxisCare + fake database.
 // node client_convert_harness.mjs supabase/functions/client-convert/index.ts
 import fs from 'fs'; import path from 'path';
-const FN = process.argv[2];
+const FN = process.argv[2] || 'supabase/functions/client-convert/index.ts';   // default so plain `node <file>` runs
 const src = fs.readFileSync(FN, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = globalThis.__fakeCreateClient');
 const tmp = path.join(process.cwd(), '_client_convert_under_test.ts'); fs.writeFileSync(tmp, src);
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note).slice(0, 800)]);

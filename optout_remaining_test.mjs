@@ -48,7 +48,9 @@ fs.writeFileSync(path.join(tmp, 'ht-optout-gate.ts'), fs.readFileSync(path.join(
 const load = async (dir, name) => { let s = noCC(fs.readFileSync(path.join(dir, name, 'index.ts'), 'utf8'))
     .replace("from '../_shared/guard.ts'", "from './guard.ts'")
     .replace(/from ['"]\.\.\/_shared\/optout-gate\.ts['"]/, dir === HT ? "from './ht-optout-gate.ts'" : "from './optout-gate.ts'")
-    .replace(/from '\.\.\/_shared\/(staff-auth|optout)\.ts'/g, (_, m) => "from '" + path.join(process.cwd(), HUBF, '_shared', m + '.ts') + "'")
+    /* the Hub's functions take every shared file from the Hub (outreach-check gained send-problems, text-consent and more since);
+       the Training / HomeTogether senders keep their own guard and gate above */
+    .replace(/from '\.\.\/_shared\/([\w.-]+\.(?:ts|js))'/g, (all, m) => dir === HUBF ? "from '" + path.join(process.cwd(), HUBF, '_shared', m) + "'" : all)
   const f = path.join(tmp, name + (dir === HT ? '-ht' : '') + '.ts'); fs.writeFileSync(f, s); await import(f + '?' + Math.random()); return handler }
 const post = async (h, body, headers = {}, q = '') => { const r = await h(new Request('https://x/functions/v1/x' + q, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) })); let j = null; try { j = await r.json() } catch { /* */ } return { status: r.status, j } }
 const to = (x) => SENT.filter((s) => s.to === x || s.to === 'C:' + x || s.to === 'C:+1' + x).length

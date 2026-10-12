@@ -1,7 +1,10 @@
 // Lead numbers S1 · reports-rollup under Node: the real function, a stand-in database. A spam lead never counts.
 import fs from 'fs'; import path from 'path';
 const DIR = path.join(path.dirname(new URL(import.meta.url).pathname), 'supabase/functions/reports-rollup');
-const src = fs.readFileSync(path.join(DIR, 'index.ts'), 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db');
+const src = fs.readFileSync(path.join(DIR, 'index.ts'), 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
+  /* 578 (2e97a9a): reports-rollup checks the caller with requireStaff (owner_admin + the owners list); that check is proven
+     in slice1_578_test.mjs, so here a signed-in owner is assumed */
+  .replace(/^import \{ requireStaff \} from .*$/m, "const requireStaff = async () => ({ ok: true, roles: ['owner_admin'], email: 'samantha@mo-care.com', name: 'Samantha' })");
 const tmp = path.join(DIR, '_under_test.ts'); fs.writeFileSync(tmp, src);
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note).slice(0, 400)]);
 let handler; const env = { SUPABASE_URL: 'http://x', SUPABASE_SERVICE_ROLE_KEY: 'k' };

@@ -71,7 +71,7 @@ const H = { none: {}, anon: { Authorization: 'Bearer ' + ANON, apikey: ANON }, w
   cron: { Authorization: 'Bearer ' + ANON, 'x-cron-secret': JOBSEC }, owner: { Authorization: 'Bearer ' + SVC } }
 
 import crypto from 'crypto'
-const HUB = '../cc-hub-live/'
+const HUB = (process.env.HUB_ROOT ? process.env.HUB_ROOT.replace(/\/?$/, '/') : '../cc-hub-live/')
 const REAL = Object.fromEntries(['client-start.js', 'promise-engine.js', 'launch-evidence.js', 'obligations.js', 'eligibility-rules.js'].map((f) => [f, fs.readFileSync(HUB + f)]))
 const fp = (b) => crypto.createHash('sha256').update(b).digest('hex')
 let SERVED = {}, DOWN = new Set(), SITE_HITS = []

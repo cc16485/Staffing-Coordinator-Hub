@@ -1,6 +1,7 @@
 // End-to-end test of the promise-run edge function under Node: real function code, real engine file, fake database.
 import fs from 'fs'; import path from 'path'; import { pathToFileURL } from 'url';
-const FN=process.argv[2], ENGINE=process.argv[3];
+// defaults so plain `node <file>` runs; the engine is the office Hub's file (HUB_ROOT first, then ../cc-hub-live)
+const FN=process.argv[2]||'supabase/functions/promise-run/index.ts', ENGINE=process.argv[3]||path.join(process.env.HUB_ROOT||'../cc-hub-live','promise-engine.js');
 let src=fs.readFileSync(FN,'utf8').replace(/^import \{ createClient \} from .*$/m,'const createClient = globalThis.__fakeCreateClient')
   .replace("'../_shared/job-auth.ts'","'"+path.resolve('test_stubs/job-auth-by-role.mjs')+"'")
   .replace("'../_shared/approved-rules.ts'", "'" + path.resolve('test_stubs/approved-rules-open.mjs') + "'");   // G2: approval stand-in (the real one: g2_approved_rules_test.mjs)   // J2: lock stand-in (the real one: j2_job_locks_test.mjs)

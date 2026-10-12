@@ -18,7 +18,11 @@ const recompute = (f) => { f.eligibility_state = f.ojt_date ? 'eligible' : 'laps
 let D = db([{ id: 5, first: 'Jo', phone: '1', _rev: 3 }])
 let c = { id: 5, first: 'Jo', phone: '1', _rev: 3, eligibility_state: 'lapsed', eligibility_history: [{ s: 'lapsed' }], eligibility_reason: 'OJT', eligibility_at: 't', axiscare_note_for: 'ojt_overdue@x' }
 let r = await P.saveSweepFields(D, c, recompute)
-ck('saves only the five sweep fields, on the _rev it read', r === 'saved' && JSON.stringify(Object.keys(D.calls[0][1].p_patch).sort()) === JSON.stringify(P.SWEEP_FIELDS.slice().sort()) && D.calls[0][1].p_base_rev === 3 && D.list[0].phone === '1', D.calls)
+/* Slice 5 (e1d388f, 2026-10-10): caregiver_sweep_patch owns six more fields (Approve to Work, AxisCare status, work_lock), and
+   the save sends only the owned fields the record actually holds. So: exactly the sweep fields this record has, nothing else. */
+const owned = P.SWEEP_FIELDS.filter((k) => k in c)
+ck('saves only the sweep fields, on the _rev it read', r === 'saved' && owned.length === 5 && JSON.stringify(Object.keys(D.calls[0][1].p_patch).sort()) === JSON.stringify(owned.slice().sort())
+  && Object.keys(D.calls[0][1].p_patch).every((k) => P.SWEEP_FIELDS.includes(k)) && D.calls[0][1].p_base_rev === 3 && D.list[0].phone === '1', D.calls)
 D = db([{ id: 5, first: 'Jo', phone: '1', _rev: 3 }], { editBefore: (d) => { d.list[0].phone = '2'; d.list[0].ojt_date = '2026-10-01'; d.list[0]._rev = 4 } })
 r = await P.saveSweepFields(D, clone(c), recompute)
 ck('an office edit lands during the run: worked out again on the current record, the edit kept', r === 'saved' && D.list[0].phone === '2' && D.list[0].eligibility_state === 'eligible' && D.calls.length === 2 && D.calls[1][1].p_base_rev === 4, [D.list, D.calls.length])

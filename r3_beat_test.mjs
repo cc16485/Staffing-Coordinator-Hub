@@ -11,6 +11,9 @@ const q = (t) => { const st = { f: [] }; const b = {
   then(ok) { if (t === 'app_data') { const k = (st.f.find(([c]) => c === 'key') || [])[1]; return Promise.resolve({ data: k in APP ? [{ key: k, data: APP[k] }] : [], error: null }).then(ok) }
     if (t === 'person_source_id') return Promise.resolve({ data: [{ person_id: 'p1', source_id: '501' }], error: null }).then(ok)
     if (t === 'person_identity') return Promise.resolve({ data: [{ id: 'p1', display_name: 'Ruth Test' }], error: null }).then(ok)
+    /* 498 (8b4a1c0, 2026-10-07): the sync keeps circles only for CURRENT clients (an active client role); without this
+       row Ruth was skipped, AxisCare was never asked, and the "fails" run below could not fail. */
+    if (t === 'person_role') return Promise.resolve({ data: [{ person_id: 'p1' }], error: null }).then(ok)
     return Promise.resolve({ data: [], error: null }).then(ok) } }; return b }
 globalThis.__db = { from: q, rpc: async (fn, a) => { if (fn === 'upsert_app_data_item') { const arr = (APP[a.target_key] ||= []); const i = arr.findIndex((x) => x.id === a.item.id); if (i >= 0) arr[i] = a.item; else arr.push(a.item) } return { data: null, error: null } } }
 globalThis.fetch = async (url) => { url = String(url)
@@ -22,13 +25,18 @@ const load = async (name) => { const src = fs.readFileSync(`${FN}/${name}/index.
   const tmp = path.join(process.cwd(), FN, name, '_t.ts'); fs.writeFileSync(tmp, src); try { await import(tmp + '?' + Math.random()) } finally { fs.unlinkSync(tmp) } return handler }
 const call = async (h, qs) => { const r = await h(new Request('https://x/functions/v1/f?' + qs, { method: 'POST', body: '{}' })); return { s: r.status, j: await r.json().catch(() => null) } }
 const beat = () => (APP.automation_heartbeats || []).find((x) => x.automation === 'circles-sync')
-let ib = await load('identity-backfill')
-APP = {}; await call(ib, 'circles=1')
-ck('a practice run (no commit) leaves no heartbeat', !beat())
-APP = {}; let r = await call(ib, 'circles=1&commit=1')
-ck('a real run leaves a heartbeat: ok, "synced", counts only', r.s === 200 && beat() && beat().ok === true && beat().note === 'synced', [r, APP])
-APP = {}; AXFAIL = true; r = await call(ib, 'circles=1&commit=1'); AXFAIL = false
-ck('a run that fails still leaves a heartbeat, marked failed', beat() && beat().ok === false, APP)
+/* 664 (5f8bf6a, 2026-10-12): the nightly sync now runs in its own function, circles-sync (identity-backfill stays down
+   since 441 but still carries ?circles=1). The heartbeat rules are checked on both. */
+let r
+for (const [name, qs] of [['circles-sync', ''], ['identity-backfill', 'circles=1&']]) {
+  const fnh = await load(name), tag = name === 'circles-sync' ? '' : ' (identity-backfill ?circles=1)'
+  APP = {}; await call(fnh, qs)
+  ck('a practice run (no commit) leaves no heartbeat' + tag, !beat())
+  APP = {}; r = await call(fnh, qs + 'commit=1')
+  ck('a real run leaves a heartbeat: ok, "synced", counts only' + tag, r.s === 200 && beat() && beat().ok === true && beat().note === 'synced', [r, APP])
+  APP = {}; AXFAIL = true; r = await call(fnh, qs + 'commit=1'); AXFAIL = false
+  ck('a run that fails still leaves a heartbeat, marked failed' + tag, beat() && beat().ok === false, APP)
+}
 let wd = await load('automation-watchdog')
 APP = {}; r = await call(wd, 'dry=1')
 ck('watchdog: before its first night, the sync is not reported as "never ran"', !JSON.stringify(r.j).includes('circles-sync has never'), r.j)

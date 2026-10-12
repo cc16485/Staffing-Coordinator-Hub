@@ -1,7 +1,7 @@
 // Change 5 · careplan-tasks under Node: real function code, fake database, fake AxisCare (catalog + client ADLs per the spec).
 // node careplan_tasks_harness.mjs supabase/functions/careplan-tasks/index.ts
 import fs from 'fs'; import path from 'path';
-const FN = process.argv[2];
+const FN = process.argv[2] || 'supabase/functions/careplan-tasks/index.ts';   // default so plain `node <file>` runs
 const src = fs.readFileSync(FN, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = globalThis.__fakeCreateClient');
 const tmp = path.join(process.cwd(), '_careplan_tasks_under_test.ts'); fs.writeFileSync(tmp, src);
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note).slice(0, 900)]);

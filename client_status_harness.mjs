@@ -1,7 +1,7 @@
 // Change 3 · client-status-review under Node: real function code, fake database, fake admission scan.
 // node client_status_harness.mjs supabase/functions/client-status-review/index.ts
 import fs from 'fs'; import path from 'path';
-const FN = process.argv[2];
+const FN = process.argv[2] || 'supabase/functions/client-status-review/index.ts';   // the documented command above
 const src = fs.readFileSync(FN, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = globalThis.__fakeCreateClient')
   /* J2: the lock and the staff check are stand-ins that follow the test token (the real ones: j2_job_locks_test.mjs) */
   .replace("'../_shared/job-auth.ts'", "'" + path.resolve('test_stubs/job-auth-by-role.mjs') + "'").replace("'../_shared/staff-auth.ts'", "'" + path.resolve('test_stubs/staff-auth-by-claim.mjs') + "'");
@@ -29,6 +29,8 @@ globalThis.fetch = async (u, o) => { if (String(u) === 'http://sb/functions/v1/c
 globalThis.__fakeCreateClient = () => ({
   from: (t) => { const f = []; let single = false; const p = { select() { return p; }, eq(k, v) { f.push(r => String(r[k]) === String(v)); return p; },
       in(k, vs) { f.push(r => vs.map(String).includes(String(r[k]))); return p; }, maybeSingle() { single = true; return p; },
+      /* 498 (8b4a1c0, 2026-10-07) reads client_journey with .not(...is null).order(...) to find the client's own Care Coordinator */
+      not(k, op, v) { if (op === 'is' && v === null) f.push(r => r[k] != null); return p; }, order(k, o) { return p; },
       then(ok, bad) { let rows = t === 'app_data' ? Object.entries(DB.app_data).map(([key, data]) => ({ key, data })) : (DB[t] || []);
         rows = rows.filter(r => f.every(g => g(r))); return Promise.resolve(single ? { data: rows[0] || null, error: null } : { data: rows, error: null }).then(ok, bad); } }; return p; },
   rpc: async (name, a) => { rpcs.push({ name, a });

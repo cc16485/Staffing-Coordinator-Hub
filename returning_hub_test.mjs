@@ -1,7 +1,7 @@
 // 5b C · the hub answers "is this the same family?" on a flagged inquiry. node returning_hub_test.mjs ../cc-hub-live/index.html
 import fs from 'fs';
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 900)]);
-const hub = fs.readFileSync(process.argv[2] || '../cc-hub-live/index.html', 'utf8');
+const hub = fs.readFileSync(process.argv[2] || (process.env.HUB_ROOT || '../cc-hub-live') + '/index.html', 'utf8');
 const cut = (a, b) => { const i = hub.indexOf(a), j = hub.indexOf(b, i); if (i < 0 || j < 0) throw new Error('missing ' + a); return hub.slice(i, j); };
 const block = cut('/* 5b C: an automatic front door', 'let CK_BUSY=false, CK_SET=');
 const card = cut("    /* 5b C: \"is this the same family?\" opens the new inquiry", "    if(it && it.source && it.source.type==='journey'){");

@@ -60,6 +60,7 @@
     coverage_reopened:   { label: 'reopened the case',      area: 'scheduling', severity: 'action' },
     coverage_held_check: { label: 'checked a held visit',   area: 'scheduling', severity: 'fyi' },
     wave_sent:           { label: 'sent a wave',            area: 'scheduling', severity: 'fyi' },
+    open_hours_sent:     { label: 'texted the team open hours', area: 'scheduling', severity: 'fyi' },
     yes_received:        { label: 'a caregiver said yes',   area: 'scheduling', severity: 'action' },
     follow_up_sent:      { label: 'sent a follow-up',       area: 'scheduling', severity: 'fyi' },
     visit_changed:       { label: 'changed a visit',        area: 'scheduling', severity: 'fyi' },

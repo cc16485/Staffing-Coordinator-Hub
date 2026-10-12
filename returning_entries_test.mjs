@@ -108,8 +108,9 @@ r = await post(h, 'token=F', { first_name: 'Joe', phone: '4175550202', transcrip
 ck('AI call · a Lost inquiry is not rewritten either', JSON.stringify(byId('Ll')) === before && fresh(KNOWN).length === 1, r);
 reset([CONV, LOST, OPEN]);
 r = await post(h, 'token=F', { first_name: 'Ann', phone: '4175550303', transcript: 'hello' });
+/* Gate 0 guard (4037950, 2026-09-28): the added note is labelled as an unreviewed AI summary ("Call <date>:" before) */
 ck('AI call · an OPEN inquiry is reused, and a second call ADDS to the notes instead of wiping them',
-  fresh(KNOWN).length === 0 && /^first call notes\n\nCall \d{4}-\d{2}-\d{2}: Wants help again for mom$/.test(byId('Lo').interest_notes), byId('Lo').interest_notes);
+  fresh(KNOWN).length === 0 && /^first call notes\n\nAI call summary, not reviewed \(\d{4}-\d{2}-\d{2}\): Wants help again for mom$/.test(byId('Lo').interest_notes), byId('Lo').interest_notes);
 AI = { is_client_lead: false, not_lead_reason: 'existing client' };
 reset([CONV]); r = await post(h, 'token=F', { phone: '4175550101', transcript: 'hi' });
 ck('AI call · a call the AI says is not a new client still creates nothing', r.status === 'skipped' && APP.leads.length === 1, r);

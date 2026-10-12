@@ -1,8 +1,11 @@
 // 5b B + D · "Is this family already known?" · the hub's own code against fakes.
 // node known_family_hub_test.mjs ../cc-hub-live/index.html
-import fs from 'fs';
+import fs from 'fs'; import path from 'path'; import { createRequire } from 'module';
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 900)]);
-const hub = fs.readFileSync(process.argv[2] || '../cc-hub-live/index.html', 'utf8');
+const HUB_PAGE = process.argv[2] || (process.env.HUB_ROOT ? process.env.HUB_ROOT + '/index.html' : '../cc-hub-live/index.html');
+const hub = fs.readFileSync(HUB_PAGE, 'utf8');
+/* Leads intake desk Stage 0 (2026-10-06): status moves go through the real LeadRules.setStatus (lead-rules.js, next to the page) */
+const LeadRules = createRequire(import.meta.url)(path.resolve(path.dirname(HUB_PAGE), 'lead-rules.js'));
 const cut = (a, b) => { const i = hub.indexOf(a), j = hub.indexOf(b, i); if (i < 0 || j < 0) throw new Error('missing ' + a); return hub.slice(i, j); };
 const block = cut('/* ===================== 5b B + D · is this family already known?', 'let CK_BUSY=false, CK_SET=');
 const save = cut('async function ckCheckNewInquiry(leave){', "  const id = document.getElementById('lead_id').value || uid();");
@@ -23,7 +26,7 @@ const sb = { auth: { getSession: async () => ({ data: { session: { access_token:
 const ctx = { DATA, sb, fetch, CONFIG: { supabase_url: 'https://x', supabase_anon_key: 'A' }, ME: { email: 'kat@mo-care.com' }, escapeHtmlComms: (x) => String(x),
   document: null, persist: async (k, l) => { persisted.push({ ...l }); }, jcSideBySide: async () => sideBySide,
   jcConnect: async (...a) => { connected.push(a); return { ok: true, text: 'Connected.' }; }, socReadyCheck: async () => {}, renderLeadProfile: () => {}, renderLeads: () => {},
-  alert: (m) => alerts.push(m) };
+  alert: (m) => alerts.push(m), LeadRules, ccActor: () => ctx.ME };
 const H = new Function(...Object.keys(ctx), block + '\nreturn { ckQuery, ckLeadMatches, ckFind, ckUseExisting, CK_WHY };')(...Object.values(ctx));
 const reset = () => { persisted = []; connected = []; alerts = []; fetchStatus = 200; lookupAnswer = { ok: true, matches: [], axiscare_ok: true }; };
 

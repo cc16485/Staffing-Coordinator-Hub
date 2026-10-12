@@ -30,7 +30,8 @@ const tmp = fs.mkdtempSync(path.join(process.cwd(), '_crw_'))
 const load = async (name) => { handler = null
   const src = fs.readFileSync(path.join(F, name, 'index.ts'), 'utf8')
     .replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
-    .replace(/from '\.\.\/_shared\/(\w[\w-]*)\.ts'/g, (_, m) => "from '" + path.resolve(F, '_shared', m + '.ts') + "'")
+    // every shared import, .ts or .js, with or without "from" (call-disposition gained a bare lead-rules.js import)
+    .replace(/(from |import )'\.\.\/_shared\/([\w.-]+\.(?:ts|js))'/g, (_, k, m) => k + "'" + path.resolve(F, '_shared', m) + "'")
   const f = path.join(tmp, name + '.ts'); fs.writeFileSync(f, src); await import(f); return handler }
 try {
   /* ---- call-followup ---- */

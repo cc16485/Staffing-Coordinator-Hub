@@ -1,6 +1,11 @@
 // Red and yellow shift-note flags (Desktop 470). The real care-notes function against a fake database, AxisCare,
 // AI and GoHighLevel (harness from n2_flag_test.mjs). node shift_note_levels_test.mjs
 import fs from 'fs'; import path from 'path';
+/* The visit fixtures are hours before "now" and atHour(h) moves Date.now by (h minus the real Chicago hour), so the run
+   only lined up when the test ran near 10am Central (it was written 2026-10-06 around then). Pin the clock to 10:00
+   Central that day; new Date() stays on the pinned clock and Date.now is still moved by atHour, as before. */
+{ const RealDate = Date, FIXED = RealDate.parse('2026-10-06T15:00:00Z')
+  globalThis.Date = class extends RealDate { constructor(...a) { super(...(a.length ? a : [FIXED])) } static now() { return FIXED } } }
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 900)]);
 const FN = 'supabase/functions';
 const realTLS = Date.prototype.toLocaleString;

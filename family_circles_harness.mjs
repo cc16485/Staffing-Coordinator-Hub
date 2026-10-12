@@ -1,5 +1,6 @@
 // Change 6a · family-circles under Node: real code, fake database, fake AxisCare responsible parties.
 import fs from 'fs'; import path from 'path';
+if (!process.argv[2]) process.argv[2] = 'supabase/functions/family-circles/index.ts';   // plain `node family_circles_harness.mjs` runs the real function
 const src = fs.readFileSync(process.argv[2], 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db');
 const tmp = path.join(path.dirname(path.resolve(process.argv[2])), '_fcf_under_test.ts'); fs.writeFileSync(tmp, src);   // beside the real file, so ../_shared resolves
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note).slice(0, 900)]);

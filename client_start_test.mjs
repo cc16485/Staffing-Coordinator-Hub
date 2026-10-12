@@ -4,7 +4,7 @@
 import fs from 'fs'; import path from 'path';
 process.env.TZ = 'UTC';
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 900)]);
-const HUB = process.argv[2] || '../cc-hub-live';
+const HUB = process.argv[2] || process.env.HUB_ROOT || '../cc-hub-live';
 const ENGINE_SRC = fs.readFileSync(path.join(HUB, 'client-start.js'), 'utf8');
 const root = {}; new Function('globalThis', ENGINE_SRC)(root); const C = root.CCStart;
 

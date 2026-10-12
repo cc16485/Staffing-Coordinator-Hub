@@ -78,7 +78,9 @@ for (const fn of G1) {
   const out = {}; for (const k of Object.keys(H)) out[k] = await call(h, u, H[k], {})
   ck(`G1 · ${fn}: no key, the public key, a wrong secret and a forged server token are all refused`,
      ['none', 'anon', 'wrong', 'forged'].every((k) => out[k].s === 401 && out[k].j?.error === 'not allowed'), out)
-  ck(`G1 · ${fn}: the schedules' own secret is refused too (it has no schedule)`, out.cron.s === 401, out.cron)
+  /* Slice 6 (1ae01b4, 2026-10-10) gave both jobs a nightly schedule on purpose: jobCaller(req) now takes the schedules'
+     own secret (practice/dry unless their live switches are on). Only that exact secret: a wrong one stays refused above. */
+  ck(`G1 · ${fn}: the schedules' own secret is accepted as the nightly schedule (Slice 6)`, out.cron.s === 200 && out.cron.j?.caller === 'cron', out.cron)
   ck(`G1 · ${fn}: a staff sign-in cannot start it`, out.staff.s === 401 && out.norole.s === 401, [out.staff, out.norole])
   ck(`G1 · ${fn}: the owner's server key is accepted`, out.owner.s === 200 && out.owner.j?.caller === 'owner', out.owner)
   let touched = 0; const realFrom = globalThis.__db.from; globalThis.__db.from = (t) => { touched++; return realFrom(t) }; FETCHES = 0
@@ -90,9 +92,11 @@ for (const fn of G1) {
   const r = await call(h, 'https://x/functions/v1/eligibility-sweep', {}, { token: ENV.ELIGIBILITY_SWEEP_TOKEN })
   ck('G1 · eligibility-sweep: the old body password alone no longer gets in (your server key does)', r.s === 401, r)
   const src = fs.readFileSync(`${FN}/eligibility-sweep/index.ts`, 'utf8')
-  ck('G1 · eligibility-sweep: the lock is checked before the rules file is fetched', src.indexOf('jobCaller(req, false)') < src.indexOf("approvedRules(supabase, 'eligibility-rules.js')") && !/body\.token !== gate/.test(src)) }
+  const lock = src.indexOf('jobCaller(req)')   // jobCaller(req, false) until Slice 6; must be found, or the order check means nothing
+  ck('G1 · eligibility-sweep: the lock is checked before the rules file is fetched', lock >= 0 && lock < src.indexOf("approvedRules(supabase, 'eligibility-rules.js')") && !/body\.token !== gate/.test(src)) }
 { const src = fs.readFileSync(`${FN}/obligations-run/index.ts`, 'utf8')
-  ck('G1 · obligations-run: the lock is checked before ?max/?days are read and before the rules are fetched', src.indexOf('jobCaller(req, false)') < src.indexOf("searchParams.get('max')") && src.indexOf('jobCaller(req, false)') < src.indexOf("approvedRules(supabase, 'obligations.js')")) }
+  const lock = src.indexOf('jobCaller(req)')   // jobCaller(req, false) until Slice 6; must be found, or the order check means nothing
+  ck('G1 · obligations-run: the lock is checked before ?max/?days are read and before the rules are fetched', lock >= 0 && lock < src.indexOf("searchParams.get('max')") && lock < src.indexOf("approvedRules(supabase, 'obligations.js')")) }
 
 for (const [n, o, note] of res) console.log((o ? 'PASS' : 'FAIL') + ' · ' + n + (o ? '' : '\n   ' + note))
 console.log(res.filter((x) => x[1]).length + '/' + res.length)

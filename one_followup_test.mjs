@@ -2,7 +2,7 @@
 // node one_followup_test.mjs ../cc-hub-live/index.html
 import fs from 'fs';
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 900)]);
-const hub = fs.readFileSync(process.argv[2] || '../cc-hub-live/index.html', 'utf8');
+const hub = fs.readFileSync(process.argv[2] || (process.env.HUB_ROOT || '../cc-hub-live') + '/index.html', 'utf8');   // HUB_ROOT: a fresh copy of the Hub
 const cut = (a, b) => { const i = hub.indexOf(a), j = hub.indexOf(b, i); if (i < 0 || j < 0) throw new Error('missing ' + a); return hub.slice(i, j); };
 const helpers = cut('/* ── ONE FIRST-SHIFT FOLLOW-UP (Change 8d', '/* ── Launch evidence (Change 1)');
 const rowCode = cut("        if(s.f==='followup_client_done'||s.f==='followup_caregiver_done'){", '        if(leLive(c)&&LE_READOUT[s.f]){');

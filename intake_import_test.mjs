@@ -3,7 +3,7 @@
 // real Postgres in intake_import_sql_test.py. node intake_import_test.mjs
 import fs from 'fs'; import path from 'path'
 const ROOT = path.dirname(new URL(import.meta.url).pathname), FN = path.join(ROOT, 'supabase/functions')
-const RULES = fs.readFileSync(process.env.CG_INTAKE || path.join(ROOT, '..', 'cc-hub-live', 'intake-import-rules.js'), 'utf8')
+const RULES = fs.readFileSync(process.env.CG_INTAKE || path.join(process.env.HUB_ROOT ? path.resolve(process.env.HUB_ROOT) : path.join(ROOT, '..', 'cc-hub-live'), 'intake-import-rules.js'), 'utf8')
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note ?? '').slice(0, 700)])
 globalThis.Deno = { env: { get: () => '' } }
 const J = await import(path.join(FN, '_shared/intake-import.ts'))

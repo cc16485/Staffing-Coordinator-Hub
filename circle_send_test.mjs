@@ -1,6 +1,6 @@
 // Change 6a · circle-send refuses unlinked circles and leaves out STOP / removed members (dry mode).
 import fs from 'fs'; import path from 'path';
-const src = fs.readFileSync(process.argv[2], 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
+const src = fs.readFileSync(process.argv[2] || 'supabase/functions/circle-send/index.ts', 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
   .replace(/^import \{ contactForOutbound \} from .*$/m, 'const contactForOutbound = async () => null')
   /* the caller check (security slice) is proven in security_slice_test.mjs; here a signed-in office member is assumed */
   .replace(/^import \{ requireStaff, OFFICE_ROLES \} from .*$/m, "const requireStaff = async () => ({ ok: true, roles: ['owner_admin'], name: 'Test Staff', email: 't@x' }); const OFFICE_ROLES = []")

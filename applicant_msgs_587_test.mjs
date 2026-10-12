@@ -3,13 +3,14 @@
 // Loads the rules as they are live (noshow_policy.sql + interview-limits.sql + 461 + 512), then 586, then its rollback.
 import fs from 'fs'; import path from 'path'
 const PG = process.env.PGLITE; if (!PG) { console.log('SKIP: set PGLITE to run against a real Postgres'); process.exit(0) }
-const { PGlite } = await import(path.join(PG, 'dist/index.js'))
+// PGLITE may name the package folder or its dist/index.js (the form most tests here use)
+const { PGlite } = await import(PG.endsWith('.js') ? PG : path.join(PG, 'dist/index.js'))
 const db = new PGlite()
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note ?? null).slice(0, 600)])
 const q = async (s, p) => (await db.query(s, p)).rows
 const ex = async (s) => db.exec(s)
 const err = async (s, p) => { try { await q(s, p); return null } catch (e) { return String(e.message) } }
-const HUB = process.env.HUB || '../cc-hub-live'
+const HUB = process.env.HUB || process.env.HUB_ROOT || '../cc-hub-live'
 await ex(`create role anon; create role authenticated; create schema auth;
   create table auth_state(role text, email text); insert into auth_state values ('anon', null);
   create function auth.role() returns text language sql stable as $$ select role from public.auth_state limit 1 $$;

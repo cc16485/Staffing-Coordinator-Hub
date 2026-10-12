@@ -53,11 +53,13 @@ globalThis.fetch = async (url, o) => {
   if (gm && (!o || !o.method || o.method === 'GET')) { const key = decodeURIComponent(gm[1]); return new Response(JSON.stringify({ contact: { id: 'C:' + key, dnd: DND.has(key) } }), { status: 200 }) }
   if (url.includes('/conversations/messages')) { SENT.push({ to: body.contactId, type: body.type }); return new Response('{}', { status: 200 }) }
   if (url.includes('/conversations/search')) return new Response(JSON.stringify({ conversations: [] }), { status: 200 })
-  if (url.includes('library.json')) return new Response(JSON.stringify([{ key: 'jan1', aud: 'clients', when: 'Early January', subj: 'Hello', head: 'H', ac: '#1c3f63', banner: 'b', blocks: [], body: [] }]), { status: 200 })
+  if (url.includes('library.json')) return new Response(JSON.stringify([{ key: 'jan1', aud: 'clients', when: 'Early January', subj: 'Hello', head: 'H', ac: '#1c3f63', banner: 'b', blocks: [], body: [] },
+    { key: 'jan2', aud: 'caregivers', when: 'Early January', subj: 'Team news', head: 'H', ac: '#1c3f63', banner: 'b', blocks: [], body: [] }]), { status: 200 })
+  /* ids: the campaign audience guard (497, 96f31a0) ties each email to its AxisCare client by id; active clients pass it */
   if (url.includes('axiscare.com')) return new Response(JSON.stringify({ clients: [
-    { firstName: 'Cleo', lastName: 'Clean', personalEmail: CLEAN_E, status: 'Active' },
-    { firstName: 'Otto', lastName: 'Opted', personalEmail: OPT_E, status: 'Active' },
-    { firstName: 'Dina', lastName: 'Dnd', personalEmail: DND_E, status: 'Active' }] }), { status: 200 })
+    { id: 701, firstName: 'Cleo', lastName: 'Clean', personalEmail: CLEAN_E, status: 'Active' },
+    { id: 702, firstName: 'Otto', lastName: 'Opted', personalEmail: OPT_E, status: 'Active' },
+    { id: 703, firstName: 'Dina', lastName: 'Dnd', personalEmail: DND_E, status: 'Active' }] }), { status: 200 })
   return new Response('{}', { status: 200 })
 }
 const CRON = 'c'.repeat(48)
@@ -122,12 +124,19 @@ const n2 = APP.leads.find((l) => l.id === 'n2'), n1 = APP.leads.find((l) => l.id
 ck('lead-nurture · the day-3 text reaches the clean lead (phone-keyed contact); the Do Not Disturb lead gets nothing and the drip stops',
    to(E164(CLEAN_P)) === 1 && n1.nurture_step === 1 && to(E164(DND_P)) === 0 && n2.nurture_stopped_at && /opted out/.test(n2.nurture_stop_reason) && r.j?.stopped_optout === 1, [r, SENT, n2])
 
-/* ── campaign-auto: the scheduled run, active-client audience (switch on for the test) ── */
+/* ── campaign-auto: the scheduled run (switches on for the test).
+   Since the 2026-10-07 audit (3d0b9b9, her rule: automation never contacts clients, families or leads by itself) the
+   client email is HELD for a person (one My Work card), so the opt-out door is proven on the caregiver audience, the
+   one the schedule still sends. ── */
 h = await load('campaign-auto')
-reset(); APP.campaign_settings = [{ id: 'settings', enabled: true, aud_clients: true }]; APP.leads = [{ id: 'L9', email: DND_E }]
+reset(); APP.campaign_settings = [{ id: 'settings', enabled: true, aud_clients: true, aud_caregivers: true }]; APP.leads = [{ id: 'L9', email: DND_E }]
+T.caregivers = [{ id: 'g1', name: 'Cleo Clean', email: CLEAN_E, active: true }, { id: 'g2', name: 'Otto Opted', email: OPT_E, active: true }, { id: 'g3', name: 'Dina Dnd', email: DND_E, active: true }]
 r = await post(h, 'https://x/functions/v1/campaign-auto', {}, { 'x-cron-secret': CRON })
-ck('campaign-auto · the clean client is emailed; the opted-out and Do Not Disturb clients are not, and the log counts them',
-   to(CLEAN_E) === 1 && to(OPT_E) === 0 && to(DND_E) === 0 && APP.campaign_log?.[0]?.not_sent_optout_or_unreachable === 2 && refusedFor('campaign-auto').length === 2, [r, SENT, APP.campaign_log])
+const cgLog = (APP.campaign_log || []).find((x) => x.key === 'jan2')
+ck('campaign-auto · the client email is held for a person (no client emailed, one My Work card), never sent by the schedule',
+   r.j?.held === 1 && !(APP.campaign_log || []).some((x) => x.key === 'jan1') && (APP.ops_items || []).some((x) => x.campaign_key === 'jan1' && x.status === 'open'), [r, APP.campaign_log, APP.ops_items])
+ck('campaign-auto · the clean caregiver is emailed; the opted-out and Do Not Disturb addresses are not, and the log counts them',
+   to(CLEAN_E) === 1 && to(OPT_E) === 0 && to(DND_E) === 0 && cgLog?.sent === 1 && cgLog?.not_sent_optout_or_unreachable === 2 && refusedFor('campaign-auto').length === 2, [r, SENT, APP.campaign_log])
 ck('campaign-auto · a GHL Do Not Disturb is still copied onto the matching Hub inquiry', APP.leads[0].do_not_contact === true, APP.leads)
 
 /* ── campaign-send: staff-pressed campaign ── */
