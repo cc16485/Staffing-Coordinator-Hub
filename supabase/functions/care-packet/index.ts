@@ -24,6 +24,8 @@
 //     'library'    -> owner only: every topic, retired ones too, for the editor.
 //     'suggest'    {ax?, lead_id?, about} -> topics from the library the AI thinks fit, each with one line of why, from
 //                  their newest care plan, their intake answers and the About notes (never medications). Saves nothing.
+//     'preview'    {packet_id} -> exactly what a caregiver's page shows for the saved packet (draft or ready). No link
+//                  made, nothing recorded, nobody's confirmation. For the card's Preview button.
 //     'upcoming'   {packet_id} -> Step 3: each caregiver with a visit with this client in the next 14 days (AxisCare, read
 //                  live) and where they stand: confirmed / older version / texted / link only / none. Reads only.
 //     STEP 2 (Samantha "build step 2", 2026-10-12; Cara never texts on her own, so a person presses Send every time):
@@ -228,6 +230,11 @@ async function topics(sb: Any, all = false): Promise<Any[]> {
   if (error) throw error
   return (data ?? []).sort((a: Any, b: Any) => String(a.title).localeCompare(String(b.title)))
 }
+/** The topics as the caregiver's page shows them (a retired topic stays in packets that already have it). */
+async function pageItems(sb: Any, p: Any): Promise<Any[]> {
+  const byKey = new Map((await topics(sb, true)).map((t) => [t.key, t]))
+  return (p.items ?? []).map((it: Any) => { const t = byKey.get(it.topic); return t ? { title: t.title, notes: it.notes || t.notes || '', videos: (t.videos ?? []).map(withEmbed) } : null }).filter(Boolean)
+}
 async function recipients(sb: Any, packetId: string): Promise<Any[]> {
   const { data, error } = await sb.from('care_packet_recipients').select('id, caregiver_axiscare_id, caregiver_name, link_made_at, link_made_by, ack_version, ack_at, last_sent_at, last_sent_by, last_send_kind, send_count').eq('packet_id', packetId)
   if (error) throw error
@@ -269,8 +276,7 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
           data: { packet_id: p.id, version: p.version, recipient_id: r.id }, outcome: 'done' })
         return json({ outcome: 'done', ack_at: at })
       }
-      const byKey = new Map((await topics(sb, true)).map((t) => [t.key, t]))   // a retired topic stays in packets that already have it
-      const items = (p.items ?? []).map((it: Any) => { const t = byKey.get(it.topic); return t ? { title: t.title, notes: it.notes || t.notes || '', videos: (t.videos ?? []).map(withEmbed) } : null }).filter(Boolean)
+      const items = await pageItems(sb, p)
       return json({ caregiver_first: firstOf(r.caregiver_name), client_first: p.client_first, about: p.about, items, version: p.version,
         acknowledged: r.ack_version === p.version, ack_at: r.ack_version === p.version ? r.ack_at : null, earlier_ack: r.ack_version != null && r.ack_version !== p.version })
     }
@@ -285,6 +291,19 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
       const p = await findPacket(sb, ax, lead)
       return json({ packet: p, topics: await topics(sb), retired_in_packet: p ? (await topics(sb, true)).filter((t) => !t.active && (p.items ?? []).some((it: Any) => it.topic === t.key)) : [],
         recipients: p ? await recipients(sb, p.id) : [], can_edit_library: who.roles.includes('owner_admin') })
+    }
+
+    /* Preview (Samantha "i want to see the caregiver packet link before i send it", 2026-10-12): exactly what a caregiver's
+       page shows for the SAVED packet, draft or ready. Makes no link, records nothing, counts as nobody's confirmation. */
+    if (action === 'preview') {
+      const pid = String(b.packet_id ?? '')
+      if (!/^[0-9a-f-]{36}$/i.test(pid)) return json({ error: 'Which packet?' }, 400)
+      const { data: pp, error: e1 } = await sb.from('care_packets').select('*').eq('id', pid).limit(1)
+      if (e1) throw e1
+      const p = pp?.[0]
+      if (!p) return json({ error: 'That packet is gone. Reload.' }, 404)
+      return json({ preview: true, ready: !!p.ready, caregiver_first: 'the caregiver', client_first: p.client_first, about: p.about,
+        items: await pageItems(sb, p), version: p.version, acknowledged: false, ack_at: null, earlier_ack: false })
     }
 
     /* Step 3: who is coming up with this client in the next 14 days (AxisCare, read live, nothing stored), and where each
