@@ -36,7 +36,7 @@ export const SCENARIOS = [
     expect: { cards: [1, 3], areas: ['client_care', 'scheduling'] } },
   { id: 'c8-steve-like-pending', group: 'promises', who: { match: 'one', person_id: 'p-sa', name: 'Sam Avery', roles: ['client'] }, caller: 'Sam A.', direction: 'out',
     transcript: T('O: Hi Sam, it is Samantha returning your call.', 'C: Yes, my license expired. I need someone to take me to the DMV and help me get in. Could Angel fit a couple of hours in this week?', 'O: We will work it out.', 'C: I will call you tomorrow to confirm the day.'),
-    expect: { cards: [1, 1], areas: ['scheduling'], commit: ['caller_will'] } },
+    expect: { cards: [1, 1], areas: ['scheduling'], commit: ['caller_will', 'awaiting_confirmation'] } },   // both say it is not settled yet
   // 2 · caregivers
   { id: 'g1-availability', group: 'caregivers', who: TANYA, caller: 'Tanya B.', direction: 'in',
     transcript: T('O: Caring Companions.', 'C: Hi, it is Tanya. Starting November first I cannot work Mondays anymore, I start a class.', 'O: Thanks for the heads up, we will plan for that.'),
