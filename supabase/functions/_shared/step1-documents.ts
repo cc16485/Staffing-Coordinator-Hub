@@ -63,12 +63,10 @@ export const LIFT_TYPES = ['Full-body sling', 'Sit-to-stand', 'Other']
 export const PAY_SOURCES = ['Consumer Directed Services (CDS) or another Medicaid program', 'A VA program', 'The client or family paid me directly', 'Not paid', 'Other']
 /** Her words (2026-10-11), at the top of Work History and next to every reference's contact boxes. No pay wording here (her
     ruling the same day: "let's just not say anything about pay rate when we're getting the experience and determining care level"). */
+/* her final wording, 2026-10-11 ("Please change the Step 1 introduction to:") */
 export const EXPERIENCE_MATTERS = [
-  /* 2026-10-11 (her ask): say plainly that everyone stays at Level 1 until experience is verified, and why that matters. Matches
-     the experience form's certification ("Everyone starts at Level 1 ... once the office verifies your previous experience"). */
-  'Everyone starts at Level 1. If we can\'t verify your experience, it doesn\'t count, and you stay at Level 1. Verified experience can qualify you for Level 2 or Level 3, which means more clients we can match you with.',
-  "Help us give you credit for your experience! Please list people who can confirm the care you've provided, including former supervisors, private clients, or professionals who have seen your work.",
-  'The more experience we can confirm, the better we can recognize your skills and consider you for assignments that fit your abilities.',
+  'Everyone starts at Level 1 while we verify their experience. The more experience we can confirm, the more opportunities you may qualify for, including Level 2 and Level 3 assignments.',
+  'Please give us accurate contact information for people who know your work. This helps us recognize your experience and match you with clients who need your skills.',
 ]
 export const REFERENCE_REMINDER = 'Please provide accurate contact information for someone who knows your work. We use verified experience when determining qualifications and client matches. A reference we cannot reach may mean we cannot yet give you credit for that experience.'
 const TASK_FIELDS: Field[] = [
@@ -126,15 +124,14 @@ export const FORMS: Record<FormKey, Form> = {
         ] },
         yesno('no_employer_history', 'I have no previous employer to list.', { required: false }),
       ] },
-      { h: 'Family or private-client care (optional)', p: ["Many great caregivers learned by caring for a family member or a private client. Tell us about it. We'll use this information, along with references and other qualifications, to better understand your experience.",
-        'If someone outside your own family saw your care (a hospice or home health nurse, a therapist, a case manager, or the client\'s family), add them so we can confirm it. Care we cannot confirm stays on your record, but it does not count toward your level.'], items: [
+      { h: 'Family or private-client care (optional)', p: ["Your caregiving experience matters, whether it was paid or unpaid. If we cannot confirm it yet, we'll keep it on your record and you can provide additional information later."], items: [
         { id: 'family_care', label: 'Care you gave a family member or private client', kind: 'cards', max: 4, add: 'Add family or private-client care', fields: [
           { k: 'who', label: 'Who did you care for?', kind: 'choice', options: ['A family member', 'A private client'], required: true },
           { k: 'relationship', label: 'Your relationship to them, or how you found this client (optional)', kind: 'text' },
           { k: 'from', label: 'From (month and year)', kind: 'text', required: true }, { k: 'to', label: 'To (month and year, or "still caring for them")', kind: 'text', required: true },
           { k: 'paid', label: 'How was this care paid for? Tick all that apply.', kind: 'multi', options: PAY_SOURCES, required: true },
           ...TASK_FIELDS,
-          { k: 'confirmer', label: 'Someone who saw your care and can confirm it (optional)', kind: 'text' },
+          { k: 'confirmer', label: 'Someone who saw your care and can confirm it (optional)', kind: 'text', note: 'Someone outside your own family works best: a hospice or home health nurse, a therapist, a case manager, or the client\'s family.' },
           { k: 'confirmer_how', label: 'How do they know your care?', kind: 'text' },
           { k: 'phone', label: 'Their phone', kind: 'tel' }, { k: 'email', label: 'Their email', kind: 'email' },
           { k: 'may_contact', label: 'May we contact them?', kind: 'yesno' },
