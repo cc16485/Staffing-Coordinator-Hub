@@ -6,14 +6,14 @@
 // Office staff (requireStaff), every action on one review:
 //   preview  {candidate_id, check} or {id, step: 'step1'|'final'}: the exact words and how they would go
 //   open     {candidate_id, check}: opens the review (Needs review). Only for a check recorded as flagged.
-//   step1    {id}: sends "Something came up" (text with their yes to texts + email), sets the response due date
-//   told     {id, note?}: "told them by phone or in person" instead of the message (sets the due date too)
+//   step1, told: RETIRED 2026-10-11 (one step, her ruling). They refuse (410); nothing is sent.
 //   spoke    {id}: "spoke with them"
 //   result   {id, result, reason?}: the office's review result (reason: why we are not hiring, for No waiver needed)
 //   waiver   {id, step: 'wait'|'approved'|'denied', proof?}: Good Cause Waiver steps (approved clears the review)
 //   clear    {id, why}: "They're cleared"; nothing is sent
 //   note     {id, note}: a short private office note (never sent)
-//   final    {id}: sends the final notice, only when finalGate allows; the review closes as not hired
+//   disclosed {candidate_id}: what they told us on Step 1 about their record (read only, never sent)
+//   final    {id}: sends THE notice (the one message), only when finalGate allows; the review closes as not hired
 // Its schedule (the jobs' secret): action 'due_check', weekdays 8am to 6pm Central, one Needs Attention card per
 // review whose response due date has passed with no contact recorded. Nothing is ever sent to an applicant without a
 // person pressing OK on the words the Hub showed (preview). Texts 8am to 6pm only; outside that both messages wait.
@@ -24,7 +24,7 @@ import { contactForOutbound, maySend } from '../_shared/outreach.ts'
 import { requireStaff, OFFICE_ROLES, serverSecretOk } from '../_shared/staff-auth.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { latestTextConsent } from '../_shared/text-consent.ts'
-import { CHECKS, CLEAR_WHY, RESULT_LABEL, isCheck, responseDue, duePassed, centralHour, step1Words, finalWords, finalGate, fmtLong,
+import { disclosureFrom, CHECKS, CLEAR_WHY, RESULT_LABEL, isCheck, responseDue, duePassed, centralHour, step1Words, finalWords, finalGate, fmtLong,
   type Check, type Words } from '../_shared/bg-review.ts'
 
 const cors = {
@@ -148,6 +148,14 @@ Deno.serve(async (req) => {
   const by = who.name || who.email
 
   /* opening a review, or previewing Step 1 before one is open */
+  /* what they disclosed on Step 1 (read only, office staff only, never sent): {candidate_id} */
+  if (action === 'disclosed') {
+    const c = await candidate(db, String(b.candidate_id ?? ''))
+    if (!c) return json({ error: 'That candidate was not found.' }, 404)
+    if (!c.offer_id) return json({ ok: true, step1: false, disclosure: disclosureFrom(null) })
+    const { data: f } = await db.from('step1_forms').select('answers, practice, completed_at').eq('offer_id', String(c.offer_id)).maybeSingle()
+    return json({ ok: true, step1: !!f, completed_at: f?.completed_at ?? null, practice: !!f?.practice, disclosure: disclosureFrom(f?.answers) })
+  }
   if (action === 'open' || (action === 'preview' && !b.id)) {
     const check = b.check, cid = String(b.candidate_id ?? '').trim()
     if (!isCheck(check)) return json({ error: 'which check? (fcsr, edl, oig or fp)' }, 400)
@@ -194,25 +202,9 @@ Deno.serve(async (req) => {
   }
   if (closed) return json({ error: 'This review is already closed.' }, 409)
 
-  if (action === 'step1') {
-    if (rv.step1_at) return json({ ok: true, already_sent: true })
-    const c = await candidate(db, rv.candidate_id)
-    if (!c) return json({ error: 'That candidate was not found.' }, 404)
-    if (!(await claim(db, id, 'step1_claim_at'))) return json({ error: 'It is already being sent. Wait a moment and reload.' }, 409)
-    const due = responseDue(now)
-    const s = await sendWords(db, c, step1Words(String(c.first || '').trim(), check, due))
-    if (s.held) { await save({ step1_held_at: now.toISOString(), step1_claim_at: null }, 'Pressed "Something came up" outside texting hours: nothing went'); return json({ ok: true, held: s.held }) }
-    if (!s.texted && !s.emailed) { await save({ step1_claim_at: null, step1_note: s.not_sent.join('; ') }, 'Pressed "Something came up": nothing could be sent (' + s.not_sent.join('; ') + ')'); return json({ ok: true, texted: false, emailed: false, not_sent: s.not_sent }) }
-    const r = await save({ step1_at: now.toISOString(), step1_by: by, step1_how: how(s), step1_note: s.not_sent.join('; ') || null, step1_held_at: null, step1_claim_at: null, due_date: due },
-      `"Something came up" sent by ${how(s)}${s.not_sent.length ? ' (not sent: ' + s.not_sent.join('; ') + ')' : ''}. Response due ${fmtLong(due)}.`)
-    return r ?? json({ ok: true, texted: s.texted, emailed: s.emailed, not_sent: s.not_sent, due_date: due })
-  }
-  if (action === 'told') {
-    if (rv.step1_at || rv.step1_told_at) return json({ ok: true, already: true })
-    const due = responseDue(now), note = String(b.note ?? '').replace(/\s+/g, ' ').trim().slice(0, 300)
-    return (await save({ step1_told_at: now.toISOString(), step1_by: by, step1_how: 'told by phone or in person', due_date: due, step1_note: note || null },
-      `Told them by phone or in person${note ? ': ' + note : ''}. Response due ${fmtLong(due)}.`)) ?? json({ ok: true, due_date: due })
-  }
+  /* ONE STEP (2026-10-11): "Something came up" and "told them by phone" are retired. Nothing is sent and nothing changes. */
+  if (action === 'step1' || action === 'told')
+    return json({ error: 'The background notice is one step now: pick the review result, then send the notice. Nothing was sent.' }, 410)
   if (action === 'spoke') {
     const r = await save({ spoke_at: now.toISOString(), spoke_by: by }, 'Spoke with them')
     if (!r && rv.due_card_at) await closeCard(db, id, by)
@@ -233,16 +225,17 @@ Deno.serve(async (req) => {
     if (step === 'approved') {
       const proof = String(b.proof ?? '').trim()
       if (!/^bgcheck\/[\w.\-\/]+$/.test(proof)) return json({ error: 'Attach the approval letter first.' }, 400)
-      const r = await save({ status: 'cleared', waiver_outcome: 'approved', waiver_decided_at: now.toISOString(), waiver_proof: proof, cleared_at: now.toISOString(), cleared_by: by, cleared_why: 'waiver_approved' },
-        'Good Cause Waiver approved (letter attached). Cleared.')
-      if (!r && rv.due_card_at) await closeCard(db, id, by)
-      return r ?? json({ ok: true, cleared: true, check, set_to: CHECKS[check].clear })
+      /* 2026-10-11 (Samantha: "we are not required to hire even if they technically could be hireable with a good cause
+         waiver"): an approved waiver no longer clears them by itself. It is recorded with the letter, and the office
+         decides: "They're cleared" (why: waiver approved) or "Not hiring…" with a private reason. */
+      return (await save({ status: 'open', result: 'no_waiver', waiver_outcome: 'approved', waiver_decided_at: now.toISOString(), waiver_proof: proof },
+        'Good Cause Waiver approved (letter attached). Not cleared yet: the office decides, They\'re cleared or Not hiring.')) ?? json({ ok: true, cleared: false, decide: true })
     }
     return json({ error: 'wait, approved or denied?' }, 400)
   }
   if (action === 'clear') {
     const why = String(b.why || '')
-    if (!CLEAR_WHY[why] || why === 'waiver_approved') return json({ error: 'Why are they cleared? (not them, an error that was corrected, or no waiver needed)' }, 400)
+    if (!CLEAR_WHY[why] || (why === 'waiver_approved' && rv.waiver_outcome !== 'approved')) return json({ error: 'Why are they cleared? (not them, an error that was corrected, or no waiver needed)' }, 400)
     if (why === 'no_waiver' && !(check === 'fcsr' || check === 'fp')) return json({ error: `No waiver applies to ${CHECKS[check].label}.` }, 400)
     const r = await save({ status: 'cleared', cleared_at: now.toISOString(), cleared_by: by, cleared_why: why }, `They're cleared: ${CLEAR_WHY[why]}. Nothing was sent.`)
     if (!r && rv.due_card_at) await closeCard(db, id, by)
@@ -260,8 +253,8 @@ Deno.serve(async (req) => {
     if (!c) return json({ error: 'That candidate was not found.' }, 404)
     if (!(await claim(db, id, 'final_claim_at'))) return json({ error: 'It is already being sent. Wait a moment and reload.' }, 409)
     const s = await sendWords(db, c, finalWords(String(c.first || '').trim(), check, g.variant!, !!rv.spoke_at))
-    if (s.held) { await save({ final_held_at: now.toISOString(), final_claim_at: null }, 'Pressed "Send the final notice" outside texting hours: nothing went'); return json({ ok: true, held: s.held }) }
-    if (!s.texted && !s.emailed) { await save({ final_claim_at: null }, 'Pressed "Send the final notice": nothing could be sent (' + s.not_sent.join('; ') + ')'); return json({ ok: true, texted: false, emailed: false, not_sent: s.not_sent }) }
+    if (s.held) { await save({ final_held_at: now.toISOString(), final_claim_at: null }, 'Pressed "Send the notice" outside texting hours: nothing went'); return json({ ok: true, held: s.held }) }
+    if (!s.texted && !s.emailed) { await save({ final_claim_at: null }, 'Pressed "Send the notice": nothing could be sent (' + s.not_sent.join('; ') + ')'); return json({ ok: true, texted: false, emailed: false, not_sent: s.not_sent }) }
     const r = await save({ status: 'not_hired', final_at: now.toISOString(), final_by: by, final_variant: g.variant, final_how: how(s), final_held_at: null, final_claim_at: null },
       `Final notice (${g.variant}) sent by ${how(s)}${s.not_sent.length ? ' (not sent: ' + s.not_sent.join('; ') + ')' : ''}. Not hired.`)
     if (!r && rv.due_card_at) await closeCard(db, id, by)

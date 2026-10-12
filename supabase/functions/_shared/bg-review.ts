@@ -10,6 +10,12 @@
 //     response period, not a federal waiting period.
 //   Step 2 the final notice: only after Step 1 (or "told them by phone or in person"), a picked result that allows it,
 //     the response due date passed or "spoke with them", and not while waiting on a Good Cause Waiver.
+//
+// ONE STEP (Samantha, 2026-10-11: "we are not required to make the background check a two step process", then "cut the
+// background notice to one step"). We use no consumer reporting agency (the screening company was dropped 2026-10-04), so the federal
+// two-step does not apply. The office reads the result, picks the review result, and sends ONE notice (the final notice
+// below). "Something came up" and the 5 business day response period are retired: the step1 and told actions refuse,
+// and finalGate no longer waits for them. Waiting on a Good Cause Waiver still holds the notice.
 // Pure functions only, so the tests run exactly what the server runs.
 // =============================================================================
 // deno-lint-ignore-file no-explicit-any
@@ -88,15 +94,32 @@ export function finalWords(first: string, check: Check, variant: Variant, spoke:
     html: html([`Hi ${esc(f)}, thank you for your time.`, ...middle[variant], `We wish you the very best.<br>Caring Companions In-Home Senior Care · ${OFFICE}`]) }
 }
 
+/* ── what they told us themselves (2026-10-11, Samantha: "I would like to know if they disclosed something on their record
+   as well ... if they disclosed a DWI from 12 years ago that helps") ── read from their Step 1 answers, never sent anywhere. */
+export type Disclosure = { asked: boolean; convicted: 'yes' | 'no' | null; convictions: { offense: string; date: string; level: string; location: string }[];
+  moving_violations: 'yes' | 'no' | null; moving_detail: string; license_suspended: 'yes' | 'no' | null }
+const yn = (v: unknown): 'yes' | 'no' | null => v === 'yes' || v === 'no' ? v : null
+const cell = (v: unknown) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, 200)
+export function disclosureFrom(answers: any): Disclosure {
+  const a = answers && typeof answers === 'object' ? answers : null
+  if (!a || !('convicted' in a)) return { asked: false, convicted: null, convictions: [], moving_violations: null, moving_detail: '', license_suspended: null }
+  const rows = Array.isArray(a.convictions) ? a.convictions : []
+  return { asked: true, convicted: yn(a.convicted),
+    convictions: rows.filter((r: any) => Array.isArray(r) && r.some((x: unknown) => cell(x))).slice(0, 20)
+      .map((r: any[]) => ({ offense: cell(r[0]), date: cell(r[1]), level: cell(r[2]), location: cell(r[3]) })),
+    moving_violations: yn(a.moving_violations), moving_detail: cell(a.moving_violations_detail), license_suspended: yn(a.license_suspended) }
+}
+
 /* ── the gates ── */
 export function finalGate(rv: any, now: Date): { ok: boolean; why?: string; variant?: Variant } {
   if (!rv) return { ok: false, why: 'no review' }
   if (rv.status === 'waiting_waiver') return { ok: false, why: 'They are waiting on their Good Cause Waiver. Record the waiver decision first.' }
   if (rv.status !== 'open') return { ok: false, why: 'This review is already closed.' }
-  if (!rv.step1_at && !rv.step1_told_at) return { ok: false, why: 'Send "Something came up" first (or record that you told them by phone or in person).' }
-  const variant = variantFor(rv.check_key, rv.result)
+  let variant = variantFor(rv.check_key, rv.result)
   if (!variant) return { ok: false, why: 'Pick the review result first (Waiver needed, No waiver needed or Can\'t be employed).' }
+  /* 2026-10-11 (Samantha: "we are not required to hire even if they technically could be hireable with a good cause
+     waiver"): with a written reason, a "Waiver needed" result gets our decision notice instead of the waiver notice. */
+  if (rv.result === 'waiver_needed' && String(rv.decision_reason || '').trim()) variant = 'decision'
   if (rv.result === 'no_waiver' && !String(rv.decision_reason || '').trim()) return { ok: false, why: 'No waiver is needed, so write down why we are not hiring them first.' }
-  if (!rv.spoke_at && !duePassed(rv.due_date, now)) return { ok: false, why: `Available after ${fmtLong(String(rv.due_date))} (their response due date), or once you record that you spoke with them.` }
   return { ok: true, variant }
 }
