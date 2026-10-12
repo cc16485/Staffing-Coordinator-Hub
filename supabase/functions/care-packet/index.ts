@@ -18,7 +18,12 @@
 //                     the words or topics is a new version.
 //     'link'       {packet_id, caregiver_axiscare_id} -> that caregiver's personal link (the packet must be ready and
 //                  the caregiver on the roster by AxisCare id). NOTHING is texted here: in Step 1 the office copies it.
-//     'topic_save' {key, title, notes, videos:[{title, url, publisher?, minutes?}]} -> owner only: the how-to library.
+//     'topic_save' {key, title, notes, videos:[{title, url, publisher?, minutes?}], active?, is_new?} -> owner only: the
+//                  how-to library (the editor on the card, 2026-10-12). is_new refuses a name already taken. Retired
+//                  (active false): not offered for new packets; packets that have it keep it.
+//     'library'    -> owner only: every topic, retired ones too, for the editor.
+//     'suggest'    {ax?, lead_id?, about} -> topics from the library the AI thinks fit, each with one line of why, from
+//                  their newest care plan, their intake answers and the About notes (never medications). Saves nothing.
 //     'upcoming'   {packet_id} -> Step 3: each caregiver with a visit with this client in the next 14 days (AxisCare, read
 //                  live) and where they stand: confirmed / older version / texted / link only / none. Reads only.
 //     STEP 2 (Samantha "build step 2", 2026-10-12; Cara never texts on her own, so a person presses Send every time):
@@ -155,13 +160,70 @@ async function ensureRecipient(sb: Any, p: Any, axId: string, name: string, rec:
   return id
 }
 
+/* ── Suggest topics ─────────────────────────────────────────────────────────── */
+const PLAN_FIELDS: Array<[string, string]> = [['adl_needs', 'Help with daily activities'], ['iadl_needs', 'Help around the home'], ['medical_conditions', 'Health conditions'],
+  ['safety_concerns', 'Safety concerns'], ['services_recommended', 'Services']]
+const blob = async (sb: Any, key: string): Promise<Any[]> => {
+  const { data, error } = await sb.from('app_data').select('data').eq('key', key).maybeSingle()
+  if (error) throw error
+  return Array.isArray(data?.data) ? data.data : []
+}
+/** What we know about the client's care, as plain text for the AI, and which records it came from. Medications are left out. */
+export async function clientFacts(sb: Any, ax: string, lead: string, about: string): Promise<{ text: string; used: string[] }> {
+  const used: string[] = [], parts: string[] = []
+  const asmts = (await blob(sb, 'care_assessments')).filter((a: Any) => (ax && String(a?.axiscare_client_id ?? '').trim() === ax) || (lead && a?.lead_id && String(a.lead_id) === lead))
+  const ids = new Set(asmts.map((a: Any) => a.id))
+  const plan = (await blob(sb, 'care_plans')).filter((p: Any) => ids.has(p?.assessment_id))
+    .sort((a: Any, b: Any) => String(b?.created_at ?? '').localeCompare(String(a?.created_at ?? '')))[0]
+  if (plan) {
+    const lines = PLAN_FIELDS.map(([k, label]) => String(plan[k] ?? '').trim() ? `${label}: ${String(plan[k]).trim().slice(0, 1200)}` : '').filter(Boolean)
+    const tasks = (Array.isArray(plan.axiscare_tasks) ? plan.axiscare_tasks : []).map((t: Any) => [t?.name, t?.instructions].filter(Boolean).join(': ')).filter(Boolean)
+    if (tasks.length) lines.push('Care plan tasks: ' + tasks.join('; ').slice(0, 1200))
+    if (lines.length) { parts.push('CARE PLAN\n' + lines.join('\n')); used.push('their care plan' + (plan.created_at ? ' (' + String(plan.created_at).slice(0, 10) + ')' : '')) }
+  }
+  if (lead) {
+    const l = (await blob(sb, 'leads')).find((x: Any) => String(x?.id) === lead)
+    const attrs = l?.client_attributes && typeof l.client_attributes === 'object' ? Object.entries(l.client_attributes).filter(([, v]) => v && v !== 'no').map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`) : []
+    const list = (label: string, v: unknown) => Array.isArray(v) && v.length ? `${label}: ${v.map(String).join(', ')}` : ''
+    const lines = [...attrs, list('needs', l?.needs), list('personal care', l?.personal_care), list('safety', l?.safety), list('care flags', l?.ai_care_flags),
+      list('health conditions', l?.medical_conditions), l?.ai_needs_summary ? 'summary of the calls: ' + String(l.ai_needs_summary).slice(0, 1200) : ''].filter(Boolean)
+    if (lines.length) { parts.push('INTAKE\n' + lines.join('\n')); used.push('their intake answers') }
+  }
+  if (about) { parts.push('OFFICE NOTES FOR CAREGIVERS\n' + about); used.push('the About notes on this card') }
+  return { text: parts.join('\n\n').slice(0, 7000), used }
+}
+/** The AI picks topics from the library only, each with one short reason. Null when it could not answer. */
+export async function askSuggest(text: string, lib: Any[], fetchImpl: typeof fetch = fetch): Promise<Array<{ topic: string; why: string }> | null> {
+  const key = Deno.env.get('ANTHROPIC_API_KEY') || ''
+  if (!key) return null
+  const menu = lib.map((t: Any) => ({ key: t.key, title: t.title, about: String(t.notes ?? '').slice(0, 300) }))
+  try {
+    const r = await fetchImpl('https://api.anthropic.com/v1/messages', { method: 'POST',
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'claude-sonnet-5-5', max_tokens: 700, temperature: 0,
+        system: 'You help a home-care office choose which how-to topics to send the caregivers of one client. You get what the office '
+          + 'knows about the client and a fixed list of topics. Pick ONLY topics from the list whose skill a caregiver will actually '
+          + 'use with this client, based on what the text says. Do not guess beyond the text. For each, give one plain reason of at '
+          + 'most 14 words, naming the need, never a diagnosis or a medication. No em dashes. Answer ONLY minified JSON: '
+          + '{"topics":[{"key":string,"why":string}]} (an empty list when nothing fits). The topic list: ' + JSON.stringify(menu),
+        messages: [{ role: 'user', content: text }] }) })
+    if (!r.ok) return null
+    const j = await r.json().catch(() => null)
+    const m = String(j?.content?.[0]?.text ?? '').match(/\{[\s\S]*\}/); if (!m) return null
+    const a = JSON.parse(m[0])
+    const keys = new Set(lib.map((t: Any) => t.key)), seen = new Set<string>()
+    return (Array.isArray(a?.topics) ? a.topics : []).filter((x: Any) => keys.has(String(x?.key)) && !seen.has(String(x.key)) && seen.add(String(x.key)))
+      .map((x: Any) => ({ topic: String(x.key), why: noDash(String(x?.why ?? '')).replace(/[<>]/g, ' ').slice(0, 140) }))
+  } catch { return null }
+}
+
 async function findPacket(sb: Any, ax: string, lead: string): Promise<Any | null> {
   if (ax) { const { data, error } = await sb.from('care_packets').select('*').eq('axiscare_client_id', ax).limit(1); if (error) throw error; if (data?.[0]) return data[0] }
   if (lead) { const { data, error } = await sb.from('care_packets').select('*').eq('lead_id', lead).limit(1); if (error) throw error; if (data?.[0]) return data[0] }
   return null
 }
-async function topics(sb: Any): Promise<Any[]> {
-  const { data, error } = await sb.from('care_topics').select('*').eq('active', true)
+async function topics(sb: Any, all = false): Promise<Any[]> {
+  const { data, error } = all ? await sb.from('care_topics').select('*') : await sb.from('care_topics').select('*').eq('active', true)
   if (error) throw error
   return (data ?? []).sort((a: Any, b: Any) => String(a.title).localeCompare(String(b.title)))
 }
@@ -206,7 +268,7 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
           data: { packet_id: p.id, version: p.version, recipient_id: r.id }, outcome: 'done' })
         return json({ outcome: 'done', ack_at: at })
       }
-      const byKey = new Map((await topics(sb)).map((t) => [t.key, t]))
+      const byKey = new Map((await topics(sb, true)).map((t) => [t.key, t]))   // a retired topic stays in packets that already have it
       const items = (p.items ?? []).map((it: Any) => { const t = byKey.get(it.topic); return t ? { title: t.title, notes: it.notes || t.notes || '', videos: (t.videos ?? []).map(withEmbed) } : null }).filter(Boolean)
       return json({ caregiver_first: firstOf(r.caregiver_name), client_first: p.client_first, about: p.about, items, version: p.version,
         acknowledged: r.ack_version === p.version, ack_at: r.ack_version === p.version ? r.ack_at : null, earlier_ack: r.ack_version != null && r.ack_version !== p.version })
@@ -220,7 +282,8 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
       const ax = String(b.ax ?? '').trim(), lead = String(b.lead_id ?? '').trim()
       if (!clientKey(ax, lead)) return json({ error: 'Which client?' }, 400)
       const p = await findPacket(sb, ax, lead)
-      return json({ packet: p, topics: await topics(sb), recipients: p ? await recipients(sb, p.id) : [] })
+      return json({ packet: p, topics: await topics(sb), retired_in_packet: p ? (await topics(sb, true)).filter((t) => !t.active && (p.items ?? []).some((it: Any) => it.topic === t.key)) : [],
+        recipients: p ? await recipients(sb, p.id) : [], can_edit_library: who.roles.includes('owner_admin') })
     }
 
     /* Step 3: who is coming up with this client in the next 14 days (AxisCare, read live, nothing stored), and where each
@@ -243,7 +306,10 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
       const ax = String(b.ax ?? '').trim(), lead = String(b.lead_id ?? '').trim(), key = clientKey(ax, lead)
       if (!key) return json({ error: 'Which client?' }, 400)
       if (!Array.isArray(b.items) || b.items.length > MAX_ITEMS) return json({ error: `Pick up to ${MAX_ITEMS} topics.` }, 400)
+      const cur = await findPacket(sb, ax, lead)
+      /* a topic retired from the library stays allowed in a packet that already has it */
       const known = new Set((await topics(sb)).map((t) => t.key)), seen = new Set()
+      for (const it of (cur?.items ?? [])) known.add(String(it?.topic ?? ''))
       const items = []
       for (const it of b.items) {
         const k = String(it?.topic ?? '')
@@ -255,7 +321,6 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
       const ready = b.ready === true
       if (ready && !items.length) return json({ error: 'Add at least one topic before marking it ready.' }, 400)
       const now = new Date().toISOString()
-      const cur = await findPacket(sb, ax, lead)
       if (!cur) {
         const row = { client_key: key, axiscare_client_id: ax || null, lead_id: lead || null, ...next, version: 1, ready, updated_by: who.email, updated_at: now }
         const { data, error } = await sb.from('care_packets').insert(row).select('*')
@@ -366,12 +431,36 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
       if (!title) return json({ error: 'The topic needs a title.' }, 400)
       const v = cleanVideos(b.videos ?? [])
       if (!v.ok) return json({ error: v.error }, 400)
+      const { data: had, error: e0 } = await sb.from('care_topics').select('key, title').eq('key', key).limit(1)
+      if (e0) throw e0
+      if (b.is_new === true && had?.length) return json({ outcome: 'exists', error: `There is already a topic with that name ("${had[0].title}"). Edit that one, or pick another name.` }, 409)
       const row = { key, title, notes: cleanLong(b.notes, MAX_NOTES), videos: v.videos, active: b.active !== false, updated_by: who.email, updated_at: new Date().toISOString() }
       const { error } = await sb.from('care_topics').upsert(row, { onConflict: 'key' })
       if (error) throw error
       await opEvent(sb, { verb: 'care_topic_saved', actor_email: who.email, actor_name: who.name, via: 'hub', item_id: 'care_topic:' + key,
-        summary: `saved the how-to topic "${title}" (${v.videos.length} video${v.videos.length === 1 ? '' : 's'})`, outcome: 'done' })
-      return json({ outcome: 'saved', topics: await topics(sb) })
+        summary: `${had?.length ? 'changed' : 'added'} the how-to topic "${title}" (${v.videos.length} video${v.videos.length === 1 ? '' : 's'}${row.active ? '' : ', retired'})`, outcome: 'done' })
+      return json({ outcome: 'saved', topics: await topics(sb), library: await topics(sb, true) })
+    }
+
+    /* The library editor (owner only): every topic, retired ones too. */
+    if (action === 'library') {
+      if (!who.roles.includes('owner_admin')) return json({ error: 'Only an owner can change the how-to library.' }, 403)
+      return json({ library: await topics(sb, true) })
+    }
+
+    /* Suggest topics (2026-10-12): reads what we know about the client (their newest care plan, their intake answers, and the
+       About notes being written) and suggests topics from the library, each with one line of why. Only suggests: the
+       person ticks or unticks. Nothing is saved here. */
+    if (action === 'suggest') {
+      const ax = String(b.ax ?? '').trim(), lead = String(b.lead_id ?? '').trim()
+      if (!clientKey(ax, lead)) return json({ error: 'Which client?' }, 400)
+      const lib = await topics(sb)
+      if (!lib.length) return json({ outcome: 'no_library', suggestions: [] })
+      const facts = await clientFacts(sb, ax, lead, cleanLong(b.about, MAX_ABOUT))
+      if (!facts.text) return json({ outcome: 'nothing_to_read', used: [], suggestions: [] })
+      const ai = await askSuggest(facts.text, lib)
+      if (!ai) return json({ outcome: 'ai_failed', error: 'The suggestions could not be made just now. Tick the topics yourself, or try again in a minute.', used: facts.used, suggestions: [] })
+      return json({ outcome: 'ok', used: facts.used, suggestions: ai })
     }
 
     return json({ error: 'Unknown action.' }, 400)

@@ -3,7 +3,7 @@
 import fs from 'fs'; import path from 'path'
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 700)])
 const SECRET = 'x'.repeat(40)
-let T, EVENTS, FAIL, SENT, GHL_FAIL, CALLS, VISITS = [], AX_FAIL = false
+let T, EVENTS, FAIL, SENT, GHL_FAIL, CALLS, VISITS = [], AX_FAIL = false, AI_ANSWER = null, AI_SEEN = []
 const TOPICS = () => [
   { key: 'turning', title: 'Turning and repositioning', notes: 'Turn every 2 hours.', active: true, videos: [{ title: 'Lie on the side', url: 'https://www.youtube.com/watch?v=6M5_eTPUWpo', publisher: 'The Hospice Care Plan', minutes: 5 }] },
   { key: 'purewick_male', title: 'PureWick (male)', notes: 'Check it every 2 hours.', active: true, videos: [{ title: 'PureWick Male in-service', url: 'https://vimeo.com/968970613', publisher: 'BD', minutes: 6 }, { title: 'IFU', url: 'https://example.com/ifu.pdf' }] },
@@ -34,11 +34,12 @@ const q = (t) => { const st = { f: [], op: 'select', row: null, sel: false }; co
 globalThis.__db = { from: q, rpc: async (fn, a) => { if (fn === 'upsert_app_data_item') { const row = T.app_data.find((r) => r.key === a.target_key); const i = row.data.findIndex((x) => x.id === a.item.id); if (i >= 0) row.data[i] = a.item; else row.data.push(a.item) } return { data: null, error: null } },
   auth: { getUser: async (jwt) => ({ kr: 'u-kr', sa: 'u-sa', cg: 'u-cg' })[jwt] ? { data: { user: { id: ({ kr: 'u-kr', sa: 'u-sa', cg: 'u-cg' })[jwt], email: jwt + '@mo-care.com', app_metadata: {} } }, error: null } : { data: { user: null }, error: { message: 'bad' } } } }
 globalThis.fetch = async (url, o) => { url = String(url); CALLS.push(url); const body = o && o.body ? JSON.parse(o.body) : {}
+  if (url.includes('api.anthropic.com')) { AI_SEEN.push(body); return AI_ANSWER == null ? new Response('{}', { status: 500 }) : new Response(JSON.stringify({ content: [{ type: 'text', text: AI_ANSWER }] }), { status: 200 }) }
   if (url.includes('axiscare.com/api/visits')) return AX_FAIL ? new Response('{}', { status: 500 }) : new Response(JSON.stringify({ results: { visits: VISITS, nextPage: null } }), { status: 200 })
   if (url.includes('/contacts/upsert')) return new Response(JSON.stringify({ contact: { id: 'C:' + body.phone, dnd: false } }), { status: 200 })
   if (url.includes('/conversations/messages')) { if (GHL_FAIL) return new Response('{"message":"nope"}', { status: 500 }); SENT.push({ to: body.contactId, text: body.message }); return new Response('{}', { status: 200 }) }
   return new Response('{}', { status: 404 }) }
-const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'k', HUB_JOB_SECRET: SECRET, GHL_TOKEN: 'g', GHL_LOCATION_ID: 'loc', AXISCARE_TOKEN: 'ax', AXISCARE_SITE: '16485' }
+const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'k', HUB_JOB_SECRET: SECRET, GHL_TOKEN: 'g', GHL_LOCATION_ID: 'loc', AXISCARE_TOKEN: 'ax', AXISCARE_SITE: '16485', ANTHROPIC_API_KEY: 'ak' }
 let handler; globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (h) => { handler = h } }
 const F = 'supabase/functions', tmp = fs.mkdtempSync(path.join(process.cwd(), '_cpk_'))
 try {
@@ -188,6 +189,44 @@ try {
   ck('AxisCare not answering: says so (never "nobody is coming")', r.j.outcome === 'unreadable' && /AxisCare did not answer/.test(r.j.error), r.j)
   reset(); await call({ action: 'save', lead_id: 'L9', client_first: 'Lee', about: '', items: [{ topic: 'turning', notes: '' }], ready: true, base_version: null })
   r = await call({ action: 'upcoming', packet_id: T.care_packets[0].id }); ck('a lead not yet in AxisCare: "not in AxisCare", AxisCare never asked', r.j.outcome === 'not_in_axiscare' && !CALLS.some((u) => u.includes('axiscare')), r.j)
+
+
+  // ---------------- the library editor and suggestions ----------------
+  reset(); r = await call({ action: 'library' }); ck('library: a care coordinator is refused', r.status === 403, r)
+  r = await call({ action: 'library' }, 'sa'); ck('library (owner): every topic, the retired one too', r.status === 200 && r.j.library.length === 3 && r.j.library.some((t) => t.key === 'old' && t.active === false), r.j)
+  r = await call({ action: 'get', ax: '900' }); ck('get says a care coordinator cannot edit the library', r.j.can_edit_library === false, r.j)
+  r = await call({ action: 'get', ax: '900' }, 'sa'); ck('...and the owner can', r.j.can_edit_library === true, r.j)
+  r = await call({ action: 'topic_save', key: 'turning', title: 'Turning again', is_new: true, videos: [] }, 'sa'); ck('a new topic whose name is taken: refused, the old one untouched', r.status === 409 && T.care_topics.find((t) => t.key === 'turning').title === 'Turning and repositioning', r)
+  r = await call({ action: 'topic_save', key: 'oxygen', title: 'Oxygen safety', notes: 'No open flame.', is_new: true, videos: [{ title: 'Oxygen at home', url: 'https://youtu.be/6M5_eTPUWpo' }] }, 'sa')
+  ck('a new topic: saved, and the answer carries both the offered list and the whole library', r.status === 200 && r.j.topics.some((t) => t.key === 'oxygen') && r.j.library.length === 4 && EVENTS.some((e) => /added the how-to topic "Oxygen safety"/.test(e.summary)), r.j)
+  // retiring keeps it in packets that have it
+  await save({ items: [{ topic: 'turning', notes: 'n' }, { topic: 'oxygen', notes: 'o' }] })
+  r = await call({ action: 'topic_save', key: 'oxygen', title: 'Oxygen safety', notes: 'No open flame.', active: false, videos: [] }, 'sa')
+  ck('retiring: no longer offered for new packets', !r.j.topics.some((t) => t.key === 'oxygen') && EVENTS.some((e) => /retired/.test(e.summary)), r.j)
+  r = await call({ action: 'get', ax: '900' }); ck('...the packet that has it lists it as retired-in-packet', r.j.retired_in_packet.map((t) => t.key).join() === 'oxygen', r.j)
+  r = await save({ about: 'still has oxygen', items: [{ topic: 'turning', notes: 'n' }, { topic: 'oxygen', notes: 'o' }], base_version: T.care_packets[0].version }); ck('...and that packet can still be saved with it', r.status === 200, r)
+  r = await call({ action: 'save', ax: '777', client_first: 'New', about: '', items: [{ topic: 'oxygen' }], ready: false, base_version: null }); ck('...but a new packet cannot pick it', r.status === 400, r)
+  const rid = await (async () => { await call({ action: 'link', packet_id: T.care_packets[0].id, caregiver_axiscare_id: '11' }); return T.care_packet_recipients[0] })()
+  const L3 = Object.fromEntries(new URL(await L.makeLink(SECRET, rid.id, 9999999999)).searchParams)
+  r = await call({ action: 'view', ...L3 }, null); ck('...and the caregiver still sees it in that packet', r.j.items.some((i) => i.title === 'Oxygen safety'), r.j)
+
+  // suggestions
+  reset()
+  T.app_data.push({ key: 'care_assessments', data: [{ id: 'as1', axiscare_client_id: '900', lead_id: 'L1' }, { id: 'as2', axiscare_client_id: '901' }] },
+    { key: 'care_plans', data: [{ id: 'cp0', assessment_id: 'as1', created_at: '2026-09-01', adl_needs: 'old plan' }, { id: 'cp1', assessment_id: 'as1', created_at: '2026-10-10', adl_needs: 'Bed bound, turn every 2 hours', medical_conditions: 'Hospice', medications: 'MORPHINE 5mg', axiscare_tasks: [{ name: 'Reposition', instructions: 'every 2 hours' }] },
+      { id: 'cp9', assessment_id: 'as2', adl_needs: 'someone else' }] },
+    { key: 'leads', data: [{ id: 'L1', needs: ['personalCare'], safety: ['fallRisk'], client_attributes: { bed_bound: 'yes', hoyer_lift: 'no' }, ai_needs_summary: 'Uses a PureWick' }] })
+  AI_ANSWER = '{"topics":[{"key":"turning","why":"Bed bound — needs turning every 2 hours"},{"key":"made_up","why":"x"},{"key":"turning","why":"dup"},{"key":"purewick_male","why":"Uses a <b>PureWick</b>"}]}'
+  r = await call({ action: 'suggest', ax: '900', lead_id: 'L1', about: 'Call hospice first.' }, 'cg'); ck('suggest from a caregiver account: refused', r.status === 403, r)
+  r = await call({ action: 'suggest', ax: '900', lead_id: 'L1', about: 'Call hospice first.' })
+  const sent = AI_SEEN[AI_SEEN.length - 1]?.messages?.[0]?.content || ''
+  ck('suggest: library topics only, each once, with why (no em dash, no markup)', r.j.outcome === 'ok' && r.j.suggestions.map((x) => x.topic).join() === 'turning,purewick_male' && !/[—<>]/.test(r.j.suggestions.map((x) => x.why).join(' ')), r.j)
+  ck('suggest reads the NEWEST care plan for this client, their intake and the About notes, and says so', /Bed bound, turn every 2 hours/.test(sent) && !/old plan|someone else/.test(sent) && /bed bound: yes/.test(sent) && !/hoyer/.test(sent) && /Uses a PureWick/.test(sent) && /Call hospice first/.test(sent) && r.j.used.join('|') === 'their care plan (2026-10-10)|their intake answers|the About notes on this card', { sent, used: r.j.used })
+  ck('medications are never sent to the AI', !/MORPHINE/i.test(sent), sent)
+  ck('the AI is given only the active library to choose from', /"key":"turning"/.test(AI_SEEN[AI_SEEN.length - 1].system) && !/"key":"old"/.test(AI_SEEN[AI_SEEN.length - 1].system))
+  ck('nothing is saved by suggesting', !T.care_packets.length)
+  AI_ANSWER = null; r = await call({ action: 'suggest', ax: '900', lead_id: 'L1', about: '' }); ck('the AI not answering: says so, no suggestions', r.j.outcome === 'ai_failed' && !r.j.suggestions.length, r.j)
+  AI_ANSWER = '{"topics":[]}'; r = await call({ action: 'suggest', ax: '555', about: '' }); ck('nothing known about the client: "nothing to read", the AI never asked', r.j.outcome === 'nothing_to_read' && AI_SEEN.length === 2, r.j)
 
   // helpers
   ck('YouTube ids from watch, youtu.be and shorts links; anything else no player', M.youtubeId('https://youtu.be/6M5_eTPUWpo') === '6M5_eTPUWpo' && M.youtubeId('https://www.youtube.com/shorts/6M5_eTPUWpo') === '6M5_eTPUWpo' && M.youtubeId('https://evil.com/watch?v=6M5_eTPUWpo') === null)
