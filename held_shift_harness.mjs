@@ -47,7 +47,8 @@ const src = src0.replace(/^import \{ createClient \} from .*$/m, 'const createCl
   .replace("from '../_shared/events.ts'", "from '" + path.join(FNS, '_shared/events.ts') + "'")
   .replace("from '../_shared/held-shift.ts'", "from '" + path.join(FNS, '_shared/held-shift.ts') + "'")
   .replace("from '../_shared/covered-outside.ts'", "from '" + path.join(FNS, '_shared/covered-outside.ts') + "'")
-  .replace("from '../_shared/job-auth.ts'", "from '" + path.resolve('test_stubs/job-auth-by-role.mjs') + "'");   // J2: lock stand-in (no token = the schedule)
+  .replace("from '../_shared/job-auth.ts'", "from '" + path.resolve('test_stubs/job-auth-by-role.mjs') + "'")   // J2: lock stand-in (no token = the schedule)
+  .replace(/from '\.\.\/_shared\/([\w.-]+\.(?:ts|js))'/g, (_, m) => "from '" + path.join(FNS, '_shared', m) + "'")   /* every other shared import, so a new one never breaks this harness */;
 const tmp = path.join(process.cwd(), '_cw_under_test.ts'); fs.writeFileSync(tmp, src);
 let handler; const env = { SUPABASE_URL: 'http://x', SUPABASE_SERVICE_ROLE_KEY: 'k', AXISCARE_TOKEN: 't', AXISCARE_SITE: '16485' };
 globalThis.Deno = { env: { get: k => env[k] }, serve: h => { handler = h; } };

@@ -98,13 +98,14 @@ async function fetchVisits(site: string, token: string, from: string, to: string
 }
 
 Deno.serve(async (req) => {
-  await loadQuiet(sb)   // Pause care / End care: paused and ended clients' visits are skipped
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200 })
   /* J1 (2026-09-29): only its 10am schedule or the owner's server key. Everyone else, the public key included, is refused
      before anything is read or sent. */
   const caller = await jobCaller(req)
   if (!caller) return json({ error: 'not allowed' }, 401)
   if (new URL(req.url).searchParams.get('auth_check') === '1') return json({ ok: true, caller })
+  /* J1: read only after the caller is known (2026-10-12; it used to run first, so a refused call still read the list) */
+  await loadQuiet(sb)   // Pause care / End care: paused and ended clients' visits are skipped
   const t0 = Date.now()
   const url = new URL(req.url)
 

@@ -113,13 +113,15 @@ world(plan); ERR.client_callin_current = true; out = await picker();
 ck('a plan that can\'t be read holds everyone (fail closed) and says why', [...out.group1, ...out.group2].length === 0 && out.excluded.every(e => /call-in plan could not be read/.test(e.why) || /Do-Not-Return|called off|active/.test(e.why)) && out.meta.callin_plan_unreadable === true, out);
 
 world(plan); await tick();
-ck("automatic texts follow the only-ask list: Dixie and Autumn are texted, Beth and Carl never", textedNames().join(',') === 'Autumn,Dixie', { sent: SENT.map(m => m.contactId) });
+/* Cara's automatic waves were retired 2026-10-12 (decision 6, Desktop 632): she texts nobody on her own. The only-ask list
+   now matters where a person picks, which the picker checks above prove. */
+ck("automatic texts: none at all (waves retired); Beth and Carl are never texted", textedNames().length === 0, { sent: SENT.map(m => m.contactId) });
 world({ ...plan, coverage_need: 'family_covers', only_ask: [] }); await tick();
 ck('"family would rather cover it": Cara starts NO automatic caregiver texts', textedNames().length === 0, SENT);
 world({ ...plan, coverage_need: 'flexible', only_ask: [] }); await tick();
 ck('"flexible": Cara starts NO automatic caregiver texts either', textedNames().length === 0, SENT);
 world(null); await tick();
-ck('no plan: automatic texts go out as today', textedNames().length >= 2, SENT.map(m => m.contactId));
+ck('no plan: still no automatic texts (waves retired 2026-10-12)', textedNames().length === 0, SENT.map(m => m.contactId));
 world(plan); ERR.client_callin_current = true; await tick();
 ck('automatic texts hold when the plan can\'t be read', textedNames().length === 0, SENT);
 

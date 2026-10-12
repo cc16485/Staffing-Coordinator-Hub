@@ -2,6 +2,10 @@
 // board's engine, and the call bridge stubbed (it has its own suite). Plus the shared link and wording helpers.
 // node callin_test.mjs
 import fs from 'fs'; import path from 'path';
+/* the fixture is a call-in on 2026-10-07; its links expire at the end of the next day, so the clock is pinned to that
+   morning (the test stopped working on 2026-10-09 when the real clock passed the expiry) */
+{ const RealDate = Date, FIXED = RealDate.parse('2026-10-07T15:00:00Z')
+  globalThis.Date = class extends RealDate { constructor(...a) { super(...(a.length ? a : [FIXED])) } static now() { return FIXED } } }
 const ROOT = path.dirname(new URL(import.meta.url).pathname), FN = path.join(ROOT, 'supabase/functions')
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note ?? '').slice(0, 900)])
 const SECRET = 's'.repeat(48)

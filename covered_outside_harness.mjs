@@ -17,7 +17,7 @@ ck('rule: nobody recorded as calling off → covered only if the shift was seen 
 
 /* the family text guard */
 const famSrc = fs.readFileSync(path.join(FNS, '_shared/family-change-text.ts'), 'utf8')
-  .replace("from './outreach.ts'", "from '" + path.join(FNS, '_shared/outreach.ts') + "'").replace("from './covered-outside.ts'", "from '" + path.join(FNS, '_shared/covered-outside.ts') + "'");
+  .replace(/from '\.\/([\w.-]+\.(?:ts|js))'/g, (_, m) => "from '" + path.join(FNS, '_shared', m) + "'")   /* every shared import, so a new one never breaks this harness */;
 const famTmp = path.join(process.cwd(), '_fam_under_test.ts'); fs.writeFileSync(famTmp, famSrc);
 globalThis.Deno = { env: { get: () => '' }, serve: () => {} };
 const F = await import(famTmp); fs.unlinkSync(famTmp);
@@ -34,7 +34,8 @@ const src = fs.readFileSync(path.join(FNS, 'coverage-watch/index.ts'), 'utf8').r
   .replace("from '../_shared/events.ts'", "from '" + path.join(FNS, '_shared/events.ts') + "'")
   .replace("from '../_shared/held-shift.ts'", "from '" + path.join(FNS, '_shared/held-shift.ts') + "'")
   .replace("from '../_shared/covered-outside.ts'", "from '" + path.join(FNS, '_shared/covered-outside.ts') + "'")
-  .replace("from '../_shared/job-auth.ts'", "from '" + path.resolve('test_stubs/job-auth-by-role.mjs') + "'");   // J2: lock stand-in (no token = the schedule)
+  .replace("from '../_shared/job-auth.ts'", "from '" + path.resolve('test_stubs/job-auth-by-role.mjs') + "'")   // J2: lock stand-in (no token = the schedule)
+  .replace(/from '\.\.\/_shared\/([\w.-]+\.(?:ts|js))'/g, (_, m) => "from '" + path.join(FNS, '_shared', m) + "'")   /* every other shared import, so a new one never breaks this harness */;
 const tmp = path.join(process.cwd(), '_cw2_under_test.ts'); fs.writeFileSync(tmp, src);
 let handler; const env = { SUPABASE_URL: 'http://x', SUPABASE_SERVICE_ROLE_KEY: 'k', AXISCARE_TOKEN: 't', AXISCARE_SITE: '16485' };
 globalThis.Deno = { env: { get: k => env[k] }, serve: h => { handler = h; } };

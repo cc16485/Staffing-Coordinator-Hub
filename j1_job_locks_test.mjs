@@ -101,6 +101,9 @@ reset(); CLOCK.hour = '02'; CLOCK.wd = 'Sun'
   ck('J1 · lead-nurture: "dry=1" at 2am Sunday no longer skips the hours (it never did a practice run, so it sent for real)', a.s === 200 && /outside outreach hours/.test(a.j?.skipped || ''), a)
   ck('J1 · lead-nurture: the schedule at 2am Sunday is held by the hours as before', b.s === 200 && /outside outreach hours/.test(b.j?.skipped || ''), b)
   ck('J1 · lead-nurture: nothing sent at night', SENT.length === 0, SENT) }
+/* ghe-rules.js sets self.GheRules itself in Deno; under node it is a CommonJS module, so the test hands it over (as
+   ghe_watch_test.mjs does). Without this the run read G.windows of nothing (the test broke when slice 3 added the watch). */
+{ const { createRequire } = await import('module'); globalThis.GheRules = createRequire(import.meta.url)('./supabase/functions/_shared/ghe-rules.js') }
 { const h = await load('ghe-reminders')
   const a = await call(h, 'https://x/functions/v1/ghe-reminders?dry=1&force=1', H.owner)
   const b = await call(h, 'https://x/functions/v1/ghe-reminders?force=1', H.owner)
