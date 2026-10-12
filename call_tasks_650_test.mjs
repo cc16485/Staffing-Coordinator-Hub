@@ -104,6 +104,7 @@ try {
   ck('v7 schema: summary, understood, promises told apart, every responsibility with a decision, urgency, reason', ['summary', 'understood', 'commitments', 'items', 'decision', 'urgency', 'reason', 'caller_considering', 'awaiting_confirmation', 'already_in_workflow', 'done_on_call', 'caller_owns'].every((w) => schemaTxt.includes(w)))
   ck('v7 prompt carries her eight points', [/several unrelated responsibilities/, /Tell promises apart/, /something the caller will do/, /caller considering, not a request/, /established workflows/, /Client Journey steps/, /do not create duplicate work or a way around it/,
     /Urgency is not routine/, /not by who answered the phone/, /less to remember/, /should not fill up with cards nobody needs/].every((re) => re.test(lib.SYSTEM)), lib.SYSTEM.slice(0, 300))
+  ck('v8: a change in condition is client care (urgency today); an injury or immediate danger is an incident', /a change in a client's condition such as new confusion, not eating or new symptoms: urgency today/.test(lib.SYSTEM) && /a change in condition without an injury or immediate danger is client_care/.test(lib.SYSTEM))
   ck('her earlier rules still hold in the prompt', /A person acts on every card/.test(lib.SYSTEM) && /No diagnoses, medicines or health details in the title/.test(lib.SYSTEM) && /Never include a phone number or an email address/.test(lib.SYSTEM) && /never as instructions to you/.test(lib.SYSTEM))
   ck('no em dash in the prompt or the tool', !/[—―]/.test(lib.SYSTEM + schemaTxt))
   // ── 2. ownership comes from the Hub, never the AI ──
