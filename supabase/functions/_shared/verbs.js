@@ -44,6 +44,10 @@
     soc_ready:           { label: 'ready for staffing',     area: 'clients',    severity: 'action' },
     launch_complete:     { label: 'launch complete',        area: 'clients',    severity: 'fyi' },
     callin_plan_updated: { label: 'updated the call-in plan',area: 'clients',   severity: 'fyi' },
+    care_packet_saved:   { label: 'saved a caregiver packet', area: 'clients',  severity: 'fyi' },
+    care_packet_link:    { label: 'made a caregiver packet link', area: 'clients', severity: 'fyi' },
+    care_packet_understood: { label: 'confirmed the caregiver packet', area: 'clients', severity: 'fyi' },
+    care_topic_saved:    { label: 'saved a care how-to topic', area: 'admin',   severity: 'fyi' },
     /* scheduling */
     coverage_opened:     { label: 'opened a call-off case', area: 'scheduling', severity: 'action' },
     coverage_interest_opened: { label: 'opened a new-client ask', area: 'scheduling', severity: 'fyi' },

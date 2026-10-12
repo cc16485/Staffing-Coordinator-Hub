@@ -1,0 +1,59 @@
+[
+  {
+    "key": "hospice_basics",
+    "title": "Caring for someone on hospice",
+    "notes": "Comfort comes first. Hospice is in charge of the medical care, and we support the plan they set.\n\nCall the hospice nurse first, not 911, for pain, trouble breathing, a fall, new skin problems, or anything that worries you, unless the hospice plan or the family tells you otherwise. Then call our office at (417) 234-8494.\n\nThe hospice phone number is in the folder in the home. Find it at the start of every shift.",
+    "videos": [
+      { "title": "The four essential things you need to know how to do when caring for a hospice patient", "url": "https://www.youtube.com/watch?v=vw5D4zqhMKs", "publisher": "The Hospice Care Plan (hospice nurses)", "minutes": 2 },
+      { "title": "What does active dying look like and what do you do?", "url": "https://www.youtube.com/watch?v=UwLJlxblI8o", "publisher": "The Hospice Care Plan (hospice nurses)", "minutes": 4 }
+    ]
+  },
+  {
+    "key": "turning",
+    "title": "Turning and repositioning",
+    "notes": "Turn every 2 hours, or as the care plan says. Rotate: left side, back, right side.\n\nUse the draw sheet to move them. Never drag skin across the sheet.\nPut a pillow between the knees and one behind the back when on the side.\nFloat the heels: a pillow under the calves so the heels do not touch the bed.\nAt every turn, look at the tailbone, hips, heels, elbows and ears.\nDo not rub or massage red skin over a bone.",
+    "videos": [
+      { "title": "Positioning for comfort to lie on the side", "url": "https://www.youtube.com/watch?v=6M5_eTPUWpo", "publisher": "The Hospice Care Plan (hospice nurses)", "minutes": 5 },
+      { "title": "Positioning for comfort to lie on the back", "url": "https://www.youtube.com/watch?v=QkcauWW9L6o", "publisher": "The Hospice Care Plan (hospice nurses)", "minutes": 5 },
+      { "title": "Placing a turn or draw sheet under a patient with 1 caregiver", "url": "https://www.youtube.com/watch?v=X66XE2FzNgw", "publisher": "The Hospice Care Plan (hospice nurses)", "minutes": 2 },
+      { "title": "Float the heels!", "url": "https://www.youtube.com/watch?v=f95rnjC1t0M", "publisher": "The Hospice Care Plan (hospice nurses)", "minutes": 1 }
+    ]
+  },
+  {
+    "key": "skin",
+    "title": "Skin checks and bed sores",
+    "notes": "The first sign of a bed sore is a pink or red spot over a bone that does not fade after the pressure is off.\n\nKeep the skin clean and dry, especially after a bowel movement.\nTake pressure off a red spot by turning them off it.\nTell the hospice nurse and our office the same day about a red spot that stays red, a blister, open skin, or a dark or purple area.",
+    "videos": [
+      { "title": "Think pink! The first sign of a bedsore", "url": "https://www.youtube.com/watch?v=HP3Br67bX1s", "publisher": "The Hospice Care Plan (hospice nurses)", "minutes": 2 },
+      { "title": "The first sign of skin breakdown. Get rid of the pressure!", "url": "https://www.youtube.com/watch?v=7JGuwoWYIyY", "publisher": "The Hospice Care Plan (hospice nurses)", "minutes": 2 }
+    ]
+  },
+  {
+    "key": "commode",
+    "title": "Bedside commode",
+    "notes": "Put the commode right next to the bed with its brakes or feet locked.\nUse a gait belt for every transfer.\nThey must be able to stand and bear some of their own weight. If they cannot, do not lift them: keep them in bed, use a brief, and call our office.\nWear gloves. Empty and rinse the bucket after every use.",
+    "videos": [
+      { "title": "How to pivot transfer a loved one from a bed to a bedside commode", "url": "https://www.youtube.com/watch?v=FpAHPstotL0", "publisher": "Hospice of the Piedmont", "minutes": 5 },
+      { "title": "Using a gait belt to transfer your patient safely", "url": "https://www.youtube.com/watch?v=5ZMS8CZ9jsI", "publisher": "The Hospice Care Plan (hospice nurses)", "minutes": 5 }
+    ]
+  },
+  {
+    "key": "brief_in_bed",
+    "title": "Changing a brief in bed",
+    "notes": "Roll them toward you, onto their side, and back, using the draw sheet.\nClean front to back, then dry the skin fully.\nCheck the skin while they are on their side.\nPut a clean pad or sheet under them if the bed got wet or soiled.",
+    "videos": [
+      { "title": "Changing an absorbent brief for a bed-bound patient", "url": "https://www.youtube.com/watch?v=4Js4atWSJu0", "publisher": "The Hospice Care Plan (hospice nurses)", "minutes": 8 },
+      { "title": "Changing an incontinence brief when the patient can't cooperate", "url": "https://www.youtube.com/watch?v=3tnbMeyCFQQ", "publisher": "The Hospice Care Plan (hospice nurses)", "minutes": 4 }
+    ]
+  },
+  {
+    "key": "purewick_male",
+    "title": "PureWick for men (male external catheter)",
+    "notes": "From BD, the maker:\n\nPutting it on: trim the hair, wash the skin with soap and water, rinse, and dry it completely. No creams, lotions or powder on that area, or it will not stick.\nCheck it and the skin at least every 2 hours, and after every turn: still connected, no pulling on the tube, no leaking.\nReplace it at least every 24 hours, and right away if it gets stool or blood on it.\nTaking it off: peel slowly from the top down, never pull straight off. A warm, damp cloth helps loosen it.\nEmpty the canister before it reaches 1800 mL. It holds 2000.\nTell the hospice nurse and our office about redness, sores or swelling.",
+    "videos": [
+      { "title": "PureWick Male for home: in-service video", "url": "https://vimeo.com/968970613", "publisher": "BD (the maker)", "minutes": 6 },
+      { "title": "PureWick Male: instructions for home use (PDF)", "url": "https://www.purewickathome.com/on/demandware.static/Sites-BD_PureWick-Site/-/default/dw825af2e5/docs/REF-59062%20PW%20Male%20IFU%20Home%20Use.pdf", "publisher": "BD (the maker)", "minutes": null },
+      { "title": "Cleaning the canister and tubing", "url": "https://www.purewickathome.com/troubleshooting.html", "publisher": "BD (the maker)", "minutes": null }
+    ]
+  }
+]
