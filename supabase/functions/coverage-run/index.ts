@@ -46,6 +46,7 @@ import { adminRecipients } from '../_shared/clockin-admins.ts'
 import { caseEnded, chiNowNaive } from '../_shared/loops.ts'
 /* SLICE 5 (2026-10-10): a new hire with a readiness card is never offered a shift until Approved to Work and AxisCare read back Active */
 import { workLock, LOCK_WHY } from '../_shared/work-lock.ts'
+import { OPEN_HOURS_DEFAULT, checkWording, inSendWindow, offeredCells, openHoursText } from '../_shared/open-hours.ts'
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -420,6 +421,105 @@ async function resolveClientAxisId(clientText: string):
        YES landing mid-run (via coverage-reply) is never clobbered by our
        stale snapshot. upsert_app_data_item replaces the whole item; the only
        safe write is fresh-read → merge → write. */
+/* ── OPEN HOURS (her ask + "yes to all", 2026-10-12) ─────────────────────────────────────────────────────────────
+   One message to the whole team about a Team Builder plan's recurring hours. The plan's days and slots are the grid;
+   the ask lives on ONE coverage case per plan (id cwh_<planId>, kind 'interest', open_hours: true), so every reply
+   comes back through coverage-reply like any other ask and lands on the plan's squares.
+   mode 'preview' (read only): the wording, who would get it and who wouldn't (and why).
+   mode 'send': switch ops_settings.open_hours_live; 9am to 6pm Central; up to 20 people per press, everyone eligible
+   who hasn't been asked yet (her decision 1: busy people too). Same gates as every Cara ask: active in AxisCare,
+   not a nurse, not on No shift texts, not Do Not Return for a named client, the work lock, opt-outs (contactForOutbound),
+   and the ask recorded under the case lock BEFORE the text goes (coverage_case_add_ask: never texted twice). */
+const OPEN_HOURS_BATCH = 20
+// deno-lint-ignore no-explicit-any
+async function openHours(body: any, whoName: string, jr: (b: unknown, s?: number) => Response): Promise<Response> {
+  const planId = String(body.plan_id || '')
+  const { data: pr } = await sb.from('app_data').select('data').eq('key', 'staffing_plans').maybeSingle()
+  // deno-lint-ignore no-explicit-any
+  const plan: any = (Array.isArray(pr?.data) ? pr!.data : []).find((p: any) => p && String(p.id) === planId)
+  if (!plan) return jr({ error: 'no such Team Builder plan' }, 404)
+  const days: string[] = (Array.isArray(plan.days) ? plan.days : []).map((d: unknown) => String(d).toLowerCase().slice(0, 3))
+  // deno-lint-ignore no-explicit-any
+  const slots = (Array.isArray(plan.slots) ? plan.slots : []).filter((x: any) => x && x.k && /^\d\d:\d\d$/.test(String(x.start)) && /^\d\d:\d\d$/.test(String(x.end)))
+  const cells = offeredCells(days, slots)
+  if (!cells.length) return jr({ error: 'the plan needs at least one day and one shift with a start and end time' }, 400)
+  const town = String(plan.city || '').trim()
+  if (!town) return jr({ error: 'add the town to the plan first (the text names the town, never the address)' }, 400)
+  const { data: setR } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+  // deno-lint-ignore no-explicit-any
+  const st: any = setR?.data ?? {}
+  const caseId = 'cwh_' + planId.replace(/[^A-Za-z0-9_-]/g, '_')
+  const existing = await readCaseFresh(caseId)
+  if (existing && existing.status !== 'open') return jr({ error: 'this plan\'s open-hours ask is closed' }, 409)
+  const starts = slots.map((x: { start: string }) => x.start).sort(), ends = slots.map((x: { end: string }) => x.end).sort()
+  const named = String(plan.client || '').trim()
+  const kase = existing ?? {
+    id: caseId, kind: 'interest', open_hours: true, plan_id: planId, reason: 'new', status: 'open', asked: [],
+    client: named || `Open hours, ${town}`, no_client: !named || !!plan.open_hours, client_city: town, client_zip: String(plan.zip || '') || null,
+    interest_days: days, interest_start: starts[0], interest_end: ends[ends.length - 1], slots, offered: cells,
+    shift_date: '', shift_time: '', opened_at: nowIso(), opened_by: whoName, admin_alerted: nowIso(),
+  }
+  /* named clients only: their Do Not Return list applies (decision 1); an open-hours plan with no client has none */
+  const pool = await buildCandidatesForCase(kase.no_client ? { ...kase, client: '' } : kase)
+  // deno-lint-ignore no-explicit-any
+  const everyone: any[] = [...pool.group0, ...pool.prn_other, ...pool.group1, ...pool.group2, ...pool.prn_ongoing]
+  const askedKeys = new Set((Array.isArray(kase.asked) ? kase.asked : []).flatMap((a: { phone?: string; axiscare_id?: string; name?: string }) =>
+    [a.axiscare_id ? 'ax:' + a.axiscare_id : '', a.name ? 'nm:' + String(a.name).toLowerCase() : ''].filter(Boolean)))
+  const notYet = everyone.filter((x) => !(x.axiscare_id && askedKeys.has('ax:' + x.axiscare_id)) && !askedKeys.has('nm:' + String(x.name).toLowerCase()))
+  const tmpl = String(kase.msg_broadcast || '') || openHoursText(String(st.open_hours_msg || '') || OPEN_HOURS_DEFAULT, { town, days, slots })
+  const whyCount: Record<string, number> = {}
+  for (const x of pool.excluded) { const k = String(x.why || 'other').replace(/\s*\(.*$/, '').slice(0, 80); whyCount[k] = (whyCount[k] || 0) + 1 }
+  if (body.mode !== 'send') {
+    return jr({ ok: true, live: st.open_hours_live === true, window_ok: inSendWindow(), case_id: caseId, exists: !!existing,
+      text: tmpl, offered: cells, will_get: notYet.length, already_asked: everyone.length - notYet.length,
+      people: notYet.map((x) => ({ name: x.name, busy: x.working_then || (x.conflicts_then ? `${x.conflicts_then} visit${x.conflicts_then === 1 ? '' : 's'} in those hours over the next 2 weeks` : null), town: x.city || null, miles: x.miles ?? null })),
+      not_sent: pool.excluded.length, not_sent_why: whyCount })
+  }
+  if (st.open_hours_live !== true) return jr({ error: 'Texting the whole team is switched off (Owners Hub Admin page, "Open hours: text the whole team"). Nothing was sent.' }, 409)
+  if (!inSendWindow()) return jr({ error: 'Texts to the whole team go 9am to 6pm. Nothing was sent; press again in the morning.', held_window: true }, 409)
+  const message = String(body.message ?? tmpl).replace(/\s+/g, ' ').trim()
+  const bad = checkWording(message); if (bad) return jr({ error: bad + '. Nothing was sent.' }, 400)
+  const ghl2 = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
+  if (!ghl2.token || !ghl2.locationId) return jr({ error: 'GHL credentials not set' }, 502)
+  if (!existing) {
+    const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: { ...kase, msg_broadcast: message } })
+    if (error) return jr({ error: 'could not save the ask, so nothing was sent: ' + error.message }, 500)
+  } else if (kase.msg_broadcast !== message) {
+    await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: { ...(await readCaseFresh(caseId)), msg_broadcast: message } })
+  }
+  const { data: rosterRow } = await sb.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
+  // deno-lint-ignore no-explicit-any
+  const roster = (Array.isArray(rosterRow?.data) ? rosterRow!.data : []) as any[]
+  const phoneOf = (nm: string) => normalisePhone(roster.find((cg) => nameKeyOf([clean(cg.first), clean(cg.last)].filter(Boolean).join(' ')) === nameKeyOf(nm))?.phone)
+  const sent: string[] = [], failed: string[] = [], already: string[] = []
+  for (const x of notYet.slice(0, OPEN_HOURS_BATCH)) {
+    const phone = phoneOf(String(x.name))
+    if (!phone) { failed.push(`${x.name} (no phone on the roster)`); continue }
+    const contact = await contactForOutbound(sb, ghl2, { phone, firstName: x.first || x.name }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'coverage-run' })
+    if (!contact) { failed.push(`${x.name} (refused by the outbound gate or opted out of texts)`); continue }
+    const ask = { id: uid(), name: x.name, phone, channel: 'sms', at: nowIso(), state: 'waiting', replied_at: null, tier: 3, auto: false,
+      picked_by_coordinator: true, open_hours: true, asked_by: whoName.slice(0, 80), ghl_contact_id: contact.contactId, axiscare_id: x.axiscare_id ?? null }
+    const { data: held, error: holdErr } = await sb.rpc('coverage_case_add_ask', { p_id: caseId, p_ask: ask })
+    if (holdErr || held !== 'added') { if (held === 'already_asked') already.push(String(x.name)); else failed.push(`${x.name} (could not record the ask, so it was not sent)`); continue }
+    let ok = false
+    try {
+      const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', { method: 'POST',
+        headers: { Authorization: `Bearer ${ghl2.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message: message.replaceAll('{first_name}', x.first || String(x.name).split(' ')[0] || 'there') }) })
+      ok = r.ok; if (!r.ok) failed.push(`${x.name} (SMS ${r.status})`)
+    } catch { failed.push(`${x.name} (send error)`) }
+    if (!ok) { await sb.rpc('coverage_case_remove_ask', { p_id: caseId, p_ask_id: ask.id }); continue }
+    sent.push(String(x.name))
+    try {
+      await fetch(`https://services.leadconnectorhq.com/contacts/${contact.contactId}/tags`, { method: 'POST',
+        headers: { Authorization: `Bearer ${ghl2.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' }, body: JSON.stringify({ tags: ['coverage-asked'] }) })
+    } catch { /* a missing tag only costs reply routing */ }
+  }
+  await opEvent(sb, { job: 'coverage-run', verb: 'open_hours_sent', item_id: caseId, area: 'coverage', actor_name: whoName,
+    summary: `${whoName} texted ${sent.length} caregiver${sent.length === 1 ? '' : 's'} about open hours in ${town}` + (failed.length ? ` (${failed.length} not sent)` : '') })
+  return jr({ ok: true, case_id: caseId, sent, failed, already_asked: already, remaining: Math.max(0, notYet.length - sent.length - already.length - failed.length) })
+}
+
 async function readCaseFresh(caseId: string): Promise<any | null> {
   const { data } = await sb.from('app_data').select('data').eq('key', 'coverage_cases').maybeSingle()
   const arr: any[] = Array.isArray(data?.data) ? data!.data : []
@@ -892,10 +992,13 @@ Deno.serve(async (req) => {
        staff record, role and hub access), or the owner's server key. It used to read "signed in" from the token
        without checking who: any account on the shared project could text caregivers from here. */
     const ownerCall = await ownerCaller(req)
+    let whoName = 'the owner'
     if (!ownerCall) {
       const who = await requireStaff(sb, req, OFFICE_ROLES)
       if (!who.ok) return jr({ error: who.error }, who.status)
+      whoName = String((who as { name?: string }).name || 'the office')
     }
+    if (body.action === 'open_hours') return await openHours(body, whoName, jr)
     const kase = await readCaseFresh(String(body.case_id || ''))
     if (!kase) return jr({ error: 'no such coverage case' }, 404)
     /* J1: only a shift that is still open (the Hub only shows the picker for open cases). */
@@ -1331,6 +1434,9 @@ Deno.serve(async (req) => {
   }
   const remPlans = new Map()
   for (const c of open) {
+    /* Open hours (2026-10-12): only a person sends that ask, from Team Builder. The tick never texts, reminds or
+       closes it. */
+    if (c?.open_hours === true) continue
     const cands = await candidatesFor(c)
 
     /* ── CI3 (2026-10-04, her decision 1): REMINDERS UNTIL SOMEONE HAS IT. Nobody tapped "I've got it", confirmed or
