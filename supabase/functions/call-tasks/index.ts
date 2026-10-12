@@ -14,7 +14,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import Anthropic from 'npm:@anthropic-ai/sdk'
 import { jobCaller } from '../_shared/job-auth.ts'
-import { VERSION, MODEL, request, clean, answerOf, transcriptText, shortName, type CallIn, type Who, type OpenCard, type Earlier } from '../_shared/call-tasks.ts'
+import { VERSION, MODEL, request, clean, answerOf, transcriptText, shortName, related as relatedOf, type CallIn, type Who, type OpenCard, type Earlier } from '../_shared/call-tasks.ts'
 
 const GHL = 'https://services.leadconnectorhq.com'
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
@@ -67,6 +67,9 @@ Deno.serve(async (req) => {
   const { data: opsRow } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
   // deno-lint-ignore no-explicit-any
   const ops: any[] = Array.isArray(opsRow?.data) ? opsRow.data : []
+  const { data: covRows } = await db.from('app_data').select('key, data').in('key', ['coverage_cases', 'timekeeper_cases'])
+  // deno-lint-ignore no-explicit-any
+  const byKey: Record<string, any[]> = Object.fromEntries((covRows ?? []).map((r: { key: string; data: unknown }) => [r.key, Array.isArray(r.data) ? r.data : []]))
 
   for (const s of todo) {
     // deno-lint-ignore no-explicit-any
@@ -104,14 +107,16 @@ Deno.serve(async (req) => {
         const { data: er } = await eq
         earlier = (er ?? []).filter((e: Earlier) => Array.isArray(e.tasks) && e.tasks.length)
       }
+      /* 4b · what the Hub's own systems already have for this person around the call (cards, call-off and clock-in cases) */
+      const related = relatedOf(String(who.name || ''), s.call_at, ops, byKey.coverage_cases || [], byKey.timekeeper_cases || [])
       /* 5 · the reading */
       const call: CallIn = { message_id: s.message_id, call_at: s.call_at, direction: row.direction, seconds: Number(s.seconds || 0), caller: row.caller || '', transcript: text }
       // deno-lint-ignore no-explicit-any
-      const resp = await (ai.beta.messages as any).create(request(call, who, open, earlier))
+      const resp = await (ai.beta.messages as any).create(request(call, who, open, earlier, related))
       const got = answerOf(resp)
       if (got.error) { row.error = got.error.slice(0, 300); out.errors++ }
       else {
-        const r = clean(got.input, open, earlier)
+        const r = clean(got.input, open, earlier, related)
         Object.assign(row, { call_type: r.call_type, tasks: r.tasks.map((t) => ({ ...t, voicemail: r.is_voicemail })), resolves: r.resolves, no_task_reason: r.no_task_reason || null })
         if (r.tasks.length) out.cards += r.tasks.length; else out.no_cards++
       }
