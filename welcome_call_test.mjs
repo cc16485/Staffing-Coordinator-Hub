@@ -30,6 +30,7 @@ globalThis.fetch = async (url, o) => { url = String(url); const body = o?.body ?
 let handler; globalThis.Deno = { env: { get: (k) => ({ SUPABASE_URL: 'x', SUPABASE_SERVICE_ROLE_KEY: 'k', GHL_TOKEN: 'g', GHL_LOCATION_ID: 'loc' })[k] }, serve: (h) => { handler = h } }
 const src = fs.readFileSync(`${FN}/welcome-call/index.ts`, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
   .replace(/^import \{ requireStaff, OFFICE_ROLES \} from .*$/m, 'const OFFICE_ROLES = []; const requireStaff = async () => globalThis.__staff')
+  .replace("from '../_shared/job-auth.ts'", "from '" + path.resolve('test_stubs/job-auth-by-role.mjs') + "'")   // Slice 4 (f255a2a) added the job-auth import (it loads supabase-js from esm.sh); the lock stand-in, as in covered_outside_harness.mjs
 const tmp = path.join(process.cwd(), FN, 'welcome-call', '_t.ts'); fs.writeFileSync(tmp, src); try { await import(tmp) } finally { fs.unlinkSync(tmp) }
 const call = async (body) => { const r = await handler(new Request('https://x/f', { method: 'POST', body: JSON.stringify(body) })); return [r.status, await r.json()] }
 const CAND = { action: 'invite', candidate_id: '42', first: 'Dana', last: 'Doe', phone: '(417) 555-0101', email: 'dana@x.com' }

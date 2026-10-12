@@ -2,7 +2,7 @@
 // node axiscare_read_probe_harness.mjs supabase/functions/axiscare-read-probe/index.ts
 import fs from 'fs'; import path from 'path';
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note).slice(0, 900)]);
-const FN = process.argv[2];
+const FN = process.argv[2] || 'supabase/functions/axiscare-read-probe/index.ts';   // default so plain `node <file>` runs
 const src = fs.readFileSync(FN, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db');
 const tmp = path.join(process.cwd(), '_probe_under_test.ts'); fs.writeFileSync(tmp, src);
 let handler; const env = { SUPABASE_URL: 'http://x', SUPABASE_SERVICE_ROLE_KEY: 'sb_secret_exact_key_123', AXISCARE_TOKEN: 't', AXISCARE_SITE: '16485' };

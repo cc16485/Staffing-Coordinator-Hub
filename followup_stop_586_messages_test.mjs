@@ -81,7 +81,8 @@ STOP_ERR = false
 reset([C('Later1', { created_at: ago(60 * 50), nudge_1_at: ago(60 * 48) })]); STOP = { Later1: 'booked' }; await run()
 ck('a later follow-up (the 2-day one) stops too', toThem().length === 0 && !T.job_applicants[0].nudge_2_at, SENT)
 import('child_process').then(() => {})
-const added = (await import('child_process')).execSync('git diff origin/main -- ' + FN + '/interview-messages/index.ts').toString().split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++'))
+// 586 is merged, so a diff against origin/main is empty; read the lines its two commits added (5f05db3, 4e5a23f)
+const added = (await import('child_process')).execSync('git diff 5f05db3^ 4e5a23f -- ' + FN + '/interview-messages/index.ts').toString().split('\n').filter((l) => l.startsWith('+') && !l.startsWith('+++'))
 ck('no em dash in any line 586 adds', added.length > 0 && !added.some((l) => l.includes('\u2014')), added.filter((l) => l.includes('\u2014')))
 
 // ---- 586: duplicates, consent, cancellations

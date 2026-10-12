@@ -7,6 +7,16 @@ const DASH = /[—―]/
 const MSG = 'This page is read only now, so that was not saved or sent. Use the Caring Companions Hub: cc.mo-care.com'   // safe saves step 3 (2026-10-04): the whole page is read only
 const html = fs.readFileSync('index.html', 'utf8')
 
+/* 2026-10-04 (79dad75, "Retire the old Staffing hub staff page"): index.html is now a short 'moved to the Care
+   Coordinator Hub' page with no script at all, so the read-only page checks in parts 1 to 3 have nothing left to run
+   against. What they guarded (this page can never write candidates or caregivers) now holds because the page has no
+   code: that is checked instead. The SQL parts (4 and 5) are unchanged. */
+const RETIRED = !/<script/i.test(html) && /<title>Moved to the Care Coordinator Hub<\/title>/.test(html)
+if (RETIRED) {
+  ck('retired page (79dad75): no script, no Supabase, no app_data, so it can never save a person', !/<script|supabase|app_data|syncToSupabase|\.rpc\(/i.test(html))
+  ck('retired page: it sends people to cc.mo-care.com', /href="https:\/\/cc\.mo-care\.com\//.test(html) && /http-equiv="refresh" content="\d+; url=https:\/\/cc\.mo-care\.com\//.test(html))
+  ck('retired page: no em dash', !DASH.test(html))
+} else {
 // ── 1. every inline script parses ──
 const inline = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1])
 let parsed = 0
@@ -94,6 +104,7 @@ const added = (() => { try { return execFileSync('git', ['diff', BASE418, '--', 
 if (added === null) console.log('(git history not available here: the em dash check on the added lines is skipped)')
 else ck('no em dash in anything this change adds to the page', added.length > 0 && !added.some((l) => DASH.test(l)), added.filter((l) => DASH.test(l)))
 ck('the marker the installer looks for on the live site is there', html.includes('data-sc-readonly="418"'))
+}  // end of the pre-retirement page checks
 
 // ── 4. the SQL (scans) ──
 const sq = fs.readFileSync('app_data_history.sql', 'utf8'); const pf = fs.readFileSync('app_data_history_proof.sql', 'utf8')

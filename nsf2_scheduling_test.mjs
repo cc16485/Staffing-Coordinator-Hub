@@ -106,12 +106,16 @@ const files = ['coverage-run', 'timekeeper-watch', 'coverage-reply', 'caregiver-
 files.push(['_shared/clockin-admins', fs.readFileSync(`${FN}/_shared/clockin-admins.ts`, 'utf8')])
 const raw = (s) => (s.match(/fetch\('https:\/\/services\.leadconnectorhq\.com\/conversations\/messages'/g) || []).length
 /* Only interactive sends that already answer the person with an error keep a raw post: team-ask (502 "Not sent"),
-   coverage-run send_selected (lists failed[]), clockin-alert EVV form (502 "could not be sent"). */
-const allowedRaw = { 'team-ask': 1, 'coverage-run': 1, 'clockin-alert': 1 }
+   coverage-run send_selected (lists failed[]), clockin-alert EVV form (502 "could not be sent").
+   coverage-run gained a second one on 2026-10-12 (b012e20, Desktop 629): the Team Builder "Open hours" send, also
+   pressed by a signed-in coordinator and also answering with failed[]; checked below. */
+const allowedRaw = { 'team-ask': 1, 'coverage-run': 2, 'clockin-alert': 1 }
 const bad = files.filter(([n, s]) => raw(s) !== (allowedRaw[n] || 0)).map(([n, s]) => n + ':' + raw(s))
 ck('scan · NO SILENT FAILURES: every automatic send in the scheduling group goes through ghlSendChecked (only 3 interactive sends that already report keep a raw post)', !bad.length, bad)
 const cr = files.find(([n]) => n === 'coverage-run')[1]
 ck('scan · coverage-run\'s one raw send is the coordinator\'s send_selected, which answers with failed[] (CI1: and takes back the ask it recorded first)', /if \(!r\.ok\) failed\.push\(`\$\{x\.name\} \(SMS \$\{r\.status\}\)`\)/.test(cr) && /if \(!ok\) \{ await sb\.rpc\('coverage_case_remove_ask'/.test(cr))
+const crOpen = cr.slice(cr.indexOf('async function openHours('), cr.indexOf('async function readCaseFresh('))
+ck('scan · coverage-run\'s second raw send (Open hours, b012e20) is coordinator-pressed and answers with failed[], taking back the ask', crOpen.length > 0 && raw(crOpen) === 1 && /if \(!r\.ok\) failed\.push\(`\$\{x\.name\} \(SMS \$\{r\.status\}\)`\)/.test(crOpen) && /if \(!ok\) \{ await sb\.rpc\('coverage_case_remove_ask'/.test(crOpen) && /return jr\(\{ ok: true, case_id: caseId, sent, failed,/.test(crOpen) && /if \(body\.action === 'open_hours'\) return await openHours/.test(cr.slice(cr.indexOf('requireStaff(sb, req, OFFICE_ROLES)'))))
 const ta = files.find(([n]) => n === 'team-ask')[1], cl = files.find(([n]) => n === 'clockin-alert')[1]
 ck('scan · team-ask and the EVV form answer a refused send with an error, never ok', /if \(!sentOk\) return json\(\{ outcome: 'failed'/.test(ta) && /if \(!ok\) return json\(\{ error: 'The text could not be sent/.test(cl))
 const senders = [...new Set(files.flatMap(([, s]) => [...s.matchAll(/'([a-z][a-z-]+(?: \([^')]*\))?)', \{ channel: '|sender: '([a-z][a-z-]+(?: \([^')]*\))?)'/g)].map((m) => m[1] || m[2])))]
