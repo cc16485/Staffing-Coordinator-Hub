@@ -32,6 +32,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { normalisePhone, contactForOutbound } from '../_shared/outreach.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
+import { loadNotClients, isNotClient } from '../_shared/client-quiet.ts'   // Office Staff and other not-clients (2026-10-12)
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -123,8 +124,10 @@ Deno.serve(async (req) => {
   type Shift = { start: string; end: string; client: string }
   const byCg = new Map<string, { name: string; axiscare_id: string; shifts: Shift[] }>()
   let skippedVisits = 0
+  await loadNotClients(sb)
   for (const v of visits) {
     if (v?.caregiver?.id == null) continue
+    if (isNotClient(v)) { skippedVisits++; continue }   // office time is not a shift with a client
     const cgId = String(v.caregiver.id)
     const cgName = [String(v.caregiver.firstName ?? '').trim(), String(v.caregiver.lastName ?? '').trim()]
       .filter(Boolean).join(' ') || ('caregiver ' + cgId)

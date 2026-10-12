@@ -13,6 +13,7 @@
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
+import { loadNotClients, isNotClient } from '../_shared/client-quiet.ts'   // Office Staff and other not-clients (2026-10-12)
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b, null, 2), { status: s, headers: { 'Content-Type': 'application/json' } })
@@ -59,6 +60,7 @@ export async function syncActiveClients(commit: boolean, skipTwins = true) {
   const clients: any[] = []
   let totalSeen = 0
   let url: string | null = `https://${site}.axiscare.com/api/clients`
+  await loadNotClients(sb)
   try {
     for (let page = 0; url && page < 12; page++) {
       const r: Response = await fetch(url, { headers: {
@@ -68,7 +70,7 @@ export async function syncActiveClients(commit: boolean, skipTwins = true) {
       const j: any = await r.json().catch(() => ({}))
       for (const c of (j?.results?.clients ?? j?.clients ?? [])) {
         totalSeen++
-        if (c?.status?.active === true) clients.push(c)
+        if (c?.status?.active === true && !isNotClient(c?.id)) clients.push(c)   // never (re)creates a not-client (Office Staff)
       }
       url = j?.results?.nextPage ?? j?.nextPage ?? null
     }

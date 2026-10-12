@@ -91,7 +91,8 @@ try {
   ;[s, j] = await run('cron', '?auth_check=1')
   ck('?auth_check=1 says who is calling and syncs nothing', s === 200 && j.caller === 'cron' && !AXCALLS.some((u) => u.includes('auth_check')), j)
   const code = fs.readFileSync(path.join(F, 'circles-sync', 'index.ts'), 'utf8'), old = fs.readFileSync(path.join(F, 'identity-backfill', 'index.ts'), 'utf8')
-  const body = (t) => t.slice(t.indexOf('async function syncCirclesFromAxisCare'), t.indexOf('Deno.serve(async (req) => {')).trim()
+  /* 2026-10-12: the only change since the move is leaving not-clients (Office Staff) out; those two lines are set aside here */
+  const body = (t) => t.slice(t.indexOf('async function syncCirclesFromAxisCare'), t.indexOf('Deno.serve(async (req) => {')).split('\n').filter((l) => !/loadNotClients\(sb\)|isNotClient\(ax\)/.test(l)).join('\n').trim()
   ck('the sync itself is the same code as before, unchanged', body(code) === body(old))
   ck('no em dash in the new code', !/[—―]/.test(code.slice(0, code.indexOf('/* ── FAMILY CIRCLES'))) && !/[—―]/.test(code.slice(code.indexOf('Deno.serve'))))
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }

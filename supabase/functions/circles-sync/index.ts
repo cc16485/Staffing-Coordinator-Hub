@@ -14,6 +14,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { OFFICE_ROLES, requireStaff } from '../_shared/staff-auth.ts'
+import { loadNotClients, isNotClient } from '../_shared/client-quiet.ts'   // Office Staff and other not-clients (2026-10-12)
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret',
@@ -109,8 +110,10 @@ async function syncCirclesFromAxisCare(commit: boolean) {
   const { data: curRoles } = await sb.from('person_role').select('person_id').eq('role', 'client').eq('status', 'active')
   const current = new Set((curRoles ?? []).map((r) => String(r.person_id)))
   out.skipped_past = 0
+  await loadNotClients(sb)
   for (const l of (links ?? [])) {
     const ax = String(l.source_id)
+    if (isNotClient(ax)) continue   // not a person in care (Office Staff): no circle, no contacts
     const clientName = nameOf.get(String(l.person_id)) ?? ''
     if (!clientName) continue
     if (!current.has(String(l.person_id))) { out.skipped_past++; continue }

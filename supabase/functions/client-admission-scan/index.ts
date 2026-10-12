@@ -15,6 +15,7 @@
 //     authenticated (browser) tokens are refused.
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { loadNotClients, isNotClient } from '../_shared/client-quiet.ts'   // Office Staff and other not-clients (2026-10-12)
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -83,7 +84,8 @@ Deno.serve(async (req) => {
     .eq('system', 'axiscare').eq('entity_type', 'client').in('source_id', active)
   if (linkErr) return json({ error: 'identity read failed: ' + linkErr.message }, 500)
   const linked = new Set((links ?? []).map((l) => String(l.source_id)))
-  const unlinked = active.filter((id) => !linked.has(id)).slice(0, 50)
+  await loadNotClients(sb)
+  const unlinked = active.filter((id) => !linked.has(id) && !isNotClient(id)).slice(0, 50)   // Office Staff is never "who is this?"
   if (!unlinked.length) return json({ ok: true, active: active.length, unlinked: 0, results: [] })
 
   // AxisCare details for the unlinked ids (read only)

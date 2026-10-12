@@ -18,6 +18,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { approvedRules, rulesCheck } from '../_shared/approved-rules.ts'
 import { saveSweepFields } from '../_shared/sweep-patch.ts'
+import { loadNotClients, isNotClient } from '../_shared/client-quiet.ts'   // Office Staff and other not-clients (2026-10-12)
 
 const cors = { 'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' }
@@ -223,6 +224,7 @@ Deno.serve(async (req) => {
   const visitsByCaregiver = new Map<string, any[]>()
   let visitsError: string | null = null
   if (acSite && acTok) {
+    await loadNotClients(supabase)
     try {
       let url: string | null =
         `https://${acSite}.axiscare.com/api/visits?startDate=${today}&endDate=${horizon}`
@@ -234,6 +236,7 @@ Deno.serve(async (req) => {
         const j: any = await r.json().catch(() => ({}))
         for (const v of (j?.results?.visits ?? j?.visits ?? [])) {
           if (v?.removed) continue                    // superseded or cancelled
+          if (isNotClient(v)) continue                // office time is not a client visit (2026-10-12)
           const cg = v?.caregiver?.id
           if (cg == null) continue
           const k = String(cg)

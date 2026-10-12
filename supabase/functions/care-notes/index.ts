@@ -44,6 +44,7 @@ import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { textAdmin, type Admin } from '../_shared/clockin-admins.ts'
 import { normalisePhone } from '../_shared/outreach.ts'
+import { loadNotClients, isNotClient } from '../_shared/client-quiet.ts'   // Office Staff and other not-clients (2026-10-12)
 
 const AC_VERSION = '2023-10-01'
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -379,12 +380,13 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
   // deno-lint-ignore no-explicit-any
   const list: any[] = []
   let url: string | null = `${base}/api/visits?startDate=${startDay}&endDate=${chiDay(0)}`
+  await loadNotClients(db)
   for (let page = 0; url && page < 20; page++) {
     const r: Response = await fetch(url, { headers: head })
     if (!r.ok) return { error: 'the visit list answered ' + r.status }
     // deno-lint-ignore no-explicit-any
     const j: any = await r.json().catch(() => ({}))
-    for (const v of rowsOf(j?.results?.visits)) if (v && !v.removed) list.push(v)
+    for (const v of rowsOf(j?.results?.visits)) if (v && !v.removed && !isNotClient(v)) list.push(v)   // office time: never read or flagged
     url = j?.results?.nextPage ?? j?.nextPage ?? null
   }
   const out = { ok: true, practice: opts.practice, window_hours: Math.round((now - since) / 3600e3), visits_finished: 0, read: 0, stopped_early: false,
