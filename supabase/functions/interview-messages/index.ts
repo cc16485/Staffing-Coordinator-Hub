@@ -549,7 +549,7 @@ Deno.serve(async (req) => {
       ].filter(Boolean).join(', ')
       const grade = p.screen_grade === 'qualified' ? 'cleared the screen' : 'needs a look'
       const team = PRN.has(p.position) ? ' for the PRN CNA Team' : ''
-      const line = `${who} just applied${team} and ${grade}${bits ? ` — ${bits}` : ''}. ` +
+      const line = `${who} just applied${team} and ${grade}${bits ? `: ${bits}` : ''}. ` +
         `They are in the hub under Applicants.`
 
       plan.alerted.push(who)
@@ -559,8 +559,8 @@ Deno.serve(async (req) => {
       if (!withinOutreachHours()) continue
       if (!(await claim('job_applicants', p.id, 'office_alerted_at'))) continue
 
+      /* EMAIL ONLY (Samantha 2026-10-12: "email only not text on the admin just applied office alert") */
       for (const t of alertTo!) {
-        if (t.phone) { const cid = await staffContact(t, 'sms'); if (cid) await sms(cid, line, t) }
         if (t.email) { const cid = await staffContact(t, 'email'); if (cid) await email(cid, `New applicant: ${who}`, shell(`<p>${line}</p>`), t) }
       }
       out.alerted++

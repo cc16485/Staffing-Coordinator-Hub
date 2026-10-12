@@ -13,7 +13,7 @@ const ago = (mins) => new Date(Date.now() - mins * 60_000).toISOString()
 let T, SENT
 const reset = (apps, { roles = true } = {}) => {
   SENT = []
-  T = { contact_optout_current: [], circle_contacts: [], phone_index: [], interview_bookings: [], applicant_alerts: [{ name: 'Office', phone: '4175550999', active: true }],
+  T = { contact_optout_current: [], circle_contacts: [], phone_index: [], interview_bookings: [], applicant_alerts: [{ name: 'Office', phone: '4175550999', email: 'office@mo-care.test', active: true }],
     scheduling_settings: [{ id: 1, phone: '(417) 234-8494', location_line1: '1331 N Stewart Ave', location_name: 'Caring Companions' }],
     job_positions: roles ? [{ key: 'caregiver', track: null }, { key: 'prn_cna', track: 'prn' }] : [],
     job_applicants: apps }
@@ -84,10 +84,13 @@ ck('after the office approves: the usual first nudge goes', texts('Dee2').length
 // 5. Amanda Peak (2026-10-05): on the do-not-rehire list, FIRST application here (grade review): held, and the office is told what it is
 RV = { Amy1: 'dnr' }; EL = {}
 reset([C('Amy1', { screen_grade: 'review' }), C('Rayna1', { screen_grade: 'review' })]); j = await run()
-const off5 = SENT.filter((x) => String(x.to).includes('4175550999')).map((x) => x.msg)
+/* "just applied" is email only since 2026-10-12; the do-not-rehire / applied-again alerts still text AND email, so the
+   office list is read from the texts plus the emails */
+const off5 = SENT.filter((x) => String(x.to).includes('4175550999') || String(x.to).includes('office@mo-care.test')).map((x) => String(x.msg || '').replace(/^(?:<[^>]*>)+/, ''))
+const off5t = SENT.filter((x) => x.type === 'SMS' && String(x.to).includes('4175550999')).map((x) => String(x.msg || ''))   // the do-not-rehire alert still texts, once
 ck('do-not-rehire: no booking link to her, even on a first application', texts('Amy1').length === 0 && !T.job_applicants[0].nudge_1_at, SENT)
-ck('...the office gets the do-not-rehire alert once, not "just applied, needs a look"', off5.filter((m) => /^Amy1 Test/.test(m)).length === 1
-  && off5.includes('Amy1 Test applied. They are on your do-not-rehire list, so they cannot book an interview and get no booking reminders. Nothing was sent to them. If that has changed, take them off the list in the hub (Recruit, Do not rehire).'), off5)
+ck('...the office gets the do-not-rehire alert once, not "just applied, needs a look"', off5t.filter((m) => /^Amy1 Test/.test(m)).length === 1 && !off5.some((m) => /^Amy1 Test just applied/.test(m))
+  && off5t.includes('Amy1 Test applied. They are on your do-not-rehire list, so they cannot book an interview and get no booking reminders. Nothing was sent to them. If that has changed, take them off the list in the hub (Recruit, Do not rehire).'), off5)
 ck('...someone else who simply needs a look is unchanged (usual alert and nudge)', off5.some((m) => /^Rayna1 Test just applied and needs a look/.test(m)) && texts('Rayna1').length === 1, off5)
 const fsrc = fs.readFileSync(`${FN}/interview-messages/index.ts`, 'utf8')
 ck('no em dash in anything new', !/[—―]/.test(fsrc.slice(fsrc.indexOf('461 (2026-10-05, Shakira'), fsrc.indexOf('461 (2026-10-05, Shakira') + 900) + fsrc.slice(fsrc.indexOf('applied again after "not moving forward" -'), fsrc.indexOf('---------------- cancellations'))))
