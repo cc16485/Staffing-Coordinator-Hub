@@ -67,6 +67,18 @@ export function shape(v: Any) {
   }
 }
 const key4 = (x: Any) => JSON.stringify([x.caregiver_id ?? null, x.date, x.start, x.end])
+/* Where the one visit sits in AxisCare's answer (2026-10-12: the Live Schedule box showed a real visit as "nobody", no
+   time, because the answer wasn't under results.visit). Read every shape AxisCare uses; never guess one. */
+export function visitOf(j: Any): Any {
+  const isVisit = (x: Any) => x && typeof x === 'object' && !Array.isArray(x) && (x.scheduledStartDate != null || x.startDate != null)
+  for (const c of [j?.results?.visit, j?.visit, j?.results, j?.data?.visit, j?.data, j]) if (isVisit(c)) return c
+  for (const l of [j?.results?.visits, j?.visits]) { const a = Array.isArray(l) ? l : (l && typeof l === 'object' ? Object.values(l) : []); if (a.length === 1 && isVisit(a[0])) return a[0] }
+  return null
+}
+/* A visit the Hub could not actually read is never shown as changeable and never changed: the optimistic lock compares
+   against the real visit, and an empty read would compare empty with empty. Keys only, so nothing personal is echoed. */
+export const readOk = (v: Any) => !!(v && v.date && v.start)
+export const keysSeen = (j: Any) => ({ top: Object.keys(j ?? {}).slice(0, 12), results: j?.results && typeof j.results === 'object' ? Object.keys(j.results).slice(0, 12) : null })
 
 /** What the change will do, checked before anything is sent. Returns the AxisCare body or the reason it can't. */
 export function plan(cur: Any, set: Any): { body?: Any; after?: Any; why?: string } {
@@ -135,7 +147,8 @@ Deno.serve(async (req) => {
     const id = String(b.visit_id ?? ''); if (!id) return json({ error: 'which visit?' }, 400)
     const r = await ax('GET', vpath(id))
     if (r.status !== 200) return json({ error: `AxisCare answered ${r.status}` }, 502)
-    const v = shape(r.json?.results?.visit ?? r.json?.visit)
+    const v = shape(visitOf(r.json))
+    if (!readOk(v)) return json({ error: 'AxisCare didn’t send this visit’s details back, so it can’t be changed from the Hub. Change it in AxisCare.', seen: keysSeen(r.json) }, 502)
     const today = chiDay()
     const undo = (await readList(sb)).filter((c) => c.visit_id === id && !c.undone_at && !c.undo_of && chiDay(new Date(c.at)) === today && key4(c.after) === key4(v))
       .map((c) => ({ change_id: c.id, words: c.words, by: c.by, at: c.at }))
@@ -166,7 +179,8 @@ Deno.serve(async (req) => {
     if (!reason) return json({ outcome: 'refused', error: 'Pick one of AxisCare’s change reasons. Nothing was changed.' }, 422)
     const g = await ax('GET', vpath(id))
     if (g.status !== 200) return json({ error: `AxisCare answered ${g.status}. Nothing was changed.` }, 502)
-    const cur = shape(g.json?.results?.visit ?? g.json?.visit)
+    const cur = shape(visitOf(g.json))
+    if (!readOk(cur)) return json({ outcome: 'refused', error: 'AxisCare didn’t send this visit’s details back. Nothing was changed.', seen: keysSeen(g.json) }, 502)
     if (cur.removed) return json({ outcome: 'refused', error: 'That visit has been removed in AxisCare. Nothing was changed.' }, 409)
     if (cur.started || cur.verified) return json({ outcome: 'refused', error: 'That visit has started or is verified. Change it in AxisCare (an EVV correction). Nothing was changed.' }, 409)
     if (key4(cur) !== key4({ caregiver_id: expect.caregiver_id ?? null, date: expect.date, start: expect.start, end: expect.end }))
@@ -180,7 +194,7 @@ Deno.serve(async (req) => {
       return json({ outcome: 'axiscare_refused', error: `AxisCare refused it (${r.status}${rowsOf(r.json?.errors).length ? ': ' + rowsOf(r.json?.errors).join('; ') : ''}). Nothing was changed.` }, 422)
     }
     const g2 = await ax('GET', vpath(id))
-    const after = g2.status === 200 ? shape(g2.json?.results?.visit ?? g2.json?.visit) : null
+    const after = g2.status === 200 ? shape(visitOf(g2.json)) : null
     const confirmed = !!after && key4(after) === key4(p.after)
     const row = { id: changeId, visit_id: id, client: cur.client, client_id: cur.client_id, at: new Date().toISOString(), by: who.name, by_email: who.email,
       reason_id: reason.id, reason_name: reason.name, before: { caregiver_id: cur.caregiver_id, caregiver: cur.caregiver, date: cur.date, start: cur.start, end: cur.end },
