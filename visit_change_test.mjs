@@ -2,7 +2,7 @@
 // node visit_change_test.mjs
 import fs from 'fs'; import path from 'path'
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 800)])
-let T, AX, PATCHES, RPCS, EVENTS, AXFAIL, DRIFT
+let T, AX, PATCHES, RPCS, EVENTS, AXFAIL, DRIFT, SHAPE = 'nested'
 const today = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
 const reset = (live = true) => { PATCHES = []; RPCS = []; EVENTS = []; AXFAIL = 0; DRIFT = false
   AX = { 's=12:d=2026-10-20': { id: 's=12:d=2026-10-20', client: { id: 900, firstName: 'Ed', lastName: 'Anderson' }, caregiver: { id: 5, firstName: 'Kim', lastName: 'Aide' },
@@ -33,7 +33,8 @@ globalThis.fetch = async (url, o = {}) => { url = String(url); const m = o.metho
     v.scheduledStartDate = d + 'T' + (body.startTime || v.scheduledStartDate.slice(11, 16)) + ':00'; v.scheduledEndDate = d + 'T' + (body.endTime || v.scheduledEndDate.slice(11, 16)) + ':00'
     return new Response(JSON.stringify({ results: { visit: v } }), { status: 200 }) }
   const out = JSON.parse(JSON.stringify(v)); if (DRIFT && PATCHES.length) out.scheduledStartDate = out.scheduledStartDate.slice(0, 11) + '09:30:00'
-  return new Response(JSON.stringify({ results: { visit: out } }), { status: 200 }) }
+  const wrapped = SHAPE === 'flat' ? { results: out } : SHAPE === 'list' ? { results: { visits: [out] } } : SHAPE === 'empty' ? { results: {}, success: true } : { results: { visit: out } }
+  return new Response(JSON.stringify(wrapped), { status: 200 }) }
 const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'k', AXISCARE_API_KEY: 'a', AXISCARE_SITE: '16485' }
 let handler; globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (h) => { handler = h } }
 const F = 'supabase/functions', tmp = fs.mkdtempSync(path.join(process.cwd(), '_vc_'))
@@ -82,6 +83,14 @@ try {
   r = await call({ action: 'undo', change_id: 'old-0001-abcd' }); ck('undo on another day: refused (change it back in AxisCare)', r.j.outcome === 'too_late' && !PATCHES.length, r)
   reset(); r = await change(); r = await call({ action: 'change', visit_id: ED, expect: { caregiver_id: '7', date: '2026-10-20', start: '09:00', end: '14:00' }, set: { start: '10:00' }, reason_id: 10, change_id: 'chg-0005-abcd' })
   r = await call({ action: 'undo', change_id: 'chg-0001-abcd' }); ck('undo after a later change to the same visit: refused (it no longer matches)', r.j.outcome === 'changed_meanwhile' && PATCHES.length === 2, r)
+  /* 2026-10-12: a visit AxisCare answers in another shape is still read; one it doesn't send back is never changed */
+  for (const sh of ['flat', 'list']) { reset(); SHAPE = sh; r = await call({ action: 'get', visit_id: ED })
+    ck(`get reads the visit when AxisCare answers ${sh}`, r.j.visit && r.j.visit.caregiver === 'Kim Aide' && r.j.visit.start === '09:00', r.j) }
+  reset(); SHAPE = 'empty'; r = await call({ action: 'get', visit_id: ED })
+  ck('get: no visit details back -> an error naming the keys seen, never an empty "nobody" visit', r.status === 502 && !r.j.visit && /didn.t send this visit/.test(r.j.error) && JSON.stringify(r.j.seen.top) === '["results","success"]', r)
+  reset(); SHAPE = 'empty'; r = await call({ action: 'change', visit_id: ED, expect: { caregiver_id: null, date: '', start: '', end: '' }, set: { caregiver_id: '7' }, reason_id: 5, change_id: 'chg-empty-0001' })
+  ck('change: an unread visit is never changed, even when what the box "saw" was empty too', r.j.outcome === 'refused' && !PATCHES.length, r)
+  SHAPE = 'nested'
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1)
