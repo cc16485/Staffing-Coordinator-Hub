@@ -1,6 +1,7 @@
 // Change 3 follow-up · client-admission-scan accepts a service-role JWT OR the project's exact server secret; nothing else.
 // node admission_scan_auth_test.mjs supabase/functions/client-admission-scan/index.ts
 import fs from 'fs'; import path from 'path';
+if (!process.argv[2]) process.argv[2] = 'supabase/functions/client-admission-scan/index.ts';   // plain `node admission_scan_auth_test.mjs` runs the real function
 const src = fs.readFileSync(process.argv[2], 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => ({})');
 const tmp = path.join(process.cwd(), '_scan_under_test.ts'); fs.writeFileSync(tmp, src);
 let handler; const env = { SUPABASE_URL: 'http://sb', SUPABASE_SERVICE_ROLE_KEY: 'sb_secret_abc123XYZ' };   // newer non-JWT format; no AxisCare creds

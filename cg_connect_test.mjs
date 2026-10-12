@@ -4,8 +4,9 @@
 // node cg_connect_test.mjs
 import fs from 'fs'; import path from 'path'
 const ROOT = path.dirname(new URL(import.meta.url).pathname), FN = path.join(ROOT, 'supabase/functions')
-const RULES_PATH = process.env.CG_RULES || path.join(ROOT, '..', 'cc-hub-live', 'caregiver-connect-rules.js')
-const ELIG_PATH = process.env.CG_ELIG || path.join(ROOT, '..', 'cc-hub-live', 'eligibility-rules.js')
+const HUB = process.env.HUB_ROOT || path.join(ROOT, '..', 'cc-hub-live')   // HUB_ROOT: a fresh copy of the Hub, when the sibling folder is not there
+const RULES_PATH = process.env.CG_RULES || path.join(HUB, 'caregiver-connect-rules.js')
+const ELIG_PATH = process.env.CG_ELIG || path.join(HUB, 'eligibility-rules.js')
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note ?? '').slice(0, 700)])
 globalThis.Deno = { env: { get: () => '' } }
 const J = await import(path.join(FN, '_shared/cg-connect.ts'))

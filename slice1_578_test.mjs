@@ -69,7 +69,7 @@ try {
   for (const p of fs.readdirSync(F)) { const ip = path.join(F, p, 'index.ts'); if (!fs.existsSync(ip)) continue; const s = fs.readFileSync(ip, 'utf8')
     for (const m of s.matchAll(/opEvent\(\w+, \{[^}]*?verb:\s*'([a-z_]+)'/gs)) used.add(m[1]) }
   for (const sh of ['routing.ts', 'ghl-call-bridge.ts']) { const s = fs.readFileSync(path.join(F, '_shared', sh), 'utf8'); for (const m of s.matchAll(/verb:\s*'([a-z_]+)'/g)) used.add(m[1]) }
-  const hub = path.resolve(process.cwd(), '..', 'cc-hub-live')
+  const hub = process.env.HUB_ROOT ? path.resolve(process.env.HUB_ROOT) : path.resolve(process.cwd(), '..', 'cc-hub-live')   // HUB_ROOT: a fresh copy of the Hub
   if (fs.existsSync(hub)) for (const f of fs.readdirSync(hub).filter((x) => x.endsWith('.js') || x === 'index.html')) { const s = fs.readFileSync(path.join(hub, f), 'utf8'); for (const m of s.matchAll(/opEvent\('([a-z_]+)'(?!\s*\+)/g)) used.add(m[1]) }  /* a verb built at runtime ('late_'+action) is not a spelling */
   const missing = [...used].filter((v) => !V.known(v))
   ck(`every verb the code writes is in the vocabulary (${used.size} verbs checked${fs.existsSync(hub) ? ', Hub included' : ', server only'})`, missing.length === 0, missing)
