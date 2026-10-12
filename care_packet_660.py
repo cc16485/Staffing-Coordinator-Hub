@@ -25,8 +25,9 @@ s, b = http("GET", f"{API}/v1/projects/{REF}/secrets", headers=MG())
 names = [x.get("name") for x in (json.loads(b) if s == 200 else [])]
 say("  ✓ the server's link secret (HUB_JOB_SECRET) is set") if "HUB_JOB_SECRET" in names else bad("HUB_JOB_SECRET is not set, so caregiver links could not be made. Tell Claude.")
 sM, mM = fmeta(REF, FN)
-if sM == 200: bad("a care-packet function is already deployed. Tell Claude.")
-else: say("  ✓ no care-packet function yet")
+if sM == 404: say("  ✓ no care-packet function yet")
+elif sM == 200: bad("a care-packet function is already deployed. Tell Claude.")
+else: bad(f"could not check the functions ({sM}). Tell Claude.")
 say(f"  · what changes: 4 new tables, {len(seed)} how-to topics, 1 new function. No client, caregiver or message changes.")
 if fails: say(); say("  RESULT: STOPPED before anything changed. Tell Claude which line."); done(3)
 
