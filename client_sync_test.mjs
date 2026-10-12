@@ -1,7 +1,7 @@
-// identity-backfill ?client_sync=1 · the 6-hourly AxisCare client sync (2026-10-12, "dan has not been pulled over").
+// client-sync · the 6-hourly AxisCare client sync (2026-10-12, "dan has not been pulled over"). identity-backfill stays down (441).
 // node client_sync_test.mjs
 import fs from 'fs'; import path from 'path';
-const src = fs.readFileSync('supabase/functions/identity-backfill/index.ts', 'utf8')
+const src = fs.readFileSync('supabase/functions/client-sync/index.ts', 'utf8')
   .replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__sb')
   .replace(/^import \{ jobCaller \} from .*$/m, "const jobCaller = async (req) => req.headers.get('x-cron-secret') === 'good' ? 'cron' : null");
 /* a tiny in-memory database: enough of the query chain for this mode */
@@ -37,15 +37,15 @@ globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ re
   { id: 4, firstName: 'Sam', lastName: 'Twin', status: { active: true } },
   { id: 5, firstName: 'Gone', lastName: 'Away', status: { active: false } } ] } }) });
 await import(tmp); fs.unlinkSync(tmp);
-const call = async (qs, hdr = {}) => { const r = await handler(new Request('http://x/identity-backfill?' + qs, { method: 'POST', headers: hdr, body: '{}' })); return { s: r.status, t: await r.text() }; };
-const out1 = await call('client_sync=1', { Authorization: 'Bearer anon' });
-const ac = await call('client_sync=1&auth_check=1', { 'x-cron-secret': 'good' });
+const call = async (qs, hdr = {}) => { const r = await handler(new Request('http://x/client-sync?' + qs, { method: 'POST', headers: hdr, body: '{}' })); return { s: r.status, t: await r.text() }; };
+const out1 = await call('', { Authorization: 'Bearer anon' });
+const ac = await call('auth_check=1', { 'x-cron-secret': 'good' });
 const people0 = db.person_identity.length;
-const dry = await call('client_sync=1&dry=1', { 'x-cron-secret': 'good' });
+const dry = await call('dry=1', { 'x-cron-secret': 'good' });
 const people1 = db.person_identity.length;
-const run = await call('client_sync=1', { 'x-cron-secret': 'good' }); const j = JSON.parse(run.t);
+const run = await call('', { 'x-cron-secret': 'good' }); const j = JSON.parse(run.t);
 const dan = db.person_source_id.find(x => x.source_id === '2');
-const again = await call('client_sync=1', { 'x-cron-secret': 'good' }); const j2 = JSON.parse(again.t);
+const again = await call('', { 'x-cron-secret': 'good' }); const j2 = JSON.parse(again.t);
 const res = [
   ['the public key alone is refused', out1.s === 401],
   ['its schedule gets in', ac.s === 200 && JSON.parse(ac.t).caller === 'cron'],
@@ -56,6 +56,8 @@ const res = [
   ['a past client is never made active again', !db.person_role.some(r => r.person_id === 'p-past' && r.status === 'active') && j.past_left_for_a_person === 1],
   ['an inactive AxisCare client is never copied in', !db.person_source_id.some(x => x.source_id === '5')],
   ['the answer is counts only, no names', j.created === 1 && j.name_coincidences === 1 && !/Dan|Twin|4175550100/.test(run.t) && j.ok === true],
+  ['identity-backfill (taken down by 441) is untouched and nothing imports it', !fs.readFileSync('supabase/functions/identity-backfill/index.ts', 'utf8').includes('client_sync') && !src.includes('identity-backfill/')],
+  ['it never touches the caregiver or candidate lists', !/'caregivers'|'candidates'|app_data_items_apply|app_data_save/.test(src)],
   ['it leaves a heartbeat for the watchdog', db.hb.some(h => h.id === 'hb_client-sync' && h.ok === true && /1 new client added, 1 left/.test(h.note))],
   ['a second run adds nobody', j2.created === 0 && db.person_source_id.filter(x => x.source_id === '2').length === 1],
 ];
