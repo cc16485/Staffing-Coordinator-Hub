@@ -28,7 +28,7 @@ for fn in FNS:
     drift = [k for k in drift if k not in KNOWN_578]; extra = [k for k in extra if k not in KNOWN_578]
     if known and not (drift or extra): say(f"  · {fn} also brings the shared record helper from 578 ({', '.join(known)}), live in 11 other functions since Oct 11")
     if drift or extra: bad(f"{fn}: the live copy is not what main had before this change ({', '.join(drift + extra)[:200]}); stopping so nothing unreleased goes live")
-    else: say(f"  ✓ {fn} (version {meta[fn].get('version', '?')}) matches main before this change; only the moved line{' and the 578 helper' if known else ''} go live")
+    else: say(f"  ✓ {fn} (version {meta[fn].get('version', '?')}) matches main before this change; {'the moved line and the 578 helper go live' if known else 'only the moved line goes live'}")
 if fails: say(); say("  RESULT: STOPPED before anything changed. Tell Claude which line."); done(3)
 say(); say("PART 2 · CHANGE")
 for fn in FNS:
