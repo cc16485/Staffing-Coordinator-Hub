@@ -7,7 +7,7 @@
 // no health detail in a title; no phone number or email kept; Observed (the call) vs Suggested (the card) kept apart.
 // =============================================================================
 
-export const VERSION = 'v5-2026-10-12'   // v2: the Hub's own call-off, missed clock-in and recent cards are given to the reader (no duplicates); v3: none at all when a Hub case covers that visit, and one retry when the model answers in text; v4: the reader sees only what existed 20 minutes after the call (a replay is what live would have seen); v5: every call-off and missed clock-in case for that day's visits, whoever is calling
+export const VERSION = 'v6-2026-10-12'   // v2: the Hub's own call-off, missed clock-in and recent cards are given to the reader (no duplicates); v3: none at all when a Hub case covers that visit, and one retry when the model answers in text; v4: the reader sees only what existed 20 minutes after the call (a replay is what live would have seen); v5: every call-off and missed clock-in case for that day's visits, whoever is calling; v6: also when the number is not in our records
 export const MODEL = 'claude-sonnet-5-5'
 export const AREAS = ['scheduling', 'client_care', 'recruiting', 'caregiver_support', 'admin', 'leads'] as const
 export const CALL_TYPES = ['client_or_family', 'caregiver', 'applicant', 'referral_partner', 'new_client_inquiry', 'vendor',
@@ -212,28 +212,27 @@ export function openCards(name: string, callAt: string, ops: any[], done: Set<st
 }
 
 export function related(name: string, callAt: string, ops: any[], coverage: any[], timekeeper: any[]): Related[] {
-  const nm = String(name || '').trim().toLowerCase()
-  if (!nm) return []
+  const nm = String(name || '').trim().toLowerCase()   // '' when the number is not in our records: then only that day's cases
   const t = Date.parse(callAt); if (!Number.isFinite(t)) return []
   const lc = (v: unknown) => String(v || '').trim().toLowerCase()
   const day = (ms: number) => new Intl.DateTimeFormat('en-CA', { timeZone: CT, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms))
   const dm1 = day(t - 864e5), dp1 = day(t + 864e5), dp7 = day(t + 7 * 864e5)
   const hm = (iso: unknown) => { const x = Date.parse(String(iso || '')); return Number.isFinite(x) ? chicago(new Date(x).toISOString()) : '' }
   const out: Related[] = []
-  for (const o of ops || []) {
+  for (const o of nm ? ops || [] : []) {
     if (!o || lc(o.about) !== nm) continue
     const c = Date.parse(String(o.created_at || ''))
     if (!(c >= t - 12 * 3600e3 && c <= t + SEEN_AFTER_MS)) continue
     const by = String(o.created_by || '')
     out.push({ kind: 'card', line: `${String(o.status || 'open')} card made by ${by.includes('@') || /\s/.test(by) ? 'a person' : 'the Hub (' + (by || 'a job') + ')'} at ${hm(o.created_at)}: ${String(o.title || '').slice(0, 140)}` })
   }
-  for (const k of timekeeper || []) {
+  for (const k of nm ? timekeeper || [] : []) {
     if (!k || lc(k.caregiver) !== nm) continue
     const sd = String(k.shift_date || '')
     if (sd < dm1 || sd > dp1) continue
     out.push({ kind: 'clockin_case', line: `missed clock-in case: ${k.caregiver} at ${k.client_first || 'a client'}'s ${k.shift_time || ''} visit on ${sd}, ${k.resolved_at ? 'resolved (' + String(k.resolved_how || 'closed') + ')' : 'open'}` })
   }
-  for (const v of coverage || []) {
+  for (const v of nm ? coverage || [] : []) {
     if (!v || ![v.calling_off, v.client, v.covered_by].some((x) => lc(x) === nm)) continue
     const sd = String(v.shift_date || '')
     if (sd < dm1 || sd > dp7) continue
