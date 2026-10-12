@@ -20,8 +20,12 @@ for fn in FNS:
     if sx != 200: bad(f"{fn} is not live: {sx}"); continue
     okl, livef = live_files(REF, fn)
     if not okl: bad(f"{fn}: could not read the live copy"); continue
+    # the live copy names its files "supabase/functions/<path>"; the fingerprints from main use "<path>" (633 stopped on this)
+    livef = {(k[len("supabase/functions/"):] if k.startswith("supabase/functions/") else k): h for k, h in livef.items()}
     drift = [k for k, h in livef.items() if BEFORE.get(f"{fn}::{k}") and BEFORE[f"{fn}::{k}"] != h]
-    extra = [k for k in livef if f"{fn}::{k}" not in BEFORE]
+    # a file only the live copy has doesn't matter (the build replaces the whole function); a file the build has that the
+    # live copy lacks could be unreleased code, so it counts as a difference
+    extra = [k.split("::", 1)[1] for k in BEFORE if k.startswith(fn + "::") and k.split("::", 1)[1] not in livef]
     # the one known difference: 578's shared record helper (events.ts + verbs.js), live in 11 functions since Oct 11
     # (Desktop 578 ran 2026-10-11 02:43 UTC); a function 578 didn't redeploy still carries the older one
     known = [k for k in drift + extra if k in KNOWN_578]
