@@ -7,7 +7,7 @@
 // Security number, the date of birth and the driver's license number appear as "on file" with the last four characters
 // at most, exactly as the record shows them to the office.
 import { BrandPdf, COMPANY_RIGHT, FOOTER, MUTED, NAVY, RULE, type Signature } from './brand-pdf.ts'
-import type { Form, Item } from './step1-documents.ts'
+import { SKILLS, type Form, type Item } from './step1-documents.ts'
 
 export type Who = { first: string; last: string; phone: string; email: string; position: string }
 export type IdentityState = { ssn: string | null; dob: boolean; license: string | null }   // "ending 1234" | null
@@ -42,6 +42,20 @@ export function answerText(item: Item, v: unknown, ident: IdentityState): string
         return `${i + 1}. ${S(row)}`
       }).join('\n')
     }
+    case 'cards': {
+      /* 2026-10-11: one numbered block per job, family-care entry or reference; tasks by their names */
+      if (!Array.isArray(v) || !v.length) return '—'
+      const yn = (x: unknown) => x === 'yes' ? 'Yes' : x === 'no' ? 'No' : S(x)
+      return v.map((row: unknown, i: number) => {
+        const r = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>
+        const parts = (item.fields || []).filter((f) => r[f.k] != null && r[f.k] !== '' && !(Array.isArray(r[f.k]) && !(r[f.k] as unknown[]).length)).map((f) => {
+          const x = r[f.k]
+          const val = f.kind === 'skills' || f.kind === 'refresher' ? (x as string[]).map((k) => k === 'none' ? 'None, ready for all of these' : SKILLS[k] || k).join(', ') : Array.isArray(x) ? x.map(S).join(', ') : f.kind === 'yesno' ? yn(x) : S(x)
+          return `${f.label.replace(/\s*\((optional|month and year[^)]*)\)/g, '').replace(/\?$/, '')}: ${val}`
+        })
+        return `${i + 1}. ` + (parts.join('; ') || '—')
+      }).join('\n')
+    }
     default: return S(v)
   }
 }
@@ -58,6 +72,7 @@ export function step1FormPdf(form: Form, answers: Record<string, unknown>, who: 
   for (const sec of form.sections) {
     pdf.heading(sec.h)
     for (const p of sec.p || []) pdf.para(p, { after: 6 })
+    if (sec.tip) pdf.para(sec.tip, { font: 'B', after: 6 })
     for (const it of sec.items || []) {
       if (it.kind === 'statement') { pdf.para(it.label, { after: 6 }); continue }
       const val = answerText(it, answers[it.id], ident)

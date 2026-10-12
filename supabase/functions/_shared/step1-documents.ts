@@ -9,11 +9,15 @@
 // wording is stored with every signature. Nothing here holds an answer: answers are merged at render time (2b/2c).
 // Two forms carry a status other than 'proposed': the FCRA disclosure is a DRAFT FOR COUNSEL (her decision 7) and the
 // screening package list is TO CONFIRM (her decision 4). Fictional practice only until each is approved.
-export const STEP1_VERSION = 3   // her operational decisions of October 9 (late): the vehicle form and the EDL/FCSR consent at version 3; four forms at version 2; the FCRA draft at version 1
+export const STEP1_VERSION = 4   // 2026-10-11 (her approval of the Step 1 previews): the application and the reference consent at version 3 (tasks per job, family care, backup references); the vehicle form and the EDL/FCSR consent at version 3; two forms at version 2; the FCRA draft at version 1
 export type FormKey = 'employee_application' | 'reference_consent' | 'fcra_disclosure' | 'edl_fcsr_consent' | 'availability' | 'experience' | 'vehicle'
 export type FormStatus = 'proposed' | 'draft_for_counsel' | 'to_confirm'
-export type Item = { id: string; label: string; kind: 'text' | 'yesno' | 'choice' | 'multi' | 'date' | 'statement' | 'table' | 'number' | 'initials' | 'photo'; options?: string[]; required?: boolean; note?: string; locked?: boolean }
-export type Section = { h: string; p?: string[]; items?: Item[] }
+/** One box inside a card (a job, a family-care entry, a reference). 'skills' are keys of SKILLS; 'lifts' shows only when a
+    lift is ticked; 'refresher' offers only the tasks ticked on the same card, plus 'none'. */
+export type Field = { k: string; label: string; kind: 'text' | 'tel' | 'email' | 'yesno' | 'choice' | 'multi' | 'skills' | 'lifts' | 'refresher'; options?: string[]; required?: boolean; note?: string }
+export type Item = { id: string; label: string; kind: 'text' | 'yesno' | 'choice' | 'multi' | 'date' | 'statement' | 'table' | 'number' | 'initials' | 'photo' | 'cards'; options?: string[]; required?: boolean; note?: string; locked?: boolean; fields?: Field[]; max?: number; add?: string }
+/** tone 'cheer': shown as an encouraging box; tip: one short line in a highlighted box (both are wording, in the fingerprint) */
+export type Section = { h: string; p?: string[]; items?: Item[]; tone?: 'cheer'; tip?: string }
 export type Form = { key: FormKey; screen: string; title: string; version: number; status: FormStatus; intro?: string[]; sections: Section[]; certification: string[]; signature: 'typed' | 'typed+initials' }
 
 export const OFFICE_PHONE = '(417) 234-8494'
@@ -42,6 +46,38 @@ export const LEVELS = {
   2: { title: 'Level 2, Personal Care', duties: 'Everything included in Level 1, plus: Bathing assistance, shower assistance, dressing assistance, grooming, toileting assistance, continence care, mobility assistance, transfers with gait belt, walking assistance, wheelchair assistance.' },
   3: { title: 'Level 3, Advanced Non-Medical Care', duties: "Everything included in Levels 1 and 2, plus: Hoyer lift (if trained), bedbound clients, frequent repositioning, hospice support (non-medical), two-person transfers (when scheduled), high fall-risk clients, Parkinson's disease, stroke recovery, complex mobility assistance." },
 }
+/* ───── 2026-10-11 (Samantha approved the Step 1 previews, with refinements): the tasks a caregiver ticks per job and per
+   family-care entry, the same list everywhere (the reference confirms from it, the profile shows it). Catheter bag emptying
+   and ostomy bag care are separate skills, and both are only emptying the bag and cleaning around the site (her rule: "we do
+   not do catheters or ostomy, the only thing we will do is empty it or clean around it"). Keys match the skills record where
+   one exists (transfers_gait_belt, hoyer_lift, bedbound_care, hospice_support, dementia_care). Nothing here changes a level,
+   a qualification or a match: these are their own words, marked self-reported until someone confirms them. ───── */
+export const SKILL_GROUPS: { h: string; skills: [string, string][] }[] = [
+  { h: 'Everyday help', skills: [['companionship', 'Companionship and conversation'], ['meals_housekeeping', 'Meals and light housekeeping'], ['med_reminders', 'Medication reminders']] },
+  { h: 'Personal care', skills: [['bathing', 'Bathing or showering'], ['dressing_grooming', 'Dressing and grooming'], ['toileting', 'Toileting and incontinence care'], ['feeding', 'Feeding'], ['walking_wheelchair', 'Walking or wheelchair help'], ['transfers_gait_belt', 'Transfers with a gait belt']] },
+  { h: 'Higher-need care', skills: [['bedbound_care', 'Bedbound care and repositioning'], ['hospice_support', 'Hospice and end-of-life support'], ['two_person_transfers', 'Two-person transfers'], ['hoyer_lift', 'A Hoyer or other mechanical lift'],
+    ['catheter_bag', 'Emptying a catheter bag and cleaning around the site'], ['ostomy_bag', 'Emptying an ostomy bag and cleaning around the site'], ['dementia_care', "Dementia or Alzheimer's care"]] },
+]
+export const SKILLS: Record<string, string> = Object.fromEntries(SKILL_GROUPS.flatMap((g) => g.skills))
+export const LIFT_TYPES = ['Full-body sling', 'Sit-to-stand', 'Other']
+export const PAY_SOURCES = ['Consumer Directed Services (CDS) or another Medicaid program', 'A VA program', 'The client or family paid me directly', 'Not paid', 'Other']
+/** Her words (2026-10-11), at the top of Work History and next to every reference's contact boxes. */
+export const EXPERIENCE_MATTERS = [
+  'The experience we can verify helps us determine your qualifications, starting pay rate, and which clients we can match you with.',
+  "Help us give you credit for your experience! Please list people who can confirm the care you've provided, including former supervisors, private clients, or professionals who have seen your work.",
+  'The more experience we can confirm, the better we can recognize your skills and consider you for assignments that fit your abilities.',
+]
+export const REFERENCE_REMINDER = 'Please provide accurate contact information for someone who knows your work. We use verified experience when determining qualifications, pay, and client matches. A reference we cannot reach may mean we cannot yet give you credit for that experience.'
+const TASK_FIELDS: Field[] = [
+  { k: 'tasks', label: 'What did you do yourself?', kind: 'skills', note: 'Tick only what you did yourself. We may ask the person who saw your work to confirm it.' },
+  { k: 'lifts', label: 'Which kind of lift?', kind: 'lifts', options: LIFT_TYPES },
+  { k: 'refresher', label: 'Is there anything you ticked that you would want training or a refresher on before doing it again?', kind: 'refresher', note: 'There is no wrong answer. It helps us set you up to do well.' },
+]
+const CONTACT_FIELDS = (who: string): Field[] => [
+  { k: 'phone', label: `${who} phone`, kind: 'tel' }, { k: 'email', label: `${who} email`, kind: 'email' },
+  { k: 'may_contact', label: 'May we contact them?', kind: 'yesno', required: true },
+]
+
 export const STATES = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC']
 
 const yesno = (id: string, label: string, extra: Partial<Item> = {}): Item => ({ id, label, kind: 'yesno', required: true, ...extra })
@@ -49,7 +85,7 @@ const text = (id: string, label: string, extra: Partial<Item> = {}): Item => ({ 
 
 export const FORMS: Record<FormKey, Form> = {
   employee_application: {
-    key: 'employee_application', screen: '2 and 3', title: 'Employee Application', version: 2, status: 'proposed', signature: 'typed',
+    key: 'employee_application', screen: '2 and 3', title: 'Employee Application', version: 3, status: 'proposed', signature: 'typed',
     sections: [
       { h: 'About you', p: ['Your name, phone and email are shown from your offer. Tap any of them to correct it.'], items: [
         text('preferred_name', 'What should families and the office call you?', { note: 'Your preferred first name, if it is different from your legal name.' }),
@@ -69,10 +105,37 @@ export const FORMS: Record<FormKey, Form> = {
         yesno('convicted', 'Have you been convicted of a crime or pled guilty or no contest to a crime (misdemeanor or felony)?'),
         { id: 'convictions', label: 'If yes, please complete the information section below.', kind: 'table', options: ['Offense', 'Date of Conviction', 'Misdemeanor or Felony', 'Location'] },
       ] },
-      /* v2: fewer than two employers is allowed */
-      { h: 'Your work history', p: ['Please list up to three employers, most recent first. If you have fewer than two, list what you have; if you have never been employed, tick the box below. Please check every detail; we use these to verify you.', 'These are the people who can confirm your experience. The more exact they are, the faster we can verify you for Level 2 or Level 3 clients.'], items: [
-        { id: 'employers', label: 'Previous Employment', kind: 'table', options: ['Company', 'City, State', 'Your role / job title', 'Supervisor', 'Phone', 'Email', 'Dates Worked for this Employer: From', 'To', 'What you did (Responsibilities)', 'Reason for Leaving', 'May we contact them? Yes / No'] },
+      /* v3 (2026-10-11, her approval of the previews): her "Your experience matters!" words first; a card per job with the
+         tasks done there, the lift type, and what they would want a refresher on; family or private-client care as its own
+         optional card, kept as self-reported until someone confirms it (never discounted for lack of a confirmer). */
+      { h: 'Your experience matters!', p: EXPERIENCE_MATTERS, tone: 'cheer' },
+      { h: 'Your work history', p: ['Please list your jobs, most recent first (up to three is plenty). If you have never been employed, tick the box below. Please check every detail; we use these to verify you.'], items: [
+        { id: 'jobs', label: 'Your jobs', kind: 'cards', max: 6, add: 'Add another job', fields: [
+          { k: 'company', label: 'Company', kind: 'text', required: true }, { k: 'city_state', label: 'City, State', kind: 'text', required: true },
+          { k: 'role', label: 'Your role / job title', kind: 'text', required: true },
+          { k: 'from', label: 'From (month and year)', kind: 'text', required: true }, { k: 'to', label: 'To (month and year, or "still working here")', kind: 'text', required: true },
+          { k: 'supervisor', label: 'Your supervisor, or someone there who saw your work', kind: 'text', required: true, note: 'Phone or email, whichever reaches them best. Both is even better.' },
+          ...CONTACT_FIELDS('Their'),
+          { k: 'reason_leaving', label: 'Reason for leaving', kind: 'text', required: true },
+          { k: 'did_care', label: 'Did you care for clients or patients in this job?', kind: 'yesno', required: true },
+          ...TASK_FIELDS,
+          { k: 'other_tasks', label: 'Anything else you did with clients? (optional)', kind: 'text' },
+        ] },
         yesno('no_employer_history', 'I have no previous employer to list.', { required: false }),
+      ] },
+      { h: 'Family or private-client care (optional)', p: ["Many great caregivers learned by caring for a family member or a private client. Tell us about it. We'll use this information, along with references and other qualifications, to better understand your experience.",
+        'If someone outside your own family saw your care (a hospice or home health nurse, a therapist, a case manager, or the client\'s family), add them so we can confirm it. If no one can yet, we still keep it on your record as experience you told us about.'], items: [
+        { id: 'family_care', label: 'Care you gave a family member or private client', kind: 'cards', max: 4, add: 'Add family or private-client care', fields: [
+          { k: 'who', label: 'Who did you care for?', kind: 'choice', options: ['A family member', 'A private client'], required: true },
+          { k: 'relationship', label: 'Your relationship to them, or how you found this client (optional)', kind: 'text' },
+          { k: 'from', label: 'From (month and year)', kind: 'text', required: true }, { k: 'to', label: 'To (month and year, or "still caring for them")', kind: 'text', required: true },
+          { k: 'paid', label: 'How was this care paid for? Tick all that apply.', kind: 'multi', options: PAY_SOURCES, required: true },
+          ...TASK_FIELDS,
+          { k: 'confirmer', label: 'Someone who saw your care and can confirm it (optional)', kind: 'text' },
+          { k: 'confirmer_how', label: 'How do they know your care?', kind: 'text' },
+          { k: 'phone', label: 'Their phone', kind: 'tel' }, { k: 'email', label: 'Their email', kind: 'email' },
+          { k: 'may_contact', label: 'May we contact them?', kind: 'yesno' },
+        ] },
       ] },
     ],
     /* v2: the E-Verify sentence is withheld until Samantha confirms the Company's participation (E_VERIFY_CONFIRMED); the I-9 line stands on its own */
@@ -82,7 +145,7 @@ export const FORMS: Record<FormKey, Form> = {
     ],
   },
   reference_consent: {
-    key: 'reference_consent', screen: '4', title: 'Reference Check and Authorization Consent Form Disclosure', version: 2, status: 'proposed', signature: 'typed',
+    key: 'reference_consent', screen: '4', title: 'Reference Check and Authorization Consent Form Disclosure', version: 3, status: 'proposed', signature: 'typed',
     intro: ['Please read the information on this form carefully and completely.'],
     sections: [
       { h: 'Authorization', p: [
@@ -92,9 +155,18 @@ export const FORMS: Record<FormKey, Form> = {
         /* her decision 2: the awkward sentence reworded; the final wording goes to her before publishing */
         `I further authorize ${COMPANY} to contact the references I provide and to verify relevant employment information, and to obtain feedback and references from my supervisors over the course of my employment with the Company. I understand that this feedback may be used in decisions about my employment. This form may be photocopied or reproduced as a facsimile, and these copies will be as effective as a release or consent as the original which I sign. This release and/or a copy of this release shall be valid for one year from the date it was signed.`,
       ] },
-      { h: 'Your references', p: [`Please give ${REFERENCES_REQUIRED.professional} professional references (a supervisor or manager from your work history; the supervisors you listed are offered here with one tap) and ${REFERENCES_REQUIRED.personal} personal references (a friend, co-worker, past client, pastor or similar, not a relative). Nothing is sent to any of them until the office asks for the reference.`], items: [
-        { id: 'professional_refs', label: 'Professional references', kind: 'table', options: ['Full Name', 'Company', 'Their role', 'Phone Number', 'Email'], required: true },
-        { id: 'personal_refs', label: 'Personal references', kind: 'table', options: ['Full Name', 'Relationship', 'Phone Number', 'Email'], required: true },
+      /* v3 (2026-10-11): her reminder beside the contact boxes; a phone or email and "may we contact them?" for each; one
+         optional backup of each kind for when someone cannot be reached. Only references they let us contact count. */
+      { h: 'Your references', p: [`Please give ${REFERENCES_REQUIRED.professional} professional references (a supervisor or manager from your work history; the people you listed are offered here with one tap) and ${REFERENCES_REQUIRED.personal} personal references (a friend, co-worker, past client, pastor or similar, not a relative). Nothing is sent to any of them until the office asks for the reference.`], tip: REFERENCE_REMINDER, items: [
+        { id: 'professional_refs', label: 'Professional references', kind: 'cards', max: 4, add: 'Add a professional reference', required: true, fields: [
+          { k: 'name', label: 'Full name', kind: 'text', required: true }, { k: 'company', label: 'Company', kind: 'text', required: true }, { k: 'role', label: 'Their role', kind: 'text', required: true }, ...CONTACT_FIELDS('Their')] },
+        { id: 'personal_refs', label: 'Personal references', kind: 'cards', max: 4, add: 'Add a personal reference', required: true, fields: [
+          { k: 'name', label: 'Full name', kind: 'text', required: true }, { k: 'relationship', label: 'How you know them', kind: 'text', required: true }, ...CONTACT_FIELDS('Their')] },
+      ] },
+      { h: 'A backup reference (optional)', p: ['If we cannot reach someone above, we will try your backup instead. A reference who does not answer never counts against you.'], items: [
+        { id: 'backup_refs', label: 'Backup references', kind: 'cards', max: 2, add: 'Add a backup reference', fields: [
+          { k: 'type', label: 'Professional or personal?', kind: 'choice', options: ['Professional', 'Personal'], required: true },
+          { k: 'name', label: 'Full name', kind: 'text', required: true }, { k: 'relationship', label: 'Company and role, or how you know them', kind: 'text', required: true }, ...CONTACT_FIELDS('Their')] },
       ] },
     ],
     certification: ['I have read this authorization and I agree to it.'],
@@ -234,7 +306,8 @@ export const FORM_ORDER: FormKey[] = ['employee_application', 'reference_consent
 export function formText(key: FormKey): string {
   const f = FORMS[key]; const out: string[] = [`title|${f.title}`, `version|${f.version}`]
   for (const p of f.intro || []) out.push(`p|${p}`)
-  for (const s of f.sections) { out.push(`h|${s.h}`); for (const p of s.p || []) out.push(`p|${p}`); for (const i of s.items || []) out.push(`i|${i.id}|${i.label}|${(i.options || []).join(';')}`) }
+  for (const s of f.sections) { out.push(`h|${s.h}`); for (const p of s.p || []) out.push(`p|${p}`); if (s.tip) out.push(`t|${s.tip}`); if (s.tone) out.push(`tone|${s.tone}`); for (const i of s.items || []) { out.push(`i|${i.id}|${i.label}|${(i.options || []).join(';')}`); for (const x of i.fields || []) out.push(`f|${i.id}|${x.k}|${x.label}|${x.kind}|${x.required ? 1 : 0}|${(x.options || []).join(';')}|${x.note || ''}`) } }
+  if (f.sections.some((s) => (s.items || []).some((i) => i.kind === 'cards' && (i.fields || []).some((x) => x.kind === 'skills')))) out.push(`skills|${SKILL_GROUPS.map((g) => g.h + ':' + g.skills.map(([k, l]) => k + '=' + l).join(',')).join('|')}`)
   for (const c of f.certification) out.push(`c|${c}`)
   return out.join('\n')
 }
