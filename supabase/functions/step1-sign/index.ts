@@ -329,6 +329,46 @@ async function enterChecks(db: any, offerId: string, who: Record<string, string>
   return made
 }
 
+export const PREVIEW_WHO = { first: 'Pat', last: 'Preview', phone: '(417) 555-0188', email: 'pat.preview@practice.invalid', position: 'Caregiver' }
+/** What a real Step 1 would show as already known: from a made-up application and interview, marked with where it came from. */
+export const PREVIEW_PREFILL = prefillFrom({ lived_outside_mo: 'no', has_license: 'yes', has_insurance: 'yes', has_transport: 'yes', experience_years: 3 }, { cats: 'yes', dogs: 'no', client_smokes: 'no', drive_clients: 'yes', skills: { dementia: 'some' } })
+/** The forms as the page receives them (the same shape the real view sends). */
+export async function formsPayload(sigs: Record<string, unknown> = {}): Promise<Record<string, unknown>[]> {
+  const forms = [] as Record<string, unknown>[]
+  for (const k of FORM_ORDER) { const f = FORMS[k]; forms.push({ key: f.key, screen: f.screen, title: f.title, version: f.version, status: f.status, intro: f.intro || [], sections: f.sections, certification: f.certification, signature: f.signature, fingerprint: await formFingerprint(k), approved_for_real: APPROVED_FOR_REAL[k] === f.version }) }
+  void sigs
+  return forms
+}
+/** Answers from the page, each cleaned to its kind (unknown ids and identity numbers dropped, never kept). */
+function cleanAnswers(raw: unknown): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return out
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>).slice(0, 200)) {
+    if (IDENTITY_IDS.includes(k)) continue
+    if (k === 'initials') { const c = clean({ id: 'initials', label: '', kind: 'initials' }, v); if (c !== undefined) out.initials = c; continue }
+    const fk = formOf(k); if (!fk) continue
+    const item = itemsOf(FORMS[fk]).find((i) => i.id === k)!; const c = clean(item, v); if (c !== undefined) out[k] = c
+  }
+  return out
+}
+// deno-lint-ignore no-explicit-any
+export async function preview(b: Record<string, any>): Promise<Record<string, unknown>> {
+  const form = S(b.form, 40) as FormKey, answers = cleanAnswers(b.answers)
+  const id = b.identity && typeof b.identity === 'object' ? b.identity : {}
+  const ident: IdentityState = { ssn: id.ssn ? 'ending ' + S(id.ssn, 4) : null, dob: !!id.dob, license: id.license ? 'ending ' + S(id.license, 4) : null }
+  if (b.check || b.pdf) {
+    if (!FORM_ORDER.includes(form)) return { ok: false, error: 'Which form?' }
+    if (b.check) return { ok: true, preview: true, form, missing: missing(form, answers, ident) }
+    const at = new Date().toISOString(), i = FORM_ORDER.indexOf(form)
+    const bytes = step1FormPdf(FORMS[form], answers, PREVIEW_WHO, ident, { typedName: 'Pat Preview (PREVIEW ONLY: not a signed document)', signedAtCentral: 'Preview, ' + longDateTime(at), signedAtUtc: at, ip: 'preview', agent: 'preview', version: FORMS[form].version, fingerprint: await formFingerprint(form), offerId: 'preview (no offer)', docName: FORMS[form].title }, i + 1, FORM_ORDER.length)
+    let bin = ''; for (let j = 0; j < bytes.length; j += 0x8000) bin += String.fromCharCode(...bytes.subarray(j, j + 0x8000))
+    return { ok: true, preview: true, form, pdf_base64: btoa(bin) }
+  }
+  return { ok: true, preview: true, who: PREVIEW_WHO, forms: await formsPayload(), order: FORM_ORDER, screens: SCREENS, answers: {}, signatures: {}, identity: { ssn: null, dob: false, license: null, license_state: null, license_expires: null },
+    prefill: PREVIEW_PREFILL, hints: { availability: 'Weekdays, mornings and afternoons', travel: 'Springfield and Nixa' }, current_screen: '1', started_at: null, completed_at: null, esign_consent_at: null,
+    test_mode: true, references_required: REFERENCES_REQUIRED, skill_groups: SKILL_GROUPS, skills: SKILLS, signed_count: 0, form_count: FORM_ORDER.length }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
@@ -394,6 +434,11 @@ Deno.serve(async (req) => {
       try { await trn().event({ offer_id: oid, kind: 'identity_revealed', by_who: 'staff', channel: 'hub', detail: { field, by_name: staff.name, by_email: staff.email, reason } }) } catch { /* the log row is the record; the trail is a courtesy */ }
       return json({ ok: true, field, value, revealed_at: at, expires_in: REVEAL_TTL_MS / 1000, by: staff.name })
     }
+    /* ───── PREVIEW (Samantha 2026-10-11: "I want to be able to click through the screens as though I were the caregiver,
+       using practice data, before approving them for real hires"). Public and read-only: no link, no offer, no database read
+       or write, nothing sent. The same versioned words, the same required-answer check and the same PDF layout as a real
+       Step 1, for the made-up Pat Preview; the page keeps the answers in its own memory and never sends identity numbers. ───── */
+    if (action === 'preview') return json(await preview(b))
     const id = S(b.o, 64)
     if (!(await checkLink(secret, 'step1', id, b.e, b.t))) return json(NOPE, 401)
     const T = trn()
