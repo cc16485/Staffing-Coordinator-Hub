@@ -134,10 +134,16 @@ def command(url, anon):
 
 def state_sync():
     """identity-backfill: 'this' (already this build) | 'base' (every live file is the build before) | other."""
-    s, m = fmeta(HUB_REF, SYNC)
-    if s != 200: return "missing", None
-    vj = (m or {}).get("verify_jwt"); okd, live = live_files(HUB_REF, SYNC)
-    if not okd or not live: return "unreadable", vj
+    s, m = None, None
+    for i in range(4):   # the management API sometimes answers a lookup oddly; ask again before deciding
+        s, m = fmeta(HUB_REF, SYNC)
+        if s in (200, 404): break
+        time.sleep(3 * (i + 1))
+    if s == 404: return "missing (the server says there is no such function)", None
+    vj = (m or {}).get("verify_jwt")   # an odd answer: read the live code itself, like the other installers do
+    okd, live = live_files(HUB_REF, SYNC)
+    if not okd or not live: return f"unreadable (lookup answered {s}, download {'worked' if okd else 'failed'})", vj
+    if not isinstance(vj, bool): vj = True   # its setting couldn't be read; deploy() sets it and checks it after
     if all(k in live and live[k] == sha(os.path.join(HUB, k)) for k in need(HUB, SYNC)): return "this", vj
     if all(base_sha(HUB, HUB_BASE, k) == v for k, v in live.items()): return "base", vj
     return "other", vj
@@ -164,7 +170,13 @@ if NODE:
         say(f"  ✓ {t}: {last.strip()}")
 else: say("  · node is not on this Mac, so the tests were not re-run here (they passed when built)")
 st1, vj1 = state_sync()
-if st1 not in ("base", "this"): bad(f"identity-backfill on the server isn't the build this was made from ({st1}). Nothing was changed. Tell Claude."); done(3)
+if st1 not in ("base", "this"):
+    if st1 == "other":
+        okd, live = live_files(HUB_REF, SYNC)
+        diff = sorted(k.split("functions/")[-1] for k, v in live.items() if base_sha(HUB, HUB_BASE, k) != v)
+        bad("identity-backfill on the server isn't the build this was made from (live files that differ: " + (", ".join(diff)[:200] or "none listed") + "). Nothing was changed. Tell Claude.")
+    else: bad(f"identity-backfill on the server: {st1}. Nothing was changed. Tell Claude.")
+    done(3)
 say("  ✓ identity-backfill: " + ("the build before this one" if st1 == "base" else "already this build (an earlier run)"))
 st2, vj2 = state(HUB_REF, HUB, HUB_BASE, CENSUS, pinned)
 if st2 not in ("new", "this"): bad(f"a {CENSUS} function already exists and isn't this build. Nothing was changed. Tell Claude."); done(3)
