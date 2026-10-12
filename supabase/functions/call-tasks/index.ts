@@ -13,6 +13,12 @@
 // v10 (2026-10-12, "it should read GHL texts!"): it also reads GoHighLevel texts: each new burst from one person (once they
 // have been quiet 10 minutes), with the thread around it; a burst that is only "ok" or "thanks" needs no reading. Each card
 // carries its prepared steps; the Hub looks up the real AxisCare visit and the client's caregivers for them (read only).
+// v13 (2026-10-12, "how can we make sure nothing ever falls through the cracks", her "build both"): NO SILENT FAILURES:
+// a call or text that could not be read is tried again (3 tries, 30 minutes apart, every try kept), a call GoHighLevel
+// never transcribed gets a reading saying so, and the Practice tab shows every one that could not be read. THE PROMISE
+// WATCH: every promise the office made and every confirmation it is waiting on gets a due day and an owner; the Hub
+// checks the person's later calls, texts, cards and call outcomes and asks whether it was kept (call_promise_watch).
+// In practice it only shows "would remind"; nobody is reminded.
 // Runs only while ops_settings.call_tasks_practice === true (texts unless ops_settings.call_tasks_texts === false). Nothing is ever sent to anyone. Every GoHighLevel request
 // is a read. Runs on its schedule (the vault secret) or the owner's key. The owner may name calls to re-read
 // ({ message_ids: [...] }) or run the test bench ({ eval: [...] }: made-up calls, nothing read from GoHighLevel and
@@ -23,12 +29,14 @@ import Anthropic from 'npm:@anthropic-ai/sdk'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { seatHolder } from '../_shared/duty.ts'
 import { VERSION, MODEL, ACK, request, retryRequest, clean, answerOf, openCards, transcriptText, shortName, related as relatedOf, workflows,
-  type CallIn, type Who, type OpenCard, type Earlier, type Related, type Action } from '../_shared/call-tasks.ts'
+  ownerFor, dueFor, dueEnd, checkRequest, cleanCheck, nextStatus, type CallIn, type Who, type OpenCard, type Earlier, type Related, type Action } from '../_shared/call-tasks.ts'
 
 const GHL = 'https://services.leadconnectorhq.com'
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
 const H = (tok: string, v = '2021-04-15') => ({ Authorization: `Bearer ${tok}`, Version: v, Accept: 'application/json' })
 export const PER_RUN = 6, PER_RUN_TEXTS = 6, LOOKBACK = 80, TEXT_QUIET_MS = 10 * 60e3, CONVOS = 40
+export const MAX_TRIES = 3, RETRY_MS = 30 * 60e3, WAIT_TRANSCRIPT_MS = 2 * 3600e3, MAX_ATTEMPT = 5
+export const WATCH_PER_RUN = 8, WATCH_DAYS = 14, WATCH_AFTER_DUE_MS = 3 * 864e5, CHECK_EVERY_MS = 60 * 60e3
 const DONE = new Set(['done', 'closed', 'resolved', 'dismissed'])
 
 // deno-lint-ignore no-explicit-any
@@ -41,6 +49,22 @@ async function beat(db: any, ok: boolean, note: string) {
 
 // deno-lint-ignore no-explicit-any
 type Any = any
+type Tries = Map<string, { n: number; ok: boolean; last: number }>
+/** What this version has already done with each message: how many tries, whether one worked, when the last was. */
+async function triesOf(db: Any, ids: string[]): Promise<Tries> {
+  const m: Tries = new Map()
+  if (!ids.length) return m
+  const { data } = await db.from('call_task_reading').select('message_id, attempt, error, read_at').eq('version', VERSION).in('message_id', ids)
+  for (const r of data ?? []) {
+    const t = m.get(r.message_id) || { n: 0, ok: false, last: 0 }
+    m.set(r.message_id, { n: Math.max(t.n, Number(r.attempt) || 1), ok: t.ok || !r.error, last: Math.max(t.last, Date.parse(String(r.read_at)) || 0) })
+  }
+  return m
+}
+/** Read it now: never read, or every try failed, fewer than 3 tries, and the last was 30+ minutes ago. */
+export function readNow(t: { n: number; ok: boolean; last: number } | undefined, now = Date.now()): boolean {
+  return !t || (!t.ok && t.n < MAX_TRIES && now - t.last >= RETRY_MS)
+}
 /** Everything a reading needs from the Hub, loaded once per run. */
 async function loadHub(db: Any) {
   const keys = ['ops_items', 'coverage_cases', 'timekeeper_cases', 'staffing_plans', 'visit_changes', 'leads', 'duty_windows', 'positions', 'ops_settings']
@@ -169,19 +193,19 @@ Deno.serve(async (req) => {
   /* 1 · which calls: named ones (owner), else the handled calls since the start that this version has not read */
   const named: string[] = caller === 'owner' && Array.isArray(body.message_ids) ? body.message_ids.map(String).slice(0, 20) : []
   let seenQ = db.from('call_pull_seen').select('message_id, call_at, direction, seconds, caller, stage')
-  seenQ = named.length ? seenQ.in('message_id', named) : seenQ.gte('call_at', since).in('stage', ['done', 'practice']).order('call_at', { ascending: true }).limit(LOOKBACK)
+  seenQ = named.length ? seenQ.in('message_id', named) : seenQ.gte('call_at', since).in('stage', ['done', 'practice', 'error', 'no_transcript']).order('call_at', { ascending: true }).limit(LOOKBACK)
   const { data: seenRows, error: sErr } = await seenQ
   if (sErr) { await beat(db, false, 'call_pull_seen read: ' + sErr.message); return json({ error: 'could not read the calls' }, 500) }
   const ids = (seenRows ?? []).map((r: { message_id: string }) => r.message_id)
-  const { data: doneRows } = ids.length ? await db.from('call_task_reading').select('message_id').eq('version', VERSION).in('message_id', ids) : { data: [] }
-  const already = new Set((doneRows ?? []).map((r: { message_id: string }) => r.message_id))
-  const todo = (seenRows ?? []).filter((r: { message_id: string }) => !already.has(r.message_id)).slice(0, Number(body.limit) > 0 ? Math.min(Number(body.limit), 20) : PER_RUN)
-  const out: Record<string, number> = { calls: ids.length, read: 0, cards: 0, no_cards: 0, no_transcript: 0, errors: 0 }
+  const tries = await triesOf(db, ids)
+  const todo = (seenRows ?? []).filter((r: { message_id: string }) => named.length ? (tries.get(r.message_id)?.n ?? 0) < MAX_ATTEMPT : readNow(tries.get(r.message_id)))
+    .slice(0, Number(body.limit) > 0 ? Math.min(Number(body.limit), 20) : PER_RUN)
+  const out: Record<string, number> = { calls: ids.length, read: 0, cards: 0, no_cards: 0, no_transcript: 0, errors: 0, could_not_read: 0, failed: 0 }
   const hub = await loadHub(db)
 
   for (const s of named.length || todo.length ? todo : []) {
     const row: Record<string, Any> = { message_id: s.message_id, version: VERSION, mode: 'practice', channel: 'call', call_at: s.call_at, direction: s.direction === 'in' ? 'in' : 'out',
-      seconds: s.seconds, caller: s.caller, match: 'none', model: MODEL, call_type: 'other', tasks: [], resolves: [], detail: {} }
+      seconds: s.seconds, caller: s.caller, match: 'none', model: MODEL, call_type: 'other', tasks: [], resolves: [], detail: {}, attempt: (tries.get(s.message_id)?.n ?? 0) + 1 }
     try {
       /* 2 · the message (for its contact), the transcript and the contact, all reads */
       const m = await fetch(`${GHL}/conversations/messages/${encodeURIComponent(s.message_id)}`, { headers: H(tok) })
@@ -189,7 +213,14 @@ Deno.serve(async (req) => {
       const msg: Any = mj?.message ?? mj ?? {}
       const tr = await fetch(`${GHL}/conversations/locations/${encodeURIComponent(loc)}/messages/${encodeURIComponent(s.message_id)}/transcription`, { headers: H(tok) })
       const text = tr.ok ? transcriptText(await tr.json().catch(() => null)) : ''
-      if (!text) { out.no_transcript++; continue }                  // left for the next run (call-pull already waits for transcripts)
+      if (!text) {
+        out.no_transcript++
+        if (s.stage !== 'no_transcript' && Date.now() - Date.parse(s.call_at) < WAIT_TRANSCRIPT_MS) continue   // GoHighLevel may still be writing it
+        /* never quietly missing: the call gets a reading that says nobody could read it (no retries; GoHighLevel has none) */
+        Object.assign(row, { error: `GoHighLevel has no transcript for this call (${Math.round(Number(s.seconds) || 0)} seconds). Listen to the recording.`, attempt: Math.max(row.attempt, MAX_TRIES), model: 'none',
+          detail: { contact_id: msg.contactId || null, failure: 'no_transcript' } })
+      }
+      if (!row.error) {
       let ct: Any = {}
       if (msg.contactId) {
         try { const r = await fetch(`${GHL}/contacts/${encodeURIComponent(msg.contactId)}`, { headers: H(tok, '2021-07-28') }); if (r.ok) ct = (await r.json())?.contact || {} } catch { /* name stays as seen */ }
@@ -228,22 +259,32 @@ Deno.serve(async (req) => {
         const r = got.reading!
         await withActions(r, db, who, s.call_at)
         Object.assign(row, { call_type: r.call_type, tasks: r.tasks.map((t) => ({ ...t, voicemail: r.is_voicemail })), resolves: r.resolves, no_task_reason: r.no_task_reason || null, detail: r.detail })
+        row.detail = { ...r.detail, contact_id: msg.contactId || null }
         if (r.tasks.length) out.cards += r.tasks.length; else out.no_cards++
+      }
       }
     } catch (e) {
       row.error = String((e as Error)?.message || e).slice(0, 300); out.errors++
     }
+    if (row.error) { out.could_not_read++; if (row.attempt >= MAX_TRIES) out.failed++ }
     const { error: iErr } = await db.from('call_task_reading').insert(row)
-    if (iErr && !/duplicate/i.test(iErr.message)) { out.errors++; continue }
+    if (iErr && !/duplicate/i.test(iErr.message)) { out.errors++; out.save_failed = (out.save_failed || 0) + 1; continue }
     out.read++
   }
   /* 6 · GoHighLevel texts (v10): each new burst of texts from one person, read with the thread around it */
   if (st.call_tasks_texts !== false) {
     const tx = await readTexts(db, ai, hub, tok, loc, since, Number(body.text_limit) > 0 ? Math.min(Number(body.text_limit), 20) : PER_RUN_TEXTS)
-    Object.assign(out, { texts_read: tx.read, text_cards: tx.cards, text_skipped: tx.skipped, text_errors: tx.errors })
+    Object.assign(out, { texts_read: tx.read, text_cards: tx.cards, text_skipped: tx.skipped, text_errors: tx.errors, text_failed: tx.failed })
     out.errors += tx.errors
+    if (tx.search_failed) out.save_failed = (out.save_failed || 0) + 1
   }
-  await beat(db, out.errors === 0, JSON.stringify(out))
+  /* 7 · the promise watch (v13) */
+  const pw = await watchPromises(db, ai, hub, tok, since)
+  Object.assign(out, { promises: pw.promises, promise_checks: pw.checked, promises_kept: pw.kept, would_remind: pw.would_remind, promise_errors: pw.errors })
+  /* The heartbeat fails only when the run itself broke (a reading could not be saved, GoHighLevel's text search or the
+     promise watch could not run): the watchdog then tells the office. A call that could not be read is tried again and
+     shown on the Practice tab; it does not fail the run. */
+  await beat(db, !(out.save_failed > 0) && !pw.broken, JSON.stringify(out))
   return json({ ok: true, ...out })
 })
 
@@ -269,10 +310,10 @@ export function threadText(msgs: Any[]): string {
 }
 
 async function readTexts(db: Any, ai: Any, hub: Any, tok: string, loc: string, since: string, limit: number) {
-  const res = { read: 0, cards: 0, skipped: 0, errors: 0 }
+  const res = { read: 0, cards: 0, skipped: 0, errors: 0, failed: 0, search_failed: false }
   const sinceMs = Date.parse(since)
   const c = await fetch(`${GHL}/conversations/search?locationId=${encodeURIComponent(loc)}&limit=${CONVOS}`, { headers: H(tok) })
-  if (!c.ok) { res.errors++; return res }
+  if (!c.ok) { res.errors++; res.search_failed = true; return res }
   const convos: Any[] = ((await c.json().catch(() => ({})))?.conversations || []).filter((x: Any) => Number(x.lastMessageDate || 0) >= sinceMs || Date.parse(String(x.lastMessageDate || '')) >= sinceMs)
   const bursts: Any[] = []
   for (const cv of convos) {
@@ -294,11 +335,11 @@ async function readTexts(db: Any, ai: Any, hub: Any, tok: string, loc: string, s
     } catch { /* one conversation never stops the run */ }
   }
   if (!bursts.length) return res
-  const { data: done } = await db.from('call_task_reading').select('message_id').eq('version', VERSION).in('message_id', bursts.map((x) => x.id))
-  const seen = new Set((done ?? []).map((d: Any) => d.message_id))
-  for (const bx of bursts.filter((x) => !seen.has(x.id)).sort((a, b) => a.at.localeCompare(b.at)).slice(0, limit)) {
+  const tries = await triesOf(db, bursts.map((x) => x.id))
+  for (const bx of bursts.filter((x) => readNow(tries.get(x.id))).sort((a, b) => a.at.localeCompare(b.at)).slice(0, limit)) {
     const row: Record<string, Any> = { message_id: bx.id, version: VERSION, mode: 'practice', channel: 'text', call_at: bx.at, direction: 'in', seconds: 0,
-      caller: shortName(bx.name.split(' ')[0], bx.name.split(' ').slice(1).join(' ')) || null, match: 'none', model: MODEL, call_type: 'other', tasks: [], resolves: [], detail: {} }
+      caller: shortName(bx.name.split(' ')[0], bx.name.split(' ').slice(1).join(' ')) || null, match: 'none', model: MODEL, call_type: 'other', tasks: [], resolves: [], detail: {},
+      attempt: (tries.get(bx.id)?.n ?? 0) + 1 }
     try {
       let phone = bx.phone
       if (!phone && bx.contactId) { try { const r = await fetch(`${GHL}/contacts/${encodeURIComponent(bx.contactId)}`, { headers: H(tok, '2021-07-28') }); if (r.ok) phone = String(((await r.json())?.contact || {}).phone || '') } catch { /* unknown */ } }
@@ -306,7 +347,7 @@ async function readTexts(db: Any, ai: Any, hub: Any, tok: string, loc: string, s
       const who: Who = w && typeof w === 'object' ? w : { match: 'none' }
       Object.assign(row, { match: who.match, person_id: who.person_id ?? null, lead_id: who.lead_id ?? null, who_name: who.name ?? null, who_roles: who.roles ?? [] })
       if (bx.fresh.every((m: Any) => ACK.test(String(m.body || '')))) {
-        Object.assign(row, { model: 'none', no_task_reason: 'only an acknowledgement (no reading needed)', detail: { summary: '', items: [] } }); res.skipped++
+        Object.assign(row, { model: 'none', no_task_reason: 'only an acknowledgement (no reading needed)', detail: { summary: '', items: [], contact_id: bx.contactId || null } }); res.skipped++
       } else {
         const name = String(who.name || '').trim().toLowerCase()
         const open = openCards(name, bx.at, hub.ops, DONE)
@@ -324,14 +365,141 @@ async function readTexts(db: Any, ai: Any, hub: Any, tok: string, loc: string, s
         else {
           const r = got.reading!
           await withActions(r, db, who, bx.at)
-          Object.assign(row, { call_type: r.call_type, tasks: r.tasks, resolves: r.resolves, no_task_reason: r.no_task_reason || null, detail: r.detail })
+          Object.assign(row, { call_type: r.call_type, tasks: r.tasks, resolves: r.resolves, no_task_reason: r.no_task_reason || null, detail: { ...r.detail, contact_id: bx.contactId || null } })
           res.cards += r.tasks.length
         }
       }
     } catch (e) { row.error = String((e as Error)?.message || e).slice(0, 300); res.errors++ }
+    if (row.error && row.attempt >= MAX_TRIES) res.failed++
     const { error: iErr } = await db.from('call_task_reading').insert(row)
-    if (iErr && !/duplicate/i.test(iErr.message)) { res.errors++; continue }
+    if (iErr && !/duplicate/i.test(iErr.message)) { res.errors++; res.search_failed = true; continue }
     res.read++
+  }
+  return res
+}
+
+/* ── The promise watch (v13) ──────────────────────────────────────────────────────────────────────────────────────── */
+const lc = (v: unknown) => String(v || '').trim().toLowerCase()
+const at = (ms: number) => new Date(ms).toLocaleString('en-US', { timeZone: 'America/Chicago', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+
+/** Everything that happened with this person after the promise: their GoHighLevel calls and texts (with the reader's
+ *  summary of a later call), cards about them made or changed, call outcomes tapped. Bodies go to the check only. */
+async function activityFor(db: Any, hub: Any, tok: string, w: Any, newest: Map<string, Any>): Promise<{ lines: string[]; latest: number }> {
+  const since = Date.parse(w.call_at), lines: Array<[number, string]> = []
+  let contact = String(newest.get(w.message_id)?.detail?.contact_id || '')
+  if (!contact) {
+    const r = await fetch(`${GHL}/conversations/messages/${encodeURIComponent(String(w.message_id).replace(/^sms:/, ''))}`, { headers: H(tok) })
+    if (r.ok) { const j: Any = await r.json().catch(() => ({})); contact = String((j?.message ?? j)?.contactId || '') }
+  }
+  if (contact) {
+    const cs = await fetch(`${GHL}/conversations/search?contactId=${encodeURIComponent(contact)}&limit=3`, { headers: H(tok) })
+    if (!cs.ok) throw new Error(`GoHighLevel conversation search ${cs.status}`)
+    for (const cv of ((await cs.json().catch(() => ({})))?.conversations || []).slice(0, 2)) {
+      const r = await fetch(`${GHL}/conversations/${encodeURIComponent(cv.id)}/messages?limit=40`, { headers: H(tok) })
+      if (!r.ok) throw new Error(`GoHighLevel messages ${r.status}`)
+      const b: Any = await r.json().catch(() => ({}))
+      for (const m of (b?.messages?.messages || b?.messages || [])) {
+        const t = Date.parse(String(m.dateAdded || ''))
+        if (!(t > since) || String(m.id) === String(w.message_id).replace(/^sms:/, '')) continue
+        const call = /CALL/i.test(String(m.messageType || ''))
+        const read = call ? newest.get(String(m.id)) : null
+        const who = m.direction === 'inbound' ? 'Them' : 'Office'
+        const auto = m.direction !== 'inbound' && /workflow|campaign|bulk/i.test(String(m.source || '')) ? ' (automatic)' : ''
+        const what = call ? `${m.direction === 'inbound' ? 'they called' : 'office called'}${read?.detail?.summary ? ': ' + String(read.detail.summary).slice(0, 500) : ''}`
+          : Number(m.type) === 1 || /SMS/i.test(String(m.messageType || '')) ? String(m.body || '').slice(0, 500)
+          : '(' + String(m.messageType || 'message').replace(/^TYPE_/, '').toLowerCase() + ')'
+        lines.push([t, `[${at(t)}] ${who}${auto}: ${what}`])
+      }
+    }
+  }
+  const nm = lc(w.who_name)
+  if (nm) for (const o of hub.ops) {
+    if (!o || lc(o.about) !== nm) continue
+    const c = Date.parse(String(o.created_at || '')), u = Date.parse(String(o.closed_at || o.resolved_at || o.updated_at || ''))
+    const by = String(o.created_by || '')
+    if (c > since) lines.push([c, `[${at(c)}] Card made by ${by.includes('@') || /\s/.test(by) ? by.split('@')[0] : 'the Hub'}: ${String(o.title || '').slice(0, 140)} (${String(o.status || 'open')})`])
+    else if (u > since) lines.push([u, `[${at(u)}] Card now ${String(o.status || 'open')}: ${String(o.title || '').slice(0, 140)}`])
+  }
+  if (w.person_id) {
+    const { data: rec } = await db.from('call_record').select('recorded_at, outcome').eq('kind', 'outcome').eq('person_id', w.person_id).gt('recorded_at', w.call_at).limit(10)
+    for (const x of rec ?? []) { const t = Date.parse(String(x.recorded_at)); lines.push([t, `[${at(t)}] Office tapped a call outcome: ${String(x.outcome || '').slice(0, 80)}`]) }
+  }
+  lines.sort((a, b) => a[0] - b[0])
+  return { lines: lines.map((l) => l[1]), latest: lines.length ? lines[lines.length - 1][0] : 0 }
+}
+
+async function watchPromises(db: Any, ai: Any, hub: Any, tok: string, since: string) {
+  const res = { promises: 0, checked: 0, kept: 0, would_remind: 0, errors: 0, broken: false }
+  const now = Date.now(), nowIso = new Date(now).toISOString()
+  const from = new Date(Math.max(Date.parse(since), now - WATCH_DAYS * 864e5)).toISOString()
+  const { data: rd, error: rErr } = await db.from('call_task_reading').select('message_id, version, channel, call_at, person_id, lead_id, who_name, caller, detail, error, read_at')
+    .gte('call_at', from).order('read_at', { ascending: false }).limit(1000)
+  const { data: have, error: wErr } = await db.from('call_promise_watch').select('*').gte('call_at', from)
+  if (rErr || wErr) { res.broken = true; res.errors++; return res }
+  const newest = new Map<string, Any>()
+  for (const r of rd ?? []) if (!newest.has(r.message_id)) newest.set(r.message_id, r)
+  const byKey = new Map<string, Any>((have ?? []).map((w: Any) => [w.message_id + '#' + w.idx, w]))
+  const save = async (q: Any) => { const { error } = await q; if (error) { res.errors++; res.broken = true } }
+
+  /* 1 · every promise in the newest reading of each call or text has a row; one a newer reading dropped says so */
+  for (const r of newest.values()) {
+    if (r.error) continue
+    const keep = new Set<number>()
+    const cs: Any[] = Array.isArray(r.detail?.commitments) ? r.detail.commitments.slice(0, 10) : []
+    for (const [idx, c] of cs.entries()) {
+      const due = dueFor(c, r.call_at)
+      if (!due) continue
+      keep.add(idx)
+      const area = String(c.area || 'office_admin')
+      const f = { version: r.version, channel: r.channel || 'call', call_at: r.call_at, person_id: r.person_id, lead_id: r.lead_id, who_name: r.who_name, caller: r.caller,
+        what: String(c.what || '').slice(0, 160), kind: c.kind, area, owner: ownerFor(area, { domains: hub.domains, staffing: staffingAt(hub, r.call_at) }), due }
+      const w = byKey.get(r.message_id + '#' + idx)
+      if (!w) {
+        await save(db.from('call_promise_watch').insert({ message_id: r.message_id, idx, ...f, status: 'waiting', history: [{ at: nowIso, status: 'waiting', why: 'promise found' }] }))
+      } else if (w.version !== r.version || w.status === 'dropped') {
+        const back = w.status === 'dropped'
+        await save(db.from('call_promise_watch').update({ ...f, ...(back ? { status: 'waiting', history: [...(w.history || []), { at: nowIso, status: 'waiting', why: 'found again in a newer reading' }] } : {}) }).eq('id', w.id))
+      }
+    }
+    for (const w of (have ?? []).filter((x: Any) => x.message_id === r.message_id && !keep.has(x.idx) && x.status !== 'dropped'))
+      await save(db.from('call_promise_watch').update({ status: 'dropped', history: [...(w.history || []), { at: nowIso, status: 'dropped', why: 'a newer reading no longer has this promise' }] }).eq('id', w.id))
+  }
+
+  /* 2 · check the promises still owed, soonest due first; the AI is asked only when something new happened with them */
+  const { data: open, error: oErr } = await db.from('call_promise_watch').select('*').in('status', ['waiting', 'would_remind']).gte('call_at', from).order('due', { ascending: true }).limit(200)
+  if (oErr) { res.broken = true; res.errors++; return res }
+  res.promises = (open ?? []).length
+  let asked = 0
+  for (const w of open ?? []) {
+    const end = dueEnd(String(w.due)), late = now > end
+    if (now > end + WATCH_AFTER_DUE_MS) continue                         // stays as it was (would remind) after 3 days
+    if (w.checked_at && now - Date.parse(w.checked_at) < CHECK_EVERY_MS) continue
+    let verdict: 'kept' | 'not_yet' | 'unclear' | 'none' = 'none', why = '', evidence: string[] | null = null, latest = 0
+    try {
+      const act = await activityFor(db, hub, tok, w, newest)
+      latest = act.latest
+      if (!act.lines.length) why = late ? 'Nothing with them since the promise: no call, text or card.' : `Nothing yet; due ${w.due}.`
+      else if (act.latest > (Date.parse(w.last_activity_at || '') || 0)) {
+        if (asked >= WATCH_PER_RUN) continue
+        asked++
+        const resp = await ai.beta.messages.create(checkRequest({ what: w.what, kind: w.kind, due: String(w.due), who: w.who_name || w.caller || '', call_at: w.call_at, channel: w.channel }, act.lines))
+        const got = cleanCheck(resp)
+        if ('error' in got) throw new Error(got.error)
+        verdict = got.status; why = got.why; evidence = got.evidence
+      } else { verdict = 'not_yet'; why = w.why || '' }
+    } catch (e) {
+      res.errors++
+      await save(db.from('call_promise_watch').update({ checked_at: nowIso, why: ('The check could not run: ' + String((e as Error)?.message || e)).slice(0, 300) }).eq('id', w.id))
+      continue
+    }
+    const status = nextStatus(w.status, verdict, late)
+    res.checked++
+    if (status === 'kept' || status === 'kept_late') res.kept++
+    if (status === 'would_remind') res.would_remind++
+    const upd: Record<string, Any> = { status, why: why.slice(0, 300) || null, checks: (w.checks || 0) + 1, checked_at: nowIso, last_activity_at: latest ? new Date(latest).toISOString() : w.last_activity_at }
+    if (evidence) upd.evidence = evidence
+    if (status !== w.status) upd.history = [...(w.history || []), { at: nowIso, status, why: why.slice(0, 200) }]
+    await save(db.from('call_promise_watch').update(upd).eq('id', w.id))
   }
   return res
 }
