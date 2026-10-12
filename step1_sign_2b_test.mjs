@@ -108,8 +108,8 @@ r = await call({ action: 'save', ...link, screen: '2', answers: { preferred_name
 ck('the SSN can never be saved as an answer (400, nothing saved)', r.status === 400 && !DB.step1_forms[0].answers.preferred_name, r)
 r = await call({ action: 'save', ...link, screen: '2', answers: { preferred_name: 'Ava', lived_outside_mo: 'yes', states_lived: ['KS', 'ZZ'], hs_name: 'Central High', cna: 'no', hha: 'no', bogus: 'x' } })
 ck('save: good answers kept, an option not on the list and an unknown id rejected, the screen remembered', r.status === 200 && r.j.rejected.join() === 'states_lived,bogus' && DB.step1_forms[0].answers.preferred_name === 'Ava' && DB.step1_forms[0].current_screen === '2', { r, a: DB.step1_forms[0].answers })
-r = await call({ action: 'save', ...link, screen: '3', answers: { states_lived: ['KS'], moving_violations: 'no', license_suspended: 'no', convicted: 'no', employers: [['Home Helpers', 'Springfield, MO', 'Caregiver', 'Jane Boss', '417-555-0202', 'jane@hh.com', '2024-01', '2026-08', 'Personal care', 'Moved', 'Yes']] } })
-ck('save: a work-history row lands as a row', r.status === 200 && DB.step1_forms[0].answers.employers.length === 1 && DB.step1_forms[0].answers.employers[0][3] === 'Jane Boss', r)
+r = await call({ action: 'save', ...link, screen: '3', answers: { states_lived: ['KS'], moving_violations: 'no', license_suspended: 'no', convicted: 'no', jobs: [{ company: 'Home Helpers', city_state: 'Springfield, MO', role: 'Caregiver', from: '2024-01', to: '2026-08', supervisor: 'Jane Boss', phone: '417-555-0202', email: 'jane@hh.com', may_contact: 'yes', reason_leaving: 'Moved', did_care: 'yes', tasks: ['bathing', 'hoyer_lift'], lifts: ['Full-body sling'], refresher: ['none'] }] } })
+ck('save: a job lands as a card with its tasks', r.status === 200 && DB.step1_forms[0].answers.jobs.length === 1 && DB.step1_forms[0].answers.jobs[0].supervisor === 'Jane Boss' && DB.step1_forms[0].answers.jobs[0].tasks.join() === 'bathing,hoyer_lift', r)
 
 /* ═══ sign, in order, with the required answers ═══ */
 r = await call({ action: 'sign', ...link, form: 'reference_consent', typed_name: 'Ava Lee', consent: true })
@@ -126,7 +126,7 @@ r = await call({ action: 'save', ...link, screen: '3', answers: { preferred_name
 ck('answers of a signed form can no longer change (409)', r.status === 409 && DB.step1_forms[0].answers.preferred_name === 'Ava', r)
 r = await call({ action: 'sign', ...link, form: 'reference_consent', typed_name: 'Ava Lee', consent: true })
 ck('references: missing answers named (2 professional, 2 personal)', r.status === 400 && /2 professional references/.test(r.j.error) && /2 personal references/.test(r.j.error), r)
-await call({ action: 'save', ...link, screen: '4', answers: { professional_refs: [['Jane Boss', 'Home Helpers', 'Supervisor', '417-555-0202', 'jane@hh.com'], ['Tom Lead', 'Visiting Angels', 'Manager', '417-555-0303', '']], personal_refs: [['Sue Friend', 'Friend', '417-555-0404', ''], ['Bob Neighbor', 'Neighbor', '417-555-0505', '']] } })
+await call({ action: 'save', ...link, screen: '4', answers: { professional_refs: [{ name: 'Jane Boss', company: 'Home Helpers', role: 'Supervisor', phone: '417-555-0202', email: 'jane@hh.com', may_contact: 'yes' }, { name: 'Tom Lead', company: 'Visiting Angels', role: 'Manager', phone: '417-555-0303', may_contact: 'yes' }], personal_refs: [{ name: 'Sue Friend', relationship: 'Friend', phone: '417-555-0404', may_contact: 'yes' }, { name: 'Bob Neighbor', relationship: 'Neighbor', phone: '417-555-0505', may_contact: 'yes' }] } })
 r = await call({ action: 'sign', ...link, form: 'reference_consent', typed_name: 'Ava Lee', consent: true }); ck('references signed once the four are there', r.status === 200, r)
 r = await call({ action: 'sign', ...link, form: 'fcra_disclosure', typed_name: 'Ava Lee', consent: true }); ck('the FCRA disclosure signs on its own (nothing else on it)', r.status === 200, r)
 

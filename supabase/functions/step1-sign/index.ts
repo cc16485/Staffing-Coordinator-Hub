@@ -25,7 +25,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { checkLink } from '../_shared/applicant-links.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
-import { FORMS, FORM_ORDER, formFingerprint, REFERENCES_REQUIRED, APPROVED_FOR_REAL, MATCHING_FACTS, type FormKey, type Item, type Form } from '../_shared/step1-documents.ts'
+import { FORMS, FORM_ORDER, formFingerprint, REFERENCES_REQUIRED, APPROVED_FOR_REAL, MATCHING_FACTS, SKILLS, SKILL_GROUPS, type FormKey, type Item, type Form, type Field } from '../_shared/step1-documents.ts'
 import { seal, open as unseal, last4, ssnLooksValid, REVEAL_TTL_MS, REVEAL_FIELDS, REVEAL_PERMISSION, type RevealField, ssnAllowed, practiceOffer } from '../_shared/step1-crypto.ts'
 import { PERM_KEY, normalizePerms, mayApprove } from '../_shared/onboarding-permissions.ts'
 import { step1FormPdf, type IdentityState } from '../_shared/step1-pdf.ts'
@@ -106,9 +106,68 @@ export function clean(item: Item, v: unknown): unknown {
       for (const r of v) { if (!Array.isArray(r) || r.length > opts.length) return undefined; const row = r.map((c) => S(c, 300)); if (row.some(Boolean)) rows.push(row) }
       return rows
     }
+    case 'cards': {
+      if (!Array.isArray(v) || v.length > (item.max || 10)) return undefined
+      const out: Record<string, unknown>[] = []
+      for (const r of v) {
+        if (!r || typeof r !== 'object' || Array.isArray(r)) return undefined
+        const row: Record<string, unknown> = {}
+        for (const [k, x] of Object.entries(r as Record<string, unknown>)) {
+          const f = (item.fields || []).find((ff) => ff.k === k); if (!f) return undefined
+          if (x == null || x === '' || (Array.isArray(x) && !x.length)) continue
+          const c = cleanField(f, x); if (c === undefined) return undefined; row[k] = c
+        }
+        /* a refresher is only for a task ticked on the same card; a lift type only when a lift is ticked */
+        const tasks = Array.isArray(row.tasks) ? row.tasks as string[] : []
+        if (Array.isArray(row.refresher)) { const rf = (row.refresher as string[]).filter((k) => k === 'none' || tasks.includes(k)); if (rf.includes('none') && rf.length > 1) return undefined; if (rf.length) row.refresher = rf; else delete row.refresher }
+        if (!tasks.includes('hoyer_lift')) delete row.lifts
+        out.push(row)
+      }
+      return out
+    }
     default: return undefined   // statement, photo: nothing to store in 2b
   }
 }
+/** One box inside a card, cleaned to its kind; null = empty; undefined = not acceptable. */
+export function cleanField(f: Field, v: unknown): unknown {
+  const opts = f.options || []
+  switch (f.kind) {
+    case 'text': return typeof v === 'string' ? v.trim().slice(0, 300) : undefined
+    case 'tel': { if (typeof v !== 'string') return undefined; const t = v.trim().slice(0, 30); return /^[0-9()+.\-\s]*$/.test(t) ? t : undefined }
+    case 'email': { if (typeof v !== 'string') return undefined; const t = v.trim().slice(0, 160); return t === '' || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t) ? t : undefined }
+    case 'yesno': return v === 'yes' || v === 'no' ? v : undefined
+    case 'choice': return typeof v === 'string' && opts.includes(v) ? v : undefined
+    case 'multi': case 'lifts': return Array.isArray(v) && v.every((x) => typeof x === 'string' && opts.includes(x)) ? [...new Set(v as string[])] : undefined
+    case 'skills': return Array.isArray(v) && v.every((x) => typeof x === 'string' && x in SKILLS) ? [...new Set(v as string[])] : undefined
+    case 'refresher': return Array.isArray(v) && v.every((x) => typeof x === 'string' && (x === 'none' || x in SKILLS)) ? [...new Set(v as string[])] : undefined
+  }
+  return undefined
+}
+const filled = (x: unknown) => !(x == null || x === '' || (Array.isArray(x) && !x.length))
+const cardName = (r: Record<string, unknown>, i: number, what: string) => `${what} ${i + 1}${S(r.name || r.company || r.who, 60) ? ' (' + S(r.name || r.company || r.who, 60) + ')' : ''}`
+/** What is still missing on each card: its required boxes, a phone or an email, the tasks when they gave care, a lift type
+    when a lift is ticked, an answer to the refresher question, and the contact boxes once a confirmer is named. */
+export function cardsMissing(item: Item, rows: unknown, what: string): string[] {
+  const out: string[] = []
+  ;(Array.isArray(rows) ? rows : []).forEach((raw, i) => {
+    const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>, miss: string[] = []
+    const has = (k: string) => (item.fields || []).some((f) => f.k === k)
+    for (const f of item.fields || []) if (f.required && !filled(r[f.k])) miss.push(f.label.replace(/\s*\(.*\)$/, '').toLowerCase())
+    const contactNeeded = item.id !== 'family_care' || filled(r.confirmer)
+    if (contactNeeded && has('phone') && !filled(r.phone) && !filled(r.email)) miss.push('a phone or an email')
+    if (item.id === 'family_care' && filled(r.confirmer) && !filled(r.may_contact)) miss.push('may we contact them')
+    const gaveCare = item.id === 'family_care' || r.did_care === 'yes'
+    if (has('tasks') && gaveCare) {
+      const tasks = Array.isArray(r.tasks) ? r.tasks as string[] : []
+      if (!tasks.length) miss.push('what you did (tick at least one)')
+      else { if (tasks.includes('hoyer_lift') && !filled(r.lifts)) miss.push('which kind of lift'); if (!filled(r.refresher)) miss.push('the refresher question') }
+    }
+    if (miss.length) out.push(cardName(r, i, what) + ': ' + miss.join(', '))
+  })
+  return out
+}
+/** A reference counts when it has a name, a phone or an email, and their permission to contact. */
+const usableRef = (r: unknown) => { if (Array.isArray(r)) return !!S(r[0]); const x = (r && typeof r === 'object' ? r : {}) as Record<string, unknown>; return !!S(x.name) && (filled(x.phone) || filled(x.email)) && x.may_contact === 'yes' }
 const yes = (a: Record<string, unknown>, id: string) => a[id] === 'yes'
 /** Which required answers are still missing on a form, after the conditional rules. */
 export function missing(form: FormKey, a: Record<string, unknown>, ident: IdentityState): string[] {
@@ -117,7 +176,7 @@ export function missing(form: FormKey, a: Record<string, unknown>, ident: Identi
   for (const it of itemsOf(f)) {
     if (!it.required || it.locked || it.kind === 'statement' || it.kind === 'photo') continue
     if (form === 'employee_application' && it.id === 'states_lived') continue
-    if (form === 'employee_application' && it.id === 'employers') continue
+    if (form === 'employee_application' && (it.id === 'employers' || it.id === 'jobs')) continue
     if (form === 'reference_consent' && (it.id === 'professional_refs' || it.id === 'personal_refs')) continue
     if (form === 'vehicle' && it.id === 'insurance_proof' && !yes(a, 'has_insurance')) continue   // no insurance: the proof question does not apply; the driver acknowledgment carries the choice
     if (form === 'edl_fcsr_consent' && ['ssn', 'dob'].includes(it.id)) continue
@@ -127,12 +186,19 @@ export function missing(form: FormKey, a: Record<string, unknown>, ident: Identi
     if (yes(a, 'lived_outside_mo')) need('states_lived', !empty(a.states_lived))
     if (yes(a, 'moving_violations')) need('moving_violations_detail', !empty(a.moving_violations_detail))
     if (yes(a, 'convicted')) need('convictions', !empty(a.convictions))
-    if (!yes(a, 'no_employer_history')) need('employers', Array.isArray(a.employers) && a.employers.length > 0, 'Your work history (or tick "I have no previous employer to list")')
+    if (!yes(a, 'no_employer_history')) need('jobs', Array.isArray(a.jobs) && a.jobs.length > 0, 'Your work history (or tick "I have no previous employer to list")')
+    const jobs = itemsOf(f).find((i) => i.id === 'jobs'), fam = itemsOf(f).find((i) => i.id === 'family_care')
+    if (jobs && !yes(a, 'no_employer_history')) out.push(...cardsMissing(jobs, a.jobs, 'Job'))
+    if (fam) out.push(...cardsMissing(fam, a.family_care, 'Family or private-client care'))
   }
   if (form === 'reference_consent') {
-    const pro = Array.isArray(a.professional_refs) ? a.professional_refs.length : 0, per = Array.isArray(a.personal_refs) ? a.personal_refs.length : 0
-    if (!yes(a, 'no_employer_history')) need('professional_refs', pro >= REFERENCES_REQUIRED.professional, `${REFERENCES_REQUIRED.professional} professional references`)
-    need('personal_refs', per >= REFERENCES_REQUIRED.personal, `${REFERENCES_REQUIRED.personal} personal references`)
+    /* v3: a reference counts once it has a phone or an email and their permission to contact; each card's own gaps are listed */
+    const count = (v: unknown) => (Array.isArray(v) ? v : []).filter(usableRef).length
+    const pro = count(a.professional_refs), per = count(a.personal_refs)
+    const cardsOf = (id: string) => itemsOf(f).find((i) => i.id === id && i.kind === 'cards')
+    for (const [id, what] of [['professional_refs', 'Professional reference'], ['personal_refs', 'Personal reference'], ['backup_refs', 'Backup reference']]) { const it = cardsOf(id); if (it) out.push(...cardsMissing(it, a[id], what)) }
+    if (!yes(a, 'no_employer_history')) need('professional_refs', pro >= REFERENCES_REQUIRED.professional, `${REFERENCES_REQUIRED.professional} professional references we may contact (if you would rather we not contact someone, add another person instead)`)
+    need('personal_refs', per >= REFERENCES_REQUIRED.personal, `${REFERENCES_REQUIRED.personal} personal references we may contact (if you would rather we not contact someone, add another person instead)`)
   }
   if (form === 'edl_fcsr_consent') { need('ssn', !!ident.ssn, 'Social Security number'); need('dob', ident.dob, 'Date of birth') }
   /* 2026-10-11 (Samantha, station 2: "everything needs to be required"): every day answered (a time or Not available), a shift
@@ -199,9 +265,15 @@ export function landingPatch(form: FormKey, a: Record<string, unknown>, at: stri
   }
   if (form === 'reference_consent') {
     const p: Record<string, unknown> = { ...stamp }; let n = 0
-    const rows = (v: unknown) => (Array.isArray(v) ? v : []) as string[][]
-    for (const r of rows(a.professional_refs)) { if (n >= 4 || !S(r[0])) continue; n++; Object.assign(p, { [`r${n}n`]: S(r[0], 80), [`r${n}_company`]: S(r[1], 80), [`r${n}_rel`]: S(r[2], 80), [`r${n}_phone`]: S(r[3], 30), [`r${n}_email`]: S(r[4], 160), [`r${n}_type`]: 'professional', [`r${n}s`]: 'Pending' }) }
-    for (const r of rows(a.personal_refs)) { if (n >= 4 || !S(r[0])) continue; n++; Object.assign(p, { [`r${n}n`]: S(r[0], 80), [`r${n}_rel`]: S(r[1], 80), [`r${n}_phone`]: S(r[2], 30), [`r${n}_email`]: S(r[3], 160), [`r${n}_type`]: 'personal', [`r${n}s`]: 'Pending' }) }
+    /* v3 (2026-10-11): cards become the same five columns; a reference they asked us not to contact never lands */
+    const rows = (v: unknown, pro: boolean) => (Array.isArray(v) ? v : []).flatMap((r: unknown) => {
+      if (Array.isArray(r)) return [r.map((c) => S(c, 160))]
+      const x = (r && typeof r === 'object' ? r : {}) as Record<string, unknown>
+      if (x.may_contact === 'no') return []
+      return [pro ? [S(x.name), S(x.company), S(x.role), S(x.phone), S(x.email)] : [S(x.name), S(x.relationship), S(x.phone), S(x.email)]]
+    }) as string[][]
+    for (const r of rows(a.professional_refs, true)) { if (n >= 4 || !S(r[0])) continue; n++; Object.assign(p, { [`r${n}n`]: S(r[0], 80), [`r${n}_company`]: S(r[1], 80), [`r${n}_rel`]: S(r[2], 80), [`r${n}_phone`]: S(r[3], 30), [`r${n}_email`]: S(r[4], 160), [`r${n}_type`]: 'professional', [`r${n}s`]: 'Pending' }) }
+    for (const r of rows(a.personal_refs, false)) { if (n >= 4 || !S(r[0])) continue; n++; Object.assign(p, { [`r${n}n`]: S(r[0], 80), [`r${n}_rel`]: S(r[1], 80), [`r${n}_phone`]: S(r[2], 30), [`r${n}_email`]: S(r[3], 160), [`r${n}_type`]: 'personal', [`r${n}s`]: 'Pending' }) }
     ;(p.step1_landed as Record<string, unknown>).references = n
     return n ? p : null
   }
@@ -336,10 +408,12 @@ Deno.serve(async (req) => {
 
     if (action === 'view') {
       if (!row) {
-        const { data: made, error } = await db.from('step1_forms').insert({ offer_id: id, started_at: now(), current_screen: '1' }).select('*').maybeSingle()
+        const { data: made, error } = await db.from('step1_forms').insert({ offer_id: id, started_at: now(), current_screen: '1', practice: practiceOffer(o) }).select('*').maybeSingle()
         if (error) { const again = await db.from('step1_forms').select('*').eq('offer_id', id).maybeSingle(); row = again.data } else row = made
         if (row) await T.event({ offer_id: id, kind: 'step1_started', by_who: 'caregiver', channel: 'page', detail: { ip: ipOf(req), agent: agentOf(req) } })
       }
+      /* 2026-10-11: the practice mark kept true to the offer (the reference page asks task questions only for practice hires) */
+      if (row && !!row.practice !== practiceOffer(o)) { await db.from('step1_forms').update({ practice: practiceOffer(o) }).eq('offer_id', id); row.practice = practiceOffer(o) }
       // never ask twice: the application (by email, then by phone) and its interview answers
       // deno-lint-ignore no-explicit-any
       let app: any = null
@@ -352,7 +426,7 @@ Deno.serve(async (req) => {
       return json({ ok: true, who, forms, order: FORM_ORDER, screens: SCREENS, answers: row?.answers || {}, signatures: publicSignatures(sigs), identity: { ...IS, license_state: ident?.license_state ?? null, license_expires: ident?.license_expires ?? null },
         prefill: prefillFrom(app, app?.post_interview || null), hints: { availability: S(app?.availability, 300) || null, travel: S(app?.post_interview?.travel_areas, 200) || null },
         current_screen: row?.current_screen || '1', started_at: row?.started_at || null, completed_at: row?.completed_at || null, esign_consent_at: row?.esign_consent_at || null,
-        test_mode: true, references_required: REFERENCES_REQUIRED, signed_count: Object.keys(sigs).length, form_count: FORM_ORDER.length })
+        test_mode: true, references_required: REFERENCES_REQUIRED, skill_groups: SKILL_GROUPS, skills: SKILLS, signed_count: Object.keys(sigs).length, form_count: FORM_ORDER.length })
     }
     if (!row) return json({ ok: false, error: 'Please open your Step 1 link first.' }, 409)
     if (action === 'begin') {

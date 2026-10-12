@@ -18,6 +18,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { logOpen, ipOf } from '../_shared/doc-log.ts'
 import { evidenceLine } from '../_shared/evidence.ts'
+import { experienceSummary } from '../_shared/step1-experience.ts'
 type Any = any
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -203,11 +204,21 @@ Deno.serve(async (req) => {
       return json({ ok: true, url: data.signedUrl, expires_in: 300 })
     }
     const [tl, docs] = await Promise.all([timeline(db, T, p), documents(db, p)])
+    /* 2026-10-11 (Samantha: everything collected must feed the matching profile, not a document to search): the skills
+       picture from their Step 1 answers and their references' task-by-task answers. Read only; nothing is decided here. */
+    let experience: Any = null
+    try {
+      const candId = p.cand?.id ?? p.rec?.candidate_id
+      const [{ data: f }, { data: rr }] = await Promise.all([
+        p.offerId ? db.from('step1_forms').select('answers, practice').eq('offer_id', p.offerId).maybeSingle() : Promise.resolve({ data: null }),
+        candId != null ? db.from('reference_requests').select('*').eq('candidate_id', String(candId)).order('slot') : Promise.resolve({ data: [] })])
+      if (f?.answers) experience = { ...experienceSummary(f.answers, rr ?? []), practice: !!f.practice }
+    } catch { experience = null }
     const o = p.offer || {}
     return json({ ok: true, name: p.name || '(no name)', phone: p.phone, email: p.email, where: whereNow(p),
       ids: { offer_id: p.offerId || null, candidate_id: p.cand?.id ?? p.rec?.candidate_id ?? null, caregiver_id: p.rec?.id ?? null, applicant_id: p.app?.id ?? null, journey_id: p.journey?.journey_id ?? null, axiscare_id: p.rec?.axiscare_id ?? null },
       path: o.onboarding_path || p.cand?.onboarding_path || null, position: o.position || p.app?.position || null, pay_rate: o.pay_rate ?? null,
-      timeline: tl, documents: docs })
+      timeline: tl, documents: docs, experience })
   } catch (e) {
     return json({ error: 'Something went wrong: ' + ((e as Error).message || 'error') + '. Nothing was changed.' }, 500)
   }
