@@ -18,6 +18,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { loadNotClients, isNotClient } from '../_shared/client-quiet.ts'   // Office Staff and other not-clients (2026-10-12)
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -208,7 +209,9 @@ Deno.serve(async (req) => {
   const quietPast = (t: any) => { const c = careOf(String(t.axiscare_client_id)); return c === 'deceased' || (c === 'past' && !/^active$/i.test(String(t.new_status_label || '').trim())) }
   // deno-lint-ignore no-explicit-any
   const preview: any[] = []
+  await loadNotClients(sb)
   for (const t of fresh) {
+    if (isNotClient(t.axiscare_client_id)) { counts.not_client = (counts.not_client || 0) + 1; continue }   // Office Staff: no status cards
     if (!known.has(String(t.axiscare_client_id))) { counts.no_hub_person++; continue }
     if (quietPast(t)) { counts.past_quiet = (counts.past_quiet || 0) + 1; continue }
     counts.would_open++

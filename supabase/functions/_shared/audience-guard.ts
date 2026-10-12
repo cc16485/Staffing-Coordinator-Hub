@@ -14,6 +14,7 @@
 //   · every campaign, any audience: never anyone tied to a DECEASED, PAST or PAUSED client.
 // Former-client outreach, if ever wanted, is a separate audience to be designed on purpose (not built).
 // =============================================================================
+import { loadNotClients, isNotClient } from './client-quiet.ts'
 // deno-lint-ignore no-explicit-any
 type Any = any
 export type CareState = 'active' | 'starting' | 'paused' | 'past' | 'deceased'
@@ -126,6 +127,11 @@ export async function loadGuard(db: Any): Promise<{ stateOf: (email: string) => 
     sel('client_journey', 'lead_id, axiscare_client_id, status, closed_reason, is_test'),
     sel('client_pause', 'axiscare_client_id', (q) => q.eq('status', 'open')),
     (async () => { try { const { data } = await db.from('app_data').select('data').eq('key', 'leads').maybeSingle(); return Array.isArray(data?.data) ? data.data : [] } catch { return [] } })()])
-  const map = classify({ axClients, links, roles, circles, contacts, leads: leadRow, journeys, pauses })
+  /* NOT CLIENTS (2026-10-12, "nothing should happen for office staff"): a record like Office Staff (#293) is not a client,
+     so nobody is tied to an active client through it; client and family campaigns then leave its addresses out (fail closed). */
+  await loadNotClients(db)
+  const keep = (ax: unknown) => !isNotClient(String(ax ?? ''))
+  const map = classify({ axClients: axClients.filter((c: Any) => keep(c?.id)), links: links.filter((l: Any) => keep(l.source_id)), roles,
+    circles: circles.filter((c: Any) => keep(c.axiscare_client_id)), contacts, leads: leadRow, journeys: journeys.filter((j: Any) => keep(j.axiscare_client_id)), pauses })
   return { stateOf: (e: string) => map.get(lc(e)) ?? null, axOk }
 }

@@ -51,6 +51,7 @@ try {
   fs.writeFileSync(path.join(tmp, 'staff-auth.ts'), "export const OFFICE_ROLES = []; export async function requireStaff(){ return { ok: false, status: 401, error: 'no' } }")
   const src = fs.readFileSync(path.join(F, 'client-status-review/index.ts'), 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
     .replace("'../_shared/job-auth.ts'", "'" + path.join(tmp, 'job-auth.ts') + "'").replace("'../_shared/staff-auth.ts'", "'" + path.join(tmp, 'staff-auth.ts') + "'")
+    .replace("'../_shared/client-quiet.ts'", "'" + path.resolve(F, '_shared/client-quiet.ts') + "'")
   fs.writeFileSync(path.join(tmp, 'sr.ts'), src); const SR = await import(path.join(tmp, 'sr.ts'))
   reset()
   const r = await handler(new Request('https://x', { method: 'POST', headers: { 'x-cron-secret': ENV.HUB_JOB_SECRET }, body: JSON.stringify({ action: 'run' }) })); const j = await r.json()

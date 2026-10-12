@@ -23,6 +23,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { loadNotClients, isNotClient } from '../_shared/client-quiet.ts'   // Office Staff and other not-clients (2026-10-12)
 
 // deno-lint-ignore no-explicit-any
 type Any = any
@@ -152,7 +153,9 @@ Deno.serve(async (req) => {
         sel('client_issue', 'axiscare_client_id, client_person_id, state, summary, resolved_at'),
         sel('review_ask', 'axiscare_client_id, moment, moment_ref, status, asked_at, updated_at, created_at'),
         appData(db, 'client_checkins')])
-      inp = { today: T, links, roles, pauses, journeys, kind, issues, asks, checkins: Array.isArray(ci) ? ci : [] }
+      await loadNotClients(db)
+      /* a not-client record (Office Staff) is never a client to ask for a review */
+      inp = { today: T, links: links.filter((l: Any) => !isNotClient(l.source_id)), roles, pauses, journeys, kind, issues, asks, checkins: Array.isArray(ci) ? ci : [] }
     } catch (e) { return json({ error: 'could not read: ' + String((e as Error).message).slice(0, 200) }, 500) }
     const f = findMoments(inp), pp = await people(db)
     const { data: who } = await db.from('person_identity').select('id, display_name').in('id', f.suggest.map((s: Any) => s.person_id))

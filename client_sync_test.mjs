@@ -3,7 +3,8 @@
 import fs from 'fs'; import path from 'path';
 const src = fs.readFileSync('supabase/functions/client-sync/index.ts', 'utf8')
   .replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__sb')
-  .replace(/^import \{ jobCaller \} from .*$/m, "const jobCaller = async (req) => req.headers.get('x-cron-secret') === 'good' ? 'cron' : null");
+  .replace(/^import \{ jobCaller \} from .*$/m, "const jobCaller = async (req) => req.headers.get('x-cron-secret') === 'good' ? 'cron' : null")
+  .replace("'../_shared/client-quiet.ts'", "'" + path.resolve('supabase/functions/_shared/client-quiet.ts') + "'");
 /* a tiny in-memory database: enough of the query chain for this mode */
 const db = {
   person_source_id: [{ person_id: 'p-old', system: 'axiscare', entity_type: 'client', source_id: '1' },
@@ -35,7 +36,8 @@ globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ re
   { id: 2, firstName: 'Dan', lastName: 'New', status: { active: true }, mobilePhone: '4175550100' },
   { id: 3, firstName: 'Past', lastName: 'Person', status: { active: true } },
   { id: 4, firstName: 'Sam', lastName: 'Twin', status: { active: true } },
-  { id: 5, firstName: 'Gone', lastName: 'Away', status: { active: false } } ] } }) });
+  { id: 5, firstName: 'Gone', lastName: 'Away', status: { active: false } },
+  { id: 293, firstName: 'Office', lastName: 'Staff', status: { active: true } } ] } }) });
 await import(tmp); fs.unlinkSync(tmp);
 const call = async (qs, hdr = {}) => { const r = await handler(new Request('http://x/client-sync?' + qs, { method: 'POST', headers: hdr, body: '{}' })); return { s: r.status, t: await r.text() }; };
 const out1 = await call('', { Authorization: 'Bearer anon' });
@@ -59,6 +61,7 @@ const res = [
   ['identity-backfill (taken down by 441) is untouched and nothing imports it', !fs.readFileSync('supabase/functions/identity-backfill/index.ts', 'utf8').includes('client_sync') && !src.includes('identity-backfill/')],
   ['it never touches the caregiver or candidate lists', !/'caregivers'|'candidates'|app_data_items_apply|app_data_save/.test(src)],
   ['it leaves a heartbeat for the watchdog', db.hb.some(h => h.id === 'hb_client-sync' && h.ok === true && /1 new client added, 1 left/.test(h.note))],
+  ['Office Staff (#293, not a client) is never added', !db.person_source_id.some(x => x.source_id === '293') && !db.person_identity.some(p => p.display_name === 'Office Staff')],
   ['a second run adds nobody', j2.created === 0 && db.person_source_id.filter(x => x.source_id === '2').length === 1],
 ];
 let pass = 0; for (const [name, good] of res) { console.log((good ? 'PASS ' : 'FAIL ') + name); if (good) pass++; }

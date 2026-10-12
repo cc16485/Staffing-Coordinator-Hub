@@ -38,6 +38,7 @@ import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { reportSendProblem } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
+import { loadNotClients, isNotClient } from '../_shared/client-quiet.ts'   // Office Staff and other not-clients (2026-10-12)
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -233,12 +234,13 @@ Deno.serve(async (req) => {
       // deno-lint-ignore no-explicit-any
       const visits: any[] = []
       let vurl: string | null = `https://${site}.axiscare.com/api/visits?startDate=${today}&endDate=${today}`
+      await loadNotClients(sb)
       for (let page = 0; vurl && page < 6; page++) {
         const r: Response = await fetch(vurl, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': AC_VERSION } })
         if (!r.ok) break
         // deno-lint-ignore no-explicit-any
         const j: any = await r.json().catch(() => ({}))
-        for (const v of (j?.results?.visits ?? j?.visits ?? [])) { if (!v?.removed) visits.push(v) }
+        for (const v of (j?.results?.visits ?? j?.visits ?? [])) { if (!v?.removed && !isNotClient(v)) visits.push(v) }   // office time is not a client visit
         vurl = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
       }
       if (visits.length) acToday = {
