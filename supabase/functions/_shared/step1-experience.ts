@@ -6,7 +6,8 @@
 // =============================================================================
 // Nothing is copied and nothing is decided here: the structured Step 1 answers (jobs, family care, their comfort answers) and
 // the structured reference answers (task by task) are read into one picture, task by task, for the profile. Her rules:
-//   • their own word is "self-reported" until someone independently confirms it; it is never thrown out for lack of a confirmer
+//   • their own word is "self-reported" until someone independently confirms it; it is kept on the record, but (her rule,
+//     2026-10-11) "if we can't verify it, it doesn't count": only a task a reference saw counts toward a level
 //   • a reference who saw it themselves confirms it; "I believe so" is support, not confirmation; "I don't know" changes nothing
 //   • a reference who does not answer never means the caregiver lacks the skill
 //   • the "comfortable having them care for someone you care about" answer is general feedback, never a skill sign-off
@@ -63,7 +64,7 @@ export function experienceSummary(a: Record<string, unknown> | null | undefined,
   for (const l of Object.values(lines)) {
     const has = (x: string) => l.confirmations.some((c) => c.answer === x)
     l.standing = has('saw') ? 'confirmed' : has('believe') ? 'supported' : has('no') ? 'questioned' : 'self_reported'
-    l.words = l.standing === 'confirmed' ? 'Confirmed by a reference who saw it' : l.standing === 'supported' ? 'Self-reported; a reference believes so but did not see it' : l.standing === 'questioned' ? 'Self-reported; a reference did not see it (talk it through)' : 'Self-reported (their own word, kept until evidence arrives)'
+    l.words = l.standing === 'confirmed' ? 'Confirmed by a reference who saw it' : l.standing === 'supported' ? 'Not verified: a reference believes so but did not see it (does not count yet)' : l.standing === 'questioned' ? 'Not verified: a reference did not see it (talk it through)' : 'Self-reported, not verified (kept on the record; does not count yet)'
   }
   const skills = Object.values(lines).sort((x, y) => Object.keys(SKILLS).indexOf(x.key) - Object.keys(SKILLS).indexOf(y.key))
   /* restrictions: what they said not at this time, what they would rather not do, what they want a refresher on first */
@@ -83,5 +84,5 @@ export function experienceSummary(a: Record<string, unknown> | null | undefined,
   const has = entries.length > 0 || skills.length > 0
   return { has, entries, skills, restrictions, strengths, references: asked, backups,
     counts: { confirmed: conf.length, supported: skills.filter((l) => l.standing === 'supported').length, self_reported: skills.filter((l) => l.standing === 'self_reported').length, questioned: skills.filter((l) => l.standing === 'questioned').length },
-    note: 'Their own words and their references\' answers. Nothing here sets a level, a qualification or a match.' }
+    note: 'Their own words and their references\' answers. If we can\'t verify it, it doesn\'t count: only tasks a reference saw count toward a level, and nothing here sets a level, a qualification or a match.' }
 }
