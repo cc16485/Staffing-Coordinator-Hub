@@ -1244,7 +1244,12 @@ Deno.serve(async (req) => {
      until a coordinator builds the list in the picker and presses send.
      "There are so many nuances that we know why someone shouldn't be sent
      to that client sometimes." */
-  const manualSelect = settings.coverage_manual_select === true
+  /* AUTOMATIC WAVES RETIRED (2026-10-12, her decision 6 + Desktop 631: "you choose who gets asked" on since the
+     09-19 redesign; the last automatic text went Sep 16 at 22:27 UTC, 66 in all, 82 picked by a person since). Cara
+     never texts a caregiver about a shift unless a person picked them, whatever the switch says. The ranking, the
+     ready-made list, the alerts and every closing text stay. */
+  const AUTO_WAVES_RETIRED = true
+  const manualSelect = AUTO_WAVES_RETIRED || settings.coverage_manual_select === true
   const fuseMin = Number(settings.coverage_wave_fuse_min) > 0 ? Number(settings.coverage_wave_fuse_min) : 10
   const ghl = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
 
@@ -2121,7 +2126,8 @@ Deno.serve(async (req) => {
     const ESCALATE_AFTER_MIN = 20
     /* A wave emptied by a census outage is a HOLD, not an exhausted
        callout — escalating on it would tell staff a lie. */
-    const escalateReady = sendLive && censusUsable && !c.pending_fill
+    /* retired with the automatic waves: it only ever counted automatic asks */
+    const escalateReady = !AUTO_WAVES_RETIRED && sendLive && censusUsable && !c.pending_fill
       && !askedArr.some((a: any) => a.state === 'yes')
       && !c.callout_escalated_at
       && autoAsked.length > 0 && wave.length === 0
