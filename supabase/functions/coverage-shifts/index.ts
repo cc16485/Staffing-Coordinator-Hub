@@ -10,6 +10,7 @@
 // with the signed-in coordinator's session token.
 // -----------------------------------------------------------------------------
 import { careLevelOf } from '../_shared/care-level.ts'
+import { newHireNeed } from '../_shared/new-hire.ts'
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: {
     'Content-Type': 'application/json',
@@ -456,6 +457,7 @@ Deno.serve(async (req) => {
             city: String(g?.mailingAddress?.city ?? g?.residentialAddress?.city ?? '').trim() || null,
             zip: String(g?.mailingAddress?.postalCode ?? g?.residentialAddress?.postalCode ?? '').trim() || null,
             windows: null, availability_updated: null, target_hours: null,
+            hire_date: String(g?.hireDate ?? g?.hire_date ?? '').slice(0, 10) || null,   // new hires who need hours (2026-10-12)
             visits: [] })
         }
         url6 = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
@@ -500,6 +502,11 @@ Deno.serve(async (req) => {
     const lock6 = await workLock(sb6)
     if (!lock6.ok) return json({ error: 'held: ' + lock6.why + ' (fail closed; nothing is offered until the readiness cards can be read)' }, 503)
     for (const p of pool.values()) { p.work_locked = lock6.axis.has(String(p.axiscare_id)); if (p.work_locked) p.work_lock_why = LOCK_WHY }
+    /* NEW HIRES WHO NEED HOURS (her ask + B, 2026-10-12): hired in AxisCare in the last 60 days with nothing (or less
+       than their weekly target) scheduled in these 14 days. A tag and a place first among equal fits, never a gate. */
+    const hrs = (v: { start: string; end: string }) => { const a = /^(\d\d):(\d\d)$/.exec(v.start), z = /^(\d\d):(\d\d)$/.exec(v.end); if (!a || !z) return 0
+      let m = (+z[1] * 60 + +z[2]) - (+a[1] * 60 + +a[2]); if (m <= 0) m += 1440; return m / 60 }
+    for (const p of pool.values()) p.new_hire = newHireNeed(p.hire_date, start6, p.visits.reduce((t: number, v: { start: string; end: string }) => t + hrs(v), 0), p.target_hours)
     return json({ window: `${start6}..${end6}`, count: pool.size, locked: [...pool.values()].filter((p) => p.work_locked).length,
       caregivers: [...pool.values()].sort((a, b) => a.name.localeCompare(b.name)) })
   }

@@ -47,6 +47,7 @@ import { caseEnded, chiNowNaive } from '../_shared/loops.ts'
 /* SLICE 5 (2026-10-10): a new hire with a readiness card is never offered a shift until Approved to Work and AxisCare read back Active */
 import { workLock, LOCK_WHY } from '../_shared/work-lock.ts'
 import { OPEN_HOURS_DEFAULT, checkWording, inSendWindow, offeredCells, openHoursText } from '../_shared/open-hours.ts'
+import { newHireNeed } from '../_shared/new-hire.ts'
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -697,7 +698,7 @@ async function buildCandidatesForCase(c: any):
      and each caregiver's town + zip, for the who-lives-closest sort. */
   const axisActive = new Set<string>(), nurseAxis = new Set<string>()
   const caregiverLevel = new Map<string, number>()
-  const cgCity = new Map<string, string>(), cgZip = new Map<string, string>()
+  const cgCity = new Map<string, string>(), cgZip = new Map<string, string>(), cgHire = new Map<string, string>()
   let censusError: string | null = null
   {
     const { token, site } = axisCreds()
@@ -725,6 +726,7 @@ async function buildCandidatesForCase(c: any):
             const city = String(g?.mailingAddress?.city ?? g?.residentialAddress?.city ?? '').trim()
             const zip = String(g?.mailingAddress?.postalCode ?? g?.residentialAddress?.postalCode ?? '').trim()
             if (city) cgCity.set(String(g.id), city)
+            const hd = String(g?.hireDate ?? g?.hire_date ?? '').slice(0, 10); if (hd) cgHire.set(String(g.id), hd)
             if (zip) cgZip.set(String(g.id), zip)
             const clsArr = Array.isArray(g?.classes) ? g.classes
               : (g?.classes && typeof g.classes === 'object') ? Object.values(g.classes) : []
@@ -846,6 +848,30 @@ async function buildCandidatesForCase(c: any):
     }
   } catch { /* hunger boost only */ }
 
+  /* NEW HIRES WHO NEED HOURS (her ask and her "B", 2026-10-12): hired in AxisCare in the last 60 days with nothing (or less
+     than their weekly target) scheduled in the next 14 days. Tagged on the row and put first among people who fit equally
+     well; never a reason to list or leave out anyone. One extra schedule read, only when someone was hired recently. */
+  // deno-lint-ignore no-explicit-any
+  const newHire = new Map<string, any>()
+  try {
+    const todayC = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+    const recent = [...cgHire.entries()].filter(([, d]) => newHireNeed(d, todayC, 0, null))
+    if (recent.length) {
+      const f14 = await fetchVisits(`startDate=${dISO(0)}&endDate=${dISO(-13)}`)
+      const h14 = new Map<string, number>()
+      for (const v of f14.rows) {
+        const id = v?.caregiver?.id; if (id == null || v?.removed) continue
+        const s0 = new Date(String(v?.scheduledStartDate ?? v?.startDate ?? '')).getTime()
+        const e0 = new Date(String(v?.scheduledEndDate ?? v?.endDate ?? '')).getTime()
+        if (Number.isFinite(s0) && Number.isFinite(e0) && e0 > s0) h14.set(String(id), (h14.get(String(id)) ?? 0) + (e0 - s0) / 3600000)
+      }
+      const { data: avN } = await sb.from('app_data').select('data').eq('key', 'caregiver_availability').maybeSingle()
+      // deno-lint-ignore no-explicit-any
+      const tgt = new Map<string, unknown>((Array.isArray(avN?.data) ? avN!.data : []).map((a: any) => [String(a?.axiscare_id ?? ''), a?.target_hours]))
+      for (const [id, d] of recent) { const n = newHireNeed(d, todayC, f14.error ? 0 : (h14.get(id) ?? 0), tgt.get(id)); if (n && !f14.error) newHire.set(id, n) }
+    }
+  } catch { /* the tag is a help, never a gate: no tag rather than a wrong one */ }
+
   const prnTeam = await prnTeamLoad()
   const ongoingCase = isOngoingCase(c)
 
@@ -910,6 +936,7 @@ async function buildCandidatesForCase(c: any):
       phone_last4: x.phone_last4,
       level: caregiverLevel.get(gid) ?? null,
       wants_more_hours: gap != null && gap > 0 ? Math.round(gap) : null,
+      new_hire: newHire.get(gid) ?? null,   // a new hire who still needs hours (2026-10-12)
       recently_active: recentlyActive.has(gid),
       history: h ? { visits: h.visits, last: h.last } : null,
       city, miles, same_town: sameTown,
@@ -944,11 +971,13 @@ async function buildCandidatesForCase(c: any):
      schedule beats raw distance; then the old ranking. "Who could actually
      take this and delight the client" reads top-down. */
   group1.sort((a, b) => ((a.working_then ? 1 : 0) - (b.working_then ? 1 : 0))
+    || ((b.new_hire ? 1 : 0) - (a.new_hire ? 1 : 0))   /* her "B": a new hire who needs hours first among equal fits */
     || ((b.this_client?.favorite ? 1 : 0) - (a.this_client?.favorite ? 1 : 0))
     || (b.history?.visits ?? 0) - (a.history?.visits ?? 0))
   group2.sort((a, b) =>
     ((a.working_then ? 1 : 0) - (b.working_then ? 1 : 0))
     || ((b.free_then === true ? 1 : 0) - (a.free_then === true ? 1 : 0))
+    || ((b.new_hire ? 1 : 0) - (a.new_hire ? 1 : 0))   /* her "B": among people who fit equally well, the new hire who needs hours first */
     || ((b.chain ? 1 : 0) - (a.chain ? 1 : 0))
     || ((b.rep?.favorites ?? 0) - (a.rep?.favorites ?? 0))
     || ((a.miles ?? 9999) - (b.miles ?? 9999))
