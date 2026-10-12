@@ -12,6 +12,7 @@
 //   waiver   {id, step: 'wait'|'approved'|'denied', proof?}: Good Cause Waiver steps (approved clears the review)
 //   clear    {id, why}: "They're cleared"; nothing is sent
 //   note     {id, note}: a short private office note (never sent)
+//   disclosed {candidate_id}: what they told us on Step 1 about their record (read only, never sent)
 //   final    {id}: sends THE notice (the one message), only when finalGate allows; the review closes as not hired
 // Its schedule (the jobs' secret): action 'due_check', weekdays 8am to 6pm Central, one Needs Attention card per
 // review whose response due date has passed with no contact recorded. Nothing is ever sent to an applicant without a
@@ -23,7 +24,7 @@ import { contactForOutbound, maySend } from '../_shared/outreach.ts'
 import { requireStaff, OFFICE_ROLES, serverSecretOk } from '../_shared/staff-auth.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { latestTextConsent } from '../_shared/text-consent.ts'
-import { CHECKS, CLEAR_WHY, RESULT_LABEL, isCheck, responseDue, duePassed, centralHour, step1Words, finalWords, finalGate, fmtLong,
+import { disclosureFrom, CHECKS, CLEAR_WHY, RESULT_LABEL, isCheck, responseDue, duePassed, centralHour, step1Words, finalWords, finalGate, fmtLong,
   type Check, type Words } from '../_shared/bg-review.ts'
 
 const cors = {
@@ -147,6 +148,14 @@ Deno.serve(async (req) => {
   const by = who.name || who.email
 
   /* opening a review, or previewing Step 1 before one is open */
+  /* what they disclosed on Step 1 (read only, office staff only, never sent): {candidate_id} */
+  if (action === 'disclosed') {
+    const c = await candidate(db, String(b.candidate_id ?? ''))
+    if (!c) return json({ error: 'That candidate was not found.' }, 404)
+    if (!c.offer_id) return json({ ok: true, step1: false, disclosure: disclosureFrom(null) })
+    const { data: f } = await db.from('step1_forms').select('answers, practice, completed_at').eq('offer_id', String(c.offer_id)).maybeSingle()
+    return json({ ok: true, step1: !!f, completed_at: f?.completed_at ?? null, practice: !!f?.practice, disclosure: disclosureFrom(f?.answers) })
+  }
   if (action === 'open' || (action === 'preview' && !b.id)) {
     const check = b.check, cid = String(b.candidate_id ?? '').trim()
     if (!isCheck(check)) return json({ error: 'which check? (fcsr, edl, oig or fp)' }, 400)
@@ -216,16 +225,17 @@ Deno.serve(async (req) => {
     if (step === 'approved') {
       const proof = String(b.proof ?? '').trim()
       if (!/^bgcheck\/[\w.\-\/]+$/.test(proof)) return json({ error: 'Attach the approval letter first.' }, 400)
-      const r = await save({ status: 'cleared', waiver_outcome: 'approved', waiver_decided_at: now.toISOString(), waiver_proof: proof, cleared_at: now.toISOString(), cleared_by: by, cleared_why: 'waiver_approved' },
-        'Good Cause Waiver approved (letter attached). Cleared.')
-      if (!r && rv.due_card_at) await closeCard(db, id, by)
-      return r ?? json({ ok: true, cleared: true, check, set_to: CHECKS[check].clear })
+      /* 2026-10-11 (Samantha: "we are not required to hire even if they technically could be hireable with a good cause
+         waiver"): an approved waiver no longer clears them by itself. It is recorded with the letter, and the office
+         decides: "They're cleared" (why: waiver approved) or "Not hiring…" with a private reason. */
+      return (await save({ status: 'open', result: 'no_waiver', waiver_outcome: 'approved', waiver_decided_at: now.toISOString(), waiver_proof: proof },
+        'Good Cause Waiver approved (letter attached). Not cleared yet: the office decides, They\'re cleared or Not hiring.')) ?? json({ ok: true, cleared: false, decide: true })
     }
     return json({ error: 'wait, approved or denied?' }, 400)
   }
   if (action === 'clear') {
     const why = String(b.why || '')
-    if (!CLEAR_WHY[why] || why === 'waiver_approved') return json({ error: 'Why are they cleared? (not them, an error that was corrected, or no waiver needed)' }, 400)
+    if (!CLEAR_WHY[why] || (why === 'waiver_approved' && rv.waiver_outcome !== 'approved')) return json({ error: 'Why are they cleared? (not them, an error that was corrected, or no waiver needed)' }, 400)
     if (why === 'no_waiver' && !(check === 'fcsr' || check === 'fp')) return json({ error: `No waiver applies to ${CHECKS[check].label}.` }, 400)
     const r = await save({ status: 'cleared', cleared_at: now.toISOString(), cleared_by: by, cleared_why: why }, `They're cleared: ${CLEAR_WHY[why]}. Nothing was sent.`)
     if (!r && rv.due_card_at) await closeCard(db, id, by)

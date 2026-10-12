@@ -134,7 +134,15 @@ ck('"They\'re cleared" (not this person): closed, nothing sent; the Hub is told 
 reset(); [s, j] = await call({ action: 'open', candidate_id: 31, check: 'fcsr' }); const ID3 = j.id
 ;[s, j] = await call({ action: 'result', id: ID3, result: 'waiver_needed' }); [s, j] = await call({ action: 'waiver', id: ID3, step: 'wait' })
 ;[s, j] = await call({ action: 'waiver', id: ID3, step: 'approved', proof: 'bgcheck/31/gcw-1.pdf' })
-ck('"Waiver approved" with the letter: cleared, letter kept, nothing sent', j.cleared && RV().status === 'cleared' && RV().cleared_why === 'waiver_approved' && RV().waiver_proof === 'bgcheck/31/gcw-1.pdf' && !SENT.length, j)
+ck('"Waiver approved" with the letter: NOT cleared by itself (her rule: a waiver never obliges us to hire); letter kept, result No waiver needed, nothing sent', !j.cleared && j.decide && RV().status === 'open' && RV().result === 'no_waiver' && RV().waiver_outcome === 'approved' && RV().waiver_proof === 'bgcheck/31/gcw-1.pdf' && !SENT.length, j)
+;[s, j] = await call({ action: 'clear', id: ID3, why: 'waiver_approved' })
+ck('...then "They\'re cleared" (waiver approved) clears them; nothing sent', j.cleared && RV().status === 'cleared' && RV().cleared_why === 'waiver_approved' && !SENT.length, j)
+reset(); [s, j] = await call({ action: 'open', candidate_id: 31, check: 'fcsr' }); const ID3b = j.id
+;[s, j] = await call({ action: 'clear', id: ID3b, why: 'waiver_approved' })
+ck('"cleared: waiver approved" is refused when no waiver was approved', s === 400 && RV().status === 'open')
+;[s, j] = await call({ action: 'result', id: ID3b, result: 'waiver_needed', reason: 'Not a fit for our clients' })
+;[s, j] = await call({ action: 'preview', id: ID3b, step: 'final' })
+ck('"Waiver needed" + Not hiring with a private reason: our decision notice (no waiver invitation), reason never in it', j.variant === 'decision' && !/Good Cause Waiver/.test(j.words.html) && !/Not a fit/.test(JSON.stringify(j.words)) && !SENT.length, j)
 
 /* spoke / consent / GHL down */
 reset(); [s, j] = await call({ action: 'open', candidate_id: 31, check: 'fcsr' }); const ID4 = j.id
@@ -198,6 +206,18 @@ reset(cardsFor({ result: 'waiver_needed', due_date: '2026-01-05' })); [s, j] = a
 ck('sending the final notice closes the response due card', j.not_hired && T.app_data.find((x) => x.key === 'ops_items').data[0].status === 'done', j)
 reset({ bg_reviews: [{ ...rv0 }] }); await MOD.dueCheck(globalThis.__db, new Date('2026-10-13T15:00:00Z'))
 ck('the due card is recorded in the review history, and it changes nothing else (still open, still "Needs review", nothing sent)', /Needs Attention card opened/.test(T.bg_reviews[0].history.at(-1).what) && T.bg_reviews[0].status === 'open' && T.bg_reviews[0].result === 'review' && !T.bg_reviews[0].final_at && !SENT.length)
+
+/* what they disclosed on Step 1 (2026-10-11) */
+ck('disclosure: a Step 1 with a DWI listed comes back row by row', (() => { const d = B.disclosureFrom({ convicted: 'yes', convictions: [['DWI', '2013-05-01', 'Misdemeanor', 'Springfield MO'], ['', '', '', '']], moving_violations: 'no', license_suspended: 'no' })
+  return d.asked && d.convicted === 'yes' && d.convictions.length === 1 && d.convictions[0].offense === 'DWI' && d.convictions[0].level === 'Misdemeanor' && d.moving_violations === 'no' })())
+ck('disclosure: no Step 1 answers = not asked (not "no")', !B.disclosureFrom(null).asked && B.disclosureFrom({ name: 'x' }).convicted === null)
+reset({ app_data: [{ key: 'candidates', data: [{ ...CAND(), offer_id: 'off-1' }] }, { key: 'ops_items', data: [] }], step1_forms: [{ offer_id: 'off-1', answers: { convicted: 'yes', convictions: [['DWI', '2013', 'Misdemeanor', 'Greene County']] }, practice: false, completed_at: '2026-10-10T15:00:00Z' }] })
+;[s, j] = await call({ action: 'disclosed', candidate_id: 31 })
+ck('the disclosed action reads their Step 1 answers (office staff, read only, nothing sent)', s === 200 && j.step1 && j.disclosure.convicted === 'yes' && j.disclosure.convictions[0].offense === 'DWI' && !SENT.length && !T.bg_reviews.length, j)
+reset(); [s, j] = await call({ action: 'disclosed', candidate_id: 31 })
+ck('...someone with no offer on the new process: no Step 1, not asked', s === 200 && !j.step1 && !j.disclosure.asked, j)
+globalThis.__staff = { ok: false, status: 401, error: 'Sign in first.' }; [s, j] = await call({ action: 'disclosed', candidate_id: 31 }); globalThis.__staff = { ok: true, email: 'krystal@mo-care.com', name: 'Krystal' }
+ck('...and nobody outside the office staff can read it', s === 401, j)
 
 /* source checks */
 const idx = fs.readFileSync(path.join(FN, 'bg-review/index.ts'), 'utf8'), lib = fs.readFileSync(path.join(FN, '_shared/bg-review.ts'), 'utf8'), sqlT = fs.readFileSync(path.join(ROOT, 'bg_review_446.sql'), 'utf8')
