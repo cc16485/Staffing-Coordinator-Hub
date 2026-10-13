@@ -15,8 +15,14 @@
 //   permission_check (service role) sends a deliberately incomplete schedule for Test
 //            Client 5; the kind of refusal says whether this connection may create
 //            schedules. Nothing can be created by it.
+//
+// STILL ONBOARDING (2026-10-13, her "yes to a and b"): Team Builder lets the office rank and confirm someone who is still
+// onboarding (an offer not on the AxisCare roster yet, or a new hire awaiting Approve to Work). Their shift is held here,
+// never sent: it shows under "waiting" with the reason, and goes in once they're approved and on the roster. The lock is
+// the one shared answer (work-lock.ts); if it can't be read, nothing is sent (fail closed).
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { workLock } from '../_shared/work-lock.ts'
 
 /* C2a (2026-09-28): every change in AxisCare adds one line to axiscare_change_log (who, when, which client or caregiver,
    the kind, how it went, a short summary; never note text). Best effort: recording never blocks the change itself. */
@@ -63,7 +69,9 @@ export type Sched = { key: string; caregiver_id: string; caregiver: string; days
 /* One schedule per caregiver per shift: the days they're CONFIRMED on that shift.
    A cell's AxisCare id wins; otherwise an exact, unique name match in the roster. */
 // deno-lint-ignore no-explicit-any
-export function groupSchedules(plan: any, roster: Map<string, { id: string; name: string }[]>) {
+export const ONBOARDING_WHY = 'still onboarding: waiting on Approve to Work. This shift goes into AxisCare once they are approved'
+export const NOT_ON_ROSTER_WHY = 'still onboarding: not on the AxisCare roster yet. This shift goes into AxisCare once they are hired and approved'
+export function groupSchedules(plan: any, roster: Map<string, { id: string; name: string }[]>, locked: Set<string> = new Set()) {
   const out = new Map<string, Sched>(), blocked: { slot: string; day: string; name: string; why: string }[] = [], unconfirmed: string[] = []
   for (const s of (plan?.slots ?? [])) {
     for (const d of ORDER.filter((x) => (plan?.days ?? []).includes(x))) {
@@ -71,11 +79,13 @@ export function groupSchedules(plan: any, roster: Map<string, { id: string; name
       const where = `${DAY[d]} ${s.label || ''}`.trim()
       if (!c || c.status !== 'yes') { unconfirmed.push(where); continue }
       let id = c.cg_ax_id ? String(c.cg_ax_id) : '', name = String(c.name ?? '')
+      if (!id && c.applicant_id) { blocked.push({ slot: s.label || '', day: DAY[d], name, why: NOT_ON_ROSTER_WHY }); continue }
       if (!id) {
         const hits = roster.get(nameKey(name)) ?? []
         if (hits.length === 1) { id = hits[0].id; name = hits[0].name }
         else { blocked.push({ slot: s.label || '', day: DAY[d], name, why: hits.length ? `${hits.length} caregivers in AxisCare are named "${name}"; pencil them in again to pick the right one` : `no active AxisCare caregiver is named "${name}"` }); continue }
       }
+      if (locked.has(id.replace(/\D/g, ''))) { blocked.push({ slot: s.label || '', day: DAY[d], name, why: ONBOARDING_WHY }); continue }
       const start = hm(s.start), end = hm(s.end), key = `${s.k}|${id}`
       const g = out.get(key) ?? { key, caregiver_id: id, caregiver: name, days: [], start, end, overnight: !!(start && end && end <= start), slot: s.label || '' }
       g.days.push(DAY[d]); out.set(key, g)
@@ -202,7 +212,9 @@ Deno.serve(async (req) => {
     const k = nameKey(nm); if (!k) continue
     roster.set(k, [...(roster.get(k) ?? []), { id: String(g.id), name: nm }])
   }
-  const grouped = groupSchedules(plan, roster)
+  const lock = await workLock(sb)
+  if (!lock.ok) problems.push(`The new-hire readiness check couldn't be read (${lock.why}), so nothing goes into AxisCare until it can. Try again in a minute.`)
+  const grouped = groupSchedules(plan, roster, lock.ok ? lock.axis : new Set())
 
   const startDate = typeof b.start_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(b.start_date) ? b.start_date : (target ?? null)
   // services in use: the client's own visits first, then the agency's last two weeks

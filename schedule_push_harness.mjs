@@ -3,7 +3,8 @@
 import fs from 'fs'; import path from 'path';
 if (!process.argv[2]) process.argv[2] = 'supabase/functions/schedule-push/index.ts';   // plain `node schedule_push_harness.mjs` runs the real function
 const FN = process.argv[2];
-const src = fs.readFileSync(FN, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = globalThis.__fakeCreateClient');
+const src = fs.readFileSync(FN, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = globalThis.__fakeCreateClient')
+  .replace(/from '\.\.\/_shared\/([\w.-]+)'/g, (m, f) => `from '${path.resolve(path.dirname(FN), '../_shared', f)}'`);
 const tmp = path.join(process.cwd(), '_schedule_push_under_test.ts'); fs.writeFileSync(tmp, src);
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note).slice(0, 900)]);
 let handler = null; const env = { SUPABASE_URL: 'http://x', SUPABASE_SERVICE_ROLE_KEY: 'k', AXISCARE_TOKEN: 't', AXISCARE_SITE: '16485' };
@@ -18,7 +19,7 @@ let DB, AX, calls, cfg;
 const reset = (p) => {
   DB = { app_data: { staffing_plans: [p || plan()] }, team_build_link_current: [{ plan_id: 'tb1', episode_id: 'E1' }], journey_episode: [{ episode_id: 'E1', person_id: 'P1' }],
     person_source_id: [{ person_id: 'P1', source_id: '501', system: 'axiscare', entity_type: 'client' }], person_identity: [{ id: 'P1', display_name: 'Ruth Jones' }],
-    start_contract_current: [{ episode_id: 'E1', target_date: D(7) }] };
+    start_contract_current: [{ episode_id: 'E1', target_date: D(7) }], client_journey: [], client_journey_step: [] };
   AX = { caregivers: [{ id: 77, firstName: 'Jane', lastName: 'Doe', status: { active: true } }, { id: 88, firstName: 'Bo', lastName: 'Smith', status: { active: true } },
       { id: 91, firstName: 'Al', lastName: 'Twin', status: { active: true } }, { id: 92, firstName: 'Al', lastName: 'Twin', status: { active: true } },
       { id: 93, firstName: 'Old', lastName: 'Timer', status: { active: false } }],
@@ -49,9 +50,11 @@ globalThis.fetch = async (u, o = {}) => {
   if (m === 'DELETE' && (x = /^\/api\/schedules\/(\d+)$/.exec(url.pathname))) { const s = AX.schedules.find(z => String(z.scheduleId) === x[1]); if (!s) return R(404, {}); s.ended = q.get('effectiveDate'); return new Response(null, { status: 204 }); }
   throw new Error('unexpected ' + m + ' ' + url);
 };
-globalThis.__fakeCreateClient = () => ({ rpc: async (n, a) => { (globalThis.__REC ||= []).push({ n, a }); return { data: { outcome: 'recorded' }, error: null }; }, from: (t) => { const f = []; const p = { select() { return p; }, eq(k, v) { f.push(r => String(r[k]) === String(v)); return p; },
-  maybeSingle() { let rows = t === 'app_data' ? Object.entries(DB.app_data).map(([key, data]) => ({ key, data })) : (DB[t] || []); rows = rows.filter(r => f.every(g => g(r)));
-    return Promise.resolve({ data: rows[0] || null, error: null }); } }; return p; } });
+globalThis.__fakeCreateClient = () => ({ rpc: async (n, a) => { (globalThis.__REC ||= []).push({ n, a }); return { data: { outcome: 'recorded' }, error: null }; }, from: (t) => { const f = [];
+  const all = () => { if (cfg.lockFail && t === 'client_journey') return null; const rows = t === 'app_data' ? Object.entries(DB.app_data).map(([key, data]) => ({ key, data })) : (DB[t] || []); return rows.filter(r => f.every(g => g(r))); };
+  const p = { select() { return p; }, eq(k, v) { f.push(r => String(r[k]) === String(v)); return p; }, in(k, vs) { f.push(r => vs.map(String).includes(String(r[k]))); return p; }, limit() { return p; },
+  then(ok, no) { const r = all(); return Promise.resolve(r === null ? { data: null, error: { message: 'down' } } : { data: r, error: null }).then(ok, no); },
+  maybeSingle() { const rows = all() || []; return Promise.resolve({ data: rows[0] || null, error: null }); } }; return p; } });
 const M = await import(tmp); fs.unlinkSync(tmp);
 const tok = (c) => 'Bearer x.' + Buffer.from(JSON.stringify(c)).toString('base64url') + '.y';
 const KAT = tok({ role: 'authenticated', email: 'kat@cc.test' }), SVC = tok({ role: 'service_role' }), ANON = tok({ role: 'anon' });
@@ -125,6 +128,31 @@ const RECS = (globalThis.__REC || []).filter((x) => x.n === 'axiscare_change_rec
 const recOk = (x) => x.p_summary && x.p_summary.length <= 200 && !/\n/.test(x.p_summary) && x.p_by && x.p_via;
 ck('C2a: schedules created are recorded (how many, how many confirmed, from which date)', RECS.some((x) => x.p_kind === 'schedule' && /schedule\(s\) created, \d+ confirmed/.test(x.p_summary) && recOk(x)), RECS);
 ck('C2a: an undo is recorded too', RECS.some((x) => x.p_kind === 'schedule' && /removed \(undo\)/.test(x.p_summary)), RECS.map((x) => x.p_summary));
+// STILL ONBOARDING (2026-10-13): ranked and confirmed on the plan, held here until approved; fail closed
+{
+  const g = M.groupSchedules(plan({ cells: { 'mon|am': { name: 'Jane Doe', status: 'yes', cg_ax_id: '77' }, 'wed|am': { name: 'Ann Newhire', status: 'yes', applicant_id: '5' } } }), new Map(), new Set(['77']));
+  ck('onboarding: a new hire awaiting Approve to Work is held with the reason, never sent', !g.schedules.length && g.blocked.some(x => x.name === 'Jane Doe' && /waiting on Approve to Work/.test(x.why)), g);
+  ck('onboarding: someone with an offer who is not on the roster yet says so (not "no caregiver is named")', g.blocked.some(x => x.name === 'Ann Newhire' && /not on the AxisCare roster yet/.test(x.why)), g.blocked);
+  reset(); DB.client_journey = [{ journey_id: 'J1', subject: 'caregiver', status: 'open', axiscare_caregiver_id: '88', offer_id: null }];
+  DB.client_journey_step = [{ journey_id: 'J1', step_key: 'cg.approve.work', state: 'pending' }];
+  let [, pb] = await call(KAT, { action: 'preview', plan_id: 'tb1' });
+  ck('onboarding preview: Bo (locked) is held, Jane still goes', pb.schedules.length === 1 && pb.schedules[0].caregiver === 'Jane Doe' && pb.blocked.filter(x => x.name === 'Bo Smith' && /Approve to Work/.test(x.why)).length === 2, pb);
+  calls = [];
+  [, pb] = await call(KAT, { action: 'create', plan_id: 'tb1', start_date: D(7), service_code: 'PC-PRIV' });
+  const posted = calls.filter(c => c[0] === 'POST').map(c => c[2].caregiverId);
+  ck('onboarding create: nothing is sent for the locked new hire', posted.length && !posted.includes(88) && !posted.includes('88'), posted);
+  DB.client_journey_step.push({ journey_id: 'J1', step_key: 'cg.approve.work', state: 'complete' }, { journey_id: 'J1', step_key: 'cg.axiscare.active', state: 'complete' });
+  reset(Object.assign(plan(), {})); DB.client_journey = [{ journey_id: 'J1', subject: 'caregiver', status: 'open', axiscare_caregiver_id: '88', offer_id: null }];
+  DB.client_journey_step = [{ journey_id: 'J1', step_key: 'cg.approve.work', state: 'complete' }, { journey_id: 'J1', step_key: 'cg.axiscare.active', state: 'complete' }];
+  [, pb] = await call(KAT, { action: 'preview', plan_id: 'tb1' });
+  ck('onboarding: once approved and active in AxisCare, their shift goes', pb.schedules.some(x => x.caregiver === 'Bo Smith'), pb.schedules);
+  reset(); cfg.lockFail = true; calls = [];
+  [, pb] = await call(KAT, { action: 'preview', plan_id: 'tb1' });
+  ck('onboarding: if the readiness check cannot be read, the preview says so', pb.problems.some(x => /readiness check couldn't be read/.test(x)), pb.problems);
+  [, pb] = await call(KAT, { action: 'create', plan_id: 'tb1', start_date: D(7), service_code: 'PC-PRIV' });
+  ck('onboarding: fail closed, nothing goes into AxisCare', pb.outcome === 'blocked' && writes().length === 0, [pb, writes()]);
+  cfg.lockFail = false;
+}
 let pass = 0;
 for (const [name, ok, note] of res) { console.log((ok ? 'PASS ' : 'FAIL ') + name + (ok ? '' : '\n     ' + note)); if (ok) pass++; }
 console.log(`\n${pass}/${res.length} passed`);
