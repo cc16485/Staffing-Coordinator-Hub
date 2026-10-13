@@ -76,6 +76,10 @@ export function verifyRows(f: Facts, now = new Date().toISOString()): Verdict[] 
     /* 2026-10-13: the driving screen is signed with the Driver Agreement OR the Non-Driver Agreement */
     const s = sigs[form] || (form === 'vehicle' ? sigs.non_driver : null); if (s?.at) out.push({ key: 'cg.step1.' + k, state: 'complete', at: iso(s.at) || now, evidence: { form: sigs[form] ? form : 'non_driver', version: s.version, fingerprint: s.fingerprint, typed_name: s.typed_name } })
   }
+  /* 2026-10-13: Samantha moved these acknowledgments from Viventium into Step 1: their signature there completes the row */
+  for (const [row, form] of [['cg.step2.handbook', 'handbook_ack'], ['cg.step2.code_of_ethics', 'code_of_ethics'], ['cg.step2.confidentiality', 'hipaa_privacy']]) {
+    const s = sigs[form]; if (s?.at) out.push({ key: row, state: 'complete', at: iso(s.at) || now, evidence: { via: 'step1', form, version: s.version, fingerprint: s.fingerprint, typed_name: s.typed_name } })
+  }
   /* 2026-10-13: the company signature on the agreements that need it (none needs it = complete by itself once Step 1 is) */
   if (s1?.completed_at) { const left = needsCountersign(sigs, (s1?.countersignatures || {}) as Record<string, unknown>); if (!left.length) { const cs = Object.values((s1?.countersignatures || {}) as Record<string, Any>); out.push({ key: 'cg.company.countersign', state: 'complete', at: iso(cs.map((x) => x.at).sort().pop() || s1.completed_at) || now, evidence: cs.length ? { forms: Object.keys(s1.countersignatures), by: cs.map((x) => x.by_name) } : { none_required: true } }) } }
   if (sigs.reference_consent?.at && sigs.fcra_disclosure?.at && sigs.edl_fcsr_consent?.at) { const at = [sigs.reference_consent.at, sigs.fcra_disclosure.at, sigs.edl_fcsr_consent.at].sort().pop(); out.push({ key: 'cg.consent.checks', state: 'complete', at: iso(at) || now, evidence: { forms: ['reference_consent', 'fcra_disclosure', 'edl_fcsr_consent'] } }) }
