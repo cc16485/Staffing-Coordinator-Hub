@@ -25,7 +25,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { checkLink } from '../_shared/applicant-links.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
-import { FORMS, FORM_ORDER, formFingerprint, REFERENCES_REQUIRED, APPROVED_FOR_REAL, approvedForReal, allApprovedForReal, step1Screens, formApplies, applicableForms, DECIDING, formCount, MATCHING_FACTS, SKILLS, SKILL_GROUPS, type FormKey, type Item, type Form, type Field } from '../_shared/step1-documents.ts'
+import { FORMS, FORM_ORDER, formFingerprint, REFERENCES_REQUIRED, APPROVED_FOR_REAL, approvedForReal, allApprovedForReal, step1Screens, formApplies, applicableForms, DECIDING, formCount, needsCountersign, MATCHING_FACTS, SKILLS, SKILL_GROUPS, type FormKey, type Item, type Form, type Field } from '../_shared/step1-documents.ts'
 import { seal, open as unseal, last4, ssnLooksValid, REVEAL_TTL_MS, REVEAL_FIELDS, REVEAL_PERMISSION, type RevealField, ssnAllowed, practiceOffer } from '../_shared/step1-crypto.ts'
 import { PERM_KEY, normalizePerms, mayApprove } from '../_shared/onboarding-permissions.ts'
 import { step1FormPdf, type IdentityState } from '../_shared/step1-pdf.ts'
@@ -309,6 +309,18 @@ async function problemCard(db: any, id: string, item: Record<string, unknown>, u
   } catch { return 'not raised' }
 }
 
+/** closes one Needs Attention card (when its work is done); never throws */
+// deno-lint-ignore no-explicit-any
+async function closeCard(db: any, id: string, by: string, done: boolean): Promise<void> {
+  if (!done) return
+  try {
+    const { data: row } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    const c = (Array.isArray(row?.data) ? row.data : []).find((x: any) => x && x.id === id)
+    if (c && c.status !== 'done') await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...c, status: 'done', closed_at: new Date().toISOString(), closed_by: by, close_note: 'Signed for Caring Companions' } })
+  } catch { /* the card stays open; the readiness row shows it is signed */ }
+}
+
 /* 2026-10-13 (her rule 2026-10-08: the signed Step 1 PDFs stay in the Hub's private store and are LINKED from the person's
    GoHighLevel contact: a note and a link, never the PDF in GoHighLevel). One note when Step 1 completes; the link opens only
    for signed-in office staff. A practice or training hire is never put into GoHighLevel. A note that cannot be written
@@ -500,6 +512,41 @@ Deno.serve(async (req) => {
       try { await trn().event({ offer_id: oid, kind: 'identity_revealed', by_who: 'staff', channel: 'hub', detail: { field, by_name: staff.name, by_email: staff.email, reason } }) } catch { /* the log row is the record; the trail is a courtesy */ }
       return json({ ok: true, field, value, revealed_at: at, expires_in: REVEAL_TTL_MS / 1000, by: staff.name })
     }
+    /* ───── COMPANY SIGNATURE (2026-10-13): a form marked countersign (the Employment Agreement) is signed for Caring Companions,
+       after the applicant signs it, by a person on the Approve to Work list, from the Hub (their Step 1 screens). Write once;
+       the applicant's own signed PDF is never replaced: a second PDF carries both signatures. ───── */
+    if (action === 'countersign') {
+      const staff = await requireStaff(db, req, OFFICE_ROLES)
+      if (!staff.ok) return json({ ok: false, error: staff.error }, staff.status)
+      const oid = S(b.offer_id, 64), form = S(b.form, 40) as FormKey
+      if (!/^[0-9a-f-]{36}$/i.test(oid) || !FORM_ORDER.includes(form) || !FORMS[form].countersign) return json({ ok: false, error: 'Which agreement?' }, 400)
+      const { data: permRow } = await db.from('app_data').select('data').eq('key', PERM_KEY).maybeSingle()
+      if (!mayApprove(normalizePerms(permRow?.data), 'work', { person_id: staff.person_id, roles: staff.roles, email: staff.email })) return json({ ok: false, error: 'Only a person on the Approve to Work list can sign for Caring Companions.' }, 403)
+      if (b.consent !== true) return json({ ok: false, error: 'Please tick that you are signing for Caring Companions first.' }, 400)
+      const name = S(b.typed_name, 80); if (!/^\S+(\s+\S+)+$/.test(name)) return json({ ok: false, error: 'Please type your full name, first and last.' }, 400)
+      const { data: fr } = await db.from('step1_forms').select('*').eq('offer_id', oid).maybeSingle()
+      const es = (fr?.signatures || {})[form] as Record<string, unknown> | undefined
+      if (!es) return json({ ok: false, error: 'They have not signed it yet. The company signs after them.' }, 409)
+      if ((fr?.countersignatures || {})[form]) return json({ ok: false, error: 'It is already signed for Caring Companions. A signature is never changed.', already: true }, 409)
+      if (Number(es.version) !== FORMS[form].version) return json({ ok: false, error: `They signed version ${es.version} and the wording is now version ${FORMS[form].version}. Tell Claude: the company signs the same version they signed.` }, 409)
+      const o = await trn().get(oid); if (!o) return json({ ok: false, error: 'That offer was not found.' }, 404)
+      const rwho = { first: S(o.first_name, 60), last: S(o.last_name, 60), phone: S(o.phone, 30), email: S(o.email, 160), position: S(o.position, 80) || 'Caregiver' }
+      const { data: idr } = await db.from('step1_identity').select('ssn_last4,dob_sealed,license_last4').eq('offer_id', oid).maybeSingle()
+      const at = new Date().toISOString(), cs = { at, typed_name: name, by_name: staff.name, by_email: staff.email, by_person: staff.person_id, ip: ipOf(req), agent: agentOf(req), version: es.version, fingerprint: es.fingerprint }
+      const { data: wrote, error: wErr } = await db.from('step1_forms').update({ countersignatures: { ...(fr.countersignatures || {}), [form]: cs } }).eq('offer_id', oid).filter('countersignatures->' + form, 'is', null).select('offer_id')
+      if (wErr || !wrote?.length) return json({ ok: false, error: 'It was just signed for Caring Companions. A signature is never changed.', already: true }, 409)
+      const T = trn(); await T.event({ offer_id: oid, kind: 'step1_signed', by_who: 'staff', channel: 'hub', result: 'countersigned', doc_version: Number(es.version), fingerprint: String(es.fingerprint), detail: { form, typed_name: name, by_name: staff.name, by_email: staff.email, ip: ipOf(req), signed_at: at } })
+      const bytes = step1FormPdf(FORMS[form], (fr.answers || {}) as Record<string, unknown>, rwho, identState(idr),
+        { typedName: String(es.typed_name), signedAtCentral: longDateTime(String(es.at)), signedAtUtc: String(es.at), ip: String(es.ip || ''), agent: String(es.agent || ''), version: Number(es.version), fingerprint: String(es.fingerprint), offerId: oid, docName: FORMS[form].title },
+        FORM_ORDER.indexOf(form) + 1, FORM_ORDER.length,
+        { typedName: name, signedAtCentral: longDateTime(at), signedAtUtc: at, ip: ipOf(req), agent: agentOf(req), version: Number(es.version), fingerprint: String(es.fingerprint), offerId: oid, docName: FORMS[form].title, byEmail: staff.email })
+      const path = `step1/${oid}/${form}-v${es.version}-countersigned-${at.replace(/[:.]/g, '-')}.pdf`
+      const up = await db.storage.from(BUCKET).upload(path, bytes, { contentType: 'application/pdf', upsert: false })
+      if (up.error) { await problemCard(db, 's1cspdf_' + oid + '_' + form, { kind: 'step1_pdf_failed', offer_id: oid, title: 'The company-signed PDF was not saved: ' + `${rwho.first} ${rwho.last}`.trim(), detail: 'The company signature on ' + FORMS[form].title + ' is recorded, but its PDF could not be saved. Tell Claude so it is made again from the record.' }) }
+      else await db.from('step1_forms').update({ countersigned_pdfs: { ...(fr.countersigned_pdfs || {}), [form]: path } }).eq('offer_id', oid).filter('countersigned_pdfs->' + form, 'is', null)
+      await closeCard(db, 's1cs_' + oid, staff.name, needsCountersign(fr.signatures || {}, { ...(fr.countersignatures || {}), [form]: cs }).length === 0)
+      return json({ ok: true, form, countersigned_at: at, by: staff.name, pdf: !up.error })
+    }
     /* ───── REVIEW (Samantha 2026-10-13: "show every Step 1 screen ... along with the applicant's answers ... coordinators
        see the complete journey without jumping between systems"). Office staff by their own sign-in, READ ONLY: the same
        screens the applicant saw, their answers, every signature with its time, device and wording version. Identity numbers
@@ -526,6 +573,8 @@ Deno.serve(async (req) => {
         identity: { ...identState(idr), license_state: idr?.license_state ?? null, license_expires: idr?.license_expires ?? null },
         prefill: prefillFrom(app, app?.post_interview || null), hints: { availability: S(app?.availability, 300) || null, travel: S(app?.post_interview?.travel_areas, 200) || null },
         current_screen: fr?.current_screen || '1', started_at: fr?.started_at || null, completed_at: fr?.completed_at || null, esign_consent_at: fr?.esign_consent_at || null, esign_consent_detail: fr?.esign_consent_detail || null,
+        countersignatures: Object.fromEntries(Object.entries((fr?.countersignatures || {}) as Record<string, Record<string, unknown>>).map(([k, v]) => [k, { at: v.at, typed_name: v.typed_name, by_name: v.by_name }])),
+        countersign_forms: FORM_ORDER.filter((k) => FORMS[k].countersign), may_countersign: mayApprove(normalizePerms((await db.from('app_data').select('data').eq('key', PERM_KEY).maybeSingle()).data?.data), 'work', { person_id: staff.person_id, roles: staff.roles, email: staff.email }),
         practice: !!fr?.practice, sent_at: o.step1_sent_at || null, test_mode: false, references_required: REFERENCES_REQUIRED, skill_groups: SKILL_GROUPS, skills: SKILLS, signed_count: Object.keys(rsigs).length, form_count: formCount((fr?.answers || {}) as Record<string, unknown>), deciding: DECIDING })
     }
     /* ───── PREVIEW (Samantha 2026-10-11: "I want to be able to click through the screens as though I were the caregiver,
@@ -710,7 +759,10 @@ Deno.serve(async (req) => {
         const { data: fin } = await db.from('step1_forms').update({ completed_at: at, current_screen: '9', receipt: { completed_at: at, forms: applicableForms(answers).length } }).eq('offer_id', id).is('completed_at', null).select('offer_id')
         done = !!fin?.length
         if (done) { await T.event({ offer_id: id, kind: 'step1_done', by_who: 'caregiver', channel: 'page', detail: { forms: applicableForms(answers).length, ip, agent } }); await T.patch(id, { step1_done_at: at }, '&step1_done_at=is.null')
-          await db.from('step1_forms').update({ receipt: { completed_at: at, forms: applicableForms(answers).length, ghl_note: await ghlStep1Note(db, o, who, id, at) } }).eq('offer_id', id) }
+          await db.from('step1_forms').update({ receipt: { completed_at: at, forms: applicableForms(answers).length, ghl_note: await ghlStep1Note(db, o, who, id, at) } }).eq('offer_id', id)
+          const cs = needsCountersign({ ...sigs, [form]: true }, {})
+          if (cs.length) await problemCard(db, 's1cs_' + id, { kind: 'step1_countersign', who: `${who.first} ${who.last}`.trim(), offer_id: id, title: 'Sign for Caring Companions: ' + cs.map((k) => FORMS[k].title).join(', ') + ' for ' + `${who.first} ${who.last}`.trim(),
+            detail: `${who.first} signed ${cs.map((k) => FORMS[k].title).join(', ')}. A person on the Approve to Work list signs for the company from their page (See their Step 1 screens). Approve to Work waits for it.` }, 'today') }
       }
       /* SLICE 2d: land what this form holds for the office, then the done stamp with the last one.
          STEP 1 BEFORE CHECKS (Samantha 2026-10-11): on the new path nobody is in Background & References before Step 1 is

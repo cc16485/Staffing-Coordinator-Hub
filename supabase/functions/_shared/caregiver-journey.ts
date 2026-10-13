@@ -12,6 +12,7 @@
 //                          ever an identity number)
 //   caregiverGate          the server refusal: may this action happen for this person? (allow when no caregiver journey
 //                          exists: the old path is untouched; fails CLOSED when the records cannot be read, 2026-10-13)
+import { needsCountersign } from './step1-documents.ts'
 import '../_shared/journey-rules.js'
 // deno-lint-ignore no-explicit-any
 type Any = any
@@ -39,7 +40,7 @@ const flagged = (s: unknown) => /flagged|issues found/i.test(String(s ?? ''))
 export async function facts(db: Any, j: Any, trn: { get(id: string): Promise<Any | null> } | null): Promise<Facts> {
   const f: Facts = { offer_id: j.offer_id }
   try { f.offer = trn ? await trn.get(j.offer_id) : null } catch { f.offer = null }
-  const { data: s1 } = await db.from('step1_forms').select('answers, signatures, completed_at').eq('offer_id', j.offer_id).maybeSingle()
+  const { data: s1 } = await db.from('step1_forms').select('answers, signatures, completed_at, countersignatures').eq('offer_id', j.offer_id).maybeSingle()
   f.step1 = s1 || null
   const a = (s1?.answers || {}) as Record<string, unknown>
   f.lived_outside_mo = a.lived_outside_mo === 'yes' ? true : a.lived_outside_mo === 'no' ? false : undefined
@@ -75,6 +76,8 @@ export function verifyRows(f: Facts, now = new Date().toISOString()): Verdict[] 
     /* 2026-10-13: the driving screen is signed with the Driver Agreement OR the Non-Driver Agreement */
     const s = sigs[form] || (form === 'vehicle' ? sigs.non_driver : null); if (s?.at) out.push({ key: 'cg.step1.' + k, state: 'complete', at: iso(s.at) || now, evidence: { form: sigs[form] ? form : 'non_driver', version: s.version, fingerprint: s.fingerprint, typed_name: s.typed_name } })
   }
+  /* 2026-10-13: the company signature on the agreements that need it (none needs it = complete by itself once Step 1 is) */
+  if (s1?.completed_at) { const left = needsCountersign(sigs, (s1?.countersignatures || {}) as Record<string, unknown>); if (!left.length) { const cs = Object.values((s1?.countersignatures || {}) as Record<string, Any>); out.push({ key: 'cg.company.countersign', state: 'complete', at: iso(cs.map((x) => x.at).sort().pop() || s1.completed_at) || now, evidence: cs.length ? { forms: Object.keys(s1.countersignatures), by: cs.map((x) => x.by_name) } : { none_required: true } }) } }
   if (sigs.reference_consent?.at && sigs.fcra_disclosure?.at && sigs.edl_fcsr_consent?.at) { const at = [sigs.reference_consent.at, sigs.fcra_disclosure.at, sigs.edl_fcsr_consent.at].sort().pop(); out.push({ key: 'cg.consent.checks', state: 'complete', at: iso(at) || now, evidence: { forms: ['reference_consent', 'fcra_disclosure', 'edl_fcsr_consent'] } }) }
   /* the checks: a result with its date and document, recorded on the row (proof required since 2c) */
   /* CASE.NET (Samantha 2026-10-11): the Missouri courts name search is one of the background checks, recorded the same way */

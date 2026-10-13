@@ -61,7 +61,8 @@ export function answerText(item: Item, v: unknown, ident: IdentityState): string
 }
 
 /** The form, its answers and (when signed) the signature, in the letterhead. */
-export function step1FormPdf(form: Form, answers: Record<string, unknown>, who: Who, ident: IdentityState, sig: Signature | null, formNo: number, formCount: number): Uint8Array {
+/** company: the signature for Caring Companions (countersigned forms), printed under the employee's */
+export function step1FormPdf(form: Form, answers: Record<string, unknown>, who: Who, ident: IdentityState, sig: Signature | null, formNo: number, formCount: number, company?: Signature & { byEmail?: string }): Uint8Array {
   const pdf = new BrandPdf(`${form.title} - ${who.first} ${who.last}`); pdf.footer(FOOTER)
   pdf.headerFn = (p, f) => p.letterhead(COMPANY_RIGHT, f); pdf.letterhead(COMPANY_RIGHT, true)
   pdf.para(form.title, { font: 'B', size: 18, color: NAVY, lh: 23, after: 2 })
@@ -89,5 +90,11 @@ export function step1FormPdf(form: Form, answers: Record<string, unknown>, who: 
       `Signed electronically with consent given on the Step 1 page. ${sig.signedAtUtc} UTC. Device address ${sig.ip || 'not recorded'}. Browser ${sig.agent || 'not recorded'}.`,
       `${sig.docName}, form version ${sig.version}. Wording fingerprint ${sig.fingerprint}.`, `Offer record ${sig.offerId}.`])
   } else { pdf.ensure(80); pdf.y -= 30; pdf.line(60, pdf.y, 552, pdf.y, MUTED, 0.6); pdf.y -= 12; pdf.textAt('ELECTRONIC SIGNATURE', 60, pdf.y, 'S', 7.5, MUTED, 1.2) }
+  if (company) {
+    pdf.heading('For Caring Companions'); pdf.ensure(290)
+    pdf.signatureArea(company.typedName, company.signedAtCentral, [
+      `Signed electronically for Troutman Enterprises, LLC DBA Caring Companions In-Home Senior Care by ${company.typedName}${company.byEmail ? ' (' + company.byEmail + ')' : ''}, a person authorized to sign for the Company. ${company.signedAtUtc} UTC. Device address ${company.ip || 'not recorded'}.`,
+      `${company.docName}, form version ${company.version}. Wording fingerprint ${company.fingerprint}.`, `Offer record ${company.offerId}.`])
+  }
   return pdf.build()
 }

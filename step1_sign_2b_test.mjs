@@ -301,6 +301,33 @@ ck('a purged record reveals nothing (410)', r.status === 410, r); DB.step1_ident
   delete D.FORMS.test_long_doc; D.FORM_ORDER.pop(); delete D.APPROVED_FOR_REAL.test_long_doc
 }
 
+/* ═══ 2026-10-13: the company signature (a form marked countersign; the Employment Agreement will be) ═══ */
+{
+  D.FORMS.availability.countersign = true
+  const perms = DB.app_data.find((x) => x.key === 'onboarding_permissions')
+  const work0 = perms.data.work; perms.data.work = [{ person_id: 'p-sam' }]
+  r = await call({ action: 'countersign', offer_id: OID, form: 'availability', typed_name: 'Krystal Land', consent: true })
+  ck('company signature: never without a sign-in', r.status === 401, r.status)
+  r = await call({ action: 'countersign', offer_id: OID, form: 'availability', typed_name: 'Krystal Land', consent: true }, STAFF)
+  ck('company signature: only a person on the Approve to Work list (403 otherwise)', r.status === 403 && /Approve to Work list/.test(r.j.error), r)
+  r = await call({ action: 'countersign', offer_id: OID, form: 'experience', typed_name: 'Krystal Land', consent: true }, STAFF)
+  ck('company signature: only on an agreement marked for it', r.status === 400, r.status)
+  perms.data.work = [{ person_id: 'p1' }]
+  const pdfs0 = Object.keys(STORE).length
+  r = await call({ action: 'countersign', offer_id: OID, form: 'availability', typed_name: 'Krystal Land', consent: false }, STAFF)
+  ck('company signature: the consent tick is required', r.status === 400, r.status)
+  r = await call({ action: 'countersign', offer_id: OID, form: 'availability', typed_name: 'Krystal Land', consent: true }, STAFF)
+  const row = DB.step1_forms.find((f) => f.offer_id === OID)
+  ck('company signature: recorded once with who, when and the version they signed; a second PDF with both signatures; their own PDF untouched', r.status === 200 && row.countersignatures.availability.by_name === 'Krystal' && row.countersignatures.availability.version === row.signatures.availability.version && /countersigned/.test(row.countersigned_pdfs.availability) && Object.keys(STORE).length === pdfs0 + 1 && row.pdfs.availability && !/countersigned/.test(row.pdfs.availability), { r, cs: row.countersignatures, cp: row.countersigned_pdfs })
+  ck('company signature: on the trail', EVENTS.some((e) => e.result === 'countersigned' && e.detail.form === 'availability'))
+  r = await call({ action: 'countersign', offer_id: OID, form: 'availability', typed_name: 'Krystal Land', consent: true }, STAFF)
+  ck('company signature: never twice', r.status === 409 && r.j.already === true, r)
+  r = await call({ action: 'review', offer_id: OID }, STAFF)
+  ck('the office review shows who signed for the company and whether this person may', r.j.countersignatures.availability.by_name === 'Krystal' && r.j.may_countersign === true && r.j.countersign_forms.includes('availability'), { cs: r.j.countersignatures, may: r.j.may_countersign })
+  ck('needsCountersign: nothing left once signed', D.needsCountersign(row.signatures, row.countersignatures).length === 0 && D.needsCountersign(row.signatures, {}).includes('availability'))
+  delete D.FORMS.availability.countersign; perms.data.work = work0
+}
+
 /* ═══ SLICE 2d: what a signed form lands on the Background & References row ═══ */
 const LP = M.landingPatch
 ck('landingPatch: the application lands lived-outside (yes), fingerprints Required, the states and no-employer flag, stamped', (() => { const p = LP('employee_application', { lived_outside_mo: 'yes', states_lived: ['KS'], no_employer_history: 'yes' }, '2026-10-10T03:00:00Z'); return p.oos === 'yes' && p.fp === 'Required' && p.no_employer_history === true && p.step1_landed.employee_application === '2026-10-10T03:00:00Z' && p.step1_landed.states_lived[0] === 'KS' })())

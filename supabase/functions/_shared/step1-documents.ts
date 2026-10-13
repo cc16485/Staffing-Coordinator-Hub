@@ -21,7 +21,8 @@ export type Section = { h: string; p?: string[]; items?: Item[]; tone?: 'cheer';
 /** 2026-10-13 (Samantha: long documents such as the Employment Agreement and the Employee Manual are shown WHOLE in one
     scrollable reader on their Step 1 screen, with a copy to open or save, and the acknowledgment, any separate initials
     and the signature right below): layout 'document'. `short` is the screen's title in the screen list. */
-export type Form = { key: FormKey; screen: string; title: string; short?: string; layout?: 'document'; when?: { id: string; equals: string }; version: number; status: FormStatus; intro?: string[]; sections: Section[]; certification: string[]; signature: 'typed' | 'typed+initials' }
+/** countersign: after the applicant signs, a person on the Approve to Work list signs for Caring Companions (step1-countersign.sql) */
+export type Form = { key: FormKey; screen: string; title: string; short?: string; layout?: 'document'; when?: { id: string; equals: string }; countersign?: boolean; version: number; status: FormStatus; intro?: string[]; sections: Section[]; certification: string[]; signature: 'typed' | 'typed+initials' }
 
 export const OFFICE_PHONE = '(417) 234-8494'
 export const COMPANY = 'Troutman Enterprises, LLC DBA Caring Companions In-Home Senior Care'
@@ -378,3 +379,5 @@ export const applicableForms = (answers: Record<string, unknown>): FormKey[] => 
 export const formCount = (a: Record<string, unknown>) => applicableForms(a || {}).length + Object.keys(DECIDING).filter((k) => !a?.[k]).length
 /** the forms to list for this person: those that apply, and while a deciding question is open, the first form it decides as a stand-in */
 export const formsToList = (a: Record<string, unknown>): FormKey[] => FORM_ORDER.filter((k) => { const w = FORMS[k].when; return !w || (a || {})[w.id] === w.equals || (!(a || {})[w.id] && FORM_ORDER.find((x) => FORMS[x].when?.id === w.id) === k) })
+/** the signed forms that still need the company's signature */
+export const needsCountersign = (signatures: Record<string, unknown>, countersignatures: Record<string, unknown>): FormKey[] => FORM_ORDER.filter((k) => FORMS[k].countersign && signatures?.[k] && !countersignatures?.[k])
