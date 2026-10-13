@@ -20,12 +20,13 @@
 //   { action: 'reveal', offer_id, field, reason } (screening staff only) -> SLICE 2c: one sealed value, once, for five minutes, logged
 // HER RULES BUILT IN: nothing here sends a text or an email; a signed form is never changed (the database trigger and the
 // write guard both refuse); the SSN, date of birth and license number never land in answers, logs or the PDF; the test
-// gate of Slice 1b holds (only offers on the NEW onboarding path, none real until the switch date); no form is approved
-// for real signing yet (APPROVED_FOR_REAL is empty), and the page says so.
+// gate of Slice 1b holds (only offers on the NEW onboarding path, none real until the switch date); a real applicant signs
+// only a form at a version Samantha approved for real (APPROVED_FOR_REAL: all thirteen, approved 2026-10-13, 'approve step 1
+// forms', wording page version 5); a form at any other version is refused, and the page says so.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { checkLink } from '../_shared/applicant-links.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
-import { FORMS, FORM_ORDER, formFingerprint, REFERENCES_REQUIRED, APPROVED_FOR_REAL, approvedForReal, allApprovedForReal, step1Screens, formApplies, applicableForms, DECIDING, formCount, needsCountersign, MATCHING_FACTS, SKILLS, SKILL_GROUPS, type FormKey, type Item, type Form, type Field } from '../_shared/step1-documents.ts'
+import { FORMS, FORM_ORDER, formFingerprint, REFERENCES_REQUIRED, APPROVED_FOR_REAL, approvedAt, approvedForReal, allApprovedForReal, step1Screens, formApplies, applicableForms, DECIDING, formCount, needsCountersign, MATCHING_FACTS, SKILLS, SKILL_GROUPS, type FormKey, type Item, type Form, type Field } from '../_shared/step1-documents.ts'
 import { seal, open as unseal, last4, ssnLooksValid, REVEAL_TTL_MS, REVEAL_FIELDS, REVEAL_PERMISSION, type RevealField, ssnAllowed, practiceOffer } from '../_shared/step1-crypto.ts'
 import { PERM_KEY, normalizePerms, mayApprove } from '../_shared/onboarding-permissions.ts'
 import { step1FormPdf, type IdentityState } from '../_shared/step1-pdf.ts'
@@ -435,6 +436,16 @@ export async function preview(b: Record<string, any>): Promise<Record<string, un
   for (const k of FORM_ORDER) for (const it of itemsOf(FORMS[k])) if (it.kind === 'photo') { const v = (b.answers || {})[it.id]; if (v && typeof v === 'object' && /^preview\//.test(String(v.path || ''))) answers[it.id] = { path: String(v.path).slice(0, 80) } }
   const id = b.identity && typeof b.identity === 'object' ? b.identity : {}
   const ident: IdentityState = { ssn: id.ssn ? 'ending ' + S(id.ssn, 4) : null, dob: !!id.dob, license: id.license ? 'ending ' + S(id.license, 4) : null }
+  /* 2026-10-13 (705, the go-live proof): would a REAL applicant be allowed to sign these forms at these versions? Read only:
+     the same rule the sign action uses (approved at exactly that version, and that version is the wording in force). */
+  if (Array.isArray(b.approval_check)) {
+    const out = (b.approval_check as unknown[]).slice(0, 40).map((x) => {
+      const k = S((x as Record<string, unknown>)?.form, 40) as FormKey, v = (x as Record<string, unknown>)?.version
+      const known = FORM_ORDER.includes(k)
+      return { form: k, version: typeof v === 'number' ? v : null, current: known ? FORMS[k].version : null, accepted: known && FORMS[k].version === v && approvedAt(k, v) }
+    })
+    return { ok: true, preview: true, approval_check: out }
+  }
   if (b.check || b.pdf) {
     if (!FORM_ORDER.includes(form)) return { ok: false, error: 'Which form?' }
     if (b.check) return { ok: true, preview: true, form, missing: missing(form, answers, ident) }

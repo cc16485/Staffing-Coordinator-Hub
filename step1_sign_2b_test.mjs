@@ -95,7 +95,7 @@ OFFERS[OID] = base()
 DB.job_applicants = [{ id: 'a1', email: 'AVA@example.com', phone: '417-555-0101', lived_outside_mo: true, has_license: true, has_insurance: false, experience_years: 3, availability: 'Weekday mornings', created_at: '2026-09-01', post_interview: { cats: 'yes', dogs: 'no', client_smokes: 'no', drive_clients: 'yes', skills: { dementia: 'some' }, travel_areas: 'Springfield and Nixa' } }]
 r = await call({ action: 'view', ...link })
 if (process.env.DUMP_VIEW) (await import('fs')).writeFileSync(process.env.DUMP_VIEW, JSON.stringify(r.j))   /* for the Step 1 page look */
-ck('view: ok, thirteen forms (incl. the Driver and Non-Driver Agreements and the five from Viventium) with fingerprints, test mode, screen 1, nothing signed', r.status === 200 && r.j.forms.length === 13 && r.j.forms.every((f) => /^[0-9a-f]{64}$/.test(f.fingerprint) && f.approved_for_real === false) && r.j.test_mode === true && r.j.current_screen === '1' && r.j.signed_count === 0, r.j && { s: r.status, e: r.j.error })
+ck('view: ok, thirteen forms (incl. the Driver and Non-Driver Agreements and the five from Viventium) with fingerprints, every one approved for real (2026-10-13), no practice banner for a real hire, screen 1, nothing signed', r.status === 200 && r.j.forms.length === 13 && r.j.forms.every((f) => /^[0-9a-f]{64}$/.test(f.fingerprint) && f.approved_for_real === true) && r.j.test_mode === false && r.j.current_screen === '1' && r.j.signed_count === 0, r.j && { s: r.status, e: r.j.error })
 ck('view: the record exists once and the trail has step1_started', DB.step1_forms.length === 1 && EVENTS.filter((e) => e.kind === 'step1_started').length === 1)
 ck('view: prefill from the application (lived outside MO, license, insurance, 2 to 5 years) and the interview (cats yes, dogs not, driving yes, dementia specialties), each with its source', r.j.prefill.lived_outside_mo?.value === 'yes' && r.j.prefill.has_insurance?.value === 'no' && r.j.prefill.experience?.value === '2 to 5 years' && r.j.prefill.experience.from === 'your application' && r.j.prefill.matching_facts?.value['Homes with cats'] === 'Yes' && r.j.prefill.matching_facts.value['Homes with dogs'] === 'Not at this time' && r.j.prefill.specialties?.value["Alzheimer's disease"] === 'Yes' && r.j.hints.travel === 'Springfield and Nixa', r.j.prefill)
 await call({ action: 'view', ...link })
@@ -119,13 +119,23 @@ r = await call({ action: 'save', ...link, screen: '3', answers: { states_lived: 
 ck('save: a job lands as a card with its tasks', r.status === 200 && DB.step1_forms[0].answers.jobs.length === 1 && DB.step1_forms[0].answers.jobs[0].supervisor === 'Jane Boss' && DB.step1_forms[0].answers.jobs[0].tasks.join() === 'bathing,hoyer_lift', r)
 
 /* ═══ sign, in order, with the required answers ═══ */
-/* 2026-10-13: wording not yet approved for real: a real applicant cannot sign it (nothing written) */
-{ const pre = JSON.stringify(DB.step1_forms)
+/* 2026-10-13 (705): Samantha approved all thirteen forms for real ('approve step 1 forms', wording page v5). A changed wording is a
+   new version and is refused for a real applicant until she approves it; practice and training hires are not held. */
+{ const REC = JSON.parse(fs.readFileSync(path.join(ROOT, 'supabase/step1-approved-2026-10-13.json'), 'utf8'))
+  ck('APPROVED_FOR_REAL holds exactly the thirteen versions of the approval record (Samantha, 2026-10-13, wording page v5), each the version in force', D.FORM_ORDER.length === 13 && REC.forms.length === 13 && REC.forms.map((f) => f.key).join() === D.FORM_ORDER.join() && REC.forms.every((f) => D.APPROVED_FOR_REAL[f.key] === f.version && D.FORMS[f.key].version === f.version && f.approved_by === 'Samantha' && f.source === 'wording page v5') && Object.keys(D.APPROVED_FOR_REAL).length === 13 && D.allApprovedForReal())
+  let fpOk = true; for (const f of REC.forms) if (await D.formFingerprint(f.key) !== f.sha256) fpOk = false
+  ck('every approved form\'s wording fingerprint is the one in the approval record (the words she read)', fpOk)
+  const pre = JSON.stringify(DB.step1_forms), v0 = D.FORMS.employee_application.version
+  D.FORMS.employee_application.version = v0 + 1
   r = await call({ action: 'sign', ...link, form: 'employee_application', typed_name: 'Ava Lee', consent: true })
-  ck('a real applicant cannot sign a form whose wording is not approved for real (409, nothing written)', r.status === 409 && r.j.not_approved === true && JSON.stringify(DB.step1_forms) === pre, r)
-  r = await call({ action: 'view', ...link }); ck('before approval the real view keeps the practice banner flag (test_mode true)', r.j.test_mode === true, r.j.test_mode)
-  for (const k of D.FORM_ORDER) D.APPROVED_FOR_REAL[k] = D.FORMS[k].version
-  r = await call({ action: 'view', ...link }); ck('once every form is approved for real, a real view has no practice banner (test_mode false)', r.j.test_mode === false, r.j.test_mode) }
+  ck('a bumped wording (application version 5, not approved) is refused for a real applicant (409 not_approved, nothing written)', r.status === 409 && r.j.not_approved === true && JSON.stringify(DB.step1_forms) === pre, r)
+  r = await call({ action: 'view', ...link }); ck('with a form at an unapproved version the real view shows the practice banner again (test_mode true) and marks that form not approved', r.j.test_mode === true && r.j.forms.find((f) => f.key === 'employee_application').approved_for_real === false && r.j.forms.filter((f) => f.approved_for_real).length === 12, r.j.test_mode)
+  OFFERS[OID].offered_by = 'Slice 10 practice run'
+  r = await call({ action: 'sign', ...link, form: 'reference_consent', typed_name: 'Ava Lee', consent: true })
+  ck('practice unchanged: a practice hire is not held by approval, even at an unapproved version (it reaches the next rule: the forms go in order)', r.status === 409 && !r.j.not_approved && /Employee Application first/.test(r.j.error) && JSON.stringify(DB.step1_forms) === pre, r)
+  delete OFFERS[OID].offered_by
+  D.FORMS.employee_application.version = v0
+  r = await call({ action: 'view', ...link }); ck('back at the approved version: a real view has no practice banner (test_mode false)', r.j.test_mode === false, r.j.test_mode) }
 r = await call({ action: 'sign', ...link, form: 'reference_consent', typed_name: 'Ava Lee', consent: true })
 ck('forms go in order: the references cannot be signed before the application', r.status === 409 && /Employee Application first/.test(r.j.error), r)
 r = await call({ action: 'sign', ...link, form: 'employee_application', typed_name: 'Ava', consent: true })
@@ -398,6 +408,15 @@ const PRINTED = res.length
   const pdf = Buffer.from(p.j.pdf_base64 || '', 'base64')
   ck('preview PDF: a real PDF in the letterhead, marked PREVIEW ONLY: not a signed document', p.status === 200 && pdf.slice(0, 5).toString() === '%PDF-' && pdf.length > 2000, p.j.error)
   p = await call({ action: 'preview', pdf: true, form: 'nope' }); ck('preview: an unknown form is refused', p.j.ok === false)
+  /* 705: the read-only approval check the go-live proof uses (the same rule the sign action uses) */
+  p = await call({ action: 'preview', approval_check: D.FORM_ORDER.map((k) => ({ form: k, version: D.FORMS[k].version })) })
+  ck('preview approval check: every form at its approved version would be accepted for a real applicant', p.status === 200 && p.j.approval_check.length === 13 && p.j.approval_check.every((x) => x.accepted === true && x.version === x.current), p.j)
+  p = await call({ action: 'preview', approval_check: [{ form: 'employee_application', version: D.FORMS.employee_application.version + 1 }, { form: 'client_rights', version: 0 }, { form: 'employee_application', version: '4' }, { form: 'nope', version: 1 }] })
+  ck('preview approval check: a bumped version, an older version, a version as text and an unknown form are all refused', p.status === 200 && p.j.approval_check.length === 4 && p.j.approval_check.every((x) => x.accepted === false), p.j)
+  { const v0 = D.FORMS.client_rights.version; D.FORMS.client_rights.version = v0 + 1
+    p = await call({ action: 'preview', approval_check: [{ form: 'client_rights', version: v0 + 1 }, { form: 'client_rights', version: v0 }] })
+    ck('preview approval check: when the wording in force is bumped past the approval, neither the new nor the approved version is accepted', p.j.approval_check.every((x) => x.accepted === false), p.j)
+    D.FORMS.client_rights.version = v0 }
   ck('preview: nothing read or written anywhere (database, offers, trail, storage, door calls unchanged)', JSON.stringify({ DB, EVENTS: EVENTS.length, PATCHES: PATCHES.length, STORE: Object.keys(STORE).length, RPCS: RPCS.length }) === before)
 }
 
