@@ -39,7 +39,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES, serverSecretOk } from '../_shared/staff-auth.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { PERM_KEY, normalizePerms, mayApprove } from '../_shared/onboarding-permissions.ts'
-import { R, facts, verifyRows, type Facts } from '../_shared/caregiver-journey.ts'
+import { R, facts, verifyRows, rightsState, type Facts } from '../_shared/caregiver-journey.ts'
 import { setCaregiverActive, setCaregiverHireDate, setCaregiverLevel } from '../_shared/axiscare-caregiver.ts'
 import { dueNextBusinessDay } from '../_shared/business-days.ts'
 import { saveSweepFields } from '../_shared/sweep-patch.ts'
@@ -546,7 +546,7 @@ Deno.serve(async (req) => {
       }
       void T; return json({ ok: true, rows, may_approve_work: mayApprove(P, 'work', { person_id: who.person_id, roles: who.roles || [], email: who.email }) })
     }
-    const answerFor = async (jid: string, f: Facts) => { const fresh = await load(db, { journey_id: jid }); const v = R.compute(dfs, fresh!.j, fresh!.steps, ctxFor(f, st)); const { data: ev } = await db.from('client_journey_event').select('*').eq('journey_id', jid).order('at', { ascending: false }).limit(200); const may: Record<string, boolean> = {}; for (const r of v.rows) may[r.key] = mayDo(r.def, who, P); return json({ ok: true, journey: fresh!.j, steps: fresh!.steps, view: v, events: ev ?? [], may, is_owner: isOwner, may_export: mayExport, approve: approveState(v, f, st, who, P, dfs, fresh!.j), facts: { lived_outside_mo: f.lived_outside_mo ?? null, claims_cna_or_hha: f.claims_cna_or_hha ?? null, drives_clients: f.drives_clients ?? null, dates: dates(f) } }) }
+    const answerFor = async (jid: string, f: Facts) => { const fresh = await load(db, { journey_id: jid }); const v = R.compute(dfs, fresh!.j, fresh!.steps, ctxFor(f, st)); const { data: ev } = await db.from('client_journey_event').select('*').eq('journey_id', jid).order('at', { ascending: false }).limit(200); const may: Record<string, boolean> = {}; for (const r of v.rows) may[r.key] = mayDo(r.def, who, P); return json({ ok: true, journey: fresh!.j, steps: fresh!.steps, view: v, events: ev ?? [], may, is_owner: isOwner, may_export: mayExport, approve: approveState(v, f, st, who, P, dfs, fresh!.j), facts: { lived_outside_mo: f.lived_outside_mo ?? null, claims_cna_or_hha: f.claims_cna_or_hha ?? null, drives_clients: f.drives_clients ?? null, dates: dates(f), rights: rightsState(f) } }) }   /* 2026-10-13: participant rights, signed and explained */
     if (action === 'get') {
       const got = await load(db, b); if (!got) return json({ ok: true, journey: null })
       const f = await facts(db, got.j, trn())
