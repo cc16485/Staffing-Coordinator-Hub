@@ -144,7 +144,7 @@ for (const [n, sc] of S.entries()) {
   /* 2026-10-13: the forms moved from Viventium: the agreement with its two initials, then the rest */
   const ini = name.split(' ').map((x) => x[0]).join('').slice(0, 4)
   await step({ action: 'save', screen: '10', answers: { ea_arbitration_initials: ini, ea_class_waiver_initials: ini } })
-  for (const f of ['employment_agreement', 'handbook_ack', 'code_of_ethics', 'medication_policy', 'hipaa_privacy']) last = await step({ action: 'sign', form: f, typed_name: name, consent: true })
+  for (const f of ['employment_agreement', 'code_of_ethics', 'medication_policy', 'hipaa_privacy']) last = await step({ action: 'sign', form: f, typed_name: name, consent: true })
   ck(`${sc.key}: every Step 1 form signs in order through the real server`, !errs.length && last.j.done === true, errs)
   const cand = DB.app_data.find((x) => x.key === 'candidates').data.find((c) => c.offer_id === OID)
   ck(`${sc.key}: Step 1 complete puts them into Background & References once, with the practice mark on their Step 1`, cand && DB.step1_forms.find((f) => f.offer_id === OID).practice === true && DB.app_data.find((x) => x.key === 'candidates').data.filter((c) => c.offer_id === OID).length === 1, cand)

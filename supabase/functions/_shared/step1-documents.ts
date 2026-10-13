@@ -443,22 +443,6 @@ export const FORMS: Record<FormKey, Form> = {
     ],
     certification: ['THIS CONTRACT CONTAINS A BINDING ARBITRATION PROVISION WHICH MAY BE ENFORCED BY THE PARTIES.', 'I have read this whole agreement, I understand it, and I agree to it. Caring Companions signs it after I do.'],
   },
-  handbook_ack: {
-    key: 'handbook_ack', screen: '11', title: 'Employee Handbook Acknowledgment', short: 'Employee Handbook', layout: 'document', version: 1, status: 'to_confirm', signature: 'typed',
-    sections: [
-      { h: 'The Employee Handbook', p: ['[The current Caring Companions In-Home Senior Care Employee Handbook will appear here in full once Samantha provides it.]'] },
-      { h: 'Acknowledgment and Receipt of Employee Handbook', p: [
-        'By signing below, I acknowledge that I have received a copy of the Caring Companions In-Home Senior Care Employee Handbook and that I have read it, understand it, and agree to comply with it. I can view the current Handbook at any time from my Caring Companions link or by asking the office.',
-        'This Handbook is not a contract of employment. I understand that the Company has the maximum discretion permitted by law to interpret, administer, change, modify, or delete the rules, regulations, procedures, and benefits contained in the Handbook at any time with or without notice. No statement or representation by a supervisor, manager, or any other employee, whether oral or written, can supplement or modify this Handbook. Changes can only be made if approved in writing by the Owner of the Company. I also understand that any delay or failure by the Company to enforce any rule, regulation, or procedure contained in the Handbook does not constitute a waiver on behalf of the Company or affect the right of the Company to enforce such rule, regulation, or procedure in the future.',
-        'This Handbook supersedes any previous handbook or policy statements, written or oral, issued by Caring Companions In-Home Senior Care. When my employment ends, I will return my company ID card, any printed company materials, and any client information, and delete company and client information from my personal devices.',
-        'I understand that no contract of employment other than "at will" has been expressed or implied and that no circumstances arising out of my employment will alter my "at will" employment relationship unless expressed in writing, with the understanding expressly set forth and signed by myself and the Company\'s Owner.',
-        'I will receive client and business information that is confidential, such as client health and personal information, client lists, and pricing. I will use it only for my work and will not share it outside the Company, during or after employment. My Employment Agreement contains the full confidentiality terms and controls. Nothing in this Handbook limits my right to discuss my wages, hours, or working conditions, to act together with coworkers under Section 7 of the National Labor Relations Act, or to report possible violations of law to a government agency.',
-        'I understand that if the content of this Handbook is changed in any way, the Company may require an additional signature from me to indicate that I am aware of and understand any new policies.',
-        'If I have any questions about the content or interpretation of this Handbook, I will contact the Owner or the office.',
-      ] },
-    ],
-    certification: ['My signature below indicates that I have read and understood the above statements and that I have received a copy of the Employee Handbook.'],
-  },
   code_of_ethics: {
     key: 'code_of_ethics', screen: '12', title: 'Code of Ethics', short: 'Code of Ethics', version: 1, status: 'proposed', signature: 'typed',
     sections: [
@@ -513,7 +497,7 @@ export const FORMS: Record<FormKey, Form> = {
     certification: ['I have completed the Company\'s HIPAA training. I have read, understood, and agree to comply with the above terms regarding HIPAA and PHI policy and procedures.'],
   },
 }
-export const FORM_ORDER: FormKey[] = ['employee_application', 'reference_consent', 'fcra_disclosure', 'edl_fcsr_consent', 'availability', 'experience', 'vehicle', 'non_driver', 'employment_agreement', 'handbook_ack', 'code_of_ethics', 'medication_policy', 'hipaa_privacy']
+export const FORM_ORDER: FormKey[] = ['employee_application', 'reference_consent', 'fcra_disclosure', 'edl_fcsr_consent', 'availability', 'experience', 'vehicle', 'non_driver', 'employment_agreement', 'code_of_ethics', 'medication_policy', 'hipaa_privacy']
 /** The wording of one form, canonical, for the fingerprint stored with every signature (answers are not part of it). */
 export function formText(key: FormKey): string {
   const f = FORMS[key]; const out: string[] = [`title|${f.title}`, `version|${f.version}`]

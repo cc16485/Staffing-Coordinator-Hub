@@ -76,8 +76,9 @@ export function verifyRows(f: Facts, now = new Date().toISOString()): Verdict[] 
     /* 2026-10-13: the driving screen is signed with the Driver Agreement OR the Non-Driver Agreement */
     const s = sigs[form] || (form === 'vehicle' ? sigs.non_driver : null); if (s?.at) out.push({ key: 'cg.step1.' + k, state: 'complete', at: iso(s.at) || now, evidence: { form: sigs[form] ? form : 'non_driver', version: s.version, fingerprint: s.fingerprint, typed_name: s.typed_name } })
   }
-  /* 2026-10-13: Samantha moved these acknowledgments from Viventium into Step 1: their signature there completes the row */
-  for (const [row, form] of [['cg.step2.handbook', 'handbook_ack'], ['cg.step2.code_of_ethics', 'code_of_ethics'], ['cg.step2.confidentiality', 'hipaa_privacy']]) {
+  /* 2026-10-13: Samantha moved these acknowledgments from Viventium into Step 1: their signature there completes the row
+     (the Employee Handbook stays in Viventium: her call, 2026-10-13) */
+  for (const [row, form] of [['cg.step2.code_of_ethics', 'code_of_ethics'], ['cg.step2.confidentiality', 'hipaa_privacy']]) {
     const s = sigs[form]; if (s?.at) out.push({ key: row, state: 'complete', at: iso(s.at) || now, evidence: { via: 'step1', form, version: s.version, fingerprint: s.fingerprint, typed_name: s.typed_name } })
   }
   /* 2026-10-13: the company signature on the agreements that need it (none needs it = complete by itself once Step 1 is) */
