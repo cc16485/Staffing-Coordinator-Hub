@@ -158,6 +158,9 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
   // ── scheduled, autonomous, nobody watching ────────────────────────────────
   'interview-messages': { class: 'reactive_external', scheduled: true,
     why: 'confirmations and reminders for an interview the applicant booked. A Monday 9am interview needs its Sunday reminder.' },
+  'applicant-decision-msg': { class: 'reactive_external', scheduled: true,
+    why: 'the kind "Not hiring" message the office booked with OK; it goes at 10am Central the next morning (Samantha 2026-10-13), '
+      + 'only if they are still marked Not hiring. Cron: applicant-decision-due, hourly (Desktop 645).' },
   'lead-followup':      { class: 'reactive_external', scheduled: true,
     why: 'acknowledges a lead who just enquired. A Saturday enquiry answered Monday is a lost client.' },
   'lead-nurture':       { class: 'proactive_external', scheduled: true,

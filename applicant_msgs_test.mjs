@@ -47,7 +47,7 @@ globalThis.Deno = { env: { get: (k) => ({ SUPABASE_URL: 'x', SUPABASE_SERVICE_RO
 const load = async (rel, edits) => {
   let src = fs.readFileSync(path.join(FN, rel), 'utf8'); for (const [a, b] of edits) { const s = src; src = src.replace(a, b); if (s === src) throw new Error('test setup: no match for ' + a) }
   src = src.replace(/'\.\.\/_shared\//g, "'" + path.join(FN, '_shared') + '/')
-  const tmp = path.join(os.tmpdir(), 'am445_' + process.pid + '_' + path.basename(path.dirname(rel)) + '.ts'); fs.writeFileSync(tmp, src); try { await import(tmp) } finally { fs.unlinkSync(tmp) }
+  const tmp = path.join(os.tmpdir(), 'am445_' + process.pid + '_' + path.basename(path.dirname(rel)) + '.ts'); fs.writeFileSync(tmp, src); try { globalThis.__lastMod = await import(tmp) } finally { fs.unlinkSync(tmp) }
   return handler }
 
 /* ═══ 1 · applicant-decision-msg ═══ */
@@ -56,7 +56,9 @@ const D = await load('applicant-decision-msg/index.ts', [
   [/^import \{ createClient \} from .*$/m, 'const createClient = (..._a: any[]) => (globalThis as any).__db'],
   [/^import \{ contactForOutbound, maySend \} from (.*)$/m, "import { contactForOutbound } from $1\nconst maySend = (..._a: any[]) => (globalThis as any).__hours"],
   [/^import \{ requireStaff, OFFICE_ROLES \} from .*$/m, 'const OFFICE_ROLES: string[] = []; const requireStaff = async (..._a: any[]) => (globalThis as any).__staff'],
+  [/^import \{ jobCaller \} from .*$/m, 'const jobCaller = async (..._a: any[]) => (globalThis as any).__job'],
 ])
+const NM = globalThis.__lastMod.nextMorning
 const ID = '11111111-1111-1111-1111-111111111111'
 const call = async (h, body) => { const r = await h(new Request('https://x/f', { method: 'POST', body: JSON.stringify(body) })); return [r.status, await r.json()] }
 const A = () => T.job_applicants[0]
@@ -81,28 +83,76 @@ reset(); [s, j] = await call(D, { action: 'send', id: ID, kind: 'pool' })
 ck('they must already be marked that way: a pool message to someone marked Not hiring is refused', s === 409 && SENT.length === 0, [s, j])
 reset(); [s, j] = await call(D, { action: 'send', id: ID, kind: 'hired' })
 ck('only the two messages exist', s === 400 && SENT.length === 0, [s, j])
-reset(); [s, j] = await call(D, { action: 'send', id: ID, kind: 'declined', message: 'custom words' })
+reset(); [s, j] = await call(D, { action: 'send', id: ID, kind: 'declined', now: true, message: 'custom words' })
 ck('send (in hours): one text through GoHighLevel, the fixed wording (the caller cannot supply words)', s === 200 && j.texted === true && SENT.length === 1 && SENT[0].type === 'SMS' && /not to move forward/.test(SENT[0].message) && !/custom/.test(SENT[0].message), [j, SENT])
 ck('...stamped: when, which decision, who pressed Send', !!A().decision_msg_at && A().decision_msg_kind === 'declined' && A().decision_msg_by === 'Krystal')
-;[s, j] = await call(D, { action: 'send', id: ID, kind: 'declined' })
+;[s, j] = await call(D, { action: 'send', id: ID, kind: 'declined', now: true })
 ck('pressing Send again sends nothing more', j.already_sent === true && SENT.length === 1, j)
 A().status = 'pool'; [s, j] = await call(D, { action: 'send', id: ID, kind: 'pool' })
 ck('a later different decision (moved to the pool) can have its own message', j.texted === true && SENT.length === 2 && A().decision_msg_kind === 'pool', j)
 
-reset(); A().sms_consent = false; [s, j] = await call(D, { action: 'send', id: ID, kind: 'declined' })
+reset(); A().sms_consent = false; [s, j] = await call(D, { action: 'send', id: ID, kind: 'declined', now: true })
 ck('no yes to texts: the email goes (and no text)', j.emailed === true && j.texted === false && SENT.length === 1 && SENT[0].type === 'Email', [j, SENT])
-reset(); A().sms_consent = false; A().email = null; [s, j] = await call(D, { action: 'send', id: ID, kind: 'declined' })
+reset(); A().sms_consent = false; A().email = null; [s, j] = await call(D, { action: 'send', id: ID, kind: 'declined', now: true })
 ck('no text allowed and no email: nothing goes, and it says so', SENT.length === 0 && j.not_sent && j.not_sent.length === 1 && !A().decision_msg_at, j)
 
-reset(); globalThis.__hours = { allowed: false, reason: 'outside' }; [s, j] = await call(D, { action: 'send', id: ID, kind: 'declined' })
+reset(); globalThis.__hours = { allowed: false, reason: 'outside' }; [s, j] = await call(D, { action: 'send', id: ID, kind: 'declined', now: true })
 ck('outside 8am–6pm: nothing goes; it waits and says how to send it after 8am', SENT.length === 0 && /8am to 6pm/.test(j.held) && /Send the not-hiring message/.test(j.held) && !!A().decision_msg_held_at && !A().decision_msg_at, j)
 ;[s, j] = await call(D, { action: 'skip', id: ID })
 ck('"Don\'t send it" clears the waiting message', j.skipped === true && A().decision_msg_held_at === null && SENT.length === 0, j)
 globalThis.__hours = { allowed: true, reason: 'ok' }
 
-reset(); globalThis.__ghlDown = true; [s, j] = await call(D, { action: 'send', id: ID, kind: 'declined' })
+reset(); globalThis.__ghlDown = true; [s, j] = await call(D, { action: 'send', id: ID, kind: 'declined', now: true })
 ck('GoHighLevel refuses it: not marked as sent, it says so, and a "Didn\'t go through" card is raised for hiring', j.texted === false && !A().decision_msg_at && /did not accept/.test((j.not_sent || []).join()) && CARDS.some((c) => /candidate/.test(JSON.stringify(c))), [j, CARDS])
 globalThis.__ghlDown = false
+
+/* ═══ 1b · Not hiring waits until 10am Central the next day (Samantha 2026-10-13) ═══ */
+ck('next morning: 2pm Central Tue Oct 13 -> 10am Central Wed Oct 14 (15:00 UTC, daylight time)', NM(new Date('2026-10-13T19:00:00Z')) === '2026-10-14T15:00:00.000Z', NM(new Date('2026-10-13T19:00:00Z')))
+ck('...11pm Central is still that day, so it goes the morning after', NM(new Date('2026-10-14T04:00:00Z')) === '2026-10-14T15:00:00.000Z', NM(new Date('2026-10-14T04:00:00Z')))
+ck('...in winter time 10am Central is 16:00 UTC', NM(new Date('2026-12-01T20:00:00Z')) === '2026-12-02T16:00:00.000Z', NM(new Date('2026-12-01T20:00:00Z')))
+ck('...the night the clocks go back (Nov 1) still lands on 10am', NM(new Date('2026-10-31T20:00:00Z')) === '2026-11-01T16:00:00.000Z', NM(new Date('2026-10-31T20:00:00Z')))
+
+reset(); [s, j] = await call(D, { action: 'preview', id: ID, kind: 'declined' })
+ck('preview (Not hiring) says when it will go: the next morning', /T1[56]:00:00\.000Z$/.test(j.goes_at || '') && Date.parse(j.goes_at) > Date.now(), j)
+reset(); A().status = 'pool'; [s, j] = await call(D, { action: 'preview', id: ID, kind: 'pool' })
+ck('...the candidate pool message still goes on OK (no next-morning time)', j.goes_at === null, j)
+reset(); [s, j] = await call(D, { action: 'send', id: ID, kind: 'declined' })
+ck('OK on Not hiring: NOTHING goes now; it is booked for the next morning, with who pressed it', SENT.length === 0 && j.booked_for && A().decision_msg_due_at === j.booked_for && A().decision_msg_by === 'Krystal' && !A().decision_msg_at, [j, A()])
+;[s, j] = await call(D, { action: 'preview', id: ID, kind: 'declined' })
+ck('...the profile can see it is booked', j.booked_for === A().decision_msg_due_at, j)
+;[s, j] = await call(D, { action: 'send', id: ID, kind: 'declined', now: true })
+ck('"Send it now": goes straight away and the booking is cleared', j.texted === true && SENT.length === 1 && A().decision_msg_due_at === null && !!A().decision_msg_at, j)
+reset(); await call(D, { action: 'send', id: ID, kind: 'declined' }); [s, j] = await call(D, { action: 'skip', id: ID })
+ck('"Don\'t send it" cancels the booking', j.skipped && A().decision_msg_due_at === null && SENT.length === 0, j)
+reset(); globalThis.__hours = { allowed: false, reason: 'outside' }; [s, j] = await call(D, { action: 'send', id: ID, kind: 'declined' })
+ck('marked Not hiring at 7pm: still booked for the morning (not "held")', j.booked_for && !A().decision_msg_held_at && SENT.length === 0, j)
+globalThis.__hours = { allowed: true, reason: 'ok' }
+
+/* the hourly run */
+const due = async (qs = '?due=1') => { const r = await D(new Request('https://x/f' + qs, { method: 'POST', body: '{}' })); return [r.status, await r.json()] }
+const past = new Date(Date.now() - 60000).toISOString(), future = new Date(Date.now() + 3600000).toISOString()
+reset(); globalThis.__job = null; [s, j] = await due()
+ck('the run refuses anyone without the jobs\' secret or the server key', s === 401 && SENT.length === 0, [s, j])
+globalThis.__job = 'cron'; [s, j] = await due('?due=1&auth_check=1')
+ck('...its schedule gets in', s === 200 && j.caller === 'cron', j)
+reset(); Object.assign(A(), { decision_msg_due_at: future, decision_msg_by: 'Krystal' }); [s, j] = await due()
+ck('not due yet: nothing goes', j.due === 0 && SENT.length === 0 && A().decision_msg_due_at === future, j)
+reset(); Object.assign(A(), { decision_msg_due_at: past, decision_msg_by: 'Krystal' }); [s, j] = await due()
+ck('due and still Not hiring: the text goes, stamped as sent by who pressed OK, booking cleared', j.sent === 1 && SENT.length === 1 && /not to move forward/.test(SENT[0].message) && A().decision_msg_by === 'Krystal' && !!A().decision_msg_at && A().decision_msg_due_at === null, [j, A()])
+;[s, j] = await due()
+ck('...the next run sends nothing more', j.due === 0 && SENT.length === 1, j)
+reset(); Object.assign(A(), { decision_msg_due_at: past, status: 'pool' }); [s, j] = await due()
+ck('moved to another status overnight: dropped, nothing goes', j.dropped === 1 && SENT.length === 0 && A().decision_msg_due_at === null && !A().decision_msg_at, j)
+reset(); Object.assign(A(), { decision_msg_due_at: past }); globalThis.__hours = { allowed: false, reason: 'outside' }; [s, j] = await due()
+ck('outside 8am to 6pm the run waits', !!j.waiting && SENT.length === 0 && A().decision_msg_due_at === past, j)
+globalThis.__hours = { allowed: true, reason: 'ok' }
+reset(); Object.assign(A(), { decision_msg_due_at: past }); globalThis.__ghlDown = true; [s, j] = await due()
+ck('GoHighLevel refuses it: not sent, the booking ends, the problem shows on their profile (and a card is raised)', j.problems === 1 && !A().decision_msg_at && A().decision_msg_due_at === null && /did not accept/.test(A().decision_msg_problem || '') && CARDS.length > 0, [j, A()])
+globalThis.__ghlDown = false
+reset(); Object.assign(A(), { decision_msg_due_at: past }); globalThis.__job = 'cron'; [s, j] = await due('?due=1&dry=1')
+ck('a counts-only look is for the owner only', s === 401, [s, j])
+globalThis.__job = 'owner'; [s, j] = await due('?due=1&dry=1')
+ck('...the owner\'s counts-only look sends and changes nothing', j.dry && j.sent === 1 && SENT.length === 0 && A().decision_msg_due_at === past, j)
 
 /* ═══ 2 · the orientation reminder: who is due ═══ */
 const R = await import(path.join(FN, '_shared/orient-remind.ts'))
