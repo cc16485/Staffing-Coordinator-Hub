@@ -161,6 +161,47 @@ r = await staff({ action: 'enter', id: target.id, note: 'again' }); ck('... and 
 PATCH_STATUS = 403; r = await staff({ action: 'enter', id: row(4, 400).id, note: 'y' })
 ck('AxisCare refuses: says so (enter it by hand), logged as refused, nothing recorded as entered', r.j.outcome === 'refused' && /Enter it in AxisCare by hand/.test(r.j.detail) && !row(4, 400).entered_at && AXCH.at(-1).p_outcome === 'refused', r)
 reset(); await run(); r = await staff({ action: 'enter', id: row(1, 100).id, note: 'z' }); ck('a practice row can\'t be entered', r.s === 404, r)
+/* overnight shifts split at midnight (her report, 2026-10-13) */
+{
+  const midnightOf = (day) => [5, 6].map((o) => Date.parse(day + 'T00:00:00Z') + o * H).find((t) => chiDay(t) === day && chiDay(t - 60e3) !== day)
+  let MID = midnightOf(chiDay(NOW())); if (NOW() - MID < 2 * H) MID = midnightOf(chiDay(NOW() - 864e5))
+  const iso2 = (t) => new Date(t).toISOString()
+  const half = (id, cg, cl, from, to, note, extra = {}) => ({ id, caregiver: { id: cg, firstName: 'C' + cg, lastName: 'Test' }, client: { id: cl, firstName: 'Cl' + cl, lastName: 'X' },
+    startDate: iso2(from), endDate: iso2(to), clockIn: { time: iso2(from), method: 'Mobile' }, clockOut: { time: iso2(to), method: 'Mobile' }, careNote: note, ...extra })
+  const nightA = (note) => half('nA', 1, 900, MID - 4 * H, MID, note), nightB = (note) => half('nB', 1, 900, MID, MID + H, note)
+  reset(); VISITS = [nightA('Slept well, up once at 2am.'), nightB('')]; r = await run()
+  ck('overnight split at midnight, note on the first half: the after-midnight half is NOT a miss, nobody texted', !T.missed_notes.some((x) => x.axiscare_client_id === '900') && r.j.overnight_noted === 1, [r.j, T.missed_notes])
+  reset(); APP.ops_settings = { missed_notes_live: true }; VISITS = [nightA('Slept well.'), nightB('')]; r = await run()
+  ck('... and live: no text for it', !SENT.length && !T.missed_notes.length, [r.j, SENT])
+  reset(); VISITS = [nightA(''), nightB('Note on the second half')]; r = await run()
+  ck('note on the second half instead: the first half is not a miss either', !T.missed_notes.length, T.missed_notes)
+  reset(); APP.ops_settings = { missed_notes_live: true }; VISITS = [nightA(''), nightB('')]; r = await run()
+  const nights = T.missed_notes.filter((x) => x.axiscare_client_id === '900')
+  ck('no note on either half: ONE miss and ONE text for the shift (on the after-midnight half, its clock-out)', nights.length === 1 && nights[0].visit_id === 'nB' && nights[0].shift_date === chiDay(MID) && SENT.length === 1, [nights, SENT])
+  reset(); VISITS = [half('dA', 1, 900, MID - 10 * H, MID - 6 * H, 'Day note'), nightB('')]; r = await run()
+  ck('a separate earlier shift (not joined at midnight) does not cover a later shift with no note', T.missed_notes.filter((x) => x.axiscare_client_id === '900').length === 1, T.missed_notes)
+  reset(); VISITS = [nightA('Note'), half('nB', 2, 900, MID, MID + H, '')]; r = await run()
+  ck('a different caregiver\'s half does not cover it', T.missed_notes.some((x) => x.axiscare_caregiver_id === '2' && x.axiscare_client_id === '900'), T.missed_notes)
+  reset(); VISITS = [nightA('Note'), half('nB', 1, 900, MID, MID + H, '', { clockIn: { time: iso2(MID + 2 * 60e3), method: 'Mobile' }, startDate: iso2(MID + 60e3) })]; r = await run()
+  ck('split times a minute or two apart still join', !T.missed_notes.length, T.missed_notes)
+  /* rows recorded before the fix */
+  reset(); APP.ops_settings = { missed_notes_live: true }; VISITS = [nightA('Slept well.'), nightB('')]
+  APP.missed_notes_state = [{ id: 'state', checked: { [`1|900|${chiDay(MID)}`]: NOW() } }]
+  T.missed_notes.push({ id: 77, axiscare_caregiver_id: '1', axiscare_client_id: '900', shift_date: chiDay(MID), caregiver_name: 'C1 Test', client_first: 'Cl900', visit_id: 'nB',
+    status: 'unresolved', counts: true, clock_out_method: 'app', texted_at: iso2(MID + 2 * H), created_at: iso2(MID + 2 * H), draft_id: null })
+  T.missed_notes.push({ id: 78, axiscare_caregiver_id: '3', axiscare_client_id: '300', shift_date: chiDay(MID), caregiver_name: 'C3 Test', client_first: 'Cl300', visit_id: 'zz',
+    status: 'unresolved', counts: true, clock_out_method: 'app', created_at: iso2(MID), draft_id: null })
+  APP.ops_items = [{ id: 'ops_mnote_77', kind: 'missed_note', status: 'open', title: 'No care note and no reply: C1 Test' }]
+  r = await run()
+  ck('a miss recorded before the fix for a noted overnight shift: removed (never counts), and its Needs Attention card closed saying why', !T.missed_notes.some((x) => x.id === 77)
+     && APP.ops_items[0].status === 'done' && /after-midnight half of an overnight shift/.test(APP.ops_items[0].close_reason) && r.j.cleared_overnight === 1, [r.j, APP.ops_items])
+  ck('... a real miss is left alone', T.missed_notes.some((x) => x.id === 78 && x.counts === true))
+  r = await run(); ck('... and each row is looked at once', r.j.cleared_overnight === 0 && APP.missed_notes_state[0].rechecked['78'], r.j)
+  reset(); VISITS = [nightA('Slept well.'), nightB('')]
+  T.missed_notes.push({ id: 79, axiscare_caregiver_id: '1', axiscare_client_id: '900', shift_date: chiDay(MID), visit_id: 'nB', status: 'recovered', counts: true, draft_id: 'dw_x', created_at: iso2(MID) })
+  APP.missed_notes_state = [{ id: 'state', checked: { [`1|900|${chiDay(MID)}`]: NOW() } }]; await run()
+  ck('... one already in a write-up draft is left for a person', T.missed_notes.some((x) => x.id === 79))
+}
 /* the rules in the source */
 const code = fs.readFileSync(`${FN}/missed-notes/index.ts`, 'utf8')
 ck('caregivers only (the do-not-text door, audience caregiver); texts 8am–9pm; no waiting after clock-out; nothing about pay', /audience: 'caregiver'/.test(code) && /h >= 8 && h < 21/.test(code) && M.WAIT_MIN === 0 && !/pay_rates|\$\d/.test(code))
