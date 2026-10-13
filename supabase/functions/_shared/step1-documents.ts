@@ -9,9 +9,13 @@
 // wording is stored with every signature. Nothing here holds an answer: answers are merged at render time (2b/2c).
 // Two forms carry a status other than 'proposed': the FCRA disclosure is a DRAFT FOR COUNSEL (her decision 7) and the
 // screening package list is TO CONFIRM (her decision 4). Fictional practice only until each is approved.
+// 2026-10-13 APPROVED: Samantha, 2026-10-13, 'approve step 1 forms', wording page version 5. All thirteen forms (a person
+// signs twelve: the Driver or the Non-Driver Agreement) are status 'approved' at the versions in APPROVED_FOR_REAL below.
 export const STEP1_VERSION = 5   // 2026-10-13: the permission form (5a v2) replaces the FCRA draft; application v4, details v4. Before: 2026-10-11 (her approval of the Step 1 previews): the application and the reference consent at version 3 (tasks per job, family care, backup references); the vehicle form and the EDL/FCSR consent at version 3; two forms at version 2; the FCRA draft at version 1
 export type FormKey = 'employee_application' | 'reference_consent' | 'fcra_disclosure' | 'edl_fcsr_consent' | 'availability' | 'experience' | 'vehicle' | (string & {})
-export type FormStatus = 'proposed' | 'draft_for_counsel' | 'to_confirm'
+/** 'approved': Samantha approved this form's wording for real applicants (2026-10-13, see APPROVED_FOR_REAL); a new wording starts
+    again as 'proposed' at a new version until she approves that version */
+export type FormStatus = 'proposed' | 'approved' | 'draft_for_counsel' | 'to_confirm'
 /** One box inside a card (a job, a family-care entry, a reference). 'skills' are keys of SKILLS; 'lifts' shows only when a
     lift is ticked; 'refresher' offers only the tasks ticked on the same card, plus 'none'. */
 export type Field = { k: string; label: string; kind: 'text' | 'tel' | 'email' | 'yesno' | 'choice' | 'multi' | 'skills' | 'lifts' | 'refresher'; options?: string[]; required?: boolean; note?: string }
@@ -90,7 +94,7 @@ const text = (id: string, label: string, extra: Partial<Item> = {}): Item => ({ 
 
 export const FORMS: Record<FormKey, Form> = {
   employee_application: {
-    key: 'employee_application', screen: '2 and 3', title: 'Employee Application', version: 4, status: 'proposed', signature: 'typed',
+    key: 'employee_application', screen: '2 and 3', title: 'Employee Application', version: 4, status: 'approved', signature: 'typed',
     sections: [
       { h: 'About you', p: ['Your name, phone and email are shown from your offer. Tap any of them to correct it.'], items: [
         text('preferred_name', 'What should families and the office call you?', { note: 'Your preferred first name, if it is different from your legal name.' }),
@@ -148,7 +152,7 @@ export const FORMS: Record<FormKey, Form> = {
     ],
   },
   reference_consent: {
-    key: 'reference_consent', screen: '4', title: 'Reference Check and Authorization Consent Form Disclosure', version: 3, status: 'proposed', signature: 'typed',
+    key: 'reference_consent', screen: '4', title: 'Reference Check and Authorization Consent Form Disclosure', version: 3, status: 'approved', signature: 'typed',
     intro: ['Please read the information on this form carefully and completely.'],
     sections: [
       { h: 'Authorization', p: [
@@ -183,7 +187,7 @@ export const FORMS: Record<FormKey, Form> = {
      with certain convictions, expunged offenses must be disclosed too, and we must say so (RSMo 610.140.10(6) and .11).
      If a screening company is ever used again, the FCRA disclosure returns for that check. Key kept as fcra_disclosure. */
   fcra_disclosure: {
-    key: 'fcra_disclosure', screen: '5a', title: 'Permission for Background Checks and References', version: 2, status: 'proposed', signature: 'typed',
+    key: 'fcra_disclosure', screen: '5a', title: 'Permission for Background Checks and References', version: 2, status: 'approved', signature: 'typed',
     sections: [
       { h: 'Why we ask', p: ['Missouri law says we must check every person who will care for our clients before they start. We run these checks ourselves, using government records. We do not use a background screening company.'] },
       { h: 'What we check', p: [
@@ -217,7 +221,7 @@ export const FORMS: Record<FormKey, Form> = {
   /* v4 (2026-10-13): the permission and the EDL/FCSR explanations moved to screen 5a; this form keeps only the details the
      checks need. Key kept as edl_fcsr_consent. */
   edl_fcsr_consent: {
-    key: 'edl_fcsr_consent', screen: '5b', title: 'Your Details for the Background Checks', version: 4, status: 'proposed', signature: 'typed',
+    key: 'edl_fcsr_consent', screen: '5b', title: 'Your Details for the Background Checks', version: 4, status: 'approved', signature: 'typed',
     sections: [
       { h: 'For your background checks', p: ['We need these to run the checks you gave permission for on the previous screen and to request your Family Care Safety Registry screening. They are kept encrypted on our server, seen only by the office person who orders your checks, and every look is logged.'], items: [
         { id: 'ssn', label: 'Social Security number', kind: 'text', required: true, locked: true, note: 'Typed twice, digits only. Never shown again; your record says "on file, ending" with the last four digits.' },
@@ -228,7 +232,7 @@ export const FORMS: Record<FormKey, Form> = {
     certification: ['The information I gave for my background checks is correct, and it may be used only for the checks I gave permission for.'],
   },
   availability: {
-    key: 'availability', screen: '6', title: 'Caregiver Availability & Scheduling Commitment', version: 2, status: 'proposed', signature: 'typed+initials',
+    key: 'availability', screen: '6', title: 'Caregiver Availability & Scheduling Commitment', version: 2, status: 'approved', signature: 'typed+initials',
     sections: [
       { h: 'Why this form is important', p: [
         'At Caring Companions, one of our highest priorities is providing clients with dependable, consistent caregivers. To do that, we hire and schedule caregivers based in part on the committed availability they provide during the hiring process.',
@@ -266,7 +270,7 @@ export const FORMS: Record<FormKey, Form> = {
     ],
   },
   experience: {
-    key: 'experience', screen: '7', title: 'Caregiver Experience & Client Matching Profile', version: 2, status: 'proposed', signature: 'typed',
+    key: 'experience', screen: '7', title: 'Caregiver Experience & Client Matching Profile', version: 2, status: 'approved', signature: 'typed',
     sections: [
       { h: 'Tell us about your experience', p: [
         'Our goal is to match you with clients where you can be successful and confident. Everyone has different backgrounds, strengths, and preferences. Some caregivers enjoy companionship visits, while others have years of experience providing personal care or assisting clients with more complex needs.',
@@ -297,7 +301,7 @@ export const FORMS: Record<FormKey, Form> = {
      an expired license or insurance suspends driving until new documents are verified. Someone who answers NO signs the
      Non-Driver Agreement instead (FORMS.non_driver). */
   vehicle: {
-    key: 'vehicle', screen: '8', title: 'Driver/Vehicle Insurance & Transportation Standards Agreement', short: 'Driver agreement', when: { id: 'transport_willing', equals: 'yes' }, version: 5, status: 'proposed', signature: 'typed',
+    key: 'vehicle', screen: '8', title: 'Driver/Vehicle Insurance & Transportation Standards Agreement', short: 'Driver agreement', when: { id: 'transport_willing', equals: 'yes' }, version: 5, status: 'approved', signature: 'typed',
     sections: [
       { h: 'Your license and insurance', p: ['Take a clear picture of each with your phone, or choose a file you already have. If you do not have a current license and insurance right now, go back and answer No; you can become a driver later.'], items: [
         { id: 'license_front', label: 'Your driver\'s license, front', kind: 'photo', required: true },
@@ -329,7 +333,7 @@ export const FORMS: Record<FormKey, Form> = {
      applicant who answers NO to transporting clients; also signed later on the driver link when someone stops driving.
      The employee's name, position and date print on the signed PDF. */
   non_driver: {
-    key: 'non_driver', screen: '8', title: 'Non-Driver Agreement & Acknowledgment', short: 'Non-driver agreement', when: { id: 'transport_willing', equals: 'no' }, version: 2, status: 'proposed', signature: 'typed',
+    key: 'non_driver', screen: '8', title: 'Non-Driver Agreement & Acknowledgment', short: 'Non-driver agreement', when: { id: 'transport_willing', equals: 'no' }, version: 2, status: 'approved', signature: 'typed',
     sections: [
       { h: '1. Non-Driver Designation', p: [
         'I understand and acknowledge that I am designated as a Non-Driver with Caring Companions In-Home Senior Care.',
@@ -383,7 +387,7 @@ export const FORMS: Record<FormKey, Form> = {
      found necessary (launch/review/viventium-forms/*-legal-review.md); every change is shown to her side by side before
      approval. All PROPOSED until she approves the set. */
   employment_agreement: {
-    key: 'employment_agreement', screen: '10', title: 'Employment Agreement', short: 'Your employment agreement', layout: 'document', countersign: true, version: 1, status: 'proposed', signature: 'typed',
+    key: 'employment_agreement', screen: '10', title: 'Employment Agreement', short: 'Your employment agreement', layout: 'document', countersign: true, version: 1, status: 'approved', signature: 'typed',
     intro: ['This agreement is between Troutman Enterprises, LLC DBA Caring Companions In-Home Senior Care ("Employer") and the employee named on this agreement ("Employee"). It is signed electronically by both.'],
     sections: [
       { h: 'Recitals', p: ['A. Employer is engaged in the business of providing non-medical home care and/or home healthcare services (the "Business").', 'B. Employer wishes to obtain the services of Employee in furtherance of Employer\'s Business, and Employee wishes to provide services in such capacity.', 'C. This agreement is expressly intended to govern the respective rights and duties of Employer and Employee, both during the term of this agreement and after its termination.', 'THEREFORE, in consideration of the mutual promises and covenants hereinafter set forth, Employer and Employee agree as follows:'] },
@@ -444,7 +448,7 @@ export const FORMS: Record<FormKey, Form> = {
     certification: ['THIS CONTRACT CONTAINS A BINDING ARBITRATION PROVISION WHICH MAY BE ENFORCED BY THE PARTIES.', 'I have read this whole agreement, I understand it, and I agree to it. Caring Companions signs it after I do.'],
   },
   code_of_ethics: {
-    key: 'code_of_ethics', screen: '12', title: 'Code of Ethics', short: 'Code of Ethics', version: 1, status: 'proposed', signature: 'typed',
+    key: 'code_of_ethics', screen: '12', title: 'Code of Ethics', short: 'Code of Ethics', version: 1, status: 'approved', signature: 'typed',
     sections: [
       { h: 'The following are strictly prohibited', p: [
         '• Consuming the client\'s food or drink (water is allowed).',
@@ -472,7 +476,7 @@ export const FORMS: Record<FormKey, Form> = {
     certification: ['I have read, understand, and agree to be governed by this Code of Ethics.'],
   },
   medication_policy: {
-    key: 'medication_policy', screen: '13', title: 'Medication Policy', short: 'Medication Policy', version: 1, status: 'proposed', signature: 'typed',
+    key: 'medication_policy', screen: '13', title: 'Medication Policy', short: 'Medication Policy', version: 1, status: 'approved', signature: 'typed',
     sections: [
       { h: 'Medication Policy', p: [
         'This policy is to be read by all employees of Caring Companions In-Home Senior Care. Caring Companions In-Home Senior Care is an independently owned and operated, non-medical, in-home care company.',
@@ -491,7 +495,7 @@ export const FORMS: Record<FormKey, Form> = {
     certification: ['I have read, understand, and agree to be governed by the above terms for the Medication Policy. Failure to follow this policy may result in disciplinary action, up to and including termination.'],
   },
   hipaa_privacy: {
-    key: 'hipaa_privacy', screen: '14', title: 'HIPAA & the Privacy Rule', short: 'HIPAA', version: 1, status: 'proposed', signature: 'typed',
+    key: 'hipaa_privacy', screen: '14', title: 'HIPAA & the Privacy Rule', short: 'HIPAA', version: 1, status: 'approved', signature: 'typed',
     sections: [
       { h: 'What HIPAA is', p: ['Health Insurance Portability and Accountability Act of 1996 (HIPAA): Public law passed by Congress to protect the privacy of Americans\' personal health records by safeguarding the security and confidentiality of health care information.', 'Privacy Rule: Establishes regulations for using and disclosing Protected Health Information (PHI). PHI is any information about health status, provision of health care, or payment for health care that can be linked to an individual.'] },
       { h: 'Privacy Policy', p: ['I will use and share client information only as my job requires: to care for the client, to bill for care, and to run the Company. I will share only the minimum needed. I will not look at, discuss, copy, or post client information for any other reason, during or after my employment.'] },
@@ -507,7 +511,7 @@ export const FORMS: Record<FormKey, Form> = {
      serving anyone: received and reviewed the rights, the Code of Ethics and the confidentiality policy, all explained
      ((24)(B)5). Shown after the Code of Ethics and HIPAA so all three are in front of them when they sign. */
   client_rights: {
-    key: 'client_rights', screen: '15', title: 'Client Rights', short: 'Client Rights', version: 1, status: 'proposed', signature: 'typed',
+    key: 'client_rights', screen: '15', title: 'Client Rights', short: 'Client Rights', version: 1, status: 'approved', signature: 'typed',
     sections: [
       { h: 'Client Rights', p: [
         'Caring Companions gives every client, and their main family caregiver when appropriate, a written copy of these rights when services begin, and we go over it with them. You get the same copy so you know what every client can expect from you.',
@@ -543,10 +547,20 @@ export async function formFingerprint(key: FormKey): Promise<string> {
   const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(formText(key)))
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
-/** Which forms may be signed for real: only the ones Samantha has approved by version (none yet: all proposed). */
-export const APPROVED_FOR_REAL: Partial<Record<FormKey, number>> = {}
+/** Which forms may be signed for real: only the ones Samantha has approved, by version.
+    APPROVED: Samantha, 2026-10-13, 'approve step 1 forms', wording page version 5 (https://claude.ai/artifact/KuoJ2LomuVaBtoHr5RZ8Tj,
+    built from this file by launch/review/tools/build_wording_page.py; rebuilt from main before this change and byte-identical to the page she
+    read). Her message: 2026-10-13 20:09:53 UTC (3:09 pm Central). Every version and wording fingerprint is in
+    supabase/step1-approved-2026-10-13.json. A changed word is a new version, and a new version is NOT approved until she
+    approves it and it is added here: until then a real applicant cannot sign it (practice and training hires still can). */
+export const APPROVED_FOR_REAL: Partial<Record<FormKey, number>> = {
+  employee_application: 4, reference_consent: 3, fcra_disclosure: 2, edl_fcsr_consent: 4, availability: 2, experience: 2,
+  vehicle: 5, non_driver: 2, employment_agreement: 1, medication_policy: 1, code_of_ethics: 1, hipaa_privacy: 1, client_rights: 1,
+}
+/** true only when Samantha approved form k at exactly version v (the version the server stamps is FORMS[k].version) */
+export const approvedAt = (k: FormKey, v: unknown): boolean => typeof v === 'number' && APPROVED_FOR_REAL[k] === v
 /** 2026-10-13: a real (non-practice) applicant may sign a form only at a version Samantha approved for real. */
-export const approvedForReal = (k: FormKey): boolean => APPROVED_FOR_REAL[k] === FORMS[k].version
+export const approvedForReal = (k: FormKey): boolean => approvedAt(k, FORMS[k].version)
 export const allApprovedForReal = (): boolean => FORM_ORDER.every(approvedForReal)
 /** 2026-10-13: the Step 1 screens follow the form list. The first ten are fixed; a form added later gets its own screen
     (its `screen` key) before "All done", in FORM_ORDER order. */

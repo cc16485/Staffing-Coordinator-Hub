@@ -1,0 +1,134 @@
+{
+ "what": "Samantha's final approval of the Step 1 forms for real applicants",
+ "approved_by": "Samantha",
+ "approved_at": "2026-10-13T20:09:53Z",
+ "approved_at_central": "2026-10-13 3:09 pm Central",
+ "her_words": "approve step 1 forms",
+ "source": "wording page v5",
+ "page": "https://claude.ai/artifact/KuoJ2LomuVaBtoHr5RZ8Tj (artifact version 1791922026-1454)",
+ "page_sha256": "f8c4bec5287a2d6a606c5e628443fcd8f734468c0fe53251bcb96cf35e9c4aa8",
+ "page_check": "rebuilt from origin/main cb3c30e with launch/review/tools/build_wording_page.py: byte-identical to the page she read",
+ "code_commit": "cb3c30ebfe2f604ce4cced43666eca8c87c144cf",
+ "step1_version": 5,
+ "signs": "12 of the 13 (the Driver Agreement or the Non-Driver Agreement, chosen by her transport answer)",
+ "fingerprint": "formFingerprint(key): SHA-256 of formText(key) in supabase/functions/_shared/step1-documents.ts",
+ "forms": [
+  {
+   "key": "employee_application",
+   "title": "Employee Application",
+   "version": 4,
+   "sha256": "dcaf0ad0df448a0c0d0a6836bb734c04901cfc52337034230b8dc3b690ef9d88",
+   "approved_by": "Samantha",
+   "approved_at": "2026-10-13T20:09:53Z",
+   "source": "wording page v5"
+  },
+  {
+   "key": "reference_consent",
+   "title": "Reference Check and Authorization Consent Form Disclosure",
+   "version": 3,
+   "sha256": "d59f83814ed0bf7c2d8942b0acf9dfa9bb3291cbd68ca9d91a10239bbc81eadf",
+   "approved_by": "Samantha",
+   "approved_at": "2026-10-13T20:09:53Z",
+   "source": "wording page v5"
+  },
+  {
+   "key": "fcra_disclosure",
+   "title": "Permission for Background Checks and References",
+   "version": 2,
+   "sha256": "b8c79c53bb74b6305217152b8069b33386c43079867fbcc287987668c508e42c",
+   "approved_by": "Samantha",
+   "approved_at": "2026-10-13T20:09:53Z",
+   "source": "wording page v5"
+  },
+  {
+   "key": "edl_fcsr_consent",
+   "title": "Your Details for the Background Checks",
+   "version": 4,
+   "sha256": "da180e453331f749129ce908a89080916c6e1f21587f0f7a35c39a60a3902053",
+   "approved_by": "Samantha",
+   "approved_at": "2026-10-13T20:09:53Z",
+   "source": "wording page v5"
+  },
+  {
+   "key": "availability",
+   "title": "Caregiver Availability & Scheduling Commitment",
+   "version": 2,
+   "sha256": "94f8974779a160a7e6a0ddb43c8476ad4e1472a3ea626d770645950afe57f46b",
+   "approved_by": "Samantha",
+   "approved_at": "2026-10-13T20:09:53Z",
+   "source": "wording page v5"
+  },
+  {
+   "key": "experience",
+   "title": "Caregiver Experience & Client Matching Profile",
+   "version": 2,
+   "sha256": "91bc5365cc684a2c60421cd350da95ff014ffb3433192296f166f7f7f1f497a1",
+   "approved_by": "Samantha",
+   "approved_at": "2026-10-13T20:09:53Z",
+   "source": "wording page v5"
+  },
+  {
+   "key": "vehicle",
+   "title": "Driver/Vehicle Insurance & Transportation Standards Agreement",
+   "version": 5,
+   "sha256": "64ef406b7e69b6a64a4dd2295e293b2555133f54633d47dc307ccee6a427020f",
+   "approved_by": "Samantha",
+   "approved_at": "2026-10-13T20:09:53Z",
+   "source": "wording page v5"
+  },
+  {
+   "key": "non_driver",
+   "title": "Non-Driver Agreement & Acknowledgment",
+   "version": 2,
+   "sha256": "995b7afc6ad9fa8315b9cc86e19a1fd0cef7528fcea6f1ed93070e6d51a005cc",
+   "approved_by": "Samantha",
+   "approved_at": "2026-10-13T20:09:53Z",
+   "source": "wording page v5"
+  },
+  {
+   "key": "employment_agreement",
+   "title": "Employment Agreement",
+   "version": 1,
+   "sha256": "48b8fdde4093570905a7e1f74c4c4b0952042fb9c3493ad4f85d795f1851b3f3",
+   "approved_by": "Samantha",
+   "approved_at": "2026-10-13T20:09:53Z",
+   "source": "wording page v5"
+  },
+  {
+   "key": "medication_policy",
+   "title": "Medication Policy",
+   "version": 1,
+   "sha256": "a615f3b5edbf36684fbe2f3bb5b0e9dc8db0d0d3ebfdbce31f50f15587c95dd9",
+   "approved_by": "Samantha",
+   "approved_at": "2026-10-13T20:09:53Z",
+   "source": "wording page v5"
+  },
+  {
+   "key": "code_of_ethics",
+   "title": "Code of Ethics",
+   "version": 1,
+   "sha256": "300ef72ca804f666c0491f325320c18dcbcd7ee835a64a1b82d1d9af9380ec44",
+   "approved_by": "Samantha",
+   "approved_at": "2026-10-13T20:09:53Z",
+   "source": "wording page v5"
+  },
+  {
+   "key": "hipaa_privacy",
+   "title": "HIPAA & the Privacy Rule",
+   "version": 1,
+   "sha256": "991f3d7adf30d844593c253abf20cd1bd9283755939c94964b645505b9f2a9e2",
+   "approved_by": "Samantha",
+   "approved_at": "2026-10-13T20:09:53Z",
+   "source": "wording page v5"
+  },
+  {
+   "key": "client_rights",
+   "title": "Client Rights",
+   "version": 1,
+   "sha256": "a8151720973437ae6fe0d799cd16dd13e0ef72b286fccbd8e1fd4ba84c13f004",
+   "approved_by": "Samantha",
+   "approved_at": "2026-10-13T20:09:53Z",
+   "source": "wording page v5"
+  }
+ ]
+}

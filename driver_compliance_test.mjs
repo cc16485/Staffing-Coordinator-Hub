@@ -269,11 +269,15 @@ r = await call({ action: 'uploaded', ...LA, kind: 'insurance', path: insPath, co
 ck('uploaded by an Approved Driver: stays approved (the verified date stays until the office verifies the new one); the old proof superseded; a card for the office', r.status === 200 && row(A.id).status === 'approved' && row(A.id).insurance_expires === '2027-04-01' && DB.driver_document.filter((d) => d.dc_id === A.id && d.kind === 'insurance' && !d.superseded_at).length === 1 && ops().some((c) => c.id === 'dc_verify_' + A.id && c.owner === 'krystal@mo-care.com'), [r.j, row(A.id)])
 r = await call({ action: 'verify', key: A.id, what: 'insurance', insurer: 'Progressive' }, 'kry')
 ck('the office verifies the new proof: the record takes its date, the roster follows, the verify card closes', r.status === 200 && row(A.id).insurance_expires === '2027-11-12' && row(A.id).insurer === 'Progressive' && cgRec(201).auto_ins_expires === '2027-11-12' && ops().find((c) => c.id === 'dc_verify_' + A.id).status === 'done', [row(A.id), cgRec(201)])
-/* 2026-10-13: the Non-Driver Agreement is in the form list now (proposed, not approved for real): a real caregiver cannot sign it yet */
+/* 2026-10-13 (705): Samantha approved the Driver and Non-Driver Agreements for real ('approve step 1 forms', wording page v5):
+   vehicle at 5, non_driver at 2. A changed wording is a new version, and a new version is refused until she approves it. */
+ck('the Driver Agreement (vehicle) is approved for real at version 5 and the Non-Driver Agreement at version 2, exactly the versions in force', DOCS.APPROVED_FOR_REAL.vehicle === 5 && DOCS.FORMS.vehicle.version === 5 && DOCS.APPROVED_FOR_REAL.non_driver === 2 && DOCS.FORMS.non_driver.version === 2 && DOCS.approvedForReal('vehicle') && DOCS.approvedForReal('non_driver'))
+DOCS.FORMS.non_driver.version += 1; DOCS.FORMS.vehicle.version += 1
 r = await call({ action: 'sign', ...LB, form: 'non_driver', typed_name: 'Ben Ray', consent: true })
-ck('sign the Non-Driver Agreement as a real caregiver while its wording is not approved for real: refused with a clear message (409)', r.status === 409 && r.j.not_approved === true, r)
+ck('a bumped Non-Driver Agreement (version 3, not approved) is refused for a real caregiver with a clear message (409)', r.status === 409 && r.j.not_approved === true, r)
 r = await call({ action: 'sign', ...LB, form: 'vehicle', typed_name: 'Ben Ray', consent: true })
-ck('sign the vehicle form as a real caregiver while its wording is not approved for real: refused, nothing changed', r.status === 409 && r.j.not_approved === true && row(Bn.id).status === 'non_driver', r)
+ck('a bumped Driver Agreement (version 6, not approved) is refused for a real caregiver, nothing changed', r.status === 409 && r.j.not_approved === true && row(Bn.id).status === 'non_driver', r)
+DOCS.FORMS.non_driver.version -= 1; DOCS.FORMS.vehicle.version -= 1
 /* a practice person (Pat Practice, 555-0181, @practice.invalid) may sign the practice way */
 h = await DRV.driverFromStep1(db, OP, { first: 'Pat', last: 'Practice' }, { transport_willing: 'no' }, {}, {}, '2026-10-13T14:20:00Z')
 const Pp = DB.driver_compliance.find((x) => x.offer_id === OP), LP = await lk(Pp.id)
@@ -286,11 +290,11 @@ const pdfKey = Object.keys(STORE).find((k) => k.startsWith(`onboarding-documents
 ck('sign the vehicle form (practice person): the PDF kept in onboarding-documents/driver/<record>/, the signature in the history, Non-Driver becomes Pending Verification (driver_requested)', r.status === 200 && r.j.pdf === true && pdfKey && String.fromCharCode(...STORE[pdfKey].slice(0, 5)) === '%PDF-' && row(Pp.id).status === 'pending' && row(Pp.id).agreement_form === 'vehicle' && evs(Pp.id, 'agreement_signed').some((e) => e.detail.typed_name === 'Pat Practice' && /^[0-9a-f]{64}$/.test(e.detail.fingerprint) && e.detail.agent === 'TestPhone') && evs(Pp.id, 'driver_requested').length === 1 && cgRec(204).dl_status === 'Pending Verification', r)
 r = await call({ action: 'sign', ...LP, form: 'vehicle', typed_name: 'Pat Practice', consent: true })
 ck('sign the same agreement twice: refused (a signed agreement is never changed)', r.status === 409 && r.j.already === true)
-/* once Samantha approves the vehicle wording for real, a real caregiver may sign it; a PDF that cannot be stored is never silent */
-DOCS.APPROVED_FOR_REAL.vehicle = DOCS.FORMS.vehicle.version; PDF_FAIL = true
+/* the approved vehicle wording (version 5): a real caregiver signs it for real; a PDF that cannot be stored is never silent */
+PDF_FAIL = true
 r = await call({ action: 'sign', ...LB, form: 'vehicle', typed_name: 'Ben Ray', consent: true })
 ck('real caregiver, wording approved for real, storage down: the signature is recorded, Non-Driver becomes Pending Verification, and a card says the PDF is missing', r.status === 200 && r.j.pdf === false && row(Bn.id).agreement_form === 'vehicle' && row(Bn.id).status === 'pending' && ops().some((c) => c.id === 'dc_pdf_' + Bn.id + '_vehicle' && noDash(c.detail)) && cgRec(202).dl_status === 'Pending Verification', r.j)
-PDF_FAIL = false; delete DOCS.APPROVED_FOR_REAL.vehicle
+PDF_FAIL = false
 
 /* ═══ 7. suspend, non-driver, setup, send link ═══ */
 r = await call({ action: 'suspend', key: Pp.id, reason: 'no' }, 'kry')
