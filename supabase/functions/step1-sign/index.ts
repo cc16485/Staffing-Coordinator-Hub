@@ -36,6 +36,8 @@ const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: 
 const S = (v: unknown, n = 120) => String(v ?? '').trim().slice(0, n)
 const NOPE = { ok: false, error: 'This link is not valid or has run out. Please ask the office for a new one: (417) 234-8494.' }
 export const BUCKET = 'onboarding-documents'
+/** the e-sign consent words on screen 1 (kept in step with step1.html; a change is a new wording) */
+export const ESIGN_WORDS = 'I agree to complete and sign my Step 1 paperwork electronically, and I understand my typed name on each form has the same effect as my handwritten signature. I can ask the office for paper copies at any time.'
 export const SCREENS = ['1', '2', '3', '4', '5a', '5b', '6', '7', '8', '9']
 export const IDENTITY_IDS = ['ssn', 'dob', 'license_number']
 const MAP_TABLES = new Set(['windows', 'specialties', 'matching_facts'])
@@ -287,6 +289,21 @@ async function land(db: any, offerId: string, patch: Record<string, unknown> | n
   catch (e) { return { ok: false, error: String((e as Error).message || e).slice(0, 160) } }
 }
 
+/** 2026-10-13 (her rule: no silent failures): one Needs Attention card per id for Recruiting & Orientation; never raised twice.
+    Returns the card id, or 'not raised' when even the card could not be written (the trail event still records it). */
+// deno-lint-ignore no-explicit-any
+async function problemCard(db: any, id: string, item: Record<string, unknown>): Promise<string> {
+  try {
+    const { data: row } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    if ((Array.isArray(row?.data) ? row.data : []).some((x: any) => x && x.id === id)) return id
+    const now = new Date().toISOString()
+    const { error } = await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id, domain: 'recruiting_orientation', status: 'open', urgency: 'now', created_at: now, first_at: now, last_at: now,
+      due: now, created_by: 'step1-sign', opened_by: 'step1-sign', ...item } })
+    return error ? 'not raised' : id
+  } catch { return 'not raised' }
+}
+
 /* ───── STEP 1 BEFORE CHECKS (Samantha 2026-10-11, "yes to all") ─────
    Step 1 complete: the server puts them into Background & References (step1_candidate_create: the record is made, or an
    unlinked record with the same phone or name is linked, never two), records it on the readiness card, and raises ONE
@@ -307,7 +324,13 @@ async function enterChecks(db: any, offerId: string, who: Record<string, string>
     if (j?.journey_id) await db.from('client_journey_event').insert({ journey_id: j.journey_id, actor_email: 'hub', actor_name: 'The Hub', kind: 'step1_complete',
       detail: { at, background_and_references: made.how || (made.ok ? 'in' : 'failed'), candidate_id: made.id ?? null }, reason: 'Step 1 complete: their signed permission is in' })
   } catch { /* the trail on the offer still has step1_done */ }
-  if (made.ok !== true) return made
+  if (made.ok !== true) {
+    /* 2026-10-13: Step 1 is complete but they did not reach Background & References: never silent */
+    made.card = await problemCard(db, 's1land_' + offerId, { kind: 'step1_landing_failed', who: name, offer_id: offerId,
+      title: 'Step 1 is complete but did not reach Background & References: ' + name,
+      detail: name + ' signed every Step 1 form, but the Hub could not put them into Background & References (' + S(made.error || made.reason || 'no reason given', 160) + '). Their signed forms are safe on their profile. Add them to Background & References by hand, or tell Claude, so the checks and references can start.' })
+    return made
+  }
   try {
     let owner = { email: '', name: '' }
     try {
@@ -321,7 +344,7 @@ async function enterChecks(db: any, offerId: string, who: Record<string, string>
       await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id: cid, kind: 'step1_complete', domain: 'recruiting_orientation', status: 'open', urgency: 'today',
         /* TRAINING WALKTHROUGH (2026-10-11): a staff member trying the journey on their own phone; the card says so */
         title: (/\(TRAINING\)/.test(name) ? 'TRAINING: ' : '') + 'Step 1 complete: start background checks and references for ' + name,
-        detail: (/\(TRAINING\)/.test(name) ? 'A staff training walkthrough (made-up identity): try the checks if you like; nothing real is needed. ' : '') + name + ' signed every Step 1 form, including the reference consent, the background check disclosure and the EDL and FCSR consent. They are now in Background & References: run the checks and contact the references.',
+        detail: (/\(TRAINING\)/.test(name) ? 'A staff training walkthrough (made-up identity): try the checks if you like; nothing real is needed. ' : '') + name + ' signed every Step 1 form, including the reference consent and the permission for background checks. They are now in Background & References: run the checks and contact the references.',
         who: name, offer_id: offerId, candidate_id: made.id ?? null, owner: owner.email, owner_name: owner.name, created_at: now, first_at: now, last_at: now,
         due: new Date(Date.now() + 24 * 3_600_000).toISOString(), created_by: 'step1-sign', opened_by: 'step1-sign' } })
       made.card = cid
@@ -509,7 +532,11 @@ Deno.serve(async (req) => {
     if (!row) return json({ ok: false, error: 'Please open your Step 1 link first.' }, 409)
     if (action === 'begin') {
       if (b.esign_consent !== true) return json({ ok: false, error: 'Please tick "I agree to complete and sign my Step 1 paperwork electronically" first.' }, 400)
-      if (!row.esign_consent_at) await db.from('step1_forms').update({ esign_consent_at: now(), esign_consent_detail: { ip: ipOf(req), agent: agentOf(req) }, current_screen: '2' }).eq('offer_id', id).is('esign_consent_at', null)
+      if (!row.esign_consent_at) {
+        /* 2026-10-13: the words they agreed to are kept with the consent (RSMo 432.220: agreement to do business electronically), and the trail records it */
+        const { data: did } = await db.from('step1_forms').update({ esign_consent_at: now(), esign_consent_detail: { ip: ipOf(req), agent: agentOf(req), words: ESIGN_WORDS }, current_screen: '2' }).eq('offer_id', id).is('esign_consent_at', null).select('offer_id')
+        if (did?.length) await T.event({ offer_id: id, kind: 'step1_started', by_who: 'caregiver', channel: 'page', result: 'esign_consent', detail: { note: 'agreed to sign electronically', ip: ipOf(req), agent: agentOf(req), words: ESIGN_WORDS } })   /* an existing kind: offer_events allows a fixed list */
+      }
       return json({ ok: true })
     }
     if (action === 'save') {
@@ -593,7 +620,9 @@ Deno.serve(async (req) => {
       const path = `step1/${id}/${form}-v${version}-${at.replace(/[:.]/g, '-')}.pdf`
       const up = await db.storage.from(BUCKET).upload(path, bytes, { contentType: 'application/pdf', upsert: false })
       let pdfOk = true
-      if (up.error) { pdfOk = false; await T.event({ offer_id: id, kind: 'step1_signed', by_who: 'system', channel: 'page', doc_version: version, fingerprint: fp, result: 'pdf_failed', detail: { form, error: String(up.error.message || up.error).slice(0, 200) } }) }
+      if (up.error) { pdfOk = false; await T.event({ offer_id: id, kind: 'step1_signed', by_who: 'system', channel: 'page', doc_version: version, fingerprint: fp, result: 'pdf_failed', detail: { form, error: String(up.error.message || up.error).slice(0, 200) } })
+        await problemCard(db, 's1pdf_' + id + '_' + form, { kind: 'step1_pdf_failed', who: `${who.first} ${who.last}`.trim(), offer_id: id, title: 'A signed Step 1 form has no PDF yet: ' + `${who.first} ${who.last}`.trim(),
+          detail: 'The signature on ' + FORMS[form].title + ' is recorded (time, device, wording version), but its PDF could not be saved (' + S(up.error.message || up.error, 120) + '). Tell Claude so the PDF is made again from the signed record.' }) }
       else await db.from('step1_forms').update({ pdfs: { ...(row.pdfs || {}), [form]: path } }).eq('offer_id', id).filter('pdfs->' + form, 'is', null)
       // 3. the last signature completes Step 1: the record, the trail, and the offer record the office reads
       const allSigned = FORM_ORDER.every((k) => k === form || sigs[k])
@@ -619,7 +648,12 @@ Deno.serve(async (req) => {
         }
       }
       const landedDone = done ? await land(db, id, { step1_done_at: at, step1_landed: { done: at } }, 'step1 done') : { skipped: true }
-      if (landed.ok === false || landedDone.ok === false || entered.ok === false) await T.event({ offer_id: id, kind: 'step1_signed', by_who: 'system', channel: 'page', result: 'landing_failed', detail: { form, landed, landedDone, entered } })
+      if (landed.ok === false || landedDone.ok === false || entered.ok === false) {
+        await T.event({ offer_id: id, kind: 'step1_signed', by_who: 'system', channel: 'page', result: 'landing_failed', detail: { form, landed, landedDone, entered } })
+        /* entering failed has its own card (enterChecks); a form that did not land on their record gets one too */
+        if (entered.ok !== false) await problemCard(db, 's1landform_' + id, { kind: 'step1_landing_failed', who: `${who.first} ${who.last}`.trim(), offer_id: id, title: 'Step 1 answers did not reach their Background & References record: ' + `${who.first} ${who.last}`.trim(),
+          detail: 'The answers on ' + FORMS[form].title + ' could not be copied onto their Background & References record (' + S((landed as Record<string, unknown>).error || (landedDone as Record<string, unknown>).error || 'no reason given', 120) + '). Their signed forms are safe on their profile. Check their references and details there, or tell Claude.' })
+      }
       const cp = pdfOk ? await db.storage.from(BUCKET).createSignedUrl(path, 600) : { data: null }
       return json({ ok: true, form, signed_at: at, version, fingerprint: fp, pdf: pdfOk, copy_url: cp.data?.signedUrl ?? null, done, signed_count: Object.keys(sigs).length + 1, form_count: FORM_ORDER.length, landed, landed_done: landedDone })
     }

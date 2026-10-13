@@ -116,7 +116,8 @@ export async function timeline(db: Any, T: Any, p: Any) {
   if (p.offerId) {
     const ev = await T.get(`offer_events?offer_id=eq.${p.offerId}&select=at,kind,by_who,channel,result,detail&order=at.asc`)
     for (const e of ev) {
-      const [type, label] = OFFER_EVENTS[e.kind] || ['done', words(String(e.kind))]
+      const [type, label] = e.result === 'esign_consent' ? ['received', 'They agreed to sign electronically'] : OFFER_EVENTS[e.kind] || ['done', words(String(e.kind))]
+      if (e.result === 'esign_consent') { push(e.at, type, label + (e.detail?.ip ? ' (device address ' + S(e.detail.ip, 64) + ')' : ''), p.name || 'them'); continue }
       const d = e.detail || {}, prac = d.practice ? ' (practice: recorded, not sent)' : ''
       const form = d.form ? ': ' + (FORM_TITLES[d.form] || d.form) : ''
       push(e.at, e.result && /fail|refus/.test(String(e.result)) ? 'refused' : type, label + form + (type === 'sent' ? prac : '') + (e.result && e.result !== 'ok' ? ' · ' + e.result : '') + (d.note ? ' · "' + S(d.note, 120) + '"' : ''), e.by_who === 'caregiver' ? (p.name || 'them') : e.by_who)
