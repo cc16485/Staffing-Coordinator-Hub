@@ -25,7 +25,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { checkLink } from '../_shared/applicant-links.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
-import { FORMS, FORM_ORDER, formFingerprint, REFERENCES_REQUIRED, APPROVED_FOR_REAL, approvedForReal, allApprovedForReal, MATCHING_FACTS, SKILLS, SKILL_GROUPS, type FormKey, type Item, type Form, type Field } from '../_shared/step1-documents.ts'
+import { FORMS, FORM_ORDER, formFingerprint, REFERENCES_REQUIRED, APPROVED_FOR_REAL, approvedForReal, allApprovedForReal, step1Screens, MATCHING_FACTS, SKILLS, SKILL_GROUPS, type FormKey, type Item, type Form, type Field } from '../_shared/step1-documents.ts'
 import { seal, open as unseal, last4, ssnLooksValid, REVEAL_TTL_MS, REVEAL_FIELDS, REVEAL_PERMISSION, type RevealField, ssnAllowed, practiceOffer } from '../_shared/step1-crypto.ts'
 import { PERM_KEY, normalizePerms, mayApprove } from '../_shared/onboarding-permissions.ts'
 import { step1FormPdf, type IdentityState } from '../_shared/step1-pdf.ts'
@@ -39,7 +39,8 @@ const NOPE = { ok: false, error: 'This link is not valid or has run out. Please 
 export const BUCKET = 'onboarding-documents'
 /** the e-sign consent words on screen 1 (kept in step with step1.html; a change is a new wording) */
 export const ESIGN_WORDS = 'I agree to complete and sign my Step 1 paperwork electronically, and I understand my typed name on each form has the same effect as my handwritten signature. I can ask the office for paper copies at any time.'
-export const SCREENS = ['1', '2', '3', '4', '5a', '5b', '6', '7', '8', '9']
+/* 2026-10-13: from the form list (a form added later gets its screen before All done) */
+export const SCREENS = step1Screens()
 export const IDENTITY_IDS = ['ssn', 'dob', 'license_number']
 const MAP_TABLES = new Set(['windows', 'specialties', 'matching_facts'])
 const COLS = 'id,first_name,last_name,phone,email,position,offered_by,onboarding_path,offer_status,offer_signed_at,pd_signed_at,offer_withdrawn_at,offer_declined_at,step1_sent_at,step1_done_at'
@@ -323,7 +324,7 @@ export async function ghlStep1Note(db: any, o: any, who: Record<string, string>,
       body: JSON.stringify({ locationId: loc, email: who.email || undefined, phone: who.phone || undefined, firstName: who.first || undefined, lastName: who.last || undefined }) })
     const ud = await up.json().catch(() => null), cid = String(ud?.contact?.id || ud?.id || '')
     if (!up.ok || !cid) return await fail('their contact could not be found (' + up.status + ')')
-    const body = `Step 1 complete ${longDateTime(at)}: all ${FORM_ORDER.length} signed forms (application, references, permission for background checks, details for the checks, availability, experience, driving) are kept in the Hub. Office staff: https://cc.mo-care.com/step1.html?review=${offerId}`
+    const body = `Step 1 complete ${longDateTime(at)}: all ${FORM_ORDER.length} signed Step 1 forms are kept in the Hub. Office staff: https://cc.mo-care.com/step1.html?review=${offerId}`
     const nr = await fetch(`https://services.leadconnectorhq.com/contacts/${cid}/notes`, { method: 'POST', headers: H, body: JSON.stringify({ body }) })
     if (!nr.ok) return await fail('the note was refused (' + nr.status + ')')
     return { ok: true, contact_id: cid }
@@ -394,7 +395,7 @@ export const PREVIEW_PREFILL = prefillFrom({ lived_outside_mo: 'no', has_license
 /** The forms as the page receives them (the same shape the real view sends). */
 export async function formsPayload(sigs: Record<string, unknown> = {}): Promise<Record<string, unknown>[]> {
   const forms = [] as Record<string, unknown>[]
-  for (const k of FORM_ORDER) { const f = FORMS[k]; forms.push({ key: f.key, screen: f.screen, title: f.title, version: f.version, status: f.status, intro: f.intro || [], sections: f.sections, certification: f.certification, signature: f.signature, fingerprint: await formFingerprint(k), approved_for_real: APPROVED_FOR_REAL[k] === f.version }) }
+  for (const k of FORM_ORDER) { const f = FORMS[k]; forms.push({ key: f.key, screen: f.screen, title: f.title, short: f.short || null, layout: f.layout || null, version: f.version, status: f.status, intro: f.intro || [], sections: f.sections, certification: f.certification, signature: f.signature, fingerprint: await formFingerprint(k), approved_for_real: APPROVED_FOR_REAL[k] === f.version }) }
   void sigs
   return forms
 }
@@ -423,7 +424,7 @@ export async function preview(b: Record<string, any>): Promise<Record<string, un
     let bin = ''; for (let j = 0; j < bytes.length; j += 0x8000) bin += String.fromCharCode(...bytes.subarray(j, j + 0x8000))
     return { ok: true, preview: true, form, pdf_base64: btoa(bin) }
   }
-  return { ok: true, preview: true, who: PREVIEW_WHO, forms: await formsPayload(), order: FORM_ORDER, screens: SCREENS, answers: {}, signatures: {}, identity: { ssn: null, dob: false, license: null, license_state: null, license_expires: null },
+  return { ok: true, preview: true, who: PREVIEW_WHO, forms: await formsPayload(), order: FORM_ORDER, screens: step1Screens(), answers: {}, signatures: {}, identity: { ssn: null, dob: false, license: null, license_state: null, license_expires: null },
     prefill: PREVIEW_PREFILL, hints: { availability: 'Weekdays, mornings and afternoons', travel: 'Springfield and Nixa' }, current_screen: '1', started_at: null, completed_at: null, esign_consent_at: null,
     test_mode: true, references_required: REFERENCES_REQUIRED, skill_groups: SKILL_GROUPS, skills: SKILLS, signed_count: 0, form_count: FORM_ORDER.length }
 }
@@ -515,7 +516,7 @@ Deno.serve(async (req) => {
           ip: S(v.ip, 64) || null, agent: S(v.agent, 200) || null, fingerprint: S(v.fingerprint, 64) || null, pdf: !!(fr?.pdfs || {})[k] }
       }
       await db.from('document_access_log').insert({ offer_id: oid, doc: 'step1:review', path: '(the Step 1 screens, read only)', by_person: staff.person_id, by_email: staff.email, by_name: staff.name, ip: ipOf(req), reason: 'opened Step 1 as the applicant saw it' })
-      return json({ ok: true, review: true, who: rwho, forms: await formsPayload(), order: FORM_ORDER, screens: SCREENS, answers: fr?.answers || {}, signatures: publicSignatures(rsigs), signed,
+      return json({ ok: true, review: true, who: rwho, forms: await formsPayload(), order: FORM_ORDER, screens: step1Screens(), answers: fr?.answers || {}, signatures: publicSignatures(rsigs), signed,
         identity: { ...identState(idr), license_state: idr?.license_state ?? null, license_expires: idr?.license_expires ?? null },
         prefill: prefillFrom(app, app?.post_interview || null), hints: { availability: S(app?.availability, 300) || null, travel: S(app?.post_interview?.travel_areas, 200) || null },
         current_screen: fr?.current_screen || '1', started_at: fr?.started_at || null, completed_at: fr?.completed_at || null, esign_consent_at: fr?.esign_consent_at || null, esign_consent_detail: fr?.esign_consent_detail || null,
@@ -548,14 +549,21 @@ Deno.serve(async (req) => {
       if (row && !!row.practice !== practiceOffer(o)) { await db.from('step1_forms').update({ practice: practiceOffer(o) }).eq('offer_id', id); row.practice = practiceOffer(o) }
       // never ask twice: the application (by email, then by phone) and its interview answers
       const app = await applicationOf(db, who)
-      const forms = [] as Record<string, unknown>[]
-      for (let i = 0; i < FORM_ORDER.length; i++) { const f = FORMS[FORM_ORDER[i]]; forms.push({ key: f.key, screen: f.screen, title: f.title, version: f.version, status: f.status, intro: f.intro || [], sections: f.sections, certification: f.certification, signature: f.signature, fingerprint: await formFingerprint(f.key), approved_for_real: APPROVED_FOR_REAL[f.key] === f.version }) }
-      return json({ ok: true, who, forms, order: FORM_ORDER, screens: SCREENS, answers: row?.answers || {}, signatures: publicSignatures(sigs), identity: { ...IS, license_state: ident?.license_state ?? null, license_expires: ident?.license_expires ?? null },
+      const forms = await formsPayload()
+      return json({ ok: true, who, forms, order: FORM_ORDER, screens: step1Screens(), answers: row?.answers || {}, signatures: publicSignatures(sigs), identity: { ...IS, license_state: ident?.license_state ?? null, license_expires: ident?.license_expires ?? null },
         prefill: prefillFrom(app, app?.post_interview || null), hints: { availability: S(app?.availability, 300) || null, travel: S(app?.post_interview?.travel_areas, 200) || null },
         current_screen: row?.current_screen || '1', started_at: row?.started_at || null, completed_at: row?.completed_at || null, esign_consent_at: row?.esign_consent_at || null,
         test_mode: practiceOffer(o) || !allApprovedForReal(), references_required: REFERENCES_REQUIRED, skill_groups: SKILL_GROUPS, skills: SKILLS, signed_count: Object.keys(sigs).length, form_count: FORM_ORDER.length })
     }
     if (!row) return json({ ok: false, error: 'Please open your Step 1 link first.' }, 409)
+    /* 2026-10-13: a copy of one form to open or save while reading it (unsigned; their answers so far; identity never printed) */
+    if (action === 'document') {
+      const form = S(b.form, 40) as FormKey
+      if (!FORM_ORDER.includes(form)) return json({ ok: false, error: 'Which form?' }, 400)
+      const bytes = step1FormPdf(FORMS[form], (row.answers || {}) as Record<string, unknown>, who, IS, null, FORM_ORDER.indexOf(form) + 1, FORM_ORDER.length)
+      let bin = ''; for (let j = 0; j < bytes.length; j += 0x8000) bin += String.fromCharCode(...bytes.subarray(j, j + 0x8000))
+      return json({ ok: true, form, version: FORMS[form].version, pdf_base64: btoa(bin) })
+    }
     if (action === 'begin') {
       if (b.esign_consent !== true) return json({ ok: false, error: 'Please tick "I agree to complete and sign my Step 1 paperwork electronically" first.' }, 400)
       if (!row.esign_consent_at) {
@@ -566,7 +574,7 @@ Deno.serve(async (req) => {
       return json({ ok: true })
     }
     if (action === 'save') {
-      const screen = S(b.screen, 4); if (screen && !SCREENS.includes(screen)) return json({ ok: false, error: 'Which screen?' }, 400)
+      const screen = S(b.screen, 4); if (screen && !step1Screens().includes(screen)) return json({ ok: false, error: 'Which screen?' }, 400)
       const incoming = (b.answers && typeof b.answers === 'object' && !Array.isArray(b.answers)) ? b.answers as Record<string, unknown> : {}
       const merged = { ...(row.answers || {}) } as Record<string, unknown>; const rejected: string[] = []
       for (const [k, v] of Object.entries(incoming)) {

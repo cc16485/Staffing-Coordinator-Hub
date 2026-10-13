@@ -20,6 +20,7 @@ import { logOpen, ipOf } from '../_shared/doc-log.ts'
 import { evidenceLine } from '../_shared/evidence.ts'
 import { experienceSummary } from '../_shared/step1-experience.ts'
 import { applicantStatus } from '../_shared/applicant-status.ts'
+import { FORMS, FORM_ORDER } from '../_shared/step1-documents.ts'
 type Any = any
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -95,7 +96,7 @@ export async function documents(db: Any, p: Any) {
   if (p.offer) { add(OD, p.offer.offer_pdf_path, 'Offer letter (signed)', p.offer.offer_signed_at, 'signed'); add(OD, p.offer.pd_pdf_path, 'Position description (signed)', p.offer.pd_signed_at, 'signed') }
   if (p.offerId) {
     const { data: f } = await db.from('step1_forms').select('pdfs, signatures').eq('offer_id', p.offerId).maybeSingle()
-    for (const [k, v] of Object.entries((f?.pdfs || {}) as Record<string, Any>)) add(OD, typeof v === 'string' ? v : v?.path, 'Step 1: ' + (FORM_TITLES[k] || k) + ' (signed)', (f?.signatures || {})[k]?.at, 'signed')
+    for (const [k, v] of Object.entries((f?.pdfs || {}) as Record<string, Any>)) add(OD, typeof v === 'string' ? v : v?.path, 'Step 1: ' + (FORM_TITLES[k] || FORMS[k]?.title || k) + ' (signed)', (f?.signatures || {})[k]?.at, 'signed')
   }
   for (const r of [p.cand, p.rec]) { if (!r) continue; for (const [k, label] of PROOFS) add(LD, r[k], label, r[k.replace(/_(proof|pdf)$/, '_date')] || null, 'proof') }
   if (p.offerId) {
@@ -119,7 +120,7 @@ export async function timeline(db: Any, T: Any, p: Any) {
       const [type, label] = e.result === 'esign_consent' ? ['received', 'They agreed to sign electronically'] : OFFER_EVENTS[e.kind] || ['done', words(String(e.kind))]
       if (e.result === 'esign_consent') { push(e.at, type, label + (e.detail?.ip ? ' (device address ' + S(e.detail.ip, 64) + ')' : ''), p.name || 'them'); continue }
       const d = e.detail || {}, prac = d.practice ? ' (practice: recorded, not sent)' : ''
-      const form = d.form ? ': ' + (FORM_TITLES[d.form] || d.form) : ''
+      const form = d.form ? ': ' + (FORM_TITLES[d.form] || FORMS[d.form]?.title || d.form) : ''
       push(e.at, e.result && /fail|refus/.test(String(e.result)) ? 'refused' : type, label + form + (type === 'sent' ? prac : '') + (e.result && e.result !== 'ok' ? ' · ' + e.result : '') + (d.note ? ' · "' + S(d.note, 120) + '"' : ''), e.by_who === 'caregiver' ? (p.name || 'them') : e.by_who)
     }
   }
@@ -189,7 +190,7 @@ Deno.serve(async (req) => {
       for (const id of ids) {
         const f = (rows ?? []).find((r: Any) => r.offer_id === id), sent = ev.filter((e: Any) => e.offer_id === id && (e.kind === 'step1_sent' || e.kind === 'step1_resent'))
         out[id] = { sent_at: sent[0]?.at ?? null, practice: !!sent[0]?.detail?.practice, sends: sent.length, started_at: f?.started_at ?? null, screen: f?.current_screen ?? null,
-          signed: Object.keys(f?.signatures || {}).length, forms: 7, completed_at: f?.completed_at ?? null }
+          signed: Object.keys(f?.signatures || {}).length, forms: FORM_ORDER.length, completed_at: f?.completed_at ?? null }
       }
       return json({ ok: true, progress: out })
     }

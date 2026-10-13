@@ -10,7 +10,7 @@
 // Two forms carry a status other than 'proposed': the FCRA disclosure is a DRAFT FOR COUNSEL (her decision 7) and the
 // screening package list is TO CONFIRM (her decision 4). Fictional practice only until each is approved.
 export const STEP1_VERSION = 5   // 2026-10-13: the permission form (5a v2) replaces the FCRA draft; application v4, details v4. Before: 2026-10-11 (her approval of the Step 1 previews): the application and the reference consent at version 3 (tasks per job, family care, backup references); the vehicle form and the EDL/FCSR consent at version 3; two forms at version 2; the FCRA draft at version 1
-export type FormKey = 'employee_application' | 'reference_consent' | 'fcra_disclosure' | 'edl_fcsr_consent' | 'availability' | 'experience' | 'vehicle'
+export type FormKey = 'employee_application' | 'reference_consent' | 'fcra_disclosure' | 'edl_fcsr_consent' | 'availability' | 'experience' | 'vehicle' | (string & {})
 export type FormStatus = 'proposed' | 'draft_for_counsel' | 'to_confirm'
 /** One box inside a card (a job, a family-care entry, a reference). 'skills' are keys of SKILLS; 'lifts' shows only when a
     lift is ticked; 'refresher' offers only the tasks ticked on the same card, plus 'none'. */
@@ -18,7 +18,10 @@ export type Field = { k: string; label: string; kind: 'text' | 'tel' | 'email' |
 export type Item = { id: string; label: string; kind: 'text' | 'yesno' | 'choice' | 'multi' | 'date' | 'statement' | 'table' | 'number' | 'initials' | 'photo' | 'cards'; options?: string[]; required?: boolean; note?: string; locked?: boolean; fields?: Field[]; max?: number; add?: string }
 /** tone 'cheer': shown as an encouraging box; tip: one short line in a highlighted box (both are wording, in the fingerprint) */
 export type Section = { h: string; p?: string[]; items?: Item[]; tone?: 'cheer'; tip?: string }
-export type Form = { key: FormKey; screen: string; title: string; version: number; status: FormStatus; intro?: string[]; sections: Section[]; certification: string[]; signature: 'typed' | 'typed+initials' }
+/** 2026-10-13 (Samantha: long documents such as the Employment Agreement and the Employee Manual are shown WHOLE in one
+    scrollable reader on their Step 1 screen, with a copy to open or save, and the acknowledgment, any separate initials
+    and the signature right below): layout 'document'. `short` is the screen's title in the screen list. */
+export type Form = { key: FormKey; screen: string; title: string; short?: string; layout?: 'document'; version: number; status: FormStatus; intro?: string[]; sections: Section[]; certification: string[]; signature: 'typed' | 'typed+initials' }
 
 export const OFFICE_PHONE = '(417) 234-8494'
 export const COMPANY = 'Troutman Enterprises, LLC DBA Caring Companions In-Home Senior Care'
@@ -337,3 +340,10 @@ export const APPROVED_FOR_REAL: Partial<Record<FormKey, number>> = {}
 /** 2026-10-13: a real (non-practice) applicant may sign a form only at a version Samantha approved for real. */
 export const approvedForReal = (k: FormKey): boolean => APPROVED_FOR_REAL[k] === FORMS[k].version
 export const allApprovedForReal = (): boolean => FORM_ORDER.every(approvedForReal)
+/** 2026-10-13: the Step 1 screens follow the form list. The first ten are fixed; a form added later gets its own screen
+    (its `screen` key) before "All done", in FORM_ORDER order. */
+export const BASE_SCREENS = ['1', '2', '3', '4', '5a', '5b', '6', '7', '8', '9']
+export function step1Screens(): string[] {
+  const extra = FORM_ORDER.map((k) => FORMS[k].screen).filter((x) => !BASE_SCREENS.includes(x) && x !== '2 and 3')
+  return [...BASE_SCREENS.slice(0, -1), ...extra.filter((x, i) => extra.indexOf(x) === i), '9']
+}

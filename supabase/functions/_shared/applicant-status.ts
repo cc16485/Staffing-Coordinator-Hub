@@ -1,4 +1,5 @@
 // =============================================================================
+import { FORMS, FORM_ORDER } from './step1-documents.ts'
 // applicant-status.ts · WHERE ONE PERSON IS, FROM APPLICATION TO APPROVED TO WORK (Samantha 2026-10-11: "When viewing a real
 // applicant, I want our Care Coordinators and Recruiting & Orientation staff to be able to see: which steps have been
 // completed; which step the applicant is currently on; what information they've submitted; which forms are signed or still
@@ -14,8 +15,10 @@ const S = (v: unknown, n = 160) => String(v ?? '').trim().slice(0, n)
 export const STAGES = ['Application', 'Prescreening', 'Interview booking', 'Interview', 'Offer', 'Offer signature', 'Step 1', 'Background & References', 'Step 2 in Viventium', 'Orientation', 'Training', 'Approved to Work'] as const
 /* readiness-card stage → walkthrough stage (the page uses it on the readiness card's own rail) */
 export const JOURNEY_STAGE: Record<string, number> = { screening: 7, approval: 7, step2: 8, orientation: 9, training: 10, ready: 11, active: 11 }
-export const STEP1_FORMS: [string, string][] = [['employee_application', 'Employee Application'], ['reference_consent', 'Reference Check and Authorization Consent'], ['fcra_disclosure', 'Permission for Background Checks and References'],
-  ['edl_fcsr_consent', 'Details for the Background Checks'], ['availability', 'Availability and Scheduling Commitment'], ['experience', 'Experience and Client Matching Profile'], ['vehicle', 'Personal Vehicle Insurance Responsibility']]
+/* 2026-10-13: the short names of the first seven; any form added later uses its own short name or title, in form order */
+const STEP1_SHORT: Record<string, string> = Object.fromEntries([['employee_application', 'Employee Application'], ['reference_consent', 'Reference Check and Authorization Consent'], ['fcra_disclosure', 'Permission for Background Checks and References'],
+  ['edl_fcsr_consent', 'Details for the Background Checks'], ['availability', 'Availability and Scheduling Commitment'], ['experience', 'Experience and Client Matching Profile'], ['vehicle', 'Personal Vehicle Insurance Responsibility']])
+export const STEP1_FORMS: [string, string][] = FORM_ORDER.map((k) => [k, STEP1_SHORT[k] || FORMS[k].short || FORMS[k].title])
 const day = (iso: unknown) => { const t = Date.parse(String(iso || '')); return Number.isFinite(t) ? new Date(t).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '' }
 
 export type StatusIn = { app?: Any; bookings?: Any[]; offer?: Any; step1?: Any; cand?: Any; rec?: Any; journey?: Any; refs?: Any[]; experience?: Any; owner?: { name?: string } | null }
@@ -44,7 +47,7 @@ export function applicantStatus(x: StatusIn): Any {
   const outstanding = forms.filter((k) => !k.signed_at)
   if (!newPath && !f) { st[6].state = 'na'; st[6].note = 'Old process: the start link and Viventium Group 1' }
   else if (f?.completed_at) done(6, f.completed_at)
-  else if (o?.offer_signed_at && o?.pd_signed_at) st[6].note = forms.length - outstanding.length + ' of 7 forms signed' + (f?.started_at ? '' : '; not opened yet')
+  else if (o?.offer_signed_at && o?.pd_signed_at) st[6].note = forms.length - outstanding.length + ' of ' + forms.length + ' forms signed' + (f?.started_at ? '' : '; not opened yet')
   /* 8 to 12: the readiness card answers these (the page fills them); here only what the records say outright */
   const readiness = !!x.journey
   if (!readiness && x.cand) st[7].note = 'In Background & References'
@@ -67,7 +70,7 @@ export function applicantStatus(x: StatusIn): Any {
   else if (cur === 3) next = b?.status === 'booked' ? R('The interview, ' + day(b.starts_at), 'the interviewer', 'Reminders go by themselves') : b?.status === 'noshow' ? R('Rebook or close: they missed the interview', 'the office') : R('Interview them', 'the office')
   else if (cur === 4) next = R('Decide: offer, candidate pool or not hiring', 'the office', 'After the interview')
   else if (cur === 5) next = R('They sign the offer letter and the position description', 'the applicant', o?.offer_expires_at ? 'Open until ' + day(o.offer_expires_at) + '; reminders on day 2 and day 5' : '')
-  else if (cur === 6) next = R('They finish Step 1 (' + (7 - outstanding.length) + ' of 7 signed)', 'the applicant', 'Reminders on day 2 and day 4')
+  else if (cur === 6) next = R('They finish Step 1 (' + (forms.length - outstanding.length) + ' of ' + forms.length + ' signed)', 'the applicant', 'Reminders on day 2 and day 4')
   else if (cur >= 7 && !readiness) next = R('Start the background checks and references', ownerName, 'Step 1 is complete: their signed permission is in')
   else if (cur >= 7) next = { from_readiness: true }   /* the readiness card's own next step (title, owner, why), filled by the page */
   else next = R('Nothing left: Approved to Work', 'nobody')

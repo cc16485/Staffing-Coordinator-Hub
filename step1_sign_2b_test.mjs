@@ -263,6 +263,24 @@ ck('a purged record reveals nothing (410)', r.status === 410, r); DB.step1_ident
   delete env.GHL_TOKEN; delete env.GHL_LOCATION_ID; globalThis.fetch = saved
 }
 
+/* ═══ 2026-10-13: a long document (layout 'document', e.g. the Employment Agreement) with separate initials ═══ */
+{
+  const DOCF = { key: 'test_long_doc', screen: '8b', title: 'Test Long Agreement', short: 'Test agreement', layout: 'document', version: 1, status: 'proposed', signature: 'typed',
+    sections: [{ h: '1. Duties', p: ['Paragraph one. '.repeat(40)] }, { h: '19. Arbitration', p: ['Arbitration words. '.repeat(30)], items: [{ id: 'tld_arbitration_initials', label: 'Your initials: arbitration', kind: 'initials', required: true }] }],
+    certification: ['I have read the whole agreement.'] }
+  D.FORMS.test_long_doc = DOCF; D.FORM_ORDER.push('test_long_doc'); D.APPROVED_FOR_REAL.test_long_doc = 1
+  ck('a form added later gets its own screen before All done', JSON.stringify(D.step1Screens()) === JSON.stringify(['1', '2', '3', '4', '5a', '5b', '6', '7', '8', '8b', '9']), D.step1Screens())
+  ck('the long document asks for its separate initials before it can be signed', M.missing('test_long_doc', {}, { ssn: null, dob: false, license: null }).includes('Your initials: arbitration') && M.missing('test_long_doc', { tld_arbitration_initials: 'AL' }, { ssn: null, dob: false, license: null }).length === 0)
+  r = await call({ action: 'document', ...link, form: 'test_long_doc' })
+  const docPdf = r.j && r.j.pdf_base64 ? Buffer.from(r.j.pdf_base64, 'base64').toString('latin1') : ''
+  ck('a copy to open or save: the whole document as a PDF, by their own link, unsigned', r.status === 200 && docPdf.startsWith('%PDF-') && r.j.version === 1, { status: r.status, keys: r.j && Object.keys(r.j) })
+  r = await call({ action: 'document', form: 'test_long_doc', o: OID, e: link.e, t: 'bad' })
+  ck('...never without a valid link', r.status === 401, r.status)
+  r = await call({ action: 'view', ...link })
+  ck('the page receives the document layout, its short name and the extra screen', r.j.forms.some((f) => f.key === 'test_long_doc' && f.layout === 'document' && f.short === 'Test agreement') && r.j.screens.includes('8b'), r.j.screens)
+  delete D.FORMS.test_long_doc; D.FORM_ORDER.pop(); delete D.APPROVED_FOR_REAL.test_long_doc
+}
+
 /* ═══ SLICE 2d: what a signed form lands on the Background & References row ═══ */
 const LP = M.landingPatch
 ck('landingPatch: the application lands lived-outside (yes), fingerprints Required, the states and no-employer flag, stamped', (() => { const p = LP('employee_application', { lived_outside_mo: 'yes', states_lived: ['KS'], no_employer_history: 'yes' }, '2026-10-10T03:00:00Z'); return p.oos === 'yes' && p.fp === 'Required' && p.no_employer_history === true && p.step1_landed.employee_application === '2026-10-10T03:00:00Z' && p.step1_landed.states_lived[0] === 'KS' })())
