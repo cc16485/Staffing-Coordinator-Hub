@@ -25,5 +25,12 @@ ck('no em dash in any row', !defs.some(([, d]) => /—/.test(JSON.stringify(d)))
 ck('the self-check refuses active caregiver rows and any table grant to the pages', /caregiver catalog rows must stay inactive/.test(c) && /has_table_privilege\('authenticated', 'public.client_journey', 'select'\)/.test(c))
 const r = code(rb)
 ck('rollback: deletes nothing; rows go inactive; the columns go only when no caregiver journey exists', !/delete from|truncate|drop table/.test(r) && /set active = false/.test(r) && /if exists \(select 1 from public.client_journey where subject = 'caregiver'\)/.test(r) && /drop column if exists subject/.test(r))
+/* 2026-10-13 (her ruling): participant rights needs the Step 1 signature AND the Orientation Video Call explanation; both files say so */
+const pr = (txt) => { const m = /set def = def \|\| '(\{[^']*\})'::jsonb,?\s*(?:updated_by[^;]*)?where key = 'cg\.step2\.participant_rights'/.exec(txt); return m ? JSON.parse(m[1]) : null }
+const vf = pr(fs.readFileSync('supabase/step1-viventium-forms.sql', 'utf8')), wr = pr(fs.readFileSync('supabase/welcome-rights-explained.sql', 'utf8'))
+ck('participant rights: the Step 1 forms file and the rights file give the same row: received and reviewed in Step 1 AND explained at the Orientation Video Call, a record row, no em dash', vf && wr && JSON.stringify(vf) === JSON.stringify(wr) && /signed in Step 1/.test(vf.title) && /explained at the Orientation Video Call/.test(vf.title) && vf.proof === 'record' && /AND the office record at the Orientation Video Call/.test(vf.evidence_required) && !/\u2014/.test(JSON.stringify(vf)), [vf, wr])
+const vr = fs.readFileSync('supabase/step1-viventium-forms-rollback.sql', 'utf8')
+ck('its rollback puts the Viventium wording back and drops the added evidence wording', /\(def \|\| '\{"title": "Viventium Step 2: Participant rights acknowledged[^']*'::jsonb\) - 'evidence_required'/.test(vr))
+ck('no drug test row anywhere in the caregiver catalog (her ruling: no readiness row requires one)', !/drug/i.test(c) && !/drug/i.test(fs.readFileSync('supabase/slice7-axiscare-prep.sql', 'utf8')))
 for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note))
 const bad = res.filter((x) => !x[1]).length; console.log(`${res.length - bad}/${res.length} passed`); process.exit(bad ? 1 : 0)

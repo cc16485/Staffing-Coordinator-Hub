@@ -57,6 +57,14 @@ export async function facts(db: Any, j: Any, trn: { get(id: string): Promise<Any
     const ids = [...new Set([String(person.id), person.candidate_id != null ? String(person.candidate_id) : ''].filter(Boolean))]
     const { data: wc } = await db.from('welcome_calls').select('id, status, done_at, candidate_id').in('candidate_id', ids).order('invited_at', { ascending: false }).limit(5)
     f.welcome_call_done_at = (wc || []).find((w: Any) => w.status === 'done')?.done_at ?? null
+    /* 2026-10-13 (her ruling, 19 CSR 15-7.021(24)(B)5): the office explains Client Rights, the Code of Ethics and the HIPAA
+       policy at the Orientation Video Call and records it (who, when, their confirmation). Its own read, so a database
+       without the columns yet leaves only this row open (never the Orientation Video Call row). */
+    try {
+      const { data: rx } = await db.from('welcome_calls').select('id, rights_explained_at, rights_explained_by, rights_explained_by_email, rights_ack_confirmed, candidate_id').in('candidate_id', ids).order('invited_at', { ascending: false }).limit(5)
+      const x = (rx || []).find((w: Any) => w.rights_explained_at && w.rights_ack_confirmed === true)
+      f.rights_explained = x ? { at: x.rights_explained_at, by: x.rights_explained_by || null, by_email: x.rights_explained_by_email || null, welcome_call_id: x.id } : null
+    } catch { f.rights_explained = null }
     const { data: prof } = await db.from('caregiver_profiles').select('id, published, published_at, updated_at, candidate_id, status').in('candidate_id', ids).neq('status', 'withdrawn').limit(2)
     const p = (prof || []).find((x: Any) => x.published) || prof?.[0]; f.profile_published_at = p?.published ? (p.published_at || p.updated_at) : null
   }
@@ -64,6 +72,13 @@ export async function facts(db: Any, j: Any, trn: { get(id: string): Promise<Any
   return f
 }
 
+/** 2026-10-13: where participant rights stands, for the row and the cards: signed in Step 1 (receipt and review), explained at
+ *  the Orientation Video Call (date, who, their confirmation). Pure. */
+export function rightsState(f: Facts): { state: 'complete' | 'waiting_explanation' | 'waiting_signature'; signed_at: string | null; version: unknown; explained_at: string | null; explained_by: string | null } {
+  const cr = ((f?.step1?.signatures || {}) as Record<string, Any>).client_rights, rx = f?.rights_explained
+  const signed = !!cr?.at, explained = !!rx?.at
+  return { state: signed && explained ? 'complete' : signed ? 'waiting_explanation' : 'waiting_signature', signed_at: cr?.at ?? null, version: cr?.version ?? null, explained_at: rx?.at ?? null, explained_by: rx?.by ?? null }
+}
 export type Verdict = { key: string; state: 'complete' | 'blocked'; at: string; evidence: Record<string, unknown>; reason?: string }
 const iso = (v: unknown) => { const t = typeof v === 'string' && v ? Date.parse(v.length === 10 ? v + 'T12:00:00Z' : v) : NaN; return Number.isFinite(t) ? new Date(t).toISOString() : null }
 /** Which rows the facts satisfy right now. Pure. */
@@ -78,9 +93,14 @@ export function verifyRows(f: Facts, now = new Date().toISOString()): Verdict[] 
   }
   /* 2026-10-13: Samantha moved these acknowledgments from Viventium into Step 1: their signature there completes the row
      (the Employee Handbook stays in Viventium: her call, 2026-10-13) */
-  for (const [row, form] of [['cg.step2.code_of_ethics', 'code_of_ethics'], ['cg.step2.confidentiality', 'hipaa_privacy'], ['cg.step2.participant_rights', 'client_rights']]) {
+  for (const [row, form] of [['cg.step2.code_of_ethics', 'code_of_ethics'], ['cg.step2.confidentiality', 'hipaa_privacy']]) {
     const s = sigs[form]; if (s?.at) out.push({ key: row, state: 'complete', at: iso(s.at) || now, evidence: { via: 'step1', form, version: s.version, fingerprint: s.fingerprint, typed_name: s.typed_name } })
   }
+  /* 2026-10-13 (her ruling): participant rights needs BOTH the Step 1 Client Rights signature (receipt and review) AND the
+     office's record that all three were explained at the Orientation Video Call and they confirmed they understood */
+  const rs = rightsState(f)
+  if (rs.state === 'complete') { const cr = sigs.client_rights, rx = f.rights_explained
+    out.push({ key: 'cg.step2.participant_rights', state: 'complete', at: iso(Date.parse(cr.at) > Date.parse(rx.at) ? cr.at : rx.at) || now, evidence: { via: 'step1 + orientation video call', form: 'client_rights', version: cr.version, fingerprint: cr.fingerprint, typed_name: cr.typed_name, signed_at: cr.at, explained_at: rx.at, explained_by: rx.by, explained_by_email: rx.by_email, acknowledged: true, welcome_call_id: rx.welcome_call_id } }) }
   /* 2026-10-13: the company signature on the agreements that need it (none needs it = complete by itself once Step 1 is) */
   if (s1?.completed_at) { const left = needsCountersign(sigs, (s1?.countersignatures || {}) as Record<string, unknown>); if (!left.length) { const cs = Object.values((s1?.countersignatures || {}) as Record<string, Any>); out.push({ key: 'cg.company.countersign', state: 'complete', at: iso(cs.map((x) => x.at).sort().pop() || s1.completed_at) || now, evidence: cs.length ? { forms: Object.keys(s1.countersignatures), by: cs.map((x) => x.by_name) } : { none_required: true } }) } }
   if (sigs.reference_consent?.at && sigs.fcra_disclosure?.at && sigs.edl_fcsr_consent?.at) { const at = [sigs.reference_consent.at, sigs.fcra_disclosure.at, sigs.edl_fcsr_consent.at].sort().pop(); out.push({ key: 'cg.consent.checks', state: 'complete', at: iso(at) || now, evidence: { forms: ['reference_consent', 'fcra_disclosure', 'edl_fcsr_consent'] } }) }

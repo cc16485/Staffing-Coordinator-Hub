@@ -349,6 +349,9 @@ Deno.serve(async (req) => {
       const confirmed: string[] = []
       if (jr) {
         const keys = new Set<string>(); for (const t of ticked) { const k = rowFor(t); if (k) keys.add(k) }
+        /* 2026-10-13 (her ruling, 19 CSR 15-7.021(24)(B)5): participant rights completes only from the Step 1 Client Rights signature
+           AND the explanation recorded at the Orientation Video Call, never from a Viventium tick */
+        keys.delete('cg.step2.participant_rights')
         if (i9s2) keys.add('cg.i9.section2')
         for (const k of keys) {
           const cur = jr.steps.find((s: Any) => s.step_key === k); if (cur && DONE.includes(cur.state)) continue

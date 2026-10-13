@@ -377,5 +377,33 @@ ck('GO-LIVE stall: the next sweep: still one card', ops().filter((i) => i.id ===
 DB.step1_forms.push({ offer_id: OID3, answers: {}, signatures: {}, completed_at: '2026-10-09T15:00:00Z' })
 await call({ action: 'sweep' }, 'cron')
 ck('GO-LIVE stall: Step 1 completes: the card closes on its own', stall().status === 'done')
+/* ═══ 2026-10-13 (her ruling, 19 CSR 15-7.021(24)(B)5): participant rights = the Step 1 Client Rights signature (receipt and
+   review) AND the explanation recorded at the Orientation Video Call; neither alone completes the row ═══ */
+{
+  const SIG = { at: '2026-10-10T15:00:00Z', version: 1, fingerprint: 'fp-cr', typed_name: 'Ava Lee' }
+  const RX = { at: '2026-10-12T16:00:00Z', by: 'Krystal', by_email: 'krystal@mo-care.com', welcome_call_id: 'w9' }
+  const pr = (f) => CJ.verifyRows(f, '2026-10-13T00:00:00Z').find((v) => v.key === 'cg.step2.participant_rights')
+  ck('rights: the Step 1 signature alone does NOT complete participant rights (waiting for the explanation)', !pr({ step1: { signatures: { client_rights: SIG } } }) && CJ.rightsState({ step1: { signatures: { client_rights: SIG } } }).state === 'waiting_explanation')
+  ck('rights: the explanation alone does NOT complete it (waiting for the Step 1 signature)', !pr({ step1: { signatures: {} }, rights_explained: RX }) && CJ.rightsState({ rights_explained: RX }).state === 'waiting_signature')
+  const v = pr({ step1: { signatures: { client_rights: SIG } }, rights_explained: RX })
+  ck('rights: both: complete at the later of the two, evidence names both (signed at and version; explained at and by)', v && v.state === 'complete' && v.at === '2026-10-12T16:00:00.000Z' && v.evidence.signed_at === SIG.at && v.evidence.version === 1 && v.evidence.explained_at === RX.at && v.evidence.explained_by === 'Krystal' && v.evidence.explained_by_email === 'krystal@mo-care.com' && v.evidence.acknowledged === true, v)
+  const both = CJ.verifyRows({ step1: { signatures: { code_of_ethics: SIG, hipaa_privacy: SIG, client_rights: SIG } } }).map((x) => x.key)
+  ck('rights: the Code of Ethics and HIPAA rows still complete from their Step 1 signatures (unchanged)', both.includes('cg.step2.code_of_ethics') && both.includes('cg.step2.confidentiality') && !both.includes('cg.step2.participant_rights'), both)
+  reset()
+  const O9 = '99999999-2222-4333-8444-555555555555'
+  DB.app_data = [{ key: 'candidates', data: [{ id: 950, offer_id: O9 }] }, { key: 'caregivers', data: [] }]
+  DB.step1_forms = [{ offer_id: O9, answers: {}, signatures: { client_rights: SIG } }]
+  DB.welcome_calls = [{ id: 'w9', candidate_id: '950', status: 'done', done_at: RX.at, invited_at: '2026-10-11', rights_explained_at: null, rights_ack_confirmed: false }]
+  let f = await CJ.facts(db, { offer_id: O9 }, null)
+  ck('facts: a done call WITHOUT the recorded explanation: Orientation Video Call verified, participant rights still waiting', f.welcome_call_done_at === RX.at && !f.rights_explained && !pr(f) && CJ.verifyRows(f).some((x) => x.key === 'cg.welcome.call'), f)
+  Object.assign(DB.welcome_calls[0], { rights_explained_at: RX.at, rights_explained_by: 'Krystal', rights_explained_by_email: 'krystal@mo-care.com', rights_ack_confirmed: false })
+  f = await CJ.facts(db, { offer_id: O9 }, null)
+  ck('facts: an explanation without their confirmation does not count', !f.rights_explained && !pr(f))
+  DB.welcome_calls[0].rights_ack_confirmed = true
+  f = await CJ.facts(db, { offer_id: O9 }, null)
+  ck('facts: the recorded explanation with their confirmation is read from welcome_calls, and the row completes', f.rights_explained && f.rights_explained.by === 'Krystal' && pr(f)?.state === 'complete', f.rights_explained)
+  const sqlF = fs.readFileSync(path.join(ROOT, 'supabase/step1-viventium-forms.sql'), 'utf8')
+  ck('catalog: the participant rights title says signed in Step 1 AND explained at the Orientation Video Call', /"title": "Client Rights, Code of Ethics and confidentiality: received and reviewed \(signed in Step 1\) and explained at the Orientation Video Call \(19 CSR 15-7\.021\(24\)\(B\)5\)"[^;]*where key = 'cg\.step2\.participant_rights'/.test(sqlF))
+}
 for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note))
 const bad = res.filter((x) => !x[1]).length; console.log(`${res.length - bad}/${res.length} passed`); process.exit(bad ? 1 : 0)

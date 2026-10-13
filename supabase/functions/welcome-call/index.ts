@@ -15,8 +15,15 @@
 //                                                                   booking (if any) is left alone, so if they cannot
 //                                                                   join nothing changes. (Samantha: an interview
 //                                                                   no-show frees a coordinator; offer the time.)
-//   action 'done'       {id}                                     -> marks the call done (who, when) and frees any
-//                                                                   later time they still had booked
+//   action 'done'       {id, rights_explained?: true}            -> marks the call done (who, when) and frees any
+//                                                                   later time they still had booked. 2026-10-13 (her ruling,
+//                                                                   19 CSR 15-7.021(24)(B)5): on the NEW onboarding path (a
+//                                                                   readiness card exists) it is refused unless the office ticked
+//                                                                   "I went over the Client Rights, the Code of Ethics and the
+//                                                                   HIPAA policy with them, and they confirmed they understand";
+//                                                                   the tick records rights_explained_at / _by / _by_email and
+//                                                                   rights_ack_confirmed (once, never changed) and a readiness
+//                                                                   event. The old path is unchanged (the tick is still kept).
 // The WORDING is fixed here; the caller never supplies message text. Texts go 8am-6pm Central only, never to someone
 // whose application said no to texts, and end "Reply STOP to opt out."; emails go any time. Every message goes
 // through GoHighLevel (shows in Conversations) via the universal opt-out door; a refusal raises a card.
@@ -49,6 +56,9 @@ const btn = (href: string, label: string) => `<p><a href="${href}" style="backgr
 
 /* 2026-10-01 Samantha: the invite must say the call is how they get set up to do their orientation from their phone or computer.
    Her words, kept in one place so the Hub preview and the send can never differ. */
+/* 2026-10-13: the words when done is pressed without the explanation on the new path (the Hub shows them as they are) */
+export const RIGHTS_NEEDED = 'First tick "I went over the Client Rights, the Code of Ethics and the HIPAA policy with them, and they confirmed they understand". ' +
+  'On the new onboarding path the call cannot be marked done until the explanation is recorded. Nothing was changed.'
 export function inviteMessages(first: string, link: string) {
   return {
     text: withStop(`Hi ${first}, great news from Caring Companions! Your background check and references are complete. ` +
@@ -102,7 +112,7 @@ Deno.serve(async (req) => {
   let action = String(b.action || 'preview')
   /* SLICE 4 (2026-10-10, option A): at Verify Viventium Step 2 Complete the Step 2 server sends the invitation itself, through
      this same path (same words, same gate, same opt-out door), on the job secret. Nobody else may use this door. */
-  let staff = '', onlyText = false, auto = false
+  let staff = '', staffEmail = '', onlyText = false, auto = false
   if (action === 'invite_auto') {
     auto = true
     /* GO-LIVE (2026-10-13, hold rather than drop): the Step 2 pass sends an invitation TEXT that was held after hours with
@@ -113,7 +123,7 @@ Deno.serve(async (req) => {
   } else {
     const who = await requireStaff(db, req, OFFICE_ROLES)
     if (!who.ok) return json({ error: who.error }, who.status)
-    staff = who.name || who.email
+    staff = who.name || who.email; staffEmail = who.email || ''
   }
 
   if (action === 'preview') return json({ ok: true, ...inviteMessages(clean(b.first, 40) || 'there', bookLink('…')) })
@@ -181,9 +191,22 @@ Deno.serve(async (req) => {
   const free = () => db.from('coordinator_busy').delete().eq('source', 'welcome_call').eq('source_id', id)
 
   if (action === 'done') {
-    await db.from('welcome_calls').update({ status: 'done', done_at: now, done_by: staff, updated_at: now }).eq('id', id)
+    /* 2026-10-13 (her ruling): the Step 1 Client Rights signature is receipt and review only; the office explains Client Rights,
+       the Code of Ethics and the HIPAA policy on this call. On the new path (a readiness card exists) done needs that tick. */
+    const rightsTick = b.rights_explained === true
+    const g = await caregiverGate(db, { candidate_id: w.candidate_id }, 'cg.welcome.call')
+    if (g.unconfirmed && !rightsTick) return json({ error: g.why, gate: 'rights_explained' }, 409)
+    if (g.journey_id && !rightsTick) return json({ error: RIGHTS_NEEDED, needs: 'rights_explained' }, 409)
+    const rights: Record<string, unknown> = rightsTick && !w.rights_explained_at ? { rights_explained_at: now, rights_explained_by: staff, rights_explained_by_email: staffEmail || null, rights_ack_confirmed: true } : {}
+    const { error } = await db.from('welcome_calls').update({ status: 'done', done_at: now, done_by: staff, ...rights, updated_at: now }).eq('id', id)
+    if (error) return json({ error: 'The Orientation Video Call could not be marked done: ' + clean(error.message, 120) + '. Nothing was changed.' }, 500)
     await free()                                   // a later time they still held goes back on offer
-    return json({ ok: true, done: true })
+    if (rights.rights_explained_at && g.journey_id) {
+      /* the readiness history: who explained what, and when (the sweep then completes the row if Step 1 is signed) */
+      await db.from('client_journey_event').insert({ journey_id: g.journey_id, step_key: 'cg.step2.participant_rights', actor_email: staffEmail || 'hub', actor_name: staff || 'The Hub', kind: 'rights_explained',
+        detail: { welcome_call_id: id, explained_at: now, explained_by: staff, explained_by_email: staffEmail || null, acknowledged: true, explained: ['client_rights', 'code_of_ethics', 'hipaa_privacy'] }, reason: null })
+    }
+    return json({ ok: true, done: true, rights_explained: !!(rights.rights_explained_at || w.rights_explained_at), new_path: !!g.journey_id })
   }
   if (action === 'now') {
     if (!['invited', 'booked', 'noshow'].includes(w.status)) return json({ error: 'That invitation is closed.' }, 409)
