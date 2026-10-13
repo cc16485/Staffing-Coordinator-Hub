@@ -14,8 +14,8 @@ const S = (v: unknown, n = 160) => String(v ?? '').trim().slice(0, n)
 export const STAGES = ['Application', 'Prescreening', 'Interview booking', 'Interview', 'Offer', 'Offer signature', 'Step 1', 'Background & References', 'Step 2 in Viventium', 'Orientation', 'Training', 'Approved to Work'] as const
 /* readiness-card stage → walkthrough stage (the page uses it on the readiness card's own rail) */
 export const JOURNEY_STAGE: Record<string, number> = { screening: 7, approval: 7, step2: 8, orientation: 9, training: 10, ready: 11, active: 11 }
-export const STEP1_FORMS: [string, string][] = [['employee_application', 'Employee Application'], ['reference_consent', 'Reference Check and Authorization Consent'], ['fcra_disclosure', 'Background Check Disclosure'],
-  ['edl_fcsr_consent', 'EDL and FCSR Screening Consent'], ['availability', 'Availability and Scheduling Commitment'], ['experience', 'Experience and Client Matching Profile'], ['vehicle', 'Personal Vehicle Insurance Responsibility']]
+export const STEP1_FORMS: [string, string][] = [['employee_application', 'Employee Application'], ['reference_consent', 'Reference Check and Authorization Consent'], ['fcra_disclosure', 'Permission for Background Checks and References'],
+  ['edl_fcsr_consent', 'Details for the Background Checks'], ['availability', 'Availability and Scheduling Commitment'], ['experience', 'Experience and Client Matching Profile'], ['vehicle', 'Personal Vehicle Insurance Responsibility']]
 const day = (iso: unknown) => { const t = Date.parse(String(iso || '')); return Number.isFinite(t) ? new Date(t).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '' }
 
 export type StatusIn = { app?: Any; bookings?: Any[]; offer?: Any; step1?: Any; cand?: Any; rec?: Any; journey?: Any; refs?: Any[]; experience?: Any; owner?: { name?: string } | null }

@@ -128,7 +128,7 @@ for (const [n, sc] of S.entries()) {
   await step({ action: 'sign', form: 'employee_application', typed_name: name, consent: true })
   await step({ action: 'save', screen: '4', answers: Object.fromEntries(Object.entries(A.screen4).filter(([, v]) => v !== undefined)) })
   await step({ action: 'sign', form: 'reference_consent', typed_name: name, consent: true })
-  await step({ action: 'sign', form: 'fcra_disclosure', typed_name: name, consent: true })
+  await step({ action: 'save', screen: '5a', answers: { edl_listed: 'no', fcsr_listed: 'No' } }); await step({ action: 'sign', form: 'fcra_disclosure', typed_name: name, consent: true })
   await step({ action: 'identity', ssn: '987-65-4321', ssn2: '987-65-4321', dob: '1990-05-05' })
   await step({ action: 'save', screen: '5b', answers: A.screen5b }); await step({ action: 'sign', form: 'edl_fcsr_consent', typed_name: name, consent: true })
   await step({ action: 'save', screen: '6', answers: A.screen6 }); await step({ action: 'sign', form: 'availability', typed_name: name, consent: true, initials: sc.first.slice(0, 1) + 'P' })

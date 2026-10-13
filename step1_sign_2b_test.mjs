@@ -135,7 +135,9 @@ r = await call({ action: 'sign', ...link, form: 'reference_consent', typed_name:
 ck('references: missing answers named (2 professional, 2 personal)', r.status === 400 && /2 professional references/.test(r.j.error) && /2 personal references/.test(r.j.error), r)
 await call({ action: 'save', ...link, screen: '4', answers: { professional_refs: [{ name: 'Jane Boss', company: 'Home Helpers', role: 'Supervisor', phone: '417-555-0202', email: 'jane@hh.com', may_contact: 'yes' }, { name: 'Tom Lead', company: 'Visiting Angels', role: 'Manager', phone: '417-555-0303', may_contact: 'yes' }], personal_refs: [{ name: 'Sue Friend', relationship: 'Friend', phone: '417-555-0404', may_contact: 'yes' }, { name: 'Bob Neighbor', relationship: 'Neighbor', phone: '417-555-0505', may_contact: 'yes' }] } })
 r = await call({ action: 'sign', ...link, form: 'reference_consent', typed_name: 'Ava Lee', consent: true }); ck('references signed once the four are there', r.status === 200, r)
-r = await call({ action: 'sign', ...link, form: 'fcra_disclosure', typed_name: 'Ava Lee', consent: true }); ck('the FCRA disclosure signs on its own (nothing else on it)', r.status === 200, r)
+r = await call({ action: 'sign', ...link, form: 'fcra_disclosure', typed_name: 'Ava Lee', consent: true }); ck('the permission form refuses without Missouri\'s two required answers (EDL, FCSR)', r.status === 400 && /Employee Disqualification List/.test(r.j.error) && /Family Care Safety Registry/.test(r.j.error), r)
+r = await call({ action: 'save', ...link, screen: '5a', answers: { edl_listed: 'no', fcsr_listed: 'No' } })
+r = await call({ action: 'sign', ...link, form: 'fcra_disclosure', typed_name: 'Ava Lee', consent: true }); ck('the permission form signs once the criminal-history, EDL and FCSR answers are given', r.status === 200, r)
 
 /* ═══ identity: sealed, never in answers, last four only ═══ */
 r = await call({ action: 'sign', ...link, form: 'edl_fcsr_consent', typed_name: 'Ava Lee', consent: true })

@@ -26,8 +26,8 @@ const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: 
 const S = (v: unknown, n = 200) => String(v ?? '').trim().slice(0, n)
 const d10 = (v: unknown) => String(v ?? '').replace(/\D/g, '').slice(-10)
 const OD = 'onboarding-documents', LD = 'lead-docs'
-const FORM_TITLES: Record<string, string> = { employee_application: 'Employee Application', reference_consent: 'Reference Check and Authorization Consent', fcra_disclosure: 'Background Check Disclosure',
-  edl_fcsr_consent: 'EDL and FCSR Screening Consent', availability: 'Availability and Scheduling Commitment', experience: 'Experience and Client Matching Profile', vehicle: 'Personal Vehicle Insurance Responsibility' }
+const FORM_TITLES: Record<string, string> = { employee_application: 'Employee Application', reference_consent: 'Reference Check and Authorization Consent', fcra_disclosure: 'Permission for Background Checks and References',
+  edl_fcsr_consent: 'Details for the Background Checks', availability: 'Availability and Scheduling Commitment', experience: 'Experience and Client Matching Profile', vehicle: 'Personal Vehicle Insurance Responsibility' }
 const OFFER_EVENTS: Record<string, [string, string]> = {
   sent: ['sent', 'Offer sent'], resent: ['sent', 'Offer link sent again'], viewed: ['received', 'They opened the offer'], signed: ['done', 'Offer letter signed'], pd_signed: ['done', 'Position description signed'],
   declined: ['received', 'They declined the offer'], withdrawn: ['done', 'Offer withdrawn'], expired: ['done', 'Offer expired unsigned'], reminder_1: ['sent', 'Offer reminder 1'], reminder_2: ['sent', 'Offer reminder 2'],

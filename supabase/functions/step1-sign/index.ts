@@ -185,12 +185,13 @@ export function missing(form: FormKey, a: Record<string, unknown>, ident: Identi
   if (form === 'employee_application') {
     if (yes(a, 'lived_outside_mo')) need('states_lived', !empty(a.states_lived))
     if (yes(a, 'moving_violations')) need('moving_violations_detail', !empty(a.moving_violations_detail))
-    if (yes(a, 'convicted')) need('convictions', !empty(a.convictions))
     if (!yes(a, 'no_employer_history')) need('jobs', Array.isArray(a.jobs) && a.jobs.length > 0, 'Your work history (or tick "I have no previous employer to list")')
     const jobs = itemsOf(f).find((i) => i.id === 'jobs'), fam = itemsOf(f).find((i) => i.id === 'family_care')
     if (jobs && !yes(a, 'no_employer_history')) out.push(...cardsMissing(jobs, a.jobs, 'Job'))
     if (fam) out.push(...cardsMissing(fam, a.family_care, 'Family or private-client care'))
   }
+  /* 2026-10-13: the criminal-history questions live on the permission form (5a v2); details when they answer yes */
+  if (form === 'fcra_disclosure' && yes(a, 'convicted')) need('convictions', !empty(a.convictions))
   if (form === 'reference_consent') {
     /* v3: a reference counts once it has a phone or an email and their permission to contact; each card's own gaps are listed */
     const count = (v: unknown) => (Array.isArray(v) ? v : []).filter(usableRef).length

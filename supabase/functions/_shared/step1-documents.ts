@@ -9,7 +9,7 @@
 // wording is stored with every signature. Nothing here holds an answer: answers are merged at render time (2b/2c).
 // Two forms carry a status other than 'proposed': the FCRA disclosure is a DRAFT FOR COUNSEL (her decision 7) and the
 // screening package list is TO CONFIRM (her decision 4). Fictional practice only until each is approved.
-export const STEP1_VERSION = 4   // 2026-10-11 (her approval of the Step 1 previews): the application and the reference consent at version 3 (tasks per job, family care, backup references); the vehicle form and the EDL/FCSR consent at version 3; two forms at version 2; the FCRA draft at version 1
+export const STEP1_VERSION = 5   // 2026-10-13: the permission form (5a v2) replaces the FCRA draft; application v4, details v4. Before: 2026-10-11 (her approval of the Step 1 previews): the application and the reference consent at version 3 (tasks per job, family care, backup references); the vehicle form and the EDL/FCSR consent at version 3; two forms at version 2; the FCRA draft at version 1
 export type FormKey = 'employee_application' | 'reference_consent' | 'fcra_disclosure' | 'edl_fcsr_consent' | 'availability' | 'experience' | 'vehicle'
 export type FormStatus = 'proposed' | 'draft_for_counsel' | 'to_confirm'
 /** One box inside a card (a job, a family-care entry, a reference). 'skills' are keys of SKILLS; 'lifts' shows only when a
@@ -86,7 +86,7 @@ const text = (id: string, label: string, extra: Partial<Item> = {}): Item => ({ 
 
 export const FORMS: Record<FormKey, Form> = {
   employee_application: {
-    key: 'employee_application', screen: '2 and 3', title: 'Employee Application', version: 3, status: 'proposed', signature: 'typed',
+    key: 'employee_application', screen: '2 and 3', title: 'Employee Application', version: 4, status: 'proposed', signature: 'typed',
     sections: [
       { h: 'About you', p: ['Your name, phone and email are shown from your offer. Tap any of them to correct it.'], items: [
         text('preferred_name', 'What should families and the office call you?', { note: 'Your preferred first name, if it is different from your legal name.' }),
@@ -99,12 +99,11 @@ export const FORMS: Record<FormKey, Form> = {
       { h: 'College / University', items: [text('co_name', 'School Name'), text('co_years', 'Years Attended'), yesno('co_grad', 'Did you Graduate?', { required: false }), text('co_major', 'Major')] },
       /* 2b: these ids are cert_number / cert_expires, not license_number / license_expires: the driver's license on the vehicle form is a different fact and the two must never share an answer */
       { h: 'Other Licenses / Certification', items: [yesno('cna', 'CNA License?'), yesno('hha', 'HHA Certification?'), text('cert_number', 'If yes, License Number'), { id: 'cert_expires', label: 'Expiration Date', kind: 'date' }] },
-      /* v2 (her decision): no "violation of the law" line; neutral, lawful criminal-history wording */
-      { h: 'Criminal Record / Driving Record', p: ['Please answer these completely and honestly. A conviction is not an automatic bar to employment: we consider the nature of the offense, how long ago it happened, and whether it relates to the work. Your answers are considered together with the background checks described later in Step 1. You do not need to list any record that has been expunged or sealed.'], items: [
+      /* v4 (2026-10-13): the criminal-history questions moved to "Permission for Background Checks and References" (screen 5a),
+         where Missouri's required disclosures are asked together (RSMo 192.2495.5); the driving questions stay here */
+      { h: 'Driving Record', items: [
         yesno('moving_violations', 'Have you had any moving traffic violations?'), text('moving_violations_detail', 'If yes, please describe.'),
         yesno('license_suspended', "Have you had your driver's license suspended or revoked in the last 3 years?"),
-        yesno('convicted', 'Have you been convicted of a crime or pled guilty or no contest to a crime (misdemeanor or felony)?'),
-        { id: 'convictions', label: 'If yes, please complete the information section below.', kind: 'table', options: ['Offense', 'Date of Conviction', 'Misdemeanor or Felony', 'Location'] },
       ] },
       /* v3 (2026-10-11, her approval of the previews): her "Your experience matters!" words first; a card per job with the
          tasks done there, the lift type, and what they would want a refresher on; family or private-client care as its own
@@ -171,41 +170,58 @@ export const FORMS: Record<FormKey, Form> = {
     ],
     certification: ['I have read this authorization and I agree to it.'],
   },
+  /* v2 (2026-10-13, Samantha: "rewrite the background-check authorization as a plain, understandable permission form; verify
+     the actual legal requirements"). No screening company is used, so the federal consumer-report rules (FCRA standalone
+     disclosure, two-step adverse action) do not apply to the office's own searches of government records (FTC staff report
+     "40 Years of Experience with the FCRA", 2011, pp. 20, 32, 58). Missouri's rules do: the applicant signs a consent for a
+     criminal records review (RSMo 43.540) and discloses criminal history, EDL status and FCSR status (RSMo 192.2495.5);
+     knowingly hiding criminal history is a class A misdemeanor (192.2495.6). Because Missouri requires us to exclude people
+     with certain convictions, expunged offenses must be disclosed too, and we must say so (RSMo 610.140.10(6) and .11).
+     If a screening company is ever used again, the FCRA disclosure returns for that check. Key kept as fcra_disclosure. */
   fcra_disclosure: {
-    key: 'fcra_disclosure', screen: '5a', title: 'Disclosure Regarding Background Investigation', version: 1, status: 'draft_for_counsel', signature: 'typed',
-    /* 15 U.S.C. 1681b(b)(2)(A): a document that consists solely of the disclosure; the authorization may be on it. Nothing else. */
+    key: 'fcra_disclosure', screen: '5a', title: 'Permission for Background Checks and References', version: 2, status: 'proposed', signature: 'typed',
     sections: [
-      { h: 'Disclosure', p: [`${COMPANY} ("the Company") may obtain information about you from a consumer reporting agency for employment purposes. This information may be in the form of a consumer report, which may include information about your character, general reputation, personal characteristics and mode of living, to the extent permitted by law, as well as your criminal history, motor vehicle records and other public record information.`, 'You have the right to request a copy of the report and a summary of your rights under the Fair Credit Reporting Act. The Summary of Your Rights Under the Fair Credit Reporting Act is linked on this screen.'] },
-      { h: 'Authorization', p: ['I have read this disclosure and I authorize the Company to obtain consumer reports about me for employment purposes, now and, if I am hired, at any time during my employment.'] },
+      { h: 'Why we ask', p: ['Missouri law says we must check every person who will care for our clients before they start. We run these checks ourselves, using government records. We do not use a background screening company.'] },
+      { h: 'What we check', p: [
+        '1. The Missouri Employee Disqualification List (EDL). Missouri law requires this.',
+        '2. The Family Care Safety Registry (FCSR). Missouri law requires this. You register yourself within 15 days of starting work, and we cannot employ someone who will not register. FCSR results cover Missouri only.',
+        '3. The federal OIG exclusion list (people who may not be paid by Medicare or Medicaid).',
+        '4. Missouri court records on Case.net.',
+        '5. A fingerprint check through the Missouri State Highway Patrol, only if one is required (for example, if you have not lived in Missouri for the last five years). You will sign the Highway Patrol\'s own forms for it. You have the right to a copy of the results and to challenge them before we make a final decision.',
+        '6. Your driving record, only if you will drive clients.',
+        '7. Your references and past employers, the people you listed earlier in Step 1. We may call, text or email them about your work and character.',
+      ] },
+      { h: 'While you work here', p: ['Missouri requires us to keep checking the EDL. Our own policy is to recheck the EDL and the OIG list every month and to rescreen you through the FCSR every year.'] },
+      { h: 'Questions Missouri law requires you to answer', p: [
+        'Please answer these completely and honestly. Knowingly failing to tell us about your criminal history is a class A misdemeanor under Missouri law (RSMo 192.2495).',
+        'Because Missouri requires us to exclude people with certain convictions from this work, you must also tell us about any offense that was expunged (RSMo 610.140).',
+        'A record is not an automatic bar to employment: we consider the nature of the offense, how long ago it happened, and whether it relates to the work.',
+      ], items: [
+        yesno('convicted', 'Have you ever been convicted of, or pled guilty or no contest to, a misdemeanor or felony? Include any suspended imposition of sentence, probation or parole.'),
+        { id: 'convictions', label: 'If yes, please list each one.', kind: 'table', options: ['Offense', 'Date of Conviction', 'Misdemeanor or Felony', 'Location'] },
+        yesno('edl_listed', 'Are you on the Missouri Employee Disqualification List?'),
+        { id: 'fcsr_listed', label: 'Are you listed on any of the background check lists in the Family Care Safety Registry?', kind: 'choice', options: ['No', 'Yes', 'I am not sure'], required: true, note: 'These lists include Missouri criminal records, the sex offender registry, child abuse and neglect findings, and the EDL. If you are not sure, choose "I am not sure" and the office will talk it through with you.' },
+      ] },
     ],
-    certification: ['I have read the disclosure above and I authorize the Company to obtain consumer reports about me.'],
+    certification: [
+      'I consent to a criminal records review under RSMo 43.540 and to the checks listed above, using my name, date of birth and other identifying details.',
+      'I give Caring Companions permission to contact my references and past employers.',
+      'I understand the results are used only for hiring and employment decisions, and that this permission lasts while I apply and while I work here.',
+      'My answers to the questions above are true and complete.',
+    ],
   },
+  /* v4 (2026-10-13): the permission and the EDL/FCSR explanations moved to screen 5a; this form keeps only the details the
+     checks need. Key kept as edl_fcsr_consent. */
   edl_fcsr_consent: {
-    key: 'edl_fcsr_consent', screen: '5b', title: 'Missouri Employee Disqualification List and Family Care Safety Registry Consent', version: 3, status: 'proposed', signature: 'typed',
+    key: 'edl_fcsr_consent', screen: '5b', title: 'Your Details for the Background Checks', version: 4, status: 'proposed', signature: 'typed',
     sections: [
-      /* v2 (her decision 4): the EDL search and the FCSR registration and screening are separate paragraphs; what Missouri
-         requires is labelled as such, and what is Caring Companions' own policy is labelled as such (frequency to confirm) */
-      { h: 'Employee Disqualification List (a Missouri requirement)', p: [
-        `Missouri requires ${COMPANY} to check the Employee Disqualification List (EDL) before I am hired and to keep monitoring it while I am employed (19 CSR 15-7.021(18)(B)). The EDL names people found to have committed an act of abuse, neglect, exploitation, misappropriation, or misconduct against a resident or consumer; a person on the list cannot be employed to deliver care.`,
-      ] },
-      { h: 'Family Care Safety Registry (a Missouri requirement)', p: [
-        'Missouri requires every in-home services worker to be registered with the Family Care Safety Registry (FCSR) and requires the Company to request a background screening through it before I have contact with any participant (19 CSR 15-7.021(19)(F); RSMo 192.2495). I register with the FCSR myself, with my Social Security number; the Company may pay the registration fee and then requests my screening.',
-      ] },
-      /* v3 (her decision 3): monthly EDL, annual FCSR, as agency policy, beside anything the law or a payer requires */
-      { h: 'Rechecks (Caring Companions policy, not a Missouri interval)', p: [
-        'As its own policy, Caring Companions rechecks the Employee Disqualification List every month and requests a new Family Care Safety Registry screening every year during employment, in addition to the initial checks and any other checks required by applicable law or by a payer agreement. These frequencies are the agency\'s policy; Missouri sets the initial checks and the ongoing EDL monitoring, not these intervals.',
-      ] },
-      { h: 'Consent', p: [
-        /* her decision 3: one consent sentence; the standalone FCRA disclosure stays on its own screen and is never folded in here */
-        'I consent to the EDL check, the FCSR screening and the rechecks described above, and to the disclosure of their results to the Company for the purpose of my employment. This consent covers the checks before I begin work and the rechecks during my employment.',
-      ] },
-      { h: 'For your background checks', p: ['We need these three things to order your background checks and your Family Care Safety Registry screening. They are kept encrypted on our server, seen only by the office person who orders your checks, and every look is logged.'], items: [
+      { h: 'For your background checks', p: ['We need these to run the checks you gave permission for on the previous screen and to request your Family Care Safety Registry screening. They are kept encrypted on our server, seen only by the office person who orders your checks, and every look is logged.'], items: [
         { id: 'ssn', label: 'Social Security number', kind: 'text', required: true, locked: true, note: 'Typed twice, digits only. Never shown again; your record says "on file, ending" with the last four digits.' },
         { id: 'dob', label: 'Date of birth', kind: 'date', required: true, locked: true },
         text('address1', 'Street address', { required: true }), text('address2', 'Apartment / unit'), text('city', 'City', { required: true }), { id: 'state', label: 'State', kind: 'choice', options: STATES, required: true }, text('zip', 'Zip code', { required: true }),
       ] },
     ],
-    certification: ['I have read this consent and I agree to it. The information I gave for my background checks is correct.'],
+    certification: ['The information I gave for my background checks is correct, and it may be used only for the checks I gave permission for.'],
   },
   availability: {
     key: 'availability', screen: '6', title: 'Caregiver Availability & Scheduling Commitment', version: 2, status: 'proposed', signature: 'typed+initials',
