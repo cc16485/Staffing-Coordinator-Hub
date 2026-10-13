@@ -152,8 +152,9 @@ export class BrandPdf {
 /* the PDF header's binary comment and the text parts: strings are ASCII except that comment, kept byte-for-byte */
 function latin1(s: string): Uint8Array { const b = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i) & 0xff; return b }
 
-export const COMPANY_RIGHT = ['Caring Companions In-Home Senior Care', '1331 N. Stewart Ave., Suite B,', 'Springfield, MO 65802', '(417) 234-8494 · mo-care.com']
-export const FOOTER = 'Caring Companions In-Home Senior Care · 1331 N. Stewart Ave., Suite B, Springfield, MO 65802 · (417) 234-8494 · mo-care.com'
+/* 2026-10-13 (Samantha confirmed the office address for all documents): 1331 N Stewart Ave, Springfield, MO 65802 */
+export const COMPANY_RIGHT = ['Caring Companions In-Home Senior Care', '1331 N Stewart Ave', 'Springfield, MO 65802', '(417) 234-8494 · mo-care.com']
+export const FOOTER = 'Caring Companions In-Home Senior Care · 1331 N Stewart Ave, Springfield, MO 65802 · (417) 234-8494 · mo-care.com'
 export type Signature = { typedName: string; signedAtCentral: string; signedAtUtc: string; ip: string; agent: string; version: number; fingerprint: string; offerId: string; docName: string }
 const splitLabel = (t: string): [string, string] | null => { const m = /^(Date|Dear|Position|Employment classification|Starting Pay):\s*(.*)$/.exec(t); return m ? [m[1] + ':', m[2]] : null }
 

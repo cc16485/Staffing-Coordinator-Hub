@@ -472,14 +472,20 @@ export const FORMS: Record<FormKey, Form> = {
     certification: ['I have read, understand, and agree to be governed by this Code of Ethics.'],
   },
   medication_policy: {
-    key: 'medication_policy', screen: '13', title: 'Medication Policy', short: 'Medication Policy', version: 1, status: 'to_confirm', signature: 'typed',
+    key: 'medication_policy', screen: '13', title: 'Medication Policy', short: 'Medication Policy', version: 1, status: 'proposed', signature: 'typed',
     sections: [
       { h: 'Medication Policy', p: [
         'This policy is to be read by all employees of Caring Companions In-Home Senior Care. Caring Companions In-Home Senior Care is an independently owned and operated, non-medical, in-home care company.',
         'Dispensing medication(s), or pre-filling a client\'s medication box, by any employee of Caring Companions, is strictly forbidden. If a client asks you to fill their medication box, you must instead have a family member or other responsible party do it.',
       ] },
-      { h: 'A Caregiver may', p: ['• Communicate appropriate information regarding self-administration.', '• Remind the client to take medication as prescribed.', '• Read the medication label to the client.', '• Hand the medication container to the client.', '• Open the medication container.', '[OWNER DECISION: OTC lotions] • Apply non-prescription lotions or creams to unbroken skin when the care plan lists it.', '[OWNER DECISION: catheter and ostomy] • When the care plan allows, empty a urinary drainage bag or ostomy pouch and wash the skin around the site with soap and water.'] },
-      { h: 'A Caregiver may not', p: ['• Administer over-the-counter or prescription medications by mouth, or put drops in a client\'s eyes, ears, or nose.', '• Apply topical prescription medications.', '• Perform tasks that require sterile techniques.', '• Administer irrigation fluids to intravenous lines, Foley catheters or ostomies, or change, connect, disconnect, or insert any catheter, bag, or appliance.', '• Administer food and fluids via feeding tubes.', '• Administer enemas or suppositories.'] },
+      { h: 'A Caregiver may', p: ['• Communicate appropriate information regarding self-administration.', '• Remind the client to take medication as prescribed.', '• Read the medication label to the client.', '• Hand the medication container to the client.', '• Open the medication container.', '• Apply ordinary non-prescription lotion to intact skin as part of personal care, when the client\'s care plan and payer allow it.'] },
+      { h: 'A Caregiver may not', p: ['• Administer over-the-counter or prescription medications by mouth, or put drops in a client\'s eyes, ears, or nose.', '• Apply topical prescription medications.', '• Perform tasks that require sterile techniques.', '• Administer irrigation fluids to intravenous lines, Foley catheters or ostomies.', '• Administer food and fluids via feeding tubes.', '• Administer enemas or suppositories.', 'Medication administration and treatment are outside the duties of a non-medical caregiver unless the office has specifically authorized it in writing.'] },
+      { h: 'Catheter and ostomy collection bags', p: [
+        'Routinely emptying a urinary drainage bag or an ostomy pouch is separate from placing, inserting, changing or connecting a catheter or appliance, and separate from catheter or ostomy site care.',
+        'When the client\'s care plan allows, you may empty a collection bag. You may not place, insert, change, connect, disconnect or irrigate any catheter, bag or appliance, or do catheter or ostomy site care, unless the office has authorized you in writing for that client after the required training.',
+        'Medicaid clients: Missouri lists some catheter and ostomy care as Advanced Personal Care. Never do an advanced task for a Medicaid client without the authorization and training Missouri requires. If you are not sure, call the office first.',
+        'Private-pay clients: an external catheter such as PureWick is placed only by a caregiver the office has trained and authorized for that client, only where the law allows it, and only when the client\'s care plan includes it.',
+      ] },
       { h: 'If something is not right', p: ['If a client refuses a medication, cannot take it without hands-on help, or has a reaction, call the office. Never decide a dose. Report redness, odor, blood, or leaks around a catheter or ostomy site to the office right away.'] },
     ],
     certification: ['I have read, understand, and agree to be governed by the above terms for the Medication Policy. Failure to follow this policy may result in disciplinary action, up to and including termination.'],
@@ -501,7 +507,7 @@ export const FORMS: Record<FormKey, Form> = {
      serving anyone: received and reviewed the rights, the Code of Ethics and the confidentiality policy, all explained
      ((24)(B)5). Shown after the Code of Ethics and HIPAA so all three are in front of them when they sign. */
   client_rights: {
-    key: 'client_rights', screen: '15', title: 'Client Rights', short: 'Client Rights', version: 1, status: 'to_confirm', signature: 'typed',
+    key: 'client_rights', screen: '15', title: 'Client Rights', short: 'Client Rights', version: 1, status: 'proposed', signature: 'typed',
     sections: [
       { h: 'Client Rights', p: [
         'Caring Companions gives every client, and their main family caregiver when appropriate, a written copy of these rights when services begin, and we go over it with them. You get the same copy so you know what every client can expect from you.',
@@ -509,7 +515,7 @@ export const FORMS: Record<FormKey, Form> = {
         '1. Be treated with respect and dignity.',
         '2. Have all of their personal and medical information kept confidential.',
         '3. Have a say in how their services are provided, as much as possible, within the care plan that was authorized.',
-        '4. Know how to make a complaint about their services, get our help working it out, and never be punished or treated differently for complaining. To make a complaint, a client or family member calls the Caring Companions office at (417) 234-8494 or writes to us at 1331 N Stewart Ave, Suite B, Springfield, MO 65802.',
+        '4. Know how to make a complaint about their services, get our help working it out, and never be punished or treated differently for complaining. To make a complaint, a client or family member calls the Caring Companions office at (417) 234-8494 or writes to Caring Companions In-Home Senior Care, 1331 N Stewart Ave, Springfield, MO 65802. If a complaint is not resolved, the client may call the Missouri Department of Health and Senior Services HCBS Call Center at 1-866-835-3505.',
         '5. Receive services no matter their race, creed, color, age, sex, or national origin.',
         '6. Receive a copy of the Caring Companions Code of Ethics that we follow when we provide services.',
         '7. Call the Missouri Department of Health and Senior Services for any reason, including being unhappy with us or their services. The HCBS Call Center is 1-866-835-3505.',
@@ -518,7 +524,9 @@ export const FORMS: Record<FormKey, Form> = {
       { h: 'Reporting abuse, neglect, or exploitation', p: ['If you ever think a client is being abused, neglected, or exploited, you must report it right away to the Missouri Adult Abuse and Neglect Hotline at 1-800-392-0210, and tell the office.'] },
       { h: 'Questions before your first shift', p: ['If anything in the Client Rights, the Code of Ethics or the HIPAA policy is unclear, call the office at (417) 234-8494 before your first shift. The office goes over all three with you at your Orientation Video Call, before you serve any client.'] },
     ],
-    certification: ['By signing, I confirm that before I provide any services, I received and reviewed a copy of the Client Rights, the Caring Companions Code of Ethics, and the Caring Companions policy on keeping client information confidential, and that each one was explained to me.'],
+    /* her ruling 2026-10-13: the signature confirms receipt and review only; the explanation happens at the Orientation Video
+       Call and is recorded there (who, when, their confirmation); the requirement is complete only then, before the first shift */
+    certification: ['By signing, I confirm that I received and reviewed a copy of the Client Rights, the Caring Companions Code of Ethics, and the Caring Companions policy on keeping client information confidential. I understand the office will explain each of them to me at my Orientation Video Call, before I serve any client.'],
   },
 }
 export const FORM_ORDER: FormKey[] = ['employee_application', 'reference_consent', 'fcra_disclosure', 'edl_fcsr_consent', 'availability', 'experience', 'vehicle', 'non_driver', 'employment_agreement', 'medication_policy', 'code_of_ethics', 'hipaa_privacy', 'client_rights']
