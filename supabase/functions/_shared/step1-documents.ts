@@ -317,3 +317,6 @@ export async function formFingerprint(key: FormKey): Promise<string> {
 }
 /** Which forms may be signed for real: only the ones Samantha has approved by version (none yet: all proposed). */
 export const APPROVED_FOR_REAL: Partial<Record<FormKey, number>> = {}
+/** 2026-10-13: a real (non-practice) applicant may sign a form only at a version Samantha approved for real. */
+export const approvedForReal = (k: FormKey): boolean => APPROVED_FOR_REAL[k] === FORMS[k].version
+export const allApprovedForReal = (): boolean => FORM_ORDER.every(approvedForReal)

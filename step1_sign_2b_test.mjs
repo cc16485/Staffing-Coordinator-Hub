@@ -112,6 +112,13 @@ r = await call({ action: 'save', ...link, screen: '3', answers: { states_lived: 
 ck('save: a job lands as a card with its tasks', r.status === 200 && DB.step1_forms[0].answers.jobs.length === 1 && DB.step1_forms[0].answers.jobs[0].supervisor === 'Jane Boss' && DB.step1_forms[0].answers.jobs[0].tasks.join() === 'bathing,hoyer_lift', r)
 
 /* ═══ sign, in order, with the required answers ═══ */
+/* 2026-10-13: wording not yet approved for real: a real applicant cannot sign it (nothing written) */
+{ const pre = JSON.stringify(DB.step1_forms)
+  r = await call({ action: 'sign', ...link, form: 'employee_application', typed_name: 'Ava Lee', consent: true })
+  ck('a real applicant cannot sign a form whose wording is not approved for real (409, nothing written)', r.status === 409 && r.j.not_approved === true && JSON.stringify(DB.step1_forms) === pre, r)
+  r = await call({ action: 'view', ...link }); ck('before approval the real view keeps the practice banner flag (test_mode true)', r.j.test_mode === true, r.j.test_mode)
+  for (const k of D.FORM_ORDER) D.APPROVED_FOR_REAL[k] = D.FORMS[k].version
+  r = await call({ action: 'view', ...link }); ck('once every form is approved for real, a real view has no practice banner (test_mode false)', r.j.test_mode === false, r.j.test_mode) }
 r = await call({ action: 'sign', ...link, form: 'reference_consent', typed_name: 'Ava Lee', consent: true })
 ck('forms go in order: the references cannot be signed before the application', r.status === 409 && /Employee Application first/.test(r.j.error), r)
 r = await call({ action: 'sign', ...link, form: 'employee_application', typed_name: 'Ava', consent: true })
@@ -223,6 +230,20 @@ DB.step1_identity[0].purged_at = '2027-01-01T00:00:00Z'
 r = await call({ action: 'reveal', offer_id: OID, field: 'ssn', reason: 'FCSR registration' }, STAFF)
 ck('a purged record reveals nothing (410)', r.status === 410, r); DB.step1_identity[0].purged_at = null
 
+
+/* ═══ 2026-10-13: the office review (every Step 1 screen with their answers, read only) ═══ */
+{
+  r = await call({ action: 'review', offer_id: OID })
+  ck('review without a sign-in is refused', r.status === 401, r)
+  const before = { forms: JSON.stringify(DB.step1_forms), ev: EVENTS.length, logs: DB.document_access_log.length }
+  r = await call({ action: 'review', offer_id: OID }, STAFF)
+  ck('review: the forms, their answers, all seven signatures with time, device and version, complete', r.status === 200 && r.j.review === true && r.j.forms.length === 7 && Object.keys(r.j.signed).length === 7 && Object.values(r.j.signed).every((g) => g.at && g.typed_name && g.version && g.ip !== undefined && g.version_mismatch === false && g.pdf === true) && r.j.completed_at && r.j.answers && Object.keys(r.j.answers).length > 5, { status: r.status, keys: r.j && Object.keys(r.j) })
+  ck('review: identity only as "ending", no number anywhere in the answer', r.j.identity.ssn === 'ending 3456' && !JSON.stringify(r.j).includes('529123456') && !JSON.stringify(r.j).includes('1990-05-05') && !JSON.stringify(r.j).includes('M123456789'), r.j.identity)
+  ck('review: read only (no change to Step 1, no trail event) and the look is logged with who', JSON.stringify(DB.step1_forms) === before.forms && EVENTS.length === before.ev && DB.document_access_log.length === before.logs + 1 && DB.document_access_log.at(-1).doc === 'step1:review' && DB.document_access_log.at(-1).by_name === 'Krystal', DB.document_access_log.at(-1))
+  ck('review: test_mode false (the office view never shows the practice banner)', r.j.test_mode === false)
+  r = await call({ action: 'review', offer_id: 'not-an-offer' }, STAFF)
+  ck('review: a bad offer id is refused', r.status === 400, r)
+}
 
 /* ═══ SLICE 2d: what a signed form lands on the Background & References row ═══ */
 const LP = M.landingPatch

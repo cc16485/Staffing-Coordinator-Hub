@@ -25,7 +25,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { checkLink } from '../_shared/applicant-links.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
-import { FORMS, FORM_ORDER, formFingerprint, REFERENCES_REQUIRED, APPROVED_FOR_REAL, MATCHING_FACTS, SKILLS, SKILL_GROUPS, type FormKey, type Item, type Form, type Field } from '../_shared/step1-documents.ts'
+import { FORMS, FORM_ORDER, formFingerprint, REFERENCES_REQUIRED, APPROVED_FOR_REAL, approvedForReal, allApprovedForReal, MATCHING_FACTS, SKILLS, SKILL_GROUPS, type FormKey, type Item, type Form, type Field } from '../_shared/step1-documents.ts'
 import { seal, open as unseal, last4, ssnLooksValid, REVEAL_TTL_MS, REVEAL_FIELDS, REVEAL_PERMISSION, type RevealField, ssnAllowed, practiceOffer } from '../_shared/step1-crypto.ts'
 import { PERM_KEY, normalizePerms, mayApprove } from '../_shared/onboarding-permissions.ts'
 import { step1FormPdf, type IdentityState } from '../_shared/step1-pdf.ts'
@@ -329,6 +329,15 @@ async function enterChecks(db: any, offerId: string, who: Record<string, string>
   return made
 }
 
+/** never ask twice: their application (by email, then by phone) with its interview answers; null when none or unreadable */
+// deno-lint-ignore no-explicit-any
+export async function applicationOf(db: any, who: { email: string; phone: string }): Promise<any> {
+  try {
+    if (who.email) { const r = await db.from('job_applicants').select('*').ilike('email', who.email).order('created_at', { ascending: false }).limit(1); if (r.data?.[0]) return r.data[0] }
+    if (digits(who.phone).length >= 10) { const r = await db.from('job_applicants').select('*').ilike('phone', '%' + digits(who.phone).slice(-4)).order('created_at', { ascending: false }).limit(20); return (r.data ?? []).find((x: { phone?: string }) => digits(x.phone).slice(-10) === digits(who.phone).slice(-10)) ?? null }
+  } catch { return null }
+  return null
+}
 export const PREVIEW_WHO = { first: 'Pat', last: 'Preview', phone: '(417) 555-0188', email: 'pat.preview@practice.invalid', position: 'Caregiver' }
 /** What a real Step 1 would show as already known: from a made-up application and interview, marked with where it came from. */
 export const PREVIEW_PREFILL = prefillFrom({ lived_outside_mo: 'no', has_license: 'yes', has_insurance: 'yes', has_transport: 'yes', experience_years: 3 }, { cats: 'yes', dogs: 'no', client_smokes: 'no', drive_clients: 'yes', skills: { dementia: 'some' } })
@@ -434,6 +443,34 @@ Deno.serve(async (req) => {
       try { await trn().event({ offer_id: oid, kind: 'identity_revealed', by_who: 'staff', channel: 'hub', detail: { field, by_name: staff.name, by_email: staff.email, reason } }) } catch { /* the log row is the record; the trail is a courtesy */ }
       return json({ ok: true, field, value, revealed_at: at, expires_in: REVEAL_TTL_MS / 1000, by: staff.name })
     }
+    /* ───── REVIEW (Samantha 2026-10-13: "show every Step 1 screen ... along with the applicant's answers ... coordinators
+       see the complete journey without jumping between systems"). Office staff by their own sign-in, READ ONLY: the same
+       screens the applicant saw, their answers, every signature with its time, device and wording version. Identity numbers
+       stay sealed ("on file, ending"). Every look is logged. Nothing is saved, signed or sent. ───── */
+    if (action === 'review') {
+      const staff = await requireStaff(db, req, OFFICE_ROLES)
+      if (!staff.ok) return json({ ok: false, error: staff.error }, staff.status)
+      const oid = S(b.offer_id, 64)
+      if (!/^[0-9a-f-]{36}$/i.test(oid)) return json({ ok: false, error: 'Which offer?' }, 400)
+      const o = await trn().get(oid); if (!o) return json({ ok: false, error: 'That offer was not found.' }, 404)
+      const rwho = { first: S(o.first_name, 60), last: S(o.last_name, 60), phone: S(o.phone, 30), email: S(o.email, 160), position: S(o.position, 80) || 'Caregiver' }
+      const { data: fr } = await db.from('step1_forms').select('*').eq('offer_id', oid).maybeSingle()
+      const { data: idr } = await db.from('step1_identity').select('ssn_last4,dob_sealed,license_last4,license_state,license_expires').eq('offer_id', oid).maybeSingle()
+      const app = await applicationOf(db, rwho)
+      const rsigs = (fr?.signatures || {}) as Record<string, Record<string, unknown>>
+      const signed: Record<string, unknown> = {}
+      for (const [k, v] of Object.entries(rsigs)) {
+        const cur = FORMS[k as FormKey]?.version ?? null
+        signed[k] = { at: S(v.at, 40), typed_name: S(v.typed_name, 120), version: Number(v.version), current_version: cur, version_mismatch: cur != null && Number(v.version) !== cur,
+          ip: S(v.ip, 64) || null, agent: S(v.agent, 200) || null, fingerprint: S(v.fingerprint, 64) || null, pdf: !!(fr?.pdfs || {})[k] }
+      }
+      await db.from('document_access_log').insert({ offer_id: oid, doc: 'step1:review', path: '(the Step 1 screens, read only)', by_person: staff.person_id, by_email: staff.email, by_name: staff.name, ip: ipOf(req), reason: 'opened Step 1 as the applicant saw it' })
+      return json({ ok: true, review: true, who: rwho, forms: await formsPayload(), order: FORM_ORDER, screens: SCREENS, answers: fr?.answers || {}, signatures: publicSignatures(rsigs), signed,
+        identity: { ...identState(idr), license_state: idr?.license_state ?? null, license_expires: idr?.license_expires ?? null },
+        prefill: prefillFrom(app, app?.post_interview || null), hints: { availability: S(app?.availability, 300) || null, travel: S(app?.post_interview?.travel_areas, 200) || null },
+        current_screen: fr?.current_screen || '1', started_at: fr?.started_at || null, completed_at: fr?.completed_at || null, esign_consent_at: fr?.esign_consent_at || null, esign_consent_detail: fr?.esign_consent_detail || null,
+        practice: !!fr?.practice, sent_at: o.step1_sent_at || null, test_mode: false, references_required: REFERENCES_REQUIRED, skill_groups: SKILL_GROUPS, skills: SKILLS, signed_count: Object.keys(rsigs).length, form_count: FORM_ORDER.length })
+    }
     /* ───── PREVIEW (Samantha 2026-10-11: "I want to be able to click through the screens as though I were the caregiver,
        using practice data, before approving them for real hires"). Public and read-only: no link, no offer, no database read
        or write, nothing sent. The same versioned words, the same required-answer check and the same PDF layout as a real
@@ -460,18 +497,13 @@ Deno.serve(async (req) => {
       /* 2026-10-11: the practice mark kept true to the offer (the reference page asks task questions only for practice hires) */
       if (row && !!row.practice !== practiceOffer(o)) { await db.from('step1_forms').update({ practice: practiceOffer(o) }).eq('offer_id', id); row.practice = practiceOffer(o) }
       // never ask twice: the application (by email, then by phone) and its interview answers
-      // deno-lint-ignore no-explicit-any
-      let app: any = null
-      try {
-        if (who.email) { const r = await db.from('job_applicants').select('*').ilike('email', who.email).order('created_at', { ascending: false }).limit(1); app = r.data?.[0] ?? null }
-        if (!app && digits(who.phone).length >= 10) { const r = await db.from('job_applicants').select('*').ilike('phone', '%' + digits(who.phone).slice(-4)).order('created_at', { ascending: false }).limit(20); app = (r.data ?? []).find((x: { phone?: string }) => digits(x.phone).slice(-10) === digits(who.phone).slice(-10)) ?? null }
-      } catch { app = null }
+      const app = await applicationOf(db, who)
       const forms = [] as Record<string, unknown>[]
       for (let i = 0; i < FORM_ORDER.length; i++) { const f = FORMS[FORM_ORDER[i]]; forms.push({ key: f.key, screen: f.screen, title: f.title, version: f.version, status: f.status, intro: f.intro || [], sections: f.sections, certification: f.certification, signature: f.signature, fingerprint: await formFingerprint(f.key), approved_for_real: APPROVED_FOR_REAL[f.key] === f.version }) }
       return json({ ok: true, who, forms, order: FORM_ORDER, screens: SCREENS, answers: row?.answers || {}, signatures: publicSignatures(sigs), identity: { ...IS, license_state: ident?.license_state ?? null, license_expires: ident?.license_expires ?? null },
         prefill: prefillFrom(app, app?.post_interview || null), hints: { availability: S(app?.availability, 300) || null, travel: S(app?.post_interview?.travel_areas, 200) || null },
         current_screen: row?.current_screen || '1', started_at: row?.started_at || null, completed_at: row?.completed_at || null, esign_consent_at: row?.esign_consent_at || null,
-        test_mode: true, references_required: REFERENCES_REQUIRED, skill_groups: SKILL_GROUPS, skills: SKILLS, signed_count: Object.keys(sigs).length, form_count: FORM_ORDER.length })
+        test_mode: practiceOffer(o) || !allApprovedForReal(), references_required: REFERENCES_REQUIRED, skill_groups: SKILL_GROUPS, skills: SKILLS, signed_count: Object.keys(sigs).length, form_count: FORM_ORDER.length })
     }
     if (!row) return json({ ok: false, error: 'Please open your Step 1 link first.' }, 409)
     if (action === 'begin') {
@@ -540,6 +572,8 @@ Deno.serve(async (req) => {
       if (b.consent !== true) return json({ ok: false, error: 'Please tick "I agree to sign this form electronically" first.' }, 400)
       const name = S(b.typed_name, 80)
       if (!/^\S+(\s+\S+)+$/.test(name) || name.length < 4) return json({ ok: false, error: 'Please type your full name, first and last, exactly as you want it on the form.' }, 400)
+      /* 2026-10-13: a real applicant signs only wording Samantha approved for real (practice and training hires are not held) */
+      if (!practiceOffer(o) && !approvedForReal(form)) return json({ ok: false, error: 'This form is waiting for its final approval, so it cannot be signed yet. Your answers are saved. The office will let you know when it is ready: (417) 234-8494.', not_approved: true }, 409)
       if (sigs[form]) return json({ ok: false, error: 'This form is already signed. A signed form is never changed; if something is wrong, call the office: (417) 234-8494.', already: true }, 409)
       const before = FORM_ORDER.slice(0, FORM_ORDER.indexOf(form)).filter((k) => !sigs[k])
       if (before.length) return json({ ok: false, error: `Please sign ${FORMS[before[0]].title} first; the forms go in order.` }, 409)
