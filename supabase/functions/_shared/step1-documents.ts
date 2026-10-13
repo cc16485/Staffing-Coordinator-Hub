@@ -560,10 +560,10 @@ export const FORMS: Record<FormKey, Form> = {
      Vaccine facts: CDC Hepatitis B Vaccine Information Statement, edition January 31, 2025
      (https://www.cdc.gov/vaccines/hcp/current-vis/hepatitis-b.html): "usually given as 2, 3, or 4 shots"; "Most people who
      are vaccinated with hepatitis B vaccine are immune for life"; soreness, fever, headache and tiredness can happen;
-     people sometimes faint after a shot; "a very remote chance" of a severe allergic reaction. PROPOSED until she approves
-     the wording. ───── */
+     people sometimes faint after a shot; "a very remote chance" of a severe allergic reaction. APPROVED 2026-10-13
+     (version 1; see APPROVED_FOR_REAL). ───── */
   hepb_vaccination: {
-    key: 'hepb_vaccination', screen: '16', title: 'Hepatitis B Vaccination', short: 'Hepatitis B vaccine', layout: 'document', step1Gate: 'hepb', confidential: true, version: 1, status: 'proposed', signature: 'typed',
+    key: 'hepb_vaccination', screen: '16', title: 'Hepatitis B Vaccination', short: 'Hepatitis B vaccine', layout: 'document', step1Gate: 'hepb', confidential: true, version: 1, status: 'approved', signature: 'typed',
     intro: ['Please read this before you choose. It tells you about the hepatitis B vaccine, which Caring Companions offers you at no cost.'],
     sections: [
       { h: 'Why we offer it', p: ['Caregiving can bring contact with blood, or with body fluids that have blood in them, for example when helping with shaving, nail care or toileting, or with a cut or a skin tear. Federal workplace safety rules (OSHA 29 CFR 1910.1030) protect workers from infections spread this way. Caring Companions offers the hepatitis B vaccine to everyone we hire.'] },
@@ -617,6 +617,9 @@ export async function formFingerprint(key: FormKey): Promise<string> {
 export const APPROVED_FOR_REAL: Partial<Record<FormKey, number>> = {
   employee_application: 4, reference_consent: 3, fcra_disclosure: 2, edl_fcsr_consent: 4, availability: 2, experience: 2,
   vehicle: 5, non_driver: 2, employment_agreement: 1, medication_policy: 1, code_of_ethics: 1, hipaa_privacy: 1, client_rights: 1,
+  /* APPROVED: Samantha, 2026-10-13 about 22:30 UTC, "ok approve your way", on the Hepatitis B approval page v1
+     (https://claude.ai/artifact/3BZSmkpvjXBRJPRtzCSmk3); record: supabase/step1-approved-hepb-2026-10-13.json */
+  hepb_vaccination: 1,
 }
 /** true only when Samantha approved form k at exactly version v (the version the server stamps is FORMS[k].version) */
 export const approvedAt = (k: FormKey, v: unknown): boolean => typeof v === 'number' && APPROVED_FOR_REAL[k] === v

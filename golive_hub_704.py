@@ -20,7 +20,11 @@
 # are in; the Step 1 preview answers with 14 forms, 13 to sign, the Hepatitis B form last (screen 16) at the approved version
 # and wording fingerprint, approved for real; the read-only approval check accepts all 13 forms a new Step 1 has; every Step 1
 # that existed before keeps its 12 forms; no switch changed.
-# ORDER: 705 has run. Then merge Staffing PR hepb-step1 (merge commit, not squash), then run this.
+# THE hepb_offer_live SWITCH: this step neither reads nor changes it (it is only shown). The Step 1 form does not depend on it:
+# from the deploy on, every new Step 1 has the form and records the answer whether the switch is on or off. The switch still
+# controls only what it always did: whether the 30-minute pass sends the private hepatitis B link to people whose Step 1 did
+# not have the form.
+# ORDER: 705 has run (done 2026-10-13). Merge Hub PR #384 and Staffing PR hepb-step1 (merge commit, not squash), then run this.
 import os, re, json, subprocess, hashlib
 os.environ.setdefault("SB_STEP", "704")
 from cc_step_lib import *
@@ -59,6 +63,9 @@ def onb():
     d = r[0].get("data"); return d if isinstance(d, dict) else None
 
 start("HEPATITIS B FORM IN STEP 1, THE HUB PROJECT")
+say("  This step pays no attention to the hepb_offer_live switch: it does not read it to decide anything and does not change it.")
+say("  The Step 1 form works whether that switch is on or off; the switch only controls the 30-minute pass's private link.")
+say()
 say("PART 1 · READ ONLY (nothing changes)")
 if not (SUPA and os.path.exists(SUPA)): bad("supabase CLI not found"); done(2)
 # THE GATE: the Hepatitis B form at its exact version must be in APPROVED_FOR_REAL in the reviewed build
@@ -134,7 +141,7 @@ else:
 st0 = onb()
 if st0 is None: bad("could not read the Hub switches (ops_settings)")
 else:
-    say("  · the switches (shown only; this step changes none): " + ", ".join(f"{k} {'on' if is_on(st0.get(k)) else 'off'}" for k in SWITCHES))
+    say("  · the switches (shown only; this step changes none and decides nothing by them): " + ", ".join(f"{k} {'on' if is_on(st0.get(k)) else 'off'}" for k in SWITCHES))
     sd = str(st0.get("onboarding_switch_date") or "")
     say(f"  · the onboarding switch date (705): {sd}" if sd else "  ! the onboarding switch date is not set (705 has not run). Not stopping: only practice Step 1s get the form until it is.")
 ok_, ks = http("GET", f"{API}/v1/projects/{REF}/api-keys?reveal=true", headers=MG()); ANON = ""

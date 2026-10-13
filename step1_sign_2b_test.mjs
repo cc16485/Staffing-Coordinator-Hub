@@ -5,6 +5,9 @@ const ROOT = path.dirname(new URL(import.meta.url).pathname), FN = path.join(ROO
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note ?? null).slice(0, 700)])
 const L = await import(path.join(FN, '_shared/applicant-links.ts'))
 const D = await import(path.join(FN, '_shared/step1-documents.ts'))
+/* 2026-10-13: the story below starts BEFORE her approval of the Hepatitis B form (Ava and Bo start their Step 1 then); the
+   approval as shipped is put back further down, where Dee, Eli and Fay start theirs */
+const HEPB_SHIPPED = D.APPROVED_FOR_REAL.hepb_vaccination; delete D.APPROVED_FOR_REAL.hepb_vaccination
 const C = await import(path.join(FN, '_shared/step1-crypto.ts'))
 const SECRET = 's'.repeat(48), KEK = Buffer.alloc(32, 7).toString('base64')
 const env = { SUPABASE_URL: 'http://x', SUPABASE_SERVICE_ROLE_KEY: 'svc', HUB_JOB_SECRET: SECRET, STEP1_KEK: KEK, OFFERS_PROJECT_URL: 'http://trn', OFFERS_SERVICE_ROLE_KEY: 'tkey' }
@@ -399,7 +402,8 @@ ck('the door is never asked to land the SSN, date of birth, license number or ad
    are signed; the Hepatitis B form is the last. ═══ */
 {
   /* as if she had approved the Hepatitis B wording (it stays PROPOSED in the code until she does) */
-  const HEPB_WAS = D.APPROVED_FOR_REAL.hepb_vaccination; D.APPROVED_FOR_REAL.hepb_vaccination = D.FORMS.hepb_vaccination.version
+  ck('HEP B: as shipped, the form is approved for real at exactly its version (Samantha, 2026-10-13, Hepatitis B approval page v1)', HEPB_SHIPPED === D.FORMS.hepb_vaccination.version && HEPB_SHIPPED === 1 && D.FORMS.hepb_vaccination.status === 'approved')
+  D.APPROVED_FOR_REAL.hepb_vaccination = HEPB_SHIPPED   /* her approval, from here on */
   const OID3 = '33333333-4444-4555-8666-777777777777'
   OFFERS[OID3] = { ...base(), id: OID3, first_name: 'Dee', last_name: 'Office', phone: '(417) 881-2234', email: 'dee@example.com', position: 'Office' }
   const exp3 = L.expiry(); const link3 = { o: OID3, e: exp3, t: await L.sign(SECRET, 'step1', OID3, exp3) }
@@ -461,7 +465,6 @@ ck('the door is never asked to land the SSN, date of birth, license number or ad
   ck('HEP B prior series: recorded, a private link to add the proof, one card for the owners to check it (no answer on the card)', r3.status === 200 && h4.status === 'prior_series' && !h4.declined_at && /hepb\.html\?h=/.test(r3.j.proof_link || '') && (globalThis.CARDS || []).some((c) => c.id === 'hepb_check_' + h4.id + '_step1' && !/prior|series/i.test(c.detail.replace('vaccine offer', ''))), { j: r3.j, cards: globalThis.CARDS })
   v = await call({ action: 'view', ...link4 })
   ck('HEP B prior series: the view after offers the proof link again (until an owner checks it)', /hepb\.html\?h=/.test(v.j.hepb_proof_link || ''), v.j.hepb_proof_link)
-  if (HEPB_WAS === undefined) delete D.APPROVED_FOR_REAL.hepb_vaccination; else D.APPROVED_FOR_REAL.hepb_vaccination = HEPB_WAS
   /* a PRACTICE Step 1 always has the form (approved or not); its choice is never recorded anywhere, nobody is told */
   const OID6 = '66666666-4444-4555-8666-777777777777'
   OFFERS[OID6] = { ...base(), id: OID6, first_name: 'Pat', last_name: 'Practice', phone: '(417) 555-0186', email: 'pat6@practice.invalid', offered_by: 'Slice 10 practice run' }
@@ -472,11 +475,13 @@ ck('the door is never asked to land the SSN, date of birth, license number or ad
   const nRec = DB.hepb_record.length, nStore = Object.keys(STORE).length
   r3 = await call({ action: 'sign', ...link6, form: 'hepb_vaccination', typed_name: 'Pat Practice', consent: true, choice: 'declined', decline_consent: true })
   ck('HEP B practice: a practice Step 1 has the form (13), signs, Step 1 complete, but NO hepatitis B record, no PDF in any store, nothing medical on Step 1', v.j.form_count === 13 && pat.hepb_form === true && r3.status === 200 && r3.j.practice === true && r3.j.done === true && DB.hepb_record.length === nRec && Object.keys(STORE).length === nStore && !JSON.stringify(pat).includes('declined') && !pat.pdfs.hepb_vaccination, { j: r3.j, fc: v.j.form_count })
-  /* NOT approved (the code as shipped): a new real Step 1 does not get the form, and shows no practice banner (12 forms, all approved) */
+  /* AFTER her approval (the code as shipped): a new real Step 1 has 13 forms and no practice banner; Ava's, started before, keeps 12 */
   const OID5 = '55555555-4444-4555-8666-777777777777'
   OFFERS[OID5] = { ...base(), id: OID5, first_name: 'Fay', last_name: 'Real', phone: '(417) 881-2236', email: 'fay@example.com' }
   const exp5 = L.expiry(); v = await call({ action: 'view', o: OID5, e: exp5, t: await L.sign(SECRET, 'step1', OID5, exp5) })
-  ck('HEP B not approved yet: a new REAL Step 1 has 12 forms, no Hepatitis B screen, and NO practice banner', v.status === 200 && v.j.form_count === 12 && !v.j.screens.includes('16') && !v.j.forms.some((f) => f.key === 'hepb_vaccination') && v.j.test_mode === false && DB.step1_forms.find((f) => f.offer_id === OID5).hepb_form === false, { fc: v.j.form_count, tm: v.j.test_mode })
+  ck('HEP B approved: a new REAL Step 1 has 13 forms, the Hepatitis B screen, every form approved, and NO practice banner', v.status === 200 && v.j.form_count === 13 && v.j.screens.includes('16') && v.j.forms.some((f) => f.key === 'hepb_vaccination' && f.approved_for_real === true) && v.j.forms.every((f) => f.approved_for_real === true) && v.j.test_mode === false && DB.step1_forms.find((f) => f.offer_id === OID5).hepb_form === true, { fc: v.j.form_count, tm: v.j.test_mode })
+  const avaLink = await L.sign(SECRET, 'step1', OID, exp5); v = await call({ action: 'view', o: OID, e: exp5, t: avaLink })
+  ck('HEP B approved: a Step 1 that existed before still shows 12 forms, no Hepatitis B screen, no banner, still complete', v.status === 200 && v.j.form_count === 12 && !v.j.screens.includes('16') && !v.j.forms.some((f) => f.key === 'hepb_vaccination') && v.j.completed_at && DB.step1_forms.find((f) => f.offer_id === OID).hepb_form === false, { fc: v.j.form_count, tm: v.j.test_mode })
 }
 
 globalThis.fetch = realFetch

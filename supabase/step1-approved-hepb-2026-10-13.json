@@ -1,0 +1,24 @@
+{
+ "what": "Samantha's approval of the Hepatitis B Vaccination form in Step 1 for real applicants",
+ "approved_by": "Samantha",
+ "approved_at": "2026-10-13T22:30:00Z",
+ "approved_at_note": "about 22:30 UTC (5:30 pm Central), as relayed by the coordinating session",
+ "her_words": "ok approve your way",
+ "context": "Her reply came right after the recommendation that the company pay for the vaccine directly as the normal way, with no reimbursement wording; the form already says \"Caring Companions pays for every shot\", so no wording changed.",
+ "source": "Hepatitis B approval page v1",
+ "page": "https://claude.ai/artifact/3BZSmkpvjXBRJPRtzCSmk3",
+ "page_built_from": "Staffing commit e6337b1 (the form) and Hub commit 1bcd161 (the page messages); the page prints the fingerprint below",
+ "fingerprint": "formFingerprint(key): SHA-256 of formText(key) in supabase/functions/_shared/step1-documents.ts",
+ "earlier_approvals": "supabase/step1-approved-2026-10-13.json (the 12 forms of wording page v5), unchanged",
+ "forms": [
+  {
+   "key": "hepb_vaccination",
+   "title": "Hepatitis B Vaccination",
+   "version": 1,
+   "sha256": "b16662c3ad463d12665597c0e6adf102fd030d1504a1f3f9b6930fe3ffed9d69",
+   "approved_by": "Samantha",
+   "approved_at": "2026-10-13T22:30:00Z",
+   "source": "Hepatitis B approval page v1"
+  }
+ ]
+}

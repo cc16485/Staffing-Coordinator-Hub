@@ -2,8 +2,8 @@
 # Rehearsal of 704 (golive_hub_704.py) against a FAKE Supabase (management API, the services) and a FAKE supabase CLI. The Step 1
 # preview is answered by the REAL step1-sign code of the build under test (imported under node; no database). Never touches a
 # real project. Runs the installer from fresh detached worktrees of HEAD (never ../ sibling folders):
-#   W   = HEAD exactly as reviewed (the Hepatitis B form PROPOSED, not approved): 704 must refuse and change nothing
-#   WA  = HEAD plus one commit adding hepb_vaccination to APPROVED_FOR_REAL (what the PR looks like after her approval)
+#   WA  = HEAD exactly as reviewed (her approval of the Hepatitis B form in APPROVED_FOR_REAL): the clean run and every case
+#   W   = HEAD plus one commit taking that approval out (as the PR was before she approved): 704 must refuse and change nothing
 #   python3 golive_hub_704_install_test.py        (T704_SHOW=1 prints the clean run's report)
 import json, os, re, subprocess, tempfile, threading, http.server, hashlib, shutil, sys, urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -12,20 +12,20 @@ res = []; ck = lambda n, c, note="": res.append((n, bool(c), "" if c else str(no
 FNS = ["hepb", "hire-profile", "step1-sign"]; SQL_REL = "supabase/hepb-step1.sql"; DOC_REL = "supabase/functions/_shared/step1-documents.ts"
 SWITCHES = ["hepb_offer_live", "step1_auto_live", "offer_send_live", "driver_reminders_live", "driver_link_send_live"]
 tmp = tempfile.mkdtemp(prefix="t704-"); W = os.path.join(tmp, "wt"); WA = os.path.join(tmp, "wta"); WX = os.path.join(tmp, "wtx")
-subprocess.run(["git", "-C", HERE, "worktree", "add", "-q", "--detach", W, "HEAD"], check=True)
 node = None
 def git(wt, *a): return subprocess.run(["git", "-C", wt, "-c", "user.name=t704", "-c", "user.email=t704@example.invalid"] + list(a), capture_output=True, text=True, check=True).stdout.strip()
 try:
-    # the approved build: the one-line change Claude makes after her approval
-    subprocess.run(["git", "-C", HERE, "worktree", "add", "-q", "--detach", WA, "HEAD"], check=True)
-    d = open(os.path.join(WA, DOC_REL)).read()
-    d2 = re.sub(r"(export const APPROVED_FOR_REAL[^=]*= \{.*?)(\n\})", lambda m: m.group(1) + "\n  hepb_vaccination: 1," + m.group(2), d, count=1, flags=re.S)
-    assert d2 != d; open(os.path.join(WA, DOC_REL), "w").write(d2); git(WA, "commit", "-q", "-am", "t704: her approval of the Hepatitis B form"); MAIN_A = git(WA, "rev-parse", "HEAD")
+    # the build as reviewed (approved) and the same build without her approval
+    subprocess.run(["git", "-C", HERE, "worktree", "add", "-q", "--detach", WA, "HEAD"], check=True); MAIN_A = git(WA, "rev-parse", "HEAD")
+    subprocess.run(["git", "-C", HERE, "worktree", "add", "-q", "--detach", W, "HEAD"], check=True)
+    d = open(os.path.join(W, DOC_REL)).read()
+    d2 = re.sub(r"\n  hepb_vaccination: 1,", "", d, count=1).replace("confidential: true, version: 1, status: 'approved'", "confidential: true, version: 1, status: 'proposed'")
+    assert d2 != d; open(os.path.join(W, DOC_REL), "w").write(d2); git(W, "commit", "-q", "-am", "t704: before her approval")
     # a main that moved on after the review (a newer step1-documents.ts)
     subprocess.run(["git", "-C", HERE, "worktree", "add", "-q", "--detach", WX, MAIN_A], check=True)
     NEWER_DOC = open(os.path.join(WX, DOC_REL)).read() + "\n// a newer change merged after the review\n"
     open(os.path.join(WX, DOC_REL), "w").write(NEWER_DOC); git(WX, "commit", "-q", "-am", "t704 newer"); MAIN_X = git(WX, "rev-parse", "HEAD")
-    OLD_DOC = subprocess.run(["git", "-C", WA, "show", "HEAD~2:" + DOC_REL], capture_output=True).stdout.decode()   # the build before this PR (705)
+    BASE_C = git(WA, "merge-base", "HEAD", "origin/main"); OLD_DOC = subprocess.run(["git", "-C", WA, "show", BASE_C + ":" + DOC_REL], capture_output=True).stdout.decode()   # main before this PR (705 and after)
 
     sys.path.insert(0, W); os.environ.setdefault("SB_REPORT", os.path.join(tmp, "unused.txt"))
     from cc_step_lib import need
@@ -145,12 +145,13 @@ sys.exit(1)
 
     # ── the gate: as reviewed (not approved), 704 refuses and touches nothing ──
     c, out, _ = run(root=W, env_over={"SB_MAIN_REF": "HEAD"})
-    ck("NOT approved (the build as reviewed): STOP in PART 1, no query, no deploy, no call; her next step is said", c == 2 and "is NOT approved for real applicants in this build" in out
+    ck("NOT approved (the build before her approval): STOP in PART 1, no query, no deploy, no call; her next step is said", c == 2 and "is NOT approved for real applicants in this build" in out
        and "Samantha approves its wording first" in out and "Nothing ran; nothing changed." in out and nothing(), out)
     fnroot_w = os.path.join(W, "supabase", "functions")
-    ck("the reviewed build itself has the form PROPOSED and NOT in APPROVED_FOR_REAL (705's 13 untouched)",
-       "hepb_vaccination:" not in re.search(r"export const APPROVED_FOR_REAL[^=]*= \{(.*?)\n\}", open(os.path.join(W, DOC_REL)).read(), re.S).group(1)
-       and re.search(r"key: 'hepb_vaccination',[^\n]*status: 'proposed'", open(os.path.join(W, DOC_REL)).read()), "")
+    AP = re.search(r"export const APPROVED_FOR_REAL[^=]*= \{(.*?)\n\}", open(os.path.join(WA, DOC_REL)).read(), re.S).group(1)
+    ck("the reviewed build has her approval (hepb_vaccination: 1, status approved) beside 705's 13, untouched",
+       "hepb_vaccination: 1," in AP and all(f"{k}: {v}" in AP for k, v in [("employee_application", 4), ("reference_consent", 3), ("fcra_disclosure", 2), ("edl_fcsr_consent", 4), ("availability", 2), ("experience", 2), ("vehicle", 5), ("non_driver", 2), ("employment_agreement", 1), ("medication_policy", 1), ("code_of_ethics", 1), ("hipaa_privacy", 1), ("client_rights", 1)])
+       and re.search(r"key: 'hepb_vaccination',[^\n]*status: 'approved'", open(os.path.join(WA, DOC_REL)).read()), AP)
     d_bad = re.sub(r"hepb_vaccination: 1,", "hepb_vaccination: 2,", open(os.path.join(WA, DOC_REL)).read())
     WB = os.path.join(tmp, "wtb"); subprocess.run(["git", "-C", HERE, "worktree", "add", "-q", "--detach", WB, MAIN_A], check=True)
     open(os.path.join(WB, DOC_REL), "w").write(d_bad); git(WB, "commit", "-q", "-am", "t704 wrong version")
@@ -180,6 +181,8 @@ sys.exit(1)
     writes = [q for q in S["sql"] if re.match(r"(?is)\s*(--|begin|alter|update|insert|delete|create)", q)]
     ck("the only database change is hepb-step1.sql (no switch, no person's record)", writes == [open(os.path.join(WA, SQL_REL)).read()], [w[:80] for w in writes])
     ck("only the read-only Step 1 preview is called, as a visitor", S["posts"] and all(f == "step1-sign" and b.get("action") == "preview" and a == "Bearer eyJanonKEY" for f, a, b in S["posts"]), S["posts"])
+    ck("the report says up front that the step pays no attention to hepb_offer_live, and the step never reads it to decide or writes it",
+       out.index("pays no attention to the hepb_offer_live switch") < out.index("PART 1") and not re.search(r"hepb_offer_live['\"]?\)?\s*(==|is|!=)|st0\.get\(.hepb_offer_live", open(os.path.join(WA, "golive_hub_704.py")).read()), out[:400])
     ck("her lines: new Step 1s get the form; ones under way keep 12; confidential", "every Step 1 that starts from now has the Hepatitis B form last" in out and "Step 1s already under way keep their 12 forms" in out and "owners only" in out, out)
     ck("no key or token printed; no em dash in the report or the step's files; never 'plain language'", "sbp_test" not in out and "eyJanonKEY" not in out and "—" not in out and "plain language" not in out.lower()
        and all("—" not in open(os.path.join(WA, f)).read() for f in ["golive_hub_704.py", SQL_REL]), out)
