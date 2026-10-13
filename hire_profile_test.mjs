@@ -74,7 +74,7 @@ r = await call({ action: 'get', candidate_id: 42 }, 'sam')
 ck('and from the Background & References record', r.status === 200 && r.j.ids.offer_id === OID)
 r = await call({ action: 'step1_progress', offer_ids: [OID] }, 'sam')
 const pr = r.j?.progress?.[OID]
-ck('Step 1 progress for the offer card: sent automatically (practice), started, 2 of 7 signed so far, complete', pr && pr.sent_at === '2026-10-11T15:11:30Z' && pr.practice === true && pr.started_at && pr.signed === 2 && pr.forms === 7 && pr.completed_at, pr)
+ck('Step 1 progress for the offer card: sent automatically (practice), started, 2 of 12 signed so far, complete', pr && pr.sent_at === '2026-10-11T15:11:30Z' && pr.practice === true && pr.started_at && pr.signed === 2 && pr.forms === 12 && pr.completed_at, pr)
 r = await call({ action: 'get', offer_id: '99999999-2222-4333-8444-555555555555' }, 'sam')
 ck('nobody: not found', r.status === 404, r)
 const src = fs.readFileSync(path.join(FN, 'hire-profile/index.ts'), 'utf8')
