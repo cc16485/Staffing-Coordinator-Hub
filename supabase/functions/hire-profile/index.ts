@@ -213,7 +213,7 @@ Deno.serve(async (req) => {
     try {
       const candId = p.cand?.id ?? p.rec?.candidate_id
       const [{ data: f }, { data: rr }, { data: bk }] = await Promise.all([
-        p.offerId ? db.from('step1_forms').select('answers, practice, signatures, started_at, completed_at').eq('offer_id', p.offerId).maybeSingle() : Promise.resolve({ data: null }),
+        p.offerId ? db.from('step1_forms').select('answers, practice, signatures, started_at, completed_at, pdfs').eq('offer_id', p.offerId).maybeSingle() : Promise.resolve({ data: null }),
         candId != null ? db.from('reference_requests').select('*').eq('candidate_id', String(candId)).order('slot') : Promise.resolve({ data: [] }),
         p.app?.id ? db.from('interview_bookings').select('id, starts_at, status, created_at').eq('applicant_id', p.app.id) : Promise.resolve({ data: [] })])
       if (f?.answers) experience = { ...experienceSummary(f.answers, rr ?? []), practice: !!f.practice }

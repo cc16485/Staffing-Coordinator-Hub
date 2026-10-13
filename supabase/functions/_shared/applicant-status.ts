@@ -1,5 +1,18 @@
 // =============================================================================
 import { FORMS, FORM_ORDER, formsToList } from './step1-documents.ts'
+
+/** 2026-10-13 (Samantha): each Step 1 form's own status: Not Started, In Progress, Signed, Needs Attention.
+    Needs Attention = signed but its PDF is missing, or signed on an older wording than the current one. */
+export function formState(key: string, f: Any): { state: 'not_started' | 'in_progress' | 'signed' | 'needs_attention'; why?: string } {
+  const sig = f?.signatures?.[key], form = FORMS[key]
+  if (sig?.at) {
+    if (f && f.pdfs && !f.pdfs[key]) return { state: 'needs_attention', why: 'signed, but its PDF was not saved' }
+    if (form && Number(sig.version) && Number(sig.version) !== form.version) return { state: 'needs_attention', why: `signed on version ${sig.version}; the wording is now version ${form.version}` }
+    return { state: 'signed' }
+  }
+  const a = (f?.answers || {}) as Record<string, unknown>, ids = (form?.sections || []).flatMap((x: Any) => (x.items || []).map((i: Any) => i.id))
+  return ids.some((id: string) => a[id] != null && a[id] !== '') ? { state: 'in_progress' } : { state: 'not_started' }
+}
 // applicant-status.ts · WHERE ONE PERSON IS, FROM APPLICATION TO APPROVED TO WORK (Samantha 2026-10-11: "When viewing a real
 // applicant, I want our Care Coordinators and Recruiting & Orientation staff to be able to see: which steps have been
 // completed; which step the applicant is currently on; what information they've submitted; which forms are signed or still
@@ -45,7 +58,7 @@ export function applicantStatus(x: StatusIn): Any {
   const sigs = (f?.signatures || {}) as Record<string, Any>
   /* 2026-10-13: only the forms that apply to them (the Driver OR the Non-Driver Agreement) */
   const listed = formsToList((f?.answers || {}) as Record<string, unknown>)
-  const forms = STEP1_FORMS.filter(([k]) => listed.includes(k)).map(([k, t]) => ({ key: k, title: t, signed_at: sigs[k]?.at || null }))
+  const forms = STEP1_FORMS.filter(([k]) => listed.includes(k)).map(([k, t]) => ({ key: k, title: t, signed_at: sigs[k]?.at || null, ...formState(k, f) }))
   const outstanding = forms.filter((k) => !k.signed_at)
   if (!newPath && !f) { st[6].state = 'na'; st[6].note = 'Old process: the start link and Viventium Group 1' }
   else if (f?.completed_at) done(6, f.completed_at)

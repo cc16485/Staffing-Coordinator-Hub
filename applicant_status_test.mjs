@@ -3,6 +3,7 @@
 import path from 'path'
 const ROOT = path.dirname(new URL(import.meta.url).pathname)
 const M = await import(path.join(ROOT, 'supabase/functions/_shared/applicant-status.ts'))
+const M2 = await import(path.join(ROOT, 'supabase/functions/_shared/step1-documents.ts'))
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note ?? null).slice(0, 500)])
 const S = (x) => M.applicantStatus(x), states = (s) => s.stages.map((x) => x.state[0]).join('')
 const app = { id: 'a1', created_at: '2026-10-01T15:00:00Z', screen_grade: 'A', position: 'Caregiver' }
@@ -32,5 +33,13 @@ s = S({ app, offer: offerNew(signed), step1: { completed_at: 'x', signatures: si
 s = S({ app, experience: { counts: { confirmed: 2, supported: 1, self_reported: 3, questioned: 0 } } }); ck('unverified experience is named in Missing as not counting until confirmed', /4 tasks from their experience not verified yet \(does not count until a reference who saw it confirms\)/.test(s.missing.join()), s.missing)
 ck('submitted: what they gave us, from the records (no free typing)', S({ app: { ...app, post_interview: { x: 1 } }, cand: { r1n: 'A' } }).submitted.interview_answers === true && S({ cand: { r1n: 'A' } }).submitted.references_listed === 1)
 ck('a blank never counts: an offer row without a send date is not an offer sent', S({ app, offer: { id: 'o3', onboarding_path: 'new' } }).stages[4].state !== 'done')
-const bad = res.filter((x) => !x[1]); for (const [n, ok, note] of res) console.log((ok ? 'ok    ' : 'FAIL  ') + n + (ok ? '' : '  ' + note))
+const bad = res.filter((x) => !x[1]); /* 2026-10-13: each form's own status */
+{ const fs = M.formState
+  ck('form status: Not Started (no answers), In Progress (answers, no signature), Signed, Needs Attention (no PDF, or an older wording)',
+    fs('availability', { answers: {}, signatures: {}, pdfs: {} }).state === 'not_started'
+    && fs('availability', { answers: { hours_ideal: 30 }, signatures: {}, pdfs: {} }).state === 'in_progress'
+    && fs('availability', { answers: {}, signatures: { availability: { at: 'x', version: M2.FORMS.availability.version } }, pdfs: { availability: 'p.pdf' } }).state === 'signed'
+    && fs('availability', { answers: {}, signatures: { availability: { at: 'x', version: M2.FORMS.availability.version } }, pdfs: {} }).state === 'needs_attention'
+    && /older|version/.test(fs('availability', { answers: {}, signatures: { availability: { at: 'x', version: 1 } }, pdfs: { availability: 'p' } }).why || ''), null) }
+for (const [n, ok, note] of res) console.log((ok ? 'ok    ' : 'FAIL  ') + n + (ok ? '' : '  ' + note))
 console.log(`${res.length - bad.length}/${res.length} passed`); if (bad.length) process.exit(1)
