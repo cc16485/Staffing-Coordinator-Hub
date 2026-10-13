@@ -1,5 +1,5 @@
 // =============================================================================
-import { FORMS, FORM_ORDER } from './step1-documents.ts'
+import { FORMS, FORM_ORDER, formsToList } from './step1-documents.ts'
 // applicant-status.ts · WHERE ONE PERSON IS, FROM APPLICATION TO APPROVED TO WORK (Samantha 2026-10-11: "When viewing a real
 // applicant, I want our Care Coordinators and Recruiting & Orientation staff to be able to see: which steps have been
 // completed; which step the applicant is currently on; what information they've submitted; which forms are signed or still
@@ -43,7 +43,9 @@ export function applicantStatus(x: StatusIn): Any {
   else if (o?.offer_signed_at) st[5].note = 'Offer letter signed; the position description is not yet'
   /* 7: Step 1, form by form */
   const sigs = (f?.signatures || {}) as Record<string, Any>
-  const forms = STEP1_FORMS.map(([k, t]) => ({ key: k, title: t, signed_at: sigs[k]?.at || null }))
+  /* 2026-10-13: only the forms that apply to them (the Driver OR the Non-Driver Agreement) */
+  const listed = formsToList((f?.answers || {}) as Record<string, unknown>)
+  const forms = STEP1_FORMS.filter(([k]) => listed.includes(k)).map(([k, t]) => ({ key: k, title: t, signed_at: sigs[k]?.at || null }))
   const outstanding = forms.filter((k) => !k.signed_at)
   if (!newPath && !f) { st[6].state = 'na'; st[6].note = 'Old process: the start link and Viventium Group 1' }
   else if (f?.completed_at) done(6, f.completed_at)

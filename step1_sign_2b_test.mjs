@@ -57,7 +57,8 @@ function table(name) {
   }
   return { select: () => q('select'), insert: (p) => q('insert', p), upsert: (p) => q('upsert', p), update: (p) => q('update', p) }
 }
-const storage = { from: () => ({ upload: async (p, bytes, o) => { if (STORE[p] && !o?.upsert) return { error: { message: 'exists' } }; STORE[p] = bytes; return { data: { path: p }, error: null } }, createSignedUrl: async (p) => ({ data: STORE[p] ? { signedUrl: 'https://signed/' + p } : null, error: STORE[p] ? null : { message: 'no' } }) }) }
+const UPLOADS = new Set(); globalThis.UPLOADS = UPLOADS
+const storage = { from: (bucket) => ({ createSignedUploadUrl: async (p) => ({ data: { token: 'tok-' + p, signedUrl: 'https://upload/' + bucket + '/' + p }, error: null }), list: async (dir, o) => ({ data: [...UPLOADS].filter((x) => x.startsWith(bucket + ':' + dir + '/')).map((x) => ({ name: x.slice((bucket + ':' + dir + '/').length) })).filter((x) => !o?.search || x.name === o.search), error: null }), upload: async (p, bytes, o) => { if (STORE[p] && !o?.upsert) return { error: { message: 'exists' } }; STORE[p] = bytes; return { data: { path: p }, error: null } }, createSignedUrl: async (p) => ({ data: STORE[p] ? { signedUrl: 'https://signed/' + p } : null, error: STORE[p] ? null : { message: 'no' } }) }) }
 const RPCS = []
 globalThis.__fakeCreateClient = () => ({ from: table, storage, rpc: async (name, args) => { RPCS.push({ name, args })
   /* STEP 1 BEFORE CHECKS: NO_CAND = nobody in Background & References yet (the new rule); the door then makes the record */
@@ -94,7 +95,7 @@ OFFERS[OID] = base()
 DB.job_applicants = [{ id: 'a1', email: 'AVA@example.com', phone: '417-555-0101', lived_outside_mo: true, has_license: true, has_insurance: false, experience_years: 3, availability: 'Weekday mornings', created_at: '2026-09-01', post_interview: { cats: 'yes', dogs: 'no', client_smokes: 'no', drive_clients: 'yes', skills: { dementia: 'some' }, travel_areas: 'Springfield and Nixa' } }]
 r = await call({ action: 'view', ...link })
 if (process.env.DUMP_VIEW) (await import('fs')).writeFileSync(process.env.DUMP_VIEW, JSON.stringify(r.j))   /* for the Step 1 page look */
-ck('view: ok, seven forms with fingerprints, test mode, screen 1, nothing signed', r.status === 200 && r.j.forms.length === 7 && r.j.forms.every((f) => /^[0-9a-f]{64}$/.test(f.fingerprint) && f.approved_for_real === false) && r.j.test_mode === true && r.j.current_screen === '1' && r.j.signed_count === 0, r.j && { s: r.status, e: r.j.error })
+ck('view: ok, eight forms (with the Driver and Non-Driver Agreements) with fingerprints, test mode, screen 1, nothing signed', r.status === 200 && r.j.forms.length === 8 && r.j.forms.every((f) => /^[0-9a-f]{64}$/.test(f.fingerprint) && f.approved_for_real === false) && r.j.test_mode === true && r.j.current_screen === '1' && r.j.signed_count === 0, r.j && { s: r.status, e: r.j.error })
 ck('view: the record exists once and the trail has step1_started', DB.step1_forms.length === 1 && EVENTS.filter((e) => e.kind === 'step1_started').length === 1)
 ck('view: prefill from the application (lived outside MO, license, insurance, 2 to 5 years) and the interview (cats yes, dogs not, driving yes, dementia specialties), each with its source', r.j.prefill.lived_outside_mo?.value === 'yes' && r.j.prefill.has_insurance?.value === 'no' && r.j.prefill.experience?.value === '2 to 5 years' && r.j.prefill.experience.from === 'your application' && r.j.prefill.matching_facts?.value['Homes with cats'] === 'Yes' && r.j.prefill.matching_facts.value['Homes with dogs'] === 'Not at this time' && r.j.prefill.specialties?.value["Alzheimer's disease"] === 'Yes' && r.j.hints.travel === 'Springfield and Nixa', r.j.prefill)
 await call({ action: 'view', ...link })
@@ -181,14 +182,33 @@ r = await call({ action: 'sign', ...link, form: 'experience', typed_name: 'Ava L
 ck('one row of each yes/no grid answered: refused, naming the rows left', r.status === 400 && /Client population: answer every row \(Other dementias/.test(r.j.error) && /Comfortable with: answer every row/.test(r.j.error), r)
 await call({ action: 'save', ...link, screen: '7', answers: { specialties: Object.fromEntries(D.SPECIALTIES.map((x, i) => [x, i % 2 ? 'Not at this time' : 'Yes'])), matching_facts: Object.fromEntries(D.MATCHING_FACTS.map((m, i) => [m.label, i % 2 ? 'Yes' : 'Not at this time'])) } })
 r = await call({ action: 'sign', ...link, form: 'experience', typed_name: 'Ava Lee', consent: true }); ck('experience signs', r.status === 200, r)
-const driverYes = D.FORMS.vehicle.sections.at(-1).items[0].options[0]
-await call({ action: 'save', ...link, screen: '8', answers: { has_license: 'yes', has_insurance: 'yes', has_transport: 'yes', insurance_proof: D.FORMS.vehicle.sections[0].items.find((i) => i.id === 'insurance_proof').options[1], driver_ack: driverYes, license_state: 'MO', license_expires: '2029-01-01' } })
+/* 2026-10-13: the driving screen asks first, then the Driver Agreement (with photos) or the Non-Driver Agreement */
+ck('six forms signed and the transport question not answered yet: Step 1 is NOT complete', !DB.step1_forms[0].completed_at, DB.step1_forms[0].completed_at)
 r = await call({ action: 'sign', ...link, form: 'vehicle', typed_name: 'Ava Lee', consent: true })
-ck('a driver who asks to transport clients must have the license number on file first', r.status === 400 && /license number/.test(r.j.error), r)
+ck('the driver agreement cannot be signed before the transport question is answered', r.status === 409 && /transport clients/.test(r.j.error), r)
+r = await call({ action: 'upload_url', ...link, item: 'license_front', ext: 'jpg' })
+ck('no picture before the question either', r.status === 409, r)
+r = await call({ action: 'save', ...link, screen: '8', answers: { transport_willing: 'maybe' } }); ck('the question takes only yes or no', r.j.rejected.includes('transport_willing'), r.j)
+await call({ action: 'save', ...link, screen: '8', answers: { transport_willing: 'yes', license_state: 'MO', license_expires: '2029-01-01', insurer: 'Practice Mutual', insurance_expires: '2027-06-30', license_front: { path: 'offer/x/sneaky.jpg' } } })
+ck('a picture can never be set by a save (only through the upload)', !DB.step1_forms[0].answers.license_front, DB.step1_forms[0].answers.license_front)
+r = await call({ action: 'view', ...link }); ck('with Yes, 7 forms to sign (the Non-Driver Agreement does not apply); the deciding question is sent to the page', r.j.form_count === 7 && r.j.deciding.transport_willing.options.length === 2, [r.j.form_count, r.j.deciding])
+r = await call({ action: 'sign', ...link, form: 'non_driver', typed_name: 'Ava Lee', consent: true }); ck('a driver cannot sign the Non-Driver Agreement', r.status === 409, r)
+r = await call({ action: 'sign', ...link, form: 'vehicle', typed_name: 'Ava Lee', consent: true })
+ck('the driver agreement needs both license pictures, the insurance proof and the license number', r.status === 400 && /license, front/.test(r.j.error) && /license, back/.test(r.j.error) && /Proof of current auto insurance/.test(r.j.error) && /license number/.test(r.j.error), r)
+r = await call({ action: 'upload_url', ...link, item: 'license_front', ext: 'exe' }); ck('only photos or PDFs', r.status === 400, r)
+for (const [item, ext] of [['license_front', 'jpg'], ['license_back', 'heic'], ['insurance_doc', 'pdf']]) {
+  r = await call({ action: 'upload_url', ...link, item, ext })
+  ck('upload link for ' + item + ' points into the private driver store under this offer', r.status === 200 && r.j.path.startsWith(`offer/${OID}/${item}-`) && r.j.signed_url.startsWith('https://upload/driver-docs/'), r)
+  const path = r.j.path
+  r = await call({ action: 'uploaded', ...link, item, path }); if (item === 'license_front') ck('a picture that never arrived is refused', r.status === 409, r)
+  UPLOADS.add('driver-docs:' + path)
+  r = await call({ action: 'uploaded', ...link, item, path: `offer/${OID}/license_back-1.jpg/../x` }); if (item === 'license_front') ck('a path that is not that item is refused', r.status === 400, r)
+  r = await call({ action: 'uploaded', ...link, item, path }); ck(item + ' recorded once it arrived', r.status === 200 && DB.step1_forms[0].answers[item]?.path === path, r)
+}
 r = await call({ action: 'identity', ...link, license_number: 'M123 456 789', license_state: 'MO', license_expires: '2029-01-01' })
 ck('the license number is sealed with its last four', r.status === 200 && r.j.identity.license === 'ending 6789' && DB.step1_identity[0].license_sealed.startsWith('v1.'), r)
 r = await call({ action: 'sign', ...link, form: 'vehicle', typed_name: 'Ava Lee', consent: true })
-ck('the last form signs: Step 1 done, the trail says so, the offer record carries step1_done_at, 7 of 7', r.status === 200 && r.j.done === true && r.j.signed_count === 7 && DB.step1_forms[0].completed_at && EVENTS.some((e) => e.kind === 'step1_done') && OFFERS[OID].step1_done_at && Object.keys(STORE).length === 7, r)
+ck('the last form signs: Step 1 done, the trail says so, the offer record carries step1_done_at, 7 of 7 (the driver path)', r.status === 200 && r.j.done === true && r.j.signed_count === 7 && r.j.form_count === 7 && DB.step1_forms[0].completed_at && EVENTS.some((e) => e.kind === 'step1_done') && OFFERS[OID].step1_done_at && Object.keys(STORE).length === 7, r)
 r = await call({ action: 'copies', ...link }); ck('copies: seven short-lived links', r.status === 200 && Object.keys(r.j.copies).length === 7, r)
 r = await call({ action: 'view', ...link }); ck('view after: completed, screen 9, seven signatures with name and version only', r.j.completed_at && r.j.current_screen === '9' && Object.keys(r.j.signatures).length === 7 && r.j.signatures.vehicle.typed_name === 'Ava Lee' && !('ip' in r.j.signatures.vehicle), r.j.signatures)
 ck('the trail: 1 start, 7 signed, 1 done; every signed event carries a 64-hex fingerprint and the form', EVENTS.filter((e) => e.kind === 'step1_signed').length === 7 && EVENTS.filter((e) => e.kind === 'step1_done').length === 1 && EVENTS.filter((e) => e.kind === 'step1_signed').every((e) => /^[0-9a-f]{64}$/.test(e.fingerprint) && e.detail.form))
@@ -239,7 +259,7 @@ ck('a purged record reveals nothing (410)', r.status === 410, r); DB.step1_ident
   ck('review without a sign-in is refused', r.status === 401, r)
   const before = { forms: JSON.stringify(DB.step1_forms), ev: EVENTS.length, logs: DB.document_access_log.length }
   r = await call({ action: 'review', offer_id: OID }, STAFF)
-  ck('review: the forms, their answers, all seven signatures with time, device and version, complete', r.status === 200 && r.j.review === true && r.j.forms.length === 7 && Object.keys(r.j.signed).length === 7 && Object.values(r.j.signed).every((g) => g.at && g.typed_name && g.version && g.ip !== undefined && g.version_mismatch === false && g.pdf === true) && r.j.completed_at && r.j.answers && Object.keys(r.j.answers).length > 5, { status: r.status, keys: r.j && Object.keys(r.j) })
+  ck('review: the forms, their answers, all seven signatures with time, device and version, complete', r.status === 200 && r.j.review === true && r.j.forms.length === 8 && Object.keys(r.j.signed).length === 7 && Object.values(r.j.signed).every((g) => g.at && g.typed_name && g.version && g.ip !== undefined && g.version_mismatch === false && g.pdf === true) && r.j.completed_at && r.j.answers && Object.keys(r.j.answers).length > 5, { status: r.status, keys: r.j && Object.keys(r.j) })
   ck('review: identity only as "ending", no number anywhere in the answer', r.j.identity.ssn === 'ending 3456' && !JSON.stringify(r.j).includes('529123456') && !JSON.stringify(r.j).includes('1990-05-05') && !JSON.stringify(r.j).includes('M123456789'), r.j.identity)
   ck('review: read only (no change to Step 1, no trail event) and the look is logged with who', JSON.stringify(DB.step1_forms) === before.forms && EVENTS.length === before.ev && DB.document_access_log.length === before.logs + 1 && DB.document_access_log.at(-1).doc === 'step1:review' && DB.document_access_log.at(-1).by_name === 'Krystal', DB.document_access_log.at(-1))
   ck('review: test_mode false (the office view never shows the practice banner)', r.j.test_mode === false)
@@ -302,12 +322,16 @@ ck('the door is never asked to land the SSN, date of birth, license number or ad
   globalThis.NO_CAND = true; globalThis.CARDS = []
   const rp0 = RPCS.length, ev0 = EVENTS.length
   await call({ action: 'view', ...link2 })
-  const steps = REPLAY.filter((b) => b.o === OID).map((b) => ({ ...b, ...link2 }))
+  /* 2026-10-13: the second hire answers No to transporting clients: no pictures, no license number; the Non-Driver Agreement instead */
+  const steps = REPLAY.filter((b) => b.o === OID && !['upload_url', 'uploaded'].includes(b.action) && !(b.action === 'identity' && b.license_number))
+    .map((b) => b.action === 'save' && b.answers && b.answers.transport_willing ? { ...b, answers: { transport_willing: 'no' } } : b.action === 'sign' && b.form === 'vehicle' ? { ...b, form: 'non_driver' } : b)
+    .map((b) => ({ ...b, ...link2 }))
   let created = -1, last = null
   for (const b of steps) { const out = await call(b); if (b.action === 'sign') last = out; if (created < 0 && RPCS.slice(rp0).some((r) => r.name === 'step1_candidate_create')) created = RPCS.length }
   const mine = RPCS.slice(rp0)
   const cc = mine.filter((r) => r.name === 'step1_candidate_create')
   ck('before checks: every form signed for the second hire (the replay reached Step 1 complete)', last && last.status === 200 && last.j && last.j.done === true, last)
+  ck('the Non-Driver path: answered No, signed the Non-Driver Agreement, no pictures, no license number, 7 of 7', last && last.j.form === 'non_driver' && last.j.form_count === 7 && !DB.step1_forms.find((f) => f.offer_id === OID2).signatures.vehicle && !DB.step1_forms.find((f) => f.offer_id === OID2).answers.license_front, last && last.j)
   ck('before checks: Background & References is entered exactly once, by the server, at the last signature, with the offer\'s person', cc.length === 1 && cc[0].args.p_offer_id === OID2 && cc[0].args.p_record.first === 'Bo' && cc[0].args.p_record.onboarding_path === 'new' && cc[0].args.p_record.oig === 'Pending', cc)
   ck('before checks: no "landing failed" on the trail for the forms signed before then', !EVENTS.slice(ev0).some((e) => e.offer_id === OID2 && e.result === 'landing_failed'), EVENTS.slice(ev0).filter((e) => e.result))
   const after = mine.slice(mine.indexOf(cc[0]) + 1).filter((r) => r.name === 'step1_land_apply' && r.args.p_offer_id === OID2)
@@ -320,11 +344,12 @@ ck('the door is never asked to land the SSN, date of birth, license number or ad
 
 globalThis.fetch = realFetch
 for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note))
+const PRINTED = res.length
 /* ═══ PREVIEW (2026-10-11, Samantha: click through every screen as the caregiver with practice data): public, read-only ═══ */
 {
   const before = JSON.stringify({ DB, EVENTS: EVENTS.length, PATCHES: PATCHES.length, STORE: Object.keys(STORE).length, RPCS: RPCS.length })
   let p = await call({ action: 'preview' })
-  ck('preview: no link needed; the seven forms with fingerprints, Pat Preview, prefill marked from the application and interview, nothing signed', p.status === 200 && p.j.preview === true && p.j.forms.length === 7 && p.j.forms.every((f) => /^[0-9a-f]{64}$/.test(f.fingerprint)) && p.j.who.last === 'Preview' && p.j.prefill.lived_outside_mo.from === 'your application' && p.j.prefill.matching_facts.from === 'your interview' && Object.keys(p.j.signatures).length === 0 && p.j.skill_groups.length === 3, p.j)
+  ck('preview: no link needed; the eight forms (Driver and Non-Driver) with fingerprints, Pat Preview, prefill marked from the application and interview, nothing signed', p.status === 200 && p.j.preview === true && p.j.forms.length === 8 && p.j.form_count === 7 && p.j.forms.every((f) => /^[0-9a-f]{64}$/.test(f.fingerprint)) && p.j.who.last === 'Preview' && p.j.prefill.lived_outside_mo.from === 'your application' && p.j.prefill.matching_facts.from === 'your interview' && Object.keys(p.j.signatures).length === 0 && p.j.skill_groups.length === 3, p.j)
   ck('preview: the same words a real Step 1 shows (identical forms to the real view)', JSON.stringify(p.j.forms) === JSON.stringify(M.__lastViewForms || p.j.forms))
   p = await call({ action: 'preview', check: true, form: 'employee_application', answers: { preferred_name: 'Pat', ssn: '123456789', bogus: 'x' } })
   ck('preview check: the real required-answer list; an identity number or unknown id is dropped, never echoed', p.status === 200 && p.j.missing.length > 3 && !JSON.stringify(p.j).includes('123456789'), p.j)
@@ -337,4 +362,5 @@ for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (o
   ck('preview: nothing read or written anywhere (database, offers, trail, storage, door calls unchanged)', JSON.stringify({ DB, EVENTS: EVENTS.length, PATCHES: PATCHES.length, STORE: Object.keys(STORE).length, RPCS: RPCS.length }) === before)
 }
 
+for (const [n, ok, note] of res.slice(PRINTED)) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note))
 const bad = res.filter((x) => !x[1]).length; console.log(`${res.length - bad}/${res.length} passed`); process.exit(bad ? 1 : 0)

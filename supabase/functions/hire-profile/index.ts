@@ -20,7 +20,7 @@ import { logOpen, ipOf } from '../_shared/doc-log.ts'
 import { evidenceLine } from '../_shared/evidence.ts'
 import { experienceSummary } from '../_shared/step1-experience.ts'
 import { applicantStatus } from '../_shared/applicant-status.ts'
-import { FORMS, FORM_ORDER } from '../_shared/step1-documents.ts'
+import { FORMS, FORM_ORDER, formCount } from '../_shared/step1-documents.ts'
 type Any = any
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -184,13 +184,13 @@ Deno.serve(async (req) => {
     if (action === 'step1_progress') {
       const ids = (Array.isArray(b.offer_ids) ? b.offer_ids : []).map((x: unknown) => S(x, 64)).filter((x: string) => /^[0-9a-f-]{36}$/i.test(x)).slice(0, 100)
       if (!ids.length) return json({ ok: true, progress: {} })
-      const { data: rows } = await db.from('step1_forms').select('offer_id, started_at, current_screen, signatures, completed_at').in('offer_id', ids)
+      const { data: rows } = await db.from('step1_forms').select('offer_id, started_at, current_screen, signatures, completed_at, answers').in('offer_id', ids)
       const ev = await T.get(`offer_events?offer_id=in.(${ids.join(',')})&kind=in.(step1_sent,step1_resent)&select=offer_id,at,kind,detail&order=at.asc`)
       const out: Record<string, Any> = {}
       for (const id of ids) {
         const f = (rows ?? []).find((r: Any) => r.offer_id === id), sent = ev.filter((e: Any) => e.offer_id === id && (e.kind === 'step1_sent' || e.kind === 'step1_resent'))
         out[id] = { sent_at: sent[0]?.at ?? null, practice: !!sent[0]?.detail?.practice, sends: sent.length, started_at: f?.started_at ?? null, screen: f?.current_screen ?? null,
-          signed: Object.keys(f?.signatures || {}).length, forms: FORM_ORDER.length, completed_at: f?.completed_at ?? null }
+          signed: Object.keys(f?.signatures || {}).length, forms: formCount((f?.answers || {}) as Record<string, unknown>), completed_at: f?.completed_at ?? null }
       }
       return json({ ok: true, progress: out })
     }

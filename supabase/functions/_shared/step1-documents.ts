@@ -21,7 +21,7 @@ export type Section = { h: string; p?: string[]; items?: Item[]; tone?: 'cheer';
 /** 2026-10-13 (Samantha: long documents such as the Employment Agreement and the Employee Manual are shown WHOLE in one
     scrollable reader on their Step 1 screen, with a copy to open or save, and the acknowledgment, any separate initials
     and the signature right below): layout 'document'. `short` is the screen's title in the screen list. */
-export type Form = { key: FormKey; screen: string; title: string; short?: string; layout?: 'document'; version: number; status: FormStatus; intro?: string[]; sections: Section[]; certification: string[]; signature: 'typed' | 'typed+initials' }
+export type Form = { key: FormKey; screen: string; title: string; short?: string; layout?: 'document'; when?: { id: string; equals: string }; version: number; status: FormStatus; intro?: string[]; sections: Section[]; certification: string[]; signature: 'typed' | 'typed+initials' }
 
 export const OFFICE_PHONE = '(417) 234-8494'
 export const COMPANY = 'Troutman Enterprises, LLC DBA Caring Companions In-Home Senior Care'
@@ -290,21 +290,24 @@ export const FORMS: Record<FormKey, Form> = {
       'Everyone starts at Level 1. Level 2 and Level 3 assignments follow once the office verifies your previous experience through your references and employment history and an authorized person approves the level. Your answers here are your own words and never raise your level by themselves.',
     ],
   },
+  /* v5 (2026-10-13, Samantha's driver and non-driver rules): only for an applicant who answers YES to "Are you willing and
+     able to transport clients in your personal vehicle as part of your caregiving duties?". Photos of the license front
+     and back and proof of insurance are required; uploading never authorizes driving; the office verifies and approves;
+     an expired license or insurance suspends driving until new documents are verified. Someone who answers NO signs the
+     Non-Driver Agreement instead (FORMS.non_driver). */
   vehicle: {
-    key: 'vehicle', screen: '8', title: 'Responsibility for Personal Vehicle Insurance & Transportation Standards', version: 4, status: 'proposed', signature: 'typed',
+    key: 'vehicle', screen: '8', title: 'Driver/Vehicle Insurance & Transportation Standards Agreement', short: 'Driver agreement', when: { id: 'transport_willing', equals: 'yes' }, version: 5, status: 'proposed', signature: 'typed',
     sections: [
-      { h: 'Your driving details', p: ['From your application: whether you have a valid license, insurance and your own transportation. Correct anything that has changed.'], items: [
-        yesno('has_license', 'I have a current, valid driver\'s license'), yesno('has_insurance', 'I have active automobile liability insurance'), yesno('has_transport', 'I have reliable transportation of my own'),
-        /* v3 (her decision 1): the MVR is not described as an existing check */
+      { h: 'Your license and insurance', p: ['Take a clear picture of each with your phone, or choose a file you already have. If you do not have a current license and insurance right now, go back and answer No; you can become a driver later.'], items: [
+        { id: 'license_front', label: 'Your driver\'s license, front', kind: 'photo', required: true },
+        { id: 'license_back', label: 'Your driver\'s license, back', kind: 'photo', required: true },
         { id: 'license_number', label: 'Driver\'s license number', kind: 'text', locked: true, note: 'Needed so the office can verify your license and driving record before you are approved to transport clients. Kept encrypted; your record says "on file, ending" with the last four characters.' },
-        { id: 'license_state', label: 'License state', kind: 'choice', options: STATES }, { id: 'license_expires', label: 'License expiration date', kind: 'date' },
-        /* her decision 5 and section 21: proof is an option, the photo is truly optional */
-        { id: 'insurance_proof', label: 'Proof of insurance', kind: 'choice', options: ['I have provided proof of current personal automobile insurance coverage to Caring Companions', 'I will provide proof of current personal automobile insurance coverage to Caring Companions before orientation'], required: true },
-        { id: 'insurance_photo', label: 'Add a photo of your insurance card if you have it handy (optional)', kind: 'photo', required: false },
-        text('insurer', 'Insurance company (optional)'), { id: 'insurance_expires', label: 'Policy expiration date (optional)', kind: 'date' },
+        { id: 'license_state', label: 'License state', kind: 'choice', options: STATES, required: true }, { id: 'license_expires', label: 'License expiration date', kind: 'date', required: true },
+        { id: 'insurance_doc', label: 'Proof of current auto insurance (your insurance card or declarations page)', kind: 'photo', required: true },
+        text('insurer', 'Insurance company', { required: true }), { id: 'insurance_expires', label: 'Insurance expiration date', kind: 'date', required: true },
       ] },
       { h: 'Insurance responsibility', p: [
-        'I agree to notify Caring Companions and provide updated proof of insurance within three (3) calendar days of any policy renewal, change, lapse, or cancellation.',
+        'I agree to notify Caring Companions immediately if my driver\'s license is suspended or revoked, or if my insurance is canceled or lapses, and to upload my updated license or proof of insurance whenever either is renewed, replaced or changed.',
         'I understand and acknowledge that Caring Companions does not provide automobile insurance coverage for employees operating personal vehicles. I further understand that I am solely responsible for all liability, claims, damages, injuries, fines, or losses arising from my operation of a personal vehicle, including while transporting clients. Any mileage reimbursement or stipend provided does not constitute insurance coverage.',
         /* v2 (her decision 7): the indemnification clause is removed pending counsel review */
       ] },
@@ -316,12 +319,28 @@ export const FORMS: Record<FormKey, Form> = {
       { h: 'Driver Conduct & Safety Expectations', p: ['While transporting clients, I agree to: Not smoke, vape, text, email, or use a mobile device while driving. Not drive while fatigued, ill, impaired, or under the influence of alcohol, drugs, or medications that affect driving ability. Obey all traffic laws and operate the vehicle in a safe, defensive manner. Transport only the authorized client (no unauthorized passengers). Avoid driving in unsafe weather or road conditions. Never operate a client\'s vehicle unless expressly authorized in writing by the agency.'] },
       { h: 'Accident & Incident Reporting', p: ['I agree to immediately notify Caring Companions of any accident, traffic citation, or incident that occurs while transporting a client. I will comply with all legal reporting requirements and understand that I may not transport clients again until cleared by the agency.'] },
       { h: 'Agency Rights & Acknowledgment', p: ['I understand that Caring Companions reserves the right to approve, suspend, or revoke driving privileges at any time based on safety concerns, compliance issues, insurance status, or policy violations. Failure to comply with this policy may result in disciplinary action, up to and including termination. Driving duties are assigned only after the office has verified my license, my insurance and my driving record, and has approved me and my vehicle.'] },
-      { h: 'Driver Acknowledgment', p: ['If you choose the second option, you will not be asked to transport clients, and the office will send you the Non-Driver Agreement to sign with your Step 2 paperwork.'], items: [{ id: 'driver_ack', label: 'Choose one', kind: 'choice', options: ['I meet all requirements and request approval to transport clients.', 'I do not meet the requirements and will inform my supervisor and sign a Non-Driver Agreement.'], required: true }] },
+      { h: 'Keeping your license and insurance current', p: ['Caring Companions keeps a current copy of your driver\'s license and proof of insurance on file for as long as you are approved to transport clients. We will send you a secure link to upload new copies 30 days before either expires, and again at 14 and 7 days if they are not updated. If your license or insurance expires before the office has your updated copy, your approval to transport clients is suspended until the office receives and verifies it.'] },
+      { h: 'Driver Acknowledgment', p: ['I meet all of the requirements above and request approval to transport clients. I understand that I may not transport any client until the office has verified my license, my insurance and my driving record and has approved me and my vehicle.'] },
     ],
-    certification: ['I have read this policy and the acknowledgment I chose above is true.'],
+    certification: ['I have read this agreement, the information and documents I gave are current and true, and I agree to it.'],
+  },
+  /* 2026-10-13 PROPOSED (a draft until Samantha sends or approves the company's Non-Driver Agreement): for an applicant who
+     answers NO to transporting clients. They continue onboarding and work non-driving assignments. */
+  non_driver: {
+    key: 'non_driver', screen: '8', title: 'Non-Driver Agreement', short: 'Non-driver agreement', when: { id: 'transport_willing', equals: 'no' }, version: 1, status: 'proposed', signature: 'typed',
+    sections: [
+      { h: 'Your choice', p: ['You told us you are not willing or able to transport clients in your personal vehicle as part of your caregiving duties. That is fine: you can continue onboarding and work with clients whose care does not include driving.'] },
+      { h: 'What this means', p: [
+        'I will not transport any client in my vehicle or in the client\'s vehicle, and I will not drive a client anywhere as part of my work, unless the office later approves me as a driver in writing.',
+        'If a client or a client\'s family asks me to drive, I will politely say no and call the office right away.',
+        'I understand that client assignments that require transportation will not be offered to me while I am a Non-Driver.',
+      ] },
+      { h: 'If you want to drive later', p: ['You can ask the office at any time. You will sign the Driver/Vehicle Insurance & Transportation Standards Agreement, upload your license and insurance, and wait for the office\'s written approval before you drive a client.'] },
+    ],
+    certification: ['I have read this agreement and I agree to it.'],
   },
 }
-export const FORM_ORDER: FormKey[] = ['employee_application', 'reference_consent', 'fcra_disclosure', 'edl_fcsr_consent', 'availability', 'experience', 'vehicle']
+export const FORM_ORDER: FormKey[] = ['employee_application', 'reference_consent', 'fcra_disclosure', 'edl_fcsr_consent', 'availability', 'experience', 'vehicle', 'non_driver']
 /** The wording of one form, canonical, for the fingerprint stored with every signature (answers are not part of it). */
 export function formText(key: FormKey): string {
   const f = FORMS[key]; const out: string[] = [`title|${f.title}`, `version|${f.version}`]
@@ -347,3 +366,15 @@ export function step1Screens(): string[] {
   const extra = FORM_ORDER.map((k) => FORMS[k].screen).filter((x) => !BASE_SCREENS.includes(x) && x !== '2 and 3')
   return [...BASE_SCREENS.slice(0, -1), ...extra.filter((x, i) => extra.indexOf(x) === i), '9']
 }
+/** 2026-10-13: a form with `when` applies only when that Step 1 answer matches (the Driver or the Non-Driver Agreement,
+    chosen by "Are you willing and able to transport clients ...?"). Answers that decide a form, asked on the form's screen. */
+export const DECIDING: Record<string, { label: string; options: [string, string][] }> = {
+  transport_willing: { label: 'Are you willing and able to transport clients in your personal vehicle as part of your caregiving duties?', options: [['yes', 'Yes'], ['no', 'No']] },
+}
+export const formApplies = (k: FormKey, answers: Record<string, unknown>): boolean => { const w = FORMS[k]?.when; return !w || answers?.[w.id] === w.equals }
+/** the forms this person signs, in order; a deciding answer not given yet leaves both of its forms out */
+export const applicableForms = (answers: Record<string, unknown>): FormKey[] => FORM_ORDER.filter((k) => formApplies(k, answers || {}))
+/** how many forms this person signs: the ones that apply, plus one for each deciding question not answered yet */
+export const formCount = (a: Record<string, unknown>) => applicableForms(a || {}).length + Object.keys(DECIDING).filter((k) => !a?.[k]).length
+/** the forms to list for this person: those that apply, and while a deciding question is open, the first form it decides as a stand-in */
+export const formsToList = (a: Record<string, unknown>): FormKey[] => FORM_ORDER.filter((k) => { const w = FORMS[k].when; return !w || (a || {})[w.id] === w.equals || (!(a || {})[w.id] && FORM_ORDER.find((x) => FORMS[x].when?.id === w.id) === k) })

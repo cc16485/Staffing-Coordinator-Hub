@@ -44,7 +44,8 @@ export async function facts(db: Any, j: Any, trn: { get(id: string): Promise<Any
   const a = (s1?.answers || {}) as Record<string, unknown>
   f.lived_outside_mo = a.lived_outside_mo === 'yes' ? true : a.lived_outside_mo === 'no' ? false : undefined
   f.claims_cna_or_hha = a.cna === 'yes' || a.hha === 'yes' ? true : (a.cna === 'no' && a.hha === 'no') ? false : undefined
-  f.drives_clients = typeof a.driver_ack === 'string' ? /request approval to transport/i.test(a.driver_ack) : undefined
+  /* 2026-10-13: Step 1's deciding question; older records answered the vehicle form's acknowledgment instead */
+  f.drives_clients = a.transport_willing === 'yes' ? true : a.transport_willing === 'no' ? false : typeof a.driver_ack === 'string' ? /request approval to transport/i.test(a.driver_ack) : undefined
   const lists: Record<string, Any[]> = {}
   for (const key of ['candidates', 'caregivers']) { const { data } = await db.from('app_data').select('data').eq('key', key).maybeSingle(); lists[key] = Array.isArray(data?.data) ? data.data : [] }
   f.candidate = lists.candidates.find((c: Any) => String(c?.offer_id ?? '') === String(j.offer_id)) || null
@@ -71,7 +72,8 @@ export function verifyRows(f: Facts, now = new Date().toISOString()): Verdict[] 
   if (o?.offer_signed_at && o?.pd_signed_at) out.push({ key: 'cg.offer.signed', state: 'complete', at: iso(o.pd_signed_at) || now, evidence: { offer_signed_at: o.offer_signed_at, pd_signed_at: o.pd_signed_at, offer_version: o.offer_version ?? null } })
   const sigs = (s1?.signatures || {}) as Record<string, Any>
   for (const [k, form] of [['application', 'employee_application'], ['references', 'reference_consent'], ['fcra', 'fcra_disclosure'], ['edl_fcsr', 'edl_fcsr_consent'], ['availability', 'availability'], ['experience', 'experience'], ['vehicle', 'vehicle']]) {
-    const s = sigs[form]; if (s?.at) out.push({ key: 'cg.step1.' + k, state: 'complete', at: iso(s.at) || now, evidence: { form, version: s.version, fingerprint: s.fingerprint, typed_name: s.typed_name } })
+    /* 2026-10-13: the driving screen is signed with the Driver Agreement OR the Non-Driver Agreement */
+    const s = sigs[form] || (form === 'vehicle' ? sigs.non_driver : null); if (s?.at) out.push({ key: 'cg.step1.' + k, state: 'complete', at: iso(s.at) || now, evidence: { form: sigs[form] ? form : 'non_driver', version: s.version, fingerprint: s.fingerprint, typed_name: s.typed_name } })
   }
   if (sigs.reference_consent?.at && sigs.fcra_disclosure?.at && sigs.edl_fcsr_consent?.at) { const at = [sigs.reference_consent.at, sigs.fcra_disclosure.at, sigs.edl_fcsr_consent.at].sort().pop(); out.push({ key: 'cg.consent.checks', state: 'complete', at: iso(at) || now, evidence: { forms: ['reference_consent', 'fcra_disclosure', 'edl_fcsr_consent'] } }) }
   /* the checks: a result with its date and document, recorded on the row (proof required since 2c) */
