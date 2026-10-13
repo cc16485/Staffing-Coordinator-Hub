@@ -388,6 +388,10 @@ ck('GO-LIVE stall: Step 1 completes: the card closes on its own', stall().status
   const v = pr({ step1: { signatures: { client_rights: SIG } }, rights_explained: RX })
   ck('rights: both: complete at the later of the two, evidence names both (signed at and version; explained at and by)', v && v.state === 'complete' && v.at === '2026-10-12T16:00:00.000Z' && v.evidence.signed_at === SIG.at && v.evidence.version === 1 && v.evidence.explained_at === RX.at && v.evidence.explained_by === 'Krystal' && v.evidence.explained_by_email === 'krystal@mo-care.com' && v.evidence.acknowledged === true, v)
   const both = CJ.verifyRows({ step1: { signatures: { code_of_ethics: SIG, hipaa_privacy: SIG, client_rights: SIG } } }).map((x) => x.key)
+  /* 2026-10-13 HEPATITIS B IN STEP 1: the Step 1 signature never completes a readiness row by itself; cg.health.hepb is written
+     only from the confidential hepatitis B record (status words), and it never holds Approve to Work */
+  const hb = CJ.verifyRows({ step1: { hepb_form: true, signatures: { hepb_vaccination: SIG } } }).map((x) => x.key)
+  ck('HEP B: the Step 1 Hepatitis B signature makes no readiness row on its own (the hepatitis B record owns cg.health.hepb)', !hb.some((k) => /hepb|health/.test(k)), hb)
   ck('rights: the Code of Ethics and HIPAA rows still complete from their Step 1 signatures (unchanged)', both.includes('cg.step2.code_of_ethics') && both.includes('cg.step2.confidentiality') && !both.includes('cg.step2.participant_rights'), both)
   reset()
   const O9 = '99999999-2222-4333-8444-555555555555'

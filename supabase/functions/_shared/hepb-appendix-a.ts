@@ -1,0 +1,6 @@
+// =============================================================================
+// hepb-appendix-a.ts · Appendix A to 29 CFR 1910.1030, Hepatitis B Vaccine Declination (Mandatory), word for word.
+// Public regulation text; (f)(2)(iv) requires this exact statement. One copy, read by the hepatitis B link (hepb.ts) and the
+// Step 1 Hepatitis B form (step1-documents.ts). Never edit it: a changed character is no longer the mandatory statement.
+// =============================================================================
+export const APPENDIX_A = 'I understand that due to my occupational exposure to blood or other potentially infectious materials I may be at risk of acquiring hepatitis B virus (HBV) infection. I have been given the opportunity to be vaccinated with hepatitis B vaccine, at no charge to myself. However, I decline hepatitis B vaccination at this time. I understand that by declining this vaccine, I continue to be at risk of acquiring hepatitis B, a serious disease. If in the future I continue to have occupational exposure to blood or other potentially infectious materials and I want to be vaccinated with hepatitis B vaccine, I can receive the vaccination series at no charge to me.'

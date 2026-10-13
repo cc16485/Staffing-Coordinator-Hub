@@ -81,6 +81,18 @@ export function step1FormPdf(form: Form, answers: Record<string, unknown>, who: 
       else pdf.labelled(it.label + ':', val, { after: 3 })
     }
   }
+  /* 2026-10-13: a form with ONE deciding choice (the Hepatitis B form). The choice is passed in as answers.__choice for the
+     PDF only (it is never a stored Step 1 answer); every option is printed, the chosen one marked. For a declination the
+     Appendix A statement is printed word for word. With no choice (a reading copy) nothing is marked. */
+  if (form.choices) {
+    const ch = S(answers.__choice)
+    pdf.hr(RULE, 10); pdf.heading(form.choices.label)
+    for (const o of form.choices.options) pdf.para((ch === o.id ? '[X] ' : '[  ] ') + o.label, { font: ch === o.id ? 'B' : undefined, after: 4 })
+    if (form.decline && ch === form.decline.choice) {
+      pdf.heading(form.decline.title); pdf.para(form.decline.intro, { size: 9.5, color: MUTED, after: 6 })
+      pdf.para(form.decline.statement, { after: 6 }); pdf.para(form.decline.consent + ' Agreed.', { font: 'B', after: 6 })
+    }
+  }
   pdf.hr(RULE, 10); pdf.heading('Certification')
   for (const c of form.certification) pdf.para(c, { after: 8 })
   if (form.signature === 'typed+initials' && answers.initials) pdf.labelled('Initials (AxisCare scheduling line):', S(answers.initials), { after: 6 })

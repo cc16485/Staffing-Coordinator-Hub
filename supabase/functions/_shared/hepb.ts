@@ -73,7 +73,9 @@ export function exposureFor(position: unknown, st: any): ExposureRow & { source:
 }
 
 /* ───── 2. Appendix A to 1910.1030, word for word (public regulation text; (f)(2)(iv) requires this statement) ───── */
-export const APPENDIX_A = 'I understand that due to my occupational exposure to blood or other potentially infectious materials I may be at risk of acquiring hepatitis B virus (HBV) infection. I have been given the opportunity to be vaccinated with hepatitis B vaccine, at no charge to myself. However, I decline hepatitis B vaccination at this time. I understand that by declining this vaccine, I continue to be at risk of acquiring hepatitis B, a serious disease. If in the future I continue to have occupational exposure to blood or other potentially infectious materials and I want to be vaccinated with hepatitis B vaccine, I can receive the vaccination series at no charge to me.'
+/* the statement itself lives in hepb-appendix-a.ts (one copy, also read by the Step 1 form) */
+import { APPENDIX_A } from './hepb-appendix-a.ts'
+export { APPENDIX_A }
 export const DECLINATION = {
   key: 'hepb_declination', title: 'Hepatitis B Vaccine Declination (Mandatory)', version: 1,
   /* the page's words around the statement; the statement itself is APPENDIX_A, never edited */
@@ -146,7 +148,8 @@ export function offerMessage(first: string, link: string): { text: string; subje
 
 /* ───── the signed declination as a PDF in the company letterhead, with the same audit lines as the Step 1 signatures ───── */
 export type DeclSig = { typedName: string; signedAtCentral: string; signedAtUtc: string; ip: string; agent: string; fingerprint: string; recordId: string }
-export function declinationPdf(who: { first: string; last: string; position: string }, sig: DeclSig): Uint8Array {
+/** where: the words for where it was signed (the private hepatitis B page, or the Step 1 page) */
+export function declinationPdf(who: { first: string; last: string; position: string }, sig: DeclSig, where = "the employee's private hepatitis B page"): Uint8Array {
   const pdf = new BrandPdf(`${DECLINATION.title} - ${who.first} ${who.last}`); pdf.footer(FOOTER)
   pdf.headerFn = (p, f) => p.letterhead(COMPANY_RIGHT, f); pdf.letterhead(COMPANY_RIGHT, true)
   pdf.para(DECLINATION.title, { font: 'B', size: 18, color: NAVY, lh: 23, after: 2 })
@@ -156,7 +159,7 @@ export function declinationPdf(who: { first: string; last: string; position: str
   pdf.para(DECLINATION.statement, { after: 10 })
   pdf.ensure(290)
   pdf.signatureArea(sig.typedName, sig.signedAtCentral, [
-    `Signed electronically with consent given on the employee's private hepatitis B page. ${sig.signedAtUtc} UTC. Device address ${sig.ip || 'not recorded'}. Browser ${sig.agent || 'not recorded'}.`,
+    `Signed electronically with consent given on ${where}. ${sig.signedAtUtc} UTC. Device address ${sig.ip || 'not recorded'}. Browser ${sig.agent || 'not recorded'}.`,
     `${DECLINATION.title}, version ${DECLINATION.version}. Wording fingerprint ${sig.fingerprint}.`, `Hepatitis B record ${sig.recordId}.`])
   return pdf.build()
 }
@@ -225,4 +228,55 @@ export async function journeyMirror(db: any, row: any, who: Who = {}): Promise<s
     await db.from('client_journey_event').insert({ journey_id: j.journey_id, step_key: JOURNEY_KEY, actor_email: byEmail, actor_name: byName, kind, detail: { via: 'hepatitis B', status: publicStatus(row) }, reason })
     return target
   } catch { return 'error' }
+}
+
+
+/* ───── 2026-10-13 HEPATITIS B IN STEP 1 (her ruling: the form is in Step 1, offered to everyone; BBP training stays in the
+   on-the-job courses). The Step 1 page's server (step1-sign) calls stepOneRecord at the moment the applicant signs the
+   form, BEFORE the Step 1 signature is written, so the choice (never kept in the Step 1 answers) is safe in the confidential
+   record first. Keyed on the offer: a retry after a failure part way through finds the same record and is safe; a record
+   the office or the link already answered is never overwritten. Offering in Step 1 IS the offer ((f)(2)(i): the form shows
+   the (g)(2)(vii)(I) information first), so the record is stamped offered, and the 30-minute pass never sends a second
+   offer (it sends only for status 'pending' and never makes a second record for the same offer). Practice and preview
+   never come here (step1-sign checks). Nothing here sends a text or an email. ───── */
+export type StepOneIn = { offerId: string; name: string; position: string; choice: string; at: string; typedName: string; ip: string; agent: string; formVersion: number; formFingerprint: string }
+const STEP1_CHOICES = ['vaccine', 'declined', 'prior_series', 'immune', 'contraindicated']
+export async function stepOneRecord(db: any, st: any, x: StepOneIn): Promise<{ ok: boolean; row?: any; created?: boolean; kept?: boolean; error?: string }> {
+  if (!/^[0-9a-f-]{36}$/i.test(S(x.offerId, 64)) || !STEP1_CHOICES.includes(x.choice)) return { ok: false, error: 'not a Step 1 hepatitis B answer' }
+  const by: Who = { name: S(x.name, 100) + ' (Step 1)' }
+  try {
+    const ex = exposureFor(x.position, st)
+    /* offered to everyone (a superset of the exposure determination): the record counts as covered; the position's own
+       determination is kept beside it for the Exposure Control Plan */
+    const basis = { position: ex.matched, scope: ex.scope, source: ex.source, fallback: ex.fallback, determination: ex.exposed, offered_to_all: true, via: 'step1' }
+    const choiceFields: Record<string, unknown> = { status: x.choice, status_at: x.at, choice_at: x.at, choice_by: by.name, step1_at: x.at, offered_at: x.at, offered_via: 'Step 1 form (vaccine information shown first)', verified_at: null, verified_by: null }
+    let { data: row } = await db.from('hepb_record').select('*').eq('offer_id', x.offerId).maybeSingle()
+    let created = false
+    const wasOffered = !!row?.offered_at
+    if (!row) {
+      const ins = { offer_id: x.offerId, name: S(x.name, 120) || null, position: S(x.position, 80) || FALLBACK_POSITION, position_source: x.position ? 'offer' : 'fallback', exposed: true, exposure_basis: basis, ...choiceFields }
+      const { data: made, error } = await db.from('hepb_record').insert(ins).select('*').maybeSingle()
+      if (error || !made) { const again = await db.from('hepb_record').select('*').eq('offer_id', x.offerId).maybeSingle(); row = again.data; if (!row) return { ok: false, error: 'could not save the hepatitis B record' + (error ? ': ' + S(error.message, 120) : '') } }
+      else { row = made; created = true; await addEvent(db, row.id, 'created', by, { via: 'step1', position: row.position, basis }) }
+    }
+    if (!created) {
+      /* answered already outside Step 1 (the link or an owner): keep it; Step 1 still records its signature */
+      if (!row.step1_at && row.status !== 'pending' && row.status !== 'not_required') { await addEvent(db, row.id, 'note', by, { via: 'step1', kept: row.status, why: 'their answer was already recorded; Step 1 did not change it' }); return { ok: true, row, kept: true } }
+      const upd: Record<string, unknown> = { ...choiceFields, exposed: true, exposure_basis: { ...(row.exposure_basis || {}), ...basis } }
+      if (row.offered_at) { delete upd.offered_at; delete upd.offered_via }
+      const { data: after, error } = await db.from('hepb_record').update(upd).eq('id', row.id).select('*').maybeSingle()
+      if (error || !after) return { ok: false, error: 'could not save the hepatitis B record' + (error ? ': ' + S(error.message, 120) : '') }
+      row = after
+    }
+    if (created || !wasOffered) await addEvent(db, row.id, 'offered', by, { via: 'step1', information: '1910.1030(g)(2)(vii)(I) shown on the form before the choice', form_version: x.formVersion, form_fingerprint: x.formFingerprint })
+    if (x.choice !== 'declined') await addEvent(db, row.id, 'chose', by, { choice: x.choice, via: 'step1', form_version: x.formVersion })
+    return { ok: true, row, created }
+  } catch (e) { return { ok: false, error: S((e as Error)?.message ?? e, 160) } }
+}
+/** the signed declination half (the Appendix A statement): written once; the trigger refuses any change afterward */
+export async function stepOneDeclination(db: any, row: any, d: { typedName: string; at: string; ip: string; agent: string; fingerprint: string; pdf: string | null }): Promise<any> {
+  if (row.declined_at) return row
+  const { data } = await db.from('hepb_record').update({ declined_at: d.at, declination_version: DECLINATION.version, declination_fingerprint: d.fingerprint, declination_typed_name: S(d.typedName, 80), declination_pdf: d.pdf }).eq('id', row.id).is('declined_at', null).select('*').maybeSingle()
+  await addEvent(db, row.id, 'declined', { name: S(d.typedName, 80) + ' (Step 1)' }, { via: 'step1', typed_name: S(d.typedName, 80), version: DECLINATION.version, fingerprint: d.fingerprint, ip: d.ip, agent: d.agent, consent: true, pdf: d.pdf })
+  return data || row
 }

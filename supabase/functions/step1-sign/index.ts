@@ -26,13 +26,15 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { checkLink } from '../_shared/applicant-links.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
-import { FORMS, FORM_ORDER, formFingerprint, REFERENCES_REQUIRED, APPROVED_FOR_REAL, approvedAt, approvedForReal, allApprovedForReal, step1Screens, formApplies, applicableForms, DECIDING, formCount, needsCountersign, MATCHING_FACTS, SKILLS, SKILL_GROUPS, type FormKey, type Item, type Form, type Field } from '../_shared/step1-documents.ts'
+import { FORMS, FORM_ORDER, formFingerprint, REFERENCES_REQUIRED, APPROVED_FOR_REAL, approvedAt, approvedForReal, allApprovedForReal, step1Screens, formApplies, applicableForms, DECIDING, formCount, needsCountersign, MATCHING_FACTS, SKILLS, SKILL_GROUPS, step1Ctx, hepbFormAtStart, formsInPlay, HEPB_CHOICE_IDS, type Step1Ctx, type FormKey, type Item, type Form, type Field } from '../_shared/step1-documents.ts'
 import { seal, open as unseal, last4, ssnLooksValid, REVEAL_TTL_MS, REVEAL_FIELDS, REVEAL_PERMISSION, type RevealField, ssnAllowed, practiceOffer } from '../_shared/step1-crypto.ts'
 import { PERM_KEY, normalizePerms, mayApprove } from '../_shared/onboarding-permissions.ts'
 import { step1FormPdf, type IdentityState } from '../_shared/step1-pdf.ts'
 import { longDateTime } from '../_shared/offer-documents.ts'
 import { practicePerson } from '../_shared/optout.ts'
 import { driverFromStep1 } from '../_shared/driver.ts'
+import { stepOneRecord, stepOneDeclination, declinationPdf, declinationFingerprint, BUCKET as HEPB_BUCKET, journeyMirror, raiseCard as hepbCard, ownerEmails, publicStatus } from '../_shared/hepb.ts'
+import { makeHepbLink } from '../_shared/applicant-links.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -410,11 +412,24 @@ export const PREVIEW_WHO = { first: 'Pat', last: 'Preview', phone: '(417) 555-01
 /** What a real Step 1 would show as already known: from a made-up application and interview, marked with where it came from. */
 export const PREVIEW_PREFILL = prefillFrom({ lived_outside_mo: 'no', has_license: 'yes', has_insurance: 'yes', has_transport: 'yes', experience_years: 3 }, { cats: 'yes', dogs: 'no', client_smokes: 'no', drive_clients: 'yes', skills: { dementia: 'some' } })
 /** The forms as the page receives them (the same shape the real view sends). */
-export async function formsPayload(sigs: Record<string, unknown> = {}): Promise<Record<string, unknown>[]> {
+export async function formsPayload(sigs: Record<string, unknown> = {}, ctx: Step1Ctx = {}): Promise<Record<string, unknown>[]> {
   const forms = [] as Record<string, unknown>[]
-  for (const k of FORM_ORDER) { const f = FORMS[k]; forms.push({ key: f.key, screen: f.screen, title: f.title, short: f.short || null, layout: f.layout || null, when: f.when || null, version: f.version, status: f.status, intro: f.intro || [], sections: f.sections, certification: f.certification, signature: f.signature, fingerprint: await formFingerprint(k), approved_for_real: APPROVED_FOR_REAL[k] === f.version }) }
+  /* 2026-10-13: only the forms in this person's Step 1 (the Hepatitis B form only when their Step 1 has it) */
+  for (const k of formsInPlay(ctx)) { const f = FORMS[k]; forms.push({ key: f.key, screen: f.screen, title: f.title, short: f.short || null, layout: f.layout || null, when: f.when || null, confidential: !!f.confidential, choices: f.choices || null, decline: f.decline || null, version: f.version, status: f.status, intro: f.intro || [], sections: f.sections, certification: f.certification, signature: f.signature, fingerprint: await formFingerprint(k), approved_for_real: APPROVED_FOR_REAL[k] === f.version }) }
   void sigs
   return forms
+}
+/** 2026-10-13: the preview shows the Step 1 a new hire gets once the Hepatitis B form is approved (offered to everyone) */
+export const PREVIEW_CTX: Step1Ctx = { hepb: true }
+const PREVIEW_ORDER = formsInPlay(PREVIEW_CTX)
+/** 2026-10-13: what the one deciding choice still needs (the Hepatitis B form): a choice; for a declination, the separate
+    agreement to sign the Appendix A statement */
+export function choiceMissing(form: FormKey, choice: unknown, declineConsent: unknown): string[] {
+  const f = FORMS[form]; if (!f?.choices) return []
+  const c = S(choice, 20)
+  if (!f.choices.options.some((o) => o.id === c)) return [f.choices.label + ' (choose one)']
+  if (f.decline && c === f.decline.choice && declineConsent !== true) return ['Tick "' + f.decline.consent + '"']
+  return []
 }
 /** Answers from the page, each cleaned to its kind (unknown ids and identity numbers dropped, never kept). */
 function cleanAnswers(raw: unknown): Record<string, unknown> {
@@ -448,15 +463,55 @@ export async function preview(b: Record<string, any>): Promise<Record<string, un
   }
   if (b.check || b.pdf) {
     if (!FORM_ORDER.includes(form)) return { ok: false, error: 'Which form?' }
-    if (b.check) return { ok: true, preview: true, form, missing: missing(form, answers, ident) }
-    const at = new Date().toISOString(), i = FORM_ORDER.indexOf(form)
-    const bytes = step1FormPdf(FORMS[form], answers, PREVIEW_WHO, ident, { typedName: 'Pat Preview (PREVIEW ONLY: not a signed document)', signedAtCentral: 'Preview, ' + longDateTime(at), signedAtUtc: at, ip: 'preview', agent: 'preview', version: FORMS[form].version, fingerprint: await formFingerprint(form), offerId: 'preview (no offer)', docName: FORMS[form].title }, i + 1, FORM_ORDER.length)
+    /* 2026-10-13: the Hepatitis B choice is checked like the real sign does; it lives in the page only (never an answer) */
+    if (b.check) return { ok: true, preview: true, form, missing: [...missing(form, answers, ident), ...choiceMissing(form, b.choice, b.decline_consent)] }
+    const at = new Date().toISOString(), i = PREVIEW_ORDER.indexOf(form)
+    if (FORMS[form].choices && HEPB_CHOICE_IDS.includes(S(b.choice, 20))) answers.__choice = S(b.choice, 20)
+    const bytes = step1FormPdf(FORMS[form], answers, PREVIEW_WHO, ident, { typedName: 'Pat Preview (PREVIEW ONLY: not a signed document)', signedAtCentral: 'Preview, ' + longDateTime(at), signedAtUtc: at, ip: 'preview', agent: 'preview', version: FORMS[form].version, fingerprint: await formFingerprint(form), offerId: 'preview (no offer)', docName: FORMS[form].title }, i + 1, PREVIEW_ORDER.length)
     let bin = ''; for (let j = 0; j < bytes.length; j += 0x8000) bin += String.fromCharCode(...bytes.subarray(j, j + 0x8000))
     return { ok: true, preview: true, form, pdf_base64: btoa(bin) }
   }
-  return { ok: true, preview: true, who: PREVIEW_WHO, forms: await formsPayload(), order: FORM_ORDER, screens: step1Screens(), answers: {}, signatures: {}, identity: { ssn: null, dob: false, license: null, license_state: null, license_expires: null },
+  return { ok: true, preview: true, who: PREVIEW_WHO, forms: await formsPayload({}, PREVIEW_CTX), order: PREVIEW_ORDER, screens: step1Screens(PREVIEW_CTX), answers: {}, signatures: {}, identity: { ssn: null, dob: false, license: null, license_state: null, license_expires: null },
     prefill: PREVIEW_PREFILL, hints: { availability: 'Weekdays, mornings and afternoons', travel: 'Springfield and Nixa' }, current_screen: '1', started_at: null, completed_at: null, esign_consent_at: null,
-    test_mode: true, references_required: REFERENCES_REQUIRED, skill_groups: SKILL_GROUPS, skills: SKILLS, signed_count: 0, form_count: formCount({}), deciding: DECIDING }
+    test_mode: true, references_required: REFERENCES_REQUIRED, skill_groups: SKILL_GROUPS, skills: SKILLS, signed_count: 0, form_count: formCount({}, PREVIEW_CTX), deciding: DECIDING }
+}
+
+/* 2026-10-13 HEPATITIS B IN STEP 1, after the signature is written: the signed form's PDF (and, for a declination, the
+   Appendix A statement as its own PDF, the same layout the hepatitis B link makes) into the PRIVATE hepb-docs store, written
+   once; the readiness row (status words only); one card for the owners to check an exception (no medical detail on it).
+   A file that cannot be saved becomes a card for the owners (never silent). Never throws. */
+// deno-lint-ignore no-explicit-any
+export async function hepbAfterSign(db: any, req: Request, row: any, x: { who: Record<string, string>; choice: string; name: string; at: string; ip: string; agent: string; bytes: Uint8Array; offerId: string }): Promise<Record<string, unknown>> {
+  const out: Record<string, unknown> = { pdf: false }
+  try {
+    const stamp = x.at.replace(/[:.]/g, '-'), person = `${x.who.first} ${x.who.last}`.trim()
+    const owner = (await ownerEmails(db))[0] || ''
+    const fail = async (what: string, why: string) => { await hepbCard(db, { id: 'hepb_pdf_' + row.id + '_' + what, kind: 'hepb_pdf_failed', urgency: 'today', who: person, hepb_id: row.id, offer_id: x.offerId, owner,
+      title: 'A signed hepatitis B form has no PDF yet: ' + person, detail: `The Step 1 signature is recorded (time, device, wording fingerprint), but its PDF could not be saved (${S(why, 120)}). Tell Claude so the PDF is made again from the signed record.` }) }
+    if (!row.step1_pdf) {
+      const path = `hb/${row.id}/step1/v${FORMS.hepb_vaccination.version}-${stamp}.pdf`
+      const up = await db.storage.from(HEPB_BUCKET).upload(path, x.bytes, { contentType: 'application/pdf', upsert: false })
+      if (up.error) await fail('step1', String(up.error.message || up.error))
+      else { await db.from('hepb_record').update({ step1_pdf: path }).eq('id', row.id).is('step1_pdf', null); row = { ...row, step1_pdf: path } }
+    }
+    out.pdf = !!row.step1_pdf; out.path = row.step1_pdf || null
+    if (x.choice === 'declined' && !row.declined_at) {
+      const dfp = await declinationFingerprint()
+      const dbytes = declinationPdf({ first: x.who.first, last: x.who.last, position: x.who.position }, { typedName: x.name, signedAtCentral: longDateTime(x.at), signedAtUtc: x.at, ip: x.ip, agent: x.agent, fingerprint: dfp, recordId: row.id }, 'the Step 1 page, after the hepatitis B vaccine information')
+      const dpath = `hb/${row.id}/declination/v1-${stamp}.pdf`
+      const up = await db.storage.from(HEPB_BUCKET).upload(dpath, dbytes, { contentType: 'application/pdf', upsert: false })
+      if (up.error) await fail('declination', String(up.error.message || up.error))
+      row = await stepOneDeclination(db, row, { typedName: x.name, at: x.at, ip: x.ip, agent: x.agent, fingerprint: dfp, pdf: up.error ? null : dpath })
+    }
+    out.journey = await journeyMirror(db, row, { name: person + ' (Step 1)' })
+    if (['prior_series', 'immune', 'contraindicated'].includes(x.choice)) {
+      await hepbCard(db, { id: `hepb_check_${row.id}_step1`, kind: 'hepb_check', urgency: 'normal', who: person, hepb_id: row.id, offer_id: x.offerId, owner,
+        title: `Check a hepatitis B answer: ${person}`, detail: `${person} answered the hepatitis B vaccine offer in Step 1. An owner opens their Hepatitis B card, checks it, and presses Checked. The answer is a confidential medical record, so it is not written here.` })
+      if (x.choice !== 'contraindicated') out.proof_link = await makeHepbLink(Deno.env.get('HUB_JOB_SECRET') ?? '', String(row.id))
+    }
+    void req
+  } catch (e) { out.error = S((e as Error)?.message ?? e, 160) }
+  return out
 }
 
 Deno.serve(async (req) => {
@@ -472,6 +527,8 @@ Deno.serve(async (req) => {
       const staff = await requireStaff(db, req, OFFICE_ROLES)
       if (!staff.ok) return json({ ok: false, error: staff.error }, staff.status)
       const id = S(b.offer_id, 64), form = S(b.form, 40)
+      /* 2026-10-13: the signed Hepatitis B form is a confidential medical record: it is opened only by an owner, from the Hepatitis B card */
+      if (FORMS[form as FormKey]?.confidential) return json({ ok: false, error: 'This form is a confidential medical record. An owner opens it from their Hepatitis B card.', confidential: true }, 403)
       const { data: row } = await db.from('step1_forms').select('pdfs').eq('offer_id', id).maybeSingle()
       const path = row?.pdfs?.[form]
       if (!path) return json({ ok: false, error: 'That form has not been signed yet.' }, 404)
@@ -573,6 +630,10 @@ Deno.serve(async (req) => {
       const { data: fr } = await db.from('step1_forms').select('*').eq('offer_id', oid).maybeSingle()
       const { data: idr } = await db.from('step1_identity').select('ssn_last4,dob_sealed,license_last4,license_state,license_expires').eq('offer_id', oid).maybeSingle()
       const app = await applicationOf(db, rwho)
+      const rctx = step1Ctx(fr)
+      /* 2026-10-13: the Hepatitis B answer is never shown here, only the status words everyone in the office may see */
+      let hepbStatus: string | null = null
+      if (rctx.hepb) { try { const { data: hr } = await db.from('hepb_record').select('status, offered_at, verified_at').eq('offer_id', oid).maybeSingle(); hepbStatus = publicStatus(hr) } catch { hepbStatus = null } }
       const rsigs = (fr?.signatures || {}) as Record<string, Record<string, unknown>>
       const signed: Record<string, unknown> = {}
       for (const [k, v] of Object.entries(rsigs)) {
@@ -581,13 +642,13 @@ Deno.serve(async (req) => {
           ip: S(v.ip, 64) || null, agent: S(v.agent, 200) || null, fingerprint: S(v.fingerprint, 64) || null, pdf: !!(fr?.pdfs || {})[k] }
       }
       await db.from('document_access_log').insert({ offer_id: oid, doc: 'step1:review', path: '(the Step 1 screens, read only)', by_person: staff.person_id, by_email: staff.email, by_name: staff.name, ip: ipOf(req), reason: 'opened Step 1 as the applicant saw it' })
-      return json({ ok: true, review: true, who: rwho, forms: await formsPayload(), order: FORM_ORDER, screens: step1Screens(), answers: fr?.answers || {}, signatures: publicSignatures(rsigs), signed,
+      return json({ ok: true, review: true, who: rwho, forms: await formsPayload({}, rctx), order: formsInPlay(rctx), screens: step1Screens(rctx), hepb_status: hepbStatus, answers: fr?.answers || {}, signatures: publicSignatures(rsigs), signed,
         identity: { ...identState(idr), license_state: idr?.license_state ?? null, license_expires: idr?.license_expires ?? null },
         prefill: prefillFrom(app, app?.post_interview || null), hints: { availability: S(app?.availability, 300) || null, travel: S(app?.post_interview?.travel_areas, 200) || null },
         current_screen: fr?.current_screen || '1', started_at: fr?.started_at || null, completed_at: fr?.completed_at || null, esign_consent_at: fr?.esign_consent_at || null, esign_consent_detail: fr?.esign_consent_detail || null,
         countersignatures: Object.fromEntries(Object.entries((fr?.countersignatures || {}) as Record<string, Record<string, unknown>>).map(([k, v]) => [k, { at: v.at, typed_name: v.typed_name, by_name: v.by_name }])),
         countersign_forms: FORM_ORDER.filter((k) => FORMS[k].countersign), may_countersign: mayApprove(normalizePerms((await db.from('app_data').select('data').eq('key', PERM_KEY).maybeSingle()).data?.data), 'work', { person_id: staff.person_id, roles: staff.roles, email: staff.email }),
-        practice: !!fr?.practice, sent_at: o.step1_sent_at || null, test_mode: false, references_required: REFERENCES_REQUIRED, skill_groups: SKILL_GROUPS, skills: SKILLS, signed_count: Object.keys(rsigs).length, form_count: formCount((fr?.answers || {}) as Record<string, unknown>), deciding: DECIDING })
+        practice: !!fr?.practice, sent_at: o.step1_sent_at || null, test_mode: false, references_required: REFERENCES_REQUIRED, skill_groups: SKILL_GROUPS, skills: SKILLS, signed_count: Object.keys(rsigs).length, form_count: formCount((fr?.answers || {}) as Record<string, unknown>, rctx), deciding: DECIDING })
     }
     /* ───── PREVIEW (Samantha 2026-10-11: "I want to be able to click through the screens as though I were the caregiver,
        using practice data, before approving them for real hires"). Public and read-only: no link, no offer, no database read
@@ -605,22 +666,30 @@ Deno.serve(async (req) => {
     const IS = identState(ident)
     const sigs = (row?.signatures || {}) as Record<string, Record<string, unknown>>
     const now = () => new Date().toISOString()
+    let ctx = step1Ctx(row)
 
     if (action === 'view') {
       if (!row) {
-        const { data: made, error } = await db.from('step1_forms').insert({ offer_id: id, started_at: now(), current_screen: '1', practice: practiceOffer(o) }).select('*').maybeSingle()
+        /* 2026-10-13: whether the Hepatitis B form is in this Step 1 is decided now, once, and kept (step1Ctx) */
+        const { data: made, error } = await db.from('step1_forms').insert({ offer_id: id, started_at: now(), current_screen: '1', practice: practiceOffer(o), hepb_form: hepbFormAtStart(practiceOffer(o)) }).select('*').maybeSingle()
         if (error) { const again = await db.from('step1_forms').select('*').eq('offer_id', id).maybeSingle(); row = again.data } else row = made
+        ctx = step1Ctx(row)
         if (row) await T.event({ offer_id: id, kind: 'step1_started', by_who: 'caregiver', channel: 'page', detail: { ip: ipOf(req), agent: agentOf(req) } })
       }
       /* 2026-10-11: the practice mark kept true to the offer (the reference page asks task questions only for practice hires) */
       if (row && !!row.practice !== practiceOffer(o)) { await db.from('step1_forms').update({ practice: practiceOffer(o) }).eq('offer_id', id); row.practice = practiceOffer(o) }
       // never ask twice: the application (by email, then by phone) and its interview answers
       const app = await applicationOf(db, who)
-      const forms = await formsPayload()
-      return json({ ok: true, who, forms, order: FORM_ORDER, screens: step1Screens(), answers: row?.answers || {}, signatures: publicSignatures(sigs), identity: { ...IS, license_state: ident?.license_state ?? null, license_expires: ident?.license_expires ?? null },
+      const forms = await formsPayload({}, ctx)
+      /* 2026-10-13: after the Hepatitis B form, someone who said they completed the series or are immune may add the proof on
+         their private hepatitis B page (the link only; never the answer itself) */
+      let hepbProof: string | null = null
+      if (ctx.hepb && sigs.hepb_vaccination && !practiceOffer(o)) { try { const { data: hr } = await db.from('hepb_record').select('id, status, verified_at').eq('offer_id', id).maybeSingle()
+        if (hr && ['prior_series', 'immune'].includes(hr.status) && !hr.verified_at) hepbProof = await makeHepbLink(secret, String(hr.id)) } catch { hepbProof = null } }
+      return json({ ok: true, who, forms, order: formsInPlay(ctx), screens: step1Screens(ctx), answers: row?.answers || {}, signatures: publicSignatures(sigs), identity: { ...IS, license_state: ident?.license_state ?? null, license_expires: ident?.license_expires ?? null },
         prefill: prefillFrom(app, app?.post_interview || null), hints: { availability: S(app?.availability, 300) || null, travel: S(app?.post_interview?.travel_areas, 200) || null },
         current_screen: row?.current_screen || '1', started_at: row?.started_at || null, completed_at: row?.completed_at || null, esign_consent_at: row?.esign_consent_at || null,
-        test_mode: practiceOffer(o) || !allApprovedForReal(), references_required: REFERENCES_REQUIRED, skill_groups: SKILL_GROUPS, skills: SKILLS, signed_count: Object.keys(sigs).length, form_count: formCount((row?.answers || {}) as Record<string, unknown>), deciding: DECIDING })
+        hepb_proof_link: hepbProof, test_mode: practiceOffer(o) || !allApprovedForReal(ctx), references_required: REFERENCES_REQUIRED, skill_groups: SKILL_GROUPS, skills: SKILLS, signed_count: Object.keys(sigs).length, form_count: formCount((row?.answers || {}) as Record<string, unknown>, ctx), deciding: DECIDING })
     }
     if (!row) return json({ ok: false, error: 'Please open your Step 1 link first.' }, 409)
     /* 2026-10-13 (Samantha's driver rules): a photo or file of the license front/back or the insurance proof goes straight to
@@ -629,7 +698,7 @@ Deno.serve(async (req) => {
     if (action === 'upload_url' || action === 'uploaded') {
       const item = S(b.item, 40), fk = formOf(item), it = fk ? itemsOf(FORMS[fk]).find((x) => x.id === item) : null
       if (!fk || !it || it.kind !== 'photo') return json({ ok: false, error: 'Which picture?' }, 400)
-      if (!formApplies(fk, (row.answers || {}) as Record<string, unknown>)) return json({ ok: false, error: 'Please answer the question at the top of this screen first.' }, 409)
+      if (!formApplies(fk, (row.answers || {}) as Record<string, unknown>, ctx)) return json({ ok: false, error: 'Please answer the question at the top of this screen first.' }, 409)
       if (sigs[fk]) return json({ ok: false, error: `${FORMS[fk].title} is already signed, so its pictures cannot change here. Call the office: (417) 234-8494.` }, 409)
       const prefix = `offer/${id}/${item}-`
       if (action === 'upload_url') {
@@ -653,8 +722,8 @@ Deno.serve(async (req) => {
     /* 2026-10-13: a copy of one form to open or save while reading it (unsigned; their answers so far; identity never printed) */
     if (action === 'document') {
       const form = S(b.form, 40) as FormKey
-      if (!FORM_ORDER.includes(form)) return json({ ok: false, error: 'Which form?' }, 400)
-      const bytes = step1FormPdf(FORMS[form], (row.answers || {}) as Record<string, unknown>, who, IS, null, FORM_ORDER.indexOf(form) + 1, FORM_ORDER.length)
+      if (!formsInPlay(ctx).includes(form)) return json({ ok: false, error: 'Which form?' }, 400)
+      const bytes = step1FormPdf(FORMS[form], (row.answers || {}) as Record<string, unknown>, who, IS, null, formsInPlay(ctx).indexOf(form) + 1, formsInPlay(ctx).length)
       let bin = ''; for (let j = 0; j < bytes.length; j += 0x8000) bin += String.fromCharCode(...bytes.subarray(j, j + 0x8000))
       return json({ ok: true, form, version: FORMS[form].version, pdf_base64: btoa(bin) })
     }
@@ -668,7 +737,7 @@ Deno.serve(async (req) => {
       return json({ ok: true })
     }
     if (action === 'save') {
-      const screen = S(b.screen, 4); if (screen && !step1Screens().includes(screen)) return json({ ok: false, error: 'Which screen?' }, 400)
+      const screen = S(b.screen, 4); if (screen && !step1Screens(ctx).includes(screen)) return json({ ok: false, error: 'Which screen?' }, 400)
       const incoming = (b.answers && typeof b.answers === 'object' && !Array.isArray(b.answers)) ? b.answers as Record<string, unknown> : {}
       const merged = { ...(row.answers || {}) } as Record<string, unknown>; const rejected: string[] = []
       for (const [k, v] of Object.entries(incoming)) {
@@ -729,12 +798,17 @@ Deno.serve(async (req) => {
     if (action === 'copies') {
       const out: Record<string, string> = {}
       for (const [k, p] of Object.entries((row.pdfs || {}) as Record<string, string>)) { const { data } = await db.storage.from(BUCKET).createSignedUrl(p, 600); if (data?.signedUrl) out[k] = data.signedUrl }
+      /* 2026-10-13: their own signed Hepatitis B form, from the private medical-record store (only to them, on their own link) */
+      if (ctx.hepb && sigs.hepb_vaccination && !practiceOffer(o)) {
+        try { const { data: hr } = await db.from('hepb_record').select('step1_pdf, declination_pdf').eq('offer_id', id).maybeSingle()
+          if (hr?.step1_pdf) { const { data } = await db.storage.from(HEPB_BUCKET).createSignedUrl(hr.step1_pdf, 600); if (data?.signedUrl) out.hepb_vaccination = data.signedUrl } } catch { /* the copy comes later */ }
+      }
       return json({ ok: true, copies: out, expires_in: 600 })
     }
     if (action === 'sign') {
       const form = S(b.form, 40) as FormKey
-      if (!FORM_ORDER.includes(form)) return json({ ok: false, error: 'Which form?' }, 400)
-      if (!formApplies(form, (row.answers || {}) as Record<string, unknown>)) return json({ ok: false, error: FORMS[form].when ? 'Please answer the question at the top of this screen first: ' + (DECIDING[FORMS[form].when!.id]?.label || 'the question') : 'Which form?' }, 409)
+      if (!formsInPlay(ctx).includes(form)) return json({ ok: false, error: 'Which form?' }, 400)
+      if (!formApplies(form, (row.answers || {}) as Record<string, unknown>, ctx)) return json({ ok: false, error: FORMS[form].when ? 'Please answer the question at the top of this screen first: ' + (DECIDING[FORMS[form].when!.id]?.label || 'the question') : 'Which form?' }, 409)
       if (!row.esign_consent_at) return json({ ok: false, error: 'Please agree to sign electronically on the first screen before signing a form.' }, 409)
       if (b.consent !== true) return json({ ok: false, error: 'Please tick "I agree to sign this form electronically" first.' }, 400)
       const name = S(b.typed_name, 80)
@@ -742,38 +816,56 @@ Deno.serve(async (req) => {
       /* 2026-10-13: a real applicant signs only wording Samantha approved for real (practice and training hires are not held) */
       if (!practiceOffer(o) && !approvedForReal(form)) return json({ ok: false, error: 'This form is waiting for its final approval, so it cannot be signed yet. Your answers are saved. The office will let you know when it is ready: (417) 234-8494.', not_approved: true }, 409)
       if (sigs[form]) return json({ ok: false, error: 'This form is already signed. A signed form is never changed; if something is wrong, call the office: (417) 234-8494.', already: true }, 409)
-      const before = FORM_ORDER.slice(0, FORM_ORDER.indexOf(form)).filter((k) => !sigs[k] && formApplies(k, (row.answers || {}) as Record<string, unknown>))
+      const before = FORM_ORDER.slice(0, FORM_ORDER.indexOf(form)).filter((k) => !sigs[k] && formApplies(k, (row.answers || {}) as Record<string, unknown>, ctx))
       if (before.length) return json({ ok: false, error: `Please sign ${FORMS[before[0]].title} first; the forms go in order.` }, 409)
       const answers = { ...(row.answers || {}) } as Record<string, unknown>
       if (FORMS[form].signature === 'typed+initials') { const ini = clean({ id: 'initials', label: '', kind: 'initials' }, b.initials ?? answers.initials); if (ini === undefined) return json({ ok: false, error: 'Please add your initials beside the AxisCare scheduling line.' }, 400); answers.initials = ini }
-      const miss = missing(form, answers, IS)
+      const miss = [...missing(form, answers, IS), ...choiceMissing(form, b.choice, b.decline_consent)]
       if (miss.length) return json({ ok: false, error: 'Please answer these first: ' + miss.join('; ') + '.', missing: miss }, 400)
       const at = now(), ip = ipOf(req), agent = agentOf(req), version = FORMS[form].version, fp = await formFingerprint(form)
       const sig = { at, typed_name: name, ip, agent, version, fingerprint: fp, consent: true }
+      /* ───── 2026-10-13 HEPATITIS B IN STEP 1: the choice goes to the confidential hepatitis B record FIRST (never into the
+         Step 1 answers or this signature), so a failure after this point never loses it and a retry finds the same record.
+         Practice and training hires: nothing medical is recorded and nobody is told (their signature alone is kept). ───── */
+      const confidential = !!FORMS[form].confidential
+      const choice = confidential ? S(b.choice, 20) : ''
+      const practice = practiceOffer(o) || practicePerson(who.phone, who.email)
+      let hepb: Record<string, unknown> | null = null
+      if (confidential && !practice) {
+        const { data: stRow } = await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+        hepb = await stepOneRecord(db, (stRow?.data && typeof stRow.data === 'object') ? stRow.data : {}, { offerId: id, name: `${who.first} ${who.last}`.trim(), position: who.position, choice, at, typedName: name, ip, agent, formVersion: version, formFingerprint: fp })
+        if (!hepb.ok) return json({ ok: false, error: 'We could not save your answer, so this form is not signed yet. Your choice is kept on this page. Please tap the button again, or call the office: (417) 234-8494.' }, 500)
+      }
       // 1. the signature, only while still unsigned (a race cannot sign twice; the trigger refuses a change anyway)
       const { data: wrote, error: wErr } = await db.from('step1_forms').update({ signatures: { ...sigs, [form]: sig }, answers }).eq('offer_id', id).filter('signatures->' + form, 'is', null).select('offer_id')
       if (wErr || !wrote?.length) return json({ ok: false, error: 'This form was just signed. A signed form is never changed.', already: true }, 409)
       await T.event({ offer_id: id, kind: 'step1_signed', by_who: 'caregiver', channel: 'page', doc_version: version, fingerprint: fp, detail: { form, typed_name: name, ip, agent, consent: true, signed_at: at } })
       // 2. the PDF: the same words as the screen with the answers, written once, never overwritten
-      const bytes = step1FormPdf(FORMS[form], answers, who, IS, { typedName: name, signedAtCentral: longDateTime(at), signedAtUtc: at, ip, agent, version, fingerprint: fp, offerId: id, docName: FORMS[form].title }, FORM_ORDER.indexOf(form) + 1, FORM_ORDER.length)
-      const path = `step1/${id}/${form}-v${version}-${at.replace(/[:.]/g, '-')}.pdf`
-      const up = await db.storage.from(BUCKET).upload(path, bytes, { contentType: 'application/pdf', upsert: false })
-      let pdfOk = true
-      if (up.error) { pdfOk = false; await T.event({ offer_id: id, kind: 'step1_signed', by_who: 'system', channel: 'page', doc_version: version, fingerprint: fp, result: 'pdf_failed', detail: { form, error: String(up.error.message || up.error).slice(0, 200) } })
+      const order = formsInPlay(ctx)
+      const bytes = step1FormPdf(FORMS[form], confidential ? { ...answers, __choice: choice } : answers, who, IS, { typedName: name, signedAtCentral: longDateTime(at), signedAtUtc: at, ip, agent, version, fingerprint: fp, offerId: id, docName: FORMS[form].title }, order.indexOf(form) + 1, order.length)
+      let path = `step1/${id}/${form}-v${version}-${at.replace(/[:.]/g, '-')}.pdf`
+      let pdfOk = true, hepbOut: Record<string, unknown> | null = null
+      /* the Hepatitis B form: its PDF (and a declination's Appendix A PDF) go only to the private hepb-docs store, on the
+         confidential record; nothing goes to the onboarding store or to step1_forms.pdfs (the office's profile lists those) */
+      const up = confidential ? { error: null } : await db.storage.from(BUCKET).upload(path, bytes, { contentType: 'application/pdf', upsert: false })
+      if (confidential) {
+        if (practice) { pdfOk = false; hepbOut = { practice: true } }
+        else { hepbOut = await hepbAfterSign(db, req, hepb!.row as Record<string, unknown>, { who, choice, name, at, ip, agent, bytes, offerId: id }); pdfOk = hepbOut.pdf === true; path = String(hepbOut.path || '') }
+      } else if (up.error) { pdfOk = false; await T.event({ offer_id: id, kind: 'step1_signed', by_who: 'system', channel: 'page', doc_version: version, fingerprint: fp, result: 'pdf_failed', detail: { form, error: String(up.error.message || up.error).slice(0, 200) } })
         await problemCard(db, 's1pdf_' + id + '_' + form, { kind: 'step1_pdf_failed', who: `${who.first} ${who.last}`.trim(), offer_id: id, title: 'A signed Step 1 form has no PDF yet: ' + `${who.first} ${who.last}`.trim(),
           detail: 'The signature on ' + FORMS[form].title + ' is recorded (time, device, wording version), but its PDF could not be saved (' + S(up.error.message || up.error, 120) + '). Tell Claude so the PDF is made again from the signed record.' }) }
-      else await db.from('step1_forms').update({ pdfs: { ...(row.pdfs || {}), [form]: path } }).eq('offer_id', id).filter('pdfs->' + form, 'is', null)
+      else if (!confidential) await db.from('step1_forms').update({ pdfs: { ...(row.pdfs || {}), [form]: path } }).eq('offer_id', id).filter('pdfs->' + form, 'is', null)
       // 3. the last signature completes Step 1: the record, the trail, and the offer record the office reads
       /* 2026-10-13: never complete while a deciding question is unanswered (its form is still to come) */
-      const allSigned = Object.keys(DECIDING).every((k) => answers[k]) && applicableForms(answers).every((k) => k === form || sigs[k])
+      const allSigned = Object.keys(DECIDING).every((k) => answers[k]) && applicableForms(answers, ctx).every((k) => k === form || sigs[k])
       let done = false
       if (allSigned) {
-        const { data: fin } = await db.from('step1_forms').update({ completed_at: at, current_screen: '9', receipt: { completed_at: at, forms: applicableForms(answers).length } }).eq('offer_id', id).is('completed_at', null).select('offer_id')
+        const { data: fin } = await db.from('step1_forms').update({ completed_at: at, current_screen: '9', receipt: { completed_at: at, forms: applicableForms(answers, ctx).length } }).eq('offer_id', id).is('completed_at', null).select('offer_id')
         done = !!fin?.length
-        if (done) { await T.event({ offer_id: id, kind: 'step1_done', by_who: 'caregiver', channel: 'page', detail: { forms: applicableForms(answers).length, ip, agent } }); await T.patch(id, { step1_done_at: at }, '&step1_done_at=is.null')
-          await db.from('step1_forms').update({ receipt: { completed_at: at, forms: applicableForms(answers).length, ghl_note: await ghlStep1Note(db, o, who, id, at) } }).eq('offer_id', id)
+        if (done) { await T.event({ offer_id: id, kind: 'step1_done', by_who: 'caregiver', channel: 'page', detail: { forms: applicableForms(answers, ctx).length, ip, agent } }); await T.patch(id, { step1_done_at: at }, '&step1_done_at=is.null')
+          await db.from('step1_forms').update({ receipt: { completed_at: at, forms: applicableForms(answers, ctx).length, ghl_note: await ghlStep1Note(db, o, who, id, at) } }).eq('offer_id', id)
           /* 2026-10-13: their driver record from Step 1 (Non-Driver, or Driver Pending Verification with the pictures); never silent */
-          const dr = await driverFromStep1(db, id, who, answers, { ...sigs, [form]: sig }, { ...(row.pdfs || {}), ...(pdfOk ? { [form]: path } : {}) }, at).catch((e: Error) => ({ ok: false, error: String(e?.message || e) }))
+          const dr = await driverFromStep1(db, id, who, answers, { ...sigs, [form]: sig }, { ...(row.pdfs || {}), ...(pdfOk && !confidential ? { [form]: path } : {}) }, at).catch((e: Error) => ({ ok: false, error: String(e?.message || e) }))
           if ((dr as Record<string, unknown>)?.ok === false) await problemCard(db, 's1drv_' + id, { kind: 'step1_driver_failed', who: `${who.first} ${who.last}`.trim(), offer_id: id, title: 'Driver Compliance record not made from Step 1: ' + `${who.first} ${who.last}`.trim(), detail: 'Step 1 is complete, but their Driver Compliance record could not be made (' + S((dr as Record<string, unknown>).error, 120) + '). Set it up from their Driver Compliance card, or tell Claude.' })
           const cs = needsCountersign({ ...sigs, [form]: true }, {})
           if (cs.length) await problemCard(db, 's1cs_' + id, { kind: 'step1_countersign', who: `${who.first} ${who.last}`.trim(), offer_id: id, title: 'Sign for Caring Companions: ' + cs.map((k) => FORMS[k].title).join(', ') + ' for ' + `${who.first} ${who.last}`.trim(),
@@ -801,8 +893,9 @@ Deno.serve(async (req) => {
         if (entered.ok !== false) await problemCard(db, 's1landform_' + id, { kind: 'step1_landing_failed', who: `${who.first} ${who.last}`.trim(), offer_id: id, title: 'Step 1 answers did not reach their Background & References record: ' + `${who.first} ${who.last}`.trim(),
           detail: 'The answers on ' + FORMS[form].title + ' could not be copied onto their Background & References record (' + S((landed as Record<string, unknown>).error || (landedDone as Record<string, unknown>).error || 'no reason given', 120) + '). Their signed forms are safe on their profile. Check their references and details there, or tell Claude.' })
       }
-      const cp = pdfOk ? await db.storage.from(BUCKET).createSignedUrl(path, 600) : { data: null }
-      return json({ ok: true, form, signed_at: at, version, fingerprint: fp, pdf: pdfOk, copy_url: cp.data?.signedUrl ?? null, done, signed_count: Object.keys(sigs).length + 1, form_count: formCount(answers), landed, landed_done: landedDone })
+      const cp = pdfOk ? await db.storage.from(confidential ? HEPB_BUCKET : BUCKET).createSignedUrl(path, 600) : { data: null }
+      return json({ ok: true, form, signed_at: at, version, fingerprint: fp, pdf: pdfOk, copy_url: cp.data?.signedUrl ?? null, done, signed_count: Object.keys(sigs).length + 1, form_count: formCount(answers, ctx), landed, landed_done: landedDone,
+        ...(confidential ? { practice, proof_link: (hepbOut?.proof_link as string) || null } : {}) })
     }
     return json({ ok: false, error: 'Unknown action.' }, 400)
   } catch (e) {

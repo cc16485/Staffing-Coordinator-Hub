@@ -33,7 +33,7 @@ s = S({ app, offer: offerNew(signed), step1: { completed_at: 'x', signatures: si
 s = S({ app, experience: { counts: { confirmed: 2, supported: 1, self_reported: 3, questioned: 0 } } }); ck('unverified experience is named in Missing as not counting until confirmed', /4 tasks from their experience not verified yet \(does not count until a reference who saw it confirms\)/.test(s.missing.join()), s.missing)
 ck('submitted: what they gave us, from the records (no free typing)', S({ app: { ...app, post_interview: { x: 1 } }, cand: { r1n: 'A' } }).submitted.interview_answers === true && S({ cand: { r1n: 'A' } }).submitted.references_listed === 1)
 ck('a blank never counts: an offer row without a send date is not an offer sent', S({ app, offer: { id: 'o3', onboarding_path: 'new' } }).stages[4].state !== 'done')
-const bad = res.filter((x) => !x[1]); /* 2026-10-13: each form's own status */
+/* 2026-10-13: each form's own status */
 { const fs = M.formState
   ck('form status: Not Started (no answers), In Progress (answers, no signature), Signed, Needs Attention (no PDF, or an older wording)',
     fs('availability', { answers: {}, signatures: {}, pdfs: {} }).state === 'not_started'
@@ -41,5 +41,15 @@ const bad = res.filter((x) => !x[1]); /* 2026-10-13: each form's own status */
     && fs('availability', { answers: {}, signatures: { availability: { at: 'x', version: M2.FORMS.availability.version } }, pdfs: { availability: 'p.pdf' } }).state === 'signed'
     && fs('availability', { answers: {}, signatures: { availability: { at: 'x', version: M2.FORMS.availability.version } }, pdfs: {} }).state === 'needs_attention'
     && /older|version/.test(fs('availability', { answers: {}, signatures: { availability: { at: 'x', version: 1 } }, pdfs: { availability: 'p' } }).why || ''), null) }
+
+/* 2026-10-13 HEPATITIS B IN STEP 1: listed only when their Step 1 has it (13 forms), its signed state never "needs attention"
+   for a missing onboarding PDF (the PDF lives on the confidential hepatitis B record) */
+{ const fs = M.formState
+  let s2 = S({ app, offer: offerNew(signed), step1: { started_at: 'x', signatures: sigs(3), answers: { a: 1 }, hepb_form: true } })
+  const keys = s2.step1.forms.map((f) => f.key)
+  ck('HEP B: a Step 1 with the form lists it last: 13 forms, "of 13 forms signed"', keys.at(-1) === 'hepb_vaccination' && keys.length === 13 && /3 of 13 forms signed/.test(s2.stages[6].note), { keys, note: s2.stages[6].note })
+  s2 = S({ app, offer: offerNew(signed), step1: { started_at: 'x', signatures: sigs(3), answers: { a: 1 } } })
+  ck('HEP B: a Step 1 without it (started before approval) lists 12 and never the Hepatitis B form', !s2.step1.forms.some((f) => f.key === 'hepb_vaccination') && s2.step1.forms.length === 12, s2.step1.forms.length)
+  ck('HEP B: signed, no PDF in the Step 1 store: Signed (its PDF is on the confidential record), never Needs Attention', fs('hepb_vaccination', { answers: {}, signatures: { hepb_vaccination: { at: 'x', version: 1 } }, pdfs: { availability: 'p' } }).state === 'signed') }
 for (const [n, ok, note] of res) console.log((ok ? 'ok    ' : 'FAIL  ') + n + (ok ? '' : '  ' + note))
-console.log(`${res.length - bad.length}/${res.length} passed`); if (bad.length) process.exit(1)
+const bad = res.filter((x) => !x[1]); console.log(`${res.length - bad.length}/${res.length} passed`); if (bad.length) process.exit(1)

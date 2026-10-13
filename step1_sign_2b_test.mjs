@@ -26,7 +26,7 @@ globalThis.fetch = async (url, o = {}) => {
   throw new Error('unexpected fetch ' + u)
 }
 /* ── a tiny table store with the query shapes the function uses ── */
-let DB = { step1_forms: [], step1_identity: [], job_applicants: [], document_access_log: [], auth_identities: [], persons: [], entity_memberships: [], staff_roles: [], app_data: [], driver_compliance: [], driver_document: [], driver_compliance_event: [] }
+let DB = { step1_forms: [], step1_identity: [], job_applicants: [], document_access_log: [], auth_identities: [], persons: [], entity_memberships: [], staff_roles: [], app_data: [], driver_compliance: [], driver_document: [], driver_compliance_event: [], hepb_record: [], hepb_event: [], client_journey: [] }
 const STORE = {}
 const getPath = (r, p) => p.split('->').reduce((a, k) => a == null ? undefined : a[k], r)
 function table(name) {
@@ -35,7 +35,7 @@ function table(name) {
     const match = (r) => filters.every((f) => f(r))
     const run = () => {
       if (mode === 'select') { let out = rows().filter(match); if (opts.order) out = [...out].reverse(); if (opts.limit) out = out.slice(0, opts.limit); return out.map((r) => JSON.parse(JSON.stringify(r))) }
-      if (mode === 'insert') { const r = { ...payload }; if (name === 'step1_forms') Object.assign(r, { answers: {}, signatures: {}, pdfs: {}, ...r }); if ((name === 'step1_forms' || name === 'step1_identity') && rows().some((x) => x.offer_id === r.offer_id)) throw Object.assign(new Error('duplicate key'), { code: '23505' }); rows().push(r); return [r] }
+      if (mode === 'insert') { const r = { ...payload }; if (name === 'hepb_record') { if (globalThis.FAIL_HEPB) throw new Error('hepb down'); if (rows().some((x) => x.offer_id === r.offer_id)) throw new Error('duplicate offer_id'); r.id = 'aaaaaaaa-bbbb-4ccc-8ddd-' + String(rows().length + 1).padStart(12, '0'); r.reminders = r.reminders || {}; r.doses = [] } if (name === 'step1_forms') Object.assign(r, { answers: {}, signatures: {}, pdfs: {}, ...r }); if ((name === 'step1_forms' || name === 'step1_identity') && rows().some((x) => x.offer_id === r.offer_id)) throw Object.assign(new Error('duplicate key'), { code: '23505' }); rows().push(r); return [r] }
       if (mode === 'upsert') { const i = rows().findIndex((x) => x.offer_id === payload.offer_id); if (i >= 0) Object.assign(rows()[i], payload); else rows().push({ ...payload }); return [rows()[i >= 0 ? i : rows().length - 1]] }
       if (mode === 'update') { const out = []; for (const r of rows()) if (match(r)) {
         if (name === 'step1_forms') { for (const k of Object.keys(r.signatures || {})) if (payload.signatures && JSON.stringify(payload.signatures[k]) !== JSON.stringify(r.signatures[k])) throw new Error('trigger: signature never changed')
@@ -122,7 +122,7 @@ ck('save: a job lands as a card with its tasks', r.status === 200 && DB.step1_fo
 /* 2026-10-13 (705): Samantha approved all thirteen forms for real ('approve step 1 forms', wording page v5). A changed wording is a
    new version and is refused for a real applicant until she approves it; practice and training hires are not held. */
 { const REC = JSON.parse(fs.readFileSync(path.join(ROOT, 'supabase/step1-approved-2026-10-13.json'), 'utf8'))
-  ck('APPROVED_FOR_REAL holds exactly the thirteen versions of the approval record (Samantha, 2026-10-13, wording page v5), each the version in force', D.FORM_ORDER.length === 13 && REC.forms.length === 13 && REC.forms.map((f) => f.key).join() === D.FORM_ORDER.join() && REC.forms.every((f) => D.APPROVED_FOR_REAL[f.key] === f.version && D.FORMS[f.key].version === f.version && f.approved_by === 'Samantha' && f.source === 'wording page v5') && Object.keys(D.APPROVED_FOR_REAL).length === 13 && D.allApprovedForReal())
+  ck('APPROVED_FOR_REAL holds exactly the thirteen versions of the approval record (Samantha, 2026-10-13, wording page v5), each the version in force', D.FORM_ORDER.length === 14 && REC.forms.length === 13 && REC.forms.map((f) => f.key).join() === D.FORM_ORDER.filter((k) => k !== 'hepb_vaccination').join() && D.APPROVED_FOR_REAL.hepb_vaccination === undefined && REC.forms.every((f) => D.APPROVED_FOR_REAL[f.key] === f.version && D.FORMS[f.key].version === f.version && f.approved_by === 'Samantha' && f.source === 'wording page v5') && Object.keys(D.APPROVED_FOR_REAL).length === 13 && D.allApprovedForReal())
   let fpOk = true; for (const f of REC.forms) if (await D.formFingerprint(f.key) !== f.sha256) fpOk = false
   ck('every approved form\'s wording fingerprint is the one in the approval record (the words she read)', fpOk)
   const pre = JSON.stringify(DB.step1_forms), v0 = D.FORMS.employee_application.version
@@ -376,6 +376,9 @@ ck('the door is never asked to land the SSN, date of birth, license number or ad
     .map((b) => ({ ...b, ...link2 }))
   let created = -1, last = null
   for (const b of steps) { const out = await call(b); if (b.action === 'sign') last = out; if (created < 0 && RPCS.slice(rp0).some((r) => r.name === 'step1_candidate_create')) created = RPCS.length }
+  /* 2026-10-13: the Hepatitis B form is not approved yet, so Bo's real Step 1 does not have it: 12 forms, complete */
+  const bo = DB.step1_forms.find((f) => f.offer_id === OID2)
+  ck('HEP B: a real Step 1 that starts while the form is not approved does not have it (12 forms, complete without it)', bo.hepb_form === false && last && last.j.done === true && last.j.form_count === 12, { hepb_form: bo.hepb_form, last: last && last.j })
   const mine = RPCS.slice(rp0)
   const cc = mine.filter((r) => r.name === 'step1_candidate_create')
   ck('before checks: every form signed for the second hire (the replay reached Step 1 complete)', last && last.status === 200 && last.j && last.j.done === true, last)
@@ -391,6 +394,91 @@ ck('the door is never asked to land the SSN, date of birth, license number or ad
   ck('before checks: the card says nothing with an em dash', card && !/—/.test(card.title + card.detail))
 }
 
+/* ═══ 2026-10-13 HEPATITIS B IN STEP 1, a REAL hire (Samantha: the form in Step 1, offered to everyone). Dee is an office
+   hire: the exposure table says no exposure, and she is still offered (a superset of OSHA's duty). Her twelve earlier forms
+   are signed; the Hepatitis B form is the last. ═══ */
+{
+  /* as if she had approved the Hepatitis B wording (it stays PROPOSED in the code until she does) */
+  const HEPB_WAS = D.APPROVED_FOR_REAL.hepb_vaccination; D.APPROVED_FOR_REAL.hepb_vaccination = D.FORMS.hepb_vaccination.version
+  const OID3 = '33333333-4444-4555-8666-777777777777'
+  OFFERS[OID3] = { ...base(), id: OID3, first_name: 'Dee', last_name: 'Office', phone: '(417) 881-2234', email: 'dee@example.com', position: 'Office' }
+  const exp3 = L.expiry(); const link3 = { o: OID3, e: exp3, t: await L.sign(SECRET, 'step1', OID3, exp3) }
+  globalThis.NO_CAND = false; globalThis.CARDS = []
+  let v = await call({ action: 'view', ...link3 })
+  const dee = () => DB.step1_forms.find((f) => f.offer_id === OID3)
+  ck('HEP B real: a new Step 1 after approval has the form whatever the position: 13 forms, screen 16 before All done, the choices and the verbatim Appendix A sent', v.status === 200 && dee().hepb_form === true && v.j.form_count === 13 && v.j.screens.slice(-2).join() === '16,9' && v.j.forms.at(-1).key === 'hepb_vaccination' && v.j.forms.at(-1).choices.options.length === 5 && v.j.forms.at(-1).decline.statement.startsWith('I understand that due to my occupational exposure') && v.j.test_mode === false, { fc: v.j.form_count, screens: v.j.screens })
+  const SIG = { at: '2026-10-13T15:00:00Z', typed_name: 'Dee Office', version: 1, fingerprint: 'f'.repeat(64), ip: '1.1.1.1', agent: 'x', consent: true }
+  const earlier = D.applicableForms({ transport_willing: 'no' }, { hepb: true }).filter((k) => k !== 'hepb_vaccination')
+  Object.assign(dee(), { esign_consent_at: '2026-10-13T14:00:00Z', answers: { transport_willing: 'no' }, signatures: Object.fromEntries(earlier.map((k) => [k, { ...SIG, version: D.FORMS[k].version }])), pdfs: Object.fromEntries(earlier.map((k) => [k, 'step1/' + OID3 + '/' + k + '.pdf'])) })
+  ck('HEP B real: twelve earlier forms, the thirteenth is Hepatitis B', earlier.length === 12)
+  const sign3 = (b) => call({ action: 'sign', ...link3, form: 'hepb_vaccination', typed_name: 'Dee Office', consent: true, ...b })
+  let r3 = await sign3({})
+  ck('HEP B: no choice: refused, the choice named, nothing written', r3.status === 400 && /Your choice about the hepatitis B vaccine/.test(r3.j.error) && !DB.hepb_record.length && !dee().signatures.hepb_vaccination, r3.j)
+  r3 = await sign3({ choice: 'declined' })
+  ck('HEP B: declining without ticking the Appendix A agreement: refused', r3.status === 400 && /declination statement/.test(r3.j.error) && !DB.hepb_record.length, r3.j)
+  r3 = await sign3({ choice: 'maybe' })
+  ck('HEP B: a choice not on the list: refused', r3.status === 400 && !DB.hepb_record.length, r3.j)
+  const keep = D.APPROVED_FOR_REAL.hepb_vaccination; delete D.APPROVED_FOR_REAL.hepb_vaccination
+  r3 = await sign3({ choice: 'vaccine' })
+  ck('HEP B: wording not approved for real: a real hire cannot sign it (409, nothing written)', r3.status === 409 && r3.j.not_approved === true && !DB.hepb_record.length, r3.j)
+  D.APPROVED_FOR_REAL.hepb_vaccination = keep
+  globalThis.FAIL_HEPB = true
+  r3 = await sign3({ choice: 'declined', decline_consent: true })
+  ck('HEP B: the confidential record cannot be saved: NOT signed (500), a safe retry is offered, nothing on Step 1', r3.status === 500 && /not signed yet/.test(r3.j.error) && !dee().signatures.hepb_vaccination && !dee().completed_at, r3.j)
+  globalThis.FAIL_HEPB = false
+  const store0 = Object.keys(STORE).length
+  r3 = await sign3({ choice: 'declined', decline_consent: true })
+  const hr = DB.hepb_record.find((x) => x.offer_id === OID3), f3 = dee()
+  ck('HEP B declined: signed, Step 1 complete (13 of 13), the record made once with the declination', r3.status === 200 && r3.j.done === true && r3.j.form_count === 13 && DB.hepb_record.filter((x) => x.offer_id === OID3).length === 1 && hr.status === 'declined' && hr.declined_at && hr.declination_typed_name === 'Dee Office' && hr.step1_at, { j: r3.j, hr })
+  ck('HEP B: offered to everyone: the office position is covered, its own determination kept beside it; offered in Step 1 so the pass never offers again', hr.exposed === true && hr.exposure_basis.determination === false && hr.exposure_basis.offered_to_all === true && hr.offered_at && /Step 1/.test(hr.offered_via), hr)
+  ck('HEP B: the signed form and the Appendix A declination are PDFs in the private hepb-docs paths only, never in the onboarding store or Step 1 pdfs', /^hb\/.+\/step1\//.test(hr.step1_pdf) && /^hb\/.+\/declination\//.test(hr.declination_pdf) && STORE[hr.step1_pdf] && STORE[hr.declination_pdf] && Object.keys(STORE).length === store0 + 2 && !f3.pdfs.hepb_vaccination && !Object.keys(STORE).some((k) => k.startsWith('step1/' + OID3 + '/hepb')), { hr, keys: Object.keys(STORE).slice(-3) })
+  ck('HEP B: the declination PDF holds the Appendix A statement word for word', Buffer.from(STORE[hr.declination_pdf]).length > 1500)
+  ck('HEP B: the choice is NOT in the Step 1 answers or the signature (no medical fact where coordinators look)', !JSON.stringify(f3.answers).match(/declin|vaccine|choice/) && Object.keys(f3.signatures.hepb_vaccination).sort().join() === 'agent,at,consent,fingerprint,ip,typed_name,version', f3)
+  ck('HEP B: the history: created, offered (information first), declined', ['created', 'offered', 'declined'].every((k) => DB.hepb_event.some((e) => e.hepb_id === hr.id && e.kind === k)) && DB.hepb_event.find((e) => e.kind === 'offered').detail.information.includes('(g)(2)(vii)(I)'), DB.hepb_event.map((e) => e.kind))
+  const evN = DB.hepb_event.length
+  r3 = await sign3({ choice: 'vaccine' })
+  ck('HEP B: a second signature is refused (already) and changes nothing', r3.status === 409 && r3.j.already === true && DB.hepb_event.length === evN && DB.hepb_record.find((x) => x.offer_id === OID3).status === 'declined', r3.j)
+  r3 = await call({ action: 'copies', ...link3 })
+  ck('HEP B: their own copy comes back on their own link', r3.status === 200 && /hb\//.test(r3.j.copies.hepb_vaccination || ''), r3.j)
+  r3 = await call({ action: 'open', offer_id: OID3, form: 'hepb_vaccination' }, STAFF)
+  ck('HEP B: the office cannot open it from Step 1 (a confidential medical record)', r3.status === 403 && r3.j.confidential === true, r3.j)
+  r3 = await call({ action: 'review', offer_id: OID3 }, STAFF)
+  ck('HEP B: the office review shows only the status words, never the answer', r3.status === 200 && r3.j.hepb_status === 'Declined' && r3.j.forms.length === 14 && r3.j.form_count === 13 && !r3.j.signed.hepb_vaccination.pdf && !JSON.stringify(r3.j.signed).includes('declin'), { s: r3.j.hepb_status, fc: r3.j.form_count })
+  ck('HEP B: the card text never names a medical answer', !(globalThis.CARDS || []).some((c) => /declin|immune|contraindicat|prior series/i.test(c.title + c.detail)), globalThis.CARDS)
+  /* a Step 1 that started BEFORE the form was approved never gains it (Ava's above): 12 forms, complete */
+  const ava = DB.step1_forms.find((f) => f.offer_id === OID)
+  ck('HEP B: a Step 1 started before approval keeps 12 forms and stays complete', ava.hepb_form !== true && ava.completed_at && D.formCount(ava.answers, D.step1Ctx(ava)) === 12)
+  /* 2. prior series: the proof link and the owners' check card */
+  const OID4 = '44444444-4444-4555-8666-777777777777'
+  OFFERS[OID4] = { ...base(), id: OID4, first_name: 'Eli', last_name: 'Care', phone: '(417) 881-2235', email: 'eli@example.com', position: 'Caregiver' }
+  const exp4 = L.expiry(); const link4 = { o: OID4, e: exp4, t: await L.sign(SECRET, 'step1', OID4, exp4) }
+  await call({ action: 'view', ...link4 })
+  const eli = DB.step1_forms.find((f) => f.offer_id === OID4)
+  Object.assign(eli, { esign_consent_at: '2026-10-13T14:00:00Z', answers: { transport_willing: 'no' }, signatures: Object.fromEntries(earlier.map((k) => [k, { ...SIG, version: D.FORMS[k].version }])), pdfs: Object.fromEntries(earlier.map((k) => [k, 'step1/' + OID4 + '/' + k + '.pdf'])) })
+  globalThis.CARDS = []
+  r3 = await call({ action: 'sign', ...link4, form: 'hepb_vaccination', typed_name: 'Eli Care', consent: true, choice: 'prior_series' })
+  const h4 = DB.hepb_record.find((x) => x.offer_id === OID4)
+  ck('HEP B prior series: recorded, a private link to add the proof, one card for the owners to check it (no answer on the card)', r3.status === 200 && h4.status === 'prior_series' && !h4.declined_at && /hepb\.html\?h=/.test(r3.j.proof_link || '') && (globalThis.CARDS || []).some((c) => c.id === 'hepb_check_' + h4.id + '_step1' && !/prior|series/i.test(c.detail.replace('vaccine offer', ''))), { j: r3.j, cards: globalThis.CARDS })
+  v = await call({ action: 'view', ...link4 })
+  ck('HEP B prior series: the view after offers the proof link again (until an owner checks it)', /hepb\.html\?h=/.test(v.j.hepb_proof_link || ''), v.j.hepb_proof_link)
+  if (HEPB_WAS === undefined) delete D.APPROVED_FOR_REAL.hepb_vaccination; else D.APPROVED_FOR_REAL.hepb_vaccination = HEPB_WAS
+  /* a PRACTICE Step 1 always has the form (approved or not); its choice is never recorded anywhere, nobody is told */
+  const OID6 = '66666666-4444-4555-8666-777777777777'
+  OFFERS[OID6] = { ...base(), id: OID6, first_name: 'Pat', last_name: 'Practice', phone: '(417) 555-0186', email: 'pat6@practice.invalid', offered_by: 'Slice 10 practice run' }
+  const exp6 = L.expiry(); const link6 = { o: OID6, e: exp6, t: await L.sign(SECRET, 'step1', OID6, exp6) }
+  v = await call({ action: 'view', ...link6 })
+  const pat = DB.step1_forms.find((f) => f.offer_id === OID6)
+  Object.assign(pat, { esign_consent_at: '2026-10-13T14:00:00Z', answers: { transport_willing: 'no' }, signatures: Object.fromEntries(earlier.map((k) => [k, { ...SIG, version: D.FORMS[k].version }])), pdfs: Object.fromEntries(earlier.map((k) => [k, 'step1/' + OID6 + '/' + k + '.pdf'])) })
+  const nRec = DB.hepb_record.length, nStore = Object.keys(STORE).length
+  r3 = await call({ action: 'sign', ...link6, form: 'hepb_vaccination', typed_name: 'Pat Practice', consent: true, choice: 'declined', decline_consent: true })
+  ck('HEP B practice: a practice Step 1 has the form (13), signs, Step 1 complete, but NO hepatitis B record, no PDF in any store, nothing medical on Step 1', v.j.form_count === 13 && pat.hepb_form === true && r3.status === 200 && r3.j.practice === true && r3.j.done === true && DB.hepb_record.length === nRec && Object.keys(STORE).length === nStore && !JSON.stringify(pat).includes('declined') && !pat.pdfs.hepb_vaccination, { j: r3.j, fc: v.j.form_count })
+  /* NOT approved (the code as shipped): a new real Step 1 does not get the form, and shows no practice banner (12 forms, all approved) */
+  const OID5 = '55555555-4444-4555-8666-777777777777'
+  OFFERS[OID5] = { ...base(), id: OID5, first_name: 'Fay', last_name: 'Real', phone: '(417) 881-2236', email: 'fay@example.com' }
+  const exp5 = L.expiry(); v = await call({ action: 'view', o: OID5, e: exp5, t: await L.sign(SECRET, 'step1', OID5, exp5) })
+  ck('HEP B not approved yet: a new REAL Step 1 has 12 forms, no Hepatitis B screen, and NO practice banner', v.status === 200 && v.j.form_count === 12 && !v.j.screens.includes('16') && !v.j.forms.some((f) => f.key === 'hepb_vaccination') && v.j.test_mode === false && DB.step1_forms.find((f) => f.offer_id === OID5).hepb_form === false, { fc: v.j.form_count, tm: v.j.test_mode })
+}
+
 globalThis.fetch = realFetch
 for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note))
 const PRINTED = res.length
@@ -398,7 +486,7 @@ const PRINTED = res.length
 {
   const before = JSON.stringify({ DB, EVENTS: EVENTS.length, PATCHES: PATCHES.length, STORE: Object.keys(STORE).length, RPCS: RPCS.length })
   let p = await call({ action: 'preview' })
-  ck('preview: no link needed; the thirteen forms with fingerprints, Pat Preview, prefill marked from the application and interview, nothing signed', p.status === 200 && p.j.preview === true && p.j.forms.length === 13 && p.j.form_count === 12 && p.j.forms.every((f) => /^[0-9a-f]{64}$/.test(f.fingerprint)) && p.j.who.last === 'Preview' && p.j.prefill.lived_outside_mo.from === 'your application' && p.j.prefill.matching_facts.from === 'your interview' && Object.keys(p.j.signatures).length === 0 && p.j.skill_groups.length === 3, p.j)
+  ck('preview: no link needed; the fourteen forms (with Hepatitis B, offered to everyone) with fingerprints, Pat Preview, prefill marked from the application and interview, nothing signed', p.status === 200 && p.j.preview === true && p.j.forms.length === 14 && p.j.form_count === 13 && p.j.screens.includes('16') && p.j.forms.every((f) => /^[0-9a-f]{64}$/.test(f.fingerprint)) && p.j.who.last === 'Preview' && p.j.prefill.lived_outside_mo.from === 'your application' && p.j.prefill.matching_facts.from === 'your interview' && Object.keys(p.j.signatures).length === 0 && p.j.skill_groups.length === 3, p.j)
   ck('preview: the same words a real Step 1 shows (identical forms to the real view)', JSON.stringify(p.j.forms) === JSON.stringify(M.__lastViewForms || p.j.forms))
   p = await call({ action: 'preview', check: true, form: 'employee_application', answers: { preferred_name: 'Pat', ssn: '123456789', bogus: 'x' } })
   ck('preview check: the real required-answer list; an identity number or unknown id is dropped, never echoed', p.status === 200 && p.j.missing.length > 3 && !JSON.stringify(p.j).includes('123456789'), p.j)
@@ -409,7 +497,7 @@ const PRINTED = res.length
   ck('preview PDF: a real PDF in the letterhead, marked PREVIEW ONLY: not a signed document', p.status === 200 && pdf.slice(0, 5).toString() === '%PDF-' && pdf.length > 2000, p.j.error)
   p = await call({ action: 'preview', pdf: true, form: 'nope' }); ck('preview: an unknown form is refused', p.j.ok === false)
   /* 705: the read-only approval check the go-live proof uses (the same rule the sign action uses) */
-  p = await call({ action: 'preview', approval_check: D.FORM_ORDER.map((k) => ({ form: k, version: D.FORMS[k].version })) })
+  p = await call({ action: 'preview', approval_check: D.FORM_ORDER.filter((k) => k !== 'hepb_vaccination').map((k) => ({ form: k, version: D.FORMS[k].version })) })
   ck('preview approval check: every form at its approved version would be accepted for a real applicant', p.status === 200 && p.j.approval_check.length === 13 && p.j.approval_check.every((x) => x.accepted === true && x.version === x.current), p.j)
   p = await call({ action: 'preview', approval_check: [{ form: 'employee_application', version: D.FORMS.employee_application.version + 1 }, { form: 'client_rights', version: 0 }, { form: 'employee_application', version: '4' }, { form: 'nope', version: 1 }] })
   ck('preview approval check: a bumped version, an older version, a version as text and an unknown form are all refused', p.status === 200 && p.j.approval_check.length === 4 && p.j.approval_check.every((x) => x.accepted === false), p.j)
@@ -417,6 +505,17 @@ const PRINTED = res.length
     p = await call({ action: 'preview', approval_check: [{ form: 'client_rights', version: v0 + 1 }, { form: 'client_rights', version: v0 }] })
     ck('preview approval check: when the wording in force is bumped past the approval, neither the new nor the approved version is accepted', p.j.approval_check.every((x) => x.accepted === false), p.j)
     D.FORMS.client_rights.version = v0 }
+  /* 2026-10-13: the Hepatitis B choice in the preview: the same check a real sign runs; the choice is the page's only */
+  p = await call({ action: 'preview', check: true, form: 'hepb_vaccination', answers: {} })
+  ck('preview HEP B: no choice yet: the choice is named as missing', p.j.missing.length === 1 && /Your choice/.test(p.j.missing[0]), p.j)
+  p = await call({ action: 'preview', check: true, form: 'hepb_vaccination', answers: {}, choice: 'declined' })
+  ck('preview HEP B: declining needs the separate agreement to sign the Appendix A statement', p.j.missing.length === 1 && /declination statement/.test(p.j.missing[0]), p.j)
+  p = await call({ action: 'preview', check: true, form: 'hepb_vaccination', answers: {}, choice: 'declined', decline_consent: true })
+  ck('preview HEP B: with the agreement nothing is missing', p.j.missing.length === 0, p.j)
+  p = await call({ action: 'preview', pdf: true, form: 'hepb_vaccination', answers: {}, choice: 'declined' })
+  ck('preview HEP B PDF: a real PDF', p.status === 200 && Buffer.from(p.j.pdf_base64 || '', 'base64').slice(0, 5).toString() === '%PDF-', p.j.error)
+  p = await call({ action: 'preview', approval_check: [{ form: 'hepb_vaccination', version: 1 }] })
+  ck('preview approval check: the Hepatitis B form is accepted for a real applicant only once she approves it', p.j.approval_check[0].accepted === D.approvedForReal('hepb_vaccination'), p.j)
   ck('preview: nothing read or written anywhere (database, offers, trail, storage, door calls unchanged)', JSON.stringify({ DB, EVENTS: EVENTS.length, PATCHES: PATCHES.length, STORE: Object.keys(STORE).length, RPCS: RPCS.length }) === before)
 }
 

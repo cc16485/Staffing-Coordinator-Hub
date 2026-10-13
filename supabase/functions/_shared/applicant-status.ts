@@ -1,12 +1,13 @@
 // =============================================================================
-import { FORMS, FORM_ORDER, formsToList } from './step1-documents.ts'
+import { FORMS, FORM_ORDER, formsToList, step1Ctx } from './step1-documents.ts'
 
 /** 2026-10-13 (Samantha): each Step 1 form's own status: Not Started, In Progress, Signed, Needs Attention.
     Needs Attention = signed but its PDF is missing, or signed on an older wording than the current one. */
 export function formState(key: string, f: Any): { state: 'not_started' | 'in_progress' | 'signed' | 'needs_attention'; why?: string } {
   const sig = f?.signatures?.[key], form = FORMS[key]
   if (sig?.at) {
-    if (f && f.pdfs && !f.pdfs[key]) return { state: 'needs_attention', why: 'signed, but its PDF was not saved' }
+    /* 2026-10-13: the signed Hepatitis B form's PDF is kept only on the confidential hepatitis B record, never in pdfs */
+    if (f && f.pdfs && !f.pdfs[key] && !form?.confidential) return { state: 'needs_attention', why: 'signed, but its PDF was not saved' }
     if (form && Number(sig.version) && Number(sig.version) !== form.version) return { state: 'needs_attention', why: `signed on version ${sig.version}; the wording is now version ${form.version}` }
     return { state: 'signed' }
   }
@@ -57,7 +58,7 @@ export function applicantStatus(x: StatusIn): Any {
   /* 7: Step 1, form by form */
   const sigs = (f?.signatures || {}) as Record<string, Any>
   /* 2026-10-13: only the forms that apply to them (the Driver OR the Non-Driver Agreement) */
-  const listed = formsToList((f?.answers || {}) as Record<string, unknown>)
+  const listed = formsToList((f?.answers || {}) as Record<string, unknown>, step1Ctx(f))
   const forms = STEP1_FORMS.filter(([k]) => listed.includes(k)).map(([k, t]) => ({ key: k, title: t, signed_at: sigs[k]?.at || null, ...formState(k, f) }))
   const outstanding = forms.filter((k) => !k.signed_at)
   if (!newPath && !f) { st[6].state = 'na'; st[6].note = 'Old process: the start link and Viventium Group 1' }

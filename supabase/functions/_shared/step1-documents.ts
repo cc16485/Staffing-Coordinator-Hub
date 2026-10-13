@@ -26,8 +26,14 @@ export type Section = { h: string; p?: string[]; items?: Item[]; tone?: 'cheer';
     scrollable reader on their Step 1 screen, with a copy to open or save, and the acknowledgment, any separate initials
     and the signature right below): layout 'document'. `short` is the screen's title in the screen list. */
 /** countersign: after the applicant signs, a person on the Approve to Work list signs for Caring Companions (step1-countersign.sql) */
-export type Form = { key: FormKey; screen: string; title: string; short?: string; layout?: 'document'; when?: { id: string; equals: string }; countersign?: boolean; version: number; status: FormStatus; intro?: string[]; sections: Section[]; certification: string[]; signature: 'typed' | 'typed+initials' }
+/** 2026-10-13 (Hepatitis B in Step 1): `step1Gate` names a form that is in a person's Step 1 only when their Step 1 record
+    says so (decided once, when the Step 1 starts: see step1Ctx); `confidential` keeps the answer and the signed PDF out of
+    the Step 1 answers and the onboarding store (a medical record, owners only); `choices` is ONE deciding choice whose
+    answer is never stored with the Step 1 answers; `decline` is a statement shown and signed only for that choice. */
+export type Choice = { id: string; label: string; note?: string }
+export type Form = { key: FormKey; screen: string; title: string; short?: string; layout?: 'document'; when?: { id: string; equals: string }; step1Gate?: 'hepb'; confidential?: boolean; choices?: { label: string; options: Choice[] }; decline?: { choice: string; title: string; intro: string; statement: string; consent: string }; countersign?: boolean; version: number; status: FormStatus; intro?: string[]; sections: Section[]; certification: string[]; signature: 'typed' | 'typed+initials' }
 
+import { APPENDIX_A } from './hepb-appendix-a.ts'
 export const OFFICE_PHONE = '(417) 234-8494'
 export const COMPANY = 'Troutman Enterprises, LLC DBA Caring Companions In-Home Senior Care'
 /** Her decision 1: a previous supervisor may be a professional reference; two professional and two personal, kept apart. */
@@ -532,14 +538,69 @@ export const FORMS: Record<FormKey, Form> = {
        Call and is recorded there (who, when, their confirmation); the requirement is complete only then, before the first shift */
     certification: ['By signing, I confirm that I received and reviewed a copy of the Client Rights, the Caring Companions Code of Ethics, and the Caring Companions policy on keeping client information confidential. I understand the office will explain each of them to me at my Orientation Video Call, before I serve any client.'],
   },
+  /* ───── 2026-10-13 HEPATITIS B IN STEP 1 (Samantha: "let's keep it [bloodborne pathogens training] in their on-the-job
+     training... they are fine to complete the [Hepatitis B] form in step one"; and "lets keep it easy and offer to everyone").
+     LEGAL BASIS (launch/review/hepb-osha-research.md):
+     - OSHA 29 CFR 1910.1030(f)(2)(i): the vaccine is made available "after the employee has received the training required in
+       paragraph (g)(2)(vii)(I)" and within 10 working days of initial assignment.
+     - Training element (g)(2)(vii)(I) is ONLY the vaccine information: its efficacy, safety, method of administration, the
+       benefits of being vaccinated, and that it is offered free of charge. This form PRESENTS that information first, then
+       asks for the choice, so the offer made here is properly sequenced.
+     - This form does NOT complete the bloodborne pathogens training. The rest of (g)(2) stays in the online on-the-job courses
+       (her ruling); this form only gives element (I) before the offer.
+     - Offered to EVERY applicant, whatever the position (her ruling "offer to everyone"). That is a superset of OSHA's duty,
+       which covers only positions with reasonably anticipated occupational exposure ((c)(2), (f)(1)(i)): offering more
+       people than the rule requires never falls short of it. The exposure table in hepb.ts still decides the 30-minute
+       pass for anyone whose Step 1 did not include this form.
+     - The vaccine is never mandatory ((f)(1)(i), CPL 02-02-069 XIII.F.1). Declining = the Appendix A statement word for word
+       ((f)(2)(iv)); a later yes is honored at no cost ((f)(2)(iii)). Exceptions: the series already completed, an antibody
+       test shows immunity, medically contraindicated ((f)(2)(i)). No medical question sits on the declination (CPL XIII.F.11).
+     - Confidential medical record ((h)(1)(iii)): the choice and the signed PDFs go only to the hepatitis B record and the
+       private hepb-docs store (owners only); the Step 1 answers and the office see only status words.
+     Vaccine facts: CDC Hepatitis B Vaccine Information Statement, edition January 31, 2025
+     (https://www.cdc.gov/vaccines/hcp/current-vis/hepatitis-b.html): "usually given as 2, 3, or 4 shots"; "Most people who
+     are vaccinated with hepatitis B vaccine are immune for life"; soreness, fever, headache and tiredness can happen;
+     people sometimes faint after a shot; "a very remote chance" of a severe allergic reaction. PROPOSED until she approves
+     the wording. ───── */
+  hepb_vaccination: {
+    key: 'hepb_vaccination', screen: '16', title: 'Hepatitis B Vaccination', short: 'Hepatitis B vaccine', layout: 'document', step1Gate: 'hepb', confidential: true, version: 1, status: 'proposed', signature: 'typed',
+    intro: ['Please read this before you choose. It tells you about the hepatitis B vaccine, which Caring Companions offers you at no cost.'],
+    sections: [
+      { h: 'Why we offer it', p: ['Caregiving can bring contact with blood, or with body fluids that have blood in them, for example when helping with shaving, nail care or toileting, or with a cut or a skin tear. Federal workplace safety rules (OSHA 29 CFR 1910.1030) protect workers from infections spread this way. Caring Companions offers the hepatitis B vaccine to everyone we hire.'] },
+      { h: 'What hepatitis B is', p: ['Hepatitis B is a liver disease caused by a virus that spreads through blood and some other body fluids. It can be a mild illness that lasts a few weeks, or a serious, lifelong illness that can damage the liver and lead to liver cancer.'] },
+      { h: 'How well the vaccine works', p: ['Hepatitis B vaccine can prevent hepatitis B. Most people who are vaccinated are protected for life.'] },
+      { h: 'How the vaccine is given', p: ['The vaccine is a shot given by a licensed healthcare professional. It is usually 2, 3 or 4 shots spread over several months, depending on the brand. You need every shot in the series to be fully protected.'] },
+      { h: 'Is it safe?', p: ['Hepatitis B vaccine is safe for most people. Soreness where the shot is given, fever, headache and feeling tired can happen afterward. Some people faint after a shot. A severe allergic reaction is very rare. If you have ever had a serious allergic reaction to a vaccine, or are not sure the vaccine is right for you, ask your doctor.'] },
+      { h: 'The benefits', p: ['Once you are protected, you are protected from hepatitis B at work and everywhere else, for as long as the protection lasts. For most people that is for life.'] },
+      { h: 'Free, and your choice', p: [
+        'The vaccine is free for you. Caring Companions pays for every shot. It is given at a reasonable time and place, by a licensed healthcare professional.',
+        'Getting the vaccine is your choice. It is not required to work here.',
+        'If you choose the vaccine, the office arranges it with you within 10 working days of your first client assignment.',
+        'If you decline now, you can change your mind at any time while you work here and still get the vaccine at no cost to you. Just tell the office: ' + OFFICE_PHONE + '.',
+      ] },
+      { h: 'Your bloodborne pathogens training', p: ['You also take our bloodborne pathogens training in your online on-the-job courses, within your first 30 days. It covers how to protect yourself from blood and body fluids, what to do if you are exposed, and more about this vaccine.'] },
+      { h: 'Your answer is private', p: ['Your answer is part of your confidential employee medical record. Only the owners of Caring Companions see it. The rest of the office sees only that you answered.'] },
+    ],
+    choices: { label: 'Your choice about the hepatitis B vaccine', options: [
+      { id: 'vaccine', label: 'Yes, I want the hepatitis B vaccine, at no cost to me.' },
+      { id: 'declined', label: 'No, I decline the hepatitis B vaccine at this time.', note: 'You sign the declination statement below. You can still choose the vaccine later at no cost.' },
+      { id: 'prior_series', label: 'I already completed the hepatitis B vaccine series.', note: 'After you sign, you can add a copy of your vaccine record. If you do not have one, the office will follow up with you.' },
+      { id: 'immune', label: 'I had a blood test (an antibody test) that shows I am immune to hepatitis B.', note: 'After you sign, you can add a copy of the result. If you do not have one, the office will follow up with you.' },
+      { id: 'contraindicated', label: 'My doctor says I should not have this vaccine.', note: 'You do not need to tell us why. The office will follow up with you.' },
+    ] },
+    decline: { choice: 'declined', title: 'Hepatitis B Vaccine Declination (Mandatory)', intro: 'Federal workplace safety rules (OSHA 29 CFR 1910.1030, Appendix A) say that if you choose not to get the hepatitis B vaccine, you sign this exact statement. The words come from the regulation and cannot be changed.', statement: APPENDIX_A, consent: 'I have read the declination statement above and I agree to sign it electronically.' },
+    certification: ['I read the information above about the hepatitis B vaccine, and the answer I chose is my own choice.'],
+  },
 }
-export const FORM_ORDER: FormKey[] = ['employee_application', 'reference_consent', 'fcra_disclosure', 'edl_fcsr_consent', 'availability', 'experience', 'vehicle', 'non_driver', 'employment_agreement', 'medication_policy', 'code_of_ethics', 'hipaa_privacy', 'client_rights']
+export const FORM_ORDER: FormKey[] = ['employee_application', 'reference_consent', 'fcra_disclosure', 'edl_fcsr_consent', 'availability', 'experience', 'vehicle', 'non_driver', 'employment_agreement', 'medication_policy', 'code_of_ethics', 'hipaa_privacy', 'client_rights', 'hepb_vaccination']
 /** The wording of one form, canonical, for the fingerprint stored with every signature (answers are not part of it). */
 export function formText(key: FormKey): string {
   const f = FORMS[key]; const out: string[] = [`title|${f.title}`, `version|${f.version}`]
   for (const p of f.intro || []) out.push(`p|${p}`)
   for (const s of f.sections) { out.push(`h|${s.h}`); for (const p of s.p || []) out.push(`p|${p}`); if (s.tip) out.push(`t|${s.tip}`); if (s.tone) out.push(`tone|${s.tone}`); for (const i of s.items || []) { out.push(`i|${i.id}|${i.label}|${(i.options || []).join(';')}`); for (const x of i.fields || []) out.push(`f|${i.id}|${x.k}|${x.label}|${x.kind}|${x.required ? 1 : 0}|${(x.options || []).join(';')}|${x.note || ''}`) } }
   if (f.sections.some((s) => (s.items || []).some((i) => i.kind === 'cards' && (i.fields || []).some((x) => x.kind === 'skills')))) out.push(`skills|${SKILL_GROUPS.map((g) => g.h + ':' + g.skills.map(([k, l]) => k + '=' + l).join(',')).join('|')}`)
+  if (f.choices) { out.push(`choices|${f.choices.label}`); for (const o of f.choices.options) out.push(`choice|${o.id}|${o.label}|${o.note || ''}`) }
+  if (f.decline) out.push(`decline|${f.decline.choice}|${f.decline.title}|${f.decline.intro}|${f.decline.consent}`, `statement|${f.decline.statement}`)
   for (const c of f.certification) out.push(`c|${c}`)
   return out.join('\n')
 }
@@ -561,12 +622,26 @@ export const APPROVED_FOR_REAL: Partial<Record<FormKey, number>> = {
 export const approvedAt = (k: FormKey, v: unknown): boolean => typeof v === 'number' && APPROVED_FOR_REAL[k] === v
 /** 2026-10-13: a real (non-practice) applicant may sign a form only at a version Samantha approved for real. */
 export const approvedForReal = (k: FormKey): boolean => approvedAt(k, FORMS[k].version)
-export const allApprovedForReal = (): boolean => FORM_ORDER.every(approvedForReal)
+/* ───── 2026-10-13 WHICH FORMS ARE IN THIS PERSON'S STEP 1 (the Hepatitis B form, step1Gate 'hepb') ─────
+   Decided ONCE, when their Step 1 record is made (step1_forms.hepb_form), and kept for that Step 1: the form is in a Step 1
+   started after it was approved for real (APPROVED_FOR_REAL at its exact version), and in every practice Step 1. A Step 1
+   that started before that never gains a new required form part way through (it would block their completion); the
+   30-minute hepatitis B pass offers those people the vaccine at Approve to Work exactly as before. Offered to every
+   applicant whatever the position (her ruling "offer to everyone"; a superset of OSHA's exposure-based duty). */
+export type Step1Ctx = { hepb?: boolean }
+// deno-lint-ignore no-explicit-any
+export const step1Ctx = (row: any): Step1Ctx => ({ hepb: row?.hepb_form === true })
+/** at the start of a Step 1: is the Hepatitis B form in it? */
+export const hepbFormAtStart = (practice: boolean): boolean => practice || approvedForReal('hepb_vaccination')
+/** the forms in this person's Step 1 (before the deciding answers): every form, less a gated form their Step 1 does not have */
+export const formsInPlay = (ctx: Step1Ctx = {}): FormKey[] => FORM_ORDER.filter((k) => FORMS[k].step1Gate !== 'hepb' || ctx.hepb === true)
+/** every form in this person's Step 1 is approved for real (decides the "practice only" note) */
+export const allApprovedForReal = (ctx: Step1Ctx = {}): boolean => formsInPlay(ctx).every(approvedForReal)
 /** 2026-10-13: the Step 1 screens follow the form list. The first ten are fixed; a form added later gets its own screen
     (its `screen` key) before "All done", in FORM_ORDER order. */
 export const BASE_SCREENS = ['1', '2', '3', '4', '5a', '5b', '6', '7', '8', '9']
-export function step1Screens(): string[] {
-  const extra = FORM_ORDER.map((k) => FORMS[k].screen).filter((x) => !BASE_SCREENS.includes(x) && x !== '2 and 3')
+export function step1Screens(ctx: Step1Ctx = {}): string[] {
+  const extra = formsInPlay(ctx).map((k) => FORMS[k].screen).filter((x) => !BASE_SCREENS.includes(x) && x !== '2 and 3')
   return [...BASE_SCREENS.slice(0, -1), ...extra.filter((x, i) => extra.indexOf(x) === i), '9']
 }
 /** 2026-10-13: a form with `when` applies only when that Step 1 answer matches (the Driver or the Non-Driver Agreement,
@@ -574,12 +649,15 @@ export function step1Screens(): string[] {
 export const DECIDING: Record<string, { label: string; options: [string, string][] }> = {
   transport_willing: { label: 'Are you willing and able to transport clients in your personal vehicle as part of your caregiving duties?', options: [['yes', 'Yes'], ['no', 'No']] },
 }
-export const formApplies = (k: FormKey, answers: Record<string, unknown>): boolean => { const w = FORMS[k]?.when; return !w || answers?.[w.id] === w.equals }
+export const formApplies = (k: FormKey, answers: Record<string, unknown>, ctx: Step1Ctx = {}): boolean => { if (FORMS[k]?.step1Gate === 'hepb' && ctx.hepb !== true) return false; const w = FORMS[k]?.when; return !w || answers?.[w.id] === w.equals }
 /** the forms this person signs, in order; a deciding answer not given yet leaves both of its forms out */
-export const applicableForms = (answers: Record<string, unknown>): FormKey[] => FORM_ORDER.filter((k) => formApplies(k, answers || {}))
-/** how many forms this person signs: the ones that apply, plus one for each deciding question not answered yet */
-export const formCount = (a: Record<string, unknown>) => applicableForms(a || {}).length + Object.keys(DECIDING).filter((k) => !a?.[k]).length
+export const applicableForms = (answers: Record<string, unknown>, ctx: Step1Ctx = {}): FormKey[] => FORM_ORDER.filter((k) => formApplies(k, answers || {}, ctx))
+/** how many forms this person signs: the ones that apply, plus one for each deciding question not answered yet
+    (12 for a Step 1 without the Hepatitis B form, 13 with it) */
+export const formCount = (a: Record<string, unknown>, ctx: Step1Ctx = {}) => applicableForms(a || {}, ctx).length + Object.keys(DECIDING).filter((k) => !a?.[k]).length
 /** the forms to list for this person: those that apply, and while a deciding question is open, the first form it decides as a stand-in */
-export const formsToList = (a: Record<string, unknown>): FormKey[] => FORM_ORDER.filter((k) => { const w = FORMS[k].when; return !w || (a || {})[w.id] === w.equals || (!(a || {})[w.id] && FORM_ORDER.find((x) => FORMS[x].when?.id === w.id) === k) })
+export const formsToList = (a: Record<string, unknown>, ctx: Step1Ctx = {}): FormKey[] => formsInPlay(ctx).filter((k) => { const w = FORMS[k].when; return !w || (a || {})[w.id] === w.equals || (!(a || {})[w.id] && FORM_ORDER.find((x) => FORMS[x].when?.id === w.id) === k) })
 /** the signed forms that still need the company's signature */
 export const needsCountersign = (signatures: Record<string, unknown>, countersignatures: Record<string, unknown>): FormKey[] => FORM_ORDER.filter((k) => FORMS[k].countersign && signatures?.[k] && !countersignatures?.[k])
+/** 2026-10-13: the Hepatitis B choices, by id (the answer is never stored in the Step 1 answers) */
+export const HEPB_CHOICE_IDS = (FORMS.hepb_vaccination.choices?.options || []).map((o) => o.id)
