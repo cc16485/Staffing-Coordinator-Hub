@@ -14,14 +14,16 @@ export const PERM_KEY = 'onboarding_permissions'
    title); only an owner changes the list. Every reveal is logged. */
 /* SLICE 6 (Samantha "yes to all", 2026-10-10, decision 10): 'audit_export' names who may run the read-only personnel-file
    export (the owners always may; every export is logged). Owners change the list. */
-export const KINDS = ['advance', 'work', 'screening', 'audit_export'] as const
+/* DRIVER COMPLIANCE (2026-10-13, her rule "only authorized office staff approve"): 'driver' names who may approve a caregiver
+   to transport clients (the owners always may); owners change the list. */
+export const KINDS = ['advance', 'work', 'screening', 'audit_export', 'driver'] as const
 export type Kind = typeof KINDS[number]
 export type Member = { person_id: string; email: string; name: string; added_by: string; added_at: string }
 export type PermEvent = { at: string; by: string; by_email: string; kind: Kind; action: 'add' | 'remove'; person_id: string; email: string; name: string }
-export type Perms = { version: number; advance: Member[]; work: Member[]; screening: Member[]; audit_export: Member[]; history: PermEvent[] }
+export type Perms = { version: number; advance: Member[]; work: Member[]; screening: Member[]; audit_export: Member[]; driver: Member[]; history: PermEvent[] }
 export type Caller = { person_id: string; roles: string[]; email?: string; name?: string }
 
-export function emptyPerms(): Perms { return { version: 0, advance: [], work: [], screening: [], audit_export: [], history: [] } }
+export function emptyPerms(): Perms { return { version: 0, advance: [], work: [], screening: [], audit_export: [], driver: [], history: [] } }
 const str = (v: unknown, max = 200) => (typeof v === 'string' ? v.trim().slice(0, max) : '')
 function members(x: unknown): Member[] {
   if (!Array.isArray(x)) return []
@@ -40,7 +42,7 @@ export function normalizePerms(x: unknown): Perms {
   if (!x || typeof x !== 'object' || Array.isArray(x)) return emptyPerms()
   const r = x as Record<string, unknown>
   const history = Array.isArray(r.history) ? (r.history as PermEvent[]).filter((e) => e && typeof e === 'object').slice(-500) : []
-  return { version: Number.isInteger(r.version) ? (r.version as number) : 0, advance: members(r.advance), work: members(r.work), screening: members(r.screening), audit_export: members(r.audit_export), history }
+  return { version: Number.isInteger(r.version) ? (r.version as number) : 0, advance: members(r.advance), work: members(r.work), screening: members(r.screening), audit_export: members(r.audit_export), driver: members(r.driver), history }
 }
 export const isMember = (list: Member[] | undefined, person_id: string) => !!person_id && Array.isArray(list) && list.some((m) => m.person_id === person_id)
 export const isOwner = (c: Caller) => Array.isArray(c.roles) && c.roles.includes('owner_admin')
@@ -51,6 +53,7 @@ export function mayApprove(p: Perms, kind: Kind, c: Caller): boolean {
   if (kind === 'advance') return isMember(p.advance, c.person_id) || isOwner(c)
   if (kind === 'screening') return isMember(p.screening, c.person_id)
   if (kind === 'audit_export') return isMember(p.audit_export, c.person_id) || isOwner(c)
+  if (kind === 'driver') return isMember(p.driver, c.person_id) || isOwner(c)
   return false
 }
 /** May this signed-in person change the list? Approve to Work: only its own members. Approve to Advance: owners. */
@@ -59,6 +62,7 @@ export function mayChange(p: Perms, kind: Kind, c: Caller): boolean {
   if (kind === 'advance') return isOwner(c)
   if (kind === 'screening') return isOwner(c)
   if (kind === 'audit_export') return isOwner(c)
+  if (kind === 'driver') return isOwner(c)
   return false
 }
 export type Target = { person_id: string; email: string; name: string }
@@ -69,9 +73,9 @@ export function applyChange(p: Perms, kind: Kind, action: 'add' | 'remove', targ
   if (action !== 'add' && action !== 'remove') return { ok: false, error: 'action must be add or remove' }
   const pid = str(target.person_id, 80)
   if (!pid) return { ok: false, error: 'no person' }
-  const next: Perms = { version: p.version + 1, advance: [...p.advance], work: [...p.work], screening: [...(p.screening || [])], audit_export: [...(p.audit_export || [])], history: [...p.history] }
-  const list = kind === 'work' ? next.work : kind === 'screening' ? next.screening : kind === 'audit_export' ? next.audit_export : next.advance
-  const label = kind === 'work' ? 'Approve to Work' : kind === 'screening' ? 'screening staff' : kind === 'audit_export' ? 'Audit export' : 'Approve to Advance to Orientation'
+  const next: Perms = { version: p.version + 1, advance: [...p.advance], work: [...p.work], screening: [...(p.screening || [])], audit_export: [...(p.audit_export || [])], driver: [...(p.driver || [])], history: [...p.history] }
+  const list = kind === 'work' ? next.work : kind === 'screening' ? next.screening : kind === 'audit_export' ? next.audit_export : kind === 'driver' ? next.driver : next.advance
+  const label = kind === 'work' ? 'Approve to Work' : kind === 'screening' ? 'screening staff' : kind === 'audit_export' ? 'Audit export' : kind === 'driver' ? 'Approve drivers' : 'Approve to Advance to Orientation'
   if (action === 'add') {
     if (isMember(list, pid)) return { ok: false, error: `${target.name || target.email || 'They'} are already on the ${label} list` }
     list.push({ person_id: pid, email: str(target.email).toLowerCase(), name: str(target.name), added_by: str(by.email || by.person_id), added_at: now })

@@ -243,6 +243,13 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
     why: 'staff press Send on one thank-you text to a caregiver with the kind words a client or family said about them, after reading and editing it (Desktop 474). The composer warns before 8am and after 8pm.' },
   'care-packet':        { class: 'urgent_internal', scheduled: false,
     why: 'staff press Send on one fixed text to one caregiver with their own link to a client\'s care packet (first, reminder or updated), after seeing the exact words; the link holds the care details, the text never does (Desktop 661). The card warns before 8am and from 8pm.' },
+  /* DRIVER COMPLIANCE (2026-10-13, Samantha's 7-point ask): renewal reminders to a caregiver whose license or insurance on
+     file expires (30, 14 and 7 days before), each with their private upload link, Monday to Saturday 9am to 6pm Central
+     (enforced in the function, held never dropped), one stamp per reminder, the opt-out door and their yes to texts;
+     practice (recorded, not sent) while ops_settings.driver_reminders_live is off. The office's Send link is a person's press
+     (driver_link_send_live, else practice). Caregivers only; nothing contacts a client or family. */
+  'driver-compliance':  { class: 'routine_internal', scheduled: true,
+    why: 'renewal reminders (d30, d14, d7) to a caregiver whose driver\'s license or auto insurance on file is about to expire, with their private upload link; Monday to Saturday 9am to 6pm Central, held outside it, never twice; the office\'s Send link is a person\'s press.' },
   'calls-feed':         { class: 'routine_internal', scheduled: false, why: 'internal call reconciliation.' },
   'resend-relay':       { class: 'reactive_external', scheduled: false, why: 'relays a message somebody composed.' },
 }
