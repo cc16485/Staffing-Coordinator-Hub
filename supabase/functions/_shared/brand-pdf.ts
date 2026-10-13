@@ -7,15 +7,15 @@
 // acceptance section with the caregiver's typed electronic signature and its audit record, the branded footer with page
 // numbers. Deterministic: the same input gives the same bytes. No colour, font or layout here changes a single word:
 // the words come from offer-documents.ts and are fingerprinted there.
-import { POPPINS_REGULAR, POPPINS_SEMIBOLD, POPPINS_BOLD, LOGO_JPEG } from './brand-assets.ts'
+import { POPPINS_REGULAR, POPPINS_SEMIBOLD, POPPINS_BOLD, DANCING_SCRIPT, LOGO_JPEG } from './brand-assets.ts'
 import type { Block } from './offer-documents.ts'
 
 export const NAVY = [0.051, 0.212, 0.373] as const, NAVY_DARK = [0.035, 0.149, 0.278] as const
 export const GOLD = [0.941, 0.651, 0.227] as const, GOLD_TEXT = [0.757, 0.478, 0.071] as const
 export const TEXT = [0.086, 0.157, 0.227] as const, MUTED = [0.42, 0.47, 0.54] as const, BEIGE = [0.965, 0.949, 0.918] as const, RULE = [0.894, 0.882, 0.847] as const
 type RGB = readonly [number, number, number]
-type FontKey = 'R' | 'S' | 'B'
-const FONTS: Record<FontKey, { res: string; meta: typeof POPPINS_REGULAR }> = { R: { res: 'F1', meta: POPPINS_REGULAR }, S: { res: 'F2', meta: POPPINS_SEMIBOLD }, B: { res: 'F3', meta: POPPINS_BOLD } }
+type FontKey = 'R' | 'S' | 'B' | 'C'   /* C: the signature script (Dancing Script), the typed name on the signature line only */
+const FONTS: Record<FontKey, { res: string; meta: typeof POPPINS_REGULAR }> = { R: { res: 'F1', meta: POPPINS_REGULAR }, S: { res: 'F2', meta: POPPINS_SEMIBOLD }, B: { res: 'F3', meta: POPPINS_BOLD }, C: { res: 'F4', meta: DANCING_SCRIPT as unknown as typeof POPPINS_REGULAR } }
 const PAGE_W = 612, PAGE_H = 792, ML = 60, MR = 60, MT = 44, MB = 64
 const CP1252: Record<number, number> = { 0x20ac: 128, 0x201a: 130, 0x192: 131, 0x201e: 132, 0x2026: 133, 0x2020: 134, 0x2021: 135, 0x2c6: 136, 0x2030: 137, 0x160: 138, 0x2039: 139, 0x152: 140, 0x17d: 142, 0x2018: 145, 0x2019: 146, 0x201c: 147, 0x201d: 148, 0x2022: 149, 0x2013: 150, 0x2014: 151, 0x2dc: 152, 0x2122: 153, 0x161: 154, 0x203a: 155, 0x153: 156, 0x17e: 158, 0x178: 159 }
 function codes(s: string): number[] { const out: number[] = []; for (const ch of s) { const u = ch.codePointAt(0)!; if (u < 128 || (u >= 160 && u <= 255)) out.push(u); else if (CP1252[u] !== undefined) out.push(CP1252[u]); else out.push(63) } return out }
@@ -92,7 +92,8 @@ export class BrandPdf {
     // every audit line is wrapped to the text width (a browser name can be 150 characters), so the block's height is known before it is placed
     const auditLines = audit.flatMap((a) => wrap(a, 'R', 7.5, PAGE_W - MR - ML))
     const h = 128 + auditLines.length * 11; this.ensure(h)
-    this.y -= 24; this.textAt(typedName, ML + 4, this.y, 'S', 17, NAVY); this.line(ML, this.y - 6, PAGE_W - MR, this.y - 6, MUTED, 0.6)
+    /* 2026-10-13: the typed name in a signature script; the evidence is the audit lines below, not the look */
+    this.y -= 24; this.textAt(typedName, ML + 4, this.y, 'C', 22, NAVY); this.line(ML, this.y - 6, PAGE_W - MR, this.y - 6, MUTED, 0.6)
     this.y -= 17; this.textAt('ELECTRONIC SIGNATURE', ML, this.y, 'S', 7.5, MUTED, 1.2)
     this.y -= 24; this.textAt(typedName, ML + 4, this.y, 'R', 12, TEXT); this.line(ML, this.y - 6, PAGE_W - MR, this.y - 6, MUTED, 0.6)
     this.y -= 17; this.textAt('PRINTED NAME', ML, this.y, 'S', 7.5, MUTED, 1.2)
@@ -123,7 +124,7 @@ export class BrandPdf {
     const objs: (string | Uint8Array)[][] = []; const add = (parts: (string | Uint8Array)[]) => { objs.push(parts); return objs.length }
     add(['<< /Type /Catalog /Pages 2 0 R >>']); add(['PAGES'])
     const fontIds: Record<string, number> = {}
-    for (const k of ['R', 'S', 'B'] as FontKey[]) {
+    for (const k of ['R', 'S', 'B', 'C'] as FontKey[]) {
       const m = FONTS[k].meta; const bytes = Uint8Array.from(atob(m.data), (c) => c.charCodeAt(0))
       const file = add([`<< /Length ${bytes.length} /Length1 ${bytes.length} >>\nstream\n`, bytes, '\nendstream'])
       const desc = add([`<< /Type /FontDescriptor /FontName /${m.name} /Flags 32 /FontBBox [${m.bbox.join(' ')}] /ItalicAngle ${m.italicAngle} /Ascent ${m.ascent} /Descent ${m.descent} /CapHeight ${m.capHeight} /StemV 80 /FontFile2 ${file} 0 R >>`])
@@ -135,7 +136,7 @@ export class BrandPdf {
     this.pages.forEach((ops, i) => {
       const content = [...ops, ...(this.footerText ? this.footerOps(i + 1, total) : [])].join('\n')
       const cid = add([`<< /Length ${enc.encode(content).length} >>\nstream\n${content}\nendstream`])
-      pageIds.push(add([`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] /Resources << /Font << /F1 ${fontIds.F1} 0 R /F2 ${fontIds.F2} 0 R /F3 ${fontIds.F3} 0 R >> /XObject << /Im1 ${imgId} 0 R >> >> /Contents ${cid} 0 R >>`]))
+      pageIds.push(add([`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] /Resources << /Font << /F1 ${fontIds.F1} 0 R /F2 ${fontIds.F2} 0 R /F3 ${fontIds.F3} 0 R /F4 ${fontIds.F4} 0 R >> /XObject << /Im1 ${imgId} 0 R >> >> /Contents ${cid} 0 R >>`]))
     })
     objs[1] = [`<< /Type /Pages /Kids [${pageIds.map((i) => `${i} 0 R`).join(' ')}] /Count ${pageIds.length} >>`]
     const infoId = add([`<< /Title ${pdfStr(codes(this.title))} /Producer (Caring Companions Hub) >>`])
@@ -152,8 +153,9 @@ export class BrandPdf {
 /* the PDF header's binary comment and the text parts: strings are ASCII except that comment, kept byte-for-byte */
 function latin1(s: string): Uint8Array { const b = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i) & 0xff; return b }
 
-export const COMPANY_RIGHT = ['Caring Companions In-Home Senior Care', '1331 N. Stewart Ave., Suite B,', 'Springfield, MO 65802', '(417) 234-8494 · mo-care.com']
-export const FOOTER = 'Caring Companions In-Home Senior Care · 1331 N. Stewart Ave., Suite B, Springfield, MO 65802 · (417) 234-8494 · mo-care.com'
+/* 2026-10-13 (Samantha confirmed the office address for all documents): 1331 N Stewart Ave, Springfield, MO 65802 */
+export const COMPANY_RIGHT = ['Caring Companions In-Home Senior Care', '1331 N Stewart Ave', 'Springfield, MO 65802', '(417) 234-8494 · mo-care.com']
+export const FOOTER = 'Caring Companions In-Home Senior Care · 1331 N Stewart Ave, Springfield, MO 65802 · (417) 234-8494 · mo-care.com'
 export type Signature = { typedName: string; signedAtCentral: string; signedAtUtc: string; ip: string; agent: string; version: number; fingerprint: string; offerId: string; docName: string }
 const splitLabel = (t: string): [string, string] | null => { const m = /^(Date|Dear|Position|Employment classification|Starting Pay):\s*(.*)$/.exec(t); return m ? [m[1] + ':', m[2]] : null }
 

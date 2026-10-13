@@ -25,18 +25,26 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { checkLink } from '../_shared/applicant-links.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
-import { FORMS, FORM_ORDER, formFingerprint, REFERENCES_REQUIRED, APPROVED_FOR_REAL, MATCHING_FACTS, SKILLS, SKILL_GROUPS, type FormKey, type Item, type Form, type Field } from '../_shared/step1-documents.ts'
+import { FORMS, FORM_ORDER, formFingerprint, REFERENCES_REQUIRED, APPROVED_FOR_REAL, approvedForReal, allApprovedForReal, step1Screens, formApplies, applicableForms, DECIDING, formCount, needsCountersign, MATCHING_FACTS, SKILLS, SKILL_GROUPS, type FormKey, type Item, type Form, type Field } from '../_shared/step1-documents.ts'
 import { seal, open as unseal, last4, ssnLooksValid, REVEAL_TTL_MS, REVEAL_FIELDS, REVEAL_PERMISSION, type RevealField, ssnAllowed, practiceOffer } from '../_shared/step1-crypto.ts'
 import { PERM_KEY, normalizePerms, mayApprove } from '../_shared/onboarding-permissions.ts'
 import { step1FormPdf, type IdentityState } from '../_shared/step1-pdf.ts'
 import { longDateTime } from '../_shared/offer-documents.ts'
+import { practicePerson } from '../_shared/optout.ts'
+import { driverFromStep1 } from '../_shared/driver.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
 const S = (v: unknown, n = 120) => String(v ?? '').trim().slice(0, n)
 const NOPE = { ok: false, error: 'This link is not valid or has run out. Please ask the office for a new one: (417) 234-8494.' }
 export const BUCKET = 'onboarding-documents'
-export const SCREENS = ['1', '2', '3', '4', '5a', '5b', '6', '7', '8', '9']
+/** 2026-10-13: license and insurance photos (private; driver-compliance.sql) */
+export const DRIVER_BUCKET = 'driver-docs'
+const PHOTO_TYPES: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', heic: 'image/heic', heif: 'image/heif', webp: 'image/webp', pdf: 'application/pdf' }
+/** the e-sign consent words on screen 1 (kept in step with step1.html; a change is a new wording) */
+export const ESIGN_WORDS = 'I agree to complete and sign my Step 1 paperwork electronically, and I understand my typed name on each form has the same effect as my handwritten signature. I can ask the office for paper copies at any time.'
+/* 2026-10-13: from the form list (a form added later gets its screen before All done) */
+export const SCREENS = step1Screens()
 export const IDENTITY_IDS = ['ssn', 'dob', 'license_number']
 const MAP_TABLES = new Set(['windows', 'specialties', 'matching_facts'])
 const COLS = 'id,first_name,last_name,phone,email,position,offered_by,onboarding_path,offer_status,offer_signed_at,pd_signed_at,offer_withdrawn_at,offer_declined_at,step1_sent_at,step1_done_at'
@@ -185,12 +193,13 @@ export function missing(form: FormKey, a: Record<string, unknown>, ident: Identi
   if (form === 'employee_application') {
     if (yes(a, 'lived_outside_mo')) need('states_lived', !empty(a.states_lived))
     if (yes(a, 'moving_violations')) need('moving_violations_detail', !empty(a.moving_violations_detail))
-    if (yes(a, 'convicted')) need('convictions', !empty(a.convictions))
     if (!yes(a, 'no_employer_history')) need('jobs', Array.isArray(a.jobs) && a.jobs.length > 0, 'Your work history (or tick "I have no previous employer to list")')
     const jobs = itemsOf(f).find((i) => i.id === 'jobs'), fam = itemsOf(f).find((i) => i.id === 'family_care')
     if (jobs && !yes(a, 'no_employer_history')) out.push(...cardsMissing(jobs, a.jobs, 'Job'))
     if (fam) out.push(...cardsMissing(fam, a.family_care, 'Family or private-client care'))
   }
+  /* 2026-10-13: the criminal-history questions live on the permission form (5a v2); details when they answer yes */
+  if (form === 'fcra_disclosure' && yes(a, 'convicted')) need('convictions', !empty(a.convictions))
   if (form === 'reference_consent') {
     /* v3: a reference counts once it has a phone or an email and their permission to contact; each card's own gaps are listed */
     const count = (v: unknown) => (Array.isArray(v) ? v : []).filter(usableRef).length
@@ -217,9 +226,9 @@ export function missing(form: FormKey, a: Record<string, unknown>, ident: Identi
     }
     if (Array.isArray(a.languages) && a.languages.includes('Another language')) need('languages_other', !empty(a.languages_other))
   }
-  if (form === 'vehicle' && typeof a.driver_ack === 'string' && a.driver_ack === (FORMS.vehicle.sections.at(-1)?.items?.[0]?.options?.[0] ?? '')) {
-    need('license_number', !!ident.license, "Driver's license number"); need('license_state', !empty(a.license_state)); need('license_expires', !empty(a.license_expires))
-  }
+  /* 2026-10-13: a photo counts once its upload is recorded; the Driver Agreement needs the license number in the locked door */
+  for (const it of itemsOf(f)) if (it.kind === 'photo' && it.required) need(it.id, !!(a[it.id] && typeof a[it.id] === 'object' && (a[it.id] as Record<string, unknown>).path))
+  if (form === 'vehicle') need('license_number', !!ident.license, "Driver's license number")
   return out
 }
 // deno-lint-ignore no-explicit-any
@@ -286,6 +295,58 @@ async function land(db: any, offerId: string, patch: Record<string, unknown> | n
   catch (e) { return { ok: false, error: String((e as Error).message || e).slice(0, 160) } }
 }
 
+/** 2026-10-13 (her rule: no silent failures): one Needs Attention card per id for Recruiting & Orientation; never raised twice.
+    Returns the card id, or 'not raised' when even the card could not be written (the trail event still records it). */
+// deno-lint-ignore no-explicit-any
+async function problemCard(db: any, id: string, item: Record<string, unknown>, urgency = 'now'): Promise<string> {
+  try {
+    const { data: row } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    if ((Array.isArray(row?.data) ? row.data : []).some((x: any) => x && x.id === id)) return id
+    const now = new Date().toISOString()
+    const { error } = await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id, domain: 'recruiting_orientation', status: 'open', urgency, created_at: now, first_at: now, last_at: now,
+      due: now, created_by: 'step1-sign', opened_by: 'step1-sign', ...item } })
+    return error ? 'not raised' : id
+  } catch { return 'not raised' }
+}
+
+/** closes one Needs Attention card (when its work is done); never throws */
+// deno-lint-ignore no-explicit-any
+async function closeCard(db: any, id: string, by: string, done: boolean): Promise<void> {
+  if (!done) return
+  try {
+    const { data: row } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    const c = (Array.isArray(row?.data) ? row.data : []).find((x: any) => x && x.id === id)
+    if (c && c.status !== 'done') await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...c, status: 'done', closed_at: new Date().toISOString(), closed_by: by, close_note: 'Signed for Caring Companions' } })
+  } catch { /* the card stays open; the readiness row shows it is signed */ }
+}
+
+/* 2026-10-13 (her rule 2026-10-08: the signed Step 1 PDFs stay in the Hub's private store and are LINKED from the person's
+   GoHighLevel contact: a note and a link, never the PDF in GoHighLevel). One note when Step 1 completes; the link opens only
+   for signed-in office staff. A practice or training hire is never put into GoHighLevel. A note that cannot be written
+   becomes a card (never silent). Never throws; never messages anyone. */
+// deno-lint-ignore no-explicit-any
+export async function ghlStep1Note(db: any, o: any, who: Record<string, string>, offerId: string, at: string): Promise<Record<string, unknown>> {
+  if (practiceOffer(o) || practicePerson(who.phone, who.email)) return { skipped: 'practice' }
+  const token = Deno.env.get('GHL_TOKEN') || Deno.env.get('GHL_API_KEY') || '', loc = Deno.env.get('GHL_LOCATION_ID') || ''
+  const name = `${who.first} ${who.last}`.trim()
+  const fail = async (why: string) => ({ ok: false, why, card: await problemCard(db, 's1ghl_' + offerId, { kind: 'step1_ghl_note_failed', who: name, offer_id: offerId,
+    title: 'Step 1 link not added to GoHighLevel: ' + name, detail: 'Step 1 is complete and every signed form is safe on their Hub profile, but the note linking them on their GoHighLevel contact could not be written (' + why + '). Nothing else is affected.' }, 'week') })
+  if (!token || !loc) return await fail('GoHighLevel is not configured on this project')
+  const H: Record<string, string> = { Authorization: `Bearer ${token}`, Version: '2021-07-28', Accept: 'application/json', 'Content-Type': 'application/json' }
+  try {
+    const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', { method: 'POST', headers: H,
+      body: JSON.stringify({ locationId: loc, email: who.email || undefined, phone: who.phone || undefined, firstName: who.first || undefined, lastName: who.last || undefined }) })
+    const ud = await up.json().catch(() => null), cid = String(ud?.contact?.id || ud?.id || '')
+    if (!up.ok || !cid) return await fail('their contact could not be found (' + up.status + ')')
+    const body = `Step 1 complete ${longDateTime(at)}: all of their signed Step 1 forms are kept in the Hub. Office staff: https://cc.mo-care.com/step1.html?review=${offerId}`
+    const nr = await fetch(`https://services.leadconnectorhq.com/contacts/${cid}/notes`, { method: 'POST', headers: H, body: JSON.stringify({ body }) })
+    if (!nr.ok) return await fail('the note was refused (' + nr.status + ')')
+    return { ok: true, contact_id: cid }
+  } catch (e) { return await fail(String((e as Error).message || e).slice(0, 120)) }
+}
+
 /* ───── STEP 1 BEFORE CHECKS (Samantha 2026-10-11, "yes to all") ─────
    Step 1 complete: the server puts them into Background & References (step1_candidate_create: the record is made, or an
    unlinked record with the same phone or name is linked, never two), records it on the readiness card, and raises ONE
@@ -306,7 +367,13 @@ async function enterChecks(db: any, offerId: string, who: Record<string, string>
     if (j?.journey_id) await db.from('client_journey_event').insert({ journey_id: j.journey_id, actor_email: 'hub', actor_name: 'The Hub', kind: 'step1_complete',
       detail: { at, background_and_references: made.how || (made.ok ? 'in' : 'failed'), candidate_id: made.id ?? null }, reason: 'Step 1 complete: their signed permission is in' })
   } catch { /* the trail on the offer still has step1_done */ }
-  if (made.ok !== true) return made
+  if (made.ok !== true) {
+    /* 2026-10-13: Step 1 is complete but they did not reach Background & References: never silent */
+    made.card = await problemCard(db, 's1land_' + offerId, { kind: 'step1_landing_failed', who: name, offer_id: offerId,
+      title: 'Step 1 is complete but did not reach Background & References: ' + name,
+      detail: name + ' signed every Step 1 form, but the Hub could not put them into Background & References (' + S(made.error || made.reason || 'no reason given', 160) + '). Their signed forms are safe on their profile. Add them to Background & References by hand, or tell Claude, so the checks and references can start.' })
+    return made
+  }
   try {
     let owner = { email: '', name: '' }
     try {
@@ -320,7 +387,7 @@ async function enterChecks(db: any, offerId: string, who: Record<string, string>
       await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id: cid, kind: 'step1_complete', domain: 'recruiting_orientation', status: 'open', urgency: 'today',
         /* TRAINING WALKTHROUGH (2026-10-11): a staff member trying the journey on their own phone; the card says so */
         title: (/\(TRAINING\)/.test(name) ? 'TRAINING: ' : '') + 'Step 1 complete: start background checks and references for ' + name,
-        detail: (/\(TRAINING\)/.test(name) ? 'A staff training walkthrough (made-up identity): try the checks if you like; nothing real is needed. ' : '') + name + ' signed every Step 1 form, including the reference consent, the background check disclosure and the EDL and FCSR consent. They are now in Background & References: run the checks and contact the references.',
+        detail: (/\(TRAINING\)/.test(name) ? 'A staff training walkthrough (made-up identity): try the checks if you like; nothing real is needed. ' : '') + name + ' signed every Step 1 form, including the reference consent and the permission for background checks. They are now in Background & References: run the checks and contact the references.',
         who: name, offer_id: offerId, candidate_id: made.id ?? null, owner: owner.email, owner_name: owner.name, created_at: now, first_at: now, last_at: now,
         due: new Date(Date.now() + 24 * 3_600_000).toISOString(), created_by: 'step1-sign', opened_by: 'step1-sign' } })
       made.card = cid
@@ -329,13 +396,22 @@ async function enterChecks(db: any, offerId: string, who: Record<string, string>
   return made
 }
 
+/** never ask twice: their application (by email, then by phone) with its interview answers; null when none or unreadable */
+// deno-lint-ignore no-explicit-any
+export async function applicationOf(db: any, who: { email: string; phone: string }): Promise<any> {
+  try {
+    if (who.email) { const r = await db.from('job_applicants').select('*').ilike('email', who.email).order('created_at', { ascending: false }).limit(1); if (r.data?.[0]) return r.data[0] }
+    if (digits(who.phone).length >= 10) { const r = await db.from('job_applicants').select('*').ilike('phone', '%' + digits(who.phone).slice(-4)).order('created_at', { ascending: false }).limit(20); return (r.data ?? []).find((x: { phone?: string }) => digits(x.phone).slice(-10) === digits(who.phone).slice(-10)) ?? null }
+  } catch { return null }
+  return null
+}
 export const PREVIEW_WHO = { first: 'Pat', last: 'Preview', phone: '(417) 555-0188', email: 'pat.preview@practice.invalid', position: 'Caregiver' }
 /** What a real Step 1 would show as already known: from a made-up application and interview, marked with where it came from. */
 export const PREVIEW_PREFILL = prefillFrom({ lived_outside_mo: 'no', has_license: 'yes', has_insurance: 'yes', has_transport: 'yes', experience_years: 3 }, { cats: 'yes', dogs: 'no', client_smokes: 'no', drive_clients: 'yes', skills: { dementia: 'some' } })
 /** The forms as the page receives them (the same shape the real view sends). */
 export async function formsPayload(sigs: Record<string, unknown> = {}): Promise<Record<string, unknown>[]> {
   const forms = [] as Record<string, unknown>[]
-  for (const k of FORM_ORDER) { const f = FORMS[k]; forms.push({ key: f.key, screen: f.screen, title: f.title, version: f.version, status: f.status, intro: f.intro || [], sections: f.sections, certification: f.certification, signature: f.signature, fingerprint: await formFingerprint(k), approved_for_real: APPROVED_FOR_REAL[k] === f.version }) }
+  for (const k of FORM_ORDER) { const f = FORMS[k]; forms.push({ key: f.key, screen: f.screen, title: f.title, short: f.short || null, layout: f.layout || null, when: f.when || null, version: f.version, status: f.status, intro: f.intro || [], sections: f.sections, certification: f.certification, signature: f.signature, fingerprint: await formFingerprint(k), approved_for_real: APPROVED_FOR_REAL[k] === f.version }) }
   void sigs
   return forms
 }
@@ -346,6 +422,7 @@ function cleanAnswers(raw: unknown): Record<string, unknown> {
   for (const [k, v] of Object.entries(raw as Record<string, unknown>).slice(0, 200)) {
     if (IDENTITY_IDS.includes(k)) continue
     if (k === 'initials') { const c = clean({ id: 'initials', label: '', kind: 'initials' }, v); if (c !== undefined) out.initials = c; continue }
+    if (DECIDING[k]) { if (DECIDING[k].options.some(([x]) => x === v)) out[k] = v; continue }
     const fk = formOf(k); if (!fk) continue
     const item = itemsOf(FORMS[fk]).find((i) => i.id === k)!; const c = clean(item, v); if (c !== undefined) out[k] = c
   }
@@ -354,6 +431,8 @@ function cleanAnswers(raw: unknown): Record<string, unknown> {
 // deno-lint-ignore no-explicit-any
 export async function preview(b: Record<string, any>): Promise<Record<string, unknown>> {
   const form = S(b.form, 40) as FormKey, answers = cleanAnswers(b.answers)
+  /* 2026-10-13: the preview's practice pictures (never uploaded) count as given, so the driver path can be tried */
+  for (const k of FORM_ORDER) for (const it of itemsOf(FORMS[k])) if (it.kind === 'photo') { const v = (b.answers || {})[it.id]; if (v && typeof v === 'object' && /^preview\//.test(String(v.path || ''))) answers[it.id] = { path: String(v.path).slice(0, 80) } }
   const id = b.identity && typeof b.identity === 'object' ? b.identity : {}
   const ident: IdentityState = { ssn: id.ssn ? 'ending ' + S(id.ssn, 4) : null, dob: !!id.dob, license: id.license ? 'ending ' + S(id.license, 4) : null }
   if (b.check || b.pdf) {
@@ -364,9 +443,9 @@ export async function preview(b: Record<string, any>): Promise<Record<string, un
     let bin = ''; for (let j = 0; j < bytes.length; j += 0x8000) bin += String.fromCharCode(...bytes.subarray(j, j + 0x8000))
     return { ok: true, preview: true, form, pdf_base64: btoa(bin) }
   }
-  return { ok: true, preview: true, who: PREVIEW_WHO, forms: await formsPayload(), order: FORM_ORDER, screens: SCREENS, answers: {}, signatures: {}, identity: { ssn: null, dob: false, license: null, license_state: null, license_expires: null },
+  return { ok: true, preview: true, who: PREVIEW_WHO, forms: await formsPayload(), order: FORM_ORDER, screens: step1Screens(), answers: {}, signatures: {}, identity: { ssn: null, dob: false, license: null, license_state: null, license_expires: null },
     prefill: PREVIEW_PREFILL, hints: { availability: 'Weekdays, mornings and afternoons', travel: 'Springfield and Nixa' }, current_screen: '1', started_at: null, completed_at: null, esign_consent_at: null,
-    test_mode: true, references_required: REFERENCES_REQUIRED, skill_groups: SKILL_GROUPS, skills: SKILLS, signed_count: 0, form_count: FORM_ORDER.length }
+    test_mode: true, references_required: REFERENCES_REQUIRED, skill_groups: SKILL_GROUPS, skills: SKILLS, signed_count: 0, form_count: formCount({}), deciding: DECIDING }
 }
 
 Deno.serve(async (req) => {
@@ -434,6 +513,71 @@ Deno.serve(async (req) => {
       try { await trn().event({ offer_id: oid, kind: 'identity_revealed', by_who: 'staff', channel: 'hub', detail: { field, by_name: staff.name, by_email: staff.email, reason } }) } catch { /* the log row is the record; the trail is a courtesy */ }
       return json({ ok: true, field, value, revealed_at: at, expires_in: REVEAL_TTL_MS / 1000, by: staff.name })
     }
+    /* ───── COMPANY SIGNATURE (2026-10-13): a form marked countersign (the Employment Agreement) is signed for Caring Companions,
+       after the applicant signs it, by a person on the Approve to Work list, from the Hub (their Step 1 screens). Write once;
+       the applicant's own signed PDF is never replaced: a second PDF carries both signatures. ───── */
+    if (action === 'countersign') {
+      const staff = await requireStaff(db, req, OFFICE_ROLES)
+      if (!staff.ok) return json({ ok: false, error: staff.error }, staff.status)
+      const oid = S(b.offer_id, 64), form = S(b.form, 40) as FormKey
+      if (!/^[0-9a-f-]{36}$/i.test(oid) || !FORM_ORDER.includes(form) || !FORMS[form].countersign) return json({ ok: false, error: 'Which agreement?' }, 400)
+      const { data: permRow } = await db.from('app_data').select('data').eq('key', PERM_KEY).maybeSingle()
+      if (!mayApprove(normalizePerms(permRow?.data), 'work', { person_id: staff.person_id, roles: staff.roles, email: staff.email })) return json({ ok: false, error: 'Only a person on the Approve to Work list can sign for Caring Companions.' }, 403)
+      if (b.consent !== true) return json({ ok: false, error: 'Please tick that you are signing for Caring Companions first.' }, 400)
+      const name = S(b.typed_name, 80); if (!/^\S+(\s+\S+)+$/.test(name)) return json({ ok: false, error: 'Please type your full name, first and last.' }, 400)
+      const { data: fr } = await db.from('step1_forms').select('*').eq('offer_id', oid).maybeSingle()
+      const es = (fr?.signatures || {})[form] as Record<string, unknown> | undefined
+      if (!es) return json({ ok: false, error: 'They have not signed it yet. The company signs after them.' }, 409)
+      if ((fr?.countersignatures || {})[form]) return json({ ok: false, error: 'It is already signed for Caring Companions. A signature is never changed.', already: true }, 409)
+      if (Number(es.version) !== FORMS[form].version) return json({ ok: false, error: `They signed version ${es.version} and the wording is now version ${FORMS[form].version}. Tell Claude: the company signs the same version they signed.` }, 409)
+      const o = await trn().get(oid); if (!o) return json({ ok: false, error: 'That offer was not found.' }, 404)
+      const rwho = { first: S(o.first_name, 60), last: S(o.last_name, 60), phone: S(o.phone, 30), email: S(o.email, 160), position: S(o.position, 80) || 'Caregiver' }
+      const { data: idr } = await db.from('step1_identity').select('ssn_last4,dob_sealed,license_last4').eq('offer_id', oid).maybeSingle()
+      const at = new Date().toISOString(), cs = { at, typed_name: name, by_name: staff.name, by_email: staff.email, by_person: staff.person_id, ip: ipOf(req), agent: agentOf(req), version: es.version, fingerprint: es.fingerprint }
+      const { data: wrote, error: wErr } = await db.from('step1_forms').update({ countersignatures: { ...(fr.countersignatures || {}), [form]: cs } }).eq('offer_id', oid).filter('countersignatures->' + form, 'is', null).select('offer_id')
+      if (wErr || !wrote?.length) return json({ ok: false, error: 'It was just signed for Caring Companions. A signature is never changed.', already: true }, 409)
+      const T = trn(); await T.event({ offer_id: oid, kind: 'step1_signed', by_who: 'staff', channel: 'hub', result: 'countersigned', doc_version: Number(es.version), fingerprint: String(es.fingerprint), detail: { form, typed_name: name, by_name: staff.name, by_email: staff.email, ip: ipOf(req), signed_at: at } })
+      const bytes = step1FormPdf(FORMS[form], (fr.answers || {}) as Record<string, unknown>, rwho, identState(idr),
+        { typedName: String(es.typed_name), signedAtCentral: longDateTime(String(es.at)), signedAtUtc: String(es.at), ip: String(es.ip || ''), agent: String(es.agent || ''), version: Number(es.version), fingerprint: String(es.fingerprint), offerId: oid, docName: FORMS[form].title },
+        FORM_ORDER.indexOf(form) + 1, FORM_ORDER.length,
+        { typedName: name, signedAtCentral: longDateTime(at), signedAtUtc: at, ip: ipOf(req), agent: agentOf(req), version: Number(es.version), fingerprint: String(es.fingerprint), offerId: oid, docName: FORMS[form].title, byEmail: staff.email })
+      const path = `step1/${oid}/${form}-v${es.version}-countersigned-${at.replace(/[:.]/g, '-')}.pdf`
+      const up = await db.storage.from(BUCKET).upload(path, bytes, { contentType: 'application/pdf', upsert: false })
+      if (up.error) { await problemCard(db, 's1cspdf_' + oid + '_' + form, { kind: 'step1_pdf_failed', offer_id: oid, title: 'The company-signed PDF was not saved: ' + `${rwho.first} ${rwho.last}`.trim(), detail: 'The company signature on ' + FORMS[form].title + ' is recorded, but its PDF could not be saved. Tell Claude so it is made again from the record.' }) }
+      else await db.from('step1_forms').update({ countersigned_pdfs: { ...(fr.countersigned_pdfs || {}), [form]: path } }).eq('offer_id', oid).filter('countersigned_pdfs->' + form, 'is', null)
+      await closeCard(db, 's1cs_' + oid, staff.name, needsCountersign(fr.signatures || {}, { ...(fr.countersignatures || {}), [form]: cs }).length === 0)
+      return json({ ok: true, form, countersigned_at: at, by: staff.name, pdf: !up.error })
+    }
+    /* ───── REVIEW (Samantha 2026-10-13: "show every Step 1 screen ... along with the applicant's answers ... coordinators
+       see the complete journey without jumping between systems"). Office staff by their own sign-in, READ ONLY: the same
+       screens the applicant saw, their answers, every signature with its time, device and wording version. Identity numbers
+       stay sealed ("on file, ending"). Every look is logged. Nothing is saved, signed or sent. ───── */
+    if (action === 'review') {
+      const staff = await requireStaff(db, req, OFFICE_ROLES)
+      if (!staff.ok) return json({ ok: false, error: staff.error }, staff.status)
+      const oid = S(b.offer_id, 64)
+      if (!/^[0-9a-f-]{36}$/i.test(oid)) return json({ ok: false, error: 'Which offer?' }, 400)
+      const o = await trn().get(oid); if (!o) return json({ ok: false, error: 'That offer was not found.' }, 404)
+      const rwho = { first: S(o.first_name, 60), last: S(o.last_name, 60), phone: S(o.phone, 30), email: S(o.email, 160), position: S(o.position, 80) || 'Caregiver' }
+      const { data: fr } = await db.from('step1_forms').select('*').eq('offer_id', oid).maybeSingle()
+      const { data: idr } = await db.from('step1_identity').select('ssn_last4,dob_sealed,license_last4,license_state,license_expires').eq('offer_id', oid).maybeSingle()
+      const app = await applicationOf(db, rwho)
+      const rsigs = (fr?.signatures || {}) as Record<string, Record<string, unknown>>
+      const signed: Record<string, unknown> = {}
+      for (const [k, v] of Object.entries(rsigs)) {
+        const cur = FORMS[k as FormKey]?.version ?? null
+        signed[k] = { at: S(v.at, 40), typed_name: S(v.typed_name, 120), version: Number(v.version), current_version: cur, version_mismatch: cur != null && Number(v.version) !== cur,
+          ip: S(v.ip, 64) || null, agent: S(v.agent, 200) || null, fingerprint: S(v.fingerprint, 64) || null, pdf: !!(fr?.pdfs || {})[k] }
+      }
+      await db.from('document_access_log').insert({ offer_id: oid, doc: 'step1:review', path: '(the Step 1 screens, read only)', by_person: staff.person_id, by_email: staff.email, by_name: staff.name, ip: ipOf(req), reason: 'opened Step 1 as the applicant saw it' })
+      return json({ ok: true, review: true, who: rwho, forms: await formsPayload(), order: FORM_ORDER, screens: step1Screens(), answers: fr?.answers || {}, signatures: publicSignatures(rsigs), signed,
+        identity: { ...identState(idr), license_state: idr?.license_state ?? null, license_expires: idr?.license_expires ?? null },
+        prefill: prefillFrom(app, app?.post_interview || null), hints: { availability: S(app?.availability, 300) || null, travel: S(app?.post_interview?.travel_areas, 200) || null },
+        current_screen: fr?.current_screen || '1', started_at: fr?.started_at || null, completed_at: fr?.completed_at || null, esign_consent_at: fr?.esign_consent_at || null, esign_consent_detail: fr?.esign_consent_detail || null,
+        countersignatures: Object.fromEntries(Object.entries((fr?.countersignatures || {}) as Record<string, Record<string, unknown>>).map(([k, v]) => [k, { at: v.at, typed_name: v.typed_name, by_name: v.by_name }])),
+        countersign_forms: FORM_ORDER.filter((k) => FORMS[k].countersign), may_countersign: mayApprove(normalizePerms((await db.from('app_data').select('data').eq('key', PERM_KEY).maybeSingle()).data?.data), 'work', { person_id: staff.person_id, roles: staff.roles, email: staff.email }),
+        practice: !!fr?.practice, sent_at: o.step1_sent_at || null, test_mode: false, references_required: REFERENCES_REQUIRED, skill_groups: SKILL_GROUPS, skills: SKILLS, signed_count: Object.keys(rsigs).length, form_count: formCount((fr?.answers || {}) as Record<string, unknown>), deciding: DECIDING })
+    }
     /* ───── PREVIEW (Samantha 2026-10-11: "I want to be able to click through the screens as though I were the caregiver,
        using practice data, before approving them for real hires"). Public and read-only: no link, no offer, no database read
        or write, nothing sent. The same versioned words, the same required-answer check and the same PDF layout as a real
@@ -460,33 +604,76 @@ Deno.serve(async (req) => {
       /* 2026-10-11: the practice mark kept true to the offer (the reference page asks task questions only for practice hires) */
       if (row && !!row.practice !== practiceOffer(o)) { await db.from('step1_forms').update({ practice: practiceOffer(o) }).eq('offer_id', id); row.practice = practiceOffer(o) }
       // never ask twice: the application (by email, then by phone) and its interview answers
-      // deno-lint-ignore no-explicit-any
-      let app: any = null
-      try {
-        if (who.email) { const r = await db.from('job_applicants').select('*').ilike('email', who.email).order('created_at', { ascending: false }).limit(1); app = r.data?.[0] ?? null }
-        if (!app && digits(who.phone).length >= 10) { const r = await db.from('job_applicants').select('*').ilike('phone', '%' + digits(who.phone).slice(-4)).order('created_at', { ascending: false }).limit(20); app = (r.data ?? []).find((x: { phone?: string }) => digits(x.phone).slice(-10) === digits(who.phone).slice(-10)) ?? null }
-      } catch { app = null }
-      const forms = [] as Record<string, unknown>[]
-      for (let i = 0; i < FORM_ORDER.length; i++) { const f = FORMS[FORM_ORDER[i]]; forms.push({ key: f.key, screen: f.screen, title: f.title, version: f.version, status: f.status, intro: f.intro || [], sections: f.sections, certification: f.certification, signature: f.signature, fingerprint: await formFingerprint(f.key), approved_for_real: APPROVED_FOR_REAL[f.key] === f.version }) }
-      return json({ ok: true, who, forms, order: FORM_ORDER, screens: SCREENS, answers: row?.answers || {}, signatures: publicSignatures(sigs), identity: { ...IS, license_state: ident?.license_state ?? null, license_expires: ident?.license_expires ?? null },
+      const app = await applicationOf(db, who)
+      const forms = await formsPayload()
+      return json({ ok: true, who, forms, order: FORM_ORDER, screens: step1Screens(), answers: row?.answers || {}, signatures: publicSignatures(sigs), identity: { ...IS, license_state: ident?.license_state ?? null, license_expires: ident?.license_expires ?? null },
         prefill: prefillFrom(app, app?.post_interview || null), hints: { availability: S(app?.availability, 300) || null, travel: S(app?.post_interview?.travel_areas, 200) || null },
         current_screen: row?.current_screen || '1', started_at: row?.started_at || null, completed_at: row?.completed_at || null, esign_consent_at: row?.esign_consent_at || null,
-        test_mode: true, references_required: REFERENCES_REQUIRED, skill_groups: SKILL_GROUPS, skills: SKILLS, signed_count: Object.keys(sigs).length, form_count: FORM_ORDER.length })
+        test_mode: practiceOffer(o) || !allApprovedForReal(), references_required: REFERENCES_REQUIRED, skill_groups: SKILL_GROUPS, skills: SKILLS, signed_count: Object.keys(sigs).length, form_count: formCount((row?.answers || {}) as Record<string, unknown>), deciding: DECIDING })
     }
     if (!row) return json({ ok: false, error: 'Please open your Step 1 link first.' }, 409)
+    /* 2026-10-13 (Samantha's driver rules): a photo or file of the license front/back or the insurance proof goes straight to
+       the private driver-docs store by a one-use signed link; 'uploaded' then records it on their answers (checked against
+       this offer and item). Only for a photo item on a form that applies to them and is not signed yet. */
+    if (action === 'upload_url' || action === 'uploaded') {
+      const item = S(b.item, 40), fk = formOf(item), it = fk ? itemsOf(FORMS[fk]).find((x) => x.id === item) : null
+      if (!fk || !it || it.kind !== 'photo') return json({ ok: false, error: 'Which picture?' }, 400)
+      if (!formApplies(fk, (row.answers || {}) as Record<string, unknown>)) return json({ ok: false, error: 'Please answer the question at the top of this screen first.' }, 409)
+      if (sigs[fk]) return json({ ok: false, error: `${FORMS[fk].title} is already signed, so its pictures cannot change here. Call the office: (417) 234-8494.` }, 409)
+      const prefix = `offer/${id}/${item}-`
+      if (action === 'upload_url') {
+        const ext = S(b.ext, 5).toLowerCase(); if (!PHOTO_TYPES[ext]) return json({ ok: false, error: 'Please use a photo (JPG, PNG, HEIC) or a PDF.' }, 400)
+        const path = prefix + Date.now() + '.' + ext
+        const { data, error } = await db.storage.from(DRIVER_BUCKET).createSignedUploadUrl(path)
+        if (error || !data) return json({ ok: false, error: 'Could not get the upload ready. Please try again.' }, 500)
+        return json({ ok: true, path, token: data.token, signed_url: data.signedUrl, content_type: PHOTO_TYPES[ext] })
+      }
+      const path = S(b.path, 200)
+      if (!path.startsWith(prefix) || !/^[\w./-]+$/.test(path)) return json({ ok: false, error: 'That picture is not yours.' }, 400)
+      const dir = path.slice(0, path.lastIndexOf('/')), name = path.slice(path.lastIndexOf('/') + 1)
+      const { data: found } = await db.storage.from(DRIVER_BUCKET).list(dir, { search: name, limit: 5 })
+      if (!(found ?? []).some((x: { name: string }) => x.name === name)) return json({ ok: false, error: 'The picture did not arrive. Please try again.' }, 409)
+      const ext = name.split('.').pop() || '', answers = { ...(row.answers || {}) } as Record<string, unknown>
+      answers[item] = { path, content_type: PHOTO_TYPES[ext] || 'application/octet-stream', at: now() }
+      const { error } = await db.from('step1_forms').update({ answers }).eq('offer_id', id)
+      if (error) return json({ ok: false, error: 'Could not save: ' + error.message }, 500)
+      return json({ ok: true, item, uploaded: true })
+    }
+    /* 2026-10-13: a copy of one form to open or save while reading it (unsigned; their answers so far; identity never printed) */
+    if (action === 'document') {
+      const form = S(b.form, 40) as FormKey
+      if (!FORM_ORDER.includes(form)) return json({ ok: false, error: 'Which form?' }, 400)
+      const bytes = step1FormPdf(FORMS[form], (row.answers || {}) as Record<string, unknown>, who, IS, null, FORM_ORDER.indexOf(form) + 1, FORM_ORDER.length)
+      let bin = ''; for (let j = 0; j < bytes.length; j += 0x8000) bin += String.fromCharCode(...bytes.subarray(j, j + 0x8000))
+      return json({ ok: true, form, version: FORMS[form].version, pdf_base64: btoa(bin) })
+    }
     if (action === 'begin') {
       if (b.esign_consent !== true) return json({ ok: false, error: 'Please tick "I agree to complete and sign my Step 1 paperwork electronically" first.' }, 400)
-      if (!row.esign_consent_at) await db.from('step1_forms').update({ esign_consent_at: now(), esign_consent_detail: { ip: ipOf(req), agent: agentOf(req) }, current_screen: '2' }).eq('offer_id', id).is('esign_consent_at', null)
+      if (!row.esign_consent_at) {
+        /* 2026-10-13: the words they agreed to are kept with the consent (RSMo 432.220: agreement to do business electronically), and the trail records it */
+        const { data: did } = await db.from('step1_forms').update({ esign_consent_at: now(), esign_consent_detail: { ip: ipOf(req), agent: agentOf(req), words: ESIGN_WORDS }, current_screen: '2' }).eq('offer_id', id).is('esign_consent_at', null).select('offer_id')
+        if (did?.length) await T.event({ offer_id: id, kind: 'step1_started', by_who: 'caregiver', channel: 'page', result: 'esign_consent', detail: { note: 'agreed to sign electronically', ip: ipOf(req), agent: agentOf(req), words: ESIGN_WORDS } })   /* an existing kind: offer_events allows a fixed list */
+      }
       return json({ ok: true })
     }
     if (action === 'save') {
-      const screen = S(b.screen, 4); if (screen && !SCREENS.includes(screen)) return json({ ok: false, error: 'Which screen?' }, 400)
+      const screen = S(b.screen, 4); if (screen && !step1Screens().includes(screen)) return json({ ok: false, error: 'Which screen?' }, 400)
       const incoming = (b.answers && typeof b.answers === 'object' && !Array.isArray(b.answers)) ? b.answers as Record<string, unknown> : {}
       const merged = { ...(row.answers || {}) } as Record<string, unknown>; const rejected: string[] = []
       for (const [k, v] of Object.entries(incoming)) {
         if (IDENTITY_IDS.includes(k)) return json({ ok: false, error: 'The Social Security number, date of birth and license number go through the locked door, never here.' }, 400)
         if (k === 'initials') { const c = clean({ id: 'initials', label: '', kind: 'initials' }, v); if (c === undefined) rejected.push(k); else merged.initials = c; continue }
+        /* 2026-10-13: a deciding answer (transport_willing) is locked once either form it chooses is signed */
+        if (DECIDING[k]) {
+          const decided = FORM_ORDER.filter((f) => FORMS[f].when?.id === k && sigs[f])
+          if (decided.length) return json({ ok: false, error: `${FORMS[decided[0]].title} is already signed, so this answer cannot change here. To change it, call the office: (417) 234-8494.` }, 409)
+          if (v == null || v === '') { delete merged[k]; continue }
+          if (!DECIDING[k].options.some(([x]) => x === v)) { rejected.push(k); continue }
+          merged[k] = v; continue
+        }
         const fk = formOf(k); if (!fk) { rejected.push(k); continue }
+        if (FORMS[fk].when && !formApplies(fk, merged)) { rejected.push(k); continue }
+        if (itemsOf(FORMS[fk]).find((i) => i.id === k)?.kind === 'photo') { rejected.push(k); continue }   /* photos arrive only through 'uploaded' */
         if (sigs[fk]) return json({ ok: false, error: `${FORMS[fk].title} is already signed, so its answers cannot change. If something is wrong, call the office: (417) 234-8494.` }, 409)
         const item = itemsOf(FORMS[fk]).find((i) => i.id === k)!
         if (v == null || v === '') { delete merged[k]; continue }
@@ -536,12 +723,15 @@ Deno.serve(async (req) => {
     if (action === 'sign') {
       const form = S(b.form, 40) as FormKey
       if (!FORM_ORDER.includes(form)) return json({ ok: false, error: 'Which form?' }, 400)
+      if (!formApplies(form, (row.answers || {}) as Record<string, unknown>)) return json({ ok: false, error: FORMS[form].when ? 'Please answer the question at the top of this screen first: ' + (DECIDING[FORMS[form].when!.id]?.label || 'the question') : 'Which form?' }, 409)
       if (!row.esign_consent_at) return json({ ok: false, error: 'Please agree to sign electronically on the first screen before signing a form.' }, 409)
       if (b.consent !== true) return json({ ok: false, error: 'Please tick "I agree to sign this form electronically" first.' }, 400)
       const name = S(b.typed_name, 80)
       if (!/^\S+(\s+\S+)+$/.test(name) || name.length < 4) return json({ ok: false, error: 'Please type your full name, first and last, exactly as you want it on the form.' }, 400)
+      /* 2026-10-13: a real applicant signs only wording Samantha approved for real (practice and training hires are not held) */
+      if (!practiceOffer(o) && !approvedForReal(form)) return json({ ok: false, error: 'This form is waiting for its final approval, so it cannot be signed yet. Your answers are saved. The office will let you know when it is ready: (417) 234-8494.', not_approved: true }, 409)
       if (sigs[form]) return json({ ok: false, error: 'This form is already signed. A signed form is never changed; if something is wrong, call the office: (417) 234-8494.', already: true }, 409)
-      const before = FORM_ORDER.slice(0, FORM_ORDER.indexOf(form)).filter((k) => !sigs[k])
+      const before = FORM_ORDER.slice(0, FORM_ORDER.indexOf(form)).filter((k) => !sigs[k] && formApplies(k, (row.answers || {}) as Record<string, unknown>))
       if (before.length) return json({ ok: false, error: `Please sign ${FORMS[before[0]].title} first; the forms go in order.` }, 409)
       const answers = { ...(row.answers || {}) } as Record<string, unknown>
       if (FORMS[form].signature === 'typed+initials') { const ini = clean({ id: 'initials', label: '', kind: 'initials' }, b.initials ?? answers.initials); if (ini === undefined) return json({ ok: false, error: 'Please add your initials beside the AxisCare scheduling line.' }, 400); answers.initials = ini }
@@ -558,15 +748,25 @@ Deno.serve(async (req) => {
       const path = `step1/${id}/${form}-v${version}-${at.replace(/[:.]/g, '-')}.pdf`
       const up = await db.storage.from(BUCKET).upload(path, bytes, { contentType: 'application/pdf', upsert: false })
       let pdfOk = true
-      if (up.error) { pdfOk = false; await T.event({ offer_id: id, kind: 'step1_signed', by_who: 'system', channel: 'page', doc_version: version, fingerprint: fp, result: 'pdf_failed', detail: { form, error: String(up.error.message || up.error).slice(0, 200) } }) }
+      if (up.error) { pdfOk = false; await T.event({ offer_id: id, kind: 'step1_signed', by_who: 'system', channel: 'page', doc_version: version, fingerprint: fp, result: 'pdf_failed', detail: { form, error: String(up.error.message || up.error).slice(0, 200) } })
+        await problemCard(db, 's1pdf_' + id + '_' + form, { kind: 'step1_pdf_failed', who: `${who.first} ${who.last}`.trim(), offer_id: id, title: 'A signed Step 1 form has no PDF yet: ' + `${who.first} ${who.last}`.trim(),
+          detail: 'The signature on ' + FORMS[form].title + ' is recorded (time, device, wording version), but its PDF could not be saved (' + S(up.error.message || up.error, 120) + '). Tell Claude so the PDF is made again from the signed record.' }) }
       else await db.from('step1_forms').update({ pdfs: { ...(row.pdfs || {}), [form]: path } }).eq('offer_id', id).filter('pdfs->' + form, 'is', null)
       // 3. the last signature completes Step 1: the record, the trail, and the offer record the office reads
-      const allSigned = FORM_ORDER.every((k) => k === form || sigs[k])
+      /* 2026-10-13: never complete while a deciding question is unanswered (its form is still to come) */
+      const allSigned = Object.keys(DECIDING).every((k) => answers[k]) && applicableForms(answers).every((k) => k === form || sigs[k])
       let done = false
       if (allSigned) {
-        const { data: fin } = await db.from('step1_forms').update({ completed_at: at, current_screen: '9', receipt: { completed_at: at, forms: FORM_ORDER.length } }).eq('offer_id', id).is('completed_at', null).select('offer_id')
+        const { data: fin } = await db.from('step1_forms').update({ completed_at: at, current_screen: '9', receipt: { completed_at: at, forms: applicableForms(answers).length } }).eq('offer_id', id).is('completed_at', null).select('offer_id')
         done = !!fin?.length
-        if (done) { await T.event({ offer_id: id, kind: 'step1_done', by_who: 'caregiver', channel: 'page', detail: { forms: FORM_ORDER.length, ip, agent } }); await T.patch(id, { step1_done_at: at }, '&step1_done_at=is.null') }
+        if (done) { await T.event({ offer_id: id, kind: 'step1_done', by_who: 'caregiver', channel: 'page', detail: { forms: applicableForms(answers).length, ip, agent } }); await T.patch(id, { step1_done_at: at }, '&step1_done_at=is.null')
+          await db.from('step1_forms').update({ receipt: { completed_at: at, forms: applicableForms(answers).length, ghl_note: await ghlStep1Note(db, o, who, id, at) } }).eq('offer_id', id)
+          /* 2026-10-13: their driver record from Step 1 (Non-Driver, or Driver Pending Verification with the pictures); never silent */
+          const dr = await driverFromStep1(db, id, who, answers, { ...sigs, [form]: sig }, { ...(row.pdfs || {}), ...(pdfOk ? { [form]: path } : {}) }, at).catch((e: Error) => ({ ok: false, error: String(e?.message || e) }))
+          if ((dr as Record<string, unknown>)?.ok === false) await problemCard(db, 's1drv_' + id, { kind: 'step1_driver_failed', who: `${who.first} ${who.last}`.trim(), offer_id: id, title: 'Driver Compliance record not made from Step 1: ' + `${who.first} ${who.last}`.trim(), detail: 'Step 1 is complete, but their Driver Compliance record could not be made (' + S((dr as Record<string, unknown>).error, 120) + '). Set it up from their Driver Compliance card, or tell Claude.' })
+          const cs = needsCountersign({ ...sigs, [form]: true }, {})
+          if (cs.length) await problemCard(db, 's1cs_' + id, { kind: 'step1_countersign', who: `${who.first} ${who.last}`.trim(), offer_id: id, title: 'Sign for Caring Companions: ' + cs.map((k) => FORMS[k].title).join(', ') + ' for ' + `${who.first} ${who.last}`.trim(),
+            detail: `${who.first} signed ${cs.map((k) => FORMS[k].title).join(', ')}. A person on the Approve to Work list signs for the company from their page (See their Step 1 screens). Approve to Work waits for it.` }, 'today') }
       }
       /* SLICE 2d: land what this form holds for the office, then the done stamp with the last one.
          STEP 1 BEFORE CHECKS (Samantha 2026-10-11): on the new path nobody is in Background & References before Step 1 is
@@ -584,9 +784,14 @@ Deno.serve(async (req) => {
         }
       }
       const landedDone = done ? await land(db, id, { step1_done_at: at, step1_landed: { done: at } }, 'step1 done') : { skipped: true }
-      if (landed.ok === false || landedDone.ok === false || entered.ok === false) await T.event({ offer_id: id, kind: 'step1_signed', by_who: 'system', channel: 'page', result: 'landing_failed', detail: { form, landed, landedDone, entered } })
+      if (landed.ok === false || landedDone.ok === false || entered.ok === false) {
+        await T.event({ offer_id: id, kind: 'step1_signed', by_who: 'system', channel: 'page', result: 'landing_failed', detail: { form, landed, landedDone, entered } })
+        /* entering failed has its own card (enterChecks); a form that did not land on their record gets one too */
+        if (entered.ok !== false) await problemCard(db, 's1landform_' + id, { kind: 'step1_landing_failed', who: `${who.first} ${who.last}`.trim(), offer_id: id, title: 'Step 1 answers did not reach their Background & References record: ' + `${who.first} ${who.last}`.trim(),
+          detail: 'The answers on ' + FORMS[form].title + ' could not be copied onto their Background & References record (' + S((landed as Record<string, unknown>).error || (landedDone as Record<string, unknown>).error || 'no reason given', 120) + '). Their signed forms are safe on their profile. Check their references and details there, or tell Claude.' })
+      }
       const cp = pdfOk ? await db.storage.from(BUCKET).createSignedUrl(path, 600) : { data: null }
-      return json({ ok: true, form, signed_at: at, version, fingerprint: fp, pdf: pdfOk, copy_url: cp.data?.signedUrl ?? null, done, signed_count: Object.keys(sigs).length + 1, form_count: FORM_ORDER.length, landed, landed_done: landedDone })
+      return json({ ok: true, form, signed_at: at, version, fingerprint: fp, pdf: pdfOk, copy_url: cp.data?.signedUrl ?? null, done, signed_count: Object.keys(sigs).length + 1, form_count: formCount(answers), landed, landed_done: landedDone })
     }
     return json({ ok: false, error: 'Unknown action.' }, 400)
   } catch (e) {

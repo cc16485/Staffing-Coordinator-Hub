@@ -20,14 +20,15 @@ import { logOpen, ipOf } from '../_shared/doc-log.ts'
 import { evidenceLine } from '../_shared/evidence.ts'
 import { experienceSummary } from '../_shared/step1-experience.ts'
 import { applicantStatus } from '../_shared/applicant-status.ts'
+import { FORMS, FORM_ORDER, formCount } from '../_shared/step1-documents.ts'
 type Any = any
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
 const S = (v: unknown, n = 200) => String(v ?? '').trim().slice(0, n)
 const d10 = (v: unknown) => String(v ?? '').replace(/\D/g, '').slice(-10)
 const OD = 'onboarding-documents', LD = 'lead-docs'
-const FORM_TITLES: Record<string, string> = { employee_application: 'Employee Application', reference_consent: 'Reference Check and Authorization Consent', fcra_disclosure: 'Background Check Disclosure',
-  edl_fcsr_consent: 'EDL and FCSR Screening Consent', availability: 'Availability and Scheduling Commitment', experience: 'Experience and Client Matching Profile', vehicle: 'Personal Vehicle Insurance Responsibility' }
+const FORM_TITLES: Record<string, string> = { employee_application: 'Employee Application', reference_consent: 'Reference Check and Authorization Consent', fcra_disclosure: 'Permission for Background Checks and References',
+  edl_fcsr_consent: 'Details for the Background Checks', availability: 'Availability and Scheduling Commitment', experience: 'Experience and Client Matching Profile', vehicle: 'Personal Vehicle Insurance Responsibility' }
 const OFFER_EVENTS: Record<string, [string, string]> = {
   sent: ['sent', 'Offer sent'], resent: ['sent', 'Offer link sent again'], viewed: ['received', 'They opened the offer'], signed: ['done', 'Offer letter signed'], pd_signed: ['done', 'Position description signed'],
   declined: ['received', 'They declined the offer'], withdrawn: ['done', 'Offer withdrawn'], expired: ['done', 'Offer expired unsigned'], reminder_1: ['sent', 'Offer reminder 1'], reminder_2: ['sent', 'Offer reminder 2'],
@@ -95,7 +96,7 @@ export async function documents(db: Any, p: Any) {
   if (p.offer) { add(OD, p.offer.offer_pdf_path, 'Offer letter (signed)', p.offer.offer_signed_at, 'signed'); add(OD, p.offer.pd_pdf_path, 'Position description (signed)', p.offer.pd_signed_at, 'signed') }
   if (p.offerId) {
     const { data: f } = await db.from('step1_forms').select('pdfs, signatures').eq('offer_id', p.offerId).maybeSingle()
-    for (const [k, v] of Object.entries((f?.pdfs || {}) as Record<string, Any>)) add(OD, typeof v === 'string' ? v : v?.path, 'Step 1: ' + (FORM_TITLES[k] || k) + ' (signed)', (f?.signatures || {})[k]?.at, 'signed')
+    for (const [k, v] of Object.entries((f?.pdfs || {}) as Record<string, Any>)) add(OD, typeof v === 'string' ? v : v?.path, 'Step 1: ' + (FORM_TITLES[k] || FORMS[k]?.title || k) + ' (signed)', (f?.signatures || {})[k]?.at, 'signed')
   }
   for (const r of [p.cand, p.rec]) { if (!r) continue; for (const [k, label] of PROOFS) add(LD, r[k], label, r[k.replace(/_(proof|pdf)$/, '_date')] || null, 'proof') }
   if (p.offerId) {
@@ -116,9 +117,10 @@ export async function timeline(db: Any, T: Any, p: Any) {
   if (p.offerId) {
     const ev = await T.get(`offer_events?offer_id=eq.${p.offerId}&select=at,kind,by_who,channel,result,detail&order=at.asc`)
     for (const e of ev) {
-      const [type, label] = OFFER_EVENTS[e.kind] || ['done', words(String(e.kind))]
+      const [type, label] = e.result === 'esign_consent' ? ['received', 'They agreed to sign electronically'] : OFFER_EVENTS[e.kind] || ['done', words(String(e.kind))]
+      if (e.result === 'esign_consent') { push(e.at, type, label + (e.detail?.ip ? ' (device address ' + S(e.detail.ip, 64) + ')' : ''), p.name || 'them'); continue }
       const d = e.detail || {}, prac = d.practice ? ' (practice: recorded, not sent)' : ''
-      const form = d.form ? ': ' + (FORM_TITLES[d.form] || d.form) : ''
+      const form = d.form ? ': ' + (FORM_TITLES[d.form] || FORMS[d.form]?.title || d.form) : ''
       push(e.at, e.result && /fail|refus/.test(String(e.result)) ? 'refused' : type, label + form + (type === 'sent' ? prac : '') + (e.result && e.result !== 'ok' ? ' · ' + e.result : '') + (d.note ? ' · "' + S(d.note, 120) + '"' : ''), e.by_who === 'caregiver' ? (p.name || 'them') : e.by_who)
     }
   }
@@ -182,13 +184,13 @@ Deno.serve(async (req) => {
     if (action === 'step1_progress') {
       const ids = (Array.isArray(b.offer_ids) ? b.offer_ids : []).map((x: unknown) => S(x, 64)).filter((x: string) => /^[0-9a-f-]{36}$/i.test(x)).slice(0, 100)
       if (!ids.length) return json({ ok: true, progress: {} })
-      const { data: rows } = await db.from('step1_forms').select('offer_id, started_at, current_screen, signatures, completed_at').in('offer_id', ids)
+      const { data: rows } = await db.from('step1_forms').select('offer_id, started_at, current_screen, signatures, completed_at, answers').in('offer_id', ids)
       const ev = await T.get(`offer_events?offer_id=in.(${ids.join(',')})&kind=in.(step1_sent,step1_resent)&select=offer_id,at,kind,detail&order=at.asc`)
       const out: Record<string, Any> = {}
       for (const id of ids) {
         const f = (rows ?? []).find((r: Any) => r.offer_id === id), sent = ev.filter((e: Any) => e.offer_id === id && (e.kind === 'step1_sent' || e.kind === 'step1_resent'))
         out[id] = { sent_at: sent[0]?.at ?? null, practice: !!sent[0]?.detail?.practice, sends: sent.length, started_at: f?.started_at ?? null, screen: f?.current_screen ?? null,
-          signed: Object.keys(f?.signatures || {}).length, forms: 7, completed_at: f?.completed_at ?? null }
+          signed: Object.keys(f?.signatures || {}).length, forms: formCount((f?.answers || {}) as Record<string, unknown>), completed_at: f?.completed_at ?? null }
       }
       return json({ ok: true, progress: out })
     }
@@ -211,7 +213,7 @@ Deno.serve(async (req) => {
     try {
       const candId = p.cand?.id ?? p.rec?.candidate_id
       const [{ data: f }, { data: rr }, { data: bk }] = await Promise.all([
-        p.offerId ? db.from('step1_forms').select('answers, practice, signatures, started_at, completed_at').eq('offer_id', p.offerId).maybeSingle() : Promise.resolve({ data: null }),
+        p.offerId ? db.from('step1_forms').select('answers, practice, signatures, started_at, completed_at, pdfs').eq('offer_id', p.offerId).maybeSingle() : Promise.resolve({ data: null }),
         candId != null ? db.from('reference_requests').select('*').eq('candidate_id', String(candId)).order('slot') : Promise.resolve({ data: [] }),
         p.app?.id ? db.from('interview_bookings').select('id, starts_at, status, created_at').eq('applicant_id', p.app.id) : Promise.resolve({ data: [] })])
       if (f?.answers) experience = { ...experienceSummary(f.answers, rr ?? []), practice: !!f.practice }

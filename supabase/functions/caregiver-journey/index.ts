@@ -13,7 +13,8 @@
 //                                                          screening, office); Approve to Work has its own action below
 //   { action: 'record', journey_id, step_key, result, document, expires? } (staff by list)  a 'proof' row the office records
 //   { action: 'not_needed', journey_id, step_key, reason } (owners only)
-//   { action: 'approve_work', journey_id }     (Approve to Work list ONLY)  refused until every earlier row is complete and no
+//   { action: 'approve_work', journey_id }     (Approve to Work list ONLY)  refused until every REQUIRED row is complete (2026-10-13:
+//                                                          all of them, re-checked at the press, with the list of what is missing) and no
 //                                                          row is blocked; records who and the exact time; sets the caregiver
 //                                                          Active in AxisCare (approve_work_axiscare_live, else practice) and
 //                                                          reads it back; Approved to Work shows only after the read-back;
@@ -38,7 +39,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES, serverSecretOk } from '../_shared/staff-auth.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { PERM_KEY, normalizePerms, mayApprove } from '../_shared/onboarding-permissions.ts'
-import { R, facts, verifyRows, type Facts } from '../_shared/caregiver-journey.ts'
+import { R, facts, verifyRows, rightsState, type Facts } from '../_shared/caregiver-journey.ts'
 import { setCaregiverActive, setCaregiverHireDate, setCaregiverLevel } from '../_shared/axiscare-caregiver.ts'
 import { dueNextBusinessDay } from '../_shared/business-days.ts'
 import { saveSweepFields } from '../_shared/sweep-patch.ts'
@@ -71,7 +72,7 @@ function trn() {
   const url = Deno.env.get('OFFERS_PROJECT_URL') ?? '', key = Deno.env.get('OFFERS_SERVICE_ROLE_KEY') ?? ''
   if (!url || !key) return null
   const H = { apikey: key, Authorization: `Bearer ${key}` }
-  return { async get(id: string) { const r = await fetch(`${url}/rest/v1/job_offers?id=eq.${encodeURIComponent(id)}&select=id,first_name,last_name,phone,email,offer_signed_at,pd_signed_at,offer_version,pd_version,offer_status,onboarding_path,step1_done_at`, { headers: H }); if (!r.ok) return null; const rows = await r.json(); return Array.isArray(rows) && rows.length === 1 ? rows[0] : null } }
+  return { async get(id: string) { const r = await fetch(`${url}/rest/v1/job_offers?id=eq.${encodeURIComponent(id)}&select=id,first_name,last_name,phone,email,offer_signed_at,pd_signed_at,offer_version,pd_version,offer_status,onboarding_path,step1_done_at,step1_sent_at,step1_reminded_at,step1_reminder_count,offer_withdrawn_at,offer_declined_at`, { headers: H }); if (!r.ok) return null; const rows = await r.json(); return Array.isArray(rows) && rows.length === 1 ? rows[0] : null } }
 }
 async function defs(db: Any): Promise<Any[]> {
   const { data, error } = await db.from('client_journey_step_def').select('key, def, active, catalog_version').like('key', 'cg.%')
@@ -113,7 +114,7 @@ const ctxFor = (f: Facts, st: Any) => ({ today: new Date().toLocaleString('sv-SE
 const dates = (f: Facts) => { const o = f.roster?.orient_date ? String(f.roster.orient_date).slice(0, 10) : null, h = f.roster?.hire_date ? String(f.roster.hire_date).slice(0, 10) : null; return { orientation: o, axiscare_hire: h, differ: !!(o && h && o !== h) } }
 
 /* ── the Needs Attention cards (ops_items), raised and closed by the readiness server; a card a person closed stays closed ── */
-async function raiseCard(db: Any, c: { id: string; kind: string; title: string; detail: string; who: string; offer_id: string; urgency: 'urgent' | 'today' | 'normal' }, extra: { owner?: string; owner_name?: string; due?: string } = {}) {
+async function raiseCard(db: Any, c: { id: string; kind: string; title: string; detail: string; who: string; offer_id: string; urgency: 'urgent' | 'today' | 'normal' }, extra: { owner?: string; owner_name?: string; due?: string; domain?: string } = {}) {
   try {
     const now = new Date().toISOString()
     const { data: row } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
@@ -121,7 +122,7 @@ async function raiseCard(db: Any, c: { id: string; kind: string; title: string; 
     const prev = items.find((x) => x && x.id === c.id)
     const isOpen = (x: Any) => x && x.status !== 'done' && x.status !== 'resolved'
     if (prev && !isOpen(prev)) return
-    const item = { ...(prev && isOpen(prev) ? prev : { owner: extra.owner || '', owner_name: extra.owner_name || '', created_at: now, first_at: now }), id: c.id, kind: c.kind, domain: c.kind === 'requirement_expired' ? 'training_compliance' : 'caregivers', status: 'open', urgency: c.urgency,
+    const item = { ...(prev && isOpen(prev) ? prev : { owner: extra.owner || '', owner_name: extra.owner_name || '', created_at: now, first_at: now }), id: c.id, kind: c.kind, domain: extra.domain || (c.kind === 'requirement_expired' ? 'training_compliance' : 'caregivers'), status: 'open', urgency: c.urgency,
       title: c.title, detail: c.detail, who: c.who, offer_id: c.offer_id, last_at: now, due: (prev && isOpen(prev) && prev.due) || (extra.due ? extra.due + 'T17:00:00Z' : new Date(Date.now() + 24 * 3_600_000).toISOString()),
       closed_at: null, closed_by: null, close_note: null, resolved_at: null, created_by: 'caregiver-journey', opened_by: 'caregiver-journey' }
     await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item })
@@ -143,28 +144,70 @@ async function rosterPatch(db: Any, roster: Any, patch: Any): Promise<'saved' | 
   return await saveSweepFields(db, { ...roster, ...patch }, (fresh: Any) => Object.assign(fresh, patch))
 }
 
+/* GO-LIVE GATE (2026-10-13, her rule "Applicants cannot be approved to work with incomplete required steps"): a row the Hub
+   verifies from a record is never written complete before the rows the catalog puts in front of it (def.after) are done
+   (orientation from a roster date waits for the Orientation Video Call, a check waits for the signed consents). A row in
+   front that does not apply to this person (fingerprints for someone who never lived outside Missouri) does not hold it. */
+function waitingFor(key: string, dfs: Any[], state: Record<string, string>, appl: (d: Any) => boolean): string[] {
+  const def = dfs.find((d) => d.key === key); if (!def) return []
+  return (Array.isArray(def.after) ? def.after : []).filter((k: string) => { const d = dfs.find((x) => x.key === k); return d && appl(d) && !DONE.includes(state[k] || '') })
+}
 /** Apply the verdicts the facts give: complete or blocked rows, with evidence and events; never un-complete a confirmed row. */
-async function applyVerdicts(db: Any, j: Any, steps: Any[], f: Facts, now: string): Promise<number> {
+async function applyVerdicts(db: Any, j: Any, steps: Any[], f: Facts, now: string, dfs: Any[] = [], ctx: Any = null): Promise<number> {
   const by = Object.fromEntries(steps.map((s) => [s.step_key, s])); let changed = 0
-  for (const v of verifyRows(f, now)) {
+  const state: Record<string, string> = Object.fromEntries(steps.map((s) => [s.step_key, s.state]))
+  const appl = (d: Any) => ctx ? R.applies(d, j, ctx) : !d.applies
+  const sortOf = (k: string) => Number(dfs.find((d) => d.key === k)?.sort ?? 0)
+  for (const v of verifyRows(f, now).sort((a, b) => sortOf(a.key) - sortOf(b.key))) {
     const st = by[v.key]
     if (v.state === 'complete') {
       const newer = st?.state === 'complete' && st.completed_at && v.at && Date.parse(v.at) > Date.parse(st.completed_at) + 60000
       if (st && DONE.includes(st.state) && !newer) continue
       if (v.key === AX_KEY && st?.state === 'blocked') continue   // the AxisCare row is settled by the approval path, never by a stale roster flag
+      if (!(st && DONE.includes(st.state)) && waitingFor(v.key, dfs, state, appl).length) continue   // not before the rows in front of it
       await putStep(db, j.journey_id, v.key, { state: 'complete', evidence: { verified: { at: now, by: 'hub' }, ...v.evidence }, completed_by: 'hub', completed_by_name: 'The Hub (verified)', completed_at: v.at, blocked_reason: null })
-      await event(db, j.journey_id, v.key, {}, newer ? 'reverified' : 'verified', v.evidence); changed++
+      await event(db, j.journey_id, v.key, {}, newer ? 'reverified' : 'verified', v.evidence); changed++; state[v.key] = 'complete'
     } else if (v.state === 'blocked') {
       if (st && (st.state === 'blocked' || DONE.includes(st.state))) continue
       await putStep(db, j.journey_id, v.key, { state: 'blocked', blocked_reason: v.reason, evidence: { ...(st?.evidence || {}), flagged: v.evidence } })
-      await event(db, j.journey_id, v.key, {}, 'blocked', v.evidence, v.reason || null); changed++
+      await event(db, j.journey_id, v.key, {}, 'blocked', v.evidence, v.reason || null); changed++; state[v.key] = 'blocked'
     }
   }
   return changed
 }
 
+/* GO-LIVE GATE (2026-10-13, her rule: "Applicants cannot be approved to work with incomplete required steps"): Ready for Final
+   Approval and the Approve to Work press need EVERY row the catalog marks required for this person to be settled (complete,
+   not needed by an owner, or an owner exception), not only the rows Approve to Work lists as "after". Left out: Approve to
+   Work itself and every row that waits on it (AxisCare Active, the hire date, the level class), and the two training rows
+   that by her cited rule follow employment: On-the-Job Skills Training (within 30 days of employment, Samantha 2026-10-01)
+   and the annual in-service (after year one). A row whose "applies" fact is not yet known (Step 1 not answered) counts as
+   missing: it is never assumed not to apply. */
+const AFTER_EMPLOYMENT = new Set(['cg.training.ojt', 'cg.training.annual'])
+function followsWork(key: string, dfs: Any[], seen = new Set<string>()): boolean {
+  if (key === WORK_KEY) return true
+  if (seen.has(key)) return false; seen.add(key)
+  const d = dfs.find((x) => x.key === key)
+  return (Array.isArray(d?.after) ? d.after : []).some((k: string) => followsWork(k, dfs, seen))
+}
+export function missingForWork(view: Any, dfs: Any[], j: Any, ctx: Any): string[] {
+  const out: string[] = []
+  const skip = (key: string) => key === WORK_KEY || key === AX_KEY || AFTER_EMPLOYMENT.has(key) || followsWork(key, dfs)
+  for (const r of view?.rows || []) {
+    if (r.def?.required === false || skip(r.key)) continue
+    if (!DONE.includes(r.status)) out.push(r.def.title + (r.status === 'blocked' ? ' (blocked)' : r.expired ? ' (expired ' + r.expired + ')' : ''))
+  }
+  const facts = (ctx && ctx.facts) || {}
+  for (const d of dfs) {
+    if (d.required === false || d.active === false || skip(d.key) || (d.subject || 'client') !== 'caregiver' || !d.applies || typeof d.applies !== 'object') continue
+    const unknown = Object.keys(d.applies).filter((k) => facts[k] !== true && facts[k] !== false)
+    if (unknown.length) out.push(d.title + ' (not known yet whether it applies: their Step 1 answer is missing)')
+  }
+  return out
+}
+
 /* ── SLICE 5: the approval state the card and the lists read ── */
-function approveState(view: Any, f: Facts, st: Any, who: Any, P: Any) {
+function approveState(view: Any, f: Facts, st: Any, who: Any, P: Any, dfs: Any[] = [], j: Any = null) {
   const rows: Any[] = view?.rows || []
   const aw = rows.find((r) => r.key === WORK_KEY), ax = rows.find((r) => r.key === AX_KEY)
   const approved = !!(aw?.st && aw.st.state === 'complete')
@@ -175,13 +218,14 @@ function approveState(view: Any, f: Facts, st: Any, who: Any, P: Any) {
     : axEv.practice ? { state: 'practice', at: axEv.practice.at || null }
     : { state: 'pending' }
   const blocked = rows.filter((r) => r.status === 'blocked' && r.key !== AX_KEY).map((r) => r.def.title)
-  const ready_for_final = !approved && !!aw && ['ready', 'attention'].includes(aw.status) && !blocked.length
+  const missing = approved ? [] : missingForWork(view, dfs, j, ctxFor(f, st))
+  const ready_for_final = !approved && !!aw && ['ready', 'attention'].includes(aw.status) && !blocked.length && !missing.length
   const lvl = f.candidate?.care_level_approved ?? f.roster?.care_level_approved ?? null
   const prepOf = (key: string) => { const r = rows.find((x) => x.key === key); if (!r) return { state: 'n/a' }; const e = r.st?.evidence || {}; return r.st && DONE.includes(r.st.state) ? { state: 'confirmed', at: r.st.completed_at, read: e.read ?? null, unchanged: !!e.unchanged } : r.st?.state === 'blocked' ? { state: 'failed', detail: r.st.blocked_reason } : e.practice ? { state: 'practice', at: e.practice.at } : { state: 'pending' } }
   return {
     ready_for_final, approved, approved_at: approved ? aw.st.completed_at : null, approved_by: approved ? (aw.st.completed_by_name || aw.st.completed_by) : null,
     prep: { hire_date: prepOf('cg.axiscare.hire_date'), level: prepOf('cg.axiscare.level') },
-    axiscare, text: aw?.st?.evidence?.text || null, blocked,
+    axiscare, text: aw?.st?.evidence?.text || null, blocked, missing,
     locked: !(approved && axDone), lock_why: !(approved && axDone) ? 'Scheduling stays locked until Approved to Work and AxisCare reads back Active.' : null,
     level_of_care: lvl ? { level: String(lvl), source: 'recorded on the Background and References row' } : { level: 'Level 1', source: 'the default: nothing higher is recorded' },
     may_approve_work: !!who && mayApprove(P, 'work', { person_id: who.person_id, roles: who.roles || [], email: who.email }),
@@ -287,6 +331,33 @@ async function activate(db: Any, j: Any, f: Facts, st: Any, who: { email?: strin
   return await fail(r.detail || r.outcome)
 }
 
+/** the person who owns an Admin domain (Admin page, Domains), as an email and a name; empty when unowned */
+async function domainOwner(db: Any, code: string): Promise<{ email: string; name: string }> {
+  try {
+    const { data: d } = await db.from('domains').select('owner_person').eq('entity', 'cc_ihs').eq('code', code).maybeSingle()
+    if (!d?.owner_person) return { email: '', name: '' }
+    const { data: p } = await db.from('persons').select('full_name, primary_email').eq('person_id', d.owner_person).maybeSingle()
+    return { email: S(p?.primary_email, 160).toLowerCase(), name: S(p?.full_name, 80) }
+  } catch { return { email: '', name: '' } }
+}
+/** GO-LIVE GATE (2026-10-13): the stalled Step 1 card (see the sweep). Returns what it did. */
+export async function step1Stall(db: Any, j: Any, f: Facts, st: Any, owner: { email: string; name: string }, now: string): Promise<'raised' | 'closed' | 'none'> {
+  const id = 'cj_step1stall_' + j.journey_id, o = f.offer
+  if (f.step1?.completed_at || o?.step1_done_at) { await closeCard(db, id, 'Step 1 is complete.'); return 'closed' }
+  if (!o) return 'none'
+  if (o.offer_withdrawn_at || o.offer_declined_at || ['withdrawn', 'declined', 'expired'].includes(String(o.offer_status || ''))) { await closeCard(db, id, 'The offer is closed.'); return 'closed' }
+  if ((o.onboarding_path && o.onboarding_path !== 'new') || !o.step1_sent_at) return 'none'
+  const second = Number(o.step1_reminder_count || 0) >= 2 && o.step1_reminded_at
+  const anchor = second ? String(o.step1_reminded_at) : new Date(Date.parse(String(o.step1_sent_at)) + 4 * 86400000).toISOString()
+  if (!Number.isFinite(Date.parse(anchor))) return 'none'
+  const due = dueNextBusinessDay(anchor, st?.company_holidays, 17, 2)
+  if (due >= now) return 'none'
+  await raiseCard(db, { id, kind: 'step1_stalled', urgency: 'today', who: j.client_name, offer_id: j.offer_id, title: 'Step 1 not finished: call ' + j.client_name,
+    detail: `Their Step 1 link went ${String(o.step1_sent_at).slice(0, 10)}${second ? ` and the second reminder went ${String(o.step1_reminded_at).slice(0, 10)}` : ' and no second reminder was recorded'}; two business days later Step 1 is still not finished, so background checks and references cannot start. Call them, help them finish, then record what you learn. This card closes on its own when Step 1 is complete.` },
+    { owner: owner.email, owner_name: owner.name, due: due.slice(0, 10), domain: 'recruiting_orientation' })
+  return 'raised'
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
@@ -372,7 +443,7 @@ Deno.serve(async (req) => {
           out.cards.looked_at++
           const { data: steps } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
           const f = await facts(db, j, T)
-          out.cards.changed += await applyVerdicts(db, j, steps ?? [], f, now)
+          out.cards.changed += await applyVerdicts(db, j, steps ?? [], f, now, dfs, ctxFor(f, st))
           const { data: fresh } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
           const view = R.compute(dfs, j, fresh ?? [], ctxFor(f, st))
           const { data: evs } = await db.from('client_journey_event').select('step_key, kind, detail').eq('journey_id', j.journey_id).eq('kind', 'expired')
@@ -399,14 +470,15 @@ Deno.serve(async (req) => {
       if (!caller) return json({ error: 'the sweep is for the schedule or an owner' }, 401)
       const T = trn(), st = await settings(db), now = new Date().toISOString()
       const { data: js } = await db.from('client_journey').select('*').eq('subject', 'caregiver').eq('status', 'open').limit(500)
-      const out: Record<string, unknown> = { looked_at: (js ?? []).length, changed: 0, completed: 0, locks: 0, texts_sent: 0, cards: 0 }
+      const out: Record<string, unknown> = { looked_at: (js ?? []).length, changed: 0, completed: 0, locks: 0, texts_sent: 0, cards: 0, step1_stalled: 0, offers_unread: 0 }
+      const recruit = await domainOwner(db, 'recruiting_orientation')
       for (const j of js ?? []) {
         const { data: steps } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
         const f = await facts(db, j, T)
-        const n = await applyVerdicts(db, j, steps ?? [], f, now); (out.changed as number) += n
+        const n = await applyVerdicts(db, j, steps ?? [], f, now, dfs, ctxFor(f, st)); (out.changed as number) += n
         const { data: fresh } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
         const view = R.compute(dfs, j, fresh ?? [], ctxFor(f, st))
-        const a = approveState(view, f, st, null, {})
+        const a = approveState(view, f, st, null, {}, dfs, j)
         /* the journey learns its AxisCare number once the roster has it (the lock and the Training report find it by that) */
         const axId = digits(f.roster?.axiscare_id)
         if (axId && !j.axiscare_caregiver_id) { const { error } = await db.from('client_journey').update({ axiscare_caregiver_id: axId, updated_at: now }).eq('journey_id', j.journey_id); if (error) console.warn('[caregiver-journey] axiscare id not saved: ' + error.message) }
@@ -418,8 +490,14 @@ Deno.serve(async (req) => {
           const due = dueNextBusinessDay(wc.st.completed_at, st.company_holidays, 17, 2)
           if (due < now) { await raiseCard(db, { id: 'cj_axhire_' + j.journey_id, kind: 'axiscare_hire_missing', urgency: 'today', who: j.client_name, offer_id: j.offer_id, title: 'Not hired in AxisCare yet: ' + j.client_name, detail: `Orientation Video Call done ${wc.st.completed_at.slice(0, 10)}; AxisCare still has no caregiver record connected to them. Hire the applicant in AxisCare (In Training); the hourly connect job links the record and this card closes.` }, { owner: S(st.staffing_email, 160).toLowerCase() || '', due }); (out.cards as number)++ }
         } else if (inAx && DONE.includes(inAx.status)) await closeCard(db, 'cj_axhire_' + j.journey_id, 'Connected to their AxisCare record.')
+        /* GO-LIVE GATE (2026-10-13, no silent failures): a new-path Step 1 that is never finished. Step 1 not complete two
+           business days after the day-4 reminder (the second Step 1 reminder the Training Platform stamps on the offer;
+           when no second reminder was stamped, four days after the Step 1 link went) raises ONE card for the Recruiting &
+           Orientation owner, closed when Step 1 completes or the offer closes. */
+        if (!f.offer && T) (out.offers_unread as number)++
+        if ((await step1Stall(db, j, f, st, recruit, now)) === 'raised') (out.step1_stalled as number)++
         /* Ready for Final Approval: one card for the Approve to Work list, closed at the press */
-        if (a.ready_for_final) { await raiseCard(db, { id: 'cj_final_' + j.journey_id, kind: 'final_approval', urgency: 'today', who: j.client_name, offer_id: j.offer_id, title: 'Ready for final approval: ' + j.client_name, detail: 'Every requirement on their readiness card is complete. An owner on the Approve to Work list opens the card and presses Approve to Work.' }); (out.cards as number)++ }
+        if (a.ready_for_final) { await raiseCard(db, { id: 'cj_final_' + j.journey_id, kind: 'final_approval', urgency: 'today', who: j.client_name, offer_id: j.offer_id, title: 'Ready for final approval: ' + j.client_name, detail: 'Every required row on their readiness card is complete (checks with their proof, Step 2, the Orientation Video Call, orientation, dementia, the profile, AxisCare entries). An owner on the Approve to Work list opens the card and presses Approve to Work; the server checks every row again at the press.' }); (out.cards as number)++ }
         /* a cleared text held after hours goes now, in hours, with the switch on */
         if (a.approved && a.axiscare.state === 'confirmed' && a.text?.state === 'due' && (st.approve_work_text_live === true || testPerson(st, { phone: f.roster?.phone || f.offer?.phone, email: f.roster?.email || f.offer?.email })) && inTextHours()) { const t = await clearedTextStep(db, j, f, st, {}); if (t.state === 'sent') (out.texts_sent as number)++ }
         if (view.complete && j.status === 'open') { await db.from('client_journey').update({ status: 'active', updated_at: now }).eq('journey_id', j.journey_id); await event(db, j.journey_id, null, {}, 'complete', { all: true }); (out.completed as number)++ }
@@ -435,17 +513,22 @@ Deno.serve(async (req) => {
       const roster = (Array.isArray(row?.data) ? row.data : []).find((c: Any) => digits(c?.axiscare_id) === axId)
       if (!roster?.offer_id) return json({ ok: true, journey: false, why: 'no roster record with that AxisCare number carries an offer' })
       const got = await load(db, { offer_id: roster.offer_id }); if (!got || got.j.status !== 'open') return json({ ok: true, journey: false, why: got ? 'their readiness card is closed' : 'no readiness card for that offer' })
-      const now = new Date().toISOString(), applied: string[] = []
+      const now = new Date().toISOString(), applied: string[] = [], held: string[] = []
+      const state: Record<string, string> = Object.fromEntries(got.steps.map((s: Any) => [s.step_key, s.state]))
       for (const c of courses) {
         const key = TRAINING_ROWS[S(c?.slug, 60)]; if (!key) continue
         if (!['complete', 'waived'].includes(S(c?.status, 20))) continue
         const st = got.steps.find((s: Any) => s.step_key === key); if (st && DONE.includes(st.state)) continue
+        /* GO-LIVE GATE (2026-10-13): never done before the rows in front of it (orientation after the Orientation Video Call,
+           dementia after orientation). Held, with an event; the nightly Training sync and the sweep verify it once they are done. */
+        const wait = waitingFor(key, dfs, state, (d: Any) => !d.applies)
+        if (wait.length) { if (!held.includes(key)) { held.push(key); await event(db, got.j.journey_id, key, { email: 'training-platform', name: 'The Training Platform' }, 'verify_held', { course: S(c?.slug, 60), waiting_for: wait }, 'Reported done before ' + wait.map((k) => dfs.find((d) => d.key === k)?.title || k).join(', ')) } continue }
         const at = /^\d{4}-\d{2}-\d{2}/.test(S(c?.completed_at, 30)) ? new Date(S(c.completed_at, 30)).toISOString() : now
         await putStep(db, got.j.journey_id, key, { state: 'complete', evidence: { verified: { at: now, by: 'training-platform' }, course: S(c?.slug, 60), title: S(c?.title, 120), status: S(c?.status, 20), completed_at: at, source: 'Training Platform report' }, completed_by: 'training-platform', completed_by_name: 'The Training Platform (reported)', completed_at: at, blocked_reason: null })
-        await event(db, got.j.journey_id, key, { email: 'training-platform', name: 'The Training Platform' }, 'verified', { course: S(c?.slug, 60), completed_at: at, reported: true }); applied.push(key)
+        await event(db, got.j.journey_id, key, { email: 'training-platform', name: 'The Training Platform' }, 'verified', { course: S(c?.slug, 60), completed_at: at, reported: true }); applied.push(key); state[key] = 'complete'
       }
       if (!got.j.axiscare_caregiver_id) await db.from('client_journey').update({ axiscare_caregiver_id: axId, updated_at: now }).eq('journey_id', got.j.journey_id)
-      return json({ ok: true, journey: true, applied })
+      return json({ ok: true, journey: true, applied, held })
     }
     const who = await requireStaff(db, req, OFFICE_ROLES)
     if (!who.ok) return json({ error: who.error }, who.status)
@@ -457,13 +540,13 @@ Deno.serve(async (req) => {
       const rows = []
       for (const j of js ?? []) {
         const { data: steps } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
-        const f = await facts(db, j, null); const v = R.compute(dfs, j, steps ?? [], ctxFor(f, st)); const a = approveState(v, f, st, who, P)
+        const f = await facts(db, j, null); const v = R.compute(dfs, j, steps ?? [], ctxFor(f, st)); const a = approveState(v, f, st, who, P, dfs, j)
         rows.push({ journey_id: j.journey_id, offer_id: j.offer_id, name: j.client_name, status: j.status, stage: v.stageLabel, next: v.next ? { key: v.next.key, title: v.next.def.title, owner: v.next.owner, attention: v.next.attention || null } : null, complete: v.complete,
           approved_to_work: a.approved, ready_for_final: a.ready_for_final, axiscare: a.axiscare.state, locked: a.locked, blocked: (v.rows || []).filter((r: Any) => r.status === 'blocked').map((r: Any) => r.def.title) })
       }
       void T; return json({ ok: true, rows, may_approve_work: mayApprove(P, 'work', { person_id: who.person_id, roles: who.roles || [], email: who.email }) })
     }
-    const answerFor = async (jid: string, f: Facts) => { const fresh = await load(db, { journey_id: jid }); const v = R.compute(dfs, fresh!.j, fresh!.steps, ctxFor(f, st)); const { data: ev } = await db.from('client_journey_event').select('*').eq('journey_id', jid).order('at', { ascending: false }).limit(200); const may: Record<string, boolean> = {}; for (const r of v.rows) may[r.key] = mayDo(r.def, who, P); return json({ ok: true, journey: fresh!.j, steps: fresh!.steps, view: v, events: ev ?? [], may, is_owner: isOwner, may_export: mayExport, approve: approveState(v, f, st, who, P), facts: { lived_outside_mo: f.lived_outside_mo ?? null, claims_cna_or_hha: f.claims_cna_or_hha ?? null, drives_clients: f.drives_clients ?? null, dates: dates(f) } }) }
+    const answerFor = async (jid: string, f: Facts) => { const fresh = await load(db, { journey_id: jid }); const v = R.compute(dfs, fresh!.j, fresh!.steps, ctxFor(f, st)); const { data: ev } = await db.from('client_journey_event').select('*').eq('journey_id', jid).order('at', { ascending: false }).limit(200); const may: Record<string, boolean> = {}; for (const r of v.rows) may[r.key] = mayDo(r.def, who, P); return json({ ok: true, journey: fresh!.j, steps: fresh!.steps, view: v, events: ev ?? [], may, is_owner: isOwner, may_export: mayExport, approve: approveState(v, f, st, who, P, dfs, fresh!.j), facts: { lived_outside_mo: f.lived_outside_mo ?? null, claims_cna_or_hha: f.claims_cna_or_hha ?? null, drives_clients: f.drives_clients ?? null, dates: dates(f), rights: rightsState(f) } }) }   /* 2026-10-13: participant rights, signed and explained */
     if (action === 'get') {
       const got = await load(db, b); if (!got) return json({ ok: true, journey: null })
       const f = await facts(db, got.j, trn())
@@ -475,10 +558,15 @@ Deno.serve(async (req) => {
     /* SLICE 5: the owner's press */
     if (action === 'approve_work') {
       if (!mayApprove(P, 'work', { person_id: who.person_id, roles: who.roles || [], email: who.email })) return json({ error: 'Only a person on the Approve to Work list (owners) may approve to work.' }, 403)
-      const a = approveState(view, f, st, who, P)
+      /* GO-LIVE GATE (2026-10-13): the press re-checks at press time, on the server: the records are verified again first
+         (a result recorded since the last sweep counts; a row that lost its basis does not), then every required row. */
+      await applyVerdicts(db, got.j, got.steps, f, now, dfs, ctxFor(f, st))
+      const fresh = await load(db, { journey_id: got.j.journey_id }); const view2 = R.compute(dfs, fresh!.j, fresh!.steps, ctxFor(f, st))
+      const a = approveState(view2, f, st, who, P, dfs, got.j)
       if (a.approved) return json({ error: 'Already approved to work' + (a.axiscare.state === 'failed' ? '; the AxisCare update failed. Press Retry.' : '.') }, 409)
-      if (a.blocked.length) return json({ error: 'Not yet: ' + a.blocked.join('; ') + ' is blocked. Nothing was approved.' }, 409)
-      const aw = view.rows.find((r: Any) => r.key === WORK_KEY)
+      if (a.blocked.length) return json({ error: 'Not yet: ' + a.blocked.join('; ') + ' is blocked. Nothing was approved.', missing: a.missing }, 409)
+      if (a.missing.length) return json({ error: 'Not yet. These required steps are not complete: ' + a.missing.join('; ') + '. Nothing was approved.', missing: a.missing }, 409)
+      const aw = view2.rows.find((r: Any) => r.key === WORK_KEY)
       if (!aw) return json({ error: 'Approve to Work does not apply to this card.' }, 400)
       if (!['ready', 'attention'].includes(aw.status)) return json({ error: 'Not yet: ' + (aw.why || 'earlier requirements first') + '. Nothing was approved.' }, 409)
       await putStep(db, got.j.journey_id, WORK_KEY, { state: 'complete', evidence: { confirmed: { by: who.email, name: who.name, at: now, list: 'work' }, level_of_care: a.level_of_care.level }, completed_by: who.email, completed_by_name: who.name, completed_at: now })
@@ -506,7 +594,7 @@ Deno.serve(async (req) => {
       return json({ ok: true, which, name: got.j.client_name, rows, note: rows.length ? 'From their signed Step 1 answers. Type these on the AxisCare screen in this order, then confirm the row.' : 'Their Step 1 holds no answers for this sheet yet.' })
     }
     if (action === 'retry_axiscare') {
-      const a = approveState(view, f, st, who, P)
+      const a = approveState(view, f, st, who, P, dfs, got.j)
       if (!a.approved) return json({ error: 'Approve to Work first.' }, 409)
       let r: Any
       if (a.axiscare.state === 'confirmed') {

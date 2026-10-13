@@ -57,7 +57,8 @@ function table(name) {
   }
   return { select: () => q('select'), insert: (p) => q('insert', p), upsert: (p) => q('upsert', p), update: (p) => q('update', p) }
 }
-const storage = { from: () => ({ upload: async (p, bytes, o) => { if (STORE[p] && !o?.upsert) return { error: { message: 'exists' } }; STORE[p] = bytes; return { data: { path: p }, error: null } }, createSignedUrl: async (p) => ({ data: STORE[p] ? { signedUrl: 'https://signed/' + p } : null, error: STORE[p] ? null : { message: 'no' } }) }) }
+const UPLOADS = new Set()
+const storage = { from: (bucket) => ({ createSignedUploadUrl: async (p) => { UPLOADS.add(bucket + ':' + p); return { data: { token: 't', signedUrl: 'https://upload/' + p }, error: null } }, list: async (dir, o) => ({ data: [...UPLOADS].filter((x) => x.startsWith(bucket + ':' + dir + '/')).map((x) => ({ name: x.slice((bucket + ':' + dir + '/').length) })).filter((x) => !o?.search || x.name === o.search), error: null }), upload: async (p, bytes, o) => { if (STORE[p] && !o?.upsert) return { error: { message: 'exists' } }; STORE[p] = bytes; return { data: { path: p }, error: null } }, createSignedUrl: async (p) => ({ data: STORE[p] ? { signedUrl: 'https://signed/' + p } : null, error: STORE[p] ? null : { message: 'no' } }) }) }
 DB.reference_requests = []; DB.client_journey = []; DB.client_journey_event = []
 /* the database doors Step 1 uses, as the installed SQL behaves: the record is made once per offer, the landing fills blanks */
 let NEXT_ID = 900
@@ -74,8 +75,6 @@ const STEP1 = await load('step1-sign'), REFS = await load('reference-tasks')
 const post = async (h, body) => { const r = await h(new Request('http://x', { method: 'POST', headers: { 'Content-Type': 'application/json', 'user-agent': 'ScenarioPhone' }, body: JSON.stringify(body) })); let j = {}; try { j = await r.json() } catch {} return { status: r.status, j } }
 
 /* ───── the same complete answers for every made-up applicant; each scenario changes only what it is about ───── */
-const driverYes = D.FORMS.vehicle.sections.at(-1).items[0].options[0]
-const proofLater = D.FORMS.vehicle.sections[0].items.find((i) => i.id === 'insurance_proof').options[1]
 const week = { Monday: { Morning: true }, Tuesday: { Morning: true }, Wednesday: { Afternoon: true }, Thursday: { Afternoon: true }, Friday: { Morning: true }, Saturday: { 'Not available': true }, Sunday: { 'Not available': true } }
 const base = (o = {}) => ({
   screen2: { preferred_name: o.first, lived_outside_mo: 'no', hs_name: 'Nixa High', cna: 'no', hha: 'no', moving_violations: 'no', license_suspended: 'no', convicted: 'no' },
@@ -85,7 +84,7 @@ const base = (o = {}) => ({
   screen6: { windows: week, hours_ideal: 30, hours_min: 20, hours_max: 40, shift_prefs: ['Morning shifts'], max_miles: '20 miles', open_shift_texts: 'yes', text_consent: 'yes' },
   screen7: { level1: 'Yes', level2: 'Yes', level3: 'Not at this time', specialties: Object.fromEntries(D.SPECIALTIES.map((x) => [x, (o.notNow || []).includes(x) ? 'Not at this time' : 'Yes'])),
     matching_facts: Object.fromEntries(D.MATCHING_FACTS.map((m) => [m.label, (o.notNow || []).includes(m.label) ? 'Not at this time' : 'Yes'])), languages: ['English'], experience: o.experience || '2 to 5 years', preferred_levels: 'Any level I\'m qualified for', ...(o.exclusions ? { exclusions: o.exclusions } : {}) },
-  screen8: { has_license: 'yes', has_insurance: 'yes', has_transport: 'yes', insurance_proof: proofLater, driver_ack: driverYes, license_state: 'MO', license_expires: '2029-01-01' },
+  screen8: { transport_willing: 'yes', license_state: 'MO', license_expires: '2029-01-01', insurer: 'Practice Mutual', insurance_expires: '2027-06-30' },
 })
 const job = (company, sup, tasks, x = {}) => ({ company, city_state: 'Springfield, MO', role: 'Caregiver', from: 'March 2019', to: 'June 2023', supervisor: sup, phone: '417-555-0181', may_contact: 'yes', reason_leaving: 'Moved', did_care: 'yes', tasks, refresher: ['none'], ...x })
 const R = (name, company, may = 'yes', x = {}) => ({ name, company, role: 'Supervisor', phone: '417-555-0181', may_contact: may, ...x }), P = (name, rel, may = 'yes') => ({ name, relationship: rel, email: name.split(' ')[0].toLowerCase() + '@practice.invalid', may_contact: may })
@@ -128,13 +127,24 @@ for (const [n, sc] of S.entries()) {
   await step({ action: 'sign', form: 'employee_application', typed_name: name, consent: true })
   await step({ action: 'save', screen: '4', answers: Object.fromEntries(Object.entries(A.screen4).filter(([, v]) => v !== undefined)) })
   await step({ action: 'sign', form: 'reference_consent', typed_name: name, consent: true })
-  await step({ action: 'sign', form: 'fcra_disclosure', typed_name: name, consent: true })
+  await step({ action: 'save', screen: '5a', answers: { edl_listed: 'no', fcsr_listed: 'No' } }); await step({ action: 'sign', form: 'fcra_disclosure', typed_name: name, consent: true })
   await step({ action: 'identity', ssn: '987-65-4321', ssn2: '987-65-4321', dob: '1990-05-05' })
   await step({ action: 'save', screen: '5b', answers: A.screen5b }); await step({ action: 'sign', form: 'edl_fcsr_consent', typed_name: name, consent: true })
   await step({ action: 'save', screen: '6', answers: A.screen6 }); await step({ action: 'sign', form: 'availability', typed_name: name, consent: true, initials: sc.first.slice(0, 1) + 'P' })
   await step({ action: 'save', screen: '7', answers: A.screen7 }); await step({ action: 'sign', form: 'experience', typed_name: name, consent: true })
-  await step({ action: 'identity', license_number: 'P1234567', license_state: 'MO', license_expires: '2029-01-01' })
-  await step({ action: 'save', screen: '8', answers: A.screen8 }); const last = await step({ action: 'sign', form: 'vehicle', typed_name: name, consent: true })
+  /* 2026-10-13: every other practice hire says No to transporting clients (the Non-Driver Agreement); the rest drive (pictures + license) */
+  let last
+  if (S.indexOf(sc) % 2) { await step({ action: 'save', screen: '8', answers: { transport_willing: 'no' } }); last = await step({ action: 'sign', form: 'non_driver', typed_name: name, consent: true }) }
+  else {
+    await step({ action: 'identity', license_number: 'P1234567', license_state: 'MO', license_expires: '2029-01-01' })
+    await step({ action: 'save', screen: '8', answers: A.screen8 })
+    for (const [item, ext] of [['license_front', 'jpg'], ['license_back', 'jpg'], ['insurance_doc', 'pdf']]) { const u = await step({ action: 'upload_url', item, ext }); await step({ action: 'uploaded', item, path: u.j.path }) }
+    last = await step({ action: 'sign', form: 'vehicle', typed_name: name, consent: true })
+  }
+  /* 2026-10-13: the forms moved from Viventium: the agreement with its two initials, then the rest */
+  const ini = name.split(' ').map((x) => x[0]).join('').slice(0, 4)
+  await step({ action: 'save', screen: '10', answers: { ea_arbitration_initials: ini, ea_class_waiver_initials: ini } })
+  for (const f of ['employment_agreement', 'medication_policy', 'code_of_ethics', 'hipaa_privacy', 'client_rights']) last = await step({ action: 'sign', form: f, typed_name: name, consent: true })
   ck(`${sc.key}: every Step 1 form signs in order through the real server`, !errs.length && last.j.done === true, errs)
   const cand = DB.app_data.find((x) => x.key === 'candidates').data.find((c) => c.offer_id === OID)
   ck(`${sc.key}: Step 1 complete puts them into Background & References once, with the practice mark on their Step 1`, cand && DB.step1_forms.find((f) => f.offer_id === OID).practice === true && DB.app_data.find((x) => x.key === 'candidates').data.filter((c) => c.offer_id === OID).length === 1, cand)

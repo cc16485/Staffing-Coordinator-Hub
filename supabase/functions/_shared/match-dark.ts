@@ -5,7 +5,8 @@
 // availability, Do Not Return, the client fact record, the readiness lock, the call-off history), it runs the shared rule
 // (match-rules.js, CCMatch) and the eligibility rules (CCElig) and returns the report. It reads nothing and writes nothing:
 // the job does both, and writes only the report. Her safe defaults, all built in:
-//   • anything unknown never counts in someone's favour (cleared to drive unknown = one more step; a Do Not Return name
+//   • anything unknown never counts in someone's favour (no driver record yet = not for a visit that needs driving, Driver
+//     Compliance 2026-10-13, the roster fields the mirror keeps; a Do Not Return name
 //     that does not match the roster exactly is listed, never assumed clear; no Journey = incomplete)
 //   • free-text restrictions are shown as said, never enforced (there are no structured ones yet)
 //   • the replay judges the past with today's records, and says so
@@ -21,7 +22,7 @@ const DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
 
 export type DarkIn = { now: string; M: Any; E: Any; levelOf: (classes: Any) => number | null; payerOf: (classes: Any) => string | null
   visits: Any[]; axCaregivers: Any[]; axClients: Any[]; roster: Any[]; overlay: Any[]; availability: Any[]; dnr: Any[]
-  factsByClient: Record<string, Any[] | null>; step1ByAx: Record<string, Any>; lock: Any; cases: Any[]; previous?: Any; fingerprints?: Record<string, string> }
+  factsByClient: Record<string, Any[] | null>; step1ByAx: Record<string, Any>; lock: Any; cases: Any[]; previous?: Any; fingerprints?: Record<string, string>; driveGate?: boolean }
 
 /** the best evidence wins between the skills record and Step 1 (never a downgrade, never an upgrade) */
 function mergeSkills(a: Record<string, Any>, b: Record<string, Any>) {
@@ -29,6 +30,7 @@ function mergeSkills(a: Record<string, Any>, b: Record<string, Any>) {
   for (const [k, v] of Object.entries(b || {})) { const w = out[k]; if (!w || STAND.indexOf(v.standing) > STAND.indexOf(w.standing)) out[k] = { ...v, refresher: !!(v.refresher || w?.refresher) }; else if (v.refresher) out[k] = { ...w, refresher: true } }
   return out
 }
+const centralDay = (iso: string) => new Date(iso).toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
 function slotOf(t: string) { const h = Number(t.slice(0, 2)); if (!Number.isFinite(h)) return null; for (const [k, [a, z]] of Object.entries(WIN)) if ((h >= a && h < z) || (h + 24 >= a && h + 24 < z)) return k; return null }
 
 export function buildDarkReport(x: DarkIn): Any {
@@ -52,7 +54,9 @@ export function buildDarkReport(x: DarkIn): Any {
     else if (x.lock.axis?.has?.(id)) { cleared = false; why = 'awaiting Approve to Work' }
     const said = S(o?.exclusions_said, 200); if (said && !gaps.restrictions_said.includes(id)) gaps.restrictions_said.push(id)
     const c = { name: `${S(g.firstName, 40)} ${S(g.lastName, 40)}`.trim() || (r ? `${S(r.first, 40)} ${S(r.last, 40)}`.trim() : id), axiscare_id: id, cleared, cleared_reason: why,
-      level: x.levelOf(g.classes) || 1, training: { dementia: !!r?.alz_date }, cleared_to_drive: null, gender: M.axisGender(g.gender),
+      level: x.levelOf(g.classes) || 1, training: { dementia: !!r?.alz_date }, gender: M.axisGender(g.gender),
+      /* Driver Compliance (2026-10-13): the roster's driver fields, read by the rule's transportEligible (match-rules 1.2.0) */
+      dl_status: r?.dl_status ?? null, cleared_to_drive: typeof r?.cleared_to_drive === 'boolean' ? r.cleared_to_drive : null, dl_expires: r?.dl_expires ?? null, auto_ins_expires: r?.auto_ins_expires ?? null,
       skills: mergeSkills(M.fromOverlay(o), M.fromStep1(x.step1ByAx[id])), willing: of.willing, spanish: of.spanish, restrictions: [], said, warnings }
     cgCache.set(id, c); return c
   }
@@ -90,8 +94,8 @@ export function buildDarkReport(x: DarkIn): Any {
     if (v.caregiver?.id == null) { open++; continue }
     const cgId = String(v.caregiver.id), cl = clientOf(String(v.client.id)), base = cgOf(cgId)
     const fr = freeFor(cgId, v), cg = { ...base, availability: { free: fr.free, reason: fr.reason } }
-    const r = M.evaluate(cl, cg)
-    if (cl.needs?.transportation?.value === 'required') gaps.drive_unknown++
+    const r = M.evaluate(cl, cg, { today: centralDay(x.now), driveGate: x.driveGate === true })
+    if (cl.needs?.transportation?.value === 'required' && !S(base.dl_status)) gaps.drive_unknown++   // needs driving, caregiver has no driver record yet
     const warnings = [...r.warnings, ...base.warnings, ...(fr.note ? [fr.note] : [])]
     rows.push({ date: day(v).slice(0, 10), time: day(v).slice(11, 16) + (end(v) ? ' to ' + end(v).slice(11, 16) : ''), visit_id: v.id ?? null, client: cl.name, client_id: cl.id, caregiver: base.name, caregiver_id: cgId,
       group: r.group, reason: r.reason, steps: r.steps.map((s2: Any) => s2.why), warnings, said: base.said || null })
@@ -110,7 +114,7 @@ export function buildDarkReport(x: DarkIn): Any {
     const coverId = S(k.axiscare_assignment?.caregiver_id) || (k.covered_by ? idOfName(k.covered_by) : null)
     if (k.covered_by && !coverId) gaps.covered_by_unmatched++
     const asked = rowsOf(k.asked).filter((a: Any) => a?.axiscare_id)
-    const judge = (id: string) => M.evaluate(cl, { ...cgOf(id), availability: { free: true } })
+    const judge = (id: string) => M.evaluate(cl, { ...cgOf(id), availability: { free: true } }, { today: centralDay(x.now), driveGate: x.driveGate === true })
     const cov = coverId ? judge(coverId) : null
     const askedRows = asked.map((a: Any) => ({ name: S(a.name, 80), group: judge(String(a.axiscare_id)).group }))
     replay.push({ date: S(k.shift_date, 10), client: cl.name, covered_by: k.covered_by ? S(k.covered_by, 80) : null, covered_group: cov?.group || null, covered_reason: cov?.reason || '', status: S(k.status, 30),
@@ -121,6 +125,6 @@ export function buildDarkReport(x: DarkIn): Any {
   const hist = [...rowsOf(x.previous?.history), { at: x.now, ...counts, clients_incomplete: clients.incomplete, clients_flagged: clients.flagged }].slice(-30)
   return { version: 1, at: x.now, rule_version: M.VERSION, fingerprints: x.fingerprints || {}, window: { from: x.now.slice(0, 10), days: 14 }, counts, clients, rows, replay: { cases: replay.length, covered_ready: replay.filter((r) => r.covered_group === 'ready').length, rows: replay.slice(0, 200) },
     gaps: { ...gaps, restrictions_said: gaps.restrictions_said.length, no_journey_clients: gaps.no_journey_clients.length },
-    notes: ['A report only: no visit, schedule, caregiver, client, card or text was touched.', 'The replay judges past call-offs with today\'s records.', 'Restrictions written in words are shown, never enforced; cleared to drive is not recorded yet.', 'A caregiver with no availability on file is assumed available any time (24 hours).'],
+    notes: ['A report only: no visit, schedule, caregiver, client, card or text was touched.', 'The replay judges past call-offs with today\'s records.', 'Restrictions written in words are shown, never enforced. Driving a client counts only an Approved Driver with a current license and insurance (Driver Compliance)' + (x.driveGate === true ? '.' : ', shown as "Driver check (not enforced yet)" until its Admin switch is on.'), 'A caregiver with no availability on file is assumed available any time (24 hours).'],
     history: hist }
 }

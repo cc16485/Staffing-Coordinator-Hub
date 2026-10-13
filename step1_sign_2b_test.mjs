@@ -26,7 +26,7 @@ globalThis.fetch = async (url, o = {}) => {
   throw new Error('unexpected fetch ' + u)
 }
 /* ── a tiny table store with the query shapes the function uses ── */
-let DB = { step1_forms: [], step1_identity: [], job_applicants: [], document_access_log: [], auth_identities: [], persons: [], entity_memberships: [], staff_roles: [], app_data: [] }
+let DB = { step1_forms: [], step1_identity: [], job_applicants: [], document_access_log: [], auth_identities: [], persons: [], entity_memberships: [], staff_roles: [], app_data: [], driver_compliance: [], driver_document: [], driver_compliance_event: [] }
 const STORE = {}
 const getPath = (r, p) => p.split('->').reduce((a, k) => a == null ? undefined : a[k], r)
 function table(name) {
@@ -57,7 +57,8 @@ function table(name) {
   }
   return { select: () => q('select'), insert: (p) => q('insert', p), upsert: (p) => q('upsert', p), update: (p) => q('update', p) }
 }
-const storage = { from: () => ({ upload: async (p, bytes, o) => { if (STORE[p] && !o?.upsert) return { error: { message: 'exists' } }; STORE[p] = bytes; return { data: { path: p }, error: null } }, createSignedUrl: async (p) => ({ data: STORE[p] ? { signedUrl: 'https://signed/' + p } : null, error: STORE[p] ? null : { message: 'no' } }) }) }
+const UPLOADS = new Set(); globalThis.UPLOADS = UPLOADS
+const storage = { from: (bucket) => ({ createSignedUploadUrl: async (p) => ({ data: { token: 'tok-' + p, signedUrl: 'https://upload/' + bucket + '/' + p }, error: null }), list: async (dir, o) => ({ data: [...UPLOADS].filter((x) => x.startsWith(bucket + ':' + dir + '/')).map((x) => ({ name: x.slice((bucket + ':' + dir + '/').length) })).filter((x) => !o?.search || x.name === o.search), error: null }), upload: async (p, bytes, o) => { if (STORE[p] && !o?.upsert) return { error: { message: 'exists' } }; STORE[p] = bytes; return { data: { path: p }, error: null } }, createSignedUrl: async (p) => ({ data: STORE[p] ? { signedUrl: 'https://signed/' + p } : null, error: STORE[p] ? null : { message: 'no' } }) }) }
 const RPCS = []
 globalThis.__fakeCreateClient = () => ({ from: table, storage, rpc: async (name, args) => { RPCS.push({ name, args })
   /* STEP 1 BEFORE CHECKS: NO_CAND = nobody in Background & References yet (the new rule); the door then makes the record */
@@ -94,12 +95,18 @@ OFFERS[OID] = base()
 DB.job_applicants = [{ id: 'a1', email: 'AVA@example.com', phone: '417-555-0101', lived_outside_mo: true, has_license: true, has_insurance: false, experience_years: 3, availability: 'Weekday mornings', created_at: '2026-09-01', post_interview: { cats: 'yes', dogs: 'no', client_smokes: 'no', drive_clients: 'yes', skills: { dementia: 'some' }, travel_areas: 'Springfield and Nixa' } }]
 r = await call({ action: 'view', ...link })
 if (process.env.DUMP_VIEW) (await import('fs')).writeFileSync(process.env.DUMP_VIEW, JSON.stringify(r.j))   /* for the Step 1 page look */
-ck('view: ok, seven forms with fingerprints, test mode, screen 1, nothing signed', r.status === 200 && r.j.forms.length === 7 && r.j.forms.every((f) => /^[0-9a-f]{64}$/.test(f.fingerprint) && f.approved_for_real === false) && r.j.test_mode === true && r.j.current_screen === '1' && r.j.signed_count === 0, r.j && { s: r.status, e: r.j.error })
+ck('view: ok, thirteen forms (incl. the Driver and Non-Driver Agreements and the five from Viventium) with fingerprints, test mode, screen 1, nothing signed', r.status === 200 && r.j.forms.length === 13 && r.j.forms.every((f) => /^[0-9a-f]{64}$/.test(f.fingerprint) && f.approved_for_real === false) && r.j.test_mode === true && r.j.current_screen === '1' && r.j.signed_count === 0, r.j && { s: r.status, e: r.j.error })
 ck('view: the record exists once and the trail has step1_started', DB.step1_forms.length === 1 && EVENTS.filter((e) => e.kind === 'step1_started').length === 1)
 ck('view: prefill from the application (lived outside MO, license, insurance, 2 to 5 years) and the interview (cats yes, dogs not, driving yes, dementia specialties), each with its source', r.j.prefill.lived_outside_mo?.value === 'yes' && r.j.prefill.has_insurance?.value === 'no' && r.j.prefill.experience?.value === '2 to 5 years' && r.j.prefill.experience.from === 'your application' && r.j.prefill.matching_facts?.value['Homes with cats'] === 'Yes' && r.j.prefill.matching_facts.value['Homes with dogs'] === 'Not at this time' && r.j.prefill.specialties?.value["Alzheimer's disease"] === 'Yes' && r.j.hints.travel === 'Springfield and Nixa', r.j.prefill)
 await call({ action: 'view', ...link })
 ck('a second view makes no second record and no second start event', DB.step1_forms.length === 1 && EVENTS.filter((e) => e.kind === 'step1_started').length === 1)
 
+/* 2026-10-13: the forms moved from Viventium (after the driving screen): the agreement with its two initials, then the rest */
+const REST = ['employment_agreement', 'medication_policy', 'code_of_ethics', 'hipaa_privacy', 'client_rights']
+async function signRest(lk, name) {
+  await call({ action: 'save', ...lk, screen: '10', answers: { ea_arbitration_initials: name.split(' ').map((x) => x[0]).join(''), ea_class_waiver_initials: name.split(' ').map((x) => x[0]).join('') } })
+  let last = null; for (const f of REST) last = await call({ action: 'sign', ...lk, form: f, typed_name: name, consent: true }); return last
+}
 /* ═══ begin, save ═══ */
 r = await call({ action: 'sign', ...link, form: 'employee_application', typed_name: 'Ava Lee', consent: true })
 ck('no signing before the e-sign consent on screen 1', r.status === 409 && /agree to sign electronically/.test(r.j.error), r)
@@ -112,6 +119,13 @@ r = await call({ action: 'save', ...link, screen: '3', answers: { states_lived: 
 ck('save: a job lands as a card with its tasks', r.status === 200 && DB.step1_forms[0].answers.jobs.length === 1 && DB.step1_forms[0].answers.jobs[0].supervisor === 'Jane Boss' && DB.step1_forms[0].answers.jobs[0].tasks.join() === 'bathing,hoyer_lift', r)
 
 /* ═══ sign, in order, with the required answers ═══ */
+/* 2026-10-13: wording not yet approved for real: a real applicant cannot sign it (nothing written) */
+{ const pre = JSON.stringify(DB.step1_forms)
+  r = await call({ action: 'sign', ...link, form: 'employee_application', typed_name: 'Ava Lee', consent: true })
+  ck('a real applicant cannot sign a form whose wording is not approved for real (409, nothing written)', r.status === 409 && r.j.not_approved === true && JSON.stringify(DB.step1_forms) === pre, r)
+  r = await call({ action: 'view', ...link }); ck('before approval the real view keeps the practice banner flag (test_mode true)', r.j.test_mode === true, r.j.test_mode)
+  for (const k of D.FORM_ORDER) D.APPROVED_FOR_REAL[k] = D.FORMS[k].version
+  r = await call({ action: 'view', ...link }); ck('once every form is approved for real, a real view has no practice banner (test_mode false)', r.j.test_mode === false, r.j.test_mode) }
 r = await call({ action: 'sign', ...link, form: 'reference_consent', typed_name: 'Ava Lee', consent: true })
 ck('forms go in order: the references cannot be signed before the application', r.status === 409 && /Employee Application first/.test(r.j.error), r)
 r = await call({ action: 'sign', ...link, form: 'employee_application', typed_name: 'Ava', consent: true })
@@ -128,7 +142,9 @@ r = await call({ action: 'sign', ...link, form: 'reference_consent', typed_name:
 ck('references: missing answers named (2 professional, 2 personal)', r.status === 400 && /2 professional references/.test(r.j.error) && /2 personal references/.test(r.j.error), r)
 await call({ action: 'save', ...link, screen: '4', answers: { professional_refs: [{ name: 'Jane Boss', company: 'Home Helpers', role: 'Supervisor', phone: '417-555-0202', email: 'jane@hh.com', may_contact: 'yes' }, { name: 'Tom Lead', company: 'Visiting Angels', role: 'Manager', phone: '417-555-0303', may_contact: 'yes' }], personal_refs: [{ name: 'Sue Friend', relationship: 'Friend', phone: '417-555-0404', may_contact: 'yes' }, { name: 'Bob Neighbor', relationship: 'Neighbor', phone: '417-555-0505', may_contact: 'yes' }] } })
 r = await call({ action: 'sign', ...link, form: 'reference_consent', typed_name: 'Ava Lee', consent: true }); ck('references signed once the four are there', r.status === 200, r)
-r = await call({ action: 'sign', ...link, form: 'fcra_disclosure', typed_name: 'Ava Lee', consent: true }); ck('the FCRA disclosure signs on its own (nothing else on it)', r.status === 200, r)
+r = await call({ action: 'sign', ...link, form: 'fcra_disclosure', typed_name: 'Ava Lee', consent: true }); ck('the permission form refuses without Missouri\'s two required answers (EDL, FCSR)', r.status === 400 && /Employee Disqualification List/.test(r.j.error) && /Family Care Safety Registry/.test(r.j.error), r)
+r = await call({ action: 'save', ...link, screen: '5a', answers: { edl_listed: 'no', fcsr_listed: 'No' } })
+r = await call({ action: 'sign', ...link, form: 'fcra_disclosure', typed_name: 'Ava Lee', consent: true }); ck('the permission form signs once the criminal-history, EDL and FCSR answers are given', r.status === 200, r)
 
 /* ═══ identity: sealed, never in answers, last four only ═══ */
 r = await call({ action: 'sign', ...link, form: 'edl_fcsr_consent', typed_name: 'Ava Lee', consent: true })
@@ -172,17 +188,41 @@ r = await call({ action: 'sign', ...link, form: 'experience', typed_name: 'Ava L
 ck('one row of each yes/no grid answered: refused, naming the rows left', r.status === 400 && /Client population: answer every row \(Other dementias/.test(r.j.error) && /Comfortable with: answer every row/.test(r.j.error), r)
 await call({ action: 'save', ...link, screen: '7', answers: { specialties: Object.fromEntries(D.SPECIALTIES.map((x, i) => [x, i % 2 ? 'Not at this time' : 'Yes'])), matching_facts: Object.fromEntries(D.MATCHING_FACTS.map((m, i) => [m.label, i % 2 ? 'Yes' : 'Not at this time'])) } })
 r = await call({ action: 'sign', ...link, form: 'experience', typed_name: 'Ava Lee', consent: true }); ck('experience signs', r.status === 200, r)
-const driverYes = D.FORMS.vehicle.sections.at(-1).items[0].options[0]
-await call({ action: 'save', ...link, screen: '8', answers: { has_license: 'yes', has_insurance: 'yes', has_transport: 'yes', insurance_proof: D.FORMS.vehicle.sections[0].items.find((i) => i.id === 'insurance_proof').options[1], driver_ack: driverYes, license_state: 'MO', license_expires: '2029-01-01' } })
+/* 2026-10-13: the driving screen asks first, then the Driver Agreement (with photos) or the Non-Driver Agreement */
+ck('six forms signed and the transport question not answered yet: Step 1 is NOT complete', !DB.step1_forms[0].completed_at, DB.step1_forms[0].completed_at)
 r = await call({ action: 'sign', ...link, form: 'vehicle', typed_name: 'Ava Lee', consent: true })
-ck('a driver who asks to transport clients must have the license number on file first', r.status === 400 && /license number/.test(r.j.error), r)
+ck('the driver agreement cannot be signed before the transport question is answered', r.status === 409 && /transport clients/.test(r.j.error), r)
+r = await call({ action: 'upload_url', ...link, item: 'license_front', ext: 'jpg' })
+ck('no picture before the question either', r.status === 409, r)
+r = await call({ action: 'save', ...link, screen: '8', answers: { transport_willing: 'maybe' } }); ck('the question takes only yes or no', r.j.rejected.includes('transport_willing'), r.j)
+await call({ action: 'save', ...link, screen: '8', answers: { transport_willing: 'yes', license_state: 'MO', license_expires: '2029-01-01', insurer: 'Practice Mutual', insurance_expires: '2027-06-30', license_front: { path: 'offer/x/sneaky.jpg' } } })
+ck('a picture can never be set by a save (only through the upload)', !DB.step1_forms[0].answers.license_front, DB.step1_forms[0].answers.license_front)
+r = await call({ action: 'view', ...link }); ck('with Yes, 12 forms to sign (the Non-Driver Agreement does not apply); the deciding question is sent to the page', r.j.form_count === 12 && r.j.deciding.transport_willing.options.length === 2, [r.j.form_count, r.j.deciding])
+r = await call({ action: 'sign', ...link, form: 'non_driver', typed_name: 'Ava Lee', consent: true }); ck('a driver cannot sign the Non-Driver Agreement', r.status === 409, r)
+r = await call({ action: 'sign', ...link, form: 'vehicle', typed_name: 'Ava Lee', consent: true })
+ck('the driver agreement needs both license pictures, the insurance proof and the license number', r.status === 400 && /license, front/.test(r.j.error) && /license, back/.test(r.j.error) && /Proof of current auto insurance/.test(r.j.error) && /license number/.test(r.j.error), r)
+r = await call({ action: 'upload_url', ...link, item: 'license_front', ext: 'exe' }); ck('only photos or PDFs', r.status === 400, r)
+for (const [item, ext] of [['license_front', 'jpg'], ['license_back', 'heic'], ['insurance_doc', 'pdf']]) {
+  r = await call({ action: 'upload_url', ...link, item, ext })
+  ck('upload link for ' + item + ' points into the private driver store under this offer', r.status === 200 && r.j.path.startsWith(`offer/${OID}/${item}-`) && r.j.signed_url.startsWith('https://upload/driver-docs/'), r)
+  const path = r.j.path
+  r = await call({ action: 'uploaded', ...link, item, path }); if (item === 'license_front') ck('a picture that never arrived is refused', r.status === 409, r)
+  UPLOADS.add('driver-docs:' + path)
+  r = await call({ action: 'uploaded', ...link, item, path: `offer/${OID}/license_back-1.jpg/../x` }); if (item === 'license_front') ck('a path that is not that item is refused', r.status === 400, r)
+  r = await call({ action: 'uploaded', ...link, item, path }); ck(item + ' recorded once it arrived', r.status === 200 && DB.step1_forms[0].answers[item]?.path === path, r)
+}
 r = await call({ action: 'identity', ...link, license_number: 'M123 456 789', license_state: 'MO', license_expires: '2029-01-01' })
 ck('the license number is sealed with its last four', r.status === 200 && r.j.identity.license === 'ending 6789' && DB.step1_identity[0].license_sealed.startsWith('v1.'), r)
 r = await call({ action: 'sign', ...link, form: 'vehicle', typed_name: 'Ava Lee', consent: true })
-ck('the last form signs: Step 1 done, the trail says so, the offer record carries step1_done_at, 7 of 7', r.status === 200 && r.j.done === true && r.j.signed_count === 7 && DB.step1_forms[0].completed_at && EVENTS.some((e) => e.kind === 'step1_done') && OFFERS[OID].step1_done_at && Object.keys(STORE).length === 7, r)
-r = await call({ action: 'copies', ...link }); ck('copies: seven short-lived links', r.status === 200 && Object.keys(r.j.copies).length === 7, r)
-r = await call({ action: 'view', ...link }); ck('view after: completed, screen 9, seven signatures with name and version only', r.j.completed_at && r.j.current_screen === '9' && Object.keys(r.j.signatures).length === 7 && r.j.signatures.vehicle.typed_name === 'Ava Lee' && !('ip' in r.j.signatures.vehicle), r.j.signatures)
-ck('the trail: 1 start, 7 signed, 1 done; every signed event carries a 64-hex fingerprint and the form', EVENTS.filter((e) => e.kind === 'step1_signed').length === 7 && EVENTS.filter((e) => e.kind === 'step1_done').length === 1 && EVENTS.filter((e) => e.kind === 'step1_signed').every((e) => /^[0-9a-f]{64}$/.test(e.fingerprint) && e.detail.form))
+ck('the driver agreement signs; Step 1 is not complete yet (the employment forms follow)', r.status === 200 && r.j.done === false && r.j.form_count === 12, r.j)
+r = await call({ action: 'sign', ...link, form: 'employment_agreement', typed_name: 'Ava Lee', consent: true })
+ck('the Employment Agreement needs both arbitration initials before it can be signed', r.status === 400 && /17\(a\)/.test(r.j.error) && /17\(b\)/.test(r.j.error), r)
+r = await signRest(link, 'Ava Lee')
+ck('the last form signs: Step 1 done, the trail says so, the offer record carries step1_done_at, 12 of 12 (the driver path)', r.status === 200 && r.j.done === true && r.j.signed_count === 12 && r.j.form_count === 12 && DB.step1_forms[0].completed_at && EVENTS.some((e) => e.kind === 'step1_done') && OFFERS[OID].step1_done_at && Object.keys(STORE).length === 12, r)
+ck('Step 1 complete makes their Driver Compliance record: Driver Pending Verification, the agreement and the three pictures', (DB.driver_compliance || []).some((d) => d.offer_id === OID && d.status === 'pending' && d.agreement_form === 'vehicle') && (DB.driver_document || []).filter((x) => /^offer\//.test(x.path)).length === 3, { dc: DB.driver_compliance, docs: (DB.driver_document || []).map((x) => x.kind) })
+r = await call({ action: 'copies', ...link }); ck('copies: twelve short-lived links', r.status === 200 && Object.keys(r.j.copies).length === 12, r)
+r = await call({ action: 'view', ...link }); ck('view after: completed, screen 9, twelve signatures with name and version only', r.j.completed_at && r.j.current_screen === '9' && Object.keys(r.j.signatures).length === 12 && r.j.signatures.vehicle.typed_name === 'Ava Lee' && !('ip' in r.j.signatures.vehicle), r.j.signatures)
+ck('the trail: 1 start, 12 signed, 1 done; every signed event carries a 64-hex fingerprint and the form', EVENTS.filter((e) => e.kind === 'step1_signed').length === 12 && EVENTS.filter((e) => e.kind === 'step1_done').length === 1 && EVENTS.filter((e) => e.kind === 'step1_signed').every((e) => /^[0-9a-f]{64}$/.test(e.fingerprint) && e.detail.form))
 ck('nothing in the function fetched GoHighLevel or any message service (no sends)', true)
 
 /* ═══ the office door ═══ */
@@ -224,6 +264,81 @@ r = await call({ action: 'reveal', offer_id: OID, field: 'ssn', reason: 'FCSR re
 ck('a purged record reveals nothing (410)', r.status === 410, r); DB.step1_identity[0].purged_at = null
 
 
+/* ═══ 2026-10-13: the office review (every Step 1 screen with their answers, read only) ═══ */
+{
+  r = await call({ action: 'review', offer_id: OID })
+  ck('review without a sign-in is refused', r.status === 401, r)
+  const before = { forms: JSON.stringify(DB.step1_forms), ev: EVENTS.length, logs: DB.document_access_log.length }
+  r = await call({ action: 'review', offer_id: OID }, STAFF)
+  ck('review: the forms, their answers, all twelve signatures with time, device and version, complete', r.status === 200 && r.j.review === true && r.j.forms.length === 13 && Object.keys(r.j.signed).length === 12 && Object.values(r.j.signed).every((g) => g.at && g.typed_name && g.version && g.ip !== undefined && g.version_mismatch === false && g.pdf === true) && r.j.completed_at && r.j.answers && Object.keys(r.j.answers).length > 5, { status: r.status, keys: r.j && Object.keys(r.j) })
+  ck('review: identity only as "ending", no number anywhere in the answer', r.j.identity.ssn === 'ending 3456' && !JSON.stringify(r.j).includes('529123456') && !JSON.stringify(r.j).includes('1990-05-05') && !JSON.stringify(r.j).includes('M123456789'), r.j.identity)
+  ck('review: read only (no change to Step 1, no trail event) and the look is logged with who', JSON.stringify(DB.step1_forms) === before.forms && EVENTS.length === before.ev && DB.document_access_log.length === before.logs + 1 && DB.document_access_log.at(-1).doc === 'step1:review' && DB.document_access_log.at(-1).by_name === 'Krystal', DB.document_access_log.at(-1))
+  ck('review: test_mode false (the office view never shows the practice banner)', r.j.test_mode === false)
+  r = await call({ action: 'review', offer_id: 'not-an-offer' }, STAFF)
+  ck('review: a bad offer id is refused', r.status === 400, r)
+}
+
+/* ═══ 2026-10-13: the GoHighLevel note and link at Step 1 complete (never the PDF; never a message) ═══ */
+{
+  const f = DB.step1_forms.find((x) => x.offer_id === OID)
+  ck('GoHighLevel not set up in this test: the note is not written and a card says so (never silent)', f.receipt?.ghl_note?.ok === false && /not configured/.test(f.receipt.ghl_note.why) && (globalThis.CARDS || []).some((c) => c.id === 's1ghl_' + OID && c.urgency === 'week'), { receipt: f.receipt, cards: (globalThis.CARDS || []).map((c) => c.id) })
+  const calls = []; const saved = globalThis.fetch
+  globalThis.fetch = async (u, o = {}) => { u = String(u); if (u.includes('leadconnectorhq.com')) { calls.push({ u, body: o.body ? JSON.parse(o.body) : null }); return new Response(JSON.stringify(u.endsWith('/contacts/upsert') ? { contact: { id: 'ghl-c1' } } : { note: { id: 'n1' } }), { status: 200 }) } return saved(u, o) }
+  env.GHL_TOKEN = 'tok'; env.GHL_LOCATION_ID = 'loc'
+  let g = await M.ghlStep1Note(globalThis.__fakeCreateClient(), { first_name: 'Ava', last_name: 'Lee', phone: '4175550111', email: 'ava@example.com' }, { first: 'Ava', last: 'Lee', phone: '4175550111', email: 'ava@example.com' }, OID, '2026-10-13T15:00:00Z')
+  const note = calls.find((c) => /\/notes$/.test(c.u))
+  ck('configured: one note on their contact with the office link to their Step 1 (no file, no message)', g.ok === true && calls.length === 2 && note && /step1\.html\?review=/.test(note.body.body) && !calls.some((c) => /medias|conversations|messages/.test(c.u)), { g, calls })
+  calls.length = 0
+  g = await M.ghlStep1Note(globalThis.__fakeCreateClient(), { first_name: 'Pat', last_name: 'Practice (TEST)', phone: '4175550183', email: 'pat.practice@practice.invalid' }, { first: 'Pat', last: 'Practice (TEST)', phone: '4175550183', email: 'pat.practice@practice.invalid' }, OID, '2026-10-13T15:00:00Z')
+  ck('a practice hire is never put into GoHighLevel', g.skipped === 'practice' && calls.length === 0, { g, calls })
+  delete env.GHL_TOKEN; delete env.GHL_LOCATION_ID; globalThis.fetch = saved
+}
+
+/* ═══ 2026-10-13: a long document (layout 'document', e.g. the Employment Agreement) with separate initials ═══ */
+{
+  const DOCF = { key: 'test_long_doc', screen: '8b', title: 'Test Long Agreement', short: 'Test agreement', layout: 'document', version: 1, status: 'proposed', signature: 'typed',
+    sections: [{ h: '1. Duties', p: ['Paragraph one. '.repeat(40)] }, { h: '19. Arbitration', p: ['Arbitration words. '.repeat(30)], items: [{ id: 'tld_arbitration_initials', label: 'Your initials: arbitration', kind: 'initials', required: true }] }],
+    certification: ['I have read the whole agreement.'] }
+  D.FORMS.test_long_doc = DOCF; D.FORM_ORDER.push('test_long_doc'); D.APPROVED_FOR_REAL.test_long_doc = 1
+  ck('a form added later gets its own screen before All done', JSON.stringify(D.step1Screens()) === JSON.stringify(['1', '2', '3', '4', '5a', '5b', '6', '7', '8', '10', '13', '12', '14', '15', '8b', '9']), D.step1Screens())
+  ck('the long document asks for its separate initials before it can be signed', M.missing('test_long_doc', {}, { ssn: null, dob: false, license: null }).includes('Your initials: arbitration') && M.missing('test_long_doc', { tld_arbitration_initials: 'AL' }, { ssn: null, dob: false, license: null }).length === 0)
+  r = await call({ action: 'document', ...link, form: 'test_long_doc' })
+  const docPdf = r.j && r.j.pdf_base64 ? Buffer.from(r.j.pdf_base64, 'base64').toString('latin1') : ''
+  ck('a copy to open or save: the whole document as a PDF, by their own link, unsigned', r.status === 200 && docPdf.startsWith('%PDF-') && r.j.version === 1, { status: r.status, keys: r.j && Object.keys(r.j) })
+  r = await call({ action: 'document', form: 'test_long_doc', o: OID, e: link.e, t: 'bad' })
+  ck('...never without a valid link', r.status === 401, r.status)
+  r = await call({ action: 'view', ...link })
+  ck('the page receives the document layout, its short name and the extra screen', r.j.forms.some((f) => f.key === 'test_long_doc' && f.layout === 'document' && f.short === 'Test agreement') && r.j.screens.includes('8b'), r.j.screens)
+  delete D.FORMS.test_long_doc; D.FORM_ORDER.pop(); delete D.APPROVED_FOR_REAL.test_long_doc
+}
+
+/* ═══ 2026-10-13: the company signature (a form marked countersign; the Employment Agreement will be) ═══ */
+{
+  D.FORMS.availability.countersign = true
+  const perms = DB.app_data.find((x) => x.key === 'onboarding_permissions')
+  const work0 = perms.data.work; perms.data.work = [{ person_id: 'p-sam' }]
+  r = await call({ action: 'countersign', offer_id: OID, form: 'availability', typed_name: 'Krystal Land', consent: true })
+  ck('company signature: never without a sign-in', r.status === 401, r.status)
+  r = await call({ action: 'countersign', offer_id: OID, form: 'availability', typed_name: 'Krystal Land', consent: true }, STAFF)
+  ck('company signature: only a person on the Approve to Work list (403 otherwise)', r.status === 403 && /Approve to Work list/.test(r.j.error), r)
+  r = await call({ action: 'countersign', offer_id: OID, form: 'experience', typed_name: 'Krystal Land', consent: true }, STAFF)
+  ck('company signature: only on an agreement marked for it', r.status === 400, r.status)
+  perms.data.work = [{ person_id: 'p1' }]
+  const pdfs0 = Object.keys(STORE).length
+  r = await call({ action: 'countersign', offer_id: OID, form: 'availability', typed_name: 'Krystal Land', consent: false }, STAFF)
+  ck('company signature: the consent tick is required', r.status === 400, r.status)
+  r = await call({ action: 'countersign', offer_id: OID, form: 'availability', typed_name: 'Krystal Land', consent: true }, STAFF)
+  const row = DB.step1_forms.find((f) => f.offer_id === OID)
+  ck('company signature: recorded once with who, when and the version they signed; a second PDF with both signatures; their own PDF untouched', r.status === 200 && row.countersignatures.availability.by_name === 'Krystal' && row.countersignatures.availability.version === row.signatures.availability.version && /countersigned/.test(row.countersigned_pdfs.availability) && Object.keys(STORE).length === pdfs0 + 1 && row.pdfs.availability && !/countersigned/.test(row.pdfs.availability), { r, cs: row.countersignatures, cp: row.countersigned_pdfs })
+  ck('company signature: on the trail', EVENTS.some((e) => e.result === 'countersigned' && e.detail.form === 'availability'))
+  r = await call({ action: 'countersign', offer_id: OID, form: 'availability', typed_name: 'Krystal Land', consent: true }, STAFF)
+  ck('company signature: never twice', r.status === 409 && r.j.already === true, r)
+  r = await call({ action: 'review', offer_id: OID }, STAFF)
+  ck('the office review shows who signed for the company and whether this person may', r.j.countersignatures.availability.by_name === 'Krystal' && r.j.may_countersign === true && r.j.countersign_forms.includes('availability'), { cs: r.j.countersignatures, may: r.j.may_countersign })
+  ck('needsCountersign: the signed one is done; the Employment Agreement still waits for the company', !D.needsCountersign(row.signatures, row.countersignatures).includes('availability') && D.needsCountersign(row.signatures, row.countersignatures).includes('employment_agreement') && D.needsCountersign(row.signatures, {}).includes('availability'))
+  delete D.FORMS.availability.countersign; perms.data.work = work0
+}
+
 /* ═══ SLICE 2d: what a signed form lands on the Background & References row ═══ */
 const LP = M.landingPatch
 ck('landingPatch: the application lands lived-outside (yes), fingerprints Required, the states and no-employer flag, stamped', (() => { const p = LP('employee_application', { lived_outside_mo: 'yes', states_lived: ['KS'], no_employer_history: 'yes' }, '2026-10-10T03:00:00Z'); return p.oos === 'yes' && p.fp === 'Required' && p.no_employer_history === true && p.step1_landed.employee_application === '2026-10-10T03:00:00Z' && p.step1_landed.states_lived[0] === 'KS' })())
@@ -245,12 +360,17 @@ ck('the door is never asked to land the SSN, date of birth, license number or ad
   globalThis.NO_CAND = true; globalThis.CARDS = []
   const rp0 = RPCS.length, ev0 = EVENTS.length
   await call({ action: 'view', ...link2 })
-  const steps = REPLAY.filter((b) => b.o === OID).map((b) => ({ ...b, ...link2 }))
+  /* 2026-10-13: the second hire answers No to transporting clients: no pictures, no license number; the Non-Driver Agreement instead */
+  const steps = REPLAY.filter((b) => b.o === OID && !['upload_url', 'uploaded'].includes(b.action) && !(b.action === 'identity' && b.license_number))
+    .map((b) => b.action === 'save' && b.answers && b.answers.transport_willing ? { ...b, answers: { transport_willing: 'no' } } : b.action === 'sign' && b.form === 'vehicle' ? { ...b, form: 'non_driver' } : b)
+    .map((b) => ({ ...b, ...link2 }))
   let created = -1, last = null
   for (const b of steps) { const out = await call(b); if (b.action === 'sign') last = out; if (created < 0 && RPCS.slice(rp0).some((r) => r.name === 'step1_candidate_create')) created = RPCS.length }
   const mine = RPCS.slice(rp0)
   const cc = mine.filter((r) => r.name === 'step1_candidate_create')
   ck('before checks: every form signed for the second hire (the replay reached Step 1 complete)', last && last.status === 200 && last.j && last.j.done === true, last)
+  ck('the Non-Driver path makes a Non-Driver record (no pictures)', (DB.driver_compliance || []).some((d) => d.offer_id === OID2 && d.status === 'non_driver' && d.agreement_form === 'non_driver'), DB.driver_compliance)
+  ck('the Non-Driver path: answered No, signed the Non-Driver Agreement, no pictures, no license number, 7 of 7', last && last.j.form === 'client_rights' && last.j.form_count === 12 && !DB.step1_forms.find((f) => f.offer_id === OID2).signatures.vehicle && !DB.step1_forms.find((f) => f.offer_id === OID2).answers.license_front, last && last.j)
   ck('before checks: Background & References is entered exactly once, by the server, at the last signature, with the offer\'s person', cc.length === 1 && cc[0].args.p_offer_id === OID2 && cc[0].args.p_record.first === 'Bo' && cc[0].args.p_record.onboarding_path === 'new' && cc[0].args.p_record.oig === 'Pending', cc)
   ck('before checks: no "landing failed" on the trail for the forms signed before then', !EVENTS.slice(ev0).some((e) => e.offer_id === OID2 && e.result === 'landing_failed'), EVENTS.slice(ev0).filter((e) => e.result))
   const after = mine.slice(mine.indexOf(cc[0]) + 1).filter((r) => r.name === 'step1_land_apply' && r.args.p_offer_id === OID2)
@@ -263,11 +383,12 @@ ck('the door is never asked to land the SSN, date of birth, license number or ad
 
 globalThis.fetch = realFetch
 for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note))
+const PRINTED = res.length
 /* ═══ PREVIEW (2026-10-11, Samantha: click through every screen as the caregiver with practice data): public, read-only ═══ */
 {
   const before = JSON.stringify({ DB, EVENTS: EVENTS.length, PATCHES: PATCHES.length, STORE: Object.keys(STORE).length, RPCS: RPCS.length })
   let p = await call({ action: 'preview' })
-  ck('preview: no link needed; the seven forms with fingerprints, Pat Preview, prefill marked from the application and interview, nothing signed', p.status === 200 && p.j.preview === true && p.j.forms.length === 7 && p.j.forms.every((f) => /^[0-9a-f]{64}$/.test(f.fingerprint)) && p.j.who.last === 'Preview' && p.j.prefill.lived_outside_mo.from === 'your application' && p.j.prefill.matching_facts.from === 'your interview' && Object.keys(p.j.signatures).length === 0 && p.j.skill_groups.length === 3, p.j)
+  ck('preview: no link needed; the thirteen forms with fingerprints, Pat Preview, prefill marked from the application and interview, nothing signed', p.status === 200 && p.j.preview === true && p.j.forms.length === 13 && p.j.form_count === 12 && p.j.forms.every((f) => /^[0-9a-f]{64}$/.test(f.fingerprint)) && p.j.who.last === 'Preview' && p.j.prefill.lived_outside_mo.from === 'your application' && p.j.prefill.matching_facts.from === 'your interview' && Object.keys(p.j.signatures).length === 0 && p.j.skill_groups.length === 3, p.j)
   ck('preview: the same words a real Step 1 shows (identical forms to the real view)', JSON.stringify(p.j.forms) === JSON.stringify(M.__lastViewForms || p.j.forms))
   p = await call({ action: 'preview', check: true, form: 'employee_application', answers: { preferred_name: 'Pat', ssn: '123456789', bogus: 'x' } })
   ck('preview check: the real required-answer list; an identity number or unknown id is dropped, never echoed', p.status === 200 && p.j.missing.length > 3 && !JSON.stringify(p.j).includes('123456789'), p.j)
@@ -280,4 +401,5 @@ for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (o
   ck('preview: nothing read or written anywhere (database, offers, trail, storage, door calls unchanged)', JSON.stringify({ DB, EVENTS: EVENTS.length, PATCHES: PATCHES.length, STORE: Object.keys(STORE).length, RPCS: RPCS.length }) === before)
 }
 
+for (const [n, ok, note] of res.slice(PRINTED)) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note))
 const bad = res.filter((x) => !x[1]).length; console.log(`${res.length - bad}/${res.length} passed`); process.exit(bad ? 1 : 0)

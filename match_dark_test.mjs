@@ -46,6 +46,18 @@ ck('the replay: only the last 60 days; who covered and how they would be judged 
 ck('the replay counts how many of those asked would be Ready', r.replay.rows.find((x) => x.date === '2026-10-02').asked === 2)
 ck('the history keeps one line per run (yesterday\'s plus today\'s)', r.history.length === 2 && r.history[1].visits === 7)
 ck('the report says what it is and what it never did', /A report only/.test(r.notes[0]) && r.rule_version === M.VERSION && r.fingerprints['match-rules.js'] === 'abc')
+/* Driver Compliance (2026-10-13, match-rules 1.2.0): the roster's driver fields reach the rule; no driver record = not for a
+   visit that needs driving, counted in gaps.drive_unknown */
+{ const drv = (st) => input({ factsByClient: { ...input().factsByClient, '24': [...allNo(['transportation'])] },
+    roster: input().roster.map((x) => x.axiscare_id === '14' ? { ...x, ...st } : x), driveGate: true })
+  const d0 = D.buildDarkReport(drv({})), v5 = d0.rows.find((x) => x.visit_id === 'v5')
+  ck('driving: a client needing transportation and a caregiver with no driver record yet: not for this visit, and counted', v5.group === 'not_for_visit' && v5.reason === 'Not cleared to drive clients: No driver record yet' && d0.gaps.drive_unknown >= 1, { v5, g: d0.gaps })
+  const d1 = D.buildDarkReport(drv({ dl_status: 'Pending Verification', cleared_to_drive: false })), v5b = d1.rows.find((x) => x.visit_id === 'v5')
+  ck('driving: Pending Verification: not for this visit, the why named', /Not an Approved Driver \(Pending Verification\)/.test(v5b.reason), v5b)
+  const d2 = D.buildDarkReport(drv({ dl_status: 'Approved Driver', cleared_to_drive: true, dl_expires: '2099-01-01', auto_ins_expires: '2099-01-01' })), v5c = d2.rows.find((x) => x.visit_id === 'v5')
+  ck('driving: an Approved Driver with current documents is not ruled out by driving', !/drive/.test(v5c.reason), v5c)
+  const off = D.buildDarkReport({ ...drv({ dl_status: 'Pending Verification' }), driveGate: false }), v5d = off.rows.find((x) => x.visit_id === 'v5')
+  ck('driving, switch off: not ruled out by driving; the warning says not enforced yet', !/drive/.test(v5d.reason) && v5d.warnings.some((w) => /^Driver check \(not enforced yet\): Not an Approved Driver \(Pending Verification\)/.test(w)), v5d) }
 const unread = D.buildDarkReport(input({ lock: { ok: false, why: 'x' } }))
 ck('an unreadable readiness lock: nobody is cleared (fails closed)', unread.rows.every((x) => x.group === 'not_for_visit' || /lock could not be read/.test(x.reason)) && unread.gaps.lock_unreadable === true)
 

@@ -31,6 +31,7 @@ import { contactForOutbound, maySendTo, normalisePhone } from '../_shared/outrea
 import { optOutCheck } from '../_shared/optout.ts'
 import { opEvent } from '../_shared/events.ts'
 import { shiftAskBlock } from '../_shared/shift-ask-gate.ts'
+import { readTransportNeed, driveGateOn, transportDecision } from '../_shared/driver-eligibility.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -86,6 +87,25 @@ async function clientNameOf(sb: Any, plan: Any): Promise<string> {
     }
   } catch { /* the typed name is the fallback */ }
   return String(plan.client || '')
+}
+
+/* Does this plan need transportation? (Driver Compliance, 2026-10-13) The plan's own needs (the Team Builder chip), and for
+   a plan linked to a Journey, that client's care needs (need_transportation) and lead checklist (transportation). Required
+   from any of them = only an Approved Driver with current documents may be texted. 'Preferred' never blocks. */
+async function transportOf(sb: Any, plan: Any): Promise<{ level: 'required' | 'preferred' | null; from: string[]; unknown: string | null }> {
+  let clientAx: string | null = null, unknown: string | null = null
+  try {
+    const { data: link } = await sb.from('team_build_link_current').select('episode_id').eq('plan_id', plan.id).maybeSingle()
+    if (link?.episode_id) {
+      const { data: ep } = await sb.from('journey_episode').select('person_id').eq('episode_id', link.episode_id).maybeSingle()
+      if (ep?.person_id) {
+        const { data: src } = await sb.from('person_source_id').select('source_id').eq('person_id', ep.person_id).eq('system', 'axiscare').eq('entity_type', 'client').maybeSingle()
+        clientAx = src?.source_id ? String(src.source_id) : null
+      }
+    }
+  } catch { unknown = 'the plan\'s client could not be read' }
+  const r = await readTransportNeed(sb, { clientAxId: clientAx, planNeeds: plan.needs })
+  return { ...r, unknown: [unknown, r.unknown].filter(Boolean).join('; ') || null }
 }
 
 async function readPlans(sb: Any): Promise<Any[]> {
@@ -151,9 +171,10 @@ Deno.serve(async (req) => {
       optedOut = v.allowed ? [] : v.reasons
     }
     /* step 3 (2026-10-12): the same checks Cara's picker makes, shown before anyone writes a text */
-    const blocked = await shiftAskBlock(sb, { cg, name: cgName, axId, client: await clientNameOf(sb, plan), roster })
+    const transport = await transportOf(sb, plan), gate = driveGateOn(st)
+    const blocked = await shiftAskBlock(sb, { cg, name: cgName, axId, client: await clientNameOf(sb, plan), roster, needsTransport: gate && transport.level === 'required' })
     return json({
-      live, blocked,
+      live, blocked, transport: { ...transport, enforced: gate, note: transportDecision(cg, transport.level, gate, chicagoDay()).note },
       caregiver: { first: first(cg ? cg.first || cgName : cgName), on_roster: !!cg, phone_last4: phone ? phone.slice(-4) : null, opt_out: optedOut },
       client: { first: clientFirst, town: plan.city || null, start_target: target, care_line: care, linked: !!link?.episode_id },
       template: String(st.team_ask_msg || '') || DEFAULT_TEMPLATE,
@@ -187,8 +208,11 @@ Deno.serve(async (req) => {
   if (!phone) return json({ outcome: 'no_phone', error: `${cgName} has no usable phone number on the roster.` }, 422)
 
   /* step 3 (2026-10-12): Cara's checks, on the server, before anything goes: No shift texts, this client's Do Not
-     Return list, active in AxisCare, new-hire readiness (fails closed). */
-  const blocked = await shiftAskBlock(sb, { cg, name: cgName, axId, client: await clientNameOf(sb, plan), roster })
+     Return list, active in AxisCare, new-hire readiness (fails closed); and (2026-10-13) a plan that needs transportation
+     goes only to an Approved Driver with current documents. */
+  /* the driver check refuses only while the Admin switch driver_schedule_gate_live is on; off, it never refuses (the draft warns) */
+  const transport = await transportOf(sb, plan)
+  const blocked = await shiftAskBlock(sb, { cg, name: cgName, axId, client: await clientNameOf(sb, plan), roster, needsTransport: driveGateOn(st) && transport.level === 'required' })
   if (blocked) {
     await opEvent(sb, { verb: 'team_ask_refused', actor_name: who.name, actor_email: who.email, item_id: planId, area: 'scheduling',
       summary: `Text to ${cgName} not sent`, data: { plan_id: planId, caregiver_axiscare_id: axId || null, cells, why: blocked } })

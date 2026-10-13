@@ -8,10 +8,14 @@
 //   - Do Not Return for this client (dnr_log, by name, like Cara)
 //   - a new hire whose readiness card isn't complete (work-lock: Approved to Work + AxisCare active). FAIL CLOSED:
 //     if the cards can't be read, nobody is texted and the reason says so.
+//   - the shift needs transportation (needsTransport) and they are not an Approved Driver with a current license and
+//     insurance (Driver Compliance, 2026-10-13; transportEligible in _shared/driver-eligibility.ts, the one shared rule).
+//     Non-Driver, Pending Verification, Suspended and no driver record yet are all refused. Other shifts are unaffected.
 // Returns null (may text) or the reason, in words the office reads.
 // =============================================================================
 import { normalisePhone } from './outreach.ts'
 import { workLock, LOCK_WHY } from './work-lock.ts'
+import { transportEligible } from './driver-eligibility.ts'
 
 // deno-lint-ignore no-explicit-any
 type Any = any
@@ -20,7 +24,7 @@ const digits = (s: unknown) => String(s ?? '').replace(/\D/g, '')
 const chiToday = () => new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
 
 /** The pure part, for tests: the lists already read. */
-export function blockReason(x: { cg: Any; name: string; axId: string; client: string; dno: Any[]; dnr: Any[]; locked: Set<string> | null; lockWhy?: string }): string | null {
+export function blockReason(x: { cg: Any; name: string; axId: string; client: string; dno: Any[]; dnr: Any[]; locked: Set<string> | null; lockWhy?: string; needsTransport?: boolean; today?: string }): string | null {
   const name = x.name || [x.cg?.first, x.cg?.last].filter(Boolean).join(' ')
   const ax = digits(x.axId || x.cg?.axiscare_id)
   if (x.cg && (x.cg.active === false || x.cg.axiscare_status_active === false)) return `${name} is not an active caregiver in AxisCare`
@@ -34,13 +38,14 @@ export function blockReason(x: { cg: Any; name: string; axId: string; client: st
   const ck = nameKeyOf(x.client)
   if (ck && (x.dnr || []).some((e) => e?.caregiver && e?.client && nameKeyOf(e.client) === ck && nameKeyOf(e.caregiver) === nk))
     return `${name} is on ${String(x.client).trim().split(/\s+/)[0]}'s Do Not Return list`
+  if (x.needsTransport) { const t = transportEligible(x.cg, x.today || today); if (!t.ok) return `${name} is not cleared to drive clients, and this shift needs transportation (${t.why})` }
   if (x.locked === null) return `the new-hire readiness check couldn't be read (${x.lockWhy || 'unknown'}), so nobody is texted until it can`
   if (ax && x.locked.has(ax)) return `${name} is ${LOCK_WHY}`
   return null
 }
 
 /** Reads the lists and answers for one caregiver. */
-export async function shiftAskBlock(sb: Any, x: { cg: Any; name: string; axId: string; client: string; roster?: Any[] }): Promise<string | null> {
+export async function shiftAskBlock(sb: Any, x: { cg: Any; name: string; axId: string; client: string; roster?: Any[]; needsTransport?: boolean }): Promise<string | null> {
   const read = async (k: string) => { const { data } = await sb.from('app_data').select('data').eq('key', k).maybeSingle(); return Array.isArray(data?.data) ? data.data : [] }
   const [dno, dnr] = await Promise.all([read('coverage_do_not_offer'), read('dnr_log')])
   const lock = await workLock(sb, x.roster ?? null)

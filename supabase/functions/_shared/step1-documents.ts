@@ -9,8 +9,8 @@
 // wording is stored with every signature. Nothing here holds an answer: answers are merged at render time (2b/2c).
 // Two forms carry a status other than 'proposed': the FCRA disclosure is a DRAFT FOR COUNSEL (her decision 7) and the
 // screening package list is TO CONFIRM (her decision 4). Fictional practice only until each is approved.
-export const STEP1_VERSION = 4   // 2026-10-11 (her approval of the Step 1 previews): the application and the reference consent at version 3 (tasks per job, family care, backup references); the vehicle form and the EDL/FCSR consent at version 3; two forms at version 2; the FCRA draft at version 1
-export type FormKey = 'employee_application' | 'reference_consent' | 'fcra_disclosure' | 'edl_fcsr_consent' | 'availability' | 'experience' | 'vehicle'
+export const STEP1_VERSION = 5   // 2026-10-13: the permission form (5a v2) replaces the FCRA draft; application v4, details v4. Before: 2026-10-11 (her approval of the Step 1 previews): the application and the reference consent at version 3 (tasks per job, family care, backup references); the vehicle form and the EDL/FCSR consent at version 3; two forms at version 2; the FCRA draft at version 1
+export type FormKey = 'employee_application' | 'reference_consent' | 'fcra_disclosure' | 'edl_fcsr_consent' | 'availability' | 'experience' | 'vehicle' | (string & {})
 export type FormStatus = 'proposed' | 'draft_for_counsel' | 'to_confirm'
 /** One box inside a card (a job, a family-care entry, a reference). 'skills' are keys of SKILLS; 'lifts' shows only when a
     lift is ticked; 'refresher' offers only the tasks ticked on the same card, plus 'none'. */
@@ -18,7 +18,11 @@ export type Field = { k: string; label: string; kind: 'text' | 'tel' | 'email' |
 export type Item = { id: string; label: string; kind: 'text' | 'yesno' | 'choice' | 'multi' | 'date' | 'statement' | 'table' | 'number' | 'initials' | 'photo' | 'cards'; options?: string[]; required?: boolean; note?: string; locked?: boolean; fields?: Field[]; max?: number; add?: string }
 /** tone 'cheer': shown as an encouraging box; tip: one short line in a highlighted box (both are wording, in the fingerprint) */
 export type Section = { h: string; p?: string[]; items?: Item[]; tone?: 'cheer'; tip?: string }
-export type Form = { key: FormKey; screen: string; title: string; version: number; status: FormStatus; intro?: string[]; sections: Section[]; certification: string[]; signature: 'typed' | 'typed+initials' }
+/** 2026-10-13 (Samantha: long documents such as the Employment Agreement and the Employee Manual are shown WHOLE in one
+    scrollable reader on their Step 1 screen, with a copy to open or save, and the acknowledgment, any separate initials
+    and the signature right below): layout 'document'. `short` is the screen's title in the screen list. */
+/** countersign: after the applicant signs, a person on the Approve to Work list signs for Caring Companions (step1-countersign.sql) */
+export type Form = { key: FormKey; screen: string; title: string; short?: string; layout?: 'document'; when?: { id: string; equals: string }; countersign?: boolean; version: number; status: FormStatus; intro?: string[]; sections: Section[]; certification: string[]; signature: 'typed' | 'typed+initials' }
 
 export const OFFICE_PHONE = '(417) 234-8494'
 export const COMPANY = 'Troutman Enterprises, LLC DBA Caring Companions In-Home Senior Care'
@@ -86,7 +90,7 @@ const text = (id: string, label: string, extra: Partial<Item> = {}): Item => ({ 
 
 export const FORMS: Record<FormKey, Form> = {
   employee_application: {
-    key: 'employee_application', screen: '2 and 3', title: 'Employee Application', version: 3, status: 'proposed', signature: 'typed',
+    key: 'employee_application', screen: '2 and 3', title: 'Employee Application', version: 4, status: 'proposed', signature: 'typed',
     sections: [
       { h: 'About you', p: ['Your name, phone and email are shown from your offer. Tap any of them to correct it.'], items: [
         text('preferred_name', 'What should families and the office call you?', { note: 'Your preferred first name, if it is different from your legal name.' }),
@@ -99,12 +103,11 @@ export const FORMS: Record<FormKey, Form> = {
       { h: 'College / University', items: [text('co_name', 'School Name'), text('co_years', 'Years Attended'), yesno('co_grad', 'Did you Graduate?', { required: false }), text('co_major', 'Major')] },
       /* 2b: these ids are cert_number / cert_expires, not license_number / license_expires: the driver's license on the vehicle form is a different fact and the two must never share an answer */
       { h: 'Other Licenses / Certification', items: [yesno('cna', 'CNA License?'), yesno('hha', 'HHA Certification?'), text('cert_number', 'If yes, License Number'), { id: 'cert_expires', label: 'Expiration Date', kind: 'date' }] },
-      /* v2 (her decision): no "violation of the law" line; neutral, lawful criminal-history wording */
-      { h: 'Criminal Record / Driving Record', p: ['Please answer these completely and honestly. A conviction is not an automatic bar to employment: we consider the nature of the offense, how long ago it happened, and whether it relates to the work. Your answers are considered together with the background checks described later in Step 1. You do not need to list any record that has been expunged or sealed.'], items: [
+      /* v4 (2026-10-13): the criminal-history questions moved to "Permission for Background Checks and References" (screen 5a),
+         where Missouri's required disclosures are asked together (RSMo 192.2495.5); the driving questions stay here */
+      { h: 'Driving Record', items: [
         yesno('moving_violations', 'Have you had any moving traffic violations?'), text('moving_violations_detail', 'If yes, please describe.'),
         yesno('license_suspended', "Have you had your driver's license suspended or revoked in the last 3 years?"),
-        yesno('convicted', 'Have you been convicted of a crime or pled guilty or no contest to a crime (misdemeanor or felony)?'),
-        { id: 'convictions', label: 'If yes, please complete the information section below.', kind: 'table', options: ['Offense', 'Date of Conviction', 'Misdemeanor or Felony', 'Location'] },
       ] },
       /* v3 (2026-10-11, her approval of the previews): her "Your experience matters!" words first; a card per job with the
          tasks done there, the lift type, and what they would want a refresher on; family or private-client care as its own
@@ -171,41 +174,58 @@ export const FORMS: Record<FormKey, Form> = {
     ],
     certification: ['I have read this authorization and I agree to it.'],
   },
+  /* v2 (2026-10-13, Samantha: "rewrite the background-check authorization as a plain, understandable permission form; verify
+     the actual legal requirements"). No screening company is used, so the federal consumer-report rules (FCRA standalone
+     disclosure, two-step adverse action) do not apply to the office's own searches of government records (FTC staff report
+     "40 Years of Experience with the FCRA", 2011, pp. 20, 32, 58). Missouri's rules do: the applicant signs a consent for a
+     criminal records review (RSMo 43.540) and discloses criminal history, EDL status and FCSR status (RSMo 192.2495.5);
+     knowingly hiding criminal history is a class A misdemeanor (192.2495.6). Because Missouri requires us to exclude people
+     with certain convictions, expunged offenses must be disclosed too, and we must say so (RSMo 610.140.10(6) and .11).
+     If a screening company is ever used again, the FCRA disclosure returns for that check. Key kept as fcra_disclosure. */
   fcra_disclosure: {
-    key: 'fcra_disclosure', screen: '5a', title: 'Disclosure Regarding Background Investigation', version: 1, status: 'draft_for_counsel', signature: 'typed',
-    /* 15 U.S.C. 1681b(b)(2)(A): a document that consists solely of the disclosure; the authorization may be on it. Nothing else. */
+    key: 'fcra_disclosure', screen: '5a', title: 'Permission for Background Checks and References', version: 2, status: 'proposed', signature: 'typed',
     sections: [
-      { h: 'Disclosure', p: [`${COMPANY} ("the Company") may obtain information about you from a consumer reporting agency for employment purposes. This information may be in the form of a consumer report, which may include information about your character, general reputation, personal characteristics and mode of living, to the extent permitted by law, as well as your criminal history, motor vehicle records and other public record information.`, 'You have the right to request a copy of the report and a summary of your rights under the Fair Credit Reporting Act. The Summary of Your Rights Under the Fair Credit Reporting Act is linked on this screen.'] },
-      { h: 'Authorization', p: ['I have read this disclosure and I authorize the Company to obtain consumer reports about me for employment purposes, now and, if I am hired, at any time during my employment.'] },
+      { h: 'Why we ask', p: ['Missouri law says we must check every person who will care for our clients before they start. We run these checks ourselves, using government records. We do not use a background screening company.'] },
+      { h: 'What we check', p: [
+        '1. The Missouri Employee Disqualification List (EDL). Missouri law requires this.',
+        '2. The Family Care Safety Registry (FCSR). Missouri law requires this. You register yourself within 15 days of starting work, and we cannot employ someone who will not register. FCSR results cover Missouri only.',
+        '3. The federal OIG exclusion list (people who may not be paid by Medicare or Medicaid).',
+        '4. Missouri court records on Case.net.',
+        '5. A fingerprint check through the Missouri State Highway Patrol, only if one is required (for example, if you have not lived in Missouri for the last five years). You will sign the Highway Patrol\'s own forms for it. You have the right to a copy of the results and to challenge them before we make a final decision.',
+        '6. Your driving record, only if you will drive clients.',
+        '7. Your references and past employers, the people you listed earlier in Step 1. We may call, text or email them about your work and character.',
+      ] },
+      { h: 'While you work here', p: ['Missouri requires us to keep checking the EDL. Our own policy is to recheck the EDL and the OIG list every month and to rescreen you through the FCSR every year.'] },
+      { h: 'Questions Missouri law requires you to answer', p: [
+        'Please answer these completely and honestly. Knowingly failing to tell us about your criminal history is a class A misdemeanor under Missouri law (RSMo 192.2495).',
+        'Because Missouri requires us to exclude people with certain convictions from this work, you must also tell us about any offense that was expunged (RSMo 610.140).',
+        'A record is not an automatic bar to employment: we consider the nature of the offense, how long ago it happened, and whether it relates to the work.',
+      ], items: [
+        yesno('convicted', 'Have you ever been convicted of, or pled guilty or no contest to, a misdemeanor or felony? Include any suspended imposition of sentence, probation or parole.'),
+        { id: 'convictions', label: 'If yes, please list each one.', kind: 'table', options: ['Offense', 'Date of Conviction', 'Misdemeanor or Felony', 'Location'] },
+        yesno('edl_listed', 'Are you on the Missouri Employee Disqualification List?'),
+        { id: 'fcsr_listed', label: 'Are you listed on any of the background check lists in the Family Care Safety Registry?', kind: 'choice', options: ['No', 'Yes', 'I am not sure'], required: true, note: 'These lists include Missouri criminal records, the sex offender registry, child abuse and neglect findings, and the EDL. If you are not sure, choose "I am not sure" and the office will talk it through with you.' },
+      ] },
     ],
-    certification: ['I have read the disclosure above and I authorize the Company to obtain consumer reports about me.'],
+    certification: [
+      'I consent to a criminal records review under RSMo 43.540 and to the checks listed above, using my name, date of birth and other identifying details.',
+      'I give Caring Companions permission to contact my references and past employers.',
+      'I understand the results are used only for hiring and employment decisions, and that this permission lasts while I apply and while I work here.',
+      'My answers to the questions above are true and complete.',
+    ],
   },
+  /* v4 (2026-10-13): the permission and the EDL/FCSR explanations moved to screen 5a; this form keeps only the details the
+     checks need. Key kept as edl_fcsr_consent. */
   edl_fcsr_consent: {
-    key: 'edl_fcsr_consent', screen: '5b', title: 'Missouri Employee Disqualification List and Family Care Safety Registry Consent', version: 3, status: 'proposed', signature: 'typed',
+    key: 'edl_fcsr_consent', screen: '5b', title: 'Your Details for the Background Checks', version: 4, status: 'proposed', signature: 'typed',
     sections: [
-      /* v2 (her decision 4): the EDL search and the FCSR registration and screening are separate paragraphs; what Missouri
-         requires is labelled as such, and what is Caring Companions' own policy is labelled as such (frequency to confirm) */
-      { h: 'Employee Disqualification List (a Missouri requirement)', p: [
-        `Missouri requires ${COMPANY} to check the Employee Disqualification List (EDL) before I am hired and to keep monitoring it while I am employed (19 CSR 15-7.021(18)(B)). The EDL names people found to have committed an act of abuse, neglect, exploitation, misappropriation, or misconduct against a resident or consumer; a person on the list cannot be employed to deliver care.`,
-      ] },
-      { h: 'Family Care Safety Registry (a Missouri requirement)', p: [
-        'Missouri requires every in-home services worker to be registered with the Family Care Safety Registry (FCSR) and requires the Company to request a background screening through it before I have contact with any participant (19 CSR 15-7.021(19)(F); RSMo 192.2495). I register with the FCSR myself, with my Social Security number; the Company may pay the registration fee and then requests my screening.',
-      ] },
-      /* v3 (her decision 3): monthly EDL, annual FCSR, as agency policy, beside anything the law or a payer requires */
-      { h: 'Rechecks (Caring Companions policy, not a Missouri interval)', p: [
-        'As its own policy, Caring Companions rechecks the Employee Disqualification List every month and requests a new Family Care Safety Registry screening every year during employment, in addition to the initial checks and any other checks required by applicable law or by a payer agreement. These frequencies are the agency\'s policy; Missouri sets the initial checks and the ongoing EDL monitoring, not these intervals.',
-      ] },
-      { h: 'Consent', p: [
-        /* her decision 3: one consent sentence; the standalone FCRA disclosure stays on its own screen and is never folded in here */
-        'I consent to the EDL check, the FCSR screening and the rechecks described above, and to the disclosure of their results to the Company for the purpose of my employment. This consent covers the checks before I begin work and the rechecks during my employment.',
-      ] },
-      { h: 'For your background checks', p: ['We need these three things to order your background checks and your Family Care Safety Registry screening. They are kept encrypted on our server, seen only by the office person who orders your checks, and every look is logged.'], items: [
+      { h: 'For your background checks', p: ['We need these to run the checks you gave permission for on the previous screen and to request your Family Care Safety Registry screening. They are kept encrypted on our server, seen only by the office person who orders your checks, and every look is logged.'], items: [
         { id: 'ssn', label: 'Social Security number', kind: 'text', required: true, locked: true, note: 'Typed twice, digits only. Never shown again; your record says "on file, ending" with the last four digits.' },
         { id: 'dob', label: 'Date of birth', kind: 'date', required: true, locked: true },
         text('address1', 'Street address', { required: true }), text('address2', 'Apartment / unit'), text('city', 'City', { required: true }), { id: 'state', label: 'State', kind: 'choice', options: STATES, required: true }, text('zip', 'Zip code', { required: true }),
       ] },
     ],
-    certification: ['I have read this consent and I agree to it. The information I gave for my background checks is correct.'],
+    certification: ['The information I gave for my background checks is correct, and it may be used only for the checks I gave permission for.'],
   },
   availability: {
     key: 'availability', screen: '6', title: 'Caregiver Availability & Scheduling Commitment', version: 2, status: 'proposed', signature: 'typed+initials',
@@ -271,37 +291,245 @@ export const FORMS: Record<FormKey, Form> = {
       'Everyone starts at Level 1. Level 2 and Level 3 assignments follow once the office verifies your previous experience through your references and employment history and an authorized person approves the level. Your answers here are your own words and never raise your level by themselves.',
     ],
   },
+  /* v5 (2026-10-13, Samantha's driver and non-driver rules): only for an applicant who answers YES to "Are you willing and
+     able to transport clients in your personal vehicle as part of your caregiving duties?". Photos of the license front
+     and back and proof of insurance are required; uploading never authorizes driving; the office verifies and approves;
+     an expired license or insurance suspends driving until new documents are verified. Someone who answers NO signs the
+     Non-Driver Agreement instead (FORMS.non_driver). */
   vehicle: {
-    key: 'vehicle', screen: '8', title: 'Responsibility for Personal Vehicle Insurance & Transportation Standards', version: 3, status: 'to_confirm', signature: 'typed',
+    key: 'vehicle', screen: '8', title: 'Driver/Vehicle Insurance & Transportation Standards Agreement', short: 'Driver agreement', when: { id: 'transport_willing', equals: 'yes' }, version: 5, status: 'proposed', signature: 'typed',
     sections: [
-      { h: 'Your driving details', p: ['From your application: whether you have a valid license, insurance and your own transportation. Correct anything that has changed.'], items: [
-        yesno('has_license', 'I have a current, valid driver\'s license'), yesno('has_insurance', 'I have active automobile liability insurance'), yesno('has_transport', 'I have reliable transportation of my own'),
-        /* v3 (her decision 1): the MVR is not described as an existing check */
+      { h: 'Your license and insurance', p: ['Take a clear picture of each with your phone, or choose a file you already have. If you do not have a current license and insurance right now, go back and answer No; you can become a driver later.'], items: [
+        { id: 'license_front', label: 'Your driver\'s license, front', kind: 'photo', required: true },
+        { id: 'license_back', label: 'Your driver\'s license, back', kind: 'photo', required: true },
         { id: 'license_number', label: 'Driver\'s license number', kind: 'text', locked: true, note: 'Needed so the office can verify your license and driving record before you are approved to transport clients. Kept encrypted; your record says "on file, ending" with the last four characters.' },
-        { id: 'license_state', label: 'License state', kind: 'choice', options: STATES }, { id: 'license_expires', label: 'License expiration date', kind: 'date' },
-        /* her decision 5 and section 21: proof is an option, the photo is truly optional */
-        { id: 'insurance_proof', label: 'Proof of insurance', kind: 'choice', options: ['I have provided proof of current personal automobile insurance coverage to Caring Companions', 'I will provide proof of current personal automobile insurance coverage to Caring Companions before orientation'], required: true },
-        { id: 'insurance_photo', label: 'Add a photo of your insurance card if you have it handy (optional)', kind: 'photo', required: false },
-        text('insurer', 'Insurance company (optional)'), { id: 'insurance_expires', label: 'Policy expiration date (optional)', kind: 'date' },
+        { id: 'license_state', label: 'License state', kind: 'choice', options: STATES, required: true }, { id: 'license_expires', label: 'License expiration date', kind: 'date', required: true },
+        { id: 'insurance_doc', label: 'Proof of current auto insurance (your insurance card or declarations page)', kind: 'photo', required: true },
+        text('insurer', 'Insurance company', { required: true }), { id: 'insurance_expires', label: 'Insurance expiration date', kind: 'date', required: true },
       ] },
       { h: 'Insurance responsibility', p: [
-        'I agree to notify Caring Companions and provide updated proof of insurance within three (3) calendar days of any policy renewal, change, lapse, or cancellation.',
+        'I agree to notify Caring Companions immediately if my driver\'s license is suspended or revoked, or if my insurance is canceled or lapses, and to upload my updated license or proof of insurance whenever either is renewed, replaced or changed.',
         'I understand and acknowledge that Caring Companions does not provide automobile insurance coverage for employees operating personal vehicles. I further understand that I am solely responsible for all liability, claims, damages, injuries, fines, or losses arising from my operation of a personal vehicle, including while transporting clients. Any mileage reimbursement or stipend provided does not constitute insurance coverage.',
         /* v2 (her decision 7): the indemnification clause is removed pending counsel review */
       ] },
       /* v2: the coverage requirement and the payer list are kept as today's form states them and marked for her confirmation */
+      /* v4 (2026-10-13): no bracketed note to the applicant; any higher limit is told to them in writing before they drive a client */
       /* v3 (her decisions 4 and 5): the insurance requirement, the transportation conditions, and no authorization from Step 1 answers */
-      { h: 'Required Standards for Transporting Clients', p: ['Employees who transport clients must meet all of the following requirements: Maintain a current, valid driver\'s license. Maintain current automobile liability insurance that meets at least Missouri\'s legal minimums and that permits transporting clients as part of paid caregiving. [Whether additional limits or coverage are required is being confirmed with the Company\'s insurance agent.] Have an acceptable driving record, verified by a Motor Vehicle Record check ordered by the office. Complete any transportation training the Company requires. Use only a personally owned or legally authorized private vehicle approved by the agency.', 'A caregiver may transport a client only when the client\'s Care Plan authorizes it, the payer permits it (Private Pay, Missouri Medicaid HCBS, or VA Community Care Network (VA CCN)), and the office has approved both the caregiver and the vehicle. No caregiver is authorized to drive clients based on their answers in Step 1 alone.'] },
+      { h: 'Required Standards for Transporting Clients', p: ['Employees who transport clients must meet all of the following requirements: Maintain a current, valid driver\'s license. Maintain current automobile liability insurance that meets at least Missouri\'s legal minimums and that permits transporting clients as part of paid caregiving. If the Company requires higher limits or other coverage, the office will tell you in writing before you transport a client. Have an acceptable driving record, verified by a Motor Vehicle Record check ordered by the office. Complete any transportation training the Company requires. Use only a personally owned or legally authorized private vehicle approved by the agency.', 'A caregiver may transport a client only when the client\'s Care Plan authorizes it, the payer permits it (Private Pay, Missouri Medicaid HCBS, or VA Community Care Network (VA CCN)), and the office has approved both the caregiver and the vehicle. No caregiver is authorized to drive clients based on their answers in Step 1 alone.'] },
       { h: 'Vehicle Safety & Condition Requirements', p: ['Any vehicle used to transport clients must be safe, operational, and well-maintained, including properly functioning: headlights, taillights, and turn signals; windshield and windshield wipers; brakes and seat belts; heater and air conditioning; tires properly inflated with a minimum of 1/8 inch tread depth at the point of greatest wear. The vehicle must also be clean and free of trash or clutter, and free of leaking oil, gasoline, or other fluids.'] },
       { h: 'Driver Conduct & Safety Expectations', p: ['While transporting clients, I agree to: Not smoke, vape, text, email, or use a mobile device while driving. Not drive while fatigued, ill, impaired, or under the influence of alcohol, drugs, or medications that affect driving ability. Obey all traffic laws and operate the vehicle in a safe, defensive manner. Transport only the authorized client (no unauthorized passengers). Avoid driving in unsafe weather or road conditions. Never operate a client\'s vehicle unless expressly authorized in writing by the agency.'] },
       { h: 'Accident & Incident Reporting', p: ['I agree to immediately notify Caring Companions of any accident, traffic citation, or incident that occurs while transporting a client. I will comply with all legal reporting requirements and understand that I may not transport clients again until cleared by the agency.'] },
       { h: 'Agency Rights & Acknowledgment', p: ['I understand that Caring Companions reserves the right to approve, suspend, or revoke driving privileges at any time based on safety concerns, compliance issues, insurance status, or policy violations. Failure to comply with this policy may result in disciplinary action, up to and including termination. Driving duties are assigned only after the office has verified my license, my insurance and my driving record, and has approved me and my vehicle.'] },
-      { h: 'Driver Acknowledgment', p: ['If you choose the second option, you will not be asked to transport clients, and the office will send you the Non-Driver Agreement to sign with your Step 2 paperwork.'], items: [{ id: 'driver_ack', label: 'Choose one', kind: 'choice', options: ['I meet all requirements and request approval to transport clients.', 'I do not meet the requirements and will inform my supervisor and sign a Non-Driver Agreement.'], required: true }] },
+      { h: 'Keeping your license and insurance current', p: ['Caring Companions keeps a current copy of your driver\'s license and proof of insurance on file for as long as you are approved to transport clients. We will send you a secure link to upload new copies 30 days before either expires, and again at 14 and 7 days if they are not updated. If your license or insurance expires before the office has your updated copy, your approval to transport clients is suspended until the office receives and verifies it.'] },
+      { h: 'Driver Acknowledgment', p: ['I meet all of the requirements above and request approval to transport clients. I understand that I may not transport any client until the office has verified my license, my insurance and my driving record and has approved me and my vehicle.'] },
     ],
-    certification: ['I have read this policy and the acknowledgment I chose above is true.'],
+    certification: ['I have read this agreement, the information and documents I gave are current and true, and I agree to it.'],
+  },
+  /* v2 (2026-10-13): Samantha's own Non-Driver Agreement & Acknowledgment, word for word (it replaces the draft v1). For an
+     applicant who answers NO to transporting clients; also signed later on the driver link when someone stops driving.
+     The employee's name, position and date print on the signed PDF. */
+  non_driver: {
+    key: 'non_driver', screen: '8', title: 'Non-Driver Agreement & Acknowledgment', short: 'Non-driver agreement', when: { id: 'transport_willing', equals: 'no' }, version: 2, status: 'proposed', signature: 'typed',
+    sections: [
+      { h: '1. Non-Driver Designation', p: [
+        'I understand and acknowledge that I am designated as a Non-Driver with Caring Companions In-Home Senior Care.',
+        'I understand that this designation means I am not authorized to transport clients in any vehicle while performing my employment duties unless I have received prior written approval from Caring Companions.',
+      ] },
+      { h: '2. Transportation Restrictions', p: [
+        'While designated as a Non-Driver, I agree that I will not:',
+        '• Transport a client in my personal vehicle.',
+        '• Drive a client\'s vehicle or a family member\'s vehicle to transport a client.',
+        '• Transport clients in another employee\'s vehicle while acting as the driver.',
+        '• Accept a client\'s or family member\'s request to drive them, even if they offer payment or reimbursement.',
+        '• Drive a client to appointments, shopping, errands, social activities, or any other destination as part of my employment duties without written authorization from Caring Companions.',
+        'These restrictions apply regardless of whether transportation is requested by the client, a family member, or another individual.',
+      ] },
+      { h: '3. Reporting Transportation Requests', p: [
+        'If a client or family member asks me to provide transportation, I agree to politely explain that I am not authorized to transport clients and notify the Caring Companions office.',
+        'I understand that a client\'s or family member\'s permission does not replace authorization from Caring Companions.',
+      ] },
+      { h: '4. Employment and Scheduling', p: [
+        'I understand that my Non-Driver designation does not automatically disqualify me from employment with Caring Companions.',
+        'I may be assigned to clients and shifts that do not require me to transport clients.',
+        'I understand that certain assignments may require an Approved Driver, and I will not accept or perform transportation duties unless I have been approved.',
+        'I remain responsible for having reliable transportation to and from my assigned work locations, consistent with my employment requirements.',
+      ] },
+      { h: '5. Changing to Approved Driver Status', p: [
+        'If I wish to transport clients in the future, I understand that I must first:',
+        '1. Notify Caring Companions that I am requesting a change in my transportation status.',
+        '2. Complete and sign the Driver/Vehicle Insurance & Transportation Standards Agreement.',
+        '3. Provide a copy of the front and back of my current driver\'s license.',
+        '4. Provide current proof of automobile insurance.',
+        '5. Meet all driving, insurance, background verification, and other applicable agency requirements.',
+        '6. Receive written approval from Caring Companions before transporting any client.',
+        'I understand that submitting documents or signing the Driver Agreement does not automatically authorize me to transport clients.',
+      ] },
+      { h: '6. Compliance and Accountability', p: [
+        'I understand that transporting a client without authorization is a violation of Caring Companions policy and may result in disciplinary action, up to and including termination of employment, consistent with applicable law.',
+        'I agree to follow my assigned care plans, scheduling instructions, and agency transportation policies.',
+      ] },
+    ],
+    certification: [
+      '7. Employee Acknowledgment. By signing below, I acknowledge that:',
+      '• I have read and understand this Non-Driver Agreement.',
+      '• I understand that I am not authorized to transport Caring Companions clients while designated as a Non-Driver.',
+      '• I agree to notify the office if a client or family member requests transportation.',
+      '• I understand that I must receive written agency approval before performing any client transportation duties.',
+      '• I understand that this designation will remain in effect until Caring Companions formally changes my transportation status.',
+    ],
+  },
+  /* 2026-10-13: the forms moved from Viventium into Step 1 (Samantha: "the Hub is our central location for all signed
+     employment agreements, policies, acknowledgments"). Each is HER Viventium form with only the changes the legal review
+     found necessary (launch/review/viventium-forms/*-legal-review.md); every change is shown to her side by side before
+     approval. All PROPOSED until she approves the set. */
+  employment_agreement: {
+    key: 'employment_agreement', screen: '10', title: 'Employment Agreement', short: 'Your employment agreement', layout: 'document', countersign: true, version: 1, status: 'proposed', signature: 'typed',
+    intro: ['This agreement is between Troutman Enterprises, LLC DBA Caring Companions In-Home Senior Care ("Employer") and the employee named on this agreement ("Employee"). It is signed electronically by both.'],
+    sections: [
+      { h: 'Recitals', p: ['A. Employer is engaged in the business of providing non-medical home care and/or home healthcare services (the "Business").', 'B. Employer wishes to obtain the services of Employee in furtherance of Employer\'s Business, and Employee wishes to provide services in such capacity.', 'C. This agreement is expressly intended to govern the respective rights and duties of Employer and Employee, both during the term of this agreement and after its termination.', 'THEREFORE, in consideration of the mutual promises and covenants hereinafter set forth, Employer and Employee agree as follows:'] },
+      { h: '1. Duties', p: ['Employer shall employ Employee for the position and duties set forth in the Position Description Employee signed with the job offer, together with such other duties and responsibilities as may be assigned by Employer from time to time.'] },
+      { h: '2. Term', p: ['Employee\'s employment begins on the date Employer gives Employee written confirmation of final approval to work (the "Hire Date"). This agreement is signed before the Hire Date and takes effect on the Hire Date. If final approval is not given, no employment begins. Employment continues until ended under section 4.'] },
+      { h: '3. Compensation', p: ['Employee shall be compensated in accordance with the signed job offer, the terms of which are incorporated herein.'] },
+      { h: '4. Termination', p: ['Employer and Employee each acknowledge and agree that the relationship between them shall be employment-at-will. Either party may end the employment at any time, with or without cause and with or without advance notice. Employer will confirm a separation in writing.'] },
+      { h: '5. Definitions', p: ['(a) "Client" means a client or patient of Employer.', '(b) "Personally Identifiable Information" means names, physical and email addresses, telephone numbers, Social Security Numbers, and other identifiers that permit the physical or online contacting of a specific individual concerning Clients or other employees of Employer ("Co-workers").', '(c) "Protected Health Information" means protected health information or individually identifiable health information concerning Clients.', '(d) The words "includes" and "including" are to be construed to include the phrase "but not limited to" throughout this agreement.'] },
+      { h: '6. Confidential Information and Nondisclosure Covenant', p: [
+        '(a) In the performance of his/her duties under this agreement, Employee will have access to certain confidential procedures, methods, products, systems, techniques, and information used in Employer\'s Business, including, but not limited to: (a) Client information, (b) marketing methods, (c) pricing methods and techniques, (d) proprietary software, (e) demographic information, (f) financial information, (g) information contained in Employer\'s operations manual, and (h) other information about the Business that is not known to the public and gives the Employer an advantage over competitors who do not know or use it ("Confidential Information"). Confidential Information may be written, oral, recorded, or stored on tapes, disks, or other electronic media or digital storage devices. Confidential Information does not include information that is in the public domain (but information will not be deemed to be in the public domain merely because it is embraced by more general information that is in the public domain) other than as the result of a breach of this agreement. Confidential Information does NOT include employee wages, hours, or terms and conditions of employment. Employee acknowledges that Employer has invested substantial amounts of time and money in the development of such Confidential Information. The parties acknowledge and agree that the Confidential Information (i) derives independent economic value, actual or potential, from not being generally known to the public or to other persons who can obtain economic value from its disclosure or use; and (ii) is the subject of reasonable efforts by Employer to maintain its secrecy.',
+        '(b) Except in the ordinary course of business and as necessary to perform his/her duties under this agreement or as otherwise specifically authorized in writing by Employer, Employee shall never, at any time during or after the termination of his/her employment with Employer, directly or indirectly use, communicate, disclose or disseminate any Confidential Information. All Confidential Information is and will remain the sole property of Employer. This Nondisclosure Covenant has no geographic, territorial, or temporal restriction, and applies wherever Employee resides in the future.',
+        '(c) Employee shall not, other than in the ordinary course of business and in connection with the performance of his/her duties under this agreement, copy, take or remove from Employer\'s premises or a Client\'s home any books of account, files, records, client lists, documents or other materials relating to Employer\'s Business or Clients. Employee hereby acknowledges that all such materials are and shall at all times remain the exclusive property of Employer, and Employee hereby waives and disclaims any interest therein or rights thereto.',
+        '(d) Upon the termination of Employee\'s employment for any reason by either Employer or Employee, or at any time upon Employer\'s request, Employee immediately shall return and surrender to Employer all originals and copies of any files, records, documents, Confidential Information, equipment and other property belonging to Employer, and shall delete Employer and Client information from any personal device.',
+        '(e) National Labor Relations Act and Government Agencies. Nothing in this agreement prohibits Employee from discussing or disclosing wages, hours, or other terms and conditions of employment, from engaging in activity protected by Section 7 of the National Labor Relations Act, or from communicating with, filing a charge with, or taking part in an investigation by any government agency, including the National Labor Relations Board, the Equal Employment Opportunity Commission, the U.S. Department of Labor, OSHA, the HHS Office of Inspector General, and the Missouri Department of Health and Senior Services.',
+        '(f) Defend Trade Secrets Act Notice. Employee is hereby notified in accordance with the Defend Trade Secrets Act of 2016 (18 USC § 1833(b)) that Employee will not be held criminally or civilly liable under any federal or state trade secret law for the disclosure of a trade secret that is made in confidence to a federal, state, or local government official, either directly or indirectly, or to an attorney solely for the purpose of reporting or investigating a suspected violation of law, or is made in a complaint or other document that is filed under seal in a lawsuit or other proceeding. If Employee files a lawsuit for retaliation against Employer for reporting a suspected violation of law, Employee may disclose Employer\'s trade secrets to Employee\'s attorney and use the trade secret information in the court proceeding if Employee files any document containing the trade secret under seal, and does not disclose the trade secret, except pursuant to court order.',
+        '(g) Employee represents and warrants that his or her employment with Employer will not violate the terms and conditions of any other agreements entered into by Employee before Employee\'s employment with Employer. Employee represents and warrants that to the extent he/she signed any non-compete, non-solicitation or other agreement with any company or former employer regarding proprietary or confidential information, he/she will provide a copy of such agreement to Employer at or before the start of his/her employment. Employee further represents and warrants that he/she is not bringing with him/her to Employer any files, documents, data, equipment, or other information that may be deemed confidential or proprietary to anyone else, including Employer\'s former employers. Employee agrees to indemnify Employer for losses caused by Employee\'s knowing breach of any such agreement, to the extent permitted by law.',
+      ] },
+      { h: '7. HIPAA Requirements', p: [
+        '(a) The parties agree that the term "Confidential Information" as used in this agreement includes Protected Health Information and Personally Identifiable Information of Clients, and Personally Identifiable Information of Co-workers.',
+        '(b) To the extent that Employer qualifies as a "covered entity" as defined by the Health Insurance Portability and Accountability Act of 1996 ("HIPAA"), and privacy regulations published by the U.S. Department of Health and Human Services contained at 45 C.F.R. §§ 160 and 164 ("HIPAA Regulations"), which may be periodically revised or amended, and other applicable laws, Employee agrees to protect and provide for the privacy and security of Clients\' Protected Health Information.',
+        '(c) Employee shall use appropriate safeguards to prevent the use and/or disclosure of all Protected Health Information and Personally Identifiable Information relating to Clients, Clients\' family members, or Co-workers, whether made available by or obtained from Clients, Co-workers, or Employer.',
+        '(d) Employee\'s disclosure of Protected Health Information and Personally Identifiable Information will be limited to only those purposes that are necessary to perform his/her duties under this agreement and specifically detailed in Employee\'s job responsibilities, unless otherwise permitted in writing by Employer.',
+        '(e) Employee shall never: (a) use or further disclose any Protected Health Information or Personally Identifiable Information except as provided with the prior written approval of Employer and the Client, as the case may be; or (b) use or further disclose any Protected Health Information in a manner that would violate any provision of HIPAA Regulations. Employee shall immediately report to Employer, in a timely manner, any unauthorized use or disclosure of Protected Health Information of which Employee becomes aware.',
+        '(f) Upon termination of Employment, Employee shall return all Protected Health Information and Personally Identifiable Information that Employee maintains in any form and shall retain no copies thereof. If Employee is unwilling or unable to return any Protected Health Information or Personally Identifiable Information, Employee shall destroy such information, regardless of whether its form is paper or electronic.',
+        '(g) Employee shall indemnify Employer for losses caused by Employee\'s willful misconduct or knowing violation of law or of this agreement in connection with any unauthorized use or disclosure of Protected Health Information or Personally Identifiable Information, to the extent permitted by law.',
+        '(h) The provisions of this agreement are not intended to restrict or otherwise limit the application of HIPAA to the parties. This provision is intended only to outline the parties\' general duties as required by HIPAA. Employee and Employer recognize that they are fully subject to all provisions of HIPAA, regardless of whether the provisions are included in this agreement.',
+        '(i) The terms of this section will survive the termination of Employee\'s employment (whether voluntary or involuntary) for any reason.',
+      ] },
+      { h: '8. Non-Solicitation Covenant', p: [
+        '(a) Employee agrees that during his or her employment and for a period of twelve (12) months following the cessation of Employee\'s employment for any reason, Employee shall not directly or indirectly use any Confidential Information in order to:',
+        '(1) Solicit or induce any individual, corporation or other entity which is a Client to whom Employee provided services, or about whom Employee received Confidential Information, during the last twelve (12) months of employment, in an attempt to: (i) enter into any business relationship with that Client if the business relationship is competitive with any aspect of the Business; or (ii) reduce or eliminate the business such Client conducts with Employer; or',
+        '(2) Solicit or induce any employee, contractor or vendor of Employer: (i) to provide services to any individual, corporation or entity whose business is competitive with the Business; or (ii) to leave Employer\'s employ to accept employment with an individual, corporation or entity whose business is competitive with Employer\'s.',
+        '(b) As used in section 8 and its subparts, "solicit or induce" means that in any communication(s) with any individual, corporation or entity, Employee affirmatively requests or expressly suggests that the individual, corporation or entity do any of the activities enumerated in section 8 and its subparts.',
+        '(c) The prohibitions contained in section 8 and its subparts extend to: (i) activities undertaken by Employee directly on Employee\'s own behalf, and (ii) activities undertaken by Employee indirectly through any individual, corporation or entity that undertakes such prohibited activities with Employee\'s assistance.',
+        '(d) During employment and for twelve (12) months after it ends, Employee will not accept private employment directly from a Client Employee served, or from that Client\'s family, to provide the same kind of services, unless Employer agrees in writing. Employee will not disclose Employer\'s Client billing rates. Employee may discuss Employee\'s own wages and working conditions with anyone.',
+      ] },
+      { h: '9. Breach of Nondisclosure or Non-solicitation Covenants', p: ['Employee acknowledges and agrees that each and any breach of or failure to perform his/her obligations under section 6, 7 or 8 above will cause immediate and irreparable harm to Employer in a manner that cannot be measured nor adequately compensated in damages. Employee agrees that in the event of any such breach or failure to perform his/her obligations, Employer shall be entitled to temporary, preliminary, and permanent injunctive relief to restrain such breach or compel performance by Employee, and to recover from Employee all costs and expenses of any proceedings filed to obtain such injunctive relief, including reasonable attorneys\' fees. Employee further agrees that in the event Employee breaches or fails to comply with the provisions of section 6 or 8 above, Employee shall pay over to Employer the compensation or profits Employee received from the solicited Client or business as a result of such breach. Nothing in this agreement authorizes any deduction from wages owed by Employer. Such relief shall be in addition to any other remedies that Employer may have at law or in equity. Waiver by either party of the performance or breach of any term or condition of this agreement shall not constitute a continuing waiver of the same or any other term, condition, or breach.'] },
+      { h: '10. Client Recording Devices: Notice and Acknowledgment', p: ['Clients or their families may use video or audio monitoring devices in their homes and yards, and some may be concealed. Employer does not control Client devices. Some Clients and families take comfort from these devices and may insist that they remain in place as a condition of service. Employee acknowledges this notice and consents to being recorded while performing services in areas a Client lawfully monitors. Employer will ask Clients not to record in bathrooms or private changing areas and not to record conversations they are not part of. Employee should report any recording concern to the office.'] },
+      { h: '11. Employer Equipment', p: ['All Employer Equipment provided or made available to Employee will at all times remain the property of Employer. Employee shall use reasonable care in handling, using and maintaining the security of all Employer Equipment in Employee\'s possession or control. Employee shall use Employer Equipment only for its intended purposes (e.g., to manage and/or access information, document processing, communications, recordkeeping, etc.) and in accordance with the functions of Employee\'s job requirements and policies adopted by Employer from time-to-time. Employee shall NOT use Employer Equipment in or for any illegal, unsafe, or unauthorized purpose. Employee shall not permit other persons (except for other employees of Employer) to use or possess Employer Equipment without Employer\'s prior authorization. Employee shall promptly report any malfunction, irregularity, damage, or loss of Employer Equipment to Employer. All Employer Equipment is subject to inspection by Employer at any time without prior notice. Employee shall return all Employer Equipment to Employer upon demand or within three days after any change in Employee\'s job responsibilities or the termination of Employee\'s employment (whether voluntary or involuntary) for any reason. Employer may seek reimbursement for Employer Equipment lost or damaged through Employee\'s negligence or misconduct, or not returned within three days after the termination of employment. Employer will not deduct any amount from wages except as permitted by federal and Missouri law and with Employee\'s separate written authorization for that specific deduction, and never below minimum wage or from final wages. "Employer Equipment" means a computer, tablet, printer, monitor, docking station, mobile, Internet or "smart" telephone, or other equipment or property, including all components thereof and software, documents and other files installed or stored thereon, that Employer may provide Employee at any time for use in connection with Employee\'s duties under this agreement.'] },
+      { h: '12. Drug and Alcohol Use', p: ['Employee shall not: (i) while on the job (whether or not on Employer\'s premises), use, consume, or be under the influence of alcohol or other substance that impairs his/her judgment, reflexes, or the performance of his/her duties under this agreement; or (ii) engage in the illegal possession, distribution, dispensation, or use of drugs while on the job (whether or not on Employer\'s premises). Following any offer of employment, and prior to or shortly after beginning employment, Employee agrees to take and submit to a chemical test of Employee\'s blood, breath, hair, or urine, to determine the alcohol, drug, or alcohol and drug content thereof ("drug test"), if Employer requires one under its screening policy. As a continuing condition of employment, Employee agrees to take and submit to a drug test at any time requested by Employer upon reasonable suspicion that Employee has engaged in drug use or in the consumption of alcohol or other substances in violation of this provision, and after a workplace accident or incident resulting in employee or Client injury when drug or alcohol use could have contributed to it. Employee authorizes the lawful release of drug test results to Employer. Testing will comply with applicable law, including Article XIV of the Missouri Constitution. Employer shall pay the cost of all drug tests.'] },
+      { h: '13. Driver\'s License and Automobile Insurance', p: ['Employee may transport Clients only after Employer has approved Employee as a driver under the Driver/Vehicle Insurance & Transportation Standards Agreement, which sets out the license, insurance and verification requirements. An Employee designated as a Non-Driver under the Non-Driver Agreement & Acknowledgment may not transport Clients. Employee is responsible for Employee\'s own vehicle and for keeping the insurance the law and that agreement require.'] },
+      { h: '14. Background Screening', p: ['Employee has completed Employer\'s separate Permission for Background Checks and References, which governs the background checks Missouri requires and Employer\'s rechecks during employment.'] },
+      { h: '15. Severability', p: ['If any provision of this agreement shall be held to be illegal, invalid or unenforceable in any respect, Employer and Employee agree that such term or provision shall be deemed to be modified to the extent necessary to permit its enforcement to the maximum extent permitted by applicable law, and the remainder of this agreement and all other provisions hereof shall not be affected thereby.'] },
+      { h: '16. Assignment', p: ['This agreement shall be binding upon and inure to the benefit of Employer, its successors and assigns, and to the benefit of Employee, his/her heirs and legal representatives, except that Employee\'s duties to perform future services and the right to receive payment therefore are hereby expressly agreed to be non-assignable and nontransferable.'] },
+      { h: '17. Arbitration Agreement and Class Action Waiver', p: [
+        '(a) Agreement to Arbitrate all Disputes. It is agreed that any controversy, claim or dispute between Employer and Employee that is in any way related to the terms of this agreement, employment and/or cessation of employment, and which is otherwise actionable at law, will be resolved exclusively by final and binding arbitration before a neutral arbitrator under the Federal Arbitration Act and the laws of the State of Missouri. This is a mutually-binding agreement and mutual waiver of a trial before the state and federal courts of the United States and is equally applicable to both the employee and the employer such that each grants this consideration to the other. Any claim by either party against the other must be submitted to arbitration, except that either party may ask a court for temporary injunctive relief to keep things as they are until the arbitrator decides. These claims include, but are not limited to, claims under federal, state, and local statutory or common law, wage, overtime, or any other claims under the laws of the State of Missouri, the Federal Fair Labor Standards Act, the Age Discrimination in Employment Act, Title VII of the Civil Rights Act of 1964, as amended, the Americans with Disabilities Act, the law of contract and the law of tort. The right to file a worker\'s compensation or unemployment compensation claim, or a charge with a government agency, cannot be and is not waived by this agreement. As federal law provides (9 U.S.C. §§ 401 and 402), Employee may choose to bring a dispute involving sexual harassment or sexual assault in court instead of arbitration. Any arbitration that must be initiated pursuant to this agreement is to be conducted according to the employment rules of the American Arbitration Association ("AAA"). Employer shall bear 100% of the cost of the arbitrator, which shall be mutually agreed to under the rules of the AAA. This agreement shall not restrict the right to conduct meaningful discovery or any remedy, including punitive damages, attorney\'s fees, or injunctive relief, as provided under Missouri or federal law that would have otherwise been available at law or equity so long as the remedy or discovery device does not conflict with the rules of the AAA. Judgment upon the award rendered by the arbitrator must be in writing and may be entered in any court of competent jurisdiction. Any such arbitration shall be conducted in Greene County, Missouri, or such other place as may be mutually agreed upon by the parties under the rules of the AAA. Employer may change this arbitration agreement only for the future, on thirty (30) days\' written notice to Employee, and never for a claim already known or filed.',
+        '(b) Class Action Waiver. There shall be no right or authority for any dispute to be heard or arbitrated on a class action basis, as a private attorney general, or on a basis involving disputes brought in a purported representative capacity on behalf of the general public, any other current, prospective or former employees, or any other persons similarly situated to either party. The arbitrator may not consolidate more than one person\'s claims, and may not otherwise preside over any form of a representative or class proceeding. Notwithstanding the waiver of either party\'s right to bring or participate in a class, collective or other representative proceeding, employees may have a statutory right (e.g., under the National Labor Relations Act) to act concertedly on behalf of themselves and others to challenge this policy in any forum. If an employee chooses to pursue such a challenge to this agreement, Employer will not retaliate against Employee for doing so. Employer is entitled, however, to enforce this policy, including enforcing Employee\'s agreement to arbitrate all claims and to forego pursuing any dispute brought on a class, collective or representative basis, and is entitled to seek dismissal of any such class, collective or representative action and otherwise assert this policy as a defense in any proceeding. In accordance with section 15 herein, if any portion, sentence, or provision of this Arbitration Agreement and Class Action Waiver is deemed unlawful or unenforceable by any tribunal with authority to do so, that portion is to be severed from the remainder of the agreement, which will remain in full force and effect. If a class action is found permissible in any event, the courts of the State of Missouri or United States of America shall be the only forum for the parties specifically agreeing not to arbitrate any class action.',
+      ], items: [
+        { id: 'ea_arbitration_initials', label: 'Your initials: 17(a) Agreement to Arbitrate', kind: 'initials', required: true },
+        { id: 'ea_class_waiver_initials', label: 'Your initials: 17(b) Class Action Waiver', kind: 'initials', required: true },
+      ] },
+      { h: '18. Governing Law, Forum Selection, and Consent to Personal Jurisdiction', p: ['This agreement shall be governed by the laws of the State of Missouri. Pursuant to section 17 above, all disputes between Employer and Employee are to be submitted to binding arbitration. However, if a dispute is deemed validly filed before a court of civil jurisdiction, Employer and Employee hereby agree that any such action shall be brought only in a state or federal court located in or for Greene County, Missouri, and do hereby consent to the exercise of personal jurisdiction by any such court and waive any defense of lack of personal jurisdiction or improper venue for the purpose of carrying out this provision.'] },
+      { h: '19. Entire Agreement and Amendments', p: ['This agreement, the signed job offer and Position Description, and the other agreements it names constitute the entire agreement between the parties with respect to the subject matter hereof and any and all prior discussions, negotiations, commitments, or understandings relating thereto are hereby superseded and merged herein. The terms and provisions of this agreement shall not be changed, amended, waived, modified or terminated in any respect whatsoever except by a written instrument executed by both Employer and Employee, except as section 17(a) provides.'] },
+      { h: '20. No Waiver of Rights', p: ['Neither any failure nor any delay on the part of Employer in exercising any right, power or privilege hereunder shall operate as a waiver thereof, nor shall a single or partial exercise thereof preclude any other or further exercise or the exercise of any other right, power or privilege by Employer.'] },
+      { h: '21. No Conflict with NLRA', p: ['The National Labor Relations Act guarantees employees the right to engage in concerted activities for mutual aid and protection. No provision of this agreement, and no policy adopted by Employer, is to be construed to restrain or infringe on that right. Thus, notwithstanding any provision of this agreement or any policy adopted by Employer in its employee handbook or otherwise, Employee and all other employees of Employer have the right to communicate with each other, and to act in concert, with respect to wages, hours, and terms and conditions of employment.'] },
+      { h: 'Your duties with Clients', p: ['Employee will also provide any additional activities as may be requested from time to time, to help ensure that the Client\'s household runs smoothly within reason.', 'It is mutually understood and agreed that if at any time Employee is asked by a Client or a Client\'s agent to perform an activity that Employee questions or is uncomfortable with, or that is not part of the Client\'s current Care Plan, or that Employee is not willing and/or able to provide, Employee is to immediately contact his/her immediate manager or supervisor before engaging in the activity and/or accepting/declining the Client\'s or agent\'s request.', 'Owner: Samantha Troutman, (417) 234-8494.'] },
+    ],
+    certification: ['THIS CONTRACT CONTAINS A BINDING ARBITRATION PROVISION WHICH MAY BE ENFORCED BY THE PARTIES.', 'I have read this whole agreement, I understand it, and I agree to it. Caring Companions signs it after I do.'],
+  },
+  code_of_ethics: {
+    key: 'code_of_ethics', screen: '12', title: 'Code of Ethics', short: 'Code of Ethics', version: 1, status: 'proposed', signature: 'typed',
+    sections: [
+      { h: 'The following are strictly prohibited', p: [
+        '• Consuming the client\'s food or drink (water is allowed).',
+        '• Using the client\'s telephone for personal calls.',
+        '• Accepting gifts or financial gratuities (tips) from the client/representative.',
+        '• Using the client\'s car.',
+        '• Lending money or items to the client/representative; borrowing money or items from the client/representative.',
+        '• Consumption of alcoholic beverages, or use of medicine or drugs for any purpose, other than medical, in the client\'s home or prior to service delivery.',
+        '• Discussing your own or anyone else\'s personal problems, or religious or political beliefs, with the client.',
+        '• Solicitation or acceptance of money or goods for personal gain from the client.',
+        '• Purchasing any item for the client not directed in the care plan.',
+        '• Bringing personal visitors (children, friends, relatives, pets, etc.) to the client\'s home.',
+        '• Smoking in the client\'s home.',
+        '• Breach of the client\'s privacy and confidentiality of information and records.',
+        '• Purchase of any item from the client even at fair market value.',
+        '• Assuming control of the financial or personal affairs, or both, of the client or of his/her estate including power of attorney, conservatorship, or guardianship.',
+        '• Taking anything from the client or from the client\'s home.',
+        '• Committing any act of abuse, neglect, or exploitation.',
+        '• Sleeping in the client\'s home, unless you are on an approved overnight shift, the client is asleep, and you stay close enough to hear and help the client.',
+        '• Remaining in the client\'s home after services have been completed.',
+      ] },
+      { h: 'What you may do', p: ['You may use the client\'s bathroom. With the client\'s consent, you may eat a lunch you bring. You may drink the client\'s water.'] },
+      { h: 'Reporting abuse, neglect, or exploitation', p: ['Missouri law makes me a mandated reporter. If I have reasonable cause to suspect abuse, neglect, or exploitation of a client, I must report it immediately to the Missouri Adult Abuse and Neglect Hotline, 1-800-392-0210. I may make the call myself or make sure a report is made. I will also tell the office the same day. If I am not sure a report was made, I will call the hotline myself. Knowingly failing to report is a class A misdemeanor (RSMo 565.188). The Company will not retaliate against me for a good-faith report (RSMo 192.2475).'] },
+    ],
+    certification: ['I have read, understand, and agree to be governed by this Code of Ethics.'],
+  },
+  medication_policy: {
+    key: 'medication_policy', screen: '13', title: 'Medication Policy', short: 'Medication Policy', version: 1, status: 'proposed', signature: 'typed',
+    sections: [
+      { h: 'Medication Policy', p: [
+        'This policy is to be read by all employees of Caring Companions In-Home Senior Care. Caring Companions In-Home Senior Care is an independently owned and operated, non-medical, in-home care company.',
+        'Dispensing medication(s), or pre-filling a client\'s medication box, by any employee of Caring Companions, is strictly forbidden. If a client asks you to fill their medication box, you must instead have a family member or other responsible party do it.',
+      ] },
+      { h: 'A Caregiver may', p: ['• Communicate appropriate information regarding self-administration.', '• Remind the client to take medication as prescribed.', '• Read the medication label to the client.', '• Hand the medication container to the client.', '• Open the medication container.', '• Apply ordinary non-prescription lotion to intact skin as part of personal care, when the client\'s care plan and payer allow it.'] },
+      { h: 'A Caregiver may not', p: ['• Administer over-the-counter or prescription medications by mouth, or put drops in a client\'s eyes, ears, or nose.', '• Apply topical prescription medications.', '• Perform tasks that require sterile techniques.', '• Administer irrigation fluids to intravenous lines, Foley catheters or ostomies.', '• Administer food and fluids via feeding tubes.', '• Administer enemas or suppositories.', 'Medication administration and treatment are outside the duties of a non-medical caregiver unless the office has specifically authorized it in writing.'] },
+      { h: 'Catheter and ostomy collection bags', p: [
+        'Routinely emptying a urinary drainage bag or an ostomy pouch is separate from placing, inserting, changing or connecting a catheter or appliance, and separate from catheter or ostomy site care.',
+        'When the client\'s care plan allows, you may empty a collection bag. You may not place, insert, change, connect, disconnect or irrigate any catheter, bag or appliance, or do catheter or ostomy site care, unless the office has authorized you in writing for that client after the required training.',
+        'Medicaid clients: Missouri lists some catheter and ostomy care as Advanced Personal Care. Never do an advanced task for a Medicaid client without the authorization and training Missouri requires. If you are not sure, call the office first.',
+        'Private-pay clients: an external catheter such as PureWick is placed only by a caregiver the office has trained and authorized for that client, only where the law allows it, and only when the client\'s care plan includes it.',
+      ] },
+      { h: 'If something is not right', p: ['If a client refuses a medication, cannot take it without hands-on help, or has a reaction, call the office. Never decide a dose. Report redness, odor, blood, or leaks around a catheter or ostomy site to the office right away.'] },
+    ],
+    certification: ['I have read, understand, and agree to be governed by the above terms for the Medication Policy. Failure to follow this policy may result in disciplinary action, up to and including termination.'],
+  },
+  hipaa_privacy: {
+    key: 'hipaa_privacy', screen: '14', title: 'HIPAA & the Privacy Rule', short: 'HIPAA', version: 1, status: 'proposed', signature: 'typed',
+    sections: [
+      { h: 'What HIPAA is', p: ['Health Insurance Portability and Accountability Act of 1996 (HIPAA): Public law passed by Congress to protect the privacy of Americans\' personal health records by safeguarding the security and confidentiality of health care information.', 'Privacy Rule: Establishes regulations for using and disclosing Protected Health Information (PHI). PHI is any information about health status, provision of health care, or payment for health care that can be linked to an individual.'] },
+      { h: 'Privacy Policy', p: ['I will use and share client information only as my job requires: to care for the client, to bill for care, and to run the Company. I will share only the minimum needed. I will not look at, discuss, copy, or post client information for any other reason, during or after my employment.'] },
+      { h: 'When I may share client information myself', p: ['I may share client information myself only (1) with 911, EMS, or a hospital treating the client, and (2) in an abuse, neglect, or exploitation report to the state hotline. All other requests go to the office. The Company decides the other disclosures the Privacy Rule permits, such as to family involved in care, health oversight like DHSS or MO HealthNet audits, law enforcement, coroners and funeral directors, organ donation, a serious threat to safety, and the U.S. Department of Health and Human Services.'] },
+      { h: 'Most common HIPAA violations', p: ['1. Employees disclosing information: revealing information about clients to friends or coworkers who do not need it for their work.', '2. Social media: posting any client photo or information, even without a name.', '3. Lost or stolen devices: the theft of PHI through lost or stolen laptops, desktops, smartphones, and other devices that contain client information. Mobile devices are the most vulnerable to theft due to their size, which requires password-protected authorization and encryption to access client-specific information.'] },
+      { h: 'Written authorization and reporting', p: ['Written authorization is required to use or disclose any individual\'s personal health information not used for treatment, payment, healthcare operations, or permitted by the HIPAA Privacy Rule. If an employee is unsure, obtaining prior authorization from the office before releasing any information is best practice.', 'I will tell the office the same day if I lose a phone or paper with client information, send information to the wrong person, or see anyone misuse it.'] },
+      { h: 'Consequences', p: ['If I misuse or wrongly share client information, the Company will discipline me, up to and including termination. Knowingly obtaining or disclosing health information without authorization can be a federal crime with fines and prison. If I hold a license or certification, the Company may report my conduct to the agency that issued it when the law requires or allows.'] },
+    ],
+    certification: ['I have completed the Company\'s HIPAA training. I have read, understood, and agree to comply with the above terms regarding HIPAA and PHI policy and procedures.'],
+  },
+  /* 2026-10-13 (Samantha: "we can add client rights here too"): the six rights every client must receive in writing
+     (19 CSR 15-7.021(18)(O)), the same words the client gets, and the one signed statement every employee needs before
+     serving anyone: received and reviewed the rights, the Code of Ethics and the confidentiality policy, all explained
+     ((24)(B)5). Shown after the Code of Ethics and HIPAA so all three are in front of them when they sign. */
+  client_rights: {
+    key: 'client_rights', screen: '15', title: 'Client Rights', short: 'Client Rights', version: 1, status: 'proposed', signature: 'typed',
+    sections: [
+      { h: 'Client Rights', p: [
+        'Caring Companions gives every client, and their main family caregiver when appropriate, a written copy of these rights when services begin, and we go over it with them. You get the same copy so you know what every client can expect from you.',
+        'Every client has the right to:',
+        '1. Be treated with respect and dignity.',
+        '2. Have all of their personal and medical information kept confidential.',
+        '3. Have a say in how their services are provided, as much as possible, within the care plan that was authorized.',
+        '4. Know how to make a complaint about their services, get our help working it out, and never be punished or treated differently for complaining. To make a complaint, a client or family member calls the Caring Companions office at (417) 234-8494 or writes to Caring Companions In-Home Senior Care, 1331 N Stewart Ave, Springfield, MO 65802. If a complaint is not resolved, the client may call the Missouri Department of Health and Senior Services HCBS Call Center at 1-866-835-3505.',
+        '5. Receive services no matter their race, creed, color, age, sex, or national origin.',
+        '6. Receive a copy of the Caring Companions Code of Ethics that we follow when we provide services.',
+        '7. Call the Missouri Department of Health and Senior Services for any reason, including being unhappy with us or their services. The HCBS Call Center is 1-866-835-3505.',
+        '8. Be free from retaliation. No client or family member will be treated worse because they reported a concern, and neither will you.',
+      ] },
+      { h: 'Reporting abuse, neglect, or exploitation', p: ['If you ever think a client is being abused, neglected, or exploited, you must report it right away to the Missouri Adult Abuse and Neglect Hotline at 1-800-392-0210, and tell the office.'] },
+      { h: 'Questions before your first shift', p: ['If anything in the Client Rights, the Code of Ethics or the HIPAA policy is unclear, call the office at (417) 234-8494 before your first shift. The office goes over all three with you at your Orientation Video Call, before you serve any client.'] },
+    ],
+    /* her ruling 2026-10-13: the signature confirms receipt and review only; the explanation happens at the Orientation Video
+       Call and is recorded there (who, when, their confirmation); the requirement is complete only then, before the first shift */
+    certification: ['By signing, I confirm that I received and reviewed a copy of the Client Rights, the Caring Companions Code of Ethics, and the Caring Companions policy on keeping client information confidential. I understand the office will explain each of them to me at my Orientation Video Call, before I serve any client.'],
   },
 }
-export const FORM_ORDER: FormKey[] = ['employee_application', 'reference_consent', 'fcra_disclosure', 'edl_fcsr_consent', 'availability', 'experience', 'vehicle']
+export const FORM_ORDER: FormKey[] = ['employee_application', 'reference_consent', 'fcra_disclosure', 'edl_fcsr_consent', 'availability', 'experience', 'vehicle', 'non_driver', 'employment_agreement', 'medication_policy', 'code_of_ethics', 'hipaa_privacy', 'client_rights']
 /** The wording of one form, canonical, for the fingerprint stored with every signature (answers are not part of it). */
 export function formText(key: FormKey): string {
   const f = FORMS[key]; const out: string[] = [`title|${f.title}`, `version|${f.version}`]
@@ -317,3 +545,27 @@ export async function formFingerprint(key: FormKey): Promise<string> {
 }
 /** Which forms may be signed for real: only the ones Samantha has approved by version (none yet: all proposed). */
 export const APPROVED_FOR_REAL: Partial<Record<FormKey, number>> = {}
+/** 2026-10-13: a real (non-practice) applicant may sign a form only at a version Samantha approved for real. */
+export const approvedForReal = (k: FormKey): boolean => APPROVED_FOR_REAL[k] === FORMS[k].version
+export const allApprovedForReal = (): boolean => FORM_ORDER.every(approvedForReal)
+/** 2026-10-13: the Step 1 screens follow the form list. The first ten are fixed; a form added later gets its own screen
+    (its `screen` key) before "All done", in FORM_ORDER order. */
+export const BASE_SCREENS = ['1', '2', '3', '4', '5a', '5b', '6', '7', '8', '9']
+export function step1Screens(): string[] {
+  const extra = FORM_ORDER.map((k) => FORMS[k].screen).filter((x) => !BASE_SCREENS.includes(x) && x !== '2 and 3')
+  return [...BASE_SCREENS.slice(0, -1), ...extra.filter((x, i) => extra.indexOf(x) === i), '9']
+}
+/** 2026-10-13: a form with `when` applies only when that Step 1 answer matches (the Driver or the Non-Driver Agreement,
+    chosen by "Are you willing and able to transport clients ...?"). Answers that decide a form, asked on the form's screen. */
+export const DECIDING: Record<string, { label: string; options: [string, string][] }> = {
+  transport_willing: { label: 'Are you willing and able to transport clients in your personal vehicle as part of your caregiving duties?', options: [['yes', 'Yes'], ['no', 'No']] },
+}
+export const formApplies = (k: FormKey, answers: Record<string, unknown>): boolean => { const w = FORMS[k]?.when; return !w || answers?.[w.id] === w.equals }
+/** the forms this person signs, in order; a deciding answer not given yet leaves both of its forms out */
+export const applicableForms = (answers: Record<string, unknown>): FormKey[] => FORM_ORDER.filter((k) => formApplies(k, answers || {}))
+/** how many forms this person signs: the ones that apply, plus one for each deciding question not answered yet */
+export const formCount = (a: Record<string, unknown>) => applicableForms(a || {}).length + Object.keys(DECIDING).filter((k) => !a?.[k]).length
+/** the forms to list for this person: those that apply, and while a deciding question is open, the first form it decides as a stand-in */
+export const formsToList = (a: Record<string, unknown>): FormKey[] => FORM_ORDER.filter((k) => { const w = FORMS[k].when; return !w || (a || {})[w.id] === w.equals || (!(a || {})[w.id] && FORM_ORDER.find((x) => FORMS[x].when?.id === w.id) === k) })
+/** the signed forms that still need the company's signature */
+export const needsCountersign = (signatures: Record<string, unknown>, countersignatures: Record<string, unknown>): FormKey[] => FORM_ORDER.filter((k) => FORMS[k].countersign && signatures?.[k] && !countersignatures?.[k])

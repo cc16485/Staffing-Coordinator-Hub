@@ -97,17 +97,20 @@ export function finalWords(first: string, check: Check, variant: Variant, spoke:
 /* ── what they told us themselves (2026-10-11, Samantha: "I would like to know if they disclosed something on their record
    as well ... if they disclosed a DWI from 12 years ago that helps") ── read from their Step 1 answers, never sent anywhere. */
 export type Disclosure = { asked: boolean; convicted: 'yes' | 'no' | null; convictions: { offense: string; date: string; level: string; location: string }[];
-  moving_violations: 'yes' | 'no' | null; moving_detail: string; license_suspended: 'yes' | 'no' | null }
+  moving_violations: 'yes' | 'no' | null; moving_detail: string; license_suspended: 'yes' | 'no' | null
+  /* 2026-10-13: Missouri's two other required disclosures (RSMo 192.2495.5), asked on the permission form */
+  edl_listed: 'yes' | 'no' | null; fcsr_listed: 'yes' | 'no' | 'not sure' | null }
 const yn = (v: unknown): 'yes' | 'no' | null => v === 'yes' || v === 'no' ? v : null
 const cell = (v: unknown) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, 200)
 export function disclosureFrom(answers: any): Disclosure {
   const a = answers && typeof answers === 'object' ? answers : null
-  if (!a || !('convicted' in a)) return { asked: false, convicted: null, convictions: [], moving_violations: null, moving_detail: '', license_suspended: null }
+  if (!a || !('convicted' in a)) return { asked: false, convicted: null, convictions: [], moving_violations: null, moving_detail: '', license_suspended: null, edl_listed: null, fcsr_listed: null }
   const rows = Array.isArray(a.convictions) ? a.convictions : []
   return { asked: true, convicted: yn(a.convicted),
     convictions: rows.filter((r: any) => Array.isArray(r) && r.some((x: unknown) => cell(x))).slice(0, 20)
       .map((r: any[]) => ({ offense: cell(r[0]), date: cell(r[1]), level: cell(r[2]), location: cell(r[3]) })),
-    moving_violations: yn(a.moving_violations), moving_detail: cell(a.moving_violations_detail), license_suspended: yn(a.license_suspended) }
+    moving_violations: yn(a.moving_violations), moving_detail: cell(a.moving_violations_detail), license_suspended: yn(a.license_suspended),
+    edl_listed: yn(a.edl_listed), fcsr_listed: a.fcsr_listed === 'Yes' ? 'yes' : a.fcsr_listed === 'No' ? 'no' : a.fcsr_listed === 'I am not sure' ? 'not sure' : null }
 }
 
 /* ── the gates ── */

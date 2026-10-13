@@ -9,7 +9,7 @@
 // became "a short Orientation Video Call" (the new name she chose). Letters signed as version 1 keep their stored PDF and
 // fingerprint; version 1's words are in this file's history (git). The position description stays version 1.
 export const OFFER_DOC_VERSION = 2
-export const PD_DOC_VERSION = 1
+export const PD_DOC_VERSION = 2   /* 2026-10-13: the office address line (her confirmed address; no suite) */
 export type Block = { k: 'h' | 'p' | 'li' | 'small' | 'q'; t: string }
 export type Fields = {
   first: string; last: string; position: string; pay_rate: number; classification: string
@@ -23,7 +23,7 @@ export function classificationParagraph(c: string): string | null {
   return null
 }
 export const DRUG_SCREENING_LINE = "Successful completion of any drug screening required by Caring Companions' screening policy."
-const HEADER = 'Caring Companions In-Home Senior Care · 1331 N. Stewart Ave., Suite B, Springfield, MO 65802 · (417) 234-8494 · mo-care.com'
+const HEADER = 'Caring Companions In-Home Senior Care · 1331 N Stewart Ave, Springfield, MO 65802 · (417) 234-8494 · mo-care.com'
 const rate = (n: number) => (Math.round(n * 100) / 100).toFixed(2)
 
 export function offerLetter(f: Fields): Block[] {
@@ -100,7 +100,7 @@ export function positionDescription(f: Fields): Block[] {
     { k: 'p', t: 'I acknowledge that I have received, read, and understand this position description. I understand it summarizes the primary purpose, essential duties, and qualifications of this position; that it is a general overview and not exhaustive; and that it is not a contract of employment, expressed or implied. I understand that Caring Companions may add, remove, or modify job duties at its discretion based on business and client needs, and that this description does not alter my at-will employment status. I confirm that I am physically able to perform the essential duties of this position, including the physical requirements described above, with or without reasonable accommodation.' },
     { k: 'small', t: `Issued by ${f.issued_by}, ${f.issued_at}` },
     { k: 'small', t: 'This description summarizes the primary purpose, essential duties, and qualifications of this role. It is a general overview, is not exhaustive, and does not alter the at-will employment relationship. Duties may vary based on client needs, assignment, licensure, and company requirements.' },
-    { k: 'small', t: 'Caring Companions In-Home Senior Care · 1331 N Stewart Ave, Ste B, Springfield, MO 65802 · (417) 234-8494 · mo-care.com' },
+    { k: 'small', t: 'Caring Companions In-Home Senior Care · 1331 N Stewart Ave, Springfield, MO 65802 · (417) 234-8494 · mo-care.com' },
     { k: 'small', t: `Document version ${PD_DOC_VERSION}` },
   ]
 }

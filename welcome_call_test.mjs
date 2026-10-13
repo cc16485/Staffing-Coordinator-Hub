@@ -18,7 +18,7 @@ const q = (t) => { const f = []; let op = 'select', patch = null, row = null, re
       if (op === 'insert') { (T[t] ||= []).push(row); out = { data: [row], error: null } }
       else if (op === 'update') { rows().forEach((r) => Object.assign(r, patch)); out = { data: null, error: null } }
       else if (op === 'delete') { T[t] = (T[t] || []).filter((r) => !f.every((fn) => fn(r))); out = { data: null, error: null } }
-      else out = { data: t === 'app_data' ? [] : rows(), error: null }
+      else out = { data: rows(), error: null }
       return Promise.resolve(out).then(ok) } }; return b }
 globalThis.__db = { from: q, rpc: async (fn, a) => { if (fn === 'upsert_app_data_item') CARDS.push(a.item); return { data: null, error: null } } }
 globalThis.__staff = { ok: true, email: 'krystal@mo-care.com', name: 'Krystal' }
@@ -63,6 +63,36 @@ ck('call them now: "opening right now" text + email with the Meet link; their bo
 // done frees a later booked time
 Object.assign(T.welcome_calls[0], { status: 'booked' }); T.coordinator_busy = [{ source: 'welcome_call', source_id: id, starts_at: '2026-10-09T15:00:00Z', ends_at: '2026-10-09T15:15:00Z' }]
 ;[s, j] = await call({ action: 'done', id }); ck('done: marked with who and when, and a later time they held goes back on offer', T.welcome_calls[0].status === 'done' && T.welcome_calls[0].done_by === 'Krystal' && !T.coordinator_busy.length, T.welcome_calls[0])
+
+// 2026-10-13 (her ruling, 19 CSR 15-7.021(24)(B)5): on the NEW path, done needs the office's tick that Client Rights, the Code of
+// Ethics and the HIPAA policy were explained and they confirmed they understand; it is stored with who and when, plus a readiness event
+const newPath = () => { reset(); T.app_data = [{ key: 'candidates', data: [{ id: 42, offer_id: 'off-1' }] }, { key: 'caregivers', data: [] }]
+  T.client_journey = [{ journey_id: 'j-1', subject: 'caregiver', status: 'open', offer_id: 'off-1' }]; T.client_journey_step = []; T.client_journey_event = []
+  T.client_journey_step_def = [{ key: 'cg.welcome.call', def: { title: 'Orientation Video Call done' } }]
+  T.welcome_calls = [{ id: '00000000-0000-4000-8000-0000000000aa', candidate_id: '42', first_name: 'Dana', status: 'booked', starts_at: '2026-10-09T15:00:00Z' }]
+  T.coordinator_busy = [{ source: 'welcome_call', source_id: '00000000-0000-4000-8000-0000000000aa', starts_at: '2026-10-09T15:00:00Z', ends_at: '2026-10-09T15:15:00Z' }] }
+const WID = '00000000-0000-4000-8000-0000000000aa'
+newPath(); ;[s, j] = await call({ action: 'done', id: WID })
+ck('new path, done WITHOUT the rights tick: refused with her words, nothing changed (still booked, time still held, no event)', s === 409 && j.needs === 'rights_explained' && /I went over the Client Rights, the Code of Ethics and the HIPAA policy with them, and they confirmed they understand/.test(j.error) && /Nothing was changed/.test(j.error) && T.welcome_calls[0].status === 'booked' && !T.welcome_calls[0].rights_explained_at && T.coordinator_busy.length === 1 && !T.client_journey_event.length, [s, j, T.welcome_calls[0]])
+;[s, j] = await call({ action: 'done', id: WID, rights_explained: 'yes' })
+ck('new path: only a real true counts as the tick (a string is refused)', s === 409 && T.welcome_calls[0].status === 'booked', j)
+;[s, j] = await call({ action: 'done', id: WID, rights_explained: true })
+const wr = T.welcome_calls[0], ev = T.client_journey_event[0] || {}
+ck('new path, done WITH the tick: done, and the explanation stored: when, who (name + sign-in email), their confirmation', s === 200 && j.rights_explained === true && j.new_path === true && wr.status === 'done' && wr.rights_explained_at && wr.rights_explained_at === wr.done_at && wr.rights_explained_by === 'Krystal' && wr.rights_explained_by_email === 'krystal@mo-care.com' && wr.rights_ack_confirmed === true && !T.coordinator_busy.length, [j, wr])
+ck('new path: one readiness event on the participant rights row with who, when and the three things explained', T.client_journey_event.length === 1 && ev.journey_id === 'j-1' && ev.step_key === 'cg.step2.participant_rights' && ev.kind === 'rights_explained' && ev.actor_name === 'Krystal' && ev.actor_email === 'krystal@mo-care.com' && ev.detail.acknowledged === true && ev.detail.explained.join() === 'client_rights,code_of_ethics,hipaa_privacy' && ev.detail.welcome_call_id === WID, ev)
+const first = wr.rights_explained_at; globalThis.__staff = { ok: true, email: 'angiel@mo-care.com', name: 'Angie' }
+;[s, j] = await call({ action: 'done', id: WID, rights_explained: true })
+ck('pressing done again never rewrites the explanation (first record kept, no second event)', s === 200 && T.welcome_calls[0].rights_explained_at === first && T.welcome_calls[0].rights_explained_by === 'Krystal' && T.client_journey_event.length === 1, T.welcome_calls[0])
+globalThis.__staff = { ok: true, email: 'krystal@mo-care.com', name: 'Krystal' }
+reset(); T.welcome_calls = [{ id: WID, candidate_id: '77', status: 'booked' }]; ;[s, j] = await call({ action: 'done', id: WID })
+ck('old path (no readiness card), done without the tick: unchanged, marked done', s === 200 && T.welcome_calls[0].status === 'done' && !T.welcome_calls[0].rights_explained_at && j.new_path === false, [j, T.welcome_calls[0]])
+reset(); T.welcome_calls = [{ id: WID, candidate_id: '77', status: 'booked' }]; ;[s, j] = await call({ action: 'done', id: WID, rights_explained: true })
+ck('old path with the tick: the explanation is still kept (no readiness card, so no event)', s === 200 && T.welcome_calls[0].rights_explained_by === 'Krystal' && T.welcome_calls[0].rights_ack_confirmed === true && !(T.client_journey_event || []).length, T.welcome_calls[0])
+const rx = fs.readFileSync('supabase/welcome-rights-explained.sql', 'utf8'), rxb = fs.readFileSync('supabase/welcome-rights-explained-rollback.sql', 'utf8')
+ck('SQL: the four columns, added if missing; only the server writes them; once recorded never changed; idempotent', ['rights_explained_at timestamptz', 'rights_explained_by text', 'rights_explained_by_email text', 'rights_ack_confirmed boolean not null default false'].every((c) => rx.includes('add column if not exists ' + c)) && /current_user in \('anon', 'authenticated'\)/.test(rx) && /A recorded explanation of rights never changes/.test(rx) && /drop trigger if exists welcome_rights_guard_t/.test(rx) && !/drop table|delete from|truncate/i.test(rx))
+ck('SQL rollback: the guard goes; the columns go only when no explanation is recorded (nothing deleted)', /drop trigger if exists welcome_rights_guard_t/.test(rxb) && /if exists \(select 1 from public\.welcome_calls where rights_explained_at is not null\)/.test(rxb) && !/delete from|truncate/i.test(rxb))
+const wsrc = fs.readFileSync(`${FN}/welcome-call/index.ts`, 'utf8')
+ck('no em dash in the new words or the new SQL', !/\u2014/.test(wsrc.slice(wsrc.indexOf('export const RIGHTS_NEEDED'), wsrc.indexOf('export function inviteMessages')) + wsrc.slice(wsrc.indexOf("if (action === 'done')"), wsrc.indexOf("if (action === 'now')")) + rx + rxb))
 
 const sq = fs.readFileSync('welcome_calls.sql', 'utf8'), im = fs.readFileSync(`${FN}/interview-messages/index.ts`, 'utf8')
 ck('SQL: times are interview hours in 15-minute steps, never over an interview, an Orientation Video Call or an all-staff block', /av\.activity = 'interview'/.test(sq) && /interval '15 minutes'/.test(sq) && /cb\.coordinator_id is null or cb\.source in \('interview', 'welcome_call'\)/.test(sq))

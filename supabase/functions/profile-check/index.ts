@@ -33,6 +33,8 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { careLevelOf as sharedCareLevelOf } from '../_shared/care-level.ts'
+import { transportEligible, driveGateOn } from '../_shared/driver-eligibility.ts'
+const todayCentral = () => new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -294,6 +296,7 @@ export function evalCaregiver(input: {
     clientFacts: any
     dnrHit: boolean
     queueRow: Record<string, unknown> | null
+    driveGate?: boolean   // ops_settings.driver_schedule_gate_live (Driver Compliance rollout switch, off by default)
   } | null
 }): { items: Item[] } {
   const { facts, cg, avail, clientCtx } = input
@@ -349,6 +352,20 @@ export function evalCaregiver(input: {
     for (const [, skill, label] of needed) {
       if (seen.has(skill)) continue
       seen.add(skill)
+      /* Driver Compliance (2026-10-13): driving a client is never self-reported. Only an Approved Driver with a current
+         license and insurance passes (transportEligible, the one shared rule); no driver record yet fails (no assumption). */
+      /* while the Admin switch driver_schedule_gate_live is off (the default) the competency stays as it was (the skills
+         record) and the driver check is reported beside it as a WARN, never failing the HARD line */
+      if (skill === 'transportation' && clientCtx.driveGate !== true) {
+        const t = transportEligible(cg, todayCentral())
+        if (!t.ok) items.push(item('driver_check', 'Driver check (not enforced yet)', 'WARN', 'hub', 'fail', 'Driver check (not enforced yet): ' + t.why, 'hub'))
+      }
+      if (skill === 'transportation' && clientCtx.driveGate === true) {
+        const t = transportEligible(cg, todayCentral())
+        items.push(item('skill_transportation', `Required competency: ${label} (Approved Driver)`, 'HARD', 'hub',
+          t.ok ? 'pass' : 'fail', t.ok ? 'Approved Driver with a current license and insurance (Driver Compliance)' : 'not cleared to drive clients: ' + t.why, 'hub'))
+        continue
+      }
       const st = skillState(skill)
       items.push(item('skill_' + skill, `Required competency: ${label}`, 'HARD', 'hub',
         st === 'yes' ? 'pass' : st === 'no' ? 'fail' : 'unanswered',
@@ -661,7 +678,7 @@ Deno.serve(async (req) => {
           S(d.caregiver).toLowerCase() === cgName && S(d.client).toLowerCase() === clName))
         const { data: qr } = cax ? await sb.from('client_queue').select('*')
           .eq('axiscare_client_id', cax).neq('status', 'complete').limit(1).maybeSingle() : { data: null }
-        clientCtx = { lead, clientFacts, dnrHit, queueRow: qr }
+        clientCtx = { lead, clientFacts, dnrHit, queueRow: qr, driveGate: driveGateOn(await opsSettings().catch(() => ({}))) }
       }
       const { items } = evalCaregiver({ facts, cg: cgEval, avail, clientCtx })
       const wb = wouldBlock(items, false)

@@ -11,6 +11,7 @@
 // -----------------------------------------------------------------------------
 import { careLevelOf } from '../_shared/care-level.ts'
 import { newHireNeed } from '../_shared/new-hire.ts'
+import { workLock, LOCK_WHY } from '../_shared/work-lock.ts'   // Slice 5 used these without importing them (team_pool threw); fixed 2026-10-13
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: {
     'Content-Type': 'application/json',
@@ -473,6 +474,17 @@ Deno.serve(async (req) => {
       p.windows = a.windows ?? null
       p.availability_updated = a.updated_at ?? null
       const t = Number(a.target_hours); if (Number.isFinite(t)) p.target_hours = t
+    }
+    /* DRIVER COMPLIANCE (2026-10-13): each row carries the roster's driver fields (the driver-compliance mirror keeps them), so
+       Team Builder, the Staffing sheet and the new-hire card apply the one driving rule (transportEligible). No roster
+       row or no driver record = the fields stay null = not cleared to drive (no assumption). */
+    const { data: roRow6 } = await sb6.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
+    for (const p of pool.values()) { p.dl_status = null; p.cleared_to_drive = null; p.dl_expires = null; p.auto_ins_expires = null }
+    // deno-lint-ignore no-explicit-any
+    for (const r of (Array.isArray(roRow6?.data) ? roRow6!.data : []) as any[]) {
+      const p = pool.get(String(r?.axiscare_id ?? '').replace(/\D/g, '')); if (!p) continue
+      p.dl_status = r.dl_status ?? null; p.cleared_to_drive = typeof r.cleared_to_drive === 'boolean' ? r.cleared_to_drive : null
+      p.dl_expires = r.dl_expires ?? null; p.auto_ins_expires = r.auto_ins_expires ?? null
     }
     const start6 = chiToday(), end6 = addCalDays(start6, 13)
     let vu: string | null = `https://${site}.axiscare.com/api/visits?startDate=${start6}&endDate=${end6}`
