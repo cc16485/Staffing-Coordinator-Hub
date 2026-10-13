@@ -23,8 +23,13 @@ export const STEP2_BASE = 'https://cc.mo-care.com/step2.html'
    Same code design; 21 days, like the PRN check-in link; it carries the record number and nothing else about them. */
 export const DRIVER_BASE = 'https://cc.mo-care.com/driver.html'
 export const DRIVER_LINK_DAYS = 21
+/* HEPATITIS B (2026-10-13, the owner's OSHA 1910.1030 ruling): the caregiver's private vaccine offer link.
+   https://cc.mo-care.com/hepb.html?h=<hepatitis B record id>&e=<expiry>&t=<code>. Same code design; 21 days; the record
+   number and nothing else about them (no medical detail is ever in a link). */
+export const HEPB_BASE = 'https://cc.mo-care.com/hepb.html'
+export const HEPB_LINK_DAYS = 21
 const PURPOSE = 'cc-applicant-link-v1'
-export type Kind = 'start' | 'orient' | 'offer' | 'step1' | 'step2' | 'driver'
+export type Kind = 'start' | 'orient' | 'offer' | 'step1' | 'step2' | 'driver' | 'hepb'
 
 const enc = new TextEncoder()
 const b64url = (b: ArrayBuffer) => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
@@ -33,7 +38,7 @@ async function hmac(secret: string, msg: string): Promise<string> {
   return b64url(await crypto.subtle.sign('HMAC', k, enc.encode(msg)))
 }
 export const okId = (kind: Kind, id: unknown) =>
-  (kind === 'start' || kind === 'offer' || kind === 'step1' || kind === 'driver') ? /^[0-9a-f-]{8,64}$/i.test(String(id ?? '')) : /^[0-9]{1,12}$/.test(String(id ?? ''))
+  (kind === 'start' || kind === 'offer' || kind === 'step1' || kind === 'driver' || kind === 'hepb') ? /^[0-9a-f-]{8,64}$/i.test(String(id ?? '')) : /^[0-9]{1,12}$/.test(String(id ?? ''))
 export function expiry(nowSec = Math.floor(Date.now() / 1000)): number { return nowSec + LINK_DAYS * 86400 }
 
 export async function sign(secret: string, kind: Kind, id: string, exp: number): Promise<string> {
@@ -62,6 +67,11 @@ export const driverExpiry = (nowSec = Math.floor(Date.now() / 1000)) => nowSec +
 export async function makeDriverLink(secret: string, dcId: string, exp = driverExpiry()): Promise<string> {
   const t = await sign(secret, 'driver', dcId, exp)
   return `${DRIVER_BASE}?d=${encodeURIComponent(dcId)}&e=${exp}&t=${t}`
+}
+export const hepbExpiry = (nowSec = Math.floor(Date.now() / 1000)) => nowSec + HEPB_LINK_DAYS * 86400
+export async function makeHepbLink(secret: string, hepbId: string, exp = hepbExpiry()): Promise<string> {
+  const t = await sign(secret, 'hepb', hepbId, exp)
+  return `${HEPB_BASE}?h=${encodeURIComponent(hepbId)}&e=${exp}&t=${t}`
 }
 export async function makeOrientLink(secret: string, candidateId: string, sessions: string, exp = expiry()): Promise<string> {
   const t = await sign(secret, 'orient', candidateId, exp)

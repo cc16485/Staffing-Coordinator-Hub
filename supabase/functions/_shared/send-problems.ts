@@ -41,6 +41,7 @@ export const SENDER_WORDS: Record<string, [string, string]> = {
   'sync-axiscare': ['training welcome / reminder', 'caregivers'],
   'prn-reconfirm': ['PRN check-in', 'caregivers'],
   'driver-compliance': ['driver document reminder or link', 'caregivers'],
+  'hepb': ['hepatitis B vaccine offer link', 'caregivers'],
   'caregiver-intro': ['caregiver introduction', 'scheduling_coverage'],
   'caregiver-availability': ['availability check', 'scheduling_coverage'],
   'coverage-run': ['open shift text', 'scheduling_coverage'],
