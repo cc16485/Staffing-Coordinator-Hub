@@ -250,6 +250,13 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
      (driver_link_send_live, else practice). Caregivers only; nothing contacts a client or family. */
   'driver-compliance':  { class: 'routine_internal', scheduled: true,
     why: 'renewal reminders (d30, d14, d7) to a caregiver whose driver\'s license or auto insurance on file is about to expire, with their private upload link; Monday to Saturday 9am to 6pm Central, held outside it, never twice; the office\'s Send link is a person\'s press.' },
+  /* HEPATITIS B (2026-10-13, the owner's OSHA 1910.1030 ruling): the vaccine offer link to a caregiver whose position has
+     reasonably anticipated exposure to blood, once the office confirmed their bloodborne pathogens training; Monday to
+     Saturday 9am to 6pm Central (held outside it, never twice), the opt-out door and their yes to texts; practice (recorded,
+     not sent) while ops_settings.hepb_offer_live is off, except the Admin test people. The office's Send link is a person's
+     press under the same switch. Caregivers only; never a medical detail in the words. */
+  'hepb':               { class: 'routine_internal', scheduled: true,
+    why: 'the hepatitis B vaccine offer (no cost, the employee\'s choice) with their private link, after bloodborne pathogens training and within 10 working days of their first client visit; Monday to Saturday 9am to 6pm Central, held outside it, sent once; the office\'s Send link is a person\'s press.' },
   'calls-feed':         { class: 'routine_internal', scheduled: false, why: 'internal call reconciliation.' },
   'resend-relay':       { class: 'reactive_external', scheduled: false, why: 'relays a message somebody composed.' },
 }
