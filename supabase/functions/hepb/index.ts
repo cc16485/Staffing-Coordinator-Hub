@@ -148,16 +148,35 @@ async function deliver(db: Any, p: { first: string; last: string; phone: string;
 /* ── the 30-minute pass ── */
 async function pass(db: Any, st: Any): Promise<Record<string, unknown>> {
   const now = new Date(), nowIso = now.toISOString(), today = todayCentral(now), live = st.hepb_offer_live === true
-  const out = { ok: true, live, today, created: 0, not_required: 0, dated: 0, offered: 0, practice: 0, held: 0, retry: 0, refused: 0, cards: 0, capped: 0, not_current: 0, errors: 0 }
+  const out = { ok: true, live, today, linked: 0, arrange: 0, created: 0, not_required: 0, dated: 0, offered: 0, practice: 0, held: 0, retry: 0, refused: 0, cards: 0, capped: 0, not_current: 0, errors: 0 }
   const sys: Who = { name: 'The Hub (hepatitis B pass)' }
   const fallback = await domainOwner(db, 'caregivers'), office = fallback.email ? fallback : { email: S(st.staffing_email, 160).toLowerCase(), name: '' }
   /* 1. new-path hires: a roster caregiver with an offer and an Approve to Work stamp, no record yet */
   const { data: cgd } = await db.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
   const roster: Any[] = Array.isArray(cgd?.data) ? cgd.data : []
-  const { data: have } = await db.from('hepb_record').select('id, offer_id, caregiver_id')
+  const { data: have } = await db.from('hepb_record').select('id, offer_id, caregiver_id, step1_at')
   const haveOffer = new Set((have ?? []).map((x: Any) => String(x.offer_id || ''))), haveCg = new Set((have ?? []).map((x: Any) => String(x.caregiver_id || '')))
   for (const r of roster) {
     if (!r || r.active === false || !UUID.test(S(r.offer_id, 64)) || !r.approved_to_work_at) continue
+    /* 2026-10-13 HEPATITIS B IN STEP 1: someone who answered in Step 1 already has their record (by offer). It is never made
+       twice and never offered again (only 'pending' records are sent an offer). At Approve to Work it is linked to their
+       roster record, its initial assignment and 10-working-day deadline are set, and an accepted vaccine gets the owners'
+       Arrange card now that the deadline is known. */
+    const s1 = (have ?? []).find((x: Any) => String(x.offer_id || '') === String(r.offer_id) && x.step1_at && !x.caregiver_id)
+    if (s1 && !haveCg.has(String(r.id))) {
+      try {
+        const { data: full } = await db.from('hepb_record').select('*').eq('id', s1.id).maybeSingle()
+        if (full) {
+          const a = assignmentFrom(r), upd: Record<string, unknown> = { caregiver_id: String(r.id), axiscare_id: r.axiscare_id ? String(r.axiscare_id) : full.axiscare_id }
+          if (!full.assignment_date && a.date) Object.assign(upd, { assignment_date: a.date, assignment_source: a.source, due_date: dueFrom(a.date, st.company_holidays) })
+          const row = await save(db, full.id, upd); s1.caregiver_id = row.caregiver_id; haveCg.add(String(r.id)); out.linked++
+          await addEvent(db, row.id, 'assignment_set', sys, { linked: 'roster at Approve to Work', caregiver_id: row.caregiver_id, date: row.assignment_date, source: row.assignment_source, due: row.due_date })
+          await journeyMirror(db, row, sys)
+        }
+      } catch (e) { out.errors++; await raiseCard(db, { id: 'hepb_link_' + r.id, kind: 'hepb_pass_failed', urgency: 'today', who: `${S(r.first, 60)} ${S(r.last, 60)}`.trim(), offer_id: String(r.offer_id), owner: office.email, owner_name: office.name,
+        title: 'Hepatitis B record not linked: ' + `${S(r.first, 60)} ${S(r.last, 60)}`.trim(), detail: `They answered the hepatitis B offer in Step 1, but the pass could not link the record to their caregiver record (${S((e as Error)?.message ?? e, 160)}). Tell Claude.` }) }
+      continue
+    }
     if (haveOffer.has(String(r.offer_id)) || haveCg.has(String(r.id))) continue
     try {
       let pos = await offerPosition(String(r.offer_id)), src = 'offer'
@@ -226,6 +245,23 @@ async function pass(db: Any, st: Any): Promise<Record<string, unknown>> {
       await raiseCard(db, { id: 'hepb_pass_' + row0.id, kind: 'hepb_pass_failed', urgency: 'today', who: S(row0.name, 120), hepb_id: row0.id, offer_id: row0.offer_id, owner: office.email,
         title: 'Hepatitis B pass could not check ' + (S(row0.name, 120) || 'a caregiver'), detail: `The 30-minute hepatitis B pass could not work their record (${S((e as Error)?.message ?? e, 160)}). Their offer or a deadline card may be waiting. Tell Claude.` })
     }
+  }
+  /* 4. 2026-10-13: an accepted vaccine (in Step 1 or on the link) with no dose recorded: the owners arrange it within 10
+     working days of initial assignment ((f)(2)(i)); one Arrange card once the deadline is known, one urgent card if the
+     deadline passes with no dose recorded. The cards never name the answer beyond "accepted". */
+  const { data: acc } = await db.from('hepb_record').select('*').eq('status', 'vaccine')
+  const owners = await ownerEmails(db)
+  for (const row of acc ?? []) {
+    try {
+      if ((Array.isArray(row.doses) && row.doses.length) || !row.due_date) continue
+      const p = await personOf(db, row), name = nameOf(p, row), due = String(row.due_date).slice(0, 10)
+      if (!p.current) { out.not_current++; continue }
+      /* the link's own yes already raised its Arrange card (applyChoice); a Step 1 yes gets it here, once the deadline is known */
+      if (row.step1_at && await raiseCard(db, { id: 'hepb_arrange_' + row.id, kind: 'hepb_arrange', urgency: 'today', who: name, hepb_id: row.id, offer_id: row.offer_id, owner: owners[0] || '',
+        title: `Arrange the hepatitis B vaccine for ${name}`, detail: `${name} accepted the hepatitis B vaccine. Arrange the first shot by ${longDate(due)} (10 working days after initial assignment), at no cost to them, at a reasonable time and place, with a licensed healthcare professional, and record each dose on their Hepatitis B card (owners only).` }) === 'raised') { out.arrange++; out.cards++ }
+      if (due < today && await raiseCard(db, { id: 'hepb_dose_late_' + row.id, kind: 'hepb_late', urgency: 'urgent', who: name, hepb_id: row.id, offer_id: row.offer_id, owner: owners[0] || '',
+        title: `Hepatitis B vaccine not arranged by the deadline: ${name}`, detail: `${name} accepted the hepatitis B vaccine and no dose is recorded. OSHA requires it to be made available within 10 working days of initial assignment; the deadline was ${longDate(due)}. Arrange it today and record the dose on their Hepatitis B card.` }) === 'raised') out.cards++
+    } catch { out.errors++ }
   }
   try { await db.rpc('upsert_app_data_item', { target_key: 'automation_log', item: { id: 'auto_srv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), at: nowIso, automation: 'hepb', ran_by: 'server', ok: out.errors === 0, dry: !live, summary: out } }) } catch { /* never takes the pass down */ }
   try { await db.rpc('upsert_app_data_item', { target_key: 'automation_heartbeats', item: { id: 'hb_hepb', automation: 'hepb', at: nowIso, ok: out.errors === 0, note: JSON.stringify(out).slice(0, 300) } }) } catch { /* same */ }

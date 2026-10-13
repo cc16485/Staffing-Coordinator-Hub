@@ -75,6 +75,16 @@ ck('and from the Background & References record', r.status === 200 && r.j.ids.of
 r = await call({ action: 'step1_progress', offer_ids: [OID] }, 'sam')
 const pr = r.j?.progress?.[OID]
 ck('Step 1 progress for the offer card: sent automatically (practice), started, 2 of 12 signed so far, complete', pr && pr.sent_at === '2026-10-11T15:11:30Z' && pr.practice === true && pr.started_at && pr.signed === 2 && pr.forms === 12 && pr.completed_at, pr)
+
+/* 2026-10-13 HEPATITIS B IN STEP 1: the progress counts 13 for a Step 1 that has the form; the signed form is never a document
+   on the profile (a confidential medical record, opened only by an owner from the Hepatitis B card) */
+{ const f0 = DB.step1_forms.find((f) => f.offer_id === OID); const was = JSON.parse(JSON.stringify(f0))
+  Object.assign(f0, { hepb_form: true, signatures: { ...f0.signatures, hepb_vaccination: { at: '2026-10-11T16:05:00Z', version: 1 } } })
+  r = await call({ action: 'step1_progress', offer_ids: [OID] }, 'sam')
+  ck('HEP B: Step 1 progress with the Hepatitis B form: 13 forms', r.j?.progress?.[OID]?.forms === 13 && r.j.progress[OID].signed === 3, r.j)
+  r = await call({ action: 'get', offer_id: OID }, 'sam')
+  ck('HEP B: the profile never lists the Hepatitis B form as a document, and its status shows 13 forms', r.status === 200 && !(r.j.documents || []).some((d) => /Hepatitis/i.test(d.label)) && r.j.status.step1.forms.length === 13, (r.j.documents || []).map((d) => d.label))
+  Object.keys(f0).forEach((k) => delete f0[k]); Object.assign(f0, was) }
 r = await call({ action: 'get', offer_id: '99999999-2222-4333-8444-555555555555' }, 'sam')
 ck('nobody: not found', r.status === 404, r)
 const src = fs.readFileSync(path.join(FN, 'hire-profile/index.ts'), 'utf8')

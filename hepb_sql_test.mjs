@@ -61,6 +61,19 @@ else {
   await db.exec(rb); await db.exec(rb)
   ck('rollback twice: the guard is gone, the row is off, every table and row stays', !(await one(`select count(*)::int n from pg_trigger where tgname = 'hepb_documents_keep'`)).n && !(await one(`select active from public.client_journey_step_def where key = 'cg.health.hepb'`)).active && (await one(`select count(*)::int n from public.hepb_record`)).n === 1 && (await one(`select count(*)::int n from public.hepb_event`)).n === 1)
   await db.exec(sq); ck('re-install after rollback: the row is active again', (await one(`select active from public.client_journey_step_def where key = 'cg.health.hepb'`)).active)
+  /* 2026-10-13 HEPATITIS B IN STEP 1 (hepb-step1.sql) */
+  const s1 = fs.readFileSync(path.join(ROOT, 'supabase/hepb-step1.sql'), 'utf8')
+  ck('Step 1 SQL: no em dash; adds only (no drop, delete or truncate)', !/—/.test(s1) && !/\bdrop\s+(table|column)|\bdelete\s+from|\btruncate\b/i.test(s1.replace(/--.*$/gm, '')))
+  await db.exec(`create table public.step1_forms (offer_id uuid primary key, started_at timestamptz default now(), answers jsonb default '{}'::jsonb);
+    insert into public.step1_forms (offer_id) values ('22222222-2222-4222-8222-222222222222');`)
+  await db.exec(s1); await db.exec(s1); ck('Step 1 SQL: installs twice cleanly', true)
+  ck('Step 1 SQL: a Step 1 that already existed stays WITHOUT the Hepatitis B form (never a new required form part way through)', (await one(`select hepb_form from public.step1_forms where offer_id = '22222222-2222-4222-8222-222222222222'`)).hepb_form === false)
+  const id2 = (await one(`insert into public.hepb_record (offer_id, name, exposed, status, step1_at) values ('33333333-3333-4333-8333-333333333333', 'Dee', true, 'vaccine', now()) returning id`)).id
+  r = await tryq(`update public.hepb_record set step1_pdf = 'hb/x/step1/v1.pdf' where id = $1`, [id2]); ck('Step 1 SQL: the signed Step 1 PDF is written once', r === 'ok', r)
+  r = await tryq(`update public.hepb_record set step1_pdf = 'hb/x/step1/v2.pdf' where id = $1`, [id2]); ck('Step 1 SQL: ...and never replaced', /never changed/.test(r), r)
+  r = await tryq(`update public.hepb_record set status = 'complete' where id = $1`, [id2]); ck('Step 1 SQL: the rest of the record still moves on (a later dose, complete)', r === 'ok', r)
+  const p2 = await one(`select has_table_privilege('authenticated', 'public.hepb_record', 'select') a`)
+  ck('Step 1 SQL: still no browser role reads the record', !p2.a)
 }
 for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (note ? '  ' + note : ''))
 console.log(`${res.filter((x) => x[1]).length}/${res.length} passed`); process.exit(res.every((x) => x[1]) ? 0 : 1)

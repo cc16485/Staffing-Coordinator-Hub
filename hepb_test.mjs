@@ -281,6 +281,44 @@ r = await asCg(A.id, { action: 'decline', typed_name: 'Ava Lee', consent: true, 
 r = await call({ action: 'series_complete', key: A.id }, 'sam')
 ck('(1) series complete: Complete; the readiness row completes; the declination is still on file', r.status === 200 && A.status === 'complete' && stepOf(OA).state === 'complete' && A.declination_pdf)
 
+/* ═══ 6b. 2026-10-13 HEPATITIS B IN STEP 1 (the form in Step 1, offered to everyone): the record the Step 1 server makes,
+   and the 30-minute pass afterward. Ivy (Caregiver) accepts in Step 1; Oz (Office) declines in Step 1. ═══ */
+{
+  const OI = '11111111-2222-4333-8444-5555555555a1', OZ = '11111111-2222-4333-8444-5555555555a2'
+  const db = globalThis.__fakeCreateClient(), st = ad('ops_settings')
+  const base = { at: '2026-11-16T15:00:00.000Z', ip: '203.0.113.9', agent: 'TestPhone', formVersion: 1, formFingerprint: 'e'.repeat(64) }
+  let x = await HB.stepOneRecord(db, st, { ...base, offerId: OI, name: 'Ivy Step', position: 'Caregiver', choice: 'vaccine', typedName: 'Ivy Step' })
+  const I = rec((r) => r.offer_id === OI)
+  ck('Step 1: the record is made from the offer with the choice, offered in Step 1 (information first), no roster link yet', x.ok && x.created && I.status === 'vaccine' && I.step1_at && I.offered_at && /Step 1/.test(I.offered_via) && !I.caregiver_id && I.exposed === true && evs(I.id, 'offered').length === 1 && evs(I.id, 'chose').length === 1, { x, I })
+  x = await HB.stepOneRecord(db, st, { ...base, offerId: OI, name: 'Ivy Step', position: 'Caregiver', choice: 'vaccine', typedName: 'Ivy Step' })
+  ck('Step 1: a retry finds the same record (never two), no second offer line', x.ok && !x.created && DB.hepb_record.filter((r) => r.offer_id === OI).length === 1 && evs(I.id, 'offered').length === 1)
+  x = await HB.stepOneRecord(db, { ...st, hepb_exposure: {} }, { ...base, offerId: OZ, name: 'Oz Desk', position: 'Office', choice: 'declined', typedName: 'Oz Desk' })
+  const Zr = rec((r) => r.offer_id === OZ)
+  ck('Step 1: offered to everyone: an Office hire (no exposure in the table) is covered, never "not required"; the determination is kept beside it', x.ok && Zr.status === 'declined' && Zr.exposed === true && Zr.exposure_basis.determination === false && Zr.exposure_basis.offered_to_all === true && HB.publicStatus(Zr) === 'Declined', Zr)
+  const d = await HB.stepOneDeclination(db, Zr, { typedName: 'Oz Desk', at: base.at, ip: base.ip, agent: base.agent, fingerprint: FP, pdf: 'hb/' + Zr.id + '/declination/v1.pdf' })
+  ck('Step 1: the declination half is written once (a second write leaves it as it was)', d.declined_at && d.declination_typed_name === 'Oz Desk' && (await HB.stepOneDeclination(db, d, { typedName: 'Someone Else', at: 'x', ip: '', agent: '', fingerprint: 'z', pdf: null })).declination_typed_name === 'Oz Desk' && evs(Zr.id, 'declined').length === 1)
+  x = await HB.stepOneRecord(db, st, { ...base, offerId: OA, name: 'Ava Lee', position: 'Caregiver', choice: 'immune', typedName: 'Ava Lee' })
+  ck('Step 1: a record already answered outside Step 1 (the link, an owner) is never overwritten', x.ok && x.kept === true && rec((r) => r.offer_id === OA).status === 'complete')
+  ck('Step 1: a bad offer id or a choice not on the list is refused', !(await HB.stepOneRecord(db, st, { ...base, offerId: 'x', name: 'a', position: '', choice: 'vaccine', typedName: 'a' })).ok && !(await HB.stepOneRecord(db, st, { ...base, offerId: OI, name: 'a', position: '', choice: 'maybe', typedName: 'a' })).ok)
+  /* the pass, at Approve to Work: linked, dated, the Arrange card for Ivy; no second record, no offer sent to either */
+  setAd('caregivers', [...ad('caregivers'), { id: 301, first: 'Ivy', last: 'Step', phone: '4175550131', email: 'ivy@x.com', offer_id: OI, approved_to_work_at: '2026-11-16T16:00:00Z', first_contact: '2026-11-17' },
+    { id: 302, first: 'Oz', last: 'Desk', phone: '4175550132', email: 'oz@x.com', offer_id: OZ, approved_to_work_at: '2026-11-16T16:00:00Z' }])
+  set('hepb_offer_live', true); const sent0 = GHL.messages.length, n0 = DB.hepb_record.length
+  r = await call({ action: 'pass' }, 'cron')
+  const I2 = rec((r2) => r2.offer_id === OI), Z2 = rec((r2) => r2.offer_id === OZ)
+  ck('pass: someone who answered in Step 1 is linked to the roster, never set up twice, and never sent an offer (even with sending on)', r.status === 200 && DB.hepb_record.length === n0 && I2.caregiver_id === '301' && Z2.caregiver_id === '302' && GHL.messages.length === sent0 && evs(I2.id, 'offered').length === 1 && r.j.linked === 2, { j: r.j, sent: GHL.messages.length - sent0 })
+  ck('pass: Ivy (accepted in Step 1): initial assignment = her first client visit, the 10-working-day deadline, ONE Arrange card for the owners', I2.assignment_date === '2026-11-17' && I2.due_date === HB.dueFrom('2026-11-17', []) && card('hepb_arrange_' + I2.id) && card('hepb_arrange_' + I2.id).owner === 'sam@mo-care.com' && /accepted the hepatitis B vaccine/.test(card('hepb_arrange_' + I2.id).detail) && noDash(card('hepb_arrange_' + I2.id).detail), { I2, c: card('hepb_arrange_' + I2.id) })
+  r = await call({ action: 'pass' }, 'cron')
+  ck('pass again: nothing new (no second card, no offer, no new record)', ops().filter((c) => c.id === 'hepb_arrange_' + I2.id).length === 1 && GHL.messages.length === sent0 && DB.hepb_record.length === n0 && r.j.linked === 0)
+  at('2026-12-15T15:00:00Z'); r = await call({ action: 'pass' }, 'cron')
+  ck('pass: past the deadline with no dose recorded: ONE urgent card', card('hepb_dose_late_' + I2.id)?.urgency === 'urgent' && /not arranged by the deadline/.test(card('hepb_dose_late_' + I2.id).title))
+  r = await call({ action: 'get', key: Z2.id }, 'kry')
+  ck('Oz (declined in Step 1): the office sees only "Declined"; a later yes on the link or the office button still works', r.j.row.status_label === 'Declined' && r.j.row.may_send === true && !r.j.detail && HB.mayChoose(Z2, 'vaccine').ok)
+  r = await asCg(Z2.id, { action: 'choose', choice: 'vaccine' })
+  ck('Oz changes her mind on the link: the vaccine at no cost ((f)(2)(iii)); the signed declination stays on file', r.status === 200 && Z2.status === 'vaccine' && Z2.declined_at && Z2.declination_pdf)
+  set('hepb_offer_live', false)
+}
+
 /* ═══ 7. the rest ═══ */
 r = await call({ action: 'exposure' }, 'cc'); ck('exposure: any office role reads the table in force', r.status === 200 && r.j.table.find((x) => x.position === 'Caregiver').exposed && r.j.fallback === 'Caregiver')
 set('hepb_exposure', { Office: { exposed: true } }); r = await call({ action: 'exposure' }, 'cc'); ck('exposure: the Admin override shows (source admin)', r.j.table.find((x) => x.position === 'Office').exposed && r.j.table.find((x) => x.position === 'Office').source === 'admin')
