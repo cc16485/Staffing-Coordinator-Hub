@@ -31,6 +31,7 @@ import { PERM_KEY, normalizePerms, mayApprove } from '../_shared/onboarding-perm
 import { step1FormPdf, type IdentityState } from '../_shared/step1-pdf.ts'
 import { longDateTime } from '../_shared/offer-documents.ts'
 import { practicePerson } from '../_shared/optout.ts'
+import { driverFromStep1 } from '../_shared/driver.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -760,6 +761,9 @@ Deno.serve(async (req) => {
         done = !!fin?.length
         if (done) { await T.event({ offer_id: id, kind: 'step1_done', by_who: 'caregiver', channel: 'page', detail: { forms: applicableForms(answers).length, ip, agent } }); await T.patch(id, { step1_done_at: at }, '&step1_done_at=is.null')
           await db.from('step1_forms').update({ receipt: { completed_at: at, forms: applicableForms(answers).length, ghl_note: await ghlStep1Note(db, o, who, id, at) } }).eq('offer_id', id)
+          /* 2026-10-13: their driver record from Step 1 (Non-Driver, or Driver Pending Verification with the pictures); never silent */
+          const dr = await driverFromStep1(db, id, who, answers, { ...sigs, [form]: sig }, { ...(row.pdfs || {}), ...(pdfOk ? { [form]: path } : {}) }, at).catch((e: Error) => ({ ok: false, error: String(e?.message || e) }))
+          if ((dr as Record<string, unknown>)?.ok === false) await problemCard(db, 's1drv_' + id, { kind: 'step1_driver_failed', who: `${who.first} ${who.last}`.trim(), offer_id: id, title: 'Driver Compliance record not made from Step 1: ' + `${who.first} ${who.last}`.trim(), detail: 'Step 1 is complete, but their Driver Compliance record could not be made (' + S((dr as Record<string, unknown>).error, 120) + '). Set it up from their Driver Compliance card, or tell Claude.' })
           const cs = needsCountersign({ ...sigs, [form]: true }, {})
           if (cs.length) await problemCard(db, 's1cs_' + id, { kind: 'step1_countersign', who: `${who.first} ${who.last}`.trim(), offer_id: id, title: 'Sign for Caring Companions: ' + cs.map((k) => FORMS[k].title).join(', ') + ' for ' + `${who.first} ${who.last}`.trim(),
             detail: `${who.first} signed ${cs.map((k) => FORMS[k].title).join(', ')}. A person on the Approve to Work list signs for the company from their page (See their Step 1 screens). Approve to Work waits for it.` }, 'today') }

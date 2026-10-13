@@ -26,7 +26,7 @@ globalThis.fetch = async (url, o = {}) => {
   throw new Error('unexpected fetch ' + u)
 }
 /* ── a tiny table store with the query shapes the function uses ── */
-let DB = { step1_forms: [], step1_identity: [], job_applicants: [], document_access_log: [], auth_identities: [], persons: [], entity_memberships: [], staff_roles: [], app_data: [] }
+let DB = { step1_forms: [], step1_identity: [], job_applicants: [], document_access_log: [], auth_identities: [], persons: [], entity_memberships: [], staff_roles: [], app_data: [], driver_compliance: [], driver_document: [], driver_compliance_event: [] }
 const STORE = {}
 const getPath = (r, p) => p.split('->').reduce((a, k) => a == null ? undefined : a[k], r)
 function table(name) {
@@ -209,6 +209,7 @@ r = await call({ action: 'identity', ...link, license_number: 'M123 456 789', li
 ck('the license number is sealed with its last four', r.status === 200 && r.j.identity.license === 'ending 6789' && DB.step1_identity[0].license_sealed.startsWith('v1.'), r)
 r = await call({ action: 'sign', ...link, form: 'vehicle', typed_name: 'Ava Lee', consent: true })
 ck('the last form signs: Step 1 done, the trail says so, the offer record carries step1_done_at, 7 of 7 (the driver path)', r.status === 200 && r.j.done === true && r.j.signed_count === 7 && r.j.form_count === 7 && DB.step1_forms[0].completed_at && EVENTS.some((e) => e.kind === 'step1_done') && OFFERS[OID].step1_done_at && Object.keys(STORE).length === 7, r)
+ck('Step 1 complete makes their Driver Compliance record: Driver Pending Verification, the agreement and the three pictures', (DB.driver_compliance || []).some((d) => d.offer_id === OID && d.status === 'pending' && d.agreement_form === 'vehicle') && (DB.driver_document || []).filter((x) => /^offer\//.test(x.path)).length === 3, { dc: DB.driver_compliance, docs: (DB.driver_document || []).map((x) => x.kind) })
 r = await call({ action: 'copies', ...link }); ck('copies: seven short-lived links', r.status === 200 && Object.keys(r.j.copies).length === 7, r)
 r = await call({ action: 'view', ...link }); ck('view after: completed, screen 9, seven signatures with name and version only', r.j.completed_at && r.j.current_screen === '9' && Object.keys(r.j.signatures).length === 7 && r.j.signatures.vehicle.typed_name === 'Ava Lee' && !('ip' in r.j.signatures.vehicle), r.j.signatures)
 ck('the trail: 1 start, 7 signed, 1 done; every signed event carries a 64-hex fingerprint and the form', EVENTS.filter((e) => e.kind === 'step1_signed').length === 7 && EVENTS.filter((e) => e.kind === 'step1_done').length === 1 && EVENTS.filter((e) => e.kind === 'step1_signed').every((e) => /^[0-9a-f]{64}$/.test(e.fingerprint) && e.detail.form))
@@ -358,6 +359,7 @@ ck('the door is never asked to land the SSN, date of birth, license number or ad
   const mine = RPCS.slice(rp0)
   const cc = mine.filter((r) => r.name === 'step1_candidate_create')
   ck('before checks: every form signed for the second hire (the replay reached Step 1 complete)', last && last.status === 200 && last.j && last.j.done === true, last)
+  ck('the Non-Driver path makes a Non-Driver record (no pictures)', (DB.driver_compliance || []).some((d) => d.offer_id === OID2 && d.status === 'non_driver' && d.agreement_form === 'non_driver'), DB.driver_compliance)
   ck('the Non-Driver path: answered No, signed the Non-Driver Agreement, no pictures, no license number, 7 of 7', last && last.j.form === 'non_driver' && last.j.form_count === 7 && !DB.step1_forms.find((f) => f.offer_id === OID2).signatures.vehicle && !DB.step1_forms.find((f) => f.offer_id === OID2).answers.license_front, last && last.j)
   ck('before checks: Background & References is entered exactly once, by the server, at the last signature, with the offer\'s person', cc.length === 1 && cc[0].args.p_offer_id === OID2 && cc[0].args.p_record.first === 'Bo' && cc[0].args.p_record.onboarding_path === 'new' && cc[0].args.p_record.oig === 'Pending', cc)
   ck('before checks: no "landing failed" on the trail for the forms signed before then', !EVENTS.slice(ev0).some((e) => e.offer_id === OID2 && e.result === 'landing_failed'), EVENTS.slice(ev0).filter((e) => e.result))

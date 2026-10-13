@@ -255,7 +255,7 @@ const LA = await lk(A.id)
 r = await call({ action: 'view', ...LA, t: 'x'.repeat(43) })
 ck('a forged link: 401 with the office number', r.status === 401 && /234-8494/.test(r.j.error))
 r = await call({ action: 'view', ...LA })
-ck('view: first name, Approved Driver, cleared, nothing needed, the expiries in words, the vehicle words to read; no paths', r.status === 200 && r.j.first === 'Ava' && r.j.status_label === 'Approved Driver' && r.j.cleared_to_drive === true && r.j.needed.length === 0 && r.j.expiries.license.date === '2029-01-01' && r.j.forms.vehicle.title && r.j.forms.non_driver === null && r.j.agreement_needed === null && !JSON.stringify(r.j).includes('offer/'), r.j)
+ck('view: first name, Approved Driver, cleared, nothing needed, the expiries in words, the vehicle words to read; no paths', r.status === 200 && r.j.first === 'Ava' && r.j.status_label === 'Approved Driver' && r.j.cleared_to_drive === true && r.j.needed.length === 0 && r.j.expiries.license.date === '2029-01-01' && r.j.forms.vehicle.title && r.j.agreement_needed === null && !JSON.stringify(r.j).includes('offer/'), r.j)
 r = await call({ action: 'upload_url', ...LA, kind: 'mvr', content_type: 'image/jpeg' })
 ck('the caregiver may not upload a driving record (the office orders it)', r.status === 400)
 r = await call({ action: 'upload_url', ...LA, kind: 'insurance', content_type: 'image/heic' })
@@ -269,9 +269,9 @@ r = await call({ action: 'uploaded', ...LA, kind: 'insurance', path: insPath, co
 ck('uploaded by an Approved Driver: stays approved (the verified date stays until the office verifies the new one); the old proof superseded; a card for the office', r.status === 200 && row(A.id).status === 'approved' && row(A.id).insurance_expires === '2027-04-01' && DB.driver_document.filter((d) => d.dc_id === A.id && d.kind === 'insurance' && !d.superseded_at).length === 1 && ops().some((c) => c.id === 'dc_verify_' + A.id && c.owner === 'krystal@mo-care.com'), [r.j, row(A.id)])
 r = await call({ action: 'verify', key: A.id, what: 'insurance', insurer: 'Progressive' }, 'kry')
 ck('the office verifies the new proof: the record takes its date, the roster follows, the verify card closes', r.status === 200 && row(A.id).insurance_expires === '2027-11-12' && row(A.id).insurer === 'Progressive' && cgRec(201).auto_ins_expires === '2027-11-12' && ops().find((c) => c.id === 'dc_verify_' + A.id).status === 'done', [row(A.id), cgRec(201)])
-/* sign: the non-driver form is not in the form list yet */
+/* 2026-10-13: the Non-Driver Agreement is in the form list now (proposed, not approved for real): a real caregiver cannot sign it yet */
 r = await call({ action: 'sign', ...LB, form: 'non_driver', typed_name: 'Ben Ray', consent: true })
-ck('sign the Non-Driver Agreement while it is not in the form list: refused with a clear message (409)', r.status === 409 && r.j.not_ready === true && /not ready/.test(r.j.error), r)
+ck('sign the Non-Driver Agreement as a real caregiver while its wording is not approved for real: refused with a clear message (409)', r.status === 409 && r.j.not_approved === true, r)
 r = await call({ action: 'sign', ...LB, form: 'vehicle', typed_name: 'Ben Ray', consent: true })
 ck('sign the vehicle form as a real caregiver while its wording is not approved for real: refused, nothing changed', r.status === 409 && r.j.not_approved === true && row(Bn.id).status === 'non_driver', r)
 /* a practice person (Pat Practice, 555-0181, @practice.invalid) may sign the practice way */
