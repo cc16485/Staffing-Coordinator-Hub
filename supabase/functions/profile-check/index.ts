@@ -33,6 +33,8 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { careLevelOf as sharedCareLevelOf } from '../_shared/care-level.ts'
+import { transportEligible } from '../_shared/driver-eligibility.ts'
+const todayCentral = () => new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -349,6 +351,14 @@ export function evalCaregiver(input: {
     for (const [, skill, label] of needed) {
       if (seen.has(skill)) continue
       seen.add(skill)
+      /* Driver Compliance (2026-10-13): driving a client is never self-reported. Only an Approved Driver with a current
+         license and insurance passes (transportEligible, the one shared rule); no driver record yet fails (no assumption). */
+      if (skill === 'transportation') {
+        const t = transportEligible(cg, todayCentral())
+        items.push(item('skill_transportation', `Required competency: ${label} (Approved Driver)`, 'HARD', 'hub',
+          t.ok ? 'pass' : 'fail', t.ok ? 'Approved Driver with a current license and insurance (Driver Compliance)' : 'not cleared to drive clients: ' + t.why, 'hub'))
+        continue
+      }
       const st = skillState(skill)
       items.push(item('skill_' + skill, `Required competency: ${label}`, 'HARD', 'hub',
         st === 'yes' ? 'pass' : st === 'no' ? 'fail' : 'unanswered',
