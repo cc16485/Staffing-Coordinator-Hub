@@ -398,7 +398,7 @@ export const PREVIEW_PREFILL = prefillFrom({ lived_outside_mo: 'no', has_license
 /** The forms as the page receives them (the same shape the real view sends). */
 export async function formsPayload(sigs: Record<string, unknown> = {}): Promise<Record<string, unknown>[]> {
   const forms = [] as Record<string, unknown>[]
-  for (const k of FORM_ORDER) { const f = FORMS[k]; forms.push({ key: f.key, screen: f.screen, title: f.title, short: f.short || null, layout: f.layout || null, version: f.version, status: f.status, intro: f.intro || [], sections: f.sections, certification: f.certification, signature: f.signature, fingerprint: await formFingerprint(k), approved_for_real: APPROVED_FOR_REAL[k] === f.version }) }
+  for (const k of FORM_ORDER) { const f = FORMS[k]; forms.push({ key: f.key, screen: f.screen, title: f.title, short: f.short || null, layout: f.layout || null, when: f.when || null, version: f.version, status: f.status, intro: f.intro || [], sections: f.sections, certification: f.certification, signature: f.signature, fingerprint: await formFingerprint(k), approved_for_real: APPROVED_FOR_REAL[k] === f.version }) }
   void sigs
   return forms
 }
@@ -418,6 +418,8 @@ function cleanAnswers(raw: unknown): Record<string, unknown> {
 // deno-lint-ignore no-explicit-any
 export async function preview(b: Record<string, any>): Promise<Record<string, unknown>> {
   const form = S(b.form, 40) as FormKey, answers = cleanAnswers(b.answers)
+  /* 2026-10-13: the preview's practice pictures (never uploaded) count as given, so the driver path can be tried */
+  for (const k of FORM_ORDER) for (const it of itemsOf(FORMS[k])) if (it.kind === 'photo') { const v = (b.answers || {})[it.id]; if (v && typeof v === 'object' && /^preview\//.test(String(v.path || ''))) answers[it.id] = { path: String(v.path).slice(0, 80) } }
   const id = b.identity && typeof b.identity === 'object' ? b.identity : {}
   const ident: IdentityState = { ssn: id.ssn ? 'ending ' + S(id.ssn, 4) : null, dob: !!id.dob, license: id.license ? 'ending ' + S(id.license, 4) : null }
   if (b.check || b.pdf) {
