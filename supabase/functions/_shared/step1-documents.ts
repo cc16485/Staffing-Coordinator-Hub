@@ -325,20 +325,58 @@ export const FORMS: Record<FormKey, Form> = {
     ],
     certification: ['I have read this agreement, the information and documents I gave are current and true, and I agree to it.'],
   },
-  /* 2026-10-13 PROPOSED (a draft until Samantha sends or approves the company's Non-Driver Agreement): for an applicant who
-     answers NO to transporting clients. They continue onboarding and work non-driving assignments. */
+  /* v2 (2026-10-13): Samantha's own Non-Driver Agreement & Acknowledgment, word for word (it replaces the draft v1). For an
+     applicant who answers NO to transporting clients; also signed later on the driver link when someone stops driving.
+     The employee's name, position and date print on the signed PDF. */
   non_driver: {
-    key: 'non_driver', screen: '8', title: 'Non-Driver Agreement', short: 'Non-driver agreement', when: { id: 'transport_willing', equals: 'no' }, version: 1, status: 'proposed', signature: 'typed',
+    key: 'non_driver', screen: '8', title: 'Non-Driver Agreement & Acknowledgment', short: 'Non-driver agreement', when: { id: 'transport_willing', equals: 'no' }, version: 2, status: 'proposed', signature: 'typed',
     sections: [
-      { h: 'Your choice', p: ['You told us you are not willing or able to transport clients in your personal vehicle as part of your caregiving duties. That is fine: you can continue onboarding and work with clients whose care does not include driving.'] },
-      { h: 'What this means', p: [
-        'I will not transport any client in my vehicle or in the client\'s vehicle, and I will not drive a client anywhere as part of my work, unless the office later approves me as a driver in writing.',
-        'If a client or a client\'s family asks me to drive, I will politely say no and call the office right away.',
-        'I understand that client assignments that require transportation will not be offered to me while I am a Non-Driver.',
+      { h: '1. Non-Driver Designation', p: [
+        'I understand and acknowledge that I am designated as a Non-Driver with Caring Companions In-Home Senior Care.',
+        'I understand that this designation means I am not authorized to transport clients in any vehicle while performing my employment duties unless I have received prior written approval from Caring Companions.',
       ] },
-      { h: 'If you want to drive later', p: ['You can ask the office at any time. You will sign the Driver/Vehicle Insurance & Transportation Standards Agreement, upload your license and insurance, and wait for the office\'s written approval before you drive a client.'] },
+      { h: '2. Transportation Restrictions', p: [
+        'While designated as a Non-Driver, I agree that I will not:',
+        '• Transport a client in my personal vehicle.',
+        '• Drive a client\'s vehicle or a family member\'s vehicle to transport a client.',
+        '• Transport clients in another employee\'s vehicle while acting as the driver.',
+        '• Accept a client\'s or family member\'s request to drive them, even if they offer payment or reimbursement.',
+        '• Drive a client to appointments, shopping, errands, social activities, or any other destination as part of my employment duties without written authorization from Caring Companions.',
+        'These restrictions apply regardless of whether transportation is requested by the client, a family member, or another individual.',
+      ] },
+      { h: '3. Reporting Transportation Requests', p: [
+        'If a client or family member asks me to provide transportation, I agree to politely explain that I am not authorized to transport clients and notify the Caring Companions office.',
+        'I understand that a client\'s or family member\'s permission does not replace authorization from Caring Companions.',
+      ] },
+      { h: '4. Employment and Scheduling', p: [
+        'I understand that my Non-Driver designation does not automatically disqualify me from employment with Caring Companions.',
+        'I may be assigned to clients and shifts that do not require me to transport clients.',
+        'I understand that certain assignments may require an Approved Driver, and I will not accept or perform transportation duties unless I have been approved.',
+        'I remain responsible for having reliable transportation to and from my assigned work locations, consistent with my employment requirements.',
+      ] },
+      { h: '5. Changing to Approved Driver Status', p: [
+        'If I wish to transport clients in the future, I understand that I must first:',
+        '1. Notify Caring Companions that I am requesting a change in my transportation status.',
+        '2. Complete and sign the Driver/Vehicle Insurance & Transportation Standards Agreement.',
+        '3. Provide a copy of the front and back of my current driver\'s license.',
+        '4. Provide current proof of automobile insurance.',
+        '5. Meet all driving, insurance, background verification, and other applicable agency requirements.',
+        '6. Receive written approval from Caring Companions before transporting any client.',
+        'I understand that submitting documents or signing the Driver Agreement does not automatically authorize me to transport clients.',
+      ] },
+      { h: '6. Compliance and Accountability', p: [
+        'I understand that transporting a client without authorization is a violation of Caring Companions policy and may result in disciplinary action, up to and including termination of employment, consistent with applicable law.',
+        'I agree to follow my assigned care plans, scheduling instructions, and agency transportation policies.',
+      ] },
     ],
-    certification: ['I have read this agreement and I agree to it.'],
+    certification: [
+      '7. Employee Acknowledgment. By signing below, I acknowledge that:',
+      '• I have read and understand this Non-Driver Agreement.',
+      '• I understand that I am not authorized to transport Caring Companions clients while designated as a Non-Driver.',
+      '• I agree to notify the office if a client or family member requests transportation.',
+      '• I understand that I must receive written agency approval before performing any client transportation duties.',
+      '• I understand that this designation will remain in effect until Caring Companions formally changes my transportation status.',
+    ],
   },
 }
 export const FORM_ORDER: FormKey[] = ['employee_application', 'reference_consent', 'fcra_disclosure', 'edl_fcsr_consent', 'availability', 'experience', 'vehicle', 'non_driver']
