@@ -48,6 +48,8 @@
     care_packet_link:    { label: 'made a caregiver packet link', area: 'clients', severity: 'fyi' },
     care_packet_understood: { label: 'confirmed the caregiver packet', area: 'clients', severity: 'fyi' },
     care_packet_sent:    { label: 'texted a caregiver packet', area: 'clients', severity: 'fyi' },
+    care_packet_auto_set: { label: 'set a caregiver packet to send automatically or by hand', area: 'clients', severity: 'fyi' },
+    care_packet_acks_carried: { label: 'kept caregiver packet confirmations after a small fix', area: 'clients', severity: 'fyi' },
     care_packet_send_refused: { label: 'caregiver packet text not sent', area: 'clients', severity: 'fyi' },
     care_topic_saved:    { label: 'saved a care how-to topic', area: 'admin',   severity: 'fyi' },
     care_topic_reviewed: { label: 'approved or removed a Care Library item', area: 'admin', severity: 'fyi' },

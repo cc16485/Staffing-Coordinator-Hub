@@ -10,7 +10,11 @@
 // an older version / link made, not texted / nothing sent yet). The card links to the client's Care tab, where Text the
 // packet / Remind is one press. It closes itself once everyone coming up has confirmed (or their visits have passed).
 //
-// It NEVER texts anyone (632: Cara never texts on her own). It never changes AxisCare.
+// By itself it never texts anyone. ONE exception, chosen per client by the office (Samantha 2026-10-12: "have us mark if we want
+// it sent to anyone who is scheduled with him or only send manually ... that option for each client"): a client whose packet
+// is set to "Send automatically" gets the packet texted to each caregiver coming up who has not had THIS version yet (a first
+// or updated text, never a reminder), 8am to 8pm Central, through care-packet's own send ('auto_send': the same texts, the
+// same opt-out gate, the same records). Every client starts set to by hand. It never changes AxisCare.
 // A card a person closed stays closed, unless someone NEW appears on it (a caregiver added to the schedule later).
 // AxisCare not answering for a client: that client's card is left exactly as it was (never closed on a failed read).
 // Switch ops_settings.care_packet_watch_live (Owners Hub Admin page), OFF to start: off, it records what it WOULD raise
@@ -29,6 +33,13 @@ type Any = any
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
 export const WINDOW_HOURS = 72
+/** Who a client set to automatic gets texted now: coming up, and never had THIS version (no text, a link only, or they
+    confirmed an older one). Someone already texted and not confirmed is left to the office's Remind. Pure. */
+export const autoTargets = (missing: Array<{ standing: string }>) => missing.filter((m) => m.standing === 'none' || m.standing === 'link_only' || m.standing === 'older')
+export function inTextHours(now = new Date()): boolean {
+  const h = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', hour: 'numeric', hourCycle: 'h23' }).format(now))
+  return h >= 8 && h < 20
+}
 const FALLBACK_OWNER = 'samantha@mo-care.com'
 export const cardId = (packetId: string) => 'ops_cpk_' + String(packetId).replace(/[^0-9a-f]/gi, '').slice(0, 32)
 
@@ -83,7 +94,19 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
   const { data: st } = await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
   const live = st?.data?.care_packet_watch_live === true
   const dry = caller === 'owner' && body?.dry === true
-  const out: Any = { live, dry, packets: 0, read: 0, unreadable: 0, caregivers_upcoming: 0, missing: 0, opened: 0, updated: 0, closed: 0, left_closed: 0, would: [] }
+  const sendLive = st?.data?.care_packet_send_live === true
+  const out: Any = { live, dry, packets: 0, read: 0, unreadable: 0, caregivers_upcoming: 0, missing: 0, opened: 0, updated: 0, closed: 0, left_closed: 0, would: [],
+    auto_clients: 0, auto_sent: 0, auto_not_sent: 0, auto_would: [] }
+  const hoursOk = inTextHours(new Date(now))
+  /* one automatic send, through care-packet's own send path (never a second way to text) */
+  const autoSend = async (packetId: string, axId: string): Promise<Any> => {
+    try {
+      const r = await fetch(Deno.env.get('SUPABASE_URL') + '/functions/v1/care-packet', { method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-cron-secret': Deno.env.get('HUB_JOB_SECRET') ?? '' },
+        body: JSON.stringify({ action: 'auto_send', packet_id: packetId, caregiver_axiscare_id: axId }) })
+      return await r.json().catch(() => ({ outcome: 'failed', error: 'care-packet answered ' + r.status }))
+    } catch (e) { return { outcome: 'failed', error: String(e).slice(0, 120) } }
+  }
 
   const { data: packets, error } = await db.from('care_packets').select('*').eq('ready', true)
   if (error) return json({ error: 'could not read the packets' }, 500)
@@ -104,6 +127,18 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
     const byAx = new Map((recs ?? []).map((r: Any) => [String(r.caregiver_axiscare_id), r]))
     const missing = ups.map((u) => ({ ...u, standing: standing(byAx.get(u.caregiver_axiscare_id), p.version) })).filter((u) => u.standing !== 'confirmed')
     out.missing += missing.length
+    if (p.auto_send === true) {   // this client is set to send automatically
+      out.auto_clients++
+      for (const m of autoTargets(missing)) {
+        if (!live || dry || !sendLive || !hoursOk) {
+          out.auto_would.push({ client: p.client_first, caregiver: m.caregiver_name, why_not_now: dry ? 'dry run' : !live ? 'check switched off' : !sendLive ? 'packet texts switched off' : 'outside 8am to 8pm' })
+          continue
+        }
+        const res = await autoSend(String(p.id), m.caregiver_axiscare_id)
+        if (res?.outcome === 'sent' || res?.outcome === 'already_sent') { m.standing = 'texted'; out.auto_sent++ }
+        else { out.auto_not_sent++; out.auto_would.push({ client: p.client_first, caregiver: m.caregiver_name, not_sent: res?.error || res?.outcome || 'no answer' }) }
+      }
+    }
     const card = missing.length ? buildCard(p, missing, owner, nowIso) : null
     const was = items.find((x) => x && x.id === cardId(p.id))
     const what = decide(was, card)
@@ -123,9 +158,9 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
     }
   }
   if (!dry) {
-    const note = `packets ${out.packets}, read ${out.read}${out.unreadable ? ', AxisCare failed ' + out.unreadable : ''}, coming up ${out.caregivers_upcoming}, not confirmed ${out.missing}, cards opened ${out.opened}, updated ${out.updated}, closed ${out.closed}${out.left_closed ? ', left closed ' + out.left_closed : ''}${live ? '' : ' (switch off: nothing raised)'}`
+    const note = `packets ${out.packets}, read ${out.read}${out.unreadable ? ', AxisCare failed ' + out.unreadable : ''}, coming up ${out.caregivers_upcoming}, not confirmed ${out.missing}, cards opened ${out.opened}, updated ${out.updated}, closed ${out.closed}${out.left_closed ? ', left closed ' + out.left_closed : ''}${out.auto_clients ? `, automatic clients ${out.auto_clients}, texted ${out.auto_sent}${out.auto_not_sent ? ', not sent ' + out.auto_not_sent : ''}` : ''}${live ? '' : ' (switch off: nothing raised)'}`
     try { await db.rpc('upsert_app_data_item', { target_key: 'automation_heartbeats', item: { id: 'hb_care-packet-watch', automation: 'care-packet-watch', at: nowIso, ok: out.unreadable === 0, note } }) } catch { /* no beat */ }
-    await opEvent(db, { verb: 'care_packet_watch_run', job: 'care-packet-watch', via: 'cron', summary: 'caregiver packet check: ' + note, data: { ...out, would: out.would.slice(0, 20) }, outcome: live ? 'done' : 'off' })
+    await opEvent(db, { verb: 'care_packet_watch_run', job: 'care-packet-watch', via: 'cron', summary: 'caregiver packet check: ' + note, data: { ...out, would: out.would.slice(0, 20), auto_would: out.auto_would.slice(0, 20) }, outcome: live ? 'done' : 'off' })
   }
   return json(out)
 })

@@ -1,0 +1,58 @@
+{
+ "add": [
+  {
+   "key": "sit_to_stand_lift",
+   "title": "Sit-to-stand lift (stand-assist lift)",
+   "category": "moving",
+   "flag": "Medicaid clients: any lift transfer is an advanced personal care task a nurse must certify. CC does not offer it, so a Medicaid client who needs a lift is flagged to the office, not matched. Private pay: only when the care plan says so.",
+   "notes": "Only use a sit-to-stand lift when the client's care plan says so and after the office has trained you on that client's lift. Follow the maker's instructions for that model, and check the straps, the sling and the brakes every time before you start. The client must be able to bear some weight on their legs and hold on with their hands. If they cannot, or seem weaker than usual, stop and call the office.",
+   "review_note": "Each video shows one brand; caregivers still learn the client's actual lift from the office. The Joerns and Arjo videos are product demos with no narration about who is NOT a candidate; the Open RN video covers that. Backup: Invacare 'Battery Powered Stand-Up Lifts' (youtube.com/watch?v=n1IaI5h0pNA).",
+   "videos": [
+    {
+     "title": "TRAINING | Hoyer® Journey®",
+     "url": "https://www.youtube.com/watch?v=L3Py4SDMf8w",
+     "publisher": "Joerns Healthcare (maker of Hoyer lifts)",
+     "minutes": 7,
+     "status": "pending",
+     "why": "Maker training on a powered sit-to-stand: sling, footplate, brakes, standing and sitting."
+    },
+    {
+     "title": "Sara Stedy demonstration video | Patient Handling | Arjo Global",
+     "url": "https://www.youtube.com/watch?v=3qlVrYG6zgU",
+     "publisher": "Arjo (maker of the Sara Stedy)",
+     "minutes": 5,
+     "status": "pending",
+     "why": "Maker demo of the non-powered stand aid many homes use."
+    },
+    {
+     "title": "Transfer from Bed to Chair with a Sit to Stand",
+     "url": "https://www.youtube.com/watch?v=zs_CIYylxtU",
+     "publisher": "Open RN (Chippewa Valley Technical College nursing assistant program)",
+     "minutes": 5,
+     "status": "pending",
+     "why": "Skills demo with safety checks, same series as the Hoyer video."
+    }
+   ]
+  }
+ ],
+ "append_videos": {
+  "hoyer": [
+   {
+    "title": "ALS Caregiver Boot Camp: How to Use a Mechanical Hoyer Lift",
+    "url": "https://www.youtube.com/watch?v=NoI7Y8Q-2_A",
+    "publisher": "ALS United Illinois (caregiver education)",
+    "minutes": 12,
+    "status": "pending",
+    "why": "Home-style bed to wheelchair transfer, with detail on positioning and attaching the sling."
+   },
+   {
+    "title": "TRAINING | Hoyer® Presence",
+    "url": "https://www.youtube.com/watch?v=XlSU_Blzk2Q",
+    "publisher": "Joerns Healthcare (maker of Hoyer lifts)",
+    "minutes": 11,
+    "status": "pending",
+    "why": "Maker training on a battery-powered floor lift, the kind most often in homes."
+   }
+  ]
+ }
+}

@@ -37,6 +37,12 @@
 //                  AxisCare id (never from the browser), the outbound gate (phone identity + the universal opt-out check),
 //                  GoHighLevel; a refusal or failure is on Needs Attention (no silent failures). Switch:
 //                  ops_settings.care_packet_send_live (Owners Hub Admin page). A repeat send_id is answered "already_sent".
+//     'auto_set'   {packet_id, on} -> per client: send automatically to anyone scheduled with them, or by hand (default).
+//     'carry_acks' {packet_id, from_version} -> after a small fix made a new version, keep the confirmations of the version
+//                  just before it, recorded as carried over (by whom, from which version). Never silent.
+//   THE TWICE-A-DAY CHECK (care-packet-watch, the schedule's secret) only:
+//     'auto_send'  {packet_id, caregiver_axiscare_id} -> the same send as 'send', only when that client is set to automatic,
+//                  8am to 8pm Central, and only a first or updated text (never a reminder); one per caregiver per version.
 //   CAREGIVER actions need only their link (i, e, t):
 //     'view'  -> what their page shows. Opening the page changes nothing (phones preview links on their own).
 //     'ack'   {version} -> "I watched it and understand" for that version (only the current one).
@@ -44,6 +50,7 @@
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { jobCaller } from '../_shared/job-auth.ts'
 import { opEvent } from '../_shared/events.ts'
 import { checkLink, linkExpiry, makeLink, newRecipientId } from '../_shared/packet-links.ts'
 import { contactForOutbound, maySendTo, normalisePhone } from '../_shared/outreach.ts'
@@ -259,7 +266,7 @@ async function pageItems(sb: Any, p: Any): Promise<Any[]> {
   return (p.items ?? []).map((it: Any) => { const t = byKey.get(it.topic); return t ? { title: t.title, notes: it.notes || t.notes || '', videos: (t.videos ?? []).filter(videoApproved).map(forPage) } : null }).filter(Boolean)
 }
 async function recipients(sb: Any, packetId: string): Promise<Any[]> {
-  const { data, error } = await sb.from('care_packet_recipients').select('id, caregiver_axiscare_id, caregiver_name, link_made_at, link_made_by, ack_version, ack_at, last_sent_at, last_sent_by, last_send_kind, send_count').eq('packet_id', packetId)
+  const { data, error } = await sb.from('care_packet_recipients').select('id, caregiver_axiscare_id, caregiver_name, link_made_at, link_made_by, ack_version, ack_at, ack_carried_from, ack_carried_by, last_sent_at, last_sent_by, last_send_kind, send_count').eq('packet_id', packetId)
   if (error) throw error
   return (data ?? []).sort((a: Any, b: Any) => String(a.caregiver_name).localeCompare(String(b.caregiver_name)))
 }
@@ -292,7 +299,7 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
         const at = new Date().toISOString()
         const { error: e3 } = await sb.from('care_packet_acks').insert({ recipient_id: r.id, packet_id: p.id, version: p.version, at })
         if (e3) throw e3
-        const { error: e4 } = await sb.from('care_packet_recipients').update({ ack_version: p.version, ack_at: at }).eq('id', r.id)
+        const { error: e4 } = await sb.from('care_packet_recipients').update({ ack_version: p.version, ack_at: at, ack_carried_from: null, ack_carried_by: null }).eq('id', r.id)
         if (e4) throw e4
         await opEvent(sb, { verb: 'care_packet_understood', actor_kind: 'employee', actor_name: r.caregiver_name, actor_id: 'axiscare:' + r.caregiver_axiscare_id, via: 'link',
           item_id: 'care_packet:' + p.id, summary: `${r.caregiver_name} watched ${p.client_first || 'the client'}'s caregiver packet and confirmed they understand (version ${p.version})`,
@@ -305,8 +312,58 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
     }
 
     /* ---------------- the office ---------------- */
-    const who = await requireStaff(sb, req, OFFICE_ROLES)
-    if (!who.ok) return json({ error: who.error }, who.status)
+    /* Automatic send (2026-10-12, per client, OFF until the office turns it on): only the twice-a-day check
+       (care-packet-watch, the schedule's secret) or the owner's Desktop key may ask. It goes through the SAME send path as
+       Text the packet below: same three fixed texts, same opt-out gate, same records. Extra limits checked there. */
+    let who: Any
+    if (action === 'auto_send') {
+      const caller = await jobCaller(req)
+      if (!caller) return json({ error: 'not allowed' }, 401)
+      who = { ok: true, email: 'care-packet-watch', name: 'Sent automatically', roles: [] }
+    } else {
+      who = await requireStaff(sb, req, OFFICE_ROLES)
+      if (!who.ok) return json({ error: who.error }, who.status)
+    }
+
+    /* Per client (2026-10-12): send the packet automatically to anyone scheduled with them, or only by hand (the default). */
+    if (action === 'auto_set') {
+      const pid = String(b.packet_id ?? '')
+      if (!/^[0-9a-f-]{36}$/i.test(pid)) return json({ error: 'Which packet?' }, 400)
+      const on = b.on === true, now = new Date().toISOString()
+      const { data, error } = await sb.from('care_packets').update({ auto_send: on, auto_send_by: who.email, auto_send_at: now }).eq('id', pid).select('*')
+      if (error) throw error
+      if (!data?.length) return json({ error: 'That packet is gone. Reload.' }, 404)
+      await opEvent(sb, { verb: 'care_packet_auto_set', actor_email: who.email, actor_name: who.name, via: 'hub', item_id: 'care_packet:' + pid,
+        summary: `${on ? 'turned on automatic sending of' : 'set to send by hand'} ${data[0].client_first || 'a client'}'s caregiver packet`, data: { on }, outcome: 'done' })
+      return json({ outcome: 'saved', packet: data[0] })
+    }
+
+    /* Small fix (Samantha 2026-10-12: "change ariels smiths back to confirmed ... i just accidently clicked save packet again"):
+       after a save made a new version, keep the confirmations of the version just before it. Never silent: each one is a
+       new history row marked carried over (from which version, by whom), and the caregiver's row says so too. */
+    if (action === 'carry_acks') {
+      const pid = String(b.packet_id ?? ''), from = Number(b.from_version)
+      if (!/^[0-9a-f-]{36}$/i.test(pid)) return json({ error: 'Which packet?' }, 400)
+      const { data: pp, error: e1 } = await sb.from('care_packets').select('*').eq('id', pid).limit(1)
+      if (e1) throw e1
+      const p = pp?.[0]
+      if (!p) return json({ error: 'That packet is gone. Reload.' }, 404)
+      if (!Number.isInteger(from) || from !== p.version - 1) return json({ error: `Only confirmations of the version just before (version ${p.version - 1}) can be kept.` }, 409)
+      const { data: rr, error: e2 } = await sb.from('care_packet_recipients').select('*').eq('packet_id', p.id).eq('ack_version', from)
+      if (e2) throw e2
+      const now = new Date().toISOString(), names: string[] = []
+      for (const r of rr ?? []) {
+        const { error: e3 } = await sb.from('care_packet_acks').insert({ recipient_id: r.id, packet_id: p.id, version: p.version, at: now, carried_from: from, carried_by: who.email })
+        if (e3) throw e3
+        const { error: e4 } = await sb.from('care_packet_recipients').update({ ack_version: p.version, ack_carried_from: from, ack_carried_by: who.email }).eq('id', r.id)
+        if (e4) throw e4
+        names.push(r.caregiver_name)
+      }
+      if (names.length) await opEvent(sb, { verb: 'care_packet_acks_carried', actor_email: who.email, actor_name: who.name, via: 'hub', item_id: 'care_packet:' + p.id,
+        summary: `kept ${names.join(', ')}'s confirmation of ${p.client_first || 'a client'}'s caregiver packet (version ${from} to ${p.version}, a small fix)`,
+        data: { from, to: p.version, recipients: (rr ?? []).map((r: Any) => r.id) }, outcome: 'done' })
+      return json({ outcome: 'saved', carried: names.length, recipients: await recipients(sb, p.id) })
+    }
 
     if (action === 'get') {
       const ax = String(b.ax ?? '').trim(), lead = String(b.lead_id ?? '').trim()
@@ -387,7 +444,7 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
       return json({ outcome: 'saved', changed, packet: data[0], recipients: await recipients(sb, cur.id) })
     }
 
-    if (action === 'link' || action === 'send_draft' || action === 'send') {
+    if (action === 'link' || action === 'send_draft' || action === 'send' || action === 'auto_send') {
       const pid = String(b.packet_id ?? ''), axId = String(b.caregiver_axiscare_id ?? '').trim()
       if (!/^[0-9a-f-]{36}$/i.test(pid) || !/^[A-Za-z0-9_-]{1,40}$/.test(axId)) return json({ error: 'Pick a caregiver.' }, 400)
       if (!SECRET || SECRET.length < 32) return json({ error: 'Links are not set up on the server (HUB_JOB_SECRET).' }, 500)
@@ -408,7 +465,13 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
 
       /* Step 2: which text, from where they stand. Already confirmed this version: nothing to send. */
       const kind = sendKind(rec, p.version)
-      if (action === 'send_draft' || action === 'send') {
+      const auto = action === 'auto_send'
+      if (auto) {   // the extra limits on an automatic send
+        if (p.auto_send !== true) return json({ outcome: 'not_auto', error: 'This client is set to send by hand.' }, 409)
+        if (!inOfficeTextHours(new Date(Date.now()))) return json({ outcome: 'late', error: 'Outside 8am to 8pm Central. Nothing was sent.' }, 409)
+        if (kind !== 'first' && kind !== 'updated') return json({ outcome: kind ? 'no_reminders' : 'confirmed', error: 'Automatic sends never remind. Nothing was sent.' }, 409)
+      }
+      if (action === 'send_draft' || action === 'send' || auto) {
         const { data: st, error: e4 } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
         if (e4) throw e4
         const live = st?.data?.care_packet_send_live === true
@@ -420,7 +483,7 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
             last_sent_at: rec?.last_sent_at ?? null, last_sent_by: rec?.last_sent_by ?? null })
         }
         if (!live) return json({ outcome: 'off', error: 'Sending packets from the Hub is switched off (Owners Hub Admin page). Nothing was sent. Use Get their link instead.' }, 409)
-        const sendId = String(b.send_id ?? '')
+        const sendId = auto ? `auto-${axId}-v${p.version}`.slice(0, 64) : String(b.send_id ?? '')
         if (!/^[a-z0-9-]{8,64}$/i.test(sendId)) return json({ error: 'bad send id' }, 400)
         if (rec?.last_send_id === sendId) return json({ outcome: 'already_sent', recipients: await recipients(sb, p.id) })
         if (!kind) return json({ outcome: 'confirmed', error: `${name} already confirmed this version. Nothing was sent.` }, 409)
@@ -430,13 +493,13 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
         const dest = await maySendTo(sb, phone)
         let refusal: string[] = []
         const contact = await contactForOutbound(sb, ghl, { phone, firstName: cg.first, lastName: cg.last }, 'urgent_internal',
-          { audience: 'caregiver', channel: 'sms', sender: 'care-packet', humanInitiated: true, onOptOut: (r: string[]) => { refusal = r } })
+          { audience: 'caregiver', channel: 'sms', sender: 'care-packet', humanInitiated: !auto, onOptOut: (r: string[]) => { refusal = r } })
         if (!contact) {
           const why = refusal.length ? `${name} has asked not to get texts (${refusal.join('; ')})`
             : !dest.allowed ? `${name}'s phone number isn't cleared for texting (${dest.reason}). Check the number on their profile`
             : 'the opt-out check could not be completed (GoHighLevel did not answer). Try again in a minute'
           await opEvent(sb, { verb: 'care_packet_send_refused', actor_email: who.email, actor_name: who.name, via: 'hub', item_id: 'care_packet:' + p.id,
-            summary: `${p.client_first || 'A client'}'s caregiver packet text to ${name} not sent`, data: { caregiver_axiscare_id: axId, why }, outcome: 'refused' })
+            summary: `${p.client_first || 'A client'}'s caregiver packet text to ${name} not sent${auto ? ' (automatic)' : ''}`, data: { caregiver_axiscare_id: axId, why, auto }, outcome: 'refused' })
           return json({ outcome: 'refused', error: `Not sent: ${why}.` }, 422)
         }
         const r2 = await ensureRecipient(sb, p, axId, name, rec, who.email)
@@ -453,8 +516,8 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
         const { error: e5 } = await sb.from('care_packet_recipients').update({ last_sent_at: at, last_sent_by: who.email, last_send_kind: kind, last_send_id: sendId,
           send_count: (Number(rec?.send_count) || 0) + 1 }).eq('id', r2)
         await opEvent(sb, { verb: 'care_packet_sent', actor_email: who.email, actor_name: who.name, via: 'hub', item_id: 'care_packet:' + p.id,
-          summary: `${who.name || 'Staff'} texted ${name} ${p.client_first || 'a client'}'s caregiver packet (${KIND_WORDS[kind]})`,
-          data: { caregiver_axiscare_id: axId, kind, version: p.version, recipient_id: r2 }, outcome: 'done' })
+          summary: auto ? `${name} was texted ${p.client_first || 'a client'}'s caregiver packet automatically (${KIND_WORDS[kind]})` : `${who.name || 'Staff'} texted ${name} ${p.client_first || 'a client'}'s caregiver packet (${KIND_WORDS[kind]})`,
+          data: { caregiver_axiscare_id: axId, kind, version: p.version, recipient_id: r2, auto }, outcome: 'done' })
         return json({ outcome: 'sent', kind, recipients: await recipients(sb, p.id),
           warning: e5 ? 'The text was sent, but the card could not record it. Note it by hand.' : null })
       }

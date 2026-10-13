@@ -45,7 +45,11 @@ const F = 'supabase/functions', tmp = fs.mkdtempSync(path.join(process.cwd(), '_
 try {
   const src = fs.readFileSync(path.join(F, 'care-packet/index.ts'), 'utf8')
     .replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
-    .replace(/from '\.\.\/_shared\/(\w[\w-]*)\.ts'/g, (_, m) => "from '" + path.join(process.cwd(), F, '_shared', m + '.ts') + "'")
+    .replace(/from '\.\.\/_shared\/(\w[\w-]*)\.ts'/g, (_, m) => "from '" + (m === 'job-auth' ? path.join(tmp, '_job-auth.ts') : path.join(process.cwd(), F, '_shared', m + '.ts')) + "'")
+  /* job-auth (the check's secret) loads a web library; a local copy uses the fake database instead, like the watch test */
+  fs.writeFileSync(path.join(tmp, '_job-auth.ts'), fs.readFileSync(path.join(F, '_shared/job-auth.ts'), 'utf8')
+    .replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
+    .replace(/from '\.\/(\w[\w-]*)\.ts'/g, (_, m) => "from '" + path.join(process.cwd(), F, '_shared', m + '.ts') + "'"))
   fs.writeFileSync(path.join(tmp, 'care-packet.ts'), src)
   const M = await import(path.join(tmp, 'care-packet.ts'))
   const L = await import(path.join(process.cwd(), F, '_shared/packet-links.ts'))
@@ -284,6 +288,47 @@ try {
   r = await call({ action: 'topic_save', key: 'diet_x', title: 'A diet', category: 'eating', flag: 'Follow the care plan.', is_new: true, videos: [] }, 'sa')
   { const t = T.care_topics.find((x) => x.key === 'diet_x'); ck('topic_save: a new topic she writes is in its group, has its warning line, and is approved by her', t && t.category === 'eating' && t.flag === 'Follow the care plan.' && t.pending === false && t.approved_by === 'sa@mo-care.com', t) }
   ck('M.stampVideos keeps an older approval, stamps a new one, clears a waiting one', (() => { const out = M.stampVideos([{ url: 'a', status: 'approved' }, { url: 'b', status: 'approved' }, { url: 'c', status: 'pending' }], [{ url: 'a', status: 'approved', approved_by: 'x', approved_at: '2026-01-01' }], 'sa', 'NOW'); return out[0].approved_by === 'x' && out[1].approved_by === 'sa' && out[1].approved_at === 'NOW' && out[2].approved_by === null })())
+  // ---- per client: send automatically, or by hand (2026-10-12) ----
+  const cron = async (body, secret = SECRET) => { const r = await handler(new Request('https://x/functions/v1/care-packet', { method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-cron-secret': secret }, body: JSON.stringify(body) })); let j = null; try { j = await r.json() } catch { /* */ } return { status: r.status, j } }
+  const realNow = Date.now, at = (iso) => { Date.now = () => Date.parse(iso) }
+  reset(); await save({ ready: true }); { const pid = T.care_packets[0].id
+    ck('every client starts set to send by hand', T.care_packets[0].auto_send !== true)
+    at('2026-10-13T15:00:00Z')   // 10am Central
+    let a = await cron({ action: 'auto_send', packet_id: pid, caregiver_axiscare_id: '11' })
+    ck('auto_send: refused while the client is set to send by hand, nothing sent', a.status === 409 && a.j.outcome === 'not_auto' && !SENT.length, a)
+    a = await call({ action: 'auto_set', packet_id: pid, on: true }, 'cg'); ck('auto_set: a caregiver account cannot change it', a.status === 403, a)
+    a = await call({ action: 'auto_set', packet_id: pid, on: true })
+    ck('auto_set: the office turns it on for this client, recorded with who and when', a.status === 200 && T.care_packets[0].auto_send === true && T.care_packets[0].auto_send_by === 'kr@mo-care.com' && EVENTS.some((e) => e.verb === 'care_packet_auto_set'), T.care_packets[0])
+    a = await cron({ action: 'auto_send', packet_id: pid, caregiver_axiscare_id: '11' }, 'y'.repeat(40)); ck('auto_send: a wrong secret is refused', a.status === 401 && !SENT.length, a)
+    a = await call({ action: 'auto_send', packet_id: pid, caregiver_axiscare_id: '11' }); ck('auto_send: a signed-in office person cannot call it (only the check)', a.status === 401 && !SENT.length, a)
+    at('2026-10-13T03:00:00Z')   // 10pm Central
+    a = await cron({ action: 'auto_send', packet_id: pid, caregiver_axiscare_id: '11' }); ck('auto_send: never outside 8am to 8pm Central', a.status === 409 && a.j.outcome === 'late' && !SENT.length, a)
+    at('2026-10-13T15:00:00Z')
+    a = await cron({ action: 'auto_send', packet_id: pid, caregiver_axiscare_id: '11' })
+    ck('auto_send: texts the first text through the same send path, recorded as automatic', a.status === 200 && a.j.outcome === 'sent' && SENT.length === 1 && /Before you work with Dan/.test(SENT[0].text) && EVENTS.some((e) => e.verb === 'care_packet_sent' && e.data.auto === true && /automatically/.test(e.summary)), [a, SENT, EVENTS.map((e) => e.verb)])
+    a = await cron({ action: 'auto_send', packet_id: pid, caregiver_axiscare_id: '11' }); ck('auto_send: never a reminder (already texted this version: nothing sent)', a.status === 409 && a.j.outcome === 'no_reminders' && SENT.length === 1, a)
+    a = await cron({ action: 'auto_send', packet_id: pid, caregiver_axiscare_id: '22' }); ck('auto_send: the opt-out gate still applies (opted-out caregiver not texted)', a.status === 422 && SENT.length === 1, a)
+    // ---- small fix: keep their confirmations ----
+    const rec = T.care_packet_recipients.find((x) => x.caregiver_axiscare_id === '11')
+    Object.assign(rec, { ack_version: 1, ack_at: '2026-10-13T15:05:00Z' })
+    await save({ about: 'On hospice. Call hospice first. Small fix.', base_version: 1 })
+    ck('a real change makes version 2; Ariel now shows an older version', T.care_packets[0].version === 2 && rec.ack_version === 1)
+    a = await call({ action: 'carry_acks', packet_id: pid, from_version: 0 }); ck('carry_acks: only from the version just before', a.status === 409 && rec.ack_version === 1, a)
+    a = await call({ action: 'carry_acks', packet_id: pid, from_version: 1 })
+    const row = (T.care_packet_acks || []).find((x) => x.version === 2)
+    ck('carry_acks: Ariel is confirmed on version 2, marked carried over from 1 by the office person, never silently', a.status === 200 && a.j.carried === 1 && rec.ack_version === 2 && rec.ack_carried_from === 1 && rec.ack_carried_by === 'kr@mo-care.com' && rec.ack_at === '2026-10-13T15:05:00Z'
+      && row && row.carried_from === 1 && row.carried_by === 'kr@mo-care.com' && EVENTS.some((e) => e.verb === 'care_packet_acks_carried' && /small fix/.test(e.summary)), [rec, row])
+    ck('carry_acks: what the card reads says carried over', a.j.recipients.some((x) => x.caregiver_axiscare_id === '11' && x.ack_carried_from === 1))
+    a = await cron({ action: 'auto_send', packet_id: pid, caregiver_axiscare_id: '11' }); ck('after the small fix, no updated text goes to Ariel', a.status === 409 && SENT.length === 1, a)
+    const L2 = linkParts((await call({ action: 'link', packet_id: pid, caregiver_axiscare_id: '11' })).j.link)
+    const v2 = await call({ ...L2, action: 'view' }, null)
+    ck('the caregiver page counts a carried-over confirmation as confirmed (no new ask)', v2.status === 200 && v2.j.acknowledged === true, v2.j)
+    const a2 = await call({ ...L2, action: 'ack', version: 2 }, null)
+    ck('tapping again keeps the record honest: already confirmed, still marked carried over', a2.j.outcome === 'already' && rec.ack_carried_from === 1, [a2.j, rec])
+    a = await call({ action: 'auto_set', packet_id: pid, on: false }); ck('auto_set: back to by hand', T.care_packets[0].auto_send === false)
+  }
+  Date.now = realNow
   reset(); FAIL = 'care_packets'; r = await call({ action: 'get', ax: '900' }); ck('a database failure: a plain error, not a crash', r.status === 500 && /went wrong/.test(r.j.error), r)
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 const bad = res.filter((x) => !x[1])
