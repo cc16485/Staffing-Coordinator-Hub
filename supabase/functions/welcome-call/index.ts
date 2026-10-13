@@ -102,8 +102,12 @@ Deno.serve(async (req) => {
   let action = String(b.action || 'preview')
   /* SLICE 4 (2026-10-10, option A): at Verify Viventium Step 2 Complete the Step 2 server sends the invitation itself, through
      this same path (same words, same gate, same opt-out door), on the job secret. Nobody else may use this door. */
-  let staff = ''
+  let staff = '', onlyText = false, auto = false
   if (action === 'invite_auto') {
+    auto = true
+    /* GO-LIVE (2026-10-13, hold rather than drop): the Step 2 pass sends an invitation TEXT that was held after hours with
+       only: 'text' (the email already went); nothing else changes */
+    onlyText = b.only === 'text'
     if (!(await jobCaller(req))) return json({ error: 'not allowed' }, 401)
     staff = 'The Hub (Step 2 verified' + (b.by ? ' by ' + clean(b.by, 80) : '') + ')'; action = 'invite'
   } else {
@@ -118,13 +122,15 @@ Deno.serve(async (req) => {
   const H = { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
   /* text (hours + their yes to texts) and email, each through the opt-out door; returns what went and what did not */
   // deno-lint-ignore no-explicit-any
-  async function deliver(w: any, m: { text: string; subject: string; html: string }) {
-    const notSent: string[] = []; let texted = false, emailed = false
+  async function deliver(w: any, m: { text: string; subject: string; html: string }, opts: { textOnly?: boolean } = {}) {
+    const notSent: string[] = []; let texted = false, emailed = false, text_held = false
     const name = [w.first_name, w.last_name].filter(Boolean).join(' ')
-    if (!ghl.token || !ghl.locationId) return { texted, emailed, not_sent: ['texting is not set up on the server'] }
+    if (!ghl.token || !ghl.locationId) return { texted, emailed, text_held, not_sent: ['texting is not set up on the server'] }
     if (w.phone) {
       const c = await latestTextConsent(db, w.phone)
-      if (!inTextHours()) notSent.push('text: texts go 8am to 6pm Central (the email still went)')
+      /* GO-LIVE (2026-10-13): on the automatic door an after-hours text is HELD (text_held), not lost: the Step 2 pass sends
+         it at the first chance inside 8am to 6pm. A person pressing Invite sees why and presses again in hours. */
+      if (!inTextHours()) { if (auto) { text_held = true; notSent.push('text: held until 8am Central (texts go 8am to 6pm; the email still went)') } else notSent.push('text: texts go 8am to 6pm Central (the email still went)') }
       else if (!c.ok) notSent.push('text: ' + c.why)
       else {
         const id = await ghlContactIfAllowed(db, ghl, 'welcome-call', { channel: 'sms', phone: w.phone, email: w.email, firstName: w.first_name, lastName: w.last_name })
@@ -133,14 +139,15 @@ Deno.serve(async (req) => {
           notSent.push('text: GoHighLevel did not accept it (a card is on Needs Attention)')
       }
     }
-    if (w.email) {
+    if (w.email && !opts.textOnly) {
       const id = await ghlContactIfAllowed(db, ghl, 'welcome-call', { channel: 'email', email: w.email, phone: w.phone, firstName: w.first_name, lastName: w.last_name })
       if (!id) notSent.push('email: they opted out, or the address could not be confirmed')
       else if (!(emailed = await ghlSendChecked(db, H, 'welcome-call', { channel: 'email', contactId: id, address: w.email, who: name }, { subject: m.subject, html: m.html })))
         notSent.push('email: GoHighLevel did not accept it (a card is on Needs Attention)')
     }
     if (!w.phone && !w.email) notSent.push('no phone number or email on file')
-    return { texted, emailed, not_sent: notSent }
+    else if (opts.textOnly && !w.phone) notSent.push('no phone number on file')
+    return { texted, emailed, text_held, not_sent: notSent }
   }
 
   if (action === 'invite') {
@@ -152,6 +159,7 @@ Deno.serve(async (req) => {
     const gate = await caregiverGate(db, { candidate_id: cand }, 'cg.approve.advance')
     if (!gate.allowed) return json({ error: gate.why, gate: 'cg.approve.advance' }, 409)
     const { data: open } = await db.from('welcome_calls').select('*').eq('candidate_id', cand).in('status', ['invited', 'booked', 'noshow']).order('invited_at', { ascending: false }).limit(1)
+    if (onlyText && !open?.length) return json({ ok: true, texted: false, emailed: false, text_held: false, skipped: 'the invitation is closed', not_sent: [] })
     let w = open?.[0]
     if (w) { await db.from('welcome_calls').update({ ...row, updated_at: new Date().toISOString() }).eq('id', w.id); w = { ...w, ...row } }
     else {
@@ -159,7 +167,8 @@ Deno.serve(async (req) => {
       if (error) return json({ error: error.message }, 500)
       w = data
     }
-    const sent = await deliver(w, inviteMessages(w.first_name || 'there', bookLink(w.id)))
+    if (onlyText && w.status !== 'invited') return json({ ok: true, id: w.id, texted: false, emailed: false, text_held: false, skipped: 'they already booked or the invitation moved on', not_sent: [] })
+    const sent = await deliver(w, inviteMessages(w.first_name || 'there', bookLink(w.id)), { textOnly: onlyText })
     return json({ ok: true, id: w.id, link: bookLink(w.id), reused: !!open?.length, ...sent })
   }
 

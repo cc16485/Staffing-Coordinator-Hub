@@ -38,7 +38,7 @@ globalThis.fetch = async (url, o = {}) => { const u = String(url), m = (o.method
   if (u.startsWith('https://services.leadconnectorhq.com/contacts/search/duplicate')) return new Response(JSON.stringify({ contacts: [] }), { status: 200 })
   if (u === 'https://services.leadconnectorhq.com/contacts/upsert') { GHL.contacts++; return new Response(JSON.stringify({ contact: { id: 'c1', phone: '+14175550100' } }), { status: 200 }) }
   if (u.startsWith('https://services.leadconnectorhq.com/contacts/c1')) return new Response(JSON.stringify({ contact: { id: 'c1', phone: '+14175550100' } }), { status: 200 })
-  if (u === 'https://services.leadconnectorhq.com/conversations/messages') { GHL.messages.push(JSON.parse(o.body)); return new Response('{}', { status: 200 }) }
+  if (u === 'https://services.leadconnectorhq.com/conversations/messages') { if (GHL.fail) return new Response('{"message":"down"}', { status: 500 }); GHL.messages.push(JSON.parse(o.body)); return new Response('{}', { status: 200 }) }
   throw new Error('unexpected fetch ' + m + ' ' + u) }
 /* fake tables */
 let DB = {}
@@ -51,7 +51,7 @@ function table(name) {
     const run = () => {
       if (mode === 'select') { let out = rows().filter(match); if (opts.order) out = [...out].sort((a, b) => String(b[opts.order]).localeCompare(String(a[opts.order]))); if (opts.limit) out = out.slice(0, opts.limit); return JSON.parse(JSON.stringify(out)) }
       if (mode === 'insert' && Array.isArray(payload)) { for (const p of payload) rows().push({ id: ++seq, ...p }); return payload }
-      if (mode === 'insert') { const r = { ...payload }; if (name === 'client_journey') { if (rows().some((x) => x.offer_id === r.offer_id)) throw new Error('duplicate offer_id'); r.journey_id = r.journey_id || 'j-' + (++seq); r.created_at = new Date().toISOString() } if (name === 'client_journey_event') { r.id = ++seq; r.at = r.at || new Date().toISOString() } rows().push(r); return [r] }
+      if (mode === 'insert') { const r = { ...payload }; if (name === 'client_journey') { if (rows().some((x) => x.offer_id === r.offer_id)) throw new Error('duplicate offer_id'); r.journey_id = r.journey_id || 'j-' + (++seq); r.created_at = new Date().toISOString() } if (name === 'client_journey_event') { r.id = ++seq; r.at = r.at || new Date().toISOString() } if (name === 'welcome_calls') { r.id = r.id || '00000000-0000-4000-8000-' + String(++seq).padStart(12, '0'); r.status = r.status || 'invited'; r.invited_at = r.invited_at || new Date().toISOString() } rows().push(r); return [r] }
       if (mode === 'upsert') { const i = rows().findIndex((x) => x.journey_id === payload.journey_id && x.step_key === payload.step_key); if (i >= 0) rows()[i] = { ...rows()[i], ...payload }; else rows().push({ ...payload }); return [payload] }
       if (mode === 'update') { const out = []; for (const r of rows()) if (match(r)) { Object.assign(r, payload); out.push(r) } return out }
     }
@@ -222,5 +222,49 @@ DB.app_data.find((x) => x.key === 'candidates').data = DB.app_data.find((x) => x
 r = await call({ action: 'verify', candidate_id: '902', ticked: ['Federal W-4'] }, 'cc')
 ck('Olga moved to the roster: the Step 2 record is found by candidate_id and verified there', r.status === 200 && DB.app_data.find((x) => x.key === 'caregivers').data[0].step2_verified_by === 'casey@mo-care.com', r.j)
 ck('no identity value appears in any record, event or card', !JSON.stringify([DB.app_data, DB.client_journey_event, DB.client_journey_step]).match(/\d{3}-\d{2}-\d{4}/))
+/* ═══ GO-LIVE (2026-10-13): reminders Monday to Saturday 9 to 6, held not dropped; the invitation text held after hours ═══ */
+ck('reminderDue: the latest due day wins (a reminder held past day 6 never sends day 3 and day 6 back to back)', S2.reminderDue({ step2_sent_at: '2026-10-05T15:00:00Z' }, [3, 6], '2026-10-12', (iso) => iso.slice(0, 10)) === 6 && S2.reminderDue({ step2_sent_at: '2026-10-08T15:00:00Z' }, [3, 6], '2026-10-12', (iso) => iso.slice(0, 10)) === 3 && S2.reminderDue({ step2_sent_at: '2026-10-05T15:00:00Z', step2_reminders: { d6: {} } }, [3, 6], '2026-10-12', (iso) => iso.slice(0, 10)) === 0)
+ck('the reminder window: Monday to Saturday 9am up to 6pm Central', S2.inReminderWindow(new Date('2026-10-12T15:00:00Z')) && !S2.inReminderWindow(new Date('2026-10-11T15:00:00Z')) && !S2.inReminderWindow(new Date('2026-10-12T13:30:00Z')) && !S2.inReminderWindow(new Date('2026-10-12T23:30:00Z')) && S2.inReminderWindow(new Date('2026-10-17T22:30:00Z')))
+const OID6 = '66666666-2222-4333-8444-555555555555'
+OFFERS[OID6] = { id: OID6, first_name: 'Eve', last_name: 'Fox', offer_signed_at: '2026-10-01T20:00:00Z', pd_signed_at: '2026-10-01T20:05:00Z', offer_status: 'accepted', onboarding_path: 'new' }
+DB.app_data.find((x) => x.key === 'candidates').data.push({ id: 906, first: 'Eve', last: 'Fox', offer_id: OID6, phone: '4175550106', email: 'eve@x.com', step2_sent_at: '2026-10-08T15:00:00Z', step2_sent_by: 'casey@mo-care.com' })
+await CJ.startCaregiverJourney(db, { id: OID6, first_name: 'Eve', last_name: 'Fox' }, 'offer-sign'); advance(OID6)
+const S = DB.app_data.find((x) => x.key === 'ops_settings').data; S.step2_reminders_live = true
+at('2026-10-11T15:00:00Z')   // Sunday 10am Chicago, day 3
+GHL.messages.length = 0
+r = await call({ action: 'pass' }, 'cron')
+ck('GO-LIVE: day 3 falls on a Sunday: HELD, nothing sent, nothing recorded (not lost)', r.j.reminders_held >= 1 && !(cand(906).step2_reminders && cand(906).step2_reminders.d3) && GHL.messages.length === 0, { r: r.j, rem: cand(906).step2_reminders })
+at('2026-10-12T23:30:00Z')   // Monday 6:30pm Chicago
+r = await call({ action: 'pass' }, 'cron')
+ck('GO-LIVE: Monday after 6pm: still held', !(cand(906).step2_reminders && cand(906).step2_reminders.d3) && GHL.messages.length === 0)
+at('2026-10-12T15:00:00Z'); GHL.fail = true   // Monday 10am, GoHighLevel refusing
+r = await call({ action: 'pass' }, 'cron')
+ck('GO-LIVE: inside the window but GoHighLevel refuses both: NOT recorded as done; a try is counted for the next pass', r.j.reminders_retry === 1 && !cand(906).step2_reminders.d3 && cand(906).step2_reminders.d3_tries.n === 1, cand(906).step2_reminders)
+GHL.fail = false
+r = await call({ action: 'pass' }, 'cron')
+ck('GO-LIVE: the next pass sends it: recorded as texted and emailed, one event', r.j.reminders_sent === 1 && cand(906).step2_reminders.d3.texted === true && cand(906).step2_reminders.d3.emailed === true && GHL.messages.filter((m) => m.type === 'SMS').length === 1 && evs(OID6, 'step2_reminder').length === 1, { r: r.j, rem: cand(906).step2_reminders })
+/* refused for good: said no to texts on their application and no email on file */
+cand(906).email = ''; cand(906).step2_sent_at = '2026-10-06T15:00:00Z'
+DB.job_applicants.push({ phone: '4175550106', sms_consent: false, created_at: '2026-10-01T00:00:00Z' })
+GHL.messages.length = 0
+r = await call({ action: 'pass' }, 'cron')
+ck('GO-LIVE: day 6, they said no to texts and no email is on file: recorded as refused (not retried) with a Needs Attention card', cand(906).step2_reminders.d6 && cand(906).step2_reminders.d6.refused === true && GHL.messages.length === 0 && ops().some((i) => i.id === 'step2_reminder_906_d6' && i.status === 'open' && /did not reach Eve Fox/.test(i.title)), { rem: cand(906).step2_reminders, cards: ops().filter((i) => /906/.test(i.id)) })
+/* the Orientation Video Call invitation at night: the email goes, the text is HELD and goes at 8am */
+cand(906).email = 'eve@x.com'; DB.job_applicants = DB.job_applicants.filter((a) => a.phone !== '4175550106')
+S.wc_auto_invite_live = true
+at('2026-10-13T02:00:00Z')   // Monday 9pm Chicago
+GHL.messages.length = 0
+r = await call({ action: 'verify', candidate_id: '906', ticked: ['Federal W-4'] }, 'kry')
+ck('GO-LIVE: Verify at 9pm: the invitation email goes, the text is HELD (not failed, no failure card)', r.status === 200 && r.j.invite.state === 'sent' && r.j.invite.text_held === true && r.j.invite.texted === false && GHL.messages.length === 1 && GHL.messages[0].type === 'Email' && cand(906).step2_invite.text_held === true && !ops().some((i) => i.id === 'step2_invite_906'), { r: r.j, msgs: GHL.messages.map((m) => m.type) })
+r = await call({ action: 'pass' }, 'cron')
+ck('GO-LIVE: a pass at night: the held text still waits', GHL.messages.length === 1 && cand(906).step2_invite.text_held === true)
+at('2026-10-13T13:05:00Z')   // Tuesday 8:05am Chicago
+r = await call({ action: 'pass' }, 'cron')
+ck('GO-LIVE: the first pass after 8am sends the held invitation text (no second email), recorded with an event', r.j.invite_texts_sent === 1 && GHL.messages.length === 2 && GHL.messages[1].type === 'SMS' && /Orientation Video Call/.test(GHL.messages[1].message) && cand(906).step2_invite.texted === true && cand(906).step2_invite.text_held === false && evs(OID6, 'welcome_invite_text_sent').length === 1, { r: r.j, inv: cand(906).step2_invite })
+r = await call({ action: 'pass' }, 'cron')
+ck('GO-LIVE: the pass again: no second text', GHL.messages.length === 2)
+DB.welcome_calls.find((w) => w.candidate_id === '906').status = 'booked'
+r = await WC(new Request('http://x/functions/v1/welcome-call', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-cron-secret': env.HUB_JOB_SECRET }, body: JSON.stringify({ action: 'invite_auto', candidate_id: '906', first: 'Eve', phone: '4175550106', email: 'eve@x.com', only: 'text' }) })).then(async (x) => ({ status: x.status, j: await x.json() }))
+ck('GO-LIVE: a held text for someone who has since booked is skipped, not sent', r.status === 200 && r.j.skipped && r.j.texted === false && GHL.messages.length === 2, r.j)
 for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note))
 const bad = res.filter((x) => !x[1]).length; console.log(`${res.length - bad}/${res.length} passed`); process.exit(bad ? 1 : 0)

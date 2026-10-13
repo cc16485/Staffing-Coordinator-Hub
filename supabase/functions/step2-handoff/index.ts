@@ -23,7 +23,11 @@
 //   GoHighLevel (?token=STEP2_REPLY_TOKEN, a Customer Replied workflow on contacts tagged step2-sent): { id, phone, name, message }
 //                                                      DONE / done / finished counts only when the phone matches exactly one
 //                                                      person at Sent; anything else is an office review card
-//   job (x-cron-secret, every 15 minutes): { action: 'pass' }   day 3 / day 6 reminders (step2_reminders_live, new path), the
+//   job (x-cron-secret, every 15 minutes): { action: 'pass' }   day 3 / day 6 reminders (step2_reminders_live, new path;
+//                                                      2026-10-13: Monday to Saturday 9am to 6pm Central, HELD outside it,
+//                                                      recorded only when sent or refused for good, three tries then a card),
+//                                                      the Orientation Video Call invitation text held after hours (sent at
+//                                                      the first pass inside 8am to 6pm), the
 //                                                      cards (Sent not recorded by the deadline; DONE not verified by the
 //                                                      deadline; no DONE by day 8), closed when the state moves on
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -35,7 +39,7 @@ import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { latestTextConsent, inTextHours } from '../_shared/text-consent.ts'
 import { makeStep2Link, checkLink } from '../_shared/applicant-links.ts'
 import { dueNextBusinessDay, centralYmd } from '../_shared/business-days.ts'
-import { sentMessages, reminderMessages, receiptText, stillOpenText, isDoneReply, rowFor, stateOf, reminderDue } from '../_shared/step2.ts'
+import { sentMessages, reminderMessages, receiptText, stillOpenText, isDoneReply, rowFor, stateOf, reminderDue, inReminderWindow, refusedForGood, REMINDER_TRIES } from '../_shared/step2.ts'
 import { testPerson } from '../_shared/test-people.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -141,6 +145,12 @@ async function deliver(db: Any, rec: Any, m: { text: string; subject?: string; h
   return { texted, emailed, not_sent: notSent }
 }
 const doneLink = (candId: string) => makeStep2Link(Deno.env.get('HUB_JOB_SECRET') ?? '', candId)
+/** the Orientation Video Call invitation through welcome-call's own server door (same words, gate and opt-out door) */
+async function inviteVia(c: Any, cid: string, by: string, only?: 'text'): Promise<{ ok: boolean; status: number; j: Any }> {
+  const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/welcome-call`, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: Deno.env.get('SUPABASE_ANON_KEY') ?? '', Authorization: 'Bearer ' + (Deno.env.get('SUPABASE_ANON_KEY') ?? ''), 'x-cron-secret': Deno.env.get('HUB_JOB_SECRET') ?? '' }, body: JSON.stringify({ action: 'invite_auto', candidate_id: cid, first: c.first || '', last: c.last || '', phone: c.phone || '', email: c.email || '', by, ...(only ? { only } : {}) }) })
+  const j = await r.json().catch(() => ({}))
+  return { ok: r.ok && !!j?.ok, status: r.status, j }
+}
 
 /** The caregiver's DONE (link or reply): counted only at Sent; the receipt; never verification. */
 async function reportDone(db: Any, p: Person, how: 'link' | 'reply' | 'office', st: Any, who: { email?: string; name?: string }, send: typeof fetch = fetch) {
@@ -213,12 +223,36 @@ Deno.serve(async (req) => {
     if (action === 'pass') {
       if (!(await jobCaller(req))) return json({ error: 'the pass is for the schedule or an owner' }, 401)
       const o = onb(st), hol = st.company_holidays, owner = S(st.staffing_email, 160).toLowerCase(), today = centralYmd(now)
-      const out: Any = { ok: true, looked_at: 0, reminders_sent: 0, reminders_practice: 0, cards: 0, closed: 0, live: { reminders: st.step2_reminders_live === true } }
+      const out: Any = { ok: true, looked_at: 0, reminders_sent: 0, reminders_practice: 0, reminders_held: 0, reminders_retry: 0, reminders_failed: 0, invite_texts_sent: 0, cards: 0, closed: 0, live: { reminders: st.step2_reminders_live === true } }
       const all: Person[] = [...(await list(db, 'candidates')).map((c) => ({ key: 'candidates' as const, rec: c, id: String(c.id) })), ...(await list(db, 'caregivers')).filter((r) => r?.candidate_id != null).map((r) => ({ key: 'caregivers' as const, rec: r, id: String(r.id) }))]
       for (const p of all) {
         const c = p.rec, cid = candIdOf(p), state = stateOf(c), name = `${c.first || ''} ${c.last || ''}`.trim()
         const jr = await journeyFor(db, c)
-        if (state === 'verified') { for (const k of ['step2_notsent_', 'step2_verify_', 'step2_stalled_']) await closeCard(db, k + cid, 'Step 2 verified.'); continue }
+        if (state === 'verified') {
+          for (const k of ['step2_notsent_', 'step2_verify_', 'step2_stalled_']) await closeCard(db, k + cid, 'Step 2 verified.')
+          /* GO-LIVE (2026-10-13, hold rather than drop): the invitation text held after hours goes at the first pass inside
+             8am to 6pm Central (like the Training Platform's held offer text); recorded only when sent or refused for good */
+          const inv = c.step2_invite
+          if (jr && inv && inv.text_held === true && inTextHours() && (st.wc_auto_invite_live === true || testPerson(st, c))) {
+            let next: Any
+            try {
+              const r = await inviteVia(c, cid, 'held text', 'text')
+              next = r.ok && r.j.texted ? { ...inv, text_held: false, texted: true, text_sent_at: now }
+                : r.ok && r.j.skipped ? { ...inv, text_held: false, text_skipped: r.j.skipped, text_skipped_at: now }
+                : r.ok && r.j.text_held ? inv
+                : r.ok && refusedForGood(r.j.not_sent || []) ? { ...inv, text_held: false, text_refused: (r.j.not_sent || []).join('; '), text_refused_at: now }
+                : { ...inv, text_tries: (Number(inv.text_tries) || 0) + 1, text_last_why: r.j?.error || (r.j?.not_sent || []).join('; ') || ('answered ' + r.status) }
+            } catch (e) { next = { ...inv, text_tries: (Number(inv.text_tries) || 0) + 1, text_last_why: 'could not reach welcome-call: ' + String((e as Error)?.message ?? e).slice(0, 120) } }
+            if (next.text_held && Number(next.text_tries) >= REMINDER_TRIES) { next = { ...next, text_held: false, text_failed: next.text_last_why, text_failed_at: now } }
+            if (next !== inv) {
+              await patch(db, p, { step2_invite: next })
+              await event(db, jr.j.journey_id, null, {}, next.texted && !inv.texted ? 'welcome_invite_text_sent' : next.text_held ? 'welcome_invite_text_retry' : 'welcome_invite_text_closed', { text_sent_at: next.text_sent_at || null, skipped: next.text_skipped || null, refused: next.text_refused || null, failed: next.text_failed || null })
+              if (next.text_refused || next.text_failed) await raiseCard(db, { id: 'step2_invite_' + cid, kind: 'send_problem', urgency: 'today', who: name, candidate_id: cid, owner, title: 'Orientation Video Call invitation text did not go to ' + name, detail: String(next.text_refused || next.text_failed) + '.' + (inv.emailed ? ' The invitation email did go.' : ' The invitation email did not go either.') + ' Call them, or press Invite to Orientation Video Call on the Orientations tab.' })
+              if (next.texted && !inv.texted) out.invite_texts_sent = (out.invite_texts_sent || 0) + 1
+            }
+          }
+          continue
+        }
         if (!jr && state === 'not_sent') continue
         out.looked_at++
         if (state === 'not_sent') {
@@ -231,14 +265,30 @@ Deno.serve(async (req) => {
         }
         await closeCard(db, 'step2_notsent_' + cid, 'Step 2 recorded sent.')
         if (state === 'sent') {
-          /* reminders: day 3 and day 6 (Admin), new path only (the old path has no DONE link) */
+          /* reminders: day 3 and day 6 (Admin), new path only (the old path has no DONE link).
+             GO-LIVE (2026-10-13, her rules: reminders Monday to Saturday 9am to 6pm Central; hold rather than drop): outside the
+             window nothing is recorded, so the next pass inside it sends it; a reminder is recorded only when it went or was
+             refused for good (said no to texts, opted out, nothing on file: a card); anything else is tried again on the next
+             pass, three tries, then recorded as failed with a card. */
           const d = jr ? reminderDue(c, o.step2_days, today, (iso) => centralYmd(iso)) : 0
-          if (d) {
+          if (d && !inReminderWindow()) out.reminders_held++
+          else if (d) {
             const rem = { ...(c.step2_reminders && typeof c.step2_reminders === 'object' ? c.step2_reminders : {}) }
-            if (st.step2_reminders_live === true || testPerson(st, c)) { const r = await deliver(db, c, reminderMessages(c.first || 'there', await doneLink(cid)), 'step2-handoff'); rem['d' + d] = { at: now, texted: r.texted, emailed: r.emailed, not_sent: r.not_sent }; out.reminders_sent++ }
-            else { rem['d' + d] = { at: now, practice: true }; out.reminders_practice++ }
+            for (const e of o.step2_days) if (e < d && !rem['d' + e]) rem['d' + e] = { at: now, passed_over: 'd' + d }
+            const live = st.step2_reminders_live === true || testPerson(st, c)
+            let recorded: Any = null
+            if (!live) { recorded = rem['d' + d] = { at: now, practice: true }; out.reminders_practice++ }
+            else {
+              const r = await deliver(db, c, reminderMessages(c.first || 'there', await doneLink(cid)), 'step2-handoff')
+              const tries = (Number(rem['d' + d + '_tries']?.n) || 0) + 1
+              if (r.texted || r.emailed) { recorded = rem['d' + d] = { at: now, texted: r.texted, emailed: r.emailed, not_sent: r.not_sent }; out.reminders_sent++ }
+              else if (refusedForGood(r.not_sent) || tries >= REMINDER_TRIES) {
+                recorded = rem['d' + d] = { at: now, texted: false, emailed: false, not_sent: r.not_sent, ...(refusedForGood(r.not_sent) ? { refused: true } : { failed: true, tries }) }; out.reminders_failed++
+                await raiseCard(db, { id: 'step2_reminder_' + cid + '_d' + d, kind: 'send_problem', urgency: 'today', who: name, candidate_id: cid, owner, title: 'Step 2 reminder did not reach ' + name, detail: `The day ${d} Step 2 reminder could not go: ${r.not_sent.join('; ') || 'no reason given'}. Call them about their Viventium tasks.` })
+              } else { rem['d' + d + '_tries'] = { n: tries, last_at: now, not_sent: r.not_sent }; out.reminders_retry++ }
+            }
             await patch(db, p, { step2_reminders: rem })
-            if (jr) await event(db, jr.j.journey_id, null, {}, 'step2_reminder', { day: d, practice: st.step2_reminders_live !== true && !testPerson(st, c) })
+            if (jr && recorded) await event(db, jr.j.journey_id, null, {}, 'step2_reminder', { day: d, practice: !live, ...(recorded.refused ? { refused: true } : {}), ...(recorded.failed ? { failed: true } : {}) })
           }
           const elapsed = Math.floor((Date.parse(today + 'T00:00:00Z') - Date.parse(centralYmd(c.step2_sent_at) + 'T00:00:00Z')) / 86400000)
           if (elapsed >= STALL_DAYS) { await raiseCard(db, { id: 'step2_stalled_' + cid, kind: 'step2_stalled', urgency: 'today', who: name, candidate_id: cid, owner, title: 'Step 2 not finished: call ' + name, detail: `Step 2 was recorded sent ${centralYmd(c.step2_sent_at)} and no DONE has come in ${elapsed} days${jr ? ' (the two reminders have gone)' : ''}. Call them, then record what you learn.` }); out.cards++ }
@@ -312,9 +362,10 @@ Deno.serve(async (req) => {
         if (st.wc_auto_invite_live !== true && !testPerson(st, c)) { invite = { state: 'practice', at: now, why: 'wc_auto_invite_live is off: the invitation was not sent; press Invite to Orientation Video Call yourself' } }
         else {
           try {
-            const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/welcome-call`, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: Deno.env.get('SUPABASE_ANON_KEY') ?? '', Authorization: 'Bearer ' + (Deno.env.get('SUPABASE_ANON_KEY') ?? ''), 'x-cron-secret': Deno.env.get('HUB_JOB_SECRET') ?? '' }, body: JSON.stringify({ action: 'invite_auto', candidate_id: cid, first: c.first || '', last: c.last || '', phone: c.phone || '', email: c.email || '', by: who.name || who.email }) })
-            const j = await r.json().catch(() => ({}))
-            invite = r.ok && j?.ok ? { state: j.texted || j.emailed ? 'sent' : 'failed', at: now, texted: !!j.texted, emailed: !!j.emailed, not_sent: j.not_sent || [], id: j.id || null } : { state: 'failed', at: now, why: j?.error || ('Orientation Video Call answered ' + r.status) }
+            const r = await inviteVia(c, cid, who.name || who.email)
+            const j = r.j
+            /* GO-LIVE (2026-10-13): a text held after hours is not a failure: the pass sends it at the first chance inside hours */
+            invite = r.ok ? { state: j.texted || j.emailed ? 'sent' : j.text_held ? 'held' : 'failed', at: now, texted: !!j.texted, emailed: !!j.emailed, not_sent: j.not_sent || [], id: j.id || null, ...(j.text_held ? { text_held: true } : {}) } : { state: 'failed', at: now, why: j?.error || ('Orientation Video Call answered ' + r.status) }
           } catch (e) { invite = { state: 'failed', at: now, why: 'could not reach welcome-call: ' + String((e as Error)?.message ?? e).slice(0, 120) } }
         }
         fields.step2_invite = invite

@@ -11,7 +11,7 @@
 //   verifyRows             which 'verified' and 'proof' rows are satisfied by the facts, with their evidence (no value is
 //                          ever an identity number)
 //   caregiverGate          the server refusal: may this action happen for this person? (allow when no caregiver journey
-//                          exists: the old path is untouched)
+//                          exists: the old path is untouched; fails CLOSED when the records cannot be read, 2026-10-13)
 import '../_shared/journey-rules.js'
 // deno-lint-ignore no-explicit-any
 type Any = any
@@ -77,9 +77,13 @@ export function verifyRows(f: Facts, now = new Date().toISOString()): Verdict[] 
   /* the checks: a result with its date and document, recorded on the row (proof required since 2c) */
   /* CASE.NET (Samantha 2026-10-11): the Missouri courts name search is one of the background checks, recorded the same way */
   const checks: [string, string, string][] = [['cg.check.oig', 'oig', 'oig'], ['cg.check.edl', 'edl', 'edl'], ['cg.check.fcsr', 'fcsr', 'fcsr'], ['cg.check.casenet', 'casenet', 'casenet'], ['cg.check.fingerprints', 'fp', 'fp']]
+  /* GO-LIVE GATE (2026-10-13, Samantha's slice 2c rule "a result is never recorded without its evidence"): on the new path a
+     check counts as done only with its result, its date AND its proof on the record (the OIG LEIE result kept on the record
+     counts as its proof). A clear result with a date but no proof leaves the row open, so the card shows it still owed. */
   for (const [key, field, _] of checks) {
     const res = c[field] ?? c[field + '_status'], date = c[field + '_date'], proof = c[field + '_proof']
-    if (clear(res) && date) out.push({ key, state: 'complete', at: iso(date) || now, evidence: { result: res, date, document: proof || null, ...(field === 'oig' && c.oig_evidence ? { leie: c.oig_evidence } : {}), from: f.candidate ? 'background & references row' : 'roster record' } })
+    const hasProof = !!S(proof, 400) || (field === 'oig' && !!c.oig_evidence && typeof c.oig_evidence === 'object')
+    if (clear(res) && date && hasProof) out.push({ key, state: 'complete', at: iso(date) || now, evidence: { result: res, date, document: proof || null, ...(field === 'oig' && c.oig_evidence ? { leie: c.oig_evidence } : {}), from: f.candidate ? 'background & references row' : 'roster record' } })
     else if (flagged(res)) out.push({ key, state: 'blocked', at: now, evidence: { result: res, date: date || null }, reason: 'Flagged: see the background review before anything else moves.' })
   }
   if (c.fcsr_reg_date) out.push({ key: 'cg.check.fcsr_registration', state: 'complete', at: iso(c.fcsr_reg_date) || now, evidence: { registered: c.fcsr_reg_date, document: c.fcsr_reg_proof || null } })
@@ -100,21 +104,49 @@ export function verifyRows(f: Facts, now = new Date().toISOString()): Verdict[] 
   return out
 }
 
-/** Server refusal: may this action happen for this person? Allowed when no caregiver journey exists (the old path). */
-export async function caregiverGate(db: Any, who: { candidate_id?: unknown; offer_id?: unknown }, needKey: string, dfsIn?: Any[]): Promise<{ allowed: boolean; why?: string; journey_id?: string }> {
+/** Server refusal: may this action happen for this person? Allowed when no caregiver journey exists (the old path).
+ *  GO-LIVE GATE (2026-10-13, her rule "no silent failures"): the gate FAILS CLOSED. When the Hub cannot read the records
+ *  to confirm (a database error), the action is refused with "could not confirm, try again" (unconfirmed: true), never
+ *  waved through; when the same person and requirement fail twice within ten minutes a Needs Attention card is raised.
+ *  Callers: step2-handoff 'sent' (cg.approve.advance), welcome-call 'invite' and the Step 2 server's 'invite_auto'
+ *  (cg.approve.advance), reference-send (cg.step1.references). A person moved to the roster is found by candidate_id there. */
+export const GATE_UNCONFIRMED = 'The Hub could not confirm their readiness card just now, so nothing was sent or changed. Please try again in a minute.'
+const gateErrors = new Map<string, number[]>()
+async function gateErrorCard(db: Any, who: { candidate_id?: unknown; offer_id?: unknown }, needKey: string, detail: string) {
+  const k = `${S(who.offer_id, 64) || 'c' + S(who.candidate_id, 40)}|${needKey}`, now = Date.now()
+  const seen = (gateErrors.get(k) || []).filter((t) => now - t < 10 * 60_000); seen.push(now); gateErrors.set(k, seen)
+  if (seen.length < 2) return
+  try {
+    const at = new Date(now).toISOString(), id = 'cj_gate_' + k.replace(/[^a-zA-Z0-9]+/g, '_').slice(0, 120)
+    await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id, kind: 'readiness_unconfirmed', domain: 'caregivers', status: 'open', urgency: 'today',
+      title: 'The Hub could not check a readiness card', detail: `An onboarding action for ${who.offer_id ? 'offer ' + S(who.offer_id, 64) : 'Background & References #' + S(who.candidate_id, 40)} was refused twice because the Hub could not read their readiness card (${S(detail, 160)}). Nothing was sent. Try again; if it keeps happening, tell Samantha.`,
+      who: '', offer_id: S(who.offer_id, 64) || null, candidate_id: who.candidate_id ?? null, owner: '', created_at: at, first_at: at, last_at: at, due: new Date(now + 24 * 3_600_000).toISOString(), created_by: 'caregiver-journey gate', opened_by: 'caregiver-journey gate' } })
+  } catch (e) { console.warn('[caregiver-journey gate] could not raise a card: ' + String(e).slice(0, 160)) }
+}
+export async function caregiverGate(db: Any, who: { candidate_id?: unknown; offer_id?: unknown }, needKey: string, dfsIn?: Any[]): Promise<{ allowed: boolean; why?: string; journey_id?: string; unconfirmed?: boolean }> {
+  const refuse = async (detail: string) => { await gateErrorCard(db, who, needKey, detail); return { allowed: false, unconfirmed: true, why: GATE_UNCONFIRMED } }
   try {
     let offerId = S(who.offer_id, 64)
     if (!offerId && who.candidate_id != null) {
-      const { data } = await db.from('app_data').select('data').eq('key', 'candidates').maybeSingle()
-      const c = (Array.isArray(data?.data) ? data.data : []).find((x: Any) => String(x?.id) === String(who.candidate_id)); offerId = S(c?.offer_id, 64)
+      const cid = String(who.candidate_id)
+      const { data, error } = await db.from('app_data').select('data').eq('key', 'candidates').maybeSingle()
+      if (error) return await refuse('the Background & References list could not be read')
+      const c = (Array.isArray(data?.data) ? data.data : []).find((x: Any) => String(x?.id) === cid); offerId = S(c?.offer_id, 64)
+      if (!c) {   /* moved to the roster: the roster record keeps candidate_id */
+        const { data: r, error: e2 } = await db.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
+        if (e2) return await refuse('the caregiver list could not be read')
+        const g = (Array.isArray(r?.data) ? r.data : []).find((x: Any) => x?.candidate_id != null && String(x.candidate_id) === cid); offerId = S(g?.offer_id, 64)
+      }
     }
     if (!offerId) return { allowed: true }
-    const { data: j } = await db.from('client_journey').select('journey_id, subject, status').eq('offer_id', offerId).maybeSingle()
+    const { data: j, error: ej } = await db.from('client_journey').select('journey_id, subject, status').eq('offer_id', offerId).maybeSingle()
+    if (ej) return await refuse('the readiness card could not be read')
     if (!j || j.subject !== 'caregiver') return { allowed: true }
-    const { data: st } = await db.from('client_journey_step').select('step_key, state').eq('journey_id', j.journey_id).eq('step_key', needKey).maybeSingle()
+    const { data: st, error: es } = await db.from('client_journey_step').select('step_key, state').eq('journey_id', j.journey_id).eq('step_key', needKey).maybeSingle()
+    if (es) return await refuse('the readiness row could not be read')
     if (st && ['complete', 'not_needed', 'exception'].includes(st.state)) return { allowed: true, journey_id: j.journey_id }
     const { data: d } = dfsIn ? { data: null } : await db.from('client_journey_step_def').select('def').eq('key', needKey).maybeSingle()
     const title = (dfsIn?.find((x: Any) => x.key === needKey)?.def?.title) || d?.def?.title || needKey
     return { allowed: false, journey_id: j.journey_id, why: `Not yet: "${title}" is not complete on their readiness card. The server refuses this until it is.` }
-  } catch { return { allowed: true } }   // a broken gate must not lock the office out; the sweep's cards show a broken journey
+  } catch (e) { return await refuse(String((e as Error)?.message ?? e)) }   // fail CLOSED: a broken gate refuses, and says so
 }
