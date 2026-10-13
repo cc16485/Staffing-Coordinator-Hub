@@ -65,12 +65,29 @@ export function stateOf(c: any): Step2State {
   if (c?.step2_sent_at) return 'sent'
   return 'not_sent'
 }
-/** Which reminder day is due today (days after Sent, Chicago dates), not yet sent: 0 = none. */
+/** Which reminder day is due today (days after Sent, Chicago dates), not yet recorded: 0 = none.
+ *  GO-LIVE (2026-10-13, hold rather than drop): the LATEST due day wins, so a reminder held over a Sunday or a night never
+ *  sends two in a row; the caller records the earlier unrecorded day as passed over. */
 export function reminderDue(c: any, days: number[], todayYmd: string, ymdOf: (iso: string) => string): number {
   if (!c?.step2_sent_at || c.step2_done_at || c.step2_verified_at) return 0
   const sent = ymdOf(String(c.step2_sent_at))
   const elapsed = Math.floor((Date.parse(todayYmd + 'T00:00:00Z') - Date.parse(sent + 'T00:00:00Z')) / 86400000)
   const have = (c.step2_reminders && typeof c.step2_reminders === 'object') ? c.step2_reminders : {}
-  for (const d of days) if (elapsed >= d && !have['d' + d]) return d
-  return 0
+  const due = days.filter((d) => elapsed >= d)
+  const last = due.length ? due[due.length - 1] : 0
+  return last && !have['d' + last] ? last : 0
 }
+/** Monday to Saturday, 9am up to 6pm Central: the reminder window (her ruling of October 8, the same as the Training
+ *  Platform's job-offer reminders). Outside it a due reminder is HELD for the next pass inside it, never dropped. */
+export function inReminderWindow(now: Date = new Date()): boolean {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', weekday: 'short', hour: 'numeric', hourCycle: 'h23' }).formatToParts(now)
+  const wd = parts.find((p) => p.type === 'weekday')?.value || '', h = Number(parts.find((p) => p.type === 'hour')?.value)
+  return wd !== 'Sun' && h >= 9 && h < 18
+}
+/** A send that reached nobody: is that final (they said no to texts, opted out, nothing on file) or worth another try
+ *  (texting not set up, GoHighLevel did not accept it, the application could not be checked)? */
+export function refusedForGood(notSent: string[]): boolean {
+  if (!notSent.length) return false
+  return notSent.every((w) => /did not agree to texts|opted out|no usable phone|no phone number or email/.test(String(w)))
+}
+export const REMINDER_TRIES = 3
