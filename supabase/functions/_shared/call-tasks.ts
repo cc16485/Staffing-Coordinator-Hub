@@ -467,3 +467,57 @@ export function nextStatus(prev: string, verdict: 'kept' | 'not_yet' | 'unclear'
   if (verdict === 'kept') return prev === 'would_remind' ? 'kept_late' : 'kept'
   return late ? 'would_remind' : 'waiting'
 }
+
+/* ── LIVE CARDS (2026-10-13, her "Let's stop practicing and go for it!") ───────────────────────────────────────────────
+   While ops_settings.call_tasks_live is on, each follow-up of the newest reading becomes a real card in Work (kind
+   call_followup), owned by the person the Hub names for that area. One card per follow-up, ever: a card id comes from the
+   call and the follow-up's place, so a re-read never makes a second card and a card someone closed never comes back.
+   Prepared steps ride on the card as drafts; nothing is sent to anyone. */
+export const LIVE_KIND = 'call_followup'
+export function cardIdFor(messageId: string, i: number): string {
+  return 'cf_' + String(messageId).replace(/[^A-Za-z0-9]/g, '').slice(-40) + '_' + i
+}
+/** The Work domain for an area (the Staffing seat's work is Scheduling and coverage). */
+export function domainFor(area: string): string {
+  const d = AREA_DOMAIN[area] || 'program_administration'
+  return d === 'seat:staffing' ? 'scheduling_coverage' : d
+}
+/** Work's urgency words: now is urgent, today is today, the rest normal. */
+export function urgencyFor(u: string | undefined): 'urgent' | 'today' | 'normal' {
+  return u === 'now' ? 'urgent' : u === 'today' ? 'today' : 'normal'
+}
+/** When the card is due: the day the reader found (6 pm Central), else by urgency from the time the card is made. */
+export function liveDue(t: { due?: string; urgency?: string }, now = Date.now()): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(t.due || ''))) return new Date(Math.max(dueEnd(String(t.due)), now + 3600e3)).toISOString()
+  const h = t.urgency === 'now' ? 1 : t.urgency === 'today' ? Math.max(1, (dueEnd(ymd(now)) - now) / 3600e3) : t.urgency === 'this_week' ? 72 : 120
+  return new Date(now + h * 3600e3).toISOString()
+}
+const STEP_WORD: Record<string, string> = { ask_client_family_permission: 'Ask the client or family first', axiscare_visit_change: 'Change the visit in AxisCare',
+  text_caregiver: 'Text the caregiver', text_client_caregivers: "Text the client's caregivers", text_family_update: 'Text the family an update', call_back: 'Call back', open_calloff_case: 'Open a call-off case' }
+/** The prepared steps as one line each, for the card. Drafts only: a person decides and sends. */
+export function stepLines(acts: Action[] | undefined): string[] {
+  return (acts || []).slice(0, 6).map((a) => {
+    const to = a.to ? ' (' + a.to + ')' : ''
+    const wait = a.waits_for_yes ? ' after they say yes' : ''
+    return `${STEP_WORD[a.kind] || a.kind}${to}${wait}${a.draft ? ': "' + String(a.draft).slice(0, 300) + '"' : ''}`
+  })
+}
+// deno-lint-ignore no-explicit-any
+type R = any
+/** The card for one follow-up of one reading. owner is { email, name } or null (unassigned: Work offers "Take it"). */
+export function liveCard(r: R, t: Task, i: number, owner: { email: string; name: string } | null, now = Date.now()): Record<string, unknown> {
+  const iso = new Date(now).toISOString()
+  const who = String(r.who_name || r.caller || 'Unknown caller')
+  const what = r.channel === 'text' ? 'texts' : (t.voicemail ? 'a voicemail' : 'a call')
+  const steps = stepLines(t.actions)
+  return {
+    id: cardIdFor(r.message_id, i), kind: LIVE_KIND, domain: domainFor(t.area), status: 'open', urgency: urgencyFor(t.urgency),
+    title: t.title, about: who, who, detail: t.why, next_action: steps[0] || '', steps, due: liveDue(t, now),
+    owner: owner?.email || '', owner_name: owner?.name || '',
+    created_at: iso, first_at: iso, last_at: iso, last_activity_at: iso, created_by: 'call-tasks', opened_by: 'call-tasks',
+    person_id: r.person_id || null, lead_id: r.lead_id || null,
+    source: { type: 'call_reading', channel: r.channel || 'call', message_id: r.message_id, call_at: r.call_at, version: r.version },
+    origin: { employee: 'office-awareness', reading: r.message_id },
+    history: [{ at: iso, by: 'AI (call follow-ups)', text: `Made from ${what} with ${who}, ${chicago(r.call_at)}${owner ? '; ' + owner.name + ' ' + (t.owner?.via || 'owns this area') : '; nobody owns this area yet'}` }],
+  }
+}

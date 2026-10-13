@@ -9,7 +9,10 @@
 // and the Staffing seat at that hour, never from the AI. The answer is kept in call_task_reading: the summary, what
 // was understood, the promises, every responsibility with its decision and reason, and the would-be cards. Never the
 // transcript.
-// PRACTICE: nothing is written to Work. Cards become real only after her authority grant and her switch.
+// PRACTICE: nothing is written to Work. LIVE (2026-10-13, her "Let's stop practicing and go for it!"): while
+// ops_settings.call_tasks_live is on, each follow-up becomes a real card in Work (kind call_followup) owned by the person
+// the Hub names for its area, a follow-up the reader added to an open card goes on that card's history, and a card a
+// later call answered is closed with a note. Prepared steps are drafts on the card; nothing is ever sent.
 // v10 (2026-10-12, "it should read GHL texts!"): it also reads GoHighLevel texts: each new burst from one person (once they
 // have been quiet 10 minutes), with the thread around it; a burst that is only "ok" or "thanks" needs no reading. Each card
 // carries its prepared steps; the Hub looks up the real AxisCare visit and the client's caregivers for them (read only).
@@ -29,13 +32,14 @@ import Anthropic from 'npm:@anthropic-ai/sdk'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { seatHolder } from '../_shared/duty.ts'
 import { VERSION, MODEL, ACK, request, retryRequest, clean, answerOf, openCards, transcriptText, shortName, related as relatedOf, workflows,
-  ownerFor, dueFor, dueEnd, checkRequest, cleanCheck, nextStatus, type CallIn, type Who, type OpenCard, type Earlier, type Related, type Action } from '../_shared/call-tasks.ts'
+  ownerFor, dueFor, dueEnd, checkRequest, cleanCheck, nextStatus, cardIdFor, liveCard, chicago, LIVE_KIND, type CallIn, type Who, type OpenCard, type Earlier, type Related, type Action } from '../_shared/call-tasks.ts'
 
 const GHL = 'https://services.leadconnectorhq.com'
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
 const H = (tok: string, v = '2021-04-15') => ({ Authorization: `Bearer ${tok}`, Version: v, Accept: 'application/json' })
 export const PER_RUN = 6, PER_RUN_TEXTS = 6, LOOKBACK = 80, TEXT_QUIET_MS = 10 * 60e3, CONVOS = 40
 export const MAX_TRIES = 3, RETRY_MS = 30 * 60e3, WAIT_TRANSCRIPT_MS = 2 * 3600e3, MAX_ATTEMPT = 5
+export const LIVE_PER_RUN = 40, LIVE_LOOK_MS = 2 * 864e5
 export const WATCH_PER_RUN = 8, WATCH_DAYS = 14, WATCH_AFTER_DUE_MS = 3 * 864e5, CHECK_EVERY_MS = 60 * 60e3
 const DONE = new Set(['done', 'closed', 'resolved', 'dismissed'])
 
@@ -74,6 +78,8 @@ async function loadHub(db: Any) {
   const { data: doms } = await db.from('domains').select('code, owner_person').eq('active', true)
   const ids = [...new Set((doms ?? []).map((d: Any) => d.owner_person).filter(Boolean))]
   const { data: ppl } = ids.length ? await db.from('persons').select('person_id, full_name, primary_email').in('person_id', ids) : { data: [] }
+  /* live cards need the owner's sign-in email: domain owners, plus each Staffing seat holder as staffingAt finds them */
+  const emailByName = new Map<string, string>((ppl ?? []).filter((p: Any) => p.full_name && p.primary_email).map((p: Any) => [String(p.full_name).trim().toLowerCase(), String(p.primary_email).toLowerCase()]))
   const { data: staff } = await db.from('persons').select('full_name, primary_email').not('primary_email', 'is', null).limit(200)
   const nameOf = new Map((ppl ?? []).map((p: Any) => [p.person_id, p.full_name]))
   const byEmail = new Map((staff ?? []).map((p: Any) => [String(p.primary_email || '').toLowerCase(), p.full_name]))
@@ -82,12 +88,15 @@ async function loadHub(db: Any) {
   const stepTitles: Record<string, string> = Object.fromEntries((defs ?? []).map((d: Any) => [d.key, String(d.def?.title || d.key)]))
   return { ops: arr(k.ops_items), coverage: arr(k.coverage_cases), timekeeper: arr(k.timekeeper_cases), staffing: arr(k.staffing_plans),
     visitChanges: arr(k.visit_changes), leads: arr(k.leads), windows: arr(k.duty_windows), positions: arr(k.positions), settings: k.ops_settings ?? {},
-    domains, byEmail, stepTitles }
+    domains, byEmail, emailByName, stepTitles }
 }
 /** Who held the Staffing seat about 15 minutes after the call (when the reader would have made the card). */
 function staffingAt(hub: Any, callAt: string): string {
   const s = seatHolder(hub.windows, 'staffing', new Date(Date.parse(callAt) + 15 * 60e3), hub.settings, '', hub.positions)
-  return s.person ? String(hub.byEmail.get(s.person) || s.person.split('@')[0]) : ''
+  if (!s.person) return ''
+  const name = String(hub.byEmail.get(s.person) || s.person.split('@')[0])
+  if (hub.emailByName && /@/.test(s.person)) hub.emailByName.set(name.trim().toLowerCase(), String(s.person).toLowerCase())
+  return name
 }
 
 /* ── AxisCare, read only: the visits a prepared step is about (v10) ── */
@@ -186,7 +195,8 @@ Deno.serve(async (req) => {
   }
 
   const st: Any = (await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()).data?.data ?? {}
-  if (st.call_tasks_practice !== true) { await beat(db, true, 'off (call_tasks_practice is not on)'); return json({ ok: true, off: true }) }
+  const live = st.call_tasks_live === true
+  if (st.call_tasks_practice !== true && !live) { await beat(db, true, 'off (neither call_tasks_practice nor call_tasks_live is on)'); return json({ ok: true, off: true }) }
   const since = String(st.call_tasks_since || st.call_pull_since || '')
   if (!Number.isFinite(Date.parse(since))) { await beat(db, false, 'no start time'); return json({ error: 'no start time set' }, 500) }
 
@@ -204,7 +214,7 @@ Deno.serve(async (req) => {
   const hub = await loadHub(db)
 
   for (const s of named.length || todo.length ? todo : []) {
-    const row: Record<string, Any> = { message_id: s.message_id, version: VERSION, mode: 'practice', channel: 'call', call_at: s.call_at, direction: s.direction === 'in' ? 'in' : 'out',
+    const row: Record<string, Any> = { message_id: s.message_id, version: VERSION, mode: live ? 'live' : 'practice', channel: 'call', call_at: s.call_at, direction: s.direction === 'in' ? 'in' : 'out',
       seconds: s.seconds, caller: s.caller, match: 'none', model: MODEL, call_type: 'other', tasks: [], resolves: [], detail: {}, attempt: (tries.get(s.message_id)?.n ?? 0) + 1 }
     try {
       /* 2 · the message (for its contact), the transcript and the contact, all reads */
@@ -273,12 +283,18 @@ Deno.serve(async (req) => {
   }
   /* 6 · GoHighLevel texts (v10): each new burst of texts from one person, read with the thread around it */
   if (st.call_tasks_texts !== false) {
-    const tx = await readTexts(db, ai, hub, tok, loc, since, Number(body.text_limit) > 0 ? Math.min(Number(body.text_limit), 20) : PER_RUN_TEXTS)
+    const tx = await readTexts(db, ai, hub, tok, loc, since, Number(body.text_limit) > 0 ? Math.min(Number(body.text_limit), 20) : PER_RUN_TEXTS, live)
     Object.assign(out, { texts_read: tx.read, text_cards: tx.cards, text_skipped: tx.skipped, text_errors: tx.errors, text_failed: tx.failed })
     out.errors += tx.errors
     if (tx.search_failed) out.save_failed = (out.save_failed || 0) + 1
   }
-  /* 7 · the promise watch (v13) */
+  /* 7 · LIVE: the readings become cards in Work */
+  if (live) {
+    const lc = await makeCards(db, hub, st)
+    Object.assign(out, { live_cards: lc.made, live_added: lc.added, live_closed: lc.closed, live_unassigned: lc.unassigned, live_errors: lc.errors })
+    if (lc.errors) out.save_failed = (out.save_failed || 0) + 1
+  }
+  /* 8 · the promise watch (v13) */
   const pw = await watchPromises(db, ai, hub, tok, since)
   Object.assign(out, { promises: pw.promises, promise_checks: pw.checked, promises_kept: pw.kept, would_remind: pw.would_remind, promise_errors: pw.errors })
   /* The heartbeat fails only when the run itself broke (a reading could not be saved, GoHighLevel's text search or the
@@ -309,7 +325,7 @@ export function threadText(msgs: Any[]): string {
   }).join('\n')
 }
 
-async function readTexts(db: Any, ai: Any, hub: Any, tok: string, loc: string, since: string, limit: number) {
+async function readTexts(db: Any, ai: Any, hub: Any, tok: string, loc: string, since: string, limit: number, live = false) {
   const res = { read: 0, cards: 0, skipped: 0, errors: 0, failed: 0, search_failed: false }
   const sinceMs = Date.parse(since)
   const c = await fetch(`${GHL}/conversations/search?locationId=${encodeURIComponent(loc)}&limit=${CONVOS}`, { headers: H(tok) })
@@ -337,7 +353,7 @@ async function readTexts(db: Any, ai: Any, hub: Any, tok: string, loc: string, s
   if (!bursts.length) return res
   const tries = await triesOf(db, bursts.map((x) => x.id))
   for (const bx of bursts.filter((x) => readNow(tries.get(x.id))).sort((a, b) => a.at.localeCompare(b.at)).slice(0, limit)) {
-    const row: Record<string, Any> = { message_id: bx.id, version: VERSION, mode: 'practice', channel: 'text', call_at: bx.at, direction: 'in', seconds: 0,
+    const row: Record<string, Any> = { message_id: bx.id, version: VERSION, mode: live ? 'live' : 'practice', channel: 'text', call_at: bx.at, direction: 'in', seconds: 0,
       caller: shortName(bx.name.split(' ')[0], bx.name.split(' ').slice(1).join(' ')) || null, match: 'none', model: MODEL, call_type: 'other', tasks: [], resolves: [], detail: {},
       attempt: (tries.get(bx.id)?.n ?? 0) + 1 }
     try {
@@ -500,6 +516,64 @@ async function watchPromises(db: Any, ai: Any, hub: Any, tok: string, since: str
     if (evidence) upd.evidence = evidence
     if (status !== w.status) upd.history = [...(w.history || []), { at: nowIso, status, why: why.slice(0, 200) }]
     await save(db.from('call_promise_watch').update(upd).eq('id', w.id))
+  }
+  return res
+}
+
+/* ── LIVE CARDS (2026-10-13) ───────────────────────────────────────────────────────────────────────────────────────────
+   The newest reading of each call or text since the switch went on (call_tasks_live_since, and never older than 2 days)
+   becomes cards. Only cards that do not exist yet are made (any status: one closed by a person stays closed). A follow-up
+   the reader put on an open card is added to that card's history once. A suggestion a later call answered closes its
+   card if the AI made it and it is still open. Every write goes through upsert_app_data_item like every other job. */
+async function makeCards(db: Any, hub: Any, st: Any) {
+  const res = { made: 0, added: 0, closed: 0, unassigned: 0, errors: 0 }
+  const now = Date.now(), nowIso = new Date(now).toISOString()
+  const liveSince = Math.max(Date.parse(String(st.call_tasks_live_since || '')) || 0, now - LIVE_LOOK_MS)
+  const { data: rd, error } = await db.from('call_task_reading').select('message_id, version, channel, call_at, person_id, lead_id, who_name, caller, tasks, resolves, detail, error, read_at')
+    .gte('call_at', new Date(liveSince).toISOString()).order('read_at', { ascending: false }).limit(400)
+  if (error) { res.errors++; return res }
+  const newest = new Map<string, Any>()
+  for (const r of rd ?? []) if (!newest.has(r.message_id)) newest.set(r.message_id, r)
+  const { data: row } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+  const ops: Any[] = Array.isArray(row?.data) ? row.data : []
+  const byId = new Map<string, Any>(ops.filter((x: Any) => x && x.id).map((x: Any) => [String(x.id), x]))
+  const put = async (item: Any) => {
+    const { error: e } = await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item })
+    if (e) { res.errors++; return false }
+    byId.set(String(item.id), item); return true
+  }
+  let writes = 0
+  for (const r of [...newest.values()].sort((a, b) => String(a.call_at).localeCompare(String(b.call_at)))) {
+    if (r.error || writes >= LIVE_PER_RUN) continue
+    const tasks: Any[] = Array.isArray(r.tasks) ? r.tasks : []
+    for (const [i, t] of tasks.entries()) {
+      const id = cardIdFor(r.message_id, i)
+      if (byId.has(id) || writes >= LIVE_PER_RUN) continue
+      const name = String(t?.owner?.name || '').trim()
+      const email = name ? hub.emailByName.get(name.toLowerCase()) || '' : ''
+      if (!email) res.unassigned++
+      if (await put(liveCard(r, t, i, email ? { email, name } : null, now))) { res.made++; writes++ }
+    }
+    /* the reader said this belongs on a card that is already open */
+    for (const it of (Array.isArray(r.detail?.items) ? r.detail.items : [])) {
+      if (it?.decision !== 'add_to_existing_card' || !it.card_id || writes >= LIVE_PER_RUN) continue
+      const c = byId.get(String(it.card_id))
+      if (!c || ['done', 'closed', 'resolved', 'dismissed'].includes(String(c.status))) continue
+      const hist: Any[] = Array.isArray(c.history) ? c.history : []
+      if (hist.some((h: Any) => h && h.ref === r.message_id)) continue
+      const what = r.channel === 'text' ? 'Texts' : 'A call'
+      const line = `${what} with ${r.who_name || r.caller || 'them'} (${chicago(r.call_at)}) added: ${String(it.why || it.responsibility || '').slice(0, 400)}`
+      if (await put({ ...c, history: [...hist, { at: nowIso, by: 'AI (call follow-ups)', ref: r.message_id, text: line }], last_activity_at: nowIso })) { res.added++; writes++ }
+    }
+    /* a later call answered an earlier suggestion: close the AI's card if nobody has touched its status */
+    for (const x of (Array.isArray(r.resolves) ? r.resolves : [])) {
+      const c = byId.get(cardIdFor(String(x.message_id), Number(x.task_index)))
+      if (!c || c.kind !== LIVE_KIND || c.status !== 'open' || writes >= LIVE_PER_RUN) continue
+      const hist: Any[] = Array.isArray(c.history) ? c.history : []
+      const note = `A later ${r.channel === 'text' ? 'text' : 'call'} with ${r.who_name || r.caller || 'them'} (${chicago(r.call_at)}) took care of this`
+      if (await put({ ...c, status: 'done', closed_at: nowIso, closed_by: 'call-tasks', close_reason: note, last_activity_at: nowIso,
+        history: [...hist, { at: nowIso, by: 'AI (call follow-ups)', ref: r.message_id, text: note }] })) { res.closed++; writes++ }
+    }
   }
   return res
 }
