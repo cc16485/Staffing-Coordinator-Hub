@@ -469,7 +469,7 @@ export const FORMS: Record<FormKey, Form> = {
       { h: 'What you may do', p: ['You may use the client\'s bathroom. With the client\'s consent, you may eat a lunch you bring. You may drink the client\'s water.'] },
       { h: 'Reporting abuse, neglect, or exploitation', p: ['Missouri law makes me a mandated reporter. If I have reasonable cause to suspect abuse, neglect, or exploitation of a client, I must report it immediately to the Missouri Adult Abuse and Neglect Hotline, 1-800-392-0210. I may make the call myself or make sure a report is made. I will also tell the office the same day. If I am not sure a report was made, I will call the hotline myself. Knowingly failing to report is a class A misdemeanor (RSMo 565.188). The Company will not retaliate against me for a good-faith report (RSMo 192.2475).'] },
     ],
-    certification: ['I received a copy of this Code of Ethics and the Client Rights statement. The Company\'s confidentiality policy was explained to me before I served any client. I have read, understand, and agree to be governed by this Code of Ethics.'],
+    certification: ['I have read, understand, and agree to be governed by this Code of Ethics.'],
   },
   medication_policy: {
     key: 'medication_policy', screen: '13', title: 'Medication Policy', short: 'Medication Policy', version: 1, status: 'to_confirm', signature: 'typed',
@@ -496,8 +496,32 @@ export const FORMS: Record<FormKey, Form> = {
     ],
     certification: ['I have completed the Company\'s HIPAA training. I have read, understood, and agree to comply with the above terms regarding HIPAA and PHI policy and procedures.'],
   },
+  /* 2026-10-13 (Samantha: "we can add client rights here too"): the six rights every client must receive in writing
+     (19 CSR 15-7.021(18)(O)), the same words the client gets, and the one signed statement every employee needs before
+     serving anyone: received and reviewed the rights, the Code of Ethics and the confidentiality policy, all explained
+     ((24)(B)5). Shown after the Code of Ethics and HIPAA so all three are in front of them when they sign. */
+  client_rights: {
+    key: 'client_rights', screen: '15', title: 'Client Rights', short: 'Client Rights', version: 1, status: 'to_confirm', signature: 'typed',
+    sections: [
+      { h: 'Client Rights', p: [
+        'Caring Companions gives every client, and their main family caregiver when appropriate, a written copy of these rights when services begin, and we go over it with them. You get the same copy so you know what every client can expect from you.',
+        'Every client has the right to:',
+        '1. Be treated with respect and dignity.',
+        '2. Have all of their personal and medical information kept confidential.',
+        '3. Have a say in how their services are provided, as much as possible, within the care plan that was authorized.',
+        '4. Know how to make a complaint about their services, get our help working it out, and never be punished or treated differently for complaining. To make a complaint, a client or family member calls the Caring Companions office at (417) 234-8494 or writes to us at 1331 N Stewart Ave, Suite B, Springfield, MO 65802.',
+        '5. Receive services no matter their race, creed, color, age, sex, or national origin.',
+        '6. Receive a copy of the Caring Companions Code of Ethics that we follow when we provide services.',
+        '7. Call the Missouri Department of Health and Senior Services for any reason, including being unhappy with us or their services. The HCBS Call Center is 1-866-835-3505.',
+        '8. Be free from retaliation. No client or family member will be treated worse because they reported a concern, and neither will you.',
+      ] },
+      { h: 'Reporting abuse, neglect, or exploitation', p: ['If you ever think a client is being abused, neglected, or exploited, you must report it right away to the Missouri Adult Abuse and Neglect Hotline at 1-800-392-0210, and tell the office.'] },
+      { h: 'Questions before your first shift', p: ['If anything in the Client Rights, the Code of Ethics or the HIPAA policy is unclear, call the office at (417) 234-8494 before your first shift. The office goes over all three with you at your Orientation Video Call, before you serve any client.'] },
+    ],
+    certification: ['By signing, I confirm that before I provide any services, I received and reviewed a copy of the Client Rights, the Caring Companions Code of Ethics, and the Caring Companions policy on keeping client information confidential, and that each one was explained to me.'],
+  },
 }
-export const FORM_ORDER: FormKey[] = ['employee_application', 'reference_consent', 'fcra_disclosure', 'edl_fcsr_consent', 'availability', 'experience', 'vehicle', 'non_driver', 'employment_agreement', 'code_of_ethics', 'medication_policy', 'hipaa_privacy']
+export const FORM_ORDER: FormKey[] = ['employee_application', 'reference_consent', 'fcra_disclosure', 'edl_fcsr_consent', 'availability', 'experience', 'vehicle', 'non_driver', 'employment_agreement', 'medication_policy', 'code_of_ethics', 'hipaa_privacy', 'client_rights']
 /** The wording of one form, canonical, for the fingerprint stored with every signature (answers are not part of it). */
 export function formText(key: FormKey): string {
   const f = FORMS[key]; const out: string[] = [`title|${f.title}`, `version|${f.version}`]

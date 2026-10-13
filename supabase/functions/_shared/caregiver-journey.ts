@@ -78,7 +78,7 @@ export function verifyRows(f: Facts, now = new Date().toISOString()): Verdict[] 
   }
   /* 2026-10-13: Samantha moved these acknowledgments from Viventium into Step 1: their signature there completes the row
      (the Employee Handbook stays in Viventium: her call, 2026-10-13) */
-  for (const [row, form] of [['cg.step2.code_of_ethics', 'code_of_ethics'], ['cg.step2.confidentiality', 'hipaa_privacy']]) {
+  for (const [row, form] of [['cg.step2.code_of_ethics', 'code_of_ethics'], ['cg.step2.confidentiality', 'hipaa_privacy'], ['cg.step2.participant_rights', 'client_rights']]) {
     const s = sigs[form]; if (s?.at) out.push({ key: row, state: 'complete', at: iso(s.at) || now, evidence: { via: 'step1', form, version: s.version, fingerprint: s.fingerprint, typed_name: s.typed_name } })
   }
   /* 2026-10-13: the company signature on the agreements that need it (none needs it = complete by itself once Step 1 is) */
