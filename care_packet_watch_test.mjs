@@ -26,7 +26,10 @@ const q = (t) => { const st = { f: [], op: 'select', row: null }; const run = ()
     maybeSingle() { const r = run(); return Promise.resolve({ data: r.data ? r.data[0] ?? null : null, error: null }) }, then(ok, no) { return Promise.resolve(run()).then(ok, no) } }; return b }
 globalThis.__db = { from: q, rpc: async (fn, a) => { if (fn === 'upsert_app_data_item') { const row = T.app_data.find((r) => r.key === a.target_key); const i = row.data.findIndex((x) => x.id === a.item.id); if (i >= 0) row.data[i] = clone(a.item); else row.data.push(clone(a.item)) } return { data: null, error: null } },
   auth: { getUser: async () => ({ data: { user: null }, error: { message: 'no' } }) } }
-globalThis.fetch = async (url) => { url = String(url); CALLS.push(url)
+let AUTO_CALLS = [], AUTO_ANSWER = { outcome: 'sent' }
+globalThis.fetch = async (url, o) => { url = String(url); CALLS.push(url)
+  if (url === 'https://x.supabase.co/functions/v1/care-packet') {   // the automatic send asks care-packet (faked here; care_packet_test covers the real send)
+    AUTO_CALLS.push({ body: JSON.parse(o.body), secret: o.headers['x-cron-secret'] }); return new Response(JSON.stringify(AUTO_ANSWER), { status: AUTO_ANSWER.outcome === 'sent' ? 200 : 422 }) }
   const m = url.match(/axiscare\.com\/api\/visits\?clientIds=(\d+)/); if (!m) throw new Error('nothing but AxisCare may be called: ' + url)
   if (AX_FAIL.has(m[1])) return new Response('{}', { status: 500 })
   return new Response(JSON.stringify({ results: { visits: VISITS[m[1]] ?? [], nextPage: null } }), { status: 200 }) }
@@ -82,6 +85,34 @@ try {
   reset(); r = await run({ 'x-cron-secret': CRON }, { dry: true }); ck('dry is only for the owner key: the schedule\'s run is a real run', r.j.dry === false && card(P1), r.j)
   ck('decide(): open, update, close, leave closed, back for someone new', M.decide(null, { missing_ids: ['1'] }) === 'open' && M.decide({ status: 'open' }, { missing_ids: ['1'] }) === 'update' && M.decide({ status: 'open' }, null) === 'close' &&
     M.decide({ status: 'done', missing_ids: ['1'] }, { missing_ids: ['1'] }) === 'leave_closed' && M.decide({ status: 'done', missing_ids: ['1'] }, { missing_ids: ['1', '2'] }) === 'open' && M.decide({ status: 'done' }, null) === 'none')
+
+  // ---- per client: send automatically (2026-10-12) ----
+  const realNow = Date.now; Date.now = () => Date.parse('2026-10-13T15:00:00Z')   // 10am Central
+  reset(); AUTO_CALLS = []; AUTO_ANSWER = { outcome: 'sent' }; T.app_data[0].data.care_packet_send_live = true
+  r = await run(); ck('a client set to by hand (the default): nobody is texted', !AUTO_CALLS.length && r.j.auto_clients === 0, r.j)
+  reset(); AUTO_CALLS = []; T.app_data[0].data.care_packet_send_live = true; T.care_packets[0].auto_send = true
+  T.care_packet_recipients.push({ packet_id: P1, caregiver_axiscare_id: '16', last_sent_at: '2026-10-12T15:00:00Z' })
+  VISITS['900'].push({ client: { id: '900' }, caregiver: { id: '16', firstName: 'Tex', lastName: 'Ted' }, scheduledStartDate: soon(10) })
+  r = await run()
+  const asked = AUTO_CALLS.map((c) => c.body.caregiver_axiscare_id).sort()
+  ck('automatic: texts Ariel (confirmed an older version) and Bea (nothing yet), not Tex (already texted: the office reminds), not Far Away (4 days out)', asked.join() === '11,12' && r.j.auto_sent === 2, [asked, r.j])
+  ck('automatic: asks care-packet\'s own send with the schedule\'s secret, for this packet', AUTO_CALLS.every((c) => c.body.action === 'auto_send' && c.body.packet_id === P1 && c.secret === CRON))
+  ck('automatic: the card still lists them, now as texted, until they confirm', /Ariel Smith.*texted, not confirmed/.test(card(P1).detail) && /Bea Jones.*texted, not confirmed/.test(card(P1).detail), card(P1).detail)
+  ck('automatic: the run record says what was texted', T.op_events.some((e) => e.verb === 'care_packet_watch_run' && /automatic clients 1, texted 2/.test(e.summary)))
+  reset(); AUTO_CALLS = []; T.app_data[0].data.care_packet_send_live = true; T.care_packets[0].auto_send = true; AUTO_ANSWER = { outcome: 'refused', error: 'Not sent: Bea has asked not to get texts.' }
+  r = await run(); ck('automatic: a refused text is counted and Bea stays "no packet sent yet" on the card (no silent failure)', r.j.auto_not_sent === 2 && /Bea Jones.*no packet sent yet/.test(card(P1).detail) && r.j.auto_would.some((w) => /asked not to/.test(w.not_sent)), r.j)
+  AUTO_ANSWER = { outcome: 'sent' }
+  reset(); AUTO_CALLS = []; T.care_packets[0].auto_send = true; T.app_data[0].data.care_packet_send_live = false
+  r = await run(); ck('automatic: packet texts switched off: nothing sent, it says why', !AUTO_CALLS.length && r.j.auto_would.every((w) => w.why_not_now === 'packet texts switched off'), r.j)
+  reset(); AUTO_CALLS = []; T.care_packets[0].auto_send = true; T.app_data[0].data.care_packet_send_live = true; T.app_data[0].data.care_packet_watch_live = false
+  r = await run(); ck('automatic: the check switched off: nothing sent, only recorded', !AUTO_CALLS.length && r.j.auto_would.length === 2, r.j)
+  Date.now = () => Date.parse('2026-10-13T03:00:00Z')   // 10pm Central
+  reset(); AUTO_CALLS = []; T.care_packets[0].auto_send = true; T.app_data[0].data.care_packet_send_live = true
+  r = await run(); ck('automatic: never outside 8am to 8pm Central', !AUTO_CALLS.length && r.j.auto_would.every((w) => w.why_not_now === 'outside 8am to 8pm'), r.j)
+  Date.now = () => Date.parse('2026-10-13T15:00:00Z'); reset(); AUTO_CALLS = []; T.care_packets[0].auto_send = true; T.app_data[0].data.care_packet_send_live = true
+  r = await run({ Authorization: 'Bearer ' + SVC }, { dry: true }); ck('automatic: a dry run texts nobody', !AUTO_CALLS.length && r.j.auto_would.length === 2, r.j)
+  ck('autoTargets(): nothing yet, link only, older version; never texted-not-confirmed or confirmed', M.autoTargets([{ standing: 'none' }, { standing: 'link_only' }, { standing: 'older' }, { standing: 'texted' }, { standing: 'confirmed' }]).length === 3)
+  Date.now = realNow
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 const bad = res.filter((x) => !x[1])
 for (const [n, okk, note] of res) console.log((okk ? 'PASS ' : 'FAIL ') + n + (note ? '\n     ' + note : ''))
