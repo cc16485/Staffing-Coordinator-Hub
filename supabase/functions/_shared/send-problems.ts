@@ -40,6 +40,7 @@ export const SENDER_WORDS: Record<string, [string, string]> = {
   'send-certificate': ['training certificate email', 'caregivers'],
   'sync-axiscare': ['training welcome / reminder', 'caregivers'],
   'prn-reconfirm': ['PRN check-in', 'caregivers'],
+  'driver-compliance': ['driver document reminder or link', 'caregivers'],
   'caregiver-intro': ['caregiver introduction', 'scheduling_coverage'],
   'caregiver-availability': ['availability check', 'scheduling_coverage'],
   'coverage-run': ['open shift text', 'scheduling_coverage'],
