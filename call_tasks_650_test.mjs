@@ -41,7 +41,10 @@ let rid = 0
 globalThis.__fakeCreateClient = () => ({
   auth: { getUser: async () => ({ data: null, error: { message: 'no' } }) },
   rpc: async (fn, args) => {
-    if (fn === 'upsert_app_data_item') { DB.heartbeats.push(args); DB.writes.push(args.target_key); return { data: null, error: null } }
+    if (fn === 'upsert_app_data_item') { DB.heartbeats.push(args); DB.writes.push(args.target_key)
+      if (args.target_key === 'ops_items') { if (globalThis.__SAVEFAIL === 'ops_items') return { data: null, error: { message: 'down' } }
+        const row = DB.app_data.find((r) => r.key === 'ops_items'); const it = JSON.parse(JSON.stringify(args.item)); const k = row.data.findIndex((x) => x.id === it.id); if (k >= 0) row.data[k] = it; else row.data.push(it) }
+      return { data: null, error: null } }
     if (fn === 'call_who' && globalThis.__WHO) { const w = globalThis.__WHO(String(args.p_phone)); if (w) return { data: w, error: null } }
     if (fn === 'call_who') return { data: String(args.p_phone).endsWith('0467') ? { match: 'one', person_id: STEVE, lead_id: null, name: 'Steve Algiere', roles: ['client'] } : { match: 'none' }, error: null }
     return { data: null, error: { message: 'unknown rpc ' + fn } }
@@ -343,6 +346,56 @@ try {
   const src = fs.readFileSync(path.join(F, 'call-tasks/index.ts'), 'utf8')
   ck('the function never sends: no POST to GoHighLevel, no Resend, no texts', !/method:\s*'(POST|PUT|PATCH|DELETE)'|resend|\/messages\/send/i.test(src.replace(/^\/\/.*$/gm, '')))
   ck('owners come from the Hub (domains, the Staffing seat), handed to clean(); the AI is never asked for a person', /staffingAt\(hub, s\.call_at\)/.test(src) && /from\('domains'\)/.test(src) && !/owner_name|assign to/i.test(JSON.stringify(lib.TOOL)))
+
+  // ── LIVE CARDS (2026-10-13, her "Let's stop practicing and go for it!") ──
+  const agoL = (m) => new Date(Date.now() - m * 60e3).toISOString()
+  const liveReset = () => { reset(); Object.assign(DB.app_data[0].data, { call_tasks_practice: false, call_tasks_live: true, call_tasks_since: agoL(600), call_tasks_live_since: agoL(300) })
+    DB.call_pull_seen[0].call_at = agoL(120); DB.call_pull_seen[1].call_at = agoL(119) }
+  liveReset()
+  ;[s, j] = await run(h, 'cron')
+  const opsL = () => DB.app_data.find((r) => r.key === 'ops_items').data
+  const cfL = () => opsL().filter((x) => x.kind === 'call_followup')
+  const vmId = lib.cardIdFor('ipoVD64wn8dUcDyPdjqW', 0), dmvId = lib.cardIdFor('gMcTDQ5WoAXMHUmrCbdN', 0)
+  ck('LIVE: practice off and live on still reads; readings are marked live', s === 200 && j.read === 2 && DB.call_task_reading.every((r) => r.mode === 'live'), [s, j])
+  ck('LIVE: each follow-up becomes a Work card (kind call_followup) with the call\'s id, so it is made once', cfL().length === 3 && cfL().some((x) => x.id === vmId) && cfL().some((x) => x.id === dmvId) && j.live_cards === 3, [j, cfL().map((x) => x.id)])
+  const dmvC = cfL().find((x) => x.id === dmvId)
+  ck('LIVE: the card says who, what, why, when, and is owned by the Hub\'s owner for the area (sign-in email), open, Scheduling and coverage', dmvC.status === 'open' && dmvC.about === 'Steve Algiere' && /DMV/.test(dmvC.title) && /license expired/.test(dmvC.detail)
+    && dmvC.owner === 'samantha@cc.test' && dmvC.owner_name === 'Samantha Troutman' && dmvC.domain === 'scheduling_coverage' && dmvC.urgency === 'normal' && Date.parse(dmvC.due) > Date.now() && dmvC.created_by === 'call-tasks'
+    && dmvC.source.message_id === 'gMcTDQ5WoAXMHUmrCbdN' && dmvC.history.length === 1 && /Made from a call with Steve Algiere/.test(dmvC.history[0].text), dmvC)
+  ck('LIVE: no phone number or email reaches a card', !/417|0467|example\.com|@example/.test(JSON.stringify(cfL())), JSON.stringify(cfL()).slice(0, 600))
+  const vmcL = cfL().find((x) => x.id === vmId)
+  ck('LIVE: the voicemail\'s callback card is closed because the later call took care of it, with a note', vmcL.status === 'done' && vmcL.closed_by === 'call-tasks' && /later call/.test(vmcL.close_reason) && j.live_closed === 1, vmcL)
+  const n0L = cfL().length, w0L = DB.writes.filter((w) => w === 'ops_items').length
+  ;[s, j] = await run(h, 'cron')
+  ck('LIVE: the next run makes no second card and writes nothing to Work', cfL().length === n0L && DB.writes.filter((w) => w === 'ops_items').length === w0L && j.live_cards === 0, j)
+  opsL().find((x) => x.id === dmvId).status = 'done'
+  opsL().splice(opsL().findIndex((x) => x.id === lib.cardIdFor('gMcTDQ5WoAXMHUmrCbdN', 1)), 1, { ...opsL().find((x) => x.id === lib.cardIdFor('gMcTDQ5WoAXMHUmrCbdN', 1)), status: 'dismissed' })
+  ;[s, j] = await run(h, 'cron')
+  ck('LIVE: a card a person closed never comes back', opsL().find((x) => x.id === dmvId).status === 'done' && j.live_cards === 0, j)
+  // add to an open card, once; a reading from before the switch makes nothing; an unknown owner leaves the card unassigned
+  liveReset(); DB.call_pull_seen.length = 0
+  const rdL = (o) => Object.assign({ version: lib.VERSION, mode: 'live', channel: 'call', direction: 'in', seconds: 60, caller: 'Iris D.', who_name: 'Iris Dorsey', person_id: 'pi', lead_id: null, tasks: [], resolves: [], detail: { items: [] }, error: null, read_at: agoL(1), attempt: 1 }, o)
+  DB.call_task_reading.push(rdL({ message_id: 'addto1', call_at: agoL(30), detail: { items: [{ decision: 'add_to_existing_card', card_id: 'ops_other', why: 'She also wants Friday mornings.' }] } }),
+    rdL({ message_id: 'old1', call_at: agoL(400), tasks: [{ title: 'Old work', why: 'w', area: 'client_care', due: '', urgency: 'today', owner: { name: 'Krystal Land', via: 'owns client care' } }] }),
+    rdL({ message_id: 'sms:t1', channel: 'text', call_at: agoL(20), tasks: [{ title: 'Send Iris the form', why: 'She asked by text.', area: 'office_admin', due: '', urgency: 'now', owner: { name: 'Nobody Known', via: 'x' } }] }),
+    rdL({ message_id: 'bad1', call_at: agoL(10), error: 'declined', tasks: [{ title: 'Should not exist', why: 'w', area: 'client_care', owner: { name: 'Krystal Land' } }] }))
+  ;[s, j] = await run(h, 'cron')
+  const otherL = opsL().find((x) => x.id === 'ops_other')
+  ck('LIVE: the reader\'s "add to this open card" goes on that card\'s history', (otherL.history || []).length === 1 && /Friday mornings/.test(otherL.history[0].text) && j.live_added === 1, [otherL, j])
+  ck('LIVE: a call from before the switch went on makes no card; a reading that failed makes no card', !opsL().some((x) => /Old work|Should not exist/.test(x.title || '')), opsL())
+  const txc = opsL().find((x) => x.id === lib.cardIdFor('sms:t1', 0))
+  ck('LIVE: texts make cards too; an owner the Hub cannot find leaves it unassigned (Work offers Take it); now is urgent', txc && txc.owner === '' && txc.urgency === 'urgent' && /Made from texts with Iris Dorsey/.test(txc.history[0].text) && j.live_unassigned === 1, [txc, j])
+  ;[s, j] = await run(h, 'cron')
+  ck('LIVE: the same addition is never added twice', opsL().find((x) => x.id === 'ops_other').history.length === 1 && j.live_added === 0, j)
+  liveReset(); globalThis.__SAVEFAIL = 'ops_items'
+  ;[s, j] = await run(h, 'cron')
+  globalThis.__SAVEFAIL = null
+  ck('LIVE: a card that could not be saved fails the heartbeat (the watchdog tells the office), never quietly', j.live_errors > 0 && DB.heartbeats.some((x) => x.item && x.item.id === 'hb_call-tasks' && x.item.ok === false), j)
+  liveReset(); DB.app_data[0].data.call_tasks_live = false; DB.app_data[0].data.call_tasks_practice = true
+  ;[s, j] = await run(h, 'cron')
+  ck('LIVE switch off: practice as before, nothing written to Work', !DB.writes.includes('ops_items') && !('live_cards' in j) && DB.call_task_reading.every((r) => r.mode === 'practice'), j)
+  ck('LIVE helpers: urgency and due words', lib.urgencyFor('now') === 'urgent' && lib.urgencyFor('today') === 'today' && lib.urgencyFor('routine') === 'normal' && lib.domainFor('evv_timekeeping') === 'scheduling_coverage' && lib.domainFor('payroll') === 'money'
+    && Math.abs(Date.parse(lib.liveDue({ urgency: 'now' })) - Date.now() - 3600e3) < 5000 && lib.stepLines([{ kind: 'text_family_update', to: 'Barbara', draft: 'Hi Barbara', waits_for_yes: false }])[0] === 'Text the family an update (Barbara): "Hi Barbara"')
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 
 // ── 5. the SQL in a real Postgres ──
