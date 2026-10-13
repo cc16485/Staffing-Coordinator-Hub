@@ -11,6 +11,7 @@
 // -----------------------------------------------------------------------------
 import { careLevelOf } from '../_shared/care-level.ts'
 import { newHireNeed } from '../_shared/new-hire.ts'
+import { workLock, LOCK_WHY } from '../_shared/work-lock.ts'   // used by team_pool since Slice 5 (e1d388f) but never imported: the pool threw
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: {
     'Content-Type': 'application/json',
