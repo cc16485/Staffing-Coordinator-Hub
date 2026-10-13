@@ -30,6 +30,7 @@ import { seal, open as unseal, last4, ssnLooksValid, REVEAL_TTL_MS, REVEAL_FIELD
 import { PERM_KEY, normalizePerms, mayApprove } from '../_shared/onboarding-permissions.ts'
 import { step1FormPdf, type IdentityState } from '../_shared/step1-pdf.ts'
 import { longDateTime } from '../_shared/offer-documents.ts'
+import { practicePerson } from '../_shared/optout.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -292,16 +293,41 @@ async function land(db: any, offerId: string, patch: Record<string, unknown> | n
 /** 2026-10-13 (her rule: no silent failures): one Needs Attention card per id for Recruiting & Orientation; never raised twice.
     Returns the card id, or 'not raised' when even the card could not be written (the trail event still records it). */
 // deno-lint-ignore no-explicit-any
-async function problemCard(db: any, id: string, item: Record<string, unknown>): Promise<string> {
+async function problemCard(db: any, id: string, item: Record<string, unknown>, urgency = 'now'): Promise<string> {
   try {
     const { data: row } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
     // deno-lint-ignore no-explicit-any
     if ((Array.isArray(row?.data) ? row.data : []).some((x: any) => x && x.id === id)) return id
     const now = new Date().toISOString()
-    const { error } = await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id, domain: 'recruiting_orientation', status: 'open', urgency: 'now', created_at: now, first_at: now, last_at: now,
+    const { error } = await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id, domain: 'recruiting_orientation', status: 'open', urgency, created_at: now, first_at: now, last_at: now,
       due: now, created_by: 'step1-sign', opened_by: 'step1-sign', ...item } })
     return error ? 'not raised' : id
   } catch { return 'not raised' }
+}
+
+/* 2026-10-13 (her rule 2026-10-08: the signed Step 1 PDFs stay in the Hub's private store and are LINKED from the person's
+   GoHighLevel contact: a note and a link, never the PDF in GoHighLevel). One note when Step 1 completes; the link opens only
+   for signed-in office staff. A practice or training hire is never put into GoHighLevel. A note that cannot be written
+   becomes a card (never silent). Never throws; never messages anyone. */
+// deno-lint-ignore no-explicit-any
+export async function ghlStep1Note(db: any, o: any, who: Record<string, string>, offerId: string, at: string): Promise<Record<string, unknown>> {
+  if (practiceOffer(o) || practicePerson(who.phone, who.email)) return { skipped: 'practice' }
+  const token = Deno.env.get('GHL_TOKEN') || Deno.env.get('GHL_API_KEY') || '', loc = Deno.env.get('GHL_LOCATION_ID') || ''
+  const name = `${who.first} ${who.last}`.trim()
+  const fail = async (why: string) => ({ ok: false, why, card: await problemCard(db, 's1ghl_' + offerId, { kind: 'step1_ghl_note_failed', who: name, offer_id: offerId,
+    title: 'Step 1 link not added to GoHighLevel: ' + name, detail: 'Step 1 is complete and every signed form is safe on their Hub profile, but the note linking them on their GoHighLevel contact could not be written (' + why + '). Nothing else is affected.' }, 'week') })
+  if (!token || !loc) return await fail('GoHighLevel is not configured on this project')
+  const H: Record<string, string> = { Authorization: `Bearer ${token}`, Version: '2021-07-28', Accept: 'application/json', 'Content-Type': 'application/json' }
+  try {
+    const up = await fetch('https://services.leadconnectorhq.com/contacts/upsert', { method: 'POST', headers: H,
+      body: JSON.stringify({ locationId: loc, email: who.email || undefined, phone: who.phone || undefined, firstName: who.first || undefined, lastName: who.last || undefined }) })
+    const ud = await up.json().catch(() => null), cid = String(ud?.contact?.id || ud?.id || '')
+    if (!up.ok || !cid) return await fail('their contact could not be found (' + up.status + ')')
+    const body = `Step 1 complete ${longDateTime(at)}: all ${FORM_ORDER.length} signed forms (application, references, permission for background checks, details for the checks, availability, experience, driving) are kept in the Hub. Office staff: https://cc.mo-care.com/step1.html?review=${offerId}`
+    const nr = await fetch(`https://services.leadconnectorhq.com/contacts/${cid}/notes`, { method: 'POST', headers: H, body: JSON.stringify({ body }) })
+    if (!nr.ok) return await fail('the note was refused (' + nr.status + ')')
+    return { ok: true, contact_id: cid }
+  } catch (e) { return await fail(String((e as Error).message || e).slice(0, 120)) }
 }
 
 /* ───── STEP 1 BEFORE CHECKS (Samantha 2026-10-11, "yes to all") ─────
@@ -630,7 +656,8 @@ Deno.serve(async (req) => {
       if (allSigned) {
         const { data: fin } = await db.from('step1_forms').update({ completed_at: at, current_screen: '9', receipt: { completed_at: at, forms: FORM_ORDER.length } }).eq('offer_id', id).is('completed_at', null).select('offer_id')
         done = !!fin?.length
-        if (done) { await T.event({ offer_id: id, kind: 'step1_done', by_who: 'caregiver', channel: 'page', detail: { forms: FORM_ORDER.length, ip, agent } }); await T.patch(id, { step1_done_at: at }, '&step1_done_at=is.null') }
+        if (done) { await T.event({ offer_id: id, kind: 'step1_done', by_who: 'caregiver', channel: 'page', detail: { forms: FORM_ORDER.length, ip, agent } }); await T.patch(id, { step1_done_at: at }, '&step1_done_at=is.null')
+          await db.from('step1_forms').update({ receipt: { completed_at: at, forms: FORM_ORDER.length, ghl_note: await ghlStep1Note(db, o, who, id, at) } }).eq('offer_id', id) }
       }
       /* SLICE 2d: land what this form holds for the office, then the done stamp with the last one.
          STEP 1 BEFORE CHECKS (Samantha 2026-10-11): on the new path nobody is in Background & References before Step 1 is

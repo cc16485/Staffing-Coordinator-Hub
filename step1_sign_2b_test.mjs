@@ -247,6 +247,22 @@ ck('a purged record reveals nothing (410)', r.status === 410, r); DB.step1_ident
   ck('review: a bad offer id is refused', r.status === 400, r)
 }
 
+/* ═══ 2026-10-13: the GoHighLevel note and link at Step 1 complete (never the PDF; never a message) ═══ */
+{
+  const f = DB.step1_forms.find((x) => x.offer_id === OID)
+  ck('GoHighLevel not set up in this test: the note is not written and a card says so (never silent)', f.receipt?.ghl_note?.ok === false && /not configured/.test(f.receipt.ghl_note.why) && (globalThis.CARDS || []).some((c) => c.id === 's1ghl_' + OID && c.urgency === 'week'), { receipt: f.receipt, cards: (globalThis.CARDS || []).map((c) => c.id) })
+  const calls = []; const saved = globalThis.fetch
+  globalThis.fetch = async (u, o = {}) => { u = String(u); if (u.includes('leadconnectorhq.com')) { calls.push({ u, body: o.body ? JSON.parse(o.body) : null }); return new Response(JSON.stringify(u.endsWith('/contacts/upsert') ? { contact: { id: 'ghl-c1' } } : { note: { id: 'n1' } }), { status: 200 }) } return saved(u, o) }
+  env.GHL_TOKEN = 'tok'; env.GHL_LOCATION_ID = 'loc'
+  let g = await M.ghlStep1Note(globalThis.__fakeCreateClient(), { first_name: 'Ava', last_name: 'Lee', phone: '4175550111', email: 'ava@example.com' }, { first: 'Ava', last: 'Lee', phone: '4175550111', email: 'ava@example.com' }, OID, '2026-10-13T15:00:00Z')
+  const note = calls.find((c) => /\/notes$/.test(c.u))
+  ck('configured: one note on their contact with the office link to their Step 1 (no file, no message)', g.ok === true && calls.length === 2 && note && /step1\.html\?review=/.test(note.body.body) && !calls.some((c) => /medias|conversations|messages/.test(c.u)), { g, calls })
+  calls.length = 0
+  g = await M.ghlStep1Note(globalThis.__fakeCreateClient(), { first_name: 'Pat', last_name: 'Practice (TEST)', phone: '4175550183', email: 'pat.practice@practice.invalid' }, { first: 'Pat', last: 'Practice (TEST)', phone: '4175550183', email: 'pat.practice@practice.invalid' }, OID, '2026-10-13T15:00:00Z')
+  ck('a practice hire is never put into GoHighLevel', g.skipped === 'practice' && calls.length === 0, { g, calls })
+  delete env.GHL_TOKEN; delete env.GHL_LOCATION_ID; globalThis.fetch = saved
+}
+
 /* ═══ SLICE 2d: what a signed form lands on the Background & References row ═══ */
 const LP = M.landingPatch
 ck('landingPatch: the application lands lived-outside (yes), fingerprints Required, the states and no-employer flag, stamped', (() => { const p = LP('employee_application', { lived_outside_mo: 'yes', states_lived: ['KS'], no_employer_history: 'yes' }, '2026-10-10T03:00:00Z'); return p.oos === 'yes' && p.fp === 'Required' && p.no_employer_history === true && p.step1_landed.employee_application === '2026-10-10T03:00:00Z' && p.step1_landed.states_lived[0] === 'KS' })())
