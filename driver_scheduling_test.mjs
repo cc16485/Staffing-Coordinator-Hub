@@ -49,12 +49,18 @@ const NEED_TABLE = [
 ]
 NEED_TABLE.forEach(([x, lvl], i) => { const a = D.transportNeed(x), b = H.transportNeed(x)
   ck('need table ' + i + ' (' + lvl + '): server and Hub agree', a.level === lvl && JSON.stringify(a) === JSON.stringify(b), { server: a, hub: b }) })
+const DEC = [[{ dl_status: 'Pending Verification' }, 'required', true], [{ dl_status: 'Pending Verification' }, 'required', false], [{ dl_status: 'Suspended' }, 'preferred', true], [{ dl_status: 'Suspended' }, 'preferred', false],
+  [{}, null, true], [{}, 'required', false], [{ dl_status: 'Approved Driver', cleared_to_drive: true }, 'required', true], [{ dl_status: 'Non-Driver' }, 'bogus', true]]
+DEC.forEach(([cg, lvl, live], i) => { const a = D.transportDecision(cg, lvl, live), b = H.transportDecision(cg, lvl, live)
+  ck('decision table ' + i + ': server and Hub agree', JSON.stringify(a) === JSON.stringify(b), { server: a, hub: b }) })
+ck('the rollout switch: on only when ops_settings.driver_schedule_gate_live === true (server and Hub)', [[{ driver_schedule_gate_live: true }, true], [{ driver_schedule_gate_live: 'true' }, false], [{}, false], [null, false]].every(([st, v]) => D.driveGateOn(st) === v && H.driveGateOn(st) === v))
+ck('switch off: required + not cleared is never excluded, only the note', (() => { const d = D.transportDecision({ dl_status: 'Suspended' }, 'required', false); return !d.exclude && !d.rankLower && d.note === 'Driver check (not enforced yet): Driving suspended' })())
 /* the function bodies themselves: the same statements in the same order (types and semicolons aside) */
 const body = (src, name) => { const i = src.indexOf('function ' + name + '('); let d = 0, j = src.lastIndexOf('{', src.indexOf('\n', i)); const s = j
   for (; j < src.length; j++) { if (src[j] === '{') d++; else if (src[j] === '}' && --d === 0) break } return src.slice(s, j + 1) }
 const norm = (t) => t.replace(/: \{ ok: boolean; why: string \}|: 'required' \| 'preferred' \| null|: string\[\]|: any/g, '').replace(/\(v\)/g, 'v').replace(/\(l\)/g, 'l').replace(/;\s*$/gm, '').replace(/;(?=\s*\})/g, '').replace(/\s+/g, ' ').replace(/; /g, ' ').trim()
 const tsSrc = fs.readFileSync(path.join(FN, '_shared/driver-eligibility.ts'), 'utf8'), hubSrc = fs.readFileSync(path.join(HUB, 'match-rules.js'), 'utf8')
-for (const f of ['transportEligible', 'transportNeed']) ck('the two copies of ' + f + ' are the same code', norm(body(tsSrc, f)) === norm(body(hubSrc, f)), [norm(body(tsSrc, f)), norm(body(hubSrc, f))])
+for (const f of ['transportEligible', 'transportNeed', 'driveGateOn', 'transportDecision']) ck('the two copies of ' + f + ' are the same code', norm(body(tsSrc, f)) === norm(body(hubSrc, f)), [norm(body(tsSrc, f)), norm(body(hubSrc, f))])
 
 /* 2. shift-ask-gate */
 const G = await import(path.join(FN, '_shared/shift-ask-gate.ts'))
@@ -83,10 +89,10 @@ ck('gate: Do Not Return still comes first', /Do Not Return/.test(G.blockReason({
   try { await import(tmp) } finally { fs.unlinkSync(tmp) }
   const tok = 'x.' + Buffer.from(JSON.stringify({ role: 'authenticated' })).toString('base64') + '.y'
   const call = async (body) => { const r = await handler(new Request('http://x/profile-check', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + tok }, body: JSON.stringify(body) })); return r.json() }
-  const seed = (drv, attrs = { transportation: 'yes' }) => { APP = {
+  const seed = (drv, attrs = { transportation: 'yes' }, gate = true) => { APP = {
     caregivers: [{ axiscare_id: '9', first: 'Cara', last: 'Giver', orient_date: '2026-01-01', alz_date: '2026-01-02', oig_status: 'CLEAR', edl_status: 'Clear', fcsr_status: 'Clear', skills: { transportation: { have: 'yes' } }, ...drv }],
     caregiver_overlay: [{ id: 'cgov_9', axiscare_id: '9', skills: { transportation: { have: 'yes', evidence: 'attested' } } }], caregiver_availability: [],
-    leads: [{ id: 'L1', axiscare_client_id: '55', client_attributes: attrs }], dnr_log: [], ops_settings: {} } }
+    leads: [{ id: 'L1', axiscare_client_id: '55', client_attributes: attrs }], dnr_log: [], ops_settings: { driver_schedule_gate_live: gate } } }
   const tr = (j) => (j.items || []).find((i) => i.code === 'skill_transportation')
   seed({ dl_status: 'Pending Verification', cleared_to_drive: false }); let j = await call({ caregiver_eval: { axiscare_id: '9', client_lead_id: 'L1' } })
   ck('profile-check: client needs transportation, says yes to driving but Pending Verification: HARD fail with the why', tr(j)?.status === 'fail' && tr(j).severity === 'HARD' && /Not an Approved Driver \(Pending Verification\)/.test(tr(j).detail), tr(j) || j)
@@ -96,6 +102,9 @@ ck('gate: Do Not Return still comes first', /Do Not Return/.test(G.blockReason({
   ck('profile-check: an Approved Driver with current documents passes', tr(j)?.status === 'pass', tr(j))
   seed({ dl_status: 'Suspended' }, { transportation: '' }); j = await call({ caregiver_eval: { axiscare_id: '9', client_lead_id: 'L1' } })
   ck('profile-check: a client who does not need transportation: no driving line at all', !tr(j), tr(j))
+  seed({ dl_status: 'Pending Verification', cleared_to_drive: false }, { transportation: 'yes' }, false); j = await call({ caregiver_eval: { axiscare_id: '9', client_lead_id: 'L1' } })
+  const dc = (j.items || []).find((i) => i.code === 'driver_check')
+  ck('profile-check, switch off: the HARD transportation line is as before (the skills record says yes: pass), and the driver check is a WARN beside it', tr(j)?.status === 'pass' && tr(j).severity === 'HARD' && dc && dc.severity === 'WARN' && dc.detail === 'Driver check (not enforced yet): Not an Approved Driver (Pending Verification)', { tr: tr(j), dc })
   const st = await (await handler(new Request('http://x/profile-check?selftest=1', { method: 'GET' }))).json()
   ck('profile-check: the self-test still passes', (st.results || st).every((x) => x.pass), (st.results || st).filter((x) => !x.pass)) }
 

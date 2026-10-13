@@ -5,6 +5,8 @@
 // that require transporting clients. Only Approved Drivers with current, verified documentation should qualify for
 // transportation assignments." A caregiver with no driver record yet is not eligible either (no assumption). Shifts that
 // do not need transportation are unaffected.
+// ROLLOUT SWITCH: Admin page, ops_settings.driver_schedule_gate_live, OFF by default. Off, nothing is left out anywhere: the
+// check is computed and shown as "Driver check (not enforced yet): <why>" (transportDecision). On, the rule is enforced.
 //
 // ONE RULE, TWO IDENTICAL COPIES: this file (the server: team-ask through shift-ask-gate, coverage-run, profile-check) and
 // the Hub's match-rules.js (CCMatch.transportEligible / CCMatch.transportNeed: the browser, the Staffing sheet, the Team
@@ -53,6 +55,20 @@ export function transportNeed(x: any): { level: 'required' | 'preferred' | null;
   return req.length ? { level: 'required', from: req } : pref.length ? { level: 'preferred', from: pref } : { level: null, from: [] }
 }
 
+// the rollout switch (Admin page, ops_settings.driver_schedule_gate_live, off by default) and what the driving rule does to
+// one person for one shift: required + not eligible + switch on = left out; preferred + not eligible + switch on = ranked
+// lower; switch off = never left out or moved, only the note "Driver check (not enforced yet): <why>".
+export function driveGateOn(st: any): boolean {
+  return !!(st && st.driver_schedule_gate_live === true)
+}
+export function transportDecision(cg: any, level: any, live: boolean, today?: string): { exclude: boolean; rankLower: boolean; note: string | null; why: string } {
+  if (level !== 'required' && level !== 'preferred') return { exclude: false, rankLower: false, note: null, why: '' }
+  const t = transportEligible(cg, today)
+  if (t.ok) return { exclude: false, rankLower: false, note: null, why: t.why }
+  if (!live) return { exclude: false, rankLower: false, note: 'Driver check (not enforced yet): ' + t.why, why: t.why }
+  if (level === 'required') return { exclude: true, rankLower: false, note: null, why: t.why }
+  return { exclude: false, rankLower: true, note: 'The client would like help with driving; ranked lower, not excluded: ' + t.why, why: t.why }
+}
 // =============================================================================
 // Reading the sources for one shift (database). Never throws: what cannot be read is said in `unknown`, and an unknown
 // need counts as not required (her rule), so the caller can show it.
@@ -83,4 +99,10 @@ export async function readTransportNeed(sb: any, x: { clientAxId?: string | null
   }
   const n = transportNeed({ planNeeds: x.planNeeds, facts, attrs })
   return { ...n, unknown }
+}
+
+/** The rollout switch, read like every other *_live switch (app_data ops_settings). Unreadable = off: nobody is left out,
+ *  the driver check is only shown (the switch's off state is the safe default while current drivers are being set up). */
+export async function readDriveGate(sb: any): Promise<boolean> {
+  try { const { data } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle(); return driveGateOn(data?.data) } catch { return false }
 }

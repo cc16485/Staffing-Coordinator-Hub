@@ -31,7 +31,7 @@ import { contactForOutbound, maySendTo, normalisePhone } from '../_shared/outrea
 import { optOutCheck } from '../_shared/optout.ts'
 import { opEvent } from '../_shared/events.ts'
 import { shiftAskBlock } from '../_shared/shift-ask-gate.ts'
-import { readTransportNeed } from '../_shared/driver-eligibility.ts'
+import { readTransportNeed, driveGateOn, transportDecision } from '../_shared/driver-eligibility.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -171,10 +171,10 @@ Deno.serve(async (req) => {
       optedOut = v.allowed ? [] : v.reasons
     }
     /* step 3 (2026-10-12): the same checks Cara's picker makes, shown before anyone writes a text */
-    const transport = await transportOf(sb, plan)
-    const blocked = await shiftAskBlock(sb, { cg, name: cgName, axId, client: await clientNameOf(sb, plan), roster, needsTransport: transport.level === 'required' })
+    const transport = await transportOf(sb, plan), gate = driveGateOn(st)
+    const blocked = await shiftAskBlock(sb, { cg, name: cgName, axId, client: await clientNameOf(sb, plan), roster, needsTransport: gate && transport.level === 'required' })
     return json({
-      live, blocked, transport,
+      live, blocked, transport: { ...transport, enforced: gate, note: transportDecision(cg, transport.level, gate, chicagoDay()).note },
       caregiver: { first: first(cg ? cg.first || cgName : cgName), on_roster: !!cg, phone_last4: phone ? phone.slice(-4) : null, opt_out: optedOut },
       client: { first: clientFirst, town: plan.city || null, start_target: target, care_line: care, linked: !!link?.episode_id },
       template: String(st.team_ask_msg || '') || DEFAULT_TEMPLATE,
@@ -210,8 +210,9 @@ Deno.serve(async (req) => {
   /* step 3 (2026-10-12): Cara's checks, on the server, before anything goes: No shift texts, this client's Do Not
      Return list, active in AxisCare, new-hire readiness (fails closed); and (2026-10-13) a plan that needs transportation
      goes only to an Approved Driver with current documents. */
+  /* the driver check refuses only while the Admin switch driver_schedule_gate_live is on; off, it never refuses (the draft warns) */
   const transport = await transportOf(sb, plan)
-  const blocked = await shiftAskBlock(sb, { cg, name: cgName, axId, client: await clientNameOf(sb, plan), roster, needsTransport: transport.level === 'required' })
+  const blocked = await shiftAskBlock(sb, { cg, name: cgName, axId, client: await clientNameOf(sb, plan), roster, needsTransport: driveGateOn(st) && transport.level === 'required' })
   if (blocked) {
     await opEvent(sb, { verb: 'team_ask_refused', actor_name: who.name, actor_email: who.email, item_id: planId, area: 'scheduling',
       summary: `Text to ${cgName} not sent`, data: { plan_id: planId, caregiver_axiscare_id: axId || null, cells, why: blocked } })

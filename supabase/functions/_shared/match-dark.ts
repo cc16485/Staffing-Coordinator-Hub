@@ -22,7 +22,7 @@ const DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
 
 export type DarkIn = { now: string; M: Any; E: Any; levelOf: (classes: Any) => number | null; payerOf: (classes: Any) => string | null
   visits: Any[]; axCaregivers: Any[]; axClients: Any[]; roster: Any[]; overlay: Any[]; availability: Any[]; dnr: Any[]
-  factsByClient: Record<string, Any[] | null>; step1ByAx: Record<string, Any>; lock: Any; cases: Any[]; previous?: Any; fingerprints?: Record<string, string> }
+  factsByClient: Record<string, Any[] | null>; step1ByAx: Record<string, Any>; lock: Any; cases: Any[]; previous?: Any; fingerprints?: Record<string, string>; driveGate?: boolean }
 
 /** the best evidence wins between the skills record and Step 1 (never a downgrade, never an upgrade) */
 function mergeSkills(a: Record<string, Any>, b: Record<string, Any>) {
@@ -94,7 +94,7 @@ export function buildDarkReport(x: DarkIn): Any {
     if (v.caregiver?.id == null) { open++; continue }
     const cgId = String(v.caregiver.id), cl = clientOf(String(v.client.id)), base = cgOf(cgId)
     const fr = freeFor(cgId, v), cg = { ...base, availability: { free: fr.free, reason: fr.reason } }
-    const r = M.evaluate(cl, cg, { today: centralDay(x.now) })
+    const r = M.evaluate(cl, cg, { today: centralDay(x.now), driveGate: x.driveGate === true })
     if (cl.needs?.transportation?.value === 'required' && !S(base.dl_status)) gaps.drive_unknown++   // needs driving, caregiver has no driver record yet
     const warnings = [...r.warnings, ...base.warnings, ...(fr.note ? [fr.note] : [])]
     rows.push({ date: day(v).slice(0, 10), time: day(v).slice(11, 16) + (end(v) ? ' to ' + end(v).slice(11, 16) : ''), visit_id: v.id ?? null, client: cl.name, client_id: cl.id, caregiver: base.name, caregiver_id: cgId,
@@ -114,7 +114,7 @@ export function buildDarkReport(x: DarkIn): Any {
     const coverId = S(k.axiscare_assignment?.caregiver_id) || (k.covered_by ? idOfName(k.covered_by) : null)
     if (k.covered_by && !coverId) gaps.covered_by_unmatched++
     const asked = rowsOf(k.asked).filter((a: Any) => a?.axiscare_id)
-    const judge = (id: string) => M.evaluate(cl, { ...cgOf(id), availability: { free: true } }, { today: centralDay(x.now) })
+    const judge = (id: string) => M.evaluate(cl, { ...cgOf(id), availability: { free: true } }, { today: centralDay(x.now), driveGate: x.driveGate === true })
     const cov = coverId ? judge(coverId) : null
     const askedRows = asked.map((a: Any) => ({ name: S(a.name, 80), group: judge(String(a.axiscare_id)).group }))
     replay.push({ date: S(k.shift_date, 10), client: cl.name, covered_by: k.covered_by ? S(k.covered_by, 80) : null, covered_group: cov?.group || null, covered_reason: cov?.reason || '', status: S(k.status, 30),
@@ -125,6 +125,6 @@ export function buildDarkReport(x: DarkIn): Any {
   const hist = [...rowsOf(x.previous?.history), { at: x.now, ...counts, clients_incomplete: clients.incomplete, clients_flagged: clients.flagged }].slice(-30)
   return { version: 1, at: x.now, rule_version: M.VERSION, fingerprints: x.fingerprints || {}, window: { from: x.now.slice(0, 10), days: 14 }, counts, clients, rows, replay: { cases: replay.length, covered_ready: replay.filter((r) => r.covered_group === 'ready').length, rows: replay.slice(0, 200) },
     gaps: { ...gaps, restrictions_said: gaps.restrictions_said.length, no_journey_clients: gaps.no_journey_clients.length },
-    notes: ['A report only: no visit, schedule, caregiver, client, card or text was touched.', 'The replay judges past call-offs with today\'s records.', 'Restrictions written in words are shown, never enforced. Driving a client counts only an Approved Driver with a current license and insurance (Driver Compliance).', 'A caregiver with no availability on file is assumed available any time (24 hours).'],
+    notes: ['A report only: no visit, schedule, caregiver, client, card or text was touched.', 'The replay judges past call-offs with today\'s records.', 'Restrictions written in words are shown, never enforced. Driving a client counts only an Approved Driver with a current license and insurance (Driver Compliance)' + (x.driveGate === true ? '.' : ', shown as "Driver check (not enforced yet)" until its Admin switch is on.'), 'A caregiver with no availability on file is assumed available any time (24 hours).'],
     history: hist }
 }

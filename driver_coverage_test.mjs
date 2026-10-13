@@ -86,7 +86,7 @@ const people = () => {
     { first: 'Sue', last: 'Suspended', phone: '4175550114', axiscare_id: '9014', active: true, dl_status: 'Suspended', cleared_to_drive: false },
     { first: 'Oz', last: 'Norecord', phone: '4175550115', axiscare_id: '9015', active: true },
     { first: 'Lee', last: 'Lapsed', phone: '4175550116', axiscare_id: '9016', active: true, ...APPROVED, auto_ins_expires: '2001-01-01' }]
-  T.pay_tracks = []; T.job_applicants = [] }
+  T.pay_tracks = []; T.job_applicants = []; APP.ops_settings.driver_schedule_gate_live = true }   // the Admin switch on (off is tested at the end)
 const client500 = (value, layer = 'plan') => {
   T.person_source_id = [{ person_id: 'p500', system: 'axiscare', entity_type: 'client', source_id: '500', confidence: 'confirmed', needs_review: false }]
   T.journey_episode = [{ episode_id: 'e500', person_id: 'p500', state: 'open', created_at: '2026-10-01T00:00:00Z' }]
@@ -156,6 +156,24 @@ ck('open hours, plan without transportation: everyone would get it (unaffected)'
 reset({ id: 'other', status: 'closed', asked: [] }); people(); APP.staffing_plans = [PLAN]; APP.ops_settings.open_hours_live = true
 r = await act({ action: 'open_hours', plan_id: 'p1', mode: 'send' })
 ck('open hours send: only the Approved Driver is texted', SENT.length === 1, { r, SENT })
+
+
+/* the Admin switch OFF (the default): nobody cut or moved; the note on the person and in meta */
+reset(K()); people(); client500('required'); APP.ops_settings.driver_schedule_gate_live = false
+out = await act({ action: 'candidates', case_id: 'cv1' })
+ck('switch off, transport required: everyone listed, in the same order as with no need at all', listed(out).join() === base.join() && !out.excluded.some((x) => /drive/.test(x.why)), [listed(out), base])
+const bob = [...out.group1, ...out.group2].find((x) => x.name === 'Bob Pending')
+ck('...each person not cleared carries "Driver check (not enforced yet)"', bob && bob.drive_note === 'Driver check (not enforced yet): Not an Approved Driver (Pending Verification)' && !out.group2.find((x) => x.name === 'Ann Approved').drive_note, bob)
+ck('...and meta says it is not enforced, with the notes', out.meta.transport.enforced === false && out.meta.transport.notes.length === 5 && /not enforced yet/.test(out.meta.transport.rule), out.meta.transport)
+reset(K()); people(); client500('preferred'); delete APP.ops_settings.driver_schedule_gate_live
+out = await act({ action: 'candidates', case_id: 'cv1' })
+ck('switch unset, transport preferred: the order is exactly as before (nobody moved)', listed(out).join() === base.join(), [listed(out), base])
+reset(K()); people(); client500('required'); APP.ops_settings.driver_schedule_gate_live = false
+out = await act({ action: 'send_selected', case_id: 'cv1', recipients: ['Bob Pending'], asked_by: 'Krystal Office' })
+ck('switch off: send_selected texts the Pending driver (never refused for driving)', SENT.length === 1 && out.sent.join() === 'Bob Pending', { out, SENT })
+reset({ id: 'other', status: 'closed', asked: [] }); people(); APP.staffing_plans = [PLAN]; APP.ops_settings.driver_schedule_gate_live = false
+r = await act({ action: 'open_hours', plan_id: 'p1' })
+ck('switch off: open hours would go to everyone', r.will_get === 6, r)
 
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1)

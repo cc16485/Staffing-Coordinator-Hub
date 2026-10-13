@@ -48,7 +48,7 @@ import { caseEnded, chiNowNaive } from '../_shared/loops.ts'
 import { workLock, LOCK_WHY } from '../_shared/work-lock.ts'
 import { OPEN_HOURS_DEFAULT, checkWording, inSendWindow, offeredCells, openHoursText } from '../_shared/open-hours.ts'
 import { newHireNeed } from '../_shared/new-hire.ts'
-import { readTransportNeed, transportEligible } from '../_shared/driver-eligibility.ts'
+import { readTransportNeed, readDriveGate, transportDecision } from '../_shared/driver-eligibility.ts'
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -893,7 +893,8 @@ async function buildCandidatesForCase(c: any):
      never eligible for a shift that needs transporting the client; only Approved Drivers with a current license and
      insurance. Needs transportation = the client's care needs (need_transportation, latest layer), the lead checklist
      (transportation), or the Team Builder plan's needs (an open-hours ask; the only source when it names no client).
-     'Preferred' only ranks those not cleared lower, never cuts. Unknown = not required, and meta says what was unknown. */
+     'Preferred' only ranks those not cleared lower, never cuts. Unknown = not required, and meta says what was unknown.
+     All of it only while the Admin switch driver_schedule_gate_live is on; off, nothing is cut or moved (notes only). */
   let planNeeds: unknown = null, planWhy: string | null = null
   if (c.plan_id) {
     try { const { data: pr } = await sb.from('app_data').select('data').eq('key', 'staffing_plans').maybeSingle()
@@ -904,6 +905,10 @@ async function buildCandidatesForCase(c: any):
   const drive = await readTransportNeed(sb, { clientAxId: clientRes.id, planNeeds })
   const driveUnknown = [planWhy, drive.unknown, !clientRes.id && !c.plan_id ? `the client is not identified (${clientRes.detail}), so their care needs could not be read` : null].filter(Boolean).join('; ') || null
   const driveToday = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+  /* the rollout switch (Admin page, ops_settings.driver_schedule_gate_live, off by default): off, nobody is cut or moved,
+     the check is only noted on the person and in meta */
+  const driveLive = await readDriveGate(sb)
+  const driveNotes: { name: string; note: string }[] = []
 
   // deno-lint-ignore no-explicit-any
   const group1: any[] = [], group2: any[] = []
@@ -927,8 +932,9 @@ async function buildCandidatesForCase(c: any):
       const cgLv = caregiverLevel.get(String(x.axiscare_id))
       if (cgLv != null && cgLv < clientLv) { cut(x, `Level ${cgLv} caregiver — client needs Level ${clientLv}`); continue }
     }
-    const drv = drive.level ? transportEligible(x, driveToday) : null
-    if (drive.level === 'required' && drv && !drv.ok) { cut(x, `not cleared to drive clients, and this shift needs transportation (${drv.why})`); continue }
+    const drv = transportDecision(x, drive.level, driveLive, driveToday)
+    if (drv.exclude) { cut(x, `not cleared to drive clients, and this shift needs transportation (${drv.why})`); continue }
+    if (drv.note) driveNotes.push({ name: String(x.name), note: drv.note })
     const h = history.get(String(x.axiscare_id))
     const gap = wantGap.get(String(x.axiscare_id))
     const gid = String(x.axiscare_id)
@@ -968,7 +974,7 @@ async function buildCandidatesForCase(c: any):
       rep: repRec ? { favorites: repRec.favorites, loves: repRec.loves,
         concerns: repRec.concerns, total: repRec.total } : null,
       this_client: mine ? { rating: mine.rating, favorite: mine.favorite } : null,
-      drive_note: drive.level === 'preferred' && drv && !drv.ok ? `The client would like help with driving; ranked lower, not excluded: ${drv.why}` : null,
+      drive_note: drv.note, drive_lower: drv.rankLower,
       why: h ? `${h.visits} visit${h.visits === 1 ? '' : 's'} with this client, last ${h.last || '?'}`
         : recentlyActive.has(gid) ? 'worked a shift in the last 14 days'
         : 'active caregiver, no recent history',
@@ -1007,11 +1013,12 @@ async function buildCandidatesForCase(c: any):
     || ((b.wants_more_hours ?? -999) - (a.wants_more_hours ?? -999)))
 
   /* driving only preferred: the same order, with everyone not cleared to drive moved after everyone who is (stable) */
-  if (drive.level === 'preferred') for (const g of [group0, group1, group2, prnOther, prnOngoing]) {
-    const yes = g.filter((r) => !r.drive_note), no = g.filter((r) => r.drive_note); g.splice(0, g.length, ...yes, ...no) }
+  if (drive.level === 'preferred' && driveLive) for (const g of [group0, group1, group2, prnOther, prnOngoing]) {
+    const yes = g.filter((r) => !r.drive_lower), no = g.filter((r) => r.drive_lower); g.splice(0, g.length, ...yes, ...no) }
   return { group0, group1, group2, prn_other: prnOther, prn_ongoing: prnOngoing, excluded, meta: {
-    transport: { level: drive.level, from: drive.from, unknown: driveUnknown,
-      rule: drive.level === 'required' ? 'needs transportation: only Approved Drivers with a current license and insurance are listed'
+    transport: { level: drive.level, from: drive.from, unknown: driveUnknown, enforced: driveLive, notes: driveNotes,
+      rule: drive.level && !driveLive ? 'Driver check (not enforced yet): the Admin switch "Only Approved Drivers get shifts that need transportation" is off, so nobody is left out or moved; each person not cleared carries the note'
+        : drive.level === 'required' ? 'needs transportation: only Approved Drivers with a current license and insurance are listed'
         : drive.level === 'preferred' ? 'transportation preferred: people not cleared to drive are listed after the rest, never left out'
         : 'no transportation need on record' + (driveUnknown ? ' (not determined: ' + driveUnknown + ')' : '') },
     prn_case: ongoingCase ? 'regular opening: PRN members listed apart (taking it would mean moving to ongoing at $18)' : 'call-off or one-time: PRN members who fit are asked first',

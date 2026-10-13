@@ -99,27 +99,34 @@ try {
   const ariel = () => T.app_data.find((x) => x.key === 'caregivers').data[0]
   const setDrv = (f) => Object.assign(ariel(), f)
   const APPROVED = { dl_status: 'Approved Driver', cleared_to_drive: true, dl_expires: '2099-01-01', auto_ins_expires: '2099-01-01' }
-  reset(); plan1().needs = ['transportation']; r = await send()
+  const GATE = () => setK('ops_settings', { team_ask_live: true, driver_schedule_gate_live: true })   // the Admin switch on
+  reset(); GATE(); plan1().needs = ['transportation']; r = await send()
   ck('driving: plan needs transportation, no driver record yet: refused with the reason, nothing marked asked', r.j.outcome === 'refused' && /not cleared to drive clients, and this shift needs transportation \(No driver record yet\)/.test(r.j.error) && !SENT.length && plan1().cells['mon|s1'].status === 'penciled', r.j)
-  reset(); plan1().needs = ['transportation']; setDrv({ dl_status: 'Pending Verification', cleared_to_drive: false }); r = await draft()
+  reset(); GATE(); plan1().needs = ['transportation']; setDrv({ dl_status: 'Pending Verification', cleared_to_drive: false }); r = await draft()
   ck('driving: Pending Verification: the draft shows why before anyone writes a text', /Not an Approved Driver \(Pending Verification\)/.test(r.j.blocked) && r.j.transport.level === 'required', r.j)
   r = await send(); ck('...and the send is refused', r.j.outcome === 'refused' && !SENT.length, r.j)
   for (const [st, re] of [['Non-Driver', /Not an Approved Driver \(Non-Driver\)/], ['Suspended', /Driving suspended/]]) {
-    reset(); plan1().needs = ['transportation']; setDrv({ dl_status: st, cleared_to_drive: false }); r = await send()
+    reset(); GATE(); plan1().needs = ['transportation']; setDrv({ dl_status: st, cleared_to_drive: false }); r = await send()
     ck('driving: ' + st + ' is refused', r.j.outcome === 'refused' && re.test(r.j.error) && !SENT.length, r.j) }
-  reset(); plan1().needs = ['transportation']; setDrv({ ...APPROVED, auto_ins_expires: '2000-01-01', cleared_to_drive: true }); r = await send()
+  reset(); GATE(); plan1().needs = ['transportation']; setDrv({ ...APPROVED, auto_ins_expires: '2000-01-01', cleared_to_drive: true }); r = await send()
   ck('driving: an Approved Driver whose insurance date has passed (mirror not yet run) is refused', r.j.outcome === 'refused' && /License or insurance expired/.test(r.j.error), r.j)
-  reset(); plan1().needs = ['transportation']; setDrv(APPROVED); r = await send()
+  reset(); GATE(); plan1().needs = ['transportation']; setDrv(APPROVED); r = await send()
   ck('driving: an Approved Driver with current documents is texted', r.j.outcome === 'sent' && SENT.length === 1, r.j)
-  reset(); setDrv({ dl_status: 'Non-Driver', cleared_to_drive: false }); r = await send()
+  reset(); GATE(); setDrv({ dl_status: 'Non-Driver', cleared_to_drive: false }); r = await send()
   ck('non-transport plan: a Non-Driver is texted as before (unaffected)', r.j.outcome === 'sent', r.j)
-  reset(); T.journey_episode[0].state = 'open'; T.client_fact_current = [{ episode_id: 'ep1', kind: 'need_transportation', layer: 'plan', value: 'required' }]
+  reset(); GATE(); T.journey_episode[0].state = 'open'; T.client_fact_current = [{ episode_id: 'ep1', kind: 'need_transportation', layer: 'plan', value: 'required' }]
   setDrv({ dl_status: 'Pending Verification', cleared_to_drive: false }); r = await send()
   ck('driving from the linked client\'s care needs (need_transportation required on the plan layer): refused', r.j.outcome === 'refused' && /Pending Verification/.test(r.j.error), r.j)
-  reset(); setK('leads', [{ id: 'L1', axiscare_client_id: '900', client_attributes: { transportation: 'yes' } }]); setDrv({ dl_status: 'Suspended' }); r = await draft()
+  reset(); GATE(); setK('leads', [{ id: 'L1', axiscare_client_id: '900', client_attributes: { transportation: 'yes' } }]); setDrv({ dl_status: 'Suspended' }); r = await draft()
   ck('driving from the lead checklist (transportation yes) for the linked client: blocked', /Driving suspended/.test(r.j.blocked) && r.j.transport.from.includes('the lead checklist'), r.j)
-  reset(); setK('leads', [{ id: 'L1', axiscare_client_id: '900', client_attributes: { transportation: 'preferred' } }]); setDrv({ dl_status: 'Suspended' }); r = await send()
+  reset(); GATE(); setK('leads', [{ id: 'L1', axiscare_client_id: '900', client_attributes: { transportation: 'preferred' } }]); setDrv({ dl_status: 'Suspended' }); r = await send()
   ck('driving only preferred on the lead: never blocks (ranked, not excluded)', r.j.outcome === 'sent', r.j)
+  /* the Admin switch OFF (the default): never refused for driving; the draft warns */
+  reset(); plan1().needs = ['transportation']; setDrv({ dl_status: 'Pending Verification', cleared_to_drive: false }); r = await draft()
+  ck('switch off: the draft is not blocked, and carries "Driver check (not enforced yet)"', r.j.blocked === null && r.j.transport.enforced === false && r.j.transport.note === 'Driver check (not enforced yet): Not an Approved Driver (Pending Verification)', r.j)
+  r = await send(); ck('switch off: the text goes', r.j.outcome === 'sent' && SENT.length === 1, r.j)
+  reset(); plan1().needs = ['transportation']; r = await send()
+  ck('switch off: no driver record yet, still sent', r.j.outcome === 'sent', r.j)
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1)

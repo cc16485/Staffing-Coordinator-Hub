@@ -89,7 +89,7 @@ Deno.serve(async (req) => {
     }
     const lock = await workLock(db, rowsOf(roster))
     const report = buildDarkReport({ now: new Date().toISOString(), M: rules.CCMatch, E: rules.CCElig, levelOf: (c) => careLevelOf(c).level, payerOf,
-      visits, axCaregivers, axClients, roster: rowsOf(roster), overlay: rowsOf(overlay), availability: rowsOf(availability), dnr: rowsOf(dnr), factsByClient, step1ByAx, lock, cases: rowsOf(cases), previous, fingerprints: fps })
+      visits, axCaregivers, axClients, roster: rowsOf(roster), overlay: rowsOf(overlay), availability: rowsOf(availability), dnr: rowsOf(dnr), factsByClient, step1ByAx, lock, cases: rowsOf(cases), previous, fingerprints: fps, driveGate: st.driver_schedule_gate_live === true /* Driver Compliance rollout switch */ })
     report.run_by = who
     const { error } = await db.from('app_data').upsert({ key: 'match_dark_report', data: report, updated_at: new Date().toISOString() }, { onConflict: 'key' })
     if (error) return json({ error: 'the report could not be saved: ' + error.message }, 500)
