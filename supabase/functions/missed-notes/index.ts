@@ -63,6 +63,29 @@ export function deadlineFor(shiftDate: string): number {
   }
   return Date.parse(next + 'T23:00:00Z')
 }
+/* OVERNIGHT SHIFTS (her report, 2026-10-13): AxisCare splits a shift that crosses midnight into two visits, one on
+   each day, and the caregiver's note lands on one half (the first). The other half sat alone in its day's group, read
+   as "no note", and the caregiver was texted for a note they had written. A half joined to its other half at the
+   split (same caregiver and client, one ends where the other starts, on the next Central day) shares that note. */
+export const SPLIT_GAP_MIN = 15
+const times = (...xs: unknown[]) => xs.map((x) => (x ? Date.parse(String(x)) : NaN)).filter(Number.isFinite)
+// deno-lint-ignore no-explicit-any
+export const dayOf = (v: any) => chiDay(v?.startDate ?? v?.scheduledStartDate ?? 0)
+// deno-lint-ignore no-explicit-any
+export function joinedAtSplit(a: any, b: any): boolean {   // a ends where b starts
+  if (!a || !b || String(a.id) === String(b.id)) return false
+  if (String(a?.caregiver?.id) !== String(b?.caregiver?.id) || String(a?.client?.id) !== String(b?.client?.id)) return false
+  if (dayOf(a) === dayOf(b)) return false
+  const ends = times(a?.clockOut?.time, a?.endDate, a?.scheduledEndDate), starts = times(b?.clockIn?.time, b?.startDate, b?.scheduledStartDate)
+  return ends.some((e) => starts.some((s) => Math.abs(s - e) <= SPLIT_GAP_MIN * 60e3))
+}
+/* The other halves of a group's visits (either side of midnight), from the visit list. */
+// deno-lint-ignore no-explicit-any
+export const splitHalves = (vs: any[], list: any[]) => list.filter((o) => !vs.some((v) => String(v.id) === String(o.id))
+  && vs.some((v) => joinedAtSplit(o, v) || joinedAtSplit(v, o)))
+// deno-lint-ignore no-explicit-any
+const noted = (v: any) => typeof v?.careNote === 'string' && !!v.careNote.trim()
+
 /* Texts only 8am to 9pm Central. */
 export const textHours = (d: Date = new Date()) => { const h = chiHour(d); return h >= 8 && h < 21 }
 const fill = (t: string, x: Record<string, string>) => Object.entries(x).reduce((s, [k, v]) => s.replaceAll('{' + k + '}', v), t).replace(/\s{2,}/g, ' ').trim()
@@ -160,21 +183,29 @@ Deno.serve(async (req) => {
   const { ok: axOk, base, head } = axis()
   if (!axOk) return json({ error: 'AxisCare credentials not set' }, 500)
   const now = Date.now()
-  const out = { live, dry, groups_checked: 0, with_note: 0, missed_found: 0, practice_found: 0, texted: 0, reminded: 0, replies: 0,
+  const out = { live, dry, groups_checked: 0, with_note: 0, overnight_noted: 0, cleared_overnight: 0, missed_found: 0, practice_found: 0, texted: 0, reminded: 0, replies: 0,
     unresolved: 0, drafts: 0, refused: 0, no_phone: 0, held_hours: 0, slowed_down: false }
 
-  /* 1 · find finished groups (every visit clocked out, the last one 60+ min ago, within 30 hours) not yet looked at */
   // deno-lint-ignore no-explicit-any
-  const list: any[] = []
-  let url: string | null = `${base}/api/visits?startDate=${chiDay(now - 864e5)}&endDate=${chiDay(now)}`
-  for (let page = 0; url && page < 20; page++) {
-    const r: Response = await fetch(url, { headers: head })
-    if (!r.ok) return json({ error: 'the visit list answered ' + r.status }, 502)
+  async function visitList(from: string, to: string): Promise<any[] | null> {
     // deno-lint-ignore no-explicit-any
-    const j: any = await r.json().catch(() => ({}))
-    for (const v of rowsOf(j?.results?.visits)) if (v && !v.removed && !isQuiet(v)) list.push(v)
-    url = j?.results?.nextPage ?? j?.nextPage ?? null
+    const got: any[] = []
+    let url: string | null = `${base}/api/visits?startDate=${from}&endDate=${to}`
+    for (let page = 0; url && page < 20; page++) {
+      const r: Response = await fetch(url, { headers: head })
+      if (!r.ok) return null
+      // deno-lint-ignore no-explicit-any
+      const j: any = await r.json().catch(() => ({}))
+      for (const v of rowsOf(j?.results?.visits)) if (v && !v.removed && !isQuiet(v)) got.push(v)
+      url = j?.results?.nextPage ?? j?.nextPage ?? null
+    }
+    return got
   }
+
+  /* 1 · find finished groups (every visit clocked out, within 30 hours) not yet looked at. The list reaches back two
+     days so the first half of an overnight shift is there beside its after-midnight half. */
+  const list = await visitList(chiDay(now - 2 * 864e5), chiDay(now))
+  if (!list) return json({ error: 'the visit list could not be read' }, 502)
   // deno-lint-ignore no-explicit-any
   const groups = new Map<string, any[]>()
   for (const v of list) {
@@ -202,15 +233,30 @@ Deno.serve(async (req) => {
     if (outs.some((t) => !Number.isFinite(t))) continue                     // someone still on the clock, or not started
     const last = Math.max(...outs)
     if (now - last < WAIT_MIN * 60e3 || now - last > LOOKBACK_H * 3600e3) continue
-    if (reads + vs.length > READ_BUDGET) break
+    if (reads + vs.length + 2 > READ_BUDGET) break
     // deno-lint-ignore no-explicit-any
     let full: any[] = []
     for (const v of vs) { const r = await readVisit(String(v.id)); reads++; if (r.limited) { out.slowed_down = true; break } if (r.v) full.push(r.v); await sleep(Number(Deno.env.get('MISSED_NOTES_PAUSE_MS') ?? '250')) }
     if (out.slowed_down) break
     if (full.length !== vs.length) continue                                   // couldn't read them all: try next run
     out.groups_checked++
-    const hasNote = full.some((v) => typeof v?.careNote === 'string' && v.careNote.trim())
+    const hasNote = full.some(noted)
     if (hasNote) { out.with_note++; if (!dry) checked[k] = now; continue }
+    /* an overnight shift split at midnight: the note on its other half covers this half */
+    const halves = splitHalves(vs, list)
+    if (halves.some((h) => !h?.clockOut?.time)) continue                    // the other half is still on the clock: wait
+    let halfNoted = false, halfUnread = false
+    for (const h of halves) {
+      const r = await readVisit(String(h.id)); reads++
+      if (r.limited) { out.slowed_down = true; break }
+      if (!r.v) { halfUnread = true; continue }
+      if (noted(r.v)) { halfNoted = true; break }
+    }
+    if (out.slowed_down) break
+    if (halfNoted) { out.with_note++; out.overnight_noted++; if (!dry) checked[k] = now; continue }
+    if (halfUnread) continue                                                 // couldn't read the other half: try next run
+    /* neither half has a note: still ONE shift, so one miss and one text, raised on the after-midnight half */
+    if (halves.some((h) => vs.some((v) => joinedAtSplit(v, h)))) { if (!dry) checked[k] = now; continue }
     const lastV = full.reduce((a, b) => (Date.parse(String(a?.clockOut?.time)) >= Date.parse(String(b?.clockOut?.time)) ? a : b))
     const [cgId, clId, day] = k.split('|')
     const g = roster.find((x) => String(x?.axiscare_id ?? '') === cgId)
@@ -225,8 +271,47 @@ Deno.serve(async (req) => {
     row.status === 'open' ? out.missed_found++ : out.practice_found++
     checked[k] = now
   }
+  /* 1b · misses recorded before the overnight fix for a half whose other half has the note: not a miss. The row is
+     removed (it never counts) and its Needs Attention card closed. Each row is looked at once, a few per run; rows
+     already in a write-up draft or already entered into AxisCare by the office are left for a person. */
+  const rechecked: Record<string, number> = state.rechecked ?? {}
+  for (const id of Object.keys(rechecked)) if (now - rechecked[id] > 40 * 864e5) delete rechecked[id]
+  if (!dry && !out.slowed_down) {
+    const { data: suspects } = await db.from('missed_notes').select('*').is('draft_id', null).is('entered_at', null).gte('shift_date', chiDay(now - COUNT_DAYS * 864e5))
+    // deno-lint-ignore no-explicit-any
+    const lists = new Map<string, any[] | null>()
+    // deno-lint-ignore no-explicit-any
+    let ops: any[] | null = null
+    let looked = 0
+    for (const r of suspects ?? []) {
+      if (rechecked[r.id] || looked >= 6 || reads >= READ_BUDGET - 2) continue
+      looked++
+      const day = String(r.shift_date).slice(0, 10)
+      const from = chiDay(Date.parse(day + 'T12:00:00Z') - 864e5), to = chiDay(Date.parse(day + 'T12:00:00Z') + 864e5)
+      let L = from >= chiDay(now - 2 * 864e5) ? list : lists.get(from)
+      if (L === undefined) { L = await visitList(from, to); lists.set(from, L) }
+      if (!L) continue
+      const mine = L.filter((v) => String(v?.caregiver?.id) === String(r.axiscare_caregiver_id) && String(v?.client?.id) === String(r.axiscare_client_id) && dayOf(v) === day)
+      let halfNoted = false, unread = false
+      for (const h of mine.length ? splitHalves(mine, L) : []) {
+        const x = await readVisit(String(h.id)); reads++
+        if (!x.v) { unread = true; continue }
+        if (noted(x.v)) { halfNoted = true; break }
+      }
+      if (unread && !halfNoted) continue                                      // try again next run
+      rechecked[r.id] = now
+      if (!halfNoted) continue
+      await db.from('missed_notes').delete().eq('id', r.id)
+      if (ops === null) { const { data: o } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle(); ops = Array.isArray(o?.data) ? o!.data : [] }
+      const card = ops!.find((x) => x?.id === 'ops_mnote_' + r.id && x?.status === 'open')
+      if (card) { const nowIso = new Date().toISOString()
+        await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...card, status: 'done', closed_at: nowIso, closed_by: 'missed-notes', last_activity_at: nowIso,
+          close_reason: 'Not a missed note: this was the after-midnight half of an overnight shift, and the caregiver put the note on the other half.' } }) }
+      out.cleared_overnight++
+    }
+  }
   if (!dry) {
-    await db.rpc('upsert_app_data_item', { target_key: 'missed_notes_state', item: { id: 'state', checked, at: new Date().toISOString() } })
+    await db.rpc('upsert_app_data_item', { target_key: 'missed_notes_state', item: { id: 'state', checked, rechecked, at: new Date().toISOString() } })
     await db.from('missed_notes').delete().eq('status', 'practice').lt('created_at', new Date(now - 7 * 864e5).toISOString())
   }
   if (!live) {
