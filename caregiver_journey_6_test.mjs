@@ -82,7 +82,7 @@ const storage = { from: (bucket) => ({ upload: async (path, body, opts) => { if 
 globalThis.__fakeCreateClient = () => ({ from: table, rpc, storage, auth: { getUser: async (jwt) => ({ sam: { data: { user: { id: 'u-sam', email: 'sam@mo-care.com', app_metadata: {} } }, error: null }, kry: { data: { user: { id: 'u-kry', email: 'krystal@mo-care.com', app_metadata: {} } }, error: null }, cc: { data: { user: { id: 'u-cc', email: 'casey@mo-care.com', app_metadata: {} } }, error: null } })[jwt] || { data: null, error: { message: 'bad' } } } })
 const TMP = path.join(ROOT, '.cj_6_under_test'); fs.rmSync(TMP, { recursive: true, force: true }); fs.cpSync(FN, TMP, { recursive: true })
 for (const p of fs.readdirSync(TMP, { recursive: true })) { const f = path.join(TMP, String(p)); if (!f.endsWith('.ts')) continue; fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = globalThis.__fakeCreateClient').replace(/^import .* from 'https:[^']*'$/mg, '')) }
-let CJ, WL, EXPORT; try { await import(path.join(TMP, 'caregiver-journey', 'index.ts')); const h1 = handler; await import(path.join(TMP, 'caregiver-export', 'index.ts')); EXPORT = handler; handler = h1; CJ = await import(path.join(TMP, '_shared', 'caregiver-journey.ts')); WL = await import(path.join(TMP, '_shared', 'work-lock.ts')) } finally { fs.rmSync(TMP, { recursive: true, force: true }) }
+let CJ, WL, EXPORT, CJI; try { CJI = await import(path.join(TMP, 'caregiver-journey', 'index.ts')); const h1 = handler; await import(path.join(TMP, 'caregiver-export', 'index.ts')); EXPORT = handler; handler = h1; CJ = await import(path.join(TMP, '_shared', 'caregiver-journey.ts')); WL = await import(path.join(TMP, '_shared', 'work-lock.ts')) } finally { fs.rmSync(TMP, { recursive: true, force: true }) }
 const call = async (body, tok) => { const r = await handler(new Request('http://x/caregiver-journey', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(tok ? (tok === 'cron' ? { 'x-cron-secret': env.HUB_JOB_SECRET } : { Authorization: 'Bearer ' + tok }) : {}) }, body: JSON.stringify(body) })); let j = null; try { j = await r.json() } catch {} return { status: r.status, j } }
 const db = globalThis.__fakeCreateClient()
 const OID = '11111111-2222-4333-8444-555555555555'
@@ -159,8 +159,21 @@ DB.welcome_calls = [{ id: 'w1', candidate_id: '901', status: 'done', done_at: '2
 DB.app_data.find((x) => x.key === 'caregivers').data = [{ id: 207, candidate_id: 901, first: 'Ava', last: 'Lee', offer_id: OID, axiscare_id: '9001', connected: { at: '2026-10-12T16:00:00Z', how: 'link' }, hire_date: '2026-10-12', orient_date: '2026-10-12', alz_date: '2026-10-13', ojt_date: '2026-10-20', ojt_online: '2026-10-20', ojt_signed: 'yes' }]
 DB.app_data.find((x) => x.key === 'candidates').data = []
 DB.caregiver_profiles = [{ id: 'pr1', candidate_id: '207', published: true, published_at: '2026-10-13T00:00:00Z', status: 'published' }]
+/* GO-LIVE GATE (2026-10-13): a record-based row is never done before the rows in front of it */
+const wcHeld = DB.welcome_calls; DB.welcome_calls = []
+r = await call({ action: 'sweep' }, 'cron')
+ck('GO-LIVE: orientation on the roster but no Orientation Video Call yet: orientation is NOT verified (nor dementia, OJT or the profile behind it)', !st('cg.training.orientation') && !st('cg.training.dementia') && !st('cg.training.ojt') && !st('cg.welcome.call'), steps().map((x) => x.step_key + ':' + x.state))
+g = await CJ.caregiverGate(db, { candidate_id: 901 }, 'cg.approve.work')
+ck('GO-LIVE gate: a person moved to the roster is still found by their Background & References number (refused, not waved through)', g.allowed === false && g.journey_id === JID, g)
+DB.welcome_calls = wcHeld
 r = await call({ action: 'sweep' }, 'cron')
 ck('sweep 4 (after the move to the roster): Orientation Video Call, orientation, dementia, OJT, the profile AND the AxisCare record (connected) verified from the records', ['cg.welcome.call', 'cg.training.orientation', 'cg.training.dementia', 'cg.training.ojt', 'cg.profile.published', 'cg.axiscare.in_training'].every((k) => st(k)?.state === 'complete') && st('cg.axiscare.in_training').evidence.axiscare_id === '9001', steps().filter((x) => x.state !== 'complete').map((x) => x.step_key + ':' + x.state))
+/* GO-LIVE GATE (2026-10-13): Approve to Work's own "after" rows are all done here, but two required rows (the AxisCare copy
+   sheets) are not: not ready for final approval, and the press refuses with the list */
+r = await call({ action: 'get', offer_id: OID }, 'sam')
+ck('GO-LIVE: every row Approve to Work lists is done but the AxisCare attributes and availability are not: NOT ready for final approval, both named as missing', r.j.approve.ready_for_final === false && r.j.approve.missing.some((m) => /Attributes entered in AxisCare/.test(m)) && r.j.approve.missing.some((m) => /Availability entered in AxisCare/.test(m)) && !r.j.approve.missing.some((m) => /On-the-Job|Annual|AxisCare status Active/.test(m)), r.j.approve)
+r = await call({ action: 'approve_work', journey_id: JID }, 'sam')
+ck('GO-LIVE: the press refuses at press time with what is missing; nothing approved, no AxisCare call, no text', r.status === 409 && /required steps are not complete/.test(r.j.error) && /Attributes entered in AxisCare/.test(r.j.error) && Array.isArray(r.j.missing) && !st('cg.approve.work') && AX.calls.length === 0 && GHL.messages.length === 0, r)
 /* SLICE 7: the copy sheets, then the two office ticks */
 r = await call({ action: 'copy_sheet', journey_id: JID, which: 'attributes' }, 'kry')
 ck('attributes copy sheet: the Step 1 answers in AxisCare order (CNA claimed, drives clients, lived outside Missouri not on it), the default level', r.status === 200 && r.j.rows.some((x) => x.label === 'CNA / HHA (claimed)' && x.value === 'Yes') && r.j.rows.some((x) => x.label === 'Drives clients' && /transport/.test(x.value)) && r.j.rows.some((x) => x.label === 'Approved Level of Care' && /Level 1/.test(x.value)) && !r.j.rows.some((x) => /Missouri/.test(x.label)), r.j)
@@ -248,11 +261,14 @@ r = await rep({ action: 'training_report', axiscare_id: '9002', courses: [{ slug
 ck('training_report without the server secret: refused', r.status === 401)
 r = await rep({ action: 'training_report', axiscare_id: '9002', courses: [{ slug: 'agency-orientation', status: 'complete', completed_at: '2026-10-13T16:00:00Z' }] }, 'wrong')
 ck('training_report with a wrong secret: refused', r.status === 401)
+r = await rep({ action: 'training_report', axiscare_id: '9002', courses: [{ slug: 'agency-orientation', status: 'complete', completed_at: '2026-10-13T16:00:00Z' }] }, env.OUTREACH_SECRET)
+ck('GO-LIVE: orientation reported before the Orientation Video Call is HELD, not done, with an event saying why', r.status === 200 && r.j.applied.length === 0 && r.j.held.includes('cg.training.orientation') && !st2('cg.training.orientation') && DB.client_journey_event.some((e) => e.kind === 'verify_held' && e.journey_id === JID2 && e.step_key === 'cg.training.orientation'), r.j)
+DB.client_journey_step.push({ journey_id: JID2, step_key: 'cg.approve.advance', state: 'complete', completed_at: '2026-10-07T15:00:00Z', completed_by: 'krystal@mo-care.com', version: 1 })
+DB.client_journey_step.push({ journey_id: JID2, step_key: 'cg.welcome.call', state: 'complete', completed_at: '2026-10-08T15:00:00Z', completed_by: 'hub', version: 1 })
 r = await rep({ action: 'training_report', axiscare_id: '9002', courses: [{ slug: 'agency-orientation', title: 'Agency Orientation', status: 'complete', completed_at: '2026-10-13T16:00:00Z' }, { slug: 'dementia-care', title: 'Dementia Care', status: 'waived', completed_at: '2026-10-13T17:00:00Z' }, { slug: 'on-the-job-training', status: 'complete' }, { slug: 'agency-orientation', status: 'in_progress' }] }, env.OUTREACH_SECRET)
 ck('training_report with the secret: orientation (complete) and dementia (waived) verified onto Ben\'s card as reported by the Training Platform, OJT ignored (needs the signed form), the journey learns the AxisCare number', r.status === 200 && r.j.journey === true && r.j.applied.join(',') === 'cg.training.orientation,cg.training.dementia' && st2('cg.training.orientation').completed_by === 'training-platform' && st2('cg.training.orientation').completed_at === '2026-10-13T16:00:00.000Z' && st2('cg.training.dementia').evidence.status === 'waived' && !st2('cg.training.ojt') && DB.client_journey[1].axiscare_caregiver_id === '9002', { r: r.j, s: st2('cg.training.orientation') })
 r = await rep({ action: 'training_report', axiscare_id: '9002', courses: [{ slug: 'agency-orientation', status: 'complete', completed_at: '2026-10-13T16:00:00Z' }] }, env.OUTREACH_SECRET)
 ck('the same report again: nothing re-applied', r.status === 200 && r.j.applied.length === 0)
-DB.client_journey_step.push({ journey_id: JID2, step_key: 'cg.welcome.call', state: 'complete', completed_at: '2026-10-08T15:00:00Z', completed_by: 'hub', version: 1 })
 DB.app_data.find((x) => x.key === 'caregivers').data.find((x) => x.id === 208).axiscare_id = null
 await call({ action: 'sweep' }, 'cron')
 ck('SLICE 7 nudge: Ben\'s Orientation Video Call done Thursday, no AxisCare record connected by Monday 5pm: "Not hired in AxisCare yet", owned by the Staffing Coordinator', ops().some((i) => i.id === 'cj_axhire_' + JID2 && i.owner === 'krystal@mo-care.com' && /Not hired in AxisCare yet: Ben Ray/.test(i.title)), ops().filter((i) => /axhire/.test(i.id)))
@@ -322,5 +338,44 @@ ck('a caregiver hired before the readiness card (no card): the export is built f
 r = await exp({ action: 'export', caregiver_id: '999' }, 'sam')
 ck('an unknown record: 404, nothing logged for it', r.status === 404 && !DB.document_access_log.some((l) => l.offer_id === 'caregiver:999'))
 ck('no identity value appears in any step, event, change-log row or export', !JSON.stringify([DB.client_journey_step, DB.client_journey_event, DB.axiscare_change_log, STORE.uploads.map((u) => u.text)]).match(/\d{3}-\d{2}-\d{4}/))
+/* ═══ GO-LIVE GATE (2026-10-13) ═══ */
+/* a check counts only with its proof */
+let V = CJ.verifyRows({ candidate: { edl: 'Clear', edl_date: '2026-10-10', fcsr: 'Clear', fcsr_date: '2026-10-10', fcsr_proof: 'bgcheck/1/fcsr.pdf', casenet: 'Clear', casenet_date: '2026-10-10', oig: 'CLEAR', oig_date: '2026-10-10', oig_evidence: { source: 'HHS-OIG LEIE', clear: true } } })
+ck('GO-LIVE proof: EDL clear with a date but no proof is NOT verified; FCSR with its proof is; Case.net without proof is not; OIG with the LEIE result kept on the record is', !V.some((v) => v.key === 'cg.check.edl') && V.some((v) => v.key === 'cg.check.fcsr' && v.state === 'complete') && !V.some((v) => v.key === 'cg.check.casenet') && V.some((v) => v.key === 'cg.check.oig' && v.state === 'complete'), V.map((v) => v.key))
+/* a row whose "applies" fact is unknown is missing, never assumed not to apply; OJT and annual never hold the approval */
+const DFS = DEFS.map((d) => ({ key: d.key, active: true, ...d.def }))
+const jx = { subject: 'caregiver' }
+let M = CJI.missingForWork({ rows: [] }, DFS, jx, { facts: {} })
+ck('GO-LIVE: Step 1 answers missing: fingerprints, the CNA/HHA credential and the driver clearance are listed as "not known yet"; OJT and annual are not listed', M.some((m) => /Fingerprint check/.test(m) && /not known yet/.test(m)) && M.some((m) => /CNA or HHA/.test(m)) && M.some((m) => /Cleared to drive/.test(m)) && !M.some((m) => /On-the-Job|Annual in-service/.test(m)), M)
+M = CJI.missingForWork({ rows: [] }, DFS, jx, { facts: { lived_outside_mo: false, claims_cna_or_hha: false, drives_clients: false } })
+ck('GO-LIVE: answered "no" (never lived outside Missouri, no credential, will not drive): those rows do not hold the approval', M.length === 0, M)
+/* the gate fails CLOSED */
+const cardsSeen = []
+const errDb = { from: () => { const q = { select: () => q, eq: () => q, in: () => q, maybeSingle: async () => ({ data: null, error: { message: 'connection reset' } }) }; return q }, rpc: async (n, a) => { cardsSeen.push(a); return { data: null, error: null } } }
+g = await CJ.caregiverGate(errDb, { candidate_id: 4242 }, 'cg.approve.advance')
+ck('GO-LIVE gate: the records cannot be read: REFUSED ("could not confirm, try again"), not allowed; no card the first time', g.allowed === false && g.unconfirmed === true && /could not confirm/.test(g.why) && cardsSeen.length === 0, g)
+g = await CJ.caregiverGate(errDb, { candidate_id: 4242 }, 'cg.approve.advance')
+ck('GO-LIVE gate: the same failure again: refused again and ONE Needs Attention card raised', g.allowed === false && cardsSeen.length === 1 && cardsSeen[0].item.kind === 'readiness_unconfirmed' && cardsSeen[0].item.status === 'open' && !/—/.test(cardsSeen[0].item.detail), cardsSeen)
+const throwDb = { from: () => { throw new Error('boom') }, rpc: async () => ({}) }
+g = await CJ.caregiverGate(throwDb, { offer_id: 'o-1' }, 'cg.step1.references')
+ck('GO-LIVE gate: a thrown error also refuses', g.allowed === false && g.unconfirmed === true, g)
+/* the stalled Step 1 card */
+const OID3 = '33333333-2222-4333-8444-555555555555'
+OFFERS[OID3] = { id: OID3, first_name: 'Cal', last_name: 'Slow', phone: '4175550103', offer_signed_at: '2026-10-01T20:00:00Z', pd_signed_at: '2026-10-01T20:05:00Z', offer_status: 'accepted', onboarding_path: 'new', step1_sent_at: '2026-10-01T20:06:00Z', step1_reminded_at: '2026-10-06T15:00:00Z', step1_reminder_count: 2 }
+await CJ.startCaregiverJourney(db, { id: OID3, first_name: 'Cal', last_name: 'Slow' }, 'offer-sign')
+const JID3 = DB.client_journey.find((x) => x.offer_id === OID3).journey_id
+DB.domains = [{ code: 'recruiting_orientation', entity: 'cc_ihs', owner_person: 'p-kry' }]; DB.persons.find((p) => p.person_id === 'p-kry').primary_email = 'krystal@mo-care.com'
+const stall = () => ops().find((i) => i.id === 'cj_step1stall_' + JID3)
+at('2026-10-08T21:00:00Z')   // Thursday 4pm Chicago: day-4 reminder Tuesday, two business days end Thursday 5pm
+await call({ action: 'sweep' }, 'cron')
+ck('GO-LIVE stall: not yet two business days after the second Step 1 reminder: no card', !stall())
+at('2026-10-08T22:30:00Z')   // Thursday 5:30pm Chicago
+r = await call({ action: 'sweep' }, 'cron')
+ck('GO-LIVE stall: Step 1 not finished two business days after the second reminder: ONE card for the Recruiting & Orientation owner', stall() && stall().status === 'open' && stall().kind === 'step1_stalled' && stall().domain === 'recruiting_orientation' && stall().owner === 'krystal@mo-care.com' && /Step 1 not finished: call Cal Slow/.test(stall().title) && !/—/.test(stall().detail) && r.j.step1_stalled >= 1, stall())
+await call({ action: 'sweep' }, 'cron')
+ck('GO-LIVE stall: the next sweep: still one card', ops().filter((i) => i.id === 'cj_step1stall_' + JID3).length === 1)
+DB.step1_forms.push({ offer_id: OID3, answers: {}, signatures: {}, completed_at: '2026-10-09T15:00:00Z' })
+await call({ action: 'sweep' }, 'cron')
+ck('GO-LIVE stall: Step 1 completes: the card closes on its own', stall().status === 'done')
 for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note))
 const bad = res.filter((x) => !x[1]).length; console.log(`${res.length - bad}/${res.length} passed`); process.exit(bad ? 1 : 0)
