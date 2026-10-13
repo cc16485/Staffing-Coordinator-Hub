@@ -29,6 +29,11 @@ const DB = {
   auth_identities: [{ auth_user_id: 'u-sam', person_id: 'p-sam', project_ref: 'zngsgedlsxinbygwmxwn' }], persons: [{ person_id: 'p-sam', full_name: 'Samantha', active: true }],
   entity_memberships: [{ person_id: 'p-sam', entity: 'cc_ihs', active: true, ended_at: null }], staff_roles: [{ person_id: 'p-sam', entity: 'cc_ihs', role: 'owner_admin' }],
 }
+/* 2026-10-13: the interview notes and the AI review on the journey */
+DB.job_applicants[0].post_interview = { observations: { at: '2026-10-10T15:00:00Z', by: 'Samantha', family: { answer: 'unsure', why: 'SECRET WHY' } } }
+DB.interview_reviews = [{ applicant_id: 'app-1', created_at: '2026-10-10T15:10:00Z', created_by: 'Samantha', kind: 'full', review: { items: [{ id: 's1', section: 'strengths' }, { id: 'c2', section: 'concerns' }, { id: 'c3', section: 'concerns' }, { id: 'm4', section: 'missed' }] },
+  marks: { c2: { mark: 'confirm', task_id: 'irf_x_c2' }, c3: { mark: 'dismiss' } } }]
+DB.app_data.find((k) => k.key === 'ops_items').data.push({ id: 'irf_x_c2', applicant_id: 'app-1', kind: 'interview_followup', title: 'Ask her last agency', created_at: '2026-10-10T15:12:00Z', status: 'done', closed_at: '2026-10-10T16:00:00Z', close_note: 'all good' })
 function table(name) {
   const rows = () => DB[name] || []
   const q = (mode, payload, filters = [], opts = {}) => {
@@ -57,6 +62,7 @@ r = await call({ action: 'get', offer_id: OID }, 'sam')
 ck('2026-10-11: the profile carries the skills picture from Step 1 (task by task, self-reported until confirmed), restrictions, the practice mark', r.j.experience && r.j.experience.practice === true && r.j.experience.skills.map((l) => l.key + ':' + l.standing).join() === 'bathing:self_reported,ostomy_bag:self_reported' && /refresher before doing again: Emptying an ostomy bag/.test(r.j.experience.restrictions.join()) && /Not at this time: Homes with cats/.test(r.j.experience.restrictions.join()), r.j.experience)
 const T = r.j?.timeline || [], txt = T.map((x) => x.type + ' ' + x.what).join('\n')
 ck('the profile: name, practice phone, where they are, every id', r.status === 200 && r.j.name === 'Pat Practice' && r.j.where === 'In Background & References: checks and references' && r.j.ids.candidate_id === 42 && r.j.ids.applicant_id === 'app-1' && r.j.ids.journey_id === 'j1', r.j)
+ck('2026-10-13 timeline: interviewer observations saved, the AI review with what is still to follow up (a dismissed point and a resolved task do not count), and the follow-up task itself; never the notes', /Interview: interviewer observations saved \(family reflection answered\)/.test(txt) && /Interview: AI review \(Analyze Interview\), 1 to follow up/.test(txt) && /Needs Attention: Ask her last agency/.test(txt) && /Card closed: Ask her last agency · all good/.test(txt) && !/SECRET WHY/.test(JSON.stringify(r.j)), txt)
 ck('timeline: applied, the offer sent (practice), opened, signed, Step 1 sent automatically (practice), a form signed by name, Step 1 complete', /received Applied/.test(txt) && /sent Offer sent \(practice: recorded, not sent\)/.test(txt) && /received They opened the offer/.test(txt) && /done Offer letter signed/.test(txt) && /sent Step 1 sent automatically \(practice/.test(txt) && /done Step 1 form signed: Permission for Background Checks and References/.test(txt) && /done Step 1 complete/.test(txt), txt)
 ck('timeline: into Background & References, the OIG check, Step 2 sent (practice), the readiness event, the card, the refused text, the evidence change', /Into Background & References/.test(txt) && /OIG exclusion check recorded/.test(txt) && /Step 2 message \(practice/.test(txt) && /Readiness: Step1 complete/.test(txt) && /card Needs Attention: Step 1 complete/.test(txt) && /refused Not sent \(sms, welcome-call\)/.test(txt) && /changed Evidence: oig_date: from blank to 2026-10-11/.test(txt), txt)
 ck('timeline: oldest first', T.every((x, i) => i === 0 || T[i - 1].at <= x.at))
