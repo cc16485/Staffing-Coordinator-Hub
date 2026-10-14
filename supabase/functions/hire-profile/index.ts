@@ -154,7 +154,20 @@ export async function timeline(db: Any, T: Any, p: Any) {
     for (const h of eh ?? []) push(h.at, 'changed', 'Evidence: ' + evidenceLine(h), h.actor)
   }
   const cards = await list(db, 'ops_items')
-  for (const c of cards.filter((x) => x && ((p.offerId && String(x.offer_id || '') === p.offerId) || (candId != null && String(x.candidate_id ?? '') === String(candId))))) { push(c.created_at || c.first_at, 'card', 'Needs Attention: ' + S(c.title, 140)); if (c.closed_at) push(c.closed_at, 'done', 'Card closed: ' + S(c.title, 100) + (c.close_note || c.close_reason ? ' · ' + S(c.close_note || c.close_reason, 100) : ''), c.closed_by) }
+  /* 2026-10-13 (her "yes to all": show the interview notes and the AI review on the Applicant Journey, office only):
+     when the interviewer's observations were saved, and each AI review with how many points are still to follow up */
+  if (p.app?.id) {
+    const ob = p.app.post_interview?.observations
+    if (ob?.at) push(ob.at, 'done', 'Interview: interviewer observations saved' + (ob.family?.answer ? ' (family reflection answered)' : ''), ob.by)
+    const { data: rv } = await db.from('interview_reviews').select('created_at, created_by, kind, review, marks').eq('applicant_id', p.app.id).order('created_at', { ascending: true })
+    for (const r of rv ?? []) {
+      const items = (r.review?.items ?? []).filter((x: Any) => x.section !== 'strengths'), m = r.marks || {}
+      const done = (id: unknown) => cards.some((c: Any) => c && c.id === id && c.status === 'done')
+      const open = items.filter((x: Any) => { const k = m[x.id] || {}; return k.mark !== 'dismiss' && !(k.task_id && done(k.task_id)) && !(k.mark && !k.task_id) }).length
+      push(r.created_at, 'done', 'Interview: AI review (' + (r.kind === 'check' ? 'check before they left' : 'Analyze Interview') + '), ' + open + ' to follow up', r.created_by)
+    }
+  }
+  for (const c of cards.filter((x) => x && ((p.offerId && String(x.offer_id || '') === p.offerId) || (candId != null && String(x.candidate_id ?? '') === String(candId)) || (p.app?.id && String(x.applicant_id ?? '') === String(p.app.id))))) { push(c.created_at || c.first_at, 'card', 'Needs Attention: ' + S(c.title, 140)); if (c.closed_at) push(c.closed_at, 'done', 'Card closed: ' + S(c.title, 100) + (c.close_note || c.close_reason ? ' · ' + S(c.close_note || c.close_reason, 100) : ''), c.closed_by) }
   return t.sort((a, z) => a.at.localeCompare(z.at))
 }
 
