@@ -420,7 +420,12 @@ Deno.serve(async (req) => {
       misses.sort((a, b) => String(a.shift_date).localeCompare(String(b.shift_date)))
       const name = misses[misses.length - 1].caregiver_name || ('Caregiver ' + cgId)
       const year = new Date(now - 365 * 864e5).toISOString()
-      const prior = past.filter((a) => String(a?.caregiver ?? '') === name && /^Missed care notes/.test(String(a?.reason ?? ''))
+      /* A write-up with the AxisCare caregiver id counts by id only; one without an id by name, as before. */
+      const sameCg = (a: { axiscare_caregiver_id?: unknown; ax_caregiver_id?: unknown; caregiver?: unknown }) => {
+        const aId = String(a?.axiscare_caregiver_id ?? a?.ax_caregiver_id ?? '').trim()
+        return aId ? aId === String(cgId) : String(a?.caregiver ?? '') === name
+      }
+      const prior = past.filter((a) => sameCg(a) && /^Missed care notes/.test(String(a?.reason ?? ''))
         && ['approved', 'issued'].includes(String(a?.status)) && String(a?.created_at ?? '') >= year).length
       const level = LADDER[Math.min(prior, LADDER.length - 1)]
       const id = 'dw_mn_' + cgId + '_' + now.toString(36)

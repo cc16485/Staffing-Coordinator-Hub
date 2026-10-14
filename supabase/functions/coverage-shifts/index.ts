@@ -276,10 +276,20 @@ Deno.serve(async (req) => {
     const nk7 = (s: string) => String(s || '').toLowerCase().replace(/[^a-z]/g, '')
     const knownPairs = new Set((await readKey7('carematch_watch_log')).map((e) => String(e?.id ?? '')))
     const cut30 = Date.now() - 30 * 864e5
-    const callins = new Map<string, number>()
+    /* Call-ins per caregiver (step 4, 2026-10-14): an event that carries the AxisCare caregiver id counts
+       for that id only; an event with no id counts by name, exactly as before. A visit looks up its
+       caregiver's id first, then the name count from id-less events, so a record with an id never
+       lands on a different person who happens to share the name. */
+    // deno-lint-ignore no-explicit-any
+    const cgId7 = (e: any) => String(e?.axiscare_caregiver_id ?? '').trim()
+    const callinsById = new Map<string, number>()
+    const callins = new Map<string, number>()   // id-less events only, keyed by name
     for (const e of await readKey7('attendance_events'))
-      if (e?.type === 'callin' && e?.caregiver && new Date(String(e.created_at || 0)).getTime() > cut30)
-        callins.set(nk7(String(e.caregiver)), (callins.get(nk7(String(e.caregiver))) ?? 0) + 1)
+      if (e?.type === 'callin' && (e?.caregiver || cgId7(e)) && new Date(String(e.created_at || 0)).getTime() > cut30) {
+        const id = cgId7(e)
+        if (id) callinsById.set(id, (callinsById.get(id) ?? 0) + 1)
+        else callins.set(nk7(String(e.caregiver)), (callins.get(nk7(String(e.caregiver))) ?? 0) + 1)
+      }
     const lateHist = new Map<string, number>()
     for (const l of await readKey7('timekeeper_cases'))
       if (l?.kind !== 'clock_out' && l?.caregiver && new Date(String(l.opened_at || 0)).getTime() > cut30)
@@ -318,7 +328,7 @@ Deno.serve(async (req) => {
       if (pairId && !knownPairs.has(pairId) && knownPairs.size)
         risks.push({ kind: 'first_pair', severity: 2, time: s, caregiver: cgName, client: clName,
           detail: `first shift together — worth a mid-shift check call` })
-      const ci = callins.get(nk7(cgName)) ?? 0
+      const ci = (callinsById.get(String(v.caregiver.id)) ?? 0) + (callins.get(nk7(cgName)) ?? 0)
       if (ci >= 2)
         risks.push({ kind: 'callin_history', severity: 3, time: s, caregiver: cgName, client: clName,
           detail: `${ci} call-ins in the last 30 days — have a backup in mind` })

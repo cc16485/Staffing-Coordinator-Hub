@@ -1720,6 +1720,7 @@ Deno.serve(async (req) => {
         }
         await sb.rpc('upsert_app_data_item', { target_key: 'attendance_events', item: {
           id: 'att_cov_' + c.id, caregiver: String(c.calling_off), type: 'callin',
+          ...(c.calling_off_id ? { axiscare_caregiver_id: String(c.calling_off_id) } : {}),
           shift_date: c.shift_date || nowIso().slice(0, 10), shift_time: String(c.shift_time || ''),
           note: `Auto-logged from the coverage case for ${c.client || 'a client'}.`,
           logged_by: 'coverage-engine', created_at: nowIso(), action_id: null,

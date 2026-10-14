@@ -158,6 +158,37 @@ reset(); APP.ops_settings.loops_close_live = false; at('2026-10-07T15:00:00Z'); 
 r = await run(CW, '?evv_review=1')
 ck('review · on demand while switched off: shows the plan, makes nothing', /would make/.test(String(r.evv_review?.card)) && !APP.ops_items.some((i) => /^ops_evvrev_/.test(i.id)), r.evv_review)
 
+/* ── 4b · step 4 (2026-10-14): attendance is matched by the AxisCare caregiver id when the event has one ── */
+const ev = (id, cg, type, d, axId) => ({ id, caregiver: cg, type, shift_date: d, ...(axId ? { axiscare_caregiver_id: axId } : {}) })
+const s4Seed = () => { reset(); APP.ops_settings.loops_close_live = true; at('2026-10-07T05:10:00Z')     // Wed Oct 7, 12:10am Central
+  APP.attendance_watch_state = [{ id: 'state', last_date: '2026-10-05' }]
+  VISITS = [{ id: 9401, caregiver: { id: 601, firstName: 'Joyce', lastName: 'Kim' }, scheduledStartDate: '2026-10-06T09:00:00', clockIn: null, clockOut: { time: '2026-10-06T12:00:00' } }] }
+s4Seed()
+APP.attendance_events = [ev('a1', 'Ann Cole', 'callin', '2026-09-21'), ev('a2', 'Ann Cole', 'callin', '2026-09-22'),
+  ev('a3', 'Ann Cole', 'callin', '2026-10-01', '801'), ev('a4', 'Ann Cole', 'callin', '2026-10-02', '801'),
+  ev('b1', 'Bo Fox', 'callin', '2026-09-21', '911'), ev('b2', 'Bo Fox', 'callin', '2026-09-22', '911'), ev('b3', 'Bo Fox', 'callin', '2026-09-23', '911'),
+  ev('b4', 'Bo Fox', 'callin', '2026-09-24', '912'), ev('b5', 'Bo Fox', 'callin', '2026-09-25', '912'), ev('b6', 'Bo Fox', 'callin', '2026-09-26'),
+  ev('c1', 'Cy Doe', 'tardy', '2026-09-21', '930'), ev('c2', 'Cy Doe', 'tardy', '2026-09-22', '930'), ev('c3', 'Dee Lane', 'tardy', '2026-09-23', '930'),
+  ev('d1', 'Dee Lane', 'tardy', '2026-09-21'), ev('d2', 'Dee Lane', 'tardy', '2026-09-22')]
+APP.ops_items = [{ id: 'ops_att_callin_anncole_202610', status: 'open', kind: 'staffing_issue', title: 'Attendance pattern: Ann Cole: 3 call-ins in 30 days', owner: 'kry@mo-care.com', history: [{ text: 'Called Ann' }], count: 3 }]
+r = await run(CW)
+const ev9401 = APP.attendance_events.find((e) => e.id === 'att_evv_9401_evv_missing_in')
+ck('step4 · the nightly EVV event now carries the AxisCare caregiver id (and still the name)', ev9401?.axiscare_caregiver_id === '601' && ev9401.caregiver === 'Joyce Kim', ev9401)
+const annCards = APP.ops_items.filter((i) => /^ops_att_callin_anncole/.test(i.id))
+ck('step4 · old name-only call-ins and new ones with her id add up (4) on the SAME card id, owner and history kept', annCards.length === 1 && annCards[0].id === 'ops_att_callin_anncole_202610'
+   && annCards[0].owner === 'kry@mo-care.com' && annCards[0].history?.[0]?.text === 'Called Ann' && /4 call-ins/.test(annCards[0].title), annCards)
+ck('step4 · two different people with the same name are counted apart: 3 for one id raises a card, the other id\'s 2 do not add to it', !!item('ops_att_callin_bofox_911_202610') && /3 call-ins/.test(item('ops_att_callin_bofox_911_202610').title)
+   && !item('ops_att_callin_bofox_202610') && !item('ops_att_callin_bofox_912_202610'), APP.ops_items.map((i) => i.id + ' ' + i.title))
+ck('step4 · a record with an id never counts toward another person by name: id 930 typed as "Dee Lane" stays with id 930 (3 tardies), name-only Dee Lane stays at 2 (no card)',
+   !!item('ops_att_tardy_cydoe_202610') && /3 tardies/.test(item('ops_att_tardy_cydoe_202610').title) && !item('ops_att_tardy_deelane_202610'), APP.ops_items.map((i) => i.id + ' ' + i.title))
+/* the same data with NO ids anywhere behaves exactly as before: grouped by the typed name */
+s4Seed()
+APP.attendance_events = [1, 2, 3].map((i) => ev('n' + i, 'Bo Fox', 'callin', '2026-09-2' + i)).concat([ev('n4', 'Bo Fox', 'callin', '2026-09-24'), ev('n5', 'Ann Cole', 'callin', '2026-09-25'), ev('n6', 'Ann Cole', 'callin', '2026-09-26')])
+APP.ops_items = []
+r = await run(CW)
+ck('step4 · id-less events: grouped by name as before (Bo Fox 4 on ops_att_callin_bofox_202610, Ann Cole 2 no card)', /4 call-ins/.test(item('ops_att_callin_bofox_202610')?.title) && !APP.ops_items.some((i) => /anncole/.test(i.id))
+   && APP.ops_items.filter((i) => /^ops_att_/.test(i.id)).length === 1, APP.ops_items.map((i) => i.id))
+
 /* ── 5 · a missed clock-in whose shift is over becomes an EVV fix ── */
 const tkSeed = (live) => { reset(); APP.ops_settings.loops_close_live = live; at('2026-10-06T19:00:00Z')    // 2pm Central
   VISITS = [{ id: 9301, caregiver: { id: 501, firstName: 'Maria', lastName: 'Lopez' }, client: { id: 701, firstName: 'Ruth', lastName: 'Adams' },

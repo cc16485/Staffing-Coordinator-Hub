@@ -144,6 +144,18 @@ reset(); APP.ops_settings = { missed_notes_live: true }; VISITS = []
 APP.discipline_actions = [{ id: 'old', caregiver: 'C9 Test', reason: 'Missed care notes: 3 in 30 days', status: 'issued', created_at: new Date(NOW() - 90 * 864e5).toISOString() }]
 mk(9, 1, chiDay(NOW() - 5 * 864e5), 'recovered'); mk(9, 2, chiDay(NOW() - 4 * 864e5), 'recovered'); mk(9, 3, chiDay(NOW() - 3 * 864e5), 'recovered'); await run()
 ck('a second time within a year: the next level (Written Warning)', APP.discipline_actions.find((a) => a.id !== 'old')?.level === 'Written Warning', APP.discipline_actions)
+/* step 4 (2026-10-14): earlier warnings are matched by the AxisCare caregiver id when the write-up has one */
+const three = () => { mk(9, 1, chiDay(NOW() - 5 * 864e5), 'recovered'); mk(9, 2, chiDay(NOW() - 4 * 864e5), 'recovered'); mk(9, 3, chiDay(NOW() - 3 * 864e5), 'recovered') }
+const lvl = () => APP.discipline_actions.find((a) => !/^old/.test(a.id))?.level
+const OLD = (extra) => ({ id: 'old', caregiver: 'C9 Test', reason: 'Missed care notes: 3 in 30 days', status: 'issued', created_at: new Date(NOW() - 90 * 864e5).toISOString(), ...extra })
+reset(); APP.ops_settings = { missed_notes_live: true }; VISITS = []; APP.discipline_actions = [OLD({ axiscare_caregiver_id: '9' })]; three(); await run()
+ck('step4 · an earlier warning with the same id counts (Written Warning)', lvl() === 'Written Warning', APP.discipline_actions)
+reset(); APP.ops_settings = { missed_notes_live: true }; VISITS = []; APP.discipline_actions = [OLD({ caregiver: 'Someone Else', ax_caregiver_id: '9' })]; three(); await run()
+ck('step4 · ...also by the older ax_caregiver_id field, even when the typed name differs', lvl() === 'Written Warning', APP.discipline_actions)
+reset(); APP.ops_settings = { missed_notes_live: true }; VISITS = []; APP.discipline_actions = [OLD({ axiscare_caregiver_id: '77' }), OLD({ id: 'old2', ax_caregiver_id: '78' })]; three(); await run()
+ck('step4 · a warning with another person\'s id never counts by name, even with the same name (stays Verbal Warning)', lvl() === 'Verbal Warning', APP.discipline_actions)
+reset(); APP.ops_settings = { missed_notes_live: true }; VISITS = []; APP.discipline_actions = [OLD({ caregiver: 'Other Name' })]; three(); await run()
+ck('step4 · a warning with no id and a different name does not count (as before)', lvl() === 'Verbal Warning', APP.discipline_actions)
 reset(); APP.ops_settings = { missed_notes_live: true, missed_notes_live_since: new Date(NOW() - 3 * 864e5).toISOString() }; VISITS = []
 mk(9, 1, chiDay(NOW() - 10 * 864e5), 'recovered'); mk(9, 2, chiDay(NOW() - 8 * 864e5), 'recovered'); mk(9, 3, chiDay(NOW() - 2 * 864e5), 'recovered'); await run()
 ck('the count starts at go-live: misses from before the switch never count toward a draft', !APP.discipline_actions.length)
