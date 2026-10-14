@@ -6,7 +6,7 @@
 import fs from 'fs'; import path from 'path'; import vm from 'vm'; import { execFileSync } from 'child_process'
 const ROOT = path.dirname(new URL(import.meta.url).pathname), FN = path.join(ROOT, 'supabase/functions')
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note ?? null).slice(0, 600)])
-const LPN_BASE = process.env.LPN_BASE || '7fcf815c2d26aa84c7c34841ecb290713a11cad0'
+const LPN_BASE = process.env.LPN_BASE || 'e63102942ceb08046a4df5f0aa1ece14aad8ce65'
 const D = await import(path.join(FN, '_shared/step1-documents.ts'))
 const P = await import(path.join(FN, '_shared/positions.ts'))
 const N = await import(path.join(FN, '_shared/nurse-hire.ts'))
