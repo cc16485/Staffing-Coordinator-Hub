@@ -651,10 +651,19 @@ Deno.serve(async (req) => {
         for (const w of (ws || [])) have.add(d + ':' + w)
       const covered = combos.filter(cb => have.has(cb))
       /* They filled the form and these hours are OUTSIDE their windows —
-         their own words narrow it, exactly as promised. */
-      if (!covered.length) continue
+         their own words narrow it, exactly as promised. Unless they ticked
+         "also text me about shifts outside my availability" (2026-10-14):
+         then they stay on the list, flagged, after everyone who fits. */
       const target = Number(a.target_hours)
-      matches.push({ ...base,
+      if (!covered.length) {
+        if (a.outside_ok !== true) continue
+        matches.push({ ...base, covers: `0/${combos.length}`, covers_n: 0, covered_slots: [],
+          outside_ok: true,
+          target_hours: Number.isFinite(target) ? target : null,
+          hours_short: Number.isFinite(target) ? Math.round((target - schedH) * 10) / 10 : null })
+        continue
+      }
+      matches.push({ ...base, outside_ok: a.outside_ok === true,
         covers: `${covered.length}/${combos.length}`,
         covers_n: covered.length,
         covered_slots: covered,
@@ -662,7 +671,8 @@ Deno.serve(async (req) => {
         hours_short: Number.isFinite(target) ? Math.round((target - schedH) * 10) / 10 : null,
       })
     }
-    matches.sort((x, y) => (y.knows_client_visits - x.knows_client_visits)
+    matches.sort((x, y) => ((x.covers_n ? 0 : 1) - (y.covers_n ? 0 : 1))   // outside-their-times (OK'd) people after everyone who fits
+      || (y.knows_client_visits - x.knows_client_visits)
       || (y.covers_n - x.covers_n)
       || ((x.assumed_available ? 1 : 0) - (y.assumed_available ? 1 : 0))   // a stated yes beats an assumed one
       || ((y.hours_short ?? -999) - (x.hours_short ?? -999)))

@@ -238,7 +238,8 @@ export const FORMS: Record<FormKey, Form> = {
     certification: ['The information I gave for my background checks is correct, and it may be used only for the checks I gave permission for.'],
   },
   availability: {
-    key: 'availability', screen: '6', title: 'Caregiver Availability & Scheduling Commitment', version: 2, status: 'approved', signature: 'typed+initials',
+    /* v3 (Samantha, 2026-10-14): one more yes/no, texts about open shifts OUTSIDE their availability (outside_shift_texts) */
+    key: 'availability', screen: '6', title: 'Caregiver Availability & Scheduling Commitment', version: 3, status: 'approved', signature: 'typed+initials',
     sections: [
       { h: 'Why this form is important', p: [
         'At Caring Companions, one of our highest priorities is providing clients with dependable, consistent caregivers. To do that, we hire and schedule caregivers based in part on the committed availability they provide during the hiring process.',
@@ -263,6 +264,7 @@ export const FORMS: Record<FormKey, Form> = {
       { h: 'Travel', items: [{ id: 'max_miles', label: 'Maximum distance I\'m willing to travel', kind: 'choice', options: ['10 miles', '20 miles', '30 miles', '40+ miles'], required: true }] },
       { h: 'Open shift notifications and texts', items: [
         yesno('open_shift_texts', 'I would like to receive notifications for available Open Shifts that match my availability.'),
+        yesno('outside_shift_texts', 'I would also like texts about open shifts outside my availability, in case I am able to take them. I understand I can always say no to those shifts.'),
         /* section 21: the text consent line, refreshed at hire */
         yesno('text_consent', 'You may text me about shifts and schedules at this number.'),
       ] },

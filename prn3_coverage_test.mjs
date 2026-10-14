@@ -117,6 +117,14 @@ ck('a regular opening asked of a PRN member uses the ordinary ongoing ask, not t
 const code = fs.readFileSync(`${FN}/coverage-run/index.ts`, 'utf8')
 ck('automatic waves: PRN who fit get tier 0 (first); PRN who don\'t fit, or any PRN on a regular opening, are left out', /x\.tier = 0; x\.tier_why = 'PRN CNA Team, fits this shift'/.test(code)
    && /cands\.filter\(x => x\.may_autosend && !x\.prn_skip\)/.test(code) && /ongoingW \? 'PRN Team: a regular opening'/.test(code))
+/* 2026-10-14: "also text me about shifts outside my availability" */
+ck('outside their times + said OK: not a fit, but marked outside (asked in their normal place); without the box, the same old no', (() => {
+  const o = M.prnFit(K(), { windows: W(['sun'], ['morning']), outside_ok: true }, false, now), n = M.prnFit(K(), { windows: W(['sun'], ['morning']) }, false, now)
+  const e = M.prnFit(K({ shift_time: '18:00-22:00' }), { windows: W(['sat'], ['morning']), outside_ok: true }, false, now)
+  return o.fit === false && o.outside === true && /said OK to texts outside their times/.test(o.why) && !n.outside && n.why === 'not available Saturdays' && e.outside === true })(), null)
+ck('outside + said OK still respects notice and already working', M.prnFit(K(), { notice: 'few_hours', windows: W(['sun'], ['morning']), outside_ok: true }, false, new Date(nextSat + 'T05:00:00')).why === "needs a few hours' notice"
+   && M.prnFit(K(), { windows: W(['sun'], ['morning']), outside_ok: true }, true, now).why === 'already working then')
+ck('automatic waves: an outside-OK PRN member is not left out and not put first', /else if \(!ongoingW && f\.outside\) \{ x\.outside_ask = true/.test(code))
 ck('nothing in coverage reads or writes pay', !/pay_rates|payRate|\.rate\b|\$20|\$18\b/.test(code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '').replace(/moving to ongoing at \$18/g, '')))
 for (const [n, o, d] of res) console.log((o ? 'PASS' : 'FAIL') + ' · ' + n + (o ? '' : '\n     ' + d))
 console.log(`${res.filter((x) => x[1]).length}/${res.length}`)

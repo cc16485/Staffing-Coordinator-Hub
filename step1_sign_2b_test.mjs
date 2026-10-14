@@ -185,7 +185,7 @@ const consentPdf = STORE[DB.step1_forms[0].pdfs.edl_fcsr_consent]
 ck('the consent PDF shows "On file, ending 3456" and never the number', Buffer.from(consentPdf).includes('ending 3456') && !Buffer.from(consentPdf).includes('529123456') && !Buffer.from(consentPdf).includes('1990-05-05'))
 
 /* ═══ availability (initials), experience, vehicle, done ═══ */
-await call({ action: 'save', ...link, screen: '6', answers: { windows: { Monday: { Morning: true, Afternoon: true, 'Hours (optional)': '7-3' }, Tuesday: { 'Not available': true } }, hours_ideal: 30, hours_min: 20, hours_max: 40, shift_prefs: ['Morning shifts'], max_miles: '20 miles', open_shift_texts: 'yes', text_consent: 'yes' } })
+await call({ action: 'save', ...link, screen: '6', answers: { windows: { Monday: { Morning: true, Afternoon: true, 'Hours (optional)': '7-3' }, Tuesday: { 'Not available': true } }, hours_ideal: 30, hours_min: 20, hours_max: 40, shift_prefs: ['Morning shifts'], max_miles: '20 miles', open_shift_texts: 'yes', outside_shift_texts: 'yes', text_consent: 'yes' } })
 /* 2026-10-11: every day must be answered (a time or Not available); overnights need the nights */
 r = await call({ action: 'sign', ...link, form: 'availability', typed_name: 'Ava Lee', consent: true, initials: 'al' })
 ck('only Monday and Tuesday answered: refused, naming Wednesday to Sunday', r.status === 400 && /Wednesday, Thursday, Friday, Saturday, Sunday/.test(r.j.error), r)

@@ -117,7 +117,7 @@ export const PRN_NOTICE_H: Record<string, number> = { same_day: 0, few_hours: 3,
 const PRN_NOTICE_WORD: Record<string, string> = { few_hours: 'a few hours', '24h': '24 hours', '48h': '48 hours' }
 const DAY_WORD: Record<string, string> = { mon: 'Mondays', tue: 'Tuesdays', wed: 'Wednesdays', thu: 'Thursdays', fri: 'Fridays', sat: 'Saturdays', sun: 'Sundays' }
 const BAND_WORD: Record<string, string> = { morning: 'mornings', afternoon: 'daytimes', evening: 'evenings', overnight: 'overnights' }
-type PrnMember = { notice: string | null; windows: Record<string, string[]> | null; confirmed_at: string | null }
+type PrnMember = { notice: string | null; windows: Record<string, string[]> | null; confirmed_at: string | null; outside_ok?: boolean }
 // deno-lint-ignore no-explicit-any
 export function isOngoingCase(c: any): boolean {
   return String(c?.kind) === 'interest' || c?.shift_pattern?.kind === 'open_ongoing' || String(c?.reason) === 'open'
@@ -127,8 +127,10 @@ export function bandOf(hhmm: string): string {
   const h = Number(String(hhmm).slice(0, 2))
   return h >= 6 && h < 12 ? 'morning' : h >= 12 && h < 17 ? 'afternoon' : h >= 17 && h < 22 ? 'evening' : 'overnight'
 }
+/* outside: the only reason it doesn't fit is their stated days and times (2026-10-14: those who ticked "also text me about
+   shifts outside my availability" can still be asked; notice and already working still rule them out) */
 // deno-lint-ignore no-explicit-any
-export function prnFit(c: any, p: PrnMember, busy: boolean, nowChicago?: Date): { fit: boolean; why: string | null } {
+export function prnFit(c: any, p: PrnMember, busy: boolean, nowChicago?: Date): { fit: boolean; why: string | null; outside?: boolean } {
   const date = String(c?.shift_date || ''), time = String(c?.shift_time || '')
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d\d:\d\d-\d\d:\d\d$/.test(time)) return { fit: false, why: 'the shift has no date and time yet' }
   const start = time.slice(0, 5)
@@ -136,8 +138,12 @@ export function prnFit(c: any, p: PrnMember, busy: boolean, nowChicago?: Date): 
   const band = bandOf(start)
   const w = p.windows ?? {}
   const onDay = Array.isArray(w[wd]) ? w[wd] : []
-  if (!onDay.length) return { fit: false, why: 'not available ' + (DAY_WORD[wd] || wd) }
-  if (!onDay.includes(band)) return { fit: false, why: 'not available ' + (DAY_WORD[wd] || wd) + ' ' + (BAND_WORD[band] || band) }
+  const outsideWhy = !onDay.length ? 'not available ' + (DAY_WORD[wd] || wd) : !onDay.includes(band) ? 'not available ' + (DAY_WORD[wd] || wd) + ' ' + (BAND_WORD[band] || band) : null
+  if (outsideWhy) {
+    if (!p.outside_ok) return { fit: false, why: outsideWhy }
+    const later = prnFit(c, { ...p, windows: { ...w, [wd]: [...onDay, band] } }, busy, nowChicago)
+    return later.fit ? { fit: false, why: outsideWhy + ' (said OK to texts outside their times)', outside: true } : later
+  }
   const need = PRN_NOTICE_H[String(p.notice ?? '')] ?? 0
   if (need > 0) {
     const now = nowChicago ?? new Date(new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).replace(' ', 'T'))
@@ -161,7 +167,7 @@ async function prnTeamLoad(): Promise<Map<string, PrnMember>> {
       const id = String(t.axiscare_caregiver_id)
       const a = (apps ?? []).find((x: { id: string }) => x.id === t.applicant_id)
       const item = av.find((x) => String(x?.axiscare_id ?? '') === id || String(x?.id ?? '') === id)
-      out.set(id, { notice: a?.prn?.notice ?? null, windows: item?.windows ?? null, confirmed_at: item?.updated_at ?? null })
+      out.set(id, { notice: a?.prn?.notice ?? null, windows: item?.windows ?? null, confirmed_at: item?.updated_at ?? null, outside_ok: item?.outside_ok === true })
     }
   } catch { /* no PRN data = nobody is treated as PRN; everything else unchanged */ }
   return out
@@ -1934,6 +1940,8 @@ Deno.serve(async (req) => {
       if (!pm || !x.may_autosend) continue
       const f = prnFit(c, pm, busyThen.has(String(x.axiscare_id)))
       if (!ongoingW && f.fit) { x.tier = 0; x.tier_why = 'PRN CNA Team, fits this shift'; x.prn_ask = true }
+      /* 2026-10-14: outside their stated times but they asked to hear about those shifts: asked in their normal place, not first */
+      else if (!ongoingW && f.outside) { x.outside_ask = true; x.tier_why = (x.tier_why ? x.tier_why + '; ' : '') + 'outside their stated times, said OK to texts about those' }
       else x.prn_skip = ongoingW ? 'PRN Team: a regular opening' : 'PRN Team: ' + f.why
     }
     stats.prn_first = (Number(stats.prn_first) || 0) + cands.filter((x: any) => x.prn_ask).length

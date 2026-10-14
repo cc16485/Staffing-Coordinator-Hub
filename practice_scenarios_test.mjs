@@ -81,7 +81,7 @@ const base = (o = {}) => ({
   screen3: { jobs: o.jobs, family_care: o.family_care, ...(o.no_jobs ? { no_employer_history: 'yes' } : {}) },
   screen4: { professional_refs: o.pro, personal_refs: o.per, backup_refs: o.backups },
   screen5b: { address1: '1 Practice Way', city: 'Nixa', state: 'MO', zip: '65714' },
-  screen6: { windows: week, hours_ideal: 30, hours_min: 20, hours_max: 40, shift_prefs: ['Morning shifts'], max_miles: '20 miles', open_shift_texts: 'yes', text_consent: 'yes' },
+  screen6: { windows: week, hours_ideal: 30, hours_min: 20, hours_max: 40, shift_prefs: ['Morning shifts'], max_miles: '20 miles', open_shift_texts: 'yes', outside_shift_texts: 'yes', text_consent: 'yes' },
   screen7: { level1: 'Yes', level2: 'Yes', level3: 'Not at this time', specialties: Object.fromEntries(D.SPECIALTIES.map((x) => [x, (o.notNow || []).includes(x) ? 'Not at this time' : 'Yes'])),
     matching_facts: Object.fromEntries(D.MATCHING_FACTS.map((m) => [m.label, (o.notNow || []).includes(m.label) ? 'Not at this time' : 'Yes'])), languages: ['English'], experience: o.experience || '2 to 5 years', preferred_levels: 'Any level I\'m qualified for', ...(o.exclusions ? { exclusions: o.exclusions } : {}) },
   screen8: { transport_willing: 'yes', license_state: 'MO', license_expires: '2029-01-01', insurer: 'Practice Mutual', insurance_expires: '2027-06-30' },
