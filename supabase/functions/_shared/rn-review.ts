@@ -6,6 +6,7 @@
 //   Natasha Early (RN, W-2 employee) signs ONLY what the rules require: every GHE an LPN completes (HCBS 8.00 Appendix 4).
 // deno-lint-ignore-file no-explicit-any
 import { BrandPdf, COMPANY_RIGHT, FOOTER, NAVY, MUTED, GOLD_TEXT, TEXT } from './brand-pdf.ts'
+import { DEFAULT_NURSE_SERVICES, nurseServices, hits } from './nurse-services.ts'   // the ONE nurse service list (Desktop 707)
 type Any = any
 
 /* ── the Level of Care sections, word for word as the Hub's GHE form (index.html GHE_SECTIONS; the test compares them) ── */
@@ -82,29 +83,25 @@ export function uploadDue(visit: unknown): string {
   return a < b ? a : b
 }
 
-/* ── the nurse services: ops_settings.nurse_services (an Admin setting) or this fallback. The default list belongs to the visit
-   check build (_shared/nurse-services.ts, Desktop 707); until it is merged this file keeps the same keys and names from the
-   build spec. Only what is needed here: the key, the name and the AxisCare service names or codes to match. ── */
-export const NURSE_SERVICES_FALLBACK = [
-  { key: 'med_setup', name: 'Weekly medication organizer setup', axis: ['T1001', 'Nurse Visit'] },
-  { key: 'ghe', name: 'General Health Evaluation', axis: ['T1001', 'Nurse Visit'] },
-  { key: 'skin_monitoring', name: 'Skin monitoring', axis: ['T1001', 'Nurse Visit'] },
-  { key: 'nail_care', name: 'Diabetic or medically necessary nail care', axis: ['T1001', 'Nurse Visit'] },
-  { key: 'insulin_prefill', name: 'Insulin syringe prefill', axis: ['T1001', 'Nurse Visit'] },
-]
-export const OTHER_SERVICE = { key: 'other', name: 'Something else', axis: [] as string[] }
-export function servicesOf(st: Any): Array<{ key: string; name: string; axis: string[] }> {
-  const list = Array.isArray(st?.nurse_services) ? st.nurse_services : null
-  const clean = (list || []).filter((s: Any) => s && /^[a-z0-9_]{2,40}$/.test(String(s.key || '')) && S(s.name, 120))
-    .map((s: Any) => ({ key: String(s.key), name: S(s.name, 120), axis: (Array.isArray(s.axis) ? s.axis : []).map((a: unknown) => S(a, 80)).filter(Boolean) }))
-  return clean.length ? clean : NURSE_SERVICES_FALLBACK.map((s) => ({ ...s, axis: [...s.axis] }))
+/* ── the nurse services: ops_settings.nurse_services (an Admin setting) or the ONE built-in list, DEFAULT_NURSE_SERVICES in
+   _shared/nurse-services.ts (the visit check's list, Desktop 707). Both builds read the setting the same way (nurseServices:
+   a service needs a key, a name and at least one match; an inactive one is left out). Here only the key, the name, the
+   AxisCare service names or codes to match, and whether it is the catch-all are needed. ── */
+export const NURSE_SERVICES_FALLBACK = DEFAULT_NURSE_SERVICES.map((s) => ({ key: s.key, name: s.name, axis: [...s.axis], generic: s.generic }))
+export const OTHER_SERVICE = { key: 'other', name: 'Something else', axis: [] as string[], generic: false }
+export function servicesOf(st: Any): Array<{ key: string; name: string; axis: string[]; generic: boolean }> {
+  return nurseServices(st).list.map((s) => ({ key: s.key, name: s.name, axis: [...s.axis], generic: s.generic }))
 }
-/** the services an AxisCare visit matches (its service code, procedure code, description or name, against each service's list) */
-export function visitServices(v: Any, services: Array<{ key: string; axis: string[] }>): string[] {
+/** the services an AxisCare visit matches (its service code, procedure code, description or name, against each service's list),
+ *  as a whole word, the same match as the visit check (nurse-services.ts hits). The named services win; the catch-all
+ *  (any T1001 "Nurse Visit" not named more exactly) is given only when no named service matched. */
+export function visitServices(v: Any, services: Array<{ key: string; axis: string[]; generic?: boolean }>): string[] {
   const s = (v && v.service) || {}
-  const words = [s.code, s.procedureCode, s.description, s.name, v?.serviceCode, v?.serviceName].map((x) => String(x || '').toLowerCase()).filter(Boolean)
+  const words = [s.code, s.procedureCode, s.description, s.name, v?.serviceCode, v?.serviceName, v?.serviceDescription].map((x) => S(x, 300)).filter(Boolean)
   if (!words.length) return []
-  return services.filter((sv) => sv.axis.some((a) => { const t = a.toLowerCase(); return words.some((w) => w === t || new RegExp('\\b' + t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(w)) })).map((sv) => sv.key)
+  const ok = (sv: { axis: string[] }) => sv.axis.some((a) => words.some((w) => hits(w, a)))
+  const named = services.filter((sv) => !sv.generic && ok(sv)).map((sv) => sv.key)
+  return named.length ? named : services.filter((sv) => sv.generic && ok(sv)).map((sv) => sv.key)
 }
 
 /* ── nurses: the same reading as the Hub's nurse-rules.js (cred RN or LPN, our employee, license number and a current expiry) ── */
