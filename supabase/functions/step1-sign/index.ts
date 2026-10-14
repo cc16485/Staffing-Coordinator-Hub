@@ -558,7 +558,10 @@ Deno.serve(async (req) => {
         return json({ ok: true, may_reveal: mayReveal, ttl_seconds: REVEAL_TTL_MS / 1000, fields: REVEAL_FIELDS,
           identity: idr ? { ...identState(idr), license_state: idr.license_state, license_expires: idr.license_expires, captured_at: idr.captured_at, reveals: idr.reveals, purged_at: idr.purged_at, purge_after: idr.purge_after } : null,
           facts: { first: S(o?.first_name, 60), last: S(o?.last_name, 60), phone: S(o?.phone, 30), email: S(o?.email, 160), preferred_name: S(a.preferred_name, 80), other_names: S(a.other_names, 200),
-            lived_outside_mo: a.lived_outside_mo ?? null, states_lived: Array.isArray(a.states_lived) ? a.states_lived : [], address: [a.address1, a.address2, [a.city, a.state, a.zip].filter(Boolean).join(' ')].map((x) => S(x, 120)).filter(Boolean).join(', ') },
+            lived_outside_mo: a.lived_outside_mo ?? null, states_lived: Array.isArray(a.states_lived) ? a.states_lived : [], address: [a.address1, a.address2, [a.city, a.state, a.zip].filter(Boolean).join(' ')].map((x) => S(x, 120)).filter(Boolean).join(', '),
+            /* 2026-10-14 (5b v5): the facts the state's FCSR forms ask for, for the Hub's FCSR sheet. A Step 1 signed before
+               v5 never had these questions: each is '' and the sheet says "not collected". */
+            middle_name: S(a.middle_name, 60), suffix: S(a.suffix, 10), birth_name: S(a.birth_name, 120), gender: S(a.gender, 10), county: S(a.county, 60) },
           consent_signed_at: (fr?.signatures as Record<string, { at?: string }> | undefined)?.edl_fcsr_consent?.at ?? null, step1_completed_at: fr?.completed_at ?? null, reveals_log: log ?? [] })
       }
       // reveal

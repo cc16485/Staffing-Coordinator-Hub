@@ -11,7 +11,7 @@
 // screening package list is TO CONFIRM (her decision 4). Fictional practice only until each is approved.
 // 2026-10-13 APPROVED: Samantha, 2026-10-13, 'approve step 1 forms', wording page version 5. All thirteen forms (a person
 // signs twelve: the Driver or the Non-Driver Agreement) are status 'approved' at the versions in APPROVED_FOR_REAL below.
-export const STEP1_VERSION = 5   // 2026-10-13: the permission form (5a v2) replaces the FCRA draft; application v4, details v4. Before: 2026-10-11 (her approval of the Step 1 previews): the application and the reference consent at version 3 (tasks per job, family care, backup references); the vehicle form and the EDL/FCSR consent at version 3; two forms at version 2; the FCRA draft at version 1
+export const STEP1_VERSION = 6   // 2026-10-14: the details form (5b) at version 5 (five facts the state's FCSR forms ask for: middle name, suffix, birth name, gender, county; and the line on registering), beside the availability form at version 3 (approved the same morning). Before: 2026-10-13: the permission form (5a v2) replaces the FCRA draft; application v4, details v4. Before: 2026-10-11 (her approval of the Step 1 previews): the application and the reference consent at version 3 (tasks per job, family care, backup references); the vehicle form and the EDL/FCSR consent at version 3; two forms at version 2; the FCRA draft at version 1
 export type FormKey = 'employee_application' | 'reference_consent' | 'fcra_disclosure' | 'edl_fcsr_consent' | 'availability' | 'experience' | 'vehicle' | (string & {})
 /** 'approved': Samantha approved this form's wording for real applicants (2026-10-13, see APPROVED_FOR_REAL); a new wording starts
     again as 'proposed' at a new version until she approves that version */
@@ -225,14 +225,24 @@ export const FORMS: Record<FormKey, Form> = {
     ],
   },
   /* v4 (2026-10-13): the permission and the EDL/FCSR explanations moved to screen 5a; this form keeps only the details the
-     checks need. Key kept as edl_fcsr_consent. */
+     checks need. Key kept as edl_fcsr_consent.
+     v5 (2026-10-14, Samantha "ok great, approved!" on the 5b wording page, record supabase/step1-approved-2026-10-14.json):
+     the five facts the state's FCSR forms ask for that Step 1 did not collect (middle name, suffix, birth name, gender,
+     county) and the line on registering with the Registry. Suffix is required ("None" is a choice, so nobody skips it by
+     accident); gender offers only the two choices the state's form gives. */
   edl_fcsr_consent: {
-    key: 'edl_fcsr_consent', screen: '5b', title: 'Your Details for the Background Checks', version: 4, status: 'approved', signature: 'typed',
+    key: 'edl_fcsr_consent', screen: '5b', title: 'Your Details for the Background Checks', version: 5, status: 'approved', signature: 'typed',
     sections: [
-      { h: 'For your background checks', p: ['We need these to run the checks you gave permission for on the previous screen and to request your Family Care Safety Registry screening. They are kept encrypted on our server, seen only by the office person who orders your checks, and every look is logged.'], items: [
+      { h: 'For your background checks', p: ['We need these to run the checks you gave permission for on the previous screen and to request your Family Care Safety Registry screening. They are kept encrypted on our server, seen only by the office person who orders your checks, and every look is logged.',
+        "Missouri requires caregivers to be registered with the Family Care Safety Registry. You can see the state's registration form and how to register here: https://health.mo.gov/providers/family-care-safety-registry/forms. If you are not registered yet, we will text and email you the steps."], items: [
         { id: 'ssn', label: 'Social Security number', kind: 'text', required: true, locked: true, note: 'Typed twice, digits only. Never shown again; your record says "on file, ending" with the last four digits.' },
         { id: 'dob', label: 'Date of birth', kind: 'date', required: true, locked: true },
+        text('middle_name', 'Middle name', { note: 'As it is on your Social Security card. Leave it blank if you do not have one.' }),
+        { id: 'suffix', label: 'Suffix', kind: 'choice', options: ['None', 'Jr.', 'Sr.', 'II', 'III', 'IV'], required: true },
+        text('birth_name', 'Your full name at birth, if it is different from your name now', { note: 'For example, a maiden name. Leave it blank if it is the same.' }),
+        { id: 'gender', label: 'Gender', kind: 'choice', options: ['Male', 'Female'], required: true, note: 'The Family Care Safety Registry form asks for this, and these are the two choices it gives.' },
         text('address1', 'Street address', { required: true }), text('address2', 'Apartment / unit'), text('city', 'City', { required: true }), { id: 'state', label: 'State', kind: 'choice', options: STATES, required: true }, text('zip', 'Zip code', { required: true }),
+        text('county', 'County', { required: true, note: 'The county you live in, for example Greene or Christian.' }),
       ] },
     ],
     certification: ['The information I gave for my background checks is correct, and it may be used only for the checks I gave permission for.'],
@@ -611,6 +621,10 @@ export async function formFingerprint(key: FormKey): Promise<string> {
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 /** Which forms may be signed for real: only the ones Samantha has approved, by version.
+    LATEST: Samantha, 2026-10-14 14:38:26 UTC, "ok great, approved!", on the screen 5b wording page
+    (https://claude.ai/artifact/Gj2NFJSbr2DFVR6m6K7LFf, artifact version 1791988544-e4d9): the details form (edl_fcsr_consent)
+    at version 5. supabase/step1-approved-2026-10-14.json lists every form in force with its version and wording fingerprint
+    (and which approval covers it); the two 2026-10-13 records below stay as they were, as history.
     APPROVED: Samantha, 2026-10-13, 'approve step 1 forms', wording page version 5 (https://claude.ai/artifact/KuoJ2LomuVaBtoHr5RZ8Tj,
     built from this file by launch/review/tools/build_wording_page.py; rebuilt from main before this change and byte-identical to the page she
     read). Her message: 2026-10-13 20:09:53 UTC (3:09 pm Central). Every version and wording fingerprint is in
@@ -619,7 +633,9 @@ export async function formFingerprint(key: FormKey): Promise<string> {
 export const APPROVED_FOR_REAL: Partial<Record<FormKey, number>> = {
   /* availability 3: APPROVED by Samantha, 2026-10-14 14:44:57 UTC, "approve availability v3" (the outside-hours texts question);
      record: supabase/step1-approved-availability-2026-10-14.json. Version 2 was in the 2026-10-13 approval. */
-  employee_application: 4, reference_consent: 3, fcra_disclosure: 2, edl_fcsr_consent: 4, availability: 3, experience: 2,
+  employee_application: 4, reference_consent: 3, fcra_disclosure: 2, availability: 3, experience: 2,
+  /* 2026-10-14: version 5 (was 4 on 2026-10-13); record supabase/step1-approved-2026-10-14.json */
+  edl_fcsr_consent: 5,
   vehicle: 5, non_driver: 2, employment_agreement: 1, medication_policy: 1, code_of_ethics: 1, hipaa_privacy: 1, client_rights: 1,
   /* APPROVED: Samantha, 2026-10-13 about 22:30 UTC, "ok approve your way", on the Hepatitis B approval page v1
      (https://claude.ai/artifact/3BZSmkpvjXBRJPRtzCSmk3); record: supabase/step1-approved-hepb-2026-10-13.json */

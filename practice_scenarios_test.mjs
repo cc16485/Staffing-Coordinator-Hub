@@ -80,7 +80,7 @@ const base = (o = {}) => ({
   screen2: { preferred_name: o.first, lived_outside_mo: 'no', hs_name: 'Nixa High', cna: 'no', hha: 'no', moving_violations: 'no', license_suspended: 'no', convicted: 'no' },
   screen3: { jobs: o.jobs, family_care: o.family_care, ...(o.no_jobs ? { no_employer_history: 'yes' } : {}) },
   screen4: { professional_refs: o.pro, personal_refs: o.per, backup_refs: o.backups },
-  screen5b: { address1: '1 Practice Way', city: 'Nixa', state: 'MO', zip: '65714' },
+  screen5b: { address1: '1 Practice Way', city: 'Nixa', state: 'MO', zip: '65714', suffix: 'None', gender: 'Female', county: 'Christian' },   // 2026-10-14: 5b v5 asks suffix, gender, county
   screen6: { windows: week, hours_ideal: 30, hours_min: 20, hours_max: 40, shift_prefs: ['Morning shifts'], max_miles: '20 miles', open_shift_texts: 'yes', outside_shift_texts: 'yes', text_consent: 'yes' },
   screen7: { level1: 'Yes', level2: 'Yes', level3: 'Not at this time', specialties: Object.fromEntries(D.SPECIALTIES.map((x) => [x, (o.notNow || []).includes(x) ? 'Not at this time' : 'Yes'])),
     matching_facts: Object.fromEntries(D.MATCHING_FACTS.map((m) => [m.label, (o.notNow || []).includes(m.label) ? 'Not at this time' : 'Yes'])), languages: ['English'], experience: o.experience || '2 to 5 years', preferred_levels: 'Any level I\'m qualified for', ...(o.exclusions ? { exclusions: o.exclusions } : {}) },
