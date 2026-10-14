@@ -521,3 +521,16 @@ export function liveCard(r: R, t: Task, i: number, owner: { email: string; name:
     history: [{ at: iso, by: 'AI (call follow-ups)', text: `Made from ${what} with ${who}, ${chicago(r.call_at)}${owner ? '; ' + owner.name + ' ' + (t.owner?.via || 'owns this area') : '; nobody owns this area yet'}` }],
   }
 }
+
+/* ── WHICH OFFICE LINE (2026-10-13, her "I want all numbers we have in our subaccount to be linked") ───────────────
+   Each reading keeps the office number the call or text came in on (detail.line), so the Hub can count readings per
+   line and a number that never shows up stands out. GoHighLevel names the two ends of a message to/from: the office end
+   is "to" on an inbound message and "from" on an outbound one. Never the caller's number. '' when GoHighLevel did not say. */
+// deno-lint-ignore no-explicit-any
+export function lineOf(m: any, contactPhone = ''): string {
+  const ten = (v: unknown) => { const d = String(v ?? '').replace(/\D/g, ''); return d.length === 11 && d[0] === '1' ? d.slice(1) : d.length === 10 ? d : '' }
+  const theirs = ten(contactPhone)
+  const office = m?.direction === 'inbound' ? [m?.to, m?.meta?.call?.to] : [m?.from, m?.meta?.call?.from]
+  for (const v of office) { const t = ten(v); if (t && t !== theirs) return `(${t.slice(0, 3)}) ${t.slice(3, 6)}-${t.slice(6)}` }
+  return ''
+}

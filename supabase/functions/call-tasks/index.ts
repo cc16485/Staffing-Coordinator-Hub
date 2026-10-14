@@ -32,7 +32,7 @@ import Anthropic from 'npm:@anthropic-ai/sdk'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { seatHolder } from '../_shared/duty.ts'
 import { VERSION, MODEL, ACK, request, retryRequest, clean, answerOf, openCards, transcriptText, shortName, related as relatedOf, workflows,
-  ownerFor, dueFor, dueEnd, checkRequest, cleanCheck, nextStatus, cardIdFor, liveCard, chicago, LIVE_KIND, type CallIn, type Who, type OpenCard, type Earlier, type Related, type Action } from '../_shared/call-tasks.ts'
+  ownerFor, dueFor, dueEnd, checkRequest, cleanCheck, nextStatus, cardIdFor, liveCard, chicago, lineOf, LIVE_KIND, type CallIn, type Who, type OpenCard, type Earlier, type Related, type Action } from '../_shared/call-tasks.ts'
 
 const GHL = 'https://services.leadconnectorhq.com'
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
@@ -221,6 +221,7 @@ Deno.serve(async (req) => {
       const m = await fetch(`${GHL}/conversations/messages/${encodeURIComponent(s.message_id)}`, { headers: H(tok) })
       const mj: Any = m.ok ? await m.json().catch(() => ({})) : {}
       const msg: Any = mj?.message ?? mj ?? {}
+      row.line = lineOf(msg)
       const tr = await fetch(`${GHL}/conversations/locations/${encodeURIComponent(loc)}/messages/${encodeURIComponent(s.message_id)}/transcription`, { headers: H(tok) })
       const text = tr.ok ? transcriptText(await tr.json().catch(() => null)) : ''
       if (!text) {
@@ -235,6 +236,7 @@ Deno.serve(async (req) => {
       if (msg.contactId) {
         try { const r = await fetch(`${GHL}/contacts/${encodeURIComponent(msg.contactId)}`, { headers: H(tok, '2021-07-28') }); if (r.ok) ct = (await r.json())?.contact || {} } catch { /* name stays as seen */ }
       }
+      row.line = lineOf(msg, String(ct.phone || ''))
       /* 3 · who, by the identity layer */
       const { data: w } = await db.rpc('call_who', { p_phone: String(ct.phone || '') })
       const who: Who = w && typeof w === 'object' ? w : { match: 'none' }
@@ -277,6 +279,7 @@ Deno.serve(async (req) => {
       row.error = String((e as Error)?.message || e).slice(0, 300); out.errors++
     }
     if (row.error) { out.could_not_read++; if (row.attempt >= MAX_TRIES) out.failed++ }
+    row.detail = { ...(row.detail || {}), line: row.line || '' }; delete row.line
     const { error: iErr } = await db.from('call_task_reading').insert(row)
     if (iErr && !/duplicate/i.test(iErr.message)) { out.errors++; out.save_failed = (out.save_failed || 0) + 1; continue }
     out.read++
@@ -347,7 +350,7 @@ async function readTexts(db: Any, ai: Any, hub: Any, tok: string, loc: string, s
       const lastOut = [...msgs].reverse().find((m: Any) => m.direction !== 'inbound' && Date.parse(String(m.dateAdded || '')) < Date.parse(String(last.dateAdded)))
       const fresh = inb.filter((m: Any) => !lastOut || String(m.dateAdded) > String(lastOut.dateAdded))
       bursts.push({ id: 'sms:' + String(last.id), at: String(last.dateAdded), contactId: String(cv.contactId || last.contactId || ''), phone: String(cv.phone || ''), name: String(cv.fullName || cv.contactName || ''),
-        thread: msgs.slice(-15), fresh: fresh.length ? fresh : [last] })
+        thread: msgs.slice(-15), fresh: fresh.length ? fresh : [last], line: lineOf(last, String(cv.phone || '')) })
     } catch { /* one conversation never stops the run */ }
   }
   if (!bursts.length) return res
@@ -387,6 +390,7 @@ async function readTexts(db: Any, ai: Any, hub: Any, tok: string, loc: string, s
       }
     } catch (e) { row.error = String((e as Error)?.message || e).slice(0, 300); res.errors++ }
     if (row.error && row.attempt >= MAX_TRIES) res.failed++
+    row.detail = { ...(row.detail || {}), line: bx.line || '' }
     const { error: iErr } = await db.from('call_task_reading').insert(row)
     if (iErr && !/duplicate/i.test(iErr.message)) { res.errors++; res.search_failed = true; continue }
     res.read++

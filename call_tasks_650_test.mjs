@@ -396,6 +396,14 @@ try {
   ck('LIVE switch off: practice as before, nothing written to Work', !DB.writes.includes('ops_items') && !('live_cards' in j) && DB.call_task_reading.every((r) => r.mode === 'practice'), j)
   ck('LIVE helpers: urgency and due words', lib.urgencyFor('now') === 'urgent' && lib.urgencyFor('today') === 'today' && lib.urgencyFor('routine') === 'normal' && lib.domainFor('evv_timekeeping') === 'scheduling_coverage' && lib.domainFor('payroll') === 'money'
     && Math.abs(Date.parse(lib.liveDue({ urgency: 'now' })) - Date.now() - 3600e3) < 5000 && lib.stepLines([{ kind: 'text_family_update', to: 'Barbara', draft: 'Hi Barbara', waits_for_yes: false }])[0] === 'Text the family an update (Barbara): "Hi Barbara"')
+
+  // ── WHICH OFFICE LINE (2026-10-13) ──
+  ck('LINE: the office end is "to" on an inbound message and "from" on an outbound one, written (417) 234-8494', lib.lineOf({ direction: 'inbound', from: '+14175550467', to: '+14172348494' }, '+14175550467') === '(417) 234-8494'
+    && lib.lineOf({ direction: 'outbound', from: '+14178156423', to: '+14175550467' }) === '(417) 815-6423' && lib.lineOf({ direction: 'inbound', meta: { call: { to: '4172348494' } } }) === '(417) 234-8494')
+  ck('LINE: never the caller\'s own number; nothing said is an empty line', lib.lineOf({ direction: 'inbound', to: '+14175550467' }, '+1 (417) 555-0467') === '' && lib.lineOf({}) === '' && lib.lineOf(null) === '')
+  liveReset(); DB.app_data[0].data.call_tasks_live = false; DB.app_data[0].data.call_tasks_practice = true
+  ;[s, j] = await run(h, 'cron')
+  ck('LINE: every reading keeps a line field in its detail (no new column)', DB.call_task_reading.length === 2 && DB.call_task_reading.every((r) => 'line' in (r.detail || {}) && !('line' in r)), DB.call_task_reading.map((r) => r.detail))
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 
 // ── 5. the SQL in a real Postgres ──
