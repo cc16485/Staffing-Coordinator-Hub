@@ -49,9 +49,12 @@ globalThis.fetch = async (url, o) => {
   if (url.includes('/contacts/upsert')) { const dnd = String(body.phone || '').endsWith(DND)
     return new Response(JSON.stringify({ contact: { id: 'C:' + body.phone, dnd: false, ...(dnd ? { dndSettings: { SMS: { status: 'active' } } } : {}) } }), { status: 200 }) }
   if (url.includes('/conversations/messages')) { if (GHL_FAIL) return new Response('{}', { status: 500 }); SENT.push({ to: body.contactId, text: body.message }); return new Response('{}', { status: 200 }) }
+  /* 2026-10-14: the live AxisCare check for one caregiver (her rule: AxisCare is the truth for active) */
+  { const m = url.match(/axiscare\.com\/api\/caregivers\/(\d+)$/); if (m) { if (globalThis.AX_DOWN) return new Response('{}', { status: 503 })
+    const off = (globalThis.AX_INACTIVE || new Set()).has(m[1]); return new Response(JSON.stringify({ results: { caregiver: { id: Number(m[1]), status: { active: !off, label: off ? 'Terminated' : 'Active' } } } }), { status: 200 }) } }
   return new Response('{}', { status: 404 })
 }
-const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'k', GHL_TOKEN: 'g', GHL_LOCATION_ID: 'loc' }
+const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'k', GHL_TOKEN: 'g', GHL_LOCATION_ID: 'loc', AXISCARE_API_KEY: 'a', AXISCARE_SITE: '16485' }
 let handler; globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (h) => { handler = h } }
 const F = 'supabase/functions', tmp = fs.mkdtempSync(path.join(process.cwd(), '_tag_'))
 try {
@@ -71,6 +74,16 @@ try {
 
   reset(); let r = await draft(); ck('nobody blocked: the draft says so and the text goes', r.j.blocked === null, r.j)
   r = await send(); ck('...sent', r.j.outcome === 'sent' && SENT.length === 1, r.j)
+  /* 2026-10-14 HER RULE: AxisCare is the truth for active; asked live every time, fail closed */
+  reset(); globalThis.AX_INACTIVE = new Set(['11']); r = await draft()
+  ck('2026-10-14: active on the Hub list but NOT active in AxisCare: the draft says so', /Ariel Smith is not active in AxisCare \(Terminated\)/.test(r.j.blocked), r.j)
+  r = await send(); ck('...and the send is refused on the server, nothing sent', r.j.outcome === 'refused' && /not active in AxisCare/.test(r.j.error) && !SENT.length, r.j)
+  globalThis.AX_INACTIVE = new Set(); reset(); globalThis.AX_DOWN = true; r = await send()
+  ck('2026-10-14: AxisCare can\'t be read: nobody is texted, and the reason says so', r.j.outcome === 'refused' && /AxisCare couldn't be checked/.test(r.j.error) && !SENT.length, r.j)
+  globalThis.AX_DOWN = false; reset()
+  { const G = await import(path.join(process.cwd(), F, '_shared/shift-ask-gate.ts'))
+    const why = await G.shiftAskBlock(globalThis.__db, { cg: { first: 'No', last: 'Number', phone: '4175550909' }, name: 'No Number', axId: '', client: '' })
+    ck('2026-10-14: no AxisCare number (someone still onboarding): never texted about a shift', /No Number has no AxisCare number/.test(why || ''), why) }
 
   reset(); setK('coverage_do_not_offer', [{ name: 'Ariel Smith', reason: 'asked for fewer texts' }])
   r = await draft(); ck('No shift texts (by name): the draft shows why', /Ariel Smith is on the No shift texts list \(asked for fewer texts\)/.test(r.j.blocked), r.j)

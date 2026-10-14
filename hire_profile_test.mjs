@@ -95,5 +95,11 @@ r = await call({ action: 'get', offer_id: '99999999-2222-4333-8444-555555555555'
 ck('nobody: not found', r.status === 404, r)
 const src = fs.readFileSync(path.join(FN, 'hire-profile/index.ts'), 'utf8')
 ck('reads only (the one write is the open log); CORS from day one; no em dash', !/\.update\(|\.delete\(|\.upsert\(/.test(src) && /OPTIONS/.test(src) && !/—/.test(src))
+/* 2026-10-14: Team Builder's batch read of stages (for planning) */
+r = await call({ action: 'stages', applicant_ids: ['app-1', 'nobody'] }, 'sam')
+{ const a = r.j?.stages?.['app-1']
+  ck('stages: one read for many applicants: their offer, the stage the profile shows, Step 1 signed of total, next step; an unknown one does not break the rest', r.status === 200 && a && a.offer_id === OID && typeof a.stage === 'string' && a.stage.length > 0 && (!a.step1 || a.step1.of >= a.step1.signed) && r.j.stages.nobody, r.j) }
+r = await call({ action: 'stages', applicant_ids: ['app-1'] })
+ck('stages: never without a staff sign-in', r.status === 401 || r.status === 403, r.status)
 for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '  ' + note))
 const bad = res.filter((x) => !x[1]).length; console.log(`${res.length - bad}/${res.length} passed`); process.exit(bad ? 1 : 0)
