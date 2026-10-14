@@ -9,8 +9,9 @@
 // AxisCare number whose active differs from AxisCare's gets AxisCare's, through caregiver_active_patch (only `active` and
 // the note of why, only if nobody changed that caregiver since this run read it). Not changed, only listed for the office:
 // an AxisCare number AxisCare doesn't know, and an active Hub caregiver with no AxisCare number.
-// Holds (changes nothing, says why) when AxisCare can't be read, its list was cut short, or the run would change more than
-// a third of the Hub's caregivers at once (something is wrong with the read, not 30 people leaving overnight).
+// Holds (changes nothing, says why) when AxisCare can't be read, its list was cut short, or a live run would change more
+// than a third of the Hub's caregivers at once that were NOT on the last list the office could see (a bad read, not 30
+// people leaving overnight); a list she has seen goes through.
 // PRACTICE until ops_settings.roster_follow_axis_live === true: works it all out and writes the list (marked practice),
 // changes no caregiver. ?dry=1 is always practice and writes nothing.
 // The list: app_data 'roster_axis_follow' {at, mode, changes[], not_in_axiscare[], no_number[], held?}.
@@ -74,10 +75,20 @@ Deno.serve(async (req) => {
   const roster: Any[] = cgRow!.data
   const p = plan(roster, census.rows)
   const report: Any = { at, mode, axiscare_total: census.total, hub_total: roster.length, ...p }
-  if (p.changes.length > Math.max(5, Math.floor(roster.length * MAX_SHARE))) {
-    report.held = `It would change ${p.changes.length} of ${roster.length} caregivers at once, more than a third, so nothing was changed. Check AxisCare, then tell Claude.`
-    await save(report); await beat(false, report.held)
-    return json({ ok: false, mode, held: report.held, would_change: p.changes.length })
+  /* THE BRAKE (2026-10-14, after 722: the first check found 26 of 70, real drift, and held). It counts only people who were
+     NOT on the last list the office could see (practice or held), so a list she has reviewed goes through when she turns the
+     switch on, while a sudden big change (a bad AxisCare read) still holds. Practice never holds: it changes nobody. */
+  const { data: prevRow } = await db.from('app_data').select('data').eq('key', 'roster_axis_follow').maybeSingle()
+  const seenBefore = new Set((Array.isArray(prevRow?.data?.changes) ? prevRow!.data.changes : []).map((c: Any) => String(c?.id) + '>' + String(c?.to)))
+  const fresh = p.changes.filter((c: Any) => !seenBefore.has(c.id + '>' + c.to))
+  const cap = Math.max(5, Math.floor(roster.length * MAX_SHARE))
+  if (fresh.length > cap) {
+    report.big = `${p.changes.length} of ${roster.length} caregivers differ from AxisCare (${fresh.length} new since the last list), more than a third at once.`
+    if (live) {
+      report.held = report.big + ' Nothing was changed. If this list is right, the next run applies it (it is on the list now); if not, check AxisCare and tell Claude.'
+      await save(report); await beat(false, report.held)
+      return json({ ok: false, mode, held: report.held, would_change: p.changes.length })
+    }
   }
   if (live) {
     for (const c of p.changes) {
@@ -98,8 +109,7 @@ Deno.serve(async (req) => {
   }
   /* keep earlier live changes on the list (newest first, last 200) so the office can always see who the Hub changed */
   if (!dry) {
-    const { data: prev } = await db.from('app_data').select('data').eq('key', 'roster_axis_follow').maybeSingle()
-    const hist = Array.isArray(prev?.data?.history) ? prev!.data.history : []
+    const hist = Array.isArray(prevRow?.data?.history) ? prevRow!.data.history : []
     report.history = [...p.changes.filter((c: Any) => c.result === 'changed').map((c: Any) => ({ ...c, at })), ...hist].slice(0, 200)
   }
   await save(report)
