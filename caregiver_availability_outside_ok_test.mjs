@@ -33,6 +33,8 @@ try {
   ck('a save keeps the rest of the record (their Step 1 details)', DB.caregiver_availability[0].step1?.hours_min === 20 && DB.caregiver_availability[0].source === 'self', DB.caregiver_availability)
   r = await call({ phone: '417-555-0107', action: 'confirm' })
   ck('"Still right" keeps the box', r.j.confirmed === true && DB.caregiver_availability[0].outside_ok === true, DB.caregiver_availability)
+  r = await call({ phone: '417-555-0107', action: 'confirm', outside_ok: false })
+  ck('"Keep it the same" saves the box as it stands on the page, and dates the confirmation', r.j.confirmed === true && DB.caregiver_availability[0].outside_ok === false && Date.now() - Date.parse(DB.caregiver_availability[0].updated_at) < 60e3, DB.caregiver_availability)
   const inv = fs.readFileSync(path.join(F, 'caregiver-availability/index.ts'), 'utf8')
   ck('the invite text mentions the outside-hours choice, no em dash', /You can also tell us if you'd like texts about shifts outside those hours\./.test(inv) && !/—/.test(inv.match(/`Hi \{first_name\}[^`]*`/)[0]))
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }

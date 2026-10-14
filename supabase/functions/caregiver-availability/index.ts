@@ -198,7 +198,8 @@ Deno.serve(async (req) => {
   if (b.action === 'confirm') {
     if (!existing || !existing.windows || !Object.values(existing.windows).some((v) => Array.isArray(v) && v.length))
       return json({ error: 'there is nothing on file to confirm yet: choose your days and times below and save' }, 400)
-    const item = { ...existing, updated_at: new Date().toISOString(), source: 'self' }
+    /* 2026-10-14: "Keep it the same" also saves the outside-hours box as it stands on the page (not sent = keep what is on file) */
+    const item = { ...existing, ...(typeof b.outside_ok === 'boolean' ? { outside_ok: b.outside_ok } : {}), updated_at: new Date().toISOString(), source: 'self' }
     const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'caregiver_availability', item })
     if (error) return json({ error: 'could not save, try again: ' + error.message }, 500)
     await answered('still_right')
