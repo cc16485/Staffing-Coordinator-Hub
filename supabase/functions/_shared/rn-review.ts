@@ -144,6 +144,16 @@ export function sigImage(typedName: string, line: string): string {
 }
 /** the words she agrees to before signing (the step1-sign e-sign consent, for this form) */
 export const ESIGN_WORDS = 'I agree to sign this General Health Evaluation electronically as the supervising RN who reviewed it, and I understand my typed name has the same effect as my handwritten signature.'
+/* ── DECISION 1 on the nurse wording page (2026-10-14), NOT IN FORCE: a GHE can reach "Ready for Fusion" without the participant's
+   signature today, but HCBS 8.00 Appendix 4 has BOTH the participant and the nurse sign before the form goes to Fusion. When
+   Samantha approves the fix this is set to true here AND in the Hub's ghe-forms-rules.js (PARTICIPANT_SIGNS_BEFORE_FUSION),
+   then Natasha's signature waits for the participant's (the form already went to her with it, once the Hub rule is on). ── */
+export const PARTICIPANT_SIGNS_BEFORE_FUSION = false
+/** the reason Natasha may not sign yet because the participant has not signed, or null (always null while the rule is off) */
+export function participantBlocker(g: Any, on: boolean = PARTICIPANT_SIGNS_BEFORE_FUSION): string | null {
+  if (!on || S(g?.sig_part, 40)) return null
+  return 'The participant (or their representative) has not signed the form yet. Both the participant and the nurse sign before it goes to Fusion (HCBS 8.00 Appendix 4).'
+}
 export const SIGN_VERSION = 1
 /** a full name typed: first and last, and it holds the names on her nurse record */
 export function typedOk(typed: string, name: string): boolean {

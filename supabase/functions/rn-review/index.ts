@@ -40,7 +40,7 @@ import { logOpen, ipOf } from '../_shared/doc-log.ts'
 import { practicePerson } from '../_shared/optout.ts'
 import { testPerson } from '../_shared/test-people.ts'
 import { businessDaysWaiting, centralYmd } from '../_shared/business-days.ts'
-import { readable, uploadDue, servicesOf, visitServices, OTHER_SERVICE, norm, credOf, rnReady, supervisorOf, nurseByName, nurseByEmail, needsRn, mineToReview,
+import { participantBlocker, readable, uploadDue, servicesOf, visitServices, OTHER_SERVICE, norm, credOf, rnReady, supervisorOf, nurseByName, nurseByEmail, needsRn, mineToReview,
   flagRnName, practiceNurse, practiceClient, sigImage, ESIGN_WORDS, SIGN_VERSION, typedOk, formFingerprint, gheReviewPdf } from '../_shared/rn-review.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -256,6 +256,7 @@ function signBlockers(g: Any, c: Caller, cx: Ctx): string[] {
   if (!c.rn || !mineToReview(g, c.rn, cx.staff, cx.today)) out.push(S(g.rn_reviewer) ? `This form is for ${S(g.rn_reviewer)} to review.` : 'Only the supervising RN reviews a form with no reviewing RN picked.')
   if (!S(g.sig_nurse, 40)) out.push('The nurse has not signed the form.')
   if (S(g.sig_sup, 40)) out.push('This form already has a Supervisory Nurse signature.')
+  const pb = participantBlocker(g); if (pb) out.push(pb)   /* decision 1, off until she approves (PARTICIPANT_SIGNS_BEFORE_FUSION) */
   return out
 }
 
