@@ -85,6 +85,11 @@ else:
 ok_, r = sql(REF, "select key, case when jsonb_typeof(data) = 'array' then jsonb_array_length(data) else null end as n from public.app_data "
                   "where key in ('nurse_clients', 'medicaid_plans', 'nurse_staff', 'ghe_forms', 'ghe_watch')")
 if ok_: say("  · what the check reads: " + ", ".join(f"{x['key']} {x['n']}" for x in sorted(r, key=lambda x: x["key"])))
+# the GHE due ladder stays in ghe-reminders (its months come from Nurse Scheduling's clients, filled by the uploaded state care
+# plan; AxisCare is read only for T1001 visits): shown so she can see what it says today
+ok_, r = sql(REF, "select coalesce(i->>'month', '') as month, coalesce(i->>'stage', '') as stage, count(*)::int as n from public.app_data a, "
+                  "jsonb_array_elements(case when jsonb_typeof(a.data) = 'array' then a.data else '[]'::jsonb end) i where a.key = 'ghe_watch' group by 1, 2 order by 1, 2")
+if ok_: say("  · the GHE watch (ghe-reminders) as of its last run: " + (", ".join(f"{x['month']} {x['stage']} {x['n']}" for x in r) if r else "no GHE months on Nurse Scheduling yet"))
 V0 = versions()
 ok_, ks = http("GET", f"{API}/v1/projects/{REF}/api-keys?reveal=true", headers=MG()); ANON = SVC = ""
 try:
