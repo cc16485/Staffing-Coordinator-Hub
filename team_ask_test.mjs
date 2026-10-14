@@ -49,9 +49,12 @@ globalThis.fetch = async (url, o) => {
   if (url.includes('/contacts/upsert')) { const dnd = String(body.phone || '').endsWith(DND)
     return new Response(JSON.stringify({ contact: { id: 'C:' + body.phone, dnd: false, ...(dnd ? { dndSettings: { SMS: { status: 'active' } } } : {}) } }), { status: 200 }) }
   if (url.includes('/conversations/messages')) { if (GHL_FAIL) return new Response('{}', { status: 500 }); SENT.push({ to: body.contactId, text: body.message }); return new Response('{}', { status: 200 }) }
+  /* 2026-10-14: the live AxisCare check for one caregiver (her rule: AxisCare is the truth for active) */
+  { const m = url.match(/axiscare\.com\/api\/caregivers\/(\d+)$/); if (m) { if (globalThis.AX_DOWN) return new Response('{}', { status: 503 })
+    const off = (globalThis.AX_INACTIVE || new Set()).has(m[1]); return new Response(JSON.stringify({ results: { caregiver: { id: Number(m[1]), status: { active: !off, label: off ? 'Terminated' : 'Active' } } } }), { status: 200 }) } }
   return new Response('{}', { status: 404 })
 }
-const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'k', GHL_TOKEN: 'g', GHL_LOCATION_ID: 'loc' }
+const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'k', GHL_TOKEN: 'g', GHL_LOCATION_ID: 'loc', AXISCARE_API_KEY: 'a', AXISCARE_SITE: '16485' }
 let handler; globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (h) => { handler = h } }
 const F = 'supabase/functions', tmp = fs.mkdtempSync(path.join(process.cwd(), '_ta_'))
 try {
@@ -72,7 +75,7 @@ try {
   reset(); r = await call({ action: 'draft', plan_id: 'tb1', caregiver_axiscare_id: '11', caregiver_name: 'Ariel Smith' })
   ck('draft: caregiver first name, phone last 4 only, no opt-out', r.j.caregiver.first === 'Ariel' && r.j.caregiver.phone_last4 === '0101' && !JSON.stringify(r.j).includes(ARIEL) && r.j.caregiver.opt_out.length === 0, r.j)
   ck('draft: client first name from the Journey person, town, Start Contract target, saved care line', r.j.client.first === 'Maryann' && r.j.client.town === 'Nixa' && r.j.client.start_target === '2099-10-05' && r.j.client.care_line === 'Help with meals and short walks', r.j.client)
-  ck('draft: never touches GoHighLevel', CALLS.length === 0, CALLS)
+  ck('draft: never touches GoHighLevel (only the read-only AxisCare active check, 2026-10-14)', CALLS.every((u) => /axiscare\.com\/api\/caregivers\/\d+$/.test(u)), CALLS)
   ck('draft: default template has no street address placeholder', r.j.template.includes('{when}') && !r.j.template.includes('{address}'), r.j.template)
   reset(); r = await call({ action: 'draft', plan_id: 'tb2', caregiver_axiscare_id: '22', caregiver_name: 'Opal Out' })
   ck('draft: an opted-out caregiver is flagged before anyone writes the text', r.j.caregiver.opt_out.some((x) => x.includes('opted out')), r.j)
