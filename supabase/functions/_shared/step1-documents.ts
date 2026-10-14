@@ -238,7 +238,8 @@ export const FORMS: Record<FormKey, Form> = {
     certification: ['The information I gave for my background checks is correct, and it may be used only for the checks I gave permission for.'],
   },
   availability: {
-    key: 'availability', screen: '6', title: 'Caregiver Availability & Scheduling Commitment', version: 2, status: 'approved', signature: 'typed+initials',
+    /* v3 (Samantha, 2026-10-14): one more yes/no, texts about open shifts OUTSIDE their availability (outside_shift_texts) */
+    key: 'availability', screen: '6', title: 'Caregiver Availability & Scheduling Commitment', version: 3, status: 'approved', signature: 'typed+initials',
     sections: [
       { h: 'Why this form is important', p: [
         'At Caring Companions, one of our highest priorities is providing clients with dependable, consistent caregivers. To do that, we hire and schedule caregivers based in part on the committed availability they provide during the hiring process.',
@@ -263,6 +264,7 @@ export const FORMS: Record<FormKey, Form> = {
       { h: 'Travel', items: [{ id: 'max_miles', label: 'Maximum distance I\'m willing to travel', kind: 'choice', options: ['10 miles', '20 miles', '30 miles', '40+ miles'], required: true }] },
       { h: 'Open shift notifications and texts', items: [
         yesno('open_shift_texts', 'I would like to receive notifications for available Open Shifts that match my availability.'),
+        yesno('outside_shift_texts', 'I would also like texts about open shifts outside my availability, in case I am able to take them. I understand I can always say no to those shifts.'),
         /* section 21: the text consent line, refreshed at hire */
         yesno('text_consent', 'You may text me about shifts and schedules at this number.'),
       ] },
@@ -615,7 +617,9 @@ export async function formFingerprint(key: FormKey): Promise<string> {
     supabase/step1-approved-2026-10-13.json. A changed word is a new version, and a new version is NOT approved until she
     approves it and it is added here: until then a real applicant cannot sign it (practice and training hires still can). */
 export const APPROVED_FOR_REAL: Partial<Record<FormKey, number>> = {
-  employee_application: 4, reference_consent: 3, fcra_disclosure: 2, edl_fcsr_consent: 4, availability: 2, experience: 2,
+  /* availability 3: APPROVED by Samantha, 2026-10-14 14:44:57 UTC, "approve availability v3" (the outside-hours texts question);
+     record: supabase/step1-approved-availability-2026-10-14.json. Version 2 was in the 2026-10-13 approval. */
+  employee_application: 4, reference_consent: 3, fcra_disclosure: 2, edl_fcsr_consent: 4, availability: 3, experience: 2,
   vehicle: 5, non_driver: 2, employment_agreement: 1, medication_policy: 1, code_of_ethics: 1, hipaa_privacy: 1, client_rights: 1,
   /* APPROVED: Samantha, 2026-10-13 about 22:30 UTC, "ok approve your way", on the Hepatitis B approval page v1
      (https://claude.ai/artifact/3BZSmkpvjXBRJPRtzCSmk3); record: supabase/step1-approved-hepb-2026-10-13.json */

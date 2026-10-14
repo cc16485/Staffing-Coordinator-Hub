@@ -201,6 +201,11 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
     why: 'a PRN CNA whose availability is 60+ days old gets one check-in text with a one-tap link; weekdays 10 to 5 '
       + 'Central (enforced in the function), max 20 a day. Practice until ops_settings.prn_reconfirm_live. '
       + 'Cron: prn-reconfirm, weekdays 16:30 UTC (Desktop 358).' },
+  'availability-checkin': { class: 'routine_internal', scheduled: true,
+    why: 'every active caregiver (not nurses, not the PRN Team) whose availability is 30+ days old or not on file gets one text '
+      + 'with their own link: keep it the same or update it, and the outside-hours box (Samantha 2026-10-14). Weekdays 10 to 5 '
+      + 'Central (enforced in the function), max 25 a run, AxisCare-active only. Practice until ops_settings.avail_checkin_live. '
+      + 'Cron: availability-checkin, weekdays 17:00 UTC.' },
   'shift-confirm':      { class: 'routine_internal', scheduled: true,
     why: 'one morning text to each caregiver listing their own shifts today, deliberately '
       + 'before the external window — it exists to surface problems before they become no-shows. '

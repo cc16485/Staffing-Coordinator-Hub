@@ -1,0 +1,22 @@
+{
+ "what": "Samantha's approval of the Availability & Scheduling Commitment form version 3 in Step 1 for real applicants",
+ "approved_by": "Samantha",
+ "approved_at": "2026-10-14T14:44:57Z",
+ "approved_at_note": "her chat reply, recorded at 14:44:57 UTC (9:44 am Central)",
+ "her_words": "approve availability v3",
+ "change": "Version 2 plus one yes/no under 'Open shift notifications and texts' (outside_shift_texts): \"I would also like texts about open shifts outside my availability, in case I am able to take them. I understand I can always say no to those shifts.\" Nothing else changed.",
+ "source": "chat, Step 1 availability v3 (Staffing PR #427)",
+ "fingerprint": "formFingerprint(key): SHA-256 of formText(key) in supabase/functions/_shared/step1-documents.ts",
+ "supersedes": "the availability entry (version 2) in supabase/step1-approved-2026-10-13.json, which stays as the record of that approval",
+ "forms": [
+  {
+   "key": "availability",
+   "title": "Caregiver Availability & Scheduling Commitment",
+   "version": 3,
+   "sha256": "c9418887d86198f93e4860c7351f0447b2283acd04341174da169a47ac43b816",
+   "approved_by": "Samantha",
+   "approved_at": "2026-10-14T14:44:57Z",
+   "source": "chat, Step 1 availability v3 (Staffing PR #427)"
+  }
+ ]
+}

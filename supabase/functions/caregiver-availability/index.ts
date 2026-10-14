@@ -17,6 +17,7 @@
 // Storage: app_data key `caregiver_availability`, one item per caregiver:
 //   { id: <roster id>, name, axiscare_id, phone_digits, target_hours,
 //     windows: { mon:[...], ... sun:[...] }  (values from WINDOW_KEYS),
+//     outside_ok: true | false | null  (2026-10-14: "text me about shifts outside my availability too"),
 //     updated_at, source: 'self' | 'office' }
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -91,7 +92,7 @@ Deno.serve(async (req) => {
       .map((i: any) => String(i.id)))
     const settings = (await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()).data?.data ?? {}
     const tmpl = String(settings.coverage_msg_avail_invite || '') ||
-      `Hi {first_name}, it's Caring Companions! Tell us the hours and days you WANT to work so we can offer you shifts first: cc.mo-care.com/availability It takes 30 seconds and you can update it anytime.`
+      `Hi {first_name}, it's Caring Companions! Tell us the hours and days you WANT to work so we can offer you shifts first: cc.mo-care.com/availability You can also tell us if you'd like texts about shifts outside those hours. It takes 30 seconds and you can update it anytime.`
     const ghl = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
     if (!ghl.token || !ghl.locationId) return json({ error: 'GHL credentials not set' }, 500)
 
@@ -152,7 +153,7 @@ Deno.serve(async (req) => {
     if (hits.length === 0)
       return json({ unknown: true, message: 'We could not match that number. Text or call the office and we will set you up.' })
     if (hits.length > 1)
-      return json({ unknown: true, message: 'That number is on more than one record — call the office and we will sort it out.' })
+      return json({ unknown: true, message: 'That number is on more than one record. Call the office and we will sort it out.' })
     const cg = hits[0]
     name = [String(cg.first || '').trim(), String(cg.last || '').trim()].filter(Boolean).join(' ')
     itemId = String(cg.axiscare_id || ('roster_' + cg.id))
@@ -179,24 +180,28 @@ Deno.serve(async (req) => {
       const raw = Array.isArray(b?.windows?.[d]) ? b.windows[d] : []
       windows[d] = raw.map((w: unknown) => String(w)).filter((w: string) => (WINDOW_KEYS as readonly string[]).includes(w))
     }
+    /* 2026-10-14: the "also text me about shifts outside my availability" box. Not sent (an older page) = keep what is on file. */
+    const outsideOk = typeof b.outside_ok === 'boolean' ? b.outside_ok : (existing?.outside_ok ?? null)
     const item = {
+      ...(existing || {}),
       id: itemId, name, axiscare_id: axId,
-      phone_digits: phone || null, target_hours: target, windows,
+      phone_digits: phone || null, target_hours: target, windows, outside_ok: outsideOk,
       updated_at: new Date().toISOString(), source: 'self',
     }
     const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'caregiver_availability', item })
-    if (error) return json({ error: 'could not save — try again: ' + error.message }, 500)
+    if (error) return json({ error: 'could not save, try again: ' + error.message }, 500)
     await answered('updated')
-    return json({ saved: true, name, message: `Saved, ${name.split(' ')[0]}! The office sees this right away — update it any time.` })
+    return json({ saved: true, name, message: `Saved, ${name.split(' ')[0]}! The office sees this right away. Update it any time.` })
   }
 
   /* PRN4: "Still right": what's on file is confirmed as of today, nothing else changes. */
   if (b.action === 'confirm') {
     if (!existing || !existing.windows || !Object.values(existing.windows).some((v) => Array.isArray(v) && v.length))
       return json({ error: 'there is nothing on file to confirm yet: choose your days and times below and save' }, 400)
-    const item = { ...existing, updated_at: new Date().toISOString(), source: 'self' }
+    /* 2026-10-14: "Keep it the same" also saves the outside-hours box as it stands on the page (not sent = keep what is on file) */
+    const item = { ...existing, ...(typeof b.outside_ok === 'boolean' ? { outside_ok: b.outside_ok } : {}), updated_at: new Date().toISOString(), source: 'self' }
     const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'caregiver_availability', item })
-    if (error) return json({ error: 'could not save — try again: ' + error.message }, 500)
+    if (error) return json({ error: 'could not save, try again: ' + error.message }, 500)
     await answered('still_right')
     return json({ confirmed: true, name, message: `Thank you, ${name.split(' ')[0]}! Your availability is confirmed.` })
   }
@@ -207,6 +212,7 @@ Deno.serve(async (req) => {
     first_name: name.split(' ')[0],
     target_hours: existing?.target_hours ?? null,
     windows: existing?.windows ?? null,
+    outside_ok: existing?.outside_ok ?? null,
     updated_at: existing?.updated_at ?? null,
     via_link: viaLink,
   })

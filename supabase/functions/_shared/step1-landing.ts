@@ -11,7 +11,7 @@ const WINDOWS: Record<string, string> = { Morning: 'morning', Afternoon: 'aftern
 export const STEP1_BY = 'Step 1 (their own answers)'
 const S = (v: unknown, n = 200) => String(v ?? '').trim().slice(0, n)
 
-export type AvailabilityItem = { id: string; name: string; axiscare_id: string; phone_digits: string | null; target_hours: number | null; windows: Record<string, string[]>; updated_at: string; source: 'step1'; step1: Record<string, unknown> }
+export type AvailabilityItem = { id: string; name: string; axiscare_id: string; phone_digits: string | null; target_hours: number | null; windows: Record<string, string[]>; outside_ok: boolean | null; updated_at: string; source: 'step1'; step1: Record<string, unknown> }
 /** The Step 1 grid as the availability record: windows by day, ideal hours as the target. Null when Step 1 holds no grid. */
 export function availabilityItem(a: Record<string, unknown>, who: { id: string | number; name: string; axiscare_id: string | number; phone?: string | null }, at: string): AvailabilityItem | null {
   const grid = a.windows
@@ -26,7 +26,8 @@ export function availabilityItem(a: Record<string, unknown>, who: { id: string |
   const n = (v: unknown) => { const x = Number(v); return Number.isFinite(x) && x > 0 ? x : null }
   const hours: Record<string, string> = {}; for (const [day, row] of Object.entries(grid as Record<string, Record<string, unknown>>)) { const h = S(row?.['Hours (optional)'], 80); if (h && DAYS[day]) hours[DAYS[day]] = h }
   return { id: String(who.id), name: S(who.name, 120), axiscare_id: String(who.axiscare_id), phone_digits: who.phone ? String(who.phone).replace(/\D/g, '') || null : null,
-    target_hours: n(a.hours_ideal), windows, updated_at: at, source: 'step1',
+    /* availability v3 (2026-10-14): "also text me about open shifts outside my availability" (null = not asked, a v2 signer) */
+    target_hours: n(a.hours_ideal), windows, outside_ok: a.outside_shift_texts === 'yes' ? true : a.outside_shift_texts === 'no' ? false : null, updated_at: at, source: 'step1',
     step1: { at, hours_min: n(a.hours_min), hours_max: n(a.hours_max), hours_by_day: hours, shift_prefs: Array.isArray(a.shift_prefs) ? a.shift_prefs : [], overnight_nights: S(a.overnight_nights, 120) || null,
       max_miles: S(a.max_miles, 20) || null, open_shift_texts: a.open_shift_texts ?? null, text_consent: a.text_consent ?? null } }
 }
