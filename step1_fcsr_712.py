@@ -124,7 +124,7 @@ ok_, fr = sql(REF, "select count(*) filter (where not coalesce(practice, false) 
                    "count(*) filter (where not coalesce(practice, false) and (signatures ? 'edl_fcsr_consent'))::int as signed_real from public.step1_forms")
 if not ok_ or not fr: bad(f"could not count the Step 1 records: {fr}")
 else:
-    say(f"  · Step 1 records: {fr[0]['signed_real']} real ones already signed screen 5b (they keep the form they signed, version 4; "
+    say(f"  · Step 1 records: {fr[0]['signed_real']} real ones already signed screen 5b (they keep the form and PDF they signed; "
         f"the Hub's FCSR sheet says \"not collected\" for the five new facts and the office asks); "
         f"{fr[0]['open_unsigned']} real ones under way have not signed it yet (they will see the five new questions)")
 ok_, ks = http("GET", f"{API}/v1/projects/{REF}/api-keys?reveal=true", headers=MG()); ANON = ""
