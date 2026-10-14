@@ -265,6 +265,12 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
      press under the same switch. Caregivers only; never a medical detail in the words. */
   'hepb':               { class: 'routine_internal', scheduled: true,
     why: 'the hepatitis B vaccine offer (no cost, the employee\'s choice) with their private link, after bloodborne pathogens training and within 10 working days of their first client visit; Monday to Saturday 9am to 6pm Central, held outside it, sent once; the office\'s Send link is a person\'s press.' },
+  /* NURSE LICENSE REMINDERS (LPN nurse visit plan, approved 2026-10-14; Desktop 707): 30, 14 and 7 days before a nurse's
+     Missouri license on file expires, one text and one email to that nurse (staff, never a client or family); 8am to 6pm
+     Central, held outside it, each stage once; the opt-out door and their yes to texts; practice (recorded, not sent) while
+     ops_settings.nurse_license_reminders_live is off, except the Admin test people. */
+  'nurse-visit-check':  { class: 'routine_internal', scheduled: true,
+    why: 'license renewal reminders (d30, d14, d7) to a nurse on the Hub\'s nurse list whose license on file is about to expire; 8am to 6pm Central, held outside it, never twice.' },
   'calls-feed':         { class: 'routine_internal', scheduled: false, why: 'internal call reconciliation.' },
   'resend-relay':       { class: 'reactive_external', scheduled: false, why: 'relays a message somebody composed.' },
 }
