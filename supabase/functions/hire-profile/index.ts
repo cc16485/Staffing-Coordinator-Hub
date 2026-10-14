@@ -194,6 +194,24 @@ Deno.serve(async (req) => {
     const who = await requireStaff(db, req, OFFICE_ROLES)
     if (!who.ok) return json({ error: who.error }, who.status)
     const T = trn(), action = S(b.action, 20) || 'get'
+    /* 2026-10-14 (Samantha, Team Builder "for planning": show people who are onboarding and what stage they are in): one
+       read for many applicants, their stage and next step as the profile page works them out. Read only. The readiness
+       card's own stage (caregiver-journey list, by offer) takes over once they have one; the Hub joins the two. */
+    if (action === 'stages') {
+      const ids = (Array.isArray(b.applicant_ids) ? b.applicant_ids : []).map((x: unknown) => S(x, 64)).filter(Boolean).slice(0, 60)
+      const out: Record<string, Any> = {}
+      for (const id of ids) {
+        try {
+          const p = await resolve(db, T, { applicant_id: id })
+          const { data: f } = p.offerId ? await db.from('step1_forms').select('answers, signatures, started_at, completed_at, hepb_form').eq('offer_id', p.offerId).maybeSingle() : { data: null }
+          const st = applicantStatus({ app: p.app, offer: p.offer, step1: f, cand: p.cand, rec: p.rec, journey: p.journey })
+          const s1 = st.step1?.forms ? { signed: st.step1.forms.filter((x: Any) => x.signed_at).length, of: st.step1.forms.length } : null
+          out[id] = { offer_id: p.offerId || null, journey_id: p.journey?.journey_id || null, stage: st.current, ended: st.ended || null,
+            step1: s1, next: st.next ? { title: st.next.title, owner: st.next.owner } : null, approved_at: p.rec?.approved_to_work_at || null }
+        } catch { out[id] = { error: 'could not be read' } }
+      }
+      return json({ ok: true, stages: out })
+    }
     if (action === 'step1_progress') {
       const ids = (Array.isArray(b.offer_ids) ? b.offer_ids : []).map((x: unknown) => S(x, 64)).filter((x: string) => /^[0-9a-f-]{36}$/i.test(x)).slice(0, 100)
       if (!ids.length) return json({ ok: true, progress: {} })
