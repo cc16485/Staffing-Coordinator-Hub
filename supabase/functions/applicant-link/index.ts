@@ -17,7 +17,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { serverSecretOk } from '../_shared/staff-auth.ts'   // SLICE 1d: the server door for the Step 1 sender
-import { letterOnly } from '../_shared/positions.ts'
 import { checkLink, makeOfferLink, makeOrientLink, makeStartLink, okId, type Kind, makeStep1Link } from '../_shared/applicant-links.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -128,7 +127,7 @@ Deno.serve(async (req) => {
           hours_type: S(o.hours_type, 20), classification: S(o.classification, 40), status: S(o.offer_status, 20) || null,
           offer_version: o.offer_version ?? null, pd_version: o.pd_version ?? null, offered_by: S(o.offered_by, 120), sent_at: o.offer_sent_at ?? null,
           expires_at: o.offer_expires_at ?? null, signed_at: o.offer_signed_at ?? null, pd_signed_at: o.pd_signed_at ?? null, declined_at: o.offer_declined_at ?? null,
-          position_key: o.position_key ?? null, letter_only: letterOnly(o) })   /* LPN HIRING 2026-10-14: an LPN or RN offer signs the letter only */
+          position_key: o.position_key ?? null, letter_only: o.position_key === 'lpn' || o.position_key === 'rn' })   /* LPN HIRING 2026-10-14: an LPN or RN offer signs the letter only (positions.ts letterOnly) */
       }
       if (kind === 'start') {
         const o = await offer(id)
