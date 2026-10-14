@@ -246,6 +246,9 @@ ck('the queue after signing: g1 gone from waiting, in recent with a PDF', !r.j.g
 const HUB = process.env.HUB_ROOT
 if (HUB && fs.existsSync(path.join(HUB, 'ghe-forms-rules.js'))) {
   const sb = { module: { exports: {} } }; vm.runInNewContext(fs.readFileSync(path.join(HUB, 'ghe-forms-rules.js'), 'utf8'), sb); const GR = sb.module.exports
+  { const pj = fs.readFileSync(path.join(HUB, 'nurse-review-portal.js'), 'utf8'), m = /const FALLBACK = (\[\[.*?\]\]);/.exec(pj)
+    const fb = m ? JSON.parse(m[1].replace(/'/g, '"')) : null
+    ck('HUB: the Nurse Portal\'s built-in service list (Mark for Natasha) is the ONE list, nurse-services.ts DEFAULT_NURSE_SERVICES, key and name for each', !!fb && JSON.stringify(fb) === JSON.stringify(NS.DEFAULT_NURSE_SERVICES.map((s) => [s.key, s.name])), fb) }
   ck('HUB: decision 1 is the same on both sides: ghe-forms-rules.js PARTICIPANT_SIGNS_BEFORE_FUSION equals rn-review.ts (both false until she approves)', GR.PARTICIPANT_SIGNS_BEFORE_FUSION === RN.PARTICIPANT_SIGNS_BEFORE_FUSION && GR.PARTICIPANT_SIGNS_BEFORE_FUSION === false, GR.PARTICIPANT_SIGNS_BEFORE_FUSION)
   const tr = GR.transition({ ...before, sig_sup: 'x', rn_reviewer: 'Natasha Early' }, 'ready', { staff: NURSES, me: 'natasha@mo-care.com', at: S1.signed_at, reviewer: 'Natasha Early', today: '2026-10-14' })
   ck('HUB: ghe-forms-rules.js transition(form, ready) for this LPN form records exactly what the signature wrote', tr.ok && Object.entries(tr.patch).every(([k, v]) => G1[k] === v) && Object.keys(tr.patch).sort().join() === 'ready_at,ready_by,rn_reviewed_at,rn_reviewed_by,rn_reviewer,status', [tr, G1])
