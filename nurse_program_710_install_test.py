@@ -240,7 +240,7 @@ sys.exit(1)
                                 "no Step 1 record changed: 9 on file, 0 with the nursing license form", "step1_forms.nurse_form and its keep trigger are in"] + [f"{fn} is live as tested" for fn in FNS]), out)
     ck("no switch, no app_data written; the only database changes are the two SQL files and the two schedules; no switch changed",
        not writes_app_data() and "no switch changed (nurse_review_live off, nurse_visit_check_live off, nurse_bill_hold_live off, nurse_license_reminders_live off, nurse_hire_live off)" in out
-       and [q[:40] for q in S["sql"] if re.match(r"(?is)\s*(--|begin|alter|update|insert|delete|create|select cron\.)", q)] == [q[:40] for q in S["sql"] if q.startswith("select cron.")]
+       and not [q[:60] for q in S["sql"] if re.match(r"(?is)\s*(--|begin|alter|update|insert|delete|create|drop|grant|revoke)", q) and q not in (open(os.path.join(W, NURSE_SQL)).read(), open(os.path.join(W, LPN_SQL)).read())]
        and sum(1 for q in S["sql"] if q in (open(os.path.join(W, NURSE_SQL)).read(), open(os.path.join(W, LPN_SQL)).read())) == 2, out)
     ck("the services are called only as a visitor (the public key), except the one practice run with the server key; only the read-only previews of step1-sign and offer-sign",
        all(a == "Bearer eyJanonKEY" for f, a, b, p in S["posts"] if not (f == "nurse-visit-check" and p.endswith("?dry=1"))) and all(b.get("action") == "preview" for f, a, b, p in S["posts"] if f in ("step1-sign", "offer-sign")), S["posts"])
