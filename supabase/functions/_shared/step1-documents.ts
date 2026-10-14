@@ -617,7 +617,9 @@ export async function formFingerprint(key: FormKey): Promise<string> {
     supabase/step1-approved-2026-10-13.json. A changed word is a new version, and a new version is NOT approved until she
     approves it and it is added here: until then a real applicant cannot sign it (practice and training hires still can). */
 export const APPROVED_FOR_REAL: Partial<Record<FormKey, number>> = {
-  employee_application: 4, reference_consent: 3, fcra_disclosure: 2, edl_fcsr_consent: 4, availability: 2, experience: 2,
+  /* availability 3: APPROVED by Samantha, 2026-10-14 14:44:57 UTC, "approve availability v3" (the outside-hours texts question);
+     record: supabase/step1-approved-availability-2026-10-14.json. Version 2 was in the 2026-10-13 approval. */
+  employee_application: 4, reference_consent: 3, fcra_disclosure: 2, edl_fcsr_consent: 4, availability: 3, experience: 2,
   vehicle: 5, non_driver: 2, employment_agreement: 1, medication_policy: 1, code_of_ethics: 1, hipaa_privacy: 1, client_rights: 1,
   /* APPROVED: Samantha, 2026-10-13 about 22:30 UTC, "ok approve your way", on the Hepatitis B approval page v1
      (https://claude.ai/artifact/3BZSmkpvjXBRJPRtzCSmk3); record: supabase/step1-approved-hepb-2026-10-13.json */

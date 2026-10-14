@@ -125,8 +125,11 @@ ck('save: a job lands as a card with its tasks', r.status === 200 && DB.step1_fo
 /* 2026-10-13 (705): Samantha approved all thirteen forms for real ('approve step 1 forms', wording page v5). A changed wording is a
    new version and is refused for a real applicant until she approves it; practice and training hires are not held. */
 { const REC = JSON.parse(fs.readFileSync(path.join(ROOT, 'supabase/step1-approved-2026-10-13.json'), 'utf8'))
-  ck('APPROVED_FOR_REAL holds exactly the thirteen versions of the approval record (Samantha, 2026-10-13, wording page v5), each the version in force', D.FORM_ORDER.length === 14 && REC.forms.length === 13 && REC.forms.map((f) => f.key).join() === D.FORM_ORDER.filter((k) => k !== 'hepb_vaccination').join() && D.APPROVED_FOR_REAL.hepb_vaccination === undefined && REC.forms.every((f) => D.APPROVED_FOR_REAL[f.key] === f.version && D.FORMS[f.key].version === f.version && f.approved_by === 'Samantha' && f.source === 'wording page v5') && Object.keys(D.APPROVED_FOR_REAL).length === 13 && D.allApprovedForReal())
-  let fpOk = true; for (const f of REC.forms) if (await D.formFingerprint(f.key) !== f.sha256) fpOk = false
+  /* 2026-10-14: availability v3 has its own approval record; the later record wins per form */
+  const AVR = JSON.parse(fs.readFileSync(path.join(ROOT, 'supabase/step1-approved-availability-2026-10-14.json'), 'utf8'))
+  const LATEST = REC.forms.map((f) => AVR.forms.find((x) => x.key === f.key) || f)
+  ck('APPROVED_FOR_REAL holds exactly the thirteen versions of the approval record (Samantha, 2026-10-13, wording page v5), each the version in force', D.FORM_ORDER.length === 14 && REC.forms.length === 13 && REC.forms.map((f) => f.key).join() === D.FORM_ORDER.filter((k) => k !== 'hepb_vaccination').join() && D.APPROVED_FOR_REAL.hepb_vaccination === undefined && LATEST.every((f) => D.APPROVED_FOR_REAL[f.key] === f.version && D.FORMS[f.key].version === f.version && f.approved_by === 'Samantha') && REC.forms.every((f) => f.source === 'wording page v5') && Object.keys(D.APPROVED_FOR_REAL).length === 13 && D.allApprovedForReal())
+  let fpOk = true; for (const f of LATEST) if (await D.formFingerprint(f.key) !== f.sha256) fpOk = false
   ck('every approved form\'s wording fingerprint is the one in the approval record (the words she read)', fpOk)
   const pre = JSON.stringify(DB.step1_forms), v0 = D.FORMS.employee_application.version
   D.FORMS.employee_application.version = v0 + 1
