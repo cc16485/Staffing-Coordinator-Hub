@@ -21,6 +21,7 @@ import { logOpen, ipOf } from '../_shared/doc-log.ts'
 import { evidenceLine } from '../_shared/evidence.ts'
 import { experienceSummary } from '../_shared/step1-experience.ts'
 import { applicantStatus } from '../_shared/applicant-status.ts'
+import { tbStage, tbFacts } from '../_shared/team-onboarding.ts'
 import { FORMS, FORM_ORDER, formCount, step1Ctx } from '../_shared/step1-documents.ts'
 type Any = any
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -199,18 +200,25 @@ Deno.serve(async (req) => {
        read for many applicants, their stage and next step as the profile page works them out. Read only. The readiness
        card's own stage (caregiver-journey list, by offer) takes over once they have one; the Hub joins the two. */
     if (action === 'stages') {
+      /* 2026-10-14 (her second ask): Team Builder's four labels (tbStage), for applicants and for new hires still locked
+         (by AxisCare number, through their roster record) */
       const ids = (Array.isArray(b.applicant_ids) ? b.applicant_ids : []).map((x: unknown) => S(x, 64)).filter(Boolean).slice(0, 60)
+      const axs = (Array.isArray(b.caregiver_axids) ? b.caregiver_axids : []).map((x: unknown) => S(x, 12).replace(/\D/g, '')).filter(Boolean).slice(0, 40)
+      const roster = axs.length ? await list(db, 'caregivers') : []
       const out: Record<string, Any> = {}
-      for (const id of ids) {
+      const one = async (key: string, q: Any) => {
         try {
-          const p = await resolve(db, T, { applicant_id: id })
+          const p = await resolve(db, T, q)
           const { data: f } = p.offerId ? await db.from('step1_forms').select('answers, signatures, started_at, completed_at, hepb_form').eq('offer_id', p.offerId).maybeSingle() : { data: null }
           const st = applicantStatus({ app: p.app, offer: p.offer, step1: f, cand: p.cand, rec: p.rec, journey: p.journey })
           const s1 = st.step1?.forms ? { signed: st.step1.forms.filter((x: Any) => x.signed_at).length, of: st.step1.forms.length } : null
-          out[id] = { offer_id: p.offerId || null, journey_id: p.journey?.journey_id || null, stage: st.current, ended: st.ended || null,
-            step1: s1, next: st.next ? { title: st.next.title, owner: st.next.owner } : null, approved_at: p.rec?.approved_to_work_at || null }
-        } catch { out[id] = { error: 'could not be read' } }
+          const tb = tbStage(await tbFacts(db, p, f))
+          out[key] = { offer_id: p.offerId || null, journey_id: p.journey?.journey_id || null, stage: st.current, ended: st.ended || null,
+            step1: s1, next: st.next ? { title: st.next.title, owner: st.next.owner } : null, approved_at: p.rec?.approved_to_work_at || null, tb }
+        } catch { out[key] = { error: 'could not be read' } }
       }
+      for (const id of ids) await one(id, { applicant_id: id })
+      for (const ax of axs) { const rec = roster.find((g: Any) => String(g?.axiscare_id ?? '').replace(/\D/g, '') === ax); if (rec) await one('ax:' + ax, { caregiver_id: rec.id }); else out['ax:' + ax] = { error: 'not on the roster' } }
       return json({ ok: true, stages: out })
     }
     if (action === 'step1_progress') {
