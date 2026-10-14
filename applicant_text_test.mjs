@@ -76,7 +76,7 @@ globalThis.__staff = { ok: true, email: 'krystal@mo-care.com', name: 'Krystal Sm
 reset(); [s, j] = await call({ action: 'draft', id: ID })
 ck('draft: who they are, we may text them, in hours, the sender first name', s === 200 && j.first === 'Dana' && j.can_text === true && j.in_hours === true && j.me === 'Krystal' && j.waits === null, j)
 ck('...her example is the first quick pick, with the names filled in', j.picks[0].key === 'fit' && j.picks[0].text.startsWith('Hi Dana, this is Krystal from Caring Companions. We saw you started an application with us, and we have a client right now who may be a good fit'), j.picks[0])
-ck('...the picks: a client who may fit, still interested, please call, we tried to reach you, write my own', j.picks.map((p) => p.key).join() === 'fit,interested,call,tried,own', j.picks.map((p) => p.key))
+ck('...the picks: a client who may fit, still interested, please call, we tried to reach you, FCSR registration (2026-10-14), write my own', j.picks.map((p) => p.key).join() === 'fit,interested,call,tried,fcsr,own', j.picks.map((p) => p.key))
 ck('...no em dash in any pick', j.picks.every((p) => !/—/.test(p.text)))
 ck('...draft sends nothing and writes nothing', SENT.length === 0 && T.applicant_texts.length === 0)
 reset(); A().status = 'partial'; book(); [s, j] = await call({ action: 'draft', id: ID })
@@ -163,6 +163,55 @@ globalThis.__hours = { allowed: true, reason: 'ok' }
 ck('cancel after 6pm: cancelled now, the message (text and email) waits for 8am', j.cancelled === true && j.held === true && T.interview_bookings[0].status === 'cancelled' && SENT.length === 0 && T.applicant_texts[0].status === 'held' && T.applicant_texts[0].email === 'dana@x.com' && T.applicant_texts[0].email_subject, [j, T.applicant_texts[0]])
 T.applicant_texts[0].send_after = new Date(Date.now() - 1000).toISOString(); globalThis.__job = 'cron'; [s, j] = await call({ action: 'release' }); globalThis.__job = null
 ck('...and at 8am both go', j.released === 1 && SENT.length === 2 && SENT[0].type === 'SMS' && SENT[1].type === 'Email', [j, SENT.map((x) => x.type)])
+
+/* ── 2026-10-14 FCSR registration: the quick pick and its email (Samantha "ok great, approved!", 5b wording page
+   https://claude.ai/artifact/Gj2NFJSbr2DFVR6m6K7LFf). Word for word as approved; Maria and Krystal there, Dana and Krystal here. ── */
+const FCSR_TEXT = 'Hi Dana, this is Krystal from Caring Companions. Next step: please register with the Missouri Family Care Safety Registry (FCSR). You only register once, and after that any employer can run your screening without you registering again. The state fee is $16 (plus $0.57 to pay online). Register here: https://healthapps.dhss.mo.gov/BSEES/Main.aspx You will need your Social Security number, your email and a debit or credit card. We also emailed you the steps. Questions? Call us at (417) 234-8494.'
+const FCSR_SUBJ = 'Your next step: register with the Missouri Family Care Safety Registry'
+const FCSR_PARAS = ['Hi Dana,', 'Your next step is to register with the Missouri Family Care Safety Registry (FCSR). Missouri requires it for caregivers, and you only do it once. After that, any employer can run your screening without you registering again.',
+  'What you need: your Social Security number, your email address, and a debit or credit card. The state fee is $16, plus $0.57 to pay online.',
+  'How to register (about 10 minutes, easiest on a computer in Google Chrome):',
+  'Go to https://healthapps.dhss.mo.gov/BSEES/Main.aspx and click Registration, then Register Online.',
+  'Enter your Social Security number twice and search. If it says you are already registered, you are done. Just let us know.',
+  'When it asks for the employer who asked you to register, choose Caring Companions (Troutman Enterprises, LLC).',
+  'For the registration type, choose Long Term Care/Personal Care, then Personal Care, In-Home Services.',
+  'Enter your information, including any other names you have used, and an email address that is yours.',
+  'Accept the agreement, pay the fee, and save your confirmation.',
+  'When you are done, reply to this email or text us, and we will request your screening.',
+  'Thank you, Krystal Caring Companions In-Home Senior Care (417) 234-8494']
+const plain = (h) => h.replace(/<br>/g, ' ').replace(/<\/(p|li)>/g, '\n').replace(/<[^>]+>/g, '').split('\n').map((x) => x.trim()).filter(Boolean)
+reset(); [s, j] = await call({ action: 'draft', id: ID })
+{ const p = j.picks.find((x) => x.key === 'fcsr')
+  ck('FCSR: the quick pick "FCSR registration", her approved words exactly, the office number as (417) 234-8494, no period right after the link', p && p.label === 'FCSR registration' && p.text === FCSR_TEXT && p.email_subject === FCSR_SUBJ && /Main\.aspx You will need/.test(p.text), p)
+  ck('FCSR: the draft carries the email (subject and words) for the composer to show; not editable', j.fcsr_email && j.fcsr_email.subject === FCSR_SUBJ && JSON.stringify(plain(j.fcsr_email.html)) === JSON.stringify(FCSR_PARAS), j.fcsr_email && plain(j.fcsr_email.html))
+  ck('FCSR: bold "What you need:" and "How to register", a numbered list, the link clickable, the look of the cancellation email, no em dash', /<b>What you need:<\/b>/.test(j.fcsr_email.html) && /<b>How to register<\/b>/.test(j.fcsr_email.html) && (j.fcsr_email.html.match(/<li>/g) || []).length === 6 && /<ol>/.test(j.fcsr_email.html) && /<a href="https:\/\/healthapps\.dhss\.mo\.gov\/BSEES\/Main\.aspx">/.test(j.fcsr_email.html) && /font-family:Arial,sans-serif;font-size:15px/.test(j.fcsr_email.html) && !/—/.test(j.fcsr_email.html + p.text)) }
+reset(); A().email = null; [s, j] = await call({ action: 'draft', id: ID })
+ck('FCSR: no email on file: the draft says no email goes', j.fcsr_email === null && j.picks.some((x) => x.key === 'fcsr'), j.fcsr_email)
+reset(); [s, j] = await call({ action: 'send', id: ID, pick: 'fcsr', message: FCSR_TEXT })
+ck('FCSR send (in hours): the text (STOP added) and the email go, one row with both, through GoHighLevel', s === 200 && j.texted === true && j.emailed === true && SENT.length === 2 && SENT[0].type === 'SMS' && SENT[0].message === FCSR_TEXT + ' Reply STOP to opt out.' && SENT[1].type === 'Email' && SENT[1].subject === FCSR_SUBJ && JSON.stringify(plain(SENT[1].html)) === JSON.stringify(FCSR_PARAS) && !/STOP/.test(SENT[1].html) && T.applicant_texts.length === 1 && T.applicant_texts[0].emailed === true && T.applicant_texts[0].email_subject === FCSR_SUBJ && T.applicant_texts[0].kind === 'text', [j, SENT.map((x) => x.type)])
+reset(); [s, j] = await call({ action: 'send', id: ID, pick: 'fcsr', message: 'Hi Dana, please register with the FCSR. We emailed you the steps.' })
+ck('FCSR: the office edited the text: their words go by text, the email keeps the approved words', j.texted === true && j.emailed === true && SENT[0].message === 'Hi Dana, please register with the FCSR. We emailed you the steps. Reply STOP to opt out.' && JSON.stringify(plain(SENT[1].html)) === JSON.stringify(FCSR_PARAS), SENT)
+reset(); [s, j] = await call({ action: 'send', id: ID, message: FCSR_TEXT })
+ck('FCSR: the same words without the pick: a text only (the email goes only with the pick)', j.texted === true && j.emailed === false && SENT.length === 1 && !T.applicant_texts[0].email_subject, [j, SENT.length])
+reset(); A().email = null; [s, j] = await call({ action: 'send', id: ID, pick: 'fcsr', message: FCSR_TEXT })
+ck('FCSR: no email on file: the text alone', j.texted === true && j.emailed === false && SENT.length === 1 && T.applicant_texts[0].email === null, [j, T.applicant_texts[0]])
+reset(); A().sms_consent = false; [s, j] = await call({ action: 'send', id: ID, pick: 'fcsr', message: FCSR_TEXT })
+ck('FCSR: no yes to texts: the email alone goes (the text is never sent without their yes)', j.texted === false && j.emailed === true && SENT.length === 1 && SENT[0].type === 'Email' && /did not agree to texts/.test(j.not_text), [j, SENT])
+reset(); T.contact_optout_current.push({ address: 'dana@x.com', channel: 'email', opted_out: true, source: 'unsubscribe' }); [s, j] = await call({ action: 'send', id: ID, pick: 'fcsr', message: FCSR_TEXT })
+ck('FCSR: opted out of email (universal door): no email, the text goes, the row says why', j.texted === true && j.emailed === false && SENT.length === 1 && /email: they opted out|email: could not/.test(T.applicant_texts[0].error || ''), [j, T.applicant_texts[0]])
+reset(); A().sms_consent = false; A().email = null; [s, j] = await call({ action: 'send', id: ID, pick: 'fcsr', message: FCSR_TEXT })
+ck('FCSR: no yes to texts and no email: refused, says why, nothing sent', s === 409 && /no email/.test(j.error) && SENT.length === 0 && T.applicant_texts.length === 0, [s, j])
+reset(); globalThis.__hours = { allowed: false, reason: 'outside' }
+;[s, j] = await call({ action: 'send', id: ID, pick: 'fcsr', message: FCSR_TEXT })
+globalThis.__hours = { allowed: true, reason: 'ok' }
+ck('FCSR after 6pm: held, text and email together, nothing goes yet', j.held === true && SENT.length === 0 && T.applicant_texts[0].status === 'held' && T.applicant_texts[0].email === 'dana@x.com' && T.applicant_texts[0].email_subject === FCSR_SUBJ && T.applicant_texts[0].created_by === 'Krystal Smith', [j, T.applicant_texts[0]])
+T.applicant_texts[0].send_after = new Date(Date.now() - 1000).toISOString(); globalThis.__job = 'cron'; [s, j] = await call({ action: 'release' }); globalThis.__job = null
+ck('...at 8am both go, the email signed by the person who pressed Send', j.released === 1 && SENT.length === 2 && SENT[0].message === FCSR_TEXT + ' Reply STOP to opt out.' && SENT[1].subject === FCSR_SUBJ && JSON.stringify(plain(SENT[1].html)) === JSON.stringify(FCSR_PARAS) && T.applicant_texts[0].emailed === true, [j, SENT.map((x) => x.type)])
+reset(); globalThis.__staff = { ok: true, email: 'office@mo-care.com', name: '' }; globalThis.__hours = { allowed: false, reason: 'outside' }
+;[s, j] = await call({ action: 'send', id: ID, pick: 'fcsr', message: 'Hi Dana, this is the office from Caring Companions. Please register with the FCSR.' })
+globalThis.__hours = { allowed: true, reason: 'ok' }; T.applicant_texts[0].send_after = new Date(Date.now() - 1000).toISOString(); globalThis.__job = 'cron'; await call({ action: 'release' }); globalThis.__job = null
+globalThis.__staff = { ok: true, email: 'krystal@mo-care.com', name: 'Krystal Smith' }
+ck('...a sender with no name on file: the released email is signed "the office", as the composer would', SENT.length === 2 && /Thank you,<br>the office<br>/.test(SENT[1].html), SENT[1] && SENT[1].html)
 
 /* ── the file itself ── */
 const src = fs.readFileSync(path.join(FN, 'applicant-text/index.ts'), 'utf8')

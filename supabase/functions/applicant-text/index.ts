@@ -8,10 +8,14 @@
 //   • Signed-in office staff only (requireStaff) for everything but 'release'. The public key gets nothing.
 //   • 'draft'            {id}: who they are, whether we may text them (and why not), the hours, the quick picks with
 //                        the sender's first name filled in. Sends nothing.
-//   • 'send'             {id, message, kind?}: one text, through GoHighLevel (so it shows in Conversations), with the
+//   • 'send'             {id, message, kind?, pick?}: one text, through GoHighLevel (so it shows in Conversations), with the
 //                        STOP line. 8am to 6pm Central; outside that it is HELD (her choice: hold and send at 8am) and
 //                        the 'release' schedule sends it in the morning. Never to someone whose latest application said
 //                        no to texts, never past the universal opt-out. Every send is a row in applicant_texts.
+//                        pick 'fcsr' (2026-10-14, Samantha "ok great, approved!" on the 5b wording page,
+//                        https://claude.ai/artifact/Gj2NFJSbr2DFVR6m6K7LFf): the email with the registration steps goes
+//                        too when we have their email (fixed words, not editable; the text is), through the same gates,
+//                        held with the text after hours, kept on the same applicant_texts row (emailed, email_subject).
 //   • 'cancel_draft'     {id}: the booked time and both cancellation messages (their call / our call).
 //   • 'cancel_interview' {id, by, reason?, message?, send?}: cancels the live booking (interview_cancel, by
 //                        'applicant' or 'office'), marks it so the interview messages job sends nothing of its own,
@@ -44,6 +48,10 @@ const TZ = 'America/Chicago'
 const SENDER_TEXT = 'send-candidate-message (office text)'
 const SENDER_CANCEL = 'send-candidate-message (interview cancelled)'
 const MAX_LEN = 1000
+/* the FCSR registration text and email carry the number as she approved it: (417) 234-8494 */
+export const OFFICE_PHONE = '(417) 234-8494'
+export const FCSR_URL = 'https://healthapps.dhss.mo.gov/BSEES/Main.aspx'
+export const FCSR_SUBJECT = 'Your next step: register with the Missouri Family Care Safety Registry'
 
 const fmtDay = (d: Date) => d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: TZ })
 const fmtTime = (d: Date) => d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: TZ })
@@ -63,7 +71,8 @@ export function nextWindow(now: Date = new Date()): Date {
   return t
 }
 
-export type Pick = { key: string; label: string; text: string }
+/** email_subject: this pick also sends an email (fixed words) when we have their address */
+export type Pick = { key: string; label: string; text: string; email_subject?: string }
 /* The quick picks (her example first). The office edits them; the STOP line is added at send time. */
 export function picks(first: string, me: string, a: { status?: string }, booked?: { day: string; time: string } | null): Pick[] {
   const hi = `Hi ${first}, this is ${me} from Caring Companions.`
@@ -74,6 +83,8 @@ export function picks(first: string, me: string, a: { status?: string }, booked?
     { key: 'tried', label: 'We tried to reach you', text: `${hi} We tried to reach you by phone and could not get through. Reply here or call us at ${OFFICE} when you can.` },
   ]
   if (a.status === 'partial') out.push({ key: 'finish', label: 'Finish the application', text: `${hi} We saw you started an application with us and would love for you to finish it. Any questions, just reply here.` })
+  /* 2026-10-14 (approved wording): no period right after the link, so the link is not broken */
+  out.push({ key: 'fcsr', label: 'FCSR registration', email_subject: FCSR_SUBJECT, text: `${hi} Next step: please register with the Missouri Family Care Safety Registry (FCSR). You only register once, and after that any employer can run your screening without you registering again. The state fee is $16 (plus $0.57 to pay online). Register here: ${FCSR_URL} You will need your Social Security number, your email and a debit or credit card. We also emailed you the steps. Questions? Call us at ${OFFICE_PHONE}.` })
   if (booked) out.push({ key: 'interview', label: 'About their interview', text: `${hi} Just a reminder about your in-person interview at our office on ${booked.day} at ${booked.time}. See you then! Need to change it? Call or text us at ${OFFICE}.` })
   out.push({ key: 'own', label: 'Write my own', text: `${hi} ` })
   return out
@@ -90,6 +101,30 @@ const cancelHtml = (message: string) => {
   return `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36"><p>${body}</p>` +
     `<p>Caring Companions In-Home Senior Care<br>${OFFICE}</p></div>`
 }
+
+/** The FCSR registration email, word for word as Samantha approved it (2026-10-14). Not editable by the office. */
+export function fcsrHtml(first: string, me: string): string {
+  const P = (h: string) => `<p>${h}</p>`
+  return `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
+    P(`Hi ${escHtml(first)},`) +
+    P('Your next step is to register with the Missouri Family Care Safety Registry (FCSR). Missouri requires it for caregivers, and you only do it once. After that, any employer can run your screening without you registering again.') +
+    P('<b>What you need:</b> your Social Security number, your email address, and a debit or credit card. The state fee is $16, plus $0.57 to pay online.') +
+    P('<b>How to register</b> (about 10 minutes, easiest on a computer in Google Chrome):') +
+    '<ol>' +
+    `<li>Go to <a href="${FCSR_URL}">${FCSR_URL}</a> and click Registration, then Register Online.</li>` +
+    '<li>Enter your Social Security number twice and search. If it says you are already registered, you are done. Just let us know.</li>' +
+    '<li>When it asks for the employer who asked you to register, choose Caring Companions (Troutman Enterprises, LLC).</li>' +
+    '<li>For the registration type, choose Long Term Care/Personal Care, then Personal Care, In-Home Services.</li>' +
+    '<li>Enter your information, including any other names you have used, and an email address that is yours.</li>' +
+    '<li>Accept the agreement, pay the fee, and save your confirmation.</li>' +
+    '</ol>' +
+    P('When you are done, reply to this email or text us, and we will request your screening.') +
+    P(`Thank you,<br>${escHtml(me)}<br>Caring Companions In-Home Senior Care<br>${OFFICE_PHONE}`) +
+    '</div>'
+}
+/** the sender's first name as the composer filled it in ('the office' when the person has no name on file); a held row
+    keeps created_by = name || email, so the 8am release signs the email the same way */
+export const meOf = (createdBy: unknown) => { const c = String(createdBy ?? '').trim(); return !c || c.includes('@') ? 'the office' : firstWord(c) }
 
 // deno-lint-ignore no-explicit-any
 type Row = Record<string, any>
@@ -127,7 +162,8 @@ Deno.serve(async (req) => {
       const c = await contactForOutbound(db, ghl, person, 'reactive_external', { ...common, channel: 'email', onOptOut: (r) => { why = 'they opted out of email (' + r.join(', ') + ')' } })
       if (!c) notSent.push('email: ' + (why || 'could not be sent'))
       else {
-        emailed = await ghlSendChecked(db, H, sender, { channel: 'email', contactId: c.contactId, address: a.email, who: whoName }, { subject: row.email_subject, html: cancelHtml(row.message.replace(/ Reply STOP to opt out\.$/, '')) })
+        const html = row.email_subject === FCSR_SUBJECT ? fcsrHtml(String(a.first_name || '').trim() || 'there', meOf(row.created_by)) : cancelHtml(row.message.replace(/ Reply STOP to opt out\.$/, ''))
+        emailed = await ghlSendChecked(db, H, sender, { channel: 'email', contactId: c.contactId, address: a.email, who: whoName }, { subject: row.email_subject, html })
         if (!emailed) notSent.push('email: GoHighLevel did not accept it (a card is on Needs Attention)')
       }
     }
@@ -185,7 +221,7 @@ Deno.serve(async (req) => {
   if (action === 'draft') {
     return json({ ok: true, first, name: [a.first_name, a.last_name].filter(Boolean).join(' '), phone: a.phone || null, email: a.email || null, status: a.status,
       can_text: consent.ok, why_not: consent.ok ? null : consent.why, in_hours: hours.allowed, send_after: window ? window.toISOString() : null, waits,
-      booked, me, picks: picks(first, me, a, booked) })
+      booked, me, picks: picks(first, me, a, booked), fcsr_email: a.email ? { subject: FCSR_SUBJECT, html: fcsrHtml(first, me) } : null })
   }
 
   if (action === 'cancel_draft') {
@@ -220,7 +256,9 @@ Deno.serve(async (req) => {
     const message = String(b.message || '').trim()
     if (message.length < 2) return json({ error: 'Write the message first.' }, 400)
     const kind = b.kind === 'reply' ? 'reply' : 'text'
-    const r = await queue(kind, message, false, null, SENDER_TEXT)
+    /* pick 'fcsr': the registration steps go by email too, when we have one (a person pressed Send; nothing automatic) */
+    const fcsr = b.pick === 'fcsr'
+    const r = await queue(kind, message, fcsr, fcsr ? FCSR_SUBJECT : null, SENDER_TEXT)
     return json(r.body, r.status)
   }
 
