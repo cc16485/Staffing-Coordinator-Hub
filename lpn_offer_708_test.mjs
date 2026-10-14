@@ -42,7 +42,7 @@ const call = async (body, tok, headers = {}) => { const r = await handler(new Re
 const linkFor = async (id, expSec) => { const u = await L.makeOfferLink(SECRET, id, expSec); return Object.fromEntries(new URL(u).searchParams); };
 
 import { execFileSync } from 'child_process'
-const LPN_BASE = process.env.LPN_BASE || 'e63102942ceb08046a4df5f0aa1ece14aad8ce65'   /* origin/main when this was built (2026-10-14) */
+const LPN_BASE = process.env.LPN_BASE || '213eff27738c86bf80f9f907b2279f87bd29b20d'   /* origin/main when the nurse program was integrated (2026-10-14, after 5b v5, 712) */
 const baseDir = fs.mkdtempSync(path.join(ROOT, '.lpn708-base-'))
 let B; try { fs.writeFileSync(path.join(baseDir, 'offer-documents.ts'), execFileSync('git', ['-C', ROOT, 'show', LPN_BASE + ':supabase/functions/_shared/offer-documents.ts'])); B = await import(path.join(baseDir, 'offer-documents.ts')) } finally { fs.rmSync(baseDir, { recursive: true, force: true }) }
 /* ═══ 1. caregiver offers: byte-identical letter and position description ═══ */
