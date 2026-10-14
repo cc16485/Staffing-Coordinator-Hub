@@ -124,12 +124,10 @@ ck('save: a job lands as a card with its tasks', r.status === 200 && DB.step1_fo
 /* ═══ sign, in order, with the required answers ═══ */
 /* 2026-10-13 (705): Samantha approved all thirteen forms for real ('approve step 1 forms', wording page v5). A changed wording is a
    new version and is refused for a real applicant until she approves it; practice and training hires are not held. */
-{ const REC = JSON.parse(fs.readFileSync(path.join(ROOT, 'supabase/step1-approved-2026-10-13.json'), 'utf8'))
-  /* 2026-10-14: availability v3 has its own approval record; the later record wins per form */
-  const AVR = JSON.parse(fs.readFileSync(path.join(ROOT, 'supabase/step1-approved-availability-2026-10-14.json'), 'utf8'))
-  const LATEST = REC.forms.map((f) => AVR.forms.find((x) => x.key === f.key) || f)
-  ck('APPROVED_FOR_REAL holds exactly the thirteen versions of the approval record (Samantha, 2026-10-13, wording page v5), each the version in force', D.FORM_ORDER.length === 14 && REC.forms.length === 13 && REC.forms.map((f) => f.key).join() === D.FORM_ORDER.filter((k) => k !== 'hepb_vaccination').join() && D.APPROVED_FOR_REAL.hepb_vaccination === undefined && LATEST.every((f) => D.APPROVED_FOR_REAL[f.key] === f.version && D.FORMS[f.key].version === f.version && f.approved_by === 'Samantha') && REC.forms.every((f) => f.source === 'wording page v5') && Object.keys(D.APPROVED_FOR_REAL).length === 13 && D.allApprovedForReal())
-  let fpOk = true; for (const f of LATEST) if (await D.formFingerprint(f.key) !== f.sha256) fpOk = false
+/* 2026-10-14 (712): the record of every form in force (step1-approved-2026-10-14.json): 5b at version 5, the rest as approved on 10-13. */
+{ const REC = JSON.parse(fs.readFileSync(path.join(ROOT, 'supabase/step1-approved-2026-10-14.json'), 'utf8'))
+  ck('APPROVED_FOR_REAL holds exactly the fourteen versions of the 2026-10-14 approval record (Samantha, "ok great, approved!"; 5b at version 5), each the version in force', D.FORM_ORDER.length === 14 && REC.forms.length === 14 && REC.forms.map((f) => f.key).join() === D.FORM_ORDER.join() && REC.forms.every((f) => (f.key === 'hepb_vaccination' ? HEPB_SHIPPED : D.APPROVED_FOR_REAL[f.key]) === f.version && D.FORMS[f.key].version === f.version && f.approved_by === 'Samantha') && REC.forms.find((f) => f.key === 'edl_fcsr_consent').version === 5 && Object.keys(D.APPROVED_FOR_REAL).length === 13 && D.allApprovedForReal() && D.STEP1_VERSION === REC.step1_version)   /* this file holds the Hepatitis B form back until its own section (line 10) */
+  let fpOk = true; for (const f of REC.forms) if (await D.formFingerprint(f.key) !== f.sha256) fpOk = false
   ck('every approved form\'s wording fingerprint is the one in the approval record (the words she read)', fpOk)
   const pre = JSON.stringify(DB.step1_forms), v0 = D.FORMS.employee_application.version
   D.FORMS.employee_application.version = v0 + 1
@@ -181,10 +179,18 @@ const I = DB.step1_identity[0]
 ck('identity saved: sealed SSN and DOB, last four only, the plain number nowhere in the record', r.status === 200 && r.j.identity.ssn === 'ending 3456' && r.j.identity.dob === true && I.ssn_sealed.startsWith('v1.') && I.ssn_last4 === '3456' && !JSON.stringify(DB).includes('529123456') && !JSON.stringify(DB).includes('529-12-3456'), { r, I })
 ck('the sealed SSN opens back only with the key and this offer id', (await C.open(KEK, OID, I.ssn_sealed)) === '529123456')
 await call({ action: 'save', ...link, screen: '5b', answers: { address1: '12 Oak St', city: 'Springfield', state: 'MO', zip: '65802' } })
+/* 2026-10-14 (5b v5): suffix, gender and county are required; middle name and birth name are not */
+r = await call({ action: 'sign', ...link, form: 'edl_fcsr_consent', typed_name: 'Ava Lee', consent: true })
+ck('5b v5: without suffix, gender and county the details form is refused, naming the three (middle name and birth name may be blank)', r.status === 400 && /Suffix/.test(r.j.error) && /Gender/.test(r.j.error) && /County/.test(r.j.error) && !/Middle name|full name at birth/.test(r.j.error), r)
+r = await call({ action: 'save', ...link, screen: '5b', answers: { suffix: 'Esq.', gender: 'Other', middle_name: 'Marie', birth_name: 'Ava Marie Stone', county: 'Greene' } })
+ck('5b v5: a suffix or gender not on the list is rejected; middle name, birth name and county kept', r.status === 200 && r.j.rejected.sort().join() === 'gender,suffix' && DB.step1_forms[0].answers.middle_name === 'Marie' && DB.step1_forms[0].answers.birth_name === 'Ava Marie Stone' && DB.step1_forms[0].answers.county === 'Greene', r)
+await call({ action: 'save', ...link, screen: '5b', answers: { suffix: 'None', gender: 'Female' } })
 r = await call({ action: 'sign', ...link, form: 'edl_fcsr_consent', typed_name: 'Ava Lee', consent: true }); ck('the consent signs with identity sealed and the address given', r.status === 200, r)
+ck('5b v5: signed at version 5 (the version she approved on 2026-10-14)', DB.step1_forms[0].signatures.edl_fcsr_consent.version === 5)
 r = await call({ action: 'identity', ...link, ssn: '529-12-9999', ssn2: '529-12-9999' })
 ck('after the consent is signed the SSN cannot be changed (409)', r.status === 409 && DB.step1_identity[0].ssn_last4 === '3456', r)
 const consentPdf = STORE[DB.step1_forms[0].pdfs.edl_fcsr_consent]
+ck('5b v5: the signed PDF carries the new answers (county, gender, suffix, middle name, birth name)', ['Greene', 'Female', 'None', 'Marie', 'Ava Marie Stone', 'County', 'Gender'].every((w) => Buffer.from(consentPdf).includes(w)))
 ck('the consent PDF shows "On file, ending 3456" and never the number', Buffer.from(consentPdf).includes('ending 3456') && !Buffer.from(consentPdf).includes('529123456') && !Buffer.from(consentPdf).includes('1990-05-05'))
 
 /* ═══ availability (initials), experience, vehicle, done ═══ */
@@ -255,6 +261,10 @@ r = await call({ action: 'screening', offer_id: OID })
 ck('screening without a sign-in is refused', r.status === 401, r)
 r = await call({ action: 'screening', offer_id: OID }, STAFF)
 ck('screening: what is on file (last four only), the registration facts, the consent time, and may_reveal false for a coordinator not on the list', r.status === 200 && r.j.identity.ssn === 'ending 3456' && r.j.identity.dob === true && r.j.identity.license === 'ending 6789' && r.j.facts.first === 'Ava' && /12 Oak St/.test(r.j.facts.address) && r.j.consent_signed_at && r.j.may_reveal === false && r.j.ttl_seconds === 300 && !JSON.stringify(r.j).includes('529123456'), r.j)
+ck('screening (2026-10-14, 5b v5): the FCSR facts for the Hub sheet: middle name, suffix, birth name, gender, county, as answered', r.j.facts.middle_name === 'Marie' && r.j.facts.suffix === 'None' && r.j.facts.birth_name === 'Ava Marie Stone' && r.j.facts.gender === 'Female' && r.j.facts.county === 'Greene', r.j.facts)
+{ const keep = DB.step1_forms[0].answers; DB.step1_forms[0].answers = { ...keep, county: 'x'.repeat(200), birth_name: 'y'.repeat(300) }; delete DB.step1_forms[0].answers.middle_name
+  const r2 = await call({ action: 'screening', offer_id: OID }, STAFF); DB.step1_forms[0].answers = keep
+  ck('screening: a Step 1 without an answer gives "" (the sheet says not collected); long answers are cut (county 60, birth name 120)', r2.j.facts.middle_name === '' && r2.j.facts.county.length === 60 && r2.j.facts.birth_name.length === 120, r2.j.facts) }
 r = await call({ action: 'reveal', offer_id: OID, field: 'ssn', reason: 'FCSR registration' }, STAFF)
 ck('reveal by someone not on the Screening staff list: refused (403), no log row', r.status === 403 && /Screening staff list/.test(r.j.error) && DB.document_access_log.filter((l) => /^identity:/.test(l.doc)).length === 0, r)
 DB.app_data[0].data.screening = [{ person_id: 'p1', email: 'k@mo-care.com', name: 'Krystal' }]
@@ -498,7 +508,7 @@ const PRINTED = res.length
   ck('preview: the same words a real Step 1 shows (identical forms to the real view)', JSON.stringify(p.j.forms) === JSON.stringify(M.__lastViewForms || p.j.forms))
   p = await call({ action: 'preview', check: true, form: 'employee_application', answers: { preferred_name: 'Pat', ssn: '123456789', bogus: 'x' } })
   ck('preview check: the real required-answer list; an identity number or unknown id is dropped, never echoed', p.status === 200 && p.j.missing.length > 3 && !JSON.stringify(p.j).includes('123456789'), p.j)
-  p = await call({ action: 'preview', check: true, form: 'edl_fcsr_consent', answers: { address1: '1 Main', city: 'Nixa', state: 'MO', zip: '65714' }, identity: { ssn: '4321', dob: true } })
+  p = await call({ action: 'preview', check: true, form: 'edl_fcsr_consent', answers: { address1: '1 Main', city: 'Nixa', state: 'MO', zip: '65714', suffix: 'None', gender: 'Female', county: 'Christian' }, identity: { ssn: '4321', dob: true } })
   ck('preview check: the identity boxes count when the page says they were filled (only the last four travel)', p.j.missing.length === 0, p.j)
   p = await call({ action: 'preview', pdf: true, form: 'employee_application', answers: { preferred_name: 'Pat', jobs: [{ company: 'Home Helpers', tasks: ['bathing'] }] } })
   const pdf = Buffer.from(p.j.pdf_base64 || '', 'base64')

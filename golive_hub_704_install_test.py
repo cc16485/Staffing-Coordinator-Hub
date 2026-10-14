@@ -149,8 +149,9 @@ sys.exit(1)
        and "Samantha approves its wording first" in out and "Nothing ran; nothing changed." in out and nothing(), out)
     fnroot_w = os.path.join(W, "supabase", "functions")
     AP = re.search(r"export const APPROVED_FOR_REAL[^=]*= \{(.*?)\n\}", open(os.path.join(WA, DOC_REL)).read(), re.S).group(1)
+    # 2026-10-14 (712): 5b moved to version 5 with her approval (step1-approved-2026-10-14.json); either is the build 704 expects
     ck("the reviewed build has her approval (hepb_vaccination: 1, status approved) beside 705's 13, untouched",
-       "hepb_vaccination: 1," in AP and all(f"{k}: {v}" in AP for k, v in [("employee_application", 4), ("reference_consent", 3), ("fcra_disclosure", 2), ("edl_fcsr_consent", 4), ("availability", 2), ("experience", 2), ("vehicle", 5), ("non_driver", 2), ("employment_agreement", 1), ("medication_policy", 1), ("code_of_ethics", 1), ("hipaa_privacy", 1), ("client_rights", 1)])
+       "hepb_vaccination: 1," in AP and all(f"{k}: {v}" in AP for k, v in [("employee_application", 4), ("reference_consent", 3), ("fcra_disclosure", 2), ("edl_fcsr_consent", 4 if "edl_fcsr_consent: 4," in AP else 5), ("availability", 2), ("experience", 2), ("vehicle", 5), ("non_driver", 2), ("employment_agreement", 1), ("medication_policy", 1), ("code_of_ethics", 1), ("hipaa_privacy", 1), ("client_rights", 1)])
        and re.search(r"key: 'hepb_vaccination',[^\n]*status: 'approved'", open(os.path.join(WA, DOC_REL)).read()), AP)
     d_bad = re.sub(r"hepb_vaccination: 1,", "hepb_vaccination: 2,", open(os.path.join(WA, DOC_REL)).read())
     WB = os.path.join(tmp, "wtb"); subprocess.run(["git", "-C", HERE, "worktree", "add", "-q", "--detach", WB, MAIN_A], check=True)
