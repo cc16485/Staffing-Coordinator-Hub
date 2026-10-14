@@ -857,7 +857,7 @@ Deno.serve(async (req) => {
         const cin = v?.clockIn?.time, cout = v?.clockOut?.time
         const put = (type: string, extra: Record<string, unknown> = {}) =>
           sb.rpc('upsert_app_data_item', { target_key: 'attendance_events', item: {
-            id: `att_evv_${vid}_${type}`, caregiver: cgName, type,
+            id: `att_evv_${vid}_${type}`, caregiver: cgName, axiscare_caregiver_id: String(v.caregiver.id), type,
             shift_date: shiftDate, shift_time: shiftTime,
             note: `Auto-detected from yesterday's AxisCare visit.`,
             logged_by: 'attendance-watch', created_at: new Date().toISOString(), action_id: null, ...extra } })
@@ -874,6 +874,33 @@ Deno.serve(async (req) => {
       const { data: aeRow } = await sb.from('app_data').select('data').eq('key', 'attendance_events').maybeSingle()
       const events: any[] = Array.isArray(aeRow?.data) ? aeRow!.data : []
       const cutoff = Date.now() - 30 * 864e5
+      /* Grouped per person (step 4, 2026-10-14): an event with the AxisCare caregiver id groups by
+         that id; an event with no id groups by its typed name, as before. A name-only group joins an
+         id group only when exactly one id group carries that same name, so the transition (old
+         events without ids, new ones with) still adds up, and a record with an id never counts
+         toward a different person who shares the name. */
+      const cgIdOf = (e: any) => String(e?.axiscare_caregiver_id ?? '').trim()
+      const normNm = (s: string) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+      /* Each id's name is the one most of its events carry, so one mistyped name on an id record
+         never pulls another person's name-only records in. */
+      const namesById = new Map<string, Map<string, number>>()
+      for (const e of events) {
+        const id = cgIdOf(e); if (!id) continue
+        const nm = String(e?.caregiver || '').trim(); if (!nm) continue
+        const m = namesById.get(id) ?? new Map<string, number>(); m.set(nm, (m.get(nm) ?? 0) + 1); namesById.set(id, m)
+      }
+      const nameById = new Map<string, string>()
+      const idsByName = new Map<string, Set<string>>()
+      for (const [id, m] of namesById) {
+        const nm = [...m.entries()].sort((a, b) => b[1] - a[1])[0][0]
+        nameById.set(id, nm)
+        const s = idsByName.get(normNm(nm)) ?? new Set<string>(); s.add(id); idsByName.set(normNm(nm), s)
+      }
+      const groupOf = (e: any) => {
+        const id = cgIdOf(e); if (id) return 'ax:' + id
+        const one = idsByName.get(normNm(String(e?.caregiver || '')))
+        return one && one.size === 1 && normNm(String(e?.caregiver || '')) ? 'ax:' + [...one][0] : 'nm:' + String(e?.caregiver || '?')
+      }
       const counts = new Map<string, number>()
       for (const e of events) {
         const t = new Date(String(e.shift_date || e.created_at || 0) + 'T12:00:00').getTime()
@@ -882,9 +909,13 @@ Deno.serve(async (req) => {
           : e.type === 'tardy' ? 'tardy'
           : (e.type === 'evv_missing_in' || e.type === 'evv_missing_out') ? 'evv' : null
         if (!bucket) continue
-        const k = String(e.caregiver || '?') + '|' + bucket
+        const k = groupOf(e) + '|' + bucket
         counts.set(k, (counts.get(k) ?? 0) + 1)
       }
+      /* The card shows the person's name and keeps the name-based card id it always had, so a card
+         already open is found again. Only when two different ids share a name does the id get added. */
+      const whoOf = (g: string) => g.startsWith('ax:') ? (nameById.get(g.slice(3)) || ('caregiver ' + g.slice(3))) : g.slice(3)
+      const slugClash = (g: string) => g.startsWith('ax:') && (idsByName.get(normNm(whoOf(g)))?.size ?? 0) > 1
       const TH: Record<string, number> = {
         callin: Number(settings.att_alert_callins) > 0 ? Number(settings.att_alert_callins) : 3,
         tardy: Number(settings.att_alert_tardies) > 0 ? Number(settings.att_alert_tardies) : 3,
@@ -910,10 +941,12 @@ Deno.serve(async (req) => {
         }
       } else attPlan.evv_cards_would_close = itemsNow.filter((i: any) => i?.status === 'open' && /^ops_att_evv_/.test(String(i?.id))).length
       for (const [k, n] of counts) {
-        const [who, bucket] = k.split('|')
+        const cut = k.lastIndexOf('|')
+        const grp = k.slice(0, cut), bucket = k.slice(cut + 1)
+        const who = whoOf(grp)
         if (n < TH[bucket]) continue
         if (loopsLive && bucket === 'evv') continue
-        const attId = `ops_att_${bucket}_${who.toLowerCase().replace(/[^a-z0-9]/g, '')}_${ym}`
+        const attId = `ops_att_${bucket}_${who.toLowerCase().replace(/[^a-z0-9]/g, '')}${slugClash(grp) ? '_' + grp.slice(3).replace(/[^A-Za-z0-9]/g, '') : ''}_${ym}`
         const attFresh = {
           id: attId,
           kind: 'staffing_issue',
