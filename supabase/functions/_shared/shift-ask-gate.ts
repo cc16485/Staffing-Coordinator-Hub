@@ -3,7 +3,10 @@
 // =============================================================================
 // Cara's picker (coverage-run) has always refused these people; Team Builder's "Text" (team-ask) did not. Same rules,
 // same matching, now in one place for any sender that texts ONE named caregiver about shifts:
-//   - not active (the roster says inactive, or AxisCare says not active)
+//   - not active (the roster says inactive, or AxisCare says not active). 2026-10-14, HER RULE: "axiscare is the truth for
+//     if a caregiver is active or not, we should never have the option to send an open shift to someone who is not active
+//     in axiscare": AxisCare is asked LIVE for this caregiver every time; no AxisCare number, or AxisCare can't be read =
+//     nobody is texted (fail closed), and the reason says so.
 //   - on the No shift texts list (coverage_do_not_offer; AxisCare id, phone, then name; an `until` date ends it)
 //   - Do Not Return for this client (dnr_log, by name, like Cara)
 //   - a new hire whose readiness card isn't complete (work-lock: Approved to Work + AxisCare active). FAIL CLOSED:
@@ -16,6 +19,7 @@
 import { normalisePhone } from './outreach.ts'
 import { workLock, LOCK_WHY } from './work-lock.ts'
 import { transportEligible } from './driver-eligibility.ts'
+import { readCaregiverStatus } from './axiscare-caregiver.ts'
 
 // deno-lint-ignore no-explicit-any
 type Any = any
@@ -45,8 +49,14 @@ export function blockReason(x: { cg: Any; name: string; axId: string; client: st
 }
 
 /** Reads the lists and answers for one caregiver. */
-export async function shiftAskBlock(sb: Any, x: { cg: Any; name: string; axId: string; client: string; roster?: Any[]; needsTransport?: boolean }): Promise<string | null> {
+export async function shiftAskBlock(sb: Any, x: { cg: Any; name: string; axId: string; client: string; roster?: Any[]; needsTransport?: boolean; readStatus?: (id: string) => Promise<{ ok: true; active: boolean; label: string } | { ok: false; detail: string }> }): Promise<string | null> {
   const read = async (k: string) => { const { data } = await sb.from('app_data').select('data').eq('key', k).maybeSingle(); return Array.isArray(data?.data) ? data.data : [] }
+  const name = x.name || [x.cg?.first, x.cg?.last].filter(Boolean).join(' ') || 'This caregiver'
+  const ax = digits(x.axId || x.cg?.axiscare_id)
+  if (!ax) return `${name} has no AxisCare number, so we can't confirm they are active in AxisCare`
+  const live = await (x.readStatus ?? readCaregiverStatus)(ax)
+  if (!live.ok) return `AxisCare couldn't be checked for ${name} (${live.detail}), so nobody is texted until it can`
+  if (!live.active) return `${name} is not active in AxisCare${live.label ? ' (' + live.label + ')' : ''}`
   const [dno, dnr] = await Promise.all([read('coverage_do_not_offer'), read('dnr_log')])
   const lock = await workLock(sb, x.roster ?? null)
   return blockReason({ ...x, dno, dnr, locked: lock.ok ? lock.axis : null, lockWhy: lock.ok ? undefined : lock.why })
