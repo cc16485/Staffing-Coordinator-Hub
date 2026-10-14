@@ -200,7 +200,7 @@ sys.exit(1)
         p = subprocess.run(["python3", os.path.join(root, STEP)], env=env, capture_output=True, text=True, timeout=900, cwd=tmp)
         return p.returncode, (open(rep).read() if os.path.exists(rep) else p.stdout + p.stderr), fsh
     changed = lambda: bool(S["files"]) or bool(deployed()) or any("cron.schedule(" in q for q in S["sql"])
-    writes_app_data = lambda: any(re.search(r"(?i)update public\.app_data|insert into public\.app_data|upsert_app_data_item\(", q) for q in S["sql"])
+    writes_app_data = lambda: any(re.search(r"(?i)update public\.app_data|insert into public\.app_data|select public\.upsert_app_data_item|rpc/upsert_app_data_item", q) for q in S["sql"])
 
     # ── the clean run ──
     c, out, fsh = run()
