@@ -50,6 +50,10 @@ import { saveAuditFields } from '../_shared/sweep-patch.ts'
 import { loadLeie, matchLeie, oigEvidence, oigDue, OIG_INTERVAL_DAYS } from '../_shared/oig-leie.ts'
 import { readTraining, certificateRef, syncPatch } from '../_shared/training-sync.ts'
 import { testPerson } from '../_shared/test-people.ts'
+/* LPN HIRING (Samantha approved the LPN nurse visit plan, 2026-10-14): the nurse rows, the nurse forms, the nurse setup at Approve to Work */
+import { NURSE_SWITCH, NURSE_RECORDED, NURSE_DOC_KINDS, ORIENTATION_TOPICS, SUPERVISING_RN_NAME, WAIVED_COURSES, KEPT_COURSES, licenseVerdict, orientationVerdict, section2Verdict, section2Statement, orientationChecklist, nurseDocPdf, nurseStaffRecord, setCaregiverNurseClass, waiverReason, nurseDocOk, packetLine } from '../_shared/nurse-hire.ts'
+import { validKey, POSITION_LABELS } from '../_shared/positions.ts'
+import { logOpen } from '../_shared/doc-log.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret, x-outreach-secret', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -72,7 +76,7 @@ function trn() {
   const url = Deno.env.get('OFFERS_PROJECT_URL') ?? '', key = Deno.env.get('OFFERS_SERVICE_ROLE_KEY') ?? ''
   if (!url || !key) return null
   const H = { apikey: key, Authorization: `Bearer ${key}` }
-  return { async get(id: string) { const r = await fetch(`${url}/rest/v1/job_offers?id=eq.${encodeURIComponent(id)}&select=id,first_name,last_name,phone,email,offer_signed_at,pd_signed_at,offer_version,pd_version,offer_status,onboarding_path,step1_done_at,step1_sent_at,step1_reminded_at,step1_reminder_count,offer_withdrawn_at,offer_declined_at`, { headers: H }); if (!r.ok) return null; const rows = await r.json(); return Array.isArray(rows) && rows.length === 1 ? rows[0] : null } }
+  return { async get(id: string) { const r = await fetch(`${url}/rest/v1/job_offers?id=eq.${encodeURIComponent(id)}&select=id,first_name,last_name,phone,email,offer_signed_at,pd_signed_at,offer_version,pd_version,offer_status,onboarding_path,step1_done_at,step1_sent_at,step1_reminded_at,step1_reminder_count,offer_withdrawn_at,offer_declined_at,position_key`, { headers: H }); if (!r.ok) return null; const rows = await r.json(); return Array.isArray(rows) && rows.length === 1 ? rows[0] : null } }
 }
 async function defs(db: Any): Promise<Any[]> {
   const { data, error } = await db.from('client_journey_step_def').select('key, def, active, catalog_version').like('key', 'cg.%')
@@ -110,7 +114,7 @@ function mayDo(def: Any, who: Any, P: Any): boolean {
   if (p === 'advance' || p === 'work' || p === 'screening') return mayApprove(P, p, { person_id: who.person_id, roles: who.roles || [], email: who.email })
   return false
 }
-const ctxFor = (f: Facts, st: Any) => ({ today: new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10), facts: { lived_outside_mo: f.lived_outside_mo, claims_cna_or_hha: f.claims_cna_or_hha, drives_clients: f.drives_clients, after_first_year: f.after_first_year }, staffing_email: S(st?.staffing_email, 160).toLowerCase() || null, owner_emails: [] })
+const ctxFor = (f: Facts, st: Any) => ({ today: new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10), facts: { lived_outside_mo: f.lived_outside_mo, claims_cna_or_hha: f.claims_cna_or_hha, drives_clients: f.drives_clients, after_first_year: f.after_first_year, licensed_nurse: f.licensed_nurse }, staffing_email: S(st?.staffing_email, 160).toLowerCase() || null, owner_emails: [] })
 const dates = (f: Facts) => { const o = f.roster?.orient_date ? String(f.roster.orient_date).slice(0, 10) : null, h = f.roster?.hire_date ? String(f.roster.hire_date).slice(0, 10) : null; return { orientation: o, axiscare_hire: h, differ: !!(o && h && o !== h) } }
 
 /* ── the Needs Attention cards (ops_items), raised and closed by the readiness server; a card a person closed stays closed ── */
@@ -358,6 +362,66 @@ export async function step1Stall(db: Any, j: Any, f: Facts, st: Any, owner: { em
   return 'raised'
 }
 
+/* ───── LPN HIRING (Samantha approved the LPN nurse visit plan, 2026-10-14) ─────
+   At Approve to Work for an LPN or RN (the offer's position key): the nurse list record (Natasha Early as the supervising RN for
+   an LPN), the AxisCare LPN or RN class, the card for the license in AxisCare's Compliance tab (AxisCare has no door for it),
+   and the training waiver (the On-the-Job Skills Training only; 19 CSR 15-7.021(22)(A)4). Only with the Admin switch
+   nurse_hire_live on; off = practice: what would be done is computed and shown on the card, nothing is written anywhere. Never
+   for a caregiver: every step checks the offer's own position key again. Idempotent: "Run nurse setup" redoes what is missing. */
+const TRAINING_JOB_OFFER = 'https://rdqujxiycycwhskyvrwa.supabase.co/functions/v1/job-offer'
+async function trainingWaive(offerId: string, axId: string, reason: string, send: typeof fetch = fetch): Promise<Any> {
+  const secret = Deno.env.get('OUTREACH_SECRET') ?? ''
+  if (secret.length < 32) return { ok: false, why: 'the server secret is not set' }
+  try {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 10000)
+    const r = await send(TRAINING_JOB_OFFER, { method: 'POST', signal: ctl.signal, headers: { 'Content-Type': 'application/json', 'x-outreach-secret': secret }, body: JSON.stringify({ action: 'nurse_waive', offer_id: offerId, axiscare_id: axId, reason }) })
+    clearTimeout(t); const j = await r.json().catch(() => ({}))
+    return r.ok && j?.ok ? { ok: true, waived: j.waived || [], kept: j.kept || [], already: j.already || [] } : { ok: false, why: S(j?.error, 200) || 'the Training Platform answered ' + r.status }
+  } catch (e) { return { ok: false, why: S((e as Error)?.message, 120) || 'could not reach the Training Platform' } }
+}
+export async function nurseSetup(db: Any, j: Any, f: Facts, st: Any, who: { email?: string; name?: string }, send: typeof fetch = fetch): Promise<Any> {
+  const now = new Date().toISOString(), live = st?.[NURSE_SWITCH] === true, key = validKey(f.offer?.position_key)
+  if (!f.offer || (key !== 'lpn' && key !== 'rn')) return { state: 'not_a_nurse' }
+  const cred = key === 'rn' ? 'RN' : 'LPN', axId = digits(f.roster?.axiscare_id)
+  const { data: lic } = await db.from('client_journey_step').select('state, evidence').eq('journey_id', j.journey_id).eq('step_key', 'cg.credential.nurse_license').maybeSingle()
+  const ev = lic?.state === 'complete' ? (lic.evidence || {}) : null
+  const out: Any = { state: live ? 'live' : 'practice', at: now, by: who.email || 'hub', cred }
+  if (!ev) { out.state = 'waiting'; out.why = 'the nursing license row is not complete'; await mergeEvidence(db, j.journey_id, WORK_KEY, { nurse_setup: out }); return out }
+  const name = S(j.client_name, 80), email = S(f.offer?.email || f.roster?.email, 160)
+  /* 1. the nurse list */
+  const { data: nsRow } = await db.from('app_data').select('data').eq('key', 'nurse_staff').maybeSingle()
+  const staff: Any[] = Array.isArray(nsRow?.data) ? nsRow.data : []
+  const ns = nurseStaffRecord(staff, { offerId: String(j.offer_id), name, email, positionKey: key, licenseEvidence: ev, at: now, by: who.email || 'hub' })
+  out.nurse_list = { would: ns.existing ? 'update' : 'add', name: ns.record.name, cred, license: ns.record.license, expires: ns.record.expires, supervisor: ns.supervisor ? ns.supervisor.name : null, problems: ns.problems }
+  if (live) { const { error } = await db.rpc('upsert_app_data_item', { target_key: 'nurse_staff', item: ns.record }); out.nurse_list.state = error ? 'failed' : 'saved'; if (error) out.nurse_list.why = S(error.message, 160) }
+  else out.nurse_list.state = 'practice'
+  /* 2. the AxisCare class */
+  const cls = await setCaregiverNurseClass(db, axId, cred as 'LPN' | 'RN', who.email || 'hub', 'caregiver-journey', live, send)
+  out.axiscare_class = { outcome: cls.outcome, detail: cls.detail || null }
+  /* 3. the training waiver (the Hub row and the Training Platform's enrollment) */
+  const reason = waiverReason(cred, S(ev.license_last4, 4), S(ev.checked_on, 10), S(ev.by_name || ev.by, 80))
+  out.waiver = { courses: [...WAIVED_COURSES], kept: [...KEPT_COURSES], reason }
+  if (live) {
+    const { data: ojt } = await db.from('client_journey_step').select('state').eq('journey_id', j.journey_id).eq('step_key', 'cg.training.ojt').maybeSingle()
+    if (!ojt || !DONE.includes(ojt.state)) { await putStep(db, j.journey_id, 'cg.training.ojt', { state: 'not_needed', completed_by: who.email || 'hub', completed_by_name: who.name || 'The Hub', completed_at: now, exception: { kind: 'waived', rule: '19 CSR 15-7.021(22)(A)4', reason, by: who.email || 'hub', at: now } }); await event(db, j.journey_id, 'cg.training.ojt', who, 'not_needed', { waived: true, rule: '19 CSR 15-7.021(22)(A)4' }, reason) }
+    const tw = axId ? await trainingWaive(String(j.offer_id), axId, reason, send) : { ok: false, why: 'no AxisCare caregiver number on their roster record yet' }
+    out.waiver.training = tw
+  } else out.waiver.training = { practice: true }
+  /* 4. the cards: what the office does by hand (AxisCare has no door for the Compliance tab), and anything that did not go */
+  if (live) {
+    const lines = [`License type ${cred}, number ending ${S(ev.license_last4, 4) || '(see their readiness card)'}, state ${S(ev.state, 2) || '?'}${ev.multistate ? ' (multistate)' : ''}, expires ${S(ev.expires, 10)}.`]
+    if (!['confirmed', 'unchanged'].includes(cls.outcome)) lines.push(`Also set the ${cred} class on their AxisCare caregiver record: the Hub could not (${cls.detail || cls.outcome}).`)
+    if (ns.problems.length) lines.push('Nurse list: ' + ns.problems.join('; ') + '.')
+    if (out.nurse_list.state === 'failed') lines.push('Nurse list: the record could not be saved (' + out.nurse_list.why + '). Add them on the Nurse Scheduling tab.')
+    if (out.waiver.training && out.waiver.training.ok === false) lines.push('Training Platform: the On-the-Job Skills Training waiver did not go (' + out.waiver.training.why + '). Record the waiver on their Training record by hand.')
+    await raiseCard(db, { id: 'cj_nurse_' + j.journey_id, kind: 'nurse_setup', urgency: 'today', who: j.client_name, offer_id: j.offer_id, title: `Enter ${name}'s nursing license in AxisCare (Compliance tab)`, detail: lines.join('\n') + '\nAxisCare has no door for licenses, so the office types it in. Close this card when it is in.' }, { owner: S(st?.staffing_email, 160).toLowerCase() || '' })
+    out.compliance_card = 'cj_nurse_' + j.journey_id
+  }
+  await mergeEvidence(db, j.journey_id, WORK_KEY, { nurse_setup: out })
+  await event(db, j.journey_id, WORK_KEY, who, live ? 'nurse_setup' : 'nurse_setup_practice', out)
+  return out
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
@@ -546,7 +610,7 @@ Deno.serve(async (req) => {
       }
       void T; return json({ ok: true, rows, may_approve_work: mayApprove(P, 'work', { person_id: who.person_id, roles: who.roles || [], email: who.email }) })
     }
-    const answerFor = async (jid: string, f: Facts) => { const fresh = await load(db, { journey_id: jid }); const v = R.compute(dfs, fresh!.j, fresh!.steps, ctxFor(f, st)); const { data: ev } = await db.from('client_journey_event').select('*').eq('journey_id', jid).order('at', { ascending: false }).limit(200); const may: Record<string, boolean> = {}; for (const r of v.rows) may[r.key] = mayDo(r.def, who, P); return json({ ok: true, journey: fresh!.j, steps: fresh!.steps, view: v, events: ev ?? [], may, is_owner: isOwner, may_export: mayExport, approve: approveState(v, f, st, who, P, dfs, fresh!.j), facts: { lived_outside_mo: f.lived_outside_mo ?? null, claims_cna_or_hha: f.claims_cna_or_hha ?? null, drives_clients: f.drives_clients ?? null, dates: dates(f), rights: rightsState(f) } }) }   /* 2026-10-13: participant rights, signed and explained */
+    const answerFor = async (jid: string, f: Facts) => { const fresh = await load(db, { journey_id: jid }); const v = R.compute(dfs, fresh!.j, fresh!.steps, ctxFor(f, st)); const { data: ev } = await db.from('client_journey_event').select('*').eq('journey_id', jid).order('at', { ascending: false }).limit(200); const may: Record<string, boolean> = {}; for (const r of v.rows) may[r.key] = mayDo(r.def, who, P); return json({ ok: true, journey: fresh!.j, steps: fresh!.steps, view: v, events: ev ?? [], may, is_owner: isOwner, may_export: mayExport, approve: approveState(v, f, st, who, P, dfs, fresh!.j), facts: { lived_outside_mo: f.lived_outside_mo ?? null, claims_cna_or_hha: f.claims_cna_or_hha ?? null, drives_clients: f.drives_clients ?? null, dates: dates(f), rights: rightsState(f), ...(f.licensed_nurse === true ? { licensed_nurse: true, position_key: f.offer?.position_key ?? null, nurse_switch_live: st?.[NURSE_SWITCH] === true } : {}) } }) }   /* 2026-10-13: participant rights, signed and explained */
     if (action === 'get') {
       const got = await load(db, b); if (!got) return json({ ok: true, journey: null })
       const f = await facts(db, got.j, trn())
@@ -573,8 +637,80 @@ Deno.serve(async (req) => {
       await event(db, got.j.journey_id, WORK_KEY, actor, 'approved_to_work', { list: 'work', level_of_care: a.level_of_care.level, at: now })
       await rosterPatch(db, f.roster, { approved_to_work_at: now, approved_to_work_by: who.email })
       const r = await activate(db, got.j, f, st, actor)
+      /* LPN HIRING (2026-10-14): an LPN or RN hire's nurse setup (practice while nurse_hire_live is off); never for a caregiver */
+      if (f.licensed_nurse === true) { try { r.nurse = await nurseSetup(db, got.j, f, st, actor) } catch (e) { r.nurse = { state: 'failed', why: S((e as Error)?.message, 160) }; await raiseCard(db, { id: 'cj_nurse_' + got.j.journey_id, kind: 'nurse_setup', urgency: 'today', who: got.j.client_name, offer_id: got.j.offer_id, title: 'Nurse setup did not finish: ' + got.j.client_name, detail: 'Approve to Work is recorded. The nurse setup stopped: ' + r.nurse.why + '. Open their readiness card and press Run nurse setup.' }) } }
       const res = await answerFor(got.j.journey_id, f); const body = await res.json()
       return json({ ...body, result: r })
+    }
+    /* ───── LPN HIRING (2026-10-14): the nurse forms on the readiness card (office staff; only on an LPN or RN card) ───── */
+    if (action.startsWith('nurse_')) {
+      if (f.licensed_nurse !== true || !['lpn', 'rn'].includes(String(validKey(f.offer?.position_key)))) return json({ error: 'This is not an LPN or RN hire (the nurse forms are only for them).' }, 400)
+      const oid = String(got.j.offer_id), today = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10), pk = validKey(f.offer.position_key)
+      if (action === 'nurse_facts') {
+        const a: Any = f.step1?.answers || {}
+        let last4: string | null = null; try { const { data: nl } = await db.from('step1_identity').select('nurse_license_last4').eq('offer_id', oid).maybeSingle(); last4 = nl?.nurse_license_last4 || null } catch { last4 = null }
+        const sig = (f.step1?.signatures || {}).nurse_license || null
+        return json({ ok: true, position: pk, position_label: POSITION_LABELS[pk!], step1: { license_type: a.nurse_license_type || null, license_last4: last4, state: a.nurse_license_state || null, multistate: a.nurse_license_multistate || null, expires: a.nurse_license_expires || null,
+          picture: a.nurse_license_doc?.path ? { path: S(a.nurse_license_doc.path, 200) } : null, signed_at: sig?.at || null, form_version: sig?.version || null },
+          topics: ORIENTATION_TOPICS, packet: packetLine(pk), switch_live: st?.[NURSE_SWITCH] === true, supervising_rn: SUPERVISING_RN_NAME, waived_courses: WAIVED_COURSES, kept_courses: KEPT_COURSES, kinds: NURSE_DOC_KINDS })
+      }
+      if (action === 'nurse_upload_url') {
+        const kind = S(b.kind, 20), ext = S(b.ext, 5).toLowerCase()
+        if (!(NURSE_DOC_KINDS as readonly string[]).includes(kind)) return json({ error: 'Which document?' }, 400)
+        if (!['jpg', 'jpeg', 'png', 'heic', 'heif', 'webp', 'pdf'].includes(ext)) return json({ error: 'Please use a picture (JPG, PNG, HEIC) or a PDF.' }, 400)
+        const path = `nurse/${oid}/${kind}-${Date.now()}.${ext}`
+        const { data, error } = await db.storage.from('onboarding-documents').createSignedUploadUrl(path)
+        if (error || !data) return json({ error: 'Could not get the upload ready. Please try again.' }, 500)
+        return json({ ok: true, path, token: data.token, signed_url: data.signedUrl })
+      }
+      if (action === 'nurse_open') {
+        const path = S(b.path, 200)
+        const mine = path.startsWith(`nurse/${oid}/`) || path === S((f.step1?.answers || {}).nurse_license_doc?.path, 200)
+        if (!mine || !/^[\w./-]+$/.test(path)) return json({ error: 'That document is not on this card.' }, 400)
+        const { data, error } = await db.storage.from('onboarding-documents').createSignedUrl(path, 300)
+        if (error || !data?.signedUrl) return json({ error: 'Could not open the document.' }, 500)
+        await logOpen(db, { subject: oid, doc: 'nurse:' + (path.split('/').pop() || '').split('-')[0], path, who: { person_id: who.person_id, email: who.email, name: who.name }, reason: 'opened from the readiness card' })
+        return json({ ok: true, url: data.signedUrl, expires_in: 300 })
+      }
+      if (action === 'nurse_doc') {
+        const which = S(b.which, 20); let last4 = ''
+        try { const { data: nl } = await db.from('step1_identity').select('nurse_license_last4').eq('offer_id', oid).maybeSingle(); last4 = S(nl?.nurse_license_last4, 4) } catch { last4 = '' }
+        const lic = `${pk === 'rn' ? 'Registered Nurse (RN)' : 'Licensed Practical Nurse (LPN)'}${last4 ? ', license ending ' + last4 : ''}`
+        const blocks = which === 'section2' ? section2Statement(S(got.j.client_name, 80), lic) : which === 'orientation' ? orientationChecklist(S(got.j.client_name, 80)) : null
+        if (!blocks) return json({ error: 'Which document?' }, 400)
+        const bytes = nurseDocPdf((which === 'section2' ? 'Section 2 acknowledgment' : 'Nurse orientation checklist') + ' - ' + S(got.j.client_name, 80), blocks)
+        let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+        return json({ ok: true, which, pdf_base64: btoa(bin) })
+      }
+      if (action === 'nurse_record') {
+        const k = S(b.step_key, 60)
+        if (!(NURSE_RECORDED as readonly string[]).includes(k)) return json({ error: 'Which nurse requirement?' }, 400)
+        const nrow = view.rows.find((r: Any) => r.key === k); if (!nrow) return json({ error: 'That requirement does not apply to this person.' }, 400)
+        if (DONE.includes(nrow.status)) return json({ error: 'Already recorded. A recorded result is permanent history; ask an owner if it must be redone.' }, 409)
+        let last4: string | null = null; try { const { data: nl } = await db.from('step1_identity').select('nurse_license_last4').eq('offer_id', oid).maybeSingle(); last4 = nl?.nurse_license_last4 || null } catch { last4 = null }
+        const by = { email: who.email, name: who.name }
+        const v = k === 'cg.credential.nurse_license' ? licenseVerdict(b, { offerId: oid, positionKey: pk, today, last4, by }) : k === 'cg.nurse.orientation' ? orientationVerdict(b, { offerId: oid, today, by }) : section2Verdict(b, { offerId: oid, today, by })
+        if (!v.ok) return json({ error: v.error + ' Nothing was saved.' }, 400)
+        const doc = S((v.evidence || {}).document, 200)
+        if (doc) { const dir = doc.slice(0, doc.lastIndexOf('/')), nm = doc.slice(doc.lastIndexOf('/') + 1); const { data: found } = await db.storage.from('onboarding-documents').list(dir, { search: nm, limit: 5 }); if (!(found ?? []).some((x: { name: string }) => x.name === nm)) return json({ error: 'The uploaded document did not arrive. Please upload it again. Nothing was saved.' }, 409) }
+        if (v.state === 'complete') {
+          await putStep(db, got.j.journey_id, k, { state: 'complete', evidence: { ...v.evidence, recorded: { by: who.email, name: who.name, at: now } }, completed_by: who.email, completed_by_name: who.name, completed_at: now, blocked_reason: null })
+          await event(db, got.j.journey_id, k, actor, 'evidence_added', v.evidence)
+        } else {
+          await putStep(db, got.j.journey_id, k, { state: 'blocked', blocked_reason: v.reason, evidence: { ...v.evidence, recorded: { by: who.email, name: who.name, at: now } } })
+          await event(db, got.j.journey_id, k, actor, 'blocked', v.evidence, v.reason || null)
+          await raiseCard(db, { id: 'cj_nurselic_' + got.j.journey_id, kind: 'nurse_license_problem', urgency: 'urgent', who: got.j.client_name, offer_id: got.j.offer_id, title: 'Nursing license not cleared: ' + got.j.client_name, detail: (v.reason || '') + '. Nothing else moves for them until an owner reviews it.' })
+        }
+        return await answerFor(got.j.journey_id, f)
+      }
+      if (action === 'nurse_setup') {
+        if (!mayApprove(P, 'work', { person_id: who.person_id, roles: who.roles || [], email: who.email })) return json({ error: 'Only a person on the Approve to Work list may run the nurse setup.' }, 403)
+        const a = approveState(view, f, st, who, P, dfs, got.j); if (!a.approved) return json({ error: 'Approve to Work first.' }, 409)
+        const r = await nurseSetup(db, got.j, f, st, actor)
+        const res = await answerFor(got.j.journey_id, f); const body = await res.json()
+        return json({ ...body, result: { nurse: r } })
+      }
+      return json({ error: 'Unknown action.' }, 400)
     }
     if (action === 'copy_sheet') {
       const which = S(b.which, 20); const a: Any = f.step1?.answers || {}
@@ -633,6 +769,8 @@ Deno.serve(async (req) => {
     }
     if (action === 'record') {
       if (def.proof !== 'proof') return json({ error: 'That requirement is not recorded with a document.' }, 400)
+      /* LPN HIRING: the nurse rows are recorded through their own forms (every field checked), never the generic prompt */
+      if ((NURSE_RECORDED as readonly string[]).includes(key)) return json({ error: 'Record this one with its nurse form on the readiness card.' }, 400)
       const result = S(b.result, 80), doc = S(b.document, 400), expires = /^\d{4}-\d{2}-\d{2}$/.test(S(b.expires, 10)) ? S(b.expires, 10) : null
       if (!result || !doc) return json({ error: 'A result and its document are both required. Nothing was saved.' }, 400)
       await putStep(db, got.j.journey_id, key, { state: 'complete', evidence: { ...(row.st?.evidence || {}), result, document: doc, expires: expires, recorded: { by: who.email, name: who.name, at: now } }, completed_by: who.email, completed_by_name: who.name, completed_at: now })

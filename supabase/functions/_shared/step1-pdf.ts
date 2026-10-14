@@ -10,7 +10,7 @@ import { BrandPdf, COMPANY_RIGHT, FOOTER, MUTED, NAVY, RULE, type Signature } fr
 import { SKILLS, type Form, type Item } from './step1-documents.ts'
 
 export type Who = { first: string; last: string; phone: string; email: string; position: string }
-export type IdentityState = { ssn: string | null; dob: boolean; license: string | null }   // "ending 1234" | null
+export type IdentityState = { ssn: string | null; dob: boolean; license: string | null; nurse_license?: string | null }   // "ending 1234" | null (nurse_license: LPN HIRING 2026-10-14, only on a nurse's Step 1)
 const S = (v: unknown) => String(v ?? '').trim()
 
 /** An answer as the words that go on paper. */
@@ -19,6 +19,7 @@ export function answerText(item: Item, v: unknown, ident: IdentityState): string
     if (item.id === 'ssn') return ident.ssn ? `On file, ${ident.ssn} (encrypted; never printed)` : 'Not provided'
     if (item.id === 'dob') return ident.dob ? 'On file (encrypted; never printed)' : 'Not provided'
     if (item.id === 'license_number') return ident.license ? `On file, ${ident.license} (encrypted; never printed)` : 'Not provided'
+    if (item.id === 'nurse_license_number') return ident.nurse_license ? `On file, ${ident.nurse_license} (encrypted; never printed)` : 'Not provided'
   }
   if (v == null || v === '') return '—'
   switch (item.kind) {

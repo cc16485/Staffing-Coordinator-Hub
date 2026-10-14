@@ -19,7 +19,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { checkLink } from '../_shared/applicant-links.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
-import { offerLetter, positionDescription, canonical, fingerprint, longDate, longDateTime, OFFER_DOC_VERSION, PD_DOC_VERSION, CLASSIFICATIONS, type Fields } from '../_shared/offer-documents.ts'
+import { offerLetter, positionDescription, canonical, fingerprint, longDate, longDateTime, OFFER_DOC_VERSION, PD_DOC_VERSION, CLASSIFICATIONS, nurseOfferLetter, NURSE_OFFER_DOC_VERSION, NURSE_TITLES, nurseLetterApproved, type Fields } from '../_shared/offer-documents.ts'
+import { letterOnly, validKey } from '../_shared/positions.ts'   /* LPN HIRING 2026-10-14: LPN and RN offers sign the letter only */
+import { practiceOffer } from '../_shared/step1-crypto.ts'
 import { offerLetterPdf, positionDescriptionPdf } from '../_shared/brand-pdf.ts'
 import { raiseOfferCard } from '../_shared/send-problems.ts'
 import { startCaregiverJourney } from '../_shared/caregiver-journey.ts'   /* SLICE 3b */
@@ -29,7 +31,7 @@ const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: 
 const S = (v: unknown, n = 120) => String(v ?? '').trim().slice(0, n)
 const NOPE = { ok: false, error: 'This link is not valid or has run out. Please ask the office for a new one: (417) 234-8494.' }
 export const BUCKET = 'onboarding-documents'
-const COLS = 'id,first_name,last_name,phone,email,position,pay_rate,hours_type,classification,onboarding_path,offer_status,offer_version,pd_version,offer_sent_at,offer_sent_by,offer_expires_at,offer_viewed_at,offer_signed_at,offer_signer_name,pd_signed_at,offer_declined_at,offer_withdrawn_at,offer_pdf_path,pd_pdf_path,offered_by,created_at'
+const COLS = 'id,first_name,last_name,phone,email,position,pay_rate,hours_type,classification,onboarding_path,offer_status,offer_version,pd_version,offer_sent_at,offer_sent_by,offer_expires_at,offer_viewed_at,offer_signed_at,offer_signer_name,pd_signed_at,offer_declined_at,offer_withdrawn_at,offer_pdf_path,pd_pdf_path,offered_by,created_at,position_key'
 
 function trn() {
   const url = Deno.env.get('OFFERS_PROJECT_URL') ?? '', key = Deno.env.get('OFFERS_SERVICE_ROLE_KEY') ?? ''
@@ -74,13 +76,15 @@ const agentOf = (req: Request) => S(req.headers.get('user-agent'), 200)
 // deno-lint-ignore no-explicit-any
 function fieldsOf(o: any): Fields {
   const cls = S(o.classification, 40) || (o.hours_type === 'PRN' ? 'prn' : o.hours_type === 'PART_TIME' ? 'part_time' : o.hours_type === 'FULL_TIME' ? 'full_time' : '')
-  return { first: S(o.first_name, 60), last: S(o.last_name, 60), position: S(o.position, 80) || 'Caregiver', pay_rate: Number(o.pay_rate) || 0, classification: cls,
+  return { first: S(o.first_name, 60), last: S(o.last_name, 60), position: (letterOnly(o) ? NURSE_TITLES[String(validKey(o.position_key))] : '') || S(o.position, 80) || 'Caregiver', pay_rate: Number(o.pay_rate) || 0, classification: cls,
     date: longDate(o.offer_sent_at || o.created_at), expires: o.offer_expires_at ? longDate(o.offer_expires_at) : '', issued_by: S(o.offer_sent_by || o.offered_by, 120) || 'the office', issued_at: longDateTime(o.offer_sent_at || o.created_at) }
 }
 /** The preview's made-up offer: an example rate (marked as an example on the page), part-time, issued by the office. */
 export function previewFields(now: Date, exp: Date): Fields {
   return { first: 'Pat', last: 'Preview', position: 'Caregiver', pay_rate: 16, classification: 'part_time', date: longDate(now.toISOString()), expires: longDate(exp.toISOString()), issued_by: 'the office (preview)', issued_at: longDateTime(now.toISOString()) }
 }
+/** LPN HIRING: the made-up preview offer for a licensed nurse ('lpn' or 'rn'), same example terms */
+export function previewNurseFields(now: Date, exp: Date, key: string): Fields { return { ...previewFields(now, exp), position: NURSE_TITLES[key] } }
 // deno-lint-ignore no-explicit-any
 function dead(o: any): Response | null {
   if (o.onboarding_path !== 'new') return json({ ...NOPE, why: 'not on the new path' }, 404)   // the Slice 1b test gate
@@ -88,13 +92,19 @@ function dead(o: any): Response | null {
   if (!o.offer_expires_at) return json({ ok: false, error: 'This offer has no expiry on record, so it cannot be signed. Please ask the office: (417) 234-8494.' }, 409)
   if (Date.parse(o.offer_expires_at) < Date.now()) return json({ ...NOPE, expired: true }, 410)
   if (!CLASSIFICATIONS[fieldsOf(o).classification]) return json({ ok: false, error: 'This offer\'s terms have not been approved for this position yet. Please ask the office: (417) 234-8494.' }, 409)
+  /* LPN HIRING (2026-10-14): the licensed nurse letter is proposed until Samantha approves its exact version; until then only
+     a practice or training offer can open it (a real LPN or RN offer answers like an offer whose terms are not approved) */
+  if (letterOnly(o) && !nurseLetterApproved() && !practiceOffer(o)) return json({ ok: false, error: 'This offer letter is waiting for its final approval. Please ask the office: (417) 234-8494.', not_approved: true }, 409)
   return null
 }
 // deno-lint-ignore no-explicit-any
 async function render(o: any) {
   const f = fieldsOf(o)
+  /* LPN HIRING: an LPN or RN offer is the licensed nurse letter alone (no caregiver position description); every other offer
+     is exactly as before */
+  if (letterOnly(o)) { const offer = nurseOfferLetter(f, String(validKey(o.position_key))); return { fields: f, offer, pd: null, offer_fp: await fingerprint(canonical(offer)), pd_fp: null, letter_only: true, offer_version: NURSE_OFFER_DOC_VERSION } }
   const offer = offerLetter(f), pd = positionDescription(f)
-  return { fields: f, offer, pd, offer_fp: await fingerprint(canonical(offer)), pd_fp: await fingerprint(canonical(pd)) }
+  return { fields: f, offer, pd, offer_fp: await fingerprint(canonical(offer)), pd_fp: await fingerprint(canonical(pd)), letter_only: false, offer_version: OFFER_DOC_VERSION }
 }
 // deno-lint-ignore no-explicit-any
 const state = (o: any) => ({ status: o.offer_status, offer_signed_at: o.offer_signed_at, offer_signer_name: o.offer_signer_name, pd_signed_at: o.pd_signed_at, expires_at: o.offer_expires_at, viewed_at: o.offer_viewed_at })
@@ -127,6 +137,11 @@ Deno.serve(async (req) => {
        the page's own memory. */
     if (action === 'preview') {
       const now = new Date(), exp = new Date(now.getTime() + 7 * 86_400_000)
+      /* LPN HIRING: ?position=lpn or rn shows the licensed nurse letter alone (proposed wording) */
+      const pk = validKey(b.position)
+      if (pk === 'lpn' || pk === 'rn') { const nf = previewNurseFields(now, exp, pk)
+        return json({ ok: true, preview: true, first: nf.first, state: { status: 'sent', offer_signed_at: null, offer_signer_name: null, pd_signed_at: null, expires_at: exp.toISOString(), viewed_at: null },
+          automation_live: false, test_mode: true, letter_only: true, approved: nurseLetterApproved(), versions: { offer: NURSE_OFFER_DOC_VERSION, pd: null }, offer: nurseOfferLetter(nf, pk), pd: null }) }
       const f = previewFields(now, exp)
       return json({ ok: true, preview: true, first: f.first, state: { status: 'sent', offer_signed_at: null, offer_signer_name: null, pd_signed_at: null, expires_at: exp.toISOString(), viewed_at: null },
         automation_live: false, test_mode: true, versions: { offer: OFFER_DOC_VERSION, pd: PD_DOC_VERSION }, offer: offerLetter(f), pd: positionDescription(f) })
@@ -145,8 +160,9 @@ Deno.serve(async (req) => {
       try { const { data: st } = await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle(); automation_live = st?.data?.step1_auto_live === true } catch { automation_live = false }
       if (!o.offer_viewed_at) {
         const n = await T.patch(id, { offer_viewed_at: new Date().toISOString(), ...(o.offer_status === 'sent' ? { offer_status: 'viewed' } : {}) }, '&offer_viewed_at=is.null')
-        if (n) await T.event({ offer_id: id, kind: 'viewed', by_who: 'caregiver', channel: 'page', doc_version: OFFER_DOC_VERSION, fingerprint: r.offer_fp, detail: { ip: ipOf(req), agent: agentOf(req) } })
+        if (n) await T.event({ offer_id: id, kind: 'viewed', by_who: 'caregiver', channel: 'page', doc_version: r.offer_version, fingerprint: r.offer_fp, detail: { ip: ipOf(req), agent: agentOf(req) } })
       }
+      if (r.letter_only) return json({ ok: true, first: r.fields.first, state: state(o), automation_live, test_mode: !automation_live, letter_only: true, versions: { offer: r.offer_version, pd: null }, fingerprints: { offer: r.offer_fp, pd: null }, offer: r.offer, pd: null })
       return json({ ok: true, first: r.fields.first, state: state(o), automation_live, test_mode: !automation_live, versions: { offer: OFFER_DOC_VERSION, pd: PD_DOC_VERSION }, fingerprints: { offer: r.offer_fp, pd: r.pd_fp }, offer: r.offer, pd: r.pd })
     }
     /* SLICE 1f (2026-10-09): the small Decline link on the signing page. Only before the offer letter is signed; records
@@ -178,10 +194,11 @@ Deno.serve(async (req) => {
       if (b.consent !== true) return json({ ok: false, error: 'Please tick "I agree to sign this document electronically" first.' }, 400)
       const name = S(b.typed_name, 80)
       if (!/^\S+(\s+\S+)+$/.test(name) || name.length < 4) return json({ ok: false, error: 'Please type your full name, first and last, exactly as you want it on the document.' }, 400)
+      if (doc === 'pd' && letterOnly(o)) return json({ ok: false, error: 'This offer has only the offer letter to sign. Your job description comes with your Step 2 paperwork.' }, 409)
       if (doc === 'pd' && !o.offer_signed_at) return json({ ok: false, error: 'Please sign your offer letter first.' }, 409)
       if ((doc === 'offer' && o.offer_signed_at) || (doc === 'pd' && o.pd_signed_at)) return json({ ok: false, error: 'This document is already signed. A signed document is never changed; if something is wrong, call the office at (417) 234-8494.', already: true }, 409)
       const r = await render(o); const now = new Date().toISOString(); const ip = ipOf(req), agent = agentOf(req)
-      const version = doc === 'offer' ? OFFER_DOC_VERSION : PD_DOC_VERSION, fp = doc === 'offer' ? r.offer_fp : r.pd_fp
+      const version = doc === 'offer' ? r.offer_version : PD_DOC_VERSION, fp = (doc === 'offer' ? r.offer_fp : r.pd_fp) as string
       // 1. the signature, only while still unsigned (a race cannot sign twice)
       const cols = doc === 'offer'
         ? { offer_signed_at: now, offer_signer_name: name, offer_signer_ip: ip, offer_signer_agent: agent, offer_version: version }
@@ -192,13 +209,14 @@ Deno.serve(async (req) => {
       // 2. the PDF: the exact text as rendered, in the company letterhead, with the signature and its audit record;
       //    written once, never overwritten
       const sig = { typedName: name, signedAtCentral: longDateTime(now), signedAtUtc: now, ip, agent, version, fingerprint: fp, offerId: id, docName: doc === 'offer' ? 'Offer of employment' : `${r.fields.position} position description` }
-      const bytes = doc === 'offer' ? offerLetterPdf(r.offer, r.fields.first, r.fields.last, sig) : positionDescriptionPdf(r.pd, r.fields.first, r.fields.last, sig)
+      const bytes = doc === 'offer' ? offerLetterPdf(r.offer, r.fields.first, r.fields.last, sig) : positionDescriptionPdf(r.pd!, r.fields.first, r.fields.last, sig)
       const path = `offers/${id}/${doc}-v${version}-${now.replace(/[:.]/g, '-')}.pdf`
       const up = await db.storage.from(BUCKET).upload(path, bytes, { contentType: 'application/pdf', upsert: false })
       if (up.error) { await T.event({ offer_id: id, kind: doc === 'offer' ? 'signed' : 'pd_signed', by_who: 'system', channel: 'page', doc_version: version, fingerprint: fp, result: 'pdf_failed', detail: { error: String(up.error.message || up.error) } }); return json({ ok: false, error: 'Your signature was recorded, but the copy could not be stored. The office will fix this; nothing more is needed from you.' }, 500) }
       await T.patch(id, doc === 'offer' ? { offer_pdf_path: path } : { pd_pdf_path: path }, doc === 'offer' ? '&offer_pdf_path=is.null' : '&pd_pdf_path=is.null')
       // 3. both signed = accepted (Step 1 is Slice 1d and reads this)
-      const both = doc === 'pd' || !!o.pd_signed_at
+      /* LPN HIRING: the shared rule (positions.ts offerSigned): a letter-only offer is complete with the letter */
+      const both = doc === 'pd' || !!o.pd_signed_at || letterOnly(o)
       if (both) await T.patch(id, { offer_status: 'accepted' }, '&offer_status=not.in.(withdrawn,declined,expired)')
       /* SLICE 1d (2026-10-09): the moment both documents are signed, the Training Platform is told to send Step 1. It reads
          the SAVED record (never this page), sends once, retries on its own, and writes every row of the trail. This kick is
