@@ -104,6 +104,72 @@ export function positionDescription(f: Fields): Block[] {
     { k: 'small', t: `Document version ${PD_DOC_VERSION}` },
   ]
 }
+/* ───── LPN HIRING (Samantha approved the LPN nurse visit plan, 2026-10-14): THE LICENSED NURSE OFFER LETTER ─────
+   An LPN or RN offer (job_offers.position_key 'lpn' or 'rn') signs the offer LETTER ONLY online; their job description, the
+   RN supervision acknowledgment and the nursing documentation expectations are in the Viventium Step 2 LPN packet. This is
+   its own letter, version 1, PROPOSED: the caregiver letter above is not touched (its wording and fingerprint are exactly
+   as before). The differences from the caregiver letter: the position and classification name the nurse's license (no
+   "field caregiver"), the license check is one of the conditions, and "what happens next" names the Step 1 license form,
+   the Step 2 packet and the nurse orientation. Until Samantha approves this exact version (NURSE_LETTER_APPROVED), a real
+   LPN or RN offer cannot be signed (offer-sign refuses; practice and test offers can). */
+export const NURSE_OFFER_DOC_VERSION = 1
+/** the version Samantha approved for real offers; 0 = not approved yet. A changed word is a new version and a new approval. */
+export const NURSE_LETTER_APPROVED = 0
+export const nurseLetterApproved = (): boolean => NURSE_LETTER_APPROVED === NURSE_OFFER_DOC_VERSION
+export const NURSE_TITLES: Record<string, string> = { lpn: 'Licensed Practical Nurse (LPN)', rn: 'Registered Nurse (RN)' }
+const NURSE_WORD: Record<string, string> = { lpn: 'licensed practical nurse', rn: 'registered nurse' }
+export const NURSE_CLASSIFICATIONS: Record<string, (k: string) => string> = {
+  prn: (k) => `PRN (as-needed) ${NURSE_WORD[k]}`, part_time: (k) => `Part-time hourly ${NURSE_WORD[k]}`, full_time: (k) => `Full-time hourly ${NURSE_WORD[k]}`,
+}
+/** The licensed nurse letter. `key` is 'lpn' or 'rn'; anything else throws (the caller never asks for it). */
+export function nurseOfferLetter(f: Fields, key: string): Block[] {
+  if (!NURSE_TITLES[key]) throw new Error('not a licensed nurse position')
+  const cls = classificationParagraph(f.classification)
+  if (!cls || !NURSE_CLASSIFICATIONS[f.classification]) throw new Error('no approved terms for this classification')
+  const lpn = key === 'lpn'
+  return [
+    { k: 'small', t: HEADER },
+    { k: 'p', t: `Date: ${f.date}` },
+    { k: 'p', t: `Dear ${f.first} ${f.last},` },
+    { k: 'p', t: "Thank you for taking the time to meet with us. We enjoyed getting to know you, and we're excited to offer you a nursing position with Caring Companions In-Home Senior Care!" },
+    { k: 'p', t: "We believe you'll be a wonderful addition to our team, and we're looking forward to welcoming you." },
+    { k: 'p', t: `Position: ${NURSE_TITLES[key]}` },
+    { k: 'p', t: `Employment classification: ${NURSE_CLASSIFICATIONS[f.classification](key)}` },
+    { k: 'p', t: `Starting Pay: $${rate(f.pay_rate)} per hour, paid weekly on Fridays` },
+    { k: 'p', t: 'This is a non-exempt, hourly position and is eligible for overtime pay for all hours worked over 40 in a workweek.' },
+    { k: 'p', t: cls },
+    { k: 'p', t: lpn
+      ? 'In this position you make the nurse visits that the Missouri Division of Senior and Disability Services authorizes for our clients, within the scope of your license and under the direction of our registered nurse.'
+      : 'In this position you make the nurse visits that the Missouri Division of Senior and Disability Services authorizes for our clients, within the scope of your license.' },
+    { k: 'h', t: 'YOUR EMPLOYMENT OFFER' },
+    { k: 'p', t: 'Your employment with Caring Companions is contingent upon successfully completing our pre-employment process, which includes:' },
+    { k: 'li', t: 'Successful completion of all required onboarding documents.' },
+    { k: 'li', t: 'Verification that your nursing license is current, active and in good standing. We check it on Nursys QuickConfirm, the verification service the Missouri State Board of Nursing names for employers, and keep it current while you work with us.' },
+    { k: 'li', t: 'A satisfactory criminal background check.' },
+    { k: 'li', t: 'Satisfactory reference checks (personal and professional).' },
+    { k: 'li', t: 'A satisfactory Motor Vehicle Record (MVR) review, when your duties include driving.' },
+    { k: 'li', t: DRUG_SCREENING_LINE },
+    { k: 'li', t: 'Verification that you are legally authorized to work in the United States.' },
+    { k: 'h', t: 'WHAT HAPPENS NEXT?' },
+    { k: 'p', t: 'Your onboarding starts here!' },
+    { k: 'p', t: 'This job offer is the first step of your onboarding. After you accept and sign, your Step 1 paperwork is sent to you automatically by text and email once your signed offer is saved, and you complete it on your phone. Step 1 includes your nursing license number, state and expiration date, and a screenshot or printout of your license.' },
+    { k: 'p', t: "These initial documents are important because they give Caring Companions permission to begin your pre-employment process, including your license verification, background check, reference checks, motor vehicle record review (when your duties include driving), and any drug screening required by Caring Companions' screening policy." },
+    { k: 'p', t: 'The sooner you complete this first step, the sooner we can begin these required checks.' },
+    { k: 'p', t: `Your Step 2 paperwork in Viventium, our payroll system, includes your ${lpn ? 'LPN' : 'RN'} job description${lpn ? ', the RN supervision acknowledgment' : ''} and our nursing documentation expectations for you to read and sign.` },
+    { k: 'p', t: 'Once your pre-employment screenings have been completed successfully, you will receive a text to book a short Orientation Video Call, and your paid orientation and training link right after it. Before your first nurse visit you also complete our nurse orientation and sign a statement that you have read Section 2 of the Missouri Personal Care Provider Manual.' },
+    { k: 'p', t: "If you have any questions along the way, we're happy to help. Just give our office a call at (417) 234-8494." },
+    { k: 'h', t: 'EMPLOYMENT RELATIONSHIP' },
+    { k: 'q', t: 'Employment with Caring Companions is at will. This means that either you or the Company may end the employment relationship at any time, with or without notice, and with or without cause, as permitted by applicable law.' },
+    { k: 'p', t: `This offer will remain open for seven (7) business days from the date of this letter, through ${f.expires}. Your signing link expires at the same time.` },
+    { k: 'p', t: 'We are excited about the opportunity to have you join the Caring Companions family and look forward to working with you!' },
+    { k: 'p', t: 'Warmly,' },
+    { k: 'p', t: 'Samantha Troutman, Co-Founder & CEO, Caring Companions In-Home Senior Care' },
+    { k: 'small', t: `Issued by ${f.issued_by}, ${f.issued_at}` },
+    { k: 'h', t: 'ACCEPTANCE OF EMPLOYMENT OFFER' },
+    { k: 'p', t: 'I accept the employment offer described above and understand that this offer is contingent upon successfully completing all required pre-employment requirements, including verification of my nursing license.' },
+    { k: 'small', t: `Licensed nurse offer letter, document version ${NURSE_OFFER_DOC_VERSION}` },
+  ]
+}
 /** One line per block with its kind, so the fingerprint covers wording AND structure. */
 export const canonical = (blocks: Block[]) => blocks.map((b) => `${b.k}|${b.t}`).join('\n')
 export async function fingerprint(text: string): Promise<string> {

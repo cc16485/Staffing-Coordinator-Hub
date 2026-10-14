@@ -15,6 +15,7 @@
 // Office staff only, by their own sign-in. Sends nothing; changes nothing (the only write is the open log).
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { offerSigned } from '../_shared/positions.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { logOpen, ipOf } from '../_shared/doc-log.ts'
 import { evidenceLine } from '../_shared/evidence.ts'
@@ -179,7 +180,7 @@ export function whereNow(p: Any): string {
   if (p.rec) return 'On the caregiver roster: training and approval'
   if (p.cand) return 'In Background & References: checks and references'
   if (o.step1_done_at) return 'Step 1 complete'
-  if (o.offer_signed_at && o.pd_signed_at) return 'Signed their offer: Step 1 next'
+  if (offerSigned(o)) return 'Signed their offer: Step 1 next'   /* LPN HIRING 2026-10-14: the one shared rule */
   if (o.offer_sent_at) return 'Offer sent: waiting for their signature'
   if (p.app) return 'Applicant'
   return 'Not found'
@@ -197,7 +198,7 @@ Deno.serve(async (req) => {
     if (action === 'step1_progress') {
       const ids = (Array.isArray(b.offer_ids) ? b.offer_ids : []).map((x: unknown) => S(x, 64)).filter((x: string) => /^[0-9a-f-]{36}$/i.test(x)).slice(0, 100)
       if (!ids.length) return json({ ok: true, progress: {} })
-      const { data: rows } = await db.from('step1_forms').select('offer_id, started_at, current_screen, signatures, completed_at, answers, hepb_form').in('offer_id', ids)
+      const { data: rows } = await db.from('step1_forms').select('offer_id, started_at, current_screen, signatures, completed_at, answers, hepb_form, nurse_form').in('offer_id', ids)
       const ev = await T.get(`offer_events?offer_id=in.(${ids.join(',')})&kind=in.(step1_sent,step1_resent)&select=offer_id,at,kind,detail&order=at.asc`)
       const out: Record<string, Any> = {}
       for (const id of ids) {
@@ -226,7 +227,7 @@ Deno.serve(async (req) => {
     try {
       const candId = p.cand?.id ?? p.rec?.candidate_id
       const [{ data: f }, { data: rr }, { data: bk }] = await Promise.all([
-        p.offerId ? db.from('step1_forms').select('answers, practice, signatures, started_at, completed_at, pdfs, hepb_form').eq('offer_id', p.offerId).maybeSingle() : Promise.resolve({ data: null }),
+        p.offerId ? db.from('step1_forms').select('answers, practice, signatures, started_at, completed_at, pdfs, hepb_form, nurse_form').eq('offer_id', p.offerId).maybeSingle() : Promise.resolve({ data: null }),
         candId != null ? db.from('reference_requests').select('*').eq('candidate_id', String(candId)).order('slot') : Promise.resolve({ data: [] }),
         p.app?.id ? db.from('interview_bookings').select('id, starts_at, status, created_at').eq('applicant_id', p.app.id) : Promise.resolve({ data: [] })])
       if (f?.answers) experience = { ...experienceSummary(f.answers, rr ?? []), practice: !!f.practice }

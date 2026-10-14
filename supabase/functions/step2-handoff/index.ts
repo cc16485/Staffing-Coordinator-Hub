@@ -41,6 +41,7 @@ import { makeStep2Link, checkLink } from '../_shared/applicant-links.ts'
 import { dueNextBusinessDay, centralYmd } from '../_shared/business-days.ts'
 import { sentMessages, reminderMessages, receiptText, stillOpenText, isDoneReply, rowFor, stateOf, reminderDue, inReminderWindow, refusedForGood, REMINDER_TRIES } from '../_shared/step2.ts'
 import { testPerson } from '../_shared/test-people.ts'
+import { validKey, packetLine } from '../_shared/positions.ts'   /* LPN HIRING 2026-10-14: the Step 2 LPN packet tick */
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -97,6 +98,22 @@ const onb = (st: Any) => {
   return { step2_days: days.length === 2 && days[0] < days[1] ? days : [3, 6], sent_due_days: num(o.step2_sent_due_days, 1), verify_due_days: num(o.verify_due_days, 1), hour: Number.isInteger(Number(o.due_hour)) && Number(o.due_hour) >= 6 && Number(o.due_hour) <= 22 ? Number(o.due_hour) : 17 }
 }
 const checklist = (st: Any) => { const c = st?.viventium_step2_checklist; return c && typeof c === 'object' && Array.isArray(c.items) && c.items.length ? { version: Number(c.version) || 0, items: c.items.map((x: unknown) => S(x, 200)).filter(Boolean) } : { version: 0, items: ['Offer letter signed in Viventium', 'I-9 Section 1', 'Federal W-4', 'Missouri W-4', 'Direct deposit', 'Employee handbook acknowledged', /* 2026-10-13: Client Rights, Code of Ethics and HIPAA moved into Step 1 and the Orientation Video Call */ 'Driver license or ID uploaded', 'Social Security card uploaded'] } }
+
+/* ── LPN HIRING (Samantha approved the LPN nurse visit plan, 2026-10-14): an LPN or RN hire's Viventium Step 2 LPN packet
+   (job description, RN supervision acknowledgment, documentation expectations) is ONE extra tick on Verify, shown only for
+   them; it confirms cg.step2.position_description. Who is a nurse: the offer's position key (Training Platform); when the
+   offer cannot be read, their Step 1 record's nursing license form says the same. A caregiver never sees or gets it. ── */
+async function nursePacket(db: Any, rec: Any): Promise<string | null> {
+  const oid = S(rec?.offer_id, 64); if (!oid) return null
+  const url = Deno.env.get('OFFERS_PROJECT_URL') ?? '', key = Deno.env.get('OFFERS_SERVICE_ROLE_KEY') ?? ''
+  if (url && key) {
+    try { const r = await fetch(`${url}/rest/v1/job_offers?id=eq.${encodeURIComponent(oid)}&select=position_key`, { headers: { apikey: key, Authorization: `Bearer ${key}` } })
+      if (r.ok) { const rows = await r.json(); if (Array.isArray(rows) && rows.length === 1) { const k = validKey(rows[0]?.position_key); return k === 'lpn' || k === 'rn' ? packetLine(k) : null } } } catch { /* the Step 1 record answers below */ }
+  }
+  try { const { data } = await db.from('step1_forms').select('nurse_form, answers').eq('offer_id', oid).maybeSingle()
+    if (data?.nurse_form === true) return packetLine(/registered/i.test(String(data.answers?.nurse_license_type || '')) ? 'rn' : 'lpn') } catch { /* not a nurse as far as the records say */ }
+  return null
+}
 
 /* ── the Needs Attention cards ── */
 async function raiseCard(db: Any, c: { id: string; kind: string; title: string; detail: string; who: string; candidate_id: string; urgency: 'urgent' | 'today' | 'normal'; owner?: string; due?: string }) {
@@ -307,7 +324,12 @@ Deno.serve(async (req) => {
     const who = await requireStaff(db, req, OFFICE_ROLES)
     if (!who.ok) return json({ error: who.error }, who.status)
     const actor = { email: who.email, name: who.name }
-    if (action === 'preview') { const f = S(b.first, 40) || 'there', L = '…'; const m = sentMessages(f, L), r = reminderMessages(f, L); return json({ ok: true, sent: { text: m.text, subject: m.subject }, reminder: { text: r.text }, receipt: receiptText(f), still_open: stillOpenText(f, '{task}', L), checklist: checklist(st), switches: { send: st.step2_send_live === true, reminders: st.step2_reminders_live === true, invite: st.wc_auto_invite_live === true } }) }
+    if (action === 'preview') {
+      const f = S(b.first, 40) || 'there', L = '…'; const m = sentMessages(f, L), r = reminderMessages(f, L)
+      /* LPN HIRING: with candidate_id, an LPN or RN hire's packet tick (the key is there only for them) */
+      let np: string | null = null; if (/^\d{1,12}$/.test(S(b.candidate_id, 12))) { const pp = await person(db, S(b.candidate_id, 12)); if (pp) np = await nursePacket(db, pp.rec) }
+      return json({ ok: true, sent: { text: m.text, subject: m.subject }, reminder: { text: r.text }, receipt: receiptText(f), still_open: stillOpenText(f, '{task}', L), checklist: checklist(st), switches: { send: st.step2_send_live === true, reminders: st.step2_reminders_live === true, invite: st.wc_auto_invite_live === true }, ...(np ? { nurse_packet: np } : {}) })
+    }
     const cid = S(b.candidate_id, 12); if (!/^\d{1,12}$/.test(cid)) return json({ error: 'Which person?' }, 400)
     const p = await person(db, cid); if (!p) return json({ error: 'That person is not in Background & References or on the roster.' }, 404)
     const c = p.rec, name = `${c.first || ''} ${c.last || ''}`.trim(), state = stateOf(c), jr = await journeyFor(db, c)
@@ -342,8 +364,12 @@ Deno.serve(async (req) => {
       if (state === 'verified') return json({ error: 'Already verified for ' + name + ' (' + String(c.step2_verified_at).slice(0, 10) + ' by ' + S(c.step2_verified_by) + ').' }, 409)
       const ck = checklist(st), ticked = (Array.isArray(b.ticked) ? b.ticked : []).map((x: unknown) => S(x, 200)).filter((x: string) => ck.items.includes(x))
       const i9s2 = b.i9_section2 === true, note = S(b.note, 300)
-      if (!ticked.length && !i9s2) return json({ error: 'Tick what you checked in Viventium. Nothing was recorded.' }, 400)
+      /* LPN HIRING: the packet tick counts only for an LPN or RN hire (refused for anyone else, nothing recorded) */
+      const np = b.nurse_packet === true ? await nursePacket(db, c) : null
+      if (b.nurse_packet === true && !np) return json({ error: 'The LPN packet tick is only for an LPN or RN hire. Nothing was recorded.' }, 400)
+      if (!ticked.length && !i9s2 && !np) return json({ error: 'Tick what you checked in Viventium. Nothing was recorded.' }, 400)
       const list_ = ck.items.map((t: string) => ({ text: t, ticked: ticked.includes(t) }))
+      if (np) list_.push({ text: np, ticked: true, nurse_packet: true } as Any)
       const fields: Any = { step2_verified_at: now, step2_verified_by: who.email, step2_checklist: { version: ck.version, items: list_, by: who.email, name: who.name, at: now }, step2_note: note || null, step2_history: hist(c, { at: now, what: 'verified', by: who.email, ticked: ticked.length, i9_section2: i9s2 }) }
       if (i9s2) { fields.step2_i9_s2_by = who.email; fields.step2_i9_s2_at = now }
       const confirmed: string[] = []
@@ -353,12 +379,13 @@ Deno.serve(async (req) => {
            AND the explanation recorded at the Orientation Video Call, never from a Viventium tick */
         keys.delete('cg.step2.participant_rights')
         if (i9s2) keys.add('cg.i9.section2')
+        if (np) keys.add('cg.step2.position_description')
         for (const k of keys) {
           const cur = jr.steps.find((s: Any) => s.step_key === k); if (cur && DONE.includes(cur.state)) continue
           await putStep(db, jr.j.journey_id, k, { state: 'complete', evidence: { confirmed: { by: who.email, name: who.name, at: now, list: 'office', via: 'step2 verify', checklist_version: ck.version } }, completed_by: who.email, completed_by_name: who.name, completed_at: now, blocked_reason: null })
           await event(db, jr.j.journey_id, k, actor, 'confirmed', { list: 'office', via: 'step2 verify' }); confirmed.push(k)
         }
-        await event(db, jr.j.journey_id, null, actor, 'step2_verified', { ticked, i9_section2: i9s2, confirmed, note: note || null })
+        await event(db, jr.j.journey_id, null, actor, 'step2_verified', { ticked, i9_section2: i9s2, confirmed, note: note || null, ...(np ? { nurse_packet: np } : {}) })
       }
       let invite: Any = { state: 'none' }
       if (jr) {

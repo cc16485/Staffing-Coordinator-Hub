@@ -17,6 +17,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { serverSecretOk } from '../_shared/staff-auth.ts'   // SLICE 1d: the server door for the Step 1 sender
+import { letterOnly } from '../_shared/positions.ts'
 import { checkLink, makeOfferLink, makeOrientLink, makeStartLink, okId, type Kind, makeStep1Link } from '../_shared/applicant-links.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -26,7 +27,7 @@ const NOPE = { ok: false, error: 'This link is not valid or has run out. Please 
 
 /* SLICE 1a: what the offer page needs to show the letter (no phone, no email, no notes). Empty columns until Slice 1c
    writes them; the page is Slice 1b. */
-const LETTER_COLS = 'id,first_name,last_name,position,pay_rate,hours_type,classification,offer_status,offer_version,pd_version,offer_sent_at,offer_expires_at,offer_viewed_at,offer_signed_at,pd_signed_at,offer_declined_at,offer_withdrawn_at,offered_by,created_at'
+const LETTER_COLS = 'id,first_name,last_name,position,pay_rate,hours_type,classification,offer_status,offer_version,pd_version,offer_sent_at,offer_expires_at,offer_viewed_at,offer_signed_at,pd_signed_at,offer_declined_at,offer_withdrawn_at,offered_by,created_at,position_key'
 // deno-lint-ignore no-explicit-any
 async function offerLetter(id: string): Promise<any | null> {
   const OF_URL = Deno.env.get('OFFERS_PROJECT_URL') ?? '', OF_KEY = Deno.env.get('OFFERS_SERVICE_ROLE_KEY') ?? ''
@@ -126,7 +127,8 @@ Deno.serve(async (req) => {
         return json({ ok: true, first: S(o.first_name, 60), last: S(o.last_name, 60), position: S(o.position, 80), pay_rate: typeof o.pay_rate === 'number' ? o.pay_rate : null,
           hours_type: S(o.hours_type, 20), classification: S(o.classification, 40), status: S(o.offer_status, 20) || null,
           offer_version: o.offer_version ?? null, pd_version: o.pd_version ?? null, offered_by: S(o.offered_by, 120), sent_at: o.offer_sent_at ?? null,
-          expires_at: o.offer_expires_at ?? null, signed_at: o.offer_signed_at ?? null, pd_signed_at: o.pd_signed_at ?? null, declined_at: o.offer_declined_at ?? null })
+          expires_at: o.offer_expires_at ?? null, signed_at: o.offer_signed_at ?? null, pd_signed_at: o.pd_signed_at ?? null, declined_at: o.offer_declined_at ?? null,
+          position_key: o.position_key ?? null, letter_only: letterOnly(o) })   /* LPN HIRING 2026-10-14: an LPN or RN offer signs the letter only */
       }
       if (kind === 'start') {
         const o = await offer(id)

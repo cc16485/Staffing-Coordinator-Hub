@@ -1,5 +1,6 @@
 // =============================================================================
 import { FORMS, FORM_ORDER, formsToList, step1Ctx } from './step1-documents.ts'
+import { offerSigned, offerSignedAt, letterOnly } from './positions.ts'   /* LPN HIRING 2026-10-14: the one "offer signed" rule */
 
 /** 2026-10-13 (Samantha): each Step 1 form's own status: Not Started, In Progress, Signed, Needs Attention.
     Needs Attention = signed but its PDF is missing, or signed on an older wording than the current one. */
@@ -53,7 +54,7 @@ export function applicantStatus(x: StatusIn): Any {
   /* 5 and 6: the offer */
   if (o?.offer_sent_at || o?.created_at) done(4, o.offer_sent_at || o.created_at)
   if (o && (o.offer_withdrawn_at || o.offer_declined_at || ['withdrawn', 'declined', 'expired'].includes(String(o.offer_status)))) ended = o.offer_declined_at || o.offer_status === 'declined' ? 'They declined the offer' : o.offer_status === 'expired' ? 'The offer expired unsigned' : 'The offer was withdrawn'
-  if (o?.offer_signed_at && o?.pd_signed_at) done(5, o.pd_signed_at)
+  if (offerSigned(o)) done(5, offerSignedAt(o))
   else if (o?.offer_signed_at) st[5].note = 'Offer letter signed; the position description is not yet'
   /* 7: Step 1, form by form */
   const sigs = (f?.signatures || {}) as Record<string, Any>
@@ -63,7 +64,7 @@ export function applicantStatus(x: StatusIn): Any {
   const outstanding = forms.filter((k) => !k.signed_at)
   if (!newPath && !f) { st[6].state = 'na'; st[6].note = 'Old process: the start link and Viventium Group 1' }
   else if (f?.completed_at) done(6, f.completed_at)
-  else if (o?.offer_signed_at && o?.pd_signed_at) st[6].note = forms.length - outstanding.length + ' of ' + forms.length + ' forms signed' + (f?.started_at ? '' : '; not opened yet')
+  else if (offerSigned(o)) st[6].note = forms.length - outstanding.length + ' of ' + forms.length + ' forms signed' + (f?.started_at ? '' : '; not opened yet')
   /* 8 to 12: the readiness card answers these (the page fills them); here only what the records say outright */
   const readiness = !!x.journey
   if (!readiness && x.cand) st[7].note = 'In Background & References'
@@ -72,7 +73,7 @@ export function applicantStatus(x: StatusIn): Any {
   const cur = ended ? -1 : st.findIndex((s) => s.state === 'todo')
   if (cur >= 0) st[cur].state = 'current'
   /* what is missing, and what happens next (before the readiness card takes over) */
-  if (outstanding.length && o?.offer_signed_at && o?.pd_signed_at && !f?.completed_at && newPath) missing.push('Step 1 forms not signed yet: ' + outstanding.map((k) => k.title).join(', '))
+  if (outstanding.length && offerSigned(o) && !f?.completed_at && newPath) missing.push('Step 1 forms not signed yet: ' + outstanding.map((k) => k.title).join(', '))
   const refs = x.refs || [], asked = refs.length, answered = refs.filter((r: Any) => r.responded_at).length
   if (x.cand) { const slots = [1, 2, 3, 4].filter((n) => S(x.cand[`r${n}n`])).length; if (slots < 4) missing.push(`Background & References has ${slots} of 4 references`); if (asked && answered < asked) missing.push(`${asked - answered} of ${asked} reference${asked === 1 ? '' : 's'} not answered yet`) }
   const ex = x.experience
@@ -85,7 +86,7 @@ export function applicantStatus(x: StatusIn): Any {
   else if (cur === 2) next = R('They book an interview', 'the applicant', 'Follow-ups to book go by themselves')
   else if (cur === 3) next = b?.status === 'booked' ? R('The interview, ' + day(b.starts_at), 'the interviewer', 'Reminders go by themselves') : b?.status === 'noshow' ? R('Rebook or close: they missed the interview', 'the office') : R('Interview them', 'the office')
   else if (cur === 4) next = R('Decide: offer, candidate pool or not hiring', 'the office', 'After the interview')
-  else if (cur === 5) next = R('They sign the offer letter and the position description', 'the applicant', o?.offer_expires_at ? 'Open until ' + day(o.offer_expires_at) + '; reminders on day 2 and day 5' : '')
+  else if (cur === 5) next = R(letterOnly(o) ? 'They sign the offer letter' : 'They sign the offer letter and the position description', 'the applicant', o?.offer_expires_at ? 'Open until ' + day(o.offer_expires_at) + '; reminders on day 2 and day 5' : '')
   else if (cur === 6) next = R('They finish Step 1 (' + (forms.length - outstanding.length) + ' of ' + forms.length + ' signed)', 'the applicant', 'Reminders on day 2 and day 4')
   else if (cur >= 7 && !readiness) next = R('Start the background checks and references', ownerName, 'Step 1 is complete: their signed permission is in')
   else if (cur >= 7) next = { from_readiness: true }   /* the readiness card's own next step (title, owner, why), filled by the page */

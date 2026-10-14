@@ -26,13 +26,14 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { checkLink } from '../_shared/applicant-links.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
-import { FORMS, FORM_ORDER, formFingerprint, REFERENCES_REQUIRED, APPROVED_FOR_REAL, approvedAt, approvedForReal, allApprovedForReal, step1Screens, formApplies, applicableForms, DECIDING, formCount, needsCountersign, MATCHING_FACTS, SKILLS, SKILL_GROUPS, step1Ctx, hepbFormAtStart, formsInPlay, HEPB_CHOICE_IDS, type Step1Ctx, type FormKey, type Item, type Form, type Field } from '../_shared/step1-documents.ts'
+import { FORMS, FORM_ORDER, formFingerprint, REFERENCES_REQUIRED, APPROVED_FOR_REAL, approvedAt, approvedForReal, allApprovedForReal, step1Screens, formApplies, applicableForms, DECIDING, formCount, needsCountersign, MATCHING_FACTS, SKILLS, SKILL_GROUPS, step1Ctx, hepbFormAtStart, nurseFormAtStart, formsInPlay, HEPB_CHOICE_IDS, type Step1Ctx, type FormKey, type Item, type Form, type Field } from '../_shared/step1-documents.ts'
 import { seal, open as unseal, last4, ssnLooksValid, REVEAL_TTL_MS, REVEAL_FIELDS, REVEAL_PERMISSION, type RevealField, ssnAllowed, practiceOffer } from '../_shared/step1-crypto.ts'
 import { PERM_KEY, normalizePerms, mayApprove } from '../_shared/onboarding-permissions.ts'
 import { step1FormPdf, type IdentityState } from '../_shared/step1-pdf.ts'
 import { longDateTime } from '../_shared/offer-documents.ts'
 import { practicePerson } from '../_shared/optout.ts'
 import { driverFromStep1 } from '../_shared/driver.ts'
+import { offerSigned } from '../_shared/positions.ts'   /* LPN HIRING 2026-10-14: the one "offer signed" rule */
 import { stepOneRecord, stepOneDeclination, declinationPdf, declinationFingerprint, BUCKET as HEPB_BUCKET, journeyMirror, raiseCard as hepbCard, ownerEmails, publicStatus } from '../_shared/hepb.ts'
 import { makeHepbLink } from '../_shared/applicant-links.ts'
 
@@ -48,9 +49,9 @@ const PHOTO_TYPES: Record<string, string> = { jpg: 'image/jpeg', jpeg: 'image/jp
 export const ESIGN_WORDS = 'I agree to complete and sign my Step 1 paperwork electronically, and I understand my typed name on each form has the same effect as my handwritten signature. I can ask the office for paper copies at any time.'
 /* 2026-10-13: from the form list (a form added later gets its screen before All done) */
 export const SCREENS = step1Screens()
-export const IDENTITY_IDS = ['ssn', 'dob', 'license_number']
+export const IDENTITY_IDS = ['ssn', 'dob', 'license_number', 'nurse_license_number']   /* nurse_license_number: LPN HIRING 2026-10-14 */
 const MAP_TABLES = new Set(['windows', 'specialties', 'matching_facts'])
-const COLS = 'id,first_name,last_name,phone,email,position,offered_by,onboarding_path,offer_status,offer_signed_at,pd_signed_at,offer_withdrawn_at,offer_declined_at,step1_sent_at,step1_done_at'
+const COLS = 'id,first_name,last_name,phone,email,position,offered_by,onboarding_path,offer_status,offer_signed_at,pd_signed_at,offer_withdrawn_at,offer_declined_at,step1_sent_at,step1_done_at,position_key'
 
 function trn() {
   const url = Deno.env.get('OFFERS_PROJECT_URL') ?? '', key = Deno.env.get('OFFERS_SERVICE_ROLE_KEY') ?? ''
@@ -83,9 +84,14 @@ const digits = (s: unknown) => String(s ?? '').replace(/\D/g, '')
 export function dead(o: any): { status: number; body: Record<string, unknown> } | null {
   if (o.onboarding_path !== 'new') return { status: 404, body: { ...NOPE, why: 'not on the new path' } }
   if (o.offer_withdrawn_at || o.offer_declined_at || ['withdrawn', 'declined'].includes(String(o.offer_status))) return { status: 410, body: NOPE }
-  if (!o.offer_signed_at || !o.pd_signed_at) return { status: 409, body: { ok: false, error: 'Please sign your offer letter and position description first; Step 1 opens right after.' } }
+  /* LPN HIRING (2026-10-14): the one shared rule; an LPN or RN offer is complete with the letter alone */
+  if (!offerSigned(o)) return { status: 409, body: { ok: false, error: 'Please sign your offer letter and position description first; Step 1 opens right after.' } }
   return null
 }
+/** LPN HIRING (2026-10-14): the company-signed PDF numbers its form out of the same list as before (the nursing license form
+    counts only in a nurse's Step 1), so a caregiver's countersigned PDF reads exactly as it did */
+// deno-lint-ignore no-explicit-any
+const csOrder = (fr: any): FormKey[] => FORM_ORDER.filter((k) => FORMS[k].step1Gate !== 'nurse' || step1Ctx(fr).nurse === true)
 const itemsOf = (f: Form): Item[] => f.sections.flatMap((s) => s.items || [])
 const formOf = (id: string): FormKey | null => { for (const k of FORM_ORDER) if (itemsOf(FORMS[k]).some((i) => i.id === id)) return k; return null }
 const empty = (v: unknown) => v == null || v === '' || (Array.isArray(v) && !v.length) || (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v as object).length)
@@ -232,6 +238,8 @@ export function missing(form: FormKey, a: Record<string, unknown>, ident: Identi
   /* 2026-10-13: a photo counts once its upload is recorded; the Driver Agreement needs the license number in the locked door */
   for (const it of itemsOf(f)) if (it.kind === 'photo' && it.required) need(it.id, !!(a[it.id] && typeof a[it.id] === 'object' && (a[it.id] as Record<string, unknown>).path))
   if (form === 'vehicle') need('license_number', !!ident.license, "Driver's license number")
+  /* LPN HIRING (2026-10-14): the nursing license number goes through the locked door too */
+  if (form === 'nurse_license') need('nurse_license_number', !!ident.nurse_license, 'Nursing license number')
   return out
 }
 // deno-lint-ignore no-explicit-any
@@ -451,6 +459,11 @@ export async function preview(b: Record<string, any>): Promise<Record<string, un
   for (const k of FORM_ORDER) for (const it of itemsOf(FORMS[k])) if (it.kind === 'photo') { const v = (b.answers || {})[it.id]; if (v && typeof v === 'object' && /^preview\//.test(String(v.path || ''))) answers[it.id] = { path: String(v.path).slice(0, 80) } }
   const id = b.identity && typeof b.identity === 'object' ? b.identity : {}
   const ident: IdentityState = { ssn: id.ssn ? 'ending ' + S(id.ssn, 4) : null, dob: !!id.dob, license: id.license ? 'ending ' + S(id.license, 4) : null }
+  /* LPN HIRING (2026-10-14): ?position=lpn or rn previews a nurse's Step 1 (the nursing license form last, proposed wording);
+     without it the preview is exactly as before */
+  const nursePreview = b.position === 'lpn' || b.position === 'rn'
+  const PCTX: Step1Ctx = nursePreview ? { ...PREVIEW_CTX, nurse: true } : PREVIEW_CTX, PORDER = nursePreview ? formsInPlay(PCTX) : PREVIEW_ORDER
+  if (nursePreview) ident.nurse_license = id.nurse_license ? 'ending ' + S(id.nurse_license, 4) : null
   /* 2026-10-13 (705, the go-live proof): would a REAL applicant be allowed to sign these forms at these versions? Read only:
      the same rule the sign action uses (approved at exactly that version, and that version is the wording in force). */
   if (Array.isArray(b.approval_check)) {
@@ -465,12 +478,15 @@ export async function preview(b: Record<string, any>): Promise<Record<string, un
     if (!FORM_ORDER.includes(form)) return { ok: false, error: 'Which form?' }
     /* 2026-10-13: the Hepatitis B choice is checked like the real sign does; it lives in the page only (never an answer) */
     if (b.check) return { ok: true, preview: true, form, missing: [...missing(form, answers, ident), ...choiceMissing(form, b.choice, b.decline_consent)] }
-    const at = new Date().toISOString(), i = PREVIEW_ORDER.indexOf(form)
+    const at = new Date().toISOString(), i = PORDER.indexOf(form)
     if (FORMS[form].choices && HEPB_CHOICE_IDS.includes(S(b.choice, 20))) answers.__choice = S(b.choice, 20)
-    const bytes = step1FormPdf(FORMS[form], answers, PREVIEW_WHO, ident, { typedName: 'Pat Preview (PREVIEW ONLY: not a signed document)', signedAtCentral: 'Preview, ' + longDateTime(at), signedAtUtc: at, ip: 'preview', agent: 'preview', version: FORMS[form].version, fingerprint: await formFingerprint(form), offerId: 'preview (no offer)', docName: FORMS[form].title }, i + 1, PREVIEW_ORDER.length)
+    const bytes = step1FormPdf(FORMS[form], answers, PREVIEW_WHO, ident, { typedName: 'Pat Preview (PREVIEW ONLY: not a signed document)', signedAtCentral: 'Preview, ' + longDateTime(at), signedAtUtc: at, ip: 'preview', agent: 'preview', version: FORMS[form].version, fingerprint: await formFingerprint(form), offerId: 'preview (no offer)', docName: FORMS[form].title }, i + 1, PORDER.length)
     let bin = ''; for (let j = 0; j < bytes.length; j += 0x8000) bin += String.fromCharCode(...bytes.subarray(j, j + 0x8000))
     return { ok: true, preview: true, form, pdf_base64: btoa(bin) }
   }
+  if (nursePreview) return { ok: true, preview: true, who: { ...PREVIEW_WHO, position: b.position === 'rn' ? 'Registered Nurse (RN)' : 'Licensed Practical Nurse (LPN)' }, forms: await formsPayload({}, PCTX), order: PORDER, screens: step1Screens(PCTX), answers: {}, signatures: {}, identity: { ssn: null, dob: false, license: null, license_state: null, license_expires: null, nurse_license: null },
+    prefill: PREVIEW_PREFILL, hints: { availability: 'Weekdays, mornings and afternoons', travel: 'Springfield and Nixa' }, current_screen: '1', started_at: null, completed_at: null, esign_consent_at: null,
+    test_mode: true, references_required: REFERENCES_REQUIRED, skill_groups: SKILL_GROUPS, skills: SKILLS, signed_count: 0, form_count: formCount({}, PCTX), deciding: DECIDING }
   return { ok: true, preview: true, who: PREVIEW_WHO, forms: await formsPayload({}, PREVIEW_CTX), order: PREVIEW_ORDER, screens: step1Screens(PREVIEW_CTX), answers: {}, signatures: {}, identity: { ssn: null, dob: false, license: null, license_state: null, license_expires: null },
     prefill: PREVIEW_PREFILL, hints: { availability: 'Weekdays, mornings and afternoons', travel: 'Springfield and Nixa' }, current_screen: '1', started_at: null, completed_at: null, esign_consent_at: null,
     test_mode: true, references_required: REFERENCES_REQUIRED, skill_groups: SKILL_GROUPS, skills: SKILLS, signed_count: 0, form_count: formCount({}, PREVIEW_CTX), deciding: DECIDING }
@@ -607,7 +623,7 @@ Deno.serve(async (req) => {
       const T = trn(); await T.event({ offer_id: oid, kind: 'step1_signed', by_who: 'staff', channel: 'hub', result: 'countersigned', doc_version: Number(es.version), fingerprint: String(es.fingerprint), detail: { form, typed_name: name, by_name: staff.name, by_email: staff.email, ip: ipOf(req), signed_at: at } })
       const bytes = step1FormPdf(FORMS[form], (fr.answers || {}) as Record<string, unknown>, rwho, identState(idr),
         { typedName: String(es.typed_name), signedAtCentral: longDateTime(String(es.at)), signedAtUtc: String(es.at), ip: String(es.ip || ''), agent: String(es.agent || ''), version: Number(es.version), fingerprint: String(es.fingerprint), offerId: oid, docName: FORMS[form].title },
-        FORM_ORDER.indexOf(form) + 1, FORM_ORDER.length,
+        csOrder(fr).indexOf(form) + 1, csOrder(fr).length,
         { typedName: name, signedAtCentral: longDateTime(at), signedAtUtc: at, ip: ipOf(req), agent: agentOf(req), version: Number(es.version), fingerprint: String(es.fingerprint), offerId: oid, docName: FORMS[form].title, byEmail: staff.email })
       const path = `step1/${oid}/${form}-v${es.version}-countersigned-${at.replace(/[:.]/g, '-')}.pdf`
       const up = await db.storage.from(BUCKET).upload(path, bytes, { contentType: 'application/pdf', upsert: false })
@@ -631,6 +647,9 @@ Deno.serve(async (req) => {
       const { data: idr } = await db.from('step1_identity').select('ssn_last4,dob_sealed,license_last4,license_state,license_expires').eq('offer_id', oid).maybeSingle()
       const app = await applicationOf(db, rwho)
       const rctx = step1Ctx(fr)
+      /* LPN HIRING (2026-10-14): a nurse's sealed license number shows as "on file, ending" like the others */
+      let rnurse: Record<string, unknown> = {}
+      if (rctx.nurse) { try { const { data: nl } = await db.from('step1_identity').select('nurse_license_last4').eq('offer_id', oid).maybeSingle(); rnurse = { nurse_license: nl?.nurse_license_last4 ? `ending ${nl.nurse_license_last4}` : null } } catch { rnurse = { nurse_license: null } } }
       /* 2026-10-13: the Hepatitis B answer is never shown here, only the status words everyone in the office may see */
       let hepbStatus: string | null = null
       if (rctx.hepb) { try { const { data: hr } = await db.from('hepb_record').select('status, offered_at, verified_at').eq('offer_id', oid).maybeSingle(); hepbStatus = publicStatus(hr) } catch { hepbStatus = null } }
@@ -643,7 +662,7 @@ Deno.serve(async (req) => {
       }
       await db.from('document_access_log').insert({ offer_id: oid, doc: 'step1:review', path: '(the Step 1 screens, read only)', by_person: staff.person_id, by_email: staff.email, by_name: staff.name, ip: ipOf(req), reason: 'opened Step 1 as the applicant saw it' })
       return json({ ok: true, review: true, who: rwho, forms: await formsPayload({}, rctx), order: formsInPlay(rctx), screens: step1Screens(rctx), hepb_status: hepbStatus, answers: fr?.answers || {}, signatures: publicSignatures(rsigs), signed,
-        identity: { ...identState(idr), license_state: idr?.license_state ?? null, license_expires: idr?.license_expires ?? null },
+        identity: { ...identState(idr), license_state: idr?.license_state ?? null, license_expires: idr?.license_expires ?? null, ...rnurse },
         prefill: prefillFrom(app, app?.post_interview || null), hints: { availability: S(app?.availability, 300) || null, travel: S(app?.post_interview?.travel_areas, 200) || null },
         current_screen: fr?.current_screen || '1', started_at: fr?.started_at || null, completed_at: fr?.completed_at || null, esign_consent_at: fr?.esign_consent_at || null, esign_consent_detail: fr?.esign_consent_detail || null,
         countersignatures: Object.fromEntries(Object.entries((fr?.countersignatures || {}) as Record<string, Record<string, unknown>>).map(([k, v]) => [k, { at: v.at, typed_name: v.typed_name, by_name: v.by_name }])),
@@ -667,13 +686,18 @@ Deno.serve(async (req) => {
     const sigs = (row?.signatures || {}) as Record<string, Record<string, unknown>>
     const now = () => new Date().toISOString()
     let ctx = step1Ctx(row)
+    /* LPN HIRING (2026-10-14): a nurse's sealed license number, read only for a Step 1 that has the nursing license form */
+    const nurseIdent = async () => { if (ctx.nurse !== true) return; try { const { data } = await db.from('step1_identity').select('nurse_license_last4').eq('offer_id', id).maybeSingle(); IS.nurse_license = data?.nurse_license_last4 ? `ending ${data.nurse_license_last4}` : null } catch { IS.nurse_license = null } }
+    await nurseIdent()
 
     if (action === 'view') {
       if (!row) {
         /* 2026-10-13: whether the Hepatitis B form is in this Step 1 is decided now, once, and kept (step1Ctx) */
-        const { data: made, error } = await db.from('step1_forms').insert({ offer_id: id, started_at: now(), current_screen: '1', practice: practiceOffer(o), hepb_form: hepbFormAtStart(practiceOffer(o)) }).select('*').maybeSingle()
+        /* LPN HIRING (2026-10-14): the nursing license form, decided the same way and kept (step1_forms.nurse_form); written only
+           for an LPN or RN offer, so every other Step 1 row is made exactly as before */
+        const { data: made, error } = await db.from('step1_forms').insert({ offer_id: id, started_at: now(), current_screen: '1', practice: practiceOffer(o), hepb_form: hepbFormAtStart(practiceOffer(o)), ...(nurseFormAtStart(o.position_key) ? { nurse_form: true } : {}) }).select('*').maybeSingle()
         if (error) { const again = await db.from('step1_forms').select('*').eq('offer_id', id).maybeSingle(); row = again.data } else row = made
-        ctx = step1Ctx(row)
+        ctx = step1Ctx(row); await nurseIdent()
         if (row) await T.event({ offer_id: id, kind: 'step1_started', by_who: 'caregiver', channel: 'page', detail: { ip: ipOf(req), agent: agentOf(req) } })
       }
       /* 2026-10-11: the practice mark kept true to the offer (the reference page asks task questions only for practice hires) */
@@ -701,17 +725,20 @@ Deno.serve(async (req) => {
       if (!formApplies(fk, (row.answers || {}) as Record<string, unknown>, ctx)) return json({ ok: false, error: 'Please answer the question at the top of this screen first.' }, 409)
       if (sigs[fk]) return json({ ok: false, error: `${FORMS[fk].title} is already signed, so its pictures cannot change here. Call the office: (417) 234-8494.` }, 409)
       const prefix = `offer/${id}/${item}-`
+      /* LPN HIRING (2026-10-14): the nursing license picture is a personnel record: the private onboarding store (kept seven
+         years, 700); the driver pictures stay in driver-docs as before */
+      const PBUCKET = fk === 'nurse_license' ? BUCKET : DRIVER_BUCKET
       if (action === 'upload_url') {
         const ext = S(b.ext, 5).toLowerCase(); if (!PHOTO_TYPES[ext]) return json({ ok: false, error: 'Please use a photo (JPG, PNG, HEIC) or a PDF.' }, 400)
         const path = prefix + Date.now() + '.' + ext
-        const { data, error } = await db.storage.from(DRIVER_BUCKET).createSignedUploadUrl(path)
+        const { data, error } = await db.storage.from(PBUCKET).createSignedUploadUrl(path)
         if (error || !data) return json({ ok: false, error: 'Could not get the upload ready. Please try again.' }, 500)
         return json({ ok: true, path, token: data.token, signed_url: data.signedUrl, content_type: PHOTO_TYPES[ext] })
       }
       const path = S(b.path, 200)
       if (!path.startsWith(prefix) || !/^[\w./-]+$/.test(path)) return json({ ok: false, error: 'That picture is not yours.' }, 400)
       const dir = path.slice(0, path.lastIndexOf('/')), name = path.slice(path.lastIndexOf('/') + 1)
-      const { data: found } = await db.storage.from(DRIVER_BUCKET).list(dir, { search: name, limit: 5 })
+      const { data: found } = await db.storage.from(PBUCKET).list(dir, { search: name, limit: 5 })
       if (!(found ?? []).some((x: { name: string }) => x.name === name)) return json({ ok: false, error: 'The picture did not arrive. Please try again.' }, 409)
       const ext = name.split('.').pop() || '', answers = { ...(row.answers || {}) } as Record<string, unknown>
       answers[item] = { path, content_type: PHOTO_TYPES[ext] || 'application/octet-stream', at: now() }
@@ -789,11 +816,20 @@ Deno.serve(async (req) => {
         if (b.license_state != null) upd.license_state = S(b.license_state, 2).toUpperCase() || null
         if (b.license_expires != null) upd.license_expires = /^\d{4}-\d{2}-\d{2}$/.test(S(b.license_expires, 10)) ? S(b.license_expires, 10) : null
       }
+      /* LPN HIRING (2026-10-14): the nursing license number, sealed like the driver's license number; only on a nurse's Step 1 */
+      if (b.nurse_license_number != null) {
+        if (ctx.nurse !== true) return json({ ok: false, error: 'Which license?' }, 400)
+        if (sigs.nurse_license) return json({ ok: false, error: 'The nursing license form is already signed. Call the office: (417) 234-8494.' }, 409)
+        const nl = S(b.nurse_license_number, 30).replace(/\s+/g, '').toUpperCase()
+        if (!/^[A-Z0-9-]{3,20}$/.test(nl)) return json({ ok: false, error: 'Please enter your license number as it appears on Nursys or your board of nursing (letters and numbers).' }, 400)
+        upd.nurse_license_sealed = await seal(kek, id, nl); upd.nurse_license_last4 = last4(nl); did.push('nurse_license')
+      }
       if (!did.length) return json({ ok: false, error: 'Nothing to save.' }, 400)
       const { error } = await db.from('step1_identity').upsert({ offer_id: id, ...upd }, { onConflict: 'offer_id' })
       if (error) return json({ ok: false, error: 'Could not save: ' + error.message }, 500)
       const after = await db.from('step1_identity').select('ssn_last4,dob_sealed,license_last4,license_state,license_expires').eq('offer_id', id).maybeSingle()
-      return json({ ok: true, saved: did, identity: { ...identState(after.data), license_state: after.data?.license_state ?? null, license_expires: after.data?.license_expires ?? null } })
+      if (did.includes('nurse_license')) await nurseIdent()
+      return json({ ok: true, saved: did, identity: { ...identState(after.data), license_state: after.data?.license_state ?? null, license_expires: after.data?.license_expires ?? null, ...(ctx.nurse === true ? { nurse_license: IS.nurse_license ?? null } : {}) } })
     }
     if (action === 'copies') {
       const out: Record<string, string> = {}

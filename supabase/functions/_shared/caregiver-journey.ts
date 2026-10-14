@@ -13,6 +13,7 @@
 //   caregiverGate          the server refusal: may this action happen for this person? (allow when no caregiver journey
 //                          exists: the old path is untouched; fails CLOSED when the records cannot be read, 2026-10-13)
 import { needsCountersign } from './step1-documents.ts'
+import { offerSigned, offerSignedAt, letterOnly, isLicensedNurse } from './positions.ts'   /* LPN HIRING 2026-10-14 */
 import '../_shared/journey-rules.js'
 // deno-lint-ignore no-explicit-any
 type Any = any
@@ -46,6 +47,11 @@ export async function facts(db: Any, j: Any, trn: { get(id: string): Promise<Any
   f.lived_outside_mo = a.lived_outside_mo === 'yes' ? true : a.lived_outside_mo === 'no' ? false : undefined
   f.claims_cna_or_hha = a.cna === 'yes' || a.hha === 'yes' ? true : (a.cna === 'no' && a.hha === 'no') ? false : undefined
   /* 2026-10-13: Step 1's deciding question; older records answered the vehicle form's acknowledgment instead */
+  /* LPN HIRING (2026-10-14): an LPN or RN hire (the offer's position key, set once at Save Offer). Known from the offer; when
+     the offer cannot be read, from the Step 1 record (its nursing license form was decided from the same key when it started).
+     Unknown (neither readable) leaves the nurse rows hidden, never assumed. Every offer without an LPN or RN key is false. */
+  f.licensed_nurse = f.offer ? isLicensedNurse(f.offer.position_key) : undefined
+  if (f.licensed_nurse === undefined && s1) { try { const { data: nf, error: ne } = await db.from('step1_forms').select('nurse_form').eq('offer_id', j.offer_id).maybeSingle(); if (!ne && nf) f.licensed_nurse = nf.nurse_form === true } catch { /* stays unknown */ } }
   f.drives_clients = a.transport_willing === 'yes' ? true : a.transport_willing === 'no' ? false : typeof a.driver_ack === 'string' ? /request approval to transport/i.test(a.driver_ack) : undefined
   const lists: Record<string, Any[]> = {}
   for (const key of ['candidates', 'caregivers']) { const { data } = await db.from('app_data').select('data').eq('key', key).maybeSingle(); lists[key] = Array.isArray(data?.data) ? data.data : [] }
@@ -85,7 +91,8 @@ const iso = (v: unknown) => { const t = typeof v === 'string' && v ? Date.parse(
 export function verifyRows(f: Facts, now = new Date().toISOString()): Verdict[] {
   const out: Verdict[] = []
   const o = f.offer, s1 = f.step1, c = f.candidate || f.roster || {}
-  if (o?.offer_signed_at && o?.pd_signed_at) out.push({ key: 'cg.offer.signed', state: 'complete', at: iso(o.pd_signed_at) || now, evidence: { offer_signed_at: o.offer_signed_at, pd_signed_at: o.pd_signed_at, offer_version: o.offer_version ?? null } })
+  /* LPN HIRING (2026-10-14): the one shared rule; a caregiver offer reads exactly as before, an LPN or RN offer is the letter alone */
+  if (offerSigned(o)) out.push({ key: 'cg.offer.signed', state: 'complete', at: iso(offerSignedAt(o)) || now, evidence: letterOnly(o) && !o.pd_signed_at ? { offer_signed_at: o.offer_signed_at, letter_only: true, position_key: o.position_key, offer_version: o.offer_version ?? null } : { offer_signed_at: o.offer_signed_at, pd_signed_at: o.pd_signed_at, offer_version: o.offer_version ?? null } })
   const sigs = (s1?.signatures || {}) as Record<string, Any>
   for (const [k, form] of [['application', 'employee_application'], ['references', 'reference_consent'], ['fcra', 'fcra_disclosure'], ['edl_fcsr', 'edl_fcsr_consent'], ['availability', 'availability'], ['experience', 'experience'], ['vehicle', 'vehicle']]) {
     /* 2026-10-13: the driving screen is signed with the Driver Agreement OR the Non-Driver Agreement */
