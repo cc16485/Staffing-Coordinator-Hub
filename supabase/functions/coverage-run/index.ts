@@ -153,6 +153,39 @@ export function prnFit(c: any, p: PrnMember, busy: boolean, nowChicago?: Date): 
   if (busy) return { fit: false, why: 'already working then' }
   return { fit: true, why: null }
 }
+/* AVAILABILITY FOR EVERYONE (Samantha, 2026-10-14: "we need them to check availability"). The shift's day and time of day
+   (its start, same bands as the availability page) against the times the caregiver gave us. A dated shift is one slot; an
+   interest check or regular opening is each asked day at its start time, and counts as outside only when NONE of those days
+   fit. No availability on file = available any time (her 24-hour rule); no date or time on the case = nothing to check.
+   outside + ok: they ticked "also text me about open shifts outside my availability". */
+// deno-lint-ignore no-explicit-any
+export function availCheck(c: any, a: { windows?: Record<string, string[]> | null; outside_ok?: boolean | null } | null | undefined): { outside: boolean; ok: boolean; why: string | null } {
+  const w = a?.windows
+  if (!w || !Object.values(w).some((v) => Array.isArray(v) && v.length)) return { outside: false, ok: false, why: null }
+  const slots: [string, string][] = []
+  const date = String(c?.shift_date || ''), time = String(c?.shift_time || '')
+  if (/^\d{4}-\d{2}-\d{2}$/.test(date) && /^\d\d:\d\d-\d\d:\d\d$/.test(time)) {
+    slots.push([new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' }).toLowerCase().slice(0, 3), bandOf(time.slice(0, 5))])
+  } else if (Array.isArray(c?.interest_days) && /^\d\d:\d\d$/.test(String(c?.interest_start || '').slice(0, 5))) {
+    for (const d of c.interest_days) slots.push([String(d).toLowerCase().slice(0, 3), bandOf(String(c.interest_start).slice(0, 5))])
+  }
+  if (!slots.length) return { outside: false, ok: false, why: null }
+  if (slots.some(([d, b]) => Array.isArray(w[d]) && w[d].includes(b))) return { outside: false, ok: false, why: null }
+  const [d0, b0] = slots[0]
+  const why = slots.length === 1 ? 'outside their availability (' + (Array.isArray(w[d0]) && w[d0].length ? 'not ' + (DAY_WORD[d0] || d0) + ' ' + (BAND_WORD[b0] || b0) : 'not ' + (DAY_WORD[d0] || d0)) + ')'
+    : 'outside their availability (none of the asked days at that time)'
+  return { outside: true, ok: a?.outside_ok === true, why }
+}
+/* every availability record by AxisCare id (and record id), read once; unreadable = empty = everyone available */
+async function availLoad(): Promise<Map<string, { windows?: Record<string, string[]> | null; outside_ok?: boolean | null }>> {
+  const out = new Map()
+  try {
+    const { data } = await sb.from('app_data').select('data').eq('key', 'caregiver_availability').maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    for (const a of (Array.isArray(data?.data) ? data!.data : []) as any[]) { if (a?.axiscare_id != null && a.axiscare_id !== '') out.set(String(a.axiscare_id), a); else if (a?.id != null) out.set(String(a.id), a) }
+  } catch { /* nothing read = nobody is left out for availability */ }
+  return out
+}
 /* Active PRN Team members linked to their AxisCare caregiver record, with their notice and availability. */
 async function prnTeamLoad(): Promise<Map<string, PrnMember>> {
   const out = new Map<string, PrnMember>()
@@ -920,6 +953,7 @@ async function buildCandidatesForCase(c: any):
   const group1: any[] = [], group2: any[] = []
   // deno-lint-ignore no-explicit-any
   const group0: any[] = [], prnOther: any[] = [], prnOngoing: any[] = []   // PRN3
+  const availAll = await availLoad()   // 2026-10-14: availability checked for everyone
   for (const x of cands) {
     if (x.skipped && !x.may_autosend) { cut(x, String(x.skipped)); continue }
     if (dnr.has(nameKeyOf(String(x.name)))) { cut(x, 'Do-Not-Return for this client — never suggested'); continue }
@@ -985,6 +1019,10 @@ async function buildCandidatesForCase(c: any):
         : recentlyActive.has(gid) ? 'worked a shift in the last 14 days'
         : 'active caregiver, no recent history',
     }
+    /* 2026-10-14: outside the times they gave us = listed, unticked, with the reason (a person can still ask them on
+       purpose); outside but they said OK to texts about those = ticked as usual, with the note. PRN keep their own rule. */
+    const av = availCheck(c, availAll.get(gid))
+    if (av.outside) Object.assign(row, av.ok ? { outside_ok_note: av.why + ', said OK to texts about those' } : { outside_avail: av.why })
     /* PRN3: the PRN CNA Team gets its own place, never mixed into the groups everyone else is ticked from. */
     const pm = prnTeam.get(gid)
     if (pm) {
@@ -1004,12 +1042,14 @@ async function buildCandidatesForCase(c: any):
   /* Busy sinks; the client's own favorite leads their group; a chained
      schedule beats raw distance; then the old ranking. "Who could actually
      take this and delight the client" reads top-down. */
-  group1.sort((a, b) => ((a.working_then ? 1 : 0) - (b.working_then ? 1 : 0))
+  group1.sort((a, b) => ((a.outside_avail ? 1 : 0) - (b.outside_avail ? 1 : 0))   // outside their availability sinks (2026-10-14)
+    || ((a.working_then ? 1 : 0) - (b.working_then ? 1 : 0))
     || ((b.new_hire ? 1 : 0) - (a.new_hire ? 1 : 0))   /* her "B": a new hire who needs hours first among equal fits */
     || ((b.this_client?.favorite ? 1 : 0) - (a.this_client?.favorite ? 1 : 0))
     || (b.history?.visits ?? 0) - (a.history?.visits ?? 0))
   group2.sort((a, b) =>
-    ((a.working_then ? 1 : 0) - (b.working_then ? 1 : 0))
+    ((a.outside_avail ? 1 : 0) - (b.outside_avail ? 1 : 0))   // outside their availability sinks (2026-10-14)
+    || ((a.working_then ? 1 : 0) - (b.working_then ? 1 : 0))
     || ((b.free_then === true ? 1 : 0) - (a.free_then === true ? 1 : 0))
     || ((b.new_hire ? 1 : 0) - (a.new_hire ? 1 : 0))   /* her "B": among people who fit equally well, the new hire who needs hours first */
     || ((b.chain ? 1 : 0) - (a.chain ? 1 : 0))
@@ -1944,10 +1984,25 @@ Deno.serve(async (req) => {
       else if (!ongoingW && f.outside) { x.outside_ask = true; x.tier_why = (x.tier_why ? x.tier_why + '; ' : '') + 'outside their stated times, said OK to texts about those' }
       else x.prn_skip = ongoingW ? 'PRN Team: a regular opening' : 'PRN Team: ' + f.why
     }
+    /* 2026-10-14 (her rule: "we need them to check availability"): anyone else whose availability says no to this shift is
+       left out of the automatic waves, unless they ticked "also text me about open shifts outside my availability".
+       No availability on file = available any time. */
+    const availW = await availLoad()
+    for (const x of cands) {
+      if (!x.may_autosend || x.prn_ask || x.prn_skip || x.outside_ask) continue
+      const pmW = x.axiscare_id ? prnTeamW.get(String(x.axiscare_id)) : undefined
+      if (pmW) continue
+      const av = availCheck(c, x.axiscare_id ? availW.get(String(x.axiscare_id)) : undefined)
+      if (!av.outside) continue
+      if (av.ok) { x.outside_ask = true; x.tier_why = (x.tier_why ? x.tier_why + '; ' : '') + 'outside their stated times, said OK to texts about those' }
+      else x.avail_skip = av.why
+    }
+    stats.avail_left_out = (Number(stats.avail_left_out) || 0) + cands.filter((x: any) => x.avail_skip).length
     stats.prn_first = (Number(stats.prn_first) || 0) + cands.filter((x: any) => x.prn_ask).length
     stats.prn_left_out = (Number(stats.prn_left_out) || 0) + cands.filter((x: any) => x.prn_skip).length
-    const sendable = cands.filter(x => x.may_autosend && !x.prn_skip).sort((a: any, b: any) =>
+    const sendable = cands.filter(x => x.may_autosend && !x.prn_skip && !x.avail_skip).sort((a: any, b: any) =>
       (a.tier - b.tier) ||
+      ((a.outside_ask ? 1 : 0) - (b.outside_ask ? 1 : 0)) ||
       ((history.get(String(b.axiscare_id ?? ''))?.visits ?? 0) -
        (history.get(String(a.axiscare_id ?? ''))?.visits ?? 0)) ||
       ((wantGap.get(String(b.axiscare_id ?? '')) ?? -999) -
