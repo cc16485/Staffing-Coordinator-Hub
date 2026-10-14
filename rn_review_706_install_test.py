@@ -6,19 +6,19 @@ import json, os, re, subprocess, tempfile, threading, http.server, hashlib, shut
 HERE = os.path.dirname(os.path.abspath(__file__))
 sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
 res = []; ck = lambda n, c, note="": res.append((n, bool(c), "" if c else str(note)[:1500]))
-SQLF = "supabase/nurse-review.sql"; FN = "rn-review"; JOB = "rn-review-pass"
+SQLF = "supabase/nurse-review.sql"; FN = "rn-review"; JOB = "rn-review-pass"; HA = "hub-access"; FNS = [FN, HA]
 tmp = tempfile.mkdtemp(prefix="t706-"); W = os.path.join(tmp, "wt")
 subprocess.run(["git", "-C", HERE, "worktree", "add", "-q", "--detach", W, "HEAD"], check=True)
 try:
     sys.path.insert(0, W); os.environ.setdefault("SB_REPORT", os.path.join(tmp, "unused.txt"))
     from cc_step_lib import need
     FNROOT = os.path.join(W, "supabase", "functions")
-    NEED = sorted(need(FNROOT, FN))
-    FNSHAS = {k[len("supabase/functions/"):]: sha(os.path.join(W, k)) for k in NEED}
+    NEEDS = {fn: sorted(need(FNROOT, fn)) for fn in FNS}; NEED = NEEDS[FN]
+    FNSHAS = {k[len("supabase/functions/"):]: sha(os.path.join(W, k)) for fn in FNS for k in NEEDS[fn]}
     SQLSHA = sha(os.path.join(W, SQLF)); SRC = open(os.path.join(W, SQLF)).read(); HEAD300 = SRC[:300]
     # a file rn-review uses that main has in an older version (the live-vs-history case): brand-pdf.ts or another shared file
     OLDER = None
-    for k in NEED:
+    for k in NEEDS[HA] + NEED:
         for c in subprocess.run(["git", "-C", W, "log", "origin/main", "--format=%H", "--", k], capture_output=True, text=True).stdout.split()[1:3]:
             b = subprocess.run(["git", "-C", W, "show", f"{c}:{k}"], capture_output=True).stdout
             if b and hashlib.sha256(b).hexdigest() != sha(os.path.join(W, k)): OLDER = (k, b.decode()); break
@@ -27,7 +27,7 @@ try:
     def reset(**m):
         S.clear(); S.update(sql=[], posts=[], patches=[], files=[], sched={})
         M.clear(); M.update(dict(live=False, vj=True, ops={"nurse_review_live": False, "ghe_watch_live": True, "other": {"keep": 1}}, jobs={}, vault=1, sqlfail=False, trigger="ok",
-                                 probe="refused", tables_open=None, open_fn=False, switch_flips=False, patched=False, reset_gateway=False, staff=[{"name": "Natasha Early", "cred": "RN", "email": "natasha@mo-care.com", "supervising_rn": True}, {"name": "Lena Park", "cred": "LPN"}]), **m)
+                                 probe="refused", tables_open=None, open_fn=False, switch_flips=False, patched=False, reset_gateway=False, ha_live=True, ha_vj=True, mapped=0, rls_rn=(0, 0), rls_cc=(31, 6), rls_fail=False, staff=[{"name": "Natasha Early", "cred": "RN", "email": "natasha@mo-care.com", "supervising_rn": True}, {"name": "Lena Park", "cred": "LPN"}]), **m)
     CLI_LOG = os.path.join(tmp, "cli.log"); STATE = os.path.join(tmp, "state.json")
     dlines = lambda: [l for l in (open(CLI_LOG).read().splitlines() if os.path.exists(CLI_LOG) else []) if l.startswith("functions deploy")]
     class H(http.server.BaseHTTPRequestHandler):
@@ -38,8 +38,12 @@ try:
             p = self.path
             if "/api-keys" in p: return self._send(200, [{"name": "anon", "api_key": "eyJanonKEY"}, {"name": "service_role", "api_key": "eyJsvcKEY"}])
             m = re.match(r"/v1/projects/\w+/functions/([\w-]+)$", p)
+            if m and m.group(1) == HA:
+                dl = [l for l in dlines() if l.split()[2] == HA]
+                if not M["ha_live"]: return self._send(404, {})
+                return self._send(200, {"version": 30 + len(dl), "verify_jwt": (("--no-verify-jwt" not in dl[-1]) if dl else M["ha_vj"])})
             if m and m.group(1) == FN:
-                dl = dlines()
+                dl = [l for l in dlines() if l.split()[2] == FN]
                 if M["patched"]: return self._send(200, {"version": 10 + len(dl), "verify_jwt": M["vj"]})
                 if dl: return self._send(200, {"version": 10 + len(dl), "verify_jwt": False if M["reset_gateway"] else ("--no-verify-jwt" not in dl[-1])})
                 if not M["live"]: return self._send(404, {})
@@ -55,7 +59,7 @@ try:
                 return self._send(200 if M["open_fn"] else 401, {"ok": False, "error": "Sign in first."})
             q = body["query"]; S["sql"].append(q)
             if "to_regclass('storage.objects') is not null as objs" in q:
-                return self._send(200, [{"objs": True, "dal": True, "door": True, "ev": True, "bucket": 0, "trig": 0, "tables": 0, "vault": M["vault"]}])
+                return self._send(200, [{"objs": True, "dal": True, "door": True, "ev": True, "bucket": 0, "trig": 0, "tables": 0, "mapped": M["mapped"], "rule": True, "vault": M["vault"]}])
             if q.startswith("select jobname, schedule, active from cron.job where jobname = 'rn-review-pass'"):
                 return self._send(200, [{"jobname": j, "schedule": s_, "active": a} for j, (s_, a) in M["jobs"].items()])
             if q == "select data, version from public.app_data where key = 'ops_settings'":
@@ -76,6 +80,12 @@ try:
                 ts = re.findall(r"'(\w+)'", q[q.find("unnest(array["):])
                 return self._send(200, [{"t": t, "here": True, "browser": t == M["tables_open"]} for t in ts])
             if q == "select public from storage.buckets where id = 'nurse-docs'": return self._send(200, [{"public": False}])
+            mm = re.search(r"raise exception '(706_RLS_RN|706_RLS_CC): % %'", q)
+            if mm:
+                S.setdefault("rls", []).append(q)
+                if M["rls_fail"]: return self._send(400, {"message": "ERROR: 42501: permission denied to set role"})
+                v = M["rls_rn"] if mm.group(1) == "706_RLS_RN" else M["rls_cc"]
+                return self._send(400, {"message": f"ERROR: P0001: {mm.group(1)}: {v[0]} {v[1]}"})
             if "706_PROBE_RESULT" in q:
                 msg = {"refused": "Signed nursing documents are kept for seven years and cannot be deleted (_706_probe/x.pdf).", "deleted": "deleted"}[M["probe"]]
                 return self._send(400, {"message": f"ERROR: P0001: 706_PROBE_RESULT: {msg}"})
@@ -91,9 +101,9 @@ st = json.load(open({STATE!r}))
 if a[:2] == ['functions', 'deploy']: sys.exit(0)
 if a[:2] == ['functions', 'download']:
     done = any(l.startswith('functions deploy ' + a[2] + ' ') for l in open({CLI_LOG!r}).read().splitlines())
-    files = {{k: open(os.path.join(st['root'], k), 'rb').read() for k in st['need']}}
+    files = {{k: open(os.path.join(st['root'], k), 'rb').read() for k in st['need'][a[2]]}}
     if not done:
-        for k, v in st['override'].items():
+        for k, v in st['override'].get(a[2], {{}}).items():
             if v is None: files.pop(k, None)
             else: files[k] = v.encode()
     for k, b in files.items():
@@ -107,7 +117,7 @@ sys.exit(1)
         for f in (CLI_LOG, rep):
             if os.path.exists(f): os.remove(f)
         open(CLI_LOG, "w").close()
-        json.dump({"root": W, "need": NEED, "override": override or {}}, open(STATE, "w"))
+        json.dump({"root": W, "need": NEEDS, "override": override or {}}, open(STATE, "w"))
         env = dict(os.environ, PATH=FAKEBIN + ":/usr/bin:/bin", SB_TOKEN="sbp_test", SB_REPORT=rep, SB_API_BASE=URL, SB_FN_BASE=URL, SB_SUPA_CLI=os.path.join(FAKEBIN, "supabase"),
                    SB_FNROOT=FNROOT, SB_FN_SHAS=json.dumps(FNSHAS), SB_SQL_SHA=SQLSHA, PYTHONPATH=W, SB_STEP="706")
         env.update(env_over or {})
@@ -121,7 +131,10 @@ sys.exit(1)
     if os.environ.get("T706_SHOW"): print(out)
     ck("clean run: exit 0, RESULT: DONE, then NEXT (merge the Hub and Owners Hub pull requests)", c == 0 and "RESULT: DONE" in out and out.strip().splitlines()[-1].startswith("NEXT: merge the Hub pull request"), out)
     ck("the SQL ran once, the reviewed file byte for byte, before the deploy", S["files"] == ["full"] and any(q == SRC for q in S["sql"]), S["files"])
-    ck("only rn-review is deployed (new: gateway sign-in check on, so no --no-verify-jwt)", deployed() == [FN] and "--no-verify-jwt" not in dlines()[0] and "rn-review is new (not live yet)" in out, dlines())
+    ck("only rn-review (new: gateway sign-in check on) and hub-access (live, its own setting kept: on) are deployed, in that order", deployed() == FNS and not any("--no-verify-jwt" in l for l in dlines()) and "rn-review is new (not live yet)" in out and "hub-access is live" in out and "hub-access is live as tested" in out, dlines())
+    ck("the RN review only check: as an rn_review sign-in and as a Care Coordinator Hub sign-in, each in one DO block that always raises (rolled back), the claims and the role set inside",
+       len(S.get("rls", [])) == 2 and all(q.startswith("do $p$") and "set local role authenticated" in q and "request.jwt.claims" in q for q in S["rls"]) and '"hub_access": ["rn_review"]' in S["rls"][0] and '"hub_access": ["care_coordinator"]' in S["rls"][1]
+       and "an RN review only sign-in reads no app_data key (0 rows" in out and "a Care Coordinator Hub sign-in reads 31 keys" in out and "no app_data key is mapped to rn_review" in out, [S.get("rls"), out])
     ck("the hourly schedule: POST {\"action\": \"pass\"} to rn-review with the Vault's x-cron-secret and the public key; proved on", JOB in S["sched"] and "/functions/v1/rn-review'" in S["sched"][JOB]
        and "'x-cron-secret', (select decrypted_secret from vault.decrypted_secrets where name = 'hub_job_secret')" in S["sched"][JOB] and "body := '{\"action\": \"pass\"}'::jsonb" in S["sched"][JOB]
        and M["jobs"][JOB] == ("7 * * * *", True) and "rn-review-pass is on, every hour" in out, [S["sched"], out])
@@ -138,26 +151,42 @@ sys.exit(1)
 
     # ── live vs history ──
     c, out = run(live=True)
-    ck("already live and already this build: said so, redeployed with its own gateway setting, DONE", c == 0 and "is already this build" in out and deployed() == [FN], out)
+    ck("already live and already this build: said so, redeployed with its own gateway setting, DONE", c == 0 and "rn-review is live at version 10 (gateway sign-in check on) and is already this build" in out and deployed() == FNS, out)
     if OLDER:
         k, b = OLDER
-        c, out = run(live=True, override={k: b})
-        ck(f"a live file from main's own history ({k.split('/')[-1]}) is just older: named, deployed, DONE", c == 0 and "older versions (from main's own history)" in out and deployed() == [FN], out)
+        fn_ = HA if k in NEEDS[HA] else FN
+        c, out = run(live=True, override={fn_: {k: b}})
+        ck(f"a live file from main's own history ({k.split('/')[-1]} in {fn_}) is just older: named, deployed, DONE", c == 0 and "older versions (from main's own history)" in out and deployed() == FNS, out)
     else: ck("an older-from-main live file was found to rehearse", False, "none")
     k1 = "supabase/functions/rn-review/index.ts"
-    c, out = run(live=True, override={k1: "// someone's hand deploy\n" + open(os.path.join(W, k1)).read()})
+    c, out = run(live=True, override={FN: {k1: "// someone's hand deploy\n" + open(os.path.join(W, k1)).read()}})
     ck("a live file in NO main history (someone's unmerged work): STOP before any change", c == 3 and "never on main" in out and not changed(), out)
-    c, out = run(live=True, override={"supabase/functions/_shared/someones-file.ts": "export const x = 1\n"})
+    c, out = run(live=True, override={FN: {"supabase/functions/_shared/someones-file.ts": "export const x = 1\n"}})
     ck("a live file this build does not use and main never had: STOP before any change", c == 3 and "someones-file.ts" in out and not changed(), out)
     c, out = run(live=True, vj=False)
-    ck("already live with the gateway check off: kept off (deployed with --no-verify-jwt)", c == 0 and "--no-verify-jwt" in dlines()[0], dlines())
+    ck("already live with the gateway check off: kept off (deployed with --no-verify-jwt)", c == 0 and "--no-verify-jwt" in dlines()[0] and dlines()[0].split()[2] == FN, dlines())
+    k2 = "supabase/functions/hub-access/index.ts"
+    c, out = run(override={HA: {k2: "// someone's unmerged change\n" + open(os.path.join(W, k2)).read()}})
+    ck("hub-access live with code never on main: STOP before any change", c == 3 and "hub-access's live copy holds hub-access/index.ts in a version that was never on main" in out and not changed(), out)
+    c, out = run(ha_live=False)
+    ck("hub-access not live at all: STOP before any change", c == 3 and "hub-access is not live at all" in out and not changed(), out)
+    c, out = run(ha_vj=False)
+    ck("hub-access's own gateway setting is kept (off stays off)", c == 0 and any(l.split()[2] == HA and "--no-verify-jwt" in l for l in dlines()) and not any(l.split()[2] == FN and "--no-verify-jwt" in l for l in dlines()), dlines())
+    c, out = run(mapped=1)
+    ck("an app_data key mapped to rn_review: STOP before any change", c == 3 and "mapped to rn_review" in out and not changed(), out)
+    c, out = run(rls_rn=(2, 1))
+    ck("an RN review only sign-in that can read app_data: reported loudly, RESULT not clean", c == 9 and "can read 2 app_data key(s)" in out and "Do not give anyone RN review only" in out, out)
+    c, out = run(rls_cc=(0, 0))
+    ck("the comparison sign-in reading nothing: the check proves nothing and says so", c == 9 and "proves nothing" in out, out)
+    c, out = run(rls_fail=True)
+    ck("the sign-in check unable to run: reported", c == 9 and "could not run as planned" in out, out)
     c, out = run(reset_gateway=True)
     ck("a deploy that comes back with the wrong gateway setting is put back (on)", c == 0 and S["patches"] == [{"verify_jwt": True}], [S["patches"], out])
 
     # ── pins and prerequisites ──
     c, out = run(env_over={"SB_SQL_SHA": "0" * 64})
     ck("the SQL is not the reviewed build: STOP, no query at all", c == 2 and not S["sql"] and "nurse-review.sql is not the reviewed build" in out, out)
-    c, out = run(env_over={"SB_FN_SHAS": json.dumps({k: v for k, v in FNSHAS.items() if k != "_shared/rn-review.ts"})})
+    c, out = run(env_over={"SB_FN_SHAS": json.dumps({k: v for k, v in FNSHAS.items() if k != "hub-access/index.ts"})})
     ck("a needed file not pinned: STOP, no query at all", c == 2 and "not pinned" in out and not S["sql"], out)
     c, out = run(env_over={"SB_FN_SHAS": json.dumps(dict(FNSHAS, **{"rn-review/index.ts": "0" * 64}))})
     ck("a service file that is not the reviewed build: STOP, no query at all", c == 2 and not S["sql"], out)
@@ -170,12 +199,12 @@ sys.exit(1)
 
     # ── changes ──
     c, out = run(sqlfail=True)
-    ck("a SQL error: STOP, nothing deployed, no schedule", c == 5 and "did not install" in out and not deployed() and not S["sched"], out)
+    ck("a SQL error: STOP, nothing deployed (neither service), no schedule", c == 5 and "did not install" in out and not deployed() and not S["sched"], out)
     c, out = run(trigger="perm")
     rq = [q for q in S["sql"] if q.startswith(HEAD300) and q != SRC]
     ck("no permission for the storage trigger: reported, the file rerun without the trigger only, deployed, RESULT not clean, the probe not tried",
        c == 9 and "NOT protected yet" in out and S["files"] == ["full", "rest"] and len(rq) == 1 and "create trigger nurse_documents_keep" not in rq[0] and "function public.nurse_documents_keep()" in rq[0]
-       and "create trigger nurse_flag_guard_t" in rq[0] and deployed() == [FN] and not any("706_PROBE_RESULT" in q for q in S["sql"]) and "the keep-guard was not tried" in out, out)
+       and "create trigger nurse_flag_guard_t" in rq[0] and "create trigger ghe_forms_a_rn_keep_t" in rq[0] and deployed() == FNS and not any("706_PROBE_RESULT" in q for q in S["sql"]) and "the keep-guard was not tried" in out, out)
     c, out = run(probe="deleted")
     ck("the guard letting a delete through: reported", c == 9 and "let a signed nursing PDF be deleted" in out, out)
     c, out = run(open_fn=True)

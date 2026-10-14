@@ -13,10 +13,17 @@
 --   bucket nurse-docs   PRIVATE, PDF only, 10 MB: the signed review PDFs. A file there can never be deleted, moved or
 --                       renamed (the 700 keep-guard; the only door is a deliberate purge setting, and no purge exists).
 --   rn_review_retention read only: the earliest date anything here may be removed (seven years; nothing removes anything).
+--   ghe_forms_a_rn_keep_t  on app_data ghe_forms: a GHE form she signed keeps her signature on every save, refuses changes
+--                       to what she signed and refuses removal (does not wait for the participant to sign).
 -- Every open of a GHE, a nursing history or a signed PDF is a row in the existing document_access_log (logOpen).
 -- Nothing here changes app_data, a switch or anyone's record. Safe to run twice.
--- Rollback: nurse-review-rollback.sql (removes the storage guard and the view; every table, row and file stays).
+-- Rollback: nurse-review-rollback.sql (removes the storage guard, the GHE signature keeper and the view; every table, row and
+-- file stays).
 -- ============================================================================
+do $guard$ begin
+  if to_regclass('public.app_data') is null then raise exception 'RN review refused: public.app_data is missing. Nothing was changed.'; end if;
+end $guard$;
+
 begin;
 -- ── 1. the tables ─────────────────────────────────────────────────────────────────────────────────────────────────
 create table if not exists public.nurse_flag (
@@ -156,6 +163,63 @@ revoke all privileges on sequence public.rn_review_event_id_seq from anon, authe
 grant select, insert, update on table public.nurse_flag, public.rn_ghe_signature to service_role;
 grant select, insert on table public.rn_review_event to service_role;
 grant usage on sequence public.rn_review_event_id_seq to service_role;
+
+-- ── 2b. her signature on the GHE form itself is kept (does not wait for the participant's signature) ─────────────
+-- The Hub's GHE form lives in app_data ghe_forms, which any office page can save. Once rn-review has written an RN's
+-- signature onto a form (its rn_signature names a row in rn_ghe_signature), every later save of that form:
+--   · keeps her signature exactly: sig_sup, rn_signature, rn_reviewer, rn_reviewed_at, rn_reviewed_by and the Supervisory
+--     Nurse date are put back as signed if a save would change or drop them (a page that redraws the signature picture,
+--     or never had it, cannot overwrite it);
+--   · refuses any change to what she signed (the answers, scores, client, visit date, nurse, total, the nurse's signature):
+--     a correction is an Amend, which keeps the signed form;
+--   · refuses removing the form.
+-- The participant may still sign after her (HCBS 8.00 Appendix 4 sets no order); the status still moves (Uploaded).
+-- It runs before the slice 9 GHE lock (trigger names sort first) and reads rn_ghe_signature as its owner.
+create or replace function public.ghe_rn_signature_keep() returns trigger
+language plpgsql security definer set search_path = pg_catalog, public as $f$
+declare it jsonb; ni jsonb; i int; who text; fld text; changed boolean;
+  locked text[] := array['checks', 'radios', 'client', 'client_id', 'visit_date', 'nurse', 'total', 'sig_nurse'];
+  keep text[] := array['sig_sup', 'rn_signature', 'rn_reviewer', 'rn_reviewed_at', 'rn_reviewed_by'];
+begin
+  if tg_op = 'UPDATE' and new.data is not distinct from old.data then return new; end if;
+  if jsonb_typeof(old.data) is distinct from 'array' then return case when tg_op = 'DELETE' then old else new end; end if;
+  for it in select e from jsonb_array_elements(old.data) e
+             where jsonb_typeof(e) = 'object' and coalesce(e->'rn_signature'->>'id', '') <> '' loop
+    if not exists (select 1 from public.rn_ghe_signature s where s.id::text = it->'rn_signature'->>'id' and s.ghe_id = it->>'id') then continue; end if;
+    who := coalesce(nullif(it->>'client', ''), 'a client') || ', visit ' || coalesce(nullif(it->>'visit_date', ''), '(no date)');
+    ni := null; i := null;
+    if tg_op = 'UPDATE' and jsonb_typeof(new.data) = 'array' then
+      select (x.ord - 1)::int, x.e into i, ni from jsonb_array_elements(new.data) with ordinality x(e, ord) where x.e->>'id' = it->>'id' limit 1;
+    end if;
+    if ni is null then
+      raise exception 'The GHE form for % is signed by the supervising RN, so it cannot be removed. Use Amend to correct it; the signed form stays.', who using errcode = '42501';
+    end if;
+    foreach fld in array locked loop
+      if (it->fld) is distinct from (ni->fld) then
+        raise exception 'The GHE form for % is signed by the supervising RN, so its % cannot change. Use Amend to make a corrected copy; the signed form stays.', who, fld using errcode = '42501';
+      end if;
+    end loop;
+    if (coalesce(it->'f', '{}'::jsonb) - 'ghe_sig_part_date' - 'ghe_sig_sup_date') is distinct from (coalesce(ni->'f', '{}'::jsonb) - 'ghe_sig_part_date' - 'ghe_sig_sup_date') then
+      raise exception 'The GHE form for % is signed by the supervising RN, so its answers cannot change. Use Amend to make a corrected copy; the signed form stays.', who using errcode = '42501';
+    end if;
+    changed := false;
+    foreach fld in array keep loop
+      if (it->fld) is distinct from (ni->fld) then
+        ni := case when it ? fld then jsonb_set(ni, array[fld], it->fld, true) else ni - fld end; changed := true;
+      end if;
+    end loop;
+    if jsonb_typeof(ni->'f') = 'object' and (it->'f'->'ghe_sig_sup_date') is distinct from (ni->'f'->'ghe_sig_sup_date') then
+      ni := jsonb_set(ni, '{f,ghe_sig_sup_date}', coalesce(it->'f'->'ghe_sig_sup_date', 'null'::jsonb), true); changed := true;
+    end if;
+    if changed then new.data := jsonb_set(new.data, array[i::text], ni); end if;
+  end loop;
+  return case when tg_op = 'DELETE' then old else new end;
+end $f$;
+comment on function public.ghe_rn_signature_keep() is 'RN review (2026-10-14): an RN-signed GHE form keeps her signature on every save, refuses changes to what she signed and refuses removal';
+revoke all on function public.ghe_rn_signature_keep() from public, anon, authenticated;
+drop trigger if exists ghe_forms_a_rn_keep_t on public.app_data;
+create trigger ghe_forms_a_rn_keep_t before update or delete on public.app_data
+  for each row when (old.key = 'ghe_forms') execute function public.ghe_rn_signature_keep();
 
 -- ── 3. the private bucket and its keep-guard (the 700 pattern) ─────────────────────────────────────────────────────
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)

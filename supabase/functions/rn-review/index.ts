@@ -236,11 +236,16 @@ async function putGhe(db: Any, id: string, change: (g: Any) => { ok: true; item:
 }
 /** the patch Natasha's signature makes: exactly what ghe-forms-rules.js transition(form, 'ready') records for an LPN form, plus the
  *  Supervisory Nurse signature and its date (the database's GHE lock lets the RN sign once, after the participant) */
-export function signedPatch(g: Any, rn: Any, email: string, at: string, sig: { id: string; typed: string; pdf: boolean }) {
+export function signedPatch(g: Any, rn: Any, email: string, at: string, sig: { id: string; typed: string; pdf: boolean; png?: string | null }) {
   const date = centralYmd(at)
   return { ...g, status: 'ready', rn_reviewer: rn.name, rn_reviewed_at: at, rn_reviewed_by: email, ready_at: at, ready_by: email,
-    sig_sup: sigImage(sig.typed, 'Signed electronically ' + date + ', RN'), f: { ...(g.f || {}), ghe_sig_sup_date: date },
+    sig_sup: sig.png || sigImage(sig.typed, 'Signed electronically ' + date + ', RN'), f: { ...(g.f || {}), ghe_sig_sup_date: date },
     rn_signature: { id: sig.id, typed_name: sig.typed, at, by: email, pdf: sig.pdf }, updated_at: at, updated_by: email }
+}
+/** a small PNG data address (her typed name drawn by the page): the PNG signature bytes, under 150 KB */
+export function pngOk(v: unknown): boolean {
+  const t = String(v || ''); if (!/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(t) || t.length > 200_000) return false
+  try { const b = atob(t.slice(22, 22 + 16)); return b.charCodeAt(0) === 0x89 && b.slice(1, 4) === 'PNG' } catch { return false }
 }
 function signBlockers(g: Any, c: Caller, cx: Ctx): string[] {
   const out: string[] = []
@@ -250,7 +255,6 @@ function signBlockers(g: Any, c: Caller, cx: Ctx): string[] {
   if (c.rn && norm(g.nurse) === norm(c.rn.name)) out.push('The reviewing RN must be someone other than the nurse who wrote it.')
   if (!c.rn || !mineToReview(g, c.rn, cx.staff, cx.today)) out.push(S(g.rn_reviewer) ? `This form is for ${S(g.rn_reviewer)} to review.` : 'Only the supervising RN reviews a form with no reviewing RN picked.')
   if (!S(g.sig_nurse, 40)) out.push('The nurse has not signed the form.')
-  if (!S(g.sig_part, 40)) out.push('The participant has not signed the form yet. Send it back to the LPN to finish it.')
   if (S(g.sig_sup, 40)) out.push('This form already has a Supervisory Nurse signature.')
   return out
 }
@@ -338,7 +342,7 @@ Deno.serve(async (req) => {
         return json({ ok: true, live: st.nurse_review_live === true, form: { ...gheSummary(g, cx, g.status === 'rn_review' ? since : ''), superseded: !!g.superseded_by, client_axiscare_id: ax || null }, readable: readable(g),
           images: { nurse: img(g.sig_nurse), participant: img(g.sig_part), supervisor: img(g.sig_sup) }, signature: sigPublic(s), sent_back: Array.isArray(g.rn_sent_back_log) ? g.rn_sent_back_log : [],
           may_sign: !blockers.length && mayWrite(c, cx, formPractice(cx, g)), may_send_back: !backBlock && mayWrite(c, cx, formPractice(cx, g)), why_not: blockers.length ? blockers : (mayWrite(c, cx, formPractice(cx, g)) ? [] : [OFF_WORDS]),
-          consent_words: ESIGN_WORDS })
+          consent_words: ESIGN_WORDS, participant_signed: !!S(g.sig_part, 40) })
       }
       if (b.client_id) {
         const cl = clients.find((x) => String(x.id) === S(b.client_id, 60))
@@ -392,6 +396,8 @@ Deno.serve(async (req) => {
       if (had) return json({ ok: false, error: 'This form is already signed. A signature is never changed; to correct the form, the LPN uses Amend.', already: true }, 409)
       if (blockers.length) return json({ ok: false, error: blockers.join(' '), blockers }, 409)
       const at = now.toISOString(), fp = await formFingerprint(g0), ip = ipShort(req), agent = agentOf(req)
+      /* the picture of her typed name the page drew (PNG, so the Hub's GHE form can redraw and print it); only a small PNG is kept */
+      const png = pngOk(b.sig_png) ? String(b.sig_png) : null
       const { data: sig, error: se } = await db.from('rn_ghe_signature').insert({ ghe_id: String(g0.id), client_id: S(g0.client_id, 60) || (cl ? String(cl.id) : null), client_axiscare_id: /^\d+$/.test(ax) ? ax : null, client_name: S(g0.client, 120),
         visit_date: S(g0.visit_date, 10), lpn_name: S(g0.nurse, 120), rn_name: c.rn.name, rn_email: c.email, rn_person: c.person || null, typed_name: typed, consent: true, consent_words: ESIGN_WORDS, version: SIGN_VERSION,
         signed_at: at, ip, agent, form_fingerprint: fp, practice }).select('*').maybeSingle()
@@ -414,7 +420,7 @@ Deno.serve(async (req) => {
       const r = await putGhe(db, String(g0.id), (g) => {
         if (S(g.sig_sup, 40) || g.superseded_by) return { ok: false, why: 'The form changed while you were signing (it already has a Supervisory Nurse signature, or it was amended).', status: 409 }
         if (g.status !== 'rn_review') return { ok: false, why: 'The form was moved out of RN review while you were signing.', status: 409 }
-        return { ok: true, item: signedPatch(g, c.rn, c.email, at, { id: sig.id, typed, pdf }) }
+        return { ok: true, item: signedPatch(g, c.rn, c.email, at, { id: sig.id, typed, pdf, png }) }
       })
       if (r.ok) {
         await db.from('rn_ghe_signature').update({ form_updated_at: at }).eq('id', sig.id).is('form_updated_at', null)

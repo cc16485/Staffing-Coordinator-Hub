@@ -91,7 +91,7 @@ const call = async (body, tok, extra = {}) => { const r = await H(new Request('h
 const ops = () => ad('ops_items') || []
 const ghe = (id) => (ad('ghe_forms') || []).find((g) => g.id === id)
 const evs = (kind) => DB.rn_review_event.filter((e) => !kind || e.kind === kind)
-const noDash = (s) => !/—/.test(String(s))
+const noDash = (s) => !/\u2014/.test(String(s))
 
 /* ── people and records ── */
 DB.auth_identities = [['u-nat', 'p-nat'], ['u-natv', 'p-nat'], ['u-nats', 'p-nat'], ['u-rita', 'p-rita'], ['u-lpn', 'p-lpn'], ['u-sam', 'p-sam'], ['u-cc', 'p-cc'], ['u-gone', 'p-gone']].map(([a, p]) => ({ auth_user_id: a, person_id: p, project_ref: 'zngsgedlsxinbygwmxwn' }))
@@ -140,7 +140,8 @@ const svg = RN.sigImage('Natasha Early', 'Signed electronically 2026-10-14, RN')
 ck('the signature image: an SVG data address with her typed name (the Hub form draws it in the Supervisory Nurse box)', /^data:image\/svg\+xml;base64,/.test(svg) && Buffer.from(svg.split(',')[1], 'base64').toString().includes('Natasha Early'))
 ck('the e-sign consent words name the GHE, the supervising RN and the typed name; no em dash', /General Health Evaluation/.test(RN.ESIGN_WORDS) && /supervising RN/.test(RN.ESIGN_WORDS) && /typed name/.test(RN.ESIGN_WORDS) && noDash(RN.ESIGN_WORDS))
 const fp1 = await RN.formFingerprint(FORM('a')), fp2 = await RN.formFingerprint({ ...FORM('a'), f: { ...FORM('a').f, ghe_bp: '130/80' } }), fp3 = await RN.formFingerprint({ ...FORM('a'), status: 'ready', updated_at: 'x' })
-ck('the fingerprint covers the answers and signatures, not the status or save time', /^[0-9a-f]{64}$/.test(fp1) && fp1 !== fp2 && fp1 === fp3)
+const fp4 = await RN.formFingerprint({ ...FORM('a'), sig_part: 'data:image/png;base64,LATER', f: { ...FORM('a').f, ghe_sig_part_date: '2026-10-20', ghe_sig_sup_date: '2026-10-14' } }), fp5 = await RN.formFingerprint({ ...FORM('a'), sig_nurse: 'data:image/png;base64,OTHER' })
+ck('the fingerprint covers the answers and the nurse\'s signature, not the status, the save time, or the participant\'s signature (which may come after hers)', /^[0-9a-f]{64}$/.test(fp1) && fp1 !== fp2 && fp1 === fp3 && fp1 === fp4 && fp1 !== fp5)
 
 /* ═══ 2. who may call ═══ */
 let r = await call({ action: 'queue' })
@@ -209,19 +210,23 @@ r = await call({ action: 'sign', ghe_id: 'g1', typed_name: 'Natasha Early' }, 'n
 ck('sign without the consent tick: 400', r.status === 400 && /electronically/.test(r.j.error))
 r = await call({ action: 'sign', ghe_id: 'g1', typed_name: 'Natasha', consent: true }, 'nat')
 ck('sign with only a first name: 400, names her record', r.status === 400 && /Natasha Early/.test(r.j.error))
-r = await call({ action: 'sign', ghe_id: 'g6', typed_name: 'Natasha Early', consent: true }, 'nat')
-ck('a form the participant has not signed: refused, says send it back', r.status === 409 && /participant has not signed/.test(r.j.error), r)
+r = await call({ action: 'open', ghe_id: 'g6' }, 'nat')
+ck('a form the participant has not signed yet: she may still sign it (no rule sets the order); the page is told', r.status === 200 && r.j.may_sign === true && r.j.participant_signed === false, r.j)
+r = await call({ action: 'sign', ghe_id: 'g6', typed_name: 'Natasha Early', consent: true, sig_png: 'data:image/png;base64,bm90IGEgcG5n' }, 'nat')
+const S6 = DB.rn_ghe_signature.find((s) => s.ghe_id === 'g6'), P6 = STORE['nurse-docs/' + S6?.pdf_path] ? Buffer.from(STORE['nurse-docs/' + S6.pdf_path]).toString('latin1') : ''
+ck('...signed: Ready for Fusion, the PDF says the participant had not signed yet; a picture that is not a PNG is not kept (her typed name is drawn instead)', r.status === 200 && ghe('g6').status === 'ready' && /not signed yet/.test(P6) && /^data:image\/svg\+xml;base64,/.test(ghe('g6').sig_sup), [r.j, ghe('g6').sig_sup?.slice(0, 40)])
 r = await call({ action: 'sign', ghe_id: 'g3', typed_name: 'Natasha Early', consent: true }, 'nat')
 ck('a form for Rita: refused', r.status === 409 && /Rita Rowe to review/.test(r.j.error), r)
 r = await call({ action: 'sign', ghe_id: 'g1', typed_name: 'Natasha Early', consent: true }, 'sam')
 ck('an owner cannot sign (only the RN)', r.status === 403, r)
 const before = clone(ghe('g1'))
-r = await call({ action: 'sign', ghe_id: 'g1', typed_name: 'Natasha Early, RN', consent: true }, 'nat', { 'x-forwarded-for': '203.0.113.9' })
+const SIGPNG = 'data:image/png;base64,' + Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(40)]).toString('base64')
+r = await call({ action: 'sign', ghe_id: 'g1', typed_name: 'Natasha Early, RN', consent: true, sig_png: SIGPNG }, 'nat', { 'x-forwarded-for': '203.0.113.9' })
 const S1 = DB.rn_ghe_signature.find((s) => s.ghe_id === 'g1'), G1 = ghe('g1')
 ck('sign: one write-once signature row: who, when, typed name, consent and its words, device, the fingerprint of what she signed', r.status === 200 && S1 && S1.rn_name === 'Natasha Early' && S1.rn_email === 'natasha@mo-care.com' && S1.typed_name === 'Natasha Early, RN' && S1.consent === true && S1.consent_words === RN.ESIGN_WORDS
   && S1.ip === '203.0.113.9' && S1.agent === 'TestPhone' && S1.form_fingerprint === fp1.replace(fp1, S1.form_fingerprint) && S1.form_fingerprint === (await RN.formFingerprint(before)) && S1.lpn_name === 'Lena Park' && S1.client_axiscare_id === '7001' && S1.form_updated_at, [r.j, S1])
-ck('sign: the form moves to Ready for Fusion with the reviewer, the times, her signature image and the date (the pipeline\'s own fields)', G1.status === 'ready' && G1.rn_reviewer === 'Natasha Early' && G1.rn_reviewed_at === S1.signed_at && G1.rn_reviewed_by === 'natasha@mo-care.com' && G1.ready_at === S1.signed_at && G1.ready_by === 'natasha@mo-care.com'
-  && /^data:image\/svg\+xml;base64,/.test(G1.sig_sup) && G1.f.ghe_sig_sup_date === '2026-10-14' && G1.rn_signature.id === S1.id, G1)
+ck('sign: the form moves to Ready for Fusion with the reviewer, the times, her signature picture (the PNG the page drew) and the date (the pipeline\'s own fields)', G1.status === 'ready' && G1.rn_reviewer === 'Natasha Early' && G1.rn_reviewed_at === S1.signed_at && G1.rn_reviewed_by === 'natasha@mo-care.com' && G1.ready_at === S1.signed_at && G1.ready_by === 'natasha@mo-care.com'
+  && G1.sig_sup === SIGPNG && G1.f.ghe_sig_sup_date === '2026-10-14' && G1.rn_signature.id === S1.id, G1)
 ck('sign: nothing she signed changed (answers, scores, client, visit, nurse, both drawn signatures)', ['f', 'checks', 'radios', 'client', 'client_id', 'visit_date', 'nurse', 'total', 'sig_nurse', 'sig_part'].every((k) => JSON.stringify(k === 'f' ? { ...G1.f, ghe_sig_sup_date: '' } : G1[k]) === JSON.stringify(before[k])), G1)
 const pdfKey = 'nurse-docs/' + S1.pdf_path, pdfText = STORE[pdfKey] ? Buffer.from(STORE[pdfKey]).toString('latin1') : ''
 ck('sign: the signed PDF is in the private bucket nurse-docs under ghe/<form>/, a real PDF with her name and the audit lines', /^ghe\/g1\/rn-signed-.*\.pdf$/.test(S1.pdf_path) && pdfText.startsWith('%PDF-1.4') && pdfText.includes('Natasha Early, RN') && pdfText.includes(S1.form_fingerprint) && pdfText.includes('128/80'), S1.pdf_path)

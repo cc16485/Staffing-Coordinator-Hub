@@ -155,9 +155,11 @@ export function typedOk(typed: string, name: string): boolean {
   const got = norm(typed).replace(/[^a-z ]/g, ' ')
   return want.length > 0 && want.every((w) => new RegExp('\\b' + w + '\\b').test(got))
 }
-/** what was signed: the answers, the score, the client, the visit, the nurse and both signatures, fingerprinted */
+/** what was signed: the answers, the score, the client, the visit, the nurse and the nurse's signature, fingerprinted. The
+ *  participant may sign before or after the RN (HCBS 8.00 Appendix 4 sets no order), so their signature and its date are left out. */
 export async function formFingerprint(g: Any): Promise<string> {
-  const pick = { client: g?.client ?? '', client_id: g?.client_id ?? '', visit_date: g?.visit_date ?? '', nurse: g?.nurse ?? '', total: g?.total ?? null, f: g?.f ?? {}, checks: g?.checks ?? [], radios: g?.radios ?? {}, sig_nurse: g?.sig_nurse ?? '', sig_part: g?.sig_part ?? '' }
+  const f = { ...(g?.f ?? {}) }; delete f.ghe_sig_part_date; delete f.ghe_sig_sup_date
+  const pick = { client: g?.client ?? '', client_id: g?.client_id ?? '', visit_date: g?.visit_date ?? '', nurse: g?.nurse ?? '', total: g?.total ?? null, f, checks: g?.checks ?? [], radios: g?.radios ?? {}, sig_nurse: g?.sig_nurse ?? '' }
   const canon = (v: Any): Any => Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])])) : v
   const b = new TextEncoder().encode(JSON.stringify(canon(pick)))
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256', b))].map((x) => x.toString(16).padStart(2, '0')).join('')
@@ -187,7 +189,7 @@ export function gheReviewPdf(g: Any, sig: RnSig): Uint8Array {
     for (const row of sec.rows) if (row.value && row.value.length > 110) pdf.para(pdfText(row.label + ': ' + row.value), { size: 9, color: TEXT, after: 2 })
   }
   pdf.heading('SIGNATURES')
-  pdf.para(`Nurse signature: on file in the Hub (drawn), dated ${r.sig_dates[0].date || 'not dated'}. Participant signature: on file in the Hub (drawn), dated ${r.sig_dates[1].date || 'not dated'}.`, { size: 9.5, after: 6 })
+  pdf.para(`Nurse signature: on file in the Hub (drawn), dated ${r.sig_dates[0].date || 'not dated'}. Participant signature: ${g.sig_part ? 'on file in the Hub (drawn), dated ' + (r.sig_dates[1].date || 'not dated') : 'not signed yet when the RN signed (the participant signs the form too; HCBS 8.00 Appendix 4)'}.`, { size: 9.5, after: 6 })
   pdf.para('Supervisory Nurse signature (the reviewing RN):', { font: 'S', size: 9.5, color: GOLD_TEXT, after: 0 })
   pdf.signatureArea(sig.typedName, sig.signedAtCentral, [`Signed electronically with consent ("${ESIGN_WORDS}"). ${sig.signedAtUtc} UTC. Device address ${sig.ip || 'not recorded'}. Browser ${sig.agent || 'not recorded'}. Signed in as ${sig.rnEmail}.`,
     `GHE form ${sig.gheId}, completed by ${sig.lpn}. The answers and signatures signed have fingerprint ${sig.fingerprint}. RN review signature version ${sig.version}.`])
