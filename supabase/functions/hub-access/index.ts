@@ -45,13 +45,18 @@ const KNOWN_HUBS: Record<string, string> = {
      invite must write. Anything invited as 'team' would be denied every Team
      Hub key. */
   team:             'Team Hub (legacy slug — do not issue)',
+  /* 2026-10-14 (RN review, Desktop 706): the supervising RN's review page ONLY. No app_data key is mapped to this slug, so
+     row level security shows such an account nothing in app_data; rn-review answers it. Never combined with another hub. */
+  rn_review:        'RN review page only (cc.mo-care.com/rn.html)',
 }
 const CANONICAL_HUB: Record<string, string> = { team: 'team_hub' }
 /* The only values that may ever be WRITTEN into hub_access. KNOWN_HUBS is
    wider because it also has to accept 'team' as an incoming request. Never
    materialise a claim from Object.keys(KNOWN_HUBS) — that would write the
    legacy slug, and the RLS policy does not recognise it. */
-const ISSUABLE_HUBS = ['care_coordinator', 'staffing', 'team_hub']
+const ISSUABLE_HUBS = ['care_coordinator', 'staffing', 'team_hub', 'rn_review']
+/* an account with this hub has it ALONE: it is refused on top of any other hub, and no other hub is added to it */
+const EXCLUSIVE_HUB = 'rn_review'
 const ACTIONS = ['invite', 'resend', 'revoke', 'restore', 'status']
 
 Deno.serve(async (req) => {
@@ -152,7 +157,7 @@ Deno.serve(async (req) => {
   const describe = (u: typeof user) => {
     if (!u) return { state: 'none', label: 'No account' }
     const access = accessOf(u)
-    const hasIt = access === null || access.includes(hub)   // null = predates the list, means all
+    const hasIt = hub === EXCLUSIVE_HUB ? (Array.isArray(access) && access.includes(hub)) : (access === null || access.includes(hub))   // null = predates the list, means all (never RN review only)
     if (!u.email_confirmed_at && !u.last_sign_in_at)
       return { state: 'invited', label: 'Invitation sent, not accepted yet', access }
     return { state: hasIt ? 'active' : 'revoked',
@@ -160,6 +165,27 @@ Deno.serve(async (req) => {
   }
 
   if (action === 'status') return json({ ok: true, target, ...describe(user) })
+
+  /* 2026-10-14 RN review only: the account must see nothing but the review page, so the slug is given ALONE. Refused on an
+     account that already has any other hub (or every hub, by predating the list), refused for an owner, and no other hub
+     is ever added to an RN review only account. Nothing is taken away automatically: an owner removes the other access
+     first, on purpose. */
+  if (['invite', 'resend', 'restore'].includes(action) && user) {
+    const cur = accessOf(user)
+    if (hub === EXCLUSIVE_HUB) {
+      if (cur === null) return json({ error: 'This account can open every hub (it was made before the hub list existed), so it cannot be RN review only.', detail: 'Remove its access to each hub first, then give RN review only.' }, 409)
+      const others = cur.filter((h) => h !== EXCLUSIVE_HUB)
+      if (others.length) return json({ error: 'This account already has ' + others.map((h) => KNOWN_HUBS[h] || h).join(', ') + ', so it cannot be RN review only.', detail: 'Remove that access first. An RN review only account sees nothing but the review page.' }, 409)
+      const { data: ids } = await admin.from('auth_identities').select('person_id').eq('auth_user_id', user.id)
+      const pids = (ids || []).map((i: { person_id: string }) => i.person_id)
+      if (pids.length) {
+        const { data: roles } = await admin.from('staff_roles').select('role').in('person_id', pids)
+        if ((roles || []).some((r: { role: string }) => r.role === 'owner_admin')) return json({ error: 'An owner cannot be made RN review only.' }, 409)
+      }
+    } else if ((cur || []).includes(EXCLUSIVE_HUB)) {
+      return json({ error: 'This account is RN review only, so no other hub can be added to it.', detail: 'Remove RN review first if they need another hub.' }, 409)
+    }
+  }
 
   // ── 4. The safeguard that matters most ────────────────────────────────────
   // Never remove the last owner who can still get in. Checked against the
@@ -204,7 +230,7 @@ Deno.serve(async (req) => {
         result = { did: 'restored', note: 'They already had an account, so access was restored rather than a new invitation sent.' }
       } else {
         const { data, error } = await admin.auth.admin.inviteUserByEmail(target,
-          { data: {}, redirectTo: `https://cc.mo-care.com/` })
+          { data: {}, redirectTo: hub === EXCLUSIVE_HUB ? `https://cc.mo-care.com/rn.html` : `https://cc.mo-care.com/` })
         if (error) throw new Error(error.message)
         // Set access separately: never from anything the caller supplied.
         if (data?.user) {
@@ -216,7 +242,7 @@ Deno.serve(async (req) => {
       }
     } else if (action === 'revoke') {
       if (!user) return json({ error: 'There is no account for that address.' }, 404)
-      const current = accessOf(user) ?? [...ISSUABLE_HUBS]   // null meant everything
+      const current = accessOf(user) ?? ISSUABLE_HUBS.filter((h) => h !== EXCLUSIVE_HUB)   // null meant every ordinary hub (never RN review only)
       const next = current.filter((h) => h !== hub)
       const { error } = await admin.auth.admin.updateUserById(user.id,
         { app_metadata: { [META_KEY]: next } })

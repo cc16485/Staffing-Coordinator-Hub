@@ -42,6 +42,7 @@ export const SENDER_WORDS: Record<string, [string, string]> = {
   'prn-reconfirm': ['PRN check-in', 'caregivers'],
   'driver-compliance': ['driver document reminder or link', 'caregivers'],
   'hepb': ['hepatitis B vaccine offer link', 'caregivers'],
+  'nurse-visit-check': ['nurse license reminder', 'caregivers'],
   'caregiver-intro': ['caregiver introduction', 'scheduling_coverage'],
   'caregiver-availability': ['availability check', 'scheduling_coverage'],
   'availability-checkin': ['30-day availability text', 'scheduling_coverage'],

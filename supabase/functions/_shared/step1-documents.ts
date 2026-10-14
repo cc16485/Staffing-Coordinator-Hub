@@ -31,9 +31,10 @@ export type Section = { h: string; p?: string[]; items?: Item[]; tone?: 'cheer';
     the Step 1 answers and the onboarding store (a medical record, owners only); `choices` is ONE deciding choice whose
     answer is never stored with the Step 1 answers; `decline` is a statement shown and signed only for that choice. */
 export type Choice = { id: string; label: string; note?: string }
-export type Form = { key: FormKey; screen: string; title: string; short?: string; layout?: 'document'; when?: { id: string; equals: string }; step1Gate?: 'hepb'; confidential?: boolean; choices?: { label: string; options: Choice[] }; decline?: { choice: string; title: string; intro: string; statement: string; consent: string }; countersign?: boolean; version: number; status: FormStatus; intro?: string[]; sections: Section[]; certification: string[]; signature: 'typed' | 'typed+initials' }
+export type Form = { key: FormKey; screen: string; title: string; short?: string; layout?: 'document'; when?: { id: string; equals: string }; step1Gate?: 'hepb' | 'nurse'; confidential?: boolean; choices?: { label: string; options: Choice[] }; decline?: { choice: string; title: string; intro: string; statement: string; consent: string }; countersign?: boolean; version: number; status: FormStatus; intro?: string[]; sections: Section[]; certification: string[]; signature: 'typed' | 'typed+initials' }
 
 import { APPENDIX_A } from './hepb-appendix-a.ts'
+import { isLicensedNurse } from './positions.ts'
 export const OFFICE_PHONE = '(417) 234-8494'
 export const COMPANY = 'Troutman Enterprises, LLC DBA Caring Companions In-Home Senior Care'
 /** Her decision 1: a previous supervisor may be a professional reference; two professional and two personal, kept apart. */
@@ -603,8 +604,40 @@ export const FORMS: Record<FormKey, Form> = {
     decline: { choice: 'declined', title: 'Hepatitis B Vaccine Declination (Mandatory)', intro: 'Federal workplace safety rules (OSHA 29 CFR 1910.1030, Appendix A) say that if you choose not to get the hepatitis B vaccine, you sign this exact statement. The words come from the regulation and cannot be changed.', statement: APPENDIX_A, consent: 'I have read the declination statement above and I agree to sign it electronically.' },
     certification: ['I read the information above about the hepatitis B vaccine, and the answer I chose is my own choice.'],
   },
+  /* ───── LPN HIRING (Samantha approved the LPN nurse visit plan, 2026-10-14: "Step 1 is the same as everyone's, plus the
+     license number, state, expiration and a picture"). ONE conditional form, only in the Step 1 of an LPN or RN offer
+     (job_offers.position_key 'lpn' or 'rn'), decided ONCE when the Step 1 record is made (step1_forms.nurse_form, the
+     Hepatitis B pattern). Every other Step 1 never has it. The application is unchanged.
+     WHY: 19 CSR 15-7.021(24)(B)10 (the personnel record holds "Verification of the current Missouri ... licensed practical
+     nurse ... or registered nurse license including, at least, the license or certificate number"); manual 2.2; Missouri
+     issues no license cards ("Missouri does not issue a physical temporary permit or license card", Board of Nursing), so
+     the picture is a Nursys QuickConfirm screenshot or printout; Missouri is in the Nurse Licensure Compact (RSMo 335.360
+     to 335.415), so a multistate license is asked about. The license number is sealed like the driver's license number
+     (step1_identity.nurse_license_sealed; the record shows "on file, ending" and the last four). The office verifies the
+     license itself on Nursys QuickConfirm (readiness row cg.credential.nurse_license); this form never verifies anything.
+     PROPOSED (version 1): not in APPROVED_FOR_REAL, so a real LPN or RN Step 1 cannot be completed until Samantha approves
+     this exact wording; practice and training hires can. ───── */
+  nurse_license: {
+    key: 'nurse_license', screen: '17', title: 'Your Nursing License', short: 'Your nursing license', step1Gate: 'nurse', version: 1, status: 'proposed', signature: 'typed',
+    intro: ['Caring Companions verifies every nurse\'s license before the first nurse visit, and keeps it current while you work here. Missouri does not issue license cards, so a screenshot or printout of your license from Nursys QuickConfirm (nursys.com) or your state board of nursing\'s license lookup is what we need.'],
+    sections: [
+      { h: 'Your license', items: [
+        { id: 'nurse_license_type', label: 'Your license', kind: 'choice', options: ['Licensed Practical Nurse (LPN)', 'Registered Nurse (RN)'], required: true },
+        { id: 'nurse_license_number', label: 'License number', kind: 'text', locked: true, note: 'Kept encrypted; your record says "on file, ending" with the last four characters.' },
+        { id: 'nurse_license_state', label: 'State that issued your license', kind: 'choice', options: STATES, required: true },
+        { id: 'nurse_license_multistate', label: 'Is it a multistate license under the Nurse Licensure Compact?', kind: 'choice', options: ['Yes, a multistate license', 'No, a single-state license', 'I am not sure'], required: true, note: 'Your Nursys QuickConfirm report shows which one.' },
+        { id: 'nurse_license_expires', label: 'License expiration date', kind: 'date', required: true },
+        { id: 'nurse_license_doc', label: 'A screenshot or printout of your license', kind: 'photo', required: true, note: 'From Nursys QuickConfirm (nursys.com) or your state board of nursing\'s license lookup. A clear photo of a printout is fine.' },
+      ] },
+      { h: 'Keeping your license current', p: [
+        'I agree to tell Caring Companions right away if my license expires or lapses, or is suspended, restricted, placed on probation or otherwise disciplined, and to send a copy of my renewed license before it expires.',
+        'I understand that I may not make a nurse visit on an expired, lapsed or suspended license, and that Caring Companions checks my license on Nursys QuickConfirm before my first visit and again after each renewal.',
+      ] },
+    ],
+    certification: ['The license information and the picture I gave are current and true.'],
+  },
 }
-export const FORM_ORDER: FormKey[] = ['employee_application', 'reference_consent', 'fcra_disclosure', 'edl_fcsr_consent', 'availability', 'experience', 'vehicle', 'non_driver', 'employment_agreement', 'medication_policy', 'code_of_ethics', 'hipaa_privacy', 'client_rights', 'hepb_vaccination']
+export const FORM_ORDER: FormKey[] = ['employee_application', 'reference_consent', 'fcra_disclosure', 'edl_fcsr_consent', 'availability', 'experience', 'vehicle', 'non_driver', 'employment_agreement', 'medication_policy', 'code_of_ethics', 'hipaa_privacy', 'client_rights', 'hepb_vaccination', 'nurse_license']
 /** The wording of one form, canonical, for the fingerprint stored with every signature (answers are not part of it). */
 export function formText(key: FormKey): string {
   const f = FORMS[key]; const out: string[] = [`title|${f.title}`, `version|${f.version}`]
@@ -651,13 +684,23 @@ export const approvedForReal = (k: FormKey): boolean => approvedAt(k, FORMS[k].v
    that started before that never gains a new required form part way through (it would block their completion); the
    30-minute hepatitis B pass offers those people the vaccine at Approve to Work exactly as before. Offered to every
    applicant whatever the position (her ruling "offer to everyone"; a superset of OSHA's exposure-based duty). */
-export type Step1Ctx = { hepb?: boolean }
+export type Step1Ctx = { hepb?: boolean; nurse?: boolean }
 // deno-lint-ignore no-explicit-any
-export const step1Ctx = (row: any): Step1Ctx => ({ hepb: row?.hepb_form === true })
+export const step1Ctx = (row: any): Step1Ctx => row?.nurse_form === true ? { hepb: row?.hepb_form === true, nurse: true } : { hepb: row?.hepb_form === true }
 /** at the start of a Step 1: is the Hepatitis B form in it? */
 export const hepbFormAtStart = (practice: boolean): boolean => practice || approvedForReal('hepb_vaccination')
 /** the forms in this person's Step 1 (before the deciding answers): every form, less a gated form their Step 1 does not have */
-export const formsInPlay = (ctx: Step1Ctx = {}): FormKey[] => FORM_ORDER.filter((k) => FORMS[k].step1Gate !== 'hepb' || ctx.hepb === true)
+export const formsInPlay = (ctx: Step1Ctx = {}): FormKey[] => FORM_ORDER.filter((k) => gateOpen(FORMS[k], ctx))
+/** LPN HIRING (2026-10-14): at the start of a Step 1, is the nursing license form in it? Only for an LPN or RN offer
+    (job_offers.position_key), decided once and kept on step1_forms.nurse_form. Not tied to approval: a real nurse's Step 1
+    has the form, and the form refuses a real signature until Samantha approves it (APPROVED_FOR_REAL). */
+export const nurseFormAtStart = (positionKey: unknown): boolean => isLicensedNurse(positionKey)
+/** a gated form is in a Step 1 only when that Step 1's record opened its gate */
+function gateOpen(f: Form | undefined, ctx: Step1Ctx): boolean {
+  if (f?.step1Gate === 'hepb') return ctx.hepb === true
+  if (f?.step1Gate === 'nurse') return ctx.nurse === true
+  return true
+}
 /** every form in this person's Step 1 is approved for real (decides the "practice only" note) */
 export const allApprovedForReal = (ctx: Step1Ctx = {}): boolean => formsInPlay(ctx).every(approvedForReal)
 /** 2026-10-13: the Step 1 screens follow the form list. The first ten are fixed; a form added later gets its own screen
@@ -672,7 +715,7 @@ export function step1Screens(ctx: Step1Ctx = {}): string[] {
 export const DECIDING: Record<string, { label: string; options: [string, string][] }> = {
   transport_willing: { label: 'Are you willing and able to transport clients in your personal vehicle as part of your caregiving duties?', options: [['yes', 'Yes'], ['no', 'No']] },
 }
-export const formApplies = (k: FormKey, answers: Record<string, unknown>, ctx: Step1Ctx = {}): boolean => { if (FORMS[k]?.step1Gate === 'hepb' && ctx.hepb !== true) return false; const w = FORMS[k]?.when; return !w || answers?.[w.id] === w.equals }
+export const formApplies = (k: FormKey, answers: Record<string, unknown>, ctx: Step1Ctx = {}): boolean => { if (FORMS[k]?.step1Gate && !gateOpen(FORMS[k], ctx)) return false; const w = FORMS[k]?.when; return !w || answers?.[w.id] === w.equals }
 /** the forms this person signs, in order; a deciding answer not given yet leaves both of its forms out */
 export const applicableForms = (answers: Record<string, unknown>, ctx: Step1Ctx = {}): FormKey[] => FORM_ORDER.filter((k) => formApplies(k, answers || {}, ctx))
 /** how many forms this person signs: the ones that apply, plus one for each deciding question not answered yet
