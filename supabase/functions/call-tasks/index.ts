@@ -32,7 +32,7 @@ import Anthropic from 'npm:@anthropic-ai/sdk'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { seatHolder } from '../_shared/duty.ts'
 import { VERSION, MODEL, ACK, request, retryRequest, clean, answerOf, openCards, transcriptText, shortName, related as relatedOf, workflows,
-  ownerFor, dueFor, dueEnd, checkRequest, cleanCheck, nextStatus, cardIdFor, liveCard, chicago, lineOf, LIVE_KIND, type CallIn, type Who, type OpenCard, type Earlier, type Related, type Action } from '../_shared/call-tasks.ts'
+  ownerFor, dueFor, dueEnd, checkRequest, cleanCheck, nextStatus, cardIdFor, liveCard, chicago, lineOf, phoneKeys, LIVE_KIND, type CallIn, type Who, type OpenCard, type Earlier, type Related, type Action } from '../_shared/call-tasks.ts'
 
 const GHL = 'https://services.leadconnectorhq.com'
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
@@ -237,6 +237,7 @@ Deno.serve(async (req) => {
         try { const r = await fetch(`${GHL}/contacts/${encodeURIComponent(msg.contactId)}`, { headers: H(tok, '2021-07-28') }); if (r.ok) ct = (await r.json())?.contact || {} } catch { /* name stays as seen */ }
       }
       row.line = lineOf(msg, String(ct.phone || ''))
+      if (!row.line) row.line_keys = phoneKeys(msg, String(ct.phone || ''))
       /* 3 · who, by the identity layer */
       const { data: w } = await db.rpc('call_who', { p_phone: String(ct.phone || '') })
       const who: Who = w && typeof w === 'object' ? w : { match: 'none' }
@@ -279,7 +280,7 @@ Deno.serve(async (req) => {
       row.error = String((e as Error)?.message || e).slice(0, 300); out.errors++
     }
     if (row.error) { out.could_not_read++; if (row.attempt >= MAX_TRIES) out.failed++ }
-    row.detail = { ...(row.detail || {}), line: row.line || '' }; delete row.line
+    row.detail = { ...(row.detail || {}), line: row.line || '', ...(row.line_keys ? { line_keys: row.line_keys } : {}) }; delete row.line; delete row.line_keys
     const { error: iErr } = await db.from('call_task_reading').insert(row)
     if (iErr && !/duplicate/i.test(iErr.message)) { out.errors++; out.save_failed = (out.save_failed || 0) + 1; continue }
     out.read++

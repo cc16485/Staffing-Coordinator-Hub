@@ -534,3 +534,22 @@ export function lineOf(m: any, contactPhone = ''): string {
   for (const v of office) { const t = ten(v); if (t && t !== theirs) return `(${t.slice(0, 3)}) ${t.slice(3, 6)}-${t.slice(6)}` }
   return ''
 }
+
+/** Diagnostic (2026-10-14): the NAMES of the message's fields that hold a phone number, never the numbers. GoHighLevel did
+ *  not put the office line in to/from on a call; this finds where it is. Removed once lineOf reads the right field. */
+// deno-lint-ignore no-explicit-any
+export function phoneKeys(m: any, contactPhone = ''): string[] {
+  const theirs = String(contactPhone).replace(/\D/g, '').slice(-10)
+  const out: string[] = []
+  // deno-lint-ignore no-explicit-any
+  const walk = (o: any, at: string, depth: number) => {
+    if (!o || typeof o !== 'object' || depth > 3) return
+    for (const [k, v] of Object.entries(o)) {
+      const p = at ? at + '.' + k : k
+      if (typeof v === 'string' || typeof v === 'number') { const d = String(v).replace(/\D/g, ''); if ((d.length === 10 || (d.length === 11 && d[0] === '1')) && /^[+\d\s().-]+$/.test(String(v))) out.push(p + (theirs && d.slice(-10) === theirs ? ' (theirs)' : '')) }
+      else walk(v, p, depth + 1)
+    }
+  }
+  walk(m, '', 0)
+  return out.slice(0, 12)
+}
