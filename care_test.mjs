@@ -143,7 +143,11 @@ try {
   r = await call({ action: 'care_end', axiscare_client_id: '296', reason: 'other', effective_date: R_add(0) }, 'an')
   ck('3 · End needs an explanation for Other', r.j.outcome === 'refused' && /Explain/.test(r.j.error) && T.client_journey[0].status !== 'closed', r.j)
   r = await call({ action: 'care_end', axiscare_client_id: '296', reason: 'facility', effective_date: R_add(1) }, 'an')
-  ck('3 · ...and a date that is not in the future', r.j.outcome === 'refused' && /effective date/.test(r.j.error))
+  ck('3 · a last day in the future PLANS the end (2026-10-15): nothing closes yet, his journey stays open', r.j.outcome === 'planned' && T.client_journey[0].status !== 'closed' && T.person_role.find((x) => x.person_id === 'p-ed').status === 'active' && T.client_care_change.some((c) => c.kind === 'end_planned'), r.j)
+  r = await call({ action: 'care_end_cancel', axiscare_client_id: '296', explanation: 'x' }, 'an')
+  ck('3 · ...cancelling it needs a reason', r.j.outcome === 'refused' && /why/.test(r.j.error), r.j)
+  r = await call({ action: 'care_end_cancel', axiscare_client_id: '296', explanation: 'They decided to stay home' }, 'an')
+  ck('3 · ...a Care Coordinator cancels it with a reason (not a 21-day end), kept as a permanent change', r.j.outcome === 'cancelled' && T.client_care_change.some((c) => c.kind === 'end_cancelled' && /stay home/.test(c.explanation)), r.j)
   const evBefore = T.client_journey_event.length, stepsBefore = T.client_journey_step.length
   r = await call({ action: 'care_end', axiscare_client_id: '296', reason: 'facility', effective_date: R_add(0), notified_by: 'Mercy social worker', explanation: 'Moved to Maranatha Village' }, 'an')
   const EC = T.client_care_change.find((c) => c.kind === 'end')
@@ -172,7 +176,7 @@ try {
   r = await call({ action: 'care_checklist', change_id: EC.change_id, item: 'dsds_written', state: 'done', how: 'PCCP Request Form, faxed again', on: R_add(0) }, 'an')
   ck('slice 9 · then recorded done again, with both records kept', r.j.outcome === 'saved' && ECk().state === 'done' && ECk().earlier.length === 1, ECk())
   r = await call({ action: 'care_state', axiscare_client_id: '296' }, 'an')
-  ck('...his state reads Past, with every change in order (pause, resume, end) and his journey kept', r.j.state === 'past' && r.j.changes.map((c) => c.kind).join() === 'pause,resume,end' && r.j.episodes.length === 1 && r.j.episodes[0].status === 'closed', r.j)
+  ck('...his state reads Past, with every change in order (pause, resume, end) and his journey kept', r.j.state === 'past' && r.j.changes.map((c) => c.kind).join() === 'pause,resume,end_planned,end_cancelled,end' && r.j.episodes.length === 1 && r.j.episodes[0].status === 'closed', r.j)
   r = await call({ action: 'sweep' }, null, job)
   ck('...the next sweep changes nothing about him (no new cards, no reopened journey)', T.client_journey[0].status === 'closed' && jcards().length === 0)
 
@@ -265,6 +269,42 @@ try {
   ck('7 · Private pay: no Medicaid discharge rule, a Care Coordinator records it', r.j.outcome === 'ended' && !T.client_care_change.find((c) => c.kind === 'end').checklist.length, r.j)
   ck('7 · the rule map: unable to staff / beyond scope / noncompliance = 21 days; deceased / facility / moved / safety = right away; authorization ended = DSDS closed; chose another provider = their choice',
     ['unable_to_staff', 'beyond_scope', 'noncompliance'].every((k) => C.DISCHARGE_RULE[k] === 'notice21') && ['deceased', 'facility', 'moved_out', 'safety'].every((k) => C.DISCHARGE_RULE[k] === 'immediate') && C.DISCHARGE_RULE.auth_ended === 'dsds' && C.DISCHARGE_RULE.other_provider === 'choice')
+  /* IHS AND ADW END (Samantha 2026-10-15): the two new reasons, the 21-day rule, and planned ends carried out by the sweep */
+  setup(); await call({ action: 'adopt', people: [{ axiscare_client_id: '296', client_name: 'Edward Anderson', payer: 'private' }] }, null, job)
+  ck('IHS · the two reasons exist, both under the 21-day rule, and are Medicaid by definition', C.END_REASONS.moved_cds && C.END_REASONS.program_ended && C.DISCHARGE_RULE.moved_cds === 'notice21' && C.DISCHARGE_RULE.program_ended === 'notice21' && C.IHS_END_REASONS.includes('moved_cds'))
+  ck('IHS · every end reason has an AxisCare-review word (noncompliance and safety were missing)', Object.keys(C.END_REASONS).every((k) => C.LEGACY[k]))
+  r = await call({ action: 'care_end', axiscare_client_id: '296', reason: 'moved_cds', effective_date: R_add(31), notice_participant_on: R_add(0), notice_dsds_on: R_add(0) }, 'an')
+  ck('IHS · a Care Coordinator can\'t record it, even on a client the Hub thinks is private pay (an owner records 21-day ends)', r.j.outcome === 'refused' && /owner/.test(r.j.error) && !T.client_care_change.length, r.j)
+  r = await call({ action: 'care_end', axiscare_client_id: '296', reason: 'moved_cds', effective_date: R_add(31) }, 'sam')
+  ck('IHS · ...an owner without the notice dates is refused', r.j.outcome === 'refused' && /notice/.test(r.j.error), r.j)
+  r = await call({ action: 'care_end', axiscare_client_id: '296', reason: 'moved_cds', effective_date: R_add(10), notice_participant_on: R_add(0), notice_dsds_on: R_add(0) }, 'sam')
+  ck('IHS · ...a last day sooner than 21 days after the notices is refused', r.j.outcome === 'refused' && /21 days/.test(r.j.error), r.j)
+  r = await call({ action: 'care_end', axiscare_client_id: '296', reason: 'moved_cds', effective_date: R_add(31), notice_participant_on: R_add(-1), notice_dsds_on: R_add(0) }, 'sam')
+  const PE = T.client_care_change.find((c) => c.kind === 'end_planned')
+  ck('IHS · an owner plans the end for a future last day: recorded as Medicaid, the two notice steps ticked with their dates, the client still active', r.j.outcome === 'planned' && PE && PE.payer === 'medicaid' && PE.checklist.find((x) => x.key === 'notice_21').on === R_add(-1) && PE.checklist.find((x) => x.key === 'dsds_written').on === R_add(0) && T.person_role.find((x) => x.person_id === 'p-ed').status === 'active' && T.client_journey[0].status !== 'closed', [r.j, PE])
+  r = await call({ action: 'care_state', axiscare_client_id: '296' }, 'an')
+  ck('IHS · care_state shows the planned end; a Care Coordinator can\'t cancel a 21-day one', r.j.planned_end && r.j.planned_end.change_id === PE.change_id && r.j.can.cancel_end === false && r.j.state === 'active', r.j.can)
+  r = await call({ action: 'care_end', axiscare_client_id: '296', reason: 'program_ended', effective_date: R_add(40), notice_participant_on: R_add(0), notice_dsds_on: R_add(0) }, 'sam')
+  ck('IHS · a second planned end is refused (cancel the first)', r.j.outcome === 'refused' && /already planned/.test(r.j.error), r.j)
+  r = await call({ action: 'sweep' }, null, job)
+  ck('IHS · the sweep before the last day changes nothing', r.j.planned_ends && r.j.planned_ends.due === 0 && T.person_role.find((x) => x.person_id === 'p-ed').status === 'active', r.j.planned_ends)
+  T.client_care_change.find((c) => c.change_id === PE.change_id).checklist.find((x) => x.key === 'continue_21').state = 'done'   /* ticked by a person meanwhile */
+  T.client_care_change.find((c) => c.change_id === PE.change_id).effective_date = R_add(-1)   /* the last day has passed */
+  T.client_care_change.find((c) => c.change_id === PE.change_id).checklist.forEach((x) => { if (x.key === 'notice_21' || x.key === 'dsds_written') x.on = R_add(-30) })
+  r = await call({ action: 'sweep' }, null, job)
+  const EE = T.client_care_change.find((c) => c.kind === 'end')
+  ck('IHS · the day after the last day the sweep ends care as planned: the role is past with the reason, the journey closed, as the owner who planned it', r.j.planned_ends.ended === 1 && T.person_role.find((x) => x.person_id === 'p-ed').status === 'former' && /Caring CDS/.test(T.person_role.find((x) => x.person_id === 'p-ed').end_reason) && T.client_journey[0].status === 'closed' && EE && EE.made_by === 'sam@mo-care.com' && /^As planned on /.test(EE.explanation), [r.j.planned_ends, EE])
+  ck('IHS · ...the end keeps the plan\'s checklist, including what was ticked meanwhile', EE.checklist.find((x) => x.key === 'continue_21').state === 'done' && EE.checklist.find((x) => x.key === 'notice_21').state === 'done', EE.checklist)
+  r = await call({ action: 'sweep' }, null, job)
+  ck('IHS · ...and the next sweep does nothing more', r.j.planned_ends.due === 0 && T.client_care_change.filter((c) => c.kind === 'end').length === 1, r.j.planned_ends)
+  /* a planned end that can't go through raises ONE card for an owner (no silent failures) */
+  setup(); await call({ action: 'adopt', people: [{ axiscare_client_id: '296', client_name: 'Edward Anderson', payer: 'private' }] }, null, job)
+  await call({ action: 'care_end', axiscare_client_id: '296', reason: 'moved_cds', effective_date: R_add(31), notice_participant_on: R_add(0), notice_dsds_on: R_add(0) }, 'sam')
+  const PF = T.client_care_change.find((c) => c.kind === 'end_planned'); PF.effective_date = R_add(-1); PF.made_by = 'angie@mo-care.com'   /* as if recorded by someone who can't */
+  await call({ action: 'sweep' }, null, job); await call({ action: 'sweep' }, null, job)
+  const fc = items().filter((x) => String(x.id).startsWith('ops_pend_'))
+  ck('IHS · a planned end that can\'t be carried out: care continues, ONE urgent card for an owner says why (not one per sweep)', T.person_role.find((x) => x.person_id === 'p-ed').status === 'active' && fc.length === 1 && fc[0].urgency === 'urgent' && /did not go through/.test(fc[0].title) && /owner/.test(fc[0].detail), fc)
+  ck('IHS · no em dash in the new words', !/\u2014/.test(C.END_REASONS.moved_cds + C.END_REASONS.program_ended))
   ck('7 · a notice date in the future is refused', /can't be in the future/.test(C.dischargeCheck('noncompliance', { effective_date: R_add(30), notice_participant_on: R_add(1), notice_dsds_on: R_add(0) }, true, R_add(0)).why || ''))
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }

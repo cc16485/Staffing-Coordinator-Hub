@@ -37,7 +37,7 @@ import { logOpen, clientSubject, ipOf } from '../_shared/doc-log.ts'   /* SLICE 
 import { jobCaller } from '../_shared/job-auth.ts'
 import '../_shared/journey-rules.js'
 import '../_shared/lead-rules.js'
-import { careAction, pausedAx } from './care.ts'
+import { careAction, pausedAx, runPlannedEnds } from './care.ts'
 import { loadQuiet } from '../_shared/client-quiet.ts'
 
 // deno-lint-ignore no-explicit-any
@@ -658,6 +658,9 @@ Deno.serve(async (req) => {
     /* Step 6: the first clock-in, whether or not journeys are on */
     let first_shifts: Any = null
     try { first_shifts = await stampFirstShifts(db, axFetcher()) } catch (e) { first_shifts = { error: String((e as Error).message || e).slice(0, 200) } }
+    /* a planned end of care whose last day has passed is carried out (2026-10-15), journeys on or off, like End care itself */
+    let planned_ends: Any = null
+    try { planned_ends = await runPlannedEnds({ db, pp, st, dfs, R, load, event, refreshCards, ctxFor, today, routeCc, openOne, logOpen, clientSubject }) } catch (e) { planned_ends = { error: String((e as Error).message || e).slice(0, 200) } }
     if (st.client_journey_live !== true) {
       /* switched off: real journeys show nobody anything, so their open My Work cards are put away (they come back on the
          first sweep after it is turned on again). TEST journeys keep theirs. */
@@ -665,7 +668,7 @@ Deno.serve(async (req) => {
       let put = 0
       for (const it of (Array.isArray(row?.data) ? row.data : []).filter((x: Any) => x?.kind === 'journey' && x.status === 'open' && !x.is_test)) {
         await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...it, status: 'done', closed_at: now, closed_by: 'journey', close_note: 'Client journeys were switched off' } }); put++ }
-      return json({ ok: true, live: false, note: 'client_journey_live is off: nothing swept', cards_put_away: put, first_shifts })
+      return json({ ok: true, live: false, note: 'client_journey_live is off: nothing swept', cards_put_away: put, first_shifts, planned_ends })
     }
     const auto = await autoOpenClose(db, dfs, pp, st), care_ended = await closeEnded(db, dfs, pp, st), pause_due = await pauseDue(db)
     let in_care: Any = null
@@ -677,7 +680,7 @@ Deno.serve(async (req) => {
       const { data: steps } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
       const out = await settle(db, j, steps ?? [], dfs, pp, st, j.status === 'active' ? { verify: false } : {}); n++; cards += out.cards.wrote + out.cards.closed; if (out.launch) launches++
     }
-    return json({ ok: true, journeys: n, card_changes: cards, launch_changes: launches, care_ended, pause_due, first_shifts, ...in_care, ...auto })
+    return json({ ok: true, journeys: n, card_changes: cards, launch_changes: launches, care_ended, pause_due, first_shifts, planned_ends, ...in_care, ...auto })
   }
   /* ── THEY SAID YES (Leads intake desk, Stage 3; Samantha 2026-10-06: "move them directly from Leads into the Client
      Journey… carry everything… record the conversion event… land on the first incomplete required step… safely
