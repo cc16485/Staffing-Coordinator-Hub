@@ -52,7 +52,7 @@ const ROSTER_ROWS: Array<[string, string, string, string | null, string | null]>
   ['Code of Ethics signed', 'ethics_date', 'ethics_proof', null, null],
   ['Participant Rights signed', 'rights_date', 'rights_proof', null, null],
   ['OIG exclusion check (LEIE)', 'oig_date', 'oig_proof', 'oig_status', 'monthly (agency policy)'],
-  ['Employee Disqualification List check', 'edl_date', 'edl_proof', 'edl_status', 'monthly (agency policy)'],
+  ['Employee Disqualification List check', 'edl_date', 'edl_proof', 'edl_status', 'quarterly (agency policy)'],
   ['Family Care Safety Registry check', 'fcsr_date', 'fcsr_proof', 'fcsr_status', 'yearly'],
   ['FCSR registration', 'fcsr_reg_date', 'fcsr_reg_proof', null, null],
   ['Case.net court records search (Missouri)', 'casenet_date', 'casenet_proof', 'casenet', null],
