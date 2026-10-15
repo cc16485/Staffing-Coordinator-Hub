@@ -11,6 +11,7 @@
 #   Part 2: the database change, then the advert wording.
 #   Part 3, proof (nothing is sent, nothing is left behind): made-up applicants inside a step that is always undone; the
 #     public is refused the office's screen.
+# SB_MODE=proof: Part 1 and Part 3 only, on a project where 731 is already in. Changes nothing.
 # SB_MODE=undo: puts the functions back (one_year_731_rollback.sql) and the advert wording back from the copy saved by the
 #   install, then checks both.
 # Prints counts only: no name, number, email, key or secret. Sends nothing.
@@ -67,7 +68,7 @@ def sql(q):
             return False, (e.args[0].get("M") if e.args and isinstance(e.args[0], dict) else str(e))[:600]
         finally: c.close()
     s, b = http("POST", f"{API}/v1/projects/{REF}/database/query", {"query": q}, MG())
-    if s not in (200, 201): return False, f"HTTP {s}: {b[:600]}"
+    if s not in (200, 201): return False, f"HTTP {s}: {b[:6000]}"   # long enough to hold the proof's whole answer
     try: return True, json.loads(b)
     except Exception: return False, b[:300]
 
@@ -156,10 +157,13 @@ end $proof$;
 """
 def proof_result():
     ok, r = sql(PROOF)
-    m = re.search(r"PROOF731 (\{.*\})", str(r), re.S)
-    if ok or not m: return None, str(r)[:300]
-    try: return json.loads(m.group(1)), None
-    except Exception: return None, m.group(1)[:300]
+    # The live API returns the error inside a JSON string, so its quotes come back escaped (\"): undo that first. The first
+    # real run (2026-10-14 20:30) proved everything but could not read its own answer because of this.
+    txt = str(r).replace('\\"', '"'); i = txt.find("PROOF731 {")
+    if ok or i < 0: return None, str(r)[:300]
+    # raw_decode reads exactly one JSON object and stops, whatever follows it (the API's own closing quote and brace)
+    try: return json.JSONDecoder().raw_decode(txt[i + len("PROOF731 "):])[0], None
+    except Exception: return None, txt[i:i + 300]
 
 ADVERT_COLS = ["summary", "description", "responsibilities", "qualifications", "benefits"]
 def adverts():
@@ -172,7 +176,7 @@ def adverts():
         out[tbl] = r
     return out
 
-say(f"731 · A YEAR OF PAID EXPERIENCE ({'UNDO' if MODE == 'undo' else 'install'})")
+say(f"731 · A YEAR OF PAID EXPERIENCE ({'UNDO' if MODE == 'undo' else 'PROOF AGAIN, changes nothing' if MODE == 'proof' else 'install'})")
 say("Report " + dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")); say()
 if not LOCAL and not TOKEN.startswith("sbp_"): bad("no Supabase access token"); done(2)
 for rel, want in PINS.items():
@@ -241,30 +245,34 @@ if not ok: bad("couldn't count the open applications. Nothing was changed. " + s
 say(f"  ✓ {r[0]['upcoming']} interview(s) booked ahead now: all left exactly as they are")
 say(f"  ·  {r[0]['waiting']} open application(s) with no interview booked: they get the experience question before an interview (the office's Ask these first, or their own link)")
 
-stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S"); save = os.path.join(SAVE_ROOT, stamp); os.makedirs(save, exist_ok=True)
-dt_ = defs_text(); ads = adverts()
-if not dt_ or ads is None: bad("couldn't save copies of the live functions and adverts. Nothing was changed."); done(3)
-open(os.path.join(save, "live_functions.sql"), "w").write("-- live before 731, " + stamp + "\n" + dt_ + "\n")
-# The advert copy is the words BEFORE 731, so it is saved only by the first install: a re-run would otherwise save the new
-# words, and the undo (which uses the latest copy) would "restore" those.
-if state == "before":
-    json.dump(ads, open(os.path.join(save, "adverts.json"), "w"), indent=1)
-    say(f"  ✓ copies of the live functions and of {sum(len(v or []) for v in ads.values())} adverts/templates saved (for the undo)")
-else:
-    say("  ✓ a copy of the live functions saved; the adverts' words from before 731 were saved by the first install")
+if MODE == "proof" and state != "after": bad("731 isn't in yet, so there is nothing to prove. Nothing was changed."); done(3)
+if MODE == "proof": say(); say("(PART 2 skipped: proof only, nothing changes)")
+stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S"); save = os.path.join(SAVE_ROOT, stamp)
+if MODE != "proof": os.makedirs(save, exist_ok=True)
+if MODE != "proof":
+    dt_ = defs_text(); ads = adverts()
+    if not dt_ or ads is None: bad("couldn't save copies of the live functions and adverts. Nothing was changed."); done(3)
+    open(os.path.join(save, "live_functions.sql"), "w").write("-- live before 731, " + stamp + "\n" + dt_ + "\n")
+    # The advert copy is the words BEFORE 731, so it is saved only by the first install: a re-run would otherwise save the new
+    # words, and the undo (which uses the latest copy) would "restore" those.
+    if state == "before":
+        json.dump(ads, open(os.path.join(save, "adverts.json"), "w"), indent=1)
+        say(f"  ✓ copies of the live functions and of {sum(len(v or []) for v in ads.values())} adverts/templates saved (for the undo)")
+    else:
+        say("  ✓ a copy of the live functions saved; the adverts' words from before 731 were saved by the first install")
 
-say(); say("PART 2 · CHANGE")
-ok, r = sql(S731)
-if not ok: bad("the database change didn't go in, and was undone as a whole (nothing changed): " + str(r)[:300]); say("  STOP. Tell Claude."); done(6)
-L2 = live()
-if not chk(same(L2, AFTER) and L2.get("office_args") == 8, "the experience rule is in (the form, the screening rule, the office screen, the lock, the follow-up stop)"): done(6)
-ok, r = sql(SW)
-if not ok: bad("the advert wording didn't go in, and was undone as a whole (the experience rule above is in and fine on its own): " + str(r)[:300]); done(6)
-ads2 = adverts()
-changed = sum(1 for t, rows in (ads or {}).items() for row in rows or [] if {x["id"]: x for x in ((ads2 or {}).get(t) or [])}.get(row["id"]) != row)
-left = sum(1 for t, rows in (ads2 or {}).items() for row in rows or [] if any("Experience helps, but reliability" in (row.get(c) or "") for c in ADVERT_COLS))
-chk(left == 0, f"advert wording: {changed} advert(s)/template(s) now ask for a year of paid experience; none still say \"Experience helps\"")
-say("  ·  the website's job pages rebuild from these within the hour")
+    say(); say("PART 2 · CHANGE")
+    ok, r = sql(S731)
+    if not ok: bad("the database change didn't go in, and was undone as a whole (nothing changed): " + str(r)[:300]); say("  STOP. Tell Claude."); done(6)
+    L2 = live()
+    if not chk(same(L2, AFTER) and L2.get("office_args") == 8, "the experience rule is in (the form, the screening rule, the office screen, the lock, the follow-up stop)"): done(6)
+    ok, r = sql(SW)
+    if not ok: bad("the advert wording didn't go in, and was undone as a whole (the experience rule above is in and fine on its own): " + str(r)[:300]); done(6)
+    ads2 = adverts()
+    changed = sum(1 for t, rows in (ads or {}).items() for row in rows or [] if {x["id"]: x for x in ((ads2 or {}).get(t) or [])}.get(row["id"]) != row)
+    left = sum(1 for t, rows in (ads2 or {}).items() for row in rows or [] if any("Experience helps, but reliability" in (row.get(c) or "") for c in ADVERT_COLS))
+    chk(left == 0, f"advert wording: {changed} advert(s)/template(s) now ask for a year of paid experience; none still say \"Experience helps\"")
+    say("  ·  the website's job pages rebuild from these within the hour")
 
 say(); say("PART 3 · PROOF (made-up applicants, always undone; nothing is sent)")
 P, perr = proof_result()
