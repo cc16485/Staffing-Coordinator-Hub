@@ -61,7 +61,7 @@ sys.exit(1)
 """)
 os.chmod(os.path.join(FAKEBIN, "supabase"), 0o755)
 sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
-PIN = {k: sha(os.path.join(WT, "supabase/functions", f)) for k, f in [("client-journey", "client-journey/index.ts"), ("lead-watch", "lead-watch/index.ts"), ("lead-digest", "lead-digest/index.ts"), ("_shared/lead-rules", "_shared/lead-rules.js")]}
+PIN = {k: sha(os.path.join(WT, "supabase/functions", f)) for k, f in [("client-journey", "client-journey/index.ts"), ("lead-watch", "lead-watch/index.ts"), ("lead-digest", "lead-digest/index.ts"), ("_shared/lead-rules.js", "_shared/lead-rules.js")]}
 def run(env_over=None, drift=False, already=False, stale=False, **mode):
     reset(**mode); rep = os.path.join(TMP, "r.txt")
     os.path.exists(LOG) and os.remove(LOG); os.path.exists(rep) and os.remove(rep)
