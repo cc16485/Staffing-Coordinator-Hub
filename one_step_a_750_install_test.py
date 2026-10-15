@@ -44,6 +44,7 @@ subprocess.run(["git", "-C", HERE, "worktree", "add", "-q", "--detach", WT, "HEA
 BASE = os.path.join(TMP, "base"); os.makedirs(BASE)
 subprocess.run(f"git -C {HERE} archive {BASE_SHA} supabase/functions | tar -x -C {BASE}", shell=True, check=True)
 OLDR = os.path.join(TMP, "older-rules.js"); open(OLDR, "wb").write(subprocess.run(["git", "-C", HERE, "show", f"{OLDER_RULES}:supabase/functions/_shared/lead-rules.js"], capture_output=True, check=True).stdout)
+LIVEOLD = os.environ.get("LIVEOLD_750", "")   # the six live functions' shared files as downloaded 2026-10-15 (kept outside the repo)
 FAKEBIN = os.path.join(TMP, "bin"); os.makedirs(FAKEBIN); LOG = os.path.join(TMP, "cli.log"); os.makedirs(os.path.join(TMP, "deployed"))
 open(os.path.join(FAKEBIN, "supabase"), "w").write(f"""#!/usr/bin/env python3
 import sys, os, shutil
@@ -54,6 +55,10 @@ if a[:2] == ['functions', 'download']:
     shutil.copytree(os.path.join({WT!r} if mine else {BASE!r}, 'supabase', 'functions'), os.path.join(os.getcwd(), 'supabase', 'functions'), dirs_exist_ok=True)
     if not mine and os.path.exists(os.path.join({TMP!r}, 'stale')) and a[2] in ('cc-booking', 'lead-watch'):
         shutil.copy({OLDR!r}, os.path.join(os.getcwd(), 'supabase', 'functions', '_shared', 'lead-rules.js'))
+    if not mine and os.path.exists(os.path.join({TMP!r}, 'liveold')):
+        shutil.copytree(os.path.join({LIVEOLD!r}, a[2], 'supabase', 'functions', '_shared'), os.path.join(os.getcwd(), 'supabase', 'functions', '_shared'), dirs_exist_ok=True)
+        if os.path.exists(os.path.join({TMP!r}, 'unseen')) and a[2] == 'lead-watch':
+            open(os.path.join(os.getcwd(), 'supabase', 'functions', '_shared', 'optout.ts'), 'a').write('// unseen')
     if not mine and os.path.exists(os.path.join({TMP!r}, 'drift')) and a[2] == 'lead-followup':
         open(os.path.join(os.getcwd(), 'supabase', 'functions', 'lead-followup', 'index.ts'), 'a').write('// someone else')
     sys.exit(0)
@@ -66,11 +71,11 @@ PIN = {"_shared/lead-rules.js": sha(os.path.join(WT, "supabase/functions/_shared
        "call-disposition": sha(os.path.join(WT, "supabase/functions/call-disposition/index.ts"))}
 SQLSHA = sha(os.path.join(WT, "care-began-one-rule-750.sql"))
 OLDB, NEWB = body(os.path.join(WT, "client-fact-care-began-fix.sql")), body(os.path.join(WT, "care-began-one-rule-750.sql"))
-def run(env_over=None, drift=False, already=False, stale=False, **mode):
+def run(env_over=None, drift=False, already=False, stale=False, liveold=False, unseen=False, **mode):
     reset(OLD=OLDB, NEW=NEWB, **mode); rep = os.path.join(TMP, "r.txt")
     os.path.exists(LOG) and os.remove(LOG); os.path.exists(rep) and os.remove(rep)
     shutil.rmtree(os.path.join(TMP, "deployed")); os.makedirs(os.path.join(TMP, "deployed"))
-    for flag, on in (("drift", drift), ("already", already), ("stale", stale)):
+    for flag, on in (("drift", drift), ("already", already), ("stale", stale), ("liveold", liveold), ("unseen", unseen)):
         fp = os.path.join(TMP, flag); (open(fp, "w").write("x") if on else (os.path.exists(fp) and os.remove(fp)))
     env = dict(os.environ, PATH=FAKEBIN + ":/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", SB_TOKEN="sbp_test", SB_REPORT=rep, SB_API_BASE=URL, SB_FN_BASE=URL,
                SB_SUPA_CLI=os.path.join(FAKEBIN, "supabase"), SB_REPO=WT, SB_BASE=BASE_SHA, SB_SHAS=json.dumps(PIN), SB_SQL_SHA=SQLSHA, SB_SETTLE="0")
@@ -94,6 +99,11 @@ try:
     ck("already installed: nothing deployed, the rule not re-run, DONE", c == 0 and not deploys() and not ran_sql() and "RESULT: DONE" in out, out[-1500:])
     c, out = run(stale=True)
     ck("a function still carrying an older lead-rules.js (its own code is main's): counts as main's build and is deployed", c == 0 and "cc-booking" in deploys() and "lead-watch" in deploys() and "RESULT: DONE" in out, out[-1500:])
+    if not LIVEOLD: ck("LIVEOLD_750 not set: the real-live-copies rehearsal did not run", False)
+    c, out = run(liveold=True)
+    ck("the real live copies of 2026-10-15 (older shared helpers, each read by Claude): accepted, all six deployed, and the report names them", c == 0 and sorted(deploys()) == sorted(FNS) and "practice-address guard" in out and "RESULT: DONE" in out, out[-2500:])
+    c, out = run(liveold=True, unseen=True)
+    ck("a shared file nobody has read (not one of the known older ones): STOP before any change", c == 3 and not deploys() and not ran_sql() and "lead-watch on the server is not what 750 expects" in out, out[-1200:])
     c, out = run(drift=True)
     ck("someone else's code on lead-followup: STOP before any change (nothing deployed, the rule untouched)", c == 3 and not deploys() and not ran_sql() and "lead-followup on the server is not what 750 expects" in out, out[-1200:])
     c, out = run(rule="other")

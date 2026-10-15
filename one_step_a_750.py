@@ -132,6 +132,23 @@ def history(root, rel):
         if b.returncode == 0: out.add(shab(b.stdout))
     return out
 HIST = None
+# 2026-10-15 first run stopped here: call-disposition (and the other lead functions) carry shared helper files from before
+# main's latest (an earlier lead-rules.js, the events.ts from before Slice 1, the opt-out guard from before the practice-address
+# rule, older sender name lists). Claude downloaded and read each one: every line only they have is older code main replaced.
+# These exact files (by fingerprint) count as "the build before this change"; deploying brings main's. Anything else stops.
+KNOWN_OLD = {
+    "328cf9ed7a3cd83804809b54fe517a8ed0fb4f3b5a9f88c92aa60bfcba8069ad": "the lead rules from before 2026-10-07",
+    "9ec24497cddd3fbce4c60d2e114d085aac3f01cb2a908a83190d9a98314bdad6": "an earlier lead rules",
+    "4478bb00e752515489f0fda83ad006c5f4b5f566d84896318635764f961bfad8": "an earlier lead rules",
+    "ddd8d4a7eb08af0e9c8c3eab8283208856ab8edfbcd8f2a3bde369dc9323ab36": "an earlier lead rules",
+    "573379c4abb9a5f44e3bf49274d86713a6bf28a1974833e2478e78c54c8cdffe": "the activity record from before Slice 1 (jobs signed 'Cara')",
+    "d027aa1cedd25bf7cfa2e82cbb26f724041a10c403172ebfd02e47ee9a357fee": "the opt-out check from before the practice-address guard",
+    "d79537111405b27bf3a424b1ac576fb836a5f276f99f513fdd88d0b3b10b886b": "an earlier list of sender names",
+    "36966f986cac011e119873b18b9c3ebe4f76f1f18e07af8e814eaad6a34f56b5": "an earlier list of sender names",
+    "6f0fe28bf97b518ae57060bbba67e2154e15ccc89d3d8b41a1247fa07b8d8ba4": "an earlier list of activity words",
+    "17bf0e843bf615545fdb6422262cf2fbbd8d19142caabf890f30ad96fd316416": "an earlier list of senders and when they may send",
+}
+OLD_SEEN = {}
 def state750(ref, root, base, fn):
     """'this' | 'base' (main's own code; its shared lead rules may be any earlier version) | 'other' | 'new' | 'unreadable'"""
     s, m = fmeta(ref, fn)
@@ -144,6 +161,8 @@ def state750(ref, root, base, fn):
     for k in nd:
         if k == SHARED and k in live and live[k] in HIST: continue
         if k in live and live[k] == base_sha(root, base, k): continue
+        if k.startswith("supabase/functions/_shared/") and k in live and live[k] in KNOWN_OLD:
+            OLD_SEEN.setdefault(fn, []).append(KNOWN_OLD[live[k]]); continue
         return "other", vj
     return "base", vj
 norm = lambda t: re.sub(r"\s+", " ", t or "").strip()
@@ -178,6 +197,7 @@ for fn in FNS:
     st, vj = state750(HUB_REF, HUB, HUB_BASE, fn)
     if st not in ("base", "this"): bad(f"{fn} on the server is not what 750 expects ({st}). Nothing was changed. Tell Claude."); done(3)
     STATES[fn] = (st, vj); say(f"  ✓ {fn}: " + {"this": "already this build", "base": "main's build (this brings the new shared lead rules)"}[st])
+    if OLD_SEEN.get(fn): say("      it also had older shared helpers, now brought up to main's: " + "; ".join(sorted(set(OLD_SEEN[fn]))))
 ok, r = sql("select prosrc, prosecdef from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'care_began_for_episode'")
 if not ok or len(r) != 1: bad("couldn't read the care-began rule. Nothing was changed."); done(3)
 live_src = norm(r[0]["prosrc"]); OLD = norm(fnbody(os.path.join(HUB, "client-fact-care-began-fix.sql"))); NEW = norm(fnbody(os.path.join(HUB, SQLF)))
