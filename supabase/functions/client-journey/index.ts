@@ -16,6 +16,8 @@
 //   list       a summary per open journey (stage, next step, owner) for the Getting ready lists
 //   sweep      (job) stamp when steps became ready, run the Hub's checks (verified steps), refresh My Work cards,
 //              start journeys for new leads once someone has talked to them, close journeys whose lead was lost or archived
+//              (766) mark a journey still at intake/pre-checks/assessment 'receiving care' when AxisCare shows an active client
+//              with a shift in the last 4 weeks; no new intake journey (sweep, adopt, open) for such a client
 //   adopt      (job, the move-over 484) start journeys for the named real leads and AxisCare clients, switch on or off
 // The move-over (483/484, Samantha 2026-10-06):
 //   ROUTING: who gets a journey nobody chose is a RULE in Settings (client_journey_routing: payer -> Care Coordinator,
