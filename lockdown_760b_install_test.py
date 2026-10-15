@@ -80,7 +80,22 @@ elif a[:2] == ["functions", "deploy"]:
         if os.path.exists(os.path.join(tmp, "deploys.log")): os.remove(os.path.join(tmp, "deploys.log"))
         e = dict(os.environ, SB_REPORT=rep, SB_TOKEN="sbp_test", SB_API_BASE=API, SB_FN_BASE=API, SB_SUPA_CLI=CLI, SB_FNROOT=FNROOT,
                  SB_BASE=BASE, SB_SHAS=json.dumps(SHAS), SB_SQL_SHA=SQLSHA, SB_RB_SHA=RBSHA, SB_YES=yes, SB_SETTLE="0", **env)
-        p = subprocess.run([sys.executable, os.path.join(W, "lockdown_760b_install.py")], cwd=W, env=e, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=600)
+        CMD = os.environ.get("T760B_COMMAND")   # rehearse the Desktop .command itself: a clone whose origin/main is HEAD, a fake CLI at ~/.local/bin
+        if CMD:
+            R = os.path.join(tmp, "repo")
+            if not os.path.exists(R):
+                subprocess.run(["git", "clone", "-q", "--bare", HERE, R + ".git"], check=True)
+                subprocess.run(["git", "-C", R + ".git", "branch", "-f", "main", subprocess.run(["git", "-C", W, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()], check=True)
+                subprocess.run(["git", "clone", "-q", R + ".git", R], check=True)
+                os.makedirs(os.path.join(tmp, "home", ".local", "bin"), exist_ok=True); shutil.copy(CLI, os.path.join(tmp, "home", ".local", "bin", "supabase"))
+            c = open(CMD).read().replace('P="/Users/samantha/Claude/Projects/Staffing-Coordinator-Hub"', f'P="{R}"')
+            c = re.sub(r'REPORT="[^"]*"', f'REPORT="{rep}"', c).replace('open "$REPORT"', 'true "$REPORT"')
+            open(os.path.join(tmp, "run.command"), "w").write(c)
+            e2 = {k: v for k, v in e.items() if k not in ("SB_FNROOT", "SB_BASE", "SB_SHAS", "SB_SQL_SHA", "SB_RB_SHA", "SB_SUPA_CLI", "SB_TOKEN", "SB_REPORT")}
+            e2["HOME"] = os.path.join(tmp, "home")
+            p = subprocess.run(["zsh", os.path.join(tmp, "run.command")], env=e2, input="sbp_test\n\n", capture_output=True, text=True, timeout=600)
+        else:
+            p = subprocess.run([sys.executable, os.path.join(W, "lockdown_760b_install.py")], cwd=W, env=e, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=600)
         out = open(rep).read() if os.path.exists(rep) else p.stdout + p.stderr
         S["deploys"] = open(os.path.join(tmp, "deploys.log")).read().split() if os.path.exists(os.path.join(tmp, "deploys.log")) else []
         if os.environ.get("T760B_SHOW"): print(out)
