@@ -129,6 +129,11 @@ export function apply(lead: any, m: Msg, d: { ev: any; line: string }, LR: any):
   return firstTime
 }
 
+/** Which of the lead's numbers a phone matched: 'phone' (the person who called us) or 'client_phone' (the client's own). */
+export function matchedOn(l: any, phone: string): 'phone' | 'client_phone' | '' {
+  const d = String(phone || '').replace(/\D/g, '').slice(-10), n = (p: unknown) => String(p || '').replace(/\D/g, '').slice(-10)
+  return d.length === 10 ? (n(l?.phone) === d ? 'phone' : n(l?.client_phone) === d ? 'client_phone' : '') : ''
+}
 /** The leads a phone number belongs to (phone or client phone, not archived). */
 export function leadsFor(leads: any[], phone: string): any[] {
   const d = String(phone || '').replace(/\D/g, '').slice(-10)
