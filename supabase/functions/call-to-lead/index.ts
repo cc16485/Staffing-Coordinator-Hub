@@ -13,6 +13,10 @@
 //                                 v2 (her "fill everything... start drafting [the care plan]"): every lead box the call
 //                                 mentions, the rest in the notes, and the care plan draft (its fields, a narrative and care
 //                                 tasks picked from AxisCare's own task list, read only), reported by the family on the phone.
+//   read_lead {lead_id}           v3 (her "Fill from the call", 2026-10-15): a lead that already exists, e.g. one the old AI
+//                                 made: every answered call with its GoHighLevel contact (up to the newest 3 with a
+//                                 transcript), read together, newest wins. The contact comes from the LEAD on the server,
+//                                 never from the page. Writes nothing.
 //   made  {message_id, lead_id}   after the person saved: checks the lead really carries this call (from_calls), then
 //                                 tags the GoHighLevel contact "lead" (the tag the old reader added). Says if it failed.
 //
@@ -84,11 +88,59 @@ Deno.serve(async (req) => {
   const who = await requireStaff(db, req, OFFICE_ROLES)
   if (!who.ok) return json({ error: who.error }, who.status)
   const body: Any = await req.json().catch(() => ({}))
-  const id = String(body?.message_id || '').trim()
-  if (!/^[A-Za-z0-9_-]{6,64}$/.test(id)) return json({ error: 'Which call? (no call id was sent)' }, 400)
   const tok = Deno.env.get('GHL_TOKEN') || Deno.env.get('GHL_API_KEY') || ''
   const loc = Deno.env.get('GHL_LOCATION_ID') || ''
   if (!tok || !loc) return json({ error: 'GoHighLevel is not set up on the server.' }, 500)
+
+  if (body.action === 'read_lead') {
+    const leadId = String(body?.lead_id || '')
+    if (!leadId || leadId.length > 80) return json({ error: 'Which lead? (no lead id was sent)' }, 400)
+    const { data: row } = await db.from('app_data').select('data').eq('key', 'leads').maybeSingle()
+    const lead = (Array.isArray(row?.data) ? row!.data : []).find((l: Any) => l && String(l.id) === leadId)
+    if (!lead) return json({ error: 'That lead was not found.' }, 404)
+    const contactId = String(lead.ghl_contact_id || '')
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(contactId)) return json({ error: 'This lead has no GoHighLevel contact, so its calls cannot be found. Use Make this a lead on the call instead.' }, 409)
+    let ct: Any = {}
+    try { const r = await fetch(`${GHL}/contacts/${encodeURIComponent(contactId)}`, { headers: H(tok, '2021-07-28') }); if (r.ok) ct = (await r.json())?.contact || {} } catch { /* blank */ }
+    const contact = { id: contactId, first_name: String(ct.firstName || '').trim(), last_name: String(ct.lastName || '').trim(), phone: String(ct.phone || '').trim(), email: String(ct.email || '').trim() }
+    /* every answered call in this contact's conversations, newest first */
+    const calls: Any[] = []
+    try {
+      const cr = await fetch(`${GHL}/conversations/search?locationId=${encodeURIComponent(loc)}&contactId=${encodeURIComponent(contactId)}&limit=20`, { headers: H(tok) })
+      const convos: Any[] = cr.ok ? ((await cr.json())?.conversations || []) : []
+      for (const cv of convos.slice(0, 5)) {
+        const mr = await fetch(`${GHL}/conversations/${encodeURIComponent(cv.id)}/messages?limit=100`, { headers: H(tok) })
+        if (!mr.ok) continue
+        const mb = await mr.json().catch(() => ({}))
+        for (const m of (mb?.messages?.messages || mb?.messages || [])) {
+          if (m?.messageType !== 'TYPE_CALL' || !(Number(m?.meta?.call?.duration || 0) > 0)) continue
+          calls.push({ message_id: String(m.id), at: String(m.dateAdded || ''), direction: m.direction === 'outbound' ? 'outbound' : 'inbound', seconds: Number(m.meta.call.duration) })
+        }
+      }
+    } catch { /* none found */ }
+    calls.sort((a, b) => String(b.at).localeCompare(String(a.at)))
+    const read: Any[] = []
+    for (const c of calls.slice(0, 6)) {
+      if (read.length >= 3) break
+      const tr = await fetch(`${GHL}/conversations/locations/${encodeURIComponent(loc)}/messages/${encodeURIComponent(c.message_id)}/transcription`, { headers: H(tok) })
+      const text = tr.ok ? transcriptText(await tr.json().catch(() => null)) : ''
+      if (text) read.push({ ...c, text })
+    }
+    const base = { ok: true, contact, calls: read.map(({ text: _t, ...c }) => c), call: read[0] ? (({ text: _t, ...c }) => c)(read[0]) : (calls[0] || null) }
+    if (!read.length) return json({ ...base, transcript: false, ...toPrefill({}, contact), note: calls.length ? 'GoHighLevel has no transcript for this family\'s calls, so nothing could be filled. Listen to the recordings.' : 'No answered call was found for this family in GoHighLevel.' })
+    const apiKey = Deno.env.get('ANTHROPIC_API_KEY') || ''
+    if (!apiKey) return json({ error: 'The AI key is not set on the server.' }, 500)
+    const cat = await adlCatalog()
+    const both = read.slice().reverse().map((c) => `=== Call on ${chicagoDay(c.at)}, ${c.direction === 'outbound' ? 'we called them' : 'they called us'}, ${Math.round(c.seconds / 60)} min ===\n${c.text}`).join('\n\n')
+    const req0 = request({ transcript: both, callDay: chicagoDay(read[0].at), direction: read[0].direction, knownName: [contact.first_name, contact.last_name].filter(Boolean).join(' '), adls: cat.list, several: read.length > 1 })
+    let a = toolAnswer(await ask(apiKey, req0))
+    if (!a) a = toolAnswer(await ask(apiKey, req0))
+    if (!a) return json({ ...base, transcript: true, ...toPrefill({}, contact), note: 'The AI could not read these calls, so nothing was filled. Listen to the recordings.' })
+    return json({ ...base, transcript: true, ...toPrefill(a, contact, cat.list), ...(cat.error ? { tasks_note: 'AxisCare\'s task list could not be read (' + cat.error + '), so the care plan draft has no care tasks yet.' } : {}) })
+  }
+
+  const id = String(body?.message_id || '').trim()
+  if (!/^[A-Za-z0-9_-]{6,64}$/.test(id)) return json({ error: 'Which call? (no call id was sent)' }, 400)
 
   if (body.action === 'read') {
     const c = await readCall(tok, loc, id)

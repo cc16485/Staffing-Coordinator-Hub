@@ -18,12 +18,16 @@ const ANSWER = { is_new_family: true, not_new_family_reason: '', caller_first_na
     tasks: [{ adl_id: 11, days: ['Mon', 'Wed', 'Fri'], as_needed: false, when: 'morning', instructions: 'Standby while showering' },
             { adl_id: 22, days: [], as_needed: true, when: 'evening', instructions: 'Meals' },
             { adl_id: 999, days: ['Mon'], as_needed: false, when: 'any', instructions: 'not a real task' },
-            { adl_id: 11, days: ['Tue'], as_needed: false, when: 'any', instructions: 'duplicate' }] } }
-let T, CALLS, AI, TRANSCRIPT, MSG, CONTACT, TAG_FAIL, AX_FAIL
+            { adl_id: 11, days: ['Tue'], as_needed: false, when: 'any', instructions: 'duplicate' }] },
+  home_life: { preferred_name: 'Maggie', living_situation: 'facility', facility_name: 'Elfdale assisted living, Apex', why_now: ['fall', 'nonsense'], allergies: 'Penicillin',
+    cats: false, dogs: true, smoking: 'no', caregiver_gender: 'female_preferred', spanish: false },
+  people: [{ name: 'Her boyfriend', relationship: 'Boyfriend', note: 'Can get in the way during care' }, { name: 'her boyfriend', relationship: 'Boyfriend', note: 'dup' }, { name: '', relationship: 'x', note: '' }] }
+let TX = {}, T, CALLS, AI, TRANSCRIPT, MSG, CONTACT, TAG_FAIL, AX_FAIL
 const reset = () => { CALLS = []; AI = [{ content: [{ type: 'tool_use', name: 'fill_lead_form', input: { ...ANSWER } }], stop_reason: 'tool_use' }]; TRANSCRIPT = [{ mediaChannel: 1, sentenceIndex: 0, transcript: 'Hi, my mom fell.' }]
   MSG = { id: 'msgAAA111', messageType: 'TYPE_CALL', contactId: 'C1', direction: 'inbound', dateAdded: '2026-10-14T15:14:00Z', meta: { call: { duration: 360 } } }
   CONTACT = { firstName: 'Linda', lastName: 'Parker', phone: '+14175550142', email: '' }; TAG_FAIL = false; AX_FAIL = false
-  T = { app_data: [{ key: 'leads', data: [{ id: 'L1', ghl_contact_id: 'C1', from_calls: [{ message_id: 'msgAAA111' }] }, { id: 'L2', ghl_contact_id: 'C2', from_calls: [] }] }],
+  TX = { callOLD01: [{ mediaChannel: 1, sentenceIndex: 0, transcript: 'First call words' }], callNEW02: [{ mediaChannel: 2, sentenceIndex: 0, transcript: 'Second call words' }] }
+  T = { app_data: [{ key: 'leads', data: [{ id: 'L1', ghl_contact_id: 'C1', from_calls: [{ message_id: 'msgAAA111' }] }, { id: 'L2', ghl_contact_id: 'C2', from_calls: [] }, { id: 'L3', first_name: '(phone lead)' }] }],
     auth_identities: [{ auth_user_id: 'u-kr', project_ref: 'zngsgedlsxinbygwmxwn', person_id: 'p-kr' }, { auth_user_id: 'u-cg', project_ref: 'zngsgedlsxinbygwmxwn', person_id: 'p-cg' }],
     persons: [{ person_id: 'p-kr', full_name: 'Krystal Office', active: true }, { person_id: 'p-cg', full_name: 'Cara Giver', active: true }],
     entity_memberships: [{ person_id: 'p-kr', entity: 'cc_ihs', active: true, ended_at: null }, { person_id: 'p-cg', entity: 'cc_ihs', active: true, ended_at: null }],
@@ -39,7 +43,13 @@ let LAST_AI
 globalThis.fetch = async (url, o) => { url = String(url); CALLS.push(url)
   if (url.includes('.axiscare.com/api/adls')) return AX_FAIL ? new Response('{}', { status: 500 }) : new Response(JSON.stringify({ results: { data: [{ id: 11, name: 'Bathing', adlKey: 'bathing', active: true }, { id: 22, name: 'Meal Preparation', active: true }, { id: 33, name: 'Old task', active: false }] } }), { status: 200 })
   if (url.includes('api.anthropic.com')) { LAST_AI = { body: JSON.parse(o.body), headers: o.headers }; return new Response(JSON.stringify(AI.shift() || {}), { status: 200 }) }
-  if (url.includes('/transcription')) return new Response(JSON.stringify(TRANSCRIPT), { status: 200 })
+  if (url.includes('/transcription')) { const id = url.split('/messages/')[1].split('/')[0]; return new Response(JSON.stringify(TX[id] || TRANSCRIPT), { status: 200 }) }
+  if (url.includes('/conversations/search')) return new Response(JSON.stringify({ conversations: url.includes('contactId=C1') ? [{ id: 'cv1' }] : [] }), { status: 200 })
+  if (url.includes('/conversations/cv1/messages')) return new Response(JSON.stringify({ messages: { messages: [
+    { id: 'callOLD01', messageType: 'TYPE_CALL', direction: 'inbound', dateAdded: '2026-10-13T15:00:00Z', meta: { call: { duration: 300 } } },
+    { id: 'callNEW02', messageType: 'TYPE_CALL', direction: 'outbound', dateAdded: '2026-10-14T15:00:00Z', meta: { call: { duration: 120 } } },
+    { id: 'callMISS3', messageType: 'TYPE_CALL', direction: 'inbound', dateAdded: '2026-10-14T16:00:00Z', meta: { call: { duration: 0 } } },
+    { id: 'smsXXXX04', messageType: 'TYPE_SMS', direction: 'inbound', dateAdded: '2026-10-14T17:00:00Z' }] } }), { status: 200 })
   if (url.endsWith('/tags')) return new Response('{}', { status: TAG_FAIL ? 500 : 200 })
   if (url.includes('/conversations/messages/')) return MSG ? new Response(JSON.stringify({ message: MSG }), { status: 200 }) : new Response('{}', { status: 404 })
   if (url.includes('/contacts/')) return new Response(JSON.stringify({ contact: CONTACT }), { status: 200 })
@@ -92,6 +102,22 @@ try {
   reset(); AX_FAIL = true; r = await call({ action: 'read', message_id: 'msgAAA111' })
   ck('v2 read: AxisCare\'s list unreadable: the form and the draft still come back, no tasks, and it says why', r.status === 200 && r.j.prefill.client_city === 'Nixa' && !r.j.care_plan.axiscare_tasks.length && /could not be read/.test(r.j.tasks_note), r.j.tasks_note)
   ck('v2 read: AxisCare is only ever read (one GET of its task list)', CALLS.filter((u) => u.includes('axiscare')).every((u) => u.includes('/api/adls')))
+  const pf = r.j.profile || {}
+  ck('v3 read: Home & Life held to the Hub\'s choices (facility, preferred name, what changed, allergies), the checklist as yes / preferred', pf.facts.living_situation === 'facility' && pf.facts.facility_name === 'Elfdale assisted living, Apex'
+     && pf.facts.preferred_name === 'Maggie' && pf.facts.why_now.join() === 'fall' && pf.facts.allergies === 'Penicillin' && pf.attributes.dogs === 'yes' && !('cats' in pf.attributes)
+     && pf.attributes.smoking === 'no' && pf.attributes.female_caregiver === 'preferred' && !('spanish_speaking' in pf.attributes), pf)
+  ck('v3 read: the other people named (not the caller), no repeats, no blanks', pf.people.length === 1 && pf.people[0].relationship === 'Boyfriend' && /get in the way/.test(pf.people[0].note), pf.people)
+
+  /* read_lead: a lead that already exists, from all its calls */
+  reset(); r = await call({ action: 'read_lead', lead_id: 'L1' }, 'cg'); ck('read_lead: a caregiver sign-in is refused', r.status === 403 && !CALLS.length, r)
+  reset(); WRITES = 0; r = await call({ action: 'read_lead', lead_id: 'L1' })
+  const both = LAST_AI.body.messages[0].content
+  ck('read_lead: every answered call of the lead\'s own GoHighLevel contact, read together, oldest first, newest named', r.status === 200 && /These are every call[\s\S]*=== Call on 2026-10-13[\s\S]*First call words[\s\S]*=== Call on 2026-10-14 \(Wednesday\), we called them, 2 min ===[\s\S]*Second call words/.test(both), both.slice(0, 600))
+  ck('read_lead: the calls come back newest first (missed calls and texts left out), the newest as the call', r.j.calls.map((c) => c.message_id).join() === 'callNEW02,callOLD01' && r.j.call.message_id === 'callNEW02' && r.j.prefill.client_city === 'Nixa', r.j.calls)
+  ck('read_lead: writes nothing', WRITES === 0 && !CALLS.some((u) => u.endsWith('/tags')))
+  reset(); r = await call({ action: 'read_lead', lead_id: 'L3' }); ck('read_lead: a lead with no GoHighLevel contact says so', r.status === 409 && /no GoHighLevel contact/.test(r.j.error), r.j)
+  reset(); r = await call({ action: 'read_lead', lead_id: 'nope' }); ck('read_lead: an unknown lead is refused', r.status === 404, r.j)
+  reset(); r = await call({ action: 'read_lead', lead_id: 'L2' }); ck('read_lead: no answered call found: says so, AI never asked', r.status === 200 && r.j.transcript === false && /No answered call/.test(r.j.note) && !CALLS.some((u) => u.includes('anthropic')), r.j)
   reset(); AI = [{ content: [{ type: 'text', text: 'hm' }] }, { content: [{ type: 'tool_use', name: 'fill_lead_form', input: { ...ANSWER, desired_start_kind: 'by_date', desired_start_date: 'next week' } }] }]
   r = await call({ action: 'read', message_id: 'msgAAA111' })
   ck('read: an answer in text is asked once more; a by-date start with no real date becomes "planning ahead"', r.j.prefill.desired_start_kind === 'planning' && !r.j.prefill.desired_start_date, r.j.prefill)
