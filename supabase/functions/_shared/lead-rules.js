@@ -426,7 +426,9 @@
      lead.status stays stored (the server reads it), but nothing sets it by hand any more: a logged conversation makes it
      Contacted, a booking makes it Assessment Scheduled, They said yes / an AxisCare client makes it Converted, a reason makes
      it Lost. Every change goes through setStatus(), which keeps status_history (who, when, why) and stamps the dates. */
-  const STATUSES = ['New', 'Contacted', 'Assessment Scheduled', 'Converted', 'Lost'];
+  /* 2026-10-15 (Future Service Opportunities): 'Saved' = saved for future. Off the active board and every follow-up clock,
+     never Lost; the same record comes back with Reactivate. */
+  const STATUSES = ['New', 'Contacted', 'Assessment Scheduled', 'Converted', 'Lost', 'Saved'];
   function setStatus(l, to, o){
     o = o || {}; if(!l) return false;
     if(STATUSES.indexOf(to) < 0) throw new Error('not a lead status: ' + to);
@@ -439,6 +441,79 @@
     if(from === 'Lost' && to !== 'Lost') l.lost_undone_at = at;
     return true;
   }
+  /* ── saved for future (2026-10-15, Samantha: "I do not want to lose these opportunities"; approved screen
+     https://claude.ai/artifact/T6F9vizYtQu57dcJumdDaD). Three different problems, never mixed in the counts:
+       area     · we don't serve that area (outside it, or a place we might expand to)
+       staff    · we serve the area but have no caregiver there right now
+       schedule · we serve the area and have caregivers, but can't cover the days or hours
+     Permission to contact them later is recorded with who said it, how and when; "didn't ask" counts as no. ── */
+  const FUTURE = [
+    ['outside_area', 'Outside our current service area', 'area'],
+    ['no_caregiver', 'No caregiver available in that location', 'staff'],
+    ['schedule', 'Unable to cover the requested schedule', 'schedule'],
+    ['expansion', 'Potential future expansion area', 'area'],
+    ['other', 'Other', 'other'],
+  ];
+  const FUTURE_KIND = { area:'Area we don\'t serve', staff:'We serve it, can\'t staff it', schedule:'We serve it, can\'t cover the schedule', other:'Other' };
+  const FUTURE_PERMISSION = { yes:'Yes, they said we may', no:'No, they don\'t want to hear from us', not_asked:'We didn\'t ask' };
+  function isSaved(l){ return !!l && l.status === 'Saved'; }
+  /* what Save for Future stores. o: { key, note, county, town, zip, look_again, permission:{ answer, via, said_by, at }, by } */
+  function futureRecord(l, o, now){
+    o = o || {}; const r = FUTURE.find(x => x[0] === o.key); if(!r) return null;
+    if(o.key === 'other' && !String(o.note || '').trim()) return null;
+    const p = o.permission || {}, ans = FUTURE_PERMISSION[p.answer] ? p.answer : 'not_asked';
+    const at = now || new Date().toISOString(), s = schedule(l);
+    return { reason_key:r[0], reason:r[1], kind:r[2], note:String(o.note || '').trim(), saved_at:at, saved_by:String(o.by || ''),
+      county:String(o.county || l.county || '').trim(), town:String(o.town || l.client_city || '').trim(), zip:String(o.zip || l.client_zip || '').trim().slice(0, 5),
+      look_again:isYmd(o.look_again) ? o.look_again : '',
+      hours_per_week:s && s.hours_per_week ? s.hours_per_week : null, days:s && !s.legacy ? s.days : [], times:s ? s.times : '',
+      permission:{ answer:ans, via:ans === 'yes' ? String(p.via || '') : '', said_by:ans === 'not_asked' ? '' : String(p.said_by || ''), at:ans === 'not_asked' ? '' : (p.at || at), recorded_by:String(o.by || '') },
+      from_lost:o.from_lost || null };
+  }
+  /* Save for Future: status Saved, the record on l.future (one at a time; earlier ones kept in future_history) */
+  function saveForFuture(l, o, now){
+    const f = futureRecord(l, o, now); if(!f) return false;
+    if(l.future && l.future.saved_at) l.future_history = (Array.isArray(l.future_history) ? l.future_history : []).concat([l.future]).slice(-20);
+    l.future = f;
+    setStatus(l, 'Saved', { by:f.saved_by, why:'saved for future: ' + f.reason + (f.note ? ' (' + f.note + ')' : ''), at:f.saved_at });
+    l.follow_up_due = ''; l.follow_up_time = ''; l.promised_callback_at = '';
+    return true;
+  }
+  /* back on the board: the status it had before it was saved (or Contacted once we have talked, else New) */
+  function statusBeforeSaved(l){
+    const h = Array.isArray(l && l.status_history) ? l.status_history : [];
+    for(let i = h.length - 1; i >= 0; i--) if(h[i].to === 'Saved' && h[i].from && ['New', 'Contacted', 'Assessment Scheduled'].indexOf(h[i].from) > -1) return h[i].from;
+    return l && l.first_human_contact_at ? 'Contacted' : 'New';
+  }
+  function reactivate(l, o, now){
+    if(!isSaved(l)) return false; o = o || {};
+    const at = now || new Date().toISOString();
+    if(l.future) l.future = Object.assign({}, l.future, { reactivated_at:at, reactivated_by:String(o.by || ''), reactivated_why:String(o.why || '') });
+    l.future_history = (Array.isArray(l.future_history) ? l.future_history : []).concat([l.future]).slice(-20);
+    const to = statusBeforeSaved(l); delete l.future;
+    setStatus(l, to, { by:o.by, why:'reactivated' + (o.why ? ': ' + o.why : ''), at });
+    return to;
+  }
+  function mayContact(l){ return !!(l && l.future && l.future.permission && l.future.permission.answer === 'yes'); }
+  /* demand by area: saved families (and families Lost for area or staffing reasons) in the last `days` days, by county
+     (else town), split by kind. Worth acting on: 3+ families or 40+ hours a week (her numbers, 2026-10-15). */
+  const DEMAND_FAMILIES = 3, DEMAND_HOURS = 40, DEMAND_DAYS = 365;
+  function demand(leads, value, now){
+    const since = new Date((now ? Date.parse(now) : Date.now()) - DEMAND_DAYS * 864e5).toISOString();
+    const by = {};
+    (leads || []).forEach(l => {
+      if(!isSaved(l) || !l.future || String((l.future.from_lost && l.future.from_lost.at) || l.future.saved_at || '') < since) return;   /* moved from Lost: counted from when they asked */
+      const f = l.future, where = f.county ? f.county.replace(/\s+county$/i, '') + ' County' : (f.town || 'Unknown place');
+      const k = where + '|' + f.kind;
+      const v = value ? value(l) : { hours:Number(f.hours_per_week) || 0, usd:0 };
+      const b = by[k] || (by[k] = { area:where, county:f.county || '', kind:f.kind, families:0, hours:0, usd:0, towns:{}, ids:[] });
+      b.families++; b.hours += Number(v.hours) || 0; b.usd += Number(v.usd) || 0; b.ids.push(l.id);
+      if(f.town) b.towns[f.town] = (b.towns[f.town] || 0) + 1;
+    });
+    return Object.values(by).map(b => Object.assign(b, { worth:b.families >= DEMAND_FAMILIES || b.hours >= DEMAND_HOURS }))
+      .sort((a, b) => (b.worth - a.worth) || (b.hours - a.hours) || (b.families - a.families));
+  }
+
   /* the status a lead had before it was Lost (for "not lost after all") */
   function statusBeforeLost(l){
     const h = Array.isArray(l && l.status_history) ? l.status_history : [];
@@ -1130,6 +1205,7 @@
     waiting, waitingProblems, defaultCheckBack, checkBackDue, lostKey, lostRecord, missing, toForm, compose, migrationPatch,
     responseHours, chicago, chicagoInstant, inResponseHours, nextOpening, clockStart, firstAttemptDue, clockWords, cameInWords, openingWords, callBackWords,
     firstAttemptState, medianFirstAttemptMinutes, PAYER_WORDS, lastEventWords, replyPending, boardRow, boardSort, dayHeader,
+    FUTURE, FUTURE_KIND, FUTURE_PERMISSION, isSaved, futureRecord, saveForFuture, statusBeforeSaved, reactivate, mayContact, demand, DEMAND_FAMILIES, DEMAND_HOURS, DEMAND_DAYS,
     markAuthorized, authorizationPending, stateDays, DSDS_AMBER_DAYS, DSDS_RED_DAYS, median, ownerNumbers, periodNumbers, leadNext, nextWords, setNext, STATUSES, setStatus, statusBeforeLost,
     STEP_KEYS, steps, timeline, SCRIPT_KEYS, SCRIPT_LABEL, SCRIPT_DEFAULT, scriptFor, timeCats, staffingLook, whenWords, RUNGS_DEFAULT, RUNG_WORDS, rungSettings, rungsDue, stampRung,
     SUBTYPE_LABEL, SUBTYPE_KEYS, PROFESSIONAL, referralSubtype, flags, PARTNER_KINDS, PARTNER_LABEL, PARTNER_DEFAULT, partnerName, partnerLoop, recordPartnerMsg, MEDICAID_LONG_DAYS, medicaidPipeline, missingRequired,

@@ -104,6 +104,8 @@ const nameOf = (lead: Any) => String([lead?.client_first_name, lead?.client_last
 export const phoneName = (lead: Any) => { const d = String(lead?.phone || '').replace(/\D/g, '').replace(/^1(?=\d{10}$)/, ''); return d.length === 10 ? `Caller (${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : '' }
 /** a lead still New (nobody has talked to the family yet): the inquiry card and its first-call clock carry the family */
 export const stillNew = (lead: Any) => !!lead && lead.status === 'New'
+/* 2026-10-15 (Future Service Opportunities): a family saved for future has no journey cards; its journey waits, open */
+export const savedForFuture = (lead: Any) => !!lead && lead.status === 'Saved'
 const live = (st: Any) => st?.client_journey_live === true
 /** start one journey (the Hub's Start button, the sweep for a new lead, and the move-over all come through here) */
 async function openOne(db: Any, dfs: Any[], pp: Any, st: Any, who: Any, o: { lead: Any; leadId: string | null; axId: string | null; payer?: unknown; name?: string; asked?: string; is_test?: boolean; how?: string }) {
@@ -416,7 +418,7 @@ async function refreshCards(db: Any, j: Any, view: Any, pp: Any, st: Any, sc: An
   let cards = j.status === 'open' && !paused && (j.is_test || live(st)) ? R.cardsFor(j, view, ctx) : []
   /* One Path stage 1 (2026-10-15): a journey opens when the lead is saved, but while the lead is still New the inquiry card
      and its first-call clock carry the family; the journey's card starts once someone has talked to them */
-  if (cards.length && j.lead_id && stillNew(await leadOf(db, j.lead_id))) cards = []
+  if (cards.length && j.lead_id) { const ld = await leadOf(db, j.lead_id); if (stillNew(ld) || savedForFuture(ld)) cards = [] }
   /* nobody assigned: the owners get it, saying so */
   cards = cards.flatMap((c: Any) => c.owner ? [c] : pp.owners.map((o: string) => ({ ...c, owner: o, why: 'Nobody is assigned: ' + (c.why || 'assign a Care Coordinator') })))
   const { data: row } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
@@ -497,7 +499,7 @@ export function autoPlan(leads: Any[], js: Any[], cutover: Any) {
       else if (j.status !== 'closed' && /^Caller \(/.test(String(j.client_name || '')) && nameOf(l)) rename.push({ j, name: nameOf(l) })
       continue
     }
-    if (gone || l.is_test || pre.has(id) || (l.spam && l.spam.at) || l.status === 'Spam') continue
+    if (gone || l.is_test || pre.has(id) || (l.spam && l.spam.at) || l.status === 'Spam' || l.status === 'Saved') continue
     if (payerFrom(l.funding_source) === 'cds' || !(nameOf(l) || phoneName(l))) continue
     open.push(l)
   }
