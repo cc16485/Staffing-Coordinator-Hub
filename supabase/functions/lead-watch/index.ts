@@ -180,7 +180,7 @@ Deno.serve(async (req) => {
   }
 
   for (const l of leads) {
-    if (!l || l.archived || (l.spam && l.spam.at) || l.said_yes_at || ['Lost', 'Converted'].includes(String(l.status || ''))) continue
+    if (!l || l.archived || (l.spam && l.spam.at) || l.said_yes_at || ['Lost', 'Converted', 'Saved'].includes(String(l.status || ''))) continue   /* Saved = saved for future (2026-10-15): no clocks */
     let dirty = false
     const family = `${l.first_name ?? ''} ${l.last_name ?? ''}`.trim() || 'a family'
     const fa = LR.firstAttemptState(l, hours, nowIso)

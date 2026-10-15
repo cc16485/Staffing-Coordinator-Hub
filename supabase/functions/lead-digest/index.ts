@@ -288,7 +288,7 @@ Deno.serve(async (req) => {
     !/^automation:/.test(String(i.created_by || '')) &&
     !/^(attendance|coverage)-watch$/.test(String(i.opened_by || ''))
   const overnightOps = ops.filter((i) => i?.status === 'open' && bornAfterHours(i.created_at) && humanBorn(i))
-  const overnightLeads = leads.filter((l) => l?.status !== 'Converted' && l?.status !== 'Lost' && bornAfterHours(l.created_at))
+  const overnightLeads = leads.filter((l) => l?.status !== 'Converted' && l?.status !== 'Lost' && l?.status !== 'Saved' && bornAfterHours(l.created_at))
 
   // ── Who gets a brief ──
   // deno-lint-ignore no-explicit-any
@@ -328,7 +328,7 @@ Deno.serve(async (req) => {
   const isPassAlong = (i: { opened_by?: string }) => i.opened_by === 'quick-capture'
   const dueMs = (i: { due?: string }) => { const t = Date.parse(String(i.due || '')); return isNaN(t) ? Infinity : t }
   const endOfToday = new Date(today + 'T23:59:59').getTime() + 6 * 3600000
-  const openLeads = leads.filter((l) => l?.status !== 'Converted' && l?.status !== 'Lost')
+  const openLeads = leads.filter((l) => l?.status !== 'Converted' && l?.status !== 'Lost' && l?.status !== 'Saved')   /* saved for future is not open work */
   const quickish = (l: { source?: string }) => /quick capture|assessment booking/i.test(String(l.source || ''))
   const covOpen = covCases.filter((c) => c?.status === 'open')
   const latestCi = new Map<string, { due: string; date: string; coordinator: string }>()
