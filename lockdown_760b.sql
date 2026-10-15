@@ -52,7 +52,7 @@ begin
   end loop;
 end $b$;
 do $vw$ declare v text; begin
-  foreach v in array array['identity_completeness', 'ghl_contact_collisions'] loop
+  foreach v in array array['identity_completeness', 'ghl_contact_collisions', 'phone_safe_for_outreach'] loop
     if to_regclass('public.' || v) is not null then execute format('alter view public.%I set (security_invoker = true)', v); end if;
   end loop; end $vw$;
 
