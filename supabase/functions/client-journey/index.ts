@@ -95,13 +95,19 @@ export function routeCc(pp: Any, st: Any, payer: string | null, lead: Any, asked
   if (ok(st?.client_journey_default_cc)) return { cc: ok(st.client_journey_default_cc), how: 'default in Settings' }
   return { cc: lc(opener) || pp.owners[0] || '', how: 'opened by' }
 }
-const nameOf = (lead: Any) => String([lead?.client_first_name, lead?.client_last_name].filter(Boolean).join(' ') || [lead?.first_name, lead?.last_name].filter(Boolean).join(' ') || '').trim()
+/* "(phone lead)" was the old AI's placeholder for a caller GoHighLevel had no name for: it is no name (2026-10-15) */
+const notPlaceholder = (v: unknown) => v && !/^\(phone lead\)$/i.test(String(v).trim())
+const nameOf = (lead: Any) => String([lead?.client_first_name, lead?.client_last_name].filter(notPlaceholder).join(' ') || [lead?.first_name, lead?.last_name].filter(notPlaceholder).join(' ') || '').trim()
+/** a nameless caller is named by their number until a name is known (the sweep renames the journey then) */
+export const phoneName = (lead: Any) => { const d = String(lead?.phone || '').replace(/\D/g, '').replace(/^1(?=\d{10}$)/, ''); return d.length === 10 ? `Caller (${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : '' }
+/** a lead still New (nobody has talked to the family yet): the inquiry card and its first-call clock carry the family */
+export const stillNew = (lead: Any) => !!lead && lead.status === 'New'
 const live = (st: Any) => st?.client_journey_live === true
 /** start one journey (the Hub's Start button, the sweep for a new lead, and the move-over all come through here) */
 async function openOne(db: Any, dfs: Any[], pp: Any, st: Any, who: Any, o: { lead: Any; leadId: string | null; axId: string | null; payer?: unknown; name?: string; asked?: string; is_test?: boolean; how?: string }) {
   const pay = payerFrom(o.payer ?? o.lead?.funding_source)
   if (pay === 'cds') return { outcome: 'cds', error: 'CDS is its own program and does not use this journey.', code: 422 }
-  const name = String(o.name || nameOf(o.lead)).trim()
+  const name = String(o.name || nameOf(o.lead) || phoneName(o.lead)).trim()
   if (!name) return { outcome: 'no_name', error: 'The client needs a name first.', code: 400 }
   const r = routeCc(pp, st, pay, o.lead, o.asked || '', who.email)
   const row = { lead_id: o.leadId, axiscare_client_id: o.axId || (o.lead && /^\d+$/.test(String(o.lead.axiscare_client_id || '').trim()) ? String(o.lead.axiscare_client_id).trim() : null),
@@ -375,6 +381,9 @@ async function refreshCards(db: Any, j: Any, view: Any, pp: Any, st: Any) {
   /* paused (Pause care): the journey's cards step aside; the one "Is care restarting?" card speaks for the client */
   const paused = j.axiscare_client_id ? (await pausedAx(db)).has(String(j.axiscare_client_id)) : false
   let cards = j.status === 'open' && !paused && (j.is_test || live(st)) ? R.cardsFor(j, view, ctx) : []
+  /* One Path stage 1 (2026-10-15): a journey opens when the lead is saved, but while the lead is still New the inquiry card
+     and its first-call clock carry the family; the journey's card starts once someone has talked to them */
+  if (cards.length && j.lead_id && stillNew(await leadOf(db, j.lead_id))) cards = []
   /* nobody assigned: the owners get it, saying so */
   cards = cards.flatMap((c: Any) => c.owner ? [c] : pp.owners.map((o: string) => ({ ...c, owner: o, why: 'Nobody is assigned: ' + (c.why || 'assign a Care Coordinator') })))
   const { data: row } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
@@ -427,36 +436,45 @@ async function allLeads(db: Any): Promise<Any[]> {
   const { data } = await db.from('app_data').select('data').eq('key', 'leads').maybeSingle()
   return (Array.isArray(data?.data) ? data.data : []).filter((l: Any) => l && l.id != null)
 }
-/** NEW LEADS (after the move-over): a journey starts once someone has talked to them (status past New; a brand-new lead is
- *  the New lead card's job). Leads that already existed at the move-over never start by themselves: the move-over chose
- *  those, and anyone else gets the Start button. A lead marked Lost or archived closes its open journey. */
+/** NEW LEADS (after the move-over): a journey starts as soon as a real lead is saved (Samantha 2026-10-15, One Path stage
+ *  1: "Start the journey as soon as a real lead is saved (not spam, test or CDS)"). While the lead is still New its journey
+ *  writes no My Work card: the New lead card and its first-call clock carry the family until someone has talked to them.
+ *  Leads that already existed at the move-over never start by themselves: the move-over chose those, and anyone else gets
+ *  the Start button. A lead marked Lost or archived closes its open journey. A journey named by the caller's number takes
+ *  the real name once the lead has one (rename). */
 export function autoPlan(leads: Any[], js: Any[], cutover: Any) {
   const pre = new Set((Array.isArray(cutover?.lead_ids) ? cutover.lead_ids : []).map(String))
   const byLead = new Map(js.filter((j: Any) => j.lead_id).map((j: Any) => [String(j.lead_id), j]))
-  const open: Any[] = [], close: Any[] = []
-  if (!cutover?.at) return { open, close }
+  const open: Any[] = [], close: Any[] = [], rename: Any[] = []
+  if (!cutover?.at) return { open, close, rename }
   for (const l of leads) {
     const id = String(l.id), j = byLead.get(id) as Any
     const gone = l.archived || l.status === 'Lost'
-    if (j) { if (gone && j.status === 'open' && !j.is_test) close.push({ j, why: l.archived ? 'The lead was archived' : 'The lead was marked Lost' }); continue }
-    if (gone || l.is_test || pre.has(id) || !l.status || l.status === 'New') continue
-    if (payerFrom(l.funding_source) === 'cds' || !nameOf(l)) continue
+    if (j) {
+      if (gone && j.status === 'open' && !j.is_test) close.push({ j, why: l.archived ? 'The lead was archived' : 'The lead was marked Lost' })
+      else if (j.status !== 'closed' && /^Caller \(/.test(String(j.client_name || '')) && nameOf(l)) rename.push({ j, name: nameOf(l) })
+      continue
+    }
+    if (gone || l.is_test || pre.has(id) || (l.spam && l.spam.at) || l.status === 'Spam') continue
+    if (payerFrom(l.funding_source) === 'cds' || !(nameOf(l) || phoneName(l))) continue
     open.push(l)
   }
-  return { open: open.slice(0, 10), close }
+  return { open: open.slice(0, 10), close, rename }
 }
 async function autoOpenClose(db: Any, dfs: Any[], pp: Any, st: Any) {
   const [{ data: cut }, leads, { data: js }] = await Promise.all([db.from('app_data').select('data').eq('key', 'client_journey_cutover').maybeSingle(), allLeads(db),
-    db.from('client_journey').select('journey_id, lead_id, status, is_test').eq('subject', 'client')])
+    db.from('client_journey').select('journey_id, lead_id, status, is_test, client_name').eq('subject', 'client')])
   const plan = autoPlan(leads, js ?? [], cut?.data), now = new Date().toISOString()
   let opened = 0, closed = 0
-  for (const l of plan.open) { const r = await openOne(db, dfs, pp, st, HUB, { lead: l, leadId: String(l.id), axId: null, how: 'the lead was contacted' }); if (r.outcome === 'created') opened++ }
+  for (const l of plan.open) { const r = await openOne(db, dfs, pp, st, HUB, { lead: l, leadId: String(l.id), axId: null, how: 'the lead was saved' }); if (r.outcome === 'created') opened++ }
+  let renamed = 0
+  for (const x of plan.rename) { const { error } = await db.from('client_journey').update({ client_name: x.name, updated_at: now }).eq('journey_id', x.j.journey_id); if (!error) { await event(db, x.j.journey_id, null, HUB, 'renamed', { to: x.name }, 'The lead now has a name'); renamed++ } }
   for (const c of plan.close) {
     await db.from('client_journey').update({ status: 'closed', closed_reason: c.why, updated_at: now }).eq('journey_id', c.j.journey_id)
     await event(db, c.j.journey_id, null, HUB, 'closed', {}, c.why)
     const full = await load(db, { journey_id: c.j.journey_id }); if (full) await refreshCards(db, full.j, R.compute(dfs, full.j, full.steps, ctxFor(pp, st)), pp, st); closed++
   }
-  return { opened, closed }
+  return { opened, closed, renamed }
 }
 
 /** CARE ENDED (2026-10-07 audit fix): when a person answered an AxisCare status change "care ended" (client_status_decide

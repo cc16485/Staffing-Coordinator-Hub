@@ -188,19 +188,28 @@ try {
   setOps({ client_journey_live: true }); r = await call({ action: 'sweep' }, null, job)
   ck('...and on again: they come back', open('krystal@mo-care.com').length === 2, open())
 
-  // new leads after the move-over: start once contacted; old ones never by themselves; lost/archived close
+  // One Path stage 1 (2026-10-15): new leads after the move-over start as soon as they are saved (not spam, test or CDS);
+  // old ones never by themselves; lost/archived close; a New lead's journey writes no card; a number-named journey takes the name
   reset(); setOps({ client_journey_routing: ROUTES })
   T.app_data.push({ key: 'client_journey_cutover', data: { at: '2026-10-07T00:00:00Z', lead_ids: ['L1', 'L2', 'L3'] } })
   leadsRow().forEach((l) => { l.status = 'Contacted' })
   leadsRow().push({ id: 'N1', client_first_name: 'New', client_last_name: 'Uncalled', funding_source: 'private', status: 'New' }, { id: 'N2', client_first_name: 'Now', client_last_name: 'Talked', funding_source: 'medicaid', status: 'Contacted' },
-    { id: 'N3', client_first_name: 'Cd', client_last_name: 'S', funding_source: 'CDS', status: 'Contacted' }, { id: 'N4', client_first_name: 'Te', client_last_name: 'St', status: 'Contacted', is_test: true })
+    { id: 'N3', client_first_name: 'Cd', client_last_name: 'S', funding_source: 'CDS', status: 'Contacted' }, { id: 'N4', client_first_name: 'Te', client_last_name: 'St', status: 'Contacted', is_test: true },
+    { id: 'N5', first_name: '(phone lead)', phone: '+14172244400', status: 'New' }, { id: 'N6', client_first_name: 'Spam', client_last_name: 'Bot', status: 'New', spam: { at: '2026-10-14T00:00:00Z' } })
   r = await call({ action: 'sweep' }, null, job)
-  ck('sweep: a new lead someone has talked to starts by itself (routed by payer)', r.j.opened === 1 && T.client_journey.length === 1 && T.client_journey[0].lead_id === 'N2' && T.client_journey[0].assigned_cc === 'angie@mo-care.com', [r.j, T.client_journey])
-  ck('...a New (uncalled) lead, a CDS lead, a TEST lead and the leads that existed at the move-over do not', !T.client_journey.some((j) => ['N1', 'N3', 'N4', 'L1', 'L2', 'L3'].includes(j.lead_id)))
-  ck('...the history says how it started', ev(T.client_journey[0].journey_id, 'created')[0]?.detail?.started === 'the lead was contacted')
+  const jOf = (id) => T.client_journey.find((j) => j.lead_id === id)
+  ck('sweep: every real lead starts by itself as soon as it is saved: a New one, a talked-to one (routed by payer), a nameless caller', r.j.opened === 3 && jOf('N1') && jOf('N2') && jOf('N5') && jOf('N2').assigned_cc === 'angie@mo-care.com', [r.j, T.client_journey.map((j) => j.lead_id)])
+  ck('...a nameless caller is named by their number, never "(phone lead)"', jOf('N5').client_name === 'Caller (417) 224-4400', jOf('N5').client_name)
+  ck('...a spam, CDS or TEST lead and the leads that existed at the move-over do not start', !T.client_journey.some((j) => ['N3', 'N4', 'N6', 'L1', 'L2', 'L3'].includes(j.lead_id)))
+  ck('...the history says how it started', ev(jOf('N1').journey_id, 'created')[0]?.detail?.started === 'the lead was saved')
+  ck('...a lead still New gets NO journey card (the New lead card and its first-call clock carry the family); a talked-to lead does', !open().some((c) => c.journey_id === jOf('N1').journey_id || c.journey_id === jOf('N5').journey_id) && open().some((c) => c.journey_id === jOf('N2').journey_id), open().map((c) => c.about))
+  leadsRow().find((l) => l.id === 'N1').status = 'Contacted'; r = await call({ action: 'sweep' }, null, job)
+  ck('...once someone has talked to them, the journey card starts', open().some((c) => c.journey_id === jOf('N1').journey_id), open().map((c) => c.about))
+  Object.assign(leadsRow().find((l) => l.id === 'N5'), { first_name: 'Laura', client_first_name: 'Joanne', client_last_name: 'Johnson' }); r = await call({ action: 'sweep' }, null, job)
+  ck('...the number-named journey takes the real name once the lead has one, and says so', jOf('N5').client_name === 'Joanne Johnson' && r.j.renamed === 1 && ev(jOf('N5').journey_id, 'renamed').length === 1, [jOf('N5').client_name, r.j])
   leadsRow().find((l) => l.id === 'N2').status = 'Lost'; r = await call({ action: 'sweep' }, null, job)
-  ck('the lead is marked Lost: the journey closes with the reason, and its card closes', r.j.closed === 1 && T.client_journey[0].status === 'closed' && /Lost/.test(T.client_journey[0].closed_reason) && !open().length, [r.j, open()])
-  r = await call({ action: 'sweep' }, null, job); ck('...and it does not start again', T.client_journey.length === 1 && r.j.opened === 0)
+  ck('the lead is marked Lost: the journey closes with the reason, and its card closes', r.j.closed === 1 && jOf('N2').status === 'closed' && /Lost/.test(jOf('N2').closed_reason) && !open().some((c) => c.journey_id === jOf('N2').journey_id), [r.j, open()])
+  r = await call({ action: 'sweep' }, null, job); ck('...and it does not start again', T.client_journey.length === 3 && r.j.opened === 0)
   reset(); r = await call({ action: 'sweep' }, null, job); ck('no move-over record yet: the sweep starts nobody by itself', r.j.opened === 0 && !T.client_journey.length)
 
   // the bridge to the First shift launch
