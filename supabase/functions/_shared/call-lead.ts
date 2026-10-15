@@ -11,6 +11,9 @@
 // family on the phone, for the home visit to check and add to.
 // Payers (her rule 2026-10-14): private pay, long-term care insurance, VA, Medicare GUIDE. CDS goes to the CDS
 // sub-account. Medicaid is no longer accepted: a caller who mentions it is flagged, never filed as Medicaid.
+// v3 (her yes to "fixes 1 to 5", 2026-10-15): also Home & Life (living situation, facility, preferred name, what changed,
+// allergies, pets, smoking, caregiver preference, Spanish) and the other people involved, each held to the Hub's own
+// choices. A lead that already exists can be filled from ALL its calls (call-to-lead read_lead).
 // This file is the pure part: the reading tool, the request, and the answer held to the form's fixed choices in code.
 // Nothing here writes anything.
 // =============================================================================
@@ -33,6 +36,10 @@ const MARITAL = ['', 'Single', 'Married', 'Widowed', 'Divorced', 'Separated'] as
 const YESNO = ['', 'yes', 'no', 'unsure'] as const
 const LEVEL = ['', '1', '2', '3'] as const
 const WHEN = ['any', 'morning', 'afternoon', 'evening', 'night'] as const
+const LIVING = ['', 'alone', 'spouse_partner', 'family', 'paid_help', 'facility', 'other'] as const
+const WHY_NOW = ['fall', 'discharge', 'caregiver_cant_continue', 'memory_worse', 'provider_cant_staff', 'new_diagnosis', 'other'] as const
+const GENDER_PREF = ['', 'female_required', 'female_preferred', 'male_required', 'male_preferred', 'no_preference'] as const
+const SMOKE = ['', 'yes', 'no'] as const
 
 const str = (description: string) => ({ type: 'string', description })
 const one = (list: readonly string[], description: string) => ({ type: 'string', enum: [...list], description })
@@ -105,12 +112,28 @@ export const TOOL = {
     summary: str('3 to 6 sentences for the coordinator: who called, who needs care, what they need, timeline, worries, and the next step agreed.'),
     other_details: str('Everything else useful the call said that no box above covers: home and family, who lives with them, pets, stairs, interests, routines, preferences, likes and dislikes, faith, personality, caregiver preferences, past agencies. As short sentences.'),
     care_plan: obj(PLAN, 'The start of the care plan, from this call. Reported by the family, to be checked and added to at the home visit.'),
+    home_life: obj({
+      preferred_name: str('What the client likes to be called, if said.'),
+      living_situation: one(LIVING, 'Who they live with: alone, spouse_partner, family, paid_help, facility (assisted living, memory care, nursing home), other.'),
+      facility_name: str('The facility or community name if they live in one, e.g. "Elfdale assisted living, Apex".'),
+      why_now: many(WHY_NOW, 'What changed that made them call now.'),
+      allergies: str('Allergies and sensitivities if said.'),
+      cats: { type: 'boolean', description: 'True if a cat is in the home.' }, dogs: { type: 'boolean', description: 'True if a dog is in the home.' },
+      smoking: one(SMOKE, 'Is there smoking in the home? Only if said.'),
+      caregiver_gender: one(GENDER_PREF, 'A caregiver gender wish if said: required = must be, preferred = would like.'),
+      spanish: { type: 'boolean', description: 'True if the client needs or prefers a Spanish-speaking caregiver.' },
+    }, 'Home & Life, as said on the call'),
+    people: { type: 'array', description: 'Everyone else involved that the call names, NOT the caller: family, friends, partners, POA, doctors, case managers, facility staff, a current caregiver.', items: obj({
+      name: str('Their name, or a description if no name was said, e.g. "her boyfriend".'),
+      relationship: str('Who they are to the client, e.g. "Son", "Boyfriend", "POA", "Current caregiver".'),
+      note: str('What was said about them that matters, e.g. "can get in the way during care".'),
+    }, 'One person') },
   }, 'The lead form and care plan draft'),
 }
 
 const SYSTEM = `You read the transcript of one phone call to Caring Companions, a small family-owned home care agency in Springfield, Missouri, fill in its new-lead form and start the care plan draft for a care coordinator to check before saving. Fill every box the call gives an answer for: the more the office knows about the client, the better. Only write what the call actually said; leave a box empty when it did not. Speakers are labelled by channel, not by name: work out who is the office and who is the caller from what they say. Always answer by calling the fill_lead_form tool, never in plain text.`
 
-export type CallIn = { transcript: string; callDay: string; direction: string; knownName: string; adls?: Adl[] }
+export type CallIn = { transcript: string; callDay: string; direction: string; knownName: string; adls?: Adl[]; several?: boolean }
 
 /** The Messages API request (server-side refusal fallback on, as for the other call reader). */
 export function request(c: CallIn) {
@@ -121,7 +144,7 @@ export function request(c: CallIn) {
     betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default',
     output_config: { effort: 'low' },
     system: SYSTEM, tools: [TOOL], tool_choice: { type: 'auto' },
-    messages: [{ role: 'user', content: `Call date (Central time): ${c.callDay}. ${c.direction === 'outbound' ? 'We called them.' : 'They called us.'} The phone system's name for this contact: ${c.knownName || '(none)'}.${list}\n\nFill the lead form and the care plan draft with the fill_lead_form tool.\n\n<transcript>\n${c.transcript.slice(0, 60000)}\n</transcript>` }],
+    messages: [{ role: 'user', content: `${c.several ? 'These are every call we have had with this family, oldest first; use all of them, and where they disagree the newest wins. Newest call' : 'Call'} date (Central time): ${c.callDay}. ${c.direction === 'outbound' ? 'We called them.' : 'They called us.'} The phone system's name for this contact: ${c.knownName || '(none)'}.${list}\n\nFill the lead form and the care plan draft with the fill_lead_form tool.\n\n<transcript>\n${c.transcript.slice(0, 60000)}\n</transcript>` }],
   }
 }
 
@@ -145,7 +168,35 @@ const AX_DAY: Record<string, string> = { Sun: 'N', Mon: 'M', Tue: 'T', Wed: 'W',
 
 export type Contact = { first_name: string; last_name: string; phone: string; email: string }
 export type CarePlanDraft = { fields: Record<string, string>; narrative: string; axiscare_tasks: Record<string, unknown>[]; heard: string[] }
-export type Prefill = { prefill: Record<string, unknown>; heard: string[]; is_new_family: boolean; not_new_family_reason: string; medicaid_mentioned: boolean; care_plan: CarePlanDraft }
+export type Profile = { facts: Record<string, unknown>; attributes: Record<string, string>; people: Record<string, string>[] }
+export type Prefill = { prefill: Record<string, unknown>; heard: string[]; is_new_family: boolean; not_new_family_reason: string; medicaid_mentioned: boolean; care_plan: CarePlanDraft; profile: Profile }
+
+/** Home & Life and the people involved, held to the Hub's own choices: facts use the fact kinds' own values (Gate 3);
+ *  the AxisCare checklist uses yes / preferred. Nothing empty is kept. */
+// deno-lint-ignore no-explicit-any
+export function toProfile(h: any, people: any): Profile {
+  const x = h && typeof h === 'object' ? h : {}
+  const facts: Record<string, unknown> = {}
+  const pn = clip(x.preferred_name, 40); if (pn) facts.preferred_name = pn
+  const ls = pick(x.living_situation, LIVING); if (ls) facts.living_situation = ls
+  const fn = clip(x.facility_name, 120); if (fn) facts.facility_name = fn
+  const wn = pickMany(x.why_now, WHY_NOW); if (wn.length) facts.why_now = wn
+  const al = clip(x.allergies, 300); if (al) facts.allergies = al
+  const attributes: Record<string, string> = {}
+  if (x.cats === true) attributes.cats = 'yes'
+  if (x.dogs === true) attributes.dogs = 'yes'
+  const sm = pick(x.smoking, SMOKE); if (sm) attributes.smoking = sm
+  const g = pick(x.caregiver_gender, GENDER_PREF)
+  if (g === 'female_required') attributes.female_caregiver = 'yes'
+  if (g === 'female_preferred') attributes.female_caregiver = 'preferred'
+  if (g === 'male_required') attributes.male_caregiver = 'yes'
+  if (g === 'male_preferred') attributes.male_caregiver = 'preferred'
+  if (x.spanish === true) attributes.spanish_speaking = 'yes'
+  const seen = new Set<string>()
+  const ppl = (Array.isArray(people) ? people : []).map((p: Record<string, unknown>) => ({ name: clip(p?.name, 60), relationship: clip(p?.relationship, 40), note: clip(p?.note, 200) }))
+    .filter((p: Record<string, string>) => p.name && !seen.has(p.name.toLowerCase()) && seen.add(p.name.toLowerCase())).slice(0, 8)
+  return { facts, attributes, people: ppl }
+}
 
 /** The care plan part, held to the plan form and to AxisCare's task list (only real task numbers survive). */
 // deno-lint-ignore no-explicit-any
@@ -229,5 +280,5 @@ export function toPrefill(a: Record<string, unknown>, ct: Contact, adls: Adl[] =
   const extra = [a.client_age ? 'Age: ' + clip(a.client_age, 10) + '.' : '', a.heard_about_us ? 'Heard about us: ' + clip(a.heard_about_us, 120) + '.' : '', para(a.other_details, 2000)].filter(Boolean).join(' ')
   put('interest_notes', [para(a.summary, 1500), extra ? 'Also said on the call: ' + extra : ''].filter(Boolean).join('\n\n'))
   return { prefill: p, heard, is_new_family: a.is_new_family !== false, not_new_family_reason: clip(a.not_new_family_reason, 120),
-    medicaid_mentioned: a.medicaid_mentioned === true, care_plan: toPlan(a.care_plan, adls, days) }
+    medicaid_mentioned: a.medicaid_mentioned === true, care_plan: toPlan(a.care_plan, adls, days), profile: toProfile(a.home_life, a.people) }
 }
