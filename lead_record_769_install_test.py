@@ -4,8 +4,7 @@
 #   python3 lead_record_769_install_test.py
 import json, os, re, subprocess, tempfile, threading, http.server, hashlib, shutil
 HERE = os.path.dirname(os.path.abspath(__file__))
-BASE_SHA = "68fb6774f02c8f4cf4e6a8f6dcfe8dd9f22b7aa8"   # origin/main before 769 (filled in below from git)
-BASE_SHA = subprocess.run(["git", "-C", HERE, "rev-parse", "68fb677"], capture_output=True, text=True).stdout.strip()
+BASE_SHA = subprocess.run(["git", "-C", HERE, "rev-parse", "68fb677"], capture_output=True, text=True).stdout.strip()   # origin/main before 769
 res = []; ck = lambda n, c, note="": res.append((n, bool(c), "" if c else str(note)[:900]))
 S = {}; M = {}
 def reset(**m):
@@ -69,8 +68,6 @@ os.chmod(os.path.join(FAKEBIN, "supabase"), 0o755)
 sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
 PIN = {"lead-record": sha(os.path.join(WT, "supabase/functions/lead-record/index.ts")), "_shared/lead-record": sha(os.path.join(WT, "supabase/functions/_shared/lead-record.ts"))}
 SQLSHA = sha(os.path.join(WT, "lead_record_769.sql"))
-class Flag:
-    pass
 def run(env_over=None, already=False, drift=False, **mode):
     reset(**mode); rep = os.path.join(TMP, "r.txt")
     for f in (LOG, rep, os.path.join(TMP, "deployed")): os.path.exists(f) and os.remove(f)
@@ -79,7 +76,6 @@ def run(env_over=None, already=False, drift=False, **mode):
     env = dict(os.environ, PATH=FAKEBIN + ":/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", SB_TOKEN="sbp_test", SB_REPORT=rep, SB_API_BASE=URL, SB_FN_BASE=URL,
                SB_SUPA_CLI=os.path.join(FAKEBIN, "supabase"), SB_REPO=WT, SB_BASE=BASE_SHA, SB_SHAS=json.dumps(PIN), SB_SQL_SHA=SQLSHA, SB_SETTLE="0", SB_POLL="0.05")
     env.update(env_over or {})
-    t = threading.Thread(target=lambda: None)
     # the fake API learns the function exists once the fake CLI deploys it
     import time
     stop = [False]
