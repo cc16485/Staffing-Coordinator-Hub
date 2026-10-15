@@ -143,6 +143,12 @@ else: say("  · node is not on this Mac, so the tests were not re-run here (they
 STATES = {}
 for fn in FNS:
     st, vj = state(HUB_REF, HUB, HUB_BASE, fn, pinned)
+    # 2026-10-15 first run stopped here ("other"): the live client-journey still carries lead-rules.js from before the
+     # Medicare GUIDE payer words (#444 changed that shared file; client-journey was not redeployed). That exact older build
+     # (SB_ALT_BASE, the commit before #444) also counts as "the build before this change"; anything else still stops.
+    if st == "other" and os.environ.get("SB_ALT_BASE"):
+        st2, vj2 = state(HUB_REF, HUB, os.environ["SB_ALT_BASE"], fn, pinned)
+        if st2 == "base": st, vj = "base", vj2; say("  · client-journey still has the shared lead rules from before the Medicare GUIDE payer words; this deploy brings them")
     if st not in ("base", "this"): bad(f"{fn} on the server is not what 743 expects ({st}). Nothing was changed. Tell Claude."); done(3)
     STATES[fn] = (st, vj); say(f"  ✓ {fn}: " + {"this": "already this build", "base": "the build before this change"}[st])
 hs = secrets(HUB_REF)
