@@ -56,6 +56,7 @@ if a[:2] == ['functions', 'download']:
     if not mine and os.path.exists(os.path.join({TMP!r}, 'stale')) and a[2] in ('cc-booking', 'lead-watch'):
         shutil.copy({OLDR!r}, os.path.join(os.getcwd(), 'supabase', 'functions', '_shared', 'lead-rules.js'))
     if not mine and os.path.exists(os.path.join({TMP!r}, 'liveold')):
+        shutil.rmtree(os.path.join(os.getcwd(), 'supabase', 'functions', '_shared'))   # exactly the live file set (2nd run: verbs.js was absent)
         shutil.copytree(os.path.join({LIVEOLD!r}, a[2], 'supabase', 'functions', '_shared'), os.path.join(os.getcwd(), 'supabase', 'functions', '_shared'), dirs_exist_ok=True)
         if os.path.exists(os.path.join({TMP!r}, 'unseen')) and a[2] == 'lead-watch':
             open(os.path.join(os.getcwd(), 'supabase', 'functions', '_shared', 'optout.ts'), 'a').write('// unseen')
@@ -102,6 +103,7 @@ try:
     if not LIVEOLD: ck("LIVEOLD_750 not set: the real-live-copies rehearsal did not run", False)
     c, out = run(liveold=True)
     ck("the real live copies of 2026-10-15 (older shared helpers, each read by Claude): accepted, all six deployed, and the report names them", c == 0 and sorted(deploys()) == sorted(FNS) and "practice-address guard" in out and "RESULT: DONE" in out, out[-2500:])
+    ck("...including the three that had no verbs.js yet (cc-booking, lead-intake, call-disposition)", all(f in deploys() for f in ("cc-booking", "lead-intake", "call-disposition")), deploys())
     c, out = run(liveold=True, unseen=True)
     ck("a shared file nobody has read (not one of the known older ones): STOP before any change", c == 3 and not deploys() and not ran_sql() and "lead-watch on the server is not what 750 expects" in out, out[-1200:])
     c, out = run(drift=True)

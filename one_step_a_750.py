@@ -149,6 +149,7 @@ KNOWN_OLD = {
     "17bf0e843bf615545fdb6422262cf2fbbd8d19142caabf890f30ad96fd316416": "an earlier list of senders and when they may send",
 }
 OLD_SEEN = {}
+PRE_SLICE1_EVENTS = "573379c4abb9a5f44e3bf49274d86713a6bf28a1974833e2478e78c54c8cdffe"
 def state750(ref, root, base, fn):
     """'this' | 'base' (main's own code; its shared lead rules may be any earlier version) | 'other' | 'new' | 'unreadable'"""
     s, m = fmeta(ref, fn)
@@ -163,6 +164,9 @@ def state750(ref, root, base, fn):
         if k in live and live[k] == base_sha(root, base, k): continue
         if k.startswith("supabase/functions/_shared/") and k in live and live[k] in KNOWN_OLD:
             OLD_SEEN.setdefault(fn, []).append(KNOWN_OLD[live[k]]); continue
+        # 2026-10-15 second run: the activity record from before Slice 1 did not import verbs.js yet, so a function carrying
+        # that exact older file has no verbs.js. Only that pairing is accepted; deploying brings both.
+        if k == "supabase/functions/_shared/verbs.js" and k not in live and live.get("supabase/functions/_shared/events.ts") == PRE_SLICE1_EVENTS: continue
         return "other", vj
     return "base", vj
 norm = lambda t: re.sub(r"\s+", " ", t or "").strip()
