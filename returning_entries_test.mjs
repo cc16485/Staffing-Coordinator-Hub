@@ -95,25 +95,12 @@ axDown = false; n = fresh(['Lc']);
 ck('booking calendar · AxisCare down: the inquiry is still made and flagged from the earlier inquiry, and says AxisCare wasn\'t checked',
   n.length === 1 && n[0].possibly_returning.axiscare_checked === false && /couldn't be checked/.test(APP.ops_items[1] ? APP.ops_items.find((i) => /returning/.test(i.id)).detail : ''), { n, ops: APP.ops_items });
 
-/* ════ call-followup (the AI phone call) ════ */
+/* ════ call-followup (the AI phone call) · RETIRED 2026-10-14: a person presses Make this a lead ════ */
 h = await load('call-followup');
 AI = { is_client_lead: true, contact_first_name: 'Dana', interest_notes: 'Wants help again for mom', branch: 'soft-check-in', needs: [] };
-reset([CONV, LOST, OPEN]); before = JSON.stringify(byId('Lc'));
+reset([CONV, LOST, OPEN]); before = JSON.stringify(APP.leads);
 r = await post(h, 'token=F', { first_name: 'Dana', phone: '4175550101', transcript: 'hello' });
-n = fresh(KNOWN);
-ck('AI call · a Converted inquiry is NOT rewritten (notes, follow-up, drafts untouched); a new flagged inquiry instead',
-  JSON.stringify(byId('Lc')) === before && n.length === 1 && n[0].possibly_returning && APP.ops_items.some((i) => i.id === 'ops_returning_' + n[0].id) && r.possibly_returning === true, { r, n });
-reset([CONV, LOST, OPEN]); before = JSON.stringify(byId('Ll'));
-r = await post(h, 'token=F', { first_name: 'Joe', phone: '4175550202', transcript: 'hello' });
-ck('AI call · a Lost inquiry is not rewritten either', JSON.stringify(byId('Ll')) === before && fresh(KNOWN).length === 1, r);
-reset([CONV, LOST, OPEN]);
-r = await post(h, 'token=F', { first_name: 'Ann', phone: '4175550303', transcript: 'hello' });
-/* Gate 0 guard (4037950, 2026-09-28): the added note is labelled as an unreviewed AI summary ("Call <date>:" before) */
-ck('AI call · an OPEN inquiry is reused, and a second call ADDS to the notes instead of wiping them',
-  fresh(KNOWN).length === 0 && /^first call notes\n\nAI call summary, not reviewed \(\d{4}-\d{2}-\d{2}\): Wants help again for mom$/.test(byId('Lo').interest_notes), byId('Lo').interest_notes);
-AI = { is_client_lead: false, not_lead_reason: 'existing client' };
-reset([CONV]); r = await post(h, 'token=F', { phone: '4175550101', transcript: 'hi' });
-ck('AI call · a call the AI says is not a new client still creates nothing', r.status === 'skipped' && APP.leads.length === 1, r);
+ck('AI call (retired) · no inquiry is made or rewritten, closed or open, and no card', JSON.stringify(APP.leads) === before && !APP.ops_items.length && r.status === 'retired', { r });
 
 /* ════ lead-intake (the website form) ════ */
 h = await load('lead-intake');

@@ -1,4 +1,4 @@
-// Gate 0 guard: call-followup never writes what the AI heard onto a lead (2026-09-28). The REAL function against a
+// Gate 0 guard: call-followup never writes what the AI heard onto a lead (2026-09-28). Since 2026-10-14 it is retired: it writes nothing at all. The REAL function against a
 // fake database, a fake AI (fixed tool answer) and a fake GoHighLevel. node call_followup_guard_test.mjs
 import fs from 'fs'; import path from 'path'
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 700)])
@@ -34,28 +34,12 @@ try {
   const FACTS = ['relationship', 'client_first_name', 'needs', 'medical_conditions', 'mobility', 'urgency', 'funding_source', 'rate_discussed', 'ai_needs_summary', 'ai_care_flags']
 
   reset([]); let r = await call(CALL, 'wrong-token'); ck('a wrong token is refused (401) before anything is read or written', r.status === 401 && !CALLS.length && !leads().length, r)
-  reset([]); r = await call(CALL); const L = leads()[0]
-  ck('a new client call still creates the lead', r.j.status === 'lead created' && leads().length === 1, r)
-  ck('its name, phone and email come from GoHighLevel, not from what the AI heard', L.first_name === 'Susan' && L.last_name === 'Miller' && L.phone === '4175550101' && L.email === 'susan@x.test', L)
-  ck('NONE of the AI-heard facts are written as lead fields', FACTS.every((k) => L[k] === undefined || (Array.isArray(L[k]) ? !L[k].length : !L[k])), FACTS.map((k) => [k, L[k]]))
-  ck('they are kept as one "suggested, not reviewed" entry, with every field', L.ai_suggestions?.length === 1 && L.ai_suggestions[0].reviewed === false && L.ai_suggestions[0].source === 'call-followup'
-     && L.ai_suggestions[0].fields.funding_source === 'Medicaid' && L.ai_suggestions[0].fields.needs[0] === 'bathing' && L.ai_suggestions[0].fields.phone_found === '4175559999', L.ai_suggestions)
-  ck('the raw transcript is NOT stored on the lead', !('call_transcript' in L) && !JSON.stringify(L).includes('needs help bathing...'), Object.keys(L))
-  ck('the call summary in the notes is labelled as unreviewed AI', /^AI call summary, not reviewed \(\d{4}-\d{2}-\d{2}\): Susan called/.test(L.interest_notes), L.interest_notes)
-  ck('the drafted email and text still wait for approval, unchanged', T.app_data.find((x) => x.key === 'post_call_followups').data[0]?.status === 'pending_approval' && L.draft_sms === 'Text', T.app_data)
-  ck('the GoHighLevel "lead" tag is still added, unchanged', CALLS.some((u) => u.includes('/contacts/C1/tags')), CALLS)
-
-  const staff = { id: 'L9', first_name: 'Susan', last_name: 'Miller', phone: '4175550101', status: 'Contacted', relationship: 'Daughter (POA)', client_first_name: 'Elizabeth',
-    needs: ['personalCare'], medical_conditions: [], mobility: 'independent', urgency: '7days', funding_source: 'private', follow_up_due: '2026-10-01', follow_up_branch: 'family-decision',
-    interest_notes: 'Staff note.', created_at: '2026-09-01T00:00:00Z' }
-  reset([staff]); r = await call(CALL); const E = leads()[0]
-  ck('an existing lead is reused', r.j.status === 'lead updated' && leads().length === 1, r)
-  ck("the office's own values are left exactly as they were", ['relationship', 'client_first_name', 'mobility', 'urgency', 'funding_source', 'status', 'follow_up_due', 'follow_up_branch'].every((k) => E[k] === staff[k])
-     && E.needs.join() === 'personalCare' && E.medical_conditions.length === 0, E)
-  ck('the staff note is kept and the AI summary is added below it, labelled', E.interest_notes.startsWith('Staff note.\n\nAI call summary, not reviewed'), E.interest_notes)
-  r = await call(CALL); ck('a second call adds a second suggestion instead of overwriting the first', (leads()[0].ai_suggestions || []).length === 2, leads()[0].ai_suggestions?.length)
-  reset([]); AI = { ...AI_OUT, is_client_lead: false, not_lead_reason: 'caregiver applicant' }; r = await call(CALL)
-  ck('a call the AI judges not to be a client creates nothing (unchanged)', r.j.status === 'skipped' && !leads().length, r)
+  reset([]); r = await call(CALL)
+  ck('2026-10-14: a new client call creates NOTHING (no lead, draft, tag or AI reading): a person presses Make this a lead', r.status === 200 && r.j.status === 'retired' && r.j.created === false
+     && !leads().length && !T.app_data.find((x) => x.key === 'post_call_followups').data.length && !CALLS.length, { r, CALLS })
+  const staff = { id: 'L9', first_name: 'Susan', last_name: 'Miller', phone: '4175550101', status: 'Contacted', interest_notes: 'Staff note.' }
+  reset([staff]); const before = JSON.stringify(leads()); r = await call(CALL)
+  ck('an existing lead is left exactly as it was', JSON.stringify(leads()) === before, leads())
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1)
