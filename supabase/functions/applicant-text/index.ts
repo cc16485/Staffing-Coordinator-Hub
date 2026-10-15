@@ -275,6 +275,9 @@ Deno.serve(async (req) => {
     if (!rc || rc.cancelled !== true) return json({ error: 'There was no live booking to cancel. Refresh and look again.' }, 409)
     /* the interview messages job would send its own notice next run; this one is the office's, so mark it told */
     await db.from('interview_bookings').update({ cancel_notified_at: new Date().toISOString() }).eq('id', bk!.id)
+    /* 748: who in the office did it, for the applicant's interview history (a separate write, so the "told" mark above never
+       depends on it) */
+    await db.from('interview_bookings').update({ office_user: who.name || who.email || 'the office' }).eq('id', bk!.id)
     if (!send) return json({ ok: true, cancelled: true, sent: false, by })
     const r = await queue('cancel', message, true, CANCEL_SUBJECT(booked.day), SENDER_CANCEL)
     if (r.status === 409) return json({ ok: true, cancelled: true, by, sent: false, not_sent: [String(r.body.error)] })
