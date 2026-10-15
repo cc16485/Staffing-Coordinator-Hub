@@ -3,7 +3,7 @@
 -- identity-operations.sql left them). The installer saves the live text of each dropped rule before 760b runs and
 -- this file is regenerated from that capture; what is below is the shape the source files give.
 create or replace function public.jwt_hub_access() returns jsonb language sql stable as $$
-  select nullif(current_setting('request.jwt.claims', true), '')::jsonb -> 'app_metadata' -> 'hub_access'
+  select nullif(auth.jwt() -> 'app_metadata' -> 'hub_access', 'null'::jsonb);
 $$;
 do $r$
 declare t text;

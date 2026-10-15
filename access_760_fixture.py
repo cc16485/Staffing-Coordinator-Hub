@@ -26,8 +26,11 @@ def make():
     c.run("""create function auth.uid() returns uuid language sql stable as $$
       select coalesce(nullif(current_setting('request.jwt.claim.sub', true), ''), (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'))::uuid $$""")
     c.run("grant execute on function auth.uid() to anon, authenticated")
+    c.run("""create function auth.jwt() returns jsonb language sql stable as $$
+      select coalesce(nullif(current_setting('request.jwt.claim', true), ''), nullif(current_setting('request.jwt.claims', true), ''))::jsonb $$""")
+    c.run("grant execute on function auth.jwt() to anon, authenticated, service_role")
     c.run("""create function public.jwt_hub_access() returns jsonb language sql stable as $$
-      select nullif(current_setting('request.jwt.claims', true), '')::jsonb -> 'app_metadata' -> 'hub_access' $$""")
+      select nullif(auth.jwt() -> 'app_metadata' -> 'hub_access', 'null'::jsonb); $$""")
     c.run("create table public.persons(person_id uuid primary key, full_name text not null, primary_email text unique, active boolean not null default true)")
     c.run("create table public.auth_identities(person_id uuid references public.persons on delete cascade, project_ref text, auth_user_id uuid, login_email text, primary key (person_id, project_ref))")
     c.run("create table public.entity_memberships(person_id uuid references public.persons on delete cascade, entity text, active boolean not null default true, ended_at date, primary key (person_id, entity))")

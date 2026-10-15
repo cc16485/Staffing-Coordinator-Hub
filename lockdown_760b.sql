@@ -13,6 +13,7 @@
 --     Coordinator Hub). The two views over those tables stop reading as their owner, so they follow the same rule.
 --
 -- No GRANT is added. No table data is changed. Undo: lockdown_760b_rollback.sql.
+-- 760 live run 2026-10-15: no login has a blank list today, so nobody is locked out by (a).
 -- Must run AFTER every office login has an explicit hub list and has signed in again (their old sign-in carries the
 -- old claim for up to an hour). The installer refuses while any active office login still has a blank list.
 -- =============================================================================
@@ -29,10 +30,11 @@ do $pre$ begin
 end $pre$;
 
 -- (a) ─────────────────────────────────────────────────────────────────────────
+-- built on the live definition (read by 760 on 2026-10-15): select nullif(auth.jwt() -> 'app_metadata' -> 'hub_access', 'null'::jsonb)
 create or replace function public.jwt_hub_access() returns jsonb language sql stable as $$
-  select case when coalesce(nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role', '') in ('authenticated', 'anon')
-              then coalesce(nullif(current_setting('request.jwt.claims', true), '')::jsonb -> 'app_metadata' -> 'hub_access', '[]'::jsonb)
-              else nullif(current_setting('request.jwt.claims', true), '')::jsonb -> 'app_metadata' -> 'hub_access' end
+  select case when coalesce(auth.jwt() ->> 'role', '') in ('authenticated', 'anon')
+              then coalesce(nullif(auth.jwt() -> 'app_metadata' -> 'hub_access', 'null'::jsonb), '[]'::jsonb)
+              else nullif(auth.jwt() -> 'app_metadata' -> 'hub_access', 'null'::jsonb) end;
 $$;
 
 -- (b) ─────────────────────────────────────────────────────────────────────────
