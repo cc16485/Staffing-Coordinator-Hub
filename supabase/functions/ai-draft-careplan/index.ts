@@ -5,6 +5,9 @@
 // hours) for the coordinator to review and edit in the plan form. Same auth
 // as ai-draft-followup: the coordinator's own session token; ANTHROPIC_API_KEY
 // stays server-side. Nothing is saved here — the browser gets a suggestion.
+// 2026-10-14 (her "start drafting... we will add to it after the home visit"): the draft the phone calls started
+// (lead.care_plan_draft) comes in as `earlier`; the visit keeps what still holds, adds what it found and corrects what it
+// contradicts. New field: narrative.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
@@ -33,9 +36,10 @@ const SCHEMA = {
       services_recommended: { type: 'string', description: 'Concrete services the agency should provide, mapped to the needs above.' },
       recommended_frequency: { type: 'string', description: 'e.g. "5x/week", "Mon/Wed/Fri", "daily mornings".' },
       recommended_hours_per_week: { type: 'number', description: 'Whole number of hours/week that fits the frequency and needs.' },
+      narrative: { type: 'string', description: 'The care plan narrative in plain sentences, 1 to 3 short paragraphs: who the client is, their home and family, what they need help with and when, what matters to them, and what a caregiver should know on day one.' },
       confidence_note: { type: 'string', description: 'One sentence flagging anything uncertain or missing the coordinator should verify.' },
     },
-    required: ['adl_needs','iadl_needs','medical_conditions','medications','safety_concerns','client_goals','services_recommended','recommended_frequency','recommended_hours_per_week','confidence_note'],
+    required: ['adl_needs','iadl_needs','medical_conditions','medications','safety_concerns','client_goals','services_recommended','recommended_frequency','recommended_hours_per_week','narrative','confidence_note'],
   },
 }
 
@@ -66,7 +70,7 @@ Deno.serve(async (req) => {
       headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
       body: JSON.stringify({
         model: AI_MODEL,
-        max_tokens: 1500,
+        max_tokens: 3000,
         system:
           'You draft in-home senior care plans for Caring Companions (non-medical home care, Missouri). ' +
           'You read a raw in-home assessment transcript and extract a structured DRAFT care plan. ' +
@@ -77,6 +81,7 @@ Deno.serve(async (req) => {
           content:
             `Client: ${body.client_name || '(unknown)'}\n` +
             (body.visit_date ? `Visit date: ${body.visit_date}\n` : '') +
+            (body.earlier && typeof body.earlier === 'object' ? `What the phone calls already told us (reported by the family, before the visit). Keep what the visit does not contradict, add what the visit found, correct what it contradicts:\n"""\n${JSON.stringify(body.earlier).slice(0, 8000)}\n"""\n` : '') +
             `Assessment transcript:\n"""\n${transcript.slice(0, 24000)}\n"""`,
         }],
         tools: [SCHEMA],

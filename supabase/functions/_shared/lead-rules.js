@@ -452,7 +452,7 @@
        waiting  Waiting: something outside the office has to happen first; always with a check-back date
      ctx = { now, today, hours, stage (leadStage word), name, assessments:[{visit_date,status}], journey_next:{title,why}|null,
              payer_label }. Pure: the page only draws what comes back. */
-  const PAYER_WORDS = { private:'Private pay', ltc:'LTC insurance', va:'VA', cds:'CDS', medicaid:'Medicaid IHS', other:'Other payer' };
+  const PAYER_WORDS = { private:'Private pay', ltc:'LTC insurance', va:'VA', guide:'Medicare GUIDE', cds:'CDS', medicaid:'Medicaid (no longer accepted)', other:'Other payer' };
   function minsWords(m){ m = Math.max(0, Math.round(m)); if(m < 60) return m + ' min'; const h = Math.floor(m / 60), r = m % 60; return h + ' h' + (r ? ' ' + r + ' min' : ''); }
   function whenWords(iso, now){ const c = chicago(iso), n = chicago(now); if(c.ymd === n.ymd) return clockWords(iso); const back = daysBetween(c.ymd, n.ymd); return (back > 1 && back < 7 ? DAY_SHORT[c.dow] : dayWords(c.ymd, n.ymd)) + ' ' + clockWords(iso); }
   function dayCap(s){ return s.charAt(0).toUpperCase() + s.slice(1); }
