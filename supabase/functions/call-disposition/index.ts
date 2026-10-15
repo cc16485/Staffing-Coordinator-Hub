@@ -772,11 +772,14 @@ Deno.serve(async (req) => {
     if (lead.status === 'New') LR.setStatus(lead, 'Contacted', { by, why: 'call outcome: ' + disposition, at: stamp }); lead.contact_attempts = 0
     outcome = 'back in 3 days'
   } else if (is('not interested')) {
+    /* CRM plan step A (Samantha 2026-10-15): a reason key, so reports count it (Not interested = No longer needs care) */
+    if (!lead.lost_reason_key) Object.assign(lead, LR.lostRecord(lead, 'no_longer_needs', 'not interested (from the call)') || {})
     lead.lost_reason = lead.lost_reason || 'Not interested'; LR.setStatus(lead, 'Lost', { by, why: lead.lost_reason, at: stamp })
     lead.lost_at = stamp; lead.follow_up_branch = 'cold-lead'; lead.follow_up_due = addDays(30)
     outcome = 'lost — cold nurture'
   } else if (is('send to cds', 'sent to cds')) {
-    lead.lost_reason = 'Referred to CDS'; LR.setStatus(lead, 'Lost', { by, why: 'Referred to CDS', at: stamp }); lead.lost_at = stamp
+    Object.assign(lead, LR.lostRecord(lead, 'referred_cds', '') || { lost_reason: 'Referred to Caring CDS' })
+    LR.setStatus(lead, 'Lost', { by, why: 'Referred to Caring CDS', at: stamp }); lead.lost_at = stamp
     lead.follow_up_due = ''; lead.follow_up_branch = ''
     outcome = 'referred to CDS'
   } else if (is('incorrect number', 'bad number')) {

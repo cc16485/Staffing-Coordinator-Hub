@@ -197,9 +197,15 @@ async function leadOf(db: Any, leadId: string | null): Promise<Any | null> {
    shift (first_shift_source 'axiscare_clock_in'); a journey's earlier stamp is corrected to it. No clock-in yet: looked at
    again tomorrow. Clients who started before AxisCare (WellSky) have no clock-ins there: their start stays unrecorded,
    never guessed. Reads AxisCare only; writes only these fields on the inquiry, re-read just before saving. */
+/* CRM plan step A (Samantha 2026-10-15, "yes to all 10"): care began = the first AxisCare visit with BOTH a clock-in and a
+   clock-out (or a hand record with a reason). A visit someone clocked into but never out of is not a shift yet. */
+export function completedVisit(v: Any): boolean {
+  const t = (c: Any) => c === true || (typeof c === 'string' && !!c) || !!(c && (c.time || c.date || c.at))
+  return !!(v && !v.removed && t(v.clockIn) && t(v.clockOut))
+}
 export function firstClockIn(visits: Any[]): string | null {
   const at = (v: Any) => { const c = v?.clockIn; const s = typeof c === 'string' ? c : (c && (c.time || c.date || c.at)) || v?.actualStartDate || null; return s && !isNaN(Date.parse(s)) ? new Date(s).toISOString() : null }
-  const xs = (visits || []).filter((v: Any) => v && !v.removed).map(at).filter(Boolean).sort() as string[]
+  const xs = (visits || []).filter(completedVisit).map(at).filter(Boolean).sort() as string[]
   return xs[0] || null
 }
 async function stampFirstShifts(db: Any, ax: (p: string) => Promise<Any>, limit = 15): Promise<{ looked: number; stamped: number; corrected: number }> {
@@ -301,8 +307,8 @@ export const VERIFY: Record<string, (x: Any) => Promise<Any | null>> = {
     const from = R.addDays(today(), -30), to = today()
     const r = await ax(`/api/visits?clientIds=${j.axiscare_client_id}&startDate=${from}&endDate=${to}`)
     const vs = r && r.status === 200 ? (r.json?.results?.visits ?? r.json?.visits ?? []) : []
-    const v = (Array.isArray(vs) ? vs : Object.values(vs)).find((x: Any) => x && !x.removed && (x.clockIn || x.actualStartDate))
-    return v ? { detail: 'First clock-in seen in AxisCare (' + String(v.scheduledStartDate || v.startDate || '').slice(0, 10) + ')' } : null
+    const v = (Array.isArray(vs) ? vs : Object.values(vs)).find(completedVisit)
+    return v ? { detail: 'First visit with a clock-in and a clock-out in AxisCare (' + String(v.scheduledStartDate || v.startDate || '').slice(0, 10) + ')' } : null
   },
 }
 function axFetcher() {
@@ -316,8 +322,33 @@ function axFetcher() {
   }
 }
 
+/* ── the target start (CRM plan step A, Samantha 2026-10-15): the Start Contract's date is the one target start. The journey
+   keeps a copy so its own rules (steps due before the start, the shift window, the First shift launch) read that one date;
+   the copy only ever comes from the contract. No contract yet: no target start. ── */
+export async function contractFor(db: Any, j: Any): Promise<Any | null> {
+  if (!j?.lead_id) return null
+  const { data: src } = await db.from('episode_source').select('episode_id').eq('system', 'lead').eq('role', 'origin').eq('source_ref', String(j.lead_id)).limit(1)
+  const ep = src?.[0]?.episode_id; if (!ep) return null
+  const { data: sc } = await db.from('start_contract_current').select('episode_id, target_date, confidence, next_update_owed_on, owed_by').eq('episode_id', ep).maybeSingle()
+  return sc ?? null
+}
+export function startFromContract(j: Any, sc: Any): { change: boolean; to: string | null } {
+  const to = sc && sc.target_date ? String(sc.target_date).slice(0, 10) : null
+  return { change: String(j.target_start || '').slice(0, 10) !== (to || ''), to }
+}
+async function mirrorStart(db: Any, j: Any): Promise<Any | null> {
+  const sc = await contractFor(db, j), m = startFromContract(j, sc)
+  if (m.change) {
+    await db.from('client_journey').update({ target_start: m.to, updated_at: new Date().toISOString() }).eq('journey_id', j.journey_id)
+    await event(db, j.journey_id, null, { email: 'hub', name: 'The Hub' }, 'target_start', { from: j.target_start ?? null, to: m.to, from_contract: true })
+    j.target_start = m.to
+  }
+  return sc
+}
+
 /** stamp ready_since, run the checks for verified steps, refresh My Work. Returns what changed. */
 async function settle(db: Any, j: Any, steps: Any[], dfs: Any[], pp: Any, st: Any, opts: Any = {}): Promise<Any> {
+  const sc = await mirrorStart(db, j)
   const ctx = ctxFor(pp, st)
   let view = R.compute(dfs, j, steps, ctx), changed = 0
   const now = new Date().toISOString()
@@ -359,7 +390,7 @@ async function settle(db: Any, j: Any, steps: Any[], dfs: Any[], pp: Any, st: An
     await event(db, j.journey_id, null, { email: 'hub', name: 'The Hub' }, 'became_active', {})
   }
   const launch = await bridge(db, j, view, st)
-  const cards = await refreshCards(db, j, view, pp, st)
+  const cards = await refreshCards(db, j, view, pp, st, sc)
   return { view, cards, changed, launch }
 }
 const stripRow = (s: Any) => { const o = { ...s }; delete o.journey_id; delete o.step_key; delete o.version; delete o.updated_at; return o }
@@ -375,7 +406,7 @@ export function cardText(c: Any) {
     : c.kind === 'waiting' ? 'Waiting: ' + c.title + (c.waiting_on ? ' (on ' + c.waiting_on + ')' : '')
     : 'Next: ' + c.title
 }
-async function refreshCards(db: Any, j: Any, view: Any, pp: Any, st: Any) {
+async function refreshCards(db: Any, j: Any, view: Any, pp: Any, st: Any, sc: Any = null) {
   const ctx = ctxFor(pp, st)
   /* switched off: a real journey shows nobody anything yet (TEST journeys still do, for the owner trying it) */
   /* paused (Pause care): the journey's cards step aside; the one "Is care restarting?" card speaks for the client */
@@ -395,19 +426,28 @@ async function refreshCards(db: Any, j: Any, view: Any, pp: Any, st: Any) {
      the card says the family's call first and the step second, and goes to Act Now; the inquiry card closes below. */
   const lead = j.lead_id && cards.length ? await leadOf(db, j.lead_id) : null
   const nx = lead ? LR.leadNext(lead, now) : null
+  /* CRM plan step A (2026-10-15): the card asks the same question as the Leads board and the profile (LeadRules.oneNext):
+     something due with the family, or before the yes something due to reach or decide, comes before the journey step */
+  let one: Any = null
+  if (lead) {
+    const { data: ca } = await db.from('app_data').select('data').eq('key', 'care_assessments').maybeSingle()
+    const asm = (Array.isArray(ca?.data) ? ca.data : []).filter((a: Any) => a && String(a.lead_id) === String(lead.id)).map((a: Any) => ({ status: a.status, visit_date: a.visit_date }))
+    one = LR.oneNext(lead, { now, today: today(), hours: LR.responseHours(st || {}), assessments: asm, contract: sc, journey_next: null })
+  }
+  const oneDue = !!(one && one.due && (one.source === 'family' || one.source === 'lead') && one.reason !== 'no_next_step')
   for (const c of cards) {
     const id = cardId(j.journey_id, c.owner)
     /* Act Now: needs attention, or blocked with the start date within 7 days, or the family's date is due */
-    const famDue = !!(nx && nx.due && c.owner === lc(j.assigned_cc || c.owner))
+    const famDue = oneDue && c.owner === lc(j.assigned_cc || c.owner)
     const urgent = famDue || c.kind === 'attention' || (c.kind === 'blocked' && c.start_in != null && c.start_in <= 7), high = c.kind === 'blocked'
-    const famLine = nx ? LR.nextWords(nx, now) : ''
+    const famLine = oneDue ? one.text + (one.late ? ' (' + one.late + ')' : '') : nx ? LR.nextWords(nx, now) : ''
     want.set(id, { id, kind: 'journey', status: 'open', source_type: 'journey', journey_id: j.journey_id, step_key: c.step_key, card_kind: famDue ? 'attention' : c.kind,
       title: famDue ? 'NEEDS ATTENTION: ' + famLine : cardText(c), about: j.client_name,
       detail: [famDue ? 'Next step: ' + c.title : (famLine ? 'With the family: ' + famLine : ''), shiftWords(((view.rows || []).find((x: Any) => x.key === c.step_key)?.st?.evidence || {}).shifts), (c.also?.length ? 'Also ready: ' + c.also.join(' · ') : '')].filter(Boolean).join(' · '),
       shifts: ((view.rows || []).find((x: Any) => x.key === c.step_key)?.st?.evidence || {}).shifts ?? null,
       link: '#p/' + ref + '/start/' + c.step_key, owner: c.owner, owner_name: pp.names[c.owner] || c.owner,
       urgency: urgent ? 'urgent' : high ? 'high' : 'normal',
-      due: famDue ? nx.at : ((urgent ? today() : (c.due || null)) ? new Date((urgent ? today() : c.due) + 'T17:00:00-05:00').toISOString() : null),
+      due: famDue ? (nx && nx.due ? nx.at : now) : ((urgent ? today() : (c.due || null)) ? new Date((urgent ? today() : c.due) + 'T17:00:00-05:00').toISOString() : null),
       lead_next: nx ? { kind: nx.kind, at: nx.at } : null,
       sub_state: c.kind === 'waiting' && !famDue ? 'waiting' : null, waiting_on: c.kind === 'waiting' && !famDue ? (c.waiting_on || 'someone outside') : null, check_back: c.kind === 'waiting' && !famDue ? c.check_back : null,
       start_in: c.start_in, is_test: !!j.is_test, created_by: 'journey', opened_by: 'journey' })
@@ -714,11 +754,8 @@ Deno.serve(async (req) => {
     return json({ outcome: 'assigned', cards: out.cards })
   }
   if (b.action === 'set_start') {
-    const d = String(b.date || ''); if (d && !/^\d{4}-\d{2}-\d{2}$/.test(d)) return json({ error: 'bad date' }, 400)
-    await db.from('client_journey').update({ target_start: d || null, updated_at: now }).eq('journey_id', j.journey_id)
-    await event(db, j.journey_id, null, who, 'target_start', { from: j.target_start, to: d || null }); j.target_start = d || null
-    await settle(db, j, got.steps, dfs, pp, st, { verify: false })
-    return json({ outcome: 'saved' })
+    /* CRM plan step A (2026-10-15): the target start is kept on the Start Contract only */
+    return json({ outcome: 'use_contract', error: 'The start date is kept on the Start Contract now (on the Start tab). Change it there and the journey follows.' }, 409)
   }
   if (b.action === 'upload_url') {
     const key = String(b.step_key || ''), name = String(b.name || 'file').replace(/[^A-Za-z0-9._-]+/g, '_').slice(-80)
@@ -769,7 +806,8 @@ Deno.serve(async (req) => {
             await event(db, j.journey_id, null, HUB, 'reassigned_cc', { from: j.assigned_cc, to: r.cc, how: 'routing by payer' }); j.assigned_cc = r.cc; j.assigned_how = 'routing'
           }
         } } }
-    if (oa.set_target_start && /^\d{4}-\d{2}-\d{2}$/.test(String(answer[oa.set_target_start] || ''))) { await db.from('client_journey').update({ target_start: answer[oa.set_target_start], updated_at: now }).eq('journey_id', j.journey_id); j.target_start = answer[oa.set_target_start] }
+    /* CRM plan step A (2026-10-15): "when do they want to start" is what they asked for and stays on the step's answer; the
+       target start comes only from the Start Contract (set_target_start no longer writes the journey) */
   } else if (op === 'wait') {
     const cb = String(b.check_back || '')
     if (!/^\d{4}-\d{2}-\d{2}$/.test(cb)) return json({ outcome: 'refused', error: 'Waiting needs a check-back date.' }, 422)
