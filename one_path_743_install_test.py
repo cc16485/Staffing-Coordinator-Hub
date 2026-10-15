@@ -43,13 +43,16 @@ WT = os.path.join(TMP, "wt")   # a fresh copy of this commit, as the Desktop ste
 subprocess.run(["git", "-C", HERE, "worktree", "add", "-q", "--detach", WT, "HEAD"], check=True)
 BASE = os.path.join(TMP, "base"); os.makedirs(BASE)
 subprocess.run(f"git -C {HERE} archive {BASE_SHA} supabase/functions | tar -x -C {BASE}", shell=True, check=True)
+ALT_SHA = "d0d75086cf8b731af763a3c5b659e31938fef316"   # before #444: the shared lead-rules.js the live client-journey still had
+ALT = os.path.join(TMP, "alt"); os.makedirs(ALT)
+subprocess.run(f"git -C {HERE} archive {ALT_SHA} supabase/functions | tar -x -C {ALT}", shell=True, check=True)
 FAKEBIN = os.path.join(TMP, "bin"); os.makedirs(FAKEBIN); LOG = os.path.join(TMP, "cli.log"); os.makedirs(os.path.join(TMP, "deployed"))
 open(os.path.join(FAKEBIN, "supabase"), "w").write(f"""#!/usr/bin/env python3
 import sys, os, shutil
 a = sys.argv[1:]; open({LOG!r}, 'a').write(' '.join(a) + '\\n')
 if a[:2] == ['functions', 'deploy']: open(os.path.join({TMP!r}, 'deployed', a[2]), 'w').write('x'); sys.exit(0)
 if a[:2] == ['functions', 'download']:
-    src = os.path.join({WT!r}, 'supabase', 'functions') if os.path.exists(os.path.join({TMP!r}, 'deployed', a[2])) or os.path.exists(os.path.join({TMP!r}, 'already')) else os.path.join({BASE!r}, 'supabase', 'functions')
+    src = os.path.join({WT!r}, 'supabase', 'functions') if os.path.exists(os.path.join({TMP!r}, 'deployed', a[2])) or os.path.exists(os.path.join({TMP!r}, 'already')) else os.path.join({ALT!r} if os.path.exists(os.path.join({TMP!r}, 'stale')) else {BASE!r}, 'supabase', 'functions')
     shutil.copytree(src, os.path.join(os.getcwd(), 'supabase', 'functions'), dirs_exist_ok=True)
     if os.path.exists(os.path.join({TMP!r}, 'drift')) and a[2] == 'client-journey' and not os.path.exists(os.path.join({TMP!r}, 'deployed', a[2])):
         open(os.path.join(os.getcwd(), 'supabase', 'functions', 'client-journey', 'index.ts'), 'a').write('// someone else')
@@ -59,14 +62,14 @@ sys.exit(1)
 os.chmod(os.path.join(FAKEBIN, "supabase"), 0o755)
 sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
 PIN = {k: sha(os.path.join(WT, "supabase/functions", f)) for k, f in [("client-journey", "client-journey/index.ts")]}
-def run(env_over=None, drift=False, already=False, **mode):
+def run(env_over=None, drift=False, already=False, stale=False, **mode):
     reset(**mode); rep = os.path.join(TMP, "r.txt")
     os.path.exists(LOG) and os.remove(LOG); os.path.exists(rep) and os.remove(rep)
     shutil.rmtree(os.path.join(TMP, "deployed")); os.makedirs(os.path.join(TMP, "deployed"))
-    for flag, on in (("drift", drift), ("already", already)):
+    for flag, on in (("drift", drift), ("already", already), ("stale", stale)):
         fp = os.path.join(TMP, flag); (open(fp, "w").write("x") if on else (os.path.exists(fp) and os.remove(fp)))
     env = dict(os.environ, PATH=FAKEBIN + ":/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", SB_TOKEN="sbp_test", SB_REPORT=rep, SB_API_BASE=URL, SB_FN_BASE=URL,
-               SB_SUPA_CLI=os.path.join(FAKEBIN, "supabase"), SB_REPO=WT, SB_BASE=BASE_SHA, SB_SHAS=json.dumps(PIN), SB_SETTLE="0")
+               SB_SUPA_CLI=os.path.join(FAKEBIN, "supabase"), SB_REPO=WT, SB_BASE=BASE_SHA, SB_SHAS=json.dumps(PIN), SB_SETTLE="0", SB_ALT_BASE=ALT_SHA)
     env.update(env_over or {})
     p = subprocess.run(["python3", os.path.join(WT, "one_path_743.py")], env=env, capture_output=True, text=True, timeout=600)
     return p.returncode, (open(rep).read() if os.path.exists(rep) else p.stdout + p.stderr)
@@ -80,6 +83,12 @@ try:
     ck("says how many leads will start (counts only), and nothing is written to the database", "4 real lead(s) without a journey will start one" in out and all(q.lstrip().lower().startswith(("with", "select")) for q in S["sql"]), [out[:1200], S["sql"]])
     ck("proof: refuses the public key", "client-journey refuses the public key (401)" in out, out[-900:])
     ck("no key or token in the report", not re.search(r"eyJ\w|sbp_\w", out), out)
+    c, out = run(stale=True)
+    ck("the 2026-10-15 case: live client-journey still has the lead rules from before #444: counts as the build before, deploys", c == 0 and deploys() == ["client-journey"] and "from before the Medicare GUIDE payer words" in out, out[-1200:])
+    c, out = run(stale=True, env_over={"SB_ALT_BASE": ""})
+    ck("...without that one known older build named, it still stops", c == 3 and not deploys(), out[-400:])
+    c, out = run(stale=True, drift=True)
+    ck("...and any other change on the live copy still stops", c == 3 and not deploys(), out[-400:])
     c, out = run(live="false")
     ck("journeys switched off: says nothing will start until they are on, still deploys", c == 0 and "switched OFF" in out, out[-900:])
     c, out = run(already=True)
