@@ -19,7 +19,7 @@ class H(http.server.BaseHTTPRequestHandler):
         if p.endswith("/secrets"): return self._send(200, [{"name": n} for n in M["secrets"]])
         if m := re.match(r"/v1/projects/\w+/functions/([\w-]+)$", p):
             fn = m.group(1)
-            if fn == "call-to-lead" and not os.path.exists(os.path.join(TMP, "deployed", fn)): return self._send(404, {})
+            if fn == "call-to-lead" and not os.path.exists(os.path.join(TMP, "deployed", fn)) and not os.path.exists(os.path.join(TMP, "already")): return self._send(404, {})
             return self._send(200, {"version": 9, "verify_jwt": True if fn == "call-to-lead" else M["vj"].get(fn, True)})
         self._send(404, {})
     def do_PATCH(self): self._send(200, {})
