@@ -506,7 +506,13 @@ async function autoOpenClose(db: Any, dfs: Any[], pp: Any, st: Any) {
     db.from('client_journey').select('journey_id, lead_id, status, is_test, client_name').eq('subject', 'client')])
   const plan = autoPlan(leads, js ?? [], cut?.data), now = new Date().toISOString()
   let opened = 0, closed = 0
-  for (const l of plan.open) { const r = await openOne(db, dfs, pp, st, HUB, { lead: l, leadId: String(l.id), axId: null, how: 'the lead was saved' }); if (r.outcome === 'created') opened++ }
+  /* already receiving care (2026-10-15): a lead whose AxisCare client is active with a recent shift gets no intake journey */
+  const axf = axFetcher()
+  let in_care_skipped = 0
+  for (const l of plan.open) {
+    if ((await inCareNow(db, axf, String(l.axiscare_client_id || '').trim() || null)) !== false) { in_care_skipped++; continue }   /* not known: decided next run */
+    const r = await openOne(db, dfs, pp, st, HUB, { lead: l, leadId: String(l.id), axId: null, how: 'the lead was saved' }); if (r.outcome === 'created') opened++
+  }
   let renamed = 0
   for (const x of plan.rename) { const { error } = await db.from('client_journey').update({ client_name: x.name, updated_at: now }).eq('journey_id', x.j.journey_id); if (!error) { await event(db, x.j.journey_id, null, HUB, 'renamed', { to: x.name }, 'The lead now has a name'); renamed++ } }
   for (const c of plan.close) {
@@ -514,7 +520,7 @@ async function autoOpenClose(db: Any, dfs: Any[], pp: Any, st: Any) {
     await event(db, c.j.journey_id, null, HUB, 'closed', {}, c.why)
     const full = await load(db, { journey_id: c.j.journey_id }); if (full) await refreshCards(db, full.j, R.compute(dfs, full.j, full.steps, ctxFor(pp, st)), pp, st); closed++
   }
-  return { opened, closed, renamed }
+  return { opened, closed, renamed, in_care_skipped }
 }
 
 /** CARE ENDED (2026-10-07 audit fix): when a person answered an AxisCare status change "care ended" (client_status_decide
@@ -557,6 +563,70 @@ async function closeEnded(db: Any, dfs: Any[], pp: Any, st: Any) {
   return n
 }
 
+/** ALREADY RECEIVING CARE (Samantha 2026-10-15, after report 765 found Dan Probstfield, Edward Anderson and Peggy Thomason:
+ *  "mark those three as receiving care, clear their cards, and stop new intake journeys for active clients"). A client is
+ *  receiving care when their AxisCare client role is active AND AxisCare has a completed shift for them in the last 4 weeks.
+ *  The shift is the safety: a brand-new client AxisCare marks Active before the first visit keeps the whole intake path. */
+export const INTAKE_STAGES = ['intake', 'prechecks', 'assessment']
+export const IN_CARE_DAYS = 27
+/** pure: open real journeys with their own AxisCare number, an active client role, and a stage still before signing */
+export function inCarePlan(js: Any[], links: Any[], roles: Any[], stageOf: (j: Any) => string) {
+  const personOf = new Map(links.map((x: Any) => [String(x.source_id), x.person_id]))
+  const active = new Set(roles.filter((r: Any) => r.role === 'client' && r.status === 'active').map((r: Any) => r.person_id))
+  return js.filter((j: Any) => j.status === 'open' && !j.is_test && /^\d+$/.test(String(j.axiscare_client_id || ''))
+    && active.has(personOf.get(String(j.axiscare_client_id))) && INTAKE_STAGES.includes(stageOf(j)))
+}
+/** the AxisCare client numbers (of those asked) whose client role is active */
+async function activeAx(db: Any, ax: string[]): Promise<Set<string>> {
+  const ids = [...new Set(ax.filter((x) => /^\d+$/.test(x)))]
+  if (!ids.length) return new Set()
+  const { data: links } = await db.from('person_source_id').select('person_id, source_id').eq('system', 'axiscare').eq('entity_type', 'client').in('source_id', ids)
+  const pids = [...new Set((links ?? []).map((x: Any) => x.person_id))]
+  const { data: roles } = pids.length ? await db.from('person_role').select('person_id, role, status').eq('role', 'client').eq('status', 'active').in('person_id', pids) : { data: [] }
+  const on = new Set((roles ?? []).map((r: Any) => r.person_id))
+  return new Set((links ?? []).filter((x: Any) => on.has(x.person_id)).map((x: Any) => String(x.source_id)))
+}
+/** a completed shift in AxisCare in the last 4 weeks: { shift: the clock-in or true } / { shift: null } / null when AxisCare didn't answer */
+async function recentShift(ax: (p: string) => Promise<Any>, id: string): Promise<{ shift: string | true | null } | null> {
+  const t = today(), r = await ax(`/api/visits?clientIds=${id}&startDate=${R.addDays(t, -IN_CARE_DAYS)}&endDate=${t}`)
+  if (!r || r.status !== 200) return null
+  const vs = r.json?.results?.visits ?? r.json?.visits ?? [], list = Array.isArray(vs) ? vs : Object.values(vs)
+  if (!list.some(completedVisit)) return { shift: null }
+  return { shift: firstClockIn(list) || true }
+}
+/** receiving care right now (active role + a recent shift): the guard every new journey goes through. null = not known */
+async function inCareNow(db: Any, ax: (p: string) => Promise<Any>, id: string | null): Promise<{ shift: string | true } | false | null> {
+  if (!id || !/^\d+$/.test(id) || !(await activeAx(db, [id])).has(id)) return false
+  const s = await recentShift(ax, id)
+  return s === null ? null : s.shift ? { shift: s.shift } : false
+}
+const shiftDay = (s: string | true) => s === true ? 'a recent shift' : 'a shift on ' + String(s).slice(0, 10)
+async function markInCare(db: Any, dfs: Any[], pp: Any, st: Any, ax: (p: string) => Promise<Any>) {
+  const { data: js } = await db.from('client_journey').select('*').eq('subject', 'client').eq('status', 'open').not('axiscare_client_id', 'is', null)
+  const real = (js ?? []).filter((j: Any) => !j.is_test)
+  if (!real.length) return { in_care: 0, in_care_unknown: 0 }
+  const ids = [...new Set(real.map((j: Any) => String(j.axiscare_client_id)))]
+  const { data: links } = await db.from('person_source_id').select('person_id, source_id').eq('system', 'axiscare').eq('entity_type', 'client').in('source_id', ids)
+  const pids = [...new Set((links ?? []).map((x: Any) => x.person_id))]
+  const { data: roles } = pids.length ? await db.from('person_role').select('person_id, role, status').eq('role', 'client').in('person_id', pids) : { data: [] }
+  const views = new Map<string, Any>()
+  for (const j of real) {
+    const { data: steps } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
+    views.set(j.journey_id, { steps: steps ?? [], view: R.compute(dfs, j, steps ?? [], ctxFor(pp, st)) })
+  }
+  const now = new Date().toISOString(); let n = 0, unknown = 0
+  for (const j of inCarePlan(real, links ?? [], roles ?? [], (x: Any) => views.get(x.journey_id).view.stage).slice(0, 25)) {
+    const s = await recentShift(ax, String(j.axiscare_client_id))
+    if (s === null) { unknown++; continue }   /* AxisCare didn't answer: nothing changes, looked at again next run */
+    if (!s.shift) continue                    /* no shift yet: a new client being set up keeps the intake path */
+    const stage = views.get(j.journey_id).view.stage, why = 'Already receiving care in AxisCare (' + shiftDay(s.shift) + ') while the journey was still at ' + (R.STAGE_LABEL[stage] || stage)
+    await db.from('client_journey').update({ status: 'active', updated_at: now }).eq('journey_id', j.journey_id); j.status = 'active'
+    await event(db, j.journey_id, null, HUB, 'already_in_care', { stage, shift: s.shift === true ? null : s.shift }, why)
+    await refreshCards(db, j, views.get(j.journey_id).view, pp, st); n++
+  }
+  return { in_care: n, in_care_unknown: unknown }
+}
+
 /** a paused client's follow-up date has come: their "Is care restarting?" card comes off Waiting and onto today's list */
 async function pauseDue(db: Any) {
   const { data: ps } = await db.from('client_pause').select('*').eq('status', 'open').lte('followup_date', today())
@@ -596,6 +666,8 @@ Deno.serve(async (req) => {
       return json({ ok: true, live: false, note: 'client_journey_live is off: nothing swept', cards_put_away: put, first_shifts })
     }
     const auto = await autoOpenClose(db, dfs, pp, st), care_ended = await closeEnded(db, dfs, pp, st), pause_due = await pauseDue(db)
+    let in_care: Any = null
+    try { in_care = await markInCare(db, dfs, pp, st, axFetcher()) } catch (e) { in_care = { error: String((e as Error).message || e).slice(0, 200) } }
     const { data: js } = await db.from('client_journey').select('*').eq('subject', 'client').in('status', ['open', 'active'])
     let n = 0, cards = 0, launches = 0
     for (const j of js ?? []) {
@@ -603,7 +675,7 @@ Deno.serve(async (req) => {
       const { data: steps } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
       const out = await settle(db, j, steps ?? [], dfs, pp, st, j.status === 'active' ? { verify: false } : {}); n++; cards += out.cards.wrote + out.cards.closed; if (out.launch) launches++
     }
-    return json({ ok: true, journeys: n, card_changes: cards, launch_changes: launches, care_ended, pause_due, first_shifts, ...auto })
+    return json({ ok: true, journeys: n, card_changes: cards, launch_changes: launches, care_ended, pause_due, first_shifts, ...in_care, ...auto })
   }
   /* ── THEY SAID YES (Leads intake desk, Stage 3; Samantha 2026-10-06: "move them directly from Leads into the Client
      Journey… carry everything… record the conversion event… land on the first incomplete required step… safely
@@ -680,13 +752,16 @@ Deno.serve(async (req) => {
   if (b.action === 'adopt') {
     if (!(await jobCaller(req))) return json({ error: 'not allowed' }, 403)
     const [dfs, pp, st] = await Promise.all([defs(db), people(db), settings(db)])
-    const leads = await allLeads(db), out: Any[] = []
+    const leads = await allLeads(db), out: Any[] = [], axf = axFetcher()
     for (const x of Array.isArray(b.people) ? b.people.slice(0, 50) : []) {
       const leadId = x.lead_id != null ? String(x.lead_id) : null, axId = x.axiscare_client_id ? String(x.axiscare_client_id) : null
       const had = await load(db, leadId ? { lead_id: leadId } : { axiscare_client_id: axId })
       if (had) { out.push({ ...x, outcome: 'exists', journey_id: had.j.journey_id }); continue }
       const lead = leadId ? leads.find((l: Any) => String(l?.id) === leadId) ?? null : null
       if (leadId && !lead) { out.push({ ...x, outcome: 'no_such_lead' }); continue }
+      /* already receiving care (2026-10-15): no intake journey; AxisCare not answering means not now either */
+      const care = await inCareNow(db, axf, axId || String(lead?.axiscare_client_id || '').trim() || null)
+      if (care !== false) { out.push({ ...x, outcome: care ? 'in_care' : 'not_checked', ...(care ? { shift: care.shift } : {}) }); continue }
       const r = await openOne(db, dfs, pp, st, { email: 'hub', name: 'The move-over (484)' }, { lead, leadId, axId, payer: x.payer, name: x.client_name, how: 'the move-over' })
       out.push({ ...x, ...r })
     }
@@ -735,6 +810,11 @@ Deno.serve(async (req) => {
     if (had) return json({ outcome: 'exists', journey_id: had.j.journey_id })
     if (st.client_journey_live !== true && b.is_test !== true) return json({ outcome: 'off', error: 'Client journeys are switched off: only TEST journeys can be started.' }, 409)
     const lead = await leadOf(db, leadId)
+    /* already receiving care (2026-10-15): AxisCare shows an active client with a recent shift, so there is no intake to do */
+    if (b.is_test !== true) {
+      const care = await inCareNow(db, axFetcher(), axId || String(lead?.axiscare_client_id || '').trim() || null)
+      if (care) return json({ outcome: 'in_care', error: 'AxisCare shows this client receiving care (' + shiftDay(care.shift) + '), so there is no intake journey to start.' }, 409)
+    }
     const r = await openOne(db, dfs, pp, st, who, { lead, leadId, axId, payer: b.payer, name: b.client_name, asked: lc(b.assigned_cc), is_test: b.is_test === true })
     return json(r, r.code)
   }
