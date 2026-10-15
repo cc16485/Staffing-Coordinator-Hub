@@ -94,6 +94,21 @@ ck("install: the made-up applicants are gone", s.run("select count(*) from job_a
 ck("install: no names or keys in the report", "Proof" not in o1 and "Sevenone" not in o1 and "sbp_" not in o1)
 c2, o2 = run()
 ck("re-run: recognises it is already in, proves again, finishes clean, changes no advert", c2 == 0 and "already 731" in o2 and "731 COMPLETE" in o2 and "0 advert(s)/template(s)" in o2, o2)
+cp, op = run("proof")
+ck("proof again (on an installed project): proves everything, changes nothing", cp == 0 and "PART 2 skipped" in op and "PART 2 · CHANGE" not in op
+   and "731 COMPLETE" in op and "✓ once the office verifies it, they can book" in op and "✓ an answer already given can't be changed" in op, op)
+# The live API hands the proof back inside a JSON string with escaped quotes, followed by more text (the first real run,
+# 2026-10-14 20:30, proved everything but could not read its own answer). Run the installer's own reader on that shape.
+import json as _json, importlib.util as _iu, types as _types
+_src = open(os.path.join(HERE, "one_year_731_install.py")).read()
+_fn = _src[_src.index("def proof_result():"):_src.index("ADVERT_COLS")]
+_ns = {"json": _json, "PROOF": ""}
+_answer = {"no_gap": "ineligible", "yes_gap": "none", "office_change_answer": "SCREENING_LOCKED: one_year was already answered"}
+_live = 'HTTP 400: ' + _json.dumps({"message": "Failed to run sql query: ERROR:  P0001: PROOF731 " + _json.dumps(_answer) + "\nCONTEXT: PL/pgSQL function inline_code_block line 40 at RAISE\n"})
+_ns["sql"] = lambda q: (False, _live)
+exec(_fn, _ns)
+_got, _err = _ns["proof_result"]()
+ck("the proof's answer is read from the live API's escaped, longer reply", _got == _answer, (_got, _err, _live[:200]))
 c3, o3 = run(extra={"SB_PINS": '{"one_year_731.sql": "0000"}'})
 ck("a file that isn't the reviewed one: stops before anything", c3 == 2 and "is not the reviewed version" in o3 and "PART 2" not in o3, o3)
 c4, o4 = run("undo")
@@ -103,6 +118,8 @@ ck("undo: every advert and template is back to its old words", "back to the word
 ck("undo: the 586 office screen (six answers) is back and the eight-answer one is gone",
    s.run("select count(*) from pg_proc where proname = 'applicant_screen_by_office'")[0][0] == 1
    and s.run("select pronargs from pg_proc where proname = 'applicant_screen_by_office'")[0][0] == 6)
+cq, oq = run("proof")
+ck("proof again before 731 is in: refuses, changes nothing", cq == 3 and "isn't in yet" in oq, oq)
 s.run("create or replace function public.applicant_followup_stop(p uuid) returns text language sql stable as $$ select null::text $$")
 c5, o5 = run(save=tempfile.mkdtemp(prefix="save731b_"))
 ck("someone changed a live function since: stops, changes nothing", c5 == 3 and "aren't the ones this was built on" in o5 and "stop" in o5 and "PART 2" not in o5, o5)
