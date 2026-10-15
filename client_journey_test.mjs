@@ -136,7 +136,7 @@ try {
     T.client_journey_step.push({ journey_id: J2, step_key: d.key, state: 'complete', answer: { outcome: 'signed', hours_week: 20 }, evidence: {}, version: 1 }) } }
   r = await call({ action: 'refresh', journey_id: J2 })
   ck('verified: the Hub ticks "Client in AxisCare" itself after reading #296 back', step(J2, 'ax.client').state === 'complete' && /#296/.test(step(J2, 'ax.client').evidence.verified.detail) && ev(J2, 'verified').length >= 1, step(J2, 'ax.client'))
-  AX.visits = [{ id: 'v', clockIn: { time: 'x' }, scheduledStartDate: '2026-10-05T09:00:00' }]
+  AX.visits = [{ id: 'v', clockIn: { time: 'x' }, clockOut: { time: 'y' }, scheduledStartDate: '2026-10-05T09:00:00' }]   /* CRM plan A: a first visit needs a clock-out too */
   r = await call({ action: 'refresh', journey_id: J2 })
   ck('verified: first visit seen in AxisCare → done; "Complete start of care" is next for the Care Coordinator', step(J2, 'fw.first_visit').state === 'complete' && open().some((c) => c.step_key === 'active.complete'), open())
   r = await call({ action: 'apply', journey_id: J2, step_key: 'active.complete', op: 'complete', note: 'All set' })
@@ -299,7 +299,7 @@ try {
   const inq = () => T.app_data.find((r) => r.key === 'ops_items').data.find((x) => x.id === 'ops_lead_L1')
   ck('opening a journey for a lead closes its inquiry card: one family, one card', inq().status === 'done' && inq().closed_by === 'journey' && /journey card carries/.test(inq().auto_closed_reason), inq())
   let jc = open('angie@mo-care.com')[0]
-  ck('...the journey card carries the lead\'s one date: a promised call 70 min late reads NEEDS ATTENTION "Call back: we said …", urgent, due at the promise, with the step as the second line', jc && jc.card_kind === 'attention' && /^NEEDS ATTENTION: Call back: we said /.test(jc.title) && /late\)$/.test(jc.title) && jc.urgency === 'urgent' && /^Next step: /.test(jc.detail) && jc.lead_next && jc.lead_next.kind === 'promise', jc)
+  ck('...the journey card carries the lead\'s one date: a promised call 70 min late reads NEEDS ATTENTION "Call back: we said …", urgent, due at the promise, with the step as the second line', jc && jc.card_kind === 'attention' && /^NEEDS ATTENTION: Call \w+ back: we said /.test(jc.title) && /late\)$/.test(jc.title) && jc.urgency === 'urgent' && /^Next step: /.test(jc.detail) && jc.lead_next && jc.lead_next.kind === 'promise', jc)
   LDc('L1').contact_events.push({ at: new Date().toISOString(), actor: 'human', direction: 'out', channel: 'call', outcome: 'connected' }); LDc('L1').follow_up_due = R_add(3); LDc('L1').follow_up_note = 'send the rates'
   r = await call({ action: 'refresh', journey_id: JC.journey_id }); jc = open('angie@mo-care.com')[0]
   ck('...once the call happened and a follow-up is set for 3 days out: back to a normal Next card, "With the family: Follow up …: send the rates" on the second line', jc.card_kind === 'next' && /^Next: /.test(jc.title) && /With the family: Follow up .*: send the rates/.test(jc.detail) && jc.urgency === 'normal' && jc.lead_next.kind === 'follow_up', jc)
@@ -347,7 +347,7 @@ try {
     { id: 'Y2', client_first_name: 'Journey', said_yes_at: '2026-09-20T10:00:00Z', axiscare_client_id: '297', first_shift_at: '2026-10-03T15:00:00Z', first_shift_source: 'journey' },
     { id: 'Y3', client_first_name: 'NoAx', said_yes_at: '2026-09-20T10:00:00Z' }, { id: 'Y4', client_first_name: 'Spam', said_yes_at: '2026-09-20T10:00:00Z', axiscare_client_id: '298', spam: { at: '2026-09-21' } },
     { id: 'Y5', client_first_name: 'NotYes', axiscare_client_id: '299' })
-  AX.visits = [{ id: 'a', scheduledStartDate: '2026-09-29T08:00:00', clockIn: { time: '2026-09-29T13:07:00Z' } }, { id: 'b', scheduledStartDate: '2026-09-28T08:00:00' }, { id: 'c', removed: true, clockIn: { time: '2026-09-25T13:00:00Z' } }]
+  AX.visits = [{ id: 'a', scheduledStartDate: '2026-09-29T08:00:00', clockIn: { time: '2026-09-29T13:07:00Z' }, clockOut: { time: '2026-09-29T17:07:00Z' } }, { id: 'open', scheduledStartDate: '2026-09-27T08:00:00', clockIn: { time: '2026-09-27T13:00:00Z' } }, { id: 'b', scheduledStartDate: '2026-09-28T08:00:00' }, { id: 'c', removed: true, clockIn: { time: '2026-09-25T13:00:00Z' } }]
   r = await call({ action: 'sweep' }, null, job6)
   ck('step 6: with journeys OFF, the first shift is still found: the earliest real clock-in (not a removed visit, not one never clocked)', r.j.live === false && LD6('Y1').first_shift_at === '2026-09-29T13:07:00.000Z' && LD6('Y1').first_shift_source === 'axiscare_clock_in', [r.j.first_shifts, LD6('Y1')])
   ck('...a journey\'s stamp (the moment it noticed) is corrected to the clock-in, and the inquiry says so', LD6('Y2').first_shift_at === '2026-09-29T13:07:00.000Z' && /corrected to the first clock-in in AxisCare \(2026-09-29; the Hub had 2026-10-03\)/.test(LD6('Y2').comm_log.slice(-1)[0].body) && r.j.first_shifts.corrected === 1, LD6('Y2'))
@@ -356,7 +356,25 @@ try {
   r = await call({ action: 'sweep' }, null, job6)
   ck('...no clock-in yet: nothing stamped, looked at again tomorrow (not every run)', !LD6('Y6').first_shift_at && LD6('Y6').first_shift_checked_at && r.j.first_shifts.looked === 1, LD6('Y6'))
   r = await call({ action: 'sweep' }, null, job6); ck('...the next run skips it', r.j.first_shifts.looked === 0, r.j.first_shifts)
-  ck('...firstClockIn reads a plain time too, and nothing when there is none', MOD.firstClockIn([{ clockIn: '2026-10-02T14:00:00Z' }, { clockIn: { time: '2026-10-01T14:00:00Z' } }]) === '2026-10-01T14:00:00.000Z' && MOD.firstClockIn([{ scheduledStartDate: 'x' }]) === null)
+  ck('...firstClockIn reads a plain time too, and nothing when there is none', MOD.firstClockIn([{ clockIn: '2026-10-02T14:00:00Z', clockOut: '2026-10-02T18:00:00Z' }, { clockIn: { time: '2026-10-01T14:00:00Z' }, clockOut: { time: '2026-10-01T18:00:00Z' } }]) === '2026-10-01T14:00:00.000Z' && MOD.firstClockIn([{ scheduledStartDate: 'x' }]) === null)
+  ck('CRM plan A: a visit clocked in but never out is not the first shift', MOD.firstClockIn([{ clockIn: { time: '2026-09-30T14:00:00Z' } }, { clockIn: { time: '2026-10-01T14:00:00Z' }, clockOut: { time: '2026-10-01T18:00:00Z' } }]) === '2026-10-01T14:00:00.000Z' && MOD.firstClockIn([{ clockIn: { time: '2026-09-30T14:00:00Z' } }]) === null && MOD.completedVisit({ clockIn: true, clockOut: true }) && !MOD.completedVisit({ clockIn: { time: 'x' }, removed: true }))
+  /* CRM plan step A (Samantha 2026-10-15): the Start Contract keeps the target start; the journey copies it; set_start is
+     refused; an update owed to the family comes first on the My Work card */
+  reset(); r = await call({ action: 'open', lead_id: 'L1' }); const jA = T.client_journey[0]
+  T.episode_source = [{ episode_id: 'E-L1', system: 'lead', role: 'origin', source_ref: 'L1' }]
+  T.start_contract_current = [{ episode_id: 'E-L1', target_date: '2026-11-02', confidence: 'likely', next_update_owed_on: R_add(-1), owed_by: 'angie@mo-care.com' }]
+  Object.assign(LDS().find((l) => l.id === 'L1'), { status: 'Contacted', first_human_contact_at: '2026-10-14T15:00:00Z' })
+  r = await call({ action: 'refresh', journey_id: jA.journey_id })
+  ck('CRM plan A: the journey\'s target start becomes the Start Contract\'s date, and the history says so', T.client_journey[0].target_start === '2026-11-02'
+    && T.client_journey_event.some((e) => e.kind === 'target_start' && e.detail && e.detail.from_contract === true && e.detail.to === '2026-11-02'), T.client_journey_event.filter((e) => e.kind === 'target_start'))
+  const cA = (T.app_data.find((x) => x.key === 'ops_items').data || []).find((x) => x.journey_id === jA.journey_id && x.status === 'open')
+  ck('CRM plan A: the My Work card puts the late family update first (same words as the Leads board), the step second', cA && /^NEEDS ATTENTION: Give \w+ their update/.test(cA.title) && /^Next step: /.test(cA.detail) && cA.urgency === 'urgent', cA)
+  r = await call({ action: 'set_start', journey_id: jA.journey_id, date: '2026-12-01' })
+  ck('CRM plan A: set_start is refused (the date is kept on the Start Contract), nothing changes', r.status === 409 && r.j.outcome === 'use_contract' && T.client_journey[0].target_start === '2026-11-02', r)
+  T.start_contract_current[0].target_date = '2026-11-09'; await call({ action: 'refresh', journey_id: jA.journey_id })
+  ck('CRM plan A: the contract\'s new date reaches the journey on the next refresh', T.client_journey[0].target_start === '2026-11-09')
+  T.start_contract_current = []; await call({ action: 'refresh', journey_id: jA.journey_id })
+  ck('CRM plan A: startFromContract: no contract means no target start', MOD.startFromContract({ target_start: '2026-11-09' }, null).change === true && MOD.startFromContract({ target_start: null }, null).change === false && T.client_journey[0].target_start === null)
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
 // the page and the server must run the SAME rules file

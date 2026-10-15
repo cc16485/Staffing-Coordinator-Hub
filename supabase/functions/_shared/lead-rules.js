@@ -159,6 +159,7 @@
     ['unable_to_reach', 'Unable to reach them'],
     ['no_longer_needs', 'No longer needs care'],
     ['hospice_deceased', 'Hospice or passed away'],
+    ['referred_cds', 'Referred to Caring CDS'],
     ['other', 'Other (say what)'],
   ];
   const LOST_LABEL = {}; LOST.forEach(r => { LOST_LABEL[r[0]] = r[1]; });
@@ -549,6 +550,13 @@
         return R('now', 3, p, { big:'Call promised ' + whenWords(p, now), sub:minsWords(late) + ' late', tone:'red' }, { text:'Call ' + callerFirst + ' back: we said ' + whenWords(p, now), sub:last }, CALL, [LOG, SCH], 'promise_late');
       }
       if(!kept && p > now) return R('later', 0, p, { big:clockWords(p), sub:'callback we promised', tone:'navy' }, { text:'Call ' + callerFirst + ' back', sub:last }, CALL, [LOG], 'promise_future');
+    }
+    /* CRM plan step A (2026-10-15): the update we owe the family on the Start Contract is a promise too */
+    const owed = ctx.contract && String(ctx.contract.next_update_owed_on || '').slice(0, 10);
+    if(isYmd(owed) && owed <= today){
+      const d = daysBetween(owed, today);
+      return R('now', 3.5, chicagoInstant(owed, '09:00'), { big:d ? 'Update ' + d + (d === 1 ? ' day' : ' days') + ' late' : 'Update due today', sub:'we owe the family an update', tone:d ? 'red' : 'amber' },
+        { text:'Give ' + callerFirst + ' their update', sub:last }, CALL, [LOG], 'update_owed');
     }
     if(authorizationPending(l)){
       const d = chicago(l.authorization_received_at).ymd;
@@ -1065,6 +1073,51 @@
     return { asked:true, total:pool.length, count:fits.length, same_town:same, days:s.days, cats:cats || [], ask, words, thin:fits.length < 2 };
   }
 
+  /* the working stage word from the lead's own facts (the same rules as the Hub page's leadStage, 2026-09-19), so the
+     server can ask boardRow and oneNext the same question the page does */
+  function stageWord(l, today){
+    if(!l) return 'new';
+    const st = String(l.status || 'New'), t = today || ymd(new Date());
+    if(st === 'Converted') return 'won';
+    if(st === 'Lost' || l.archived) return 'lost';
+    if(l.nurture_started_at && !l.nurture_stopped_at) return 'nurture';
+    if(st === 'Assessment Scheduled') return 'assessment';
+    if(l.first_human_contact_at){
+      const deciding = l.promised_callback_at || (l.follow_up_due && String(l.follow_up_due) > t) || ['family-decision', 'call-back-next-week', 'soft-check-in'].indexOf(String(l.follow_up_branch || '')) >= 0;
+      return deciding ? 'deciding' : 'connected';
+    }
+    if(l.first_human_attempt_at || evts(l).some(e => e && e.actor === 'human' && e.direction === 'out') || st === 'Contacted' || l.last_contacted_at || (l.comm_log || []).length) return 'reaching_out';
+    return 'new';
+  }
+  /* ── ONE NEXT STEP EVERYWHERE (CRM plan step A, Samantha 2026-10-15 "yes to all 10"): one rule, shown the same on the
+     Leads board, the profile, the Path card and My Work. In order:
+       1. a promise to the family that is due: a call-back, the update we owe them, a reply waiting for us
+       2. before they say yes: reaching them and deciding (the board's own row, boardRow)
+       3. otherwise the journey's next step
+     ctx = boardRow's ctx plus contract { next_update_owed_on } and journey_next { title, why, status }.
+     Returns { text, sub, source: 'family' | 'lead' | 'journey' | 'none', reason, due }. The Start of Care checklist and the
+     First shift launch steps no longer give a next step of their own. */
+  const FAMILY_REASONS = ['promise_late', 'update_owed', 'replied', 'check_back_due', 'followup_late'];
+  function oneNext(l, ctx){
+    ctx = Object.assign({ now:new Date().toISOString() }, ctx || {});
+    const now = ctx.now, today = ctx.today || chicago(now).ymd, jn = ctx.journey_next || null;
+    const yes = !!(l && (l.said_yes_at || l.status === 'Converted'));
+    if(l && !yes && !l.archived && l.status !== 'Lost'){
+      const r = boardRow(l, Object.assign({}, ctx, { today, stage:ctx.stage || stageWord(l, today) }));
+      if(r.reason === 'no_next_step' && jn) return { text:jn.title, sub:jn.why || '', source:'journey', reason:'journey', due:jn.status === 'attention' || jn.status === 'blocked' };
+      return { text:r.next.text, sub:r.next.sub || '', late:/late/.test(String(r.when && r.when.sub || '')) ? r.when.sub : '', source:FAMILY_REASONS.indexOf(r.reason) > -1 ? 'family' : 'lead', reason:r.reason, due:r.group === 'now' };
+    }
+    if(l && yes){
+      if(replyPending(l)) return { text:'Answer ' + ((l.first_name || '').trim() || 'them'), sub:'', source:'family', reason:'replied', due:true };
+      const nx = leadNext(l, now);
+      if(nx && nx.due) return { text:nextWords(nx, now), sub:'', source:'family', reason:nx.kind, due:true };
+      const owed = ctx.contract && String(ctx.contract.next_update_owed_on || '').slice(0, 10);
+      if(isYmd(owed) && owed <= today) return { text:'Give the family their update (owed ' + dayWords(owed, today) + ')', sub:'', source:'family', reason:'update_owed', due:true };
+    }
+    if(jn) return { text:jn.title, sub:jn.why || '', source:'journey', reason:'journey', due:jn.status === 'attention' || jn.status === 'blocked' };
+    return { text:'', sub:'', source:'none', reason:'none', due:false };
+  }
+
   const api = { whenISO, START_KINDS, START_LABEL, LEGACY_URGENCY, DAYS, WAITING, WAITING_KEYS, LOST, LOST_LABEL, LOST_STAFFING, REQ_BY_STAGE, FORM_KEYS,
     RESPONSE_HOURS_DEFAULT, FIRST_ATTEMPT_MINUTES,
     ymd, addDays, daysBetween, dayWords, desiredStart, desiredStartWords, startRank, schedule, daysWords, scheduleWords, whyCalled,
@@ -1074,7 +1127,7 @@
     markAuthorized, authorizationPending, stateDays, DSDS_AMBER_DAYS, DSDS_RED_DAYS, median, ownerNumbers, periodNumbers, leadNext, nextWords, setNext, STATUSES, setStatus, statusBeforeLost,
     STEP_KEYS, steps, timeline, SCRIPT_KEYS, SCRIPT_LABEL, SCRIPT_DEFAULT, scriptFor, timeCats, staffingLook, whenWords, RUNGS_DEFAULT, RUNG_WORDS, rungSettings, rungsDue, stampRung,
     SUBTYPE_LABEL, SUBTYPE_KEYS, PROFESSIONAL, referralSubtype, flags, PARTNER_KINDS, PARTNER_LABEL, PARTNER_DEFAULT, partnerName, partnerLoop, recordPartnerMsg, MEDICAID_LONG_DAYS, medicaidPipeline, missingRequired,
-    ASMT_TARGET_DAYS, DECISION_DAYS, assessmentOverdue, decisionStale, cadenceNext, medicaidLong, carriedForward, yesThanks };
+    ASMT_TARGET_DAYS, DECISION_DAYS, stageWord, oneNext, FAMILY_REASONS, assessmentOverdue, decisionStale, cadenceNext, medicaidLong, carriedForward, yesThanks };
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   root.LeadRules = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
