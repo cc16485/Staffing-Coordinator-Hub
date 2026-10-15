@@ -54,7 +54,7 @@ globalThis.__db = { from: q,
   auth: { getUser: async (jwt) => ({ kr: 'u-kr', an: 'u-an', sam: 'u-sam', sal: 'u-sal' }[jwt] ? { data: { user: { id: { kr: 'u-kr', an: 'u-an', sam: 'u-sam', sal: 'u-sal' }[jwt], email: { kr: 'krystal@mo-care.com', an: 'angie@mo-care.com', sam: 'sam@mo-care.com', sal: 'sally@mo-care.com' }[jwt], app_metadata: {} } }, error: null } : { data: { user: null }, error: { message: 'bad' } }) } }
 globalThis.fetch = async (url) => { url = String(url)
   const m = /\/api\/clients\/(\d+)/.exec(url); if (m) return new Response('{}', { status: AX.clients[m[1]] ? 200 : 404 })
-  if (url.includes('/api/visits')) return new Response(JSON.stringify({ results: { visits: AX.visits } }), { status: 200 })
+  if (url.includes('/api/visits')) { AX.asked = (AX.asked || 0) + 1; if (AX.down) return new Response('{}', { status: 503 }); return new Response(JSON.stringify({ results: { visits: AX.visits } }), { status: 200 }) }
   return new Response('{}', { status: 404 }) }
 const ENV = { SUPABASE_URL: 'https://x', SUPABASE_SERVICE_ROLE_KEY: 'k', AXISCARE_API_KEY: 'a', AXISCARE_SITE: '16485', HUB_JOB_SECRET: 'j'.repeat(40) }
 let handler; globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (h) => { handler = h } }
@@ -251,6 +251,48 @@ try {
   r = await call({ action: 'sweep' }, null, job); ck('...and it happens once', r.j.care_ended === 0 && ev(JE2.journey_id, 'closed').length === 1)
   r = await call({ action: 'list', include_active: true })
   ck('the list carries closed journeys with their reason (for the stage words)', (r.j.journeys || []).some((x) => x.journey_id === JE2.journey_id && x.status === 'closed' && /Care ended/.test(x.closed_reason)), r.j)
+
+  // ALREADY RECEIVING CARE (Samantha 2026-10-15, report 765: Dan Probstfield, Edward Anderson, Peggy Thomason at Intake)
+  reset(); T.client_queue = []
+  r = await call({ action: 'adopt', people: [{ axiscare_client_id: '296', client_name: 'Edward Anderson' }, { axiscare_client_id: '297', client_name: 'Dan Probstfield', payer: 'private' }, { axiscare_client_id: '295', client_name: 'Peggy Thomason' }] }, null, job)
+  ck('in care: the move-over adopts them while AxisCare shows nobody active yet', r.j.adopted.every((x) => x.outcome === 'created') && T.client_journey.length === 3, r.j)
+  const JIA = T.client_journey.find((j) => j.axiscare_client_id === '296'), JIB = T.client_journey.find((j) => j.axiscare_client_id === '297'), JIC = T.client_journey.find((j) => j.axiscare_client_id === '295')
+  await call({ action: 'sweep' }, null, job)
+  ck('in care: before anything changes, each has an intake card', [JIA, JIB, JIC].every((j) => open().some((c) => c.journey_id === j.journey_id)), open())
+  T.person_source_id = [['pa', '296'], ['pb', '297'], ['pc', '295']].map(([person_id, source_id]) => ({ person_id, source_id, system: 'axiscare', entity_type: 'client' }))
+  T.person_role = [{ person_id: 'pa', role: 'client', status: 'active' }, { person_id: 'pb', role: 'client', status: 'active' }, { person_id: 'pc', role: 'client', status: 'former' }]
+  AX.visits = []; r = await call({ action: 'sweep' }, null, job)
+  ck('in care: AxisCare active but no shift yet (a new client being set up): the journey keeps its intake path', r.j.in_care === 0 && JIA.status === 'open' && open().some((c) => c.journey_id === JIA.journey_id), r.j)
+  AX.visits = [{ id: 'v1', clockIn: { time: R_add(-3) + 'T09:00:00-05:00' }, clockOut: { time: R_add(-3) + 'T12:00:00-05:00' } }]; AX.down = true
+  r = await call({ action: 'sweep' }, null, job)
+  ck('in care: AxisCare not answering: nothing changes, counted as not known', r.j.in_care === 0 && r.j.in_care_unknown === 2 && JIA.status === 'open', r.j)
+  AX.down = false; r = await call({ action: 'sweep' }, null, job)
+  ck('in care: active with a recent shift: Edward and Dan become receiving care', r.j.in_care === 2 && JIA.status === 'active' && JIB.status === 'active', r.j)
+  ck('...their My Work cards are put away', !open().some((c) => c.journey_id === JIA.journey_id || c.journey_id === JIB.journey_id), open())
+  ck('...the history says why, with the shift day and the stage', ev(JIA.journey_id, 'already_in_care').length === 1 && /Already receiving care in AxisCare \(a shift on \d{4}-\d{2}-\d{2}\) while the journey was still at Intake/.test(ev(JIA.journey_id, 'already_in_care')[0].reason || ''), ev(JIA.journey_id))
+  ck('...their steps are kept, nothing deleted', T.client_journey_step.some((x) => x.journey_id === JIB.journey_id && x.step_key === 'intake.payer'))
+  ck('...Peggy (care ended in this test, not active) is not touched by this rule', JIC.status !== 'active' && !ev(JIC.journey_id, 'already_in_care').length)
+  r = await call({ action: 'sweep' }, null, job); ck('...and it happens once', r.j.in_care === 0 && ev(JIA.journey_id, 'already_in_care').length === 1, r.j)
+  // stop new ones
+  T.client_journey = T.client_journey.filter((j) => j.journey_id !== JIA.journey_id)
+  r = await call({ action: 'adopt', people: [{ axiscare_client_id: '296', client_name: 'Edward Anderson' }] }, null, job)
+  ck('stop new: the move-over will not start an intake journey for a client receiving care', r.j.adopted[0].outcome === 'in_care' && !T.client_journey.some((j) => j.axiscare_client_id === '296'), r.j)
+  r = await call({ action: 'open', axiscare_client_id: '296', client_name: 'Edward Anderson', payer: 'private' })
+  ck('stop new: the Start button is refused with the reason', r.status === 409 && r.j.outcome === 'in_care' && /receiving care/.test(r.j.error), r)
+  r = await call({ action: 'open', axiscare_client_id: '296', client_name: 'Edward Anderson', payer: 'private', is_test: true })
+  ck('stop new: a TEST journey can still be started', r.j.outcome === 'created', r.j)
+  T.app_data.push({ key: 'client_journey_cutover', data: { at: '2026-10-07T00:00:00Z', lead_ids: ['L1', 'L2', 'L3'] } })
+  leadsRow().push({ id: 'N7', client_first_name: 'Ed', client_last_name: 'Again', funding_source: 'private', status: 'Contacted', axiscare_client_id: '296' })
+  r = await call({ action: 'sweep' }, null, job)
+  ck('stop new: a contacted lead whose AxisCare client is receiving care gets no journey', r.j.in_care_skipped === 1 && !T.client_journey.some((j) => j.lead_id === 'N7'), r.j)
+  T.client_journey = T.client_journey.filter((j) => !(j.is_test && j.axiscare_client_id === '296'))   /* the TEST one above */
+  AX.visits = []; r = await call({ action: 'sweep' }, null, job)
+  ck('...the same lead with no recent shift does get one (a new client still starting)', T.client_journey.some((j) => j.lead_id === 'N7'), r.j)
+  ck('pure: inCarePlan takes open, real, numbered, active, intake-stage journeys only', MOD.inCarePlan(
+    [{ journey_id: 'a', status: 'open', axiscare_client_id: '1' }, { journey_id: 'b', status: 'open', axiscare_client_id: '1', is_test: true }, { journey_id: 'c', status: 'active', axiscare_client_id: '1' },
+     { journey_id: 'd', status: 'open', axiscare_client_id: '2' }, { journey_id: 'e', status: 'open', axiscare_client_id: '1', st: 'team' }, { journey_id: 'f', status: 'open', lead_id: 'L' }],
+    [{ person_id: 'p1', source_id: '1' }, { person_id: 'p2', source_id: '2' }], [{ person_id: 'p1', role: 'client', status: 'active' }, { person_id: 'p2', role: 'client', status: 'former' }],
+    (j) => j.st || 'assessment').map((j) => j.journey_id).join() === 'a')
 
   // the new client's shifts (2026-10-07): the schedule step and "Staff every shift" read AxisCare
   reset(); setOps({ client_journey_live: true })
