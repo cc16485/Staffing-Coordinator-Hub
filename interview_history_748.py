@@ -167,6 +167,12 @@ say("  ✓ the live cancel and move rules are " + ("already this build (an earli
 STATES = {}
 for fn in FNS:
     st, vj = state(HUB_REF, HUB, HUB_BASE, fn, pinned)
+    # 2026-10-15 first run stopped here ("other"): the live applicant-text is the 712 build (2026-10-14), from before the nurse
+    # license reminders added two registry lines to _shared/outreach.ts and _shared/send-problems.ts (it was not redeployed).
+    # That exact older build (SB_ALT_BASE) also counts as "the build before this change"; anything else still stops.
+    if st == "other" and os.environ.get("SB_ALT_BASE"):
+        st2, vj2 = state(HUB_REF, HUB, os.environ["SB_ALT_BASE"], fn, pinned)
+        if st2 == "base": st, vj = "base", vj2; say("  · applicant-text is the build from 712 (before the nurse reminder lines in two shared files); this deploy brings them")
     if st not in ("base", "this"): bad(f"{fn} on the server is not what 748 expects ({st}). Nothing was changed. Tell Claude."); done(3)
     STATES[fn] = (st, vj); say(f"  ✓ {fn}: " + {"this": "already this build", "base": "the build before this change"}[st])
 ok, cnt = sql("""select count(*) filter (where status = 'cancelled' and (cancelled_by = 'applicant' or (cancelled_by = 'reschedule' and cancel_reason = 'moved by the applicant')))::int asked,

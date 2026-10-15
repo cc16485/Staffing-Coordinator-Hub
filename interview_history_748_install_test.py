@@ -46,13 +46,16 @@ WT = os.path.join(TMP, "wt")
 subprocess.run(["git", "-C", HERE, "worktree", "add", "-q", "--detach", WT, "HEAD"], check=True)
 BASE = os.path.join(TMP, "base"); os.makedirs(BASE)
 subprocess.run(f"git -C {HERE} archive {BASE_SHA} supabase/functions | tar -x -C {BASE}", shell=True, check=True)
+ALT_SHA = "218744b"   # the 712 build: the applicant-text that was live on 2026-10-15
+ALT = os.path.join(TMP, "alt"); os.makedirs(ALT)
+subprocess.run(f"git -C {HERE} archive {ALT_SHA} supabase/functions | tar -x -C {ALT}", shell=True, check=True)
 FAKEBIN = os.path.join(TMP, "bin"); os.makedirs(FAKEBIN); LOG = os.path.join(TMP, "cli.log"); os.makedirs(os.path.join(TMP, "deployed"))
 open(os.path.join(FAKEBIN, "supabase"), "w").write(f"""#!/usr/bin/env python3
 import sys, os, shutil
 a = sys.argv[1:]; open({LOG!r}, 'a').write(' '.join(a) + '\\n')
 if a[:2] == ['functions', 'deploy']: open(os.path.join({TMP!r}, 'deployed', a[2]), 'w').write('x'); sys.exit(0)
 if a[:2] == ['functions', 'download']:
-    src = os.path.join({WT!r}, 'supabase', 'functions') if os.path.exists(os.path.join({TMP!r}, 'deployed', a[2])) or os.path.exists(os.path.join({TMP!r}, 'already')) else os.path.join({BASE!r}, 'supabase', 'functions')
+    src = os.path.join({WT!r}, 'supabase', 'functions') if os.path.exists(os.path.join({TMP!r}, 'deployed', a[2])) or os.path.exists(os.path.join({TMP!r}, 'already')) else os.path.join({ALT!r} if os.path.exists(os.path.join({TMP!r}, 'stale')) else {BASE!r}, 'supabase', 'functions')
     shutil.copytree(src, os.path.join(os.getcwd(), 'supabase', 'functions'), dirs_exist_ok=True)
     if os.path.exists(os.path.join({TMP!r}, 'drift')) and not os.path.exists(os.path.join({TMP!r}, 'deployed', a[2])):
         open(os.path.join(os.getcwd(), 'supabase', 'functions', a[2], 'index.ts'), 'a').write('// someone else')
@@ -62,14 +65,14 @@ sys.exit(1)
 os.chmod(os.path.join(FAKEBIN, "supabase"), 0o755)
 sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
 PIN = {"applicant-text": sha(os.path.join(WT, "supabase/functions/applicant-text/index.ts"))}
-def run(env_over=None, drift=False, already=False, yes="yes", **mode):
+def run(env_over=None, drift=False, already=False, stale=False, yes="yes", **mode):
     reset(**mode); rep = os.path.join(TMP, "r.txt")
     os.path.exists(LOG) and os.remove(LOG); os.path.exists(rep) and os.remove(rep)
     shutil.rmtree(os.path.join(TMP, "deployed")); os.makedirs(os.path.join(TMP, "deployed"))
-    for flag, on in (("drift", drift), ("already", already)):
+    for flag, on in (("drift", drift), ("already", already), ("stale", stale)):
         fp = os.path.join(TMP, flag); (open(fp, "w").write("x") if on else (os.path.exists(fp) and os.remove(fp)))
     env = dict(os.environ, PATH=FAKEBIN + ":/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", SB_TOKEN="sbp_test", SB_REPORT=rep, SB_API_BASE=URL, SB_FN_BASE=URL,
-               SB_SUPA_CLI=os.path.join(FAKEBIN, "supabase"), SB_REPO=WT, SB_BASE=BASE_SHA, SB_SHAS=json.dumps(PIN), SB_SETTLE="0", SB_YES=yes,
+               SB_SUPA_CLI=os.path.join(FAKEBIN, "supabase"), SB_REPO=WT, SB_BASE=BASE_SHA, SB_SHAS=json.dumps(PIN), SB_SETTLE="0", SB_YES=yes, SB_ALT_BASE=ALT_SHA,
                SB_SQL_SHA=sha(os.path.join(WT, "interview_history_748.sql")), SB_RB_SHA=sha(os.path.join(WT, "interview_history_748_rollback.sql")))
     env.update(env_over or {})
     p = subprocess.run(["python3", os.path.join(WT, "interview_history_748.py")], env=env, capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL, start_new_session=True)
@@ -85,6 +88,12 @@ try:
     ck("says what is already on record (counts only)", "7 cancel(s) and move(s) by applicants" in out and "4 no-show(s)" in out, out[:1500])
     ck("proof: new rules, the column, the live server, refuses the public key", all(s in out for s in ("the live cancel and move rules are the new ones", "keep who in the office", "applicant-text: the live copy is exactly", "refuses the public key (401)")), out[-1200:])
     ck("no key or token in the report", not re.search(r"eyJ\w|sbp_\w", out), out)
+    c, out = run(stale=True)
+    ck("the 2026-10-15 case: live applicant-text is the 712 build: counts as the build before, saves the rules, deploys", c == 0 and len(wrote()) == 1 and deploys() == ["applicant-text"] and "build from 712" in out, out[-1200:])
+    c, out = run(stale=True, env_over={"SB_ALT_BASE": ""})
+    ck("...without that one known older build named, it still stops before any change", c == 3 and not wrote() and not deploys(), out[-400:])
+    c, out = run(stale=True, drift=True)
+    ck("...and any other change on the live copy still stops", c == 3 and not wrote() and not deploys(), out[-400:])
     c, out = run(yes="no")
     ck("no yes: nothing changed", c == 0 and not wrote() and not deploys() and "didn't type yes" in out, out[-500:])
     c, out = run(rules="new", already=True, col=1)
