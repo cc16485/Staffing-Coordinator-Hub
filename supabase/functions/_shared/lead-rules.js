@@ -558,12 +558,18 @@
       return R('now', 3.5, chicagoInstant(owed, '09:00'), { big:d ? 'Update ' + d + (d === 1 ? ' day' : ' days') + ' late' : 'Update due today', sub:'we owe the family an update', tone:d ? 'red' : 'amber' },
         { text:'Give ' + callerFirst + ' their update', sub:last }, CALL, [LOG], 'update_owed');
     }
+    /* 2026-10-15 (her rule): Medicaid is no longer accepted. With ctx.no_medicaid (the Hub's board and workspace), a Medicaid
+       family before the yes gets ONE row instead of the state's rows (authorized, DSDS, case manager, bridge hours): tell
+       them CDS may fit, or change the payer, or close it as sent to CDS. */
+    if(ctx.no_medicaid && l.funding_source === 'medicaid' && !l.said_yes_at && l.status !== 'Converted')
+      return R('now', 4.2, now, { big:'Medicaid: not accepted', sub:'we no longer take Medicaid', tone:'amber' },
+        { text:'Tell ' + callerFirst + ': CDS may fit, (417) 218-2888, or private pay', sub:last }, { kind:'payer', label:'Change payer' }, [{ kind:'lost_cds', label:'Lost: sent to CDS' }, CALL], 'medicaid_closed');
     if(authorizationPending(l)){
       const d = chicago(l.authorization_received_at).ymd;
       return R('now', 4, l.authorization_received_at, { big:'Authorized ' + dayWords(d, today), sub:'the state said yes: call the family', tone:'green' },
         { text:'Call ' + callerFirst + ': authorized, pick a start week', sub:last }, CALL, [LOG], 'authorized');
     }
-    if(ctx.drafts && ctx.drafts.length) return R('now', 6.5, now, { big:'Draft ready', sub:'an AI follow-up is waiting for your approval', tone:'amber' },
+    if(ctx.drafts && ctx.drafts.length && !ctx.no_drafts) return R('now', 6.5, now, { big:'Draft ready', sub:'an AI follow-up is waiting for your approval', tone:'amber' },
       { text:'Review the draft, then send or drop it', sub:last }, { kind:'draft', label:'Review draft', id:ctx.drafts[0] }, [CALL, LOG], 'draft_ready');
     if(asm && asm.kind === 'plan') return R('now', 6, asm.day, { big:'Assessment done ' + dayWords(asm.day, today), sub:'plan not written', tone:'amber' }, { text:'Write the care plan', sub:last }, { kind:'open_asmt', label:'Open assessment' }, [CALL], 'asmt_plan');
     if(asm && asm.kind === 'booked'){
@@ -609,9 +615,9 @@
       return R('waiting', 1, '9999', { big:'The state', sub:(l.state_submitted ? 'since ' + dayWords(String(l.state_submitted).slice(0, 10), today) : 'submitted') + (sd != null && sd >= DSDS_AMBER_DAYS ? ' · ' + sd + ' days, follow up soon' : ''), tone:sd != null && sd >= DSDS_AMBER_DAYS ? 'amber' : 'muted' }, { text:'Set a check-back date', sub:last }, FU, [CALL], 'waiting_state_nodate');
     }
     /* item 5: the assessment is overdue for how soon they need care; a decision with no reason after 7 days */
-    const ao = assessmentOverdue(l, ctx);
+    const ao = ctx.quiet_nudges ? null : assessmentOverdue(l, ctx);
     if(ao) return R('now', 5.5, now, { big:'Assessment overdue', sub:ao.days + ' days since we talked; target ' + ao.target, tone:'amber' }, { text:'Book the assessment with ' + callerFirst + ', or say what we are waiting on', sub:last }, SCH, [CALL, { kind:'waiting', label:'Waiting on…' }], 'asmt_overdue');
-    const ds = decisionStale(l, ctx);
+    const ds = ctx.quiet_nudges ? null : decisionStale(l, ctx);
     if(ds) return R('now', 6.8, now, { big:'Deciding ' + ds.days + ' days', sub:'over ' + DECISION_DAYS + ': it needs a reason', tone:'amber' }, { text:'What are we waiting on with ' + callerFirst + '? Give it a reason, or mark it lost', sub:last }, { kind:'waiting', label:'Waiting on…' }, [CALL, { kind:'lost', label:'Mark lost…' }], 'decision_stale');
     if(stage === 'reaching_out'){
       const cn = cadenceNext(l, ctx);
