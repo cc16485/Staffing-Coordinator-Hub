@@ -101,7 +101,8 @@ async function whoCalls(db: Any, req: Request, staff: Any[], today: string): Pro
   let user: Any
   try { const { data, error } = await db.auth.getUser(jwt); if (error || !data?.user) return { error: 'Your session has expired. Sign in again.', status: 401 }; user = data.user } catch { return { error: 'Your session could not be checked. Sign in again.', status: 401 } }
   const hubs = user.app_metadata?.hub_access
-  if (Array.isArray(hubs) && !hubs.includes('care_coordinator') && !hubs.includes('rn_review')) return { error: 'Your account does not have access to the RN review page.', status: 403 }
+  /* 760b: no hub list = no hub */
+  if (!Array.isArray(hubs) || (!hubs.includes('care_coordinator') && !hubs.includes('rn_review'))) return { error: 'Your account does not have access to the RN review page.', status: 403 }
   const email = S(user.email, 160).toLowerCase()
   /* a sign-in linked to a staff record that is no longer active is refused, even if the nurse list still has the email */
   let person = ''

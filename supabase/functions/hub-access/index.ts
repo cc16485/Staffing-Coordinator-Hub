@@ -19,8 +19,12 @@
 //   · set anybody's password. People are invited and choose their own
 //   · remove the last owner who can still sign in
 //
-// POST { action, target_email }
+// POST { action, target_email, hub? , hubs? }
 //   action: invite | resend | revoke | restore | status
+//   hubs (invite, resend, restore, status): several hubs at once, e.g. ["care_coordinator", "staffing"]. Samantha
+//   2026-10-15: "I want most to have access to both hubs staffing and care coordinator."
+//
+// 760b (2026-10-15): an account with NO hub list has NO hub. It used to mean every hub ("predates the list").
 // -----------------------------------------------------------------------------
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -116,13 +120,18 @@ Deno.serve(async (req) => {
   try { body = await req.json() } catch { /* empty body is fine for status */ }
   const action = String(body.action || 'status')
   const target = String(body.target_email || '').trim().toLowerCase()
-  let hub = String(body.hub || 'care_coordinator')
+  const asked = (Array.isArray(body.hubs) && body.hubs.length && action !== 'revoke' ? body.hubs : [body.hub || 'care_coordinator'])
+    .map((h) => String(h))
 
   if (!ACTIONS.includes(action)) return json({ error: `Unknown action "${action}".` }, 400)
-  if (!KNOWN_HUBS[hub]) return json({ error: `Unknown hub "${hub}".` }, 400)
+  const unknown = asked.find((h) => !KNOWN_HUBS[h])
+  if (unknown !== undefined) return json({ error: `Unknown hub "${unknown}".` }, 400)
   // Normalise before anything is written, so a legacy slug can be asked for
   // but never stored.
-  hub = CANONICAL_HUB[hub] || hub
+  const hubs = Array.from(new Set(asked.map((h) => CANONICAL_HUB[h] || h)))
+  if (hubs.includes(EXCLUSIVE_HUB) && hubs.length > 1)
+    return json({ error: 'RN review only is given alone, never together with another hub.' }, 400)
+  const hub = hubs[0]
   if (!target || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(target))
     return json({ error: 'A work email address is required.' }, 400)
 
@@ -146,7 +155,7 @@ Deno.serve(async (req) => {
 
   const accessOf = (u: typeof user) => {
     const a = u?.app_metadata?.[META_KEY]
-    if (!Array.isArray(a)) return null                      // null = predates the list, means all
+    if (!Array.isArray(a)) return [] as string[]             // 760b: no list = no hub (it used to mean every hub)
     // Upgrade a legacy 'team' claim to 'team_hub' rather than merely keeping it.
     // Keeping it would stop the strip but leave the account denied every Team
     // Hub key, because the RLS policy only ever checks 'team_hub'.
@@ -157,23 +166,22 @@ Deno.serve(async (req) => {
   const describe = (u: typeof user) => {
     if (!u) return { state: 'none', label: 'No account' }
     const access = accessOf(u)
-    const hasIt = hub === EXCLUSIVE_HUB ? (Array.isArray(access) && access.includes(hub)) : (access === null || access.includes(hub))   // null = predates the list, means all (never RN review only)
+    const hasIt = hubs.every((h) => access.includes(h))
     if (!u.email_confirmed_at && !u.last_sign_in_at)
       return { state: 'invited', label: 'Invitation sent, not accepted yet', access }
     return { state: hasIt ? 'active' : 'revoked',
-             label: hasIt ? 'Can sign in' : 'Account exists, no access to this hub', access }
+             label: hasIt ? 'Can sign in' : (access.length ? 'Account exists, no access to this hub' : 'Account exists, no hub yet'), access }
   }
 
   if (action === 'status') return json({ ok: true, target, ...describe(user) })
 
   /* 2026-10-14 RN review only: the account must see nothing but the review page, so the slug is given ALONE. Refused on an
-     account that already has any other hub (or every hub, by predating the list), refused for an owner, and no other hub
-     is ever added to an RN review only account. Nothing is taken away automatically: an owner removes the other access
+     account that already has any other hub, refused for an owner, and no other hub is ever added to an RN review only
+     account. Nothing is taken away automatically: an owner removes the other access
      first, on purpose. */
   if (['invite', 'resend', 'restore'].includes(action) && user) {
     const cur = accessOf(user)
     if (hub === EXCLUSIVE_HUB) {
-      if (cur === null) return json({ error: 'This account can open every hub (it was made before the hub list existed), so it cannot be RN review only.', detail: 'Remove its access to each hub first, then give RN review only.' }, 409)
       const others = cur.filter((h) => h !== EXCLUSIVE_HUB)
       if (others.length) return json({ error: 'This account already has ' + others.map((h) => KNOWN_HUBS[h] || h).join(', ') + ', so it cannot be RN review only.', detail: 'Remove that access first. An RN review only account sees nothing but the review page.' }, 409)
       const { data: ids } = await admin.from('auth_identities').select('person_id').eq('auth_user_id', user.id)
@@ -182,7 +190,7 @@ Deno.serve(async (req) => {
         const { data: roles } = await admin.from('staff_roles').select('role').in('person_id', pids)
         if ((roles || []).some((r: { role: string }) => r.role === 'owner_admin')) return json({ error: 'An owner cannot be made RN review only.' }, 409)
       }
-    } else if ((cur || []).includes(EXCLUSIVE_HUB)) {
+    } else if (cur.includes(EXCLUSIVE_HUB)) {
       return json({ error: 'This account is RN review only, so no other hub can be added to it.', detail: 'Remove RN review first if they need another hub.' }, 409)
     }
   }
@@ -206,7 +214,7 @@ Deno.serve(async (req) => {
           if (u.id === user.id) continue
           if (!ownerAuthIds.has(u.id)) continue
           const a = u.app_metadata?.[META_KEY]
-          const ok = !Array.isArray(a) || (a as string[]).includes(hub)
+          const ok = Array.isArray(a) && (a as string[]).includes(hub)   // 760b: no list = no hub
           if (ok && (u.email_confirmed_at || u.last_sign_in_at)) stillIn++
         }
         if (data.users.length < 200) break
@@ -223,7 +231,7 @@ Deno.serve(async (req) => {
     if (action === 'invite' || action === 'resend') {
       if (user && (user.email_confirmed_at || user.last_sign_in_at) && action === 'invite') {
         // Already a real account — this is a restore, not an invitation.
-        const next = Array.from(new Set([...(accessOf(user) || []), hub]))
+        const next = Array.from(new Set([...accessOf(user), ...hubs]))
         const { error } = await admin.auth.admin.updateUserById(user.id,
           { app_metadata: { [META_KEY]: next } })
         if (error) throw new Error(error.message)
@@ -234,23 +242,25 @@ Deno.serve(async (req) => {
         if (error) throw new Error(error.message)
         // Set access separately: never from anything the caller supplied.
         if (data?.user) {
-          const next = Array.from(new Set([...(accessOf(data.user) || []), hub]))
-          await admin.auth.admin.updateUserById(data.user.id,
+          const next = Array.from(new Set([...accessOf(data.user), ...hubs]))
+          const { error: e2 } = await admin.auth.admin.updateUserById(data.user.id,
             { app_metadata: { [META_KEY]: next } })
+          // Said out loud, never silent. The account can open nothing until this is fixed (no list = no hub).
+          if (e2) return json({ error: 'The invitation was sent, but their hubs were not saved, so they cannot open any hub yet.',
+                                detail: 'Press Restore access for them. ' + e2.message }, 500)
         }
         result = { did: action === 'resend' ? 'resent' : 'invited' }
       }
     } else if (action === 'revoke') {
       if (!user) return json({ error: 'There is no account for that address.' }, 404)
-      const current = accessOf(user) ?? ISSUABLE_HUBS.filter((h) => h !== EXCLUSIVE_HUB)   // null meant every ordinary hub (never RN review only)
-      const next = current.filter((h) => h !== hub)
+      const next = accessOf(user).filter((h) => h !== hub)
       const { error } = await admin.auth.admin.updateUserById(user.id,
         { app_metadata: { [META_KEY]: next } })
       if (error) throw new Error(error.message)
       result = { did: 'revoked', remaining: next }
     } else if (action === 'restore') {
       if (!user) return json({ error: 'There is no account for that address. Invite them instead.' }, 404)
-      const next = Array.from(new Set([...(accessOf(user) || []), hub]))
+      const next = Array.from(new Set([...accessOf(user), ...hubs]))
       const { error } = await admin.auth.admin.updateUserById(user.id,
         { app_metadata: { [META_KEY]: next } })
       if (error) throw new Error(error.message)
@@ -266,7 +276,7 @@ Deno.serve(async (req) => {
     at: new Date().toISOString(),
     by: callerEmail,
     by_person: callerPerson,
-    action, target, hub,
+    action, target, hub, hubs,
     result: result.did || action,
   }
   try {
@@ -274,6 +284,6 @@ Deno.serve(async (req) => {
   } catch { /* the change succeeded; losing the audit line must not fail it */ }
 
   const after = await findUser().catch(() => null)
-  return json({ ok: true, target, hub, hub_label: KNOWN_HUBS[hub], ...result, ...describe(after),
+  return json({ ok: true, target, hub, hubs, hub_label: hubs.map((h) => KNOWN_HUBS[h]).join(' and '), ...result, ...describe(after),
                 audit: entry })
 })

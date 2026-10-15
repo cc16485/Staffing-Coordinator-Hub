@@ -26,8 +26,11 @@ def make():
     c.run("""create function auth.uid() returns uuid language sql stable as $$
       select coalesce(nullif(current_setting('request.jwt.claim.sub', true), ''), (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'))::uuid $$""")
     c.run("grant execute on function auth.uid() to anon, authenticated")
+    c.run("""create function auth.jwt() returns jsonb language sql stable as $$
+      select coalesce(nullif(current_setting('request.jwt.claim', true), ''), nullif(current_setting('request.jwt.claims', true), ''))::jsonb $$""")
+    c.run("grant execute on function auth.jwt() to anon, authenticated, service_role")
     c.run("""create function public.jwt_hub_access() returns jsonb language sql stable as $$
-      select nullif(current_setting('request.jwt.claims', true), '')::jsonb -> 'app_metadata' -> 'hub_access' $$""")
+      select nullif(auth.jwt() -> 'app_metadata' -> 'hub_access', 'null'::jsonb); $$""")
     c.run("create table public.persons(person_id uuid primary key, full_name text not null, primary_email text unique, active boolean not null default true)")
     c.run("create table public.auth_identities(person_id uuid references public.persons on delete cascade, project_ref text, auth_user_id uuid, login_email text, primary key (person_id, project_ref))")
     c.run("create table public.entity_memberships(person_id uuid references public.persons on delete cascade, entity text, active boolean not null default true, ended_at date, primary key (person_id, entity))")
@@ -88,6 +91,12 @@ def make():
     c.run("""create view public.identity_completeness as select (select count(*)::int from public.person_identity) as persons,
       (select count(*)::int from public.phone_index) as phones""")
     c.run("revoke all on public.identity_completeness from anon; grant select on public.identity_completeness to authenticated")
+    c.run("""create view public.phone_safe_for_outreach as select ph.phone, ph.person_id, pi.display_name from public.phone_index ph join public.person_identity pi on pi.id = ph.person_id""")
+    c.run("revoke all on public.phone_safe_for_outreach from anon; grant select on public.phone_safe_for_outreach to authenticated")
+    c.run("""create function public.hub_office_ok() returns boolean language sql stable security definer set search_path = pg_catalog, public as $$
+      select public.desk_hub_ok() and exists (select 1 from public.staff_roles r where r.person_id = public.desk_me() and r.entity = 'cc_ihs'
+        and r.role in ('owner_admin', 'care_coordinator', 'staffing_coordinator')) $$""")
+    c.run("revoke all on function public.hub_office_ok() from public, anon; grant execute on function public.hub_office_ok() to authenticated, service_role")
     c.run("""create function public.identify_caller(p_phone text) returns table(person_id uuid, match_count int) language sql stable security definer
       set search_path = public as $$ select p.person_id, (count(*) over ())::int from public.phone_index p where p.phone = right(regexp_replace(p_phone, '\\D', '', 'g'), 10) $$""")
     c.run("revoke all on function public.identify_caller(text) from public, anon; grant execute on function public.identify_caller(text) to authenticated")

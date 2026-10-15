@@ -177,11 +177,10 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: 'Not signed in or session expired.' }), { status: 401, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
     }
 
-    // Defense in depth — same grandfathering rule as the hub's client-side
-    // hasHubAccess(): a missing hub_access claim means an account predates
-    // the access-control system, so it's allowed rather than denied.
+    // Defense in depth, same rule as the hub's own sign-in check. 760b (2026-10-15): a missing hub_access list means
+    // no hub, never every hub.
     const hubAccess = userData.user.app_metadata?.hub_access;
-    if (Array.isArray(hubAccess) && !hubAccess.includes('care_coordinator')) {
+    if (!Array.isArray(hubAccess) || !hubAccess.includes('care_coordinator')) {
       return new Response(JSON.stringify({ error: "You don't have Care Coordinator's Hub access." }), { status: 403, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } });
     }
 

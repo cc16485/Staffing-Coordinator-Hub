@@ -80,8 +80,8 @@ const storage = { from: (bucket) => ({
   upload: async (p, bytes, o) => { if (PDF_FAIL) return { error: { message: 'storage down' } }; if (STORE[bucket + '/' + p] && !o?.upsert) return { error: { message: 'exists' } }; STORE[bucket + '/' + p] = bytes; return { data: { path: p }, error: null } },
   createSignedUrl: async (p, s) => STORE[bucket + '/' + p] ? { data: { signedUrl: 'https://signed/' + bucket + '/' + p + '?s=' + s }, error: null } : { data: null, error: { message: 'not found' } } }) }
 const USERS = { nat: ['u-nat', 'natasha@mo-care.com'], rita: ['u-rita', 'rita@mo-care.com'], lpn: ['u-lpn', 'lena@mo-care.com'], lpn2: ['u-lpn2', 'lou@mo-care.com'], sam: ['u-sam', 'sam@mo-care.com'], cc: ['u-cc', 'casey@mo-care.com'],
-  natvault: ['u-natv', 'natasha@mo-care.com', { hub_access: ['rn_review'] }], natstaff: ['u-nats', 'natasha@mo-care.com', { hub_access: ['staffing'] }], gone: ['u-gone', 'old@mo-care.com'] }
-globalThis.__fakeCreateClient = () => ({ from: table, rpc, storage, auth: { getUser: async (jwt) => USERS[jwt] ? { data: { user: { id: USERS[jwt][0], email: USERS[jwt][1], app_metadata: USERS[jwt][2] || {} } }, error: null } : { data: null, error: { message: 'bad' } } } })
+  natvault: ['u-natv', 'natasha@mo-care.com', { hub_access: ['rn_review'] }], natstaff: ['u-nats', 'natasha@mo-care.com', { hub_access: ['staffing'] }], gone: ['u-gone', 'old@mo-care.com'], blank: ['u-blank', 'natasha@mo-care.com', {}] }
+globalThis.__fakeCreateClient = () => ({ from: table, rpc, storage, auth: { getUser: async (jwt) => USERS[jwt] ? { data: { user: { id: USERS[jwt][0], email: USERS[jwt][1], app_metadata: USERS[jwt][2] || { hub_access: ['care_coordinator'] } } }, error: null } : { data: null, error: { message: 'bad' } } } })
 const TMP = path.join(ROOT, '.rn_review_under_test'); fs.rmSync(TMP, { recursive: true, force: true }); fs.cpSync(FN, TMP, { recursive: true })
 for (const p of fs.readdirSync(TMP, { recursive: true })) { const f = path.join(TMP, String(p)); if (!f.endsWith('.ts')) continue; fs.writeFileSync(f, fs.readFileSync(f, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = globalThis.__fakeCreateClient').replace(/^import .* from 'https:[^']*'$/mg, '')) }
 let RN, FNMOD, NS
@@ -160,6 +160,8 @@ r = await call({ action: 'queue' }, 'gone')
 ck('an RN with an expired license: 403', r.status === 403, r)
 r = await call({ action: 'queue' }, 'natstaff')
 ck('an account limited to another hub (hub_access staffing): 403', r.status === 403 && /access/.test(r.j.error), r)
+r = await call({ action: 'load' }, 'blank')
+ck('760b: a sign-in with no hub list is refused (403), even with the nurse email', r.status === 403 && /access/.test(r.j.error), r)
 r = await call({ action: 'queue' }, 'natvault')
 ck('Natasha with hub_access [rn_review] only (no app_data key is mapped to it, so RLS shows her nothing directly): the function answers', r.status === 200 && r.j.me.rn === true, r)
 
