@@ -14,7 +14,7 @@ def fingerprint():
 before = fingerprint()
 pages = tempfile.mkdtemp(prefix="pages760-")
 os.makedirs(os.path.join(pages, "tests"))
-open(os.path.join(pages, "index.html"), "w").write("x\n  const OWNERS=['samantha@mo-care.com','zach@mo-care.com'];\nconst DISC_APPROVERS=['samantha@mo-care.com','zach@mo-care.com'];\n  return ['samantha@mo-care.com','krystal@mo-care.com']\n")
+open(os.path.join(pages, "index.html"), "w").write("x\n  const OWNERS=['samantha@mo-care.com','zach@mo-care.com'];\nconst DISC_APPROVERS=['samantha@mo-care.com','zach@mo-care.com'];\n  return ['samantha@mo-care.com','krystal@mo-care.com']\nconst DISC2=OWNERS;\n")
 open(os.path.join(pages, "tests", "t.js"), "w").write("const X=['test@mo-care.com'];\n")
 rep = tempfile.mktemp()
 p = subprocess.run([sys.executable, os.path.join(HERE, "access_report_760.py")], capture_output=True, text=True,
@@ -43,7 +43,7 @@ ck("closed table not listed", "closed_notes" not in out)
 ck("blank-is-all functions listed", "can_access_data_key(k text)" in out and "desk_hub_ok()" in out)
 ck("identity reader function listed", "identify_caller(p_phone text) · runs as owner, ignores row rules · callable by any signed-in login" in out)
 ck("page email lists found, tests skipped", "index.html:2  OWNERS: samantha@mo-care.com, zach@mo-care.com" in out
-   and "index.html:3  DISC_APPROVERS" in out and "index.html:4  returned list: samantha@mo-care.com, krystal@mo-care.com" in out and "test@mo-care.com" not in out)
+   and "index.html:3  DISC_APPROVERS" in out and "index.html:4  returned list: samantha@mo-care.com, krystal@mo-care.com" in out and "index.html:5  DISC2: the same list as OWNERS" in out and "test@mo-care.com" not in out)
 ck("live rule text copied", "CREATE OR REPLACE FUNCTION public.can_access_data_key" in out and "app_data.app_data_owner_keys_sel · RESTRICTIVE" in out)
 ck("no record content or phone printed", "SECRET" not in out and "5550100" not in out)
 g = subprocess.run([sys.executable, "-c", "import os,sys;os.environ['SB_REPORT']='/dev/null';exec(open(%r).read().split('day = lambda')[0]);_guard('update public.app_data set data=null')" % os.path.join(HERE, "access_report_760.py")], capture_output=True, text=True)

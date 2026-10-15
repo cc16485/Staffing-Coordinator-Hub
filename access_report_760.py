@@ -125,7 +125,10 @@ begin
            where c.relnamespace = 'public'::regnamespace and c.relkind in ('r', 'v', 'm', 'p')
              and (has_table_privilege('authenticated', c.oid, 'SELECT') or has_table_privilege('anon', c.oid, 'SELECT'))
            order by c.relname loop
-    execute format('select count(*) from %s', t.oid::regclass) into tot;
+    begin
+      execute format('select count(*) from %s', t.oid::regclass) into tot;
+    exception when others then tot := -2;
+    end;
     row := jsonb_build_object('t', t.relname, 'kind', t.relkind, 'rls', t.rls, 'total', tot);
     for per in select * from (values ('anon', 'anon', '{{}}'::jsonb), ('no_list', 'authenticated', '{{}}'::jsonb),
                                      ('cc_only', 'authenticated', '{{"hub_access": ["care_coordinator"]}}'::jsonb)) v(name, rol, md) loop
@@ -142,6 +145,7 @@ begin
       begin
         execute format('select count(*) from %s', t.oid::regclass) into n;
       exception when insufficient_privilege then n := -1;
+                when others then n := -2;
       end;
       if t.relname = 'app_data' then
         begin
@@ -187,14 +191,14 @@ for name, label in (("no_list", "signed in, no staff record, BLANK hub list"),
 say(); say("4 · TABLES AND VIEWS A LOGIN CAN READ (row counts only)")
 say("   'every row' = the rule lets ANY signed-in login read the whole table, staff record or not.")
 tabs = res["tables"]
-def frac(n, tot): return "refused" if n == -1 else ("every row" if n == tot and tot > 0 else f"{n} of {tot}")
+def frac(n, tot): return "refused" if n == -1 else "could not count" if -2 in (n, tot) else ("every row" if n == tot and tot > 0 else f"{n} of {tot}")
 ident = [t for t in tabs if t["t"] in IDENTITY]
 say("  Caller-recognition tables (identity-layer.sql uses a read-everything rule for signed-in logins):")
 for t in sorted(ident, key=lambda x: IDENTITY.index(x["t"])):
     say(f"    {t['t']}: {t['total']} rows · new login, blank list: {frac(t['no_list'], t['total'])} · Care Coordinator only: {frac(t['cc_only'], t['total'])} · not signed in: {frac(t['anon'], t['total'])}")
 for name in IDENTITY:
     if name not in [t["t"] for t in ident]: say(f"    {name}: not readable by any login (or not present)")
-wide = [t for t in tabs if t["t"] not in IDENTITY and t["t"] != "app_data" and t["no_list"] > 0]
+wide = [t for t in tabs if t["t"] not in IDENTITY and t["t"] != "app_data" and (t["no_list"] > 0 or t["no_list"] == -2)]
 say(f"  Other tables and views a brand-new signed-in login (no staff record) can read rows from: {len(wide)}")
 for t in wide:
     kind = "view" if t["kind"] in ("v", "m") else ("table, row rules OFF" if not t["rls"] else "table")
@@ -225,6 +229,7 @@ else:
 say(); say("6 · EMAIL LISTS WRITTEN INTO PAGE CODE (live code from GitHub)")
 if not PAGES: say("  (page code not supplied to this run)")
 pat = re.compile(r"(?:(?:const|let|var)\s+([A-Za-z_][\w]*)\s*=\s*|return\s+|([\w.]+)\s*:\s*)?\[\s*('[^'\]]*@mo-care\.com'(?:\s*,\s*'[^'\]]*@[\w.-]+')*)\s*\]")
+pat3 = re.compile(r"(?:const|let|var)\s+([A-Za-z_]\w*)\s*=\s*(OWNERS|ADMINS|OWNER_EMAILS|DISC_APPROVERS)\s*;")
 pat2 = re.compile(r"(?:(?:const|let|var)\s+([A-Za-z_]\w*)\s*=\s*)\{\s*('[^']*@mo-care\.com'\s*:[^}]*)\}")
 for label, root in PAGES:
     found = 0
@@ -240,6 +245,8 @@ for label, root in PAGES:
                     emails = re.findall(r"'([^']+@[\w.-]+)'", m.group(0))
                     name = (m.group(1) or "") if m.re is pat2 else (m.group(1) or m.group(2) or ("returned list" if m.group(0).lstrip().startswith("return") else "list"))
                     say(f"  {label} {os.path.relpath(path, root)}:{no}  {name}: {', '.join(emails)}"); found += 1
+                for m in pat3.finditer(ln):
+                    say(f"  {label} {os.path.relpath(path, root)}:{no}  {m.group(1)}: the same list as {m.group(2)}"); found += 1
     if not found: say(f"  {label}: none found")
 
 # ── 7 ────────────────────────────────────────────────────────────────────────
