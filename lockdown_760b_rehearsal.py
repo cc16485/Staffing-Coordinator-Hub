@@ -1,4 +1,4 @@
-# 760b · DESIGN REHEARSAL (nothing live). On a throwaway local Postgres shaped like the hub project: shows what every
+# 760b · REHEARSAL (nothing live). On a throwaway local Postgres shaped like the hub project: shows what every
 # kind of login can open before the change, runs lockdown_760b.sql, shows it again, proves the server path and the
 # functions still WORK (not only refuse), then runs the undo and proves today's behaviour is back exactly.
 # python3 lockdown_760b_rehearsal.py
@@ -12,10 +12,6 @@ c.run("drop function public.identify_caller(text)")
 c.run("""create function public.identify_caller(p_phone text) returns table(person_id uuid, match_count int) language sql stable security invoker
   set search_path = public as $$ select p.person_id, (count(*) over ())::int from public.phone_index p where p.phone = right(regexp_replace(p_phone, '\\D', '', 'g'), 10) $$""")
 c.run("grant execute on function public.identify_caller(text) to authenticated")
-c.run("""create function public.hub_office_ok() returns boolean language sql stable security definer set search_path = pg_catalog, public as $$
-  select public.desk_hub_ok() and exists (select 1 from public.staff_roles r where r.person_id = public.desk_me() and r.entity = 'cc_ihs'
-    and r.role in ('owner_admin', 'care_coordinator', 'staffing_coordinator')) $$""")
-c.run("revoke all on function public.hub_office_ok() from public, anon; grant execute on function public.hub_office_ok() to authenticated, service_role")
 c.run("alter view public.identity_completeness owner to postgres")
 c.run("grant all on public.app_data, public.app_data_key_hub_map to service_role; grant select on public.identity_completeness to service_role; grant execute on function public.identify_caller(text) to service_role")
 CHANGE, BACK = (open(os.path.join(HERE, f)).read() for f in ("lockdown_760b.sql", "lockdown_760b_rollback.sql"))
@@ -57,7 +53,7 @@ ck("today: a new login with a blank list opens leads and every identity row",
 
 # step 0 must come first: a staff login with a blank list is refused
 try: c.run(CHANGE); ck("refuses while Krystal's list is blank", False, "it ran")
-except DatabaseError as e: ck("refuses while Krystal's list is blank", "blank hub list" in str(e), e)
+except DatabaseError as e: ck("refuses while Krystal's list is blank", "blank hub list" in str(e), e); c.run("rollback")
 ck("refusal changed nothing", c.run("select count(*) from pg_policies where policyname like '%_office_read'")[0][0] == 0)
 c.run("update auth.users set raw_app_meta_data = raw_app_meta_data || '{\"hub_access\": [\"care_coordinator\", \"staffing\", \"team_hub\"]}' where id = :u", u=U["kry"])
 c.run(CHANGE)

@@ -91,6 +91,12 @@ def make():
     c.run("""create view public.identity_completeness as select (select count(*)::int from public.person_identity) as persons,
       (select count(*)::int from public.phone_index) as phones""")
     c.run("revoke all on public.identity_completeness from anon; grant select on public.identity_completeness to authenticated")
+    c.run("""create view public.phone_safe_for_outreach as select ph.phone, ph.person_id, pi.display_name from public.phone_index ph join public.person_identity pi on pi.id = ph.person_id""")
+    c.run("revoke all on public.phone_safe_for_outreach from anon; grant select on public.phone_safe_for_outreach to authenticated")
+    c.run("""create function public.hub_office_ok() returns boolean language sql stable security definer set search_path = pg_catalog, public as $$
+      select public.desk_hub_ok() and exists (select 1 from public.staff_roles r where r.person_id = public.desk_me() and r.entity = 'cc_ihs'
+        and r.role in ('owner_admin', 'care_coordinator', 'staffing_coordinator')) $$""")
+    c.run("revoke all on function public.hub_office_ok() from public, anon; grant execute on function public.hub_office_ok() to authenticated, service_role")
     c.run("""create function public.identify_caller(p_phone text) returns table(person_id uuid, match_count int) language sql stable security definer
       set search_path = public as $$ select p.person_id, (count(*) over ())::int from public.phone_index p where p.phone = right(regexp_replace(p_phone, '\\D', '', 'g'), 10) $$""")
     c.run("revoke all on function public.identify_caller(text) from public, anon; grant execute on function public.identify_caller(text) to authenticated")

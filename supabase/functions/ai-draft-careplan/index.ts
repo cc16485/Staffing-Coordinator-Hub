@@ -55,7 +55,7 @@ Deno.serve(async (req) => {
     const { data: userData, error: userErr } = await sb.auth.getUser()
     if (userErr || !userData?.user) return jerr('Not signed in or session expired.', 401)
     const hubAccess = userData.user.app_metadata?.hub_access
-    if (Array.isArray(hubAccess) && !hubAccess.includes('care_coordinator')) {
+    if (!Array.isArray(hubAccess) || !hubAccess.includes('care_coordinator')) {   // 760b: no list = no hub
       return jerr("You don't have Care Coordinator's Hub access.", 403)
     }
 

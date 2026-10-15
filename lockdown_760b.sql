@@ -1,6 +1,6 @@
 -- =============================================================================
--- 760b · DESIGN ONLY, NOT INSTALLED. Hub CRM Build Plan, decision 8, step C part 2 (direction approved 2026-10-15).
--- Waits on Samantha's answer for Angiel (staffing, care coordinating, or both) and on her look at the plan page.
+-- 760b · Hub CRM Build Plan, decision 8, step C part 2. Approved by Samantha 2026-10-15 ("Yes, build the lockdown"); she
+-- reviews the PRs before anything goes live. Her answer on Angiel: both hubs, care coordinator.
 --
 -- (a) A signed-in login with NO hub list gets NO hub, instead of every hub.
 --     One change, in public.jwt_hub_access(): for a browser login (role authenticated or anon) a missing list now reads
@@ -12,11 +12,13 @@
 --     OFFICE_ROLES in _shared/staff-auth.ts (owner_admin, care_coordinator, staffing_coordinator, on the Care
 --     Coordinator Hub). The two views over those tables stop reading as their owner, so they follow the same rule.
 --
--- No GRANT is added. No table data is changed. Undo: lockdown_760b_rollback.sql.
+-- One transaction: all of it goes in, or none of it. No GRANT is added. No table data is changed. Undo: lockdown_760b_rollback.sql.
 -- 760 live run 2026-10-15: no login has a blank list today, so nobody is locked out by (a).
 -- Must run AFTER every office login has an explicit hub list and has signed in again (their old sign-in carries the
 -- old claim for up to an hour). The installer refuses while any active office login still has a blank list.
 -- =============================================================================
+begin;
+
 do $pre$ begin
   if exists (select 1 from auth.users u
              join public.auth_identities ai on ai.auth_user_id = u.id and ai.project_ref = 'zngsgedlsxinbygwmxwn'
@@ -66,7 +68,9 @@ do $v$ begin
              and permissive = 'PERMISSIVE' and qual = 'true' and cmd in ('SELECT', 'ALL')) then
     raise exception '760b self-check: a read-everything rule is still in place';
   end if;
-  if public.jwt_hub_access() is not null and current_setting('request.jwt.claims', true) is null then
-    raise exception '760b self-check: the server path changed';
+  if public.jwt_hub_access() is not null then
+    raise exception '760b self-check: with no sign-in the hub list must still read as nothing, exactly as before';
   end if;
 end $v$;
+
+commit;
