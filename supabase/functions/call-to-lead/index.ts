@@ -10,6 +10,9 @@
 //                                 into the form's own fields (_shared/call-lead.ts). WRITES NOTHING. The phone number
 //                                 and, when GoHighLevel has them, the caller's name and email come from the contact,
 //                                 never from what the AI heard. No transcript: the form still opens with the contact.
+//                                 v2 (her "fill everything... start drafting [the care plan]"): every lead box the call
+//                                 mentions, the rest in the notes, and the care plan draft (its fields, a narrative and care
+//                                 tasks picked from AxisCare's own task list, read only), reported by the family on the phone.
 //   made  {message_id, lead_id}   after the person saved: checks the lead really carries this call (from_calls), then
 //                                 tags the GoHighLevel contact "lead" (the tag the old reader added). Says if it failed.
 //
@@ -20,6 +23,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { request, toolAnswer, toPrefill } from '../_shared/call-lead.ts'
+import { adlCatalog } from '../_shared/axiscare-adls.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -100,14 +104,15 @@ Deno.serve(async (req) => {
     }
     const apiKey = Deno.env.get('ANTHROPIC_API_KEY') || ''
     if (!apiKey) return json({ error: 'The AI key is not set on the server.' }, 500)
-    const req0 = request({ transcript, callDay: chicagoDay(call.at), direction: call.direction, knownName: [contact.first_name, contact.last_name].filter(Boolean).join(' ') })
+    const cat = await adlCatalog()   /* AxisCare's task list, read only; without it the draft simply has no task picks */
+    const req0 = request({ transcript, callDay: chicagoDay(call.at), direction: call.direction, knownName: [contact.first_name, contact.last_name].filter(Boolean).join(' '), adls: cat.list })
     let a = toolAnswer(await ask(apiKey, req0))
     if (!a) a = toolAnswer(await ask(apiKey, req0))   /* one retry: an answer in text instead of the tool */
     if (!a) {
       const p = toPrefill({}, contact)
       return json({ ...base, transcript: true, ...p, note: 'The AI could not read this call, so only the contact is filled in. Listen to the recording.' })
     }
-    return json({ ...base, transcript: true, ...toPrefill(a, contact) })
+    return json({ ...base, transcript: true, ...toPrefill(a, contact, cat.list), ...(cat.error ? { tasks_note: 'AxisCare\'s task list could not be read (' + cat.error + '), so the care plan draft has no care tasks yet.' } : {}) })
   }
 
   if (body.action === 'made') {

@@ -7,11 +7,22 @@ const ANSWER = { is_new_family: true, not_new_family_reason: '', caller_first_na
   referral_subtype: 'hospital', desired_start_kind: 'by_date', desired_start_date: '2026-10-19', needs: ['personalCare', 'housekeeping', 'cds', 'nonsense'],
   safety: ['fallRisk'], mobility: 'walker', personal_care: ['bathing'], medical_conditions: ['dementia'], medical_notes: 'Broke her wrist in the fall',
   schedule_days: ['Fri', 'Mon', 'Mon', 'Funday'], times_needed: 'Mornings, 8 to 12', number_of_hours: 'about 20 hours', funding_source: 'private',
-  why_called: 'Daughter looking for morning help for her mom after a fall', summary: 'Linda called about her mom Margaret in Nixa.' }
-let T, CALLS, AI, TRANSCRIPT, MSG, CONTACT, TAG_FAIL
+  why_called: 'Daughter looking for morning help for her mom after a fall', summary: 'Linda called about her mom Margaret in Nixa.',
+  client_dob: '1941-03-02', client_age: '85', client_gender: 'Female', client_address: '12 Elm St', client_state: 'mo', client_zip: '65714', client_phone: '',
+  marital_status: 'Widowed', language: 'English', heard_about_us: 'a friend at church', weight_bearing: 'yes', level_estimate: '2', dementia_follow_up: ['sundowning'],
+  physician_name: 'Dr. Lee', physician_phone: '', preferred_hospital: 'Mercy', medicaid_mentioned: false, rate_quoted: '$32 an hour',
+  other_details: 'Lives alone with a small dog. Loves gardening and the Cardinals.',
+  care_plan: { adl_needs: 'Needs standby help showering.', iadl_needs: 'Meals and light housekeeping.', medical_conditions: 'Broken wrist.', medications: '',
+    safety_concerns: 'Fell last week.', client_goals: 'Stay home.', services_recommended: 'Morning personal care.', recommended_frequency: 'Mon to Fri mornings',
+    recommended_hours_per_week: '20 hours', narrative: 'Margaret is 85 and lives alone in Nixa. Reported by her daughter on the phone, to confirm at the visit.',
+    tasks: [{ adl_id: 11, days: ['Mon', 'Wed', 'Fri'], as_needed: false, when: 'morning', instructions: 'Standby while showering' },
+            { adl_id: 22, days: [], as_needed: true, when: 'evening', instructions: 'Meals' },
+            { adl_id: 999, days: ['Mon'], as_needed: false, when: 'any', instructions: 'not a real task' },
+            { adl_id: 11, days: ['Tue'], as_needed: false, when: 'any', instructions: 'duplicate' }] } }
+let T, CALLS, AI, TRANSCRIPT, MSG, CONTACT, TAG_FAIL, AX_FAIL
 const reset = () => { CALLS = []; AI = [{ content: [{ type: 'tool_use', name: 'fill_lead_form', input: { ...ANSWER } }], stop_reason: 'tool_use' }]; TRANSCRIPT = [{ mediaChannel: 1, sentenceIndex: 0, transcript: 'Hi, my mom fell.' }]
   MSG = { id: 'msgAAA111', messageType: 'TYPE_CALL', contactId: 'C1', direction: 'inbound', dateAdded: '2026-10-14T15:14:00Z', meta: { call: { duration: 360 } } }
-  CONTACT = { firstName: 'Linda', lastName: 'Parker', phone: '+14175550142', email: '' }; TAG_FAIL = false
+  CONTACT = { firstName: 'Linda', lastName: 'Parker', phone: '+14175550142', email: '' }; TAG_FAIL = false; AX_FAIL = false
   T = { app_data: [{ key: 'leads', data: [{ id: 'L1', ghl_contact_id: 'C1', from_calls: [{ message_id: 'msgAAA111' }] }, { id: 'L2', ghl_contact_id: 'C2', from_calls: [] }] }],
     auth_identities: [{ auth_user_id: 'u-kr', project_ref: 'zngsgedlsxinbygwmxwn', person_id: 'p-kr' }, { auth_user_id: 'u-cg', project_ref: 'zngsgedlsxinbygwmxwn', person_id: 'p-cg' }],
     persons: [{ person_id: 'p-kr', full_name: 'Krystal Office', active: true }, { person_id: 'p-cg', full_name: 'Cara Giver', active: true }],
@@ -26,13 +37,14 @@ globalThis.__db = { from: q, rpc: async () => { WRITES++; return { data: null, e
   auth: { getUser: async (jwt) => ({ data: { user: jwt === 'kr' ? { id: 'u-kr', email: 'k@x', app_metadata: {} } : jwt === 'cg' ? { id: 'u-cg', email: 'c@x', app_metadata: {} } : null }, error: jwt === 'kr' || jwt === 'cg' ? null : { message: 'bad' } }) } }
 let LAST_AI
 globalThis.fetch = async (url, o) => { url = String(url); CALLS.push(url)
+  if (url.includes('.axiscare.com/api/adls')) return AX_FAIL ? new Response('{}', { status: 500 }) : new Response(JSON.stringify({ results: { data: [{ id: 11, name: 'Bathing', adlKey: 'bathing', active: true }, { id: 22, name: 'Meal Preparation', active: true }, { id: 33, name: 'Old task', active: false }] } }), { status: 200 })
   if (url.includes('api.anthropic.com')) { LAST_AI = { body: JSON.parse(o.body), headers: o.headers }; return new Response(JSON.stringify(AI.shift() || {}), { status: 200 }) }
   if (url.includes('/transcription')) return new Response(JSON.stringify(TRANSCRIPT), { status: 200 })
   if (url.endsWith('/tags')) return new Response('{}', { status: TAG_FAIL ? 500 : 200 })
   if (url.includes('/conversations/messages/')) return MSG ? new Response(JSON.stringify({ message: MSG }), { status: 200 }) : new Response('{}', { status: 404 })
   if (url.includes('/contacts/')) return new Response(JSON.stringify({ contact: CONTACT }), { status: 200 })
   return new Response('{}', { status: 404 }) }
-const ENV = { SUPABASE_URL: 'https://x', SUPABASE_SERVICE_ROLE_KEY: 'k', GHL_TOKEN: 'g', GHL_LOCATION_ID: 'loc', ANTHROPIC_API_KEY: 'a' }
+const ENV = { SUPABASE_URL: 'https://x', SUPABASE_SERVICE_ROLE_KEY: 'k', GHL_TOKEN: 'g', GHL_LOCATION_ID: 'loc', ANTHROPIC_API_KEY: 'a', AXISCARE_API_KEY: 'ax', AXISCARE_SITE: '16485' }
 let handler; globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (h) => { handler = h } }
 const F = 'supabase/functions', tmp = fs.mkdtempSync(path.join(process.cwd(), '_ctl_'))
 try {
@@ -55,12 +67,31 @@ try {
   ck('read: an email heard fills only the empty GoHighLevel email, and is marked heard', p.email === 'linda@x.test' && heard.includes('email'), { p, heard })
   ck('read: choices are held to the form (unknown and CDS needs dropped, days de-duplicated and in week order)', p.needs.join() === 'personalCare,housekeeping' && p.schedule_days.join() === 'Mon,Fri', p)
   ck('read: hours as a number, start by date, referral kept', p.number_of_hours === '20' && p.desired_start_kind === 'by_date' && p.desired_start_date === '2026-10-19' && p.source === 'Referral' && p.referral_subtype === 'hospital', p)
-  ck('read: the summary goes to the notes and why they called is one line', p.interest_notes === ANSWER.summary && p.why_called.length <= 140, p)
+  ck('read: the summary leads the notes and why they called is one line', p.interest_notes.startsWith(ANSWER.summary) && p.why_called.length <= 140, p)
   ck('read: every box filled from the call is listed as heard (shown yellow); nothing empty is listed', ['client_first_name', 'client_city', 'needs', 'schedule_days', 'funding_source', 'interest_notes'].every((k) => heard.includes(k)) && !heard.includes('client_last_name'), heard)
   ck('read: writes nothing anywhere', WRITES === 0 && !CALLS.some((u) => u.endsWith('/tags')), { WRITES, CALLS })
   ck('read: the AI is asked with auto tool choice (no forced tool), the strict tool, the call day in Central, and the refusal fallback', LAST_AI.body.tool_choice.type === 'auto' && LAST_AI.body.tools[0].strict === true
      && /2026-10-14 \(Wednesday\)/.test(LAST_AI.body.messages[0].content) && LAST_AI.body.fallbacks === 'default' && /server-side-fallback-2026-07-01/.test(LAST_AI.headers['anthropic-beta']) && !('betas' in LAST_AI.body), LAST_AI.body.tool_choice)
 
+  ck('v2 read: everything the call gave is filled (birth date, address, state upper case, ZIP, marital, language, doctor, hospital, level, weight, dementia, quoted rate)',
+     p.client_dob === '1941-03-02' && p.client_address === '12 Elm St' && p.client_state === 'MO' && p.client_zip === '65714' && p.marital_status === 'Widowed' && p.language === 'English'
+     && p.physician_name === 'Dr. Lee' && p.preferred_hospital === 'Mercy' && p.level_estimate === '2' && p.weight_bearing === 'yes' && p.dementia_follow_up.join() === 'sundowning'
+     && p.price_quoted === true && p.quoted_price_amount === '$32 an hour' && heard.includes('client_dob') && heard.includes('price_quoted'), p)
+  ck('v2 read: anything with no box of its own goes into the notes (age, how they heard, home and family)', /Also said on the call: Age: 85\. Heard about us: a friend at church\. Lives alone with a small dog/.test(p.interest_notes), p.interest_notes)
+  const cp = r.j.care_plan || {}
+  ck('v2 read: the care plan draft: its fields, the hours as a number, the narrative', cp.fields.adl_needs === 'Needs standby help showering.' && cp.fields.recommended_hours_per_week === '20'
+     && !('medications' in cp.fields) && /Reported by her daughter/.test(cp.narrative) && cp.heard.includes('narrative'), cp)
+  ck('v2 read: care tasks only from AxisCare\'s own active list (unknown and repeated numbers dropped), in AxisCare\'s day letters; as needed is any time',
+     cp.axiscare_tasks.length === 2 && cp.axiscare_tasks[0].adl_id === 11 && cp.axiscare_tasks[0].name === 'Bathing' && cp.axiscare_tasks[0].days.join('') === 'MWF' && cp.axiscare_tasks[0].require === 1 && cp.axiscare_tasks[0].when === 1
+     && cp.axiscare_tasks[1].adl_id === 22 && cp.axiscare_tasks[1].require === 2 && cp.axiscare_tasks[1].when === 0 && cp.axiscare_tasks[1].days.join('') === 'MF', cp.axiscare_tasks)
+  ck('v2 read: the AI is shown AxisCare\'s active tasks (not the inactive one) and asked for the care plan', /11: Bathing\n22: Meal Preparation/.test(LAST_AI.body.messages[0].content) && !/Old task/.test(LAST_AI.body.messages[0].content)
+     && LAST_AI.body.tools[0].input_schema.properties.care_plan.properties.narrative, LAST_AI.body.messages[0].content.slice(0, 300))
+  ck('v2 read: the payer choices are private, LTC, VA, Medicare GUIDE and CDS; Medicaid is never a payer', LAST_AI.body.tools[0].input_schema.properties.funding_source.enum.join() === ',private,ltc,va,guide,cds', LAST_AI.body.tools[0].input_schema.properties.funding_source.enum)
+  reset(); AI = [{ content: [{ type: 'tool_use', name: 'fill_lead_form', input: { ...ANSWER, funding_source: 'medicaid', medicaid_mentioned: true } }] }]; r = await call({ action: 'read', message_id: 'msgAAA111' })
+  ck('v2 read: a caller on Medicaid: no payer filled, flagged', !('funding_source' in r.j.prefill) && r.j.medicaid_mentioned === true, r.j.prefill.funding_source)
+  reset(); AX_FAIL = true; r = await call({ action: 'read', message_id: 'msgAAA111' })
+  ck('v2 read: AxisCare\'s list unreadable: the form and the draft still come back, no tasks, and it says why', r.status === 200 && r.j.prefill.client_city === 'Nixa' && !r.j.care_plan.axiscare_tasks.length && /could not be read/.test(r.j.tasks_note), r.j.tasks_note)
+  ck('v2 read: AxisCare is only ever read (one GET of its task list)', CALLS.filter((u) => u.includes('axiscare')).every((u) => u.includes('/api/adls')))
   reset(); AI = [{ content: [{ type: 'text', text: 'hm' }] }, { content: [{ type: 'tool_use', name: 'fill_lead_form', input: { ...ANSWER, desired_start_kind: 'by_date', desired_start_date: 'next week' } }] }]
   r = await call({ action: 'read', message_id: 'msgAAA111' })
   ck('read: an answer in text is asked once more; a by-date start with no real date becomes "planning ahead"', r.j.prefill.desired_start_kind === 'planning' && !r.j.prefill.desired_start_date, r.j.prefill)
