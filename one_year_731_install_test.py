@@ -43,6 +43,18 @@ load(os.path.join(HUB, "interview-limits.sql"), strip_mine=True)
 load(os.path.join(HERE, "interview_person_461.sql"))
 load(os.path.join(HERE, "interview_first_choice_512.sql"))
 load(os.path.join(HERE, "screening_gate_586.sql"))
+# 647 (2026-10-13): the office screen is office staff only. The same check as live: a sign-in linked to a staff role.
+s.run("create table auth_identities (person_id uuid, auth_user_id uuid)")
+s.run("create table staff_roles (person_id uuid, entity text, role text)")
+s.run("insert into auth_identities values ('00000000-0000-4000-8000-00000000b0b0', '00000000-0000-4000-8000-00000000a0a0')")
+s.run("insert into staff_roles values ('00000000-0000-4000-8000-00000000b0b0', 'cc_ihs', 'owner_admin')")
+s.run("""create function public.hub_office_ok() returns boolean language sql stable security definer as $$
+  select exists (select 1 from public.auth_identities ai join public.staff_roles r on r.person_id = ai.person_id
+    where ai.auth_user_id::text = nullif(current_setting('request.jwt.claim.sub', true), '') and r.entity = 'cc_ihs'
+      and r.role in ('owner_admin','care_coordinator','staffing_coordinator')) $$""")
+d = s.run("select pg_get_functiondef('public.applicant_screen_by_office(uuid,boolean,boolean,boolean,boolean,boolean)'::regprocedure)")[0][0]
+s.execute_simple(d.replace("if coalesce(auth.role(),'anon') <> 'authenticated' then raise exception 'sign in first'; end if;",
+                           "if not public.hub_office_ok() then raise exception 'office staff only'; end if;"))
 s.run("""create table job_postings (id uuid primary key default gen_random_uuid(), status text, summary text, description text,
   responsibilities text, qualifications text, benefits text)""")
 s.run("""create table job_templates (id serial primary key, summary text, description text, responsibilities text, qualifications text, benefits text)""")

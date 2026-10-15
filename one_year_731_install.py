@@ -116,8 +116,11 @@ def defs_text():
 # ---- the proof: made-up applicants inside one step that always ends by undoing itself ----
 PROOF = r"""
 do $proof$
-declare r jsonb := '{}'::jsonb; a1 uuid; a2 uuid; a3 uuid; t text;
+declare r jsonb := '{}'::jsonb; a1 uuid; a2 uuid; a3 uuid; t text; office uuid;
 begin
+  -- a real office member's sign-in, as 647's proof does (the office screen is office staff only since 647)
+  select ai.auth_user_id into office from public.auth_identities ai join public.staff_roles s on s.person_id = ai.person_id
+   where s.entity = 'cc_ihs' and s.role = 'owner_admin' and ai.auth_user_id is not null limit 1;
   perform set_config('request.jwt.claims', '{"role":"anon"}', true);
   perform set_config('request.jwt.claim.role', 'anon', true);
   -- the form, as the public: family caregiving / under a year / a year or more
@@ -137,7 +140,9 @@ begin
   begin perform public.applicant_screen_by_office(a1, true, true, true, null, null, 'family_ok', 'Proof nurse'); t := 'saved';
   exception when others then t := sqlerrm; end;
   r := r || jsonb_build_object('public_office_door', t);
-  perform set_config('request.jwt.claims', '{"role":"authenticated","email":"proof@example.invalid"}', true);
+  perform set_config('request.jwt.claims', json_build_object('sub', office, 'role', 'authenticated', 'email', 'proof@example.invalid',
+    'app_metadata', json_build_object('hub_access', json_build_array('care_coordinator')))::text, true);
+  perform set_config('request.jwt.claim.sub', office::text, true);
   perform set_config('request.jwt.claim.role', 'authenticated', true);
   begin perform public.applicant_screen_by_office(a1, true, true, true, null, null, 'family_ok', null); t := 'saved';
   exception when others then t := sqlerrm; end;
@@ -183,8 +188,11 @@ BEFORE = {"gap": file_body(SRB, "applicant_screening_gap"), "office": file_body(
 AFTER = {"gap": file_body(S731, "applicant_screening_gap"), "office": file_body(S731, "applicant_screen_by_office", 8),
          "guard": file_body(S731, "job_applicants_screen_guard"), "stop": file_body(S731, "applicant_followup_stop"),
          "save": file_body(S731, "apply_save")}
-# The rollback holds the very text this was built on: 586's four and noshow_policy's apply_save.
-BUILT_ON = {"gap": file_body(S586, "applicant_screening_gap"), "office": file_body(S586, "applicant_screen_by_office", 6),
+# The rollback holds the very text this was built on: 586's four (the office screen as 647 left it) and noshow_policy's apply_save.
+# 647 (2026-10-13) edited the office screen in place: "sign in first" became "office staff only" (one line).
+O586 = "if coalesce(auth.role(),'anon') <> 'authenticated' then raise exception 'sign in first'; end if;"
+O647 = "if not public.hub_office_ok() then raise exception 'office staff only'; end if;"
+BUILT_ON = {"gap": file_body(S586, "applicant_screening_gap"), "office": (file_body(S586, "applicant_screen_by_office", 6) or "").replace(O586, O647),
             "guard": file_body(S586, "job_applicants_screen_guard"), "stop": file_body(S586, "applicant_followup_stop"),
             "save": file_body(SNS, "apply_save")}
 if not all(BEFORE.values()) or not all(AFTER.values()) or BEFORE != BUILT_ON:
@@ -265,7 +273,7 @@ chk(P.get("yes_gap") == "none", "a year or more: they can book an interview")
 chk(P.get("no_gap") == "ineligible" and P.get("no_status") == "declined", "under a year: the application ends there (declined) and can't book")
 chk(P.get("family_gap") == "questions", "unpaid family caregiving: no interview until the office has verified it")
 chk("verify family caregiving" in str(P.get("family_stop")), "...and the \"pick a time\" follow-up texts wait too")
-chk("sign in first" in str(P.get("public_office_door")), "the public can't use the office's answer screen")
+chk("office staff only" in str(P.get("public_office_door")), "the public can't use the office's answer screen")
 chk("who confirmed" in str(P.get("verify_without_who")), "the office has to say who confirmed the family caregiving")
 chk(P.get("office_verify") == "none", "once the office verifies it, they can book")
 chk("SCREENING_LOCKED" in str(P.get("office_change_answer")), "an answer already given can't be changed")
