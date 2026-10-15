@@ -26,7 +26,12 @@ export const END_REASONS: Record<string, string> = {
   beyond_scope: 'Needs exceed our scope', unable_to_staff: 'Unable to staff', requested_discharge: 'Client or family requested discharge',
   auth_ended: 'Medicaid or authorization ended', deceased: 'Deceased',
   /* Medicaid intake slice B (2026-10-08): the two other ways WE end services (19 CSR 15-7.021(16)(C),(D)) */
-  noncompliance: 'Does not follow the care plan (we are ending services)', safety: 'Threats or abuse toward our staff (we are ending services)', other: 'Other' }
+  noncompliance: 'Does not follow the care plan (we are ending services)', safety: 'Threats or abuse toward our staff (we are ending services)',
+  /* IHS and ADW end 2026-11-16 (Samantha 2026-10-15: the last 3 are cancelled or move to Caring CDS; "both new reasons under
+     the 21-day notice rule"). We are the ones stopping, while they still need care: 19 CSR 15-7.021(16)(D). */
+  moved_cds: 'Moved to Caring CDS (we no longer provide IHS or ADW)', program_ended: 'We no longer provide this program (IHS or ADW)', other: 'Other' }
+/* the IHS/ADW reasons are Medicaid by definition: their rule applies even when the Hub has no Medicaid plan on file */
+export const IHS_END_REASONS = ['moved_cds', 'program_ended']
 /* Medicaid intake slice B (Samantha 2026-10-08, her approved matrix): the discharge rules by reason.
    notice21: we end services while they still need care → written notice to the participant or family AND to DSDS at least
      21 days before the last day; care continues for the 21 days or until DSDS arranges other care (19 CSR 15-7.021(16)(D)).
@@ -34,7 +39,7 @@ export const END_REASONS: Record<string, string> = {
    immediate: death, a facility, no longer needs our services, threats or abuse → written notice to DSDS right away
      ((16)(B),(C)). Never blocks recording what happened; the checklist step stays open until a person ticks it.
    dsds: DSDS closed the case → stop right away ((16)(A)). choice: the participant chose another provider or to stop. */
-export const DISCHARGE_RULE: Record<string, string> = { beyond_scope: 'notice21', unable_to_staff: 'notice21', noncompliance: 'notice21',
+export const DISCHARGE_RULE: Record<string, string> = { beyond_scope: 'notice21', unable_to_staff: 'notice21', noncompliance: 'notice21', moved_cds: 'notice21', program_ended: 'notice21',
   deceased: 'immediate', facility: 'immediate', moved_out: 'immediate', safety: 'immediate', auth_ended: 'dsds', other_provider: 'choice', requested_discharge: 'choice', other: 'choice' }
 const addDaysYmd = (d: string, n: number) => { const x = new Date(d + 'T12:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10) }
 /** pure: may this Medicaid end be recorded? (only the 21-day reasons are ever refused) */
@@ -57,8 +62,25 @@ export function dischargeCheck(reason: string, b: Any, isOwner: boolean, today_:
 }
 export const PAUSE_REASONS: Record<string, string> = { hospital: 'Hospital stay', rehab: 'Rehab or skilled nursing stay', family_away: 'Family away', other: 'Other' }
 /* the older AxisCare-review answer words, for client_status_decide (the exact reason is kept on the change and the role) */
-const LEGACY: Record<string, string> = { other_provider: 'discharged', moved_out: 'moved', facility: 'facility', beyond_scope: 'discharged', unable_to_staff: 'discharged',
-  requested_discharge: 'discharged', auth_ended: 'discharged', deceased: 'deceased', other: 'other' }
+export const LEGACY: Record<string, string> = { other_provider: 'discharged', moved_out: 'moved', facility: 'facility', beyond_scope: 'discharged', unable_to_staff: 'discharged',
+  requested_discharge: 'discharged', auth_ended: 'discharged', deceased: 'deceased', other: 'other',
+  /* 2026-10-15: noncompliance and safety were missing, so ending care from an AxisCare review with them was refused */
+  noncompliance: 'discharged', safety: 'other', moved_cds: 'discharged', program_ended: 'discharged' }
+/* ── PLANNED END (Samantha 2026-10-15, "plus planned future end dates"): End care with a last day in the future records the
+   end now (every check runs now: the reason, the 21-day notices, an owner) and care continues as normal. The day after the
+   last day, the sweep carries it out exactly as End care would, as the person who planned it. It can be cancelled with a
+   reason. Both are permanent care changes (kinds end_planned, end_cancelled). ── */
+export function plannedEnd(changes: Any[]): Any | null {
+  const cs = (changes || []).filter((c: Any) => c && ['end_planned', 'end_cancelled', 'end', 'return'].includes(c.kind)).sort((a: Any, b: Any) => String(a.made_at).localeCompare(String(b.made_at)))
+  const last = cs[cs.length - 1]
+  return last && last.kind === 'end_planned' ? last : null
+}
+/** the notice dates a planned end recorded on its checklist, back as the End care form's fields */
+export function plannedFields(pe: Any): Any {
+  const on = (k: string) => ((pe.checklist || []).find((x: Any) => x.key === k && x.state === 'done') || {}).on || undefined
+  const arr = (pe.checklist || []).find((x: Any) => x.key === 'continue_21' && x.state === 'done' && /DSDS arranged/.test(String(x.how || '')))
+  return { notice_participant_on: on('notice_21'), notice_dsds_on: on('dsds_written'), dsds_arranged_on: arr ? arr.on : undefined, dsds_notice_on: on('dsds_written') }
+}
 
 /* ── the Medicaid checklist: what the regulation says, as a person's checklist. Never automatic. ──
    source 'regulation' cites the rule; anything DSDS hasn't answered says so instead of assuming (her 8 questions). */
@@ -200,13 +222,17 @@ export async function careAction(c: Any): Promise<{ body: Any; status?: number }
     } catch { /* keep the journey's payer */ }
   }
   const ccOf = () => lc(current?.assigned_cc || latest?.assigned_cc || '') || who.email
+  const pe = plannedEnd(changes ?? [])
+  const medFor = (reason: string) => payer === 'medicaid' || IHS_END_REASONS.includes(reason)
 
   if (b.action === 'care_state') {
     return { body: { axiscare_client_id: ax, person_id: personId, client_name: name, state, pause: pauseRow ?? null, payer,
       episodes: js.map((j: Any) => ({ journey_id: j.journey_id, episode_n: j.episode_n ?? 1, status: j.status, closed_reason: j.closed_reason ?? null, created_at: j.created_at, assigned_cc: j.assigned_cc })),
       roles: (roles ?? []).map((r: Any) => ({ status: r.status, started_at: r.started_at ?? null, ended_at: r.ended_at ?? null, ended_date_basis: r.ended_date_basis ?? null, end_reason: r.end_reason ?? null })),
-      changes: changes ?? [], can: { pause: can && ['active', 'starting'].includes(state), resume: can && state === 'paused', end: can && ['active', 'starting', 'paused'].includes(state),
-        return: isOwner && state === 'past', end_date: can && ['past', 'deceased'].includes(state) }, reasons: { end: END_REASONS, pause: PAUSE_REASONS }, discharge: DISCHARGE_RULE } }
+      changes: changes ?? [], planned_end: pe, can: { pause: can && ['active', 'starting'].includes(state), resume: can && state === 'paused', end: can && ['active', 'starting', 'paused'].includes(state),
+        return: isOwner && state === 'past', end_date: can && ['past', 'deceased'].includes(state),
+        cancel_end: !!pe && can && (isOwner || DISCHARGE_RULE[pe.reason] !== 'notice21') },
+      reasons: { end: END_REASONS, pause: PAUSE_REASONS }, discharge: DISCHARGE_RULE, always_medicaid: IHS_END_REASONS } }
   }
   if (!can) return err('Only a Care Coordinator or an owner can pause or end care.', 403)
 
@@ -285,10 +311,27 @@ export async function careAction(c: Any): Promise<{ body: Any; status?: number }
       const reason = String(b.reason || ''), explanation = String(b.explanation || '').trim()
       if (!END_REASONS[reason]) return err('Pick why care ended.')
       if (reason === 'other' && !explanation) return err('Explain why care ended.')
-      if (!isYmd(b.effective_date) || b.effective_date > today()) return err('The effective date (the last day of service, not in the future) is required.')
-      const dc = payer === 'medicaid' ? dischargeCheck(reason, b, isOwner, today()) : { ok: true, done: {} as Record<string, string> }
+      if (!isYmd(b.effective_date)) return err('The effective date (the last day of service) is required.')
+      const med = medFor(reason), cpayer = med ? 'medicaid' : payer
+      const dc = med ? dischargeCheck(reason, b, isOwner, today()) : { ok: true, done: {} as Record<string, string> }
       if (!dc.ok) return err(dc.why || 'Not allowed.')
       const label = END_REASONS[reason], seat = isOwner ? 'owner_decision' : 'client_intake'
+      const buildChecklist = () => {
+        const out = checklistFor('end', reason, cpayer).map((x: Any) => dc.done && dc.done[x.key] ? { ...x, state: 'done', on: dc.done[x.key], how: 'Date entered when care was ended', by: who.email, by_name: who.name, at: now } : x)
+        if (med && DISCHARGE_RULE[reason] === 'notice21' && isYmd(b.dsds_arranged_on)) out.forEach((x: Any) => { if (x.key === 'continue_21') Object.assign(x, { state: 'done', on: b.dsds_arranged_on, how: 'DSDS arranged other care', by: who.email, by_name: who.name, at: now }) })
+        return out
+      }
+      /* a last day in the future: plan it (every check above has run); care continues as normal until then */
+      if (b.effective_date > today()) {
+        if (b.review_id) return err('An AxisCare status change is answered with the day it happened, not a future day.')
+        if (pe) return err('An end is already planned for ' + pe.effective_date + '. Cancel it first to change it.')
+        const ch = await record({ kind: 'end_planned', reason, explanation: explanation || null, effective_date: b.effective_date, notified_by: String(b.notified_by || '').slice(0, 200) || null,
+          journey_id: (current || latest)?.journey_id ?? null, checklist: buildChecklist(), payer: cpayer })
+        if (current) { await event(db, current.journey_id, null, actor, 'care_end_planned', { last_day: b.effective_date, reason, change_id: ch.change_id }, explanation || null); await refreshJourney(current) }
+        return { body: { outcome: 'planned', change_id: ch.change_id, last_day: b.effective_date } }
+      }
+      /* carrying out a planned end: its checklist (with anything ticked since) becomes the end's */
+      const fromPlan = b.planned_change_id && pe && pe.change_id === b.planned_change_id ? pe : null
       const evid = 'Care ended (' + label + ') on ' + b.effective_date + ', recorded by ' + who.name + (explanation ? ': ' + explanation : '') + (b.notified_by ? ' · told by ' + b.notified_by : '')
       let roleRes: Any = null
       if (b.review_id) {
@@ -303,10 +346,9 @@ export async function careAction(c: Any): Promise<{ body: Any; status?: number }
         roleRes = data
       }
       /* the notice dates entered at End care tick their steps (who, when, how); nothing else is ticked for a person */
-      const cl = checklistFor('end', reason, payer).map((x: Any) => dc.done && dc.done[x.key] ? { ...x, state: 'done', on: dc.done[x.key], how: 'Date entered when care was ended', by: who.email, by_name: who.name, at: now } : x)
-      if (payer === 'medicaid' && DISCHARGE_RULE[reason] === 'notice21' && isYmd(b.dsds_arranged_on)) cl.forEach((x: Any) => { if (x.key === 'continue_21') Object.assign(x, { state: 'done', on: b.dsds_arranged_on, how: 'DSDS arranged other care', by: who.email, by_name: who.name, at: now }) })
-      const ch = await record({ kind: 'end', reason, explanation: explanation || null, effective_date: b.effective_date, notified_by: String(b.notified_by || '').slice(0, 200) || null,
-        journey_id: (current || latest)?.journey_id ?? null, checklist: cl })
+      const cl = fromPlan ? (fromPlan.checklist || []) : buildChecklist()
+      const ch = await record({ kind: 'end', reason, explanation: (fromPlan ? 'As planned on ' + String(fromPlan.made_at).slice(0, 10) + (explanation ? ': ' + explanation : '') : explanation) || null,
+        effective_date: b.effective_date, notified_by: String(b.notified_by || '').slice(0, 200) || null, journey_id: (current || latest)?.journey_id ?? null, checklist: cl, payer: cpayer })
       if (pauseRow) { await db.from('client_pause').update({ status: 'closed', closed_change: ch.change_id, closed_kind: 'ended', closed_at: now }).eq('pause_id', pauseRow.pause_id); await closeCard(restartCardId(pauseRow), 'Care ended ' + b.effective_date) }
       /* the journey and its First shift launch close with the reason; nothing is deleted */
       const why = 'Care ended (' + (reason === 'deceased' ? 'deceased' : label) + ') on ' + b.effective_date
@@ -337,6 +379,14 @@ export async function careAction(c: Any): Promise<{ body: Any; status?: number }
         }
       }
       return { body: { outcome: 'ended', change_id: ch.change_id, role: roleRes, closed_work: closedWork, sympathy } }
+    }
+    if (b.action === 'care_end_cancel') {
+      if (!pe) return err('No end is planned for this client.')
+      if (DISCHARGE_RULE[pe.reason] === 'notice21' && !isOwner) return err('This planned end was recorded by an owner under the 21-day notice rule: ask Samantha to cancel it.', 403)
+      const why = String(b.explanation || '').trim(); if (why.length < 5) return err('Say why the planned end is cancelled.')
+      const ch = await record({ kind: 'end_cancelled', explanation: 'Planned end on ' + pe.effective_date + ' cancelled: ' + why, effective_date: today(), journey_id: pe.journey_id ?? null })
+      if (current) { await event(db, current.journey_id, null, actor, 'care_end_cancelled', { was: pe.effective_date, change_id: ch.change_id }, why); await refreshJourney(current) }
+      return { body: { outcome: 'cancelled', change_id: ch.change_id } }
     }
     if (b.action === 'care_end_date') {
       if (!['past', 'deceased'].includes(state)) return err('Only a past client\'s end date can be corrected.')
@@ -373,6 +423,34 @@ export async function careAction(c: Any): Promise<{ body: Any; status?: number }
     }
   } catch (e) { return err(String((e as Error).message || e), 500, 'error') }
   return err('unknown care action', 400)
+}
+
+/** the sweep: carry out every planned end whose last day has passed, as the person who planned it. A planned end that can't
+ *  be carried out raises ONE card for the owners (no silent failures); it is tried again on the next sweep. */
+export async function runPlannedEnds(c: Any): Promise<{ due: number; ended: number; failed: number }> {
+  const { db, pp, today } = c, out = { due: 0, ended: 0, failed: 0 }
+  const { data: rows } = await db.from('client_care_change').select('*').in('kind', ['end_planned', 'end_cancelled', 'end', 'return']).order('made_at', { ascending: true })
+  const byAx = new Map<string, Any[]>()
+  for (const r of rows ?? []) { const k = String(r.axiscare_client_id); byAx.set(k, [...(byAx.get(k) || []), r]) }
+  for (const [ax, cs] of byAx) {
+    const pe = plannedEnd(cs); if (!pe || !(pe.effective_date < today())) continue
+    out.due++
+    const isOwner = (pp.owners || []).includes(lc(pe.made_by))
+    const who = { email: lc(pe.made_by), name: pe.made_by_name || pe.made_by, roles: isOwner ? ['owner_admin'] : ['care_coordinator'], person_id: null }
+    const r = await careAction({ ...c, who, isOwner, b: { action: 'care_end', axiscare_client_id: ax, reason: pe.reason, explanation: pe.explanation || undefined, effective_date: pe.effective_date,
+      notified_by: pe.notified_by || undefined, planned_change_id: pe.change_id, is_test: !!pe.is_test, ...plannedFields(pe) } })
+    if (r.body?.outcome === 'ended') { out.ended++; continue }
+    out.failed++
+    const id = 'ops_pend_' + String(pe.change_id).replace(/-/g, '').slice(0, 12)
+    const { data: row } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+    const have = (Array.isArray(row?.data) ? row.data : []).find((x: Any) => x?.id === id)
+    if (!have || have.status !== 'open') for (const o of (pp.owners || []).slice(0, 1)) {
+      await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id, kind: 'planned_end_failed', status: 'open', source_type: 'client_care', axiscare_client_id: ax, about: pe.client_name,
+        title: 'The planned end of care for ' + (pe.client_name || 'a client') + ' (last day ' + pe.effective_date + ') did not go through', detail: String(r.body?.error || 'unknown').slice(0, 300) + '. Open their profile and use End care, or cancel the planned end.',
+        owner: o, owner_name: pp.names?.[o] || o, link: '#p/A' + ax + '/summary', urgency: 'urgent', due: new Date().toISOString(), is_test: !!pe.is_test, created_by: 'client care', opened_by: 'client care', created_at: new Date().toISOString() } })
+    }
+  }
+  return out
 }
 
 /** every AxisCare client whose care is paused right now (for the sweep, the cards and the shift jobs) */
