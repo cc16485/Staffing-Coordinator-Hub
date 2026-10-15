@@ -3,7 +3,7 @@
 # fresh worktree of this commit (as the Desktop step runs it). Never touches a real project.  python3 one_path_743_install_test.py
 import json, os, re, subprocess, tempfile, threading, http.server, hashlib, shutil
 HERE = os.path.dirname(os.path.abspath(__file__))
-BASE_SHA = subprocess.run(["git", "-C", HERE, "rev-parse", "HEAD~1"], capture_output=True, text=True).stdout.strip()   # origin/main before 771
+BASE_SHA = subprocess.run(["git", "-C", HERE, "merge-base", "HEAD", "origin/main"], capture_output=True, text=True).stdout.strip()   # origin/main before 771
 res = []; ck = lambda n, c, note="": res.append((n, bool(c), "" if c else str(note)[:900]))
 S = {}; M = {}
 def reset(**m):
