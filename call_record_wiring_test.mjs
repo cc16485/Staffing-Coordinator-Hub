@@ -40,12 +40,9 @@ try {
   reset({ leads: [], post_call_followups: [], call_followup_log: [], ops_items: [] }); AI = { ...AI_OUT }
   let r = await cf(new Request('https://x/functions/v1/call-followup?token=' + ENV.CALL_FOLLOWUP_TOKEN, { method: 'POST',
     body: JSON.stringify({ contactId: 'C1', first_name: 'Susan', last_name: 'Smith', phone: '4175550100', direction: 'inbound', transcript: 'x'.repeat(200) }) }))
-  const lead = T.app_data.find((x) => x.key === 'leads').data[0]
-  ck('call reader: one call-record line, our AI\'s reading, where it was written, from the number (not a name)', REC.length === 1 && REC[0].p_kind === 'ai_reading'
-     && REC[0].p_source === 'our_ai' && REC[0].p_summary === 'Susan called about her mom.' && REC[0].p_written_to === 'lead:' + lead.id && REC[0].p_phone === '4175550100'
-     && REC[0].p_via === 'call-followup' && REC[0].p_direction === 'inbound', REC)
-  ck('call reader: still writes the lead and the draft as before (Gate 0 guard intact)', lead && lead.ai_suggestions?.length === 1 && !('needs' in lead && lead.needs?.length)
-     && T.app_data.find((x) => x.key === 'post_call_followups').data.length === 1)
+  /* 2026-10-14: the call reader is retired (a person presses Make this a lead): it records and writes nothing */
+  ck('call reader (retired 2026-10-14): no call-record line, no lead, no draft', REC.length === 0 && !T.app_data.find((x) => x.key === 'leads').data.length
+     && !T.app_data.find((x) => x.key === 'post_call_followups').data.length, { REC, r: r.status })
   /* ---- call-disposition ---- */
   delete ENV.ANTHROPIC_API_KEY
   const cd = await load('call-disposition')

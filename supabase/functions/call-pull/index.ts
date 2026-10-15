@@ -10,6 +10,11 @@
 // do (create/update a lead, or "not a client lead") and creates nothing. Calls seen in practice are not redone later.
 // Missed calls (no talk time) are skipped: the Operations Inbox has those. Nothing is ever sent to anyone.
 // Runs on its schedule (the vault secret) or the owner's key. Every GoHighLevel request here is a read.
+//
+// 2026-10-14 (Samantha, "Make this a lead"): the AI no longer makes leads. Calls with a transcript are only recorded
+// here (stage done/practice, outcome "ready for the call reader"); call-tasks reads them, and its "new client inquiry"
+// shows as the "Sounds like a new family" tag on the Hub. A person presses Make this a lead (call-to-lead). call-followup
+// is no longer asked.
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
@@ -53,8 +58,7 @@ Deno.serve(async (req) => {
   const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const tok = Deno.env.get('GHL_TOKEN') || Deno.env.get('GHL_API_KEY') || ''
   const loc = Deno.env.get('GHL_LOCATION_ID') || ''
-  const readerTok = Deno.env.get('CALL_FOLLOWUP_TOKEN') || ''
-  if (!tok || !loc || !readerTok) { await beat(db, false, 'missing GoHighLevel key/location or call reader code'); return json({ error: 'not set up' }, 500) }
+  if (!tok || !loc) { await beat(db, false, 'missing GoHighLevel key/location'); return json({ error: 'not set up' }, 500) }
 
   const { data: stRow } = await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
   // deno-lint-ignore no-explicit-any
@@ -117,21 +121,10 @@ Deno.serve(async (req) => {
       try { const r = await fetch(`${GHL}/contacts/${encodeURIComponent(c.contactId)}`, { headers: H(tok, '2021-07-28') }); if (r.ok) ct = (await r.json())?.contact || {} } catch { /* name stays blank */ }
     }
     row.caller = shortName(ct.firstName, ct.lastName) || null
-    /* 4 · the call reader: the same fields the old workflow sent, transcript last */
-    const payload = { contactId: c.contactId, first_name: ct.firstName || '', last_name: ct.lastName || '', phone: ct.phone || '',
-      email: ct.email || '', direction: c.inbound ? 'inbound' : 'outbound', transcript: text }
-    const base = `${Deno.env.get('SUPABASE_URL')}/functions/v1/call-followup?token=${encodeURIComponent(readerTok)}${live ? '' : '&dry=1'}`
-    try {
-      const r = await fetch(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-      const j = await r.json().catch(() => ({}))
-      if (!r.ok) throw new Error(`call reader answered ${r.status}: ${String(j?.error || '').slice(0, 80)}`)
-      const outcome = j.status === 'skipped' ? `not a client lead${j.detail ? ': ' + String(j.detail).slice(0, 80) : ''}` : String(j.status || 'handled')
-      await db.from('call_pull_seen').upsert({ ...row, stage: live ? 'done' : 'practice', outcome, branch: j.branch || null })
-      out.handled++; if (live) out.done++; else out.practice++
-    } catch (e) {
-      await db.from('call_pull_seen').upsert({ ...row, stage: 'error', outcome: String((e as Error)?.message || e).slice(0, 160) })
-      out.errors++
-    }
+    /* 4 · recorded for the call reader (call-tasks); no lead is made here any more */
+    const { error: upErr } = await db.from('call_pull_seen').upsert({ ...row, stage: live ? 'done' : 'practice', outcome: 'ready for the call reader', branch: null })
+    if (upErr) { out.errors++; continue }
+    out.handled++; if (live) out.done++; else out.practice++
   }
   await beat(db, out.errors === 0, JSON.stringify(out))
   return json({ ok: true, ...out })
