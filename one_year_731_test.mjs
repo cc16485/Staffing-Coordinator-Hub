@@ -39,6 +39,12 @@ await ex(fs.readFileSync('interview_person_461.sql', 'utf8').replace(/^notify .*
 await ex(fs.readFileSync('interview_first_choice_512.sql', 'utf8').replace(/^notify .*$/m, ''))
 
 await ex(fs.readFileSync('screening_gate_586.sql', 'utf8').replace(/^notify .*$/m, ''))
+// 647 (2026-10-13) made the office screen office staff only, editing that one line in place. Here an office member is any
+// sign-in (the live test is the staff roles).
+await ex(`create function public.hub_office_ok() returns boolean language sql stable as $$ select coalesce(auth.role(),'anon') = 'authenticated' $$`)
+{ const d = (await q(`select pg_get_functiondef('public.applicant_screen_by_office(uuid,boolean,boolean,boolean,boolean,boolean)'::regprocedure) d`))[0].d
+  await ex(d.replace("if coalesce(auth.role(),'anon') <> 'authenticated' then raise exception 'sign in first'; end if;",
+    "if not public.hub_office_ok() then raise exception 'office staff only'; end if;")) }
 const day = (n, h) => `(date_trunc('day', now() at time zone 'America/Chicago') + interval '${n} days' + interval '${h} hours') at time zone 'America/Chicago'`
 const asRole = async (r, email = null) => ex(`update auth_state set role = '${r}', email = ${email ? `'${email}'` : 'null'}`)
 let slot = 3
@@ -105,7 +111,7 @@ ck('office answers an old application on the phone: yes clears the gap', (await 
 ck('office calls with the old six answers still work (no experience answer: still waiting)', (await err(`select applicant_screen_by_office($1, true, true, true)`, [junk])) === null && (await gap(junk)) === 'questions')
 ck('a direct table write cannot change a given answer', /SCREENING_LOCKED/.test(await err(`update job_applicants set one_year = 'yes' where id = $1`, [no]) || ''))
 await asRole('anon')
-ck('the public cannot use the office door', /sign in first|permission denied/.test(await office(junk, 'yes') || ''))
+ck('the public cannot use the office door', /office staff only|permission denied/.test(await office(junk, 'yes') || ''))
 await asRole('authenticated', 'office@example.com')
 ck('the check constraint refuses anything else', /one_year_chk/.test(await err(`update job_applicants set one_year = 'maybe' where id = $1`, [junk]) || ''))
 
@@ -115,6 +121,7 @@ const afterRb = await form(undefined)
 ck('after the rollback a finished form with no experience answer can book again (586 behaviour)', (await gap(afterRb)) === null)
 await asRole('authenticated', 'office@example.com')
 ck('...the office call with six answers works again', (await err(`select applicant_screen_by_office($1, true, true, true)`, [afterRb])) === null)
+ck('...it is office staff only again (as 647 left it)', /hub_office_ok/.test((await q(`select pg_get_functiondef('public.applicant_screen_by_office(uuid,boolean,boolean,boolean,boolean,boolean)'::regprocedure) d`))[0].d))
 ck('...and the eight-answer office function is gone', (await q(`select count(*)::int n from pg_proc where proname = 'applicant_screen_by_office'`))[0].n === 1)
 
 const ok = res.filter((r) => r[1]).length

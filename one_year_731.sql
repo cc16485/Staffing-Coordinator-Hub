@@ -12,8 +12,8 @@
 --   · job_applicants_screen_guard: the same lock for one_year, on every route.
 --   · applicant_followup_stop: no "pick a time" follow-ups while family caregiving waits for the office.
 --   · apply_save: stores the form's answer. Nothing else in it changes.
--- Built on screening_gate_586.sql (gap, office, guard, follow-up stop) and noshow_policy.sql (apply_save); the Desktop
--- step checks the live ones match before changing anything. Rollback: one_year_731_rollback.sql.
+-- Built on screening_gate_586.sql (gap, office, guard, follow-up stop) as changed by office_only_647.sql (the office
+-- screen is office staff only) and noshow_policy.sql (apply_save); the Desktop step checks the live ones match first. Rollback: one_year_731_rollback.sql.
 begin;
 
 alter table public.job_applicants add column if not exists one_year text;
@@ -52,7 +52,7 @@ create or replace function public.applicant_screen_by_office(p uuid, p_age_ok bo
  returns text language plpgsql security definer set search_path to 'public' as $f$
 declare v_by text;
 begin
-  if coalesce(auth.role(),'anon') <> 'authenticated' then raise exception 'sign in first'; end if;
+  if not public.hub_office_ok() then raise exception 'office staff only'; end if;
   if p_age_ok is null or p_work_auth is null or p_has_transport is null then
     raise exception 'all three answers are needed';
   end if;

@@ -1,4 +1,5 @@
--- one_year_731_rollback.sql: puts back 586's gap / office / guard / follow-up stop and noshow_policy's apply_save.
+-- one_year_731_rollback.sql: puts back 586's gap / office (as 647 left it: office staff only) / guard / follow-up stop
+-- and noshow_policy's apply_save.
 -- The two columns and the check stay (harmless left in place; nothing reads them once this has run).
 begin;
 create or replace function public.applicant_screening_gap(p uuid)
@@ -24,7 +25,7 @@ create or replace function public.applicant_screen_by_office(p uuid, p_age_ok bo
  returns text language plpgsql security definer set search_path to 'public' as $f$
 declare v_by text;
 begin
-  if coalesce(auth.role(),'anon') <> 'authenticated' then raise exception 'sign in first'; end if;
+  if not public.hub_office_ok() then raise exception 'office staff only'; end if;
   if p_age_ok is null or p_work_auth is null or p_has_transport is null then
     raise exception 'all three answers are needed';
   end if;
