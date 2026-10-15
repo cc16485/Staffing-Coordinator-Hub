@@ -19,7 +19,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { opEvent } from '../_shared/events.ts'
-import { fromGhl, decide, already, apply, leadsFor, type Msg, type Person, type Reading } from '../_shared/lead-record.ts'
+import { fromGhl, decide, already, apply, leadsFor, matchedOn, type Msg, type Person, type Reading } from '../_shared/lead-record.ts'
 import '../_shared/lead-rules.js'
 // deno-lint-ignore no-explicit-any
 type Any = any
@@ -125,10 +125,12 @@ Deno.serve(async (req) => {
   out.conversations = convos.length
 
   /* 3 · messages that still need looking at: everything new in matched conversations, plus short calls left waiting */
-  const seenRows = (await db.from('lead_record_seen').select('message_id, status, tries, lead_id').eq('mode', mode).gte('msg_at', new Date(since).toISOString())).data ?? []
+  const seenRows = (await db.from('lead_record_seen').select('message_id, status, tries, lead_id, contact_name').eq('mode', mode).gte('msg_at', new Date(since).toISOString())).data ?? []
   const seen = new Map(seenRows.map((r: Any) => [r.message_id, r]))
   const final = (id: string) => { const s = seen.get(id); return !!s && !(s.status === 'waiting' || (s.status === 'error' && s.tries < MAX_TRIES)) }
-  type Item = { m: Msg; cands: Any[] }
+  /* 772 (her safeguards): each row keeps GoHighLevel's name for the contact and which of the lead's numbers matched,
+     so the office can check every row went to the right family before this is switched on */
+  type Item = { m: Msg; cands: Any[]; who: string; phone: string }
   const items: Item[] = []
   for (const c of convos) {
     const cands = leadsFor(leads, String(c.phone || ''))
@@ -145,7 +147,7 @@ Deno.serve(async (req) => {
         const m = fromGhl(raw, String(c.contactId || ''))
         if (!m) continue
         if (Date.parse(m.at) < since) { reachedOld = true; continue }
-        if (!final(m.id)) items.push({ m, cands })
+        if (!final(m.id)) items.push({ m, cands, who: String(c.fullName || c.contactName || '').replace(/\s+/g, ' ').trim().slice(0, 80), phone: String(c.phone || '') })
       }
       if (reachedOld || !b?.messages?.nextPage || !msgs.length) break
       lastId = String(msgs[msgs.length - 1]?.id || ''); if (!lastId) break
@@ -160,7 +162,7 @@ Deno.serve(async (req) => {
     if (!r.ok) { out.errors++; continue }
     const j = await r.json().catch(() => ({}))
     const m = fromGhl(j?.message ?? j)
-    if (m) items.push({ m, cands: [lead] })
+    if (m) items.push({ m, cands: [lead], who: String(w.contact_name || ''), phone: String(lead.phone || '') })
   }
   out.messages = items.length
   items.sort((a, b) => a.m.at.localeCompare(b.m.at))
@@ -168,8 +170,10 @@ Deno.serve(async (req) => {
   /* 4 · decide each one; group the writes by lead */
   const rows: Any[] = []
   const byLead = new Map<string, Array<{ m: Msg; d: Any }>>()
-  for (const { m, cands } of items) {
-    const base = { message_id: m.id, mode, msg_at: m.at, kind: m.kind, tries: (seen.get(m.id)?.tries ?? 0) + 1, seen_at: new Date().toISOString() }
+  const extra = new Map<string, Any>()
+  for (const { m, cands, who, phone } of items) {
+    const base: Any = { message_id: m.id, mode, msg_at: m.at, kind: m.kind, tries: (seen.get(m.id)?.tries ?? 0) + 1, seen_at: new Date().toISOString(), contact_name: who || null, matched_on: cands.length === 1 ? (matchedOn(cands[0], phone) || null) : null }
+    extra.set(m.id, { contact_name: base.contact_name, matched_on: base.matched_on })
     if (cands.length > 1) {
       const d: Any = decide(m, users[m.userId] ?? null, null, Number.MAX_SAFE_INTEGER)   // never waits: a person picks the lead
       rows.push({ ...base, status: 'several', candidates: cands.map((l) => String(l.id)), line: d.line, ev: { ...d.ev, ref: 'ghl:' + m.id, at: m.at } })
@@ -209,7 +213,7 @@ Deno.serve(async (req) => {
           summary: `First real conversation with ${who} (recorded from the office line)` })
       }
       for (const r of res) {
-        rows.push({ message_id: r.m.id, mode, msg_at: r.m.at, kind: r.m.kind, status: r.status, lead_id: id, line: r.line, ev: r.ev, tries: (seen.get(r.m.id)?.tries ?? 0) + 1, seen_at: new Date().toISOString() })
+        rows.push({ ...extra.get(r.m.id), message_id: r.m.id, mode, msg_at: r.m.at, kind: r.m.kind, status: r.status, lead_id: id, line: r.line, ev: r.ev, tries: (seen.get(r.m.id)?.tries ?? 0) + 1, seen_at: new Date().toISOString() })
         if (r.status === 'already') out.already++; else if (live) out.recorded++; else out.would_record++
       }
       done = true

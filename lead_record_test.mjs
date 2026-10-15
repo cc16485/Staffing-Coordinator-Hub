@@ -10,12 +10,12 @@ const reset = (live = false) => {
   T = { app_data: [{ key: 'ops_settings', data: { lead_record_live: live, lead_record_since: ago(7 * 24 * 60) } },
     { key: 'leads', data: [lead('L1', '(417) 555-0101'), lead('L2', '4175550102', { status: 'Contacted', contact_events: [{ at: ago(20), channel: 'sms', direction: 'out', outcome: 'sent', actor: 'human', by: 'krystal@mo-care.com', ref: 'Here is the link' }] }),
       lead('L3', '4175550103'), lead('L4', '4175550199', { client_phone: '417-555-0103' }), lead('L5', '4175550105', { archived: true }),
-      lead('L6', '4175550106', { contact_events: [{ at: ago(100), channel: 'call', direction: 'out', outcome: 'connected', actor: 'human', by: 'sam@mo-care.com' }], first_human_contact_at: ago(100), first_human_attempt_at: ago(100), status: 'Contacted' })] },
+      lead('L7', '4175550170', { client_phone: '4175550107' }), lead('L6', '4175550106', { contact_events: [{ at: ago(100), channel: 'call', direction: 'out', outcome: 'connected', actor: 'human', by: 'sam@mo-care.com' }], first_human_contact_at: ago(100), first_human_attempt_at: ago(100), status: 'Contacted' })] },
     { key: 'ghl_users', data: [] }, { key: 'automation_heartbeats', data: [] }],
     lead_record_seen: [], lead_record_state: [], call_task_reading: [], op_events: [] }
   const M = (id, type, min, dir, o = {}) => ({ id, messageType: type, dateAdded: ago(min), direction: dir, ...o })
   G = { users: [{ id: 'u-kr', email: 'Krystal@mo-care.com', firstName: 'Krystal' }, { id: 'u-sam', email: 'sam@mo-care.com', firstName: 'Samantha' }],
-    convos: [{ id: 'c1', phone: '+14175550101', contactId: 'k1', lastMessageDate: NOW - 5 * 60e3 }, { id: 'c2', phone: '+14175550102', contactId: 'k2', lastMessageDate: NOW - 19 * 60e3 },
+    convos: [{ id: 'c1', phone: '+14175550101', contactId: 'k1', fullName: 'Carol  Price', lastMessageDate: NOW - 5 * 60e3 }, { id: 'c7', phone: '+14175550107', contactId: 'k7', fullName: 'Ruth Price', lastMessageDate: NOW - 6 * 60e3 }, { id: 'c2', phone: '+14175550102', contactId: 'k2', lastMessageDate: NOW - 19 * 60e3 },
       { id: 'c3', phone: '+14175550103', contactId: 'k3', lastMessageDate: NOW - 30 * 60e3 }, { id: 'c5', phone: '+14175550105', contactId: 'k5', lastMessageDate: NOW - 30 * 60e3 },
       { id: 'c6', phone: '+14175550106', contactId: 'k6', lastMessageDate: NOW - 95 * 60e3 }, { id: 'c9', phone: '+14175550999', contactId: 'k9', lastMessageDate: NOW - 30 * 60e3 }],
     msgs: {
@@ -28,6 +28,7 @@ const reset = (live = false) => {
         M('m7', 'TYPE_CALL', 5, 'inbound', { meta: { call: { duration: 0, status: 'no-answer' } } }),
         M('mOld', 'TYPE_SMS', 8 * 24 * 60, 'inbound', { body: 'too old' }),
         M('mEm', 'TYPE_EMAIL', 7, 'outbound', { body: 'email' })],
+      c7: [M('m13', 'TYPE_SMS', 6, 'inbound', { body: 'This is Ruth' })],
       c2: [M('m8', 'TYPE_SMS', 19.5, 'outbound', { source: 'api', body: 'Here is the link' })],
       c3: [M('m9', 'TYPE_CALL', 30, 'inbound', { userId: 'u-kr', meta: { call: { duration: 120, status: 'completed' } } })],
       c5: [M('m10', 'TYPE_SMS', 30, 'inbound', { body: 'archived lead' })],
@@ -127,6 +128,8 @@ try {
   ck('practice: the short call with no reading yet is waiting', seen('m6', 'practice')?.status === 'waiting', seen('m6', 'practice'))
   ck('practice: a number on two leads is never guessed (listed with both)', seen('m9', 'practice')?.status === 'several' && same(seen('m9', 'practice').candidates.sort(), ['L3', 'L4']))
   ck('practice: archived leads, unknown numbers, emails and messages before the start are left alone', !seen('m10', 'practice') && !seen('m12', 'practice') && !seen('mEm', 'practice') && !seen('mOld', 'practice'))
+  ck('772: each row keeps GoHighLevel\'s name for the contact and which of the family\'s numbers matched', seen('m3', 'practice').contact_name === 'Carol Price' && seen('m3', 'practice').matched_on === 'phone'
+    && seen('m13', 'practice').matched_on === 'client_phone' && seen('m13', 'practice').lead_id === 'L7' && seen('m9', 'practice').matched_on === null, [seen('m3', 'practice'), seen('m13', 'practice')])
   ck('only reads: every request to GoHighLevel was a GET', SENT.every(([m]) => m === 'GET'), SENT.filter(([m]) => m !== 'GET'))
 
   /* LIVE */
@@ -157,6 +160,7 @@ try {
   T.call_task_reading.push({ message_id: 'm6', version: 9, tasks: [{ voicemail: true }], detail: { summary: 'Left a voicemail about Thursday.' } })
   r = await run()
   const l1b = leadOf('L1')
+  ck('772: the revisited short call keeps its contact name', seen('m6', 'live')?.contact_name === 'Carol Price', seen('m6', 'live'))
   ck('again: the waiting short call is now a voicemail try (fetched by its id), nothing else changed', seen('m6', 'live')?.status === 'recorded' && l1b.contact_attempts === 2 && l1b.last_attempt_kind === 'voicemail'
     && l1b.contact_events.length === snap.contact_events.length + 1 && l1b.comm_log.some((c) => c.body === '☎ Samantha called, reached voicemail'), [r.j, l1b.contact_attempts])
   r = await run()
