@@ -76,6 +76,7 @@ try {
   ck('read: the caller name and phone come from GoHighLevel, never from what the AI heard (Lynda heard, Linda kept)', p.first_name === 'Linda' && p.phone === '+14175550142' && !heard.includes('first_name') && !heard.includes('phone'), { p, heard })
   ck('read: an email heard fills only the empty GoHighLevel email, and is marked heard', p.email === 'linda@x.test' && heard.includes('email'), { p, heard })
   ck('read: choices are held to the form (unknown and CDS needs dropped, days de-duplicated and in week order)', p.needs.join() === 'personalCare,housekeeping' && p.schedule_days.join() === 'Mon,Fri', p)
+  ck('776: the reader is told to add up days and times into hours a week (her Laura call: 5:30 to 9:30 pm Mon to Fri plus 8 am to 9:30 pm Sat and Sun = 47)', /ADD THEM UP[\s\S]*47/.test(fs.readFileSync('supabase/functions/_shared/call-lead.ts', 'utf8')), null)
   ck('read: hours as a number, start by date, referral kept', p.number_of_hours === '20' && p.desired_start_kind === 'by_date' && p.desired_start_date === '2026-10-19' && p.source === 'Referral' && p.referral_subtype === 'hospital', p)
   ck('read: the summary leads the notes and why they called is one line', p.interest_notes.startsWith(ANSWER.summary) && p.why_called.length <= 140, p)
   ck('read: every box filled from the call is listed as heard (shown yellow); nothing empty is listed', ['client_first_name', 'client_city', 'needs', 'schedule_days', 'funding_source', 'interest_notes'].every((k) => heard.includes(k)) && !heard.includes('client_last_name'), heard)
