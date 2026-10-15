@@ -1,0 +1,18 @@
+{
+  "note": "CRM plan step A5 (Samantha 2026-10-15, yes to all 10; the home safety check stays part of the assessment). Three new steps, one changed instruction, and Complete start of care waits for the new steps.",
+  "add": [
+    { "key": "signed.welcome", "sort": 127, "stage": "signed", "title": "Welcome call to the family", "owner_role": "care_coordinator", "proof": "confirmed",
+      "payers": [], "after": ["signed.yes"], "required": true, "active": true, "due": { "days": 1, "business": true },
+      "howto": ["Call the family the next working day after they said yes.", "Welcome them, say who their Care Coordinator is, what happens next and when we'll call again.", "Confirm here with what you told them."] },
+    { "key": "ax.startdate", "sort": 195, "stage": "axiscare", "title": "Set the Start Date in AxisCare", "owner_role": "care_coordinator", "proof": "confirmed",
+      "payers": [], "after": ["ax.client"], "required": true, "active": true, "due": { "before_start": 2 },
+      "howto": ["Open the client in AxisCare, Profile.", "Set the Start Date to the date on the Start Contract (the Start tab here).", "Confirm here."] },
+    { "key": "fw.evv", "sort": 335, "stage": "firstweek", "title": "Check the first visit's EVV in AxisCare", "owner_role": "care_coordinator", "proof": "confirmed",
+      "payers": [], "after": ["fw.first_visit"], "required": true, "active": true, "due": { "days": 1, "business": true },
+      "howto": ["Open the first visit in AxisCare.", "Check the clock-in and clock-out are there, at the right times, from the app or the client's phone.", "Fix anything wrong before billing, then confirm here."] }
+  ],
+  "patch": {
+    "fw.first_visit": { "howto": ["The Hub ticks this once AxisCare shows the first visit with a clock-in and a clock-out.", "If it can't see it, confirm by hand with a reason."] }
+  },
+  "complete_after": ["signed.welcome", "ax.startdate", "fw.evv"]
+}
