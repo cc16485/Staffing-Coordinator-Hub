@@ -62,8 +62,12 @@ export function localDate(v: unknown, tz?: unknown): string {
 
 /** Her go-live rule (2026-10-16): the app does not go live without the month-end App fee check. Live booking needs BOTH
  *  family_app_live and family_fee_check_ready (set by the step that installs the check); otherwise it stays practice. */
+// Her live test (2026-10-16, "live test on Test Client 5 only"): clients listed in ops_settings family_app_live_clients are
+// live on their own while the app switch is off. The fee check rule still applies to them. Without a client (caregiver
+// offers), only the app switch counts.
 // deno-lint-ignore no-explicit-any
-export const appLive = (st: any) => st?.family_app_live === true && st?.family_fee_check_ready === true
+export const appLive = (st: any, clientId?: string) => st?.family_fee_check_ready === true &&
+  (st?.family_app_live === true || (clientId != null && Array.isArray(st?.family_app_live_clients) && st.family_app_live_clients.map(String).includes(String(clientId))))
 export const MIN_HOURS = 2, NOTICE_MIN = 120, MAX_DAYS_AHEAD = 60, AUTO_NOTICE_HOURS = 24, FREE_CANCEL_HOURS = 24, MAX_PICKS = 5
 export const WHO = ['preferred', 'any']
 const OLD_WHO: Record<string, string> = { regular: 'preferred', favorites: 'any', any: 'any' }   // the Step 1b app's answers
@@ -438,8 +442,8 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
     if (!ins) return say(500, { error: "We couldn't save that booking. Nothing was booked. Please try again or call the office." })
     const b = { ...row, id: ins.id }
     const nowIso = now.toISOString()
-    await deps.event({ actor_kind: 'person', actor_email: user.email ?? undefined, actor_name: w.name, via: 'link', verb: 'family_booked', area: 'family_app', summary: `${w.name} booked ${clientName} ${when(b)}`, data: { booking_id: b.id, kind: v.kind, live: appLive(st) } })
-    if (!appLive(st)) {
+    await deps.event({ actor_kind: 'person', actor_email: user.email ?? undefined, actor_name: w.name, via: 'link', verb: 'family_booked', area: 'family_app', summary: `${w.name} booked ${clientName} ${when(b)}`, data: { booking_id: b.id, kind: v.kind, live: appLive(st, w.axiscare_client_id) } })
+    if (!appLive(st, w.axiscare_client_id)) {
       await deps.updateBooking(b.id, { status: 'practice' })
       return say(200, { ok: true, booking_id: b.id, status: 'practice', message: "Got it. (Practice mode: the office hasn't turned on live booking yet, so nothing was added to the schedule.)" })
     }
@@ -476,7 +480,7 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
     if (late && body?.late_ok !== true) return say(409, { late: true, late_hours: lateHours,
       error: `This visit is less than 24 hours away, so ${lateHours} hours will still be charged. Cancel anyway?` })
     const nowIso = now.toISOString()
-    const live = appLive(st)
+    const live = appLive(st, w.axiscare_client_id)
     const cgId = b.caregiver_axiscare_id ? String(b.caregiver_axiscare_id) : null
     const cgFirst = String(b.caregiver_name ?? '').trim().split(/\s+/)[0] || ''
     const cgName = cgId ? (String(b.caregiver_name ?? '').trim() || 'The caregiver') : null

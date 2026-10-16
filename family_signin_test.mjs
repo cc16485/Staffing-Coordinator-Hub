@@ -103,6 +103,15 @@ ck('13 careActive: active yes, inactive no, test list yes', fam.careActive({ sta
   ck('13b a signed-in family whose client\'s care ended: the app is closed for them, with the office number', r.status === 403 && /Earl's care with us has ended/.test(r.body.error) && /\(417\) 234-8494/.test(r.body.error), r)
 }
 
+// live for listed clients (her live test 2026-10-16)
+{
+  const R = { family_fee_check_ready: true }
+  ck('16 appLive: app switch on = live for everyone', fam.appLive({ ...R, family_app_live: true }, '501') && fam.appLive({ ...R, family_app_live: true }))
+  ck('16b live-clients list: only those clients are live while the switch is off', fam.appLive({ ...R, family_app_live_clients: ['290'] }, '290') && fam.appLive({ ...R, family_app_live_clients: [290] }, '290') && !fam.appLive({ ...R, family_app_live_clients: ['290'] }, '501'))
+  ck('16c no client given (caregiver offers): the list does not count', !fam.appLive({ ...R, family_app_live_clients: ['290'] }))
+  ck('16d the fee check rule still holds for listed clients', !fam.appLive({ family_app_live_clients: ['290'] }, '290') && !fam.appLive({ family_app_live: true }, '290'))
+}
+
 // gateway wiring (source checks)
 const gw = fs.readFileSync(path.resolve(F, 'family-gateway/index.ts'), 'utf8')
 ck('14 gateway: start is answered before the sign-in check, everything else still needs a family sign-in', gw.indexOf("body?.action === 'start'") > 0 && gw.indexOf("body?.action === 'start'") < gw.indexOf('const user = await familyUser(req)') && /if \(!user\) return json\(\{ error: 'Please sign in again.' \}, 401\)/.test(gw))
