@@ -38,7 +38,7 @@ let W
 const utc = (date, hhmm) => { const [h, m] = hhmm.split(':').map(Number); return `${date}T${String(h + 5).padStart(2, '0')}:${String(m).padStart(2, '0')}:00Z` } // CDT = UTC-5
 function reset(m = {}) {
   W = { visits: {}, bookings: [], items: [], events: [], calls: [], settings: { family_app_live: true, family_fee_check_ready: true, family_app_service_MO: 'PP - WC', family_app_cancel_reason: 'Schedule Change - Client Cancellation' },
-    clientState: 'MO', postFails: false, delFails: false, readbackWrong: false, insertFails: false, ...m }
+    clientState: 'MO', notes: [], texts: [], notesFail: false, textFails: false, postFails: false, delFails: false, readbackWrong: false, insertFails: false, ...m }
   W.visits['v=1:s=5:d=2026-10-21'] = { id: 'v=1:s=5:d=2026-10-21', client: { id: 501 }, caregiver: { id: 77, firstName: 'Sarah' }, timezone: 'US/Central', scheduledStartDate: utc('2026-10-21', '09:00'), scheduledEndDate: utc('2026-10-21', '11:00') }
   W.visits['v=2:s=5:d=2026-09-30'] = { id: 'v=2:s=5:d=2026-09-30', client: { id: 501 }, caregiver: { id: 77, firstName: 'Sarah' }, timezone: 'US/Central', scheduledStartDate: utc('2026-09-30', '09:00'), scheduledEndDate: utc('2026-09-30', '11:00') }
   W.visits['v=3:s=5:d=2026-09-25'] = { id: 'v=3:s=5:d=2026-09-25', client: { id: 501 }, caregiver: { id: 88, firstName: 'Maria' }, timezone: 'US/Central', scheduledStartDate: utc('2026-09-25', '13:00'), scheduledEndDate: utc('2026-09-25', '15:00') }
@@ -61,6 +61,8 @@ const ax = async (method, p, body) => {
     W.visits[id] = { id, client: { id: body.clientId }, caregiver: null, timezone: 'US/Central', scheduledStartDate: utc(body.visitDate, body.startTime), scheduledEndDate: utc(body.visitDate, W.readbackWrong ? '23:00' : body.endTime) }
     return r(201, { visit: { ...W.visits[id] } })
   }
+  const nm = u.pathname.match(/^\/api\/notes\/(client|caregiver)\/(\d+)$/)
+  if (method === 'POST' && nm) { if (W.notesFail) return r(500, { errors: ['notes down'] }); W.notes.push({ on: nm[1], id: nm[2], ...body }); return r(201, { results: { id: W.notes.length } }) }
   if (method === 'GET' && u.pathname === '/api/caregivers/88') return r(200, { results: { caregiver: { id: 88, firstName: 'Maria', lastName: 'Lopez', status: { active: true } } } })
   if (method === 'GET' && u.pathname === '/api/caregivers/66') return r(200, { results: { caregiver: { id: 66, firstName: 'Gone', status: { active: false, label: 'Inactive' } } } })
   const vm = u.pathname.match(/^\/api\/visits\/(.+)$/)
@@ -84,6 +86,8 @@ const deps = (who = 'lisa') => ({
   updateBooking: async (id, vals) => { Object.assign(W.bookings.find((b) => b.id === id), vals); return true },
   officeItem: async (item) => { const k = W.items.findIndex((x) => x.id === item.id); if (k >= 0) W.items[k] = item; else W.items.push(item); return true },
   event: async (row) => { W.events.push(row) },
+  closeItem: async (id, by, text) => { const it = W.items.find((x) => x.id === id); if (it && it.status !== 'done') { it.status = 'done'; it.history = [...(it.history ?? []), { by, text }] } },
+  textCaregiver: async (id, message) => { if (W.textFails) return { ok: false, why: 'opted out' }; W.texts.push({ id, message }); return { ok: true } },
 })
 const go = (body, who) => fam.familyAction(deps(who), { id: 'u-lisa', email: 'lisa@x.test' }, body)
 const BOOK = { action: 'book', client: '501', date: '2026-10-22', start: '10:00', hours: 3, tasks: ['Companionship', 'Meal preparation'], who: 'regular', note: 'Soup please' }
@@ -153,9 +157,46 @@ reset(); await go(BOOK); W.calls = []
 const id1 = W.bookings[0].id
 o = await go({ action: 'cancel', client: '501', booking_id: id1 })
 ck('cancel 2 days ahead: removed from AxisCare with the client-cancellation reason, nothing charged', o.status === 200 && W.bookings[0].status === 'cancelled' && !W.visits[W.bookings[0].axiscare_visit_id] && W.calls.some((c) => c[0] === 'DELETE' && /modificationReason=11/.test(c[1])), o)
-reset(); W.bookings.push({ id: 'b-soon', axiscare_client_id: '501', client_name: 'Dot', visit_date: '2026-10-21', start_time: '08:30', end_time: '10:30', status: 'placed', axiscare_visit_id: 'v=50:s=0:d=2026-10-21' })
+ck('cancel 2 days ahead, no caregiver yet: client note with who and when, no text, no office card', W.notes.length === 1 && W.notes[0].on === 'client' && W.notes[0].id === '501' &&
+  /Cancelled by Lisa Ray on Tue Oct 20, 2026 at 9 AM Central/.test(W.notes[0].note) && /Thu Oct 22, 10 AM to 1 PM/.test(W.notes[0].note) && /no charge/.test(W.notes[0].note) && W.notes[0].important === false &&
+  W.texts.length === 0 && !W.items.some((i) => i.id.startsWith('fam_cancel')) && /Nothing is charged/.test(o.body.message), { notes: W.notes, items: W.items })
+ck('the visit\'s "Place a caregiver" card is closed with who cancelled and when', W.items.some((i) => i.id.startsWith('fam_book') && i.status === 'done' && /Lisa Ray cancelled this visit in the app on Tue Oct 20, 2026 at 9 AM Central/.test(i.history.at(-1).text)), W.items)
+// 2 days ahead with a caregiver placed: they're texted, notes on both records, no card
+reset(); await go(BOOK); Object.assign(W.bookings[0], { caregiver_axiscare_id: '88', caregiver_name: 'Maria L.', status: 'placed' }); W.items = []
+o = await go({ action: 'cancel', client: '501', booking_id: W.bookings[0].id })
+ck('caregiver placed: texted at once, note on the client AND the caregiver, no office card', o.status === 200 && W.texts.length === 1 && W.texts[0].id === '88' &&
+  /^Hi Maria, the family cancelled Dot's visit on Thu Oct 22, 10 AM to 1 PM\. It's off your schedule/.test(W.texts[0].message) && !/paid/.test(W.texts[0].message) &&
+  W.notes.some((n) => n.on === 'caregiver' && n.id === '88' && /Maria L\. was scheduled and has been taken off the visit/.test(n.note)) && W.items.length === 0, { t: W.texts, n: W.notes, i: W.items })
+// inside 24 hours: the app must ask first
+reset(); W.bookings.push({ id: 'b-soon', axiscare_client_id: '501', client_name: 'Dot', visit_date: '2026-10-21', start_time: '08:30', end_time: '10:30', hours: 2, status: 'placed', axiscare_visit_id: 'v=50:s=0:d=2026-10-21', caregiver_axiscare_id: '88', caregiver_name: 'Maria L.' })
+W.visits['v=50:s=0:d=2026-10-21'] = { id: 'v=50:s=0:d=2026-10-21', client: { id: 501 }, caregiver: { id: 88 } }
 o = await go({ action: 'cancel', client: '501', booking_id: 'b-soon' })
-ck('cancel within 24 hours: call the office, nothing removed', o.status === 409 && /within 24 hours/i.test(o.body.error) && /234-8494/.test(o.body.error) && W.bookings[0].status === 'placed', o)
+ck('inside 24 hours without the yes: asks first (2 hours charged), nothing removed, nobody texted', o.status === 409 && o.body.late === true && o.body.late_hours === 2 && /less than 24 hours away, so 2 hours will still be charged/.test(o.body.error) &&
+  W.bookings[0].status === 'placed' && W.visits['v=50:s=0:d=2026-10-21'] && W.texts.length === 0 && W.notes.length === 0, o)
+o = await go({ action: 'cancel', client: '501', booking_id: 'b-soon', late_ok: true })
+ck('inside 24 hours with the yes: removed, caregiver texted that they are paid 2 hours', o.status === 200 && o.body.late === true && W.bookings[0].status === 'cancelled' && !W.visits['v=50:s=0:d=2026-10-21'] &&
+  /you'll still be paid for 2 hours/.test(W.texts[0]?.message) && /2 hours will be on your weekly invoice/.test(o.body.message), { o, t: W.texts })
+ck('late cancel: important note says charge the family 2 hours and pay the caregiver 2 hours', W.notes.length === 2 && W.notes.every((n) => n.important === true && /Late cancel \(less than 24 hours before\): charge the family 2 hours and pay Maria L\. 2 hours/.test(n.note)), W.notes)
+ck('late cancel: office card to put the 2 hours on the invoice and the caregiver\'s pay', W.items.length === 1 && W.items[0].title === 'Late cancel: Dot, Wed Oct 21, 8:30 AM to 10:30 AM' &&
+  /add 2 hours for Dot to this week's invoice and pay Maria L\. 2 hours/.test(W.items[0].detail) && /on Tue Oct 20, 2026 at 9 AM Central/.test(W.items[0].detail), W.items)
+ck('late cancel: the event records it', W.events.some((e) => e.verb === 'family_cancelled' && e.data.late === true && e.data.late_hours === 2 && e.data.caregiver_texted === true), W.events)
+// the setting can change the 2 hours
+reset({ settings: { family_app_live: true, family_fee_check_ready: true, family_app_cancel_reason: 'Schedule Change - Client Cancellation', family_app_late_cancel_hours: 3 } })
+W.bookings.push({ id: 'b-soon', axiscare_client_id: '501', client_name: 'Dot', visit_date: '2026-10-21', start_time: '08:30', end_time: '10:30', hours: 2, status: 'waiting_for_caregiver' })
+o = await go({ action: 'cancel', client: '501', booking_id: 'b-soon' })
+ck('family_app_late_cancel_hours sets the late charge', o.body.late_hours === 3 && /3 hours will still be charged/.test(o.body.error), o)
+// text fails / notes fail: never silent
+reset(); await go(BOOK); Object.assign(W.bookings[0], { caregiver_axiscare_id: '88', caregiver_name: 'Maria L.' }); W.items = []; W.textFails = true; W.notesFail = true
+o = await go({ action: 'cancel', client: '501', booking_id: W.bookings[0].id })
+ck('text or notes fail: the office card says call the caregiver and add the note', o.status === 200 && W.items.length === 1 && /The text to Maria L\. didn't go \(opted out\)\. Please call them/.test(W.items[0].detail) && /note didn't save on Dot's AxisCare record/.test(W.items[0].detail), W.items)
+// started or past: call the office
+reset(); W.bookings.push({ id: 'b-now', axiscare_client_id: '501', client_name: 'Dot', visit_date: '2026-10-20', start_time: '08:00', end_time: '10:00', hours: 2, status: 'placed' })
+o = await go({ action: 'cancel', client: '501', booking_id: 'b-now', late_ok: true })
+ck('a visit that already started: call the office, nothing changed', o.status === 409 && /already started/.test(o.body.error) && /234-8494/.test(o.body.error) && W.bookings[0].status === 'placed', o)
+// practice mode: nothing in AxisCare, nobody texted
+reset({ settings: { family_app_live: false } }); W.bookings.push({ id: 'b-p', axiscare_client_id: '501', client_name: 'Dot', visit_date: '2026-10-21', start_time: '08:30', end_time: '10:30', hours: 2, status: 'practice', caregiver_axiscare_id: '88', caregiver_name: 'Maria L.' })
+o = await go({ action: 'cancel', client: '501', booking_id: 'b-p', late_ok: true })
+ck('practice mode: cancelled, no AxisCare calls past the client read, no text, no card', o.status === 200 && /Practice mode/.test(o.body.message) && W.texts.length === 0 && W.notes.length === 0 && W.items.length === 0 && !W.calls.some((c) => c[0] !== 'GET'), o)
 reset(); await go(BOOK); W.delFails = true
 o = await go({ action: 'cancel', client: '501', booking_id: W.bookings[0].id })
 ck('AxisCare refuses the removal: cancelled for the family, office card to finish it', o.status === 200 && W.items.some((i) => /refused to remove/.test(i.detail)), o)

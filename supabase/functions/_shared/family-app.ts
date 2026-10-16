@@ -319,16 +319,49 @@ export type Deps = {
   officeItem: (item: any) => Promise<boolean>
   // deno-lint-ignore no-explicit-any
   event: (row: any) => Promise<void>
+  /** Text a caregiver (audience 'caregiver', through the outbound gate). Optional: without it the office card asks a person to. */
+  textCaregiver?: (axiscareId: string, message: string) => Promise<{ ok: boolean; why?: string }>
+  /** Close an open office card (the "Place a caregiver" card of a visit the family cancelled). Optional. */
+  closeItem?: (id: string, by: string, text: string) => Promise<void>
 }
 type Out = { status: number; body: Record<string, unknown> }
 const say = (status: number, body: Record<string, unknown>): Out => ({ status, body })
 
 export function officeCard(kind: string, b: any, title: string, detail: string, nowIso: string) {   // deno-lint-ignore no-explicit-any
   return { id: `fam_${kind}_${b.id}`, kind: 'family_booking', domain: 'scheduling_coverage', status: 'open', urgency: kind === 'cancel' ? 'soon' : 'today',
-    title, about: b.client_name, who: b.requested_by_name, detail, next_action: kind === 'cancel' ? 'Let the caregiver know the visit is cancelled.' : 'Place a caregiver on this visit (Scheduling, Family bookings).',
+    title, about: b.client_name, who: b.requested_by_name, detail, next_action: kind === 'cancel' ? 'Do what the card says (late charge, caregiver, schedule).' : 'Place a caregiver on this visit (Scheduling, Family bookings).',
     created_at: nowIso, first_at: nowIso, last_at: nowIso, last_activity_at: nowIso, created_by: 'family app', opened_by: 'family app',
     source: { kind: 'family_booking', booking_id: b.id, axiscare_visit_id: b.axiscare_visit_id ?? null }, history: [{ at: nowIso, by: 'family app', text: detail }] }
 }
+/** Her cancel rules (2026-10-16): families cancel app-booked visits any time in the app. Less than 24 hours before the start,
+ *  the family is charged 2 hours and the caregiver is paid 2 hours (Hub setting family_app_late_cancel_hours). */
+// deno-lint-ignore no-explicit-any
+export const lateCancelHours = (st: any) => { const n = Number(st?.family_app_late_cancel_hours); return n > 0 && n <= 12 ? n : 2 }
+const SHORT_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], SHORT_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const niceDay = (date: string) => { const d = new Date(date + 'T12:00:00Z'); return `${SHORT_DAYS[d.getUTCDay()]} ${SHORT_MON[d.getUTCMonth()]} ${d.getUTCDate()}` }
+/** "Tue Oct 20, 10 AM to 12 PM" (a flexible visit with no time yet: "Tue Oct 20, 3 hours between 9 AM and 5 PM"). */
+// deno-lint-ignore no-explicit-any
+export const visitWords = (b: any) => b.start_time ? `${niceDay(b.visit_date)}, ${clock12(b.start_time)} to ${clock12(b.end_time)}`
+  : `${niceDay(b.visit_date)}, ${Number(b.hours)} hours between ${clock12(b.window_start)} and ${clock12(b.window_end)}`
+/** "Mon Oct 19, 2026 at 9:42 PM Central". */
+export function stampWords(now: Date) {
+  const c = central(now), d = new Date(c.date + 'T12:00:00Z')
+  return `${niceDay(c.date)}, ${d.getUTCFullYear()} at ${clock12(fromMin(c.minutes))} Central`
+}
+/** The note that goes on the AxisCare client (and caregiver) when a family cancels. */
+// deno-lint-ignore no-explicit-any
+export function cancelNote(b: any, by: string, now: Date, late: boolean, lateHours: number, caregiver: string | null) {
+  return `Visit cancelled by the family in the family app. Visit: ${visitWords(b)}. Cancelled by ${by} on ${stampWords(now)}.` +
+    (caregiver ? ` ${caregiver} was scheduled and has been taken off the visit.` : ' No caregiver was placed yet.') +
+    (late ? ` Late cancel (less than 24 hours before): charge the family ${lateHours} hours${caregiver ? ` and pay ${caregiver} ${lateHours} hours` : ''}.` : ' Cancelled 24 hours or more ahead: no charge.')
+}
+/** The text the caregiver gets. */
+// deno-lint-ignore no-explicit-any
+export function cancelText(b: any, caregiverFirst: string, clientName: string, late: boolean, lateHours: number) {
+  return `Hi ${caregiverFirst || 'there'}, the family cancelled ${clientName}'s visit on ${visitWords(b)}. It's off your schedule, so please don't go.` +
+    (late ? ` Because it was cancelled less than 24 hours ahead, you'll still be paid for ${lateHours} hours.` : '') + ' Caring Companions'
+}
+
 // deno-lint-ignore no-explicit-any
 export const when = (b: any) => b.start_time ? `${b.visit_date} ${b.start_time} to ${b.end_time}` : `${b.visit_date}, flexible: ${Number(b.hours)} hours anytime ${b.window_start} to ${b.window_end}`
 /** What a family's app shows for one of their bookings. */
@@ -436,21 +469,49 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
     if (!w.can_book) return say(403, { error: 'Please call the office to change visits.' })
     const b = (await deps.bookings(w.axiscare_client_id)).find((x) => x.id === String(body?.booking_id ?? ''))
     if (!b || b.status === 'cancelled') return say(404, { error: "We couldn't find that visit." })
-    if (hoursUntil(b.visit_date, startOf(b), now) < FREE_CANCEL_HOURS) return say(409, { error: `Within 24 hours of a visit, please call the office to cancel${phone ? ` at ${phone}` : ''}.` })
+    const left = hoursUntil(b.visit_date, startOf(b), now)
+    if (left <= 0) return say(409, { error: `This visit has already started. Please call the office${phone ? ` at ${phone}` : ''}.` })
+    const late = left < FREE_CANCEL_HOURS, lateHours = lateCancelHours(st)
+    // Inside 24 hours the family has to say yes to the charge first (the app asks, then sends late_ok).
+    if (late && body?.late_ok !== true) return say(409, { late: true, late_hours: lateHours,
+      error: `This visit is less than 24 hours away, so ${lateHours} hours will still be charged. Cancel anyway?` })
     const nowIso = now.toISOString()
-    if (b.axiscare_visit_id && appLive(st)) {
+    const live = appLive(st)
+    const cgId = b.caregiver_axiscare_id ? String(b.caregiver_axiscare_id) : null
+    const cgFirst = String(b.caregiver_name ?? '').trim().split(/\s+/)[0] || ''
+    const cgName = cgId ? (String(b.caregiver_name ?? '').trim() || 'The caregiver') : null
+    const problems: string[] = []
+    let removed = !b.axiscare_visit_id, texted = false
+    if (live && b.axiscare_visit_id) {
       const rid = await reasonId(deps.ax, st?.family_app_cancel_reason ?? 'Schedule Change - Client Cancellation')
       const del = await deps.ax('DELETE', `/api/visits/${encodeURIComponent(b.axiscare_visit_id)}` + (rid != null ? `?modificationReason=${rid}` : ''))
-      if (!ok2(del.status)) {
-        await deps.officeItem(officeCard('cancel', b, `Family cancelled: ${b.client_name}, ${when(b)}`, `${w.name} cancelled ${when(b)} in the app, but AxisCare refused to remove it (${del.status} ${axErr(del.json)}). Please remove it from the schedule.`, nowIso))
-        await deps.updateBooking(b.id, { status: 'cancelled', cancelled_at: nowIso, cancelled_by: w.name, error: `AxisCare remove refused: ${del.status}` })
-        return say(200, { ok: true, message: "Cancelled. Our office will finish taking it off the schedule." })
-      }
-      if (b.caregiver_axiscare_id) await deps.officeItem(officeCard('cancel', b, `Family cancelled: ${b.client_name}, ${when(b)}`, `${w.name} cancelled ${when(b)} in the app. ${b.caregiver_name ?? 'The caregiver'} was booked on it. Please let them know.`, nowIso))
+      removed = ok2(del.status)
+      if (!removed) problems.push(`AxisCare refused to remove it (${del.status} ${axErr(del.json)}). Please remove it from the schedule${cgName ? ` and take ${cgName} off it` : ''}.`)
     }
-    await deps.updateBooking(b.id, { status: 'cancelled', cancelled_at: nowIso, cancelled_by: w.name })
-    await deps.event({ actor_kind: 'person', actor_email: user.email ?? undefined, actor_name: w.name, via: 'link', verb: 'family_cancelled', area: 'family_app', summary: `${w.name} cancelled ${b.client_name} ${when(b)}`, data: { booking_id: b.id } })
-    return say(200, { ok: true, message: 'Cancelled. Nothing is charged for it.' })
+    if (live) {
+      const note = cancelNote(b, w.name, now, late, lateHours, cgName)
+      const cn = await deps.ax('POST', `/api/notes/client/${encodeURIComponent(w.axiscare_client_id)}`, { note, important: late })
+      if (!ok2(cn.status)) problems.push(`The note didn't save on ${clientName}'s AxisCare record (${cn.status}). Please add it: "${note}"`)
+      if (cgId) {
+        const gn = await deps.ax('POST', `/api/notes/caregiver/${encodeURIComponent(cgId)}`, { note, important: late })
+        if (!ok2(gn.status)) problems.push(`The note didn't save on ${cgName}'s AxisCare record (${gn.status}).`)
+        if (deps.textCaregiver) {
+          const t = await deps.textCaregiver(cgId, cancelText(b, cgFirst, clientName, late, lateHours))
+          texted = t.ok
+          if (!t.ok) problems.push(`The text to ${cgName} didn't go (${t.why ?? 'unknown'}). Please call them: the visit is cancelled.`)
+        } else problems.push(`Please let ${cgName} know the visit is cancelled.`)
+      }
+      if (late) problems.push(`Late cancel: add ${lateHours} hours for ${clientName} to this week's invoice${cgName ? ` and pay ${cgName} ${lateHours} hours` : ''}. AxisCare won't do this by itself because nobody clocks in.`)
+    }
+    if (problems.length) await deps.officeItem(officeCard('cancel', b, `${late ? 'Late cancel' : 'Family cancelled'}: ${clientName}, ${visitWords(b)}`,
+      `${w.name} cancelled ${visitWords(b)} in the app on ${stampWords(now)}. ${problems.join(' ')}`, nowIso))
+    if (deps.closeItem) await deps.closeItem(`fam_book_${b.id}`, 'family app', `${w.name} cancelled this visit in the app on ${stampWords(now)}.`)
+    await deps.updateBooking(b.id, { status: 'cancelled', cancelled_at: nowIso, cancelled_by: w.name, ...(removed ? {} : { error: 'AxisCare remove refused' }) })
+    await deps.event({ actor_kind: 'person', actor_email: user.email ?? undefined, actor_name: w.name, via: 'link', verb: 'family_cancelled', area: 'family_app',
+      summary: `${w.name} cancelled ${b.client_name} ${when(b)}${late ? ` (late: ${lateHours} hours charged)` : ''}`, data: { booking_id: b.id, late, late_hours: late ? lateHours : 0, caregiver_texted: texted, live } })
+    if (!live) return say(200, { ok: true, late, message: `Cancelled. (Practice mode: nothing was on the schedule${late ? ', and nothing is charged' : ''}.)` })
+    const tail = !removed ? ' Our office will finish taking it off the schedule.' : ''
+    return say(200, { ok: true, late, message: late ? `Cancelled. Because it was less than 24 hours away, ${lateHours} hours will be on your weekly invoice.${tail}` : `Cancelled. Nothing is charged for it.${tail}` })
   }
   return say(400, { error: 'unknown action' })
 }
