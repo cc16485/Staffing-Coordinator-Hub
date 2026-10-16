@@ -47,7 +47,7 @@ const say = (status: number, body: Record<string, unknown>): Out => ({ status, b
 const emailOk = (e: unknown) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e ?? '').trim())
 
 export const inviteWords = (first: string, client: string) =>
-  `Hi ${first}, you can now see ${client}'s visits and book extra visits at app.mo-care.com. Sign in with this email address and we'll email you a 6-digit code. Call us anytime with questions.`
+  `Hi ${first}, you can now see ${client}'s visits and book extra visits at family.mo-care.com. Sign in with this email address and we'll email you a 6-digit code. Call us anytime with questions.`
 
 // deno-lint-ignore no-explicit-any
 export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Promise<Out> {

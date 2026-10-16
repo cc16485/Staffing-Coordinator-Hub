@@ -15,7 +15,7 @@ REPO = os.environ["SB_REPO"]; PINS = json.loads(os.environ["SB_PINS"])
 RESEND = os.environ.get("SB_RESEND_KEY", "").strip()
 FNB = os.environ.get("SB_FN_BASE", f"https://{HUB}.supabase.co")
 FAMB = os.environ.get("SB_FAM_BASE", "")           # tests point this at the fake; else https://<ref>.supabase.co
-APP = "https://app.mo-care.com"
+APP = "https://family.mo-care.com"
 lines = []; fails = []; HIDE = [RESEND] if RESEND else []
 def say(s=""):
     s = str(s)
@@ -82,7 +82,7 @@ if RESEND:
 s, b, _ = http("PATCH", f"{API}/v1/projects/{FREF}/config/auth", patch, MG())
 s2, b2, _ = http("GET", f"{API}/v1/projects/{FREF}/config/auth", headers=MG()); c = j(b2) or {}
 chk(s in (200, 201) and c.get("disable_signup") is True and c.get("site_url") == APP and "{{ .Token }}" in str(c.get("mailer_templates_magic_link_content")) and int(c.get("mailer_otp_length") or 6) == 6,
-    "sign-up off, 6-digit code by email, address app.mo-care.com" if s in (200, 201) else f"sign-in settings not saved ({s}: {str(b)[:200]})")
+    "sign-up off, 6-digit code by email, address family.mo-care.com" if s in (200, 201) else f"sign-in settings not saved ({s}: {str(b)[:200]})")
 if RESEND: chk(c.get("smtp_host") == "smtp.resend.com" and c.get("smtp_admin_email") == "noreply@mo-care.com", "codes come from noreply@mo-care.com (Resend)")
 else: say("  · codes come from Supabase's built-in sender for now (a few an hour). Fine for testing; add your Resend key before families use it.")
 

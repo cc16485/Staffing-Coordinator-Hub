@@ -79,7 +79,7 @@ def run(pins=PINS, resend="", **mode):
 c, out = run()
 ck("1 good run: sign-in set, Hub connected, records, two doors, proofs", c == 0 and "STEP 1a: DONE" in out and out.count("✓") >= 11 and "✗" not in out, out)
 ck("1b sign-in: sign-up off, 6-digit code template, app address, built-in sender kept", S["auth"].get("disable_signup") is True and "{{ .Token }}" in S["auth"]["mailer_templates_magic_link_content"]
-   and S["auth"].get("site_url") == "https://app.mo-care.com" and "smtp_host" not in S["auth"] and "built-in sender" in out, S["auth"])
+   and S["auth"].get("site_url") == "https://family.mo-care.com" and "smtp_host" not in S["auth"] and "built-in sender" in out, S["auth"])
 ck("1c Hub secrets: the family app's address and keys", S["secrets"] == {"FAMILY_APP_URL": "https://famref.supabase.co", "FAMILY_APP_ANON_KEY": "eyJanonfamref", "FAMILY_APP_SERVICE_KEY": "eyJsvcfamref"}, S["secrets"])
 ck("1d doors: family-gateway checks its own sign-in (gateway check off), office door keeps it on", S["deployed"] == {"family-gateway": False, "family-app-office": True}, S["deployed"])
 ck("1e no key or token ever printed", not re.search(r"eyJ\w|sbp_test", out), out)

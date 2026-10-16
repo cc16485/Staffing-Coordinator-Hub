@@ -1,5 +1,5 @@
 // =============================================================================
-// family-gateway — the ONE door the family booking app (app.mo-care.com) talks to. Step 1a, plan approved 2026-10-15.
+// family-gateway — the ONE door the family booking app (family.mo-care.com) talks to. Step 1a, plan approved 2026-10-15.
 //
 // Who may call: a family member signed in to the separate cc-family-app project. Their sign-in token is checked by
 // asking cc-family-app itself (GET /auth/v1/user), so no Hub login is involved and no Hub table is reachable by them.
@@ -18,7 +18,7 @@ const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const FAMILY_URL = (Deno.env.get('FAMILY_APP_URL') || '').replace(/\/+$/, '')
 const FAMILY_ANON = Deno.env.get('FAMILY_APP_ANON_KEY') || ''
 const AC_VERSION = '2023-10-01'
-const ORIGINS = ['https://app.mo-care.com', 'https://cc16485.github.io', 'http://localhost:8787']
+const ORIGINS = ['https://family.mo-care.com', 'https://cc16485.github.io', 'http://localhost:8787']
 
 function cors(req: Request) {
   const o = req.headers.get('Origin') || ''
