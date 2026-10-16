@@ -333,6 +333,13 @@ export const bookingView = (b: any) => ({ id: b.id, date: b.visit_date, kind: b.
   window_start: b.window_start ?? b.start_time, window_end: b.window_end ?? b.end_time, hours: Number(b.hours), tasks: b.tasks, status: b.status, caregiver: b.caregiver_name ?? null })
 const OPEN = ['received', 'practice', 'waiting_for_caregiver', 'needs_office']
 
+/** Her rule 2026-10-16: the app is for ACTIVE clients only. A client AxisCare no longer lists as active closes the app for their
+ *  family, whoever let them in. Test clients the office lists in ops_settings family_app_test_clients count as active. */
+// deno-lint-ignore no-explicit-any
+export const testClients = (st: any): string[] => Array.isArray(st?.family_app_test_clients) ? st.family_app_test_clients.map(String) : []
+// deno-lint-ignore no-explicit-any
+export const careActive = (client: any, axId: string, st: any) => client?.status?.active === true || testClients(st).includes(String(axId))
+
 // deno-lint-ignore no-explicit-any
 export async function familyAction(deps: Deps, user: { id: string; email?: string | null }, body: any): Promise<Out> {
   const who = (await deps.whoIs(user.id)).filter((w) => w.axiscare_client_id)
@@ -347,6 +354,7 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
   const cr = await deps.ax('GET', `/api/clients/${encodeURIComponent(w.axiscare_client_id)}`)
   if (cr.status !== 200) return say(502, { error: "We couldn't reach the schedule just now. Please try again in a minute." })
   const client = cr.json?.results?.client ?? cr.json?.results
+  if (!careActive(client, w.axiscare_client_id, st)) return say(403, { error: `${String(client?.goesBy || client?.firstName || w.client_name || 'This client').trim()}'s care with us has ended, so the app is closed. Please call the office at (417) 234-8494 with any questions.` })
   const state = stateOf(client)
   const clientName = String(client?.goesBy || client?.firstName || w.client_name || '').trim()
   const phone = st?.[`family_app_office_phone_${state}`] ?? (state === 'MO' ? '(417) 234-8494' : null)

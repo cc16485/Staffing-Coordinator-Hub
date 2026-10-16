@@ -68,7 +68,7 @@ let vn = 100
 const CG = { 77: { id: 77, firstName: 'Sarah', lastName: 'Jones', status: { active: true } }, 88: { id: 88, firstName: 'Maria', lastName: 'Lopez', status: { active: true } }, 55: { id: 55, firstName: 'Ann', lastName: 'Bee', status: { active: true } }, 44: { id: 44, firstName: 'Dee', lastName: 'Cee', status: { active: true } } }
 const ax = async (method, p, body) => {
   W.calls.push([method, p, body]); const u = new URL('http://x' + p)
-  if (method === 'GET' && u.pathname === '/api/clients/501') return r(200, { results: { client: { id: 501, firstName: 'Dorothy', goesBy: 'Dot', residentialAddress: { state: W.clientState, city: 'Nixa', street1: '12 Elm St' } } } })
+  if (method === 'GET' && u.pathname === '/api/clients/501') return r(200, { results: { client: { id: 501, firstName: 'Dorothy', goesBy: 'Dot', status: { active: true, label: 'Active' }, residentialAddress: { state: W.clientState, city: 'Nixa', street1: '12 Elm St' } } } })
   if (method === 'GET' && u.pathname === '/api/visits/modification-reasons') return r(200, { results: { modificationReasons: [{ id: 11, name: 'Schedule Change - Client Cancellation', disabled: false }] } })
   if (method === 'GET' && u.pathname === '/api/visits') {
     const c = u.searchParams.get('clientIds'), g = u.searchParams.get('caregiverIds'), s = u.searchParams.get('startDate'), e = u.searchParams.get('endDate')

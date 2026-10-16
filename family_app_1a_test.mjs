@@ -48,7 +48,7 @@ const r = (status, json) => ({ status, json })
 let vn = 100
 const ax = async (method, p, body) => {
   W.calls.push([method, p, body]); const u = new URL('http://x' + p)
-  if (method === 'GET' && u.pathname === '/api/clients/501') return r(200, { results: { client: { id: 501, firstName: 'Dorothy', goesBy: 'Dot', residentialAddress: { state: W.clientState } } } })
+  if (method === 'GET' && u.pathname === '/api/clients/501') return r(200, { results: { client: { id: 501, firstName: 'Dorothy', goesBy: 'Dot', status: { active: true, label: 'Active' }, residentialAddress: { state: W.clientState } } } })
   if (method === 'GET' && u.pathname === '/api/visits/modification-reasons') return r(200, { results: { modificationReasons: [{ id: 3, name: 'Office Issue', disabled: true }, { id: 11, name: 'Schedule Change - Client Cancellation', disabled: false }, { id: 12, name: 'Booked by family in app', disabled: false }] } })
   if (method === 'GET' && u.pathname === '/api/visits') {
     const c = u.searchParams.get('clientIds'), s = u.searchParams.get('startDate'), e = u.searchParams.get('endDate')
