@@ -9,6 +9,9 @@
 #  3. family-offer checks every 10 minutes (cron). With the switch OFF, and while the app is in practice mode, it sends nothing.
 #  4. Publishes the reviewed family app (calendar, set time or flexible, who would you like) to family.mo-care.com.
 #  5. Proves it: the live doors answer as built, a forged offer link gets nothing, the site serves the new app.
+#  Also (her yes 2026-10-16, "Approve the App fee check plan as recommended"): family_app_fee.sql (the App plan tick, the
+#  month-end App fee check table, $15, and family_fee_check_ready), the family-fee-check door and its run on the 1st of each
+#  month. Live family booking needs family_app_live AND the fee check (her go-live rule).
 # Turns NOTHING on: family_app_live (practice mode) and family_offer_live stay as they are; you turn offers on on the Admin page.
 # Never texts or emails anyone. Safe to run again.
 import json, os, re, subprocess, shutil, tempfile, time
@@ -26,7 +29,8 @@ LIVE = os.environ.get("SB_LIVE_BASE", APP); OFFER_PAGE = os.environ.get("SB_OFFE
 REMOTE = os.environ.get("SB_GIT_REMOTE", f"https://github.com/{OWNER_REPO}.git")
 WAIT = float(os.environ.get("SB_WAIT", "600")); POLL = float(os.environ.get("SB_POLL", "15"))
 JOB = "family-offer"; SCHEDULE = "*/10 * * * *"; VAULT_NAME = "hub_job_secret"
-FNS = [("family-gateway", False), ("family-app-office", True), ("family-offer", False)]
+FNS = [("family-gateway", False), ("family-app-office", True), ("family-offer", False), ("family-fee-check", True)]
+FEE_JOB = "family-fee-check"; FEE_SCHEDULE = "0 13 1 * *"   # the 1st, 8am Central (7am in winter)
 ok = lambda s: say("  ✓ " + s)
 def chk(good, msg, badmsg=None): (ok(msg) if good else bad(badmsg or msg))
 def run(args, cwd=None): p = subprocess.run(args, cwd=cwd, capture_output=True, text=True); return p.returncode, (p.stdout or "") + (p.stderr or "")
@@ -57,7 +61,7 @@ for fn, _ in FNS:
     for k in sorted(L.need(FNROOT, fn)):
         c2, b2 = run(["git", "-C", ROOT, "show", f"{MAIN}:{k}"])
         if c2 != 0 or b2 != open(os.path.join(ROOT, k)).read(): drift.append(k)
-for k in ("family_app_flex.sql",):
+for k in [x for x in ("family_app_flex.sql", "family_app_fee.sql", "family_app_signin.sql") if os.path.exists(os.path.join(ROOT, x))]:
     c2, b2 = run(["git", "-C", ROOT, "show", f"{MAIN}:{k}"])
     if c2 != 0 or b2 != open(os.path.join(ROOT, k)).read(): drift.append(k)
 if drift: bad("this isn't the same as GitHub's main yet (merge the pull request first, or newer work landed since: " + ", ".join(sorted(set(drift)))[:240] + ")"); say("  STOP. Nothing was changed."); done(2)
@@ -100,9 +104,21 @@ r = (r or [{}])[0] if good else {}
 chk(r.get("cols") == 7 and r.get("offers") is True, "flexible bookings, the family's picks and the offers table are in")
 chk(r.get("mo_open") is not None and r.get("ok_days") is not None, f"booking hours: Missouri opens {r.get('mo_open')}, Oklahoma days {r.get('ok_days')} (0 = Sunday)")
 say(f"  · caregiver offers: {'ON' if r.get('offers_live') == 'true' else 'OFF'} · app short-visit extra: {'still set (you changed it yourself, so it was kept)' if r.get('extra') else 'none'}")
+good, r = sql(HUB, open(os.path.join(ROOT, "family_app_fee.sql")).read())
+if not good: bad("the App fee check database change was refused: " + str(r)[:300]); say("  STOP. Tell Claude. (The flexible booking change above is in; nothing else changed.)"); done(4)
+good, r = sql(HUB, "select to_regclass('public.family_app_fees') is not null as tbl, (select count(*) from information_schema.columns where table_name = 'care_circles' and column_name in ('app_plan','app_plan_since','app_plan_by'))::int as cols, "
+    "(select data->>'family_app_fee' from app_data where key = 'ops_settings') as fee, (select data->>'family_fee_check_ready' from app_data where key = 'ops_settings') as ready")
+r = (r or [{}])[0] if good else {}
+chk(r.get("tbl") is True and r.get("cols") == 3 and r.get("ready") == "true", f"the App fee check is in: App plan tick on each client, ${r.get('fee')} for a month with no visits")
 if L.fails: say("  STOP. Tell Claude."); done(4)
 
-say(); say("2 · THE THREE DOORS")
+# Sign-in by email on file (the App readiness work, PR #471): its table must be in before the new family door is deployed.
+if os.path.exists(os.path.join(ROOT, "family_app_signin.sql")):
+    good, r = sql(HUB, open(os.path.join(ROOT, "family_app_signin.sql")).read())
+    chk(good, "sign-in by email on file: its database change is in", "the sign-in database change was refused: " + str(r)[:300])
+    if L.fails: say("  STOP. Tell Claude. (The changes above are in; no door was deployed.)"); done(4)
+
+say(); say("2 · THE FOUR DOORS")
 for fn, vj in FNS:
     if not deploy(HUB, FNROOT, fn, vj): say("  STOP. Tell Claude. (Anything above this line is in; the rest is unchanged.)"); done(5)
 
@@ -111,6 +127,10 @@ sql(HUB, f"select cron.unschedule({lit(JOB)}) where exists (select 1 from cron.j
 good, r = sql(HUB, f"select cron.schedule({lit(JOB)}, {lit(SCHEDULE)}, {lit(cron_command(FNB + '/functions/v1/family-offer', ANON))}) as id")
 good2, jb = sql(HUB, f"select schedule, command from cron.job where jobname = {lit(JOB)}")
 chk(good and good2 and jb and jb[0]["schedule"] == SCHEDULE and "x-cron-secret" in jb[0]["command"], "family-offer checks every 10 minutes (switched off, it sends nothing)")
+sql(HUB, f"select cron.unschedule({lit(FEE_JOB)}) where exists (select 1 from cron.job where jobname = {lit(FEE_JOB)})")
+good, r = sql(HUB, f"select cron.schedule({lit(FEE_JOB)}, {lit(FEE_SCHEDULE)}, {lit(cron_command(FNB + '/functions/v1/family-fee-check', ANON))}) as id")
+good2, jb = sql(HUB, f"select schedule, command from cron.job where jobname = {lit(FEE_JOB)}")
+chk(good and good2 and jb and jb[0]["schedule"] == FEE_SCHEDULE and "x-cron-secret" in jb[0]["command"], "the App fee check runs on the 1st of each month, 8am, for the month before")
 
 say(); say("4 · THE APP SITE")
 tmp = tempfile.mkdtemp(prefix="cc825-"); site = os.path.join(tmp, "site"); os.makedirs(site)
@@ -143,6 +163,10 @@ s, b = http("POST", f"{FNB}/functions/v1/family-offer?dry=1", {}, {"Authorizatio
 try: d = json.loads(b)
 except Exception: d = {}
 chk(s == 200 and d.get("ok") is True and (d.get("live") is False or d.get("held")), "family-offer dry run answers and sends nothing" + (f" ({d.get('held')})" if d.get("held") else f" ({d.get('bookings', 0)} bookings looked at)"), f"family-offer dry run: {s} {b[:200]}")
+s, b = http("POST", f"{FNB}/functions/v1/family-fee-check?dry=1", {}, {"Authorization": "Bearer " + SERVICE, "apikey": SERVICE})
+try: d = json.loads(b)
+except Exception: d = {}
+chk(s == 200 and d.get("ok") is True and d.get("dry") is True, f"the App fee check dry run answers ({len(d.get('rows') or [])} app plan clients for {d.get('month')}), saving nothing", f"family-fee-check dry run: {s} {b[:200]}")
 s, b = http("OPTIONS", f"{FNB}/functions/v1/family-gateway", headers={"Origin": APP, "Access-Control-Request-Method": "POST"})
 chk(s == 200, "the app's address may still call the family door")
 s, b = http("GET", OFFER_PAGE)
@@ -155,5 +179,5 @@ while time.time() - t0 < WAIT:
     time.sleep(POLL)
 chk(live, f"{DOMAIN} serves the new booking screens", f"{DOMAIN} doesn't show the new app yet; GitHub can be slow. Run 825 again in a few minutes (it changes nothing twice)")
 say()
-say("  825: " + ("DONE. Families can pick a date, a set time or a flexible window, and who they'd like. Nothing is switched on: offers stay OFF until you turn on \"Family app bookings: offer to caregivers\" on the Admin page." if not L.fails else "NOT COMPLETE. See the ✗ lines above."))
+say("  825: " + ("DONE. Families can pick a date, a set time or a flexible window, and who they'd like. The App fee check runs on the 1st. Nothing is switched on: offers stay OFF until you turn on \"Family app bookings: offer to caregivers\" on the Admin page." if not L.fails else "NOT COMPLETE. See the ✗ lines above."))
 done(0 if not L.fails else 1)

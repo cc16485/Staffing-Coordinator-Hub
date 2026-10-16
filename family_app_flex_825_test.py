@@ -13,11 +13,11 @@ subprocess.run(["git", "clone", "-q", HERE, COPY], check=True)
 subprocess.run(["git", "-C", COPY, "checkout", "-q", subprocess.run(["git", "-C", HERE, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()], check=True)
 FNROOT = os.path.join(COPY, "supabase", "functions")
 sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
-SHAS = {k: sha(os.path.join(FNROOT, k)) for k in ("_shared/family-app.ts", "_shared/family-app-office.ts", "_shared/family-offer.ts", "_shared/offer-links.ts", "family-gateway/index.ts", "family-app-office/index.ts", "family-offer/index.ts")}
+SHAS = {k: sha(os.path.join(FNROOT, k)) for k in ("_shared/family-app.ts", "_shared/family-app-office.ts", "_shared/family-offer.ts", "_shared/offer-links.ts", "_shared/family-fee.ts", "family-gateway/index.ts", "family-app-office/index.ts", "family-offer/index.ts", "family-fee-check/index.ts")}
 SITE_PIN = subprocess.run(["git", "-C", SITE, "rev-parse", "flex-booking"], capture_output=True, text=True).stdout.strip()
 S = {}; M = {}
 def reset(**m):
-    S.clear(); S.update(sql=[], calls=[], deployed={}, cron=None, settings={"family_app_live": False})
+    S.clear(); S.update(sql=[], calls=[], deployed={}, cron={}, settings={"family_app_live": False})
     M.clear(); M.update(dict(sql_fail=False, gh_auth=True, page_up=True, offer_401=True, offer_403=True), **m)
     subprocess.run(["rm", "-rf", BARE]); subprocess.run(["git", "init", "-q", "--bare", "-b", "main", BARE])
     # GitHub already has the app published once (802)
@@ -64,12 +64,20 @@ class H(http.server.BaseHTTPRequestHandler):
             if "create table if not exists public.family_offers" in q:
                 if M["sql_fail"]: return self._send(400, {"message": "syntax error"})
                 S["settings"].update(family_app_open_MO="07:00", family_app_days_OK=[1, 2, 3, 4, 5], family_offer_live=False); return self._send(201, [])
+            if "create table if not exists public.family_app_fees" in q:
+                if M.get("fee_sql_fail"): return self._send(400, {"message": "syntax error"})
+                S["settings"].update(family_app_fee=15, family_fee_check_ready=True); return self._send(201, [])
+            if "to_regclass('public.family_app_fees')" in q: return self._send(200, [{"tbl": True, "cols": 3, "fee": "15", "ready": "true" if S["settings"].get("family_fee_check_ready") else None}])
             if "information_schema.columns" in q: return self._send(200, [{"cols": 7, "offers": True, "mo_open": S["settings"].get("family_app_open_MO"), "ok_days": json.dumps(S["settings"].get("family_app_days_OK")), "offers_live": "false", "extra": False}])
-            if "cron.schedule" in q: S["cron"] = q; return self._send(201, [{"id": 1}])
+            if "cron.schedule" in q:
+                m2 = re.search(r"cron\.schedule\('([\w-]+)', '([^']+)', '(.*)'\) as id", q, re.S); S["cron"][m2.group(1)] = (m2.group(2), m2.group(3)); return self._send(201, [{"id": 1}])
             if "from cron.job" in q:
-                m2 = re.search(r"cron\.schedule\('family-offer', '([^']+)', '(.*)'\) as id", S["cron"] or "", re.S)
-                return self._send(200, [{"schedule": m2.group(1), "command": m2.group(2)}] if m2 else [])
+                j2 = re.search(r"jobname = '([\w-]+)'", q).group(1)
+                return self._send(200, [{"schedule": S["cron"][j2][0], "command": S["cron"][j2][1]}] if j2 in S["cron"] else [])
             return self._send(201, [])
+        if p.startswith("/functions/v1/family-fee-check"):
+            if (self.headers.get("Authorization") or "") == "Bearer eyJsvcHUB" and "dry=1" in p: return self._send(200, {"ok": True, "dry": True, "month": "2026-09", "rows": []})
+            return self._send(401, {"error": "not allowed"})
         if p.startswith("/functions/v1/family-offer"):
             if "o" in (b or {}): return self._send(403 if M["offer_403"] else 200, {"error": "This link has ended"})
             auth = self.headers.get("Authorization") or ""
@@ -113,9 +121,10 @@ writes = lambda: [c for c in S["calls"] if c[0] == "POST" and c[1].endswith("/da
 c, out = run()
 ck("1 good run: database, three doors, the 10-minute check, the site, the proofs", c == 0 and "825: DONE" in out and "✗" not in out, out)
 d = deployed()
-ck("1b doors: family-gateway and family-offer with their own checks (gateway off), the office door signed-in only", d == {"family-gateway": False, "family-app-office": True, "family-offer": False}, d)
+ck("1b doors: family-gateway and family-offer with their own checks (gateway off), the office and fee-check doors signed-in only", d == {"family-gateway": False, "family-app-office": True, "family-offer": False, "family-fee-check": True}, d)
 ck("1c the database change ran once, as one transaction", sum(1 for q in S["sql"] if "create table if not exists public.family_offers" in q) == 1 and any(q.strip().startswith("--") and "begin;" in q for q in S["sql"]))
-ck("1d the check runs every 10 minutes with the vault secret", S["cron"] and "'*/10 * * * *'" in S["cron"] and "x-cron-secret" in S["cron"] and "hub_job_secret" in S["cron"], S["cron"])
+ck("1d offers every 10 minutes and the App fee check on the 1st, both with the vault secret", S["cron"].get("family-offer", ("",))[0] == "*/10 * * * *" and S["cron"].get("family-fee-check", ("",))[0] == "0 13 1 * *" and all("x-cron-secret" in v[1] and "hub_job_secret" in v[1] for v in S["cron"].values()), S["cron"])
+ck("1h the App fee check is in (her go-live rule) and said so", "the App fee check is in" in out and "runs on the 1st of each month" in out and "App fee check dry run answers" in out, out)
 cfg = live_file("config.js") or ""; js = live_file("app.js") or ""
 ck("1e the published app is the reviewed version with the real settings, no sample data", "When should we come?" in js and "I\\'m flexible" in js and '"familyAnon": "eyJanonFAM"' in cfg and "CC_DEMO" not in cfg and live_file("CNAME") == "family.mo-care.com\n", cfg[:200])
 ck("1f nothing is switched on, and it says so", "Nothing is switched on" in out and not any("family_offer_live', true" in q or '"family_offer_live": true' in q for q in S["sql"]), out[-400:])
@@ -130,6 +139,8 @@ c, out = run(gh_auth=False)
 ck("5 GitHub not signed in: stops before anything", c == 2 and "GitHub isn't signed in" in out and not writes(), out)
 c, out = run(sql_fail=True)
 ck("6 database change refused: stops, no door deployed", c == 4 and not deployed() and "refused" in out, out)
+c, out = run(fee_sql_fail=True)
+ck("6b App fee check database change refused: stops, no door deployed", c == 4 and not deployed() and "App fee check database change was refused" in out, out)
 c, out = run(offer_403=False)
 ck("7 a forged offer link not refused: caught", c == 1 and "forged link was not refused" in out, out)
 c, out = run(page_up=False)
