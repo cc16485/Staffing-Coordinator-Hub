@@ -242,13 +242,14 @@ if MODE == "move":
     ok, r = sql("select public.ok_companion_move(false) as c")
     if not ok: bad("couldn't count the opening list: " + str(r)[:200]); done(3)
     c = r[0]["c"]; c = json.loads(c) if isinstance(c, str) else c
-    say(f"  ✓ {c['to_move']} caregiver(s) on the Oklahoma opening list to move in; {c['already_in_hub']} already in the Hub (linked, not added twice)")
+    say(f"  ✓ {c['to_move']} caregiver application(s) on the Oklahoma opening list to move in; {c['already_in_hub']} already in the Hub (linked, not added twice); 'email me when hiring opens' sign-ups stay on the list")
     say(); say("PART 2 · MOVE")
     ok, r = sql("select public.ok_companion_move(true) as c")
     if not ok: bad("the move didn't go in, and was undone as a whole (nothing changed): " + str(r)[:300]); done(6)
     m = r[0]["c"]; m = json.loads(m) if isinstance(m, str) else m
     chk(m["moved"] == c["to_move"], f"{m['moved']} moved in as Oklahoma Companion applicants (New, call only: no text consent on that form)")
-    ok, r = sql("""select (select count(*) from public.early_interest where site = 'oklahoma' and kind = 'caregiver' and moved_applicant_id is null)::int as left_,
+    ok, r = sql("""select (select count(*) from public.early_interest where site = 'oklahoma' and kind = 'caregiver' and moved_applicant_id is null
+                                and not coalesce(interests @> array['email-when-hiring'], false))::int as left_,
                           (select count(*) from public.job_applicants where source = 'ok-opening-list' and office = 'OK')::int as in_hub,
                           (select count(*) from public.job_applicants where source = 'ok-opening-list' and office <> 'OK')::int as wrong""")
     chk(ok and r[0]["left_"] == 0 and r[0]["wrong"] == 0, f"none left behind on the list; {r[0]['in_hub'] if ok else '?'} in the Hub from the list, all marked Oklahoma")
@@ -261,10 +262,11 @@ for fn in FNS:
     STATES[fn] = (st, vj)
 say(f"  ✓ all {len(FNS)} applicant senders on the server are builds from GitHub ({sum(1 for s, _ in STATES.values() if s == 'this')} already this one)")
 ok, r = sql("""select (select count(*) from public.job_applicants)::int as apps,
-  (select count(*) from public.early_interest where site = 'oklahoma' and kind = 'caregiver')::int as list_cg""")
+  (select count(*) from public.early_interest where site = 'oklahoma' and kind = 'caregiver' and not coalesce(interests @> array['email-when-hiring'], false))::int as list_cg,
+  (select count(*) from public.early_interest where site = 'oklahoma' and kind = 'caregiver' and coalesce(interests @> array['email-when-hiring'], false))::int as notify""")
 if not ok: bad("couldn't count applicants. Nothing was changed. " + str(r)[:200]); done(3)
 say(f"  ·  {r[0]['apps']} applicant record(s) in the Hub: every one reads Missouri after this")
-say(f"  ·  {r[0]['list_cg']} caregiver(s) on the Oklahoma opening list (they are NOT moved by this step)")
+say(f"  ·  {r[0]['list_cg']} caregiver application(s) on the Oklahoma opening list (they are NOT moved by this step); {r[0]['notify']} 'email me when hiring opens' sign-up(s) stay on the list")
 
 say(); say("PART 2 · CHANGE")
 stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S"); save = os.path.join(SAVE_ROOT, stamp); os.makedirs(save, exist_ok=True)
@@ -302,6 +304,6 @@ chk(ok and r[0]["n"] == 0, "nothing made-up was left behind")
 ok, r = sql("select public.ok_companion_move(false) as c")
 if ok:
     c = r[0]["c"]; c = json.loads(c) if isinstance(c, str) else c
-    say(f"  ·  {c['to_move']} caregiver(s) from the opening list are ready to move into the Hub ({c['already_in_hub']} already there). That is Desktop 807, after you say yes.")
+    say(f"  ·  {c['to_move']} caregiver application(s) from the opening list are ready to move into the Hub ({c['already_in_hub']} already there). That is Desktop 807, after you say yes.")
 say(); say("806 COMPLETE. Nothing was sent." if not fails else f"{len(fails)} PROBLEM(S) ABOVE. Tell Claude. (To put the database back: the 806 undo.)")
 done(0 if not fails else 4)

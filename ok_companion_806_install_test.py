@@ -17,7 +17,8 @@ s.run("""insert into job_applicants (first_name, last_name, phone, email, zip, p
 s.run("insert into early_interest (site, kind, name, phone, email, zip, interests, timing, experience, may_contact) values "
       "('oklahoma','caregiver','Okla Listone','405-555-0181','l1@practice.invalid','73099',array['weekdays-all','drives'],'Early 2027','1 to 3 years',true),"
       "('oklahoma','caregiver','Okla Listtwo',null,'l2@practice.invalid','73064',null,'Spring 2027','Less than 1 year',true),"
-      "('oklahoma','family','Fam Ily','405-555-0183',null,'73064',null,null,null,true)")
+      "('oklahoma','family','Fam Ily','405-555-0183',null,'73064',null,null,null,true),"
+      "('oklahoma','caregiver','Okla Notify',null,'n1@practice.invalid',null,array['email-when-hiring'],null,null,true)")
 FNS = ["interview-messages", "applicant-text", "applicant-invite", "applicant-decision-msg", "applicant-noshow", "applicant-reengage",
        "reference-chase", "reference-send", "step2-handoff", "outreach-check", "bg-review", "caregiver-journey", "welcome-call",
        "send-candidate-message", "orientation-remind"]
@@ -92,24 +93,24 @@ try:
     c, out = run()
     ck("clean run from a fresh copy: exit 0, 806 COMPLETE, nothing sent", c == 0 and "806 COMPLETE. Nothing was sent." in out, out[-2500:])
     ck("the send-door test runs in Part 1", re.search(r"optout_check_test\.mjs: ALL \d+ CHECKS PASS", out), out[:1500])
-    ck("counts only: 1 applicant record, 2 caregivers on the list (not moved)", "1 applicant record(s)" in out and "2 caregiver(s) on the Oklahoma opening list (they are NOT moved" in out, out[:2500])
+    ck("counts only: 1 applicant record, 2 caregivers on the list (not moved)", "1 applicant record(s)" in out and "2 caregiver application(s) on the Oklahoma opening list (they are NOT moved by this step); 1 'email me when hiring opens' sign-up(s) stay" in out, out[:2500])
     ck("all 15 senders redeployed, each keeping its gateway setting", sorted(deploys()) == sorted(FNS)
        and all(("--no-verify-jwt" in l) == (VJ.get(l.split()[2], True) is False) for l in cli().splitlines() if l.startswith("functions deploy")), cli())
     for line in ["Companion is an Oklahoma position", "even when the form says otherwise", "measured from Mustang", "nothing more to ask before an interview",
                  "no automatic follow-ups for an Oklahoma applicant", "the send door holds their phone", "a Missouri applicant is exactly as before",
                  "can't use the hold or the move", "Oklahoma applicant messages are OFF", "nothing made-up was left behind", "with the Oklahoma hold"]:
         ck("proves: " + line, ("✓ " in out and line in out) and ("✗ " + line) not in out, out[-2500:])
-    ck("tells her 2 are ready to move (807)", "2 caregiver(s) from the opening list are ready to move into the Hub" in out, out[-600:])
+    ck("tells her 2 are ready to move (807)", "2 caregiver application(s) from the opening list are ready to move into the Hub" in out, out[-600:])
     ck("the existing Missouri applicant reads MO and kept its grade", s.run("select office from job_applicants where first_name = 'Mo'")[0][0] == "MO")
     ck("a copy of the live rules was saved for the undo", any(f == "live_functions.sql" for _, _, fs in os.walk(SAVE) for f in fs))
-    ck("no names, numbers, emails or keys in the report", not re.search(r"Proof|Eightohsix|Listone|Listtwo|405-555|417-555|@practice|sbp_", out), out)
+    ck("no names, numbers, emails or keys in the report", not re.search(r"Proof|Eightohsix|Listone|Listtwo|Notify|405-555|417-555|@practice|sbp_", out), out)
     c, out = run(keep_deployed=True)
     ck("run again: recognises it is in, deploys nothing, proves again", c == 0 and not deploys() and "already 806" in out and "806 COMPLETE" in out, out[-900:])
     c, out = run("move")
     ck("807: moves the 2 caregivers, nobody contacted", c == 0 and "2 moved in as Oklahoma Companion applicants" in out and "MOVE COMPLETE. Nobody was texted or emailed." in out, out[-900:])
     ck("807: they are Oklahoma Companions in the Hub, call only", s.run("select count(*) from job_applicants where source = 'ok-opening-list' and office = 'OK' and position = 'companion' and sms_consent = false")[0][0] == 2)
     c, out = run("move")
-    ck("807 again: nothing more to move", c == 0 and "0 caregiver(s) on the Oklahoma opening list to move in" in out and "0 moved in" in out, out[-600:])
+    ck("807 again: nothing more to move", c == 0 and "0 caregiver application(s) on the Oklahoma opening list to move in" in out and "0 moved in" in out, out[-600:])
     c, out = run("undo")
     ck("undo: the rules are back exactly as before 806", c == 0 and "back exactly as before 806" in out and rules() == before, out[-700:])
     ck("undo: the moved applicants stay (they are real applicants)", s.run("select count(*) from job_applicants where source = 'ok-opening-list'")[0][0] == 2)

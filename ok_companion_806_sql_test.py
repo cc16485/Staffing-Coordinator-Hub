@@ -20,7 +20,8 @@ s.run("insert into early_interest (site, kind, name, phone, email, zip, interest
       "('oklahoma','caregiver','Okla Listone','405-555-0111','list.one@example.invalid','73099',array['weekdays-all','drives'],'Early 2027','1 to 3 years','I love older folks',true),"
       "('oklahoma','caregiver','Okla Listtwo Smith',null,'list.two@example.invalid','73064',array['weekdays-some'],'When you open in June 2027','None yet, but I''d love to learn',null,true),"
       "('oklahoma','family','Fam Ily','405-555-0113',null,'73064',null,null,null,null,true),"
-      "('oklahoma','caregiver','Already There','417-555-0101',null,'73064',null,null,null,null,true)")
+      "('oklahoma','caregiver','Already There','417-555-0101',null,'73064',null,null,null,null,true),"
+      "('oklahoma','caregiver','Notify Only',null,'notify@example.invalid',null,array['email-when-hiring'],null,null,null,true)")
 
 s.run("reset role")
 load("ok_companion_806.sql")
@@ -144,6 +145,8 @@ ck("moved: the person already in the Hub is linked, not added twice",
    s.run("select count(*) from job_applicants where right(regexp_replace(coalesce(phone,''),'\\D','','g'),10) = '4175550101'")[0][0] == 2
    and s.run("select moved_applicant_id is not null from early_interest where name = 'Already There'")[0][0] is True)
 ck("moved: the family on the list is left alone", s.run("select moved_applicant_id from early_interest where kind = 'family'")[0][0] is None)
+ck("moved: an 'Email me when hiring opens' sign-up stays on the list (not an application)", s.run("select moved_applicant_id from early_interest where name = 'Notify Only'")[0][0] is None
+   and s.run("select count(*) from job_applicants where lower(email) = 'notify@example.invalid'")[0][0] == 0)
 mv2 = s.run("select public.ok_companion_move(true)")[0][0]; mv2 = json.loads(mv2) if isinstance(mv2, str) else mv2
 ck("move twice: nothing more happens", mv2 == {"to_move": 0, "moved": 0, "already_in_hub": 0}, mv2)
 

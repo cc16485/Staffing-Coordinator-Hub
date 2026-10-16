@@ -316,7 +316,9 @@ revoke all on function public.ok_applicant_hold(text, text, text, text) from pub
 grant execute on function public.ok_applicant_hold(text, text, text, text) to service_role;
 
 -- ---------------------------------------------------------------------------------------------------------------------
--- The opening list's caregivers, moved in once. ok_companion_move(false) only counts; (true) moves. Nobody is contacted.
+-- The opening list's caregiver APPLICATIONS (the careers form before 2026-10-16), moved in once. The "Email me when hiring
+-- opens" sign-ups stay on the list: they get the application by email when hiring opens. ok_companion_move(false) only
+-- counts; (true) moves. Nobody is contacted.
 -- ---------------------------------------------------------------------------------------------------------------------
 alter table public.early_interest add column if not exists moved_applicant_id uuid;
 create or replace function public.ok_companion_move(p_do boolean)
@@ -324,7 +326,10 @@ create or replace function public.ok_companion_move(p_do boolean)
 declare e record; v_id uuid; v_first text; v_last text; v_moved int := 0; v_dup int := 0; v_todo int := 0;
 begin
   for e in select * from public.early_interest
-            where site = 'oklahoma' and kind = 'caregiver' and moved_applicant_id is null order by created_at loop
+            where site = 'oklahoma' and kind = 'caregiver' and moved_applicant_id is null
+              -- "Email me when hiring opens" (her 2026-10-16 change) is a sign-up, not an application: it stays on the list
+              and not coalesce(interests @> array['email-when-hiring'], false)
+            order by created_at loop
     -- already in the Hub (same last 10 digits or same email): link the list row to them, add nobody
     select a.id into v_id from public.job_applicants a
      where (length(regexp_replace(coalesce(e.phone,''),'\D','','g')) >= 10
