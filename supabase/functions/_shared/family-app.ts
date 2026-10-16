@@ -225,7 +225,8 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
   if (action === 'home') {
     const visits = (await clientVisits(deps.ax, w.axiscare_client_id, today, addDays(today, 21))).map(visitView).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start))
     const mine = (await deps.bookings(w.axiscare_client_id)).filter((b) => b.visit_date >= today && ['received', 'practice', 'waiting_for_caregiver', 'needs_office'].includes(b.status))
-    return say(200, { client: { id: w.axiscare_client_id, name: clientName, state }, can_book: w.can_book, office_phone: phone, visits,
+    const rate = Number(st?.[`family_app_rate_${state}`]) > 0 ? Number(st[`family_app_rate_${state}`]) : null
+    return say(200, { client: { id: w.axiscare_client_id, name: clientName, state }, can_book: w.can_book, office_phone: phone, rate, visits,
       waiting: mine.map((b) => ({ id: b.id, date: b.visit_date, start: b.start_time, end: b.end_time, status: b.status })), tasks: tasksFor(state, st) })
   }
 
