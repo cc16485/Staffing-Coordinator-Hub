@@ -48,6 +48,7 @@ export const SENDER_WORDS: Record<string, [string, string]> = {
   'availability-checkin': ['30-day availability text', 'scheduling_coverage'],
   'coverage-run': ['open shift text', 'scheduling_coverage'],
   'family-offer': ['family visit offer text', 'scheduling_coverage'],
+  'family-cancel': ['visit cancelled text to a caregiver', 'scheduling_coverage'],
   'coverage-reply': ['open shift reply', 'scheduling_coverage'],
   'shift-confirm': ['shift confirmation', 'scheduling_coverage'],
   'team-ask': ['Team Builder text', 'scheduling_coverage'],

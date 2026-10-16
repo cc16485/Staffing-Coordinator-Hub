@@ -16,6 +16,8 @@ import { familyAction, type Deps, type Who } from '../_shared/family-app.ts'
 import { opEvent } from '../_shared/events.ts'
 import { signinStart, type SigninDeps } from '../_shared/family-signin.ts'
 import { axClients } from '../_shared/client-lookup.ts'
+import { contactForOutbound, normalisePhone } from '../_shared/outreach.ts'
+import { ghlSendChecked } from '../_shared/send-problems.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -93,6 +95,28 @@ const deps: Deps = {
   updateBooking: async (id, vals) => !(await db.from('family_bookings').update({ ...vals, updated_at: new Date().toISOString() }).eq('id', id)).error,
   officeItem: async (item) => !(await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item })).error,
   event: async (row) => { await opEvent(db, row) },
+  closeItem: async (id, by, text) => {
+    const list = (await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()).data?.data
+    const it = (Array.isArray(list) ? list : []).find((x: any) => x?.id === id)
+    if (!it || it.status === 'done') return
+    const at = new Date().toISOString()
+    await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...it, status: 'done', last_at: at, last_activity_at: at, history: [...(it.history ?? []), { at, by, text }] } })
+  },
+  // A family cancelled: tell the caregiver (her rule 2026-10-16). Caregiver audience only; never a family.
+  textCaregiver: async (axId, message) => {
+    const ghl = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
+    if (!ghl.token || !ghl.locationId) return { ok: false, why: 'GoHighLevel is not set up on the server' }
+    const list = (await db.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()).data?.data
+    const g = (Array.isArray(list) ? list : []).find((x: any) => String(x?.axiscare_id ?? '').trim() === String(axId))
+    const phone = normalisePhone(g?.phone)
+    if (!g || !phone) return { ok: false, why: 'no phone on their Hub record' }
+    const name = [String(g.first || '').trim(), String(g.last || '').trim()].filter(Boolean).join(' ')
+    const contact = await contactForOutbound(db, ghl, { phone, firstName: String(g.first || '').trim() }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'family-cancel' })
+    if (!contact) return { ok: false, why: 'not sent (opted out, or the number is not trusted for texts)' }
+    const ok = await ghlSendChecked(db, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+      'family-cancel', { channel: 'sms', contactId: contact.contactId, address: phone, who: name }, { message })
+    return ok ? { ok: true } : { ok: false, why: 'GoHighLevel refused the text' }
+  },
 }
 
 const famAdmin = (path: string, init: RequestInit = {}) => fetch(`${FAMILY_URL}/auth/v1/admin${path}`, { ...init,
