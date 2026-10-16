@@ -9,6 +9,8 @@
 // Pure logic + small injected dependencies so it runs under Node tests.
 // =============================================================================
 
+import { brand, brandFor, brandView } from './brands.ts'
+
 export const TZ = 'America/Chicago'   // Missouri and Oklahoma are both Central
 
 /** Companion tasks families may pick. Extras show only where the settings allow them (decisions 1 and 2). */
@@ -325,6 +327,17 @@ export type Deps = {
   event: (row: any) => Promise<void>
   /** Text a caregiver (audience 'caregiver', through the outbound gate). Optional: without it the office card asks a person to. */
   textCaregiver?: (axiscareId: string, message: string) => Promise<{ ok: boolean; why?: string }>
+  /** Let me choose, from the offer engine (family-offer.ts, wired by the gateway). Optional: without it the choice isn't offered. */
+  choose?: {
+    // deno-lint-ignore no-explicit-any
+    counts: (bookingIds: string[]) => Promise<Record<string, number>>
+    // deno-lint-ignore no-explicit-any
+    list: (b: any) => Promise<any[]>
+    // deno-lint-ignore no-explicit-any
+    place: (b: any, offerId: string | null, by: 'family' | 'switch') => Promise<{ ok: boolean; placed?: boolean; name?: string; message: string; unavailable?: string[] }>
+    // deno-lint-ignore no-explicit-any
+    cancelled: (b: any, late: boolean) => Promise<void>
+  }
   /** Close an open office card (the "Place a caregiver" card of a visit the family cancelled). Optional. */
   closeItem?: (id: string, by: string, text: string) => Promise<void>
 }
@@ -337,6 +350,30 @@ export function officeCard(kind: string, b: any, title: string, detail: string, 
     created_at: nowIso, first_at: nowIso, last_at: nowIso, last_activity_at: nowIso, created_by: 'family app', opened_by: 'family app',
     source: { kind: 'family_booking', booking_id: b.id, axiscare_visit_id: b.axiscare_visit_id ?? null }, history: [{ at: nowIso, by: 'family app', text: detail }] }
 }
+/** "Let me choose" (her yes 2026-10-16, with the 5 recommended answers): the family books, caregivers say they're interested
+ *  (nobody is placed), and the family picks from their profiles. Off until family_choose_live (and caregiver offers are on).
+ *  Shown only when the visit is at least minLead hours away; at deadline hours before the visit, if the family hasn't picked,
+ *  the first interested caregiver who is still free gets it. At most `max` interested before asking stops. */
+// deno-lint-ignore no-explicit-any
+export function chooseSettings(st: any) {
+  const num = (v: unknown, d: number) => Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d
+  const deadline = num(st?.family_choose_deadline_hours, 24)
+  return { live: st?.family_choose_live === true && st?.family_offer_live === true, max: Math.min(10, num(st?.family_choose_max_interested, 3)),
+    deadline, minLead: Math.max(deadline + 2, num(st?.family_choose_min_lead_hours, 30)), familyText: st?.family_choose_family_text !== false }
+}
+/** May this visit use Let me choose? */
+// deno-lint-ignore no-explicit-any
+export function chooseAllowed(st: any, date: string, start: string, now: Date): { ok: true } | { ok: false; why: string } {
+  const c = chooseSettings(st)
+  if (!c.live) return { ok: false, why: '"Let me choose" isn\'t turned on yet. Pick "Find someone for me."' }
+  if (hoursUntil(date, start, now) < c.minLead) return { ok: false, why: `"Let me choose" needs the visit at least ${c.minLead} hours away, so there's time to choose. Pick "Find someone for me."` }
+  return { ok: true }
+}
+/** The family's deadline to choose (ISO): `deadline` hours before the visit starts (Central wall clock). */
+export function chooseBy(date: string, start: string, now: Date, deadlineHours: number) {
+  return new Date(now.getTime() + (hoursUntil(date, start, now) - deadlineHours) * 3600000).toISOString()
+}
+
 /** Her cancel rules (2026-10-16): families cancel app-booked visits any time in the app. Less than 24 hours before the start,
  *  the family is charged 2 hours and the caregiver is paid 2 hours (Hub setting family_app_late_cancel_hours). */
 // deno-lint-ignore no-explicit-any
@@ -361,9 +398,10 @@ export function cancelNote(b: any, by: string, now: Date, late: boolean, lateHou
 }
 /** The text the caregiver gets. */
 // deno-lint-ignore no-explicit-any
-export function cancelText(b: any, caregiverFirst: string, clientName: string, late: boolean, lateHours: number) {
+export function cancelText(b: any, caregiverFirst: string, clientName: string, late: boolean, lateHours: number, st?: any) {
+  const sign = brand(brandFor(b?.state), st)?.short
   return `Hi ${caregiverFirst || 'there'}, the family cancelled ${clientName}'s visit on ${visitWords(b)}. It's off your schedule, so please don't go.` +
-    (late ? ` Because it was cancelled less than 24 hours ahead, you'll still be paid for ${lateHours} hours.` : '') + ' Caring Companions'
+    (late ? ` Because it was cancelled less than 24 hours ahead, you'll still be paid for ${lateHours} hours.` : '') + (sign ? ` ${sign}` : '')
 }
 
 // deno-lint-ignore no-explicit-any
@@ -371,7 +409,8 @@ export const when = (b: any) => b.start_time ? `${b.visit_date} ${b.start_time} 
 /** What a family's app shows for one of their bookings. */
 // deno-lint-ignore no-explicit-any
 export const bookingView = (b: any) => ({ id: b.id, date: b.visit_date, kind: b.kind === 'flex' ? 'flex' : 'set', start: b.start_time ?? null, end: b.end_time ?? null,
-  window_start: b.window_start ?? b.start_time, window_end: b.window_end ?? b.end_time, hours: Number(b.hours), tasks: b.tasks, status: b.status, caregiver: b.caregiver_name ?? null })
+  window_start: b.window_start ?? b.start_time, window_end: b.window_end ?? b.end_time, hours: Number(b.hours), tasks: b.tasks, status: b.status, caregiver: b.caregiver_name ?? null,
+  method: b.method === 'choose' ? 'choose' : 'auto', choose_by: b.method === 'choose' ? (b.choose_by ?? null) : null, interested: Number(b.interested_count ?? 0) })
 const OPEN = ['received', 'practice', 'waiting_for_caregiver', 'needs_office']
 
 /** Her rule 2026-10-16: the app is for ACTIVE clients only. A client AxisCare no longer lists as active closes the app for their
@@ -395,16 +434,18 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
   const cr = await deps.ax('GET', `/api/clients/${encodeURIComponent(w.axiscare_client_id)}`)
   if (cr.status !== 200) return say(502, { error: "We couldn't reach the schedule just now. Please try again in a minute." })
   const client = cr.json?.results?.client ?? cr.json?.results
-  if (!careActive(client, w.axiscare_client_id, st)) return say(403, { error: `${String(client?.goesBy || client?.firstName || w.client_name || 'This client').trim()}'s care with us has ended, so the app is closed. Please call the office at (417) 234-8494 with any questions.` })
   const state = stateOf(client)
+  // The client's brand (her two-brand plan 2026-10-16): Missouri or Oklahoma from the AxisCare address, never guessed.
+  const bnd = brand(brandFor(state), st)
+  if (!careActive(client, w.axiscare_client_id, st)) return say(403, { error: `${String(client?.goesBy || client?.firstName || w.client_name || 'This client').trim()}'s care with us has ended, so the app is closed. Please call the office${bnd ? ` at ${bnd.phone}` : ''} with any questions.` })
   const clientName = String(client?.goesBy || client?.firstName || w.client_name || '').trim()
-  const phone = st?.[`family_app_office_phone_${state}`] ?? (state === 'MO' ? '(417) 234-8494' : null)
+  const phone = (state ? st?.[`family_app_office_phone_${state}`] : null) ?? bnd?.phone ?? null
 
   if (action === 'home') {
     const visits = (await clientVisits(deps.ax, w.axiscare_client_id, today, addDays(today, 21))).map(visitView).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start))
     const mine = (await deps.bookings(w.axiscare_client_id)).filter((b) => b.visit_date >= today && OPEN.includes(b.status))
     const est = await estimateRate(deps.ax, w.axiscare_client_id, state, st, today)
-    return say(200, { client: { id: w.axiscare_client_id, name: clientName, state }, can_book: w.can_book, office_phone: phone, rate: est.rate, short_extra: est.short_extra, short_under_hours: est.short_under_hours, visits,
+    return say(200, { client: { id: w.axiscare_client_id, name: clientName, state }, brand: bnd ? { ...brandView(bnd), phone: phone ?? bnd.phone } : null, can_book: w.can_book, office_phone: phone, rate: est.rate, short_extra: est.short_extra, short_under_hours: est.short_under_hours, visits,
       waiting: mine.map(bookingView), tasks: tasksFor(state, st), hours: hoursFor(state, st) })
   }
 
@@ -419,7 +460,24 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
 
   if (action === 'bookings') {
     const list = (await deps.bookings(w.axiscare_client_id)).filter((b) => b.visit_date >= addDays(today, -30))
-    return say(200, { bookings: list.map(bookingView) })
+    const choosing = list.filter((b) => b.method === 'choose' && b.status === 'waiting_for_caregiver' && !b.caregiver_axiscare_id)
+    const counts = choosing.length && deps.choose ? await deps.choose.counts(choosing.map((b) => String(b.id))) : {}
+    return say(200, { bookings: list.map((b) => bookingView({ ...b, interested_count: counts[String(b.id)] ?? 0 })), choose: { live: chooseSettings(st).live && !!deps.choose, min_lead_hours: chooseSettings(st).minLead } })
+  }
+
+  // ── Let me choose: who's interested, pick one, or let us pick ──
+  if (action === 'interested' || action === 'choose' || action === 'auto') {
+    const b = (await deps.bookings(w.axiscare_client_id)).find((x) => x.id === String(body?.booking_id ?? ''))
+    if (!b || b.status === 'cancelled') return say(404, { error: "We couldn't find that visit." })
+    if (b.caregiver_axiscare_id || b.status !== 'waiting_for_caregiver') return say(409, { error: b.caregiver_name ? `${String(b.caregiver_name).split(' ')[0]} is already confirmed for this visit.` : 'This visit already has a caregiver.' })
+    if (b.method !== 'choose') return say(409, { error: "We're already finding someone for this visit." })
+    if (!deps.choose) return say(503, { error: "Choosing isn't available just now. Please call the office." })
+    if (action === 'interested') return say(200, { booking: bookingView(b), caregivers: await deps.choose.list(b) })
+    if (!w.can_book) return say(403, { error: 'Please call the office to change visits.' })
+    const r = await deps.choose.place(b, action === 'choose' ? String(body?.offer_id ?? '') : null, action === 'choose' ? 'family' : 'switch')
+    await deps.event({ actor_kind: 'person', actor_email: user.email ?? undefined, actor_name: w.name, via: 'link', verb: action === 'choose' ? 'family_chose' : 'family_let_us_pick', area: 'family_app',
+      summary: `${w.name} ${action === 'choose' ? 'chose' : 'asked us to pick'} for ${b.client_name} ${when(b)}: ${r.placed ? `${r.name} placed` : r.message}`, data: { booking_id: b.id, placed: !!r.placed } })
+    return say(r.ok ? 200 : 409, r.ok ? { ok: true, placed: !!r.placed, message: r.message } : { error: r.message, unavailable: r.unavailable ?? [] })
   }
 
   if (action === 'book') {
@@ -427,6 +485,8 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
     if (!state) return say(409, { error: "We can't book online for this address yet. Please call the office." })
     const v = validateBooking(body, now, tasksFor(state, st), hoursFor(state, st))
     if (!v.ok) return say(400, { error: v.error })
+    const method = String(body?.method ?? 'auto') === 'choose' ? 'choose' : 'auto'
+    if (method === 'choose') { const ca = chooseAllowed(st, v.date, v.start ?? v.window_start, now); if (!ca.ok || !deps.choose) return say(400, { error: ca.ok ? '"Let me choose" isn\'t available just now. Pick "Find someone for me."' : ca.why }) }
     if (v.preferred.length) {
       const hers = new Set((await herCaregivers()).map((c) => c.axiscare_id))
       if (v.preferred.some((id) => !hers.has(id))) return say(400, { error: `Please pick from ${clientName}'s caregivers, or choose Whoever is available.` })
@@ -437,7 +497,8 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
     if (dup) return say(409, { error: 'You already have a visit booked for that time.', booking_id: dup.id })
     const row = { axiscare_client_id: w.axiscare_client_id, client_name: clientName, state, contact_id: w.contact_id, app_user_id: user.id, requested_by_name: w.name,
       kind: v.kind, visit_date: v.date, start_time: v.start, end_time: v.end, window_start: v.window_start, window_end: v.window_end, hours: v.hours, tasks: v.tasks, who: v.who, note: v.note || null,
-      preferred_caregiver_ids: v.preferred, requested_caregiver_axiscare_id: v.preferred[0] ?? null, status: 'received' }
+      preferred_caregiver_ids: v.preferred, requested_caregiver_axiscare_id: v.preferred[0] ?? null, status: 'received',
+      ...(method === 'choose' ? { method, choose_by: chooseBy(v.date, v.start ?? v.window_start, now, chooseSettings(st).deadline) } : {}) }
     const ins = await deps.insertBooking(row)
     if (!ins) return say(500, { error: "We couldn't save that booking. Nothing was booked. Please try again or call the office." })
     const b = { ...row, id: ins.id }
@@ -447,7 +508,7 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
       await deps.updateBooking(b.id, { status: 'practice' })
       return say(200, { ok: true, booking_id: b.id, status: 'practice', message: "Got it. (Practice mode: the office hasn't turned on live booking yet, so nothing was added to the schedule.)" })
     }
-    const seeIt = v.kind === 'flex' ? "You're booked. You'll see who's coming, and the exact time, here in the app once a caregiver confirms." : "You're booked. You'll see who's coming here in the app once a caregiver confirms."
+    const seeIt = method === 'choose' ? "Got it. We're asking caregivers now. You'll see who's interested here in the app, and you choose. If you haven't picked by the day before, we'll pick for you." : v.kind === 'flex' ? "You're booked. You'll see who's coming, and the exact time, here in the app once a caregiver confirms." : "You're booked. You'll see who's coming here in the app once a caregiver confirms."
     const offers = st?.family_offer_live === true
     const picks = v.preferred.length ? ` Asked for: ${v.preferred.length} of ${clientName}'s caregivers first.` : ''
     const needsOffice = async (why: string) => {
@@ -500,7 +561,7 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
         const gn = await deps.ax('POST', `/api/notes/caregiver/${encodeURIComponent(cgId)}`, { note, important: late })
         if (!ok2(gn.status)) problems.push(`The note didn't save on ${cgName}'s AxisCare record (${gn.status}).`)
         if (deps.textCaregiver) {
-          const t = await deps.textCaregiver(cgId, cancelText(b, cgFirst, clientName, late, lateHours))
+          const t = await deps.textCaregiver(cgId, cancelText(b, cgFirst, clientName, late, lateHours, st))
           texted = t.ok
           if (!t.ok) problems.push(`The text to ${cgName} didn't go (${t.why ?? 'unknown'}). Please call them: the visit is cancelled.`)
         } else problems.push(`Please let ${cgName} know the visit is cancelled.`)
@@ -509,6 +570,7 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
     }
     if (problems.length) await deps.officeItem(officeCard('cancel', b, `${late ? 'Late cancel' : 'Family cancelled'}: ${clientName}, ${visitWords(b)}`,
       `${w.name} cancelled ${visitWords(b)} in the app on ${stampWords(now)}. ${problems.join(' ')}`, nowIso))
+    if (deps.choose && b.method === 'choose') await deps.choose.cancelled(b, late)
     if (deps.closeItem) await deps.closeItem(`fam_book_${b.id}`, 'family app', `${w.name} cancelled this visit in the app on ${stampWords(now)}.`)
     await deps.updateBooking(b.id, { status: 'cancelled', cancelled_at: nowIso, cancelled_by: w.name, ...(removed ? {} : { error: 'AxisCare remove refused' }) })
     await deps.event({ actor_kind: 'person', actor_email: user.email ?? undefined, actor_name: w.name, via: 'link', verb: 'family_cancelled', area: 'family_app',

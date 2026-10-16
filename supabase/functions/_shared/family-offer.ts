@@ -23,7 +23,8 @@
 // OFF until ops_settings.family_offer_live === true (then the office no longer gets a card for every booking).
 // Pure logic + injected dependencies so it runs under Node tests.
 // =============================================================================
-import { appLive, central, hoursUntil, startOf, startChoices, toMin, fromMin, clock12, caregiverDay, overlaps, placeCaregiver, clientVisits, officeCard, when, type Ax } from './family-app.ts'
+import { appLive, central, hoursUntil, startOf, startChoices, toMin, fromMin, clock12, caregiverDay, overlaps, placeCaregiver, clientVisits, officeCard, when, chooseSettings, cardOf, shareable, type Ax } from './family-app.ts'
+import { brand, brandFor } from './brands.ts'
 
 // deno-lint-ignore no-explicit-any
 type Any = any
@@ -49,10 +50,26 @@ export type OfferDeps = {
   officeItem: (item: Any) => Promise<boolean>
   closeItem: (id: string, by: string, text: string) => Promise<void>
   event: (row: Any) => Promise<void>
+  // ── Let me choose ──
+  /** Text one caregiver by AxisCare id (chosen / not chosen / cancelled). */
+  textCaregiver: (axiscareId: string, message: string) => Promise<{ ok: boolean; why?: string }>
+  /** The shift-ask gate for one caregiver by AxisCare id (re-checked when the family chooses). */
+  askBlockId: (axiscareId: string, name: string, clientName: string, needsTransport: boolean) => Promise<string | null>
+  /** Published + consented caregiver profiles (her answer 3: only they are asked in Let me choose and shown to the family). */
+  profiles: (axiscareIds: string[]) => Promise<Any[]>
+  supabaseUrl: string
+  /** THE one automatic family text (her named exception, 2026-10-16): to the person who booked, when caregivers are interested. */
+  textFamily?: (b: Any, message: string) => Promise<{ ok: boolean; why?: string }>
 }
+export type ChooseDeps = Pick<OfferDeps, 'ax' | 'now' | 'settings' | 'offers' | 'updateOffer' | 'updateBooking' | 'claimBooking' | 'textCaregiver' | 'askBlockId' | 'profiles' | 'supabaseUrl' | 'officeItem' | 'closeItem' | 'event'>
 
 export const MSG_PICK = "Hi {first_name}, it's Caring Companions. A family you've visited asked for you for an extra visit in {town}: {when}. Can you take it? Tap to see it and answer: {link}"
 export const MSG_TEAM = "Hi {first_name}, it's Caring Companions. We have an extra visit in {town}: {when}. Can you take it? The first yes gets it. Tap to see it and answer: {link}"
+export const MSG_CHOOSE = "Hi {first_name}, it's {brand}. A family is choosing a caregiver for an extra visit in {town}: {when}. Interested? Tap to see it and let them know: {link} The family picks, and we'll text you if it's you."
+export const MSG_CHOSEN = "Hi {first_name}, good news: the family chose you for {when} in {town}. It's on your AxisCare schedule now. Thank you! {brand}"
+export const MSG_NOT_CHOSEN = "Hi {first_name}, the family chose another caregiver for {when} this time. Thank you for saying you could help. {brand}"
+export const MSG_CHOOSE_CANCELLED = "Hi {first_name}, the family cancelled the visit on {when} that you were interested in, so it's no longer needed. Thank you! {brand}"
+export const MSG_FAMILY_INTERESTED = "Hi {first_name}, it's {brand}. A caregiver is interested in {client}'s visit on {when}. Open the app to see who and choose: {app} If you'd rather we pick, tap Find someone for me."
 const num = (v: unknown, d: number) => Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d
 export function offerSettings(st: Any) {
   return { live: st?.family_offer_live === true, pickWait: num(st?.family_offer_pick_wait_hours, 4), waveSize: Math.min(20, num(st?.family_offer_wave_size, 5)),
@@ -103,6 +120,75 @@ export async function freeStarts(ax: Ax, b: Any, cg: string): Promise<string[]> 
   return all.filter((s: string) => !overlaps(s, fromMin(toMin(s) + hours * 60), busy))
 }
 
+// ── Let me choose: the engine (her yes 2026-10-16) ─────────────────────────────────────────────────────────────────────
+const fill = (t: string, x: Record<string, string>) => Object.entries(x).reduce((s, [k, v]) => s.replaceAll(`{${k}}`, v), t).replace(/\s{2,}/g, ' ').trim()
+const brandShort = (b: Any, st: Any) => brand(brandFor(b?.state), st)?.short ?? null
+/** Interest is good until the family's deadline; a caregiver can take it back. */
+export const interestedOf = (offers: Any[]) => offers.filter((x) => x.state === 'interested').sort((a, b) => String(a.answered_at ?? '').localeCompare(String(b.answered_at ?? '')))
+
+/** What the family sees: each interested caregiver's profile (published + consented only), and the start they picked (flex). */
+export async function interestedCards(d: ChooseDeps, b: Any) {
+  const ins = interestedOf(await d.offers(String(b.id)))
+  if (!ins.length) return []
+  const profs = (await d.profiles(ins.map((x) => String(x.caregiver_axiscare_id)))).filter(shareable)
+  return ins.map((x) => { const p = profs.find((q) => String(q.axiscare_id) === String(x.caregiver_axiscare_id)); return p ? { offer_id: x.id, start: x.picked_start ?? b.start_time ?? null, ...cardOf(p, d.supabaseUrl) } : null }).filter(Boolean)
+}
+
+/** Put ONE interested caregiver on the visit: the family's pick (offerId), or the first still-free one (the deadline, or the
+ *  family's "Find someone for me"). Re-checks everything first: still free, active in AxisCare, not Do Not Return, a driver
+ *  if the visit needs one. The same one-winner update as first-yes stops double bookings. */
+export async function placeChosen(d: ChooseDeps, b: Any, offerId: string | null, by: 'family' | 'switch' | 'deadline'): Promise<{ ok: boolean; placed?: boolean; name?: string; message: string; unavailable?: string[] }> {
+  const st = await d.settings(), now = d.now(), nowIso = now.toISOString()
+  const all = await d.offers(String(b.id)), ins = interestedOf(all)
+  const pool = offerId ? ins.filter((x) => x.id === offerId) : ins
+  if (offerId && !pool.length) return { ok: false, message: "That caregiver isn't available for this visit any more. Please pick someone else, or tap Find someone for me." }
+  const sign = brandShort(b, st) ?? '', unavailable: string[] = []
+  const town = (await townOf(d.ax, b.axiscare_client_id)) || 'your area'
+  for (const off of pool) {
+    const cg = String(off.caregiver_axiscare_id), name = String(off.caregiver_name ?? cg)
+    const flex = b.kind === 'flex' && !b.start_time, pick = flex ? String(off.picked_start ?? '') : b.start_time
+    let free: string[] = []
+    try { free = await freeStarts(d.ax, b, cg) } catch { free = [] }
+    const why = free.includes(pick) ? await d.askBlockId(cg, name, String(b.client_name ?? ''), needsDrive(b, st)) : 'already working then'
+    if (why) { await d.updateOffer(off.id, { state: 'withdrawn', error: `no longer available: ${why}`, answered_at: nowIso }); unavailable.push(name.split(' ')[0]); continue }
+    const won = await d.claimBooking(String(b.id), { caregiver_axiscare_id: cg, caregiver_name: off.caregiver_name ?? null })
+    if (!won) return { ok: false, message: 'This visit already has a caregiver.' }
+    await d.updateOffer(off.id, { state: 'chosen', answered_at: off.answered_at ?? nowIso })
+    const put = await placeCaregiver(d.ax, b, cg, flex ? pick : null, st)
+    const others = all.filter((x) => x.id !== off.id && (x.state === 'interested' || x.state === 'sent'))
+    const wasInterested = others.filter((x) => x.state === 'interested').map((x) => ({ ...x }))
+    for (const x of others) await d.updateOffer(x.id, { state: x.state === 'interested' ? 'not_chosen' : 'closed' })
+    const placedB = { ...b, start_time: flex ? pick : b.start_time, end_time: flex ? fromMin(toMin(pick) + Number(b.hours) * 60) : b.end_time }
+    if (!put.ok) {
+      await d.updateBooking(String(b.id), { status: 'needs_office', offer_stage: 'done', error: `${name} was ${by === 'family' ? 'chosen by the family' : 'picked'}, but: ${put.why}` })
+      await d.officeItem({ ...officeCard('book', b, `${by === 'family' ? 'The family chose' : 'Picked'} ${name}: ${b.client_name}, ${b.visit_date}`, `${name} was ${by === 'family' ? 'chosen by the family in the app' : 'picked (first interested)'} for ${when(b)}${flex ? `, starting ${pick}` : ''}, but it isn't on AxisCare yet: ${put.why}. Please put them on by hand and let them know.`, nowIso), urgency: 'today' })
+      return { ok: true, placed: false, name: name.split(' ')[0], message: `Thank you! Our office will confirm ${name.split(' ')[0]} with you shortly.` }
+    }
+    await d.updateBooking(String(b.id), { ...put.vals, status: 'placed', placed_at: nowIso, placed_by: by === 'family' ? 'family chose (Let me choose)' : by === 'switch' ? 'family asked us to pick (first interested)' : 'choosing deadline (first interested)', offer_stage: 'done', error: null })
+    await d.closeItem(`fam_book_${b.id}`, 'family app', `${put.name} is on the schedule (${by === 'family' ? 'the family chose' : 'first interested'})`)
+    const parts = (x: Any) => ({ first_name: String(x.caregiver_name ?? '').split(' ')[0] || 'there', when: whenWords(placedB), town, brand: sign })
+    const t = await d.textCaregiver(cg, fill(MSG_CHOSEN, parts(off)))
+    if (!t.ok) await d.officeItem({ ...officeCard('chosen', b, `Tell ${name}: chosen for ${b.client_name}, ${b.visit_date}`, `${name} is on ${when(placedB)} (${by === 'family' ? 'the family chose them' : 'first interested'}), but the text to them didn't go (${t.why ?? 'unknown'}). Please call them.`, nowIso), urgency: 'today' })
+    for (const x of wasInterested) await d.textCaregiver(String(x.caregiver_axiscare_id), fill(MSG_NOT_CHOSEN, parts(x)))
+    await d.event({ actor_kind: by === 'family' ? 'person' : 'system', actor_name: by === 'family' ? (b.requested_by_name ?? 'family') : 'family-offer', via: 'link', verb: 'family_choose_placed', area: 'family_app',
+      summary: `${put.name} placed on ${b.client_name} ${b.visit_date} (${by})`, data: { booking_id: b.id, offer_id: off.id, by, others: others.length } })
+    return { ok: true, placed: true, name: put.name, message: `${String(put.name).split(' ')[0]} is confirmed for ${whenWords(placedB)}. We've let them know.` }
+  }
+  return { ok: false, message: unavailable.length ? `${unavailable.join(' and ')} ${unavailable.length > 1 ? 'are' : 'is'} no longer available, so we're still asking. You'll see more here as they say yes.` : "Nobody is interested yet, so we're still asking.", unavailable }
+}
+
+/** The family cancelled a Let me choose visit: everyone who said they were interested hears it's no longer needed. */
+export async function chooseCancelled(d: ChooseDeps, b: Any) {
+  const st = await d.settings(), sign = brandShort(b, st) ?? ''
+  for (const x0 of (await d.offers(String(b.id))).filter((y) => y.state === 'interested' || y.state === 'sent')) {
+    const x = { ...x0 }
+    await d.updateOffer(x.id, { state: 'closed' })
+    if (x.state === 'interested') await d.textCaregiver(String(x.caregiver_axiscare_id), fill(MSG_CHOOSE_CANCELLED, { first_name: String(x.caregiver_name ?? '').split(' ')[0] || 'there', when: whenWords(b), brand: sign }))
+  }
+}
+/** The family's quiet hours for the one choose text: 8 AM to 8 PM Central only. */
+export const familyWindow = (now: Date) => { const h = Math.floor(central(now).minutes / 60); return h >= 8 && h < 20 }
+
 async function townOf(ax: Ax, clientId: string): Promise<string> {
   try {
     const r = await ax('GET', `/api/clients/${encodeURIComponent(clientId)}`)
@@ -116,7 +202,8 @@ const linkExpiry = (date: string) => Math.floor(Date.parse(date + 'T23:59:59Z') 
 export async function runOffers(d: OfferDeps, opts: { dry?: boolean } = {}) {
   const st = await d.settings(), o = offerSettings(st), now = d.now(), nowIso = now.toISOString(), today = central(now).date
   const live = o.live && !opts.dry
-  const out = { live, bookings: 0, texted: 0, refused: 0, failed: 0, held_night: 0, cards: 0, would: [] as Any[], skipped: [] as Any[] }
+  const out = { live, bookings: 0, texted: 0, refused: 0, failed: 0, held_night: 0, cards: 0, chosen: 0, family_texts: 0, would: [] as Any[], skipped: [] as Any[] }
+  let profiled: Set<string> | null = null
   if (!appLive(st)) return { ...out, held: 'the family app is in practice mode, so nothing is offered' }
   let roster: Candidate[] | null = null
   for (const b0 of await d.openBookings(today)) {
@@ -134,6 +221,23 @@ export async function runOffers(d: OfferDeps, opts: { dry?: boolean } = {}) {
     }
     const offers = await d.offers(b.id)
     const asked = new Set(offers.map((x) => String(x.caregiver_axiscare_id)))
+    // Let me choose: the deadline passed without a choice = the first interested caregiver who is still free gets it;
+    // nobody (still) interested = it carries on as Find someone for me (first yes wins), and the 24-hour card works as usual.
+    const cs = chooseSettings(st)
+    if (b.method === 'choose' && o.live && !opts.dry && b.choose_by && Date.parse(b.choose_by) <= now.getTime()) {
+      const r = await placeChosen(d, b, null, 'deadline')
+      if (r.ok) { out.chosen++; continue }
+      await d.updateBooking(b.id, { method: 'auto' }); b.method = 'auto'
+    }
+    // THE one automatic family text (her named exception 2026-10-16): once, when caregivers are interested, 8 AM to 8 PM.
+    if (b.method === 'choose' && o.live && !opts.dry && !b.family_told_at && cs.familyText && d.textFamily && familyWindow(now) && interestedOf(offers).length) {
+      const fb = brand(brandFor(b.state), st)
+      const msg = fb?.app_host ? fill(MSG_FAMILY_INTERESTED, { first_name: String(b.requested_by_name ?? '').split(' ')[0] || 'there', brand: fb.short, client: String(b.client_name ?? 'your loved one').split(' ')[0], when: whenWords(b), app: fb.app_host }) : ''
+      const t = msg ? await d.textFamily(b, msg) : { ok: false, why: 'no family app for this brand' }
+      await d.updateBooking(b.id, { family_told_at: nowIso, ...(t.ok ? {} : { error: `family text: ${t.why}` }) }); b.family_told_at = nowIso
+      if (t.ok) out.family_texts++
+      else if (t.why !== 'no consent to text') await d.officeItem({ ...officeCard('choose_tell', b, `Tell the family: caregivers are interested (${b.client_name})`, `Caregivers are interested in ${when(b)}, but the text to ${b.requested_by_name ?? 'the family'} didn't go (${t.why}). They can see it in the app; a call may help.`, nowIso), urgency: 'soon' })
+    }
     const lines = () => offers.length ? ` Asked so far: ${offers.map((x) => `${x.caregiver_name ?? x.caregiver_axiscare_id} (${x.state === 'sent' ? 'no answer yet' : x.state})`).join(', ')}.` : ''
     if (left <= o.unfilledHours && !b.unfilled_card_at)
       await card(`Nobody has taken this yet: ${b.client_name}, ${b.visit_date}`, `${b.requested_by_name ?? 'The family'} booked ${when(b)} in the app and no caregiver has said yes, with ${Math.round(left)} hours to go.${lines()} Place someone (Scheduling, Family bookings), or call the family.`)
@@ -141,6 +245,11 @@ export async function runOffers(d: OfferDeps, opts: { dry?: boolean } = {}) {
     if (nightHold(now, left, o)) { out.held_night++; continue }
     let town = '', history: Map<string, number> | null = null
     const send = async (c: Candidate, wave: 'picks' | 'team', waveNo: number): Promise<'sent' | 'skip'> => {
+      if (b.method === 'choose' && !brandShort(b, st)) { out.skipped.push({ booking: b.id, who: c.name, why: 'the visit has no Missouri/Oklahoma state, so no brand to text as' }); return 'skip' }
+      if (b.method === 'choose') {   // her answer 3: only caregivers with a published, consented profile are asked in Let me choose
+        profiled = profiled ?? new Set((await d.profiles((roster ?? await d.roster()).map((x) => x.axiscare_id))).filter(shareable).map((p) => String(p.axiscare_id)))
+        if (!profiled.has(c.axiscare_id)) { out.skipped.push({ booking: b.id, who: c.name, why: 'no published profile (Let me choose shows profiles)' }); return 'skip' }
+      }
       const why = await d.askBlock(c, String(b.client_name ?? ''), needsDrive(b, st))
       if (why) { out.skipped.push({ booking: b.id, who: c.name, why }); return 'skip' }
       let free: string[] = []
@@ -152,13 +261,15 @@ export async function runOffers(d: OfferDeps, opts: { dry?: boolean } = {}) {
       if (!ins) return 'skip'   // already asked (unique per booking and caregiver)
       asked.add(c.axiscare_id)
       const link = await d.makeLink(ins.id, linkExpiry(b.visit_date))
-      const msg = (wave === 'picks' ? o.msgPick : o.msgTeam).replaceAll('{first_name}', c.first || 'there').replaceAll('{town}', town).replaceAll('{when}', whenWords(b)).replaceAll('{link}', link)
+      const tpl = b.method === 'choose' ? String(st?.family_choose_msg || '') || MSG_CHOOSE : wave === 'picks' ? o.msgPick : o.msgTeam
+      const msg = tpl.replaceAll('{first_name}', c.first || 'there').replaceAll('{town}', town).replaceAll('{when}', whenWords(b)).replaceAll('{link}', link).replaceAll('{brand}', brandShort(b, st) ?? '')
       const r = await d.sendText(c, msg)
       if (!r.ok) { await d.updateOffer(ins.id, { state: 'failed', error: r.why }); out.failed++; return 'skip' }
       offers.push({ id: ins.id, caregiver_axiscare_id: c.axiscare_id, caregiver_name: c.name, wave, wave_no: waveNo, state: 'sent', sent_at: nowIso })
       out.texted++
       return 'sent'
     }
+    if (b.method === 'choose' && interestedOf(offers).length >= cs.max) continue   // enough interested: stop asking
     // 1. picks
     if (!b.offer_stage) {
       const ids: string[] = Array.isArray(b.preferred_caregiver_ids) ? b.preferred_caregiver_ids.map(String) : []
@@ -235,10 +346,14 @@ export async function offerPage(d: OfferDeps, offerId: string, body: Any): Promi
     return { state, answer: off.state, first_name: String(off.caregiver_name ?? '').split(' ')[0], client: String(b.client_name ?? '').split(' ')[0], town: await townOf(d.ax, b.axiscare_client_id),
       date: b.visit_date, day: dayWords(b.visit_date), kind: b.kind === 'flex' && !b.start_time ? 'flex' : 'set', start: b.start_time ?? null, end: b.end_time ?? null,
       window_start: b.window_start ?? b.start_time, window_end: b.window_end ?? b.end_time, hours: Number(b.hours), tasks: b.tasks ?? [], note: b.note ?? null, choices,
-      picked: mine ? b.start_time : null }
+      picked: mine ? b.start_time : (off.state === 'interested' ? off.picked_start ?? null : null), mode: b.method === 'choose' ? 'choose' : 'first' }
   }
   const action = String(body?.action ?? 'view')
   if (action === 'view') return say(200, await view())
+  if (action === 'withdraw') {   // Let me choose: "I can't do it after all"
+    if (off.state === 'interested' && state === 'open') await d.updateOffer(off.id, { state: 'withdrawn', answered_at: nowIso })
+    return say(200, { ok: true, message: 'Got it, the family won\'t see you for this one. Thank you for letting us know.' })
+  }
   if (action !== 'answer') return say(400, { error: 'unknown action' })
   if (body?.yes !== true) {
     if (state === 'open' && off.state === 'sent') await d.updateOffer(off.id, { state: 'no', answered_at: nowIso })
@@ -254,6 +369,13 @@ export async function offerPage(d: OfferDeps, offerId: string, body: Any): Promi
   const flex = b.kind === 'flex' && !b.start_time
   const pick = flex ? String(body?.start ?? '') : b.start_time
   if (!free.includes(pick)) return say(409, { error: flex ? 'Please pick a start time from the list.' : "You're already working then, so we can't put you on this one." })
+  // Let me choose: a yes is INTEREST, not a booking. The family picks; we text them if it's them.
+  if (b.method === 'choose') {
+    if (off.state === 'interested') return say(200, { ok: true, interested: true, message: "You've already said you're interested. The family is choosing; we'll text you if they pick you." })
+    await d.updateOffer(off.id, { state: 'interested', answered_at: nowIso, picked_start: pick })
+    await d.event({ actor_kind: 'person', actor_name: off.caregiver_name ?? cg, via: 'link', verb: 'family_offer_interested', area: 'family_app', summary: `${off.caregiver_name} is interested in ${b.client_name} ${b.visit_date}`, data: { booking_id: b.id, offer_id: off.id } })
+    return say(200, { ok: true, interested: true, message: "Thank you! The family is choosing. We'll text you if they pick you. You're not on the schedule unless they do." })
+  }
   const won = await d.claimBooking(b.id, { caregiver_axiscare_id: cg, caregiver_name: off.caregiver_name ?? null })
   if (!won) { await d.updateOffer(off.id, { state: 'taken', answered_at: nowIso }); return say(200, { ok: false, taken: true, message: 'Someone else took this one. Thank you for saying yes!' }) }
   await d.updateOffer(off.id, { state: 'yes', answered_at: nowIso, picked_start: pick })

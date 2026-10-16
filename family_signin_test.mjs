@@ -97,10 +97,16 @@ ck('12c client list down and no contact: "try again", not "not on file"', o.stat
 ck('13 careActive: active yes, inactive no, test list yes', fam.careActive({ status: { active: true } }, '1', {}) && !fam.careActive({ status: { active: false } }, '1', {}) && fam.careActive({ status: { active: false } }, '290', { family_app_test_clients: ['290'] }) && !fam.careActive({}, '1', {}))
 {
   const who = [{ contact_id: 1, name: 'Ann', circle_id: 'K1', axiscare_client_id: '502', client_name: 'Earl Jones', can_book: true }]
-  const d = { ax: async () => ({ status: 200, json: { results: { client: { id: 502, firstName: 'Earl', status: { active: false } } } } }), now: () => NOW, supabaseUrl: 'x', settings: async () => ({}), whoIs: async () => who,
+  const d = { ax: async () => ({ status: 200, json: { results: { client: { id: 502, firstName: 'Earl', status: { active: false }, residentialAddress: { state: 'MO' } } } } }), now: () => NOW, supabaseUrl: 'x', settings: async () => ({}), whoIs: async () => who,
     profiles: async () => [], bookings: async () => [], insertBooking: async () => null, updateBooking: async () => true, officeItem: async () => true, event: async () => {} }
   const r = await fam.familyAction(d, { id: 'u1' }, { action: 'home' })
   ck('13b a signed-in family whose client\'s care ended: the app is closed for them, with the office number', r.status === 403 && /Earl's care with us has ended/.test(r.body.error) && /\(417\) 234-8494/.test(r.body.error), r)
+  const d2 = { ...d, ax: async () => ({ status: 200, json: { results: { client: { id: 502, firstName: 'Earl', status: { active: false } } } } }) }
+  const r2 = await fam.familyAction(d2, { id: 'u1', email: 'a@x.test' }, { action: 'home' })
+  ck('13c care ended and AxisCare has no state: closed, and NO Missouri number guessed (two-brand rule)', r2.status === 403 && /call the office with any questions/.test(r2.body.error) && !/417/.test(r2.body.error), r2)
+  const d3 = { ...d, ax: async () => ({ status: 200, json: { results: { client: { id: 502, firstName: 'Earl', status: { active: false }, residentialAddress: { state: 'OK' } } } } }) }
+  const r3 = await fam.familyAction(d3, { id: 'u1', email: 'a@x.test' }, { action: 'home' })
+  ck('13d care ended, Oklahoma client: the Oklahoma office number', r3.status === 403 && /\(405\) 500-1758/.test(r3.body.error), r3)
 }
 
 // live for listed clients (her live test 2026-10-16)

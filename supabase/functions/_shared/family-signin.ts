@@ -42,6 +42,9 @@ export type SigninDeps = {
 }
 type Out = { status: number; body: Record<string, unknown> }
 const say = (status: number, body: Record<string, unknown>): Out => ({ status, body })
+import { brand, brandForSite } from './brands.ts'
+/** Missouri's office line (kept for the tests and older callers). The sign-in answer now uses the brand of the site the
+ *  family opened (family.mo-care.com = Missouri); an unknown site gets no number rather than Missouri's. */
 export const OFFICE = '(417) 234-8494'
 export const MAX_PER_EMAIL = 5, EMAIL_WINDOW_MIN = 15, MAX_PER_IP = 30, IP_WINDOW_MIN = 60
 export const cleanEmail = (v: unknown) => String(v ?? '').trim().toLowerCase()
@@ -50,10 +53,11 @@ export const emailOk = (e: string) => /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/.test(e) && 
 export const clientEmails = (c: any): string[] => [c?.email, c?.personalEmail, c?.emailAddress, c?.primaryEmail].map(cleanEmail).filter(Boolean)
 // deno-lint-ignore no-explicit-any
 const clientName = (c: any) => [c?.goesBy || c?.firstName, c?.lastName].map((x: unknown) => String(x ?? '').trim()).filter(Boolean).join(' ')
-export const notOnFile = (email: string) => `We don't have ${email} on file for a current client. Please call us at ${OFFICE} and we'll add it.`
+export const notOnFile = (email: string, phone: string | null = OFFICE) => `We don't have ${email} on file for a current client. Please call ${phone ? `us at ${phone}` : 'the office'} and we'll add it.`
 
 /** POST {action:'start', email} from the sign-in screen, before anyone is signed in. */
-export async function signinStart(d: SigninDeps, rawEmail: unknown, ip: string): Promise<Out> {
+export async function signinStart(d: SigninDeps, rawEmail: unknown, ip: string, origin?: string | null): Promise<Out> {
+  const sitePhone = origin === undefined ? OFFICE : (brand(brandForSite(origin))?.phone ?? null)
   const email = cleanEmail(rawEmail)
   if (!emailOk(email)) return say(400, { ok: false, error: 'Please type your whole email address.' })
   const now = d.now()
@@ -94,7 +98,7 @@ export async function signinStart(d: SigninDeps, rawEmail: unknown, ip: string):
   }
   if (!hits.length) {
     await d.recordAttempt(email, ip, revokedOnly ? 'revoked' : 'not_on_file')
-    return say(200, { ok: false, reason: 'not_on_file', error: notOnFile(email) })
+    return say(200, { ok: false, reason: 'not_on_file', error: notOnFile(email, sitePhone) })
   }
 
   // 3. One login for the email, turned on for each client they belong to
