@@ -61,7 +61,7 @@ for fn, _ in FNS:
     for k in sorted(L.need(FNROOT, fn)):
         c2, b2 = run(["git", "-C", ROOT, "show", f"{MAIN}:{k}"])
         if c2 != 0 or b2 != open(os.path.join(ROOT, k)).read(): drift.append(k)
-for k in ("family_app_flex.sql", "family_app_fee.sql"):
+for k in [x for x in ("family_app_flex.sql", "family_app_fee.sql", "family_app_signin.sql") if os.path.exists(os.path.join(ROOT, x))]:
     c2, b2 = run(["git", "-C", ROOT, "show", f"{MAIN}:{k}"])
     if c2 != 0 or b2 != open(os.path.join(ROOT, k)).read(): drift.append(k)
 if drift: bad("this isn't the same as GitHub's main yet (merge the pull request first, or newer work landed since: " + ", ".join(sorted(set(drift)))[:240] + ")"); say("  STOP. Nothing was changed."); done(2)
@@ -111,6 +111,12 @@ good, r = sql(HUB, "select to_regclass('public.family_app_fees') is not null as 
 r = (r or [{}])[0] if good else {}
 chk(r.get("tbl") is True and r.get("cols") == 3 and r.get("ready") == "true", f"the App fee check is in: App plan tick on each client, ${r.get('fee')} for a month with no visits")
 if L.fails: say("  STOP. Tell Claude."); done(4)
+
+# Sign-in by email on file (the App readiness work, PR #471): its table must be in before the new family door is deployed.
+if os.path.exists(os.path.join(ROOT, "family_app_signin.sql")):
+    good, r = sql(HUB, open(os.path.join(ROOT, "family_app_signin.sql")).read())
+    chk(good, "sign-in by email on file: its database change is in", "the sign-in database change was refused: " + str(r)[:300])
+    if L.fails: say("  STOP. Tell Claude. (The changes above are in; no door was deployed.)"); done(4)
 
 say(); say("2 · THE FOUR DOORS")
 for fn, vj in FNS:
