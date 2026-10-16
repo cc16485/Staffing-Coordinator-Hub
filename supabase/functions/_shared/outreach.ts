@@ -201,6 +201,11 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
     why: 'a PRN CNA whose availability is 60+ days old gets one check-in text with a one-tap link; weekdays 10 to 5 '
       + 'Central (enforced in the function), max 20 a day. Practice until ops_settings.prn_reconfirm_live. '
       + 'Cron: prn-reconfirm, weekdays 16:30 UTC (Desktop 358).' },
+  'family-offer':       { class: 'urgent_internal', scheduled: true,
+    why: 'a visit a family booked in the family app is offered to caregivers, each with their own link: the family\'s picks first '
+      + '(4 hours), then the team in waves of 5; first yes goes on the schedule (Samantha 2026-10-16). Caregivers only, the '
+      + 'caregiver night rule (9pm to 8am unless it starts within 3 hours) is enforced in the function. Off until '
+      + 'ops_settings.family_offer_live. Cron: family-offer, every 10 minutes.' },
   'availability-checkin': { class: 'routine_internal', scheduled: true,
     why: 'every active caregiver (not nurses, not the PRN Team) whose availability is 30+ days old or not on file gets one text '
       + 'with their own link: keep it the same or update it, and the outside-hours box (Samantha 2026-10-14). Weekdays 10 to 5 '

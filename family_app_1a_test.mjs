@@ -98,15 +98,15 @@ o = await go({ action: 'home', client: '999' })
 ck('asking for someone else\'s client is refused before AxisCare is asked', o.status === 403 && W.calls.length === 0, o)
 o = await go({ action: 'home', client: '501' })
 ck('home: upcoming visits in Central time with caregiver first name, nobody else\'s visits', o.status === 200 && o.body.visits.length === 1 && o.body.visits[0].start === '09:00' && o.body.visits[0].end === '11:00' && o.body.visits[0].caregiver.first_name === 'Sarah' && o.body.client.name === 'Dot' && o.body.client.state === 'MO' && o.body.office_phone === '(417) 234-8494', o)
-ck('home: no rate when the client has no priced visits and no state rate is set; MO short-visit extra $5 under 4 hours', o.body.rate === null && o.body.short_extra === 5 && o.body.short_under_hours === 4, o.body)
+ck('home: no rate when the client has no priced visits and no state rate is set; no short-visit extra in the app (her rule 2026-10-16)', o.body.rate === null && o.body.short_extra === 0 && o.body.short_under_hours === 4, o.body)
 W.settings.family_app_rate_MO = 30; o = await go({ action: 'home', client: '501' })
 ck('home: falls back to the state rate in the Hub settings', o.body.rate === 30, o.body.rate)
 W.visits['v=2:s=5:d=2026-09-30'].chargeRate = 32; W.visits['v=3:s=5:d=2026-09-25'].chargeRate = 29
 W.visits['v=1:s=5:d=2026-10-21'].chargeRate = 99; W.visits['v=1:s=5:d=2026-10-21'].billableRateMode = 'custom'
 o = await go({ action: 'home', client: '501' })
 ck('home: the client\'s OWN rate from their most recent priced visit (a custom one-off rate ignored)', o.body.rate === 32, o.body.rate)
-W.settings.family_app_short_extra_MO = 0; o = await go({ action: 'home', client: '501' })
-ck('home: the short-visit extra can be changed in the Hub settings', o.body.short_extra === 0, o.body.short_extra)
+W.settings.family_app_short_extra_MO = 5; o = await go({ action: 'home', client: '501' })
+ck('home: the short-visit extra can still be set in the Hub settings', o.body.short_extra === 5, o.body.short_extra)
 delete W.settings.family_app_short_extra_MO; delete W.settings.family_app_rate_MO
 o = await go({ action: 'caregivers', client: '501' })
 ck('caregivers: only published profiles of caregivers who visited, most visits first', o.status === 200 && o.body.caregivers.length === 1 && o.body.caregivers[0].name === 'Sarah J.' && o.body.caregivers[0].visits_together === 2 && o.body.caregivers[0].photo === 'https://h.co/storage/v1/object/public/caregiver-profiles/s.jpg', o)

@@ -6,11 +6,12 @@
 //   invite   {contact_id, can_book}   give a Family Circle person an app login (cc-family-app), turn them on
 //   revoke   {contact_id}             turn a login off at once (Hub record) and block it at sign-in (ban)
 //   can_book {contact_id, on}         booking on/off for one person
-//   place    {booking_id, caregiver_axiscare_id}   put a caregiver on the app visit in AxisCare, read back
+//   place    {booking_id, caregiver_axiscare_id, start?}   put a caregiver on the app visit in AxisCare, read back
+//                                    (a flexible visit: start = the time picked inside the window; the visit is made then)
 //   schedule {booking_id}             put a booking that needs the office onto the AxisCare schedule now
 // Never texts or emails a family: invite returns the words for a person to send.
 // =============================================================================
-import { ok2, axErr, putOnSchedule, reasonId, visitOf, type Ax } from './family-app.ts'
+import { putOnSchedule, placeCaregiver, type Ax } from './family-app.ts'
 
 export type OfficeDeps = {
   ax: Ax
@@ -175,21 +176,11 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     }
     const cg = String(body?.caregiver_axiscare_id ?? '')
     if (!/^\d+$/.test(cg)) return say(400, { error: 'Pick a caregiver.' })
-    if (!b.axiscare_visit_id || !['waiting_for_caregiver', 'placed'].includes(b.status)) return say(409, { error: 'Put this booking on the schedule first.' })
-    const cr = await d.ax('GET', `/api/caregivers/${cg}`)
-    const c = cr.json?.results?.caregiver ?? cr.json?.results
-    if (cr.status !== 200 || !c) return say(502, { error: `AxisCare didn't find that caregiver (${cr.status}).` })
-    const activeNow = typeof c.status === 'object' ? c.status?.active !== false : !/inactive|terminated/i.test(String(c.status ?? ''))
-    if (!activeNow) return say(409, { error: `${c.firstName ?? 'That caregiver'} isn't active in AxisCare.` })
-    const patch: Record<string, unknown> = { caregiverId: Number(cg) }
-    const rid = await reasonId(d.ax, st?.family_app_place_reason)
-    if (rid != null) patch.modificationReason = rid
-    const up = await d.ax('PATCH', `/api/visits/${encodeURIComponent(b.axiscare_visit_id)}`, patch)
-    if (!ok2(up.status)) return say(502, { error: `AxisCare refused (${up.status} ${axErr(up.json)}). Nothing changed.` })
-    const back = await d.ax('GET', `/api/visits/${encodeURIComponent(b.axiscare_visit_id)}`)
-    if (String(visitOf(back.json)?.caregiver?.id ?? '') !== cg) return say(502, { error: 'AxisCare said yes but the visit doesn\'t show that caregiver. Please check the schedule.' })
-    const name = [c.goesBy || c.firstName, c.lastName ? String(c.lastName)[0] + '.' : ''].filter(Boolean).join(' ')
-    await d.updateBooking(b.id, { status: 'placed', caregiver_axiscare_id: cg, caregiver_name: name, placed_at: nowIso, placed_by: staff.email, error: null })
+    if (b.kind === 'flex' ? !['waiting_for_caregiver', 'needs_office'].includes(b.status) : (!b.axiscare_visit_id || !['waiting_for_caregiver', 'placed', 'needs_office'].includes(b.status))) return say(409, { error: b.kind === 'flex' ? 'This visit already has its caregiver and time.' : 'Put this booking on the schedule first.' })
+    const put = await placeCaregiver(d.ax, b, cg, body?.start ? String(body.start) : null, st)
+    if (!put.ok) return say(put.status, { error: put.why })
+    const name = put.name
+    await d.updateBooking(b.id, { ...put.vals, status: 'placed', placed_at: nowIso, placed_by: staff.email, error: null })
     await d.closeItem(`fam_book_${b.id}`, staff.name, `${name} placed`)
     await ev('family_booking_placed', `${staff.name} placed ${name} with ${b.client_name} ${b.visit_date}`, { booking_id: b.id, caregiver: cg })
     return say(200, { ok: true, caregiver_name: name })
