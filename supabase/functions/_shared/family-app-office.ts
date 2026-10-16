@@ -16,6 +16,7 @@
 //   fee_billed {month, axiscare_client_id, on}   the office added (or un-added) the fee on the AxisCare invoice
 // Never texts or emails a family: invite returns the words for a person to send.
 // =============================================================================
+import { brand, brandFor, type Brand } from './brands.ts'
 import { putOnSchedule, placeCaregiver, central, type Ax } from './family-app.ts'
 import { runFeeCheck, lastMonth, validMonth, type FeeDeps } from './family-fee.ts'
 
@@ -74,22 +75,24 @@ export const inviteWords = (first: string, client: string) =>
 export const APP_URL = 'https://family.mo-care.com'
 export const AXIS_ACTIVATE = 'https://16485.axiscare.com/?user-connect.php&action=activate'
 /** The welcome text she approved 2026-10-15 (editable in the Hub before sending). */
-export function welcomeText(first: string, client: string, phone: string, withAxis: boolean) {
-  return `Hi ${first}, it's Caring Companions. You're set up to follow ${client}'s care online. To see visits and book extra ones, go to family.mo-care.com and sign in with this email (we'll email you a code).` +
+// Branded by the client's state (her two-brand plan 2026-10-16). Missouri reads exactly as she approved it on 2026-10-15.
+const MO_BRAND = brand('MO') as Brand
+export function welcomeText(first: string, client: string, phone: string, withAxis: boolean, b: Brand = MO_BRAND) {
+  return `Hi ${first}, it's ${b.short}. You're set up to follow ${client}'s care online. To see visits and book extra ones, go to ${b.app_host} and sign in with this email (we'll email you a code).` +
     (withAxis ? ` For ${client}'s calendar, care notes and invoices, go to 16485.axiscare.com, tap Activate account and use this same email.` : '') +
     ` Questions? Call ${phone}.`
 }
 const h = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-export function welcomeEmail(first: string, client: string, email: string, phone: string, withAxis: boolean) {
+export function welcomeEmail(first: string, client: string, email: string, phone: string, withAxis: boolean, b: Brand = MO_BRAND) {
   const btn = (href: string, label: string) => `<a href="${href}" style="display:inline-block;background:#1F7A8C;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:10px;margin:6px 0 2px">${label}</a>`
   const step = (n: number, title: string, body: string) => `<div style="margin:18px 0 0"><div style="font-weight:700;color:#0D365F;font-size:17px">${n}. ${title}</div>${body}</div>`
   const html = `<div style="font-family:Arial,sans-serif;font-size:16px;line-height:1.6;color:#16283a;max-width:520px">` +
     `<p>Hi ${h(first)},</p><p>You're set up to follow ${h(client)}'s care online.</p>` +
-    step(1, 'See visits and book extra ones', `<p style="margin:4px 0">Go to family.mo-care.com and type <b>${h(email)}</b>. We'll email you a 6-digit code. No password needed.</p>${btn(APP_URL, 'Open the family app')}`) +
+    step(1, 'See visits and book extra ones', `<p style="margin:4px 0">Go to ${h(String(b.app_host))} and type <b>${h(email)}</b>. We'll email you a 6-digit code. No password needed.</p>${btn(String(b.app_url), 'Open the family app')}`) +
     (withAxis ? step(2, `${h(client)}'s calendar, care notes and invoices`, `<p style="margin:4px 0">Go to 16485.axiscare.com and tap <b>Activate account</b>. Use this same email, <b>${h(email)}</b>, and follow the short steps to set a password.</p>${btn(AXIS_ACTIVATE, 'Activate your AxisCare account')}`) : '') +
     `<p style="margin-top:22px">Questions? Call us at ${h(phone)}. A real person answers, weekdays 8 AM to 6 PM.</p>` +
-    `<p style="color:#55677a">Caring Companions In-Home Senior Care</p></div>`
-  return { subject: `Your Caring Companions family access for ${client}`, html }
+    `<p style="color:#55677a">${h(b.footer)}</p></div>`
+  return { subject: `Your ${b.short} family access for ${client}`, html }
 }
 
 // deno-lint-ignore no-explicit-any
@@ -154,7 +157,15 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     const client = String(k.client_name ?? '').trim().split(/\s+/)[0] || 'your loved one'
     const cst = await d.ax('GET', `/api/clients/${encodeURIComponent(k.axiscare_client_id)}`)
     const state = String((cst.json?.results?.client ?? cst.json?.results)?.residentialAddress?.state ?? '').toUpperCase()
-    const phone = st?.[`family_app_office_phone_${state}`] ?? '(417) 234-8494'
+    // Never a default brand: an address that isn't Missouri or Oklahoma (or AxisCare unreadable) = nothing is sent.
+    const bk = cst.status === 200 ? brandFor(state) : null
+    const b = brand(bk, st)
+    if (!b) {
+      // The office pressed the button, so the reason shows right there (no card needed).
+      return say(409, { error: cst.status === 200 ? `${client}'s address in AxisCare isn't Missouri or Oklahoma${state ? ` (it says ${state})` : ''}, so we don't know which office this is. Fix the address in AxisCare, then send it.` : "AxisCare couldn't be read just now, so nothing was sent. Please try again in a minute." })
+    }
+    if (!b.app_url) return say(409, { error: `The family app isn't set up for ${b.name} yet, so nothing was sent.` })
+    const phone = st?.[`family_app_office_phone_${b.key}`] ?? b.phone
     const rps = await d.rpEmails(String(k.axiscare_client_id))
     const email = String(c.email ?? '').trim().toLowerCase()
     const onAxis = rps === null ? null : (!!email && rps.includes(email))
@@ -162,8 +173,8 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     if (body?.send !== true) {
       const withAxis = onAxis !== false
       return say(200, { preview: true, name: c.name, can_text: canText, can_email: canEmail, axis_email_on_file: onAxis, include_axis: withAxis,
-        text: welcomeText(first, client, phone, withAxis), text_without_axis: welcomeText(first, client, phone, false), text_with_axis: welcomeText(first, client, phone, true),
-        email_subject: welcomeEmail(first, client, email, phone, withAxis).subject })
+        text: welcomeText(first, client, phone, withAxis, b), text_without_axis: welcomeText(first, client, phone, false, b), text_with_axis: welcomeText(first, client, phone, true, b),
+        email_subject: welcomeEmail(first, client, email, phone, withAxis, b).subject, brand: b.key })
     }
     const withAxis = body?.include_axis !== false
     const text = String(body?.text ?? '').trim()
@@ -171,7 +182,7 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     if (!canText && !canEmail) return say(409, { error: `There's no way to reach ${c.name}: no email, and no phone with Texts OK.` })
     let byText = false, byEmail = false
     if (canText && body?.by_text !== false) byText = await d.send(c, 'sms', { message: text })
-    if (canEmail && body?.by_email !== false) { const em = welcomeEmail(first, client, email, phone, withAxis); byEmail = await d.send(c, 'email', { subject: em.subject, html: em.html }) }
+    if (canEmail && body?.by_email !== false) { const em = welcomeEmail(first, client, email, phone, withAxis, b); byEmail = await d.send(c, 'email', { subject: em.subject, html: em.html }) }
     await d.logMessage({ circle_id: String(c.circle_id), kind: 'update', body: text, sent_by: staff.name, reached: byText || byEmail ? 1 : 0, skipped: byText || byEmail ? 0 : 1 })
     await ev('family_app_welcome', `${staff.name} sent ${c.name} the family app welcome (${[byText && 'text', byEmail && 'email'].filter(Boolean).join(' + ') || 'nothing went'})`, { contact_id: c.id, by_text: byText, by_email: byEmail, include_axis: withAxis })
     if (!byText && !byEmail) return say(502, { error: 'Neither the text nor the email went through. The office has a Needs Attention card with the reason.' })

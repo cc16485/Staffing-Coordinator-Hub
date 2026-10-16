@@ -182,7 +182,7 @@ Deno.serve(async (req) => {
   if (body?.action === 'start') {
     try {
       const ip = (req.headers.get('x-forwarded-for') ?? '').split(',')[0].trim() || 'unknown'
-      const out = await signinStart(signinDeps, body?.email, ip)
+      const out = await signinStart(signinDeps, body?.email, ip, req.headers.get('Origin'))
       return json(out.body, out.status)
     } catch (e) {
       console.error('family-gateway start', String((e as Error)?.message ?? e))

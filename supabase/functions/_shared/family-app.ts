@@ -9,6 +9,8 @@
 // Pure logic + small injected dependencies so it runs under Node tests.
 // =============================================================================
 
+import { brand, brandFor, brandView } from './brands.ts'
+
 export const TZ = 'America/Chicago'   // Missouri and Oklahoma are both Central
 
 /** Companion tasks families may pick. Extras show only where the settings allow them (decisions 1 and 2). */
@@ -361,9 +363,10 @@ export function cancelNote(b: any, by: string, now: Date, late: boolean, lateHou
 }
 /** The text the caregiver gets. */
 // deno-lint-ignore no-explicit-any
-export function cancelText(b: any, caregiverFirst: string, clientName: string, late: boolean, lateHours: number) {
+export function cancelText(b: any, caregiverFirst: string, clientName: string, late: boolean, lateHours: number, st?: any) {
+  const sign = brand(brandFor(b?.state), st)?.short
   return `Hi ${caregiverFirst || 'there'}, the family cancelled ${clientName}'s visit on ${visitWords(b)}. It's off your schedule, so please don't go.` +
-    (late ? ` Because it was cancelled less than 24 hours ahead, you'll still be paid for ${lateHours} hours.` : '') + ' Caring Companions'
+    (late ? ` Because it was cancelled less than 24 hours ahead, you'll still be paid for ${lateHours} hours.` : '') + (sign ? ` ${sign}` : '')
 }
 
 // deno-lint-ignore no-explicit-any
@@ -395,16 +398,18 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
   const cr = await deps.ax('GET', `/api/clients/${encodeURIComponent(w.axiscare_client_id)}`)
   if (cr.status !== 200) return say(502, { error: "We couldn't reach the schedule just now. Please try again in a minute." })
   const client = cr.json?.results?.client ?? cr.json?.results
-  if (!careActive(client, w.axiscare_client_id, st)) return say(403, { error: `${String(client?.goesBy || client?.firstName || w.client_name || 'This client').trim()}'s care with us has ended, so the app is closed. Please call the office at (417) 234-8494 with any questions.` })
   const state = stateOf(client)
+  // The client's brand (her two-brand plan 2026-10-16): Missouri or Oklahoma from the AxisCare address, never guessed.
+  const bnd = brand(brandFor(state), st)
+  if (!careActive(client, w.axiscare_client_id, st)) return say(403, { error: `${String(client?.goesBy || client?.firstName || w.client_name || 'This client').trim()}'s care with us has ended, so the app is closed. Please call the office${bnd ? ` at ${bnd.phone}` : ''} with any questions.` })
   const clientName = String(client?.goesBy || client?.firstName || w.client_name || '').trim()
-  const phone = st?.[`family_app_office_phone_${state}`] ?? (state === 'MO' ? '(417) 234-8494' : null)
+  const phone = (state ? st?.[`family_app_office_phone_${state}`] : null) ?? bnd?.phone ?? null
 
   if (action === 'home') {
     const visits = (await clientVisits(deps.ax, w.axiscare_client_id, today, addDays(today, 21))).map(visitView).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start))
     const mine = (await deps.bookings(w.axiscare_client_id)).filter((b) => b.visit_date >= today && OPEN.includes(b.status))
     const est = await estimateRate(deps.ax, w.axiscare_client_id, state, st, today)
-    return say(200, { client: { id: w.axiscare_client_id, name: clientName, state }, can_book: w.can_book, office_phone: phone, rate: est.rate, short_extra: est.short_extra, short_under_hours: est.short_under_hours, visits,
+    return say(200, { client: { id: w.axiscare_client_id, name: clientName, state }, brand: bnd ? { ...brandView(bnd), phone: phone ?? bnd.phone } : null, can_book: w.can_book, office_phone: phone, rate: est.rate, short_extra: est.short_extra, short_under_hours: est.short_under_hours, visits,
       waiting: mine.map(bookingView), tasks: tasksFor(state, st), hours: hoursFor(state, st) })
   }
 
@@ -500,7 +505,7 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
         const gn = await deps.ax('POST', `/api/notes/caregiver/${encodeURIComponent(cgId)}`, { note, important: late })
         if (!ok2(gn.status)) problems.push(`The note didn't save on ${cgName}'s AxisCare record (${gn.status}).`)
         if (deps.textCaregiver) {
-          const t = await deps.textCaregiver(cgId, cancelText(b, cgFirst, clientName, late, lateHours))
+          const t = await deps.textCaregiver(cgId, cancelText(b, cgFirst, clientName, late, lateHours, st))
           texted = t.ok
           if (!t.ok) problems.push(`The text to ${cgName} didn't go (${t.why ?? 'unknown'}). Please call them: the visit is cancelled.`)
         } else problems.push(`Please let ${cgName} know the visit is cancelled.`)
