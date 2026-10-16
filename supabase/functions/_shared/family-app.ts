@@ -60,33 +60,92 @@ export function localDate(v: unknown, tz?: unknown): string {
   return s.slice(0, 10)
 }
 
-export const OPEN_AT = 8 * 60, CLOSE_AT = 18 * 60, MIN_HOURS = 2, NOTICE_MIN = 120, MAX_DAYS_AHEAD = 60, AUTO_NOTICE_HOURS = 24, FREE_CANCEL_HOURS = 24
-export const WHO = ['regular', 'favorites', 'any']
+export const MIN_HOURS = 2, NOTICE_MIN = 120, MAX_DAYS_AHEAD = 60, AUTO_NOTICE_HOURS = 24, FREE_CANCEL_HOURS = 24, MAX_PICKS = 5
+export const WHO = ['preferred', 'any']
+const OLD_WHO: Record<string, string> = { regular: 'preferred', favorites: 'any', any: 'any' }   // the Step 1b app's answers
 
-export type BookingIn = { date?: unknown; start?: unknown; hours?: unknown; tasks?: unknown; who?: unknown; note?: unknown; caregiver_axiscare_id?: unknown }
-export type BookingOk = { ok: true; date: string; start: string; end: string; hours: number; tasks: string[]; who: string; note: string; caregiver_axiscare_id: string | null }
-/** The approved rules: weekdays 8 AM to 6 PM, 2 hours or more (half hours ok), at least 2 hours' notice, up to 60 days ahead. */
-export function validateBooking(b: BookingIn, now: Date, allowedTasks: string[]): BookingOk | { ok: false; error: string } {
-  const date = String(b.date ?? ''), start = String(b.start ?? ''), hours = Number(b.hours)
+/** Booking hours per state (her rules 2026-10-16): Missouri any day 7 AM to 6 PM, Oklahoma Monday to Friday 8 AM to 6 PM.
+ *  Hub settings family_app_days_<STATE> (0 = Sunday ... 6 = Saturday), family_app_open_<STATE>, family_app_close_<STATE>. */
+const HOURS_DEFAULT: Record<string, { days: number[]; open: string; close: string }> = {
+  MO: { days: [0, 1, 2, 3, 4, 5, 6], open: '07:00', close: '18:00' },
+  OK: { days: [1, 2, 3, 4, 5], open: '08:00', close: '18:00' },
+}
+export type Hours = { days: number[]; open: string; close: string; min_hours: number; notice_hours: number; max_days: number }
+// deno-lint-ignore no-explicit-any
+export function hoursFor(state: string | null, st: any): Hours {
+  const d = HOURS_DEFAULT[String(state)] ?? HOURS_DEFAULT.OK
+  const set = st?.[`family_app_days_${state}`]
+  const days = Array.isArray(set) ? [...new Set(set.map(Number).filter((n: number) => Number.isInteger(n) && n >= 0 && n <= 6))].sort() as number[] : d.days
+  const hm = (v: unknown, dflt: string) => { const s = String(v ?? ''); return /^\d{2}:(00|30)$/.test(s) && toMin(s) <= 1440 ? s : dflt }
+  let open = hm(st?.[`family_app_open_${state}`], d.open), close = hm(st?.[`family_app_close_${state}`], d.close)
+  if (toMin(close) - toMin(open) < MIN_HOURS * 60) { open = d.open; close = d.close }
+  return { days, open, close, min_hours: MIN_HOURS, notice_hours: NOTICE_MIN / 60, max_days: MAX_DAYS_AHEAD }
+}
+const DAY_WORDS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+export function clock12(hhmm: string) { const m = toMin(hhmm); const h = Math.floor(m / 60), mm = m % 60; return `${(h + 11) % 12 + 1}${mm ? ':' + String(mm).padStart(2, '0') : ''} ${h < 12 ? 'AM' : 'PM'}` }
+function daysWords(days: number[]) {
+  if (days.length === 7) return 'any day'
+  if (days.join() === '1,2,3,4,5') return 'Monday to Friday'
+  return days.map((n) => DAY_WORDS[n]).join(', ')
+}
+
+export type BookingIn = { kind?: unknown; date?: unknown; start?: unknown; end?: unknown; hours?: unknown; window_start?: unknown; window_end?: unknown; tasks?: unknown; who?: unknown; note?: unknown; caregiver_axiscare_id?: unknown; preferred?: unknown }
+export type BookingOk = { ok: true; kind: 'set' | 'flex'; date: string; start: string | null; end: string | null; window_start: string; window_end: string; hours: number; tasks: string[]; who: string; note: string; preferred: string[] }
+/** The approved rules (2026-10-16): the state's days and hours, 2 hours or more (half hours ok), at least 2 hours' notice,
+ *  up to 60 days ahead. A set time is from/to; a flexible visit is a window plus how long, and the caregiver who takes it
+ *  picks the start inside the window. `preferred`: the caregivers the family would like asked first (checked against her
+ *  own caregivers by the caller). */
+export function validateBooking(b: BookingIn, now: Date, allowedTasks: string[], hrs: Hours = hoursFor('OK', {})): BookingOk | { ok: false; error: string } {
+  const date = String(b.date ?? '')
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || isNaN(Date.parse(date + 'T12:00:00Z'))) return { ok: false, error: 'Please pick a day.' }
-  const d = dowOf(date)
-  if (d === 0 || d === 6) return { ok: false, error: 'Visits are Monday to Friday.' }
-  const s = toMin(start)
-  if (isNaN(s) || s % 30 !== 0) return { ok: false, error: 'Please pick a start time.' }
-  if (!(hours >= MIN_HOURS) || (hours * 2) % 1 !== 0) return { ok: false, error: 'Visits are at least 2 hours.' }
-  const e = s + hours * 60
-  if (s < OPEN_AT || e > CLOSE_AT) return { ok: false, error: 'Visits run between 8 AM and 6 PM.' }
+  if (!hrs.days.includes(dowOf(date))) return { ok: false, error: `Visits are ${daysWords(hrs.days)}.` }
+  const kind = String(b.kind ?? 'set') === 'flex' ? 'flex' : 'set'
+  const open = toMin(hrs.open), close = toMin(hrs.close)
+  const between = `Visits run between ${clock12(hrs.open)} and ${clock12(hrs.close)}.`
+  let ws: number, we: number, hours: number
+  if (kind === 'set') {
+    ws = toMin(String(b.start ?? ''))
+    if (isNaN(ws) || ws % 30 !== 0) return { ok: false, error: 'Please pick a start time.' }
+    if (b.end != null && b.end !== '') {
+      we = toMin(String(b.end))
+      if (isNaN(we) || we % 30 !== 0) return { ok: false, error: 'Please pick an end time.' }
+      hours = (we - ws) / 60
+    } else { hours = Number(b.hours); we = ws + hours * 60 }
+    if (!(hours >= MIN_HOURS) || (hours * 2) % 1 !== 0) return { ok: false, error: 'Visits are at least 2 hours.' }
+  } else {
+    ws = toMin(String(b.window_start ?? '')); we = toMin(String(b.window_end ?? '')); hours = Number(b.hours)
+    if (isNaN(ws) || isNaN(we) || ws % 30 !== 0 || we % 30 !== 0) return { ok: false, error: 'Please pick the times you are flexible between.' }
+    if (!(hours >= MIN_HOURS) || (hours * 2) % 1 !== 0) return { ok: false, error: 'Visits are at least 2 hours.' }
+    if (we - ws < hours * 60) return { ok: false, error: `The times you picked are shorter than ${hours % 1 ? hours.toFixed(1) : hours} hours. Please widen them or shorten the visit.` }
+  }
+  if (ws < open || we > close) return { ok: false, error: between }
   const c = central(now), ahead = dayDiff(c.date, date)
-  if (ahead < 0 || (ahead === 0 && s - c.minutes < NOTICE_MIN)) return { ok: false, error: 'Please book at least 2 hours ahead. For sooner help, call the office.' }
+  if (ahead < 0 || (ahead === 0 && ws - c.minutes < NOTICE_MIN)) return { ok: false, error: 'Please book at least 2 hours ahead. For sooner help, call the office.' }
   if (ahead > MAX_DAYS_AHEAD) return { ok: false, error: 'You can book up to 60 days ahead.' }
   const tasks = Array.isArray(b.tasks) ? [...new Set(b.tasks.map(String))] : []
   if (!tasks.length) return { ok: false, error: 'Please pick what would help.' }
   const bad = tasks.find((t) => !allowedTasks.includes(t))
   if (bad) return { ok: false, error: `"${bad}" isn't something we can book in the app. Please call the office.` }
-  const who = WHO.includes(String(b.who)) ? String(b.who) : 'regular'
+  const ids = (Array.isArray(b.preferred) ? b.preferred : b.caregiver_axiscare_id != null ? [b.caregiver_axiscare_id] : []).map(String).filter((x) => /^\d+$/.test(x))
+  const preferred = [...new Set(ids)]
+  if (preferred.length > MAX_PICKS) return { ok: false, error: `Please pick up to ${MAX_PICKS} caregivers.` }
+  const rawWho = String(b.who ?? '')
+  let who = WHO.includes(rawWho) ? rawWho : (OLD_WHO[rawWho] ?? (preferred.length ? 'preferred' : 'any'))
+  if (who === 'preferred' && !preferred.length && rawWho === 'preferred') return { ok: false, error: 'Please pick who you would like, or choose Whoever is available.' }
+  if (!preferred.length) who = 'any'
   const note = String(b.note ?? '').trim().slice(0, 1000)
-  const cg = b.caregiver_axiscare_id != null && /^\d+$/.test(String(b.caregiver_axiscare_id)) ? String(b.caregiver_axiscare_id) : null
-  return { ok: true, date, start: fromMin(s), end: fromMin(e), hours, tasks, who, note, caregiver_axiscare_id: cg }
+  return { ok: true, kind, date, start: kind === 'set' ? fromMin(ws) : null, end: kind === 'set' ? fromMin(we) : null, window_start: fromMin(ws), window_end: fromMin(we),
+           hours, tasks, who, note, preferred: who === 'preferred' ? preferred : [] }
+}
+
+/** The start the clock counts from: the set start, or the start of a flexible window. */
+// deno-lint-ignore no-explicit-any
+export const startOf = (b: any) => String(b.start_time || b.window_start || '')
+/** The half-hour starts a caregiver may pick for a flexible visit (the window, less the length). */
+export function startChoices(windowStart: string, windowEnd: string, hours: number): string[] {
+  const out: string[] = []
+  for (let m = toMin(windowStart); m + hours * 60 <= toMin(windowEnd); m += 30) out.push(fromMin(m))
+  return out
 }
 
 /** Hours from now (Central wall clock) until a visit's start. */
@@ -172,22 +231,65 @@ export async function estimateRate(ax: Ax, clientId: string, state: string | nul
   return { rate, short_extra, short_under_hours }
 }
 
-/** Put a booking on the AxisCare schedule with no caregiver, then read it back. Never trust a 200. */
+/** Put a booking on the AxisCare schedule, then read it back. Never trust a 200. With no caregiver for a set-time visit
+ *  (offers go out after); a flexible visit only goes on once a caregiver has taken it and picked the start (`at`). */
 // deno-lint-ignore no-explicit-any
-export async function putOnSchedule(ax: Ax, b: any, st: any): Promise<{ ok: true; vid: string } | { ok: false; why: string }> {
+export async function putOnSchedule(ax: Ax, b: any, st: any, at?: { start: string; end: string; caregiverId: string }): Promise<{ ok: true; vid: string } | { ok: false; why: string }> {
   const service = st?.[`family_app_service_${b.state}`]
   if (!service) return { ok: false, why: `no app service is set for ${b.state} in the Hub settings` }
-  const post: Record<string, unknown> = { clientId: Number(b.axiscare_client_id), visitDate: b.visit_date, startTime: b.start_time, endTime: b.end_time, caregiverId: null, serviceCode: service }
+  const start = at?.start ?? b.start_time, end = at?.end ?? b.end_time
+  if (!start || !end) return { ok: false, why: 'a flexible visit has no start time until a caregiver picks one' }
+  const post: Record<string, unknown> = { clientId: Number(b.axiscare_client_id), visitDate: b.visit_date, startTime: start, endTime: end, caregiverId: at ? Number(at.caregiverId) : null, serviceCode: service }
   const rid = await reasonId(ax, st?.family_app_create_reason)
   if (rid != null) post.modificationReason = rid
   const made = await ax('POST', '/api/visits', post)
   if (!ok2(made.status)) return { ok: false, why: `AxisCare refused the visit (${made.status} ${axErr(made.json)})` }
   let vid = visitIdOf(made.json)
-  if (!vid) vid = (await clientVisits(ax, String(b.axiscare_client_id), b.visit_date, b.visit_date)).map(visitView).find((x) => x.start === b.start_time && !x.caregiver)?.id ?? null
+  if (!vid) vid = (await clientVisits(ax, String(b.axiscare_client_id), b.visit_date, b.visit_date)).map(visitView).find((x) => x.start === start && (at ? x.caregiver?.axiscare_id === at.caregiverId : !x.caregiver))?.id ?? null
   const back = vid ? await ax('GET', `/api/visits/${encodeURIComponent(String(vid))}`) : { status: 0, json: null }
   const bv = back.status === 200 ? visitView(visitOf(back.json)) : null
-  if (!bv || bv.date !== b.visit_date || bv.start !== b.start_time || bv.end !== b.end_time) return { ok: false, why: `AxisCare took the visit but it didn't read back as booked${vid ? ` (visit ${vid})` : ''}; please check the schedule` }
+  if (!bv || bv.date !== b.visit_date || bv.start !== start || bv.end !== end || (at && bv.caregiver?.axiscare_id !== at.caregiverId)) return { ok: false, why: `AxisCare took the visit but it didn't read back as booked${vid ? ` (visit ${vid})` : ''}; please check the schedule` }
   return { ok: true, vid: String(vid) }
+}
+
+/** A caregiver's own visits that day (Central), to keep an offer from double-booking them. */
+export async function caregiverDay(ax: Ax, caregiverId: string, date: string): Promise<{ start: string; end: string }[]> {
+  const r = await ax('GET', `/api/visits?caregiverIds=${encodeURIComponent(caregiverId)}&startDate=${date}&endDate=${date}`)
+  if (r.status !== 200 && r.status !== 404) throw new Error(`AxisCare visits ${r.status} ${axErr(r.json)}`)
+  return visitsIn(r).filter((v) => !v?.removed).map(visitView).filter((v) => v.date === date && v.start && v.end).map((v) => ({ start: v.start, end: v.end }))
+}
+export const overlaps = (s: string, e: string, busy: { start: string; end: string }[]) => busy.some((x) => toMin(s) < toMin(x.end) && toMin(x.start) < toMin(e))
+
+/** Put a caregiver on a family booking, the one way both the office and a caregiver's yes do it, always read back.
+ *  Set time: onto the AxisCare visit already there. Flexible: the AxisCare visit is made now, at the start they picked.
+ *  Returns what to save on the booking, or why it didn't work (nothing is half-saved by this function). */
+// deno-lint-ignore no-explicit-any
+export async function placeCaregiver(ax: Ax, b: any, cg: string, pickedStart: string | null, st: any): Promise<{ ok: true; name: string; vals: Record<string, unknown> } | { ok: false; status: number; why: string }> {
+  if (!/^\d+$/.test(cg)) return { ok: false, status: 400, why: 'Pick a caregiver.' }
+  const cr = await ax('GET', `/api/caregivers/${cg}`)
+  const c = cr.json?.results?.caregiver ?? cr.json?.results
+  if (cr.status !== 200 || !c) return { ok: false, status: 502, why: `AxisCare didn't find that caregiver (${cr.status}).` }
+  const activeNow = typeof c.status === 'object' ? c.status?.active !== false : !/inactive|terminated/i.test(String(c.status ?? ''))
+  if (!activeNow) return { ok: false, status: 409, why: `${c.firstName ?? 'That caregiver'} isn't active in AxisCare.` }
+  const name = [c.goesBy || c.firstName, c.lastName ? String(c.lastName)[0] + '.' : ''].filter(Boolean).join(' ')
+  if (b.kind === 'flex') {
+    if (b.axiscare_visit_id) return { ok: false, status: 409, why: 'This visit already has its time set. Change it in AxisCare.' }
+    const choices = startChoices(b.window_start, b.window_end, Number(b.hours))
+    if (!pickedStart || !choices.includes(pickedStart)) return { ok: false, status: 400, why: 'Pick a start time inside the family\'s window.' }
+    const end = fromMin(toMin(pickedStart) + Number(b.hours) * 60)
+    const put = await putOnSchedule(ax, b, st, { start: pickedStart, end, caregiverId: cg })
+    if (!put.ok) return { ok: false, status: 502, why: put.why }
+    return { ok: true, name, vals: { axiscare_visit_id: put.vid, start_time: pickedStart, end_time: end, caregiver_axiscare_id: cg, caregiver_name: name } }
+  }
+  if (!b.axiscare_visit_id) return { ok: false, status: 409, why: 'Put this booking on the schedule first.' }
+  const patch: Record<string, unknown> = { caregiverId: Number(cg) }
+  const rid = await reasonId(ax, st?.family_app_place_reason)
+  if (rid != null) patch.modificationReason = rid
+  const up = await ax('PATCH', `/api/visits/${encodeURIComponent(b.axiscare_visit_id)}`, patch)
+  if (!ok2(up.status)) return { ok: false, status: 502, why: `AxisCare refused (${up.status} ${axErr(up.json)}). Nothing changed.` }
+  const back = await ax('GET', `/api/visits/${encodeURIComponent(b.axiscare_visit_id)}`)
+  if (String(visitOf(back.json)?.caregiver?.id ?? '') !== cg) return { ok: false, status: 502, why: 'AxisCare said yes but the visit doesn\'t show that caregiver. Please check the schedule.' }
+  return { ok: true, name, vals: { caregiver_axiscare_id: cg, caregiver_name: name } }
 }
 
 // ── The family door ──────────────────────────────────────────────────────────────────────────────────────────────────
@@ -221,7 +323,13 @@ export function officeCard(kind: string, b: any, title: string, detail: string, 
     created_at: nowIso, first_at: nowIso, last_at: nowIso, last_activity_at: nowIso, created_by: 'family app', opened_by: 'family app',
     source: { kind: 'family_booking', booking_id: b.id, axiscare_visit_id: b.axiscare_visit_id ?? null }, history: [{ at: nowIso, by: 'family app', text: detail }] }
 }
-const when = (b: any) => `${b.visit_date} ${b.start_time} to ${b.end_time}`   // deno-lint-ignore no-explicit-any
+// deno-lint-ignore no-explicit-any
+export const when = (b: any) => b.start_time ? `${b.visit_date} ${b.start_time} to ${b.end_time}` : `${b.visit_date}, flexible: ${Number(b.hours)} hours anytime ${b.window_start} to ${b.window_end}`
+/** What a family's app shows for one of their bookings. */
+// deno-lint-ignore no-explicit-any
+export const bookingView = (b: any) => ({ id: b.id, date: b.visit_date, kind: b.kind === 'flex' ? 'flex' : 'set', start: b.start_time ?? null, end: b.end_time ?? null,
+  window_start: b.window_start ?? b.start_time, window_end: b.window_end ?? b.end_time, hours: Number(b.hours), tasks: b.tasks, status: b.status, caregiver: b.caregiver_name ?? null })
+const OPEN = ['received', 'practice', 'waiting_for_caregiver', 'needs_office']
 
 // deno-lint-ignore no-explicit-any
 export async function familyAction(deps: Deps, user: { id: string; email?: string | null }, body: any): Promise<Out> {
@@ -243,63 +351,78 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
 
   if (action === 'home') {
     const visits = (await clientVisits(deps.ax, w.axiscare_client_id, today, addDays(today, 21))).map(visitView).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start))
-    const mine = (await deps.bookings(w.axiscare_client_id)).filter((b) => b.visit_date >= today && ['received', 'practice', 'waiting_for_caregiver', 'needs_office'].includes(b.status))
+    const mine = (await deps.bookings(w.axiscare_client_id)).filter((b) => b.visit_date >= today && OPEN.includes(b.status))
     const est = await estimateRate(deps.ax, w.axiscare_client_id, state, st, today)
     return say(200, { client: { id: w.axiscare_client_id, name: clientName, state }, can_book: w.can_book, office_phone: phone, rate: est.rate, short_extra: est.short_extra, short_under_hours: est.short_under_hours, visits,
-      waiting: mine.map((b) => ({ id: b.id, date: b.visit_date, start: b.start_time, end: b.end_time, status: b.status })), tasks: tasksFor(state, st) })
+      waiting: mine.map(bookingView), tasks: tasksFor(state, st), hours: hoursFor(state, st) })
   }
 
-  if (action === 'caregivers') {
+  const herCaregivers = async () => {
     const past = await clientVisits(deps.ax, w.axiscare_client_id, addDays(today, -120), addDays(today, 21))
     const count = new Map<string, number>()
     for (const v of past) { const id = v?.caregiver?.id; if (id != null) count.set(String(id), (count.get(String(id)) ?? 0) + 1) }
     const cards = (await deps.profiles([...count.keys()])).filter(shareable).map((p) => ({ ...cardOf(p, deps.supabaseUrl), visits_together: count.get(String(p.axiscare_id)) ?? 0 }))
-    const seen = new Set<string>(); const out = cards.sort((a, b) => b.visits_together - a.visits_together).filter((c) => !seen.has(c.axiscare_id) && seen.add(c.axiscare_id))
-    return say(200, { caregivers: out })
+    const seen = new Set<string>(); return cards.sort((a, b) => b.visits_together - a.visits_together).filter((c) => !seen.has(c.axiscare_id) && seen.add(c.axiscare_id))
   }
+  if (action === 'caregivers') return say(200, { caregivers: await herCaregivers() })
 
   if (action === 'bookings') {
     const list = (await deps.bookings(w.axiscare_client_id)).filter((b) => b.visit_date >= addDays(today, -30))
-    return say(200, { bookings: list.map((b) => ({ id: b.id, date: b.visit_date, start: b.start_time, end: b.end_time, hours: Number(b.hours), tasks: b.tasks, status: b.status, caregiver: b.caregiver_name ?? null })) })
+    return say(200, { bookings: list.map(bookingView) })
   }
 
   if (action === 'book') {
     if (!w.can_book) return say(403, { error: 'Booking is turned off for your login. Please call the office.' })
     if (!state) return say(409, { error: "We can't book online for this address yet. Please call the office." })
-    const v = validateBooking(body, now, tasksFor(state, st))
+    const v = validateBooking(body, now, tasksFor(state, st), hoursFor(state, st))
     if (!v.ok) return say(400, { error: v.error })
-    const dup = (await deps.bookings(w.axiscare_client_id)).find((b) => b.visit_date === v.date && b.start_time === v.start && b.status !== 'cancelled')
-    if (dup) return say(409, { error: 'That visit is already booked.', booking_id: dup.id })
+    if (v.preferred.length) {
+      const hers = new Set((await herCaregivers()).map((c) => c.axiscare_id))
+      if (v.preferred.some((id) => !hers.has(id))) return say(400, { error: 'Please pick from her caregivers, or choose Whoever is available.' })
+    }
+    const vEnd = v.end ?? v.window_end, vStart = v.start ?? v.window_start
+    const dup = (await deps.bookings(w.axiscare_client_id)).find((b) => b.visit_date === v.date && b.status !== 'cancelled' &&
+      toMin(vStart) < toMin(b.end_time ?? b.window_end) && toMin(b.start_time ?? b.window_start) < toMin(vEnd))
+    if (dup) return say(409, { error: 'You already have a visit booked for that time.', booking_id: dup.id })
     const row = { axiscare_client_id: w.axiscare_client_id, client_name: clientName, state, contact_id: w.contact_id, app_user_id: user.id, requested_by_name: w.name,
-      visit_date: v.date, start_time: v.start, end_time: v.end, hours: v.hours, tasks: v.tasks, who: v.who, note: v.note || null,
-      requested_caregiver_axiscare_id: v.caregiver_axiscare_id, status: 'received' }
+      kind: v.kind, visit_date: v.date, start_time: v.start, end_time: v.end, window_start: v.window_start, window_end: v.window_end, hours: v.hours, tasks: v.tasks, who: v.who, note: v.note || null,
+      preferred_caregiver_ids: v.preferred, requested_caregiver_axiscare_id: v.preferred[0] ?? null, status: 'received' }
     const ins = await deps.insertBooking(row)
     if (!ins) return say(500, { error: "We couldn't save that booking. Nothing was booked. Please try again or call the office." })
     const b = { ...row, id: ins.id }
     const nowIso = now.toISOString()
-    await deps.event({ actor_kind: 'person', actor_email: user.email ?? undefined, actor_name: w.name, via: 'link', verb: 'family_booked', area: 'family_app', summary: `${w.name} booked ${clientName} ${when(b)}`, data: { booking_id: b.id, live: st?.family_app_live === true } })
+    await deps.event({ actor_kind: 'person', actor_email: user.email ?? undefined, actor_name: w.name, via: 'link', verb: 'family_booked', area: 'family_app', summary: `${w.name} booked ${clientName} ${when(b)}`, data: { booking_id: b.id, kind: v.kind, live: st?.family_app_live === true } })
     if (st?.family_app_live !== true) {
       await deps.updateBooking(b.id, { status: 'practice' })
       return say(200, { ok: true, booking_id: b.id, status: 'practice', message: "Got it. (Practice mode: the office hasn't turned on live booking yet, so nothing was added to the schedule.)" })
     }
+    const seeIt = v.kind === 'flex' ? "You're booked. You'll see who's coming, and the exact time, here in the app once a caregiver confirms." : "You're booked. You'll see who's coming here in the app once a caregiver confirms."
+    const offers = st?.family_offer_live === true
+    const picks = v.preferred.length ? ` Asked for: ${v.preferred.length} of her caregivers first.` : ''
     const needsOffice = async (why: string) => {
       await deps.updateBooking(b.id, { status: 'needs_office', error: why })
       await deps.officeItem(officeCard('book', b, `Family booked a visit: ${clientName}`, `${w.name} booked ${when(b)} in the app (${v.tasks.join(', ')}). It is NOT on the AxisCare schedule yet: ${why}`, nowIso))
       return say(200, { ok: true, booking_id: b.id, status: 'needs_office', message: "Got it. Our office will add it to the schedule and let you know who's coming." })
     }
+    if (v.kind === 'flex') {
+      // Stays in the Hub until a caregiver takes it and picks the start; only then does it go on AxisCare (it needs a fixed time).
+      await deps.updateBooking(b.id, { status: 'waiting_for_caregiver' })
+      if (!offers) await deps.officeItem(officeCard('book', b, `Pick a caregiver and a time: ${clientName}, ${b.visit_date}`, `${w.name} booked ${when(b)} in the app (${v.tasks.join(', ')}). Flexible: it goes on AxisCare when a caregiver is placed at a start inside the window.${picks}${v.note ? ` Note: ${v.note}` : ''}`, nowIso))
+      return say(200, { ok: true, booking_id: b.id, status: 'waiting_for_caregiver', message: seeIt })
+    }
     const put = await putOnSchedule(deps.ax, b, st)
     if (!put.ok) return needsOffice(put.why)
     const vid = put.vid
     await deps.updateBooking(b.id, { status: 'waiting_for_caregiver', axiscare_visit_id: String(vid) })
-    await deps.officeItem(officeCard('book', { ...b, axiscare_visit_id: String(vid) }, `Place a caregiver: ${clientName}, ${when(b)}`, `${w.name} booked ${when(b)} in the app (${v.tasks.join(', ')}). It is on the AxisCare schedule with no caregiver yet.${v.note ? ` Note: ${v.note}` : ''}`, nowIso))
-    return say(200, { ok: true, booking_id: b.id, status: 'waiting_for_caregiver', message: "You're booked. We'll let you know who's coming." })
+    if (!offers) await deps.officeItem(officeCard('book', { ...b, axiscare_visit_id: String(vid) }, `Place a caregiver: ${clientName}, ${when(b)}`, `${w.name} booked ${when(b)} in the app (${v.tasks.join(', ')}). It is on the AxisCare schedule with no caregiver yet.${picks}${v.note ? ` Note: ${v.note}` : ''}`, nowIso))
+    return say(200, { ok: true, booking_id: b.id, status: 'waiting_for_caregiver', message: seeIt })
   }
 
   if (action === 'cancel') {
     if (!w.can_book) return say(403, { error: 'Please call the office to change visits.' })
     const b = (await deps.bookings(w.axiscare_client_id)).find((x) => x.id === String(body?.booking_id ?? ''))
     if (!b || b.status === 'cancelled') return say(404, { error: "We couldn't find that visit." })
-    if (hoursUntil(b.visit_date, b.start_time, now) < FREE_CANCEL_HOURS) return say(409, { error: `Within 24 hours of a visit, please call the office to cancel${phone ? ` at ${phone}` : ''}.` })
+    if (hoursUntil(b.visit_date, startOf(b), now) < FREE_CANCEL_HOURS) return say(409, { error: `Within 24 hours of a visit, please call the office to cancel${phone ? ` at ${phone}` : ''}.` })
     const nowIso = now.toISOString()
     if (b.axiscare_visit_id && st?.family_app_live === true) {
       const rid = await reasonId(deps.ax, st?.family_app_cancel_reason ?? 'Schedule Change - Client Cancellation')
