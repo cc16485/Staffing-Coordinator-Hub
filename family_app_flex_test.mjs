@@ -141,13 +141,13 @@ ck('home: an Oklahoma client gets Monday to Friday 8 to 6', o.body.hours.days.jo
 reset()
 const FLEX = { action: 'book', kind: 'flex', date: '2026-10-22', window_start: '09:00', window_end: '15:00', hours: 3, tasks: ['Companionship'], who: 'preferred', preferred: ['77', '88'], note: 'Soup' }
 o = await go({ ...FLEX, preferred: ['77', '12345'] })
-ck('a pick who is not one of her caregivers is refused', o.status === 400 && /her caregivers/.test(o.body.error) && W.bookings.length === 0, o)
+ck('a pick who is not one of her caregivers is refused', o.status === 400 && /Dot's caregivers/.test(o.body.error) && W.bookings.length === 0, o)
 W.calls = []
 o = await go(FLEX)
 let b = bk()
 ck('flexible (live, offers off): kept in the Hub only, AxisCare not written', o.status === 200 && b.status === 'waiting_for_caregiver' && !b.axiscare_visit_id && b.start_time === null && !W.calls.some((c) => c[0] !== 'GET'), o)
 ck('flexible: saved with the window, length and picks', b.kind === 'flex' && b.window_start === '09:00' && b.window_end === '15:00' && b.hours === 3 && b.preferred_caregiver_ids.join() === '77,88' && b.who === 'preferred')
-ck('flexible (offers off): the office gets "Pick a caregiver and a time"', W.items.length === 1 && /Pick a caregiver and a time/.test(W.items[0].title) && /flexible: 3 hours anytime 09:00 to 15:00/.test(W.items[0].detail) && /2 of her caregivers/.test(W.items[0].detail), W.items)
+ck('flexible (offers off): the office gets "Pick a caregiver and a time"', W.items.length === 1 && /Pick a caregiver and a time/.test(W.items[0].title) && /flexible: 3 hours anytime 09:00 to 15:00/.test(W.items[0].detail) && /2 of Dot's caregivers/.test(W.items[0].detail), W.items)
 ck('the family is told they will see it in the app (no promise of a text)', /exact time, here in the app/.test(o.body.message) && !/let you know/.test(o.body.message), o.body.message)
 o = await go({ ...FLEX, kind: 'set', start: '12:00', end: '14:00' })
 ck('a visit overlapping one already booked is refused', o.status === 409 && /already have a visit/.test(o.body.error), o)
@@ -305,6 +305,7 @@ ck('the sender is registered (outreach SENDER_REGISTER and Needs Attention words
 ck('no family contact anywhere in the offer engine', !/audience: 'family'|circle-send|email/i.test((fx2 + shared).replace(/Never texts or emails a family|Never contacts a family/g, '')))
 ck('no secret or key in any file', ![fx2, shared, fs.readFileSync(path.join(F, '_shared/offer-links.ts'), 'utf8')].some((s) => /sb_secret_|sbp_|eyJhbGci/.test(s)))
 const all = [shared, fs.readFileSync(path.join(F, '_shared/family-app.ts'), 'utf8'), fs.readFileSync(path.join(F, '_shared/family-app-office.ts'), 'utf8'), fx2, fs.readFileSync('family_app_flex.sql', 'utf8')]
+ck('no her/she in anything a family, caregiver or the office reads (clients can be anyone)', !all.slice(0, 4).some((s) => /'[^'\n]*\b(her|she|She|Her)\b[^'\n]*'|`[^`\n]*\b(her|she|She|Her)\b[^`\n]*`/.test(s)))
 ck('no em dashes in anything a family, caregiver or the office reads', !all.some((s) => /'[^'\n]*\u2014[^'\n]*'|`[^`\n]*\u2014[^`\n]*`/.test(s)) && !/\u2014/.test(all[0] + all[3] + all[4]))
 
 // ── the SQL in a real Postgres ───────────────────────────────────────────────────────────────────────────────────────
