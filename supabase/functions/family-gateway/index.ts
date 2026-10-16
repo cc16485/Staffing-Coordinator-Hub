@@ -13,6 +13,8 @@
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { familyAction, type Deps, type Who } from '../_shared/family-app.ts'
+import { interestedCards, placeChosen, chooseCancelled } from '../_shared/family-offer.ts'
+import { chooseDepsFor } from '../_shared/family-offer-db.ts'
 import { opEvent } from '../_shared/events.ts'
 import { signinStart, type SigninDeps } from '../_shared/family-signin.ts'
 import { axClients } from '../_shared/client-lookup.ts'
@@ -69,8 +71,27 @@ async function familyUser(req: Request): Promise<{ id: string; email: string | n
 const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
 const PROFILE_COLS = 'axiscare_id, first_name, last_name, preferred_name, about, experience, why_this_work, years_experience, photo_path, photo_url, video_path, consent, published, status, photo_hidden, video_hidden'
 
+const cd = chooseDepsFor(db, ax, SUPABASE_URL)
 const deps: Deps = {
   ax,
+  // Let me choose (her yes 2026-10-16): the family sees who's interested and picks; the offer engine does the placing
+  choose: {
+    counts: async (ids) => {
+      const { data } = await db.from('family_offers').select('booking_id, state').in('booking_id', ids).eq('state', 'interested')
+      const out: Record<string, number> = {}; for (const r of data ?? []) out[String(r.booking_id)] = (out[String(r.booking_id)] ?? 0) + 1; return out
+    },
+    list: (b) => interestedCards(cd, b),
+    place: async (b, offerId, by) => {
+      if (by === 'switch') {
+        const r = await placeChosen(cd, b, null, 'switch')
+        if (r.ok) return r
+        await db.from('family_bookings').update({ method: 'auto', updated_at: new Date().toISOString() }).eq('id', b.id)
+        return { ok: true, placed: false, message: "Got it. We'll find someone for you, and you'll see who's coming here in the app." }
+      }
+      return placeChosen(cd, b, offerId, 'family')
+    },
+    cancelled: async (b) => { await chooseCancelled(cd, b) },
+  },
   now: () => new Date(),
   supabaseUrl: SUPABASE_URL,
   settings: async () => (await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()).data?.data ?? {},

@@ -17,6 +17,7 @@ import { shiftAskBlock } from '../_shared/shift-ask-gate.ts'
 import { readCensus } from '../_shared/axis-census.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { opEvent } from '../_shared/events.ts'
+import { chooseDepsFor } from '../_shared/family-offer-db.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -54,8 +55,11 @@ const nameKey = (n: string) => n.toLowerCase().replace(/[^a-z ]/g, '').split(/\s
 const ghl = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
 const OPEN_COLS = '*'
 
+const cd = chooseDepsFor(db, ax, SUPABASE_URL)
 const deps: OfferDeps = {
   ax,
+  // Let me choose (her yes 2026-10-16): same checks and texts as the family's door
+  textCaregiver: cd.textCaregiver, askBlockId: cd.askBlockId, profiles: cd.profiles, supabaseUrl: SUPABASE_URL, textFamily: cd.textFamily,
   now: () => new Date(),
   settings: async () => (await key('ops_settings')) ?? {},
   openBookings: async (from) => (await db.from('family_bookings').select(OPEN_COLS).eq('status', 'waiting_for_caregiver').is('caregiver_axiscare_id', null).gte('visit_date', from).order('visit_date', { ascending: true }).limit(200)).data ?? [],

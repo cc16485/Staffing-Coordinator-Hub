@@ -205,7 +205,10 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
     why: 'a visit a family booked in the family app is offered to caregivers, each with their own link: the family\'s picks first '
       + '(4 hours), then the team in waves of 5; first yes goes on the schedule (Samantha 2026-10-16). Caregivers only, the '
       + 'caregiver night rule (9pm to 8am unless it starts within 3 hours) is enforced in the function. Off until '
-      + 'ops_settings.family_offer_live. Cron: family-offer, every 10 minutes.' },
+      + 'ops_settings.family_offer_live. Cron: family-offer, every 10 minutes. LET ME CHOOSE (her yes 2026-10-16): caregivers say they are '
+      + 'interested, the family picks; chosen / not chosen / no longer needed texts to those caregivers; and ONE family text (her named '
+      + 'exception): to the person who booked, once, when caregivers are interested, 8am to 8pm, Texts OK only, through audience '
+      + '\'family\' with explicitlyEnabled backed by ops_settings.family_choose_text_approved. Off until family_choose_live.' },
   'family-cancel':      { class: 'urgent_internal', scheduled: false,
     why: 'a family cancelled a visit they booked in the family app: one text to the caregiver who was placed on it, at once, so '
       + 'they don\'t go (Samantha 2026-10-16). Caregivers only, never the family. Sent from family-gateway when the family taps '

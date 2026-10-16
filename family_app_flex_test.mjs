@@ -352,7 +352,122 @@ if (process.env.PGLITE) {
   ck('PGLITE: one offer per caregiver per booking', (await tryQ(`insert into public.family_offers (booking_id, caregiver_axiscare_id, wave, state) values ('${bidQ}','77','picks','sent')`)) === 'ok' && (await tryQ(`insert into public.family_offers (booking_id, caregiver_axiscare_id, wave, state) values ('${bidQ}','77','team','sent')`)).startsWith('refused'))
   const g = (await db.query(`select grantee, privilege_type from information_schema.role_table_grants where table_name='family_offers' and grantee in ('anon','authenticated') order by 1,2`)).rows
   ck('PGLITE: family_offers: anon nothing, office read only', JSON.stringify(g) === JSON.stringify([{ grantee: 'authenticated', privilege_type: 'SELECT' }]), g)
+  const csql = fs.readFileSync('family_app_choose.sql', 'utf8')
+  ck('PGLITE: Let me choose installs, and installs again', (await tryQ(csql)) === 'ok' && (await tryQ(csql)) === 'ok', await tryQ(csql))
+  ck('PGLITE: an interested offer is allowed; a made-up state refused', (await tryQ(`update public.family_offers set state='interested' where caregiver_axiscare_id='77'`)) === 'ok' && (await tryQ(`update public.family_offers set state='maybe'`)).startsWith('refused'))
+  ck('PGLITE: method is auto by default, choose allowed, anything else refused', (await db.query(`select method from public.family_bookings limit 1`)).rows[0].method === 'auto' && (await tryQ(`update public.family_bookings set method='choose' where kind='flex'`)) === 'ok' && (await tryQ(`update public.family_bookings set method='x'`)).startsWith('refused'))
+  const cs2 = (await db.query(`select data from public.app_data where key='ops_settings'`)).rows[0].data
+  ck('PGLITE: Let me choose OFF, 3 interested, 24-hour deadline, 30-hour minimum, her approval of the one family text recorded', cs2.family_choose_live === false && cs2.family_choose_max_interested === 3 && cs2.family_choose_deadline_hours === 24 && cs2.family_choose_min_lead_hours === 30 && /5 recommended answers/.test(cs2.family_choose_text_approved.words), cs2)
 }
+
+
+// ── LET ME CHOOSE (her yes 2026-10-16, with the 5 recommended answers) ─────────────────────────────────────────────────
+const CHOOSE_ON = { ...OFFERS_ON, family_choose_live: true, family_choose_text_approved: { by: 'Samantha' } }
+const chooseDeps = () => ({ ...offDeps(),
+  textCaregiver: async (id, message) => { W.texts.push({ to: String(id), message }); return { ok: true } },
+  askBlockId: async (id, name, client, nt) => W.blocked[id] ?? null,
+  textFamily: async (b, message) => { if (W.famFail) return { ok: false, why: 'refused' }; (W.fam ??= []).push({ to: b.contact_id, message }); return { ok: true } } })
+const famC = () => ({ ...famDeps(), choose: {
+  counts: async (ids) => { const out = {}; for (const x of W.offers) if (ids.includes(x.booking_id) && x.state === 'interested') out[x.booking_id] = (out[x.booking_id] ?? 0) + 1; return out },
+  list: (b) => fo.interestedCards(chooseDeps(), b),
+  place: async (b, offerId, by) => { if (by === 'switch') { const r = await fo.placeChosen(chooseDeps(), b, null, 'switch'); if (r.ok) return r; W.bookings.find((x) => x.id === b.id).method = 'auto'; return { ok: true, placed: false, message: "Got it. We'll find someone for you." } } return fo.placeChosen(chooseDeps(), b, offerId, 'family') },
+  cancelled: (b) => fo.chooseCancelled(chooseDeps(), b) } })
+const goC = (body) => fam.familyAction(famC(), { id: 'u-lisa', email: 'lisa@x.test' }, { client: '501', ...body })
+const runC = () => fo.runOffers(chooseDeps())
+const pageC = (id, body) => fo.offerPage(chooseDeps(), id, body)
+const CB = { action: 'book', method: 'choose', date: '2026-10-22', start: '13:00', end: '16:00', tasks: ['Companionship'], who: 'any' }
+const offerOf = (cg) => W.offers.find((x) => x.caregiver_axiscare_id === cg && x.booking_id === bk().id)
+
+reset({ settings: { ...OFFERS_ON } })
+o = await goC(CB)
+ck('choose: refused while Let me choose is off, nothing booked', o.status === 400 && /isn't turned on yet/.test(o.body.error) && W.bookings.length === 0, o)
+reset({ settings: { ...CHOOSE_ON } })
+o = await goC({ ...CB, date: '2026-10-21', start: '13:00', end: '15:00' })
+ck('choose: a visit only 28 hours away is refused (needs 30), says pick Find someone for me', o.status === 400 && /at least 30 hours/.test(o.body.error) && /Find someone for me/.test(o.body.error), o)
+o = await goC(CB); b = bk()
+ck('choose: booked, method choose, deadline 24 hours before (Wed 1 PM Central), the family is told they choose', o.status === 200 && b.method === 'choose' && b.choose_by === '2026-10-21T18:00:00.000Z' && /you choose/.test(o.body.message), [o.body, b.choose_by])
+await runC()
+ck('choose: only caregivers with a published profile are asked (Sarah, Maria), with the "family is choosing" text', W.texts.map((t) => t.to).sort().join() === '77,88' && W.texts.every((t) => /A family is choosing/.test(t.message) && /it's Caring Companions\./.test(t.message) && /we'll text you if it's you/.test(t.message)), W.texts)
+let oc = await pageC(offerOf('77').id, { action: 'view' })
+ck('caregiver page knows it is Let me choose', oc.body.mode === 'choose' && oc.body.state === 'open', oc.body)
+oc = await pageC(offerOf('77').id, { action: 'answer', yes: true })
+ck('Sarah says yes: INTERESTED, not placed; the booking still waits; she is told the family picks', oc.body.interested && offerOf('77').state === 'interested' && !b.caregiver_axiscare_id && b.status === 'waiting_for_caregiver' && /not on the schedule unless they do/.test(oc.body.message), [oc.body, b.status])
+W.texts = []; await runC()
+ck('the ONE family text: to the person who booked, once, with the app address', W.fam?.length === 1 && W.fam[0].to === 9 && /^Hi Lisa, it's Caring Companions\. A caregiver is interested in Dot's visit on Thu, Oct 22, 1 PM to 4 PM\. Open the app to see who and choose: family\.mo-care\.com/.test(W.fam[0].message) && !!b.family_told_at, W.fam)
+await runC()
+ck('...never twice', W.fam.length === 1)
+o = await goC({ action: 'bookings' })
+ck('the app: the visit shows Choosing with 1 interested, never Confirmed', o.body.bookings.find((x) => x.id === b.id).interested === 1 && o.body.bookings.find((x) => x.id === b.id).method === 'choose' && o.body.choose.live === true, o.body)
+o = await goC({ action: 'interested', booking_id: b.id })
+ck('the app: who is interested = Sarah\'s profile card', o.status === 200 && o.body.caregivers.length === 1 && o.body.caregivers[0].first_name === 'Sarah' && o.body.caregivers[0].offer_id === offerOf('77').id, o.body)
+await pageC(offerOf('88').id, { action: 'answer', yes: true })
+o = await goC({ action: 'choose', booking_id: b.id, offer_id: offerOf('88').id })
+ck('the family chooses Maria: placed on AxisCare, Confirmed, Maria texted "the family chose you", Sarah thanked', o.status === 200 && o.body.placed && b.status === 'placed' && b.caregiver_axiscare_id === '88' && W.visits[b.axiscare_visit_id].caregiver.id === 88 &&
+  W.texts.some((t) => t.to === '88' && /the family chose you/.test(t.message)) && W.texts.some((t) => t.to === '77' && /chose another caregiver/.test(t.message)) && offerOf('88').state === 'chosen' && offerOf('77').state === 'not_chosen', [o.body, W.texts])
+o = await goC({ action: 'choose', booking_id: b.id, offer_id: offerOf('77').id })
+ck('choosing again after it is placed: refused (no double booking)', o.status === 409 && /already confirmed/.test(o.body.error), o)
+
+// re-check at choosing time
+reset({ settings: { ...CHOOSE_ON } }); await goC(CB); b = bk(); await runC()
+await pageC(offerOf('77').id, { action: 'answer', yes: true }); W.blocked['77'] = 'Sarah Jones is on the No shift texts list'
+o = await goC({ action: 'choose', booking_id: b.id, offer_id: offerOf('77').id })
+ck('chosen caregiver no longer allowed: not placed, the family is told plainly, she drops off the list', o.status === 409 && /Sarah is no longer available/.test(o.body.error) && b.status === 'waiting_for_caregiver' && offerOf('77').state === 'withdrawn', o)
+delete W.blocked['77']
+
+// withdraw
+reset({ settings: { ...CHOOSE_ON } }); await goC(CB); b = bk(); await runC()
+await pageC(offerOf('77').id, { action: 'answer', yes: true })
+oc = await pageC(offerOf('77').id, { action: 'withdraw' })
+o = await goC({ action: 'interested', booking_id: b.id })
+ck('a caregiver takes it back: gone from the family\'s list', /won't see you/.test(oc.body.message) && offerOf('77').state === 'withdrawn' && o.body.caregivers.length === 0, o.body)
+
+// Find someone for me instead
+reset({ settings: { ...CHOOSE_ON } }); await goC(CB); b = bk(); await runC()
+await pageC(offerOf('88').id, { action: 'answer', yes: true })
+o = await goC({ action: 'auto', booking_id: b.id })
+ck('"Find someone for me instead" with someone interested: the first interested is placed now', o.status === 200 && o.body.placed && b.caregiver_axiscare_id === '88' && /placed_by/.test(Object.keys(b).join()) && /family asked us to pick/.test(b.placed_by), [o.body, b.placed_by])
+reset({ settings: { ...CHOOSE_ON } }); await goC(CB); b = bk(); await runC()
+o = await goC({ action: 'auto', booking_id: b.id })
+ck('"Find someone for me instead" with nobody interested yet: it becomes first-yes-wins', o.status === 200 && !o.body.placed && b.method === 'auto', o.body)
+oc = await pageC(offerOf('77').id, { action: 'answer', yes: true })
+ck('...and the next yes goes straight on the schedule', oc.body.placed && b.caregiver_axiscare_id === '77', oc.body)
+
+// the deadline
+reset({ settings: { ...CHOOSE_ON } }); await goC(CB); b = bk(); await runC()
+await pageC(offerOf('77').id, { action: 'answer', yes: true }); NOW = new Date('2026-10-20T14:30:00Z'); await pageC(offerOf('88').id, { action: 'answer', yes: true })
+NOW = new Date('2026-10-21T18:30:00Z')   // past the deadline, the family never chose; Sarah said yes first
+await runC()
+ck('deadline passed without a choice: the FIRST interested (Sarah) is placed and told; Maria thanked', b.status === 'placed' && b.caregiver_axiscare_id === '77' && /choosing deadline/.test(b.placed_by) && W.texts.some((t) => t.to === '88' && /chose another caregiver/.test(t.message)), [b.status, b.placed_by, b.caregiver_axiscare_id, W.texts.map((t) => t.to + ': ' + t.message.slice(0, 60))])
+NOW = new Date('2026-10-20T14:00:00Z')
+reset({ settings: { ...CHOOSE_ON } }); await goC(CB); b = bk(); await runC()
+NOW = new Date('2026-10-21T18:30:00Z')
+await runC()
+ck('deadline passed with nobody interested: it becomes Find someone for me, and the office card comes (24 hours)', b.method === 'auto' && W.items.some((i) => /Nobody has taken this yet/.test(i.title)), [b.method, W.items.map((i) => i.title)])
+NOW = new Date('2026-10-20T14:00:00Z')
+
+// the family text: 8 AM to 8 PM only, and only with the approval recorded
+reset({ settings: { ...CHOOSE_ON } }); await goC(CB); b = bk(); await runC()
+await pageC(offerOf('77').id, { action: 'answer', yes: true })
+NOW = new Date('2026-10-21T02:00:00Z')   // 9 PM Central
+await runC()
+ck('family text held at night (9 PM)', !W.fam?.length && !b.family_told_at)
+NOW = new Date('2026-10-20T14:00:00Z')
+await runC()
+ck('...and sent in the morning run', W.fam?.length === 1)
+
+// enough interested: stop asking
+reset({ settings: { ...CHOOSE_ON, family_choose_max_interested: 1 } }); await goC(CB); b = bk(); await runC()
+await pageC(offerOf('77').id, { action: 'answer', yes: true }); W.texts = []
+NOW = new Date('2026-10-20T16:00:00Z'); await runC(); NOW = new Date('2026-10-20T14:00:00Z')
+ck('with enough interested, nobody else is asked', W.texts.length === 0, W.texts)
+
+// cancel a Let me choose visit
+reset({ settings: { ...CHOOSE_ON } }); await goC(CB); b = bk(); await runC()
+await pageC(offerOf('77').id, { action: 'answer', yes: true }); W.texts = []
+o = await goC({ action: 'cancel', booking_id: b.id })
+ck('the family cancels: interested caregivers hear it is no longer needed', o.status === 200 && W.texts.some((t) => t.to === '77' && /no longer needed/.test(t.message)) && offerOf('77').state === 'closed', W.texts)
+
+ck('no em dashes in any Let me choose wording', ![fo.MSG_CHOOSE, fo.MSG_CHOSEN, fo.MSG_NOT_CHOSEN, fo.MSG_CHOOSE_CANCELLED, fo.MSG_FAMILY_INTERESTED].some((m) => /—/.test(m)))
 
 for (const [n, ok, note] of res) console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note))
 const bad = res.filter((x) => !x[1]).length
