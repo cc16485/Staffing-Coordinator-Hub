@@ -23,7 +23,7 @@
 // OFF until ops_settings.family_offer_live === true (then the office no longer gets a card for every booking).
 // Pure logic + injected dependencies so it runs under Node tests.
 // =============================================================================
-import { central, hoursUntil, startOf, startChoices, toMin, fromMin, clock12, caregiverDay, overlaps, placeCaregiver, clientVisits, officeCard, when, type Ax } from './family-app.ts'
+import { appLive, central, hoursUntil, startOf, startChoices, toMin, fromMin, clock12, caregiverDay, overlaps, placeCaregiver, clientVisits, officeCard, when, type Ax } from './family-app.ts'
 
 // deno-lint-ignore no-explicit-any
 type Any = any
@@ -111,7 +111,7 @@ export async function runOffers(d: OfferDeps, opts: { dry?: boolean } = {}) {
   const st = await d.settings(), o = offerSettings(st), now = d.now(), nowIso = now.toISOString(), today = central(now).date
   const live = o.live && !opts.dry
   const out = { live, bookings: 0, texted: 0, refused: 0, failed: 0, held_night: 0, cards: 0, would: [] as Any[], skipped: [] as Any[] }
-  if (st?.family_app_live !== true) return { ...out, held: 'the family app is in practice mode, so nothing is offered' }
+  if (!appLive(st)) return { ...out, held: 'the family app is in practice mode, so nothing is offered' }
   let roster: Candidate[] | null = null
   for (const b0 of await d.openBookings(today)) {
     const b = { ...b0 }

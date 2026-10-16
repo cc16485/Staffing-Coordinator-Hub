@@ -57,7 +57,7 @@ let W
 const utc = (date, hhmm) => { const [h, m] = hhmm.split(':').map(Number); return `${date}T${String(h + 5).padStart(2, '0')}:${String(m).padStart(2, '0')}:00Z` }
 function reset(m = {}) {
   W = { visits: {}, bookings: [], offers: [], items: [], events: [], calls: [], texts: [], blocked: {}, sendFail: {}, postFails: false,
-    settings: { family_app_live: true, family_offer_live: false, family_app_service_MO: 'PP - WC', family_app_cancel_reason: 'Schedule Change - Client Cancellation' }, clientState: 'MO', ...m }
+    settings: { family_app_live: true, family_fee_check_ready: true, family_offer_live: false, family_app_service_MO: 'PP - WC', family_app_cancel_reason: 'Schedule Change - Client Cancellation' }, clientState: 'MO', ...m }
   W.visits['v=1:s=5:d=2026-10-21'] = { id: 'v=1:s=5:d=2026-10-21', client: { id: 501 }, caregiver: { id: 77, firstName: 'Sarah' }, timezone: 'US/Central', scheduledStartDate: utc('2026-10-21', '09:00'), scheduledEndDate: utc('2026-10-21', '11:00') }
   W.visits['v=3:s=5:d=2026-09-25'] = { id: 'v=3:s=5:d=2026-09-25', client: { id: 501 }, caregiver: { id: 88, firstName: 'Maria' }, timezone: 'US/Central', scheduledStartDate: utc('2026-09-25', '13:00'), scheduledEndDate: utc('2026-09-25', '15:00') }
   // Maria already works 9 to 11 on the 22nd for someone else
@@ -156,10 +156,13 @@ ck('bookings: the family sees the window, the length, no start yet', o.body.book
 o = await go({ action: 'home' })
 ck('home: a waiting flexible visit is listed with its window', o.body.waiting.length === 1 && o.body.waiting[0].window_end === '15:00')
 
-reset({ settings: { family_app_live: true, family_offer_live: true, family_app_service_MO: 'PP - WC' } })
+reset({ settings: { family_app_live: true, family_fee_check_ready: true, family_offer_live: true, family_app_service_MO: 'PP - WC' } })
 o = await go({ action: 'book', date: '2026-10-22', start: '13:00', end: '16:00', tasks: ['Companionship'], who: 'any' })
 b = bk()
 ck('set time (live, offers on): on AxisCare with no caregiver, and NO office card yet (offers go out first)', b.status === 'waiting_for_caregiver' && W.visits[b.axiscare_visit_id]?.caregiver === null && W.items.length === 0, { b, items: W.items })
+reset({ settings: { family_app_live: true, family_app_service_MO: 'PP - WC' } }); W.calls = []
+o = await go({ action: 'book', date: '2026-10-22', start: '13:00', end: '16:00', tasks: ['Companionship'], who: 'any' })
+ck('her go-live rule: the app switch ON but the App fee check not installed = still practice, AxisCare never written', o.body.status === 'practice' && !W.calls.some((c) => c[0] !== 'GET'), o.body)
 reset({ settings: { family_app_live: false } })
 o = await go(FLEX)
 ck('practice mode: flexible saved as practice, nothing else', o.body.status === 'practice' && bk().status === 'practice' && W.items.length === 0)
@@ -184,7 +187,7 @@ o = await office({ action: 'place', booking_id: b.id, caregiver_axiscare_id: '88
 ck('office place (set time): unchanged, Maria PATCHed on, read back', o.status === 200 && b.status === 'placed' && W.visits[b.axiscare_visit_id].caregiver.id === 88, o)
 
 // ── offers ───────────────────────────────────────────────────────────────────────────────────────────────────────────
-const OFFERS_ON = { family_app_live: true, family_offer_live: true, family_app_service_MO: 'PP - WC' }
+const OFFERS_ON = { family_app_live: true, family_fee_check_ready: true, family_offer_live: true, family_app_service_MO: 'PP - WC' }
 reset({ settings: { ...OFFERS_ON, family_offer_live: false } }); await go(FLEX)
 o = await run()
 ck('offers switched off: nothing sent', W.texts.length === 0 && W.offers.length === 0 && o.live === false, o)

@@ -37,7 +37,7 @@ ck('only published, consented, not withdrawn profiles are shown', fam.shareable(
 let W
 const utc = (date, hhmm) => { const [h, m] = hhmm.split(':').map(Number); return `${date}T${String(h + 5).padStart(2, '0')}:${String(m).padStart(2, '0')}:00Z` } // CDT = UTC-5
 function reset(m = {}) {
-  W = { visits: {}, bookings: [], items: [], events: [], calls: [], settings: { family_app_live: true, family_app_service_MO: 'PP - WC', family_app_cancel_reason: 'Schedule Change - Client Cancellation' },
+  W = { visits: {}, bookings: [], items: [], events: [], calls: [], settings: { family_app_live: true, family_fee_check_ready: true, family_app_service_MO: 'PP - WC', family_app_cancel_reason: 'Schedule Change - Client Cancellation' },
     clientState: 'MO', postFails: false, delFails: false, readbackWrong: false, insertFails: false, ...m }
   W.visits['v=1:s=5:d=2026-10-21'] = { id: 'v=1:s=5:d=2026-10-21', client: { id: 501 }, caregiver: { id: 77, firstName: 'Sarah' }, timezone: 'US/Central', scheduledStartDate: utc('2026-10-21', '09:00'), scheduledEndDate: utc('2026-10-21', '11:00') }
   W.visits['v=2:s=5:d=2026-09-30'] = { id: 'v=2:s=5:d=2026-09-30', client: { id: 501 }, caregiver: { id: 77, firstName: 'Sarah' }, timezone: 'US/Central', scheduledStartDate: utc('2026-09-30', '09:00'), scheduledEndDate: utc('2026-09-30', '11:00') }
@@ -129,7 +129,7 @@ ck('the same slot twice is refused', o.status === 409 && W.bookings.length === 1
 reset({ settings: { family_app_live: false, family_app_service_MO: 'PP - WC' } }); W.calls = []
 o = await go(BOOK)
 ck('practice mode: saved as practice, AxisCare never written', o.body.status === 'practice' && W.bookings[0].status === 'practice' && !W.calls.some((c) => c[0] !== 'GET') && W.items.length === 0, o)
-reset({ settings: { family_app_live: true } })
+reset({ settings: { family_app_live: true, family_fee_check_ready: true } })
 o = await go(BOOK)
 ck('no service set for the state: kept, office card says it is NOT on the schedule', o.body.status === 'needs_office' && /NOT on the AxisCare schedule/.test(W.items[0].detail) && !W.calls.some((c) => c[0] === 'POST'), o)
 reset({ postFails: true })
@@ -144,7 +144,7 @@ ck('the Hub can\'t save the request: AxisCare untouched, family told nothing was
 reset({ clientState: 'KS' })
 o = await go(BOOK)
 ck('an address outside MO/OK can\'t book online', o.status === 409 && W.bookings.length === 0, o)
-reset({ clientState: 'OK', settings: { family_app_live: true, family_app_service_OK: 'OK - COMP' } })
+reset({ clientState: 'OK', settings: { family_app_live: true, family_fee_check_ready: true, family_app_service_OK: 'OK - COMP' } })
 o = await go({ ...BOOK, tasks: ['Rides to appointments'] })
 ck('Oklahoma: rides refused until confirmed in settings', o.status === 400 && /isn't something/.test(o.body.error), o)
 
@@ -181,6 +181,7 @@ const odeps = () => ({
   rpEmails: async () => OW.rpFail ? null : OW.rps,
   send: async (c, channel, payload) => { OW.sent.push([c.id, channel, payload]); return !(OW.sendFail || []).includes(channel) },
   logMessage: async (row) => { OW.log.push(row) },
+  plans: async () => [], setPlan: async (id, vals) => { OW.plan = { id, ...vals }; return true }, markBilled: async () => true, fee: null,
   login: {
     create: async (email) => { if (OW.createFails) return { error: 'boom' }; if (OW.logins[email]) return { error: 'A user with this email address has already been registered', exists: true }; OW.logins[email] = 'uid-' + email; return { id: OW.logins[email] } },
     find: async (email) => OW.logins[email] ?? null,
@@ -241,7 +242,7 @@ o = await office({ action: 'place', booking_id: bk.id, caregiver_axiscare_id: '6
 ck('place: an inactive caregiver is refused', o.status === 409 && W.visits[bk.axiscare_visit_id].caregiver === null, o)
 o = await office({ action: 'place', booking_id: bk.id, caregiver_axiscare_id: '88' })
 ck('place: Maria on the AxisCare visit, read back, booking placed, office card closed', o.status === 200 && W.visits[bk.axiscare_visit_id].caregiver.id === 88 && bk.status === 'placed' && bk.caregiver_name === 'Maria L.' && OW.closed[0][0] === `fam_book_${bk.id}`, o)
-reset({ settings: { family_app_live: true } }); oreset(); await go(BOOK)
+reset({ settings: { family_app_live: true, family_fee_check_ready: true } }); oreset(); await go(BOOK)
 W.settings.family_app_service_MO = 'PP - WC'
 o = await office({ action: 'schedule', booking_id: W.bookings[0].id })
 ck('schedule: a needs-office booking goes on AxisCare once the service is set', o.status === 200 && W.bookings[0].status === 'waiting_for_caregiver' && W.visits[W.bookings[0].axiscare_visit_id], o)

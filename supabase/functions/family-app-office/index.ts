@@ -44,12 +44,27 @@ const famAdmin = (path: string, init: RequestInit = {}) => fetch(`${FAMILY_URL}/
 const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
 const CONTACT_COLS = 'id, name, email, phone, sms_consent, circle_id, stopped_at, axiscare_removed_at, app_user_id, app_status, app_can_book, app_invited_at, app_invited_by'
 
+// The App fee check (family-fee.ts): App plan clients are active Family Circles ticked app_plan with an AxisCare client.
+const appClients = async () => ((await db.from('care_circles').select('id, client_name, axiscare_client_id, app_plan_since, active').eq('app_plan', true)).data ?? [])
+  // deno-lint-ignore no-explicit-any
+  .filter((k: any) => k.active !== false && k.axiscare_client_id).map((k: any) => ({ circle_id: String(k.id), axiscare_client_id: String(k.axiscare_client_id), client_name: String(k.client_name ?? ''), app_plan_since: k.app_plan_since ?? null }))
 const deps: OfficeDeps = {
   ax,
+  fee: {
+    ax, now: () => new Date(),
+    settings: async () => (await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()).data?.data ?? {},
+    appClients,
+    checks: async (month) => (await db.from('family_app_fees').select('*').eq('month', month).order('client_name', { ascending: true })).data ?? [],
+    saveCheck: async (row) => !(await db.from('family_app_fees').upsert(row, { onConflict: 'month,axiscare_client_id' })).error,
+    officeItem: async (item) => !(await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item })).error,
+  },
+  plans: async () => (await db.from('care_circles').select('id, client_name, axiscare_client_id, app_plan, app_plan_since').not('app_plan', 'is', null)).data ?? [],
+  setPlan: async (id, vals) => !(await db.from('care_circles').update(vals).eq('id', id)).error,
+  markBilled: async (month, cid, vals) => !(await db.from('family_app_fees').update(vals).eq('month', month).eq('axiscare_client_id', cid)).error,
   now: () => new Date(),
   settings: async () => (await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()).data?.data ?? {},
   contact: async (id) => Number.isFinite(id) ? (await db.from('circle_contacts').select(CONTACT_COLS).eq('id', id).maybeSingle()).data ?? null : null,
-  circle: async (id) => (await db.from('care_circles').select('id, client_name, active, axiscare_client_id').eq('id', id).maybeSingle()).data ?? null,
+  circle: async (id) => (await db.from('care_circles').select('id, client_name, active, axiscare_client_id, app_plan, app_plan_since').eq('id', id).maybeSingle()).data ?? null,
   updateContact: async (id, vals) => !(await db.from('circle_contacts').update(vals).eq('id', id)).error,
   members: async () => {
     const { data: cs } = await db.from('circle_contacts').select(CONTACT_COLS).not('app_status', 'is', null)

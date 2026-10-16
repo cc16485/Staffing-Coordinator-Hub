@@ -60,6 +60,10 @@ export function localDate(v: unknown, tz?: unknown): string {
   return s.slice(0, 10)
 }
 
+/** Her go-live rule (2026-10-16): the app does not go live without the month-end App fee check. Live booking needs BOTH
+ *  family_app_live and family_fee_check_ready (set by the step that installs the check); otherwise it stays practice. */
+// deno-lint-ignore no-explicit-any
+export const appLive = (st: any) => st?.family_app_live === true && st?.family_fee_check_ready === true
 export const MIN_HOURS = 2, NOTICE_MIN = 120, MAX_DAYS_AHEAD = 60, AUTO_NOTICE_HOURS = 24, FREE_CANCEL_HOURS = 24, MAX_PICKS = 5
 export const WHO = ['preferred', 'any']
 const OLD_WHO: Record<string, string> = { regular: 'preferred', favorites: 'any', any: 'any' }   // the Step 1b app's answers
@@ -393,8 +397,8 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
     if (!ins) return say(500, { error: "We couldn't save that booking. Nothing was booked. Please try again or call the office." })
     const b = { ...row, id: ins.id }
     const nowIso = now.toISOString()
-    await deps.event({ actor_kind: 'person', actor_email: user.email ?? undefined, actor_name: w.name, via: 'link', verb: 'family_booked', area: 'family_app', summary: `${w.name} booked ${clientName} ${when(b)}`, data: { booking_id: b.id, kind: v.kind, live: st?.family_app_live === true } })
-    if (st?.family_app_live !== true) {
+    await deps.event({ actor_kind: 'person', actor_email: user.email ?? undefined, actor_name: w.name, via: 'link', verb: 'family_booked', area: 'family_app', summary: `${w.name} booked ${clientName} ${when(b)}`, data: { booking_id: b.id, kind: v.kind, live: appLive(st) } })
+    if (!appLive(st)) {
       await deps.updateBooking(b.id, { status: 'practice' })
       return say(200, { ok: true, booking_id: b.id, status: 'practice', message: "Got it. (Practice mode: the office hasn't turned on live booking yet, so nothing was added to the schedule.)" })
     }
@@ -426,7 +430,7 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
     if (!b || b.status === 'cancelled') return say(404, { error: "We couldn't find that visit." })
     if (hoursUntil(b.visit_date, startOf(b), now) < FREE_CANCEL_HOURS) return say(409, { error: `Within 24 hours of a visit, please call the office to cancel${phone ? ` at ${phone}` : ''}.` })
     const nowIso = now.toISOString()
-    if (b.axiscare_visit_id && st?.family_app_live === true) {
+    if (b.axiscare_visit_id && appLive(st)) {
       const rid = await reasonId(deps.ax, st?.family_app_cancel_reason ?? 'Schedule Change - Client Cancellation')
       const del = await deps.ax('DELETE', `/api/visits/${encodeURIComponent(b.axiscare_visit_id)}` + (rid != null ? `?modificationReason=${rid}` : ''))
       if (!ok2(del.status)) {
