@@ -190,11 +190,16 @@ Deno.serve(async (req) => {
      field rather than buried in the notes, because "which partner is actually
      working" is a question worth being able to count. */
   const heard = pick('heard_from', 'how_did_you_hear', 'referral_source', 'source_detail')
+  /* mo-care.com/app sign-ups (her rule 2026-10-16: "send mo-care.com/app sign-ups into the Leads Intake Desk tagged 'wants
+     the app'"). App-only clients still get intake and a care assessment, so the sign-up is an ordinary care lead with the tag. */
+  const wantsApp = pick('kind') === 'app_interest'
 
   const notes = [
+    wantsApp ? 'Signed up on mo-care.com/app: wants to use the Caring Companions app.' : '',
     pick('message', 'notes', 'comments', 'situation', 'how_can_we_help', 'description'),
-    pick('care_for', 'who_needs_care') ? 'Care for: ' + pick('care_for', 'who_needs_care') : '',
+    pick('care_for', 'who_needs_care', 'for_whom') ? 'Care for: ' + pick('care_for', 'who_needs_care', 'for_whom') : '',
     pick('city') ? 'City: ' + pick('city') : '',
+    pick('zip') ? 'ZIP: ' + pick('zip').replace(/\D/g, '').slice(0, 5) : '',
     pick('best_time', 'preferred_contact_time') ? 'Best time: ' + pick('best_time', 'preferred_contact_time') : '',
   ].filter(Boolean).join('\n')
 
@@ -211,6 +216,7 @@ Deno.serve(async (req) => {
     interest_notes: notes || 'Website form submission (no message left).',
     follow_up_due: today, // the clock starts the moment they reach out
     created_at: new Date().toISOString(),
+    ...(wantsApp ? { intent_tags: ['wants the app'] } : {}),
   }
   /* Contact truth: the inquiry itself is the first event on the record. */
   ldPush(lead, { channel: 'web', direction: 'in', outcome: 'inquiry', actor: 'family',
