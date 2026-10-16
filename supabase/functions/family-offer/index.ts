@@ -85,11 +85,12 @@ const deps: OfferDeps = {
       const phone = normalisePhone(g.phone)
       if (!phone || nurses.has(nameKey(name))) continue
       seen.add(id)
-      out.push({ axiscare_id: id, name, first: String(g.first || '').trim(), phone, avail: av.find((x) => String(x?.axiscare_id ?? '') === id) ?? null })
+      out.push({ axiscare_id: id, name, first: String(g.first || '').trim(), phone,
+        drive: { dl_status: g.dl_status ?? null, dl_expires: g.dl_expires ?? null, auto_ins_expires: g.auto_ins_expires ?? null, cleared_to_drive: g.cleared_to_drive ?? null }, avail: av.find((x) => String(x?.axiscare_id ?? '') === id) ?? null })
     }
     return out
   },
-  askBlock: async (c, client) => shiftAskBlock(db, { cg: { axiscare_id: c.axiscare_id, phone: c.phone, first: c.first }, name: c.name, axId: c.axiscare_id, client }),
+  askBlock: async (c, client, needsTransport) => shiftAskBlock(db, { cg: { axiscare_id: c.axiscare_id, phone: c.phone, first: c.first, ...(c.drive ?? {}) }, name: c.name, axId: c.axiscare_id, client, needsTransport }),
   sendText: async (c, message) => {
     if (!ghl.token || !ghl.locationId) return { ok: false, why: 'GoHighLevel is not set up on the server' }
     const contact = await contactForOutbound(db, ghl, { phone: c.phone, firstName: c.first }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'family-offer' })
