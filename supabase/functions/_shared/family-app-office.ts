@@ -176,7 +176,7 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     }
     const cg = String(body?.caregiver_axiscare_id ?? '')
     if (!/^\d+$/.test(cg)) return say(400, { error: 'Pick a caregiver.' })
-    if (b.kind === 'flex' ? !['waiting_for_caregiver', 'needs_office'].includes(b.status) : (!b.axiscare_visit_id || !['waiting_for_caregiver', 'placed'].includes(b.status))) return say(409, { error: b.kind === 'flex' ? 'This visit already has its caregiver and time.' : 'Put this booking on the schedule first.' })
+    if (b.kind === 'flex' ? !['waiting_for_caregiver', 'needs_office'].includes(b.status) : (!b.axiscare_visit_id || !['waiting_for_caregiver', 'placed', 'needs_office'].includes(b.status))) return say(409, { error: b.kind === 'flex' ? 'This visit already has its caregiver and time.' : 'Put this booking on the schedule first.' })
     const put = await placeCaregiver(d.ax, b, cg, body?.start ? String(body.start) : null, st)
     if (!put.ok) return say(put.status, { error: put.why })
     const name = put.name

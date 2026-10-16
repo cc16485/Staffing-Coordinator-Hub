@@ -9,7 +9,8 @@
 --  * family_offers: one row per caregiver asked about one booking. The link in the text is signed (HMAC with
 --    HUB_JOB_SECRET, its own purpose label) and names only the offer. Only the server writes it; office staff read it.
 --  * ops_settings, only where not set: booking days/hours per state (MO any day 7-18, OK Mon-Fri 8-18), and the offer
---    engine's settings with family_offer_live OFF.
+--    engine's settings with family_offer_live OFF. A $5 Missouri short-visit extra in the app settings is removed (her rule
+--    2026-10-16: the app has no extra charge for short visits).
 -- Changes nothing else. Idempotent.
 -- =============================================================================
 begin;
@@ -70,6 +71,9 @@ grant select on public.family_offers to authenticated;
 grant select, insert, update on public.family_offers to service_role;
 drop policy if exists family_offers_office_read on public.family_offers;
 create policy family_offers_office_read on public.family_offers for select to authenticated using (public.hub_office_ok());
+
+-- Her rule 2026-10-16 (live on mo-care.com/app): no extra charge for short visits booked in the app. Clear the old $5.
+update public.app_data set data = data - 'family_app_short_extra_MO' where key = 'ops_settings' and (data->>'family_app_short_extra_MO') = '5';
 
 -- Settings, only where not set already (her own values kept).
 update public.app_data

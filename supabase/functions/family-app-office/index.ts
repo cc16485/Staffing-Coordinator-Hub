@@ -59,7 +59,7 @@ const deps: OfficeDeps = {
     // deno-lint-ignore no-explicit-any
     return (cs ?? []).map((c: any) => { const k = (ks ?? []).find((x: any) => String(x.id) === String(c.circle_id)); return { contact_id: c.id, name: c.name, email: c.email, client_name: k?.client_name ?? null, axiscare_client_id: k?.axiscare_client_id ?? null, status: c.app_status, can_book: c.app_can_book === true, invited_at: c.app_invited_at, invited_by: c.app_invited_by } })
   },
-  recentBookings: async (from) => (await db.from('family_bookings').select('*').gte('visit_date', from).order('visit_date', { ascending: true })).data ?? [],
+  recentBookings: async (from) => (await db.from('family_bookings').select('*, family_offers(caregiver_name, state, wave, sent_at, answered_at, picked_start)').gte('visit_date', from).order('visit_date', { ascending: true })).data ?? [],
   booking: async (id) => /^[0-9a-f-]{36}$/i.test(id) ? (await db.from('family_bookings').select('*').eq('id', id).maybeSingle()).data ?? null : null,
   updateBooking: async (id, vals) => !(await db.from('family_bookings').update({ ...vals, updated_at: new Date().toISOString() }).eq('id', id)).error,
   closeItem: async (id, by, text) => {

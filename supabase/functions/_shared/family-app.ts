@@ -214,7 +214,9 @@ export async function reasonId(ax: Ax, name: unknown): Promise<number | null> {
 
 /** The family's estimate: THIS client's own hourly rate from their recent AxisCare visits (rates vary by client), else the
  *  state's rate from the Hub settings, else none. Missouri adds $5 an hour to visits under 4 hours (mileage between
- *  clients, her rule 2026-10-15); Hub settings family_app_short_extra_<STATE> / family_app_short_under_hours. An estimate only:
+ *  clients, her rule 2026-10-15) on usual schedules, but NOT in the app (her rule 2026-10-16, live on mo-care.com/app: "no weekly
+ *  minimum and no extra charge for short visits"), so the default is none; Hub settings family_app_short_extra_<STATE> /
+ *  family_app_short_under_hours can still set one. An estimate only:
  *  the invoice is AxisCare's, from the caregiver's actual clock-in and clock-out. */
 export async function estimateRate(ax: Ax, clientId: string, state: string | null, st: any, today: string) {   // deno-lint-ignore no-explicit-any
   let rate: number | null = null
@@ -226,7 +228,7 @@ export async function estimateRate(ax: Ax, clientId: string, state: string | nul
   } catch { /* no estimate is better than a wrong one */ }
   if (rate == null && Number(st?.[`family_app_rate_${state}`]) > 0) rate = Number(st[`family_app_rate_${state}`])
   const extraSet = st?.[`family_app_short_extra_${state}`]
-  const short_extra = extraSet != null ? Math.max(0, Number(extraSet) || 0) : (state === 'MO' ? 5 : 0)
+  const short_extra = extraSet != null ? Math.max(0, Number(extraSet) || 0) : 0
   const short_under_hours = Number(st?.family_app_short_under_hours) > 0 ? Number(st.family_app_short_under_hours) : 4
   return { rate, short_extra, short_under_hours }
 }
