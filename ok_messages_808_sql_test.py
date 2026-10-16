@@ -42,6 +42,27 @@ ck("the old 806 switch no longer lets anything through", (setsw("ok_applicant_ms
 stop = s.run("select public.applicant_followup_stop(:a)", a=ok1)[0][0]
 ck("follow-ups: never for an Oklahoma applicant, whatever the switches say", stop == "Oklahoma applicant: the recruiter calls (no automatic follow-ups)", stop)
 ck("...Missouri unchanged", s.run("select public.applicant_followup_stop(:a)", a=mo1)[0][0] != stop)
+# driving is required (her rule, relayed 2026-10-16)
+as_anon(s)
+d1 = s.run("""select public.apply_save(null, '{"first_name":"Okla","last_name":"Drive","phone":"405-555-0130","zip":"73064","position":"companion"}'::jsonb, false)""")[0][0]
+s.run("""select public.apply_save(:a, '{"age_ok":true,"work_auth":true,"can_pass_background":true,"experience_years":"Less than 1 year"}'::jsonb, false)""", a=d1)
+s.run("reset role")
+gap = lambda a: s.run("select public.applicant_screening_gap(:a)", a=a)[0][0]
+ck("driving: not answered yet = a question to ask", gap(d1) == "questions")
+as_anon(s); s.run("""select public.apply_save(:a, '{"has_transport":false}'::jsonb, true)""", a=d1); s.run("reset role")
+ck("driving: a no = not eligible", gap(d1) == "ineligible")
+g = s.run("select screen_grade, screen_flags from job_applicants where id = :a", a=d1)[0]
+ck("...and the screen no longer passes it as qualified", g[0] == "review" and "won't drive clients (every Companion drives)" in g[1], g)
+as_anon(s)
+d2 = s.run("""select public.apply_save(null, '{"first_name":"Okla","last_name":"Drives","phone":"405-555-0131","zip":"73064","position":"companion"}'::jsonb, false)""")[0][0]
+s.run("""select public.apply_save(:a, '{"age_ok":true,"work_auth":true,"can_pass_background":true,"has_transport":true,"experience_years":"Less than 1 year"}'::jsonb, true)""", a=d2)
+s.run("reset role")
+ck("driving yes + under a year: qualified, nothing more to ask", gap(d2) is None and s.run("select screen_grade from job_applicants where id = :a", a=d2)[0][0] == "qualified")
+from ok_companion_806_fixture import as_office
+as_anon(s); d3 = s.run("""select public.apply_save(null, '{"first_name":"Okla","last_name":"Phone","phone":"405-555-0132","position":"companion"}'::jsonb, false)""")[0][0]; s.run("reset role")
+as_office(s)
+ck("the office's Oklahoma questions include driving (four answers)", s.run("select public.applicant_screen_by_office_ok(:a, true, true, true, true)", a=d3)[0][0] is None)
+s.run("reset role")
 for r_ in ["anon", "authenticated"]:
     s.run(f"set role {r_}")
     try: s.run("select public.ok_applicant_hold('4055550120', null, null, null)"); t = "ran"

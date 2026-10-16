@@ -131,10 +131,11 @@ def body(defn):
     m = re.search(r"AS \$(\w*)\$(.*)\$\1\$", defn or "", re.S)
     return m.group(2).strip() if m else None
 def fbody(text, name):
-    m = re.search(r"create or replace function public\." + name + r"\(.*?as \$f\$(.*?)\$f\$", text, re.S | re.I)
-    return m.group(1).strip() if m else None
-SIGS = {"hold": "public.ok_applicant_hold(text,text,text,text)", "stop": "public.applicant_followup_stop(uuid)"}
-NAMES = {"hold": "ok_applicant_hold", "stop": "applicant_followup_stop"}
+    m = re.search(r"create or replace function public\." + name + r"\(.*?\bas \$(\w*)\$(.*?)\$\1\$", text, re.S | re.I)
+    return m.group(2).strip() if m else None
+SIGS = {"hold": "public.ok_applicant_hold(text,text,text,text)", "stop": "public.applicant_followup_stop(uuid)",
+        "screen": "public.applicant_screen(uuid)", "gap": "public.applicant_screening_gap(uuid)"}   # 808: driving required (screen, gap)
+NAMES = {"hold": "ok_applicant_hold", "stop": "applicant_followup_stop", "screen": "applicant_screen", "gap": "applicant_screening_gap"}
 def live_rules():
     out = {}
     for k, sig in SIGS.items():
@@ -154,6 +155,10 @@ begin
   perform set_config('request.jwt.claims', '{"role":"anon"}', true);
   perform set_config('request.jwt.claim.role', 'anon', true);
   ok1 := public.apply_save(null, '{"first_name":"Proof","last_name":"Eightoheight","phone":"405-555-0187","email":"proof-808-ok@practice.invalid","zip":"73099","position":"companion","channel":"self-test"}'::jsonb, false);
+  perform public.apply_save(ok1, '{"age_ok":true,"work_auth":true,"can_pass_background":true}'::jsonb, false);
+  r := r || jsonb_build_object('gap_no_drive_answer', coalesce(public.applicant_screening_gap(ok1), 'none'));
+  perform public.apply_save(ok1, '{"has_transport":false}'::jsonb, false);
+  r := r || jsonb_build_object('gap_wont_drive', coalesce(public.applicant_screening_gap(ok1), 'none'));
   perform public.apply_save(null, '{"first_name":"Proof","last_name":"Eightoheightmo","phone":"417-555-0186","position":"caregiver","channel":"self-test"}'::jsonb, false);
   -- with the switches as they are now (both off after a first install)
   h_office := public.ok_applicant_hold('+14055550187', null, 'send-candidate-message (office text)', 'sms');
@@ -298,6 +303,7 @@ chk(P.get("on_office") is False and P.get("on_auto") is False and P.get("on_ref"
 chk(P.get("h_mo") is False, "a Missouri applicant is never held")
 chk(P.get("stop") == "Oklahoma applicant: the recruiter calls (no automatic follow-ups)", "no automatic follow-ups for Oklahoma applicants")
 chk(P.get("anon_hold") is False, "the public can't use the hold")
+chk(P.get("gap_no_drive_answer") == "questions" and P.get("gap_wont_drive") == "ineligible", "driving is required for Oklahoma: no answer yet = a question to ask, a no = not eligible")
 ok, r = sql("select count(*)::int as n from public.job_applicants where email like 'proof-808-%' or last_name like 'Eightoheight%'")
 chk(ok and r[0]["n"] == 0, "nothing made-up was left behind")
 ok, r = sql("select coalesce((data->>'ok_applicant_office_msgs_live')::boolean, false) as o, coalesce((data->>'ok_applicant_auto_msgs_live')::boolean, false) as a from public.app_data where key = 'ops_settings'")
