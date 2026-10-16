@@ -6,17 +6,22 @@
 // The token then maps to Family Circle rows (circle_contacts.app_user_id, app_status 'active') and only those
 // clients' AxisCare visits, caregiver cards and bookings come back. Rules: _shared/family-app.ts.
 // Deployed with verify_jwt OFF (the token comes from another project); this file does the checking.
+// Before sign-in, one public action: {action:'start', email} checks the email is on file for an ACTIVE client (her rule
+// 2026-10-16, rules in _shared/family-signin.ts) and turns their app on; only then does the app ask for the emailed code.
 // Never charges anything. Never texts or emails anyone. Booking writes to AxisCare only when the Hub switch
 // family_app_live is on; otherwise it records a practice booking.
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { familyAction, type Deps, type Who } from '../_shared/family-app.ts'
 import { opEvent } from '../_shared/events.ts'
+import { signinStart, type SigninDeps } from '../_shared/family-signin.ts'
+import { axClients } from '../_shared/client-lookup.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const FAMILY_URL = (Deno.env.get('FAMILY_APP_URL') || '').replace(/\/+$/, '')
 const FAMILY_ANON = Deno.env.get('FAMILY_APP_ANON_KEY') || ''
+const FAMILY_SERVICE = Deno.env.get('FAMILY_APP_SERVICE_KEY') || ''
 const AC_VERSION = '2023-10-01'
 const ORIGINS = ['https://family.mo-care.com', 'https://cc16485.github.io', 'http://localhost:8787']
 
@@ -90,14 +95,78 @@ const deps: Deps = {
   event: async (row) => { await opEvent(db, row) },
 }
 
+const famAdmin = (path: string, init: RequestInit = {}) => fetch(`${FAMILY_URL}/auth/v1/admin${path}`, { ...init,
+  headers: { apikey: FAMILY_SERVICE, Authorization: `Bearer ${FAMILY_SERVICE}`, 'Content-Type': 'application/json', ...(init.headers ?? {}) } })
+const CC = 'id, name, circle_id, source, app_status, app_user_id, app_can_book, stopped_at, axiscare_removed_at'
+const signinDeps: SigninDeps = {
+  now: () => new Date(),
+  settings: deps.settings,
+  ax: (m, p) => ax(m, p),
+  axClients: async () => { const r = await axClients(); return r.error ? null : r.clients },
+  contactsByEmail: async (email) => (await db.from('circle_contacts').select(CC).ilike('email', email.replace(/[\\%_]/g, '\\$&'))).data ?? [],
+  circles: async (ids) => ids.length ? (await db.from('care_circles').select('id, client_name, active, axiscare_client_id').in('id', ids)).data ?? [] : [],
+  circleForClient: async (axId, name) => {
+    const { data: k } = await db.from('care_circles').select('id, client_name, active, axiscare_client_id').eq('axiscare_client_id', axId).or('active.is.null,active.eq.true').order('id').limit(1).maybeSingle()
+    if (k) return k
+    const { data } = await db.from('care_circles').insert({ client_name: name, axiscare_client_id: axId, linked_by: 'family app: email on file', linked_at: new Date().toISOString(), link_how: 'app_self' })
+      .select('id, client_name, active, axiscare_client_id').single()
+    return data ?? null
+  },
+  contactInCircle: async (circleId, email, name) => {
+    const { data: hit } = await db.from('circle_contacts').select(CC).eq('circle_id', circleId).ilike('email', email.replace(/[\\%_]/g, '\\$&')).order('id').limit(1).maybeSingle()
+    if (hit) return hit
+    const { data } = await db.from('circle_contacts').insert({ circle_id: circleId, name, email, relationship: 'Client', source: 'app_self' }).select(CC).single()
+    return data ?? null
+  },
+  updateContact: async (id, vals) => !(await db.from('circle_contacts').update(vals).eq('id', id)).error,
+  login: {
+    find: async (email) => {
+      if (!FAMILY_URL || !FAMILY_SERVICE) return null
+      for (let page = 1; page <= 20; page++) {
+        const j = await (await famAdmin(`/users?page=${page}&per_page=200`)).json().catch(() => ({}))
+        // deno-lint-ignore no-explicit-any
+        const users: any[] = j?.users ?? []
+        const hit = users.find((u) => String(u.email ?? '').toLowerCase() === email)
+        if (hit) return String(hit.id)
+        if (users.length < 200) return null
+      }
+      return null
+    },
+    create: async (email, name) => {
+      if (!FAMILY_URL || !FAMILY_SERVICE) return null
+      const r = await famAdmin('/users', { method: 'POST', body: JSON.stringify({ email, email_confirm: true, user_metadata: { name } }) })
+      const j = await r.json().catch(() => ({}))
+      return (r.status === 200 || r.status === 201) && j?.id ? String(j.id) : await signinDeps.login.find(email)
+    },
+    unblock: async (id) => { await famAdmin(`/users/${id}`, { method: 'PUT', body: JSON.stringify({ ban_duration: 'none' }) }).catch(() => null) },
+  },
+  attempts: async (email, ip, sinceEmail, sinceIp) => {
+    const a = await db.from('family_signin_attempts').select('id', { count: 'exact', head: true }).eq('email', email).gte('at', sinceEmail)
+    const b = await db.from('family_signin_attempts').select('id', { count: 'exact', head: true }).eq('ip', ip).gte('at', sinceIp)
+    return { email: a.count ?? 0, ip: b.count ?? 0 }
+  },
+  recordAttempt: async (email, ip, outcome) => { await db.from('family_signin_attempts').insert({ email, ip, outcome }) },
+  event: deps.event,
+}
+
 Deno.serve(async (req) => {
   const h = cors(req)
   const json = (o: unknown, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { ...h, 'Content-Type': 'application/json' } })
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200, headers: h })
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
+  const body = await req.json().catch(() => ({}))
+  if (body?.action === 'start') {
+    try {
+      const ip = (req.headers.get('x-forwarded-for') ?? '').split(',')[0].trim() || 'unknown'
+      const out = await signinStart(signinDeps, body?.email, ip)
+      return json(out.body, out.status)
+    } catch (e) {
+      console.error('family-gateway start', String((e as Error)?.message ?? e))
+      return json({ ok: false, error: 'Something went wrong on our side. Please try again or call the office.' }, 500)
+    }
+  }
   const user = await familyUser(req)
   if (!user) return json({ error: 'Please sign in again.' }, 401)
-  const body = await req.json().catch(() => ({}))
   try {
     const out = await familyAction(deps, user, body)
     return json(out.body, out.status)
