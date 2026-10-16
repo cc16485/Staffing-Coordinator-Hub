@@ -77,6 +77,7 @@ const setAd = (k, v) => { const r = DB.app_data.find((x) => x.key === k); if (r)
 async function rpc(name, a) {
   if (name === 'upsert_app_data_item') { let row = DB.app_data.find((x) => x.key === a.target_key); if (!row) { row = { key: a.target_key, data: [] }; DB.app_data.push(row) } const i = row.data.findIndex((x) => x.id === a.item.id); if (i >= 0) row.data[i] = a.item; else row.data.push(a.item); return { data: null, error: null } }
   if (name === 'contact_send_refusal_log') return { data: null, error: null }
+  if (name === 'ok_applicant_hold') return { data: false, error: null }   // 806: nobody here is an Oklahoma applicant
   return { data: null, error: { message: 'unknown rpc ' + name } }
 }
 const STORE = {}; let PDF_FAIL = false
