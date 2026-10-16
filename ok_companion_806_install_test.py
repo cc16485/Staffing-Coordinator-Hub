@@ -102,7 +102,7 @@ try:
     ck("tells her 2 are ready to move (807)", "2 caregiver(s) from the opening list are ready to move into the Hub" in out, out[-600:])
     ck("the existing Missouri applicant reads MO and kept its grade", s.run("select office from job_applicants where first_name = 'Mo'")[0][0] == "MO")
     ck("a copy of the live rules was saved for the undo", any(f == "live_functions.sql" for _, _, fs in os.walk(SAVE) for f in fs))
-    ck("no names, numbers, emails or keys in the report", not re.search(r"Proof|Okla|405-555|@practice|sbp_", out), out)
+    ck("no names, numbers, emails or keys in the report", not re.search(r"Proof|Eightohsix|Listone|Listtwo|405-555|417-555|@practice|sbp_", out), out)
     c, out = run(keep_deployed=True)
     ck("run again: recognises it is in, deploys nothing, proves again", c == 0 and not deploys() and "already 806" in out and "806 COMPLETE" in out, out[-900:])
     c, out = run("move")
