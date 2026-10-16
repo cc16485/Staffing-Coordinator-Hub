@@ -26,11 +26,12 @@
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
-import { ghlSendChecked } from '../_shared/send-problems.ts'
+import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
+import { fromFor, smsBody, type From } from '../_shared/office-from.ts'
 import { latestTextConsent, withStop } from '../_shared/text-consent.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
-import { texts, emails, interviewerLabel, isGoodbye, REPLY_TAG } from '../_shared/applicant-words.ts'
+import { texts, emails, okTexts, okEmails, interviewerLabel, isGoodbye, REPLY_TAG } from '../_shared/applicant-words.ts'
 import { classify } from '../_shared/reply-classify.ts'
 import { inboundTextsSince } from '../_shared/ghl-inbox.ts'
 
@@ -116,7 +117,10 @@ Deno.serve(async (req) => {
   const ops: any = opsRow?.data && typeof opsRow.data === 'object' && !Array.isArray(opsRow.data) ? opsRow.data : {}
   const V2 = ops.applicant_msgs_v2_live === true
   const krystalNamed = ops.applicant_msgs_krystal_named === true
-  const OK_LIVE = ops.ok_applicant_msgs_live === true   // 806: Oklahoma applicant messages, off until she says yes
+  /* 808: Oklahoma interview messages (booked, the day before, cancelled) go only once she turns this on (Admin page), from
+     the Oklahoma number (ops_settings.ok_from_number); without a number they are refused, never sent from 417. */
+  const OK_AUTO = ops.ok_applicant_auto_msgs_live === true
+  const OK_FROM = fromFor('OK', ops)
   const { data: coords } = await supabase.from('coordinators').select('id, name')
   // deno-lint-ignore no-explicit-any
   const coordName = new Map((coords ?? []).map((c: any) => [String(c.id), c.name]))
@@ -141,14 +145,14 @@ Deno.serve(async (req) => {
      (the phone alone for a text, the email alone for an email). Staff alerts below use staffContact. */
   const ghlDoor = { token: ghlToken!, locationId: ghlLocation! }
   // deno-lint-ignore no-explicit-any
-  const applicantDoor = (who: any, first: string) => ({
+  const applicantDoor = (who: any, first: string, from?: From) => ({
     /* 587: opts.photo turns it into a picture text (the hour-before entrance photo); opts.tag marks their GoHighLevel
        contact so a YES/NO reply reaches interview-reply (a missing tag only costs reply routing). */
     sms: async (message: string, opts: { photo?: string | null; tag?: string } = {}) => {
       const id = await ghlContactIfAllowed(supabase, ghlDoor, 'interview-messages', { channel: 'sms', phone: who.phone, email: who.email, firstName: first })
       /* NO SILENT FAILURES (2026-10-01): a message GoHighLevel refuses raises a Needs Attention card */
       if (id) await ghlSendChecked(supabase, h, 'interview-messages', { channel: 'sms', contactId: id, address: who.phone, who: [first, who.last_name].filter(Boolean).join(' ') },
-        opts.photo ? { message, attachments: [opts.photo] } : { message })
+        smsBody(from ?? { office: 'MO', phone: '', name: '' }, opts.photo ? { message, attachments: [opts.photo] } : { message }))   // 808: Oklahoma names its number
       if (id && opts.tag) {
         try { await fetch(`https://services.leadconnectorhq.com/contacts/${encodeURIComponent(id)}/tags`, { method: 'POST', headers: h, body: JSON.stringify({ tags: [opts.tag] }) }) } catch { /* reply routing only */ }
       }
@@ -208,7 +212,40 @@ Deno.serve(async (req) => {
     /* 806 (Samantha 2026-10-16): Oklahoma applicants hear nothing automatic until she switches Oklahoma applicant messages
        on (every message here is Missouri wording from the Missouri number). Skipped BEFORE the claim, so nothing is marked
        sent and lost; the send door holds them too. */
-    if (a.office === 'OK' && !OK_LIVE) { plan.held.push(`${a.first_name || 'someone'}: Oklahoma applicant, messages held`); continue }
+    if (a.office === 'OK' && !OK_AUTO) { plan.held.push(`${a.first_name || 'someone'}: Oklahoma applicant, messages held`); continue }
+    /* 808: an Oklahoma PHONE interview (her decision 1): the confirmation, then the day-before text with YES / NO. No
+       address, no link, no 2-days or hour-before notes. Same claim-before-send as Missouri. */
+    if (a.office === 'OK') {
+      const okFirst = a.first_name || 'there', okWhen = new Date(b.starts_at)
+      const okHours = (okWhen.getTime() - Date.now()) / 3_600_000
+      const okDay = fmtDay(okWhen), okTime = fmtTime(okWhen)
+      const oc = { first: okFirst, krystalNamed, phone: OK_FROM.phone, video: OK_FROM.video || '' }
+      const okWho = interviewerLabel(coordName.get(String(b.coordinator_id)), krystalNamed)
+      const ymd = (d: Date) => d.toLocaleDateString('en-CA', { timeZone: TZ })
+      const tomorrow = ymd(okWhen) === ymd(new Date(Date.now() + 86_400_000))
+      const due = !b.confirmed_at ? 'confirm' : (!b.reminded_day_at && tomorrow && okHours > 2) ? 'day' : null
+      if (!due) continue
+      plan[due === 'confirm' ? 'confirm' : 'day'].push(`${okFirst}: Oklahoma, ${okDay} ${okTime}`)
+      if (dry || !ghlToken || !ghlLocation || !withinOutreachHours()) continue
+      if (OK_FROM.refuse || OK_FROM.videoRefuse) {   // no number, or no video link: refused (a card), never half a message
+        await reportSendProblem(supabase, { sender: 'interview-messages', channel: 'sms', address: a.phone, who: okFirst, reasons: [OK_FROM.refuse || OK_FROM.videoRefuse!] })
+        continue
+      }
+      const to = applicantDoor(a, okFirst, OK_FROM)
+      if (due === 'confirm') {
+        // booked for tomorrow: the confirmation counts as the day-before notice too
+        if (!(await claim('interview_bookings', b.id, 'confirmed_at', tomorrow ? { reminded_day_at: new Date().toISOString() } : {}))) continue
+        if (await textOk(a)) await to.sms(okTexts.confirm(oc, okWho, okDay, okTime))
+        if (a.email) { const e = okEmails.confirm(oc, okWho, okDay, okTime); await to.email(e.subject, e.html) }
+        out.confirmed++
+      } else {
+        if (!(await claim('interview_bookings', b.id, 'reminded_day_at'))) continue
+        if (await textOk(a)) await to.sms(okTexts.dayBefore(oc, okTime), { tag: REPLY_TAG })
+        if (a.email) { const e = okEmails.dayBefore(oc, okDay, okTime); await to.email(e.subject, e.html) }
+        out.reminded_day++
+      }
+      continue
+    }
     const first = a.first_name || 'there'
     const when = new Date(b.starts_at)
     const untilHours = (when.getTime() - Date.now()) / 3_600_000
@@ -396,6 +433,7 @@ Deno.serve(async (req) => {
 
   for (const p of waiting ?? []) {
     if (booked.has(p.id)) continue
+    if (p.office === 'OK') continue                    // 808: no "finish" or "pick a time" nudges in Oklahoma (the recruiter calls)
     if (p.decline_reason) continue                     // we already told them no
     /* 461 (2026-10-05, Shakira Sutton applied twice and booked twice): a repeat application is not invited to book when the
        person already holds an interview under another application, or applied again after the office chose not to move
@@ -625,7 +663,7 @@ Deno.serve(async (req) => {
     // deno-lint-ignore no-explicit-any
     const a: any = b.job_applicants
     if (!a) continue
-    if (a.office === 'OK' && !OK_LIVE) { plan.held.push(`${a.first_name || 'someone'}: Oklahoma applicant, cancellation notice held`); continue }   // 806
+    if (a.office === 'OK' && !OK_AUTO) { plan.held.push(`${a.first_name || 'someone'}: Oklahoma applicant, cancellation notice held`); continue }   // 806/808
     /* They cancelled and then booked a new time before this run — that is a
        reschedule in two steps, not a cancellation. Saying "your interview is
        cancelled" next to "see you Thursday" helps nobody, so the notice is
@@ -649,8 +687,17 @@ Deno.serve(async (req) => {
     if (!ghlToken || !ghlLocation) continue
     if (!(await claim('interview_bookings', b.id, 'cancel_notified_at'))) continue
 
-    const to = applicantDoor(a, first)
-    if (to && V2) {
+    const isOk = a.office === 'OK'
+    if (isOk && OK_FROM.refuse) await reportSendProblem(supabase, { sender: 'interview-messages', channel: 'sms', address: a.phone, who: first, reasons: [OK_FROM.refuse] })
+    const to = applicantDoor(a, first, isOk ? OK_FROM : undefined)
+    if (to && isOk) {
+      /* 808: Oklahoma: call or text the Oklahoma number for a new time (no booking link) */
+      const oc = { first, krystalNamed, phone: OK_FROM.phone, video: OK_FROM.video || '' }
+      if (!OK_FROM.refuse) {   // no Oklahoma number: the card above says so, and nothing names a wrong number
+        if (await textOk(a)) await to.sms(okTexts.cancelled(oc, day, time))
+        if (a.email) { const e = okEmails.cancelled(oc, day, time); await to.email(e.subject, e.html) }
+      }
+    } else if (to && V2) {
       /* 587: why they cancelled decides the words. Found another job / not interested: a warm goodbye, no push to
          rebook. Anything else (schedule, transportation, a NO to the reminder, no reason): their link to a new time. */
       const c = ctx(first, bookUrl)
@@ -672,7 +719,8 @@ Deno.serve(async (req) => {
       const who = `${a.first_name ?? ''} ${a.last_name ?? ''}`.trim() || 'An applicant'
       const line = `${who} cancelled their interview for ${day} at ${time}.` +
         (b.cancel_reason ? ` Reason: ${b.cancel_reason}.` : '') +
-        ` They have the link to rebook; they are in the hub under Applicants.`
+        (isOk ? ` They were told to call or text ${OK_FROM.phone || 'the Oklahoma number'} for a new time; they are in the hub under Applicants (Oklahoma).`
+              : ` They have the link to rebook; they are in the hub under Applicants.`)
       for (const t of alertTo!) {
         if (t.phone) { const cid = await staffContact(t, 'sms'); if (cid) await sms(cid, line, t) }
         if (t.email) { const cid = await staffContact(t, 'email'); if (cid) await email(cid, `Interview cancelled: ${who}`, shell(`<p>${line}</p>`), t) }

@@ -26,7 +26,8 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { contactForOutbound, maySend } from '../_shared/outreach.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
-import { ghlSendChecked } from '../_shared/send-problems.ts'
+import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
+import { fromFor, readOps, smsBody, type From } from '../_shared/office-from.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 
 const cors = {
@@ -49,10 +50,10 @@ export const BODY: Record<Kind, (first: string) => string> = {
 }
 export const decisionText = (k: Kind, first: string) => BODY[k](first) + ' Reply STOP to opt out.'
 export const DECISION_SUBJECT = 'Your application with Caring Companions'
-export const decisionHtml = (k: Kind, first: string) =>
+export const decisionHtml = (k: Kind, first: string, from?: From) =>
   `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
   `<p>${escHtml(BODY[k](first))}</p>` +
-  `<p>Caring Companions In-Home Senior Care<br>${OFFICE}</p></div>`
+  `<p>${from && from.office === 'OK' ? `${from.name}<br>${from.phone}` : `Caring Companions In-Home Senior Care<br>${OFFICE}`}</p></div>`   // 808: the Oklahoma footer
 export const LABEL: Record<Kind, string> = { declined: 'not-hiring message', pool: 'candidate pool message' }
 
 /* 10am Central the next day (Central's calendar, so a decision at 11pm Central still means "tomorrow"). */
@@ -66,16 +67,16 @@ export function nextMorning(now = new Date()): string {
   }
   return new Date(Date.UTC(+p.year, +p.month - 1, +p.day + 1, 15)).toISOString()
 }
-const COLS = 'id, first_name, last_name, phone, email, sms_consent, status, decision_msg_at, decision_msg_kind, decision_msg_by, decision_msg_held_at, decision_msg_due_at'
+const COLS = 'id, first_name, last_name, phone, email, sms_consent, status, office, decision_msg_at, decision_msg_kind, decision_msg_by, decision_msg_held_at, decision_msg_due_at'
 
 // deno-lint-ignore no-explicit-any
 type Applicant = any
-function planFor(a: Applicant, kind: Kind) {
+function planFor(a: Applicant, kind: Kind, from?: From) {
   const first = String(a.first_name || '').trim() || 'there'
   const canText = !!a.phone && a.sms_consent === true
   return {
     text: canText ? decisionText(kind, first) : null,
-    email: !canText && a.email ? { subject: DECISION_SUBJECT, html: decisionHtml(kind, first) } : null,
+    email: !canText && a.email ? { subject: DECISION_SUBJECT, html: decisionHtml(kind, first, from) } : null,
     no_text_why: !a.phone ? 'no phone number' : a.sms_consent !== true ? 'they did not agree to texts on their application' : null,
     already_sent: !!a.decision_msg_at && a.decision_msg_kind === kind,
     label: LABEL[kind],
@@ -84,11 +85,16 @@ function planFor(a: Applicant, kind: Kind) {
 /* Sends one message through GoHighLevel and stamps it on success. */
 // deno-lint-ignore no-explicit-any
 async function deliver(db: any, a: Applicant, kind: Kind, byName: string) {
-  const plan = planFor(a, kind)
+  const from = fromFor(a.office, await readOps(db))   // 808: Oklahoma goes from the Oklahoma number, or not at all
+  const plan = planFor(a, kind, from)
   const notSent: string[] = []
   let texted = false, emailed = false
   const ghl = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
   if (!ghl.token || !ghl.locationId) return { texted, emailed, not_sent: notSent, error: 'Texting is not set up on the server, so no message went.' }
+  if (from.refuse) {
+    await reportSendProblem(db, { sender: SENDER, channel: 'sms', address: a.phone, who: [a.first_name, a.last_name].filter(Boolean).join(' '), reasons: [from.refuse] })
+    return { texted, emailed, not_sent: ['not sent: ' + from.refuse] }
+  }
   if (!plan.text && !plan.email) return { texted, emailed, not_sent: ['no usable phone (with their yes to texts) or email'] }
   const H = { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
   const whoName = [a.first_name, a.last_name].filter(Boolean).join(' ')
@@ -99,7 +105,7 @@ async function deliver(db: any, a: Applicant, kind: Kind, byName: string) {
       { ...common, channel: 'sms', onOptOut: (r) => { why = 'they opted out of texts (' + r.join(', ') + ')' } })
     if (!c) notSent.push('text: ' + (why || 'the number could not be confirmed as safe to text'))
     else {
-      texted = await ghlSendChecked(db, H, SENDER, { channel: 'sms', contactId: c.contactId, address: a.phone, who: whoName }, { message: plan.text })
+      texted = await ghlSendChecked(db, H, SENDER, { channel: 'sms', contactId: c.contactId, address: a.phone, who: whoName }, smsBody(from, { message: plan.text }))
       if (!texted) notSent.push('text: GoHighLevel did not accept it (a card is on Needs Attention)')
     }
   }

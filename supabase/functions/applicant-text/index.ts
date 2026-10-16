@@ -30,7 +30,8 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { contactForOutbound, maySend } from '../_shared/outreach.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
-import { ghlSendChecked } from '../_shared/send-problems.ts'
+import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
+import { fromFor, readOps, smsBody, type From } from '../_shared/office-from.ts'
 import { latestTextConsent, withStop } from '../_shared/text-consent.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 
@@ -89,6 +90,27 @@ export function picks(first: string, me: string, a: { status?: string }, booked?
   out.push({ key: 'own', label: 'Write my own', text: `${hi} ` })
   return out
 }
+/* 808 (Samantha 2026-10-16, "all five decisions as you recommended"): an Oklahoma applicant gets the same picks with the
+   Oklahoma number, a VIDEO interview (her standing Zoom/Meet link), and no Missouri registry (FCSR) pick. */
+export function picksOk(first: string, me: string, a: { status?: string }, booked: { day: string; time: string } | null, phone: string, video = ''): Pick[] {
+  const hi = `Hi ${first}, this is ${me} from Caring Companions.`
+  const out: Pick[] = [
+    { key: 'fit', label: 'A client who may fit', text: `${hi} We saw you applied with us, and we have a client who may be a good fit for your experience and availability. Would you like to hear more? Reply here or call us at ${phone}.` },
+    { key: 'interested', label: 'Still interested?', text: `${hi} Are you still interested in a companion position with us? Reply here and we will take it from there.` },
+    { key: 'call', label: 'Please call us', text: `${hi} Could you give us a call at ${phone} when you have a moment? Thank you.` },
+    { key: 'tried', label: 'We tried to reach you', text: `${hi} We tried to reach you by phone and could not get through. Reply here or call us at ${phone} when you can.` },
+  ]
+  if (a.status === 'partial') out.push({ key: 'finish', label: 'Finish the application', text: `${hi} We saw you started an application with us and would love for you to finish it. Any questions, just reply here.` })
+  if (booked) out.push({ key: 'interview', label: 'About their interview', text: `${hi} Just a reminder about your video interview on ${booked.day} at ${booked.time}.${video ? ' Join here: ' + video : ''} Need to change it? Call or text us at ${phone}.` })
+  out.push({ key: 'own', label: 'Write my own', text: `${hi} ` })
+  return out
+}
+export function cancelDraftsOk(first: string, me: string, day: string, time: string, phone: string) {
+  return {
+    applicant: `Hi ${first}, your video interview with Caring Companions for ${day} at ${time} is cancelled as you asked, so there is nothing more to do. Want a different time? Call or text us at ${phone}.`,
+    office: `Hi ${first}, this is ${me} from Caring Companions. We are sorry, we need to cancel your video interview for ${day} at ${time}. We would still like to talk with you, so please call or text us at ${phone} for a new time.`,
+  }
+}
 export const CANCEL_SUBJECT = (day: string) => `Your interview on ${day} is cancelled`
 export function cancelDrafts(first: string, me: string, day: string, time: string, bookUrl: string) {
   return {
@@ -96,10 +118,10 @@ export function cancelDrafts(first: string, me: string, day: string, time: strin
     office: `Hi ${first}, this is ${me} from Caring Companions. We are sorry, we need to cancel your interview for ${day} at ${time}. We would still like to meet you, so please pick a new time here: ${bookUrl} or call us at ${OFFICE}.`,
   }
 }
-const cancelHtml = (message: string) => {
+const cancelHtml = (message: string, from?: From) => {
   const body = escHtml(message).replace(/(https?:\/\/\S+?)([.,]?)(\s|$)/g, '<a href="$1">$1</a>$2$3')
   return `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36"><p>${body}</p>` +
-    `<p>Caring Companions In-Home Senior Care<br>${OFFICE}</p></div>`
+    `<p>${from && from.office === 'OK' ? `${from.name}<br>${from.phone}` : `Caring Companions In-Home Senior Care<br>${OFFICE}`}</p></div>`
 }
 
 /** The FCSR registration email, word for word as Samantha approved it (2026-10-14). Not editable by the office. */
@@ -141,10 +163,16 @@ Deno.serve(async (req) => {
   const action = String(b.action || url.searchParams.get('action') || (url.searchParams.get('auth_check') === '1' ? 'auth_check' : 'draft'))
 
   /* ---- one real send: text (and, for a cancellation, the email), through the gates ---- */
+  const OPS = await readOps(db)   // 808: the Oklahoma sending number
   const deliver = async (row: Row, a: Row, sender: string) => {
     const notSent: string[] = []
     let texted = false, emailed = false
     if (!ghl.token || !ghl.locationId) return { texted, emailed, notSent: ['texting is not set up on the server'] }
+    const from = fromFor(a.office, OPS)
+    if (from.refuse) {   // 808: never from the Missouri number; the card says why
+      await reportSendProblem(db, { sender, channel: 'sms', address: a.phone, who: [a.first_name, a.last_name].filter(Boolean).join(' '), reasons: [from.refuse] })
+      return { texted, emailed, notSent: ['not sent: ' + from.refuse] }
+    }
     const person = { phone: a.phone, email: a.email, firstName: a.first_name, lastName: a.last_name }
     const whoName = [a.first_name, a.last_name].filter(Boolean).join(' ')
     const common = { humanInitiated: true, audience: 'applicant' as const, sender }
@@ -153,7 +181,7 @@ Deno.serve(async (req) => {
       const c = await contactForOutbound(db, ghl, person, 'reactive_external', { ...common, channel: 'sms', onOptOut: (r) => { why = 'they opted out of texts (' + r.join(', ') + ')' } })
       if (!c) notSent.push('text: ' + (why || 'the number could not be confirmed as safe to text'))
       else {
-        texted = await ghlSendChecked(db, H, sender, { channel: 'sms', contactId: c.contactId, address: a.phone, who: whoName }, { message: row.message })
+        texted = await ghlSendChecked(db, H, sender, { channel: 'sms', contactId: c.contactId, address: a.phone, who: whoName }, smsBody(from, { message: row.message }))
         if (!texted) notSent.push('text: GoHighLevel did not accept it (a card is on Needs Attention)')
       }
     }
@@ -162,7 +190,7 @@ Deno.serve(async (req) => {
       const c = await contactForOutbound(db, ghl, person, 'reactive_external', { ...common, channel: 'email', onOptOut: (r) => { why = 'they opted out of email (' + r.join(', ') + ')' } })
       if (!c) notSent.push('email: ' + (why || 'could not be sent'))
       else {
-        const html = row.email_subject === FCSR_SUBJECT ? fcsrHtml(String(a.first_name || '').trim() || 'there', meOf(row.created_by)) : cancelHtml(row.message.replace(/ Reply STOP to opt out\.$/, ''))
+        const html = row.email_subject === FCSR_SUBJECT ? fcsrHtml(String(a.first_name || '').trim() || 'there', meOf(row.created_by)) : cancelHtml(row.message.replace(/ Reply STOP to opt out\.$/, ''), from)
         emailed = await ghlSendChecked(db, H, sender, { channel: 'email', contactId: c.contactId, address: a.email, who: whoName }, { subject: row.email_subject, html })
         if (!emailed) notSent.push('email: GoHighLevel did not accept it (a card is on Needs Attention)')
       }
@@ -182,7 +210,7 @@ Deno.serve(async (req) => {
     let released = 0, failed = 0
     for (const row of (due ?? []) as Row[]) {
       if (dry) continue
-      const { data: a } = await db.from('job_applicants').select('id, first_name, last_name, phone, email').eq('id', row.applicant_id).maybeSingle()
+      const { data: a } = await db.from('job_applicants').select('id, first_name, last_name, phone, email, office').eq('id', row.applicant_id).maybeSingle()
       if (!a) { await db.from('applicant_texts').update({ status: 'failed', error: 'applicant not found' }).eq('id', row.id); failed++; continue }
       const r = await deliver(row, a, row.kind === 'cancel' ? SENDER_CANCEL : SENDER_TEXT)
       const ok = r.texted || r.emailed
@@ -207,7 +235,7 @@ Deno.serve(async (req) => {
 
   const id = String(b.id || '').trim()
   if (!/^[0-9a-f-]{36}$/i.test(id)) return json({ error: 'which applicant?' }, 400)
-  const { data: a, error: aErr } = await db.from('job_applicants').select('id, first_name, last_name, phone, email, sms_consent, status').eq('id', id).maybeSingle()
+  const { data: a, error: aErr } = await db.from('job_applicants').select('id, first_name, last_name, phone, email, sms_consent, status, office').eq('id', id).maybeSingle()
   if (aErr) return json({ error: aErr.message }, 500)
   if (!a) return json({ error: 'That applicant was not found.' }, 404)
   const first = String(a.first_name || '').trim() || 'there'
@@ -218,17 +246,20 @@ Deno.serve(async (req) => {
   const window = hours.allowed ? null : nextWindow()
   const waits = window ? `It is outside 8am to 6pm Central, so it will be held and sent at ${fmtTime(window)} on ${fmtDay(window)}.` : null
 
+  const okFrom = a.office === 'OK' ? fromFor('OK', OPS) : null   // 808
   if (action === 'draft') {
-    return json({ ok: true, first, name: [a.first_name, a.last_name].filter(Boolean).join(' '), phone: a.phone || null, email: a.email || null, status: a.status,
+    return json({ ok: true, office: a.office === 'OK' ? 'OK' : 'MO', from: okFrom ? (okFrom.phone || null) : null, from_problem: okFrom?.refuse ?? null, first, name: [a.first_name, a.last_name].filter(Boolean).join(' '), phone: a.phone || null, email: a.email || null, status: a.status,
       can_text: consent.ok, why_not: consent.ok ? null : consent.why, in_hours: hours.allowed, send_after: window ? window.toISOString() : null, waits,
-      booked, me, picks: picks(first, me, a, booked), fcsr_email: a.email ? { subject: FCSR_SUBJECT, html: fcsrHtml(first, me) } : null })
+      booked, me, picks: okFrom ? picksOk(first, me, a, booked, okFrom.phone || 'our office', okFrom.video || '') : picks(first, me, a, booked),
+      fcsr_email: a.email && !okFrom ? { subject: FCSR_SUBJECT, html: fcsrHtml(first, me) } : null })
   }
 
   if (action === 'cancel_draft') {
     if (!booked) return json({ error: 'They have no interview booked.' }, 409)
     const bookUrl = 'https://mo-care.com/apply?book=' + encodeURIComponent(id)
     return json({ ok: true, first, name: [a.first_name, a.last_name].filter(Boolean).join(' '), booked, can_text: consent.ok, why_not: consent.ok ? null : consent.why,
-      email: a.email || null, in_hours: hours.allowed, waits, me, drafts: cancelDrafts(first, me, booked.day, booked.time, bookUrl), subject: CANCEL_SUBJECT(booked.day) })
+      email: a.email || null, in_hours: hours.allowed, waits, me, subject: CANCEL_SUBJECT(booked.day),
+      drafts: okFrom ? cancelDraftsOk(first, me, booked.day, booked.time, okFrom.phone || 'our office') : cancelDrafts(first, me, booked.day, booked.time, bookUrl) })
   }
 
   /* a message the office wrote (edited from a pick, or the cancellation), as one row, sent now or held */
@@ -258,6 +289,7 @@ Deno.serve(async (req) => {
     const kind = b.kind === 'reply' ? 'reply' : 'text'
     /* pick 'fcsr': the registration steps go by email too, when we have one (a person pressed Send; nothing automatic) */
     const fcsr = b.pick === 'fcsr'
+    if (fcsr && a.office === 'OK') return json({ error: 'The Missouri registry (FCSR) steps are not for an Oklahoma applicant.' }, 400)   // 808
     const r = await queue(kind, message, fcsr, fcsr ? FCSR_SUBJECT : null, SENDER_TEXT)
     return json(r.body, r.status)
   }
