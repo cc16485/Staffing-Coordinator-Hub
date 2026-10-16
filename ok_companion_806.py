@@ -146,7 +146,7 @@ def defs_text():
 
 PROOF = r"""
 do $proof$
-declare r jsonb := '{}'::jsonb; ok1 uuid; mo1 uuid;
+declare r jsonb := '{}'::jsonb; ok1 uuid; mo1 uuid; h1 boolean; h2 boolean;
 begin
   perform set_config('request.jwt.claims', '{"role":"anon"}', true);
   perform set_config('request.jwt.claim.role', 'anon', true);
@@ -154,16 +154,18 @@ begin
   perform public.apply_save(ok1, '{"age_ok":true,"work_auth":true,"can_pass_background":true,"has_transport":false,"experience_years":"Less than 1 year"}'::jsonb, false);
   perform public.apply_save(ok1, '{}'::jsonb, true);
   mo1 := public.apply_save(null, '{"first_name":"Proof","last_name":"Eightohsixmo","phone":"417-555-0188","email":"proof-806-mo@practice.invalid","zip":"65714","position":"caregiver","channel":"self-test"}'::jsonb, false);
+  h1 := public.ok_applicant_hold('+14055550189', null, 'proof-806', 'sms');   -- its own step, so the mark it makes is seen below
+  h2 := public.ok_applicant_hold('+14175550188', null, 'proof-806', 'sms');
   r := r || jsonb_build_object(
     'ok_office', (select office from public.job_applicants where id = ok1),
     'ok_grade', (select screen_grade from public.job_applicants where id = ok1),
     'ok_miles', (select miles_out from public.job_applicants where id = ok1),
     'ok_gap', coalesce(public.applicant_screening_gap(ok1), 'none'),
     'ok_stop', coalesce(public.applicant_followup_stop(ok1), 'none'),
-    'ok_hold', public.ok_applicant_hold('+14055550189', null, 'proof-806', 'sms'),
+    'ok_hold', h1,
     'ok_marked', (select msgs_held_at is not null from public.job_applicants where id = ok1),
     'mo_office', (select office from public.job_applicants where id = mo1),
-    'mo_hold', public.ok_applicant_hold('+14175550188', null, 'proof-806', 'sms'),
+    'mo_hold', h2,
     'mo_stop_held', coalesce(public.applicant_followup_stop(mo1), 'none') = 'Oklahoma applicant: messages held',
     'anon_hold', has_function_privilege('anon', 'public.ok_applicant_hold(text,text,text,text)', 'execute'),
     'auth_hold', has_function_privilege('authenticated', 'public.ok_applicant_hold(text,text,text,text)', 'execute'),
