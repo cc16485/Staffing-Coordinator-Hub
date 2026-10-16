@@ -123,7 +123,7 @@ const offDeps = () => ({
   updateOffer: async (id, vals) => { Object.assign(W.offers.find((o) => o.id === id), vals); return true },
   claimBooking: async (id, vals) => { const b = W.bookings.find((x) => x.id === id); if (!b || b.status !== 'waiting_for_caregiver' || b.caregiver_axiscare_id) return false; Object.assign(b, vals); return true },
   roster: async () => ROSTER,
-  askBlock: async (c) => W.blocked[c.axiscare_id] ?? null,
+  askBlock: async (c, client, needsTransport) => { (W.drive ??= []).push([c.axiscare_id, needsTransport]); return W.blocked[c.axiscare_id] ?? (needsTransport && !W.drivers?.includes(c.axiscare_id) ? `${c.name} is not cleared to drive clients` : null) },
   sendText: async (c, message) => { if (W.sendFail[c.axiscare_id]) return { ok: false, why: 'refused' }; W.texts.push({ to: c.axiscare_id, message }); return { ok: true } },
   makeLink: async (id, exp) => links.makeOfferLink('s'.repeat(40), id, exp),
   closeItem: async (id, by, text) => { const it = W.items.find((x) => x.id === id); if (it) { it.status = 'done'; it.closed_text = text } },
@@ -249,6 +249,21 @@ await run()
 ck('everyone asked said no: ONE office card "Nobody has taken this yet", the same card Place closes', W.items.length === 1 && W.items[0].id === `fam_book_${b.id}` && /Nobody has taken this yet/.test(W.items[0].title) && /Everyone who could be asked/.test(W.items[0].detail) && b.offer_stage === 'done', W.items)
 await run()
 ck('...and only once', W.items.length === 1 && W.texts.length === 2)
+
+// Approved Driver (her rule 2026-10-13): rides or an outing = only cleared drivers are asked
+reset({ settings: { ...OFFERS_ON } }); W.drivers = ['55']
+await go({ action: 'book', date: '2026-10-22', start: '13:00', end: '16:00', tasks: ['Companionship', 'Rides to appointments'], who: 'any' }); b = bk()
+await run()
+ck('a visit with rides: every caregiver is checked as a driver, only Ann (an Approved Driver) is texted', W.drive.every((x) => x[1] === true) && W.texts.map((t) => t.to).join() === '55', { drive: W.drive, to: W.texts.map((t) => t.to) })
+reset({ settings: { ...OFFERS_ON } }); W.drivers = []
+await go({ action: 'book', date: '2026-10-22', start: '13:00', end: '16:00', tasks: ['Companionship'], who: 'any' }); b = bk()
+await run()
+ck('a visit with no driving: nobody is held back for driving', W.drive.every((x) => x[1] === false) && W.texts.length > 0, W.drive)
+reset({ settings: { ...OFFERS_ON } }); W.drivers = []
+await go({ action: 'book', date: '2026-10-22', start: '13:00', end: '16:00', tasks: ['An outing together'], who: 'any' }); b = bk()
+await run()
+ck('an outing with no Approved Driver available: nobody is texted, the office card says everyone was asked', W.texts.length === 0 && W.items.some((i) => /Nobody has taken this yet/.test(i.title)), { t: W.texts, i: W.items })
+ck('family_offer_driver_check false turns the check off', fo.needsDrive({ tasks: ['An outing together'] }, { family_offer_driver_check: false }) === false && fo.needsDrive({ tasks: ['An outing together'] }, {}) === true)
 
 // 24 hours before
 reset({ settings: { ...OFFERS_ON } }); await go({ action: 'book', date: '2026-10-21', start: '13:00', end: '16:00', tasks: ['Companionship'], who: 'preferred', preferred: ['77'] }); b = bk()

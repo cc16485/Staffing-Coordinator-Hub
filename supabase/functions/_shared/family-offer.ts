@@ -27,7 +27,7 @@ import { appLive, central, hoursUntil, startOf, startChoices, toMin, fromMin, cl
 
 // deno-lint-ignore no-explicit-any
 type Any = any
-export type Candidate = { axiscare_id: string; name: string; first: string; phone: string; avail?: { windows?: Record<string, string[]> | null; outside_ok?: boolean | null } | null }
+export type Candidate = { axiscare_id: string; name: string; first: string; phone: string; drive?: Any; avail?: { windows?: Record<string, string[]> | null; outside_ok?: boolean | null } | null }
 export type OfferDeps = {
   ax: Ax
   now: () => Date
@@ -42,7 +42,8 @@ export type OfferDeps = {
   /** First yes wins: sets vals only while the booking is still waiting with nobody on it. True = this caller won. */
   claimBooking: (id: string, vals: Any) => Promise<boolean>
   roster: () => Promise<Candidate[]>
-  askBlock: (c: Candidate, clientName: string) => Promise<string | null>
+  /** needsTransport: the visit has rides or an outing, so only an Approved Driver (cleared, current license + insurance) may be asked. */
+  askBlock: (c: Candidate, clientName: string, needsTransport: boolean) => Promise<string | null>
   sendText: (c: Candidate, message: string) => Promise<{ ok: true } | { ok: false; why: string }>
   makeLink: (offerId: string, exp: number) => Promise<string>
   officeItem: (item: Any) => Promise<boolean>
@@ -62,6 +63,11 @@ export function offerSettings(st: Any) {
     msgPick: String(st?.family_offer_msg_pick || '') || MSG_PICK, msgTeam: String(st?.family_offer_msg_team || '') || MSG_TEAM }
 }
 
+/** Tasks that mean the caregiver drives the client (her Driver Compliance rule 2026-10-13: only Approved Drivers). Unlike the
+ *  office's tools (driver_schedule_gate_live), app offers always enforce it: nobody reviews an app offer before it goes. The Hub
+ *  setting family_offer_driver_check === false is the only way off. */
+export const DRIVE_TASKS = ['Rides to appointments', 'An outing together']
+export const needsDrive = (b: Any, st: Any) => st?.family_offer_driver_check !== false && (Array.isArray(b?.tasks) ? b.tasks : []).some((t: unknown) => DRIVE_TASKS.includes(String(t)))
 const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 export const dayWords = (date: string) => { const d = new Date(date + 'T12:00:00Z'); return `${DAY[d.getUTCDay()]}, ${MON[d.getUTCMonth()]} ${d.getUTCDate()}` }
 const hrsWords = (h: number) => `${h % 1 ? h.toFixed(1) : h} hours`
@@ -135,7 +141,7 @@ export async function runOffers(d: OfferDeps, opts: { dry?: boolean } = {}) {
     if (nightHold(now, left, o)) { out.held_night++; continue }
     let town = '', history: Map<string, number> | null = null
     const send = async (c: Candidate, wave: 'picks' | 'team', waveNo: number): Promise<'sent' | 'skip'> => {
-      const why = await d.askBlock(c, String(b.client_name ?? ''))
+      const why = await d.askBlock(c, String(b.client_name ?? ''), needsDrive(b, st))
       if (why) { out.skipped.push({ booking: b.id, who: c.name, why }); return 'skip' }
       let free: string[] = []
       try { free = await freeStarts(d.ax, b, c.axiscare_id) } catch (e) { out.skipped.push({ booking: b.id, who: c.name, why: `their AxisCare schedule couldn't be read (${String(e).slice(0, 80)})` }); return 'skip' }
