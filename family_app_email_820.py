@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-# 820 · FAMILY APP SIGN-IN EMAILS. Samantha 2026-10-16: "Yes, start getting the Springfield pilot ready. Start with the sign-in email fix."
+# 820 · FAMILY APP SIGN-IN EMAILS + MISSOURI RATE. Samantha 2026-10-16: "Yes, start getting the Springfield pilot ready. Start with the
+# sign-in email fix." and, asked whether the Missouri rate is $30: "yes".
 # The family app's sign-in codes still come from Supabase's built-in sender, which only delivers to Supabase team members and only a
 # few an hour, so a real family would never get their code. This points cc-family-app's sign-in email at Resend, the same way 351 did for
 # the Hub: from "Caring Companions" <noreply@mo-care.com> (mo-care.com is already verified in Resend), up to 30 an hour.
 #  1. Saves the Resend key into cc-family-app's sign-in email settings (the key is never shown).
-#  2. Optional test: if she typed her own address AND it already has a family app login, sends HER one sign-in code. Nobody else.
-# Changes nothing in the Hub, AxisCare or GHL. Never contacts a family. Safe to run again (a new key just replaces the old one).
+#  2. Missouri rate $30 an hour in the Hub settings (ops_settings family_app_rate_MO). The estimate still uses a client's own AxisCare
+#     rate first when they have one; $30 is for clients with no rate yet. Only that one setting is touched.
+#  3. Optional test: if she typed her own address AND it already has a family app login, sends HER one sign-in code. Nobody else.
+# Changes nothing else in the Hub, and nothing in AxisCare or GHL. Never contacts a family. Safe to run again (a new key just replaces the old one).
 import json, os, re, sys, time, urllib.request, urllib.error
 REPORT = os.environ["SB_REPORT"]; TOKEN = os.environ.get("SB_TOKEN", "").strip().strip('"').strip("'")
 API = os.environ.get("SB_API_BASE", "https://api.supabase.com"); FAMB = os.environ.get("SB_FAM_BASE", "")
 RESEND = os.environ.get("SB_RESEND_KEY", "").strip(); TEST = os.environ.get("SB_TEST_EMAIL", "").strip().lower()
-FAM_NAME = "cc-family-app"; SENDER = "noreply@mo-care.com"
+FAM_NAME = "cc-family-app"; HUB = "zngsgedlsxinbygwmxwn"; MO_RATE = 30; SENDER = "noreply@mo-care.com"
 lines = []; fails = []; HIDE = [RESEND] if RESEND else []
 def say(s=""):
     s = str(s)
@@ -47,7 +50,11 @@ def keys(ref):
         if str(got.get("service_role", "")).startswith("eyJ") and str(got.get("anon", "")).startswith("eyJ"): return got
     return {}
 
-say("820 · FAMILY APP SIGN-IN EMAILS"); say(time.strftime("%Y-%m-%d %H:%M")); say()
+def sql(q):
+    s, b = http("POST", f"{API}/v1/projects/{HUB}/database/query", {"query": q}, MG())
+    return (s in (200, 201)), (j(b) if s in (200, 201) else f"HTTP {s}: {b[:300]}")
+
+say("820 · FAMILY APP SIGN-IN EMAILS + MISSOURI RATE"); say(time.strftime("%Y-%m-%d %H:%M")); say()
 if not re.fullmatch(r"re_[A-Za-z0-9_]{10,}", RESEND): bad("that isn't a Resend key (they start with re_)"); say("  STOP. Nothing was changed."); done(2)
 if TEST and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[a-z]{2,}", TEST): bad("the test address doesn't look like an email"); say("  STOP. Nothing was changed."); done(2)
 
@@ -69,8 +76,16 @@ chk(s in (200, 201) and c.get("smtp_host") == "smtp.resend.com" and c.get("smtp_
 chk(c.get("disable_signup") is True, "sign-up still off: only families the office invites can sign in")
 if fails: say("  STOP. Tell Claude."); done(1)
 
-# ── 2. Test (her own address only) ──────────────────────────────────────────────────────────────────────────────────
-say(); say("2 · TEST")
+# ── 2. Missouri rate ────────────────────────────────────────────────────────────────────────────────────────────────
+say(); say("2 · MISSOURI RATE")
+good, rows = sql(f"update public.app_data set data = coalesce(data, '{{}}'::jsonb) || jsonb_build_object('family_app_rate_MO', {MO_RATE}) "
+                 "where key = 'ops_settings' returning data->>'family_app_rate_MO' as mo, data->>'family_app_live' as live")
+r = (rows or [{}])[0] if good and isinstance(rows, list) else {}
+chk(good and str(r.get("mo")) == str(MO_RATE), f"Missouri app estimate: ${MO_RATE} an hour (a client's own AxisCare rate still wins when they have one); live booking: {'ON' if r.get('live') == 'true' else 'OFF (practice)'}"
+    if good and r else f"rate not saved ({rows if not good else 'no Hub settings found'})")
+
+# ── 3. Test (her own address only) ──────────────────────────────────────────────────────────────────────────────────
+say(); say("3 · TEST")
 if not TEST:
     say("  · no test address typed, so nothing was sent.")
     say("  · To test: in the Hub, Invite yourself to the app on a test client's Family Circle, then sign in at family.mo-care.com.")
@@ -90,5 +105,5 @@ else:
             elif s == 429: bad("Supabase says too many codes were asked for just now. Wait a minute and sign in at family.mo-care.com to test.")
             else: bad(f"the test code was NOT sent ({s}: {str(b)[:160]}). Most likely the key isn't a Sending key for mo-care.com. Make a new one and run 820 again.")
 say()
-say("  820: " + ("DONE. Family sign-in codes come from noreply@mo-care.com." if not fails else "NOT COMPLETE. See the ✗ lines above."))
+say("  820: " + ("DONE. Family sign-in codes come from noreply@mo-care.com; Missouri estimate $30 an hour." if not fails else "NOT COMPLETE. See the ✗ lines above."))
 done(0 if not fails else 1)

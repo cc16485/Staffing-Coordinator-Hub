@@ -7,8 +7,8 @@ res = []; ck = lambda n, c, note="": res.append((n, bool(c), "" if c else str(no
 S = {}; M = {}
 KEY = "re_abcdefghijklmnop1234"
 def reset(**m):
-    S.clear(); S.update(auth={"disable_signup": True}, otp=[], calls=[])
-    M.clear(); M.update(dict(fam=True, patch_fail=False, users=["sam@mo-care.com"], otp_code=200, bad_token=False), **m)
+    S.clear(); S.update(auth={"disable_signup": True}, otp=[], calls=[], sql=[], ops={"family_app_live": "false", "x": 1})
+    M.clear(); M.update(dict(fam=True, patch_fail=False, users=["sam@mo-care.com"], otp_code=200, bad_token=False, sqlfail=False), **m)
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def _send(self, code, obj):
@@ -34,6 +34,14 @@ class H(http.server.BaseHTTPRequestHandler):
         self._send(404, {})
     def do_POST(self):
         b = self._body(); S["calls"].append(("POST", self.path, b))
+        if self.path == "/v1/projects/zngsgedlsxinbygwmxwn/database/query":
+            q = b["query"]; S["sql"].append(q)
+            if M["sqlfail"]: return self._send(400, {"message": "boom"})
+            m = re.search(r"jsonb_build_object\('family_app_rate_MO', (\d+)\)", q)
+            if m and "where key = 'ops_settings'" in q:
+                S["ops"]["family_app_rate_MO"] = int(m.group(1))
+                return self._send(201, [{"mo": str(S["ops"]["family_app_rate_MO"]), "live": S["ops"]["family_app_live"]}])
+            return self._send(400, {"message": "unexpected"})
         if self.path == "/auth/v1/otp":
             S["otp"].append((b, self.headers.get("apikey"))); return self._send(M["otp_code"], {} if M["otp_code"] == 200 else {"msg": "Error sending magic link email"})
         self._send(404, {})
@@ -54,6 +62,9 @@ ck("1b settings: smtp.resend.com:465 user resend, noreply@mo-care.com, Caring Co
    and a.get("smtp_user") == "resend" and a.get("smtp_pass") == KEY and a.get("smtp_admin_email") == "noreply@mo-care.com" and a.get("smtp_sender_name") == "Caring Companions" and a.get("rate_limit_email_sent") == 30, a)
 ck("1c only the email settings were changed (no sign-up, templates, site address)", set(S["calls"][[x[0] for x in S["calls"]].index("PATCH")][2]) == {"smtp_host", "smtp_port", "smtp_user", "smtp_pass", "smtp_admin_email", "smtp_sender_name", "rate_limit_email_sent"}, S["calls"])
 ck("1d no key or token ever printed", KEY not in out and not re.search(r"eyJ\w|sbp_test", out), out)
+ck("1e Missouri rate $30 set, other settings kept, practice mode reported", S["ops"] == {"family_app_live": "false", "x": 1, "family_app_rate_MO": 30} and len(S["sql"]) == 1 and "$30 an hour" in out and "OFF (practice)" in out, (S["ops"], out))
+c, out = run(sqlfail=True)
+ck("1f rate refused: reported as not complete", c == 1 and "rate not saved" in out and "NOT COMPLETE" in out, out)
 c, out = run(test="Sam@mo-care.com")
 ck("2 her address has a login: ONE code sent to her only, never creating a login", c == 0 and S["otp"] == [({"email": "sam@mo-care.com", "create_user": False}, "eyJanonfam")] and "handed to Resend" in out, (S["otp"], out))
 c, out = run(test="someone@example.com")
@@ -61,7 +72,7 @@ ck("3 address without a login: nothing sent, tells her how to test", c == 0 and 
 c, out = run(test="sam@mo-care.com", otp_code=500)
 ck("4 Resend refuses the send: reported as not complete with what to do", c == 1 and "NOT sent" in out and "NOT COMPLETE" in out, out)
 c, out = run(key="sbp_wrongthingpasted12345")
-ck("5 not a Resend key: stops before anything", c == 2 and not S["calls"], out)
+ck("5 not a Resend key: stops before anything", c == 2 and not S["calls"] and not S["sql"], out)
 c, out = run(key="")
 ck("5b empty key: stops before anything", c == 2 and not S["calls"], out)
 c, out = run(test="not-an-email")
@@ -71,7 +82,7 @@ ck("7 wrong Supabase token: stops, nothing changed", c == 2 and not writes(), ou
 c, out = run(fam=False)
 ck("8 no cc-family-app: stops, nothing changed", c == 2 and not writes(), out)
 c, out = run(test="sam@mo-care.com", patch_fail=True)
-ck("9 settings refused: stops before any test send", c == 1 and not S["otp"] and "not saved" in out, out)
+ck("9 email settings refused: stops before the rate and any test send", c == 1 and not S["otp"] and not S["sql"] and "not saved" in out, out)
 c, out = run(test="sam@mo-care.com", otp_code=429)
 ck("10 too many codes just now: reported plainly", c == 1 and "too many codes" in out, out)
 
