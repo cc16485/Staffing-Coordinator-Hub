@@ -22,7 +22,8 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { contactForOutbound, maySend } from '../_shared/outreach.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
-import { ghlSendChecked } from '../_shared/send-problems.ts'
+import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
+import { fromFor, readOps, smsBody } from '../_shared/office-from.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -40,6 +41,23 @@ export const noshowText = (first: string) =>
   `We understand that unexpected circumstances can happen. If there is a reasonable explanation for missing your interview, please call our office at ${OFFICE} as soon as possible so we can discuss the situation.\n\n` +
   `Thank you,\nCaring Companions In-Home Senior Care\n\nReply STOP to opt out.`
 export const NOSHOW_SUBJECT = 'Missed Interview – Caring Companions'
+/* 808 (Samantha 2026-10-16): Oklahoma interviews are VIDEO interviews, so her words say "video interview" and "did not join";
+   everything else is hers, with the Oklahoma number and name. */
+export const noshowTextOk = (first: string, phone: string) =>
+  `Hi ${first}, this is Caring Companions Oklahoma. You were scheduled for a video interview with us today and did not join or contact us before your scheduled interview time.\n\n` +
+  `Your application has been marked as a No-Show, which means you will not be eligible to reapply or be considered for employment with Caring Companions in the future.\n\n` +
+  `We understand that unexpected circumstances can happen. If there is a reasonable explanation for missing your interview, please call us at ${phone} as soon as possible so we can discuss the situation.\n\n` +
+  `Thank you,\nCaring Companions Oklahoma\n\nReply STOP to opt out.`
+export const NOSHOW_SUBJECT_OK = 'Missed video interview: Caring Companions Oklahoma'
+export const noshowHtmlOk = (first: string, phone: string) => {
+  const f = escHtml(first), ph = escHtml(phone)
+  return `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
+    `<p>Hi ${f},</p>` +
+    `<p>You were scheduled for a video interview with Caring Companions Oklahoma today and did not join or contact us before your scheduled interview time.</p>` +
+    `<p>As a result, your application has been marked as a <b>No-Show</b>. Applicants who are marked as a No-Show are not eligible to reapply or be considered for future employment with Caring Companions.</p>` +
+    `<p>We understand that unexpected circumstances can occur. If there is a reasonable explanation for missing your scheduled interview, please call us at <b>${ph}</b> as soon as possible. We are happy to discuss the circumstances with you and determine whether your application may be reconsidered.</p>` +
+    `<p>Thank you,</p><p>Caring Companions Oklahoma<br>${ph}</p></div>`
+}
 /* The email version she approved (2026-10-01 screenshot). */
 export const noshowHtml = (first: string) => {
   const f = escHtml(first)
@@ -64,7 +82,7 @@ Deno.serve(async (req) => {
   const id = String(b.id || '').trim()
   if (!/^[0-9a-f-]{36}$/i.test(id)) return json({ error: 'which applicant?' }, 400)
   const { data: a, error: aErr } = await db.from('job_applicants')
-    .select('id, first_name, last_name, phone, email, sms_consent, status, noshow_at, noshow_msg_at').eq('id', id).maybeSingle()
+    .select('id, first_name, last_name, phone, email, sms_consent, status, noshow_at, noshow_msg_at, office').eq('id', id).maybeSingle()
   if (aErr) return json({ error: aErr.message }, 500)
   if (!a) return json({ error: 'That applicant was not found.' }, 404)
   const first = String(a.first_name || '').trim() || 'there'
@@ -79,9 +97,11 @@ Deno.serve(async (req) => {
     return error ? json({ error: error.message }, 500) : json({ ok: true, excused: true })
   }
 
+  const from = fromFor(a.office, await readOps(db))   // 808
+  const ok = from.office === 'OK'
   const plan = {
-    text: a.phone && a.sms_consent === true ? noshowText(first) : null,
-    email: a.email ? { subject: NOSHOW_SUBJECT, html: noshowHtml(first) } : null,
+    text: a.phone && a.sms_consent === true ? (ok ? noshowTextOk(first, from.phone) : noshowText(first)) : null,
+    email: a.email ? (ok ? { subject: NOSHOW_SUBJECT_OK, html: noshowHtmlOk(first, from.phone) } : { subject: NOSHOW_SUBJECT, html: noshowHtml(first) }) : null,
     no_text_why: !a.phone ? 'no phone number' : a.sms_consent !== true ? 'they did not agree to texts on their application' : null,
     already_sent: !!a.noshow_msg_at,
   }
@@ -109,6 +129,10 @@ Deno.serve(async (req) => {
   if (!ghl.token || !ghl.locationId) return json({ ok: true, marked: true, error: 'Texting is not set up on the server, so no message went.' })
   const H = { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
   const whoName = [a.first_name, a.last_name].filter(Boolean).join(' ')
+  if (from.refuse) {   // 808: never from the Missouri number
+    await reportSendProblem(db, { sender: 'applicant-noshow', channel: 'sms', address: a.phone, who: whoName, reasons: [from.refuse] })
+    return json({ ok: true, marked: true, texted: false, emailed: false, not_sent: ['not sent: ' + from.refuse] })
+  }
   const common = { humanInitiated: true, audience: 'applicant' as const, sender: 'applicant-noshow' }
   const notSent: string[] = []
   if (plan.no_text_why && a.phone) notSent.push('text: ' + plan.no_text_why)
@@ -119,7 +143,7 @@ Deno.serve(async (req) => {
       { ...common, channel: 'sms', onOptOut: (r) => { why = 'they opted out of texts (' + r.join(', ') + ')' } })
     if (!c) notSent.push('text: ' + (why || 'the number could not be confirmed as safe to text'))
     else {
-      texted = await ghlSendChecked(db, H, 'applicant-noshow', { channel: 'sms', contactId: c.contactId, address: a.phone, who: whoName }, { message: plan.text })
+      texted = await ghlSendChecked(db, H, 'applicant-noshow', { channel: 'sms', contactId: c.contactId, address: a.phone, who: whoName }, smsBody(from, { message: plan.text }))
       if (!texted) notSent.push('text: GoHighLevel did not accept it (a card is on Needs Attention)')
     }
   }

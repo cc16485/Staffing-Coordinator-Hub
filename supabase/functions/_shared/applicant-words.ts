@@ -134,3 +134,43 @@ export const emails = {
     html: shell(c, h(`Thanks for letting us know, ${c.first}.`) + p("If things change, you're always welcome to apply again at mo-care.com/apply. We wish you all the best!") + sign(c)),
   }),
 }
+
+/* ---------------- Caring Companions Oklahoma (808) ----------------
+   Samantha 2026-10-16 ("all five decisions as you recommended", plan https://claude.ai/artifact/6o96izMj4RBMEFZmgQBNn2), and on
+   how: "I want Zoom interviews set up like an easy link - or could be google meet interview". Oklahoma interviews are VIDEO
+   interviews by one standing link (no Mustang office yet), so no address, map or entrance photo, and no booking link (no
+   self-booking in Oklahoma: they call or text us to change it); the Oklahoma number; the same signer as Missouri; emails carry
+   the Oklahoma footer. Three automatic messages: booked, the day before (YES / NO), cancelled. No pay wording. */
+export type OkCtx = { first: string; krystalNamed: boolean; phone: string; video: string }   // phone: (405) 500-1758; video: the Zoom/Meet link
+export const okTexts = {
+  confirm: (c: OkCtx, who: string, day: string, time: string) =>
+    `You're booked, ${c.first}! Your video interview with ${who} is ${day} at ${time}. At that time, open this link on your phone or computer: ${c.video} Need a different time? Call or text us at ${c.phone}. ${STOP}`,
+  dayBefore: (c: OkCtx, time: string) =>
+    `Hi ${c.first}, see you tomorrow at ${time} for your video interview! Join here: ${c.video} Reply YES so we know you're coming, or NO if you can't make it and we'll find another time. ${STOP}`,
+  cancelled: (c: OkCtx, day: string, time: string) =>
+    `Hi ${c.first}, your video interview on ${day} at ${time} is cancelled, so there's nothing more you need to do. If you'd like a new time, call or text us at ${c.phone}. ${STOP}`,
+}
+export function okShell(c: OkCtx, inner: string) {
+  return shell({ ...c, link: '', mins: 0, place: '', note: '', mapUrl: '' }, inner)
+    .replace('Caring Companions In-Home Senior Care</div></div></div>', 'Caring Companions Oklahoma</div></div></div>')
+}
+const okSign = (c: OkCtx) => p(esc(c.krystalNamed ? 'Krystal, Caring Companions Oklahoma' : 'The Caring Companions Oklahoma Team'))
+const okJoin = (c: OkCtx) => button(c.video, 'Join the video interview') +
+  p(`<span style="font-size:14px;color:#55677a">It works on a phone or a computer. Open the link a minute or two early; you don't need an account.</span>`)
+export const okEmails = {
+  confirm: (c: OkCtx, who: string, day: string, time: string) => ({
+    subject: `You're booked: ${day} at ${time}`,
+    html: okShell(c, h(`You're booked, ${c.first}!`) + p(`Your video interview with <b>${esc(who)}</b> is <b>${esc(day)} at ${esc(time)}</b>. At that time, open this link:`) +
+      okJoin(c) + p(`Need a different time? Call or text us at ${esc(c.phone)}.`) + okSign(c)),
+  }),
+  dayBefore: (c: OkCtx, day: string, time: string) => ({
+    subject: `See you tomorrow at ${time}`,
+    html: okShell(c, h(`See you tomorrow, ${c.first}!`) + p(`Your video interview is <b>${esc(day)} at ${esc(time)}</b>.`) + okJoin(c) +
+      p(`Can't make it? Please call or text us at ${esc(c.phone)} so we can find another time.`) + okSign(c)),
+  }),
+  cancelled: (c: OkCtx, day: string, time: string) => ({
+    subject: `Your video interview on ${day} is cancelled`,
+    html: okShell(c, h(`Hi ${c.first},`) + p(`Your video interview on <b>${esc(day)} at ${esc(time)}</b> is cancelled, so there's nothing more you need to do.`) +
+      p(`If you'd like a new time, call or text us at ${esc(c.phone)}.`) + okSign(c)),
+  }),
+}
