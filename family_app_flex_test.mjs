@@ -493,10 +493,10 @@ ck('page: no About written = no About (null)', oc.body.about === null, oc.body.a
 oc = await pageC(offerOf('77').id, { action: 'answer', yes: true })
 ck('first yes: placed, and the family is queued to hear who is coming', oc.body.placed && b.status === 'placed' && b.family_confirm_pending === true, b)
 await runC()
-ck('the family hears it once: "Sarah will be there for Dot\'s visit on Thu, Oct 22, 1 PM to 4 PM", with the app address', W.told?.length === 1 && W.told[0].to === 9 && /^Hi Lisa, it's Caring Companions\. Sarah will be there for Dot's visit on Thu, Oct 22, 1 PM to 4 PM\. You can see it in the app: family\.mo-care\.com$/.test(W.told[0].sms) && b.family_confirm_how === 'sms' && !!b.family_confirmed_at, W.told)
+ck('the family hears it once, her pick (warm and simple): "Hi Lisa, good news from Caring Companions! Sarah will be with Dot on Thursday, October 22, from 1 to 4..."', W.told?.length === 1 && W.told[0].to === 9 && W.told[0].sms === "Hi Lisa, good news from Caring Companions! Sarah will be with Dot on Thursday, October 22, from 1 to 4. You can see the details anytime in the app: family.mo-care.com" && b.family_confirm_how === 'sms' && !!b.family_confirmed_at, W.told)
 await runC()
 ck('...never twice', W.told.length === 1)
-ck('the email version (for no Texts OK) names the caregiver and visit, no em dashes', /Sarah is confirmed for Dot's visit/.test(W.told[0].email.subject) && /Sarah<\/b> will be there/.test(W.told[0].email.html) && !/—/.test(W.told[0].email.html + W.told[0].sms))
+ck('the email version (for no Texts OK) says the same, no em dashes', W.told[0].email.subject === 'Good news: Sarah will be with Dot on Thursday, October 22' && /Good news! <b>Sarah<\/b> will be with Dot on <b>Thursday, October 22, from 1 to 4<\/b>/.test(W.told[0].email.html) && !/—/.test(W.told[0].email.html + W.told[0].sms))
 // overnight: held until 8 AM
 reset({ settings: { ...CONF_ON } }); await go({ action: 'book', date: '2026-10-22', start: '13:00', end: '16:00', tasks: ['Companionship'], who: 'preferred', preferred: ['77'] }); b = bk(); await runC()
 await pageC(offerOf('77').id, { action: 'answer', yes: true })
@@ -517,6 +517,7 @@ reset({ settings: { ...CHOOSE_ON, ...CONF_ON } }); await goC(CB); b = bk(); awai
 await pageC(offerOf('88').id, { action: 'answer', yes: true }); await goC({ action: 'choose', booking_id: b.id, offer_id: offerOf('88').id })
 ck('Let me choose: once the chosen caregiver is placed, the family message is queued too', b.status === 'placed' && b.family_confirm_pending === true)
 
+ck('times read naturally: from 1 to 4, from 10 AM to 1 PM across noon, from 9 to 12', fo.fromTo('13:00', '16:00') === 'from 1 to 4' && fo.fromTo('10:00', '13:00') === 'from 10 AM to 1 PM' && fo.fromTo('09:00', '12:00') === 'from 9 to 12' && fo.fromTo('08:30', '10:30') === 'from 8:30 to 10:30')
 ck('no em dashes in any Let me choose wording', ![fo.MSG_CHOOSE, fo.MSG_CHOSEN, fo.MSG_NOT_CHOSEN, fo.MSG_CHOOSE_CANCELLED, fo.MSG_FAMILY_INTERESTED].some((m) => /—/.test(m)))
 
 for (const [n, ok, note] of res) console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note))

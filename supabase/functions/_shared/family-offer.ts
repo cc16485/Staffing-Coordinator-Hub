@@ -79,7 +79,19 @@ export const MSG_CHOOSE = "Hi {first_name}, it's {brand}. A family is choosing a
 export const MSG_CHOSEN = "Hi {first_name}, good news: the family chose you for {when} in {town}. It's on your AxisCare schedule now. Thank you! {brand}"
 export const MSG_NOT_CHOSEN = "Hi {first_name}, the family chose another caregiver for {when} this time. Thank you for saying you could help. {brand}"
 export const MSG_CHOOSE_CANCELLED = "Hi {first_name}, the family cancelled the visit on {when} that you were interested in, so it's no longer needed. Thank you! {brand}"
-export const MSG_FAMILY_CONFIRMED = "Hi {first_name}, it's {brand}. {caregiver} will be there for {client}'s visit on {when}. You can see it in the app: {app}"
+// Her pick 2026-10-16 ("1. warm and simple"): "Hi Lisa, good news from Caring Companions! Sarah will be with Dot on Thursday,
+// October 22, from 1 to 4. You can see the details anytime in the app: family.mo-care.com"
+export const MSG_FAMILY_CONFIRMED = "Hi {first_name}, good news from {brand}! {caregiver} will be with {client} on {day}, {times}. You can see the details anytime in the app: {app}"
+const DAY_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+const MON_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+/** "Thursday, October 22" */
+export const dayFull = (date: string) => { const d = new Date(date + 'T12:00:00Z'); return `${DAY_FULL[d.getUTCDay()]}, ${MON_FULL[d.getUTCMonth()]} ${d.getUTCDate()}` }
+/** "from 1 to 4" when both are afternoon (or both morning); "from 10 AM to 1 PM" when the visit crosses noon. */
+export function fromTo(start: string, end: string) {
+  const c = (hhmm: string, ap: boolean) => { const m = toMin(hhmm), h = Math.floor(m / 60), mm = m % 60; return `${(h + 11) % 12 + 1}${mm ? ':' + String(mm).padStart(2, '0') : ''}${ap ? (h < 12 ? ' AM' : ' PM') : ''}` }
+  const same = (toMin(start) < 720) === (toMin(end) <= 720)   // 9 to 12 counts as a morning
+  return same ? `from ${c(start, false)} to ${c(end, false)}` : `from ${c(start, true)} to ${c(end, true)}`
+}
 export const MSG_FAMILY_INTERESTED = "Hi {first_name}, it's {brand}. A caregiver is interested in {client}'s visit on {when}. Open the app to see who and choose: {app} If you'd rather we pick, tap Find someone for me."
 const num = (v: unknown, d: number) => Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d
 export function offerSettings(st: Any) {
@@ -221,15 +233,15 @@ export async function runOffers(d: OfferDeps, opts: { dry?: boolean } = {}) {
       if (opts.dry) { out.would.push({ booking: b.id, tell_family: true }); continue }
       const fb = brand(brandFor(b.state), st)
       const cg = String(b.caregiver_name ?? 'Your caregiver').split(' ')[0], client = String(b.client_name ?? 'your loved one').split(' ')[0]
-      const w = whenWords({ ...b, kind: b.start_time ? 'set' : b.kind })
+      const day = dayFull(b.visit_date), times = b.start_time && b.end_time ? fromTo(b.start_time, b.end_time) : ''
       let r: { ok: boolean; how?: string; why?: string } = { ok: false, why: 'the visit has no Missouri/Oklahoma state, so no brand to send as' }
       if (fb?.app_host) {
-        const sms = fill(MSG_FAMILY_CONFIRMED, { first_name: String(b.requested_by_name ?? '').split(' ')[0] || 'there', brand: fb.short, caregiver: cg, client, when: w, app: fb.app_host })
+        const sms = fill(MSG_FAMILY_CONFIRMED, { first_name: String(b.requested_by_name ?? '').split(' ')[0] || 'there', brand: fb.short, caregiver: cg, client, day, times, app: fb.app_host }).replace(' ,', ',').replace(', .', '.')
         const h = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         const html = `<div style="font-family:Arial,sans-serif;font-size:16px;line-height:1.6;color:#16283a;max-width:520px"><p>Hi ${h(String(b.requested_by_name ?? '').split(' ')[0] || 'there')},</p>` +
-          `<p><b>${h(cg)}</b> will be there for ${h(client)}'s visit on <b>${h(w)}</b>.</p><p>You can see it, and the rest of the visits you booked, in the app at <a href="${h(String(fb.app_url))}">${h(String(fb.app_host))}</a>.</p>` +
+          `<p>Good news! <b>${h(cg)}</b> will be with ${h(client)} on <b>${h(day)}${times ? ', ' + h(times) : ''}</b>.</p><p>You can see the details anytime in the app at <a href="${h(String(fb.app_url))}">${h(String(fb.app_host))}</a>.</p>` +
           `<p>Questions? Call us at ${h(fb.phone)}.</p><p style="color:#55677a">${h(fb.footer)}</p></div>`
-        r = await d.tellFamily(b, sms, { subject: `${cg} is confirmed for ${client}'s visit`, html })
+        r = await d.tellFamily(b, sms, { subject: `Good news: ${cg} will be with ${client} on ${day}`, html })
       }
       await d.updateBooking(b.id, { family_confirm_pending: false, family_confirmed_at: nowIso, family_confirm_how: r.ok ? r.how : `not sent: ${r.why}` })
       if (r.ok) out.family_texts++
