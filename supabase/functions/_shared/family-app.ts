@@ -380,7 +380,7 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
     if (!v.ok) return say(400, { error: v.error })
     if (v.preferred.length) {
       const hers = new Set((await herCaregivers()).map((c) => c.axiscare_id))
-      if (v.preferred.some((id) => !hers.has(id))) return say(400, { error: 'Please pick from her caregivers, or choose Whoever is available.' })
+      if (v.preferred.some((id) => !hers.has(id))) return say(400, { error: `Please pick from ${clientName}'s caregivers, or choose Whoever is available.` })
     }
     const vEnd = v.end ?? v.window_end, vStart = v.start ?? v.window_start
     const dup = (await deps.bookings(w.axiscare_client_id)).find((b) => b.visit_date === v.date && b.status !== 'cancelled' &&
@@ -400,7 +400,7 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
     }
     const seeIt = v.kind === 'flex' ? "You're booked. You'll see who's coming, and the exact time, here in the app once a caregiver confirms." : "You're booked. You'll see who's coming here in the app once a caregiver confirms."
     const offers = st?.family_offer_live === true
-    const picks = v.preferred.length ? ` Asked for: ${v.preferred.length} of her caregivers first.` : ''
+    const picks = v.preferred.length ? ` Asked for: ${v.preferred.length} of ${clientName}'s caregivers first.` : ''
     const needsOffice = async (why: string) => {
       await deps.updateBooking(b.id, { status: 'needs_office', error: why })
       await deps.officeItem(officeCard('book', b, `Family booked a visit: ${clientName}`, `${w.name} booked ${when(b)} in the app (${v.tasks.join(', ')}). It is NOT on the AxisCare schedule yet: ${why}`, nowIso))
