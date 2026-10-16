@@ -320,7 +320,11 @@ ck('family-offer: the link is checked before anything is read', fx2.indexOf('che
 ck('first yes wins is one conditional update (still waiting, nobody on it)', /\.eq\('status', 'waiting_for_caregiver'\)\.is\('caregiver_axiscare_id', null\)\.select\('id'\)/.test(fx2))
 const outreach = fs.readFileSync(path.join(F, '_shared/outreach.ts'), 'utf8'), sp = fs.readFileSync(path.join(F, '_shared/send-problems.ts'), 'utf8')
 ck('the sender is registered (outreach SENDER_REGISTER and Needs Attention words)', /'family-offer':\s+\{ class: 'urgent_internal', scheduled: true/.test(outreach) && /'family-offer': \['family visit offer text'/.test(sp))
-ck('no family contact anywhere in the offer engine', !/audience: 'family'|circle-send|email/i.test((fx2 + shared).replace(/Never texts or emails a family|Never contacts a family/g, '')))
+// 2026-10-16 her two named family messages (caregivers are interested; a caregiver is confirmed) go ONLY through family-offer-db.ts,
+// each behind its own recorded approval; the engine itself never addresses a family
+const fdb = fs.readFileSync(path.join(F, '_shared/family-offer-db.ts'), 'utf8')
+ck('no family send in the offer engine itself (only through the two approved family messages)', !/audience: 'family'|circle-send/i.test(fx2 + shared))
+ck('...each family message checks its own recorded approval first', /family_choose_text_approved/.test(fdb.slice(fdb.indexOf('textFamily:'))) && /family_confirm_text_approved/.test(fdb.slice(fdb.indexOf('tellFamily:'), fdb.indexOf('clientAbout:'))))
 ck('no secret or key in any file', ![fx2, shared, fs.readFileSync(path.join(F, '_shared/offer-links.ts'), 'utf8')].some((s) => /sb_secret_|sbp_|eyJhbGci/.test(s)))
 const all = [shared, fs.readFileSync(path.join(F, '_shared/family-app.ts'), 'utf8'), fs.readFileSync(path.join(F, '_shared/family-app-office.ts'), 'utf8'), fx2, fs.readFileSync('family_app_flex.sql', 'utf8')]
 ck('no her/she in anything a family, caregiver or the office reads (clients can be anyone)', !all.slice(0, 4).some((s) => /'[^'\n]*\b(her|she|She|Her)\b[^'\n]*'|`[^`\n]*\b(her|she|She|Her)\b[^`\n]*`/.test(s)))
@@ -358,6 +362,11 @@ if (process.env.PGLITE) {
   ck('PGLITE: method is auto by default, choose allowed, anything else refused', (await db.query(`select method from public.family_bookings limit 1`)).rows[0].method === 'auto' && (await tryQ(`update public.family_bookings set method='choose' where kind='flex'`)) === 'ok' && (await tryQ(`update public.family_bookings set method='x'`)).startsWith('refused'))
   const cs2 = (await db.query(`select data from public.app_data where key='ops_settings'`)).rows[0].data
   ck('PGLITE: Let me choose OFF, 3 interested, 24-hour deadline, 30-hour minimum, her approval of the one family text recorded', cs2.family_choose_live === false && cs2.family_choose_max_interested === 3 && cs2.family_choose_deadline_hours === 24 && cs2.family_choose_min_lead_hours === 30 && /5 recommended answers/.test(cs2.family_choose_text_approved.words), cs2)
+  const v2 = fs.readFileSync('family_app_offer_v2.sql', 'utf8')
+  await db.exec(`insert into public.care_circles (id, client_name, active, axiscare_client_id) values ('cv2','Dot',true,'501') on conflict do nothing`)
+  ck('PGLITE: offer v2 installs, and installs again', (await tryQ(v2)) === 'ok' && (await tryQ(v2)) === 'ok', await tryQ(v2))
+  ck('PGLITE: About up to 400 characters, longer refused', (await tryQ(`update public.care_circles set caregiver_about = repeat('a', 400)`)) === 'ok' && (await tryQ(`update public.care_circles set caregiver_about = repeat('a', 401)`)).startsWith('refused'))
+  ck('PGLITE: bookings start not waiting to tell the family; her approval of the confirmed message recorded', (await db.query(`select bool_or(family_confirm_pending) as p from public.family_bookings`)).rows[0].p === false && /automatic text to the family when a caregiver is confirmed/.test((await db.query(`select data from public.app_data where key='ops_settings'`)).rows[0].data.family_confirm_text_approved.words))
 }
 
 
@@ -366,7 +375,10 @@ const CHOOSE_ON = { ...OFFERS_ON, family_choose_live: true, family_choose_text_a
 const chooseDeps = () => ({ ...offDeps(),
   textCaregiver: async (id, message) => { W.texts.push({ to: String(id), message }); return { ok: true } },
   askBlockId: async (id, name, client, nt) => W.blocked[id] ?? null,
-  textFamily: async (b, message) => { if (W.famFail) return { ok: false, why: 'refused' }; (W.fam ??= []).push({ to: b.contact_id, message }); return { ok: true } } })
+  textFamily: async (b, message) => { if (W.famFail) return { ok: false, why: 'refused' }; (W.fam ??= []).push({ to: b.contact_id, message }); return { ok: true } },
+  confirmDue: async () => W.bookings.filter((b) => b.status === 'placed' && b.family_confirm_pending === true && !b.family_confirmed_at),
+  tellFamily: async (b, sms, email) => { if (W.tellFail) return { ok: false, why: W.tellFail }; const how = W.noConsent ? 'email' : 'sms'; (W.told ??= []).push({ to: b.contact_id, how, sms, email }); return { ok: true, how } },
+  clientAbout: async (ax) => W.about ?? null })
 const famC = () => ({ ...famDeps(), choose: {
   counts: async (ids) => { const out = {}; for (const x of W.offers) if (ids.includes(x.booking_id) && x.state === 'interested') out[x.booking_id] = (out[x.booking_id] ?? 0) + 1; return out },
   list: (b) => fo.interestedCards(chooseDeps(), b),
@@ -466,6 +478,44 @@ reset({ settings: { ...CHOOSE_ON } }); await goC(CB); b = bk(); await runC()
 await pageC(offerOf('77').id, { action: 'answer', yes: true }); W.texts = []
 o = await goC({ action: 'cancel', booking_id: b.id })
 ck('the family cancels: interested caregivers hear it is no longer needed', o.status === 200 && W.texts.some((t) => t.to === '77' && /no longer needed/.test(t.message)) && offerOf('77').state === 'closed', W.texts)
+
+// ── her offer-flow rules (2026-10-16): asked-for-you only when picked, the About box, the family hears who's coming ──
+const CONF_ON = { ...OFFERS_ON, family_confirm_text_approved: { by: 'Samantha' } }
+reset({ settings: { ...CONF_ON } }); W.about = 'Dot loves gardening and old movies, and she makes the best sweet tea.'
+await go({ action: 'book', date: '2026-10-22', start: '13:00', end: '16:00', tasks: ['Companionship'], who: 'preferred', preferred: ['77'] }); b = bk(); await runC()
+oc = await pageC(offerOf('77').id, { action: 'view' })
+ck('page: the family asked for Sarah, so it says so; the office\'s About shows', oc.body.asked_for_you === true && /sweet tea/.test(oc.body.about), oc.body)
+NOW = new Date('2026-10-20T19:00:00Z'); await runC(); NOW = new Date('2026-10-20T14:00:00Z')
+const team = W.offers.find((x) => x.booking_id === b.id && x.caregiver_axiscare_id !== '77')
+if (team) { oc = await pageC(team.id, { action: 'view' }); ck('page: a team caregiver the family did NOT ask for sees nothing about being asked for', oc.body.asked_for_you === false, oc.body) }
+W.about = null; oc = await pageC(offerOf('77').id, { action: 'view' })
+ck('page: no About written = no About (null)', oc.body.about === null, oc.body.about)
+oc = await pageC(offerOf('77').id, { action: 'answer', yes: true })
+ck('first yes: placed, and the family is queued to hear who is coming', oc.body.placed && b.status === 'placed' && b.family_confirm_pending === true, b)
+await runC()
+ck('the family hears it once: "Sarah will be there for Dot\'s visit on Thu, Oct 22, 1 PM to 4 PM", with the app address', W.told?.length === 1 && W.told[0].to === 9 && /^Hi Lisa, it's Caring Companions\. Sarah will be there for Dot's visit on Thu, Oct 22, 1 PM to 4 PM\. You can see it in the app: family\.mo-care\.com$/.test(W.told[0].sms) && b.family_confirm_how === 'sms' && !!b.family_confirmed_at, W.told)
+await runC()
+ck('...never twice', W.told.length === 1)
+ck('the email version (for no Texts OK) names the caregiver and visit, no em dashes', /Sarah is confirmed for Dot's visit/.test(W.told[0].email.subject) && /Sarah<\/b> will be there/.test(W.told[0].email.html) && !/—/.test(W.told[0].email.html + W.told[0].sms))
+// overnight: held until 8 AM
+reset({ settings: { ...CONF_ON } }); await go({ action: 'book', date: '2026-10-22', start: '13:00', end: '16:00', tasks: ['Companionship'], who: 'preferred', preferred: ['77'] }); b = bk(); await runC()
+await pageC(offerOf('77').id, { action: 'answer', yes: true })
+NOW = new Date('2026-10-21T03:00:00Z'); await runC()   // 10 PM Central
+ck('accepted late at night: the family message waits (8 AM to 8 PM only)', !W.told?.length && b.family_confirm_pending === true)
+NOW = new Date('2026-10-21T13:10:00Z'); await runC(); NOW = new Date('2026-10-20T14:00:00Z')   // 8:10 AM
+ck('...and goes in the first run after 8 AM', W.told?.length === 1)
+// no approval recorded = never sent
+reset({ settings: { ...OFFERS_ON } }); await go({ action: 'book', date: '2026-10-22', start: '13:00', end: '16:00', tasks: ['Companionship'], who: 'preferred', preferred: ['77'] }); b = bk(); await runC()
+await pageC(offerOf('77').id, { action: 'answer', yes: true }); await runC()
+ck('without her recorded approval the family message never goes (it just waits)', !W.told?.length && b.family_confirm_pending === true)
+// can't reach them: office card
+reset({ settings: { ...CONF_ON } }); W.tellFail = 'GoHighLevel refused the text'; await go({ action: 'book', date: '2026-10-22', start: '13:00', end: '16:00', tasks: ['Companionship'], who: 'preferred', preferred: ['77'] }); b = bk(); await runC()
+await pageC(offerOf('77').id, { action: 'answer', yes: true }); await runC()
+ck('the message fails: never silent, an office card says so', W.items.some((i) => /Tell the family who's coming/.test(i.title) && /refused/.test(i.detail)) && /not sent/.test(b.family_confirm_how), W.items.map((i) => i.title))
+// Let me choose: the family's chosen caregiver also queues the family message
+reset({ settings: { ...CHOOSE_ON, ...CONF_ON } }); await goC(CB); b = bk(); await runC()
+await pageC(offerOf('88').id, { action: 'answer', yes: true }); await goC({ action: 'choose', booking_id: b.id, offer_id: offerOf('88').id })
+ck('Let me choose: once the chosen caregiver is placed, the family message is queued too', b.status === 'placed' && b.family_confirm_pending === true)
 
 ck('no em dashes in any Let me choose wording', ![fo.MSG_CHOOSE, fo.MSG_CHOSEN, fo.MSG_NOT_CHOSEN, fo.MSG_CHOOSE_CANCELLED, fo.MSG_FAMILY_INTERESTED].some((m) => /—/.test(m)))
 

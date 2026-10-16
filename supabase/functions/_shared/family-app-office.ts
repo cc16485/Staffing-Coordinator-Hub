@@ -56,6 +56,9 @@ export type OfficeDeps = {
   plans: () => Promise<any[]>
   // deno-lint-ignore no-explicit-any
   setPlan: (circleId: string, vals: any) => Promise<boolean>
+  /** The office's short About for caregivers (care_circles.caregiver_about). Optional (older callers). */
+  // deno-lint-ignore no-explicit-any
+  setAbout?: (circleId: string, vals: any) => Promise<boolean>
   // deno-lint-ignore no-explicit-any
   markBilled: (month: string, axiscareClientId: string, vals: any) => Promise<boolean>
   login: {
@@ -189,6 +192,20 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     return say(200, { ok: true, by_text: byText, by_email: byEmail })
   }
 
+  // Her rule 2026-10-16: a short "About <client>" the office writes once, shown on the caregiver's offer link. First name only,
+  // no address or medical detail (the box says so; an address is refused). Empty = no About row on the link.
+  if (action === 'about') {
+    const k = await d.circle(String(body?.circle_id ?? ''))
+    if (!k) return say(404, { error: 'Family Circle not found.' })
+    if (!d.setAbout) return say(503, { error: 'Not available yet.' })
+    const text = String(body?.text ?? '').replace(/\s+/g, ' ').trim()
+    if (text.length > 400) return say(400, { error: 'Please keep it under 400 characters (a few sentences).' })
+    if (/\b\d{2,6}\s+[A-Za-z0-9.\s]{2,30}\b(st|street|ave|avenue|rd|road|dr|drive|ln|lane|ct|court|blvd|way|pl|place|hwy)\b/i.test(text)) return say(400, { error: 'Please leave out the address. Caregivers see it in AxisCare once they have the visit.' })
+    if (!(await d.setAbout(String(k.id), { caregiver_about: text || null, caregiver_about_by: staff.email, caregiver_about_at: d.now().toISOString() }))) return say(500, { error: 'Not saved. Please try again.' })
+    await ev('family_app_about', `${staff.name} ${text ? 'updated' : 'cleared'} the caregiver About for ${k.client_name ?? 'a client'}`, { circle_id: k.id, chars: text.length })
+    return say(200, { ok: true, text })
+  }
+
   if (action === 'app_plan') {
     const k = await d.circle(String(body?.circle_id ?? ''))
     if (!k) return say(404, { error: 'Family Circle not found.' })
@@ -235,7 +252,8 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     const put = await placeCaregiver(d.ax, b, cg, body?.start ? String(body.start) : null, st)
     if (!put.ok) return say(put.status, { error: put.why })
     const name = put.name
-    await d.updateBooking(b.id, { ...put.vals, status: 'placed', placed_at: nowIso, placed_by: staff.email, error: null })
+    // her rule 2026-10-16: the family hears who's coming (one text 8 AM to 8 PM, or an email); the 10-minute run sends it
+    await d.updateBooking(b.id, { ...put.vals, status: 'placed', placed_at: nowIso, placed_by: staff.email, error: null, family_confirm_pending: true })
     await d.closeItem(`fam_book_${b.id}`, staff.name, `${name} placed`)
     await ev('family_booking_placed', `${staff.name} placed ${name} with ${b.client_name} ${b.visit_date}`, { booking_id: b.id, caregiver: cg })
     return say(200, { ok: true, caregiver_name: name })

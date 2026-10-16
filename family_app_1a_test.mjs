@@ -222,7 +222,7 @@ const odeps = () => ({
   rpEmails: async () => OW.rpFail ? null : OW.rps,
   send: async (c, channel, payload) => { OW.sent.push([c.id, channel, payload]); return !(OW.sendFail || []).includes(channel) },
   logMessage: async (row) => { OW.log.push(row) },
-  plans: async () => [], setPlan: async (id, vals) => { OW.plan = { id, ...vals }; return true }, markBilled: async () => true, fee: null,
+  plans: async () => [], setPlan: async (id, vals) => { OW.plan = { id, ...vals }; return true }, setAbout: async (id, vals) => { OW.about = { id, ...vals }; return true }, markBilled: async () => true, fee: null,
   login: {
     create: async (email) => { if (OW.createFails) return { error: 'boom' }; if (OW.logins[email]) return { error: 'A user with this email address has already been registered', exists: true }; OW.logins[email] = 'uid-' + email; return { id: OW.logins[email] } },
     find: async (email) => OW.logins[email] ?? null,
@@ -272,6 +272,19 @@ await office({ action: 'welcome', contact_id: 9, send: true, text: 'x' })
 ck('no Texts OK: email only, never a text', OW.sent.length === 1 && OW.sent[0][1] === 'email', OW.sent)
 OW.sendFail = ['email']; o = await office({ action: 'welcome', contact_id: 9, send: true, text: 'x' })
 ck('nothing went: said plainly (the door raises the Needs Attention card)', o.status === 502 && /Neither/.test(o.body.error), o)
+// the caregiver About (her rule 2026-10-16)
+reset(); oreset()
+o = await office({ action: 'about', circle_id: 'c1', text: '  Dot loves   gardening and old movies.  ' })
+ck('About: saved tidied, with who and when, and recorded', o.status === 200 && OW.about.caregiver_about === 'Dot loves gardening and old movies.' && OW.about.caregiver_about_by && OW.about.caregiver_about_at && OW.events.some((e) => e.verb === 'family_app_about'), [o, OW.about])
+o = await office({ action: 'about', circle_id: 'c1', text: 'Lives at 1234 Elm Street, loves cards.' })
+ck('About: an address is refused (caregivers get it in AxisCare)', o.status === 400 && /leave out the address/.test(o.body.error), o)
+o = await office({ action: 'about', circle_id: 'c1', text: 'x'.repeat(401) })
+ck('About: 400 characters at most', o.status === 400, o)
+o = await office({ action: 'about', circle_id: 'c1', text: '' })
+ck('About: empty clears it (no About row on the link)', o.status === 200 && OW.about.caregiver_about === null, OW.about)
+o = await office({ action: 'place', booking_id: 'nope' })
+ck('(office place still answers)', o.status >= 400, o)
+
 // two brands (2026-10-16): the welcome is branded by the client's AxisCare state, never guessed
 reset({ clientState: 'OK' }); oreset(); await office({ action: 'invite', contact_id: 9 })
 o = await office({ action: 'welcome', contact_id: 9 })
@@ -294,6 +307,7 @@ o = await office({ action: 'place', booking_id: bk.id, caregiver_axiscare_id: '6
 ck('place: an inactive caregiver is refused', o.status === 409 && W.visits[bk.axiscare_visit_id].caregiver === null, o)
 o = await office({ action: 'place', booking_id: bk.id, caregiver_axiscare_id: '88' })
 ck('place: Maria on the AxisCare visit, read back, booking placed, office card closed', o.status === 200 && W.visits[bk.axiscare_visit_id].caregiver.id === 88 && bk.status === 'placed' && bk.caregiver_name === 'Maria L.' && OW.closed[0][0] === `fam_book_${bk.id}`, o)
+ck('place by the office: the family is queued to hear who is coming (her rule 2026-10-16)', bk.family_confirm_pending === true, bk)
 reset({ settings: { family_app_live: true, family_fee_check_ready: true } }); oreset(); await go(BOOK)
 W.settings.family_app_service_MO = 'PP - WC'
 o = await office({ action: 'schedule', booking_id: W.bookings[0].id })
