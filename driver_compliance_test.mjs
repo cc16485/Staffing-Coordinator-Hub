@@ -93,6 +93,7 @@ async function rpc(name, a) {
     if (!changed.length) return { data: { ok: true, unchanged: true, rev }, error: null }
     Object.assign(r, a.p_patch); r._rev = rev + 1; DOOR.history.push({ id: r.id, fields: changed }); return { data: { ok: true, rev: r._rev }, error: null }
   }
+  if (name === 'ok_applicant_hold') return { data: false, error: null }   // 806: nobody here is an Oklahoma applicant
   return { data: null, error: { message: 'unknown rpc ' + name } }
 }
 const STORE = {}; let PDF_FAIL = false

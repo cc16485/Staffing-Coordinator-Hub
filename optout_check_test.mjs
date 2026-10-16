@@ -2,8 +2,8 @@
 import path from 'path';
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 700)]);
 const lib = await import(path.join(process.cwd(), 'supabase/functions/_shared/optout.ts'));
-let T, broken, logged, cards = [];
-const reset = () => { T = { contact_optout_current: [], leads: [], circle_contacts: [] }; broken = new Set(); logged = []; cards = []; };
+let T, broken, logged, cards = [], holdAsked = [];
+const reset = () => { T = { contact_optout_current: [], leads: [], circle_contacts: [], ok: [] }; broken = new Set(); logged = []; cards = []; holdAsked = []; };
 const db = { from: (t) => { const st = { f: [], notNull: null }; const b = {
   select() { return b; }, eq(c, v) { st.f.push([c, v]); return b; }, not(c) { st.notNull = c; return b; },
   maybeSingle() { return b.then((x) => ({ data: x.data?.[0] ?? null, error: x.error })); },
@@ -14,7 +14,8 @@ const db = { from: (t) => { const st = { f: [], notNull: null }; const b = {
     if (st.notNull) rows = rows.filter((r) => r[st.notNull] != null);
     return Promise.resolve({ data: rows, error: null }).then(ok);
   } }; return b; },
-  rpc: async (fn, a) => { if (fn === 'upsert_app_data_item') { cards.push(a.item); return { data: null, error: null }; } logged.push([fn, a]); return { data: null, error: null }; } };
+  rpc: async (fn, a) => { if (fn === 'ok_applicant_hold') { holdAsked.push(a); return broken.has('okhold') ? { data: null, error: { message: 'down' } } : { data: T.ok.includes(a.p_phone ?? a.p_email), error: null }; }   // 806
+    if (fn === 'upsert_app_data_item') { cards.push(a.item); return { data: null, error: null }; } logged.push([fn, a]); return { data: null, error: null }; } };
 const clean = { id: 'c1', dnd: false, dndSettings: { SMS: { status: 'inactive' }, Email: { status: 'inactive' } } };
 const sms = (x = {}) => lib.optOutCheck(db, { channel: 'sms', phone: '(417) 555-0101', ghlContact: clean, ...x });
 const mail = (x = {}) => lib.optOutCheck(db, { channel: 'email', email: 'Dana@X.com', ghlContact: clean, ...x });
@@ -160,6 +161,21 @@ OPS = []; ok = await P.ghlSendChecked(dbOps, {}, 'x', { channel: 'sms', contactI
 ck('checked send: GoHighLevel unreachable is false + a card', ok === false && /could not be reached/.test(OPS[0]?.detail), OPS);
 ok = await P.reportSendProblem({ rpc: async () => { throw new Error('x'); }, from: () => { throw new Error('y'); } }, { sender: 'x', channel: 'sms', reasons: ['r'] });
 ck('card: a broken database never throws out of the report', ok === undefined);
+// ── 806 (2026-10-16): Oklahoma applicants are held until she switches Oklahoma applicant messages on ──
+reset(); T.ok = ['+14055550120']; f = fakeGhl({ id: 'ok1', dnd: false }); id = await lib.ghlContactIfAllowed(db, ghl, 'interview-messages', { channel: 'sms', phone: '405-555-0120', firstName: 'Okla' }, f);
+ck('806 door: an Oklahoma applicant is held before GoHighLevel is even asked (no contact made)', id === null && f.calls.length === 0
+  && logged.length === 1 && logged[0][1].p_reasons[0] === lib.OK_HOLD_WHY && cards.length === 0, [f.calls, logged, cards]);
+ck('806 door: the database is told who held it and on which channel', holdAsked[0]?.p_sender === 'interview-messages' && holdAsked[0]?.p_channel === 'sms' && holdAsked[0]?.p_phone === '+14055550120', holdAsked);
+reset(); T.ok = ['okla@x.com']; f = fakeGhl({ id: 'ok2', dnd: false }); id = await lib.ghlContactIfAllowed(db, ghl, 'reference-chase', { channel: 'email', email: 'Okla@X.com' }, f);
+ck('806 door: an Oklahoma applicant\'s email is held too', id === null && f.calls.length === 0 && cards.length === 0, [f.calls, logged]);
+reset(); T.ok = ['+14055550120']; f = fakeGhl({ id: 'mo1', dnd: false }); id = await lib.ghlContactIfAllowed(db, ghl, 'interview-messages', { channel: 'sms', phone: '417-555-0101' }, f);
+ck('806 door: anybody else goes as before, and the hold is asked once per send (not twice)', id === 'mo1' && holdAsked.length === 1 && logged.length === 0, holdAsked);
+reset(); broken.add('okhold'); f = fakeGhl({ id: 'x1', dnd: false }); id = await lib.ghlContactIfAllowed(db, ghl, 'applicant-text', { channel: 'sms', phone: '417-555-0101' }, f);
+ck('806 door: a hold that cannot be checked is refused (fail closed) and raises a card', id === null && f.calls.length === 0 && /could not check the Oklahoma applicant hold/.test(JSON.stringify(logged)) && cards.length === 1, [logged, cards]);
+reset(); T.ok = ['+14055550120']; v = await lib.optOutCheck(db, { channel: 'sms', phone: '4055550120', ghlContact: clean });
+ck('806 check: optOutCheck (mayContact, stored contacts) holds them too', !v.allowed && v.reasons[0] === lib.OK_HOLD_WHY, v);
+reset(); T.ok = ['+14055550120']; let okv = await lib.mayContact(db, 'outreach-check', { channel: 'sms', phone: '4055550120', viaGhl: false });
+ck('806 check: ...logged with no Needs Attention card (nothing failed)', okv === false && cards.length === 0 && logged.length === 1, [logged, cards]);
 console.log('\n0b-1 · UNIVERSAL OPT-OUT CHECK · TEST\n' + '='.repeat(60)); let all = true;
 for (const [n, g, note] of res) { all &&= g; console.log((g ? 'PASS  ' : 'FAIL  ') + n + (note ? '\n   └─ ' + note : '')); }
 console.log('='.repeat(60)); console.log(all ? `ALL ${res.length} CHECKS PASS` : 'FAILED');

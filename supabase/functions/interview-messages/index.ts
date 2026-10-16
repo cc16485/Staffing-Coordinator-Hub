@@ -116,6 +116,7 @@ Deno.serve(async (req) => {
   const ops: any = opsRow?.data && typeof opsRow.data === 'object' && !Array.isArray(opsRow.data) ? opsRow.data : {}
   const V2 = ops.applicant_msgs_v2_live === true
   const krystalNamed = ops.applicant_msgs_krystal_named === true
+  const OK_LIVE = ops.ok_applicant_msgs_live === true   // 806: Oklahoma applicant messages, off until she says yes
   const { data: coords } = await supabase.from('coordinators').select('id, name')
   // deno-lint-ignore no-explicit-any
   const coordName = new Map((coords ?? []).map((c: any) => [String(c.id), c.name]))
@@ -195,7 +196,7 @@ Deno.serve(async (req) => {
   /* ---------------- interviews that are booked ---------------- */
   const { data: bookings, error } = await supabase
     .from('interview_bookings')
-    .select('*, job_applicants(first_name,last_name,phone,email,sms_consent)')
+    .select('*, job_applicants(first_name,last_name,phone,email,sms_consent,office)')
     .eq('status', 'booked')
     .gte('starts_at', new Date(Date.now() - 3 * 3_600_000).toISOString())
   if (error) { await beat(supabase, false, 'bookings query: ' + error.message); return json({ error: error.message }, 500) }
@@ -204,6 +205,10 @@ Deno.serve(async (req) => {
     // deno-lint-ignore no-explicit-any
     const a: any = b.job_applicants
     if (!a) continue
+    /* 806 (Samantha 2026-10-16): Oklahoma applicants hear nothing automatic until she switches Oklahoma applicant messages
+       on (every message here is Missouri wording from the Missouri number). Skipped BEFORE the claim, so nothing is marked
+       sent and lost; the send door holds them too. */
+    if (a.office === 'OK' && !OK_LIVE) { plan.held.push(`${a.first_name || 'someone'}: Oklahoma applicant, messages held`); continue }
     const first = a.first_name || 'there'
     const when = new Date(b.starts_at)
     const untilHours = (when.getTime() - Date.now()) / 3_600_000
@@ -528,7 +533,7 @@ Deno.serve(async (req) => {
   if ((alertTo ?? []).length) {
     const { data: fresh } = await supabase
       .from('job_applicants')
-      .select('id, first_name, last_name, phone, city, zip, position, channel, screen_grade, miles_out, hours_wanted, created_at')
+      .select('id, first_name, last_name, phone, city, zip, position, channel, screen_grade, miles_out, hours_wanted, created_at, office')
       .is('office_alerted_at', null)
       .not('completed_at', 'is', null)
       .is('decline_reason', null)
@@ -548,7 +553,7 @@ Deno.serve(async (req) => {
         p.channel ? `via ${p.channel}` : null,
       ].filter(Boolean).join(', ')
       const grade = p.screen_grade === 'qualified' ? 'cleared the screen' : 'needs a look'
-      const team = PRN.has(p.position) ? ' for the PRN CNA Team' : ''
+      const team = p.office === 'OK' ? ' for Companion in Oklahoma (Mustang)' : PRN.has(p.position) ? ' for the PRN CNA Team' : ''   // 806
       const line = `${who} just applied${team} and ${grade}${bits ? `: ${bits}` : ''}. ` +
         `They are in the hub under Applicants.`
 
@@ -561,7 +566,7 @@ Deno.serve(async (req) => {
 
       /* EMAIL ONLY (Samantha 2026-10-12: "email only not text on the admin just applied office alert") */
       for (const t of alertTo!) {
-        if (t.email) { const cid = await staffContact(t, 'email'); if (cid) await email(cid, `New applicant: ${who}`, shell(`<p>${line}</p>`), t) }
+        if (t.email) { const cid = await staffContact(t, 'email'); if (cid) await email(cid, `New applicant${p.office === 'OK' ? ' (Oklahoma)' : ''}: ${who}`, shell(`<p>${line}</p>`), t) }
       }
       out.alerted++
     }
@@ -611,7 +616,7 @@ Deno.serve(async (req) => {
      cancel_notified_at, and the new booking's confirmation says it all. */
   const { data: cx } = await supabase
     .from('interview_bookings')
-    .select('*, job_applicants(first_name,last_name,phone,email,sms_consent)')
+    .select('*, job_applicants(first_name,last_name,phone,email,sms_consent,office)')
     .eq('status', 'cancelled')
     .is('cancel_notified_at', null)
     .gte('cancelled_at', new Date(Date.now() - 7 * 86_400_000).toISOString())
@@ -620,6 +625,7 @@ Deno.serve(async (req) => {
     // deno-lint-ignore no-explicit-any
     const a: any = b.job_applicants
     if (!a) continue
+    if (a.office === 'OK' && !OK_LIVE) { plan.held.push(`${a.first_name || 'someone'}: Oklahoma applicant, cancellation notice held`); continue }   // 806
     /* They cancelled and then booked a new time before this run — that is a
        reschedule in two steps, not a cancellation. Saying "your interview is
        cancelled" next to "see you Thursday" helps nobody, so the notice is

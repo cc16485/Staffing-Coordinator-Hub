@@ -57,6 +57,24 @@ export function practicePerson(phone: unknown, email: unknown): boolean {
   return (!p || practicePhone(p)) && (!e || practiceEmail(e))
 }
 
+/* OKLAHOMA APPLICANTS (806, Samantha 2026-10-16: "Approve the Oklahoma Companion pre-screener plan with all six decisions as
+   you recommended"). Every text and email from the Hub goes out from the Missouri GoHighLevel number with Missouri wording,
+   so nothing goes to somebody whose latest application is to Caring Companions Oklahoma until she switches on
+   ops_settings.ok_applicant_msgs_live. The database answers (ok_applicant_hold) and marks their application "held", which
+   the Hub shows on their profile. Like a practice address, the refusal is logged without a Needs Attention card: nothing
+   failed. A hold that cannot be checked is refused (fail closed) and does raise a card. */
+export const OK_HOLD_WHY = 'an Oklahoma applicant: Oklahoma applicant messages are off'
+const OK_HOLD_UNKNOWN = 'could not check the Oklahoma applicant hold'
+// deno-lint-ignore no-explicit-any
+export async function okApplicantHold(db: any, phone: unknown, email: unknown, sender?: string, channel?: Channel): Promise<string | null> {
+  try {
+    const { data, error } = await db.rpc('ok_applicant_hold', { p_phone: phone == null ? null : String(phone), p_email: email == null ? null : String(email),
+      p_sender: sender ?? null, p_channel: channel ?? null })
+    if (error) return OK_HOLD_UNKNOWN
+    return data === true ? OK_HOLD_WHY : null
+  } catch { return OK_HOLD_UNKNOWN }
+}
+
 /* GHL's contact: `dnd: true` stops everything; `dndSettings.SMS/Email.status` of 'active' or 'permanent' stops one channel. */
 // deno-lint-ignore no-explicit-any
 export function ghlDnd(contact: any, channel: Channel): boolean {
@@ -87,12 +105,18 @@ const readContact = (c: any) => (c && typeof c === 'object' ? { ...c, __dnd_read
 export async function optOutCheck(
   // deno-lint-ignore no-explicit-any
   db: any,
-  target: { channel: Channel; phone?: unknown; email?: unknown; ghlContact?: unknown | 'unknown' | null; viaGhl?: boolean },
+  target: { channel: Channel; phone?: unknown; email?: unknown; ghlContact?: unknown | 'unknown' | null; viaGhl?: boolean;
+            /* 806: the door already asked the Oklahoma hold for this address (one question per send, not two) */ okChecked?: boolean },
 ): Promise<OptOutVerdict> {
   const reasons: string[] = []
   const address = target.channel === 'sms' ? normPhone(target.phone) : normEmail(target.email)
   if (!address) return { allowed: false, reasons: ['no usable ' + (target.channel === 'sms' ? 'phone number' : 'email address')] }
   if (practiceAddress(target.channel, target.phone, target.email)) return { allowed: false, reasons: [PRACTICE_WHY] }
+  /* 806: an Oklahoma applicant (or the hold could not be checked): nothing else needs asking */
+  if (!target.okChecked) {
+    const okHold = await okApplicantHold(db, target.channel === 'sms' ? address : null, target.channel === 'email' ? address : null, undefined, target.channel)
+    if (okHold) return { allowed: false, reasons: [okHold] }
+  }
 
   // 1. GHL Do Not Disturb (a contact object without a true/false `dnd` can't prove DND is off: unknown, refused)
   if (target.viaGhl !== false) {
@@ -135,7 +159,7 @@ export async function optOutCheck(
 export async function logRefusal(db: any, sender: string, channel: Channel, address: unknown, reasons: string[], who?: unknown): Promise<void> {
   try { await db.rpc('contact_send_refusal_log', { p_sender: sender, p_channel: channel, p_address: String(address ?? ''), p_reasons: reasons }) }
   catch { console.warn(`[${sender}] refusal not logged: ${reasons.join('; ')}`) }
-  if (reasons.length && reasons.every((r) => r === PRACTICE_WHY)) return   /* a practice address: logged, no card (nothing failed) */
+  if (reasons.length && reasons.every((r) => r === PRACTICE_WHY || r === OK_HOLD_WHY)) return   /* a practice address or an Oklahoma hold (806): logged, no card (nothing failed) */
   /* NO SILENT FAILURES (2026-10-01): every refusal also becomes a Needs Attention card the office sees */
   await reportSendProblem(db, { sender, channel, address, who, reasons })
 }
@@ -166,6 +190,9 @@ export async function ghlContactIfAllowed(
   }
   /* a practice address never reaches GoHighLevel: refused before any contact is looked up or made */
   if (practiceAddress(to.channel, phone, email)) { await logRefusal(db, sender, to.channel, phone ?? email, [PRACTICE_WHY], nameOf(to)); return null }
+  /* 806: an Oklahoma applicant is held before any GoHighLevel contact is looked up or made */
+  { const okHold = await okApplicantHold(db, phone, email, sender, to.channel)
+    if (okHold) { await logRefusal(db, sender, to.channel, phone ?? email, [okHold], nameOf(to)); return null } }
   const h = { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
   // deno-lint-ignore no-explicit-any
   let contact: any = null
@@ -203,7 +230,7 @@ export async function ghlContactIfAllowed(
     await logRefusal(db, sender, to.channel, phone ?? email, ['GHL returned no contact, so Do Not Disturb could not be checked'], nameOf(to))
     return null
   }
-  return await decide(db, sender, to.channel, phone ?? email, contact, to.onOptOut, nameOf(to) || nameOf(contact))
+  return await decide(db, sender, to.channel, phone ?? email, contact, to.onOptOut, nameOf(to) || nameOf(contact), true)
 }
 
 const GHL = 'https://services.leadconnectorhq.com'
@@ -235,8 +262,8 @@ export async function joinExisting(send: typeof fetch, h: Record<string, string>
 
 // deno-lint-ignore no-explicit-any
 async function decide(db: any, sender: string, channel: Channel, address: string | null, contact: any,
-                      onOptOut?: (reasons: string[], contact: Record<string, unknown>) => void | Promise<void>, who?: string): Promise<string | null> {
-  const v = await optOutCheck(db, { channel, phone: channel === 'sms' ? address : undefined, email: channel === 'email' ? address : undefined, ghlContact: contact })
+                      onOptOut?: (reasons: string[], contact: Record<string, unknown>) => void | Promise<void>, who?: string, okChecked = false): Promise<string | null> {
+  const v = await optOutCheck(db, { channel, phone: channel === 'sms' ? address : undefined, email: channel === 'email' ? address : undefined, ghlContact: contact, okChecked })
   if (v.allowed) return String(contact.id)
   await logRefusal(db, sender, channel, address, v.reasons, who || nameOf(contact))
   console.warn(`[${sender}] send refused: ${v.reasons.join('; ')}`)
