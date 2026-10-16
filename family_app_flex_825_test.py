@@ -88,15 +88,7 @@ FN = {FNROOT!r}
 if a[:2] == ['functions', 'deploy']:
     open({os.path.join(TMP, 'deploys')!r}, 'a').write(json.dumps([a[2], '--no-verify-jwt' in a]) + '\\n'); sys.exit(0)
 if a[:2] == ['functions', 'download']:
-    def deps(path, seen):
-        if path in seen or not os.path.exists(path): return
-        seen.add(path)
-        src = open(path).read()
-        for m in re.findall(r\"\"\"from\\s+['"](\\.{{1,2}}/[^'"]+)['"]\"\"\", src): deps(os.path.normpath(os.path.join(os.path.dirname(path), m)), seen)
-    s = set(); deps(os.path.join(FN, a[2], 'index.ts'), s)
-    for x in s:
-        rel = os.path.relpath(x, FN); dst = os.path.join(os.getcwd(), 'supabase', 'functions', rel); os.makedirs(os.path.dirname(dst), exist_ok=True); shutil.copy2(x, dst)
-    sys.exit(0)
+    shutil.copytree(FN, os.path.join(os.getcwd(), 'supabase', 'functions'), dirs_exist_ok=True); sys.exit(0)
 sys.exit(1)
 """)
 open(os.path.join(BIN, "gh"), "w").write(f"""#!/usr/bin/env python3
