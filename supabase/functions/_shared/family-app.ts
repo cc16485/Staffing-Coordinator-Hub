@@ -153,6 +153,25 @@ export async function reasonId(ax: Ax, name: unknown): Promise<number | null> {
   return hit?.id != null ? Number(hit.id) : null
 }
 
+/** The family's estimate: THIS client's own hourly rate from their recent AxisCare visits (rates vary by client), else the
+ *  state's rate from the Hub settings, else none. Missouri adds $5 an hour to visits under 4 hours (mileage between
+ *  clients, her rule 2026-10-15); Hub settings family_app_short_extra_<STATE> / family_app_short_under_hours. An estimate only:
+ *  the invoice is AxisCare's, from the caregiver's actual clock-in and clock-out. */
+export async function estimateRate(ax: Ax, clientId: string, state: string | null, st: any, today: string) {   // deno-lint-ignore no-explicit-any
+  let rate: number | null = null
+  try {
+    const past = await clientVisits(ax, clientId, addDays(today, -120), today)
+    const priced = past.filter((v) => Number(v?.chargeRate) > 0 && String(v?.billableRateMode ?? '').toLowerCase() !== 'custom')
+      .sort((a, b) => String(b?.scheduledStartDate ?? b?.startDate ?? '').localeCompare(String(a?.scheduledStartDate ?? a?.startDate ?? '')))
+    if (priced.length) rate = Number(priced[0].chargeRate)
+  } catch { /* no estimate is better than a wrong one */ }
+  if (rate == null && Number(st?.[`family_app_rate_${state}`]) > 0) rate = Number(st[`family_app_rate_${state}`])
+  const extraSet = st?.[`family_app_short_extra_${state}`]
+  const short_extra = extraSet != null ? Math.max(0, Number(extraSet) || 0) : (state === 'MO' ? 5 : 0)
+  const short_under_hours = Number(st?.family_app_short_under_hours) > 0 ? Number(st.family_app_short_under_hours) : 4
+  return { rate, short_extra, short_under_hours }
+}
+
 /** Put a booking on the AxisCare schedule with no caregiver, then read it back. Never trust a 200. */
 // deno-lint-ignore no-explicit-any
 export async function putOnSchedule(ax: Ax, b: any, st: any): Promise<{ ok: true; vid: string } | { ok: false; why: string }> {
@@ -225,8 +244,8 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
   if (action === 'home') {
     const visits = (await clientVisits(deps.ax, w.axiscare_client_id, today, addDays(today, 21))).map(visitView).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start))
     const mine = (await deps.bookings(w.axiscare_client_id)).filter((b) => b.visit_date >= today && ['received', 'practice', 'waiting_for_caregiver', 'needs_office'].includes(b.status))
-    const rate = Number(st?.[`family_app_rate_${state}`]) > 0 ? Number(st[`family_app_rate_${state}`]) : null
-    return say(200, { client: { id: w.axiscare_client_id, name: clientName, state }, can_book: w.can_book, office_phone: phone, rate, visits,
+    const est = await estimateRate(deps.ax, w.axiscare_client_id, state, st, today)
+    return say(200, { client: { id: w.axiscare_client_id, name: clientName, state }, can_book: w.can_book, office_phone: phone, rate: est.rate, short_extra: est.short_extra, short_under_hours: est.short_under_hours, visits,
       waiting: mine.map((b) => ({ id: b.id, date: b.visit_date, start: b.start_time, end: b.end_time, status: b.status })), tasks: tasksFor(state, st) })
   }
 

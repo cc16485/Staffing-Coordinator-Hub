@@ -35,6 +35,13 @@ export type OfficeDeps = {
   closeItem: (id: string, by: string, text: string) => Promise<void>
   // deno-lint-ignore no-explicit-any
   event: (row: any) => Promise<void>
+  /** AxisCare responsible-party emails for a client (lower-cased), or null if AxisCare couldn't be read. */
+  rpEmails: (axiscareClientId: string) => Promise<string[] | null>
+  /** One send through the family-safe door (a person pressed Send). True when it went. */
+  // deno-lint-ignore no-explicit-any
+  send: (c: any, channel: 'sms' | 'email', payload: { message?: string; subject?: string; html?: string }) => Promise<boolean>
+  // deno-lint-ignore no-explicit-any
+  logMessage: (row: any) => Promise<void>
   login: {
     create: (email: string, name: string) => Promise<{ id: string } | { error: string; exists?: boolean }>
     find: (email: string) => Promise<string | null>
@@ -48,6 +55,27 @@ const emailOk = (e: unknown) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e ?? ''
 
 export const inviteWords = (first: string, client: string) =>
   `Hi ${first}, you can now see ${client}'s visits and book extra visits at family.mo-care.com. Sign in with this email address and we'll email you a 6-digit code. Call us anytime with questions.`
+
+export const APP_URL = 'https://family.mo-care.com'
+export const AXIS_ACTIVATE = 'https://16485.axiscare.com/?user-connect.php&action=activate'
+/** The welcome text she approved 2026-10-15 (editable in the Hub before sending). */
+export function welcomeText(first: string, client: string, phone: string, withAxis: boolean) {
+  return `Hi ${first}, it's Caring Companions. You're set up to follow ${client}'s care online. To see visits and book extra ones, go to family.mo-care.com and sign in with this email (we'll email you a code).` +
+    (withAxis ? ` For ${client}'s calendar, care notes and invoices, go to 16485.axiscare.com, tap Activate account and use this same email.` : '') +
+    ` Questions? Call ${phone}.`
+}
+const h = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+export function welcomeEmail(first: string, client: string, email: string, phone: string, withAxis: boolean) {
+  const btn = (href: string, label: string) => `<a href="${href}" style="display:inline-block;background:#1F7A8C;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:10px;margin:6px 0 2px">${label}</a>`
+  const step = (n: number, title: string, body: string) => `<div style="margin:18px 0 0"><div style="font-weight:700;color:#0D365F;font-size:17px">${n}. ${title}</div>${body}</div>`
+  const html = `<div style="font-family:Arial,sans-serif;font-size:16px;line-height:1.6;color:#16283a;max-width:520px">` +
+    `<p>Hi ${h(first)},</p><p>You're set up to follow ${h(client)}'s care online.</p>` +
+    step(1, 'See visits and book extra ones', `<p style="margin:4px 0">Go to family.mo-care.com and type <b>${h(email)}</b>. We'll email you a 6-digit code. No password needed.</p>${btn(APP_URL, 'Open the family app')}`) +
+    (withAxis ? step(2, `${h(client)}'s calendar, care notes and invoices`, `<p style="margin:4px 0">Go to 16485.axiscare.com and tap <b>Activate account</b>. Use this same email, <b>${h(email)}</b>, and follow the short steps to set a password.</p>${btn(AXIS_ACTIVATE, 'Activate your AxisCare account')}`) : '') +
+    `<p style="margin-top:22px">Questions? Call us at ${h(phone)}. A real person answers, weekdays 8 AM to 6 PM.</p>` +
+    `<p style="color:#55677a">Caring Companions In-Home Senior Care</p></div>`
+  return { subject: `Your Caring Companions family access for ${client}`, html }
+}
 
 // deno-lint-ignore no-explicit-any
 export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Promise<Out> {
@@ -95,6 +123,42 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     if (back?.app_user_id !== uid || back?.app_status !== 'active') return say(500, { error: 'Saved, but it didn\'t read back. Please try again.' })
     await ev('family_app_invited', `${staff.name} gave ${c.name} the family app for ${k.client_name ?? 'their client'}`, { contact_id: c.id, can_book: can })
     return say(200, { ok: true, words: inviteWords(String(c.name ?? '').split(' ')[0] || 'there', String(k.client_name ?? 'your loved one')), email })
+  }
+
+  if (action === 'welcome') {
+    const c = await d.contact(Number(body?.contact_id))
+    if (!c) return say(404, { error: 'That person isn\'t in a Family Circle.' })
+    if (c.app_status !== 'active') return say(409, { error: `Invite ${c.name} to the family app first.` })
+    if (c.stopped_at || c.axiscare_removed_at) return say(409, { error: `${c.name} has been removed from the Family Circle.` })
+    const k = await d.circle(String(c.circle_id))
+    if (!k?.axiscare_client_id) return say(409, { error: 'Connect this Family Circle to the client in AxisCare first.' })
+    const st = await d.settings()
+    const first = String(c.name ?? '').trim().split(/\s+/)[0] || 'there'
+    const client = String(k.client_name ?? '').trim().split(/\s+/)[0] || 'your loved one'
+    const cst = await d.ax('GET', `/api/clients/${encodeURIComponent(k.axiscare_client_id)}`)
+    const state = String((cst.json?.results?.client ?? cst.json?.results)?.residentialAddress?.state ?? '').toUpperCase()
+    const phone = st?.[`family_app_office_phone_${state}`] ?? '(417) 234-8494'
+    const rps = await d.rpEmails(String(k.axiscare_client_id))
+    const email = String(c.email ?? '').trim().toLowerCase()
+    const onAxis = rps === null ? null : (!!email && rps.includes(email))
+    const canText = !!(c.phone && c.sms_consent), canEmail = !!email
+    if (body?.send !== true) {
+      const withAxis = onAxis !== false
+      return say(200, { preview: true, name: c.name, can_text: canText, can_email: canEmail, axis_email_on_file: onAxis, include_axis: withAxis,
+        text: welcomeText(first, client, phone, withAxis), text_without_axis: welcomeText(first, client, phone, false), text_with_axis: welcomeText(first, client, phone, true),
+        email_subject: welcomeEmail(first, client, email, phone, withAxis).subject })
+    }
+    const withAxis = body?.include_axis !== false
+    const text = String(body?.text ?? '').trim()
+    if (!text) return say(400, { error: 'The text is empty.' })
+    if (!canText && !canEmail) return say(409, { error: `There's no way to reach ${c.name}: no email, and no phone with Texts OK.` })
+    let byText = false, byEmail = false
+    if (canText && body?.by_text !== false) byText = await d.send(c, 'sms', { message: text })
+    if (canEmail && body?.by_email !== false) { const em = welcomeEmail(first, client, email, phone, withAxis); byEmail = await d.send(c, 'email', { subject: em.subject, html: em.html }) }
+    await d.logMessage({ circle_id: String(c.circle_id), kind: 'update', body: text, sent_by: staff.name, reached: byText || byEmail ? 1 : 0, skipped: byText || byEmail ? 0 : 1 })
+    await ev('family_app_welcome', `${staff.name} sent ${c.name} the family app welcome (${[byText && 'text', byEmail && 'email'].filter(Boolean).join(' + ') || 'nothing went'})`, { contact_id: c.id, by_text: byText, by_email: byEmail, include_axis: withAxis })
+    if (!byText && !byEmail) return say(502, { error: 'Neither the text nor the email went through. The office has a Needs Attention card with the reason.' })
+    return say(200, { ok: true, by_text: byText, by_email: byEmail })
   }
 
   if (action === 'place' || action === 'schedule') {

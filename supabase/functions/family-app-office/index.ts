@@ -8,6 +8,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { opEvent } from '../_shared/events.ts'
 import { officeAction, type OfficeDeps } from '../_shared/family-app-office.ts'
+import { contactForOutbound } from '../_shared/outreach.ts'
+import { ghlSendChecked } from '../_shared/send-problems.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -40,7 +42,7 @@ const famAdmin = (path: string, init: RequestInit = {}) => fetch(`${FAMILY_URL}/
   headers: { apikey: FAMILY_SERVICE, Authorization: `Bearer ${FAMILY_SERVICE}`, 'Content-Type': 'application/json', ...(init.headers ?? {}) } })
 
 const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
-const CONTACT_COLS = 'id, name, email, circle_id, stopped_at, axiscare_removed_at, app_user_id, app_status, app_can_book, app_invited_at, app_invited_by'
+const CONTACT_COLS = 'id, name, email, phone, sms_consent, circle_id, stopped_at, axiscare_removed_at, app_user_id, app_status, app_can_book, app_invited_at, app_invited_by'
 
 const deps: OfficeDeps = {
   ax,
@@ -69,6 +71,27 @@ const deps: OfficeDeps = {
     await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...it, status: 'done', last_at: at, last_activity_at: at, history: [...(it.history ?? []), { at, by, text }] } })
   },
   event: async (row) => { await opEvent(db, row) },
+  rpEmails: async (cid) => {
+    const r = await ax('GET', `/api/clients/${encodeURIComponent(cid)}/responsibleParties`)
+    if (r.status === 404) return []
+    if (r.status !== 200) return null
+    const raw = r.json?.results?.responsibleParties ?? r.json?.results ?? []
+    // deno-lint-ignore no-explicit-any
+    return (Array.isArray(raw) ? raw : []).map((p: any) => String(p?.email ?? p?.personalEmail ?? '').trim().toLowerCase()).filter(Boolean)
+  },
+  /* The welcome goes through the same family-safe door as every Family Circle message: audience 'family', allowed only
+     because a person pressed Send; opt-outs, Texts OK and the hours policy all apply; a refusal raises a Needs Attention card. */
+  send: async (c, channel, payload) => {
+    const token = Deno.env.get('GHL_TOKEN') || '', locationId = Deno.env.get('GHL_LOCATION_ID') || ''
+    if (!token || !locationId) return false
+    const first = String(c.name || '').split(' ')[0] || 'there'
+    const dest = await contactForOutbound(db, { token, locationId }, { phone: c.phone, email: c.email, firstName: first }, 'circle-send',
+      { audience: 'family', humanInitiated: true, channel, sender: 'circle-send' })
+    if (!dest) return false
+    const h = { Authorization: `Bearer ${token}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
+    return await ghlSendChecked(db, h, 'circle-send', { channel, contactId: dest.contactId, address: channel === 'sms' ? c.phone : c.email, who: c.name }, payload)
+  },
+  logMessage: async (row) => { await db.from('circle_messages').insert(row) },
   login: {
     create: async (email, name) => {
       if (!FAMILY_URL || !FAMILY_SERVICE) return { error: 'the family app is not connected yet' }
