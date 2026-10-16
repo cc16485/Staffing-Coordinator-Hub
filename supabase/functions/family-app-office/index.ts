@@ -60,6 +60,7 @@ const deps: OfficeDeps = {
   },
   plans: async () => (await db.from('care_circles').select('id, client_name, axiscare_client_id, app_plan, app_plan_since').not('app_plan', 'is', null)).data ?? [],
   setPlan: async (id, vals) => !(await db.from('care_circles').update(vals).eq('id', id)).error,
+  setAbout: async (id, vals) => !(await db.from('care_circles').update(vals).eq('id', id)).error,
   markBilled: async (month, cid, vals) => !(await db.from('family_app_fees').update(vals).eq('month', month).eq('axiscare_client_id', cid)).error,
   now: () => new Date(),
   settings: async () => (await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()).data?.data ?? {},

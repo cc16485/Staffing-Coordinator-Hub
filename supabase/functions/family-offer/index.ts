@@ -60,6 +60,7 @@ const deps: OfferDeps = {
   ax,
   // Let me choose (her yes 2026-10-16): same checks and texts as the family's door
   textCaregiver: cd.textCaregiver, askBlockId: cd.askBlockId, profiles: cd.profiles, supabaseUrl: SUPABASE_URL, textFamily: cd.textFamily,
+  confirmDue: cd.confirmDue, tellFamily: cd.tellFamily, clientAbout: cd.clientAbout,
   now: () => new Date(),
   settings: async () => (await key('ops_settings')) ?? {},
   openBookings: async (from) => (await db.from('family_bookings').select(OPEN_COLS).eq('status', 'waiting_for_caregiver').is('caregiver_axiscare_id', null).gte('visit_date', from).order('visit_date', { ascending: true }).limit(200)).data ?? [],
