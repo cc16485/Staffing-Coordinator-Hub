@@ -98,9 +98,16 @@ o = await go({ action: 'home', client: '999' })
 ck('asking for someone else\'s client is refused before AxisCare is asked', o.status === 403 && W.calls.length === 0, o)
 o = await go({ action: 'home', client: '501' })
 ck('home: upcoming visits in Central time with caregiver first name, nobody else\'s visits', o.status === 200 && o.body.visits.length === 1 && o.body.visits[0].start === '09:00' && o.body.visits[0].end === '11:00' && o.body.visits[0].caregiver.first_name === 'Sarah' && o.body.client.name === 'Dot' && o.body.client.state === 'MO' && o.body.office_phone === '(417) 234-8494', o)
-ck('home: no rate shown until the Hub settings have one', o.body.rate === null, o.body.rate)
+ck('home: no rate when the client has no priced visits and no state rate is set; MO short-visit extra $5 under 4 hours', o.body.rate === null && o.body.short_extra === 5 && o.body.short_under_hours === 4, o.body)
 W.settings.family_app_rate_MO = 30; o = await go({ action: 'home', client: '501' })
-ck('home: the state\'s hourly rate for the estimate', o.body.rate === 30, o.body.rate)
+ck('home: falls back to the state rate in the Hub settings', o.body.rate === 30, o.body.rate)
+W.visits['v=2:s=5:d=2026-09-30'].chargeRate = 32; W.visits['v=3:s=5:d=2026-09-25'].chargeRate = 29
+W.visits['v=1:s=5:d=2026-10-21'].chargeRate = 99; W.visits['v=1:s=5:d=2026-10-21'].billableRateMode = 'custom'
+o = await go({ action: 'home', client: '501' })
+ck('home: the client\'s OWN rate from their most recent priced visit (a custom one-off rate ignored)', o.body.rate === 32, o.body.rate)
+W.settings.family_app_short_extra_MO = 0; o = await go({ action: 'home', client: '501' })
+ck('home: the short-visit extra can be changed in the Hub settings', o.body.short_extra === 0, o.body.short_extra)
+delete W.settings.family_app_short_extra_MO; delete W.settings.family_app_rate_MO
 o = await go({ action: 'caregivers', client: '501' })
 ck('caregivers: only published profiles of caregivers who visited, most visits first', o.status === 200 && o.body.caregivers.length === 1 && o.body.caregivers[0].name === 'Sarah J.' && o.body.caregivers[0].visits_together === 2 && o.body.caregivers[0].photo === 'https://h.co/storage/v1/object/public/caregiver-profiles/s.jpg', o)
 
@@ -157,7 +164,8 @@ ck('AxisCare refuses the removal: cancelled for the family, office card to finis
 let OW
 function oreset(m = {}) {
   OW = { contacts: { 9: { id: 9, name: 'Lisa Ray', email: 'Lisa@X.test', circle_id: 'c1', app_user_id: null, app_status: null }, 10: { id: 10, name: 'Tom', email: '', circle_id: 'c1' }, 11: { id: 11, name: 'Gone', email: 'g@x.test', circle_id: 'c1', stopped_at: '2026-01-01' } },
-    circles: { c1: { id: 'c1', client_name: 'Dorothy Ray', active: true, axiscare_client_id: '501' } }, logins: {}, blocked: {}, closed: [], events: [], createFails: false, ...m }
+    circles: { c1: { id: 'c1', client_name: 'Dorothy Ray', active: true, axiscare_client_id: '501' } }, logins: {}, blocked: {}, closed: [], events: [], createFails: false,
+    rps: ['lisa@x.test'], rpFail: false, sent: [], log: [], sendFail: [], ...m }
 }
 const odeps = () => ({
   ax, now: () => NOW, settings: async () => W.settings,
@@ -170,6 +178,9 @@ const odeps = () => ({
   updateBooking: async (id, vals) => { Object.assign(W.bookings.find((b) => b.id === id), vals); return true },
   closeItem: async (id, by, text) => { OW.closed.push([id, by, text]) },
   event: async (row) => { OW.events.push(row) },
+  rpEmails: async () => OW.rpFail ? null : OW.rps,
+  send: async (c, channel, payload) => { OW.sent.push([c.id, channel, payload]); return !(OW.sendFail || []).includes(channel) },
+  logMessage: async (row) => { OW.log.push(row) },
   login: {
     create: async (email) => { if (OW.createFails) return { error: 'boom' }; if (OW.logins[email]) return { error: 'A user with this email address has already been registered', exists: true }; OW.logins[email] = 'uid-' + email; return { id: OW.logins[email] } },
     find: async (email) => OW.logins[email] ?? null,
@@ -198,6 +209,31 @@ o = await office({ action: 'invite', contact_id: 9 })
 ck('invite again after revoke: unblocked, same login', o.status === 200 && OW.blocked['uid-lisa@x.test'] === false && OW.contacts[9].app_status === 'active', o)
 o = await office({ action: 'can_book', contact_id: 9, on: false })
 ck('booking can be turned off for one person', o.status === 200 && OW.contacts[9].app_can_book === false, o)
+
+// welcome
+reset(); oreset(); await office({ action: 'invite', contact_id: 9 }); Object.assign(OW.contacts[9], { phone: '4175550100', sms_consent: true })
+o = await office({ action: 'welcome', contact_id: 9 })
+ck('welcome preview: her approved text, both parts, MO phone, nothing sent', o.status === 200 && o.body.preview && o.body.include_axis === true && o.body.axis_email_on_file === true && o.body.can_text && o.body.can_email
+   && o.body.text === "Hi Lisa, it's Caring Companions. You're set up to follow Dorothy's care online. To see visits and book extra ones, go to family.mo-care.com and sign in with this email (we'll email you a code). For Dorothy's calendar, care notes and invoices, go to 16485.axiscare.com, tap Activate account and use this same email. Questions? Call (417) 234-8494."
+   && o.body.email_subject === 'Your Caring Companions family access for Dorothy' && OW.sent.length === 0, o.body)
+OW.rps = ['someone@else.test']; o = await office({ action: 'welcome', contact_id: 9 })
+ck('welcome preview: email not on AxisCare -> flagged, AxisCare part left out by default', o.body.axis_email_on_file === false && o.body.include_axis === false && !/axiscare/i.test(o.body.text) && /16485/.test(o.body.text_with_axis), o.body)
+OW.rps = ['lisa@x.test']
+o = await office({ action: 'welcome', contact_id: 9, send: true, text: 'Edited words', include_axis: true })
+const em = OW.sent.find((x) => x[1] === 'email')
+ck('welcome send: the office\'s edited text by text, the full email with both buttons, logged on the circle', o.status === 200 && o.body.by_text && o.body.by_email && OW.sent.find((x) => x[1] === 'sms')[2].message === 'Edited words'
+   && /Open the family app/.test(em[2].html) && /Activate your AxisCare account/.test(em[2].html) && /lisa@x\.test/.test(em[2].html) && OW.log[0].circle_id === 'c1' && OW.log[0].body === 'Edited words', [o.body, OW.log])
+OW.sent = []; await office({ action: 'welcome', contact_id: 9, send: true, text: 'x', include_axis: false })
+ck('welcome send without the AxisCare part: the email has no AxisCare step', !/Activate your AxisCare/.test(OW.sent.find((x) => x[1] === 'email')[2].html))
+Object.assign(OW.contacts[9], { sms_consent: false }); OW.sent = []
+await office({ action: 'welcome', contact_id: 9, send: true, text: 'x' })
+ck('no Texts OK: email only, never a text', OW.sent.length === 1 && OW.sent[0][1] === 'email', OW.sent)
+OW.sendFail = ['email']; o = await office({ action: 'welcome', contact_id: 9, send: true, text: 'x' })
+ck('nothing went: said plainly (the door raises the Needs Attention card)', o.status === 502 && /Neither/.test(o.body.error), o)
+oreset(); o = await office({ action: 'welcome', contact_id: 9 })
+ck('welcome before invite: refused', o.status === 409 && /Invite/.test(o.body.error), o)
+const ofx = fs.readFileSync(path.join(F, 'family-app-office/index.ts'), 'utf8')
+ck('welcome goes through the family-safe door: audience family, humanInitiated, named channel, checked send', /audience: 'family', humanInitiated: true, channel/.test(ofx) && /ghlSendChecked\(db/.test(ofx))
 
 reset(); oreset(); await go(BOOK)
 const bk = W.bookings[0]
