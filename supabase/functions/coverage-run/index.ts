@@ -49,6 +49,7 @@ import { workLock, LOCK_WHY } from '../_shared/work-lock.ts'
 import { OPEN_HOURS_DEFAULT, checkWording, inSendWindow, offeredCells, openHoursText } from '../_shared/open-hours.ts'
 import { newHireNeed } from '../_shared/new-hire.ts'
 import { readTransportNeed, readDriveGate, transportDecision } from '../_shared/driver-eligibility.ts'
+import { MO_FROM } from '../_shared/office-from.ts'   // every text goes out from (417) 234-8494
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -553,7 +554,7 @@ async function openHours(body: any, whoName: string, jr: (b: unknown, s?: number
     try {
       const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', { method: 'POST',
         headers: { Authorization: `Bearer ${ghl2.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message: message.replaceAll('{first_name}', x.first || String(x.name).split(' ')[0] || 'there') }) })
+        body: JSON.stringify({ type: 'SMS', fromNumber: MO_FROM, contactId: contact.contactId, message: message.replaceAll('{first_name}', x.first || String(x.name).split(' ')[0] || 'there') }) })
       ok = r.ok; if (!r.ok) failed.push(`${x.name} (SMS ${r.status})`)
     } catch { failed.push(`${x.name} (send error)`) }
     if (!ok) { await sb.rpc('coverage_case_remove_ask', { p_id: caseId, p_ask_id: ask.id }); continue }
@@ -1227,7 +1228,7 @@ Deno.serve(async (req) => {
             method: 'POST',
             headers: { Authorization: `Bearer ${ghl2.token}`, Version: '2021-07-28',
                        'Content-Type': 'application/json' },
-            body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message }),
+            body: JSON.stringify({ type: 'SMS', fromNumber: MO_FROM, contactId: contact.contactId, message }),
           })
           ok = r.ok
           if (!r.ok) failed.push(`${x.name} (SMS ${r.status})`)

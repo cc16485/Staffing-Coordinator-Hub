@@ -19,6 +19,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { contactForOutbound, maySend } from '../_shared/outreach.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { MO_FROM } from '../_shared/office-from.ts'   // every text goes out from (417) 234-8494
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -124,7 +125,7 @@ Deno.serve(async (req) => {
     else {
       try {
         const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', { method: 'POST', headers: H,
-          body: JSON.stringify({ type: 'SMS', contactId: c.contactId, message: plan.text }) })
+          body: JSON.stringify({ type: 'SMS', fromNumber: MO_FROM, contactId: c.contactId, message: plan.text }) })
         texted = r.ok; if (!r.ok) notSent.push('text: the texting service refused it (' + r.status + ')')
       } catch { notSent.push('text: the texting service did not answer') }
     }

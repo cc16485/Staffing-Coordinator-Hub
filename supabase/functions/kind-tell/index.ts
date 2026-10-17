@@ -21,6 +21,7 @@ import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { contactForOutbound, maySendTo, normalisePhone } from '../_shared/outreach.ts'
 import { optOutCheck } from '../_shared/optout.ts'
 import { opEvent } from '../_shared/events.ts'
+import { MO_FROM } from '../_shared/office-from.ts'   // every text goes out from (417) 234-8494
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -113,7 +114,7 @@ Deno.serve(async (req) => {
   try {
     const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', { method: 'POST',
       headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message }) })
+      body: JSON.stringify({ type: 'SMS', fromNumber: MO_FROM, contactId: contact.contactId, message }) })
     ok = r.ok; if (!r.ok) err = `GoHighLevel answered ${r.status}`
   } catch { err = 'could not reach GoHighLevel' }
   if (!ok) return json({ outcome: 'failed', error: `Not sent: ${err}.` }, 502)

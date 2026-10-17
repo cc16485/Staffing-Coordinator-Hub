@@ -1,3 +1,4 @@
+import { officeSms } from './office-from.ts'
 /**
  * NO SILENT FAILURES (Samantha, 2026-10-01). Every text or email that is held back (the opt-out check said no, or
  * could not check) or that GoHighLevel refused becomes a card on Needs Attention (app_data 'ops_items', kind
@@ -223,7 +224,7 @@ export async function ghlSendChecked(
   let why = ''
   try {
     const r = await send('https://services.leadconnectorhq.com/conversations/messages', {
-      method: 'POST', headers, body: JSON.stringify({ type: to.channel === 'sms' ? 'SMS' : 'Email', contactId: to.contactId, ...body }) })
+      method: 'POST', headers, body: JSON.stringify({ type: to.channel === 'sms' ? 'SMS' : 'Email', contactId: to.contactId, ...(to.channel === 'sms' ? officeSms(body) : body) }) })
     if (r.ok) return true
     const t = await r.text().catch(() => '')
     let m = ''; try { m = String(JSON.parse(t)?.message ?? '') } catch { m = t }
