@@ -300,9 +300,9 @@ export async function l0(db: any, days: number, offset: number, limit: number, n
     next_offset: offset + slice.length < cgs.length ? offset + slice.length : null, counts: c }
 }
 
-/* The same members the caregiver-change text may reach (her decision 3): _shared/family-change-text.ts eligibleMembers. */
+/* The same gate as the caregiver-change text (her decision 3), with the running-late switch (872): eligibleMembers(.., 'late'). */
 // deno-lint-ignore no-explicit-any
-export const eligible = (m: any) => eligibleMembers([m]).length === 1
+export const eligible = (m: any) => eligibleMembers([m], 'late').length === 1
 // deno-lint-ignore no-explicit-any
 export async function circles(db: any, days: number, now = Date.now()) {
   const { shifts, error } = await listShifts(days, now)
@@ -312,7 +312,7 @@ export async function circles(db: any, days: number, now = Date.now()) {
   const { data: circs } = await db.from('care_circles').select('id, axiscare_client_id').eq('active', true)
   const byAx = new Map<string, string[]>()
   for (const x of circs ?? []) { const k = String(x?.axiscare_client_id ?? '').trim(); if (!k) continue; const a = byAx.get(k) ?? []; a.push(String(x.id)); byAx.set(k, a) }
-  const { data: mem } = await db.from('circle_contacts').select('circle_id, sms_consent, wants_changes, stopped_at, axiscare_removed_at, phone')
+  const { data: mem } = await db.from('circle_contacts').select('circle_id, sms_consent, wants_changes, wants_late, stopped_at, axiscare_removed_at, phone')
   const good = new Map<string, number>()
   for (const m of mem ?? []) if (eligible(m)) good.set(String(m.circle_id), (good.get(String(m.circle_id)) ?? 0) + 1)
   for (const cl of clients) {
@@ -632,7 +632,7 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
       if (fe.ok) {
         const { data: circs } = await db.from('care_circles').select('id').eq('active', true).eq('axiscare_client_id', String(n.axiscare_client_id ?? ''))
         let count = 0
-        if (circs && circs.length === 1) { const { data: mem } = await db.from('circle_contacts').select('*').eq('circle_id', circs[0].id); count = eligibleMembers(mem ?? []).length }
+        if (circs && circs.length === 1) { const { data: mem } = await db.from('circle_contacts').select('*').eq('circle_id', circs[0].id); count = eligibleMembers(mem ?? [], 'late').length }
         const text = fill(String(st.late_msg_family || DEFAULT_FAMILY), { caregiver: cgFirst, client: n.client_first || 'your loved one', time: t12, eta: etaTxt })
         const w = wouldPush(n, { to: 'family', key: 'family_' + etaTxt, text: count ? text : `(nobody to tell: ${circs?.length === 1 ? 'no circle member has agreed to texts' : circs?.length ? 'two linked circles' : 'no linked Family Circle'})`, count })
         if (w) { up.would = w; n.would = w }

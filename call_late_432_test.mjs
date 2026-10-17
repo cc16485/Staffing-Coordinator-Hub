@@ -29,7 +29,7 @@ const reset = (st = {}) => {
     circle_contacts: [{ circle_id: 'k1', name: 'Linda Jones', phone: '4175550200', sms_consent: true },
       { circle_id: 'k1', name: 'Tom Jones', phone: '4175550201', sms_consent: true, stopped_at: '2026-01-01' },
       { circle_id: 'k1', name: 'Sue Jones', phone: '4175550202', sms_consent: false },
-      { circle_id: 'k1', name: 'Wes Jones', phone: '4175550203', sms_consent: true, wants_changes: false }] }
+      { circle_id: 'k1', name: 'Wes Jones', phone: '4175550203', sms_consent: true, wants_changes: false, wants_late: false }] }
   CONTACTS = [{ id: 'gMary', firstName: 'Mary', lastName: 'Smith', phone: '+14175550111' }]
   VISITS = [{ id: 9001, caregiver: { id: 501, firstName: 'Mary', lastName: 'Smith' }, client: { id: 701, firstName: 'April', lastName: 'Jones' },
     scheduledStartDate: '2026-10-02T16:30:00', scheduledEndDate: '2026-10-02T20:30:00', clockIn: null, clockOut: null }]
