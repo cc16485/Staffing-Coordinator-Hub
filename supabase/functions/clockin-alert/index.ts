@@ -15,8 +15,8 @@
 //   resolve   {reason, note}: stops the reminders for everyone, closes the Needs Attention item, records who/why;
 //             the other admins get one "Resolved by ..." text (when the admin texts are live)
 //   snooze    pauses the reminders for THIS admin for 10 minutes
-//   evv       texts the caregiver the EVV correction form, once per alert, only on this tap
-//             (427: the link opens the form pre-filled for this visit; only a random token is in the link)
+//   evv       RETIRED 2026-10-17 (refused, 410): the EVV correction form is no longer used; the office confirms the
+//             times with the client by phone from a Needs Attention card
 //   coverage  she's calling off: opens a coverage case for the shift (the call-in process takes over) and resolves
 // 432 (2026-10-03): when the caregiver told the office on a CALL, view also returns late_call: "Mary said on your 4:31pm
 //   call: running late, about 8 minutes (around 4:39pm)", her words, whether this alert's texts are paused (until when),
@@ -31,10 +31,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { checkLink, adminKey } from '../_shared/clockin-links.ts'
 import { adminRecipients, textAdmin, clock12 } from '../_shared/clockin-admins.ts'
-import { normalisePhone, contactForOutbound } from '../_shared/outreach.ts'
+import { normalisePhone } from '../_shared/outreach.ts'
 import { opEvent } from '../_shared/events.ts'
 import { officeQuiet, afterHoursAllowed } from '../_shared/quiet-hours.ts'
-import { makePrefill, withPrefillLink, axisHm } from '../_shared/evv-prefill.ts'
 import { ghlClientLink } from '../_shared/ghl-contact-link.ts'
 import { ghlCallBridge } from '../_shared/ghl-call-bridge.ts'
 import { callLine, holdUntil, holdOptsOf, clockAt, familyEligible, FAMILY_MIN_DEFAULT } from '../_shared/late-notice.ts'
@@ -180,7 +179,12 @@ Deno.serve(async (req) => {
       ...status() })
   }
 
-  if (l.resolved_at && action !== 'evv')
+  /* RETIRED 2026-10-17 (Samantha): the EVV correction form is no longer used. Nothing is texted; when the shift is
+     over with no clock-in, the Hub opens a "Call <client> to confirm <caregiver>'s times" card (timekeeper-watch). */
+  if (action === 'evv')
+    return json({ error: `The EVV correction form is no longer used. When the shift is over, the Hub opens a card to call ${l.client_first} and confirm the times.`, retired: true, ...status() }, 410)
+
+  if (l.resolved_at)
     return json({ ok: true, already: true, ...status() })
 
   if (action === 'snooze') {
@@ -243,45 +247,6 @@ Deno.serve(async (req) => {
       }
     }
     return json({ ok: true, others_told: told, ...(quiet ? { others_not_texted: 'office quiet hours' } : {}), ...status() })
-  }
-
-  if (action === 'evv') {
-    const fresh = await readLadder()
-    if (fresh?.evv_sent_at) return json({ ok: true, already_sent: true, ...status() })
-    const cg = await roster()
-    const phone = normalisePhone(cg?.phone)
-    if (!phone) return json({ error: `There's no phone for ${cgFirst} on the caregiver roster.` }, 409)
-    const contact = await contactForOutbound(sb, ghl, { phone, firstName: String(cg?.first ?? '') || cgFirst }, 'urgent_internal',
-      { audience: 'caregiver', channel: 'sms', sender: 'clockin-alert (EVV form, sent by ' + me.first + ')' })
-    if (!contact) return json({ error: `The text to ${cgFirst} was refused (an untrusted number, or they opted out of texts).` }, 409)
-    /* 427: the link opens the form already filled in for this visit (caregiver, client first name + last initial,
-       date, scheduled times; only a random token in the link). Read from AxisCare (GET); same wording; if the pre-fill
-       can't be made, the plain form link goes as before. */
-    const vj = await axisGet(`visits/${encodeURIComponent(String(l.visit_id))}`)
-    const v = vj?.results?.visit ?? vj?.results ?? vj?.visit ?? null
-    const endStamp = String(v?.scheduledEndDate ?? v?.endDate ?? '')
-    const ended = !!endStamp && Date.parse(endStamp.slice(0, 19)) <= Date.parse(chiWall())
-    const pre = await makePrefill(sb, { visit_id: String(l.visit_id), caregiver_axiscare_id: String(l.caregiver_axiscare_id ?? ''),
-      client_axiscare_id: l.client_axiscare_id ?? (v?.client?.id != null ? String(v.client.id) : null),
-      caregiver_name: String(l.caregiver || ''), client_first: String(l.client_first || ''), client_last: String(v?.client?.lastName ?? ''),
-      visit_date: String(l.shift_date), scheduled_in: String(l.shift_time || ''), scheduled_out: endStamp.slice(11, 16) || null,
-      actual_in: axisHm(v?.clockIn), actual_out: axisHm(v?.clockOut),
-      which_missing: !v?.clockIn?.time && !v?.clockOut?.time && ended ? 'both' : 'in' }, 'clockin-alert (EVV form, sent by ' + me.first + ')')
-    const message = withPrefillLink(`Hi ${String(cg?.first ?? '') || cgFirst}, to change your clock-in time we need the EVV correction form, filled out and signed by ${l.client_first}: sc.mo-care.com/evv-correction-form. We can't make any manual changes without it.`, pre?.url ?? null)
-    let ok = false
-    try {
-      const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', { method: 'POST',
-        headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message }) })
-      ok = r.ok
-    } catch { ok = false }
-    if (!ok) return json({ error: 'The text could not be sent. Try again, or send the form link by hand.' }, 502)
-    const f2 = (await readLadder()) || l
-    f2.evv_sent_at = new Date().toISOString(); f2.evv_sent_by = me.email; f2.evv_prefilled = !!pre
-    await save(f2); Object.assign(l, f2)
-    await opEvent(sb, { actor_email: me.email, actor_name: me.name, via: 'link', verb: 'message_sent', item_id: `ops_tk_${l.id}`, area: 'coverage',
-      summary: `${me.name} texted ${l.caregiver} the EVV correction form (${l.client_first} ${clock12(l.shift_time)})` })
-    return json({ ok: true, ...status() })
   }
 
   return json({ error: 'unknown action' }, 400)

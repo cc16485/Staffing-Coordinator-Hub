@@ -221,7 +221,7 @@ reset(); APP.ops_settings.evv_chase_live = true; APP.ops_settings.coverage_alert
 at('20:30', '2026-10-03'); await tick()
 ck('Saturday 8:30pm · no office EVV nudge, and it is not marked done', to_('4175550999').length === 0 && !APP.evv_chase_state.some((x) => String(x.id).startsWith('satnudge_')), { sent: SENT, st: APP.evv_chase_state })
 at('15:05', '2026-10-03'); await tick()
-ck('Saturday 3:05pm · the office EVV nudge goes as before', to_('4175550999').length === 1, SENT)
+ck('Saturday 3:05pm · the office EVV nudge is retired (2026-10-17, no forms to process): nothing goes', to_('4175550999').length === 0, SENT)
 
 /* ════ 4 · the real ops-escalate (missed calls) ════ */
 /* 576: ops-escalate answers its schedule by the vault secret (x-cron-secret), no longer a token in the URL. */
@@ -240,7 +240,7 @@ ck('ops-escalate 7:26 · a call missed at 7:10 is texted at its 15 minutes, as b
 /* ════ 5 · source scans: every internal (office, admin, coordinator) text path checks the quiet hours ════ */
 const src = (f) => fs.readFileSync(`${FN}/${f}`, 'utf8')
 const PATHS = [
-  ['timekeeper-watch/index.ts', /const quietNow = officeQuiet\(new Date\(\), settings\)/, /const loopQuiet = quietNow && !tkAfterHours/, /if \(loopQuiet\) \{ quietHeld\+\+; return 0 \}/, /if \(loopQuiet\) \{ quietHeld\+\+; continue \}/, /chiHourE >= 15 && !forceDry && !quietNow/],
+  ['timekeeper-watch/index.ts', /const quietNow = officeQuiet\(new Date\(\), settings\)/, /const loopQuiet = quietNow && !tkAfterHours/, /if \(loopQuiet\) \{ quietHeld\+\+; return 0 \}/, /if \(loopQuiet\) \{ quietHeld\+\+; continue \}/],
   ['clockin-alert/index.ts', /const quiet = officeQuiet\(new Date\(\), settings\) && !afterHours/, /loopLive && !quiet &&/],
   ['late-watch/index.ts', /const quiet = officeQuiet\(new Date\(now\), st\)/, /if \(!n\.seen_at && !quiet\)/, /final && adminLive && !quiet/],
   ['late-alert/index.ts', /if \(officeQuiet\(new Date\(\), st\)\) return 0/],

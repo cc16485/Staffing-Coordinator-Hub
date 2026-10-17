@@ -145,11 +145,9 @@ p = await page({ ...L, action: 'snooze' }); ck('page · snooze: 10 minutes for S
 at('09:10'); const s0 = toSam().length, k0 = toKry().length; await tick()
 ck('C1 · a snoozed admin is skipped; the other still gets the repeat', toSam().length === s0 && toKry().length === k0 + 1, { s: toSam().length - s0, k: toKry().length - k0 })
 at('09:20'); await tick(); ck('C1 · after the snooze ends she gets them again', toSam().length === s0 + 1, toSam().length - s0)
-p = await page({ ...L, action: 'evv' })
-const evv = toCg().at(-1)?.message || ''
-ck('page · "Text Maria the EVV form": one text, the form link, signed by the client, no manual changes', p.s === 200 && p.j.evv_sent_at
-   && /^Hi Maria, to change your clock-in time we need the EVV correction form, filled out and signed by Ruth: https:\/\/sc\.mo-care\.com\/evv-correction-form\.html\?t=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\. We can't make any manual changes without it\.$/.test(evv), evv)   // 427: pre-filled link, token only
-p = await page({ ...L, action: 'evv' }); ck('page · a second tap does not send it again', p.j?.already_sent === true && toCg().filter((m) => /evv-correction/.test(m.message)).length === 1, p)
+{ const n0 = SENT.length; p = await page({ ...L, action: 'evv' })
+  ck('page · "Text the EVV form" is retired (2026-10-17): refused, nothing texted, nothing stamped', p.s === 410 && p.j?.retired === true && /call Ruth and confirm the times/.test(p.j?.error || '')
+     && SENT.length === n0 && !lad().evv_sent_at, p) }
 p = await page({ ...L, action: 'resolve', reason: 'nope' }); ck('page · resolve needs a known reason', p.s === 400, p)
 const k1 = toKry().length
 p = await page({ ...L, action: 'resolve', reason: 'on_the_way', note: 'called her, 5 min out' })
@@ -207,12 +205,12 @@ lad().resolved_at = 'x'; rr = await reply({ id: 'C1', phone: '4175550111', name:
 
 /* ── 7 · source checks ── */
 { const tk = fs.readFileSync(`${FN}/timekeeper-watch/index.ts`, 'utf8')
-  ck('source · the clock-out reminder keeps the EVV form (they have left)', /msgOutTmpl[\s\S]{0,400}evv-correction-form/.test(tk))
+  ck('source · the clock-out reminder has no EVV form link any more (2026-10-17)', !/MSG_OUT_DEFAULT = `[^`]*evv-correction-form/.test(tk) && !/makePrefill|withPrefillLink/.test(tk))
   ck('source · the old office-phone path is gone (it was never set)', !/timekeeper_alert_phones/.test(tk.replace(/^\/\/.*$/gm, '')))
   const ca = fs.readFileSync(`${FN}/clockin-alert/index.ts`, 'utf8')
   const gl = fs.readFileSync(`${FN}/_shared/ghl-contact-link.ts`, 'utf8').replace(/^\s*\/\/.*$/gm, '')
   ck('source · 431 the GHL contact lookup is read only (no POST/PUT/upsert, no message send)', !/method: '(POST|PUT|DELETE)'|upsert|conversations\/messages|contactForOutbound/.test(gl), gl.match(/method: '\w+'/g))
-  ck('source · the page never texts a client or family', !/audience: 'client'|audience: 'family'/.test(ca) && (ca.match(/conversations\/messages/g) || []).length === 1) }
+  ck('source · the page never texts a client or family', !/audience: 'client'|audience: 'family'/.test(ca) && (ca.match(/conversations\/messages/g) || []).length === 0) }   // 2026-10-17: its one caregiver text (the EVV form) is retired
 
 for (const [n, o, note] of res) console.log((o ? 'PASS' : 'FAIL') + ' · ' + n + (o ? '' : '\n   ' + note))
 console.log(res.filter((x) => x[1]).length + '/' + res.length)

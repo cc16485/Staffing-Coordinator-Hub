@@ -37,6 +37,7 @@ import { outsideVerdict } from '../_shared/covered-outside.ts'
 import { attendanceCard, caseEnded, caseWhen, shiftAhead, chiNowNaive, evvDayStats, evvWeek, familyCallNeeded, itemsToCloseForCases,
   markNoClosureTexts, pastCaseVerdict, weekOf } from '../_shared/loops.ts'
 import { loadQuiet, isQuiet } from '../_shared/client-quiet.ts'
+import { confirmTimesItem, hasCard, outAfterMin } from '../_shared/confirm-times.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -870,6 +871,51 @@ Deno.serve(async (req) => {
           }
         }
       }
+      /* ── THE OVERNIGHT CHECK FOR MISSING TIMES (2026-10-17, Samantha: the office calls the client to confirm the
+         times; the EVV correction form is retired). Every visit from YESTERDAY (only: CFT_MAX_DAYS_BACK, never older
+         history) still missing its clock-in or clock-out, whose scheduled end is confirm_times_out_after_min (30)
+         past, gets ONE "Call <client> to confirm <caregiver>'s times" card, unless it already has one (open or done,
+         or an old EVV fix card) or a coverage case covers the visit. Same switch as the live cards (loops_close_live);
+         off = counted only. Office work only: nobody outside the office is contacted. */
+      const CFT_MAX_DAYS_BACK = 1
+      const cft: Record<string, unknown> = { live: loopsLive, seen: 0, created: 0, already_had_a_card: 0, coverage_case: 0, not_ended: 0, paused_client: 0, would_create: 0, max_days_back: CFT_MAX_DAYS_BACK }
+      try {
+        const { data: oiC } = await sb.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+        const opsC = new Map<string, any>((Array.isArray(oiC?.data) ? oiC!.data : []).map((i: any) => [String(i?.id), i]))
+        const caseVisits = new Set(cases.map((c: any) => String(c?.axiscare_visit_id ?? '')).filter(Boolean))
+        const nowNaive = chiNowNaive()
+        const after = outAfterMin(settings)
+        const ownerC = String((Array.isArray(settings.coverage_alert_admins) && settings.coverage_alert_admins[0]) || 'samantha@mo-care.com')
+        for (const v of dayRows) {
+          if (v?.caregiver?.id == null) continue
+          const cin = v?.clockIn?.time, cout = v?.clockOut?.time
+          if (cin && cout) continue
+          cft.seen = Number(cft.seen) + 1
+          const vid = String(v?.id ?? ''); if (!vid) continue
+          const start = String(v?.scheduledStartDate ?? v?.startDate ?? ''), end = String(v?.scheduledEndDate ?? v?.endDate ?? '')
+          if (start.slice(0, 10) !== chiYesterday) continue                      // yesterday only
+          if (isQuiet(v)) { cft.paused_client = Number(cft.paused_client) + 1; continue }
+          const endMs = Date.parse(end.slice(0, 16) + ':00Z'), nowMs = Date.parse(nowNaive.slice(0, 16) + ':00Z')
+          if (!Number.isFinite(endMs) || nowMs - endMs < after * 60000) { cft.not_ended = Number(cft.not_ended) + 1; continue }   // an overnight shift still going
+          if (hasCard(opsC, vid)) { cft.already_had_a_card = Number(cft.already_had_a_card) + 1; continue }
+          if (caseVisits.has(vid)) { cft.coverage_case = Number(cft.coverage_case) + 1; continue }
+          const cgName = [String(v?.caregiver?.firstName ?? '').trim(), String(v?.caregiver?.lastName ?? '').trim()].filter(Boolean).join(' ') || ('caregiver ' + v.caregiver.id)
+          const hm = (c: any) => { const t = String(c?.time ?? ''); if (!t) return null
+            if (!/Z$|[+-]\d{2}:?\d{2}$/.test(t)) return t.slice(11, 16) || null
+            const d = new Date(t); return Number.isFinite(d.getTime()) ? new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', hourCycle: 'h23', hour: '2-digit', minute: '2-digit' }).format(d) : null }
+          const item = confirmTimesItem({ visit_id: vid, caregiver: cgName, caregiver_axiscare_id: String(v.caregiver.id),
+            client_first: String(v?.client?.firstName ?? '').trim() || 'the client', client_name: [v?.client?.firstName, v?.client?.lastName].filter(Boolean).join(' ') || null,
+            client_axiscare_id: v?.client?.id != null ? String(v.client.id) : null, shift_date: chiYesterday,
+            start: start.slice(11, 16), end: end.slice(11, 16), clock_in: hm(v?.clockIn), clock_out: hm(v?.clockOut),
+            missing: !cin && !cout ? 'both' : !cin ? 'in' : 'out' },
+            { owner: ownerC, now: new Date().toISOString(), source: 'coverage-watch (overnight check)' })
+          if (!loopsLive) { cft.would_create = Number(cft.would_create) + 1; continue }
+          const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item })
+          if (!error) { opsC.set(item.id, item); cft.created = Number(cft.created) + 1 }
+          else cft.error = String(error.message ?? error).slice(0, 160)
+        }
+      } catch (e) { cft.error = String(e).slice(0, 160) }
+      ;(globalThis as any).__cftOvernight = cft
       /* Rolling 30-day threshold alarms → one item per caregiver/type/month. */
       const { data: aeRow } = await sb.from('app_data').select('data').eq('key', 'attendance_events').maybeSingle()
       const events: any[] = Array.isArray(aeRow?.data) ? aeRow!.data : []
@@ -1180,6 +1226,7 @@ Deno.serve(async (req) => {
     held_checks: { reopen_live: reopenLive, checked: heldChecks.length, reopened, people_asked: heldAsked, shifts: heldChecks },
     attendance_sweep: (globalThis as any).__attSwept ?? 'already done for yesterday',
     attendance_cards: (globalThis as any).__attPlan ?? null,
+    confirm_times_overnight: (globalThis as any).__cftOvernight ?? 'with the attendance sweep, once a night',
     evv_review: (globalThis as any).__evvReview ?? 'made on Mondays (or ?evv_review=1)',
     loops,
     notes_sweep: (globalThis as any).__noteSwept ?? 'already done this hour',

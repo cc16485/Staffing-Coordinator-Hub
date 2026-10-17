@@ -1,0 +1,39 @@
+{
+ "slot": "no_clock",
+ "moment": "ongoing",
+ "state": "MO",
+ "title": "Missed clock-in or clock-out: confirm the times with the client",
+ "when": "A caregiver did not clock in or clock out in AxisCare, and the shift is over. The Hub does the watching: no clock-in 5 minutes into a shift, the caregiver gets a text asking her to clock in and the office gets texts until someone marks it Resolved; no clock-out 10 minutes after the shift ends, the caregiver gets one text asking her to clock out. No clock-out 30 minutes after the shift ends, or a shift that ended with no clock-in, puts a card in Needs Attention: \"Call Ruth to confirm Maria's times.\" Overnight, any visit from yesterday still missing a time gets the same card.",
+ "owner": "Whoever is on duty in the office",
+ "backup": "",
+ "steps": [
+  "Open the card and tap Call. It rings your phone and connects from the office line.",
+  "Speak with the client, or the family member who handles their care. Ask: \"Was Maria with you today? What time did she get there, and what time did she leave?\" Let them tell you the times rather than reading them out.",
+  "On the card, record who you spoke with, the times they gave, and any notes.",
+  "Correct the visit in AxisCare with those times, then tick Fixed in AxisCare. The card closes.",
+  "If the client can't remember or isn't sure: call the family member on file. If nobody can confirm, don't change the times. Write down what was said.",
+  "If nobody answers: leave a message and try again later the same day. The card stays open until it's done.",
+  "If a caregiver keeps missing clock-ins or clock-outs: the weekly Caregiver EVV Review flags it, and you decide the next step there."
+ ],
+ "where": [
+  {
+   "label": "Needs Attention: the card",
+   "url": "#ops"
+  },
+  {
+   "label": "AxisCare: the visit",
+   "url": ""
+  }
+ ],
+ "done_when": "The visit in AxisCare has the times the client confirmed, and the card is closed.",
+ "escalate_if": "The client says the caregiver wasn't there: don't change the times. Record a call-off or no-show on the caregiver's attendance and tell Samantha.",
+ "why": [
+  {
+   "kind": "choice",
+   "text": "We no longer use the EVV correction form. When a time is missing, the office calls the client to confirm it.",
+   "source": "Samantha, 2026-10-17",
+   "url": "",
+   "checked": ""
+  }
+ ]
+}

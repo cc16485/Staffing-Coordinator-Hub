@@ -17,7 +17,7 @@
 type Any = any
 
 export const ESCALATE = { shiftSoonMin: 60, shiftSoonAfterMin: 5, urgentAfterMin: 15 }
-export const STAFFING_KINDS = new Set(['coverage', 'staffing_issue', 'coverage_outcome', 'family_call', 'evv_fix', 'staffing'])
+export const STAFFING_KINDS = new Set(['coverage', 'staffing_issue', 'coverage_outcome', 'family_call', 'evv_fix', 'confirm_times', 'staffing'])
 
 /** Chicago wall clock: day of week (0 Sunday), minutes since midnight, and the ms of "now". */
 export function chiClock(now: Date = new Date()): { dow: number; mins: number; ms: number } {

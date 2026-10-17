@@ -189,7 +189,35 @@ r = await run(CW)
 ck('step4 · id-less events: grouped by name as before (Bo Fox 4 on ops_att_callin_bofox_202610, Ann Cole 2 no card)', /4 call-ins/.test(item('ops_att_callin_bofox_202610')?.title) && !APP.ops_items.some((i) => /anncole/.test(i.id))
    && APP.ops_items.filter((i) => /^ops_att_/.test(i.id)).length === 1, APP.ops_items.map((i) => i.id))
 
-/* ── 5 · a missed clock-in whose shift is over becomes an EVV fix ── */
+/* ── 4c · the overnight check: yesterday's visits still missing a time become a call to the client (2026-10-17) ── */
+const nightSeed = (live) => { reset(); APP.ops_settings.loops_close_live = live; at('2026-10-06T05:10:00Z')   // Tue 12:10am Central
+  APP.attendance_watch_state = [{ id: 'state', last_date: '2026-10-04' }]
+  VISITS = [
+    { id: 9501, caregiver: { id: 501, firstName: 'Maria', lastName: 'Lopez' }, client: { id: 701, firstName: 'Ruth', lastName: 'Adams' }, scheduledStartDate: '2026-10-05T09:00:00', scheduledEndDate: '2026-10-05T13:00:00', clockIn: { time: '2026-10-05T09:02:00' }, clockOut: null },
+    { id: 9502, caregiver: { id: 502, firstName: 'Ann', lastName: 'Cole' }, client: { id: 702, firstName: 'Ted', lastName: 'Burns' }, scheduledStartDate: '2026-10-05T14:00:00', scheduledEndDate: '2026-10-05T16:00:00', clockIn: null, clockOut: { time: '2026-10-05T16:01:00' } },
+    { id: 9503, caregiver: { id: 503, firstName: 'Joyce', lastName: 'Kim' }, client: { id: 703, firstName: 'Lou' }, scheduledStartDate: '2026-10-05T09:00:00', scheduledEndDate: '2026-10-05T12:00:00', clockIn: { time: '2026-10-05T09:00:00' }, clockOut: { time: '2026-10-05T12:00:00' } },
+    { id: 9504, caregiver: { id: 504, firstName: 'Pat', lastName: 'Long' }, client: { id: 704, firstName: 'Bea' }, scheduledStartDate: '2026-10-05T22:00:00', scheduledEndDate: '2026-10-06T06:00:00', clockIn: { time: '2026-10-05T22:00:00' }, clockOut: null },
+    { id: 9505, caregiver: { id: 505, firstName: 'Sue', lastName: 'Ray' }, client: { id: 705, firstName: 'Cal' }, scheduledStartDate: '2026-10-05T08:00:00', scheduledEndDate: '2026-10-05T10:00:00', clockIn: null, clockOut: null },
+    { id: 9506, caregiver: { id: 506, firstName: 'Kim', lastName: 'Fox' }, client: { id: 706, firstName: 'Dot' }, scheduledStartDate: '2026-10-05T08:00:00', scheduledEndDate: '2026-10-05T10:00:00', clockIn: null, clockOut: null },
+    { id: 9507, caregiver: null, client: { id: 707, firstName: 'Eve' }, scheduledStartDate: '2026-10-05T08:00:00', scheduledEndDate: '2026-10-05T10:00:00', clockIn: null, clockOut: null }]
+  APP.ops_items = [{ id: 'ops_cft_9505', kind: 'confirm_times', status: 'done', title: 'already called' }]
+  APP.coverage_cases = [{ id: 'c9', status: 'done', axiscare_visit_id: '9506', client: 'Dot', shift_date: '2026-10-05', shift_time: '08:00-10:00', asked: [] }] }
+nightSeed(true); r = await run(CW)
+const cfts = () => APP.ops_items.filter((i) => i.kind === 'confirm_times' && i.status === 'open')
+ck('overnight · a missed clock-out from yesterday: "Call Ruth to confirm Maria\'s departure time", clock-in shown', /^Call Ruth to confirm Maria's departure time \(Monday, Oct 5, 9 AM to 1 PM\)$/.test(item('ops_cft_9501')?.title || '')
+   && item('ops_cft_9501').missing === 'out' && /clock-in at 9:02 AM/.test(item('ops_cft_9501').detail) && item('ops_cft_9501').source === 'coverage-watch (overnight check)', item('ops_cft_9501'))
+ck('overnight · a missed clock-in: "Call Ted to confirm Ann\'s arrival time"', /^Call Ted to confirm Ann's arrival time/.test(item('ops_cft_9502')?.title || '') && item('ops_cft_9502').missing === 'in', item('ops_cft_9502'))
+ck('overnight · complete visit, overnight shift still going, a visit already carded (done), a coverage-case visit and an empty visit: no card',
+   cfts().length === 2 && !item('ops_cft_9503') && !item('ops_cft_9504') && item('ops_cft_9505').status === 'done' && !item('ops_cft_9506') && !item('ops_cft_9507'), APP.ops_items.map((i) => i.id))
+ck('overnight · the summary counts what it saw and why it skipped', r.confirm_times_overnight?.created === 2 && r.confirm_times_overnight.already_had_a_card === 1 && r.confirm_times_overnight.coverage_case === 1
+   && r.confirm_times_overnight.not_ended === 1 && r.confirm_times_overnight.max_days_back === 1, r.confirm_times_overnight)
+ck('overnight · nothing is texted or emailed to anyone', SENT.length === 0, SENT)
+nightSeed(false); r = await run(CW)
+ck('overnight · switch off: counted (would create 2), no card', cfts().length === 0 && r.confirm_times_overnight?.would_create === 2, r.confirm_times_overnight)
+nightSeed(true); APP.ops_items.push({ id: 'ops_evvfix_9502', kind: 'evv_fix', status: 'open', title: 'old EVV fix card' }); r = await run(CW)
+ck('overnight · a visit with an old "EVV fix needed" card gets no second card', !item('ops_cft_9502') && !!item('ops_cft_9501'), APP.ops_items.map((i) => i.id))
+
+/* ── 5 · a missed clock-in whose shift is over becomes a call to the client (2026-10-17: was "EVV fix needed") ── */
 const tkSeed = (live) => { reset(); APP.ops_settings.loops_close_live = live; at('2026-10-06T19:00:00Z')    // 2pm Central
   VISITS = [{ id: 9301, caregiver: { id: 501, firstName: 'Maria', lastName: 'Lopez' }, client: { id: 701, firstName: 'Ruth', lastName: 'Adams' },
     scheduledStartDate: '2026-10-06T09:00:00', scheduledEndDate: '2026-10-06T13:00:00', clockIn: null, clockOut: null }]
@@ -198,16 +226,45 @@ const tkSeed = (live) => { reset(); APP.ops_settings.loops_close_live = live; at
     admin_loop: { started_at: '2026-10-06T14:10:00Z', sends: [{ at: '2026-10-06T18:00:00Z', stage: 'after_end', admins: 2 }], last_sent_at: '2026-10-06T18:00:00Z', snooze: {}, texts_to: {} } }]
   APP.ops_items = [{ id: 'ops_tk_tk_9301', kind: 'staffing_issue', status: 'open', owner: 'sam@mo-care.com', title: 'NO CLOCK-IN' }] }
 tkSeed(false); r = await run(TK)
-ck('tk off · it lists what would become an EVV fix and keeps the old behaviour', r.evv_fix?.became_evv_fix?.length === 1 && !APP.timekeeper_cases[0].resolved_at && item('ops_tk_tk_9301').status === 'open', r.evv_fix)
+ck('tk off · it lists the call card it would make and keeps the old behaviour', r.confirm_times?.from_missed_clockin?.length === 1 && r.confirm_times.live === false
+   && !APP.timekeeper_cases[0].resolved_at && item('ops_tk_tk_9301').status === 'open' && !item('ops_cft_9301'), r.confirm_times)
 tkSeed(true); SENT = []; r = await run(TK)
 const lad = APP.timekeeper_cases[0]
-ck('tk on · the alert closes as "became EVV fix" (Resolved) and its card says so', lad.resolved_how === 'became_evv_fix' && item('ops_tk_tk_9301').status === 'resolved' && item('ops_tk_tk_9301').resolved_how === 'became_evv_fix', [lad, item('ops_tk_tk_9301')])
-const fix = item('ops_evvfix_9301')
-ck('tk on · ONE "EVV fix needed" card, same owner, with the next step', fix?.kind === 'evv_fix' && fix.status === 'open' && fix.owner === 'sam@mo-care.com'
-   && /Maria Lopez, Ruth's 9am shift \(2026-10-06\) had no clock-in/.test(fix.title) && /Text the EVV form/.test(fix.detail), fix)
+ck('tk on · the alert closes as "became a call to confirm the times" (Resolved) and its card says so', lad.resolved_how === 'became_confirm_times' && lad.confirm_times_item === 'ops_cft_9301'
+   && item('ops_tk_tk_9301').status === 'resolved' && item('ops_tk_tk_9301').resolved_how === 'became_confirm_times' && /Call Ruth to confirm the times/.test(item('ops_tk_tk_9301').detail), [lad, item('ops_tk_tk_9301')])
+const fix = item('ops_cft_9301')
+ck('tk on · ONE "Call Ruth to confirm Maria\'s times" card, same owner, both times missing, the SOP named', fix?.kind === 'confirm_times' && fix.status === 'open' && fix.owner === 'sam@mo-care.com'
+   && fix.missing === 'both' && fix.visit_id === '9301' && fix.client_axiscare_id === '701' && fix.shift_time === '09:00' && fix.shift_end === '13:00'
+   && /^Call Ruth to confirm Maria's arrival and departure times \(Tuesday, Oct 6, 9 AM to 1 PM\)$/.test(fix.title)
+   && /Let them tell you the times/.test(fix.detail) && /Fixed in AxisCare/.test(fix.detail) && /SOP: Procedures > Missed clock-in or clock-out/.test(fix.detail)
+   && !/EVV form|correction form|\u2014/.test(fix.title + fix.detail) && !item('ops_evvfix_9301'), fix)
 ck('tk on · the admin texts stop: nothing sent this run or the next', SENT.length === 0 && (at('2026-10-06T19:40:00Z'), true) && (await run(TK), SENT.length === 0), SENT)
+ck('tk on · and the card is made once: the next run adds no second card', APP.ops_items.filter((i) => i.kind === 'confirm_times').length === 1, APP.ops_items.map((i) => i.id))
+tkSeed(true); APP.ops_items.push({ id: 'ops_cft_9301', kind: 'confirm_times', status: 'done', title: 'done already' }); r = await run(TK)
+ck('tk on · a visit whose card was already done is never carded again', item('ops_cft_9301').status === 'done' && r.confirm_times.already_had_a_card === 1, r.confirm_times)
 tkSeed(true); VISITS[0].caregiver = { id: 777, firstName: 'Other', lastName: 'Person' }; r = await run(TK)
-ck('tk on · a visit that changed caregiver is still "visit changed", not an EVV fix', APP.timekeeper_cases[0].resolved_how === 'visit_changed' && !item('ops_evvfix_9301'), APP.timekeeper_cases[0])
+ck('tk on · a visit that changed caregiver is still "visit changed", no call card', APP.timekeeper_cases[0].resolved_how === 'visit_changed' && !item('ops_cft_9301'), APP.timekeeper_cases[0])
+
+/* ── 5b · a missed clock-OUT becomes a call to the client 30 minutes after the end (2026-10-17) ── */
+const outSeed = (live, nowIso) => { reset(); APP.ops_settings.loops_close_live = live; at(nowIso)
+  VISITS = [{ id: 9401, caregiver: { id: 501, firstName: 'Maria', lastName: 'Lopez' }, client: { id: 701, firstName: 'Ruth', lastName: 'Adams' },
+    scheduledStartDate: '2026-10-06T09:00:00', scheduledEndDate: '2026-10-06T13:00:00', clockIn: { time: '2026-10-06T09:04:00' }, clockOut: null }] }
+outSeed(true, '2026-10-06T18:25:00Z'); r = await run(TK)          // 1:25pm Central: 25 minutes after the end
+ck('clock-out · 25 minutes after the end: the reminder text only, no card yet', !APP.ops_items.some((i) => i.kind === 'confirm_times')
+   && SENT.some((x) => /no clock-out yet/.test(JSON.stringify(x))), [APP.ops_items, SENT.length])
+ck('clock-out · the reminder has no form link any more', SENT.every((x) => !/evv-correction-form|correction form|fill in this form/i.test(JSON.stringify(x))), SENT)
+at('2026-10-06T18:31:00Z'); r = await run(TK)
+const out = item('ops_cft_9401')
+ck('clock-out · 31 minutes after: ONE "Call Ruth to confirm Maria\'s departure time" card, AxisCare clock-in shown', out?.kind === 'confirm_times' && out.missing === 'out'
+   && /^Call Ruth to confirm Maria's departure time/.test(out.title) && /clock-in at 9:04 AM and no clock-out/.test(out.detail) && r.confirm_times.from_missed_clockout.length === 1, [out, r.confirm_times])
+at('2026-10-06T19:31:00Z'); r = await run(TK)
+ck('clock-out · never a second card for the same visit', APP.ops_items.filter((i) => i.kind === 'confirm_times').length === 1 && r.confirm_times.from_missed_clockout.length === 0)
+APP.ops_settings.confirm_times_out_after_min = 90; outSeed(true, '2026-10-06T19:00:00Z'); APP.ops_settings.confirm_times_out_after_min = 90; r = await run(TK)
+ck('clock-out · the 30 minutes is a setting (90 here: nothing at 60 minutes)', !item('ops_cft_9401') && r.confirm_times.out_after_min === 90, r.confirm_times)
+outSeed(false, '2026-10-06T18:31:00Z'); r = await run(TK)
+ck('clock-out · switch off: listed, no card', !item('ops_cft_9401') && r.confirm_times.from_missed_clockout.length === 1 && r.confirm_times.live === false, r.confirm_times)
+outSeed(true, '2026-10-06T18:31:00Z'); VISITS[0].clockOut = { time: '2026-10-06T13:02:00' }; r = await run(TK)
+ck('clock-out · clocked out: no card', !item('ops_cft_9401'))
 
 /* ── 6 · coverage-run never asks caregivers about a shift that is over ── */
 const CRsrc = fs.readFileSync(`${FN}/coverage-run/index.ts`, 'utf8')
