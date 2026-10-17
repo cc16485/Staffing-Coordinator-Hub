@@ -3,8 +3,8 @@
 // https://claude.ai/artifact/AS6GbybmUqC47WKPto44p8). AxisCare is the truth; the app follows it.
 // Every 10 minutes (inside family-offer's run), each CONFIRMED app visit (status placed, an AxisCare visit, the next 14 days,
 // not started) is read from AxisCare and compared with what the app shows:
-//   * Caregiver taken off: the app says "<Sarah> can't come on <day>. Our office is arranging another caregiver and will
-//     update you." No family message here: Coverage Help owns a call-off (its case, its "covered" text, or a person calls
+//   * Caregiver taken off: the app says "<Sarah> can no longer come on <day>. We're checking whether another caregiver can,
+//     but we can't promise one. We'll contact you either way." (her wording 2026-10-17). No family message here: Coverage Help owns a call-off (its case, its "covered" text, or a person calls
 //     the family). If no Coverage Help case is open for the visit, the office gets one card, because a confirmed visit
 //     with nobody on it always needs a person (decision 7, existing coverage procedures).
 //   * Another caregiver put on, or the time or day changed: the app updates. The family gets ONE message (caregiver changed
@@ -128,7 +128,7 @@ export async function syncPlaced(d: SyncDeps, opts: { dry?: boolean } = {}) {
       const k = await caseFor(b.axiscare_visit_id)
       await d.updateBooking(b.id, { ...base, sync_state: 'no_caregiver', sync_note: b.caregiver_name ?? null, family_change_pending: false })
       if (!k || k.status !== 'open') {
-        await d.officeItem({ ...officeCard('nocg', b, `App visit has no caregiver: ${b.client_name}, ${b.visit_date}`, `${b.caregiver_name ?? 'The caregiver'} is no longer on ${when(b)} in AxisCare, and Coverage Help has no open case for it. The family's app says our office is arranging another caregiver. Please cover it (or tell the family).`, nowIso), urgency: 'today', next_action: 'Cover the visit, or call the family.' })
+        await d.officeItem({ ...officeCard('nocg', b, `App visit has no caregiver: ${b.client_name}, ${b.visit_date}`, `${b.caregiver_name ?? 'The caregiver'} is no longer on ${when(b)} in AxisCare, and Coverage Help has no open case for it. The family's app says we're checking for another caregiver, can't promise one, and will contact them either way. Please cover it, or call the family.`, nowIso), urgency: 'today', next_action: 'Cover the visit, or call the family.' })
         out.cards++
       }
       await d.event({ actor_kind: 'system', actor_name: 'family app', via: 'cron', verb: 'family_visit_no_caregiver', area: 'family_app', summary: `${b.caregiver_name ?? 'The caregiver'} is off ${b.client_name} ${when(b)} in AxisCare${k?.status === 'open' ? ' (Coverage Help has it)' : '; the office is asked to cover it'}`, data: { booking_id: b.id, coverage_case: k?.id ?? null } })
