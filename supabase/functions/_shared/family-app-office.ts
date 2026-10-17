@@ -22,6 +22,7 @@
 //   help_fill {circle_id, on, reason}   the client's "Help us fill extra visits" flag, 90 days; Samantha or Krystal only
 //            (owner_admin or care_coordinator)
 //   app_tasks {circle_id, tasks: string[] | null}   the companion tasks this client may pick in the app (null = all)
+//   late_billed {booking_id, on}   a late cancel's charge was added to the invoice (the weekly billing list, not a card)
 // Never texts or emails a family: invite returns the words for a person to send.
 // =============================================================================
 import { brand, brandFor, type Brand } from './brands.ts'
@@ -316,6 +317,15 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     if (!(await d.setAbout(String(k.id), { help_fill: flag }))) return say(500, { error: 'Not saved. Please try again.' })
     await ev('family_help_fill', `${staff.name} turned Help us fill ${on ? `ON until ${review}` : 'off'} for ${k.client_name ?? 'a client'}${on ? `: ${reason}` : ''}`, { circle_id: k.id, on })
     return say(200, { ok: true, help_fill: flag })
+  }
+
+  if (action === 'late_billed') {
+    const b = await d.booking(String(body?.booking_id ?? ''))
+    if (!b || !b.late_charge_hours) return say(404, { error: 'No late charge on that visit.' })
+    const on = body?.on !== false
+    await d.updateBooking(b.id, on ? { late_billed_at: nowIso, late_billed_by: staff.email } : { late_billed_at: null, late_billed_by: null })
+    await ev('family_late_billed', `${staff.name} ${on ? 'added' : 'took back'} the late-cancel charge (${b.late_charge_hours} hours) for ${b.client_name} ${b.visit_date}`, { booking_id: b.id, on })
+    return say(200, { ok: true })
   }
 
   if (action === 'app_tasks') {

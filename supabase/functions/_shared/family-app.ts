@@ -11,7 +11,7 @@
 
 import { brand, brandFor, brandView } from './brands.ts'
 import { planRequest, earliestStart, words as answerWords } from './answer-by.ts'
-import { NOTE_MAX, checkNote, helpFillOn, officeCanHelp, HELD_WORDS, EMERGENCY_WORDS, HELP_ADD, HELP_LATE } from './family-review.ts'
+import { NOTE_MAX, checkNote, noteBlockWords, helpFillOn, officeCanHelp, HELP_ADD, HELP_LATE, type AiVerdict } from './family-review.ts'
 
 export const TZ = 'America/Chicago'   // Missouri and Oklahoma are both Central
 
@@ -351,6 +351,8 @@ export type Deps = {
   /** Release 3: the client's Family Circle settings: the companion tasks allowed in the app (null = all) and Help us fill. */
   // deno-lint-ignore no-explicit-any
   circleFlags?: (circleId: string) => Promise<{ app_tasks: string[] | null; help_fill: any } | null>
+  /** Release 3: AI's second opinion on the family's note, at Send (family-review.ts); null = unavailable */
+  reviewNote?: (note: string, tasks: string[]) => Promise<AiVerdict>
   /** Close an open office card (the "Place a caregiver" card of a visit the family cancelled). Optional. */
   closeItem?: (id: string, by: string, text: string) => Promise<void>
 }
@@ -496,10 +498,12 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
   if (action === 'when') {
     const date = String(body?.date ?? ''), start = String(body?.start ?? '')
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(start)) return say(400, { error: 'Please pick a day and a time.' })
+    const wn = checkNote(body?.note)   // the fixed rules, before Send (AI reads it at Send)
+    const note_block = wn.fam || wn.emergency ? noteBlockWords(wn, phone ?? 'the office') : null
     const p = planRequest(now, date, start, st), hrs = hoursFor(state, st)
     if (!p.ok) { const e = earliestStart(now, date, hrs.open, hrs.close, MIN_HOURS, st); return say(200, { ok: false, earliest: e, error: tooSoonWords(date, e) }) }
     return say(200, { ok: true, answer_by: p.answer_by, answer_by_words: answerWords(p.answer_by), two_stage: p.two_stage, team_from_words: p.two_stage ? answerWords(p.team_from) : null,
-      help: helpFill ? (officeCanHelp(now, new Date(p.answer_by)) ? HELP_ADD : HELP_LATE) : null })
+      help: helpFill ? (officeCanHelp(now, new Date(p.answer_by)) ? HELP_ADD : HELP_LATE) : null, note_block, emergency: wn.emergency })
   }
 
   const herCaregivers = async () => {
@@ -539,6 +543,16 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
     const v = validateBooking(body, now, allowedTasks(), hoursFor(state, st))
     if (!v.ok) return say(400, { error: v.error })
     if (String(v.note ?? '').length > NOTE_MAX) return say(400, { error: `Please keep the note to ${NOTE_MAX} characters.` })
+    // Her choice 2026-10-17: a note asking for care extra visits don't include is stopped HERE. Nothing is saved or sent, and
+    // nobody in the office is involved: the family changes or removes the note, or calls.
+    const nc = checkNote(v.note)
+    if (nc.fam || nc.emergency) return say(422, { blocked: true, emergency: nc.emergency, error: noteBlockWords(nc, phone ?? 'the office') })
+    let noteCheck: string | null = null
+    if (v.note && deps.reviewNote) {
+      const a = await deps.reviewNote(String(v.note), v.tasks)
+      if (a?.verdict === 'outside') return say(422, { blocked: true, emergency: false, error: noteBlockWords({ fam: null, emergency: false }, phone ?? 'the office', true) })
+      noteCheck = a ? `ai_${a.verdict}` : 'ai_unavailable'   // recorded only; a concern goes through (the caregiver reads the note)
+    }
     const method = String(body?.method ?? 'auto') === 'choose' ? 'choose' : 'auto'
     if (method === 'choose') { const ca = chooseAllowed(st, v.date, v.start ?? v.window_start, now); if (!ca.ok || !deps.choose) return say(400, { error: ca.ok ? '"Let me choose" isn\'t available just now. Pick "Find someone for me."' : ca.why }) }
     if (v.preferred.length) {
@@ -554,7 +568,7 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
     const row = { axiscare_client_id: w.axiscare_client_id, client_name: clientName, state, contact_id: w.contact_id, app_user_id: user.id, requested_by_name: w.name,
       kind: v.kind, visit_date: v.date, start_time: v.start, end_time: v.end, window_start: v.window_start, window_end: v.window_end, hours: v.hours, tasks: v.tasks, who: v.who, note: v.note || null,
       preferred_caregiver_ids: v.preferred, requested_caregiver_axiscare_id: v.preferred[0] ?? null, status: 'received',
-      answer_by: plan.answer_by, team_from: plan.team_from, asking_from: plan.asking_from, two_stage: plan.two_stage, help_fill: helpFill,
+      answer_by: plan.answer_by, team_from: plan.team_from, asking_from: plan.asking_from, two_stage: plan.two_stage, help_fill: helpFill, note_check: noteCheck,
       ...(method === 'choose' ? { method, choose_by: chooseBy(v.date, v.start ?? v.window_start, now, chooseSettings(st).deadline) } : {}) }
     const ins = await deps.insertBooking(row)
     if (!ins) return say(500, { error: "We couldn't save that booking. Nothing was booked. Please try again or call the office." })
@@ -571,18 +585,10 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
     const picks = v.preferred.length ? ` Asked for: ${v.preferred.length} of ${clientName}'s caregivers first.` : ''
     // Release 1 (her approval 2026-10-17): nothing goes on AxisCare until a caregiver accepts and it's confirmed (set times
     // and flexible visits alike), so the schedule never shows an empty placeholder for a request.
-    // Release 3 (decision 6, layer 2): a note that asks for care our extra visits don't cover is held for the office first.
-    const nc = checkNote(v.note)
-    const em = nc.emergency ? ' ' + EMERGENCY_WORDS(phone ?? 'the office') : ''
-    if (nc.hold) {
-      await deps.updateBooking(b.id, { status: 'held', hold_reason: nc.hold, held_by: 'rules', held_at: nowIso, note_check: 'rules_held' })
-      await deps.officeItem({ ...officeCard('held', b, `Check this request before caregivers are asked: ${clientName}, ${b.visit_date}`, `${w.name} asked for ${when(b)} (${v.tasks.join(', ')}). Held because ${nc.hold}. Note: "${String(v.note).slice(0, 300)}". Approve it, approve it without the note, or decline it (Scheduling, Family bookings). Not reviewed by ${answerWords(plan.answer_by)} = it ends with the decline wording.`, nowIso), urgency: nc.emergency ? 'now' : 'today', next_action: 'Approve, approve without the note, or decline.' })
-      return say(200, { ok: true, booking_id: b.id, status: 'held', emergency: nc.emergency, message: HELD_WORDS(answerWords(plan.answer_by)) + em, answer_by: plan.answer_by, answer_by_words: answerWords(plan.answer_by) })
-    }
     await deps.updateBooking(b.id, { status: 'waiting_for_caregiver' })
     if (!offers) await deps.officeItem(officeCard('book', b, `Place a caregiver: ${clientName}, ${when(b)}`, `${w.name} asked for ${when(b)} in the app (${v.tasks.join(', ')}). Caregiver offers are off, so the office places it; it goes on AxisCare when a caregiver is placed.${picks}${v.note ? ` Note: ${v.note}` : ''}`, nowIso))
     const help = helpFill ? ' ' + (officeCanHelp(now, new Date(plan.answer_by)) ? HELP_ADD : HELP_LATE) : ''
-    return say(200, { ok: true, booking_id: b.id, status: 'waiting_for_caregiver', emergency: nc.emergency, message: sent + help + em, answer_by: plan.answer_by, answer_by_words: answerWords(plan.answer_by) })
+    return say(200, { ok: true, booking_id: b.id, status: 'waiting_for_caregiver', message: sent + help, answer_by: plan.answer_by, answer_by_words: answerWords(plan.answer_by) })
   }
 
   if (action === 'cancel') {
@@ -632,13 +638,14 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
           if (!t.ok) problems.push(`The text to ${cgName} didn't go (${t.why ?? 'unknown'}). Please call them: the visit is cancelled.`)
         } else problems.push(`Please let ${cgName} know the visit is cancelled.`)
       }
-      if (late) problems.push(`Late cancel: add ${lateHours} hours for ${clientName} to this week's invoice${cgName ? ` and pay ${cgName} ${lateHours} hours` : ''}. AxisCare won't do this by itself because nobody clocks in.`)
+      // Late charge (approved model): a weekly billing list in Family bookings, not an office card.
     }
     if (problems.length) await deps.officeItem(officeCard('cancel', b, `${late ? 'Late cancel' : 'Family cancelled'}: ${clientName}, ${visitWords(b)}`,
       `${w.name} cancelled ${visitWords(b)} in the app on ${stampWords(now)}. ${problems.join(' ')}`, nowIso))
     if (deps.choose && b.method === 'choose') await deps.choose.cancelled(b, late)
     if (deps.closeItem) await deps.closeItem(`fam_book_${b.id}`, 'family app', `${w.name} cancelled this visit in the app on ${stampWords(now)}.`)
-    await deps.updateBooking(b.id, { status: 'cancelled', cancelled_at: nowIso, cancelled_by: w.name, ...(removed ? {} : { error: 'AxisCare remove refused' }) })
+    await deps.updateBooking(b.id, { status: 'cancelled', cancelled_at: nowIso, cancelled_by: w.name, ...(removed ? {} : { error: 'AxisCare remove refused' }),
+      ...(late && live ? { late_charge_hours: lateHours, late_pay_caregiver: cgName } : {}) })
     await deps.event({ actor_kind: 'person', actor_email: user.email ?? undefined, actor_name: w.name, via: 'link', verb: 'family_cancelled', area: 'family_app',
       summary: `${w.name} cancelled ${b.client_name} ${when(b)}${late ? ` (late: ${lateHours} hours charged)` : ''}`, data: { booking_id: b.id, late, late_hours: late ? lateHours : 0, caregiver_texted: texted, live } })
     if (!live) return say(200, { ok: true, late, message: `Cancelled. (Practice mode: nothing was on the schedule${late ? ', and nothing is charged' : ''}.)` })

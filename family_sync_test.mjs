@@ -137,8 +137,10 @@ world(); booking('a'); W.visits['v=a'].caregiver = { id: 88, firstName: 'Maria' 
 at('2026-10-21T15:30:00Z'); await run()   // Wed 10:30, after the 10:00 visit started
 ck('the visit started before we could tell them: not sent, no card', !W.sent.length && /already started/.test(B('a').family_change_how) && !W.items.length, B('a'))
 at('2026-10-20T15:00:00Z')
+world(); W.failSend = 'not sent (opted out, or the number is not trusted for texts)'; booking('a'); W.visits['v=a'].caregiver = { id: 88, firstName: 'Maria' }; await run(); await run()
+ck('a message that did not go becomes a "call the family" card (no silent failures)', W.items.some((x) => x.id === 'fam_change_tell_a') && /not sent/.test(B('a').family_change_how), { items: W.items, b: B('a') })
 world(); W.failSend = 'GoHighLevel refused the text (Needs Attention card raised)'; booking('a'); W.visits['v=a'].caregiver = { id: 88, firstName: 'Maria' }; await run(); await run()
-ck('a refused message becomes a "call the family" card (no silent failures)', W.items.some((x) => x.id === 'fam_change_tell_a') && /not sent/.test(B('a').family_change_how), { items: W.items, b: B('a') })
+ck('a GoHighLevel refusal already made a Needs Attention card: no second card', !W.items.length && /not sent/.test(B('a').family_change_how), { items: W.items, b: B('a') })
 world(); W.failSend = 'no way to reach them (no Texts OK and no email)'; booking('a'); W.visits['v=a'].caregiver = { id: 88, firstName: 'Maria' }; await run(); await run()
 ck('no way to reach them: recorded, no card (the app shows it)', !W.items.length && /no way to reach/.test(B('a').family_change_how))
 

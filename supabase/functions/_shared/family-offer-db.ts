@@ -16,7 +16,6 @@ import type { MatchResult } from './family-offer.ts'
 import { approvedRules } from './approved-rules.ts'
 import { careLevelOf } from './care-level.ts'
 import { judge, homeNotes, type MatchClient, type MatchCaregiver } from './family-match.ts'
-import { reviewNote, type AiVerdict } from './family-review.ts'
 
 // deno-lint-ignore no-explicit-any
 type Any = any
@@ -27,7 +26,7 @@ const SENDERS: Record<string, string> = { family_confirm_text_approved: 'family-
 const PROFILE_COLS = 'axiscare_id, first_name, last_name, preferred_name, about, experience, why_this_work, years_experience, photo_path, photo_url, video_path, consent, published, status, photo_hidden, video_hidden'
 
 export function chooseDepsFor(db: Any, ax: Ax, supabaseUrl: string): ChooseDeps & Required<Pick<import('./family-offer.ts').OfferDeps, 'textFamily' | 'confirmDue' | 'tellFamily' | 'clientAbout' | 'unfilledDue'>> &
-  Pick<SyncDeps, 'placedAhead' | 'coverage' | 'changeDue'> & { matchFor: (b: Any) => Promise<MatchResult>; reviewNote: (b: Any) => Promise<AiVerdict>; heldDue: () => Promise<Any[]>; declinedDue: () => Promise<Any[]> } {
+  Pick<SyncDeps, 'placedAhead' | 'coverage' | 'changeDue'> & { matchFor: (b: Any) => Promise<MatchResult>; heldDue: () => Promise<Any[]>; declinedDue: () => Promise<Any[]> } {
   const key = async (k: string): Promise<Any> => (await db.from('app_data').select('data').eq('key', k).maybeSingle()).data?.data
   const ghl = () => ({ token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' })
   const headers = (t: string) => ({ Authorization: `Bearer ${t}`, Version: '2021-07-28', 'Content-Type': 'application/json' })
@@ -147,7 +146,6 @@ export function chooseDepsFor(db: Any, ax: Ax, supabaseUrl: string): ChooseDeps 
         return judge(M, client, cg, today)
       } }
     },
-    reviewNote: async (b) => reviewNote(String(b.note ?? ''), Array.isArray(b.tasks) ? b.tasks.map(String) : [], Deno.env.get('ANTHROPIC_API_KEY') ?? ''),
     heldDue: async () => (await db.from('family_bookings').select('*').eq('status', 'held').lte('answer_by', new Date().toISOString()).limit(100)).data ?? [],
     declinedDue: async () => {
       const today = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)

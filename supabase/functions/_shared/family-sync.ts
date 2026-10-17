@@ -176,5 +176,5 @@ async function tellChange(d: SyncDeps, st: Any, b: Any, now: Date): Promise<{ ok
   const html = `<div style="font-family:Arial,sans-serif;font-size:16px;line-height:1.6;color:#16283a;max-width:520px"><p>Hi ${h(first)},</p><p>${line}</p>` +
     `<p>You can see the details anytime in the app at <a href="${h(String(fb.app_url))}">${h(String(fb.app_host))}</a>.</p><p>Questions? Call us at ${h(fb.phone)}.</p><p style="color:#55677a">${h(fb.footer)}</p></div>`
   const r = await d.tellFamily(b, sms, { subject: kind === 'caregiver' ? `${cg} will be with ${client} on ${day}` : `${client}'s visit is now on ${day}`, html }, keys[0])
-  return r.ok ? r : { ...r, ask: r.why !== 'no way to reach them (no Texts OK and no email)' }
+  return r.ok ? r : { ...r, ask: r.why !== 'no way to reach them (no Texts OK and no email)' && !/Needs Attention card raised/.test(String(r.why ?? '')) }   // no duplicate card
 }

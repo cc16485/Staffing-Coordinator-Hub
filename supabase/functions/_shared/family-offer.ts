@@ -27,7 +27,7 @@
 // =============================================================================
 import { appLive, central, hoursUntil, startOf, startChoices, toMin, fromMin, clock12, caregiverDay, overlaps, placeCaregiver, clientVisits, officeCard, when, chooseSettings, cardOf, shareable, reasonId, axErr, ok2, type Ax } from './family-app.ts'
 import { askRules, inHours } from './answer-by.ts'
-import { AI_WHY, handoffAt, inOffice, MSG_FAMILY_DECLINED, MSG_FAMILY_COULDNT, type AiVerdict } from './family-review.ts'
+import { handoffAt, inOffice, MSG_FAMILY_DECLINED, MSG_FAMILY_COULDNT } from './family-review.ts'
 import { brand, brandFor } from './brands.ts'
 
 // deno-lint-ignore no-explicit-any
@@ -76,8 +76,6 @@ export type OfferDeps = {
   unfilledDue?: () => Promise<Any[]>
   /** Release 3: the Hub's matching rulebook for this request (family-match.ts); ok:false = offers wait (fail closed) */
   matchFor?: (b: Any) => Promise<MatchResult>
-  /** Release 3: AI as a second opinion on the family's note (family-review.ts); null = unavailable */
-  reviewNote?: (b: Any) => Promise<AiVerdict>
   /** held requests whose answer-by time has passed (never reviewed) */
   heldDue?: () => Promise<Any[]>
   /** declined requests whose family message is owed */
@@ -227,6 +225,9 @@ export async function chooseCancelled(d: ChooseDeps, b: Any) {
   }
 }
 /** The family's quiet hours for the one choose text: 8 AM to 8 PM Central only. */
+/** A family message that didn't go makes an office card only when nobody else already raised one: GoHighLevel refusals already
+ *  make a Needs Attention card, and "no way to reach them" shows in the app (no silent failure, no duplicate card). */
+export const cardWorthy = (why: unknown) => { const w = String(why ?? ''); return w !== 'no way to reach them (no Texts OK and no email)' && !/Needs Attention card raised/.test(w) }
 export const familyWindow = (now: Date) => { const h = Math.floor(central(now).minutes / 60); return h >= 8 && h < 20 }
 
 async function townOf(ax: Ax, clientId: string): Promise<string> {
@@ -263,7 +264,7 @@ export async function runOffers(d: OfferDeps, opts: { dry?: boolean } = {}) {
       }
       await d.updateBooking(b.id, { family_confirm_pending: false, family_confirmed_at: nowIso, family_confirm_how: r.ok ? r.how : `not sent: ${r.why}` })
       if (r.ok) out.family_texts++
-      else if (r.why !== 'no way to reach them (no Texts OK and no email)') await d.officeItem({ ...officeCard('confirm_tell', b, `Tell the family who's coming: ${b.client_name}`, `${b.caregiver_name ?? 'A caregiver'} is on ${when(b)}, but the message to ${b.requested_by_name ?? 'the family'} didn't go (${r.why}). They can see it in the app; a call may help.`, nowIso), urgency: 'soon' })
+      else if (cardWorthy(r.why)) await d.officeItem({ ...officeCard('confirm_tell', b, `Tell the family who's coming: ${b.client_name}`, `${b.caregiver_name ?? 'A caregiver'} is on ${when(b)}, but the message to ${b.requested_by_name ?? 'the family'} didn't go (${r.why}). They can see it in the app; a call may help.`, nowIso), urgency: 'soon' })
     }
   }
   // Release 1: the family always hears when nobody accepted (8 AM to 7:30 PM; text with Texts OK, else email).
@@ -287,7 +288,7 @@ export async function runOffers(d: OfferDeps, opts: { dry?: boolean } = {}) {
       }
       await d.updateBooking(b.id, { family_unfilled_pending: false, family_unfilled_at: nowIso, family_unfilled_how: r.ok ? r.how : `not sent: ${r.why}` })
       if (r.ok) out.family_texts++
-      else if (r.why !== 'no way to reach them (no Texts OK and no email)') await d.officeItem({ ...officeCard('unfilled_tell', b, `Tell the family: no caregiver for ${b.client_name}, ${b.visit_date}`, `Nobody accepted ${when(b)}, but the message to ${b.requested_by_name ?? 'the family'} didn't go (${r.why}). The app shows it; a call may help.`, nowIso), urgency: 'soon' })
+      else if (cardWorthy(r.why)) await d.officeItem({ ...officeCard('unfilled_tell', b, `Tell the family: no caregiver for ${b.client_name}, ${b.visit_date}`, `Nobody accepted ${when(b)}, but the message to ${b.requested_by_name ?? 'the family'} didn't go (${r.why}). The app shows it; a call may help.`, nowIso), urgency: 'soon' })
     }
   }
   // Release 3: a held request nobody reviewed by its answer-by time ends with the decline wording (decision 6).
@@ -315,7 +316,7 @@ export async function runOffers(d: OfferDeps, opts: { dry?: boolean } = {}) {
       }
       await d.updateBooking(b.id, { family_declined_pending: false, family_declined_at: nowIso, family_declined_how: r.ok ? r.how : `not sent: ${r.why}` })
       if (r.ok) out.family_texts++
-      else if (r.why !== 'no way to reach them (no Texts OK and no email)') await d.officeItem({ ...officeCard('declined_tell', b, `Tell the family: request declined (${b.client_name})`, `${when(b)} was declined, but the message to ${b.requested_by_name ?? 'the family'} didn't go (${r.why}). The app shows it; please call them.`, nowIso), urgency: 'soon', next_action: 'Call the family.' })
+      else if (cardWorthy(r.why)) await d.officeItem({ ...officeCard('declined_tell', b, `Tell the family: request declined (${b.client_name})`, `${when(b)} was declined, but the message to ${b.requested_by_name ?? 'the family'} didn't go (${r.why}). The app shows it; please call them.`, nowIso), urgency: 'soon', next_action: 'Call the family.' })
     }
   }
   const r1 = askRules(st)
@@ -381,24 +382,9 @@ export async function runOffers(d: OfferDeps, opts: { dry?: boolean } = {}) {
       const t = msg ? await d.textFamily(b, msg) : { ok: false, why: 'no family app for this brand' }
       await d.updateBooking(b.id, { family_told_at: nowIso, ...(t.ok ? {} : { error: `family text: ${t.why}` }) }); b.family_told_at = nowIso
       if (t.ok) out.family_texts++
-      else if (t.why !== 'no consent to text') await d.officeItem({ ...officeCard('choose_tell', b, `Tell the family: caregivers are interested (${b.client_name})`, `Caregivers are interested in ${when(b)}, but the text to ${b.requested_by_name ?? 'the family'} didn't go (${t.why}). They can see it in the app; a call may help.`, nowIso), urgency: 'soon' })
+      else if (t.why !== 'no consent to text' && cardWorthy(t.why)) await d.officeItem({ ...officeCard('choose_tell', b, `Tell the family: caregivers are interested (${b.client_name})`, `Caregivers are interested in ${when(b)}, but the text to ${b.requested_by_name ?? 'the family'} didn't go (${t.why}). They can see it in the app; a call may help.`, nowIso), urgency: 'soon' })
     }
-    // Release 3 (decision 6, layer 3): AI reads the family's note before any caregiver is asked. It can only add a hold.
-    if (b.note && !b.note_check && !offers.length && d.reviewNote) {   // (requests already being offered before Release 3 are left as they are)
-      const v = opts.dry ? { verdict: 'fine' as const, why: '' } : await d.reviewNote(b)   // a dry run never calls AI
-      if (opts.dry) out.would.push({ booking: b.id, review_note: true })
-      if (opts.dry) { /* nothing saved */ }
-      else if (!v) await d.updateBooking(b.id, { note_check: 'ai_unavailable' })   // the rules decided; it goes on the office's daily list
-      else if (v.verdict === 'fine') await d.updateBooking(b.id, { note_check: 'ai_fine' })
-      else {
-        const reason = `AI: ${AI_WHY[v.verdict]}${v.why ? ` (${v.why})` : ''}`
-        await d.updateBooking(b.id, { status: 'held', hold_reason: reason, held_by: 'ai', held_at: nowIso, note_check: `ai_${v.verdict}` })
-        await d.officeItem({ ...officeCard('held', b, `Check this request before caregivers are asked: ${b.client_name}, ${b.visit_date}`, `${b.requested_by_name ?? 'The family'} asked for ${when(b)} (${(b.tasks ?? []).join(', ')}). Held: ${reason}. Note: "${String(b.note).slice(0, 300)}". Approve it, approve it without the note, or decline it (Scheduling, Family bookings).`, nowIso), urgency: 'today', next_action: 'Approve, approve without the note, or decline.' })
-        await d.event({ actor_kind: 'system', actor_name: 'family app', via: 'cron', verb: 'family_request_held', area: 'family_app', summary: `${b.client_name} ${when(b)} held for the office: ${reason}`, data: { booking_id: b.id, by: 'ai', verdict: v.verdict } })
-        out.cards++; continue
-      }
-      b.note_check = 'checked'
-    }
+    // (Her choice 2026-10-17: the note is checked at Send, rules then AI, in family-app.ts; nothing is held for the office here.)
     // Release 1 (decision A, 2026-10-17): no office card for a routine request nobody has taken; it ends with an answer.
     if (!o.live) { out.would.push({ booking: b.id, stage: b.offer_stage ?? 'picks next' }); continue }
     // Release 1: optional visits never text caregivers at night (no "within 3 hours" exception); the answer-by rule allows for it.
@@ -443,10 +429,11 @@ export async function runOffers(d: OfferDeps, opts: { dry?: boolean } = {}) {
     { const m0 = await match()
       if (m0 && !m0.ok) {
         out.skipped.push({ booking: b.id, why: `matching rules unavailable: ${m0.why}` })
-        if (!opts.dry) await d.officeItem({ ...officeCard('match', b, `Caregiver offers paused: ${b.client_name}, ${b.visit_date}`, `The matching rules couldn't be read (${m0.why}), so no caregiver was asked for ${when(b)}. The run tries again every 10 minutes; tell Claude if this card stays.`, nowIso), urgency: 'today', next_action: 'Tell Claude; place a caregiver by hand if the visit is close.' })
+        // ONE card for the whole app (not one per request): it's a system fault the office can't fix, only report
+        if (!opts.dry) await d.officeItem({ ...officeCard('match', b, 'Family app: caregiver offers paused', `The matching rules couldn't be read (${m0.why}), so app requests are waiting instead of being offered. The run tries again every 10 minutes; tell Claude if this card stays.`, nowIso), id: 'fam_match_down', about: null, urgency: 'today', next_action: 'Tell Claude.' })
         continue
       }
-      if (m0?.ok && !opts.dry) await d.closeItem(`fam_match_${b.id}`, 'family app', 'The matching rules are readable again; offers carry on.') }
+      if (m0?.ok && !opts.dry) await d.closeItem('fam_match_down', 'family app', 'The matching rules are readable again; offers carry on.') }
     // 1. picks
     if (!b.offer_stage) {
       const ids: string[] = Array.isArray(b.preferred_caregiver_ids) ? b.preferred_caregiver_ids.map(String) : []

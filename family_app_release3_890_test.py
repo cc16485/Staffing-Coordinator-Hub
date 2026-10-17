@@ -36,7 +36,7 @@ class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         p = self.path; S["calls"].append(("GET", p))
         if p.startswith("/match-rules.js"): return self._raw(200, RULES, "application/javascript")
-        if p.startswith("/family-app-panel.js"): return self._raw(200, "window.FAMAPP = { review: review }" if M["panel_live"] else "window.FAMAPP = {}", "application/javascript")
+        if p.startswith("/family-app-panel.js"): return self._raw(200, "window.FAMAPP = { lateBilled: lateBilled, review: review }" if M["panel_live"] else "window.FAMAPP = {}", "application/javascript")
         if p.startswith("/visit-offer.html"): return self._raw(200, "<b>Good to know</b>" if M["page_live"] else "<b>old</b>", "text/html")
         if p.endswith("/secrets"): return self._send(200, [{"name": "ANTHROPIC_API_KEY"}] if M["ai_key"] else [{"name": "GHL_TOKEN"}])
         if "/api-keys" in p: return self._send(200, [{"name": "anon", "api_key": "eyJanonHUB"}, {"name": "service_role", "api_key": "eyJsvcHUB"}])
@@ -52,11 +52,11 @@ class H(http.server.BaseHTTPRequestHandler):
             q = b["query"]; S["sql"].append(q)
             if "to_regclass('public.family_bookings') is not null as tbl" in q: return self._send(200, [{"tbl": True, "live": "true", "offers": "true"}])
             if "from public.rules_approved" in q: return self._send(200, [{"n": 1 if (M["approved"] and RULES_SHA in q) else 0}])
-            if "begin;" in q and "family_declined_pending" in q:
+            if "begin;" in q and "late_charge_hours" in q:
                 if M["sql_fail"]: return self._send(400, {"message": "syntax error"})
-                S["cols"] = 17; S["ccols"] = 2; S["settings"].update(family_declined_text_approved={"by": "Samantha"}, family_couldnt_text_approved={"by": "Samantha"}); return self._send(201, [])
+                S["cols"] = 21; S["ccols"] = 2; S["settings"].update(family_couldnt_text_approved={"by": "Samantha"}); return self._send(201, [])
             if "information_schema.columns" in q:
-                st = S["settings"]; return self._send(200, [{"cols": S["cols"], "ccols": S["ccols"], "status_ok": S["cols"] == 17, "dec": (st.get("family_declined_text_approved") or {}).get("by"), "cf": (st.get("family_couldnt_text_approved") or {}).get("by")}])
+                st = S["settings"]; return self._send(200, [{"cols": S["cols"], "ccols": S["ccols"], "status_ok": S["cols"] == 21, "cf": (st.get("family_couldnt_text_approved") or {}).get("by")}])
             return self._send(201, [])
         if p.startswith("/functions/v1/family-gateway"): return self._send(401 if M["gw_401"] else 200, {"error": "Please sign in again."})
         if p.startswith("/functions/v1/family-app-office"): return self._send(401 if M["office_401"] else 200, {"error": "not allowed"})
@@ -92,7 +92,7 @@ writes = lambda: [q for q in S["sql"] if not re.match(r"\s*select ", q)]
 c, out = run()
 ck("1 good run: checks, database, three doors, proofs", c == 0 and "890: DONE" in out and "✗" not in out, out)
 ck("1b the door first, then the run, then the office, each keeping its live gateway setting", deployed() == [["family-gateway", False], ["family-offer", False], ["family-app-office", True]], deployed())
-ck("1c the database change ran once, before any door, with both approvals", len(writes()) == 1 and "family_declined_text_approved" in writes()[0] and "family_couldnt_text_approved" in writes()[0], writes())
+ck("1c the database change ran once, before any door, with the couldn't-fill approval and no declined one", len(writes()) == 1 and "family_couldnt_text_approved" in writes()[0] and "family_declined_text_approved" not in writes()[0], writes())
 ck("1d the rulebook's approval was checked by its real fingerprint", "is an approved version (" + RULES_SHA[:12] in out, out)
 ck("1e says the AI key is there; no key or token in the report", "the AI key is set" in out and not re.search(r"eyJsvcHUB|eyJanon|sbp_test", out), out)
 c, out = run(approved=False)
