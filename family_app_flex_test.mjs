@@ -581,7 +581,10 @@ const lo = W.offers[0]
 o = await page(lo.id, { action: 'view' })
 ck('R1 the family cancels a request: a caregiver opening their link sees it was cancelled', o.body.state === 'cancelled', o.body)
 const fdb2 = fs.readFileSync(path.join(F, '_shared/family-offer-db.ts'), 'utf8')
-ck('R1 guard: the not-filled message is only sent behind its own recorded approval', /family_unfilled_text_approved/.test(fdb2.slice(fdb2.indexOf('tellFamily:'))) && /!st\[approvalKey\]/.test(fdb2))
+// R2 (2026-10-17): the approved family messages are one list (SENDERS); tellFamily refuses any key not on it or not recorded.
+const senders = fdb2.slice(fdb2.indexOf('const SENDERS'), fdb2.indexOf('const PROFILE_COLS'))
+ck('R1/R2 guard: each family message only goes behind its own recorded approval', ['family_confirm_text_approved', 'family_unfilled_text_approved', 'family_cgchange_text_approved', 'family_timechange_text_approved'].every((k) => senders.includes(k)) &&
+  /Object\.keys\(SENDERS\)\.includes\(approvalKey\) \|\| !st\[approvalKey\]/.test(fdb2), senders)
 
 for (const [n, ok, note] of res) console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note))
 const bad = res.filter((x) => !x[1]).length

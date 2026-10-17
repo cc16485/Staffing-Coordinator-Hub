@@ -18,6 +18,7 @@ import { readCensus } from '../_shared/axis-census.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { opEvent } from '../_shared/events.ts'
 import { chooseDepsFor } from '../_shared/family-offer-db.ts'
+import { syncPlaced, type SyncDeps } from '../_shared/family-sync.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -115,6 +116,10 @@ const deps: OfferDeps = {
   event: async (row) => { await opEvent(db, row) },
 }
 
+// Release 2: the same run keeps confirmed app visits in step with AxisCare (_shared/family-sync.ts).
+const syncDeps: SyncDeps = { ax, now: () => new Date(), settings: deps.settings, placedAhead: cd.placedAhead, coverage: cd.coverage, changeDue: cd.changeDue,
+  updateBooking: deps.updateBooking, officeItem: deps.officeItem, closeItem: deps.closeItem, event: deps.event, tellFamily: cd.tellFamily }
+
 // deno-lint-ignore no-explicit-any
 async function beat(ok: boolean, note: string) {
   try { await db.rpc('upsert_app_data_item', { target_key: 'automation_heartbeats', item: { id: 'hb_family-offer', automation: 'family-offer', at: new Date().toISOString(), ok, note: String(note).slice(0, 300) } }) } catch { /* never waits on this */ }
@@ -134,8 +139,10 @@ Deno.serve(async (req) => {
     if (!caller) return json({ error: 'not allowed' }, 401)
     const dry = new URL(req.url).searchParams.get('dry') === '1'
     const out = await runOffers(deps, { dry })
-    if (!dry) await beat(out.failed === 0, JSON.stringify({ ...out, would: undefined, skipped: out.skipped.slice(0, 5) }))
-    return json({ ok: true, ...out })
+    let sync: Record<string, unknown>
+    try { sync = await syncPlaced(syncDeps, { dry }) } catch (e) { sync = { error: String((e as Error)?.message ?? e).slice(0, 200) } }
+    if (!dry) await beat(out.failed === 0 && !sync.error, JSON.stringify({ ...out, would: undefined, skipped: out.skipped.slice(0, 5), sync: { ...sync, would: undefined } }))
+    return json({ ok: true, ...out, sync })
   } catch (e) {
     console.error('family-offer', String((e as Error)?.message ?? e))
     return json({ error: 'Something went wrong on our side. Please try again in a minute.' }, 500)
