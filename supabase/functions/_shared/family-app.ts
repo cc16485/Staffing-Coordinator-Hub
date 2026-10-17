@@ -10,6 +10,7 @@
 // =============================================================================
 
 import { brand, brandFor, brandView } from './brands.ts'
+import { planRequest, earliestStart, words as answerWords } from './answer-by.ts'
 
 export const TZ = 'America/Chicago'   // Missouri and Oklahoma are both Central
 
@@ -296,7 +297,12 @@ export async function placeCaregiver(ax: Ax, b: any, cg: string, pickedStart: st
     if (!put.ok) return { ok: false, status: 502, why: put.why }
     return { ok: true, name, vals: { axiscare_visit_id: put.vid, start_time: pickedStart, end_time: end, caregiver_axiscare_id: cg, caregiver_name: name } }
   }
-  if (!b.axiscare_visit_id) return { ok: false, status: 409, why: 'Put this booking on the schedule first.' }
+  // Release 1 (2026-10-17): a set-time request has no AxisCare visit until a caregiver is placed; create it now, with them on it.
+  if (!b.axiscare_visit_id) {
+    const put = await putOnSchedule(ax, b, st, { start: b.start_time, end: b.end_time, caregiverId: cg })
+    if (!put.ok) return { ok: false, status: 502, why: put.why }
+    return { ok: true, name, vals: { axiscare_visit_id: put.vid, caregiver_axiscare_id: cg, caregiver_name: name } }
+  }
   const patch: Record<string, unknown> = { caregiverId: Number(cg) }
   const rid = await reasonId(ax, st?.family_app_place_reason)
   if (rid != null) patch.modificationReason = rid
@@ -413,7 +419,27 @@ export const when = (b: any) => b.start_time ? `${b.visit_date} ${b.start_time} 
 // deno-lint-ignore no-explicit-any
 export const bookingView = (b: any) => ({ id: b.id, date: b.visit_date, kind: b.kind === 'flex' ? 'flex' : 'set', start: b.start_time ?? null, end: b.end_time ?? null,
   window_start: b.window_start ?? b.start_time, window_end: b.window_end ?? b.end_time, hours: Number(b.hours), tasks: b.tasks, status: b.status, caregiver: b.caregiver_name ?? null,
-  method: b.method === 'choose' ? 'choose' : 'auto', choose_by: b.method === 'choose' ? (b.choose_by ?? null) : null, interested: Number(b.interested_count ?? 0) })
+  method: b.method === 'choose' ? 'choose' : 'auto', choose_by: b.method === 'choose' ? (b.choose_by ?? null) : null, interested: Number(b.interested_count ?? 0),
+  // Release 1 (her approval 2026-10-17): a request until a caregiver accepts; the family always knows when they'll hear
+  answer_by: b.answer_by ?? null, answer_by_words: b.answer_by ? answerWords(b.answer_by) : null, two_stage: b.two_stage === true,
+  team_from_words: b.two_stage && b.team_from ? answerWords(b.team_from) : null, picks: Array.isArray(b.preferred_caregiver_ids) ? b.preferred_caregiver_ids.length : 0 })
+/** "Mon, Oct 19 · 1 PM": the earliest start a family can still request, per day, for the next three days (the picker greys out the rest). */
+// deno-lint-ignore no-explicit-any
+export function earliestByDay(now: Date, hrs: Hours, st: any) {
+  const out: Record<string, string | null> = {}, today = central(now).date
+  for (let i = 0; i < 3; i++) { const d = addDays(today, i); out[d] = hrs.days.includes(dowOf(d)) ? earliestStart(now, d, hrs.open, hrs.close, MIN_HOURS, st) : null }
+  return out
+}
+/** The family's words when a request is sent (approved 2026-10-17: never "booked" before a caregiver accepts). */
+export function requestWords(p: { answer_by: string; two_stage: boolean; team_from: string }, picks: number) {
+  const by = answerWords(p.answer_by)
+  if (p.two_stage && picks) return `Request sent. We're asking the caregiver${picks > 1 ? 's' : ''} you picked now. If they can't come, we'll ask other caregivers from ${answerWords(p.team_from)}. You'll hear from us by ${by} at the latest. This isn't a scheduled visit yet.`
+  if (p.two_stage) return `Request sent. We'll ask caregivers from ${answerWords(p.team_from)}. You'll hear from us by ${by} at the latest. This isn't a scheduled visit yet.`
+  return `Request sent. We're asking caregivers now. This isn't a scheduled visit yet. You'll hear from us by ${by}.`
+}
+export const tooSoonWords = (date: string, earliest: string | null) => earliest
+  ? `That time is too soon to request in the app. The earliest you can request that day is ${clock12(earliest)}.`
+  : 'That day is too soon to request in the app. Please pick a later day, or call the office.'
 const OPEN = ['received', 'practice', 'waiting_for_caregiver', 'needs_office']
 
 /** Her rule 2026-10-16: the app is for ACTIVE clients only. A client AxisCare no longer lists as active closes the app for their
@@ -449,7 +475,16 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
     const mine = (await deps.bookings(w.axiscare_client_id)).filter((b) => b.visit_date >= today && OPEN.includes(b.status))
     const est = await estimateRate(deps.ax, w.axiscare_client_id, state, st, today)
     return say(200, { client: { id: w.axiscare_client_id, name: clientName, state }, brand: bnd ? { ...brandView(bnd), phone: phone ?? bnd.phone } : null, can_book: w.can_book, office_phone: phone, rate: est.rate, short_extra: est.short_extra, short_under_hours: est.short_under_hours, visits,
-      waiting: mine.map(bookingView), tasks: tasksFor(state, st), hours: hoursFor(state, st) })
+      waiting: mine.map(bookingView), tasks: tasksFor(state, st), hours: hoursFor(state, st), earliest: earliestByDay(now, hoursFor(state, st), st) })
+  }
+
+  // Release 1: what the family will be told before they send ("You'll hear from us by ..."), or the earliest time they can ask.
+  if (action === 'when') {
+    const date = String(body?.date ?? ''), start = String(body?.start ?? '')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(start)) return say(400, { error: 'Please pick a day and a time.' })
+    const p = planRequest(now, date, start, st), hrs = hoursFor(state, st)
+    if (!p.ok) { const e = earliestStart(now, date, hrs.open, hrs.close, MIN_HOURS, st); return say(200, { ok: false, earliest: e, error: tooSoonWords(date, e) }) }
+    return say(200, { ok: true, answer_by: p.answer_by, answer_by_words: answerWords(p.answer_by), two_stage: p.two_stage, team_from_words: p.two_stage ? answerWords(p.team_from) : null })
   }
 
   const herCaregivers = async () => {
@@ -494,6 +529,8 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
       const hers = new Set((await herCaregivers()).map((c) => c.axiscare_id))
       if (v.preferred.some((id) => !hers.has(id))) return say(400, { error: `Please pick from ${clientName}'s caregivers, or choose Whoever is available.` })
     }
+    const plan = planRequest(now, v.date, v.start ?? v.window_start, st)
+    if (!plan.ok) { const h = hoursFor(state, st); return say(409, { error: tooSoonWords(v.date, earliestStart(now, v.date, h.open, h.close, MIN_HOURS, st)) }) }
     const vEnd = v.end ?? v.window_end, vStart = v.start ?? v.window_start
     const dup = (await deps.bookings(w.axiscare_client_id)).find((b) => b.visit_date === v.date && b.status !== 'cancelled' &&
       toMin(vStart) < toMin(b.end_time ?? b.window_end) && toMin(b.start_time ?? b.window_start) < toMin(vEnd))
@@ -501,6 +538,7 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
     const row = { axiscare_client_id: w.axiscare_client_id, client_name: clientName, state, contact_id: w.contact_id, app_user_id: user.id, requested_by_name: w.name,
       kind: v.kind, visit_date: v.date, start_time: v.start, end_time: v.end, window_start: v.window_start, window_end: v.window_end, hours: v.hours, tasks: v.tasks, who: v.who, note: v.note || null,
       preferred_caregiver_ids: v.preferred, requested_caregiver_axiscare_id: v.preferred[0] ?? null, status: 'received',
+      answer_by: plan.answer_by, team_from: plan.team_from, asking_from: plan.asking_from, two_stage: plan.two_stage,
       ...(method === 'choose' ? { method, choose_by: chooseBy(v.date, v.start ?? v.window_start, now, chooseSettings(st).deadline) } : {}) }
     const ins = await deps.insertBooking(row)
     if (!ins) return say(500, { error: "We couldn't save that booking. Nothing was booked. Please try again or call the office." })
@@ -509,34 +547,33 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
     await deps.event({ actor_kind: 'person', actor_email: user.email ?? undefined, actor_name: w.name, via: 'link', verb: 'family_booked', area: 'family_app', summary: `${w.name} booked ${clientName} ${when(b)}`, data: { booking_id: b.id, kind: v.kind, live: appLive(st, w.axiscare_client_id) } })
     if (!appLive(st, w.axiscare_client_id)) {
       await deps.updateBooking(b.id, { status: 'practice' })
-      return say(200, { ok: true, booking_id: b.id, status: 'practice', message: "Got it. (Practice mode: the office hasn't turned on live booking yet, so nothing was added to the schedule.)" })
+      return say(200, { ok: true, booking_id: b.id, status: 'practice', message: "Request saved. (Practice mode: the office hasn't turned on live booking yet, so caregivers aren't asked and nothing is scheduled.)" })
     }
-    const seeIt = method === 'choose' ? "Got it. We're asking caregivers now. You'll see who's interested here in the app, and you choose. If you haven't picked by the day before, we'll pick for you." : v.kind === 'flex' ? "You're booked. You'll see who's coming, and the exact time, here in the app once a caregiver confirms." : "You're booked. You'll see who's coming here in the app once a caregiver confirms."
+    const sent = method === 'choose' ? "Request sent. We're asking caregivers now. You'll see who's interested here in the app, and you choose. If you haven't picked by the day before, we'll pick for you. This isn't a scheduled visit yet."
+      : requestWords(plan, v.preferred.length)
     const offers = st?.family_offer_live === true
     const picks = v.preferred.length ? ` Asked for: ${v.preferred.length} of ${clientName}'s caregivers first.` : ''
-    const needsOffice = async (why: string) => {
-      await deps.updateBooking(b.id, { status: 'needs_office', error: why })
-      await deps.officeItem(officeCard('book', b, `Family booked a visit: ${clientName}`, `${w.name} booked ${when(b)} in the app (${v.tasks.join(', ')}). It is NOT on the AxisCare schedule yet: ${why}`, nowIso))
-      return say(200, { ok: true, booking_id: b.id, status: 'needs_office', message: "Got it. Our office will add it to the schedule and let you know who's coming." })
-    }
-    if (v.kind === 'flex') {
-      // Stays in the Hub until a caregiver takes it and picks the start; only then does it go on AxisCare (it needs a fixed time).
-      await deps.updateBooking(b.id, { status: 'waiting_for_caregiver' })
-      if (!offers) await deps.officeItem(officeCard('book', b, `Pick a caregiver and a time: ${clientName}, ${b.visit_date}`, `${w.name} booked ${when(b)} in the app (${v.tasks.join(', ')}). Flexible: it goes on AxisCare when a caregiver is placed at a start inside the window.${picks}${v.note ? ` Note: ${v.note}` : ''}`, nowIso))
-      return say(200, { ok: true, booking_id: b.id, status: 'waiting_for_caregiver', message: seeIt })
-    }
-    const put = await putOnSchedule(deps.ax, b, st)
-    if (!put.ok) return needsOffice(put.why)
-    const vid = put.vid
-    await deps.updateBooking(b.id, { status: 'waiting_for_caregiver', axiscare_visit_id: String(vid) })
-    if (!offers) await deps.officeItem(officeCard('book', { ...b, axiscare_visit_id: String(vid) }, `Place a caregiver: ${clientName}, ${when(b)}`, `${w.name} booked ${when(b)} in the app (${v.tasks.join(', ')}). It is on the AxisCare schedule with no caregiver yet.${picks}${v.note ? ` Note: ${v.note}` : ''}`, nowIso))
-    return say(200, { ok: true, booking_id: b.id, status: 'waiting_for_caregiver', message: seeIt })
+    // Release 1 (her approval 2026-10-17): nothing goes on AxisCare until a caregiver accepts and it's confirmed (set times
+    // and flexible visits alike), so the schedule never shows an empty placeholder for a request.
+    await deps.updateBooking(b.id, { status: 'waiting_for_caregiver' })
+    if (!offers) await deps.officeItem(officeCard('book', b, `Place a caregiver: ${clientName}, ${when(b)}`, `${w.name} asked for ${when(b)} in the app (${v.tasks.join(', ')}). Caregiver offers are off, so the office places it; it goes on AxisCare when a caregiver is placed.${picks}${v.note ? ` Note: ${v.note}` : ''}`, nowIso))
+    return say(200, { ok: true, booking_id: b.id, status: 'waiting_for_caregiver', message: sent, answer_by: plan.answer_by, answer_by_words: answerWords(plan.answer_by) })
   }
 
   if (action === 'cancel') {
     if (!w.can_book) return say(403, { error: 'Please call the office to change visits.' })
     const b = (await deps.bookings(w.axiscare_client_id)).find((x) => x.id === String(body?.booking_id ?? ''))
     if (!b || b.status === 'cancelled') return say(404, { error: "We couldn't find that visit." })
+    if (b.status === 'not_filled') return say(409, { error: 'This request has already ended. Nothing was scheduled.' })
+    // Release 1: a request nobody has accepted was never on AxisCare, so cancelling it touches nothing there and costs nothing.
+    if (['received', 'waiting_for_caregiver', 'needs_office'].includes(b.status) && !b.caregiver_axiscare_id && !b.axiscare_visit_id && b.method !== 'choose') {
+      const at = now.toISOString()
+      await deps.updateBooking(b.id, { status: 'cancelled', cancelled_at: at, cancelled_by: w.name })
+      if (deps.closeItem) await deps.closeItem(`fam_book_${b.id}`, 'family app', `${w.name} cancelled this request in the app.`)
+      await deps.event({ actor_kind: 'person', actor_email: user.email ?? undefined, actor_name: w.name, via: 'link', verb: 'family_cancelled', area: 'family_app',
+        summary: `${w.name} cancelled the request for ${b.client_name} ${when(b)} before any caregiver accepted`, data: { booking_id: b.id, request: true } })
+      return say(200, { ok: true, late: false, message: "Request cancelled. Nothing was scheduled and there's no charge." })
+    }
     const left = hoursUntil(b.visit_date, startOf(b), now)
     if (left <= 0) return say(409, { error: `This visit has already started. Please call the office${phone ? ` at ${phone}` : ''}.` })
     const late = left < FREE_CANCEL_HOURS, lateHours = lateCancelHours(st)
