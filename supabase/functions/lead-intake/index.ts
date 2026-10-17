@@ -15,6 +15,7 @@ import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { officeQuietNow } from '../_shared/quiet-hours.ts'
 import { leadResponseHours, leadHoursNow } from '../_shared/lead-hours.ts'
+import { fallbackPeople } from '../_shared/notice-to.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -120,7 +121,7 @@ Deno.serve(async (req) => {
         const h = { Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
         let people: { name?: string; phone?: string | null; email?: string | null }[] = []
         try { const { data } = await sbR.from('applicant_alerts').select('name, phone, email').eq('active', true).contains('alert_on', ['lead']); people = data ?? [] } catch { /* backstop */ }
-        if (!people.length) people = [{ name: 'Samantha', email: 'samantha@mo-care.com' }]
+        if (!people.length) people = await fallbackPeople(sbR, 'family_enquiries')   // SOP ruling 8 (2026-10-17)
         const esc = (s: string) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')
         const from = [rName, rOrg].filter(Boolean).join(', ') || 'a referral partner', reach = [rPhone, rEmail].filter(Boolean).join(' · ')
         const subject = (urg === 'urgent' ? 'URGENT referral from ' : 'New referral from ') + from
@@ -367,7 +368,7 @@ Deno.serve(async (req) => {
         } catch { /* the office alert below still needs to go out */ }
       }
       // Who hears. A row in applicant_alerts so it changes without a deploy.
-      // If that table or column is not there, we still tell Samantha.
+      // If that table or column is not there, we still tell the Family enquiries owner and the Springfield lead.
       let people: { name?: string; phone?: string | null; email?: string | null }[] = []
       try {
         const { data } = await supabase
@@ -375,7 +376,7 @@ Deno.serve(async (req) => {
           .eq('active', true).contains('alert_on', ['lead'])
         people = data ?? []
       } catch { /* fall through to the backstop */ }
-      if (!people.length) people = [{ name: 'Samantha', email: 'samantha@mo-care.com' }]
+      if (!people.length) people = await fallbackPeople(supabase, 'family_enquiries')   // SOP ruling 8: owner + Springfield lead
 
       const who = [lead.first_name, lead.last_name].filter(Boolean).join(' ')
       const reach = [phone, email].filter(Boolean).join(' · ')

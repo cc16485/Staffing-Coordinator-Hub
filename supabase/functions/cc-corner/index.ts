@@ -21,6 +21,7 @@ import { ghlContactIfAllowed } from '../_shared/optout.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
+import { noticeTo, noticeCard, firstName } from '../_shared/notice-to.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -35,22 +36,27 @@ const clean = (v: unknown, n: number) => String(v ?? '').replace(/<[^>]*>/g, '')
 /* NO SILENT FAILURES (2026-10-01): the review notice fires from the public page with nobody in the office watching,
    so a notice that doesn't go out raises a Needs Attention card ('staff-alert') */
 // deno-lint-ignore no-explicit-any
-async function notifySamantha(db: any, subject: string, html: string) {
+/* SOP ruling 8 (2026-10-17): moderation notices go to the Springfield lead (no work area owns the Corner), then
+   Samantha. The posts wait in the Hub's Corner review list, which owners see. */
+async function notifyOffice(db: any, subject: string, html: string, card?: { id: string; title: string; about: string; detail: string }) {
+  const to = await noticeTo(db)
+  if (card) await noticeCard(db, to, { ...card, kind: 'request', domain: 'office_ops', urgency: 'normal', due_hours: 24, link: '#campaigns',
+    created_by: 'cc-corner', next_action: 'Approve or remove it in Campaigns, Community, then close this card.' })
   const ghlToken = Deno.env.get('GHL_TOKEN')
   const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
   if (!ghlToken || !ghlLocation) return
   try {
     const h = { Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
-    /* ONE CONTACT (2026-10-01): Samantha's contact is found by the one-contact rule for this email channel. */
-    const contactId = await ghlStaffContact({ token: ghlToken, locationId: ghlLocation }, { channel: 'email', email: 'samantha@mo-care.com', firstName: 'Samantha' })
+    /* ONE CONTACT (2026-10-01): the recipient's contact is found by the one-contact rule for this email channel. */
+    const contactId = await ghlStaffContact({ token: ghlToken, locationId: ghlLocation }, { channel: 'email', email: to.email, firstName: firstName(to.name) })
     if (contactId) {
-      await ghlSendChecked(db, h, 'staff-alert', { channel: 'email', contactId, address: 'samantha@mo-care.com', who: 'Samantha' }, { subject, html })
+      await ghlSendChecked(db, h, 'staff-alert', { channel: 'email', contactId, address: to.email, who: to.name }, { subject, html })
     } else {
-      await reportSendProblem(db, { sender: 'staff-alert', channel: 'email', address: 'samantha@mo-care.com', who: 'Samantha',
+      await reportSendProblem(db, { sender: 'staff-alert', channel: 'email', address: to.email, who: to.name,
         reasons: ['no GoHighLevel contact'], failed: true })
     }
   } catch (e) {
-    await reportSendProblem(db, { sender: 'staff-alert', channel: 'email', address: 'samantha@mo-care.com', who: 'Samantha',
+    await reportSendProblem(db, { sender: 'staff-alert', channel: 'email', address: to.email, who: to.name,
       reasons: ['GoHighLevel could not be reached: ' + String((e as Error)?.message ?? e).slice(0, 80)], failed: true })
   }
 }
@@ -132,10 +138,12 @@ Deno.serve(async (req) => {
     }
     const { error } = await supabase.rpc('upsert_app_data_item', { target_key: 'corner_posts', item })
     if (error) return json({ error: error.message }, 500)
-    await notifySamantha(supabase, '💬 Caregivers Corner: new post awaiting review',
+    await notifyOffice(supabase, '💬 Caregivers Corner: new post awaiting review',
       '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.6;">'
       + '<p><b>' + item.name + '</b>' + (title ? ': ' + title : '') + '</p><p>' + body.replace(/\n/g, '<br>') + '</p>'
-      + '<p style="color:#55677a;font-size:13px;">Approve or remove it in the Care Coordinator Hub &rarr; Campaigns &rarr; Community.</p></div>')
+      + '<p style="color:#55677a;font-size:13px;">Approve or remove it in the Care Coordinator Hub &rarr; Campaigns &rarr; Community.</p></div>',
+      { id: 'ops_corner_' + item.id, title: 'Caregivers Corner post to review from ' + item.name, about: item.name,
+        detail: (title ? '"' + title + '": ' : '') + body.slice(0, 300) })
     return json({ ok: true, pending: true })
   }
 
@@ -154,10 +162,12 @@ Deno.serve(async (req) => {
     p.pending_replies = true
     const { error } = await supabase.rpc('upsert_app_data_item', { target_key: 'corner_posts', item: p })
     if (error) return json({ error: error.message }, 500)
-    await notifySamantha(supabase, '💬 Caregivers Corner: new reply awaiting review',
+    await notifyOffice(supabase, '💬 Caregivers Corner: new reply awaiting review',
       '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.6;">'
       + '<p><b>' + name + '</b> replied to "' + (p.title || p.body.slice(0, 60)) + '":</p><p>' + body.replace(/\n/g, '<br>') + '</p>'
-      + '<p style="color:#55677a;font-size:13px;">Approve or remove it in the Care Coordinator Hub &rarr; Campaigns &rarr; Community.</p></div>')
+      + '<p style="color:#55677a;font-size:13px;">Approve or remove it in the Care Coordinator Hub &rarr; Campaigns &rarr; Community.</p></div>',
+      { id: 'ops_corner_r_' + p.replies[p.replies.length - 1].id, title: 'Caregivers Corner reply to review from ' + name, about: name,
+        detail: 'Reply to "' + (p.title || String(p.body || '').slice(0, 60)) + '": ' + body.slice(0, 300) })
     return json({ ok: true, pending: true })
   }
 

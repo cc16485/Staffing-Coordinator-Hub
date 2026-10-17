@@ -110,7 +110,7 @@ ck('scan · family-change-text: the family text goes through ghlSendChecked', !/
 {
   const s = read('cc-booking/index.ts')
   ck('scan · cc-booking: both the office notice and the family confirmation pass a report (so a refusal is a card)',
-    (s.match(/\{ db: supabase, sender: 'staff-alert', who: 'Samantha' \}/g) || []).length === 1 && (s.match(/\{ db: supabase, sender: 'cc-booking', who: name \}/g) || []).length === 1
+    (s.match(/\{ db: supabase, sender: 'staff-alert', who: officeTo\.name \}/g) || []).length === 1 && (s.match(/\{ db: supabase, sender: 'cc-booking', who: name \}/g) || []).length === 1
     && /if \(report\) return await ghlSendChecked\(/.test(s))
 }
 {

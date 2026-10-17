@@ -8,6 +8,7 @@
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { ownerCaller } from '../_shared/job-auth.ts'
+import { fallbackList } from '../_shared/notice-to.ts'
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
 const GHL = 'https://services.leadconnectorhq.com'
 const e164 = (v: unknown) => { const d = String(v ?? '').replace(/\D/g, ''); return d.length >= 10 ? '+1' + d.slice(-10) : '' }
@@ -30,7 +31,7 @@ Deno.serve(async (req) => {
   const { data: cs } = await db.from('app_data').select('data').eq('key', 'coordinator_staff').maybeSingle()
   for (const c of (Array.isArray(cs?.data) ? cs!.data : [])) add(c.name, c.phone, c.email, 'office staff list')
   const { data: os } = await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
-  const admins = Array.isArray(os?.data?.coverage_alert_admins) ? os!.data.coverage_alert_admins : ['samantha@mo-care.com', 'krystal@mo-care.com']
+  const admins = Array.isArray(os?.data?.coverage_alert_admins) ? os!.data.coverage_alert_admins : await fallbackList(db, 'scheduling_coverage')   // SOP ruling 8
   for (const e of admins) { const k = low(e); const o = staff.get(k); if (o) o.lists.add('call-in alerts'); else add('', '', e, 'call-in alerts') }
   const h = { Authorization: `Bearer ${tok}`, Version: '2021-07-28', Accept: 'application/json' }
   const get = async (path: string) => { const r = await fetch(GHL + path, { headers: h }); return { status: r.status, j: await r.json().catch(() => ({})) } }

@@ -23,6 +23,7 @@ import { leadHits, returningCheck, returningItem } from '../_shared/returning.ts
 import { opEvent } from '../_shared/events.ts'
 import { ldPush } from '../_shared/lead-truth.ts'
 import '../_shared/lead-rules.js'
+import { noticeTo } from '../_shared/notice-to.ts'
 // deno-lint-ignore no-explicit-any
 const LR: any = (globalThis as any).LeadRules
 
@@ -351,6 +352,9 @@ Deno.serve(async (req) => {
      The booking row stays the booking source of truth; nothing here can fail
      the booking itself. */
   let leadLinked = ''
+  /* SOP ruling 8 (2026-10-17): the office notice and the booking card go to the Family enquiries owner (then the
+     Springfield lead, then Samantha), read from the work areas, never a name in the code. */
+  const officeTo = await noticeTo(supabase, 'family_enquiries')
   try {
     const normB = (p: unknown) => String(p || '').replace(/\D/g, '').slice(-10)
     const digitsB = normB(phone)
@@ -386,7 +390,7 @@ Deno.serve(async (req) => {
           + (created ? ' (New family — this booking created the lead.)' : ''),
         next_action: 'Confirm who is going, review their notes, and prepare for the consultation.',
         phone: phone || '', domain: 'family_enquiries', status: 'open', urgency: 'high',
-        owner: '', owner_name: '', created_at: nowIsoB,
+        owner: officeTo.email, owner_name: officeTo.name, created_at: nowIsoB,
         due: new Date(startMs).toISOString(),
         created_by: 'cc-booking', opened_by: 'system' })
       await opEvent(supabase, { verb: 'lead_consult_booked', item_id: String(l.id), area: 'growth_leads',
@@ -416,7 +420,7 @@ Deno.serve(async (req) => {
         about: name,
         detail: `${name} (${phone}${email ? ', ' + email : ''}) booked a ${typeLabel.toLowerCase()} for ${whenLabel}, but the phone/email matches more than one lead. Open Leads, pick the right record (or merge the duplicates), and note the consultation there.`,
         domain: 'family_enquiries', status: 'open', urgency: 'high',
-        owner: '', owner_name: '', created_at: nowIsoB,
+        owner: officeTo.email, owner_name: officeTo.name, created_at: nowIsoB,
         due: new Date(Date.now() + 4 * 3600e3).toISOString(),
         created_by: 'cc-booking', opened_by: 'system' })
       leadLinked = 'ambiguous — raised for a human'
@@ -424,7 +428,7 @@ Deno.serve(async (req) => {
   } catch (e) { console.warn('[cc-booking] lead seam failed (booking unaffected):', e) }
 
   // office notification (best effort — the booking is already saved)
-  await ghlEmail('samantha@mo-care.com', 'Samantha',
+  await ghlEmail(officeTo.email, officeTo.name.split(' ')[0],
     '📅 New consultation booked: ' + name + ', ' + whenLabel,
     '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.6;">'
     + '<p style="font-size:17px;margin:0 0 10px;"><b>' + typeLabel + '</b></p>'
@@ -432,7 +436,7 @@ Deno.serve(async (req) => {
     + '<p><b>Name:</b> ' + esc(name) + '<br><b>Phone:</b> ' + esc(phone) + (email ? '<br><b>Email:</b> ' + esc(email) : '') + '</p>'
     + (notes ? '<p><b>Notes:</b><br>' + esc(notes) + '</p>' : '')
     + '<p style="color:#55677a;font-size:13px;">Saved to the Care Coordinator Hub &rarr; Grow &rarr; Bookings. It also blocks that time on the public scheduler.</p></div>',
-    undefined, { db: supabase, sender: 'staff-alert', who: 'Samantha' })
+    undefined, { db: supabase, sender: 'staff-alert', who: officeTo.name })
 
   // confirmation to the family
   let confirmed = false

@@ -1,12 +1,13 @@
 // Supabase Edge Function: cc-feedback (shared hub project)
 // Receives star check-ins and Caregiver of the Year nominations from the
 // public feedback pages, stores them in app_data key "feedback" (so the hub's
-// Feedback tab can show them), and emails Samantha through the GHL pipe.
+// Feedback tab can show them), and emails the work area owner through the GHL pipe (_shared/notice-to.ts).
 // Deploy: dashboard editor, Verify JWT OFF. Token-gated like the other forms.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
+import { noticeTo, noticeCard, firstName } from '../_shared/notice-to.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -56,15 +57,27 @@ Deno.serve(async (req) => {
   const { error } = await supabase.rpc('upsert_app_data_item', { target_key: 'feedback', item })
   if (error) return json({ error: error.message }, 500)
 
-  // Email Samantha through GHL (best effort — storage already succeeded).
+  /* SOP ruling 8 (2026-10-17): a star check-in goes to the Client care owner, a nomination to the Caregivers owner
+     (then the Springfield lead, then Samantha). A rating of 3 or below also opens a card for that person, so the
+     follow-up call is visible work owners can see under Everyone. Anything that sounds like harm is an incident and is
+     handed to Samantha, as every incident is. */
+  const officeTo = await noticeTo(supabase, kind === 'nomination' ? 'caregivers' : 'client_care')
+  if (kind === 'rating' && rating <= 3) {
+    await noticeCard(supabase, officeTo, { id: 'ops_lowrating_' + item.id, kind: 'request', domain: 'client_care', urgency: 'high',
+      title: rating + '-star check-in' + (item.name ? ' from ' + item.name : '') + ': call them',
+      about: item.name || item.who, due_hours: 24, link: '#campaigns', created_by: 'cc-feedback',
+      detail: (item.message ? 'They wrote: "' + item.message.slice(0, 400) + '"' : 'No message with it.') + (item.contact ? ' Contact: ' + item.contact + '.' : '') + (item.partial ? ' (They tapped the star in the email but never sent the form.)' : ''),
+      next_action: 'Call them today and note what you heard. If it sounds like harm or neglect, it is an incident: hand it to Samantha.' })
+  }
+  // Email the right person through GHL (best effort; storage already succeeded).
   let notified = false
   const ghlToken = Deno.env.get('GHL_TOKEN')
   const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
   if (ghlToken && ghlLocation) {
     try {
       const h = { Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
-      /* ONE CONTACT (2026-10-01): Samantha's contact is found by the one-contact rule for this email channel. */
-      const contactId = await ghlStaffContact({ token: ghlToken, locationId: ghlLocation }, { channel: 'email', email: 'samantha@mo-care.com', firstName: 'Samantha' })
+      /* ONE CONTACT (2026-10-01): the recipient's contact is found by the one-contact rule for this email channel. */
+      const contactId = await ghlStaffContact({ token: ghlToken, locationId: ghlLocation }, { channel: 'email', email: officeTo.email, firstName: firstName(officeTo.name) })
       if (contactId) {
         const starRow = (n: number) => '★★★★★☆☆☆☆☆'.slice(5 - n, 10 - n)
         const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')
@@ -78,10 +91,11 @@ Deno.serve(async (req) => {
           + (item.contact ? '<p><b>Contact:</b> ' + esc(item.contact) + '</p>' : '')
           + (item.message ? '<p><b>Message:</b><br>' + esc(item.message) + '</p>' : '')
           + (kind === 'rating' && rating <= 3 ? '<p style="color:#a33;"><b>Low rating. A personal follow-up call is worth it.</b></p>' : '')
+          + (kind === 'rating' && rating <= 3 ? '<p style="color:#55677a;font-size:13px;">It is also a card for you on Needs Attention.</p>' : '')
           + '<p style="color:#55677a;font-size:13px;">Also saved to the hub → Campaigns → Feedback tab.</p></div>'
         /* NO SILENT FAILURES (2026-10-01): a public page with nobody in the office watching, so a notice that
            doesn't go out (a low rating included) raises a Needs Attention card ('staff-alert') */
-        notified = await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'email', contactId, address: 'samantha@mo-care.com', who: 'Samantha' },
+        notified = await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'email', contactId, address: officeTo.email, who: officeTo.name },
           { subject, html })
       }
     } catch { /* stored fine; email is best effort */ }

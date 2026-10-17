@@ -15,6 +15,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
+import { noticeTo, noticeCard, firstName } from '../_shared/notice-to.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -51,6 +52,14 @@ Deno.serve(async (req) => {
 
   // deno-lint-ignore no-explicit-any
   async function notify(item: Record<string, any>) {
+    /* SOP ruling 8 (2026-10-17): the story goes to the Springfield lead (no work area owns marketing), with a card for
+       the thank-you so owners see it and who has it. Choosing a story for marketing stays with Samantha. */
+    const officeTo = await noticeTo(supabase)
+    await noticeCard(supabase, officeTo, { id: 'ops_story_' + String(item.id), kind: 'request', domain: 'office_ops', urgency: 'normal',
+      title: 'Thank ' + (item.name || 'them') + ' for their story', about: String(item.name || ''), due_hours: 24, link: '#campaigns',
+      created_by: 'cc-story', detail: (item.has_video ? 'A video story' : 'A written story') + ' from ' + (item.who === 'caregiver' ? 'a caregiver' : 'a client family')
+        + (item.contact ? '. Contact: ' + String(item.contact) : '') + '. Marketing release: ' + (item.release_signed ? 'signed' : 'not given') + '.',
+      next_action: 'Send a thank-you within a day. Samantha decides whether it is used in marketing.' })
     const ghlToken = Deno.env.get('GHL_TOKEN')
     const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
     if (!ghlToken || !ghlLocation) return false
@@ -59,8 +68,8 @@ Deno.serve(async (req) => {
         Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28',
         'Content-Type': 'application/json', Accept: 'application/json',
       }
-      /* ONE CONTACT (2026-10-01): Samantha's contact is found by the one-contact rule for this email channel. */
-      const contactId = await ghlStaffContact({ token: ghlToken, locationId: ghlLocation }, { channel: 'email', email: 'samantha@mo-care.com', firstName: 'Samantha' })
+      /* ONE CONTACT (2026-10-01): the recipient's contact is found by the one-contact rule for this email channel. */
+      const contactId = await ghlStaffContact({ token: ghlToken, locationId: ghlLocation }, { channel: 'email', email: officeTo.email, firstName: firstName(officeTo.name) })
       if (!contactId) return false
       const esc = (t: string) => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')
       const isCaregiver = item.who === 'caregiver'
@@ -83,7 +92,7 @@ Deno.serve(async (req) => {
         + '<p style="color:#55677a;font-size:13px;">A thank-you is worth sending within a day. They just did you a real favor.</p></div>'
       /* NO SILENT FAILURES (2026-10-01): fired from the public page with nobody in the office watching, so a notice
          that doesn't go out raises a Needs Attention card ('staff-alert') */
-      return await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'email', contactId, address: 'samantha@mo-care.com', who: 'Samantha' },
+      return await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'email', contactId, address: officeTo.email, who: officeTo.name },
         { subject, html })
     } catch { return false }
   }
