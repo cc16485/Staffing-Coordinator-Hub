@@ -12,6 +12,7 @@ import { opEvent } from './events.ts'
 import type { ChooseDeps } from './family-offer.ts'
 import type { Ax } from './family-app.ts'
 import type { SyncDeps } from './family-sync.ts'
+import type { WelcomeAlertDeps } from './family-welcome-alert.ts'
 import type { MatchResult } from './family-offer.ts'
 import { approvedRules } from './approved-rules.ts'
 import { careLevelOf } from './care-level.ts'
@@ -26,7 +27,7 @@ const SENDERS: Record<string, string> = { family_confirm_text_approved: 'family-
 const PROFILE_COLS = 'axiscare_id, first_name, last_name, preferred_name, about, experience, why_this_work, years_experience, photo_path, photo_url, video_path, consent, published, status, photo_hidden, video_hidden'
 
 export function chooseDepsFor(db: Any, ax: Ax, supabaseUrl: string): ChooseDeps & Required<Pick<import('./family-offer.ts').OfferDeps, 'textFamily' | 'confirmDue' | 'tellFamily' | 'clientAbout' | 'unfilledDue'>> &
-  Pick<SyncDeps, 'placedAhead' | 'coverage' | 'changeDue'> & { matchFor: (b: Any) => Promise<MatchResult>; heldDue: () => Promise<Any[]>; declinedDue: () => Promise<Any[]> } {
+  Pick<SyncDeps, 'placedAhead' | 'coverage' | 'changeDue'> & Pick<WelcomeAlertDeps, 'candidates' | 'stampReady' | 'openCards'> & { matchFor: (b: Any) => Promise<MatchResult>; heldDue: () => Promise<Any[]>; declinedDue: () => Promise<Any[]> } {
   const key = async (k: string): Promise<Any> => (await db.from('app_data').select('data').eq('key', k).maybeSingle()).data?.data
   const ghl = () => ({ token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' })
   const headers = (t: string) => ({ Authorization: `Bearer ${t}`, Version: '2021-07-28', 'Content-Type': 'application/json' })
@@ -151,6 +152,22 @@ export function chooseDepsFor(db: Any, ax: Ax, supabaseUrl: string): ChooseDeps 
       const today = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
       return (await db.from('family_bookings').select('*').eq('status', 'declined').eq('family_declined_pending', true).is('family_declined_at', null).gte('visit_date', today).limit(100)).data ?? []
     },
+    // the welcome reminder (family-welcome-alert.ts): family members with an email on active circles, and whether the client is active
+    candidates: async () => {
+      const { data: cs } = await db.from('circle_contacts').select('id, name, email, relationship, source, hipaa_authorized, stopped_at, axiscare_removed_at, circle_id, welcome_sent_at, welcome_skip_at, welcome_ready_at').not('email', 'is', null)
+      const ids = [...new Set((cs ?? []).map((c: Any) => String(c.circle_id)))]
+      const { data: ks } = ids.length ? await db.from('care_circles').select('id, client_name, axiscare_client_id, active').in('id', ids) : { data: [] }
+      const ax = [...new Set((ks ?? []).map((k: Any) => String(k.axiscare_client_id ?? '')).filter(Boolean))]
+      const { data: ps } = ax.length ? await db.from('person_source_id').select('person_id, source_id').eq('system', 'axiscare').eq('entity_type', 'client').in('source_id', ax) : { data: [] }
+      const persons = [...new Set((ps ?? []).map((p: Any) => p.person_id))]
+      const { data: rs } = persons.length ? await db.from('person_role').select('person_id').eq('role', 'client').eq('status', 'active').in('person_id', persons) : { data: [] }
+      const activePerson = new Set((rs ?? []).map((r: Any) => String(r.person_id)))
+      const activeAx = new Set((ps ?? []).filter((p: Any) => activePerson.has(String(p.person_id))).map((p: Any) => String(p.source_id)))
+      return (cs ?? []).map((c: Any) => { const k = (ks ?? []).find((x: Any) => String(x.id) === String(c.circle_id)) ?? {}
+        return { ...c, client_name: k.client_name ?? null, axiscare_client_id: k.axiscare_client_id ?? null, circle_active: k.active !== false, client_active: activeAx.has(String(k.axiscare_client_id ?? '')) } })
+    },
+    stampReady: async (id, at) => { await db.from('circle_contacts').update({ welcome_ready_at: at }).eq('id', id).is('welcome_ready_at', null) },
+    openCards: async () => arr(await key('ops_items')).filter((x) => String(x?.id ?? '').startsWith('fam_welcome_') && x?.status !== 'done').map((x) => String(x.id)),
     placedAhead: async (from, to) => (await db.from('family_bookings').select('*').eq('status', 'placed').not('axiscare_visit_id', 'is', null)
       .gte('visit_date', from).lte('visit_date', to).order('visit_date', { ascending: true }).limit(200)).data ?? [],
     coverage: async () => {

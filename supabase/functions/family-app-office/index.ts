@@ -42,7 +42,7 @@ const famAdmin = (path: string, init: RequestInit = {}) => fetch(`${FAMILY_URL}/
   headers: { apikey: FAMILY_SERVICE, Authorization: `Bearer ${FAMILY_SERVICE}`, 'Content-Type': 'application/json', ...(init.headers ?? {}) } })
 
 const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
-const CONTACT_COLS = 'id, name, email, phone, sms_consent, circle_id, stopped_at, axiscare_removed_at, app_user_id, app_status, app_can_book, app_invited_at, app_invited_by'
+const CONTACT_COLS = 'id, name, email, phone, sms_consent, circle_id, relationship, hipaa_authorized, stopped_at, axiscare_removed_at, app_user_id, app_status, app_can_book, app_invited_at, app_invited_by, welcome_sent_at, welcome_sent_by, welcome_version, welcome_how, welcome_skip_at, welcome_skip_reason'
 
 // The App fee check (family-fee.ts): App plan clients are active Family Circles ticked app_plan with an AxisCare client.
 const appClients = async () => ((await db.from('care_circles').select('id, client_name, axiscare_client_id, app_plan_since, active').eq('app_plan', true)).data ?? [])
@@ -58,15 +58,16 @@ const deps: OfficeDeps = {
     saveCheck: async (row) => !(await db.from('family_app_fees').upsert(row, { onConflict: 'month,axiscare_client_id' })).error,
     officeItem: async (item) => !(await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item })).error,
   },
-  plans: async () => (await db.from('care_circles').select('id, client_name, axiscare_client_id, app_plan, app_plan_since, help_fill, app_tasks').not('app_plan', 'is', null)).data ?? [],
+  plans: async () => (await db.from('care_circles').select('id, client_name, axiscare_client_id, app_plan, app_plan_since, help_fill, app_tasks, care_scheduling_type').or('app_plan.not.is.null,care_scheduling_type.not.is.null')).data ?? [],
   setPlan: async (id, vals) => !(await db.from('care_circles').update(vals).eq('id', id)).error,
   setAbout: async (id, vals) => !(await db.from('care_circles').update(vals).eq('id', id)).error,
   markBilled: async (month, cid, vals) => !(await db.from('family_app_fees').update(vals).eq('month', month).eq('axiscare_client_id', cid)).error,
   now: () => new Date(),
   settings: async () => (await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()).data?.data ?? {},
   contact: async (id) => Number.isFinite(id) ? (await db.from('circle_contacts').select(CONTACT_COLS).eq('id', id).maybeSingle()).data ?? null : null,
-  circle: async (id) => (await db.from('care_circles').select('id, client_name, active, axiscare_client_id, app_plan, app_plan_since, help_fill, app_tasks').eq('id', id).maybeSingle()).data ?? null,
+  circle: async (id) => (await db.from('care_circles').select('id, client_name, active, axiscare_client_id, app_plan, app_plan_since, help_fill, app_tasks, care_scheduling_type').eq('id', id).maybeSingle()).data ?? null,
   updateContact: async (id, vals) => !(await db.from('circle_contacts').update(vals).eq('id', id)).error,
+  circleContacts: async (cid) => (await db.from('circle_contacts').select(CONTACT_COLS).eq('circle_id', cid)).data ?? [],
   members: async () => {
     const { data: cs } = await db.from('circle_contacts').select(CONTACT_COLS).not('app_status', 'is', null)
     // deno-lint-ignore no-explicit-any
@@ -93,7 +94,8 @@ const deps: OfficeDeps = {
     if (r.status !== 200) return null
     const raw = r.json?.results?.responsibleParties ?? r.json?.results ?? []
     // deno-lint-ignore no-explicit-any
-    return (Array.isArray(raw) ? raw : []).map((p: any) => String(p?.email ?? p?.personalEmail ?? '').trim().toLowerCase()).filter(Boolean)
+    // AxisCare sometimes answers a list as an index-keyed object (the rowsOf lesson in circles-sync): read both shapes
+    return (Array.isArray(raw) ? raw : raw && typeof raw === 'object' ? Object.values(raw) : []).map((p: any) => String(p?.email ?? p?.personalEmail ?? '').trim().toLowerCase()).filter(Boolean)
   },
   /* The welcome goes through the same family-safe door as every Family Circle message: audience 'family', allowed only
      because a person pressed Send; opt-outs, Texts OK and the hours policy all apply; a refusal raises a Needs Attention card. */

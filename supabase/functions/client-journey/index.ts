@@ -274,6 +274,10 @@ export function shiftWords(f: Any) {
   if (!f.unassigned) return 'Every one of the ' + f.total + ' shift' + (f.total === 1 ? '' : 's') + ' in the two weeks from ' + f.from + ' has a caregiver'
   return f.unassigned + ' of ' + f.total + ' shift' + (f.total === 1 ? '' : 's') + ' in the two weeks from ' + f.from + ' still ' + (f.unassigned === 1 ? 'has' : 'have') + ' no caregiver'
 }
+/** The client's Care Scheduling Type is Flexible Booking Care (set when the welcome is sent, or on the Family bookings page). */
+async function flexibleOnly(db: Any, axId: unknown): Promise<boolean> {
+  try { const { data } = await db.from('care_circles').select('care_scheduling_type').eq('axiscare_client_id', String(axId)).eq('care_scheduling_type', 'flexible').limit(1); return Array.isArray(data) && data.length > 0 } catch { return false }
+}
 export const VERIFY: Record<string, (x: Any) => Promise<Any | null>> = {
   lead_basics: async ({ lead }) => {
     if (!lead) return null
@@ -292,16 +296,19 @@ export const VERIFY: Record<string, (x: Any) => Promise<Any | null>> = {
     const r = await ax(`/api/clients/${id}`)
     return r && r.status === 200 ? { detail: 'AxisCare client #' + id + ' read back', axiscare_client_id: id } : null
   },
-  /* the schedule is in AxisCare: at least one shift in the window. Otherwise the step stays up, saying so. */
-  schedule_entered: async ({ j, ax }) => {
+  /* the schedule is in AxisCare: at least one shift in the window. Otherwise the step stays up, saying so.
+     2026-10-17 (her Care Scheduling Type): a Flexible Booking Care client has no standing schedule, so this is done. */
+  schedule_entered: async ({ j, ax, db }) => {
     if (!j.axiscare_client_id) return null
+    if (await flexibleOnly(db, j.axiscare_client_id)) return { detail: 'Flexible Booking Care: no standing schedule. Visits are requested in the Booking App.' }
     const w = shiftWindow(j, today()), vs = await clientVisits(ax, j.axiscare_client_id, w.from, w.to); if (!vs) return null
     const f = shiftFacts(vs, w.from, w.to)
     return f.total ? { detail: 'The schedule is in AxisCare: ' + f.total + ' shift' + (f.total === 1 ? '' : 's') + ' in the two weeks from ' + w.from, facts: f } : { pending: true, facts: f }
   },
   /* every shift in the window has a caregiver. Until then the step shows how many are still open, and when. */
-  shifts_staffed: async ({ j, ax }) => {
+  shifts_staffed: async ({ j, ax, db }) => {
     if (!j.axiscare_client_id) return null
+    if (await flexibleOnly(db, j.axiscare_client_id)) return { detail: 'Flexible Booking Care: caregivers accept each Booking App request; there are no standing shifts to staff.' }
     const w = shiftWindow(j, today()), vs = await clientVisits(ax, j.axiscare_client_id, w.from, w.to); if (!vs) return null
     const f = shiftFacts(vs, w.from, w.to)
     return f.total && !f.unassigned ? { detail: shiftWords(f), facts: f } : { pending: true, facts: f }

@@ -22,11 +22,17 @@
 //   help_fill {circle_id, on, reason}   the client's "Help us fill extra visits" flag, 90 days; Samantha or Krystal only
 //            (owner_admin or care_coordinator)
 //   app_tasks {circle_id, tasks: string[] | null}   the companion tasks this client may pick in the app (null = all)
+//   welcome  {contact_id, kind?, send?, again?, text?, include_axis?}   the family welcome (her design 2026-10-17): a person picks
+//            the version (Regular / Flexible / Combination, remembered on the client), previews it, presses Send. Recorded with the
+//            date, time, who and which version; a second send asks first ("again"). Needs HIPAA permission and an active client.
+//   scheduling_type {circle_id, kind}   the client's Care Scheduling Type; it also sets the App plan default (Flexible on,
+//            Regular and Combination off; the office can still change the App plan)
+//   welcome_skip {contact_id, on, reason}   "No welcome for this person" (closes the reminder card)
 //   late_billed {booking_id, on}   a late cancel's charge was added to the invoice (the weekly billing list, not a card)
 // Never texts or emails a family: invite returns the words for a person to send.
 // =============================================================================
 import { brand, brandFor, type Brand } from './brands.ts'
-import { placeCaregiver, central, tasksFor, type Ax } from './family-app.ts'
+import { placeCaregiver, central, tasksFor, testClients, stampWords, type Ax } from './family-app.ts'
 import { runFeeCheck, lastMonth, validMonth, type FeeDeps } from './family-fee.ts'
 
 export type OfficeDeps = {
@@ -40,6 +46,9 @@ export type OfficeDeps = {
   circle: (id: string) => Promise<any | null>
   // deno-lint-ignore no-explicit-any
   updateContact: (id: number, vals: any) => Promise<boolean>
+  /** Everyone in one Family Circle (the welcome's "already sent to this email" check). Optional for older callers. */
+  // deno-lint-ignore no-explicit-any
+  circleContacts?: (circleId: string) => Promise<any[]>
   // deno-lint-ignore no-explicit-any
   members: () => Promise<any[]>
   // deno-lint-ignore no-explicit-any
@@ -86,36 +95,110 @@ export const inviteWords = (first: string, client: string) =>
 
 export const APP_URL = 'https://family.mo-care.com'
 export const AXIS_ACTIVATE = 'https://16485.axiscare.com/?user-connect.php&action=activate'
-/** The welcome she approved 2026-10-17 for the pilot ("The welcome wording is approved (keep the pilot line)"; draft
- *  https://claude.ai/artifact/A292b1bNQCicg4Yy7id8dS): the 2026-10-15 welcome with "request" instead of "book", one sentence on
- *  how requests work, and in the email a "How extra visits work" box and the pilot line. Editable in the Hub before sending.
- *  The pilot line goes once ops_settings.family_welcome_pilot_line is false. Branded by the client's state. */
+/** THE FAMILY WELCOME (Samantha 2026-10-17, "Family Welcome Email, Text Messages & Scheduling Type"; proposal
+ *  https://claude.ai/artifact/8EG7jCEt2LJz1pSmxtZcw9; then "make it manual and make note of the date and time it was sent - then
+ *  have an alert if it wasn't sent", "then we can choose the correct email too"). One template, three versions, chosen by the
+ *  person sending (and remembered on the client as the Care Scheduling Type):
+ *    regular  = Regular Scheduled Care: AxisCare Family Portal first; the Booking App second, clearly optional.
+ *    flexible = Flexible Booking Care: the Booking App first; AxisCare second (confirmed visits, notes, invoices). Never
+ *               "extra" or "additional visits".
+ *    both     = Combination of Both: both tools with equal weight, as a benefit.
+ *  Email-safe HTML (tables, inline styles), the brand palette and logo. The pilot line goes once
+ *  ops_settings.family_welcome_pilot_line is false. Without the AxisCare part (their email isn't on the client in AxisCare),
+ *  only the Booking App section is sent. */
+export type CareType = 'regular' | 'flexible' | 'both'
 const MO_BRAND = brand('MO') as Brand
-export function welcomeText(first: string, client: string, phone: string, withAxis: boolean, b: Brand = MO_BRAND) {
-  return `Hi ${first}, it's ${b.short}. You're set up to follow ${client}'s care online. To see visits and request an extra one, go to ${b.app_host} and sign in with this email (we'll email you a code).` +
-    ` Extra visits are requests: we ask our caregivers and tell you by a set time whether someone can come.` +
-    (withAxis ? ` For ${client}'s calendar, care notes and invoices, go to 16485.axiscare.com, tap Activate account and use this same email.` : '') +
-    ` Questions? Call ${phone}.`
-}
 /** The app's request hours in words, per state (the same days and hours the app's picker uses). */
-const appHours = (key: string | null) => key === 'OK' ? 'Monday to Friday, 8 AM to 6 PM' : '7 AM to 6 PM'
-const h = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-export function welcomeEmail(first: string, client: string, email: string, phone: string, withAxis: boolean, b: Brand = MO_BRAND, pilot = true) {
-  const btn = (href: string, label: string) => `<a href="${href}" style="display:inline-block;background:#1F7A8C;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:10px;margin:6px 0 2px">${label}</a>`
-  const step = (n: number, title: string, body: string) => `<div style="margin:18px 0 0"><div style="font-weight:700;color:#0D365F;font-size:17px">${n}. ${title}</div>${body}</div>`
-  const html = `<div style="font-family:Arial,sans-serif;font-size:16px;line-height:1.6;color:#16283a;max-width:520px">` +
-    `<p>Hi ${h(first)},</p><p>You're set up to follow ${h(client)}'s care online.</p>` +
-    step(1, 'See visits and request extra ones', `<p style="margin:4px 0">Go to ${h(String(b.app_host))} and type <b>${h(email)}</b>. We'll email you a 6-digit code. No password needed.</p>${btn(String(b.app_url), 'Open the family app')}`) +
-    `<div style="margin:14px 0 0;border-left:3px solid #1F7A8C;padding-left:12px"><b>How extra visits work</b><ul style="margin:4px 0 0;padding-left:18px">` +
-      `<li>Ask for a visit of 2 hours or more, any day from ${h(appHours(b.key))}.</li>` +
-      `<li>We ask our caregivers, starting with those who know ${h(client)}. The app tells you when you'll hear back.</li>` +
-      `<li>It isn't scheduled until a caregiver accepts. If nobody can, we tell you, and there's no charge.</li>` +
-      `<li>You can cancel a request any time before it's confirmed. Once confirmed, there's no fee to cancel up to 24 hours before; after that, 2 hours are charged.</li></ul></div>` +
-    (withAxis ? step(2, `${h(client)}'s calendar, care notes and invoices`, `<p style="margin:4px 0">Go to 16485.axiscare.com and tap <b>Activate account</b>. Use this same email, <b>${h(email)}</b>, and follow the short steps to set a password.</p>${btn(AXIS_ACTIVATE, 'Activate your AxisCare account')}`) : '') +
-    (pilot ? `<p style="margin-top:18px">You're one of the first families to use the app. If anything is confusing, tell us; it helps us get it right.</p>` : '') +
-    `<p style="margin-top:22px">Questions? Call us at ${h(phone)}. A real person answers, weekdays 8 AM to 6 PM.</p>` +
-    `<p style="color:#55677a">${h(b.footer)}</p></div>`
-  return { subject: `Your ${b.short} family access for ${client}`, html }
+const appHours = (key: string | null) => key === 'OK' ? 'Monday to Friday, 8 AM to 6 PM' : '7 AM and 6 PM'
+export const CARE_TYPES: CareType[] = ['regular', 'flexible', 'both']
+export const CARE_TYPE_LABEL: Record<CareType, string> = { regular: 'Regular Scheduled Care', flexible: 'Flexible Booking Care', both: 'Combination of Both' }
+export const isCareType = (x: unknown): x is CareType => CARE_TYPES.includes(x as CareType)
+const AXIS_URL = 'https://16485.axiscare.com/'
+const h = (s: string) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+const OFFICE_HOURS = 'Monday to Friday, 8 AM to 6 PM'
+const TAGLINE = 'We care like family.'
+
+/** The welcome text message: short, the main tool's link, "your email has the steps". */
+export function welcomeText(first: string, client: string, email: string, phone: string, withAxis: boolean, b: Brand = MO_BRAND, kind: CareType = 'regular') {
+  const app = String(b.app_url ?? '')
+  if (kind === 'flexible' || !withAxis) return `Hi ${first}, welcome to ${b.short}! You can request care for ${client} whenever you need it in our Booking App: ${app} Sign in with ${email} and we'll email you a code. Your welcome email has the full steps. Questions? ${phone}`
+  if (kind === 'both') return `Hi ${first}, welcome to ${b.short}! Follow ${client}'s visits, care notes and invoices in the AxisCare Family Portal, and request care on other days in our Booking App (${app}). Your welcome email has the steps for both. Questions? ${phone}`
+  return `Hi ${first}, welcome to ${b.short}! You can follow ${client}'s visits, care notes and invoices in the AxisCare Family Portal. Set it up here: ${AXIS_ACTIVATE} Your welcome email has the steps, plus our optional Booking App. Questions? ${phone}`
+}
+
+export function welcomeEmail(first: string, client: string, email: string, phone: string, withAxis: boolean, b: Brand = MO_BRAND, pilot = true, kind: CareType = 'regular') {
+  const C = { navy: b.colors?.dark || '#0D365F', teal: b.colors?.primary || '#1F7A8C', pale: '#EAF4F6', honey: '#C17A12', honeyPale: '#FBF3E6', cream: '#FAF9F6', ink: '#16283A', muted: '#55677A', line: '#E4E1D8' }
+  const font = "font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;", serif = "font-family:Georgia,'Times New Roman',serif;"
+  const tel = '+1' + phone.replace(/\D/g, '').slice(-10)
+  const button = (href: string, label: string, solid = true) =>
+    `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:18px 0 0"><tr><td style="border-radius:10px;background:${solid ? C.teal : '#ffffff'};${solid ? '' : `border:2px solid ${C.teal};`}">` +
+    `<a href="${href}" style="display:inline-block;padding:14px 24px;${font}font-size:17px;font-weight:700;line-height:1;color:${solid ? '#ffffff' : C.teal};text-decoration:none;border-radius:10px">${label}</a></td></tr></table>`
+  const bullets = (items: string[]) => items.map((t) =>
+    `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:7px 0 0"><tr><td width="20" valign="top" style="${font}font-size:17px;line-height:1.5;color:${C.teal};font-weight:700">&#10003;</td><td valign="top" style="${font}font-size:16px;line-height:1.5;color:${C.ink}">${t}</td></tr></table>`).join('')
+  const steps = (items: string[]) => items.map((t, i) =>
+    `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:8px 0 0"><tr><td width="30" valign="top"><div style="width:22px;height:22px;border-radius:11px;background:${C.pale};color:${C.teal};${font}font-size:13px;font-weight:700;line-height:22px;text-align:center">${i + 1}</div></td><td valign="top" style="${font}font-size:16px;line-height:1.5;color:${C.ink}">${t}</td></tr></table>`).join('')
+  const kicker = (t: string, color: string) => `<div style="${font}font-size:12px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:${color};margin:0 0 6px">${t}</div>`
+  const p = (t: string, top = 10) => `<p style="${font}font-size:16px;line-height:1.6;color:${C.ink};margin:${top}px 0 0">${t}</p>`
+  const small = (t: string) => `<p style="${font}font-size:14px;line-height:1.55;color:${C.muted};margin:14px 0 0">${t}</p>`
+  const section = (label: string, title: string, body: string, optional = false) =>
+    `<tr><td style="padding:30px 36px 0"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border:1px solid ${C.line};border-radius:14px"><tr><td style="padding:22px 22px 24px">` +
+    kicker(label, optional ? C.muted : C.teal) + `<div style="${serif}font-size:22px;font-weight:bold;color:${C.navy};line-height:1.3;margin:0 0 8px">${title}</div>${body}</td></tr></table></td></tr>`
+  const cl = h(client), em = h(email)
+  // "How booking works": checked against the app 2026-10-17 (2 hours, 7 to 6, familiar caregivers first, confirmed only on a
+  // yes, no charge if nobody, free cancel before confirmation, 24 hours after, then 2 hours). No texts go out while it's checked,
+  // so it says the app shows where the request stands.
+  const howBooking = `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:20px 0 0;background:${C.pale};border-radius:12px"><tr><td style="padding:16px 18px 18px">` +
+    `<div style="${font}font-size:15px;font-weight:700;color:${C.navy};margin:0 0 2px">How booking works</div>` +
+    bullets([(b.key === 'OK' ? `Visits are at least 2 hours, ${h(appHours(b.key))}.` : `Visits are at least 2 hours, any day between ${h(appHours(b.key))}.`), `We offer your request to caregivers who know ${cl} first, then to others who are available.`,
+      "The app shows where your request stands and when you'll hear from us.", "A visit is confirmed only when a caregiver accepts. If no one is available, we let you know, and there's no charge.",
+      "Cancel a request anytime before it's confirmed. Once confirmed, there's no fee if you cancel at least 24 hours ahead; later cancellations are charged 2 hours."]) + `</td></tr></table>`
+  const axisBody = (kind === 'flexible'
+      ? p('Once a visit is confirmed, AxisCare is where you can see it, along with care notes and invoices.', 0) + bullets([`See ${cl}'s confirmed visits`, 'Read care notes from completed visits', 'View invoices and billing'])
+      : p(kind === 'both' ? `Follow ${cl}'s recurring schedule and every visit in one place.` : `Follow ${cl}'s care from anywhere.`, 0) + bullets(['View upcoming caregiver visits', 'Read care notes from completed visits', 'View invoices and billing'])) +
+    `<div style="${font}font-size:15px;font-weight:700;color:${C.navy};margin:18px 0 0">Set it up once</div>` +
+    steps(['Tap <b>Activate your account</b> below.', `Enter your email address, <b>${em}</b>.`, 'Follow the steps to create your password.']) +
+    button(AXIS_ACTIVATE, 'Activate your account', kind !== 'flexible') +
+    small(`After that, sign in anytime at <a href="${AXIS_URL}" style="color:${C.teal};font-weight:700;text-decoration:none">16485.axiscare.com</a>.`)
+  const appMain = kind === 'flexible' || !withAxis
+  const appBody = (kind === 'flexible' || (!withAxis && kind !== 'both' && kind !== 'regular')
+      ? p(`Request care for ${cl} on the days and times that suit your family.`, 0) + bullets(['No recurring weekly schedule required', 'Request a visit whenever care is needed', 'Choose the day and time that work for you', 'Ask for companionship, meals, light housekeeping, errands and other everyday help', 'Follow your request in the app while we check caregiver availability'])
+      : kind === 'both' ? p(`Request care on other days or times whenever a little more support would help. It's the easy way to add flexibility around ${cl}'s regular schedule.`, 0)
+      : p(`Whenever additional care would be helpful, you can request a visit outside ${cl}'s regular schedule. It doesn't change the regular schedule, and using it is entirely up to you.`, 0)) +
+    `<div style="${font}font-size:15px;font-weight:700;color:${C.navy};margin:18px 0 0">How to sign in</div>` +
+    steps(['Open the Booking App.', `Enter your email address, <b>${em}</b>.`, "We'll email you a 6-digit code.", 'Enter the code to sign in. No password needed.']) +
+    button(String(b.app_url), 'Open the Booking App', kind !== 'regular' || !withAxis) + howBooking
+  const axisSec = section('AxisCare Family Portal', kind === 'flexible' ? 'Your schedule, care notes and invoices' : `${cl}'s visits, care notes and invoices`, axisBody)
+  const appOptional = kind === 'regular' && withAxis
+  const appSec = section(appOptional ? 'Optional' : `${h(b.short)} Booking App`, appOptional ? `The ${h(b.short)} Booking App` : kind === 'flexible' ? 'Request care when you need it' : kind === 'both' ? 'Request care on other days' : 'Request care when you need it', appBody, appOptional)
+  const body = !withAxis ? appSec : kind === 'flexible' ? appSec + axisSec : axisSec + appSec
+  const HERO: Record<CareType, { title: string; intro: string; pre: string; subject: string }> = {
+    regular: { title: `Stay connected to ${cl}'s care`, intro: `${cl}'s caregivers visit on set days and times. Your AxisCare Family Portal lets you follow every visit, read care notes and view invoices from home.`, pre: `Follow ${client}'s visits, care notes and invoices online.`, subject: `Welcome to ${b.short}: your online tools for ${client}'s care` },
+    flexible: { title: 'Care when you need it, without a weekly commitment', intro: `You've chosen flexible care for ${cl}. With the ${h(b.short)} Booking App, you can request a visit whenever care would help, with no standing weekly schedule.`, pre: `Request care for ${client} whenever you need it.`, subject: `Welcome to ${b.short}: request care for ${client} anytime` },
+    both: { title: 'Regular visits, plus the freedom to request more', intro: `${cl} has the consistency of regular caregiver visits, along with the flexibility to request care on other days whenever it would help. Here are the two tools that make that easy.`, pre: `Your two online tools for ${client}'s care.`, subject: `Welcome to ${b.short}: your online tools for ${client}'s care` },
+  }
+  const H = HERO[kind]
+  void appMain
+  const html =
+    `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>Welcome to ${h(b.short)}</title></head>` +
+    `<body style="margin:0;padding:0;background:${C.cream}"><div style="display:none;max-height:0;overflow:hidden;opacity:0">${h(H.pre)}</div>` +
+    `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:${C.cream}"><tr><td align="center" style="padding:28px 12px">` +
+    `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:620px;background:#ffffff;border:1px solid ${C.line};border-radius:18px;overflow:hidden">` +
+    `<tr><td style="height:6px;background:${C.teal};font-size:0;line-height:0">&nbsp;</td></tr>` +
+    `<tr><td style="padding:28px 36px 0"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr><td>` +
+      (b.logo ? `<img src="${h(b.logo)}" alt="${h(b.short)}" height="50" style="display:block;height:50px;width:auto;border:0">` : `<div style="${serif}font-size:22px;font-weight:bold;color:${C.navy}">${h(b.short)}</div>`) +
+      `</td><td align="right" style="${serif}font-size:15px;font-style:italic;color:${C.honey}">${TAGLINE}</td></tr></table></td></tr>` +
+    `<tr><td style="padding:26px 36px 0">` + kicker(`Welcome to ${h(b.short)}`, C.honey) +
+      `<h1 style="${serif}font-size:30px;line-height:1.22;font-weight:bold;color:${C.navy};margin:4px 0 0">${H.title}</h1>` + p(`Hi ${h(first)},`, 18) + p(H.intro) + `</td></tr>` +
+    body +
+    (pilot ? `<tr><td style="padding:28px 36px 0"><table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:${C.honeyPale};border-left:4px solid ${C.honey};border-radius:8px"><tr><td style="padding:14px 18px;${font}font-size:15px;line-height:1.55;color:${C.ink}">` +
+      `You're one of the first families to use the Booking App. If anything is confusing, tell us; it helps us get it right.</td></tr></table></td></tr>` : '') +
+    `<tr><td style="padding:30px 36px 34px"><div style="border-top:1px solid ${C.line};padding-top:22px">` +
+      p(`We're here to help. Call us at <a href="tel:${tel}" style="color:${C.teal};font-weight:700;text-decoration:none">${h(phone)}</a>, ${OFFICE_HOURS}. A real person answers.`, 0) +
+      p(`Warmly,<br><b>Your team at ${h(b.short)}</b>`, 14) + `</div></td></tr></table>` +
+    `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:620px"><tr><td align="center" style="padding:18px 12px 0;${font}font-size:13px;line-height:1.6;color:${C.muted}">` +
+      `${h(b.footer)} &middot; ${h(phone)}${b.website ? ` &middot; <a href="https://${h(b.website)}" style="color:${C.muted}">${h(b.website)}</a>` : ''}<br>You're receiving this because you're part of ${cl}'s care circle.</td></tr></table>` +
+    `</td></tr></table></body></html>`
+  return { subject: H.subject, html }
 }
 
 // deno-lint-ignore no-explicit-any
@@ -123,6 +206,16 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
   const action = String(body?.action ?? '')
   const nowIso = d.now().toISOString()
   const ev = (verb: string, summary: string, data: Record<string, unknown>) => d.event({ actor_kind: 'person', actor_email: staff.email, actor_name: staff.name, via: 'hub', verb, area: 'family_app', summary, data })
+  /* The Care Scheduling Type (her decision 2026-10-17): saved on the client's Family Circle; it sets the App plan default
+     ("Flexible on, Regular and Combination off (office can still change it)"), only when the type changes. */
+  // deno-lint-ignore no-explicit-any
+  const saveCareType = async (circleId: string, k: any, kind: CareType) => {
+    const plan = kind === 'flexible'
+    const vals: Record<string, unknown> = { care_scheduling_type: kind, care_scheduling_type_at: nowIso, care_scheduling_type_by: staff.name,
+      app_plan: plan, app_plan_since: plan ? (k.app_plan === true ? k.app_plan_since : central(d.now()).date) : k.app_plan_since ?? null, app_plan_by: `${staff.email} (scheduling type)` }
+    await d.setPlan(circleId, vals)
+    await ev('family_scheduling_type', `${staff.name} set ${k.client_name ?? 'a client'} to ${CARE_TYPE_LABEL[kind]} (App plan ${plan ? 'on' : 'off'})`, { circle_id: circleId, kind, app_plan: plan })
+  }
 
   if (action === 'list') {
     const from = new Date(d.now().getTime() - 30 * 86400000).toISOString().slice(0, 10)
@@ -164,8 +257,7 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     const back = await d.contact(c.id)
     if (back?.app_user_id !== uid || back?.app_status !== 'active') return say(500, { error: 'Saved, but it didn\'t read back. Please try again.' })
     await ev('family_app_invited', `${staff.name} gave ${c.name} the family app for ${k.client_name ?? 'their client'}`, { contact_id: c.id, can_book: can })
-    // App plan on by default at the first invite (never over the office's own choice)
-    if (k.app_plan == null) await d.setPlan(String(k.id), { app_plan: true, app_plan_since: central(d.now()).date, app_plan_by: staff.email })
+    // (2026-10-17: the App plan default now comes from the Care Scheduling Type, not from the invite)
     return say(200, { ok: true, words: inviteWords(String(c.name ?? '').split(' ')[0] || 'there', String(k.client_name ?? 'your loved one')), email })
   }
 
@@ -180,7 +272,8 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     const first = String(c.name ?? '').trim().split(/\s+/)[0] || 'there'
     const client = String(k.client_name ?? '').trim().split(/\s+/)[0] || 'your loved one'
     const cst = await d.ax('GET', `/api/clients/${encodeURIComponent(k.axiscare_client_id)}`)
-    const state = String((cst.json?.results?.client ?? cst.json?.results)?.residentialAddress?.state ?? '').toUpperCase()
+    const axc = cst.json?.results?.client ?? cst.json?.results
+    const state = String(axc?.residentialAddress?.state ?? '').toUpperCase()
     // Never a default brand: an address that isn't Missouri or Oklahoma (or AxisCare unreadable) = nothing is sent.
     const bk = cst.status === 200 ? brandFor(state) : null
     const b = brand(bk, st)
@@ -189,28 +282,71 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
       return say(409, { error: cst.status === 200 ? `${client}'s address in AxisCare isn't Missouri or Oklahoma${state ? ` (it says ${state})` : ''}, so we don't know which office this is. Fix the address in AxisCare, then send it.` : "AxisCare couldn't be read just now, so nothing was sent. Please try again in a minute." })
     }
     if (!b.app_url) return say(409, { error: `The family app isn't set up for ${b.name} yet, so nothing was sent.` })
+    const active = axc?.status?.active === true || testClients(st).includes(String(k.axiscare_client_id))
+    if (!active) return say(409, { error: `${client} isn't an active client in AxisCare, so the welcome can't go yet (their sign-ins wouldn't work).` })
+    // HIPAA permission (as for care-note messages): the welcome leads to the client's schedule, notes and invoices
+    const isClient = String(c.relationship ?? '').toLowerCase() === 'client'
+    const hipaaOk = isClient || c.hipaa_authorized === true
     const phone = st?.[`family_app_office_phone_${b.key}`] ?? b.phone
     const rps = await d.rpEmails(String(k.axiscare_client_id))
     const email = String(c.email ?? '').trim().toLowerCase()
     const onAxis = rps === null ? null : (!!email && rps.includes(email))
     const canText = !!(c.phone && c.sms_consent), canEmail = !!email
+    const kind: CareType | null = isCareType(body?.kind) ? body.kind : isCareType(k.care_scheduling_type) ? k.care_scheduling_type : null
+    // already sent to this person, or to the same email for this client (a couple sharing an inbox)
+    const same = d.circleContacts ? (await d.circleContacts(String(c.circle_id))).filter((x) => x.id !== c.id && String(x.email ?? '').trim().toLowerCase() === email && x.welcome_sent_at) : []
+    const prior = c.welcome_sent_at ? c : same[0] ?? null
+    const sent = prior ? { at: prior.welcome_sent_at, by: prior.welcome_sent_by ?? null, version: prior.welcome_version ?? null, how: prior.welcome_how ?? null, to: prior.id === c.id ? null : prior.name } : null
+    const withAxisDefault = onAxis !== false
+    const render = (kk: CareType, withAxis: boolean) => ({ text: welcomeText(first, client, email, phone, withAxis, b, kk), email: welcomeEmail(first, client, email, phone, withAxis, b, st?.family_welcome_pilot_line !== false, kk) })
     if (body?.send !== true) {
-      const withAxis = onAxis !== false
-      return say(200, { preview: true, name: c.name, can_text: canText, can_email: canEmail, axis_email_on_file: onAxis, include_axis: withAxis,
-        text: welcomeText(first, client, phone, withAxis, b), text_without_axis: welcomeText(first, client, phone, false, b), text_with_axis: welcomeText(first, client, phone, true, b),
-        email_subject: welcomeEmail(first, client, email, phone, withAxis, b, st?.family_welcome_pilot_line !== false).subject, brand: b.key })
+      const r = kind ? render(kind, withAxisDefault) : null
+      return say(200, { preview: true, name: c.name, client, can_text: canText, can_email: canEmail, axis_email_on_file: onAxis, include_axis: withAxisDefault, hipaa_ok: hipaaOk,
+        kinds: CARE_TYPES.map((x) => ({ key: x, label: CARE_TYPE_LABEL[x] })), kind, saved_kind: isCareType(k.care_scheduling_type) ? k.care_scheduling_type : null, sent,
+        text: r?.text ?? null, text_with_axis: kind ? render(kind, true).text : null, text_without_axis: kind ? render(kind, false).text : null,
+        email_subject: r?.email.subject ?? null, email_html: r?.email.html ?? null, brand: b.key })
     }
-    const withAxis = body?.include_axis !== false
-    const text = String(body?.text ?? '').trim()
-    if (!text) return say(400, { error: 'The text is empty.' })
+    if (!kind) return say(400, { error: 'Pick how this client schedules care (Regular, Flexible or Combination) first.' })
+    if (!hipaaOk) return say(409, { error: `${c.name} doesn't have HIPAA permission for ${client} on file, so the welcome (which opens ${client}'s schedule, notes and invoices) can't go. Check their permission in AxisCare first.` })
+    if (sent && body?.again !== true) return say(409, { already: sent, error: `Already sent${sent.to ? ` to ${sent.to} at the same email` : ''} on ${stampWords(new Date(sent.at))}${sent.by ? ` by ${sent.by}` : ''}. Send it again?` })
+    // Family messages go 8 AM to 6 PM Central (the hours policy); after that it would be held, so say so plainly instead
+    const hr = Math.floor(central(d.now()).minutes / 60)
+    if (hr < 8 || hr >= 18) return say(409, { error: 'Welcomes go out between 8 AM and 6 PM. Nothing was sent; please send it then.' })
+    const withAxis = body?.include_axis === false ? false : withAxisDefault
+    const r = render(kind, withAxis)
+    const text = String(body?.text ?? '').trim() || r.text
     if (!canText && !canEmail) return say(409, { error: `There's no way to reach ${c.name}: no email, and no phone with Texts OK.` })
+    // the version is remembered on the client as its Care Scheduling Type (and sets the App plan default when it changes)
+    if (k.care_scheduling_type !== kind) await saveCareType(String(k.id), k, kind)
     let byText = false, byEmail = false
     if (canText && body?.by_text !== false) byText = await d.send(c, 'sms', { message: text })
-    if (canEmail && body?.by_email !== false) { const em = welcomeEmail(first, client, email, phone, withAxis, b, st?.family_welcome_pilot_line !== false); byEmail = await d.send(c, 'email', { subject: em.subject, html: em.html }) }
+    if (canEmail && body?.by_email !== false) byEmail = await d.send(c, 'email', { subject: r.email.subject, html: r.email.html })
+    const how = [byText && 'text', byEmail && 'email'].filter(Boolean).join(' + ')
     await d.logMessage({ circle_id: String(c.circle_id), kind: 'update', body: text, sent_by: staff.name, reached: byText || byEmail ? 1 : 0, skipped: byText || byEmail ? 0 : 1 })
-    await ev('family_app_welcome', `${staff.name} sent ${c.name} the family app welcome (${[byText && 'text', byEmail && 'email'].filter(Boolean).join(' + ') || 'nothing went'})`, { contact_id: c.id, by_text: byText, by_email: byEmail, include_axis: withAxis })
-    if (!byText && !byEmail) return say(502, { error: 'Neither the text nor the email went through. The office has a Needs Attention card with the reason.' })
-    return say(200, { ok: true, by_text: byText, by_email: byEmail })
+    await ev('family_app_welcome', `${staff.name} sent ${c.name} the ${CARE_TYPE_LABEL[kind]} welcome (${how || 'nothing went'})`, { contact_id: c.id, by_text: byText, by_email: byEmail, include_axis: withAxis, version: kind, again: !!sent })
+    if (!byText && !byEmail) return say(502, { error: 'Neither the text nor the email went through. If GoHighLevel refused it there\'s a Needs Attention card; otherwise they may have opted out.' })
+    // the record: date and time, who, which version, how
+    await d.updateContact(c.id, { welcome_sent_at: nowIso, welcome_sent_by: staff.name, welcome_version: kind, welcome_how: how })
+    if (d.closeItem) await d.closeItem(`fam_welcome_${c.circle_id}`, staff.name, `Welcome sent to ${c.name}.`)
+    return say(200, { ok: true, by_text: byText, by_email: byEmail, sent_at: nowIso, version: kind })
+  }
+
+  if (action === 'scheduling_type') {
+    const k = await d.circle(String(body?.circle_id ?? ''))
+    if (!k) return say(404, { error: 'Family Circle not found.' })
+    if (!isCareType(body?.kind)) return say(400, { error: 'Pick Regular Scheduled Care, Flexible Booking Care or Combination of Both.' })
+    await saveCareType(String(k.id), k, body.kind)
+    return say(200, { ok: true, kind: body.kind })
+  }
+
+  if (action === 'welcome_skip') {
+    const c = await d.contact(Number(body?.contact_id))
+    if (!c) return say(404, { error: 'That person isn\'t in a Family Circle.' })
+    const on = body?.on !== false, reason = String(body?.reason ?? '').replace(/\s+/g, ' ').trim().slice(0, 200)
+    if (on && !reason) return say(400, { error: 'Say why (for the record).' })
+    await d.updateContact(c.id, on ? { welcome_skip_at: nowIso, welcome_skip_by: staff.name, welcome_skip_reason: reason } : { welcome_skip_at: null, welcome_skip_by: null, welcome_skip_reason: null })
+    await ev('family_welcome_skip', `${staff.name} ${on ? `marked "no welcome" for ${c.name}: ${reason}` : `cleared "no welcome" for ${c.name}`}`, { contact_id: c.id, on })
+    return say(200, { ok: true })
   }
 
   // Her rule 2026-10-16: a short "About <client>" the office writes once, shown on the caregiver's offer link. First name only,
