@@ -100,7 +100,7 @@ ck('confirmation still owed: it carries the new caregiver; no second message', B
 // ── caregiver taken off ──────────────────────────────────────────────────────────────
 world(); booking('a'); W.visits['v=a'].caregiver = null
 o = await run()
-ck('no caregiver, no Coverage Help case: the app says the office is arranging one; one office card', B('a').sync_state === 'no_caregiver' && B('a').sync_note === 'Sarah J.' && W.items.length === 1 && W.items[0].id === 'fam_nocg_a' && !W.sent.length, { b: B('a'), items: W.items })
+ck('no caregiver, no Coverage Help case: the app is told nobody is on it (no promise); one office card', B('a').sync_state === 'no_caregiver' && B('a').sync_note === 'Sarah J.' && W.items.length === 1 && W.items[0].id === 'fam_nocg_a' && !W.sent.length, { b: B('a'), items: W.items })
 await run()
 ck('next run: no second card, still no message', W.items.length === 1 && !W.sent.length)
 W.visits['v=a'].caregiver = { id: 77, firstName: 'Sarah', lastName: 'Jones' }; await run()
@@ -146,6 +146,8 @@ const fam = await imp('_shared/family-app.ts')
 const bv1 = fam.bookingView({ id: 'x', visit_date: '2026-10-21', status: 'placed', sync_state: 'no_caregiver', sync_note: 'Sarah J.', caregiver_name: 'Sarah J.' })
 const bv2 = fam.bookingView({ id: 'y', visit_date: '2026-10-21', status: 'cancelled', cancel_source: 'office' })
 const bv3 = fam.bookingView({ id: 'z', visit_date: '2026-10-21', status: 'cancelled', cancelled_by: 'Lisa' })
+const fsync = (await import('fs')).readFileSync('supabase/functions/_shared/family-sync.ts', 'utf8')
+ck('office card repeats her wording, no promise of a replacement', /can't promise one, and will contact them either way/.test(fsync) && !/arranging another caregiver/.test(fsync.slice(fsync.indexOf('export async function syncPlaced'))))
 ck('the app is told: nobody on it now (Sarah came off); removed by us; a family cancel is not "by us"', bv1.no_caregiver && bv1.off_caregiver === 'Sarah' && bv2.by_office && !bv3.by_office && !bv2.no_caregiver, [bv1, bv2, bv3])
 const fsrc = (await import('fs')).readFileSync('supabase/functions/_shared/family-app.ts', 'utf8')
 ck('no late charge when AxisCare shows nobody on the visit', /const late = left < FREE_CANCEL_HOURS && b\.sync_state !== 'no_caregiver'/.test(fsrc))
