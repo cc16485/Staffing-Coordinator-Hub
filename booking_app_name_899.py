@@ -56,6 +56,7 @@ ok("the Hub's Care circle screen says Booking App")
 gate = {}
 for fn in FNS:
     s, m = fmeta(HUB, fn)
+    if s == 404: say(f"  · {fn} isn't live (never put live), so it is left alone"); continue
     if s != 200 or not m or "verify_jwt" not in m: stop(f"couldn't read how {fn} is set up live ({s})", 3)
     gate[fn] = bool(m["verify_jwt"]); say(f"  · {fn} is live as version {m.get('version', '?')}, gateway sign-in check {'on' if gate[fn] else 'off'} (kept)")
 s, b = http("GET", f"{API}/v1/projects", headers=MG())
@@ -76,13 +77,13 @@ same = all(c.get(k) == before.get(k) for k in ("disable_signup", "site_url", "ma
 chk(same and c.get("disable_signup") is True, "nothing else about sign-in changed (sign-up still off, same sender, same code length and time)", "another sign-in setting looks different now: tell Claude")
 if L.fails: say("  STOP. The doors are unchanged. Tell Claude."); done(4)
 say(); say("2 · THE DOORS")
-for fn in FNS:
+for fn in [f for f in FNS if f in gate]:
     if not deploy(HUB, FNROOT, fn, gate[fn]): say("  STOP. Tell Claude. (Anything above this line is in; the rest is unchanged.)"); done(5)
 
 say(); say("PART 3 · PROOF")
 s, b = http("POST", f"{FNB}/functions/v1/family-gateway", {"action": "me"})
 chk(s == 401, f"family-gateway: no family sign-in, refused ({s})", f"family-gateway answered a stranger ({s})")
-for fn in FNS[:2] + FNS[3:]:
+for fn in [f for f in FNS if f in gate and f != "family-gateway"]:
     s, b = http("POST", f"{FNB}/functions/v1/{fn}", {"action": "list"})
     chk(s in (401, 403), f"{fn}: a caller with no sign-in gets nothing ({s})", f"{fn} answered a stranger ({s})")
 say()
