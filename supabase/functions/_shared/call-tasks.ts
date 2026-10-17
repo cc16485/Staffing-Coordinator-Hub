@@ -26,11 +26,14 @@ export const ACTIONS = ['ask_client_family_permission', 'axiscare_visit_change',
 /** A text that is only an acknowledgement or an opt-out word: no reading needed. */
 export const ACK = /^\s*(?:(?:yes|yeah|yep|no|nope|y|n|ok|okay|k|kk|thanks|thank you|thank u|ty|thx|got it|will do|sounds good|great|perfect|stop|unsubscribe|👍|🙏|❤️|😊)[\s,.!]*)+$/iu
 /** Which Hub domain owns an area (domains table). Scheduling and EVV go to whoever holds the Staffing seat at that hour. */
+/* 2026-10-17 (Samantha): no Payer Program coordinator (every Care Coordinator handles private pay, LTC, GUIDE and VA) and
+   no Field Quality for now; both work areas are switched off. Payer work goes to Client Care, field work to Caregiver
+   Performance. The model may still name the old areas; they land here. */
 export const AREA_DOMAIN: Record<string, string> = {
   scheduling: 'seat:staffing', evv_timekeeping: 'seat:staffing', payroll: 'money', client_care: 'client_care',
   caregiver_performance: 'caregiver_performance', safety_incident: 'incidents', family_enquiries: 'family_enquiries',
-  referral_partner: 'family_enquiries', payer_programs: 'payer_programs', recruiting: 'recruiting_orientation',
-  field_quality: 'field_quality', training_compliance: 'training_compliance', office_admin: 'program_administration',
+  referral_partner: 'family_enquiries', payer_programs: 'client_care', recruiting: 'recruiting_orientation',
+  field_quality: 'caregiver_performance', training_compliance: 'training_compliance', office_admin: 'program_administration',
 }
 
 const str = (d: string) => ({ type: 'string', description: d })
