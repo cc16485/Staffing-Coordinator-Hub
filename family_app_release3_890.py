@@ -77,7 +77,7 @@ if ap[0]["n"] < 1: stop(f"the Hub's matching rulebook (fingerprint {RULES_SHA[:1
 ok(f"the Hub's matching rulebook is an approved version ({RULES_SHA[:12]})")
 ps, pb = http("GET", f"{HUB_SITE}/family-app-panel.js?v={int(time.time())}")
 os_, ob = http("GET", f"{HUB_SITE}/visit-offer.html?v={int(time.time())}")
-if ps != 200 or "FAMAPP.review" not in (pb or "") and "review: review" not in (pb or ""): stop("the Hub's Family bookings panel for Release 3 isn't live yet (merge the Hub pull request, wait a minute, run again)", 2)
+if ps != 200 or "lateBilled" not in (pb or ""): stop("the Hub's Family bookings panel for Release 3 isn't live yet (merge the Hub pull request, wait a minute, run again)", 2)
 if os_ != 200 or "Good to know" not in (ob or ""): stop("the caregiver offer page for Release 3 isn't live yet (merge the Hub pull request, wait a minute, run again)", 2)
 ok("the Hub pages for Release 3 are live (Family bookings panel, caregiver offer page)")
 sk, sb = http("GET", f"{API}/v1/projects/{HUB}/secrets", headers=MG())

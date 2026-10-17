@@ -36,7 +36,7 @@ class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         p = self.path; S["calls"].append(("GET", p))
         if p.startswith("/match-rules.js"): return self._raw(200, RULES, "application/javascript")
-        if p.startswith("/family-app-panel.js"): return self._raw(200, "window.FAMAPP = { review: review }" if M["panel_live"] else "window.FAMAPP = {}", "application/javascript")
+        if p.startswith("/family-app-panel.js"): return self._raw(200, "window.FAMAPP = { lateBilled: lateBilled, review: review }" if M["panel_live"] else "window.FAMAPP = {}", "application/javascript")
         if p.startswith("/visit-offer.html"): return self._raw(200, "<b>Good to know</b>" if M["page_live"] else "<b>old</b>", "text/html")
         if p.endswith("/secrets"): return self._send(200, [{"name": "ANTHROPIC_API_KEY"}] if M["ai_key"] else [{"name": "GHL_TOKEN"}])
         if "/api-keys" in p: return self._send(200, [{"name": "anon", "api_key": "eyJanonHUB"}, {"name": "service_role", "api_key": "eyJsvcHUB"}])
