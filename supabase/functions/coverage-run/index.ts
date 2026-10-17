@@ -50,6 +50,7 @@ import { OPEN_HOURS_DEFAULT, checkWording, inSendWindow, offeredCells, openHours
 import { newHireNeed } from '../_shared/new-hire.ts'
 import { readTransportNeed, readDriveGate, transportDecision } from '../_shared/driver-eligibility.ts'
 import { MO_FROM } from '../_shared/office-from.ts'   // every text goes out from (417) 234-8494
+import { fallbackList } from '../_shared/notice-to.ts'
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -1598,7 +1599,7 @@ Deno.serve(async (req) => {
        from any entry point, pushes to every admin: SMS (held 21:00-08:00
        unless the shift starts within 3 hours) and email (always — email is
        silent). Once per case. Admin list: ops_settings.coverage_alert_admins
-       (array of emails), default Samantha + Krystal. */
+       (array of emails), default the Scheduling and coverage owner + the Springfield lead (SOP ruling 8). */
     /* RETRY (2026-10-01, Samantha "yes make them retry"): the call-in alert is stamped sent only when at least one
        admin was reached (email or text). If nobody was, the next run tries again: at most 3 tries, 10+ minutes apart. */
     const alertRetryOk = (Number(c.admin_alert_tries) || 0) < 3
@@ -1607,7 +1608,7 @@ Deno.serve(async (req) => {
       const admins: string[] = (Array.isArray(settings.coverage_alert_admins)
         && settings.coverage_alert_admins.length)
         ? settings.coverage_alert_admins.map((e: unknown) => String(e).toLowerCase())
-        : ['samantha@mo-care.com', 'krystal@mo-care.com']
+        : await fallbackList(sb, 'scheduling_coverage')   // SOP ruling 8 (2026-10-17): owner + Springfield lead, never a name in code
       const whenTxt = [c.shift_date, span12(c.shift_time)].filter(Boolean).join(' ') || 'time on the case'
       const chiHrA = Number(new Date().toLocaleString('en-US',
         { timeZone: 'America/Chicago', hour: '2-digit', hour12: false }))

@@ -40,7 +40,7 @@ try {
   const fix = (src) => src.replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
     .replace(/from '\.\.\/_shared\/(\w[\w-]*)\.ts'/g, (_, m) => "from '" + path.join(tmp, '_' + m + '.ts') + "'").replace(/from '\.\/(\w[\w-]*)\.ts'/g, (_, m) => "from '" + path.join(tmp, '_' + m + '.ts') + "'")
     .replace(/import '\.\.\/_shared\/verbs\.js'/, "import '" + path.join(process.cwd(), F, '_shared/verbs.js') + "'").replace(/import '\.\/verbs\.js'/, "import '" + path.join(process.cwd(), F, '_shared/verbs.js') + "'")
-  for (const f of ['job-auth', 'staff-auth', 'events', 'packet-visits']) fs.writeFileSync(path.join(tmp, '_' + f + '.ts'), fix(fs.readFileSync(path.join(F, '_shared', f + '.ts'), 'utf8')))
+  for (const f of ['job-auth', 'staff-auth', 'events', 'packet-visits', 'notice-to']) fs.writeFileSync(path.join(tmp, '_' + f + '.ts'), fix(fs.readFileSync(path.join(F, '_shared', f + '.ts'), 'utf8')))
   fs.writeFileSync(path.join(tmp, 'w.ts'), fix(fs.readFileSync(path.join(F, 'care-packet-watch/index.ts'), 'utf8')))
   const M = await import(path.join(tmp, 'w.ts'))
   const run = async (headers = { 'x-cron-secret': CRON }, body = {}) => { const r = await handler(new Request('https://x/functions/v1/care-packet-watch', { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) }))

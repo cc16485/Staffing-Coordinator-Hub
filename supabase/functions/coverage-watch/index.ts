@@ -38,6 +38,7 @@ import { attendanceCard, caseEnded, caseWhen, shiftAhead, chiNowNaive, evvDaySta
   markNoClosureTexts, pastCaseVerdict, weekOf } from '../_shared/loops.ts'
 import { loadQuiet, isQuiet } from '../_shared/client-quiet.ts'
 import { confirmTimesItem, hasCard, outAfterMin } from '../_shared/confirm-times.ts'
+import { fallbackList } from '../_shared/notice-to.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -299,7 +300,7 @@ Deno.serve(async (req) => {
           : `held: couldn't ask AxisCare whether it changed (${act ? 'a person was asked' : 'would ask a person'})`
         if (act) {
           const admins = (Array.isArray(settings.coverage_alert_admins) && settings.coverage_alert_admins.length)
-            ? settings.coverage_alert_admins : ['samantha@mo-care.com']
+            ? settings.coverage_alert_admins : await fallbackList(sb, 'scheduling_coverage')   // SOP ruling 8 (2026-10-17)
           const item = heldItem(decision, { visitId, client: clientName, startMs: visitMs(start, v?.timezone), reason,
             lastCase: closedCase, detail: chk.detail, owner: String(admins[0]), nowIso })
           if (item && !(await opsHas(item.id))) {
@@ -885,7 +886,7 @@ Deno.serve(async (req) => {
         const caseVisits = new Set(cases.map((c: any) => String(c?.axiscare_visit_id ?? '')).filter(Boolean))
         const nowNaive = chiNowNaive()
         const after = outAfterMin(settings)
-        const ownerC = String((Array.isArray(settings.coverage_alert_admins) && settings.coverage_alert_admins[0]) || 'samantha@mo-care.com')
+        const ownerC = String((Array.isArray(settings.coverage_alert_admins) && settings.coverage_alert_admins[0]) || (await fallbackList(sb, 'scheduling_coverage'))[0])   // SOP ruling 8
         for (const v of dayRows) {
           if (v?.caregiver?.id == null) continue
           const cin = v?.clockIn?.time, cout = v?.clockOut?.time
@@ -970,7 +971,7 @@ Deno.serve(async (req) => {
       const LABEL: Record<string, string> = {
         callin: 'call-ins', tardy: 'tardies', evv: 'EVV problems (missing clock-in/out)' }
       const admins = (Array.isArray(settings.coverage_alert_admins) && settings.coverage_alert_admins.length)
-        ? settings.coverage_alert_admins : ['samantha@mo-care.com']
+        ? settings.coverage_alert_admins : await fallbackList(sb, 'scheduling_coverage')   // SOP ruling 8 (2026-10-17)
       const ym = chiYesterday.slice(0, 7).replace('-', '')
       /* Phase 2 (live): no nightly EVV cards (they become the weekly review below), and a call-in / tardy card keeps
          a person's handling: an open card keeps its owner and history; a closed one reopens only if the count rose. */
