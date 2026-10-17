@@ -13,6 +13,7 @@
 //     notes / invoices, and the emails each person chose. The office does these by hand and ticks them off.
 // Pure functions here (tested offline); the client-agreement function does the reads and writes.
 // =============================================================================
+import { findPerson } from './person-match.ts'
 // deno-lint-ignore no-explicit-any
 type Any = any
 const t = (v: unknown) => (typeof v === 'string' ? v.trim() : v == null ? '' : String(v).trim())
@@ -80,7 +81,7 @@ export function withEdits(c: Contact, edits: Any): { contact: Contact; changed: 
   return { contact: out, changed, problems }
 }
 
-export type Slot = { list_number: number; name: string }
+export type Slot = { list_number: number; name: string; email?: string | null }
 export type Plan = { axiscare: { action: 'update' | 'add' | 'hub_only'; slot: number | null; why?: string }; hub: { action: 'update' | 'add'; member_id: string | null } }
 /** Where each contact goes. AxisCare: same name -> that slot; else the next free slot of 1-3 not already taken by an
  *  earlier contact; else Hub only. Hub: the member this agreement added before, else the same name, else a new member. */
@@ -88,7 +89,8 @@ export function planContacts(contacts: Contact[], slots: Slot[], members: Any[],
   const taken = new Set(slots.map((s) => Number(s.list_number)))
   const used = new Set<number>(), plans: Record<number, Plan> = {}
   for (const c of contacts) {
-    const same = slots.find((s) => nameKey(s.name) === nameKey(c.name) && !used.has(Number(s.list_number)))
+    // 2026-10-17: the same person by email first, then name (person-match.ts)
+    const same = findPerson(slots.filter((s) => !used.has(Number(s.list_number))), { name: c.name, email: c.email })
     let ax: Plan['axiscare']
     if (same) { ax = { action: 'update', slot: Number(same.list_number) }; used.add(Number(same.list_number)) }
     else {
@@ -97,7 +99,7 @@ export function planContacts(contacts: Contact[], slots: Slot[], members: Any[],
       else ax = { action: 'hub_only', slot: null, why: "AxisCare's three responsible party slots are taken by other people" }
     }
     const mine = (members ?? []).find((m) => String(m.from_agreement ?? '') === agreementId && Number(m.from_agreement_n) === c.n)
-      ?? (members ?? []).find((m) => nameKey(m.name) === nameKey(c.name))
+      ?? findPerson(members ?? [], { name: c.name, email: c.email })
     plans[c.n] = { axiscare: ax, hub: mine ? { action: 'update', member_id: String(mine.id) } : { action: 'add', member_id: null } }
   }
   return plans

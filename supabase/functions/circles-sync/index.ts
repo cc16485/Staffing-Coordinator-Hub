@@ -11,6 +11,7 @@
 //   ?commit=1 writes; without it, a dry run (counts, and for the owner a sample). ?auth_check=1 says who is calling.
 //   A real (committed) run leaves the heartbeat hb_circles-sync, which the Hub shows and the watchdog checks.
 // =============================================================================
+import { findPerson } from '../_shared/person-match.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { OFFICE_ROLES, requireStaff } from '../_shared/staff-auth.ts'
@@ -163,6 +164,7 @@ async function syncCirclesFromAxisCare(commit: boolean) {
 
     const mine = contactsByCircle.get(String(circle.id)) ?? []
     const seen = new Set<string>()
+    const matched = new Set<string>()   // 2026-10-17: the Family Circle rows AxisCare still lists (by email first, then name)
     for (const p of parties) {
       const nm = String(p.name).trim()
       seen.add(nm.toLowerCase())
@@ -176,15 +178,17 @@ async function syncCirclesFromAxisCare(commit: boolean) {
         can_make_medical_decisions: axYes(p.canMakeMedicalDecisions),
         source: 'axiscare',
       }
-      const existing = mine.find(c => String(c.name ?? '').trim().toLowerCase() === nm.toLowerCase())
+      /* her rule 2026-10-17: the same person by EMAIL first, then by name (person-match.ts), never twice in one run */
+      const existing = findPerson(mine.filter((c: any) => !matched.has(String(c.id))), { name: nm, email: row.email })
       if (existing) {
+        matched.add(String(existing.id))
         /* Her ownership rule (2026-09-20): a contact typed in the office is never
            changed by automation. AxisCare-sourced contacts now FOLLOW AxisCare in
            full (Change 6a): AxisCare owns the responsible parties, so its values
            replace ours, including the old wrongly-false HIPAA flags. */
         if (String(existing.source ?? '') !== 'axiscare') { out.manual_untouched++; continue }
         const patch: Record<string, unknown> = {}
-        for (const k of ['relationship', 'phone', 'email', 'axiscare_list_number', 'hipaa_authorized', 'can_make_medical_decisions'] as const) {
+        for (const k of ['name', 'relationship', 'phone', 'email', 'axiscare_list_number', 'hipaa_authorized', 'can_make_medical_decisions'] as const) {   // name: a renamed person stays one person
           if ((existing[k] ?? null) !== (row[k] ?? null)) patch[k] = row[k]
         }
         if (existing.axiscare_removed_at) { patch.axiscare_removed_at = null; out.contacts_back_on_axiscare++ }
@@ -210,7 +214,7 @@ async function syncCirclesFromAxisCare(commit: boolean) {
        consent and history stay; the family senders leave them out) */
     for (const ct of mine) {
       if (String(ct.source ?? '') !== 'axiscare' || ct.axiscare_removed_at) continue
-      if (seen.has(String(ct.name ?? '').trim().toLowerCase())) continue
+      if (matched.has(String(ct.id)) || seen.has(String(ct.name ?? '').trim().toLowerCase())) continue
       out.contacts_marked_removed++
       if (commit) {
         const { error } = await sb.from('circle_contacts').update({ axiscare_removed_at: new Date().toISOString() }).eq('id', ct.id)

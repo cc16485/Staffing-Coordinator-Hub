@@ -407,7 +407,7 @@ export function stampWords(now: Date) {
 /** The note that goes on the AxisCare client (and caregiver) when a family cancels. */
 // deno-lint-ignore no-explicit-any
 export function cancelNote(b: any, by: string, now: Date, late: boolean, lateHours: number, caregiver: string | null) {
-  return `Visit cancelled by the family in the family app. Visit: ${visitWords(b)}. Cancelled by ${by} on ${stampWords(now)}.` +
+  return `Visit cancelled by the family in the Caring Companions Booking App. Visit: ${visitWords(b)}. Cancelled by ${by} on ${stampWords(now)}.` +
     (caregiver ? ` ${caregiver} was scheduled and has been taken off the visit.` : ' No caregiver was placed yet.') +
     (late ? ` Late cancel (less than 24 hours before): charge the family ${lateHours} hours${caregiver ? ` and pay ${caregiver} ${lateHours} hours` : ''}.` : ' Cancelled 24 hours or more ahead: no charge.')
 }

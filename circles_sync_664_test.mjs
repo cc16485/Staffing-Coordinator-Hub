@@ -93,7 +93,15 @@ try {
   const code = fs.readFileSync(path.join(F, 'circles-sync', 'index.ts'), 'utf8'), old = fs.readFileSync(path.join(F, 'identity-backfill', 'index.ts'), 'utf8')
   /* 2026-10-12: the only change since the move is leaving not-clients (Office Staff) out; those two lines are set aside here */
   const body = (t) => t.slice(t.indexOf('async function syncCirclesFromAxisCare'), t.indexOf('Deno.serve(async (req) => {')).split('\n').filter((l) => !/loadNotClients\(sb\)|isNotClient\(ax\)/.test(l)).join('\n').trim()
-  ck('the sync itself is the same code as before, unchanged', body(code) === body(old))
+  /* 2026-10-17 (her "match Family Circle people by email first, then name"): the sync now differs from the retired identity-backfill
+     copy (taken down by #441) on purpose: it matches by email first. The rest is unchanged. */
+  void body; void old
+  ck('the sync matches people by email first, then name, and never matches one person twice', /findPerson\(mine\.filter\(\(c: any\) => !matched\.has\(String\(c\.id\)\)\), \{ name: nm, email: row\.email \}\)/.test(code) && /matched\.has\(String\(ct\.id\)\)/.test(code))
+  // a renamed person (Bea in AxisCare is now "Beatrice Baker", same email) stays ONE person: renamed, not added, not marked removed
+  reset(); DB.circle_contacts[0].email = 'bea@x.test'; AX['102'][0] = { ...AX['102'][0], name: 'Beatrice Baker', email: 'BEA@x.test ' }
+  ;[s, j] = await run('owner', '?commit=1')
+  const bea2 = DB.circle_contacts.filter((c) => c.circle_id === 'c2' && /Bea/.test(c.name))
+  ck('email first: Bea renamed to Beatrice in AxisCare is the same person (renamed), not a second copy, not marked removed', bea2.length === 1 && bea2[0].id === 'k1' && bea2[0].name === 'Beatrice Baker' && !bea2[0].axiscare_removed_at && !DB.circle_contacts.some((c) => c.circle_id === 'c2' && String(c.id).startsWith('n')), { bea2, j })
   ck('no em dash in the new code', !/[—―]/.test(code.slice(0, code.indexOf('/* ── FAMILY CIRCLES'))) && !/[—―]/.test(code.slice(code.indexOf('Deno.serve'))))
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 const failed = res.filter((r) => !r[1])
