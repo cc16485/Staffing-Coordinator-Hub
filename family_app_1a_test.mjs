@@ -105,10 +105,14 @@ ck('home: upcoming visits in Central time with caregiver first name, nobody else
 ck('home: no rate when the client has no priced visits and no state rate is set; no short-visit extra in the app (her rule 2026-10-16)', o.body.rate === null && o.body.short_extra === 0 && o.body.short_under_hours === 4, o.body)
 W.settings.family_app_rate_MO = 30; o = await go({ action: 'home', client: '501' })
 ck('home: falls back to the state rate in the Hub settings', o.body.rate === 30, o.body.rate)
-W.visits['v=2:s=5:d=2026-09-30'].chargeRate = 32; W.visits['v=3:s=5:d=2026-09-25'].chargeRate = 29
+W.visits['v=2:s=5:d=2026-09-30'].chargeRate = 450; W.visits['v=2:s=5:d=2026-09-30'].billableRateMode = 'Visit'
+o = await go({ action: 'home', client: '501' })
+ck('home: a visit billed per visit (not hourly) is never shown as an hourly rate (pilot check: "$450/hr"); the state rate instead', o.body.rate === 30, o.body.rate)
+W.visits['v=2:s=5:d=2026-09-30'].chargeRate = 32; W.visits['v=2:s=5:d=2026-09-30'].billableRateMode = 'Hourly'
+W.visits['v=3:s=5:d=2026-09-25'].chargeRate = 29; W.visits['v=3:s=5:d=2026-09-25'].billableRateMode = 'Hourly'
 W.visits['v=1:s=5:d=2026-10-21'].chargeRate = 99; W.visits['v=1:s=5:d=2026-10-21'].billableRateMode = 'custom'
 o = await go({ action: 'home', client: '501' })
-ck('home: the client\'s OWN rate from their most recent priced visit (a custom one-off rate ignored)', o.body.rate === 32, o.body.rate)
+ck('home: the client\'s OWN rate from their most recent HOURLY visit (a custom one-off rate ignored)', o.body.rate === 32, o.body.rate)
 W.settings.family_app_short_extra_MO = 5; o = await go({ action: 'home', client: '501' })
 ck('home: the short-visit extra can still be set in the Hub settings', o.body.short_extra === 5, o.body.short_extra)
 delete W.settings.family_app_short_extra_MO; delete W.settings.family_app_rate_MO
