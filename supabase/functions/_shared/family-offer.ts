@@ -93,7 +93,7 @@ export const MSG_NOT_CHOSEN = "Hi {first_name}, the family chose another caregiv
 export const MSG_CHOOSE_CANCELLED = "Hi {first_name}, the family cancelled the visit on {when} that you were interested in, so it's no longer needed. Thank you! {brand}"
 // Her pick 2026-10-16 ("1. warm and simple"): "Hi Lisa, good news from Caring Companions! Sarah will be with Dot on Thursday,
 // October 22, from 1 to 4. You can see the details anytime in the app: family.mo-care.com"
-export const MSG_FAMILY_CONFIRMED = "Hi {first_name}, good news from {brand}! {caregiver} will be with {client} on {day}, {times}. You can see the details anytime in the app: {app}"
+export const MSG_FAMILY_CONFIRMED = "Hi {first_name}, good news from {brand}! {caregiver} will be with {client} on {day}, {times}. You can see the details anytime in the Booking App: {app}"
 const DAY_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 const MON_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 /** "Thursday, October 22" */
@@ -106,8 +106,8 @@ export function fromTo(start: string, end: string) {
 }
 // Release 1 (her approval 2026-10-17, decision 5 of Oct 16: "include not-filled and caregiver-changed messages"): the family
 // is always told when nobody accepted. 8 AM to 7:30 PM, the text with Texts OK, else the email.
-export const MSG_FAMILY_UNFILLED = "Hi {first_name}, it's {brand}. We couldn't find a caregiver for {client}'s extra visit on {day}{times}. Nothing was scheduled and there's no charge. You can request another time in the app: {app}"
-export const MSG_FAMILY_INTERESTED = "Hi {first_name}, it's {brand}. A caregiver is interested in {client}'s visit on {when}. Open the app to see who and choose: {app} If you'd rather we pick, tap Find someone for me."
+export const MSG_FAMILY_UNFILLED = "Hi {first_name}, it's {brand}. We couldn't find a caregiver for {client}'s extra visit on {day}{times}. Nothing was scheduled and there's no charge. You can request another time in the Booking App: {app}"
+export const MSG_FAMILY_INTERESTED = "Hi {first_name}, it's {brand}. A caregiver is interested in {client}'s visit on {when}. Open the Booking App to see who and choose: {app} If you'd rather we pick, tap Find someone for me."
 const num = (v: unknown, d: number) => Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d
 export function offerSettings(st: Any) {
   return { live: st?.family_offer_live === true, pickWait: num(st?.family_offer_pick_wait_hours, 4), waveSize: Math.min(20, num(st?.family_offer_wave_size, 5)),
@@ -258,7 +258,7 @@ export async function runOffers(d: OfferDeps, opts: { dry?: boolean } = {}) {
         const sms = fill(MSG_FAMILY_CONFIRMED, { first_name: String(b.requested_by_name ?? '').split(' ')[0] || 'there', brand: fb.short, caregiver: cg, client, day, times, app: fb.app_host }).replace(' ,', ',').replace(', .', '.')
         const h = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         const html = `<div style="font-family:Arial,sans-serif;font-size:16px;line-height:1.6;color:#16283a;max-width:520px"><p>Hi ${h(String(b.requested_by_name ?? '').split(' ')[0] || 'there')},</p>` +
-          `<p>Good news! <b>${h(cg)}</b> will be with ${h(client)} on <b>${h(day)}${times ? ', ' + h(times) : ''}</b>.</p><p>You can see the details anytime in the app at <a href="${h(String(fb.app_url))}">${h(String(fb.app_host))}</a>.</p>` +
+          `<p>Good news! <b>${h(cg)}</b> will be with ${h(client)} on <b>${h(day)}${times ? ', ' + h(times) : ''}</b>.</p><p>You can see the details anytime in the Booking App at <a href="${h(String(fb.app_url))}">${h(String(fb.app_host))}</a>.</p>` +
           `<p>Questions? Call us at ${h(fb.phone)}.</p><p style="color:#55677a">${h(fb.footer)}</p></div>`
         r = await d.tellFamily(b, sms, { subject: `Good news: ${cg} will be with ${client} on ${day}`, html })
       }
@@ -283,7 +283,7 @@ export async function runOffers(d: OfferDeps, opts: { dry?: boolean } = {}) {
         const html = `<div style="font-family:Arial,sans-serif;font-size:16px;line-height:1.6;color:#16283a;max-width:520px"><p>Hi ${h(first)},</p>` +
           (couldnt ? `<p>We asked our caregivers and our office also tried, but no one is available for ${h(client)}'s visit on <b>${h(day)}${h(times)}</b>. Nothing was scheduled and there's no charge. Please call us if this visit is essential.</p>`
             : `<p>We couldn't find a caregiver for ${h(client)}'s extra visit on <b>${h(day)}${h(times)}</b>. Nothing was scheduled and there's no charge.</p>`) +
-          `<p>You can request another time in the app at <a href="${h(String(fb.app_url))}">${h(String(fb.app_host))}</a>, or call us at ${h(fb.phone)}.</p><p style="color:#55677a">${h(fb.footer)}</p></div>`
+          `<p>You can request another time in the Booking App at <a href="${h(String(fb.app_url))}">${h(String(fb.app_host))}</a>, or call us at ${h(fb.phone)}.</p><p style="color:#55677a">${h(fb.footer)}</p></div>`
         r = await d.tellFamily(b, sms, { subject: `No caregiver was available for ${client}'s visit on ${day}`, html }, couldnt ? 'family_couldnt_text_approved' : 'family_unfilled_text_approved')
       }
       await d.updateBooking(b.id, { family_unfilled_pending: false, family_unfilled_at: nowIso, family_unfilled_how: r.ok ? r.how : `not sent: ${r.why}` })
@@ -311,7 +311,7 @@ export async function runOffers(d: OfferDeps, opts: { dry?: boolean } = {}) {
         const sms = fill(MSG_FAMILY_DECLINED, { first_name: first, brand: fb.short, client, day, times, phone: fb.phone })
         const h = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         const html = `<div style="font-family:Arial,sans-serif;font-size:16px;line-height:1.6;color:#16283a;max-width:520px"><p>Hi ${h(first)},</p>` +
-          `<p>We can't arrange ${h(client)}'s request for <b>${h(day)}${h(times)}</b> in the app because it includes care our extra visits don't cover.</p><p>Please call us at ${h(fb.phone)} so we can help.</p><p style="color:#55677a">${h(fb.footer)}</p></div>`
+          `<p>We can't arrange ${h(client)}'s request for <b>${h(day)}${h(times)}</b> in the Booking App because it includes care our extra visits don't cover.</p><p>Please call us at ${h(fb.phone)} so we can help.</p><p style="color:#55677a">${h(fb.footer)}</p></div>`
         r = await d.tellFamily(b, sms, { subject: `About ${client}'s request for ${day}`, html }, 'family_declined_text_approved')
       }
       await d.updateBooking(b.id, { family_declined_pending: false, family_declined_at: nowIso, family_declined_how: r.ok ? r.how : `not sent: ${r.why}` })

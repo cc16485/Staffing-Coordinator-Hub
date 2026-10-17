@@ -376,7 +376,7 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
       const all = await axis('GET', `/api/clients/${ax}/responsibleParties`)
       if (!okS(all.status) && all.status !== 404) return json({ error: 'Could not read AxisCare, so nothing was changed: ' + axErr(all) }, 502)
       const axList = listOf(all.json?.results?.responsibleParties ?? all.json?.results ?? []).filter((p: Any) => tt(p?.name))
-      const slots = axList.map((p: Any) => ({ list_number: Number(p.listNumber), name: tt(p.name) }))
+      const slots = axList.map((p: Any) => ({ list_number: Number(p.listNumber), name: tt(p.name), email: tt(p.email ?? p.personalEmail) || null }))
       const slotRaw = (n: number | null) => axList.find((p: Any) => Number(p?.listNumber) === n) ?? null
       const { data: circs, error: ce } = await db.from('care_circles').select('id, client_name').eq('active', true).eq('axiscare_client_id', ax)
       if (ce) throw ce

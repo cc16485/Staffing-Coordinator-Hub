@@ -91,7 +91,7 @@ const say = (status: number, body: Record<string, unknown>): Out => ({ status, b
 const emailOk = (e: unknown) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e ?? '').trim())
 
 export const inviteWords = (first: string, client: string) =>
-  `Hi ${first}, you can now see ${client}'s visits and book extra visits at family.mo-care.com. Sign in with this email address and we'll email you a 6-digit code. Call us anytime with questions.`
+  `Hi ${first}, you can now use the Caring Companions Booking App for ${client} at family.mo-care.com. Sign in with this email address and we'll email you a 6-digit code. Call us anytime with questions.`
 
 export const APP_URL = 'https://family.mo-care.com'
 export const AXIS_ACTIVATE = 'https://16485.axiscare.com/?user-connect.php&action=activate'
@@ -256,7 +256,7 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     if (!(await d.updateContact(c.id, { app_user_id: uid, app_status: 'active', app_can_book: can, app_invited_at: nowIso, app_invited_by: staff.email }))) return say(500, { error: 'The login exists but the Hub didn\'t save it. Please try again.' })
     const back = await d.contact(c.id)
     if (back?.app_user_id !== uid || back?.app_status !== 'active') return say(500, { error: 'Saved, but it didn\'t read back. Please try again.' })
-    await ev('family_app_invited', `${staff.name} gave ${c.name} the family app for ${k.client_name ?? 'their client'}`, { contact_id: c.id, can_book: can })
+    await ev('family_app_invited', `${staff.name} gave ${c.name} the Booking App for ${k.client_name ?? 'their client'}`, { contact_id: c.id, can_book: can })
     // (2026-10-17: the App plan default now comes from the Care Scheduling Type, not from the invite)
     return say(200, { ok: true, words: inviteWords(String(c.name ?? '').split(' ')[0] || 'there', String(k.client_name ?? 'your loved one')), email })
   }

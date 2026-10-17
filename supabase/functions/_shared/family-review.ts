@@ -122,5 +122,5 @@ export const HELD_WORDS = (by: string) => `Request sent. Our office needs to che
 export const EMERGENCY_WORDS = (phone: string) => `If this is an emergency, call 911 now. For anything urgent, call us at ${phone}.`
 export const HELP_ADD = "If no caregiver accepts, our office will also try to arrange this visit. We can't guarantee a caregiver."
 export const HELP_LATE = "Our office isn't able to help with this one in time, so it depends on caregivers accepting."
-export const MSG_FAMILY_DECLINED = "Hi {first_name}, it's {brand}. We can't arrange {client}'s request for {day}{times} in the app because it includes care our extra visits don't cover. Please call us at {phone} so we can help."
-export const MSG_FAMILY_COULDNT = "Hi {first_name}, it's {brand}. We asked our caregivers and our office also tried, but no one is available for {client}'s visit on {day}{times}. Nothing was scheduled and there's no charge. Please call us at {phone} if this visit is essential, or try another time in the app: {app}"
+export const MSG_FAMILY_DECLINED = "Hi {first_name}, it's {brand}. We can't arrange {client}'s request for {day}{times} in the Booking App because it includes care our extra visits don't cover. Please call us at {phone} so we can help."
+export const MSG_FAMILY_COULDNT = "Hi {first_name}, it's {brand}. We asked our caregivers and our office also tried, but no one is available for {client}'s visit on {day}{times}. Nothing was scheduled and there's no charge. Please call us at {phone} if this visit is essential, or try another time in the Booking App: {app}"

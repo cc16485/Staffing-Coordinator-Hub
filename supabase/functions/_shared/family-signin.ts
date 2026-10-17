@@ -117,7 +117,7 @@ export async function signinStart(d: SigninDeps, rawEmail: unknown, ip: string, 
     turnedOn++
   }
   if (turnedOn) await d.event({ actor_kind: 'person', actor_email: email, actor_name: String(hits[0].c.name ?? ''), via: 'link', verb: 'family_app_self_signin', area: 'family_app',
-    summary: `${hits[0].c.name ?? 'A family member'} turned on the family app with their email on file (${hits.length} client${hits.length === 1 ? '' : 's'})`,
+    summary: `${hits[0].c.name ?? 'A family member'} turned on the Booking App with their email on file (${hits.length} client${hits.length === 1 ? '' : 's'})`,
     data: { contact_ids: hits.map((h) => h.c.id), clients: hits.map((h) => h.ax) } })
   await d.recordAttempt(email, ip, 'ok')
   return say(200, { ok: true })
