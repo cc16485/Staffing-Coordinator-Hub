@@ -13,7 +13,7 @@ const read = (f) => fs.readFileSync(path.join(FN, f), 'utf8');
 /* ════ scans ════ */
 const CONVERTED = ['automation-watchdog', 'campaign-auto', 'cc-417', 'carematch-watch', 'cc-corner', 'cc-feedback', 'cc-booking',
   'cc-story', 'coverage-run', 'coverage-reply', 'ghe-reminders', 'lead-digest', 'interview-messages', 'lead-intake', 'ops-escalate',
-  'lead-followup', 'timekeeper-watch', 'shared-backup']
+  'lead-followup', 'shared-backup']   /* timekeeper-watch: its one staff text (the Saturday EVV reminder) was retired 2026-10-17 */
 for (const f of CONVERTED) {
   const s = read(`${f}/index.ts`)
   ck(`scan · ${f}: imports ghlStaffContact and calls it`,

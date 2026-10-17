@@ -8,7 +8,9 @@ const DASH = /[\u2014\u2015]/
 const FN = 'supabase/functions'
 const sq = fs.readFileSync('evv_prefill_427.sql', 'utf8'), pf = fs.readFileSync('evv_prefill_427_proof.sql', 'utf8')
 const helper = fs.readFileSync(`${FN}/_shared/evv-prefill.ts`, 'utf8')
-const form = fs.readFileSync('evv-correction-form.html', 'utf8')
+/* 2026-10-17: the public form page now only says the form is retired (evv_retired_test.mjs); its 427 pre-fill code is
+   checked on its last full version */
+const form = (await import('child_process')).execSync('git show b68665a:evv-correction-form.html', { encoding: 'utf8', maxBuffer: 64e6 })
 const UUIDRE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 // ── 1 · scans ──
@@ -118,64 +120,24 @@ ck('missed clock-in · no admin text carries an EVV form link', toSam().length >
 at('09:30'); await tick()
 ck('missed clock-in · later rounds still make no pre-fill and send no form', T.evv_prefill.length === 0 && SENT.every((m) => !/evv-correction/.test(m.message)), T.evv_prefill)
 
-/* b · the person's tap: "Text Maria the EVV form" */
-const L = linkOf(toSam()[0].message)
-const before = SENT.length
-let p = await page({ ...L, action: 'view' })
-ck('tap · opening the page makes nothing and sends nothing', SENT.length === before && T.evv_prefill.length === 0 && p.j?.evv_prefilled === false, p.j)
-p = await page({ ...L, action: 'evv' })
-const evvMsg = toCg().at(-1)?.message || ''
-const url1 = (evvMsg.match(/https:\/\/\S+?(?=\. We can't)/) || [''])[0]
-ck('tap · one text to the caregiver, the same wording with the pre-filled link', p.s === 200 && SENT.length === before + 1
-  && evvMsg === `Hi Maria, to change your clock-in time we need the EVV correction form, filled out and signed by Ruth: ${url1}. We can't make any manual changes without it.`, evvMsg)
-ck('tap · the link carries ONLY a random token (no name, phone, email, client, date or ids)', url1 && noPII(url1), url1)
-const row1 = T.evv_prefill[0]
-ck('tap · one pre-fill row, the token in the link is that row\'s token', T.evv_prefill.length === 1 && url1.endsWith('?t=' + row1.token), T.evv_prefill)
-ck('tap · the row holds the visit from AxisCare: ids, Maria Lopez, "Ruth A.", the date, 09:00 to 13:00, clock-in missing',
-  row1.axiscare_visit_id === '9001' && row1.caregiver_axiscare_id === '501' && row1.client_axiscare_id === '701' && row1.caregiver_name === 'Maria Lopez'
-  && row1.client_display === 'Ruth A.' && row1.client_name === 'Ruth Adams' && row1.visit_date === '2026-09-30' && row1.scheduled_in === '09:00' && row1.scheduled_out === '13:00'
-  && row1.actual_in === null && row1.which_missing === 'in' && /^clockin-alert \(EVV form, sent by Samantha\)$/.test(row1.created_by)
-  && Math.abs(Date.parse(row1.expires_at) - (NOW + 7 * 864e5)) < 1000, row1)
-ck('tap · the page records it as pre-filled', p.j?.evv_prefilled === true && APP.timekeeper_cases.find((l) => l.visit_id === '9001')?.evv_prefilled === true, p.j)
-p = await page({ ...L, action: 'evv' })
-ck('tap · a second tap sends nothing and makes no second row', p.j?.already_sent === true && T.evv_prefill.length === 1 && SENT.length === before + 1, p.j)
-
-/* c · the tap when the row can't be made (database not ready): the text still goes, with the plain form link */
-reset(); at('09:05'); await tick(); PREFAIL = true
-{ const L2 = linkOf(toSam()[0].message); const n0 = SENT.length
-  p = await page({ ...L2, action: 'evv' })
-  ck('tap, no pre-fill possible · the text still goes, exactly as before (plain form link)', p.s === 200 && SENT.length === n0 + 1 && toCg().at(-1).message
-    === "Hi Maria, to change your clock-in time we need the EVV correction form, filled out and signed by Ruth: sc.mo-care.com/evv-correction-form. We can't make any manual changes without it." && p.j?.evv_prefilled === false, toCg().at(-1)) }
-
-/* d · after the shift ended with no clock-in and no clock-out: both are missing */
-reset(); at('09:05'); await tick(); at('13:20')
-{ const L3 = linkOf(toSam()[0].message); await page({ ...L3, action: 'evv' })
-  ck('tap after the shift ended with nothing recorded · which_missing is both', T.evv_prefill[0]?.which_missing === 'both', T.evv_prefill[0]) }
-
-/* e · the clock-out reminder */
+/* b-f · RETIRED 2026-10-17 (Samantha): the EVV correction form is no longer used. The tap is refused and sends nothing,
+   the clock-out reminder carries no form link, and no pre-fill row is ever made. */
+{ const L = linkOf(toSam()[0].message); const before = SENT.length
+  const p = await page({ ...L, action: 'evv' })
+  ck('retired tap · "Text the EVV form" is refused (410), nothing sent, no pre-fill row', p.s === 410 && p.j?.retired === true && SENT.length === before && T.evv_prefill.length === 0, p.j) }
 reset(); VISITS[0].clockIn = { time: '2026-09-30T09:04:00' }; at('13:10'); await tick()
-{ const m = toCg().at(-1)?.message || ''; const u = (m.match(EVVURL) || [''])[0]; const row = T.evv_prefill[0]
-  ck('clock-out reminder · one text, same wording, the plain link swapped for the pre-filled one', toCg().length === 1 && u && m.startsWith('Hi Maria, it\'s Caring Companions. Your shift with Ruth ended at 1pm but there\'s no clock-out yet.')   /* 429 wording: before you leave */
-    && m.includes(`fill in this form before you leave and have Ruth sign it: ${u}. If you didn't put in your shift note`) && !m.includes('sc.mo-care.com/evv-correction-form. '), m)
-  ck('clock-out reminder · the link carries only the token', u && noPII(u) && u.endsWith('?t=' + row?.token), u)
-  ck('clock-out reminder · the row: clock-out missing, AxisCare clock-in 09:04, scheduled 09:00 to 13:00', row && row.which_missing === 'out' && row.actual_in === '09:04' && row.actual_out === null
-    && row.scheduled_in === '09:00' && row.scheduled_out === '13:00' && row.client_display === 'Ruth A.' && row.visit_id === undefined && row.axiscare_visit_id === '9001', row)
-  at('13:14'); await tick()
-  ck('clock-out reminder · still once, ever (no new sends, no second row)', toCg().length === 1 && T.evv_prefill.length === 1, { sent: toCg().length, rows: T.evv_prefill.length }) }
-reset(); VISITS[0].clockIn = { time: '2026-09-30T09:04:00' }; APP.ops_settings.timekeeper_text_live = false; at('13:10'); await tick()
-ck('clock-out reminder in practice mode · nothing sent and no row made', SENT.length === 0 && T.evv_prefill.length === 0, { SENT, rows: T.evv_prefill })
-reset(); VISITS[0].clockIn = { time: '2026-09-30T09:04:00' }; PREFAIL = true; at('13:10'); await tick()
-ck('clock-out reminder, no pre-fill possible · it still goes with the plain link', toCg().length === 1 && toCg()[0].message.includes('have Ruth sign it: sc.mo-care.com/evv-correction-form. If you'), toCg()[0])
-
-/* f · no new sends anywhere: the senders' send calls are exactly what they were */
+{ const m = toCg().at(-1)?.message || ''
+  ck('clock-out reminder · one text, no form link, no pre-fill row', toCg().length === 1
+    && m === "Hi Maria, it's Caring Companions. Your shift with Ruth ended at 1pm but there's no clock-out yet. Please clock out in the AxisCare app now. If you didn't put in your shift note, text it to the office now so we can put it in your shift for you."
+    && T.evv_prefill.length === 0, m) }
+reset(); VISITS[0].clockIn = { time: '2026-09-30T09:04:00' }; APP.ops_settings.timekeeper_msg_out = 'Hi {first_name}, clock out please. Form: sc.mo-care.com/evv-correction-form'; at('13:10'); await tick()
+ck('clock-out reminder · an older saved wording with the form link is not sent; the standard wording goes', toCg().length === 1 && !/evv-correction/.test(toCg()[0].message) && /Please clock out in the AxisCare app now/.test(toCg()[0].message), toCg()[0])
+reset(); VISITS[0].clockIn = { time: '2026-09-30T09:04:00' }; APP.ops_settings.timekeeper_msg_out = 'Hi {first_name}, please clock out for {client} ({time}).'; at('13:10'); await tick()
+ck('clock-out reminder · her own wording without a link is still used as it is', toCg().length === 1 && toCg()[0].message === 'Hi Maria, please clock out for Ruth (1pm).', toCg()[0])
 { const ex = (rel) => { try { return String(fs.readFileSync(rel, 'utf8')) } catch { return '' } }
-  const count = (s, re) => (s.match(re) || []).length
-  const now = { tk: ex(`${FN}/timekeeper-watch/index.ts`), ca: ex(`${FN}/clockin-alert/index.ts`) }
-  ck('source · no new send calls in either sender (ghlSendChecked, textAdmin, conversations/messages counts unchanged by 427)',
-    count(now.tk, /ghlSendChecked\(/g) === 4 && count(now.tk, /textAdmin\(/g) === 1 && count(now.ca, /conversations\/messages/g) === 1 && count(now.ca, /textAdmin\(/g) === 1,
-    { tk: [count(now.tk, /ghlSendChecked\(/g), count(now.tk, /textAdmin\(/g)], ca: [count(now.ca, /conversations\/messages/g), count(now.ca, /textAdmin\(/g)] })
-  ck('source · the pre-fill is made only in the clock-out reminder and on the tap', count(now.tk, /makePrefill\(/g) === 1 && count(now.ca, /makePrefill\(/g) === 1
-    && now.ca.indexOf('makePrefill(') > now.ca.indexOf("if (action === 'evv')") && now.tk.indexOf('makePrefill(') > now.tk.indexOf('PASS 3: clock-OUT reminders')) }
+  const tk = ex(`${FN}/timekeeper-watch/index.ts`), ca = ex(`${FN}/clockin-alert/index.ts`)
+  ck('source · neither sender makes a pre-fill or sends a form link any more', !/makePrefill|withPrefillLink|evv-prefill/.test(tk + ca)
+    && !/sc\.mo-care\.com\/evv-correction-form/.test(tk.replace(/\/evv-correction-form\/i\.test/, '') + ca)) }
 
 // ── 4 · the AxisCare check uses the form's own visit ──
 { const src = fs.readFileSync(`${FN}/evv-axiscare-check/index.ts`, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db2')

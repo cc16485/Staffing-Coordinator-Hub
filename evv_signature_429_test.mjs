@@ -9,7 +9,12 @@ const DASH = /[\u2014\u2015]/
 const FN = 'supabase/functions'
 const sq = fs.readFileSync('evv_signature_429.sql', 'utf8'), pf = fs.readFileSync('evv_signature_429_proof.sql', 'utf8')
 const helperSrc = fs.readFileSync(`${FN}/_shared/evv-sign.ts`, 'utf8')
-const form = fs.readFileSync('evv-correction-form.html', 'utf8'), signPage = fs.readFileSync('evv-client-sign.html', 'utf8')
+/* 2026-10-17: the EVV correction form is retired and both public pages now only say so (evv_retired_test.mjs). The
+   form pages' 429 behaviour is checked on their last full version, like 4b below. */
+const LAST_FORMS = 'b68665a'
+const { execSync } = await import('child_process')
+const gitShow = (f) => execSync(`git show ${LAST_FORMS}:${f}`, { encoding: 'utf8', maxBuffer: 64e6 })
+const form = gitShow('evv-correction-form.html'), signPage = gitShow('evv-client-sign.html')
 const tkSrc = fs.readFileSync(`${FN}/timekeeper-watch/index.ts`, 'utf8')
 const UUIDRE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const PLAINLANG = new RegExp('pla' + 'in (lang' + 'uage|eng' + 'lish)', 'i')   // her banned phrase, spelled so this file never contains it
@@ -43,9 +48,9 @@ ck('SQL: nothing is deleted, truncated or dropped (except replacing its own trig
   !/\bdelete\s+from\b|\btruncate\b|\bdrop\s+table\b/i.test(body.replace(/'[A-Z]+'/g, '')) && (body.match(/drop trigger if exists/g) || []).length === 1
   && !/^\s*update\s+public\.evv_submissions/im.test(body.split('create or replace function')[0]))
 ck('no em dashes, and never her banned phrase, in anything 429 added (SQL, proof, helper, client page)', ![sq, pf, helperSrc, signPage].some((t) => DASH.test(t) || PLAINLANG.test(t)))
-{ const added = tkSrc.slice(tkSrc.indexOf('PASS 4 (429)'), tkSrc.indexOf('const summary = {'))
-  const outMsg = (tkSrc.match(/const msgOutTmpl[\s\S]*?`;?\n/) || [''])[0]
-  ck('timekeeper: no em dashes in the 429 part or the new clock-out wording', added.length > 1000 && !DASH.test(added) && !DASH.test(outMsg) && !PLAINLANG.test(added), [DASH.test(added), DASH.test(outMsg)]) }
+ck('timekeeper: the 429 next-visit pass and the Saturday reminder are retired (2026-10-17), no em dashes in what replaced them',
+  !/PASS 4 \(429\)|nextVisitMessage|satnudge_|evv_next_visit_live === true/.test(tkSrc) && /RETIRED 2026-10-17/.test(tkSrc)
+  && !DASH.test(tkSrc.slice(tkSrc.indexOf('PASS 3b (2026-10-17)'), tkSrc.indexOf('const summary = {'))))
 { const a = form.indexOf('/* 429: "<client> will sign'), b = form.indexOf('return { token, fields, statusWords')
   const parts = [form.slice(a, b), (form.match(/<!-- 429: only while[\s\S]*?<\/div>\n    <\/div>/) || [''])[0], (form.match(/\/\* 429: the "will sign at my next visit" choice[\s\S]*?addEventListener\('input', laterSync\);/) || [''])[0]]
   ck('form: no em dashes in the 429 parts', parts.every((p) => p.length > 50 && !DASH.test(p) && !PLAINLANG.test(p)), parts.map((p) => p.length)) }
@@ -145,98 +150,18 @@ const items = () => APP.ops_items.filter((x) => String(x.id).startsWith('ops_evv
 const LINK = `https://sc.mo-care.com/evv-client-sign.html?t=${SIGTOK}`
 const WANT = `Hi Maria, it's Caring Companions. While you're with Ruth today, please have Ruth sign the EVV correction form from Wednesday, Sep 30: ${LINK}`
 
-/* a · AT THE SHIFT: the clock-out reminder asks for the form before they leave */
-reset(); VISITS = [{ ...VISITS[0], id: 9001, scheduledStartDate: '2026-10-02T09:00:00', scheduledEndDate: '2026-10-02T13:00:00', clockIn: { time: '2026-10-02T09:04:00' } }]; T.evv_sign = []; T.evv_submissions = []
+/* a-g · RETIRED 2026-10-17 (Samantha): no form at the shift, no next-visit signature text, no Saturday reminder. A
+   form still waiting is turned into a "call the client" card once, at install (Desktop 883); the watcher never texts
+   about forms again, whatever the old switches say. */
+reset({ settings: { evv_next_visit_live: true, evv_chase_live: true } }); at('09:15'); let j = await tick()
+ck('retired · next visit, even with the old switch on: nothing texted, no row touched, no card', SENT.length === 0 && !sign().next_visit_practice_at && !sign().next_visit_texted_at
+  && items().length === 0 && /retired/.test(JSON.stringify(j.evv_next_visit)), { SENT, s: sign(), j: j.evv_next_visit })
+reset({ settings: { evv_chase_live: true } }); APP.evv_chase_state = []
+at('15:05', '2026-10-03'); j = await tick()          // Saturday 3:05pm
+ck('retired · Saturday 3pm with a form unprocessed: no office reminder, nothing stamped', SENT.length === 0 && APP.evv_chase_state.length === 0 && /retired/.test(JSON.stringify(j.evv_chase)), { SENT, j: j.evv_chase })
+reset(); VISITS = [{ ...VISITS[0], id: 9001, scheduledStartDate: '2026-10-02T09:00:00', scheduledEndDate: '2026-10-02T13:00:00', clockIn: { time: '2026-10-02T09:04:00' } }]
 at('13:10'); await tick()
-{ const m = toCg()[0]?.message || ''; const u = (m.match(/https:\/\/sc\.mo-care\.com\/evv-correction-form\.html\?t=([0-9a-f-]{36})/) || [])[0]
-  ck('clock-out reminder · the exact new wording: before you leave, have Ruth sign it (pre-filled link, token only)', toCg().length === 1 && !!u
-    && m === `Hi Maria, it's Caring Companions. Your shift with Ruth ended at 1pm but there's no clock-out yet. Please clock out in the AxisCare app now. If you need your time corrected, fill in this form before you leave and have Ruth sign it: ${u}. If you didn't put in your shift note, text it to the office now so we can put it in your shift for you.`, m)
-  ck('clock-out reminder · "Caring Companions", never "it\'s Cara"; no em dash', !/it's Cara/.test(m) && !DASH.test(m)) }
-reset({ settings: { timekeeper_msg_out: 'Hi {first_name}, clock out please. Form: sc.mo-care.com/evv-correction-form' } }); VISITS = [{ ...VISITS[0], id: 9001, clockIn: { time: '2026-10-02T09:04:00' } }]; T.evv_sign = []; T.evv_submissions = []
-at('13:10'); await tick()
-ck('clock-out reminder · her own wording (timekeeper_msg_out) is used as it is (only the link is swapped)', /^Hi Maria, clock out please\. Form: https:\/\/sc\.mo-care\.com\/evv-correction-form\.html\?t=/.test(toCg()[0]?.message || ''), toCg())
-
-/* b · NEXT VISIT, switch OFF (the default): practice only */
-reset(); at('09:15'); let j = await tick()
-ck('next visit, switch off · nothing is texted to anyone; recorded once as practice', SENT.length === 0 && !!sign().next_visit_practice_at && sign().next_visit_id === '9002' && !sign().next_visit_texted_at
-  && j.evv_next_visit?.live === false && j.evv_next_visit?.would_text === 1, { SENT, s: sign(), j: j.evv_next_visit })
-const firstPractice = sign().next_visit_practice_at; at('09:30'); await tick()
-ck('next visit, switch off · the practice stamp is not rewritten each run', sign().next_visit_practice_at === firstPractice && SENT.length === 0)
-reset({ settings: { evv_next_visit_live: true, timekeeper_text_live: false } }); at('09:15'); await tick()
-ck('next visit · the caregiver-text switch (timekeeper_text_live) off also stops it', SENT.length === 0 && !sign().next_visit_texted_at)
-
-/* c · NEXT VISIT, switch ON */
-reset({ settings: { evv_next_visit_live: true } }); at('09:05'); await tick()
-ck('next visit · clocked in 3 minutes: not yet', SENT.length === 0 && !sign().next_visit_texted_at)
-at('09:15'); j = await tick()
-ck('next visit · 10+ minutes in: ONE text to the caregiver, the exact words, the client-signature link', toCg().length === 1 && toCg()[0].message === WANT && j.evv_next_visit?.texted === 1, { SENT, j: j.evv_next_visit })
-ck('next visit · NOTHING to the client or anyone else', toClient().length === 0 && SENT.length === 1)
-ck('next visit · the link carries only the token', new URL(LINK).searchParams.size === 1 && UUIDRE.test(new URL(LINK).searchParams.get('t')) && !/maria|ruth|4175|2026/i.test(LINK))
-ck('next visit · marked sent once (visit, time), the link kept good through the visit', sign().next_visit_texted_at && sign().next_visit_id === '9002' && Date.parse(sign().expires_at) >= NOW + 864e5 - 1000, sign())
-at('09:40'); await tick(); at('12:00'); await tick()
-ck('next visit · never a second text for the same form', toCg().length === 1)
-reset({ settings: { evv_next_visit_live: true } }); VISITS[0].id = 9001; VISITS[0].scheduledStartDate = '2026-09-30T09:00:00'; at('09:15', '2026-09-30'); await tick()
-ck('next visit · the corrected visit itself never triggers it', SENT.filter((m) => /evv-client-sign/.test(m.message)).length === 0)
-reset({ settings: { evv_next_visit_live: true } }); VISITS[0].clockIn = null; at('09:30'); await tick()
-ck('next visit · no clock-in yet: no text (the missed clock-in flow owns that)', SENT.filter((m) => /evv-client-sign/.test(m.message)).length === 0 && !sign().next_visit_texted_at)
-reset({ settings: { evv_next_visit_live: true } }); VISITS[0] = { ...VISITS[0], scheduledStartDate: '2026-10-02T20:00:00', scheduledEndDate: '2026-10-03T08:00:00', clockIn: { time: '2026-10-02T20:01:00' } }
-at('20:30'); await tick()
-ck('next visit · overnight visit at 8:30pm: no text (night)', SENT.length === 0)
-VISITS[0].scheduledStartDate = '2026-10-02T20:00:00'; at('07:05', '2026-10-03'); AHEAD = []; await tick()
-ck('next visit · still there at 7:05am: the text goes then', toCg().length === 1 && /evv-client-sign/.test(toCg()[0].message), SENT)
-
-/* d · not reached: opted out, no phone, GoHighLevel down */
-reset({ settings: { evv_next_visit_live: true } }); T.contact_optout_current = [{ address: '+14175550111', channel: 'sms', opted_out: true, source: 'STOP' }]; at('09:15'); await tick()
-ck('opted out · no text; marked final; a Needs Attention item: call Ruth to verify', SENT.length === 0 && sign().next_visit_refused_at && items().length === 1 && /could not be texted the signature link for Ruth: call Ruth to verify/.test(items()[0].title), { items: items(), s: sign() })
-ck('opted out · the refusal also shows as a "didn\'t go through" card (no silent failure)', APP.ops_items.some((x) => x.kind === 'send_problem'), APP.ops_items.map((x) => x.kind))
-at('09:30'); await tick(); ck('opted out · never retried', SENT.length === 0 && items().length === 1)
-reset({ settings: { evv_next_visit_live: true } }); APP.caregivers[0].phone = ''; at('09:15'); await tick()
-ck('no phone on the roster · no text, an item to call Ruth', SENT.length === 0 && items().length === 1 && /no phone on the roster/.test(items()[0].detail), items())
-reset({ settings: { evv_next_visit_live: true } }); GHLDOWN = true
-for (const hm of ['09:15', '09:17', '09:19']) { at(hm); await tick() }
-ck('GoHighLevel refuses · not stamped as sent, tried 3 times, a "didn\'t go through" card, then an item to call', !sign().next_visit_texted_at && sign().next_visit_tries === 3 && !!sign().next_visit_refused_at
-  && items().length === 1 && APP.ops_items.some((x) => x.kind === 'send_problem'), { s: sign(), it: APP.ops_items.map((x) => x.id) })
-GHLDOWN = false; at('09:21'); await tick(); ck('GoHighLevel refuses · after 3 tries it stops', SENT.length === 0)
-
-/* e · WORST CASE: no next visit within 14 days */
-reset({ settings: { evv_next_visit_live: true } }); VISITS = []; AHEAD = [{ id: 9010, caregiver: { id: 502 }, client: { id: 701 }, scheduledStartDate: '2026-10-05T09:00:00', scheduledEndDate: '2026-10-05T13:00:00' }]
-at('08:30'); await tick()
-ck('look ahead · not before 9am', AXQ.length === 0 && items().length === 0)
-at('09:10'); await tick()
-ck('look ahead · AxisCare asked once, for this client, today to the link end', AXQ.length === 1 && /clientIds=701&startDate=2026-10-02&endDate=2026-10-14/.test(AXQ[0]), AXQ)
-ck('look ahead · no visit with Maria and Ruth in 14 days: the item "No upcoming visit with Ruth: call Ruth to verify"', items().length === 1
-  && items()[0].title === "No upcoming visit with Ruth: call Ruth to verify Maria Lopez's EVV correction (Wednesday, Sep 30)" && SENT.length === 0, items())
-at('09:12'); await tick(); at('15:00'); await tick()
-ck('look ahead · once a day, one item (not repeated)', AXQ.length === 1 && items().length === 1)
-reset({ settings: { evv_next_visit_live: true } }); VISITS = []; AHEAD = [{ id: 9011, caregiver: { id: 501 }, client: { id: 701 }, scheduledStartDate: '2026-10-07T09:00:00', scheduledEndDate: '2026-10-07T13:00:00' }]
-at('09:10'); await tick()
-ck('look ahead · a visit next week: no item; noted on the row', items().length === 0 && sign().next_check_day === '2026-10-02' && sign().next_visit_seen === '2026-10-07T09:00', sign())
-reset(); T.evv_sign[0].expires_at = '2026-10-01T00:00:00Z'; at('10:00'); await tick()
-ck('expired link, still unsigned · an item to call Ruth (practice mode too: it is an office item, not a text)', items().length === 1 && /still not signed by Ruth: call Ruth to verify/.test(items()[0].title) && SENT.length === 0, items())
-
-/* f · housekeeping */
-reset(); T.evv_submissions[0].client_sig_status = 'signed'; at('09:15'); await tick()
-ck('a form signed meanwhile (or verified by phone) · its link row is closed, nothing sent', !!sign().closed_at && SENT.length === 0, sign())
-reset(); T.evv_sign = []; T.evv_submissions[0].axiscare_visit_id = null; at('09:15'); await tick()
-ck('a plain form the office linked to Maria and Ruth · gets its link row (no visit number: a later day counts)', T.evv_sign.length === 1 && T.evv_sign[0].submission_id === 'S1' && UUIDRE.test(T.evv_sign[0].token)
-  && T.evv_sign[0].caregiver_axiscare_id === '501' && T.evv_sign[0].visit_id === null && !!T.evv_sign[0].next_visit_practice_at, T.evv_sign)
-reset(); T.evv_sign = []; T.evv_submissions[0].client_axiscare_id = null; at('09:15'); await tick()
-ck('a plain form NOT linked yet · no link row (the office sees "no visit link" and can verify by phone)', T.evv_sign.length === 0)
-reset({ settings: { evv_next_visit_live: true, timekeeper_watch_live: false } }); at('09:15'); j = await tick()
-ck('dry run (watch off) · writes nothing, sends nothing', SENT.length === 0 && !sign().next_visit_practice_at && !sign().next_visit_texted_at && items().length === 0 && j.mode === 'DRY RUN')
-
-/* g · the morning chase is retired */
-reset({ settings: { evv_chase_live: true } }); T.evv_sign = []; T.evv_submissions = []
-VISITS = [{ id: 9100, caregiver: { id: 501, firstName: 'Maria', lastName: 'Lopez' }, client: { id: 701, firstName: 'Ruth' }, scheduledStartDate: '2026-10-01T09:00:00', scheduledEndDate: '2026-10-01T13:00:00', clockIn: null, clockOut: null }]
-at('09:30'); j = await tick()
-ck('morning chase retired · evv_chase_live on, yesterday\'s missed punch: NO text asking for a new form', SENT.length === 0 && /retired in 429/.test(j.evv_chase?.why || ''), { SENT, c: j.evv_chase })
-ck('source · the old chase wording and its per-visit followups stamp are gone; the Saturday office reminder stays',
-  !/EVV correction form and have the client sign it/.test(tkSrc) && !/by: 'evv-chase'/.test(tkSrc) && /satnudge_/.test(tkSrc))
-ck('source · the next-visit text goes to the CAREGIVER only (audience caregiver, sms, opt-out checked); no client phone is read',
-  /contactForOutbound\(sb, ghl, \{ phone, firstName: first \}, 'urgent_internal',\s*\{ audience: 'caregiver', channel: 'sms', sender: 'timekeeper-watch \(EVV next visit\)' \}\)/.test(tkSrc)
-  && !/homePhone|client\.phone|client_phone/.test(tkSrc.slice(tkSrc.indexOf('PASS 4 (429)'), tkSrc.indexOf('const summary = {'))))
-ck('source · switches: needs evv_next_visit_live === true AND the caregiver texts; the summary reports both', /const nvLive = textLive && settings\.evv_next_visit_live === true/.test(tkSrc)
-  && /evv_next_visit_live: settings\.evv_next_visit_live === true, evv_chase_live: settings\.evv_chase_live === true/.test(tkSrc))
+ck('retired · the clock-out reminder has no form or signature link', toCg().length === 1 && !/evv-correction|evv-client-sign|sign it/.test(toCg()[0].message), toCg())
 globalThis.Date = RealDate
 
 // ── 4 · the public pages in a fake browser ──
