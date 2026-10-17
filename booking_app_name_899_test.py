@@ -28,6 +28,7 @@ class H(http.server.BaseHTTPRequestHandler):
             d = {}
             if os.path.exists(os.path.join(TMP, "deploys")):
                 for ln in open(os.path.join(TMP, "deploys")).read().splitlines(): f, vj = json.loads(ln); d[f] = vj
+            if m.group(1) in M.get("missing", ()): return self._send(404, {"message": "Function not found"})
             return self._send(200, {"verify_jwt": d.get(m.group(1), GATES[m.group(1)]), "version": 3})
         self._send(404, {})
     def do_PATCH(self):
@@ -90,6 +91,8 @@ c, out, d, pt = run(fail="family-offer")
 ck("8 a door fails: stops there", c == 5 and d == [[f, GATES[f]] for f in FNS[:3]], (d, out))
 c, out, d, pt = run(open="circles-sync")
 ck("9 a door answering a stranger is reported, not DONE", c == 1 and "NOT COMPLETE" in out and "circles-sync answered a stranger" in out, out)
+c, out, d, pt = run(missing=("pilot-readiness",))
+ck("10 a piece that was never live (pilot-readiness, 404): left alone, the rest go live, DONE", c == 0 and "899: DONE" in out and "pilot-readiness isn't live" in out and d == [[f, GATES[f]] for f in FNS if f != "pilot-readiness"], (d, out))
 for n, okk, note in res: print(("  ✓ " if okk else "  ✗ ") + n + ("" if okk else "\n" + note))
 print(f"\n  899 rehearsal: {sum(1 for r in res if r[1])}/{len(res)} passed")
 shutil.rmtree(TMP, ignore_errors=True)
