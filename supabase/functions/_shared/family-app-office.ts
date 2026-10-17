@@ -86,22 +86,33 @@ export const inviteWords = (first: string, client: string) =>
 
 export const APP_URL = 'https://family.mo-care.com'
 export const AXIS_ACTIVATE = 'https://16485.axiscare.com/?user-connect.php&action=activate'
-/** The welcome text she approved 2026-10-15 (editable in the Hub before sending). */
-// Branded by the client's state (her two-brand plan 2026-10-16). Missouri reads exactly as she approved it on 2026-10-15.
+/** The welcome she approved 2026-10-17 for the pilot ("The welcome wording is approved (keep the pilot line)"; draft
+ *  https://claude.ai/artifact/A292b1bNQCicg4Yy7id8dS): the 2026-10-15 welcome with "request" instead of "book", one sentence on
+ *  how requests work, and in the email a "How extra visits work" box and the pilot line. Editable in the Hub before sending.
+ *  The pilot line goes once ops_settings.family_welcome_pilot_line is false. Branded by the client's state. */
 const MO_BRAND = brand('MO') as Brand
 export function welcomeText(first: string, client: string, phone: string, withAxis: boolean, b: Brand = MO_BRAND) {
-  return `Hi ${first}, it's ${b.short}. You're set up to follow ${client}'s care online. To see visits and book extra ones, go to ${b.app_host} and sign in with this email (we'll email you a code).` +
+  return `Hi ${first}, it's ${b.short}. You're set up to follow ${client}'s care online. To see visits and request an extra one, go to ${b.app_host} and sign in with this email (we'll email you a code).` +
+    ` Extra visits are requests: we ask our caregivers and tell you by a set time whether someone can come.` +
     (withAxis ? ` For ${client}'s calendar, care notes and invoices, go to 16485.axiscare.com, tap Activate account and use this same email.` : '') +
     ` Questions? Call ${phone}.`
 }
+/** The app's request hours in words, per state (the same days and hours the app's picker uses). */
+const appHours = (key: string | null) => key === 'OK' ? 'Monday to Friday, 8 AM to 6 PM' : '7 AM to 6 PM'
 const h = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-export function welcomeEmail(first: string, client: string, email: string, phone: string, withAxis: boolean, b: Brand = MO_BRAND) {
+export function welcomeEmail(first: string, client: string, email: string, phone: string, withAxis: boolean, b: Brand = MO_BRAND, pilot = true) {
   const btn = (href: string, label: string) => `<a href="${href}" style="display:inline-block;background:#1F7A8C;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:10px;margin:6px 0 2px">${label}</a>`
   const step = (n: number, title: string, body: string) => `<div style="margin:18px 0 0"><div style="font-weight:700;color:#0D365F;font-size:17px">${n}. ${title}</div>${body}</div>`
   const html = `<div style="font-family:Arial,sans-serif;font-size:16px;line-height:1.6;color:#16283a;max-width:520px">` +
     `<p>Hi ${h(first)},</p><p>You're set up to follow ${h(client)}'s care online.</p>` +
-    step(1, 'See visits and book extra ones', `<p style="margin:4px 0">Go to ${h(String(b.app_host))} and type <b>${h(email)}</b>. We'll email you a 6-digit code. No password needed.</p>${btn(String(b.app_url), 'Open the family app')}`) +
+    step(1, 'See visits and request extra ones', `<p style="margin:4px 0">Go to ${h(String(b.app_host))} and type <b>${h(email)}</b>. We'll email you a 6-digit code. No password needed.</p>${btn(String(b.app_url), 'Open the family app')}`) +
+    `<div style="margin:14px 0 0;border-left:3px solid #1F7A8C;padding-left:12px"><b>How extra visits work</b><ul style="margin:4px 0 0;padding-left:18px">` +
+      `<li>Ask for a visit of 2 hours or more, any day from ${h(appHours(b.key))}.</li>` +
+      `<li>We ask our caregivers, starting with those who know ${h(client)}. The app tells you when you'll hear back.</li>` +
+      `<li>It isn't scheduled until a caregiver accepts. If nobody can, we tell you, and there's no charge.</li>` +
+      `<li>You can cancel a request any time before it's confirmed. Once confirmed, there's no fee to cancel up to 24 hours before; after that, 2 hours are charged.</li></ul></div>` +
     (withAxis ? step(2, `${h(client)}'s calendar, care notes and invoices`, `<p style="margin:4px 0">Go to 16485.axiscare.com and tap <b>Activate account</b>. Use this same email, <b>${h(email)}</b>, and follow the short steps to set a password.</p>${btn(AXIS_ACTIVATE, 'Activate your AxisCare account')}`) : '') +
+    (pilot ? `<p style="margin-top:18px">You're one of the first families to use the app. If anything is confusing, tell us; it helps us get it right.</p>` : '') +
     `<p style="margin-top:22px">Questions? Call us at ${h(phone)}. A real person answers, weekdays 8 AM to 6 PM.</p>` +
     `<p style="color:#55677a">${h(b.footer)}</p></div>`
   return { subject: `Your ${b.short} family access for ${client}`, html }
@@ -187,7 +198,7 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
       const withAxis = onAxis !== false
       return say(200, { preview: true, name: c.name, can_text: canText, can_email: canEmail, axis_email_on_file: onAxis, include_axis: withAxis,
         text: welcomeText(first, client, phone, withAxis, b), text_without_axis: welcomeText(first, client, phone, false, b), text_with_axis: welcomeText(first, client, phone, true, b),
-        email_subject: welcomeEmail(first, client, email, phone, withAxis, b).subject, brand: b.key })
+        email_subject: welcomeEmail(first, client, email, phone, withAxis, b, st?.family_welcome_pilot_line !== false).subject, brand: b.key })
     }
     const withAxis = body?.include_axis !== false
     const text = String(body?.text ?? '').trim()
@@ -195,7 +206,7 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     if (!canText && !canEmail) return say(409, { error: `There's no way to reach ${c.name}: no email, and no phone with Texts OK.` })
     let byText = false, byEmail = false
     if (canText && body?.by_text !== false) byText = await d.send(c, 'sms', { message: text })
-    if (canEmail && body?.by_email !== false) { const em = welcomeEmail(first, client, email, phone, withAxis, b); byEmail = await d.send(c, 'email', { subject: em.subject, html: em.html }) }
+    if (canEmail && body?.by_email !== false) { const em = welcomeEmail(first, client, email, phone, withAxis, b, st?.family_welcome_pilot_line !== false); byEmail = await d.send(c, 'email', { subject: em.subject, html: em.html }) }
     await d.logMessage({ circle_id: String(c.circle_id), kind: 'update', body: text, sent_by: staff.name, reached: byText || byEmail ? 1 : 0, skipped: byText || byEmail ? 0 : 1 })
     await ev('family_app_welcome', `${staff.name} sent ${c.name} the family app welcome (${[byText && 'text', byEmail && 'email'].filter(Boolean).join(' + ') || 'nothing went'})`, { contact_id: c.id, by_text: byText, by_email: byEmail, include_axis: withAxis })
     if (!byText && !byEmail) return say(502, { error: 'Neither the text nor the email went through. The office has a Needs Attention card with the reason.' })
