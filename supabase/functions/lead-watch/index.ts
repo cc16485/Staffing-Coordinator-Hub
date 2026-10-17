@@ -162,7 +162,10 @@ Deno.serve(async (req) => {
   const P = await people()
   const firstAdmin = Array.isArray(settings.coverage_alert_admins) && settings.coverage_alert_admins.length ? String(settings.coverage_alert_admins[0]) : 'samantha@mo-care.com'
   const ops = seatHolder(windows, 'operations', now, settings, firstAdmin, positions)
-  const esc = seatHolder(windows, 'owner_escalation', now, settings, firstAdmin, positions)
+  /* The manager rung goes to whoever is IN CHARGE now, not leadership (Springfield structure, Samantha 2026-10-17): an
+     uncalled family is a team problem. Leadership only when In charge is the owner, or nobody is in charge. */
+  const lead = seatHolder(windows, 'owner_escalation', now, settings, firstAdmin, positions)
+  const esc = seatHolder(windows, 'in_charge', now, settings, lead.person || firstAdmin, positions)
   const opsBackup = low(ops.window?.backup_person || '')
   const hours = LR.responseHours(settings), set = LR.rungSettings(settings), quiet = officeQuiet(now, settings)
   const plan: Any = { live, quiet, seats: { operations: ops.person ? firstOf(P.nameOf(ops.person)) : null, operations_from: ops.source, backup: opsBackup ? firstOf(P.nameOf(opsBackup)) : null, escalation: esc.person ? firstOf(P.nameOf(esc.person)) : null },
@@ -207,7 +210,7 @@ Deno.serve(async (req) => {
     for (const r of due) {
       const who = r.level === 'owner' ? owner || ops.person
         : r.level === 'backup' ? (opsBackup && opsBackup !== owner ? opsBackup : (ops.person && ops.person !== owner ? ops.person : (esc.person !== owner ? esc.person : '')))
-        : esc.person
+        : (esc.person && esc.person !== owner ? esc.person : lead.person)
       if (quiet) { plan.waiting_quiet++; continue }          /* the text waits for 7am; the stamp waits with it, so nothing is skipped */
       plan.rungs[r.level]++
       const whoFirst = who ? firstOf(P.nameOf(who)) : ''
@@ -227,10 +230,10 @@ Deno.serve(async (req) => {
       if (it && it.status === 'open') {
         if (r.level === 'backup' && who) { it.also_for = [...new Set([...(Array.isArray(it.also_for) ? it.also_for : []), who])]
           it.history = [...(Array.isArray(it.history) ? it.history : []), { at: nowIso, by: 'Cara', text: `On ${P.nameOf(who)}'s desk too (backup): ${mins} minutes, nobody has called` }]; await put('ops_items', it) }
-        if (r.level === 'manager' && who) { it.escalation = { to: who, to_name: P.nameOf(who), seat: 'owner_escalation', level: 'urgent', why: `nobody has called this family in ${mins} minutes`, at: nowIso }; it.urgency = 'high'
+        if (r.level === 'manager' && who) { it.escalation = { to: who, to_name: P.nameOf(who), seat: who === esc.person ? 'in_charge' : 'owner_escalation', level: 'urgent', why: `nobody has called this family in ${mins} minutes`, at: nowIso }; it.urgency = 'high'
           it.history = [...(Array.isArray(it.history) ? it.history : []), { at: nowIso, by: 'Cara', text: `Escalated to ${P.nameOf(who)}: nobody has called in ${mins} minutes (a miss)` }]; await put('ops_items', it) }
       }
-      try { await opEvent(sb, { job: 'lead-watch', verb: 'lead_rung', item_id: String(l.id), area: 'growth_leads', summary: `${r.level === 'owner' ? 'Owner' : r.level === 'backup' ? 'Backup' : 'Owner Escalation'} told at ${mins} minutes: nobody has called ${family}${who ? ' (' + firstOf(P.nameOf(who)) + (sent ? '' : ', text failed') + ')' : ' (nobody to tell)'}` }) } catch { /* nicety */ }
+      try { await opEvent(sb, { job: 'lead-watch', verb: 'lead_rung', item_id: String(l.id), area: 'growth_leads', summary: `${r.level === 'owner' ? 'Owner' : r.level === 'backup' ? 'Backup' : 'In charge'} told at ${mins} minutes: nobody has called ${family}${who ? ' (' + firstOf(P.nameOf(who)) + (sent ? '' : ', text failed') + ')' : ' (nobody to tell)'}` }) } catch { /* nicety */ }
     }
     if (dirty && live) { await put('leads', l); plan.written++ }
   }

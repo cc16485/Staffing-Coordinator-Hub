@@ -3,10 +3,12 @@
 // TODAY COCKPIT, PHASE 3 (Samantha, 2026-10-05): right person first, then escalate. Every 2 minutes:
 //   1. ROUTE: new scheduling work made by a job (no person placed it) goes to whoever holds the STAFFING seat on the
 //      duty schedule now (Krystal in her staffing hours; the seat's "when nobody is scheduled" person otherwise).
-//   2. ESCALATE: work nobody has taken pulls in whoever holds the OWNER ESCALATION seat now. The owner keeps it.
-//        uncovered shift starting within 60 minutes   after 5 minutes
-//        other urgent staffing / no-clock-in items     after 15 minutes
-//        normal work                                   once overdue
+//   2. ESCALATE (the team ladder, Samantha approved 2026-10-17): work nobody has taken pulls in the next person on the
+//      ladder. The owner keeps it.
+//        normal work, once overdue                     whoever is IN CHARGE now (never leadership)
+//        critical: uncovered shift within the hour,    In charge after 10 minutes (5 for the shift), Leadership after
+//        urgent staffing, no clock-in                  20, the leadership backup (Zach) after 35
+//      Nobody is escalated to themselves; a stage whose person is the owner (or empty) is skipped.
 //      An escalation that no longer applies (someone took it, it was parked, the due date moved) is marked cleared.
 // Writes ops_items only, per item, on the newest copy (the Hub saves the same way). Sends NOTHING: the missed
 // clock-in texts to the escalation person come from timekeeper-watch (daytime only).
@@ -16,7 +18,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { opEvent } from '../_shared/events.ts'
-import { escalationDue, minsToShift, onDuty, routable } from '../_shared/duty.ts'
+import { escalationDue, ladder, minsToShift, onDuty, routable, STAGE_SEAT, stagePerson } from '../_shared/duty.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b, null, 2), { status: s, headers: { 'Content-Type': 'application/json' } })
@@ -41,6 +43,7 @@ Deno.serve(async (req) => {
   const since = String(settings.routing_since || '')
   const [windows, positions, items, cases] = await Promise.all([read('duty_windows'), read('positions'), read('ops_items'), read('coverage_cases')])
   const seats = onDuty(windows, settings, now, positions)
+  const L = ladder(settings)
   const names = new Map<string, string>()
   try {
     const { data: ps } = await sb.from('persons').select('primary_email, full_name')
@@ -52,7 +55,10 @@ Deno.serve(async (req) => {
 
   const plan: Any = { live, seats: {
       staffing: { first: seats.staffing.person ? first(seats.staffing.person) : null, from: seats.staffing.source },
-      escalation: { first: seats.escalation.person ? first(seats.escalation.person) : null, from: seats.escalation.source } },
+      in_charge: { first: seats.in_charge.person ? first(seats.in_charge.person) : null, from: seats.in_charge.source },
+      escalation: { first: seats.escalation.person ? first(seats.escalation.person) : null, from: seats.escalation.source },
+      backup: { first: seats.backup.person ? first(seats.backup.person) : null } },
+    ladder: L,
     routed: 0, escalated_urgent: 0, escalated_overdue: 0, cleared: 0, written: 0 }
   const changes = new Map<string, (it: Any) => void>()
 
@@ -76,19 +82,29 @@ Deno.serve(async (req) => {
     }
     /* 2 · escalate */
     const c = it.coverage_case_id != null ? caseById.get(String(it.coverage_case_id)) : null
-    const due = escalationDue(it, now, { minsToShift: c ? minsToShift(c, now) : null, ownerFirst: owner ? first(owner) : 'Nobody' })
-    const to = seats.escalation.person
+    const due = escalationDue(it, now, { minsToShift: c ? minsToShift(c, now) : null, ownerFirst: owner ? first(owner) : 'Nobody', ladder: L })
     const prev = it.escalation && !it.escalation.cleared_at ? it.escalation : null
-    if (due && to && to !== owner) {
+    /* The stage reached, or the nearest earlier stage whose person isn't the owner. Krystal's own late item has nobody
+       above her in the team, so it stays hers (it shows on the Overview, it doesn't interrupt leadership). */
+    let stage = due?.stage, to = ''
+    if (due) {
+      const order = ['in_charge', 'leadership', 'backup'] as const
+      for (let k = order.indexOf(due.stage); k >= 0; k--) {
+        const p = stagePerson(seats, order[k])
+        if (p && p !== owner) { stage = order[k]; to = p; break }
+      }
+    }
+    if (due && to) {
       if (prev && prev.to === to && prev.level === due.level) continue
       due.level === 'urgent' ? plan.escalated_urgent++ : plan.escalated_overdue++
       const before = changes.get(String(it.id))
+      const told = [...new Set([...(Array.isArray(prev?.also_to) ? prev.also_to : []), ...(prev?.to ? [prev.to] : [])])].filter((e) => e && e !== to && e !== owner)
       changes.set(String(it.id), (x: Any) => {
         before?.(x)
-        x.escalation = { to, to_name: nameOf(to), seat: 'owner_escalation', level: due.level, why: due.why, at: nowIso }
+        x.escalation = { to, to_name: nameOf(to), seat: STAGE_SEAT[stage!], stage, level: due.level, why: due.why, at: nowIso, ...(told.length ? { also_to: told } : {}) }
         x.history = [...(Array.isArray(x.history) ? x.history : []), { at: nowIso, by: 'Cara', text: `Escalated to ${nameOf(to)}: ${due.why}` }]
       })
-    } else if (prev && (!due || to === owner)) {
+    } else if (prev && !to) {
       plan.cleared++
       const before = changes.get(String(it.id))
       changes.set(String(it.id), (x: Any) => { before?.(x); if (x.escalation) { x.escalation.cleared_at = nowIso; x.escalation.cleared_why = it.claimed_by ? 'taken' : 'no longer due' } })
