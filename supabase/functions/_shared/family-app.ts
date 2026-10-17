@@ -11,6 +11,7 @@
 
 import { brand, brandFor, brandView } from './brands.ts'
 import { planRequest, earliestStart, words as answerWords } from './answer-by.ts'
+import { NOTE_MAX, checkNote, helpFillOn, officeCanHelp, HELD_WORDS, EMERGENCY_WORDS, HELP_ADD, HELP_LATE } from './family-review.ts'
 
 export const TZ = 'America/Chicago'   // Missouri and Oklahoma are both Central
 
@@ -347,6 +348,9 @@ export type Deps = {
     // deno-lint-ignore no-explicit-any
     cancelled: (b: any, late: boolean) => Promise<void>
   }
+  /** Release 3: the client's Family Circle settings: the companion tasks allowed in the app (null = all) and Help us fill. */
+  // deno-lint-ignore no-explicit-any
+  circleFlags?: (circleId: string) => Promise<{ app_tasks: string[] | null; help_fill: any } | null>
   /** Close an open office card (the "Place a caregiver" card of a visit the family cancelled). Optional. */
   closeItem?: (id: string, by: string, text: string) => Promise<void>
 }
@@ -426,7 +430,9 @@ export const bookingView = (b: any) => ({ id: b.id, date: b.visit_date, kind: b.
   // Release 2 (2026-10-17): what AxisCare shows now. A caregiver taken off (Coverage Help or the office is arranging another),
   // or the visit removed by us (not the family).
   no_caregiver: b.status === 'placed' && b.sync_state === 'no_caregiver', off_caregiver: b.sync_state === 'no_caregiver' && b.sync_note ? String(b.sync_note).split(' ')[0] : null,
-  by_office: b.status === 'cancelled' && b.cancel_source === 'office' })
+  by_office: b.status === 'cancelled' && b.cancel_source === 'office',
+  // Release 3: held for the office (the family never sees why: the office tells them), and Help us fill on this request
+  held: b.status === 'held', declined: b.status === 'declined', help_fill: b.help_fill === true, couldnt: b.status === 'not_filled' && b.unfilled_kind === 'couldnt' })
 /** "Mon, Oct 19 · 1 PM": the earliest start a family can still request, per day, for the next three days (the picker greys out the rest). */
 // deno-lint-ignore no-explicit-any
 export function earliestByDay(now: Date, hrs: Hours, st: any) {
@@ -444,7 +450,7 @@ export function requestWords(p: { answer_by: string; two_stage: boolean; team_fr
 export const tooSoonWords = (date: string, earliest: string | null) => earliest
   ? `That time is too soon to request in the app. The earliest you can request that day is ${clock12(earliest)}.`
   : 'That day is too soon to request in the app. Please pick a later day, or call the office.'
-const OPEN = ['received', 'practice', 'waiting_for_caregiver', 'needs_office']
+const OPEN = ['received', 'practice', 'waiting_for_caregiver', 'needs_office', 'held']
 
 /** Her rule 2026-10-16: the app is for ACTIVE clients only. A client AxisCare no longer lists as active closes the app for their
  *  family, whoever let them in. Test clients the office lists in ops_settings family_app_test_clients count as active. */
@@ -473,13 +479,17 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
   if (!careActive(client, w.axiscare_client_id, st)) return say(403, { error: `${String(client?.goesBy || client?.firstName || w.client_name || 'This client').trim()}'s care with us has ended, so the app is closed. Please call the office${bnd ? ` at ${bnd.phone}` : ''} with any questions.` })
   const clientName = String(client?.goesBy || client?.firstName || w.client_name || '').trim()
   const phone = (state ? st?.[`family_app_office_phone_${state}`] : null) ?? bnd?.phone ?? null
+  // Release 3 (decision 6, layer 1): only the companion tasks allowed for this client (set at the assessment; none set = all)
+  const cf = deps.circleFlags && w.circle_id ? await deps.circleFlags(String(w.circle_id)) : null
+  const allowedTasks = () => { const all = tasksFor(state, st); const only = Array.isArray(cf?.app_tasks) && cf!.app_tasks.length ? cf!.app_tasks : null; return only ? all.filter((t) => only.includes(t)) : all }
+  const helpFill = helpFillOn(cf?.help_fill, today)
 
   if (action === 'home') {
     const visits = (await clientVisits(deps.ax, w.axiscare_client_id, today, addDays(today, 21))).map(visitView).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start))
     const mine = (await deps.bookings(w.axiscare_client_id)).filter((b) => b.visit_date >= today && OPEN.includes(b.status))
     const est = await estimateRate(deps.ax, w.axiscare_client_id, state, st, today)
     return say(200, { client: { id: w.axiscare_client_id, name: clientName, state }, brand: bnd ? { ...brandView(bnd), phone: phone ?? bnd.phone } : null, can_book: w.can_book, office_phone: phone, rate: est.rate, short_extra: est.short_extra, short_under_hours: est.short_under_hours, visits,
-      waiting: mine.map(bookingView), tasks: tasksFor(state, st), hours: hoursFor(state, st), earliest: earliestByDay(now, hoursFor(state, st), st) })
+      waiting: mine.map(bookingView), tasks: allowedTasks(), note_max: NOTE_MAX, hours: hoursFor(state, st), earliest: earliestByDay(now, hoursFor(state, st), st) })
   }
 
   // Release 1: what the family will be told before they send ("You'll hear from us by ..."), or the earliest time they can ask.
@@ -488,7 +498,8 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(start)) return say(400, { error: 'Please pick a day and a time.' })
     const p = planRequest(now, date, start, st), hrs = hoursFor(state, st)
     if (!p.ok) { const e = earliestStart(now, date, hrs.open, hrs.close, MIN_HOURS, st); return say(200, { ok: false, earliest: e, error: tooSoonWords(date, e) }) }
-    return say(200, { ok: true, answer_by: p.answer_by, answer_by_words: answerWords(p.answer_by), two_stage: p.two_stage, team_from_words: p.two_stage ? answerWords(p.team_from) : null })
+    return say(200, { ok: true, answer_by: p.answer_by, answer_by_words: answerWords(p.answer_by), two_stage: p.two_stage, team_from_words: p.two_stage ? answerWords(p.team_from) : null,
+      help: helpFill ? (officeCanHelp(now, new Date(p.answer_by)) ? HELP_ADD : HELP_LATE) : null })
   }
 
   const herCaregivers = async () => {
@@ -525,8 +536,9 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
   if (action === 'book') {
     if (!w.can_book) return say(403, { error: 'Booking is turned off for your login. Please call the office.' })
     if (!state) return say(409, { error: "We can't book online for this address yet. Please call the office." })
-    const v = validateBooking(body, now, tasksFor(state, st), hoursFor(state, st))
+    const v = validateBooking(body, now, allowedTasks(), hoursFor(state, st))
     if (!v.ok) return say(400, { error: v.error })
+    if (String(v.note ?? '').length > NOTE_MAX) return say(400, { error: `Please keep the note to ${NOTE_MAX} characters.` })
     const method = String(body?.method ?? 'auto') === 'choose' ? 'choose' : 'auto'
     if (method === 'choose') { const ca = chooseAllowed(st, v.date, v.start ?? v.window_start, now); if (!ca.ok || !deps.choose) return say(400, { error: ca.ok ? '"Let me choose" isn\'t available just now. Pick "Find someone for me."' : ca.why }) }
     if (v.preferred.length) {
@@ -542,7 +554,7 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
     const row = { axiscare_client_id: w.axiscare_client_id, client_name: clientName, state, contact_id: w.contact_id, app_user_id: user.id, requested_by_name: w.name,
       kind: v.kind, visit_date: v.date, start_time: v.start, end_time: v.end, window_start: v.window_start, window_end: v.window_end, hours: v.hours, tasks: v.tasks, who: v.who, note: v.note || null,
       preferred_caregiver_ids: v.preferred, requested_caregiver_axiscare_id: v.preferred[0] ?? null, status: 'received',
-      answer_by: plan.answer_by, team_from: plan.team_from, asking_from: plan.asking_from, two_stage: plan.two_stage,
+      answer_by: plan.answer_by, team_from: plan.team_from, asking_from: plan.asking_from, two_stage: plan.two_stage, help_fill: helpFill,
       ...(method === 'choose' ? { method, choose_by: chooseBy(v.date, v.start ?? v.window_start, now, chooseSettings(st).deadline) } : {}) }
     const ins = await deps.insertBooking(row)
     if (!ins) return say(500, { error: "We couldn't save that booking. Nothing was booked. Please try again or call the office." })
@@ -559,21 +571,30 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
     const picks = v.preferred.length ? ` Asked for: ${v.preferred.length} of ${clientName}'s caregivers first.` : ''
     // Release 1 (her approval 2026-10-17): nothing goes on AxisCare until a caregiver accepts and it's confirmed (set times
     // and flexible visits alike), so the schedule never shows an empty placeholder for a request.
+    // Release 3 (decision 6, layer 2): a note that asks for care our extra visits don't cover is held for the office first.
+    const nc = checkNote(v.note)
+    const em = nc.emergency ? ' ' + EMERGENCY_WORDS(phone ?? 'the office') : ''
+    if (nc.hold) {
+      await deps.updateBooking(b.id, { status: 'held', hold_reason: nc.hold, held_by: 'rules', held_at: nowIso, note_check: 'rules_held' })
+      await deps.officeItem({ ...officeCard('held', b, `Check this request before caregivers are asked: ${clientName}, ${b.visit_date}`, `${w.name} asked for ${when(b)} (${v.tasks.join(', ')}). Held because ${nc.hold}. Note: "${String(v.note).slice(0, 300)}". Approve it, approve it without the note, or decline it (Scheduling, Family bookings). Not reviewed by ${answerWords(plan.answer_by)} = it ends with the decline wording.`, nowIso), urgency: nc.emergency ? 'now' : 'today', next_action: 'Approve, approve without the note, or decline.' })
+      return say(200, { ok: true, booking_id: b.id, status: 'held', emergency: nc.emergency, message: HELD_WORDS(answerWords(plan.answer_by)) + em, answer_by: plan.answer_by, answer_by_words: answerWords(plan.answer_by) })
+    }
     await deps.updateBooking(b.id, { status: 'waiting_for_caregiver' })
     if (!offers) await deps.officeItem(officeCard('book', b, `Place a caregiver: ${clientName}, ${when(b)}`, `${w.name} asked for ${when(b)} in the app (${v.tasks.join(', ')}). Caregiver offers are off, so the office places it; it goes on AxisCare when a caregiver is placed.${picks}${v.note ? ` Note: ${v.note}` : ''}`, nowIso))
-    return say(200, { ok: true, booking_id: b.id, status: 'waiting_for_caregiver', message: sent, answer_by: plan.answer_by, answer_by_words: answerWords(plan.answer_by) })
+    const help = helpFill ? ' ' + (officeCanHelp(now, new Date(plan.answer_by)) ? HELP_ADD : HELP_LATE) : ''
+    return say(200, { ok: true, booking_id: b.id, status: 'waiting_for_caregiver', emergency: nc.emergency, message: sent + help + em, answer_by: plan.answer_by, answer_by_words: answerWords(plan.answer_by) })
   }
 
   if (action === 'cancel') {
     if (!w.can_book) return say(403, { error: 'Please call the office to change visits.' })
     const b = (await deps.bookings(w.axiscare_client_id)).find((x) => x.id === String(body?.booking_id ?? ''))
     if (!b || b.status === 'cancelled') return say(404, { error: "We couldn't find that visit." })
-    if (b.status === 'not_filled') return say(409, { error: 'This request has already ended. Nothing was scheduled.' })
+    if (b.status === 'not_filled' || b.status === 'declined') return say(409, { error: 'This request has already ended. Nothing was scheduled.' })
     // Release 1: a request nobody has accepted was never on AxisCare, so cancelling it touches nothing there and costs nothing.
-    if (['received', 'waiting_for_caregiver', 'needs_office'].includes(b.status) && !b.caregiver_axiscare_id && !b.axiscare_visit_id && b.method !== 'choose') {
+    if (['received', 'waiting_for_caregiver', 'needs_office', 'held'].includes(b.status) && !b.caregiver_axiscare_id && !b.axiscare_visit_id && b.method !== 'choose') {
       const at = now.toISOString()
       await deps.updateBooking(b.id, { status: 'cancelled', cancelled_at: at, cancelled_by: w.name })
-      if (deps.closeItem) await deps.closeItem(`fam_book_${b.id}`, 'family app', `${w.name} cancelled this request in the app.`)
+      if (deps.closeItem) for (const k of ['book', 'held', 'fill']) await deps.closeItem(`fam_${k}_${b.id}`, 'family app', `${w.name} cancelled this request in the app.`)
       await deps.event({ actor_kind: 'person', actor_email: user.email ?? undefined, actor_name: w.name, via: 'link', verb: 'family_cancelled', area: 'family_app',
         summary: `${w.name} cancelled the request for ${b.client_name} ${when(b)} before any caregiver accepted`, data: { booking_id: b.id, request: true } })
       return say(200, { ok: true, late: false, message: "Request cancelled. Nothing was scheduled and there's no charge." })

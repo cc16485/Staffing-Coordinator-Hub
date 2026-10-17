@@ -99,6 +99,7 @@ const famDeps = () => ({
   ax, now: () => NOW, supabaseUrl: 'https://h.co',
   settings: async () => W.settings,
   whoIs: async () => WHO.lisa,
+  circleFlags: async () => W.circle ?? null,
   profiles: async (ids) => [{ axiscare_id: '77', first_name: 'Sarah', last_name: 'Jones', published: true, consent: true }, { axiscare_id: '88', first_name: 'Maria', last_name: 'Lopez', published: true, consent: true }].filter((p) => ids.includes(p.axiscare_id)),
   bookings: async (cid) => W.bookings.filter((b) => b.axiscare_client_id === cid),
   insertBooking: async (row) => { const b = { id: uuid(++bid), offer_stage: null, offer_next_at: null, unfilled_card_at: null, caregiver_axiscare_id: null, ...row }; W.bookings.push(b); return { id: b.id } },
@@ -129,6 +130,9 @@ const offDeps = () => ({
   closeItem: async (id, by, text) => { const it = W.items.find((x) => x.id === id); if (it) { it.status = 'done'; it.closed_text = text } },
   // Release 1: requests that ended unfilled, and the family message behind its own approval
   unfilledDue: async () => W.bookings.filter((b) => b.status === 'not_filled' && b.family_unfilled_pending === true && !b.family_unfilled_at),
+  reviewNote: async () => W.ai === undefined ? null : W.ai,
+  heldDue: async () => W.bookings.filter((b) => b.status === 'held' && b.answer_by && Date.parse(b.answer_by) <= NOW.getTime()),
+  declinedDue: async () => W.bookings.filter((b) => b.status === 'declined' && b.family_declined_pending === true && !b.family_declined_at),
   tellFamily: async (b, sms, email, key) => { if (W.tellFail) return { ok: false, why: W.tellFail }; (W.told ??= []).push({ to: b.contact_id, how: 'sms', sms, email, key }); return { ok: true, how: 'sms' } },
 })
 const run = (o) => fo.runOffers(offDeps(), o)
@@ -585,6 +589,76 @@ const fdb2 = fs.readFileSync(path.join(F, '_shared/family-offer-db.ts'), 'utf8')
 const senders = fdb2.slice(fdb2.indexOf('const SENDERS'), fdb2.indexOf('const PROFILE_COLS'))
 ck('R1/R2 guard: each family message only goes behind its own recorded approval', ['family_confirm_text_approved', 'family_unfilled_text_approved', 'family_cgchange_text_approved', 'family_timechange_text_approved'].every((k) => senders.includes(k)) &&
   /Object\.keys\(SENDERS\)\.includes\(approvalKey\) \|\| !st\[approvalKey\]/.test(fdb2), senders)
+
+// ── Release 3 (her "Start Release 3." 2026-10-17): notes, held requests, Help us fill ──────────────────────────────────
+const R3 = { ...OFFERS_ON, family_declined_text_approved: { by: 'Samantha' }, family_couldnt_text_approved: { by: 'Samantha' }, family_unfilled_text_approved: { by: 'Samantha' } }
+const officeR3 = (body, roles = ['care_coordinator']) => off.officeAction({ ...offDepsOffice(), circle: async () => ({ id: 'c1', client_name: 'Dorothy Ray', help_fill: W.circle?.help_fill ?? null }), setAbout: async (id, v) => { W.circle = { ...(W.circle ?? {}), ...v }; return true } }, { email: 'k@mo-care.com', name: 'Krystal', roles }, body)
+const SET = { action: 'book', date: '2026-10-22', start: '10:00', end: '12:00', tasks: ['Companionship'], who: 'any' }
+reset({ settings: R3 })
+o = await go({ ...SET, note: 'x'.repeat(301) })
+ck('R3 the note is 300 characters at most', o.status === 400 && /300 characters/.test(o.body.error), o.body)
+o = await go({ ...SET, note: 'Please help her shower before lunch' }); b = bk()
+ck('R3 rules: a personal-care note is HELD for the office, the family is told plainly', o.body.status === 'held' && b.status === 'held' && b.held_by === 'rules' && /^Request sent\. Our office needs to check this request before we ask caregivers\. You'll hear from us by /.test(o.body.message), o.body)
+ck('R3 held: one office task to approve, approve without the note, or decline', W.items.some((x) => x.id === `fam_held_${b.id}` && /personal care/.test(x.detail)), W.items)
+await run()
+ck('R3 held: no caregiver is texted', !W.texts.length)
+reset({ settings: R3 }); o = await go({ ...SET, note: 'She fell yesterday, please keep her company' })
+ck('R3 emergency words: held, and the family sees the emergency message at once', o.body.status === 'held' && o.body.emergency === true && /call 911 now/.test(o.body.message), o.body)
+reset({ settings: R3 }); o = await go({ ...SET, note: 'She loves cards and a short walk' }); b = bk()
+ck('R3 an ordinary note goes on as a request', o.body.status === 'waiting_for_caregiver' && b.status === 'waiting_for_caregiver')
+W.ai = { verdict: 'concern', why: 'She may wander at night' }; await run()
+ck('R3 AI: a concern holds it before anyone is texted; AI can add a hold', b.status === 'held' && b.held_by === 'ai' && /health or safety/.test(b.hold_reason) && !W.texts.length && W.items.some((x) => x.id === `fam_held_${b.id}`), b)
+o = await officeR3({ action: 'review', booking_id: b.id, decision: 'approve_no_note' })
+ck('R3 office: approve without the note, caregivers are asked, the note is hidden from them', o.status === 200 && b.status === 'waiting_for_caregiver' && b.note_hidden === true && W.items.find((x) => x.id === `fam_held_${b.id}`).status === 'done', o)
+await run()
+ck('R3 after approval: offers go out, and AI is not asked again', W.texts.length > 0 && b.note_check === 'office_ok', { t: W.texts.length, b })
+ck('R3 the caregiver link leaves the note out', (await page(W.offers[0].id, { action: 'view' })).body.note === null)
+reset({ settings: R3 }); await go({ ...SET, note: 'Cards please' }); b = bk(); W.ai = null; await run()
+ck('R3 AI unavailable: the rules decide, offers go out, the note goes on the office list', b.note_check === 'ai_unavailable' && W.texts.length > 0, b)
+reset({ settings: R3 }); await go({ ...SET, note: 'Cards please' }); b = bk(); W.ai = { verdict: 'fine', why: '' }; await run()
+ck('R3 AI fine: offers go out', b.note_check === 'ai_fine' && W.texts.length > 0)
+reset({ settings: R3 }); await go({ ...SET, note: 'Help him get dressed' }); b = bk()
+o = await officeR3({ action: 'review', booking_id: b.id, decision: 'decline' })
+ck('R3 decline needs a reason (for the record)', o.status === 400)
+o = await officeR3({ action: 'review', booking_id: b.id, decision: 'decline', reason: 'Dressing is personal care' }); await run()
+ck('R3 declined: the family gets the approved decline wording, once, behind its own approval', b.status === 'declined' && W.told?.length === 1 && W.told[0].key === 'family_declined_text_approved' &&
+  /can't arrange Dot's request for Thursday, October 22, from 10 to 12 in the app because it includes care our extra visits don't cover\. Please call us at/.test(W.told[0].sms), W.told)
+reset({ settings: R3 }); await go({ ...SET, note: 'insulin at noon' }); b = bk(); b.answer_by = '2026-10-20T13:00:00Z'; await run()
+ck('R3 held and not reviewed by the answer-by time: it ends with the decline wording', b.status === 'declined' && b.ended_why === 'not_reviewed' && W.items.find((x) => x.id === `fam_held_${b.id}`).status === 'done', b)
+reset({ settings: R3 }); W.circle = { app_tasks: ['Companionship'] }
+o = await go({ action: 'home' })
+ck('R3 layer 1: the app only offers the tasks allowed for this client', o.body.tasks.join() === 'Companionship', o.body.tasks)
+o = await go({ ...SET, tasks: ['Meal preparation'] })
+ck('R3 layer 1: a task not allowed for this client is refused', o.status === 400, o.body)
+
+// Help us fill
+o = await officeR3({ action: 'help_fill', circle_id: 'c1', on: true, reason: 'Respite' }, ['staffing_coordinator'])
+ck('R3 Help us fill: only Samantha or Krystal (owner, care coordinator) can set it', o.status === 403)
+o = await officeR3({ action: 'help_fill', circle_id: 'c1', on: true }, ['care_coordinator'])
+ck('R3 Help us fill: a reason is required', o.status === 400)
+reset({ settings: R3 }); o = await officeR3({ action: 'help_fill', circle_id: 'c1', on: true, reason: 'Respite for her daughter' })
+ck('R3 Help us fill: on for 90 days', o.status === 200 && W.circle.help_fill.on === true && W.circle.help_fill.review_by === '2027-01-18', W.circle)
+o = await go({ ...SET }); b = bk()
+ck('R3 Help us fill: the family is told the office will also try, no guarantee', /our office will also try to arrange this visit\. We can't guarantee a caregiver\./.test(o.body.message) && b.help_fill === true, o.body)
+o = await go({ action: 'when', date: '2026-10-24', start: '09:00' })
+ck('R3 Help us fill, a Saturday visit asked on Tuesday: the office has Thursday and Friday to help', /our office will also try/.test(o.body.help ?? ''), o.body)
+NOW = new Date('2026-10-23T20:00:00Z')   // Friday 3 PM, for Saturday 2 PM: the office closes before it could help
+o = await go({ action: 'when', date: '2026-10-24', start: '14:00' })
+ck('R3 Help us fill, Friday afternoon for Saturday: "our office isn\'t able to help with this one in time"', /isn't able to help with this one in time/.test(o.body.help ?? ''), o.body)
+NOW = new Date('2026-10-20T14:00:00Z')
+await run()
+for (const x of W.offers) x.state = 'declined'
+await run(); await run()
+ck('R3 everyone said no on a Help us fill client: one office task (a Tuesday morning), no early end', b.offer_stage === 'done' && b.status === 'waiting_for_caregiver' && W.items.filter((x) => x.id === `fam_fill_${b.id}`).length === 1, { b, items: W.items.map((x) => x.id) })
+o = await officeR3({ action: 'fill_close', booking_id: b.id, how: 'couldnt' }); await run()
+ck("R3 couldn't fill: the family gets the approved wording (our office also tried), its own approval", b.status === 'not_filled' && W.told?.[0]?.key === 'family_couldnt_text_approved' && /our office also tried/.test(W.told[0].sms) && W.items.find((x) => x.id === `fam_fill_${b.id}`).status === 'done', W.told)
+reset({ settings: R3 }); W.circle = { help_fill: { on: true, review_by: '2027-01-18' } }; await go({ ...SET }); b = bk(); await run(); for (const x of W.offers) x.state = 'declined'
+NOW = new Date('2026-10-24T15:00:00Z')   // Saturday 10 AM
+b.visit_date = '2026-10-27'; b.answer_by = '2026-10-26T23:00:00Z'; await run(); await run()
+ck('R3 Help us fill on a Saturday: no office task (Monday to Friday only)', !W.items.some((x) => x.id === `fam_fill_${b.id}`), W.items.map((x) => x.id))
+NOW = new Date('2026-10-20T14:00:00Z')
+reset({ settings: R3 }); W.circle = { help_fill: { on: true, review_by: '2026-10-01' } }; o = await go({ ...SET })
+ck('R3 Help us fill past its review date counts as off', !/our office will also try/.test(o.body.message) && bk().help_fill === false)
 
 for (const [n, ok, note] of res) console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note))
 const bad = res.filter((x) => !x[1]).length

@@ -12,16 +12,22 @@ import { opEvent } from './events.ts'
 import type { ChooseDeps } from './family-offer.ts'
 import type { Ax } from './family-app.ts'
 import type { SyncDeps } from './family-sync.ts'
+import type { MatchResult } from './family-offer.ts'
+import { approvedRules } from './approved-rules.ts'
+import { careLevelOf } from './care-level.ts'
+import { judge, homeNotes, type MatchClient, type MatchCaregiver } from './family-match.ts'
+import { reviewNote, type AiVerdict } from './family-review.ts'
 
 // deno-lint-ignore no-explicit-any
 type Any = any
 const arr = (x: unknown) => (Array.isArray(x) ? x : []) as Any[]
 const SENDERS: Record<string, string> = { family_confirm_text_approved: 'family-offer (caregiver confirmed)', family_unfilled_text_approved: 'family-offer (request not filled)',
-  family_cgchange_text_approved: 'family-offer (caregiver changed)', family_timechange_text_approved: 'family-offer (time changed)' }
+  family_cgchange_text_approved: 'family-offer (caregiver changed)', family_timechange_text_approved: 'family-offer (time changed)',
+  family_declined_text_approved: 'family-offer (request declined)', family_couldnt_text_approved: "family-offer (help us fill: couldn't fill)" }
 const PROFILE_COLS = 'axiscare_id, first_name, last_name, preferred_name, about, experience, why_this_work, years_experience, photo_path, photo_url, video_path, consent, published, status, photo_hidden, video_hidden'
 
 export function chooseDepsFor(db: Any, ax: Ax, supabaseUrl: string): ChooseDeps & Required<Pick<import('./family-offer.ts').OfferDeps, 'textFamily' | 'confirmDue' | 'tellFamily' | 'clientAbout' | 'unfilledDue'>> &
-  Pick<SyncDeps, 'placedAhead' | 'coverage' | 'changeDue'> {
+  Pick<SyncDeps, 'placedAhead' | 'coverage' | 'changeDue'> & { matchFor: (b: Any) => Promise<MatchResult>; reviewNote: (b: Any) => Promise<AiVerdict>; heldDue: () => Promise<Any[]>; declinedDue: () => Promise<Any[]> } {
   const key = async (k: string): Promise<Any> => (await db.from('app_data').select('data').eq('key', k).maybeSingle()).data?.data
   const ghl = () => ({ token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' })
   const headers = (t: string) => ({ Authorization: `Bearer ${t}`, Version: '2021-07-28', 'Content-Type': 'application/json' })
@@ -36,6 +42,36 @@ export function chooseDepsFor(db: Any, ax: Ax, supabaseUrl: string): ChooseDeps 
     return ok ? { ok: true } : { ok: false, why: 'GoHighLevel refused the text (Needs Attention card raised)' }
   }
   const items = async () => arr(await key('ops_items'))
+  // Release 3 matching: the approved rulebook and the AxisCare caregiver list, read at most every 5 minutes per worker.
+  let rulesAt = 0, M: Any = null, cgsAt = 0, axCgs: Map<string, Any> | null = null
+  const rulebook = async (): Promise<{ ok: true } | { ok: false; why: string }> => {
+    if (M && Date.now() - rulesAt < 300000) return { ok: true }
+    const a = await approvedRules(db, 'match-rules.js')
+    if (!a.ok) return { ok: false, why: a.error }
+    try { (0, eval)(a.src); M = (globalThis as Any).CCMatch; rulesAt = Date.now() } catch (e) { return { ok: false, why: 'match-rules.js did not run: ' + String(e).slice(0, 80) } }
+    return M ? { ok: true } : { ok: false, why: 'match-rules.js did not define CCMatch' }
+  }
+  const axCaregivers = async (): Promise<Map<string, Any> | null> => {
+    if (axCgs && Date.now() - cgsAt < 300000) return axCgs
+    const out = new Map<string, Any>(); let url: string | null = '/api/caregivers'
+    for (let i = 0; url && i < 20; i++) {
+      const r = await ax('GET', url)
+      if (r.status !== 200) return null
+      for (const g of arr(r.json?.results?.caregivers ?? r.json?.caregivers)) if (g?.id != null) out.set(String(g.id), g)
+      const next = r.json?.results?.nextPage; url = typeof next === 'string' && next ? next.replace(/^https?:\/\/[^/]+/, '') : null
+    }
+    axCgs = out; cgsAt = Date.now(); return out
+  }
+  /** the client's care-plan answers (client_fact_current, plan/current layers), through their active Journey, as match-dark reads them */
+  const clientFacts = async (axId: string): Promise<Any[] | null> => {
+    const { data: ps } = await db.from('person_source_id').select('person_id').eq('system', 'axiscare').eq('entity_type', 'client').eq('source_id', axId).limit(1)
+    const pid = ps?.[0]?.person_id; if (!pid) return null
+    const { data: eps } = await db.from('journey_episode').select('episode_id, state, created_at').eq('person_id', pid)
+    const ep = (eps ?? []).filter((e: Any) => ['provisional', 'open', 'converted', 'established'].includes(e.state)).sort((a: Any, z: Any) => String(z.created_at).localeCompare(String(a.created_at)))[0]
+    if (!ep) return null
+    const { data: fs } = await db.from('client_fact_current').select('kind, layer, value').eq('episode_id', ep.episode_id).in('layer', ['plan', 'current'])
+    return fs ?? []
+  }
   return {
     ax, supabaseUrl,
     now: () => new Date(),
@@ -92,6 +128,30 @@ export function chooseDepsFor(db: Any, ax: Ax, supabaseUrl: string): ChooseDeps 
       if (!contact) return { ok: false, why: 'not sent (opted out, or the address is not trusted)' }
       const ok = await ghlSendChecked(db, headers(g.token), 'family-offer', { channel: 'email', contactId: contact.contactId, address: addr, who: String(c.name ?? '') }, email)
       return ok ? { ok: true, how: 'email' } : { ok: false, why: 'GoHighLevel refused the email (Needs Attention card raised)' }
+    },
+    matchFor: async (b) => {
+      const rb = await rulebook(); if (!rb.ok) return { ok: false, why: rb.why }
+      const cgs = await axCaregivers(); if (!cgs) return { ok: false, why: "AxisCare's caregiver list couldn't be read" }
+      const cr = await ax('GET', `/api/clients/${encodeURIComponent(String(b.axiscare_client_id))}`)
+      if (cr.status !== 200) return { ok: false, why: `AxisCare's client record couldn't be read (${cr.status})` }
+      const cl = cr.json?.results?.client ?? cr.json?.results ?? {}
+      const { data: plan } = await db.from('client_callin_current').select('only_ask').eq('axiscare_client_id', String(b.axiscare_client_id)).maybeSingle()
+      const client: MatchClient = { name: String(b.client_name ?? ''), level: careLevelOf(cl?.classes).level || 1, facts: await clientFacts(String(b.axiscare_client_id)),
+        onlyAsk: Array.isArray(plan?.only_ask) ? plan.only_ask : [] }
+      const roster = new Map(arr(await key('caregivers')).map((g) => [String(g?.axiscare_id ?? '').replace(/\D/g, ''), g]))
+      const overlay = new Map(arr(await key('caregiver_overlay')).map((o) => [String(o?.axiscare_id ?? ''), o]))
+      const today = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+      return { ok: true, home: homeNotes(M, client), judge: (c) => {
+        const g = cgs.get(String(c.axiscare_id)) ?? {}, r = roster.get(String(c.axiscare_id)) ?? null
+        const cg: MatchCaregiver = { axiscare_id: String(c.axiscare_id), name: c.name, level: careLevelOf(g.classes).level, gender: M.axisGender(g.gender), dementia_trained: !!r?.alz_date, overlay: overlay.get(String(c.axiscare_id)) ?? null }
+        return judge(M, client, cg, today)
+      } }
+    },
+    reviewNote: async (b) => reviewNote(String(b.note ?? ''), Array.isArray(b.tasks) ? b.tasks.map(String) : [], Deno.env.get('ANTHROPIC_API_KEY') ?? ''),
+    heldDue: async () => (await db.from('family_bookings').select('*').eq('status', 'held').lte('answer_by', new Date().toISOString()).limit(100)).data ?? [],
+    declinedDue: async () => {
+      const today = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+      return (await db.from('family_bookings').select('*').eq('status', 'declined').eq('family_declined_pending', true).is('family_declined_at', null).gte('visit_date', today).limit(100)).data ?? []
     },
     placedAhead: async (from, to) => (await db.from('family_bookings').select('*').eq('status', 'placed').not('axiscare_visit_id', 'is', null)
       .gte('visit_date', from).lte('visit_date', to).order('visit_date', { ascending: true }).limit(200)).data ?? [],

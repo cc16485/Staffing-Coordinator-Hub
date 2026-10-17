@@ -14,6 +14,14 @@
 //   fee_check {month?}                run the App fee check for a month (default: last month) and list it
 //   fee_list {month?}                 the saved check for a month, nothing re-checked
 //   fee_billed {month, axiscare_client_id, on}   the office added (or un-added) the fee on the AxisCare invoice
+//   Release 3 (her "Start Release 3." 2026-10-17, decisions 3 and 6):
+//   review   {booking_id, decision: approve | approve_no_note | decline, reason?}   a request held for the office: caregivers
+//            are asked (with or without the family's note), or it is declined (the family gets the approved decline wording)
+//   fill_close {booking_id, how: another_time | couldnt}   close a Help us fill task (Placed is the place action);
+//            couldnt = the family gets the approved "couldn't fill" wording; another_time = ends quietly (agreed with the family)
+//   help_fill {circle_id, on, reason}   the client's "Help us fill extra visits" flag, 90 days; Samantha or Krystal only
+//            (owner_admin or care_coordinator)
+//   app_tasks {circle_id, tasks: string[] | null}   the companion tasks this client may pick in the app (null = all)
 // Never texts or emails a family: invite returns the words for a person to send.
 // =============================================================================
 import { brand, brandFor, type Brand } from './brands.ts'
@@ -67,7 +75,7 @@ export type OfficeDeps = {
     block: (userId: string, on: boolean) => Promise<boolean>
   }
 }
-type Staff = { name: string; email: string }
+type Staff = { name: string; email: string; roles?: string[] }
 type Out = { status: number; body: Record<string, unknown> }
 const say = (status: number, body: Record<string, unknown>): Out => ({ status, body })
 const emailOk = (e: unknown) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(e ?? '').trim())
@@ -248,9 +256,76 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     const name = put.name
     // her rule 2026-10-16: the family hears who's coming (one text 8 AM to 8 PM, or an email); the 10-minute run sends it
     await d.updateBooking(b.id, { ...put.vals, status: 'placed', placed_at: nowIso, placed_by: staff.email, error: null, family_confirm_pending: true })
-    await d.closeItem(`fam_book_${b.id}`, staff.name, `${name} placed`)
+    for (const k of ['book', 'fill']) await d.closeItem(`fam_${k}_${b.id}`, staff.name, `${name} placed`)
     await ev('family_booking_placed', `${staff.name} placed ${name} with ${b.client_name} ${b.visit_date}`, { booking_id: b.id, caregiver: cg })
     return say(200, { ok: true, caregiver_name: name })
+  }
+  if (action === 'review') {
+    const b = await d.booking(String(body?.booking_id ?? ''))
+    if (!b) return say(404, { error: 'Booking not found.' })
+    if (b.status !== 'held') return say(409, { error: 'This request is not waiting for a check any more.' })
+    const decision = String(body?.decision ?? '')
+    if (decision === 'approve' || decision === 'approve_no_note') {
+      const hide = decision === 'approve_no_note'
+      await d.updateBooking(b.id, { status: 'waiting_for_caregiver', reviewed_at: nowIso, reviewed_by: staff.email, review_decision: decision, note_check: 'office_ok', ...(hide ? { note_hidden: true } : {}) })
+      await d.closeItem(`fam_held_${b.id}`, staff.name, hide ? 'Approved without the note: caregivers are asked.' : 'Approved: caregivers are asked.')
+      await ev('family_request_approved', `${staff.name} approved ${b.client_name} ${b.visit_date}${hide ? ' without the note' : ''}`, { booking_id: b.id, decision })
+      return say(200, { ok: true, status: 'waiting_for_caregiver' })
+    }
+    if (decision === 'decline') {
+      const reason = String(body?.reason ?? '').replace(/\s+/g, ' ').trim().slice(0, 300)
+      if (!reason) return say(400, { error: 'Say why (for the record; the family gets the approved wording).' })
+      await d.updateBooking(b.id, { status: 'declined', ended_at: nowIso, ended_why: 'declined', decline_reason: reason, reviewed_at: nowIso, reviewed_by: staff.email, review_decision: 'decline', family_declined_pending: true })
+      await d.closeItem(`fam_held_${b.id}`, staff.name, `Declined: ${reason}`)
+      await ev('family_request_declined', `${staff.name} declined ${b.client_name} ${b.visit_date}: ${reason}`, { booking_id: b.id })
+      return say(200, { ok: true, status: 'declined' })
+    }
+    return say(400, { error: 'Pick Approve, Approve without the note, or Decline.' })
+  }
+
+  if (action === 'fill_close') {
+    const b = await d.booking(String(body?.booking_id ?? ''))
+    if (!b) return say(404, { error: 'Booking not found.' })
+    if (b.status !== 'waiting_for_caregiver' || b.caregiver_axiscare_id) return say(409, { error: 'This request is no longer open.' })
+    const how = String(body?.how ?? '')
+    if (how === 'couldnt') {
+      await d.updateBooking(b.id, { status: 'not_filled', offer_stage: 'done', ended_at: nowIso, ended_why: 'office_couldnt', unfilled_kind: 'couldnt', family_unfilled_pending: true, fill_closed_by: staff.email })
+      await d.closeItem(`fam_fill_${b.id}`, staff.name, "Couldn't fill: the family is told.")
+      await ev('family_fill_closed', `${staff.name}: couldn't fill ${b.client_name} ${b.visit_date}`, { booking_id: b.id, how })
+      return say(200, { ok: true, status: 'not_filled' })
+    }
+    if (how === 'another_time') {
+      await d.updateBooking(b.id, { status: 'cancelled', cancelled_at: nowIso, cancelled_by: staff.name, cancel_source: 'office_agreed', offer_stage: 'done', fill_closed_by: staff.email })
+      await d.closeItem(`fam_fill_${b.id}`, staff.name, 'Another time agreed with the family.')
+      await ev('family_fill_closed', `${staff.name}: another time agreed for ${b.client_name} (was ${b.visit_date})`, { booking_id: b.id, how })
+      return say(200, { ok: true, status: 'cancelled', words: 'Ended. Put the new time on AxisCare (or ask the family to request it in the app).' })
+    }
+    return say(400, { error: 'Pick Another time agreed or Couldn\'t fill (Placed: use Place).' })
+  }
+
+  if (action === 'help_fill') {
+    if (!(staff.roles ?? []).some((r) => ['owner_admin', 'care_coordinator'].includes(r))) return say(403, { error: 'Only Samantha or Krystal can set Help us fill.' })
+    const k = await d.circle(String(body?.circle_id ?? ''))
+    if (!k) return say(404, { error: 'Family Circle not found.' })
+    if (!d.setAbout) return say(503, { error: 'Not available yet.' })
+    const on = body?.on === true, reason = String(body?.reason ?? '').replace(/\s+/g, ' ').trim().slice(0, 300)
+    if (on && !reason) return say(400, { error: 'Say why this client needs it (for example respite for a worn-out family caregiver).' })
+    const review = new Date(d.now().getTime() + 90 * 86400000).toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+    const flag = on ? { on: true, reason, by: staff.email, at: nowIso, review_by: review } : { on: false, by: staff.email, at: nowIso, was: k.help_fill ?? null }
+    if (!(await d.setAbout(String(k.id), { help_fill: flag }))) return say(500, { error: 'Not saved. Please try again.' })
+    await ev('family_help_fill', `${staff.name} turned Help us fill ${on ? `ON until ${review}` : 'off'} for ${k.client_name ?? 'a client'}${on ? `: ${reason}` : ''}`, { circle_id: k.id, on })
+    return say(200, { ok: true, help_fill: flag })
+  }
+
+  if (action === 'app_tasks') {
+    const k = await d.circle(String(body?.circle_id ?? ''))
+    if (!k) return say(404, { error: 'Family Circle not found.' })
+    if (!d.setAbout) return say(503, { error: 'Not available yet.' })
+    const tasks = Array.isArray(body?.tasks) ? [...new Set(body.tasks.map((t: unknown) => String(t).trim()).filter(Boolean))].slice(0, 40) : null
+    if (tasks && !tasks.length) return say(400, { error: 'Pick at least one task, or All companion tasks.' })
+    if (!(await d.setAbout(String(k.id), { app_tasks: tasks }))) return say(500, { error: 'Not saved. Please try again.' })
+    await ev('family_app_tasks', `${staff.name} set the app tasks for ${k.client_name ?? 'a client'}: ${tasks ? tasks.join(', ') : 'all companion tasks'}`, { circle_id: k.id, tasks })
+    return say(200, { ok: true, app_tasks: tasks })
   }
   return say(400, { error: 'unknown action' })
 }

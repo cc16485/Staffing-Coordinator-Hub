@@ -27,6 +27,7 @@
 // =============================================================================
 import { appLive, central, hoursUntil, startOf, startChoices, toMin, fromMin, clock12, caregiverDay, overlaps, placeCaregiver, clientVisits, officeCard, when, chooseSettings, cardOf, shareable, reasonId, axErr, ok2, type Ax } from './family-app.ts'
 import { askRules, inHours } from './answer-by.ts'
+import { AI_WHY, handoffAt, inOffice, MSG_FAMILY_DECLINED, MSG_FAMILY_COULDNT, type AiVerdict } from './family-review.ts'
 import { brand, brandFor } from './brands.ts'
 
 // deno-lint-ignore no-explicit-any
@@ -68,12 +69,21 @@ export type OfferDeps = {
   /** Placed bookings whose family hasn't been told yet. */
   confirmDue?: () => Promise<Any[]>
   /** To the person who booked: the text if they have Texts OK, else the email; neither = not sent (says why). */
-  tellFamily?: (b: Any, sms: string, email: { subject: string; html: string }, approvalKey?: 'family_confirm_text_approved' | 'family_unfilled_text_approved' | 'family_cgchange_text_approved' | 'family_timechange_text_approved') => Promise<{ ok: boolean; how?: 'sms' | 'email'; why?: string }>
+  tellFamily?: (b: Any, sms: string, email: { subject: string; html: string }, approvalKey?: 'family_confirm_text_approved' | 'family_unfilled_text_approved' | 'family_cgchange_text_approved' | 'family_timechange_text_approved' | 'family_declined_text_approved' | 'family_couldnt_text_approved') => Promise<{ ok: boolean; how?: 'sms' | 'email'; why?: string }>
   /** The office's short "About <client>" for caregivers (care_circles.caregiver_about), or null. */
   clientAbout?: (axiscareClientId: string) => Promise<string | null>
   /** Release 1: requests that ended unfilled whose family hasn't been told yet. */
   unfilledDue?: () => Promise<Any[]>
+  /** Release 3: the Hub's matching rulebook for this request (family-match.ts); ok:false = offers wait (fail closed) */
+  matchFor?: (b: Any) => Promise<MatchResult>
+  /** Release 3: AI as a second opinion on the family's note (family-review.ts); null = unavailable */
+  reviewNote?: (b: Any) => Promise<AiVerdict>
+  /** held requests whose answer-by time has passed (never reviewed) */
+  heldDue?: () => Promise<Any[]>
+  /** declined requests whose family message is owed */
+  declinedDue?: () => Promise<Any[]>
 }
+export type MatchResult = { ok: true; judge: (c: Candidate) => { cut: string | null; rank: number }; home: string[] } | { ok: false; why: string }
 export type ChooseDeps = Pick<OfferDeps, 'ax' | 'now' | 'settings' | 'offers' | 'updateOffer' | 'updateBooking' | 'claimBooking' | 'textCaregiver' | 'askBlockId' | 'profiles' | 'supabaseUrl' | 'officeItem' | 'closeItem' | 'event'>
 
 // Her approval 2026-10-17 (decision E): accepting is a confirmed shift, said up front.
@@ -266,21 +276,52 @@ export async function runOffers(d: OfferDeps, opts: { dry?: boolean } = {}) {
       let r: { ok: boolean; how?: string; why?: string } = { ok: false, why: 'the visit has no Missouri/Oklahoma state, so no brand to send as' }
       if (fb?.app_host) {
         const first = String(b.requested_by_name ?? '').split(' ')[0] || 'there'
-        const sms = fill(MSG_FAMILY_UNFILLED, { first_name: first, brand: fb.short, client, day, times, app: fb.app_host })
+        const couldnt = b.unfilled_kind === 'couldnt'   // Release 3: Help us fill, the office also tried
+        const sms = fill(couldnt ? MSG_FAMILY_COULDNT : MSG_FAMILY_UNFILLED, { first_name: first, brand: fb.short, client, day, times, app: fb.app_host, phone: fb.phone })
         const h = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         const html = `<div style="font-family:Arial,sans-serif;font-size:16px;line-height:1.6;color:#16283a;max-width:520px"><p>Hi ${h(first)},</p>` +
-          `<p>We couldn't find a caregiver for ${h(client)}'s extra visit on <b>${h(day)}${h(times)}</b>. Nothing was scheduled and there's no charge.</p>` +
+          (couldnt ? `<p>We asked our caregivers and our office also tried, but no one is available for ${h(client)}'s visit on <b>${h(day)}${h(times)}</b>. Nothing was scheduled and there's no charge. Please call us if this visit is essential.</p>`
+            : `<p>We couldn't find a caregiver for ${h(client)}'s extra visit on <b>${h(day)}${h(times)}</b>. Nothing was scheduled and there's no charge.</p>`) +
           `<p>You can request another time in the app at <a href="${h(String(fb.app_url))}">${h(String(fb.app_host))}</a>, or call us at ${h(fb.phone)}.</p><p style="color:#55677a">${h(fb.footer)}</p></div>`
-        r = await d.tellFamily(b, sms, { subject: `No caregiver was available for ${client}'s visit on ${day}`, html }, 'family_unfilled_text_approved')
+        r = await d.tellFamily(b, sms, { subject: `No caregiver was available for ${client}'s visit on ${day}`, html }, couldnt ? 'family_couldnt_text_approved' : 'family_unfilled_text_approved')
       }
       await d.updateBooking(b.id, { family_unfilled_pending: false, family_unfilled_at: nowIso, family_unfilled_how: r.ok ? r.how : `not sent: ${r.why}` })
       if (r.ok) out.family_texts++
       else if (r.why !== 'no way to reach them (no Texts OK and no email)') await d.officeItem({ ...officeCard('unfilled_tell', b, `Tell the family: no caregiver for ${b.client_name}, ${b.visit_date}`, `Nobody accepted ${when(b)}, but the message to ${b.requested_by_name ?? 'the family'} didn't go (${r.why}). The app shows it; a call may help.`, nowIso), urgency: 'soon' })
     }
   }
+  // Release 3: a held request nobody reviewed by its answer-by time ends with the decline wording (decision 6).
+  if (d.heldDue) for (const b of await d.heldDue()) {
+    if (opts.dry) { out.would.push({ booking: b.id, held_expired: true }); continue }
+    await d.updateBooking(b.id, { status: 'declined', ended_at: nowIso, ended_why: 'not_reviewed', family_declined_pending: true })
+    await d.closeItem(`fam_held_${b.id}`, 'family app', 'Nobody reviewed it by the answer-by time; the request ended with the decline wording.')
+    await d.event({ actor_kind: 'system', actor_name: 'family app', via: 'cron', verb: 'family_request_declined', area: 'family_app', summary: `${b.client_name} ${when(b)}: held and not reviewed by the answer-by time; ended`, data: { booking_id: b.id, why: 'not_reviewed' } })
+    out.ended++
+  }
+  // ...and the family hears it (8 AM to 7:30 PM, the approved decline wording, behind its own approval).
+  if (d.declinedDue && d.tellFamily && st?.family_declined_text_approved && inHours(now, 8, 19.5)) {
+    for (const b of await d.declinedDue()) {
+      if (opts.dry) { out.would.push({ booking: b.id, tell_family_declined: true }); continue }
+      const fb = brand(brandFor(b.state), st)
+      const client = String(b.client_name ?? 'your loved one').split(' ')[0], day = dayFull(b.visit_date), times = b.start_time && b.end_time ? `, ${fromTo(b.start_time, b.end_time)}` : ''
+      let r: { ok: boolean; how?: string; why?: string } = { ok: false, why: 'the visit has no Missouri/Oklahoma state, so no brand to send as' }
+      if (fb?.app_host) {
+        const first = String(b.requested_by_name ?? '').split(' ')[0] || 'there'
+        const sms = fill(MSG_FAMILY_DECLINED, { first_name: first, brand: fb.short, client, day, times, phone: fb.phone })
+        const h = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        const html = `<div style="font-family:Arial,sans-serif;font-size:16px;line-height:1.6;color:#16283a;max-width:520px"><p>Hi ${h(first)},</p>` +
+          `<p>We can't arrange ${h(client)}'s request for <b>${h(day)}${h(times)}</b> in the app because it includes care our extra visits don't cover.</p><p>Please call us at ${h(fb.phone)} so we can help.</p><p style="color:#55677a">${h(fb.footer)}</p></div>`
+        r = await d.tellFamily(b, sms, { subject: `About ${client}'s request for ${day}`, html }, 'family_declined_text_approved')
+      }
+      await d.updateBooking(b.id, { family_declined_pending: false, family_declined_at: nowIso, family_declined_how: r.ok ? r.how : `not sent: ${r.why}` })
+      if (r.ok) out.family_texts++
+      else if (r.why !== 'no way to reach them (no Texts OK and no email)') await d.officeItem({ ...officeCard('declined_tell', b, `Tell the family: request declined (${b.client_name})`, `${when(b)} was declined, but the message to ${b.requested_by_name ?? 'the family'} didn't go (${r.why}). The app shows it; please call them.`, nowIso), urgency: 'soon', next_action: 'Call the family.' })
+    }
+  }
   const r1 = askRules(st)
   // Release 1: a request that ends without a caregiver. Nothing is left on AxisCare; the family is told (above, next run).
   const endUnfilled = async (b: Any, why: 'deadline' | 'early', offersNow: Any[]) => {
+    const fillTried = b.help_fill === true && !!b.fill_task_at
     out.ended++
     if (!live) return
     if (b.axiscare_visit_id) {   // only requests made before Release 1 had an empty AxisCare visit
@@ -289,8 +330,9 @@ export async function runOffers(d: OfferDeps, opts: { dry?: boolean } = {}) {
       if (!ok2(del.status)) await d.officeItem({ ...officeCard('unfilled_remove', b, `Remove the empty visit: ${b.client_name}, ${b.visit_date}`, `Nobody accepted ${when(b)}. AxisCare wouldn't remove its empty visit (${del.status} ${axErr(del.json)}). Please remove it.`, nowIso), urgency: 'soon' })
     }
     for (const x of offersNow) if (x.state === 'sent') await d.updateOffer(x.id, { state: 'closed' })
-    await d.updateBooking(b.id, { status: 'not_filled', offer_stage: 'done', ended_at: nowIso, ended_why: why, family_unfilled_pending: true })
+    await d.updateBooking(b.id, { status: 'not_filled', offer_stage: 'done', ended_at: nowIso, ended_why: why, family_unfilled_pending: true, ...(fillTried ? { unfilled_kind: 'couldnt' } : {}) })
     await d.closeItem(`fam_book_${b.id}`, 'family app', 'Nobody accepted; the request ended and the family is told.')
+    await d.closeItem(`fam_fill_${b.id}`, 'family app', 'The answer-by time came before the office closed this; the request ended with the "couldn\'t fill" message.')
     await d.event({ actor_kind: 'system', actor_name: 'family app', via: 'cron', verb: 'family_request_unfilled', area: 'family_app', summary: `Nobody accepted ${b.client_name} ${when(b)} (${why === 'early' ? 'everyone asked' : 'answer-by time reached'}); the family is told`, data: { booking_id: b.id, why } })
   }
   let roster: Candidate[] | null = null
@@ -306,6 +348,18 @@ export async function runOffers(d: OfferDeps, opts: { dry?: boolean } = {}) {
     const teamFrom = b.two_stage && b.team_from ? Date.parse(b.team_from) : null
     const beforeTeam = teamFrom != null && now.getTime() < teamFrom
     // Release 1 (decision 2): everyone asked and nobody still answering, or 24 hours since the last ask = tell the family now.
+    // Release 3 (decision 3): Help us fill. One office day before the answer-by time, or once everyone was asked, the office
+    // gets ONE task, created only in office hours (Monday to Friday, 8 to 6). The request then waits for the office or its
+    // answer-by time (no early end while the office may still help).
+    if (b.help_fill === true && b.answer_by && b.method !== 'choose') {
+      const due = now.getTime() >= handoffAt(new Date(b.answer_by)).getTime() || b.offer_stage === 'done'
+      if (due && !b.fill_task_at && inOffice(now) && !opts.dry && o.live) {
+        const said = offers.filter((x) => x.state !== 'sent').map((x) => `${x.caregiver_name} (${x.state === 'declined' ? 'said no' : x.state})`).concat(offers.filter((x) => x.state === 'sent').map((x) => `${x.caregiver_name} (no answer)`))
+        await d.officeItem({ ...officeCard('fill', b, `Help us fill: ${b.client_name}, ${b.visit_date}`, `${b.client_name} is marked "Help us fill extra visits". Nobody has accepted ${when(b)} yet. Asked: ${said.join(', ') || 'nobody yet'}. One round: call up to 5 caregivers (those who know the client first, then the PRN Team), or offer the family another time. Then close it: Placed, Another time agreed, or Couldn't fill. The family hears by ${b.answer_by} either way.`, nowIso), urgency: 'today', next_action: 'One round of calls, then Placed, Another time agreed, or Couldn\'t fill.' })
+        await d.updateBooking(b.id, { fill_task_at: nowIso }); b.fill_task_at = nowIso; out.cards++
+      }
+      if (b.offer_stage === 'done') continue
+    }
     if (b.offer_stage === 'done' && b.method !== 'choose' && !beforeTeam) {
       const last = Math.max(0, ...offers.map((x) => Date.parse(String(x.sent_at ?? '')) || 0))
       if (!offers.some((x) => x.state === 'sent') || now.getTime() - last >= r1.earlyEndHours * 3600000) await endUnfilled(b, 'early', offers)
@@ -329,11 +383,31 @@ export async function runOffers(d: OfferDeps, opts: { dry?: boolean } = {}) {
       if (t.ok) out.family_texts++
       else if (t.why !== 'no consent to text') await d.officeItem({ ...officeCard('choose_tell', b, `Tell the family: caregivers are interested (${b.client_name})`, `Caregivers are interested in ${when(b)}, but the text to ${b.requested_by_name ?? 'the family'} didn't go (${t.why}). They can see it in the app; a call may help.`, nowIso), urgency: 'soon' })
     }
+    // Release 3 (decision 6, layer 3): AI reads the family's note before any caregiver is asked. It can only add a hold.
+    if (b.note && !b.note_check && !offers.length && d.reviewNote) {   // (requests already being offered before Release 3 are left as they are)
+      const v = opts.dry ? { verdict: 'fine' as const, why: '' } : await d.reviewNote(b)   // a dry run never calls AI
+      if (opts.dry) out.would.push({ booking: b.id, review_note: true })
+      if (opts.dry) { /* nothing saved */ }
+      else if (!v) await d.updateBooking(b.id, { note_check: 'ai_unavailable' })   // the rules decided; it goes on the office's daily list
+      else if (v.verdict === 'fine') await d.updateBooking(b.id, { note_check: 'ai_fine' })
+      else {
+        const reason = `AI: ${AI_WHY[v.verdict]}${v.why ? ` (${v.why})` : ''}`
+        await d.updateBooking(b.id, { status: 'held', hold_reason: reason, held_by: 'ai', held_at: nowIso, note_check: `ai_${v.verdict}` })
+        await d.officeItem({ ...officeCard('held', b, `Check this request before caregivers are asked: ${b.client_name}, ${b.visit_date}`, `${b.requested_by_name ?? 'The family'} asked for ${when(b)} (${(b.tasks ?? []).join(', ')}). Held: ${reason}. Note: "${String(b.note).slice(0, 300)}". Approve it, approve it without the note, or decline it (Scheduling, Family bookings).`, nowIso), urgency: 'today', next_action: 'Approve, approve without the note, or decline.' })
+        await d.event({ actor_kind: 'system', actor_name: 'family app', via: 'cron', verb: 'family_request_held', area: 'family_app', summary: `${b.client_name} ${when(b)} held for the office: ${reason}`, data: { booking_id: b.id, by: 'ai', verdict: v.verdict } })
+        out.cards++; continue
+      }
+      b.note_check = 'checked'
+    }
     // Release 1 (decision A, 2026-10-17): no office card for a routine request nobody has taken; it ends with an answer.
     if (!o.live) { out.would.push({ booking: b.id, stage: b.offer_stage ?? 'picks next' }); continue }
     // Release 1: optional visits never text caregivers at night (no "within 3 hours" exception); the answer-by rule allows for it.
     if (!inHours(now, r1.textFrom, r1.textUntil)) { out.held_night++; continue }
     let town = '', history: Map<string, number> | null = null
+    // Release 3: who may be asked for THIS client (level, required gender / Spanish / dementia care, "not now" with cats, dogs
+    // or smoking, the call-in "only ask" list). Loaded once per request per run; if the rulebook can't be read, nobody is asked.
+    let mres: MatchResult | null | undefined
+    const match = async () => { if (mres === undefined) mres = d.matchFor ? await d.matchFor(b) : null; return mres }
     const send = async (c: Candidate, wave: 'picks' | 'team', waveNo: number): Promise<'sent' | 'skip'> => {
       if (b.method === 'choose' && !brandShort(b, st)) { out.skipped.push({ booking: b.id, who: c.name, why: 'the visit has no Missouri/Oklahoma state, so no brand to text as' }); return 'skip' }
       if (b.method === 'choose') {   // her answer 3: only caregivers with a published, consented profile are asked in Let me choose
@@ -342,11 +416,16 @@ export async function runOffers(d: OfferDeps, opts: { dry?: boolean } = {}) {
       }
       const why = await d.askBlock(c, String(b.client_name ?? ''), needsDrive(b, st))
       if (why) { out.skipped.push({ booking: b.id, who: c.name, why }); return 'skip' }
+      const m = await match()
+      if (m && !m.ok) { out.skipped.push({ booking: b.id, who: c.name, why: `matching rules unavailable: ${m.why}` }); return 'skip' }
+      const j = m ? m.judge(c) : null
+      if (j?.cut) { out.skipped.push({ booking: b.id, who: c.name, why: j.cut }); return 'skip' }
       let free: string[] = []
       try { free = await freeStarts(d.ax, b, c.axiscare_id) } catch (e) { out.skipped.push({ booking: b.id, who: c.name, why: `their AxisCare schedule couldn't be read (${String(e).slice(0, 80)})` }); return 'skip' }
       if (!free.length) { out.skipped.push({ booking: b.id, who: c.name, why: 'already working then' }); return 'skip' }
       if (opts.dry) { out.would.push({ booking: b.id, who: c.name, wave }); return 'sent' }
       if (!town) town = (await townOf(d.ax, b.axiscare_client_id)) || 'your area'
+      if (m?.ok && JSON.stringify(m.home) !== JSON.stringify(b.home_notes ?? [])) { await d.updateBooking(b.id, { home_notes: m.home }); b.home_notes = m.home }   // shown on the offer link
       const ins = await d.insertOffer({ booking_id: b.id, caregiver_axiscare_id: c.axiscare_id, caregiver_name: c.name, wave, wave_no: waveNo, state: 'sent', sent_at: nowIso })
       if (!ins) return 'skip'   // already asked (unique per booking and caregiver)
       asked.add(c.axiscare_id)
@@ -360,6 +439,14 @@ export async function runOffers(d: OfferDeps, opts: { dry?: boolean } = {}) {
       return 'sent'
     }
     if (b.method === 'choose' && interestedOf(offers).length >= cs.max) continue   // enough interested: stop asking
+    // Release 3: no rulebook = nobody is asked this run (never "everyone was asked"); one office card so it isn't silent.
+    { const m0 = await match()
+      if (m0 && !m0.ok) {
+        out.skipped.push({ booking: b.id, why: `matching rules unavailable: ${m0.why}` })
+        if (!opts.dry) await d.officeItem({ ...officeCard('match', b, `Caregiver offers paused: ${b.client_name}, ${b.visit_date}`, `The matching rules couldn't be read (${m0.why}), so no caregiver was asked for ${when(b)}. The run tries again every 10 minutes; tell Claude if this card stays.`, nowIso), urgency: 'today', next_action: 'Tell Claude; place a caregiver by hand if the visit is close.' })
+        continue
+      }
+      if (m0?.ok && !opts.dry) await d.closeItem(`fam_match_${b.id}`, 'family app', 'The matching rules are readable again; offers carry on.') }
     // 1. picks
     if (!b.offer_stage) {
       const ids: string[] = Array.isArray(b.preferred_caregiver_ids) ? b.preferred_caregiver_ids.map(String) : []
@@ -404,10 +491,11 @@ export async function runOffers(d: OfferDeps, opts: { dry?: boolean } = {}) {
       }
       const start = startOf(b)
       const fitRank = { fits: 0, none_on_file: 1, outside_ok: 2, outside: 9 }
+      const mr = await match(), rankOf = (c: Candidate) => (mr && mr.ok ? mr.judge(c).rank : 0)
       const ranked = roster.filter((c) => !asked.has(c.axiscare_id))
-        .map((c) => ({ c, fit: availFits(c.avail, b.visit_date, start), seen: history!.get(c.axiscare_id) ?? 0 }))
+        .map((c) => ({ c, fit: availFits(c.avail, b.visit_date, start), seen: history!.get(c.axiscare_id) ?? 0, pref: rankOf(c) }))
         .filter((x) => x.fit !== 'outside')
-        .sort((x, y) => (y.seen > 0 ? 1 : 0) - (x.seen > 0 ? 1 : 0) || fitRank[x.fit] - fitRank[y.fit] || y.seen - x.seen || x.c.name.localeCompare(y.c.name))
+        .sort((x, y) => (y.seen > 0 ? 1 : 0) - (x.seen > 0 ? 1 : 0) || y.pref - x.pref || fitRank[x.fit] - fitRank[y.fit] || y.seen - x.seen || x.c.name.localeCompare(y.c.name))
       let sent = 0
       for (const x of ranked) { if (sent >= o.waveSize) break; if (await send(x.c, 'team', lastWave + 1) === 'sent') sent++ }
       if (!sent) { if (!pending('team').length && !pending('picks').length) await allAsked('Everyone who could be asked has been asked.'); continue }
@@ -437,12 +525,14 @@ export async function offerPage(d: OfferDeps, offerId: string, body: Any): Promi
     if (state === 'open') { try { choices = await freeStarts(d.ax, b, cg) } catch { choices = [] } }
     return { state, answer: off.state, first_name: String(off.caregiver_name ?? '').split(' ')[0], client: String(b.client_name ?? '').split(' ')[0], town: await townOf(d.ax, b.axiscare_client_id),
       date: b.visit_date, day: dayWords(b.visit_date), kind: b.kind === 'flex' && !b.start_time ? 'flex' : 'set', start: b.start_time ?? null, end: b.end_time ?? null,
-      window_start: b.window_start ?? b.start_time, window_end: b.window_end ?? b.end_time, hours: Number(b.hours), tasks: b.tasks ?? [], note: b.note ?? null, choices,
+      window_start: b.window_start ?? b.start_time, window_end: b.window_end ?? b.end_time, hours: Number(b.hours), tasks: b.tasks ?? [], note: b.note_hidden ? null : (b.note ?? null), choices,
       picked: mine ? b.start_time : (off.state === 'interested' ? off.picked_start ?? null : null), mode: b.method === 'choose' ? 'choose' : 'first',
       // her rule 2026-10-16: "if the family has specifically asked for them - nothing there if they weren't specifically asked"
       asked_for_you: Array.isArray(b.preferred_caregiver_ids) && b.preferred_caregiver_ids.map(String).includes(cg),
       // the office's short About for caregivers (first name only; no address or medical detail); empty = no row
-      about: d.clientAbout ? await d.clientAbout(String(b.axiscare_client_id)) : null }
+      about: d.clientAbout ? await d.clientAbout(String(b.axiscare_client_id)) : null,
+      // Release 3: what to know before saying yes (cats, dogs, smoking from the care plan); the caregiver decides
+      home: Array.isArray(b.home_notes) ? b.home_notes : [] }
   }
   const action = String(body?.action ?? 'view')
   if (action === 'view') return say(200, await view())
