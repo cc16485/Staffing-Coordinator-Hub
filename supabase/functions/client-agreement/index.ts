@@ -17,6 +17,9 @@
 // 874 (Stage 3, Samantha 2026-10-17): link_send / link_cancel. The office sends the family a link to fill in and sign from
 // home (agreement-sign, the public door with a 6-digit code). The family signature is ONE shared step for the tablet and
 // the link: _shared/agreement-family-sign.ts.
+// 875 (Stage 4, Samantha 2026-10-17): countersigning ticks Start of Care "Care Agreement provided" + "Signed Care Agreement
+// received" and the journey's "Service agreement signed and on file" (_shared/agreement-steps.ts). Upload to AxisCare stays
+// a person's tick. The GoHighLevel agreement is retired.
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
@@ -26,6 +29,7 @@ import { MASTER_PATH } from '../_shared/client-agreement-map.ts'
 import { signedAgreementPdf, familyCopyOf } from '../_shared/agreement-pdf.ts'
 import { emailSignedCopy, EMAIL_OK } from '../_shared/agreement-email.ts'
 import { familySign } from '../_shared/agreement-family-sign.ts'
+import { tickAgreementSteps } from '../_shared/agreement-steps.ts'
 import { LINK_DAYS, SIGN_PAGE, secret, sha256, digits, linkMessages, sendFamily, linkView } from '../_shared/agreement-links.ts'
 import { contactsFrom, withEdits, planContacts, rpBody, memberRow, todoFor, badState, nameKey } from '../_shared/agreement-contacts.ts'
 
@@ -296,8 +300,9 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
         .eq('id', r.id).eq('status', 'signed').is('signed_pdf_path', null).select('id')
       if (error) throw error
       if (!did?.length) return json({ error: 'Someone else countersigned this a moment ago. Open it again.', outcome: 'stale' }, 409)
+      const steps = await tickAgreementSteps(db, r, { at, by: who.name || who.email, fromHome: !!r.client_sign?.via_link, when: centralDate(r.client_sign?.at || at).long.replace(/ at .*$/, '') })
       const email = copyTo ? await sendCopy(db, { ...r, office_sign, signed_pdf_path: pdfPath, status: 'countersigned' }, copyTo, who.email) : null
-      return json({ ok: true, outcome: 'countersigned', at, email })
+      return json({ ok: true, outcome: 'countersigned', at, email, steps })
     }
 
     if (action === 'open') {
