@@ -16,7 +16,8 @@
 //   · A reply goes to Needs Attention with the words, and a PERSON taps "Put it in AxisCare" (the note is written on
 //     the visit, read back, logged). It is recorded "recovered by text" and STILL counts toward 3 in 30 days.
 //   · 3 counted misses in 30 days → a DRAFT write-up in the Write-Ups list (level suggested from their history). A
-//     person reviews it and sends it for approval; only Samantha or Zach can approve. Nothing is issued by the Hub.
+//     person reviews it and sends it for approval. Who approves follows SOP ruling 2 (2026-10-17, cc-hub writeup-rules.js):
+//     a Care Coordinator for coaching, verbal and first written warnings, leadership above that. Nothing is issued by the Hub.
 //   · The count starts at go-live: nothing before the switch is counted.
 //   · WEB clock-outs (the office clocked them out; 336: 0 of 22 carry GPS) are still asked for the note but NEVER count
 //     toward 3 in 30 days, replied or not (her ruling (b), 2026-10-01).
@@ -133,7 +134,7 @@ export function draftBody(name: string, level: string, misses: any[]): string {
     'A care note is required for every shift before clock-out. These shifts ended without one:',
     ...misses.map((m) => '  - ' + d(m.shift_date) + (m.client_first ? ', ' + m.client_first : '') + ': ' + (how[m.clock_out_method] || 'clocked out') + ', no note. '
       + (m.status === 'unresolved' ? 'UNRESOLVED: no reply to the office\'s text by the deadline.' : 'Recovered by text: they replied with the note and the office entered it.')),
-    '', 'Prepared by the Hub from AxisCare records. A person reviews and edits this, then sends it for approval. Only Samantha or Zach can approve; nothing is issued until they do.'].join('\n')
+    '', 'Prepared by the Hub from AxisCare records. A person reviews and edits this, then sends it for approval. A Care Coordinator approves coaching, a verbal warning or a first written warning; leadership approves anything above that. Nothing is issued until it is approved.'].join('\n')
 }
 
 Deno.serve(async (req) => {
