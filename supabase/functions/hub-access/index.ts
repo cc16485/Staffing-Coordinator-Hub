@@ -11,6 +11,11 @@
 // in staff_roles. A request that says {"is_owner": true} is treated exactly
 // like one that does not.
 //
+// SPRINGFIELD LEAD (2026-10-17, Samantha's SOP ruling 9: "Springfield lead can open Team access and on-duty
+// schedules"): a person holding 'springfield_lead' may invite, resend, remove and restore Hub access for anyone
+// who is NOT an owner, and read status. Changing an owner's access stays with owners. Same rule as above: read
+// from staff_roles, never from the request.
+//
 // WHAT IT WILL NOT DO, deliberately:
 //   · accept app_metadata from the caller. Only hub_access is ever written,
 //     and only ever to the fixed slug list below
@@ -98,19 +103,20 @@ Deno.serve(async (req) => {
     .eq('auth_user_id', callerId)
   if (authErr) return json({ error: 'Could not check your permissions.', detail: authErr.message }, 500)
 
-  let isOwner = false
+  let isOwner = false, isLead = false
   let callerPerson: string | null = null
   if (authority && authority.length) {
     callerPerson = (authority[0] as Record<string, unknown>).person_id as string
     const { data: roles } = await admin
       .from('staff_roles').select('role').eq('person_id', callerPerson)
     isOwner = !!roles?.some((r: { role: string }) => r.role === 'owner_admin')
+    isLead = !!roles?.some((r: { role: string }) => r.role === 'springfield_lead')
   }
-  if (!isOwner) {
+  if (!isOwner && !isLead) {
     return json({
-      error: 'Only an owner can change Hub access.',
+      error: 'Only an owner or the Springfield lead can change Hub access.',
       detail: callerPerson
-        ? 'Your account is linked to a person record, but that person does not hold owner_admin.'
+        ? 'Your account is linked to a person record, but that person does not hold owner_admin or springfield_lead.'
         : 'Your sign-in is not linked to a person record yet. Run the identity migration.',
     }, 403)
   }
@@ -174,6 +180,18 @@ Deno.serve(async (req) => {
   }
 
   if (action === 'status') return json({ ok: true, target, ...describe(user) })
+
+  /* Springfield lead: an owner's access is changed only by an owner (checked through the target account's own
+     person record). */
+  if (!isOwner && user) {
+    const { data: ids } = await admin.from('auth_identities').select('person_id').eq('auth_user_id', user.id)
+    const pids = (ids || []).map((i: { person_id: string }) => i.person_id)
+    if (pids.length) {
+      const { data: roles } = await admin.from('staff_roles').select('role').in('person_id', pids)
+      if ((roles || []).some((r: { role: string }) => r.role === 'owner_admin'))
+        return json({ error: "Only an owner can change an owner's Hub access." }, 403)
+    }
+  }
 
   /* 2026-10-14 RN review only: the account must see nothing but the review page, so the slug is given ALONE. Refused on an
      account that already has any other hub, refused for an owner, and no other hub is ever added to an RN review only
