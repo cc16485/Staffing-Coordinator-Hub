@@ -55,6 +55,10 @@ export type OutreachClass =
      late). Her approved hours for it are 6am to 9pm, every day, so a 6am visit's family can hear. Only the running-late
      family text uses it, and only through the family audience gate (a person's tap). */
   | 'timely_external'
+  /* 874 (Samantha 2026-10-17, "Any time"): a message the person just asked for themselves, right now (the 6-digit code
+     for signing the Client Care Agreement from home). Like a password reset it goes at any hour. Only that code uses it,
+     and only through the family audience gate. */
+  | 'requested_external'
 
 export const OUTREACH_TZ = 'America/Chicago'
 /* The window is [WINDOW_START, WINDOW_END) — start inclusive, end EXCLUSIVE.
@@ -101,6 +105,8 @@ export function maySend(kind: OutreachClass, now: Date = new Date()): Verdict {
     return { allowed: true, reason: 'urgent operational alert to staff, no window', detail }
   if (kind === 'routine_internal' || kind === 'digest')
     return { allowed: true, reason: 'internal, the schedule decides', detail }
+  if (kind === 'requested_external')
+    return { allowed: true, reason: 'they just asked for it themselves (a sign-in code), any hour', detail }
   if (kind === 'timely_external')
     return hour >= TIMELY_START && hour < TIMELY_END
       ? { allowed: true, reason: 'about a visit happening now, within 6am-9pm', detail }

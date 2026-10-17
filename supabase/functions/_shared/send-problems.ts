@@ -54,6 +54,8 @@ export const SENDER_WORDS: Record<string, [string, string]> = {
   'team-ask': ['Team Builder text', 'scheduling_coverage'],
   'care-packet': ['caregiver packet text', 'client_care'],
   'client-agreement': ['signed Client Care Agreement copy (email)', 'client_care'],   // 873
+  'agreement-link': ['Client Care Agreement link to sign from home', 'client_care'],   // 874
+  'agreement-code': ['6-digit code to open the Client Care Agreement', 'client_care'],   // 874
   'kind-tell': ['kind words text to a caregiver', 'caregivers'],
   'carematch-watch': ['care match message', 'scheduling_coverage'],
   'late-watch': ['running-late message', 'scheduling_coverage'],
@@ -126,7 +128,7 @@ const normAddr = (channel: Channel, a: unknown) => {
 // deno-lint-ignore no-explicit-any
 const ownerCache: Record<string, string> = {}
 // deno-lint-ignore no-explicit-any
-async function ownerFor(db: any, domain: string): Promise<string> {
+export async function ownerFor(db: any, domain: string): Promise<string> {
   if (domain in ownerCache) return ownerCache[domain]
   let owner = ''
   try {  // the same canonical rule as issues-run: domains.owner_person, or honestly unowned

@@ -14,6 +14,9 @@
 // 873 (Samantha 2026-10-16): "Signed electronically on ___" on the PDF; the family's copy with a big "COPY" (copy_print, to
 // print and hand them); the emailed copy (codes hidden) on the office's countersign tap or copy_email later, through
 // GoHighLevel and the family audience gate. _shared/agreement-email.ts.
+// 874 (Stage 3, Samantha 2026-10-17): link_send / link_cancel. The office sends the family a link to fill in and sign from
+// home (agreement-sign, the public door with a 6-digit code). The family signature is ONE shared step for the tablet and
+// the link: _shared/agreement-family-sign.ts.
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
@@ -22,6 +25,8 @@ import { FIELDS, VERSION, DOC, PDF_SHA256, BUCKET, ESIGN_WORDS, INITIALS, OFFICE
 import { MASTER_PATH } from '../_shared/client-agreement-map.ts'
 import { signedAgreementPdf, familyCopyOf } from '../_shared/agreement-pdf.ts'
 import { emailSignedCopy, EMAIL_OK } from '../_shared/agreement-email.ts'
+import { familySign } from '../_shared/agreement-family-sign.ts'
+import { LINK_DAYS, SIGN_PAGE, secret, sha256, digits, linkMessages, sendFamily, linkView } from '../_shared/agreement-links.ts'
 import { contactsFrom, withEdits, planContacts, rpBody, memberRow, todoFor, badState, nameKey } from '../_shared/agreement-contacts.ts'
 
 // deno-lint-ignore no-explicit-any
@@ -86,7 +91,9 @@ function recordOf(r: Any): string[][] {
     ['Signed by', `${cs.typed_name}${cs.role === 'representative' ? ` (on behalf of the client${cs.relationship ? ', ' + cs.relationship : ''})` : ' (the client)'}`],
     ['Signed at', `${centralDate(cs.at).long} (${cs.at} UTC)`], ['Signer device', `${cs.ip || 'not recorded'} · ${cs.agent || 'not recorded'}`],
     ['Electronic signature consent', `"${cs.consent_words}"`], ['Initials taps', tapLine || 'none'],
-    ['Signed on the tablet of', `${cs.on_staff_session?.name || ''} (${cs.on_staff_session?.email || ''})`],
+    ...(cs.via_link ? [['Signed from home', `with a link sent by ${cs.via_link.sent_by} on ${centralDate(cs.via_link.sent_at).long} to ${cs.via_link.sent_to}`],
+      ['Identity check', `6-digit code sent by ${cs.via_link.code_via === 'sms' ? 'text to ' : 'email to '}${cs.via_link.code_to}, entered correctly at ${centralDate(cs.via_link.verified_at).long}`]]
+      : [['Signed on the tablet of', `${cs.on_staff_session?.name || ''} (${cs.on_staff_session?.email || ''})`]]),
     ['Countersigned by', `${os.typed_name} (${os.email}), Caring Companions`], ['Countersigned at', `${centralDate(os.at).long} (${os.at} UTC)`],
     ['Countersigner device', `${os.ip || 'not recorded'} · ${os.agent || 'not recorded'}`],
   ]
@@ -102,6 +109,8 @@ async function renderSigned(db: Any, r: Any, opts: { copy?: boolean; hide?: stri
   return await signedAgreementPdf({ master: new Uint8Array(await master.data.arrayBuffer()), plan, clientSigPng: new Uint8Array(await csig.data.arrayBuffer()),
     officeSigPng: new Uint8Array(await osig.data.arrayBuffer()), record: recordOf(r), at: os.at, esign, copy: !!opts.copy, hide: opts.hide })
 }
+/** The link the card should show: the live one, else the newest (874). */
+const pickLink = (ls: Any[]) => ls.find((l) => !l.revoked_at && !l.signed_at) ?? ls.find((l) => l.signed_at) ?? [...ls].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0] ?? null
 /** Who the family's copy goes to by default: the primary contact, else the POA. */
 function defaultCopyTo(a: Any): { to: string; name: string } {
   for (const [e, n] of [['c1.email', 'c1.name'], ['poa.email', 'poa.name']]) if (EMAIL_OK.test(String(a?.[e] ?? '').trim())) return { to: String(a[e]).trim(), name: String(a[n] ?? '').trim() }
@@ -142,6 +151,8 @@ function view(r: Any) {
     signer: r.client_sign ? { name: r.client_sign.typed_name, role: r.client_sign.role, at: r.client_sign.at } : null,
     office_signer: r.office_sign ? { name: r.office_sign.typed_name, at: r.office_sign.at } : null,
     has_pdf: !!r.signed_pdf_path, contacts_review: r.contacts_review ?? null,
+    link: r.__link !== undefined ? linkView(r.__link) : undefined,
+    signed_from_home: !!r.client_sign?.via_link,
     copies: { emails: (r.copies?.emails ?? []).map((e: Any) => ({ to: e.to, at: e.at, by: e.by, outcome: e.outcome, detail: e.detail })), printed: !!r.copies?.print_path }, created_at: r.created_at, signed_at: r.signed_at, countersigned_at: r.countersigned_at, void_reason: r.void_reason,
   }
 }
@@ -171,6 +182,9 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
       if (!AX.test(ax)) return json({ error: 'Which client?' }, 400)
       const { data, error } = await db.from('client_agreements').select('*').eq('axiscare_client_id', ax).order('created_at', { ascending: false }).limit(20)
       if (error) throw error
+      const ids = (data ?? []).map((x: Any) => x.id)
+      const { data: links } = ids.length ? await db.from('client_agreement_links').select('*').in('agreement_id', ids).order('created_at', { ascending: false }) : { data: [] }
+      for (const x of data ?? []) x.__link = pickLink((links ?? []).filter((l: Any) => l.agreement_id === x.id))
       return json({ ok: true, agreements: (data || []).map(view) })
     }
 
@@ -192,6 +206,8 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
     if (action === 'get') {
       const r = await row(b.id)
       if (!r) return json({ error: 'Agreement not found.' }, 404)
+      const { data: links } = await db.from('client_agreement_links').select('*').eq('agreement_id', r.id).order('created_at', { ascending: false }).limit(10)
+      r.__link = pickLink(links ?? [])
       return json({ ok: true, agreement: view(r), form: FORM_INFO })
     }
 
@@ -217,28 +233,41 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
     if (action === 'sign') {
       const r = await row(b.id)
       if (!r) return json({ error: 'Agreement not found.' }, 404)
-      if (r.status !== 'draft') return json({ error: 'This agreement is already signed.', outcome: 'stale' }, 409)
-      if (b.consent !== true) return json({ error: 'Please tick the box to agree to sign electronically.', field: 'consent' }, 400)
-      const fam = cleanAnswers(b.answers || {}, 'family')
-      if (fam.problems.length) return json({ error: 'Some answers are not right.', problems: fam.problems }, 422)
-      const all: Answers = { ...(r.office?.answers || {}), ...fam.answers }
-      const signer = { name: S(b.signer?.name, 80).trim().replace(/\s+/g, ' '), role: S(b.signer?.role, 20), relationship: S(b.signer?.relationship, 40).trim() }
-      const problems = [...readyToSign(all, signer), ...initialsComplete(b.initials, signer.role === 'representative')]
-      if (!signatureOk(b.signature)) problems.push({ field: 'signature', error: 'Please sign with your finger in the box.' })
-      if (problems.length) return json({ error: 'A few things are still needed before signing.', problems }, 422)
-      const at = new Date().toISOString()
-      const path = `sig/${r.axiscare_client_id}/${r.id}-client-${stampOf(at)}.png`
-      const up = await db.storage.from(BUCKET).upload(path, pngBytes(b.signature), { contentType: 'image/png', upsert: false })
-      if (up.error) throw up.error
-      const taps = Object.fromEntries(Object.entries(b.initials || {}).filter(([k]) => k in INITIALS || k === 'poa').map(([k, v]) => [k, S(v, 40)]))
-      const client_sign = { typed_name: signer.name, role: signer.role, relationship: signer.relationship || null, initials_text: initialsOf(signer.name), initials_taps: taps,
-        at, ip: ipOf(req), agent: agentOf(req), consent: true, consent_words: ESIGN_WORDS, signature_path: path, version: VERSION, pdf_sha256: PDF_SHA256,
-        on_staff_session: { name: who.name, email: who.email, person_id: who.person_id } }
-      const { data: did, error } = await db.from('client_agreements').update({ answers: fam.answers, client_sign, status: 'signed', signed_at: at, updated_at: at })
-        .eq('id', r.id).eq('status', 'draft').select('id')
+      const [code, body] = await familySign(db, r, b, { ip: ipOf(req), agent: agentOf(req), where: { on_staff_session: { name: who.name, email: who.email, person_id: who.person_id } } })
+      if (code === 200) { delete body.signer; await db.from('client_agreement_links').update({ revoked_at: body.at, revoked_by: 'signed on the tablet instead' }).eq('agreement_id', r.id).is('revoked_at', null).is('signed_at', null) }
+      return json(body, code)
+    }
+
+    /* ---------- 874: send the family a link to fill in and sign from home ---------- */
+    if (action === 'link_send' || action === 'link_cancel') {
+      const r = await row(b.id)
+      if (!r) return json({ error: 'Agreement not found.' }, 404)
+      const now = new Date().toISOString()
+      const cancelLive = async (why: string) => { const { error } = await db.from('client_agreement_links').update({ revoked_at: now, revoked_by: why }).eq('agreement_id', r.id).is('revoked_at', null).is('signed_at', null); if (error) throw error }
+      if (action === 'link_cancel') { await cancelLive(who.email); return json({ ok: true, outcome: 'cancelled' }) }
+      if (r.status !== 'draft') return json({ error: 'This agreement is already signed.' }, 409)
+      const toName = S(b.to_name, 80).trim(), phone = digits(b.phone), email = S(b.email, 120).trim()
+      const ch = (Array.isArray(b.channels) ? b.channels : []).filter((c: unknown) => c === 'sms' || c === 'email')
+      if (toName.length < 2) return json({ error: 'Who is it for? Type their name.', field: 'to_name' }, 400)
+      if (!ch.length) return json({ error: 'Pick text, email or both.', field: 'channels' }, 400)
+      if (ch.includes('sms') && phone.length !== 10) return json({ error: 'A 10-digit cell number is needed to text it.', field: 'phone' }, 400)
+      if (ch.includes('email') && !EMAIL_OK.test(email)) return json({ error: 'That email address does not look right.', field: 'email' }, 400)
+      const token = secret(), expires = new Date(Date.now() + LINK_DAYS * 864e5).toISOString()
+      const url = `${SIGN_PAGE}#t=${token}`, until = centralDate(expires).long.replace(/ at .*$/, '')
+      const msg = linkMessages({ toName, clientName: String(r.answers?.['client.client_s_name'] || S(b.client_name, 80).trim() || ''), url, expires: until })
+      const ghl = { token: Deno.env.get('GHL_API_KEY') || '', locationId: Deno.env.get('GHL_LOCATION_ID') || '' }
+      await cancelLive('replaced by a new link from ' + who.email)
+      const { data: made, error } = await db.from('client_agreement_links').insert({ agreement_id: r.id, token_hash: await sha256(token), to_name: toName,
+        to_phone: ch.includes('sms') ? phone : null, to_email: ch.includes('email') ? email : null, channels: ch, sent_by: who.email, expires_at: expires }).select('*')
       if (error) throw error
-      if (!did?.length) return json({ error: 'This agreement changed while you were signing. Open it again.', outcome: 'stale' }, 409)
-      return json({ ok: true, outcome: 'signed', at })
+      const sent: Any[] = []
+      for (const c of ch) sent.push(await sendFamily(db, ghl, { channel: c, phone, email, toName, sender: 'agreement-link', kind: 'reactive_external', sms: msg.sms, subject: msg.subject, html: msg.html }))
+      const got = sent.some((x) => x.outcome === 'sent')
+      const { data: fin } = await db.from('client_agreement_links').update({ sent: Object.fromEntries(sent.map((x) => [x.channel, x])), ...(got ? {} : { revoked_at: new Date().toISOString(), revoked_by: 'not delivered' }) })
+        .eq('id', made![0].id).select('*')
+      if (!got) return json({ ok: false, outcome: 'not_sent', sent, error: sent.map((x) => x.detail).join(' ') })
+      made![0] = fin?.[0] ?? made![0]
+      return json({ ok: true, outcome: 'sent', sent, link: linkView(made?.[0]) })
     }
 
     if (action === 'countersign') {
