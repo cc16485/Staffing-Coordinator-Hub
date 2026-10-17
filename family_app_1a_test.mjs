@@ -205,8 +205,9 @@ o = await go({ action: 'cancel', client: '501', booking_id: 'b-soon', late_ok: t
 ck('inside 24 hours with the yes: removed, caregiver texted that they are paid 2 hours', o.status === 200 && o.body.late === true && W.bookings[0].status === 'cancelled' && !W.visits['v=50:s=0:d=2026-10-21'] &&
   /you'll still be paid for 2 hours/.test(W.texts[0]?.message) && /2 hours will be on your weekly invoice/.test(o.body.message), { o, t: W.texts })
 ck('late cancel: important note says charge the family 2 hours and pay the caregiver 2 hours', W.notes.length === 2 && W.notes.every((n) => n.important === true && /Late cancel \(less than 24 hours before\): charge the family 2 hours and pay Maria L\. 2 hours/.test(n.note)), W.notes)
-ck('late cancel: office card to put the 2 hours on the invoice and the caregiver\'s pay', W.items.length === 1 && W.items[0].title === 'Late cancel: Dot, Wed Oct 21, 8:30 AM to 10:30 AM' &&
-  /add 2 hours for Dot to this week's invoice and pay Maria L\. 2 hours/.test(W.items[0].detail) && /on Tue Oct 20, 2026 at 9 AM Central/.test(W.items[0].detail), W.items)
+// 2026-10-17 office check ("Check for anytime it's involving office staff when it shouldn't"): the approved model puts late
+// charges on a weekly billing list, not an office card, when everything else went through
+ck('late cancel: no office card; the charge goes on the billing list (2 hours, pay Maria L.)', W.items.length === 0 && W.bookings[0].late_charge_hours === 2 && W.bookings[0].late_pay_caregiver === 'Maria L.', { items: W.items, b: W.bookings[0] })
 ck('late cancel: the event records it', W.events.some((e) => e.verb === 'family_cancelled' && e.data.late === true && e.data.late_hours === 2 && e.data.caregiver_texted === true), W.events)
 // the setting can change the 2 hours
 reset({ settings: { family_app_live: true, family_fee_check_ready: true, family_app_cancel_reason: 'Schedule Change - Client Cancellation', family_app_late_cancel_hours: 3 } })

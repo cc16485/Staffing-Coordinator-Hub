@@ -6,12 +6,11 @@
 //   1. approved choices: families pick only the companion tasks allowed for this client (care_circles.app_tasks; none set =
 //      every companion task for their state). Checked where the request is made (family-app.ts).
 //   2. fixed rules on the note (checkNote): personal care, medical care, lifting or transfers, overnight stays, or driving the
-//      client's own car HOLD the request for the office. Emergency words also show the family the emergency message at once.
-//   3. AI as a second opinion (reviewNote): fine / outside companion services / health or safety concern / needs a person /
-//      unsure. It can only ADD a hold, never release one. Unsure = held. Unavailable or slower than 20 seconds = the rules
-//      decide and the note goes on the office's "notes AI didn't read" list.
-//   A held request: the office approves it, approves it without the note, or declines it (the family gets the approved
-//   decline wording). Not reviewed by the answer-by time = it ends with that wording.
+//      client's own car, and emergency words.
+//   3. AI as a second opinion (reviewNote): "outside companion services" counts like a rule; anything else goes through.
+//   HER CHOICE 2026-10-17 ("Stop it at Send", after "why would it say our office needs to check this request?!?"): a note
+//   that trips 2 or 3 is stopped when the family taps Send. NOTHING is sent and there is NO office task: the family changes
+//   or removes the note, or calls (noteBlockWords). The old "held for the office" path is never started any more.
 //
 // HELP US FILL EXTRA VISITS (decision 3): a client flag only Samantha or Krystal set, with a reason, for 90 days. When no
 // caregiver has said yes one office day before the answer-by time (or sooner, once everyone was asked), the office gets one
@@ -27,22 +26,29 @@ export const NOTE_MAX = 300
 
 // ── layer 2: the fixed rules ─────────────────────────────────────────────────────────
 const PRON = '(?:her|him|his|them|their|mom|dad|mother|father|my mom|my dad|grandma|grandpa)'
-export const NOTE_RULES: { why: string; re: RegExp }[] = [
-  { why: 'personal care (bathing, toileting, dressing)', re: new RegExp(`\\b(bathe|bathing|give ${PRON} a bath|shower(ing)?|toilet(ing)?|incontinen\\w*|diapers?|depends|change ${PRON} (brief|pad)s?|brief changes?|(get|help) ${PRON} (get )?dressed|dress ${PRON}|wipe ${PRON})\\b`, 'i') },
-  { why: 'medical care (injections, wounds, catheters, giving medication)', re: new RegExp(`\\b(insulin|injections?|shots?|wounds?|dressing change|bandage change|catheter|ostomy|colostomy|feeding tube|oxygen tank|give ${PRON} (her |his |their )?(meds|medications?|medicine|pills)|administer|blood sugars?|glucose|blood pressure readings?)\\b`, 'i') },
-  { why: 'lifting or transfers', re: new RegExp(`\\b(lift(ing)? ${PRON}|hoyer|transfers?|transferring|(get|help) ${PRON} (in|out) of (bed|the bed|the chair|the tub|the car)|pick ${PRON} up off)\\b`, 'i') },
-  { why: 'an overnight stay', re: /\b(overnight|over night|spend the night|stay the night|stays? all night|sleep ?over|through the night)\b/i },
-  { why: "driving the client's own car", re: /\b((drive|use|take) (her|his|their|my|our|mom'?s|dad'?s) (car|van|truck)|in (her|his|their|mom'?s|dad'?s) (car|van|truck))\b/i },
+export const NOTE_RULES: { why: string; fam: string; re: RegExp }[] = [
+  { why: 'personal care (bathing, toileting, dressing)', fam: 'bathing, toileting or dressing', re: new RegExp(`\\b(bathe|bathing|give ${PRON} a bath|shower(ing)?|toilet(ing)?|incontinen\\w*|diapers?|depends|change ${PRON} (brief|pad)s?|brief changes?|(get|help) ${PRON} (get )?dressed|dress ${PRON}|wipe ${PRON})\\b`, 'i') },
+  { why: 'medical care (injections, wounds, catheters, giving medication)', fam: 'medication or medical care', re: new RegExp(`\\b(insulin|injections?|shots?|wounds?|dressing change|bandage change|catheter|ostomy|colostomy|feeding tube|oxygen tank|give ${PRON} (her |his |their )?(meds|medications?|medicine|pills)|administer|blood sugars?|glucose|blood pressure readings?)\\b`, 'i') },
+  { why: 'lifting or transfers', fam: 'lifting or moving them', re: new RegExp(`\\b(lift(ing)? ${PRON}|hoyer|transfers?|transferring|(get|help) ${PRON} (in|out) of (bed|the bed|the chair|the tub|the car)|pick ${PRON} up off)\\b`, 'i') },
+  { why: 'an overnight stay', fam: 'an overnight stay', re: /\b(overnight|over night|spend the night|stay the night|stays? all night|sleep ?over|through the night)\b/i },
+  { why: "driving the client's own car", fam: 'driving their own car', re: /\b((drive|use|take) (her|his|their|my|our|mom'?s|dad'?s) (car|van|truck)|in (her|his|their|mom'?s|dad'?s) (car|van|truck))\b/i },
 ]
 export const EMERGENCY = /\b(fell|has fallen|she fell|he fell|chest pains?|can'?t breathe|cannot breathe|not breathing|trouble breathing|unresponsive|passed out|stroke|seizure|choking|bleeding (badly|a lot)|suicid\w*|overdose)\b/i
 
 /** Layer 2. hold: the first rule the note trips (or null); emergency: the family sees the emergency message now. */
-export function checkNote(note: unknown): { hold: string | null; emergency: boolean } {
+export function checkNote(note: unknown): { hold: string | null; fam: string | null; emergency: boolean } {
   const t = String(note ?? '').trim()
-  if (!t) return { hold: null, emergency: false }
+  if (!t) return { hold: null, fam: null, emergency: false }
   const emergency = EMERGENCY.test(t)
   const hit = NOTE_RULES.find((r) => r.re.test(t))
-  return { hold: hit ? `the note mentions ${hit.why}` : emergency ? 'the note mentions a possible emergency' : null, emergency }
+  return { hold: hit ? `the note mentions ${hit.why}` : emergency ? 'the note mentions a possible emergency' : null, fam: hit ? hit.fam : null, emergency }
+}
+/** Her choice 2026-10-17 ("Stop it at Send"): the words the family sees instead of sending. Nothing is sent, no office task. */
+export function noteBlockWords(c: { fam: string | null; emergency: boolean }, phone: string, ai = false): string {
+  const call = `call us at ${phone} and we'll help`
+  if (c.emergency) return `If this is an emergency, call 911 now. For anything urgent, call us at ${phone}. This note is only for the caregiver, so please change or remove it to send this request.`
+  if (c.fam) return `Your note asks for help with ${c.fam}, which extra visits through the app don't include. Please change or remove the note, or ${call}.`
+  return ai ? `Your note asks for something extra visits through the app don't include. Please change or remove the note, or ${call}.` : ''
 }
 
 // ── layer 3: AI as a second opinion ──────────────────────────────────────────────────

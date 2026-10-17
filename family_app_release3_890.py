@@ -3,10 +3,11 @@
 # 5 and 6, https://claude.ai/artifact/AS6GbybmUqC47WKPto44p8).
 #  1. Checks first (nothing changes): the Hub's matching rulebook (cc.mo-care.com/match-rules.js) is an approved version, so
 #     app offers can read it (if not, it STOPS: offers would pause), and the Hub pages for this release are live.
-#  2. Database: the note checks, held and declined requests, Help us fill, each client's app tasks, and her approval of the
-#     two new family messages (declined; couldn't fill) recorded.
-#  3. Deploys family-gateway (note rules, emergency message, app tasks, Help us fill words), family-offer (matching, AI second
-#     opinion, held expiry, Help us fill handoff) and family-app-office (Approve / Decline / Couldn't fill / the flag).
+#  2. Database: the note check, Help us fill, each client's app tasks, the late-cancel billing list, and her approval of the
+#     "couldn't fill" family message recorded.
+#  3. Deploys family-gateway (a note asking for care extra visits don't include is stopped at Send: rules then AI, nothing
+#     sent, no office task; emergency message; app tasks; Help us fill words), family-offer (matching, Help us fill handoff,
+#     one card if the rulebook is unreadable, no duplicate cards) and family-app-office (Help us fill, app tasks, late billing).
 #  4. Proves it: the doors refuse strangers, a dry run reads everything and sends nothing.
 # Sends nothing itself. The app site is published separately right after. Safe to run again.
 import json, os, subprocess, shutil, time
@@ -96,14 +97,14 @@ good, r2 = sql(HUB, open(os.path.join(ROOT, SQLF)).read())
 if not good: stop(f"the database change was refused (nothing in it was kept): {str(r2)[:200]}", 4)
 good, c = sql(HUB, """select (select count(*)::int from information_schema.columns where table_schema = 'public' and table_name = 'family_bookings'
     and column_name in ('home_notes', 'note_check', 'note_hidden', 'hold_reason', 'held_by', 'held_at', 'reviewed_at', 'reviewed_by', 'review_decision', 'decline_reason',
-      'family_declined_pending', 'family_declined_at', 'family_declined_how', 'help_fill', 'fill_task_at', 'fill_closed_by', 'unfilled_kind')) as cols,
+      'family_declined_pending', 'family_declined_at', 'family_declined_how', 'help_fill', 'fill_task_at', 'fill_closed_by', 'unfilled_kind',
+      'late_charge_hours', 'late_pay_caregiver', 'late_billed_at', 'late_billed_by')) as cols,
   (select count(*)::int from information_schema.columns where table_schema = 'public' and table_name = 'care_circles' and column_name in ('app_tasks', 'help_fill')) as ccols,
   (select bool_or(pg_get_constraintdef(oid) ilike '%held%' and pg_get_constraintdef(oid) ilike '%declined%') from pg_constraint where conrelid = 'public.family_bookings'::regclass and contype = 'c') as status_ok,
-  (select data->'family_declined_text_approved'->>'by' from app_data where key = 'ops_settings') as dec,
   (select data->'family_couldnt_text_approved'->>'by' from app_data where key = 'ops_settings') as cf""")
 c = (c or [{}])[0] if good else {}
-chk(c.get("cols") == 17 and c.get("ccols") == 2 and c.get("status_ok") is True, "the request, note and Help us fill fields are in place", f"the database change didn't land as expected: {c}")
-chk(c.get("dec") == "Samantha" and c.get("cf") == "Samantha", "your approvals of the declined and couldn't-fill messages are recorded", f"approvals not recorded: {c}")
+chk(c.get("cols") == 21 and c.get("ccols") == 2 and c.get("status_ok") is True, "the request, note and Help us fill fields are in place", f"the database change didn't land as expected: {c}")
+chk(c.get("cf") == "Samantha", "your approval of the couldn't-fill message is recorded", f"approval not recorded: {c}")
 if L.fails: say("  STOP. The doors are unchanged. Tell Claude."); done(4)
 say(); say("2 · THE DOORS")
 for fn in FNS:
@@ -129,5 +130,5 @@ if SERVICE:
     chk(s == 200 and d.get("ok") is True and not sy.get("error") and not mskip, f"dry run: {d.get('bookings', 0)} open request(s) looked at, {len(d.get('would') or [])} thing(s) it would do; nothing changed or sent", f"family-offer dry run: {s} {(b or '')[:200]}")
 else: say("  · couldn't read the Hub's server key, so the dry run was skipped (the doors above are proven)")
 say()
-say("  890: " + ("DONE. App offers now follow the Hub's matching rules for each client (level, required gender, Spanish and dementia care, the call-in list, cats, dogs and smoking), family notes are checked (fixed rules, then AI) and anything outside companion care is held for you to Approve or Decline, and Help us fill is ready on Family bookings (Samantha or Krystal, with a reason). Next: Claude publishes the matching app screens." if not L.fails else "NOT COMPLETE. See the ✗ lines above."))
+say("  890: " + ("DONE. App offers now follow the Hub's matching rules for each client (level, required gender, Spanish and dementia care, the call-in list, cats, dogs and smoking), a note asking for care extra visits don't include is stopped at Send (the family changes it or calls; nothing comes to the office), and Help us fill is ready on Family bookings (Samantha or Krystal, with a reason). Next: Claude publishes the matching app screens." if not L.fails else "NOT COMPLETE. See the ✗ lines above."))
 done(0 if not L.fails else 1)

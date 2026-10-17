@@ -100,6 +100,7 @@ const famDeps = () => ({
   settings: async () => W.settings,
   whoIs: async () => WHO.lisa,
   circleFlags: async () => W.circle ?? null,
+  reviewNote: async () => W.ai === undefined ? null : W.ai,
   profiles: async (ids) => [{ axiscare_id: '77', first_name: 'Sarah', last_name: 'Jones', published: true, consent: true }, { axiscare_id: '88', first_name: 'Maria', last_name: 'Lopez', published: true, consent: true }].filter((p) => ids.includes(p.axiscare_id)),
   bookings: async (cid) => W.bookings.filter((b) => b.axiscare_client_id === cid),
   insertBooking: async (row) => { const b = { id: uuid(++bid), offer_stage: null, offer_next_at: null, unfilled_card_at: null, caregiver_axiscare_id: null, ...row }; W.bookings.push(b); return { id: b.id } },
@@ -597,34 +598,28 @@ const SET = { action: 'book', date: '2026-10-22', start: '10:00', end: '12:00', 
 reset({ settings: R3 })
 o = await go({ ...SET, note: 'x'.repeat(301) })
 ck('R3 the note is 300 characters at most', o.status === 400 && /300 characters/.test(o.body.error), o.body)
-o = await go({ ...SET, note: 'Please help her shower before lunch' }); b = bk()
-ck('R3 rules: a personal-care note is HELD for the office, the family is told plainly', o.body.status === 'held' && b.status === 'held' && b.held_by === 'rules' && /^Request sent\. Our office needs to check this request before we ask caregivers\. You'll hear from us by /.test(o.body.message), o.body)
-ck('R3 held: one office task to approve, approve without the note, or decline', W.items.some((x) => x.id === `fam_held_${b.id}` && /personal care/.test(x.detail)), W.items)
+// Her choice 2026-10-17 ("Stop it at Send"): nothing is saved or sent, nobody in the office is involved
+let n0 = W.bookings.length
+o = await go({ ...SET, note: 'Please help her shower before lunch' })
+ck('R3 a personal-care note is stopped at Send: nothing saved, no office task, the family told why', o.status === 422 && o.body.blocked === true && W.bookings.length === n0 && !W.items.length &&
+  o.body.error === "Your note asks for help with bathing, toileting or dressing, which extra visits through the app don't include. Please change or remove the note, or call us at (417) 234-8494 and we'll help.", o.body)
+o = await go({ action: 'when', date: '2026-10-22', start: '10:00', note: 'give her her meds at noon' })
+ck('R3 the app is warned before Send too (medication)', /help with medication or medical care/.test(o.body.note_block ?? ''), o.body)
+o = await go({ action: 'when', date: '2026-10-22', start: '10:00', note: 'Cards and a walk' })
+ck('R3 an ordinary note: no warning', o.body.note_block === null, o.body)
+o = await go({ ...SET, note: 'She fell yesterday, please keep her company' })
+ck('R3 emergency words: the 911 message, nothing sent', o.status === 422 && o.body.emergency === true && /^If this is an emergency, call 911 now\./.test(o.body.error) && W.bookings.length === n0, o.body)
+W.ai = { verdict: 'outside', why: 'asks for nail clipping' }
+o = await go({ ...SET, note: 'Clip her toenails please' })
+ck('R3 AI says outside companion care: stopped at Send the same way, nothing saved', o.status === 422 && /asks for something extra visits through the app don't include/.test(o.body.error) && W.bookings.length === n0, o.body)
+W.ai = { verdict: 'concern', why: 'She may wander at night' }
+o = await go({ ...SET, note: 'She loves cards and a short walk' }); b = bk()
+ck('R3 AI concern: the request goes on (the caregiver reads the note), recorded, no office task', o.status === 200 && b.status === 'waiting_for_caregiver' && b.note_check === 'ai_concern' && !W.items.length, { o: o.body, b })
 await run()
-ck('R3 held: no caregiver is texted', !W.texts.length)
-reset({ settings: R3 }); o = await go({ ...SET, note: 'She fell yesterday, please keep her company' })
-ck('R3 emergency words: held, and the family sees the emergency message at once', o.body.status === 'held' && o.body.emergency === true && /call 911 now/.test(o.body.message), o.body)
-reset({ settings: R3 }); o = await go({ ...SET, note: 'She loves cards and a short walk' }); b = bk()
-ck('R3 an ordinary note goes on as a request', o.body.status === 'waiting_for_caregiver' && b.status === 'waiting_for_caregiver')
-W.ai = { verdict: 'concern', why: 'She may wander at night' }; await run()
-ck('R3 AI: a concern holds it before anyone is texted; AI can add a hold', b.status === 'held' && b.held_by === 'ai' && /health or safety/.test(b.hold_reason) && !W.texts.length && W.items.some((x) => x.id === `fam_held_${b.id}`), b)
-o = await officeR3({ action: 'review', booking_id: b.id, decision: 'approve_no_note' })
-ck('R3 office: approve without the note, caregivers are asked, the note is hidden from them', o.status === 200 && b.status === 'waiting_for_caregiver' && b.note_hidden === true && W.items.find((x) => x.id === `fam_held_${b.id}`).status === 'done', o)
-await run()
-ck('R3 after approval: offers go out, and AI is not asked again', W.texts.length > 0 && b.note_check === 'office_ok', { t: W.texts.length, b })
-ck('R3 the caregiver link leaves the note out', (await page(W.offers[0].id, { action: 'view' })).body.note === null)
-reset({ settings: R3 }); await go({ ...SET, note: 'Cards please' }); b = bk(); W.ai = null; await run()
-ck('R3 AI unavailable: the rules decide, offers go out, the note goes on the office list', b.note_check === 'ai_unavailable' && W.texts.length > 0, b)
-reset({ settings: R3 }); await go({ ...SET, note: 'Cards please' }); b = bk(); W.ai = { verdict: 'fine', why: '' }; await run()
-ck('R3 AI fine: offers go out', b.note_check === 'ai_fine' && W.texts.length > 0)
-reset({ settings: R3 }); await go({ ...SET, note: 'Help him get dressed' }); b = bk()
-o = await officeR3({ action: 'review', booking_id: b.id, decision: 'decline' })
-ck('R3 decline needs a reason (for the record)', o.status === 400)
-o = await officeR3({ action: 'review', booking_id: b.id, decision: 'decline', reason: 'Dressing is personal care' }); await run()
-ck('R3 declined: the family gets the approved decline wording, once, behind its own approval', b.status === 'declined' && W.told?.length === 1 && W.told[0].key === 'family_declined_text_approved' &&
-  /can't arrange Dot's request for Thursday, October 22, from 10 to 12 in the app because it includes care our extra visits don't cover\. Please call us at/.test(W.told[0].sms), W.told)
-reset({ settings: R3 }); await go({ ...SET, note: 'insulin at noon' }); b = bk(); b.answer_by = '2026-10-20T13:00:00Z'; await run()
-ck('R3 held and not reviewed by the answer-by time: it ends with the decline wording', b.status === 'declined' && b.ended_why === 'not_reviewed' && W.items.find((x) => x.id === `fam_held_${b.id}`).status === 'done', b)
+ck('R3 the run asks caregivers straight away; nothing is held', W.texts.length > 0 && b.status === 'waiting_for_caregiver' && !W.items.length, { t: W.texts.length, items: W.items })
+reset({ settings: R3 }); W.ai = null; o = await go({ ...SET, note: 'Cards please' })
+ck('R3 AI unavailable: the rules decide, the request goes on', o.status === 200 && bk().note_check === 'ai_unavailable')
+ck('R3 no request is ever held for the office any more', !W.bookings.some((x) => x.status === 'held'))
 reset({ settings: R3 }); W.circle = { app_tasks: ['Companionship'] }
 o = await go({ action: 'home' })
 ck('R3 layer 1: the app only offers the tasks allowed for this client', o.body.tasks.join() === 'Companionship', o.body.tasks)
