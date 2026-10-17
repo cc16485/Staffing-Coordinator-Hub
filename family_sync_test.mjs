@@ -58,7 +58,7 @@ ck('caregiver changed: one message owed, from Sarah', B('a').family_change_pendi
 ck('not sent in the same run that found it (the next run sends)', !W.sent.length)
 o = await run()
 ck('caregiver changed: her wording, the caregiver-changed approval', W.sent.length === 1 && W.sent[0].key === 'family_cgchange_text_approved' &&
-  W.sent[0].sms === "Hi Lisa, it's Caring Companions. Maria will be with Dorothy on Wednesday, October 21, from 10 to 12, instead of Sarah. You can see the details anytime in the app: family.mo-care.com", W.sent)
+  W.sent[0].sms === "Hi Lisa, it's Caring Companions. Maria will be with Dorothy on Wednesday, October 21, from 10 to 12, instead of Sarah. You can see the details anytime in the Booking App: family.mo-care.com", W.sent)
 ck('sent once: marked done, never again', B('a').family_change_pending === false && B('a').family_change_how === 'sms' && (await run(), W.sent.length === 1), B('a'))
 ck('no em dash in the family messages', !/—/.test(fs_.MSG_FAMILY_CG_CHANGED + fs_.MSG_FAMILY_TIME_CHANGED))
 
@@ -72,7 +72,7 @@ world(); booking('a'); W.visits['v=a'].scheduledStartDate = utc('2026-10-21', '1
 await run(); await run()
 ck('time changed: the app shows 11 to 1', B('a').start_time === '11:00' && B('a').end_time === '13:00' && B('a').family_change_kind === 'time', B('a'))
 ck('time changed: her wording, the time-changed approval', W.sent.length === 1 && W.sent[0].key === 'family_timechange_text_approved' &&
-  W.sent[0].sms === "Hi Lisa, it's Caring Companions. Dorothy's visit is now on Wednesday, October 21, from 11 AM to 1 PM, with Sarah. You can see the details anytime in the app: family.mo-care.com", W.sent)
+  W.sent[0].sms === "Hi Lisa, it's Caring Companions. Dorothy's visit is now on Wednesday, October 21, from 11 AM to 1 PM, with Sarah. You can see the details anytime in the Booking App: family.mo-care.com", W.sent)
 
 // ── both, and the day moved ──────────────────────────────────────────────────────────
 world(); booking('a'); Object.assign(W.visits['v=a'], { caregiver: { id: 88, firstName: 'Maria', lastName: 'Lopez' }, scheduledStartDate: utc('2026-10-22', '14:00'), scheduledEndDate: utc('2026-10-22', '16:00') })

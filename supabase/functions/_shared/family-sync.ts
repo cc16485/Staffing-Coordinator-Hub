@@ -42,8 +42,8 @@ export type SyncDeps = {
 }
 
 export const SYNC_DAYS = 14, SYNC_MAX = 60
-export const MSG_FAMILY_CG_CHANGED = "Hi {first_name}, it's {brand}. {caregiver} will be with {client} on {day}, {times}, instead of {old}. You can see the details anytime in the app: {app}"
-export const MSG_FAMILY_TIME_CHANGED = "Hi {first_name}, it's {brand}. {client}'s visit is now on {day}, {times}, with {caregiver}. You can see the details anytime in the app: {app}"
+export const MSG_FAMILY_CG_CHANGED = "Hi {first_name}, it's {brand}. {caregiver} will be with {client} on {day}, {times}, instead of {old}. You can see the details anytime in the Booking App: {app}"
+export const MSG_FAMILY_TIME_CHANGED = "Hi {first_name}, it's {brand}. {client}'s visit is now on {day}, {times}, with {caregiver}. You can see the details anytime in the Booking App: {app}"
 const DAY_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 const MON_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 const dayFull = (date: string) => { const d = new Date(date + 'T12:00:00Z'); return `${DAY_FULL[d.getUTCDay()]}, ${MON_FULL[d.getUTCMonth()]} ${d.getUTCDate()}` }
@@ -174,7 +174,7 @@ async function tellChange(d: SyncDeps, st: Any, b: Any, now: Date): Promise<{ ok
   const h = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   const line = kind === 'caregiver' ? `<b>${h(cg)}</b> will be with ${h(client)} on <b>${h(day)}, ${h(times)}</b>, instead of ${h(old)}.` : `${h(client)}'s visit is now on <b>${h(day)}, ${h(times)}</b>, with <b>${h(cg)}</b>.`
   const html = `<div style="font-family:Arial,sans-serif;font-size:16px;line-height:1.6;color:#16283a;max-width:520px"><p>Hi ${h(first)},</p><p>${line}</p>` +
-    `<p>You can see the details anytime in the app at <a href="${h(String(fb.app_url))}">${h(String(fb.app_host))}</a>.</p><p>Questions? Call us at ${h(fb.phone)}.</p><p style="color:#55677a">${h(fb.footer)}</p></div>`
+    `<p>You can see the details anytime in the Booking App at <a href="${h(String(fb.app_url))}">${h(String(fb.app_host))}</a>.</p><p>Questions? Call us at ${h(fb.phone)}.</p><p style="color:#55677a">${h(fb.footer)}</p></div>`
   const r = await d.tellFamily(b, sms, { subject: kind === 'caregiver' ? `${cg} will be with ${client} on ${day}` : `${client}'s visit is now on ${day}`, html }, keys[0])
   return r.ok ? r : { ...r, ask: r.why !== 'no way to reach them (no Texts OK and no email)' && !/Needs Attention card raised/.test(String(r.why ?? '')) }   // no duplicate card
 }
