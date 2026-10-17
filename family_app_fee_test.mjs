@@ -88,9 +88,10 @@ ck('office: the App plan tick turns off (a set-shift client who only adds extra 
 o = await office({ action: 'app_plan', circle_id: 'c2', on: true })
 ck('office: on again starts from today (that month is free)', circles.c2.app_plan === true && circles.c2.app_plan_since === '2026-11-01')
 
-// the first family login invite turns the App plan on, once, never over the office's own choice
+// 2026-10-17 her decision: the App plan default comes from the Care Scheduling Type (Flexible on, Regular and Combination off;
+// the office can still change it), no longer from the first invite
 const src = fs.readFileSync(path.join(F, '_shared/family-app-office.ts'), 'utf8')
-ck('invite: App plan on by default at the first invite only (app_plan null), from that day', /if \(k\.app_plan == null\) await d\.setPlan\(String\(k\.id\), \{ app_plan: true, app_plan_since: central\(d\.now\(\)\)\.date/.test(src))
+ck('App plan: no longer turned on by the invite; set from the scheduling type (Flexible on, others off), only when the type changes', !/if \(k\.app_plan == null\) await d\.setPlan/.test(src) && /const plan = kind === 'flexible'/.test(src) && /if \(k\.care_scheduling_type !== kind\) await saveCareType/.test(src))
 
 // ── the go-live gate ─────────────────────────────────────────────────────────────────────────────────────────────────
 ck('go-live gate: live only with the app switch AND the fee check installed', fam.appLive({ family_app_live: true, family_fee_check_ready: true }) && !fam.appLive({ family_app_live: true }) && !fam.appLive({ family_fee_check_ready: true }))

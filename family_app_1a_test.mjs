@@ -242,6 +242,7 @@ const odeps = () => ({
   contact: async (id) => OW.contacts[id] ? { ...OW.contacts[id] } : null,
   circle: async (id) => OW.circles[id] ?? null,
   updateContact: async (id, vals) => { Object.assign(OW.contacts[id], vals); return true },
+  circleContacts: async (cid) => Object.values(OW.contacts).filter((c) => c.circle_id === cid).map((c) => ({ ...c })),
   members: async () => Object.values(OW.contacts).filter((c) => c.app_status),
   recentBookings: async () => W.bookings,
   booking: async (id) => W.bookings.find((b) => b.id === id) ?? null,
@@ -259,7 +260,8 @@ const odeps = () => ({
   },
 })
 const staff = { name: 'Krystal Land', email: 'krystal@cc.test' }
-const office = (body) => off.officeAction(odeps(), staff, body)
+let CLOCK = null
+const office = (body) => off.officeAction(CLOCK ? { ...odeps(), now: () => CLOCK } : odeps(), staff, body)
 oreset()
 o = await office({ action: 'invite', contact_id: 9, can_book: true })
 ck('invite: login made (email lower-cased), turned on, words for a person to send, nothing sent', o.status === 200 && OW.contacts[9].app_user_id === 'uid-lisa@x.test' && OW.contacts[9].app_status === 'active' && OW.contacts[9].app_can_book === true && /family\.mo-care\.com/.test(o.body.words) && /Hi Lisa/.test(o.body.words) && OW.events[0].verb === 'family_app_invited', o)
@@ -281,26 +283,56 @@ ck('invite again after revoke: unblocked, same login', o.status === 200 && OW.bl
 o = await office({ action: 'can_book', contact_id: 9, on: false })
 ck('booking can be turned off for one person', o.status === 200 && OW.contacts[9].app_can_book === false, o)
 
-// welcome
-reset(); oreset(); await office({ action: 'invite', contact_id: 9 }); Object.assign(OW.contacts[9], { phone: '4175550100', sms_consent: true })
+// welcome (her design 2026-10-17: a person picks the version, previews, sends; recorded; a second send asks first)
+reset(); oreset(); await office({ action: 'invite', contact_id: 9 }); Object.assign(OW.contacts[9], { phone: '4175550100', sms_consent: true, hipaa_authorized: true })
+ck('invite no longer turns on the App plan (it follows the Care Scheduling Type now)', !OW.plan, OW.plan)
 o = await office({ action: 'welcome', contact_id: 9 })
-ck('welcome preview: her approved text, both parts, MO phone, nothing sent', o.status === 200 && o.body.preview && o.body.include_axis === true && o.body.axis_email_on_file === true && o.body.can_text && o.body.can_email
-   && o.body.text === "Hi Lisa, it's Caring Companions. You're set up to follow Dorothy's care online. To see visits and request an extra one, go to family.mo-care.com and sign in with this email (we'll email you a code). Extra visits are requests: we ask our caregivers and tell you by a set time whether someone can come. For Dorothy's calendar, care notes and invoices, go to 16485.axiscare.com, tap Activate account and use this same email. Questions? Call (417) 234-8494."
-   && o.body.email_subject === 'Your Caring Companions family access for Dorothy' && OW.sent.length === 0, o.body)
-OW.rps = ['someone@else.test']; o = await office({ action: 'welcome', contact_id: 9 })
-ck('welcome preview: email not on AxisCare -> flagged, AxisCare part left out by default', o.body.axis_email_on_file === false && o.body.include_axis === false && !/axiscare/i.test(o.body.text) && /16485/.test(o.body.text_with_axis), o.body)
+ck('preview with no Care Scheduling Type: asks which version, shows no words yet, nothing sent', o.status === 200 && o.body.preview && o.body.kind === null && o.body.text === null && o.body.kinds.map((x) => x.label).join('|') === 'Regular Scheduled Care|Flexible Booking Care|Combination of Both' && OW.sent.length === 0, o.body)
+o = await office({ action: 'welcome', contact_id: 9, kind: 'flexible' })
+ck('preview Flexible: the Flexible text and email, both parts, MO phone', o.body.kind === 'flexible' && /request care for Dorothy whenever you need it/.test(o.body.text) && /Care when you need it/.test(o.body.email_html) && o.body.include_axis === true && o.body.axis_email_on_file === true && /234-8494/.test(o.body.text), o.body)
+o = await office({ action: 'welcome', contact_id: 9, send: true })
+ck('send without a version: refused (never guessed)', o.status === 400 && /Pick how this client schedules care/.test(o.body.error) && OW.sent.length === 0, o)
+OW.rps = ['someone@else.test']; o = await office({ action: 'welcome', contact_id: 9, kind: 'regular' })
+ck('preview: email not on AxisCare -> flagged, AxisCare part left out by default', o.body.axis_email_on_file === false && o.body.include_axis === false && !/16485/.test(o.body.text) && /16485/.test(o.body.text_with_axis), o.body)
 OW.rps = ['lisa@x.test']
-o = await office({ action: 'welcome', contact_id: 9, send: true, text: 'Edited words', include_axis: true })
+o = await office({ action: 'welcome', contact_id: 9, kind: 'flexible', send: true, text: 'Edited words', include_axis: true })
 const em = OW.sent.find((x) => x[1] === 'email')
-ck('welcome send: the office\'s edited text by text, the full email with both buttons, logged on the circle', o.status === 200 && o.body.by_text && o.body.by_email && OW.sent.find((x) => x[1] === 'sms')[2].message === 'Edited words'
-   && /Open the family app/.test(em[2].html) && /Activate your AxisCare account/.test(em[2].html) && /lisa@x\.test/.test(em[2].html) && OW.log[0].circle_id === 'c1' && OW.log[0].body === 'Edited words', [o.body, OW.log])
-OW.sent = []; await office({ action: 'welcome', contact_id: 9, send: true, text: 'x', include_axis: false })
-ck('welcome send without the AxisCare part: the email has no AxisCare step', !/Activate your AxisCare/.test(OW.sent.find((x) => x[1] === 'email')[2].html))
-Object.assign(OW.contacts[9], { sms_consent: false }); OW.sent = []
-await office({ action: 'welcome', contact_id: 9, send: true, text: 'x' })
+ck('send Flexible: the edited text, the Flexible email with both buttons, logged on the circle', o.status === 200 && o.body.by_text && o.body.by_email && OW.sent.find((x) => x[1] === 'sms')[2].message === 'Edited words'
+   && /Open the Booking App/.test(em[2].html) && /Activate your account/.test(em[2].html) && /lisa@x\.test/.test(em[2].html) && OW.log[0].circle_id === 'c1' && OW.log[0].body === 'Edited words', [o.body, OW.log])
+ck('the record: date and time, who, which version, how', OW.contacts[9].welcome_sent_at === NOW.toISOString() && OW.contacts[9].welcome_sent_by === 'Krystal Land' && OW.contacts[9].welcome_version === 'flexible' && OW.contacts[9].welcome_how === 'text + email', OW.contacts[9])
+ck('the version is remembered on the client and sets the App plan default: Flexible = on', OW.plan?.care_scheduling_type === 'flexible' && OW.plan?.app_plan === true && OW.plan?.app_plan_since === '2026-10-20', OW.plan)
+ck('the reminder card closes once sent', OW.closed.some((x) => x[0] === 'fam_welcome_c1'))
+OW.circles.c1.care_scheduling_type = 'flexible'; OW.sent = []
+o = await office({ action: 'welcome', contact_id: 9, send: true })
+ck('a second send asks first ("Already sent on ... Send it again?"), sends nothing', o.status === 409 && o.body.already && /Already sent on Tue Oct 20, 2026 at 9 AM Central by Krystal Land\. Send it again\?/.test(o.body.error) && OW.sent.length === 0, o.body)
+o = await office({ action: 'welcome', contact_id: 9, send: true, again: true })
+ck('...and "again" sends it (the saved version), recorded again', o.status === 200 && OW.sent.length === 2 && o.body.version === 'flexible')
+OW.contacts[12] = { id: 12, name: 'Lisa (2nd row)', email: 'lisa@x.test', circle_id: 'c1', app_status: 'active', hipaa_authorized: true }
+o = await office({ action: 'welcome', contact_id: 12, send: true })
+ck('the same email for this client already got it (a couple sharing an inbox): asks first', o.status === 409 && /to Lisa Ray at the same email/.test(o.body.error), o.body)
+reset(); oreset(); await office({ action: 'invite', contact_id: 9 }); Object.assign(OW.contacts[9], { hipaa_authorized: null })
+o = await office({ action: 'welcome', contact_id: 9, kind: 'regular', send: true })
+ck('no HIPAA permission on file: refused, says why, nothing sent', o.status === 409 && /HIPAA permission/.test(o.body.error) && OW.sent.length === 0, o)
+Object.assign(OW.contacts[9], { hipaa_authorized: true }); CLOCK = new Date('2026-10-21T00:30:00Z')   // 7:30 PM
+o = await office({ action: 'welcome', contact_id: 9, kind: 'regular', send: true })
+ck('after 6 PM: says plainly it goes 8 AM to 6 PM, nothing sent (no false "card" message)', o.status === 409 && /between 8 AM and 6 PM/.test(o.body.error) && OW.sent.length === 0, o)
+CLOCK = null
+o = await office({ action: 'welcome', contact_id: 9, kind: 'regular', send: true, include_axis: false })
+ck('Regular, without the AxisCare part: the email is the Booking App only', o.status === 200 && !/Activate your account/.test(OW.sent.find((x) => x[1] === 'email')[2].html))
+ck('Regular sets the App plan default off', OW.plan?.care_scheduling_type === 'regular' && OW.plan?.app_plan === false, OW.plan)
+reset(); oreset(); await office({ action: 'invite', contact_id: 9 }); Object.assign(OW.contacts[9], { hipaa_authorized: true, sms_consent: false })
+await office({ action: 'welcome', contact_id: 9, kind: 'both', send: true })
 ck('no Texts OK: email only, never a text', OW.sent.length === 1 && OW.sent[0][1] === 'email', OW.sent)
-OW.sendFail = ['email']; o = await office({ action: 'welcome', contact_id: 9, send: true, text: 'x' })
-ck('nothing went: said plainly (the door raises the Needs Attention card)', o.status === 502 && /Neither/.test(o.body.error), o)
+OW.contacts[9].welcome_sent_at = null; OW.sendFail = ['email']; OW.sent = []; o = await office({ action: 'welcome', contact_id: 9, kind: 'both', send: true })
+ck('nothing went: said plainly, nothing recorded as sent', o.status === 502 && /Neither/.test(o.body.error) && !OW.contacts[9].welcome_sent_at, o)
+o = await office({ action: 'scheduling_type', circle_id: 'c1', kind: 'weekly' })
+ck('Care Scheduling Type: only the three choices', o.status === 400)
+o = await office({ action: 'scheduling_type', circle_id: 'c1', kind: 'flexible' })
+ck('Care Scheduling Type can be changed anytime; Flexible turns the App plan on', o.status === 200 && OW.plan.app_plan === true && OW.events.some((e) => e.verb === 'family_scheduling_type'))
+o = await office({ action: 'welcome_skip', contact_id: 9, on: true })
+ck('"No welcome" needs a reason', o.status === 400)
+o = await office({ action: 'welcome_skip', contact_id: 9, on: true, reason: 'Live-in client' })
+ck('"No welcome" recorded with who and why', o.status === 200 && OW.contacts[9].welcome_skip_reason === 'Live-in client' && OW.contacts[9].welcome_skip_by === 'Krystal Land')
 // the caregiver About (her rule 2026-10-16)
 reset(); oreset()
 o = await office({ action: 'about', circle_id: 'c1', text: '  Dot loves   gardening and old movies.  ' })
