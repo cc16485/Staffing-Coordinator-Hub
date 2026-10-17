@@ -25,7 +25,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { logOpen, clientSubject } from '../_shared/doc-log.ts'
 import { FIELDS, VERSION, DOC, PDF_SHA256, BUCKET, ESIGN_WORDS, INITIALS, OFFICE_KEYS, cleanAnswers, readyToSign, initialsOf, signatureOk, initialsComplete, centralDate, stampPlan, type Answers } from '../_shared/client-agreement.ts'
-import { MASTER_PATH } from '../_shared/client-agreement-map.ts'
+import { masterFor } from '../_shared/agreement-masters.ts'
 import { signedAgreementPdf, familyCopyOf } from '../_shared/agreement-pdf.ts'
 import { emailSignedCopy, EMAIL_OK } from '../_shared/agreement-email.ts'
 import { familySign } from '../_shared/agreement-family-sign.ts'
@@ -91,7 +91,7 @@ function recordOf(r: Any): string[][] {
   const tapLine = Object.entries(cs.initials_taps || {}).map(([k, v]) => `${k === 'poa' ? 'POA' : k + ' of 6'}: ${centralDate(String(v)).long}`).join('\n')
   return [
     ['Agreement', `Client Care Agreement, ${VERSION}`], ['Agreement id', r.id], ['AxisCare client', r.axiscare_client_id],
-    ['Master document SHA-256', PDF_SHA256],
+    ['Master document SHA-256', r.pdf_sha256],
     ['Signed by', `${cs.typed_name}${cs.role === 'representative' ? ` (on behalf of the client${cs.relationship ? ', ' + cs.relationship : ''})` : ' (the client)'}`],
     ['Signed at', `${centralDate(cs.at).long} (${cs.at} UTC)`], ['Signer device', `${cs.ip || 'not recorded'} · ${cs.agent || 'not recorded'}`],
     ['Electronic signature consent', `"${cs.consent_words}"`], ['Initials taps', tapLine || 'none'],
@@ -104,13 +104,14 @@ function recordOf(r: Any): string[][] {
 }
 async function renderSigned(db: Any, r: Any, opts: { copy?: boolean; hide?: string[] } = {}): Promise<Uint8Array> {
   const cs = r.client_sign, os = r.office_sign
-  const [master, csig, osig] = await Promise.all([db.storage.from(BUCKET).download(MASTER_PATH), db.storage.from(BUCKET).download(cs.signature_path), db.storage.from(BUCKET).download(os.signature_path)])
+  const map = masterFor(r.pdf_sha256)   // 2026-10-17: always the master this agreement was started on
+  const [master, csig, osig] = await Promise.all([db.storage.from(BUCKET).download(map.path), db.storage.from(BUCKET).download(cs.signature_path), db.storage.from(BUCKET).download(os.signature_path)])
   if (master.error || csig.error || osig.error) throw (master.error || csig.error || osig.error)
   const all: Answers = { ...(r.office?.answers || {}), ...(r.answers || {}) }
   const plan = stampPlan(all, { initials: cs.initials_text, signedAt: cs.at, signerName: cs.typed_name, representative: cs.role === 'representative', officeName: os.typed_name, officeAt: os.at })
   const esign = { client: `Signed electronically on ${centralDate(cs.at).long}`, office: `Signed electronically on ${centralDate(os.at).long}`,
     footer: `Signed electronically on ${centralDate(cs.at).long.replace(/ at .*$/, '')} · Caring Companions Client Care Agreement · ${VERSION}` }
-  return await signedAgreementPdf({ master: new Uint8Array(await master.data.arrayBuffer()), plan, clientSigPng: new Uint8Array(await csig.data.arrayBuffer()),
+  return await signedAgreementPdf({ master: new Uint8Array(await master.data.arrayBuffer()), map, plan, clientSigPng: new Uint8Array(await csig.data.arrayBuffer()),
     officeSigPng: new Uint8Array(await osig.data.arrayBuffer()), record: recordOf(r), at: os.at, esign, copy: !!opts.copy, hide: opts.hide })
 }
 /** The link the card should show: the live one, else the newest (874). */
@@ -143,7 +144,7 @@ async function sendCopy(db: Any, r: Any, to: string, by: string): Promise<Any> {
 
 /** What the tablet page needs to draw the form: the field keys and kinds, the six initials, the consent words. */
 export const FORM_INFO = {
-  doc: DOC, version: VERSION, esign_words: ESIGN_WORDS, initials: INITIALS,
+  doc: DOC, version: VERSION, pdf_sha256: PDF_SHA256, esign_words: ESIGN_WORDS, initials: INITIALS,
   fields: Object.fromEntries(Object.entries(FIELDS).map(([k, f]) => [k, f.type])),
   office_keys: [...OFFICE_KEYS],
 }
@@ -151,7 +152,7 @@ export const FORM_INFO = {
 /** The row as the Hub may see it: no signature images, no file paths beyond whether a PDF exists. */
 function view(r: Any) {
   return {
-    id: r.id, client_ax: r.axiscare_client_id, status: r.status, version: r.version, office: r.office, answers: r.answers,
+    id: r.id, client_ax: r.axiscare_client_id, status: r.status, version: r.version, pdf_sha256: r.pdf_sha256, office: r.office, answers: r.answers,
     signer: r.client_sign ? { name: r.client_sign.typed_name, role: r.client_sign.role, at: r.client_sign.at } : null,
     office_signer: r.office_sign ? { name: r.office_sign.typed_name, at: r.office_sign.at } : null,
     has_pdf: !!r.signed_pdf_path, contacts_review: r.contacts_review ?? null,
@@ -250,6 +251,7 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
       const cancelLive = async (why: string) => { const { error } = await db.from('client_agreement_links').update({ revoked_at: now, revoked_by: why }).eq('agreement_id', r.id).is('revoked_at', null).is('signed_at', null); if (error) throw error }
       if (action === 'link_cancel') { await cancelLive(who.email); return json({ ok: true, outcome: 'cancelled' }) }
       if (r.status !== 'draft') return json({ error: 'This agreement is already signed.' }, 409)
+      if (r.pdf_sha256 !== PDF_SHA256) return json({ error: 'This agreement was started before the wording was updated. Start a new one, then send the link.', outcome: 'old_version' }, 409)
       const toName = S(b.to_name, 80).trim(), phone = digits(b.phone), email = S(b.email, 120).trim()
       const ch = (Array.isArray(b.channels) ? b.channels : []).filter((c: unknown) => c === 'sms' || c === 'email')
       if (toName.length < 2) return json({ error: 'Who is it for? Type their name.', field: 'to_name' }, 400)
