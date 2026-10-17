@@ -23,10 +23,13 @@ import { coversThemselves } from './covered-outside.ts'
 import { ghlSendChecked } from './send-problems.ts'
 import { findCardForCase, meetLine } from './caregiver-card-link.ts'
 
+/* 872 (Samantha 2026-10-16, "Separately"): running-late texts follow their own switch, wants_late, so a person who
+   ticked only "Caregiver change" on the Client Care Agreement never gets running-late texts (and the other way round).
+   kind 'change' (the default, every existing caller) is unchanged. */
 export type FamilyResult = { outcome: 'none' | 'sent' | 'retry'; count: number; reason: string | null; circle: string | null }
 // deno-lint-ignore no-explicit-any
-export function eligibleMembers(members: any[]): any[] {
-  return (members ?? []).filter((m) => m && m.sms_consent === true && m.wants_changes !== false
+export function eligibleMembers(members: any[], kind: 'change' | 'late' = 'change'): any[] {
+  return (members ?? []).filter((m) => m && m.sms_consent === true && (kind === 'late' ? m.wants_late !== false : m.wants_changes !== false)
     && !m.stopped_at && !m.axiscare_removed_at
     && String(m.phone || '').replace(/\D/g, '').length >= 10)
 }

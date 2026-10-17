@@ -103,7 +103,7 @@ Deno.serve(async (req) => {
     const { data: circs } = await sb.from('care_circles').select('id').eq('active', true).eq('axiscare_client_id', ax)
     if (!circs || circs.length !== 1) return { members: [], why: circs && circs.length > 1 ? 'two Family Circles are linked to this client' : 'no Family Circle is linked to this client' }
     const { data: mem } = await sb.from('circle_contacts').select('*').eq('circle_id', circs[0].id)
-    const members = eligibleMembers(mem ?? [])
+    const members = eligibleMembers(mem ?? [], 'late')
     return { members, why: members.length ? '' : 'nobody in the Family Circle has agreed to texts' }
   }
   const told = () => family().some((f) => f.what === 'late' || f.what === 'update')

@@ -61,5 +61,15 @@ reset(); gates = []; sends = [];
 r = await M.notifyFamilyOfChange(sb, { token: 't', locationId: 'l' }, CASE, APPROVED, { whenText: 'x' }, async () => null, send);
 ck('if the gate refuses every member, the case is left to retry (never faked as sent)', r.outcome === 'retry' && r.count === 0, r);
 
+/* 872 (her answer "Separately"): running-late texts follow wants_late, caregiver-change texts follow wants_changes */
+{ const base = { sms_consent: true, phone: '4175550190' }
+  const onlyLate = { ...base, name: 'Only Late', wants_late: true, wants_changes: false }, onlyChange = { ...base, name: 'Only Change', wants_late: false, wants_changes: true }
+  const old = { ...base, name: 'Before 872' }
+  const names = (ms, k) => M.eligibleMembers(ms, k).map((m) => m.name).join(',')
+  ck('872: a person who ticked only Running late gets running-late texts, never caregiver-change texts', names([onlyLate], 'late') === 'Only Late' && names([onlyLate]) === '' && names([onlyLate], 'change') === '')
+  ck('872: a person who ticked only Caregiver change gets caregiver-change texts, never running-late texts', names([onlyChange]) === 'Only Change' && names([onlyChange], 'late') === '')
+  ck('872: someone saved before 872 (no switch yet) is treated as before, for both', names([old]) === 'Before 872' && names([old], 'late') === 'Before 872')
+  ck('872: STOP and no texting consent still win for running-late texts', names([{ ...onlyLate, stopped_at: '2026-10-01' }, { ...onlyLate, sms_consent: false }], 'late') === '') }
+
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? 'PASS ' : 'FAIL ') + n + (ok ? '' : '\n     ' + note)); if (ok) pass++; }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1);

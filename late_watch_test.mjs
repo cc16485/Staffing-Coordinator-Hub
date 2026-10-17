@@ -112,7 +112,7 @@ ck('a time they give: "09:20" is that day; nonsense and far-off times are refuse
 /* circles */
 reset(); T = { care_circles: [{ id: 'k1', axiscare_client_id: '100', active: true }, { id: 'k2', axiscare_client_id: '200', active: true }, { id: 'k3', axiscare_client_id: '201', active: true }, { id: 'k4', axiscare_client_id: '201', active: true }],
   circle_contacts: [{ circle_id: 'k1', sms_consent: true, phone: '4175550000' }, { circle_id: 'k1', sms_consent: true, phone: '4175550001', stopped_at: 'x' },
-    { circle_id: 'k2', sms_consent: false, phone: '4175550002' }, { circle_id: 'k1', sms_consent: true, wants_changes: false, phone: '4175550003' }] }
+    { circle_id: 'k2', sms_consent: false, phone: '4175550002' }, { circle_id: 'k1', sms_consent: true, wants_changes: false, wants_late: false, phone: '4175550003' }] }
 const cc = await M.circles(db, 14, NOW)
 ck('circles: 6 clients; one circle with a member who can get it (STOP and "no updates" left out), one where nobody agreed, one client with two circles, the rest none',
   cc.counts.clients_with_shifts === 6 && cc.counts.circle_has_member_who_can_get_it === 1 && cc.counts.members_who_can_get_it === 1 && cc.counts.circle_but_nobody_agreed_to_texts === 1
