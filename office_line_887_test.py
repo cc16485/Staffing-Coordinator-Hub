@@ -10,7 +10,7 @@ COPY = os.path.join(TMP, "hub")
 subprocess.run(["git", "clone", "-q", HERE, COPY], check=True)
 HEAD = subprocess.run(["git", "-C", HERE, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
 subprocess.run(["git", "-C", COPY, "checkout", "-q", HEAD], check=True)
-BASE = subprocess.run(["git", "-C", COPY, "rev-parse", "HEAD~1"], capture_output=True, text=True).stdout.strip()
+BASE = subprocess.run(["git", "-C", HERE, "merge-base", "HEAD", "origin/main"], capture_output=True, text=True).stdout.strip()
 FNROOT = os.path.join(COPY, "supabase", "functions")
 LIVE = os.path.join(TMP, "live")   # what is "deployed" before 887: the build just before this change, which is on main
 subprocess.run(["git", "-C", COPY, "worktree", "add", "-q", "--detach", LIVE, BASE], check=True)
