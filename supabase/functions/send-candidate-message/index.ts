@@ -21,6 +21,7 @@ import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { ghlContactIfAllowed, normPhone } from '../_shared/optout.ts'
 import { reportSendProblem } from '../_shared/send-problems.ts'
 import { latestTextConsent, inTextHours, withStop } from '../_shared/text-consent.ts'
+import { MO_FROM } from '../_shared/office-from.ts'   // every text goes out from (417) 234-8494
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -66,7 +67,7 @@ Deno.serve(async (req) => {
     try {
       const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
         method: 'POST', headers: { Authorization: `Bearer ${ghlToken}`, Version: '2021-04-15', 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ type: 'SMS', contactId: cid, message: withStop(message) }),   // every text carries the opt-out line
+        body: JSON.stringify({ type: 'SMS', fromNumber: MO_FROM, contactId: cid, message: withStop(message) }),   // every text carries the opt-out line
       })
       const sb = await r.json().catch(() => ({}))
       if (r.ok) return { ok: true, contact_id: cid, message_id: sb?.messageId || sb?.msg || null }

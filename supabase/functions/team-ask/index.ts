@@ -32,6 +32,7 @@ import { optOutCheck } from '../_shared/optout.ts'
 import { opEvent } from '../_shared/events.ts'
 import { shiftAskBlock } from '../_shared/shift-ask-gate.ts'
 import { readTransportNeed, driveGateOn, transportDecision } from '../_shared/driver-eligibility.ts'
+import { MO_FROM } from '../_shared/office-from.ts'   // every text goes out from (417) 234-8494
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -238,7 +239,7 @@ Deno.serve(async (req) => {
   try {
     const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
       method: 'POST', headers: { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'SMS', contactId: contact.contactId, message }) })
+      body: JSON.stringify({ type: 'SMS', fromNumber: MO_FROM, contactId: contact.contactId, message }) })
     sentOk = r.ok; if (!r.ok) sendErr = `GoHighLevel answered ${r.status}`
   } catch { sendErr = 'could not reach GoHighLevel' }
   if (!sentOk) return json({ outcome: 'failed', error: `Not sent: ${sendErr}. Nothing was marked as asked.` }, 502)

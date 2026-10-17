@@ -34,6 +34,7 @@ import { reportSendProblem } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { officeQuietBetween, quietWords } from '../_shared/quiet-hours.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
+import { MO_FROM } from '../_shared/office-from.ts'   // every text goes out from (417) 234-8494
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -113,7 +114,7 @@ async function sendSms(tok: string, locationId: string, phone: string, message: 
   const send = await fetch(`${GHL_BASE}/conversations/messages`, {
     method: 'POST',
     headers: { ...ghlHeaders(tok), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type: 'SMS', contactId, message }),
+    body: JSON.stringify({ type: 'SMS', fromNumber: MO_FROM, contactId, message }),
   })
   if (!send.ok) throw new Error('send failed ' + send.status)
 }

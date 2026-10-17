@@ -16,6 +16,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { contactForOutbound, maySend } from '../_shared/outreach.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { caregiverGate } from '../_shared/caregiver-journey.ts'   /* SLICE 3b */
+import { MO_FROM } from '../_shared/office-from.ts'   // every text goes out from (417) 234-8494
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -108,7 +109,7 @@ Deno.serve(async (req) => {
     { ...common, channel: 'sms', selfSupplied: true, onOptOut: (x) => { why = 'they opted out of texts (' + x.join(', ') + ')' } })
   if (!c) return json({ ok: false, error: 'Not sent: ' + (why || 'that number could not be texted.') }, 200)
   const s = await fetch('https://services.leadconnectorhq.com/conversations/messages', { method: 'POST', headers: H,
-    body: JSON.stringify({ type: 'SMS', contactId: c.contactId, message: textBody(r, link) }) })
+    body: JSON.stringify({ type: 'SMS', fromNumber: MO_FROM, contactId: c.contactId, message: textBody(r, link) }) })
   if (!s.ok) return json({ ok: false, error: `The texting service refused it (${s.status}).` }, 200)
   await log({ method: 'text', note: "Texted the form (OK'd by phone)" }, { ...(b.phone ? { ref_phone: phone } : {}), office_texted_at: now, office_texted_by: by, ...(r.sent_at ? {} : { sent_at: now }) })
   return json({ ok: true, sent: 'text', to: phone, at: now, by })

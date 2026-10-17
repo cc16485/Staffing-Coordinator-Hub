@@ -130,7 +130,7 @@ ck('cancelled with the switch off: held, not stamped (it can go once she turns i
 
 // Missouri untouched
 OPSX = OKON; reset([C('Mo1', { status: 'new' })]); T.interview_bookings = [BK('Mo1', { starts_at: soon(72) })]; await run()
-ck('Missouri with the Oklahoma switch on: its own words, NO fromNumber (the default 417 number)', sms('Mo1').length === 1 && /Your interview with Samantha is/.test(sms('Mo1')[0]) && texts('Mo1')[0].from === undefined, texts('Mo1'))
+ck('Missouri with the Oklahoma switch on: its own words, from the office line (417) 234-8494 (887)', sms('Mo1').length === 1 && /Your interview with Samantha is/.test(sms('Mo1')[0]) && texts('Mo1')[0].from === '+14172348494', texts('Mo1'))
 reset([O('Ok12', { created_at: ago(30), completed_at: ago(15) })]); STOP = { Ok12: 'Oklahoma applicant: the recruiter calls (no automatic follow-ups)' }; await run()
 ck('no "pick a time" or "finish" nudges for Oklahoma (the database stop)', toThem().length === 0); STOP = {}
 

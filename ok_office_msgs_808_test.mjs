@@ -90,7 +90,7 @@ ck('cancelling: the text from 405 and the email with the Oklahoma footer', SENT.
 reset({ job_applicants: [okRow()], app_data: OPS({ ok_from_number: '' }) }); ;[s, j] = await call(TEXT, { action: 'send', id: ID, message: 'hello there' })
 ck('no Oklahoma number set: not sent (never from 417), and a card says why', !SENT.length && CARDS.some((c) => /Oklahoma sending number/.test(JSON.stringify(c))) && /not sent/.test(JSON.stringify(j)), [j, CARDS])
 reset({ job_applicants: [moRow()], app_data: OPS() }); ;[s, j] = await call(TEXT, { action: 'send', id: ID, message: 'hello there' })
-ck('Missouri: exactly as before, no fromNumber (the default 417 number)', SENT.length === 1 && SENT[0].fromNumber === undefined, SENT)
+ck('Missouri: from the office line (417) 234-8494 (887)', SENT.length === 1 && SENT[0].fromNumber === '+14172348494', SENT)
 ;[s, j] = await call(TEXT, { action: 'draft', id: ID })
 ck('...and the Missouri draft keeps the FCSR pick', j.picks.some((p) => p.key === 'fcsr') && j.from === null, j)
 
@@ -100,7 +100,7 @@ ck('candidate pool message to an Oklahoma applicant goes from 405', SENT.length 
 reset({ job_applicants: [okRow({ status: 'pool', sms_consent: false })], app_data: OPS() }); ;[s, j] = await call(DEC, { action: 'send', id: ID, kind: 'pool' })
 ck('...by email (no text consent): the Oklahoma footer, no 417', SENT.length === 1 && SENT[0].type === 'Email' && /Caring Companions Oklahoma<br>\(405\) 500-1758/.test(SENT[0].html) && !/417/.test(SENT[0].html), [s, j, SENT])
 reset({ job_applicants: [moRow({ status: 'pool' })], app_data: OPS() }); ;[s, j] = await call(DEC, { action: 'send', id: ID, kind: 'pool' })
-ck('...Missouri unchanged (no fromNumber)', SENT.length === 1 && SENT[0].fromNumber === undefined, SENT)
+ck('...Missouri from the office line (887)', SENT.length === 1 && SENT[0].fromNumber === '+14172348494', SENT)
 
 /* ── no-show ── */
 reset({ job_applicants: [okRow({ status: 'reviewing' })], interview_bookings: [], coordinator_busy: [], app_data: OPS() }); ;[s, j] = await call(NOS, { action: 'preview', id: ID })
