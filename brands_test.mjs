@@ -37,14 +37,14 @@ if (oldSrc) {
   const tmp = path.resolve(F, '_old_family_app_office_test.ts'); fs.writeFileSync(tmp, oldSrc)
   try {
     const OLD = await import(pathToFileURL(tmp).href), NEW = await imp('family-app-office.ts')
-    let same = true, first = null
-    for (const withAxis of [true, false]) for (const [f, c, e, p] of [['Lisa', 'Dorothy', 'lisa@x.test', '(417) 234-8494'], ['Tom', 'Earl', 'tom+1@x.test', '(417) 555-0000']]) {
-      const a = [OLD.welcomeText(f, c, p, withAxis), JSON.stringify(OLD.welcomeEmail(f, c, e, p, withAxis))]
-      const b = [NEW.welcomeText(f, c, p, withAxis, NEW_MO()), JSON.stringify(NEW.welcomeEmail(f, c, e, p, withAxis, NEW_MO()))]
-      const b2 = [NEW.welcomeText(f, c, p, withAxis), JSON.stringify(NEW.welcomeEmail(f, c, e, p, withAxis))]
-      if (a[0] !== b[0] || a[1] !== b[1] || a[0] !== b2[0] || a[1] !== b2[1]) { same = false; first = first ?? { a, b } }
-    }
-    ck('MISSOURI GUARD: the welcome text and email are word-for-word what origin/main sends', same, first)
+    void OLD
+    // 2026-10-17 her approval ("The welcome wording is approved (keep the pilot line)"): the Missouri welcome, word for word
+    const APPROVED = "Hi Lisa, it's Caring Companions. You're set up to follow Dorothy's care online. To see visits and request an extra one, go to family.mo-care.com and sign in with this email (we'll email you a code). Extra visits are requests: we ask our caregivers and tell you by a set time whether someone can come. For Dorothy's calendar, care notes and invoices, go to 16485.axiscare.com, tap Activate account and use this same email. Questions? Call (417) 234-8494."
+    const t1 = NEW.welcomeText('Lisa', 'Dorothy', '(417) 234-8494', true), t2 = NEW.welcomeText('Lisa', 'Dorothy', '(417) 234-8494', true, NEW_MO())
+    ck('MISSOURI WELCOME: the text is word for word what she approved on 2026-10-17', t1 === APPROVED && t2 === APPROVED, t1)
+    const wem = NEW.welcomeEmail('Lisa', 'Dorothy', 'lisa@x.test', '(417) 234-8494', true), em0 = NEW.welcomeEmail('Lisa', 'Dorothy', 'lisa@x.test', '(417) 234-8494', true, NEW_MO(), false)
+    ck('MISSOURI WELCOME: the email says request, has How extra visits work, and the pilot line (off by the setting)', /See visits and request extra ones/.test(wem.html) && /How extra visits work/.test(wem.html) && /any day from 7 AM to 6 PM/.test(wem.html) &&
+      /You're one of the first families to use the app/.test(wem.html) && !/first families/.test(em0.html) && !/book extra/i.test(wem.html + t1) && !/\u2014/.test(wem.html + t1), wem.html)
     const okb = B.brand('OK'); okb.app_url = 'https://family.example'; okb.app_host = 'family.example'
     const t = NEW.welcomeText('Ann', 'Bea', '(405) 500-1758', false, okb), em = NEW.welcomeEmail('Ann', 'Bea', 'a@b.c', '(405) 500-1758', false, okb)
     ck('an Oklahoma welcome (once its app exists) carries no Missouri name, site or number', /it's Caring Companions Oklahoma/.test(t) && !/mo-care|417|In-Home Senior Care/.test(t + em.html + em.subject) && /Caring Companions Oklahoma family access/.test(em.subject), { t, s: em.subject })
