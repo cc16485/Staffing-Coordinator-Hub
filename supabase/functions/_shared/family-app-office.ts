@@ -25,7 +25,7 @@
 // Never texts or emails a family: invite returns the words for a person to send.
 // =============================================================================
 import { brand, brandFor, type Brand } from './brands.ts'
-import { placeCaregiver, central, type Ax } from './family-app.ts'
+import { placeCaregiver, central, tasksFor, type Ax } from './family-app.ts'
 import { runFeeCheck, lastMonth, validMonth, type FeeDeps } from './family-fee.ts'
 
 export type OfficeDeps = {
@@ -114,7 +114,8 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
 
   if (action === 'list') {
     const from = new Date(d.now().getTime() - 30 * 86400000).toISOString().slice(0, 10)
-    return say(200, { members: await d.members(), bookings: await d.recentBookings(from), plans: await d.plans() })
+    const st = await d.settings(), tasks = [...new Set([...tasksFor('MO', st), ...tasksFor('OK', st)])]   // Release 3: the companion tasks a client's app may offer
+    return say(200, { members: await d.members(), bookings: await d.recentBookings(from), plans: await d.plans(), tasks })
   }
 
   if (['invite', 'revoke', 'can_book'].includes(action)) {
