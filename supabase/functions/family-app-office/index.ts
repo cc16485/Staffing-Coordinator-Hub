@@ -58,14 +58,14 @@ const deps: OfficeDeps = {
     saveCheck: async (row) => !(await db.from('family_app_fees').upsert(row, { onConflict: 'month,axiscare_client_id' })).error,
     officeItem: async (item) => !(await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item })).error,
   },
-  plans: async () => (await db.from('care_circles').select('id, client_name, axiscare_client_id, app_plan, app_plan_since').not('app_plan', 'is', null)).data ?? [],
+  plans: async () => (await db.from('care_circles').select('id, client_name, axiscare_client_id, app_plan, app_plan_since, help_fill, app_tasks').not('app_plan', 'is', null)).data ?? [],
   setPlan: async (id, vals) => !(await db.from('care_circles').update(vals).eq('id', id)).error,
   setAbout: async (id, vals) => !(await db.from('care_circles').update(vals).eq('id', id)).error,
   markBilled: async (month, cid, vals) => !(await db.from('family_app_fees').update(vals).eq('month', month).eq('axiscare_client_id', cid)).error,
   now: () => new Date(),
   settings: async () => (await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()).data?.data ?? {},
   contact: async (id) => Number.isFinite(id) ? (await db.from('circle_contacts').select(CONTACT_COLS).eq('id', id).maybeSingle()).data ?? null : null,
-  circle: async (id) => (await db.from('care_circles').select('id, client_name, active, axiscare_client_id, app_plan, app_plan_since').eq('id', id).maybeSingle()).data ?? null,
+  circle: async (id) => (await db.from('care_circles').select('id, client_name, active, axiscare_client_id, app_plan, app_plan_since, help_fill, app_tasks').eq('id', id).maybeSingle()).data ?? null,
   updateContact: async (id, vals) => !(await db.from('circle_contacts').update(vals).eq('id', id)).error,
   members: async () => {
     const { data: cs } = await db.from('circle_contacts').select(CONTACT_COLS).not('app_status', 'is', null)
@@ -143,7 +143,7 @@ Deno.serve(async (req) => {
   if (!who.ok) return json({ error: who.error }, who.status)
   const body = await req.json().catch(() => ({}))
   try {
-    const out = await officeAction(deps, { name: who.name, email: who.email }, body)
+    const out = await officeAction(deps, { name: who.name, email: who.email, roles: who.roles }, body)
     return json(out.body, out.status)
   } catch (e) {
     console.error('family-app-office', String((e as Error)?.message ?? e))

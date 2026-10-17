@@ -112,6 +112,8 @@ const deps: Deps = {
   },
   profiles: async (ids) => ids.length ? ((await db.from('caregiver_profiles').select(PROFILE_COLS).in('axiscare_id', ids)).data ?? []) : [],
   bookings: async (cid) => (await db.from('family_bookings').select('*').eq('axiscare_client_id', cid).order('visit_date', { ascending: true })).data ?? [],
+  // Release 3: the Family Circle's app tasks (null = all companion tasks) and its Help us fill flag
+  circleFlags: async (circleId) => { const { data } = await db.from('care_circles').select('app_tasks, help_fill').eq('id', circleId).maybeSingle(); return data ? { app_tasks: data.app_tasks ?? null, help_fill: data.help_fill ?? null } : null },
   insertBooking: async (row) => { const { data, error } = await db.from('family_bookings').insert(row).select('id').single(); return error || !data ? null : { id: String(data.id) } },
   updateBooking: async (id, vals) => !(await db.from('family_bookings').update({ ...vals, updated_at: new Date().toISOString() }).eq('id', id)).error,
   officeItem: async (item) => !(await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item })).error,
