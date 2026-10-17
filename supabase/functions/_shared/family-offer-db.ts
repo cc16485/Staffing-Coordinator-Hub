@@ -11,13 +11,17 @@ import { shiftAskBlock } from './shift-ask-gate.ts'
 import { opEvent } from './events.ts'
 import type { ChooseDeps } from './family-offer.ts'
 import type { Ax } from './family-app.ts'
+import type { SyncDeps } from './family-sync.ts'
 
 // deno-lint-ignore no-explicit-any
 type Any = any
 const arr = (x: unknown) => (Array.isArray(x) ? x : []) as Any[]
+const SENDERS: Record<string, string> = { family_confirm_text_approved: 'family-offer (caregiver confirmed)', family_unfilled_text_approved: 'family-offer (request not filled)',
+  family_cgchange_text_approved: 'family-offer (caregiver changed)', family_timechange_text_approved: 'family-offer (time changed)' }
 const PROFILE_COLS = 'axiscare_id, first_name, last_name, preferred_name, about, experience, why_this_work, years_experience, photo_path, photo_url, video_path, consent, published, status, photo_hidden, video_hidden'
 
-export function chooseDepsFor(db: Any, ax: Ax, supabaseUrl: string): ChooseDeps & Required<Pick<import('./family-offer.ts').OfferDeps, 'textFamily' | 'confirmDue' | 'tellFamily' | 'clientAbout' | 'unfilledDue'>> {
+export function chooseDepsFor(db: Any, ax: Ax, supabaseUrl: string): ChooseDeps & Required<Pick<import('./family-offer.ts').OfferDeps, 'textFamily' | 'confirmDue' | 'tellFamily' | 'clientAbout' | 'unfilledDue'>> &
+  Pick<SyncDeps, 'placedAhead' | 'coverage' | 'changeDue'> {
   const key = async (k: string): Promise<Any> => (await db.from('app_data').select('data').eq('key', k).maybeSingle()).data?.data
   const ghl = () => ({ token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' })
   const headers = (t: string) => ({ Authorization: `Bearer ${t}`, Version: '2021-07-28', 'Content-Type': 'application/json' })
@@ -67,26 +71,38 @@ export function chooseDepsFor(db: Any, ax: Ax, supabaseUrl: string): ChooseDeps 
       const today = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
       return (await db.from('family_bookings').select('*').eq('status', 'placed').eq('family_confirm_pending', true).is('family_confirmed_at', null).gte('visit_date', today).limit(100)).data ?? []
     },
-    // Each family message is behind its own recorded approval: who's coming (2026-10-16) and not filled (Release 1, 2026-10-17).
+    // Each family message is behind its own recorded approval: who's coming (2026-10-16), not filled (Release 1, 2026-10-17),
+    // caregiver changed and time changed (Release 2, her decisions 5 and D, 2026-10-17).
     tellFamily: async (b, message, email, approvalKey = 'family_confirm_text_approved') => {
       const st = (await key('ops_settings')) ?? {}
-      if (!['family_confirm_text_approved', 'family_unfilled_text_approved'].includes(approvalKey) || !st[approvalKey]) return { ok: false, why: 'the family message is not approved in the Hub settings' }
+      if (!Object.keys(SENDERS).includes(approvalKey) || !st[approvalKey]) return { ok: false, why: 'the family message is not approved in the Hub settings' }
       if (!b?.contact_id) return { ok: false, why: 'no family member on the booking' }
       const { data: c } = await db.from('circle_contacts').select('id, name, phone, email, sms_consent, stopped_at, axiscare_removed_at').eq('id', b.contact_id).maybeSingle()
       if (!c || c.stopped_at || c.axiscare_removed_at) return { ok: false, why: 'they are no longer in the Family Circle' }
       const phone = normalisePhone(c.phone), addr = String(c.email ?? '').trim()
       const first = String(c.name ?? '').split(' ')[0]
       if (c.sms_consent === true && phone) {
-        const r = await sms(approvalKey === 'family_unfilled_text_approved' ? 'family-offer (request not filled)' : 'family-offer (caregiver confirmed)', 'family', { phone, first, name: String(c.name ?? '') }, message, true)
+        const r = await sms(SENDERS[approvalKey], 'family', { phone, first, name: String(c.name ?? '') }, message, true)
         return r.ok ? { ok: true, how: 'sms' } : r
       }
       if (!addr) return { ok: false, why: 'no way to reach them (no Texts OK and no email)' }
       const g = ghl()
       if (!g.token || !g.locationId) return { ok: false, why: 'GoHighLevel is not set up on the server' }
-      const contact = await contactForOutbound(db, g, { email: addr, firstName: first }, 'reactive_external', { audience: 'family', explicitlyEnabled: true, channel: 'email', sender: approvalKey === 'family_unfilled_text_approved' ? 'family-offer (request not filled)' : 'family-offer (caregiver confirmed)' })
+      const contact = await contactForOutbound(db, g, { email: addr, firstName: first }, 'reactive_external', { audience: 'family', explicitlyEnabled: true, channel: 'email', sender: SENDERS[approvalKey] })
       if (!contact) return { ok: false, why: 'not sent (opted out, or the address is not trusted)' }
       const ok = await ghlSendChecked(db, headers(g.token), 'family-offer', { channel: 'email', contactId: contact.contactId, address: addr, who: String(c.name ?? '') }, email)
       return ok ? { ok: true, how: 'email' } : { ok: false, why: 'GoHighLevel refused the email (Needs Attention card raised)' }
+    },
+    placedAhead: async (from, to) => (await db.from('family_bookings').select('*').eq('status', 'placed').not('axiscare_visit_id', 'is', null)
+      .gte('visit_date', from).lte('visit_date', to).order('visit_date', { ascending: true }).limit(200)).data ?? [],
+    coverage: async () => {
+      const m = new Map<string, Any>()
+      for (const k of ['coverage_cases_archive', 'coverage_cases']) for (const c of arr(await key(k))) { const v = String(c?.axiscare_visit_id ?? ''); if (v) m.set(v, c) }
+      return m
+    },
+    changeDue: async () => {
+      const today = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+      return (await db.from('family_bookings').select('*').eq('status', 'placed').eq('family_change_pending', true).is('family_change_at', null).gte('visit_date', today).limit(100)).data ?? []
     },
     unfilledDue: async () => {
       const today = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)

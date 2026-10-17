@@ -68,7 +68,7 @@ export type OfferDeps = {
   /** Placed bookings whose family hasn't been told yet. */
   confirmDue?: () => Promise<Any[]>
   /** To the person who booked: the text if they have Texts OK, else the email; neither = not sent (says why). */
-  tellFamily?: (b: Any, sms: string, email: { subject: string; html: string }, approvalKey?: 'family_confirm_text_approved' | 'family_unfilled_text_approved') => Promise<{ ok: boolean; how?: 'sms' | 'email'; why?: string }>
+  tellFamily?: (b: Any, sms: string, email: { subject: string; html: string }, approvalKey?: 'family_confirm_text_approved' | 'family_unfilled_text_approved' | 'family_cgchange_text_approved' | 'family_timechange_text_approved') => Promise<{ ok: boolean; how?: 'sms' | 'email'; why?: string }>
   /** The office's short "About <client>" for caregivers (care_circles.caregiver_about), or null. */
   clientAbout?: (axiscareClientId: string) => Promise<string | null>
   /** Release 1: requests that ended unfilled whose family hasn't been told yet. */

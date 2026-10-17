@@ -422,7 +422,11 @@ export const bookingView = (b: any) => ({ id: b.id, date: b.visit_date, kind: b.
   method: b.method === 'choose' ? 'choose' : 'auto', choose_by: b.method === 'choose' ? (b.choose_by ?? null) : null, interested: Number(b.interested_count ?? 0),
   // Release 1 (her approval 2026-10-17): a request until a caregiver accepts; the family always knows when they'll hear
   answer_by: b.answer_by ?? null, answer_by_words: b.answer_by ? answerWords(b.answer_by) : null, two_stage: b.two_stage === true,
-  team_from_words: b.two_stage && b.team_from ? answerWords(b.team_from) : null, picks: Array.isArray(b.preferred_caregiver_ids) ? b.preferred_caregiver_ids.length : 0 })
+  team_from_words: b.two_stage && b.team_from ? answerWords(b.team_from) : null, picks: Array.isArray(b.preferred_caregiver_ids) ? b.preferred_caregiver_ids.length : 0,
+  // Release 2 (2026-10-17): what AxisCare shows now. A caregiver taken off (Coverage Help or the office is arranging another),
+  // or the visit removed by us (not the family).
+  no_caregiver: b.status === 'placed' && b.sync_state === 'no_caregiver', off_caregiver: b.sync_state === 'no_caregiver' && b.sync_note ? String(b.sync_note).split(' ')[0] : null,
+  by_office: b.status === 'cancelled' && b.cancel_source === 'office' })
 /** "Mon, Oct 19 · 1 PM": the earliest start a family can still request, per day, for the next three days (the picker greys out the rest). */
 // deno-lint-ignore no-explicit-any
 export function earliestByDay(now: Date, hrs: Hours, st: any) {
@@ -576,7 +580,8 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
     }
     const left = hoursUntil(b.visit_date, startOf(b), now)
     if (left <= 0) return say(409, { error: `This visit has already started. Please call the office${phone ? ` at ${phone}` : ''}.` })
-    const late = left < FREE_CANCEL_HOURS, lateHours = lateCancelHours(st)
+    // Release 2: no late charge when AxisCare shows nobody on the visit (we couldn't keep our side of it).
+    const late = left < FREE_CANCEL_HOURS && b.sync_state !== 'no_caregiver', lateHours = lateCancelHours(st)
     // Inside 24 hours the family has to say yes to the charge first (the app asks, then sends late_ok).
     if (late && body?.late_ok !== true) return say(409, { late: true, late_hours: lateHours,
       error: `This visit is less than 24 hours away, so ${lateHours} hours will still be charged. Cancel anyway?` })
