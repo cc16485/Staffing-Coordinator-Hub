@@ -232,8 +232,10 @@ export async function estimateRate(ax: Ax, clientId: string, state: string | nul
   let rate: number | null = null
   try {
     const past = await clientVisits(ax, clientId, addDays(today, -120), today)
-    // Only HOURLY visits (pilot check 2026-10-16: a client billed per visit showed families "$450/hr").
-    const priced = past.filter((v) => Number(v?.chargeRate) > 0 && String(v?.billableRateMode ?? '').trim().toLowerCase() === 'hourly')
+    // Only HOURLY visits (pilot check 2026-10-16: a live-in client's $450 DAILY rate showed families "$450/hr"). AxisCare's visit
+    // "type" is Hourly / Daily / Fixed; "billableRateMode" is only auto (from the service) or custom (typed in), and custom is skipped.
+    const priced = past.filter((v) => Number(v?.chargeRate) > 0 && String(v?.type ?? '').trim().toLowerCase() === 'hourly'
+      && String(v?.billableRateMode ?? '').trim().toLowerCase() !== 'custom')
       .sort((a, b) => String(b?.scheduledStartDate ?? b?.startDate ?? '').localeCompare(String(a?.scheduledStartDate ?? a?.startDate ?? '')))
     if (priced.length) rate = Number(priced[0].chargeRate)
   } catch { /* no estimate is better than a wrong one */ }
