@@ -17,7 +17,7 @@
 // Never texts or emails a family: invite returns the words for a person to send.
 // =============================================================================
 import { brand, brandFor, type Brand } from './brands.ts'
-import { putOnSchedule, placeCaregiver, central, type Ax } from './family-app.ts'
+import { placeCaregiver, central, type Ax } from './family-app.ts'
 import { runFeeCheck, lastMonth, validMonth, type FeeDeps } from './family-fee.ts'
 
 export type OfficeDeps = {
@@ -238,17 +238,11 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     const b = await d.booking(String(body?.booking_id ?? ''))
     if (!b) return say(404, { error: 'Booking not found.' })
     const st = await d.settings()
-    if (action === 'schedule') {
-      if (!['needs_office', 'practice', 'received'].includes(b.status) || b.axiscare_visit_id) return say(409, { error: 'This booking is already on the schedule.' })
-      const put = await putOnSchedule(d.ax, b, st)
-      if (!put.ok) { await d.updateBooking(b.id, { error: put.why }); return say(502, { error: put.why }) }
-      await d.updateBooking(b.id, { status: 'waiting_for_caregiver', axiscare_visit_id: put.vid, error: null })
-      await ev('family_booking_scheduled', `${staff.name} put ${b.client_name} ${b.visit_date} on the schedule`, { booking_id: b.id, visit: put.vid })
-      return say(200, { ok: true, axiscare_visit_id: put.vid })
-    }
+    // Release 1 (her approval 2026-10-17): no empty AxisCare visits; a request goes on AxisCare when a caregiver is placed.
+    if (action === 'schedule') return say(409, { error: 'Requests go on the AxisCare schedule when a caregiver is placed. Use Place.' })
     const cg = String(body?.caregiver_axiscare_id ?? '')
     if (!/^\d+$/.test(cg)) return say(400, { error: 'Pick a caregiver.' })
-    if (b.kind === 'flex' ? !['waiting_for_caregiver', 'needs_office'].includes(b.status) : (!b.axiscare_visit_id || !['waiting_for_caregiver', 'placed', 'needs_office'].includes(b.status))) return say(409, { error: b.kind === 'flex' ? 'This visit already has its caregiver and time.' : 'Put this booking on the schedule first.' })
+    if (b.kind === 'flex' ? !['waiting_for_caregiver', 'needs_office'].includes(b.status) : !['waiting_for_caregiver', 'placed', 'needs_office'].includes(b.status)) return say(409, { error: b.kind === 'flex' ? 'This visit already has its caregiver and time.' : 'This request is no longer open.' })
     const put = await placeCaregiver(d.ax, b, cg, body?.start ? String(body.start) : null, st)
     if (!put.ok) return say(put.status, { error: put.why })
     const name = put.name

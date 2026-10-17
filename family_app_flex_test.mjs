@@ -127,6 +127,9 @@ const offDeps = () => ({
   sendText: async (c, message) => { if (W.sendFail[c.axiscare_id]) return { ok: false, why: 'refused' }; W.texts.push({ to: c.axiscare_id, message }); return { ok: true } },
   makeLink: async (id, exp) => links.makeOfferLink('s'.repeat(40), id, exp),
   closeItem: async (id, by, text) => { const it = W.items.find((x) => x.id === id); if (it) { it.status = 'done'; it.closed_text = text } },
+  // Release 1: requests that ended unfilled, and the family message behind its own approval
+  unfilledDue: async () => W.bookings.filter((b) => b.status === 'not_filled' && b.family_unfilled_pending === true && !b.family_unfilled_at),
+  tellFamily: async (b, sms, email, key) => { if (W.tellFail) return { ok: false, why: W.tellFail }; (W.told ??= []).push({ to: b.contact_id, how: 'sms', sms, email, key }); return { ok: true, how: 'sms' } },
 })
 const run = (o) => fo.runOffers(offDeps(), o)
 const page = (offerId, body) => fo.offerPage(offDeps(), offerId, body)
@@ -147,8 +150,8 @@ o = await go(FLEX)
 let b = bk()
 ck('flexible (live, offers off): kept in the Hub only, AxisCare not written', o.status === 200 && b.status === 'waiting_for_caregiver' && !b.axiscare_visit_id && b.start_time === null && !W.calls.some((c) => c[0] !== 'GET'), o)
 ck('flexible: saved with the window, length and picks', b.kind === 'flex' && b.window_start === '09:00' && b.window_end === '15:00' && b.hours === 3 && b.preferred_caregiver_ids.join() === '77,88' && b.who === 'preferred')
-ck('flexible (offers off): the office gets "Pick a caregiver and a time"', W.items.length === 1 && /Pick a caregiver and a time/.test(W.items[0].title) && /flexible: 3 hours anytime 09:00 to 15:00/.test(W.items[0].detail) && /2 of Dot's caregivers/.test(W.items[0].detail), W.items)
-ck('the family is told they will see it in the app (no promise of a text)', /exact time, here in the app/.test(o.body.message) && !/let you know/.test(o.body.message), o.body.message)
+ck('flexible (offers off): the office gets "Place a caregiver"', W.items.length === 1 && /Place a caregiver/.test(W.items[0].title) && /flexible: 3 hours anytime 09:00 to 15:00/.test(W.items[0].detail) && /2 of Dot's caregivers/.test(W.items[0].detail), W.items)
+ck('Release 1: the family is told it is a request, not scheduled, and when they will hear; never "booked"', /^Request sent\./.test(o.body.message) && /isn't a scheduled visit yet/.test(o.body.message) && /You'll hear from us by Wed, Oct 21, 6 PM/.test(o.body.message) && !/booked/i.test(o.body.message), o.body.message)
 o = await go({ ...FLEX, kind: 'set', start: '12:00', end: '14:00' })
 ck('a visit overlapping one already booked is refused', o.status === 409 && /already have a visit/.test(o.body.error), o)
 o = await go({ action: 'bookings' })
@@ -159,7 +162,7 @@ ck('home: a waiting flexible visit is listed with its window', o.body.waiting.le
 reset({ settings: { family_app_live: true, family_fee_check_ready: true, family_offer_live: true, family_app_service_MO: 'PP - WC' } })
 o = await go({ action: 'book', date: '2026-10-22', start: '13:00', end: '16:00', tasks: ['Companionship'], who: 'any' })
 b = bk()
-ck('set time (live, offers on): on AxisCare with no caregiver, and NO office card yet (offers go out first)', b.status === 'waiting_for_caregiver' && W.visits[b.axiscare_visit_id]?.caregiver === null && W.items.length === 0, { b, items: W.items })
+ck('set time (live, offers on): Release 1 = NOT on AxisCare until a caregiver accepts, and no office card', b.status === 'waiting_for_caregiver' && !b.axiscare_visit_id && !W.calls.some((c) => c[0] === 'POST') && W.items.length === 0, { b, items: W.items })
 reset({ settings: { family_app_live: true, family_app_service_MO: 'PP - WC' } }); W.calls = []
 o = await go({ action: 'book', date: '2026-10-22', start: '13:00', end: '16:00', tasks: ['Companionship'], who: 'any' })
 ck('her go-live rule: the app switch ON but the App fee check not installed = still practice, AxisCare never written', o.body.status === 'practice' && !W.calls.some((c) => c[0] !== 'GET'), o.body)
@@ -211,7 +214,7 @@ o = await page(mo.id, { action: 'answer', yes: true, start: '09:30' })
 ck('a start she is busy for is refused, nothing placed', o.status === 409 && b.status === 'waiting_for_caregiver' && !b.caregiver_axiscare_id, o)
 o = await page(mo.id, { action: 'answer', yes: true, start: '11:30' })
 ck('Maria says yes at 11:30: straight on AxisCare 11:30 to 2:30, read back, booking placed', o.status === 200 && o.body.placed && b.status === 'placed' && b.start_time === '11:30' && b.end_time === '14:30' && W.visits[b.axiscare_visit_id]?.caregiver?.id === 88 && b.placed_by === 'caregiver yes (family app offer)', { o, b })
-ck('her answer says when, in her words', /You're on it! Thu, Oct 22, 11:30 AM to 2:30 PM/.test(o.body.message), o.body.message)
+ck('her answer: confirmed, when, and that changes go through the office like any shift (her approval 2026-10-17)', /^You're confirmed for Thu, Oct 22, 11:30 AM to 2:30 PM with Dot\./.test(o.body.message) && /call the office at \(417\) 234-8494 right away, the same as any shift/.test(o.body.message), o.body.message)
 ck('Sarah\'s offer is closed; Sarah gets no text about it', W.offers.find((x) => x.caregiver_axiscare_id === '77').state === 'closed' && W.texts.length === 2)
 const so = W.offers.find((x) => x.caregiver_axiscare_id === '77')
 o = await page(so.id, { action: 'answer', yes: true, start: '09:00' })
@@ -233,7 +236,8 @@ await page(so2.id, { action: 'answer', yes: false })
 ck('Sarah says no: recorded, thanked, nothing else', so2.state === 'no')
 await run()
 ck('all picks said no: the team goes at once, Maria first (she has visited Dorothy), then the next by availability', W.texts.length === 3 && W.texts[1].to === '88' && W.texts[2].to === '55' && b.offer_stage === 'team', W.texts.map((t) => t.to))
-ck('the team text says the first yes gets it', /The first yes gets it/.test(W.texts[1].message))
+ck('the team text says the first to accept gets it, and that it is a confirmed shift', /The first caregiver to accept gets it, and it's a confirmed shift on their schedule/.test(W.texts[1].message), W.texts[1]?.message)
+ck('the pick text says accepting is a confirmed shift', /If you accept, it's a confirmed shift on your schedule/.test(W.texts[0].message), W.texts[0]?.message)
 ck('Dee (outside her availability, no outside box) is never texted', !W.texts.some((t) => t.to === '44'))
 const ao = W.offers.find((x) => x.caregiver_axiscare_id === '55')
 o = await page(ao.id, { action: 'answer', yes: true })
@@ -246,9 +250,14 @@ await run()
 ck('whoever is available: straight to the team; blocked people skipped with the reason', W.texts.map((t) => t.to).join() === '88,55' && !W.texts.some((t) => t.to === '77'), W.texts.map((t) => t.to))
 for (const x of W.offers) await page(x.id, { action: 'answer', yes: false })
 await run()
-ck('everyone asked said no: ONE office card "Nobody has taken this yet", the same card Place closes', W.items.length === 1 && W.items[0].id === `fam_book_${b.id}` && /Nobody has taken this yet/.test(W.items[0].title) && /Everyone who could be asked/.test(W.items[0].detail) && b.offer_stage === 'done', W.items)
+await run()   // the next 10-minute check
+ck('everyone asked said no: NO office card (decision A); at the next check the request ends as not filled and the family is queued to hear', W.items.length === 0 && b.status === 'not_filled' && b.ended_why === 'early' && b.family_unfilled_pending === true, { b, items: W.items })
 await run()
-ck('...and only once', W.items.length === 1 && W.texts.length === 2)
+ck('...the family hears once ("couldn\'t find a caregiver", nothing scheduled, no charge), only after her approval is recorded', !W.told, W.told)
+W.settings.family_unfilled_text_approved = { by: 'Samantha' }
+await run(); await run()
+ck('...with the approval: told once, behind its own approval key, in her words', W.told?.length === 1 && W.told[0].key === 'family_unfilled_text_approved' && /We couldn't find a caregiver for Dot's extra visit on Thursday, October 22, from 1 to 4\. Nothing was scheduled and there's no charge\./.test(W.told[0].sms) && b.family_unfilled_at, W.told)
+ck('...and no caregiver is texted again', W.texts.length === 2)
 
 // Approved Driver (her rule 2026-10-13): rides or an outing = only cleared drivers are asked
 reset({ settings: { ...OFFERS_ON } }); W.drivers = ['55']
@@ -262,7 +271,8 @@ ck('a visit with no driving: nobody is held back for driving', W.drive.every((x)
 reset({ settings: { ...OFFERS_ON } }); W.drivers = []
 await go({ action: 'book', date: '2026-10-22', start: '13:00', end: '16:00', tasks: ['An outing together'], who: 'any' }); b = bk()
 await run()
-ck('an outing with no Approved Driver available: nobody is texted, the office card says everyone was asked', W.texts.length === 0 && W.items.some((i) => /Nobody has taken this yet/.test(i.title)), { t: W.texts, i: W.items })
+await run()
+ck('an outing with no Approved Driver available: nobody is texted, no office card, the request ends as not filled', W.texts.length === 0 && W.items.length === 0 && b.status === 'not_filled', { t: W.texts, i: W.items, b })
 ck('family_offer_driver_check false turns the check off', fo.needsDrive({ tasks: ['An outing together'] }, { family_offer_driver_check: false }) === false && fo.needsDrive({ tasks: ['An outing together'] }, {}) === true)
 
 // 24 hours before
@@ -271,7 +281,10 @@ await run()
 ck('booked 28 hours out: picks texted, no card yet; picks wait capped at half the time left', W.texts.length === 1 && W.items.length === 0)
 NOW = new Date('2026-10-20T19:00:00Z')   // 2 PM, 23 hours to go
 await run()
-ck('24 hours before and nobody has said yes: the office card', W.items.length === 1 && /Nobody has taken this yet/.test(W.items[0].title) && /Sarah Jones \(no answer yet\)/.test(W.items[0].detail), W.items)
+ck('24 hours before and nobody has said yes: still no office card (decision A)', W.items.length === 0 && b.status === 'waiting_for_caregiver', W.items)
+NOW = new Date('2026-10-20T23:05:00Z')   // 6:05 PM, past its answer-by time (6 PM the day before)
+await run()
+ck('the answer-by time passes: the request ends as not filled; Sarah\'s unanswered offer is closed; nothing is left on AxisCare', b.status === 'not_filled' && b.ended_why === 'deadline' && W.offers.every((x) => x.state !== 'sent') && !b.axiscare_visit_id, { b, offers: W.offers })
 NOW = new Date('2026-10-20T14:00:00Z')
 
 // the night rule
@@ -285,7 +298,8 @@ NOW = new Date('2026-10-20T14:00:00Z')
 reset({ settings: { ...OFFERS_ON, family_app_service_OK: 'OK - C' }, clientState: 'OK' })
 await go({ action: 'book', date: '2026-10-22', start: '13:00', end: '16:00', tasks: ['Companionship'], who: 'any' })
 await run()
-ck('Oklahoma visit: the Missouri team is never texted; the office gets the card', W.texts.length === 0 && W.items.length === 1 && /isn't texted for OK visits yet/.test(W.items[0].detail), W.items)
+await run()
+ck('Oklahoma visit: the Missouri team is never texted; no office card; the request ends as not filled', W.texts.length === 0 && W.items.length === 0 && W.bookings[0].status === 'not_filled', { i: W.items, b: W.bookings[0] })
 
 // first yes wins against two at once, and AxisCare trouble
 reset({ settings: { ...OFFERS_ON } }); await go(FLEX); b = bk()
@@ -454,7 +468,7 @@ NOW = new Date('2026-10-20T14:00:00Z')
 reset({ settings: { ...CHOOSE_ON } }); await goC(CB); b = bk(); await runC()
 NOW = new Date('2026-10-21T18:30:00Z')
 await runC()
-ck('deadline passed with nobody interested: it becomes Find someone for me, and the office card comes (24 hours)', b.method === 'auto' && W.items.some((i) => /Nobody has taken this yet/.test(i.title)), [b.method, W.items.map((i) => i.title)])
+ck('deadline passed with nobody interested: it becomes Find someone for me (no office card in Release 1)', b.method === 'auto' && !W.items.some((i) => /Nobody has taken this yet/.test(i.title)), [b.method, W.items.map((i) => i.title)])
 NOW = new Date('2026-10-20T14:00:00Z')
 
 // the family text: 8 AM to 8 PM only, and only with the approval recorded
@@ -519,6 +533,55 @@ ck('Let me choose: once the chosen caregiver is placed, the family message is qu
 
 ck('times read naturally: from 1 to 4, from 10 AM to 1 PM across noon, from 9 to 12', fo.fromTo('13:00', '16:00') === 'from 1 to 4' && fo.fromTo('10:00', '13:00') === 'from 10 AM to 1 PM' && fo.fromTo('09:00', '12:00') === 'from 9 to 12' && fo.fromTo('08:30', '10:30') === 'from 8:30 to 10:30')
 ck('no em dashes in any Let me choose wording', ![fo.MSG_CHOOSE, fo.MSG_CHOSEN, fo.MSG_NOT_CHOSEN, fo.MSG_CHOOSE_CANCELLED, fo.MSG_FAMILY_INTERESTED].some((m) => /—/.test(m)))
+
+// ── Release 1 (her approval 2026-10-17): two stages, no night texts, the 9 PM confirmation ───────────────────────
+NOW = new Date('2026-10-20T14:00:00Z')   // Tue 9 AM Central
+reset({ settings: { ...OFFERS_ON } }); await go({ action: 'book', date: '2026-11-05', start: '10:00', end: '13:00', tasks: ['Companionship'], who: 'preferred', preferred: ['77'] }); b = bk()
+ck('R1 two stages: a visit 16 days out is saved with the team from Thu Oct 29 8 AM and the answer by Tue Nov 3 6 PM', b.two_stage === true && b.team_from === '2026-10-29T13:00:00.000Z' && b.answer_by === '2026-11-04T00:00:00.000Z', { team: b.team_from, by: b.answer_by })   // 6 PM CST, after the clock change
+await run()
+ck('R1 two stages: Sarah (the pick) is asked now', W.texts.length === 1 && W.texts[0].to === '77', W.texts.map((t) => t.to))
+await page(W.offers[0].id, { action: 'answer', yes: false }); await run(); await run()
+ck('R1 two stages: Sarah said no, but the wider team is NOT asked before Oct 29', W.texts.length === 1 && b.status === 'waiting_for_caregiver', W.texts.map((t) => t.to))
+NOW = new Date('2026-10-29T13:05:00Z')   // Thu Oct 29, 8:05 AM
+await run()
+ck('R1 two stages: from Oct 29 the wider team is asked, once', W.texts.length > 1 && W.texts.slice(1).every((t) => t.to !== '77'), W.texts.map((t) => t.to))
+NOW = new Date('2026-10-20T14:00:00Z')
+// no night texts for an optional visit, even within 3 hours (the old exception is gone)
+reset({ settings: { ...OFFERS_ON } }); W.bookings.push({ id: 'b-night', axiscare_client_id: '501', client_name: 'Dot', state: 'MO', contact_id: 9, kind: 'set', visit_date: '2026-10-21', start_time: '07:00', end_time: '09:00', hours: 2, tasks: ['Companionship'], who: 'any', preferred_caregiver_ids: [], status: 'waiting_for_caregiver', offer_stage: null, caregiver_axiscare_id: null, answer_by: '2026-10-21T11:00:00.000Z' })
+NOW = new Date('2026-10-21T10:30:00Z')   // 5:30 AM, the visit at 7 AM is within 3 hours
+o = await run()
+ck('R1 night: 5:30 AM, a visit within 3 hours: still nobody is texted', W.texts.length === 0 && o.held_night === 1, o)
+NOW = new Date('2026-10-20T14:00:00Z')
+// the who's-coming confirmation may go until 9 PM; not until 9:05
+const conf = () => ({ ...offDeps(), confirmDue: async () => W.bookings.filter((x) => x.status === 'placed' && x.family_confirm_pending === true && !x.family_confirmed_at) })
+reset({ settings: { ...OFFERS_ON, family_confirm_text_approved: { by: 'Samantha' } } })
+W.bookings.push({ id: 'b-c', axiscare_client_id: '501', client_name: 'Dot', state: 'MO', contact_id: 9, requested_by_name: 'Lisa Ray', kind: 'set', visit_date: '2026-10-22', start_time: '10:00', end_time: '12:00', hours: 2, status: 'placed', caregiver_name: 'Maria L.', family_confirm_pending: true })
+NOW = new Date('2026-10-21T01:40:00Z')   // 8:40 PM
+await fo.runOffers(conf())
+ck('R1 confirmation at 8:40 PM: sent (until 9 PM)', W.told?.length === 1 && W.told[0].key !== 'family_unfilled_text_approved', W.told)
+W.told = []; W.bookings[0].family_confirmed_at = null; W.bookings[0].family_confirm_pending = true
+NOW = new Date('2026-10-21T02:05:00Z')   // 9:05 PM
+await fo.runOffers(conf())
+ck('R1 confirmation at 9:05 PM: held until morning', W.told.length === 0, W.told)
+NOW = new Date('2026-10-20T14:00:00Z')
+// "not filled" waits for 8 AM to 7:30 PM
+reset({ settings: { ...OFFERS_ON, family_unfilled_text_approved: { by: 'Samantha' } } })
+W.bookings.push({ id: 'b-u', axiscare_client_id: '501', client_name: 'Dot', state: 'MO', contact_id: 9, requested_by_name: 'Lisa Ray', kind: 'set', visit_date: '2026-10-22', start_time: '10:00', end_time: '12:00', hours: 2, status: 'not_filled', family_unfilled_pending: true })
+NOW = new Date('2026-10-21T00:45:00Z')   // 7:45 PM
+await run()
+ck('R1 not filled at 7:45 PM: held', !W.told?.length, W.told)
+NOW = new Date('2026-10-21T13:01:00Z')   // 8:01 AM
+await run()
+ck('R1 not filled at 8:01 AM: sent once, its own approval', W.told?.length === 1 && W.told[0].key === 'family_unfilled_text_approved', W.told)
+NOW = new Date('2026-10-20T14:00:00Z')
+// a family cancelling a request nobody accepted closes the caregivers' links
+reset({ settings: { ...OFFERS_ON } }); await go({ action: 'book', date: '2026-10-22', start: '13:00', end: '16:00', tasks: ['Companionship'], who: 'any' }); b = bk(); await run()
+o = await go({ action: 'cancel', booking_id: b.id })
+const lo = W.offers[0]
+o = await page(lo.id, { action: 'view' })
+ck('R1 the family cancels a request: a caregiver opening their link sees it was cancelled', o.body.state === 'cancelled', o.body)
+const fdb2 = fs.readFileSync(path.join(F, '_shared/family-offer-db.ts'), 'utf8')
+ck('R1 guard: the not-filled message is only sent behind its own recorded approval', /family_unfilled_text_approved/.test(fdb2.slice(fdb2.indexOf('tellFamily:'))) && /!st\[approvalKey\]/.test(fdb2))
 
 for (const [n, ok, note] of res) console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note))
 const bad = res.filter((x) => !x[1]).length
