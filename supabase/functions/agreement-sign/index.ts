@@ -13,7 +13,7 @@
 // Nothing here changes AxisCare. The only messages it sends are the codes the person asks for.
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { FIELDS, VERSION, DOC, ESIGN_WORDS, INITIALS, OFFICE_KEYS, cleanAnswers } from '../_shared/client-agreement.ts'
+import { FIELDS, VERSION, DOC, PDF_SHA256, ESIGN_WORDS, INITIALS, OFFICE_KEYS, cleanAnswers } from '../_shared/client-agreement.ts'
 import { familySign } from '../_shared/agreement-family-sign.ts'
 import { CODE_MINUTES, CODE_TRIES, CODE_SENDS, CODE_GAP_SECONDS, SESSION_HOURS, SECRET_OK, sha256, secret, sixDigits, codeHash, maskPhone, maskEmail, codeMessages, sendFamily, raiseCountersignCard } from '../_shared/agreement-links.ts'
 
@@ -24,11 +24,11 @@ const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: 
 const S = (v: unknown, n: number) => String(v ?? '').slice(0, n)
 const ipOf = (req: Request) => S(req.headers.get('cf-connecting-ip') || (req.headers.get('x-forwarded-for') || '').split(',')[0], 64).trim()
 const agentOf = (req: Request) => S(req.headers.get('user-agent'), 200)
-const FORM_INFO = { doc: DOC, version: VERSION, esign_words: ESIGN_WORDS, initials: INITIALS,
+const FORM_INFO = { doc: DOC, version: VERSION, pdf_sha256: PDF_SHA256, esign_words: ESIGN_WORDS, initials: INITIALS,
   fields: Object.fromEntries(Object.entries(FIELDS).map(([k, f]) => [k, f.type])), office_keys: [...OFFICE_KEYS] }
 const CALL = 'Please call Caring Companions at (417) 234-8494.'
 /** Only what the family needs to fill in their agreement. */
-const familyView = (r: Any) => ({ id: r.id, status: r.status, version: r.version, office: { answers: r.office?.answers ?? {} }, answers: r.answers ?? {} })
+const familyView = (r: Any) => ({ id: r.id, status: r.status, version: r.version, pdf_sha256: r.pdf_sha256, office: { answers: r.office?.answers ?? {} }, answers: r.answers ?? {} })
 
 if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { status: 200, headers: cors })

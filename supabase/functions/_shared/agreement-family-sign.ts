@@ -16,6 +16,9 @@ const stampOf = (iso: string) => iso.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z'
 /** Returns [http status, reply body]. `where` is what the signature record says about how it was signed. */
 export async function familySign(db: Any, r: Any, b: Any, meta: { ip: string; agent: string; where: Record<string, unknown> }): Promise<[number, Any]> {
   if (r.status !== 'draft') return [409, { error: 'This agreement is already signed.', outcome: 'stale' }]
+  // 2026-10-17: the wording changed (8-hour weekly minimum). A draft started on the earlier wording can't be signed: the
+  // pages the family reads are the current ones, so the office starts a new agreement instead.
+  if (r.pdf_sha256 !== PDF_SHA256) return [409, { error: 'This agreement was started before the wording was updated. Please ask the office to start a new one.', outcome: 'old_version' }]
   if (b.consent !== true) return [400, { error: 'Please tick the box to agree to sign electronically.', field: 'consent' }]
   const fam = cleanAnswers(b.answers || {}, 'family')
   if (fam.problems.length) return [422, { error: 'Some answers are not right.', problems: fam.problems }]

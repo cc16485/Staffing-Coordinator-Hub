@@ -10,13 +10,14 @@
 // garage codes ("on file with the office"). The original saved in the Hub has no "COPY" and keeps the codes.
 // =============================================================================
 import { PDFDocument, StandardFonts, rgb, degrees } from 'https://esm.sh/pdf-lib@1.17.1'
-import { FIELDS, PAGES, PDF_SHA256, VERSION } from './client-agreement-map.ts'
+import { CURRENT, type Master } from './agreement-masters.ts'
 
 const INK = rgb(0.05, 0.2, 0.45), NAVY = rgb(0.051, 0.212, 0.373), MUTED = rgb(0.33, 0.4, 0.48)
 const H = 792
 
 export type SignInput = {
   master: Uint8Array
+  map?: Master                // which master these bytes are (2026-10-17); the current one when left out
   plan: { text: Record<string, string>; checks: string[]; initials: string[]; initialsText: string; sigs: Record<string, 'client' | 'office'> }
   clientSigPng: Uint8Array
   officeSigPng?: Uint8Array
@@ -66,9 +67,10 @@ function fitSize(font: any, s: string, width: number, start = 9.5): number {
 }
 
 export async function signedAgreementPdf(inp: SignInput): Promise<Uint8Array> {
-  if ((await sha256Hex(inp.master)) !== PDF_SHA256) throw new Error('master PDF does not match the field map')
+  const map = inp.map ?? CURRENT, FIELDS = map.fields
+  if ((await sha256Hex(inp.master)) !== map.sha) throw new Error('master PDF does not match the field map')
   const doc = await PDFDocument.load(inp.master)
-  if (doc.getPageCount() !== PAGES) throw new Error('master PDF page count changed')
+  if (doc.getPageCount() !== map.pages) throw new Error('master PDF page count changed')
   const pages = doc.getPages()
   const font = await doc.embedFont(StandardFonts.Helvetica), bold = await doc.embedFont(StandardFonts.HelveticaBold)
   const pt = (k: string) => { const f = FIELDS[k]; if (!f) throw new Error('unknown field ' + k); return { p: pages[f.page - 1], x0: f.box[0], y0: f.box[1], x1: f.box[2], y1: f.box[3] } }
@@ -109,7 +111,7 @@ export async function signedAgreementPdf(inp: SignInput): Promise<Uint8Array> {
   const r = doc.addPage([612, 792])
   let y = 740
   r.drawText('Electronic signature record', { x: 60, y, size: 18, font: bold, color: NAVY }); y -= 18
-  r.drawText(`Caring Companions Client Care Agreement · ${VERSION} · this page is part of the signed agreement`, { x: 60, y, size: 9, font, color: MUTED }); y -= 26
+  r.drawText(`Caring Companions Client Care Agreement · ${map.version} · this page is part of the signed agreement`, { x: 60, y, size: 9, font, color: MUTED }); y -= 26
   for (const [label, value] of inp.record) {
     const lines = wrapText(font, safe(String(value ?? '')), 330, 9)
     if (y - lines.length * 12 < 60) break

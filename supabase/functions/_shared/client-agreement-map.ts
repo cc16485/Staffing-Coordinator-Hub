@@ -3,12 +3,14 @@
 // Do not edit by hand: rebuild the agreement, then regenerate this file. Every fill-in, checkbox, initials box and signature
 // line on the printed agreement, with its page (1-based) and box in PDF points measured from the TOP-LEFT of a 612 x 792 page.
 // PDF_SHA256 is the sha256 of the exact master PDF these boxes belong to; the function refuses any other file.
+// 2026-10-17 (Samantha: scheduled care keeps an 8 hours a week minimum): the current master. The first master stays in
+// client-agreement-map-2026-10-16.ts; agreement-masters.ts picks the right one for each agreement by its pdf_sha256.
 // =============================================================================
 export const DOC = 'client-care-agreement'
 export const VERSION = "Rev. 10/2026"
 export const PAGES = 23
-export const PDF_SHA256 = "d2c6df31fd5bcca031916a31355dfff0321a0c68c4c8445fb41d9ab9350b93f9"
-export const MASTER_PATH = 'master/client-care-agreement-rev-2026-10.pdf'
+export const PDF_SHA256 = "b04cd3c1f45930aa1926a63036d8bd44f5091dc71ca7ceff78b0f4a39f5081c3"
+export const MASTER_PATH = 'master/client-care-agreement-rev-2026-10-17.pdf'
 export type FieldType = 'text' | 'check' | 'initials' | 'signature'
 export type Field = { type: FieldType; page: number; box: [number, number, number, number] }
 export const FIELDS: Record<string, Field> = {
@@ -17,9 +19,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 4,
    "box": [
     58.2,
-    304.6,
+    321.1,
     67.2,
-    313.6
+    330.1
    ]
   },
   "access.2_lockbox_access_a_ke": {
@@ -27,9 +29,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 4,
    "box": [
     58.2,
-    338.3,
+    354.8,
     67.2,
-    347.3
+    363.8
    ]
   },
   "access.3_garage_door_access_code": {
@@ -37,9 +39,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 4,
    "box": [
     58.2,
-    392.3,
+    408.8,
     67.2,
-    401.3
+    417.8
    ]
   },
   "access.4_other_access_option": {
@@ -47,9 +49,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 4,
    "box": [
     58.2,
-    432.8,
+    449.3,
     67.2,
-    441.8
+    458.3
    ]
   },
   "access.describe": {
@@ -57,9 +59,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 4,
    "box": [
     113.8,
-    450.8,
+    466.6,
     553.7,
-    465.2
+    480.9
    ]
   },
   "access.garage_code": {
@@ -67,9 +69,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 4,
    "box": [
     129.4,
-    410.3,
+    426.8,
     553.7,
-    424.7
+    441.2
    ]
   },
   "access.lockbox_code": {
@@ -77,9 +79,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 4,
    "box": [
     458.6,
-    369.8,
+    386.3,
     553.7,
-    384.2
+    400.7
    ]
   },
   "access.lockbox_location": {
@@ -87,9 +89,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 4,
    "box": [
     145.8,
-    369.8,
+    386.3,
     385.6,
-    384.2
+    400.7
    ]
   },
   "backup.full_name": {
@@ -1097,9 +1099,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 5,
    "box": [
     178.8,
-    519.1,
+    564.8,
     187.8,
-    528.1
+    573.8
    ]
   },
   "car.decline": {
@@ -1107,9 +1109,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 5,
    "box": [
     240.5,
-    519.1,
+    564.8,
     249.5,
-    528.1
+    573.8
    ]
   },
   "ci.client_s_name": {
@@ -1277,9 +1279,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 3,
    "box": [
     501.0,
-    390.8,
+    405.1,
     560.7,
-    411.2
+    424.7
    ]
   },
   "ini.2": {
@@ -1287,9 +1289,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 5,
    "box": [
     501.0,
-    147.8,
+    194.3,
     560.7,
-    168.2
+    213.9
    ]
   },
   "ini.3": {
@@ -1297,9 +1299,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 5,
    "box": [
     497.1,
-    514.6,
+    560.3,
     556.7,
-    534.9
+    580.7
    ]
   },
   "ini.4": {
@@ -1547,9 +1549,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 5,
    "box": [
     135.6,
-    586.6,
+    633.1,
     380.6,
-    600.9
+    647.4
    ]
   },
   "vehicle.driver_s_license": {
@@ -1557,9 +1559,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 5,
    "box": [
     124.6,
-    628.6,
+    675.1,
     380.6,
-    642.9
+    689.4
    ]
   },
   "vehicle.expiration_date": {
@@ -1567,9 +1569,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 5,
    "box": [
     456.8,
-    607.6,
+    654.1,
     553.7,
-    621.9
+    668.4
    ]
   },
   "vehicle.expiration_date_2": {
@@ -1577,9 +1579,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 5,
    "box": [
     456.8,
-    628.6,
+    675.1,
     553.7,
-    642.9
+    689.4
    ]
   },
   "vehicle.insurance": {
@@ -1587,9 +1589,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 5,
    "box": [
     102.4,
-    607.6,
+    654.1,
     380.6,
-    621.9
+    668.4
    ]
   },
   "vehicle.spare_key_location": {
@@ -1597,9 +1599,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 5,
    "box": [
     136.5,
-    649.6,
+    696.1,
     553.7,
-    663.9
+    710.4
    ]
   },
   "vehicle.year": {
@@ -1607,9 +1609,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 5,
    "box": [
     415.5,
-    586.6,
+    633.1,
     553.7,
-    600.9
+    647.4
    ]
   }
 }
