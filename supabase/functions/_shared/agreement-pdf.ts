@@ -5,8 +5,11 @@
 // with the audit trail. This is the one place in the server that edits an existing PDF, so it uses pdf-lib (the rest of
 // the repo writes PDFs from scratch with brand-pdf.ts, which cannot open an existing file or place a PNG).
 // Deterministic for the same inputs apart from pdf-lib's own metadata dates, which are set to the signing time.
+// 873 (Samantha 2026-10-16): "Signed electronically on ___" under each signature and at the foot of every page; the
+// family's copy (printed and emailed) carries a big light "COPY" on every page; the emailed copy hides the lockbox and
+// garage codes ("on file with the office"). The original saved in the Hub has no "COPY" and keeps the codes.
 // =============================================================================
-import { PDFDocument, StandardFonts, rgb } from 'https://esm.sh/pdf-lib@1.17.1'
+import { PDFDocument, StandardFonts, rgb, degrees } from 'https://esm.sh/pdf-lib@1.17.1'
 import { FIELDS, PAGES, PDF_SHA256, VERSION } from './client-agreement-map.ts'
 
 const INK = rgb(0.05, 0.2, 0.45), NAVY = rgb(0.051, 0.212, 0.373), MUTED = rgb(0.33, 0.4, 0.48)
@@ -19,6 +22,28 @@ export type SignInput = {
   officeSigPng?: Uint8Array
   record: string[][]          // [label, value] rows for the signature record page
   at: string                  // ISO time used for the PDF's own dates
+  esign?: { client?: string; office?: string; footer?: string }   // "Signed electronically on ..." lines (873)
+  copy?: boolean              // the family's copy: a big "COPY" on every page (873)
+  hide?: string[]             // field keys written as "on file with the office" (the emailed copy's codes, 873)
+}
+export const HIDDEN_TEXT = 'on file with the office'
+const WATER = rgb(0.6, 0.66, 0.72)
+
+/** A big light "COPY" across the middle of every page. */
+// deno-lint-ignore no-explicit-any
+function stampCopy(doc: any, bold: any) {
+  for (const p of doc.getPages()) {
+    const { width, height } = p.getSize(), size = 150, w = bold.widthOfTextAtSize('COPY', size)
+    const a = Math.PI / 4, cx = width / 2, cy = height / 2
+    p.drawText('COPY', { x: cx - (w / 2) * Math.cos(a) + (size * 0.35) * Math.sin(a), y: cy - (w / 2) * Math.sin(a) - (size * 0.35) * Math.cos(a), size, font: bold, color: WATER, opacity: 0.22, rotate: degrees(45) })
+  }
+}
+/** The family's printed copy: the saved original with "COPY" on every page (codes kept: it stays in their home). */
+export async function familyCopyOf(original: Uint8Array): Promise<Uint8Array> {
+  const doc = await PDFDocument.load(original)
+  stampCopy(doc, await doc.embedFont(StandardFonts.HelveticaBold))
+  doc.setTitle('Caring Companions Client Care Agreement (family copy)')
+  return await doc.save({ useObjectStreams: false })
 }
 
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
@@ -48,8 +73,9 @@ export async function signedAgreementPdf(inp: SignInput): Promise<Uint8Array> {
   const font = await doc.embedFont(StandardFonts.Helvetica), bold = await doc.embedFont(StandardFonts.HelveticaBold)
   const pt = (k: string) => { const f = FIELDS[k]; if (!f) throw new Error('unknown field ' + k); return { p: pages[f.page - 1], x0: f.box[0], y0: f.box[1], x1: f.box[2], y1: f.box[3] } }
 
+  const hide = new Set(inp.hide ?? [])
   for (const [k, raw] of Object.entries(inp.plan.text)) {
-    const v = safe(raw)
+    const v = hide.has(k) && String(raw ?? '').trim() ? HIDDEN_TEXT : safe(raw)
     if (!v) continue
     const { p, x0, x1, y1 } = pt(k)
     const w = x1 - x0 - 4, size = fitSize(font, v, w)
@@ -75,6 +101,8 @@ export async function signedAgreementPdf(inp: SignInput): Promise<Uint8Array> {
     const boxH = (y1 - y0) + 10, boxW = x1 - x0 - 4          // let the signature rise a little above the line, as ink would
     const s = Math.min(boxW / img.width, boxH / img.height)
     p.drawImage(img, { x: x0 + 2, y: H - y1 + 1, width: img.width * s, height: img.height * s })
+    const line = safe(who === 'client' ? inp.esign?.client ?? '' : inp.esign?.office ?? '')
+    if (line) { const sz = fitSize(font, line, x1 - x0 - 2, 6.5); p.drawText(line, { x: x0 + 1, y: H - y1 - 7.5, size: sz, font, color: INK }) }
   }
 
   // the signature record page
@@ -89,8 +117,14 @@ export async function signedAgreementPdf(inp: SignInput): Promise<Uint8Array> {
     for (const ln of lines) { r.drawText(ln, { x: 222, y, size: 9, font, color: rgb(0.09, 0.16, 0.23) }); y -= 12 }
     y -= 5
   }
+  const foot = safe(inp.esign?.footer ?? '')
+  if (foot) for (const p of doc.getPages()) {
+    const { width } = p.getSize(), sz = 7
+    p.drawText(foot, { x: (width - font.widthOfTextAtSize(foot, sz)) / 2, y: 9, size: sz, font, color: MUTED })
+  }
+  if (inp.copy) stampCopy(doc, bold)
   const when = new Date(inp.at)
-  doc.setTitle('Caring Companions Client Care Agreement (signed)'); doc.setCreator('Caring Companions Hub'); doc.setProducer('Caring Companions Hub')
+  doc.setTitle(inp.copy ? 'Caring Companions Client Care Agreement (family copy)' : 'Caring Companions Client Care Agreement (signed)'); doc.setCreator('Caring Companions Hub'); doc.setProducer('Caring Companions Hub')
   doc.setCreationDate(when); doc.setModificationDate(when)
   return await doc.save({ useObjectStreams: false })
 }

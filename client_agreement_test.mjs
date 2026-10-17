@@ -38,7 +38,8 @@ const F = 'supabase/functions', tmp = fs.mkdtempSync(path.join(process.cwd(), '_
 const shared = (s) => s.replace(/from '\.\.\/_shared\/([\w-]+)\.ts'/g, (_, m) => "from '" + path.join(tmp, m + '.ts') + "'").replace(/from '\.\/([\w-]+)\.ts'/g, (_, m) => "from '" + path.join(tmp, m + '.ts') + "'")
   .replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db').replace("'https://esm.sh/pdf-lib@1.17.1'", JSON.stringify(PDFLIB))
 try {
-  for (const m of ['staff-auth', 'doc-log', 'client-agreement', 'client-agreement-map', 'agreement-pdf', 'agreement-contacts']) fs.writeFileSync(path.join(tmp, m + '.ts'), shared(fs.readFileSync(path.join(F, '_shared', m + '.ts'), 'utf8')))
+  fs.writeFileSync(path.join(tmp, 'outreach.ts'), 'export const contactForOutbound = async () => null\nexport const maySend = () => ({ allowed: false })\n')   // 873: no family email in this test
+  for (const m of ['staff-auth', 'doc-log', 'client-agreement', 'client-agreement-map', 'agreement-pdf', 'agreement-contacts', 'agreement-email', 'send-problems']) fs.writeFileSync(path.join(tmp, m + '.ts'), shared(fs.readFileSync(path.join(F, '_shared', m + '.ts'), 'utf8')))
   fs.writeFileSync(path.join(tmp, 'fn.ts'), shared(fs.readFileSync(path.join(F, 'client-agreement/index.ts'), 'utf8')))
   await import(path.join(tmp, 'fn.ts'))
   const { PDFDocument } = await import(PDFLIB)

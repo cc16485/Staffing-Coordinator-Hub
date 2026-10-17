@@ -11,13 +11,17 @@
 // countersigned, an office person reviews the signed Contacts & Permissions and approves them into AxisCare responsible
 // parties 1-3 (incl. HIPAA and Medical Decisions from the signed agreement) and the Hub Family Circle, every AxisCare
 // write read back and logged. Only on that click; nothing is texted or emailed. _shared/agreement-contacts.ts.
+// 873 (Samantha 2026-10-16): "Signed electronically on ___" on the PDF; the family's copy with a big "COPY" (copy_print, to
+// print and hand them); the emailed copy (codes hidden) on the office's countersign tap or copy_email later, through
+// GoHighLevel and the family audience gate. _shared/agreement-email.ts.
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { logOpen, clientSubject } from '../_shared/doc-log.ts'
 import { FIELDS, VERSION, DOC, PDF_SHA256, BUCKET, ESIGN_WORDS, INITIALS, OFFICE_KEYS, cleanAnswers, readyToSign, initialsOf, signatureOk, initialsComplete, centralDate, stampPlan, type Answers } from '../_shared/client-agreement.ts'
 import { MASTER_PATH } from '../_shared/client-agreement-map.ts'
-import { signedAgreementPdf } from '../_shared/agreement-pdf.ts'
+import { signedAgreementPdf, familyCopyOf } from '../_shared/agreement-pdf.ts'
+import { emailSignedCopy, EMAIL_OK } from '../_shared/agreement-email.ts'
 import { contactsFrom, withEdits, planContacts, rpBody, memberRow, todoFor, badState, nameKey } from '../_shared/agreement-contacts.ts'
 
 // deno-lint-ignore no-explicit-any
@@ -71,6 +75,59 @@ async function axisLog(db: Any, c: { client: string; outcome: string; summary: s
     p_summary: c.summary.slice(0, 200), p_detail: c.detail ? c.detail.slice(0, 300) : null, p_by: c.by || 'unknown', p_via: 'client-agreement' }) } catch { /* best effort */ }
 }
 
+/* ---------- the signed PDF, rebuilt the same way for the original and the family's emailed copy (873) ---------- */
+const HIDE_ON_EMAIL = ['access.lockbox_code', 'access.garage_code']
+function recordOf(r: Any): string[][] {
+  const cs = r.client_sign, os = r.office_sign
+  const tapLine = Object.entries(cs.initials_taps || {}).map(([k, v]) => `${k === 'poa' ? 'POA' : k + ' of 6'}: ${centralDate(String(v)).long}`).join('\n')
+  return [
+    ['Agreement', `Client Care Agreement, ${VERSION}`], ['Agreement id', r.id], ['AxisCare client', r.axiscare_client_id],
+    ['Master document SHA-256', PDF_SHA256],
+    ['Signed by', `${cs.typed_name}${cs.role === 'representative' ? ` (on behalf of the client${cs.relationship ? ', ' + cs.relationship : ''})` : ' (the client)'}`],
+    ['Signed at', `${centralDate(cs.at).long} (${cs.at} UTC)`], ['Signer device', `${cs.ip || 'not recorded'} · ${cs.agent || 'not recorded'}`],
+    ['Electronic signature consent', `"${cs.consent_words}"`], ['Initials taps', tapLine || 'none'],
+    ['Signed on the tablet of', `${cs.on_staff_session?.name || ''} (${cs.on_staff_session?.email || ''})`],
+    ['Countersigned by', `${os.typed_name} (${os.email}), Caring Companions`], ['Countersigned at', `${centralDate(os.at).long} (${os.at} UTC)`],
+    ['Countersigner device', `${os.ip || 'not recorded'} · ${os.agent || 'not recorded'}`],
+  ]
+}
+async function renderSigned(db: Any, r: Any, opts: { copy?: boolean; hide?: string[] } = {}): Promise<Uint8Array> {
+  const cs = r.client_sign, os = r.office_sign
+  const [master, csig, osig] = await Promise.all([db.storage.from(BUCKET).download(MASTER_PATH), db.storage.from(BUCKET).download(cs.signature_path), db.storage.from(BUCKET).download(os.signature_path)])
+  if (master.error || csig.error || osig.error) throw (master.error || csig.error || osig.error)
+  const all: Answers = { ...(r.office?.answers || {}), ...(r.answers || {}) }
+  const plan = stampPlan(all, { initials: cs.initials_text, signedAt: cs.at, signerName: cs.typed_name, representative: cs.role === 'representative', officeName: os.typed_name, officeAt: os.at })
+  const esign = { client: `Signed electronically on ${centralDate(cs.at).long}`, office: `Signed electronically on ${centralDate(os.at).long}`,
+    footer: `Signed electronically on ${centralDate(cs.at).long.replace(/ at .*$/, '')} · Caring Companions Client Care Agreement · ${VERSION}` }
+  return await signedAgreementPdf({ master: new Uint8Array(await master.data.arrayBuffer()), plan, clientSigPng: new Uint8Array(await csig.data.arrayBuffer()),
+    officeSigPng: new Uint8Array(await osig.data.arrayBuffer()), record: recordOf(r), at: os.at, esign, copy: !!opts.copy, hide: opts.hide })
+}
+/** Who the family's copy goes to by default: the primary contact, else the POA. */
+function defaultCopyTo(a: Any): { to: string; name: string } {
+  for (const [e, n] of [['c1.email', 'c1.name'], ['poa.email', 'poa.name']]) if (EMAIL_OK.test(String(a?.[e] ?? '').trim())) return { to: String(a[e]).trim(), name: String(a[n] ?? '').trim() }
+  return { to: '', name: '' }
+}
+const nameFor = (a: Any, to: string) => { for (const n of [1, 2, 3, 4]) if (String(a?.[`c${n}.email`] ?? '').trim().toLowerCase() === to.toLowerCase()) return String(a[`c${n}.name`] ?? ''); return String(a?.['poa.email'] ?? '').trim().toLowerCase() === to.toLowerCase() ? String(a['poa.name'] ?? '') : '' }
+async function sendCopy(db: Any, r: Any, to: string, by: string): Promise<Any> {
+  const a = r.answers || {}
+  if (a['comm.decline'] === true) return { outcome: 'refused', detail: 'They chose not to get email (Permission to communicate). Print their copy instead.', to }
+  let pdf: Uint8Array
+  try { pdf = await renderSigned(db, r, { copy: true, hide: HIDE_ON_EMAIL }) }
+  catch (e) { console.error('client-agreement email copy pdf', e); return { outcome: 'failed', detail: 'The copy could not be made, so nothing was sent. Try again from the card.', to } }
+  const now = new Date().toISOString()
+  const res = await emailSignedCopy(db, { token: Deno.env.get('GHL_API_KEY') || '', locationId: Deno.env.get('GHL_LOCATION_ID') || '' },
+    { to, toName: nameFor(a, to) || defaultCopyTo(a).name, clientName: String(a['client.client_s_name'] ?? ''), pdf, filename: 'Client Care Agreement (signed copy).pdf' })
+  let path: string | null = null
+  if (res.outcome === 'sent') {
+    path = `signed/${r.axiscare_client_id}/${r.id}-email-copy-${stampOf(now)}.pdf`
+    const up = await db.storage.from(BUCKET).upload(path, pdf, { contentType: 'application/pdf', upsert: false }); if (up.error) path = null
+  }
+  const copies = { ...(r.copies || {}), emails: [...(r.copies?.emails ?? []), { to, at: now, by, outcome: res.outcome, detail: res.detail, path }] }
+  await db.from('client_agreements').update({ copies, updated_at: now }).eq('id', r.id)
+  r.copies = copies
+  return res
+}
+
 /** What the tablet page needs to draw the form: the field keys and kinds, the six initials, the consent words. */
 export const FORM_INFO = {
   doc: DOC, version: VERSION, esign_words: ESIGN_WORDS, initials: INITIALS,
@@ -84,7 +141,8 @@ function view(r: Any) {
     id: r.id, client_ax: r.axiscare_client_id, status: r.status, version: r.version, office: r.office, answers: r.answers,
     signer: r.client_sign ? { name: r.client_sign.typed_name, role: r.client_sign.role, at: r.client_sign.at } : null,
     office_signer: r.office_sign ? { name: r.office_sign.typed_name, at: r.office_sign.at } : null,
-    has_pdf: !!r.signed_pdf_path, contacts_review: r.contacts_review ?? null, created_at: r.created_at, signed_at: r.signed_at, countersigned_at: r.countersigned_at, void_reason: r.void_reason,
+    has_pdf: !!r.signed_pdf_path, contacts_review: r.contacts_review ?? null,
+    copies: { emails: (r.copies?.emails ?? []).map((e: Any) => ({ to: e.to, at: e.at, by: e.by, outcome: e.outcome, detail: e.detail })), printed: !!r.copies?.print_path }, created_at: r.created_at, signed_at: r.signed_at, countersigned_at: r.countersigned_at, void_reason: r.void_reason,
   }
 }
 
@@ -188,31 +246,17 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
       if (!r) return json({ error: 'Agreement not found.' }, 404)
       if (r.status !== 'signed') return json({ error: r.status === 'countersigned' ? 'Already countersigned.' : 'The client signs first.', outcome: 'stale' }, 409)
       if (!signatureOk(b.signature)) return json({ error: 'Please sign in the box.', field: 'signature' }, 400)
+      const copyTo = b.email_copy && typeof b.email_copy === 'object' ? String(b.email_copy.to ?? '').trim() : ''
+      if (copyTo && !EMAIL_OK.test(copyTo)) return json({ error: 'That email address does not look right.', field: 'email_copy' }, 400)
       const at = new Date().toISOString()
       const sigPath = `sig/${r.axiscare_client_id}/${r.id}-office-${stampOf(at)}.png`
       const up = await db.storage.from(BUCKET).upload(sigPath, pngBytes(b.signature), { contentType: 'image/png', upsert: false })
       if (up.error) throw up.error
       const office_sign = { typed_name: who.name, email: who.email, person_id: who.person_id, at, ip: ipOf(req), agent: agentOf(req), signature_path: sigPath }
 
-      const [master, csig] = await Promise.all([db.storage.from(BUCKET).download(MASTER_PATH), db.storage.from(BUCKET).download(r.client_sign.signature_path)])
-      if (master.error || csig.error) throw (master.error || csig.error)
-      const cs = r.client_sign, all: Answers = { ...(r.office?.answers || {}), ...(r.answers || {}) }
-      const plan = stampPlan(all, { initials: cs.initials_text, signedAt: cs.at, signerName: cs.typed_name, representative: cs.role === 'representative', officeName: who.name, officeAt: at })
-      const tapLine = Object.entries(cs.initials_taps || {}).map(([k, v]) => `${k === 'poa' ? 'POA' : k + ' of 6'}: ${centralDate(String(v)).long}`).join('\n')
-      const record = [
-        ['Agreement', `Client Care Agreement, ${VERSION}`], ['Agreement id', r.id], ['AxisCare client', r.axiscare_client_id],
-        ['Master document SHA-256', PDF_SHA256],
-        ['Signed by', `${cs.typed_name}${cs.role === 'representative' ? ` (on behalf of the client${cs.relationship ? ', ' + cs.relationship : ''})` : ' (the client)'}`],
-        ['Signed at', `${centralDate(cs.at).long} (${cs.at} UTC)`], ['Signer device', `${cs.ip || 'not recorded'} · ${cs.agent || 'not recorded'}`],
-        ['Electronic signature consent', `"${cs.consent_words}"`], ['Initials taps', tapLine || 'none'],
-        ['Signed on the tablet of', `${cs.on_staff_session?.name || ''} (${cs.on_staff_session?.email || ''})`],
-        ['Countersigned by', `${who.name} (${who.email}), Caring Companions`], ['Countersigned at', `${centralDate(at).long} (${at} UTC)`],
-        ['Countersigner device', `${office_sign.ip || 'not recorded'} · ${office_sign.agent || 'not recorded'}`],
-      ]
       let bytes: Uint8Array
-      try {
-        bytes = await signedAgreementPdf({ master: new Uint8Array(await master.data.arrayBuffer()), plan, clientSigPng: new Uint8Array(await csig.data.arrayBuffer()), officeSigPng: pngBytes(b.signature), record, at })
-      } catch (e) {
+      try { bytes = await renderSigned(db, { ...r, office_sign }) }
+      catch (e) {
         console.error('client-agreement pdf', e)
         return json({ error: 'The signed PDF could not be made. Nothing was lost: try Countersign again, and tell Samantha if it keeps happening.' }, 500)
       }
@@ -223,7 +267,8 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
         .eq('id', r.id).eq('status', 'signed').is('signed_pdf_path', null).select('id')
       if (error) throw error
       if (!did?.length) return json({ error: 'Someone else countersigned this a moment ago. Open it again.', outcome: 'stale' }, 409)
-      return json({ ok: true, outcome: 'countersigned', at })
+      const email = copyTo ? await sendCopy(db, { ...r, office_sign, signed_pdf_path: pdfPath, status: 'countersigned' }, copyTo, who.email) : null
+      return json({ ok: true, outcome: 'countersigned', at, email })
     }
 
     if (action === 'open') {
@@ -245,6 +290,34 @@ if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) =
       const { error } = await db.from('client_agreements').update({ status: 'void', void_reason: `${why} (${who.name})`, updated_at: new Date().toISOString() }).eq('id', r.id).in('status', ['draft', 'signed'])
       if (error) throw error
       return json({ ok: true, outcome: 'saved' })
+    }
+
+    /* ---------- 873: the family's copy, printed or emailed ---------- */
+    if (action === 'copy_print' || action === 'copy_email') {
+      const r = await row(b.id)
+      if (!r) return json({ error: 'Agreement not found.' }, 404)
+      if (r.status !== 'countersigned' || !r.signed_pdf_path) return json({ error: 'The family\'s copy is ready once the agreement is countersigned.' }, 409)
+      if (action === 'copy_email') {
+        const to = String(b.to ?? '').trim() || defaultCopyTo(r.answers).to
+        if (!EMAIL_OK.test(to)) return json({ error: to ? 'That email address does not look right.' : 'There is no email on the agreement: type one.', field: 'to' }, 400)
+        const res = await sendCopy(db, r, to, who.email)
+        return json({ ok: res.outcome === 'sent', email: res })
+      }
+      let path = r.copies?.print_path as string | undefined
+      if (!path) {
+        const orig = await db.storage.from(BUCKET).download(r.signed_pdf_path)
+        if (orig.error) throw orig.error
+        const copy = await familyCopyOf(new Uint8Array(await orig.data.arrayBuffer()))
+        path = `signed/${r.axiscare_client_id}/${r.id}-family-copy.pdf`
+        const up = await db.storage.from(BUCKET).upload(path, copy, { contentType: 'application/pdf', upsert: false })
+        if (up.error && !/exist/i.test(String(up.error.message || ''))) throw up.error
+        await db.from('client_agreements').update({ copies: { ...(r.copies || {}), print_path: path } }).eq('id', r.id)
+      }
+      const logged = await logOpen(db, { subject: clientSubject(r.axiscare_client_id, null), doc: 'client_agreement_family_copy', path, who, ip: ipOf(req) })
+      if (!logged) return json({ error: 'Could not record who opened it, so it was not opened. Try again.' }, 500)
+      const { data, error } = await db.storage.from(BUCKET).createSignedUrl(path, 300)
+      if (error || !data?.signedUrl) throw error || new Error('no url')
+      return json({ ok: true, url: data.signedUrl, expires_in: 300 })
     }
 
     /* ---------- Stage 2: review the signed contacts, approve them into AxisCare and the Family Circle ---------- */
