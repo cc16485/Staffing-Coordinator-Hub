@@ -61,11 +61,11 @@ Deno.serve(async (req) => {
     let cgs: string[] = []
     try { cgs = [...new Set((await clientVisits(ax, id, from, today)).map(visitView).map((v) => v.caregiver?.axiscare_id).filter(Boolean) as string[])] } catch { cgs = [] }
     const state = stateOf(c)
-    let rate: number | null = null, rateFrom: Facts['rateFrom'] = null
-    try { const e = await estimateRate(ax, id, state, st, today); rate = e.rate; rateFrom = e.rate == null ? null : (Number(st?.[`family_app_rate_${state}`]) === e.rate ? 'state' : 'client') } catch { /* none */ }
+    let rate: number | null = null, rateFrom: Facts['rateFrom'] = null, liveIn = false
+    try { const e = await estimateRate(ax, id, state, st, today); rate = e.rate; liveIn = e.live_in === true; rateFrom = e.rate == null ? null : (Number(st?.[`family_app_rate_${state}`]) === e.rate ? 'state' : 'client') } catch { /* none */ }
     rows.push({ ax: id, name: [S(c.firstName), S(c.lastName)].filter(Boolean).join(' '), state, clientEmail: S(c.personalEmail ?? c.email) || null,
       rpEmails: rps.map((p) => S(p?.email)).filter(Boolean), circleEmails: live.map((x) => S(x.email)).filter(Boolean),
-      appOn: live.filter((x) => x.app_status === 'active').length, rate, rateFrom, about: k.some((x) => S(x.caregiver_about).length > 0),
+      appOn: live.filter((x) => x.app_status === 'active').length, rate, rateFrom, liveIn, about: k.some((x) => S(x.caregiver_about).length > 0),
       recentCaregivers: cgs.length, reachable: cgs.filter((g) => phoneOf.get(g) === true).length })
   }
   return json({ ok: true, count: rows.length, text: report(rows) })

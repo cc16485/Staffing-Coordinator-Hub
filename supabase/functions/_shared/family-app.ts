@@ -229,9 +229,14 @@ export async function reasonId(ax: Ax, name: unknown): Promise<number | null> {
  *  family_app_short_under_hours can still set one. An estimate only:
  *  the invoice is AxisCare's, from the caregiver's actual clock-in and clock-out. */
 export async function estimateRate(ax: Ax, clientId: string, state: string | null, st: any, today: string) {   // deno-lint-ignore no-explicit-any
-  let rate: number | null = null
+  let rate: number | null = null, live_in = false
   try {
     const past = await clientVisits(ax, clientId, addDays(today, -120), today)
+    // Her rule 2026-10-16 ("Jodie and Charles are live in only and shouldn't have the $30 option for the app"): a client whose
+    // recent priced visits are all DAILY (live-in) or FIXED, none hourly, can't book app visits. Read from AxisCare each time,
+    // so if they later get hourly visits, booking opens by itself.
+    const typed = past.filter((v) => Number(v?.chargeRate) > 0).map((v) => String(v?.type ?? '').trim().toLowerCase())
+    live_in = typed.some((t) => t === 'daily' || t === 'fixed') && !typed.includes('hourly')
     // Only HOURLY visits (pilot check 2026-10-16: a live-in client's $450 DAILY rate showed families "$450/hr"). AxisCare's visit
     // "type" is Hourly / Daily / Fixed; "billableRateMode" is only auto (from the service) or custom (typed in), and custom is skipped.
     const priced = past.filter((v) => Number(v?.chargeRate) > 0 && String(v?.type ?? '').trim().toLowerCase() === 'hourly'
@@ -243,8 +248,9 @@ export async function estimateRate(ax: Ax, clientId: string, state: string | nul
   const extraSet = st?.[`family_app_short_extra_${state}`]
   const short_extra = extraSet != null ? Math.max(0, Number(extraSet) || 0) : 0
   const short_under_hours = Number(st?.family_app_short_under_hours) > 0 ? Number(st.family_app_short_under_hours) : 4
-  return { rate, short_extra, short_under_hours }
+  return { rate: live_in ? null : rate, short_extra, short_under_hours, live_in }
 }
+export const liveInWords = (phone: string | null) => `Booking extra visits in the app isn't available with live-in care. Please call the office${phone ? ` at ${phone}` : ''} for any changes.`
 
 /** Put a booking on the AxisCare schedule, then read it back. Never trust a 200. With no caregiver for a set-time visit
  *  (offers go out after); a flexible visit only goes on once a caregiver has taken it and picked the start (`at`). */
@@ -448,7 +454,7 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
     const visits = (await clientVisits(deps.ax, w.axiscare_client_id, today, addDays(today, 21))).map(visitView).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start))
     const mine = (await deps.bookings(w.axiscare_client_id)).filter((b) => b.visit_date >= today && OPEN.includes(b.status))
     const est = await estimateRate(deps.ax, w.axiscare_client_id, state, st, today)
-    return say(200, { client: { id: w.axiscare_client_id, name: clientName, state }, brand: bnd ? { ...brandView(bnd), phone: phone ?? bnd.phone } : null, can_book: w.can_book, office_phone: phone, rate: est.rate, short_extra: est.short_extra, short_under_hours: est.short_under_hours, visits,
+    return say(200, { client: { id: w.axiscare_client_id, name: clientName, state }, brand: bnd ? { ...brandView(bnd), phone: phone ?? bnd.phone } : null, can_book: w.can_book && !est.live_in, booking_note: est.live_in ? liveInWords(phone) : null, office_phone: phone, rate: est.rate, short_extra: est.short_extra, short_under_hours: est.short_under_hours, visits,
       waiting: mine.map(bookingView), tasks: tasksFor(state, st), hours: hoursFor(state, st) })
   }
 
@@ -486,6 +492,7 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
   if (action === 'book') {
     if (!w.can_book) return say(403, { error: 'Booking is turned off for your login. Please call the office.' })
     if (!state) return say(409, { error: "We can't book online for this address yet. Please call the office." })
+    if ((await estimateRate(deps.ax, w.axiscare_client_id, state, st, today)).live_in) return say(409, { error: liveInWords(phone) })
     const v = validateBooking(body, now, tasksFor(state, st), hoursFor(state, st))
     if (!v.ok) return say(400, { error: v.error })
     const method = String(body?.method ?? 'auto') === 'choose' ? 'choose' : 'auto'

@@ -15,6 +15,7 @@ export type Facts = {
   circleEmails: string[]        // Hub Family Circle people with an email (not stopped / removed / revoked)
   appOn: number                 // Family Circle people whose app is on
   rate: number | null; rateFrom: 'client' | 'state' | null
+  liveIn?: boolean              // recent visits all daily/fixed: the app shows visits but booking is off (her rule 2026-10-16)
   about: boolean
   recentCaregivers: number      // different caregivers on their visits in the last 60 days
   reachable: number             // of those, with a mobile on the Hub roster (can get the offer text)
@@ -28,7 +29,8 @@ export function verdict(f: Facts): Verdict {
   const rpOnly = uniq(f.rpEmails).filter((e) => !canSign.includes(e))
   if (!canSign.length) missing.push(rpOnly.length ? 'family email is on AxisCare but not in the Hub yet (arrives overnight, or add them to the Family Circle)' : 'no family email (add one to a responsible party in AxisCare or to the Family Circle)')
   else if (rpOnly.length) notes.push(`${rpOnly.length} more family email${rpOnly.length > 1 ? 's' : ''} arrive from AxisCare overnight`)
-  if (f.rate == null) missing.push('no hourly rate (none on recent visits and no Missouri rate in the Hub)')
+  if (f.liveIn) missing.push('live-in only: the app shows their visits, but booking extra visits is off')
+  else if (f.rate == null) missing.push('no hourly rate (none on recent visits and no Missouri rate in the Hub)')
   else notes.push(`estimate $${f.rate}/hr`)
   if (!f.about) missing.push('no About box for caregivers (Family Circle in the Hub)')
   if (!f.recentCaregivers) notes.push('no caregiver visits in the last 60 days, so offers go to the wider team')

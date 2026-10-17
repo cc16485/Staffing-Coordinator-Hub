@@ -107,7 +107,9 @@ W.settings.family_app_rate_MO = 30; o = await go({ action: 'home', client: '501'
 ck('home: falls back to the state rate in the Hub settings', o.body.rate === 30, o.body.rate)
 W.visits['v=2:s=5:d=2026-09-30'].chargeRate = 450; W.visits['v=2:s=5:d=2026-09-30'].type = 'Daily'; W.visits['v=2:s=5:d=2026-09-30'].billableRateMode = 'auto'
 o = await go({ action: 'home', client: '501' })
-ck('home: a visit billed per visit (not hourly) is never shown as an hourly rate (pilot check: a $450 DAILY live-in rate shown as "$450/hr"); the state rate instead', o.body.rate === 30, o.body.rate)
+ck('home: live-in only (daily visits, none hourly): no rate, booking off with a note to call (her rule: no $30 option for live-in)', o.body.rate === null && o.body.can_book === false && /live-in care/.test(o.body.booking_note || ''), o.body)
+o = await go({ action: 'book', client: '501', kind: 'set', date: '2026-10-22', start: '10:00', end: '12:00', hours: 2, tasks: ['Companionship'], who: 'any' })
+ck('book: refused for a live-in-only client, with the same words', o.status === 409 && /live-in care/.test(o.body.error || ''), o)
 W.visits['v=2:s=5:d=2026-09-30'].chargeRate = 32; W.visits['v=2:s=5:d=2026-09-30'].type = 'Hourly'; W.visits['v=2:s=5:d=2026-09-30'].billableRateMode = 'auto'
 W.visits['v=3:s=5:d=2026-09-25'].chargeRate = 29; W.visits['v=3:s=5:d=2026-09-25'].type = 'Hourly'; W.visits['v=3:s=5:d=2026-09-25'].billableRateMode = 'auto'
 W.visits['v=1:s=5:d=2026-10-21'].chargeRate = 99; W.visits['v=1:s=5:d=2026-10-21'].type = 'Hourly'; W.visits['v=1:s=5:d=2026-10-21'].billableRateMode = 'custom'
