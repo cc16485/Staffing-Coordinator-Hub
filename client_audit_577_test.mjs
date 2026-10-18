@@ -138,7 +138,7 @@ r = await call({ action: 'nightly' }, 'cron')
 ck('after the justification, the Fusion check and the PDF: the late-start and verify cards close themselves', r.j.closed === 2 && card('ca_start_mcp_290').status === 'done' && card('ca_verify_mcp_290').status === 'done' && card('ca_end_mcp_290').status === 'open', ops().map((i) => i.id + ':' + i.status))
 DB.rules_approved = []
 r = await call({ action: 'nightly' }, 'cron')
-ck('rules file not approved: the pass checks nobody and says so (no card changes)', r.j.ok === false && /not approved/.test(r.j.errors.join(' ')) && r.j.clients === 0)
+ck('rules file not approved and not checkable against GitHub main: the pass checks nobody and says so (no card changes)', r.j.ok === false && /not approved|against GitHub main/.test(r.j.errors.join(' ')) && r.j.clients === 0)
 DB.rules_approved = [{ file: 'ihs-rules.js', sha256: fp }]
 /* ═══ proof uploads and logged opens ═══ */
 r = await call({ action: 'upload_url', kind: 'careplan', ref: 'mcp_290', name: 'plan.docx' }, 'kry')

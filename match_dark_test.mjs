@@ -89,7 +89,7 @@ const call = async (body, headers = {}) => { const r = await handler(new Request
 let c = await call({ once: true }); ck('a caller with neither the schedule\'s secret nor the server key is refused', c.status === 401 && WRITES.length === 0)
 c = await call({}, { 'x-cron-secret': env.HUB_JOB_SECRET }); ck('the schedule with the switch off: skipped, nothing written', c.j.skipped && WRITES.length === 0, c.j)
 c = await call({ once: true }, { 'x-cron-secret': env.HUB_JOB_SECRET }); ck('"once" from the schedule is not enough while the switch is off (only the owner\'s Desktop step may)', c.j.skipped && WRITES.length === 0)
-APPROVED = false; c = await call({ once: true }, { Authorization: 'Bearer ' + env.SUPABASE_SERVICE_ROLE_KEY }); ck('the rule not approved by fingerprint: not run, nothing written', c.status === 502 && /not approved/.test(c.j.error) && WRITES.length === 0, c.j)
+APPROVED = false; c = await call({ once: true }, { Authorization: 'Bearer ' + env.SUPABASE_SERVICE_ROLE_KEY }); ck('the rule not approved and not checkable against GitHub main: not run, nothing written', c.status === 502 && /not approved|against GitHub main/.test(c.j.error) && WRITES.length === 0, c.j)
 APPROVED = true; c = await call({ once: true }, { Authorization: 'Bearer ' + env.SUPABASE_SERVICE_ROLE_KEY })
 ck('the owner\'s Desktop step, once: the report is built from AxisCare and saved', c.status === 200 && c.j.ok && c.j.counts.visits === 1, c.j)
 ck('it writes ONE thing: app_data match_dark_report (no visit, schedule, caregiver, client, card or text)', WRITES.length === 1 && WRITES[0].t === 'app_data' && WRITES[0].row.key === 'match_dark_report', WRITES.map((w) => w.t + ':' + (w.row?.key || '')))
