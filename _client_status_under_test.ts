@@ -16,8 +16,8 @@
 // Replies to the scheduler (public key) with counts only.
 // ---------------------------------------------------------------------------
 const createClient = globalThis.__fakeCreateClient
-import { jobCaller } from '/private/tmp/claude-501/-Users-samantha-Claude/4837155f-7601-4986-b067-f6a9670a5dfd/scratchpad/wt-staff/test_stubs/job-auth-by-role.mjs'
-import { requireStaff, OFFICE_ROLES } from '/private/tmp/claude-501/-Users-samantha-Claude/4837155f-7601-4986-b067-f6a9670a5dfd/scratchpad/wt-staff/test_stubs/staff-auth-by-claim.mjs'
+import { jobCaller } from '/private/tmp/claude-501/-Users-samantha-Claude/a37c58c8-cc11-44d7-8771-4b7e7908ac4a/scratchpad/srv/test_stubs/job-auth-by-role.mjs'
+import { requireStaff, OFFICE_ROLES } from '/private/tmp/claude-501/-Users-samantha-Claude/a37c58c8-cc11-44d7-8771-4b7e7908ac4a/scratchpad/srv/test_stubs/staff-auth-by-claim.mjs'
 import { loadNotClients, isNotClient } from '../_shared/client-quiet.ts'   // Office Staff and other not-clients (2026-10-12)
 
 const cors = {

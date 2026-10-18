@@ -82,7 +82,8 @@ import { normalisePhone, contactForOutbound } from '../_shared/outreach.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { shadowRoute } from '../_shared/routing.ts'
 import { opEvent } from '../_shared/events.ts'
-import { adminRecipients, textAdmin, ADMIN_DEFAULT } from '../_shared/clockin-admins.ts'
+import { adminRecipients, textAdmin } from '../_shared/clockin-admins.ts'
+import { fallbackList } from '../_shared/notice-to.ts'
 import { makeLink, adminKey, linkExpiry } from '../_shared/clockin-links.ts'
 import { lateHold, liveNotices, holdOptsOf, holdUntil, callLine } from '../_shared/late-notice.ts'
 import { visitMs } from '../_shared/held-shift.ts'
@@ -283,7 +284,7 @@ Deno.serve(async (req) => {
   // deno-lint-ignore no-explicit-any
   const opsByIdC = new Map<string, any>((Array.isArray(opsRowC?.data) ? opsRowC!.data : []).map((x: any) => [String(x?.id), x]))
   const admins = (Array.isArray(settings.coverage_alert_admins) && settings.coverage_alert_admins.length)
-    ? settings.coverage_alert_admins : ADMIN_DEFAULT
+    ? settings.coverage_alert_admins : await fallbackList(sb, 'scheduling_coverage')   // SOP ruling 8 (2026-10-17)
   const adminList = await adminRecipients(sb, settings)
   /* Today cockpit Phase 3 (2026-10-05): with ops_settings.routing_live, the missed clock-in texts go to whoever holds
      the STAFFING seat now (the duty schedule), then up the team ladder while nobody has taken it (2026-10-17: In charge
@@ -297,7 +298,7 @@ Deno.serve(async (req) => {
   if (routingLive) {
     const rd = async (k: string) => { const { data } = await sb.from('app_data').select('data').eq('key', k).maybeSingle(); return Array.isArray(data?.data) ? data!.data : [] }
     const [dw, pos, cs, oi] = await Promise.all([rd('duty_windows'), rd('positions'), rd('coordinator_staff'), rd('ops_items')])
-    const seats = onDuty(dw, settings, new Date(), pos)
+    const seats = onDuty(dw, settings, new Date(), pos, admins[0])   // nobody scheduled: the list above, never a name in code
     const L = ladder(settings)
     // deno-lint-ignore no-explicit-any
     const adminFor = (email: string) => { const p = cs.find((x: any) => String(x?.email || '').trim().toLowerCase() === email)

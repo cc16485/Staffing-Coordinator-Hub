@@ -19,6 +19,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { opEvent } from '../_shared/events.ts'
 import { escalationDue, ladder, minsToShift, onDuty, routable, STAGE_SEAT, stagePerson } from '../_shared/duty.ts'
+import { fallbackList } from '../_shared/notice-to.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b, null, 2), { status: s, headers: { 'Content-Type': 'application/json' } })
@@ -42,7 +43,7 @@ Deno.serve(async (req) => {
   const live = settings.routing_live === true && url.searchParams.get('dry') !== '1'
   const since = String(settings.routing_since || '')
   const [windows, positions, items, cases] = await Promise.all([read('duty_windows'), read('positions'), read('ops_items'), read('coverage_cases')])
-  const seats = onDuty(windows, settings, now, positions)
+  const seats = onDuty(windows, settings, now, positions, (await fallbackList(sb, 'scheduling_coverage'))[0])   // SOP ruling 8
   const L = ladder(settings)
   const names = new Map<string, string>()
   try {

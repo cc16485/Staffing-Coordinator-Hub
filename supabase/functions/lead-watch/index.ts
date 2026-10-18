@@ -23,6 +23,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { opEvent } from '../_shared/events.ts'
 import { seatHolder } from '../_shared/duty.ts'
+import { fallbackList } from '../_shared/notice-to.ts'
 import { officeQuiet } from '../_shared/quiet-hours.ts'
 import { textAdmin, type Admin } from '../_shared/clockin-admins.ts'
 import { normalisePhone } from '../_shared/outreach.ts'
@@ -160,7 +161,8 @@ Deno.serve(async (req) => {
   const live = settings.lead_rungs_live === true && url.searchParams.get('dry') !== '1'
   const [leads, windows, positions, items] = await Promise.all([read('leads'), read('duty_windows'), read('positions'), read('ops_items')])
   const P = await people()
-  const firstAdmin = Array.isArray(settings.coverage_alert_admins) && settings.coverage_alert_admins.length ? String(settings.coverage_alert_admins[0]) : 'samantha@mo-care.com'
+  /* Nobody scheduled and no alert list: the Family enquiries owner, then the Springfield lead, then Samantha (SOP ruling 8) */
+  const firstAdmin = Array.isArray(settings.coverage_alert_admins) && settings.coverage_alert_admins.length ? String(settings.coverage_alert_admins[0]) : (await fallbackList(sb, 'family_enquiries'))[0]
   const ops = seatHolder(windows, 'operations', now, settings, firstAdmin, positions)
   /* The manager rung goes to whoever is IN CHARGE now, not leadership (Springfield structure, Samantha 2026-10-17): an
      uncalled family is a team problem. Leadership only when In charge is the owner, or nobody is in charge. */

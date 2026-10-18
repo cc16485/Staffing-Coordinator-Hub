@@ -40,6 +40,10 @@ ck('ladder · ops_settings.critical_ladder changes the minutes; a nonsense ladde
 const IC = [{ area: 'in_charge', person: K, recur: { days: [1, 2, 3, 4, 5], from: '08:00', to: '17:00' }, active: true }]
 ck('seat · In charge from the schedule; Staffing with nobody scheduled falls to In charge, not the alert list', D.onDuty(IC, { coverage_alert_admins: [S] }, new Date(), []).in_charge.person === K
   && D.onDuty(IC, { coverage_alert_admins: [S] }, new Date('2026-10-06T20:00:00Z'), []).staffing.person === K)
+ck('seat · no alert list: nobody scheduled falls to the fallback the caller passes (notice-to.ts), never a name in duty.ts', D.onDuty([], {}, new Date(), [], 'Lead@mo-care.com').in_charge.person === 'lead@mo-care.com'
+  && D.onDuty([], {}, new Date(), [], 'lead@mo-care.com').staffing.person === 'lead@mo-care.com' && D.onDuty([], {}, new Date(), [], 'lead@mo-care.com').escalation.source === 'fallback'
+  && D.onDuty([], { coverage_alert_admins: [S] }, new Date(), [], 'lead@mo-care.com').in_charge.person === S
+  && D.onDuty([], {}, new Date(), []).in_charge.source === 'none' && !/samantha@mo-care\.com/.test(fs.readFileSync(path.join(FN, '_shared/duty.ts'), 'utf8')))
 ck('seat · Leadership backup is only ops_settings.leadership_backup, never a default', D.onDuty([], { coverage_alert_admins: [S] }, new Date(), []).backup.person === '' && D.onDuty([], { leadership_backup: 'Zach@mo-care.com' }, new Date(), []).backup.person === 'zach@mo-care.com')
 ck('rule · taken (claimed) never escalates; parked with a wake-up never escalates', !D.escalationDue(it({ kind: 'staffing_issue', opened_by: 'timekeeper', claimed_by: K }), n0, {}) && !D.escalationDue(it({ due: '2026-10-01T00:00:00Z', sub_state: 'waiting', check_back: '2026-10-20' }), n0, {}))
 ck('rule · normal work escalates once overdue', D.escalationDue(it({ kind: 'request', due: new Date(NOW - 3600000).toISOString() }), n0, {})?.level === 'overdue' && !D.escalationDue(it({ kind: 'request', due: new Date(NOW + 3600000).toISOString() }), n0, {}))
