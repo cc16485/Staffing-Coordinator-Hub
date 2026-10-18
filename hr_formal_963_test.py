@@ -219,16 +219,16 @@ ck("the report prints counts, never names or keys", "eyJ" not in out and "sbp_te
 ck("the proof left nothing behind", q1("select count(*) from public.hr_formal_log") == [[0]], q1("select * from public.hr_formal_log"))
 # the trail itself, committed
 SAVE = "select public.upsert_app_data_item('discipline_actions', cast(:i as jsonb))"
-act(ZAC, SAVE, i=json.dumps({"id": "w1", "caregiver": "Pat", "level": "Verbal Warning", "status": "draft", "body": "first"}))
+act(ZAC, SAVE, i=json.dumps({"id": "n1", "caregiver": "Pat", "level": "Verbal Warning", "status": "draft", "body": "first"}))
 ck("Zach adds a write-up: logged as added, under his email", q1("select action, by_email from public.hr_formal_log order by id") == [["added", "zach@mo-care.com"]], q1("select action, by_email from public.hr_formal_log"))
-act(ZAC, SAVE, i=json.dumps({"id": "w1", "caregiver": "Pat", "level": "Verbal Warning", "status": "pending_approval", "body": "second"}))
+act(ZAC, SAVE, i=json.dumps({"id": "n1", "caregiver": "Pat", "level": "Verbal Warning", "status": "pending_approval", "body": "second"}))
 ch = q1("select changes from public.hr_formal_log where action = 'changed'")
 ck("a change logs each changed field with old and new (the notice text too)", ch and ch[0][0].get("status") == ["draft", "pending_approval"] and ch[0][0].get("body") == ["first", "second"] and "level" not in ch[0][0], ch)
-c = conn(); c.run("update public.app_data set data = data || '[{\"id\":\"w2\",\"caregiver\":\"Lee\",\"level\":\"Verbal Warning\",\"status\":\"draft\"}]'::jsonb where key = 'discipline_actions'"); c.close()
-ck("a change by the server's own jobs is logged as server", q1("select by_email from public.hr_formal_log where item_id = 'w2'") == [["server"]])
-c = conn(); c.run("update public.app_data set data = (select jsonb_agg(x) from jsonb_array_elements(data) x where x->>'id' <> 'w2') where key = 'discipline_actions'"); c.close()
-ck("a removed write-up is logged with what it held", q1("select action, changes->'item'->>'caregiver' from public.hr_formal_log where item_id = 'w2' order by id desc limit 1") == [["removed", "Lee"]])
-ck("saving the same thing again logs nothing", (lambda n: (act(ZAC, SAVE, i=json.dumps({"id": "w1", "caregiver": "Pat", "level": "Verbal Warning", "status": "pending_approval", "body": "second"})), q1("select count(*) from public.hr_formal_log"))[1] == n)(q1("select count(*) from public.hr_formal_log")))
+c = conn(); c.run("update public.app_data set data = data || '[{\"id\":\"n2\",\"caregiver\":\"Lee\",\"level\":\"Verbal Warning\",\"status\":\"draft\"}]'::jsonb where key = 'discipline_actions'"); c.close()
+ck("a change by the server's own jobs is logged as server", q1("select by_email from public.hr_formal_log where item_id = 'n2'") == [["server"]])
+c = conn(); c.run("update public.app_data set data = (select jsonb_agg(x) from jsonb_array_elements(data) x where x->>'id' <> 'n2') where key = 'discipline_actions'"); c.close()
+ck("a removed write-up is logged with what it held", q1("select action, changes->'item'->>'caregiver' from public.hr_formal_log where item_id = 'n2' order by id desc limit 1") == [["removed", "Lee"]])
+ck("saving the same thing again logs nothing", (lambda n: (act(ZAC, SAVE, i=json.dumps({"id": "n1", "caregiver": "Pat", "level": "Verbal Warning", "status": "pending_approval", "body": "second"})), q1("select count(*) from public.hr_formal_log"))[1] == n)(q1("select count(*) from public.hr_formal_log")))
 ck("other storage slots are never logged", (lambda n: (act(KRY, "select public.upsert_app_data_item('attendance_events', '{\"id\":\"a1\"}'::jsonb)"), q1("select count(*) from public.hr_formal_log"))[1] == n)(q1("select count(*) from public.hr_formal_log")))
 ck("Krystal can't read the log", act(KRY, "select count(*) from public.hr_formal_log") == [[0]])
 ck("Zach can read it but can't change or delete it", act(ZAC, "select count(*) > 0 from public.hr_formal_log") == [[True]]
