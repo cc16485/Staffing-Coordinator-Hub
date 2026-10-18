@@ -10,7 +10,8 @@
 //   * the client's own email in AxisCare (a Family Circle row 'Client' is made for them).
 // Someone the office turned off (app_status 'revoked') is never turned back on here. A stopped or AxisCare-removed
 // contact doesn't count. Booking: the client and responsible parties yes, other Family Circle people no (the office can
-// change it); anyone already on keeps what the office set.
+// change it); anyone already on keeps what the office set. 2026-10-18b: a booking choice made before their first sign-in
+// (app_book_choice: "Can book in the app" on the signed agreement, or the office's switch) wins over that default.
 // Not on file: no login is made, no code is sent, and the app says so plainly. Asking is limited per email and per address.
 // Never texts or emails anyone itself (the app asks cc-family-app for the code only after an ok here).
 // Pure logic + injected dependencies so it runs under Node tests.
@@ -18,7 +19,7 @@
 import { careActive } from './family-app.ts'
 
 export type Contact = { id: number; name: string | null; circle_id: string; source: string | null; app_status: string | null; app_user_id: string | null
-  app_can_book: boolean | null; stopped_at: string | null; axiscare_removed_at: string | null }
+  app_can_book: boolean | null; app_book_choice?: boolean | null; stopped_at: string | null; axiscare_removed_at: string | null }
 export type Circle = { id: string; client_name: string | null; active: boolean | null; axiscare_client_id: string | null }
 export type SigninDeps = {
   now: () => Date
@@ -110,7 +111,8 @@ export async function signinStart(d: SigninDeps, rawEmail: unknown, ip: string, 
   for (const h of hits) {
     if (h.c.app_status === 'active' && h.c.app_user_id === uid) continue
     const wasOn = h.c.app_status === 'active'
-    const can = wasOn ? h.c.app_can_book === true : (h.self || h.c.source === 'axiscare')
+    const chose = typeof h.c.app_book_choice === 'boolean' ? h.c.app_book_choice : null
+    const can = wasOn ? h.c.app_can_book === true : (chose ?? (h.self || h.c.source === 'axiscare'))
     if (!(await d.updateContact(h.c.id, { app_user_id: uid, app_status: 'active', app_can_book: can, app_invited_at: at, app_invited_by: 'self: email on file' }))) {
       await d.recordAttempt(email, ip, 'save_failed'); return say(500, { ok: false, error: 'Something went wrong on our side. Please try again or call the office.' })
     }

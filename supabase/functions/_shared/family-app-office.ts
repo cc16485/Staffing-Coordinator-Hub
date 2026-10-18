@@ -228,7 +228,7 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     if (!c) return say(404, { error: 'That person isn\'t in a Family Circle.' })
     if (action === 'can_book') {
       const on = body?.on === true
-      if (!(await d.updateContact(c.id, { app_can_book: on }))) return say(500, { error: 'Not saved. Please try again.' })
+      if (!(await d.updateContact(c.id, { app_can_book: on, app_book_choice: on }))) return say(500, { error: 'Not saved. Please try again.' })   // 2026-10-18b: the latest choice, which a first sign-in follows
       await ev('family_app_can_book', `${staff.name} turned booking ${on ? 'on' : 'off'} for ${c.name}`, { contact_id: c.id, on })
       return say(200, { ok: true })
     }
