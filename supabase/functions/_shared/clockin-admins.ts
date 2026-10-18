@@ -9,8 +9,6 @@ import { ghlSendChecked, reportSendProblem } from './send-problems.ts'
 import { fallbackList } from './notice-to.ts'
 
 /* SOP ruling 8 (2026-10-17): an empty list falls back to the Scheduling and coverage owner + the Springfield lead. */
-/* Kept only for timekeeper-watch, which server #498 also edits; it moves to fallbackList after #498 merges. */
-export const ADMIN_DEFAULT = ['samantha@mo-care.com', 'krystal@mo-care.com']
 export type Admin = { email: string; name: string; first: string; phone: string | null }
 
 export async function adminRecipients(sb: any, settings: any): Promise<Admin[]> {

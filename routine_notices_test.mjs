@@ -58,7 +58,16 @@ for (const f of ['cc-booking', 'cc-feedback', 'cc-story', 'cc-corner', 'cc-417',
   ck(`scan · ${f}: no samantha@ literal left (it asks notice-to.ts)`, lit === allowed && /from '\.\.\/_shared\/notice-to\.ts'/.test(s), lit)
 }
 const cl = read('_shared/clockin-admins.ts')
-ck('scan · clockin-admins: the missed clock-in list falls back through notice-to.ts (ADMIN_DEFAULT kept only for timekeeper-watch)', /await fallbackList\(sb, 'scheduling_coverage'\)/.test(cl) && /Kept only for timekeeper-watch/.test(cl))
+ck('scan · clockin-admins: the missed clock-in list falls back through notice-to.ts, ADMIN_DEFAULT is gone', /await fallbackList\(sb, 'scheduling_coverage'\)/.test(cl) && !/ADMIN_DEFAULT|samantha@mo-care\.com/.test(cl))
+/* the seat fallbacks (who holds a seat when nobody is scheduled) name nobody in the code either */
+for (const f of ['work-route/index.ts', 'lead-watch/index.ts', 'timekeeper-watch/index.ts', '_shared/duty.ts']) {
+  const s = read(f)
+  ck(`scan · ${f}: no samantha@ literal and no ADMIN_DEFAULT (seat fallback asks notice-to.ts)`, !/['"`]samantha@mo-care\.com['"`]/.test(s) && !/ADMIN_DEFAULT/.test(s)
+    && (f === '_shared/duty.ts' || /from '\.\.\/_shared\/notice-to\.ts'/.test(s)))
+}
+ck('scan · work-route and timekeeper-watch: nobody scheduled falls to the Scheduling and coverage list', /onDuty\(windows, settings, now, positions, \(await fallbackList\(sb, 'scheduling_coverage'\)\)\[0\]\)/.test(read('work-route/index.ts'))
+  && /: await fallbackList\(sb, 'scheduling_coverage'\)/.test(read('timekeeper-watch/index.ts')) && /onDuty\(dw, settings, new Date\(\), pos, admins\[0\]\)/.test(read('timekeeper-watch/index.ts')))
+ck('scan · lead-watch: nobody scheduled falls to the Family enquiries owner, then the lead', /\(await fallbackList\(sb, 'family_enquiries'\)\)\[0\]/.test(read('lead-watch/index.ts')))
 const fb = read('cc-feedback/index.ts')
 ck('scan · cc-feedback: a rating of 3 or less opens a card for the Client care owner', /kind === 'rating' && rating <= 3\) \{\s*await noticeCard\(supabase, officeTo/.test(fb) && /noticeTo\(supabase, kind === 'nomination' \? 'caregivers' : 'client_care'\)/.test(fb))
 ck('scan · cc-booking: the booking card is owned by the person told', (read('cc-booking/index.ts').match(/owner: officeTo\.email, owner_name: officeTo\.name/g) || []).length === 2)

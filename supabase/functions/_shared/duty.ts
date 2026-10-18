@@ -77,11 +77,13 @@ export function seatHolder(windows: Any[], area: string, now: Date, settings: An
   return { person: '', source: 'none' }
 }
 /** The seats this check cares about. Nobody scheduled in a seat falls to the team before leadership: Staffing falls to
- *  whoever is In charge; In charge and Leadership fall to the first scheduling alert admin (the office is empty). The
+ *  whoever is In charge; In charge and Leadership fall to the first scheduling alert admin (the office is empty), else
+ *  `fallback`: the caller passes (await fallbackList(sb, 'scheduling_coverage'))[0] from notice-to.ts, so the work area
+ *  owner, then the Springfield lead, then Samantha (SOP ruling 8, 2026-10-17; never a name in this file). The
  *  leadership backup is ops_settings.leadership_backup (Zach), never a default for anything else. */
-export function onDuty(windows: Any[], settings: Any, now: Date, positions: Any[] = []) {
+export function onDuty(windows: Any[], settings: Any, now: Date, positions: Any[] = [], fallback = '') {
   const first = Array.isArray(settings?.coverage_alert_admins) && settings.coverage_alert_admins.length
-    ? String(settings.coverage_alert_admins[0]) : 'samantha@mo-care.com'
+    ? String(settings.coverage_alert_admins[0]) : String(fallback || '').trim().toLowerCase()
   const inCharge = seatHolder(windows, 'in_charge', now, settings, first, positions)
   const backup = String(settings?.leadership_backup || '').trim().toLowerCase()
   return { staffing: seatHolder(windows, 'staffing', now, settings, inCharge.person || first, positions),
