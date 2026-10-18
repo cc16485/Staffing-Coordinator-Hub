@@ -338,7 +338,11 @@ Deno.serve(async (req) => {
     if (!prev || (c.checkin_date || '') > prev.date)
       latestCi.set(c.client_name, { due: c.next_checkin_due || '', date: c.checkin_date || '', coordinator: c.coordinator || '' })
   }
-  const svOverdue = svs.filter((v) => v?.due_date && v.due_date < today && !v.completed_date)
+  /* From 2026-11-16 (IHS/ADW Medicaid ends, her decision 2026-10-18) supervisory visits happen only when there is a
+     concern and have no yearly due date, so none is ever past due. Same day as CCElig.SUPERVISORY_CONCERN_FROM
+     in the Hub's eligibility-rules.js; `today` is the Central date. */
+  const SUPERVISORY_CONCERN_FROM = '2026-11-16'
+  const svOverdue = today >= SUPERVISORY_CONCERN_FROM ? [] : svs.filter((v) => v?.due_date && v.due_date < today && !v.completed_date)
 
   // ── Email building blocks (table-based, inline styles, email-client safe) ──
   const NAVY = '#0E3860', TEAL = '#54BDB8', HONEY = '#FFC671', RED = '#DC2626', AMBER = '#B45309', GRAY = '#6B7280', BORDER = '#E7EDF4'
