@@ -1,5 +1,5 @@
 // G2 · approved rules only: the five jobs that run a rules file from cc.mo-care.com run it only when its SHA-256
-// fingerprint is in rules_approved. Real functions and the REAL rules files (cc-hub-live), a fake database, and a
+// fingerprint is in rules_approved, or (since 2026-10-18) it is exactly GitHub main's copy, which is then recorded. Real functions and the REAL rules files (cc-hub-live), a fake database, and a
 // poisoned file that would set a marker if it ever ran. node g2_approved_rules_test.mjs
 import fs from 'fs'; import path from 'path';
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 900)]);
@@ -26,7 +26,7 @@ const q = (t) => { const st = { f: [], nn: null, inF: null }; const b = {
   gte() { return b; }, ilike() { return b; }, lte() { return b; }, lt() { return b; }, gt() { return b; }, neq() { return b; },
   eq(c, v) { st.f.push([c, v]); return b; }, in(c, v) { st.inF = [c, v]; return b; }, not(c) { st.nn = c; return b; },
   update() { return { eq: () => Promise.resolve({ data: null, error: null }) }; },
-  upsert(row) { return Promise.resolve({ data: row, error: null }); },
+  upsert(row) { if (t === 'rules_approved') { const a = (T[t] ||= []); if (!a.some((r) => r.file === row.file && r.sha256 === row.sha256)) a.push(row) } return Promise.resolve({ data: row, error: null }); },
   insert(row) { (T[t] ||= []).push(row); return Promise.resolve({ data: row, error: null }); },
   maybeSingle() { return b.then((x) => ({ data: Array.isArray(x.data) ? (x.data[0] ?? null) : x.data, error: x.error })); },
   single() { return b.maybeSingle(); },
@@ -75,11 +75,16 @@ const HUB = (process.env.HUB_ROOT ? process.env.HUB_ROOT.replace(/\/?$/, '/') : 
 const REAL = Object.fromEntries(['client-start.js', 'promise-engine.js', 'launch-evidence.js', 'obligations.js', 'eligibility-rules.js'].map((f) => [f, fs.readFileSync(HUB + f)]))
 const fp = (b) => crypto.createHash('sha256').update(b).digest('hex')
 let SERVED = {}, DOWN = new Set(), SITE_HITS = []
+/* GitHub main (2026-10-18: main is the approval). MAIN = the files on main; GH_DOWN = GitHub not answering. */
+let MAIN = { ...REAL }, GH_DOWN = false, GH_HITS = 0; const MAIN_SHA = 'c'.repeat(40)
 const baseFetch = globalThis.fetch
 globalThis.fetch = async (u, o) => { u = String(u)
   const m = u.match(/^https:\/\/cc\.mo-care\.com\/([a-z0-9-]+\.js)/)
   if (m) { SITE_HITS.push(m[1]); if (DOWN.has(m[1])) return new Response('nope', { status: 503 }); return new Response(SERVED[m[1]] ?? '', { status: SERVED[m[1]] ? 200 : 404 }) }
   if (/evil\.example/.test(u)) { SITE_HITS.push('EVIL'); return new Response('globalThis.__PWNED = true', { status: 200 }) }
+  if (u === 'https://api.github.com/repos/cc16485/care-coordinator-hub/commits/main') { GH_HITS++; return GH_DOWN ? new Response('down', { status: 503 }) : new Response(MAIN_SHA, { status: 200 }) }
+  const g = u.match(/^https:\/\/raw\.githubusercontent\.com\/cc16485\/care-coordinator-hub\/([0-9a-f]{40})\/([a-z0-9-]+\.js)$/)
+  if (g) return g[1] === MAIN_SHA && MAIN[g[2]] ? new Response(MAIN[g[2]], { status: 200 }) : new Response('404: Not Found', { status: 404 })
   return baseFetch(u, o) }
 const POISON = (f) => Buffer.concat([REAL[f], Buffer.from('\n;globalThis.__PWNED = true\n')])
 const approve = (pairs) => { T.rules_approved = pairs.map(([file, b]) => ({ file, sha256: fp(b) })) }
@@ -95,9 +100,12 @@ ENV.CLIENT_START_ENGINE_URL = 'https://evil.example/client-start.js'
   let g = await A.approvedRules(globalThis.__db, 'promise-engine.js')
   ck('G2 helper: the approved version comes back, byte for byte', g.ok && g.src === REAL['promise-engine.js'].toString('utf8') && g.fingerprint === fp(REAL['promise-engine.js']), g.error)
   SERVED['promise-engine.js'] = POISON('promise-engine.js'); g = await A.approvedRules(globalThis.__db, 'promise-engine.js')
-  ck('G2 helper: one changed line means a different fingerprint, refused, and no text handed back', !g.ok && /not approved/.test(g.error) && !('src' in g), g)
+  ck('G2 helper: one changed line means a different fingerprint, not GitHub main\'s, refused, and no text handed back', !g.ok && /does not match GitHub main/.test(g.error) && !('src' in g), g)
+  ck('G2 helper: a refused file is not recorded as approved', !T.rules_approved.some((r) => r.sha256 === fp(POISON('promise-engine.js'))), T.rules_approved)
   SERVED['promise-engine.js'] = REAL['promise-engine.js']; approve([['client-start.js', REAL['promise-engine.js']]]); g = await A.approvedRules(globalThis.__db, 'promise-engine.js')
-  ck('G2 helper: a fingerprint approved for a different file does not count', !g.ok, g)
+  ck('G2 helper: a fingerprint approved for a different file does not count (it runs only because main has it, and is then recorded for its own file)', g.ok && T.rules_approved.some((r) => r.file === 'promise-engine.js' && r.sha256 === fp(REAL['promise-engine.js'])), g)
+  MAIN = { ...REAL, 'promise-engine.js': Buffer.from('// someone else\'s main') }; approve([['client-start.js', REAL['promise-engine.js']]]); g = await A.approvedRules(globalThis.__db, 'promise-engine.js'); MAIN = { ...REAL }
+  ck('G2 helper: approved for a different file and not on main: refused', !g.ok && /does not match GitHub main/.test(g.error), g)
   const realFrom = globalThis.__db.from; globalThis.__db.from = (t) => t === 'rules_approved' ? { select: () => ({ eq: () => ({ eq: () => ({ limit: async () => ({ data: null, error: { message: 'permission denied' } }) }) }) }) } : realFrom(t)
   g = await A.approvedRules(globalThis.__db, 'promise-engine.js'); globalThis.__db.from = realFrom
   ck('G2 helper: if the approved list cannot be read, nothing runs', !g.ok && /could not read the approved rules list/.test(g.error), g)
@@ -105,7 +113,20 @@ ENV.CLIENT_START_ENGINE_URL = 'https://evil.example/client-start.js'
   ck('G2 helper: a failed download is refused (no fingerprint)', !g.ok && g.fingerprint === null, g)
   const bom = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), REAL['promise-engine.js']]); SERVED['promise-engine.js'] = bom; approve([['promise-engine.js', REAL['promise-engine.js']]])
   g = await A.approvedRules(globalThis.__db, 'promise-engine.js')
-  ck('G2 helper: the fingerprint is of the exact bytes served (an invisible byte-order mark is a different version)', !g.ok, g) }
+  ck('G2 helper: the fingerprint is of the exact bytes served (an invisible byte-order mark is a different version)', !g.ok, g)
+  /* main is the approval (2026-10-18) */
+  SERVED['promise-engine.js'] = REAL['promise-engine.js']; T.rules_approved = []; GH_HITS = 0; g = await A.approvedRules(globalThis.__db, 'promise-engine.js')
+  ck('main: a file never approved that is exactly GitHub main\'s copy runs, byte for byte', g.ok && g.src === REAL['promise-engine.js'].toString('utf8'), g)
+  ck('main: it is recorded as approved, noting the main commit', T.rules_approved.length === 1 && T.rules_approved[0].sha256 === fp(REAL['promise-engine.js']) && /matches GitHub main cccccc/.test(T.rules_approved[0].note), T.rules_approved)
+  GH_HITS = 0; g = await A.approvedRules(globalThis.__db, 'promise-engine.js')
+  ck('main: the next time it is on the list, so GitHub is not asked again', g.ok && GH_HITS === 0, GH_HITS)
+  T.rules_approved = []; GH_DOWN = true; g = await A.approvedRules(globalThis.__db, 'promise-engine.js'); GH_DOWN = false
+  ck('main: GitHub not answering for a new version: refused, nothing recorded, says the next run tries again', !g.ok && /could not be checked against GitHub main/.test(g.error) && /next run tries again/.test(g.error) && !T.rules_approved.length, g)
+  T.rules_approved = []; MAIN = { ...REAL }; delete MAIN['promise-engine.js']; g = await A.approvedRules(globalThis.__db, 'promise-engine.js'); MAIN = { ...REAL }
+  ck('main: a file GitHub main does not have is refused', !g.ok && /GitHub main has no promise-engine\.js/.test(g.error), g)
+  T.rules_approved = []; const recFrom = globalThis.__db.from; globalThis.__db.from = (t) => t === 'rules_approved' ? { select: () => ({ eq: () => ({ eq: () => ({ limit: async () => ({ data: [], error: null }) }) }) }), upsert: async () => { throw new Error('write failed') } } : recFrom(t)
+  g = await A.approvedRules(globalThis.__db, 'promise-engine.js'); globalThis.__db.from = recFrom
+  ck('main: if recording fails the matching file still runs (it is main\'s copy)', g.ok, g) }
 
 /* ── 2 · each job: approved runs, poisoned never runs, rules_check reports ── */
 for (const [fn, files] of Object.entries(JOBS)) {
@@ -116,12 +137,14 @@ for (const [fn, files] of Object.entries(JOBS)) {
   r = await call(h, u + '?rules_check=1', H.anon, BODY[fn] ?? {}); ck(`G2 · ${fn}: rules_check with the public key is refused`, r.s === 401, r)
   delete globalThis.__PWNED; SERVED[files[0]] = POISON(files[0]); SITE_HITS = []
   r = await call(h, u + '?dry=1', H.owner, BODY[fn] ?? {})
-  ck(`G2 · ${fn}: a changed rules file is refused and not one line of it runs`, globalThis.__PWNED === undefined && r.s === 502 && /not approved/.test(JSON.stringify(r.j)), { s: r.s, j: JSON.stringify(r.j).slice(0, 300), pwned: globalThis.__PWNED })
+  ck(`G2 · ${fn}: a changed rules file (not on GitHub main) is refused and not one line of it runs`, globalThis.__PWNED === undefined && r.s === 502 && /does not match GitHub main/.test(JSON.stringify(r.j)), { s: r.s, j: JSON.stringify(r.j).slice(0, 300), pwned: globalThis.__PWNED })
   r = await call(h, u + '?rules_check=1', H.owner, BODY[fn] ?? {})
   ck(`G2 · ${fn}: rules_check then shows that file as not approved`, r.j?.all_approved === false && r.j.rules_check[0].approved === false, r)
   SERVED[files[0]] = REAL[files[0]]; T.rules_approved = []; delete globalThis.__PWNED
-  r = await call(h, u + '?dry=1', H.owner, BODY[fn] ?? {})
-  ck(`G2 · ${fn}: with nothing approved yet it refuses (fails closed)`, r.s === 502 && /not approved/.test(JSON.stringify(r.j)), { s: r.s, j: JSON.stringify(r.j).slice(0, 200) })
+  GH_DOWN = true; r = await call(h, u + '?dry=1', H.owner, BODY[fn] ?? {}); GH_DOWN = false
+  ck(`G2 · ${fn}: nothing approved yet and GitHub not answering: it refuses (fails closed)`, r.s === 502 && /could not be checked against GitHub main/.test(JSON.stringify(r.j)), { s: r.s, j: JSON.stringify(r.j).slice(0, 200) })
+  T.rules_approved = []; r = await call(h, u + '?dry=1', H.owner, BODY[fn] ?? {})
+  ck(`G2 · ${fn}: nothing approved yet but the file is GitHub main's: it runs with no approve step, and records it`, !/not approved|does not match|Could not load/.test(JSON.stringify(r.j ?? '')) && files.every((f) => T.rules_approved.some((x) => x.file === f && x.sha256 === fp(REAL[f]))), { s: r.s, j: JSON.stringify(r.j).slice(0, 200), list: T.rules_approved })
   approve(files.map((f) => [f, REAL[f]]))
   r = await call(h, u + '?dry=1', H.owner, BODY[fn] ?? {})
   ck(`G2 · ${fn}: with the approved file it gets past loading the rules (as before)`, !/not approved|Could not load/.test(JSON.stringify(r.j ?? '')) , { s: r.s, j: JSON.stringify(r.j).slice(0, 300) })
