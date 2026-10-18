@@ -60,8 +60,9 @@ export function statusOf(rec: Any): { label: string; active: boolean | null } {
   return { label: String(v ?? ''), active: v == null ? null : /^active$/i.test(String(v)) }
 }
 /** why AxisCare refused a schedule, in words: the client, the caregiver, or something else */
-export function refusalReason(errors: Any): 'client_inactive' | 'caregiver_required' | 'other' {
+export function refusalReason(errors: Any): 'client_inactive' | 'caregiver_required' | 'service_not_on_client' | 'other' {
   const t = JSON.stringify(errors ?? '').toLowerCase()
+  if (/service code|service description|servicecode|available for the client/.test(t)) return 'service_not_on_client'
   if (/client\w*\s*(id)?\s*is inactive|inactive or does not exist|client.*inactive/.test(t)) return 'client_inactive'
   if (/caregiver/.test(t)) return 'caregiver_required'
   return 'other'
@@ -94,9 +95,12 @@ Deno.serve(async (req) => {
 
   // a service code this agency uses (from a recent visit), for the schedule
   const recent = await ax('GET', `/api/visits?startDate=${chi(-14)}&endDate=${chi(0)}`)
-  const svc = rowsOf(recent.json?.results?.visits ?? recent.json?.visits).map((v: Any) => v?.service?.code ?? v?.serviceCode ?? null).find((x: Any) => x) || (typeof b.service_code === 'string' ? b.service_code : '')
+  /* 915: AxisCare only takes a service set up on that client's Billing tab, so every code the agency uses is a candidate */
+  const codes = [...new Set([...(typeof b.service_code === 'string' && b.service_code ? [b.service_code] : []),
+    ...rowsOf(recent.json?.results?.visits ?? recent.json?.visits).map((v: Any) => v?.service?.code ?? v?.serviceCode ?? null).filter(Boolean).map(String)])]
+  const svc = codes[0] || ''
   const pd = probeDay(Number(b.days_out) >= 21 ? Number(b.days_out) : 35), end = addDays(pd.date, 6)
-  out.plan = { service_code: svc || null, start: pd.date, end, day: pd.day, time: '09:00-11:00' }
+  out.plan = { service_code: svc || null, service_codes: codes, start: pd.date, end, day: pd.day, time: '09:00-11:00' }
   // the placeholder caregiver for the preference test: "Canceled Shift", never a real person
   let ph: Any = null
   for (let page = 1, url: string | null = '/api/caregivers?statuses=Active&limit=500'; url && page <= 5; page++) {
@@ -116,7 +120,12 @@ Deno.serve(async (req) => {
   else {
     const before = await schedulesFor(pd.date, end)
     A.schedules_before = before.list.length
-    const r = await ax('POST', '/api/schedules', { clientId: TEST_CLIENT, days: [pd.day], startDate: pd.date, endDate: end, startTime: '09:00', endTime: '11:00', serviceCode: svc, frequency: 1 })
+    let r: Any = null; A.tried = []
+    for (const code of codes.slice(0, 12)) {
+      r = await ax('POST', '/api/schedules', { clientId: TEST_CLIENT, days: [pd.day], startDate: pd.date, endDate: end, startTime: '09:00', endTime: '11:00', serviceCode: code, frequency: 1 })
+      A.tried.push({ code, status: r.status, errors: errs(r) })
+      if (ok2(r.status) || !/service/i.test(JSON.stringify(errs(r) ?? ''))) { A.service_code = code; break }
+    }
     A.create = { status: r.status, errors: errs(r), body_keys: Object.keys(r.json || {}) }
     const ids = rowsOf(r.json?.schedules ?? r.json?.results?.schedules ?? r.json?.results).map((x: Any) => x?.scheduleId ?? x?.id).filter((x: Any) => x != null).map(String)
     A.created_ids = ids
