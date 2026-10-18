@@ -48,10 +48,13 @@ async function people(): Promise<{ emailOf: (n: string) => string }> {
   return { emailOf: (n: string) => { const f = lc(firstOf(n)); const p = live.find((x: Any) => lc(firstOf(x.full_name)) === f) || live.find((x: Any) => lc(String(x.primary_email).split('@')[0]) === f); return p ? lc(p.primary_email) : '' } }
 }
 async function facts() {
-  const [st, leads, assessments, bonuses, cards, P] = await Promise.all([read('ops_settings'), list('leads'), list('care_assessments'), list('cc_bonuses'), list('ops_items'), people()])
+  const [st, leads, assessments, bonuses, cards, P, staff] = await Promise.all([read('ops_settings'), list('leads'), list('care_assessments'), list('cc_bonuses'), list('ops_items'), people(), list('coordinator_staff')])
   const { data: js } = await sb.from('client_journey').select('lead_id, status, closed_reason, updated_at').eq('subject', 'client').not('lead_id', 'is', null)
   const set = T.settingsOf(st || {}), nowIso = new Date().toISOString(), today = centralYmd(nowIso)
-  const overdue = T.overdueNow(leads, cards, LR, st || {}, nowIso, set.people, P.emailOf)
+  const raw = T.overdueNow(leads, cards, LR, st || {}, nowIso, set.people, P.emailOf)
+  /* time off never counts (audit step 2): out = the Team page's out_until, today or later */
+  const isOut = (name: string) => { const f = lc(firstOf(name)); return !!f && staff.some((x: Any) => x && lc(firstOf(x.name)) === f && String(x.out_until || '').slice(0, 10) >= today) }
+  const overdue = (st || {}).fair_counts_live === true ? T.excuse(raw, isOut) : raw
   return { st: st || {}, set, leads, assessments, bonuses, journeys: js ?? [], overdue, nowIso, today, P }
 }
 

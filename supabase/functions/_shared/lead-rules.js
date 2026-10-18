@@ -784,10 +784,10 @@
     const owners = {};
     came.forEach(l => { const o = String(l.assigned_coordinator || '').trim().split(/\s+/)[0] || 'Nobody'; const r = owners[o] = owners[o] || { owner:o, inquiries:0, mins:[], reached_24h:0, never_attempted:0, said_yes:0, late:0, misses:0, took:0 };
       r.inquiries++; const m = mins(l); if(m != null) r.mins.push(m); if(reached24.indexOf(l) > -1) r.reached_24h++; if(stale.indexOf(l) > -1) r.never_attempted++; if(l.said_yes_at) r.said_yes++;
-      if(l.rungs && l.rungs.owner_at) r.late++; });
+      if(l.rungs && l.rungs.owner_at && !l.rungs.owner_excused) r.late++; if(l.rungs && l.rungs.owner_excused) r.excused = (r.excused || 0) + 1; });   /* time off and coverage never count (step 2, 2026-10-18) */
     /* a miss is counted against the owner at the time (speed_miss.owner is their email; fold back to a first name through opts.names {email:name}); a backup who took an inquiry gets the take */
     const nameOf = e => { const n = opts && opts.names && opts.names[String(e || '').toLowerCase()]; const f = (n ? String(n) : String(e || '').split('@')[0]).split(/\s+/)[0]; return f.charAt(0).toUpperCase() + f.slice(1); };
-    came.forEach(l => { if(l.speed_miss && l.speed_miss.owner){ const o = nameOf(l.speed_miss.owner); const r = owners[o] = owners[o] || { owner:o, inquiries:0, mins:[], reached_24h:0, never_attempted:0, said_yes:0, late:0, misses:0, took:0 }; r.misses++; }
+    came.forEach(l => { if(l.speed_miss && l.speed_miss.owner && !l.speed_miss.excused){ const o = nameOf(l.speed_miss.owner); const r = owners[o] = owners[o] || { owner:o, inquiries:0, mins:[], reached_24h:0, never_attempted:0, said_yes:0, late:0, misses:0, took:0 }; r.misses++; }
       (Array.isArray(l.comm_log) ? l.comm_log : []).forEach(n => { if(n && n.kind === 'owner' && /took this inquiry/.test(String(n.body || ''))){ const o = String(n.body).split(' ')[0]; const r = owners[o] = owners[o] || { owner:o, inquiries:0, mins:[], reached_24h:0, never_attempted:0, said_yes:0, late:0, misses:0, took:0 }; r.took++; } }); });
     return { from, to, inquiries:came.length, attempted:attempted.length, median_first_attempt_min:median(came.map(mins)), reached_24h:reached24.length,
       reached_24h_pct:came.length ? Math.round(reached24.length / came.length * 100) : null, never_attempted:stale.length, buckets,
@@ -796,7 +796,7 @@
       by_partner:Object.values(partners).map(shape).sort((a, b) => b.sent - a.sent || b.started - a.started),
       lost_hours_week:lost.reduce((a, l) => a + hoursOf(l), 0), by_reason:Object.values(byReason).sort((a, b) => b.hours - a.hours || b.count - a.count),
       funnel, by_source:Object.values(sources).sort((a, b) => b.inquiries - a.inquiries),
-      by_owner:Object.values(owners).map(o => ({ owner:o.owner, inquiries:o.inquiries, median_first_attempt_min:median(o.mins), reached_24h:o.reached_24h, never_attempted:o.never_attempted, said_yes:o.said_yes, late:o.late, misses:o.misses, took:o.took })).sort((a, b) => b.inquiries - a.inquiries) };
+      by_owner:Object.values(owners).map(o => ({ owner:o.owner, inquiries:o.inquiries, median_first_attempt_min:median(o.mins), reached_24h:o.reached_24h, never_attempted:o.never_attempted, said_yes:o.said_yes, late:o.late, misses:o.misses, took:o.took, excused:o.excused || 0 })).sort((a, b) => b.inquiries - a.inquiries) };
   }
   function ownerNumbers(leads, hours, opts){
     opts = opts || {}; const now = opts.now || new Date().toISOString(), days = Number(opts.days) || 30;
@@ -933,13 +933,19 @@
     if(fa.open_minutes >= set.manager_min && !st.manager_at) out.push({ level:'manager', minutes:set.manager_min });
     return out;
   }
-  /* the stamp: who was told, when, and at 30 the miss against the owner (for the owners' team numbers) */
+  /* the stamp: who was told, when, and at 30 the miss against the owner (for the owners' team numbers).
+     o.excused ('out': the owner was on time off): the stamp says so, and the owner is never counted late or as a miss
+     (time off and coverage never count against someone, audit step 2, Samantha 2026-10-18; ops_settings.fair_counts_live) */
   function stampRung(l, level, o, nowIso){
     const at = nowIso || new Date().toISOString(); o = o || {};
-    l.rungs = Object.assign({}, l.rungs || {}, { [level + '_at']:at, [level + '_to']:String(o.to || ''), [level + '_sent']:o.sent !== false });
-    if(level === 'manager' && !l.speed_miss) l.speed_miss = { at, owner:String(o.owner || l.assigned_coordinator || ''), minutes:Number(o.minutes) || RUNGS_DEFAULT.manager_min };
+    l.rungs = Object.assign({}, l.rungs || {}, { [level + '_at']:at, [level + '_to']:String(o.to || ''), [level + '_sent']:o.sent !== false },
+      o.excused ? { [level + '_excused']:String(o.excused) } : {});
+    if(level === 'manager' && !l.speed_miss) l.speed_miss = Object.assign({ at, owner:String(o.owner || l.assigned_coordinator || ''), minutes:Number(o.minutes) || RUNGS_DEFAULT.manager_min },
+      o.excused ? { excused:String(o.excused) } : {});
     return l;
   }
+  /* the switch for "time off and coverage never count against someone" */
+  function fairCountsOn(settings){ return !!(settings && settings.fair_counts_live === true); }
   const RUNG_WORDS = { owner:'the owner', backup:'the backup', manager:'Owner Escalation' };
 
   /* ── REFERRAL SUBTYPE, THE TWO FLAGS, AND THE PARTNER LOOP (item 3 of her design, 2026-10-07) ─────────────────────────
@@ -1321,7 +1327,7 @@
   /* the line for whoever makes a first call for the owner */
   function ownerIntro(l){ const o = firstName(l && l.assigned_coordinator); return o ? 'Calling for ' + o + '? Introduce ' + o + ' as their Care Coordinator.' : ''; }
 
-  const api = { SECOND_TRY_DAYS, followupRulesOn, secondTry, nextDateRule, TURN_HOW, rotationSettings, lastTurn, nextUp, giveTurn, changeOwner, noteHelper, ownerIntro,
+  const api = { fairCountsOn, SECOND_TRY_DAYS, followupRulesOn, secondTry, nextDateRule, TURN_HOW, rotationSettings, lastTurn, nextUp, giveTurn, changeOwner, noteHelper, ownerIntro,
     whenISO, START_KINDS, START_LABEL, LEGACY_URGENCY, DAYS, WAITING, WAITING_KEYS, LOST, LOST_LABEL, LOST_STAFFING, REQ_BY_STAGE, FORM_KEYS,
     RESPONSE_HOURS_DEFAULT, FIRST_ATTEMPT_MINUTES,
     ymd, addDays, daysBetween, dayWords, desiredStart, desiredStartWords, startRank, schedule, daysWords, scheduleWords, whyCalled,

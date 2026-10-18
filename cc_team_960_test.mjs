@@ -112,6 +112,22 @@ try {
   r = await cron()
   ck('a second new miss for Krystal · a new review opens with just the two new items', kr().length === 2 && kr()[1].status === 'open' && kr()[1].items.length === 2 && kr()[1].items.every((x) => ['Gus', 'Hal'].includes(x.client)), kr())
   ck('no review or decision ever went to the office event record', !T.op_events.length, T.op_events)
+
+  /* ── time off never counts (audit step 2, ops_settings.fair_counts_live) ── */
+  reset(true); at('2026-11-20T18:00:00Z'); APP.ops_settings.fair_counts_live = true
+  APP.coordinator_staff = [{ email: K, name: 'Krystal Land', out_until: '2026-11-22' }, { email: A, name: 'Angiel Rose' }]
+  r = await cron()
+  ck('time off · Krystal is out: her 2 overdue follow-ups are logged as excused and open no review', !rev().some((x) => x.person === 'Krystal') && APP.cc_overdue_log.filter((x) => x.person === 'Krystal').every((x) => x.excused === 'out'), { rev: rev(), log: APP.cc_overdue_log })
+  r = await call('zach', { action: 'list' })
+  const kmo = r.j.months.find((m) => m.person === 'Krystal')
+  ck('time off · Team shows them apart: 0 overdue, 2 while out', kmo.overdue_now === 0 && kmo.overdue_while_out === 2, kmo)
+  at('2026-11-24T18:00:00Z'); APP.coordinator_staff[0].out_until = ''
+  r = await cron()
+  ck('back from time off · the same two items stay excused (no review for what went overdue while out)', !rev().some((x) => x.person === 'Krystal'), rev())
+  APP.ops_settings.fair_counts_live = false; reset(true); at('2026-11-20T18:00:00Z')
+  APP.coordinator_staff = [{ email: K, name: 'Krystal Land', out_until: '2026-11-22' }]
+  r = await cron()
+  ck('switch off · as before: time off is not looked at, and the review opens', rev().some((x) => x.person === 'Krystal'), rev())
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 
 for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '\n      ' + note))

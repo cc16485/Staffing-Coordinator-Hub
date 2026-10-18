@@ -21,6 +21,8 @@
 // the same answer the Hub shows), an owner who is out KEEPS their inquiries (the Operations holder gets the card on
 // their desk to make first contact), and Take it from the link page means helping: the inquiry stays its owner's.
 // Off: everything below works exactly as before.
+// TIME OFF NEVER COUNTS (audit step 2, Samantha 2026-10-18), only while ops_settings.fair_counts_live: an owner who is out
+// on the Team page is not texted at 5 minutes (the person on Operations is, as cover) and is never counted late or as a miss.
 // Off until ops_settings.lead_rungs_live (Owners Hub Admin page; Hub Settings → Leads); while off, the answer lists
 // what it WOULD do and nothing is written or sent. Auth: its schedule (x-cron-secret) or the owner's server key.
 // -----------------------------------------------------------------------------
@@ -193,6 +195,7 @@ Deno.serve(async (req) => {
   const rot = LR.rotationSettings(settings)
   const turns = rot.live && rot.people.some((p: Any) => p.on)
   const turnsWrite = turns && url.searchParams.get('dry') !== '1'
+  const fair = LR.fairCountsOn ? LR.fairCountsOn(settings) : false
   const isOut = (name: string) => !!P.outUntil(P.emailOf(name))
   const practiceTurns: Any[] = []
   const plan: Any = { live, quiet, turns: { on: turns, given: [] as string[], kept_while_out: 0 }, seats: { operations: ops.person ? firstOf(P.nameOf(ops.person)) : null, operations_from: ops.source, backup: opsBackup ? firstOf(P.nameOf(opsBackup)) : null, escalation: esc.person ? firstOf(P.nameOf(esc.person)) : null },
@@ -254,10 +257,15 @@ Deno.serve(async (req) => {
         const it = itemOf(String(l.id)); if (it && it.status === 'open') { it.owner = owner; it.owner_name = P.nameOf(owner)
           it.history = [...(Array.isArray(it.history) ? it.history : []), { at: nowIso, by: 'Cara', text: `Moved to ${P.nameOf(owner)}: ${firstOf(P.nameOf(l.moved_out_from))} is out until ${out}` }]; await put('ops_items', it) } }
     }
-    /* the rungs */
+    /* the rungs. Time off never counts (audit step 2, ops_settings.fair_counts_live): an owner who is out on the Team page
+       gets no 5-minute text (the person on Operations is told instead) and is never counted late or as a miss. */
+    const ownerOut = fair && owner ? P.outUntil(owner) : ''
+    /* a lead just moved to the person on Operations because its owner is out (lead turns off): the new owner is covering,
+       so the clock that ran before the move never counts against them either */
+    const covering = fair && !ownerOut && l.moved_out_at && Date.now() - Date.parse(String(l.moved_out_at)) < set.manager_min * 60e3
     const due: Any[] = LR.rungsDue(l, { now: nowIso, hours, settings })
     for (const r of due) {
-      const who = r.level === 'owner' ? owner || ops.person
+      const who = r.level === 'owner' ? (ownerOut && ops.person && ops.person !== owner ? ops.person : owner || ops.person)
         : r.level === 'backup' ? (opsBackup && opsBackup !== owner ? opsBackup : (ops.person && ops.person !== owner ? ops.person : (esc.person !== owner ? esc.person : '')))
         : (esc.person && esc.person !== owner ? esc.person : lead.person)
       if (quiet) { plan.waiting_quiet++; continue }          /* the text waits for 7am; the stamp waits with it, so nothing is skipped */
@@ -268,13 +276,14 @@ Deno.serve(async (req) => {
       if (who) {
         const lk = await link(l, who)
         const what = `${family} asked about care ${fa.came_in.replace(/^came in /, '')}${l.phone ? ' (' + l.phone + ')' : ''}`
-        msg = r.level === 'owner' ? `${whoFirst}, a new inquiry needs a call: ${what}. ${mins} min and nobody has called yet. ${lk}`
+        msg = r.level === 'owner' && ownerOut && who !== owner ? `${whoFirst}, covering for ${firstOf(P.nameOf(owner))} (out until ${ownerOut}): ${what}. ${mins} min and nobody has called yet. It stays ${firstOf(P.nameOf(owner))}'s lead. ${lk}`
+          : r.level === 'owner' ? `${whoFirst}, a new inquiry needs a call: ${what}. ${mins} min and nobody has called yet. ${lk}`
           : r.level === 'backup' ? `${whoFirst}, backup: ${what}. ${mins} min and ${owner ? firstOf(P.nameOf(owner)) : 'nobody'} hasn't called yet. It's on your My Work; take it here: ${lk}`
           : `${whoFirst}: ${what}. ${mins} min and nobody has called (${owner ? firstOf(P.nameOf(owner)) : 'no owner'}). Counted as a miss. ${lk}`
       }
       const sent = who ? await text(who, msg) : false
       if (!live) continue
-      LR.stampRung(l, r.level, { to: who, sent, owner, minutes: r.minutes }, nowIso); dirty = true
+      LR.stampRung(l, r.level, { to: who, sent, owner, minutes: r.minutes, ...(ownerOut ? { excused: 'out' } : covering ? { excused: 'covering' } : {}) }, nowIso); dirty = true
       const it = itemOf(String(l.id))
       if (it && it.status === 'open') {
         if (r.level === 'backup' && who) { it.also_for = [...new Set([...(Array.isArray(it.also_for) ? it.also_for : []), who])]
