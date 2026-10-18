@@ -68,18 +68,21 @@ say(f"      417 Caring Community (with cards): {first(lead)}")
 al = W.get("alerts") or []
 say(f"      call-in alerts: {', '.join(al) if al else 'the list is empty, so ' + first(A.get('scheduling_coverage'), lead) + ' and the lead'}")
 if not lead: say("  · there is no Springfield lead yet (run 897 first), so anything without a work area owner still goes to Samantha")
-gate = {}
+gate = {}; skipped = []
 for fn in FNS:
     s, m = fmeta(HUB, fn)
+    # a piece that is not live at all (staff-contacts-check was a one-time check, removed after 396) is left off, never re-created
+    if s == 404: skipped.append(fn); say(f"  · {fn} is not live, so it is left off (not deployed)"); continue
     if s != 200 or not m or "verify_jwt" not in m: stop(f"couldn't read how {fn} is set up live ({s})", 3)
     gate[fn] = bool(m["verify_jwt"]); say(f"  · {fn} is live as version {m.get('version', '?')}, gateway sign-in check {'on' if gate[fn] else 'off'} (kept)")
 
+LIVE = [fn for fn in FNS if fn not in skipped]
 say(); say("PART 2 · CHANGE")
-for fn in FNS:
+for fn in LIVE:
     if not deploy(HUB, FNROOT, fn, gate[fn]): say("  STOP. Tell Claude. (Anything above this line is in; the rest is unchanged.)"); done(5)
 
 say(); say("PART 3 · PROOF")
-for fn in FNS:
+for fn in LIVE:
     s, b = http("POST", f"{FNB}/functions/v1/{fn}", {})
     chk(s is not None and s != 200 and s < 500, f"{fn}: a caller with no key gets nothing ({s})", f"{fn} answered a caller with no key ({s})")
 say()
