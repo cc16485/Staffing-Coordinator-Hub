@@ -1199,7 +1199,90 @@
     return { text:'', sub:'', source:'none', reason:'none', due:false };
   }
 
-  const api = { whenISO, START_KINDS, START_LABEL, LEGACY_URGENCY, DAYS, WAITING, WAITING_KEYS, LOST, LOST_LABEL, LOST_STAFFING, REQ_BY_STAGE, FORM_KEYS,
+  /* ── LEAD TURNS (Care Coordinator Leads and Bonus policy, approved by Samantha 2026-10-18; Hub plan Stage 1) ─────────
+     Each new lead goes to the next eligible Care Coordinator by turn, and helping never moves it. Four names stay apart:
+       lead owner          l.assigned_coordinator (as before)
+       original owner      l.original_owner {name, at, how}: the first owner, never changed by a reassignment (the bonus
+                           recipient reads it in Stage 4)
+       task performer      who did each thing (contact_events.by, l.helpers[])
+       client's coordinator  the journey / client record (unchanged here)
+     The turn order and who is in it are Hub settings (ops_settings.lead_rotation {people:[{name, on}]}); the switch is
+     ops_settings.lead_rotation_live. While it is off nothing here is called and leads get their owner the old way.
+     The pointer is the leads themselves: the newest l.owner_turn says whose turn it was, so the Hub and the server
+     always agree without a second record. Someone out (or switched off) is skipped with no makeup turn. */
+  const TURN_HOW = { turn:'next up', asked:'asked for by name', returning:'returning client' };
+  const firstName = s => String(s || '').trim().split(/\s+/)[0] || '';
+  const sameName = (a, b) => !!firstName(a) && firstName(a).toLowerCase() === firstName(b).toLowerCase();
+  function rotationSettings(settings){
+    const r = (settings && settings.lead_rotation) || {}, seen = {};
+    const people = (Array.isArray(r.people) ? r.people : []).map(p => ({ name:firstName(p && p.name), on:!(p && p.on === false) }))
+      .filter(p => p.name && !seen[p.name.toLowerCase()] && (seen[p.name.toLowerCase()] = true));
+    return { live:!!(settings && settings.lead_rotation_live === true), since:(settings && settings.lead_rotation_live_since) || null, people };
+  }
+  /* the newest turn on file: {to, how, at, by, seq, lead} or null. seq counts up by one per turn, so two turns given in
+     the same second still have an order. */
+  function lastTurn(leads){
+    let best = null;
+    const newer = (t, b) => (Number(t.seq) || 0) !== (Number(b.seq) || 0) ? (Number(t.seq) || 0) > (Number(b.seq) || 0) : String(t.at || '') > String(b.at || '');
+    (Array.isArray(leads) ? leads : []).forEach(l => { const t = l && l.owner_turn;
+      if(t && t.to && TURN_HOW[t.how] && (!best || newer(t, best))) best = Object.assign({ lead:l.id }, t); });
+    return best;
+  }
+  /* who is next up: the person after the last turn in the set order, skipping anyone switched off or out. null when
+     nobody is eligible (the caller falls back to the old way and says so). opts.isOut(name) → true while out. */
+  function nextUp(leads, settings, opts){
+    const rs = rotationSettings(settings), isOut = (opts && opts.isOut) || (() => false);
+    const ok = p => p.on && !isOut(p.name);
+    if(!rs.people.some(ok)) return null;
+    const last = lastTurn(leads), n = rs.people.length;
+    const at = last ? rs.people.findIndex(p => sameName(p.name, last.to)) : -1;
+    for(let k = 1; k <= n; k++){ const p = rs.people[(at + k + n) % n]; if(ok(p)) return p.name; }
+    return null;
+  }
+  /* give the lead to name by turn (how: turn · asked · returning). Every kind uses that person's turn. Pass o.leads
+     (every lead) so the turn gets the next number. */
+  function giveTurn(l, name, o){
+    o = o || {}; const at = o.at || new Date().toISOString(), how = TURN_HOW[o.how] ? o.how : 'turn', who = firstName(name);
+    if(!l || !who) return l;
+    const last = lastTurn(o.leads), seq = ((last && Number(last.seq)) || 0) + 1;
+    l.assigned_coordinator = who;
+    l.owner_turn = { to:who, how, at, by:String(o.by || ''), seq };
+    if(!l.original_owner || !l.original_owner.name) l.original_owner = { name:who, at, how };
+    l.comm_log = Array.isArray(l.comm_log) ? l.comm_log : [];
+    l.comm_log.push({ kind:'owner', at, by:String(o.by || ''), body:how === 'turn' ? who + '’s lead (next up by turn)'
+      : who + '’s lead (' + TURN_HOW[how] + '; it counts as ' + who + '’s turn)' });
+    return l;
+  }
+  /* only Samantha or Zachary, with a reason. It is not a turn and never changes the original owner. */
+  function changeOwner(l, name, o){
+    o = o || {}; const at = o.at || new Date().toISOString(), who = firstName(name), why = String(o.why || '').trim();
+    if(!l || !who) return { error:'Pick who should own this lead.' };
+    if(!o.by_owner) return { error:'Only Samantha or Zachary can change who owns a lead.' };
+    if(!why) return { error:'Write the reason for the change.' };
+    const was = firstName(l.assigned_coordinator);
+    if(sameName(was, who)) return { ok:true, unchanged:true };
+    l.assigned_coordinator = who;
+    if(!l.original_owner || !l.original_owner.name) l.original_owner = { name:was || who, at:l.created_at || at, how:'before turns' };
+    l.owner_changes = (Array.isArray(l.owner_changes) ? l.owner_changes : []).concat([{ at, from:was, to:who, by:String(o.by || ''), why }]).slice(-20);
+    l.comm_log = Array.isArray(l.comm_log) ? l.comm_log : [];
+    l.comm_log.push({ kind:'owner', at, by:String(o.by || ''), body:'Owner changed' + (was ? ' from ' + was : '') + ' to ' + who + ': ' + why });
+    return { ok:true, from:was, to:who };
+  }
+  /* a teammate helped (first contact, a call, the assessment): recorded, and the owner stays */
+  function noteHelper(l, name, o){
+    o = o || {}; const at = o.at || new Date().toISOString(), who = firstName(name), owner = firstName(l && l.assigned_coordinator);
+    if(!l || !who || sameName(who, owner)) return l;
+    const what = String(o.what || 'first contact');
+    l.helpers = (Array.isArray(l.helpers) ? l.helpers : []).concat([{ name:who, at, what, by:String(o.by || '') }]).slice(-20);
+    l.comm_log = Array.isArray(l.comm_log) ? l.comm_log : [];
+    l.comm_log.push({ kind:'owner', at, by:String(o.by || ''), body:who + ' is helping with ' + what + (owner ? '. It stays ' + owner + '’s lead.' : '.') });
+    return l;
+  }
+  /* the line for whoever makes a first call for the owner */
+  function ownerIntro(l){ const o = firstName(l && l.assigned_coordinator); return o ? 'Calling for ' + o + '? Introduce ' + o + ' as their Care Coordinator.' : ''; }
+
+  const api = { TURN_HOW, rotationSettings, lastTurn, nextUp, giveTurn, changeOwner, noteHelper, ownerIntro,
+    whenISO, START_KINDS, START_LABEL, LEGACY_URGENCY, DAYS, WAITING, WAITING_KEYS, LOST, LOST_LABEL, LOST_STAFFING, REQ_BY_STAGE, FORM_KEYS,
     RESPONSE_HOURS_DEFAULT, FIRST_ATTEMPT_MINUTES,
     ymd, addDays, daysBetween, dayWords, desiredStart, desiredStartWords, startRank, schedule, daysWords, scheduleWords, whyCalled,
     waiting, waitingProblems, defaultCheckBack, checkBackDue, lostKey, lostRecord, missing, toForm, compose, migrationPatch,
