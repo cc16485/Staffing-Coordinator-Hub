@@ -105,9 +105,9 @@ const BRANCH_KEYS = ['call-back-next-week', 'family-decision', 'ready-to-start',
 const BRANCH_GUIDE = `
 - call-back-next-week: the contact asked to be called back at a specific future time/window, or gave a clear "not now, but later" timeline.
 - family-decision: the decision involves other family members (spouse, siblings, adult children) who haven't weighed in yet, or the contact explicitly said they need to discuss it with someone.
-- ready-to-start: strong, immediate intent — urgency is high (today/48 hours), and/or the contact used language like "let's move forward," "when can we start," asked about paperwork/next steps.
+- ready-to-start: strong, immediate intent: urgency is high (today/48 hours), and/or the contact used language like "let's move forward," "when can we start," asked about paperwork/next steps.
 - cold-lead: contact expressed disinterest, said they chose a different agency, budget is a clear mismatch with no flexibility, or the conversation reads as a dead end.
-- soft-check-in: none of the above clearly applies — general interest with no strong signal either way, or "just researching."
+- soft-check-in: none of the above clearly applies: general interest with no strong signal either way, or "just researching."
 `.trim();
 
 const RESPONSE_SCHEMA = {
@@ -117,7 +117,7 @@ const RESPONSE_SCHEMA = {
     type: 'object',
     properties: {
       branch: { type: 'string', enum: BRANCH_KEYS, description: 'Best-fit follow-up branch for this lead, based on the call notes.' },
-      confidence_note: { type: 'string', description: 'One short sentence explaining why this branch fits — shown to the coordinator, not saved.' },
+      confidence_note: { type: 'string', description: 'One short sentence explaining why this branch fits, shown to the coordinator, not saved.' },
       intent_tags: { type: 'array', items: { type: 'string' }, maxItems: 5, description: 'Up to 5 short phrases capturing key signals from the notes (e.g. "price sensitive", "ready this week", "comparing agencies").' },
       email_subject: { type: 'string', description: 'Warm, personal subject line for a follow-up recap email.' },
       email_body: { type: 'string', description: "Full follow-up email body in Caring Companions' warm, personal voice: recap what was discussed (client name/situation, care type, schedule, rate if known), mention the attached Service Guide if relevant, invite next steps (a complimentary in-home assessment), and sign off warmly. If no email address was collected on the call, gently ask for one instead." },
@@ -201,7 +201,7 @@ Deno.serve(async (req) => {
     }
 
     // ---- 3. Build the prompt ----
-    const systemPrompt = `You are an assistant for Caring Companions In-Home Senior Care, helping a care coordinator handle post-call follow-ups with prospective clients (leads). You read raw call notes and produce two kinds of output depending on what's asked: (a) which of five follow-up branches best fits the lead, or (b) a warm, personal follow-up email + SMS draft. Your tone in drafted messages is warm, empathetic, and personal — never generic or salesy — matching a small family-owned home care agency, not a call center. Always call the submit_followup_analysis tool with your answer; never reply in plain text.
+    const systemPrompt = `You are an assistant for Caring Companions In-Home Senior Care, helping a care coordinator handle post-call follow-ups with prospective clients (leads). You read raw call notes and produce two kinds of output depending on what's asked: (a) which of five follow-up branches best fits the lead, or (b) a warm, personal follow-up email + SMS draft. Your tone in drafted messages is warm, empathetic, and personal (never generic or salesy), matching a small family-owned home care agency, not a call center. Always call the submit_followup_analysis tool with your answer; never reply in plain text.
 
 Follow-up branch definitions:
 ${BRANCH_GUIDE}`;
@@ -216,9 +216,9 @@ Raw call notes (this is the primary thing to analyze):
 ${lead.interest_notes}
 """
 
-${mode === 'branch' ? 'Focus on branch, confidence_note, and intent_tags — you may leave draft fields minimal.' : ''}
-${mode === 'draft' ? 'Focus on email_subject, email_body, sms_draft, rate_discussed, email_collected_on_call, attach_service_guide, include_website — you may give your best-guess branch too, but drafting is the priority.' : ''}
-${mode === 'summary' ? 'Focus on needs_summary and care_flags for the lead profile page — fill the other required fields minimally (best-guess branch, empty-string drafts are fine).' : ''}
+${mode === 'branch' ? 'Focus on branch, confidence_note, and intent_tags; you may leave draft fields minimal.' : ''}
+${mode === 'draft' ? 'Focus on email_subject, email_body, sms_draft, rate_discussed, email_collected_on_call, attach_service_guide, include_website; you may give your best-guess branch too, but drafting is the priority.' : ''}
+${mode === 'summary' ? 'Focus on needs_summary and care_flags for the lead profile page; fill the other required fields minimally (best-guess branch, empty-string drafts are fine).' : ''}
 Sign follow-up emails/SMS as "Caring Companions" unless a specific coordinator name is given in the notes.`;
 
     // ---- 4. Call Anthropic, forcing structured tool-call output ----

@@ -156,11 +156,11 @@ Deno.serve(async (req) => {
           const inline = appJson.length < 180_000
             ? `<p style="font-weight:bold;margin-bottom:4px">app_data.json (full off-site copy)</p>` +
               `<pre style="font-size:10px;background:#f5f7fa;padding:10px;border-radius:6px;white-space:pre-wrap">${esc(appJson)}</pre>`
-            : `<p><i>app_data snapshot too large to inline (${Math.round(appJson.length / 1024)} KB) — full copy is in the backups vault.</i></p>`
+            : `<p><i>app_data snapshot too large to inline (${Math.round(appJson.length / 1024)} KB); full copy is in the backups vault.</i></p>`
           /* NO SILENT FAILURES (2026-10-01): the Monday backup runs with nobody watching, so a backup email that
              doesn't go out (refused, no contact, or GoHighLevel unreachable) raises a Needs Attention card */
           emailed = await ghlSendChecked(supabase, ghlHeaders, 'shared-backup', { channel: 'email', contactId, address: to, who: 'Hub backup' }, {
-              subject: `Hub backup ${stamp} — Staffing/Team/CC hubs snapshot`,
+              subject: `Hub backup ${stamp}: Staffing/Team/CC hubs snapshot`,
               html:
                 `<div style="font-family:Arial,sans-serif;font-size:14px;color:#1f2a36;line-height:1.5">` +
                 `<p>Weekly snapshot of the shared hub database (Team, Staffing, Care Coordinator).</p>` +
@@ -172,7 +172,7 @@ Deno.serve(async (req) => {
                   ? `</ul><p style="color:#b45309"><b>Captured only in part:</b> ${esc(partial.join(', '))}. ` +
                     `Those files are named .PARTIAL.json and are NOT a complete restore point for those tables.</p><ul>`
                   : '') +
-                `</ul><p><b>Keep this email</b> — if the hubs ever lose data again (like July 5), this is the restore point.</p>` +
+                `</ul><p><b>Keep this email</b>. If the hubs ever lose data again (like July 5), this is the restore point.</p>` +
                 inline +
                 `</div>`,
           })

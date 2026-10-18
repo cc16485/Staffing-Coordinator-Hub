@@ -25,7 +25,7 @@ const CORS = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const SYSTEM = `You are a senior long-term care (LTC) insurance claims specialist at a home care agency. You read LTC policies and benefits summaries and explain them to care coordinators who are NOT insurance experts. Be accurate and conservative: if a value is not stated in the text, use "Not stated — confirm with carrier". Never invent numbers or coverage.`;
+const SYSTEM = `You are a senior long-term care (LTC) insurance claims specialist at a home care agency. You read LTC policies and benefits summaries and explain them to care coordinators who are NOT insurance experts. Be accurate and conservative: if a value is not stated in the text, use "Not stated, confirm with carrier". Never invent numbers or coverage.`;
 
 // Ask Claude to return exactly this shape so the hub can render it.
 const SCHEMA_INSTRUCTIONS = `Return ONLY a JSON object (no markdown, no prose outside the JSON) with these keys:

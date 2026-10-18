@@ -97,15 +97,15 @@ Deno.serve(async (req) => {
     if (!last) {
       // deno-lint-ignore no-explicit-any
       if ((e as any).quietUntilFirst) continue
-      problems.push(`${e.name} has never reported a run — ${e.what} may not be running at all ` +
+      problems.push(`${e.name} has never reported a run. ${e.what[0].toUpperCase() + e.what.slice(1)} may not be running at all ` +
         `(expected shortly after its next scheduled run; if this persists, its cron or deploy is missing).`)
       problemNames.push(e.name + ':never')
       continue
     }
     const ageH = (Date.now() - new Date(last.at).getTime()) / 3_600_000
     if (!(ageH <= e.hours)) {
-      problems.push(`${e.name} last ran ${Math.round(ageH)}h ago (allowed ${e.hours}h) — ` +
-        `${e.what} ${ageH > e.hours * 3 ? 'has' : 'may have'} stopped.`)
+      problems.push(`${e.name} last ran ${Math.round(ageH)}h ago (allowed ${e.hours}h). ` +
+        `${e.what[0].toUpperCase() + e.what.slice(1)} ${ageH > e.hours * 3 ? 'has' : 'may have'} stopped.`)
       problemNames.push(e.name + ':stale')
     } else if (last.ok === false) {
       problems.push(`${e.name} is running but failing: ${String(last.note || last.error || 'no detail')}`)
@@ -171,11 +171,11 @@ Deno.serve(async (req) => {
       const h = { Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28',
                   'Content-Type': 'application/json', Accept: 'application/json' }
       const line = `Hub watchdog: ${problems.length} automation problem${problems.length > 1 ? 's' : ''}. ` +
-        problems.map((p) => p.split(' — ')[0]).join('; ') + '. Ask Claude to investigate.'
+        problems.map((p) => p.split('. ')[0]).join('; ') + '. Ask Claude to investigate.'
       const html = `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
         `<p><b>The hub's automation watchdog found ${problems.length} problem${problems.length > 1 ? 's' : ''} this morning:</b></p>` +
         `<ul>` + problems.map((p) => `<li>${p}</li>`).join('') + `</ul>` +
-        `<p>Nothing here reaches applicants or clients by itself — these are background jobs that have gone quiet ` +
+        `<p>Nothing here reaches applicants or clients by itself. These are background jobs that have gone quiet ` +
         `or are erroring. Tell Claude what this email says and it can dig in.</p>` +
         `<p style="color:#57606a">Caring Companions · automation watchdog</p></div>`
       /* NO SILENT FAILURES (2026-10-01): the watchdog's own alert is the last line of defence, so if it can't reach

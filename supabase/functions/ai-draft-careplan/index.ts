@@ -29,10 +29,10 @@ const SCHEMA = {
     properties: {
       adl_needs: { type: 'string', description: 'ADL needs observed/discussed: bathing, dressing, toileting, transfers, mobility, eating. Plain sentences.' },
       iadl_needs: { type: 'string', description: 'IADL needs: meal prep, housekeeping, laundry, transportation, errands, medication reminders.' },
-      medical_conditions: { type: 'string', description: 'Diagnoses/conditions mentioned (as stated — do not infer diagnoses not mentioned).' },
+      medical_conditions: { type: 'string', description: 'Diagnoses/conditions mentioned (as stated; do not infer diagnoses not mentioned).' },
       medications: { type: 'string', description: 'Medications mentioned, with dosing details only if stated. Empty string if none discussed.' },
       safety_concerns: { type: 'string', description: 'Fall risks, home hazards, wandering, smoking, oxygen, pets underfoot, etc.' },
-      client_goals: { type: 'string', description: "Client/family goals in their own spirit — what a good outcome looks like to them." },
+      client_goals: { type: 'string', description: "Client/family goals in their own spirit: what a good outcome looks like to them." },
       services_recommended: { type: 'string', description: 'Concrete services the agency should provide, mapped to the needs above.' },
       recommended_frequency: { type: 'string', description: 'e.g. "5x/week", "Mon/Wed/Fri", "daily mornings".' },
       recommended_hours_per_week: { type: 'number', description: 'Whole number of hours/week that fits the frequency and needs.' },
@@ -61,7 +61,7 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => null)
     const transcript = body?.transcript_text ? String(body.transcript_text).trim() : ''
-    if (!transcript) return jerr('Paste the assessment transcript text first — the AI needs something to read.', 400)
+    if (!transcript) return jerr('Paste the assessment transcript text first. The AI needs something to read.', 400)
     const apiKey = Deno.env.get('ANTHROPIC_API_KEY')
     if (!apiKey) return jerr('ANTHROPIC_API_KEY is not set on this Supabase project.', 500)
 
@@ -74,7 +74,7 @@ Deno.serve(async (req) => {
         system:
           'You draft in-home senior care plans for Caring Companions (non-medical home care, Missouri). ' +
           'You read a raw in-home assessment transcript and extract a structured DRAFT care plan. ' +
-          'Only state what the transcript supports — never invent diagnoses, medications, or family facts. ' +
+          'Only state what the transcript supports. Never invent diagnoses, medications, or family facts. ' +
           'The coordinator reviews and edits everything. Always call the submit_care_plan_draft tool; never reply in plain text.',
         messages: [{
           role: 'user',

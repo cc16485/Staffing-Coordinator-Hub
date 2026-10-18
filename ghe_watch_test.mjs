@@ -91,7 +91,7 @@ try {
   at('2026-11-20'); SENT.length = 0; await run()
   const uc = cards('ghe_unbooked')
   ck('the 20th, still not booked: a Needs Attention card for the coordinator (Payer Programs), saying the nurse books it in AxisCare', uc.length === 1 && uc[0].owner === 'krystal@mo-care.com' && uc[0].domain === 'payer_programs' && uc[0].status === 'open' && /Bea Unbooked/.test(uc[0].title) && /closes itself once AxisCare shows it booked/.test(uc[0].detail), uc)
-  ck('...the 20th digest tells the nurse which are booked and which are not', SENT.some((s) => s.to === 'natasha@mo-care.com' && /Bea Unbooked<\/b> — 2026-11 \(not booked in AxisCare yet\)/.test(s.html) && /Ann Booked<\/b> — 2026-11 \(booked in AxisCare 2026-11-27\)/.test(s.html)), SENT.map((s) => s.html).join('\n').slice(0, 900))
+  ck('...the 20th digest tells the nurse which are booked and which are not', SENT.some((s) => s.to === 'natasha@mo-care.com' && /Bea Unbooked<\/b>: 2026-11 \(not booked in AxisCare yet\)/.test(s.html) && /Ann Booked<\/b>: 2026-11 \(booked in AxisCare 2026-11-27\)/.test(s.html)), SENT.map((s) => s.html).join('\n').slice(0, 900))
   /* the nurse books it */
   AX['2'].push(visit('2', '2026-11-26')); at('2026-11-23'); await run()
   ck('once AxisCare shows it booked, the card closes itself', cards('ghe_unbooked')[0].status === 'done' && /AxisCare shows it booked/.test(cards('ghe_unbooked')[0].done_by), cards('ghe_unbooked'))
