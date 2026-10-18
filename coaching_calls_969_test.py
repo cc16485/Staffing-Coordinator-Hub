@@ -17,7 +17,11 @@ CHANGED = ["calls-feed", "call-pull", "call-tasks", "call-disposition"]
 hsha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
 FIX = os.path.join(COPY, "coaching_calls_969_patches", "live")
 def fake_live(fn, dest):
-    """what the fake project has live for fn before this step: GitHub main's bundle with today's real live index.ts"""
+    """what the fake project has live for fn before this step: GitHub main's bundle with today's real live index.ts
+    (or, with REAL_LIVE set, today's real live copies as Claude downloaded them)"""
+    real = os.environ.get("REAL_LIVE")
+    if real and os.path.exists(os.path.join(real, "live_" + fn)):
+        shutil.copytree(os.path.join(real, "live_" + fn, "supabase"), os.path.join(dest, "supabase"), dirs_exist_ok=True); return
     for part in (fn, "_shared"):
         shutil.copytree(os.path.join(MAIN, "supabase", "functions", part), os.path.join(dest, "supabase", "functions", part), dirs_exist_ok=True)
     fx = os.path.join(FIX, fn + ".index.ts.live")
@@ -88,6 +92,9 @@ sys.path.insert(0, {HERE!r})
 a = sys.argv[1:]
 TMP = {TMP!r}; MAIN = {MAIN!r}; FIX = {FIX!r}
 def fake_live(fn, dest):
+    real = os.environ.get("REAL_LIVE")   # the launcher rehearsal: today's real live copies (downloaded by Claude)
+    if real and os.path.exists(os.path.join(real, "live_" + fn)):
+        shutil.copytree(os.path.join(real, "live_" + fn, "supabase"), os.path.join(dest, "supabase"), dirs_exist_ok=True); return
     for part in (fn, "_shared"):
         shutil.copytree(os.path.join(MAIN, "supabase", "functions", part), os.path.join(dest, "supabase", "functions", part), dirs_exist_ok=True)
     fx = os.path.join(FIX, fn + ".index.ts.live")
@@ -203,6 +210,7 @@ if CMD:
     for f in glob.glob(os.path.join(TMP, "dep-*")): os.remove(f)
     shutil.rmtree(os.path.join(TMP, "live"), ignore_errors=True)
     env = dict(ENVF(""), HOME=FH, PATH=FB + ":" + os.environ["PATH"]); [env.pop(k) for k in ("SB_REPORT", "SB_FNROOT", "SB_TOKEN", "SB_LIVE_SHAS")]
+    env["REAL_LIVE"] = os.environ.get("REAL_LIVE", "")
     p = subprocess.run(["zsh", LC], input="sbp_fake_token\n\n", env=env, capture_output=True, text=True, timeout=300)
     reps = sorted(glob.glob(os.path.join(FH, "Desktop", "969 *report*.txt")))
     rep = open(reps[-1]).read() if reps else ""
