@@ -16,6 +16,11 @@
 // THE LINK PAGE (cc.mo-care.com/lead.html; POST {c, a, e, t, action}): view · called {outcome, note} (logs the attempt
 // as that person, which stops the clock) · take (the inquiry becomes theirs) · bridge (Call rings their phone first).
 // Only a live link from a person's own text. Nothing here ever contacts the family.
+// LEAD TURNS (Care Coordinator Leads and Bonus, Stage 1, policy approved by Samantha 2026-10-18), only while
+// ops_settings.lead_rotation_live: an inquiry nobody owns goes to whoever is NEXT UP by turn (lead-rules.js nextUp,
+// the same answer the Hub shows), an owner who is out KEEPS their inquiries (the Operations holder gets the card on
+// their desk to make first contact), and Take it from the link page means helping: the inquiry stays its owner's.
+// Off: everything below works exactly as before.
 // Off until ops_settings.lead_rungs_live (Owners Hub Admin page; Hub Settings → Leads); while off, the answer lists
 // what it WOULD do and nothing is written or sent. Auth: its schedule (x-cron-secret) or the owner's server key.
 // -----------------------------------------------------------------------------
@@ -132,6 +137,21 @@ Deno.serve(async (req) => {
     if (action === 'take') {
       const was = l.assigned_coordinator || ''
       if (ownerEmail === me.email) return json({ ok: true, already_mine: true })
+      /* lead turns on: helping, not taking. The inquiry and its card stay the owner's; you are on the card as the helper. */
+      if (was && LR.rotationSettings(settings).live) {
+        LR.noteHelper(l, me.first, { what: 'first contact', by: me.email, at: nowIso })
+        await put('leads', l)
+        const items = await read('ops_items'); const it = items.find((x) => String(x?.id) === 'ops_lead_' + id)
+        if (it && it.status === 'open') {
+          it.help_from = me.email; it.helping_since = nowIso; it.help_asked_at = it.help_asked_at || nowIso
+          it.also_for = [...new Set([...(Array.isArray(it.also_for) ? it.also_for : []), me.email])]
+          if (it.escalation && !it.escalation.cleared_at) { it.escalation.cleared_at = nowIso; it.escalation.cleared_why = 'a teammate is helping' }
+          it.history = [...(Array.isArray(it.history) ? it.history : []), { at: nowIso, by: me.name, text: `${me.first} is making first contact for ${firstOf(was)} (from the text link; it stays ${firstOf(was)}'s)` }]
+          await put('ops_items', it)
+        }
+        await opEvent(sb, { actor_name: me.name, actor_email: me.email, verb: 'item_helped', item_id: id, area: 'growth_leads', summary: `${me.name} is helping ${firstOf(was)} with the inquiry from ${family}` })
+        return json({ ok: true, helping: true, owner: firstOf(was), intro: LR.ownerIntro(l) })
+      }
       l.assigned_coordinator = me.first
       l.comm_log = Array.isArray(l.comm_log) ? l.comm_log : []
       l.comm_log.push({ body: `${me.first} took this inquiry${was ? ' from ' + firstOf(was) : ''} (from the text link)`, at: nowIso, by: me.email, kind: 'owner' })
@@ -170,7 +190,12 @@ Deno.serve(async (req) => {
   const esc = seatHolder(windows, 'in_charge', now, settings, lead.person || firstAdmin, positions)
   const opsBackup = low(ops.window?.backup_person || '')
   const hours = LR.responseHours(settings), set = LR.rungSettings(settings), quiet = officeQuiet(now, settings)
-  const plan: Any = { live, quiet, seats: { operations: ops.person ? firstOf(P.nameOf(ops.person)) : null, operations_from: ops.source, backup: opsBackup ? firstOf(P.nameOf(opsBackup)) : null, escalation: esc.person ? firstOf(P.nameOf(esc.person)) : null },
+  const rot = LR.rotationSettings(settings)
+  const turns = rot.live && rot.people.some((p: Any) => p.on)
+  const turnsWrite = turns && url.searchParams.get('dry') !== '1'
+  const isOut = (name: string) => !!P.outUntil(P.emailOf(name))
+  const practiceTurns: Any[] = []
+  const plan: Any = { live, quiet, turns: { on: turns, given: [] as string[], kept_while_out: 0 }, seats: { operations: ops.person ? firstOf(P.nameOf(ops.person)) : null, operations_from: ops.source, backup: opsBackup ? firstOf(P.nameOf(opsBackup)) : null, escalation: esc.person ? firstOf(P.nameOf(esc.person)) : null },
     minutes: { owner: LR.FIRST_ATTEMPT_MINUTES, backup: set.backup_min, manager: set.manager_min }, filled: 0, moved: 0, rungs: { owner: 0, backup: 0, manager: 0 }, texted: 0, not_texted: 0, waiting_quiet: 0, written: 0 }
   const itemOf = (id: string) => items.find((x) => String(x?.id) === 'ops_lead_' + id)
   const movedFrom: Record<string, number> = {}
@@ -192,14 +217,36 @@ Deno.serve(async (req) => {
     const fresh = fa && fa.running && fa.open_minutes <= 24 * 60
     /* unowned: the Operations holder owns it from now (only while the inquiry is young; old records are history) */
     let owner = P.emailOf(l.assigned_coordinator)
-    if (!owner && fresh && ops.person) {
+    /* lead turns: an inquiry nobody owns goes to whoever is next up, from the moment it lands (not only inside lead hours) */
+    const young = Date.now() - Date.parse(String(l.created_at || '')) < 24 * 3600e3
+    if (!owner && turns && !l.first_human_attempt_at && (fresh || young)) {
+      const nx = LR.nextUp(leads.concat(practiceTurns), settings, { isOut })
+      if (nx) {
+        plan.turns.given.push(`${family} → ${nx}`)
+        if (turnsWrite) { LR.giveTurn(l, nx, { how: 'turn', by: 'cara', at: nowIso, leads }); owner = P.emailOf(nx); dirty = true }
+        else practiceTurns.push({ id: 'practice_' + l.id, owner_turn: { to: nx, how: 'turn', at: nowIso, seq: ((LR.lastTurn(leads.concat(practiceTurns)) || {}).seq || 0) + 1 } })   /* a practice run still takes turns in order */
+      }
+    }
+    if (!owner && fresh && ops.person && !(turns && LR.nextUp(leads.concat(practiceTurns), settings, { isOut }))) {
       plan.filled++
       if (live) { l.assigned_coordinator = firstOf(P.nameOf(ops.person)); owner = ops.person
         l.comm_log = [...(Array.isArray(l.comm_log) ? l.comm_log : []), { body: `Cara: assigned to ${firstOf(P.nameOf(ops.person))} (on Operations now; nobody owned this inquiry)`, at: nowIso, by: 'cara', kind: 'owner' }]; dirty = true }
     }
     /* owner out: their inquiries move to the Operations holder, once */
     const out = owner ? P.outUntil(owner) : ''
-    if (owner && out && ops.person && ops.person !== owner && !P.outUntil(ops.person) && !(l.moved_out_at && String(l.moved_out_from || '') === owner)) {
+    /* lead turns: the owner keeps it. Whoever holds Operations gets the card on their desk to make first contact, once. */
+    if (turns && owner && out && ops.person && ops.person !== owner && !P.outUntil(ops.person) && !l.first_human_attempt_at
+        && !(l.out_cover && String(l.out_cover.owner || '') === owner && String(l.out_cover.until || '') === out)) {
+      plan.turns.kept_while_out++
+      if (turnsWrite) {
+        l.out_cover = { owner, until: out, helper: ops.person, at: nowIso }
+        l.comm_log = [...(Array.isArray(l.comm_log) ? l.comm_log : []), { body: `Cara: ${firstOf(P.nameOf(owner))} is out until ${out}. ${firstOf(P.nameOf(ops.person))} (on Operations) makes first contact; it stays ${firstOf(P.nameOf(owner))}'s lead.`, at: nowIso, by: 'cara', kind: 'owner' }]
+        dirty = true
+        const it = itemOf(String(l.id)); if (it && it.status === 'open') {
+          it.also_for = [...new Set([...(Array.isArray(it.also_for) ? it.also_for : []), ops.person])]
+          it.history = [...(Array.isArray(it.history) ? it.history : []), { at: nowIso, by: 'Cara', text: `On ${P.nameOf(ops.person)}'s desk for first contact: ${firstOf(P.nameOf(owner))} is out until ${out} (it stays ${firstOf(P.nameOf(owner))}'s)` }]; await put('ops_items', it) }
+      }
+    } else if (!turns && owner && out && ops.person && ops.person !== owner && !P.outUntil(ops.person) && !(l.moved_out_at && String(l.moved_out_from || '') === owner)) {
       plan.moved++; movedFrom[owner] = (movedFrom[owner] || 0) + 1
       if (live) { l.moved_out_at = nowIso; l.moved_out_from = owner; l.assigned_coordinator = firstOf(P.nameOf(ops.person))
         l.comm_log = [...(Array.isArray(l.comm_log) ? l.comm_log : []), { body: `Cara: moved from ${firstOf(P.nameOf(owner))} (out until ${out}) to ${firstOf(P.nameOf(ops.person))}, on Operations now`, at: nowIso, by: 'cara', kind: 'owner' }]
@@ -237,7 +284,7 @@ Deno.serve(async (req) => {
       }
       try { await opEvent(sb, { job: 'lead-watch', verb: 'lead_rung', item_id: String(l.id), area: 'growth_leads', summary: `${r.level === 'owner' ? 'Owner' : r.level === 'backup' ? 'Backup' : 'In charge'} told at ${mins} minutes: nobody has called ${family}${who ? ' (' + firstOf(P.nameOf(who)) + (sent ? '' : ', text failed') + ')' : ' (nobody to tell)'}` }) } catch { /* nicety */ }
     }
-    if (dirty && live) { await put('leads', l); plan.written++ }
+    if (dirty && (live || turnsWrite)) { await put('leads', l); plan.written++ }   /* lead turns write on their own switch */
   }
   /* one summary to Owner Escalation about an owner who is out (per run, only when something moved) */
   if (live && plan.moved && esc.person) {
