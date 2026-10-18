@@ -159,7 +159,7 @@ export async function shadowRoute(sb: SB, o: {
           about: 'Routing',
           detail: `A ${o.channel} notification fired, but the Who Handles What page `
             + (r.found ? 'lists nobody under "Notified now"' : 'has no saved row')
-            + ` for this area — so its notifications stay hardcoded. Open Who Handles What, fill in the row, and save.`,
+            + ` for this area, so its notifications stay hardcoded. Open Who Handles What, fill in the row, and save.`,
           next_action: 'Open Who Handles What and complete this area’s row.',
           domain: 'office_ops', status: 'open', urgency: 'normal',
           owner: '', owner_name: '', created_at: new Date().toISOString(),

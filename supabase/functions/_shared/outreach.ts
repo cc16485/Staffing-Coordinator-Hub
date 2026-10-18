@@ -185,13 +185,13 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
     why: 'we restart a conversation the applicant let go quiet.' },
   'reference-chase':    { class: 'proactive_external', scheduled: true,
     why: 'chasing an employer for a favour. They do not answer at weekends. '
-      + 'Cron: daily-reference-chase, weekday mornings — created by cron-reference-chase.sql (care-coordinator-hub repo).' },
+      + 'Cron: daily-reference-chase, weekday mornings, created by cron-reference-chase.sql (care-coordinator-hub repo).' },
 
   // ── urgent internal ───────────────────────────────────────────────────────
   'timekeeper-watch':   { class: 'urgent_internal', scheduled: true,
     why: 'a caregiver with no clock-in minutes into a shift, and the office alert behind it. '
       + 'The 6am shift needs its 6:03 nudge; a client may be standing at the door. '
-      + 'Cron: timekeeper-watch, every 2 minutes — created by cron-timekeeper.sql (~/Claude). '
+      + 'Cron: timekeeper-watch, every 2 minutes, created by cron-timekeeper.sql (~/Claude). '
       + 'The ADMIN missed clock-in texts go at any hour (her 2026-10-03 exception, ops_settings.missed_clockin_after_hours, '
       + 'on unless set false; capped at 6 per alert); the Saturday EVV office nudge keeps the office quiet hours (none 8pm to 7am).' },
   'missed-notes':       { class: 'routine_internal', scheduled: true,
@@ -226,17 +226,17 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
       + 'Cron: availability-checkin, weekdays 17:00 UTC.' },
   'shift-confirm':      { class: 'routine_internal', scheduled: true,
     why: 'one morning text to each caregiver listing their own shifts today, deliberately '
-      + 'before the external window — it exists to surface problems before they become no-shows. '
-      + 'Cron: shift-confirm, 12:00 UTC daily — created by cron-shift-confirm.sql (~/Claude).' },
+      + 'before the external window. It exists to surface problems before they become no-shows. '
+      + 'Cron: shift-confirm, 12:00 UTC daily, created by cron-shift-confirm.sql (~/Claude).' },
   'carematch-watch':    { class: 'routine_internal', scheduled: true,
     why: 'the morning after a caregiver\'s FIRST shift with a client: one text to the '
       + 'caregiver (staff, about their own shift) asking how it went, and one email to the '
-      + 'office saying a client check-in call is due. The client is never messaged — their '
+      + 'office saying a client check-in call is due. The client is never messaged; their '
       + 'side of the check-in is deliberately a human phone call. '
-      + 'Cron: carematch-watch, 15:00 UTC daily (9-10am Springfield) — created by cron-carematch-watch.sql (care-coordinator-hub repo).' },
+      + 'Cron: carematch-watch, 15:00 UTC daily (9-10am Springfield), created by cron-carematch-watch.sql (care-coordinator-hub repo).' },
   'automation-watchdog': { class: 'urgent_internal', scheduled: true,
     why: 'tells the office when a scheduled automation has gone quiet or is erroring (the text keeps the office quiet hours, the email does not need to). '
-      + 'Cron: daily-automation-watchdog, mornings — created by cron-automation-watchdog.sql (care-coordinator-hub repo).' },
+      + 'Cron: daily-automation-watchdog, mornings, created by cron-automation-watchdog.sql (care-coordinator-hub repo).' },
   'ops-escalate':       { class: 'urgent_internal', scheduled: false,
     why: 'missed-call escalations to staff. Office quiet hours (2026-10-03): no text 8pm to 7am, and a step that came due overnight is never texted.' },
 
@@ -380,7 +380,7 @@ export async function maySendTo(
 
   if (!data || !data.length) {
     return { allowed: true, phone, confidence: 'unknown',
-             reason: 'not an imported identifier — no provenance concern',
+             reason: 'not an imported identifier, no provenance concern',
              displayable: true }
   }
 
@@ -521,7 +521,7 @@ export function audienceGate(
     return { allowed: true, reason: 'a person chose to send this' }
   if (opts.transactional)
     return { allowed: true,
-      reason: 'transactional — a direct response to this person\'s own action in this interaction' }
+      reason: 'transactional: a direct response to this person\'s own action in this interaction' }
   const aud = String(audience ?? 'unknown')
   const known = Object.prototype.hasOwnProperty.call(AUDIENCE_AUTONOMY, aud)
   if (known && AUDIENCE_AUTONOMY[aud as Audience])
@@ -529,8 +529,8 @@ export function audienceGate(
   if (opts.explicitlyEnabled)
     return { allowed: true, reason: `this specific capability was explicitly enabled by Samantha` }
   return { allowed: false, reason: known
-    ? `autonomous contact with a ${aud} is not permitted — a human makes this contact, unless Samantha explicitly enables this specific capability`
-    : `recipient type not declared — unknown audiences never get autonomous outreach` }
+    ? `autonomous contact with a ${aud} is not permitted. A human makes this contact, unless Samantha explicitly enables this specific capability`
+    : `recipient type not declared; unknown audiences never get autonomous outreach` }
 }
 
 /**

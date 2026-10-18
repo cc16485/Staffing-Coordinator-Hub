@@ -262,7 +262,7 @@ Deno.serve(async (req) => {
   const unassigned = dueNow.filter((r) => !r.nurse)
   const booked = (r: { client: string; month: string }) => { const c = clients.find((x) => x.name === r.client); const s = c ? wState(c.id, r.month) : {}; return s.state === 'booked' && s.visit ? ' (booked in AxisCare ' + esc(String(s.visit.at).slice(0, 10)) + ')' : ' (not booked in AxisCare yet)' }
   const list = (rows: { client: string; month: string }[]) =>
-    '<ul>' + rows.map((r) => `<li><b>${esc(r.client)}</b> — ${esc(r.month)}${booked(r)}</li>`).join('') + '</ul>'
+    '<ul>' + rows.map((r) => `<li><b>${esc(r.client)}</b>: ${esc(r.month)}${booked(r)}</li>`).join('') + '</ul>'
 
   if (speakToday) {
     // Each nurse hears only about her own caseload.
@@ -286,7 +286,7 @@ Deno.serve(async (req) => {
         (unassigned.length ? `<p><b>Due this month with no nurse assigned:</b></p>${list(unassigned)}</p>` : '') +
         (awaitingUpload.length
           ? `<p><b>Signed and waiting to go into Fusion:</b></p><ul>` +
-            awaitingUpload.map((f) => `<li><b>${esc(String(f.client || ''))}</b> — visited ${esc(String(f.visit_date || ''))}, score ${esc(String(f.total ?? ''))}</li>`).join('') +
+            awaitingUpload.map((f) => `<li><b>${esc(String(f.client || ''))}</b>: visited ${esc(String(f.visit_date || ''))}, score ${esc(String(f.total ?? ''))}</li>`).join('') +
             `</ul><p>Open the GHE form in the hub, print the PDF, upload it into Fusion, then mark it Uploaded.</p>`
           : '') +
         `<p style="color:#666;font-size:13px;">Caring Companions · Nurse Scheduling</p>`
