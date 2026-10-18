@@ -148,6 +148,13 @@ ck('sample: a practice notice for Test Caregiver, not tied to any write-up', r.s
 r = await call({ action: 'sign', t: r.j.token, typed_name: 'Test Caregiver', consent: true, notice_hash: T.hr_ack[0].notice_hash })
 ck('...signs end to end with nothing filed', r.s === 200 && T.hr_ack[0].status === 'signed' && !AX.length && !APP.ops_items.length && APP.discipline_actions[0].status === 'approved')
 
+r = await call({ action: 'sample' }); const sid = T.hr_ack[T.hr_ack.length - 1].id
+r = await call({ action: 'record', ack_id: sid, outcome: 'refused', date: '2026-10-16', how: 'phone', witness: 'Desktop proof' })
+ck('the owner key may record a refusal on the practice sample', r.s === 200 && T.hr_ack.find((x) => x.id === sid).status === 'refused' && T.hr_ack.find((x) => x.id === sid).recorded_by === 'desktop-step', r)
+reset({ live: true }); NOW_OWNERKEY = true; WHO = null; T.hr_ack.push({ id: '00000000-0000-4000-8000-0000000000aa', writeup_id: 'w1', practice: false, status: 'waiting', caregiver: 'Jordan Miller', notice, notice_hash: 'h' })
+r = await call({ action: 'record', ack_id: '00000000-0000-4000-8000-0000000000aa', outcome: 'refused', date: '2026-10-16', how: 'phone', witness: 'X' })
+ck('...but never on a real notice', r.s === 401 && T.hr_ack[0].status === 'waiting', r)
+r = await call({ action: 'cancel', ack_id: '00000000-0000-4000-8000-0000000000aa' }); ck('...and nothing else with the owner key', r.s === 401)
 const body = fs.readFileSync(`${FN}/hr-ack/index.ts`, 'utf8') + fs.readFileSync(`${FN}/_shared/hr-ack.ts`, 'utf8')
 ck('no em dashes in the code\'s words', !/—/.test(body))
 let f = 0; for (const [n, ok, dd] of res) { console.log((ok ? 'PASS' : 'FAIL') + ' · ' + n + (ok ? '' : '  ' + dd)); if (!ok) f++ }

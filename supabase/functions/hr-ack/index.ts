@@ -51,6 +51,15 @@ Deno.serve(async (req: Request) => {
       if (!(await ownerCaller(req))) return json({ error: 'not allowed' }, 401)
       return await sample(db)
     }
+    /* the Desktop step's proof: the owner's server key may record and open the practice sample only, never a real notice */
+    if ((action === 'record' || action === 'open') && await ownerCaller(req)) {
+      const s0 = await getAck(db, b?.ack_id)
+      if (!s0 || s0.writeup_id !== 'practice-sample' || !s0.practice) return json({ error: 'not allowed' }, 401)
+      const me0 = { email: 'desktop-step', name: 'Desktop step' }
+      if (action === 'record') return await record(db, me0, s0, b)
+      const { data } = await db.storage.from(BUCKET).createSignedUrl(String(s0.pdf_path || ''), 60)
+      return json({ ok: !!data?.signedUrl, url: data?.signedUrl || null })
+    }
     const who = await requireStaff(db, req, ['owner_admin'])
     if (!who.ok) return json({ error: who.status === 403 ? 'Only Samantha or Zach can do this.' : who.error }, who.status)
     const me = { email: who.email, name: who.name }
