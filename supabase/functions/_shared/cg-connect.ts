@@ -20,6 +20,7 @@
 // =============================================================================
 // deno-lint-ignore-file no-explicit-any
 import { usablePhone, type Census, type CensusRow } from './axis-census.ts'
+import { isPlaceholderCaregiver } from './cg-placeholder.ts'   // "Canceled Shift" is nobody
 import { landAtConnect } from './step1-landing.ts'   /* SLICE 2e */
 
 export const RULES_FILE = 'caregiver-connect-rules.js'
@@ -36,6 +37,7 @@ export function phoneWork(cgs: any[], rows: CensusRow[]) {
   for (const r of recs) { const k = String(r.axiscare_id).trim(); byAx.set(k, [...(byAx.get(k) ?? []), r]) }
   const fill: { rec: any; ax: CensusRow }[] = [], none: CensusRow[] = []
   for (const ax of rows) {
+    if (isPlaceholderCaregiver(ax.first, ax.last)) continue   // AxisCare's "Canceled Shift": not a person, never on the list
     const mine = byAx.get(String(ax.id)) ?? []
     if (ax.phone) { if (mine.length === 1 && !usablePhone(mine[0].phone)) fill.push({ rec: mine[0], ax }) }
     else if (ax.active && !mine.some((r) => usablePhone(r.phone))) none.push(ax)

@@ -260,6 +260,7 @@ ck('no em dash', !/—/.test(all))
     row('205', 'Eve', 'Gone', false, {}),                                         // not active: not on the list
     row('206', 'Fay', 'Newcomb', true, {}),                                       // new to the Hub, no number anywhere: on the list
     row('207', 'Gus', 'Otherly', true, { otherPhone: '417 555 0207' }),           // new to the Hub: their record starts with AxisCare's other phone
+    row('299', 'Canceled', 'Shift', true, {}),                                    // AxisCare's placeholder for cancelled visits: nobody, never on the list
   ]
   const w2 = (live, items = []) => ({ app_data: [
     { key: 'ops_settings', data: live ? { cg_connect_live: true } : {} },
