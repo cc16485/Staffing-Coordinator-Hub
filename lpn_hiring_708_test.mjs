@@ -13,11 +13,15 @@ const N = await import(path.join(FN, '_shared/nurse-hire.ts'))
 /* ═══ 1. the caregiver Step 1, byte for byte ═══ */
 const bdir = fs.mkdtempSync(path.join(ROOT, '.lpn708-base-'))
 let B; try { for (const f of ['step1-documents.ts', 'hepb-appendix-a.ts']) fs.writeFileSync(path.join(bdir, f), execFileSync('git', ['-C', ROOT, 'show', LPN_BASE + ':supabase/functions/_shared/' + f])); B = await import(path.join(bdir, 'step1-documents.ts')) } finally { fs.rmSync(bdir, { recursive: true, force: true }) }
+/* forms changed later by their own approval (2026-10-18, no two-person transfers) are held to that record instead of the base */
+const R18 = JSON.parse(fs.readFileSync(path.join(ROOT, 'supabase/step1-approved-2026-10-18.json'), 'utf8')), LATER = {}
+for (const f of R18.forms) if (f.approved_at === R18.approved_at) LATER[f.key] = f
 let same = true, diff = []
-for (const k of B.FORM_ORDER) { if (D.formText(k) !== B.formText(k) || await D.formFingerprint(k) !== await B.formFingerprint(k) || JSON.stringify(D.FORMS[k]) !== JSON.stringify(B.FORMS[k])) { same = false; diff.push(k) } }
-ck(`every one of the ${B.FORM_ORDER.length} caregiver Step 1 forms is byte-identical to the base (wording, fingerprint, definition)`, same && B.FORM_ORDER.length === 14, diff)
+for (const k of B.FORM_ORDER) { if (LATER[k]) { if (D.FORMS[k].version !== LATER[k].version || await D.formFingerprint(k) !== LATER[k].sha256) { same = false; diff.push(k) } continue }
+  if (D.formText(k) !== B.formText(k) || await D.formFingerprint(k) !== await B.formFingerprint(k) || JSON.stringify(D.FORMS[k]) !== JSON.stringify(B.FORMS[k])) { same = false; diff.push(k) } }
+ck(`every one of the ${B.FORM_ORDER.length} caregiver Step 1 forms is byte-identical to the base (wording, fingerprint, definition), or at the version and wording of its later approval (2026-10-18: ${Object.keys(LATER).join(', ')})`, same && B.FORM_ORDER.length === 14 && Object.keys(LATER).join() === 'employee_application,experience', diff)
 ck('the form order is the base order with ONE form added at the end (the nursing license, gated to nurses)', JSON.stringify(D.FORM_ORDER.slice(0, -1)) === JSON.stringify(B.FORM_ORDER) && D.FORM_ORDER.at(-1) === 'nurse_license' && D.FORMS.nurse_license.step1Gate === 'nurse')
-ck('APPROVED_FOR_REAL is exactly the base (the new form is not in it)', JSON.stringify(D.APPROVED_FOR_REAL) === JSON.stringify(B.APPROVED_FOR_REAL) && !D.approvedForReal('nurse_license'))
+ck('APPROVED_FOR_REAL is exactly the base, but for the later approvals (the new form is not in it)', JSON.stringify(D.APPROVED_FOR_REAL) === JSON.stringify({ ...B.APPROVED_FOR_REAL, ...Object.fromEntries(Object.values(LATER).map((f) => [f.key, f.version])) }) && !D.approvedForReal('nurse_license'))
 const CTX = [{}, { hepb: true }, { hepb: false }]
 const ANS = [{}, { transport_willing: 'yes' }, { transport_willing: 'no' }]
 let same2 = true; const d2 = []

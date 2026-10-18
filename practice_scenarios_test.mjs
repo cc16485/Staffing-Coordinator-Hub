@@ -111,8 +111,8 @@ const S = [
     pro: [R('Uma Boss', 'Home Helpers'), R('Vic Lead', 'Home Helpers')], per: [P('Wes Friend', 'Friend'), P('Xan Friend', 'Friend')], answers: { 'Uma Boss': { companionship: 'saw', meals_housekeeping: 'saw', med_reminders: 'saw' } } },
   { key: 'no_care_jobs', first: 'Indy', jobs: [job('Corner Diner', 'Yan Boss', undefined, { did_care: 'no', refresher: undefined })],
     pro: [R('Yan Boss', 'Corner Diner'), R('Zed Lead', 'Corner Diner')], per: [P('Abe Friend', 'Friend'), P('Bea Friend', 'Friend')], answers: {} },
-  { key: 'mixed_disagree', first: 'Jules', jobs: [job('Home Helpers', 'Cy Boss', ['bathing', 'two_person_transfers']), job('Visiting Angels', 'Di Lead', ['bathing', 'two_person_transfers'])],
-    pro: [R('Cy Boss', 'Home Helpers'), R('Di Lead', 'Visiting Angels')], per: [P('Ed Friend', 'Friend'), P('Flo Friend', 'Friend')], answers: { 'Cy Boss': { bathing: 'saw', two_person_transfers: 'no' }, 'Di Lead': { bathing: 'believe', two_person_transfers: 'unknown' } } },
+  { key: 'mixed_disagree', first: 'Jules', jobs: [job('Home Helpers', 'Cy Boss', ['bathing', 'feeding']), job('Visiting Angels', 'Di Lead', ['bathing', 'feeding'])],
+    pro: [R('Cy Boss', 'Home Helpers'), R('Di Lead', 'Visiting Angels')], per: [P('Ed Friend', 'Friend'), P('Flo Friend', 'Friend')], answers: { 'Cy Boss': { bathing: 'saw', feeding: 'no' }, 'Di Lead': { bathing: 'believe', feeding: 'unknown' } } },
 ]
 
 const out = {}; const TASK_OK = ['saw', 'believe', 'no', 'unknown']
@@ -181,7 +181,7 @@ ck('bedbound_hospice: bedbound, hospice, toileting and ostomy bag care all confi
 ck('dementia_new: a supervisor who did not see dementia care leaves it "questioned" (talk it through), never confirmed', st('dementia_new', 'dementia_care') === 'questioned' && st('dementia_new', 'companionship') === 'confirmed', SKILL('dementia_new'))
 ck('restrictions: not at this time (smoking homes, bedbound) and "would rather not" (overnights) are on the profile', /Not at this time: .*Homes where someone smokes.*/.test(out.restrictions.summary.restrictions.join()) && /Bedbound clients/.test(out.restrictions.summary.restrictions.join()) && /Would rather not accept: Overnights/.test(out.restrictions.summary.restrictions.join()), out.restrictions.summary.restrictions)
 ck('no_care_jobs: a job without care adds no tasks and asks the reference nothing about care', out.no_care_jobs.summary.skills.length === 0 && out['no_care_jobs:asked:Yan Boss'].length === 0)
-ck('mixed_disagree: one saw bathing (confirmed); two-person transfers "no" plus "don\'t know" is questioned, never confirmed', st('mixed_disagree', 'bathing') === 'confirmed' && st('mixed_disagree', 'two_person_transfers') === 'questioned', SKILL('mixed_disagree'))
+ck('mixed_disagree: one saw bathing (confirmed); feeding "no" plus "don\'t know" is questioned, never confirmed', st('mixed_disagree', 'bathing') === 'confirmed' && st('mixed_disagree', 'feeding') === 'questioned', SKILL('mixed_disagree'))
 
 /* ═══ across everyone: missing never counts, nothing reached the outside world ═══ */
 const all = S.flatMap((sc) => out[sc.key].summary.skills.map((l) => ({ sc: sc.key, ...l })))

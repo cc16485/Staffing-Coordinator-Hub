@@ -11,7 +11,7 @@
 // screening package list is TO CONFIRM (her decision 4). Fictional practice only until each is approved.
 // 2026-10-13 APPROVED: Samantha, 2026-10-13, 'approve step 1 forms', wording page version 5. All thirteen forms (a person
 // signs twelve: the Driver or the Non-Driver Agreement) are status 'approved' at the versions in APPROVED_FOR_REAL below.
-export const STEP1_VERSION = 6   // 2026-10-14: the details form (5b) at version 5 (five facts the state's FCSR forms ask for: middle name, suffix, birth name, gender, county; and the line on registering), beside the availability form at version 3 (approved the same morning). Before: 2026-10-13: the permission form (5a v2) replaces the FCRA draft; application v4, details v4. Before: 2026-10-11 (her approval of the Step 1 previews): the application and the reference consent at version 3 (tasks per job, family care, backup references); the vehicle form and the EDL/FCSR consent at version 3; two forms at version 2; the FCRA draft at version 1
+export const STEP1_VERSION = 7   // 2026-10-18: no two-person transfers (her rule): the skill is gone from the task list (application v5) and the Level 3 duties say one caregiver per visit (experience v3); record supabase/step1-approved-2026-10-18.json. Before: 2026-10-14: the details form (5b) at version 5 (five facts the state's FCSR forms ask for: middle name, suffix, birth name, gender, county; and the line on registering), beside the availability form at version 3 (approved the same morning). Before: 2026-10-13: the permission form (5a v2) replaces the FCRA draft; application v4, details v4. Before: 2026-10-11 (her approval of the Step 1 previews): the application and the reference consent at version 3 (tasks per job, family care, backup references); the vehicle form and the EDL/FCSR consent at version 3; two forms at version 2; the FCRA draft at version 1
 export type FormKey = 'employee_application' | 'reference_consent' | 'fcra_disclosure' | 'edl_fcsr_consent' | 'availability' | 'experience' | 'vehicle' | (string & {})
 /** 'approved': Samantha approved this form's wording for real applicants (2026-10-13, see APPROVED_FOR_REAL); a new wording starts
     again as 'proposed' at a new version until she approves that version */
@@ -59,7 +59,7 @@ export const SPECIALTIES = ["Alzheimer's disease", 'Other dementias', "Parkinson
 export const LEVELS = {
   1: { title: 'Level 1, Wellness & Companionship Care', duties: 'Friendly companionship and conversation, meal preparation, light housekeeping, laundry, medication reminders, transportation and errands, grocery shopping, safety supervision, social engagement, wellness visits.' },
   2: { title: 'Level 2, Personal Care', duties: 'Everything included in Level 1, plus: Bathing assistance, shower assistance, dressing assistance, grooming, toileting assistance, continence care, mobility assistance, transfers with gait belt, walking assistance, wheelchair assistance.' },
-  3: { title: 'Level 3, Advanced Non-Medical Care', duties: "Everything included in Levels 1 and 2, plus: Hoyer lift (if trained), bedbound clients, frequent repositioning, hospice support (non-medical), two-person transfers (when scheduled), high fall-risk clients, Parkinson's disease, stroke recovery, complex mobility assistance." },
+  3: { title: 'Level 3, Advanced Non-Medical Care', duties: "Everything included in Levels 1 and 2, plus: Hoyer lift (if trained), bedbound clients, frequent repositioning, hospice support (non-medical), high fall-risk clients, Parkinson's disease, stroke recovery, complex mobility assistance. One caregiver per visit: a client who needs more than one person to transfer must have a lift." },
 }
 /* ───── 2026-10-11 (Samantha approved the Step 1 previews, with refinements): the tasks a caregiver ticks per job and per
    family-care entry, the same list everywhere (the reference confirms from it, the profile shows it). Catheter bag emptying
@@ -70,7 +70,7 @@ export const LEVELS = {
 export const SKILL_GROUPS: { h: string; skills: [string, string][] }[] = [
   { h: 'Everyday help', skills: [['companionship', 'Companionship and conversation'], ['meals_housekeeping', 'Meals and light housekeeping'], ['med_reminders', 'Medication reminders']] },
   { h: 'Personal care', skills: [['bathing', 'Bathing or showering'], ['dressing_grooming', 'Dressing and grooming'], ['toileting', 'Toileting and incontinence care'], ['feeding', 'Feeding'], ['walking_wheelchair', 'Walking or wheelchair help'], ['transfers_gait_belt', 'Transfers with a gait belt']] },
-  { h: 'Higher-need care', skills: [['bedbound_care', 'Bedbound care and repositioning'], ['hospice_support', 'Hospice and end-of-life support'], ['two_person_transfers', 'Two-person transfers'], ['hoyer_lift', 'A Hoyer or other mechanical lift'],
+  { h: 'Higher-need care', skills: [['bedbound_care', 'Bedbound care and repositioning'], ['hospice_support', 'Hospice and end-of-life support'], ['hoyer_lift', 'A Hoyer or other mechanical lift'],
     ['catheter_bag', 'Emptying a catheter bag and cleaning around the site'], ['ostomy_bag', 'Emptying an ostomy bag and cleaning around the site'], ['dementia_care', "Dementia or Alzheimer's care"]] },
 ]
 export const SKILLS: Record<string, string> = Object.fromEntries(SKILL_GROUPS.flatMap((g) => g.skills))
@@ -100,8 +100,10 @@ const yesno = (id: string, label: string, extra: Partial<Item> = {}): Item => ({
 const text = (id: string, label: string, extra: Partial<Item> = {}): Item => ({ id, label, kind: 'text', ...extra })
 
 export const FORMS: Record<FormKey, Form> = {
+  /* v5 (2026-10-18, Samantha "2 approved with the added Level 3 sentence" on the no two-person transfers page, record
+     supabase/step1-approved-2026-10-18.json): "Two-person transfers" is gone from the task list on job and family-care cards. */
   employee_application: {
-    key: 'employee_application', screen: '2 and 3', title: 'Employee Application', version: 4, status: 'approved', signature: 'typed',
+    key: 'employee_application', screen: '2 and 3', title: 'Employee Application', version: 5, status: 'approved', signature: 'typed',
     sections: [
       { h: 'About you', p: ['Your name, phone and email are shown from your offer. Tap any of them to correct it.'], items: [
         text('preferred_name', 'What should families and the office call you?', { note: 'Your preferred first name, if it is different from your legal name.' }),
@@ -288,8 +290,10 @@ export const FORMS: Record<FormKey, Form> = {
       'AxisCare scheduling. I understand that: The office keeps my availability on file from this form. If I need to change it, I tell the office first, as soon as possible. Once the office approves the change, I update my availability in the AxisCare app so that AxisCare and the office always match. (Initials)',
     ],
   },
+  /* v3 (2026-10-18, the same approval): the Level 3 duties lose "two-person transfers (when scheduled)" and gain "One caregiver
+     per visit: a client who needs more than one person to transfer must have a lift." */
   experience: {
-    key: 'experience', screen: '7', title: 'Caregiver Experience & Client Matching Profile', version: 2, status: 'approved', signature: 'typed',
+    key: 'experience', screen: '7', title: 'Caregiver Experience & Client Matching Profile', version: 3, status: 'approved', signature: 'typed',
     sections: [
       { h: 'Tell us about your experience', p: [
         'Our goal is to match you with clients where you can be successful and confident. Everyone has different backgrounds, strengths, and preferences. Some caregivers enjoy companionship visits, while others have years of experience providing personal care or assisting clients with more complex needs.',
@@ -654,7 +658,9 @@ export async function formFingerprint(key: FormKey): Promise<string> {
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 /** Which forms may be signed for real: only the ones Samantha has approved, by version.
-    LATEST: Samantha, 2026-10-14 14:38:26 UTC, "ok great, approved!", on the screen 5b wording page
+    LATEST: Samantha, 2026-10-18 17:32 UTC, "2 approved with the added Level 3 sentence": the application at version 5 and the
+    experience form at version 3 (no two-person transfers); record supabase/step1-approved-2026-10-18.json. Before that:
+    Samantha, 2026-10-14 14:38:26 UTC, "ok great, approved!", on the screen 5b wording page
     (https://claude.ai/artifact/Gj2NFJSbr2DFVR6m6K7LFf, artifact version 1791988544-e4d9): the details form (edl_fcsr_consent)
     at version 5. supabase/step1-approved-2026-10-14.json lists every form in force with its version and wording fingerprint
     (and which approval covers it); the two 2026-10-13 records below stay as they were, as history.
@@ -666,7 +672,10 @@ export async function formFingerprint(key: FormKey): Promise<string> {
 export const APPROVED_FOR_REAL: Partial<Record<FormKey, number>> = {
   /* availability 3: APPROVED by Samantha, 2026-10-14 14:44:57 UTC, "approve availability v3" (the outside-hours texts question);
      record: supabase/step1-approved-availability-2026-10-14.json. Version 2 was in the 2026-10-13 approval. */
-  employee_application: 4, reference_consent: 3, fcra_disclosure: 2, availability: 3, experience: 2,
+  /* 2026-10-18: employee_application 5 (was 4) and experience 3 (was 2), APPROVED by Samantha 2026-10-18 17:32 UTC, "2 approved
+     with the added Level 3 sentence" (no two-person transfers page, https://claude.ai/artifact/W9WetxzBTJz7s8utoMfSkZ);
+     record: supabase/step1-approved-2026-10-18.json */
+  employee_application: 5, reference_consent: 3, fcra_disclosure: 2, availability: 3, experience: 3,
   /* 2026-10-14: version 5 (was 4 on 2026-10-13); record supabase/step1-approved-2026-10-14.json */
   edl_fcsr_consent: 5,
   vehicle: 5, non_driver: 2, employment_agreement: 1, medication_policy: 1, code_of_ethics: 1, hipaa_privacy: 1, client_rights: 1,
