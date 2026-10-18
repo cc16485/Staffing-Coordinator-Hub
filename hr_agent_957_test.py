@@ -183,7 +183,7 @@ def run(cron=True, vault=1, live=False, shas=None, **seedargs):
     if os.path.exists(d): os.remove(d)
     rep = os.path.join(TMP, "report.txt")
     if os.path.exists(rep): os.remove(rep)
-    env = dict(os.environ, SB_STEP="957", SB_TOKEN="sbp_test", SB_REPORT=rep, SB_API_BASE=URL, SB_FN_BASE=FURL, SB_SUPA_CLI=os.path.join(FAKEBIN, "supabase"),
+    env = dict(os.environ, SB_STEP="957", SB_TOKEN="sbp_test", SB_REPORT=rep, SB_API_BASE=FURL, SB_FN_BASE=FURL, SB_SUPA_CLI=os.path.join(FAKEBIN, "supabase"),
                SB_FNROOT=FNR, SB_FN_SHAS=json.dumps(shas or SHAS), SB_SETTLE="0", SB_HR_EMAIL="zach@mo-care.com", SB_CC_EMAIL="krystal@mo-care.com")
     p = subprocess.run(["python3", os.path.join(COPY, "hr_agent_957.py")], cwd=COPY, env=env, capture_output=True, text=True, timeout=300)
     txt = open(rep).read() if os.path.exists(rep) else ""
