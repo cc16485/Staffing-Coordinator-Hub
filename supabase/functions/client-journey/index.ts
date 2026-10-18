@@ -49,7 +49,8 @@ const LR: Any = (globalThis as any).LeadRules
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
 const BUCKET = 'client-journey-files'
-const PAYERS = ['private', 'medicaid', 'va', 'ltc', 'other']
+/* GUIDE (Medicare GUIDE) is its own payer (stage A, 2026-10-17); Medicaid stays for the clients already on it, no new ones */
+const PAYERS = ['private', 'medicaid', 'va', 'ltc', 'guide', 'other']
 const lc = (s: unknown) => String(s ?? '').trim().toLowerCase()
 const today = () => R.ymd(Date.now())
 
@@ -63,6 +64,7 @@ export function payerFrom(fs: unknown): string | 'cds' | null {
   if (/\bva\b|veteran/.test(s)) return 'va'
   if (/ltc|long.?term/.test(s)) return 'ltc'
   if (/private/.test(s)) return 'private'
+  if (/guide|dementia care program/.test(s)) return 'guide'
   return 'other'
 }
 
@@ -92,7 +94,7 @@ export function routeCc(pp: Any, st: Any, payer: string | null, lead: Any, asked
     if (hit) return { cc: hit, how: 'lead coordinator' }
   }
   const routes = st?.client_journey_routing && typeof st.client_journey_routing === 'object' ? st.client_journey_routing : {}
-  const r = ok(routes[payer || 'unknown'])
+  const r = ok(routes[payer || 'unknown']) || (payer ? ok(routes.unknown) : '')
   if (r) return { cc: r, how: payer ? 'routing' : 'routing (payer not known yet)' }
   if (ok(st?.client_journey_default_cc)) return { cc: ok(st.client_journey_default_cc), how: 'default in Settings' }
   return { cc: lc(opener) || pp.owners[0] || '', how: 'opened by' }
@@ -159,7 +161,9 @@ async function settings(db: Any): Promise<Any> {
   return data?.data ?? {}
 }
 function ctxFor(pp: Any, st: Any) {
-  const staffing = lc(st?.client_journey_staffing_default) || pp.staffing[0] || pp.owners[0] || null
+  /* stage A (2026-10-17): with no Staffing Coordinator, staffing steps go to the client's Care Coordinator (journey-rules
+     ownerOf), never to the first owner */
+  const staffing = lc(st?.client_journey_staffing_default) || pp.staffing[0] || null
   return { today: today(), owner_emails: pp.owners, staffing_email: staffing }
 }
 async function load(db: Any, by: Any): Promise<{ j: Any; steps: Any[] } | null> {
@@ -368,7 +372,8 @@ async function settle(db: Any, j: Any, steps: Any[], dfs: Any[], pp: Any, st: An
     if (['ready', 'attention', 'blocked'].includes(r.status) && !r.st.ready_since && r.st.state !== 'waiting') {
       await putStep(db, j.journey_id, r.key, { ...stripRow(r.st), ready_since: now }); changed++
     }
-    if (r.def.proof === 'verified' && ['ready', 'attention'].includes(r.status) && r.def.verify && VERIFY[r.def.verify] && opts.verify !== false) {
+    /* stage A (2026-10-17): a verified step a person reopened stays open until they finish it or ask the Hub to check again */
+    if (r.def.proof === 'verified' && ['ready', 'attention'].includes(r.status) && r.def.verify && VERIFY[r.def.verify] && opts.verify !== false && !(r.st.evidence || {}).hold_auto) {
       const ok = await VERIFY[r.def.verify]({ j, lead, ax, db })
       /* not done yet, but the Hub can say how far along it is (the shifts): keep that on the step when it changes */
       if (ok && ok.pending) {
@@ -924,8 +929,17 @@ Deno.serve(async (req) => {
     if (!done && !row.stop) return json({ outcome: 'refused', error: 'This step is not done.' }, 422)
     if (!reason) return json({ outcome: 'refused', error: 'Say why it is being reopened.' }, 422)
     if (s.state === 'exception' && !isOwner) return json({ outcome: 'refused', error: 'Only an owner can undo an owner exception.' }, 403)
-    await putStep(db, j.journey_id, key, { ...stripRow(s), state: 'open', completed_by: null, completed_by_name: null, completed_at: null, exception: null })
+    /* stage A (2026-10-17): reopening a step the Hub ticks used to be undone a second later by the Hub ticking it again.
+       Now it holds: the Hub stops checking that step until a person finishes it or presses "Let the Hub check again" */
+    const hold = row.def.proof === 'verified' ? { hold_auto: { by: who.email, at: now, reason: reason.slice(0, 500) } } : {}
+    await putStep(db, j.journey_id, key, { ...stripRow(s), state: 'open', evidence: { ...(s.evidence || {}), ...hold }, completed_by: null, completed_by_name: null, completed_at: null, exception: null })
     await event(db, j.journey_id, key, who, 'reopened', { was: { state: s.state, answer: s.answer ?? null, evidence: s.evidence ?? null, by: s.completed_by, at: s.completed_at } }, reason)
+  } else if (op === 'recheck') {
+    const ev = s.evidence || {}
+    if (row.def.proof !== 'verified' || !ev.hold_auto) return json({ outcome: 'refused', error: 'The Hub is already checking this step.' }, 422)
+    const { hold_auto: _was, ...rest } = ev
+    await putStep(db, j.journey_id, key, { ...stripRow(s), evidence: rest })
+    await event(db, j.journey_id, key, who, 'recheck', { was_held: _was }, reason || null)
   } else if (op === 'not_needed') {
     if (!reason) return json({ outcome: 'refused', error: 'Say why this step isn\'t needed.' }, 422)
     if (row.def.required !== false && !isOwner) return json({ outcome: 'refused', error: 'This step is required. Only an owner can mark it not needed.' }, 403)
