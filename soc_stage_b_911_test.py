@@ -48,7 +48,7 @@ v1_n = lambda: q1("select count(*) from public.client_journey_step_def where coa
 
 M = {}; CALLS = []
 def reset(**m):
-    M.clear(); M.update(dict(fail_deploy=None, gate=True, gates={}, live="old"), **m); CALLS.clear()
+    M.clear(); M.update(dict(fail_deploy=None, gate=True, gates={}, live="old", drop=['_shared/duty.ts']), **m); CALLS.clear()
     p = os.path.join(TMP, "deploys")
     if os.path.exists(p): os.remove(p)
     open(os.path.join(TMP, "mode.json"), "w").write(json.dumps(M))
@@ -96,6 +96,11 @@ if a[:2] == ['functions', 'download']:
     src = {FNROOT!r} if (done or M['live'] == 'new') else {OLDBUILD!r}
     shutil.copytree(src, os.path.join(os.getcwd(), 'supabase', 'functions'), dirs_exist_ok=True)
     if M['live'] == 'other' and not done and fn == 'caregiver-journey': open(os.path.join(os.getcwd(), 'supabase', 'functions', 'caregiver-journey', 'index.ts'), 'a').write('// someone else')
+    # like the real download: the live copy of a function holds only the files ITS build imported (911 found client-journey had no duty.ts)
+    if not done and M['live'] != 'new' and fn == 'client-journey':
+        for rel in M.get('drop', ['_shared/duty.ts']):
+            p_ = os.path.join(os.getcwd(), 'supabase', 'functions', rel)
+            if os.path.exists(p_): os.remove(p_)
     sys.exit(0)
 sys.exit(1)
 """)
@@ -145,6 +150,10 @@ except DatabaseError:
     refused = True; cc.run("rollback")
 cc.run("update public.client_journey set catalog = 'v1'"); cc.run(open(os.path.join(COPY, "soc_stage_b_911_rollback.sql")).read()); cc.close()
 ck("13 the undo refuses while a journey is on the nine steps, then puts the database back exactly", refused and not has_col() and nine_n() == 0 and v1_n() == V1)
+c, out = run(drop=["_shared/duty.ts", "client-journey/care.ts"])
+ck("15 a file the built-on code DID have is missing from the live copy: still stops, naming it", c != 0 and "client-journey/care.ts" in out and not deployed() and not writes(), out)
+c, out = run()
+ck("16 the case 911 hit for real: client-journey newly imports duty.ts, which the live copy doesn't have yet: runs", c == 0 and "RESULT: DONE" in out, out)
 src = open(os.path.join(HERE, "soc_stage_b_911.py")).read()
 ck("14 no em dash in what the step says", not re.search(r"—", "\n".join(l for l in src.split("\n") if "say(" in l or "bad(" in l or "stop(" in l)))
 for n, okk, note in res: print(("PASS  " if okk else "FAIL  ") + n + ("\n      " + note if note else ""))
