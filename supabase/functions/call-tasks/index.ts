@@ -32,7 +32,8 @@ import Anthropic from 'npm:@anthropic-ai/sdk'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { seatHolder } from '../_shared/duty.ts'
 import { VERSION, MODEL, ACK, request, retryRequest, clean, answerOf, openCards, transcriptText, shortName, related as relatedOf, workflows,
-  ownerFor, dueFor, dueEnd, checkRequest, cleanCheck, nextStatus, cardIdFor, liveCard, chicago, LIVE_KIND, type CallIn, type Who, type OpenCard, type Earlier, type Related, type Action } from '../_shared/call-tasks.ts'
+  ownerFor, dueFor, dueEnd, checkRequest, cleanCheck, nextStatus, cardIdFor, liveCard, chicago, LIVE_KIND, type CallIn, type Who, type OpenCard, type Earlier, type Related, type Action,
+  checkMode, stepProof, cardDecision, cardCheckRequest, cleanCardCheck, CARD_CHECK_DAYS, CARD_CHECK_PER_RUN, CARD_CHECK_AI_PER_RUN, CARD_CHECK_EVERY_MS, type Facts, type Ev, type Fact, type CheckMode } from '../_shared/call-tasks.ts'
 
 const GHL = 'https://services.leadconnectorhq.com'
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
@@ -294,6 +295,14 @@ Deno.serve(async (req) => {
     Object.assign(out, { live_cards: lc.made, live_added: lc.added, live_closed: lc.closed, live_unassigned: lc.unassigned, live_errors: lc.errors })
     if (lc.errors) out.save_failed = (out.save_failed || 0) + 1
   }
+  /* 7b · CARDS CLOSE THEMSELVES (2026-10-17): open call cards are looked at again; practice, suggest or close */
+  const ccMode = checkMode(st)
+  if (live && ccMode !== 'off') {
+    const cc = await checkCards(db, ai, hub, tok, ccMode)
+    Object.assign(out, { card_check_mode: ccMode, cards_open: cc.cards, cards_checked: cc.checked, cards_asked: cc.asked, cards_would_close: cc.would_close,
+      cards_would_suggest: cc.would_suggest, cards_closed: cc.closed, cards_suggested: cc.suggested, card_check_errors: cc.errors })
+    if (cc.broken) out.save_failed = (out.save_failed || 0) + 1
+  }
   /* 8 · the promise watch (v13) */
   const pw = await watchPromises(db, ai, hub, tok, since)
   Object.assign(out, { promises: pw.promises, promise_checks: pw.checked, promises_kept: pw.kept, would_remind: pw.would_remind, promise_errors: pw.errors })
@@ -400,8 +409,8 @@ const at = (ms: number) => new Date(ms).toLocaleString('en-US', { timeZone: 'Ame
 
 /** Everything that happened with this person after the promise: their GoHighLevel calls and texts (with the reader's
  *  summary of a later call), cards about them made or changed, call outcomes tapped. Bodies go to the check only. */
-async function activityFor(db: Any, hub: Any, tok: string, w: Any, newest: Map<string, Any>): Promise<{ lines: string[]; latest: number }> {
-  const since = Date.parse(w.call_at), lines: Array<[number, string]> = []
+async function activityFor(db: Any, hub: Any, tok: string, w: Any, newest: Map<string, Any>): Promise<{ lines: string[]; latest: number; events: Ev[] }> {
+  const since = Date.parse(w.call_at), lines: Array<[number, string]> = [], events: Ev[] = []
   let contact = String(newest.get(w.message_id)?.detail?.contact_id || '')
   if (!contact) {
     const r = await fetch(`${GHL}/conversations/messages/${encodeURIComponent(String(w.message_id).replace(/^sms:/, ''))}`, { headers: H(tok) })
@@ -425,12 +434,14 @@ async function activityFor(db: Any, hub: Any, tok: string, w: Any, newest: Map<s
           : Number(m.type) === 1 || /SMS/i.test(String(m.messageType || '')) ? String(m.body || '').slice(0, 500)
           : '(' + String(m.messageType || 'message').replace(/^TYPE_/, '').toLowerCase() + ')'
         lines.push([t, `[${at(t)}] ${who}${auto}: ${what}`])
+        /* the same messages, as facts for the card check's hard proof (2026-10-17) */
+        events.push({ t, dir: m.direction === 'inbound' ? 'in' : 'out', kind: call ? 'call' : (Number(m.type) === 1 || /SMS/i.test(String(m.messageType || ''))) ? 'sms' : 'other', auto: !!auto })
       }
     }
   }
   const nm = lc(w.who_name)
   if (nm) for (const o of hub.ops) {
-    if (!o || lc(o.about) !== nm) continue
+    if (!o || lc(o.about) !== nm || (w.card_id && o.id === w.card_id)) continue
     const c = Date.parse(String(o.created_at || '')), u = Date.parse(String(o.closed_at || o.resolved_at || o.updated_at || ''))
     const by = String(o.created_by || '')
     if (c > since) lines.push([c, `[${at(c)}] Card made by ${by.includes('@') || /\s/.test(by) ? by.split('@')[0] : 'the Hub'}: ${String(o.title || '').slice(0, 140)} (${String(o.status || 'open')})`])
@@ -441,7 +452,7 @@ async function activityFor(db: Any, hub: Any, tok: string, w: Any, newest: Map<s
     for (const x of rec ?? []) { const t = Date.parse(String(x.recorded_at)); lines.push([t, `[${at(t)}] Office tapped a call outcome: ${String(x.outcome || '').slice(0, 80)}`]) }
   }
   lines.sort((a, b) => a[0] - b[0])
-  return { lines: lines.map((l) => l[1]), latest: lines.length ? lines[lines.length - 1][0] : 0 }
+  return { lines: lines.map((l) => l[1]), latest: lines.length ? lines[lines.length - 1][0] : 0, events }
 }
 
 async function watchPromises(db: Any, ai: Any, hub: Any, tok: string, since: string) {
@@ -574,6 +585,122 @@ async function makeCards(db: Any, hub: Any, st: Any) {
       if (await put({ ...c, status: 'done', closed_at: nowIso, closed_by: 'call-tasks', close_reason: note, last_activity_at: nowIso,
         history: [...hist, { at: nowIso, by: 'AI (call follow-ups)', ref: r.message_id, text: note }] })) { res.closed++; writes++ }
     }
+  }
+  return res
+}
+
+/* ── CARDS CLOSE THEMSELVES (2026-10-17) ─────────────────────────────────────────────────────────────────────────────
+   See _shared/call-tasks.ts for her rules. Every open call card the AI made in the last 14 days is looked at again, at
+   most hourly, 12 a run, longest-unchecked first; the AI is asked only when something new happened (8 a run). What it
+   found is kept in call_card_check (practice shows it there and nowhere else). In suggest and close modes the card is
+   changed through call_card_patch, which only touches a card that is still open and never replaces a person's edits. */
+/** What AxisCare now shows for a visit a step changes (read only). A read that fails is never proof. */
+async function visitFact(a: Action, ids: { client?: string; caregiver?: string }, card: Any): Promise<Fact> {
+  if (!a.date) return { proven: false, line: '' }
+  const list = ids.caregiver ? await axVisits(`caregiverIds=${encodeURIComponent(ids.caregiver)}&startDate=${a.date}&endDate=${a.date}`)
+    : ids.client ? await axVisits(`clientIds=${encodeURIComponent(ids.client)}&startDate=${a.date}&endDate=${a.date}`) : null
+  if (list === null) return { proven: false, line: '' }
+  const hits = list.filter((v: Any) => !a.client_name || sameName(a.client_name, v.client))
+  const was: Any = (a.resolved as Any)?.visit || null
+  const who = a.client_name || was?.client || 'the client'
+  const line = `[AxisCare now] ${who}, ${a.date}: ${hits.length ? hits.map((v: Any) => `${v.start}-${v.end} with ${v.caregiver || 'nobody'}`).join('; ') : 'no visit'}`
+  let proven = false
+  if (was && /^\s*(cancel|remove)\b/i.test(String(card.title || ''))) proven = !hits.some((v: Any) => v.start === was.start)
+  else if (was && a.start && a.end && (was.start !== a.start || was.end !== a.end))
+    proven = hits.some((v: Any) => v.start === a.start && v.end === a.end) && !hits.some((v: Any) => v.start === was.start && v.end === was.end)
+  return { proven, line }
+}
+/** Whether a call-off case for that client and day was opened after the card. */
+function coverageFact(a: Action, card: Any, coverage: Any[]): Fact {
+  const since = Date.parse(String(card.created_at || ''))
+  const who = String(a.client_name || card.about || '')
+  const c = coverage.find((x: Any) => x && Date.parse(String(x.opened_at || '')) > since && sameName(who, String(x.client || '')) && (!a.date || String(x.shift_date) === a.date))
+  return c ? { proven: true, line: `[Hub] Call-off case opened ${chicago(String(c.opened_at))} for ${c.client}, ${c.shift_date}` } : { proven: false, line: '' }
+}
+async function checkCards(db: Any, ai: Any, hub: Any, tok: string, mode: CheckMode) {
+  const res = { cards: 0, checked: 0, asked: 0, would_close: 0, would_suggest: 0, closed: 0, suggested: 0, errors: 0, broken: false }
+  const now = Date.now(), nowIso = new Date(now).toISOString()
+  const { data: row } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+  const ops: Any[] = Array.isArray(row?.data) ? row.data : []
+  const cands = ops.filter((o: Any) => o && o.kind === LIVE_KIND && o.status === 'open' && o.created_by === 'call-tasks'
+    && now - (Date.parse(String(o.created_at || '')) || 0) <= CARD_CHECK_DAYS * 864e5)
+  res.cards = cands.length
+  if (!cands.length) return res
+  const { data: have, error: hErr } = await db.from('call_card_check').select('*').in('card_id', cands.map((c: Any) => c.id))
+  if (hErr) { res.broken = true; res.errors++; return res }
+  const byId = new Map<string, Any>((have ?? []).map((h: Any) => [String(h.card_id), h]))
+  const due = cands.filter((c: Any) => { const h = byId.get(c.id); return !h || !h.checked_at || now - Date.parse(h.checked_at) >= CARD_CHECK_EVERY_MS })
+    .sort((a: Any, b: Any) => String(byId.get(a.id)?.checked_at || '').localeCompare(String(byId.get(b.id)?.checked_at || '')))
+    .slice(0, CARD_CHECK_PER_RUN)
+  const mids = [...new Set(due.map((c: Any) => String(c.source?.message_id || '')).filter(Boolean))]
+  const { data: rd } = mids.length ? await db.from('call_task_reading').select('message_id, read_at, tasks, detail, person_id, call_at').in('message_id', mids).order('read_at', { ascending: false }) : { data: [] }
+  const newest = new Map<string, Any>()
+  for (const r of rd ?? []) if (!newest.has(r.message_id)) newest.set(r.message_id, r)
+  const patch = async (id: string, p: Record<string, Any>, note: string) => {
+    const { data, error } = await db.rpc('call_card_patch', { p_id: id, p_patch: p, p_history: { at: nowIso, by: 'AI (call follow-ups)', text: note } })
+    if (error) { res.errors++; return false }
+    return data === true
+  }
+  for (const c of due) {
+    const h = byId.get(c.id)
+    const rec: Record<string, Any> = { card_id: c.id, message_id: String(c.source?.message_id || '') || null, mode, checked_at: nowIso, checks: (h?.checks || 0) + 1 }
+    try {
+      const r = newest.get(String(c.source?.message_id || ''))
+      const ti = Number((/_(\d+)$/.exec(String(c.id)) || [])[1] || 0)
+      const acts: Action[] = Array.isArray(r?.tasks?.[ti]?.actions) ? r.tasks[ti].actions : []
+      const w = { message_id: String(c.source?.message_id || ''), call_at: String(c.created_at), who_name: c.about, person_id: c.person_id || r?.person_id || null, card_id: c.id }
+      const act = await activityFor(db, hub, tok, w, newest)
+      const ids: { client?: string; caregiver?: string } = {}
+      if (w.person_id && acts.some((a) => a.kind === 'axiscare_visit_change')) {
+        const { data: src } = await db.from('person_source_id').select('entity_type, source_id').eq('person_id', w.person_id).eq('system', 'axiscare').eq('needs_review', false)
+        for (const x of src ?? []) { if (x.entity_type === 'client') ids.client = String(x.source_id); if (x.entity_type === 'caregiver') ids.caregiver = String(x.source_id) }
+      }
+      const facts: Facts = { events: act.events, visits: {}, coverage: {} }
+      const factLines: string[] = []
+      for (const [i, a] of acts.entries()) {
+        if (a.kind === 'axiscare_visit_change') { const v = await visitFact(a, ids, c); facts.visits[i] = v; if (v.line) factLines.push(v.line) }
+        if (a.kind === 'open_calloff_case') { const v = coverageFact(a, c, hub.coverage); facts.coverage[i] = v; if (v.line) factLines.push(v.line) }
+      }
+      const proofs = acts.map((a, i) => ({ kind: a.kind, ...stepProof(a, i, c, facts) }))
+      const lines = [...act.lines, ...factLines]
+      const sig = String(act.latest) + '|' + factLines.join('|')
+      let verdict = String(h?.verdict || 'none'), why = String(h?.why || ''), evidence: string[] = Array.isArray(h?.evidence) ? h.evidence : []
+      const allProven = acts.length > 0 && proofs.every((p) => p.proven)
+      if (!lines.length) { verdict = 'none'; why = 'Nothing has happened with them since the card was made.'; evidence = [] }
+      else if (allProven) { verdict = 'done'; why = proofs.map((p) => p.how).join('; ').slice(0, 300); evidence = proofs.map((p) => p.how).slice(0, 5) }   // proof needs no AI
+      else if (sig !== h?.sig) {
+        if (res.asked >= CARD_CHECK_AI_PER_RUN) continue          // asked enough this run: this card waits for the next one
+        res.asked++
+        const got = cleanCardCheck(await ai.beta.messages.create(cardCheckRequest(c, Array.isArray(c.steps) ? c.steps : [], lines)))
+        if ('error' in got) throw new Error(got.error)
+        verdict = got.status; why = got.why; evidence = got.evidence
+      }
+      const would = cardDecision(acts, proofs, verdict, 'practice')
+      if (would === 'close') res.would_close++
+      if (would === 'suggest') res.would_suggest++
+      /* a person's "Not yet" holds until something new happens with them */
+      const no = Date.parse(String(c.looks_done_no?.at || '')) || 0
+      const fresh = !no || act.latest > no
+      const doIt = mode === 'practice' || !fresh ? 'none' : cardDecision(acts, proofs, verdict, mode)
+      if (doIt === 'close') {
+        const how = proofs.map((p) => p.how).filter(Boolean).join('; ')
+        if (await patch(c.id, { status: 'done', closed_at: nowIso, closed_by: 'call-tasks', resolution_code: 'proof', close_reason: ('Closed on proof: ' + how).slice(0, 400),
+          last_activity_at: nowIso, looks_done: { at: nowIso, why: how.slice(0, 300), evidence: proofs.map((p) => p.how).filter(Boolean).slice(0, 5), source: 'proof', sig } }, ('Closed on proof: ' + how).slice(0, 400))) res.closed++
+      } else if (doIt === 'suggest' && c.looks_done?.sig !== sig) {
+        const all = acts.length > 0 && proofs.every((p) => p.proven)
+        const ld = all ? { at: nowIso, why: proofs.map((p) => p.how).join('; ').slice(0, 300), evidence: proofs.map((p) => p.how).slice(0, 5), source: 'proof', sig }
+          : { at: nowIso, why, evidence, source: 'ai', sig }
+        if (await patch(c.id, { looks_done: ld }, 'Looks done: ' + String(ld.why).slice(0, 300))) res.suggested++
+      }
+      Object.assign(rec, { sig, verdict, why: why.slice(0, 300) || null, evidence: evidence.slice(0, 5), proofs, would, done: doIt, last_activity_at: act.latest ? new Date(act.latest).toISOString() : null, error: null })
+      if (!h || h.would !== would || h.verdict !== verdict) rec.history = [...(Array.isArray(h?.history) ? h.history : []), { at: nowIso, verdict, would, done: doIt }].slice(-30)
+      res.checked++
+    } catch (e) {
+      res.errors++
+      Object.assign(rec, { error: String((e as Error)?.message || e).slice(0, 300) })
+    }
+    const { error: sErr } = h ? await db.from('call_card_check').update(rec).eq('card_id', c.id) : await db.from('call_card_check').insert(rec)
+    if (sErr) { res.errors++; res.broken = true }
   }
   return res
 }
