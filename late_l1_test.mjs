@@ -13,7 +13,9 @@ let NOW, VISITS, MSGS, SENT, APP, T, AI, NEXT, SEQ, AIFAIL, CALLS, TRANSCRIPTS
 const reset = () => {
   NOW = Date.now(); SEQ = 1; SENT = []; AI = []; AIFAIL = false; CALLS = []; TRANSCRIPTS = {}
   NEXT = { kind: 'late', eta: 20 }
-  APP = { ops_settings: {}, caregivers: [{ first: 'Maria', last: 'Test', phone: '4175550101', axiscare_id: '1', active: true }, { first: 'Joe', last: 'Test', phone: '4175550102', axiscare_id: '2', active: true },
+  /* SOP ruling 8 (2026-10-17): the alert list is set, as it is live; an EMPTY list now falls back through notice-to.ts
+     (routine_notices_test.mjs), not to a name in the code. */
+  APP = { ops_settings: { coverage_alert_admins: ['samantha@mo-care.com', 'krystal@mo-care.com'] }, caregivers: [{ first: 'Maria', last: 'Test', phone: '4175550101', axiscare_id: '1', active: true }, { first: 'Joe', last: 'Test', phone: '4175550102', axiscare_id: '2', active: true },
       { first: 'Ann', last: 'Test', phone: '', axiscare_id: '3', active: true }],
     coordinator_staff: [{ email: 'samantha@mo-care.com', name: 'Samantha Owner', phone: '4175559001' }, { email: 'krystal@mo-care.com', name: 'Krystal Office', phone: '4175559002' }],
     ops_items: [], coverage_cases: [], late_watch_state: [], automation_heartbeats: [] }

@@ -30,6 +30,8 @@ try {
     .replace("'../_shared/send-problems.ts'", "'" + stub('send', 'export const ghlSendChecked = async (_s, _h, who, o, m) => { globalThis.__sent.push({ who, to: o.address, subject: m.subject }); return true }') + "'")
     .replace("'../_shared/staff-contact.ts'", "'" + stub('staffc', 'export const ghlStaffContact = async () => "sam"') + "'")
     .replace("'../_shared/audience-guard.ts'", "'" + path.resolve(F, '_shared/audience-guard.ts') + "'")
+    /* SOP ruling 8: the cards and the summary go to whoever notice-to.ts names (here, the Springfield lead) */
+    .replace("'../_shared/notice-to.ts'", "'" + stub('notice', 'export const noticeTo = async () => ({ email: "krystal@mo-care.com", name: "Krystal Lead", why: "springfield_lead", area: "" }); export const firstName = (n) => String(n).split(" ")[0]') + "'")
   /* make today's date the window for '__TODAY__' */
   src = src.replace("const WINDOWS: Record<string, [string, string]> = {", "const WINDOWS: Record<string, [string, string]> = { '__TODAY__': ['" + mmdd + "', '" + mmdd + "'],")
   fs.writeFileSync(path.join(tmp, 'ca.ts'), src); globalThis.__sent = []
@@ -40,7 +42,7 @@ try {
   ck('the schedule emails no lead, client or family contact (not one)', fam.length === 0, r.sent)
   ck('...caregivers (staff) still get theirs', r.sent.some((x) => x.who === 'campaign-auto' && x.to === 'cg@example.com'), r.sent)
   const cards = STORE.ops_items.filter((x) => String(x.id).startsWith('ops_camp_'))
-  ck('...each due family email is one card on Samantha\'s My Work: "ready for you to send", linking to Campaigns', cards.length === 3 && cards.every((c) => c.owner === 'samantha@mo-care.com' && c.status === 'open' && /^Campaign ready for you to send/.test(c.title) && c.link === '#campaigns'), cards)
+  ck('...each due family email is one card on the Springfield lead\'s My Work (SOP ruling 8): "ready for you to send", linking to Campaigns', cards.length === 3 && cards.every((c) => c.owner === 'krystal@mo-care.com' && c.owner_name === 'Krystal Lead' && c.status === 'open' && /^Campaign ready for you to send/.test(c.title) && c.link === '#campaigns'), cards)
   ck('...her summary email says they are waiting for her', r.sent.some((x) => x.who === 'staff-alert' && /Campaign autopilot/.test(x.subject)) && r.j.held === 3, r.j)
   ck('...nothing is logged as sent to families (so she can still send them herself this year)', !STORE.campaign_log.some((x) => /monthly|clients|client_contacts/.test(x.source)), STORE.campaign_log)
   r = await run()

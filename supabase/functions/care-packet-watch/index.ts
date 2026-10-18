@@ -28,6 +28,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { opEvent } from '../_shared/events.ts'
 import { axVisitsReader, chiDay, standing, upcomingByCaregiver, whenWords } from '../_shared/packet-visits.ts'
+import { noticeTo } from '../_shared/notice-to.ts'
 // deno-lint-ignore no-explicit-any
 type Any = any
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -40,7 +41,6 @@ export function inTextHours(now = new Date()): boolean {
   const h = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/Chicago', hour: 'numeric', hourCycle: 'h23' }).format(now))
   return h >= 8 && h < 20
 }
-const FALLBACK_OWNER = 'samantha@mo-care.com'
 export const cardId = (packetId: string) => 'ops_cpk_' + String(packetId).replace(/[^0-9a-f]/gi, '').slice(0, 32)
 
 const STAND_WORDS: Record<string, string> = {
@@ -75,12 +75,9 @@ export function decide(was: Any, card: Any | null): 'open' | 'update' | 'close' 
   return card.missing_ids.some((id: string) => !before.has(id)) ? 'open' : 'leave_closed'   // someone NEW: back it comes
 }
 
+/* SOP ruling 8 (2026-10-17): the Client care owner, else the Springfield lead, else Samantha (_shared/notice-to.ts). */
 async function ownerOf(db: Any): Promise<string> {
-  try {
-    const { data: dom } = await db.from('domains').select('owner_person').eq('code', 'client_care').eq('entity', 'cc_ihs').maybeSingle()
-    if (dom?.owner_person) { const { data: p } = await db.from('persons').select('primary_email').eq('person_id', dom.owner_person).maybeSingle(); if (p?.primary_email) return String(p.primary_email).toLowerCase() }
-  } catch { /* fall back */ }
-  return FALLBACK_OWNER
+  return (await noticeTo(db, 'client_care')).email
 }
 
 if (typeof Deno !== 'undefined' && Deno.serve) Deno.serve(async (req: Request) => {

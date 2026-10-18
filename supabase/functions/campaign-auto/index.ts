@@ -8,14 +8,14 @@
 //   caregivers -> the caregiver roster synced from AxisCare
 // FAMILIES ARE NEVER EMAILED BY THE SCHEDULE (2026-10-07 audit, her rule: automation never contacts clients, families or
 // leads by itself). When an email for leads, clients or client contacts is due, the autopilot sends nothing to them: it
-// puts one My Work card on Samantha's list ("ready for you to send") and a person sends it from Campaigns. Only the
+// puts one My Work card on the Springfield lead's list ("ready for you to send") and a person sends it from Campaigns. Only the
 // caregiver audience (staff) is still sent on the schedule.
 // Referral-partner emails stay manual (relationship-timed, not calendar-timed).
 //
 // Safety rails: master switch + per-audience switches live in app_data
 // 'campaign_settings' (default OFF). Each email sends at most once per year
 // per audience (campaign_log is checked, manual sends count too). GHL
-// do-not-disturb contacts are skipped. A summary email goes to Samantha after
+// do-not-disturb contacts are skipped. A summary email goes to the Springfield lead after
 // every autopilot run that sends anything.
 //
 // Library JSON is hosted at caring-companions.pages.dev/email-assets/library.json
@@ -29,6 +29,7 @@ import { ghlContactIfAllowed } from '../_shared/optout.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { loadGuard, verdict } from '../_shared/audience-guard.ts'
+import { noticeTo, firstName } from '../_shared/notice-to.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -48,7 +49,6 @@ export const CAMPAIGN_ROLES = OFFICE_ROLES
 const LIB_URL = 'https://caring-companions.pages.dev/email-assets/library.json'
 const ASSETS = 'https://caring-companions.pages.dev/email-assets'
 const LOGO = 'https://caring-companions.pages.dev/email-assets/cc-logo.png'
-const ADMIN = 'samantha@mo-care.com'
 
 // When each "when" phrase is due (MM-DD ranges, America/Chicago).
 const WINDOWS: Record<string, [string, string]> = {
@@ -95,10 +95,10 @@ function blocksToHtml(e: any) {
    somebody's phone. Everything below already sets its own background
    explicitly, which is the other half of the fix. */
 // deno-lint-ignore no-explicit-any
-function buildEmailHTML(e: any) {
+function buildEmailHTML(e: any, unsub = 'samantha@mo-care.com') {   // unsub: the Springfield lead (SOP ruling 8)
   const ac = e.ac
   const footer = e.footer || "You're receiving this because you've been in touch with Caring Companions about care for your family."
-  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light"><title>${e.subj}</title></head><body style="margin:0;padding:0;background:#e7e9ec;"><div style="display:none;max-height:0;overflow:hidden;opacity:0;">${e.pre || ''}</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#e7e9ec;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:600px;background:#ffffff;border-radius:14px;overflow:hidden;"><tr><td style="height:6px;background:${ac};font-size:0;line-height:0;">&nbsp;</td></tr><tr><td align="center" style="background:#f7f2e8;padding:26px 20px 22px;border-bottom:1px solid #efe7d6;"><img src="${LOGO}" width="180" alt="Caring Companions In-Home Senior Care" style="display:inline-block;width:180px;max-width:60%;height:auto;"><div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:bold;letter-spacing:0.14em;text-transform:uppercase;color:#9aa7b4;margin-top:12px;">Quality Caregivers &middot; 24 &middot; 7 &middot; 365</div></td></tr><tr><td style="padding:0;background:${rgba(ac, 0.14)};"><img src="${ASSETS}/${e.banner}.jpg" width="600" alt="Caring Companions" style="display:block;width:100%;max-width:600px;height:auto;border:0;"></td></tr><tr><td style="padding:34px 40px 38px;"><div style="font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:bold;letter-spacing:0.1em;text-transform:uppercase;color:${ac};margin-bottom:12px;">${e.eye || ''}</div><h1 style="margin:0 0 20px;font-family:Georgia,'Times New Roman',serif;font-size:29px;line-height:1.22;font-weight:600;color:#16334f;">${e.head}</h1>${blocksToHtml(e)}${e.cta ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:30px 0 8px;"><tr><td align="center"><a href="${e.cta.href}" style="display:inline-block;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:bold;color:#ffffff;background:#1c3f63;text-decoration:none;padding:15px 34px;border-radius:10px;">${e.cta.label}</a></td></tr></table>` : ''}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;border-top:1px solid #ecebe6;"><tr><td style="padding-top:22px;"><div style="font-family:Georgia,'Times New Roman',serif;font-size:17px;font-style:italic;color:#516274;margin-bottom:3px;">${e.sign || 'With care,'}</div><div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:bold;color:#1c3f63;">The Caring Companions Team</div></td></tr></table></td></tr><tr><td align="center" style="background:#1c3f63;padding:26px 40px 28px;"><div style="font-family:Georgia,'Times New Roman',serif;font-size:18px;color:#ffffff;margin-bottom:6px;">Caring Companions In-Home Senior Care</div><div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.6;color:#b6c5d6;">Serving Springfield &amp; Southwest Missouri since 2017<br><a href="tel:4172348494" style="color:#e7c87a;text-decoration:none;font-weight:bold;">(417) 234-8494</a> &middot; 1331 N Stewart Ave, Ste B, Springfield, MO 65802</div><div style="height:1px;background:rgba(255,255,255,0.14);margin:18px auto 14px;max-width:360px;font-size:0;line-height:0;">&nbsp;</div><div style="font-family:Arial,Helvetica,sans-serif;font-size:11.5px;line-height:1.6;color:#8298b0;">${footer}<br><a href="mailto:samantha@mo-care.com?subject=Please%20unsubscribe%20me" style="color:#a9bccf;">Unsubscribe</a> &middot; <a href="https://mo-care.com" style="color:#a9bccf;">mo-care.com</a></div></td></tr></table></td></tr></table></body></html>`
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><meta name="supported-color-schemes" content="light"><title>${e.subj}</title></head><body style="margin:0;padding:0;background:#e7e9ec;"><div style="display:none;max-height:0;overflow:hidden;opacity:0;">${e.pre || ''}</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#e7e9ec;"><tr><td align="center" style="padding:24px 12px;"><table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:600px;background:#ffffff;border-radius:14px;overflow:hidden;"><tr><td style="height:6px;background:${ac};font-size:0;line-height:0;">&nbsp;</td></tr><tr><td align="center" style="background:#f7f2e8;padding:26px 20px 22px;border-bottom:1px solid #efe7d6;"><img src="${LOGO}" width="180" alt="Caring Companions In-Home Senior Care" style="display:inline-block;width:180px;max-width:60%;height:auto;"><div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:bold;letter-spacing:0.14em;text-transform:uppercase;color:#9aa7b4;margin-top:12px;">Quality Caregivers &middot; 24 &middot; 7 &middot; 365</div></td></tr><tr><td style="padding:0;background:${rgba(ac, 0.14)};"><img src="${ASSETS}/${e.banner}.jpg" width="600" alt="Caring Companions" style="display:block;width:100%;max-width:600px;height:auto;border:0;"></td></tr><tr><td style="padding:34px 40px 38px;"><div style="font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:bold;letter-spacing:0.1em;text-transform:uppercase;color:${ac};margin-bottom:12px;">${e.eye || ''}</div><h1 style="margin:0 0 20px;font-family:Georgia,'Times New Roman',serif;font-size:29px;line-height:1.22;font-weight:600;color:#16334f;">${e.head}</h1>${blocksToHtml(e)}${e.cta ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:30px 0 8px;"><tr><td align="center"><a href="${e.cta.href}" style="display:inline-block;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:bold;color:#ffffff;background:#1c3f63;text-decoration:none;padding:15px 34px;border-radius:10px;">${e.cta.label}</a></td></tr></table>` : ''}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:28px;border-top:1px solid #ecebe6;"><tr><td style="padding-top:22px;"><div style="font-family:Georgia,'Times New Roman',serif;font-size:17px;font-style:italic;color:#516274;margin-bottom:3px;">${e.sign || 'With care,'}</div><div style="font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:bold;color:#1c3f63;">The Caring Companions Team</div></td></tr></table></td></tr><tr><td align="center" style="background:#1c3f63;padding:26px 40px 28px;"><div style="font-family:Georgia,'Times New Roman',serif;font-size:18px;color:#ffffff;margin-bottom:6px;">Caring Companions In-Home Senior Care</div><div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;line-height:1.6;color:#b6c5d6;">Serving Springfield &amp; Southwest Missouri since 2017<br><a href="tel:4172348494" style="color:#e7c87a;text-decoration:none;font-weight:bold;">(417) 234-8494</a> &middot; 1331 N Stewart Ave, Ste B, Springfield, MO 65802</div><div style="height:1px;background:rgba(255,255,255,0.14);margin:18px auto 14px;max-width:360px;font-size:0;line-height:0;">&nbsp;</div><div style="font-family:Arial,Helvetica,sans-serif;font-size:11.5px;line-height:1.6;color:#8298b0;">${footer}<br><a href="mailto:${unsub}?subject=Please%20unsubscribe%20me" style="color:#a9bccf;">Unsubscribe</a> &middot; <a href="https://mo-care.com" style="color:#a9bccf;">mo-care.com</a></div></td></tr></table></td></tr></table></body></html>`
 }
 
 Deno.serve(async (req) => {
@@ -162,6 +162,9 @@ Deno.serve(async (req) => {
   const held = sideMode ? [] : due.filter((e: any) => FAMILY_AUDIENCES.includes(e.aud))
   for (let i = due.length - 1; i >= 0; i--) if (FAMILY_AUDIENCES.includes(due[i].aud)) due.splice(i, 1)
   const heldWords: string[] = []
+  /* SOP ruling 8 (2026-10-17): the "ready to send" cards and the daily summary go to the Springfield lead (then
+     Samantha). A person still checks each one and presses Send; owners see the cards under Everyone. */
+  const to = await noticeTo(supabase)
   if (held.length) {
     const items = await getKey('ops_items')
     const nowIso = new Date().toISOString()
@@ -170,7 +173,7 @@ Deno.serve(async (req) => {
       // deno-lint-ignore no-explicit-any
       if (items.some((x: any) => x && x.id === id)) continue
       await supabase.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
-        id, kind: 'review', status: 'open', owner: ADMIN, owner_name: 'Samantha', urgency: 'normal', created_at: nowIso, opened_by: 'campaign-auto', source_type: 'campaign',
+        id, kind: 'review', status: 'open', owner: to.email, owner_name: to.name, urgency: 'normal', created_at: nowIso, opened_by: 'campaign-auto', source_type: 'campaign',
         due: new Date(chicago + 'T17:00:00-05:00').toISOString(), title: 'Campaign ready for you to send: "' + e.subj + '"',
         detail: 'Due now for ' + (AUD_WORDS[e.aud] || e.aud) + '. The autopilot never emails families, clients or leads by itself. Open Campaigns, check it, and press Send (or skip it this year).',
         link: '#campaigns', campaign_key: e.key, campaign_audience: e.aud } })
@@ -305,7 +308,7 @@ Deno.serve(async (req) => {
   for (const e of due) {
     if (totalSent >= cap) break
     const recips = audiences[e.aud] || []
-    const html = buildEmailHTML(e)
+    const html = buildEmailHTML(e, to.email)
     let sent = 0, failed = 0, optedOutOrFailed = 0
     for (const r of recips) {
       if (totalSent >= cap) break
@@ -339,15 +342,15 @@ Deno.serve(async (req) => {
     summary.push(`"${e.subj}" → ${e.aud}: ${sent} sent${failed ? ', ' + failed + ' failed' : ''}`)
   }
 
-  // 5. Tell Samantha what happened
+  // 5. Tell the office what happened
   if (summary.length) {
     try {
-      /* ONE CONTACT (2026-10-01): Samantha's contact is found by the one-contact rule for this email channel. */
-      const contactId = await ghlStaffContact({ token: ghlToken, locationId: ghlLocation }, { channel: 'email', email: ADMIN, firstName: 'Samantha' })
+      /* ONE CONTACT (2026-10-01): the recipient's contact is found by the one-contact rule for this email channel. */
+      const contactId = await ghlStaffContact({ token: ghlToken, locationId: ghlLocation }, { channel: 'email', email: to.email, firstName: firstName(to.name) })
       if (contactId) {
-        await ghlSendChecked(supabase, sendH, 'staff-alert', { channel: 'email', contactId, address: ADMIN, who: 'Samantha' }, {
+        await ghlSendChecked(supabase, sendH, 'staff-alert', { channel: 'email', contactId, address: to.email, who: to.name }, {
             subject: 'Campaign autopilot: ' + summary.length + ' email' + (summary.length > 1 ? 's' : '') + ' today',
-            html: `<div style="font-family:Arial,sans-serif;font-size:15px;color:#1f2a36;line-height:1.7;max-width:600px"><p>Your campaign autopilot ran today:</p><ul>${summary.map((s) => `<li>${s}</li>`).join('')}</ul><p>Details are in the hub under 🎯 Campaigns → Recent sends. To pause everything, flip the autopilot switch off.</p></div>`,
+            html: `<div style="font-family:Arial,sans-serif;font-size:15px;color:#1f2a36;line-height:1.7;max-width:600px"><p>The campaign autopilot ran today:</p><ul>${summary.map((s) => `<li>${s}</li>`).join('')}</ul><p>Details are in the hub under 🎯 Campaigns → Recent sends. To pause everything, flip the autopilot switch off.</p></div>`,
         })
       }
     } catch { /* summary is best-effort */ }

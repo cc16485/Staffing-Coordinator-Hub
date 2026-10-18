@@ -22,6 +22,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
+import { noticeTo, noticeCard, firstName } from '../_shared/notice-to.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -177,7 +178,16 @@ Deno.serve(async (req) => {
   return json({ error: 'unknown action' }, 400)
 
   // ---------------------------------------------------------------- notify
+  /* SOP ruling 8 (2026-10-17): 417 notices go to the Springfield lead, who also assigns referral partners (her ruling
+     2026-10-18, PR 490: no default owner), with a card so owners see the work and who has it. Choosing what is published
+     stays with Samantha. */
   async function notifyNomination(n: Row) {
+    const to = await noticeTo(supabase)
+    await noticeCard(supabase, to, { id: 'ops_417n_' + String(n.id), kind: 'request', domain: 'office_ops', urgency: 'normal', due_hours: 72,
+      title: 'Invite ' + (n.who_name || n.who_org || 'a nominee') + ' to 417 Caring Community', about: String(n.who_name || n.who_org || ''),
+      detail: (n.who_org ? String(n.who_org) + '. ' : '') + (n.who_contact ? 'Reach them: ' + String(n.who_contact) + '. ' : '')
+        + (n.from_name ? 'Nominated by ' + String(n.from_name) + '.' : 'Nominated anonymously.'),
+      next_action: 'Call and invite them. Lead with who nominated them.', created_by: 'cc-417' })
     const ghlToken = Deno.env.get('GHL_TOKEN')
     const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
     if (!ghlToken || !ghlLocation) return
@@ -185,8 +195,8 @@ Deno.serve(async (req) => {
       Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28',
       'Content-Type': 'application/json', Accept: 'application/json',
     }
-    /* ONE CONTACT (2026-10-01): Samantha's contact is found by the one-contact rule for this email channel. */
-    const contactId = await ghlStaffContact({ token: ghlToken, locationId: ghlLocation }, { channel: 'email', email: 'samantha@mo-care.com', firstName: 'Samantha' })
+    /* ONE CONTACT (2026-10-01): the recipient's contact is found by the one-contact rule for this email channel. */
+    const contactId = await ghlStaffContact({ token: ghlToken, locationId: ghlLocation }, { channel: 'email', email: to.email, firstName: firstName(to.name) })
     if (!contactId) return
     const esc = (t: string) => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')
     const html = '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.6;">'
@@ -202,13 +212,18 @@ Deno.serve(async (req) => {
       + '<p style="color:#55677a;font-size:13px;">Also in the hub under 417 Series &rarr; Invite people.</p></div>'
     /* NO SILENT FAILURES (2026-10-01): both office notices fire from a public page with nobody in the office watching,
        so a refused email raises a Needs Attention card ('staff-alert') */
-    await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'email', contactId, address: 'samantha@mo-care.com', who: 'Samantha' }, {
+    await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'email', contactId, address: to.email, who: to.name }, {
       subject: '👋 Someone nominated ' + (n.who_name || n.who_org) + ' for 417 Caring Community',
       html,
     })
   }
 
   async function notifyOffice(v: Row) {
+    const to = await noticeTo(supabase)
+    await noticeCard(supabase, to, { id: 'ops_417v_' + String(v.id), kind: 'request', domain: 'office_ops', urgency: 'normal', due_hours: 24,
+      title: 'Thank ' + (v.name || 'them') + ' for their 417 video', about: String(v.name || ''),
+      detail: String(v.org || '') + (v.email ? '. Reach them: ' + String(v.email) : '') + '. Nothing is public yet.',
+      next_action: 'Send a thank-you today. Samantha decides whether it is published in this month\'s issue.', created_by: 'cc-417' })
     const ghlToken = Deno.env.get('GHL_TOKEN')
     const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
     if (!ghlToken || !ghlLocation) return
@@ -216,7 +231,7 @@ Deno.serve(async (req) => {
       Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28',
       'Content-Type': 'application/json', Accept: 'application/json',
     }
-    const contactId = await ghlStaffContact({ token: ghlToken, locationId: ghlLocation }, { channel: 'email', email: 'samantha@mo-care.com', firstName: 'Samantha' })
+    const contactId = await ghlStaffContact({ token: ghlToken, locationId: ghlLocation }, { channel: 'email', email: to.email, firstName: firstName(to.name) })
     if (!contactId) return
     const esc = (t: string) => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/\n/g, '<br>')
     const html = '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.6;">'
@@ -229,7 +244,7 @@ Deno.serve(async (req) => {
       + '<p style="background:#fdf3e2;border-radius:10px;padding:14px 16px;">Nothing is public yet. '
       + 'Watch it in the hub under <b>417 Series</b> and press Publish if you want it in this month\'s issue.</p>'
       + '<p style="color:#55677a;font-size:13px;">A thank-you the same day is what keeps them referring.</p></div>'
-    await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'email', contactId, address: 'samantha@mo-care.com', who: 'Samantha' }, {
+    await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'email', contactId, address: to.email, who: to.name }, {
       subject: '🎙️ 417 Caring Community: ' + v.name + ' at ' + v.org + ' sent one in',
       html,
     })

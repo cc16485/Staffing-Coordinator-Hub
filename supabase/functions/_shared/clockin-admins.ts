@@ -1,18 +1,21 @@
 // C1 (2026-09-29) · who gets the missed clock-in texts, and how one is sent.
-// "All admin" = the same list that gets call-in alerts (ops_settings.coverage_alert_admins, emails; default Samantha
-// and Krystal, as coverage-run). Their phones and names come from app_data.coordinator_staff, as the call-in alert.
+// "All admin" = the same list that gets call-in alerts (ops_settings.coverage_alert_admins, emails; default the
+// Scheduling and coverage owner + the Springfield lead, as coverage-run). Their phones and names come from app_data.coordinator_staff, as the call-in alert.
 // Sent through the same staff door as every office alert (contactForOutbound, audience staff, urgent_internal: a
 // shift happening right now, any hour).
 // deno-lint-ignore-file no-explicit-any
 import { normalisePhone, contactForOutbound } from './outreach.ts'
 import { ghlSendChecked, reportSendProblem } from './send-problems.ts'
+import { fallbackList } from './notice-to.ts'
 
+/* SOP ruling 8 (2026-10-17): an empty list falls back to the Scheduling and coverage owner + the Springfield lead. */
+/* Kept only for timekeeper-watch, which server #498 also edits; it moves to fallbackList after #498 merges. */
 export const ADMIN_DEFAULT = ['samantha@mo-care.com', 'krystal@mo-care.com']
 export type Admin = { email: string; name: string; first: string; phone: string | null }
 
 export async function adminRecipients(sb: any, settings: any): Promise<Admin[]> {
   const emails: string[] = (Array.isArray(settings?.coverage_alert_admins) && settings.coverage_alert_admins.length
-    ? settings.coverage_alert_admins : ADMIN_DEFAULT).map((e: unknown) => String(e).trim().toLowerCase()).filter(Boolean)
+    ? settings.coverage_alert_admins : await fallbackList(sb, 'scheduling_coverage')).map((e: unknown) => String(e).trim().toLowerCase()).filter(Boolean)
   const { data } = await sb.from('app_data').select('data').eq('key', 'coordinator_staff').maybeSingle()
   const staff: any[] = Array.isArray(data?.data) ? data.data : []
   return [...new Set(emails)].map((email) => {
