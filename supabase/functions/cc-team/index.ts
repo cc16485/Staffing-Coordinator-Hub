@@ -15,6 +15,8 @@
 //              Zachary get every Care Coordinator side by side. Reviews: the HR lead sees all, Samantha the unresolved
 //              ones, a coaching owner their own coaching; nobody else sees any
 //     · act    decide (cause + No action or Coaching with an owner, deadline and plan) / coaching_done (a note)
+//     · set_cause  why a follow-up went overdue (audit step 3, ops_settings.overdue_causes_live): the owner marks their own;
+//              once it is part of an open review only the HR lead or Samantha can change it. Only "employee" counts.
 // Reviews are never discipline and never go to the office event record (everyone reads it). Nothing here texts,
 // emails or calls anyone.
 // -----------------------------------------------------------------------------
@@ -72,7 +74,7 @@ Deno.serve(async (req) => {
     const f = await facts(), write = f.set.live && url.searchParams.get('dry') !== '1'
     const log0 = await list(LOG), log1 = T.logOverdue(log0, f.overdue, f.today)
     const added = log1.filter((x: Any) => !log0.some((y: Any) => y.key === x.key))
-    const reviews = await list(REVIEWS), open = T.reviewsToOpen(log1, reviews, f.set.people, f.today)
+    const reviews = await list(REVIEWS), open = T.reviewsToOpen(log1, reviews, f.set.people, f.today, undefined, f.set.causes_live)
     const plan = { live: f.set.live, write, today: f.today, overdue_now: f.overdue.length, newly_overdue: added.length, reviews_to_open: open.map((r: Any) => r.person), written: 0 }
     if (write) {
       if (log1.length !== log0.length) { const { error } = await sb.from('app_data').upsert({ key: LOG, data: log1 }); if (!error) plan.written++ }
@@ -93,10 +95,26 @@ Deno.serve(async (req) => {
     const d = { leads: f.leads, assessments: f.assessments, bonuses: f.bonuses, journeys: f.journeys, overdue: f.overdue }
     const months = me.owner ? f.set.people.map((p: string) => T.monthFor(p, d, f.today)) : (role.cc ? [T.monthFor(me.first, d, f.today)] : [])
     const myOverdue = role.cc ? f.overdue.filter((o: Any) => lc(o.person) === lc(me.first)).map((o: Any) => ({ kind: o.kind, client: o.client, since: o.since, lead_id: o.lead_id })) : []
-    const reviews = T.visibleReviews(await list(REVIEWS), me.email, f.set, f.today).map((r: Any) => ({ ...r, unresolved: T.unresolved(r, f.today),
-      ...(me.email === f.set.hr_lead || me.email === f.set.decider ? {} : { items: undefined, note: undefined, history: undefined }) }))
-    return json({ live: f.set.live, me: { ...role, email: me.email }, month: T.monthOf(f.today).label, months, my_overdue: myOverdue, reviews,
+    /* audit step 3: the logged misses of the last 30 days with their cause (the owner's own; the HR lead and Samantha see causes in reviews) */
+    const log = await list(LOG), allReviews = await list(REVIEWS), from30 = new Date(Date.now() - 29 * 864e5).toISOString().slice(0, 10)
+    const inReview = (k: string) => allReviews.some((r: Any) => ['open', 'coaching'].includes(r.status) && (r.items || []).some((i: Any) => i.key === k))
+    const shape = (x: Any) => ({ key: x.key, kind: x.kind, client: x.client, day: x.day, cause: T.causeOf(x), cause_note: x.cause_note || '', counts: T.counts(x, f.set.causes_live), in_review: inReview(x.key) })
+    const myMissed = role.cc ? log.filter((x: Any) => lc(firstOf(x.person)) === lc(me.first) && x.day >= from30).map(shape) : []
+    const byKey = new Map(log.map((x: Any) => [x.key, x]))
+    const hrView = me.email === f.set.hr_lead || me.email === f.set.decider
+    const reviews = T.visibleReviews(allReviews, me.email, f.set, f.today).map((r: Any) => ({ ...r, unresolved: T.unresolved(r, f.today),
+      ...(hrView ? { items: (r.items || []).map((i: Any) => (byKey.get(i.key) ? { ...i, ...shape(byKey.get(i.key)) } : i)) } : { items: undefined, note: undefined, history: undefined }) }))
+    return json({ live: f.set.live, causes_live: f.set.causes_live, overdue_causes: T.OVERDUE_CAUSES, me: { ...role, email: me.email }, month: T.monthOf(f.today).label, months, my_overdue: myOverdue, my_missed: myMissed, reviews,
       waiting: role.hr ? reviews.filter((r: Any) => r.status === 'open').length : 0, causes: T.CAUSES })
+  }
+  if (body.action === 'set_cause') {
+    if (!f.set.causes_live) return json({ error: 'Causes are switched off.' }, 400)
+    const log = await list(LOG), entry = log.find((x: Any) => x.key === String(body.key || ''))
+    const out = T.setCause(entry, String(body.cause || ''), String(body.note || ''), { email: me.email, first: me.first }, await list(REVIEWS), f.set, f.nowIso)
+    if (out.error) return json({ error: out.error }, 400)
+    const { error } = await sb.from('app_data').upsert({ key: LOG, data: log.map((x: Any) => (x.key === out.entry.key ? out.entry : x)) })
+    if (error) return json({ error: 'Could not save. Nothing changed.' }, 500)
+    return json({ ok: true, cause: out.entry.cause })
   }
   if (body.action === 'act') {
     const all = await list(REVIEWS), r = all.find((x: Any) => x.id === String(body.id || ''))

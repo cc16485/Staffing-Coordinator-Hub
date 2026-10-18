@@ -27,6 +27,12 @@ import { centralYmd, addDaysYmd, isYmd } from './business-days.ts'
 
 export const DEFAULTS = { hr_lead: 'zach@mo-care.com', decider: 'samantha@mo-care.com', misses: 2, window_days: 30, unresolved_days: 7 }
 export const CAUSES: Record<string, string> = { workload: 'Workload', training: 'Training', accountability: 'Accountability' }
+/* why a follow-up went overdue (audit step 3, Samantha 2026-10-18, ops_settings.overdue_causes_live). Only "employee"
+   counts toward a review. Not marked = employee. Approved leave is set by itself while someone is out (step 2). */
+export const OVERDUE_CAUSES: Record<string, string> = { employee: 'Mine (it counts)', staffing: 'Staffing shortage', client: 'Client or family decision', leave: 'Approved leave', technical: 'Phone or Hub problem' }
+export const causeOf = (x: any) => (x && x.excused ? 'leave' : (x && OVERDUE_CAUSES[x.cause] ? x.cause : 'employee'))
+/** does this logged miss count toward a review? never when excused; with causes on, only when the cause is employee */
+export const counts = (x: any, causesOn: boolean) => !!x && !x.excused && (!causesOn || causeOf(x) === 'employee')
 const lc = (v: unknown) => String(v ?? '').trim().toLowerCase()
 const first = (v: unknown) => String(v ?? '').trim().split(/\s+/)[0] || ''
 const same = (a: unknown, b: unknown) => !!first(a) && lc(first(a)) === lc(first(b))
@@ -35,7 +41,7 @@ const dayOf = (v: unknown) => { const s = String(v ?? ''); if (!s) return ''; re
 export function settingsOf(st: any) {
   const s = st || {}, t = s.team || {}
   const people = (Array.isArray(s.lead_rotation?.people) ? s.lead_rotation.people : []).map((p: any) => first(p?.name)).filter(Boolean)
-  return { live: s.team_live === true, hr_lead: lc(t.hr_lead) || DEFAULTS.hr_lead, decider: lc(s.bonus?.decider) || DEFAULTS.decider, people }
+  return { live: s.team_live === true, causes_live: s.overdue_causes_live === true, hr_lead: lc(t.hr_lead) || DEFAULTS.hr_lead, decider: lc(s.bonus?.decider) || DEFAULTS.decider, people }
 }
 export function monthOf(today: string) { return { from: today.slice(0, 8) + '01', to: today, label: new Date(today + 'T12:00:00Z').toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', year: 'numeric' }) } }
 const inR = (d: string, r: { from: string; to: string }) => !!d && d >= r.from && d <= r.to
@@ -93,14 +99,14 @@ export function logOverdue(log: any[], overdue: any[], today: string): any[] {
   return [...(log || []).filter((x) => x.day >= addDaysYmd(today, -90)), ...add]
 }
 /** reviews to open now: a person with 2 different follow-ups overdue within 30 days, counted after their last review */
-export function reviewsToOpen(log: any[], reviews: any[], people: string[], today: string, misses = DEFAULTS.misses): any[] {
+export function reviewsToOpen(log: any[], reviews: any[], people: string[], today: string, misses = DEFAULTS.misses, causesOn = false): any[] {
   const out: any[] = []
   for (const p of people) {
     const mineR = (reviews || []).filter((r) => same(r.person, p))
     if (mineR.some((r) => ['open', 'coaching'].includes(r.status))) continue
     const since = mineR.map((r) => r.opened_on).sort().pop() || ''
-    const items = (log || []).filter((x) => same(x.person, p) && !x.excused && x.day >= addDaysYmd(today, -(DEFAULTS.window_days - 1)) && x.day > since)   /* excused (time off) never counts */
-    if (items.length >= misses) out.push({ id: 'rev_' + lc(p) + '_' + today, person: p, opened_on: today, status: 'open', items: items.map((x) => ({ kind: x.kind, client: x.client, day: x.day })), history: [] })
+    const items = (log || []).filter((x) => same(x.person, p) && counts(x, causesOn) && (!causesOn || x.day < today) && x.day >= addDaysYmd(today, -(DEFAULTS.window_days - 1)) && x.day > since)   /* with causes on, a miss counts from the next day's check, so the owner has a day to mark why */   /* excused (time off), and with causes on anything not the employee's, never counts */
+    if (items.length >= misses) out.push({ id: 'rev_' + lc(p) + '_' + today, person: p, opened_on: today, status: 'open', items: items.map((x) => ({ key: x.key, kind: x.kind, client: x.client, day: x.day })), history: [] })
   }
   return out
 }
@@ -141,4 +147,20 @@ export function act(r: any, action: string, actor: any, o: any, set: ReturnType<
 export function visibleReviews(reviews: any[], me: string, set: ReturnType<typeof settingsOf>, today: string): any[] {
   const e = lc(me)
   return (reviews || []).filter((r) => e === set.hr_lead || (e === set.decider && unresolved(r, today)) || (r.status === 'coaching' && lc(r.coaching?.owner) === e))
+}
+
+/** the cause on one logged miss (decision 5: the owner picks it; once it is part of an open review, only the HR lead or
+ *  Samantha can change it). Any cause but "employee" needs a short note. Returns {entry} (a new object) or {error}. */
+export function setCause(entry: any, cause: string, note: string, actor: { email: string; first: string }, reviews: any[], set: ReturnType<typeof settingsOf>, nowIso: string): any {
+  if (!entry) return { error: 'That item is not on file.' }
+  if (!OVERDUE_CAUSES[cause]) return { error: 'Pick a cause.' }
+  if (entry.excused) return { error: 'This went overdue while they were out, so it is already approved leave and never counts.' }
+  const n = String(note || '').trim().slice(0, 300)
+  if (cause !== 'employee' && !n) return { error: 'Add a short note: what happened?' }
+  const me = lc(actor.email), hr = me === set.hr_lead || me === set.decider, owner = same(actor.first, entry.person)
+  const inReview = (reviews || []).some((r) => ['open', 'coaching'].includes(r.status) && (r.items || []).some((i: any) => i.key === entry.key))
+  if (inReview && !hr) return { error: 'This is part of a review now, so Zachary decides its cause. Tell him what happened.' }
+  if (!hr && !owner) return { error: 'Only the person it belongs to, Zachary or Samantha can mark this.' }
+  return { entry: { ...entry, cause, cause_note: n, cause_by: me, cause_at: nowIso,
+    cause_history: [...(Array.isArray(entry.cause_history) ? entry.cause_history : []), { at: nowIso, by: me, from: causeOf(entry), to: cause, note: n }].slice(-10) } }
 }
