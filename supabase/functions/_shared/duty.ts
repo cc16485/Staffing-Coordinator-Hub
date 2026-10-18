@@ -1,22 +1,38 @@
 /**
  * RIGHT PERSON FIRST, THEN ESCALATE (Today cockpit, Phase 3; Samantha decided 2026-10-05).
+ * IN CHARGE + THE TEAM LADDER (Springfield structure, Samantha approved 2026-10-17, plan VWRK2aGB1WkRaxV2Xn9MJ9).
  *
- *   · Scheduling work goes to whoever holds the STAFFING seat now (the duty schedule on My Team: Krystal in her staffing
- *     hours). When nobody is scheduled, the seat's "when nobody is scheduled" person holds it (Samantha for now).
- *   · Escalation goes to whoever holds the OWNER ESCALATION seat now (Samantha for now). A seat, not a name: when the
- *     Staffing Coordinator starts, they take a seat on the schedule and nothing here changes.
- *   · Escalating keeps the owner. The escalation person is pulled in, with the reason.
- *       uncovered shift starting within 60 minutes   · after 5 minutes nobody has taken it
- *       other urgent staffing and no-clock-in items  · after 15 minutes nobody has taken it
- *       normal work                                  · once it is overdue
+ *   · Scheduling work goes to whoever holds the STAFFING seat now. When nobody is scheduled: the seat's "when nobody is
+ *     scheduled" person, else whoever is IN CHARGE now.
+ *   · IN CHARGE (new seat): the person with authority when the owner, their partner and leadership aren't available.
+ *     Weekdays Krystal (Springfield lead), evenings and weekends Samantha for now. A seat, not a name.
+ *   · Problems climb sideways through the team before they reach leadership. Escalating always keeps the owner.
+ *       normal work, once overdue                      · In charge (never leadership; late work stays with the team)
+ *       critical (uncovered shift within 60 minutes,   · In charge after 10 minutes nobody took it (5 for a shift that
+ *       urgent staffing, no clock-in)                    starts within the hour), Leadership after 20, the leadership
+ *                                                        backup (Zach) after 35. ops_settings.critical_ladder overrides.
  *   · Nobody is escalated to themselves, and nothing taken (claimed) or parked with a wake-up escalates.
+ *   · Escalation decides who is TOLD. It never decides who may act: in an emergency anyone calls 911 first.
  *
  * Reads the same duty_windows the Hub reads (index.html dutyCoversAt / dutyHolder), in Chicago time.
  */
 // deno-lint-ignore-file no-explicit-any
 type Any = any
 
-export const ESCALATE = { shiftSoonMin: 60, shiftSoonAfterMin: 5, urgentAfterMin: 15 }
+export const ESCALATE = { shiftSoonMin: 60, shiftSoonAfterMin: 5, urgentAfterMin: 10 }
+/** The approved critical ladder, in minutes nobody has taken it (Samantha 2026-10-17: 10 / 20 / 35). */
+export const LADDER = { in_charge: 10, leadership: 20, backup: 35 }
+export type Stage = 'in_charge' | 'leadership' | 'backup'
+export const STAGE_SEAT: Record<Stage, string> = { in_charge: 'in_charge', leadership: 'owner_escalation', backup: 'leadership_backup' }
+export const STAGE_LABEL: Record<Stage, string> = { in_charge: 'In charge', leadership: 'Leadership', backup: 'Leadership backup' }
+/** The ladder with any ops_settings.critical_ladder override (whole minutes, each later than the one before). */
+export function ladder(settings: Any): { in_charge: number; leadership: number; backup: number } {
+  const o = settings?.critical_ladder || {}
+  const n = (v: unknown, d: number) => { const x = Number(v); return Number.isFinite(x) && x > 0 ? Math.round(x) : d }
+  const l = { in_charge: n(o.in_charge, LADDER.in_charge), leadership: n(o.leadership, LADDER.leadership), backup: n(o.backup, LADDER.backup) }
+  if (!(l.in_charge < l.leadership && l.leadership < l.backup)) return { ...LADDER }
+  return l
+}
 export const STAFFING_KINDS = new Set(['coverage', 'staffing_issue', 'coverage_outcome', 'family_call', 'evv_fix', 'confirm_times', 'staffing'])
 
 /** Chicago wall clock: day of week (0 Sunday), minutes since midnight, and the ms of "now". */
@@ -60,12 +76,22 @@ export function seatHolder(windows: Any[], area: string, now: Date, settings: An
   if (fallback) return { person: String(fallback).toLowerCase(), source: 'fallback' }
   return { person: '', source: 'none' }
 }
-/** Both seats this check cares about. The fallback for both is the first scheduling alert admin (today, Samantha). */
+/** The seats this check cares about. Nobody scheduled in a seat falls to the team before leadership: Staffing falls to
+ *  whoever is In charge; In charge and Leadership fall to the first scheduling alert admin (the office is empty). The
+ *  leadership backup is ops_settings.leadership_backup (Zach), never a default for anything else. */
 export function onDuty(windows: Any[], settings: Any, now: Date, positions: Any[] = []) {
   const first = Array.isArray(settings?.coverage_alert_admins) && settings.coverage_alert_admins.length
     ? String(settings.coverage_alert_admins[0]) : 'samantha@mo-care.com'
-  return { staffing: seatHolder(windows, 'staffing', now, settings, first, positions),
-           escalation: seatHolder(windows, 'owner_escalation', now, settings, first, positions) }
+  const inCharge = seatHolder(windows, 'in_charge', now, settings, first, positions)
+  const backup = String(settings?.leadership_backup || '').trim().toLowerCase()
+  return { staffing: seatHolder(windows, 'staffing', now, settings, inCharge.person || first, positions),
+           in_charge: inCharge,
+           escalation: seatHolder(windows, 'owner_escalation', now, settings, first, positions),
+           backup: { person: backup, source: backup ? 'default' as const : 'none' as const } }
+}
+/** Who a stage of the ladder reaches now. */
+export function stagePerson(seats: ReturnType<typeof onDuty>, stage: Stage): string {
+  return stage === 'in_charge' ? seats.in_charge.person : stage === 'leadership' ? seats.escalation.person : seats.backup.person
 }
 
 export const isStaffingItem = (i: Any): boolean => !!i && (i.domain === 'scheduling_coverage' || STAFFING_KINDS.has(String(i.kind)))
@@ -97,20 +123,27 @@ export function minsToShift(c: Any, now: Date): number | null {
   return Math.round((start - chiNow) / 60000)
 }
 
-/** Is this item due to escalate now? Returns the level and the reason in the office's words, or null. */
-export function escalationDue(i: Any, now: Date, ctx: { minsToShift?: number | null; ownerFirst?: string } = {}):
-  { level: 'urgent' | 'overdue'; why: string } | null {
+/** Is this item due to escalate now? Returns the level, the ladder stage it has reached and the reason in the office's
+ *  words, or null. Critical work climbs In charge -> Leadership -> Leadership backup; overdue work only reaches In charge. */
+export function escalationDue(i: Any, now: Date, ctx: { minsToShift?: number | null; ownerFirst?: string; ladder?: { in_charge: number; leadership: number; backup: number } } = {}):
+  { level: 'urgent' | 'overdue'; stage: Stage; why: string } | null {
   if (!i || i.status !== 'open' || i.claimed_by || parked(i, now)) return null
+  const L = ctx.ladder || LADDER
   const who = ctx.ownerFirst || (i.owner ? 'The owner' : 'Nobody')
   const since = Date.parse(String(i.created_at || ''))            // the clock starts when the problem appeared, not when it was routed
   const age = Number.isFinite(since) ? (now.getTime() - since) / 60000 : 0
   const m = ctx.minsToShift
-  if (isStaffingItem(i) && i.kind === 'coverage' && m != null && m <= ESCALATE.shiftSoonMin && age >= ESCALATE.shiftSoonAfterMin)
-    return { level: 'urgent', why: `${who} hasn't taken it in ${ESCALATE.shiftSoonAfterMin} minutes, and the shift starts ${m <= 0 ? 'now' : 'in ' + m + ' minutes'}` }
+  const shiftSoon = isStaffingItem(i) && i.kind === 'coverage' && m != null && m <= ESCALATE.shiftSoonMin
   const urgent = isStaffingItem(i) && (/timekeeper/.test(String(i.opened_by || '')) || i.urgency === 'urgent')
-  if (urgent && age >= ESCALATE.urgentAfterMin)
-    return { level: 'urgent', why: `${who} hasn't taken it in ${ESCALATE.urgentAfterMin} minutes` }
+  if (shiftSoon || urgent) {
+    const first = shiftSoon ? Math.min(ESCALATE.shiftSoonAfterMin, L.in_charge) : L.in_charge
+    const stage: Stage | null = age >= L.backup ? 'backup' : age >= L.leadership ? 'leadership' : age >= first ? 'in_charge' : null
+    if (stage) {
+      const mins = stage === 'backup' ? L.backup : stage === 'leadership' ? L.leadership : first
+      return { level: 'urgent', stage, why: `${who} hasn't taken it in ${mins} minutes` + (shiftSoon ? `, and the shift starts ${m! <= 0 ? 'now' : 'in ' + m + ' minutes'}` : '') }
+    }
+  }
   const due = Date.parse(String(i.due || ''))
-  if (Number.isFinite(due) && due < now.getTime()) return { level: 'overdue', why: `it's overdue (it was due ${new Date(due).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` }
+  if (Number.isFinite(due) && due < now.getTime()) return { level: 'overdue', stage: 'in_charge', why: `it's overdue (it was due ${new Date(due).toLocaleString('en-US', { timeZone: 'America/Chicago', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})` }
   return null
 }

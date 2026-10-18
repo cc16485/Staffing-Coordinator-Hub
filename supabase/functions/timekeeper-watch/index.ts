@@ -88,7 +88,7 @@ import { lateHold, liveNotices, holdOptsOf, holdUntil, callLine } from '../_shar
 import { visitMs } from '../_shared/held-shift.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { tkShiftEnded } from '../_shared/loops.ts'
-import { ESCALATE, onDuty } from '../_shared/duty.ts'
+import { ladder, onDuty } from '../_shared/duty.ts'
 import { officeQuiet, quietWords, afterHoursAllowed } from '../_shared/quiet-hours.ts'
 import { confirmTimesItem, cftId, hasCard, outAfterMin } from '../_shared/confirm-times.ts'
 import { loadQuiet, isQuiet } from '../_shared/client-quiet.ts'
@@ -286,8 +286,8 @@ Deno.serve(async (req) => {
     ? settings.coverage_alert_admins : ADMIN_DEFAULT
   const adminList = await adminRecipients(sb, settings)
   /* Today cockpit Phase 3 (2026-10-05): with ops_settings.routing_live, the missed clock-in texts go to whoever holds
-     the STAFFING seat now (the duty schedule), and after 15 minutes nobody has taken it, also to whoever holds the
-     OWNER ESCALATION seat, daytime only. Nobody on Staffing with a phone on file = everyone on the list, as before
+     the STAFFING seat now (the duty schedule), then up the team ladder while nobody has taken it (2026-10-17: In charge
+     at 10 minutes, Leadership at 20, the leadership backup at 35), daytime only. Nobody on Staffing with a phone on file = everyone on the list, as before
      (never silent). Off = the whole admin list, exactly as before. */
   const routingLive = settings.routing_live === true && !forceDry
   // deno-lint-ignore no-explicit-any
@@ -298,6 +298,7 @@ Deno.serve(async (req) => {
     const rd = async (k: string) => { const { data } = await sb.from('app_data').select('data').eq('key', k).maybeSingle(); return Array.isArray(data?.data) ? data!.data : [] }
     const [dw, pos, cs, oi] = await Promise.all([rd('duty_windows'), rd('positions'), rd('coordinator_staff'), rd('ops_items')])
     const seats = onDuty(dw, settings, new Date(), pos)
+    const L = ladder(settings)
     // deno-lint-ignore no-explicit-any
     const adminFor = (email: string) => { const p = cs.find((x: any) => String(x?.email || '').trim().toLowerCase() === email)
       const name = String(p?.name || email.split('@')[0]); return { email, name, first: name.split(/\s+/)[0], phone: normalisePhone(p?.phone) || null } }
@@ -305,16 +306,22 @@ Deno.serve(async (req) => {
     const opsById = new Map(oi.map((x: any) => [String(x?.id), x]))
     const onStaffing = seats.staffing.person ? adminFor(seats.staffing.person) : null
     routeInfo.staffing = onStaffing ? { first: onStaffing.first, has_phone: !!onStaffing.phone, from: seats.staffing.source } : null
+    routeInfo.in_charge_first = seats.in_charge.person ? adminFor(seats.in_charge.person).first : null
     routeInfo.escalation_first = seats.escalation.person ? adminFor(seats.escalation.person).first : null
+    routeInfo.ladder = L
     // deno-lint-ignore no-explicit-any
     recipientsFor = (l: any) => {
       if (!onStaffing?.phone) return adminList
       const list = [onStaffing]
       const it = opsById.get(`ops_tk_${l.id}`)
       const mins = (Date.now() - Date.parse(String(l.office_alerted_at || nowIso))) / 60000
-      const e = seats.escalation.person
-      if (e && e !== onStaffing.email && !it?.claimed_by && mins >= ESCALATE.urgentAfterMin && !quietNow) {
-        const ea = adminFor(e); if (ea.phone) list.push(ea)
+      /* The team ladder (Samantha approved 2026-10-17): In charge after 10 minutes nobody took it, Leadership after 20,
+         the leadership backup (Zach) after 35. Daytime only, as before. Nobody twice, nobody without a phone. */
+      if (!it?.claimed_by && !quietNow) {
+        const add = (e: string) => { if (!e || list.some((a) => a.email === e)) return; const a = adminFor(e); if (a.phone) list.push(a) }
+        if (mins >= L.in_charge) add(seats.in_charge.person)
+        if (mins >= L.leadership) add(seats.escalation.person)
+        if (mins >= L.backup) add(seats.backup.person)
       }
       return list
     }

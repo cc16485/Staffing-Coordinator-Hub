@@ -29,7 +29,18 @@ const n0 = new Date()
 const it = (o) => ({ id: 'x', status: 'open', created_at: new Date(NOW - 20 * 60000).toISOString(), ...o })
 ck('rule · uncovered shift starting within 60 min, 5 min untaken: urgent', D.escalationDue(it({ kind: 'coverage', created_at: new Date(NOW - 6 * 60000).toISOString() }), n0, { minsToShift: 40, ownerFirst: 'Krystal' })?.level === 'urgent')
 ck('rule · ...but not at 4 minutes, and not 2 hours out', !D.escalationDue(it({ kind: 'coverage', created_at: new Date(NOW - 4 * 60000).toISOString() }), n0, { minsToShift: 40 }) && !D.escalationDue(it({ kind: 'coverage' }), n0, { minsToShift: 120 }))
-ck('rule · no clock-in, 15 min untaken: urgent ("Krystal hasn\'t taken it in 15 minutes")', D.escalationDue(it({ kind: 'staffing_issue', opened_by: 'timekeeper' }), n0, { ownerFirst: 'Krystal' })?.why === "Krystal hasn't taken it in 15 minutes")
+ck('rule · no clock-in, 20 min untaken: urgent, reached Leadership ("Krystal hasn\'t taken it in 20 minutes")', D.escalationDue(it({ kind: 'staffing_issue', opened_by: 'timekeeper' }), n0, { ownerFirst: 'Krystal' })?.why === "Krystal hasn't taken it in 20 minutes" && D.escalationDue(it({ kind: 'staffing_issue', opened_by: 'timekeeper' }), n0, {})?.stage === 'leadership')
+/* the team ladder, Samantha approved 2026-10-17: In charge 10, Leadership 20, Leadership backup 35; overdue only In charge */
+const ageIt = (m, o = {}) => ({ id: 'x', status: 'open', kind: 'staffing_issue', opened_by: 'timekeeper', created_at: new Date(NOW - m * 60000).toISOString(), ...o })
+ck('ladder · 9 min nothing, 10 In charge, 20 Leadership, 35 Leadership backup', !D.escalationDue(ageIt(9), n0, {}) && D.escalationDue(ageIt(10), n0, {})?.stage === 'in_charge'
+  && D.escalationDue(ageIt(19), n0, {})?.stage === 'in_charge' && D.escalationDue(ageIt(20), n0, {})?.stage === 'leadership' && D.escalationDue(ageIt(35), n0, {})?.stage === 'backup')
+ck('ladder · overdue normal work only ever reaches In charge, however late', D.escalationDue(it({ kind: 'request', created_at: new Date(NOW - 3 * 86400000).toISOString(), due: new Date(NOW - 86400000).toISOString() }), n0, {})?.stage === 'in_charge')
+ck('ladder · ops_settings.critical_ladder changes the minutes; a nonsense ladder falls back to 10/20/35', JSON.stringify(D.ladder({ critical_ladder: { in_charge: 5, leadership: 15, backup: 30 } })) === '{"in_charge":5,"leadership":15,"backup":30}'
+  && JSON.stringify(D.ladder({ critical_ladder: { in_charge: 30, leadership: 15, backup: 5 } })) === '{"in_charge":10,"leadership":20,"backup":35}' && D.escalationDue(ageIt(16), n0, { ladder: D.ladder({ critical_ladder: { in_charge: 5, leadership: 15, backup: 30 } }) })?.stage === 'leadership')
+const IC = [{ area: 'in_charge', person: K, recur: { days: [1, 2, 3, 4, 5], from: '08:00', to: '17:00' }, active: true }]
+ck('seat · In charge from the schedule; Staffing with nobody scheduled falls to In charge, not the alert list', D.onDuty(IC, { coverage_alert_admins: [S] }, new Date(), []).in_charge.person === K
+  && D.onDuty(IC, { coverage_alert_admins: [S] }, new Date('2026-10-06T20:00:00Z'), []).staffing.person === K)
+ck('seat · Leadership backup is only ops_settings.leadership_backup, never a default', D.onDuty([], { coverage_alert_admins: [S] }, new Date(), []).backup.person === '' && D.onDuty([], { leadership_backup: 'Zach@mo-care.com' }, new Date(), []).backup.person === 'zach@mo-care.com')
 ck('rule · taken (claimed) never escalates; parked with a wake-up never escalates', !D.escalationDue(it({ kind: 'staffing_issue', opened_by: 'timekeeper', claimed_by: K }), n0, {}) && !D.escalationDue(it({ due: '2026-10-01T00:00:00Z', sub_state: 'waiting', check_back: '2026-10-20' }), n0, {}))
 ck('rule · normal work escalates once overdue', D.escalationDue(it({ kind: 'request', due: new Date(NOW - 3600000).toISOString() }), n0, {})?.level === 'overdue' && !D.escalationDue(it({ kind: 'request', due: new Date(NOW + 3600000).toISOString() }), n0, {}))
 ck('rule · only job-made scheduling work is routed (not what a person placed)', D.routable(it({ kind: 'coverage', created_by: 'coverage-run' }), '') && !D.routable(it({ kind: 'coverage', created_by: 'jess@mo-care.com' }), '')
@@ -108,7 +119,7 @@ ck('on · the 3-minute-old no clock-in is not escalated yet', !tk.escalation)
 ck('on · Krystal\'s overdue item: escalated as overdue (her Escalated list, not Act Now)', item('mine').escalation?.level === 'overdue' && item('mine').owner === K)
 ck('on · Samantha is never escalated to herself; taken work never escalates', !item('sams').escalation && !item('taken').escalation)
 at('2026-10-06T15:13:00Z'); r = await run(WR)
-ck('on · 15 minutes on, the no clock-in escalates too', item('ops_tk_1').escalation?.level === 'urgent' && /15 minutes/.test(item('ops_tk_1').escalation.why))
+ck('on · 10 minutes on, the no clock-in escalates too (In charge)', item('ops_tk_1').escalation?.level === 'urgent' && item('ops_tk_1').escalation.stage === 'in_charge' && /10 minutes/.test(item('ops_tk_1').escalation.why))
 const n1 = APP.ops_items.map((x) => (x.history || []).length).join(); r = await run(WR)
 ck('on · running again adds nothing', APP.ops_items.map((x) => (x.history || []).length).join() === n1 && r.escalated_urgent === 0 && r.routed === 0, r)
 item('ops_tk_1').claimed_by = K; r = await run(WR)
@@ -131,6 +142,53 @@ at('2026-10-06T14:21:00Z'); await run(TK)
 ck('tk · if Krystal took it, Samantha is not texted', toPh('4175550901').length === 0, SENT.map((m) => m.to))
 tkSeed(false); await run(TK)
 ck('tk · routing off: everyone on the alert list, exactly as before', toPh('4175550902').length === 1 && toPh('4175550901').length === 1, SENT.map((m) => m.to))
+
+/* ── 3b · the team ladder end to end (Samantha approved 2026-10-17): Staffing Coordinator owns it, Krystal is In
+   charge, Samantha is Leadership, Zach is the leadership backup ── */
+const SC = 'sc@mo-care.com', Z = 'zach@mo-care.com'
+const ladderSeed = () => { reset(); at('2026-10-06T15:00:00Z')
+  Object.assign(APP.ops_settings, { routing_live: true, routing_since: '2026-10-06T00:00:00Z', duty_default_owner_escalation: S, leadership_backup: Z })
+  APP.duty_windows = [{ id: 'w1', area: 'staffing', person: SC, recur: { days: [1, 2, 3, 4, 5], from: '08:00', to: '17:00' }, active: true },
+    { id: 'w2', area: 'in_charge', person: K, recur: { days: [1, 2, 3, 4, 5], from: '08:00', to: '17:00' }, active: true }]; APP.positions = []
+  T.persons = [{ person_id: 'p_s', primary_email: S, full_name: 'Samantha Troutman' }, { person_id: 'p_k', primary_email: K, full_name: 'Krystal Land' },
+    { person_id: 'p_c', primary_email: SC, full_name: 'Sam Coord' }, { person_id: 'p_z', primary_email: Z, full_name: 'Zach Troutman' }]
+  const ago = (m) => new Date(NOW - m * 60000).toISOString()
+  APP.ops_items = [
+    { id: 'crit', kind: 'staffing_issue', status: 'open', domain: 'scheduling_coverage', owner: SC, opened_by: 'timekeeper', created_by: 'timekeeper-watch', created_at: ago(0), routed: { at: ago(0) }, title: 'NO CLOCK-IN' },
+    { id: 'klate', kind: 'request', status: 'open', owner: K, created_by: 'jess@mo-care.com', created_at: ago(600), due: ago(60), title: 'Krystal overdue' },
+    { id: 'sclate', kind: 'request', status: 'open', owner: SC, created_by: 'jess@mo-care.com', created_at: ago(600), due: ago(60), title: 'Coordinator overdue' } ] }
+ladderSeed(); r = await run(WR)
+ck('ladder · overdue work owned by the Staffing Coordinator goes to Krystal (In charge), not Samantha', item('sclate').escalation?.to === K && item('sclate').escalation.stage === 'in_charge' && item('sclate').escalation.seat === 'in_charge', item('sclate').escalation)
+ck('ladder · Krystal\'s own late work stays hers: nobody above her in the team, and leadership is not interrupted', !item('klate').escalation, item('klate').escalation)
+ck('ladder · a fresh no clock-in is not escalated', !item('crit').escalation)
+at('2026-10-06T15:10:00Z'); r = await run(WR)
+ck('ladder · 10 minutes: Krystal (In charge) is pulled in; the coordinator keeps it', item('crit').escalation?.to === K && item('crit').escalation.stage === 'in_charge' && item('crit').owner === SC, item('crit').escalation)
+at('2026-10-06T15:20:00Z'); r = await run(WR)
+ck('ladder · 20 minutes: Samantha (Leadership), Krystal still told', item('crit').escalation?.to === S && item('crit').escalation.stage === 'leadership' && (item('crit').escalation.also_to || []).includes(K), item('crit').escalation)
+at('2026-10-06T15:35:00Z'); r = await run(WR)
+ck('ladder · 35 minutes: Zach (Leadership backup), Krystal and Samantha still told', item('crit').escalation?.to === Z && item('crit').escalation.stage === 'backup' && ['also_to'].every((k) => [K, S].every((e) => item('crit').escalation[k].includes(e))), item('crit').escalation)
+ck('ladder · Zach is never pulled in for overdue work', item('sclate').escalation?.to === K)
+item('crit').claimed_by = SC; r = await run(WR)
+ck('ladder · once someone takes it, the escalation clears', !!item('crit').escalation?.cleared_at)
+ladderSeed(); APP.ops_settings.leadership_backup = ''; at('2026-10-06T15:36:00Z'); APP.ops_items[0].created_at = '2026-10-06T15:00:00Z'; r = await run(WR)
+ck('ladder · no leadership backup set: it stays with Samantha at 35 minutes', item('crit').escalation?.to === S, item('crit').escalation)
+
+/* missed clock-in texts climb the same ladder */
+const tkLadder = () => { reset(); Object.assign(APP.ops_settings, { routing_live: true, duty_default_owner_escalation: S, leadership_backup: Z }); at('2026-10-06T14:05:00Z')
+  APP.duty_windows = [{ id: 'w1', area: 'staffing', person: SC, recur: { days: [1, 2, 3, 4, 5], from: '08:00', to: '17:00' }, active: true },
+    { id: 'w2', area: 'in_charge', person: K, recur: { days: [1, 2, 3, 4, 5], from: '08:00', to: '17:00' }, active: true }]; APP.positions = []
+  VISITS = [{ id: 9402, caregiver: { id: 501, firstName: 'Maria', lastName: 'Lopez' }, client: { id: 701, firstName: 'Ruth', lastName: 'Adams' }, scheduledStartDate: '2026-10-06T09:00:00', scheduledEndDate: '2026-10-06T13:00:00', clockIn: null, clockOut: null }]
+  APP.coordinator_staff = [{ email: S, name: 'Samantha T', phone: '4175550901' }, { email: K, name: 'Krystal L', phone: '4175550902' },
+    { email: SC, name: 'Sam Coord', phone: '4175550903' }, { email: Z, name: 'Zach T', phone: '4175550904' }]
+  APP.ops_items = [] }
+tkLadder(); await run(TK)
+ck('tk ladder · first text only to the Staffing Coordinator', toPh('4175550903').length === 1 && !toPh('4175550902').length && !toPh('4175550901').length && !toPh('4175550904').length, SENT.map((m) => m.to))
+at('2026-10-06T14:16:00Z'); await run(TK)
+ck('tk ladder · 11 minutes: Krystal (In charge) texted, not Samantha', toPh('4175550902').length >= 1 && !toPh('4175550901').length, SENT.map((m) => m.to))
+at('2026-10-06T14:26:00Z'); await run(TK)
+ck('tk ladder · 21 minutes: Samantha texted, not Zach', toPh('4175550901').length >= 1 && !toPh('4175550904').length, SENT.map((m) => m.to))
+at('2026-10-06T14:41:00Z'); await run(TK)
+ck('tk ladder · 36 minutes: Zach texted', toPh('4175550904').length >= 1, SENT.map((m) => m.to))
 
 /* ── 4 · coverage-run keeps what people did to an Uncovered shift card ── */
 const CRsrc = fs.readFileSync(`${FN}/coverage-run/index.ts`, 'utf8')
