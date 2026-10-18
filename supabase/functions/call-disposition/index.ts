@@ -32,6 +32,7 @@
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { pushCallNote } from '../_shared/axiscare-call-note.ts'
+import { loadSkip } from '../_shared/coaching-calls.ts'   // coaching calls stay private (2026-10-18)
 import { recordCall, axiscareState } from '../_shared/call-record.ts'
 import { opEvent } from '../_shared/events.ts'
 import { ldPush, looksLikeOptOut } from '../_shared/lead-truth.ts'
@@ -316,6 +317,10 @@ Deno.serve(async (req) => {
   const summary = field('summary') || field('transcript_summary') || field('recap')
   if (b.attach === true || String(b.attach).toLowerCase() === 'true' || (summary && !field('disposition'))) {
     if (!summary) return json({ ok: true, routed: 'nothing to attach, no summary in this request' })
+    /* COACHING CALLS (2026-10-18): the summary of a coaching call goes nowhere: not to AxisCare, not to the call record,
+       not onto an office card. If coaching calls can't be checked, the summary is held back the same way. */
+    try { const isCoaching = await loadSkip(supabase); if (isCoaching({ contactId: callerId, phone: callerPhone, at: Date.now() })) return json({ ok: true, routed: 'a coaching call: kept private' }) }
+    catch { return json({ ok: true, routed: 'coaching calls could not be checked: summary held back' }) }
 
     /* Every summarised call also goes to AxisCare's CALL LOG: the identity
        layer matches the number to ONE known person (client, caregiver, lead,

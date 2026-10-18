@@ -23,6 +23,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { loadSkip } from '../_shared/coaching-calls.ts'   // coaching calls stay private (2026-10-18)
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -131,7 +132,15 @@ Deno.serve(async (req) => {
   try { body = await req.json() } catch { /* an empty body is a plain list request */ }
 
   // ── Recording proxy ────────────────────────────────────────────────────────
+  /* COACHING CALLS (2026-10-18): a coaching call is never listed or played here; it plays only on its coaching record,
+     for the coach, Zach and Samantha. If the list of coaching calls can't be read, nothing is played or listed. */
+  let isCoaching: (m: { id?: unknown; contactId?: unknown; phone?: unknown; at?: unknown }) => boolean
+  try { isCoaching = await loadSkip(admin) } catch { return json({ error: 'The private call list could not be checked. Try again in a minute.' }, 503) }
+  // deno-lint-ignore no-explicit-any
+  const notCoaching = (list: any[]) => (list || []).filter((c) => !isCoaching({ id: c.id, contactId: c.contact_id, phone: c.phone, at: c.at }))
+
   if (body.recording) {
+    if (isCoaching({ id: body.recording })) return json({ error: 'This call is private.' }, 403)
     const url = `${GHL_BASE}/conversations/messages/${encodeURIComponent(String(body.recording))}/locations/${encodeURIComponent(locationId)}/recording`
     const r = await fetch(url, { headers: ghlHeaders(tok) })
     if (!r.ok) return json({ error: 'no recording for that call', status: r.status }, r.status === 404 ? 404 : 502)
@@ -147,7 +156,7 @@ Deno.serve(async (req) => {
   const age = prev?.generated_at ? Date.now() - Date.parse(prev.generated_at) : Infinity
 
   if (!body.refresh && prev?.calls && age < CACHE_TTL_MS) {
-    return json({ calls: prev.calls, generated_at: prev.generated_at, cached: true })
+    return json({ calls: notCoaching(prev.calls), generated_at: prev.generated_at, cached: true })
   }
 
   try {
@@ -156,11 +165,11 @@ Deno.serve(async (req) => {
     // Service role writes app_data directly; `key` is the primary key.
     const { error: wErr } = await admin.from('app_data').upsert({ key: CACHE_KEY, data: payload })
     if (wErr) console.error('calls-feed cache write failed (serving live results anyway):', wErr.message)
-    return json({ ...payload, cached: false })
+    return json({ ...payload, calls: notCoaching(payload.calls), cached: false })
   } catch (err) {
     console.error('calls-feed:', err)
     // Stale beats blank — show what we had rather than an empty page.
-    if (prev?.calls) return json({ calls: prev.calls, generated_at: prev.generated_at, cached: true, stale: true })
+    if (prev?.calls) return json({ calls: notCoaching(prev.calls), generated_at: prev.generated_at, cached: true, stale: true })
     return json({ error: String(err) }, 502)
   }
 })
