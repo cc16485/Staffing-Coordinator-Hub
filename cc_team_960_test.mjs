@@ -124,6 +124,35 @@ try {
   at('2026-11-24T18:00:00Z'); APP.coordinator_staff[0].out_until = ''
   r = await cron()
   ck('back from time off · the same two items stay excused (no review for what went overdue while out)', !rev().some((x) => x.person === 'Krystal'), rev())
+  /* ── causes (audit step 3, ops_settings.overdue_causes_live) ── */
+  reset(true); at('2026-11-20T18:00:00Z'); APP.ops_settings.overdue_causes_live = true
+  r = await cron()
+  ck('causes · the first day the misses are logged, no review yet: the owner has a day to mark why', !rev().some((x) => x.person === 'Krystal') && APP.cc_overdue_log.filter((x) => x.person === 'Krystal').length === 2, rev())
+  r = await call('kry', { action: 'list' })
+  ck('causes · Krystal sees her two misses, each "Mine (it counts)", and the cause list', r.j.causes_live === true && r.j.my_missed.length === 2 && r.j.my_missed.every((x) => x.cause === 'employee' && x.counts) && !!r.j.overdue_causes.staffing, r.j.my_missed)
+  const k1 = r.j.my_missed[0].key, k2 = r.j.my_missed[1].key
+  r = await call('kry', { action: 'set_cause', key: k1, cause: 'staffing' })
+  ck('causes · anything but "mine" needs a note', r.s === 400 && /note/.test(r.j.error), r.j)
+  r = await call('ang', { action: 'set_cause', key: k1, cause: 'client', note: 'x' })
+  ck('causes · Angiel can’t mark Krystal’s', r.s === 400 && /Only the person/.test(r.j.error), r.j)
+  r = await call('kry', { action: 'set_cause', key: k1, cause: 'client', note: 'Family asked us to wait until after the hospital visit' })
+  ck('causes · Krystal marks one as a client decision, with her note; it is kept with who and when', r.s === 200 && APP.cc_overdue_log.find((x) => x.key === k1).cause === 'client' && APP.cc_overdue_log.find((x) => x.key === k1).cause_by === K, APP.cc_overdue_log)
+  at('2026-11-21T18:00:00Z'); r = await cron()
+  ck('causes · next day: only one miss counts, so no review', !rev().some((x) => x.person === 'Krystal'), rev())
+  r = await call('kry', { action: 'set_cause', key: k1, cause: 'employee' })
+  at('2026-11-22T18:00:00Z'); r = await cron()
+  ck('causes · put back to "mine": two count, the review opens with both keys', rev().some((x) => x.person === 'Krystal' && x.items.length === 2 && x.items.every((i) => i.key)), rev())
+  r = await call('kry', { action: 'set_cause', key: k2, cause: 'technical', note: 'phone down' })
+  ck('causes · once in a review, Krystal can’t change it (Zachary decides)', r.s === 400 && /Zachary decides/.test(r.j.error), r.j)
+  r = await call('zach', { action: 'list' })
+  const it0 = r.j.reviews.find((x) => x.person === 'Krystal').items[0]
+  ck('causes · Zachary sees each item’s cause in the review', it0.cause === 'employee' && it0.in_review === true, it0)
+  r = await call('zach', { action: 'set_cause', key: k2, cause: 'technical', note: 'GoHighLevel phone outage that morning' })
+  ck('causes · Zachary changes one to phone or Hub problem', r.s === 200 && APP.cc_overdue_log.find((x) => x.key === k2).cause === 'technical', r.j)
+  APP.ops_settings.overdue_causes_live = false
+  r = await call('kry', { action: 'set_cause', key: k1, cause: 'client', note: 'x' })
+  ck('causes off · marking is refused, and counting is as before', r.s === 400 && /switched off/.test(r.j.error), r.j)
+
   APP.ops_settings.fair_counts_live = false; reset(true); at('2026-11-20T18:00:00Z')
   APP.coordinator_staff = [{ email: K, name: 'Krystal Land', out_until: '2026-11-22' }]
   r = await cron()
