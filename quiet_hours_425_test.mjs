@@ -264,7 +264,10 @@ for (const [f, ...res_] of PATHS) { const s = src(f); ck(`scan · ${f}: imports 
 { const s = src('care-notes/index.ts')
   ck('scan · care-notes: the red-flag text is an ordinary staff text (no emergency), so office quiet hours hold it',
     /await textAdmin\(db, ghl, admin, msg\)\)/.test(s) && !/textAdmin\([^)]*emergency/.test(s) && /h >= 8 && h < 21/.test(s)) }
-const KNOWN = new Set([...PATHS.map(([f]) => f.split('/')[0]), 'interview-messages', 'care-notes', '_shared'])
+{ const s = src('hr-alerts/index.ts')   // HR Agent step 7 (965): Zach's alerts send only Mon to Fri 8am to 6pm; the test only outside quiet hours
+  ck('scan · hr-alerts: alerts only inside its 8am to 6pm window, its test never in quiet hours, never an emergency', /const open = sendWindow\(now, ops\)/.test(s) && /if \(fresh\.length && open\)/.test(s)
+    && /if \(officeQuiet\(now, ops\)\) return json/.test(s) && !/emergency/.test(s)) }
+const KNOWN = new Set([...PATHS.map(([f]) => f.split('/')[0]), 'interview-messages', 'care-notes', 'hr-alerts', '_shared'])
 const offenders = []
 for (const d of fs.readdirSync(FN)) {
   const f = `${FN}/${d}/index.ts`; if (!fs.existsSync(f)) continue
