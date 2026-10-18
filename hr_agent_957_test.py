@@ -117,6 +117,7 @@ sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
 def extra_seed(cron=True, vault=1):
     c = conn()
     c.run("do $$ begin if not exists (select 1 from pg_roles where rolname = 'service_role') then create role service_role; end if; end $$")
+    c.run("drop schema if exists cron cascade; drop schema if exists vault cascade; drop schema if exists net cascade")
     c.run("create schema if not exists cron; create schema if not exists vault; create schema if not exists net")
     c.run("create table if not exists cron.job(jobid serial, jobname text unique, schedule text, command text)")
     c.run("create or replace function cron.schedule(n text, s text, cmd text) returns bigint language sql as $$ insert into cron.job(jobname, schedule, command) values (n, s, cmd) on conflict (jobname) do update set schedule = excluded.schedule, command = excluded.command returning jobid $$")
