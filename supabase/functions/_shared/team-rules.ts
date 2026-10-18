@@ -13,6 +13,8 @@
 //                           check-back date, a second try) plus their relationship calls past due
 //     bonuses earned        approved or paid this month (count and dollars)
 //   The numbers start a conversation; they never decide it.
+//   Time off never counts (audit step 2, ops_settings.fair_counts_live): what goes overdue while someone is out on the
+//   Team page is shown apart ("while out") and never counts toward a review.
 //
 //   MANAGEMENT REVIEW: two different follow-ups that went overdue within 30 days open ONE review for the HR lead
 //   (Zachary). He records the cause (workload, training or accountability) and chooses No action or Coaching. Coaching
@@ -79,12 +81,15 @@ export function monthFor(person: string, d: { leads: any[]; assessments: any[]; 
     return !(ended && ended <= d30) }).length
   const won = (d.bonuses || []).filter((b) => same(b.recipient, person) && ['approved', 'paid'].includes(b.status) && inR(dayOf(b.decided_at), m))
   return { person, month: m.label, from: m.from, to: m.to, leads_assigned: assigned, assessments_owned: owned, assessments_helped: helped, starts, retained_30: retained,
-    overdue_now: (d.overdue || []).filter((o) => same(o.person, person)).length, bonuses: won.length, bonus_dollars: won.reduce((t, b) => t + (Number(b.amount) || 0), 0) }
+    overdue_now: (d.overdue || []).filter((o) => same(o.person, person) && !o.excused).length, overdue_while_out: (d.overdue || []).filter((o) => same(o.person, person) && o.excused).length, bonuses: won.length, bonus_dollars: won.reduce((t, b) => t + (Number(b.amount) || 0), 0) }
 }
+/** time off never counts (audit step 2, ops_settings.fair_counts_live): mark each overdue item whose owner is out today as
+ *  excused. An item first seen while they were out stays excused in the log, so it never counts after they come back. */
+export function excuse(overdue: any[], isOut: (name: string) => boolean): any[] { return (overdue || []).map((o) => (isOut(o.person) ? { ...o, excused: 'out' } : o)) }
 /** the daily log: add today's overdue keys (one entry per key, the first day it was seen) */
 export function logOverdue(log: any[], overdue: any[], today: string): any[] {
   const have = new Set((log || []).map((x) => x.key))
-  const add = overdue.filter((o) => !have.has(o.key)).map((o) => ({ id: 'od_' + o.key.replace(/[^a-zA-Z0-9_:-]/g, '_'), key: o.key, person: o.person, kind: o.kind, lead_id: o.lead_id, client: o.client, day: today }))
+  const add = overdue.filter((o) => !have.has(o.key)).map((o) => ({ id: 'od_' + o.key.replace(/[^a-zA-Z0-9_:-]/g, '_'), key: o.key, person: o.person, kind: o.kind, lead_id: o.lead_id, client: o.client, day: today, ...(o.excused ? { excused: o.excused } : {}) }))
   return [...(log || []).filter((x) => x.day >= addDaysYmd(today, -90)), ...add]
 }
 /** reviews to open now: a person with 2 different follow-ups overdue within 30 days, counted after their last review */
@@ -94,7 +99,7 @@ export function reviewsToOpen(log: any[], reviews: any[], people: string[], toda
     const mineR = (reviews || []).filter((r) => same(r.person, p))
     if (mineR.some((r) => ['open', 'coaching'].includes(r.status))) continue
     const since = mineR.map((r) => r.opened_on).sort().pop() || ''
-    const items = (log || []).filter((x) => same(x.person, p) && x.day >= addDaysYmd(today, -(DEFAULTS.window_days - 1)) && x.day > since)
+    const items = (log || []).filter((x) => same(x.person, p) && !x.excused && x.day >= addDaysYmd(today, -(DEFAULTS.window_days - 1)) && x.day > since)   /* excused (time off) never counts */
     if (items.length >= misses) out.push({ id: 'rev_' + lc(p) + '_' + today, person: p, opened_on: today, status: 'open', items: items.map((x) => ({ kind: x.kind, client: x.client, day: x.day })), history: [] })
   }
   return out
