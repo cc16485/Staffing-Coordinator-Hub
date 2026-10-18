@@ -3,16 +3,17 @@
 // Do not edit by hand: rebuild the agreement, then regenerate this file. Every fill-in, checkbox, initials box and signature
 // line on the printed agreement, with its page (1-based) and box in PDF points measured from the TOP-LEFT of a 612 x 792 page.
 // PDF_SHA256 is the sha256 of the exact master PDF these boxes belong to; the function refuses any other file.
-// 2026-10-18 (Samantha: the pay week runs Monday to Sunday): the current master. Overtime is now counted "in any Monday through
-// Sunday week" (was "any Thursday through Wednesday timesheet period"); every box measured the same as the 2026-10-17 master.
-// Earlier masters stay in client-agreement-map-2026-10-17.ts and -2026-10-16.ts; agreement-masters.ts picks the right one for
-// each agreement by its pdf_sha256.
+// 2026-10-18b (Samantha: the Booking App needs its own terms, signed at the care assessment): the current master. Section 9 is
+// now "The Caring Companions Booking App" (the $15 month-with-no-visits fee, the join month free, who may book, turning it off),
+// and each Exhibit I contact has "Can book in the app" Yes / No (c1-c4.book_yes / book_no). 23 pages, same initials.
+// Earlier masters stay in client-agreement-map-2026-10-18.ts, -2026-10-17.ts and -2026-10-16.ts; agreement-masters.ts picks
+// the right one for each agreement by its pdf_sha256.
 // =============================================================================
 export const DOC = 'client-care-agreement'
 export const VERSION = "Rev. 10/2026"
 export const PAGES = 23
-export const PDF_SHA256 = "ce326142e4593c7caac65cc549e6992af8808eebbaac1f0fcdcababef0b8be11"
-export const MASTER_PATH = 'master/client-care-agreement-rev-2026-10-18.pdf'
+export const PDF_SHA256 = "a06569407574b49985c0c80fcca149db53904c237b850e874298ba23d66ce3fa"
+export const MASTER_PATH = 'master/client-care-agreement-rev-2026-10-18b.pdf'
 export type FieldType = 'text' | 'check' | 'initials' | 'signature'
 export type Field = { type: FieldType; page: number; box: [number, number, number, number] }
 export const FIELDS: Record<string, Field> = {
@@ -21,9 +22,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 4,
    "box": [
     58.2,
-    321.1,
+    445.6,
     67.2,
-    330.1
+    454.6
    ]
   },
   "access.2_lockbox_access_a_ke": {
@@ -31,9 +32,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 4,
    "box": [
     58.2,
-    354.8,
+    479.3,
     67.2,
-    363.8
+    488.3
    ]
   },
   "access.3_garage_door_access_code": {
@@ -41,9 +42,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 4,
    "box": [
     58.2,
-    408.8,
+    533.3,
     67.2,
-    417.8
+    542.3
    ]
   },
   "access.4_other_access_option": {
@@ -51,9 +52,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 4,
    "box": [
     58.2,
-    449.3,
+    573.8,
     67.2,
-    458.3
+    582.8
    ]
   },
   "access.describe": {
@@ -61,9 +62,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 4,
    "box": [
     113.8,
-    466.6,
+    591.1,
     553.7,
-    480.9
+    605.4
    ]
   },
   "access.garage_code": {
@@ -71,9 +72,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 4,
    "box": [
     129.4,
-    426.8,
+    551.3,
     553.7,
-    441.2
+    565.7
    ]
   },
   "access.lockbox_code": {
@@ -81,9 +82,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 4,
    "box": [
     458.6,
-    386.3,
+    510.8,
     553.7,
-    400.7
+    525.2
    ]
   },
   "access.lockbox_location": {
@@ -91,9 +92,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 4,
    "box": [
     145.8,
-    386.3,
+    510.8,
     385.6,
-    400.7
+    525.2
    ]
   },
   "backup.full_name": {
@@ -141,9 +142,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     96.1,
-    241.6,
+    240.8,
     296.1,
-    253.7
+    252.9
    ]
   },
   "c1.axis_care_notes": {
@@ -151,9 +152,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     177.0,
-    363.1,
+    371.3,
     186.0,
-    372.1
+    380.3
    ]
   },
   "c1.axis_invoices": {
@@ -161,9 +162,29 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     259.8,
-    363.1,
+    371.3,
     268.8,
-    372.1
+    380.3
+   ]
+  },
+  "c1.book_no": {
+   "type": "check",
+   "page": 22,
+   "box": [
+    227.0,
+    324.1,
+    236.0,
+    333.1
+   ]
+  },
+  "c1.book_yes": {
+   "type": "check",
+   "page": 22,
+   "box": [
+    177.0,
+    324.1,
+    186.0,
+    333.1
    ]
   },
   "c1.cell_phone": {
@@ -171,9 +192,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     235.6,
-    225.8,
+    224.3,
     306.0,
-    237.9
+    237.2
    ]
   },
   "c1.city": {
@@ -181,9 +202,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     328.9,
-    241.6,
+    240.8,
     416.2,
-    253.7
+    252.9
    ]
   },
   "c1.email": {
@@ -191,9 +212,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     344.2,
-    225.8,
+    224.3,
     553.7,
-    237.9
+    237.2
    ]
   },
   "c1.email_care_plans": {
@@ -201,9 +222,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     285.9,
-    381.1,
+    387.1,
     294.9,
-    390.1
+    396.1
    ]
   },
   "c1.email_invoices": {
@@ -211,9 +232,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     477.6,
-    381.1,
+    387.1,
     486.6,
-    390.1
+    396.1
    ]
   },
   "c1.email_office_messages": {
@@ -221,9 +242,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     367.9,
-    381.1,
+    387.1,
     376.9,
-    390.1
+    396.1
    ]
   },
   "c1.email_weekly_calendar": {
@@ -231,9 +252,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     177.0,
-    381.1,
+    387.1,
     186.0,
-    390.1
+    396.1
    ]
   },
   "c1.hipaa_no": {
@@ -241,9 +262,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     227.0,
-    278.3,
+    276.8,
     236.0,
-    287.3
+    285.8
    ]
   },
   "c1.hipaa_yes": {
@@ -251,9 +272,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     177.0,
-    278.3,
+    276.8,
     186.0,
-    287.3
+    285.8
    ]
   },
   "c1.home_phone": {
@@ -261,9 +282,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     114.1,
-    225.8,
+    224.3,
     176.1,
-    237.9
+    237.2
    ]
   },
   "c1.medical_no": {
@@ -271,9 +292,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     227.0,
-    296.3,
+    292.6,
     236.0,
-    305.3
+    301.6
    ]
   },
   "c1.medical_yes": {
@@ -281,9 +302,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     177.0,
-    296.3,
+    292.6,
     186.0,
-    305.3
+    301.6
    ]
   },
   "c1.name": {
@@ -291,9 +312,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     86.5,
-    209.3,
+    208.6,
     380.6,
-    222.2
+    220.7
    ]
   },
   "c1.poa_financial": {
@@ -301,9 +322,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     240.0,
-    313.6,
+    308.3,
     249.0,
-    322.6
+    317.3
    ]
   },
   "c1.poa_health": {
@@ -311,9 +332,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     177.0,
-    313.6,
+    308.3,
     186.0,
-    322.6
+    317.3
    ]
   },
   "c1.poa_none": {
@@ -321,9 +342,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     313.8,
-    313.6,
+    308.3,
     322.8,
-    322.6
+    317.3
    ]
   },
   "c1.relationship": {
@@ -331,9 +352,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     445.9,
-    209.3,
+    208.6,
     553.7,
-    222.2
+    220.7
    ]
   },
   "c1.state": {
@@ -341,9 +362,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     453.7,
-    241.6,
+    240.8,
     476.9,
-    253.7
+    252.9
    ]
   },
   "c1.text_caregiver_change": {
@@ -351,9 +372,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     266.7,
-    345.8,
+    355.6,
     275.7,
-    354.8
+    364.6
    ]
   },
   "c1.text_running_late": {
@@ -361,9 +382,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     177.0,
-    345.8,
+    355.6,
     186.0,
-    354.8
+    364.6
    ]
   },
   "c1.zip": {
@@ -371,9 +392,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     506.3,
-    241.6,
+    240.8,
     553.7,
-    253.7
+    252.9
    ]
   },
   "c2.address": {
@@ -381,9 +402,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     96.1,
-    462.8,
+    465.1,
     296.1,
-    475.7
+    477.2
    ]
   },
   "c2.axis_care_notes": {
@@ -391,9 +412,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     177.0,
-    585.1,
+    595.6,
     186.0,
-    594.1
+    604.6
    ]
   },
   "c2.axis_invoices": {
@@ -401,9 +422,29 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     259.8,
-    585.1,
+    595.6,
     268.8,
-    594.1
+    604.6
+   ]
+  },
+  "c2.book_no": {
+   "type": "check",
+   "page": 22,
+   "box": [
+    227.0,
+    548.3,
+    236.0,
+    557.3
+   ]
+  },
+  "c2.book_yes": {
+   "type": "check",
+   "page": 22,
+   "box": [
+    177.0,
+    548.3,
+    186.0,
+    557.3
    ]
   },
   "c2.cell_phone": {
@@ -411,9 +452,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     235.6,
-    447.1,
+    449.3,
     306.0,
-    459.2
+    461.4
    ]
   },
   "c2.city": {
@@ -421,9 +462,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     328.9,
-    462.8,
+    465.1,
     416.2,
-    475.7
+    477.2
    ]
   },
   "c2.email": {
@@ -431,9 +472,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     344.2,
-    447.1,
+    449.3,
     553.7,
-    459.2
+    461.4
    ]
   },
   "c2.email_care_plans": {
@@ -441,9 +482,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     285.9,
-    602.3,
+    611.3,
     294.9,
-    611.3
+    620.3
    ]
   },
   "c2.email_invoices": {
@@ -451,9 +492,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     477.6,
-    602.3,
+    611.3,
     486.6,
-    611.3
+    620.3
    ]
   },
   "c2.email_office_messages": {
@@ -461,9 +502,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     367.9,
-    602.3,
+    611.3,
     376.9,
-    611.3
+    620.3
    ]
   },
   "c2.email_weekly_calendar": {
@@ -471,9 +512,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     177.0,
-    602.3,
+    611.3,
     186.0,
-    611.3
+    620.3
    ]
   },
   "c2.hipaa_no": {
@@ -481,9 +522,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     227.0,
-    500.3,
+    501.1,
     236.0,
-    509.3
+    510.1
    ]
   },
   "c2.hipaa_yes": {
@@ -491,9 +532,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     177.0,
-    500.3,
+    501.1,
     186.0,
-    509.3
+    510.1
    ]
   },
   "c2.home_phone": {
@@ -501,9 +542,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     114.1,
-    447.1,
+    449.3,
     176.1,
-    459.2
+    461.4
    ]
   },
   "c2.medical_no": {
@@ -511,9 +552,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     227.0,
-    517.6,
+    516.8,
     236.0,
-    526.6
+    525.8
    ]
   },
   "c2.medical_yes": {
@@ -521,9 +562,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     177.0,
-    517.6,
+    516.8,
     186.0,
-    526.6
+    525.8
    ]
   },
   "c2.name": {
@@ -531,9 +572,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     86.5,
-    431.3,
+    432.8,
     380.6,
-    443.4
+    445.7
    ]
   },
   "c2.poa_financial": {
@@ -541,9 +582,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     240.0,
-    534.8,
+    532.6,
     249.0,
-    543.8
+    541.6
    ]
   },
   "c2.poa_health": {
@@ -551,9 +592,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     177.0,
-    534.8,
+    532.6,
     186.0,
-    543.8
+    541.6
    ]
   },
   "c2.poa_none": {
@@ -561,9 +602,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     313.8,
-    534.8,
+    532.6,
     322.8,
-    543.8
+    541.6
    ]
   },
   "c2.relationship": {
@@ -571,9 +612,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     445.9,
-    431.3,
+    432.8,
     553.7,
-    443.4
+    445.7
    ]
   },
   "c2.state": {
@@ -581,9 +622,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     453.7,
-    462.8,
+    465.1,
     476.9,
-    475.7
+    477.2
    ]
   },
   "c2.text_caregiver_change": {
@@ -591,9 +632,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     266.7,
-    567.8,
+    579.8,
     275.7,
-    576.8
+    588.8
    ]
   },
   "c2.text_running_late": {
@@ -601,9 +642,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     177.0,
-    567.8,
+    579.8,
     186.0,
-    576.8
+    588.8
    ]
   },
   "c2.zip": {
@@ -611,9 +652,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 22,
    "box": [
     506.3,
-    462.8,
+    465.1,
     553.7,
-    475.7
+    477.2
    ]
   },
   "c3.address": {
@@ -621,9 +662,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     96.1,
-    100.6,
+    99.8,
     296.1,
-    112.7
+    111.9
    ]
   },
   "c3.axis_care_notes": {
@@ -631,9 +672,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     177.0,
-    222.8,
+    230.3,
     186.0,
-    231.8
+    239.3
    ]
   },
   "c3.axis_invoices": {
@@ -641,9 +682,29 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     259.8,
-    222.8,
+    230.3,
     268.8,
-    231.8
+    239.3
+   ]
+  },
+  "c3.book_no": {
+   "type": "check",
+   "page": 23,
+   "box": [
+    227.0,
+    183.1,
+    236.0,
+    192.1
+   ]
+  },
+  "c3.book_yes": {
+   "type": "check",
+   "page": 23,
+   "box": [
+    177.0,
+    183.1,
+    186.0,
+    192.1
    ]
   },
   "c3.cell_phone": {
@@ -651,9 +712,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     235.6,
-    84.8,
+    83.3,
     306.0,
-    96.9
+    96.2
    ]
   },
   "c3.city": {
@@ -661,9 +722,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     328.9,
-    100.6,
+    99.8,
     416.2,
-    112.7
+    111.9
    ]
   },
   "c3.email": {
@@ -671,9 +732,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     344.2,
-    84.8,
+    83.3,
     553.7,
-    96.9
+    96.2
    ]
   },
   "c3.email_care_plans": {
@@ -681,9 +742,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     285.9,
-    240.1,
+    246.1,
     294.9,
-    249.1
+    255.1
    ]
   },
   "c3.email_invoices": {
@@ -691,9 +752,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     477.6,
-    240.1,
+    246.1,
     486.6,
-    249.1
+    255.1
    ]
   },
   "c3.email_office_messages": {
@@ -701,9 +762,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     367.9,
-    240.1,
+    246.1,
     376.9,
-    249.1
+    255.1
    ]
   },
   "c3.email_weekly_calendar": {
@@ -711,9 +772,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     177.0,
-    240.1,
+    246.1,
     186.0,
-    249.1
+    255.1
    ]
   },
   "c3.hipaa_no": {
@@ -721,9 +782,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     227.0,
-    138.1,
+    135.8,
     236.0,
-    147.1
+    144.8
    ]
   },
   "c3.hipaa_yes": {
@@ -731,9 +792,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     177.0,
-    138.1,
+    135.8,
     186.0,
-    147.1
+    144.8
    ]
   },
   "c3.home_phone": {
@@ -741,9 +802,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     114.1,
-    84.8,
+    83.3,
     176.1,
-    96.9
+    96.2
    ]
   },
   "c3.medical_no": {
@@ -751,9 +812,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     227.0,
-    155.3,
+    151.6,
     236.0,
-    164.3
+    160.6
    ]
   },
   "c3.medical_yes": {
@@ -761,9 +822,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     177.0,
-    155.3,
+    151.6,
     186.0,
-    164.3
+    160.6
    ]
   },
   "c3.name": {
@@ -771,9 +832,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     86.5,
-    68.3,
+    67.6,
     380.6,
-    81.2
+    79.7
    ]
   },
   "c3.poa_financial": {
@@ -781,9 +842,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     240.0,
-    172.6,
+    167.3,
     249.0,
-    181.6
+    176.3
    ]
   },
   "c3.poa_health": {
@@ -791,9 +852,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     177.0,
-    172.6,
+    167.3,
     186.0,
-    181.6
+    176.3
    ]
   },
   "c3.poa_none": {
@@ -801,9 +862,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     313.8,
-    172.6,
+    167.3,
     322.8,
-    181.6
+    176.3
    ]
   },
   "c3.relationship": {
@@ -811,9 +872,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     445.9,
-    68.3,
+    67.6,
     553.7,
-    81.2
+    79.7
    ]
   },
   "c3.state": {
@@ -821,9 +882,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     453.7,
-    100.6,
+    99.8,
     476.9,
-    112.7
+    111.9
    ]
   },
   "c3.text_caregiver_change": {
@@ -831,9 +892,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     266.7,
-    204.8,
+    214.6,
     275.7,
-    213.8
+    223.6
    ]
   },
   "c3.text_running_late": {
@@ -841,9 +902,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     177.0,
-    204.8,
+    214.6,
     186.0,
-    213.8
+    223.6
    ]
   },
   "c3.zip": {
@@ -851,9 +912,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     506.3,
-    100.6,
+    99.8,
     553.7,
-    112.7
+    111.9
    ]
   },
   "c4.address": {
@@ -861,9 +922,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     96.1,
-    321.8,
+    324.1,
     296.1,
-    334.7
+    336.9
    ]
   },
   "c4.axis_care_notes": {
@@ -871,9 +932,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     177.0,
-    444.1,
+    454.6,
     186.0,
-    453.1
+    463.6
    ]
   },
   "c4.axis_invoices": {
@@ -881,9 +942,29 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     259.8,
-    444.1,
+    454.6,
     268.8,
-    453.1
+    463.6
+   ]
+  },
+  "c4.book_no": {
+   "type": "check",
+   "page": 23,
+   "box": [
+    227.0,
+    408.1,
+    236.0,
+    417.1
+   ]
+  },
+  "c4.book_yes": {
+   "type": "check",
+   "page": 23,
+   "box": [
+    177.0,
+    408.1,
+    186.0,
+    417.1
    ]
   },
   "c4.cell_phone": {
@@ -891,9 +972,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     235.6,
-    306.1,
+    308.3,
     306.0,
-    318.2
+    320.4
    ]
   },
   "c4.city": {
@@ -901,9 +982,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     328.9,
-    321.8,
+    324.1,
     416.2,
-    334.7
+    336.9
    ]
   },
   "c4.email": {
@@ -911,9 +992,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     344.2,
-    306.1,
+    308.3,
     553.7,
-    318.2
+    320.4
    ]
   },
   "c4.email_care_plans": {
@@ -921,9 +1002,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     285.9,
-    461.3,
+    470.3,
     294.9,
-    470.3
+    479.3
    ]
   },
   "c4.email_invoices": {
@@ -931,9 +1012,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     477.6,
-    461.3,
+    470.3,
     486.6,
-    470.3
+    479.3
    ]
   },
   "c4.email_office_messages": {
@@ -941,9 +1022,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     367.9,
-    461.3,
+    470.3,
     376.9,
-    470.3
+    479.3
    ]
   },
   "c4.email_weekly_calendar": {
@@ -951,9 +1032,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     177.0,
-    461.3,
+    470.3,
     186.0,
-    470.3
+    479.3
    ]
   },
   "c4.hipaa_no": {
@@ -961,9 +1042,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     227.0,
-    359.3,
+    360.8,
     236.0,
-    368.3
+    369.8
    ]
   },
   "c4.hipaa_yes": {
@@ -971,9 +1052,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     177.0,
-    359.3,
+    360.8,
     186.0,
-    368.3
+    369.8
    ]
   },
   "c4.home_phone": {
@@ -981,9 +1062,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     114.1,
-    306.1,
+    308.3,
     176.1,
-    318.2
+    320.4
    ]
   },
   "c4.medical_no": {
@@ -1011,9 +1092,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     86.5,
-    290.3,
+    292.6,
     380.6,
-    302.4
+    304.7
    ]
   },
   "c4.poa_financial": {
@@ -1021,9 +1102,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     240.0,
-    393.8,
+    392.3,
     249.0,
-    402.8
+    401.3
    ]
   },
   "c4.poa_health": {
@@ -1031,9 +1112,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     177.0,
-    393.8,
+    392.3,
     186.0,
-    402.8
+    401.3
    ]
   },
   "c4.poa_none": {
@@ -1041,9 +1122,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     313.8,
-    393.8,
+    392.3,
     322.8,
-    402.8
+    401.3
    ]
   },
   "c4.relationship": {
@@ -1051,9 +1132,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     445.9,
-    290.3,
+    292.6,
     553.7,
-    302.4
+    304.7
    ]
   },
   "c4.state": {
@@ -1061,9 +1142,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     453.7,
-    321.8,
+    324.1,
     476.9,
-    334.7
+    336.9
    ]
   },
   "c4.text_caregiver_change": {
@@ -1071,9 +1152,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     266.7,
-    426.8,
+    438.8,
     275.7,
-    435.8
+    447.8
    ]
   },
   "c4.text_running_late": {
@@ -1081,9 +1162,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     177.0,
-    426.8,
+    438.8,
     186.0,
-    435.8
+    447.8
    ]
   },
   "c4.zip": {
@@ -1091,9 +1172,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     506.3,
-    321.8,
+    324.1,
     553.7,
-    334.7
+    336.9
    ]
   },
   "car.accept": {
@@ -1101,9 +1182,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 5,
    "box": [
     178.8,
-    564.8,
+    672.1,
     187.8,
-    573.8
+    681.1
    ]
   },
   "car.decline": {
@@ -1111,9 +1192,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 5,
    "box": [
     240.5,
-    564.8,
+    672.1,
     249.5,
-    573.8
+    681.1
    ]
   },
   "ci.client_s_name": {
@@ -1141,9 +1222,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     335.3,
-    627.8,
+    637.6,
     552.7,
-    642.2
+    651.9
    ]
   },
   "ci.sig.printed_name": {
@@ -1151,9 +1232,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     116.9,
-    627.8,
+    637.6,
     300.0,
-    642.2
+    651.9
    ]
   },
   "ci.sig.signature": {
@@ -1161,9 +1242,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 23,
    "box": [
     102.1,
-    660.8,
+    670.6,
     552.7,
-    675.1
+    684.9
    ]
   },
   "client.address": {
@@ -1231,9 +1312,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 8,
    "box": [
     450.4,
-    118.6,
+    245.3,
     459.4,
-    127.6
+    254.3
    ]
   },
   "comm.decline": {
@@ -1241,9 +1322,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 8,
    "box": [
     512.1,
-    118.6,
+    245.3,
     521.1,
-    127.6
+    254.3
    ]
   },
   "date.day": {
@@ -1281,9 +1362,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 3,
    "box": [
     501.0,
-    405.1,
+    536.3,
     560.7,
-    424.7
+    555.9
    ]
   },
   "ini.2": {
@@ -1291,9 +1372,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 5,
    "box": [
     501.0,
-    194.3,
+    300.8,
     560.7,
-    213.9
+    321.2
    ]
   },
   "ini.3": {
@@ -1301,9 +1382,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 5,
    "box": [
     497.1,
-    560.3,
+    667.6,
     556.7,
-    580.7
+    687.9
    ]
   },
   "ini.4": {
@@ -1311,9 +1392,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 8,
    "box": [
     501.0,
-    249.1,
+    376.6,
     560.7,
-    269.4
+    396.9
    ]
   },
   "ini.5": {
@@ -1381,9 +1462,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 7,
    "box": [
     422.1,
-    232.6,
+    366.8,
     431.1,
-    241.6
+    375.8
    ]
   },
   "photos.no_photos": {
@@ -1391,9 +1472,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 7,
    "box": [
     499.1,
-    232.6,
+    366.8,
     508.1,
-    241.6
+    375.8
    ]
   },
   "photos.share_with_my_family": {
@@ -1401,9 +1482,9 @@ export const FIELDS: Record<string, Field> = {
    "page": 7,
    "box": [
     296.3,
-    232.6,
+    366.8,
     305.3,
-    241.6
+    375.8
    ]
   },
   "poa.cell_phone": {
@@ -1548,72 +1629,72 @@ export const FIELDS: Record<string, Field> = {
   },
   "vehicle.car_make_model": {
    "type": "text",
-   "page": 5,
+   "page": 6,
    "box": [
     135.6,
-    633.1,
+    88.6,
     380.6,
-    647.4
+    102.9
    ]
   },
   "vehicle.driver_s_license": {
    "type": "text",
-   "page": 5,
+   "page": 6,
    "box": [
     124.6,
-    675.1,
+    130.6,
     380.6,
-    689.4
+    144.9
    ]
   },
   "vehicle.expiration_date": {
    "type": "text",
-   "page": 5,
+   "page": 6,
    "box": [
     456.8,
-    654.1,
+    109.6,
     553.7,
-    668.4
+    123.9
    ]
   },
   "vehicle.expiration_date_2": {
    "type": "text",
-   "page": 5,
+   "page": 6,
    "box": [
     456.8,
-    675.1,
+    130.6,
     553.7,
-    689.4
+    144.9
    ]
   },
   "vehicle.insurance": {
    "type": "text",
-   "page": 5,
+   "page": 6,
    "box": [
     102.4,
-    654.1,
+    109.6,
     380.6,
-    668.4
+    123.9
    ]
   },
   "vehicle.spare_key_location": {
    "type": "text",
-   "page": 5,
+   "page": 6,
    "box": [
     136.5,
-    696.1,
+    151.6,
     553.7,
-    710.4
+    165.9
    ]
   },
   "vehicle.year": {
    "type": "text",
-   "page": 5,
+   "page": 6,
    "box": [
     415.5,
-    633.1,
+    88.6,
     553.7,
-    647.4
+    102.9
    ]
   }
 }

@@ -8,7 +8,10 @@
 //     touched. When all three slots are taken, the contact goes to the Hub only and the review says so.
 //   * the Hub Family Circle: the person, the two answers as AxisCare holds them after the read-back, and texting exactly
 //     as ticked: "Running late" -> wants_late, "Caregiver change" -> wants_changes, either one -> sms_consent
-//     (her answer "Separately"). A STOP reply (stopped_at) is never touched.
+//     (her answer "Separately"). A STOP reply (stopped_at) is never touched. 2026-10-18b: "Can book in the app" Yes / No
+//     (Samantha: the Booking App terms are signed at the care assessment) sets whether that person may book in the Booking
+//     App (app_can_book) and records it as the latest booking choice (app_book_choice), which the first sign-in follows.
+//     An agreement signed before the choice existed leaves both alone.
 //   * a checklist for what AxisCare's API cannot set (her answer "Checklist"): the AxisCare family sign-in for care
 //     notes / invoices, and the emails each person chose. The office does these by hand and ticks them off.
 // Pure functions here (tested offline); the client-agreement function does the reads and writes.
@@ -37,7 +40,7 @@ export function stateCode(v: unknown): string | null {
 export type Contact = {
   n: number; name: string; relationship: string; cell: string; home: string; email: string
   address: { line1: string; city: string; state: string; zip: string }
-  hipaa: boolean | null; medical: boolean | null; poa: string[]
+  hipaa: boolean | null; medical: boolean | null; poa: string[]; book: boolean | null
   texts: { late: boolean; change: boolean }; axis: { care_notes: boolean; invoices: boolean }
   emails: { weekly_calendar: boolean; care_plans: boolean; office_messages: boolean; invoices: boolean }
 }
@@ -52,7 +55,7 @@ export function contactsFrom(answers: Any): Contact[] {
     out.push({ n, name, relationship: t(a[p + 'relationship']), cell: t(a[p + 'cell_phone']), home: t(a[p + 'home_phone']), email: t(a[p + 'email']),
       address: { line1: t(a[p + 'address']), city: t(a[p + 'city']), state: t(a[p + 'state']), zip: t(a[p + 'zip']) },
       hipaa: yn(a, p + 'hipaa_yes', p + 'hipaa_no'), medical: yn(a, p + 'medical_yes', p + 'medical_no'),
-      poa: ['health', 'financial', 'none'].filter((k) => a[p + 'poa_' + k] === true),
+      poa: ['health', 'financial', 'none'].filter((k) => a[p + 'poa_' + k] === true), book: yn(a, p + 'book_yes', p + 'book_no'),
       texts: { late: a[p + 'text_running_late'] === true, change: a[p + 'text_caregiver_change'] === true },
       axis: { care_notes: a[p + 'axis_care_notes'] === true, invoices: a[p + 'axis_invoices'] === true },
       emails: { weekly_calendar: a[p + 'email_weekly_calendar'] === true, care_plans: a[p + 'email_care_plans'] === true,
@@ -137,6 +140,7 @@ export function memberRow(c: Contact, ax: { list_number: number; name: string; r
     hipaa_authorized: ax ? ax.hipaa_authorized : c.hipaa, can_make_medical_decisions: ax ? ax.can_make_medical_decisions : c.medical,
     sms_consent: texts, wants_changes: c.texts.change, wants_late: c.texts.late,
     ...(ax ? { source: 'axiscare', axiscare_list_number: ax.list_number, axiscare_removed_at: null, axiscare_sent_by: opts.by, axiscare_sent_at: opts.at } : {}),
+    ...(c.book === null ? {} : { app_can_book: c.book, app_book_choice: c.book }),
     from_agreement: opts.agreementId, from_agreement_n: c.n,
   }
 }

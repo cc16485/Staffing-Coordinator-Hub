@@ -5,10 +5,10 @@ import fs from 'fs'; import path from 'path'
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 700)])
 const PDFLIB = process.env.PDFLIB
 if (!PDFLIB || !fs.existsSync(PDFLIB)) { console.log('Set PDFLIB to pdf-lib 1.17.1 dist/pdf-lib.esm.js (npm i pdf-lib@1.17.1).'); process.exit(2) }
-const MASTER = fs.readFileSync('client-agreement/client-care-agreement-rev-2026-10-18.pdf'), MASTER_SECOND = fs.readFileSync('client-agreement/client-care-agreement-rev-2026-10-17.pdf'), MASTER_FIRST = fs.readFileSync('client-agreement/client-care-agreement-rev-2026-10.pdf')   // 2026-10-18: all three masters are stored
+const MASTER = fs.readFileSync('client-agreement/client-care-agreement-rev-2026-10-18b.pdf'), MASTER_THIRD = fs.readFileSync('client-agreement/client-care-agreement-rev-2026-10-18.pdf'), MASTER_SECOND = fs.readFileSync('client-agreement/client-care-agreement-rev-2026-10-17.pdf'), MASTER_FIRST = fs.readFileSync('client-agreement/client-care-agreement-rev-2026-10.pdf')   // 2026-10-18: all three masters are stored
 const SIG = 'data:image/png;base64,' + fs.readFileSync('client-agreement/test-signature.png').toString('base64')
 let T, FILES, FAIL
-const reset = () => { FAIL = null; FILES = { 'client-agreements/master/client-care-agreement-rev-2026-10-18.pdf': new Uint8Array(MASTER), 'client-agreements/master/client-care-agreement-rev-2026-10-17.pdf': new Uint8Array(MASTER_SECOND), 'client-agreements/master/client-care-agreement-rev-2026-10.pdf': new Uint8Array(MASTER_FIRST) }; T = {
+const reset = () => { FAIL = null; FILES = { 'client-agreements/master/client-care-agreement-rev-2026-10-18b.pdf': new Uint8Array(MASTER), 'client-agreements/master/client-care-agreement-rev-2026-10-18.pdf': new Uint8Array(MASTER_THIRD), 'client-agreements/master/client-care-agreement-rev-2026-10-17.pdf': new Uint8Array(MASTER_SECOND), 'client-agreements/master/client-care-agreement-rev-2026-10.pdf': new Uint8Array(MASTER_FIRST) }; T = {
   client_agreements: [], document_access_log: [],
   auth_identities: [{ auth_user_id: 'u-kr', project_ref: 'zngsgedlsxinbygwmxwn', person_id: 'p-kr' }, { auth_user_id: 'u-cg', project_ref: 'zngsgedlsxinbygwmxwn', person_id: 'p-cg' }],
   persons: [{ person_id: 'p-kr', full_name: 'Krystal Office', active: true }, { person_id: 'p-cg', full_name: 'Cara Giver', active: true }],
@@ -49,7 +49,7 @@ try {
     let j = null; try { j = await r.json() } catch { /* */ } return { status: r.status, j, h: r.headers } }
   const OFFICE = { 'level.personal_care': true, 'level.hourly_rate': '32' }
   const FAMILY = { 'client.client_s_name': 'Edward Anderson', 'client.address': '123 Maple St', 'client.city': 'Springfield', 'client.zip': '65804', 'client.phone_number': '417-555-0100',
-    'c1.name': 'Nancy Anderson', 'c1.relationship': 'Wife', 'c1.cell_phone': '417-863-7309', 'c1.email': 'nancy@example.com', 'c1.hipaa_yes': true, 'c1.medical_yes': true, 'c1.poa_health': true,
+    'c1.name': 'Nancy Anderson', 'c1.relationship': 'Wife', 'c1.cell_phone': '417-863-7309', 'c1.email': 'nancy@example.com', 'c1.hipaa_yes': true, 'c1.book_yes': true, 'c1.medical_yes': true, 'c1.poa_health': true,
     'c1.text_running_late': true, 'c1.axis_care_notes': true, 'c1.email_invoices': true, 'ci.date_of_birth': '3/4/1941',
     'backup.full_name': 'Tom Anderson', 'backup.relationship_to_client': 'Son', 'backup.primary_phone': '417-555-0111',
     'access.2_lockbox_access_a_ke': true, 'access.lockbox_location': 'Back porch', 'access.lockbox_code': '2468',
@@ -60,12 +60,12 @@ try {
   reset(); let r = await call(null, null, 'OPTIONS'); ck('browser preflight: CORS allows the Hub headers (x-cc-via)', r.status === 200 && /x-cc-via/.test(r.h.get('access-control-allow-headers') || ''))
   reset(); r = await call({ action: 'form' }, null); ck('no sign-in: refused (401)', r.status === 401, r)
   reset(); r = await call({ action: 'form' }, 'cg'); ck('a caregiver account: refused (403)', r.status === 403, r)
-  reset(); r = await call({ action: 'form' }); ck('form: every field of the agreement, the six initials, the consent words', r.status === 200 && Object.keys(r.j.form.fields).length === 160 && Object.keys(r.j.form.initials).length === 6 && /electronically/.test(r.j.form.esign_words), r.j)
+  reset(); r = await call({ action: 'form' }); ck('form: every field of the agreement, the six initials, the consent words', r.status === 200 && Object.keys(r.j.form.fields).length === 168 && Object.keys(r.j.form.initials).length === 6 && /electronically/.test(r.j.form.esign_words), r.j)
   reset(); r = await call({ action: 'start', client_ax: 'abc', office: OFFICE }); ck('start: a bad client id is refused', r.status === 400, r)
   reset(); r = await call({ action: 'start', client_ax: '296', office: { 'client.client_s_name': 'x' } }); ck('start: the office cannot fill in family fields', r.status === 422 && !T.client_agreements.length, r)
   reset(); r = await call({ action: 'start', client_ax: '296', office: OFFICE, addenda: ['va', 'nope'], start_date: '2026-10-20' })
   const a0 = T.client_agreements[0]
-  ck('start: one draft, the office level and rate kept, only known addenda, the master fingerprint recorded', r.status === 200 && a0.status === 'draft' && a0.office.answers['level.personal_care'] === true && a0.office.addenda.join() === 'va' && /^ce32/.test(a0.pdf_sha256) && a0.created_by === 'kr@mo-care.com', a0)
+  ck('start: one draft, the office level and rate kept, only known addenda, the master fingerprint recorded', r.status === 200 && a0.status === 'draft' && a0.office.answers['level.personal_care'] === true && a0.office.addenda.join() === 'va' && /^a065/.test(a0.pdf_sha256) && a0.created_by === 'kr@mo-care.com', a0)
 
   reset(); let id = await start()
   r = await call({ action: 'save', id, answers: { 'level.hourly_rate': '20' } }); ck('save: the family cannot change the rate', r.status === 422 && T.client_agreements[0].office.answers['level.hourly_rate'] === '32', r)
@@ -80,6 +80,9 @@ try {
   r = await sign({ answers: { ...FAMILY, 'c1.hipaa_no': true } }); ck('sign: HIPAA Yes and No both ticked, refused', r.status === 422 && r.j.problems.some((p) => /only one/i.test(p.error)), r.j)
   r = await sign({ answers: { ...FAMILY, 'photos.no_photos': true } }); ck('sign: "No photos" with another photo choice, refused', r.status === 422 && r.j.problems.some((p) => p.field === 'photos.no_photos'), r.j)
   r = await sign({ answers: { ...FAMILY, 'c2.name': 'Tom' } }); ck('sign: a second contact needs their HIPAA and medical answers', r.status === 422 && r.j.problems.some((p) => p.field === 'c2.hipaa_yes'), r.j)
+  { const { ['c1.book_yes']: _, ...noBook } = FAMILY
+    r = await sign({ answers: noBook }); ck('sign: every contact needs "Can book in the app" Yes or No (2026-10-18b)', r.status === 422 && r.j.problems.some((p) => p.field === 'c1.book_yes' && /Booking App/.test(p.error)), r.j) }
+  r = await sign({ answers: { ...FAMILY, 'c1.book_no': true } }); ck('sign: "Can book" Yes and No both ticked, refused', r.status === 422 && r.j.problems.some((p) => p.field === 'c1.book_yes' && /only one/i.test(p.error)), r.j)
   r = await sign({ initials: { ...TAPS, 6: '' } }); ck('sign: all six initials must be tapped', r.status === 422 && r.j.problems.some((p) => p.field === 'ini.6'), r.j)
   r = await sign({ signature: 'data:image/png;base64,AAAA' }); ck('sign: an empty or tiny signature is refused', r.status === 422 && r.j.problems.some((p) => p.field === 'signature'), r.j)
   r = await sign({ signer: { name: 'Edward', role: 'client' } }); ck('sign: a full typed name is required', r.status === 422 && r.j.problems.some((p) => p.field === 'signer.name'), r.j)
@@ -113,7 +116,7 @@ try {
   reset(); id = await start(); await call({ action: 'sign', id, answers: { ...FAMILY, 'client.client_s_name': 'Zoë “Bea” Núñez 👵' }, signer: { name: 'Zoë Núñez', role: 'client' }, initials: TAPS, signature: SIG, consent: true })
   r = await call({ action: 'countersign', id, signature: SIG }); ck('accents, curly quotes and emoji do not break the signed PDF', r.status === 200 && T.client_agreements[0].status === 'countersigned', r)
 
-  reset(); id = await start(); await sign(); FILES['client-agreements/master/client-care-agreement-rev-2026-10-18.pdf'] = new Uint8Array([1, 2, 3])
+  reset(); id = await start(); await sign(); FILES['client-agreements/master/client-care-agreement-rev-2026-10-18b.pdf'] = new Uint8Array([1, 2, 3])
   r = await call({ action: 'countersign', id, signature: SIG }); ck('a master PDF that is not the one the family read: refused, nothing marked countersigned', r.status === 500 && T.client_agreements[0].status === 'signed' && !T.client_agreements[0].signed_pdf_path, r)
 
   // 2026-10-17: the wording changed (8-hour weekly minimum). Agreements keep the master they were started on.
@@ -123,7 +126,7 @@ try {
   ck('a draft started on the earlier wording: the family cannot sign it, the office is told to start a new one', r.status === 409 && r.j.outcome === 'old_version' && T.client_agreements[0].status === 'draft', r)
   r = await call({ action: 'link_send', id, to_name: 'Bea Smith', channels: ['email'], email: 'bea@example.com' })
   ck('a draft started on the earlier wording: no link is sent to sign it from home', r.status === 409 && r.j.outcome === 'old_version', r)
-  reset(); id = await start(); await sign(); T.client_agreements[0].pdf_sha256 = FIRST; FILES['client-agreements/master/client-care-agreement-rev-2026-10-18.pdf'] = new Uint8Array([1, 2, 3])
+  reset(); id = await start(); await sign(); delete T.client_agreements[0].answers['c1.book_yes']; T.client_agreements[0].pdf_sha256 = FIRST; FILES['client-agreements/master/client-care-agreement-rev-2026-10-18b.pdf'] = new Uint8Array([1, 2, 3])
   r = await call({ action: 'countersign', id, signature: SIG })
   ck('signed on the earlier wording: countersigned on the earlier master (the new one is never touched)', r.status === 200 && T.client_agreements[0].status === 'countersigned', r)
   // 2026-10-18: the overtime week became Monday to Sunday. An agreement signed on the 10-17 wording stays on it.
@@ -131,9 +134,20 @@ try {
   reset(); id = await start(); T.client_agreements[0].pdf_sha256 = SECOND
   r = await call({ action: 'sign', id, answers: FAMILY, signer: { name: 'Bea Smith', role: 'client' }, initials: TAPS, signature: SIG, consent: true })
   ck('a draft started on the 10-17 wording: the family cannot sign it, the office is told to start a new one', r.status === 409 && r.j.outcome === 'old_version' && T.client_agreements[0].status === 'draft', r)
-  reset(); id = await start(); await sign(); T.client_agreements[0].pdf_sha256 = SECOND; FILES['client-agreements/master/client-care-agreement-rev-2026-10-18.pdf'] = new Uint8Array([1, 2, 3])
+  reset(); id = await start(); await sign(); delete T.client_agreements[0].answers['c1.book_yes']; T.client_agreements[0].pdf_sha256 = SECOND; FILES['client-agreements/master/client-care-agreement-rev-2026-10-18b.pdf'] = new Uint8Array([1, 2, 3])
   r = await call({ action: 'countersign', id, signature: SIG })
   ck('signed on the 10-17 wording: countersigned on the 10-17 master (the new one is never touched)', r.status === 200 && T.client_agreements[0].status === 'countersigned', r)
+  // 2026-10-18b: Section 9 became the Booking App terms and Exhibit I gained "Can book in the app". The 10-18 wording stays.
+  const THIRD = 'ce326142e4593c7caac65cc549e6992af8808eebbaac1f0fcdcababef0b8be11'
+  reset(); id = await start(); T.client_agreements[0].pdf_sha256 = THIRD
+  r = await call({ action: 'sign', id, answers: FAMILY, signer: { name: 'Bea Smith', role: 'client' }, initials: TAPS, signature: SIG, consent: true })
+  ck('a draft started on the 10-18 wording: the family cannot sign it, the office is told to start a new one', r.status === 409 && r.j.outcome === 'old_version' && T.client_agreements[0].status === 'draft', r)
+  reset(); id = await start(); await sign(); delete T.client_agreements[0].answers['c1.book_yes']; T.client_agreements[0].pdf_sha256 = THIRD; FILES['client-agreements/master/client-care-agreement-rev-2026-10-18b.pdf'] = new Uint8Array([1, 2, 3])
+  r = await call({ action: 'countersign', id, signature: SIG })
+  ck('signed on the 10-18 wording: countersigned on the 10-18 master (the new one is never touched)', r.status === 200 && T.client_agreements[0].status === 'countersigned', r)
+  reset(); id = await start()
+  r = await call({ action: 'save', id, answers: { 'c1.name': 'Bea Smith', 'c1.book_yes': true } })
+  ck('the new "Can book in the app" boxes are part of the agreement the family can fill in', r.status === 200 && T.client_agreements[0].answers?.['c1.book_yes'] === true, [r, T.client_agreements[0].answers])
   reset(); id = await start(); await sign(); T.client_agreements[0].pdf_sha256 = 'f'.repeat(64)
   r = await call({ action: 'countersign', id, signature: SIG }); ck('a master fingerprint the server does not know: refused, nothing marked countersigned', r.status === 500 && T.client_agreements[0].status === 'signed', r)
 

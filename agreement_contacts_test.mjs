@@ -76,8 +76,8 @@ try {
   const ANS = { ...FAMILY,
     'c1.name': 'Nancy Anderson', 'c1.relationship': 'Wife', 'c1.cell_phone': '417-863-7309', 'c1.home_phone': '417-555-0002', 'c1.email': 'nancy@example.com',
     'c1.address': '123 Maple St', 'c1.city': 'Springfield', 'c1.state': 'Missouri', 'c1.zip': '65804', 'c1.hipaa_yes': true, 'c1.medical_yes': true, 'c1.poa_health': true,
-    'c1.text_running_late': true, 'c1.axis_care_notes': true, 'c1.axis_invoices': true, 'c1.email_invoices': true, 'c1.email_weekly_calendar': true,
-    'c2.name': 'Tom Anderson', 'c2.relationship': 'Son', 'c2.cell_phone': '417-555-011', 'c2.hipaa_no': true, 'c2.medical_no': true, 'c2.text_caregiver_change': true,
+    'c1.text_running_late': true, 'c1.axis_care_notes': true, 'c1.axis_invoices': true, 'c1.email_invoices': true, 'c1.email_weekly_calendar': true, 'c1.book_no': true,
+    'c2.name': 'Tom Anderson', 'c2.relationship': 'Son', 'c2.cell_phone': '417-555-011', 'c2.hipaa_no': true, 'c2.medical_no': true, 'c2.text_caregiver_change': true, 'c2.book_yes': true,
     'c3.name': 'Jane Doe', 'c3.relationship': 'Neighbor', 'c3.hipaa_no': true, 'c3.medical_no': true, 'c3.text_running_late': true,
     'c4.name': 'Bob Ray', 'c4.relationship': 'Friend', 'c4.cell_phone': '417-555-0444', 'c4.hipaa_no': true, 'c4.medical_no': true }
   const seed = (status = 'countersigned', answers = ANS) => { const id = crypto.randomUUID(); T.client_agreements.push({ id, axiscare_client_id: '296', status, version: 'Rev. 10/2026', office: { answers: OFFICE }, answers, contacts_review: null }); return id }
@@ -114,6 +114,10 @@ try {
   ck('Hub: Nancy ticked only Running late: running-late texts on, caregiver-change texts off', n1.sms_consent === true && n1.wants_late === true && n1.wants_changes === false, n1)
   ck('Hub: Tom ticked only Caregiver change: caregiver-change on, running-late off', n2 && n2.sms_consent === true && n2.wants_changes === true && n2.wants_late === false && n2.source === 'axiscare' && n2.axiscare_list_number === 3, n2)
   ck('Hub: Jane is in the Family Circle only (not marked as AxisCare), texts as ticked', n3 && n3.source === undefined && n3.wants_late === true && n3.wants_changes === false && n3.hipaa_authorized === false, n3)
+  // 2026-10-18b: "Can book in the app" Yes / No on Exhibit I
+  ck('Hub: Nancy marked "No" for the Booking App: booking off and the choice recorded (even though she is in AxisCare)', n1.app_can_book === false && n1.app_book_choice === false, n1)
+  ck('Hub: Tom marked "Yes": booking on and the choice recorded', n2.app_can_book === true && n2.app_book_choice === true, n2)
+  ck('Hub: Jane left it blank: booking and the choice are not touched', !('app_can_book' in n3) && !('app_book_choice' in n3), n3)
   ck('Hub: Bob was left out by the office and is nowhere', !person('Bob Ray') && !puts().some((x) => x.body?.name === 'Bob Ray'))
   ck('Hub: Nancy stays the main contact; nobody new is made main', n1.is_primary === true && n2.is_primary === false && n3.is_primary === false)
   const logs = RPC.filter((x) => x[0] === 'axiscare_change_record')

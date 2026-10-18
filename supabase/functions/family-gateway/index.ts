@@ -146,7 +146,7 @@ const deps: Deps = {
 
 const famAdmin = (path: string, init: RequestInit = {}) => fetch(`${FAMILY_URL}/auth/v1/admin${path}`, { ...init,
   headers: { apikey: FAMILY_SERVICE, Authorization: `Bearer ${FAMILY_SERVICE}`, 'Content-Type': 'application/json', ...(init.headers ?? {}) } })
-const CC = 'id, name, circle_id, source, app_status, app_user_id, app_can_book, stopped_at, axiscare_removed_at'
+const CC = 'id, name, circle_id, source, app_status, app_user_id, app_can_book, app_book_choice, stopped_at, axiscare_removed_at'
 const signinDeps: SigninDeps = {
   now: () => new Date(),
   settings: deps.settings,

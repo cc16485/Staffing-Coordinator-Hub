@@ -6,10 +6,10 @@ import fs from 'fs'; import path from 'path'
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 700)])
 const PDFLIB = process.env.PDFLIB
 if (!PDFLIB || !fs.existsSync(PDFLIB)) { console.log('Set PDFLIB to pdf-lib 1.17.1 dist/pdf-lib.esm.js (npm i pdf-lib@1.17.1).'); process.exit(2) }
-const MASTER = fs.readFileSync('client-agreement/client-care-agreement-rev-2026-10-18.pdf'), MASTER_SECOND = fs.readFileSync('client-agreement/client-care-agreement-rev-2026-10-17.pdf'), MASTER_FIRST = fs.readFileSync('client-agreement/client-care-agreement-rev-2026-10.pdf')   // 2026-10-18: all three masters are stored
+const MASTER = fs.readFileSync('client-agreement/client-care-agreement-rev-2026-10-18b.pdf'), MASTER_THIRD = fs.readFileSync('client-agreement/client-care-agreement-rev-2026-10-18.pdf'), MASTER_SECOND = fs.readFileSync('client-agreement/client-care-agreement-rev-2026-10-17.pdf'), MASTER_FIRST = fs.readFileSync('client-agreement/client-care-agreement-rev-2026-10.pdf')   // 2026-10-18: all three masters are stored
 const SIG = 'data:image/png;base64,' + fs.readFileSync('client-agreement/test-signature.png').toString('base64')
 let T, FILES, FAIL, GHL, GATE
-const reset = () => { FAIL = null; GHL = { calls: [], uploadStatus: 200, sendStatus: 201 }; GATE = { calls: [], refuse: false }; globalThis.__hours = { allowed: true }; FILES = { 'client-agreements/master/client-care-agreement-rev-2026-10-18.pdf': new Uint8Array(MASTER), 'client-agreements/master/client-care-agreement-rev-2026-10-17.pdf': new Uint8Array(MASTER_SECOND), 'client-agreements/master/client-care-agreement-rev-2026-10.pdf': new Uint8Array(MASTER_FIRST) }; T = {
+const reset = () => { FAIL = null; GHL = { calls: [], uploadStatus: 200, sendStatus: 201 }; GATE = { calls: [], refuse: false }; globalThis.__hours = { allowed: true }; FILES = { 'client-agreements/master/client-care-agreement-rev-2026-10-18b.pdf': new Uint8Array(MASTER), 'client-agreements/master/client-care-agreement-rev-2026-10-18.pdf': new Uint8Array(MASTER_THIRD), 'client-agreements/master/client-care-agreement-rev-2026-10-17.pdf': new Uint8Array(MASTER_SECOND), 'client-agreements/master/client-care-agreement-rev-2026-10.pdf': new Uint8Array(MASTER_FIRST) }; T = {
   client_agreements: [], document_access_log: [],
   auth_identities: [{ auth_user_id: 'u-kr', project_ref: 'zngsgedlsxinbygwmxwn', person_id: 'p-kr' }, { auth_user_id: 'u-cg', project_ref: 'zngsgedlsxinbygwmxwn', person_id: 'p-cg' }],
   persons: [{ person_id: 'p-kr', full_name: 'Krystal Office', active: true }, { person_id: 'p-cg', full_name: 'Cara Giver', active: true }],
@@ -62,7 +62,7 @@ try {
     let j = null; try { j = await r.json() } catch { /* */ } return { status: r.status, j, h: r.headers } }
   const OFFICE = { 'level.personal_care': true, 'level.hourly_rate': '32' }
   const FAMILY = { 'client.client_s_name': 'Edward Anderson', 'client.address': '123 Maple St', 'client.city': 'Springfield', 'client.zip': '65804', 'client.phone_number': '417-555-0100',
-    'c1.name': 'Nancy Anderson', 'c1.relationship': 'Wife', 'c1.cell_phone': '417-863-7309', 'c1.email': 'nancy@example.com', 'c1.hipaa_yes': true, 'c1.medical_yes': true, 'c1.poa_health': true,
+    'c1.name': 'Nancy Anderson', 'c1.relationship': 'Wife', 'c1.cell_phone': '417-863-7309', 'c1.email': 'nancy@example.com', 'c1.hipaa_yes': true, 'c1.book_yes': true, 'c1.medical_yes': true, 'c1.poa_health': true,
     'c1.text_running_late': true, 'c1.axis_care_notes': true, 'c1.email_invoices': true, 'ci.date_of_birth': '3/4/1941',
     'backup.full_name': 'Tom Anderson', 'backup.relationship_to_client': 'Son', 'backup.primary_phone': '417-555-0111',
     'access.2_lockbox_access_a_ke': true, 'access.lockbox_location': 'Back porch', 'access.lockbox_code': '2468',
