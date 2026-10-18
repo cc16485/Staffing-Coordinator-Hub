@@ -20,6 +20,8 @@
     item_seen:           { label: 'seen',                   area: 'work',       severity: 'fyi' },
     item_note:           { label: 'added a note',           area: 'work',       severity: 'fyi' },
     help_asked:          { label: 'asked for help',         area: 'work',       severity: 'action' },
+    item_helped:         { label: 'helped with',            area: 'work',       severity: 'fyi' },   /* lead turns (2026-10-18): helping never moves the work */
+    item_updated:        { label: 'updated',                area: 'work',       severity: 'fyi' },
     claim_stale:         { label: 'claim went stale',       area: 'work',       severity: 'fyi' },
     captured:            { label: 'captured',               area: 'work',       severity: 'fyi' },
     handoff_seen:        { label: 'read the handoff',       area: 'work',       severity: 'fyi' },
