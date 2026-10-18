@@ -384,7 +384,7 @@ Deno.serve(async (req) => {
       const noWay = !phone && !email
 
       const subject = noWay
-        ? '🔔 New website lead — NO contact details'
+        ? '🔔 New website lead, NO contact details'
         : '🔔 New lead: ' + who + (phone ? ' · ' + phone : '')
       const html = '<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#16283a;">'
         + '<p style="font-size:30px;margin:0 0 8px;">🔔</p>'
@@ -401,9 +401,9 @@ Deno.serve(async (req) => {
         + '<p><a href="https://cc.mo-care.com/#leads" style="display:inline-block;background:#1F7A8C;color:#fff;'
         + 'font-weight:bold;padding:11px 22px;border-radius:9px;text-decoration:none;">Open the lead &rarr;</a></p>'
         + '</div>'
-      const sms = '🔔 New lead: ' + who + (reach ? ' — ' + reach : ' — NO phone or email left')
+      const sms = '🔔 New lead: ' + who + (reach ? ', ' + reach : ', NO phone or email left')
         + '. ' + String(lead.interest_notes).replace(/\s+/g, ' ').slice(0, 110)
-        + ' — cc.mo-care.com/#leads'
+        + '. cc.mo-care.com/#leads'
 
       /* OFFICE QUIET HOURS (Samantha, 2026-10-03): no text to staff 8pm to 7am Central; the email still goes and the
          lead is in the Hub. Nothing is queued for the morning (the overdue-lead alert in lead-followup still follows). */

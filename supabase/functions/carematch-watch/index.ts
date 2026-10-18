@@ -249,15 +249,15 @@ Deno.serve(async (req) => {
       `<tr><td style="font-family:Arial,sans-serif;font-size:14px;color:#1f2a36;padding:8px 10px;border-bottom:1px solid ${BORDER};"><b>${esc(m.client)}</b> × ${esc(m.caregiver)}</td>` +
       `<td style="font-family:Arial,sans-serif;font-size:13px;color:#5b6673;padding:8px 10px;border-bottom:1px solid ${BORDER};white-space:nowrap;">first shift ${esc(m.day)}</td></tr>`).join('')
     const subject = due.length === 1
-      ? `New match: ${due[0].client} × ${due[0].caregiver} — check-in call due`
-      : `${due.length} new matches — check-in calls due`
+      ? `New match: ${due[0].client} × ${due[0].caregiver}, check-in call due`
+      : `${due.length} new matches, check-in calls due`
     const html =
       `<div style="background:#F1F5FA;padding:14px 8px;"><div style="max-width:620px;margin:0 auto;">` +
       `<div style="background:${NAVY};border-radius:14px 14px 0 0;padding:18px 24px;">` +
       `<div style="font-family:Arial,sans-serif;color:${HONEY};font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;">Caring Companions · Care Match</div>` +
       `<div style="font-family:Arial,sans-serif;color:#ffffff;font-size:20px;font-weight:800;margin-top:3px;">First shifts just happened 💛</div></div>` +
       `<div style="background:#F8FAFD;border:1px solid ${BORDER};border-top:none;border-radius:0 0 14px 14px;padding:14px 16px 18px;">` +
-      `<p style="font-family:Arial,sans-serif;font-size:14px;color:#1f2a36;margin:2px 0 10px;">Each of these clients had a caregiver in their home for the first time. The caregiver has been texted for their side. <b>The client (or their family) gets a call from us</b> — a two-minute "how did it go?" while it is fresh.</p>` +
+      `<p style="font-family:Arial,sans-serif;font-size:14px;color:#1f2a36;margin:2px 0 10px;">Each of these clients had a caregiver in their home for the first time. The caregiver has been texted for their side. <b>The client (or their family) gets a call from us</b>: a two-minute "how did it go?" while it is fresh.</p>` +
       `<table role="presentation" width="100%" style="border-collapse:collapse;background:#ffffff;border:1px solid ${BORDER};border-radius:8px;">${rows}</table>` +
       `<div style="margin-top:14px;"><a href="${HUB}/#carematch" style="display:inline-block;background:${NAVY};color:#ffffff;font-family:Arial,sans-serif;text-decoration:none;font-weight:700;font-size:13.5px;padding:10px 20px;border-radius:9px;">Open Care Match and log the calls →</a></div>` +
       `</div><div style="text-align:center;font-family:Arial,sans-serif;color:#9aa3ad;font-size:11px;padding:12px;">Sent by carematch-watch · cc.mo-care.com</div></div></div>`
@@ -285,7 +285,7 @@ Deno.serve(async (req) => {
   }
 
   const summary = {
-    mode: live ? 'LIVE' : 'DRY RUN — flip ops_settings.carematch_live to true to send',
+    mode: live ? 'LIVE' : 'DRY RUN: flip ops_settings.carematch_live to true to send',
     window: `${from} to ${to}`, fetch_error: fetchError,
     visits_seen: visits.length, pairs_in_window: seenThisRun.size,
     visits_not_ended_yet: skippedNotEnded,

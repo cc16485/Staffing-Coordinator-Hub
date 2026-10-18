@@ -385,16 +385,16 @@ Deno.serve(async (req) => {
       const whoB = [l.first_name, l.last_name].filter(Boolean).join(' ').trim() || name
       await putB('ops_items', {
         id: `ops_consult_${l.id}`, kind: 'new_lead', source_id: String(l.id),
-        title: `Consultation booked — ${whoB}, ${whenLabel}`, about: whoB,
+        title: `Consultation booked: ${whoB}, ${whenLabel}`, about: whoB,
         detail: `${typeLabel} booked on mo-care.com/book.html.` + (notes ? ` Their note: "${notes.slice(0, 300)}"` : '')
-          + (created ? ' (New family — this booking created the lead.)' : ''),
+          + (created ? ' (New family: this booking created the lead.)' : ''),
         next_action: 'Confirm who is going, review their notes, and prepare for the consultation.',
         phone: phone || '', domain: 'family_enquiries', status: 'open', urgency: 'high',
         owner: officeTo.email, owner_name: officeTo.name, created_at: nowIsoB,
         due: new Date(startMs).toISOString(),
         created_by: 'cc-booking', opened_by: 'system' })
       await opEvent(supabase, { verb: 'lead_consult_booked', item_id: String(l.id), area: 'growth_leads',
-        actor_name: whoB, summary: `${whoB} booked a ${typeLabel.toLowerCase()} — ${whenLabel}` })
+        actor_name: whoB, summary: `${whoB} booked a ${typeLabel.toLowerCase()}, ${whenLabel}` })
       leadLinked = created ? 'created' : 'linked'
     }
     if (hits.length === 1) {
@@ -416,14 +416,14 @@ Deno.serve(async (req) => {
       /* Ambiguous identity: never merge people silently. */
       await putB('ops_items', {
         id: `ops_consultmatch_${item.id}`, kind: 'request',
-        title: `Consultation booking matches ${hits.length} leads — link it by hand`,
+        title: `Consultation booking matches ${hits.length} leads. Link it by hand`,
         about: name,
         detail: `${name} (${phone}${email ? ', ' + email : ''}) booked a ${typeLabel.toLowerCase()} for ${whenLabel}, but the phone/email matches more than one lead. Open Leads, pick the right record (or merge the duplicates), and note the consultation there.`,
         domain: 'family_enquiries', status: 'open', urgency: 'high',
         owner: officeTo.email, owner_name: officeTo.name, created_at: nowIsoB,
         due: new Date(Date.now() + 4 * 3600e3).toISOString(),
         created_by: 'cc-booking', opened_by: 'system' })
-      leadLinked = 'ambiguous — raised for a human'
+      leadLinked = 'ambiguous, raised for a human'
     }
   } catch (e) { console.warn('[cc-booking] lead seam failed (booking unaffected):', e) }
 

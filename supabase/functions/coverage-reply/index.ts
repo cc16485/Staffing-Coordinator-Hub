@@ -76,7 +76,7 @@ Deno.serve(async (req) => {
   const contactId = field('id') || field('contactId') || field('contact_id')
   const text = field('message') || field('body') || field('text')
   const digits = norm(phone)
-  if (!text) return json({ ok: true, routed: 'no message text — nothing to record' })
+  if (!text) return json({ ok: true, routed: 'no message text, nothing to record' })
 
   // Which callout is this an answer to? The newest open case where this
   // phone (or contact) was texted and hasn't answered yet — else the
@@ -199,7 +199,7 @@ Deno.serve(async (req) => {
 
   matches.sort((x, y) => new Date(String(y.a.at || 0)).getTime() - new Date(String(x.a.at || 0)).getTime())
   const m = matches.find(x => x.a.state === 'waiting') ?? matches[0]
-  if (!m) return json({ ok: true, routed: 'no open callout asked this number — nothing to attach to' })
+  if (!m) return json({ ok: true, routed: 'no open callout asked this number, nothing to attach to' })
   const { c, a } = m
   /* Asked on TWO open callouts at once? An SMS cannot say which one they
      mean — a human decides instead of the code guessing (review finding). */
@@ -231,13 +231,13 @@ Deno.serve(async (req) => {
     a.replied_at = stamp
     a.reply = text.slice(0, 500)
     a.state = 'inquiry'
-    routed = 'reply matches two open callouts — raised for a human to place it'
+    routed = 'reply matches two open callouts, raised for a human to place it'
     await opEvent(sb, { job: 'coverage-reply', verb: 'item_created', item_id: String(c.id), area: 'coverage',
-      summary: `Cara raised: ${a.name} replied but is on ${caseIds.size} open callouts — a human places it` })
+      summary: `Cara raised: ${a.name} replied but is on ${caseIds.size} open callouts. A human places it` })
     await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
       id: `ops_covq_multi_${norm(String(a.phone || contactId))}_${Date.now().toString(36)}`,
       kind: 'coverage', coverage_case_id: c.id,
-      title: `${a.name} replied but is on ${caseIds.size} open callouts — which one?`,
+      title: `${a.name} replied but is on ${caseIds.size} open callouts. Which one?`,
       about: a.name, detail: `They wrote: "${text.slice(0, 300)}". Reply to them in GHL Conversations, place the answer on the right case, then update it there.`,
       domain: 'scheduling_coverage', status: 'open', urgency: 'high',
       created_at: stamp, due: new Date(Date.now() + 3600000).toISOString(),
@@ -329,15 +329,15 @@ Deno.serve(async (req) => {
           [...names].some((nm) => off1(rt, nm) && !caseTokens.has(nm)))
         if (strange) {
           a.state = 'inquiry'
-          routed = `yes — but the reply mentions "${strange}", which reads like a different client than ${c.client || 'this case'}. Routed to a human.`
+          routed = `yes, but the reply mentions "${strange}", which reads like a different client than ${c.client || 'this case'}. Routed to a human.`
           await opEvent(sb, { job: 'coverage-reply', verb: 'item_created', item_id: String(c.id), area: 'coverage',
-            summary: `Cara raised: ${a.name} said yes but may mean a DIFFERENT client than ${c.client || '?'} — confirm before accepting` })
+            summary: `Cara raised: ${a.name} said yes but may mean a DIFFERENT client than ${c.client || '?'}. Confirm before accepting` })
           await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
             id: `ops_covq_${c.id}_${norm(String(a.phone || contactId))}`,
             kind: 'coverage', coverage_case_id: c.id,
-            title: `${a.name} said yes — but may mean a DIFFERENT client than ${c.client || '?'}`,
+            title: `${a.name} said yes, but may mean a DIFFERENT client than ${c.client || '?'}`,
             about: a.name,
-            detail: `They wrote: "${text.slice(0, 300)}". The word "${strange}" looks like another client's name. Confirm which shift they mean before accepting — reply to them in GHL Conversations, then set their answer on the right case.`,
+            detail: `They wrote: "${text.slice(0, 300)}". The word "${strange}" looks like another client's name. Confirm which shift they mean before accepting. Reply to them in GHL Conversations, then set their answer on the right case.`,
             domain: 'scheduling_coverage', status: 'open', urgency: 'high',
             created_at: stamp, due: new Date(Date.now() + 3600000).toISOString(),
             owner: '', owner_name: '', created_by: 'coverage-reply', opened_by: 'callout',
@@ -353,7 +353,7 @@ Deno.serve(async (req) => {
        the client meeting. Soft ack, no fill item, no staff blast. */
     if (String(c.kind) === 'interest') {
       a.state = 'yes'
-      routed = 'interested — collected on the case'
+      routed = 'interested, collected on the case'
       await opEvent(sb, { verb: 'yes_received', item_id: String(c.id), area: 'coverage',
         actor_name: String(a.name || 'a caregiver'),
         summary: `${a.name} is interested in the ${c.client || 'new client'} hours (interest check)` })
@@ -385,7 +385,7 @@ Deno.serve(async (req) => {
        warm not-chosen text (coverage-run's closure pass sends both). */
     a.state = 'yes'
     const yeses = (Array.isArray(c.asked) ? c.asked : []).filter((x: any) => x.state === 'yes')
-    routed = `YES ${yeses.length === 1 ? '' : '(' + yeses.length + ' so far) '}— collected silently; the office picks from all the yeses`
+    routed = `YES ${yeses.length === 1 ? '' : '(' + yeses.length + ' so far) '}collected silently; the office picks from all the yeses`
     await opEvent(sb, { verb: 'yes_received', item_id: String(c.id), area: 'coverage',
       actor_name: String(a.name || 'a caregiver'),
       summary: `${a.name} said YES to ${c.client || 'the shift'}`
@@ -394,8 +394,8 @@ Deno.serve(async (req) => {
     await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
       id: `ops_covfill_${c.id}`, kind: 'coverage', coverage_case_id: c.id,
       title: yeses.length === 1
-        ? `${a.name} can cover ${c.client || 'the shift'} — pick & assign when ready`
-        : `${yeses.length} can cover ${c.client || 'the shift'} — pick the best fit & assign`,
+        ? `${a.name} can cover ${c.client || 'the shift'}. Pick & assign when ready`
+        : `${yeses.length} can cover ${c.client || 'the shift'}. Pick the best fit & assign`,
       about: c.client || '',
       detail: 'Said yes so far: ' + yeses.map((x: any) =>
           `${x.name}${x.reply ? ` ("${String(x.reply).slice(0, 60)}")` : ''}`).join('; ')
@@ -409,24 +409,24 @@ Deno.serve(async (req) => {
     if (yeses.length === 1) await alertStaffOfPending(c, a.name)
   } else if (isNo) {
     a.state = 'no'
-    routed = 'no — recorded'
+    routed = 'no, recorded'
     /* Legacy: clear a pending_fill left by the old first-yes-wins flow so
        an old case can't sit frozen on a decliner. No promotion — the
        office picks from the standing yeses on the board. */
     if (c.pending_fill && String(c.pending_fill.name).toLowerCase() === String(a.name).toLowerCase()) {
       delete c.pending_fill
-      routed = 'no — legacy pending fill cleared'
+      routed = 'no, legacy pending fill cleared'
     }
   } else {
     a.state = 'inquiry'
-    routed = 'inquiry — raised for a human to answer'
+    routed = 'inquiry, raised for a human to answer'
     await opEvent(sb, { job: 'coverage-reply', verb: 'item_created', item_id: String(c.id), area: 'coverage',
-      summary: `Cara raised: ${a.name} has a question about the ${c.client || ''} callout — "${text.slice(0, 120)}"` })
+      summary: `Cara raised: ${a.name} has a question about the ${c.client || ''} callout: "${text.slice(0, 120)}"` })
     await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
       id: `ops_covq_${c.id}_${norm(String(a.phone || contactId))}`, kind: 'coverage',
       coverage_case_id: c.id,
       title: `${a.name} has a question about the ${c.client || ''} callout`,
-      about: a.name, detail: `They wrote: "${text.slice(0, 300)}" — open their conversation in GHL and reply there, then update the case.`
+      about: a.name, detail: `They wrote: "${text.slice(0, 300)}". Open their conversation in GHL and reply there, then update the case.`
         + (function () {
           /* CARA DRAFTS THE EASY ANSWER (her pick #3, 2026-09-19): when the
              question is about the time or the place, the case already knows.

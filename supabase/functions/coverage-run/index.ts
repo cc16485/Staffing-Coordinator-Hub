@@ -334,7 +334,7 @@ async function candidatesFor(_c: any) {
     if (!name) continue
     if (cg.active === false) { out.push({ name, skipped: 'no longer active' }); continue }
     if (nurseNames.has(nameKeyOf(name))) {
-      out.push({ name, skipped: 'nurse — nursing staff are never coverage candidates' }); continue }
+      out.push({ name, skipped: 'nurse: nursing staff are never coverage candidates' }); continue }
     if ((clean(cg.axiscare_id) && dnoIds.has(clean(cg.axiscare_id)))
         || dnoPhones.has(normalisePhone(cg.phone) ?? '')
         || dnoNames.has(nameKeyOf(name))) {
@@ -436,7 +436,7 @@ async function resolveClientAxisId(clientText: string):
   const name = clean(clientText)
   if (!name || /not identified|from call|confirm the client|unknown/i.test(name))
     return { status: 'placeholder', id: null,
-             detail: 'the case does not name a real client yet — confirm the client on the case first' }
+             detail: 'the case does not name a real client yet. Confirm the client on the case first' }
   const { data: people } = await sb.from('person_identity')
     .select('id, display_name').ilike('display_name', name)
   let ids = [...new Set((people ?? []).map((p: any) => String(p.id)))]
@@ -449,7 +449,7 @@ async function resolveClientAxisId(clientText: string):
   if (ids.length === 0) return { status: 'not_found', id: null,
     detail: `no person named "${name}" in the identity layer` }
   if (ids.length > 1) return { status: 'ambiguous', id: null,
-    detail: `${ids.length} people named "${name}" — a human must pick` }
+    detail: `${ids.length} people named "${name}"; a human must pick` }
   const { data: src } = await sb.from('person_source_id')
     .select('source_id').eq('person_id', ids[0]).eq('system', 'axiscare')
     .eq('entity_type', 'client').eq('confidence', 'confirmed').eq('needs_review', false)
@@ -958,21 +958,21 @@ async function buildCandidatesForCase(c: any):
   const availAll = await availLoad()   // 2026-10-14: availability checked for everyone
   for (const x of cands) {
     if (x.skipped && !x.may_autosend) { cut(x, String(x.skipped)); continue }
-    if (dnr.has(nameKeyOf(String(x.name)))) { cut(x, 'Do-Not-Return for this client — never suggested'); continue }
+    if (dnr.has(nameKeyOf(String(x.name)))) { cut(x, 'Do-Not-Return for this client, never suggested'); continue }
     if (planR.error) { cut(x, "held: the client's call-in plan could not be read (fail closed)"); continue }
     const planCut = onlyAskCut(planR.plan, x, String(c.client || planR.plan?.client_name || ''))
     if (planCut) { cut(x, planCut); continue }
     if (alreadyAsked.has(String(x.name).toLowerCase())) { cut(x, 'already asked on this case'); continue }
     if ((callerOff && String(x.name).toLowerCase() === callerOff)
         || (callerOffId && String(x.axiscare_id || '') === callerOffId)) { cut(x, 'the person who called off'); continue }
-    if (!censusUsable) { cut(x, 'held — AxisCare census unreachable (fail closed)'); continue }
+    if (!censusUsable) { cut(x, 'held: AxisCare census unreachable (fail closed)'); continue }
     if (!x.axiscare_id || !axisActive.has(String(x.axiscare_id))) { cut(x, 'not active in the AxisCare census'); continue }
     if (!lock.ok) { cut(x, 'held: ' + lock.why + ' (fail closed)'); continue }
     if (lock.axis.has(String(x.axiscare_id)) || (x.offer_id && lock.offers.has(String(x.offer_id)))) { cut(x, LOCK_WHY); continue }
     if (nurseAxis.has(String(x.axiscare_id))) { cut(x, 'nurse-classed in AxisCare'); continue }
     if (clientLv != null) {
       const cgLv = caregiverLevel.get(String(x.axiscare_id))
-      if (cgLv != null && cgLv < clientLv) { cut(x, `Level ${cgLv} caregiver — client needs Level ${clientLv}`); continue }
+      if (cgLv != null && cgLv < clientLv) { cut(x, `Level ${cgLv} caregiver; client needs Level ${clientLv}`); continue }
     }
     const drv = transportDecision(x, drive.level, driveLive, driveToday)
     if (drv.exclude) { cut(x, `not cleared to drive clients, and this shift needs transportation (${drv.why})`); continue }
@@ -1074,7 +1074,7 @@ async function buildCandidatesForCase(c: any):
     client_level: clientLv,
     client_city: clientCity || null, client_zip: clientZip || null,
     hours_check: patternCheck || null,
-    census: censusUsable ? `${axisActive.size} active caregivers` : `UNREACHABLE (${censusError || 'empty'}) — everyone held, fail closed`,
+    census: censusUsable ? `${axisActive.size} active caregivers` : `UNREACHABLE (${censusError || 'empty'}), everyone held, fail closed`,
     dnr_barred: dnr.size,
     callin_plan: planR.plan ? planLine(planR.plan) : null,
     callin_plan_note: planR.plan?.note ?? null,
@@ -1134,7 +1134,7 @@ Deno.serve(async (req) => {
       // deno-lint-ignore no-explicit-any
       const st: any = setR?.data ?? {}
       if (st.coverage_send_live !== true)
-        return jr({ error: 'sending is switched off (ops_settings.coverage_send_live) — nothing sent' }, 409)
+        return jr({ error: 'sending is switched off (ops_settings.coverage_send_live), nothing sent' }, 409)
       const ghl2 = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
       if (!ghl2.token || !ghl2.locationId) return jr({ error: 'GHL credentials not set' }, 502)
       /* CI1: the caregiver night rule, on the server (it used to be only a browser warning) */
@@ -1254,7 +1254,7 @@ Deno.serve(async (req) => {
         } })
       } catch { /* logging must never block */ }
       return jr({ sent, failed, already_asked: already, refused_not_eligible: refusedNames,
-        note: 'Replies land on the case like any other ask — watch the board.' })
+        note: 'Replies land on the case like any other ask. Watch the board.' })
     }
 
     if (body.action === 'follow_up') {
@@ -1275,7 +1275,7 @@ Deno.serve(async (req) => {
       // deno-lint-ignore no-explicit-any
       const stF: any = setF?.data ?? {}
       if (stF.coverage_send_live !== true)
-        return jr({ error: 'sending is switched off (ops_settings.coverage_send_live) — nothing sent' }, 409)
+        return jr({ error: 'sending is switched off (ops_settings.coverage_send_live), nothing sent' }, 409)
       const ghlF = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
       if (!ghlF.token || !ghlF.locationId) return jr({ error: 'GHL credentials not set' }, 502)
       if (caregiverNightHold(kase, stF))
@@ -1323,7 +1323,7 @@ Deno.serve(async (req) => {
         } })
       } catch { /* logging must never block */ }
       return jr({ sent: sentF, failed: failedF, skipped, unknown,
-        note: 'Replies land on the case like any other ask — watch the board.' })
+        note: 'Replies land on the case like any other ask. Watch the board.' })
     }
 
     return jr({ error: `unknown action "${body.action}"` }, 400)
@@ -1489,7 +1489,7 @@ Deno.serve(async (req) => {
     try {
       await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
         id: `ops_cov_censusdown_${chiDayC}`, kind: 'coverage',
-        title: 'Cara is HOLDING all callouts — AxisCare caregiver census unreachable',
+        title: 'Cara is HOLDING all callouts: AxisCare caregiver census unreachable',
         about: 'coverage callouts',
         detail: `${open.length} open coverage case(s) are waiting. No caregiver texts go out until the active-caregiver census reads again (${censusError || 'census came back empty'}). If a shift is soon, work it by hand.`,
         domain: 'scheduling_coverage', status: 'open', urgency: 'high',
@@ -1669,7 +1669,7 @@ Deno.serve(async (req) => {
                 html: `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.6;color:#1f2a36;">`
                   + `<p><b>New call-in detected.</b></p>`
                   + `<p>Client: <b>${String(c.client || '?')}</b><br>Shift: <b>${whenTxt}</b>`
-                  + (c.calling_off ? `<br>Called off: <b>${String(c.calling_off)}</b>` : '<br>Called off: (unknown — opened from an AxisCare unassignment, which does not say who)')
+                  + (c.calling_off ? `<br>Called off: <b>${String(c.calling_off)}</b>` : '<br>Called off: (unknown; opened from an AxisCare unassignment, which does not say who)')
                   + `<br>Called in at: <b>${calledAt}</b> (Chicago)`
                   + (c.modification_reason ? `<br>Reason: ${String(c.modification_reason)}` : '')
                   + (planTxtA ? `<br>Call-in plan: <b>${planTxtA}</b>` : '')
@@ -1776,7 +1776,7 @@ Deno.serve(async (req) => {
         const whenQ = [c.shift_date, span12(c.shift_time)].filter(Boolean).join(' ') || 'the shift'
         if (firstLookQ) await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
           id: `ops_covquiet_${c.id}_${newestQ}`, kind: 'coverage', coverage_case_id: c.id,
-          title: `Nobody's answered — ${c.client || 'shift'} ${whenQ}, ${c.asked.length} asked`,
+          title: `Nobody's answered: ${c.client || 'shift'} ${whenQ}, ${c.asked.length} asked`,
           about: c.client || '',
           detail: `${Math.round((Date.now() - newestQ) / 60000)} min since the last ask: ${noes} no, ${c.asked.length - noes} silent, zero yes. Widen to Group 2 on the case, or start calling.`,
           domain: 'scheduling_coverage', status: 'open', urgency: 'high',
@@ -1785,7 +1785,7 @@ Deno.serve(async (req) => {
           created_by: 'coverage-run', opened_by: 'quiet-callout',
         } })
         if (firstLookQ) await opEvent(sb, { job: 'coverage-run', verb: 'item_created', item_id: String(c.id), area: 'coverage',
-          summary: `Cara raised: nobody's answered — ${c.client || 'shift'} ${whenQ}, ${c.asked.length} asked, zero yes` })
+          summary: `Cara raised: nobody's answered: ${c.client || 'shift'} ${whenQ}, ${c.asked.length} asked, zero yes` })
         let soonQ = false, minsToShiftQ = 0
         if (c.shift_date) {
           const sH = String(c.shift_time || '').split('-')[0] || '23:59'
@@ -1841,13 +1841,13 @@ Deno.serve(async (req) => {
         if (soonQ && (firstLookQ || resumingQ)) {
           await shadowRoute(sb, { area: 'sched_calloffs', channel: 'quiet-callout office SMS',
             production: (sendLive && !claimActiveQ && !quietQ) ? phonesQ : [], case_id: String(c.id),
-            note: quietQ ? 'office quiet hours: no office text, the item waits in Needs Attention' : claimActiveQ ? `SMS suppressed — ${claimedByQ} has it (moved ${staleMinQ} min ago)`
-              : resumingQ ? `claim stale — ${claimedByQ} has it but nothing moved for ${staleMinQ} min; alert resumed`
+            note: quietQ ? 'office quiet hours: no office text, the item waits in Needs Attention' : claimActiveQ ? `SMS suppressed: ${claimedByQ} has it (moved ${staleMinQ} min ago)`
+              : resumingQ ? `claim stale: ${claimedByQ} has it but nothing moved for ${staleMinQ} min; alert resumed`
               : (sendLive ? '' : 'text sending is off') })
         }
         if (soonQ && sendLive && !claimActiveQ && !quietQ && ghl.token && ghl.locationId) {
           if (resumingQ) await opEvent(sb, { job: 'coverage-run', verb: 'claim_stale', item_id: String(c.id), area: 'coverage',
-            summary: `Office alert resumed — ${claimedByQ} has ${c.client || 'the shift'} but nothing has moved for ${staleMinQ} min and it starts in ${minsToShiftQ} min` })
+            summary: `Office alert resumed: ${claimedByQ} has ${c.client || 'the shift'} but nothing has moved for ${staleMinQ} min and it starts in ${minsToShiftQ} min` })
           const msgQ = resumingQ
             ? `Cara: ${claimedByQ} took the ${c.client || 'open-shift'} callout (${whenQ}) but nothing has moved for ${staleMinQ} min and it starts in ${minsToShiftQ} min. Check in or jump in: {link}`
             : `Cara: nobody has answered the ask for ${c.client || 'a shift'} ${whenQ} (${c.asked.length} asked, 0 yes) and it starts soon. Ask more or start calling: {link}`
@@ -1929,13 +1929,13 @@ Deno.serve(async (req) => {
        same-day visits fetch; overlap on the naive HH:MM window. Overnight
        windows (end before start) skip the check rather than guess. */
     const busyThen = new Set<string>()
-    let busyCheck = 'no shift date/time on the case — busy check off'
+    let busyCheck = 'no shift date/time on the case, busy check off'
     if (c.shift_date && /^\d\d:\d\d-\d\d:\d\d$/.test(String(c.shift_time || ''))) {
       const [shStart, shEnd] = String(c.shift_time).split('-')
-      if (shEnd <= shStart) busyCheck = 'overnight window — busy check off (cannot compare across midnight safely)'
+      if (shEnd <= shStart) busyCheck = 'overnight window, busy check off (cannot compare across midnight safely)'
       else {
         const day = await fetchVisits(`startDate=${c.shift_date}&endDate=${c.shift_date}`)
-        if (day.error) busyCheck = `could not read the day's schedule (${day.error}) — busy check off`
+        if (day.error) busyCheck = `could not read the day's schedule (${day.error}), busy check off`
         else {
           for (const v of day.rows) {
             const cg = v?.caregiver?.id
@@ -2270,9 +2270,9 @@ Deno.serve(async (req) => {
       const whenTxt = [c.shift_date, span12(c.shift_time)].filter(Boolean).join(' ') || 'time on the case'
       await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
         id: `ops_covesc_${c.id}`, kind: 'coverage', coverage_case_id: c.id,
-        title: `CALLOUT EXHAUSTED — ${c.client || 'shift'} ${whenTxt} still uncovered`,
+        title: `CALLOUT EXHAUSTED: ${c.client || 'shift'} ${whenTxt} still uncovered`,
         about: c.client || '',
-        detail: `${autoAsked.length} caregivers asked: ${declined} declined, ${noReply} never answered, nobody said yes. A person needs to work this now — call people, split the shift, or tell the client.`,
+        detail: `${autoAsked.length} caregivers asked: ${declined} declined, ${noReply} never answered, nobody said yes. A person needs to work this now: call people, split the shift, or tell the client.`,
         domain: 'scheduling_coverage', status: 'open', urgency: 'high',
         owner: own2, owner_name: own2.split('@')[0],
         created_at: nowIso(), due: new Date(Date.now() + 3600000).toISOString(),
@@ -2327,21 +2327,21 @@ Deno.serve(async (req) => {
     const itemId = `ops_cov_${c.id}`
     detail.push({
       case_id: c.id,
-      client: c.client ?? '(not identified — AxisCare)',
+      client: c.client ?? '(not identified, AxisCare)',
       client_resolution: clientRes.status === 'resolved'
         ? clientRes.detail
-        : `${clientRes.status}: ${clientRes.detail} — waves fall back to tier 2/3 ranking`,
+        : `${clientRes.status}: ${clientRes.detail}; waves fall back to tier 2/3 ranking`,
       history_error: historyError,
       recent_activity_error: recent.error,
       axiscare_census: censusUsable
         ? `${axisActive.size} active caregivers; ${inactiveSkipped} roster candidate(s) skipped as not active in AxisCare`
-        : `census unavailable (${censusError || 'empty'}) — ALL WAVES HELD this run (${censusHeld} candidate(s) held), nothing sends on roster data alone`,
+        : `census unavailable (${censusError || 'empty'}). ALL WAVES HELD this run (${censusHeld} candidate(s) held), nothing sends on roster data alone`,
       /* Who has already been texted on this case but is NOT in the active
          census now — the exact question the 2026-09-16 incident asked. */
       asked_no_longer_active: censusUsable
         ? (c.asked ?? []).filter((a: any) => a?.axiscare_id && !axisActive.has(String(a.axiscare_id)))
             .map((a: any) => a.name)
-        : 'unknown — census unavailable',
+        : 'unknown, census unavailable',
       /* And who was texted despite being nurse-classed or nurse-listed —
          the Natasha Early question, permanently answerable. */
       asked_nurse_flagged: (c.asked ?? []).filter((a: any) =>
@@ -2353,7 +2353,7 @@ Deno.serve(async (req) => {
       nurse_check: `${nurseAxis.size} nurse-classed in AxisCare; ${nurseSkipped} additionally skipped from this wave (nurse-roster names are excluded before candidacy)`,
       care_level: clientLv != null
         ? `client is Level ${clientLv} (class "${c.client_care_level_from || '?'}"); ${underLevelSkipped} caregiver(s) skipped as below level; ${caregiverLevel.size} caregivers carry a level class`
-        : 'no care-level class found on this client — level filter off for this case',
+        : 'no care-level class found on this client, level filter off for this case',
       reason: c.reason,
       opened: c.opened_at,
       owner_now: c.owner ?? '(none)',
@@ -2615,7 +2615,7 @@ Deno.serve(async (req) => {
   } catch { /* logging must never block the run */ }
 
   return new Response(JSON.stringify({
-    mode: commit ? 'COMMIT' : 'DRY RUN (cases/items only — sending has its own switch)',
+    mode: commit ? 'COMMIT' : 'DRY RUN (cases/items only; sending has its own switch)',
     sending_enabled: sendLive,
     manual_select: manualSelect,
     sending_note: manualSelect
@@ -2631,10 +2631,10 @@ Deno.serve(async (req) => {
        this-client ranking and recent-activity now come from real visit
        history above. What still needs AxisCare work (or a build): */
     blocked_or_unbuilt: [
-      'caregiver availability and schedule conflicts (schedules readable — not wired in yet)',
+      'caregiver availability and schedule conflicts (schedules readable, not wired in yet)',
       'overtime risk',
       'service area and client requirements',
-      'writing the accepted assignment back to the schedule (API supports it — deliberately manual for now)',
+      'writing the accepted assignment back to the schedule (API supports it, deliberately manual for now)',
       'family notification driven by the real schedule change',
       'ongoing/recurring open shifts offered as ONE package instead of shift-by-shift',
     ],

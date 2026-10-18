@@ -289,7 +289,7 @@ Deno.serve(async (req) => {
       '<div style="font-family:Arial,sans-serif;font-size:15px;color:#16283a;line-height:1.6;">'
       + '<p><b>' + esc(item.name) + '</b> · ' + esc(item.zip) + '</p>'
       + '<p>' + esc(item.phone) + (item.email ? ' · ' + esc(item.email) : '') + '</p>'
-      + '<p><b>Care for:</b> ' + esc(item.who || '—') + '<br><b>Needs:</b> ' + esc(item.care.join(', ') || '—') + '<br><b>Frequency:</b> ' + esc(item.freq || '—') + '</p>'
+      + '<p><b>Care for:</b> ' + esc(item.who || 'Not set') + '<br><b>Needs:</b> ' + esc(item.care.join(', ') || 'Not set') + '<br><b>Frequency:</b> ' + esc(item.freq || 'Not set') + '</p>'
       + (item.notes ? '<p><b>Notes:</b> ' + esc(item.notes) + '</p>' : '')
       + '<p style="color:#55677a;font-size:13px;">Review in the Care Coordinator Hub → HomeTogether → Local. Concierge promise: personal introduction within 2 business days.</p></div>')
 

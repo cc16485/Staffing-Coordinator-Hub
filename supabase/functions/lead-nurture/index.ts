@@ -141,7 +141,7 @@ Deno.serve(async (req) => {
       if (upJson?.contact?.dnd === true && !l.do_not_contact) {
         l.do_not_contact = true
         l.do_not_contact_at = new Date().toISOString()
-        l.do_not_contact_reason = 'GHL DND (STOP) — synchronized by lead-nurture'
+        l.do_not_contact_reason = 'GHL DND (STOP), synchronized by lead-nurture'
         l.nurture_stopped_at = l.do_not_contact_at; l.nurture_stop_reason = 'do not contact'
         await save(l); stopped++; continue
       }
@@ -158,16 +158,16 @@ Deno.serve(async (req) => {
         c.lastMessageDirection === 'inbound' &&
         c.lastMessageDate && new Date(c.lastMessageDate).getTime() > new Date(l.nurture_started_at).getTime())
       if (repliedSince) {
-        l.nurture_stopped_at = new Date().toISOString(); l.nurture_stop_reason = 'they replied — human takes over'
+        l.nurture_stopped_at = new Date().toISOString(); l.nurture_stop_reason = 'they replied, human takes over'
         /* The reply is a SIGNAL, not just a stop condition. Record it and
            raise it, so a human actually answers. */
         ldPush(l, { channel: 'sms', direction: 'in', outcome: 'reply', actor: 'family',
-          note: 'noticed by the nurture check — read the conversation in GHL' })
+          note: 'noticed by the nurture check. Read the conversation in GHL' })
         const whoR = [l.first_name, l.last_name].filter(Boolean).join(' ').trim() || 'A family'
         await supabase.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
           id: `ops_leadreply_${l.id}_${new Date().toISOString().slice(0, 10).replaceAll('-', '')}`,
           kind: 'new_lead', source_id: String(l.id),
-          title: `${whoR} replied — waiting for a human response`, about: whoR,
+          title: `${whoR} replied, waiting for a human response`, about: whoR,
           detail: 'They wrote back since we last messaged them (spotted by the nurture check). Read their conversation in GHL from the lead profile and answer as a person.',
           next_action: 'Open the lead, read the reply in Conversations, and answer as a person.',
           phone: l.phone || '', domain: 'family_enquiries', status: 'open', urgency: 'high',
@@ -175,7 +175,7 @@ Deno.serve(async (req) => {
           due: new Date(Date.now() + 3600e3).toISOString(),
           created_by: 'lead-nurture', opened_by: 'system' } })
         await opEvent(supabase, { verb: 'lead_reply_received', item_id: String(l.id), area: 'growth_leads',
-          actor_name: whoR, summary: `${whoR} replied — nurture stopped, waiting for a human response` })
+          actor_name: whoR, summary: `${whoR} replied. Nurture stopped, waiting for a human response` })
         await save(l); stopped++; continue
       }
     } catch { /* if the check fails, err on NOT sending */ continue }

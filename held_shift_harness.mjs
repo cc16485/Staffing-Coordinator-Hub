@@ -129,7 +129,7 @@ ck('switched off: the time reading is unchanged from before, and the report list
   out0.time_check.fix_live === false && out0.time_check.has_offset === false && out0.time_check.differs.some(d => d.visit === AX[4].id && d.old_reading === 'already started' && d.correct_reading === 'upcoming')
   && !newCases0.some(c => c.axiscare_visit_id === AX[4].id), { t: out0.time_check });
 ck('TIME FIX: a call-off 3 hours from now (Springfield wall clock, no offset) opens a case; one that started an hour ago does not',
-  newCases().some(c => c.axiscare_visit_id === AX[4].id) && !newCases().some(c => c.axiscare_visit_id === AX[5].id) && verdict(out, AX[5].id) === 'ignored — already started', { v4: verdict(out, AX[4].id), v5: verdict(out, AX[5].id) });
+  newCases().some(c => c.axiscare_visit_id === AX[4].id) && !newCases().some(c => c.axiscare_visit_id === AX[5].id) && verdict(out, AX[5].id) === 'ignored, already started', { v4: verdict(out, AX[4].id), v5: verdict(out, AX[5].id) });
 ck('untouched: a shift with an open case, and a shift with no reason, cause no new case and no AxisCare check',
   !newCases().some(c => c.axiscare_visit_id === AX[6].id) && DB.coverage_cases.filter(c => c.axiscare_visit_id === AX[6].id).length === 1 && !newCases().some(c => c.axiscare_visit_id === AX[7].id)
   && !sinceCalls().some(c => c.includes(AX[6].id.slice(-10)) && c.includes('s=140')));

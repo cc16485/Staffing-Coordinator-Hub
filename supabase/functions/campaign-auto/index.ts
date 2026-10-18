@@ -325,7 +325,7 @@ Deno.serve(async (req) => {
               if (hl && !hl.do_not_contact) {
                 hl.do_not_contact = true
                 hl.do_not_contact_at = new Date().toISOString()
-                hl.do_not_contact_reason = 'GHL DND (STOP) — synchronized by campaign-auto'
+                hl.do_not_contact_reason = 'GHL DND (STOP), synchronized by campaign-auto'
                 await supabase.rpc('upsert_app_data_item', { target_key: 'leads', item: hl })
               }
             } })

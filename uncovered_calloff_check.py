@@ -43,7 +43,7 @@ say()
 for x in sorted(detail, key=lambda y: str(y.get("when") or "")):
     v = str(x.get("visit") or ""); cs = cases.get(v, [])
     open_ = [c for c in cs if c["status"] == "open"]; closed = [c for c in cs if c["status"] != "open" and c["resolved_at"]]
-    started = str(x.get("verdict", "")).startswith("ignored — already started")
+    started = str(x.get("verdict", "")).startswith(("ignored — already started", "ignored, already started"))
     reasoned = x.get("verdict") in ("opens a case", "already has an open case")
     is_held = reasoned and not open_ and closed and not started
     held += 1 if is_held else 0
