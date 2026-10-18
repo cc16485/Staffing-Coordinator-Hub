@@ -218,6 +218,16 @@ async function finish(db: Any, ack: Any, outcome: 'signed' | 'refused' | 'did_no
         ack: { id: ack.id, status: outcome, at: (ack.signed_at || ack.recorded_at || when.toISOString()), signed_name: ack.signed_name || null, witness: ack.witness || null, via: ack.via } }
       const { error } = await db.rpc('upsert_app_data_item', { target_key: 'discipline_actions', item })
       out.writeup = error ? 'failed: ' + error.message : 'issued'
+      /* the attendance events it covers stop counting toward the next step (as Mark issued did) */
+      const ids = new Set((Array.isArray(w.event_ids) ? w.event_ids : []).map(String))
+      if (ids.size) {
+        const { data: ev } = await db.from('app_data').select('data').eq('key', 'attendance_events').maybeSingle()
+        let n = 0
+        for (const e of (Array.isArray(ev?.data) ? ev.data : [])) {
+          if (e && ids.has(String(e.id)) && !e.action_id) { const r = await db.rpc('upsert_app_data_item', { target_key: 'attendance_events', item: { ...e, action_id: w.id } }); if (!r.error) n++ }
+        }
+        out.events = n
+      }
     } else out.writeup = 'not found'
   } catch (e) { out.writeup = 'failed: ' + String(e).slice(0, 80) }
   // 2. AxisCare: a short note with no details

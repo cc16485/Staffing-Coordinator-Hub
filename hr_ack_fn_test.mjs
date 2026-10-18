@@ -32,7 +32,7 @@ let T, APP, STORE, SENT, AX, OPEN_LOG, WHO, LIVE, NOW_OWNERKEY
 const reset = (o = {}) => {
   LIVE = !!o.live
   APP = { ops_settings: { hr_ack_live: LIVE }, caregivers: [{ first: 'Jordan', last: 'Miller', axiscare_id: '77', phone: '4175550100' }],
-    discipline_actions: [{ id: 'w1', caregiver: 'Jordan Miller', axiscare_caregiver_id: '77', level: 'Verbal Warning', status: 'approved', body: notice },
+    attendance_events: [{ id: 'e1' }, { id: 'e2', action_id: 'older' }, { id: 'e3' }], discipline_actions: [{ id: 'w1', caregiver: 'Jordan Miller', axiscare_caregiver_id: '77', level: 'Verbal Warning', status: 'approved', body: notice, event_ids: ['e1', 'e2'] },
       { id: 'w2', caregiver: 'Pat Doe', level: 'Verbal Warning', status: 'draft', body: 'x' }], ops_items: [] }
   T = { hr_ack: [], hr_ack_event: [] }; STORE = {}; SENT = []; AX = []; OPEN_LOG = []; WHO = o.who === undefined ? 'zach' : o.who; NOW_OWNERKEY = false
 }
@@ -114,6 +114,7 @@ ck('live sign: the write-up is issued with how it was acknowledged', w1.status =
 ck('...AxisCare gets the short note on the right caregiver, no reason or notice text', AX.length === 1 && /\/api\/notes\/caregiver\/77$/.test(AX[0].url) && /Verbal Warning/.test(AX[0].body.note) && !/called in|FACTS/.test(AX[0].body.note) && T.hr_ack[0].ax_note === 'sent', AX)
 const task = APP.ops_items.find((x) => x.kind === 'hr_file')
 ck('...Zach gets the upload task: his, first name + last initial only, links to Formal cases', task && task.owner === 'zach@mo-care.com' && task.title.endsWith('Jordan M.') && !/Miller/.test(JSON.stringify(task)) && task.link === '#hr/formal' && task.status === 'open', task)
+ck('...the attendance events it covers are marked handled (an already-handled one and others untouched)', APP.attendance_events.find((e) => e.id === 'e1').action_id === 'w1' && APP.attendance_events.find((e) => e.id === 'e2').action_id === 'older' && !APP.attendance_events.find((e) => e.id === 'e3').action_id, APP.attendance_events)
 ck('...the PDF goes under notices/', /^notices\/w1\//.test(T.hr_ack[0].pdf_path))
 r = await call({ action: 'uploaded', ack_id: T.hr_ack[0].id }); ck('Uploaded to AxisCare: recorded and the task closes', !!T.hr_ack[0].ax_upload_at && APP.ops_items.find((x) => x.kind === 'hr_file').status === 'done')
 r = await call({ action: 'record', ack_id: T.hr_ack[0].id, outcome: 'refused', date: '2026-10-20', how: 'phone', witness: 'X' }); ck('a signed one cannot then be recorded as refused', r.s === 409)
