@@ -8,6 +8,7 @@
 // Deployed with verify_jwt OFF (caregivers have no Hub login); this file does the checking.
 // OFF until ops_settings.family_offer_live === true. Never texts or emails a family.
 // =============================================================================
+import { isPlaceholderCaregiver } from '../_shared/cg-placeholder.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { runOffers, offerPage, type OfferDeps, type Candidate } from '../_shared/family-offer.ts'
 import { makeOfferLink, checkOfferLink } from '../_shared/offer-links.ts'
@@ -90,7 +91,7 @@ const deps: OfferDeps = {
       if (g?.active === false || !/^\d{1,12}$/.test(id) || seen.has(id) || !axActive.has(id)) continue
       const name = [String(g.first || '').trim(), String(g.last || '').trim()].filter(Boolean).join(' ')
       const phone = normalisePhone(g.phone)
-      if (!phone || nurses.has(nameKey(name))) continue
+      if (!phone || nurses.has(nameKey(name)) || isPlaceholderCaregiver(name)) continue   // AxisCare's "Canceled Shift" is nobody
       seen.add(id)
       out.push({ axiscare_id: id, name, first: String(g.first || '').trim(), phone,
         drive: { dl_status: g.dl_status ?? null, dl_expires: g.dl_expires ?? null, auto_ins_expires: g.auto_ins_expires ?? null, cleared_to_drive: g.cleared_to_drive ?? null }, avail: av.find((x) => String(x?.axiscare_id ?? '') === id) ?? null })

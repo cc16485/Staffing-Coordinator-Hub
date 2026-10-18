@@ -9,6 +9,7 @@ import { clientVisits, visitView, stateOf, estimateRate, type Ax } from '../_sha
 import { axClients } from '../_shared/client-lookup.ts'
 import { report, type Facts } from '../_shared/pilot-readiness.ts'
 import { loadNotClients, isNotClient } from '../_shared/client-quiet.ts'   // Office Staff and other not-clients
+import { isPlaceholderCaregiver } from '../_shared/cg-placeholder.ts'   // "Canceled Shift" is not a caregiver
 
 function axisCreds() {
   let token = ''
@@ -59,7 +60,7 @@ Deno.serve(async (req) => {
     const rp = await ax('GET', `/api/clients/${encodeURIComponent(id)}/responsibleParties`)
     const rps = rowsOf(rp.json?.results?.responsibleParties ?? rp.json?.results ?? [])
     let cgs: string[] = []
-    try { cgs = [...new Set((await clientVisits(ax, id, from, today)).map(visitView).map((v) => v.caregiver?.axiscare_id).filter(Boolean) as string[])] } catch { cgs = [] }
+    try { cgs = [...new Set((await clientVisits(ax, id, from, today)).filter((v: any) => !isPlaceholderCaregiver(v?.caregiver?.firstName, v?.caregiver?.lastName)).map(visitView).map((v) => v.caregiver?.axiscare_id).filter(Boolean) as string[])] } catch { cgs = [] }
     const state = stateOf(c)
     let rate: number | null = null, rateFrom: Facts['rateFrom'] = null
     try { const e = await estimateRate(ax, id, state, st, today); rate = e.rate; rateFrom = e.rate == null ? null : (Number(st?.[`family_app_rate_${state}`]) === e.rate ? 'state' : 'client') } catch { /* none */ }
