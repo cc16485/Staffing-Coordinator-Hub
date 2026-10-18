@@ -104,7 +104,12 @@ globalThis.__fakeCreateClient = () => ({
       gte(k, v) { f.push((r) => String(r[k]) >= String(v)); return p }, lt(k, v) { f.push((r) => String(r[k]) < String(v)); return p }, gt(k, v) { f.push((r) => String(r[k]) > String(v)); return p },
       not() { return p }, order(k, o) { ord = [k, o?.ascending !== false]; return p }, limit(n) { lim = n; return p }, maybeSingle() { single = true; return p },
       update(vals) { return { eq: (k, v) => { DB.writes.push(tb); for (const r of DB[tb] || []) if (String(r[k]) === String(v)) Object.assign(r, JSON.parse(JSON.stringify(vals))); return Promise.resolve({ error: null }) } } },
-      insert(row) { DB.writes.push(tb); (DB[tb] = DB[tb] || []).push(JSON.parse(JSON.stringify(row))); return Promise.resolve({ error: null }) },
+      insert(row) { DB.writes.push(tb)
+        /* like Postgres: call_card_check's key is card_id */
+        if (tb === 'call_card_check' && (DB[tb] || []).some((r) => r.card_id === row.card_id)) return Promise.resolve({ error: { message: 'duplicate key value violates unique constraint "call_card_check_pkey"' } })
+        ;(DB[tb] = DB[tb] || []).push(JSON.parse(JSON.stringify(row))); return Promise.resolve({ error: null }) },
+      upsert(row, o) { DB.writes.push(tb); const k = (o && o.onConflict) || 'id'; const arr = (DB[tb] = DB[tb] || []); const i = arr.findIndex((r) => r[k] === row[k])
+        if (i >= 0) Object.assign(arr[i], JSON.parse(JSON.stringify(row))); else arr.push(JSON.parse(JSON.stringify(row))); return Promise.resolve({ error: null }) },
       then(ok, bad) { let rows = (DB[tb] || []).filter((r) => f.every((fn) => fn(r))); if (ord) rows = rows.slice().sort((a, b) => (String(a[ord[0]]) < String(b[ord[0]]) ? -1 : 1) * (ord[1] ? 1 : -1)); if (lim) rows = rows.slice(0, lim)
         return Promise.resolve({ data: single ? (rows[0] || null) : rows, error: null }).then(ok, bad) } }
     return p },
@@ -193,6 +198,12 @@ try {
   const n0 = DB.patches.length
   ;[st, out] = await run(h)
   ck('suggest: the same Looks done is not written twice', DB.patches.length === n0, DB.patches.slice(n0))
+
+  /* ── two runs at once (a Desktop step's run beside the 10-minute one) ── */
+  reset('practice')
+  const [[s1, o1], [s2, o2]] = await Promise.all([run(h), run(h)])
+  ck('two runs at once: both fine, no save refused', s1 === 200 && s2 === 200 && !o1.card_check_errors && !o2.card_check_errors && !o1.save_failed && !o2.save_failed, [o1, o2])
+  ck('two runs at once: one record per card', DB.call_card_check.length === new Set(DB.call_card_check.map((r) => r.card_id)).size && DB.call_card_check.length === 11, DB.call_card_check.map((r) => r.card_id))
 
   /* ── off ── */
   reset('off')
