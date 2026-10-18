@@ -90,6 +90,6 @@ Deno.serve(async (req) => {
   /* purged < of means some rows refused the update — that is a failure to
      shout about, not a statistic to bury in an HTTP response nobody reads. */
   await beat(supabase, purged === rows.length,
-    `purged ${purged} of ${rows.length}` + (purged === rows.length ? '' : ' — some rows would not update'))
+    `purged ${purged} of ${rows.length}` + (purged === rows.length ? '' : ', but some rows would not update'))
   return json({ ok: true, purged, of: rows.length })
 })

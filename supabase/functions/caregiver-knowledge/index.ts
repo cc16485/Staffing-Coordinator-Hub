@@ -40,7 +40,7 @@ const CATEGORY: Record<string, [string, string]> = {
   competency_check: ['observed', 'Demonstrated to Caring Companions'],
   training_completion: ['training_supported', 'Training-supported'],
   staff_resolution: ['staff_resolution', 'Staff resolution'],
-  legacy_unspecified: ['legacy_unspecified', 'Legacy — source unknown'],
+  legacy_unspecified: ['legacy_unspecified', 'Legacy, source unknown'],
 }
 
 function callerRole(req: Request): string {

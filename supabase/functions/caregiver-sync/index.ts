@@ -73,7 +73,7 @@ export async function syncActiveCaregivers(sb: Any, rows: CensusRow[], commit: b
       const twin = nameOwners.get(name.toLowerCase())
       if (twin) {
         out.name_coincidences.push({ name, axiscare_id: axId,
-          note: 'a person with this exact name already exists WITHOUT this AxisCare caregiver id — left unconnected for a person to check' })
+          note: 'a person with this exact name already exists WITHOUT this AxisCare caregiver id, left unconnected for a person to check' })
         continue
       }
       if (!commit) { out.created++; continue }

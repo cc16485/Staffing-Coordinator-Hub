@@ -53,7 +53,7 @@ const KNOWN_HUBS: Record<string, string> = {
      'team_hub'; that is the value the RLS policy checks and the value an
      invite must write. Anything invited as 'team' would be denied every Team
      Hub key. */
-  team:             'Team Hub (legacy slug — do not issue)',
+  team:             'Team Hub (legacy slug, do not issue)',
   /* 2026-10-14 (RN review, Desktop 706): the supervising RN's review page ONLY. No app_data key is mapped to this slug, so
      row level security shows such an account nothing in app_data; rn-review answers it. Never combined with another hub. */
   rn_review:        'RN review page only (cc.mo-care.com/rn.html)',

@@ -71,13 +71,13 @@ export function validate(input: any): { ok: boolean; errors: string[]; event?: a
   if (occ && !['date', 'approximate'].includes(prec))
     errors.push('occurred_precision must be date|approximate when occurred_at is given')
   if (!occ && prec !== 'unknown') errors.push('occurred_precision must be unknown when occurred_at is absent')
-  if (!links.length) errors.push('at least one claim link required — evidence must say what it is evidence OF')
+  if (!links.length) errors.push('at least one claim link required; evidence must say what it is evidence OF')
   for (const l of links) {
     const claim = String(l?.claim ?? '')
     const def = REGISTRY[claim]
     if (!def) { errors.push(`unknown claim '${claim}'`); continue }
     if (!def.allowed.includes(type))
-      errors.push(`event type '${type}' may not support '${claim}' — refused (fail closed)`)
+      errors.push(`event type '${type}' may not support '${claim}', refused (fail closed)`)
     const a = l?.asserts == null ? null : String(l.asserts)
     const optional = type === 'staff_resolution' || (def.assertsOptionalFor ?? []).includes(type)
     if (a == null && !optional) errors.push(`'${claim}': asserts required for '${type}'`)
@@ -290,11 +290,11 @@ export function recorderFor(role: string, bodyRecordedBy: unknown, jwtEmail: str
   const via = role === 'service_role' ? 'service_role' : 'authenticated'
   const rb = typeof bodyRecordedBy === 'string' ? bodyRecordedBy.trim() : ''
   if (role === 'service_role') {
-    if (!rb) return { ok: false, error: 'service-role writes must state the human recorded_by — the service is never the recorder' }
+    if (!rb) return { ok: false, error: 'service-role writes must state the human recorded_by; the service is never the recorder' }
     return { ok: true, recorded_by: rb, recorded_via: via }
   }
   if (rb && rb !== jwtEmail)
-    return { ok: false, error: 'recorded_by must be the signed-in user — you cannot record as someone else' }
+    return { ok: false, error: 'recorded_by must be the signed-in user. You cannot record as someone else' }
   return { ok: true, recorded_by: jwtEmail, recorded_via: via }
 }
 
@@ -375,7 +375,7 @@ if (typeof Deno !== 'undefined' && Deno?.serve) {
          foundation stays provably EMPTY. Not caregiver knowledge; never used
          outside deploy proof. */
       const v = validate({ event: { axiscare_id: '0', type: 'legacy_unspecified', source_person: '',
-        client_token: 'foundation-probe', note: 'deploy probe — removed in the same call' },
+        client_token: 'foundation-probe', note: 'deploy probe, removed in the same call' },
         links: [{ claim: 'dementia_care.experience', asserts: 'yes' }] })
       if (!v.ok) return json({ probe: 'validate failed', errors: v.errors }, 500)
       const id = eventIdFor('0', 'foundation-probe')
@@ -399,7 +399,7 @@ if (typeof Deno !== 'undefined' && Deno?.serve) {
     const axid = v.event!.axiscare_id
     const id = eventIdFor(axid, v.event!.client_token)
     const existing = (await items(K_EV)).find(e => e.id === id)
-    if (existing) return json({ ok: true, duplicate: true, event_id: id, note: 'idempotent replay — nothing new was written' })
+    if (existing) return json({ ok: true, duplicate: true, event_id: id, note: 'idempotent replay, nothing new was written' })
     const stamp = new Date().toISOString()
     const rec = recorderFor(r, body.recorded_by, email(req))
     if (!rec.ok) return json({ ok: false, refused: true, errors: [rec.error] }, 422)

@@ -248,11 +248,11 @@ Deno.serve(async (req) => {
     } catch (err) { visitsError = String(err) }
   } else {
     visitsError = !acSecretPresent
-      ? `no AxisCare token on this project — looked for ${AC_SECRET_ORDER.join(', ')} in that order`
+      ? `no AxisCare token on this project; looked for ${AC_SECRET_ORDER.join(', ')} in that order`
       : !acSiteRaw
-      ? `no AxisCare site number on this project — looked for ${AC_SITE_ORDER.join(', ')} in that order`
+      ? `no AxisCare site number on this project; looked for ${AC_SITE_ORDER.join(', ')} in that order`
       : `${acSiteName} is not a site number, so no valid address can be built ` +
-        `(it holds ${acSiteRaw.length} characters ending "${acSiteRaw.slice(-4)}" — ` +
+        `(it holds ${acSiteRaw.length} characters ending "${acSiteRaw.slice(-4)}"; ` +
         `a site number is digits only, e.g. 16485). This is a configuration error, not AxisCare.`
   }
 
@@ -331,7 +331,7 @@ Deno.serve(async (req) => {
     if (ineligible) {
       const item = {
         id: eid, kind: e.state === 'needs_verification' ? 'eligibility_verify' : 'eligibility', source_id: c.id || null, about: who,
-        title: e.label + ' — ' + who,
+        title: e.label + ': ' + who,
         detail: e.summary,
         next_action: e.needs_supervisor
           ? 'A supervisor has to decide on the references before this moves on.'
@@ -347,7 +347,7 @@ Deno.serve(async (req) => {
     } else if (existing && existing.status === 'open') {
       plan.items_close.push({ ...existing, status: 'done', closed_at: now,
         closed_by: 'eligibility-sweep',
-        close_reason: 'Eligibility restored — ' + e.summary, last_activity_at: now })
+        close_reason: 'Eligibility restored: ' + e.summary, last_activity_at: now })
     }
 
     // ── STEP 5: on the schedule while not eligible ────────────────────────
@@ -385,7 +385,7 @@ Deno.serve(async (req) => {
       const eventKey = 'ojt_overdue@' + (ojt.due || 'unknown')
       if (c.axiscare_note_for !== eventKey) {
         plan.axiscare_notes.push({ caregiver: who, axiscare_id: cgKey, event: eventKey,
-          note: 'DO NOT SCHEDULE — Not eligible to work. Required OJT is overdue. ' +
+          note: 'DO NOT SCHEDULE. Not eligible to work. Required OJT is overdue. ' +
                 'Caregiver may resume client shifts after OJT is completed and eligibility is restored.',
           important: true })
       }
@@ -431,7 +431,7 @@ Deno.serve(async (req) => {
   }
 
   return json({
-    mode: DRY ? 'DRY RUN — nothing was written or sent' : 'LIVE',
+    mode: DRY ? 'DRY RUN: nothing was written or sent' : 'LIVE',
     rules: rulesMeta,
     /* Both branches name the secret and the site variable that were actually
        used. Two functions silently disagreeing about which variable to read is
@@ -441,7 +441,7 @@ Deno.serve(async (req) => {
           secret_name: acSecretPresent ? AC_SECRET_NAME : '(none found)',
           site_name: acSiteRaw ? acSiteName : '(none found)',
           site: acSite ?? '(unusable)',
-          note: 'Affected-visit counts below are NOT ZERO — they are unknown.' }
+          note: 'Affected-visit counts below are NOT ZERO; they are unknown.' }
       : { schedule_check: 'SUCCESS', secret_name: AC_SECRET_NAME,
           also_present: acOtherNames.length ? acOtherNames : undefined,
           site_name: acSiteName, site: acSite,

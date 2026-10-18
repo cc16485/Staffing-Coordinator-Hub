@@ -61,8 +61,8 @@ Deno.serve(async (req) => {
     }
     url = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
   }
-  if (url) return json({ error: 'census truncated at 20 pages — refusing to diff a partial census' }, 502)
-  if (seen.size === 0) return json({ error: 'empty census — refusing to diff' }, 502)
+  if (url) return json({ error: 'census truncated at 20 pages, refusing to diff a partial census' }, 502)
+  if (seen.size === 0) return json({ error: 'empty census, refusing to diff' }, 502)
 
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const { data: row } = await sb.from('app_data').select('data').eq('key', 'caregiver_census_state').maybeSingle()
@@ -101,7 +101,7 @@ Deno.serve(async (req) => {
         reactivated.push(id)
         await put({ id: 'obs_' + Date.now() + '_re_' + id, kind: 'reactivated', axiscare_id: id,
           observed_at: runAt, first_seen: prior.first_seen,
-          note: 'previously observed id returned to active — NOT a new caregiver' })
+          note: 'previously observed id returned to active, NOT a new caregiver' })
       }
       prior.last_active = s.active; prior.last_label = s.label; prior.last_seen = runAt
     }

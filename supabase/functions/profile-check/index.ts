@@ -206,7 +206,7 @@ export function evalClient(input: {
   // ---- FIRST_SHIFT ----
   items.push(item('dob', 'Date of birth (all clients)', 'FIRST_SHIFT', 'api',
     facts == null ? 'unanswered' : has(F.dateOfBirth) ? 'pass' : 'unanswered',
-    has(F.dateOfBirth) ? S(F.dateOfBirth) : 'not on the AxisCare record — enter it there', 'axiscare'))
+    has(F.dateOfBirth) ? S(F.dateOfBirth) : 'not on the AxisCare record. Enter it there', 'axiscare'))
   const addr = F?.residentialAddress ?? {}
   items.push(item('address', 'Service address with ZIP', 'FIRST_SHIFT', 'api',
     facts == null ? 'unanswered' : (has(addr.streetAddress1) && has(addr.city) && has(addr.postalCode)) ? 'pass' : 'fail',
@@ -218,19 +218,19 @@ export function evalClient(input: {
     partiesWithPhone.length > 0 ? 'pass' : rpException ? 'pass' : 'fail',
     partiesWithPhone.length > 0 ? `${partiesWithPhone.length} on file in AxisCare`
       : rpException ? `documented exception: ${S(rpException.reason)} (${S(rpException.by)})`
-      : 'none in AxisCare — add one, or document the no-responsible-party exception', partiesWithPhone.length > 0 ? 'none' : rpException ? 'none' : 'exception'))
+      : 'none in AxisCare. Add one, or document the no-responsible-party exception', partiesWithPhone.length > 0 ? 'none' : rpException ? 'none' : 'exception'))
   const entOk = has(prof?.entrance) || prof?.entrance_none === true
   items.push(item('entrance', 'Entrance / access instructions', 'FIRST_SHIFT', 'hub',
     entOk ? 'pass' : 'unanswered',
-    has(prof?.entrance) ? 'instructions on the profile' : prof?.entrance_none === true ? 'explicitly “no special instructions”' : 'unanswered — instructions or an explicit “none” required; blank is not an answer', 'hub'))
+    has(prof?.entrance) ? 'instructions on the profile' : prof?.entrance_none === true ? 'explicitly “no special instructions”' : 'unanswered: instructions or an explicit “none” required; blank is not an answer', 'hub'))
   const petsOk = has(prof?.pets) || prof?.pets_none === true
   items.push(item('pets', 'Pets in the home', 'FIRST_SHIFT', 'hub',
     petsOk ? 'pass' : 'unanswered',
-    has(prof?.pets) ? S(prof?.pets) : prof?.pets_none === true ? 'explicitly “no pets”' : 'unanswered — pet details or an explicit “no pets” required', 'hub'))
+    has(prof?.pets) ? S(prof?.pets) : prof?.pets_none === true ? 'explicitly “no pets”' : 'unanswered: pet details or an explicit “no pets” required', 'hub'))
   items.push(item('allergies', 'Allergies / sensitivities', 'FIRST_SHIFT', 'api',
     facts == null ? 'unanswered' : has(F.allergies) ? 'pass' : 'unanswered',
     has(F.allergies) ? S(F.allergies)
-      : 'unanswered — enter the allergies (or exactly “None known”) on their AxisCare profile. This must be corrected in AxisCare; the Hub cannot write it.', 'axiscare'))
+      : 'unanswered: enter the allergies (or exactly “None known”) on their AxisCare profile. This must be corrected in AxisCare; the Hub cannot write it.', 'axiscare'))
   const lvl = careLevelOf(F?.classes)
   items.push(item('care_level', 'Care level set in AxisCare', 'FIRST_SHIFT', 'api',
     facts == null ? 'unanswered' : lvl != null ? 'pass' : 'unanswered',
@@ -244,7 +244,7 @@ export function evalClient(input: {
     cp as Status, cp === 'na' ? 'read from the SOC step (new starts only)' : cp === 'pass' ? 'attested on the SOC checklist' : 'care-plan step unchecked', 'attested'))
   items.push(item('start_date', 'AxisCare Start Date set (verified before first shift, never an SOC gate)', 'FIRST_SHIFT', 'api',
     facts == null ? 'unanswered' : has(F.startDate) ? 'pass' : 'unanswered',
-    has(F.startDate) ? S(F.startDate) : 'not set — set Start Date on their AxisCare profile (reminded at schedule entry)', 'axiscare'))
+    has(F.startDate) ? S(F.startDate) : 'Not set. Set Start Date on their AxisCare profile (reminded at schedule entry)', 'axiscare'))
   if (medicaid) items.push(item('dcn', 'Medicaid number (DCN) in AxisCare', 'FIRST_SHIFT', 'api',
     facts == null ? 'unanswered' : has(F.medicaidNumber) ? 'pass' : 'unanswered',
     has(F.medicaidNumber) ? 'on file' : 'not on the AxisCare record', 'axiscare'))
@@ -257,7 +257,7 @@ export function evalClient(input: {
     (p?.hipaaDisclosureAuthorization === '' || p?.hipaaDisclosureAuthorization == null)).length
   items.push(item('contact_permissions', 'Family-contact permission answers', 'WARN', 'api',
     (parties ?? []).length === 0 ? 'na' : unansweredFlags === 0 ? 'pass' : 'unanswered',
-    unansweredFlags ? `${unansweredFlags} contact(s) have unanswered HIPAA/medical-decision questions in AxisCare — cleanup, never a block` : 'all contacts answered', 'axiscare'))
+    unansweredFlags ? `${unansweredFlags} contact(s) have unanswered HIPAA/medical-decision questions in AxisCare: cleanup, never a block` : 'all contacts answered', 'axiscare'))
   items.push(item('email', 'Client email', 'WARN', 'api',
     facts == null ? 'na' : has(F.personalEmail) ? 'pass' : 'unanswered', has(F.personalEmail) ? 'on file' : 'none recorded', 'axiscare'))
   items.push(item('billing_contact', 'Billing address / email', 'WARN', 'api',
@@ -371,13 +371,13 @@ export function evalCaregiver(input: {
         st === 'yes' ? 'pass' : st === 'no' ? 'fail' : 'unanswered',
         st === 'yes' ? (skill === 'dementia_care' && has(cg?.alz_date) ? 'derived from ALZ training on file' : 'recorded in the hub skills record')
           : st === 'no' ? 'recorded as not having this competency'
-          : 'no answer recorded — unanswered is not a no, but a required competency needs an answer', 'hub'))
+          : 'no answer recorded. Unanswered is not a no, but a required competency needs an answer', 'hub'))
     }
     if (attrs['spanish_speaking'] === 'yes') {
       const sa = S(cg?.spanish_ability)
       items.push(item('spanish', 'Spanish communication (conversational or fluent required)', 'HARD', 'hub',
         sa === 'conversational' || sa === 'fluent' ? 'pass' : sa === 'basic' ? 'fail' : sa === 'none' ? 'fail' : 'unanswered',
-        sa === 'basic' ? 'basic Spanish only — greetings and simple task words are not enough to conduct a care visit safely'
+        sa === 'basic' ? 'basic Spanish only. Greetings and simple task words are not enough to conduct a care visit safely'
           : sa === 'none' ? 'staff recorded no Spanish ability'
           : sa ? sa : 'spanish_ability unanswered (unknown is not none)', 'hub'))
     }
@@ -394,15 +394,15 @@ export function evalCaregiver(input: {
         !gender ? 'caregiver gender not on the AxisCare record'
           : match ? 'matches'
           : required ? 'does not match a REQUIRED gender'
-          : (want === 'yes' && !normalized) ? 'legacy preference (pre-standard) — treated as PREFER until staff confirms; ranking only'
-          : 'does not match the preference — ranking only, never a block', 'axiscare'))
+          : (want === 'yes' && !normalized) ? 'legacy preference (pre-standard), treated as PREFER until staff confirms; ranking only'
+          : 'does not match the preference, ranking only, never a block', 'axiscare'))
     }
     for (const [attr, skill, label] of [['cats', 'ok_cats', 'cats'], ['dogs', 'ok_dogs', 'dogs'], ['smoking', 'ok_smoking', 'smoking']] as const) {
       if (attrs[attr] !== 'yes') continue
       const st = skillState(skill)
       items.push(item(skill, `Comfortable with ${label} in the home`, st === 'no' ? 'HARD' : 'WARN', 'hub',
         st === 'yes' ? 'pass' : st === 'no' ? 'fail' : 'unanswered',
-        st === 'no' ? `explicit no — conflicts with this home (${label})` : st === 'yes' ? 'yes on record' : 'unanswered — warning only, never inferred either way', 'hub'))
+        st === 'no' ? `explicit no, conflicts with this home (${label})` : st === 'yes' ? 'yes on record' : 'unanswered, warning only, never inferred either way', 'hub'))
     }
     const evv = clientCtx.queueRow
     items.push(item('evv_setup', 'EVV / clock-in verified for this launch', 'FIRST_SHIFT', 'attested',
@@ -424,15 +424,15 @@ export function evalCaregiver(input: {
   const mobile = has(F?.mobilePhone) || has(cg?.mobile_phone) || has(cg?.phone)
   items.push(item('mobile', 'Mobile phone', 'WARN', 'api',
     mobile ? 'pass' : 'unanswered',
-    mobile ? 'on file' : 'Cannot receive automated coverage offers — mobile number missing. Manual assignment may proceed.', 'axiscare'))
+    mobile ? 'on file' : 'Cannot receive automated coverage offers: mobile number missing. Manual assignment may proceed.', 'axiscare'))
   const availAge = avail?.updated_at ? (Date.now() - Date.parse(S(avail.updated_at))) / 86400000 : null
   items.push(item('availability', 'Availability on record', 'WARN', 'hub',
     avail == null ? 'unanswered' : (availAge != null && availAge > 90) ? 'unanswered' : 'pass',
-    avail == null ? 'no availability recorded — confidence warning only; an explicit conflict with a proposed shift is what blocks a match'
-      : (availAge != null && availAge > 90) ? `availability is ${Math.round(availAge)} days old — stale, warning only` : 'current', 'hub'))
+    avail == null ? 'no availability recorded. Confidence warning only; an explicit conflict with a proposed shift is what blocks a match'
+      : (availAge != null && availAge > 90) ? `availability is ${Math.round(availAge)} days old, stale, warning only` : 'current', 'hub'))
   items.push(item('mailing_address', 'Mailing address (proximity ranking)', 'WARN', 'api',
     facts == null ? 'na' : (has(F?.mailingAddress?.city) || has(F?.mailingAddress?.postalCode)) ? 'pass' : 'unanswered',
-    (has(F?.mailingAddress?.city)) ? S(F?.mailingAddress?.city) : 'no mailing address in AxisCare — proximity ranking degrades', 'axiscare'))
+    (has(F?.mailingAddress?.city)) ? S(F?.mailingAddress?.city) : 'no mailing address in AxisCare, so proximity ranking degrades', 'axiscare'))
   items.push(item('email', 'Email', 'WARN', 'api',
     (has(F?.personalEmail) || has(cg?.email)) ? 'pass' : 'unanswered', 'record quality only', 'axiscare'))
 
@@ -562,7 +562,7 @@ function runSelfTest() {
   T('inactive in AxisCare = HARD fail', find(c, 'active')!.status === 'fail')
   // missing mobile: WARN with the exact capability wording
   c = evalCaregiver({ facts: { ...cgFacts, mobilePhone: '' }, cg: { ...cgRec, mobile_phone: '' }, avail: null, clientCtx: null })
-  T('missing mobile = WARN with exact capability text', find(c, 'mobile')!.severity === 'WARN' && /Cannot receive automated coverage offers — mobile number missing/.test(find(c, 'mobile')!.detail))
+  T('missing mobile = WARN with exact capability text', find(c, 'mobile')!.severity === 'WARN' && /Cannot receive automated coverage offers: mobile number missing/.test(find(c, 'mobile')!.detail))
   // stale availability warns only
   c = evalCaregiver({ facts: cgFacts, cg: cgRec, avail: { updated_at: '2026-01-01T00:00:00Z' }, clientCtx: null })
   T('stale availability = WARN only', find(c, 'availability')!.severity === 'WARN' && find(c, 'availability')!.status === 'unanswered')

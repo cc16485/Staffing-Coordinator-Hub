@@ -44,7 +44,7 @@ const PROBES: Array<{ path: string; why: string; token?: string }> = [
   { path: '/api/caregivers',              why: 'caregiver census' },
   { path: '/api/caregivers?active=true',  why: 'active-only filter support' },
   { path: '/api/applicants',              why: 'applicant pipeline' },
-  { path: '/api/contacts',                why: 'CLIENT CONTACTS — the open question' },
+  { path: '/api/contacts',                why: 'CLIENT CONTACTS: the open question' },
   { path: '/api/clientContacts',          why: 'client contacts, alternate spelling' },
   { path: '/api/responsibleParties',      why: 'responsible parties' },
   { path: '/api/emergencyContacts',       why: 'emergency contacts' },
@@ -340,9 +340,9 @@ Deno.serve(async (req) => {
         count = list.length
         fields = list.length ? [...new Set(shapeOf(list[0]))].sort() : [...new Set(shapeOf(j))].sort()
         if (list.length) captured[p.path] = list
-        if (count === 0) note = 'reachable but EMPTY — an endpoint that works over no data'
+        if (count === 0) note = 'reachable but EMPTY: an endpoint that works over no data'
         else if (hasMorePages(j)) note =
-          `FIRST PAGE ONLY — more pages exist, so ${count} is a page size, not the population`
+          `FIRST PAGE ONLY. More pages exist, so ${count} is a page size, not the population`
       } else {
         note = text.slice(0, 160)
       }
@@ -378,12 +378,12 @@ Deno.serve(async (req) => {
           const list = listOf(j)
           count = list.length
           fields = list.length ? [...new Set(shapeOf(list[0]))].sort() : [...new Set(shapeOf(j))].sort()
-          if (count === 0) note = 'reachable — this client has no responsible parties on file'
+          if (count === 0) note = 'reachable, but this client has no responsible parties on file'
         } else note = text.slice(0, 160)
       } catch (e) { note = e instanceof Error ? e.message : String(e) }
       capability.push({
         endpoint: '/api/clients/{id}/responsibleParties',
-        purpose: 'FAMILY / responsible parties (nested per client — probed with a real id)',
+        purpose: 'FAMILY / responsible parties (nested per client, probed with a real id)',
         status, available: status === 200, records: count, fields: fields.slice(0, 60), note,
       })
     }
