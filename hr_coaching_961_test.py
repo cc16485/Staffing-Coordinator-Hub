@@ -199,7 +199,6 @@ ck("Krystal can't reassign it herself", "Only Samantha or Zach" in str(A(KRY, r3
 ck("Zach reassigns it: the card moves to Casey", A(ZAC, r3, "reassign", {"assigned_to": "casey@mo-care.com"}) == [["open"]] and (card(r3) or {}).get("owner") == "casey@mo-care.com")
 ck("Casey says the flag is wrong (with why): closed, card closes", A(CC2, r3, "flag_wrong", {"reason": "She was in the hospital"}) == [["flag_wrong"]] and card(r3).get("status") == "done")
 ck("Zach withdraws the compliment one", A(ZAC, r2, "withdraw", {"reason": "Told her myself"}) == [["withdrawn"]])
-ck("someone with no office role can do nothing", "Only Samantha" in str(act(KRY, "select 1")) or True)
 c = conn(); c.run("delete from public.staff_roles where person_id = cast(:p as uuid)", p=CC2); c.close()
 ck("a person without a coordinator or owner role reads nothing and can act on nothing", act(CC2, "select count(*) from public.hr_coaching") == [[0]] and "Only Samantha" in str(A(CC2, r3, "improved", {"improved": "true"})))
 ck("the public key can't call the door", str(as_person(KRY, "set local role anon; select public.hr_coaching_act(null, 'assign', '{}'::jsonb)")).startswith("ERR"))
