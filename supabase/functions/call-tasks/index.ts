@@ -608,6 +608,11 @@ async function visitFact(a: Action, ids: { client?: string; caregiver?: string }
   if (was && /^\s*(cancel|remove)\b/i.test(String(card.title || ''))) proven = !hits.some((v: Any) => v.start === was.start)
   else if (was && a.start && a.end && (was.start !== a.start || was.end !== a.end))
     proven = hits.some((v: Any) => v.start === a.start && v.end === a.end) && !hits.some((v: Any) => v.start === was.start && v.end === was.end)
+  /* ADDING A VISIT (2026-10-18): when the card was made AxisCare had no matching visit that day (the reading's own lookup
+     said so), and now there is one for that client at exactly the asked-for time. If that first lookup could not read
+     AxisCare or found several visits, nobody knows whether the visit was already there, so it is never proof. */
+  else if (!was && a.start && a.end && /^no matching visit/.test(String((a.resolved as Any)?.note || '')))
+    proven = hits.some((v: Any) => v.start === a.start && v.end === a.end)
   return { proven, line }
 }
 /** Whether a call-off case for that client and day was opened after the card. */

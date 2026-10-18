@@ -31,6 +31,10 @@ function reset(mode) {
         card('cf_m6_0', { about: 'Nora No', title: 'Call Nora back', steps: ['Call back'], source: { message_id: 'm6', call_at: H(-5) }, looks_done_no: { at: H(-1), by: 'Sam T' } }),
         card('cf_m7_0', { about: 'Lisa Late', title: 'Change Lisa Late\'s visit to start at 3:00 PM', steps: ['Change the visit in AxisCare (Robbin)'], person_id: 'p_lisa', source: { message_id: 'm7', call_at: H(-5) } }),
         card('cf_m8_0', { about: 'Old Olive', title: 'Call Olive back', steps: ['Call back'], created_at: H(-24 * 20), source: { message_id: 'm8', call_at: H(-24 * 20) } }),
+        card('cf_m10_0', { about: 'Steve Add', title: 'Add Steve Add\'s DMV visit with Angiel, 9:30am-12:30pm', steps: ['Change the visit in AxisCare (Angiel)'], person_id: 'p_steve', source: { message_id: 'm10', call_at: H(-5) } }),
+        card('cf_m11_0', { about: 'Wren Wrong', title: 'Add Wren Wrong\'s visit 9:30am-12:30pm', steps: ['Change the visit in AxisCare'], person_id: 'p_wren', source: { message_id: 'm11', call_at: H(-5) } }),
+        card('cf_m12_0', { about: 'Fay Fail', title: 'Add Fay Fail\'s visit 9:30am-12:30pm', steps: ['Change the visit in AxisCare'], person_id: 'p_fay', source: { message_id: 'm12', call_at: H(-5) } }),
+        card('cf_m13_0', { about: 'Una Known', title: 'Add Una Known\'s visit 9:30am-12:30pm', steps: ['Change the visit in AxisCare'], person_id: 'p_una', source: { message_id: 'm13', call_at: H(-5) } }),
         { id: 'ops_human', kind: 'request', status: 'open', about: 'Ann Back', title: 'Human card', created_at: H(-3) },
         card('cf_m9_0', { about: 'Done Dan', title: 'Call Dan back', status: 'done', source: { message_id: 'm9', call_at: H(-5) } }),
       ] },
@@ -46,10 +50,18 @@ function reset(mode) {
       { message_id: 'm6', read_at: H(-5), call_at: H(-5), detail: { contact_id: 'c6' }, tasks: [{ title: 'x', actions: [{ kind: 'call_back', to: '' }] }] },
       { message_id: 'm7', read_at: H(-5), call_at: H(-5), person_id: 'p_lisa', detail: { contact_id: 'c7' }, tasks: [{ title: 'x', actions: [
         { kind: 'axiscare_visit_change', date: D1, client_name: 'Lisa Late', start: '15:00', end: '19:00', resolved: { found: true, visit: { client: 'Lisa Late', caregiver: 'Robbin', date: D1, start: '13:00', end: '17:00' } } }] }] },
+      ...[['m10', 'p_steve', 'Steve Add', 'no matching visit in AxisCare that day'], ['m11', 'p_wren', 'Wren Wrong', 'no matching visit in AxisCare that day'],
+          ['m12', 'p_fay', 'Fay Fail', 'no matching visit in AxisCare that day'], ['m13', 'p_una', 'Una Known', 'AxisCare could not be read for this visit']].map(([m, pid, nm, note]) =>
+        ({ message_id: m, read_at: H(-5), call_at: H(-5), person_id: pid, detail: { contact_id: 'c_' + m }, tasks: [{ title: 'x', actions: [
+          { kind: 'axiscare_visit_change', date: D1, client_name: nm, start: '09:30', end: '12:30', resolved: { note } }] }] })),
     ],
     call_card_check: [], call_promise_watch: [], call_record: [], writes: [], patches: [],
     person_source_id: [{ person_id: 'p_betty', system: 'axiscare', entity_type: 'client', source_id: '900', needs_review: false },
-      { person_id: 'p_lisa', system: 'axiscare', entity_type: 'client', source_id: '901', needs_review: false }],
+      { person_id: 'p_lisa', system: 'axiscare', entity_type: 'client', source_id: '901', needs_review: false },
+      { person_id: 'p_steve', system: 'axiscare', entity_type: 'client', source_id: '910', needs_review: false },
+      { person_id: 'p_wren', system: 'axiscare', entity_type: 'client', source_id: '911', needs_review: false },
+      { person_id: 'p_fay', system: 'axiscare', entity_type: 'client', source_id: '912', needs_review: false },
+      { person_id: 'p_una', system: 'axiscare', entity_type: 'client', source_id: '913', needs_review: false }],
     domains: [], persons: [], client_journey_step_def: [], call_pull_seen: [],
   }
   AI = []; CALLS = []
@@ -63,7 +75,9 @@ function reset(mode) {
     { id: 'v6', contactId: 'c6', msgs: [msg('a6', -2, 'outbound', 'Hi Nora, calling you back')] },
     { id: 'v7', contactId: 'c7', msgs: [] },
   ]
-  AXV = { 'clientIds=900': [], 'clientIds=901': [{ id: 77, client: { id: 901, firstName: 'Lisa', lastName: 'Late' }, caregiver: { firstName: 'Robbin', lastName: 'R' }, scheduledStartDate: D1 + 'T15:00:00', scheduledEndDate: D1 + 'T19:00:00' }] }
+  const vis = (id, f, l, st, en) => ({ id, client: { firstName: f, lastName: l }, caregiver: { firstName: 'Angiel', lastName: 'A' }, scheduledStartDate: D1 + 'T' + st + ':00', scheduledEndDate: D1 + 'T' + en + ':00' })
+  AXV = { 'clientIds=910': [vis(80, 'Steve', 'Add', '09:30', '12:30')], 'clientIds=911': [vis(81, 'Wren', 'Wrong', '10:00', '12:30')], 'clientIds=913': [vis(83, 'Una', 'Known', '09:30', '12:30')],
+    'clientIds=900': [], 'clientIds=901': [{ id: 77, client: { id: 901, firstName: 'Lisa', lastName: 'Late' }, caregiver: { firstName: 'Robbin', lastName: 'R' }, scheduledStartDate: D1 + 'T15:00:00', scheduledEndDate: D1 + 'T19:00:00' }] }
   VERDICT = (req) => /Tell Angela the Herrons/.test(req.messages[0].content) ? { status: 'done', why: 'The office told Tom that Angela knows.', evidence: ['Office text: told Tom Angela knows (555-123-4567)'] }
     : { status: 'not_yet', why: 'Nothing shows Angela was told.', evidence: [] }
 }
@@ -100,6 +114,7 @@ globalThis.__FakeAnthropic = class { constructor() { this.beta = { messages: { c
   if (req.tools[0].name === 'submit_promise_check') return { stop_reason: 'tool_use', content: [{ type: 'tool_use', name: 'submit_promise_check', input: { status: 'not_yet', why: '', evidence: [] } }] }
   throw new Error('unexpected model call ' + req.tools[0].name) } } } } }
 globalThis.fetch = async (url, o) => { url = String(url); CALLS.push((o && o.method) || 'GET'); let m
+  if (url.includes('axiscare.com/api/visits?') && url.includes('clientIds=912')) return new Response('{}', { status: 500 })
   if (url.includes('axiscare.com/api/visits?')) { const k = Object.keys(AXV).find((x) => url.includes(x)); return new Response(JSON.stringify({ results: { visits: k ? AXV[k] : [] } }), { status: 200 }) }
   if (url.includes('/conversations/search?')) return new Response(JSON.stringify({ conversations: TEXTS.filter((c) => !url.includes('contactId=') || url.includes('contactId=' + c.contactId + '&')).map((c) => ({ id: c.id, contactId: c.contactId })) }), { status: 200 })
   if ((m = url.match(/\/conversations\/([^/]+)\/messages\?limit=\d+$/))) { const c = TEXTS.find((x) => x.id === m[1]); return new Response(JSON.stringify({ messages: { messages: c ? c.msgs : [] } }), { status: 200 }) }
@@ -133,13 +148,17 @@ try {
   reset('practice')
   const before = JSON.stringify(ops())
   let [st, out] = await run(h)
-  ck('practice: the run is fine and counts what it found', st === 200 && out.card_check_mode === 'practice' && out.cards_open === 7 && out.cards_checked === 7 && out.cards_would_close === 3 && out.cards_asked === 3, out)
+  ck('practice: the run is fine and counts what it found', st === 200 && out.card_check_mode === 'practice' && out.cards_open === 11 && out.cards_checked === 11 && out.cards_would_close === 4 && out.cards_asked === 5, out)
   ck('practice: no card is changed, nothing patched', JSON.stringify(ops()) === before && DB.patches.length === 0)
   ck('practice: Ann (office texted after the card) would close; the proof is kept', chk('cf_m1_0')?.would === 'close' && chk('cf_m1_0')?.done === 'none' && chk('cf_m1_0')?.proofs[0].proven === true, chk('cf_m1_0'))
   ck('practice: Lisa (AxisCare shows the new 3:00 time) would close', chk('cf_m7_0')?.would === 'close', chk('cf_m7_0'))
   ck('practice: Tom (text to Angela unseen; the AI says done) would suggest', chk('cf_m2_0')?.would === 'suggest' && chk('cf_m2_0')?.verdict === 'done', chk('cf_m2_0'))
   ck('practice: Betty (visit gone in AxisCare, but Angela text unseen) would not close', chk('cf_m3_0')?.would === 'none' && chk('cf_m3_0')?.proofs[0].proven === true && chk('cf_m3_0')?.proofs[1].proven === false, chk('cf_m3_0'))
   ck('practice: a card with proof for every step asks no AI', !AI.some((r) => /Call Ann Back about Tuesday|Lisa Late/.test(r.messages[0].content)))
+  ck('new visit: AxisCare had none when the card was made and now has one at exactly 9:30-12:30: would close', chk('cf_m10_0')?.would === 'close' && chk('cf_m10_0')?.proofs[0].proven === true, chk('cf_m10_0'))
+  ck('new visit at a different time (10:00): not proof', chk('cf_m11_0')?.proofs[0].proven === false && chk('cf_m11_0')?.would !== 'close', chk('cf_m11_0'))
+  ck('AxisCare cannot be read now: not proof', chk('cf_m12_0')?.proofs[0].proven === false && chk('cf_m12_0')?.would === 'none', chk('cf_m12_0'))
+  ck('the first lookup could not read AxisCare, so the visit may have been there all along: not proof', chk('cf_m13_0')?.proofs[0].proven === false && chk('cf_m13_0')?.would !== 'close', chk('cf_m13_0'))
   ck('practice: Quinn (nothing since the card) asks no AI and stays', chk('cf_m4_0')?.verdict === 'none' && chk('cf_m4_0')?.would === 'none' && !AI.some((r) => /Call Quinn back/.test(r.messages[0].content)))
   ck('practice: Al (only an automatic reminder) is not proof', chk('cf_m5_0')?.proofs[0].proven === false, chk('cf_m5_0'))
   ck('practice: a card older than 14 days, a closed card and a person\'s card are never looked at', !chk('cf_m8_0') && !chk('cf_m9_0') && !chk('ops_human'))
@@ -155,10 +174,12 @@ try {
     && /Closed on proof: Office texted them/.test(item('cf_m1_0').close_reason) && /Closed on proof/.test(item('cf_m1_0').history.slice(-1)[0].text), item('cf_m1_0'))
   ck('close: Lisa closes on the AxisCare proof', item('cf_m7_0').status === 'done' && /AxisCare now/.test(item('cf_m7_0').close_reason), item('cf_m7_0'))
   ck('close: Tom gets Looks done from the AI (not closed)', item('cf_m2_0').status === 'open' && item('cf_m2_0').looks_done?.source === 'ai' && /told Tom/.test(item('cf_m2_0').looks_done.why), item('cf_m2_0'))
+  ck('close: Steve\'s new visit closes on the AxisCare proof', item('cf_m10_0').status === 'done' && /AxisCare now\] Steve Add/.test(item('cf_m10_0').close_reason), item('cf_m10_0'))
+  ck('close: the wrong-time, failed-read and unknown-before cards stay open', ['cf_m11_0', 'cf_m12_0', 'cf_m13_0'].every((id) => item(id).status === 'open'))
   ck('close: Betty stays open with no Looks done', item('cf_m3_0').status === 'open' && !item('cf_m3_0').looks_done)
   ck('close: Nora said Not yet after the last thing that happened: left alone', item('cf_m6_0').status === 'open' && !item('cf_m6_0').looks_done, item('cf_m6_0'))
   ck('close: Quinn and Al untouched', item('cf_m4_0').status === 'open' && item('cf_m5_0').status === 'open' && !item('cf_m4_0').looks_done && !item('cf_m5_0').looks_done)
-  ck('close: the run counts closed and suggested', out.cards_closed === 2 && out.cards_suggested === 1, out)
+  ck('close: the run counts closed and suggested', out.cards_closed === 3 && out.cards_suggested === 1, out)
   ck('close: only the allowed fields are ever sent', DB.patches.every((p) => Object.keys(p.p_patch).every((k) => PATCH_OK.includes(k))))
   ck('close: nothing is sent to anyone (no GoHighLevel write)', CALLS.every((m) => m === 'GET'))
 
