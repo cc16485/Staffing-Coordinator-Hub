@@ -71,7 +71,7 @@ Deno.serve(async (req) => {
     // deno-lint-ignore no-explicit-any
     url = (j as any)?.results?.nextPage ?? (j as any)?.nextPage ?? null
   }
-  if (!clients.length) return json({ error: 'census returned no clients — nothing recorded', run_id: runId }, 502)
+  if (!clients.length) return json({ error: 'census returned no clients, nothing recorded', run_id: runId }, 502)
 
   // ── last-seen map lives as one item in the log key ────────────────────────
   const { data: row } = await sb.from('app_data').select('data').eq('key', 'client_status_log').maybeSingle()

@@ -104,7 +104,7 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({
       ok: false,
       error: !GHL_LOCATION ? 'GHL_LOCATION_ID is not set'
-        : `no GHL token on this project — looked for ${GHL_KEY_ORDER.join(', ')} in that order`,
+        : `no GHL token on this project; looked for ${GHL_KEY_ORDER.join(', ')} in that order`,
     }), { status: 500, headers: { 'Content-Type': 'application/json' } })
   }
 
@@ -247,7 +247,7 @@ Deno.serve(async (req) => {
 
     if (stalled) {
       err = {
-        pagination: 'STALLED — the cursor stopped advancing while full pages ' +
+        pagination: 'STALLED: the cursor stopped advancing while full pages ' +
           'were still being returned. The scan is INCOMPLETE and its counts ' +
           'must not be treated as a total.',
       }
@@ -381,7 +381,7 @@ Deno.serve(async (req) => {
     if (allSameName) forDuplicate.push('every contact carries the same name')
     if (emails.size === 1 && list.length > 1) forDuplicate.push('all share one email address')
     if (surnames.size === 1 && names.length > 1 && !allSameName) {
-      forHousehold.push('same surname, different given names — relatives on one line')
+      forHousehold.push('same surname, different given names: relatives on one line')
     }
     if (surnames.size > 1) forHousehold.push(`different surnames (${[...surnames].join(', ')})`)
     if (emails.size > 1) forHousehold.push('different email addresses')
@@ -409,11 +409,11 @@ Deno.serve(async (req) => {
       evidence_household: forHousehold,
       reading:
         verdict === 'likely_duplicate_person'
-          ? 'one person across several records — link them to a single identity'
+          ? 'one person across several records; link them to a single identity'
         : verdict === 'likely_shared_household'
           ? 'several people sharing a line. This is CORRECT as it stands and ' +
             'must never be merged. It is exactly the client-and-daughter case.'
-          : 'signals point both ways — a person has to decide',
+          : 'signals point both ways; a person has to decide',
     })
   }
 
@@ -504,7 +504,7 @@ Deno.serve(async (req) => {
     hub_lines_total: hubPhones.size,
     hub_lines_matching_a_ghl_contact_by_name: hubLinesMatched,
     hub_lines_with_no_ghl_contact_at_all: hubLinesAbsentFromGhl,
-    note: 'A Hub person with no GHL contact is not damage on its own — they may ' +
+    note: 'A Hub person with no GHL contact is not damage on its own; they may ' +
           'simply never have been synced. It is listed because it is the same ' +
           'question the reconciliation report will have to answer for AxisCare.',
   }
@@ -541,8 +541,8 @@ Deno.serve(async (req) => {
         names: people.map(p => p.name),
         reading: oneHuman
           ? 'one person who changed role over time, most often applicant then ' +
-            'caregiver. Link the roles to a single identity — do not clone them.'
-          : 'different names sharing a line across roles — separate people, ' +
+            'caregiver. Link the roles to a single identity. Do not clone them.'
+          : 'different names sharing a line across roles: separate people, ' +
             'and the identity layer must keep them separate',
       })
     }
@@ -559,7 +559,7 @@ Deno.serve(async (req) => {
     by_verdict: byVerdict,
     what_each_means: {
       likely_duplicate_person: 'one human, several records. Link to one identity.',
-      likely_shared_household: 'several humans, one line. CORRECT as-is — never merge.',
+      likely_shared_household: 'several humans, one line. CORRECT as-is. Never merge.',
       possible_ghl_collapse:   'one record carrying signals of two humans. Someone may ' +
                                'already have been overwritten and be missing from GHL.',
       ambiguous:               'signals point both ways. A person decides.',
@@ -567,7 +567,7 @@ Deno.serve(async (req) => {
     findings,
   }
   report.next = truncated
-    ? 'INCOMPLETE — the page ceiling was reached. Do not draw conclusions from this run.'
+    ? 'INCOMPLETE: the page ceiling was reached. Do not draw conclusions from this run.'
     : 'Complete scan. Nothing was split or merged. Every finding needs a human decision.'
 
   return new Response(JSON.stringify(report, null, 2),

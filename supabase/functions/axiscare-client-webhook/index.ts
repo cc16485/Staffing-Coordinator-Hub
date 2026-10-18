@@ -192,7 +192,7 @@ Deno.serve(async (req) => {
       occurred_at: received, received_at: received, source: 'axiscare',
       facts: { unmapped: true, axiscare_event: rawEvent },
       raw: payload,
-      unresolved: [`unrecognised AxisCare event "${rawEvent}" — needs mapping`],
+      unresolved: [`unrecognised AxisCare event "${rawEvent}", needs mapping`],
     })
     console.log('recorded unmapped event:', rawEvent)
     return new Response(JSON.stringify({ ok: true, recorded: 'unmapped', event: rawEvent }),
@@ -244,7 +244,7 @@ Deno.serve(async (req) => {
      that already has a confident-looking value in it. */
   const payerResult = resolvePayer(client?.classes)
   if (payerResult.unresolved) {
-    unresolved.push(`payer unresolved — ${payerResult.reason}` +
+    unresolved.push(`payer unresolved: ${payerResult.reason}` +
       (payerResult.candidates.length ? ` (saw: ${payerResult.candidates.join(', ')})` : ''))
   }
 

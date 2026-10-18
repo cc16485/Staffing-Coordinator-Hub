@@ -21,31 +21,31 @@ export function answerText(item: Item, v: unknown, ident: IdentityState): string
     if (item.id === 'license_number') return ident.license ? `On file, ${ident.license} (encrypted; never printed)` : 'Not provided'
     if (item.id === 'nurse_license_number') return ident.nurse_license ? `On file, ${ident.nurse_license} (encrypted; never printed)` : 'Not provided'
   }
-  if (v == null || v === '') return '—'
+  if (v == null || v === '') return 'Not provided'
   switch (item.kind) {
     case 'yesno': return v === true || v === 'yes' ? 'Yes' : v === false || v === 'no' ? 'No' : S(v)
-    case 'multi': return Array.isArray(v) ? v.map(S).filter(Boolean).join(', ') || '—' : S(v)
+    case 'multi': return Array.isArray(v) ? v.map(S).filter(Boolean).join(', ') || 'Not provided' : S(v)
     case 'photo': return v ? 'Provided' : 'Not provided'
     case 'table': {
       /* the weekly grid, the specialties and the matching facts are maps (option -> answer); the rest are rows */
       if (v && typeof v === 'object' && !Array.isArray(v)) {
         const lines = Object.entries(v as Record<string, unknown>).map(([k, c]) => {
-          if (c && typeof c === 'object' && !Array.isArray(c)) { const on = Object.entries(c as Record<string, unknown>).filter(([, x]) => x === true || (typeof x === 'string' && x.trim())).map(([kk, x]) => x === true ? kk : `${kk} ${S(x)}`); return `${k}: ${on.join(', ') || '—'}` }
-          return `${k}: ${S(c) || '—'}`
+          if (c && typeof c === 'object' && !Array.isArray(c)) { const on = Object.entries(c as Record<string, unknown>).filter(([, x]) => x === true || (typeof x === 'string' && x.trim())).map(([kk, x]) => x === true ? kk : `${kk} ${S(x)}`); return `${k}: ${on.join(', ') || 'Not provided'}` }
+          return `${k}: ${S(c) || 'Not provided'}`
         })
-        return lines.join('\n') || '—'
+        return lines.join('\n') || 'Not provided'
       }
-      if (!Array.isArray(v) || !v.length) return '—'
+      if (!Array.isArray(v) || !v.length) return 'Not provided'
       const cols = item.options || []
       return v.map((row: unknown, i: number) => {
-        if (Array.isArray(row)) return `${i + 1}. ` + row.map((c, j) => `${cols[j] ?? 'Column ' + (j + 1)}: ${S(c) || '—'}`).join('; ')
-        if (row && typeof row === 'object') return `${i + 1}. ` + Object.entries(row as Record<string, unknown>).map(([k, c]) => `${k}: ${S(c) || '—'}`).join('; ')
+        if (Array.isArray(row)) return `${i + 1}. ` + row.map((c, j) => `${cols[j] ?? 'Column ' + (j + 1)}: ${S(c) || 'Not provided'}`).join('; ')
+        if (row && typeof row === 'object') return `${i + 1}. ` + Object.entries(row as Record<string, unknown>).map(([k, c]) => `${k}: ${S(c) || 'Not provided'}`).join('; ')
         return `${i + 1}. ${S(row)}`
       }).join('\n')
     }
     case 'cards': {
       /* 2026-10-11: one numbered block per job, family-care entry or reference; tasks by their names */
-      if (!Array.isArray(v) || !v.length) return '—'
+      if (!Array.isArray(v) || !v.length) return 'Not provided'
       const yn = (x: unknown) => x === 'yes' ? 'Yes' : x === 'no' ? 'No' : S(x)
       return v.map((row: unknown, i: number) => {
         const r = (row && typeof row === 'object' ? row : {}) as Record<string, unknown>
@@ -54,7 +54,7 @@ export function answerText(item: Item, v: unknown, ident: IdentityState): string
           const val = f.kind === 'skills' || f.kind === 'refresher' ? (x as string[]).map((k) => k === 'none' ? 'None, ready for all of these' : SKILLS[k] || k).join(', ') : Array.isArray(x) ? x.map(S).join(', ') : f.kind === 'yesno' ? yn(x) : S(x)
           return `${f.label.replace(/\s*\((optional|month and year[^)]*)\)/g, '').replace(/\?$/, '')}: ${val}`
         })
-        return `${i + 1}. ` + (parts.join('; ') || '—')
+        return `${i + 1}. ` + (parts.join('; ') || 'Not provided')
       }).join('\n')
     }
     default: return S(v)
@@ -69,7 +69,7 @@ export function step1FormPdf(form: Form, answers: Record<string, unknown>, who: 
   pdf.para(form.title, { font: 'B', size: 18, color: NAVY, lh: 23, after: 2 })
   pdf.para(`Step 1 new-hire paperwork · form ${formNo} of ${formCount} · version ${form.version} · ${who.position || 'Caregiver'}`, { size: 8.5, color: MUTED, after: 4 })
   pdf.labelled('Employee:', `${who.first} ${who.last}`.trim(), { after: 1 })
-  pdf.labelled('Phone / email:', [who.phone, who.email].filter(Boolean).join(' · ') || '—', { after: 8 })
+  pdf.labelled('Phone / email:', [who.phone, who.email].filter(Boolean).join(' · ') || 'Not provided', { after: 8 })
   for (const p of form.intro || []) pdf.para(p, { after: 8 })
   for (const sec of form.sections) {
     pdf.heading(sec.h)

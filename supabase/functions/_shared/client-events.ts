@@ -100,12 +100,12 @@ export function resolvePayer(labels: unknown): PayerResult {
   if (hits.length > 1)
     return {
       payer: null, unresolved: true,
-      reason: `more than one known payer present (${hits.join(', ')}) — a person must decide`,
+      reason: `more than one known payer present (${hits.join(', ')}), so a person must decide`,
       candidates: list,
     }
   return {
     payer: null, unresolved: true,
-    reason: 'no label matched a known payer — do not infer from position',
+    reason: 'no label matched a known payer; do not infer from position',
     candidates: list,
   }
 }

@@ -235,8 +235,8 @@ Deno.serve(async (req) => {
         name: s.name || null,
         status: s.status || 'Pending',
         display: s.status === 'Positive' ? 'Positive'
-               : s.status === 'Negative' ? 'Negative — needs a decision'
-               : s.status === 'Conditional' ? 'Conditional — needs a decision'
+               : s.status === 'Negative' ? 'Negative: needs a decision'
+               : s.status === 'Conditional' ? 'Conditional: needs a decision'
                : (s.email || s.phone)
                    ? (age > 0 ? `No response, day ${age}` : 'Requested today')
                    : 'Not contacted',
@@ -272,7 +272,7 @@ Deno.serve(async (req) => {
     guards: { max_age_days: MAX_AGE_DAYS, max_per_run: MAX_PER_RUN,
               positive_required: POSITIVE_REQUIRED },
     outbound: 'NONE. This creates and chases WORK, not messages.',
-    outbound_policy: 'UNRESOLVED — the channel and consent basis for contacting ' +
+    outbound_policy: 'UNRESOLVED: the channel and consent basis for contacting ' +
               'a referee has not been decided. Automated outbound stays off ' +
               'until it is.',
     producer_note: 'Read from the candidate record, which the office actually ' +

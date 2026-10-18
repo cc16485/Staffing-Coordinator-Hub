@@ -150,7 +150,7 @@ async function proposeCaregiverPhones() {
         candidates: hits.length,
         phones_last4: hits.map(h => h.phone!.slice(-4)),
         reading: `${hits.length} GHL contacts share this name. Name alone cannot ` +
-                 `settle it — a person must choose, or wait for AxisCare.`,
+                 `settle it. A person must choose, or wait for AxisCare.`,
       })
     } else {
       none++
@@ -323,7 +323,7 @@ async function gradeCaregiverEvidence() {
       reading: grade === 'CONFIRMED'
         ? 'name plus at least one independent identifier'
         : grade === 'AMBIGUOUS'
-          ? 'identifiers disagree — do not write'
+          ? 'identifiers disagree, do not write'
           : 'exact name only. No independent identifier agrees, so this is not ' +
             'eligible for an automatic fill.',
     })
@@ -384,8 +384,8 @@ async function inspectRosterRoles() {
       field_markers: present,
       field_marker_count: present.length,
       verdict: present.length >= 2 ? 'looks like a real field caregiver'
-             : present.length === 1 ? 'one marker only — not conclusive'
-             : 'NO field-work markers at all — likely on the roster for ' +
+             : present.length === 1 ? 'one marker only, not conclusive'
+             : 'NO field-work markers at all, likely on the roster for ' +
                'administrative or compliance reasons, not because they attend clients',
     }
   }
@@ -404,7 +404,7 @@ async function inspectRosterRoles() {
       .filter(p => p.field_marker_count === 0 && !watch.includes(nameKey(p.name)))
       .map(p => p.name).slice(0, 30),
     note: 'This reports evidence. It does not change a single record. Whether ' +
-          'someone holds staff, caregiver, or both is your call — the schema ' +
+          'someone holds staff, caregiver, or both is your call; the schema ' +
           'supports holding both at once, so nothing has to be forced.',
   }
 }
@@ -438,7 +438,7 @@ async function applyCaregiverPhones(stamp: string) {
   const { data: row } = await sb.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
   // deno-lint-ignore no-explicit-any
   const cgs = (Array.isArray(row?.data) ? row!.data : []) as any[]
-  if (!cgs.length) return { error: 'caregivers blob is empty — refusing to write' }
+  if (!cgs.length) return { error: 'caregivers blob is empty, refusing to write' }
 
   /* BACK UP, and prove the backup exists before touching anything. */
   const backupKey = `caregivers_backup_${stamp}`
@@ -448,7 +448,7 @@ async function applyCaregiverPhones(stamp: string) {
   const { data: check } = await sb.from('app_data').select('data').eq('key', backupKey).maybeSingle()
   const backedUp = Array.isArray(check?.data) ? check!.data.length : 0
   if (backedUp !== cgs.length) {
-    return { error: `backup read-back mismatch (${backedUp} vs ${cgs.length}) — nothing was changed` }
+    return { error: `backup read-back mismatch (${backedUp} vs ${cgs.length}), nothing was changed` }
   }
 
   /* Fetch the full contact rows so we write real values, not last-4. */
@@ -502,7 +502,7 @@ async function applyCaregiverPhones(stamp: string) {
       reason: 'conflicting_names', phone: null,
       detail: { caregiver: p.caregiver, candidates: p.candidates,
                 phones_last4: p.phones_last4,
-                note: 'several GHL contacts share this name — a person must choose' },
+                note: 'several GHL contacts share this name; a person must choose' },
     })
     if (!error) queued++
   }
@@ -610,7 +610,7 @@ async function backfillClientsFromAxisCare(commit: boolean) {
     else {
       const twin = nameOwners.get(name.toLowerCase())
       if (twin) out.name_coincidences.push({ name, axiscare_id: axId,
-        note: 'a person with this exact name already exists WITHOUT this AxisCare client id — created separately, review and merge by hand if they are the same human' })
+        note: 'a person with this exact name already exists WITHOUT this AxisCare client id, created separately, review and merge by hand if they are the same human' })
       if (!commit) { out.created++; continue }
       const { data: pi, error: e1 } = await sb.from('person_identity')
         .insert({ display_name: name, primary_phone: phones[0]?.phone ?? null })
@@ -672,7 +672,7 @@ async function linkClientsToGhl(commit: boolean) {
   const { data: roles } = await sb.from('person_role')
     .select('person_id').eq('role', 'client')
   const ids = [...new Set((roles ?? []).map(r => String(r.person_id)))]
-  if (!ids.length) return { error: 'no client roles in the identity layer — run ?clients=1 first' }
+  if (!ids.length) return { error: 'no client roles in the identity layer; run ?clients=1 first' }
 
   const [{ data: people }, { data: existing }] = await Promise.all([
     sb.from('person_identity').select('id, display_name, primary_phone').in('id', ids),

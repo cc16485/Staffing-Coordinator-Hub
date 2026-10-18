@@ -65,14 +65,14 @@ Deno.serve(async (req) => {
     .select('id, created_at, completed_at, status, experience_years, experience_kinds, work_history')
     .or(`axiscare_id.eq.${axid},candidate_id.eq.${axid}`)
   let application: Record<string, unknown> = { found: false,
-    honest: 'No online application record — no deterministically connected /apply record exists. This does not imply an application was required in their hiring path.' }
+    honest: 'No online application record. No deterministically connected /apply record exists. This does not imply an application was required in their hiring path.' }
   if (apps && apps.length === 1) {
     const a = apps[0]
     application = { found: true, record_id: a.id, created: String(a.created_at).slice(0, 10),
       completed: a.completed_at ? String(a.completed_at).slice(0, 10) : null, status: a.status,
       experience_years: a.experience_years, experience_kinds: a.experience_kinds,
       work_history_entries: Array.isArray(a.work_history) ? a.work_history.length : 0 }
-  } else if (apps && apps.length > 1) { ambiguities.push(`multiple application records (${apps.length}) carry this id — needs review`) }
+  } else if (apps && apps.length > 1) { ambiguities.push(`multiple application records (${apps.length}) carry this id; needs review`) }
 
   // — intake (hub project, candidate_id equality) —
   const { data: intakes } = await sb.from('hire_intake')
@@ -95,7 +95,7 @@ Deno.serve(async (req) => {
   let offer: any = { found: false }
   const OF_URL = Deno.env.get('OFFERS_PROJECT_URL') ?? ''
   const OF_KEY = Deno.env.get('OFFERS_SERVICE_ROLE_KEY') ?? ''
-  if (!OF_URL || !OF_KEY) offer = { found: false, error: 'offers-project connection not configured — run the deploy script' }
+  if (!OF_URL || !OF_KEY) offer = { found: false, error: 'offers-project connection not configured; run the deploy script' }
   else {
     const resp = await fetch(`${OF_URL}/rest/v1/job_offers?axiscare_applicant_id=eq.${axid}`
       + `&select=id,created_at,offered_by,interview_date,position,level_suggested,level_confirmed,availability,experience,personality,notes,attributes,attributes_entered_by,onboarding_path`,
@@ -120,8 +120,8 @@ Deno.serve(async (req) => {
           ({ field: k, label, claim, answer: attrs[k] === true ? 'yes' : attrs[k] === false ? 'no' : 'unanswered' })),
         attribute_typist: o.attributes_entered_by || null,   // null = unknown, permanently honest
         unresolved_source_fields: { spanish_speaking: attrs.spanish_speaking ?? null,
-          note: 'boolean semantics not established (explicit answer vs default) — never rendered as an assertion' } }
-    } else if (rows.length > 1) ambiguities.push(`multiple offer records (${rows.length}) carry this applicant id — needs review`)
+          note: 'boolean semantics not established (explicit answer vs default), never rendered as an assertion' } }
+    } else if (rows.length > 1) ambiguities.push(`multiple offer records (${rows.length}) carry this applicant id; needs review`)
   }
 
   // — the Foundation bridge (derived live, never hard-coded) —
@@ -138,14 +138,14 @@ Deno.serve(async (req) => {
   const gaps: string[] = []
   if (!(application as { found: boolean }).found) gaps.push('No connected online application record.')
   if (offer.found) {
-    gaps.push('No per-question interview script, scores, or interviewer notes exist — the interviewer is known; the questions are not.')
+    gaps.push('No per-question interview script, scores, or interviewer notes exist. The interviewer is known; the questions are not.')
     gaps.push('No interview recording or transcript exists.')
-    if (!offer.attribute_typist) gaps.push('The original typist of the structured interview answers is unknown — permanently represented as such.')
-    gaps.push('Structured experience answers are yes/no only — depth, years, and settings were not captured outside the free text.')
+    if (!offer.attribute_typist) gaps.push('The original typist of the structured interview answers is unknown, permanently represented as such.')
+    gaps.push('Structured experience answers are yes/no only. Depth, years, and settings were not captured outside the free text.')
   }
-  if (intake.found) gaps.push('Reference answers do not exist in any connected system — only the contacts provided. Whether outreach occurred is not recorded.')
+  if (intake.found) gaps.push('Reference answers do not exist in any connected system, only the contacts provided. Whether outreach occurred is not recorded.')
 
   return json({ ok: true, axiscare_id: axid, found,
-    honest_empty: found ? null : 'No connected hiring history found in the current recruiting records. This does not mean they were never interviewed or references were never checked — it means no defensibly connected records exist today.',
+    honest_empty: found ? null : 'No connected hiring history found in the current recruiting records. This does not mean they were never interviewed or references were never checked. It means no defensibly connected records exist today.',
     ambiguities, application, intake, offer, bridge, gaps })
 })

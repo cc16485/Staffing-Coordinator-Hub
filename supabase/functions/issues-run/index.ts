@@ -279,7 +279,7 @@ async function recordAction(body: any) {
     follow_up_scheduled: followUpScheduled,
     resolved: updated.state === 'resolved',
     note: followUpScheduled
-      ? `Action recorded. NOT resolved — ${cat.label} requires a follow-up check ` +
+      ? `Action recorded. NOT resolved: ${cat.label} requires a follow-up check ` +
         `on ${followUpScheduled} confirming it actually worked.`
       : undefined,
     prompt_item: item.id,
@@ -311,13 +311,13 @@ async function sweep(commit: boolean) {
         out.actions.push(`${i.id}: routed to ${late.owner} (${cat.label})`)
       } else {
         out.unowned++
-        out.actions.push(`${i.id}: UNOWNED — ${late.why} (${cat.label})`)
+        out.actions.push(`${i.id}: UNOWNED: ${late.why} (${cat.label})`)
       }
     }
 
     if (i.state === 'follow_up' && i.follow_up_due && i.follow_up_due <= addDays(0)) {
       out.follow_ups_due++
-      out.actions.push(`${i.id}: follow-up due — confirm it actually worked`)
+      out.actions.push(`${i.id}: follow-up due, confirm it actually worked`)
     }
 
     if (ageH > cat.target_hours) {
@@ -333,7 +333,7 @@ async function sweep(commit: boolean) {
         .filter(Boolean).join(',')
       if (audience) {
         out.escalated++
-        out.actions.push(`${i.id}: visible to ${audience} — owner UNCHANGED (${i.owner ?? 'none'})`)
+        out.actions.push(`${i.id}: visible to ${audience}, owner UNCHANGED (${i.owner ?? 'none'})`)
       }
       if (commit) await syncPrompt(i, cat)
     }
@@ -366,7 +366,7 @@ async function scenarios() {
     const a = await recordAction({ issue_id: i.issue_id, action_type: 'coached_caregiver',
       note: 'Krystal spoke to the caregiver', by_whom: 'Krystal', state: 'resolved' })
     return { intake: i, action_marked_resolved: a,
-      proves: 'a coaching call did NOT resolve it — a follow-up was scheduled instead' }
+      proves: 'a coaching call did NOT resolve it; a follow-up was scheduled instead' }
   })
 
   await step('2. family wants a different caregiver', async () =>
@@ -411,7 +411,7 @@ async function scenarios() {
     const a2 = await recordAction({ issue_id: i.issue_id, action_type: 'follow_up_check',
       note: 'Family confirms improvement', by_whom: 'Krystal', state: 'follow_up_done' })
     return { first_close_attempt: a1, follow_up_completed: a2,
-      proves: 'resolution required TWO steps — the fix, then confirmation it held' }
+      proves: 'resolution required TWO steps: the fix, then confirmation it held' }
   })
 
   /* Clean up, and prove the cleanup. */

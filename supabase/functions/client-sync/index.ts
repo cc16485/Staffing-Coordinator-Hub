@@ -107,8 +107,8 @@ export async function syncActiveClients(commit: boolean, skipTwins = true) {
     else {
       const twin = nameOwners.get(name.toLowerCase())
       if (twin) out.name_coincidences.push({ name, axiscare_id: axId,
-        note: skipTwins ? 'a person with this exact name already exists WITHOUT this AxisCare client id — left unconnected for a person to check'
-          : 'a person with this exact name already exists WITHOUT this AxisCare client id — created separately, review and merge by hand if they are the same human' })
+        note: skipTwins ? 'a person with this exact name already exists WITHOUT this AxisCare client id, left unconnected for a person to check'
+          : 'a person with this exact name already exists WITHOUT this AxisCare client id, created separately, review and merge by hand if they are the same human' })
       if (twin && skipTwins) continue
       if (!commit) { out.created++; continue }
       const { data: pi, error: e1 } = await sb.from('person_identity')
