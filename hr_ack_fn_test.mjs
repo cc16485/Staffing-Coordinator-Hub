@@ -21,6 +21,8 @@ ck('a refusal needs the outcome, date, how and a witness or a reason', R.refusal
 const notice = 'CARING COMPANIONS: CORRECTIVE ACTION NOTICE\n══════════════\nEmployee: Jordan Miller\n\nTHE FACTS:\n  • 2026-10-01: called in\n──────────────\nEmployee signature (confirms receipt, not agreement):\n\n___________'
 const rn = R.readableNotice(notice)
 ck('the caregiver reads the notice without the drawn lines or the blank signature lines', /THE FACTS/.test(rn) && !/═|─|Employee signature|____/.test(rn), rn)
+const hb = R.readableNotice('NOTICE\nFacts here\n\nEMPLOYEE COMMENTS:\n\n\n\nACKNOWLEDGMENT:\nMy signature below acknowledges...\n  Employee: ______  Date: ____')
+ck('the Handbook template: its own acknowledgment and empty comments block are left out too', hb === 'NOTICE\nFacts here', hb)
 const bytes = R.ackPdf({ id: 'a1', caregiver: 'Jordan Miller', level: 'Verbal Warning', notice, notice_hash: 'abc', practice: false }, { signed: { typedName: 'Jordan Miller', at: new Date('2026-10-20T15:00:00Z'), ip: '1.2.3.4', agent: 'Phone', via: 'link' } })
 const txt = Buffer.from(bytes).toString('latin1')
 ck('the signed PDF is a PDF with the receipt words and the signature audit', txt.startsWith('%PDF') && /Acknowledgment of receipt|ACKNOWLEDGMENT OF RECEIPT/i.test(txt) || txt.startsWith('%PDF'), txt.slice(0, 20))

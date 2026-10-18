@@ -82,8 +82,10 @@ export function refusalMissing(r: Any): string {
  *  acknowledgment below it replaces them). */
 export function readableNotice(text: unknown): string {
   const lines = String(text ?? '').replace(/\r\n/g, '\n').split('\n')
-  const cut = lines.findIndex((l) => /^\s*(employee signature|employee:\s*_{3,}|signature\b)/i.test(l))
-  return (cut > 0 ? lines.slice(0, cut) : lines).filter((l) => !/^[\s═─_=-]{6,}$/.test(l)).join('\n').replace(/\u2014/g, ',').trim()
+  const cut = lines.findIndex((l) => /^\s*(employee signature|employee:\s*_{3,}|signature\b|acknowledge?ment:)/i.test(l))
+  const kept = (cut > 0 ? lines.slice(0, cut) : lines).filter((l) => !/^[\s═─_=-]{6,}$/.test(l))
+  while (kept.length && /^\s*(employee comments:?)?\s*$/i.test(kept[kept.length - 1])) kept.pop()
+  return kept.join('\n').replace(/\u2014/g, ',').trim()
 }
 
 export type SignedBy = { typedName: string; at: Date; ip: string; agent: string; via: 'link' | 'in_person' }
