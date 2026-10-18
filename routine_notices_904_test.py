@@ -21,6 +21,7 @@ class H(http.server.BaseHTTPRequestHandler):
     def _send(self, code, obj): b = json.dumps(obj).encode(); self.send_response(code); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(b)
     def do_GET(self):
         if m := re.match(r"/v1/projects/zngsgedlsxinbygwmxwn/functions/([\w-]+)$", self.path):
+            if m.group(1) in M.get("gone", ()): return self._send(404, {"message": "Function not found"})
             d = {}
             if os.path.exists(os.path.join(TMP, "deploys")):
                 for ln in open(os.path.join(TMP, "deploys")).read().splitlines(): f, vj = json.loads(ln); d[f] = vj
@@ -82,6 +83,10 @@ c, out, d = run(sql_fail=True)
 ck("5 the read of who gets what fails: stops before any deploy", c == 3 and not d, out)
 c, out, d = run(fail="cc-417")
 ck("6 a piece fails to deploy: stops there", c == 5 and d == [[f, GATES[f]] for f in FNS[:4]], (d, out[-800:]))
+c, out, d = run(gone=("staff-contacts-check",))
+ck("8 a piece that is not live (staff-contacts-check) is left off: not deployed, not proved, the rest go in, DONE",
+   c == 0 and "904: DONE" in out and "staff-contacts-check is not live, so it is left off" in out and d == [[f, GATES[f]] for f in FNS if f != "staff-contacts-check"]
+   and "staff-contacts-check: a caller" not in out, (d, out[-1200:]))
 c, out, d = run(open="coverage-watch")
 ck("7 a piece answering a caller with no key is reported, not DONE", c == 1 and "NOT COMPLETE" in out and "coverage-watch answered a caller with no key" in out, out[-800:])
 for n, okk, note in res: print(("  ✓ " if okk else "  ✗ ") + n + ("" if okk else "\n" + note))
