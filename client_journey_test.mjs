@@ -549,6 +549,34 @@ try {
     ck('stage B move: a brand-new lead stays at step 1', MOD.placeNine({ old: {} }).done.length === 0)
     globalThis.fetch = realFetch
   }
+  /* ── STAGE C (2026-10-17): the recheck rule and the one card per plan ── */
+  { const R = globalThis.JourneyRules
+    const t0 = R.ymd(Date.now()), old = R.addDays(t0, -15), fresh = R.addDays(t0, -3)
+    const snap = (p, k) => R.yesSnap(p, k)
+    const P = { id: 'tbC1', client: 'Carl K (TEST)', city: 'Nixa', lead_id: 'L2', days: ['mon', 'tue'], slots: [{ k: 's1', label: '8a-12p', start: '08:00', end: '12:00' }], cells: {} }
+    P.cells['mon|s1'] = { name: 'Maria V', cg_ax_id: '9', status: 'yes', yes_at: fresh }; P.cells['mon|s1'].yes_snap = snap(P, 'mon|s1')
+    P.cells['tue|s1'] = { name: 'Denise K', cg_ax_id: '8', status: 'yes', yes_at: old }; P.cells['tue|s1'].yes_snap = snap(P, 'tue|s1')
+    ck('stage C: a yes 3 days old with nothing changed needs no recheck', !R.yesRecheck(P, 'mon|s1', null, t0).need)
+    ck('stage C: a yes 15 days old before care starts needs a recheck, and is kept (not deleted)', R.yesRecheck(P, 'tue|s1', null, t0).need && P.cells['tue|s1'].status === 'yes')
+    P.slots[0].end = '13:00'
+    ck('stage C: the shift time changed after the yes: recheck, saying so', /shift time changed/.test(R.yesRecheck(P, 'mon|s1', null, t0).why || ''))
+    P.slots[0].end = '12:00'; P.city = 'Ozark'
+    ck('stage C: the location changed: recheck', /location changed/.test(R.yesRecheck(P, 'mon|s1', null, t0).why || '')); P.city = 'Nixa'
+    P.axiscare_push = { created: [{ key: 's1|8', caregiver_id: '8', days: ['Tuesday'] }] }
+    ck('stage C: once that shift is on the real AxisCare schedule, the 14-day rule stops', !R.yesRecheck(P, 'tue|s1', null, R.addDays(t0, 60)).need && R.yesRecheck(P, 'tue|s1', null, t0).scheduled === true)
+    delete P.axiscare_push
+    ck('stage C: planRechecks lists exactly the yes answers needing a recheck', MOD.planRechecks(P, t0).map((x) => x.key).join() === 'tue|s1' && MOD.planRechecks({ ...P, open_hours: true }, t0).length === 0)
+    reset(); T.app_data.push({ key: 'staffing_plans', data: [P] })
+    let rc = await call({ action: 'sweep' }, null, { 'x-cron-secret': ENV.HUB_JOB_SECRET })
+    ck('stage C: with "Caregiver Matching checks" off, no recheck card is made', !T.app_data.find((x) => x.key === 'ops_items').data.some((x) => x.kind === 'plan_recheck'), rc.j)
+    Object.assign(T.app_data.find((x) => x.key === 'ops_settings').data, { cm_checks_live: true })
+    rc = await call({ action: 'sweep' }, null, { 'x-cron-secret': ENV.HUB_JOB_SECRET })
+    const cardsC = T.app_data.find((x) => x.key === 'ops_items').data.filter((x) => x.kind === 'plan_recheck' && x.status === 'open')
+    ck('stage C: switched on: ONE card for the plan, to the Staffing Coordinator, naming who and why; nothing is texted', cardsC.length === 1 && cardsC[0].owner === 'sally@mo-care.com' && /Denise K, Tue 8a-12p: 15 days since they last confirmed/.test(cardsC[0].detail) && /^Recheck 1 caregiver yes for Carl K/.test(cardsC[0].title), cardsC)
+    P.cells['tue|s1'].yes_at = t0; T.app_data.find((x) => x.key === 'staffing_plans').data = [P]
+    await call({ action: 'sweep' }, null, { 'x-cron-secret': ENV.HUB_JOB_SECRET })
+    ck('stage C: after "Still a yes" (a fresh date), the card closes itself', T.app_data.find((x) => x.key === 'ops_items').data.find((x) => x.kind === 'plan_recheck').status === 'done')
+  }
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
 // the page and the server must run the SAME rules file

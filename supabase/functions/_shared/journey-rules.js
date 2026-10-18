@@ -231,7 +231,36 @@
     return out;
   }
 
-  const api = { STAGES, CG_STAGES, NINE_STAGES, catalogOf, checksOf, checkState, personChecks, stagesFor, subjectOf, expiredOn, STAGE_LABEL, PAYERS, ROLE_LABEL, PROOF_LABEL, EXCEPTION_KINDS, DONE, ymd, addDays, addBusinessDays, daysBetween,
+  /* STAGE C (2026-10-17, her recheck rule for pre-start staffing plans): a caregiver's yes is never deleted or expired.
+     It needs a recheck when (a) the shift's day, time, length, location or care duties changed after the yes, or (b) 14
+     days have passed since the caregiver last confirmed and care hasn't started. Once that shift is on the real AxisCare
+     schedule (sent from the plan), the rule stops: AxisCare is the commitment. A yes needing a recheck isn't coverage. */
+  const RECHECK_DAYS = 14;
+  function yesSnap(plan, key){
+    const parts = String(key || '').split('|'), slot = ((plan && plan.slots) || []).find(x => x.k === parts[1]) || {};
+    return { day:parts[0], start:slot.start || '', end:slot.end || '', city:String((plan && plan.city) || '').toLowerCase(), zip:(plan && plan.zip) || '',
+      level:(plan && plan.level) != null ? String(plan.level) : '', needs:((plan && plan.needs) || []).slice().sort().join(',') };
+  }
+  function yesRecheck(plan, key, cell, today){
+    const c = cell || ((plan && plan.cells) || {})[key];
+    if(!c || c.status !== 'yes') return { need:false };
+    /* schedule-push records one schedule per caregiver per shift: key '<shift>|<caregiver AxisCare id>' with the days */
+    const kp = String(key || '').split('|');
+    const pushed = ((plan && plan.axiscare_push && plan.axiscare_push.created) || []).some(x => x && String(x.key || '').split('|')[0] === kp[1]
+      && (!c.cg_ax_id || String(x.caregiver_id || String(x.key || '').split('|')[1] || '') === String(c.cg_ax_id))
+      && (x.days || []).some(z => String(z).toLowerCase().slice(0, 3) === kp[0]));
+    if(pushed) return { need:false, scheduled:true };
+    const snap = c.yes_snap, now = yesSnap(plan, key), why = [];
+    if(snap){
+      if(snap.day !== now.day || snap.start !== now.start || snap.end !== now.end) why.push('the shift time changed');
+      if((snap.city || '') !== now.city || (snap.zip || '') !== (now.zip || '')) why.push('the location changed');
+      if((snap.level || '') !== now.level || (snap.needs || '') !== now.needs) why.push('the care duties changed');
+    }
+    const last = String(c.yes_at || c.at || '').slice(0, 10), t = today || ymd(Date.now());
+    if(last && /^\d{4}-\d{2}-\d{2}$/.test(last) && daysBetween(last, t) >= RECHECK_DAYS) why.push(daysBetween(last, t) + ' days since they last confirmed');
+    return why.length ? { need:true, why:why.join(' and '), since:last } : { need:false, since:last };
+  }
+  const api = { RECHECK_DAYS, yesSnap, yesRecheck, STAGES, CG_STAGES, NINE_STAGES, catalogOf, checksOf, checkState, personChecks, stagesFor, subjectOf, expiredOn, STAGE_LABEL, PAYERS, ROLE_LABEL, PROOF_LABEL, EXCEPTION_KINDS, DONE, ymd, addDays, addBusinessDays, daysBetween,
     applies, ruleHit, dueOf, ownerOf, compute, canComplete, cardsFor, shown };
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   root.JourneyRules = api;
