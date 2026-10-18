@@ -51,7 +51,7 @@ globalThis.__db = { from: q,
     if (fn === 'client_care_end_role') { const rs = (T.person_role || []).filter((r) => r.person_id === a.p_person && r.role === 'client' && r.status === 'active'); rs.forEach((r) => Object.assign(r, { status: 'former', ended_at: a.p_date, end_reason: a.p_reason })); return { data: { outcome: 'ended', client_role_ended: rs.length > 0 }, error: null } }
     if (fn === 'client_care_return_role') { (T.person_role = T.person_role || []).push({ person_id: a.p_person, role: 'client', status: 'active', started_at: a.p_date }); return { data: { outcome: 'returned' }, error: null } }
     if (fn === 'client_status_decide') { const rv = (T.client_status_review || []).find((x) => x.review_id === a.p_review_id); if (!rv || rv.status !== 'open') return { data: { outcome: 'already_decided' }, error: null }
-      if (a.p_decision === 'returning' && a.p_seat !== 'owner_decision') return { data: { outcome: 'seat_required' }, error: null }
+      if (!['client_intake', 'owner_decision'].includes(a.p_seat)) return { data: { outcome: 'invalid_seat' }, error: null }   /* 908: a Care Coordinator (client_intake) may answer Returning client too */
       if (a.p_decision === 'care_ended') (T.person_role || []).filter((r) => r.person_id === rv.person_id && r.status === 'active').forEach((r) => Object.assign(r, { status: 'former', ended_at: a.p_date, end_reason: a.p_reason }))
       if (a.p_decision === 'returning') T.person_role.push({ person_id: rv.person_id, role: 'client', status: 'active', started_at: a.p_date })
       Object.assign(rv, { status: 'decided', decision: a.p_decision, decided_by: a.p_staff }); return { data: { outcome: 'decided' }, error: null } }
@@ -201,12 +201,18 @@ try {
   ck('...only HIS role changed (other past clients untouched)', T.person_role.find((x) => x.person_id === 'p-old').ended_at === '2025-03-01')
   ck('...he is still Past (nothing else changed): no journey reopened, no card', T.client_journey[0].status === 'closed' && jcards().length === 0 && T.person_role.filter((x) => x.person_id === 'p-ed').length === 1)
 
-  // 7 · RETURN (a person approves; the same person, a new episode)
-  r = await call({ action: 'care_return', axiscare_client_id: '296' }, 'an')
-  ck('7 · Return: a Care Coordinator can\'t start a new episode (an owner decides)', r.status === 403 && T.client_journey.length === 1, r.j)
-  r = await call({ action: 'care_return', axiscare_client_id: '296', explanation: 'Back home from Maranatha, family called' }, 'sam')
+  // 7 · RETURN (a person approves; the same person, a new episode). Samantha 2026-10-17 (SOP 30): a Care Coordinator or an owner.
+  r = await call({ action: 'care_state', axiscare_client_id: '296' }, 'sal')
+  ck('7 · Return: Staffing sees no Resume care button', r.j.can && r.j.can.return === false, r.j.can)
+  r = await call({ action: 'care_return', axiscare_client_id: '296' }, 'sal')
+  ck('7 · ...and Staffing is refused (no new episode)', r.status === 403 && T.client_journey.length === 1, r.j)
+  r = await call({ action: 'care_state', axiscare_client_id: '296' }, 'an')
+  ck('7 · ...a Care Coordinator sees Resume care on a past client', r.j.can && r.j.can.return === true, r.j.can)
+  r = await call({ action: 'care_state', axiscare_client_id: '296' }, 'sam')
+  ck('7 · ...and so does an owner', r.j.can && r.j.can.return === true, r.j.can)
+  r = await call({ action: 'care_return', axiscare_client_id: '296', explanation: 'Back home from Maranatha, family called' }, 'an')
   const J2 = T.client_journey.find((j) => j.journey_id !== JE.journey_id)
-  ck('7 · ...an owner confirms: a NEW journey (episode 2) on the same person, linked to the old one; the old one is untouched', r.j.outcome === 'returned' && J2 && J2.episode_n === 2 && J2.previous_journey_id === JE.journey_id && J2.axiscare_client_id === '296' && T.client_journey.find((j) => j.journey_id === JE.journey_id).status === 'closed', [r.j, T.client_journey])
+  ck('7 · ...a Care Coordinator confirms: a NEW journey (episode 2) on the same person, linked to the old one; the old one is untouched', r.j.outcome === 'returned' && J2 && J2.episode_n === 2 && J2.previous_journey_id === JE.journey_id && J2.axiscare_client_id === '296' && T.client_journey.find((j) => j.journey_id === JE.journey_id).status === 'closed', [r.j, T.client_journey])
   ck('7 · ...his client role is active again; the past role is kept', T.person_role.filter((x) => x.person_id === 'p-ed').map((x) => x.status).sort().join() === 'active,former')
   r = await call({ action: 'care_state', axiscare_client_id: '296' }, 'an')
   ck('7 · ...his history shows both episodes', r.j.episodes.length === 2 && r.j.episodes[0].status === 'closed' && r.j.episodes[1].episode_n === 2, r.j.episodes)

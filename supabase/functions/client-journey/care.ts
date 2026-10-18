@@ -12,7 +12,8 @@
 //   care_end       care ends on the effective date with the reason: the client role becomes past, the journey and its open
 //                  work close (nothing is deleted), a death adds ONE human sympathy-card task. From an AxisCare status
 //                  review too (review_id): an AxisCare change never ends care by itself.
-//   care_return    a past client comes back, ONLY when a person confirms it (an owner, as before): a NEW episode and a new
+//   care_return    a past client comes back, ONLY when a person confirms it (a Care Coordinator or an owner; Samantha
+//                  2026-10-17, SOP 30): a NEW episode and a new
 //                  journey on the same person; the old ones stay as they were
 //   care_end_date  correct a past or deceased client's end date (Samantha 2026-10-08), with how we know; the date becomes
 //                  exact and the old one stays in the permanent care history
@@ -230,7 +231,7 @@ export async function careAction(c: Any): Promise<{ body: Any; status?: number }
       episodes: js.map((j: Any) => ({ journey_id: j.journey_id, episode_n: j.episode_n ?? 1, status: j.status, closed_reason: j.closed_reason ?? null, created_at: j.created_at, assigned_cc: j.assigned_cc })),
       roles: (roles ?? []).map((r: Any) => ({ status: r.status, started_at: r.started_at ?? null, ended_at: r.ended_at ?? null, ended_date_basis: r.ended_date_basis ?? null, end_reason: r.end_reason ?? null })),
       changes: changes ?? [], planned_end: pe, can: { pause: can && ['active', 'starting'].includes(state), resume: can && state === 'paused', end: can && ['active', 'starting', 'paused'].includes(state),
-        return: isOwner && state === 'past', end_date: can && ['past', 'deceased'].includes(state),
+        return: can && state === 'past', end_date: can && ['past', 'deceased'].includes(state),
         cancel_end: !!pe && can && (isOwner || DISCHARGE_RULE[pe.reason] !== 'notice21') },
       reasons: { end: END_REASONS, pause: PAUSE_REASONS }, discharge: DISCHARGE_RULE, always_medicaid: IHS_END_REASONS } }
   }
@@ -405,14 +406,14 @@ export async function careAction(c: Any): Promise<{ body: Any; status?: number }
     if (b.action === 'care_return') {
       if (state === 'deceased') return err('This client died. Care can\'t be resumed.')
       if (state !== 'past') return err('Only a past client\'s care can be resumed this way.')
-      if (!isOwner) return err('Resuming care for a returning client is an owner\'s decision.', 403)
+      const seat = isOwner ? 'owner_decision' : 'client_intake'
       const eff = isYmd(b.effective_date) && b.effective_date <= today() ? b.effective_date : today()
       if (b.review_id) {
         const { data, error } = await db.rpc('client_status_decide', { p_review_id: b.review_id, p_decision: 'returning', p_date: eff, p_reason: null,
-          p_note: String(b.explanation || '').trim() || 'Returning client confirmed', p_staff: who.email, p_seat: 'owner_decision' })
+          p_note: String(b.explanation || '').trim() || 'Returning client confirmed', p_staff: who.email, p_seat: seat })
         if (error || data?.outcome !== 'decided') return err('The AxisCare review could not be answered: ' + (error?.message || JSON.stringify(data)))
       } else if (personId) {
-        const { data, error } = await db.rpc('client_care_return_role', { p_person: personId, p_date: eff, p_evidence: 'Returning client confirmed by ' + who.name + (b.explanation ? ': ' + b.explanation : ''), p_staff: who.email, p_seat: 'owner_decision' })
+        const { data, error } = await db.rpc('client_care_return_role', { p_person: personId, p_date: eff, p_evidence: 'Returning client confirmed by ' + who.name + (b.explanation ? ': ' + b.explanation : ''), p_staff: who.email, p_seat: seat })
         if (error || data?.outcome !== 'returned') return err('The return could not be recorded: ' + (error?.message || JSON.stringify(data)))
       }
       const o = await openOne(db, dfs, pp, st, actor, { lead: null, leadId: null, axId: ax, payer: latest?.payer ?? null, name, asked: lc(latest?.assigned_cc || ''), how: 'a returning client, confirmed by ' + who.name })
