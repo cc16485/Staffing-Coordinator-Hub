@@ -136,13 +136,15 @@ ck("Samantha reads both", as_person(SAM, see) == [["attendance_events"], ["disci
 ck("Zach reads both", as_person(ZAC, see) == [["attendance_events"], ["discipline_actions"]], as_person(ZAC, see))
 probe = lambda pid, key, iid: (lambda r: r[-1:] if isinstance(r, list) else r)(as_person(pid, f"select public.upsert_app_data_item('{key}', '{json.dumps({'id': iid, 'level': 'Verbal Warning'})}'::jsonb); select count(*) from public.app_data a, jsonb_array_elements(a.data) x where a.key = '{key}' and x->>'id' = '{iid}'"))
 ck("Krystal cannot save a write-up", probe(KRY, "discipline_actions", "n1") != [[1]], probe(KRY, "discipline_actions", "n1"))
-ck("Krystal cannot change an existing one", probe(KRY, "discipline_actions", "w1") != [[1]] or app("discipline_actions")[0].get("level") == "Verbal Warning")
+chg = "select public.upsert_app_data_item('discipline_actions', '{\"id\": \"w1\", \"level\": \"Coaching\"}'::jsonb); reset role; select x->>'level' from public.app_data a, jsonb_array_elements(a.data) x where a.key = 'discipline_actions' and x->>'id' = 'w1'"
+ck("Krystal cannot change an existing one", (lambda r: r != [["Coaching"]] if isinstance(r, list) else True)(as_person(KRY, chg)), as_person(KRY, chg))
+ck("...while Zach can (same test, so it proves the test works)", as_person(ZAC, chg)[-1:] == [["Coaching"]], as_person(ZAC, chg))
 ck("Zach saves a write-up", probe(ZAC, "discipline_actions", "n2") == [[1]], probe(ZAC, "discipline_actions", "n2"))
 ck("Samantha saves a write-up", probe(SAM, "discipline_actions", "n3") == [[1]])
 ck("Krystal still logs attendance", probe(KRY, "attendance_events", "a9") == [[1]], probe(KRY, "attendance_events", "a9"))
-ck("Krystal cannot delete the write-up list", as_person(KRY, "delete from public.app_data where key = 'discipline_actions'; select count(*) from public.app_data where key = 'discipline_actions'") in ([[1]],) or str(as_person(KRY, "delete from public.app_data where key = 'discipline_actions'")).startswith("ERR") or app("discipline_actions") is not None)
-ck("Krystal cannot delete it, checked as the database sees it after", as_person(KRY, "delete from public.app_data where key = 'discipline_actions' returning key") in ([], ) or str(as_person(KRY, "delete from public.app_data where key = 'discipline_actions' returning key")).startswith("ERR"),
+ck("Krystal cannot delete the write-up list", as_person(KRY, "delete from public.app_data where key = 'discipline_actions' returning key") in ([], ) or str(as_person(KRY, "delete from public.app_data where key = 'discipline_actions' returning key")).startswith("ERR"),
    as_person(KRY, "delete from public.app_data where key = 'discipline_actions' returning key"))
+ck("...while an owner could (same test, undone, so it proves the test works)", as_person(SAM, "delete from public.app_data where key = 'discipline_actions' returning key") == [["discipline_actions"]])
 ck("the server (no signed-in person) still reads and writes write-ups", q1("select count(*) from public.app_data where key = 'discipline_actions'") == [[1]])
 ck("the 576 owner lock and the offboarding lists are untouched", q1("select count(*) from pg_policies where policyname like 'app_data_owner_keys_%'") == [[4]])
 # 3 · safe to run again, and with no list yet
