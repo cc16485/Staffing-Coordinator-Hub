@@ -35,6 +35,20 @@ files = sorted(set().union(*[L.need(FNROOT, f) for f in FNS]))
 drift = [k for k in files if (lambda c: c[0] != 0 or c[1] != open(os.path.join(ROOT, k)).read())(run(["git", "-C", ROOT, "show", f"{MAIN}:{k}"]))]
 if drift: stop("this build isn't the same as GitHub's main (not merged yet, or changed since): " + ", ".join(drift)[:240])
 ok("the build is what is on GitHub's main")
+import re as _re
+def base_need(fn):
+    """the files the build this was made on imported for fn (the same reading as cc_step_lib.need, from git)"""
+    seen, todo = set(), [f"supabase/functions/{fn}/index.ts"]
+    while todo:
+        k = todo.pop()
+        if k in seen: continue
+        rc, src, _ = run(["git", "-C", ROOT, "show", f"{BASE}:{k}"])
+        if rc != 0: continue
+        seen.add(k)
+        src = "\n".join(l for l in src.split("\n") if not _re.match(r"\s*import\s+type\b", l))
+        for m in _re.findall(r"""from\s+['"](\.{1,2}/[^'"]+)['"]|import\s+['"](\.{1,2}/[^'"]+)['"]""", src):
+            todo.append(os.path.normpath(os.path.join(os.path.dirname(k), m[0] or m[1])))
+    return seen
 GATES = {}
 for fn in FNS:
     s0, m0 = fmeta(REF, fn)
@@ -42,10 +56,12 @@ for fn in FNS:
     GATES[fn] = bool(m0["verify_jwt"])
     okl, live = live_files(REF, fn)
     if not okl: stop(f"couldn't download the live {fn} to compare")
-    odd = []
+    odd, BN = [], base_need(fn)
     for k in sorted(L.need(FNROOT, fn)):
         rc, was, _ = run(["git", "-C", ROOT, "show", f"{BASE}:{k}"])
         base_sha = hashlib.sha256(was.encode()).hexdigest() if rc == 0 else None
+        # a file this build newly imports is not in the live copy yet: that is expected
+        if live.get(k) is None and k not in BN: continue
         if live.get(k) not in (base_sha, sha(os.path.join(ROOT, k))): odd.append(k)
     if odd: stop(f"the live {fn} has code that isn't on GitHub's main (someone else's unreleased change): " + ", ".join(odd)[:240])
     say(f"  ✓ {fn}: live version {m0.get('version', '?')} is the code this was built on (gateway check {'on' if GATES[fn] else 'off'}, kept)")
