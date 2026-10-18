@@ -704,7 +704,9 @@ async function checkCards(db: Any, ai: Any, hub: Any, tok: string, mode: CheckMo
       res.errors++
       Object.assign(rec, { error: String((e as Error)?.message || e).slice(0, 300) })
     }
-    const { error: sErr } = h ? await db.from('call_card_check').update(rec).eq('card_id', c.id) : await db.from('call_card_check').insert(rec)
+    /* one save that works whether or not a row exists yet (2026-10-18): two runs at once (a Desktop step's run beside the
+       10-minute one) used to both insert the same card and the second was refused, failing the heartbeat */
+    const { error: sErr } = await db.from('call_card_check').upsert(rec, { onConflict: 'card_id' })
     if (sErr) { res.errors++; res.broken = true }
   }
   return res
