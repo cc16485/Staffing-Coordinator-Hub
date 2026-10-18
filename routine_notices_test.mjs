@@ -46,12 +46,7 @@ ck('a notice card is raised once, owned by the person told, with their name and 
 ck('raising it again does not make a second card', await N.noticeCard(db, to, c) === 'open' && T.app_data.ops_items.length === 1)
 T.app_data.ops_items[0].status = 'done'
 ck('a card someone closed stays closed', await N.noticeCard(db, to, c) === 'closed' && T.app_data.ops_items[0].status === 'done')
-reset({ app_data: { ops_items: [], ops_settings: { partner_desk: { default_owner: 'Angiel@mo-care.com' } } } })
-r = await N.partnerDeskTo(db)
-ck('417 notices: the Referral Desk default owner the owners set', r.email === 'angiel@mo-care.com' && r.name === 'Angiel Test', r)
-reset()
-ck('...and the Springfield lead when no default owner is set', (await N.partnerDeskTo(db)).email === 'krystal@mo-care.com')
-
+const nt0 = fs.readFileSync(path.join(FN, '_shared/notice-to.ts'), 'utf8')
 /* scans: the routine senders name nobody in the code any more */
 const read = (f) => fs.readFileSync(path.join(FN, f), 'utf8')
 for (const f of ['cc-booking', 'cc-feedback', 'cc-story', 'cc-corner', 'cc-417', 'campaign-auto', 'coverage-watch', 'coverage-run', 'staff-contacts-check', 'lead-intake', 'care-packet-watch']) {
@@ -67,6 +62,7 @@ ck('scan · clockin-admins: the missed clock-in list falls back through notice-t
 const fb = read('cc-feedback/index.ts')
 ck('scan · cc-feedback: a rating of 3 or less opens a card for the Client care owner', /kind === 'rating' && rating <= 3\) \{\s*await noticeCard\(supabase, officeTo/.test(fb) && /noticeTo\(supabase, kind === 'nomination' \? 'caregivers' : 'client_care'\)/.test(fb))
 ck('scan · cc-booking: the booking card is owned by the person told', (read('cc-booking/index.ts').match(/owner: officeTo\.email, owner_name: officeTo\.name/g) || []).length === 2)
+ck('scan · cc-417 asks for the Springfield lead (no Referral Desk default owner any more, PR 490)', (read('cc-417/index.ts').match(/await noticeTo\(supabase\)/g) || []).length === 2 && !/partnerDeskTo/.test(read('cc-417/index.ts') + nt0))
 ck('scan · cc-story, cc-corner, cc-417: each opens a card', /noticeCard\(supabase, officeTo/.test(read('cc-story/index.ts')) && /noticeCard\(db, to/.test(read('cc-corner/index.ts')) && (read('cc-417/index.ts').match(/noticeCard\(supabase, to/g) || []).length === 2)
 const ca = read('campaign-auto/index.ts')
 ck('scan · campaign-auto: cards, summary and unsubscribe all use the same person', /owner: to\.email, owner_name: to\.name/.test(ca) && /buildEmailHTML\(e, to\.email\)/.test(ca) && /mailto:\$\{unsub\}/.test(ca))

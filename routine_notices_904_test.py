@@ -15,7 +15,7 @@ FNS = ["cc-booking", "cc-feedback", "cc-story", "cc-corner", "cc-417", "campaign
        "callin-alert", "care-notes", "clockin-alert", "coverage-assign", "coverage-reply", "late-alert", "late-watch", "lead-watch", "timekeeper-watch"]
 GATES = {f: f not in ("cc-booking", "cc-feedback", "cc-story", "cc-corner", "cc-417", "lead-intake", "coverage-reply") for f in FNS}
 M = {}; S = {}
-WHO = {"areas": {"family_enquiries": "Krystal Land", "client_care": "Krystal Land", "scheduling_coverage": "Krystal Land"}, "lead": ["Krystal Land"], "partner": None, "alerts": ["samantha@mo-care.com", "krystal@mo-care.com"]}
+WHO = {"areas": {"family_enquiries": "Krystal Land", "client_care": "Krystal Land", "scheduling_coverage": "Krystal Land"}, "lead": ["Krystal Land"], "alerts": ["samantha@mo-care.com", "krystal@mo-care.com"]}
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def _send(self, code, obj): b = json.dumps(obj).encode(); self.send_response(code); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(b)
@@ -67,10 +67,10 @@ def run(shas=SHAS, main_ref="HEAD", fail=None, **m):
 c, out, d = run()
 ck("1 good run: tests pass, the report says who gets what, all twenty pieces deploy with their gateway settings kept, proofs, DONE",
    c == 0 and "904: DONE" in out and "✗" not in out and d == [[f, GATES[f]] for f in FNS], (d, out[-1500:]))
-ck("1b the report names who gets each notice, from the database", "website consult bookings: Krystal Land" in out and "417 Caring Community (with cards): Krystal Land (Referral Desk default owner not set yet)" in out
+ck("1b the report names who gets each notice, from the database", "website consult bookings: Krystal Land" in out and "417 Caring Community (with cards): Krystal Land" in out
    and "call-in alerts: samantha@mo-care.com, krystal@mo-care.com" in out, out)
 ck("1c the only database call is the one read (no writes); no token in the report", len(S.get("sql", [])) == 1 and re.match(r"\s*select ", S["sql"][0]) and not re.search(r"\b(insert|update|delete|alter|drop)\b", S["sql"][0], re.I) and "sbp_test" not in out, S.get("sql"))
-c, out, d = run(who={"areas": {}, "lead": [], "partner": None, "alerts": []})
+c, out, d = run(who={"areas": {}, "lead": [], "alerts": []})
 ck("2 no owners and no lead yet: says Samantha still gets them and points at 897, still deploys", c == 0 and "Samantha (nobody else is set)" in out and "run 897 first" in out and len(d) == len(FNS), out)
 c, out, d = run(shas={**SHAS, "_shared/notice-to.ts": "0" * 64})
 ck("3 not the reviewed build: stops before anything", c == 2 and not d and not S.get("sql"), out)

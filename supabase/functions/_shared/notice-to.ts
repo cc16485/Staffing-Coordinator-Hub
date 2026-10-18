@@ -69,20 +69,6 @@ export async function fallbackList(db: any, area: string): Promise<string[]> {
   return (await fallbackPeople(db, area)).map((p) => p.email)
 }
 
-/** Referral partner work (417 Caring Community): the Referral Desk default owner the owners set (ops_settings
-    partner_desk.default_owner), else the usual order. */
-export async function partnerDeskTo(db: any): Promise<NoticeTo> {
-  try {
-    const { data } = await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
-    const email = S(data?.data?.partner_desk?.default_owner).toLowerCase()
-    if (email.includes('@')) {
-      const { data: p } = await db.from('persons').select('full_name, active').ilike('primary_email', email.replace(/[%_\\]/g, '\\$&')).maybeSingle()
-      if (p?.active !== false) return { email, name: S(p?.full_name) || email.split('@')[0], why: 'area_owner', area: 'partner_desk' }
-    }
-  } catch { /* the usual order */ }
-  return await noticeTo(db)
-}
-
 export const firstName = (n: string) => S(n).split(/\s+/)[0] || 'there'
 
 /** Open (once) the Needs Attention card for a notice, owned by its recipient. Returns what happened. */

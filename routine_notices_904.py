@@ -54,7 +54,6 @@ okw, rows = sql(HUB, """select jsonb_build_object(
             where d.entity = 'cc_ihs' and d.code in ('family_enquiries', 'client_care', 'caregivers', 'scheduling_coverage')),
   'lead', (select coalesce(jsonb_agg(coalesce(p.full_name, p.primary_email) order by p.primary_email), '[]'::jsonb) from public.staff_roles r
            join public.persons p on p.person_id = r.person_id and p.active is not false where r.entity = 'cc_ihs' and r.role = 'springfield_lead'),
-  'partner', (select data->'partner_desk'->>'default_owner' from public.app_data where key = 'ops_settings'),
   'alerts', (select data->'coverage_alert_admins' from public.app_data where key = 'ops_settings')) as who""")
 if not okw: stop(f"couldn't read the work areas and roles ({str(rows)[:200]})", 3)
 W = rows[0]["who"] if isinstance(rows[0]["who"], dict) else json.loads(rows[0]["who"])
@@ -65,7 +64,7 @@ say(f"      website consult bookings: {first(A.get('family_enquiries'), lead)}")
 say(f"      star check-ins and low ratings (with a card): {first(A.get('client_care'), lead)}")
 say(f"      Caregiver of the Year nominations: {first(A.get('caregivers'), lead)}")
 say(f"      stories, Caregivers Corner, campaign autopilot (with cards): {first(lead)}")
-say(f"      417 Caring Community (with cards): {first(W.get('partner'), lead)}" + ("" if W.get("partner") else " (Referral Desk default owner not set yet)"))
+say(f"      417 Caring Community (with cards): {first(lead)}")
 al = W.get("alerts") or []
 say(f"      call-in alerts: {', '.join(al) if al else 'the list is empty, so ' + first(A.get('scheduling_coverage'), lead) + ' and the lead'}")
 if not lead: say("  · there is no Springfield lead yet (run 897 first), so anything without a work area owner still goes to Samantha")

@@ -22,7 +22,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
-import { partnerDeskTo, noticeCard, firstName } from '../_shared/notice-to.ts'
+import { noticeTo, noticeCard, firstName } from '../_shared/notice-to.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -178,10 +178,11 @@ Deno.serve(async (req) => {
   return json({ error: 'unknown action' }, 400)
 
   // ---------------------------------------------------------------- notify
-  /* SOP ruling 8 (2026-10-17): 417 notices go to the Referral Desk default owner (these are partner relationships),
-     with a card so owners see the work and who has it. Choosing what is published stays with Samantha. */
+  /* SOP ruling 8 (2026-10-17): 417 notices go to the Springfield lead, who also assigns referral partners (her ruling
+     2026-10-18, PR 490: no default owner), with a card so owners see the work and who has it. Choosing what is published
+     stays with Samantha. */
   async function notifyNomination(n: Row) {
-    const to = await partnerDeskTo(supabase)
+    const to = await noticeTo(supabase)
     await noticeCard(supabase, to, { id: 'ops_417n_' + String(n.id), kind: 'request', domain: 'office_ops', urgency: 'normal', due_hours: 72,
       title: 'Invite ' + (n.who_name || n.who_org || 'a nominee') + ' to 417 Caring Community', about: String(n.who_name || n.who_org || ''),
       detail: (n.who_org ? String(n.who_org) + '. ' : '') + (n.who_contact ? 'Reach them: ' + String(n.who_contact) + '. ' : '')
@@ -218,7 +219,7 @@ Deno.serve(async (req) => {
   }
 
   async function notifyOffice(v: Row) {
-    const to = await partnerDeskTo(supabase)
+    const to = await noticeTo(supabase)
     await noticeCard(supabase, to, { id: 'ops_417v_' + String(v.id), kind: 'request', domain: 'office_ops', urgency: 'normal', due_hours: 24,
       title: 'Thank ' + (v.name || 'them') + ' for their 417 video', about: String(v.name || ''),
       detail: String(v.org || '') + (v.email ? '. Reach them: ' + String(v.email) : '') + '. Nothing is public yet.',
