@@ -3,14 +3,16 @@
 // Do not edit by hand: rebuild the agreement, then regenerate this file. Every fill-in, checkbox, initials box and signature
 // line on the printed agreement, with its page (1-based) and box in PDF points measured from the TOP-LEFT of a 612 x 792 page.
 // PDF_SHA256 is the sha256 of the exact master PDF these boxes belong to; the function refuses any other file.
-// 2026-10-17 (Samantha: scheduled care keeps an 8 hours a week minimum): the current master. The first master stays in
-// client-agreement-map-2026-10-16.ts; agreement-masters.ts picks the right one for each agreement by its pdf_sha256.
+// 2026-10-18 (Samantha: the pay week runs Monday to Sunday): the current master. Overtime is now counted "in any Monday through
+// Sunday week" (was "any Thursday through Wednesday timesheet period"); every box measured the same as the 2026-10-17 master.
+// Earlier masters stay in client-agreement-map-2026-10-17.ts and -2026-10-16.ts; agreement-masters.ts picks the right one for
+// each agreement by its pdf_sha256.
 // =============================================================================
 export const DOC = 'client-care-agreement'
 export const VERSION = "Rev. 10/2026"
 export const PAGES = 23
-export const PDF_SHA256 = "b04cd3c1f45930aa1926a63036d8bd44f5091dc71ca7ceff78b0f4a39f5081c3"
-export const MASTER_PATH = 'master/client-care-agreement-rev-2026-10-17.pdf'
+export const PDF_SHA256 = "ce326142e4593c7caac65cc549e6992af8808eebbaac1f0fcdcababef0b8be11"
+export const MASTER_PATH = 'master/client-care-agreement-rev-2026-10-18.pdf'
 export type FieldType = 'text' | 'check' | 'initials' | 'signature'
 export type Field = { type: FieldType; page: number; box: [number, number, number, number] }
 export const FIELDS: Record<string, Field> = {

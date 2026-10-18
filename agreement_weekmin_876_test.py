@@ -8,7 +8,8 @@ res = []; ck = lambda n, c, note="": res.append((n, bool(c), "" if c else str(no
 TMP = tempfile.mkdtemp(prefix="t876-"); BIN = os.path.join(TMP, "bin"); os.makedirs(BIN)
 COPY = os.path.join(TMP, "hub")
 subprocess.run(["git", "clone", "-q", HERE, COPY], check=True)
-HEAD = subprocess.run(["git", "-C", HERE, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+# 2026-10-18: 934 made a newer master current, so 876 is rehearsed on the build it shipped (it ran 2026-10-17).
+HEAD = "0e8f003e5f425ff52933b1bd5e3417dcdd29d9ac"
 subprocess.run(["git", "-C", COPY, "checkout", "-q", HEAD], check=True)
 FNROOT = os.path.join(COPY, "supabase", "functions")
 sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
