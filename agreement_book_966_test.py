@@ -19,11 +19,11 @@ FN_FILES = ("client-agreement/index.ts", "agreement-sign/index.ts", "family-gate
 PDFS = {n: os.path.join(COPY, "client-agreement", f"client-care-agreement-{n}.pdf") for n in ("rev-2026-10-18b", "rev-2026-10-18", "rev-2026-10-17", "rev-2026-10")}
 PDF_SHA = sha(PDFS["rev-2026-10-18b"]); SQL_SHA = sha(os.path.join(COPY, "agreement_book_966.sql"))
 SHAS = {k: sha(os.path.join(FNROOT, k)) for k in FN_FILES}
-STORE = {}; M = {}; CALLS = []; SQLS = []
+STORE = {}; M = {}; CALLS = []; SQLS = []; UPSERTS = []
 def reset(**m):
-    M.clear(); M.update(dict(col_there=False, sql_fail=False, col_missing_after=False, fail_deploy=None, old_drafts=0, old_signed=0, no_old=False, bad_store=False, no_key=False, odd_live=None, no_contacts=False, new_there=False,
+    M.clear(); M.update(dict(col_there=False, sql_fail=False, col_missing_after=False, fail_deploy=None, old_drafts=0, old_signed=0, no_old=False, bad_store=False, no_key=False, odd_live=None, no_contacts=False, new_there=False, doc='old', fail_docs=False,
                              gates={"client-agreement": False, "agreement-sign": False, "family-app-office": False, "family-gateway": False}), **m)
-    STORE.clear(); CALLS.clear(); SQLS.clear()
+    STORE.clear(); CALLS.clear(); SQLS.clear(); UPSERTS.clear()
     for n in ("rev-2026-10-18", "rev-2026-10-17", "rev-2026-10"):
         if not (M["no_old"] and n == "rev-2026-10-18"): STORE[f"client-agreements/master/client-care-agreement-{n}.pdf"] = open(PDFS[n], "rb").read()
     if M["new_there"]: STORE["client-agreements/master/client-care-agreement-rev-2026-10-18b.pdf"] = open(PDFS["rev-2026-10-18b"], "rb").read()
@@ -41,7 +41,7 @@ class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         CALLS.append(("GET", self.path))
         if "/api-keys" in self.path: return self._send(200, [] if M["no_key"] else [{"name": "service_role", "api_key": "eyJfake"}])
-        m = re.match(r"/storage/v1/object/authenticated/(client-agreements/.+)$", self.path)
+        m = re.match(r"/storage/v1/object/authenticated/((?:client-agreements|agency-docs)/.+)$", self.path)
         if m: return self._raw(200, STORE[m.group(1)]) if m.group(1) in STORE else self._send(400, {"error": "not found"})
         m = re.match(r"/v1/projects/\w+/functions/([\w-]+)$", self.path)
         if m:
@@ -51,9 +51,10 @@ class H(http.server.BaseHTTPRequestHandler):
     def do_PATCH(self): CALLS.append(("PATCH", self.path)); self._send(200, {})
     def do_POST(self):
         n = int(self.headers.get("Content-Length") or 0); raw = self.rfile.read(n)
-        m = re.match(r"/storage/v1/object/(client-agreements/.+)$", self.path)
+        m = re.match(r"/storage/v1/object/((?:client-agreements|agency-docs)/.+)$", self.path)
         if m:
             CALLS.append(("STORE", m.group(1)))
+            if M["fail_docs"] and m.group(1).startswith("agency-docs/"): return self._send(500, {"error": "boom"})
             if m.group(1) in STORE: return self._send(400, {"error": "Duplicate", "message": "The resource already exists"})
             STORE[m.group(1)] = (raw[:-1] + b"x") if M["bad_store"] else raw; return self._send(200, {"Key": m.group(1)})
         b = json.loads(raw or b"null"); CALLS.append(("POST", self.path, b))
@@ -66,6 +67,12 @@ class H(http.server.BaseHTTPRequestHandler):
                 if M["sql_fail"]: return self._send(400, {"message": "permission denied"})
                 return self._send(200, [])
             if "as chosen" in q: return self._send(200, [{"col": not M["col_missing_after"], "chosen": 0}])
+            if "e->>'id' in (" in q:
+                old = {"id": OLD_DOC, "name": "Client Care Agreement (blank)", "cat": "Contract", "path": f"contract/{OLD_DOC}.pdf", "family": OLD_DOC}
+                rows = {"old": [old], "none": [], "new": [old, {"id": NEW_DOC}], "replaced": [dict(old, replaced={"with": "x"})]}[M["doc"]]
+                return self._send(200, [{"item": r} for r in rows])
+            if "upsert_app_data_item('agency_docs'" in q: UPSERTS.append(q); return self._send(200, [{"n": 23}])
+            if "filter (where" in q: return self._send(200, [{"cur": 1 if UPSERTS else 0, "old": 1 if len(UPSERTS) > 1 else 0}])
             return self._send(400, {"message": "unexpected query: " + q[:80]})
         self._send(404, {})
 srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H); threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -97,14 +104,19 @@ def run(shas=SHAS, sql_sha=SQL_SHA, main=HEAD, pdf_sha=None, **mode):
 stored = lambda: [x[1] for x in CALLS if x[0] == "STORE"]
 ran_sql = lambda: any("add column if not exists app_book_choice" in q for q in SQLS)
 NEWP = "client-agreements/master/client-care-agreement-rev-2026-10-18b.pdf"
+OLD_DOC, NEW_DOC = "8e9636b4-5b3f-40f6-82cc-040f713947f8", "3c7d2e91-4b6a-4f0d-9e25-966b00c18b18"; DOCP = f"agency-docs/contract/{NEW_DOC}.pdf"
 FNS = ["client-agreement", "agreement-sign", "family-app-office", "family-gateway"]
 
 c, out = run()
 ck("1 good run: the column added first, the PDF stored and read back, the four functions deployed with their gateway settings kept, proofs pass, DONE",
-   c == 0 and "RESULT: DONE" in out and "✗" not in out and ran_sql() and stored() == [NEWP] and deployed() == [[f, True] for f in FNS], out)
+   c == 0 and "RESULT: DONE" in out and "✗" not in out and ran_sql() and stored() == [NEWP, DOCP] and deployed() == [[f, True] for f in FNS], out)
 ck("1b the database change runs before any function is deployed (family-gateway reads the new column)", SQLS.index(next(q for q in SQLS if "add column" in q)) < len(SQLS) and out.index("booking choice column is there") < out.index("family-gateway deployed"), out)
-ck("1c the earlier PDFs are never written again; the report says nothing was sent", not any(p != NEWP for p in stored()) and "Nothing was sent by this step" in out, out)
-c, out = run(col_there=True, new_there=True); ck("2 run a second time: the column is kept, the PDF is already there and checked, DONE", c == 0 and "RESULT: DONE" in out and "already there (kept)" in out and "already stored" in out, out)
+ck("1c the earlier PDFs are never written again; the report says nothing was sent", not any(p not in (NEWP, DOCP) for p in stored()) and "Nothing was sent by this step" in out, out)
+ck("1d Forms & Templates: the new blank agreement in the same family, then the 10-18 one marked replaced by it (the forms page's own way)", len(UPSERTS) == 2 and NEW_DOC in UPSERTS[0] and f'"family": "{OLD_DOC}"' in UPSERTS[0] and '"replaced"' in UPSERTS[1] and f'"with": "{NEW_DOC}"' in UPSERTS[1] and "listed as replaced" in out, UPSERTS)
+c, out = run(doc="none"); ck("1e no blank agreement in Forms & Templates: nothing added there, the rest DONE", c == 0 and "RESULT: DONE" in out and not UPSERTS and DOCP not in stored(), out)
+c, out = run(doc="replaced"); ck("1f the office already replaced it by hand: left alone, DONE", c == 0 and "RESULT: DONE" in out and not UPSERTS, out)
+c, out = run(fail_docs=True); ck("1g the Forms & Templates copy fails: the agreement update is live, the report says only that part failed, no list entry", c == 8 and "only the Forms & Templates copy failed" in out and len(deployed()) == 4 and not UPSERTS, out)
+c, out = run(col_there=True, new_there=True, doc="new"); ck("2 run a second time: the column is kept, the PDF is already there and checked, Forms & Templates kept, DONE", c == 0 and "RESULT: DONE" in out and "already there (kept)" in out and "already stored" in out and "already has the new blank agreement" in out and not UPSERTS, out)
 c, out = run(old_drafts=2, old_signed=1); ck("3 agreements on the 10-18 wording are counted, with what to do", c == 0 and "not signed yet: 2 (after this step, tap Start another" in out and "waiting for the office: 1 (countersign as usual" in out, out)
 c, out = run(shas=dict(SHAS, **{"_shared/family-signin.ts": "0" * 64})); ck("4 not the reviewed build: stopped before any change", c != 0 and not deployed() and not stored() and not ran_sql(), out)
 c, out = run(pdf_sha="0" * 64); ck("5 the updated PDF is not the reviewed one: stopped before any change", c != 0 and not deployed() and not stored() and not ran_sql(), out)
