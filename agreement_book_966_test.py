@@ -21,11 +21,12 @@ PDF_SHA = sha(PDFS["rev-2026-10-18b"]); SQL_SHA = sha(os.path.join(COPY, "agreem
 SHAS = {k: sha(os.path.join(FNROOT, k)) for k in FN_FILES}
 STORE = {}; M = {}; CALLS = []; SQLS = []
 def reset(**m):
-    M.clear(); M.update(dict(col_there=False, sql_fail=False, col_missing_after=False, fail_deploy=None, old_drafts=0, old_signed=0, no_old=False, bad_store=False, no_key=False, odd_live=None, no_contacts=False,
+    M.clear(); M.update(dict(col_there=False, sql_fail=False, col_missing_after=False, fail_deploy=None, old_drafts=0, old_signed=0, no_old=False, bad_store=False, no_key=False, odd_live=None, no_contacts=False, new_there=False,
                              gates={"client-agreement": False, "agreement-sign": False, "family-app-office": False, "family-gateway": False}), **m)
     STORE.clear(); CALLS.clear(); SQLS.clear()
     for n in ("rev-2026-10-18", "rev-2026-10-17", "rev-2026-10"):
         if not (M["no_old"] and n == "rev-2026-10-18"): STORE[f"client-agreements/master/client-care-agreement-{n}.pdf"] = open(PDFS[n], "rb").read()
+    if M["new_there"]: STORE["client-agreements/master/client-care-agreement-rev-2026-10-18b.pdf"] = open(PDFS["rev-2026-10-18b"], "rb").read()
     p = os.path.join(TMP, "deploys")
     if os.path.exists(p): os.remove(p)
     open(os.path.join(TMP, "mode.json"), "w").write(json.dumps(M))
@@ -103,7 +104,7 @@ ck("1 good run: the column added first, the PDF stored and read back, the four f
    c == 0 and "RESULT: DONE" in out and "✗" not in out and ran_sql() and stored() == [NEWP] and deployed() == [[f, True] for f in FNS], out)
 ck("1b the database change runs before any function is deployed (family-gateway reads the new column)", SQLS.index(next(q for q in SQLS if "add column" in q)) < len(SQLS) and out.index("booking choice column is there") < out.index("family-gateway deployed"), out)
 ck("1c the earlier PDFs are never written again; the report says nothing was sent", not any(p != NEWP for p in stored()) and "Nothing was sent by this step" in out, out)
-c, out = run(col_there=True); ck("2 run a second time: the column is kept, the PDF is already there and checked, DONE", c == 0 and "RESULT: DONE" in out and "already there (kept)" in out and "already stored" in out, out)
+c, out = run(col_there=True, new_there=True); ck("2 run a second time: the column is kept, the PDF is already there and checked, DONE", c == 0 and "RESULT: DONE" in out and "already there (kept)" in out and "already stored" in out, out)
 c, out = run(old_drafts=2, old_signed=1); ck("3 agreements on the 10-18 wording are counted, with what to do", c == 0 and "not signed yet: 2 (after this step, tap Start another" in out and "waiting for the office: 1 (countersign as usual" in out, out)
 c, out = run(shas=dict(SHAS, **{"_shared/family-signin.ts": "0" * 64})); ck("4 not the reviewed build: stopped before any change", c != 0 and not deployed() and not stored() and not ran_sql(), out)
 c, out = run(pdf_sha="0" * 64); ck("5 the updated PDF is not the reviewed one: stopped before any change", c != 0 and not deployed() and not stored() and not ran_sql(), out)
