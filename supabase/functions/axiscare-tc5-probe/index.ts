@@ -18,6 +18,9 @@
 //
 // go:false (the default) reads only and says what it WOULD do. go:true runs A and B. Every AxisCare answer is
 // returned (status + errors), so the result is evidence, not a guess.
+// 2026-10-17 (914, after 913): AxisCare only takes schedules for an ACTIVE client, and Test Client 5 was inactive, so A
+// was not answered. only:'open_shift' runs A alone; it refuses unless Samantha has set #290 Active, and
+// set_status_after:'Inactive' puts it back afterwards (read back). A refusal names AxisCare's real reason.
 // =============================================================================
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b, null, 1), { status: s, headers: { 'Content-Type': 'application/json' } })
 const VER = Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01'
@@ -50,6 +53,19 @@ async function ax(method: string, path: string, body?: unknown): Promise<{ statu
 const errs = (r: { json: Any }) => r?.json?.errors ?? null
 const ok2 = (s: number) => s >= 200 && s < 300
 const cgOf = (v: Any) => v?.preferredCaregiver ?? v?.referredCaregiver ?? null
+/** the client's status as AxisCare gives it (a word, or { active, label }) */
+export function statusOf(rec: Any): { label: string; active: boolean | null } {
+  const v = rec?.status
+  if (v && typeof v === 'object') return { label: String(v.label ?? ''), active: typeof v.active === 'boolean' ? v.active : /^active$/i.test(String(v.label ?? '')) }
+  return { label: String(v ?? ''), active: v == null ? null : /^active$/i.test(String(v)) }
+}
+/** why AxisCare refused a schedule, in words: the client, the caregiver, or something else */
+export function refusalReason(errors: Any): 'client_inactive' | 'caregiver_required' | 'other' {
+  const t = JSON.stringify(errors ?? '').toLowerCase()
+  if (/client\w*\s*(id)?\s*is inactive|inactive or does not exist|client.*inactive/.test(t)) return 'client_inactive'
+  if (/caregiver/.test(t)) return 'caregiver_required'
+  return 'other'
+}
 const cgId = (x: Any) => (x && typeof x === 'object' ? (x.id ?? null) : x ?? null)
 
 async function clientRec(): Promise<Any> {
@@ -73,7 +89,7 @@ Deno.serve(async (req) => {
   // the lock: client 290 must still be Test Client 5
   const c0 = await clientRec()
   const nm = [c0.rec?.firstName, c0.rec?.lastName].filter(Boolean).join(' ')
-  out.client = { status: c0.status, name: nm, preferred_before: cgId(cgOf(c0.rec)), field_names: c0.rec ? Object.keys(c0.rec).filter((k) => /caregiver/i.test(k)) : [] }
+  out.client = { status: c0.status, name: nm, preferred_before: cgId(cgOf(c0.rec)), field_names: c0.rec ? Object.keys(c0.rec).filter((k) => /caregiver/i.test(k)) : [], client_status: statusOf(c0.rec) }
   if (c0.status !== 200 || !/test client 5/i.test(nm)) return json({ ...out, refused: 'AxisCare client 290 is not "Test Client 5" (or could not be read): nothing was done' }, 409)
 
   // a service code this agency uses (from a recent visit), for the schedule
@@ -90,6 +106,8 @@ Deno.serve(async (req) => {
     const nx = r.json?.results?.nextPage ?? r.json?.nextPage ?? null; url = nx ? String(nx).replace(/^https?:\/\/[^/]+/, '') : null
   }
   out.placeholder = ph ? { id: ph.id, name: 'Canceled Shift' } : null
+  const onlyA = b.only === 'open_shift'
+  if (onlyA && out.client.client_status.active !== true) return json({ ...out, not_active: 'Test Client 5 is ' + (out.client.client_status.label || 'not Active') + ' in AxisCare. AxisCare only takes schedules for an Active client: set it to Active first. Nothing was done.' }, 409)
   if (!go) return json({ ...out, would: 'A: create one open-shift schedule on ' + pd.day + ' ' + pd.date + ' to ' + end + ' 9-11am, read it back, delete it, read back. B: set the preferred caregiver to the placeholder, read back, put it back, read back.' })
 
   /* ── A. OPEN SHIFT ── */
@@ -103,6 +121,7 @@ Deno.serve(async (req) => {
     const ids = rowsOf(r.json?.schedules ?? r.json?.results?.schedules ?? r.json?.results).map((x: Any) => x?.scheduleId ?? x?.id).filter((x: Any) => x != null).map(String)
     A.created_ids = ids
     A.accepted_without_caregiver = ok2(r.status)
+    if (!ok2(r.status)) A.reason = refusalReason(errs(r))
     if (ok2(r.status)) {
       const sb = await schedulesFor(pd.date, end)
       const mine = sb.list.filter((s: Any) => ids.includes(String(s?.scheduleId ?? s?.id)) || (String(s?.startTime || '').startsWith('09:00') && String(s?.endTime || '').startsWith('11:00')))
@@ -120,6 +139,13 @@ Deno.serve(async (req) => {
     }
   }
 
+  /* put the client's status back when asked (914): read back */
+  if (typeof b.set_status_after === 'string' && /^(Inactive|Active)$/.test(b.set_status_after)) {
+    const r2 = await ax('PATCH', `/api/clients/${TEST_CLIENT}`, { status: b.set_status_after })
+    const back = await clientRec()
+    out.status_after = { to: b.set_status_after, status: r2.status, errors: errs(r2), read_back: statusOf(back.rec).label, restored: statusOf(back.rec).label.toLowerCase() === b.set_status_after.toLowerCase() }
+  }
+  if (onlyA) return json(out)
   /* ── B. PREFERRED CAREGIVER ── */
   const B: Any = {}; out.preferred = B
   if (!ph) B.skipped = 'the placeholder caregiver "Canceled Shift" was not found among active caregivers; no real caregiver is used for this test'
