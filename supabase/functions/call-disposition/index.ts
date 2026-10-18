@@ -168,7 +168,7 @@ Deno.serve(async (req) => {
                 if (flagLive) {
                   await supabaseS.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: {
                     id: flagId, status: 'flagged', kind: 'calloff',
-                    client: String(verdict.client_name || '') || '(from text — confirm the client)',
+                    client: String(verdict.client_name || '') || '(from text, confirm the client)',
                     calling_off: cgName, caller_phone: callerPhone, caller_contact_id: callerId,
                     shift_date: todayISO(), shift_time: String(verdict.shift_hint || ''),
                     reason: 'Cara flagged this TEXT as a possible call-off',
@@ -219,7 +219,7 @@ Deno.serve(async (req) => {
             const d = norm(String(p ?? '')); if (d.length === 10) staffPhones.add(d)
           })
           isStaffNum = staffPhones.has(digits)
-          if (isStaffNum) out.staff = 'internal number — left in the GHL inbox'
+          if (isStaffNum) out.staff = 'internal number, left in the GHL inbox'
         }
         if (!isCaregiverNum && !isStaffNum) {
           const leadsAll = await readKey('leads')
@@ -234,13 +234,13 @@ Deno.serve(async (req) => {
               l.do_not_contact_at = stamp2
               l.do_not_contact_reason = `their text: "${smsText.slice(0, 120)}"`
               l.comm_log = Array.isArray(l.comm_log) ? l.comm_log : []
-              l.comm_log.push({ body: `🚫 Asked us to stop contacting them — "${smsText.slice(0, 200)}"`, at: stamp2, by: 'inbound text' })
+              l.comm_log.push({ body: `🚫 Asked us to stop contacting them: "${smsText.slice(0, 200)}"`, at: stamp2, by: 'inbound text' })
               ldPush(l, { channel: 'sms', direction: 'in', outcome: 'reply', actor: 'family', ref: smsText.slice(0, 200) })
               await put('leads', l)
               await put('ops_items', {
                 id: `ops_leaddnc_${l.id}`, kind: 'new_lead', source_id: String(l.id),
                 title: `${who} asked us to stop contacting them`, about: who,
-                detail: `They texted: "${smsText.slice(0, 300)}". Do-not-contact is now recorded and every automated sender skips them. Nothing else to send — this is only so a human knows.`,
+                detail: `They texted: "${smsText.slice(0, 300)}". Do-not-contact is now recorded and every automated sender skips them. Nothing else to send. This is only so a human knows.`,
                 domain: 'family_enquiries', status: 'open', urgency: 'normal',
                 owner: '', owner_name: '', created_at: stamp2,
                 due: new Date(Date.now() + 24 * 3600e3).toISOString(),
@@ -257,27 +257,27 @@ Deno.serve(async (req) => {
               await put('ops_items', {
                 id: `ops_leadreply_${l.id}_${day2}`, kind: 'new_lead', source_id: String(l.id),
                 coverage_case_id: '',
-                title: `${who} replied — waiting for a human response`, about: who,
-                detail: `They texted: "${smsText.slice(0, 300)}". Nobody has answered yet — reply from their conversation in GHL (open their lead profile → Conversations), then log what happened.`,
+                title: `${who} replied, waiting for a human response`, about: who,
+                detail: `They texted: "${smsText.slice(0, 300)}". Nobody has answered yet. Reply from their conversation in GHL (open their lead profile → Conversations), then log what happened.`,
                 next_action: 'Open the lead, read the reply in Conversations, and answer as a person.',
                 phone: l.phone || '', domain: 'family_enquiries', status: 'open', urgency: 'high',
                 owner: '', owner_name: '', created_at: stamp2,
                 due: new Date(Date.now() + 3600e3).toISOString(),
                 created_by: 'call-disposition', opened_by: 'system' })
               await opEvent(supabase, { verb: 'lead_reply_received', item_id: String(l.id), area: 'growth_leads',
-                actor_name: who, summary: `${who} replied by text — waiting for a human response` })
+                actor_name: who, summary: `${who} replied by text, waiting for a human response` })
               out.lead_reply = l.id
             }
           } else if (hits.length > 1) {
             await put('ops_items', {
               id: `ops_leadreply_multi_${digits}_${new Date().toISOString().slice(0, 10)}`,
-              kind: 'request', title: `A text from ${callerPhone} matches ${hits.length} leads — who is it?`,
-              detail: `They wrote: "${smsText.slice(0, 300)}". The number matches more than one lead, so nothing was recorded automatically — read it in GHL, put it on the right lead, and consider merging the duplicates.`,
+              kind: 'request', title: `A text from ${callerPhone} matches ${hits.length} leads. Who is it?`,
+              detail: `They wrote: "${smsText.slice(0, 300)}". The number matches more than one lead, so nothing was recorded automatically. Read it in GHL, put it on the right lead, and consider merging the duplicates.`,
               domain: 'family_enquiries', status: 'open', urgency: 'high',
               owner: '', owner_name: '', created_at: new Date().toISOString(),
               due: new Date(Date.now() + 4 * 3600e3).toISOString(),
               created_by: 'call-disposition', opened_by: 'system' })
-            out.lead_reply = 'ambiguous — raised for a human'
+            out.lead_reply = 'ambiguous, raised for a human'
           } else {
             /* UNKNOWN NUMBER — fail safely into human review, never silence.
                A real message from a number we can't place deserves eyes;
@@ -290,16 +290,16 @@ Deno.serve(async (req) => {
               if (!itemsAll.some((i) => i.id === idU)) {
                 await put('ops_items', {
                   id: idU, kind: 'request',
-                  title: `Text from an unknown number — who is this?`,
+                  title: `Text from an unknown number. Who is this?`,
                   about: callerPhone,
-                  detail: `${callerPhone} texted: "${smsText.slice(0, 300)}". The number matches no caregiver, no staff, and no lead. Read it in GHL — if it's a new family, add them as a lead; if it's a caregiver's new number, fix the roster.`,
+                  detail: `${callerPhone} texted: "${smsText.slice(0, 300)}". The number matches no caregiver, no staff, and no lead. Read it in GHL. If it's a new family, add them as a lead; if it's a caregiver's new number, fix the roster.`,
                   domain: 'office_ops', status: 'open', urgency: 'normal',
                   owner: '', owner_name: '', created_at: new Date().toISOString(),
                   due: new Date(Date.now() + 8 * 3600e3).toISOString(),
                   created_by: 'call-disposition', opened_by: 'system' })
                 out.unknown = 'raised for human review'
               } else out.unknown = 'already raised today'
-            } else out.unknown = 'short/trivial text from unknown number — left in the GHL inbox'
+            } else out.unknown = 'short/trivial text from unknown number, left in the GHL inbox'
           }
         }
       }
@@ -315,7 +315,7 @@ Deno.serve(async (req) => {
      and fill in the detail that was missing. */
   const summary = field('summary') || field('transcript_summary') || field('recap')
   if (b.attach === true || String(b.attach).toLowerCase() === 'true' || (summary && !field('disposition'))) {
-    if (!summary) return json({ ok: true, routed: 'nothing to attach — no summary in this request' })
+    if (!summary) return json({ ok: true, routed: 'nothing to attach, no summary in this request' })
 
     /* Every summarised call also goes to AxisCare's CALL LOG: the identity
        layer matches the number to ONE known person (client, caregiver, lead,
@@ -427,7 +427,7 @@ Deno.serve(async (req) => {
                 if (flagLive) {
                   await put('coverage_cases', {
                     id: flagId, status: 'flagged', kind: 'calloff',
-                    client: String(verdict.client_name || '') || '(from call — confirm the client)',
+                    client: String(verdict.client_name || '') || '(from call, confirm the client)',
                     calling_off: cgName, caller_phone: callerPhone, caller_contact_id: callerId,
                     shift_date: todayISO(), shift_time: String(verdict.shift_hint || ''),
                     reason: 'Cara flagged this call as a possible call-off',
@@ -451,7 +451,7 @@ Deno.serve(async (req) => {
       }
     } catch (e) { flagged = { checked: true, error: String(e) } }
     await recSummary(null)
-    return json({ ok: true, routed: 'nothing recent to attach to — no disposition was tapped on this call', axiscare_note: axNote, cara_flag: flagged })
+    return json({ ok: true, routed: 'nothing recent to attach to, no disposition was tapped on this call', axiscare_note: axNote, cara_flag: flagged })
   }
 
   const disposition = field('disposition') || field('call_disposition') || field('outcome')
@@ -465,12 +465,12 @@ Deno.serve(async (req) => {
     try {
       const { data } = await supabaseT.from('app_data').select('data').eq('key', 'call_disposition_log').maybeSingle()
       const arr = Array.isArray(data?.data) ? data!.data : []
-      arr.push({ at: new Date().toISOString(), disposition: '(none)', routed: 'no disposition — nothing created', phone_present: !!(field('phone') || field('phone_number')) })
+      arr.push({ at: new Date().toISOString(), disposition: '(none)', routed: 'no disposition, nothing created', phone_present: !!(field('phone') || field('phone_number')) })
       await supabaseT.from('app_data').upsert({ key: 'call_disposition_log', data: arr.slice(-50), updated_at: new Date().toISOString() })
     } catch { /* never block the response */ }
     return json({
       ok: true,
-      routed: 'nothing — no disposition on this request',
+      routed: 'nothing, no disposition on this request',
       note: 'This is the expected reply to a test request. On a real call the disposition arrives and the call gets routed.',
       received,
     })
@@ -549,7 +549,7 @@ Deno.serve(async (req) => {
   // ---------- calls that are about a caregiver, a client, or nobody ----------
   if (is('call-off', 'call off', 'caregiver call-off')) {
     await put('coverage_cases', {
-      id: uid(), client: '(from call — confirm the client)', shift_date: todayISO(), shift_time: '',
+      id: uid(), client: '(from call, confirm the client)', shift_date: todayISO(), shift_time: '',
       reason: 'call_off', note: [`${who} called off.`, note].filter(Boolean).join(' '),
       status: 'open', asked: [], opened_at: stamp, opened_by: by,
       caller_phone: phone, caller_contact_id: contactId,
@@ -602,11 +602,11 @@ Deno.serve(async (req) => {
       })
       const j = await r.json().catch(() => ({}))
       created.push(j?.needs_human_confirmation
-        ? 'existing issue offered — needs a person to choose'
+        ? 'existing issue offered, needs a person to choose'
         : `issue ${String(j?.issue_id ?? '').slice(0, 8)}`)
     } catch (e) {
       console.error('issue intake failed, falling back to a work item:', e)
-      await put('ops_items', opsItem('client_issue', `Concern — ${who}`, 24))
+      await put('ops_items', opsItem('client_issue', `Concern: ${who}`, 24))
       created.push('needs-attention item (issue intake failed)')
     }
   }
@@ -615,7 +615,7 @@ Deno.serve(async (req) => {
     return json({ ok: true, routed: 'issue raised', created, received })
   }
   if (is('job applicant')) {
-    await put('ops_items', opsItem('request', `Job applicant called — ${who}`, 72))
+    await put('ops_items', opsItem('request', `Job applicant called: ${who}`, 72))
     created.push('needs-attention item')
     await logDbg({ disposition, routed: 'job applicant item', matched: 'n/a' })
     return json({ ok: true, routed: 'job applicant raised', created, received })
@@ -626,7 +626,7 @@ Deno.serve(async (req) => {
     // lives in AxisCare, so the hub's job is making sure somebody actually goes
     // and changes it — short fuse, because the shift is often tomorrow and a
     // forgotten change is a missed visit.
-    await put('ops_items', opsItem('staffing_issue', `Schedule change — ${who} (update AxisCare)`, 4))
+    await put('ops_items', opsItem('staffing_issue', `Schedule change: ${who} (update AxisCare)`, 4))
     created.push('needs-attention item (4h)')
     await logDbg({ disposition, routed: 'schedule change', matched: 'n/a' })
     return json({ ok: true, routed: 'schedule change raised for AxisCare', created, received })
@@ -705,15 +705,15 @@ Deno.serve(async (req) => {
 
   if (!lead) {
     // Nothing to attach to. Rather than guess, leave a trace a human can act on.
-    await put('ops_items', opsItem('request', `Call marked "${disposition}" — no matching record (${who})`, 24))
+    await put('ops_items', opsItem('request', `Call marked "${disposition}", no matching record (${who})`, 24))
     await logDbg({ disposition, routed: 'unmatched', matched: 'none' })
-    return json({ ok: true, routed: 'unmatched — raised in Needs Attention', created: ['needs-attention item'], received })
+    return json({ ok: true, routed: 'unmatched, raised in Needs Attention', created: ['needs-attention item'], received })
   }
 
   // Any disposition on a lead means somebody actually worked it.
   lead.last_contacted_at = todayISO()
   lead.comm_log = Array.isArray(lead.comm_log) ? lead.comm_log : []
-  lead.comm_log.push({ body: `☎ ${direction} call — ${disposition}${noteShort ? ': ' + noteShort : ''}`, at: stamp, by })
+  lead.comm_log.push({ body: `☎ ${direction} call · ${disposition}${noteShort ? ': ' + noteShort : ''}`, at: stamp, by })
   if (transcript && !typedNote) lead.last_call_transcript = { at: stamp, text: cap(transcript, 8000) }
 
   /* CONTACT TRUTH (2026-09-19). The disposition already tells us whether a
@@ -758,7 +758,7 @@ Deno.serve(async (req) => {
   } else if (is('requested appointment', 'ready to start')) {
     lead.follow_up_branch = 'ready-to-start'; lead.follow_up_due = todayISO()
     if (lead.status === 'New') LR.setStatus(lead, 'Contacted', { by, why: 'call outcome: ' + disposition, at: stamp }); lead.contact_attempts = 0
-    outcome = 'hot — due today'
+    outcome = 'hot, due today'
   } else if (is('lead - not ready', 'not ready', 'family deciding')) {
     lead.follow_up_branch = 'family-decision'; lead.follow_up_due = addDays(5)
     if (lead.status === 'New') LR.setStatus(lead, 'Contacted', { by, why: 'call outcome: ' + disposition, at: stamp }); lead.contact_attempts = 0
@@ -776,7 +776,7 @@ Deno.serve(async (req) => {
     if (!lead.lost_reason_key) Object.assign(lead, LR.lostRecord(lead, 'no_longer_needs', 'not interested (from the call)') || {})
     lead.lost_reason = lead.lost_reason || 'Not interested'; LR.setStatus(lead, 'Lost', { by, why: lead.lost_reason, at: stamp })
     lead.lost_at = stamp; lead.follow_up_branch = 'cold-lead'; lead.follow_up_due = addDays(30)
-    outcome = 'lost — cold nurture'
+    outcome = 'lost, cold nurture'
   } else if (is('send to cds', 'sent to cds')) {
     Object.assign(lead, LR.lostRecord(lead, 'referred_cds', '') || { lost_reason: 'Referred to Caring CDS' })
     LR.setStatus(lead, 'Lost', { by, why: 'Referred to Caring CDS', at: stamp }); lead.lost_at = stamp
@@ -784,7 +784,7 @@ Deno.serve(async (req) => {
     outcome = 'referred to CDS'
   } else if (is('incorrect number', 'bad number')) {
     lead.bad_number = true
-    lead.comm_log.push({ body: '⚠ Number reported incorrect on a call — needs a good number.', at: stamp, by })
+    lead.comm_log.push({ body: '⚠ Number reported incorrect on a call. Needs a good number.', at: stamp, by })
     outcome = 'flagged bad number'
   } else if (is('referral call')) {
     lead.follow_up_due = todayISO(); outcome = 'referral logged'

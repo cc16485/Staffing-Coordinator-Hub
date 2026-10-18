@@ -78,7 +78,7 @@ Deno.serve(async (req) => {
   const email = field('email')
   const startTime = field('start_time') || field('appointment_start_time') || field('startTime')
   const startsAt = parseWhen(startTime)
-  if (!first && !phone && !email) return json({ ok: true, routed: 'nothing usable in this request — check the workflow field mapping' })
+  if (!first && !phone && !email) return json({ ok: true, routed: 'nothing usable in this request; check the workflow field mapping' })
 
   const { data: row } = await sb.from('app_data').select('data').eq('key', 'leads').maybeSingle()
   // deno-lint-ignore no-explicit-any
@@ -114,7 +114,7 @@ Deno.serve(async (req) => {
   const who = [first, last].filter(Boolean).join(' ') || phone || email
   await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
     id: 'ops_asmt_' + lead.id, kind: 'request',
-    title: `Assessment ${startTime || '(time on the calendar)'} — ${who}`,
+    title: `Assessment ${startTime || '(time on the calendar)'}: ${who}`,
     about: who,
     detail: `New Client Assessment booked${startTime ? ' for ' + startTime : ''}. Prep: caregiver match ready (Hours Watch matcher), start packet, confirm the address. Lead is on the board.`,
     domain: '', status: 'open', urgency: 'high',

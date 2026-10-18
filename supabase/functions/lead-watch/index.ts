@@ -115,7 +115,7 @@ Deno.serve(async (req) => {
       ldPush(l, { channel: 'call', direction: 'out', outcome, actor: 'human', by: me.email, note })
       const label: Record<string, string> = { connected: 'connected', voicemail: 'voicemail', no_answer: 'no answer', wrong_number: 'wrong number' }
       l.comm_log = Array.isArray(l.comm_log) ? l.comm_log : []
-      l.comm_log.push({ body: `☎ call — ${label[outcome]}${note ? ': ' + note : ''} (from the text link)`, at: nowIso, by: me.email })
+      l.comm_log.push({ body: `☎ call · ${label[outcome]}${note ? ': ' + note : ''} (from the text link)`, at: nowIso, by: me.email })
       l.last_contacted_at = todayChi()
       if (outcome === 'connected' && String(l.status || 'New') === 'New') LR.setStatus(l, 'Contacted', { by: me.email, why: 'first real conversation (logged from the text link)' })
       if (outcome === 'voicemail' || outcome === 'no_answer') { l.contact_attempts = (Number(l.contact_attempts) || 0) + 1; l.last_attempt_kind = label[outcome] }

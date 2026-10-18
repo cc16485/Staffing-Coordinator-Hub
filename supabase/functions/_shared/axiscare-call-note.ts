@@ -149,7 +149,7 @@ export async function pushCallNote(
     const dayAgo = Date.now() - 24 * 3600 * 1000
     if (arr.some((e) => e.hash === hash && new Date(e.at || 0).getTime() > dayAgo &&
                         (e.outcome === 'posted' || e.outcome === 'dry_run')))
-      return finish({ outcome: 'skipped', detail: 'duplicate — this call summary was already handled', dry }, { hash })
+      return finish({ outcome: 'skipped', detail: 'duplicate, this call summary was already handled', dry }, { hash })
   } catch { /* a broken log must not block a real note */ }
 
   // ── WHO: the identity layer, phone first, one person or nothing. ──
@@ -159,9 +159,9 @@ export async function pushCallNote(
   if (phErr) return finish({ outcome: 'error', detail: 'phone_index read failed: ' + phErr.message, dry })
   const personIds: string[] = [...new Set((phoneRows || []).map((r: any) => String(r.person_id)))]
   if (personIds.length === 0)
-    return finish({ outcome: 'skipped', detail: 'caller not recognised — no person on this number', dry }, { hash })
+    return finish({ outcome: 'skipped', detail: 'caller not recognised, no person on this number', dry }, { hash })
   if (personIds.length > 1)
-    return finish({ outcome: 'skipped', detail: `shared line — ${personIds.length} people on this number, refusing to guess`, dry }, { hash })
+    return finish({ outcome: 'skipped', detail: `shared line: ${personIds.length} people on this number, refusing to guess`, dry }, { hash })
   const personId = personIds[0]
 
   const { data: pi } = await supabase
@@ -193,7 +193,7 @@ export async function pushCallNote(
     if (clientIds.length === 0)
       return finish({ outcome: 'skipped', detail: `${callerName} is known but has no AxisCare profile and no client relationship`, dry }, { hash })
     if (clientIds.length > 1)
-      return finish({ outcome: 'skipped', detail: `${callerName} is a contact for ${clientIds.length} clients — cannot know who the call was about`, dry }, { hash })
+      return finish({ outcome: 'skipped', detail: `${callerName} is a contact for ${clientIds.length} clients, so we cannot know who the call was about`, dry }, { hash })
     const { data: cliSrc } = await supabase
       .from('person_source_id').select('source_id')
       .eq('person_id', clientIds[0]).eq('system', 'axiscare').eq('entity_type', 'client')
@@ -208,7 +208,7 @@ export async function pushCallNote(
 
   const entityIdNum = Number(entityId)
   if (!Number.isInteger(entityIdNum))
-    return finish({ outcome: 'error', detail: `AxisCare id "${entityId}" for ${callerName} is not numeric — cannot tag a call log`, dry }, { hash })
+    return finish({ outcome: 'error', detail: `AxisCare id "${entityId}" for ${callerName} is not numeric, so we cannot tag a call log`, dry }, { hash })
 
   // A jump link straight to this caller's conversation (calls, recordings,
   // texts) in the phone system, so nobody hunts for the contact by hand.

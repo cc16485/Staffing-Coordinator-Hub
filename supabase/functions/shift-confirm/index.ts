@@ -210,7 +210,7 @@ Deno.serve(async (req) => {
   }
 
   const summary = {
-    mode: live ? 'LIVE' : 'DRY RUN — flip ops_settings.confirm_live to true to send',
+    mode: live ? 'LIVE' : 'DRY RUN: flip ops_settings.confirm_live to true to send',
     day, fetch_error: fetchError,
     visits_seen: visits.length,
     caregivers_with_shifts_today: byCg.size,

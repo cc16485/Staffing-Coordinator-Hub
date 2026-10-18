@@ -205,7 +205,7 @@ Deno.serve(async (req) => {
     const to = String(reqBody.test_notify) === 'true'
       ? (cfgNow.fallback_phone || (staffNow.find((s) => s.phone) || {}).phone || '')
       : String(reqBody.test_notify)
-    if (!to) return json({ error: 'no number to test with — set a backstop phone on the Admin page' }, 400)
+    if (!to) return json({ error: 'no number to test with. Set a backstop phone on the Admin page' }, 400)
     try {
       await sendSms(tok, locationId, e164(to),
         'Caring Companions test: missed-call chasing is switched on and working. This is the only message this test sends.')

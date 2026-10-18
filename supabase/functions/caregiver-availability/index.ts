@@ -122,7 +122,7 @@ Deno.serve(async (req) => {
       }
     }
     return json({ sent, sent_to: sentTo, skipped_gate: skippedGate, failed: failedTo.length, failed_to: failedTo,
-      note: sent >= CAP ? `capped at ${CAP} per run — press the button again for the next batch` : 'everyone eligible was invited' })
+      note: sent >= CAP ? `capped at ${CAP} per run. Press the button again for the next batch` : 'everyone eligible was invited' })
   }
 
   const { data: cgRow } = await sb.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()

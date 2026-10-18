@@ -202,7 +202,7 @@ Deno.serve(async (req) => {
     } catch (err) { return json({ error: String(err) }, 502) }
     out.sort((a, b2) => a.name.localeCompare(b2.name))
     return json({ caregivers_total: total, active: out.length, caregivers: out,
-      ...(url ? { truncated: true, note: 'more pages existed than the cap — list is PARTIAL' } : {}) })
+      ...(url ? { truncated: true, note: 'more pages existed than the cap; list is PARTIAL' } : {}) })
   }
 
   /* Mode 3: one client's profile note, to prefill the {care} synopsis from
@@ -327,15 +327,15 @@ Deno.serve(async (req) => {
         ? `cw_c${v.client.id}_g${v.caregiver.id}` : ''
       if (pairId && !knownPairs.has(pairId) && knownPairs.size)
         risks.push({ kind: 'first_pair', severity: 2, time: s, caregiver: cgName, client: clName,
-          detail: `first shift together — worth a mid-shift check call` })
+          detail: `first shift together, worth a mid-shift check call` })
       const ci = (callinsById.get(String(v.caregiver.id)) ?? 0) + (callins.get(nk7(cgName)) ?? 0)
       if (ci >= 2)
         risks.push({ kind: 'callin_history', severity: 3, time: s, caregiver: cgName, client: clName,
-          detail: `${ci} call-ins in the last 30 days — have a backup in mind` })
+          detail: `${ci} call-ins in the last 30 days. Have a backup in mind` })
       const lh = lateHist.get(nk7(cgName)) ?? 0
       if (lh >= 2)
         risks.push({ kind: 'late_history', severity: 1, time: s, caregiver: cgName, client: clName,
-          detail: `${lh} missed-clock-in ladders in 30 days — watch the start` })
+          detail: `${lh} missed-clock-in ladders in 30 days. Watch the start` })
     }
     for (const [, arr] of byCg7) {
       arr.sort((a, b) => String(a?.scheduledStartDate ?? a?.startDate ?? '')
@@ -354,7 +354,7 @@ Deno.serve(async (req) => {
           const cgName = [cur.caregiver.firstName, cur.caregiver.lastName].filter(Boolean).join(' ')
           risks.push({ kind: 'impossible_gap', severity: 3, time: cs, caregiver: cgName,
             client: [cur?.client?.firstName, cur?.client?.lastName].filter(Boolean).join(' '),
-            detail: `${gap} min between visits but ~${Math.round(mi!)} mi apart (needs ~${needMin} min) — `
+            detail: `${gap} min between visits but ~${Math.round(mi!)} mi apart (needs ~${needMin} min): `
               + `${t12f(pe)} to ${t12f(cs)}; the second visit will start late` })
         }
       }
@@ -416,15 +416,15 @@ Deno.serve(async (req) => {
       const early = (c.w[0] + c.w[1] + c.w[2] + c.w[3]) / 4, late = (c.w[4] + c.w[5]) / 2
       if (early >= 8 && late < early * 0.6)
         falling.push({ name: c.name, was: r1(early), now: r1(late),
-          detail: `${r1(early)}h/wk → ${r1(late)}h/wk — worth a conversation before they drift away` })
+          detail: `${r1(early)}h/wk → ${r1(late)}h/wk, worth a conversation before they drift away` })
       if (late > 40)
-        overtime.push({ name: c.name, now: r1(late), detail: `averaging ${r1(late)}h/wk the last two weeks — burnout and OT risk` })
+        overtime.push({ name: c.name, now: r1(late), detail: `averaging ${r1(late)}h/wk the last two weeks: burnout and OT risk` })
     }
     for (const [, c] of clWeeks) {
       const early = (c.w[0] + c.w[1] + c.w[2] + c.w[3]) / 4, late = (c.w[4] + c.w[5]) / 2
       if (early >= 6 && late < early * 0.7)
         careGaps.push({ name: c.name, was: r1(early), now: r1(late),
-          detail: `care delivered fell ${r1(early)}h/wk → ${r1(late)}h/wk — find out why before the family calls` })
+          detail: `care delivered fell ${r1(early)}h/wk → ${r1(late)}h/wk. Find out why before the family calls` })
     }
     falling.sort((a, b) => (a.now / Math.max(a.was, 1)) - (b.now / Math.max(b.was, 1)))
     careGaps.sort((a, b) => (a.now / Math.max(a.was, 1)) - (b.now / Math.max(b.was, 1)))
@@ -795,7 +795,7 @@ Deno.serve(async (req) => {
         }
         return json({ error: exists === false
           ? `caregiver ${cgId} was not found in AxisCare`
-          : 'AxisCare responded 404 and the caregiver could not be verified — try again, or open the case by hand' }, 502)
+          : 'AxisCare responded 404 and the caregiver could not be verified. Try again, or open the case by hand' }, 502)
       }
       if (!r.ok) return json({ error: `AxisCare responded ${r.status}` }, 502)
       // deno-lint-ignore no-explicit-any
@@ -819,5 +819,5 @@ Deno.serve(async (req) => {
 
   out.sort((a, b2) => (a.date + a.time).localeCompare(b2.date + b2.time))
   return json({ caregiver_axiscare_id: cgId, window: `${startDate} → ${endDate}`, shifts: out,
-    ...(url ? { truncated: true, note: 'more pages existed than the cap — list is PARTIAL' } : {}) })
+    ...(url ? { truncated: true, note: 'more pages existed than the cap; list is PARTIAL' } : {}) })
 })

@@ -250,9 +250,9 @@ Deno.serve(async (req) => {
           .filter(Boolean).join(' ') || '(no client name)',
         when: dStart, visit: String(v?.id ?? ''),
         reason: reason || '(no modification reason)',
-        verdict: !reason ? 'ignored — no reason recorded'
-          : !reasonMatches(reason) ? 'ignored — reason does not match the filter'
-          : startedNow(v, dStart) ? 'ignored — already started'
+        verdict: !reason ? 'ignored, no reason recorded'
+          : !reasonMatches(reason) ? 'ignored, reason does not match the filter'
+          : startedNow(v, dStart) ? 'ignored, already started'
           : openByVisit.has(String(v?.id ?? '')) ? 'already has an open case'
           : 'opens a case',
       })
@@ -330,7 +330,7 @@ Deno.serve(async (req) => {
       if (!error) {
         created++; openByVisit.add(visitId)
         await opEvent(sb, { job: 'coverage-watch', verb: 'coverage_opened', item_id: c.id, area: 'coverage',
-          summary: `Cara opened a call-off case${reopenNote ? ' again' : ''} — ${clientName || 'a client'} ${entry.shift_date} ${entry.shift_time}`
+          summary: `Cara opened a call-off case${reopenNote ? ' again' : ''}: ${clientName || 'a client'} ${entry.shift_date} ${entry.shift_time}`
             + (entry.calling_off ? `, ${entry.calling_off} calling off` : '') })
       }
     }
@@ -440,7 +440,7 @@ Deno.serve(async (req) => {
           if (!error) {
             ongoingCreated++; haveSweepCase.add(c.id)
             await opEvent(sb, { job: 'coverage-watch', verb: 'coverage_opened', item_id: c.id, area: 'coverage',
-              summary: `Cara opened an ongoing-shifts case — ${clientName || 'a client'}, ${dates.length} open ${weekdays} date${dates.length === 1 ? '' : 's'}` })
+              summary: `Cara opened an ongoing-shifts case: ${clientName || 'a client'}, ${dates.length} open ${weekdays} date${dates.length === 1 ? '' : 's'}` })
           }
         }
       }
@@ -581,7 +581,7 @@ Deno.serve(async (req) => {
       cc.resolved_how = 'covered'
       cc.covered_by = cgName
       cc.note = [String(cc.note || '').trim(),
-        `Covered in AxisCare directly (assigned to ${cgName}) — closed by the watcher.`]
+        `Covered in AxisCare directly (assigned to ${cgName}), closed by the watcher.`]
         .filter(Boolean).join('\n')
       const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: cc })
       if (!error) coveredOutside++
@@ -997,9 +997,9 @@ Deno.serve(async (req) => {
         const attFresh = {
           id: attId,
           kind: 'staffing_issue',
-          title: `Attendance pattern — ${who}: ${n} ${LABEL[bucket]} in 30 days`,
+          title: `Attendance pattern: ${who}: ${n} ${LABEL[bucket]} in 30 days`,
           about: who,
-          detail: `${who} has ${n} ${LABEL[bucket]} in the last 30 days (threshold ${TH[bucket]}). Review on Performance > Attendance — the write-up ladder there has the details and next step.`,
+          detail: `${who} has ${n} ${LABEL[bucket]} in the last 30 days (threshold ${TH[bucket]}). Review on Performance > Attendance. The write-up ladder there has the details and next step.`,
           domain: 'scheduling_coverage', status: 'open', urgency: 'high',
           owner: String(admins[0]), owner_name: String(admins[0]).split('@')[0],
           created_at: new Date().toISOString(),
@@ -1193,7 +1193,7 @@ Deno.serve(async (req) => {
       await sb.rpc('upsert_app_data_item', { target_key: 'notes_watch_state', item: ns })
       ;(globalThis as any).__noteSwept = { window: `${chiYest} → ${chiToday}`,
         visits_checked: rows.length, notes_seen: notesSeen, flagged, items_created: made,
-        shape: shape || 'NONE FOUND — no note fields on visits and no per-visit note endpoint answered; tell Claude what the capability map should say' }
+        shape: shape || 'NONE FOUND: no note fields on visits and no per-visit note endpoint answered; tell Claude what the capability map should say' }
     }
   } catch (err) { (globalThis as any).__noteSwept = { error: String(err) } }
 

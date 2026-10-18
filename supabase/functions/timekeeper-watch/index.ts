@@ -475,7 +475,7 @@ Deno.serve(async (req) => {
         /* Close the alert too — a resolved emergency must not sit urgent. */
         await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
           id: `ops_tk_${l.id}`, kind: 'staffing_issue', status: 'resolved',
-          title: `Resolved — ${l.caregiver} ${how === 'clocked_in' ? 'clocked in' : 'no longer on this visit'} (${l.client_first} ${l.shift_time})`,
+          title: `Resolved: ${l.caregiver} ${how === 'clocked_in' ? 'clocked in' : 'no longer on this visit'} (${l.client_first} ${l.shift_time})`,
           about: l.caregiver, domain: 'scheduling_coverage', urgency: 'high',
           owner: String(admins[0]), owner_name: String(admins[0]).split('@')[0],
           detail: how === 'clocked_in'
@@ -549,7 +549,7 @@ Deno.serve(async (req) => {
       const phone = normalisePhone(cg?.phone)
       if (!phone) {
         skippedNoPhone++
-        if (!l.no_phone) { l.no_phone = true; l.notes.push('No phone on the roster — text skipped, office step will fire at its time.') }
+        if (!l.no_phone) { l.no_phone = true; l.notes.push('No phone on the roster. Text skipped; office step will fire at its time.') }
         if (watchLive) await save(l)
       } else if (textLive) {
         /* Same classification as the callouts: an employee, about a shift
@@ -790,16 +790,16 @@ Deno.serve(async (req) => {
   const summary = {
     routing: routeInfo,
     confirm_times: { live: cftLive, out_after_min: cftOutAfter, from_missed_clockin: cftFromIn, from_missed_clockout: cftFromOut, already_had_a_card: cftAlready },
-    mode: !watchLive ? 'DRY RUN' : textLive ? 'LIVE (watch + text)' : 'LIVE (watch only — texting off)',
+    mode: !watchLive ? 'DRY RUN' : textLive ? 'LIVE (watch + text)' : 'LIVE (watch only, texting off)',
     day, fetch_error: fetchError,
     visits_seen: visits.length,
     /* The clockIn proof First-Visit Confirmation has been waiting for. */
     clockin_evidence: {
       assigned_visits_started_over_15_min_ago: startedAWhile,
       of_those_with_a_clockin: withClockIn,
-      read: startedAWhile === 0 ? 'no started visits yet today — run again mid-morning'
-        : withClockIn === 0 ? 'ZERO clock-ins visible in the API — do NOT go live until this is understood'
-        : `${withClockIn}/${startedAWhile} populate — if this is well under 100%, raise timekeeper_grace_min before texting goes live`,
+      read: startedAWhile === 0 ? 'no started visits yet today; run again mid-morning'
+        : withClockIn === 0 ? 'ZERO clock-ins visible in the API. Do NOT go live until this is understood'
+        : `${withClockIn}/${startedAWhile} populate. If this is well under 100%, raise timekeeper_grace_min before texting goes live`,
     },
     evv_chase: evvChase,
     evv_next_visit: nextVisit,
