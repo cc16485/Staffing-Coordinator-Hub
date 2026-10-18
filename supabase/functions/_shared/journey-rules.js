@@ -23,7 +23,7 @@
     offer:'Offer', step1:'Step 1', screening:'Screening', approval:'Approval', step2:'Step 2 (Viventium)', orientation:'Orientation', training:'Training' };
   const subjectOf = j => (j && j.subject === 'caregiver') ? 'caregiver' : 'client';
   const stagesFor = j => subjectOf(j) === 'caregiver' ? CG_STAGES : STAGES;
-  const PAYERS = { private:'Private Pay', medicaid:'Medicaid IHS / HCBS', va:'VA Community Care', ltc:'Long-Term Care Insurance', other:'Other' };
+  const PAYERS = { private:'Private Pay', medicaid:'Medicaid IHS / HCBS (ending)', va:'VA Community Care', ltc:'Long-Term Care Insurance', guide:'Medicare GUIDE', other:'Other' };
   const ROLE_LABEL = { care_coordinator:'Care Coordinator', staffing_coordinator:'Staffing Coordinator', owner:'Owner', hub:'The Hub' };
   const DONE = ['complete', 'not_needed', 'exception'];
   const PROOF_LABEL = { verified:'Verified by the Hub', proof:'Proof file required', answer:'Answer required', confirmed:'Confirmed by a person' };
@@ -46,6 +46,9 @@
       const facts = (ctx && ctx.facts) || {};
       if(!Object.keys(def.applies).every(k => facts[k] === def.applies[k])) return false;
     }
+    /* stage A (2026-10-17): a step retired for NEW journeys only (Medicaid IHS intake ended): journeys opened before the
+       date keep it, with every record, exactly as it was */
+    if(def.opened_before && j && j.created_at && String(j.created_at).slice(0, 10) >= String(def.opened_before)) return false;
     const p = Array.isArray(def.payers) ? def.payers : [];
     if(!p.length) return true;
     return !!j.payer && p.indexOf(j.payer) > -1;
@@ -88,7 +91,10 @@
     if(st && st.owner_email) return { email:String(st.owner_email).toLowerCase(), role:def.owner_role, how:'step' };
     const role = def.owner_role || 'care_coordinator';
     if(role === 'care_coordinator') return { email:(j.assigned_cc || '').toLowerCase() || null, role, how:'assigned' };
-    if(role === 'staffing_coordinator'){ const e = j.staffing_email || (ctx && ctx.staffing_email) || null; return { email:e ? String(e).toLowerCase() : null, role, how:j.staffing_email ? 'assigned' : 'role' }; }
+    if(role === 'staffing_coordinator'){ const e = j.staffing_email || (ctx && ctx.staffing_email) || null;
+      /* stage A (2026-10-17): no Staffing Coordinator yet -> the client's Care Coordinator, never the first owner */
+      if(!e && j.assigned_cc && subjectOf(j) === 'client') return { email:String(j.assigned_cc).toLowerCase(), role, how:'care coordinator (no staffing coordinator)' };
+      return { email:e ? String(e).toLowerCase() : null, role, how:j.staffing_email ? 'assigned' : 'role' }; }
     if(role === 'owner') return { email:null, emails:((ctx && ctx.owner_emails) || []).map(x => String(x).toLowerCase()), role, how:'owners' };
     return { email:null, role, how:'hub' };
   }
@@ -175,6 +181,12 @@
     view.rows.forEach(r => {
       if(['ready', 'blocked', 'attention', 'waiting'].indexOf(r.status) < 0) return;
       if(r.def.quiet && r.status === 'ready') return;   /* a quiet step waits for a person without a card */
+      /* stage A (2026-10-17): a step the Hub does itself (First visit happened) is nobody's card while it waits; if it
+         needs a person (attention, blocked) it goes to the client's Care Coordinator, never to the owners as "Nobody is assigned" */
+      if(subjectOf(j) === 'client' && r.owner && r.owner.how === 'hub' && !(r.status === 'blocked' && r.unblock_role === 'owner')){
+        if(['attention', 'blocked'].indexOf(r.status) < 0) return;
+        if(j.assigned_cc){ add(String(j.assigned_cc).toLowerCase(), r); return; }
+      }
       const target = r.status === 'blocked' && r.unblock_role === 'owner' ? { emails:(ctx && ctx.owner_emails) || [] } : r.owner;
       if(target.email) add(target.email, r);
       else if(target.emails && target.emails.length) target.emails.forEach(e => add(String(e).toLowerCase(), r));

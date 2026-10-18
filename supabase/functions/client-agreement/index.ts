@@ -85,7 +85,8 @@ async function axisLog(db: Any, c: { client: string; outcome: string; summary: s
 }
 
 /* ---------- the signed PDF, rebuilt the same way for the original and the family's emailed copy (873) ---------- */
-const HIDE_ON_EMAIL = ['access.lockbox_code', 'access.garage_code']
+/* stage A (2026-10-17): the driver's license number is a government ID; it stays on the original, never on the emailed copy */
+const HIDE_ON_EMAIL = ['access.lockbox_code', 'access.garage_code', 'vehicle.driver_s_license']
 function recordOf(r: Any): string[][] {
   const cs = r.client_sign, os = r.office_sign
   const tapLine = Object.entries(cs.initials_taps || {}).map(([k, v]) => `${k === 'poa' ? 'POA' : k + ' of 6'}: ${centralDate(String(v)).long}`).join('\n')

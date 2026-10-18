@@ -417,9 +417,39 @@ try {
   ck('CRM plan A: the contract\'s new date reaches the journey on the next refresh', T.client_journey[0].target_start === '2026-11-09')
   T.start_contract_current = []; await call({ action: 'refresh', journey_id: jA.journey_id })
   ck('CRM plan A: startFromContract: no contract means no target start', MOD.startFromContract({ target_start: '2026-11-09' }, null).change === true && MOD.startFromContract({ target_start: null }, null).change === false && T.client_journey[0].target_start === null)
+  /* ── STAGE A (2026-10-17) ── */
+  { const R = globalThis.JourneyRules
+    ck('stage A: GUIDE is a payer; "Medicare GUIDE" and "guide" map to it, CDS still is not a journey', MOD.payerFrom('Medicare GUIDE') === 'guide' && MOD.payerFrom('guide') === 'guide' && MOD.payerFrom('cds') === 'cds' && R.PAYERS.guide === 'Medicare GUIDE')
+    const med = { key: 'med.emomed', payers: ['medicaid'], opened_before: '2026-10-18', active: true }
+    ck('stage A: a Medicaid step retired for new journeys still applies to a journey opened before the date (IHS records kept)', R.applies(med, { payer: 'medicaid', created_at: '2026-10-01T15:00:00Z' }) === true)
+    ck('stage A: ...and not to a journey opened on or after it', R.applies(med, { payer: 'medicaid', created_at: '2026-10-18T15:00:00Z' }) === false && R.applies({ key: 'x', payers: ['medicaid'], active: true }, { payer: 'medicaid', created_at: '2026-10-18T15:00:00Z' }) === true)
+    const so = R.ownerOf({ owner_role: 'staffing_coordinator' }, null, { assigned_cc: 'Krystal@mo-care.com' }, { staffing_email: null })
+    ck('stage A: no Staffing Coordinator: a staffing step goes to the client\'s Care Coordinator, not an owner', so.email === 'krystal@mo-care.com', so)
+    reset(); LDS().push({ id: 'G1', client_first_name: 'Gina', client_last_name: 'Guide', funding_source: 'guide' })
+    T.app_data.find((x) => x.key === 'ops_settings').data.client_journey_routing = { unknown: 'krystal@mo-care.com' }
+    let r2 = await call({ action: 'open', lead_id: 'G1' }); const JG = T.client_journey.find((j) => j.lead_id === 'G1')
+    const vG = (await call({ action: 'get', journey_id: JG.journey_id })).j
+    ck('stage A: a GUIDE lead opens a GUIDE journey, routed by the "payer not known" route, with no owner review of an "Other" payer', JG.payer === 'guide' && JG.assigned_cc === 'krystal@mo-care.com' && R.applies(CAT.find((d) => d.key === 'intake.other_review'), JG) === false && R.applies(CAT.find((d) => d.key === 'intake.other_review'), { ...JG, payer: 'other' }) === true && !open('sam@mo-care.com').length, { JG, r2: r2.j })
+    /* the Hub's own step (First visit happened) waiting: nobody's card, and never "Nobody is assigned" to the owners */
+    reset(); await call({ action: 'open', lead_id: 'L2' }); const JH = T.client_journey[0].journey_id
+    T.client_journey[0].axiscare_client_id = '296'; AX.visits = []
+    for (const d of CAT) { if (!d.payers.length || d.payers.includes('private')) { if (['fw.first_visit', 'intake.payer'].includes(d.key) || d.stage === 'firstweek' || d.stage === 'active') continue
+      T.client_journey_step.push({ journey_id: JH, step_key: d.key, state: 'complete', answer: { outcome: 'signed', hours_week: 20 }, evidence: {}, version: 1 }) } }
+    await call({ action: 'refresh', journey_id: JH })
+    ck('stage A: "First visit happened" waiting on AxisCare makes no card for the owners', step(JH, 'fw.first_visit').state !== 'complete' && !open('sam@mo-care.com').length && !cards().some((c) => /Nobody is assigned/.test(c.title + ' ' + (c.detail || ''))), open())
+    /* reopening a step the Hub ticks holds until a person finishes it or asks the Hub to check again */
+    ck('stage A setup: the Hub ticked "Client in AxisCare"', step(JH, 'ax.client').state === 'complete')
+    r2 = await call({ action: 'apply', journey_id: JH, step_key: 'ax.client', op: 'reopen', reason: 'Linked to the wrong AxisCare client' })
+    await call({ action: 'refresh', journey_id: JH })
+    ck('stage A: reopened, it stays open (the Hub does not tick it again a second later) and says who reopened it', r2.j.outcome === 'saved' && step(JH, 'ax.client').state === 'open' && step(JH, 'ax.client').evidence.hold_auto.by === 'angie@mo-care.com', step(JH, 'ax.client'))
+    r2 = await call({ action: 'apply', journey_id: JH, step_key: 'ax.client', op: 'recheck' })
+    ck('stage A: "Let the Hub check again" hands it back and the Hub ticks it from AxisCare', r2.j.outcome === 'saved' && step(JH, 'ax.client').state === 'complete' && !step(JH, 'ax.client').evidence.hold_auto && ev(JH, 'recheck').length === 1, step(JH, 'ax.client'))
+    r2 = await call({ action: 'apply', journey_id: JH, step_key: 'ax.client', op: 'recheck' })
+    ck('stage A: recheck on a step the Hub is already checking is refused', r2.j.outcome === 'refused' || r2.status === 422, r2)
+  }
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
 // the page and the server must run the SAME rules file
-{ const hub = path.join(process.cwd(), '..', 'cc-hub-live', 'journey-rules.js')
+{ const hub = path.join(process.env.HUB_ROOT || path.join(process.cwd(), '..', 'cc-hub-live'), 'journey-rules.js')
   if (fs.existsSync(hub)) { const same = fs.readFileSync(hub, 'utf8') === fs.readFileSync(path.join(F, '_shared', 'journey-rules.js'), 'utf8'); console.log((same ? '  ✓ ' : '  ✗ ') + 'the Hub page and the server run the same journey-rules.js'); if (!same) process.exitCode = 1 } }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length && !process.exitCode ? 0 : 1)

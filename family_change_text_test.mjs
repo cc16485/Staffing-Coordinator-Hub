@@ -31,6 +31,12 @@ const CASE = { client: 'Mary Smith', client_axiscare_id: '501', covered_by: 'Jan
 const APPROVED = { family_caregiver_change_text_approved: { by: 'samantha', at: '2026-09-27' } };
 const run = async (c, settings) => { gates = []; sends = []; return M.notifyFamilyOfChange(sb, { token: 't', locationId: 'l' }, c, settings, { whenText: 'Wed, Sep 30 9am-1pm' }, gate, send); };
 
+
+/* stage A (2026-10-17): a new client's open shift filled for the first time is not a "caregiver changed" */
+reset(); { const a = await run({ ...CASE, reason: 'open', calling_off: '' }, APPROVED);
+  ck('stage A: an open-schedule case (reason open, nobody held it) sends nothing: open_shift_not_a_change', a.outcome === 'none' && a.reason === 'open_shift_not_a_change' && gates.length === 0, a);
+  const b = await run({ ...CASE, reason: 'call_off', calling_off: '' }, APPROVED);
+  ck('stage A: a real call-off whose caregiver name is unknown still texts as before', b.outcome === 'sent' && gates.length > 0, b); }
 reset(); let r = await run(CASE, {});
 ck('without the recorded approval nothing is sent (complete, reason not_enabled)', r.outcome === 'none' && r.reason === 'not_enabled' && gates.length === 0, r);
 r = await run(CASE, APPROVED);
