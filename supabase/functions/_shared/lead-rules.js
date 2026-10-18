@@ -694,12 +694,20 @@
     if(ao) return R('now', 5.5, now, { big:'Assessment overdue', sub:ao.days + ' days since we talked; target ' + ao.target, tone:'amber' }, { text:'Book the assessment with ' + callerFirst + ', or say what we are waiting on', sub:last }, SCH, [CALL, { kind:'waiting', label:'Waiting on…' }], 'asmt_overdue');
     const ds = ctx.quiet_nudges ? null : decisionStale(l, ctx);
     if(ds) return R('now', 6.8, now, { big:'Deciding ' + ds.days + ' days', sub:'over ' + DECISION_DAYS + ': it needs a reason', tone:'amber' }, { text:'What are we waiting on with ' + callerFirst + '? Give it a reason, or mark it lost', sub:last }, { kind:'waiting', label:'Waiting on…' }, [CALL, { kind:'lost', label:'Mark lost…' }], 'decision_stale');
+    const nnTone = ctx.followup_rules ? 'red' : 'amber';   /* Stage 2: no next step stays red until it has one */
+    if(ctx.followup_rules){
+      const st = secondTry(l, Object.assign({}, ctx, { now, today }));
+      if(st && st.late) return R('now', 7.2, st.day, { big:'Second try ' + st.late_days + (st.late_days === 1 ? ' day' : ' days') + ' late', sub:'the first call reached nobody', tone:'red' },
+        { text:'Try ' + callerFirst + ' again (2nd try)', sub:last }, CALL, [LOG, FU], 'second_try_late');
+      if(st) return R(st.due ? 'now' : 'later', st.due ? 7.1 : 2, chicagoInstant(st.day, '09:00'), { big:st.due ? 'Second try today' : dayCap(dayWords(st.day, today)), sub:'2nd try, within ' + SECOND_TRY_DAYS + ' days of the first call', tone:st.due ? 'amber' : 'navy' },
+        { text:'Try ' + callerFirst + ' again (2nd try)', sub:last }, CALL, [LOG, FU], 'second_try');
+    }
     if(stage === 'reaching_out'){
       const cn = cadenceNext(l, ctx);
-      if(cn && cn.step === 'park') return R('now', 9, now, { big:'No next step', sub:aw || 'tried, not reached', tone:'amber' }, { text:cn.words, sub:last }, { kind:'waiting', label:'Waiting on…' }, [CALL, LOG], 'no_next_step');
-      return R('now', 9, now, { big:'No next step', sub:aw || 'tried, not reached', tone:'amber' }, { text:cn ? cn.words : 'Try ' + callerFirst + ' again, or set a follow-up', sub:last }, CALL, [cn ? { kind:'followup', label:'Set follow-up', suggest:{ day:cn.day, time:cn.time } } : FU, LOG], 'no_next_step');
+      if(cn && cn.step === 'park') return R('now', 9, now, { big:'No next step', sub:aw || 'tried, not reached', tone:nnTone }, { text:cn.words, sub:last }, { kind:'waiting', label:'Waiting on…' }, [CALL, LOG], 'no_next_step');
+      return R('now', 9, now, { big:'No next step', sub:aw || 'tried, not reached', tone:nnTone }, { text:cn ? cn.words : 'Try ' + callerFirst + ' again, or set a follow-up', sub:last }, CALL, [cn ? { kind:'followup', label:'Set follow-up', suggest:{ day:cn.day, time:cn.time } } : FU, LOG], 'no_next_step');
     }
-    return R('now', 9, now, { big:'No next step', sub:'nothing scheduled', tone:'amber' }, { text:jn ? jn.title : 'Set the next step with ' + callerFirst, sub:last }, FU, [CALL, LOG], 'no_next_step');
+    return R('now', 9, now, { big:'No next step', sub:'nothing scheduled', tone:nnTone }, { text:jn ? jn.title : 'Set the next step with ' + callerFirst, sub:last }, FU, [CALL, LOG], 'no_next_step');
   }
   /* the group order and the within-group order */
   function boardSort(a, b){
@@ -1113,7 +1121,7 @@
     const byWait = r => r === 'state' ? 'check_back_state' : r === 'unable_to_reach' ? 'unable_to_reach' : 'check_back_family';
     const key = /^new_/.test(reason) ? 'first_call' : reason === 'replied' ? 'replied' : /^promise/.test(reason) ? 'promise' : reason === 'authorized' ? 'authorized'
       : (reason === 'check_back_due' || reason === 'waiting') ? byWait(w && w.reason) : reason === 'asmt_booked' ? 'asmt_booked' : reason === 'urgent_start' ? 'urgent_start'
-      : /^followup/.test(reason) ? 'followup' : reason === 'no_next_step' && (ctx.stage === 'reaching_out') ? 'voicemail' : null;
+      : /^followup/.test(reason) ? 'followup' : (reason === 'no_next_step' && (ctx.stage === 'reaching_out')) || /^second_try/.test(reason) ? 'voicemail' : null;
     const client = (l.client_first_name || '').trim(), caller = (l.first_name || '').trim();
     const v = { first:caller || 'there', client:client && client !== caller ? client : 'your loved one', me:(ctx.me || 'a Care Coordinator').split(' ')[0],
       when:nx && (nx.kind === 'promise' || reason === 'asmt_booked') ? whenWords(nx.at, ctx.now || new Date().toISOString()) : (row && row.when && row.when.big) || 'as we said',
@@ -1199,6 +1207,38 @@
     return { text:'', sub:'', source:'none', reason:'none', due:false };
   }
 
+  /* ── FOLLOW-UP RULES (Care Coordinator Leads and Bonus, Stage 2; policy approved by Samantha 2026-10-18) ─────────────
+     Only while ops_settings.lead_followup_live (the board context carries it as ctx.followup_rules):
+       · the first call reached nobody → a second try is due within 2 days of it
+       · after that the owner picks the next date (a call log can't be saved without one, unless something else already
+         carries the lead: a promise, a booked assessment, a waiting record)
+       · a lead with no next step shows red until it has one or is closed (yes, lost with a reason, or saved for future
+         with a check-back date)
+     Reminders for staff only: nothing here contacts a family. */
+  const SECOND_TRY_DAYS = 2;
+  function followupRulesOn(settings){ return !!(settings && settings.lead_followup_live === true); }
+  const humanOuts = l => evts(l).filter(e => e && e.actor === 'human' && e.direction === 'out');
+  const closedLead = l => !l || l.archived || l.said_yes_at || isSaved(l) || ['Lost', 'Converted'].indexOf(String(l.status || '')) > -1;
+  /* {day, due, late, late_days} while the first call reached nobody and nothing else is set; else null */
+  function secondTry(l, ctx){
+    ctx = ctx || {}; const now = ctx.now || new Date().toISOString(), today = ctx.today || chicago(now).ymd;
+    if(closedLead(l) || l.first_human_contact_at || waiting(l) || leadNext(l, now)) return null;
+    const outs = humanOuts(l); if(outs.length !== 1 || outs[0].outcome === 'connected' || !outs[0].at) return null;
+    const day = addDays(chicago(outs[0].at).ymd, SECOND_TRY_DAYS);
+    return { day, due:day <= today, late:day < today, late_days:Math.max(0, daysBetween(day, today)) };
+  }
+  /* logging a call: must it carry a next date, and how far out may it be? {required, latest, why} */
+  function nextDateRule(l, outcome, ctx){
+    ctx = ctx || {}; const now = ctx.now || new Date().toISOString(), today = ctx.today || chicago(now).ymd;
+    if(outcome === 'requested_callback' || closedLead(l)) return { required:false, latest:null, why:'' };
+    if(waiting(l)) return { required:false, latest:null, why:'waiting: its check-back date carries it' };
+    const asm = asmtNext(Object.assign({}, ctx, { lead:l, now, today }));
+    if(asm && asm.kind === 'booked') return { required:false, latest:null, why:'the assessment is booked' };
+    const firstFail = outcome !== 'connected' && !l.first_human_contact_at && humanOuts(l).length === 0;
+    return { required:true, latest:firstFail ? addDays(today, SECOND_TRY_DAYS) : null,
+      why:firstFail ? 'The first call reached nobody, so the second try is within ' + SECOND_TRY_DAYS + ' days.' : 'Every open lead has a next date.' };
+  }
+
   /* ── LEAD TURNS (Care Coordinator Leads and Bonus policy, approved by Samantha 2026-10-18; Hub plan Stage 1) ─────────
      Each new lead goes to the next eligible Care Coordinator by turn, and helping never moves it. Four names stay apart:
        lead owner          l.assigned_coordinator (as before)
@@ -1281,7 +1321,7 @@
   /* the line for whoever makes a first call for the owner */
   function ownerIntro(l){ const o = firstName(l && l.assigned_coordinator); return o ? 'Calling for ' + o + '? Introduce ' + o + ' as their Care Coordinator.' : ''; }
 
-  const api = { TURN_HOW, rotationSettings, lastTurn, nextUp, giveTurn, changeOwner, noteHelper, ownerIntro,
+  const api = { SECOND_TRY_DAYS, followupRulesOn, secondTry, nextDateRule, TURN_HOW, rotationSettings, lastTurn, nextUp, giveTurn, changeOwner, noteHelper, ownerIntro,
     whenISO, START_KINDS, START_LABEL, LEGACY_URGENCY, DAYS, WAITING, WAITING_KEYS, LOST, LOST_LABEL, LOST_STAFFING, REQ_BY_STAGE, FORM_KEYS,
     RESPONSE_HOURS_DEFAULT, FIRST_ATTEMPT_MINUTES,
     ymd, addDays, daysBetween, dayWords, desiredStart, desiredStartWords, startRank, schedule, daysWords, scheduleWords, whyCalled,
