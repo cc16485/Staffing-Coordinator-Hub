@@ -98,7 +98,7 @@ globalThis.fetch = async (url, o) => { url = String(url); GH.calls.push(url + (o
   if (url.includes('/conversations/search?')) return new Response(JSON.stringify({ conversations: TEXTS.filter((c) => !url.includes('contactId=') || url.includes('contactId=' + c.contactId + '&')).map((c) => ({ id: c.id, contactId: c.contactId, phone: c.phone, fullName: c.name, lastMessageDate: Date.parse(c.msgs.at(-1).dateAdded) })) }), { status: 200 })
   if ((m = url.match(/\/conversations\/([^/]+)\/messages\?limit=\d+$/))) { const c = TEXTS.find((x) => x.id === m[1]); return new Response(JSON.stringify({ messages: { messages: c ? c.msgs : [] } }), { status: 200 }) }
   if ((m = url.match(/\/messages\/([^/]+)\/transcription$/))) return GH.transcripts[m[1]] ? new Response(JSON.stringify([{ sentenceIndex: 0, transcript: GH.transcripts[m[1]] }]), { status: 200 }) : new Response('{}', { status: 404 })
-  if ((m = url.match(/\/conversations\/messages\/([^/?]+)$/))) return new Response(JSON.stringify({ message: { id: m[1], contactId: GH.msg[m[1]] } }), { status: 200 })
+  if ((m = url.match(/\/conversations\/messages\/([^/?]+)$/))) return new Response(JSON.stringify({ message: { id: m[1], contactId: GH.msg[m[1]], userId: 'ghlUserKrystal' } }), { status: 200 })
   if ((m = url.match(/\/contacts\/([^/?]+)$/))) return GH.contacts[m[1]] ? new Response(JSON.stringify({ contact: GH.contacts[m[1]] }), { status: 200 }) : new Response('{}', { status: 404 })
   return new Response('{}', { status: 404 }) }
 async function load(fn) { fs.mkdirSync(path.join(tmp, fn), { recursive: true }); const src = rewrite(fs.readFileSync(path.join(F, fn, 'index.ts'), 'utf8'))
@@ -180,6 +180,7 @@ try {
     && call.tasks[0].urgency === 'this_week' && call.tasks[0].owner.name && call.detail.items.length === 3 && call.detail.items[1].decision === 'caller_owns', [call.tasks, call.detail.items])
   ck('the call answers the voicemail (a made-up one dropped)', JSON.stringify(call.resolves) === '[{"message_id":"ipoVD64wn8dUcDyPdjqW","task_index":0}]', call.resolves)
   ck('nothing is kept that it must not keep: no transcript lines, phone number or email in any reading', !/Speaker \d|take me to the DMV|help me get in|417|0467|example\.com/.test(JSON.stringify(DB.call_task_reading)), JSON.stringify(DB.call_task_reading).match(/.{30}(Speaker \d|417|0467|example\.com).{30}/g))
+  ck('who answered is kept on the reading (GoHighLevel user id, for the Hub\'s New family? card)', call.detail.answered_by === 'ghlUserKrystal', call.detail)
   ck('PRACTICE: nothing is written to Work (no ops_items), only the readings and a heartbeat', !DB.writes.includes('ops_items') && DB.writes.every((w) => ['call_task_reading', 'call_promise_watch', 'automation_heartbeats'].includes(w)), DB.writes)
   ck('every GoHighLevel request is a read (GET), to its message, transcript, contact and conversation endpoints', GH.calls.length === 8 && GH.calls.every((u) => !/ (POST|PUT|PATCH|DELETE)$/.test(u) && /services\.leadconnectorhq\.com\/(conversations\/messages\/|conversations\/locations\/loc1\/messages\/.*\/transcription|contacts\/|conversations\/search)/.test(u)), GH.calls)
   const ai0 = AI.length

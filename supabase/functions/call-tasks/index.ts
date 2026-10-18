@@ -270,7 +270,8 @@ Deno.serve(async (req) => {
         const r = got.reading!
         await withActions(r, db, who, s.call_at)
         Object.assign(row, { call_type: r.call_type, tasks: r.tasks.map((t) => ({ ...t, voicemail: r.is_voicemail })), resolves: r.resolves, no_task_reason: r.no_task_reason || null, detail: r.detail })
-        row.detail = { ...r.detail, contact_id: msg.contactId || null }
+        /* answered_by (2026-10-18): GoHighLevel's user on the call, so the Hub's New family? card goes to whoever took it */
+        row.detail = { ...r.detail, contact_id: msg.contactId || null, answered_by: msg.userId ? String(msg.userId).slice(0, 60) : null }
         if (r.tasks.length) out.cards += r.tasks.length; else out.no_cards++
       }
       }
