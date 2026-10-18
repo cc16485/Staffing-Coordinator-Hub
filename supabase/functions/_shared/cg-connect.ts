@@ -11,15 +11,56 @@
 // If AxisCare or the rules can't be read, nothing changes and the run says why; 3 scheduled runs in a row like that
 // open a Needs Attention item (no silent failures). Staff actions (the Hub's Connect card and "Not this person") come
 // through manualAction. Nothing here messages anyone or writes to AxisCare.
+//
+// PHONES (921, Samantha 2026-10-18: "any AxisCare phone, fill blanks hourly without overwriting, and a list of anyone with
+// no number anywhere"): AxisCare's number is its mobile, else other, else home phone (axis-census bestPhone). A new or
+// moved-over record with no usable number gets AxisCare's. Each live run, a connected Hub record with no usable number gets
+// AxisCare's through caregiver_phone_fill (never replaces a number). Anyone active in AxisCare with no number in AxisCare
+// or on their Hub record is on ONE Needs Attention item (NOPHONE_ID), kept current each run and closed when nobody is left.
 // =============================================================================
 // deno-lint-ignore-file no-explicit-any
-import type { Census, CensusRow } from './axis-census.ts'
+import { usablePhone, type Census, type CensusRow } from './axis-census.ts'
+import { isPlaceholderCaregiver } from './cg-placeholder.ts'   // "Canceled Shift" is nobody
 import { landAtConnect } from './step1-landing.ts'   /* SLICE 2e */
 
 export const RULES_FILE = 'caregiver-connect-rules.js'
 export const ELIG_FILE = 'eligibility-rules.js'   // the hire snapshot (CCElig.hiringSnapshot), the same approved copy obligations-run runs
 export const FAILING_ID = 'ops_cgconnect_failing'
 export const itemId = (ax: string) => 'ops_cgconnect_' + ax
+export const NOPHONE_ID = 'ops_cgconnect_nophone'
+
+/** Phones (921). fill: connected Hub records with no usable number whose AxisCare caregiver has one. none: caregivers
+    active in AxisCare with no number in AxisCare and none on a Hub record connected to them. */
+export function phoneWork(cgs: any[], rows: CensusRow[]) {
+  const recs = (cgs ?? []).filter((r: any) => r && typeof r === 'object' && String(r.axiscare_id ?? '').trim())
+  const byAx = new Map<string, any[]>()
+  for (const r of recs) { const k = String(r.axiscare_id).trim(); byAx.set(k, [...(byAx.get(k) ?? []), r]) }
+  const fill: { rec: any; ax: CensusRow }[] = [], none: CensusRow[] = []
+  for (const ax of rows) {
+    if (isPlaceholderCaregiver(ax.first, ax.last)) continue   // AxisCare's "Canceled Shift": not a person, never on the list
+    const mine = byAx.get(String(ax.id)) ?? []
+    if (ax.phone) { if (mine.length === 1 && !usablePhone(mine[0].phone)) fill.push({ rec: mine[0], ax }) }
+    else if (ax.active && !mine.some((r) => usablePhone(r.phone))) none.push(ax)
+  }
+  return { fill, none }
+}
+/** A record about to be added (new or moved over) with no usable number gets AxisCare's. */
+export function withAxisPhone(record: any, ax: CensusRow | undefined, at: string) {
+  if (!record || usablePhone(record.phone) || !ax?.phone) return record
+  return { ...record, phone: ax.phone, phone_from: { source: 'axiscare', field: ax.phone_field, at, by: 'caregiver-connect', ...(record.phone ? { was: record.phone } : {}) } }
+}
+function noPhoneItem(C: any, none: CensusRow[], owner: string, at: string, prev: any) {
+  const names = none.map((r) => C.name(r) || ('AxisCare ' + r.id)).sort((a: string, b: string) => a.localeCompare(b))
+  const detail = `${names.length === 1 ? 'This caregiver is' : 'These caregivers are'} active in AxisCare, but neither AxisCare nor their Hub record has a phone number, `
+    + `so they get no Booking App offers and no Hub texts: ${names.join(', ')}. Add their mobile in AxisCare and the Hub copies it within the hour (or add it on their Hub caregiver record).`
+  return {
+    ...(prev ?? {}), id: NOPHONE_ID, kind: 'caregiver_connect', domain: 'caregivers', about: names.join(', '), names,
+    title: `Caregivers with no phone number: ${names.length}`, detail, next_action: 'Add their mobile in AxisCare.',
+    status: 'open', urgency: 'normal', created_at: prev?.created_at ?? at, first_at: prev?.first_at ?? at, last_activity_at: at,
+    opened_by: 'caregiver-connect', created_by: 'caregiver-connect', owner: prev?.owner ?? owner, owner_name: prev?.owner_name ?? '',
+    log: [...(Array.isArray(prev?.log) ? prev.log : []), { at, by: 'automation', text: 'The hourly caregiver check found: ' + names.join(', ') + '.' }],
+  }
+}
 
 export type Rules = { ok: true; C: any; E: any } | { ok: false; error: string }
 export type Deps = { census: () => Promise<Census>; rules: () => Promise<Rules> }
@@ -150,7 +191,12 @@ export async function runJob(db: any, deps: Deps, o: JobOpts) {
   const plan = C.plan(cen.rows, L.cgs, L.cands, { blocked })
   const counts = { census_total: cen.total, census_active: cen.rows.filter((r: CensusRow) => r.active).length,
     linked: plan.link.length, moved: plan.move.length, created: plan.create.length, review: plan.review.length }
-  if (o.dry) return { ok: true, dry: true, mode, ...counts, truncated: cen.truncated }
+  const ph = phoneWork(L.cgs, cen.rows)
+  const phoneCounts = { phones_to_fill: ph.fill.length, no_phone: ph.none.length }
+  const nmOf = (x: any) => C.name(x) || ('AxisCare ' + x.id)
+  if (o.dry) return { ok: true, dry: true, mode, ...counts, ...phoneCounts, truncated: cen.truncated,   // the owner's look: who, by name
+    phones_to_fill_names: ph.fill.map((f) => `${nmOf(f.ax)} (AxisCare ${f.ax.phone_field === 'mobilePhone' ? 'mobile' : f.ax.phone_field === 'otherPhone' ? 'other phone' : 'home phone'})`).sort(),
+    no_phone_names: ph.none.map(nmOf).sort() }
 
   const nm = (x: any) => C.name(x)
   const reviewRows = plan.review.map((r: any) => ({ action: 'review', axiscare_id: String(r.ax.id), ax_name: nm(r.ax), why: r.why,
@@ -168,7 +214,7 @@ export async function runJob(db: any, deps: Deps, o: JobOpts) {
     if (error) return fail('the practice list could not be saved: ' + String(error.message ?? error).slice(0, 120))
     await recordRun(db, { run_id: o.runId, mode, caller: o.caller, ok: true, ...counts, note })
     try { await closeItem(db, L.items, FAILING_ID, 'automation', 'Running again.') } catch { /* next run */ }
-    return { ok: true, mode, ...counts, truncated: cen.truncated }
+    return { ok: true, mode, ...counts, ...phoneCounts, truncated: cen.truncated }
   }
 
   // ── live ──
@@ -188,13 +234,13 @@ export async function runJob(db: any, deps: Deps, o: JobOpts) {
     if (r?.ok) done.linked.push(String(a.ax.id))
   }
   for (const m of plan.move) {
-    const record = C.movedRecord(m.cand, m.ax, { promoted_at: at, hiring_snapshot: E.hiringSnapshot(m.cand), today,
-      connected: { at, how: m.how, by: 'auto', from: 'background & references' } })
+    const record = withAxisPhone(C.movedRecord(m.cand, m.ax, { promoted_at: at, hiring_snapshot: E.hiringSnapshot(m.cand), today,
+      connected: { at, how: m.how, by: 'auto', from: 'background & references' } }), m.ax, at)
     const r = await apply({ op: 'move', axiscare_id: String(m.ax.id), ax_name: nm(m.ax), how: m.how, candidate_id: String(m.cand.id), cand_base_rev: rev(m.cand), record })
     if (r?.ok) { done.moved.push(String(m.ax.id)); /* SLICE 2e: their Step 1 availability and skills land now that they have an AxisCare id */ (done as any).landed = { ...((done as any).landed || {}), [String(m.ax.id)]: await landAtConnect(db, m.cand, r.caregiver_id ?? record.id ?? '', m.ax, at) } }
   }
   for (const c of plan.create) {
-    const record = C.newRecord(c.ax, { connected: { at, by: 'auto', how: 'new' }, via: 'auto from AxisCare' })
+    const record = withAxisPhone(C.newRecord(c.ax, { connected: { at, by: 'auto', how: 'new' }, via: 'auto from AxisCare' }), c.ax, at)
     const r = await apply({ op: 'create', axiscare_id: String(c.ax.id), ax_name: nm(c.ax), how: 'new', record })
     if (r?.ok) done.created.push(String(c.ax.id))
   }
@@ -212,11 +258,33 @@ export async function runJob(db: any, deps: Deps, o: JobOpts) {
   for (const ax of new Set([...plan.connected, ...done.linked, ...done.moved, ...done.created])) {
     try { await closeItem(db, items, itemId(ax), 'automation', 'Connected to their Hub record.') } catch (e) { errors.push(String((e as Error).message)) }
   }
+  // phones (921): after the connections above, so a record connected this run is filled this run too
+  let phonesFilled = 0, noPhone = 0
+  try {
+    const L2 = await lists(db)
+    items = L2.items
+    const w = phoneWork(L2.cgs, cen.rows)
+    noPhone = w.none.length
+    for (const f of w.fill) {
+      const { data, error } = await db.rpc('caregiver_phone_fill', { p: { caregiver_id: String(f.rec.id), axiscare_id: String(f.ax.id), phone: f.ax.phone, field: f.ax.phone_field, base_rev: rev(f.rec) } })
+      if (error) { errors.push('a phone could not be copied: ' + String(error.message ?? error).slice(0, 100)); break }
+      if (data?.ok) phonesFilled++
+    }
+    const prev = items.find((x: any) => x && x.id === NOPHONE_ID)
+    if (w.none.length) {
+      const names = w.none.map((r) => C.name(r) || ('AxisCare ' + r.id)).sort((a: string, b: string) => a.localeCompare(b))
+      const same = Array.isArray(prev?.names) && prev.names.join('|') === names.join('|')
+      // kept current while open; a list a person closed opens again only when it names someone new
+      if (isOpen(prev) ? !same : !(prev && same)) await putItem(db, noPhoneItem(C, w.none, await caregiversOwner(db), at, isOpen(prev) ? prev : null))
+    } else if (isOpen(prev)) {
+      await closeItem(db, items, NOPHONE_ID, 'automation', 'Everyone active in AxisCare now has a phone number.')
+    }
+  } catch (e) { errors.push('phones: ' + String((e as Error).message ?? e).slice(0, 120)) }
   try { await closeItem(db, items, FAILING_ID, 'automation', 'Running again.') } catch { /* next run */ }
-  const out = { linked: done.linked.length, moved: done.moved.length, created: done.created.length, review: plan.review.length, refused }
+  const out = { linked: done.linked.length, moved: done.moved.length, created: done.created.length, review: plan.review.length, refused, phones_filled: phonesFilled, no_phone: noPhone }
   const landed = (done as any).landed as Record<string, unknown> | undefined   /* SLICE 2e: what Step 1 landed per moved person (answered, not stored on the run row) */
   await recordRun(db, { run_id: o.runId, mode, caller: o.caller, ok: errors.length === 0, census_total: counts.census_total, census_active: counts.census_active,
-    ...out, error: errors.length ? errors.slice(0, 3).join(' · ').slice(0, 300) : null, note })
+    linked: out.linked, moved: out.moved, created: out.created, review: out.review, refused: out.refused, phones_filled: out.phones_filled, error: errors.length ? errors.slice(0, 3).join(' · ').slice(0, 300) : null, note })
   return { ok: errors.length === 0, mode, census_total: counts.census_total, census_active: counts.census_active, ...out, truncated: cen.truncated, ...(landed ? { landed } : {}), ...(errors.length ? { errors } : {}) }
 }
 
@@ -267,9 +335,9 @@ export async function manualAction(db: any, deps: Deps, staff: Staff, body: any)
     if (!cand) return { ok: false, status: 404, message: 'They are no longer in Background & References. Nothing was changed.' }
     movedCand = cand
     p = { op: 'move', axiscare_id: axId, ax_name: name, how: 'manual', candidate_id: kid, cand_base_rev: rev(cand),
-      record: C.movedRecord(cand, ax, { promoted_at: at, hiring_snapshot: E.hiringSnapshot(cand), today: at.slice(0, 10), connected: { ...connected, from: 'background & references' } }) }
+      record: withAxisPhone(C.movedRecord(cand, ax, { promoted_at: at, hiring_snapshot: E.hiringSnapshot(cand), today: at.slice(0, 10), connected: { ...connected, from: 'background & references' } }), ax, at) }
   } else {
-    p = { op: 'create', axiscare_id: axId, ax_name: name, how: 'manual', record: C.newRecord(ax, { connected, via: 'manual from AxisCare' }) }
+    p = { op: 'create', axiscare_id: axId, ax_name: name, how: 'manual', record: withAxisPhone(C.newRecord(ax, { connected, via: 'manual from AxisCare' }), ax, at) }
   }
   const { data, error } = await db.rpc('caregiver_connect_apply', { p: { ...p, mode: 'manual', by: who } })
   if (error) return { ok: false, status: 500, message: 'That did not go through: ' + String(error.message ?? error).slice(0, 120) }

@@ -68,7 +68,7 @@ try {
 
 
   const sign = async (id, extra = {}) => call({ action: 'sign', id, answers: { ...FAMILY, ...extra }, signer: { name: 'Nancy Anderson', role: 'representative', relationship: 'Wife' }, initials: { ...TAPS, poa: '2026-10-16T15:07:00Z' }, signature: SIG, consent: true })
-  const FAM = { ...FAMILY, 'poa.name': 'Nancy Anderson', 'poa.relationship': 'Wife', 'access.3_garage_door_access_code': true, 'access.garage_code': '9753' }
+  const FAM = { ...FAMILY, 'poa.name': 'Nancy Anderson', 'poa.relationship': 'Wife', 'access.3_garage_door_access_code': true, 'access.garage_code': '9753', 'vehicle.driver_s_license': 'D998877' }
   const textOf = async (bytes) => { const d = await PDFDocument.load(bytes); return d }
   const { execFileSync } = await import('child_process')
   const textCache = new Map()
@@ -86,10 +86,12 @@ try {
   ck('the original says "Signed electronically on" beside each signature and at the foot of every page', pages(orig).length === 24 && pages(orig).every((p) => /Signed electronically on October \d+, 2026 · Caring Companions Client Care Agreement/.test(p)) && (pdfText(orig).match(/Signed electronically on October \d+, 2026 at/g) || []).length >= 3, pdfText(orig).slice(0, 300))
   const od = await textOf(orig); ck('the original is still the 23 pages plus the signature record page', od.getPageCount() === 24)
   ck('the original has no "COPY" and keeps the lockbox and garage codes', !has(orig, 'COPY') && has(orig, '2468') && has(orig, '9753'))
+  ck('stage A: the original keeps the driver\'s license number', has(orig, 'D998877'))
   const up = GHL.calls.find((c) => c.kind === 'upload'), sent = GHL.calls.find((c) => c.kind === 'send')
   ck('the copy goes through the family send gate: family, a person\'s tap, email channel, sender client-agreement', GATE.calls.length === 1 && GATE.calls[0].opts.audience === 'family' && GATE.calls[0].opts.humanInitiated === true && GATE.calls[0].opts.channel === 'email' && GATE.calls[0].opts.sender === 'client-agreement' && GATE.calls[0].person.firstName === 'Nancy', GATE.calls)
   ck('GoHighLevel: the PDF is uploaded as a secure attachment to that contact, with the Hub\'s key', up && up.secure === 'true' && up.contactId === 'ct-nancy@example.com' && up.locationId === 'loc1' && up.auth === 'Bearer ghl-k' && up.name.endsWith('.pdf'), up && { ...up, bytes: up.bytes?.length })
   ck('the emailed copy has the big "COPY" and hides the codes ("on file with the office")', up && pages(up.bytes).every((p) => p.includes('COPY')) && has(up.bytes, 'on file with the office') && !has(up.bytes, '2468') && !has(up.bytes, '9753'))
+  ck('stage A: the emailed copy never shows the driver\'s license number', up && !has(up.bytes, 'D998877'))
   ck('the email: an Email to that contact, the attachment, her wording, no em dashes', sent && sent.body.type === 'Email' && sent.body.contactId === 'ct-nancy@example.com' && sent.body.attachments[0] === 'https://files.example/secure/abc'
     && sent.body.subject === 'Your signed Client Care Agreement' && /Hi Nancy,/.test(sent.body.html) && /Client Handbook/.test(sent.body.html) && /Edward/.test(sent.body.html) && !/—/.test(sent.body.html), sent?.body)
   const e1 = T.client_agreements[0].copies.emails[0]

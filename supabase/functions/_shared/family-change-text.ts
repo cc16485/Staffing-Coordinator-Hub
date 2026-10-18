@@ -47,6 +47,9 @@ export async function notifyFamilyOfChange(
 ): Promise<FamilyResult> {
   const approval = settings?.family_caregiver_change_text_approved
   if (!approval || typeof approval !== 'object') return { outcome: 'none', count: 0, reason: 'not_enabled', circle: null }
+  /* stage A (2026-10-17): filling an open shift nobody held (coverage-watch's open-schedule cases, reason 'open': a new client's first caregiver) is
+     not a change: the family hears about their caregiver from the Care Coordinator (Start of Care step 7), never this text */
+  if (c?.reason === 'open' && !String(c?.calling_off ?? '').trim()) return { outcome: 'none', count: 0, reason: 'open_shift_not_a_change', circle: null }
   /* never "Ashley can't make it, so Ashley is coming instead" (Elizabeth Kurtz, 2026-09-27) */
   if (coversThemselves(c)) return { outcome: 'none', count: 0, reason: 'covering_caregiver_is_the_one_who_called_off', circle: null }
   const ax = String(c?.client_axiscare_id ?? '').trim()

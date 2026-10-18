@@ -417,9 +417,169 @@ try {
   ck('CRM plan A: the contract\'s new date reaches the journey on the next refresh', T.client_journey[0].target_start === '2026-11-09')
   T.start_contract_current = []; await call({ action: 'refresh', journey_id: jA.journey_id })
   ck('CRM plan A: startFromContract: no contract means no target start', MOD.startFromContract({ target_start: '2026-11-09' }, null).change === true && MOD.startFromContract({ target_start: null }, null).change === false && T.client_journey[0].target_start === null)
+  /* ── STAGE A (2026-10-17) ── */
+  { const R = globalThis.JourneyRules
+    ck('stage A: GUIDE is a payer; "Medicare GUIDE" and "guide" map to it, CDS still is not a journey', MOD.payerFrom('Medicare GUIDE') === 'guide' && MOD.payerFrom('guide') === 'guide' && MOD.payerFrom('cds') === 'cds' && R.PAYERS.guide === 'Medicare GUIDE')
+    const med = { key: 'med.emomed', payers: ['medicaid'], opened_before: '2026-10-18', active: true }
+    ck('stage A: a Medicaid step retired for new journeys still applies to a journey opened before the date (IHS records kept)', R.applies(med, { payer: 'medicaid', created_at: '2026-10-01T15:00:00Z' }) === true)
+    ck('stage A: ...and not to a journey opened on or after it', R.applies(med, { payer: 'medicaid', created_at: '2026-10-18T15:00:00Z' }) === false && R.applies({ key: 'x', payers: ['medicaid'], active: true }, { payer: 'medicaid', created_at: '2026-10-18T15:00:00Z' }) === true)
+    const so = R.ownerOf({ owner_role: 'staffing_coordinator' }, null, { assigned_cc: 'Krystal@mo-care.com' }, { staffing_email: null })
+    ck('stage A: no Staffing Coordinator: a staffing step goes to the client\'s Care Coordinator, not an owner', so.email === 'krystal@mo-care.com', so)
+    reset(); LDS().push({ id: 'G1', client_first_name: 'Gina', client_last_name: 'Guide', funding_source: 'guide' })
+    T.app_data.find((x) => x.key === 'ops_settings').data.client_journey_routing = { unknown: 'krystal@mo-care.com' }
+    let r2 = await call({ action: 'open', lead_id: 'G1' }); const JG = T.client_journey.find((j) => j.lead_id === 'G1')
+    const vG = (await call({ action: 'get', journey_id: JG.journey_id })).j
+    ck('stage A: a GUIDE lead opens a GUIDE journey, routed by the "payer not known" route, with no owner review of an "Other" payer', JG.payer === 'guide' && JG.assigned_cc === 'krystal@mo-care.com' && R.applies(CAT.find((d) => d.key === 'intake.other_review'), JG) === false && R.applies(CAT.find((d) => d.key === 'intake.other_review'), { ...JG, payer: 'other' }) === true && !open('sam@mo-care.com').length, { JG, r2: r2.j })
+    /* the Hub's own step (First visit happened) waiting: nobody's card, and never "Nobody is assigned" to the owners */
+    reset(); await call({ action: 'open', lead_id: 'L2' }); const JH = T.client_journey[0].journey_id
+    T.client_journey[0].axiscare_client_id = '296'; AX.visits = []
+    for (const d of CAT) { if (!d.payers.length || d.payers.includes('private')) { if (['fw.first_visit', 'intake.payer'].includes(d.key) || d.stage === 'firstweek' || d.stage === 'active') continue
+      T.client_journey_step.push({ journey_id: JH, step_key: d.key, state: 'complete', answer: { outcome: 'signed', hours_week: 20 }, evidence: {}, version: 1 }) } }
+    await call({ action: 'refresh', journey_id: JH })
+    ck('stage A: "First visit happened" waiting on AxisCare makes no card for the owners', step(JH, 'fw.first_visit').state !== 'complete' && !open('sam@mo-care.com').length && !cards().some((c) => /Nobody is assigned/.test(c.title + ' ' + (c.detail || ''))), open())
+    /* reopening a step the Hub ticks holds until a person finishes it or asks the Hub to check again */
+    ck('stage A setup: the Hub ticked "Client in AxisCare"', step(JH, 'ax.client').state === 'complete')
+    r2 = await call({ action: 'apply', journey_id: JH, step_key: 'ax.client', op: 'reopen', reason: 'Linked to the wrong AxisCare client' })
+    await call({ action: 'refresh', journey_id: JH })
+    ck('stage A: reopened, it stays open (the Hub does not tick it again a second later) and says who reopened it', r2.j.outcome === 'saved' && step(JH, 'ax.client').state === 'open' && step(JH, 'ax.client').evidence.hold_auto.by === 'angie@mo-care.com', step(JH, 'ax.client'))
+    r2 = await call({ action: 'apply', journey_id: JH, step_key: 'ax.client', op: 'recheck' })
+    ck('stage A: "Let the Hub check again" hands it back and the Hub ticks it from AxisCare', r2.j.outcome === 'saved' && step(JH, 'ax.client').state === 'complete' && !step(JH, 'ax.client').evidence.hold_auto && ev(JH, 'recheck').length === 1, step(JH, 'ax.client'))
+    r2 = await call({ action: 'apply', journey_id: JH, step_key: 'ax.client', op: 'recheck' })
+    ck('stage A: recheck on a step the Hub is already checking is refused', r2.j.outcome === 'refused' || r2.status === 422, r2)
+  }
+  /* ── STAGE B (2026-10-17): the nine-step Start of Care ── */
+  { const R = globalThis.JourneyRules, NINE = JSON.parse(fs.readFileSync('client-journey/catalog-nine.json', 'utf8')).steps
+    const realFetch = globalThis.fetch
+    globalThis.fetch = async (url, o) => { url = String(url)
+      if (/\/api\/clients\/\d+\/responsibleParties/.test(url)) return new Response(JSON.stringify({ results: { responsibleParties: AX.rps || [] } }), { status: 200 })
+      if (/\/api\/clients\/\d+\/adls/.test(url)) return new Response(JSON.stringify({ results: { adls: AX.adls || [] } }), { status: 200 })
+      return realFetch(url, o) }
+    const resetNine = () => { reset(); T.client_journey_step_def.push(...NINE.map((d) => ({ key: d.key, def: d, active: true, catalog_version: 9 })))
+      Object.assign(T.app_data.find((x) => x.key === 'ops_settings').data, { soc_nine_steps_live: true }) }
+    const L = (id) => T.app_data.find((x) => x.key === 'leads').data.find((l) => l.id === id)
+    const appd = (k, v) => { const r = T.app_data.find((x) => x.key === k); if (r) r.data = v; else T.app_data.push({ key: k, data: v }) }
+    const S9 = (jid, k) => step(jid, k)
+    resetNine(); let r9 = await call({ action: 'open', lead_id: 'L2' }); const J9 = T.client_journey[0], JID9 = J9.journey_id
+    ck('stage B: with the switch on, a new journey starts on the nine steps', J9.catalog === 'nine' && r9.j.outcome === 'created', r9.j)
+    const v0 = R.compute(T.client_journey_step_def.map((x) => ({ ...x.def, key: x.key })), J9, [], { today: R.ymd(Date.now()) })
+    ck('stage B: a nine-step journey sees exactly the nine steps, in order (no old step leaks in)', v0.rows.map((x) => x.key).join() === NINE.map((d) => d.key).join(), v0.rows.map((x) => x.key))
+    ck('stage B: an old journey (catalog v1) never sees the nine steps', !R.compute(T.client_journey_step_def.map((x) => ({ ...x.def, key: x.key })), { payer: 'private' }, [], {}).rows.some((x) => x.def.catalog === 'nine'))
+    await call({ action: 'refresh', journey_id: JID9 })
+    ck('stage B 1: New Lead stays up while the lead is missing phone and town, and says so', S9(JID9, 'soc.lead').state !== 'complete' && /Missing: phone, town/.test(S9(JID9, 'soc.lead').evidence.auto.basics.detail), S9(JID9, 'soc.lead'))
+    Object.assign(L('L2'), { phone: '4175551234', client_city: 'Republic', assessment_at: '2026-10-22T10:00' }); await call({ action: 'refresh', journey_id: JID9 })
+    ck('stage B 1: ...name, phone, town, payer and a booked assessment: it finishes itself', S9(JID9, 'soc.lead').state === 'complete' && S9(JID9, 'soc.lead').completed_by === 'hub', S9(JID9, 'soc.lead'))
+    appd('care_assessments', [{ id: 'A1', lead_id: 'L2', status: 'Scheduled' }]); await call({ action: 'refresh', journey_id: JID9 })
+    ck('stage B 2: an assessment still Scheduled does not count', S9(JID9, 'soc.assess').state !== 'complete')
+    r9 = await call({ action: 'apply', journey_id: JID9, step_key: 'soc.assess', op: 'confirm_check', check: 'saved' })
+    ck('stage B 2: confirming a check by hand needs a reason', r9.j.outcome === 'refused')
+    appd('care_assessments', [{ id: 'A1', lead_id: 'L2', status: 'Completed — Awaiting Plan', visit_date: '2026-10-22' }]); await call({ action: 'refresh', journey_id: JID9 })
+    ck('stage B 2: saved as done in the Hub: Care Assessment finishes itself', S9(JID9, 'soc.assess').state === 'complete')
+    r9 = await call({ action: 'apply', journey_id: JID9, step_key: 'soc.outcome', op: 'complete', answer: { outcome: 'ready' } })
+    ck('stage B 3: Ready to Start before the agreement is signed is allowed, and the inquiry counts as a yes', r9.j.outcome === 'saved' && S9(JID9, 'soc.outcome').state === 'complete' && !!L('L2').said_yes_at && L('L2').status === 'Converted', r9.j)
+    let g9 = await call({ action: 'get', journey_id: JID9 })
+    ck('stage B 3: no AxisCare client and no agreement yet: the header gets no agreement (Agreement Pending)', g9.j.agreement === null && g9.j.nine_live === true)
+    L('L2').axiscare_client_id = '296'; T.client_journey[0].axiscare_client_id = '296'; AX.rps = []; AX.adls = []
+    T.client_agreements = [{ id: 'g1', axiscare_client_id: '296', status: 'signed', created_at: '2026-10-22T12:00:00Z' }]
+    await call({ action: 'refresh', journey_id: JID9 })
+    const au = () => S9(JID9, 'soc.setup').evidence.auto
+    ck('stage B 4: the Hub ticks the AxisCare client, and says the agreement still needs the office countersign', au().ax_client.ok && !au().agreement.ok && /countersign/.test(au().agreement.detail) && !au().ax_contacts.ok, au())
+    T.client_agreements[0].status = 'countersigned'; T.client_agreements[0].countersigned_at = '2026-10-22T13:00:00Z'; AX.rps = [{ name: 'Lisa Ellis' }]; AX.adls = [{ id: 7 }]
+    await call({ action: 'refresh', journey_id: JID9 })
+    ck('stage B 4: agreement, contacts and tasks ticked by the Hub; the step waits for the person checks', au().agreement.ok && au().ax_contacts.ok && au().ax_tasks.ok && S9(JID9, 'soc.setup').state !== 'complete')
+    r9 = await call({ action: 'apply', journey_id: JID9, step_key: 'soc.setup', op: 'save', answer: { health: true, billing_service: 'Private Pay, Personal Care', billing_rate: '$32/hr', docs: true, va_auth: 'X' } })
+    await call({ action: 'refresh', journey_id: JID9 })
+    ck('stage B 4: the person checks saved (who and when kept), a VA field ignored for a private client, and the step finished itself', S9(JID9, 'soc.setup').state === 'complete' && S9(JID9, 'soc.setup').answer.billing_rate === '$32/hr' && !('va_auth' in S9(JID9, 'soc.setup').answer) && S9(JID9, 'soc.setup').evidence.answered.docs.by === 'angie@mo-care.com', S9(JID9, 'soc.setup'))
+    appd('staffing_plans', [{ id: 'tb1', lead_id: 'L2', days: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'], slots: [{ k: 's1', label: '8am-12pm', start: '08:00', end: '12:00' }], cells: {} }])
+    await call({ action: 'apply', journey_id: JID9, step_key: 'soc.confirm', op: 'save', answer: { approved: true, schedule: 'Every day 8 to 12 from Oct 26' } }); await call({ action: 'refresh', journey_id: JID9 })
+    ck('stage B 5: approved, but no caregiver yes for the first visit yet: still up, and says which visit', S9(JID9, 'soc.confirm').state !== 'complete' && /No yes yet/.test(S9(JID9, 'soc.confirm').evidence.auto.first_yes.detail), S9(JID9, 'soc.confirm').evidence)
+    const pl = T.app_data.find((x) => x.key === 'staffing_plans').data[0]; ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'].forEach((d) => { pl.cells[d + '|s1'] = { name: 'Maria V', status: 'yes' } })
+    await call({ action: 'refresh', journey_id: JID9 })
+    ck('stage B 5: the first visit\'s caregiver said yes: Confirm Schedule + Caregivers finishes', S9(JID9, 'soc.confirm').state === 'complete', S9(JID9, 'soc.confirm').evidence)
+    AX.visits = [{ id: 'v1', scheduledStartDate: R.addDays(R.ymd(Date.now()), 3) + 'T08:00:00' }, { id: 'v2', scheduledStartDate: R.addDays(R.ymd(Date.now()), 5) + 'T08:00:00' }]
+    await call({ action: 'refresh', journey_id: JID9 })
+    ck('stage B 6: visits in AxisCare but the first has no caregiver: up, and the coverage is kept for the screen', S9(JID9, 'soc.axis').state !== 'complete' && S9(JID9, 'soc.axis').evidence.auto.first_assigned.facts.unassigned === 2, S9(JID9, 'soc.axis').evidence)
+    AX.visits[0].caregiver = { id: 9, firstName: 'Maria', lastName: 'V' }; await call({ action: 'refresh', journey_id: JID9 })
+    const f6 = S9(JID9, 'soc.axis').evidence.auto.first_assigned
+    ck('stage B 6: the first visit has its caregiver: done, while the open later visit stays visible (1 of 2 open)', S9(JID9, 'soc.axis').state === 'complete' && f6.facts.unassigned === 1 && /Maria V/.test(f6.detail), f6)
+    await call({ action: 'apply', journey_id: JID9, step_key: 'soc.start', op: 'save', answer: { first_at: 'Mon 8:00am', family_told: true, cg_confirmed: true } }); await call({ action: 'refresh', journey_id: JID9 })
+    ck('stage B 7: family told, caregiver confirmed (incl. sees it in the app): Confirm Start of Care done', S9(JID9, 'soc.start').state === 'complete')
+    const vd = R.addDays(R.ymd(Date.now()), -1)
+    AX.visits = [{ id: 'v0', scheduledStartDate: vd + 'T08:00:00', clockIn: { time: 'x' }, clockOut: { time: 'y' }, caregiver: { id: 9 } }]
+    const dowNext = new Date(R.addDays(vd, 1) + 'T12:00:00Z').getUTCDay()
+    appd('duty_windows', [{ area: 'operations', person: 'sally@mo-care.com', recur: { days: [dowNext], from: '08:00', to: '17:00' } }]); appd('positions', [])
+    await call({ action: 'refresh', journey_id: JID9 }); await call({ action: 'refresh', journey_id: JID9 })
+    const s8 = S9(JID9, 'soc.first'), s9 = S9(JID9, 'soc.follow')
+    ck('stage B 8: the first visit with clock-in and clock-out is recorded in the Hub (actual date), and AxisCare is not written', s8.state === 'complete' && s8.evidence.actual_first_visit === vd, s8)
+    ck('stage B 9: the follow-up is due the next day the duty schedule covers, with the person covering it (the Care Coordinator is not on)', s9.evidence && s9.evidence.due_on === R.addDays(vd, 1) && s9.owner_email === 'sally@mo-care.com', s9)
+    r9 = await call({ action: 'apply', journey_id: JID9, step_key: 'soc.follow', op: 'complete', answer: { arrived: 'yes', satisfied: 'yes', concerns: 'none', changes: 'schedule', changes_note: 'Wants Fridays later', schedule_ok: true, urgent: true } })
+    const tasks = T.app_data.find((x) => x.key === 'ops_items').data.filter((x) => x.kind === 'journey_followup')
+    ck('stage B 9: a change needed becomes ONE task for the Care Coordinator; urgent goes to whoever holds Operations now; Start of Care finishes', r9.j.outcome === 'saved' && tasks.length === 2 && tasks.some((t) => t.urgency === 'normal' && /schedule/.test(t.title)) && tasks.some((t) => t.urgency === 'urgent') && T.client_journey[0].status === 'active', { r: r9.j, tasks, st: T.client_journey[0].status })
+    /* followPlan on its own */
+    const fp1 = MOD.followPlan([{ area: 'operations', person: 'krystal@mo-care.com', recur: { days: [1, 2, 3, 4, 5] } }], [], 'krystal@mo-care.com', '2026-10-23')
+    ck('stage B 9: a Friday first visit, Care Coordinator works weekdays, no weekend cover: due Monday with her', fp1.due === '2026-10-26' && fp1.owner === 'krystal@mo-care.com', fp1)
+    const fp2 = MOD.followPlan([{ area: 'operations', person: 'krystal@mo-care.com', recur: { days: [1, 2, 3, 4, 5] } }, { area: 'after_hours', person: 'angie@mo-care.com', recur: { days: [6] } }, { area: 'operations', person: 'angie@mo-care.com', recur: { days: [6] } }], [], 'krystal@mo-care.com', '2026-10-23')
+    ck('stage B 9: ...with Saturday Operations cover: due Saturday with the person covering', fp2.due === '2026-10-24' && fp2.owner === 'angie@mo-care.com', fp2)
+    const fp3 = MOD.followPlan([], [], 'krystal@mo-care.com', '2026-10-23')
+    ck('stage B 9: no duty schedule at all: the next business day with the Care Coordinator', fp3.due === '2026-10-26' && fp3.owner === 'krystal@mo-care.com', fp3)
+    /* cannot accept closes; flexible booking skips the schedule steps */
+    resetNine(); await call({ action: 'open', lead_id: 'L2' }); const JC = T.client_journey[0].journey_id
+    for (const k of ['soc.lead', 'soc.assess']) T.client_journey_step.push({ journey_id: JC, step_key: k, state: 'complete', evidence: {}, version: 1 })
+    r9 = await call({ action: 'apply', journey_id: JC, step_key: 'soc.outcome', op: 'complete', answer: { outcome: 'cannot', reason: 'Needs nursing care we do not provide' } })
+    const vC = (await call({ action: 'get', journey_id: JC })).j
+    ck('stage B 3: Cannot Accept stops the journey with the reason; the assessment is kept', R.compute(vC.defs, vC.journey, vC.steps, {}).stop?.key === 'soc.outcome', r9.j)
+    resetNine(); L('L2').axiscare_client_id = '296'; await call({ action: 'open', lead_id: 'L2' }); const JF = T.client_journey[0].journey_id
+    for (const k of ['soc.lead', 'soc.assess', 'soc.outcome', 'soc.setup']) T.client_journey_step.push({ journey_id: JF, step_key: k, state: 'complete', evidence: {}, version: 1 })
+    T.care_circles = [{ axiscare_client_id: '296', care_scheduling_type: 'flexible' }]
+    await call({ action: 'refresh', journey_id: JF }); await call({ action: 'refresh', journey_id: JF })
+    ck('stage B: a Flexible Booking Care client skips Confirm Schedule + Caregivers and Schedule in AxisCare (not needed), never a recurring schedule', S9(JF, 'soc.confirm').state === 'not_needed' && S9(JF, 'soc.axis').state === 'not_needed', [S9(JF, 'soc.confirm'), S9(JF, 'soc.axis')])
+    delete T.care_circles
+    /* the move: preview changes nothing; the real move lands each journey where its facts put it */
+    reset(); T.client_journey_step_def.push(...NINE.map((d) => ({ key: d.key, def: d, active: true, catalog_version: 9 })))
+    await call({ action: 'open', lead_id: 'L2' }); const JM = T.client_journey[0].journey_id; L('L2').said_yes_at = '2026-10-10T10:00:00Z'
+    r9 = await call({ action: 'place_nine', practice: true }, 'sam')
+    ck('stage B move: the preview says where each journey would land and changes nothing', r9.j.outcome === 'practice' && r9.j.journeys[0].to === 'Client Setup + Billing in AxisCare' && (T.client_journey[0].catalog || 'v1') === 'v1', r9.j)
+    r9 = await call({ action: 'place_nine', practice: false }, 'sam')
+    ck('stage B move: the real move is refused while the switch is off', r9.status === 409)
+    r9 = await call({ action: 'place_nine', practice: true }, 'an'); ck('stage B move: only an owner can preview or move', r9.status === 403)
+    Object.assign(T.app_data.find((x) => x.key === 'ops_settings').data, { soc_nine_steps_live: true })
+    r9 = await call({ action: 'place_nine', practice: false }, 'sam')
+    ck('stage B move: a family that said yes moves to step 4 with steps 1 to 3 recorded as moved (old steps kept)', T.client_journey[0].catalog === 'nine' && ['soc.lead', 'soc.assess', 'soc.outcome'].every((k) => step(JM, k).state === 'complete' && step(JM, k).completed_by_name === 'Moved to the nine steps') && ev(JM, 'moved_to_nine').length === 1, T.client_journey_step.filter((x) => x.journey_id === JM))
+    const pc = MOD.placeNine({ in_care: '2026-10-08', old: {} })
+    ck('stage B move: a client already receiving care (Dan, Edward, Peggy) lands as Start of Care complete', pc.active === true && pc.done.length === 9, pc)
+    ck('stage B move: a brand-new lead stays at step 1', MOD.placeNine({ old: {} }).done.length === 0)
+    globalThis.fetch = realFetch
+  }
+  /* ── STAGE C (2026-10-17): the recheck rule and the one card per plan ── */
+  { const R = globalThis.JourneyRules
+    const t0 = R.ymd(Date.now()), old = R.addDays(t0, -15), fresh = R.addDays(t0, -3)
+    const snap = (p, k) => R.yesSnap(p, k)
+    const P = { id: 'tbC1', client: 'Carl K (TEST)', city: 'Nixa', lead_id: 'L2', days: ['mon', 'tue'], slots: [{ k: 's1', label: '8a-12p', start: '08:00', end: '12:00' }], cells: {} }
+    P.cells['mon|s1'] = { name: 'Maria V', cg_ax_id: '9', status: 'yes', yes_at: fresh }; P.cells['mon|s1'].yes_snap = snap(P, 'mon|s1')
+    P.cells['tue|s1'] = { name: 'Denise K', cg_ax_id: '8', status: 'yes', yes_at: old }; P.cells['tue|s1'].yes_snap = snap(P, 'tue|s1')
+    ck('stage C: a yes 3 days old with nothing changed needs no recheck', !R.yesRecheck(P, 'mon|s1', null, t0).need)
+    ck('stage C: a yes 15 days old before care starts needs a recheck, and is kept (not deleted)', R.yesRecheck(P, 'tue|s1', null, t0).need && P.cells['tue|s1'].status === 'yes')
+    P.slots[0].end = '13:00'
+    ck('stage C: the shift time changed after the yes: recheck, saying so', /shift time changed/.test(R.yesRecheck(P, 'mon|s1', null, t0).why || ''))
+    P.slots[0].end = '12:00'; P.city = 'Ozark'
+    ck('stage C: the location changed: recheck', /location changed/.test(R.yesRecheck(P, 'mon|s1', null, t0).why || '')); P.city = 'Nixa'
+    P.axiscare_push = { created: [{ key: 's1|8', caregiver_id: '8', days: ['Tuesday'] }] }
+    ck('stage C: once that shift is on the real AxisCare schedule, the 14-day rule stops', !R.yesRecheck(P, 'tue|s1', null, R.addDays(t0, 60)).need && R.yesRecheck(P, 'tue|s1', null, t0).scheduled === true)
+    delete P.axiscare_push
+    ck('stage C: planRechecks lists exactly the yes answers needing a recheck', MOD.planRechecks(P, t0).map((x) => x.key).join() === 'tue|s1' && MOD.planRechecks({ ...P, open_hours: true }, t0).length === 0)
+    reset(); T.app_data.push({ key: 'staffing_plans', data: [P] })
+    let rc = await call({ action: 'sweep' }, null, { 'x-cron-secret': ENV.HUB_JOB_SECRET })
+    ck('stage C: with "Caregiver Matching checks" off, no recheck card is made', !T.app_data.find((x) => x.key === 'ops_items').data.some((x) => x.kind === 'plan_recheck'), rc.j)
+    Object.assign(T.app_data.find((x) => x.key === 'ops_settings').data, { cm_checks_live: true })
+    rc = await call({ action: 'sweep' }, null, { 'x-cron-secret': ENV.HUB_JOB_SECRET })
+    const cardsC = T.app_data.find((x) => x.key === 'ops_items').data.filter((x) => x.kind === 'plan_recheck' && x.status === 'open')
+    ck('stage C: switched on: ONE card for the plan, to the Staffing Coordinator, naming who and why; nothing is texted', cardsC.length === 1 && cardsC[0].owner === 'sally@mo-care.com' && /Denise K, Tue 8a-12p: 15 days since they last confirmed/.test(cardsC[0].detail) && /^Recheck 1 caregiver yes for Carl K/.test(cardsC[0].title), cardsC)
+    P.cells['tue|s1'].yes_at = t0; T.app_data.find((x) => x.key === 'staffing_plans').data = [P]
+    await call({ action: 'sweep' }, null, { 'x-cron-secret': ENV.HUB_JOB_SECRET })
+    ck('stage C: after "Still a yes" (a fresh date), the card closes itself', T.app_data.find((x) => x.key === 'ops_items').data.find((x) => x.kind === 'plan_recheck').status === 'done')
+  }
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
 // the page and the server must run the SAME rules file
-{ const hub = path.join(process.cwd(), '..', 'cc-hub-live', 'journey-rules.js')
+{ const hub = path.join(process.env.HUB_ROOT || path.join(process.cwd(), '..', 'cc-hub-live'), 'journey-rules.js')
   if (fs.existsSync(hub)) { const same = fs.readFileSync(hub, 'utf8') === fs.readFileSync(path.join(F, '_shared', 'journey-rules.js'), 'utf8'); console.log((same ? '  ✓ ' : '  ✗ ') + 'the Hub page and the server run the same journey-rules.js'); if (!same) process.exitCode = 1 } }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length && !process.exitCode ? 0 : 1)

@@ -52,6 +52,14 @@ function fakeDb(init) {
         return { error: null }
       }
       if (name === 'caregiver_connect_practice') return { data: args.p_rows.length, error: null }
+      if (name === 'caregiver_phone_fill') {   // the same rules as cg_phone_fill.sql (proven on Postgres in cg_phone_fill_sql_test.py)
+        if (init.fillError) return { data: null, error: { message: 'boom' } }
+        const p = args.p, r = t.app_data.find((x) => x.key === 'caregivers').data.find((x) => String(x.id) === p.caregiver_id)
+        if (!r || String(r.axiscare_id) !== p.axiscare_id) return { data: { ok: false, reason: 'not_theirs' }, error: null }
+        if (String(r.phone ?? '').replace(/\D/g, '').length >= 10) return { data: { ok: false, reason: 'has_phone' }, error: null }
+        r.phone = p.phone; r.phone_from = { source: 'axiscare', field: p.field }
+        return { data: { ok: true, caregiver_id: p.caregiver_id }, error: null }
+      }
       if (name === 'caregiver_connect_apply') {
         const p = args.p
         if (applyResults[p.op]) return { data: applyResults[p.op], error: null }
@@ -235,6 +243,84 @@ ck('no em dash', !/—/.test(all))
     step1_forms: [{ offer_id: 'off-9', answers: { windows: { Monday: { Morning: true } } }, signatures: { availability: { at: 'x' } } }] })
   const r2 = await J.runJob(db2, okDeps({ census: async () => ({ ok: true, rows: census, total: census.length, truncated: false }) }), { caller: 'cron', runId: 'r-2e-p', now: NOW })
   ck('2e practice: nothing lands (no move happened)', r2.mode === 'practice' && !db2.calls.some((c) => c[0] === 'upsert_app_data_item'), db2.calls.map((c) => c[0]))
+}
+// ── 921 phones: any AxisCare phone, fill blanks hourly without overwriting, one list of anyone with no number ──
+{
+  const A = await import(path.join(FN, '_shared/axis-census.ts'))
+  ck('921 AxisCare number: mobile first, then other, then home; under 10 digits does not count; 1 + 10 digits does',
+    JSON.stringify(A.bestPhone({ mobilePhone: '417-555-01', otherPhone: '1 (417) 555-0102', homePhone: '4175550103' })) === JSON.stringify({ phone: '1 (417) 555-0102', phone_field: 'otherPhone' })
+    && A.bestPhone({ mobilePhone: '4175550101', homePhone: '4175550103' }).phone_field === 'mobilePhone' && A.bestPhone({ homePhone: '(417) 555-0103' }).phone_field === 'homePhone'
+    && A.bestPhone({}).phone === '' && A.bestPhone({ mobilePhone: '22 417 555 0101' }).phone === '')
+  const row = (id, first, last, active, g) => ({ id, first, last, goes_by: '', active, status_label: '', hire_date: '', mobile: String(g.mobilePhone ?? ''), email: '', ...A.bestPhone(g) })
+  const cen2 = [
+    row('201', 'Ada', 'Fillmore', true, { homePhone: '(417) 555-0201' }),        // Hub record has no number: filled from AxisCare's home phone
+    row('202', 'Ben', 'Keeper', true, { mobilePhone: '4175550202' }),            // Hub record has its own number: never replaced
+    row('203', 'Cal', 'Nobody', true, {}),                                        // no number anywhere: on the list
+    row('204', 'Dee', 'Hubbard', true, {}),                                       // AxisCare has none but the Hub does: not on the list
+    row('205', 'Eve', 'Gone', false, {}),                                         // not active: not on the list
+    row('206', 'Fay', 'Newcomb', true, {}),                                       // new to the Hub, no number anywhere: on the list
+    row('207', 'Gus', 'Otherly', true, { otherPhone: '417 555 0207' }),           // new to the Hub: their record starts with AxisCare's other phone
+    row('299', 'Canceled', 'Shift', true, {}),                                    // AxisCare's placeholder for cancelled visits: nobody, never on the list
+  ]
+  const w2 = (live, items = []) => ({ app_data: [
+    { key: 'ops_settings', data: live ? { cg_connect_live: true } : {} },
+    { key: 'caregivers', data: [{ id: 31, first: 'Ada', last: 'Fillmore', axiscare_id: '201', phone: '', _rev: 5 }, { id: 32, first: 'Ben', last: 'Keeper', axiscare_id: '202', phone: '417 555 9999' },
+      { id: 33, first: 'Cal', last: 'Nobody', axiscare_id: '203' }, { id: 34, first: 'Dee', last: 'Hubbard', axiscare_id: '204', phone: '417-555-0204' }, { id: 35, first: 'Eve', last: 'Gone', axiscare_id: '205' }] },
+    { key: 'candidates', data: [] }, { key: 'ops_items', data: items } ] })
+  const dep2 = (rows = cen2) => okDeps({ census: async () => ({ ok: true, rows: clone(rows), total: rows.length, truncated: false }) })
+  const itemOf = (db) => db.t.app_data.find((x) => x.key === 'ops_items').data.find((x) => x.id === J.NOPHONE_ID)
+  const cgOf = (db, id) => db.t.app_data.find((x) => x.key === 'caregivers').data.find((x) => String(x.axiscare_id) === id)
+
+  const db = fakeDb(w2(true))
+  const r = await J.runJob(db, dep2(), { caller: 'cron', runId: 'p1', now: NOW })
+  const fills = db.calls.filter((c) => c[0] === 'caregiver_phone_fill').map((c) => c[1].p)
+  ck('921 live: the one blank Hub record is filled from AxisCare (which field, the _rev it saw), through the one writer', r.ok && r.phones_filled === 1 && fills.length === 1
+    && fills[0].caregiver_id === '31' && fills[0].phone === '(417) 555-0201' && fills[0].field === 'homePhone' && fills[0].base_rev === 5 && cgOf(db, '201').phone === '(417) 555-0201', [r, fills])
+  ck('921 live: a Hub record with its own number is never sent to be filled', cgOf(db, '202').phone === '417 555 9999' && !fills.some((f) => f.caregiver_id === '32'))
+  const made = db.calls.filter((c) => c[0] === 'caregiver_connect_apply').map((c) => c[1].p).filter((p) => p.op === 'create')
+  const gus = made.find((p) => p.axiscare_id === '207'), fay = made.find((p) => p.axiscare_id === '206')
+  ck('921 live: a new record starts with AxisCare\'s number (other phone here), saying where it came from', gus && gus.record.phone === '417 555 0207' && gus.record.phone_from.source === 'axiscare' && gus.record.phone_from.field === 'otherPhone', made)
+  ck('921 live: a new record with no AxisCare number starts blank (nothing invented)', fay && !fay.record.phone && !fay.record.phone_from, fay)
+  const it = itemOf(db)
+  ck('921 live: ONE Needs Attention list of who has no number anywhere (active only; the Hub\'s own number counts), owned by the caregivers owner',
+    it && it.status === 'open' && it.title === 'Caregivers with no phone number: 2' && JSON.stringify(it.names) === JSON.stringify(['Cal Nobody', 'Fay Newcomb'])
+    && /Booking App offers/.test(it.detail) && it.owner === 'angiel@mo-care.com' && !/—/.test(it.title + it.detail + it.next_action) && r.no_phone === 2, it)
+  ck('921 live: the run line counts the phones filled', db.t.caregiver_connect_runs.at(-1).phones_filled === 1 && db.t.caregiver_connect_runs.at(-1).ok === true && !('no_phone' in db.t.caregiver_connect_runs.at(-1)), db.t.caregiver_connect_runs.at(-1))
+
+  // the next hour, nothing new: the list is not rewritten
+  const before = JSON.stringify(itemOf(db)), n0 = db.calls.length
+  await J.runJob(db, dep2(), { caller: 'cron', runId: 'p2', now: NOW })
+  ck('921 next hour, same people: the list is left as it is (no new log line), and nothing is filled twice', JSON.stringify(itemOf(db)) === before && !db.calls.slice(n0).some((c) => c[0] === 'caregiver_phone_fill'))
+  // Cal gets a mobile in AxisCare: filled, and the list shrinks
+  const cen3 = cen2.map((x) => x.id === '203' ? row('203', 'Cal', 'Nobody', true, { mobilePhone: '4175550203' }) : x)
+  await J.runJob(db, dep2(cen3), { caller: 'cron', runId: 'p3', now: NOW })
+  ck('921 a mobile added in AxisCare reaches the Hub record within the hour, and the list keeps only who is left', cgOf(db, '203').phone === '4175550203'
+    && itemOf(db).status === 'open' && JSON.stringify(itemOf(db).names) === JSON.stringify(['Fay Newcomb']) && itemOf(db).title === 'Caregivers with no phone number: 1', itemOf(db))
+  // everyone has one: the list closes itself
+  const cen4 = cen3.map((x) => x.id === '206' ? row('206', 'Fay', 'Newcomb', true, { homePhone: '4175550206' }) : x)
+  await J.runJob(db, dep2(cen4), { caller: 'cron', runId: 'p4', now: NOW })
+  ck('921 nobody left: the list closes itself', itemOf(db).status === 'done' && /now has a phone/.test(itemOf(db).close_note), itemOf(db))
+
+  // a person closed the list: it stays closed for the same people, opens again for someone new
+  const closed = { id: J.NOPHONE_ID, status: 'done', names: ['Cal Nobody', 'Fay Newcomb'], title: 'x' }
+  const dbc = fakeDb(w2(true, [clone(closed)]))
+  await J.runJob(dbc, dep2(), { caller: 'cron', runId: 'p5', now: NOW })
+  ck('921 a list a person closed stays closed while it names the same people', itemOf(dbc).status === 'done')
+  const dbn = fakeDb(w2(true, [{ ...clone(closed), names: ['Cal Nobody'] }]))
+  await J.runJob(dbn, dep2(), { caller: 'cron', runId: 'p6', now: NOW })
+  ck('921 ... and opens again when someone new is missing a number', itemOf(dbn).status === 'open' && itemOf(dbn).names.length === 2, itemOf(dbn))
+
+  const dbp = fakeDb(w2(false))
+  const rp = await J.runJob(dbp, dep2(), { caller: 'cron', runId: 'p7', now: NOW })
+  ck('921 practice (switch off): counts only, nothing filled, no list', rp.mode === 'practice' && rp.phones_to_fill === 1 && rp.no_phone === 2
+    && !dbp.calls.some((c) => c[0] === 'caregiver_phone_fill' || c[0] === 'upsert_app_data_item'), rp)
+  const dbd = fakeDb(w2(true))
+  const rd = await J.runJob(dbd, dep2(), { caller: 'owner', runId: 'p8', dry: true, now: NOW })
+  ck('921 dry: the phone counts and names (which AxisCare field), nothing recorded', rd.dry && rd.phones_to_fill === 1 && dbd.calls.length === 0
+    && JSON.stringify(rd.phones_to_fill_names) === JSON.stringify(['Ada Fillmore (AxisCare home phone)']) && JSON.stringify(rd.no_phone_names) === JSON.stringify(['Cal Nobody', 'Fay Newcomb']), rd)
+  const dbe = fakeDb({ ...w2(true), fillError: true })
+  const re = await J.runJob(dbe, dep2(), { caller: 'cron', runId: 'p9', now: NOW })
+  ck('921 the writer failing is reported on the run (no silent failure)', re.ok === false && re.errors.some((e) => /phone could not be copied/.test(e)) && dbe.t.caregiver_connect_runs.at(-1).ok === false, re)
 }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? 'PASS ' : 'FAIL ') + n + (ok ? '' : '\n     ' + note)); if (ok) pass++ }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1)
