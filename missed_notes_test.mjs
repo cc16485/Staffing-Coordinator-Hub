@@ -138,7 +138,7 @@ const dw = APP.discipline_actions[0]
 ck('the third: one DRAFT write-up, Verbal Warning, "Missed care notes: 3 in 30 days", for a person to review and send for approval', r.j.drafts === 1 && dw.status === 'draft'
    && dw.level === 'Verbal Warning' && dw.reason === 'Missed care notes: 3 in 30 days' && dw.caregiver === 'C9 Test' && dw.missed_note_ids.length === 3, dw)
 ck('the draft lists each miss: recovered by text vs UNRESOLVED (more serious), and the web clock-out as the office\'s', /Recovered by text/.test(dw.body) && /UNRESOLVED: no reply/.test(dw.body)
-   && /clocked out by the office \(web\)/.test(dw.body) && /Only Samantha or Zach can approve/.test(dw.body) && !/—/.test(dw.body), dw.body)
+   && /clocked out by the office \(web\)/.test(dw.body) && /A Care Coordinator approves coaching, a verbal warning or a first written warning; leadership approves anything above that/.test(dw.body) && !/—/.test(dw.body), dw.body)
 ck('those three are marked as drafted; running again drafts nothing more', T.missed_notes.filter((x) => x.draft_id === dw.id).length === 3 && (await run()).j.drafts === 0 && APP.discipline_actions.length === 1)
 reset(); APP.ops_settings = { missed_notes_live: true }; VISITS = []
 APP.discipline_actions = [{ id: 'old', caregiver: 'C9 Test', reason: 'Missed care notes: 3 in 30 days', status: 'issued', created_at: new Date(NOW() - 90 * 864e5).toISOString() }]
