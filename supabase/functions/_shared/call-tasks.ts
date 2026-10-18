@@ -617,3 +617,74 @@ export function cleanCardCheck(resp: any): { status: 'done' | 'partly' | 'not_ye
   return { status: pick(i.status, ['done', 'partly', 'not_yet', 'unclear'] as const, 'unclear'), why: scrub(i.why, 300),
     evidence: (Array.isArray(i.evidence) ? i.evidence : []).slice(0, 3).map((e: unknown) => scrub(e, 160)).filter(Boolean) }
 }
+
+/* ── PROMISE CARDS (2026-10-18, item 6 of her 2026-10-14 plan: "broken-promise reminder = My Work card next morning 8am") ──
+   The promise watch knew which promises went unkept but only showed them on the Call Follow Ups tab, so 18 of 51 late
+   promises were on nobody's list. Now a promise that is still not kept the morning after its due day (8 am Central)
+   becomes ONE card in My Work. When a card from the same call is still open, the promise goes on that card's history
+   instead (one card, not layers). Never a card for: a promise that only applies if something happens, EVV work (retired
+   2026-10-17; missed clock-ins are Call cards), a promise whose card from the same call a person already closed, or one
+   more than 7 days past due. The owner is worked out again at card time and must be on the office team
+   (coordinator_staff); otherwise the area's backup, then the Program Administration owner. A promise kept later closes
+   its card. PRACTICE unless ops_settings.call_promise_cards_live === true: the run only counts and notes what it would do. */
+const lcp = (v: unknown) => String(v || '').trim().toLowerCase()
+export const PROMISE_CARD_MAX_DAYS = 7, PROMISE_CARDS_PER_RUN = 10, PROMISE_CARD_HOUR = 8
+export function promiseCardIdFor(messageId: string, idx: number): string {
+  return 'cfp_' + String(messageId).replace(/[^A-Za-z0-9]/g, '').slice(-40) + '_' + idx
+}
+/** The ids of the cards made from one call or text all start with this. */
+export function sameCallPrefix(messageId: string): string {
+  return 'cf_' + String(messageId).replace(/[^A-Za-z0-9]/g, '').slice(-40) + '_'
+}
+export const CONDITIONAL_PROMISE = /^\s*(if|in case|unless|should)\b|\b(in case|unless)\b|\bif\s+(not\b|[^.;]*?\b(does not|doesn't|did not|didn't|is not|isn't|are not|aren't|not|never|no[- ]?show|missing|misses|missed|looks wrong|reports?|fails?)\b)/i
+export const EVV_PROMISE = /\bEVV\b|\bclock[- ]?(in|out) location\b|\btimes? in the system\b/i
+/** Why this promise never becomes a card, or '' when it may. */
+export function promiseSkip(w: { kind?: string; area?: string; what?: string }): string {
+  if (!(WATCH_KINDS as readonly string[]).includes(String(w.kind))) return 'not something the office owes'
+  if (w.area === 'evv_timekeeping' || EVV_PROMISE.test(String(w.what || ''))) return 'EVV work is retired; missed clock-ins are Call cards'
+  if (CONDITIONAL_PROMISE.test(String(w.what || ''))) return 'it only applies if something happens'
+  return ''
+}
+const hourCT = (ms: number) => Number(new Intl.DateTimeFormat('en-US', { timeZone: CT, hour: 'numeric', hourCycle: 'h23' }).format(new Date(ms)))
+/** Card time: from 8 am Central the morning after the due day, and never more than 7 days after it. */
+export function promiseCardTime(due: string, now = Date.now()): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(due))) return false
+  const today = ymd(now)
+  if (today <= due) return false
+  const days = Math.round((Date.parse(today + 'T12:00:00Z') - Date.parse(due + 'T12:00:00Z')) / 864e5)
+  if (days > PROMISE_CARD_MAX_DAYS) return false
+  return days > 1 || hourCT(now) >= PROMISE_CARD_HOUR
+}
+/** The owner now, held to the office team: the area's owner, else its backup, else the Program Administration owner. */
+export function promiseOwner(area: string, o: { domains: Record<string, string>; backups?: Record<string, string>; staffing?: string; team: Array<{ name?: string; email?: string }> }):
+  { email: string; name: string; via: string } | null {
+  const onTeam = (n: string) => { const x = lcp(n); return x ? o.team.find((t) => lcp(t.name) === x && /@/.test(String(t.email || ''))) : undefined }
+  const first = ownerFor(area, { domains: o.domains, staffing: o.staffing })
+  const d = domainFor(area)
+  const tries: Array<[string, string]> = [[first.name, first.via], [o.backups?.[d] || '', 'backs up ' + d.replace(/_/g, ' ')],
+    [o.domains.program_administration || '', 'owns program administration (nobody on the team owns this area)']]
+  for (const [n, via] of tries) { const t = onTeam(n); if (t) return { email: String(t.email).toLowerCase(), name: String(t.name), via } }
+  return null
+}
+const PROMISE_NEXT: Record<string, string> = { we_agreed: 'Do it, or let them know when it will happen', awaiting_confirmation: 'Get the answer, then let them know' }
+/** The My Work card for one promise still not kept. owner null: unassigned (Work offers "Take it"). */
+export function promiseCard(w: Any, owner: { email: string; name: string; via: string } | null, now = Date.now()): Record<string, unknown> {
+  const iso = new Date(now).toISOString()
+  const who = String(w.who_name || w.caller || 'Unknown caller')
+  const what = String(w.what || '').trim().replace(/\.$/, '')
+  const how = w.channel === 'text' ? 'texts' : 'a call'
+  const said = w.kind === 'awaiting_confirmation' ? 'was waiting on' : 'said it would'
+  const next = PROMISE_NEXT[String(w.kind)] || PROMISE_NEXT.we_agreed
+  return {
+    id: promiseCardIdFor(w.message_id, Number(w.idx)), kind: LIVE_KIND, domain: domainFor(String(w.area || 'office_admin')), status: 'open', urgency: 'today',
+    title: ('Promise not kept yet: ' + what).slice(0, 200), about: who, who,
+    detail: `In ${how} with ${who} (${chicago(String(w.call_at))}) the office ${said}: ${what}. It was due ${w.due}.${w.why ? ' ' + String(w.why).slice(0, 300) : ''}`,
+    next_action: next, steps: [next], due: new Date(Math.max(dueEnd(ymd(now)), now + 3600e3)).toISOString(),
+    owner: owner?.email || '', owner_name: owner?.name || '',
+    created_at: iso, first_at: iso, last_at: iso, last_activity_at: iso, created_by: 'call-tasks', opened_by: 'call-tasks',
+    person_id: w.person_id || null, lead_id: w.lead_id || null,
+    source: { type: 'call_promise', channel: w.channel || 'call', message_id: w.message_id, idx: Number(w.idx), call_at: w.call_at, due: w.due, version: w.version || null },
+    origin: { employee: 'office-awareness', promise: String(w.id ?? '') },
+    history: [{ at: iso, by: 'AI (call follow-ups)', text: `The promise watch found this still not kept the morning after it was due${owner ? '; ' + owner.name + ' ' + owner.via : '; nobody on the team owns this area'}` }],
+  }
+}
