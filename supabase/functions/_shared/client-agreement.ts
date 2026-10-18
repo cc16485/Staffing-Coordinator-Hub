@@ -31,7 +31,7 @@ const SERVER_ONLY = (k: string) => k.startsWith('ini.') || k.startsWith('sig.') 
 export const ONE_OF: string[][] = [
   ['level.wellness_care', 'level.personal_care', 'level.advanced_care'],
   ['car.accept', 'car.decline'], ['comm.accept', 'comm.decline'],
-  ...[1, 2, 3, 4].flatMap((n) => [[`c${n}.hipaa_yes`, `c${n}.hipaa_no`], [`c${n}.medical_yes`, `c${n}.medical_no`]]),
+  ...[1, 2, 3, 4].flatMap((n) => [[`c${n}.hipaa_yes`, `c${n}.hipaa_no`], [`c${n}.medical_yes`, `c${n}.medical_no`], [`c${n}.book_yes`, `c${n}.book_no`]]),
 ]
 
 export type Answers = Record<string, string | boolean>
@@ -75,6 +75,8 @@ export function readyToSign(a: Answers, signer: { name?: string; role?: string }
     if (!has(a, `c${n}.name`)) continue
     if (!has(a, `c${n}.hipaa_yes`) && !has(a, `c${n}.hipaa_no`)) p.push({ field: `c${n}.hipaa_yes`, error: `Contact ${n}: may we share health information? Yes or No` })
     if (!has(a, `c${n}.medical_yes`) && !has(a, `c${n}.medical_no`)) p.push({ field: `c${n}.medical_yes`, error: `Contact ${n}: makes medical decisions? Yes or No` })
+    // 2026-10-18b: asked at the care assessment for every contact (only the current master has these boxes; older drafts can't be signed)
+    if (FIELDS[`c${n}.book_yes`] && !has(a, `c${n}.book_yes`) && !has(a, `c${n}.book_no`)) p.push({ field: `c${n}.book_yes`, error: `Contact ${n}: can book in the Booking App? Yes or No` })
   }
   need('backup.full_name', 'Backup caregiver name (required)'); need('backup.primary_phone', 'Backup caregiver phone')
   if (!Object.keys(a).some((k) => k.startsWith('access.') && FIELDS[k].type === 'check' && a[k] === true)) p.push({ field: 'access.1_client_responsible_party', error: 'How caregivers get into the home' })
