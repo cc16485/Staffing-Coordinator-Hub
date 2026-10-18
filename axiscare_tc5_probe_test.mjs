@@ -3,14 +3,15 @@ import fs from 'fs'; import path from 'path'
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : JSON.stringify(note ?? null).slice(0, 900)])
 let handler; globalThis.Deno = { env: { get: (k) => ({ AXISCARE_API_KEY: 'k', AXISCARE_SITE: '16485' })[k] }, serve: (h) => { handler = h } }
 let AX, CALLS
-const reset = (o = {}) => { CALLS = []; AX = Object.assign({ name: ['Test', 'Client 5'], pref: null, schedules: [], visits: [], acceptsOpen: true, prefField: 'referredCaregiver', nullOk: true,
+const reset = (o = {}) => { CALLS = []; AX = Object.assign({ name: ['Test', 'Client 5'], status: 'Active', pref: null, schedules: [], visits: [], acceptsOpen: true, prefField: 'referredCaregiver', nullOk: true,
   caregivers: [{ id: 50, firstName: 'Canceled', lastName: 'Shift' }, { id: 9, firstName: 'Maria', lastName: 'V' }], recent: [{ service: { code: 'PP-PC' } }] }, o) }
 globalThis.fetch = async (url, o = {}) => { const u = new URL(String(url)), p = u.pathname, m = o.method || 'GET', body = o.body ? JSON.parse(o.body) : null; CALLS.push([m, p + u.search, body])
   const R = (s, j) => new Response(JSON.stringify(j), { status: s })
-  if (p === '/api/clients/290' && m === 'GET') return R(200, { results: { client: { firstName: AX.name[0], lastName: AX.name[1], preferredCaregiver: AX.pref == null ? null : { id: AX.pref } } } })
+  if (p === '/api/clients/290' && m === 'GET') return R(200, { results: { client: { firstName: AX.name[0], lastName: AX.name[1], status: AX.statusObj ? { active: AX.status === 'Active', label: AX.status } : AX.status, preferredCaregiver: AX.pref == null ? null : { id: AX.pref } } } })
+  if (p === '/api/clients/290' && m === 'PATCH' && 'status' in body) { AX.status = body.status; return R(200, {}) }
   if (p === '/api/clients/290' && m === 'PATCH') { const k = Object.keys(body)[0]; if (k !== AX.prefField) return R(400, { errors: ['unknown field ' + k] }); if (body[k] === null && !AX.nullOk) return R(400, { errors: ['null not allowed'] }); AX.pref = body[k] ? body[k].id : null; return R(200, {}) }
   if (p === '/api/caregivers') return R(200, { results: { caregivers: AX.caregivers } })
-  if (p === '/api/schedules' && m === 'POST') { if (!AX.acceptsOpen && !body.caregiverId) return R(400, { errors: ['caregiverId is required'] }); const id = 700 + AX.schedules.length; AX.schedules.push({ scheduleId: id, startTime: body.startTime, endTime: body.endTime, caregiver: null }); AX.visits.push({ id: 'v' + id, scheduledStartDate: body.startDate + 'T' + body.startTime + ':00', caregiver: null }); return R(201, { results: { schedules: [{ scheduleId: id }] } }) }
+  if (p === '/api/schedules' && m === 'POST') { if (AX.status !== 'Active') return R(400, { errors: ['The provided clientId is inactive or does not exist.'] }); if (!AX.acceptsOpen && !body.caregiverId) return R(400, { errors: ['caregiverId is required'] }); const id = 700 + AX.schedules.length; AX.schedules.push({ scheduleId: id, startTime: body.startTime, endTime: body.endTime, caregiver: null }); AX.visits.push({ id: 'v' + id, scheduledStartDate: body.startDate + 'T' + body.startTime + ':00', caregiver: null }); return R(201, { results: { schedules: [{ scheduleId: id }] } }) }
   if (p === '/api/schedules' && m === 'GET') return R(200, { results: { schedules: AX.schedules } })
   if (p.startsWith('/api/schedules/') && m === 'DELETE') { const id = Number(p.split('/').pop()); AX.schedules = AX.schedules.filter((s) => s.scheduleId !== id); AX.visits = AX.visits.filter((v) => v.id !== 'v' + id); return R(200, {}) }
   if (p === '/api/visits') return R(200, { results: { visits: u.searchParams.get('clientIds') ? AX.visits : AX.recent } })
@@ -39,5 +40,14 @@ reset({ nullOk: false }); r = await call({ go: true })
 ck('B: if AxisCare will not clear the field, the report says it was not restored (no silent leftovers)', r.j.preferred.restore.restored === false, r.j.preferred)
 reset({ caregivers: [{ id: 9, firstName: 'Maria', lastName: 'V' }] }); r = await call({ go: true })
 ck('B: no placeholder caregiver: the preference test is skipped (never a real person)', /never a real caregiver|no real caregiver/.test(r.j.preferred.skipped || '') && !CALLS.some(([m, p]) => m === 'PATCH'), r.j.preferred)
+/* 914: the open-shift retest on an Active Test Client 5, put back to Inactive afterwards */
+reset({ status: 'Inactive' }); r = await call({ go: true, only: 'open_shift', set_status_after: 'Inactive' })
+ck('914: Test Client 5 still Inactive: refuses before writing anything, saying to set it Active first', r.status === 409 && /set it to Active first/.test(r.j.not_active) && !writes().length, r.j)
+reset({ status: 'Active', statusObj: true }); r = await call({ go: true, only: 'open_shift', set_status_after: 'Inactive' })
+ck('914: Active ({active,label} form): the open shift is tried, read back, cleaned up', r.status === 200 && r.j.open_shift.accepted_without_caregiver && r.j.open_shift.clean, r.j)
+ck('914: put back to Inactive and read back; the preference test is not repeated', r.j.status_after.restored === true && AX.status === 'Inactive' && !r.j.preferred && !CALLS.some(([m, p, b]) => m === 'PATCH' && b && !('status' in b)), r.j)
+reset({ status: 'Active', acceptsOpen: false }); r = await call({ go: true, only: 'open_shift', set_status_after: 'Inactive' })
+ck('914: a refusal about the caregiver is named as that (not mixed up with an inactive client)', r.j.open_shift.reason === 'caregiver_required' && AX.status === 'Inactive', r.j.open_shift)
+ck('914: refusalReason reads AxisCare\'s inactive-client words as client_inactive', M.refusalReason(['The provided clientId is inactive or does not exist.']) === 'client_inactive' && M.refusalReason(['caregiverId is required']) === 'caregiver_required' && M.refusalReason(['bad time']) === 'other')
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
 console.log(`${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1)
