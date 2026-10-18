@@ -5,12 +5,13 @@
 // current master (client-agreement-map.ts). Add a line here, never remove one.
 // =============================================================================
 import * as current from './client-agreement-map.ts'
+import * as second from './client-agreement-map-2026-10-17.ts'
 import * as first from './client-agreement-map-2026-10-16.ts'
 import type { Field } from './client-agreement-map.ts'
 
 export type Master = { sha: string; path: string; pages: number; version: string; fields: Record<string, Field> }
-const of = (m: typeof current | typeof first): Master => ({ sha: m.PDF_SHA256, path: m.MASTER_PATH, pages: m.PAGES, version: m.VERSION, fields: m.FIELDS })
-export const MASTERS: Record<string, Master> = Object.fromEntries([current, first].map((m) => [m.PDF_SHA256, of(m)]))
+const of = (m: typeof current | typeof second | typeof first): Master => ({ sha: m.PDF_SHA256, path: m.MASTER_PATH, pages: m.PAGES, version: m.VERSION, fields: m.FIELDS })
+export const MASTERS: Record<string, Master> = Object.fromEntries([current, second, first].map((m) => [m.PDF_SHA256, of(m)]))
 export const CURRENT: Master = of(current)
 
 /** The master an agreement was started on. Unknown means the row is damaged: refuse rather than guess. */
