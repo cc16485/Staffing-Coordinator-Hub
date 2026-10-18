@@ -38,7 +38,7 @@ def seed(variant="old"):
     c.run("create table public.client_journey(journey_id serial primary key, subject text not null default 'client', client_name text, status text not null default 'open', created_at timestamptz not null default now(), payer text check (payer in ('private', 'medicaid', 'va', 'ltc', 'other')))")
     c.run("create table public.client_journey_step_def(key text primary key, catalog_version int not null default 1, def jsonb not null, active boolean not null default true, updated_at timestamptz not null default now(), updated_by text not null default 'seed')")
     for d in CAT:
-        dd = dict(d)
+        dd = json.loads(json.dumps(d))
         if variant == "other" and d["key"] == "intake.payer": dd["answer"]["fields"][0]["options"] = dd["answer"]["fields"][0]["options"][:2]
         c.run("insert into public.client_journey_step_def(key, def) values (:k, cast(:d as jsonb))", k=d["key"], d=json.dumps(dd))
     c.run("insert into public.client_journey(client_name, payer, created_at) values ('Old IHS client', 'medicaid', '2026-10-01T15:00:00Z'), ('Pat Pay', 'private', '2026-10-10T15:00:00Z')")
