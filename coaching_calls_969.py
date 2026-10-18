@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 # 969 · COACHING CALLS, part C1 (Samantha 2026-10-18: "Start the coaching calls build").
 # Part 1 (read only): the reviewed build; the coaching tracker (961) and the jobs' secret are there; the GoHighLevel key;
-#   the four functions this changes (calls-feed, call-pull, call-tasks, call-disposition) are live AND exactly what is
-#   in GitHub today (so nothing someone else deployed is overwritten); coaching calls are not switched on.
+#   the four functions this changes (calls-feed, call-pull, call-tasks, call-disposition) are live and every file of each
+#   is exactly what Claude reviewed on 2026-10-18 (two of them hold back shared changes on purpose, see 958); coaching
+#   calls are not switched on.
 # Part 2: hr_coaching_calls.sql (the coaching call records, server only and never deleted; the private bucket hr-audio;
 #   the completion lock and the private My Work card wording, both only once switched on); deploy hr-coach-call and its
-#   5-minute schedule; redeploy the four functions with the privacy check (coaching calls are never listed or played in
-#   the Calls view, never read by the AI call reader, never sent to AxisCare), each with its gateway setting unchanged.
+#   5-minute schedule; each of the four is redeployed as EXACTLY what is live plus the privacy check (coaching_calls_969_
+#   patches/<fn>.diff, made against the live copy), so nothing held back is released: coaching calls are never listed
+#   or played in the Calls view, never read by the AI call reader, never sent to AxisCare. Gateway settings unchanged.
 # Part 3 (proof; undone, nothing rings, nothing sent): the public key is refused; the schedule gets in; with the switch
 #   pretended on inside an undone test, a coaching talk can't be completed without a confirmed recorded call and the card
 #   shows only first name + last initial; Krystal can't read the call records directly.
@@ -20,7 +22,29 @@ NEW = "hr-coach-call"; VAULT_NAME = "hub_job_secret"; SCHEDULE = "*/5 * * * *"
 CHANGED = ["calls-feed", "call-pull", "call-tasks", "call-disposition"]
 CC_EMAIL = os.environ.get("SB_CC_EMAIL", "krystal@mo-care.com")
 HERE = os.path.dirname(os.path.abspath(__file__))
-LIVE_SHAS = json.loads(os.environ.get("SB_LIVE_SHAS", "{}"))   # each function's files as they are in GitHub before this change
+LIVE_SHAS = json.loads(os.environ.get("SB_LIVE_SHAS", "{}"))   # {fn: {path: sha}}: every file of each live function as Claude reviewed it
+import subprocess, tempfile, shutil
+def deploy_patched(fn, verify_jwt):
+    """Deploy exactly the live copy of fn plus its reviewed patch and the new shared rules file; prove the live copy is that."""
+    tmp = tempfile.mkdtemp(prefix=f"cc969-{fn}-"); os.makedirs(os.path.join(tmp, "supabase"), exist_ok=True)
+    try:
+        d = subprocess.run([SUPA, "functions", "download", fn, "--project-ref", REF, "--use-api"], cwd=tmp, env=dict(os.environ, SUPABASE_ACCESS_TOKEN=TOKEN), capture_output=True, text=True)
+        if d.returncode != 0: bad(f"{fn}: the live copy could not be downloaded to patch"); return False
+        here = {k: v for k, v in {os.path.relpath(os.path.join(r_, f), tmp).replace(os.sep, "/"): sha(os.path.join(r_, f)) for r_, _, fs in os.walk(os.path.join(tmp, "supabase")) for f in fs}.items() if "/functions/" in k}
+        if here != LIVE_SHAS.get(fn): bad(f"{fn}: the live copy changed while this ran, so it was not replaced"); return False
+        a = subprocess.run(["git", "apply", os.path.join(HERE, "coaching_calls_969_patches", fn + ".diff")], cwd=tmp, capture_output=True, text=True)
+        if a.returncode != 0:
+            subprocess.run(["git", "init", "-q"], cwd=tmp); a = subprocess.run(["git", "apply", os.path.join(HERE, "coaching_calls_969_patches", fn + ".diff")], cwd=tmp, capture_output=True, text=True)
+        if a.returncode != 0: bad(f"{fn}: the privacy change did not apply to the live copy: {a.stderr[-160:]}"); return False
+        shutil.copy(os.path.join(FNROOT, "_shared", "coaching-calls.ts"), os.path.join(tmp, "supabase", "functions", "_shared", "coaching-calls.ts"))
+        want = {k: v for k, v in {os.path.relpath(os.path.join(r_, f), tmp).replace(os.sep, "/"): sha(os.path.join(r_, f)) for r_, _, fs in os.walk(os.path.join(tmp, "supabase")) for f in fs}.items() if "/functions/" in k}
+        p = subprocess.run([SUPA, "functions", "deploy", fn, "--project-ref", REF, "--use-api"] + ([] if verify_jwt else ["--no-verify-jwt"]), cwd=tmp, env=dict(os.environ, SUPABASE_ACCESS_TOKEN=TOKEN), capture_output=True, text=True)
+        okd, livef = live_files(REF, fn)
+        if p.returncode != 0 or not okd or any(livef.get(k) != v for k, v in want.items()): bad(f"{fn} did not deploy cleanly: " + (p.stderr or p.stdout)[-200:]); return False
+        sN, mN = fmeta(REF, fn)
+        if (mN or {}).get("verify_jwt") != verify_jwt: bad(f"{fn}: the gateway setting changed"); return False
+        say(f"  ✓ {fn}: the live copy plus only the privacy check (version {(mN or {}).get('version', '?')}, gateway sign-in check {'on' if verify_jwt else 'off'})"); return True
+    finally: shutil.rmtree(tmp, ignore_errors=True)
 def keys():
     usable = lambda v: isinstance(v, str) and (v.startswith("eyJ") or v.startswith("sb_secret_") or v.startswith("sb_publishable_")) and "·" not in v and "*" not in v
     for q in ("?reveal=true", ""):
@@ -61,13 +85,11 @@ for fn in CHANGED:
     if sF != 200 or not mF: bad(f"{fn} is not live, so it is not safe to redeploy it here"); continue
     GATE[fn] = bool(mF.get("verify_jwt"))
     okL, livef = live_files(REF, fn)
-    # the function's own files must be GitHub's; shared files are brought up to GitHub's by the redeploy anyway
-    want = {k: v for k, v in LIVE_SHAS.items() if k.startswith(f"supabase/functions/{fn}/")}
-    mine = {k for k in livef if k.startswith(f"supabase/functions/{fn}/")}
-    off = [k for k in mine if k in want and livef[k] != want[k]]
+    want = LIVE_SHAS.get(fn) or {}
     if not okL: bad(f"could not read the live copy of {fn}")
-    elif off: bad(f"the live {fn} is not what is in GitHub ({len(off)} file(s) differ), so it was not replaced. Tell Claude.")
-    else: say(f"  ✓ the live {fn} is what is in GitHub (gateway sign-in check {'on' if GATE[fn] else 'off'}, kept as it is)")
+    elif not want: bad(f"the launcher has no reviewed copy of {fn}. Tell Claude.")
+    elif livef != want: bad(f"the live {fn} is not what Claude reviewed ({len(set(livef.items()) ^ set(want.items()))} difference(s)), so it was not replaced. Tell Claude.")
+    else: say(f"  ✓ the live {fn} is exactly what Claude reviewed (gateway sign-in check {'on' if GATE[fn] else 'off'}, kept as it is)")
 K = keys(); ANON, SVC = K.get("anon", ""), K.get("service_role", ""); HIDE.extend([ANON, SVC])
 if not (ANON and SVC): bad("could not read the project's keys (the schedule and the proofs need them)")
 say("  · what changes: 1 new server-only table, 1 private bucket, the coaching completion rule (only once switched on), 1 new service and its schedule, 4 services redeployed with the privacy check. Nothing rings, nothing is sent, no switch is turned on.")
@@ -92,7 +114,7 @@ ok2, jb = sql(REF, f"select schedule, command from cron.job where jobname = {lit
 g = ok and ok2 and jb and jb[0]["schedule"] == SCHEDULE and "x-cron-secret" in jb[0]["command"]
 say("  ✓ its schedule: every 5 minutes it looks for the call after each Call now (it only acts on taps)") if g else bad("the schedule did not go in")
 for fn in CHANGED:
-    if not deploy(REF, FNROOT, fn, GATE[fn]): say(f"  RESULT: STOPPED at {fn}. The ones above are deployed. Tell Claude."); done(7)
+    if not deploy_patched(fn, GATE[fn]): say(f"  RESULT: STOPPED at {fn}. The ones above are deployed. Tell Claude."); done(7)
 
 say(); say("PART 3 · PROOF (undone after; nothing rings, nothing is sent)")
 time.sleep(float(os.environ.get("SB_SETTLE", "10")))

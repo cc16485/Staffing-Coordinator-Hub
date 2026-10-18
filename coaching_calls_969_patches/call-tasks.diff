@@ -1,0 +1,33 @@
+--- a/supabase/functions/call-tasks/index.ts
++++ b/supabase/functions/call-tasks/index.ts
+@@ -28,6 +28,7 @@
+ // nothing stored).
+ // =============================================================================
+ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
++import { loadSkip } from '../_shared/coaching-calls.ts'   // coaching calls are never read (2026-10-18)
+ import Anthropic from 'npm:@anthropic-ai/sdk'
+ import { jobCaller } from '../_shared/job-auth.ts'
+ import { seatHolder } from '../_shared/duty.ts'
+@@ -207,9 +208,12 @@
+   seenQ = named.length ? seenQ.in('message_id', named) : seenQ.gte('call_at', since).in('stage', ['done', 'practice', 'error', 'no_transcript']).order('call_at', { ascending: true }).limit(LOOKBACK)
+   const { data: seenRows, error: sErr } = await seenQ
+   if (sErr) { await beat(db, false, 'call_pull_seen read: ' + sErr.message); return json({ error: 'could not read the calls' }, 500) }
+-  const ids = (seenRows ?? []).map((r: { message_id: string }) => r.message_id)
++  /* COACHING CALLS (2026-10-18): never read; if they can't be checked, nothing is read this run */
++  let isCoaching: (m: { id?: unknown; contactId?: unknown; at?: unknown }) => boolean
++  try { isCoaching = await loadSkip(db) } catch (e) { await beat(db, false, String(e).slice(0, 200)); return json({ error: 'coaching calls could not be checked' }, 500) }
++  const ids = (seenRows ?? []).filter((r: { message_id: string }) => !isCoaching({ id: r.message_id })).map((r: { message_id: string }) => r.message_id)
+   const tries = await triesOf(db, ids)
+-  const todo = (seenRows ?? []).filter((r: { message_id: string }) => named.length ? (tries.get(r.message_id)?.n ?? 0) < MAX_ATTEMPT : readNow(tries.get(r.message_id)))
++  const todo = (seenRows ?? []).filter((r: { message_id: string }) => ids.includes(r.message_id)).filter((r: { message_id: string }) => named.length ? (tries.get(r.message_id)?.n ?? 0) < MAX_ATTEMPT : readNow(tries.get(r.message_id)))
+     .slice(0, Number(body.limit) > 0 ? Math.min(Number(body.limit), 20) : PER_RUN)
+   const out: Record<string, number> = { calls: ids.length, read: 0, cards: 0, no_cards: 0, no_transcript: 0, errors: 0, could_not_read: 0, failed: 0 }
+   const hub = await loadHub(db)
+@@ -222,6 +226,7 @@
+       const m = await fetch(`${GHL}/conversations/messages/${encodeURIComponent(s.message_id)}`, { headers: H(tok) })
+       const mj: Any = m.ok ? await m.json().catch(() => ({})) : {}
+       const msg: Any = mj?.message ?? mj ?? {}
++      if (isCoaching({ id: s.message_id, contactId: msg.contactId, at: s.call_at })) continue   // a coaching call: never read
+       const tr = await fetch(`${GHL}/conversations/locations/${encodeURIComponent(loc)}/messages/${encodeURIComponent(s.message_id)}/transcription`, { headers: H(tok) })
+       const text = tr.ok ? transcriptText(await tr.json().catch(() => null)) : ''
+       if (!text) {

@@ -15,14 +15,18 @@ subprocess.run(["git", "clone", "-q", HERE, MAIN], check=True)
 subprocess.run(["git", "-C", MAIN, "checkout", "-q", subprocess.run(["git", "-C", HERE, "rev-parse", "origin/main"], capture_output=True, text=True).stdout.strip()], check=True)
 CHANGED = ["calls-feed", "call-pull", "call-tasks", "call-disposition"]
 hsha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
-def own_files(root, fn):
-    d = os.path.join(root, "supabase", "functions", fn); out = {}
-    for r_, _, fs in os.walk(d):
-        for f in fs:
-            p = os.path.join(r_, f); out["supabase/functions/" + os.path.relpath(p, os.path.join(root, "supabase", "functions")).replace(os.sep, "/")] = hsha(p)
-    return out
+FIX = os.path.join(COPY, "coaching_calls_969_patches", "live")
+def fake_live(fn, dest):
+    """what the fake project has live for fn before this step: GitHub main's bundle with today's real live index.ts"""
+    for part in (fn, "_shared"):
+        shutil.copytree(os.path.join(MAIN, "supabase", "functions", part), os.path.join(dest, "supabase", "functions", part), dirs_exist_ok=True)
+    fx = os.path.join(FIX, fn + ".index.ts.live")
+    if os.path.exists(fx): shutil.copy(fx, os.path.join(dest, "supabase", "functions", fn, "index.ts"))
+def bundle_shas(root):
+    return {os.path.relpath(os.path.join(r_, f), root).replace(os.sep, "/"): hsha(os.path.join(r_, f)) for r_, _, fs in os.walk(os.path.join(root, "supabase", "functions")) for f in fs}
 LIVE_SHAS = {}
-for fn in CHANGED: LIVE_SHAS.update(own_files(MAIN, fn))
+for fn in CHANGED:
+    t_ = os.path.join(TMP, "ls-" + fn); fake_live(fn, t_); LIVE_SHAS[fn] = bundle_shas(t_)
 FNR = os.path.join(COPY, "supabase", "functions")
 FILES = ["hr-coach-call/index.ts", "_shared/coaching-calls.ts", "calls-feed/index.ts", "call-pull/index.ts", "call-tasks/index.ts", "call-disposition/index.ts", "_shared/ghl-call-bridge.ts", "_shared/staff-auth.ts", "_shared/job-auth.ts", "_shared/doc-log.ts"]
 SHAS = {k: hsha(os.path.join(FNR, k)) for k in FILES}
@@ -80,14 +84,29 @@ FURL = f"http://127.0.0.1:{fsrv.server_address[1]}"
 FAKEBIN = os.path.join(TMP, "bin2"); os.makedirs(FAKEBIN, exist_ok=True)
 open(os.path.join(FAKEBIN, "supabase"), "w").write(f"""#!/usr/bin/env python3
 import sys, os, shutil
+sys.path.insert(0, {HERE!r})
 a = sys.argv[1:]
+TMP = {TMP!r}; MAIN = {MAIN!r}; FIX = {FIX!r}
+def fake_live(fn, dest):
+    for part in (fn, "_shared"):
+        shutil.copytree(os.path.join(MAIN, "supabase", "functions", part), os.path.join(dest, "supabase", "functions", part), dirs_exist_ok=True)
+    fx = os.path.join(FIX, fn + ".index.ts.live")
+    if os.path.exists(fx): shutil.copy(fx, os.path.join(dest, "supabase", "functions", fn, "index.ts"))
 if a[:2] == ['functions', 'deploy']:
-    open(os.path.join({TMP!r}, 'dep-' + a[2]), 'w').write(' '.join(a)); sys.exit(0)
+    fn = a[2]; open(os.path.join(TMP, 'dep-' + fn), 'w').write(' '.join(a))
+    snap = os.path.join(TMP, 'live', fn); shutil.rmtree(snap, ignore_errors=True)
+    for part in (fn, "_shared"):
+        src = os.path.join(os.getcwd(), 'supabase', 'functions', part)
+        if os.path.exists(src): shutil.copytree(src, os.path.join(snap, 'supabase', 'functions', part))
+    sys.exit(0)
 if a[:2] == ['functions', 'download']:
-    fn = a[2]; src = {COPY!r} if os.path.exists(os.path.join({TMP!r}, 'dep-' + fn)) else ({MAIN!r} if not os.path.exists(os.path.join({TMP!r}, 'drift')) else {COPY!r})
-    os.makedirs(os.path.join(os.getcwd(), 'supabase', 'functions'), exist_ok=True)
-    shutil.copytree(os.path.join(src, 'supabase', 'functions', fn), os.path.join(os.getcwd(), 'supabase', 'functions', fn), dirs_exist_ok=True)
-    shutil.copytree(os.path.join(src, 'supabase', 'functions', '_shared'), os.path.join(os.getcwd(), 'supabase', 'functions', '_shared'), dirs_exist_ok=True); sys.exit(0)
+    fn = a[2]; snap = os.path.join(TMP, 'live', fn)
+    if os.path.exists(snap): shutil.copytree(os.path.join(snap, 'supabase'), os.path.join(os.getcwd(), 'supabase'), dirs_exist_ok=True)
+    else:
+        fake_live(fn, os.getcwd())
+        if os.path.exists(os.path.join(TMP, 'drift')) and fn == 'call-tasks':
+            open(os.path.join(os.getcwd(), 'supabase', 'functions', '_shared', 'duty.ts'), 'a').write('// changed by someone else')
+    sys.exit(0)
 sys.exit(1)
 """)
 os.chmod(os.path.join(FAKEBIN, "supabase"), 0o755)
@@ -98,6 +117,7 @@ def run969(shas=None, fresh=True, drift=False, live_on=False, **m):
         seed961(True); r_ = run()  # the real 961 again on a clean database
     extra(live_on=live_on); M.clear(); M.update(m)
     for f in glob.glob(os.path.join(TMP, "dep-*")) + glob.glob(os.path.join(TMP, "drift")): os.remove(f)
+    shutil.rmtree(os.path.join(TMP, "live"), ignore_errors=True)
     if drift: open(os.path.join(TMP, "drift"), "w").write("x")
     rep = os.path.join(TMP, "r969.txt")
     if os.path.exists(rep): os.remove(rep)
@@ -109,6 +129,14 @@ ck("runs to DONE with no ✗", code == 0 and "RESULT: DONE" in out and "✗" not
 ck("the report never shows a key", "eyJ" not in out and "sbp_test" not in out, out)
 ck("all five services deployed, the four with their gateway setting kept (call-disposition stays off)", all(os.path.exists(os.path.join(TMP, "dep-" + f)) for f in CHANGED + ["hr-coach-call"])
    and "--no-verify-jwt" in open(os.path.join(TMP, "dep-call-disposition")).read() and "--no-verify-jwt" not in open(os.path.join(TMP, "dep-calls-feed")).read() and not M.get("patched"), M)
+ok_ = True; why = []
+for fn in CHANGED:
+    got = bundle_shas(os.path.join(TMP, "live", fn)); before = LIVE_SHAS[fn]
+    extra_files = set(got) - set(before); changed = {k for k in before if got.get(k) != before[k]}
+    if extra_files != {"supabase/functions/_shared/coaching-calls.ts"} or changed != {f"supabase/functions/{fn}/index.ts"}: ok_ = False; why.append((fn, sorted(extra_files), sorted(changed)))
+ck("each of the four went out as the live copy plus ONLY the privacy change and the new rules file (nothing held back released)", ok_, why)
+dl = open(os.path.join(TMP, "live", "call-disposition", "supabase", "functions", "call-disposition", "index.ts")).read()
+ck("...call-disposition keeps today's live wording and gets the coaching check", "nothing to attach \u2014 no summary" in dl and "a coaching call: kept private" in dl)
 ck("the schedule is every 5 minutes with the vault secret, as a sweep", q1("select schedule, command like '%vault.decrypted_secrets%' and command like '%sweep%' from cron.job where jobname = 'hr-coach-call'") == [["*/5 * * * *", True]])
 ck("the proof's pretend switch and probe left nothing behind", q1("select data->>'hr_coaching_calls_live' from public.app_data where key = 'ops_settings'") == [["false"]] and q1("select count(*) from public.hr_coaching where caregiver = 'Probe Person'") == [[0]])
 ck("the bucket is private with its keep-guard", q1("select public from storage.buckets where id = 'hr-audio'") == [[False]] and q1("select count(*) from pg_trigger where tgname = 'hr_audio_keep'") == [[1]])
@@ -147,7 +175,7 @@ c.close(); ck("one call, one record: the same call can't be linked twice", not d
 ck("Krystal can't read the call records directly", str(act(KRY, "select count(*) from public.hr_coaching_call")).startswith("ERR"))
 # stops
 code2, out2 = run969(drift=True)
-ck("if a live function is not what is in GitHub: stops before anything changes", code2 == 3 and "is not what is in GitHub" in out2 and q1("select to_regclass('public.hr_coaching_call') is null") == [[True]], out2[-1200:])
+ck("if a live function is not what Claude reviewed (even a shared file): stops before anything changes", code2 == 3 and "is not what Claude reviewed" in out2 and q1("select to_regclass('public.hr_coaching_call') is null") == [[True]], out2[-1200:])
 code3, out3 = run969(live_on=True)
 ck("if coaching calls are already on: stops", code3 == 3 and "already switched on" in out3, out3[-600:])
 code4, out4 = run969(missing="call-pull")
@@ -173,6 +201,7 @@ if CMD:
     LC = os.path.join(TMP, "launch.command"); open(LC, "w").write(s2); os.chmod(LC, 0o755)
     seed961(True); run(); extra(); M.clear()
     for f in glob.glob(os.path.join(TMP, "dep-*")): os.remove(f)
+    shutil.rmtree(os.path.join(TMP, "live"), ignore_errors=True)
     env = dict(ENVF(""), HOME=FH, PATH=FB + ":" + os.environ["PATH"]); [env.pop(k) for k in ("SB_REPORT", "SB_FNROOT", "SB_TOKEN", "SB_LIVE_SHAS")]
     p = subprocess.run(["zsh", LC], input="sbp_fake_token\n\n", env=env, capture_output=True, text=True, timeout=300)
     reps = sorted(glob.glob(os.path.join(FH, "Desktop", "969 *report*.txt")))

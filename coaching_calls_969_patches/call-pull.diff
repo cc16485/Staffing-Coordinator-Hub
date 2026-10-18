@@ -1,0 +1,24 @@
+--- a/supabase/functions/call-pull/index.ts
++++ b/supabase/functions/call-pull/index.ts
+@@ -17,6 +17,7 @@
+ // is no longer asked.
+ // =============================================================================
+ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
++import { loadSkip } from '../_shared/coaching-calls.ts'   // coaching calls are never read (2026-10-18)
+ import { jobCaller } from '../_shared/job-auth.ts'
+ 
+ const GHL = 'https://services.leadconnectorhq.com'
+@@ -96,6 +97,13 @@
+   out.calls_seen = calls.length
+   if (!calls.length) { await beat(db, true, JSON.stringify(out)); return json({ ok: true, ...out }) }
+ 
++  /* COACHING CALLS (2026-10-18): a coaching call is never transcribed or read; if they can't be checked, nothing is */
++  let isCoaching: (m: { id?: unknown; contactId?: unknown; at?: unknown }) => boolean
++  try { isCoaching = await loadSkip(db) } catch (e) { await beat(db, false, String(e).slice(0, 200)); return json({ error: 'coaching calls could not be checked' }, 500) }
++  const before = calls.length
++  calls.splice(0, calls.length, ...calls.filter((c) => !isCoaching({ id: c.id, contactId: c.contactId, at: c.at })))
++  ;(out as Record<string, unknown>).coaching_skipped = before - calls.length
++  if (!calls.length) { await beat(db, true, JSON.stringify(out)); return json({ ok: true, ...out }) }
+   const { data: seenRows } = await db.from('call_pull_seen').select('message_id, stage, tries').in('message_id', calls.map((c) => c.id))
+   const seen = new Map((seenRows ?? []).map((r: { message_id: string; stage: string; tries: number }) => [r.message_id, r]))
+   const todo = calls.filter((c) => { const s = seen.get(c.id); return !s || (s.stage === 'error' && s.tries < MAX_TRIES) })
