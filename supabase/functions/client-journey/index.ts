@@ -285,14 +285,14 @@ export function shiftWords(f: Any) {
 }
 /** STAGE B: the plan's first shift on or after a day: { label, cell } (cells['mon|s1'], slots in plan order) */
 const DOWS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
-export function firstShiftOf(plan: Any, fromDay: string): { label: string; cell: Any; day: string } | null {
+export function firstShiftOf(plan: Any, fromDay: string): { label: string; cell: Any; day: string; key: string } | null {
   const days: string[] = Array.isArray(plan?.days) ? plan.days : [], slots: Any[] = Array.isArray(plan?.slots) ? plan.slots : []
   if (!days.length || !slots.length) return null
   for (let i = 0; i < 7; i++) {
     const d = R.addDays(fromDay, i), dow = DOWS[new Date(d + 'T12:00:00Z').getUTCDay()]
     if (!days.includes(dow)) continue
     const sl = slots.slice().sort((a: Any, b: Any) => String(a.start || '').localeCompare(String(b.start || '')))[0]
-    return { day: d, label: dow[0].toUpperCase() + dow.slice(1) + ' ' + d + ' ' + (sl.label || ((sl.start || '') + '-' + (sl.end || ''))), cell: (plan.cells || {})[dow + '|' + sl.k] || null }
+    return { day: d, key: dow + '|' + sl.k, label: dow[0].toUpperCase() + dow.slice(1) + ' ' + d + ' ' + (sl.label || ((sl.start || '') + '-' + (sl.end || ''))), cell: (plan.cells || {})[dow + '|' + sl.k] || null }
   }
   return null
 }
@@ -397,8 +397,9 @@ export const VERIFY: Record<string, (x: Any) => Promise<Any | null>> = {
     if (!plans.length) return { why: 'No Caregiver Matching plan for this client yet' } as Any
     const f = firstShiftOf(plans[0], j.target_start || today())
     if (!f) return { why: 'The plan has no shifts yet' } as Any
-    if (f.cell && f.cell.status === 'yes' && !f.cell.recheck) return { detail: (f.cell.name || 'The caregiver') + ' said yes to ' + f.label }
-    return { why: f.cell && f.cell.status === 'yes' ? 'Recheck needed: ' + f.label : 'No yes yet for the first visit (' + f.label + ')' } as Any
+    const rc = f.cell && f.cell.status === 'yes' ? R.yesRecheck(plans[0], f.key, f.cell, today()) : null
+    if (f.cell && f.cell.status === 'yes' && !rc.need) return { detail: (f.cell.name || 'The caregiver') + ' said yes to ' + f.label }
+    return { why: f.cell && f.cell.status === 'yes' ? 'Recheck needed for ' + f.label + ': ' + rc.why : 'No yes yet for the first visit (' + f.label + ')' } as Any
   },
   first_visit_assigned: async ({ j, ax }) => {
     if (!j.axiscare_client_id) return null
@@ -512,6 +513,38 @@ async function moveToNine(db: Any, dfs: Any[], pp: Any, st: Any, practice: boole
     out.push(row)
   }
   return out
+}
+/** STAGE C (her recheck rule 2026-10-17): ONE My Work card per Caregiver Matching plan listing every yes that needs a
+ *  recheck, for whoever handles that plan's staffing (the Staffing Coordinator, else the client's Care Coordinator).
+ *  No texts, ever: a person asks the caregiver and presses Still a yes or No longer available on the plan. */
+export function planRechecks(plan: Any, todayYmd: string): { key: string; name: string; why: string }[] {
+  if (!plan || plan.status === 'done' || plan.status === 'archived' || plan.open_hours) return []
+  return Object.keys(plan.cells || {}).map((k) => ({ k, rc: R.yesRecheck(plan, k, plan.cells[k], todayYmd) })).filter((x) => x.rc.need)
+    .map((x) => ({ key: x.k, name: String(plan.cells[x.k].name || ''), why: x.rc.why }))
+}
+async function recheckCards(db: Any, pp: Any): Promise<{ open: number; closed: number }> {
+  const { data: pr } = await db.from('app_data').select('data').eq('key', 'staffing_plans').maybeSingle()
+  const plans: Any[] = Array.isArray(pr?.data) ? pr.data.filter(Boolean) : []
+  const { data: row } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+  const items: Any[] = Array.isArray(row?.data) ? row.data : []
+  const now = new Date().toISOString(), t = today(); let open = 0, closed = 0
+  const DAYW: Any = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun' }
+  for (const p of plans) {
+    const id = 'ops_tbrc_' + String(p.id).replace(/[^a-z0-9]/gi, '').slice(0, 24), had = items.find((x: Any) => x?.id === id)
+    const list = planRechecks(p, t)
+    if (!list.length) { if (had && had.status === 'open') { await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...had, status: 'done', closed_at: now, closed_by: 'journey', close_note: 'Nothing on the plan needs a recheck now', updated_at: now } }); closed++ } continue }
+    let cc = ''
+    if (p.journey_id) { const { data: jr } = await db.from('client_journey').select('assigned_cc').eq('journey_id', String(p.journey_id)).maybeSingle(); cc = String(jr?.assigned_cc || '') }
+    const owner = (pp.staffing[0] || cc || pp.owners[0] || '').toLowerCase()
+    const slotOf = (k: string) => { const [d, sk] = k.split('|'), sl = (p.slots || []).find((x: Any) => x.k === sk) || {}; return (DAYW[d] || d) + ' ' + (sl.label || ((sl.start || '') + '-' + (sl.end || ''))) }
+    const detail = list.map((x) => x.name + ', ' + slotOf(x.key) + ': ' + x.why).join(' · ').slice(0, 900)
+    const title = 'Recheck ' + list.length + ' caregiver yes' + (list.length === 1 ? '' : 'es') + ' for ' + (p.client || 'a client')
+    if (had && had.status === 'open' && had.title === title && had.detail === detail && had.owner === owner) { open++; continue }
+    await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...(had && had.status === 'open' ? had : { created_at: now }), id, kind: 'plan_recheck', status: 'open', owner, plan_id: p.id,
+      about: p.client || '', title, detail, urgency: 'normal', link: p.lead_id ? '#p/L' + p.lead_id + '/team' : p.axiscare_client_id ? '#p/A' + p.axiscare_client_id + '/team' : '', updated_at: now } })
+    open++
+  }
+  return { open, closed }
 }
 /** STAGE B: once the first visit is done, the next-day follow-up gets its day and its person from the duty schedule */
 async function scheduleFollow(db: Any, j: Any, fv: Any, steps: Any[]): Promise<boolean> {
@@ -907,6 +940,9 @@ Deno.serve(async (req) => {
     /* STAGE B: the nine-step switch is on: any journey still on the old steps moves over (once each) */
     let nine_moved: Any = null
     if (nineLive(st)) { try { nine_moved = (await moveToNine(db, dfs, pp, st, false, HUB)).filter((x: Any) => x.outcome === 'moved').length } catch (e) { nine_moved = { error: String((e as Error).message || e).slice(0, 200) } } }
+    let rechecks: Any = null
+    /* STAGE C: behind its own Admin switch, "Caregiver Matching checks" */
+    if (st.cm_checks_live === true) try { rechecks = await recheckCards(db, pp) } catch (e) { rechecks = { error: String((e as Error).message || e).slice(0, 200) } }
     const auto = await autoOpenClose(db, dfs, pp, st), care_ended = await closeEnded(db, dfs, pp, st), pause_due = await pauseDue(db)
     let in_care: Any = null
     try { in_care = await markInCare(db, dfs, pp, st, axFetcher()) } catch (e) { in_care = { error: String((e as Error).message || e).slice(0, 200) } }
@@ -917,7 +953,7 @@ Deno.serve(async (req) => {
       const { data: steps } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
       const out = await settle(db, j, steps ?? [], dfs, pp, st, j.status === 'active' ? { verify: false } : {}); n++; cards += out.cards.wrote + out.cards.closed; if (out.launch) launches++
     }
-    return json({ ok: true, journeys: n, card_changes: cards, launch_changes: launches, care_ended, pause_due, first_shifts, planned_ends, nine_moved, ...in_care, ...auto })
+    return json({ ok: true, journeys: n, card_changes: cards, launch_changes: launches, care_ended, pause_due, first_shifts, planned_ends, nine_moved, rechecks, ...in_care, ...auto })
   }
   /* ── THEY SAID YES (Leads intake desk, Stage 3; Samantha 2026-10-06: "move them directly from Leads into the Client
      Journey… carry everything… record the conversion event… land on the first incomplete required step… safely
