@@ -25,6 +25,7 @@ def one(q, what):
 
 start("THE COACHING TRACKER")
 say("PART 1 · READ ONLY (nothing changes)")
+if not one("select to_jsonb(to_regclass('public.hr_cases') is not null) as r", "whether the case table is there"): stop("the HR agent's case table (Desktop 957) is not there")
 X = one("""select jsonb_build_object(
   'cases', to_regclass('public.hr_cases') is not null,
   'coaching', to_regclass('public.hr_coaching') is not null,
