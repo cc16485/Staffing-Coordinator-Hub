@@ -39,6 +39,7 @@ import '../_shared/journey-rules.js'
 import '../_shared/lead-rules.js'
 import { careAction, pausedAx, runPlannedEnds } from './care.ts'
 import { loadQuiet } from '../_shared/client-quiet.ts'
+import { planned as dutyPlanned, seatHolder } from '../_shared/duty.ts'
 
 // deno-lint-ignore no-explicit-any
 type Any = any
@@ -109,6 +110,8 @@ export const stillNew = (lead: Any) => !!lead && lead.status === 'New'
 /* 2026-10-15 (Future Service Opportunities): a family saved for future has no journey cards; its journey waits, open */
 export const savedForFuture = (lead: Any) => !!lead && lead.status === 'Saved'
 const live = (st: Any) => st?.client_journey_live === true
+/* STAGE B: the nine-step Start of Care (Admin switch "Nine-step Start of Care") */
+export const nineLive = (st: Any) => st?.client_journey_live === true && st?.soc_nine_steps_live === true
 /** start one journey (the Hub's Start button, the sweep for a new lead, and the move-over all come through here) */
 async function openOne(db: Any, dfs: Any[], pp: Any, st: Any, who: Any, o: { lead: Any; leadId: string | null; axId: string | null; payer?: unknown; name?: string; asked?: string; is_test?: boolean; how?: string }) {
   const pay = payerFrom(o.payer ?? o.lead?.funding_source)
@@ -116,12 +119,14 @@ async function openOne(db: Any, dfs: Any[], pp: Any, st: Any, who: Any, o: { lea
   const name = String(o.name || nameOf(o.lead) || phoneName(o.lead)).trim()
   if (!name) return { outcome: 'no_name', error: 'The client needs a name first.', code: 400 }
   const r = routeCc(pp, st, pay, o.lead, o.asked || '', who.email)
-  const row = { lead_id: o.leadId, axiscare_client_id: o.axId || (o.lead && /^\d+$/.test(String(o.lead.axiscare_client_id || '').trim()) ? String(o.lead.axiscare_client_id).trim() : null),
+  /* STAGE B (2026-10-17): with the nine-step switch on, a new journey starts on the nine steps */
+  const catalog = nineLive(st) ? 'nine' : 'v1'
+  const row = { catalog, lead_id: o.leadId, axiscare_client_id: o.axId || (o.lead && /^\d+$/.test(String(o.lead.axiscare_client_id || '').trim()) ? String(o.lead.axiscare_client_id).trim() : null),
     client_name: name, payer: pay, assigned_cc: r.cc, assigned_how: r.how, created_by: who.email, is_test: o.is_test === true }
   const { data: j, error } = await db.from('client_journey').insert(row).select('*').single()
   if (error) return { outcome: 'error', error: 'Could not start the journey: ' + error.message, code: 500 }
   await event(db, j.journey_id, null, who, 'created', { assigned_cc: r.cc, payer: pay, how: r.how, started: o.how || 'by hand' })
-  if (pay) {
+  if (pay && catalog === 'v1') {
     await putStep(db, j.journey_id, 'intake.payer', { state: 'complete', answer: { payer: pay }, evidence: { note: 'From the inquiry' }, completed_by: who.email, completed_by_name: who.name, completed_at: new Date().toISOString() })
     await event(db, j.journey_id, 'intake.payer', who, 'completed', { answer: { payer: pay }, from: 'the inquiry' })
   }
@@ -278,6 +283,38 @@ export function shiftWords(f: Any) {
   if (!f.unassigned) return 'Every one of the ' + f.total + ' shift' + (f.total === 1 ? '' : 's') + ' in the two weeks from ' + f.from + ' has a caregiver'
   return f.unassigned + ' of ' + f.total + ' shift' + (f.total === 1 ? '' : 's') + ' in the two weeks from ' + f.from + ' still ' + (f.unassigned === 1 ? 'has' : 'have') + ' no caregiver'
 }
+/** STAGE B: the plan's first shift on or after a day: { label, cell } (cells['mon|s1'], slots in plan order) */
+const DOWS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
+export function firstShiftOf(plan: Any, fromDay: string): { label: string; cell: Any; day: string } | null {
+  const days: string[] = Array.isArray(plan?.days) ? plan.days : [], slots: Any[] = Array.isArray(plan?.slots) ? plan.slots : []
+  if (!days.length || !slots.length) return null
+  for (let i = 0; i < 7; i++) {
+    const d = R.addDays(fromDay, i), dow = DOWS[new Date(d + 'T12:00:00Z').getUTCDay()]
+    if (!days.includes(dow)) continue
+    const sl = slots.slice().sort((a: Any, b: Any) => String(a.start || '').localeCompare(String(b.start || '')))[0]
+    return { day: d, label: dow[0].toUpperCase() + dow.slice(1) + ' ' + d + ' ' + (sl.label || ((sl.start || '') + '-' + (sl.end || ''))), cell: (plan.cells || {})[dow + '|' + sl.k] || null }
+  }
+  return null
+}
+/** STAGE B (her rule 2026-10-17: "Schedule the next-day follow-up according to actual staff coverage, including weekend
+ *  arrangements"): the first day after the visit that the client's Care Coordinator is on the duty schedule; else the
+ *  first day someone holds Operations (their weekend cover); else the next business day with the Care Coordinator. */
+const RESPONDING = ['operations', 'staffing', 'after_hours']
+export function followPlan(windows: Any[], positions: Any[], cc: string, visitDay: string): { due: string; owner: string; why: string } {
+  const on = (w: Any, day: string) => {
+    if (!w || w.active === false || dutyPlanned(w, positions)) return false
+    if (w.start && w.end) return String(w.start).slice(0, 10) <= day && day <= String(w.end).slice(0, 10)
+    return !!w.recur && (!(w.recur.days || []).length || (w.recur.days || []).includes(new Date(day + 'T12:00:00Z').getUTCDay()))
+  }
+  const me = String(cc || '').toLowerCase()
+  for (let i = 1; i <= 7; i++) {
+    const day = R.addDays(visitDay, i)
+    if (me && (windows || []).some((w: Any) => String(w?.person || '').toLowerCase() === me && RESPONDING.includes(w.area) && on(w, day))) return { due: day, owner: me, why: 'the next day the Care Coordinator is working' }
+    const ops = (windows || []).find((w: Any) => w?.area === 'operations' && w.person && on(w, day))
+    if (ops) return { due: day, owner: String(ops.person).toLowerCase(), why: 'covered by the person on Operations that day' }
+  }
+  return { due: R.addBusinessDays(visitDay, 1), owner: me, why: 'nobody on the duty schedule that week: the next business day' }
+}
 /** The client's Care Scheduling Type is Flexible Booking Care (set when the welcome is sent, or on the Family bookings page). */
 async function flexibleOnly(db: Any, axId: unknown): Promise<boolean> {
   try { const { data } = await db.from('care_circles').select('care_scheduling_type').eq('axiscare_client_id', String(axId)).eq('care_scheduling_type', 'flexible').limit(1); return Array.isArray(data) && data.length > 0 } catch { return false }
@@ -316,6 +353,73 @@ export const VERIFY: Record<string, (x: Any) => Promise<Any | null>> = {
     const w = shiftWindow(j, today()), vs = await clientVisits(ax, j.axiscare_client_id, w.from, w.to); if (!vs) return null
     const f = shiftFacts(vs, w.from, w.to)
     return f.total && !f.unassigned ? { detail: shiftWords(f), facts: f } : { pending: true, facts: f }
+  },
+  /* ── STAGE B: the nine steps' checks ── */
+  soc_basics: async ({ j, lead }) => {
+    if (!lead) return j.axiscare_client_id ? { detail: 'Came from AxisCare (#' + j.axiscare_client_id + ')' } : null
+    const name = String((lead.client_first_name || '') + (lead.client_last_name || '') || (lead.first_name || '') + (lead.last_name || '')).trim()
+    const town = String(lead.client_city || lead.client_zip || lead.client_address || '').trim(), phone = String(lead.client_phone || lead.phone || '').trim()
+    const miss = [['name', name], ['phone', phone], ['town', town]].filter(([, v]) => !v).map(([k]) => k)
+    return miss.length ? { why: 'Missing: ' + miss.join(', ') } as Any : { detail: 'Name, phone and town are on the lead' }
+  },
+  payer_known: async ({ j }) => j.payer ? { detail: (R.PAYERS[j.payer] || j.payer) } : null,
+  assessment_done: async ({ j, db }) => {
+    const { data } = await db.from('app_data').select('data').eq('key', 'care_assessments').maybeSingle()
+    const list: Any[] = Array.isArray(data?.data) ? data.data : []
+    const mine = list.filter((a: Any) => a && ((j.lead_id && String(a.lead_id || '') === String(j.lead_id)) || (j.axiscare_client_id && String(a.axiscare_client_id || '').trim() === String(j.axiscare_client_id))))
+    const done = mine.find((a: Any) => a.status && a.status !== 'Scheduled')
+    return done ? { detail: 'Assessment ' + String(done.visit_date || done.created_at || '').slice(0, 10) + ': ' + done.status } : mine.length ? { why: 'Booked, not saved as done yet' } as Any : null
+  },
+  agreement_signed: async ({ j, db }) => {
+    if (!j.axiscare_client_id) return { why: 'Agreement Pending (the tablet agreement starts once the AxisCare client exists)' } as Any
+    const { data } = await db.from('client_agreements').select('id, status, countersigned_at, signed_at').eq('axiscare_client_id', String(j.axiscare_client_id)).neq('status', 'void').order('created_at', { ascending: false }).limit(5)
+    const c = (data ?? []).find((a: Any) => a.status === 'countersigned')
+    if (c) return { detail: 'Countersigned ' + String(c.countersigned_at || '').slice(0, 10) }
+    const sg = (data ?? []).find((a: Any) => a.status === 'signed')
+    return { why: sg ? 'Signed by the family; the office still needs to countersign' : 'Agreement Pending' } as Any
+  },
+  ax_contacts: async ({ j, ax }) => {
+    if (!j.axiscare_client_id) return null
+    const r = await ax(`/api/clients/${j.axiscare_client_id}/responsibleParties`); if (!r || r.status !== 200) return null
+    const raw = r.json?.results?.responsibleParties ?? r.json?.results ?? [], list = (Array.isArray(raw) ? raw : Object.values(raw)).filter((x: Any) => x && String(x.name || '').trim())
+    return list.length ? { detail: list.length + ' responsible part' + (list.length === 1 ? 'y' : 'ies') + ' in AxisCare' } : { why: 'None in AxisCare yet' } as Any
+  },
+  ax_tasks: async ({ j, ax }) => {
+    if (!j.axiscare_client_id) return null
+    const r = await ax(`/api/clients/${j.axiscare_client_id}/adls`); if (!r || r.status !== 200) return null
+    const raw = r.json?.results?.adls ?? r.json?.results ?? r.json?.adls ?? [], list = Array.isArray(raw) ? raw : Object.values(raw)
+    return list.length ? { detail: list.length + ' care task' + (list.length === 1 ? '' : 's') + ' in AxisCare' } : { why: 'No care tasks in AxisCare yet' } as Any
+  },
+  first_shift_yes: async ({ j, db }) => {
+    const { data } = await db.from('app_data').select('data').eq('key', 'staffing_plans').maybeSingle()
+    const plans: Any[] = (Array.isArray(data?.data) ? data.data : []).filter((p: Any) => p && p.status !== 'archived' && (String(p.journey_id || '') === String(j.journey_id)
+      || (j.lead_id && String(p.lead_id || '') === String(j.lead_id)) || (j.axiscare_client_id && String(p.axiscare_client_id || '') === String(j.axiscare_client_id))))
+    if (!plans.length) return { why: 'No Caregiver Matching plan for this client yet' } as Any
+    const f = firstShiftOf(plans[0], j.target_start || today())
+    if (!f) return { why: 'The plan has no shifts yet' } as Any
+    if (f.cell && f.cell.status === 'yes' && !f.cell.recheck) return { detail: (f.cell.name || 'The caregiver') + ' said yes to ' + f.label }
+    return { why: f.cell && f.cell.status === 'yes' ? 'Recheck needed: ' + f.label : 'No yes yet for the first visit (' + f.label + ')' } as Any
+  },
+  first_visit_assigned: async ({ j, ax }) => {
+    if (!j.axiscare_client_id) return null
+    const w = shiftWindow(j, today()), vs = await clientVisits(ax, j.axiscare_client_id, w.from, w.to); if (!vs) return null
+    const f = shiftFacts(vs, w.from, w.to)
+    const first = vs.filter((v: Any) => v && !v.removed).sort((a: Any, b: Any) => String(a.scheduledStartDate ?? a.startDate ?? '').localeCompare(String(b.scheduledStartDate ?? b.startDate ?? '')))[0]
+    if (!first) return { pending: true, facts: f, detail: 'No visits in AxisCare from ' + w.from + ' yet' }
+    const at = String(first.scheduledStartDate ?? first.startDate ?? '').slice(0, 16)
+    if (first?.caregiver?.id == null) return { pending: true, facts: { ...f, first_at: at }, detail: 'The first visit (' + at + ') has no caregiver yet' }
+    const cg = [first.caregiver.firstName, first.caregiver.lastName].filter(Boolean).join(' ')
+    return { detail: 'First visit ' + at + ' with ' + (cg || 'a caregiver') + '. ' + shiftWords(f), facts: { ...f, first_at: at, first_caregiver: cg } }
+  },
+  first_visit_done: async ({ j, ax, steps }) => {
+    if (!j.axiscare_client_id) return null
+    const st7 = (steps || []).find((x: Any) => x.step_key === 'soc.start')
+    const since = R.addDays(String(j.created_at || today()).slice(0, 10), -1), to = today()
+    const vs = await clientVisits(ax, j.axiscare_client_id, since, to); if (!vs) return null
+    const done = vs.filter(completedVisit).sort((a: Any, b: Any) => String(a.scheduledStartDate ?? a.startDate ?? '').localeCompare(String(b.scheduledStartDate ?? b.startDate ?? '')))[0]
+    if (!done) return null
+    const day = String(done.scheduledStartDate ?? done.startDate ?? '').slice(0, 10)
+    return { detail: 'First visit done ' + day + ' (clock-in and clock-out in AxisCare)', facts: { actual_first_visit: day, confirmed: st7?.answer?.first_at || null } }
   },
   first_visit: async ({ j, ax }) => {
     if (!j.axiscare_client_id) return null
@@ -361,6 +465,97 @@ async function mirrorStart(db: Any, j: Any): Promise<Any | null> {
   return sc
 }
 
+/** STAGE B (pure): where an existing journey lands on the nine steps, from what the Hub and AxisCare already show.
+ *  f = { said_yes, booked, assessed, in_care, old: { key: state } } */
+export const NINE_KEYS = ['soc.lead', 'soc.assess', 'soc.outcome', 'soc.setup', 'soc.confirm', 'soc.axis', 'soc.start', 'soc.first', 'soc.follow']
+export function placeNine(f: Any): { done: string[]; active: boolean; why: string } {
+  const od = (k: string) => R.DONE.includes((f.old || {})[k])
+  if (f.in_care) return { done: NINE_KEYS.slice(), active: true, why: 'Already receiving care in AxisCare (' + (f.in_care === true ? 'a recent visit' : 'first visit ' + f.in_care) + ')' }
+  const done: string[] = []
+  const yes = !!f.said_yes || od('signed.yes')
+  if (yes || f.booked || f.ax || (od('intake.payer') && od('asmt.book'))) done.push('soc.lead')
+  if (yes || f.assessed || od('asmt.outcome')) { if (!done.includes('soc.lead')) done.push('soc.lead'); done.push('soc.assess') }
+  if (yes) done.push('soc.outcome')
+  const why = yes ? 'They said yes' : f.assessed ? 'Assessment done' : done.length ? 'Assessment booked' : 'Still a new lead'
+  return { done, active: false, why }
+}
+async function placeFacts(db: Any, j: Any, steps: Any[], ax: Any): Promise<Any> {
+  const lead = await leadOf(db, j.lead_id)
+  const old: Any = {}; steps.forEach((x: Any) => { old[x.step_key] = x.state })
+  const assessed = await VERIFY.assessment_done({ j, db })
+  let in_care: Any = false
+  if (j.axiscare_client_id) { const s2 = await recentShift(ax, String(j.axiscare_client_id)); if (s2 === null) return null; in_care = s2.shift ? (s2.shift === true ? true : String(s2.shift).slice(0, 10)) : false }
+  return { said_yes: !!lead?.said_yes_at, booked: !!(lead && (lead.assessment_at || lead.assessment_date || /assessment scheduled/i.test(String(lead.status || '')))),
+    assessed: !!(assessed && !assessed.why), ax: !!j.axiscare_client_id, in_care, old }
+}
+/** STAGE B: move open journeys onto the nine steps. practice: say what would happen, change nothing. */
+async function moveToNine(db: Any, dfs: Any[], pp: Any, st: Any, practice: boolean, who: Any) {
+  const { data: js } = await db.from('client_journey').select('*').eq('subject', 'client').eq('status', 'open')
+  const ax = axFetcher(), out: Any[] = []
+  for (const j of (js ?? []).filter((x: Any) => (x.catalog || 'v1') !== 'nine')) {
+    const { data: steps } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
+    const oldView = R.compute(dfs, j, steps ?? [], ctxFor(pp, st))
+    const f = await placeFacts(db, j, steps ?? [], ax)
+    if (!f) { out.push({ journey_id: j.journey_id, client: j.client_name, outcome: 'not_checked', why: 'AxisCare did not answer; looked at again next time' }); continue }
+    const p = placeNine(f), nj = { ...j, catalog: 'nine' }
+    const fake = p.done.map((k) => ({ journey_id: j.journey_id, step_key: k, state: 'complete' }))
+    const v = R.compute(dfs, nj, fake, ctxFor(pp, st))
+    const row = { journey_id: j.journey_id, client: j.client_name, is_test: !!j.is_test, from: oldView.stageLabel, to: p.active ? 'Receiving care (Start of Care complete)' : v.next ? v.next.def.title : 'Start of Care complete', done: p.done.length, why: p.why, outcome: practice ? 'would_move' : 'moved' }
+    if (!practice) {
+      const now = new Date().toISOString()
+      await db.from('client_journey').update({ catalog: 'nine', ...(p.active ? { status: 'active' } : {}), updated_at: now }).eq('journey_id', j.journey_id)
+      for (const k of p.done) await putStep(db, j.journey_id, k, { state: 'complete', evidence: { placed: { at: now, from: oldView.stage, why: p.why } }, completed_by: 'hub', completed_by_name: 'Moved to the nine steps', completed_at: now })
+      await event(db, j.journey_id, null, who, 'moved_to_nine', { from: oldView.stage, done: p.done, active: p.active }, p.why)
+      const fresh = await load(db, { journey_id: j.journey_id }); if (fresh && fresh.j.status === 'open') await settle(db, fresh.j, fresh.steps, dfs, pp, st)
+      else if (fresh) await refreshCards(db, fresh.j, R.compute(dfs, fresh.j, fresh.steps, ctxFor(pp, st)), pp, st)
+    }
+    out.push(row)
+  }
+  return out
+}
+/** STAGE B: once the first visit is done, the next-day follow-up gets its day and its person from the duty schedule */
+async function scheduleFollow(db: Any, j: Any, fv: Any, steps: Any[]): Promise<boolean> {
+  const fs = steps.find((x: Any) => x.step_key === 'soc.follow')
+  if (fs && (R.DONE.includes(fs.state) || (fs.evidence || {}).due_on)) return false
+  const read = async (k: string) => { const { data } = await db.from('app_data').select('data').eq('key', k).maybeSingle(); return Array.isArray(data?.data) ? data.data : [] }
+  const [windows, positions] = await Promise.all([read('duty_windows'), read('positions')])
+  const day = String((fv.evidence || {}).actual_first_visit || fv.completed_at || new Date().toISOString()).slice(0, 10)
+  const f = followPlan(windows, positions, String(j.assigned_cc || ''), day)
+  const cc = String(j.assigned_cc || '').toLowerCase()
+  await putStep(db, j.journey_id, 'soc.follow', { ...(fs ? stripRow(fs) : { state: 'open' }), evidence: { ...((fs && fs.evidence) || {}), due_on: f.due, due_why: f.why }, owner_email: f.owner && f.owner !== cc ? f.owner : (fs?.owner_email ?? null) })
+  await event(db, j.journey_id, 'soc.follow', HUB, 'followup_scheduled', { due: f.due, owner: f.owner, why: f.why })
+  return true
+}
+/** STAGE B: what finishing a nine-step step does beyond the step itself */
+async function afterNine(db: Any, j: Any, key: string, answer: Any, who: Any, pp: Any, st: Any) {
+  const now = new Date().toISOString()
+  /* Ready to Start: the inquiry counts as a yes (the Leads board's word), exactly as "They said yes" does */
+  if (key === 'soc.outcome' && answer?.outcome === 'ready' && j.lead_id) {
+    const lead = await leadOf(db, j.lead_id)
+    if (lead && !lead.said_yes_at) {
+      const l2: Any = { ...lead, said_yes_at: now, said_yes_by: who.email, said_yes_by_name: who.name, said_yes_prev_status: lead.status || 'New', comm_log: Array.isArray(lead.comm_log) ? [...lead.comm_log] : [] }
+      LR.setStatus(l2, 'Converted', { by: who.email, why: 'Ready to Start (assessment outcome)', at: now })
+      l2.comm_log.push({ body: 'Assessment outcome: Ready to Start · ' + who.name, at: now, by: who.email, kind: 'said_yes' })
+      await db.rpc('upsert_app_data_item', { target_key: 'leads', item: l2 })
+      await event(db, j.journey_id, key, who, 'said_yes', { lead_id: j.lead_id, from: 'assessment outcome' })
+    }
+  }
+  if (key !== 'soc.follow') return
+  const items: Any[] = []
+  const base = { kind: 'journey_followup', status: 'open', created_at: now, updated_at: now, journey_id: j.journey_id, about: j.client_name, ref: refOf(j), is_test: !!j.is_test }
+  if (answer?.changes && answer.changes !== 'none') {
+    const what: Any = { care_plan: 'the care plan', schedule: 'the schedule', caregiver: 'the caregiver', other: 'something else' }
+    items.push({ ...base, id: 'ops_jf_' + j.journey_id.replace(/-/g, '').slice(0, 12) + '_c', owner: String(j.assigned_cc || '').toLowerCase() || null, urgency: 'normal',
+      title: j.client_name + ': change ' + (what[answer.changes] || 'something') + ' after the first visit', detail: String(answer.changes_note || '').slice(0, 500) })
+  }
+  if (answer?.urgent === true) {
+    const read = async (k: string) => { const { data } = await db.from('app_data').select('data').eq('key', k).maybeSingle(); return Array.isArray(data?.data) ? data.data : [] }
+    const seat = seatHolder(await read('duty_windows'), 'operations', new Date(), st, String(j.assigned_cc || ''), await read('positions'))
+    items.push({ ...base, id: 'ops_jf_' + j.journey_id.replace(/-/g, '').slice(0, 12) + '_u', owner: seat.person || String(j.assigned_cc || '').toLowerCase() || null, urgency: 'urgent',
+      title: 'URGENT after the first visit: ' + j.client_name, detail: String(answer.changes_note || 'Marked urgent on the next-day follow-up').slice(0, 500) + ' · from ' + who.name })
+  }
+  for (const it of items) { await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: it }); await event(db, j.journey_id, key, HUB, 'followup_task', { id: it.id, owner: it.owner, urgency: it.urgency }) }
+}
 /** stamp ready_since, run the checks for verified steps, refresh My Work. Returns what changed. */
 async function settle(db: Any, j: Any, steps: Any[], dfs: Any[], pp: Any, st: Any, opts: Any = {}): Promise<Any> {
   const sc = await mirrorStart(db, j)
@@ -372,9 +567,32 @@ async function settle(db: Any, j: Any, steps: Any[], dfs: Any[], pp: Any, st: An
     if (['ready', 'attention', 'blocked'].includes(r.status) && !r.st.ready_since && r.st.state !== 'waiting') {
       await putStep(db, j.journey_id, r.key, { ...stripRow(r.st), ready_since: now }); changed++
     }
+    /* STAGE B: a step made of checks. The Hub ticks the checks it can see; when every check is done the step finishes
+       itself. A step not needed for a Flexible Booking Care client (no standing schedule) is marked so. */
+    if (r.def.proof === 'checks' && ['ready', 'attention', 'blocked'].includes(r.status) && opts.verify !== false && !(r.st.evidence || {}).hold_auto) {
+      if (r.def.not_needed_if === 'flexible_only' && j.axiscare_client_id && await flexibleOnly(db, j.axiscare_client_id)) {
+        await putStep(db, j.journey_id, r.key, { ...stripRow(r.st), state: 'not_needed', evidence: { ...(r.st.evidence || {}), flexible: { at: now } }, completed_by: 'hub', completed_by_name: 'The Hub (Flexible Booking Care)', completed_at: now })
+        await event(db, j.journey_id, r.key, HUB, 'not_needed', { flexible_booking: true }, 'Flexible Booking Care: no standing schedule'); changed++; continue
+      }
+      const auto: Any = { ...((r.st.evidence || {}).auto || {}) }; let diff = false
+      for (const c of R.checksOf(r.def, j).filter((c: Any) => c.auto)) {
+        if (auto[c.key]?.manual) continue
+        const fn = VERIFY[c.auto]; if (!fn) continue
+        const ok = await fn({ j, lead, ax, db, steps })
+        const nx: Any = ok && !ok.pending && !ok.why ? { ok: true, detail: ok.detail || '', at: auto[c.key]?.ok ? auto[c.key].at : now } : { ok: false, detail: (ok && (ok.why || ok.detail)) || '' }
+        if (ok?.facts) nx.facts = ok.facts
+        if (!auto[c.key] || auto[c.key].ok !== nx.ok || auto[c.key].detail !== nx.detail || JSON.stringify(auto[c.key].facts ?? null) !== JSON.stringify(nx.facts ?? null)) { auto[c.key] = nx; diff = true }
+      }
+      const ev = { ...(r.st.evidence || {}), auto }
+      if (R.checkState(r.def, { ...r.st, evidence: ev }, j).every((c: Any) => c.ok || c.optional)) {
+        await putStep(db, j.journey_id, r.key, { ...stripRow(r.st), state: 'complete', evidence: ev, completed_by: 'hub', completed_by_name: 'The Hub (every check done)', completed_at: now })
+        await event(db, j.journey_id, r.key, HUB, 'checks_complete', { checks: Object.keys(auto) }); changed++
+      } else if (diff) { await putStep(db, j.journey_id, r.key, { ...stripRow(r.st), evidence: ev }); changed++ }
+      continue
+    }
     /* stage A (2026-10-17): a verified step a person reopened stays open until they finish it or ask the Hub to check again */
     if (r.def.proof === 'verified' && ['ready', 'attention'].includes(r.status) && r.def.verify && VERIFY[r.def.verify] && opts.verify !== false && !(r.st.evidence || {}).hold_auto) {
-      const ok = await VERIFY[r.def.verify]({ j, lead, ax, db })
+      const ok = await VERIFY[r.def.verify]({ j, lead, ax, db, steps })
       /* not done yet, but the Hub can say how far along it is (the shifts): keep that on the step when it changes */
       if (ok && ok.pending) {
         const was = (r.st.evidence || {}).shifts
@@ -384,7 +602,7 @@ async function settle(db: Any, j: Any, steps: Any[], dfs: Any[], pp: Any, st: An
         continue
       }
       if (ok) {
-        await putStep(db, j.journey_id, r.key, { ...stripRow(r.st), state: 'complete', evidence: { ...(r.st.evidence || {}), verified: { at: now, detail: ok.detail }, ...(ok.facts ? { shifts: { ...ok.facts, checked_at: now } } : {}) },
+        await putStep(db, j.journey_id, r.key, { ...stripRow(r.st), state: 'complete', evidence: { ...(r.st.evidence || {}), verified: { at: now, detail: ok.detail }, ...(ok.facts && ok.facts.actual_first_visit ? { actual_first_visit: ok.facts.actual_first_visit, confirmed_first_visit: ok.facts.confirmed } : ok.facts ? { shifts: { ...ok.facts, checked_at: now } } : {}) },
           completed_by: 'hub', completed_by_name: 'The Hub (verified)', completed_at: now })
         if (ok.axiscare_client_id && !j.axiscare_client_id) { await db.from('client_journey').update({ axiscare_client_id: ok.axiscare_client_id, updated_at: now }).eq('journey_id', j.journey_id); j.axiscare_client_id = ok.axiscare_client_id }
         await event(db, j.journey_id, r.key, { email: 'hub', name: 'The Hub' }, 'verified', { detail: ok.detail }); changed++
@@ -394,14 +612,16 @@ async function settle(db: Any, j: Any, steps: Any[], dfs: Any[], pp: Any, st: An
   if (changed) { const fresh = await load(db, { journey_id: j.journey_id }); if (fresh) { steps = fresh.steps; view = R.compute(dfs, j, steps, ctx) } }
   /* FIRST SHIFT ON THE INQUIRY (2026-10-07): once the journey has the first visit (verified from AxisCare, or confirmed by hand),
      the lead carries first_shift_at, so the Owners Hub can say inquiry → yes → first shift without reading journey tables. */
-  const fv = steps.find((s: Any) => s.step_key === 'fw.first_visit' && R.DONE.includes(s.state))
+  const fv = steps.find((s: Any) => (s.step_key === 'fw.first_visit' || s.step_key === 'soc.first') && R.DONE.includes(s.state))
   if (fv && lead && !lead.first_shift_at) {
     const at = (fv.evidence && fv.evidence.verified && fv.evidence.verified.at) || fv.completed_at || now
     const l2 = { ...lead, first_shift_at: at, first_shift_source: 'journey', comm_log: [...(Array.isArray(lead.comm_log) ? lead.comm_log : []), { body: 'First shift happened (from the client journey)', at, kind: 'first_shift' }] }
     await db.rpc('upsert_app_data_item', { target_key: 'leads', item: l2 }); lead.first_shift_at = at
     await event(db, j.journey_id, 'fw.first_visit', { email: 'hub', name: 'The Hub' }, 'first_shift_stamped', { at })
   }
-  if (view.complete && j.status === 'open' && steps.some((s: Any) => s.step_key === 'active.complete' && s.state === 'complete')) {
+  if (fv && fv.step_key === 'soc.first') { if (await scheduleFollow(db, j, fv, steps)) { const f2 = await load(db, { journey_id: j.journey_id }); if (f2) { steps = f2.steps; view = R.compute(dfs, j, steps, ctx) } } }
+  const ender = (k: string) => k === 'active.complete' || !!(dfs.find((d: Any) => d.key === k) || {}).completes_journey
+  if (view.complete && j.status === 'open' && steps.some((s: Any) => ender(s.step_key) && s.state === 'complete')) {
     await db.from('client_journey').update({ status: 'active', updated_at: now }).eq('journey_id', j.journey_id); j.status = 'active'
     await event(db, j.journey_id, null, { email: 'hub', name: 'The Hub' }, 'became_active', {})
   }
@@ -583,7 +803,7 @@ async function closeEnded(db: Any, dfs: Any[], pp: Any, st: Any) {
  *  "mark those three as receiving care, clear their cards, and stop new intake journeys for active clients"). A client is
  *  receiving care when their AxisCare client role is active AND AxisCare has a completed shift for them in the last 4 weeks.
  *  The shift is the safety: a brand-new client AxisCare marks Active before the first visit keeps the whole intake path. */
-export const INTAKE_STAGES = ['intake', 'prechecks', 'assessment']
+export const INTAKE_STAGES = ['intake', 'prechecks', 'assessment', 'lead', 'assess', 'outcome']
 export const IN_CARE_DAYS = 27
 /** pure: open real journeys with their own AxisCare number, an active client role, and a stage still before signing */
 export function inCarePlan(js: Any[], links: Any[], roles: Any[], stageOf: (j: Any) => string) {
@@ -684,6 +904,9 @@ Deno.serve(async (req) => {
         await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...it, status: 'done', closed_at: now, closed_by: 'journey', close_note: 'Client journeys were switched off' } }); put++ }
       return json({ ok: true, live: false, note: 'client_journey_live is off: nothing swept', cards_put_away: put, first_shifts, planned_ends })
     }
+    /* STAGE B: the nine-step switch is on: any journey still on the old steps moves over (once each) */
+    let nine_moved: Any = null
+    if (nineLive(st)) { try { nine_moved = (await moveToNine(db, dfs, pp, st, false, HUB)).filter((x: Any) => x.outcome === 'moved').length } catch (e) { nine_moved = { error: String((e as Error).message || e).slice(0, 200) } } }
     const auto = await autoOpenClose(db, dfs, pp, st), care_ended = await closeEnded(db, dfs, pp, st), pause_due = await pauseDue(db)
     let in_care: Any = null
     try { in_care = await markInCare(db, dfs, pp, st, axFetcher()) } catch (e) { in_care = { error: String((e as Error).message || e).slice(0, 200) } }
@@ -694,7 +917,7 @@ Deno.serve(async (req) => {
       const { data: steps } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
       const out = await settle(db, j, steps ?? [], dfs, pp, st, j.status === 'active' ? { verify: false } : {}); n++; cards += out.cards.wrote + out.cards.closed; if (out.launch) launches++
     }
-    return json({ ok: true, journeys: n, card_changes: cards, launch_changes: launches, care_ended, pause_due, first_shifts, planned_ends, ...in_care, ...auto })
+    return json({ ok: true, journeys: n, card_changes: cards, launch_changes: launches, care_ended, pause_due, first_shifts, planned_ends, nine_moved, ...in_care, ...auto })
   }
   /* ── THEY SAID YES (Leads intake desk, Stage 3; Samantha 2026-10-06: "move them directly from Leads into the Client
      Journey… carry everything… record the conversion event… land on the first incomplete required step… safely
@@ -723,20 +946,31 @@ Deno.serve(async (req) => {
       const { j } = got!
       /* the payer step: answered from the inquiry if the journey never got it */
       const pay = payerFrom(lead.funding_source)
-      if (pay && pay !== 'cds' && !got!.steps.some((x: Any) => x.step_key === 'intake.payer' && R.DONE.includes(x.state))) {
+      if (pay && pay !== 'cds' && R.catalogOf(j) === 'nine' && !j.payer) { await db.from('client_journey').update({ payer: pay, updated_at: now }).eq('journey_id', j.journey_id); j.payer = pay }
+      if (pay && pay !== 'cds' && R.catalogOf(j) !== 'nine' && !got!.steps.some((x: Any) => x.step_key === 'intake.payer' && R.DONE.includes(x.state))) {
         await putStep(db, j.journey_id, 'intake.payer', { state: 'complete', answer: { payer: pay }, evidence: { note: 'From the inquiry' }, completed_by: who.email, completed_by_name: who.name, completed_at: now })
         if (!j.payer) { await db.from('client_journey').update({ payer: pay, updated_at: now }).eq('journey_id', j.journey_id); j.payer = pay }
         got = await load(db, { journey_id: j.journey_id })
       }
       const view = R.compute(dfs, j, got!.steps, ctxFor(pp, st))
       if (view.stop) return json({ outcome: 'stopped', error: 'The journey is stopped at "' + view.stop.def.title + '": ' + view.stop.why + ' Only an owner exception lets it continue.', step: view.stop.key, ref: refOf(j) }, 422)
-      const row = view.rows.find((r: Any) => r.key === 'signed.yes')
+      const nine = R.catalogOf(j) === 'nine', yesKey = nine ? 'soc.outcome' : 'signed.yes'
+      const row = view.rows.find((r: Any) => r.key === yesKey)
       if (!row) return json({ error: 'The catalog has no "Family chose Caring Companions" step. Run the Stage 3 installer.' }, 500)
-      if (row.status === 'later') return json({ outcome: 'refused', error: row.why || 'Not its turn yet.', step: 'signed.yes', ref: refOf(j) }, 422)
-      if (!R.DONE.includes(row.st.state)) {
-        await putStep(db, j.journey_id, 'signed.yes', { ...stripRow(row.st), state: 'complete', evidence: { confirmed: { by: who.email, at: now } }, completed_by: who.email, completed_by_name: who.name, completed_at: now })
+      if (nine) {
+        /* STAGE B: the yes is the assessment outcome Ready to Start. Before the assessment step is done, the answer waits
+           on the step (picked for them when it comes up) */
+        if (!R.DONE.includes(row.st.state)) {
+          if (row.status === 'later') await putStep(db, j.journey_id, yesKey, { ...stripRow(row.st), answer: { outcome: 'ready', from: 'they said yes' } })
+          else await putStep(db, j.journey_id, yesKey, { ...stripRow(row.st), state: 'complete', answer: { outcome: 'ready', from: 'they said yes' }, evidence: { confirmed: { by: who.email, at: now } }, completed_by: who.email, completed_by_name: who.name, completed_at: now })
+        }
+      } else {
+        if (row.status === 'later') return json({ outcome: 'refused', error: row.why || 'Not its turn yet.', step: 'signed.yes', ref: refOf(j) }, 422)
+        if (!R.DONE.includes(row.st.state)) {
+          await putStep(db, j.journey_id, 'signed.yes', { ...stripRow(row.st), state: 'complete', evidence: { confirmed: { by: who.email, at: now } }, completed_by: who.email, completed_by_name: who.name, completed_at: now })
+        }
       }
-      await event(db, j.journey_id, 'signed.yes', actor, 'said_yes', { lead_id: leadId, marked_by: who.name, at: now })
+      await event(db, j.journey_id, yesKey, actor, 'said_yes', { lead_id: leadId, marked_by: who.name, at: now })
       const l2 = stamp({ ...lead, said_yes_at: now, said_yes_by: who.email, said_yes_by_name: who.name, said_yes_prev_status: lead.status || 'New' })
       LR.setStatus(l2, 'Converted', { by: who.email, why: 'they said yes', at: now })
       l2.comm_log.push({ body: 'They said yes · marked by ' + who.name, at: now, by: who.email, kind: 'said_yes' })
@@ -751,13 +985,14 @@ Deno.serve(async (req) => {
     if (ageH > 24 && !isOwner) return json({ outcome: 'refused', error: 'More than a day has passed. Only an owner (Samantha or Zachary) can undo a yes now.' }, 403)
     const got = await load(db, { lead_id: leadId })
     if (got) {
-      const yesDef = dfs.find((d: Any) => d.key === 'signed.yes'), yesSort = Number(yesDef?.sort ?? 125)
-      const later = got.steps.filter((x: Any) => R.DONE.includes(x.state) && x.completed_by && x.completed_by !== 'hub' && Number((dfs.find((d: Any) => d.key === x.step_key) || {}).sort ?? 0) > yesSort)
+      const yk = R.catalogOf(got.j) === 'nine' ? 'soc.outcome' : 'signed.yes'
+      const yesDef = dfs.find((d: Any) => d.key === yk), yesSort = Number(yesDef?.sort ?? 125)
+      const later = got.steps.filter((x: Any) => R.DONE.includes(x.state) && x.completed_by && x.completed_by !== 'hub' && R.applies(dfs.find((d: Any) => d.key === x.step_key) || {}, got.j) && Number((dfs.find((d: Any) => d.key === x.step_key) || {}).sort ?? 0) > yesSort)
       if (later.length) { const t = (dfs.find((d: Any) => d.key === later[0].step_key) || {}).title || later[0].step_key; return json({ outcome: 'refused', error: 'Work has been done since the yes ("' + t + '"). Reopen that step first if this really was a mistake.', step: later[0].step_key }, 422) }
-      const yesStep = got.steps.find((x: Any) => x.step_key === 'signed.yes')
+      const yesStep = got.steps.find((x: Any) => x.step_key === yk)
       if (yesStep && R.DONE.includes(yesStep.state)) {
-        await putStep(db, got.j.journey_id, 'signed.yes', { ...stripRow(yesStep), state: 'open', completed_by: null, completed_by_name: null, completed_at: null, evidence: null })
-        await event(db, got.j.journey_id, 'signed.yes', actor, 'said_yes_undone', { was: { by: yesStep.completed_by, at: yesStep.completed_at } }, String(b.reason || 'pressed by mistake').slice(0, 300))
+        await putStep(db, got.j.journey_id, yk, { ...stripRow(yesStep), state: 'open', completed_by: null, completed_by_name: null, completed_at: null, evidence: null, ...(yk === 'soc.outcome' ? { answer: null } : {}) })
+        await event(db, got.j.journey_id, yk, actor, 'said_yes_undone', { was: { by: yesStep.completed_by, at: yesStep.completed_at } }, String(b.reason || 'pressed by mistake').slice(0, 300))
       }
     }
     const l3 = stamp({ ...lead, said_yes_at: null, said_yes_by: null, said_yes_by_name: null, said_yes_undone: { at: now, by: who.email, was_at: lead.said_yes_at } })
@@ -798,6 +1033,13 @@ Deno.serve(async (req) => {
   }
   if (st.client_journey_live !== true && !isOwner) return json({ error: 'Client journeys are switched off right now.' }, 409)
 
+  /* STAGE B: an owner previews (practice) or makes the move to the nine steps */
+  if (b.action === 'place_nine') {
+    if (!isOwner) return json({ error: 'Only an owner can move journeys to the nine steps.' }, 403)
+    const practice = b.practice !== false
+    if (!practice && !nineLive(st)) return json({ outcome: 'off', error: 'Turn on Nine-step Start of Care first. The preview works any time.' }, 409)
+    return json({ outcome: practice ? 'practice' : 'moved', journeys: await moveToNine(db, dfs, pp, st, practice, { email: who.email, name: who.name }) })
+  }
   if (b.action === 'list') {
     const { data: js } = await db.from('client_journey').select('*').eq('subject', 'client').in('status', b.include_active ? ['open', 'active', 'closed'] : ['open']).limit(1000)
     const ids = (js ?? []).map((j: Any) => j.journey_id)
@@ -807,7 +1049,8 @@ Deno.serve(async (req) => {
     const { data: paused } = await db.from('client_pause').select('axiscare_client_id, client_name, paused_from, followup_date, reason, owner_email').eq('status', 'open')
     return json({ quiet, paused: paused ?? [], journeys: (js ?? []).map((j: Any) => {
       const v = R.compute(dfs, j, (steps ?? []).filter((s: Any) => s.journey_id === j.journey_id), ctx)
-      return { journey_id: j.journey_id, ref: refOf(j), client_name: j.client_name, payer: j.payer, status: j.status, stage: v.stage, stage_label: v.stageLabel,
+      return { journey_id: j.journey_id, ref: refOf(j), client_name: j.client_name, payer: j.payer, status: j.status, stage: v.stage, stage_label: v.stageLabel, catalog: j.catalog || 'v1',
+        step_n: R.catalogOf(j) === 'nine' ? Math.max(1, R.NINE_STAGES.indexOf(v.stage) + 1) : null,
         target_start: j.target_start, assigned_cc: j.assigned_cc, is_test: j.is_test, lead_id: j.lead_id, axiscare_client_id: j.axiscare_client_id, launch_id: j.launch_id ?? null, closed_reason: j.closed_reason ?? null,
         next: v.next ? { key: v.next.key, title: v.next.def.title, status: v.next.status, why: v.next.attention || v.next.why || '', owner: v.next.owner.email,
           shifts: v.next.st?.evidence?.shifts ?? null, shift_words: shiftWords(v.next.st?.evidence?.shifts) } : null, stopped: !!v.stop }
@@ -818,7 +1061,10 @@ Deno.serve(async (req) => {
     const got = await load(db, b)
     if (!got) return json({ journey: null, defs: dfs })
     const { data: ev } = await db.from('client_journey_event').select('*').eq('journey_id', got.j.journey_id).order('at', { ascending: false }).limit(300)
-    return json({ journey: got.j, steps: got.steps, events: ev ?? [], defs: dfs, ref: refOf(got.j), names: pp.names, is_owner: isOwner,
+    /* STAGE B: the header's Agreement Pending / Signed comes from the tablet agreement */
+    let agreement: Any = null
+    if (got.j.axiscare_client_id) { const { data: ag } = await db.from('client_agreements').select('id, status, signed_at, countersigned_at').eq('axiscare_client_id', String(got.j.axiscare_client_id)).neq('status', 'void').order('created_at', { ascending: false }).limit(1); agreement = ag?.[0] ?? null }
+    return json({ journey: got.j, steps: got.steps, events: ev ?? [], defs: dfs, ref: refOf(got.j), names: pp.names, is_owner: isOwner, agreement, nine_live: nineLive(st),
       ctx: ctxFor(pp, st), office: [...pp.office].map((e) => ({ email: e, name: pp.names[e] || e, roles: [pp.owners.includes(e) && 'owner_admin', pp.cc.includes(e) && 'care_coordinator', pp.staffing.includes(e) && 'staffing_coordinator'].filter(Boolean) })) })
   }
 
@@ -907,6 +1153,28 @@ Deno.serve(async (req) => {
         } } }
     /* CRM plan step A (2026-10-15): "when do they want to start" is what they asked for and stays on the step's answer; the
        target start comes only from the Start Contract (set_target_start no longer writes the journey) */
+    if (row.def.catalog === 'nine') await afterNine(db, j, key, answer, who, pp, st)
+  } else if (op === 'save') {
+    /* STAGE B: a person ticks or answers one of a step's checks; the step finishes itself once every check is done */
+    if (row.def.proof !== 'checks') return json({ outcome: 'refused', error: 'This step has no checks to tick.' }, 422)
+    if (done) return json({ outcome: 'refused', error: 'This step is already done. Reopen it to change an answer.' }, 422)
+    if (row.status === 'later') return json({ outcome: 'refused', error: row.why || 'Not its turn yet.' }, 422)
+    const keys = R.personChecks(row.def, j).map((c: Any) => c.key), inp = b.answer && typeof b.answer === 'object' ? b.answer : {}
+    const add: Any = {}; for (const k of keys) if (k in inp) add[k] = typeof inp[k] === 'string' ? inp[k].slice(0, 300) : inp[k] === true
+    if (!Object.keys(add).length) return json({ outcome: 'refused', error: 'Nothing to save.' }, 422)
+    const answered = { ...((s.evidence || {}).answered || {}) }; Object.keys(add).forEach((k) => { answered[k] = { by: who.email, name: who.name, at: now } })
+    await putStep(db, j.journey_id, key, { ...stripRow(s), answer: { ...(s.answer || {}), ...add }, evidence: { ...(s.evidence || {}), answered } })
+    await event(db, j.journey_id, key, who, 'checks_saved', { answer: add })
+  } else if (op === 'confirm_check') {
+    /* STAGE B: the Hub can't see something it normally checks (for example an assessment saved without a recording):
+       a person confirms that one check by hand, with a reason, recorded as such */
+    const ck = R.checksOf(row.def, j).find((c: Any) => c.auto && c.key === String(b.check || ''))
+    if (!ck) return json({ outcome: 'refused', error: 'That is not a check the Hub does on this step.' }, 422)
+    if (!reason) return json({ outcome: 'refused', error: 'Say how you know it is done.' }, 422)
+    if (done || row.status === 'later') return json({ outcome: 'refused', error: 'Only a step that is up now can be confirmed.' }, 422)
+    const auto = { ...((s.evidence || {}).auto || {}), [ck.key]: { ok: true, detail: 'Confirmed by ' + who.name + ': ' + reason.slice(0, 200), at: now, manual: { by: who.email, at: now, reason: reason.slice(0, 500) } } }
+    await putStep(db, j.journey_id, key, { ...stripRow(s), evidence: { ...(s.evidence || {}), auto } })
+    await event(db, j.journey_id, key, who, 'confirmed_by_hand', { check: ck.key }, reason)
   } else if (op === 'wait') {
     const cb = String(b.check_back || '')
     if (!/^\d{4}-\d{2}-\d{2}$/.test(cb)) return json({ outcome: 'refused', error: 'Waiting needs a check-back date.' }, 422)

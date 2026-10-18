@@ -1,0 +1,523 @@
+{
+ "version": 1,
+ "catalog": "nine",
+ "steps": [
+  {
+   "key": "soc.lead",
+   "sort": 10,
+   "stage": "lead",
+   "title": "New Lead",
+   "owner_role": "care_coordinator",
+   "proof": "checks",
+   "admin": true,
+   "after": [],
+   "due": {
+    "days": 2,
+    "business": true
+   },
+   "howto": [
+    "Fill in who needs care, where, how to reach them and who pays. Make this a lead fills most of it from the call.",
+    "VA, long-term care and GUIDE families: tick the one payer check that shows.",
+    "Book the in-home assessment. The step finishes itself when the booking is in."
+   ],
+   "checks": [
+    {
+     "key": "basics",
+     "label": "Client name, phone and town on the lead",
+     "auto": "soc_basics"
+    },
+    {
+     "key": "payer",
+     "label": "Payer known",
+     "auto": "payer_known"
+    },
+    {
+     "key": "va_ok",
+     "label": "VA referral or authorization received",
+     "show_if": {
+      "payer": "va"
+     }
+    },
+    {
+     "key": "ltc_ok",
+     "label": "Long-term care policy reviewed with the carrier",
+     "show_if": {
+      "payer": "ltc"
+     }
+    },
+    {
+     "key": "guide_ok",
+     "label": "GUIDE screener done",
+     "show_if": {
+      "payer": "guide"
+     }
+    },
+    {
+     "key": "booked",
+     "label": "In-home assessment booked",
+     "auto": "assessment_booked"
+    }
+   ],
+   "catalog": "nine",
+   "subject": "client",
+   "payers": [],
+   "required": true,
+   "active": true
+  },
+  {
+   "key": "soc.assess",
+   "sort": 20,
+   "stage": "assess",
+   "title": "Care Assessment",
+   "owner_role": "care_coordinator",
+   "proof": "checks",
+   "admin": true,
+   "after": [
+    "soc.lead"
+   ],
+   "due": {
+    "days": 2,
+    "business": true
+   },
+   "howto": [
+    "Do the in-home assessment and save it in the Hub (Care tab, Assessments & care plans).",
+    "The step finishes itself when the assessment is saved as done."
+   ],
+   "checks": [
+    {
+     "key": "saved",
+     "label": "Assessment saved in the Hub",
+     "auto": "assessment_done"
+    }
+   ],
+   "catalog": "nine",
+   "subject": "client",
+   "payers": [],
+   "required": true,
+   "active": true
+  },
+  {
+   "key": "soc.outcome",
+   "sort": 30,
+   "stage": "outcome",
+   "title": "Assessment Outcome",
+   "owner_role": "care_coordinator",
+   "proof": "answer",
+   "admin": true,
+   "after": [
+    "soc.assess"
+   ],
+   "due": {
+    "days": 1,
+    "business": true
+   },
+   "howto": [
+    "Pick what was decided at the assessment.",
+    "Ready to Start can be picked before the agreement is signed: the client shows Agreement Pending until it is.",
+    "Needs Follow-Up and Family Not Ready keep everything and wait for the date you pick, without going late. Cannot Accept closes the journey with your reason."
+   ],
+   "answer": {
+    "fields": [
+     {
+      "key": "outcome",
+      "label": "Outcome",
+      "type": "select",
+      "options": [
+       {
+        "v": "ready",
+        "l": "Ready to Start"
+       },
+       {
+        "v": "follow_up",
+        "l": "Needs Follow-Up"
+       },
+       {
+        "v": "not_ready",
+        "l": "Family Not Ready"
+       },
+       {
+        "v": "cannot",
+        "l": "Cannot Accept"
+       }
+      ]
+     },
+     {
+      "key": "reason",
+      "label": "Why we cannot accept",
+      "type": "text",
+      "show_if": {
+       "outcome": "cannot"
+      }
+     },
+     {
+      "key": "note",
+      "label": "Note (optional)",
+      "type": "text",
+      "required": false
+     }
+    ]
+   },
+   "rule": {
+    "field": "outcome",
+    "op": "==",
+    "value": "cannot",
+    "outcome": "stop",
+    "message": "Cannot accept: this journey is closed. The assessment and everything else are kept."
+   },
+   "catalog": "nine",
+   "subject": "client",
+   "payers": [],
+   "required": true,
+   "active": true
+  },
+  {
+   "key": "soc.setup",
+   "sort": 40,
+   "stage": "setup",
+   "title": "Client Setup + Billing in AxisCare",
+   "owner_role": "care_coordinator",
+   "proof": "checks",
+   "admin": true,
+   "after": [
+    "soc.outcome"
+   ],
+   "due": {
+    "days": 2,
+    "business": true
+   },
+   "howto": [
+    "Create the client in AxisCare from the profile (More, Create in AxisCare). The Hub checks it read back.",
+    "Push the contacts and care tasks from the Hub; the Hub ticks them when AxisCare shows them.",
+    "Type the rest into AxisCare: allergies, medications, diagnoses, attributes, pets and directions; then the payer, service and bill rate on the Billing tab. Never type card numbers into the Hub: the family enters payment in AxisCare.",
+    "Upload the signed agreement to the client's Documents in AxisCare, then tick it here. AxisCare can't tell the Hub, so your tick is the record."
+   ],
+   "checks": [
+    {
+     "key": "ax_client",
+     "label": "Client created in AxisCare",
+     "auto": "axiscare_client"
+    },
+    {
+     "key": "agreement",
+     "label": "Client Care Agreement signed and countersigned",
+     "auto": "agreement_signed"
+    },
+    {
+     "key": "ax_contacts",
+     "label": "Responsible parties in AxisCare",
+     "auto": "ax_contacts"
+    },
+    {
+     "key": "ax_tasks",
+     "label": "Care tasks in AxisCare",
+     "auto": "ax_tasks"
+    },
+    {
+     "key": "health",
+     "label": "Allergies, medications, diagnoses, attributes, pets and directions typed into AxisCare"
+    },
+    {
+     "key": "billing_service",
+     "label": "Service set up in AxisCare (for example Private Pay, Personal Care)",
+     "type": "text"
+    },
+    {
+     "key": "billing_rate",
+     "label": "Bill rate set up in AxisCare",
+     "type": "text"
+    },
+    {
+     "key": "va_auth",
+     "label": "VA authorization number",
+     "type": "text",
+     "show_if": {
+      "payer": "va"
+     }
+    },
+    {
+     "key": "va_hours",
+     "label": "VA authorized hours per week",
+     "type": "text",
+     "show_if": {
+      "payer": "va"
+     }
+    },
+    {
+     "key": "ltc_policy",
+     "label": "Long-term care carrier and policy number",
+     "type": "text",
+     "show_if": {
+      "payer": "ltc"
+     }
+    },
+    {
+     "key": "docs",
+     "label": "Signed agreement uploaded to the client's Documents in AxisCare"
+    }
+   ],
+   "catalog": "nine",
+   "subject": "client",
+   "payers": [],
+   "required": true,
+   "active": true
+  },
+  {
+   "key": "soc.confirm",
+   "sort": 50,
+   "stage": "confirm",
+   "title": "Confirm Schedule + Caregivers",
+   "owner_role": "care_coordinator",
+   "proof": "checks",
+   "after": [
+    "soc.outcome"
+   ],
+   "due": {
+    "before_start": 3
+   },
+   "not_needed_if": "flexible_only",
+   "howto": [
+    "Agree the final days, times and start date with the family, and write them here.",
+    "In Caregiver Matching, the caregiver for the first visit says yes to the real assignment. Shifts still without a yes stay open staffing work; they don't hold up the start.",
+    "Flexible Booking Care clients skip this step."
+   ],
+   "checks": [
+    {
+     "key": "approved",
+     "label": "Schedule approved by the family"
+    },
+    {
+     "key": "schedule",
+     "label": "Days, times and start date approved",
+     "type": "text"
+    },
+    {
+     "key": "first_yes",
+     "label": "The first visit's caregiver said yes to the real assignment",
+     "auto": "first_shift_yes"
+    }
+   ],
+   "catalog": "nine",
+   "subject": "client",
+   "payers": [],
+   "required": true,
+   "active": true
+  },
+  {
+   "key": "soc.axis",
+   "sort": 60,
+   "stage": "axis",
+   "title": "Schedule in AxisCare",
+   "owner_role": "care_coordinator",
+   "proof": "checks",
+   "after": [
+    "soc.setup",
+    "soc.confirm"
+   ],
+   "due": {
+    "days": 1,
+    "business": true
+   },
+   "not_needed_if": "flexible_only",
+   "howto": [
+    "Send the schedule to AxisCare from Caregiver Matching, or type it in AxisCare: accepted shifts with their caregiver, the rest as open shifts.",
+    "The step finishes itself when AxisCare shows the first visit with its caregiver. Open shifts stay listed below with an owner."
+   ],
+   "checks": [
+    {
+     "key": "first_assigned",
+     "label": "The first visit is in AxisCare with its caregiver",
+     "auto": "first_visit_assigned"
+    }
+   ],
+   "catalog": "nine",
+   "subject": "client",
+   "payers": [],
+   "required": true,
+   "active": true
+  },
+  {
+   "key": "soc.start",
+   "sort": 70,
+   "stage": "start",
+   "title": "Confirm Start of Care",
+   "owner_role": "care_coordinator",
+   "proof": "checks",
+   "after": [
+    "soc.axis",
+    "soc.setup"
+   ],
+   "due": {
+    "before_start": 1
+   },
+   "howto": [
+    "Call or message the family with the first visit's date, time and caregiver (the caregiver intro unlocks now).",
+    "Confirm with the caregiver: date, time, address, how to get in, that they read the care plan, and that the visits show in their AxisCare app.",
+    "The Hub can see the visit is assigned in AxisCare but can't see inside the caregiver's app, so their confirmation is the proof."
+   ],
+   "checks": [
+    {
+     "key": "first_at",
+     "label": "Confirmed first visit (date and time)",
+     "type": "text"
+    },
+    {
+     "key": "family_told",
+     "label": "Family told the date, time and caregiver"
+    },
+    {
+     "key": "cg_confirmed",
+     "label": "Caregiver confirmed the time, address, entry and care plan, and sees the visits in their AxisCare app"
+    }
+   ],
+   "catalog": "nine",
+   "subject": "client",
+   "payers": [],
+   "required": true,
+   "active": true
+  },
+  {
+   "key": "soc.first",
+   "sort": 80,
+   "stage": "first",
+   "title": "First Shift",
+   "owner_role": "hub",
+   "proof": "verified",
+   "verify": "first_visit_done",
+   "after": [
+    "soc.start"
+   ],
+   "howto": [
+    "Nothing to tick. The Hub watches the first visit; late and missed clock-ins come to you as their usual cards.",
+    "When the first visit has a clock-in and a clock-out, the Hub records the actual first visit date."
+   ],
+   "catalog": "nine",
+   "subject": "client",
+   "payers": [],
+   "required": true,
+   "active": true
+  },
+  {
+   "key": "soc.follow",
+   "sort": 90,
+   "stage": "follow",
+   "title": "Next-Day Follow-Up",
+   "owner_role": "care_coordinator",
+   "proof": "answer",
+   "after": [
+    "soc.first"
+   ],
+   "completes_journey": true,
+   "howto": [
+    "Call the family the day after the first visit (the Hub picks the next day someone covering is working, weekends included).",
+    "Anything urgent: tick it and the person on duty right now gets it straight away.",
+    "All good: saving finishes Start of Care and the client moves to normal check-ins. A change needed becomes one task; Start of Care still finishes."
+   ],
+   "answer": {
+    "fields": [
+     {
+      "key": "arrived",
+      "label": "Did the caregiver arrive as expected?",
+      "type": "select",
+      "options": [
+       {
+        "v": "yes",
+        "l": "Yes, on time"
+       },
+       {
+        "v": "late",
+        "l": "Yes, but late"
+       },
+       {
+        "v": "no",
+        "l": "No"
+       }
+      ]
+     },
+     {
+      "key": "satisfied",
+      "label": "Was the family satisfied?",
+      "type": "select",
+      "options": [
+       {
+        "v": "yes",
+        "l": "Yes"
+       },
+       {
+        "v": "mostly",
+        "l": "Mostly"
+       },
+       {
+        "v": "no",
+        "l": "No"
+       }
+      ]
+     },
+     {
+      "key": "concerns",
+      "label": "Did the caregiver report concerns?",
+      "type": "select",
+      "options": [
+       {
+        "v": "none",
+        "l": "None"
+       },
+       {
+        "v": "some",
+        "l": "Yes"
+       }
+      ]
+     },
+     {
+      "key": "changes",
+      "label": "Any changes needed?",
+      "type": "select",
+      "options": [
+       {
+        "v": "none",
+        "l": "None"
+       },
+       {
+        "v": "care_plan",
+        "l": "Care plan"
+       },
+       {
+        "v": "schedule",
+        "l": "Schedule"
+       },
+       {
+        "v": "caregiver",
+        "l": "Caregiver"
+       },
+       {
+        "v": "other",
+        "l": "Something else"
+       }
+      ]
+     },
+     {
+      "key": "changes_note",
+      "label": "What needs to change (or the concern)",
+      "type": "text",
+      "required": false
+     },
+     {
+      "key": "schedule_ok",
+      "label": "Ongoing schedule confirmed",
+      "type": "check"
+     },
+     {
+      "key": "urgent",
+      "label": "Something urgent: send it to the person on duty now",
+      "type": "check",
+      "required": false
+     }
+    ]
+   },
+   "catalog": "nine",
+   "subject": "client",
+   "payers": [],
+   "required": true,
+   "active": true
+  }
+ ]
+}
