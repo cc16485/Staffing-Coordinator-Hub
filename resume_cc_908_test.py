@@ -33,7 +33,9 @@ def seed(which="client-status-returning.sql"):
     for r in ("anon", "authenticated", "service_role"):
         if not c.run("select 1 from pg_roles where rolname = :r", r=r): c.run(f"create role {r}")
     c.run("create table public.client_status_review(review_id uuid primary key, person_id uuid, status text, decision text, decided_on date, reason text, note text, decided_by text, decided_seat text, decided_at timestamptz, result jsonb, old_label text, new_label text, observed_at timestamptz, axiscare_client_id text)")
-    if which:
+    if which == "other":
+        c.run("create function public.client_status_decide(uuid, text, date, text, text, text, text) returns jsonb language plpgsql as $$ begin return '{}'::jsonb; end $$")
+    elif which:
         s = open(os.path.join(COPY, which)).read()
         c.run(s[s.index("create or replace function"):s.index("do $verify$")])
     c.close()
@@ -121,7 +123,7 @@ c, out = run(main=BASE)
 ck("8 not merged yet: stops before anything changes", c != 0 and "isn't the same as GitHub's main" in out and not deployed() and not writes(), out)
 c, out = run(live="other")
 ck("9 the live client-journey has someone else's unreleased code: stops before anything changes", c != 0 and "someone else's unreleased change" in out and not deployed() and not writes(), out)
-c, out = run(seedwith="client-status.sql")
+c, out = run(seedwith="other")
 ck("10 the live database rule isn't the expected version: stops before anything changes", c != 0 and "isn't the version this was built on" in out and not deployed() and not writes(), out)
 c, out = run(fail_deploy="client-journey")
 ck("11 the deploy fails: stops and says the rule changed but nobody sees a difference; running again finishes", c != 0 and "STOPPED at client-journey" in out and "Running this step again finishes it" in out, out)
