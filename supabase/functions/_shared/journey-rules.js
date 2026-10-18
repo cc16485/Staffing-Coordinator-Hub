@@ -18,15 +18,20 @@
   /* SLICE 3b (2026-10-10): the caregiver journey (offer to Approved to Work) runs on the same tables and this same file; its
      stages are its own, and a step applies only to its own subject (client or caregiver), never across. */
   const CG_STAGES = ['offer', 'step1', 'screening', 'approval', 'step2', 'orientation', 'training', 'ready', 'active'];
+  /* STAGE B (2026-10-17, Samantha approved "one client, one Start of Care journey, one current action"): the nine-step
+     Start of Care. A journey on catalog 'nine' uses only the steps marked catalog 'nine', and each step is its own stage. */
+  const NINE_STAGES = ['lead', 'assess', 'outcome', 'setup', 'confirm', 'axis', 'start', 'first', 'follow', 'active'];
+  const catalogOf = j => (j && j.catalog === 'nine') ? 'nine' : 'v1';
   const STAGE_LABEL = { intake:'Intake', prechecks:'Pre-checks', assessment:'Assessment', signed:'Signed', axiscare:'AxisCare', billing:'Billing/Auth',
     schedule:'Schedule', team:'Team', ready:'Ready', firstweek:'First week', active:'Active',
+    lead:'New Lead', assess:'Care Assessment', outcome:'Assessment Outcome', setup:'Client Setup + Billing', confirm:'Confirm Schedule + Caregivers', axis:'Schedule in AxisCare', start:'Confirm Start of Care', first:'First Shift', follow:'Next-Day Follow-Up',
     offer:'Offer', step1:'Step 1', screening:'Screening', approval:'Approval', step2:'Step 2 (Viventium)', orientation:'Orientation', training:'Training' };
   const subjectOf = j => (j && j.subject === 'caregiver') ? 'caregiver' : 'client';
-  const stagesFor = j => subjectOf(j) === 'caregiver' ? CG_STAGES : STAGES;
+  const stagesFor = j => subjectOf(j) === 'caregiver' ? CG_STAGES : catalogOf(j) === 'nine' ? NINE_STAGES : STAGES;
   const PAYERS = { private:'Private Pay', medicaid:'Medicaid IHS / HCBS (ending)', va:'VA Community Care', ltc:'Long-Term Care Insurance', guide:'Medicare GUIDE', other:'Other' };
   const ROLE_LABEL = { care_coordinator:'Care Coordinator', staffing_coordinator:'Staffing Coordinator', owner:'Owner', hub:'The Hub' };
   const DONE = ['complete', 'not_needed', 'exception'];
-  const PROOF_LABEL = { verified:'Verified by the Hub', proof:'Proof file required', answer:'Answer required', confirmed:'Confirmed by a person' };
+  const PROOF_LABEL = { verified:'Verified by the Hub', proof:'Proof file required', answer:'Answer required', confirmed:'Confirmed by a person', checks:'Checks (the Hub ticks what it can see)' };
   /* the owner exception kinds Samantha named (2026-10-06) */
   const EXCEPTION_KINDS = { hard_stop:'Hard-stop override', unusual_acceptance:'Unusual acceptance', authorization:'Authorization exception',
     payer_setup:'Payer / setup exception', safety:'Safety decision', other:'Other owner decision' };
@@ -40,6 +45,7 @@
   function applies(def, j, ctx){
     if(!def || def.active === false) return false;
     if((def.subject || 'client') !== subjectOf(j)) return false;   /* 3b: never across subjects */
+    if(subjectOf(j) === 'client' && (def.catalog || 'v1') !== catalogOf(j)) return false;   /* stage B: one catalog per journey */
     /* 3b: a caregiver step that applies only to some people (lived outside Missouri, claims a credential, will drive, after
        year one): every named fact must be known and true; an unknown fact means the step is not shown yet */
     if(def.applies && typeof def.applies === 'object'){
@@ -78,6 +84,7 @@
   }
   /* when a step is due: N (business) days after it became ready, or N days before the target start */
   function dueOf(def, st, j, byKey){
+    if(st && st.evidence && typeof st.evidence.due_on === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(st.evidence.due_on)) return st.evidence.due_on;
     const d = def && def.due; if(!d) return null;
     if(d.before_start != null && j.target_start) return addDays(j.target_start, -Number(d.before_start));
     /* 3b: N days after another step was completed (the OJT clock runs from orientation completion, her decision 7) */
@@ -111,7 +118,7 @@
     const rows = list.map(def => {
       const st = byKey[def.key] || { state:'open' };
       const owner = ownerOf(def, st, j, ctx);
-      const r = { key:def.key, def, st, owner, due:null, status:'later', why:'', back:false };
+      const r = { key:def.key, def, st, owner, due:null, status:'later', why:'', back:false, payer:j.payer || null };
       const hit = ruleHit(def, st, byKey);
       if(hit && st.state !== 'exception'){ r.status = 'blocked'; r.stop = true; r.why = hit.message; if(!stop) stop = r; return r; }
       const exp = expiredOn(def, st, today);
@@ -130,7 +137,7 @@
       else r.status = 'ready';
       /* attention is worked out from dates: late, or the start date is close and an administrative step is still open */
       if(r.due && r.due < today){ r.attention = 'Late since ' + r.due; }
-      else if(startSoon != null && startSoon <= 3 && subjectOf(j) === 'client' && STAGES.indexOf(def.stage) < STAGES.indexOf('team') && def.required !== false){
+      else if(startSoon != null && startSoon <= 3 && subjectOf(j) === 'client' && (def.catalog === 'nine' ? def.admin === true : STAGES.indexOf(def.stage) < STAGES.indexOf('team')) && def.required !== false){
         r.attention = startSoon < 0 ? 'Start date has passed' : startSoon === 0 ? 'Starts today' : 'Start date in ' + startSoon + ' day' + (startSoon === 1 ? '' : 's');
       }
       if(r.attention && r.status === 'ready') r.status = 'attention';
@@ -162,12 +169,31 @@
   /* What can be done to a step, and what it needs. The server checks the same things again (journey_step_apply). */
   /* a question only asked for some answers (show_if: { payer:'other' }) */
   function shown(f, a){ if(!f.show_if) return true; return Object.keys(f.show_if).every(k => a[k] === f.show_if[k]); }
+  /* STAGE B: a step made of checks. An auto check is ticked by the Hub from what it can see (st.evidence.auto[key].ok);
+     a person check is answered by a person. show_if may also name the journey's payer ({ payer:'va' }). */
+  function checksOf(def, j){ return ((def && def.checks) || []).filter(c => !c.show_if || Object.keys(c.show_if).every(k => k === 'payer' ? (j && j.payer) === c.show_if[k] : true)); }
+  function checkState(def, st, j, answer){
+    const auto = (st && st.evidence && st.evidence.auto) || {}, a = answer || (st && st.answer) || {};
+    return checksOf(def, j).map(c => {
+      if(c.auto) return { key:c.key, label:c.label, auto:true, ok:!!(auto[c.key] && auto[c.key].ok), detail:(auto[c.key] && auto[c.key].detail) || '', at:(auto[c.key] && auto[c.key].at) || null };
+      const v = a[c.key];
+      const ok = c.type === 'check' || !c.type ? v === true : (v !== undefined && v !== null && String(v).trim() !== '');
+      return { key:c.key, label:c.label, auto:false, ok, type:c.type || 'check', options:c.options || null, value:v, optional:c.required === false };
+    });
+  }
+  const personChecks = (def, j) => checksOf(def, j).filter(c => !c.auto);
   function canComplete(row, input){
     const def = row.def, a = (input && input.answer) || {}, files = (input && input.files) || [];
     if(row.status === 'later') return { ok:false, why:row.why || 'Not its turn yet.' };
     /* a verified step completes itself; by hand only with a reason (when the Hub can't see it), recorded as such */
     if(def.proof === 'verified' && !(input && input.manual_reason)) return { ok:false, why:'The Hub completes this one itself when it sees it done. If it can\'t, confirm it by hand with a reason.' };
     if(def.proof === 'proof' && !files.length && !(row.st.evidence && (row.st.evidence.files || []).length)) return { ok:false, why:'Attach the proof first.' };
+    if(def.proof === 'checks'){
+      const cs = checkState(def, row.st, { payer:row.payer || null }, Object.assign({}, row.st.answer || {}, a));
+      const miss = cs.find(c => !c.ok && !c.optional);
+      if(miss) return { ok:false, why:miss.auto ? 'The Hub can\'t see this yet: ' + miss.label + (miss.detail ? ' (' + miss.detail + ')' : '') : 'Tick or answer "' + miss.label + '" first.' };
+      return { ok:true };
+    }
     const fields = (def.answer && def.answer.fields) || [];
     for(const f of fields){ if(!shown(f, a) || f.required === false) continue;
       const v = a[f.key]; if(v === undefined || v === null || v === '' || (f.type === 'check' && v !== true)) return { ok:false, why:(f.type === 'check' ? 'Tick "' : 'Answer "') + f.label + '" first.' }; }
@@ -205,7 +231,7 @@
     return out;
   }
 
-  const api = { STAGES, CG_STAGES, stagesFor, subjectOf, expiredOn, STAGE_LABEL, PAYERS, ROLE_LABEL, PROOF_LABEL, EXCEPTION_KINDS, DONE, ymd, addDays, addBusinessDays, daysBetween,
+  const api = { STAGES, CG_STAGES, NINE_STAGES, catalogOf, checksOf, checkState, personChecks, stagesFor, subjectOf, expiredOn, STAGE_LABEL, PAYERS, ROLE_LABEL, PROOF_LABEL, EXCEPTION_KINDS, DONE, ymd, addDays, addBusinessDays, daysBetween,
     applies, ruleHit, dueOf, ownerOf, compute, canComplete, cardsFor, shown };
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   root.JourneyRules = api;
