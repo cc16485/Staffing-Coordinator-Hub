@@ -6,6 +6,9 @@
 export type CensusRow = {
   id: string; first: string; last: string; goes_by: string; active: boolean; status_label: string
   hire_date: string; mobile: string; email: string
+  /** the number to reach them on: AxisCare's mobile, else its other phone, else its home phone (the first with 10 digits);
+      '' when AxisCare has none (her ask 2026-10-18: "any AxisCare phone") */
+  phone: string; phone_field: '' | 'mobilePhone' | 'otherPhone' | 'homePhone'
 }
 export type Census = { ok: true; rows: CensusRow[]; total: number; truncated: boolean } | { ok: false; error: string }
 
@@ -19,6 +22,14 @@ function axisCreds() {
 // deno-lint-ignore no-explicit-any
 const rowsOf = (x: any): any[] => Array.isArray(x) ? x : (x && typeof x === 'object' ? Object.values(x) : [])
 const S = (v: unknown) => String(v ?? '').trim()
+/** 10 digits, or 11 starting with 1 (US). */
+export const usablePhone = (v: unknown) => { const d = S(v).replace(/\D/g, ''); return d.length === 10 || (d.length === 11 && d[0] === '1') }
+export const PHONE_FIELDS = ['mobilePhone', 'otherPhone', 'homePhone'] as const
+// deno-lint-ignore no-explicit-any
+export function bestPhone(g: any): { phone: string; phone_field: CensusRow['phone_field'] } {
+  for (const f of PHONE_FIELDS) if (usablePhone(g?.[f])) return { phone: S(g[f]), phone_field: f }
+  return { phone: '', phone_field: '' }
+}
 
 export async function readCensus(send: typeof fetch = fetch): Promise<Census> {
   const { token, site } = axisCreds()
@@ -39,7 +50,7 @@ export async function readCensus(send: typeof fetch = fetch): Promise<Census> {
         rows.push({
           id: String(g.id), first: S(g.firstName), last: S(g.lastName), goes_by: S(g.goesBy),
           active: g?.status?.active === true, status_label: S(g?.status?.label),
-          hire_date: S(g.hireDate) || S(g.startDate), mobile: S(g.mobilePhone), email: S(g.personalEmail),
+          hire_date: S(g.hireDate) || S(g.startDate), mobile: S(g.mobilePhone), email: S(g.personalEmail), ...bestPhone(g),
         })
       }
       url = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
