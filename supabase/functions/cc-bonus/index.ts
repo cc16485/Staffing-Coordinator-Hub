@@ -16,6 +16,10 @@
 //              else sees only their own. Each line carries the words for its progress.
 //     · act    approve / not_earned / paid / reopen, with the checks in bonus-rules.ts (who may, a written reason)
 //     · ot_checked  Samantha records that she confirmed with Viventium how bonuses count toward overtime (once)
+//     · separation  owners only (audit step 5): the bonuses on file for an office person who is leaving, by the employee
+//              name on their offboarding (an exact full-name match to someone with a bonus on file, active or not;
+//              anyone else, a caregiver, gets office:false). It only lists: nothing is paid or cancelled because someone leaves (decision 3 is Samantha's).
+//              In the owners' list, a line whose person has an offboarding carries leaving {kind, last_day}.
 //   Decisions are never written to the office event record (everyone in the office reads it; pay is private): each line
 //   keeps its own history of who, when and why.
 // Nothing here texts, emails or calls anyone. AxisCare is only read.
@@ -40,6 +44,13 @@ const put = (key: string, item: unknown) => sb.rpc('upsert_app_data_item', { tar
 const lc = (v: unknown) => String(v ?? '').trim().toLowerCase()
 const firstOf = (v: unknown) => String(v ?? '').trim().split(/\s+/)[0] || ''
 
+/** the people who have a bonus on file, active or not (someone leaving may already be switched off): email -> full name */
+async function bonusPeople(lines: Any[]): Promise<Any[]> {
+  const emails = [...new Set(lines.map((x: Any) => lc(x.recipient_email)).filter(Boolean))]
+  if (!emails.length) return []
+  const { data } = await sb.from('persons').select('full_name, primary_email').in('primary_email', emails)
+  return (data ?? []).filter((p: Any) => p.full_name && p.primary_email)
+}
 async function settings(): Promise<Any> { const { data } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle(); return data?.data ?? {} }
 /** office people: first name -> email, and email -> name (persons + staff_roles, the same people every function uses) */
 async function people(): Promise<{ emailOf: (n: string) => string; nameOf: (e: string) => string }> {
@@ -115,8 +126,12 @@ Deno.serve(async (req) => {
   const role = { owner: me.owner, decider: me.email === set.decider, payroll: !!set.payroll && me.email === set.payroll }
 
   if (body.action === 'list') {
+    /* owners only: who is leaving (an offboarding names them). Payroll never sees it: a termination is owner-only. */
+    const leaving = new Map<string, Any>()
+    if (me.owner) { const [offs, who] = await Promise.all([Promise.all([read('offboardings'), read('offboardings_team')]).then(([a, b]) => [...a, ...b]), read(KEY).then(bonusPeople)])
+      for (const p of who) { const o = B.leaverOf(offs, p.full_name); if (o) leaving.set(lc(p.primary_email), { kind: o.kind || '', last_day: o.last_day || '' }) } }
     const lines = B.visible(await read(KEY), me, set).map((x: Any) => ({ ...x, words: B.progressWords(x, set), status_words: B.STATUS_WORDS[x.status] || x.status,
-      history: me.owner || role.payroll ? x.history : undefined }))
+      history: me.owner || role.payroll ? x.history : undefined, leaving: leaving.get(lc(x.recipient_email)) }))
       .sort((a: Any, b: Any) => String(b.first_visit).localeCompare(String(a.first_visit)))
     return json({ live: set.live, start: set.start, amount: set.amount, min_hours: set.min_hours, days: set.days, me: { ...role, email: me.email },
       ot_checked: set.ot_checked, lines })
@@ -130,6 +145,13 @@ Deno.serve(async (req) => {
     if (error) return json({ error: 'Could not save. Nothing changed.' }, 500)
     /* no office event: the event record is read by the whole office, and pay is private. The line keeps its own history. */
     return json({ ok: true, line: { ...r.line, words: B.progressWords(r.line, set), status_words: B.STATUS_WORDS[r.line.status] } })
+  }
+  if (body.action === 'separation') {
+    if (!me.owner) return json({ error: 'Only Samantha or Zachary sees bonuses at separation.' }, 403)
+    const lines = await read(KEY), w = lc(body.name).replace(/\s+/g, ' ')
+    const p = w ? (await bonusPeople(lines)).find((x: Any) => lc(x.full_name).replace(/\s+/g, ' ') === w) : null
+    if (!p) return json({ office: false })   /* nobody with a bonus by that full name: a caregiver, or no bonus on file */
+    return json({ office: true, name: p.full_name, email: lc(p.primary_email), ...B.separationOf(lines, p.primary_email, set) })
   }
   if (body.action === 'ot_checked') {
     if (!role.decider) return json({ error: 'Only Samantha records the Viventium overtime check.' }, 403)

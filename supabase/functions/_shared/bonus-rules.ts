@@ -133,3 +133,24 @@ export function visible(lines: any[], me: { email: string; first: string; owner:
   const e = lc(me.email), f = lc(me.first)
   return (lines || []).filter((l) => me.owner || lc(l.recipient_email) === e || (!!f && lc(l.recipient) === f) || (e && e === set.payroll && ['approved', 'paid'].includes(l.status)))
 }
+
+/* ---------------------------------------------------------------------------------------------------------------------
+   BONUSES WHEN A CARE COORDINATOR LEAVES (audit step 5, Samantha 2026-10-18). Whether a bonus is still paid when someone
+   leaves, and whether an earned one belongs in final pay, is Samantha's open decision 3 (with the attorney and Viventium).
+   So this only LISTS what is on file for the person leaving: nothing is paid, cancelled or changed because someone leaves.
+   Owners only (a termination is owner-only, and pay is private). ------------------------------------------------------ */
+export const SEPARATION_NOTE = 'Nothing here is paid or cancelled because someone leaves. Samantha decides each one with the attorney and Viventium (Missouri final-pay rules may apply to an earned bonus).'
+const nm = (v: unknown) => lc(v).replace(/\s+/g, ' ')
+/** the latest offboarding whose employee name is this office person's full name (exactly, ignoring case and spaces) */
+export function leaverOf(offs: any[], fullName: string): any {
+  const n = nm(fullName); if (!n) return null
+  return (offs || []).filter((o: any) => o && nm(o.name) === n).sort((a: any, b: any) => String(b.created_at || '').localeCompare(String(a.created_at || '')))[0] || null
+}
+/** the person's bonuses, grouped: approved but not paid, still running (on the way, ready, under review), already paid */
+export function separationOf(lines: any[], email: string, set: ReturnType<typeof settingsOf>): any {
+  const mine = (lines || []).filter((l: any) => lc(l?.recipient_email) === lc(email) && l.status !== 'not_earned')
+  const pick = (want: string[]) => { const ls = mine.filter((l: any) => want.includes(l.status)).map((l: any) => ({ id: l.id, client: l.client, first_visit: l.first_visit, day30: l.day30,
+    amount: Number(l.amount || 0), status: l.status, status_words: STATUS_WORDS[l.status] || l.status, words: progressWords(l, set), paid_on: l.paid_on || null }))
+    return { lines: ls, total: ls.reduce((t: number, l: any) => t + l.amount, 0) } }
+  return { approved: pick(['approved']), running: pick(['on_the_way', 'ready', 'under_review']), paid: pick(['paid']), note: SEPARATION_NOTE }
+}
