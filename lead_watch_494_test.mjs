@@ -104,6 +104,12 @@ ck('page · a forged or expired link is refused before anything is read; a stran
   && (await page('dia', 'nobody@elsewhere.com', { action: 'view' })).status === 403)
 ck('page · an inquiry that is gone: 404', (await page('zzz', K, { action: 'view' })).status === 404)
 
+/* ── planned time off (2026-10-18): out_from in the future means not out yet ── */
+seed(true); APP.coordinator_staff[1].out_from = '2026-10-20'; APP.coordinator_staff[1].out_until = '2026-10-22'
+APP.duty_windows[0].person = A; APP.duty_windows[0].backup_person = ''
+r = await run()
+ck('planned · Krystal is planned out from Oct 20: nothing moves today', r.j.moved === 0 && lead('dia').assigned_coordinator !== 'Angiel', r.j)
+
 /* ── owner out ── */
 seed(true); APP.coordinator_staff[1].out_until = '2026-10-08'   /* Krystal is out */
 APP.duty_windows[0].person = A; APP.duty_windows[0].backup_person = ''          /* Angiel holds Operations */

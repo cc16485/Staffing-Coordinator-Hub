@@ -113,6 +113,11 @@ try {
   ck('a second new miss for Krystal · a new review opens with just the two new items', kr().length === 2 && kr()[1].status === 'open' && kr()[1].items.length === 2 && kr()[1].items.every((x) => ['Gus', 'Hal'].includes(x.client)), kr())
   ck('no review or decision ever went to the office event record', !T.op_events.length, T.op_events)
 
+  /* ── planned time off (2026-10-18): an Out from still ahead means not out, so misses still count ── */
+  reset(true); at('2026-11-20T18:00:00Z'); APP.ops_settings.fair_counts_live = true
+  APP.coordinator_staff = [{ email: K, name: 'Krystal Land', out_from: '2026-11-25', out_until: '2026-11-28' }, { email: A, name: 'Angiel Rose' }]
+  r = await cron()
+  ck('planned · Krystal is planned out from Nov 25: today her overdue follow-ups are NOT excused', APP.cc_overdue_log.filter((x) => x.person === 'Krystal').every((x) => !x.excused) && APP.cc_overdue_log.some((x) => x.person === 'Krystal'), APP.cc_overdue_log)
   /* ── time off never counts (audit step 2, ops_settings.fair_counts_live) ── */
   reset(true); at('2026-11-20T18:00:00Z'); APP.ops_settings.fair_counts_live = true
   APP.coordinator_staff = [{ email: K, name: 'Krystal Land', out_until: '2026-11-22' }, { email: A, name: 'Angiel Rose' }]
