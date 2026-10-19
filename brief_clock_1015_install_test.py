@@ -25,6 +25,7 @@ class H(http.server.BaseHTTPRequestHandler):
         if p.startswith("/functions/v1/"):
             S["posts"].append((p, self.headers.get("Authorization"), body))
             if "auth_check" in p: return self._send(M["gate"], {"error": "not allowed"})
+            if M["gate"] != 401 and self.headers.get("Authorization") == "Bearer eyJanonKEY": return self._send(M["gate"], {})   # the brief has no auth_check door
             if self.headers.get("Authorization") != "Bearer eyJsvcKEY": return self._send(401, {})
             if M["run"] != 200: return self._send(M["run"], {"error": "boom"})
             S["ran"] = True
