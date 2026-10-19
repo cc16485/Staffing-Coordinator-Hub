@@ -64,6 +64,7 @@
     coverage_backed_out: { label: 'caregiver backed out',   area: 'scheduling', severity: 'ack' },
     coverage_reopened:   { label: 'reopened the case',      area: 'scheduling', severity: 'action' },
     coverage_held_check: { label: 'checked a held visit',   area: 'scheduling', severity: 'fyi' },
+    open_shift_card:     { label: 'raised an open shift',   area: 'scheduling', severity: 'action' },   /* 2026-10-18: no caregiver, no coverage case */
     wave_sent:           { label: 'sent a wave',            area: 'scheduling', severity: 'fyi' },
     open_hours_sent:     { label: 'texted the team open hours', area: 'scheduling', severity: 'fyi' },
     yes_received:        { label: 'a caregiver said yes',   area: 'scheduling', severity: 'action' },

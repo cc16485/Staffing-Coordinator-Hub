@@ -39,6 +39,7 @@ import { attendanceCard, caseEnded, caseWhen, shiftAhead, chiNowNaive, evvDaySta
 import { loadQuiet, isQuiet } from '../_shared/client-quiet.ts'
 import { confirmTimesItem, hasCard, outAfterMin } from '../_shared/confirm-times.ts'
 import { fallbackList } from '../_shared/notice-to.ts'
+import { openShiftSkip, openShiftItem, openShiftCloseWhy, openShiftId, scheduleOf, OPEN_SHIFT_KIND, OPEN_SHIFT_PER_RUN, type OpenVisit } from '../_shared/open-shift.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -511,6 +512,57 @@ Deno.serve(async (req) => {
       } catch { /* a missed suggestion costs nothing */ }
     } catch { /* the sweep must never break call-off detection */ }
   }
+
+  /* ── OPEN SHIFTS WITH NO COVERAGE CASE (2026-10-18, the Today page map; see _shared/open-shift.ts) ── */
+  const openShift: Record<string, unknown> = { live: settings.open_shift_cards_live === true && !forceDry, would: [] as Record<string, unknown>[], made: 0, closed: 0, skipped: {} as Record<string, number> }
+  try {
+    const now = Date.now()
+    const { data: c2 } = await sb.from('app_data').select('data').eq('key', 'coverage_cases').maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    const openCases = (Array.isArray(c2?.data) ? c2!.data : []).filter((c: any) => c?.status === 'open')
+    // deno-lint-ignore no-explicit-any
+    const openCaseVisits = new Set<string>(openCases.map((c: any) => String(c?.axiscare_visit_id ?? '')).filter(Boolean))
+    // deno-lint-ignore no-explicit-any
+    const openCaseSchedules = new Set<string>(openCases.filter((c: any) => /^cwo_s/.test(String(c?.id ?? ''))).map((c: any) => String(c.id).replace(/^cwo_s/, '')).filter(Boolean))
+    for (const v of openCaseVisits) { const sc = scheduleOf(v); if (sc && openCases.some((c: { id?: unknown; axiscare_visit_id?: unknown }) => String(c.axiscare_visit_id) === v && /^cwo_/.test(String(c.id)))) openCaseSchedules.add(sc) }
+    const unassignedMap = new Map<string, OpenVisit>(), assigned = new Set<string>(), startMsOf = new Map<string, number>()
+    for (const v of visits) {
+      const vid = String(v?.id ?? ''); if (!vid) continue
+      const st = String(v?.scheduledStartDate ?? v?.startDate ?? ''), en = String(v?.scheduledEndDate ?? v?.endDate ?? '')
+      const sms = visitMs(st, v?.timezone); startMsOf.set(vid, sms)
+      if (v?.caregiver?.id != null) { assigned.add(vid); continue }
+      unassignedMap.set(vid, { visitId: vid, start: st, end: en, startMs: sms, endMs: visitMs(en, v?.timezone), reason: String(v?.modificationReason?.name ?? '').trim(),
+        client: [String(v?.client?.firstName ?? '').trim(), String(v?.client?.lastName ?? '').trim()].filter(Boolean).join(' '), clientId: v?.client?.id != null ? String(v.client.id) : null })
+    }
+    const { data: o2, error: oErr } = await sb.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+    if (oErr) throw new Error('the card list could not be read')
+    // deno-lint-ignore no-explicit-any
+    const ops: any[] = Array.isArray(o2?.data) ? o2!.data : []
+    const have = new Map<string, Record<string, unknown>>(ops.filter((i: { id?: unknown }) => i && i.id).map((i: Record<string, unknown>) => [String(i.id), i]))
+    const owner = (await fallbackList(sb, 'scheduling_coverage'))[0] || 'samantha@mo-care.com'
+    const ctx = { now, openCaseVisits, openCaseSchedules }
+    let writes = 0
+    for (const v of [...unassignedMap.values()].sort((a, b) => a.startMs - b.startMs)) {
+      const why = openShiftSkip(v, ctx)
+      if (why) { (openShift.skipped as Record<string, number>)[why] = ((openShift.skipped as Record<string, number>)[why] || 0) + 1; continue }
+      if (have.has(openShiftId(v.visitId))) continue                  // made once per visit; a card a person closed stays closed
+      ;(openShift.would as Record<string, unknown>[]).push({ visit: v.visitId, client: v.client, when: v.start, reason: v.reason || '(none)' })
+      if (!openShift.live || writes >= OPEN_SHIFT_PER_RUN) continue
+      const item = openShiftItem(v, owner, nowIso)
+      const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item })
+      if (!error) { writes++; openShift.made = (openShift.made as number) + 1; have.set(String(item.id), item)
+        await opEvent(sb, { job: 'coverage-watch', verb: 'open_shift_card', item_id: String(item.id), area: 'coverage', summary: String(item.title) }) }
+    }
+    /* close the ones that are settled (live only; never on a failed AxisCare read) */
+    for (const c of ops.filter((i: { kind?: unknown; status?: unknown; created_by?: unknown }) => i?.kind === OPEN_SHIFT_KIND && i?.status === 'open' && i?.created_by === 'coverage-watch')) {
+      const why = openShiftCloseWhy(c, { ...ctx, unassigned: unassignedMap, assigned, startMsOf, fetched: !fetchError })
+      if (!why || !openShift.live) continue
+      const item = { ...c, status: 'done', closed_at: nowIso, closed_by: 'system', auto_closed_reason: why, last_activity_at: nowIso,
+        history: [...(Array.isArray(c.history) ? c.history : []), { at: nowIso, by: 'Hub', text: 'Closed: ' + why }] }
+      const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item })
+      if (!error) openShift.closed = (openShift.closed as number) + 1
+    }
+  } catch (e) { openShift.error = String((e as Error)?.message || e).slice(0, 200) }
 
   /* ── COVERED OUTSIDE THE BOARD (her observation, 2026-09-13: "it could be
      that we cover it outside the calloff board"). If an OPEN case's visit
@@ -1230,6 +1282,7 @@ Deno.serve(async (req) => {
     confirm_times_overnight: (globalThis as any).__cftOvernight ?? 'with the attendance sweep, once a night',
     evv_review: (globalThis as any).__evvReview ?? 'made on Mondays (or ?evv_review=1)',
     loops,
+    open_shift_cards: openShift,
     notes_sweep: (globalThis as any).__noteSwept ?? 'already done this hour',
   }
 

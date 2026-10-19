@@ -2389,7 +2389,8 @@ Deno.serve(async (req) => {
          3 minutes. */
       const prevItem = items.find((x: any) => String(x?.id) === itemId)
       if (prevItem) for (const k of ['owner', 'owner_name', 'owner_history', 'claimed_by', 'claimed_by_name', 'claimed_at', 'started_at',
-        'history', 'routed', 'escalation', 'sub_state', 'waiting_on', 'check_back', 'help_from', 'help_asked_at', 'domain_set_by'])
+        'history', 'routed', 'escalation', 'sub_state', 'waiting_on', 'check_back', 'help_from', 'help_asked_at', 'domain_set_by',
+        'also_for', 'talk_also_for'])   /* 2026-10-18: a person tagged on the card keeps it in their My Work */
         if (prevItem[k] !== undefined && prevItem[k] !== null && prevItem[k] !== '') (item as any)[k] = prevItem[k]
       await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item })
       if (!haveItem.has(itemId)) stats.prompts_created++
