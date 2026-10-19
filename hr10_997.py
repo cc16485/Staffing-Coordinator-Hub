@@ -26,7 +26,7 @@ def deploy_patched(fn, verify_jwt):
         d = subprocess.run([SUPA, "functions", "download", fn, "--project-ref", REF, "--use-api"], cwd=tmp, env=dict(os.environ, SUPABASE_ACCESS_TOKEN=TOKEN), capture_output=True, text=True)
         if d.returncode != 0: bad(f"{fn}: the live copy could not be downloaded to patch"); return False
         here = {k: v for k, v in {os.path.relpath(os.path.join(r_, f), tmp).replace(os.sep, "/"): sha(os.path.join(r_, f)) for r_, _, fs in os.walk(os.path.join(tmp, "supabase")) for f in fs}.items() if "/functions/" in k}
-        if here != LIVE_SHAS.get(fn): bad(f"{fn}: the live copy changed while this ran, so it was not replaced"); return False
+        if here != LIVE_SHAS: bad(f"{fn}: the live copy changed while this ran, so it was not replaced"); return False
         a = subprocess.run(["git", "apply", os.path.join(HERE, "hr10_patches", fn + ".diff")], cwd=tmp, capture_output=True, text=True)
         if a.returncode != 0:
             subprocess.run(["git", "init", "-q"], cwd=tmp); a = subprocess.run(["git", "apply", os.path.join(HERE, "hr10_patches", fn + ".diff")], cwd=tmp, capture_output=True, text=True)
