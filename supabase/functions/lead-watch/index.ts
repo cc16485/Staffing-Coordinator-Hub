@@ -70,7 +70,7 @@ async function people() {
     const f = low(firstOf(s)); const p = persons.find((x) => low(firstOf(x?.full_name)) === f) || persons.find((x) => low(String(x?.primary_email).split('@')[0]) === f)
     if (p) return low(p.primary_email); const st = staff.find((x) => low(firstOf(x?.name)) === f || low(String(x?.email).split('@')[0]) === f); return st ? low(st.email) : '' }
   const admin = (e: string): Admin => { const s = staff.find((x) => low(x?.email) === low(e)); const name = nameOf(e); return { email: low(e), name, first: firstOf(name), phone: normalisePhone(s?.phone) || null } }
-  const outUntil = (e: string) => { const s = staff.find((x) => low(x?.email) === low(e)); const d = String(s?.out_until || '').slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(d) && d >= todayChi() ? d : '' }
+  const outUntil = (e: string) => { const s = staff.find((x) => low(x?.email) === low(e)); const d = String(s?.out_until || '').slice(0, 10), from = String(s?.out_from || '').slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(d) && d >= todayChi() && !(from && from > todayChi()) ? d : '' }   /* planned time off (2026-10-18): not out before out_from */
   const emails = [...new Set([...persons.map((p) => low(p?.primary_email)), ...staff.map((s) => low(s?.email))].filter(Boolean))]
   return { nameOf, emailOf, admin, outUntil, emails }
 }
