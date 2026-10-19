@@ -57,7 +57,7 @@ async function facts() {
   /* time off never counts (audit step 2): out = the Team page's out_until, today or later */
   const isOut = (name: string) => { const f = lc(firstOf(name)); return !!f && staff.some((x: Any) => x && lc(firstOf(x.name)) === f && String(x.out_until || '').slice(0, 10) >= today) }
   const overdue = (st || {}).fair_counts_live === true ? T.excuse(raw, isOut) : raw
-  return { st: st || {}, set, leads, assessments, bonuses, journeys: js ?? [], overdue, nowIso, today, P }
+  return { st: st || {}, set, leads, assessments, bonuses, journeys: js ?? [], overdue, nowIso, today, P, cards }
 }
 
 Deno.serve(async (req) => {
@@ -93,7 +93,10 @@ Deno.serve(async (req) => {
 
   if (body.action === 'list') {
     const d = { leads: f.leads, assessments: f.assessments, bonuses: f.bonuses, journeys: f.journeys, overdue: f.overdue }
-    const months = me.owner ? f.set.people.map((p: string) => T.monthFor(p, d, f.today)) : (role.cc ? [T.monthFor(me.first, d, f.today)] : [])
+    /* audit step 7: balanced measures beside the others, only while ops_settings.balanced_measures_live is on */
+    const hours = LR.responseHours(f.st), firstCallMin = (l: Any) => { if (!l?.first_human_attempt_at) return null; const st = LR.clockStart(l, hours); return st ? Math.max(0, Math.round((Date.parse(l.first_human_attempt_at) - Date.parse(st)) / 60000)) : null }   /* the same math as the Leads board's median */
+    const withBal = (p: string) => { const mo = T.monthFor(p, d, f.today); return f.set.balance_live ? { ...mo, balance: T.balanceFor(p, { leads: f.leads, cards: f.cards, emailOf: f.P.emailOf, firstCallMin }, f.today) } : mo }
+    const months = me.owner ? f.set.people.map(withBal) : (role.cc ? [withBal(me.first)] : [])
     const myOverdue = role.cc ? f.overdue.filter((o: Any) => lc(o.person) === lc(me.first)).map((o: Any) => ({ kind: o.kind, client: o.client, since: o.since, lead_id: o.lead_id })) : []
     /* audit step 3: the logged misses of the last 30 days with their cause (the owner's own; the HR lead and Samantha see causes in reviews) */
     const log = await list(LOG), allReviews = await list(REVIEWS), from30 = new Date(Date.now() - 29 * 864e5).toISOString().slice(0, 10)

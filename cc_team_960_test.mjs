@@ -157,6 +157,24 @@ try {
   APP.coordinator_staff = [{ email: K, name: 'Krystal Land', out_until: '2026-11-22' }]
   r = await cron()
   ck('switch off · as before: time off is not looked at, and the review opens', rev().some((x) => x.person === 'Krystal'), rev())
+  /* ── audit step 7: balanced measures (ops_settings.balanced_measures_live) ── */
+  reset(true); at('2026-11-20T18:00:00Z')
+  APP.ops_items.push({ id: 'ops_rel_x_day7', kind: 'relationship_call', status: 'done', owner: A, due: '2026-11-10T23:00:00Z', closed_at: '2026-11-09T20:00:00Z' },
+    { id: 'ops_rel_y_day7', kind: 'relationship_call', status: 'done', owner: A, due: '2026-11-12T23:00:00Z', closed_at: '2026-11-12T20:00:00Z', closed_by: 'system', auto_closed_reason: 'Care stopped' },
+    { id: 'ops_rel_z_day30', kind: 'relationship_call', status: 'open', owner: A, due: '2026-11-28T23:00:00Z' },
+    { id: 'ops_relfu_l1', kind: 'relationship_followup', status: 'done', owner: K, due: '2026-11-18T23:00:00Z', closed_at: '2026-11-19T15:00:00Z' })
+  APP.leads.find((l) => l.id === 'l3').helpers = [{ name: 'Krystal', at: '2026-11-04T17:00:00Z', what: 'first contact' }]
+  r = await call('zach', { action: 'list' })
+  ck('step 7 · off: no balanced measures in the months', r.s === 200 && r.j.months.every((m) => !m.balance), r.j.months)
+  APP.ops_settings.balanced_measures_live = true
+  r = await call('zach', { action: 'list' })
+  const ab = (r.j.months.find((m) => m.person === 'Angiel') || {}).balance, kb = (r.j.months.find((m) => m.person === 'Krystal') || {}).balance
+  ck('step 7 · Angiel: relationship calls 1 of 2 on time (care stopped not counted, not-yet-due not counted)', ab && ab.rel_calls.due === 2 && ab.rel_calls.on_time === 1, ab)
+  ck('step 7 · Krystal: concern follow-ups 0 of 1 on time (done a day late)', kb && kb.followups.due === 1 && kb.followups.on_time === 0, kb)
+  ck('step 7 · help: Krystal gave 1, Angiel received 1', kb.help_given === 1 && kb.help_received === 0 && ab.help_received === 1 && ab.help_given === 0, { kb, ab })
+  ck('step 7 · median time to first call: Krystal 60 min over her leads this month', kb.first_call_median_min === 60 && kb.first_call_n >= 2, kb)
+  r = await call('ang', { action: 'list' })
+  ck('step 7 · Angiel sees only her own month with its measures', r.j.months.length === 1 && r.j.months[0].person === 'Angiel' && r.j.months[0].balance && r.j.months[0].balance.rel_calls.due === 2, r.j.months)
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 
 for (const [n, ok, note] of res) console.log((ok ? 'PASS  ' : 'FAIL  ') + n + (ok ? '' : '\n      ' + note))

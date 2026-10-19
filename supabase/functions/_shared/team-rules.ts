@@ -13,6 +13,9 @@
 //                           check-back date, a second try) plus their relationship calls past due
 //     bonuses earned        approved or paid this month (count and dollars)
 //   The numbers start a conversation; they never decide it.
+//   Balanced measures (audit step 7, ops_settings.balanced_measures_live): relationship calls made on time, concern
+//   follow-ups done on time, help given to and received from teammates, and the median time to a new lead's first call
+//   (from when the lead clock starts, so after-hours leads count from opening). Shown beside the others, never scored.
 //   Time off never counts (audit step 2, ops_settings.fair_counts_live): what goes overdue while someone is out on the
 //   Team page is shown apart ("while out") and never counts toward a review.
 //
@@ -41,7 +44,7 @@ const dayOf = (v: unknown) => { const s = String(v ?? ''); if (!s) return ''; re
 export function settingsOf(st: any) {
   const s = st || {}, t = s.team || {}
   const people = (Array.isArray(s.lead_rotation?.people) ? s.lead_rotation.people : []).map((p: any) => first(p?.name)).filter(Boolean)
-  return { live: s.team_live === true, causes_live: s.overdue_causes_live === true, hr_lead: lc(t.hr_lead) || DEFAULTS.hr_lead, decider: lc(s.bonus?.decider) || DEFAULTS.decider, people }
+  return { live: s.team_live === true, causes_live: s.overdue_causes_live === true, balance_live: s.balanced_measures_live === true, hr_lead: lc(t.hr_lead) || DEFAULTS.hr_lead, decider: lc(s.bonus?.decider) || DEFAULTS.decider, people }
 }
 export function monthOf(today: string) { return { from: today.slice(0, 8) + '01', to: today, label: new Date(today + 'T12:00:00Z').toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', year: 'numeric' }) } }
 const inR = (d: string, r: { from: string; to: string }) => !!d && d >= r.from && d <= r.to
@@ -89,6 +92,28 @@ export function monthFor(person: string, d: { leads: any[]; assessments: any[]; 
   const won = (d.bonuses || []).filter((b) => same(b.recipient, person) && ['approved', 'paid'].includes(b.status) && inR(dayOf(b.decided_at), m))
   return { person, month: m.label, from: m.from, to: m.to, leads_assigned: assigned, leads_returning: returning, assessments_owned: owned, assessments_helped: helped, starts, retained_30: retained,
     overdue_now: (d.overdue || []).filter((o) => same(o.person, person) && !o.excused).length, overdue_while_out: (d.overdue || []).filter((o) => same(o.person, person) && o.excused).length, bonuses: won.length, bonus_dollars: won.reduce((t, b) => t + (Number(b.amount) || 0), 0) }
+}
+/** balanced measures for one person this month (audit step 7). cards = ops_items; firstCallMin(lead) = minutes from the
+ *  lead clock's start to the first call (null when not called). A card closed because care stopped, or no longer open,
+ *  is not counted as due. */
+export function balanceFor(person: string, d: { leads: any[]; cards: any[]; emailOf: (n: string) => string; firstCallMin: (l: any) => number | null }, today: string): any {
+  const m = monthOf(today), email = lc(d.emailOf(person))
+  const leads = (d.leads || []).filter((l) => l && !(l.spam && l.spam.at))
+  const onTime = (kind: string) => {
+    const due = (d.cards || []).filter((c) => c && c.kind === kind && lc(c.owner) === email && !!email && inR(dayOf(c.due), m) && dayOf(c.due) <= today
+      && !['Care stopped', 'Not open now'].includes(String(c.auto_closed_reason || '')))
+    return { due: due.length, on_time: due.filter((c) => c.status === 'done' && c.closed_at && Date.parse(c.closed_at) <= Date.parse(c.due)).length }
+  }
+  let given = 0, received = 0
+  for (const l of leads) for (const h of Array.isArray(l.helpers) ? l.helpers : []) {
+    if (!inR(dayOf(h?.at), m)) continue
+    if (same(h.name, person) && !same(ownerOf(l), person)) given++
+    else if (same(ownerOf(l), person) && !same(h.name, person)) received++
+  }
+  const mins = leads.filter((l) => (l.owner_turn && l.owner_turn.to ? same(l.owner_turn.to, person) && inR(dayOf(l.owner_turn.at), m) : same(ownerOf(l), person) && inR(dayOf(l.created_at), m)))
+    .map((l) => d.firstCallMin(l)).filter((x): x is number => typeof x === 'number' && x >= 0).sort((a, b) => a - b)
+  const median = mins.length ? (mins.length % 2 ? mins[(mins.length - 1) / 2] : Math.round((mins[mins.length / 2 - 1] + mins[mins.length / 2]) / 2)) : null
+  return { rel_calls: onTime('relationship_call'), followups: onTime('relationship_followup'), help_given: given, help_received: received, first_call_median_min: median, first_call_n: mins.length }
 }
 /** time off never counts (audit step 2, ops_settings.fair_counts_live): mark each overdue item whose owner is out today as
  *  excused. An item first seen while they were out stays excused in the log, so it never counts after they come back. */
