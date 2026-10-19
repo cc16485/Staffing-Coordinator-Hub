@@ -56,7 +56,7 @@ sys.exit(1)
 """)
 os.chmod(os.path.join(FAKEBIN, "supabase"), 0o755)
 sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
-PIN = {"coverage-watch": sha(os.path.join(WT, "supabase/functions/coverage-watch/index.ts")), "_shared/open-shift": sha(os.path.join(WT, "supabase/functions/_shared/open-shift.ts")), "_shared/verbs": sha(os.path.join(WT, "supabase/functions/_shared/verbs.js"))}
+PIN = {"coverage-watch": sha(os.path.join(WT, "supabase/functions/coverage-watch/index.ts")), "_shared/open-shift": sha(os.path.join(WT, "supabase/functions/_shared/open-shift.ts")), "_shared/verbs.js": sha(os.path.join(WT, "supabase/functions/_shared/verbs.js"))}
 def run(env_over=None, already=False, drift=False, sameduty=False, **mode):
     reset(**mode); rep = os.path.join(TMP, "r.txt")
     for f in (LOG, rep, os.path.join(TMP, "deployed")): os.path.exists(f) and os.remove(f)

@@ -68,7 +68,7 @@ def keys(ref):
 shab = lambda b: hashlib.sha256(b).hexdigest()
 sha = lambda p: shab(open(p, "rb").read())
 def chk(good, msg): (say if good else bad)(("  ✓ " if good else "") + msg)
-pinpath = lambda k: f"supabase/functions/{k}.ts" if k.startswith("_shared/") else f"supabase/functions/{k}/index.ts"
+pinpath = lambda k: (f"supabase/functions/{k}" if re.search(r"\.(ts|js)$", k) else f"supabase/functions/{k}.ts") if k.startswith("_shared/") else f"supabase/functions/{k}/index.ts"
 def git(root, *a): return subprocess.run(["git", *a], cwd=root, capture_output=True)
 def deps(path, seen):
     if path in seen or not os.path.exists(path): return
