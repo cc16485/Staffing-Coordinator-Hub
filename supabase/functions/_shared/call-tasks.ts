@@ -688,3 +688,50 @@ export function promiseCard(w: Any, owner: { email: string; name: string; via: s
     history: [{ at: iso, by: 'AI (call follow-ups)', text: `The promise watch found this still not kept the morning after it was due${owner ? '; ' + owner.name + ' ' + owner.via : '; nobody on the team owns this area'}` }],
   }
 }
+
+/* ── CALLS NOBODY COULD READ BECOME CARDS (2026-10-18, her "yes" to the Today clean-up: no silent failures) ───────────
+   A call or text the reader gave up on was only listed on the Call Follow Ups tab. Now a real conversation that could not
+   be read becomes ONE card in My Work: "Couldn't read this call: listen to it in GoHighLevel". Real means the AI failed
+   all three tries, or GoHighLevel has no transcript for a call of at least ops_settings.call_unread_min_seconds (30 by
+   default). A shorter call with no transcript is a hang-up or a pocket dial (all 5 on 2026-10-18 were 4 to 12 seconds)
+   and makes no card. Owner: whoever held the Staffing seat at the call (the phones), held to the office team. If a later
+   reading of the same call works, the card closes itself. PRACTICE unless ops_settings.call_unread_cards_live === true. */
+export const UNREAD_MIN_SECONDS = 30, UNREAD_DAYS = 7, UNREAD_PER_RUN = 10, UNREAD_MAX_TRIES = 3
+export function unreadCardIdFor(messageId: string): string {
+  return 'cfu_' + String(messageId).replace(/[^A-Za-z0-9]/g, '').slice(-40)
+}
+/** The reader has given up on this reading: no transcript, or every try failed. */
+export function unreadFinal(r: { error?: string | null; attempt?: number | null; detail?: Any }): boolean {
+  if (!r?.error) return false
+  return r.detail?.failure === 'no_transcript' || /no transcript/i.test(String(r.error)) || (Number(r.attempt) || 1) >= UNREAD_MAX_TRIES
+}
+/** Why this unreadable call makes no card, or '' when it should get one. */
+export function unreadSkip(r: { error?: string | null; seconds?: number | null; channel?: string | null; detail?: Any }, minSeconds = UNREAD_MIN_SECONDS): string {
+  const noTranscript = r.detail?.failure === 'no_transcript' || /no transcript/i.test(String(r.error || ''))
+  if (noTranscript && r.channel !== 'text' && (Number(r.seconds) || 0) < minSeconds) return `a ${Math.round(Number(r.seconds) || 0)} second call with nothing to transcribe (a hang-up or pocket dial)`
+  return ''
+}
+/** The My Work card for one call or text nobody could read. owner null: unassigned (Work offers "Take it"). */
+export function unreadCard(r: Any, owner: { email: string; name: string; via: string } | null, now = Date.now()): Record<string, unknown> {
+  const iso = new Date(now).toISOString()
+  const who = String(r.who_name || r.caller || 'Unknown caller')
+  const text = r.channel === 'text'
+  const secs = Math.round(Number(r.seconds) || 0)
+  const len = secs >= 60 ? `${Math.floor(secs / 60)} min ${secs % 60} sec` : `${secs} sec`
+  const noTranscript = r.detail?.failure === 'no_transcript' || /no transcript/i.test(String(r.error || ''))
+  const why = noTranscript ? 'GoHighLevel never made a transcript of it.' : 'The AI tried three times and could not read it.'
+  const next = text ? 'Read the texts in GoHighLevel and make a card for anything that needs doing' : 'Listen to the recording in GoHighLevel and make a card for anything that needs doing'
+  return {
+    id: unreadCardIdFor(r.message_id), kind: LIVE_KIND, domain: 'scheduling_coverage', status: 'open', urgency: 'today',
+    title: text ? `Couldn't read texts from ${who}: read them in GoHighLevel` : `Couldn't read a call with ${who}: listen to it in GoHighLevel`,
+    about: who, who,
+    detail: `${text ? 'Texts' : `A ${len} call`} with ${who} (${chicago(String(r.call_at))}). ${why} Nobody knows yet whether it asked for anything.`,
+    next_action: next, steps: [next], due: new Date(Math.max(dueEnd(ymd(now)), now + 3600e3)).toISOString(),
+    owner: owner?.email || '', owner_name: owner?.name || '',
+    created_at: iso, first_at: iso, last_at: iso, last_activity_at: iso, created_by: 'call-tasks', opened_by: 'call-tasks',
+    person_id: r.person_id || null, lead_id: r.lead_id || null, ghl_contact_id: r.detail?.contact_id || null,
+    source: { type: 'call_unread', channel: r.channel || 'call', message_id: r.message_id, call_at: r.call_at, seconds: secs },
+    origin: { employee: 'office-awareness', reading: r.message_id },
+    history: [{ at: iso, by: 'AI (call follow-ups)', text: `${why}${owner ? ' ' + owner.name + ' ' + owner.via : ' Nobody on the team held the phones then'}` }],
+  }
+}

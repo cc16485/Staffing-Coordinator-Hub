@@ -25,6 +25,8 @@
 // PROMISE CARDS (2026-10-18, item 6 of her 2026-10-14 plan): a promise still not kept the morning after it was due becomes
 // one card in My Work (or a line on the open card from the same call), and closes when the watch sees it kept. Practice
 // (counted and noted on the promise only) unless ops_settings.call_promise_cards_live === true.
+// UNREADABLE CALLS (2026-10-18): a real conversation the reader gave up on (3 failed tries, or no transcript on a call of
+// 30+ seconds) becomes one "Couldn't read" card in My Work; hang-ups make none. Practice unless call_unread_cards_live.
 // Runs only while ops_settings.call_tasks_practice === true (texts unless ops_settings.call_tasks_texts === false). Nothing is ever sent to anyone. Every GoHighLevel request
 // is a read. Runs on its schedule (the vault secret) or the owner's key. The owner may name calls to re-read
 // ({ message_ids: [...] }) or run the test bench ({ eval: [...] }: made-up calls, nothing read from GoHighLevel and
@@ -37,7 +39,7 @@ import { jobCaller } from '../_shared/job-auth.ts'
 import { seatHolder } from '../_shared/duty.ts'
 import { VERSION, MODEL, ACK, request, retryRequest, clean, answerOf, openCards, transcriptText, shortName, related as relatedOf, workflows,
   ownerFor, dueFor, dueEnd, checkRequest, cleanCheck, nextStatus, cardIdFor, liveCard, chicago, LIVE_KIND, type CallIn, type Who, type OpenCard, type Earlier, type Related, type Action,
-  checkMode, stepProof, cardDecision, promiseCardIdFor, sameCallPrefix, promiseSkip, promiseCardTime, promiseOwner, promiseCard, PROMISE_CARDS_PER_RUN, cardCheckRequest, cleanCardCheck, CARD_CHECK_DAYS, CARD_CHECK_PER_RUN, CARD_CHECK_AI_PER_RUN, CARD_CHECK_EVERY_MS, type Facts, type Ev, type Fact, type CheckMode } from '../_shared/call-tasks.ts'
+  checkMode, stepProof, cardDecision, promiseCardIdFor, sameCallPrefix, unreadCardIdFor, unreadFinal, unreadSkip, unreadCard, UNREAD_MIN_SECONDS, UNREAD_DAYS, UNREAD_PER_RUN, promiseSkip, promiseCardTime, promiseOwner, promiseCard, PROMISE_CARDS_PER_RUN, cardCheckRequest, cleanCardCheck, CARD_CHECK_DAYS, CARD_CHECK_PER_RUN, CARD_CHECK_AI_PER_RUN, CARD_CHECK_EVERY_MS, type Facts, type Ev, type Fact, type CheckMode } from '../_shared/call-tasks.ts'
 
 const GHL = 'https://services.leadconnectorhq.com'
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
@@ -318,6 +320,11 @@ Deno.serve(async (req) => {
   Object.assign(out, { promises: pw.promises, promise_checks: pw.checked, promises_kept: pw.kept, would_remind: pw.would_remind, promise_errors: pw.errors,
     promise_cards_mode: pw.cards_mode, promise_cards: pw.cards, promise_cards_would: pw.cards_would, promise_cards_added: pw.cards_added, promise_cards_skipped: pw.cards_skipped,
     promise_cards_closed: pw.cards_closed, promise_cards_unassigned: pw.cards_unassigned })
+  /* 9 · CALLS NOBODY COULD READ (2026-10-18): a real conversation the reader gave up on becomes a card */
+  const ur = await unreadCards(db, hub, st)
+  Object.assign(out, { unread_cards_mode: ur.mode, unread_final: ur.final, unread_cards: ur.made, unread_cards_would: ur.would, unread_skipped: ur.skipped, unread_closed: ur.closed,
+    unread_would_list: ur.list.slice(0, 20) })
+  if (ur.broken) out.save_failed = (out.save_failed || 0) + 1
   /* The heartbeat fails only when the run itself broke (a reading could not be saved, GoHighLevel's text search or the
      promise watch could not run): the watchdog then tells the office. A call that could not be read is tried again and
      shown on the Practice tab; it does not fail the run. */
@@ -602,6 +609,50 @@ async function watchPromises(db: Any, ai: Any, hub: Any, tok: string, since: str
   return res
 }
 
+/* ── CALLS NOBODY COULD READ (2026-10-18) ─ see _shared/call-tasks.ts ── */
+async function unreadCards(db: Any, hub: Any, st: Any) {
+  const res = { mode: st.call_unread_cards_live === true ? 'live' : 'practice', final: 0, made: 0, would: 0, skipped: 0, closed: 0, broken: false, list: [] as Any[] }
+  const now = Date.now(), nowIso = new Date(now).toISOString()
+  const live = res.mode === 'live'
+  const min = Number(st.call_unread_min_seconds) > 0 ? Number(st.call_unread_min_seconds) : UNREAD_MIN_SECONDS
+  const { data: rd, error } = await db.from('call_task_reading').select('message_id, channel, call_at, seconds, caller, who_name, person_id, lead_id, error, attempt, detail, read_at')
+    .gte('call_at', new Date(now - UNREAD_DAYS * 864e5).toISOString()).order('read_at', { ascending: false }).limit(1000)
+  if (error) { res.broken = true; return res }
+  const newest = new Map<string, Any>()
+  for (const r of rd ?? []) if (!newest.has(r.message_id)) newest.set(r.message_id, r)
+  const { data: opsRow } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+  const byId = new Map<string, Any>((Array.isArray(opsRow?.data) ? opsRow.data : []).filter((x: Any) => x && x.id).map((x: Any) => [String(x.id), x]))
+  let writes = 0
+  for (const r of [...newest.values()].sort((a, b) => String(a.call_at).localeCompare(String(b.call_at)))) {
+    const id = unreadCardIdFor(r.message_id), card = byId.get(id)
+    /* a later reading of the same call worked: its card closes (live only; only an open call card) */
+    if (!r.error) {
+      if (live && card && card.status === 'open' && card.created_by === 'call-tasks') {
+        const note = 'A later try read this ' + (r.channel === 'text' ? 'text' : 'call') + ', so its follow-ups are on their own cards'
+        const { data: okc, error: pErr } = await db.rpc('call_card_patch', { p_id: id, p_patch: { status: 'done', closed_at: nowIso, closed_by: 'call-tasks', resolution_code: 'read_later', close_reason: note, last_activity_at: nowIso },
+          p_history: { at: nowIso, by: 'AI (call follow-ups)', text: note } })
+        if (pErr) res.broken = true; else if (okc === true) res.closed++
+      }
+      continue
+    }
+    if (!unreadFinal(r)) continue                                        // still being tried again
+    res.final++
+    if (card) continue                                                   // made once, ever
+    const skip = unreadSkip(r, min)
+    if (skip) { res.skipped++; continue }
+    if (writes >= UNREAD_PER_RUN) break
+    const owner = promiseOwner('scheduling', { domains: hub.domains, backups: hub.backups, staffing: staffingAt(hub, r.call_at), team: hub.team || [] })
+    res.would++
+    res.list.push({ message_id: r.message_id, who: r.who_name || r.caller || 'Unknown caller', at: r.call_at, channel: r.channel || 'call', seconds: r.seconds, owner: owner?.name || '' })
+    if (!live) continue
+    const item = unreadCard(r, owner, now)
+    const { error: e } = await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item })
+    if (e) { res.broken = true; continue }
+    byId.set(id, item); res.made++; writes++
+  }
+  return res
+}
+
 /* ── LIVE CARDS (2026-10-13) ───────────────────────────────────────────────────────────────────────────────────────────
    The newest reading of each call or text since the switch went on (call_tasks_live_since, and never older than 2 days)
    becomes cards. Only cards that do not exist yet are made (any status: one closed by a person stays closed). A follow-up
@@ -698,7 +749,7 @@ async function checkCards(db: Any, ai: Any, hub: Any, tok: string, mode: CheckMo
   const now = Date.now(), nowIso = new Date(now).toISOString()
   const { data: row } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
   const ops: Any[] = Array.isArray(row?.data) ? row.data : []
-  const cands = ops.filter((o: Any) => o && o.kind === LIVE_KIND && o.status === 'open' && o.created_by === 'call-tasks' && !String(o.id).startsWith('cfp_')
+  const cands = ops.filter((o: Any) => o && o.kind === LIVE_KIND && o.status === 'open' && o.created_by === 'call-tasks' && !String(o.id).startsWith('cfp_') && !String(o.id).startsWith('cfu_')
     && now - (Date.parse(String(o.created_at || '')) || 0) <= CARD_CHECK_DAYS * 864e5)
   res.cards = cands.length
   if (!cands.length) return res
