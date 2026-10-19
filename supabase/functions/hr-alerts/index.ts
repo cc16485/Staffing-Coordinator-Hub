@@ -3,7 +3,7 @@
 // =============================================================================
 // Every 30 minutes it looks for HR items waiting for Zach (_shared/hr-alert-rules.ts: agent cases that are recurring or
 // serious, write-ups sent for his approval, coaching help requests, handbacks and overdue coaching talks). When there is
-// at least one he has not been told about, he gets ONE generic text and email: "You have an HR item to review", with a
+// at least one he has not been told about (step 9: also a write-up step due or overdue under the SOP), he gets ONE generic text and email: "You have an HR item to review", with a
 // link to the Hub's HR page. No name, no reason, no count. The Hub asks him to sign in before anything shows.
 // Alerts go Monday to Friday, 8am to 6pm Central; anything found outside that goes at the next 8am.
 // Recipients: to_phone and to_emails on the server-only row hr_alert_state 'zach' (Desktop 965 sets them; not in this
@@ -54,13 +54,13 @@ Deno.serve(async (req: Request) => {
       const sent = await sendAll(db, to, true)
       return json({ ok: true, test: true, ...sent })
     }
-    const [writeups, cs, co] = await Promise.all([
-      key('discipline_actions'),
+    const [writeups, cards, cs, co] = await Promise.all([
+      key('discipline_actions'), key('ops_items'),
       db.from('hr_cases').select('id,kind,status').eq('status', 'open'),
       db.from('hr_coaching').select('id,status,due_on,help_at,help_reply_at,handoff_at').eq('status', 'open'),
     ])
     if (cs.error || co.error) throw new Error('read failed: ' + (cs.error || co.error)?.message)
-    const keys = waitingItems({ cases: arr(cs.data), writeups: arr(writeups), coaching: arr(co.data), today: chicagoDate(now) })
+    const keys = waitingItems({ cases: arr(cs.data), writeups: arr(writeups), coaching: arr(co.data), today: chicagoDate(now), cards: arr(cards) })
     const state = st.data || { id: 'zach', seen: [], practice_log: [] }
     const fresh = newItems(keys, state.seen)
     const open = sendWindow(now, ops)
