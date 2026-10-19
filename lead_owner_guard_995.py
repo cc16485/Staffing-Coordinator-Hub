@@ -71,6 +71,9 @@ def probe(P):
       update public.app_data set data = data || '{{"owner_guard_live": true, "lead_rotation_live": true}}'::jsonb where key = 'ops_settings';
       select x into it from public.app_data a, jsonb_array_elements(coalesce(a.data, '[]'::jsonb)) x where a.key = 'leads' and coalesce(x->>'assigned_coordinator', '') <> '' limit 1;
       if it is null then raise exception 'PROBE_RESULT:none=1'; end if;
+      if coalesce(it #>> '{{original_owner,name}}', '') = '' then   /* a lead from before turns has no first owner yet: give the test copy one (undone with the rest) */
+        it := jsonb_set(it, '{{original_owner}}', jsonb_build_object('name', split_part(btrim(it->>'assigned_coordinator'), ' ', 1)));
+        perform public.upsert_app_data_item('leads', it); end if;
       select coalesce(raw_app_meta_data, '{{}}'::jsonb) into meta from auth.users where id = uid;
       perform set_config('request.jwt.claims', jsonb_build_object('sub', uid, 'role', 'authenticated', 'app_metadata', meta)::text, true);
       perform set_config('request.jwt.claim.sub', uid::text, true);

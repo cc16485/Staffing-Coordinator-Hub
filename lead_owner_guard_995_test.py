@@ -88,6 +88,7 @@ try:
             body, code = (json.dumps([{"r": out}] if out else []), 200) if p_.returncode == 0 else (json.dumps({"message": p_.stderr}), 400)
             self.send_response(code); self.end_headers(); self.wfile.write(body.encode())
     hs = http.server.HTTPServer(("127.0.0.1", 0), H); threading.Thread(target=hs.serve_forever, daemon=True).start()
+    LEADS[0] = {k: v for k, v in LEADS[0].items() if k != "original_owner"}   # like live: owned leads from before turns have no first owner
     seed({"owner_guard_live": False, "lead_rotation_live": False})
     c.run(open(os.path.join(HERE, "lead_owner_guard_995_rollback.sql")).read())
     c.run("create table auth.users(id uuid primary key, banned_until timestamptz, raw_app_meta_data jsonb default '{}')")
@@ -101,7 +102,7 @@ try:
     ck("the step · installs, proves Krystal is refused and Samantha is not, and leaves the switch as it was", pr.returncode == 0 and "acting as Krystal Land (a Care Coordinator" in out and "no, can move a lead" in out
        and "acting as Samantha Troutman (an owner" in out and "yes, can move a lead" in out and "the refusal says why" in out and "exactly as it was" in out and "RESULT: DONE" in out, out[-1800:] + pr.stderr[-400:])
     st = c.run("select data from public.app_data where key = 'ops_settings'")[0][0]
-    ck("the step · the switch is still off and no lead changed", st.get("owner_guard_live") is False and lead("l1")["assigned_coordinator"] == "Angiel" and lead("l1")["original_owner"]["name"] == "Angiel", st)
+    ck("the step · the switch is still off and no lead changed (the test first owner was undone too)", st.get("owner_guard_live") is False and lead("l1")["assigned_coordinator"] == "Angiel" and "original_owner" not in lead("l1"), st)
     pr2 = subprocess.run(["python3", os.path.join(HERE, "lead_owner_guard_995.py")], capture_output=True, text=True,
         env={**os.environ, "SB_API_BASE": f"http://127.0.0.1:{hs.server_port}", "SB_TOKEN": "sbp_fake", "SB_REPORT": rep, "SB_STEP": "995"})
     ck("the step · safe to run again", pr2.returncode == 0 and "already installed" in pr2.stdout, pr2.stdout[-600:])
