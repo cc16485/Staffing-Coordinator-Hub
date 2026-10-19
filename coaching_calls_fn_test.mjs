@@ -120,6 +120,12 @@ WHO = null; r = await call({ action: 'sweep' }); ck('the schedule needs the job 
 OWNERKEY = true; r = await call({ action: 'sweep' })
 ck('the schedule: a recent tap gets its call; one older than 30 minutes is given up with the pick-list hint', T.hr_coaching_call[1].state === 'qualifies' && T.hr_coaching_call[0].state === 'no_call' && /pick the call/.test(T.hr_coaching_call[0].reason), T.hr_coaching_call)
 
+reset({ live: true, who: 'zach' }); APP.coordinator_staff = [{ email: 'krystal@mo-care.com', name: 'Krystal Test', phone: '4175550111' }]
+T.hr_coaching = [{ id: '55555555-5555-4555-8555-555555555555', subject_type: 'office', subject_email: 'krystal@mo-care.com', caregiver: 'Krystal Test', kind: 'coaching', status: 'open', assigned_to: 'zach@mo-care.com' }]
+r = await call({ action: 'tap', coaching_id: '55555555-5555-4555-8555-555555555555' })
+ck('office coaching: Call now dials the office employee from the staff list', r.j.ok && BRIDGE[0][1].phone === '+14175550111', r.j)
+WHO = 'krystal'; r = await call({ action: 'list', coaching_id: '55555555-5555-4555-8555-555555555555' })
+ck('...and a coordinator can never open an office coaching record', r.s === 403)
 const body = ['hr-coach-call/index.ts', '_shared/coaching-calls.ts'].map((f) => fs.readFileSync(`${FN}/${f}`, 'utf8')).join('')
 ck('no em dashes', !/—/.test(body))
 ck('the four places that would show a coaching call all check it', ['calls-feed', 'call-pull', 'call-tasks', 'call-disposition'].every((f) => /loadSkip\(/.test(fs.readFileSync(`${FN}/${f}/index.ts`, 'utf8'))))
