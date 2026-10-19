@@ -22,6 +22,9 @@
 // WATCH: every promise the office made and every confirmation it is waiting on gets a due day and an owner; the Hub
 // checks the person's later calls, texts, cards and call outcomes and asks whether it was kept (call_promise_watch).
 // In practice it only shows "would remind"; nobody is reminded.
+// PROMISE CARDS (2026-10-18, item 6 of her 2026-10-14 plan): a promise still not kept the morning after it was due becomes
+// one card in My Work (or a line on the open card from the same call), and closes when the watch sees it kept. Practice
+// (counted and noted on the promise only) unless ops_settings.call_promise_cards_live === true.
 // Runs only while ops_settings.call_tasks_practice === true (texts unless ops_settings.call_tasks_texts === false). Nothing is ever sent to anyone. Every GoHighLevel request
 // is a read. Runs on its schedule (the vault secret) or the owner's key. The owner may name calls to re-read
 // ({ message_ids: [...] }) or run the test bench ({ eval: [...] }: made-up calls, nothing read from GoHighLevel and
@@ -34,7 +37,7 @@ import { jobCaller } from '../_shared/job-auth.ts'
 import { seatHolder } from '../_shared/duty.ts'
 import { VERSION, MODEL, ACK, request, retryRequest, clean, answerOf, openCards, transcriptText, shortName, related as relatedOf, workflows,
   ownerFor, dueFor, dueEnd, checkRequest, cleanCheck, nextStatus, cardIdFor, liveCard, chicago, LIVE_KIND, type CallIn, type Who, type OpenCard, type Earlier, type Related, type Action,
-  checkMode, stepProof, cardDecision, cardCheckRequest, cleanCardCheck, CARD_CHECK_DAYS, CARD_CHECK_PER_RUN, CARD_CHECK_AI_PER_RUN, CARD_CHECK_EVERY_MS, type Facts, type Ev, type Fact, type CheckMode } from '../_shared/call-tasks.ts'
+  checkMode, stepProof, cardDecision, promiseCardIdFor, sameCallPrefix, promiseSkip, promiseCardTime, promiseOwner, promiseCard, PROMISE_CARDS_PER_RUN, cardCheckRequest, cleanCardCheck, CARD_CHECK_DAYS, CARD_CHECK_PER_RUN, CARD_CHECK_AI_PER_RUN, CARD_CHECK_EVERY_MS, type Facts, type Ev, type Fact, type CheckMode } from '../_shared/call-tasks.ts'
 
 const GHL = 'https://services.leadconnectorhq.com'
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
@@ -73,12 +76,12 @@ export function readNow(t: { n: number; ok: boolean; last: number } | undefined,
 }
 /** Everything a reading needs from the Hub, loaded once per run. */
 async function loadHub(db: Any) {
-  const keys = ['ops_items', 'coverage_cases', 'timekeeper_cases', 'staffing_plans', 'visit_changes', 'leads', 'duty_windows', 'positions', 'ops_settings']
+  const keys = ['ops_items', 'coverage_cases', 'timekeeper_cases', 'staffing_plans', 'visit_changes', 'leads', 'duty_windows', 'positions', 'ops_settings', 'coordinator_staff']
   const { data: rows } = await db.from('app_data').select('key, data').in('key', keys)
   const k: Record<string, Any> = Object.fromEntries((rows ?? []).map((r: { key: string; data: unknown }) => [r.key, r.data]))
   const arr = (x: Any) => Array.isArray(x) ? x : []
-  const { data: doms } = await db.from('domains').select('code, owner_person').eq('active', true)
-  const ids = [...new Set((doms ?? []).map((d: Any) => d.owner_person).filter(Boolean))]
+  const { data: doms } = await db.from('domains').select('code, owner_person, backup_person').eq('active', true)
+  const ids = [...new Set((doms ?? []).flatMap((d: Any) => [d.owner_person, d.backup_person]).filter(Boolean))]
   const { data: ppl } = ids.length ? await db.from('persons').select('person_id, full_name, primary_email').in('person_id', ids) : { data: [] }
   /* live cards need the owner's sign-in email: domain owners, plus each Staffing seat holder as staffingAt finds them */
   const emailByName = new Map<string, string>((ppl ?? []).filter((p: Any) => p.full_name && p.primary_email).map((p: Any) => [String(p.full_name).trim().toLowerCase(), String(p.primary_email).toLowerCase()]))
@@ -86,11 +89,12 @@ async function loadHub(db: Any) {
   const nameOf = new Map((ppl ?? []).map((p: Any) => [p.person_id, p.full_name]))
   const byEmail = new Map((staff ?? []).map((p: Any) => [String(p.primary_email || '').toLowerCase(), p.full_name]))
   const domains: Record<string, string> = Object.fromEntries((doms ?? []).map((d: Any) => [d.code, String(nameOf.get(d.owner_person) || '')]))
+  const backups: Record<string, string> = Object.fromEntries((doms ?? []).filter((d: Any) => d.backup_person).map((d: Any) => [d.code, String(nameOf.get(d.backup_person) || '')]))
   const { data: defs } = await db.from('client_journey_step_def').select('key, def').eq('active', true)
   const stepTitles: Record<string, string> = Object.fromEntries((defs ?? []).map((d: Any) => [d.key, String(d.def?.title || d.key)]))
   return { ops: arr(k.ops_items), coverage: arr(k.coverage_cases), timekeeper: arr(k.timekeeper_cases), staffing: arr(k.staffing_plans),
     visitChanges: arr(k.visit_changes), leads: arr(k.leads), windows: arr(k.duty_windows), positions: arr(k.positions), settings: k.ops_settings ?? {},
-    domains, byEmail, emailByName, stepTitles }
+    domains, backups, team: arr(k.coordinator_staff), byEmail, emailByName, stepTitles }
 }
 /** Who held the Staffing seat about 15 minutes after the call (when the reader would have made the card). */
 function staffingAt(hub: Any, callAt: string): string {
@@ -310,8 +314,10 @@ Deno.serve(async (req) => {
     if (cc.broken) out.save_failed = (out.save_failed || 0) + 1
   }
   /* 8 · the promise watch (v13) */
-  const pw = await watchPromises(db, ai, hub, tok, since)
-  Object.assign(out, { promises: pw.promises, promise_checks: pw.checked, promises_kept: pw.kept, would_remind: pw.would_remind, promise_errors: pw.errors })
+  const pw = await watchPromises(db, ai, hub, tok, since, st)
+  Object.assign(out, { promises: pw.promises, promise_checks: pw.checked, promises_kept: pw.kept, would_remind: pw.would_remind, promise_errors: pw.errors,
+    promise_cards_mode: pw.cards_mode, promise_cards: pw.cards, promise_cards_would: pw.cards_would, promise_cards_added: pw.cards_added, promise_cards_skipped: pw.cards_skipped,
+    promise_cards_closed: pw.cards_closed, promise_cards_unassigned: pw.cards_unassigned })
   /* The heartbeat fails only when the run itself broke (a reading could not be saved, GoHighLevel's text search or the
      promise watch could not run): the watchdog then tells the office. A call that could not be read is tried again and
      shown on the Practice tab; it does not fail the run. */
@@ -461,8 +467,9 @@ async function activityFor(db: Any, hub: Any, tok: string, w: Any, newest: Map<s
   return { lines: lines.map((l) => l[1]), latest: lines.length ? lines[lines.length - 1][0] : 0, events }
 }
 
-async function watchPromises(db: Any, ai: Any, hub: Any, tok: string, since: string) {
-  const res = { promises: 0, checked: 0, kept: 0, would_remind: 0, errors: 0, broken: false }
+async function watchPromises(db: Any, ai: Any, hub: Any, tok: string, since: string, st: Any = {}) {
+  const res = { promises: 0, checked: 0, kept: 0, would_remind: 0, errors: 0, broken: false,
+    cards_mode: st.call_promise_cards_live === true ? 'live' : 'practice', cards: 0, cards_would: 0, cards_added: 0, cards_skipped: 0, cards_closed: 0, cards_unassigned: 0 }
   const now = Date.now(), nowIso = new Date(now).toISOString()
   const from = new Date(Math.max(Date.parse(since), now - WATCH_DAYS * 864e5)).toISOString()
   const { data: rd, error: rErr } = await db.from('call_task_reading').select('message_id, version, channel, call_at, person_id, lead_id, who_name, caller, detail, error, read_at')
@@ -473,6 +480,11 @@ async function watchPromises(db: Any, ai: Any, hub: Any, tok: string, since: str
   for (const r of rd ?? []) if (!newest.has(r.message_id)) newest.set(r.message_id, r)
   const byKey = new Map<string, Any>((have ?? []).map((w: Any) => [w.message_id + '#' + w.idx, w]))
   const save = async (q: Any) => { const { error } = await q; if (error) { res.errors++; res.broken = true } }
+  /* the cards as they are now (the live cards above may have just added some) */
+  const { data: opsRow } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+  const ops: Any[] = Array.isArray(opsRow?.data) ? opsRow.data : []
+  const byId = new Map<string, Any>(ops.filter((x: Any) => x && x.id).map((x: Any) => [String(x.id), x]))
+  const openCard = (id: string) => { const c = byId.get(id); return c && c.status === 'open' ? c : null }
 
   /* 1 · every promise in the newest reading of each call or text has a row; one a newer reading dropped says so */
   for (const r of newest.values()) {
@@ -505,7 +517,8 @@ async function watchPromises(db: Any, ai: Any, hub: Any, tok: string, since: str
   let asked = 0
   for (const w of open ?? []) {
     const end = dueEnd(String(w.due)), late = now > end
-    if (now > end + WATCH_AFTER_DUE_MS) continue                         // stays as it was (would remind) after 3 days
+    const pcard = openCard(promiseCardIdFor(w.message_id, w.idx))
+    if (now > end + WATCH_AFTER_DUE_MS && !pcard) continue               // stays as it was (would remind) after 3 days, unless its card is still open
     if (w.checked_at && now - Date.parse(w.checked_at) < CHECK_EVERY_MS) continue
     let verdict: 'kept' | 'not_yet' | 'unclear' | 'none' = 'none', why = '', evidence: string[] | null = null, latest = 0
     try {
@@ -533,6 +546,58 @@ async function watchPromises(db: Any, ai: Any, hub: Any, tok: string, since: str
     if (evidence) upd.evidence = evidence
     if (status !== w.status) upd.history = [...(w.history || []), { at: nowIso, status, why: why.slice(0, 200) }]
     await save(db.from('call_promise_watch').update(upd).eq('id', w.id))
+    w.status = status; if (upd.history) w.history = upd.history
+    /* kept after its card was made: the card closes (only an open call card; a person's edits are never replaced) */
+    if ((status === 'kept' || status === 'kept_late') && pcard && pcard.created_by === 'call-tasks' && res.cards_mode === 'live') {
+      const note = ('The promise was kept: ' + (why || 'the promise watch saw it done')).slice(0, 400)
+      const { data: okc, error: pErr } = await db.rpc('call_card_patch', { p_id: pcard.id, p_patch: { status: 'done', closed_at: nowIso, closed_by: 'call-tasks', resolution_code: 'promise_kept',
+        close_reason: note, last_activity_at: nowIso }, p_history: { at: nowIso, by: 'AI (call follow-ups)', text: note } })
+      if (pErr) res.errors++
+      else if (okc === true) { res.cards_closed++; pcard.status = 'done' }
+    }
+  }
+
+  /* 3 · PROMISE CARDS (2026-10-18): still not kept the morning after it was due → one card in My Work (see _shared) */
+  const live = res.cards_mode === 'live'
+  const note = async (w: Any, status: string, why: string) => {
+    if ((w.history || []).some((x: Any) => x && x.status === status)) return        // said once
+    w.history = [...(w.history || []), { at: nowIso, status, why: why.slice(0, 200) }]
+    await save(db.from('call_promise_watch').update({ history: w.history }).eq('id', w.id))
+  }
+  let writes = 0
+  for (const w of (open ?? []).filter((x: Any) => x.status === 'would_remind' && promiseCardTime(String(x.due), now))) {
+    const id = promiseCardIdFor(w.message_id, w.idx)
+    if (byId.has(id)) continue                                            // made once, ever: a card a person closed never comes back
+    const skip = promiseSkip(w)
+    if (skip) { res.cards_skipped++; await note(w, 'no_card', skip); continue }
+    const pre = sameCallPrefix(w.message_id)
+    const same = ops.filter((o: Any) => o && String(o.id).startsWith(pre))
+    const sameOpen = same.find((o: Any) => o.status === 'open')
+    if (!sameOpen && same.length) { res.cards_skipped++; await note(w, 'no_card', 'its card from the same call was already closed'); continue }
+    if (writes >= PROMISE_CARDS_PER_RUN) break
+    if (sameOpen) {
+      /* one card, not layers: the promise goes on the open card from the same call, once */
+      const hist: Any[] = Array.isArray(sameOpen.history) ? sameOpen.history : []
+      if (hist.some((h: Any) => h && h.ref === 'promise:' + id)) continue
+      res.cards_would++
+      if (!live) { await note(w, 'would_card', 'would add this to the open card ' + sameOpen.id); continue }
+      const line = `Promise still not kept the morning after it was due (${w.due}): ${String(w.what || '').slice(0, 200)}`
+      const item = { ...sameOpen, history: [...hist, { at: nowIso, by: 'AI (call follow-ups)', ref: 'promise:' + id, text: line }], last_activity_at: nowIso }
+      const { error: e } = await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item })
+      if (e) { res.errors++; res.broken = true; continue }
+      byId.set(String(sameOpen.id), item); Object.assign(sameOpen, item); res.cards_added++; writes++
+      await note(w, 'card', 'added to the open card ' + sameOpen.id)
+      continue
+    }
+    const owner = promiseOwner(String(w.area || 'office_admin'), { domains: hub.domains, backups: hub.backups, staffing: staffingAt(hub, nowIso), team: hub.team || [] })
+    res.cards_would++
+    if (!live) { await note(w, 'would_card', 'would make a My Work card for ' + (owner?.name || 'nobody (unassigned)')); continue }
+    const card = promiseCard(w, owner, now)
+    const { error: e } = await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: card })
+    if (e) { res.errors++; res.broken = true; continue }
+    byId.set(id, card); res.cards++; writes++
+    if (!owner) res.cards_unassigned++
+    await note(w, 'card', 'My Work card ' + id + ' made for ' + (owner?.name || 'nobody (unassigned)'))
   }
   return res
 }
@@ -633,7 +698,7 @@ async function checkCards(db: Any, ai: Any, hub: Any, tok: string, mode: CheckMo
   const now = Date.now(), nowIso = new Date(now).toISOString()
   const { data: row } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
   const ops: Any[] = Array.isArray(row?.data) ? row.data : []
-  const cands = ops.filter((o: Any) => o && o.kind === LIVE_KIND && o.status === 'open' && o.created_by === 'call-tasks'
+  const cands = ops.filter((o: Any) => o && o.kind === LIVE_KIND && o.status === 'open' && o.created_by === 'call-tasks' && !String(o.id).startsWith('cfp_')
     && now - (Date.parse(String(o.created_at || '')) || 0) <= CARD_CHECK_DAYS * 864e5)
   res.cards = cands.length
   if (!cands.length) return res
