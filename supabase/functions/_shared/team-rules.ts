@@ -72,7 +72,8 @@ export function overdueNow(leads: any[], cards: any[], LR: any, settings: any, n
 export function monthFor(person: string, d: { leads: any[]; assessments: any[]; bonuses: any[]; journeys: any[]; overdue: any[] }, today: string): any {
   const m = monthOf(today), mine = (l: any) => same(ownerOf(l), person)
   const leads = (d.leads || []).filter((l) => l && !(l.spam && l.spam.at))
-  const assigned = leads.filter((l) => l.owner_turn && l.owner_turn.to ? same(l.owner_turn.to, person) && inR(dayOf(l.owner_turn.at), m) : mine(l) && inR(dayOf(l.created_at), m)).length
+  const assignedL = leads.filter((l) => l.owner_turn && l.owner_turn.to ? same(l.owner_turn.to, person) && inR(dayOf(l.owner_turn.at), m) : mine(l) && inR(dayOf(l.created_at), m)), assigned = assignedL.length
+  const returning = assignedL.filter((l) => l.owner_turn && l.owner_turn.how === 'returning').length   /* audit step 6: returning clients on their own line */
   const byId = new Map(leads.map((l) => [String(l.id), l]))
   let owned = 0, helped = 0
   for (const a of d.assessments || []) {
@@ -86,7 +87,7 @@ export function monthFor(person: string, d: { leads: any[]; assessments: any[]; 
     const j: any = jOf.get(String(l.id)); const ended = j && j.status === 'closed' && /^care ended/i.test(String(j.closed_reason || '')) ? dayOf(j.updated_at) : (String(l.status) === 'Lost' ? dayOf(l.lost_at) : '')
     return !(ended && ended <= d30) }).length
   const won = (d.bonuses || []).filter((b) => same(b.recipient, person) && ['approved', 'paid'].includes(b.status) && inR(dayOf(b.decided_at), m))
-  return { person, month: m.label, from: m.from, to: m.to, leads_assigned: assigned, assessments_owned: owned, assessments_helped: helped, starts, retained_30: retained,
+  return { person, month: m.label, from: m.from, to: m.to, leads_assigned: assigned, leads_returning: returning, assessments_owned: owned, assessments_helped: helped, starts, retained_30: retained,
     overdue_now: (d.overdue || []).filter((o) => same(o.person, person) && !o.excused).length, overdue_while_out: (d.overdue || []).filter((o) => same(o.person, person) && o.excused).length, bonuses: won.length, bonus_dollars: won.reduce((t, b) => t + (Number(b.amount) || 0), 0) }
 }
 /** time off never counts (audit step 2, ops_settings.fair_counts_live): mark each overdue item whose owner is out today as

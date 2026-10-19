@@ -20,7 +20,7 @@ const reset = (live = true) => {
       { id: 'l3', first_name: 'Cy', client_first_name: 'Cal', status: 'Contacted', assigned_coordinator: 'Angiel', created_at: '2026-11-04T15:00:00Z', first_human_contact_at: '2026-11-04T16:00:00Z', first_human_attempt_at: '2026-11-04T16:00:00Z', follow_up_due: '2026-11-25' },
       { id: 'l4', first_name: 'Di', client_first_name: 'Dot', status: 'Converted', said_yes_at: '2026-11-01T00:00:00Z', funding_source: 'private', assigned_coordinator: 'Krystal', original_owner: { name: 'Krystal' }, first_shift_at: '2026-11-05T15:00:00Z', created_at: '2026-10-25T15:00:00Z' },
       { id: 'l5', first_name: 'Ed', client_first_name: 'Eve', status: 'Converted', said_yes_at: '2026-10-15T00:00:00Z', assigned_coordinator: 'Angiel', original_owner: { name: 'Angiel' }, first_shift_at: '2026-10-20T15:00:00Z', created_at: '2026-10-10T15:00:00Z' },
-      { id: 'l6', first_name: 'Flo', client_first_name: 'Fay', status: 'Assessment Scheduled', assigned_coordinator: 'Angiel', owner_turn: { to: 'Angiel', how: 'turn', at: '2026-11-10T15:00:00Z', seq: 3 }, created_at: '2026-11-10T15:00:00Z', first_human_contact_at: '2026-11-10T16:00:00Z', first_human_attempt_at: '2026-11-10T16:00:00Z', follow_up_due: '2026-11-24' } ],
+      { id: 'l6', first_name: 'Flo', client_first_name: 'Fay', status: 'Assessment Scheduled', assigned_coordinator: 'Angiel', owner_turn: { to: 'Angiel', how: 'returning', apart: true, at: '2026-11-10T15:00:00Z', seq: 3 }, created_at: '2026-11-10T15:00:00Z', first_human_contact_at: '2026-11-10T16:00:00Z', first_human_attempt_at: '2026-11-10T16:00:00Z', follow_up_due: '2026-11-24' } ],
     care_assessments: [{ id: 'a1', lead_id: 'l6', visit_date: '2026-11-12', status: 'Completed — Awaiting Plan', coordinator: 'Krystal' }],
     cc_bonuses: [{ id: 'bonus_l5', lead_id: 'l5', recipient: 'Angiel', amount: 100, status: 'approved', decided_at: '2026-11-15T15:00:00Z' }],
     ops_items: [{ id: 'ops_rel_l5_day30', kind: 'relationship_call', status: 'open', owner: A, source_id: 'l5', about: 'Eve', due: '2026-11-19T23:00:00Z' }] }
@@ -76,7 +76,7 @@ try {
 
   r = await call('ang', { action: 'list' })
   const am = r.j.months && r.j.months[0]
-  ck('Angiel · MY MONTH only: 2 leads assigned, 1 assessment owned, 1 retained at 30 days, 1 overdue, 1 bonus ($100)', r.s === 200 && r.j.months.length === 1 && am.person === 'Angiel' && am.leads_assigned === 2 && am.assessments_owned === 1 && am.retained_30 === 1 && am.overdue_now === 1 && am.bonuses === 1 && am.bonus_dollars === 100, r.j.months)
+  ck('Angiel · MY MONTH only: 2 leads assigned (1 a returning client, step 6), 1 assessment owned, 1 retained at 30 days, 1 overdue, 1 bonus ($100)', r.s === 200 && r.j.months.length === 1 && am.person === 'Angiel' && am.leads_assigned === 2 && am.leads_returning === 1 && am.assessments_owned === 1 && am.retained_30 === 1 && am.overdue_now === 1 && am.bonuses === 1 && am.bonus_dollars === 100, r.j.months)
   ck('Angiel · her overdue list (the 30-day relationship call), and no reviews', r.j.my_overdue.length === 1 && r.j.my_overdue[0].kind === 'relationship_call' && r.j.reviews.length === 0, r.j)
   r = await call('kry', { action: 'list' })
   const km = r.j.months[0]

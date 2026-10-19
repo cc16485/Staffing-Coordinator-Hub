@@ -1255,7 +1255,10 @@
      The turn order and who is in it are Hub settings (ops_settings.lead_rotation {people:[{name, on}]}); the switch is
      ops_settings.lead_rotation_live. While it is off nothing here is called and leads get their owner the old way.
      The pointer is the leads themselves: the newest l.owner_turn says whose turn it was, so the Hub and the server
-     always agree without a second record. Someone out (or switched off) is skipped with no makeup turn. */
+     always agree without a second record. Someone out (or switched off) is skipped with no makeup turn.
+     Returning clients apart (audit step 6, Samantha's decision 1, 2026-10-18; switch ops_settings.returning_apart_live):
+     while on, a returning client still goes to their old Care Coordinator, but the turn is stamped apart:true and does
+     not move whose turn is next. Turns given before the switch keep counting as they did. */
   const TURN_HOW = { turn:'next up', asked:'asked for by name', returning:'returning client' };
   const firstName = s => String(s || '').trim().split(/\s+/)[0] || '';
   const sameName = (a, b) => !!firstName(a) && firstName(a).toLowerCase() === firstName(b).toLowerCase();
@@ -1267,11 +1270,11 @@
   }
   /* the newest turn on file: {to, how, at, by, seq, lead} or null. seq counts up by one per turn, so two turns given in
      the same second still have an order. */
-  function lastTurn(leads){
-    let best = null;
+  function lastTurn(leads, opts){
+    let best = null; const counted = !!(opts && opts.counted);   /* counted: only turns that use someone's turn (not apart) */
     const newer = (t, b) => (Number(t.seq) || 0) !== (Number(b.seq) || 0) ? (Number(t.seq) || 0) > (Number(b.seq) || 0) : String(t.at || '') > String(b.at || '');
     (Array.isArray(leads) ? leads : []).forEach(l => { const t = l && l.owner_turn;
-      if(t && t.to && TURN_HOW[t.how] && (!best || newer(t, best))) best = Object.assign({ lead:l.id }, t); });
+      if(t && t.to && TURN_HOW[t.how] && !(counted && t.apart === true) && (!best || newer(t, best))) best = Object.assign({ lead:l.id }, t); });
     return best;
   }
   /* who is next up: the person after the last turn in the set order, skipping anyone switched off or out. null when
@@ -1280,22 +1283,25 @@
     const rs = rotationSettings(settings), isOut = (opts && opts.isOut) || (() => false);
     const ok = p => p.on && !isOut(p.name);
     if(!rs.people.some(ok)) return null;
-    const last = lastTurn(leads), n = rs.people.length;
+    const last = lastTurn(leads, { counted:true }), n = rs.people.length;
     const at = last ? rs.people.findIndex(p => sameName(p.name, last.to)) : -1;
     for(let k = 1; k <= n; k++){ const p = rs.people[(at + k + n) % n]; if(ok(p)) return p.name; }
     return null;
   }
-  /* give the lead to name by turn (how: turn · asked · returning). Every kind uses that person's turn. Pass o.leads
-     (every lead) so the turn gets the next number. */
+  /* give the lead to name by turn (how: turn · asked · returning). Every kind uses that person's turn, except a returning
+     client with o.apart (returning clients apart is on). Pass o.leads (every lead) so the turn gets the next number. */
+  function returningApartOn(settings){ return !!(settings && settings.returning_apart_live === true); }
   function giveTurn(l, name, o){
     o = o || {}; const at = o.at || new Date().toISOString(), how = TURN_HOW[o.how] ? o.how : 'turn', who = firstName(name);
     if(!l || !who) return l;
     const last = lastTurn(o.leads), seq = ((last && Number(last.seq)) || 0) + 1;
     l.assigned_coordinator = who;
-    l.owner_turn = { to:who, how, at, by:String(o.by || ''), seq };
+    const apart = how === 'returning' && o.apart === true;
+    l.owner_turn = Object.assign({ to:who, how, at, by:String(o.by || ''), seq }, apart ? { apart:true } : {});
     if(!l.original_owner || !l.original_owner.name) l.original_owner = { name:who, at, how };
     l.comm_log = Array.isArray(l.comm_log) ? l.comm_log : [];
     l.comm_log.push({ kind:'owner', at, by:String(o.by || ''), body:how === 'turn' ? who + '’s lead (next up by turn)'
+      : apart ? who + '’s lead (returning client; it does not use a turn)'
       : who + '’s lead (' + TURN_HOW[how] + '; it counts as ' + who + '’s turn)' });
     return l;
   }
@@ -1327,7 +1333,7 @@
   /* the line for whoever makes a first call for the owner */
   function ownerIntro(l){ const o = firstName(l && l.assigned_coordinator); return o ? 'Calling for ' + o + '? Introduce ' + o + ' as their Care Coordinator.' : ''; }
 
-  const api = { fairCountsOn, SECOND_TRY_DAYS, followupRulesOn, secondTry, nextDateRule, TURN_HOW, rotationSettings, lastTurn, nextUp, giveTurn, changeOwner, noteHelper, ownerIntro,
+  const api = { fairCountsOn, SECOND_TRY_DAYS, followupRulesOn, secondTry, nextDateRule, TURN_HOW, rotationSettings, lastTurn, nextUp, giveTurn, returningApartOn, changeOwner, noteHelper, ownerIntro,
     whenISO, START_KINDS, START_LABEL, LEGACY_URGENCY, DAYS, WAITING, WAITING_KEYS, LOST, LOST_LABEL, LOST_STAFFING, REQ_BY_STAGE, FORM_KEYS,
     RESPONSE_HOURS_DEFAULT, FIRST_ATTEMPT_MINUTES,
     ymd, addDays, daysBetween, dayWords, desiredStart, desiredStartWords, startRank, schedule, daysWords, scheduleWords, whyCalled,
