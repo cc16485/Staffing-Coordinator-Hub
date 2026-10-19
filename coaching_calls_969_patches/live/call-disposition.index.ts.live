@@ -1,0 +1,798 @@
+// Supabase Edge Function: call-disposition  (shared hub project)
+// -----------------------------------------------------------------------------
+// The post-call screen becomes the front door for every kind of call.
+//
+// A GHL Workflow fires on "Call Disposition" and POSTs here (gated by
+// ?token=CALL_DISPOSITION_TOKEN). One tap on the coordinator's phone then
+// lands the call on the right board instead of dying as a label:
+//
+//   Call-Off          → opens a Coverage Help case
+//   Caregiver Issue   → Needs Attention (staffing)
+//   Client Concern    → Needs Attention (client issue)
+//   Client Call       → logged only, deliberately no alert
+//   Referral Call     → credits the referring org + starts a lead
+//   Job Applicant     → Needs Attention for whoever recruits
+//   Spam or Sales     → suppression list, so it stops making missed-call noise
+//   Booked Visit      → lead moves to Assessment Scheduled
+//   Lead - Not Ready  → back in 5 days
+//   Send to CDS       → Lost, reason "Referred to CDS"
+//   No Answer /       → counts an attempt and sets the next try on a ladder
+//   Voicemail            (1d → 2d → 4d → 7d → cools itself)
+//   Follow Up         → back in 7 days
+//   Requested Appointment → hot, due today
+//   Not Interested    → Lost, cold nurture
+//   Incorrect Number  → flags the number as bad
+//
+// Every disposition on a matched lead also stamps last_contacted_at, which is
+// what closes the "new lead nobody answered" item and feeds the stand-up board.
+//
+// The disposition carries the WHO for non-lead calls, so a caregiver call-off
+// works even when the number matches nothing. Phone matching is only needed to
+// attach lead outcomes to the right lead.
+// -----------------------------------------------------------------------------
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { pushCallNote } from '../_shared/axiscare-call-note.ts'
+import { recordCall, axiscareState } from '../_shared/call-record.ts'
+import { opEvent } from '../_shared/events.ts'
+import { ldPush, looksLikeOptOut } from '../_shared/lead-truth.ts'
+import '../_shared/lead-rules.js'
+// deno-lint-ignore no-explicit-any
+const LR: any = (globalThis as any).LeadRules
+import { leadHits, returningCheck, returningItem } from '../_shared/returning.ts'
+
+const cors = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
+const json = (b: unknown, s = 200) =>
+  new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
+
+const norm = (p: string) => String(p || '').replace(/\D/g, '').slice(-10)
+const todayISO = () => new Date().toISOString().slice(0, 10)
+const addDays = (n: number) => {
+  const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10)
+}
+const uid = () => 'd_' + crypto.randomUUID().slice(0, 12)
+
+// How long before we try an unreached lead again, by attempt number.
+const LADDER = [1, 2, 4, 7]
+const ladderDays = (attempt: number) => LADDER[Math.min(attempt, LADDER.length) - 1] ?? 7
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
+  const url = new URL(req.url)
+  if (url.searchParams.get('token') !== Deno.env.get('CALL_DISPOSITION_TOKEN')) return json({ error: 'unauthorized' }, 401)
+
+  // GHL substitutes merge fields into the raw JSON body, which breaks two ways:
+  // an unresolved field arrives as the literal "{{...}}", and a note containing
+  // a quote or newline can break the JSON outright. Handle both so a real call
+  // is never lost to a formatting accident.
+  const raw = await req.text()
+  let b: Record<string, unknown> = {}
+  try { b = JSON.parse(raw) } catch {
+    // Salvage: pull the simple leading fields, then take everything after
+    // "note": as free text. (This is why note must be the LAST field.)
+    const grab = (k: string) => (raw.match(new RegExp('"' + k + '"\\s*:\\s*"([^"]*)"')) || [])[1] || ''
+    b = { id: grab('id'), name: grab('name'), email: grab('email'), phone: grab('phone'),
+          disposition: grab('disposition'), direction: grab('direction'),
+          summary: grab('summary'),
+          attach: /"attach"\s*:\s*true/.test(raw) }
+    // Whichever free-text field was put last is the one that broke the JSON, so
+    // take everything after it as its value.
+    const lastKey = ['note', 'transcript', 'summary']
+      .map((k) => [k, raw.lastIndexOf('"' + k + '"')] as [string, number])
+      .sort((a, b2) => b2[1] - a[1])[0][0]
+    const nm = raw.match(new RegExp('"' + lastKey + '"\\s*:\\s*([\\s\\S]*)\\}\\s*$'))
+    if (nm) b[lastKey] = nm[1].trim().replace(/^"/, '').replace(/",?$/, '').trim()
+  }
+  // An unresolved merge field is not a value.
+  const field = (k: string) => {
+    const v = typeof b[k] === 'string' ? String(b[k]).trim() : ''
+    return v.includes('{{') || v.includes('}}') ? '' : v
+  }
+  // Field names in GHL are guesswork from the outside, so every reply says what
+  // actually arrived. Read this in the workflow's Execution logs: "resolved"
+  // means real text came through, "unresolved" means the merge field is wrong
+  // for this kind of call, "empty" means it resolved to nothing.
+  const state = (k: string) => {
+    const v = b[k]
+    if (typeof v !== 'string' || !v.trim()) return 'empty'
+    return v.includes('{{') ? 'unresolved merge field' : 'resolved (' + v.trim().length + ' chars)'
+  }
+  const received: Record<string, string> = { disposition: state('disposition'), transcript: state('transcript'), note: state('note'), phone: state('phone'), name: state('name'), detail_from: 'nothing yet' }
+  const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  const readKey = async (k: string) => {
+    const { data } = await supabase.from('app_data').select('data').eq('key', k).maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    return (Array.isArray(data?.data) ? data!.data : []) as any[]
+  }
+  const put = (k: string, item: unknown) => supabase.rpc('upsert_app_data_item', { target_key: k, item })
+
+  const callerPhone = field('phone') || field('phone_number')
+  const callerId = field('id') || field('contactId') || field('contact_id')
+
+  /* ---- Cara's ears, SMS edition (2026-09-19: the last piece of "monitoring
+     call transcripts AND texts"). A GHL workflow posts every inbound SMS
+     here with sms:true. The endpoint itself is the filter: only a number
+     the identity layer says is exactly ONE caregiver gets classified; a
+     hit becomes the same status:'flagged' case the call ears create —
+     confirm/dismiss on the board, texts nobody. Trivial replies (yes/no/c)
+     are the callout and confirm flows' business and are skipped unread. */
+  if (b.sms === true || String(b.sms).toLowerCase() === 'true') {
+    const smsText = field('message') || field('body') || field('text') || ''
+    const out: Record<string, unknown> = { ok: true, heard: false }
+    try {
+      const digits = norm(callerPhone)
+      const anthKey = Deno.env.get('ANTHROPIC_API_KEY') || ''
+      const trivial = /^\s*(y|yes|yeah|yep|no|nope|n|c|ok|okay|k|thanks|thank you|ty)\s*[.!]*\s*$/i.test(smsText)
+      if (digits.length === 10 && smsText.length >= 8 && !trivial && anthKey) {
+        const supabaseS = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+        const { data: setS } = await supabaseS.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+        const flagLive = setS?.data?.coverage_flag_live === true
+        const { data: phoneRows } = await supabaseS.from('phone_index').select('person_id').eq('phone', '+1' + digits)
+        // deno-lint-ignore no-explicit-any
+        const personIds = [...new Set((phoneRows || []).map((r: any) => String(r.person_id)))]
+        if (personIds.length === 1) {
+          const { data: srcRows } = await supabaseS.from('person_source_id')
+            .select('entity_type').eq('person_id', personIds[0]).eq('system', 'axiscare')
+            .eq('confidence', 'confirmed').eq('needs_review', false)
+          if ((srcRows || []).some((l) => l.entity_type === 'caregiver')) {
+            const { data: pi } = await supabaseS.from('person_identity')
+              .select('display_name').eq('id', personIds[0]).maybeSingle()
+            const cgName = pi?.display_name || 'a caregiver'
+            const chiDay = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+            const flagId = `cwf_${digits}_${chiDay.replaceAll('-', '')}`
+            const { data: caseRow } = await supabaseS.from('app_data').select('data').eq('key', 'coverage_cases').maybeSingle()
+            // deno-lint-ignore no-explicit-any
+            const existing: any[] = Array.isArray(caseRow?.data) ? caseRow!.data : []
+            const already = existing.some((k) => k.id === flagId
+              || (['flagged', 'open'].includes(String(k.status))
+                  && norm(String(k.caller_phone || '')) === digits
+                  && new Date(String(k.opened_at || 0)).getTime() > Date.now() - 12 * 3600 * 1000))
+            if (!already) {
+              const ai = await fetch('https://api.anthropic.com/v1/messages', {
+                method: 'POST',
+                headers: { 'x-api-key': anthKey, 'anthropic-version': '2023-06-01',
+                           'Content-Type': 'application/json' },
+                body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 300,
+                  system: 'You read one inbound TEXT MESSAGE from a home-care caregiver to the office. Decide if they are calling off / calling in sick / unable to work an upcoming or current shift. Availability updates for future weeks, schedule questions, running-late notes, and ordinary chat are NOT call-offs. Answer ONLY minified JSON: {"call_off":bool,"confidence":"high"|"medium"|"low","client_name":str|null,"shift_hint":str|null,"evidence":str} where evidence quotes the deciding phrase.',
+                  messages: [{ role: 'user', content: `From: ${cgName} (caregiver)\nText:\n${smsText.slice(0, 1200)}` }] }),
+              })
+              // deno-lint-ignore no-explicit-any
+              const aj: any = await ai.json().catch(() => ({}))
+              let verdict: Record<string, unknown> = {}
+              try { verdict = JSON.parse(String(aj?.content?.[0]?.text || '{}').replace(/^```(json)?|```$/g, '').trim()) } catch { verdict = {} }
+              out.heard = true; out.caller = cgName; out.verdict = verdict
+              if (verdict.call_off === true && verdict.confidence !== 'low') {
+                if (flagLive) {
+                  await supabaseS.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: {
+                    id: flagId, status: 'flagged', kind: 'calloff',
+                    client: String(verdict.client_name || '') || '(from text — confirm the client)',
+                    calling_off: cgName, caller_phone: callerPhone, caller_contact_id: callerId,
+                    shift_date: todayISO(), shift_time: String(verdict.shift_hint || ''),
+                    reason: 'Cara flagged this TEXT as a possible call-off',
+                    flag_evidence: String(verdict.evidence || ''), flag_confidence: String(verdict.confidence || ''),
+                    flag_source: 'text message', note: smsText.slice(0, 1000),
+                    opened_at: new Date().toISOString(), opened_by: 'cara-flag-sms',
+                  } })
+                  out.flagged = flagId
+                } else out.would_flag = flagId
+              }
+            } else out.skipped = 'a case for this caller already exists today'
+          }
+        }
+      }
+      /* ---- THE ONE INBOUND PIPE (her design, 2026-09-19) -----------------
+         One GHL "Customer Replied → SMS → webhook" workflow gives the
+         operating system EARS, never a voice. Every inbound text is
+         classified by IDENTITY, in this order:
+           caregiver  → the call-off ears above (existing workflow)
+           staff      → internal chatter; noted, no item
+           one lead   → recorded reply + NEEDS-YOU for a human response
+                        (or a recorded opt-out)
+           many leads → visible reconcile work, never a silent merge
+           unknown    → human-review item, once per number per day
+         Nothing in this pipe sends anything to anyone. Trivial texts are
+         NOT skipped for leads — a lead texting "Yes" is the whole point. */
+      if (!out.heard && digits.length === 10 && smsText.trim().length >= 1) {
+        const { data: cgRows } = await supabase.from('phone_index').select('person_id').eq('phone', '+1' + digits)
+        let isCaregiverNum = false
+        // deno-lint-ignore no-explicit-any
+        const pids = [...new Set((cgRows || []).map((r: any) => String(r.person_id)))]
+        if (pids.length) {
+          const { data: srcAll } = await supabase.from('person_source_id')
+            .select('entity_type').in('person_id', pids).eq('system', 'axiscare')
+          isCaregiverNum = (srcAll || []).some((r) => r.entity_type === 'caregiver')
+        }
+        /* Staff and office numbers are internal — never items, never noise. */
+        let isStaffNum = false
+        if (!isCaregiverNum) {
+          const { data: stfRow } = await supabase.from('app_data').select('data').eq('key', 'coordinator_staff').maybeSingle()
+          // deno-lint-ignore no-explicit-any
+          const staffPhones = new Set((Array.isArray(stfRow?.data) ? stfRow!.data : [])
+            // deno-lint-ignore no-explicit-any
+            .map((s: any) => norm(s.phone)).filter((p: string) => p.length === 10))
+          const { data: osRow } = await supabase.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+          const oPhones = osRow?.data?.coverage_alert_phones
+          if (Array.isArray(oPhones)) oPhones.forEach((p: unknown) => {
+            const d = norm(String(p ?? '')); if (d.length === 10) staffPhones.add(d)
+          })
+          isStaffNum = staffPhones.has(digits)
+          if (isStaffNum) out.staff = 'internal number — left in the GHL inbox'
+        }
+        if (!isCaregiverNum && !isStaffNum) {
+          const leadsAll = await readKey('leads')
+          const hits = leadsAll.filter((l) => !l.archived
+            && (norm(l.phone) === digits || norm(l.client_phone) === digits))
+          if (hits.length === 1) {
+            const l = hits[0]
+            const who = [l.first_name, l.last_name].filter(Boolean).join(' ').trim() || 'A family'
+            const stamp2 = new Date().toISOString()
+            if (looksLikeOptOut(smsText)) {
+              l.do_not_contact = true
+              l.do_not_contact_at = stamp2
+              l.do_not_contact_reason = `their text: "${smsText.slice(0, 120)}"`
+              l.comm_log = Array.isArray(l.comm_log) ? l.comm_log : []
+              l.comm_log.push({ body: `🚫 Asked us to stop contacting them — "${smsText.slice(0, 200)}"`, at: stamp2, by: 'inbound text' })
+              ldPush(l, { channel: 'sms', direction: 'in', outcome: 'reply', actor: 'family', ref: smsText.slice(0, 200) })
+              await put('leads', l)
+              await put('ops_items', {
+                id: `ops_leaddnc_${l.id}`, kind: 'new_lead', source_id: String(l.id),
+                title: `${who} asked us to stop contacting them`, about: who,
+                detail: `They texted: "${smsText.slice(0, 300)}". Do-not-contact is now recorded and every automated sender skips them. Nothing else to send — this is only so a human knows.`,
+                domain: 'family_enquiries', status: 'open', urgency: 'normal',
+                owner: '', owner_name: '', created_at: stamp2,
+                due: new Date(Date.now() + 24 * 3600e3).toISOString(),
+                created_by: 'call-disposition', opened_by: 'system' })
+              await opEvent(supabase, { verb: 'lead_opted_out', item_id: String(l.id), area: 'growth_leads',
+                actor_name: who, summary: `${who} asked us to stop contacting them (recorded, senders will skip them)` })
+              out.lead_opt_out = l.id
+            } else {
+              ldPush(l, { channel: 'sms', direction: 'in', outcome: 'reply', actor: 'family', ref: smsText.slice(0, 200) })
+              l.comm_log = Array.isArray(l.comm_log) ? l.comm_log : []
+              l.comm_log.push({ body: `💬 They texted: "${smsText.slice(0, 300)}"`, at: stamp2, by: 'inbound text' })
+              await put('leads', l)
+              const day2 = stamp2.slice(0, 10).replaceAll('-', '')
+              await put('ops_items', {
+                id: `ops_leadreply_${l.id}_${day2}`, kind: 'new_lead', source_id: String(l.id),
+                coverage_case_id: '',
+                title: `${who} replied — waiting for a human response`, about: who,
+                detail: `They texted: "${smsText.slice(0, 300)}". Nobody has answered yet — reply from their conversation in GHL (open their lead profile → Conversations), then log what happened.`,
+                next_action: 'Open the lead, read the reply in Conversations, and answer as a person.',
+                phone: l.phone || '', domain: 'family_enquiries', status: 'open', urgency: 'high',
+                owner: '', owner_name: '', created_at: stamp2,
+                due: new Date(Date.now() + 3600e3).toISOString(),
+                created_by: 'call-disposition', opened_by: 'system' })
+              await opEvent(supabase, { verb: 'lead_reply_received', item_id: String(l.id), area: 'growth_leads',
+                actor_name: who, summary: `${who} replied by text — waiting for a human response` })
+              out.lead_reply = l.id
+            }
+          } else if (hits.length > 1) {
+            await put('ops_items', {
+              id: `ops_leadreply_multi_${digits}_${new Date().toISOString().slice(0, 10)}`,
+              kind: 'request', title: `A text from ${callerPhone} matches ${hits.length} leads — who is it?`,
+              detail: `They wrote: "${smsText.slice(0, 300)}". The number matches more than one lead, so nothing was recorded automatically — read it in GHL, put it on the right lead, and consider merging the duplicates.`,
+              domain: 'family_enquiries', status: 'open', urgency: 'high',
+              owner: '', owner_name: '', created_at: new Date().toISOString(),
+              due: new Date(Date.now() + 4 * 3600e3).toISOString(),
+              created_by: 'call-disposition', opened_by: 'system' })
+            out.lead_reply = 'ambiguous — raised for a human'
+          } else {
+            /* UNKNOWN NUMBER — fail safely into human review, never silence.
+               A real message from a number we can't place deserves eyes;
+               spam and one-word noise stays in the GHL inbox. One item per
+               number per day, and a closed item is never resurrected. */
+            if (smsText.trim().length >= 8 && !trivial) {
+              const dayU = new Date().toISOString().slice(0, 10).replaceAll('-', '')
+              const idU = `ops_unktext_${digits}_${dayU}`
+              const itemsAll = await readKey('ops_items')
+              if (!itemsAll.some((i) => i.id === idU)) {
+                await put('ops_items', {
+                  id: idU, kind: 'request',
+                  title: `Text from an unknown number — who is this?`,
+                  about: callerPhone,
+                  detail: `${callerPhone} texted: "${smsText.slice(0, 300)}". The number matches no caregiver, no staff, and no lead. Read it in GHL — if it's a new family, add them as a lead; if it's a caregiver's new number, fix the roster.`,
+                  domain: 'office_ops', status: 'open', urgency: 'normal',
+                  owner: '', owner_name: '', created_at: new Date().toISOString(),
+                  due: new Date(Date.now() + 8 * 3600e3).toISOString(),
+                  created_by: 'call-disposition', opened_by: 'system' })
+                out.unknown = 'raised for human review'
+              } else out.unknown = 'already raised today'
+            } else out.unknown = 'short/trivial text from unknown number — left in the GHL inbox'
+          }
+        }
+      }
+    } catch (e) { out.error = String(e) }
+    return json(out)
+  }
+
+  /* ---- Attach mode -------------------------------------------------------
+     The transcript summary lands minutes after the call, long after the
+     disposition already routed it. Delaying the routing is the wrong trade —
+     a call-off cannot wait on a transcript — so the summary catches up
+     instead: find what this caller's disposition created a few minutes ago
+     and fill in the detail that was missing. */
+  const summary = field('summary') || field('transcript_summary') || field('recap')
+  if (b.attach === true || String(b.attach).toLowerCase() === 'true' || (summary && !field('disposition'))) {
+    if (!summary) return json({ ok: true, routed: 'nothing to attach — no summary in this request' })
+
+    /* Every summarised call also goes to AxisCare's CALL LOG: the identity
+       layer matches the number to ONE known person (client, caregiver, lead,
+       applicant, or a client contact → tagged to their client) and the summary
+       becomes a call log entry on that profile. Unrecognised callers and
+       shared lines are skipped, never guessed. Dry-run until
+       ops_settings.axiscare_call_notes_live is true; the module logs every
+       decision either way and must never break the attach routing below. */
+    let axNote: Record<string, unknown> = { outcome: 'error', detail: 'push did not run' }
+    try {
+      axNote = await pushCallNote(supabase, { phone: callerPhone, summary, direction: field('direction'), ghlContactId: callerId }) as unknown as Record<string, unknown>
+    } catch (e) { axNote = { outcome: 'error', detail: String(e) } }
+
+    /* K1 (2026-09-28): every summary also becomes one line of the call record, saying where it was written */
+    const recSummary = (writtenTo: string | null) => recordCall(supabase, { kind: 'summary', via: 'call-disposition',
+      direction: field('direction'), phone: callerPhone, ghlContactId: callerId, summary, source: 'ghl',
+      axiscare: axiscareState(axNote.outcome), axiscareDetail: String(axNote.detail || ''), writtenTo })
+    const digits = norm(callerPhone)
+    const since = Date.now() - 45 * 60 * 1000
+    const mine = (r: Record<string, unknown>) => {
+      const t = new Date(String(r.created_at || r.opened_at || 0)).getTime()
+      if (!t || t < since) return false
+      return (digits && norm(String(r.caller_phone || '')) === digits) ||
+             (!!callerId && String(r.caller_contact_id || '') === callerId)
+    }
+    const newest = (rows: Record<string, unknown>[]) =>
+      rows.filter(mine).sort((a, b2) =>
+        new Date(String(b2.created_at || b2.opened_at || 0)).getTime() -
+        new Date(String(a.created_at || a.opened_at || 0)).getTime())[0]
+
+    const item = newest(await readKey('ops_items'))
+    if (item) {
+      item.detail = [String(item.detail || '').trim(), summary].filter(Boolean).join('\n\n')
+      await put('ops_items', item)
+      await recSummary('needs_attention')
+      return json({ ok: true, routed: 'summary attached to the Needs Attention item', title: item.title, axiscare_note: axNote })
+    }
+    const cov = newest(await readKey('coverage_cases'))
+    if (cov) {
+      cov.note = [String(cov.note || '').trim(), summary].filter(Boolean).join('\n\n')
+      await put('coverage_cases', cov)
+      await recSummary('coverage_case')
+      return json({ ok: true, routed: 'summary attached to the coverage case', axiscare_note: axNote })
+    }
+    // No item from a disposition, but it may still belong to a lead.
+    /* K1, her rule: a summary goes to a lead only when exactly ONE lead (not archived) has this number; two leads
+       sharing a number is for a person to place, never a guess (it stays on the call record as 'several'). */
+    const leadRows = await readKey('leads')
+    const leadHitsHere = leadRows.filter((l) => digits && !l.archived && (norm(String(l.phone || '')) === digits || norm(String(l.client_phone || '')) === digits))
+    const lead = leadHitsHere.length === 1 ? leadHitsHere[0] : null
+    if (lead) {
+      lead.comm_log = Array.isArray(lead.comm_log) ? lead.comm_log : []
+      lead.comm_log.push({ body: '📝 ' + summary, at: new Date().toISOString(), by: 'call summary' })
+      await put('leads', lead)
+      await recSummary('lead:' + String(lead.id))
+      return json({ ok: true, routed: 'summary added to the lead\'s conversation log', axiscare_note: axNote })
+    }
+    /* ---- Cara's ears (2026-09-19 redesign) --------------------------------
+       A summarised call that attached to NOTHING — no disposition was tapped,
+       no lead matched — is exactly the call that used to slip through: a
+       caregiver phoning in a call-off that nobody labelled. If the caller is
+       a KNOWN caregiver (identity layer, one person on the number), ask
+       Claude whether the summary reads like a call-off. A hit creates a
+       coverage case with status 'flagged' — Cara never texts anybody off a
+       flag; a coordinator confirms it on the board first and then chooses
+       who to ask. Gated by ops_settings.coverage_flag_live (dry-logs when
+       off). Misses stay silent: a flag system that cries wolf gets ignored. */
+    let flagged: Record<string, unknown> = { checked: false }
+    try {
+      const { data: setD } = await supabase.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+      const flagLive = setD?.data?.coverage_flag_live === true
+      const digits = norm(callerPhone)
+      const anthKey = Deno.env.get('ANTHROPIC_API_KEY') || ''
+      if (digits.length === 10 && summary.length >= 30 && anthKey) {
+        const { data: phoneRows } = await supabase.from('phone_index').select('person_id').eq('phone', '+1' + digits)
+        // deno-lint-ignore no-explicit-any
+        const personIds = [...new Set((phoneRows || []).map((r: any) => String(r.person_id)))]
+        if (personIds.length === 1) {
+          const { data: srcRows } = await supabase.from('person_source_id')
+            .select('entity_type').eq('person_id', personIds[0]).eq('system', 'axiscare')
+            .eq('confidence', 'confirmed').eq('needs_review', false)
+          const isCaregiver = (srcRows || []).some((l) => l.entity_type === 'caregiver')
+          if (isCaregiver) {
+            const { data: pi } = await supabase.from('person_identity')
+              .select('display_name').eq('id', personIds[0]).maybeSingle()
+            const cgName = pi?.display_name || 'a caregiver'
+            const chiDay = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+            const flagId = `cwf_${digits}_${chiDay.replaceAll('-', '')}`
+            const existing = await readKey('coverage_cases')
+            const already = existing.some((k) => k.id === flagId
+              || (['flagged', 'open'].includes(String(k.status))
+                  && norm(String(k.caller_phone || '')) === digits
+                  && new Date(String(k.opened_at || 0)).getTime() > Date.now() - 12 * 3600 * 1000))
+            if (!already) {
+              const ai = await fetch('https://api.anthropic.com/v1/messages', {
+                method: 'POST',
+                headers: { 'x-api-key': anthKey, 'anthropic-version': '2023-06-01',
+                           'Content-Type': 'application/json' },
+                body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 300,
+                  system: 'You read one home-care phone call summary. Decide if the CALLER (a caregiver) is calling off / calling in sick / unable to work an upcoming or current shift. Scheduling questions, availability updates for future weeks, and ordinary check-ins are NOT call-offs. Answer ONLY minified JSON: {"call_off":bool,"confidence":"high"|"medium"|"low","client_name":str|null,"shift_hint":str|null,"evidence":str} where evidence quotes the deciding phrase.',
+                  messages: [{ role: 'user', content: `Caller: ${cgName} (caregiver)\nCall summary:\n${summary.slice(0, 3000)}` }] }),
+              })
+              // deno-lint-ignore no-explicit-any
+              const aj: any = await ai.json().catch(() => ({}))
+              let verdict: Record<string, unknown> = {}
+              try { verdict = JSON.parse(String(aj?.content?.[0]?.text || '{}').replace(/^```(json)?|```$/g, '').trim()) } catch { verdict = {} }
+              flagged = { checked: true, caller: cgName, verdict }
+              if (verdict.call_off === true && verdict.confidence !== 'low') {
+                if (flagLive) {
+                  await put('coverage_cases', {
+                    id: flagId, status: 'flagged', kind: 'calloff',
+                    client: String(verdict.client_name || '') || '(from call — confirm the client)',
+                    calling_off: cgName, caller_phone: callerPhone, caller_contact_id: callerId,
+                    shift_date: todayISO(), shift_time: String(verdict.shift_hint || ''),
+                    reason: 'Cara flagged this call as a possible call-off',
+                    flag_evidence: String(verdict.evidence || ''), flag_confidence: String(verdict.confidence || ''),
+                    flag_source: 'call summary', note: summary,
+                    opened_at: new Date().toISOString(), opened_by: 'cara-flag',
+                  })
+                  flagged.created = flagId
+                } else flagged.would_create = flagId
+                try {
+                  await put('automation_log', {
+                    id: 'auto_srv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+                    at: new Date().toISOString(), automation: 'cara-flag', ran_by: 'server',
+                    ok: true, dry: !flagLive, rows_seen: 1, candidates: 1, created: flagLive ? 1 : 0,
+                  })
+                } catch { /* never block */ }
+              }
+            } else flagged = { checked: true, skipped: 'a case for this caller already exists today' }
+          }
+        }
+      }
+    } catch (e) { flagged = { checked: true, error: String(e) } }
+    await recSummary(null)
+    return json({ ok: true, routed: 'nothing recent to attach to — no disposition was tapped on this call', axiscare_note: axNote, cara_flag: flagged })
+  }
+
+  const disposition = field('disposition') || field('call_disposition') || field('outcome')
+  if (!disposition) {
+    // GHL's "send a test request" fires with no real call behind it, so
+    // {{phoneCall.dispositions}} resolves to nothing — and GHL will not let the
+    // action be saved unless it gets a 200 back. Answer politely, create
+    // nothing, and leave a trace so a genuinely broken merge field is still
+    // visible in the log rather than silently doing nothing forever.
+    const supabaseT = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+    try {
+      const { data } = await supabaseT.from('app_data').select('data').eq('key', 'call_disposition_log').maybeSingle()
+      const arr = Array.isArray(data?.data) ? data!.data : []
+      arr.push({ at: new Date().toISOString(), disposition: '(none)', routed: 'no disposition — nothing created', phone_present: !!(field('phone') || field('phone_number')) })
+      await supabaseT.from('app_data').upsert({ key: 'call_disposition_log', data: arr.slice(-50), updated_at: new Date().toISOString() })
+    } catch { /* never block the response */ }
+    return json({
+      ok: true,
+      routed: 'nothing — no disposition on this request',
+      note: 'This is the expected reply to a test request. On a real call the disposition arrives and the call gets routed.',
+      received,
+    })
+  }
+
+  /* K1 (2026-09-28): the tapped outcome becomes one line of the call record (routing below is unchanged) */
+  await recordCall(supabase, { kind: 'outcome', via: 'call-disposition', direction: field('direction'), phone: callerPhone,
+    ghlContactId: callerId, outcome: disposition })
+
+  const phone = callerPhone
+  const email = field('email')
+  // A typed note wins when there is one, otherwise the call transcript carries
+  // the detail: "she can no longer work Thursdays" beats the label "Schedule
+  // Change". The transcript stays in our own database — nothing is sent
+  // anywhere else — so this does not raise the question the AI recap does.
+  const typedNote = field('note') || field('notes')
+  const transcript = field('transcript') || field('call_transcript')
+
+  const cap = (s: string, n: number) => (s.length > n ? s.slice(0, n).trim() + ` … [${s.length} characters, trimmed]` : s)
+
+  // GHL exposes no merge field for a call transcript or for the note typed on
+  // the post-call screen (only AI-product transcripts and contact custom
+  // fields). So fetch the note ourselves: the coordinator taps Notes as usual,
+  // and we pull the newest one for this contact. Only notes written in the last
+  // 20 minutes count, otherwise an old note would get stapled to a new call.
+  let pulledNote = ''
+  const contactId = callerId
+  if (!typedNote && !transcript && contactId) {
+    try {
+      const r = await fetch(`https://services.leadconnectorhq.com/contacts/${encodeURIComponent(contactId)}/notes`, {
+        headers: { Authorization: `Bearer ${Deno.env.get('GHL_TOKEN')}`, Version: '2021-07-28', Accept: 'application/json' },
+      })
+      const j = await r.json().catch(() => ({}))
+      // deno-lint-ignore no-explicit-any
+      const notes: any[] = j?.notes ?? []
+      const newest = notes
+        .filter((n) => n?.body)
+        .sort((a, b) => new Date(b.dateAdded || 0).getTime() - new Date(a.dateAdded || 0).getTime())[0]
+      if (newest && Date.now() - new Date(newest.dateAdded || 0).getTime() < 20 * 60 * 1000) {
+        pulledNote = String(newest.body).trim()
+      }
+    } catch { /* a missing note must never block the routing */ }
+  }
+
+  const detail = typedNote || pulledNote || transcript || ''
+  received.detail_from = typedNote ? 'note field in the webhook body' : pulledNote ? 'note pulled from the GHL contact' : transcript ? 'transcript field' : 'no detail available'
+  const note = detail ? cap(detail, 1500) : ''
+  const noteShort = detail ? cap(detail, 400) : ''
+  const direction = field('direction') || 'outbound'
+  let first = field('first_name') || field('firstName')
+  let last = field('last_name') || field('lastName')
+  const full = field('name') || field('full_name')
+  if (!first && full) { const p = full.split(/\s+/); first = p[0]; last = last || p.slice(1).join(' ') }
+  const who = [first, last].filter(Boolean).join(' ').trim() || phone || 'unknown caller'
+
+  // Debug trail so "webhook never arrived" is distinguishable from "arrived and
+  // did nothing". Metadata only — the note is not logged here.
+  const logDbg = async (row: Record<string, unknown>) => {
+    try {
+      const { data } = await supabase.from('app_data').select('data').eq('key', 'call_disposition_log').maybeSingle()
+      const arr = Array.isArray(data?.data) ? data!.data : []
+      arr.push({ at: new Date().toISOString(), ...row })
+      await supabase.from('app_data').upsert({ key: 'call_disposition_log', data: arr.slice(-50), updated_at: new Date().toISOString() })
+    } catch { /* logging must never break the routing */ }
+  }
+
+  // GHL's token is {{phoneCall.dispositions}} — plural, and it can arrive as a
+  // comma-separated list if more than one was set on the call. Match against
+  // every value rather than failing the whole call on an exact-string miss.
+  const parts = disposition.split(',').map((s) => s.toLowerCase().replace(/[‐-―]/g, '-').trim()).filter(Boolean)
+  const is = (...names: string[]) => names.some((n) => parts.includes(n.toLowerCase()))
+  const stamp = new Date().toISOString()
+  const by = 'phone: ' + who
+  const created: string[] = []
+
+  // ---------- calls that are about a caregiver, a client, or nobody ----------
+  if (is('call-off', 'call off', 'caregiver call-off')) {
+    await put('coverage_cases', {
+      id: uid(), client: '(from call — confirm the client)', shift_date: todayISO(), shift_time: '',
+      reason: 'call_off', note: [`${who} called off.`, note].filter(Boolean).join(' '),
+      status: 'open', asked: [], opened_at: stamp, opened_by: by,
+      caller_phone: phone, caller_contact_id: contactId,
+      resolved_at: null, resolved_how: null, covered_by: null,
+    })
+    created.push('coverage case')
+    /* A call-off is DONE here. Falling through to the lead matcher minted a
+       spurious "no matching record" item on every single call-off (review
+       finding) — a caregiver calling off is never a lead. */
+    await logDbg({ disposition, routed: 'coverage case opened', matched: 'n/a' })
+    return json({ ok: true, routed: 'coverage case opened', created, received })
+  }
+
+  const opsItem = (kind: string, title: string, hours: number) => ({
+    id: 'ops_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    kind, title, detail: note, about: who, urgency: 'normal', status: 'open',
+    caller_phone: phone, caller_contact_id: contactId,
+    created_at: stamp, due: new Date(Date.now() + hours * 3600 * 1000).toISOString(),
+    owner: '', owner_name: '', created_by: by, opened_by: 'phone',
+  })
+  /* A genuine concern becomes a durable ISSUE, not a bare work item. The item
+     is still created — by the issue lifecycle — but it points at a record that
+     survives the task, carries its own action history, and cannot be closed by
+     completing one action.
+
+     Category is 'needs_triage' on purpose: the disposition says a problem
+     exists, not which kind, and the kind decides urgency, follow-up and what
+     resolution means. Guessing here would apply the wrong follow-up rule
+     silently. */
+  if (is('caregiver issue') || is('client concern')) {
+    const reportedBy = is('caregiver issue') ? 'caregiver' : 'family'
+    try {
+      const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/issues-run?intake=1`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+                   'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          category: 'needs_triage',
+          summary: `${is('caregiver issue') ? 'Caregiver' : 'Client'} concern raised by phone`,
+          client_name: who,
+          reported_by_name: who,
+          reported_by_role: reportedBy,
+          source: 'call_disposition',
+          source_ref: String(contactId ?? callerId ?? ''),
+          taken_by: 'phone',
+          /* Duplicate candidates are NOT auto-confirmed here. If an open issue
+             already covers this client the response says so and a human picks,
+             which is the whole point of the second-call case. */
+        }),
+      })
+      const j = await r.json().catch(() => ({}))
+      created.push(j?.needs_human_confirmation
+        ? 'existing issue offered — needs a person to choose'
+        : `issue ${String(j?.issue_id ?? '').slice(0, 8)}`)
+    } catch (e) {
+      console.error('issue intake failed, falling back to a work item:', e)
+      await put('ops_items', opsItem('client_issue', `Concern — ${who}`, 24))
+      created.push('needs-attention item (issue intake failed)')
+    }
+  }
+  if (is('caregiver issue') || is('client concern')) {
+    await logDbg({ disposition, routed: 'issue intake', matched: 'n/a' })
+    return json({ ok: true, routed: 'issue raised', created, received })
+  }
+  if (is('job applicant')) {
+    await put('ops_items', opsItem('request', `Job applicant called — ${who}`, 72))
+    created.push('needs-attention item')
+    await logDbg({ disposition, routed: 'job applicant item', matched: 'n/a' })
+    return json({ ok: true, routed: 'job applicant raised', created, received })
+  }
+  if (is('schedule change', 'schedule')) {
+    // Clients AND caregivers call about scheduling: change a day, add weekends,
+    // give notice, drop a shift. The note carries which. The schedule itself
+    // lives in AxisCare, so the hub's job is making sure somebody actually goes
+    // and changes it — short fuse, because the shift is often tomorrow and a
+    // forgotten change is a missed visit.
+    await put('ops_items', opsItem('staffing_issue', `Schedule change — ${who} (update AxisCare)`, 4))
+    created.push('needs-attention item (4h)')
+    await logDbg({ disposition, routed: 'schedule change', matched: 'n/a' })
+    return json({ ok: true, routed: 'schedule change raised for AxisCare', created, received })
+  }
+
+  if (is('spam or sales', 'spam', 'sales')) {
+    const list = await readKey('phone_suppress')
+    const d = norm(phone)
+    if (d && !list.some((x) => norm(x.phone) === d)) {
+      await put('phone_suppress', { id: uid(), phone, digits: d, why: disposition, at: stamp, by })
+      created.push('suppressed number')
+    }
+    await logDbg({ disposition, routed: 'suppress', matched: 'n/a' })
+    return json({ ok: true, routed: 'suppressed', created, received })
+  }
+
+  if (is('client call')) {
+    // Deliberately quiet: a routine client question should not cry wolf on a
+    // board people are meant to trust.
+    await logDbg({ disposition, routed: 'logged only', matched: 'n/a' })
+    return json({ ok: true, routed: 'logged only (no alert by design)', created, received })
+  }
+
+  // ---------- everything below wants a lead ----------
+  const leads = await readKey('leads')
+  const d = norm(phone)
+  /* 5b C: an OPEN inquiry takes the call. A Converted or archived inquiry is never changed: a call that
+     means the family wants care again starts a NEW inquiry (flagged possibly returning, one "is this the
+     same family?" item on My Work); any other call is only logged on it. A Lost inquiry keeps its
+     follow-up calls (no answer, voicemail...), but a family wanting care again gets a new inquiry too,
+     because a Lost inquiry's Journey is closed. */
+  const split = leadHits(leads, [phone], email)
+  let lead = split.open[0] || null
+  let newFlag: Awaited<ReturnType<typeof returningCheck>> = null
+  const revives = is('booked visit', 'booked assessment', 'requested appointment', 'ready to start', 'lead - not ready',
+    'not ready', 'family deciding', 'follow up', 'call back', 'researching', 'referral call')
+  if (!lead && split.closed.length) {
+    const lost = split.closed.find((l) => l.status === 'Lost' && !l.archived)
+    if (revives) {
+      lead = { id: crypto.randomUUID(), first_name: first || '(phone call)', last_name: last, phone, email,
+        source: is('referral call') ? 'Referral' : 'Inbound Call', status: 'New', created_at: stamp }
+      newFlag = await returningCheck(supabase, 'call disposition', { phones: [phone], email, first, last }, split.closed)
+      if (newFlag) lead.possibly_returning = newFlag
+      leads.push(lead)
+      created.push('new inquiry (their earlier one is closed)')
+    } else if (lost) {
+      lead = lost
+    } else {
+      const old = split.closed[0]
+      old.comm_log = Array.isArray(old.comm_log) ? old.comm_log : []
+      old.comm_log.push({ body: `☎ ${direction} call: ${disposition}${noteShort ? ", " + noteShort : ""} (logged only; this inquiry is closed)`, at: stamp, by })
+      await put('leads', old)
+      await logDbg({ disposition, routed: 'logged on a closed inquiry', matched: 'closed lead' })
+      return json({ ok: true, routed: 'logged on their closed inquiry (nothing changed)', lead_id: old.id, created, received })
+    }
+  }
+
+  if (is('referral call')) {
+    // Credit the referring organisation if we know them, so field work shows up
+    // on the scoreboard without anyone logging it twice.
+    const orgs = await readKey('referral_orgs')
+    const org = orgs.find((o) => d && norm(o.phone) === d)
+    if (org) {
+      await put('referral_activities', { id: uid(), org_id: org.id, kind: 'call', note: note || `Referral call from ${who}`, at: stamp, by })
+      created.push(`credited ${org.name}`)
+    }
+    if (!lead) {
+      lead = { id: crypto.randomUUID(), first_name: first || '(referral call)', last_name: last, phone, email,
+        source: 'Referral', referral_source_name: org?.name || who, status: 'New', created_at: stamp }
+      newFlag = await returningCheck(supabase, 'call disposition', { phones: [phone], email, first, last }, [])
+      if (newFlag) lead.possibly_returning = newFlag
+      leads.push(lead)
+      created.push('lead')
+    }
+  }
+
+  if (!lead) {
+    // Nothing to attach to. Rather than guess, leave a trace a human can act on.
+    await put('ops_items', opsItem('request', `Call marked "${disposition}" — no matching record (${who})`, 24))
+    await logDbg({ disposition, routed: 'unmatched', matched: 'none' })
+    return json({ ok: true, routed: 'unmatched — raised in Needs Attention', created: ['needs-attention item'], received })
+  }
+
+  // Any disposition on a lead means somebody actually worked it.
+  lead.last_contacted_at = todayISO()
+  lead.comm_log = Array.isArray(lead.comm_log) ? lead.comm_log : []
+  lead.comm_log.push({ body: `☎ ${direction} call — ${disposition}${noteShort ? ': ' + noteShort : ''}`, at: stamp, by })
+  if (transcript && !typedNote) lead.last_call_transcript = { at: stamp, text: cap(transcript, 8000) }
+
+  /* CONTACT TRUTH (2026-09-19). The disposition already tells us whether a
+     human actually spoke with the family or only tried. Record that as a
+     structured event instead of letting it dissolve into `contacted`.
+     Dispositions that only exist because a conversation happened (booked,
+     ready to start, not ready, follow up, researching, not interested) are
+     CONNECTED; no-answer/voicemail are attempts; a bad number is its own
+     outcome. Referral/other stay unclassified rather than guessed. */
+  const callDir: 'in' | 'out' = /in/i.test(String(direction)) ? 'in' : 'out'
+  if (is('no answer', 'voicemail')) {
+    ldPush(lead, { channel: 'call', direction: 'out',
+      outcome: is('voicemail') ? 'voicemail' : 'no_answer', actor: 'human', by })
+  } else if (is('incorrect number', 'bad number')) {
+    ldPush(lead, { channel: 'call', direction: 'out', outcome: 'wrong_number', actor: 'human', by })
+  } else if (is('booked visit', 'booked assessment', 'requested appointment', 'ready to start',
+                'lead - not ready', 'not ready', 'family deciding', 'follow up', 'call back',
+                'researching', 'not interested')) {
+    const firstTime = !lead.first_human_contact_at
+    ldPush(lead, { channel: 'call', direction: callDir, outcome: 'connected', actor: 'human', by,
+      note: disposition })
+    if (firstTime) await opEvent(supabase, { verb: 'lead_connected', item_id: String(lead.id), area: 'growth_leads',
+      actor_name: by || 'the office',
+      summary: `First real conversation with ${[lead.first_name, lead.last_name].filter(Boolean).join(' ') || 'a lead'} (${disposition})` })
+  }
+
+  let outcome = 'logged'
+  if (is('no answer', 'voicemail')) {
+    lead.contact_attempts = (Number(lead.contact_attempts) || 0) + 1
+    lead.last_attempt_kind = is('voicemail') ? 'voicemail' : 'no answer'
+    if (lead.contact_attempts >= 5) {
+      lead.follow_up_branch = 'cold-lead'; lead.follow_up_due = addDays(30)
+      outcome = 'cooled after 5 attempts'
+    } else {
+      lead.follow_up_due = addDays(ladderDays(lead.contact_attempts))
+      outcome = `attempt ${lead.contact_attempts}, retry ${lead.follow_up_due}`
+    }
+  } else if (is('booked visit', 'booked assessment')) {
+    LR.setStatus(lead, 'Assessment Scheduled', { by, why: 'call outcome: booked', at: stamp }); lead.follow_up_branch = 'ready-to-start'
+    lead.follow_up_due = todayISO(); lead.contact_attempts = 0
+    outcome = 'assessment scheduled'
+  } else if (is('requested appointment', 'ready to start')) {
+    lead.follow_up_branch = 'ready-to-start'; lead.follow_up_due = todayISO()
+    if (lead.status === 'New') LR.setStatus(lead, 'Contacted', { by, why: 'call outcome: ' + disposition, at: stamp }); lead.contact_attempts = 0
+    outcome = 'hot — due today'
+  } else if (is('lead - not ready', 'not ready', 'family deciding')) {
+    lead.follow_up_branch = 'family-decision'; lead.follow_up_due = addDays(5)
+    if (lead.status === 'New') LR.setStatus(lead, 'Contacted', { by, why: 'call outcome: ' + disposition, at: stamp }); lead.contact_attempts = 0
+    outcome = 'back in 5 days'
+  } else if (is('follow up', 'call back')) {
+    lead.follow_up_branch = 'call-back-next-week'; lead.follow_up_due = addDays(7)
+    if (lead.status === 'New') LR.setStatus(lead, 'Contacted', { by, why: 'call outcome: ' + disposition, at: stamp }); lead.contact_attempts = 0
+    outcome = 'back in 7 days'
+  } else if (is('researching')) {
+    lead.follow_up_branch = 'soft-check-in'; lead.follow_up_due = addDays(3)
+    if (lead.status === 'New') LR.setStatus(lead, 'Contacted', { by, why: 'call outcome: ' + disposition, at: stamp }); lead.contact_attempts = 0
+    outcome = 'back in 3 days'
+  } else if (is('not interested')) {
+    /* CRM plan step A (Samantha 2026-10-15): a reason key, so reports count it (Not interested = No longer needs care) */
+    if (!lead.lost_reason_key) Object.assign(lead, LR.lostRecord(lead, 'no_longer_needs', 'not interested (from the call)') || {})
+    lead.lost_reason = lead.lost_reason || 'Not interested'; LR.setStatus(lead, 'Lost', { by, why: lead.lost_reason, at: stamp })
+    lead.lost_at = stamp; lead.follow_up_branch = 'cold-lead'; lead.follow_up_due = addDays(30)
+    outcome = 'lost — cold nurture'
+  } else if (is('send to cds', 'sent to cds')) {
+    Object.assign(lead, LR.lostRecord(lead, 'referred_cds', '') || { lost_reason: 'Referred to Caring CDS' })
+    LR.setStatus(lead, 'Lost', { by, why: 'Referred to Caring CDS', at: stamp }); lead.lost_at = stamp
+    lead.follow_up_due = ''; lead.follow_up_branch = ''
+    outcome = 'referred to CDS'
+  } else if (is('incorrect number', 'bad number')) {
+    lead.bad_number = true
+    lead.comm_log.push({ body: '⚠ Number reported incorrect on a call — needs a good number.', at: stamp, by })
+    outcome = 'flagged bad number'
+  } else if (is('referral call')) {
+    lead.follow_up_due = todayISO(); outcome = 'referral logged'
+  }
+
+  const { error } = await put('leads', lead)
+  if (error) return json({ error: 'could not save the lead', detail: error.message }, 502)
+  if (newFlag) { await put('ops_items', returningItem(lead, newFlag, 'call disposition')); created.push('is-this-the-same-family item') }
+  await logDbg({ disposition, routed: outcome, matched: 'lead', attempts: lead.contact_attempts ?? 0 })
+  return json({ ok: true, routed: outcome, lead_id: lead.id, created, received })
+})
