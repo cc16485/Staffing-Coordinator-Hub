@@ -15,9 +15,9 @@
 //     unresolved.
 //   · A reply goes to Needs Attention with the words, and a PERSON taps "Put it in AxisCare" (the note is written on
 //     the visit, read back, logged). It is recorded "recovered by text" and STILL counts toward 3 in 30 days.
-//   · 3 counted misses in 30 days → a DRAFT write-up in the Write-Ups list (level suggested from their history). A
-//     person reviews it and sends it for approval. Who approves follows SOP ruling 2 (2026-10-17, cc-hub writeup-rules.js):
-//     a Care Coordinator for coaching, verbal and first written warnings, leadership above that. Nothing is issued by the Hub.
+//   · 3 counted misses in 30 days: the HR agent sees them (its rule w05) and Zach decides. HR step 10, piece 1 (Samantha
+//     2026-10-18, "ok"): this job NO LONGER drafts a write-up by itself (her decision 3: coaching never becomes discipline
+//     automatically). The old drafting stays below only behind ops_settings.missed_notes_drafts === true, which is off.
 //   · The count starts at go-live: nothing before the switch is counted.
 //   · WEB clock-outs (the office clocked them out; 336: 0 of 22 carry GPS) are still asked for the note but NEVER count
 //     toward 3 in 30 days, replied or not (her ruling (b), 2026-10-01).
@@ -404,7 +404,9 @@ Deno.serve(async (req) => {
     out.unresolved++
   }
 
-  /* 5 · 3 counted misses in 30 days (from go-live) → one DRAFT write-up; each miss goes into one draft only */
+  /* 5 · (OFF since HR step 10 piece 1, 2026-10-18) 3 counted misses in 30 days → one DRAFT write-up. The HR agent reads
+     the same counted misses (rule w05); only ops_settings.missed_notes_drafts === true turns the old drafting back on. */
+  if (st.missed_notes_drafts !== true) { await beat(db, true, JSON.stringify(out)); return json({ ok: true, ...out, drafting: 'off (the HR agent decides)' }) }
   const since30 = chiDay(now - COUNT_DAYS * 864e5)
   const { data: counted } = await db.from('missed_notes').select('*').eq('counts', true).is('draft_id', null).gte('shift_date', since30)
   const perCg = new Map<string, NonNullable<typeof counted>>()
