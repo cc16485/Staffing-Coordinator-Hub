@@ -13,7 +13,7 @@
 // priorities · unowned triage · ticking clocks.
 // Admin extras: family-update calls (med/high care notes flagged by the
 // watcher) · write-ups needed (call-offs with under 4 hours notice) ·
-// yesterday's EVV misses · today's AxisCare schedule with open shifts.
+// yesterday's missed clock-ins and clock-outs (the call-to-confirm cards) · today's AxisCare schedule with open shifts.
 //
 // Missing-note detection waits on AxisCare exposing notes at all (the hourly
 // sweep still reports NONE FOUND); when that door opens both note sections
@@ -271,10 +271,12 @@ Deno.serve(async (req) => {
   // ── Family-update calls: the watcher's med/high care-note reviews ──
   const familyCalls = ops.filter((i) => i?.status === 'open' && String(i.id || '').startsWith('ops_note_'))
 
-  // ── Yesterday's EVV misses ──
-  const evvMisses = attEvents.filter((e) => e?.shift_date === yesterday && /^evv_missing/.test(String(e.type || '')))
-  const evvIn = evvMisses.filter((e) => e.type === 'evv_missing_in').map((e) => e.caregiver)
-  const evvOut = evvMisses.filter((e) => e.type === 'evv_missing_out').map((e) => e.caregiver)
+  // ── Yesterday's missed clock-ins and clock-outs (2026-10-19, Samantha: "we dont need evv...it would be missed clock in
+  //    or out"). EVV retired 2026-10-17; a visit with no clock-in or no clock-out is now a confirm_times card (the office
+  //    calls the client to confirm the times). The section lists yesterday's, open ones first ("still to call").
+  const missed = ops.filter((i) => i?.kind === 'confirm_times' && i?.shift_date === yesterday)
+    .sort((a, b) => Number(b.status === 'open') - Number(a.status === 'open'))
+  const missWord = (m: unknown) => m === 'in' ? 'no clock-in' : m === 'out' ? 'no clock-out' : 'no clock-in or clock-out'
 
   // ── While you were out: everything born after 5pm the last workday ──
   const dow = new Date(today + 'T12:00:00').getUTCDay() // 1=Mon
@@ -338,7 +340,11 @@ Deno.serve(async (req) => {
     if (!prev || (c.checkin_date || '') > prev.date)
       latestCi.set(c.client_name, { due: c.next_checkin_due || '', date: c.checkin_date || '', coordinator: c.coordinator || '' })
   }
-  const svOverdue = svs.filter((v) => v?.due_date && v.due_date < today && !v.completed_date)
+  /* From 2026-11-16 (IHS/ADW Medicaid ends, her decision 2026-10-18) supervisory visits happen only when there is a
+     concern and have no yearly due date, so none is ever past due. Same day as CCElig.SUPERVISORY_CONCERN_FROM
+     in the Hub's eligibility-rules.js; `today` is the Central date. */
+  const SUPERVISORY_CONCERN_FROM = '2026-11-16'
+  const svOverdue = today >= SUPERVISORY_CONCERN_FROM ? [] : svs.filter((v) => v?.due_date && v.due_date < today && !v.completed_date)
 
   // ── Email building blocks (table-based, inline styles, email-client safe) ──
   const NAVY = '#0E3860', TEAL = '#54BDB8', HONEY = '#FFC671', RED = '#DC2626', AMBER = '#B45309', GRAY = '#6B7280', BORDER = '#E7EDF4'
@@ -465,9 +471,11 @@ Deno.serve(async (req) => {
     if (triTop.length) body += card('🖐', `Nobody owns these yet (${triage.length})`, GRAY,
       triTop.map((i) => row(esc(i.about || i.title || ''), esc(String(i.detail || '').slice(0, 90)),
         `${HUB}/#ops`, 'Claim')).join(''))
-    if (r.admin && (evvIn.length || evvOut.length)) body += card('⏰', 'Yesterday\'s EVV misses', AMBER,
-      (evvIn.length ? row(`<b>No clock-in:</b> ${esc([...new Set(evvIn)].join(', '))}`, '', `${HUB}/#cgattendance`, 'Review') : '') +
-      (evvOut.length ? row(`<b>No clock-out:</b> ${esc([...new Set(evvOut)].join(', '))}`, '', `${HUB}/#cgattendance`, 'Review') : ''))
+    if (r.admin && missed.length) body += card('⏰', `Yesterday's missed clock-ins and clock-outs (${missed.length})`, AMBER,
+      missed.slice(0, 8).map((i) => row(`<b>${esc(i.caregiver || i.about || '')}</b> at ${esc(i.client_first || 'a client')}'s visit: ${missWord(i.missing)}`,
+        i.status === 'open' ? `<b style="color:${RED};">still to call</b> ${esc(i.client_first || 'the client')} to confirm the times` : 'times confirmed',
+        `${HUB}/#mywork`, i.status === 'open' ? 'Call' : 'Open')).join('') +
+      (missed.length > 8 ? `<div style="font-family:Arial,sans-serif;font-size:12px;color:${GRAY};padding-top:6px;">plus ${missed.length - 8} more in My Work</div>` : ''))
     if (r.admin && acToday) body += card('🗓', `Today in AxisCare: ${acToday.total} visits`, TEAL,
       (acToday.open.length
         ? acToday.open.slice(0, 6).map((o) => row(`<b style="color:${RED};">Open shift</b> ${esc(o.time)} · ${esc(o.client)}`, '', `${HUB}/#coverage`, 'Cover')).join('') +

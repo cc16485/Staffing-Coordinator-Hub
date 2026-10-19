@@ -22,7 +22,8 @@ const reset = (o = {}) => { MAIL = []; RPC = []; OPTS = o; T = {
       { id: 'L3', first_name: 'Fay', last_name: 'Lost', status: 'Lost', assessment_at: 'Friday, October 2, 2026 3:00 PM', created_at: '2026-09-20T10:00:00Z' }] },
     { key: 'care_assessments', data: [{ id: 'A1', lead_id: 'L1', client_name: 'Mae Mom', visit_date: '2026-10-02', coordinator: 'Krystal', address: '1 Elm St, Nixa', status: 'Scheduled' }] },
     { key: 'ops_settings', data: { morning_brief_recipients: [{ name: 'Samantha', email: 'samantha@mo-care.com', admin: true }, { name: 'Krystal', email: 'krystal@mo-care.com', admin: false }], ...(o.ops || {}) } },
-    { key: 'morning_brief_state', data: o.marker ? [{ id: 'sent_' + o.marker }] : [] }],
+    { key: 'morning_brief_state', data: o.marker ? [{ id: 'sent_' + o.marker }] : [] },
+    { key: 'ops_items', data: o.items || [] }],
   interview_bookings: o.noInterviews ? [] : BOOKINGS,
   job_applicants: [{ id: 'a1', first_name: 'Ava', last_name: 'Afternoon', phone: '4175559991' }, { id: 'a2', first_name: 'Ben', last_name: 'Morning', phone: '4175559992' },
     { id: 'a3', first_name: 'Cal', last_name: 'Missed', phone: '4175559993' }, { id: 'a4', first_name: 'Dee', last_name: 'Cancelled' }, { id: 'a5', first_name: 'Eve', last_name: 'Tomorrow' }] } }
@@ -121,6 +122,17 @@ try {
   ck('Settings change the rule (from 2:15pm, Krystal): only the 2:30pm interview is marked, as Krystal\'s', (MAIL[0].html.match(/Krystal&#39;s interview/g) || []).length === 1 && !/Samantha&#39;s interview/.test(MAIL[0].html))
 
   // ---- the helpers ----
+  /* 2026-10-19 (Samantha: "we dont need evv...it would be missed clock in or out"): the admin section lists yesterday's
+     call-to-confirm cards as missed clock-ins and clock-outs, open ones first */
+  r = await cron('2026-10-02T13:00:00Z', { items: [
+    { id: 'ops_cft_1', kind: 'confirm_times', status: 'done', shift_date: '2026-10-01', caregiver: 'Ann Fixed', client_first: 'Rose', missing: 'out' },
+    { id: 'ops_cft_2', kind: 'confirm_times', status: 'open', shift_date: '2026-10-01', caregiver: 'Bo Open', client_first: 'Gil', missing: 'in' },
+    { id: 'ops_cft_3', kind: 'confirm_times', status: 'open', shift_date: '2026-09-29', caregiver: 'Old Week', client_first: 'Ivy', missing: 'both' } ] })
+  const adm = MAIL.find((m) => /samantha/.test(m.to || m.email || JSON.stringify(m)))?.html || MAIL[0]?.html || ''
+  const per = MAIL.find((m) => /krystal/.test(m.to || m.email || JSON.stringify(m)))?.html || ''
+  ck('missed clock-ins and clock-outs: yesterday\'s two cards, the open one first, still to call; nothing older', /Yesterday&#39;s missed clock-ins and clock-outs \(2\)|Yesterday's missed clock-ins and clock-outs \(2\)/.test(adm)
+    && adm.indexOf('Bo Open') > 0 && adm.indexOf('Bo Open') < adm.indexOf('Ann Fixed') && /still to call/.test(adm) && /no clock-in/.test(adm) && /no clock-out/.test(adm) && !/Old Week/.test(adm), adm.slice(0, 300))
+  ck('the word EVV is gone from the brief; the personal edition has no admin section', !/EVV/.test(adm) && !/missed clock-ins and clock-outs/.test(per))
   ck('chiParts: GHL words, timestamps, dates', JSON.stringify(M.chiParts('Friday, October 2, 2026 2:30 PM')) === '{"date":"2026-10-02","min":870}' && M.chiParts('2026-10-03T04:30:00Z').date === '2026-10-02' && M.chiParts('2026-10-02').min === null)
   ck('SEND_HOUR is 8 and nothing the office reads says 6:45 any more', M.SEND_HOUR === 8 && !/6:45am|Sent at 6:45|6:45 scheduled/.test(fs.readFileSync(path.join(F, 'lead-digest/index.ts'), 'utf8')))
   const fsrc = fs.readFileSync(path.join(F, 'lead-digest/index.ts'), 'utf8')
