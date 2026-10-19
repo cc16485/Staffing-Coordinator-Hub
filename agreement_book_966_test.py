@@ -90,7 +90,7 @@ if a[:2] == ['functions', 'download']:
     dst = os.path.join(os.getcwd(), 'supabase', 'functions')
     shutil.copytree({FNROOT!r}, dst, dirs_exist_ok=True)
     if M.get('odd_live') == a[2]: open(os.path.join(dst, '_shared', 'family-signin.ts'), 'a').write('// someone else\\n')
-    if M.get('older_live') == a[2]: shutil.copy({os.path.join(COPY, 'old_verbs.js')!r}, os.path.join(dst, '_shared', 'verbs.js'))
+    if M.get('older_live') == a[2] and not (os.path.exists({os.path.join(TMP, 'deploys')!r}) and a[2] in open({os.path.join(TMP, 'deploys')!r}).read()): shutil.copy({os.path.join(COPY, 'old_verbs.js')!r}, os.path.join(dst, '_shared', 'verbs.js'))
     sys.exit(0)
 sys.exit(1)
 """)
