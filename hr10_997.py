@@ -37,7 +37,7 @@ def deploy_patched(fn, verify_jwt):
         if p.returncode != 0 or not okd or any(livef.get(k) != v for k, v in want.items()): bad(f"{fn} did not deploy cleanly: " + (p.stderr or p.stdout)[-200:]); return False
         sN, mN = fmeta(REF, fn)
         if (mN or {}).get("verify_jwt") != verify_jwt: bad(f"{fn}: the gateway setting changed"); return False
-        say(f"  ✓ {fn}: the live copy plus only the privacy check (version {(mN or {}).get('version', '?')}, gateway sign-in check {'on' if verify_jwt else 'off'})"); return True
+        say(f"  ✓ {fn}: the live copy plus only this change (version {(mN or {}).get('version', '?')}, gateway sign-in check {'on' if verify_jwt else 'off'})"); return True
     finally: shutil.rmtree(tmp, ignore_errors=True)
 
 start("MISSED NOTES STOP DRAFTING WRITE-UPS")
