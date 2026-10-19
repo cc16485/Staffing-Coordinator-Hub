@@ -11,7 +11,7 @@ globalThis.Deno = { env: { get: k => env[k] }, serve: h => { handler = h; } };
 const mod = await import(tmp); fs.unlinkSync(tmp);
 const pages = {
   'https://16485.axiscare.com/api/clients': { results: { clients: [
-    { id: 7, firstName: 'Dan', lastName: 'Example', status: { active: true, label: 'Active' }, mobilePhone: '4175550100', dateOfBirth: '1940-01-01',
+    { id: 7, firstName: 'Dan', lastName: 'Example', startDate: '2023-10-25T00:00:00', status: { active: true, label: 'Active' }, mobilePhone: '4175550100', dateOfBirth: '1940-01-01',
       residentialAddress: { city: 'Joplin', street1: '1 Main' }, classes: { 0: { label: 'Level 2' }, 1: { code: 'PRIVATE' } } }],
     nextPage: 'https://16485.axiscare.com/api/clients?page=2' } },
   'https://16485.axiscare.com/api/clients?page=2': { results: { clients: { 0: { id: 8, firstName: 'Ann', lastName: 'Past', status: { active: false, label: 'Discharged' } } } } },
@@ -36,6 +36,7 @@ const res = [
   ['index-keyed AxisCare lists still read (the 172 lesson)', ok.j.clients?.[1]?.id === '8' && ok.j.clients[1].active === false],
   ['errors answer CORS too, so the page can show them', nocreds.s === 502 && nocreds.h.get('Access-Control-Allow-Origin') === '*'],
   ['the row helper is the only shape', typeof mod.clientRow === 'function'],
+  ['2026-10-18: the start date of care comes along, as a date (none = null)', dan.start_date === '2023-10-25' && ok.j.clients?.[1]?.start_date === null],
 ];
 let pass = 0; for (const [n, good] of res) { console.log((good ? 'PASS ' : 'FAIL ') + n); if (good) pass++; }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1);

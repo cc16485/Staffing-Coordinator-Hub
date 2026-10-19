@@ -6,7 +6,7 @@
 // Past clients are READ here when the office looks, never copied into the Hub (her 2026-09-27 "lock only" ruling).
 // SEND-INCAPABLE by construction: its only outbound calls are AxisCare GETs, it writes nothing anywhere, and it
 // answers only signed-in office staff. No phone, address, birth date or note leaves this function: name, status,
-// care classes and city are all the directory shows.
+// care classes, city and the start date of care (2026-10-18, for client anniversaries) are all it sends.
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { OFFICE_ROLES, requireStaff } from '../_shared/staff-auth.ts'
@@ -33,6 +33,8 @@ export function clientRow(c: any) {
     city: S(c?.residentialAddress?.city) || S(c?.mailingAddress?.city),
     // deno-lint-ignore no-explicit-any
     classes: rowsOf(c?.classes).map((k: any) => S(k?.label ?? k?.code)).filter(Boolean),
+    // 2026-10-18 (Samantha, client anniversaries + Friday wins): the date care started, as AxisCare has it (a date only)
+    start_date: /^\d{4}-\d\d-\d\d/.test(S(c?.startDate)) ? S(c?.startDate).slice(0, 10) : null,
   }
 }
 
