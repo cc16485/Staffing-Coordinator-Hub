@@ -13,6 +13,8 @@ HEAD = subprocess.run(["git", "-C", HERE, "rev-parse", "HEAD"], capture_output=T
 subprocess.run(["git", "-C", COPY, "checkout", "-q", HEAD], check=True)
 BASE = subprocess.run(["git", "-C", HERE, "merge-base", "HEAD", "origin/main"], capture_output=True, text=True).stdout.strip()
 FNROOT = os.path.join(COPY, "supabase", "functions")
+# an older version of a shared file that was on main (verbs.js before 368d170), as a function deployed before that change holds it
+open(os.path.join(COPY, "old_verbs.js"), "w").write(subprocess.run(["git", "-C", HERE, "show", "368d170^:supabase/functions/_shared/verbs.js"], capture_output=True, text=True).stdout)
 sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
 FN_FILES = ("client-agreement/index.ts", "agreement-sign/index.ts", "family-gateway/index.ts", "family-app-office/index.ts", "_shared/agreement-masters.ts",
             "_shared/client-agreement-map.ts", "_shared/client-agreement-map-2026-10-18.ts", "_shared/agreement-contacts.ts", "_shared/family-signin.ts", "_shared/family-app-office.ts")
@@ -21,7 +23,7 @@ PDF_SHA = sha(PDFS["rev-2026-10-18b"]); SQL_SHA = sha(os.path.join(COPY, "agreem
 SHAS = {k: sha(os.path.join(FNROOT, k)) for k in FN_FILES}
 STORE = {}; M = {}; CALLS = []; SQLS = []; UPSERTS = []
 def reset(**m):
-    M.clear(); M.update(dict(col_there=False, sql_fail=False, col_missing_after=False, fail_deploy=None, old_drafts=0, old_signed=0, no_old=False, bad_store=False, no_key=False, odd_live=None, no_contacts=False, new_there=False, doc='old', fail_docs=False,
+    M.clear(); M.update(dict(col_there=False, sql_fail=False, col_missing_after=False, fail_deploy=None, old_drafts=0, old_signed=0, no_old=False, bad_store=False, no_key=False, odd_live=None, no_contacts=False, new_there=False, older_live=None, doc='old', fail_docs=False,
                              gates={"client-agreement": False, "agreement-sign": False, "family-app-office": False, "family-gateway": False}), **m)
     STORE.clear(); CALLS.clear(); SQLS.clear(); UPSERTS.clear()
     for n in ("rev-2026-10-18", "rev-2026-10-17", "rev-2026-10"):
@@ -88,6 +90,7 @@ if a[:2] == ['functions', 'download']:
     dst = os.path.join(os.getcwd(), 'supabase', 'functions')
     shutil.copytree({FNROOT!r}, dst, dirs_exist_ok=True)
     if M.get('odd_live') == a[2]: open(os.path.join(dst, '_shared', 'family-signin.ts'), 'a').write('// someone else\\n')
+    if M.get('older_live') == a[2]: shutil.copy({os.path.join(COPY, 'old_verbs.js')!r}, os.path.join(dst, '_shared', 'verbs.js'))
     sys.exit(0)
 sys.exit(1)
 """)
@@ -122,7 +125,8 @@ c, out = run(shas=dict(SHAS, **{"_shared/family-signin.ts": "0" * 64})); ck("4 n
 c, out = run(pdf_sha="0" * 64); ck("5 the updated PDF is not the reviewed one: stopped before any change", c != 0 and not deployed() and not stored() and not ran_sql(), out)
 c, out = run(sql_sha="0" * 64); ck("5b the database change is not the reviewed one: stopped before any change", c != 0 and not deployed() and not stored() and not ran_sql(), out)
 c, out = run(main=BASE); ck("6 not merged to GitHub's main yet: stopped before any change", c != 0 and "merge the pull request first" in out and not deployed() and not stored() and not ran_sql(), out)
-c, out = run(odd_live="family-gateway"); ck("7 the live family-gateway has someone else's unreleased code: stopped before any change", c != 0 and "someone else's change" in out and not deployed() and not ran_sql(), out)
+c, out = run(odd_live="family-gateway"); ck("7 the live family-gateway has someone else's unreleased code: stopped before any change", c != 0 and "someone else's unreleased change" in out and not deployed() and not ran_sql(), out)
+c, out = run(older_live="family-app-office"); ck("7b the live family-app-office holds an OLDER merged verbs.js: goes ahead and says it brings that forward", c == 0 and "RESULT: DONE" in out and "brings forward already-merged updates to verbs.js" in out and len(deployed()) == 4, out)
 c, out = run(no_old=True); ck("8 the 10-18 PDF is not stored live: stopped before any change", c != 0 and "10-18 agreement PDF did not read back" in out and not deployed() and not ran_sql(), out)
 c, out = run(no_key=True); ck("9 the server key can't be read: stopped before any change", c != 0 and not deployed() and not stored() and not ran_sql(), out)
 c, out = run(no_contacts=True); ck("9b the Family Circle table is missing: stopped before any change", c != 0 and not deployed() and not ran_sql(), out)

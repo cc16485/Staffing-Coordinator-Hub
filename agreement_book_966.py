@@ -66,6 +66,16 @@ def base_need(fn):
         for m in re.findall(r"""from\s+['"](\.{1,2}/[^'"]+)['"]|import\s+['"](\.{1,2}/[^'"]+)['"]""", src):
             todo.append(os.path.normpath(os.path.join(os.path.dirname(k), m[0] or m[1])))
     return seen
+_mv = {}
+def merged_versions(k):
+    """every version of file k that was ever on GitHub's main"""
+    if k not in _mv:
+        rc, out, _ = run(["git", "-C", ROOT, "log", "--format=%H", MAIN, "--", k]); vs = set()
+        for h in out.split():
+            r2, src, _ = run(["git", "-C", ROOT, "show", f"{h}:{k}"])
+            if r2 == 0: vs.add(hashlib.sha256(src.encode()).hexdigest())
+        _mv[k] = vs
+    return _mv[k]
 gate = {}
 for fn in FNS:
     s, m = fmeta(REF, fn)
@@ -73,14 +83,18 @@ for fn in FNS:
     gate[fn] = bool(m["verify_jwt"])
     okl, live = live_files(REF, fn)
     if not okl: stop(f"couldn't download the live {fn} to compare")
-    odd, BN = [], base_need(fn)
+    odd, older, BN = [], [], base_need(fn)
     for k in sorted(L.need(FNROOT, fn)):
         rc, was, _ = run(["git", "-C", ROOT, "show", f"{BASE}:{k}"])
         base_sha = hashlib.sha256(was.encode()).hexdigest() if rc == 0 else None
         if live.get(k) is None and k not in BN: continue   # a file this build newly imports is not live yet: expected
-        if live.get(k) not in (base_sha, sha(os.path.join(ROOT, k))): odd.append(k)
-    if odd: stop(f"the live {fn} has code that isn't what this was built on (someone else's change not released or not merged): " + ", ".join(odd)[:240])
-    say(f"  · {fn}: live version {m.get('version', '?')} is the code this was built on, gateway sign-in check {'on' if gate[fn] else 'off'} (kept)")
+        if live.get(k) in (base_sha, sha(os.path.join(ROOT, k))): continue
+        # 2026-10-18 (first two runs): a function last deployed before other sessions' MERGED changes to a shared file holds an
+        # older version of it. Any version that was on GitHub's main is merged work and only moves forward; anything else stops.
+        if live.get(k) in merged_versions(k): older.append(k.rsplit("/", 1)[-1]); continue
+        odd.append(k)
+    if odd: stop(f"the live {fn} has code that was never on GitHub's main (someone else's unreleased change): " + ", ".join(odd)[:240])
+    say(f"  · {fn}: live version {m.get('version', '?')} is merged code" + (f" (brings forward already-merged updates to {', '.join(older)})" if older else "") + f", gateway sign-in check {'on' if gate[fn] else 'off'} (kept)")
 OLD_SHA = EARLIER[0][1]
 ok1, r1 = sql(REF, f"""select to_regclass('public.circle_contacts') is not null as contacts,
   exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'circle_contacts' and column_name = 'app_book_choice') as col_there,
