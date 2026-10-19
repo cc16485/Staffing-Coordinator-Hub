@@ -11,7 +11,7 @@ COPY = os.path.join(TMP, "hub")
 subprocess.run(["git", "clone", "-q", HERE, COPY], check=True)
 HEAD = subprocess.run(["git", "-C", HERE, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
 subprocess.run(["git", "-C", COPY, "checkout", "-q", HEAD], check=True)
-BASE = subprocess.run(["git", "-C", HERE, "merge-base", "HEAD", "origin/main"], capture_output=True, text=True).stdout.strip()
+BASE = "ecb821d96b9ec6f953c29bc8b3b5d2ac9ce5a28a"   # main when 966 was built (its SB_BASE); fixed now that 966 is merged
 FNROOT = os.path.join(COPY, "supabase", "functions")
 # an older version of a shared file that was on main (verbs.js before 368d170), as a function deployed before that change holds it
 open(os.path.join(COPY, "old_verbs.js"), "w").write(subprocess.run(["git", "-C", HERE, "show", "368d170^:supabase/functions/_shared/verbs.js"], capture_output=True, text=True).stdout)
