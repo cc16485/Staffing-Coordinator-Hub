@@ -37,17 +37,17 @@ def ins(**kw):
     cols = {"axiscare_caregiver_id": "7", "caregiver": "Pat Sample", "kind": "coaching", "topic": "t", "assigned_to": "krystal@mo-care.com", "assigned_by": "zach@mo-care.com", "due_on": today.isoformat()}; cols.update(kw)
     ks = list(cols); c = conn(); r = c.run(f"insert into public.hr_coaching ({', '.join(ks)}) values ({', '.join(':' + k for k in ks)}) returning id::text", **cols); c.close(); return r[0][0]
 def cards(): return {e["id"]: e for e in (q1("select e from public.app_data, jsonb_array_elements(data) e where key = 'ops_items'") and [x[0] for x in q1("select e from public.app_data, jsonb_array_elements(data) e where key = 'ops_items'")])}
-def bd_back(n):
-    d = today
-    while n:
-        d -= datetime.timedelta(days=1)
-        if d.weekday() < 5: n -= 1
+def bdays(a, b):   # weekdays after a, up to and including b (the SQL hr_business_days)
+    return sum(1 for i in range(1, (b - a).days + 1) if (a + datetime.timedelta(days=i)).weekday() < 5)
+def bd_back(n):    # the latest due date that is n business days late today
+    d = today - datetime.timedelta(days=1)
+    while bdays(d, today) < n: d -= datetime.timedelta(days=1)
     return d
 a1 = ins(due_on=(today - datetime.timedelta(days=1)).isoformat()); a3 = ins(due_on=bd_back(3).isoformat(), caregiver="Lee Late")
 q1("select public.hr_coaching_followthrough()")
 cs = cards()
 ck("past due: Zach gets a private card with first name + last initial", cs.get("ops_coach_late_" + a1, {}).get("owner") == "zach@mo-care.com" and cs["ops_coach_late_" + a1]["sensitive"] is True and cs["ops_coach_late_" + a1]["title"] == "Coaching overdue: Pat S.", cs.get("ops_coach_late_" + a1))
-ck("...a day late is not yet Samantha's", "ops_coach_late2_" + a1 not in cs)
+ck("...under 3 business days late is not yet Samantha's", bdays(today - datetime.timedelta(days=1), today) >= 3 or "ops_coach_late2_" + a1 not in cs)
 ck("3 business days late: Samantha gets one too", cs.get("ops_coach_late2_" + a3, {}).get("owner") == "samantha@mo-care.com" and cs["ops_coach_late2_" + a3]["sensitive"] is True)
 q1("select public.hr_coaching_followthrough()")
 ck("the next day's run doesn't make them again", len([k for k in cards() if k.startswith("ops_coach_late")]) == 3)
