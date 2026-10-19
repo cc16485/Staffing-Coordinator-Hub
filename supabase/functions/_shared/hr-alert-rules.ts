@@ -11,6 +11,8 @@
 //   · a coaching talk where the coordinator asked for help and nobody has answered yet
 //   · a coaching talk the coordinator handed back to him
 //   · a coaching talk past its due day and still not held
+//   · a write-up step that is due or overdue under the Corrective Action SOP (step 9: its open reminder card; a new step,
+//     or a reminder that turns from due to overdue, counts as new)
 // =============================================================================
 // deno-lint-ignore no-explicit-any
 type Any = any
@@ -37,7 +39,7 @@ export function emailHtml(test = false): string {
 const s = (x: unknown) => String(x ?? '').trim()
 
 /** The keys of everything waiting for Zach right now. `today` is the Chicago date, YYYY-MM-DD. */
-export function waitingItems(p: { cases: Any[]; writeups: Any[]; coaching: Any[]; today: string }): string[] {
+export function waitingItems(p: { cases: Any[]; writeups: Any[]; coaching: Any[]; today: string; cards?: Any[] }): string[] {
   const out: string[] = []
   for (const c of p.cases || []) if (c && c.status === 'open' && (c.kind === 'recurring' || c.kind === 'serious')) out.push('case:' + s(c.id))
   for (const w of p.writeups || []) if (w && w.status === 'pending_approval') out.push('approve:' + s(w.id) + ':' + s(w.sent_for_approval_at || w.updated_at))
@@ -47,6 +49,7 @@ export function waitingItems(p: { cases: Any[]; writeups: Any[]; coaching: Any[]
     if (c.handoff_at) out.push('handoff:' + s(c.id) + ':' + s(c.handoff_at))
     if (c.due_on && s(c.due_on) < p.today) out.push('late:' + s(c.id) + ':' + s(c.due_on))
   }
+  for (const k of p.cards || []) if (k && k.status === 'open' && String(k.id || '').startsWith('ops_wu_step_')) out.push('step:' + s(k.id).slice(12) + ':' + s(k.title) + ':' + s(k.urgency))
   return [...new Set(out)].sort()
 }
 
