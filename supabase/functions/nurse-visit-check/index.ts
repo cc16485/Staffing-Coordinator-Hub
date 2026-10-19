@@ -45,6 +45,7 @@ import { centralYmd, addDaysYmd } from '../_shared/business-days.ts'
 import { DEFAULT_NURSE_SERVICES, nurseServices } from '../_shared/nurse-services.ts'
 import { checkClient, readFrom, medicaidOf, notReadyCard, longDate } from '../_shared/nurse-bill.ts'
 import { licenseDue, licenseMessage, licenseCard, nurseKey } from '../_shared/nurse-license.ts'
+import { routingBySettings, noticeTo } from '../_shared/notice-to.ts'
 
 type Any = any
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -109,6 +110,7 @@ async function coordinatorOf(db: Any): Promise<string> {
     const { data: dom } = await db.from('domains').select('code, owner_person, entity').eq('code', 'payer_programs').eq('entity', 'cc_ihs').maybeSingle()
     if (dom?.owner_person) { const { data: p } = await db.from('persons').select('person_id, primary_email').eq('person_id', dom.owner_person).maybeSingle(); if (p?.primary_email) return String(p.primary_email).toLowerCase() }
   } catch { /* fall through */ }
+  if (await routingBySettings(db)) return (await noticeTo(db, 'payer_programs')).email   /* batch 2 (off by default) */
   return OWNER
 }
 /** one card per id: raised or updated while open; a card a person closed stays closed. 'raised' | 'open' | 'closed' | 'failed' */

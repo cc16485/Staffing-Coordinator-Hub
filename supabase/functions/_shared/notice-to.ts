@@ -90,3 +90,23 @@ export async function noticeCard(db: any, to: NoticeTo, c: { id: string; kind: s
     return error ? 'failed' : 'raised'
   } catch { return 'failed' }
 }
+
+/* SERVER JOBS OFF SAMANTHA, batch 2 (Samantha 2026-10-18, "build batch 2 anyway, switched off"):
+   ops_settings.routing_by_settings_live. On: the jobs that fell back to Samantha BY NAME (ghe-reminders, medicaid-visits,
+   nurse-visit-check, rn-review) use noticeTo like everything else, and the GHE "still not booked" email and the GHE
+   digest go to the work area's escalation person instead of to Samantha by name. Off: exactly as before. Never throws. */
+export async function routingBySettings(db: any): Promise<boolean> {
+  try { const { data } = await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle(); return data?.data?.routing_by_settings_live === true } catch { return false }
+}
+/** Who a work area's work climbs to: the area's escalation person (domains.escalation_person), else the Springfield
+    lead, else Samantha. */
+export async function escalationTo(db: any, area: string): Promise<NoticeTo> {
+  try {
+    const { data: d } = await db.from('domains').select('escalation_person').eq('entity', ENTITY).eq('code', area).maybeSingle()
+    const p = await person(db, d?.escalation_person)
+    if (p) return { ...p, why: 'area_owner', area }
+  } catch { /* fall through */ }
+  const l = await springfieldLead(db)
+  if (l) return { ...l, why: 'springfield_lead', area }
+  return { ...LAST_RESORT, why: 'last_resort', area }
+}

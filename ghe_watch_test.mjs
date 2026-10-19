@@ -59,6 +59,7 @@ try {
   fs.writeFileSync(path.join(tmp, 'staff-contact.ts'), 'export async function ghlStaffContact(_c, o) { return "ct_" + o.email }\n')
   fs.writeFileSync(path.join(tmp, 'send-problems.ts'), 'export async function reportSendProblem() {}\nexport async function ghlSendChecked(_db, _h, _s, to, msg) { globalThis.__sent.push({ to: to.address, subject: msg.subject, html: msg.html }); return true }\n')
   fs.copyFileSync(path.join(F, '_shared', 'ghe-rules.js'), path.join(tmp, 'ghe-rules.js'))
+  fs.copyFileSync(path.join(F, '_shared', 'notice-to.ts'), path.join(tmp, 'notice-to.ts'))
   globalThis.__sent = SENT
   globalThis.GheRules = (await import(path.join(tmp, 'ghe-rules.js'))).default   /* in Deno the file sets self.GheRules itself; under node it is a CommonJS module */
   const src = fs.readFileSync(path.join(F, 'ghe-reminders/index.ts'), 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')

@@ -37,9 +37,10 @@ const F = 'supabase/functions', tmp = fs.mkdtempSync(path.join(process.cwd(), '_
 try {
   fs.writeFileSync(path.join(tmp, 'job-auth.ts'), 'export async function jobCaller(req) { return req.headers.get("x-test") === "no" ? null : "cron" }\n')
   fs.copyFileSync(path.join(F, '_shared', 'visit-rules.js'), path.join(tmp, 'visit-rules.js'))
+  fs.copyFileSync(path.join(F, '_shared', 'notice-to.ts'), path.join(tmp, 'notice-to.ts'))
   globalThis.VisitRules = (await import(path.join(tmp, 'visit-rules.js'))).default
   const src = fs.readFileSync(path.join(F, 'medicaid-visits/index.ts'), 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
-    .replace("'../_shared/job-auth.ts'", "'" + path.join(tmp, 'job-auth.ts') + "'").replace("'../_shared/visit-rules.js'", "'" + path.join(tmp, 'visit-rules.js') + "'")
+    .replace("'../_shared/job-auth.ts'", "'" + path.join(tmp, 'job-auth.ts') + "'").replace("'../_shared/visit-rules.js'", "'" + path.join(tmp, 'visit-rules.js') + "'").replace("'../_shared/notice-to.ts'", "'" + path.join(tmp, 'notice-to.ts') + "'")
   fs.writeFileSync(path.join(tmp, 'mv.ts'), src); await import(path.join(tmp, 'mv.ts'))
   const run = async (qs = '', hdr = {}) => { const r = await handler(new Request('https://x/f' + qs, { method: 'POST', headers: hdr })); return { status: r.status, j: await r.json() } }
   const W = (id) => T.app_data.find((r) => r.key === 'visit_watch').data.find((x) => x.id === id) || {}
