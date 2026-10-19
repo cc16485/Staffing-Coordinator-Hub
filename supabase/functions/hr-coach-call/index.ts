@@ -8,7 +8,8 @@
 // OFF until ops_settings.hr_coaching_calls_live === true (after her two gates: who can hear calls inside GoHighLevel,
 // and the attorney-checked employee notice). Until then only Samantha and Zach can try it, as practice, on any record:
 // practice rows never count toward completing a coaching record and no audio copy is kept.
-// Who: the coach on the record, Samantha and Zach. The audio plays only for them, every play logged.
+// Who: the coach on the record, Samantha and Zach (office coaching: Samantha and Zach only). The audio plays only for
+// them, every play logged.
 //
 //   list       { coaching_id }                 -> { live, min_seconds, calls[] }   (never an audio path)
 //   tap        { coaching_id }                 -> rings the manager's phone; a waiting row
@@ -54,7 +55,8 @@ Deno.serve(async (req: Request) => {
     if (!who.ok) return json({ error: who.error }, who.status)
     const me = who.email.toLowerCase(), owner = who.roles.includes('owner_admin')
     const recOf = async (id: unknown) => /^[0-9a-f-]{36}$/i.test(String(id ?? '')) ? (await db.from('hr_coaching').select('*').eq('id', String(id)).maybeSingle()).data : null
-    const mayUse = (c: Any) => !!c && (owner || (live && String(c.assigned_to || '').toLowerCase() === me))
+    /* office coaching (part C3) is for Samantha and Zach only; a caregiver's coach once it is live */
+    const mayUse = (c: Any) => !!c && (owner || (live && c.subject_type !== 'office' && String(c.assigned_to || '').toLowerCase() === me))
     if (!live && !owner) return json({ error: 'Coaching calls are not switched on yet.' }, 403)
 
     if (['list', 'tap', 'candidates', 'pick'].includes(action)) {
@@ -112,6 +114,12 @@ Deno.serve(async (req: Request) => {
 })
 
 async function employeePhone(db: Any, c: Any): Promise<string | null> {
+  /* part C3: an office employee's phone comes from the staff list, by their email on the record */
+  if (c.subject_type === 'office') {
+    const { data: st } = await db.from('app_data').select('data').eq('key', 'coordinator_staff').maybeSingle()
+    const hit = (Array.isArray(st?.data) ? st.data : []).filter((x: Any) => String(x?.email || '').toLowerCase() === String(c.subject_email || '').toLowerCase())
+    return hit.length === 1 ? normalisePhone(hit[0].phone) : null
+  }
   const { data } = await db.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
   const roster: Any[] = Array.isArray(data?.data) ? data.data : []
   const hit = roster.filter((g) => String(g?.axiscare_id ?? '') === String(c.axiscare_caregiver_id))
