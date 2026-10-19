@@ -36,6 +36,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES, PROJECT_REF, ENTITY } from '../_shared/staff-auth.ts'
 import { jobCaller } from '../_shared/job-auth.ts'
+import { routingBySettings, noticeTo } from '../_shared/notice-to.ts'
 import { logOpen, ipOf } from '../_shared/doc-log.ts'
 import { practicePerson } from '../_shared/optout.ts'
 import { testPerson } from '../_shared/test-people.ts'
@@ -90,6 +91,7 @@ async function payerOwner(db: Any): Promise<string> {
     const { data: d } = await db.from('domains').select('owner_person').eq('entity', ENTITY).eq('code', 'payer_programs').maybeSingle()
     if (d?.owner_person) { const { data: p } = await db.from('persons').select('primary_email').eq('person_id', d.owner_person).maybeSingle(); if (p?.primary_email) return S(p.primary_email).toLowerCase() }
   } catch { /* fall through */ }
+  if (await routingBySettings(db)) return (await noticeTo(db, 'payer_programs')).email   /* batch 2 (off by default): like everything else, not Samantha by name */
   return 'samantha@mo-care.com'
 }
 

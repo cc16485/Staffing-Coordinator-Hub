@@ -24,6 +24,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
 import '../_shared/visit-rules.js'
+import { routingBySettings, noticeTo } from '../_shared/notice-to.ts'
 // deno-lint-ignore no-explicit-any
 const VR: any = (globalThis as any).VisitRules
 // deno-lint-ignore no-explicit-any
@@ -66,6 +67,7 @@ async function ownerOf(db: Any, code: string): Promise<string> {
     const { data: dom } = await db.from('domains').select('code, owner_person, entity').eq('code', code).eq('entity', 'cc_ihs').maybeSingle()
     if (dom?.owner_person) { const { data: p } = await db.from('persons').select('person_id, primary_email').eq('person_id', dom.owner_person).maybeSingle(); if (p?.primary_email) return String(p.primary_email).toLowerCase() }
   } catch { /* fall back */ }
+  if (await routingBySettings(db)) return (await noticeTo(db, code)).email   /* batch 2 (off by default): like everything else, not Samantha by name */
   return OWNER
 }
 const lastDay = (m: string) => new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7), 0)).getUTCDate()

@@ -29,6 +29,7 @@ import { jobCaller } from '../_shared/job-auth.ts'
 import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import '../_shared/ghe-rules.js'
+import { routingBySettings, noticeTo, escalationTo } from '../_shared/notice-to.ts'
 // deno-lint-ignore no-explicit-any
 const G: any = (globalThis as any).GheRules
 // deno-lint-ignore no-explicit-any
@@ -99,6 +100,8 @@ async function coordinatorOf(supabase: Any): Promise<{ email: string; why: strin
       if (p?.primary_email) return { email: String(p.primary_email).toLowerCase(), why: 'owner of Payer Programs' }
     }
   } catch { /* fall through */ }
+  /* batch 2 (switched off by default): route like everything else instead of Samantha by name */
+  if (await routingBySettings(supabase)) { const n = await noticeTo(supabase, 'payer_programs'); return { email: n.email, why: n.why === 'springfield_lead' ? 'nobody owns Payer Programs, so the Springfield lead' : n.why === 'area_owner' ? 'owner of Payer Programs' : 'nobody is set up, so Samantha' } }
   return { email: OWNER, why: 'nobody owns Payer Programs yet, so Samantha' }
 }
 
@@ -173,6 +176,8 @@ Deno.serve(async (req) => {
   /* ── 2. THE AXISCARE WATCH ─────────────────────────────────────────────── */
   const axVisits = axFetcher()
   const coord = await coordinatorOf(supabase)
+  /* who the last-week "still not booked" email and the office digest go to: Samantha by name, or (batch 2 on) Payer Programs' escalation person */
+  const upTo = (await routingBySettings(supabase)) ? (await escalationTo(supabase, 'payer_programs')).email : OWNER
   const wins = G.windows(clients, today)
   const seen: Any[] = [], cards: Any[] = [], ladderMails: Any[] = []
   let axFailed = 0, notLinked = 0
@@ -206,7 +211,7 @@ Deno.serve(async (req) => {
           `<p style="color:#666;font-size:13px;">Caring Companions · Nurse Scheduling. The Medicaid coordinator (${esc(coord.email)}) gets a copy.</p>`, stamp: 'warned_unbooked_at', item })
     }
     if (sg.actions.includes('owner_alert') && !item.owner_alerted_at) {
-      ladderMails.push({ to: [OWNER], subject: `GHE still not booked, ${w.month} ends soon: ${w.name}`,
+      ladderMails.push({ to: [upTo], subject: `GHE still not booked, ${w.month} ends soon: ${w.name}`,
         html: `<p><b>${esc(w.name)}</b>'s GHE is due this month and AxisCare still has no GHE visit (T1001)${st.state === 'not_visited' ? ' that was clocked' : ''}. Nurse: ${esc(nurse || 'none assigned')}.</p><p style="color:#666;font-size:13px;">Caring Companions · Nurse Scheduling</p>`, stamp: 'owner_alerted_at', item })
     }
     const unbookedId = `ops_ghe_unbooked_${w.client_id}_${w.month}`
@@ -290,7 +295,7 @@ Deno.serve(async (req) => {
             `</ul><p>Open the GHE form in the hub, print the PDF, upload it into Fusion, then mark it Uploaded.</p>`
           : '') +
         `<p style="color:#666;font-size:13px;">Caring Companions · Nurse Scheduling</p>`
-      const office = new Set<string>([OWNER, coord.email])
+      const office = new Set<string>([upTo, coord.email])
       coordinators.forEach((c) => { const e = String(c.email || '').trim(); if (e) office.add(e) })
       for (const to of office) {
         if (await mail(to, `GHE watch: ${overdue.length} overdue, ${awaitingUpload.length} waiting for Fusion`, html)) sent++
