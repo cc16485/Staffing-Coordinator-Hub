@@ -126,8 +126,13 @@ ck('a phone clock-out that never replied: unresolved, and it DOES count', row(2,
      && opw && /office clocked this shift out \(web\), so it does not count/.test(opw.detail), [w, opw])
   ck('an APP clock-out that never replied still counts', [1, 3].every((i) => { const x = T.missed_notes.find((m) => m.axiscare_caregiver_id === String(i) && m.status === 'unresolved'); return !x || x.counts === true }))
   ck('the web clock-out was still texted for its note', !!w.texted_at, w) }
-/* 3 in 30 days → one draft */
-reset(); APP.ops_settings = { missed_notes_live: true }
+/* HR step 10 piece 1 (2026-10-18): by default 3 in 30 days makes NO draft (the HR agent decides) */
+{ reset(); APP.ops_settings = { missed_notes_live: true }; VISITS = []
+  for (const [cl, ago] of [[1, 20], [2, 10], [3, 2]]) T.missed_notes.push({ id: SEQ++, axiscare_caregiver_id: '9', axiscare_client_id: String(cl), shift_date: chiDay(NOW() - ago * 864e5), caregiver_name: 'C9 Test', visit_id: 'x' + cl, status: 'recovered', counts: true, clock_out_method: 'app', created_at: new Date().toISOString(), draft_id: null })
+  const r0 = await run()
+  ck('step 10 piece 1: three counted misses make NO write-up draft by default (the HR agent decides), and the run says so', !APP.discipline_actions.length && r0.j.drafting === 'off (the HR agent decides)' && T.missed_notes.every((m) => m.draft_id === null), r0.j) }
+/* 3 in 30 days → one draft, only with ops_settings.missed_notes_drafts (the old way, kept for undo) */
+reset(); APP.ops_settings = { missed_notes_live: true, missed_notes_drafts: true }
 const mk = (cg, cl, d, status, meth = 'app') => T.missed_notes.push({ id: SEQ++, axiscare_caregiver_id: String(cg), axiscare_client_id: String(cl), shift_date: d, caregiver_name: 'C' + cg + ' Test', client_first: 'Cl' + cl,
   visit_id: 'x' + cl, status, counts: status !== 'open', clock_out_method: meth, created_at: new Date().toISOString(), draft_id: null })
 VISITS = []
@@ -140,7 +145,7 @@ ck('the third: one DRAFT write-up, Verbal Warning, "Missed care notes: 3 in 30 d
 ck('the draft lists each miss: recovered by text vs UNRESOLVED (more serious), and the web clock-out as the office\'s', /Recovered by text/.test(dw.body) && /UNRESOLVED: no reply/.test(dw.body)
    && /clocked out by the office \(web\)/.test(dw.body) && /A Care Coordinator approves coaching, a verbal warning or a first written warning; leadership approves anything above that/.test(dw.body) && !/—/.test(dw.body), dw.body)
 ck('those three are marked as drafted; running again drafts nothing more', T.missed_notes.filter((x) => x.draft_id === dw.id).length === 3 && (await run()).j.drafts === 0 && APP.discipline_actions.length === 1)
-reset(); APP.ops_settings = { missed_notes_live: true }; VISITS = []
+reset(); APP.ops_settings = { missed_notes_live: true, missed_notes_drafts: true }; VISITS = []
 APP.discipline_actions = [{ id: 'old', caregiver: 'C9 Test', reason: 'Missed care notes: 3 in 30 days', status: 'issued', created_at: new Date(NOW() - 90 * 864e5).toISOString() }]
 mk(9, 1, chiDay(NOW() - 5 * 864e5), 'recovered'); mk(9, 2, chiDay(NOW() - 4 * 864e5), 'recovered'); mk(9, 3, chiDay(NOW() - 3 * 864e5), 'recovered'); await run()
 ck('a second time within a year: the next level (Written Warning)', APP.discipline_actions.find((a) => a.id !== 'old')?.level === 'Written Warning', APP.discipline_actions)
@@ -148,13 +153,13 @@ ck('a second time within a year: the next level (Written Warning)', APP.discipli
 const three = () => { mk(9, 1, chiDay(NOW() - 5 * 864e5), 'recovered'); mk(9, 2, chiDay(NOW() - 4 * 864e5), 'recovered'); mk(9, 3, chiDay(NOW() - 3 * 864e5), 'recovered') }
 const lvl = () => APP.discipline_actions.find((a) => !/^old/.test(a.id))?.level
 const OLD = (extra) => ({ id: 'old', caregiver: 'C9 Test', reason: 'Missed care notes: 3 in 30 days', status: 'issued', created_at: new Date(NOW() - 90 * 864e5).toISOString(), ...extra })
-reset(); APP.ops_settings = { missed_notes_live: true }; VISITS = []; APP.discipline_actions = [OLD({ axiscare_caregiver_id: '9' })]; three(); await run()
+reset(); APP.ops_settings = { missed_notes_live: true, missed_notes_drafts: true }; VISITS = []; APP.discipline_actions = [OLD({ axiscare_caregiver_id: '9' })]; three(); await run()
 ck('step4 · an earlier warning with the same id counts (Written Warning)', lvl() === 'Written Warning', APP.discipline_actions)
-reset(); APP.ops_settings = { missed_notes_live: true }; VISITS = []; APP.discipline_actions = [OLD({ caregiver: 'Someone Else', ax_caregiver_id: '9' })]; three(); await run()
+reset(); APP.ops_settings = { missed_notes_live: true, missed_notes_drafts: true }; VISITS = []; APP.discipline_actions = [OLD({ caregiver: 'Someone Else', ax_caregiver_id: '9' })]; three(); await run()
 ck('step4 · ...also by the older ax_caregiver_id field, even when the typed name differs', lvl() === 'Written Warning', APP.discipline_actions)
-reset(); APP.ops_settings = { missed_notes_live: true }; VISITS = []; APP.discipline_actions = [OLD({ axiscare_caregiver_id: '77' }), OLD({ id: 'old2', ax_caregiver_id: '78' })]; three(); await run()
+reset(); APP.ops_settings = { missed_notes_live: true, missed_notes_drafts: true }; VISITS = []; APP.discipline_actions = [OLD({ axiscare_caregiver_id: '77' }), OLD({ id: 'old2', ax_caregiver_id: '78' })]; three(); await run()
 ck('step4 · a warning with another person\'s id never counts by name, even with the same name (stays Verbal Warning)', lvl() === 'Verbal Warning', APP.discipline_actions)
-reset(); APP.ops_settings = { missed_notes_live: true }; VISITS = []; APP.discipline_actions = [OLD({ caregiver: 'Other Name' })]; three(); await run()
+reset(); APP.ops_settings = { missed_notes_live: true, missed_notes_drafts: true }; VISITS = []; APP.discipline_actions = [OLD({ caregiver: 'Other Name' })]; three(); await run()
 ck('step4 · a warning with no id and a different name does not count (as before)', lvl() === 'Verbal Warning', APP.discipline_actions)
 reset(); APP.ops_settings = { missed_notes_live: true, missed_notes_live_since: new Date(NOW() - 3 * 864e5).toISOString() }; VISITS = []
 mk(9, 1, chiDay(NOW() - 10 * 864e5), 'recovered'); mk(9, 2, chiDay(NOW() - 8 * 864e5), 'recovered'); mk(9, 3, chiDay(NOW() - 2 * 864e5), 'recovered'); await run()
