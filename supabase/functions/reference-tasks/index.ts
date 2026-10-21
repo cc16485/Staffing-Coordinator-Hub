@@ -4,7 +4,8 @@
 // confirmation from uncertainty", and a final question, "would feel comfortable having this caregiver provide similar care to
 // someone they care about", with an optional explanation, treated as general reference feedback and not skill certification)
 // =============================================================================
-// PRACTICE HIRES ONLY: "No real caregiver records, reference requests, or live matching behavior should change yet." The
+// PRACTICE HIRES, and from 2026-10-21 every real WORK reference once ops_settings.reference_tasks_all_live is on (Level of
+// Care, her approved design of 2026-10-08: show: true). Before that: "No real caregiver records, reference requests, or live matching behavior should change yet." The
 // reference form (reference.html) asks this first; for every request that is not a practice hire's it answers
 // { practice: false } and the form is exactly today's. The request id in the link is the only key (as for reference_answer).
 //   { action: 'view', r }                                   -> { practice, first, entries: [{ where, when, tasks: [{ key, label }] }] }
@@ -23,16 +24,22 @@ const S = (v: unknown, n = 200) => String(v ?? '').trim().slice(0, n)
 const NOT_PRACTICE = { ok: true, practice: false }
 
 /** The request, and (for a practice hire only) the Step 1 entries that name this reference. */
-export async function lookup(db: any, r: string): Promise<{ row: any; practice: boolean; first: string; entries: any[] } | null> {
+export async function lookup(db: any, r: string): Promise<{ row: any; practice: boolean; show: boolean; first: string; entries: any[] } | null> {
   const { data: row } = await db.from('reference_requests').select('id, candidate_id, slot, ref_name, ref_type, responded_at, task_confirm').eq('id', r).maybeSingle()
   if (!row) return null
   const { data: c } = await db.from('app_data').select('data').eq('key', 'candidates').maybeSingle()
   const cand = (Array.isArray(c?.data) ? c.data : []).find((x: any) => x && String(x.id) === String(row.candidate_id))
   const offer = S(cand?.offer_id, 64)
-  if (!offer) return { row, practice: false, first: '', entries: [] }
+  if (!offer) return { row, practice: false, show: false, first: '', entries: [] }
   const { data: f } = await db.from('step1_forms').select('answers, practice').eq('offer_id', offer).maybeSingle()
-  if (!f?.practice) return { row, practice: false, first: '', entries: [] }
-  return { row, practice: true, first: S(cand?.first, 40), entries: entriesFor(f.answers || {}, row.ref_name) }
+  if (f?.practice) return { row, practice: true, show: true, first: S(cand?.first, 40), entries: entriesFor(f.answers || {}, row.ref_name) }
+  /* 2026-10-21 (Level of Care, her approved design of 2026-10-08): with ops_settings.reference_tasks_all_live on, every real
+     WORK reference is asked the same task-by-task questions (their "Yes, I saw it myself" answers can verify a level) */
+  if (f && String(row.ref_type || '').toLowerCase() === 'professional') {
+    const { data: o } = await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+    if (o?.data?.reference_tasks_all_live === true) return { row, practice: false, show: true, first: S(cand?.first, 40), entries: entriesFor(f.answers || {}, row.ref_name) }
+  }
+  return { row, practice: false, show: false, first: '', entries: [] }
 }
 export const taskKeys = (entries: any[]) => [...new Set(entries.flatMap((e) => e.tasks))].filter((k) => k in SKILLS)
 
@@ -45,7 +52,7 @@ Deno.serve(async (req) => {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(r)) return json(NOT_PRACTICE)
   try {
     const L = await lookup(db, r)
-    if (!L || !L.practice) return json(NOT_PRACTICE)
+    if (!L || !L.show) return json(NOT_PRACTICE)
     const keys = taskKeys(L.entries)
     if (S(b.action, 10) === 'save') {
       if (L.row.responded_at) return json({ ok: false, error: 'already' }, 409)
@@ -58,9 +65,9 @@ Deno.serve(async (req) => {
         .eq('id', r).is('responded_at', null).select('id')
       if (error) return json({ ok: false, error: 'Could not save.' }, 500)
       if (!data?.length) return json({ ok: false, error: 'already' }, 409)
-      return json({ ok: true, practice: true, saved: keys.length })
+      return json({ ok: true, practice: L.practice, show: true, saved: keys.length })
     }
-    return json({ ok: true, practice: true, first: L.first, answered: !!L.row.responded_at,
+    return json({ ok: true, practice: L.practice, show: true, first: L.first, answered: !!L.row.responded_at,
       entries: L.entries.map((e) => ({ kind: e.kind, where: e.where, when: e.when, tasks: e.tasks.map((k: string) => ({ key: k, label: SKILLS[k] })) })) })
   } catch {
     return json(NOT_PRACTICE)

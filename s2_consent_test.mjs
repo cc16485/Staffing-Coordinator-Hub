@@ -93,6 +93,6 @@ ck('S2 · the row carries the applicant\'s own record: that record decides (yes 
 ck('S2 · no yes and no email: nothing sent (the office picks it up at day 9)', SENT.length === 7, SENT)
 const src2 = fs.readFileSync(`${FN}/reference-chase/index.ts`, 'utf8')
 ck('S2 · the text now says "Reply STOP to opt out."', /Reply STOP to opt out\./.test(src2))
-ck('S2 · still exactly 4 sends, all through the opt-out door', (src2.match(/await door\(/g) || []).length === 4)
+ck('S2 · still every send through the opt-out door (4 emails or applicant texts, plus the 2 reference texts of 2026-10-21)', (src2.match(/await door\(/g) || []).length === 6)
 for (const [n, o, note] of res) console.log((o ? 'PASS' : 'FAIL') + ' · ' + n + (o ? '' : '\n   ' + note))
 console.log(res.filter((x) => x[1]).length + '/' + res.length)
