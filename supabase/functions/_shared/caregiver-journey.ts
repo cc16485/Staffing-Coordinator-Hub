@@ -71,8 +71,10 @@ export async function facts(db: Any, j: Any, trn: { get(id: string): Promise<Any
       const x = (rx || []).find((w: Any) => w.rights_explained_at && w.rights_ack_confirmed === true)
       f.rights_explained = x ? { at: x.rights_explained_at, by: x.rights_explained_by || null, by_email: x.rights_explained_by_email || null, welcome_call_id: x.id } : null
     } catch { f.rights_explained = null }
-    const { data: prof } = await db.from('caregiver_profiles').select('id, published, published_at, updated_at, candidate_id, status').in('candidate_id', ids).neq('status', 'withdrawn').limit(2)
+    const { data: prof } = await db.from('caregiver_profiles').select('id, published, published_at, updated_at, candidate_id, status, photo_path').in('candidate_id', ids).neq('status', 'withdrawn').limit(2)
     const p = (prof || []).find((x: Any) => x.published) || prof?.[0]; f.profile_published_at = p?.published ? (p.published_at || p.updated_at) : null
+    /* 2026-10-21 the badge task (stop 6): their profile photo is in */
+    f.profile_photo = !!(p && p.photo_path)
   }
   if (f.roster?.hire_date) { const hire = String(f.roster.hire_date).slice(0, 10); f.after_first_year = (Date.now() - Date.parse(hire + 'T12:00:00Z')) > 365 * 86400000 }
   return f

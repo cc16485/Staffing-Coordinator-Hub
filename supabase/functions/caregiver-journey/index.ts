@@ -49,6 +49,7 @@ import { latestTextConsent, inTextHours, withStop } from '../_shared/text-consen
 import { saveAuditFields } from '../_shared/sweep-patch.ts'
 import { loadLeie, matchLeie, oigEvidence, oigDue, OIG_INTERVAL_DAYS } from '../_shared/oig-leie.ts'
 import { advanceDue, oigWanted, oigItemId, ADV_KEY } from '../_shared/onboarding-auto.ts'   /* 2026-10-21 onboarding design */
+import { autoAskSlots, requestRow } from '../_shared/ref-auto-ask.ts'   /* 2026-10-21 references asked by themselves */
 import { readTraining, certificateRef, syncPatch } from '../_shared/training-sync.ts'
 import { testPerson } from '../_shared/test-people.ts'
 /* LPN HIRING (Samantha approved the LPN nurse visit plan, 2026-10-14): the nurse rows, the nurse forms, the nurse setup at Approve to Work */
@@ -574,6 +575,35 @@ Deno.serve(async (req) => {
            Orientation owner, closed when Step 1 completes or the offer closes. */
         if (!f.offer && T) (out.offers_unread as number)++
         if ((await step1Stall(db, j, f, st, recruit, now)) === 'raised') (out.step1_stalled as number)++
+        /* 2026-10-21 REFERENCES ASKED BY THEMSELVES: the reference rows the office used to make with Ask refs, made here once
+           their Step 1 is complete (refs_auto_ask_live; off = what it would make is recorded, see _shared/ref-auto-ask.ts).
+           reference-chase is poked once after the sweep, so the email and text go now (in its hours) rather than tomorrow. */
+        { const c = f.candidate, A = (out.auto_ask ||= { live: st.refs_auto_ask_live === true, made: 0, would: 0, people: [] as string[], errors: 0 }) as Any
+          if (c && c.onboarding_path === 'new' && !!f.step1?.completed_at) {
+            const { data: have, error: he } = await db.from('reference_requests').select('slot').eq('candidate_id', c.id)
+            const slots = he ? [] : autoAskSlots(c, true, (have ?? []).map((x: Any) => Number(x.slot)))
+            if (slots.length) {
+              const who = `${S(c.first, 40)} ${S(c.last, 60)}`.trim() + ' (' + slots.length + ' reference' + (slots.length === 1 ? '' : 's') + ')'
+              if (!A.live) {
+                A.would += slots.length; A.people.push(who)
+                await db.rpc('upsert_app_data_item', { target_key: 'refs_auto_ask_practice', item: { id: 'ask_' + c.id, candidate_id: c.id, offer_id: j.offer_id, would_make: slots.map((n) => ({ slot: n, ref_name: S(c['r' + n + 'n'], 80) })), at: now } })
+              } else {
+                const { error } = await db.from('reference_requests').insert(slots.map((n) => requestRow(c, n)))
+                if (error) { A.errors++; await raiseCard(db, { id: 'cj_refask_' + j.journey_id, kind: 'send_problem', urgency: 'today', who: j.client_name, offer_id: j.offer_id, title: 'References were not asked for ' + j.client_name, detail: `The Hub could not set up their reference requests (${S(error.message, 140)}). Press Ask refs on their checklist.` }, { domain: 'recruiting_orientation' }) }
+                else { A.made += slots.length; A.people.push(who); await event(db, j.journey_id, 'cg.refs.cleared', {}, 'references_asked', { slots, by: 'the Hub (Step 1 complete)' }) }
+              }
+            }
+          } }
+        /* 2026-10-21 THE EMPLOYEE BADGE (stop 6): once their profile photo is in, one card for whoever owns Recruiting &
+           Orientation: make and mail their badge. It never holds up Approve to Work. The Hub records badge_mailed_at on
+           their record, which closes the card. ops_settings.badge_cards_live (off = counted only). */
+        { const rec = f.candidate || f.roster, B = (out.badge ||= { live: st.badge_cards_live === true, raised: 0, would: 0, closed: 0 }) as Any
+          if (rec && (rec.badge_mailed_at || rec.badge_not_needed)) { await closeCard(db, 'cj_badge_' + j.journey_id, 'Badge recorded mailed.', () => { B.closed++ }) }
+          else if (rec && f.profile_photo && !rec.not_hired) {
+            if (B.live) { await raiseCard(db, { id: 'cj_badge_' + j.journey_id, kind: 'badge_to_mail', urgency: 'normal', who: j.client_name, offer_id: j.offer_id, title: "Make and mail " + j.client_name + "'s badge",
+              detail: `${j.client_name}'s profile photo is in. Print their Caring Companions employee badge with it, mail it to the address on their Step 1, then press Badge mailed on their onboarding checklist. This never holds up Approve to Work.` }, { owner: recruit?.email, owner_name: recruit?.name, domain: 'recruiting_orientation' }); B.raised++ }
+            else B.would++
+          } }
         /* 2026-10-21 decision 3: Approve to Advance by itself once everything in front of it is done and nothing is blocked */
         const ad = advanceDue(view, dfs), O = out.advance as Any
         if (ad.due) {
@@ -611,6 +641,12 @@ Deno.serve(async (req) => {
         /* a cleared text held after hours goes now, in hours, with the switch on */
         if (a.approved && a.axiscare.state === 'confirmed' && a.text?.state === 'due' && (st.approve_work_text_live === true || testPerson(st, { phone: f.roster?.phone || f.offer?.phone, email: f.roster?.email || f.offer?.email })) && inTextHours()) { const t = await clearedTextStep(db, j, f, st, {}); if (t.state === 'sent') (out.texts_sent as number)++ }
         if (view.complete && j.status === 'open') { await db.from('client_journey').update({ status: 'active', updated_at: now }).eq('journey_id', j.journey_id); await event(db, j.journey_id, null, {}, 'complete', { all: true }); (out.completed as number)++ }
+      }
+      /* the rows just made are asked now: reference-chase only touches rows never sent, and keeps its own hours */
+      if ((out.auto_ask as Any)?.made) {
+        try { const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/reference-chase`, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: Deno.env.get('SUPABASE_ANON_KEY') ?? '', Authorization: 'Bearer ' + (Deno.env.get('SUPABASE_ANON_KEY') ?? ''), 'x-cron-secret': Deno.env.get('HUB_JOB_SECRET') ?? '' }, body: '{}' })
+          ;(out.auto_ask as Any).chase = r.ok ? ((await r.json().catch(() => ({})))?.skipped || 'asked') : 'refused ' + r.status }
+        catch (e) { (out.auto_ask as Any).chase = 'could not reach reference-chase: ' + String((e as Error)?.message ?? e).slice(0, 100) }
       }
       return json({ ok: true, ...out })
     }
