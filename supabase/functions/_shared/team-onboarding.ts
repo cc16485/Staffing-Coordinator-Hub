@@ -24,8 +24,8 @@ export function tbStage(f: TbFacts, now = Date.now()): { key: string; label: str
   const orientationDone = f.orientation_done || f.ovc?.status === 'done' || !!f.ovc?.done_at
   if (f.approved) return { key: 'approved', label: TB_LABEL.approved }
   if (!f.step1_done) return { key: 'step1_not_done', label: TB_LABEL.step1_not_done }
-  if (orientationDone && f.dementia_done) return { key: 'ready', label: TB_LABEL.ready }
-  if (orientationDone) return { key: 'needs_dementia', label: TB_LABEL.needs_dementia }
+  /* 2026-10-21 orientation only (her rule 2026-10-15): the dementia course is optional, so orientation done is ready */
+  if (orientationDone) return { key: 'ready', label: TB_LABEL.ready }
   if (f.ovc?.status === 'booked' && f.ovc.starts_at && Date.parse(f.ovc.starts_at) > now - 2 * 3600e3)
     return { key: 'orientation_set', label: TB_LABEL.orientation_set + ' for ' + dayWord(f.ovc.starts_at) }
   return { key: 'step1_done', label: TB_LABEL.step1_done }

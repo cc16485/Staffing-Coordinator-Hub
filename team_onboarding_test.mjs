@@ -8,7 +8,7 @@ ck('Step 1 not finished: its own label (kept on a plan, never offered)', M.tbSta
 ck('Step 1 done, nothing booked: "Step 1 done (checks running)"', M.tbStage(F({}), NOW).label === 'Step 1 done (checks running)')
 ck('Orientation Video Call booked ahead: "Orientation scheduled for <day>"', M.tbStage(F({ ovc: { status: 'booked', starts_at: '2026-10-16T15:00:00Z' } }), NOW).label === 'Orientation scheduled for Fri, Oct 16')
 ck('booked but long past and not marked done: back to Step 1 done (not shown as scheduled)', M.tbStage(F({ ovc: { status: 'booked', starts_at: '2026-10-10T15:00:00Z' } }), NOW).key === 'step1_done')
-ck('orientation done (the call marked done, or the readiness row, or the roster date): needs the dementia course', M.tbStage(F({ ovc: { status: 'done' } }), NOW).label === "Orientation done, needs the Alzheimer's/dementia course" && M.tbStage(F({ orientation_done: true }), NOW).key === 'needs_dementia')
+ck('orientation done (the call marked done, or the readiness row, or the roster date): ready, no dementia course needed (orientation only, 2026-10-21)', M.tbStage(F({ ovc: { status: 'done' } }), NOW).label === 'Ready, waiting on Approve to Work')
 ck('orientation and the dementia course done: "Ready, waiting on Approve to Work"', M.tbStage(F({ orientation_done: true, dementia_done: true }), NOW).label === 'Ready, waiting on Approve to Work')
 ck('the dementia course alone does not skip orientation', M.tbStage(F({ dementia_done: true }), NOW).key === 'step1_done')
 ck('Approved to Work wins', M.tbStage(F({ approved: true, step1_done: false }), NOW).key === 'approved')

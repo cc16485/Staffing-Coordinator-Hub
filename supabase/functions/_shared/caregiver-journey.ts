@@ -87,6 +87,27 @@ export function rightsState(f: Facts): { state: 'complete' | 'waiting_explanatio
 }
 export type Verdict = { key: string; state: 'complete' | 'blocked'; at: string; evidence: Record<string, unknown>; reason?: string }
 const iso = (v: unknown) => { const t = typeof v === 'string' && v ? Date.parse(v.length === 10 ? v + 'T12:00:00Z' : v) : NaN; return Number.isFinite(t) ? new Date(t).toISOString() : null }
+/** The Hub's reference rule (eligibility-rules.js refDecisionCovers + refPolicy), word for word. Pure. The fixture test
+ *  ref_policy_parity_test.mjs runs both on the same records. */
+export function refTypeOfSlot(c: Any, n: number): string {
+  const t = String((c?.['r' + n + '_manual'] && c['r' + n + '_manual'].type) || c?.['r' + n + '_type'] || '').trim().toLowerCase()
+  return t === 'professional' ? 'professional' : t === 'personal' ? 'personal' : ''
+}
+export function refDecisionCoversOf(c: Any): boolean {
+  const d = c?.ref_decision
+  if (!d || d.outcome !== 'proceed') return false
+  return String(d.refs || '') === [c.r1s, c.r2s, c.r3s, c.r4s].map((x) => x || '').join('|')
+}
+export function refPolicyOf(c: Any): { ok: boolean; blocked: boolean; why: string } {
+  const refs = [c?.r1s, c?.r2s, c?.r3s, c?.r4s]
+  const pos = refs.filter((r) => r === 'Positive').length
+  if (refs.some((r) => r === 'Negative')) return { ok: false, blocked: true, why: 'A reference came back Negative. A supervisor has to resolve it.' }
+  if (refs.some((r) => r === 'Conditional') && !refDecisionCoversOf(c)) return { ok: false, blocked: true, why: 'A reference is Conditional. A supervisor has to decide before this one moves on.' }
+  if (pos < 2) return { ok: false, blocked: false, why: (2 - pos) + ' more positive reference' + (2 - pos === 1 ? '' : 's') + ' needed (at least one from a past job).' }
+  const work = [1, 2, 3, 4].some((n) => c['r' + n + 's'] === 'Positive' && refTypeOfSlot(c, n) === 'professional')
+  if (!work) return { ok: false, blocked: false, why: 'One of the positive references has to be from a past job. If one already is, mark it as a work reference.' }
+  return { ok: true, blocked: false, why: '' }
+}
 /** Which rows the facts satisfy right now. Pure. */
 export function verifyRows(f: Facts, now = new Date().toISOString()): Verdict[] {
   const out: Verdict[] = []
@@ -113,7 +134,9 @@ export function verifyRows(f: Facts, now = new Date().toISOString()): Verdict[] 
   if (sigs.reference_consent?.at && sigs.fcra_disclosure?.at && sigs.edl_fcsr_consent?.at) { const at = [sigs.reference_consent.at, sigs.fcra_disclosure.at, sigs.edl_fcsr_consent.at].sort().pop(); out.push({ key: 'cg.consent.checks', state: 'complete', at: iso(at) || now, evidence: { forms: ['reference_consent', 'fcra_disclosure', 'edl_fcsr_consent'] } }) }
   /* the checks: a result with its date and document, recorded on the row (proof required since 2c) */
   /* CASE.NET (Samantha 2026-10-11): the Missouri courts name search is one of the background checks, recorded the same way */
-  const checks: [string, string, string][] = [['cg.check.oig', 'oig', 'oig'], ['cg.check.edl', 'edl', 'edl'], ['cg.check.fcsr', 'fcsr', 'fcsr'], ['cg.check.casenet', 'casenet', 'casenet'], ['cg.check.fingerprints', 'fp', 'fp']]
+  /* NO FINGERPRINTS (Samantha 2026-10-21: "I don't need finger print anymore since we are stopping Medicaid IHS"): the row is
+     switched off in the catalog (1031 SQL) and never verified or blocked from here. */
+  const checks: [string, string, string][] = [['cg.check.oig', 'oig', 'oig'], ['cg.check.edl', 'edl', 'edl'], ['cg.check.fcsr', 'fcsr', 'fcsr'], ['cg.check.casenet', 'casenet', 'casenet']]
   /* GO-LIVE GATE (2026-10-13, Samantha's slice 2c rule "a result is never recorded without its evidence"): on the new path a
      check counts as done only with its result, its date AND its proof on the record (the OIG LEIE result kept on the record
      counts as its proof). A clear result with a date but no proof leaves the row open, so the card shows it still owed. */
@@ -124,10 +147,13 @@ export function verifyRows(f: Facts, now = new Date().toISOString()): Verdict[] 
     else if (flagged(res)) out.push({ key, state: 'blocked', at: now, evidence: { result: res, date: date || null }, reason: 'Flagged: see the background review before anything else moves.' })
   }
   if (c.fcsr_reg_date) out.push({ key: 'cg.check.fcsr_registration', state: 'complete', at: iso(c.fcsr_reg_date) || now, evidence: { registered: c.fcsr_reg_date, document: c.fcsr_reg_proof || null } })
-  /* references: two positive, at least one professional (decision 1) */
-  const slots = [1, 2, 3, 4].map((n) => ({ name: c['r' + n + 'n'], status: c['r' + n + 's'], type: c['r' + n + '_type'] })).filter((r) => r.name)
-  const pos = slots.filter((r) => positive(r.status)); const pro = pos.filter((r) => String(r.type || '').toLowerCase() === 'professional')
-  if (pos.length >= 2 && pro.length >= 1) out.push({ key: 'cg.refs.cleared', state: 'complete', at: now, evidence: { positive: pos.map((r) => r.name), professional: pro.map((r) => r.name) } })
+  /* references: the Hub's one reference rule (eligibility-rules.js refPolicy, 2026-10-21 made identical): two Positive with at
+     least one from work (the type on the slot or with the answers), any Negative blocks, a Conditional blocks unless an owner's
+     decision covers exactly these answers */
+  const rp = refPolicyOf(c)
+  if (rp.ok) { const slots = [1, 2, 3, 4].map((n) => ({ name: c['r' + n + 'n'], status: c['r' + n + 's'], type: refTypeOfSlot(c, n) })).filter((r) => r.name)
+    const pos = slots.filter((r) => positive(r.status)); out.push({ key: 'cg.refs.cleared', state: 'complete', at: now, evidence: { positive: pos.map((r) => r.name), professional: pos.filter((r) => r.type === 'professional').map((r) => r.name), ...(c.ref_decision ? { decision: c.ref_decision } : {}) } }) }
+  else if (rp.blocked) out.push({ key: 'cg.refs.cleared', state: 'blocked', at: now, evidence: { refs: [c.r1s, c.r2s, c.r3s, c.r4s].map((x) => x || '') }, reason: rp.why })
   if (f.welcome_call_done_at) out.push({ key: 'cg.welcome.call', state: 'complete', at: iso(f.welcome_call_done_at) || now, evidence: { done_at: f.welcome_call_done_at } })
   const r = f.roster || {}
   if (r.orient_date) out.push({ key: 'cg.training.orientation', state: 'complete', at: iso(r.orient_date) || now, evidence: { date: r.orient_date, document: r.orient_proof || null, note: 'employment start date (decision 7)' } })

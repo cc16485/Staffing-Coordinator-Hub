@@ -2,7 +2,8 @@
 // BACKGROUND REVIEW, the rules and the words (446). Samantha approved the revised plan "Telling an applicant something
 // came up on a background check" ("yes to all", 2026-10-04, https://claude.ai/artifact/92p3yq6QqJxHq2dFLiBbY4).
 //
-// Our own direct checks only (FCSR, EDL, OIG, fingerprints). A finding is NEVER an automatic
+// Our own direct checks only (FCSR, EDL, OIG, Case.net; fingerprints retired 2026-10-21, kept only so an older review still
+// reads). A finding is NEVER an automatic
 // "not hired": an office person reads the result and picks the review result. Two steps, each sent only when a person
 // presses OK on the exact words:
 //   Step 1 "Something came up": the text never names the check; the email names the check, never any detail. It sets
@@ -23,12 +24,17 @@ export const TZ = 'America/Chicago'
 export const OFFICE = '(417) 234-8494'
 export const RESPONSE_DAYS = 5
 
-export type Check = 'fcsr' | 'edl' | 'oig' | 'fp'
+export type Check = 'fcsr' | 'edl' | 'oig' | 'casenet' | 'fp'
 export type Result = 'review' | 'waiver_needed' | 'no_waiver' | 'cannot_employ'
 export const CHECKS: Record<Check, { label: string; name: string; phrase: string; flagged: string[]; clear: string; results: Result[] }> = {
   fcsr: { label: 'FCSR', name: 'Missouri Family Care Safety Registry', phrase: 'Missouri Family Care Safety Registry screening', flagged: ['Issues Found'], clear: 'Clear', results: ['waiver_needed', 'no_waiver', 'cannot_employ'] },
   edl: { label: 'EDL', name: 'Missouri Employee Disqualification List', phrase: 'Missouri Employee Disqualification List check', flagged: ['Issues Found'], clear: 'Clear', results: ['cannot_employ'] },
   oig: { label: 'OIG', name: 'federal OIG exclusion list', phrase: 'federal OIG exclusion list check', flagged: ['FLAGGED'], clear: 'CLEAR', results: ['cannot_employ'] },
+  /* CASE.NET (2026-10-21, the onboarding design: a Case.net "Issues Found" needs a review path). Court records are our own
+     search, not a state list: "Can't be employed" sends OUR decision notice, which never names the court record (the same
+     key, results and notice the Hub's BGRV_CHECKS uses). */
+  casenet: { label: 'Case.net', name: 'background screening', phrase: 'background screening', flagged: ['Issues Found'], clear: 'Clear', results: ['cannot_employ'] },
+  /* RETIRED 2026-10-21 (no fingerprints): new reviews are refused (bg-review open), older ones still read */
   fp: { label: 'Fingerprints', name: 'fingerprint background check', phrase: 'fingerprint background check', flagged: ['Issues Found'], clear: 'Clear', results: ['waiver_needed', 'no_waiver'] },
 }
 export const isCheck = (k: unknown): k is Check => typeof k === 'string' && Object.prototype.hasOwnProperty.call(CHECKS, k)
@@ -73,7 +79,7 @@ export function step1Words(first: string, check: Check, due: string): Words {
 export type Variant = 'waiver' | 'decision' | 'edl' | 'oig'
 export function variantFor(check: Check, result: Result | string | null | undefined): Variant | null {
   if (!isCheck(check) || !CHECKS[check].results.includes(result as Result)) return null
-  if (result === 'cannot_employ') return check === 'oig' ? 'oig' : (check === 'edl' || check === 'fcsr') ? 'edl' : null
+  if (result === 'cannot_employ') return check === 'oig' ? 'oig' : (check === 'edl' || check === 'fcsr') ? 'edl' : check === 'casenet' ? 'decision' : null
   if (result === 'waiver_needed') return (check === 'fcsr' || check === 'fp') ? 'waiver' : null
   if (result === 'no_waiver') return (check === 'fcsr' || check === 'fp') ? 'decision' : null
   return null
@@ -84,7 +90,7 @@ export function finalWords(first: string, check: Check, variant: Variant, spoke:
   const middle: Record<Variant, string[]> = {
     waiver: [`After reviewing your ${name} results, we're not able to offer you a caregiving position at this time. Missouri rules don't allow us to employ someone with this kind of result unless the state grants a Good Cause Waiver.`,
       `You can apply for a waiver yourself by calling the Family Care Safety Registry at 1-866-422-6872 (weekdays, 9am to 3pm) or at health.mo.gov/providers/good-cause-waiver. If a waiver is granted, you're welcome to apply with us again.`],
-    decision: [`After reviewing your ${name} results${spoke ? ' and talking with you' : ''}, we've decided not to move forward with your application for a caregiving position at this time.`],
+    decision: [`After reviewing your ${check === 'casenet' ? 'background screening' : name + ' results'}${spoke ? ' and talking with you' : ''}, we've decided not to move forward with your application for a caregiving position at this time.`],
     edl: [`After reviewing your background screening, we're not able to offer you a position. Missouri law does not allow in-home care providers to employ anyone listed on the Missouri Employee Disqualification List.`,
       `If you believe this listing is in error, you can contact the Missouri Department of Health and Senior Services.`],
     oig: [`After reviewing your background screening, we're not able to offer you a caregiving position. Federal rules don't allow us to employ someone on the federal OIG exclusion list in a role paid by Medicare or Medicaid.`,
