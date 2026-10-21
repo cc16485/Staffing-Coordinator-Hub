@@ -41,6 +41,7 @@ import { makeStep2Link, checkLink } from '../_shared/applicant-links.ts'
 import { dueNextBusinessDay, centralYmd } from '../_shared/business-days.ts'
 import { sentMessages, reminderMessages, receiptText, stillOpenText, isDoneReply, rowFor, stateOf, reminderDue, inReminderWindow, refusedForGood, REMINDER_TRIES } from '../_shared/step2.ts'
 import { testPerson } from '../_shared/test-people.ts'
+import { profileReminderMessages, profileLink } from '../_shared/welcome-message.ts'   /* 2026-10-21 the one welcome message + profile reminders */
 import { validKey, packetLine } from '../_shared/positions.ts'   /* LPN HIRING 2026-10-14: the Step 2 LPN packet tick */
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -163,8 +164,8 @@ async function deliver(db: Any, rec: Any, m: { text: string; subject?: string; h
 }
 const doneLink = (candId: string) => makeStep2Link(Deno.env.get('HUB_JOB_SECRET') ?? '', candId)
 /** the Orientation Video Call invitation through welcome-call's own server door (same words, gate and opt-out door) */
-async function inviteVia(c: Any, cid: string, by: string, only?: 'text'): Promise<{ ok: boolean; status: number; j: Any }> {
-  const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/welcome-call`, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: Deno.env.get('SUPABASE_ANON_KEY') ?? '', Authorization: 'Bearer ' + (Deno.env.get('SUPABASE_ANON_KEY') ?? ''), 'x-cron-secret': Deno.env.get('HUB_JOB_SECRET') ?? '' }, body: JSON.stringify({ action: 'invite_auto', candidate_id: cid, first: c.first || '', last: c.last || '', phone: c.phone || '', email: c.email || '', by, ...(only ? { only } : {}) }) })
+async function inviteVia(c: Any, cid: string, by: string, only?: 'text', welcome = false): Promise<{ ok: boolean; status: number; j: Any }> {
+  const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/welcome-call`, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: Deno.env.get('SUPABASE_ANON_KEY') ?? '', Authorization: 'Bearer ' + (Deno.env.get('SUPABASE_ANON_KEY') ?? ''), 'x-cron-secret': Deno.env.get('HUB_JOB_SECRET') ?? '' }, body: JSON.stringify({ action: 'invite_auto', candidate_id: cid, first: c.first || '', last: c.last || '', phone: c.phone || '', email: c.email || '', by, ...(only ? { only } : {}), ...(welcome ? { welcome: true } : {}) }) })
   const j = await r.json().catch(() => ({}))
   return { ok: r.ok && !!j?.ok, status: r.status, j }
 }
@@ -253,7 +254,7 @@ Deno.serve(async (req) => {
           if (jr && inv && inv.text_held === true && inTextHours() && (st.wc_auto_invite_live === true || testPerson(st, c))) {
             let next: Any
             try {
-              const r = await inviteVia(c, cid, 'held text', 'text')
+              const r = await inviteVia(c, cid, 'held text', 'text', inv.welcome === true)
               next = r.ok && r.j.texted ? { ...inv, text_held: false, texted: true, text_sent_at: now }
                 : r.ok && r.j.skipped ? { ...inv, text_held: false, text_skipped: r.j.skipped, text_skipped_at: now }
                 : r.ok && r.j.text_held ? inv
@@ -266,6 +267,30 @@ Deno.serve(async (req) => {
               await event(db, jr.j.journey_id, null, {}, next.texted && !inv.texted ? 'welcome_invite_text_sent' : next.text_held ? 'welcome_invite_text_retry' : 'welcome_invite_text_closed', { text_sent_at: next.text_sent_at || null, skipped: next.text_skipped || null, refused: next.text_refused || null, failed: next.text_failed || null })
               if (next.text_refused || next.text_failed) await raiseCard(db, { id: 'step2_invite_' + cid, kind: 'send_problem', urgency: 'today', who: name, candidate_id: cid, owner, title: 'Orientation Video Call invitation text did not go to ' + name, detail: String(next.text_refused || next.text_failed) + '.' + (inv.emailed ? ' The invitation email did go.' : ' The invitation email did not go either.') + ' Call them, or press Invite to Orientation Video Call on the Orientations tab.' })
               if (next.texted && !inv.texted) out.invite_texts_sent = (out.invite_texts_sent || 0) + 1
+            }
+          }
+          /* 2026-10-21 PROFILE REMINDERS (stop 6): day 3 and day 6 after the welcome message, while their profile is not sent in,
+             inside the reminder window; ops_settings.profile_reminders_live (off = recorded as practice, nothing sent). A
+             reminder that cannot go is a card (no silent failures). */
+          if (jr && inv && inv.welcome === true && ['sent', 'held'].includes(inv.state) && inv.at) {
+            const days = Math.floor((Date.parse(today + 'T00:00:00Z') - Date.parse(centralYmd(inv.at) + 'T00:00:00Z')) / 86400000)
+            const pr = { ...(c.profile_reminders && typeof c.profile_reminders === 'object' ? c.profile_reminders : {}) }
+            const dueDay = [6, 3].find((d) => days >= d && !pr['d' + d])
+            if (dueDay && inReminderWindow()) {
+              const { data: pf } = await db.from('caregiver_profiles').select('id, upload_token, submitted_at, published, status').eq('candidate_id', cid).neq('status', 'withdrawn').limit(1)
+              const prof = pf?.[0]
+              if (prof && !prof.submitted_at && !prof.published) {
+                if (dueDay === 6 && !pr.d3) pr.d3 = { at: now, passed_over: 'd6' }
+                if (st.profile_reminders_live !== true && !testPerson(st, c)) { pr['d' + dueDay] = { at: now, practice: true }; out.profile_reminders_practice = (out.profile_reminders_practice || 0) + 1 }
+                else {
+                  const r = await deliver(db, c, profileReminderMessages(c.first || 'there', profileLink(prof.upload_token)), 'step2-handoff')
+                  pr['d' + dueDay] = { at: now, texted: r.texted, emailed: r.emailed, not_sent: r.not_sent }
+                  if (r.texted || r.emailed) out.profile_reminders_sent = (out.profile_reminders_sent || 0) + 1
+                  else await raiseCard(db, { id: 'profile_reminder_' + cid + '_d' + dueDay, kind: 'send_problem', urgency: 'today', who: name, candidate_id: cid, owner, title: 'Profile reminder did not reach ' + name, detail: `The day ${dueDay} reminder to finish their caregiver profile could not go: ${(r.not_sent || []).join('; ') || 'no reason given'}. Give them a call.` })
+                }
+                await patch(db, p, { profile_reminders: pr })
+                await event(db, jr.j.journey_id, null, {}, 'profile_reminder', { day: dueDay, practice: !!pr['d' + dueDay].practice })
+              }
             }
           }
           continue
@@ -392,10 +417,12 @@ Deno.serve(async (req) => {
         if (st.wc_auto_invite_live !== true && !testPerson(st, c)) { invite = { state: 'practice', at: now, why: 'wc_auto_invite_live is off: the invitation was not sent; press Invite to Orientation Video Call yourself' } }
         else {
           try {
-            const r = await inviteVia(c, cid, who.name || who.email)
+            /* 2026-10-21 stop 5: the ONE welcome message (booking, profile, orientation, badge) with welcome_message_live */
+            const welcomeOn = st.welcome_message_live === true || testPerson(st, c)
+            const r = await inviteVia(c, cid, who.name || who.email, undefined, welcomeOn)
             const j = r.j
             /* GO-LIVE (2026-10-13): a text held after hours is not a failure: the pass sends it at the first chance inside hours */
-            invite = r.ok ? { state: j.texted || j.emailed ? 'sent' : j.text_held ? 'held' : 'failed', at: now, texted: !!j.texted, emailed: !!j.emailed, not_sent: j.not_sent || [], id: j.id || null, ...(j.text_held ? { text_held: true } : {}) } : { state: 'failed', at: now, why: j?.error || ('Orientation Video Call answered ' + r.status) }
+            invite = r.ok ? { state: j.texted || j.emailed ? 'sent' : j.text_held ? 'held' : 'failed', at: now, texted: !!j.texted, emailed: !!j.emailed, not_sent: j.not_sent || [], id: j.id || null, ...(j.text_held ? { text_held: true } : {}), ...(j.welcome ? { welcome: true, profile_id: j.profile_id || null } : {}) } : { state: 'failed', at: now, why: j?.error || ('Orientation Video Call answered ' + r.status) }
           } catch (e) { invite = { state: 'failed', at: now, why: 'could not reach welcome-call: ' + String((e as Error)?.message ?? e).slice(0, 120) } }
         }
         fields.step2_invite = invite

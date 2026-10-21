@@ -36,6 +36,7 @@ import { caregiverGate } from '../_shared/caregiver-journey.ts'   /* SLICE 3b */
 import { ghlContactIfAllowed } from '../_shared/optout.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { latestTextConsent, inTextHours, withStop } from '../_shared/text-consent.ts'
+import { welcomeMessages, profileLink } from '../_shared/welcome-message.ts'   /* 2026-10-21 the one welcome message */
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -112,9 +113,12 @@ Deno.serve(async (req) => {
   let action = String(b.action || 'preview')
   /* SLICE 4 (2026-10-10, option A): at Verify Viventium Step 2 Complete the Step 2 server sends the invitation itself, through
      this same path (same words, same gate, same opt-out door), on the job secret. Nobody else may use this door. */
-  let staff = '', staffEmail = '', onlyText = false, auto = false
+  let staff = '', staffEmail = '', onlyText = false, auto = false, welcome = false
   if (action === 'invite_auto') {
     auto = true
+    /* 2026-10-21 (stop 5 of the onboarding design): the Step 2 server asks for the ONE welcome message (booking link,
+       profile link, orientation, badge) when ops_settings.welcome_message_live is on; otherwise the plain invitation */
+    welcome = b.welcome === true
     /* GO-LIVE (2026-10-13, hold rather than drop): the Step 2 pass sends an invitation TEXT that was held after hours with
        only: 'text' (the email already went); nothing else changes */
     onlyText = b.only === 'text'
@@ -171,6 +175,19 @@ Deno.serve(async (req) => {
     }
     return false
   }
+  /** the new hire's own profile row (made if there is none, self-complete: they write it themselves) and its personal link */
+  async function ensureProfile(cand: string, row: { first_name: string; last_name: string }): Promise<{ id: string; link: string } | null> {
+    const { data: have, error } = await db.from('caregiver_profiles').select('id, upload_token, status').eq('candidate_id', cand).neq('status', 'withdrawn').limit(1)
+    if (error) return null
+    let p = have?.[0]
+    if (!p) {
+      const ins = await db.from('caregiver_profiles').insert({ candidate_id: cand, first_name: row.first_name || null, last_name: row.last_name || null, status: 'new', published: false, consent: false, self_complete: true, updated_at: new Date().toISOString() }).select('id, upload_token, status').single()
+      if (ins.error) { const again = await db.from('caregiver_profiles').select('id, upload_token, status').eq('candidate_id', cand).neq('status', 'withdrawn').limit(1); p = again.data?.[0] } else p = ins.data
+    }
+    if (!p?.upload_token) return null
+    await db.from('caregiver_profiles').update({ link_sent_at: new Date().toISOString(), link_sent_by: 'The Hub (welcome message)' }).eq('id', p.id)
+    return { id: p.id, link: profileLink(p.upload_token) }
+  }
   if (action === 'invite') {
     const cand = clean(b.candidate_id, 40)
     if (!cand) return json({ error: 'which candidate?' }, 400)
@@ -197,8 +214,14 @@ Deno.serve(async (req) => {
       w = data
     }
     if (onlyText && w.status !== 'invited') return json({ ok: true, id: w.id, texted: false, emailed: false, text_held: false, skipped: 'they already booked or the invitation moved on', not_sent: [] })
-    const sent = await deliver(w, inviteMessages(w.first_name || 'there', bookLink(w.id)), { textOnly: onlyText })
-    return json({ ok: true, id: w.id, link: bookLink(w.id), reused: !!open?.length, ...sent })
+    let profile: { id: string; link: string } | null = null
+    if (welcome) {
+      profile = await ensureProfile(cand, row)
+      if (!profile) return json({ error: 'The welcome message did not go: their caregiver profile could not be started, so there was no profile link to send. Nothing was sent.', welcome: true }, 500)
+    }
+    const words = welcome && profile ? welcomeMessages(w.first_name || 'there', bookLink(w.id), profile.link, clean(b.orientation_url, 400) || null) : inviteMessages(w.first_name || 'there', bookLink(w.id))
+    const sent = await deliver(w, words, { textOnly: onlyText })
+    return json({ ok: true, id: w.id, link: bookLink(w.id), reused: !!open?.length, ...(welcome ? { welcome: true, profile_id: profile?.id ?? null } : {}), ...sent })
   }
 
   const id = String(b.id || '')
