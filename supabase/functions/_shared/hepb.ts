@@ -40,6 +40,8 @@ export const DEFAULT_EXPOSURE: ExposureRow[] = [
   { position: 'Caregiver', exposed: true, scope: 'all', tasks: PERSONAL_CARE_TASKS, why: 'Hands-on personal care (bathing, toileting, incontinence care, shaving, nail care) can bring contact with blood or with body fluids visibly contaminated with blood. Decided without regard to gloves (1910.1030(c)(2)(iii)).' },
   { position: 'CNA', exposed: true, scope: 'all', tasks: PERSONAL_CARE_TASKS, why: 'The same hands-on personal care as a Caregiver, with more complex clients.' },
   { position: 'PRN CNA Team', exposed: true, scope: 'all', tasks: PERSONAL_CARE_TASKS, why: 'PRN CNAs cover hands-on personal care shifts.' },
+  /* 1037: the PRN Caregiver Team, by the role's label */
+  { position: 'PRN Caregiver Team', exposed: true, scope: 'all', tasks: PERSONAL_CARE_TASKS, why: 'PRN Caregivers cover hands-on personal care shifts.' },
   { position: 'LPN', exposed: true, scope: 'all', tasks: PERSONAL_CARE_TASKS, why: 'Licensed nursing staff give hands-on care.' },
   { position: 'RN', exposed: true, scope: 'all', tasks: PERSONAL_CARE_TASKS, why: 'Licensed nursing staff give hands-on care.' },
   { position: 'Companion / Homemaker', exposed: false, scope: 'none', tasks: [], why: 'Companionship, housekeeping, meals and errands only, with no hands-on personal care. If personal care, or cleaning up blood, can be assigned, set this position to exposed.' },

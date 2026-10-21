@@ -21,6 +21,13 @@
 //             confirmed on a shift, or backed out after confirming. Kept per person and shift, never edited.
 //   move      {applicant_id, to: 'ongoing'|'prn_team', effective_date, reason, from}: the track change, then the
 //             PRN Team class off (to ongoing; CNA stays) or back on (to prn_team) in AxisCare, read back and logged.
+//   to_cna_team {applicant_id, effective_date, reason}: (1037) a PRN Caregiver who earned a CNA joins the PRN CNA Team at its
+//             rate. A deliberate office step, recorded in the history (who, when, why). AxisCare: their PRN TEAM -
+//             CAREGIVER class becomes PRN TEAM - CNA (and CNA is added), read back and logged.
+// TWO TEAMS (1037, Samantha 2026-10-21 "Yes to all 8 PRN Caregiver recommendations"): the PRN CNA Team ($20 PRN, $18
+// ongoing) and the PRN Caregiver Team ($18 PRN, $16 ongoing). pay_tracks.team says which; the role's own key decides it
+// at start (job_positions.requires_cna). Each team has its own AxisCare class ("PRN TEAM - CNA", "PRN TEAM - CAREGIVER"),
+// matched by name, so two PRN classes never make the check refuse; the caregiver team is never given the CNA class.
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
@@ -34,7 +41,11 @@ const cors = {
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
 const AC_VERSION = '2023-10-01'
-const RATE_FALLBACK = { prn_team: 20, ongoing: 18 }   // her figures; the approved Pay rates win when set
+/* her figures; the approved Pay rates (the Hub's pay_rates card) win when set */
+const RATE_FALLBACK: Record<Team, { prn_team: number; ongoing: number }> = { cna: { prn_team: 20, ongoing: 18 }, caregiver: { prn_team: 18, ongoing: 16 } }
+export type Team = 'cna' | 'caregiver'
+export const TEAM_LABEL: Record<Team, string> = { cna: 'PRN CNA Team', caregiver: 'PRN Caregiver Team' }
+const RATE_KEYS: Record<Team, { prn: string; ongoing: string; role: string }> = { cna: { prn: 'prn_cna', ongoing: 'cna', role: 'prn_cna' }, caregiver: { prn: 'prn_caregiver', ongoing: 'caregiver', role: 'prn_caregiver' } }
 
 // deno-lint-ignore no-explicit-any
 async function recordAxisChange(db: any, c: { kind: string; caregiver: string; outcome: 'sent_confirmed' | 'sent' | 'refused'; summary: string; detail?: string | null; by: string }): Promise<boolean> {
@@ -50,6 +61,10 @@ const lab = (c: { label?: unknown; code?: unknown }) => String(c?.label ?? c?.co
 const slim = (c: { label?: unknown; code?: unknown }) => ({ ...(c?.code ? { code: String(c.code) } : {}), ...(c?.label ? { label: String(c.label) } : {}) })
 /* Which AxisCare classes these are. Exactly one of each must exist, or the step refuses and says so. */
 export const isPrnClass = (c: { label?: unknown; code?: unknown }) => /\bprn\b/i.test(String(c?.label ?? '')) || /\bprn\b/i.test(String(c?.code ?? ''))
+/* Which team a PRN class is for, by its name: "PRN TEAM - CAREGIVER" is the caregiver team; any other PRN class (her "PRN
+   TEAM - CNA", or an older plain "PRN TEAM") is the CNA team's. */
+export const prnTeamOf = (c: { label?: unknown; code?: unknown }): Team | null => !isPrnClass(c) ? null
+  : /\bcaregiver\b/i.test(String(c?.label ?? '') + ' ' + String(c?.code ?? '')) ? 'caregiver' : 'cna'
 /* A CNA can be on the PRN Team or not (her point, 2026-09-29), so the plain CNA class is separate: a class that
    mentions PRN (her "PRN TEAM - CNA") is only ever the PRN Team class, never the CNA one. */
 export const isCnaClass = (c: { label?: unknown; code?: unknown }) => !isPrnClass(c) &&
@@ -91,12 +106,13 @@ const errText = (r: { status: number; json: any }) => {
 }
 // deno-lint-ignore no-explicit-any
 const cgOf = (r: { json: any }) => r.json?.results?.caregiver ?? r.json?.results
-async function vocab() {
+async function vocab(team: Team = 'cna') {
   const v = await ax('GET', '/api/classes/caregiver')
   if (!ok2(v.status)) return { error: 'could not read AxisCare\'s caregiver class list: ' + errText(v) }
   const all = rows(v.json?.results?.classes ?? v.json?.results)
-  const prn = all.filter(isPrnClass), cna = all.filter(isCnaClass)
-  const why = [prn.length !== 1 ? (prn.length ? `AxisCare has ${prn.length} classes that read as PRN Team (${prn.map(lab).join(', ')})` : 'AxisCare has no PRN Team caregiver class yet') : '',
+  const prn = all.filter((c) => prnTeamOf(c) === team), cna = all.filter(isCnaClass)
+  const name = team === 'caregiver' ? 'PRN TEAM - CAREGIVER' : 'PRN TEAM - CNA'
+  const why = [prn.length !== 1 ? (prn.length ? `AxisCare has ${prn.length} classes that read as the ${TEAM_LABEL[team]} (${prn.map(lab).join(', ')})` : `AxisCare has no ${name} caregiver class yet`) : '',
                cna.length !== 1 ? (cna.length ? `AxisCare has ${cna.length} plain CNA classes (${cna.map(lab).join(', ')}), so CNA is left alone` : 'AxisCare has no plain CNA caregiver class yet, so only PRN Team is added') : ''].filter(Boolean)
   return { prn: prn.length === 1 ? prn[0] : null, cna: cna.length === 1 ? cna[0] : null, why }
 }
@@ -111,8 +127,9 @@ Deno.serve(async (req) => {
   if (await ownerCaller(req)) {
     const q = await req.clone().json().catch(() => ({})) as Record<string, unknown>
     if (q.action !== 'vocab') return json({ error: 'the server key may only ask vocab' }, 403)
-    const v = await vocab()
-    return json('error' in v ? { error: v.error } : { prn: v.prn ? lab(v.prn) : null, cna: v.cna ? lab(v.cna) : null, why: v.why })
+    const v = await vocab('cna'), vc = await vocab('caregiver')
+    return json('error' in v ? { error: v.error } : { prn: v.prn ? lab(v.prn) : null, cna: v.cna ? lab(v.cna) : null, why: v.why,
+      prn_caregiver: 'error' in vc ? null : (vc.prn ? lab(vc.prn) : null), why_caregiver: 'error' in vc ? [vc.error] : vc.why })
   }
   const who = await requireStaff(db, req, OFFICE_ROLES)
   if (!who.ok) return json({ error: who.error }, who.status)
@@ -146,25 +163,29 @@ Deno.serve(async (req) => {
   const { data: a } = await db.from('job_applicants').select('id, first_name, last_name, phone, email, position, prn').eq('id', id).maybeSingle()
   if (!a) return json({ error: 'no such applicant' }, 404)
   const { data: tr } = await db.from('pay_tracks').select('*').eq('applicant_id', id).maybeSingle()
-  const rates = async () => {
+  const rates = async (team: Team) => {
     const { data } = await db.from('app_data').select('data').eq('key', 'pay_rates').maybeSingle()
     // deno-lint-ignore no-explicit-any
     const rec = (Array.isArray(data?.data) ? data!.data : []).find((x: any) => x?.id === 'rates')?.rates ?? {}
     const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) && n > 0 && n < 200 ? n : null }
-    const { data: role } = await db.from('job_positions').select('pay_min').eq('key', 'prn_cna').maybeSingle()
-    return { prn_team: num(rec?.prn_cna?.min) ?? num(role?.pay_min) ?? RATE_FALLBACK.prn_team, ongoing: num(rec?.cna?.min) ?? RATE_FALLBACK.ongoing }
+    const k = RATE_KEYS[team]
+    const { data: role } = await db.from('job_positions').select('pay_min').eq('key', k.role).maybeSingle()
+    return { prn_team: num(rec?.[k.prn]?.min) ?? num(role?.pay_min) ?? RATE_FALLBACK[team].prn_team, ongoing: num(rec?.[k.ongoing]?.min) ?? RATE_FALLBACK[team].ongoing }
   }
+  const teamOf = (t: { team?: unknown } | null): Team => t?.team === 'caregiver' ? 'caregiver' : 'cna'
   const today = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
 
   if (action === 'start') {
-    const { data: role } = await db.from('job_positions').select('track').eq('key', a.position ?? '').maybeSingle()
-    if (role?.track !== 'prn') return json({ outcome: 'not_prn', detail: 'this applicant did not apply for the PRN CNA Team' })
+    /* 1037: the role's own key decides the team (requires_cna: the PRN CNA Team; otherwise the PRN Caregiver Team) */
+    const { data: role } = await db.from('job_positions').select('track, requires_cna, label').eq('key', a.position ?? '').maybeSingle()
+    if (role?.track !== 'prn') return json({ outcome: 'not_prn', detail: 'this applicant did not apply for a PRN team' })
     if (tr) return json({ outcome: 'already', track: tr })
-    const rate = (await rates()).prn_team
-    const { data, error } = await db.rpc('pay_track_change', { p_applicant: id, p_from_expected: null, p_to: 'prn_team', p_rate: rate,
-      p_effective: today(), p_by: by, p_reason: 'Joined the PRN CNA Team (offer sent)' })
+    const team: Team = role.requires_cna === false ? 'caregiver' : 'cna'
+    const rate = (await rates(team)).prn_team
+    const { data, error } = await db.rpc('pay_track_start', { p_applicant: id, p_team: team, p_rate: rate,
+      p_effective: today(), p_by: by, p_reason: 'Joined the ' + TEAM_LABEL[team] + ' (offer sent)' })
     if (error) return json({ error: 'could not start their pay track: ' + error.message }, 500)
-    return json({ outcome: data?.outcome === 'already' ? 'already' : 'started', rate })
+    return json({ outcome: data?.outcome === 'already' ? 'already' : 'started', rate, team })
   }
   if (!tr) return json({ outcome: 'no_track', detail: 'they are not on a pay track yet (the PRN offer starts it)' })
 
@@ -225,33 +246,35 @@ Deno.serve(async (req) => {
     return { outcome: good ? 'updated' : 'updated_check', classes: after.map(lab), kept_ok: keptOk, recorded }
   }
 
+  const team = teamOf(tr)
   if (action === 'classes') {
     if (!cgId) return json({ outcome: 'not_linked' })
-    const [cur, v] = await Promise.all([readClasses(), vocab()])
+    const [cur, v] = await Promise.all([readClasses(), vocab(team)])
     if (!cur.ok) return json({ error: cur.detail }, 502)
-    return json({ outcome: 'ok', classes: cur.classes.map(lab), has_prn: cur.classes.some(isPrnClass), has_cna: cur.classes.some(isCnaClass),
+    return json({ outcome: 'ok', team, classes: cur.classes.map(lab), has_prn: cur.classes.some((c) => prnTeamOf(c) === team), has_cna: cur.classes.some(isCnaClass),
       ready: 'error' in v ? false : !!v.prn, why: 'error' in v ? [v.error] : v.why })
   }
 
   if (action === 'mark') {
     if (!cgId) return json({ outcome: 'not_linked', detail: 'link them to their caregiver record first' })
     if (tr.track !== 'prn_team') return json({ outcome: 'not_prn', detail: 'they are an ongoing caregiver now, not on the PRN Team' })
-    const v = await vocab()
+    const v = await vocab(team)
     if ('error' in v) return json({ outcome: 'refused', detail: v.error })
     if (!v.prn) return json({ outcome: 'classes_missing', detail: v.why.join('; ') + '. Create it in AxisCare (Settings, Classes) and try again.' })
     const cur = await readClasses()
     if (!cur.ok) return json({ outcome: 'refused', detail: cur.detail })
-    /* PRN Team always; the plain CNA class too when exactly one exists. Never the same class twice. */
-    const want = [v.prn, ...(v.cna ? [v.cna] : [])].filter((t, i, arr) => arr.findIndex((x) => lab(x) === lab(t)) === i)
+    /* The team's PRN class always; the plain CNA class too for the CNA team only (1037: never for the caregiver team), when
+       exactly one exists. Never the same class twice. */
+    const want = [v.prn, ...(team === 'cna' && v.cna ? [v.cna] : [])].filter((t, i, arr) => arr.findIndex((x) => lab(x) === lab(t)) === i)
     const add = want.filter((t) => !cur.classes.some((c) => lab(c) === lab(t)))
     if (!add.length) {
       await db.from('pay_tracks').update({ axiscare_marked_at: new Date().toISOString(), axiscare_marked_by: by }).eq('applicant_id', id)
-      return json({ outcome: 'already', classes: cur.classes.map(lab), note: v.cna ? null : v.why.join('; ') })
+      return json({ outcome: 'already', classes: cur.classes.map(lab), note: team === 'caregiver' || v.cna ? null : v.why.join('; ') })
     }
     const r = await setClasses('prn_team_classes', add.map(lab).join(' + ') + ' added', [...cur.classes, ...add],
       (after) => add.every((t) => after.some((x) => lab(x) === lab(t))), cur.classes)
     if (r.outcome === 'updated') await db.from('pay_tracks').update({ axiscare_marked_at: new Date().toISOString(), axiscare_marked_by: by }).eq('applicant_id', id)
-    return json({ ...r, note: v.cna ? null : v.why.join('; ') })
+    return json({ ...r, note: team === 'caregiver' || v.cna ? null : v.why.join('; ') })
   }
 
   if (action === 'move') {
@@ -263,7 +286,7 @@ Deno.serve(async (req) => {
     if (Math.abs(days) > 60) return json({ outcome: 'incomplete', detail: 'the effective date should be within 60 days of today' })
     if (b.from !== tr.track) return json({ outcome: 'changed_meanwhile', detail: 'their track changed since the page was opened; reload and look again' })
     if (tr.track === to) return json({ outcome: 'already', track: tr.track })
-    const rate = (await rates())[to as 'prn_team' | 'ongoing']
+    const rate = (await rates(team))[to as 'prn_team' | 'ongoing']
     const { data, error } = await db.rpc('pay_track_change', { p_applicant: id, p_from_expected: tr.track, p_to: to, p_rate: rate,
       p_effective: eff, p_by: by, p_reason: reason })
     if (error) return json({ outcome: 'refused', detail: /TRACK_CHANGED/.test(error.message) ? 'their track changed since the page was opened; reload and look again' : error.message })
@@ -277,7 +300,7 @@ Deno.serve(async (req) => {
           ? await setClasses('prn_team_classes', 'PRN Team removed (moved to ongoing)', cur.classes.filter((c) => !isPrnClass(c)), (after) => !after.some(isPrnClass), cur.classes)
           : { outcome: 'already' }
       } else {
-        const v = await vocab()
+        const v = await vocab(team)
         axis = 'error' in v || !v.prn ? { outcome: 'classes_missing', detail: 'error' in v ? v.error : v.why.join('; ') }
           : cur.classes.some(isPrnClass) ? { outcome: 'already' }
           : await setClasses('prn_team_classes', 'PRN Team added (back on the PRN Team)', [...cur.classes, v.prn], (after) => after.some(isPrnClass), cur.classes)
@@ -286,5 +309,33 @@ Deno.serve(async (req) => {
     return json({ outcome: 'moved', track: data, axiscare: axis })
   }
 
-  return json({ error: "action must be 'list', 'start', 'link', 'classes', 'mark' or 'move'" }, 400)
+  /* 1037 decision 6: a PRN Caregiver who earned a CNA moves to the PRN CNA Team. Deliberate, recorded, at the prn_cna rate. */
+  if (action === 'to_cna_team') {
+    const eff = typeof b.effective_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(b.effective_date) ? b.effective_date : today()
+    const reason = typeof b.reason === 'string' ? b.reason.trim().slice(0, 300) : ''
+    if (!reason) return json({ outcome: 'incomplete', detail: 'say why (for example: CNA certificate earned, number and date checked)' })
+    if (team !== 'caregiver') return json({ outcome: 'already', detail: 'they are already on the PRN CNA Team' })
+    const days = Math.round((new Date(eff + 'T12:00:00Z').getTime() - new Date(today() + 'T12:00:00Z').getTime()) / 864e5)
+    if (Math.abs(days) > 60) return json({ outcome: 'incomplete', detail: 'the effective date should be within 60 days of today' })
+    const rate = tr.track === 'prn_team' ? (await rates('cna')).prn_team : (await rates('cna')).ongoing
+    const { data, error } = await db.rpc('pay_team_change', { p_applicant: id, p_from_team: 'caregiver', p_to_team: 'cna', p_rate: rate, p_effective: eff, p_by: by, p_reason: reason })
+    if (error) return json({ outcome: 'refused', detail: /TEAM_CHANGED/.test(error.message) ? 'their team changed since the page was opened; reload and look again' : error.message })
+    /* AxisCare: PRN TEAM - CAREGIVER off, PRN TEAM - CNA and CNA on (on the PRN track); read back and logged */
+    let axis: Record<string, unknown> = { outcome: 'not_linked' }
+    if (cgId) {
+      const cur = await readClasses(), v = await vocab('cna')
+      if (!cur.ok) axis = { outcome: 'refused', detail: cur.detail }
+      else if ('error' in v) axis = { outcome: 'refused', detail: v.error }
+      else {
+        const keep = cur.classes.filter((c) => prnTeamOf(c) !== 'caregiver')
+        const add = [...(tr.track === 'prn_team' && v.prn ? [v.prn] : []), ...(v.cna ? [v.cna] : [])].filter((t) => !keep.some((c) => lab(c) === lab(t)))
+        axis = tr.track === 'prn_team' && !v.prn ? { outcome: 'classes_missing', detail: v.why.join('; ') }
+          : await setClasses('prn_team_classes', 'Moved to the PRN CNA Team' + (add.length ? ': ' + add.map(lab).join(' + ') + ' added' : ''), [...keep, ...add],
+            (after) => !after.some((c) => prnTeamOf(c) === 'caregiver') && add.every((t) => after.some((x) => lab(x) === lab(t))), cur.classes)
+      }
+    }
+    return json({ outcome: 'moved', team: 'cna', rate, change: data, axiscare: axis })
+  }
+
+  return json({ error: "action must be 'list', 'start', 'link', 'classes', 'mark', 'move' or 'to_cna_team'" }, 400)
 })

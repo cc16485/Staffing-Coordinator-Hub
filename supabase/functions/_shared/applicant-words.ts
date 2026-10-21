@@ -17,7 +17,10 @@ export type Ctx = {
   note: string             // how to find the door, from the interview settings
   mapUrl: string
   photoUrl?: string | null // entrance photo, if it is loaded
+  teamLabel?: string       // 1037: the PRN role's own label ("PRN CNA Team", "PRN Caregiver Team"); the PRN words use it
 }
+/** 1037: the PRN role's label, never hard-coded (two PRN teams now) */
+const prnTeam = (c: Ctx) => String(c.teamLabel || '').trim() || 'PRN CNA Team'
 export const STOP = 'Reply STOP to opt out.'
 const team = (c: Ctx) => c.krystalNamed ? 'Krystal at Caring Companions' : 'the Caring Companions Team'
 const again = (c: Ctx) => c.krystalNamed ? 'Krystal again from Caring Companions' : 'the Caring Companions Team again'
@@ -38,7 +41,7 @@ export const texts = {
   finish2: (c: Ctx) => `Hi ${c.first}, just a reminder that your Caring Companions application is almost done. Finish it here and you can pick your interview time right after: ${c.link} ${STOP}`,
   // Finished, didn't pick a time
   invite1: (c: Ctx) => `Hi ${c.first}, it's ${team(c)}. Thank you for applying! We'd love to meet you for a relaxed ${c.mins}-minute interview at our office. Pick a time that works for you: ${c.link} ${STOP}`,
-  invite1Prn: (c: Ctx) => `Hi ${c.first}! Thanks for applying for Caring Companions' PRN CNA Team. Based on your Priority Application, we'd like to meet you in person. Choose an in-person interview time at our office here: ${c.link} ${STOP}`,
+  invite1Prn: (c: Ctx) => `Hi ${c.first}! Thanks for applying for Caring Companions' ${prnTeam(c)}. Based on your Priority Application, we'd like to meet you in person. Choose an in-person interview time at our office here: ${c.link} ${STOP}`,
   invite2: (c: Ctx) => `Hi ${c.first}, ${again(c)}. We'd really like to meet you! Grab any open interview time here: ${c.link} or text us back and we'll find one together. ${STOP}`,
   invite3: (c: Ctx) => `Hi ${c.first}, if this week got busy, no worries. Interviews take about ${c.mins} minutes, Monday to Friday. Here's your link whenever you're ready: ${c.link} ${STOP}`,
   invite4: (c: Ctx) => `Hi ${c.first}, this is our last note so we don't crowd your phone. If the timing is better later, your link still works: ${c.link} Or call us at ${c.phone}. We'd be glad to hear from you. ${STOP}`,
@@ -94,10 +97,10 @@ export const emails = {
       button(c.link, 'Finish my application') + p(`Once it's done, you can pick a time for a relaxed ${c.mins}-minute interview at our office.`) + sign(c)),
   }),
   invite: (c: Ctx, step: 1 | 2 | 3 | 4, prn = false) => {
-    const subject = step === 1 ? (prn ? 'Choose your in-person interview time: PRN CNA Team' : `${c.first}, we'd love to meet you`)
+    const subject = step === 1 ? (prn ? `Choose your in-person interview time: ${prnTeam(c)}` : `${c.first}, we'd love to meet you`)
       : step === 4 ? 'One last note from Caring Companions' : "We'd love to meet you"
     const body = step === 1
-      ? (prn ? p(esc(`Thanks for applying for Caring Companions' PRN CNA Team. Based on your Priority Application, we'd like to meet you in person.`))
+      ? (prn ? p(esc(`Thanks for applying for Caring Companions' ${prnTeam(c)}. Based on your Priority Application, we'd like to meet you in person.`))
              : p(`Thank you for applying to Caring Companions! We'd love to meet you. The next step is a relaxed ${c.mins}-minute interview at our office in Springfield, and you can pick any time that works for you.`))
         + button(c.link, 'Pick my interview time') + expect(c) + where(c)
       : step === 2 ? p("We'd really like to meet you! Grab any open interview time, or reply and we'll find one together.") + button(c.link, 'Pick my interview time')

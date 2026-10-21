@@ -42,8 +42,20 @@ const change = (a) => {
     Object.assign(cur, { track: a.p_to, rate: a.p_rate, since: a.p_effective }) }
   T.pay_track_history.push({ applicant_id: a.p_applicant, from_track: cur?.track === a.p_to ? null : (cur ? a.p_from_expected : null), to_track: a.p_to, to_rate: a.p_rate, effective_date: a.p_effective, changed_by: a.p_by, reason: a.p_reason })
   return { data: { outcome: 'changed', to: a.p_to, rate: a.p_rate } } }
+/* 1037: pay_track_start and pay_team_change, as prn-caregiver-1037.sql does them */
+const start = (a) => { if (T.pay_tracks.some((x) => x.applicant_id === a.p_applicant)) return { data: { outcome: 'already' } }
+  T.pay_tracks.push({ applicant_id: a.p_applicant, track: 'prn_team', team: a.p_team, rate: a.p_rate, since: a.p_effective, axiscare_caregiver_id: null })
+  T.pay_track_history.push({ applicant_id: a.p_applicant, from_track: null, to_track: 'prn_team', to_rate: a.p_rate, effective_date: a.p_effective, changed_by: a.p_by, reason: a.p_reason, from_team: null, to_team: a.p_team })
+  return { data: { outcome: 'changed', team: a.p_team, rate: a.p_rate } } }
+const teamChange = (a) => { const cur = T.pay_tracks.find((x) => x.applicant_id === a.p_applicant); if (!cur) return { error: { message: 'NO_TRACK_YET' } }
+  if ((cur.team || 'cna') !== a.p_from_team) return { error: { message: 'TEAM_CHANGED' } }
+  const from = cur.team; Object.assign(cur, { team: a.p_to_team, rate: cur.track === 'prn_team' ? a.p_rate : cur.rate, since: a.p_effective })
+  T.pay_track_history.push({ applicant_id: a.p_applicant, from_track: cur.track, to_track: cur.track, to_rate: cur.rate, effective_date: a.p_effective, changed_by: a.p_by, reason: a.p_reason, from_team: from, to_team: a.p_to_team })
+  return { data: { outcome: 'changed', from_team: from, to_team: a.p_to_team, rate: cur.rate } } }
 globalThis.__db = { from: q, rpc: async (fn, a) => {
   if (fn === 'pay_track_change') return change(a)
+  if (fn === 'pay_track_start') return start(a)
+  if (fn === 'pay_team_change') return teamChange(a)
   if (fn === 'upsert_app_data_item') { const arr = (APP[a.target_key] ||= []); const i = arr.findIndex((x) => x.id === a.item.id); if (i >= 0) arr[i] = a.item; else arr.push(a.item); return { data: null, error: null } }
   if (fn === 'axiscare_change_record') { AXCHANGES.push(a); return { data: { outcome: 'recorded' }, error: null } }
   return { data: null, error: null } } }
@@ -98,7 +110,7 @@ r = await call({ action: 'link', applicant_id: A1, axiscare_caregiver_id: '9001'
 ck('link: availability they set themselves is kept, never overwritten', r.j.availability === 'kept' && APP.caregiver_availability[0].source === 'self' && APP.caregiver_availability.length === 1, r)
 // AxisCare classes
 VOCAB = VOCAB.filter((v) => v.code !== 'PRNT')
-r = await call({ action: 'classes', applicant_id: A1 }); ck('classes: says PRN Team doesn\'t exist in AxisCare yet (read only)', r.j.ready === false && /no PRN Team caregiver class/.test(r.j.why.join()) && !PATCHES.length, r)
+r = await call({ action: 'classes', applicant_id: A1 }); ck('classes: says PRN Team doesn\'t exist in AxisCare yet (read only)', r.j.ready === false && /no PRN TEAM - CNA caregiver class/.test(r.j.why.join()) && !PATCHES.length, r)
 r = await call({ action: 'mark', applicant_id: A1 }); ck('mark with the class missing: refused, says to create it, nothing changed', r.j.outcome === 'classes_missing' && /Create it in AxisCare/.test(r.j.detail) && !PATCHES.length, r)
 VOCAB.push({ code: 'PRNT', label: 'PRN Team' })
 r = await call({ action: 'mark', applicant_id: A1 })
@@ -130,7 +142,7 @@ ck('AxisCare refuses: the track change still stands (the Hub is the record), the
 // the rule, in the source
 const code = fs.readFileSync(`${FN}/prn-team/index.ts`, 'utf8')
 ck('no visit, shift or payroll writes anywhere in it (one rate per person, nothing per shift)', !/\/api\/visits|\/api\/shifts|payroll|visit.*rate|payRate/i.test(code.replace(/\/\/.*$/gm, '')))
-ck('rates come from the approved Pay rates: PRN CNA Team and CNA', M.windowsFrom && /rec\?\.prn_cna\?\.min/.test(code) && /rec\?\.cna\?\.min/.test(code))
+ck('rates come from the approved Pay rates: PRN CNA Team and CNA (1037: by team, prn_cna/cna and prn_caregiver/caregiver)', M.windowsFrom && /rec\?\.\[k\.prn\]\?\.min/.test(code) && /cna: \{ prn: 'prn_cna', ongoing: 'cna'/.test(code) && /caregiver: \{ prn: 'prn_caregiver', ongoing: 'caregiver'/.test(code))
 ck('the class rules: "PRN Team" reads as PRN Team; "CERTIFIED NURSES AIDE" and code CNA read as CNA; others don\'t', M.isPrnClass({ label: 'PRN Team' }) && M.isCnaClass({ label: 'CERTIFIED NURSES AIDE' })
    && M.isCnaClass({ code: 'CNA' }) && !M.isPrnClass({ label: 'VACCINATED' }) && !M.isCnaClass({ label: 'CAREGIVER' }))
 reset(); globalThis.__ownerKey = 'a-differently-formatted-owner-key'; ENV.SUPABASE_SERVICE_ROLE_KEY = 'svc-key'

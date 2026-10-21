@@ -14,7 +14,7 @@ const reset = (apps, { roles = true } = {}) => {
   SENT = []
   T = { contact_optout_current: [], circle_contacts: [], phone_index: [], interview_bookings: [], applicant_alerts: [{ name: 'Office', phone: '4175550999', email: 'office@mo-care.test', active: true }],
     scheduling_settings: [{ id: 1, phone: '(417) 234-8494', location_line1: '1331 N Stewart Ave', location_name: 'Caring Companions' }],
-    job_positions: roles ? [{ key: 'caregiver', track: null }, { key: 'prn_cna', track: 'prn' }] : [],
+    job_positions: roles ? [{ key: 'caregiver', track: null }, { key: 'prn_cna', track: 'prn', label: 'PRN CNA Team' }] : [],
     job_applicants: apps }
 }
 const q = (t) => { const st = { f: [], isNull: [], inF: null, nn: [] }; const b = {
