@@ -278,7 +278,7 @@ export function landingPatch(form: FormKey, a: Record<string, unknown>, at: stri
   if (form === 'employee_application') {
     const oos = yesno(a.lived_outside_mo); const p: Record<string, unknown> = { ...stamp }
     if (oos) p.oos = oos
-    if (oos === 'yes') p.fp = 'Required'
+    /* NO FINGERPRINTS (Samantha 2026-10-21): living outside Missouri is kept as history, it no longer adds a check */
     if (a.no_employer_history === 'yes') p.no_employer_history = true
     if (Array.isArray(a.states_lived) && a.states_lived.length) (p.step1_landed as Record<string, unknown>).states_lived = a.states_lived
     return p

@@ -160,6 +160,17 @@ Deno.serve(async (req) => {
     return { texted, emailed, text_held, not_sent: notSent }
   }
 
+  /** true when the office checked Step 2 in Viventium for this Background & References id (or its roster record); null when the
+   *  list could not be read (the caller refuses: fails closed) */
+  async function step2Verified(cand: string): Promise<boolean | null> {
+    for (const key of ['candidates', 'caregivers']) {
+      const { data, error } = await db.from('app_data').select('data').eq('key', key).maybeSingle()
+      if (error) return null
+      const hit = (Array.isArray(data?.data) ? data.data : []).find((x: Record<string, unknown>) => String(key === 'candidates' ? x?.id : x?.candidate_id) === cand)
+      if (hit) return !!hit.step2_verified_at
+    }
+    return false
+  }
   if (action === 'invite') {
     const cand = clean(b.candidate_id, 40)
     if (!cand) return json({ error: 'which candidate?' }, 400)
@@ -168,6 +179,14 @@ Deno.serve(async (req) => {
     /* SLICE 3b: on the new path the Orientation Video Call waits for Approve to Advance (the old path has no card and is untouched) */
     const gate = await caregiverGate(db, { candidate_id: cand }, 'cg.approve.advance')
     if (!gate.allowed) return json({ error: gate.why, gate: 'cg.approve.advance' }, 409)
+    /* 2026-10-21 (Samantha's onboarding design, stop 4: "Nothing should advance prematurely"): on the new path the invitation
+       also waits for Step 2 to be CHECKED in Viventium by the office (step2_verified_at), never only reported done. The Step 2
+       server's own door (invite_auto) is only ever called from the Verify press itself, before the record is saved. */
+    if (gate.journey_id && !auto) {
+      const v = await step2Verified(cand)
+      if (v === null) return json({ error: 'The Hub could not confirm their Step 2 just now, so nothing was sent. Please try again in a minute.', gate: 'step2_verified' }, 409)
+      if (!v) return json({ error: 'Not yet: their Step 2 has not been checked in Viventium. Check it on their Step 2 card first, then invite them.', gate: 'step2_verified' }, 409)
+    }
     const { data: open } = await db.from('welcome_calls').select('*').eq('candidate_id', cand).in('status', ['invited', 'booked', 'noshow']).order('invited_at', { ascending: false }).limit(1)
     if (onlyText && !open?.length) return json({ ok: true, texted: false, emailed: false, text_held: false, skipped: 'the invitation is closed', not_sent: [] })
     let w = open?.[0]

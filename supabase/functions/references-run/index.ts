@@ -195,8 +195,8 @@ Deno.serve(async (req) => {
 
     /* Is this candidate blocked ONLY by references? That is the expensive
        case: everything else is clear and a hire is waiting on a phone call. */
-    const checksClear = c.oig === 'CLEAR' && c.edl === 'Clear' && c.fcsr === 'Clear'
-                     && (c.oos !== 'yes' || c.fp === 'Clear')
+    /* fingerprints are no longer a check (2026-10-21); Case.net is (2026-10-11) */
+    const checksClear = c.oig === 'CLEAR' && c.edl === 'Clear' && c.fcsr === 'Clear' && c.casenet === 'Clear'
     if (checksClear) stats.candidates_blocked_only_by_references++
 
     stats.candidates_needing_work++

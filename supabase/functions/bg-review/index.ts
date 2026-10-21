@@ -158,7 +158,8 @@ Deno.serve(async (req) => {
   }
   if (action === 'open' || (action === 'preview' && !b.id)) {
     const check = b.check, cid = String(b.candidate_id ?? '').trim()
-    if (!isCheck(check)) return json({ error: 'which check? (fcsr, edl, oig or fp)' }, 400)
+    if (!isCheck(check)) return json({ error: 'which check? (fcsr, edl, oig or casenet)' }, 400)
+    if (check === 'fp') return json({ error: 'Fingerprints are no longer one of our checks (2026-10-21), so there is nothing to review.' }, 409)
     if (!/^\d{1,9}$/.test(cid)) return json({ error: 'which candidate?' }, 400)
     const c = await candidate(db, cid)
     if (!c) return json({ error: 'That candidate was not found. Reload the page.' }, 404)

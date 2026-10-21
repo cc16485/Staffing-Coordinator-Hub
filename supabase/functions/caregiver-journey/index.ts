@@ -48,6 +48,7 @@ import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { latestTextConsent, inTextHours, withStop } from '../_shared/text-consent.ts'
 import { saveAuditFields } from '../_shared/sweep-patch.ts'
 import { loadLeie, matchLeie, oigEvidence, oigDue, OIG_INTERVAL_DAYS } from '../_shared/oig-leie.ts'
+import { advanceDue, oigWanted, oigItemId, ADV_KEY } from '../_shared/onboarding-auto.ts'   /* 2026-10-21 onboarding design */
 import { readTraining, certificateRef, syncPatch } from '../_shared/training-sync.ts'
 import { testPerson } from '../_shared/test-people.ts'
 /* LPN HIRING (Samantha approved the LPN nurse visit plan, 2026-10-14): the nurse rows, the nurse forms, the nurse setup at Approve to Work */
@@ -81,8 +82,16 @@ function trn() {
 async function defs(db: Any): Promise<Any[]> {
   const { data, error } = await db.from('client_journey_step_def').select('key, def, active, catalog_version').like('key', 'cg.%')
   if (error) throw new Error('could not read the caregiver catalog')
-  return (data ?? []).filter((d: Any) => d.active !== false).map((d: Any) => ({ key: d.key, active: d.active, ...(d.def || {}) }))
+  /* RETIRED ROWS (2026-10-21): fingerprints are gone and the dementia course is optional. The 1031 SQL changes the catalog; the
+     code says the same, so a card never waits for either whether or not that SQL has run. */
+  return (data ?? []).filter((d: Any) => d.active !== false && !RETIRED.has(d.key)).map((d: Any) => {
+    const x = { key: d.key, active: d.active, ...(d.def || {}) }
+    if (x.key === 'cg.training.dementia') x.required = false
+    if (Array.isArray(x.after)) x.after = x.after.filter((k: string) => !RETIRED.has(k) && !(k === 'cg.training.dementia' && ['cg.approve.work', 'cg.approve.advance'].includes(x.key)))
+    return x
+  })
 }
+const RETIRED = new Set(['cg.check.fingerprints'])
 async function load(db: Any, by: { journey_id?: unknown; offer_id?: unknown }) {
   let q = db.from('client_journey').select('*').eq('subject', 'caregiver')
   q = by.journey_id ? q.eq('journey_id', S(by.journey_id, 64)) : q.eq('offer_id', S(by.offer_id, 64))
@@ -534,8 +543,13 @@ Deno.serve(async (req) => {
       if (!caller) return json({ error: 'the sweep is for the schedule or an owner' }, 401)
       const T = trn(), st = await settings(db), now = new Date().toISOString()
       const { data: js } = await db.from('client_journey').select('*').eq('subject', 'caregiver').eq('status', 'open').limit(500)
-      const out: Record<string, unknown> = { looked_at: (js ?? []).length, changed: 0, completed: 0, locks: 0, texts_sent: 0, cards: 0, step1_stalled: 0, offers_unread: 0 }
+      const out: Record<string, unknown> = { looked_at: (js ?? []).length, changed: 0, completed: 0, locks: 0, texts_sent: 0, cards: 0, step1_stalled: 0, offers_unread: 0,
+        advance: { live: st.approve_advance_auto_live === true, done: 0, would: 0 }, oig_search: { live: st.oig_auto_search_live === true, ran: 0, would: 0, matches: 0, why: null as string | null } }
       const recruit = await domainOwner(db, 'recruiting_orientation')
+      /* 2026-10-21 the OIG search on arrival: the LEIE file is read at most once per run, only when someone needs it */
+      let leie: Any = null, leieErr: string | null = null
+      const { data: oigRow } = await db.from('app_data').select('data').eq('key', 'oig_auto_search').maybeSingle()
+      const oigItems: Any[] = Array.isArray(oigRow?.data) ? oigRow.data : []
       for (const j of js ?? []) {
         const { data: steps } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
         const f = await facts(db, j, T)
@@ -560,6 +574,38 @@ Deno.serve(async (req) => {
            Orientation owner, closed when Step 1 completes or the offer closes. */
         if (!f.offer && T) (out.offers_unread as number)++
         if ((await step1Stall(db, j, f, st, recruit, now)) === 'raised') (out.step1_stalled as number)++
+        /* 2026-10-21 decision 3: Approve to Advance by itself once everything in front of it is done and nothing is blocked */
+        const ad = advanceDue(view, dfs), O = out.advance as Any
+        if (ad.due) {
+          if (O.live) {
+            await putStep(db, j.journey_id, ADV_KEY, { state: 'complete', evidence: { auto: true, rule: 'every row in front done, nothing blocked (decision 3, 2026-10-21)', rows: ad.evidence }, completed_by: 'hub', completed_by_name: 'The Hub (everything clear)', completed_at: now, blocked_reason: null })
+            await event(db, j.journey_id, ADV_KEY, {}, 'confirmed', { auto: true, rows: ad.evidence }); O.done++
+          } else {
+            const { data: seen } = await db.from('client_journey_event').select('id').eq('journey_id', j.journey_id).eq('step_key', ADV_KEY).eq('kind', 'auto_advance_practice').limit(1)
+            if (!seen?.length) await event(db, j.journey_id, ADV_KEY, {}, 'auto_advance_practice', { would: 'complete Approve to Advance', rows: ad.evidence }, 'Practice: the switch approve_advance_auto_live is off')
+            O.would++
+          }
+        }
+        /* 2026-10-21 the OIG search the moment they land in Background & References (evidence only, a person presses CLEAR) */
+        const c = f.candidate, OS = out.oig_search as Any
+        if (c && oigWanted(c, oigItems.find((x) => x && x.id === oigItemId(c.id)), OS.live)) {
+          if (!OS.live) {
+            await db.rpc('upsert_app_data_item', { target_key: 'oig_auto_search', item: { id: oigItemId(c.id), candidate_id: c.id, offer_id: j.offer_id, practice: true, would_search: { first: S(c.first, 60), last: S(c.last, 60) }, at: now } })
+            OS.would++
+          } else if (!leieErr) {
+            try { if (!leie) leie = await loadLeie() } catch (e) { leieErr = String((e as Error)?.message ?? e).slice(0, 160); OS.why = leieErr }
+            if (leie) {
+              const r = matchLeie(leie, c.first, c.last), ev = { ...oigEvidence(r, now), by: 'caregiver-journey (on arrival)' }
+              const path = `bgcheck/${c.id}/oig-${Date.now()}-leie-auto.json`; let proof: string | null = null
+              try { const up = await db.storage.from('lead-docs').upload(path, new Blob([JSON.stringify({ ...ev, candidate: `${S(c.first, 60)} ${S(c.last, 60)}`.trim() }, null, 2)], { type: 'application/json' }), { contentType: 'application/json', upsert: false }); if (!up.error) proof = path } catch { /* the result is still kept below */ }
+              await db.rpc('upsert_app_data_item', { target_key: 'oig_auto_search', item: { id: oigItemId(c.id), candidate_id: c.id, offer_id: j.offer_id, practice: false, ran_at: now, evidence: ev, proof, at: now } })
+              OS.ran++
+              if (!r.clear) { OS.matches++
+                await raiseCard(db, { id: 'oig_match_c' + c.id, kind: 'oig_match_review', urgency: 'urgent', who: j.client_name, offer_id: j.offer_id, title: 'Possible OIG exclusion match: ' + j.client_name,
+                  detail: `The OIG search found ${r.matches.length} name match${r.matches.length === 1 ? '' : 'es'} for ${j.client_name}. A name match is not a verdict: open their checklist, compare the details, and record CLEAR or FLAGGED.` }, { domain: 'recruiting_orientation' }) }
+            }
+          }
+        }
         /* Ready for Final Approval: one card for the Approve to Work list, closed at the press */
         if (a.ready_for_final) { await raiseCard(db, { id: 'cj_final_' + j.journey_id, kind: 'final_approval', urgency: 'today', who: j.client_name, offer_id: j.offer_id, title: 'Ready for final approval: ' + j.client_name, detail: 'Every required row on their readiness card is complete (checks with their proof, Step 2, the Orientation Video Call, orientation, dementia, the profile, AxisCare entries). An owner on the Approve to Work list opens the card and presses Approve to Work; the server checks every row again at the press.' }); (out.cards as number)++ }
         /* a cleared text held after hours goes now, in hours, with the switch on */
