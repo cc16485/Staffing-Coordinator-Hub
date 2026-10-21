@@ -422,8 +422,10 @@ Deno.serve(async (req) => {
      as soon as it is finished, in the team's own words, instead of two hours later. A PRN application that is not
      finished, needs a look or applied before gets no booking link at all: the office decides. Every other role is
      exactly as before. Before the track column exists this finds nothing, so nothing changes. */
-  const { data: prnRoles } = await supabase.from('job_positions').select('key').eq('track', 'prn')
+  const { data: prnRoles } = await supabase.from('job_positions').select('key, label').eq('track', 'prn')
   const PRN = new Set((prnRoles ?? []).map((r: { key: string }) => r.key))
+  /* 1037: each PRN team in its own name ("PRN CNA Team", "PRN Caregiver Team"), from the role, never hard-coded */
+  const PRN_LABEL = new Map((prnRoles ?? []).map((r: { key: string; label?: string }) => [r.key, String(r.label || 'PRN Team')]))
   const { data: waiting } = await supabase
     .from('job_applicants')
     .select('*')
@@ -474,7 +476,7 @@ Deno.serve(async (req) => {
     }
 
     if (V2) {
-      const c = ctx(first, bookUrl)
+      const c = { ...ctx(first, bookUrl), teamLabel: PRN_LABEL.get(p.position) }   /* 1037: the PRN team's own name */
       if (!p.completed_at) {
         /* 587: didn't finish. Two "finish your application" messages (30 minutes, then the next day), then nothing.
            Only new starts (last 3 days) that the older follow-ups never wrote to. Their link reopens the step they
@@ -541,7 +543,7 @@ Deno.serve(async (req) => {
     if (!(await claim('job_applicants', p.id, col))) continue
 
     const line = prn && step === 1
-      ? `Hi ${first}! Thanks for applying for Caring Companions' PRN CNA Team. Based on your Priority Application, we'd like to meet you in person. Choose an in-person interview time at our office here: ${bookUrl}`
+      ? `Hi ${first}! Thanks for applying for Caring Companions' ${PRN_LABEL.get(p.position) || 'PRN Team'}. Based on your Priority Application, we'd like to meet you in person. Choose an in-person interview time at our office here: ${bookUrl}`
       : step === 1
       ? `Hi ${first}, thanks for applying to Caring Companions. You are one step from an in-person interview at our office, and you can pick a time that suits you here: ${bookUrl}`
       : step === 2
@@ -550,7 +552,7 @@ Deno.serve(async (req) => {
 
     if (await textOk(p)) await to.sms(line)
     if (p.email) await to.email(
-      step === 3 ? 'One last note from Caring Companions' : prn && step === 1 ? 'Choose your in-person interview time: PRN CNA Team' : 'Pick a time to come and meet us in person',
+      step === 3 ? 'One last note from Caring Companions' : prn && step === 1 ? `Choose your in-person interview time: ${PRN_LABEL.get(p.position) || 'PRN Team'}` : 'Pick a time to come and meet us in person',
       shell(`<p>Hi ${first},</p><p>${line.replace(bookUrl, `<a href="${bookUrl}">${bookUrl}</a>`)}</p>` +
         (step === 1 ? whereBlock() : '')))
 
@@ -591,7 +593,7 @@ Deno.serve(async (req) => {
         p.channel ? `via ${p.channel}` : null,
       ].filter(Boolean).join(', ')
       const grade = p.screen_grade === 'qualified' ? 'cleared the screen' : 'needs a look'
-      const team = p.office === 'OK' ? ' for Companion in Oklahoma (Mustang)' : PRN.has(p.position) ? ' for the PRN CNA Team' : ''   // 806
+      const team = p.office === 'OK' ? ' for Companion in Oklahoma (Mustang)' : PRN.has(p.position) ? ' for the ' + (PRN_LABEL.get(p.position) || 'PRN Team') : ''   // 806; 1037 the team's own name
       const line = `${who} just applied${team} and ${grade}${bits ? `: ${bits}` : ''}. ` +
         `They are in the hub under Applicants.`
 
