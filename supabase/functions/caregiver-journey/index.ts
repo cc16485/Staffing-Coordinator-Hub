@@ -50,6 +50,7 @@ import { saveAuditFields } from '../_shared/sweep-patch.ts'
 import { loadLeie, matchLeie, oigEvidence, oigDue, OIG_INTERVAL_DAYS } from '../_shared/oig-leie.ts'
 import { advanceDue, oigWanted, oigItemId, ADV_KEY } from '../_shared/onboarding-auto.ts'   /* 2026-10-21 onboarding design */
 import { autoAskSlots, requestRow } from '../_shared/ref-auto-ask.ts'   /* 2026-10-21 references asked by themselves */
+import { DUTIES, validateEvidence, verifiedLevel, claimedFrom, evidenceFromReference } from '../_shared/care-level-verify.ts'   /* 2026-10-21 Level of Care */
 import { readTraining, certificateRef, syncPatch } from '../_shared/training-sync.ts'
 import { testPerson } from '../_shared/test-people.ts'
 /* LPN HIRING (Samantha approved the LPN nurse visit plan, 2026-10-14): the nurse rows, the nurse forms, the nurse setup at Approve to Work */
@@ -218,6 +219,31 @@ export function missingForWork(view: Any, dfs: Any[], j: Any, ctx: Any): string[
     if (unknown.length) out.push(d.title + ' (not known yet whether it applies: their Step 1 answer is missing)')
   }
   return out
+}
+
+/* ── Level of Care: what is claimed, verified and approved for this person (her design of 2026-10-08) ── */
+async function levelState(db: Any, j: Any, f: Facts): Promise<Any> {
+  const { data: ev } = await db.from('caregiver_level_evidence').select('id, level, kind, source, who, duties, date_from, date_to, credential, proof, note, ref_request_id, by_email, by_name, at').eq('offer_id', String(j.offer_id)).order('at', { ascending: true })
+  const evidence = (ev ?? []).map((e: Any) => ({ id: e.id, level: e.level, kind: e.kind, source: e.source, who: e.who, duties: e.duties || [], from: e.date_from, to: e.date_to, credential: e.credential || null, proof: e.proof, note: e.note, ref_request_id: e.ref_request_id || null, by: e.by_name || e.by_email, at: e.at,
+    date_from: e.date_from, date_to: e.date_to }))
+  const rec = f.candidate || f.roster || {}
+  const al = Number(String(rec.care_level_approved ?? '').replace(/\D/g, ''))
+  const approved = al >= 1 && al <= 3 ? { level: al, by: rec.care_level_by || null, at: rec.care_level_at || null, note: rec.care_level_note || null, default: false }
+    : { level: 1, by: null, at: null, note: 'Everyone starts at Level 1 until a higher level is verified and approved.', default: true }
+  return { claimed: claimedFrom(f.step1?.answers, f.offer), evidence: evidence.map(({ date_from: _a, date_to: _b, ...x }: Any) => x), verified_level: verifiedLevel(evidence), approved }
+}
+/** the care_level_* fields only, through the server's own door (level_patch), only if nobody changed the record since it was read */
+async function levelPatch(db: Any, key: string, rec: Any, fields: Any, tries = 3): Promise<'saved' | 'skipped' | 'error'> {
+  let cur = rec
+  for (let i = 0; i < tries; i++) {
+    const r = (x: Any) => (/^[0-9]{1,15}$/.test(String(x?._rev ?? '')) ? Number(x._rev) : 0)
+    const { data, error } = await db.rpc('level_patch', { p_key: key, p_id: String(cur.id), p_base_rev: r(cur), p_patch: fields })
+    if (error) return 'error'
+    if (data?.ok) return 'saved'
+    if (data?.reason !== 'changed' || !data.current_record) return 'skipped'
+    cur = data.current_record
+  }
+  return 'skipped'
 }
 
 /* ── SLICE 5: the approval state the card and the lists read ── */
@@ -604,6 +630,22 @@ Deno.serve(async (req) => {
               detail: `${j.client_name}'s profile photo is in. Print their Caring Companions employee badge with it, mail it to the address on their Step 1, then press Badge mailed on their onboarding checklist. This never holds up Approve to Work.` }, { owner: recruit?.email, owner_name: recruit?.name, domain: 'recruiting_orientation' }); B.raised++ }
             else B.would++
           } }
+        /* 2026-10-21 LEVEL OF CARE from the reference form: a Positive work reference's "Yes, I saw it myself" answers on the
+           task list become Level evidence (one row per level, with the employer's dates; "I believe so" never counts). Once
+           per request and level (unique index). ops_settings.level_from_refs_live (off = counted only). */
+        { const rec = f.candidate || f.roster, L = (out.level_refs ||= { live: st.level_from_refs_live === true, added: 0, would: 0 }) as Any
+          const cid = rec ? String(f.candidate ? rec.id : rec.candidate_id ?? '') : ''
+          if (cid) {
+            const { data: rqs } = await db.from('reference_requests').select('id, slot, ref_type, ref_name, ref_company, responder_name, employer_confirmed, emp_from, emp_to, task_confirm, responded_at').eq('candidate_id', cid).not('task_confirm', 'is', null)
+            for (const rq of rqs ?? []) {
+              if (!rq.responded_at || String(rq.ref_type || '').toLowerCase() !== 'professional' || rec['r' + rq.slot + 's'] !== 'Positive') continue
+              const rows = evidenceFromReference(rq); if (!rows.length) continue
+              const { data: have } = await db.from('caregiver_level_evidence').select('level').eq('ref_request_id', String(rq.id))
+              const todo = rows.filter((r: Any) => !(have ?? []).some((h: Any) => h.level === r.level)); if (!todo.length) continue
+              if (!L.live) { L.would += todo.length; continue }
+              for (const r of todo) { const { error } = await db.from('caregiver_level_evidence').insert({ ...r, offer_id: String(j.offer_id), by_email: 'hub', by_name: 'The Hub (from their reference)', at: now }); if (!error) { L.added++; await event(db, j.journey_id, null, {}, 'level_evidence', { level: r.level, kind: 'reference', from_reference: rq.id, duties: r.duties }) } }
+            }
+          } }
         /* 2026-10-21 decision 3: Approve to Advance by itself once everything in front of it is done and nothing is blocked */
         const ad = advanceDue(view, dfs), O = out.advance as Any
         if (ad.due) {
@@ -701,6 +743,45 @@ Deno.serve(async (req) => {
     const got = await load(db, b); if (!got) return json({ error: 'That readiness card was not found.' }, 404)
     const f = await facts(db, got.j, trn()); const view = R.compute(dfs, got.j, got.steps, ctxFor(f, st))
     const now = new Date().toISOString(), actor = { email: who.email, name: who.name }
+    /* ── LEVEL OF CARE (her approved design of 2026-10-08; decision 4, 2026-10-21: the approvers are the Approve to Work list) ── */
+    if (action === 'level_get' || action === 'level_evidence' || action === 'level_approve') {
+      const mayLvl = mayApprove(P, 'work', { person_id: who.person_id, roles: who.roles || [], email: who.email })
+      if (action === 'level_evidence') {
+        const v = validateEvidence(b)
+        if (!v.ok) return json({ error: v.why }, 400)
+        const { error } = await db.from('caregiver_level_evidence').insert({ ...v.row, offer_id: String(got.j.offer_id), by_email: who.email || null, by_name: who.name || null, at: now })
+        if (error) return json({ error: 'That proof could not be saved: ' + S(error.message, 160) + '. Nothing was recorded.' }, 500)
+        await event(db, got.j.journey_id, null, actor, 'level_evidence', { level: v.row.level, kind: v.row.kind, source: v.row.source, duties: v.row.duties })
+      }
+      if (action === 'level_approve') {
+        if (!mayLvl) return json({ error: 'Only a person on the Approve to Work list (Samantha or Zachary) may approve a Level of Care.' }, 403)
+        const want = Number(b.level)
+        const lv = await levelState(db, got.j, f)
+        if (![1, 2, 3].includes(want)) return json({ error: 'Which level: 1, 2 or 3?' }, 400)
+        if (want > lv.verified_level) return json({ error: `Not yet: Level ${want} is not verified (verified: Level ${lv.verified_level}). Record the proof first. There is no override.` }, 409)
+        const pr = f.candidate ? { key: 'candidates', rec: f.candidate } : f.roster ? { key: 'caregivers', rec: f.roster } : null
+        if (!pr) return json({ error: 'Their Background & References or caregiver record was not found.' }, 404)
+        const ids = lv.evidence.filter((e: Any) => e.level <= want).map((e: Any) => e.id)
+        const hist = (Array.isArray(pr.rec.care_level_history) ? pr.rec.care_level_history.slice(-49) : []).concat([{ at: now, level: want, by: who.email, name: who.name, note: S(b.note, 500) || null, evidence: ids }])
+        const fields = { care_level_approved: want, care_level_by: who.name || who.email, care_level_by_email: who.email, care_level_at: now, care_level_note: S(b.note, 500) || null, care_level_evidence: ids, care_level_history: hist }
+        const saved = await levelPatch(db, pr.key, pr.rec, fields)
+        if (saved !== 'saved') return json({ error: saved === 'error' ? 'The level could not be saved just now. Nothing changed. Try again.' : 'Their record changed while you were looking. Reload and approve again.' }, 409)
+        await event(db, got.j.journey_id, null, actor, 'level_approved', { level: want, evidence: ids, note: S(b.note, 500) || null })
+        /* already approved to work: the AxisCare level class follows now (read back; practice while axiscare_level_live is off) */
+        const work = got.steps.find((x: Any) => x.step_key === WORK_KEY), axId = digits(f.roster?.axiscare_id)
+        let axiscare: Any = { state: 'not_yet', why: 'They are not approved to work yet; Approve to Work writes the level then.' }
+        if (work && DONE.includes(work.state) && axId) {
+          const r = await setCaregiverLevel(db, axId, want, who.email || 'hub', 'caregiver-journey level', st?.axiscare_level_live === true)
+          axiscare = { state: r.outcome, detail: r.detail || null }
+          await event(db, got.j.journey_id, 'cg.axiscare.level', actor, r.outcome === 'practice' ? 'axiscare_practice' : r.outcome === 'confirmed' || r.outcome === 'unchanged' ? 'axiscare_confirmed' : 'axiscare_failed', { level: want, outcome: r.outcome, detail: r.detail || null })
+          if (!['confirmed', 'unchanged', 'practice'].includes(r.outcome)) await raiseCard(db, { id: 'cj_level_ax_' + got.j.journey_id, kind: 'axiscare_prep_failed', urgency: 'today', who: got.j.client_name, offer_id: got.j.offer_id, title: 'AxisCare level class not set: ' + got.j.client_name, detail: `Level ${want} was approved, but AxisCare did not take the class (${S(r.detail || r.outcome, 160)}). Set it by hand in AxisCare or press Retry.` })
+        }
+        const f2 = await facts(db, got.j, trn()); const lv2 = await levelState(db, got.j, f2)
+        return json({ ok: true, ...lv2, may_approve: mayLvl, duties: DUTIES, axiscare })
+      }
+      const lv = await levelState(db, got.j, f)
+      return json({ ok: true, ...lv, may_approve: mayLvl, duties: DUTIES })
+    }
     /* SLICE 5: the owner's press */
     if (action === 'approve_work') {
       if (!mayApprove(P, 'work', { person_id: who.person_id, roles: who.roles || [], email: who.email })) return json({ error: 'Only a person on the Approve to Work list (owners) may approve to work.' }, 403)
