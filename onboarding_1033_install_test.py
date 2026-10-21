@@ -9,7 +9,7 @@ PGL = os.environ.get("PGLITE", "")
 if not PGL: print("FAIL  PGLITE is not set"); sys.exit(1)
 TMP = tempfile.mkdtemp(prefix="t1033-"); WT = os.path.join(TMP, "wt"); BASE = os.path.join(TMP, "base"); PGDIR = os.path.join(TMP, "pg")
 subprocess.run(["git", "-C", HERE, "worktree", "add", "-q", "--detach", WT, "HEAD"], check=True)
-base_ref = subprocess.run(["git", "-C", HERE, "rev-parse", "HEAD~1"], capture_output=True, text=True).stdout.strip()   # the 1032 build
+base_ref = subprocess.run(["git", "-C", HERE, "rev-parse", "HEAD~2"], capture_output=True, text=True).stdout.strip()   # the 1032 build
 subprocess.run(["git", "-C", HERE, "worktree", "add", "-q", "--detach", BASE, base_ref], check=True)
 PGQ = os.path.join(TMP, "pgq.mjs")
 open(PGQ, "w").write(f"""import fs from 'fs'; const {{ PGlite }} = await import({json.dumps(PGL)}); const db = new PGlite(process.argv[2])
