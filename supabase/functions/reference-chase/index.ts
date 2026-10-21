@@ -29,6 +29,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { outreachGate } from '../_shared/outreach.ts'
+import { readOps } from '../_shared/office-from.ts'
+import { firstAskText, reminderText, textable } from '../_shared/reference-texts.ts'   /* 2026-10-21 her new rule */
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -103,19 +105,24 @@ Deno.serve(async (req) => {
     ghlContactIfAllowed(supabase, ghlDoor, 'reference-chase', channel === 'sms'
       ? { channel, phone: address, email: other, firstName: first } : { channel, email: address, phone: other, firstName: first })
 
+  /* REFERENCE TEXTS (Samantha 2026-10-21: "the Hub texts each reference automatically from the office line (with STOP to opt
+     out), and the office calls when needed"): the first ask and the one reminder also go by text, from the office line,
+     while ops_settings.ref_auto_text_live is true. Off = practice: only counted (would_text). */
+  const ops = await readOps(supabase), textLive = ops.ref_auto_text_live === true
+  let would_text = 0
   // deno-lint-ignore no-explicit-any
   const toSend: any[] = [], toNudge: any[] = [], toApplicant: any[] = [], toEscalate: any[] = []
   for (const r of open) {
-    /* Never sent. Either we can email them, or we cannot reach them at all and
-       it is a phone call for the office today rather than in nine days. */
-    if (!r.sent_at) { (r.ref_email ? toSend : toEscalate).push(r); continue }
+    /* Never sent. Either we can email (or, with texts on, text) them, or we cannot reach them at all and it is a phone
+       call for the office today rather than in nine days. */
+    if (!r.sent_at) { (r.ref_email || (textLive && textable(r)) ? toSend : toEscalate).push(r); if (!textLive && textable(r)) would_text++; continue }
     const quiet = daysSince(r.sent_at)
     if (quiet >= GIVE_UP_AFTER_DAYS) toEscalate.push(r)
     else if (quiet >= ASK_APPLICANT_AFTER_DAYS && !r.applicant_nudged_at) {
       // Back to the applicant, if we can reach them. If we cannot, it is ours.
       if (r.candidate_phone || r.candidate_email) toApplicant.push(r); else toEscalate.push(r)
     }
-    else if (quiet >= NUDGE_AFTER_DAYS && !r.reminded_at && r.ref_email) toNudge.push(r)
+    else if (quiet >= NUDGE_AFTER_DAYS && !r.reminded_at) { if (r.ref_email || (textLive && textable(r))) toNudge.push(r); if (!textLive && textable(r)) would_text++ }
   }
 
   /* S2 (2026-09-28): the applicant is texted only if they said yes to texts on the apply form
@@ -148,10 +155,12 @@ Deno.serve(async (req) => {
       applicant_by_text: toApplicant.filter(textOk).length,
       applicant_email_only: toApplicant.filter((r) => !textOk(r)).length,
       would_escalate_to_office: toEscalate.map((r) => `${r.ref_name} (for ${r.candidate_name})`),
+      texts: textLive ? 'on' : 'practice', would_text,
     })
   }
 
-  /* Email only, deliberately.
+  /* 2026-10-21: SUPERSEDED by her rule above (texts from the office line with STOP, behind ref_auto_text_live). The
+     original reasoning, kept for the record: Email only, deliberately.
      A reference never asked us to contact them; the candidate gave us their
      number. An automated text to a number that gave no consent is the kind of
      thing the TCPA exists about, and the exposure is per message. Email
@@ -162,20 +171,27 @@ Deno.serve(async (req) => {
   /* The first ask. This used to be a mailto the coordinator had to send by
      hand, while the row was already stamped sent, so the two-day reminder was
      often the first thing a reference ever received. */
-  let asked_first_time = 0
+  let asked_first_time = 0, texted_first = 0, texted_reminder = 0
   for (const r of toSend) {
-    if (!ghlToken || !ghlLocation || !r.ref_email) continue
+    if (!ghlToken || !ghlLocation || !(r.ref_email || (textLive && textable(r)))) continue
     const url = `https://cc.mo-care.com/reference.html?r=${encodeURIComponent(r.id)}` +
       `&c=${encodeURIComponent(r.candidate_name)}&n=${encodeURIComponent(r.ref_name ?? '')}` +
       (r.ref_relationship ? `&rel=${encodeURIComponent(r.ref_relationship)}` : '') +
       /* R1–R5 (2026-10-01): the form shows professional or personal questions */
       (r.ref_type ? `&t=${encodeURIComponent(r.ref_type)}` : '') + (r.ref_company ? `&co=${encodeURIComponent(r.ref_company)}` : '')
     try {
-      const contactId = await door('email', r.ref_email, r.ref_name ?? 'Reference')
-      if (!contactId) continue
+      /* the text first (2026-10-21), from the office line, through the opt-out door; a refusal raises a card (ghlSendChecked) */
+      let texted = false
+      if (textLive && textable(r)) {
+        const smsId = await door('sms', r.ref_phone, r.ref_name ?? 'Reference', r.ref_email)
+        if (smsId) texted = await ghlSendChecked(supabase, h, 'reference-chase', { channel: 'sms', contactId: smsId, address: r.ref_phone, who: r.ref_name }, { message: firstAskText(r.ref_name, r.candidate_name, url) })
+      }
+      const contactId = r.ref_email ? await door('email', r.ref_email, r.ref_name ?? 'Reference', r.ref_phone) : null
+      /* a phone-only reference we could not text (they texted STOP, or the number was refused): a phone call for the office */
+      if (!contactId && !texted) { if (!r.ref_email) toEscalate.push(r); continue }
       /* NO SILENT FAILURES (2026-10-01): stamped sent only when GoHighLevel took it; a refusal raises a card and
          the next run tries again */
-      const went = await ghlSendChecked(supabase, h, 'reference-chase', { channel: 'email', contactId, address: r.ref_email, who: r.ref_name }, {
+      const went = !contactId ? texted : await ghlSendChecked(supabase, h, 'reference-chase', { channel: 'email', contactId, address: r.ref_email, who: r.ref_name }, {
           subject: `A quick reference for ${r.candidate_name}`,
           html: `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
             `<p>Hi ${r.ref_name ?? 'there'},</p>` +
@@ -188,24 +204,30 @@ Deno.serve(async (req) => {
             `<p style="color:#57606a;font-size:13px">Or paste this into your browser: ${url}</p>` +
             `<p style="color:#57606a">Thank you,<br>Caring Companions In-Home Senior Care<br>(417) 234-8494</p></div>`,
       })
-      if (!went) continue
+      if (!went && !texted) continue
+      const at = new Date().toISOString()
       await supabase.from('reference_requests')
-        .update({ sent_at: new Date().toISOString() }).eq('id', r.id)
-      asked_first_time++
+        .update({ sent_at: at, ...(texted ? { texted_at: at } : {}) }).eq('id', r.id)
+      asked_first_time++; if (texted) texted_first++
     } catch { /* one failure must not stop the rest */ }
   }
 
   let nudged = 0
   for (const r of toNudge) {
-    if (!ghlToken || !ghlLocation || !r.ref_email) continue
+    if (!ghlToken || !ghlLocation || !(r.ref_email || (textLive && textable(r)))) continue
     const url = `https://cc.mo-care.com/reference.html?r=${encodeURIComponent(r.id)}` +
       `&c=${encodeURIComponent(r.candidate_name)}&n=${encodeURIComponent(r.ref_name ?? '')}` +
       (r.ref_relationship ? `&rel=${encodeURIComponent(r.ref_relationship)}` : '') +
       (r.ref_type ? `&t=${encodeURIComponent(r.ref_type)}` : '') + (r.ref_company ? `&co=${encodeURIComponent(r.ref_company)}` : '')
         try {
-      const contactId = await door('email', r.ref_email, r.ref_name ?? 'Reference')
-      if (!contactId) continue
-      {
+      let texted = false
+      if (textLive && textable(r)) {
+        const smsId = await door('sms', r.ref_phone, r.ref_name ?? 'Reference', r.ref_email)
+        if (smsId) texted = await ghlSendChecked(supabase, h, 'reference-chase', { channel: 'sms', contactId: smsId, address: r.ref_phone, who: r.ref_name }, { message: reminderText(r.ref_name, r.candidate_name, url) })
+      }
+      const contactId = r.ref_email ? await door('email', r.ref_email, r.ref_name ?? 'Reference', r.ref_phone) : null
+      if (!contactId && !texted) continue
+      if (contactId) {
         const went = await ghlSendChecked(supabase, h, 'reference-chase', { channel: 'email', contactId, address: r.ref_email, who: r.ref_name }, {
             subject: `A quick reference for ${r.candidate_name}`,
             html: `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
@@ -216,12 +238,13 @@ Deno.serve(async (req) => {
               `border-radius:8px;font-weight:700;display:inline-block">Answer a few quick questions</a></p>` +
               `<p style="color:#57606a">Thank you, it genuinely helps.<br>Caring Companions In-Home Senior Care</p></div>`,
         })
-        if (!went) continue
+        if (!went && !texted) continue
       }
+      const at = new Date().toISOString()
       await supabase.from('reference_requests')
-        .update({ reminded_at: new Date().toISOString(), reminder_count: (r.reminder_count ?? 0) + 1 })
+        .update({ reminded_at: at, reminder_count: (r.reminder_count ?? 0) + 1, ...(texted ? { reminder_texted_at: at } : {}) })
         .eq('id', r.id)
-      nudged++
+      nudged++; if (texted) texted_reminder++
     } catch { /* one failure must not stop the rest */ }
   }
 
@@ -305,7 +328,7 @@ Deno.serve(async (req) => {
   }
 
   if (!dry) await beat(supabase, true,
-    `outstanding ${open.length}, first asks ${asked_first_time}, reminders ${nudged}, applicants ${asked}, escalated ${escalated}`)
+    `outstanding ${open.length}, first asks ${asked_first_time}, reminders ${nudged}, applicants ${asked}, escalated ${escalated}, texts ${textLive ? 'on: ' + (texted_first + texted_reminder) + ' sent' : 'practice: ' + would_text + ' would go'}`)
   return json({ ok: true, outstanding: open.length, asked_first_time,
-                reference_reminders: nudged, applicants_asked: asked, escalated })
+                reference_reminders: nudged, applicants_asked: asked, escalated, texts: textLive ? 'on' : 'practice', texted_first, texted_reminder, would_text })
 })
