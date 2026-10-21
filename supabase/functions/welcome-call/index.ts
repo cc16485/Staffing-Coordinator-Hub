@@ -164,6 +164,16 @@ Deno.serve(async (req) => {
     return { texted, emailed, text_held, not_sent: notSent }
   }
 
+  /** true when this Background & References id (or its roster record) left onboarding or is not hired; null when unreadable */
+  async function leftOnboarding(cand: string): Promise<boolean | null> {
+    for (const key of ['candidates', 'caregivers']) {
+      const { data, error } = await db.from('app_data').select('data').eq('key', key).maybeSingle()
+      if (error) return null
+      const hit = (Array.isArray(data?.data) ? data.data : []).find((x: Record<string, unknown>) => String(key === 'candidates' ? x?.id : x?.candidate_id) === cand)
+      if (hit) return !!(hit.not_hired || hit.onboarding_left)
+    }
+    return false
+  }
   /** true when the office checked Step 2 in Viventium for this Background & References id (or its roster record); null when the
    *  list could not be read (the caller refuses: fails closed) */
   async function step2Verified(cand: string): Promise<boolean | null> {
@@ -196,6 +206,9 @@ Deno.serve(async (req) => {
     /* SLICE 3b: on the new path the Orientation Video Call waits for Approve to Advance (the old path has no card and is untouched) */
     const gate = await caregiverGate(db, { candidate_id: cand }, 'cg.approve.advance')
     if (!gate.allowed) return json({ error: gate.why, gate: 'cg.approve.advance' }, 409)
+    /* 2026-10-21 LEAVING ONBOARDING: never an invitation or the welcome message for someone who left */
+    { const left = await leftOnboarding(cand); if (left === null) return json({ error: 'The Hub could not confirm their record just now, so nothing was sent. Please try again in a minute.' }, 409)
+      if (left) return json({ error: 'They left onboarding, so nothing was sent.', left: true }, 409) }
     /* 2026-10-21 (Samantha's onboarding design, stop 4: "Nothing should advance prematurely"): on the new path the invitation
        also waits for Step 2 to be CHECKED in Viventium by the office (step2_verified_at), never only reported done. The Step 2
        server's own door (invite_auto) is only ever called from the Verify press itself, before the record is saved. */
