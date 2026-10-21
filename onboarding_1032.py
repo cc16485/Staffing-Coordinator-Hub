@@ -11,6 +11,7 @@
 import os, json, subprocess
 os.environ.setdefault("SB_STEP", "1032")
 from cc_step_lib import *
+import hashlib, subprocess
 REF = "zngsgedlsxinbygwmxwn"
 FNB = os.environ.get("SB_FN_BASE", f"https://{REF}.supabase.co")
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -27,6 +28,18 @@ def keys():
         got = {k.get("name"): k.get("api_key", "") for k in arr if isinstance(k, dict) and usable(k.get("api_key", ""))}
         if got.get("service_role"): return got
     return {}
+
+
+def older_copies(livef, want):
+    """1031b (2026-10-21): the live copy can carry an OLDER version of a shared file (a function deployed before a later
+    change to that file, e.g. send-problems.ts before the HR alert line). That is nobody's own work, so it is safe to
+    replace. Returns the paths that differ when every one of them is a version from the Staffing history; else []."""
+    if set(livef) != set(want): return []
+    diff = [k for k in want if livef.get(k) != want[k]]
+    for k in diff:
+        revs = subprocess.run(["git", "-C", BASE_ROOT, "log", "--format=%H", "HEAD", "--", k], capture_output=True, text=True).stdout.split()
+        if not any(hashlib.sha256(subprocess.run(["git", "-C", BASE_ROOT, "show", f"{r}:{k}"], capture_output=True).stdout).hexdigest() == livef[k] for r in revs[:300]): return []
+    return diff
 
 start("REFERENCE TEXTS + THE ONE WELCOME MESSAGE")
 say("PART 1 · READ ONLY (nothing changes)")
@@ -54,7 +67,8 @@ if not fails:
         okL, livef = live_files(REF, fn)
         if not okL: bad(f"could not read the live {fn}")
         elif livef == mine: say(f"  ✓ the live {fn} is already this build (an earlier run of 1032)")
-        elif livef != want: bad(f"the live {fn} is not what 1031 left ({len(set(livef.items()) ^ set(want.items()))} difference(s)), so nothing was replaced. Tell Claude.")
+        elif livef != want and not older_copies(livef, want): bad(f"the live {fn} is not what 1031 left ({len(set(livef.items()) ^ set(want.items()))} difference(s)), so nothing was replaced. Tell Claude.")
+        elif livef != want: say(f"  ✓ the live {fn} carries an older copy of {', '.join(k.split('/')[-1] for k in older_copies(livef, want))} from an earlier deploy; this build brings it up to date")
         else: say(f"  ✓ the live {fn} is the 1031 build (gateway sign-in check {'on' if GATES[fn] else 'off'}, kept)")
 K = keys(); SVC = K.get("service_role", ""); HIDE.append(SVC)
 if not SVC: bad("could not read the project's server key (the proof needs it)")
