@@ -3,8 +3,8 @@
 // and the last four digits, nothing else. Decryption happens only in the reveal action, which logs who, when and why.
 //
 // THE REVEAL RULES (Samantha, 2026-10-09, decision 6; the reveal action itself is built in Slice 2c and must follow these):
-//   who     only a person on the Admin page's "Screening staff" list (onboarding-permissions kind 'screening'), checked by
-//           person_id on the server; not every office user, and not an owner by title.
+//   who     (changed 2026-10-21, her rule) any active office user: an active person, an active member, an office role,
+//           checked by requireStaff on the server. The Screening staff list no longer gates the reveal.
 //   how long the answer carries the value once, for one screen, and it expires after REVEAL_TTL_MS; nothing is cached.
 //   audited every reveal writes document_access_log (doc = 'identity', which field, who, when, the reason typed) and bumps
 //           step1_identity.reveals; the value itself is never written anywhere.

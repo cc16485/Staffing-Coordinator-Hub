@@ -261,21 +261,27 @@ DB.app_data = [{ key: 'onboarding_permissions', data: { version: 1, advance: [],
 r = await call({ action: 'screening', offer_id: OID })
 ck('screening without a sign-in is refused', r.status === 401, r)
 r = await call({ action: 'screening', offer_id: OID }, STAFF)
-ck('screening: what is on file (last four only), the registration facts, the consent time, and may_reveal false for a coordinator not on the list', r.status === 200 && r.j.identity.ssn === 'ending 3456' && r.j.identity.dob === true && r.j.identity.license === 'ending 6789' && r.j.facts.first === 'Ava' && /12 Oak St/.test(r.j.facts.address) && r.j.consent_signed_at && r.j.may_reveal === false && r.j.ttl_seconds === 300 && !JSON.stringify(r.j).includes('529123456'), r.j)
+ck('screening: what is on file (last four only), the registration facts, the consent time, and may_reveal true for any office user (2026-10-21, no list needed)', r.status === 200 && r.j.identity.ssn === 'ending 3456' && r.j.identity.dob === true && r.j.identity.license === 'ending 6789' && r.j.facts.first === 'Ava' && /12 Oak St/.test(r.j.facts.address) && r.j.consent_signed_at && r.j.may_reveal === true && r.j.ttl_seconds === 300 && !JSON.stringify(r.j).includes('529123456'), r.j)
 ck('screening (2026-10-14, 5b v5): the FCSR facts for the Hub sheet: middle name, suffix, birth name, gender, county, as answered', r.j.facts.middle_name === 'Marie' && r.j.facts.suffix === 'None' && r.j.facts.birth_name === 'Ava Marie Stone' && r.j.facts.gender === 'Female' && r.j.facts.county === 'Greene', r.j.facts)
 { const keep = DB.step1_forms[0].answers; DB.step1_forms[0].answers = { ...keep, county: 'x'.repeat(200), birth_name: 'y'.repeat(300) }; delete DB.step1_forms[0].answers.middle_name
   const r2 = await call({ action: 'screening', offer_id: OID }, STAFF); DB.step1_forms[0].answers = keep
   ck('screening: a Step 1 without an answer gives "" (the sheet says not collected); long answers are cut (county 60, birth name 120)', r2.j.facts.middle_name === '' && r2.j.facts.county.length === 60 && r2.j.facts.birth_name.length === 120, r2.j.facts) }
-r = await call({ action: 'reveal', offer_id: OID, field: 'ssn', reason: 'FCSR registration' }, STAFF)
-ck('reveal by someone not on the Screening staff list: refused (403), no log row', r.status === 403 && /Screening staff list/.test(r.j.error) && DB.document_access_log.filter((l) => /^identity:/.test(l.doc)).length === 0, r)
-DB.app_data[0].data.screening = [{ person_id: 'p1', email: 'k@mo-care.com', name: 'Krystal' }]
+r = await call({ action: 'reveal', offer_id: OID, field: 'ssn', reason: 'FCSR registration' }, { Authorization: 'Bearer nobody' })
+ck('2026-10-21: a reveal by a sign-in that is not an office user is refused, no log row', [401, 403].includes(r.status) && DB.document_access_log.filter((l) => /^identity:/.test(l.doc)).length === 0, r)
+/* 2026-10-21: the Screening staff list stays empty; any office user reveals */
+{ const keepRoles = DB.staff_roles; DB.staff_roles = [{ person_id: 'p1', entity: 'cc_ihs', role: 'caregiver' }]
+  const rr = await call({ action: 'reveal', offer_id: OID, field: 'ssn', reason: 'FCSR registration' }, STAFF); DB.staff_roles = keepRoles
+  ck('2026-10-21: signed in but not an office role: refused (403), no log row', rr.status === 403 && DB.document_access_log.filter((l) => /^identity:/.test(l.doc)).length === 0, rr) }
+{ DB.persons[0].active = false
+  const rr = await call({ action: 'reveal', offer_id: OID, field: 'dob', reason: 'FCSR registration' }, STAFF); DB.persons[0].active = true
+  ck('2026-10-21: an inactive staff record is refused (403), no log row', rr.status === 403 && DB.document_access_log.filter((l) => /^identity:/.test(l.doc)).length === 0, rr) }
 r = await call({ action: 'reveal', offer_id: OID, field: 'ssn', reason: 'FCSR' }, STAFF)
 ck('a reason shorter than five characters is refused', r.status === 400 && /why/.test(r.j.error), r)
 r = await call({ action: 'reveal', offer_id: OID, field: 'name', reason: 'FCSR registration' }, STAFF)
 ck('an unknown field is refused', r.status === 400, r)
 const evBefore = EVENTS.length
 r = await call({ action: 'reveal', offer_id: OID, field: 'ssn', reason: 'FCSR registration' }, STAFF)
-ck('on the list: the SSN comes back once, five-minute life, with who and when', r.status === 200 && r.j.value === '529123456' && r.j.expires_in === 300 && r.j.by === 'Krystal', { status: r.status, j: { ...r.j, value: r.j && r.j.value ? '(present)' : null } })
+ck('any office user, nobody named on a list: the SSN comes back once, five-minute life, with who and when', r.status === 200 && r.j.value === '529123456' && r.j.expires_in === 300 && r.j.by === 'Krystal', { status: r.status, j: { ...r.j, value: r.j && r.j.value ? '(present)' : null } })
 const lg = DB.document_access_log.filter((l) => /^identity:/.test(l.doc))
 ck('...logged with field, who and the reason, the value in no row; the reveal count is 1; the trail has identity_revealed without the value', lg.length === 1 && lg[0].doc === 'identity:ssn' && lg[0].by_name === 'Krystal' && lg[0].reason === 'FCSR registration' && !JSON.stringify(lg).includes('529123456') && DB.step1_identity[0].reveals === 1 && EVENTS.length === evBefore + 1 && EVENTS.at(-1).kind === 'identity_revealed' && EVENTS.at(-1).detail.field === 'ssn' && !JSON.stringify(EVENTS).includes('529123456'), { lg, ev: EVENTS.at(-1) })
 r = await call({ action: 'reveal', offer_id: OID, field: 'dob', reason: 'FCSR registration' }, STAFF)

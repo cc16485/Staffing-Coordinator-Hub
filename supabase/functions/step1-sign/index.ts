@@ -27,7 +27,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { checkLink } from '../_shared/applicant-links.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { FORMS, FORM_ORDER, formFingerprint, REFERENCES_REQUIRED, APPROVED_FOR_REAL, approvedAt, approvedForReal, allApprovedForReal, step1Screens, formApplies, applicableForms, DECIDING, formCount, needsCountersign, MATCHING_FACTS, SKILLS, SKILL_GROUPS, step1Ctx, hepbFormAtStart, nurseFormAtStart, formsInPlay, HEPB_CHOICE_IDS, type Step1Ctx, type FormKey, type Item, type Form, type Field } from '../_shared/step1-documents.ts'
-import { seal, open as unseal, last4, ssnLooksValid, REVEAL_TTL_MS, REVEAL_FIELDS, REVEAL_PERMISSION, type RevealField, ssnAllowed, practiceOffer } from '../_shared/step1-crypto.ts'
+import { seal, open as unseal, last4, ssnLooksValid, REVEAL_TTL_MS, REVEAL_FIELDS, type RevealField, ssnAllowed, practiceOffer } from '../_shared/step1-crypto.ts'
 import { PERM_KEY, normalizePerms, mayApprove } from '../_shared/onboarding-permissions.ts'
 import { step1FormPdf, type IdentityState } from '../_shared/step1-pdf.ts'
 import { longDateTime } from '../_shared/offer-documents.ts'
@@ -555,16 +555,17 @@ Deno.serve(async (req) => {
     }
     /* ───── SLICE 2c (Samantha "start slice 2c", 2026-10-10): the screening desk and the identity reveal ─────
        Office staff by their own sign-in. `screening` tells the desk what is on file and whether this caller may reveal;
-       `reveal` opens ONE sealed field for a person on the Admin page's Screening staff list (decision 6), with a reason,
-       for REVEAL_TTL_MS; the log row, the reveal count and the trail row are written, the value is in none of them. */
+       `reveal` opens ONE sealed field for any active office user, with a reason, for REVEAL_TTL_MS; the log row, the
+       reveal count and the trail row are written, the value is in none of them.
+       2026-10-21 (Samantha: "every active office user can open SSN and DOB without being added by name. Still log every
+       reveal."): the Screening staff list no longer decides who may reveal. requireStaff above already refuses anyone who
+       is not an active person, an active member and an office role, so passing it is the permission. */
     if (action === 'screening' || action === 'reveal') {
       const staff = await requireStaff(db, req, OFFICE_ROLES)
       if (!staff.ok) return json({ ok: false, error: staff.error }, staff.status)
       const oid = S(b.offer_id, 64)
       if (!/^[0-9a-f-]{8,64}$/i.test(oid)) return json({ ok: false, error: 'Which offer?' }, 400)
-      const { data: permRow } = await db.from('app_data').select('data').eq('key', PERM_KEY).maybeSingle()
-      const perms = normalizePerms(permRow?.data)
-      const mayReveal = mayApprove(perms, REVEAL_PERMISSION, { person_id: staff.person_id, roles: staff.roles, email: staff.email })
+      const mayReveal = true
       const { data: idr } = await db.from('step1_identity').select('ssn_last4,dob_sealed,ssn_sealed,license_sealed,license_last4,license_state,license_expires,address1,address2,city,state,zip,captured_at,purge_after,purged_at,reveals').eq('offer_id', oid).maybeSingle()
       if (action === 'screening') {
         const o = await trn().get(oid)
@@ -581,7 +582,6 @@ Deno.serve(async (req) => {
           consent_signed_at: (fr?.signatures as Record<string, { at?: string }> | undefined)?.edl_fcsr_consent?.at ?? null, step1_completed_at: fr?.completed_at ?? null, reveals_log: log ?? [] })
       }
       // reveal
-      if (!mayReveal) return json({ ok: false, error: 'Only a person named on the Admin page\'s Screening staff list may reveal identity details. Ask an owner to add you there.' }, 403)
       const field = S(b.field, 10) as RevealField
       if (!REVEAL_FIELDS.includes(field)) return json({ ok: false, error: 'Which field: ssn, dob or license?' }, 400)
       const reason = S(b.reason, 200)
