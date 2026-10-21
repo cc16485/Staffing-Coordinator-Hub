@@ -53,6 +53,8 @@ Deno.serve(async (req) => {
   const id = String(b.id || '')
   if (!/^[0-9a-f-]{36}$/i.test(id)) return json({ error: 'Which reference?' }, 400)
   const { data: r } = await db.from('reference_requests').select('*').eq('id', id).maybeSingle()
+  /* 2026-10-21 LEAVING ONBOARDING: a request closed because they left is not sent */
+  if (r?.closed_at) return json({ error: 'This reference request was closed (' + String(r.closed_reason || 'they left onboarding').slice(0, 80) + '), so nothing was sent.' }, 409)
   if (!r) return json({ error: 'That reference request was not found.' }, 404)
   if (r.responded_at) return json({ error: 'They already answered. Nothing was sent.' }, 409)
   /* SLICE 3b: on the new path nothing reaches a reference before the signed reference consent (the old path is untouched) */

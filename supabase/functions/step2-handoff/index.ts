@@ -245,6 +245,9 @@ Deno.serve(async (req) => {
       const all: Person[] = [...(await list(db, 'candidates')).map((c) => ({ key: 'candidates' as const, rec: c, id: String(c.id) })), ...(await list(db, 'caregivers')).filter((r) => r?.candidate_id != null).map((r) => ({ key: 'caregivers' as const, rec: r, id: String(r.id) }))]
       for (const p of all) {
         const c = p.rec, cid = candIdOf(p), state = stateOf(c), name = `${c.first || ''} ${c.last || ''}`.trim()
+        /* 2026-10-21 LEAVING ONBOARDING: someone who left (or is not hired) gets no Step 2 reminder, invitation text, profile
+           reminder or card */
+        if (c.not_hired || c.onboarding_left) { out.skipped_left = (out.skipped_left || 0) + 1; continue }
         const jr = await journeyFor(db, c)
         if (state === 'verified') {
           for (const k of ['step2_notsent_', 'step2_verify_', 'step2_stalled_']) await closeCard(db, k + cid, 'Step 2 verified.')
@@ -357,6 +360,8 @@ Deno.serve(async (req) => {
     }
     const cid = S(b.candidate_id, 12); if (!/^\d{1,12}$/.test(cid)) return json({ error: 'Which person?' }, 400)
     const p = await person(db, cid); if (!p) return json({ error: 'That person is not in Background & References or on the roster.' }, 404)
+    /* 2026-10-21: nothing more for someone who left onboarding or is not hired (Come back first) */
+    if ((p.rec.not_hired || p.rec.onboarding_left) && action !== 'undo') return json({ error: 'They left onboarding' + (p.rec.not_hired_reason ? ' (' + S(p.rec.not_hired_reason, 40) + ')' : '') + ', so nothing was sent or recorded. Bring them back first if they are returning.', left: true }, 409)
     const c = p.rec, name = `${c.first || ''} ${c.last || ''}`.trim(), state = stateOf(c), jr = await journeyFor(db, c)
     if (action === 'sent') {
       const resend = b.resend === true

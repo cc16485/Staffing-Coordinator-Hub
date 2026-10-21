@@ -50,6 +50,7 @@ import { saveAuditFields } from '../_shared/sweep-patch.ts'
 import { loadLeie, matchLeie, oigEvidence, oigDue, OIG_INTERVAL_DAYS } from '../_shared/oig-leie.ts'
 import { advanceDue, oigWanted, oigItemId, ADV_KEY } from '../_shared/onboarding-auto.ts'   /* 2026-10-21 onboarding design */
 import { autoAskSlots, requestRow } from '../_shared/ref-auto-ask.ts'   /* 2026-10-21 references asked by themselves */
+import { LEAVE_REASONS, LEFT_TAG, leaveFields, comeBackFields, cardsFor } from '../_shared/onboarding-leave.ts'   /* 2026-10-21 leaving onboarding */
 import { DUTIES, validateEvidence, verifiedLevel, claimedFrom, evidenceFromReference } from '../_shared/care-level-verify.ts'   /* 2026-10-21 Level of Care */
 import { readTraining, certificateRef, syncPatch } from '../_shared/training-sync.ts'
 import { testPerson } from '../_shared/test-people.ts'
@@ -231,6 +232,34 @@ async function levelState(db: Any, j: Any, f: Facts): Promise<Any> {
   const approved = al >= 1 && al <= 3 ? { level: al, by: rec.care_level_by || null, at: rec.care_level_at || null, note: rec.care_level_note || null, default: false }
     : { level: 1, by: null, at: null, note: 'Everyone starts at Level 1 until a higher level is verified and approved.', default: true }
   return { claimed: claimedFrom(f.step1?.answers, f.offer), evidence: evidence.map(({ date_from: _a, date_to: _b, ...x }: Any) => x), verified_level: verifiedLevel(evidence), approved }
+}
+/** 2026-10-21 the leave fields only, through the server's own door (leave_patch), only if nobody changed the record since it was read */
+async function leavePatch(db: Any, key: string, rec: Any, fields: Any, tries = 3): Promise<'saved' | 'skipped' | 'error'> {
+  let cur = rec
+  for (let i = 0; i < tries; i++) {
+    const r = (x: Any) => (/^[0-9]{1,15}$/.test(String(x?._rev ?? '')) ? Number(x._rev) : 0)
+    const { data, error } = await db.rpc('leave_patch', { p_key: key, p_id: String(cur.id), p_base_rev: r(cur), p_patch: fields })
+    if (error) return 'error'
+    if (data?.ok) return 'saved'
+    if (data?.reason !== 'changed' || !data.current_record) return 'skipped'
+    cur = data.current_record
+  }
+  return 'skipped'
+}
+/** the candidate and roster records, and the readiness card, behind a candidate id or an offer id */
+async function personFor(db: Any, b: Any): Promise<{ cand: Any; roster: Any; offer_id: string; candidate_id: string; j: Any } | null> {
+  const cid = S(b.candidate_id, 40), oid0 = S(b.offer_id, 80)
+  if (!cid && !oid0) return null
+  const list = async (k: string) => { const { data, error } = await db.from('app_data').select('data').eq('key', k).maybeSingle(); if (error) throw new Error('could not read ' + k); return Array.isArray(data?.data) ? data.data : [] }
+  const cands = await list('candidates'), roster = await list('caregivers')
+  let cand = cands.find((x: Any) => (cid && String(x?.id) === cid) || (oid0 && String(x?.offer_id ?? '') === oid0)) || null
+  const offer_id = S(cand?.offer_id, 80) || oid0
+  const ros = roster.find((x: Any) => (cid && x?.candidate_id != null && String(x.candidate_id) === cid) || (offer_id && String(x?.offer_id ?? '') === offer_id)) || null
+  if (!cand && ros?.candidate_id != null) cand = cands.find((x: Any) => String(x?.id) === String(ros.candidate_id)) || null
+  if (!cand && !ros) return null
+  const candidate_id = cand ? String(cand.id) : String(ros?.candidate_id ?? '')
+  const { data: j } = offer_id ? await db.from('client_journey').select('*').eq('subject', 'caregiver').eq('offer_id', offer_id).maybeSingle() : { data: null }
+  return { cand, roster: ros, offer_id, candidate_id, j: j || null }
 }
 /** the care_level_* fields only, through the server's own door (level_patch), only if nobody changed the record since it was read */
 async function levelPatch(db: Any, key: string, rec: Any, fields: Any, tries = 3): Promise<'saved' | 'skipped' | 'error'> {
@@ -580,6 +609,9 @@ Deno.serve(async (req) => {
       for (const j of js ?? []) {
         const { data: steps } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
         const f = await facts(db, j, T)
+        /* 2026-10-21 LEAVING ONBOARDING: their card is closed by leave; if a record says they left while the card is still
+           open (an older leave), nothing here runs for them: no verdicts, cards, reminders, references, OIG, badge or advance */
+        if (f.candidate?.not_hired || f.roster?.onboarding_left || f.roster?.not_hired) { out.skipped_left = ((out.skipped_left as number) || 0) + 1; continue }
         const n = await applyVerdicts(db, j, steps ?? [], f, now, dfs, ctxFor(f, st)); (out.changed as number) += n
         const { data: fresh } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
         const view = R.compute(dfs, j, fresh ?? [], ctxFor(f, st))
@@ -735,6 +767,49 @@ Deno.serve(async (req) => {
       void T; return json({ ok: true, rows, may_approve_work: mayApprove(P, 'work', { person_id: who.person_id, roles: who.roles || [], email: who.email }) })
     }
     const answerFor = async (jid: string, f: Facts) => { const fresh = await load(db, { journey_id: jid }); const v = R.compute(dfs, fresh!.j, fresh!.steps, ctxFor(f, st)); const { data: ev } = await db.from('client_journey_event').select('*').eq('journey_id', jid).order('at', { ascending: false }).limit(200); const may: Record<string, boolean> = {}; for (const r of v.rows) may[r.key] = mayDo(r.def, who, P); return json({ ok: true, journey: fresh!.j, steps: fresh!.steps, view: v, events: ev ?? [], may, is_owner: isOwner, may_export: mayExport, approve: approveState(v, f, st, who, P, dfs, fresh!.j), facts: { lived_outside_mo: f.lived_outside_mo ?? null, claims_cna_or_hha: f.claims_cna_or_hha ?? null, drives_clients: f.drives_clients ?? null, dates: dates(f), rights: rightsState(f), ...(f.licensed_nurse === true ? { licensed_nurse: true, position_key: f.offer?.position_key ?? null, nurse_switch_live: st?.[NURSE_SWITCH] === true } : {}) } }) }   /* 2026-10-13: participant rights, signed and explained */
+    /* ── LEAVING ONBOARDING, AND COMING BACK (Samantha 2026-10-21: "a clear way to take someone out of onboarding if they ghost,
+       or let us know that they took another position") ── */
+    if (action === 'leave' || action === 'come_back') {
+      const reason = S(b.reason, 20), note = S(b.note, 600), now = new Date().toISOString(), actor = { email: who.email, name: who.name }
+      if (action === 'leave' && !LEAVE_REASONS[reason]) return json({ error: 'Why are they leaving: stopped answering, took another job, changed their mind, or we decided not to hire? (A background finding goes through the background review.)' }, 400)
+      if (action === 'come_back' && !(isOwner || mayApprove(P, 'work', { person_id: who.person_id, roles: who.roles || [], email: who.email }))) return json({ error: 'Only an owner or a person on the Approve to Work list may bring someone back into onboarding.' }, 403)
+      let p: Any
+      try { p = await personFor(db, b) } catch (e) { return json({ error: 'The Hub could not read their records just now, so nothing changed. Try again in a minute.' }, 503) }
+      if (!p) return json({ error: 'Which person? Their Background & References record or offer was not found.' }, 404)
+      const rec = p.cand || p.roster, name = `${S(rec.first, 40)} ${S(rec.last, 60)}`.trim() || S(p.j?.client_name, 80) || 'this person'
+      if (action === 'leave' && rec.not_hired && rec.left_at) return json({ error: name + ' already left onboarding (' + String(rec.left_at).slice(0, 10) + ').' }, 409)
+      if (action === 'come_back' && !(rec.not_hired && rec.left_at)) return json({ error: name + ' did not leave onboarding this way, so there is nothing to undo here.' }, 409)
+      const by = who.name || who.email
+      const save = async (key: string, r: Any, roster: boolean) => r ? await leavePatch(db, key, r, action === 'leave' ? leaveFields(reason, note, by, now, roster) : comeBackFields(r, note, by, now, roster)) : 'none'
+      const s1 = await save('candidates', p.cand, false), s2 = await save('caregivers', p.roster, true)
+      if (s1 === 'error' || s2 === 'error' || s1 === 'skipped' || s2 === 'skipped') return json({ error: 'Their record could not be saved just now' + (s1 === 'saved' || s2 === 'saved' ? ' (part of it was)' : '') + '. Reload and try again.' }, 409)
+      const label = LEAVE_REASONS[reason] || '', closedRefs: Any[] = []
+      let cardsClosed = 0, axCard = false
+      if (action === 'leave') {
+        /* (b) the readiness card closes, so every sweep, card and reminder skips them */
+        if (p.j && p.j.status !== 'closed') { await db.from('client_journey').update({ status: 'closed', closed_reason: LEFT_TAG + reason, updated_at: now }).eq('journey_id', p.j.journey_id) }
+        /* their open Needs Attention cards close, each through the item door */
+        const { data: row } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+        for (const it of cardsFor(row?.data || [], { offer_id: p.offer_id, candidate_id: p.candidate_id, journey_id: p.j?.journey_id })) {
+          const { error } = await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...it, status: 'done', closed_at: now, closed_by: who.email, close_reason: 'They left onboarding: ' + label, last_activity_at: now } }); if (!error) cardsClosed++
+        }
+        /* (c) their unanswered reference requests close (reference-chase, the reference texts and the applicant nudge skip closed rows) */
+        if (p.candidate_id) { const { data: rr } = await db.from('reference_requests').update({ closed_at: now, closed_reason: LEFT_TAG + reason }).eq('candidate_id', p.candidate_id).is('responded_at', null).is('closed_at', null).select('id'); closedRefs.push(...(rr ?? [])) }
+        /* already on the roster: one card to set them inactive in AxisCare by hand */
+        if (p.roster) { axCard = true; const at = now
+          await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id: 'left_ax_' + (p.roster.id ?? p.candidate_id), kind: 'axiscare_inactive_after_leave', domain: 'recruiting_orientation', status: 'open', urgency: 'today',
+            title: 'Set ' + name + ' inactive in AxisCare (they left onboarding)', detail: `${name} left onboarding (${label}${note ? ': ' + note : ''}). They were already in AxisCare. Set them inactive there. The Hub does not change AxisCare by itself.`,
+            who: name, offer_id: p.offer_id || null, candidate_id: p.candidate_id || null, owner: '', created_at: at, first_at: at, last_at: at, due: new Date(Date.now() + 24 * 3_600_000).toISOString(), created_by: 'caregiver-journey leave', opened_by: who.email } }) }
+        if (p.j) await event(db, p.j.journey_id, null, actor, 'left_onboarding', { reason, label, note: note || null, references_closed: closedRefs.length, cards_closed: cardsClosed, axiscare_card: axCard }, label)
+        return json({ ok: true, closed: { references: closedRefs.length, cards: cardsClosed }, axiscare_card: axCard })
+      }
+      /* come_back: the card reopens; only the reference requests leave closed reopen */
+      if (p.j && p.j.status === 'closed' && String(p.j.closed_reason || '').startsWith(LEFT_TAG)) await db.from('client_journey').update({ status: 'open', closed_reason: null, updated_at: now }).eq('journey_id', p.j.journey_id)
+      let reopened = 0
+      if (p.candidate_id) { const { data: rr } = await db.from('reference_requests').update({ closed_at: null, closed_reason: null }).eq('candidate_id', p.candidate_id).like('closed_reason', LEFT_TAG + '%').select('id'); reopened = (rr ?? []).length }
+      if (p.j) await event(db, p.j.journey_id, null, actor, 'came_back', { note: note || null, had_left: { reason: rec.not_hired_reason ?? null, at: rec.left_at ?? null }, references_reopened: reopened }, note || 'Back into onboarding')
+      return json({ ok: true, reopened: { references: reopened, journey: !!p.j }, note: p.roster ? 'They were on the caregiver roster: if they were set inactive in AxisCare, set them back to In Training there.' : null })
+    }
     if (action === 'get') {
       const got = await load(db, b); if (!got) return json({ ok: true, journey: null })
       const f = await facts(db, got.j, trn())

@@ -83,6 +83,9 @@ Deno.serve(async (req) => {
     .from('reference_requests')
     .select('*')
     .is('responded_at', null)
+    /* 2026-10-21 LEAVING ONBOARDING: a request closed because they left is never chased (first ask, texts, reminder,
+       the applicant nudge, the office Call card) */
+    .is('closed_at', null)
   if (error) { await beat(supabase, false, 'query: ' + error.message); return json({ error: error.message }, 500) }
   if (!open?.length) {
     if (!dry) await beat(supabase, true, 'nothing outstanding')
