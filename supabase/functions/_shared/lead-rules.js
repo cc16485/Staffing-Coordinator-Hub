@@ -939,13 +939,18 @@
   function stampRung(l, level, o, nowIso){
     const at = nowIso || new Date().toISOString(); o = o || {};
     l.rungs = Object.assign({}, l.rungs || {}, { [level + '_at']:at, [level + '_to']:String(o.to || ''), [level + '_sent']:o.sent !== false },
-      o.excused ? { [level + '_excused']:String(o.excused) } : {});
+      o.excused ? { [level + '_excused']:String(o.excused) } : {}, o.quiet ? { [level + '_quiet']:true } : {});
     if(level === 'manager' && !l.speed_miss) l.speed_miss = Object.assign({ at, owner:String(o.owner || l.assigned_coordinator || ''), minutes:Number(o.minutes) || RUNGS_DEFAULT.manager_min },
       o.excused ? { excused:String(o.excused) } : {});
     return l;
   }
   /* the switch for "time off and coverage never count against someone" */
   function fairCountsOn(settings){ return !!(settings && settings.fair_counts_live === true); }
+  /* ONE TEXT PER FAMILY (Samantha 2026-10-22, "maybe just one notification about the lead", Speed to lead design approved,
+     artifact 5vuSNJ9NKGhNiYf9ScEj7M), only while ops_settings.lead_one_text: the 5-minute text is the only text. The 15
+     and 30 still happen, quietly: the backup still gets the family on My Work, the person in charge still gets the
+     escalation card, and the 30-minute miss is still counted (and listed in the 8am brief), with no text. */
+  function oneText(settings){ return !!(settings && settings.lead_one_text === true); }
   const RUNG_WORDS = { owner:'the owner', backup:'the backup', manager:'Owner Escalation' };
 
   /* ── REFERRAL SUBTYPE, THE TWO FLAGS, AND THE PARTNER LOOP (item 3 of her design, 2026-10-07) ─────────────────────────
@@ -1079,7 +1084,10 @@
     });
     if(l.authorization_received_at) push(l.authorization_received_at, 'auto', 'Authorization received from the state', '');
     const rg = l.rungs || {};
-    ['owner', 'backup', 'manager'].forEach(k => { if(rg[k + '_at']) push(rg[k + '_at'], 'auto', (rg[k + '_sent'] === false ? 'Could not text ' : 'Texted ') + (who(rg[k + '_to']) || RUNG_WORDS[k]) + (k === 'owner' ? ' at 5 minutes, nobody had called' : k === 'backup' ? ': on the backup\'s desk, nobody had called' : ': Owner Escalation told, counted as a miss'), ''); });
+    ['owner', 'backup', 'manager'].forEach(k => { if(!rg[k + '_at']) return;
+      if(rg[k + '_quiet']) push(rg[k + '_at'], 'auto', k === 'backup' ? 'On ' + (who(rg[k + '_to']) || RUNG_WORDS[k]) + '\'s desk too (backup), nobody had called. No text: one text per family'
+        : 'Waited 30 minutes, nobody had called: counted as a miss' + (who(rg[k + '_to']) ? ', on ' + who(rg[k + '_to']) + '\'s desk' : '') + '. No text: one text per family', '');
+      else push(rg[k + '_at'], 'auto', (rg[k + '_sent'] === false ? 'Could not text ' : 'Texted ') + (who(rg[k + '_to']) || RUNG_WORDS[k]) + (k === 'owner' ? ' at 5 minutes, nobody had called' : k === 'backup' ? ': on the backup\'s desk, nobody had called' : ': Owner Escalation told, counted as a miss'), ''); });
     (Array.isArray(l.status_history) ? l.status_history : []).forEach(h => {
       if(!h || !h.at) return;
       if(h.to === 'Lost') push(h.at, 'stage', 'Marked lost' + (who(h.by) ? ' by ' + who(h.by) : ''), h.why || '');
@@ -1342,7 +1350,7 @@
     firstAttemptState, medianFirstAttemptMinutes, PAYER_WORDS, lastEventWords, replyPending, boardRow, boardSort, dayHeader,
     FUTURE, FUTURE_KIND, FUTURE_PERMISSION, isSaved, futureRecord, saveForFuture, statusBeforeSaved, reactivate, mayContact, demand, DEMAND_FAMILIES, DEMAND_HOURS, DEMAND_DAYS,
     markAuthorized, authorizationPending, stateDays, DSDS_AMBER_DAYS, DSDS_RED_DAYS, median, ownerNumbers, periodNumbers, leadNext, nextWords, setNext, STATUSES, setStatus, statusBeforeLost,
-    STEP_KEYS, steps, timeline, SCRIPT_KEYS, SCRIPT_LABEL, SCRIPT_DEFAULT, scriptFor, timeCats, staffingLook, whenWords, RUNGS_DEFAULT, RUNG_WORDS, rungSettings, rungsDue, stampRung,
+    STEP_KEYS, steps, timeline, SCRIPT_KEYS, SCRIPT_LABEL, SCRIPT_DEFAULT, scriptFor, timeCats, staffingLook, whenWords, RUNGS_DEFAULT, RUNG_WORDS, rungSettings, rungsDue, stampRung, oneText,
     SUBTYPE_LABEL, SUBTYPE_KEYS, PROFESSIONAL, referralSubtype, flags, PARTNER_KINDS, PARTNER_LABEL, PARTNER_DEFAULT, partnerName, partnerLoop, recordPartnerMsg, MEDICAID_LONG_DAYS, medicaidPipeline, missingRequired,
     ASMT_TARGET_DAYS, DECISION_DAYS, stageWord, oneNext, FAMILY_REASONS, assessmentOverdue, decisionStale, cadenceNext, medicaidLong, carriedForward, yesThanks };
   if(typeof module !== 'undefined' && module.exports) module.exports = api;

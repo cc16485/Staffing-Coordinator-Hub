@@ -19,7 +19,7 @@ const reset = (o = {}) => { MAIL = []; RPC = []; OPTS = o; T = {
   app_data: [{ key: 'leads', data: [
       { id: 'L1', first_name: 'Dana', last_name: 'Daughter', client_first_name: 'Mae', client_last_name: 'Mom', phone: '4175550101', status: 'Assessment Scheduled', assessment_at: 'Friday, October 2, 2026 10:00 AM', client_address: '1 Elm St, Nixa', created_at: '2026-09-20T10:00:00Z' },
       { id: 'L2', first_name: 'Eli', last_name: 'Ghl', phone: '4175550102', status: 'Assessment Scheduled', assessment_at: 'Friday, October 2, 2026 1:00 PM', created_at: '2026-09-20T10:00:00Z' },
-      { id: 'L3', first_name: 'Fay', last_name: 'Lost', status: 'Lost', assessment_at: 'Friday, October 2, 2026 3:00 PM', created_at: '2026-09-20T10:00:00Z' }] },
+      { id: 'L3', first_name: 'Fay', last_name: 'Lost', status: 'Lost', assessment_at: 'Friday, October 2, 2026 3:00 PM', created_at: '2026-09-20T10:00:00Z' }, ...(o.extraLeads || [])] },
     { key: 'care_assessments', data: [{ id: 'A1', lead_id: 'L1', client_name: 'Mae Mom', visit_date: '2026-10-02', coordinator: 'Krystal', address: '1 Elm St, Nixa', status: 'Scheduled' }] },
     { key: 'ops_settings', data: { morning_brief_recipients: [{ name: 'Samantha', email: 'samantha@mo-care.com', admin: true }, { name: 'Krystal', email: 'krystal@mo-care.com', admin: false }], ...(o.ops || {}) } },
     { key: 'morning_brief_state', data: o.marker ? [{ id: 'sent_' + o.marker }] : [] },
@@ -133,6 +133,22 @@ try {
   ck('missed clock-ins and clock-outs: yesterday\'s two cards, the open one first, still to call; nothing older', /Yesterday&#39;s missed clock-ins and clock-outs \(2\)|Yesterday's missed clock-ins and clock-outs \(2\)/.test(adm)
     && adm.indexOf('Bo Open') > 0 && adm.indexOf('Bo Open') < adm.indexOf('Ann Fixed') && /still to call/.test(adm) && /no clock-in/.test(adm) && /no clock-out/.test(adm) && !/Old Week/.test(adm), adm.slice(0, 300))
   ck('the word EVV is gone from the brief; the personal edition has no admin section', !/EVV/.test(adm) && !/missed clock-ins and clock-outs/.test(per))
+  /* 2026-10-22 Speed to lead (one text per family): families who waited over 30 minutes since the last workday's brief */
+  const waits = [
+    { id: 'W1', first_name: 'Wanda', last_name: 'Called', status: 'Contacted', assigned_coordinator: 'Krystal', created_at: '2026-10-01T15:00:00Z', rungs: { manager_at: '2026-10-01T15:31:00Z' }, speed_miss: { owner: 'krystal@mo-care.com' }, first_human_attempt_at: '2026-10-01T16:02:00Z' },
+    { id: 'W2', first_name: 'Will', last_name: 'Waiting', status: 'New', assigned_coordinator: 'Krystal', created_at: '2026-10-01T19:00:00Z', rungs: { manager_at: '2026-10-01T19:31:00Z' } },
+    { id: 'W3', first_name: 'Olde', last_name: 'Week', status: 'New', assigned_coordinator: 'Krystal', created_at: '2026-09-29T15:00:00Z', rungs: { manager_at: '2026-09-29T15:31:00Z' } },
+    { id: 'W4', first_name: 'Ona', last_name: 'Out', status: 'New', assigned_coordinator: 'Angiel', created_at: '2026-10-01T16:00:00Z', rungs: { manager_at: '2026-10-01T16:31:00Z', manager_excused: 'out' }, speed_miss: { owner: 'Angiel', excused: 'out' } }]
+  r = await cron('2026-10-02T13:00:00Z', { extraLeads: waits })
+  const adm2 = MAIL.find((m) => /samantha/.test(m.to || m.email || JSON.stringify(m)))?.html || ''
+  const per2 = MAIL.find((m) => /krystal/.test(m.to || m.email || JSON.stringify(m)))?.html || ''
+  ck('speed to lead · yesterday\'s 30-minute waits are one line each for admins, the not-called one in red, time off marked, nothing older', /Waited over 30 minutes for a first call \(3\)/.test(adm2)
+    && /Wanda Called/.test(adm2) && /first call 11:02am/.test(adm2) && /Will Waiting/.test(adm2) && /not called yet/.test(adm2) && /Ona Out/.test(adm2) && /was out, not counted/.test(adm2) && !/Olde Week/.test(adm2), adm2.slice(adm2.indexOf('Waited over'), adm2.indexOf('Waited over') + 900))
+  ck('speed to lead · the personal edition has no such line', !/Waited over 30 minutes/.test(per2))
+  r = await cron('2026-10-05T13:00:00Z', { extraLeads: [{ id: 'W5', first_name: 'Sat', last_name: 'Urday', status: 'New', created_at: '2026-10-03T15:00:00Z', rungs: { manager_at: '2026-10-03T15:31:00Z' } },
+    { id: 'W6', first_name: 'Fri', last_name: 'Day', status: 'New', created_at: '2026-10-02T15:00:00Z', rungs: { manager_at: '2026-10-02T15:31:00Z' } }] })
+  const adm3 = MAIL.find((m) => /samantha/.test(m.to || m.email || JSON.stringify(m)))?.html || ''
+  ck('speed to lead · on Monday it covers Friday through Sunday', /Waited over 30 minutes for a first call \(2\)/.test(adm3) && /Sat Urday/.test(adm3) && /Fri Day/.test(adm3), adm3.slice(0, 200))
   ck('chiParts: GHL words, timestamps, dates', JSON.stringify(M.chiParts('Friday, October 2, 2026 2:30 PM')) === '{"date":"2026-10-02","min":870}' && M.chiParts('2026-10-03T04:30:00Z').date === '2026-10-02' && M.chiParts('2026-10-02').min === null)
   ck('SEND_HOUR is 8 and nothing the office reads says 6:45 any more', M.SEND_HOUR === 8 && !/6:45am|Sent at 6:45|6:45 scheduled/.test(fs.readFileSync(path.join(F, 'lead-digest/index.ts'), 'utf8')))
   const fsrc = fs.readFileSync(path.join(F, 'lead-digest/index.ts'), 'utf8')
