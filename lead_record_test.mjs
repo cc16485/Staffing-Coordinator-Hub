@@ -74,6 +74,8 @@ globalThis.fetch = async (url, o = {}) => { url = String(url); SENT.push([o.meth
   const ok = (b) => new Response(JSON.stringify(b), { status: 200 })
   if (url.includes('/users/')) return ok({ users: G.users })
   if (url.includes('/conversations/search')) { const u = new URL(url); const after = u.searchParams.get('startAfterDate')
+    const cid = u.searchParams.get('contactId'), qy = u.searchParams.get('query')
+    if (cid || qy) return ok({ conversations: clone([...G.convos, ...(G.older || [])]).filter((c) => cid ? c.contactId === cid : String(c.phone).replace(/\D/g, '').endsWith(qy)) })
     return ok({ conversations: after ? [] : clone(G.convos).sort((a, b) => b.lastMessageDate - a.lastMessageDate) }) }
   let m = /\/conversations\/messages\/([\w-]+)/.exec(url)
   if (m) { for (const list of Object.values(G.msgs)) { const x = list.find((y) => y.id === m[1]); if (x) return ok({ message: x }) } return new Response('{}', { status: 404 }) }
@@ -170,6 +172,25 @@ try {
   reset(false); await run(); T.app_data[0].data.lead_record_live = true
   r = await run()
   ck('going live after practice records the practice days too', seen('m3', 'live')?.status === 'recorded' && leadOf('L1').status === 'Contacted', r.j)
+
+  /* 2026-10-22 (Greg): the family called and Krystal talked to them, THEN somebody typed them in as a lead. That
+     conversation is older than the last scan, so only the never-reached lookup can find it. */
+  reset(true); await run()
+  G.older = [{ id: 'c20', phone: '+14175550120', contactId: 'k20', fullName: 'Greg Hall', lastMessageDate: NOW - 50 * 60e3 }, { id: 'c21', phone: '+14175550121', contactId: 'k21', lastMessageDate: NOW - 50 * 60e3 }]
+  G.msgs.c20 = [{ id: 'm20', messageType: 'TYPE_CALL', dateAdded: ago(50), direction: 'inbound', userId: 'u-kr', meta: { call: { duration: 540, status: 'completed' } } }]
+  G.msgs.c21 = [{ id: 'm21', messageType: 'TYPE_CALL', dateAdded: ago(50), direction: 'inbound', userId: 'u-kr', meta: { call: { duration: 300, status: 'completed' } } }]
+  const leadsNow = T.app_data.find((r) => r.key === 'leads').data
+  leadsNow.push(lead('L20', '417-555-0120', { created_at: ago(20) }), lead('L21', '', { created_at: ago(20), ghl_contact_id: 'k21', client_phone: '4175550121' }))
+  r = await run()
+  const g = leadOf('L20')
+  ck('typed in after the call: the call they already had counts as the first real conversation', g.first_human_contact_at === ago(50) && g.status === 'Contacted'
+    && g.comm_log.some((c) => c.body === '☎ They called, Krystal answered, 9 min' || /They called/.test(c.body)), [r.j, g.status, g.comm_log])
+  ck('typed in after the call: found by the GoHighLevel contact too', leadOf('L21').first_human_contact_at === ago(50), leadOf('L21'))
+  const mine = () => SENT.filter(([, u]) => /contactId=k21|query=4175550120|query=4175550121/.test(u)).length
+  const asks = mine()
+  r = await run()
+  ck('...and once reached, a lead is not looked up again', asks > 0 && mine() === asks && r.j.recorded === 0, [asks, mine(), r.j])
+  ck('...the lookups only read (GET)', SENT.every(([m]) => m === 'GET'))
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1)

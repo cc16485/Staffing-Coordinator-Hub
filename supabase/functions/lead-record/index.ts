@@ -4,7 +4,8 @@
 // Samantha: "we shouldnt have to manually log a call or text follow up since the ai should monitor and record all of
 // our calls and texts to leads". Approved mockup Part 2: https://claude.ai/artifact/MhFEgbLXTzmPCbegzHVv49
 //
-// Every 5 minutes: the office line's GoHighLevel conversations that changed since the last scan; for each one whose
+// Every 5 minutes: the office line's GoHighLevel conversations that changed since the last scan (plus, since 2026-10-22,
+// the conversations of every lead nobody has reached yet, so a call from before they were typed in counts); for each one whose
 // phone number belongs to exactly ONE lead (phone or client phone, not archived), every call and text since
 // ops_settings.lead_record_since is written on that lead the way Log a call writes it (rules in _shared/lead-record.ts).
 // A number on two or more leads is never guessed: it is listed for the office ("Couldn't tell whose" on Leads).
@@ -28,7 +29,7 @@ const LR: Any = (globalThis as Any).LeadRules
 const GHL = 'https://services.leadconnectorhq.com'
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
 const H = (tok: string, v = '2021-04-15') => ({ Authorization: `Bearer ${tok}`, Version: v, Accept: 'application/json' })
-export const PAGE = 100, MAX_PAGES = 10, OVERLAP_MS = 30 * 60e3, MSG_PAGES = 3, MAX_TRIES = 3, USERS_FRESH_MS = 12 * 3600e3
+export const PAGE = 100, MAX_PAGES = 10, OVERLAP_MS = 30 * 60e3, MSG_PAGES = 3, MAX_TRIES = 3, USERS_FRESH_MS = 12 * 3600e3, MAX_LOOKUPS = 60
 
 async function beat(db: Any, ok: boolean, note: string) {
   try {
@@ -121,6 +122,32 @@ Deno.serve(async (req) => {
     after = String((Array.isArray(last?.sort) && last.sort[0]) || last?.lastMessageDate || '')
     if (!after) break
     if (p === MAX_PAGES - 1) out.reached_back = false
+  }
+  /* 2b · (Samantha 2026-10-22: "lead that call into the office are being treated as a lead that need followed up
+     immediately like a website lead form ... he called in as a lead and already spoke to Krystal"). A family who calls
+     BEFORE anyone types them in: when the scan saw that call it matched no lead, and the scan above only looks at
+     conversations that changed since the last run, so the call never reached the lead and its first-call clock kept
+     running. So every lead nobody has reached yet gets its own conversations looked up (by contact, and by number). */
+  const have = new Set(convos.map((c) => String(c.id)))
+  const unreached = leads.filter((l: Any) => l && l.id && l.archived !== true && !l.first_human_contact_at && String(l.status || 'New') !== 'Lost')
+  const lookups: Record<string, string>[] = []
+  for (const l of unreached) {
+    if (l.ghl_contact_id) lookups.push({ contactId: String(l.ghl_contact_id) })
+    for (const p of [l.phone, l.client_phone]) { const d = String(p || '').replace(/\D/g, '').slice(-10); if (d.length === 10) lookups.push({ query: d }) }
+  }
+  const asked = new Set<string>()
+  out.unreached = unreached.length; out.looked_up = 0
+  for (const f of lookups) {
+    const k = JSON.stringify(f)
+    if (asked.has(k)) continue
+    if (asked.size >= MAX_LOOKUPS) { out.lookups_capped = true; break }
+    asked.add(k)
+    const r = await fetch(`${GHL}/conversations/search?` + new URLSearchParams({ locationId: loc, limit: '20', ...f }), { headers: H(tok) })
+    if (!r.ok) { out.errors++; continue }
+    for (const c of ((await r.json().catch(() => ({})))?.conversations || []) as Any[]) {
+      if (!c?.id || have.has(String(c.id))) continue
+      have.add(String(c.id)); convos.push(c); out.looked_up++
+    }
   }
   out.conversations = convos.length
 
