@@ -69,7 +69,9 @@ const PLAN = {
 export const TOOL = {
   name: 'fill_lead_form',
   description: 'Fill the Caring Companions new-lead form and start the care plan draft from one phone call. Fill every box the call gives an answer for. Use an empty string or an empty list only when the call did not say. Never guess.',
-  strict: true,
+  /* not strict (Desktop 1058, 2026-10-22): the AI service refused this form in strict mode, "The compiled grammar is too
+     large ... Simplify your tool schemas or reduce the number of strict tools" (a 400 on every call). toPrefill below holds
+     every answer to the form's own choices in code, so a wrong type or an unknown choice is dropped, never saved. */
   input_schema: obj({
     is_new_family: { type: 'boolean', description: 'True if someone is asking about home care for themselves or a loved one. False for a job applicant, caregiver, vendor, existing client, wrong number or spam.' },
     not_new_family_reason: str('If is_new_family is false, a few words why. Empty otherwise.'),
@@ -244,7 +246,7 @@ export function toPrefill(a: Record<string, unknown>, ct: Contact, adls: Adl[] =
   put('client_gender', pick(a.client_gender, GENDER))
   put('client_address', clip(a.client_address, 120))
   put('client_city', clip(a.client_city, 60))
-  const st = clip(a.client_state, 2).toUpperCase(); put('client_state', /^[A-Z]{2}$/.test(st) ? st : '')
+  const st = clip(a.client_state, 10).toUpperCase(); put('client_state', /^[A-Z]{2}$/.test(st) ? st : '')   /* "Missouri" was cut to "MI" (1058 test) */
   const zip = clip(a.client_zip, 10); put('client_zip', /^\d{5}(-\d{4})?$/.test(zip) ? zip : '')
   put('client_phone', clip(a.client_phone, 30))
   put('marital_status', pick(a.marital_status, MARITAL))
