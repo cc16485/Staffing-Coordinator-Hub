@@ -36,7 +36,7 @@ import { archivedSchedules, caseHistory, changedSince, decideHeld, heldItem, vis
 import { outsideVerdict } from '../_shared/covered-outside.ts'
 import { attendanceCard, caseEnded, caseWhen, shiftAhead, chiNowNaive, evvDayStats, evvWeek, familyCallNeeded, itemsToCloseForCases,
   markNoClosureTexts, pastCaseVerdict, weekOf } from '../_shared/loops.ts'
-import { loadQuiet, isQuiet } from '../_shared/client-quiet.ts'
+import { loadQuiet, isQuiet, isNotClient } from '../_shared/client-quiet.ts'
 import { confirmTimesItem, hasCard, outAfterMin } from '../_shared/confirm-times.ts'
 import { fallbackList } from '../_shared/notice-to.ts'
 import { openShiftSkip, openShiftItem, openShiftCloseWhy, openShiftId, scheduleOf, OPEN_SHIFT_KIND, OPEN_SHIFT_PER_RUN, type OpenVisit } from '../_shared/open-shift.ts'
@@ -892,7 +892,7 @@ Deno.serve(async (req) => {
         if (!r.ok) { u = null; break }
         const j: any = await r.json().catch(() => ({}))
         for (const v of (Array.isArray(j?.results?.visits) ? j.results.visits
-          : Object.values(j?.results?.visits ?? {}))) if (!(v as any)?.removed) dayRows.push(v)
+          : Object.values(j?.results?.visits ?? {}))) if (!(v as any)?.removed && !isNotClient(v)) dayRows.push(v)   /* 2026-10-22: never the Practice client or Office Staff (not-client list) */
         u = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
       }
       let evLogged = 0

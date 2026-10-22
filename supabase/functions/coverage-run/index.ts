@@ -46,6 +46,7 @@ import { adminRecipients } from '../_shared/clockin-admins.ts'
 import { caseEnded, chiNowNaive } from '../_shared/loops.ts'
 /* SLICE 5 (2026-10-10): a new hire with a readiness card is never offered a shift until Approved to Work and AxisCare read back Active */
 import { workLock, LOCK_WHY } from '../_shared/work-lock.ts'
+import { loadNotClients, isNotClient } from '../_shared/client-quiet.ts'   // 2026-10-22: the Practice client (and Office Staff) are never a visit here
 import { isInTraining, inTrainingLive, IN_TRAINING_WHY } from '../_shared/in-training.ts'   // 2026-10-22 In Training is onboarding
 import { OPEN_HOURS_DEFAULT, checkWording, inSendWindow, offeredCells, openHoursText } from '../_shared/open-hours.ts'
 import { newHireNeed } from '../_shared/new-hire.ts'
@@ -408,6 +409,7 @@ async function fetchVisits(params: string): Promise<{ rows: any[]; error: string
   const { token, site } = axisCreds()
   if (!token || !site) return { rows: [], error: 'AxisCare credentials not set on this project' }
   const rows: any[] = []
+  await loadNotClients(sb)   /* the not-client list (Office Staff, the Practice client): their visits never count here */
   try {
     let url: string | null = `https://${site}.axiscare.com/api/visits?${params}`
     for (let page = 0; url && page < 12; page++) {
@@ -417,7 +419,7 @@ async function fetchVisits(params: string): Promise<{ rows: any[]; error: string
       if (!r.ok) return { rows, error: `AxisCare responded ${r.status}` }
       const j: any = await r.json().catch(() => ({}))
       for (const v of (j?.results?.visits ?? j?.visits ?? [])) {
-        if (v?.removed) continue
+        if (v?.removed || isNotClient(v)) continue
         rows.push(v)
       }
       url = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
