@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Rehearsal of 1050 (one_text_1050.py) against a FAKE Supabase (management API, functions) and a FAKE supabase CLI, from a
-# fresh worktree of this commit (as the Desktop step runs it). Never touches a real project.  python3 one_text_1050_test.py
+# Rehearsal of 1051 (one_text_1051.py) against a FAKE Supabase (management API, functions) and a FAKE supabase CLI, from a
+# fresh worktree of this commit (as the Desktop step runs it). Never touches a real project.  python3 one_text_1051_test.py
 import json, os, subprocess, tempfile, threading, http.server, hashlib, re, shutil, datetime as dt
 HERE = os.path.dirname(os.path.abspath(__file__))
 res = []; ck = lambda n, c, note="": res.append((n, bool(c), "" if c else str(note)[:900]))
@@ -28,7 +28,7 @@ class H(http.server.BaseHTTPRequestHandler):
         return self._send(400, {"message": "unexpected query " + q[:120]})
 srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H); threading.Thread(target=srv.serve_forever, daemon=True).start()
 URL = f"http://127.0.0.1:{srv.server_address[1]}"
-TMP = tempfile.mkdtemp(prefix="t1050-"); WT = os.path.join(TMP, "wt"); LIVE = os.path.join(TMP, "live")
+TMP = tempfile.mkdtemp(prefix="t1051-"); WT = os.path.join(TMP, "wt"); LIVE = os.path.join(TMP, "live")
 subprocess.run(["git", "-C", HERE, "worktree", "add", "-q", "--detach", WT, "HEAD"], check=True)
 subprocess.run(["git", "-C", HERE, "worktree", "add", "-q", "--detach", LIVE, BASE], check=True)
 FAKEBIN = os.path.join(TMP, "bin"); os.makedirs(FAKEBIN); FLAG = os.path.join(TMP, "deployed"); SRCF = os.path.join(TMP, "livesrc")
@@ -56,14 +56,14 @@ def go(**m):
                 if os.path.exists(FLAG): M["deployed"] = True
                 threading.Event().wait(0.1)
     w = W(daemon=True); w.start()
-    env = dict(os.environ, SB_STEP="1050", SB_TOKEN="sbp_fake", SB_REPORT=rep, SB_SUPA_CLI=os.path.join(FAKEBIN, "supabase"), SB_API_BASE=URL, SB_FN_BASE=URL,
+    env = dict(os.environ, SB_STEP="1051", SB_TOKEN="sbp_fake", SB_REPORT=rep, SB_SUPA_CLI=os.path.join(FAKEBIN, "supabase"), SB_API_BASE=URL, SB_FN_BASE=URL,
                SB_FNROOT=os.path.join(WT, "supabase/functions"), SB_SHAS=json.dumps(m.get("shas", SHAS)), SB_MAIN_REF="HEAD", SB_BASE=BASE, SB_WAIT_S="20", SB_FAST="1")
-    p = subprocess.run(["python3", os.path.join(WT, "one_text_1050.py")], cwd=WT, env=env, capture_output=True, text=True)
+    p = subprocess.run(["python3", os.path.join(WT, "one_text_1051.py")], cwd=WT, env=env, capture_output=True, text=True)
     w.stop = True
     return p.returncode, open(rep).read() if os.path.exists(rep) else p.stdout + p.stderr
 try:
     c, o = go()
-    ck("clean run: DONE, exit 0", c == 0 and "1050: DONE" in o, o)
+    ck("clean run: DONE, exit 0", c == 0 and "1051: DONE" in o, o)
     ck("clean run: the live functions were the starting build", "the live lead-watch is exactly the starting build" in o and "the live lead-digest is exactly the starting build" in o, o)
     ck("clean run: tests ran", "tests pass: one text per family" in o, o)
     ck("clean run: gateway settings kept (lead-watch off, lead-digest on)", "lead-watch deployed: version 18, gateway sign-in check off" in o and "lead-digest deployed: version 81, gateway sign-in check on" in o, o)

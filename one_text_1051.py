@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# 1050 · SPEED TO LEAD: ONE TEXT PER FAMILY (2026-10-22, Samantha: "maybe just one notification about the lead";
+# 1051 · SPEED TO LEAD: ONE TEXT PER FAMILY (2026-10-22, Samantha: "maybe just one notification about the lead";
 # the Speed to lead design approved, artifact 5vuSNJ9NKGhNiYf9ScEj7M; "Build it, starting with the one notification").
 #  1. Checks first (nothing changes): the reviewed build is GitHub's main; the tests pass (fake data only); the LIVE
 #     lead-watch and lead-digest are exactly the build this change started from (so nothing anyone else deployed is
@@ -56,7 +56,7 @@ for fn in FNS:
         if c2 != 0:
             if k in live: diff.append(k + " (live has it, the starting build does not)")
             continue
-        tmp = os.path.join(ROOT, ".cmp_1050"); open(tmp, "w").write(b2); want = sha(tmp); os.remove(tmp)
+        tmp = os.path.join(ROOT, ".cmp_1051"); open(tmp, "w").write(b2); want = sha(tmp); os.remove(tmp)
         if live.get(k) != want: diff.append(k)
     if diff: stop(f"the live {fn} is not the build this change started from, so deploying could undo someone else's work: " + ", ".join(diff)[:240])
     ok(f"the live {fn} is exactly the starting build (nothing of anyone else's would be undone)")
@@ -77,7 +77,7 @@ if not st[0]["one_text"]:
     chk(okq and r and r[0]["v"] == "true", "one text per family is ON (Owners Hub Admin page and Hub Settings show it; turn it off there any time)", "one text per family could not be turned on: " + str(r)[:200])
     if okq:
         sql(HUB, "insert into public.op_events (actor_email, actor_name, verb, item_id, area, summary) values ('samantha@mo-care.com', 'Samantha', 'setting_changed', 'ops_settings', 'growth_leads', "
-            + lit("Samantha turned on One text per family (Desktop 1050, her Speed to lead approval 2026-10-22): only the 5-minute text goes out") + ")")
+            + lit("Samantha turned on One text per family (Desktop 1051, her Speed to lead approval 2026-10-22): only the 5-minute text goes out") + ")")
 else: ok("one text per family was already on (left as it is)")
 
 say(); say("PART 3 · PROOF")
@@ -95,5 +95,5 @@ chk(bool(seen), f"lead-watch ran with the new build: {seen['note'] if seen else 
 okq, st2 = sql(HUB, SETTINGS)
 chk(okq and st2 and st2[0]["one_text"], "the switch reads ON", "the switch does not read on")
 say()
-say("  1050: " + ("DONE. A new family gets one text, at 5 minutes. The 15 and 30 happen on My Work and Leads with no text, and long waits are in the 8am brief." if not L.fails else "NOT COMPLETE. See the ✗ lines above."))
+say("  1051: " + ("DONE. A new family gets one text, at 5 minutes. The 15 and 30 happen on My Work and Leads with no text, and long waits are in the 8am brief." if not L.fails else "NOT COMPLETE. See the ✗ lines above."))
 done(0 if not L.fails else 1)
