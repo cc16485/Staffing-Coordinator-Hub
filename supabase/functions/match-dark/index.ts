@@ -16,6 +16,7 @@ import { approvedRules, rulesCheck } from '../_shared/approved-rules.ts'
 import { careLevelOf } from '../_shared/care-level.ts'
 import { resolvePayer } from '../_shared/client-events.ts'
 import { workLock } from '../_shared/work-lock.ts'
+import { loadNotClients, isNotClient } from '../_shared/client-quiet.ts'   // 2026-10-22: never the Practice client or Office Staff
 import { rowWorking, inTrainingLive } from '../_shared/in-training.ts'   // 2026-10-22 In Training is onboarding
 import { experienceSummary } from '../_shared/step1-experience.ts'
 import { buildDarkReport } from '../_shared/match-dark.ts'
@@ -61,11 +62,12 @@ Deno.serve(async (req) => {
   }
   const { token, site } = axisCreds(); if (!token || !site) return json({ error: 'AxisCare credentials are not set on this project' }, 502)
   const trainLive = await inTrainingLive(db)   // 2026-10-22: In Training (onboarding) is not a match once the switch is on
+  await loadNotClients(db)   /* 2026-10-22: the not-client list first (Office Staff, the Practice client) */
   try {
     const [visits, axCaregivers, axClients] = await Promise.all([
-      axisAll(site, token, `/api/visits?startDate=${chiDay(0)}&endDate=${chiDay(13)}`, 'visits'),
+      axisAll(site, token, `/api/visits?startDate=${chiDay(0)}&endDate=${chiDay(13)}`, 'visits').then((xs) => xs.filter((v) => !isNotClient(v))),
       axisAll(site, token, '/api/caregivers', 'caregivers').then((xs) => xs.filter((g) => rowWorking(g, trainLive))),
-      axisAll(site, token, '/api/clients', 'clients').then((xs) => xs.filter((c) => c?.status?.active === true)) ])
+      axisAll(site, token, '/api/clients', 'clients').then((xs) => xs.filter((c) => c?.status?.active === true && !isNotClient(c))) ])
     const [roster, overlay, availability, dnr, cases, previous] = await Promise.all(['caregivers', 'caregiver_overlay', 'caregiver_availability', 'dnr_log', 'coverage_cases', 'match_dark_report'].map(key))
     /* each visited client's care needs: AxisCare client → person → their active Journey → the fact record (null = no Journey) */
     const clientIds = [...new Set(visits.filter((v) => v?.client?.id != null).map((v) => String(v.client.id)).concat(rowsOf(cases).map((k: any) => String(k?.client_axiscare_id || '')).filter(Boolean)))]

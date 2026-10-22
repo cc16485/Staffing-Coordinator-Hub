@@ -28,7 +28,17 @@ export async function loadNotClients(db: Any): Promise<Set<string>> {
 /** is this AxisCare client number (or a visit / client object carrying one) a not-client record? */
 export function isNotClient(v: Any): boolean {
   const id = v != null && typeof v === 'object' ? (v.client?.id ?? v.id ?? v.axiscare_client_id) : v
-  return id != null && NOT_CLIENTS.has(String(id).trim())
+  return (id != null && NOT_CLIENTS.has(String(id).trim())) || isPracticeName(v)
+}
+/* THE PRACTICE CLIENT (2026-10-22, the In Training plan: the Staffing Coordinator puts a short practice visit on a fake AxisCare
+   client named "Practice" for a new hire's test clock-in). Caught by name as well as by number, so nothing fires for it even
+   before its number is on the not-client list. Only the exact name: "Practice" or "Practice Client" (first + last). */
+export const PRACTICE_NAME = /^practice( client)?$/i
+export function isPracticeName(v: Any): boolean {
+  if (v == null || typeof v !== 'object') return false
+  const c = v.client && typeof v.client === 'object' ? v.client : v
+  const nm = [c.firstName ?? c.first_name, c.lastName ?? c.last_name].map((x: Any) => String(x ?? '').trim()).filter(Boolean).join(' ') || String(c.name ?? '').trim()
+  return !!nm && PRACTICE_NAME.test(nm)
 }
 export function notClientSet(): Set<string> { return NOT_CLIENTS }
 let QUIET: Set<string> = new Set()
@@ -51,5 +61,5 @@ export async function loadQuiet(db: Any): Promise<Set<string>> {
   return QUIET
 }
 /** is this AxisCare visit for a paused or ended client, or a not-client record (Office Staff)? */
-export function isQuiet(v: Any): boolean { const id = v?.client?.id; return id != null && QUIET.has(String(id)) }
+export function isQuiet(v: Any): boolean { const id = v?.client?.id; return (id != null && QUIET.has(String(id))) || isPracticeName(v) }
 export function quietSet(): Set<string> { return QUIET }

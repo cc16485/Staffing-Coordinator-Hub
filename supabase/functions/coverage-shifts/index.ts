@@ -12,6 +12,7 @@
 import { careLevelOf } from '../_shared/care-level.ts'
 import { newHireNeed } from '../_shared/new-hire.ts'
 import { isInTraining, inTrainingLive, IN_TRAINING_WHY } from '../_shared/in-training.ts'   // 2026-10-22 In Training is onboarding
+import { loadNotClients, isNotClient } from '../_shared/client-quiet.ts'   // 2026-10-22: the Practice client (and Office Staff) never show here
 import { workLock, LOCK_WHY } from '../_shared/work-lock.ts'   // Slice 5 used these without importing them (team_pool threw); fixed 2026-10-13
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: {
@@ -78,6 +79,10 @@ Deno.serve(async (req) => {
   const role = callerRole(req)
   if (role !== 'authenticated' && role !== 'service_role')
     return json({ error: 'a signed-in coordinator session is required' }, 403)
+  /* 2026-10-22: the not-client list (Office Staff, the Practice client for test clock-ins) is read once per call; their
+     visits never appear on the Today board, Live Schedule, forecasts, Team Builder, new-hire hours or Hours Watch */
+  try { const { createClient: ccN } = await import('https://esm.sh/@supabase/supabase-js@2'); await loadNotClients(ccN(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)) }
+  catch { /* unreadable: the default stays (Office Staff, and the Practice client by name) */ }
 
   // deno-lint-ignore no-explicit-any
   const b: any = await req.json().catch(() => ({}))
@@ -101,7 +106,7 @@ Deno.serve(async (req) => {
         if (!r.ok) return json({ error: `AxisCare responded ${r.status}` }, 502)
         // deno-lint-ignore no-explicit-any
         const j: any = await r.json().catch(() => ({}))
-        for (const v of rowsOf(j?.results?.visits ?? j?.visits)) { if (!v?.removed) visits.push(v) }
+        for (const v of rowsOf(j?.results?.visits ?? j?.visits)) { if (!v?.removed && !isNotClient(v)) visits.push(v) }
         vurl = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
       }
     } catch (err) { return json({ error: String(err) }, 502) }
@@ -148,7 +153,7 @@ Deno.serve(async (req) => {
         if (!r.ok) return json({ error: `AxisCare responded ${r.status}` }, 502)
         // deno-lint-ignore no-explicit-any
         const j: any = await r.json().catch(() => ({}))
-        for (const v of rowsOf(j?.results?.visits ?? j?.visits)) { if (!v?.removed) visits.push(v) }
+        for (const v of rowsOf(j?.results?.visits ?? j?.visits)) { if (!v?.removed && !isNotClient(v)) visits.push(v) }
         vurl = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
       }
     } catch (err) { return json({ error: String(err) }, 502) }
@@ -263,7 +268,7 @@ Deno.serve(async (req) => {
         if (!r.ok) return json({ error: `AxisCare responded ${r.status}` }, 502)
         // deno-lint-ignore no-explicit-any
         const j: any = await r.json().catch(() => ({}))
-        for (const v of rowsOf(j?.results?.visits ?? j?.visits)) if (!v?.removed) visits.push(v)
+        for (const v of rowsOf(j?.results?.visits ?? j?.visits)) if (!v?.removed && !isNotClient(v)) visits.push(v)
         fu = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
       }
     } catch (err) { return json({ error: String(err) }, 502) }
@@ -381,7 +386,7 @@ Deno.serve(async (req) => {
         if (!r.ok) return json({ error: `AxisCare responded ${r.status}` }, 502)
         // deno-lint-ignore no-explicit-any
         const j: any = await r.json().catch(() => ({}))
-        for (const v of rowsOf(j?.results?.visits ?? j?.visits)) if (!v?.removed) visits.push(v)
+        for (const v of rowsOf(j?.results?.visits ?? j?.visits)) if (!v?.removed && !isNotClient(v)) visits.push(v)
         tu = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
       }
     } catch (err) { return json({ error: String(err) }, 502) }
@@ -509,7 +514,7 @@ Deno.serve(async (req) => {
         // deno-lint-ignore no-explicit-any
         const j: any = await r.json().catch(() => ({}))
         for (const v of rowsOf(j?.results?.visits ?? j?.visits)) {
-          if (v?.removed || v?.caregiver?.id == null) continue
+          if (v?.removed || isNotClient(v) || v?.caregiver?.id == null) continue
           const p = pool.get(String(v.caregiver.id)); if (!p) continue
           const s = String(v?.scheduledStartDate ?? v?.startDate ?? '')
           const e = String(v?.scheduledEndDate ?? v?.endDate ?? '')
@@ -607,7 +612,7 @@ Deno.serve(async (req) => {
         if (!r.ok) break
         // deno-lint-ignore no-explicit-any
         const j: any = await r.json().catch(() => ({}))
-        for (const v of rowsOf(j?.results?.visits ?? j?.visits)) if (!v?.removed) rows.push(v)
+        for (const v of rowsOf(j?.results?.visits ?? j?.visits)) if (!v?.removed && !isNotClient(v)) rows.push(v)
         u = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
       }
       return rows
@@ -726,7 +731,7 @@ Deno.serve(async (req) => {
         // deno-lint-ignore no-explicit-any
         const j: any = await r.json().catch(() => ({}))
         for (const v of rowsOf(j?.results?.visits ?? j?.visits)) {
-          if (v?.removed || v?.caregiver?.id == null) continue
+          if (v?.removed || isNotClient(v) || v?.caregiver?.id == null) continue
           const s = new Date(String(v?.scheduledStartDate ?? v?.startDate ?? '')).getTime()
           const e = new Date(String(v?.scheduledEndDate ?? v?.endDate ?? '')).getTime()
           if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) continue
@@ -809,7 +814,7 @@ Deno.serve(async (req) => {
       // deno-lint-ignore no-explicit-any
       const j: any = await r.json().catch(() => ({}))
       for (const v of rowsOf(j?.results?.visits ?? j?.visits)) {
-        if (v?.removed) continue
+        if (v?.removed || isNotClient(v)) continue
         const start = String(v?.scheduledStartDate ?? v?.startDate ?? '')
         const end = String(v?.scheduledEndDate ?? v?.endDate ?? '')
         out.push({

@@ -27,6 +27,7 @@
 // =============================================================================
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { loadNotClients, isNotClient } from '../_shared/client-quiet.ts'   // 2026-10-22: Office Staff and the Practice client are not clients
 import {
   type ClientEvent, type ClientEventRecord,
   eventId, resolvePayer,
@@ -232,6 +233,16 @@ Deno.serve(async (req) => {
 
   const name = [client?.firstName, client?.lastName].filter(Boolean).join(' ').trim()
   if (!name) unresolved.push('client name could not be read from the payload')
+
+  /* NOT A CLIENT (2026-10-22, the In Training plan): the "Practice" client the Staffing Coordinator uses for test clock-ins, and
+     anything on the Hub's not-client list (Office Staff), never become a client event, a New Clients launch or an obligation.
+     A client named exactly "Practice" is caught before anyone has added its number to the list. */
+  await loadNotClients(sb)
+  if (isNotClient(clientId) || /^(practice|practice client|office staff)$/i.test(name)) {
+    console.log(`not a client (${name || clientId}): nothing recorded`)
+    return new Response(JSON.stringify({ ok: true, event: internal, skipped: 'not_a_client', axiscare_client_id: clientId }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
 
   const addr = client?.residentialAddress
   const address = addr
