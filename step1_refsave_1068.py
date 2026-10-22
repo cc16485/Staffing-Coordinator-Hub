@@ -51,14 +51,16 @@ for k in sorted(L.need(FNROOT, FN)):
         continue
     tmp = os.path.join(ROOT, ".cmp_1068"); open(tmp, "w").write(b2); want = sha(tmp); os.remove(tmp)
     if live.get(k) != want: diff.append(k)
-if diff: stop(f"the live {FN} is not the build this change started from, so deploying could undo someone else's work: " + ", ".join(diff)[:240])
-ok(f"the live {FN} is exactly the starting build (nothing of anyone else's would be undone)")
+already = bool(diff) and all(live.get(k) == sha(os.path.join(ROOT, k)) for k in L.need(FNROOT, FN))
+if diff and not already: stop(f"the live {FN} is not the build this change started from, so deploying could undo someone else's work: " + ", ".join(diff)[:240])
+ok(f"the live {FN} is already this fix (run before)" if already else f"the live {FN} is exactly the starting build (nothing of anyone else's would be undone)")
 s, m = fmeta(HUB, FN)
 if s != 200 or not m or "verify_jwt" not in m: stop(f"couldn't read how {FN} is set up live ({s})", 3)
 jwt = bool(m["verify_jwt"]); say(f"  · {FN} is live as version {m.get('version', '?')}, gateway sign-in check {'on' if jwt else 'off'} (kept)")
 
 say(); say("PART 2 · CHANGE")
-if not deploy(HUB, FNROOT, FN, jwt): say("  STOP. Tell Claude. Nothing else was changed."); done(5)
+if already: ok("nothing to deploy")
+elif not deploy(HUB, FNROOT, FN, jwt): say("  STOP. Tell Claude. Nothing else was changed."); done(5)
 
 say(); say("PART 3 · PROOF")
 s, b = http("POST", f"{FNB}/functions/v1/{FN}", {"action": "save", "o": "x", "e": "1", "t": "y", "answers": {}})
