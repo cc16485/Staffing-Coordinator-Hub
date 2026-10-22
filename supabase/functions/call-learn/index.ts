@@ -47,8 +47,9 @@ async function ask(apiKey: string, body: Any): Promise<{ resp: Any; why: string 
       body: JSON.stringify(rest) })
     if (!r.ok) {
       const t = await r.text().catch(() => ''); console.error('anthropic', r.status, t.slice(0, 300))
-      let type = ''; try { type = String(JSON.parse(t)?.error?.type || '') } catch { /* not JSON */ }
-      return { resp: null, why: `the AI service answered ${r.status}${type ? ' (' + type + ')' : ''}` }
+      let type = '', msg = ''; try { const e = JSON.parse(t)?.error || {}; type = String(e.type || ''); msg = String(e.message || '') } catch { /* not JSON */ }
+      /* the service's own words say which setting it refused (1056b: a bare "400 (invalid_request_error)" could not be fixed) */
+      return { resp: null, why: `the AI service answered ${r.status}${type ? ' (' + type + ')' : ''}${msg ? ': ' + msg.replace(/\s+/g, ' ').slice(0, 240) : ''}` }
     }
     const resp = await r.json().catch(() => null)
     return resp ? { resp, why: '' } : { resp: null, why: 'the AI service sent an unreadable answer' }
