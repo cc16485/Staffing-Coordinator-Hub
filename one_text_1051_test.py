@@ -3,7 +3,7 @@
 # fresh worktree of this commit (as the Desktop step runs it). Never touches a real project.  python3 one_text_1051_test.py
 import json, os, subprocess, tempfile, threading, http.server, hashlib, re, shutil, datetime as dt
 HERE = os.path.dirname(os.path.abspath(__file__))
-res = []; ck = lambda n, c, note="": res.append((n, bool(c), "" if c else str(note)[:900]))
+res = []; ck = lambda n, c, note="": res.append((n, bool(c), "" if c else str(note)[:2000]))
 BASE = "ff97721aa2a1c999e580ed89f7a6874683b979c5"     # main before this change: what is live
 M = {}
 class H(http.server.BaseHTTPRequestHandler):
@@ -61,7 +61,7 @@ def go(**m):
                SB_FNROOT=os.path.join(WT, "supabase/functions"), SB_SHAS=json.dumps(m.get("shas", SHAS)), SB_MAIN_REF="HEAD", SB_BASE=HEADSHA, SB_WAIT_S="20", SB_FAST="1")
     p = subprocess.run(["python3", os.path.join(WT, "one_text_1051.py")], cwd=WT, env=env, capture_output=True, text=True)
     w.stop = True
-    return p.returncode, open(rep).read() if os.path.exists(rep) else p.stdout + p.stderr
+    return p.returncode, (open(rep).read() if os.path.exists(rep) else p.stdout) + "\nSTDERR:" + p.stderr[-1500:]
 try:
     c, o = go()
     ck("clean run: DONE, exit 0", c == 0 and "1051: DONE" in o, o)
@@ -76,7 +76,7 @@ try:
     OLD = os.path.join(TMP, "old"); shutil.copytree(LIVE, OLD, ignore=shutil.ignore_patterns(".git"))
     open(os.path.join(OLD, "supabase/functions/_shared/verbs.js"), "w").write(subprocess.run(["git", "-C", HERE, "show", "368d170:supabase/functions/_shared/verbs.js"], capture_output=True, text=True).stdout)
     c, o = go(live_src=OLD)
-    ck("live has an older verbs.js from main's history: goes ahead and says it brings it up to date", c == 0 and "1051: DONE" in o and "older copies of: supabase/functions/_shared/verbs.js" in o, o)
+    ck("live has an older verbs.js from main's history: goes ahead and says it brings it up to date", c == 0 and "1051: DONE" in o and "_shared/verbs.js (live has the Oct 18 16:17 version)" in o and "nothing newer is replaced" in o, o)
     # live has a verbs.js that is nowhere in main's history: someone's unknown work, stop
     UNK = os.path.join(TMP, "unk"); shutil.copytree(WT, UNK, ignore=shutil.ignore_patterns(".git"))
     with open(os.path.join(UNK, "supabase/functions/_shared/verbs.js"), "a") as f: f.write("\n// a change nobody merged\n")
