@@ -38,16 +38,25 @@ async function beat(db: Any, ok: boolean, note: string) {
       item: { id: 'hb_call-learn', automation: 'call-learn', at: new Date().toISOString(), ok, note: String(note).slice(0, 300) } })
   } catch { /* never block on the heartbeat */ }
 }
-async function ask(apiKey: string, body: Any): Promise<Any> {
+/** One Messages API call: the response, or why there is none (kept on the call so a failure is never quiet). */
+async function ask(apiKey: string, body: Any): Promise<{ resp: Any; why: string }> {
   const { betas, ...rest } = body
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST',
       headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'anthropic-beta': betas.join(','), 'content-type': 'application/json' },
       body: JSON.stringify(rest) })
-    if (!r.ok) { console.error('anthropic', r.status, (await r.text().catch(() => '')).slice(0, 300)); return null }
-    return await r.json().catch(() => null)
-  } catch { return null }
+    if (!r.ok) {
+      const t = await r.text().catch(() => ''); console.error('anthropic', r.status, t.slice(0, 300))
+      let type = ''; try { type = String(JSON.parse(t)?.error?.type || '') } catch { /* not JSON */ }
+      return { resp: null, why: `the AI service answered ${r.status}${type ? ' (' + type + ')' : ''}` }
+    }
+    const resp = await r.json().catch(() => null)
+    return resp ? { resp, why: '' } : { resp: null, why: 'the AI service sent an unreadable answer' }
+  } catch { return { resp: null, why: 'the AI service could not be reached' } }
 }
+/* 1050 found it: on a call with little to fill in, the model sometimes answers in words instead of the form. Forcing the
+   tool is a 400 on Claude Opus 5.5, so it gets its own answer back unchanged and is asked once more for the form. */
+export const NUDGE = 'Answer only by calling fill_lead_form. Leave empty every box the call did not answer; an empty form is the right answer for a call with nothing to fill in.'
 
 Deno.serve(async (req) => {
   const caller = await jobCaller(req)
@@ -97,9 +106,17 @@ Deno.serve(async (req) => {
     const transcript = tr.ok ? transcriptText(await tr.json().catch(() => null)) : ''
     if (!transcript) { await save(n >= MAX_TRIES ? 'no_transcript' : 'waiting', { note: 'GoHighLevel has no transcript ' + (n >= MAX_TRIES ? 'for this call' : 'yet') }); continue }
     const req0 = request({ transcript, callDay: chicagoDay(String(s.msg_at)), direction: row.direction, knownName: '', adls: (cat as Any).list || [] })
-    let a = toolAnswer(await ask(apiKey, req0))
-    if (!a) a = toolAnswer(await ask(apiKey, req0))
-    if (!a) { await save('error', { note: 'the AI could not read this call' }); continue }
+    let r = await ask(apiKey, req0), a = toolAnswer(r.resp)
+    if (!a && r.resp && r.resp.stop_reason !== 'refusal' && Array.isArray(r.resp.content)) {
+      r = await ask(apiKey, { ...req0, messages: [...req0.messages, { role: 'assistant', content: r.resp.content }, { role: 'user', content: NUDGE }] })
+      a = toolAnswer(r.resp)
+    } else if (!a && !r.resp) { r = await ask(apiKey, req0); a = toolAnswer(r.resp) }   /* the service failed: once more */
+    if (!a) {
+      if (r.resp && r.resp.stop_reason === 'refusal') await save('skipped', { note: 'the AI would not read this call' })
+      else if (r.resp) await save('skipped', { note: 'the AI found nothing it could fill in from this call' })
+      else await save('error', { note: r.why || 'the AI could not read this call' })
+      continue
+    }
     const kept = toStore(toPrefill(a, { first_name: '', last_name: '', phone: '', email: '' }, (cat as Any).list || []))
     await save('read', { reading: kept, note: null })
   }
