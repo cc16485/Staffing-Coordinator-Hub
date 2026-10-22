@@ -4,7 +4,7 @@ import fs from 'fs'; import path from 'path'
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 700)])
 const clone = (x) => JSON.parse(JSON.stringify(x))
 const NOW = Date.now(), ago = (min) => new Date(NOW - min * 60e3).toISOString()
-let T, G, SENT, AI
+let T, G, SENT, AI, AIQ = []
 const seenRow = (id, lead, min, status, o = {}) => ({ message_id: id, mode: 'live', kind: 'call', msg_at: ago(min), status, lead_id: lead, ev: status === 'recorded' ? { outcome: 'connected', by: 'krystal@mo-care.com' } : null, ...o })
 const reset = () => {
   T = { app_data: [{ key: 'ops_settings', data: { call_learn_since: ago(3 * 24 * 60) } },
@@ -43,7 +43,7 @@ const answer = (o) => ({ stop_reason: 'tool_use', content: [{ type: 'tool_use', 
   care_plan: { narrative: 'From the call.' }, home_life: { dogs: true }, people: [{ name: 'Mark Hayes', relationship: 'Son', note: 'pays the bills' }], ...o } }] })
 globalThis.fetch = async (url, o = {}) => { url = String(url); SENT.push([o.method || 'GET', url])
   const ok = (b) => new Response(JSON.stringify(b), { status: 200 })
-  if (url.includes('api.anthropic.com')) { const b = JSON.parse(o.body); AI.push(b); return ok(AI.length === 99 ? {} : answer({})) }
+  if (url.includes('api.anthropic.com')) { const b = JSON.parse(o.body); AI.push(b); const q = AIQ.shift(); if (q && q.status) return new Response(JSON.stringify(q.body || {}), { status: q.status }); return ok(q || answer({})) }
   if (url.includes('axiscare.com')) return ok({ results: [] })
   let m = /\/messages\/([\w-]+)\/transcription/.exec(url)
   if (m) return G.tr[m[1]] ? ok(G.tr[m[1]]) : new Response('{}', { status: 404 })
@@ -97,7 +97,21 @@ try {
   G.tr.c6 = [{ transcript: 'late transcript' }]; r = await run()
   ck('...even if a transcript turns up later (no endless retries)', r.j.looked_at === 0)
 
-  reset(); r = await run('?limit=1')
+  /* the AI answers in words instead of the form (1050's proof call) */
+  const words = { stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: '', signature: 'sig' }, { type: 'text', text: 'This call does not seem to be about care.' }] }
+  reset(); AIQ = [words]; r = await run('?limit=1')
+  const nudge = AI[1] && AI[1].messages
+  ck('words instead of the form: its own answer goes back unchanged and it is asked once more; the form then counts', row('c1')?.status === 'read' && AI.length === 2
+    && nudge.length === 3 && nudge[1].role === 'assistant' && JSON.stringify(nudge[1].content) === JSON.stringify(words.content) && /Answer only by calling fill_lead_form/.test(nudge[2].content) && !AI[1].tool_choice?.name, [row('c1'), AI.length])
+  reset(); AIQ = [words, words]; r = await run('?limit=1')
+  ck('words twice: nothing to fill in (skipped, not an error, not tried again)', row('c1')?.status === 'skipped' && /found nothing it could fill in/.test(row('c1').note) && r.j.errors === 0 && AI.length === 2, [row('c1'), r.j])
+  reset(); AIQ = [{ stop_reason: 'refusal', content: [] }]; r = await run('?limit=1')
+  ck('a refusal: said so, not asked again', row('c1')?.status === 'skipped' && /would not read this call/.test(row('c1').note) && AI.length === 1, row('c1'))
+  reset(); AIQ = [{ status: 529, body: { type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } } }, { status: 529, body: { type: 'error', error: { type: 'overloaded_error' } } }]; r = await run('?limit=1')
+  ck('the AI service fails twice: an error that says why, tried again on a later run', row('c1')?.status === 'error' && row('c1').note === 'the AI service answered 529 (overloaded_error)' && AI.length === 2 && row('c1').tries === 1, row('c1'))
+  r = await run('?limit=1')
+  ck('...and the next run reads it', row('c1')?.status === 'read' && row('c1').tries === 2, row('c1'))
+  reset(); AIQ = []; r = await run('?limit=1')
   ck('?limit=1 reads one call (the installer\'s proof)', r.j.looked_at === 1 && T.call_learned.length === 1, r.j)
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
