@@ -11,8 +11,8 @@
 //
 // This runs hourly and checks that every expected automation has beaten
 // inside its window and that its last beat was healthy. Anything wrong goes to
-// the office by text and email — the same applicant_alerts list that announces
-// good applicants — with a 6-hour suppression per unchanged problem signature,
+// Samantha by email only (never a text; her ruling 2026-10-22), with a 6-hour
+// suppression per unchanged problem signature,
 // so a day-long outage alerts a handful of times, not twenty-four. A run with
 // nothing wrong sends nothing.
 //
@@ -27,7 +27,6 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { jobCaller } from '../_shared/job-auth.ts'
 import { ghlSendChecked, reportSendProblem } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
-import { officeQuietNow } from '../_shared/quiet-hours.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -148,30 +147,13 @@ Deno.serve(async (req) => {
   if (problems.length && !dry && !suppressed && !quietHours) {
     const ghlToken = Deno.env.get('GHL_TOKEN')
     const ghlLocation = Deno.env.get('GHL_LOCATION_ID')
-    /* Watchdog alerts have their own recipient list (app_data key
-       'watchdog_recipients'; her ruling 2026-09-21: watchdog problems go to
-       Samantha directly, not the office channel). applicant_alerts keeps
-       announcing applicants/leads/interviews untouched and serves only as
-       the fallback here, so a missing or emptied config can never silence
-       the watchdog entirely. */
-    // deno-lint-ignore no-explicit-any
-    let alertTo: any[] = []
-    try {
-      const { data: wr } = await supabase.from('app_data').select('data')
-        .eq('key', 'watchdog_recipients').maybeSingle()
-      alertTo = (Array.isArray(wr?.data) ? wr!.data : [])
-        // deno-lint-ignore no-explicit-any
-        .filter((x: any) => x?.active !== false && (x?.phone || x?.email))
-    } catch { /* fall through to the shared list */ }
-    if (!alertTo.length) {
-      const { data: fb } = await supabase.from('applicant_alerts').select('*').eq('active', true)
-      alertTo = fb ?? []
-    }
+    /* EMAIL ONLY, SAMANTHA ONLY (her ruling 2026-10-22: "change all hub watchdog notifications to only send to
+       samantha@mo-care.com, no text"). Fixed here rather than read from app_data 'watchdog_recipients' or the
+       applicant_alerts fallback, so no list edit can ever start texting or copying anyone again. */
+    const alertTo: { name: string; email: string }[] = [{ name: 'Samantha', email: 'samantha@mo-care.com' }]
     if (ghlToken && ghlLocation && alertTo.length) {
       const h = { Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28',
                   'Content-Type': 'application/json', Accept: 'application/json' }
-      const line = `Hub watchdog: ${problems.length} automation problem${problems.length > 1 ? 's' : ''}. ` +
-        problems.map((p) => p.split('. ')[0]).join('; ') + '. Ask Claude to investigate.'
       const html = `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#1f2a36">` +
         `<p><b>The hub's automation watchdog found ${problems.length} problem${problems.length > 1 ? 's' : ''} this morning:</b></p>` +
         `<ul>` + problems.map((p) => `<li>${p}</li>`).join('') + `</ul>` +
@@ -182,29 +164,17 @@ Deno.serve(async (req) => {
          someone (GoHighLevel refused it, or couldn't even find their contact, e.g. an expired token) that becomes a
          Needs Attention card. A person who got nothing doesn't count as alerted, so the 6-hour suppression isn't
          stamped and the next run tries again. */
-      const unreachable = async (t: { name?: string; phone?: string; email?: string }, why: string, only?: 'sms' | 'email') => {
-        if (t.phone && only !== 'email') await reportSendProblem(supabase, { sender: 'staff-alert', channel: 'sms', address: t.phone, who: t.name, reasons: [why], failed: true })
-        if (t.email && only !== 'sms') await reportSendProblem(supabase, { sender: 'staff-alert', channel: 'email', address: t.email, who: t.name, reasons: [why], failed: true })
+      const unreachable = async (t: { name?: string; email?: string }, why: string) => {
+        if (t.email) await reportSendProblem(supabase, { sender: 'staff-alert', channel: 'email', address: t.email, who: t.name, reasons: [why], failed: true })
       }
-      /* OFFICE QUIET HOURS (Samantha, 2026-10-03): no text 8pm to 7am Central; the email still goes. Someone with no
-         email is simply not reached until 7am (not stamped, so the next run after 7am texts them once). */
-      const quiet = await officeQuietNow(supabase)
       for (const t of alertTo) {
         try {
-          /* ONE CONTACT (2026-10-01): the contact is found per channel (the text to the contact holding the phone,
-             the email to the contact holding the email), so a phone-only contact no longer swallows the email. */
           const ghl = { token: ghlToken, locationId: ghlLocation }
-          const who = { phone: t.phone, email: t.email, firstName: t.name ?? 'Team' }
+          const who = { email: t.email, firstName: t.name }
           let went = false
-          if (t.phone && !quiet) {
-            const cid = await ghlStaffContact(ghl, { channel: 'sms', ...who })
-            if (!cid) await unreachable(t, 'no GoHighLevel contact', 'sms')
-            else went = await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'sms', contactId: cid, address: t.phone, who: t.name },
-              { message: line }) || went
-          }
           if (t.email) {
             const cid = await ghlStaffContact(ghl, { channel: 'email', ...who })
-            if (!cid) await unreachable(t, 'no GoHighLevel contact', 'email')
+            if (!cid) await unreachable(t, 'no GoHighLevel contact')
             else went = await ghlSendChecked(supabase, h, 'staff-alert', { channel: 'email', contactId: cid, address: t.email, who: t.name },
               { subject: `Hub watchdog: ${problems.length} automation problem${problems.length > 1 ? 's' : ''}`, html }) || went
           }
