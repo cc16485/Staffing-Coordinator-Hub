@@ -5,6 +5,9 @@
 // path, every current caregiver) are never locked here. Read by coverage-run (fills), coverage-shifts (the Team Builder
 // pool and the Staffing Sheet) and the readiness sweep (the roster's work_lock field, for the Hub page).
 // FAIL CLOSED: if the journey tables cannot be read, the caller holds everyone it would otherwise ask (it says so).
+// IN TRAINING PLAN v2 (Samantha 2026-10-22, decision 1): a check-in call that was opened and is not done yet also holds them
+// (the row cg.checkin.call exists only once opened, with checkin_call_live on), so shift texts wait for the call; turning the
+// switch off releases the hold at once.
 // deno-lint-ignore-file no-explicit-any
 const DONE = ['complete', 'not_needed', 'exception']
 export const LOCK_WHY = 'awaiting Approve to Work (new hire readiness card not complete)'
@@ -19,17 +22,22 @@ export async function workLock(db: any, roster?: any[] | null): Promise<Lock> {
     const axis = new Set<string>(), offers = new Set<string>()
     if (!js || !js.length) return { ok: true, axis, offers, open: 0 }
     const ids = js.map((j: any) => j.journey_id)
-    const { data: steps, error: e2 } = await db.from('client_journey_step').select('journey_id, step_key, state').in('journey_id', ids).in('step_key', ['cg.approve.work', 'cg.axiscare.active'])
+    const { data: steps, error: e2 } = await db.from('client_journey_step').select('journey_id, step_key, state').in('journey_id', ids).in('step_key', ['cg.approve.work', 'cg.axiscare.active', 'cg.checkin.call'])
     if (e2) return { ok: false, why: 'the readiness rows could not be read: ' + (e2.message || 'error') }
     const done = new Map<string, Set<string>>()
     for (const s of steps ?? []) if (DONE.includes(s.state)) { if (!done.has(s.journey_id)) done.set(s.journey_id, new Set()); done.get(s.journey_id)!.add(s.step_key) }
+    /* the check-in hold follows its switch: turning checkin_call_live off releases everyone it held, at once */
+    const { data: stRow } = await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+    const checkinLive = (stRow?.data ?? {}).checkin_call_live === true
+    const checkinOpen = new Set<string>()
+    if (checkinLive) for (const s of steps ?? []) if (s.step_key === 'cg.checkin.call' && !DONE.includes(s.state)) checkinOpen.add(s.journey_id)
     let list = roster
     if (!Array.isArray(list)) { const { data } = await db.from('app_data').select('data').eq('key', 'caregivers').maybeSingle(); list = Array.isArray(data?.data) ? data.data : [] }
     const byOffer = new Map<string, string>()
     for (const r of list!) if (r?.offer_id && digits(r.axiscare_id)) byOffer.set(String(r.offer_id), digits(r.axiscare_id))
     for (const j of js) {
       const d = done.get(j.journey_id)
-      if (d && d.has('cg.approve.work') && d.has('cg.axiscare.active')) continue   // unlocked: the stamp and the read-back
+      if (d && d.has('cg.approve.work') && d.has('cg.axiscare.active') && !checkinOpen.has(j.journey_id)) continue   // unlocked: the stamp, the read-back, and no check-in call waiting
       if (j.offer_id) offers.add(String(j.offer_id))
       const ax = digits(j.axiscare_caregiver_id) || (j.offer_id ? byOffer.get(String(j.offer_id)) : '') || ''
       if (ax) axis.add(ax)

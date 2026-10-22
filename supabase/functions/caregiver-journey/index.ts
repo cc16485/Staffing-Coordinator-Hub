@@ -67,14 +67,20 @@ const S = (v: unknown, n = 160) => String(v ?? '').trim().slice(0, n)
 const DONE = ['complete', 'not_needed', 'exception']
 const digits = (s: unknown) => String(s ?? '').replace(/\D/g, '')
 const WORK_KEY = 'cg.approve.work', AX_KEY = 'cg.axiscare.active'
+/* IN TRAINING PLAN v2 (Samantha approved 2026-10-22): the check-in call from the Staffing Coordinator after they go Active */
+const CHECKIN_KEY = 'cg.checkin.call'
+export const CHECKIN_TICKS: Record<string, string> = { on_file: 'Everything on file and complete', questions: 'Questions about orientation and the job answered', app: 'AxisCare app downloaded and signed in' }
+export const AUTO_ACTOR = { email: 'hub', name: 'The Hub (orientation finished, every required step complete)' }
 const TRAINING_ROWS: Record<string, string> = { 'agency-orientation': 'cg.training.orientation', 'dementia-care': 'cg.training.dementia' }
 
-/* THE CLEARED TEXT (her wording, 2026-10-10): not "approved to work"; we were notified the Dementia course is done, and where
-   the open shifts are. Goes only after Approve to Work AND the AxisCare read-back, 8am to 6pm Central, yes-to-texts,
-   opt-outs; practice (recorded, not sent) while approve_work_text_live is off. No em dashes. */
-export const clearedText = (first: string) => withStop(`Hi${first ? ' ' + first : ''}, we've been notified that you completed your Dementia course. Welcome to the team!\n` +
-  `Keep an eye out for our texts about open shifts, and check the Open Shifts section of the AxisCare app too.\n` +
-  `For anything you need, call or text the office, and save the number in your phone: (417) 234-8494.\nCaring Companions`)
+/* THE CLEARED TEXT (her wording, 2026-10-10; IN TRAINING PLAN v2, 2026-10-22: it now says orientation, sends the AxisCare app
+   guide and says the Staffing Coordinator will call). Goes only after Approve to Work AND the AxisCare read-back, 8am to 6pm
+   Central, yes-to-texts, opt-outs; practice (recorded, not sent) while approve_work_text_live is off. No em dashes. */
+export const APP_GUIDE = 'https://mo-care.com/axiscare-setup'
+export const clearedText = (first: string) => withStop(`Hi${first ? ' ' + first : ''}, you finished your orientation. Welcome to the team!\n` +
+  `Next, download the AxisCare app with this guide: ${APP_GUIDE}\n` +
+  `Our staffing coordinator will call you soon to check in and answer any questions.\n` +
+  `Save the office number in your phone: (417) 234-8494.\nCaring Companions`)
 
 function trn() {
   const url = Deno.env.get('OFFERS_PROJECT_URL') ?? '', key = Deno.env.get('OFFERS_SERVICE_ROLE_KEY') ?? ''
@@ -282,6 +288,8 @@ function approveState(view: Any, f: Facts, st: Any, who: Any, P: Any, dfs: Any[]
   const approved = !!(aw?.st && aw.st.state === 'complete')
   const axDone = !!(ax?.st && DONE.includes(ax.st.state))
   const axEv = ax?.st?.evidence || {}
+  /* the check-in call row exists only once it was opened (after the read-back, with checkin_call_live): open = not done yet */
+  const ci = rows.find((r) => r.key === CHECKIN_KEY), checkinOpen = !!(ci?.st && !DONE.includes(ci.st.state))
   const axiscare = axDone ? { state: 'confirmed', label: axEv.label || 'Active', at: ax.st.completed_at || null }
     : ax?.st?.state === 'blocked' ? { state: 'failed', detail: ax.st.blocked_reason || 'AxisCare update failed', at: ax.st.updated_at || null }
     : axEv.practice ? { state: 'practice', at: axEv.practice.at || null }
@@ -295,11 +303,13 @@ function approveState(view: Any, f: Facts, st: Any, who: Any, P: Any, dfs: Any[]
     ready_for_final, approved, approved_at: approved ? aw.st.completed_at : null, approved_by: approved ? (aw.st.completed_by_name || aw.st.completed_by) : null,
     prep: { hire_date: prepOf('cg.axiscare.hire_date'), level: prepOf('cg.axiscare.level') },
     axiscare, text: aw?.st?.evidence?.text || null, blocked, missing,
-    locked: !(approved && axDone), lock_why: !(approved && axDone) ? 'Scheduling stays locked until Approved to Work and AxisCare reads back Active.' : null,
+    locked: !(approved && axDone) || checkinOpen, lock_why: !(approved && axDone) ? 'Scheduling stays locked until Approved to Work and AxisCare reads back Active.' : checkinOpen ? 'Shift texts wait for the check-in call.' : null,
+    checkin: ci ? { open: checkinOpen, done: !!(ci.st && DONE.includes(ci.st.state)), at: ci.st?.completed_at || null, ticks: ci.st?.evidence?.ticks || {}, test_clock: ci.st?.evidence?.test_clock || null, tries: ci.st?.evidence?.tries || [], opened_at: ci.st?.evidence?.opened?.at || null } : null,
+    auto_approve_live: st?.auto_approve_work_live === true,
     level_of_care: lvl ? { level: String(lvl), source: 'recorded on the Background and References row' } : { level: 'Level 1', source: 'the default: nothing higher is recorded' },
     may_approve_work: !!who && mayApprove(P, 'work', { person_id: who.person_id, roles: who.roles || [], email: who.email }),
     may_retry: approved && !axDone,
-    switches: { axiscare_live: st?.approve_work_axiscare_live === true, text_live: st?.approve_work_text_live === true, hire_date_live: st?.axiscare_hire_date_live === true, level_live: st?.axiscare_level_live === true },
+    switches: { axiscare_live: st?.approve_work_axiscare_live === true, text_live: st?.approve_work_text_live === true, hire_date_live: st?.axiscare_hire_date_live === true, level_live: st?.axiscare_level_live === true, auto_approve_live: st?.auto_approve_work_live === true, checkin_live: st?.checkin_call_live === true },
   }
 }
 const nameOf = (f: Facts, j: Any) => S(f.offer?.first_name || f.roster?.first || f.candidate?.first || String(j?.client_name || '').split(' ')[0], 40)
@@ -388,7 +398,8 @@ async function activate(db: Any, j: Any, f: Facts, st: Any, who: { email?: strin
     await closeCard(db, 'cj_final_' + j.journey_id, 'Approved to Work.')
     const prep = await prepAxis(db, j, f, st, who, axId, send)
     const text = await clearedTextStep(db, j, f, st, who, send)
-    return { outcome: 'confirmed', label: r.label, text, prep }
+    const checkin = await openCheckin(db, j, st, who)
+    return { outcome: 'confirmed', label: r.label, text, prep, checkin }
   }
   if (r.outcome === 'practice') {
     await mergeEvidence(db, j.journey_id, AX_KEY, { practice: { at: now, by: who.email || 'hub', recorded: r.recorded } })
@@ -398,6 +409,59 @@ async function activate(db: Any, j: Any, f: Facts, st: Any, who: { email?: strin
     return { outcome: 'practice', text }
   }
   return await fail(r.detail || r.outcome)
+}
+
+/* ── IN TRAINING PLAN v2 (Samantha approved 2026-10-22) ── */
+/** The check-in call: opened once AxisCare reads back Active (checkin_call_live; off = an event only). The row stays open until
+    the Staffing Coordinator ticks it done; while open, the scheduling lock holds shift texts (work-lock.ts). One card, owned by
+    whoever owns Recruiting and Orientation. */
+export async function openCheckin(db: Any, j: Any, st: Any, who: { email?: string; name?: string }): Promise<'opened' | 'practice' | 'already'> {
+  const { data: cur } = await db.from('client_journey_step').select('state, evidence').eq('journey_id', j.journey_id).eq('step_key', CHECKIN_KEY).maybeSingle()
+  if (cur) return 'already'
+  if (st?.checkin_call_live !== true) { await event(db, j.journey_id, CHECKIN_KEY, who, 'checkin_practice', { why: 'checkin_call_live is off: no check-in card, shift texts are not held' }); return 'practice' }
+  const now = new Date().toISOString(), owner = await domainOwner(db, 'recruiting_orientation')
+  await putStep(db, j.journey_id, CHECKIN_KEY, { state: 'waiting', waiting_on: 'the check-in call', evidence: { opened: { at: now, by: who.email || 'hub' }, ticks: {}, tries: [] } })
+  await event(db, j.journey_id, CHECKIN_KEY, who, 'checkin_opened', {})
+  await raiseCard(db, { id: 'cj_checkin_' + j.journey_id, kind: 'checkin_call', urgency: 'today', who: j.client_name, offer_id: j.offer_id, title: 'Check-in call with ' + j.client_name,
+    detail: `${j.client_name} finished orientation and is Active in AxisCare. Call them: make sure everything is on file and complete, answer any questions about orientation or the job, make sure the AxisCare app is downloaded and they can sign in, and ask if they would like a quick test clock-in. Shift texts wait until this call is ticked done on their readiness card.` },
+    { owner: owner.email, owner_name: owner.name, domain: 'recruiting_orientation', due: dueNextBusinessDay(now, st?.company_holidays, 17, 1).slice(0, 10) })
+  return 'opened'
+}
+/** Approve to Work, the one way: by an owner's press (list 'work') or by the Hub itself when the last required step is done
+    (auto_approve_work_live). Re-checks every required row at the moment; refuses with what is missing. */
+async function approveNow(db: Any, j: Any, steps: Any[], f: Facts, st: Any, dfs: Any[], actor: { email?: string; name?: string }, list: 'work' | 'auto', who: Any = null, P: Any = {}): Promise<{ ok: true; r: Any } | { ok: false; status: number; error: string; missing?: string[] }> {
+  const now = new Date().toISOString()
+  /* GO-LIVE GATE (2026-10-13): the press re-checks at press time, on the server: the records are verified again first
+     (a result recorded since the last sweep counts; a row that lost its basis does not), then every required row. */
+  await applyVerdicts(db, j, steps, f, now, dfs, ctxFor(f, st))
+  const fresh = await load(db, { journey_id: j.journey_id }); const view2 = R.compute(dfs, fresh!.j, fresh!.steps, ctxFor(f, st))
+  const a = approveState(view2, f, st, who, P, dfs, j)
+  if (a.approved) return { ok: false, status: 409, error: 'Already approved to work' + (a.axiscare.state === 'failed' ? '; the AxisCare update failed. Press Retry.' : '.') }
+  if (a.blocked.length) return { ok: false, status: 409, error: 'Not yet: ' + a.blocked.join('; ') + ' is blocked. Nothing was approved.', missing: a.missing }
+  if (a.missing.length) return { ok: false, status: 409, error: 'Not yet. These required steps are not complete: ' + a.missing.join('; ') + '. Nothing was approved.', missing: a.missing }
+  const aw = view2.rows.find((r: Any) => r.key === WORK_KEY)
+  if (!aw) return { ok: false, status: 400, error: 'Approve to Work does not apply to this card.' }
+  if (!['ready', 'attention'].includes(aw.status)) return { ok: false, status: 409, error: 'Not yet: ' + (aw.why || 'earlier requirements first') + '. Nothing was approved.' }
+  await putStep(db, j.journey_id, WORK_KEY, { state: 'complete', evidence: { confirmed: { by: actor.email, name: actor.name, at: now, list }, level_of_care: a.level_of_care.level }, completed_by: actor.email, completed_by_name: actor.name, completed_at: now })
+  await event(db, j.journey_id, WORK_KEY, actor, 'approved_to_work', { list, level_of_care: a.level_of_care.level, at: now })
+  await rosterPatch(db, f.roster, { approved_to_work_at: now, approved_to_work_by: actor.email })
+  const r = await activate(db, j, f, st, actor)
+  /* LPN HIRING (2026-10-14): an LPN or RN hire's nurse setup (practice while nurse_hire_live is off); never for a caregiver */
+  if (f.licensed_nurse === true) { try { r.nurse = await nurseSetup(db, j, f, st, actor) } catch (e) { r.nurse = { state: 'failed', why: S((e as Error)?.message, 160) }; await raiseCard(db, { id: 'cj_nurse_' + j.journey_id, kind: 'nurse_setup', urgency: 'today', who: j.client_name, offer_id: j.offer_id, title: 'Nurse setup did not finish: ' + j.client_name, detail: 'Approve to Work is recorded. The nurse setup stopped: ' + r.nurse.why + '. Open their readiness card and press Run nurse setup.' }) } }
+  return { ok: true, r }
+}
+/** Automatic Approve to Work (auto_approve_work_live): when every required step is done. Off = practice: one event says it would have. */
+async function autoApprove(db: Any, j: Any, f: Facts, st: Any, dfs: Any[]): Promise<'approved' | 'practice' | 'not_ready' | 'failed'> {
+  if (st?.auto_approve_work_live !== true) {
+    const { data: seen } = await db.from('client_journey_event').select('id').eq('journey_id', j.journey_id).eq('kind', 'auto_approve_practice').limit(1)
+    if (!seen?.length) await event(db, j.journey_id, WORK_KEY, AUTO_ACTOR, 'auto_approve_practice', { would: 'Approve to Work and set them Active in AxisCare' }, 'Practice: the switch auto_approve_work_live is off')
+    return 'practice'
+  }
+  const { data: steps } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
+  try {
+    const out = await approveNow(db, j, steps ?? [], f, st, dfs, AUTO_ACTOR, 'auto')
+    return out.ok ? 'approved' : 'not_ready'
+  } catch (e) { console.warn('[caregiver-journey] auto approve: ' + String((e as Error)?.message ?? e).slice(0, 160)); return 'failed' }
 }
 
 /** the person who owns an Admin domain (Admin page, Domains), as an email and a name; empty when unowned */
@@ -711,10 +775,12 @@ Deno.serve(async (req) => {
           }
         }
         /* Ready for Final Approval: one card for the Approve to Work list, closed at the press */
-        if (a.ready_for_final) { await raiseCard(db, { id: 'cj_final_' + j.journey_id, kind: 'final_approval', urgency: 'today', who: j.client_name, offer_id: j.offer_id, title: 'Ready for final approval: ' + j.client_name, detail: 'Every required row on their readiness card is complete (checks with their proof, Step 2, the Orientation Video Call, orientation, dementia, the profile, AxisCare entries). An owner on the Approve to Work list opens the card and presses Approve to Work; the server checks every row again at the press.' }); (out.cards as number)++ }
+        /* IN TRAINING PLAN v2 (2026-10-22): every required step done = Approve to Work by itself (auto_approve_work_live); off = the card as before */
+        if (a.ready_for_final && st.auto_approve_work_live === true) { const r = await autoApprove(db, j, f, st, dfs); out.auto_approved = ((out.auto_approved as number) || 0) + (r === 'approved' ? 1 : 0); if (r !== 'approved') { await raiseCard(db, { id: 'cj_final_' + j.journey_id, kind: 'final_approval', urgency: 'today', who: j.client_name, offer_id: j.offer_id, title: 'Ready for final approval: ' + j.client_name, detail: 'Every required row on their readiness card is complete (checks with their proof, Step 2, the Orientation Video Call, orientation, dementia, the profile, AxisCare entries). An owner on the Approve to Work list opens the card and presses Approve to Work; the server checks every row again at the press.' }); (out.cards as number)++ } }
+        else if (a.ready_for_final) { await autoApprove(db, j, f, st, dfs); await raiseCard(db, { id: 'cj_final_' + j.journey_id, kind: 'final_approval', urgency: 'today', who: j.client_name, offer_id: j.offer_id, title: 'Ready for final approval: ' + j.client_name, detail: 'Every required row on their readiness card is complete (checks with their proof, Step 2, the Orientation Video Call, orientation, dementia, the profile, AxisCare entries). An owner on the Approve to Work list opens the card and presses Approve to Work; the server checks every row again at the press.' }); (out.cards as number)++ }
         /* a cleared text held after hours goes now, in hours, with the switch on */
         if (a.approved && a.axiscare.state === 'confirmed' && a.text?.state === 'due' && (st.approve_work_text_live === true || testPerson(st, { phone: f.roster?.phone || f.offer?.phone, email: f.roster?.email || f.offer?.email })) && inTextHours()) { const t = await clearedTextStep(db, j, f, st, {}); if (t.state === 'sent') (out.texts_sent as number)++ }
-        if (view.complete && j.status === 'open') { await db.from('client_journey').update({ status: 'active', updated_at: now }).eq('journey_id', j.journey_id); await event(db, j.journey_id, null, {}, 'complete', { all: true }); (out.completed as number)++ }
+        if (view.complete && j.status === 'open' && !a.checkin?.open) {   /* 2026-10-22: the card stays open (and the lock holds) until the check-in call is done */ await db.from('client_journey').update({ status: 'active', updated_at: now }).eq('journey_id', j.journey_id); await event(db, j.journey_id, null, {}, 'complete', { all: true }); (out.completed as number)++ }
       }
       /* the rows just made are asked now: reference-chase only touches rows never sent, and keeps its own hours */
       if ((out.auto_ask as Any)?.made) {
@@ -748,7 +814,20 @@ Deno.serve(async (req) => {
         await event(db, got.j.journey_id, key, { email: 'training-platform', name: 'The Training Platform' }, 'verified', { course: S(c?.slug, 60), completed_at: at, reported: true }); applied.push(key); state[key] = 'complete'
       }
       if (!got.j.axiscare_caregiver_id) await db.from('client_journey').update({ axiscare_caregiver_id: axId, updated_at: now }).eq('journey_id', got.j.journey_id)
-      return json({ ok: true, journey: true, applied, held })
+      /* IN TRAINING PLAN v2 (2026-10-22): orientation just finished and every required step is done = Approve to Work now, by the
+         Hub (auto_approve_work_live; off = one practice event). Anything still missing waits for the hourly sweep. */
+      let auto: string | null = null
+      if (applied.length) {
+        try {
+          const st = await settings(db), f = await facts(db, got.j, trn())
+          const { data: fresh } = await db.from('client_journey_step').select('*').eq('journey_id', got.j.journey_id)
+          await applyVerdicts(db, got.j, fresh ?? [], f, now, dfs, ctxFor(f, st))
+          const again = await load(db, { journey_id: got.j.journey_id })
+          const a = approveState(R.compute(dfs, again!.j, again!.steps, ctxFor(f, st)), f, st, null, {}, dfs, got.j)
+          auto = a.ready_for_final ? await autoApprove(db, got.j, f, st, dfs) : (a.approved ? 'already' : 'not_ready')
+        } catch (e) { auto = 'failed: ' + String((e as Error)?.message ?? e).slice(0, 120) }
+      }
+      return json({ ok: true, journey: true, applied, held, auto_approve: auto })
     }
     const who = await requireStaff(db, req, OFFICE_ROLES)
     if (!who.ok) return json({ error: who.error }, who.status)
@@ -762,7 +841,7 @@ Deno.serve(async (req) => {
         const { data: steps } = await db.from('client_journey_step').select('*').eq('journey_id', j.journey_id)
         const f = await facts(db, j, null); const v = R.compute(dfs, j, steps ?? [], ctxFor(f, st)); const a = approveState(v, f, st, who, P, dfs, j)
         rows.push({ journey_id: j.journey_id, offer_id: j.offer_id, name: j.client_name, status: j.status, stage: v.stageLabel, next: v.next ? { key: v.next.key, title: v.next.def.title, owner: v.next.owner, attention: v.next.attention || null } : null, complete: v.complete,
-          approved_to_work: a.approved, ready_for_final: a.ready_for_final, axiscare: a.axiscare.state, locked: a.locked, blocked: (v.rows || []).filter((r: Any) => r.status === 'blocked').map((r: Any) => r.def.title) })
+          approved_to_work: a.approved, ready_for_final: a.ready_for_final, axiscare: a.axiscare.state, locked: a.locked, checkin_open: !!a.checkin?.open, blocked: (v.rows || []).filter((r: Any) => r.status === 'blocked').map((r: Any) => r.def.title) })
       }
       void T; return json({ ok: true, rows, may_approve_work: mayApprove(P, 'work', { person_id: who.person_id, roles: who.roles || [], email: who.email }) })
     }
@@ -860,25 +939,38 @@ Deno.serve(async (req) => {
     /* SLICE 5: the owner's press */
     if (action === 'approve_work') {
       if (!mayApprove(P, 'work', { person_id: who.person_id, roles: who.roles || [], email: who.email })) return json({ error: 'Only a person on the Approve to Work list (owners) may approve to work.' }, 403)
-      /* GO-LIVE GATE (2026-10-13): the press re-checks at press time, on the server: the records are verified again first
-         (a result recorded since the last sweep counts; a row that lost its basis does not), then every required row. */
-      await applyVerdicts(db, got.j, got.steps, f, now, dfs, ctxFor(f, st))
-      const fresh = await load(db, { journey_id: got.j.journey_id }); const view2 = R.compute(dfs, fresh!.j, fresh!.steps, ctxFor(f, st))
-      const a = approveState(view2, f, st, who, P, dfs, got.j)
-      if (a.approved) return json({ error: 'Already approved to work' + (a.axiscare.state === 'failed' ? '; the AxisCare update failed. Press Retry.' : '.') }, 409)
-      if (a.blocked.length) return json({ error: 'Not yet: ' + a.blocked.join('; ') + ' is blocked. Nothing was approved.', missing: a.missing }, 409)
-      if (a.missing.length) return json({ error: 'Not yet. These required steps are not complete: ' + a.missing.join('; ') + '. Nothing was approved.', missing: a.missing }, 409)
-      const aw = view2.rows.find((r: Any) => r.key === WORK_KEY)
-      if (!aw) return json({ error: 'Approve to Work does not apply to this card.' }, 400)
-      if (!['ready', 'attention'].includes(aw.status)) return json({ error: 'Not yet: ' + (aw.why || 'earlier requirements first') + '. Nothing was approved.' }, 409)
-      await putStep(db, got.j.journey_id, WORK_KEY, { state: 'complete', evidence: { confirmed: { by: who.email, name: who.name, at: now, list: 'work' }, level_of_care: a.level_of_care.level }, completed_by: who.email, completed_by_name: who.name, completed_at: now })
-      await event(db, got.j.journey_id, WORK_KEY, actor, 'approved_to_work', { list: 'work', level_of_care: a.level_of_care.level, at: now })
-      await rosterPatch(db, f.roster, { approved_to_work_at: now, approved_to_work_by: who.email })
-      const r = await activate(db, got.j, f, st, actor)
-      /* LPN HIRING (2026-10-14): an LPN or RN hire's nurse setup (practice while nurse_hire_live is off); never for a caregiver */
-      if (f.licensed_nurse === true) { try { r.nurse = await nurseSetup(db, got.j, f, st, actor) } catch (e) { r.nurse = { state: 'failed', why: S((e as Error)?.message, 160) }; await raiseCard(db, { id: 'cj_nurse_' + got.j.journey_id, kind: 'nurse_setup', urgency: 'today', who: got.j.client_name, offer_id: got.j.offer_id, title: 'Nurse setup did not finish: ' + got.j.client_name, detail: 'Approve to Work is recorded. The nurse setup stopped: ' + r.nurse.why + '. Open their readiness card and press Run nurse setup.' }) } }
+      const out = await approveNow(db, got.j, got.steps, f, st, dfs, actor, 'work', who, P)
+      if (!out.ok) return json({ error: out.error, ...(out.missing ? { missing: out.missing } : {}) }, out.status)
       const res = await answerFor(got.j.journey_id, f); const body = await res.json()
-      return json({ ...body, result: r })
+      return json({ ...body, result: out.r })
+    }
+    /* IN TRAINING PLAN v2 (2026-10-22): the check-in call. ticks { on_file, questions, app }, test_clock 'done' | 'declined',
+       or no_answer: true (tried, the card stays for the next business day). Done when all three ticks and test_clock are in. */
+    if (action === 'checkin') {
+      const cur = got.steps.find((x: Any) => x.step_key === CHECKIN_KEY)
+      if (!cur) return json({ error: 'There is no check-in call open for them yet (it opens when they are Active in AxisCare).' }, 409)
+      if (DONE.includes(cur.state)) return json({ error: 'The check-in call is already done.' }, 409)
+      const ev = cur.evidence || {}, note = S(b.note, 300)
+      if (b.no_answer === true) {
+        const tries = [...(Array.isArray(ev.tries) ? ev.tries : []), { at: now, by: who.email, name: who.name, note: note || null }].slice(-20)
+        await putStep(db, got.j.journey_id, CHECKIN_KEY, { evidence: { ...ev, tries } })
+        await event(db, got.j.journey_id, CHECKIN_KEY, actor, 'checkin_no_answer', { tries: tries.length }, note || 'No answer')
+        const due = dueNextBusinessDay(now, st?.company_holidays, 17, 1)
+        await raiseCard(db, { id: 'cj_checkin_' + got.j.journey_id, kind: 'checkin_call', urgency: 'today', who: got.j.client_name, offer_id: got.j.offer_id, title: 'Check-in call with ' + got.j.client_name, detail: `No answer ${tries.length === 1 ? 'once' : tries.length + ' times'} (last ${now.slice(0, 10)}). Try again. Shift texts wait until this call is ticked done on their readiness card.` }, { due: due.slice(0, 10) })
+        const res = await answerFor(got.j.journey_id, f); return res
+      }
+      const ticks: Record<string, Any> = { ...(ev.ticks || {}) }
+      for (const k of Object.keys(CHECKIN_TICKS)) if (b.ticks && typeof b.ticks[k] === 'boolean') ticks[k] = b.ticks[k] ? { at: now, by: who.email, name: who.name } : null
+      const tc = ['done', 'declined'].includes(S(b.test_clock, 20)) ? { choice: S(b.test_clock, 20), at: now, by: who.email } : (b.test_clock === null ? null : ev.test_clock ?? null)
+      const all = Object.keys(CHECKIN_TICKS).every((k) => ticks[k]) && !!tc
+      const finish = b.finish === true && all
+      /* the ticks are kept even when Done is refused, so nothing the office ticked is lost */
+      await putStep(db, got.j.journey_id, CHECKIN_KEY, { evidence: { ...ev, ticks, test_clock: tc, ...(note ? { note } : {}) },
+        ...(finish ? { state: 'complete', completed_by: who.email, completed_by_name: who.name, completed_at: now, waiting_on: null } : {}) })
+      await event(db, got.j.journey_id, CHECKIN_KEY, actor, finish ? 'checkin_done' : 'checkin_ticked', { ticks: Object.keys(ticks).filter((k) => ticks[k]), test_clock: tc?.choice ?? null }, note || null)
+      if (b.finish === true && !all) return json({ error: 'Tick all three and choose test clock-in done or no thanks first. Your ticks are saved; nothing was finished.' }, 409)
+      if (finish) { await closeCard(db, 'cj_checkin_' + got.j.journey_id, 'Check-in call done.'); if (f.roster) await rosterPatch(db, f.roster, { work_lock: false }) }
+      return await answerFor(got.j.journey_id, f)
     }
     /* ───── LPN HIRING (2026-10-14): the nurse forms on the readiness card (office staff; only on an LPN or RN card) ───── */
     if (action.startsWith('nurse_')) {
