@@ -69,7 +69,8 @@ export function inviteMessages(first: string, link: string) {
     html: shell(`<p>Hi ${esc(first)},</p><p>Great news! Your background check and references are complete, and you are almost ready to start.</p>` +
       `<p><b>Next step: a quick 15-minute Orientation Video Call</b> with our office. On the call we will show you how to complete your paid orientation ` +
       `from your phone or computer, so you can do it from home. Pick a time that suits you:</p>${btn(link, 'Book my Orientation Video Call')}` +
-      `<p>We will also check your ID for your employment paperwork, help you set up the AxisCare app, and go over your caregiver profile together. ` +
+      /* 2026-10-22 (her approved Part C wording): the AxisCare app is set up after orientation, not on this call */
+      `<p>We will also check your ID for your employment paperwork and go over your caregiver profile together. You will set up the AxisCare app after your orientation. ` +
       `Please have the <b>original ID documents</b> you uploaded in Viventium with you. You can join from your phone, no app needed.</p>`),
   }
 }
