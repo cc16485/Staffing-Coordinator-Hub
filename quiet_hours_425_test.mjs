@@ -247,7 +247,6 @@ const PATHS = [
   ['coverage-run/index.ts', /const smsOk = mustA \|\| callinAnyHour \|\| \(!officeQuiet\(new Date\(\), settings\)/, /emergency: mustA \|\| callinAnyHour/, /soonQ && sendLive && !claimActiveQ && !quietQ/, /const smsAllowed = !officeQuiet\(new Date\(\), settings\)/],
   ['coverage-reply/index.ts', /if \(officeQuiet\(new Date\(\), settings\)\) \{ console\.log\('\[coverage-reply\] staff alert held: office quiet hours'\); return \}/],
   ['ops-escalate/index.ts', /officeQuietBetween\(Date\.parse\(it\.created_at \|\| ''\) \+ rule\.after_min \* 60000, now, cfg\)/],
-  ['automation-watchdog/index.ts', /const quiet = await officeQuietNow\(supabase\)/, /if \(t\.phone && !quiet\)/],
   ['lead-intake/index.ts', /const quietStaff = await officeQuietNow\(supabase\)/, /if \(p\.phone && !quietStaff\)/],
   ['lead-followup/index.ts', /const quietStaff = await officeQuietNow\(supabase\)/, /if \(t\.phone && !quietStaff\)/, /else if \(quietStaff\)/],
   ['_shared/outreach.ts', /String\(opts\.audience \?\? ''\) === 'staff' && !opts\.emergency && await officeQuietNow\(sb, opts\.now \?\? new Date\(\)\)/],
@@ -255,6 +254,10 @@ const PATHS = [
   ['lead-watch/index.ts', /quiet = officeQuiet\(now, settings\)/, /if \(quiet\) \{ plan\.waiting_quiet\+\+; continue \}/, /if \(!quiet\) await text\(/],
 ]
 for (const [f, ...res_] of PATHS) { const s = src(f); ck(`scan · ${f}: imports quiet-hours.ts and checks it at every office text`, /from '\.\.?\/(_shared\/)?quiet-hours\.ts'/.test(s) && res_.every((re) => re.test(s)), res_.filter((re) => !re.test(s)).map(String)) }
+{ const s = src('automation-watchdog/index.ts')
+  ck('scan · automation-watchdog: emails Samantha only and never texts anyone (her ruling 2026-10-22)',
+    /const alertTo: \{ name: string; email: string \}\[\] = \[\{ name: 'Samantha', email: 'samantha@mo-care\.com' \}\]/.test(s)
+      && !/channel: 'sms'|t\.phone|watchdog_recipients'\)|from\('applicant_alerts'\)/.test(s)) }
 { const s = src('interview-messages/index.ts')
   ck('scan · interview-messages: its office texts (new applicant, applicant cancelled) already only go 8am to 6pm',
     (s.match(/if \(!withinOutreachHours\(\)\) continue/g) || []).length >= 2 && /const withinOutreachHours = \(\) => \{ const h = TZ_HOUR\(\); return h >= 8 && h < 18 \}/.test(s)) }
