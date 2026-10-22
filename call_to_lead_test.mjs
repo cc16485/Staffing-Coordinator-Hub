@@ -81,7 +81,7 @@ try {
   ck('read: the summary leads the notes and why they called is one line', p.interest_notes.startsWith(ANSWER.summary) && p.why_called.length <= 140, p)
   ck('read: every box filled from the call is listed as heard (shown yellow); nothing empty is listed', ['client_first_name', 'client_city', 'needs', 'schedule_days', 'funding_source', 'interest_notes'].every((k) => heard.includes(k)) && !heard.includes('client_last_name'), heard)
   ck('read: writes nothing anywhere', WRITES === 0 && !CALLS.some((u) => u.endsWith('/tags')), { WRITES, CALLS })
-  ck('read: the AI is asked with auto tool choice (no forced tool), the strict tool, the call day in Central, and the refusal fallback', LAST_AI.body.tool_choice.type === 'auto' && LAST_AI.body.tools[0].strict === true
+  ck('read: the AI is asked with auto tool choice (no forced tool), the form NOT strict (1058: too large for strict mode), the call day in Central, and the refusal fallback', LAST_AI.body.tool_choice.type === 'auto' && !LAST_AI.body.tools[0].strict
      && /2026-10-14 \(Wednesday\)/.test(LAST_AI.body.messages[0].content) && LAST_AI.body.fallbacks === 'default' && /server-side-fallback-2026-07-01/.test(LAST_AI.headers['anthropic-beta']) && !('betas' in LAST_AI.body), LAST_AI.body.tool_choice)
 
   ck('v2 read: everything the call gave is filled (birth date, address, state upper case, ZIP, marital, language, doctor, hospital, level, weight, dementia, quoted rate)',
@@ -135,6 +135,15 @@ try {
   ck('made: a lead that was not saved with this call is refused, nothing tagged', r.status === 409 && !CALLS.some((u) => u.endsWith('/tags')), r.j)
   reset(); TAG_FAIL = true; r = await call({ action: 'made', message_id: 'msgAAA111', lead_id: 'L1' })
   ck('made: a failed tag says so (never quietly)', r.status === 502 && r.j.tagged === false && /lead/.test(r.j.error), r.j)
+  /* 1058: the form is no longer strict, so the code's own checks are the only guard. Junk from the AI never gets through. */
+  const CLx = await import(path.join(process.cwd(), 'supabase/functions/_shared/call-lead.ts'))
+  const junk = CLx.toPrefill({ needs: 'personalCare', safety: ['fallRisk', 'falls'], schedule_days: ['Mon', 'Funday'], number_of_hours: 'twenty', funding_source: 'medicaid',
+    client_state: 'Missouri', client_zip: '657', client_dob: 'March 2', mobility: 'cane', desired_start_kind: 'by_date', desired_start_date: 'soon', relationship: 42, email_heard: 'not an email',
+    care_plan: 'nope', home_life: null, people: 'Mark' }, { first_name: '', last_name: '', phone: '', email: '' }, [])
+  const jp = junk.prefill
+  ck('1058 not strict: wrong types and unknown choices are dropped, never saved', !('needs' in jp) && JSON.stringify(jp.safety) === '["fallRisk"]' && JSON.stringify(jp.schedule_days) === '["Mon"]'
+     && !('number_of_hours' in jp) && !('funding_source' in jp) && !('client_state' in jp) && !('client_zip' in jp) && !('client_dob' in jp) && !('mobility' in jp) && jp.desired_start_kind === 'planning' && !('desired_start_date' in jp)
+     && jp.relationship === '42' && !('email' in jp && jp.email) && Object.keys(junk.care_plan.fields).length === 0 && junk.profile.people.length === 0, jp)
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1)
