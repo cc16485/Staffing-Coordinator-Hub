@@ -81,7 +81,7 @@ for p in people:
     st = e.get("status") or "not enrolled"
     by_hand = bool(e.get("completion_note") or e.get("completion_doc_path") or e.get("waived_at"))
     online = bool(ce.get("at"))
-    signed = f", signed off as \"{e.get('attested_name')}\" {day(e.get('attested_at'))}" if e.get("attested_at") else ", not signed off"
+    signed = f", signed off as \"{e.get('attested_name')}\" {day(e.get('attested_at'))}" if e.get("attested_at") else (f", not signed off (office note by {e.get('signoff_note_by') or 'the office'}: the sign-off was not shown)" if e.get("signoff_note") else ", not signed off")
     if st in ("complete", "waived") and by_hand:
         lines.append(f"orientation MARKED complete by the office {day(e.get('completed_at') or e.get('waived_at'))}" + (f" ({str(e.get('completion_note') or e.get('waiver_reason') or '')[:110]})" if (e.get('completion_note') or e.get('waiver_reason')) else ""))
         missing.append("orientation was marked by hand, not done online: confirm it")
