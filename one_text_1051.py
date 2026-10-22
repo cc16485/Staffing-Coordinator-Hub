@@ -27,6 +27,19 @@ SETTINGS = """select coalesce((data::jsonb->>'lead_rungs_live')::boolean, false)
   from public.app_data where key = 'ops_settings'"""
 BEAT = "select item->>'at' as at, item->>'note' as note from public.app_data, jsonb_array_elements(case when jsonb_typeof(data::jsonb) = 'array' then data::jsonb else '[]'::jsonb end) item where key = 'automation_heartbeats' and item->>'id' = 'hb_lead-watch'"
 
+def sha_text(t):
+    tmp = os.path.join(ROOT, ".cmp_1051"); open(tmp, "w").write(t); h = sha(tmp); os.remove(tmp); return h
+def past_version(k, h):
+    """The date and subject of the main commit where file k had sha h, when that is an earlier version on the starting build's history."""
+    if not h: return ""
+    c, log = run(["git", "-C", ROOT, "log", "--format=%H %ad %s", "--date=format:%b %d %H:%M", BASE, "--", k])
+    if c != 0: return ""
+    for line in log.splitlines()[:200]:
+        commit, rest = line.split(" ", 1)
+        c2, body = run(["git", "-C", ROOT, "show", f"{commit}:{k}"])
+        if c2 == 0 and sha_text(body) == h: return rest[:12].strip()
+    return ""
+
 start("SPEED TO LEAD: ONE TEXT PER FAMILY")
 say("PART 1 · READ ONLY (nothing changes)")
 check_build(FNROOT, SHAS)
@@ -50,16 +63,21 @@ metas = {}
 for fn in FNS:
     okl, live = live_files(HUB, fn)
     if not okl: stop(f"couldn't download the live {fn} to compare it", 3)
-    diff = []
+    diff = []; older = []
     for k in sorted(L.need(FNROOT, fn)):
         c2, b2 = run(["git", "-C", ROOT, "show", f"{BASE}:{k}"])
         if c2 != 0:
             if k in live: diff.append(k + " (live has it, the starting build does not)")
             continue
-        tmp = os.path.join(ROOT, ".cmp_1051"); open(tmp, "w").write(b2); want = sha(tmp); os.remove(tmp)
-        if live.get(k) != want: diff.append(k)
-    if diff: stop(f"the live {fn} is not the build this change started from, so deploying could undo someone else's work: " + ", ".join(diff)[:240])
-    ok(f"the live {fn} is exactly the starting build (nothing of anyone else's would be undone)")
+        if live.get(k) == sha_text(b2): continue
+        # Not the starting build. An OLDER version of the same file from main's history is fine (the function was last
+        # deployed before that file moved on; deploying only brings it up to date). Anything else stops: unknown work.
+        past = past_version(k, live.get(k))
+        if past: older.append(f"{k} (live has the {past} version)")
+        else: diff.append(k)
+    if diff: stop(f"the live {fn} has something that is not on GitHub's main, so deploying could undo someone else's work: " + ", ".join(diff)[:240])
+    if older: say(f"  · the live {fn} has older copies of: " + "; ".join(older)[:300] + ". Deploying brings them up to date; nothing newer is replaced.")
+    ok(f"the live {fn} holds nothing that is not already on GitHub's main (nothing of anyone else's would be undone)")
     s, m = fmeta(HUB, fn)
     if s != 200 or not m or "verify_jwt" not in m: stop(f"couldn't read how {fn} is set up live ({s})", 3)
     metas[fn] = bool(m["verify_jwt"]); say(f"  · {fn} is live as version {m.get('version', '?')}, gateway sign-in check {'on' if metas[fn] else 'off'} (kept)")
