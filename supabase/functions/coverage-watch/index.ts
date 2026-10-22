@@ -39,6 +39,7 @@ import { attendanceCard, caseEnded, caseWhen, shiftAhead, chiNowNaive, evvDaySta
 import { loadQuiet, isQuiet, isNotClient } from '../_shared/client-quiet.ts'
 import { confirmTimesItem, hasCard, outAfterMin } from '../_shared/confirm-times.ts'
 import { fallbackList } from '../_shared/notice-to.ts'
+import { quietOn, mondayOf, weekCard, weekCardId, suggestedBefore, recheckCases } from '../_shared/quiet-cards.ts'
 import { openShiftSkip, openShiftItem, openShiftCloseWhy, openShiftId, scheduleOf, OPEN_SHIFT_KIND, OPEN_SHIFT_PER_RUN, type OpenVisit } from '../_shared/open-shift.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
@@ -92,6 +93,11 @@ Deno.serve(async (req) => {
      off, the summary's "loops" section says exactly what WOULD close, open or be asked, and nothing is written. */
   const loopsLive = settings.loops_close_live === true && !forceDry
   const loopsSince = String(settings.loops_close_since || '')
+  /* Fewer cards (2026-10-22, her: "stop EVV and Make it official cards", "coverage checks close themselves from AxisCare",
+     "a weekly Make it official list"), off until ops_settings.quieter_cards_live (_shared/quiet-cards.ts). Off: exactly as before. */
+  const quiet = quietOn(settings)
+  // deno-lint-ignore no-explicit-any
+  const quietPlan: any = { on: quiet, official_week: null, official_new: 0, evv_review: quiet ? 'not made (EVV is retired)' : 'made on Mondays as before', rechecked: [] }
   const timeDiffers = new Map<string, Record<string, unknown>>()
   let sampleStart = ''
   // deno-lint-ignore no-explicit-any
@@ -456,6 +462,10 @@ Deno.serve(async (req) => {
           const { data: itemRow } = await sb.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
           const haveItem = new Set((Array.isArray(itemRow?.data) ? itemRow!.data : [])
             .map((i: { id?: unknown }) => String(i?.id ?? '')))
+          /* quiet: one list for the week; a schedule already on an old card or an earlier list is never suggested again */
+          const already = quiet ? suggestedBefore(Array.isArray(itemRow?.data) ? itemRow!.data : []) : new Set<string>()
+          // deno-lint-ignore no-explicit-any
+          const weekly: any[] = []
           // deno-lint-ignore no-explicit-any
           const backVisits: any[] = []
           let bu: string | null = `https://${site}.axiscare.com/api/visits?startDate=${new Date(Date.now() - 21 * 86400000).toISOString().slice(0, 10)}&endDate=${new Date(Date.now() - 86400000).toISOString().slice(0, 10)}`
@@ -482,7 +492,7 @@ Deno.serve(async (req) => {
           }
           for (const [schedId, arr] of pastBySched) {
             const itemId = `ops_regular_s${schedId}`
-            if (haveItem.has(itemId)) continue
+            if (haveItem.has(itemId) || already.has(String(schedId))) continue
             // deno-lint-ignore no-explicit-any
             arr.sort((a: any, b: any) => String(a?.scheduledStartDate ?? a?.startDate ?? '')
               .localeCompare(String(b?.scheduledStartDate ?? b?.startDate ?? '')))
@@ -497,6 +507,7 @@ Deno.serve(async (req) => {
               .filter(Boolean).join(' ') || 'the client'
             const wd = new Date(String(w?.scheduledStartDate ?? w?.startDate ?? '').slice(0, 10) + 'T12:00:00')
               .toLocaleDateString('en-US', { weekday: 'long' })
+            if (quiet) { weekly.push({ sched: String(schedId), caregiver: cgName, client: clName, weekday: wd }); continue }
             if (live) {
               await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
                 id: itemId, kind: 'staffing',
@@ -507,6 +518,14 @@ Deno.serve(async (req) => {
                 created_at: nowIso, created_by: 'ongoing-sweep', owner: '', owner_name: '',
               } })
             }
+          }
+          if (quiet && weekly.length) {
+            const monday = mondayOf(new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10))
+            // deno-lint-ignore no-explicit-any
+            const prev = (Array.isArray(itemRow?.data) ? itemRow!.data : []).find((i: any) => String(i?.id) === weekCardId(monday)) || null
+            const card = weekCard(prev, weekly, monday, nowIso)
+            quietPlan.official_week = weekCardId(monday); quietPlan.official_new = weekly.length
+            if (card && live) await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: card })
           }
         }
       } catch { /* a missed suggestion costs nothing */ }
@@ -672,7 +691,9 @@ Deno.serve(async (req) => {
     const ended = cases.filter((cc: any) => cc?.status === 'open' && String(cc?.kind) !== 'interest' && caseEnded(cc, chiNow))
     /* AxisCare, for the dates of finished shifts in the last 14 days (older ones go straight to a person) */
     const oldest = new Date(Date.now() - 14 * 864e5).toISOString().slice(0, 10)
-    const dates = [...new Set(ended.map((cc: any) => String(cc.shift_date)).filter((d: string) => d >= oldest))].sort()
+    /* quiet: "Was it covered?" cases are looked at again until AxisCare can say (same 14 days) */
+    const again = quiet ? recheckCases(cases, opsItems, oldest) : []
+    const dates = [...new Set([...ended, ...again].map((cc: any) => String(cc.shift_date)).filter((d: string) => d >= oldest))].sort()
     const pastById = new Map<string, any>()
     let pastFetched = false
     if (dates.length) {
@@ -721,6 +742,25 @@ Deno.serve(async (req) => {
             created_at: nowIso, created_by: 'coverage-watch', opened_by: 'loops' } })
           itemIds.add(qid)
         }
+      }
+    }
+    /* 1b. quiet: a "Was it covered?" case AxisCare can now answer closes from AxisCare, and its card with it */
+    for (const cc of again) {
+      if (!pastFetched) break
+      const verdict = pastCaseVerdict(cc, pastById.get(String(cc.axiscare_visit_id)), outsideVerdict)
+      if (!verdict.how) continue
+      const qid = `ops_covq_${cc.id}`
+      quietPlan.rechecked.push({ case: cc.id, client: cc.client || null, how: verdict.how, why: verdict.why })
+      if (!loopsLive) continue
+      cc.status = 'resolved'; cc.resolved_at = nowIso; cc.resolved_how = verdict.how; cc.covered_by = verdict.covered_by
+      cc.resolved_by = 'cara'; cc.closed_after_shift = true
+      cc.note = [String(cc.note || '').trim(), `Later, AxisCare showed it: ${verdict.why}, so Cara closed the case (${verdict.how.replace(/_/g, ' ')}). No texts were sent.`].filter(Boolean).join('\n')
+      await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: cc })
+      const card = opsItems.find((i: any) => String(i?.id) === qid)
+      if (card && card.status === 'open') {
+        await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...card, status: 'resolved', resolved_at: nowIso, resolved_how: 'axiscare_later',
+          close_note: `AxisCare now shows it: ${verdict.why}. Closed by itself; nothing was sent.` } })
+        card.status = 'resolved'
       }
     }
     /* 2. cards that belong to a closed case */
@@ -1078,7 +1118,8 @@ Deno.serve(async (req) => {
     const chiToday = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
     const isMonday = new Date(chiToday + 'T12:00:00Z').getUTCDay() === 1
     const force = new URL(req.url).searchParams.get('evv_review') === '1'
-    if (isMonday || force) {
+    if ((isMonday || force) && quiet) (globalThis as any).__evvReview = { card: 'not made: EVV is retired (quieter cards on)' }
+    else if (isMonday || force) {
       const lastSunday = (() => { const d = new Date(chiToday + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 7) % 7 || 7)); return d.toISOString().slice(0, 10) })()
       const wk = weekOf(lastSunday)
       const rid = `ops_evvrev_${wk.start}`
@@ -1280,7 +1321,8 @@ Deno.serve(async (req) => {
     attendance_sweep: (globalThis as any).__attSwept ?? 'already done for yesterday',
     attendance_cards: (globalThis as any).__attPlan ?? null,
     confirm_times_overnight: (globalThis as any).__cftOvernight ?? 'with the attendance sweep, once a night',
-    evv_review: (globalThis as any).__evvReview ?? 'made on Mondays (or ?evv_review=1)',
+    evv_review: (globalThis as any).__evvReview ?? (quiet ? 'not made: EVV is retired (quieter cards on)' : 'made on Mondays (or ?evv_review=1)'),
+    quieter_cards: quietPlan,
     loops,
     open_shift_cards: openShift,
     notes_sweep: (globalThis as any).__noteSwept ?? 'already done this hour',
