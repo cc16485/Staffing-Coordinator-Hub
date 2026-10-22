@@ -639,7 +639,17 @@ export function sameCallPrefix(messageId: string): string {
 export const CONDITIONAL_PROMISE = /^\s*(if|in case|unless|should)\b|\b(in case|unless)\b|\bif\s+(not\b|[^.;]*?\b(does not|doesn't|did not|didn't|is not|isn't|are not|aren't|not|never|no[- ]?show|missing|misses|missed|looks wrong|reports?|fails?)\b)/i
 export const EVV_PROMISE = /\bEVV\b|\bclock[- ]?(in|out) location\b|\btimes? in the system\b/i
 /** Why this promise never becomes a card, or '' when it may. */
-export function promiseSkip(w: { kind?: string; area?: string; what?: string }): string {
+/** 1049 (2026-10-22, her rule): a call read more than 2 days after it happened (a catch-up, like the 97 calls the reader
+ *  missed from Oct 16) is read and kept, but makes no cards: the office has most likely handled it already. */
+export const LATE_READ_MS = 2 * 864e5
+export function readLate(callAt: unknown, readAt: unknown): boolean {
+  const c = Date.parse(String(callAt || '')), r = Date.parse(String(readAt || ''))
+  return Number.isFinite(c) && Number.isFinite(r) && r - c > LATE_READ_MS
+}
+const LATE_WHY = 'read more than 2 days after the call (a catch-up), so no card'
+export function promiseSkip(w: { kind?: string; area?: string; what?: string; call_at?: string; history?: Array<{ at?: string; why?: string }> }): string {
+  const found = (w.history || []).find((h) => h && h.why === 'promise found')
+  if (readLate(w.call_at, found?.at)) return LATE_WHY
   if (!(WATCH_KINDS as readonly string[]).includes(String(w.kind))) return 'not something the office owes'
   if (w.area === 'evv_timekeeping' || EVV_PROMISE.test(String(w.what || ''))) return 'EVV work is retired; missed clock-ins are Call cards'
   if (CONDITIONAL_PROMISE.test(String(w.what || ''))) return 'it only applies if something happens'
@@ -706,7 +716,8 @@ export function unreadFinal(r: { error?: string | null; attempt?: number | null;
   return r.detail?.failure === 'no_transcript' || /no transcript/i.test(String(r.error)) || (Number(r.attempt) || 1) >= UNREAD_MAX_TRIES
 }
 /** Why this unreadable call makes no card, or '' when it should get one. */
-export function unreadSkip(r: { error?: string | null; seconds?: number | null; channel?: string | null; detail?: Any }, minSeconds = UNREAD_MIN_SECONDS): string {
+export function unreadSkip(r: { error?: string | null; seconds?: number | null; channel?: string | null; detail?: Any; call_at?: string | null; read_at?: string | null }, minSeconds = UNREAD_MIN_SECONDS): string {
+  if (readLate(r.call_at, r.read_at)) return LATE_WHY
   const noTranscript = r.detail?.failure === 'no_transcript' || /no transcript/i.test(String(r.error || ''))
   if (noTranscript && r.channel !== 'text' && (Number(r.seconds) || 0) < minSeconds) return `a ${Math.round(Number(r.seconds) || 0)} second call with nothing to transcribe (a hang-up or pocket dial)`
   return ''
