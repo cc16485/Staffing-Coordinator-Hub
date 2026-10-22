@@ -50,7 +50,7 @@ d1 = drift(ROOT, FNROOT, FNS, [SQLF]); d2 = drift(TRN_ROOT, TRN_FNROOT, TRN_FNS)
 if d1 or d2: stop("this isn't the same as GitHub's main yet (merge both pull requests first, or newer work landed since: " + ", ".join(d1 + d2)[:260] + ")")
 ok("both reviewed builds are what is on GitHub's main (Hub server and Training Platform)")
 if NODE:
-    for root, t, must in ((ROOT, "in_training_part_b_test.mjs", "15/15 passed"), (ROOT, "caregiver_journey_6_test.mjs", "126/126 passed"), (ROOT, "step2_handoff_575_test.mjs", "58/58 passed"),
+    for root, t, must in ((ROOT, "in_training_part_b_test.mjs", "15/15 passed"), (ROOT, "caregiver_journey_6_test.mjs", "127/127 passed"), (ROOT, "step2_handoff_575_test.mjs", "58/58 passed"),
                           (ROOT, "in_training_test.mjs", "21/21 passed"), (ROOT, "callin_plan_harness.mjs", "ALL 20 CHECKS PASS"), (ROOT, "team_pool_test.mjs", "5/5 passed"),
                           (ROOT, "schedule_push_harness.mjs", "33/33 passed"), (TRN_ROOT, "orientation_link_test.mjs", "67/67 passed")):
         c, o = run([NODE, t], cwd=root)

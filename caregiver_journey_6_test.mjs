@@ -252,7 +252,7 @@ r = await call({ action: 'list' }, 'sam')
 ck('list: approved, AxisCare confirmed, unlocked, may_approve_work for Samantha', r.j.rows[0].approved_to_work === true && r.j.rows[0].axiscare === 'confirmed' && r.j.rows[0].locked === false && r.j.may_approve_work === true, r.j)
 /* ═══ IN TRAINING PLAN v2, PART B (2026-10-22): the check-in call ═══ */
 { const SNAP = structuredClone(DB), G0 = GHL.messages.length
-  DB.client_journey_step_def.push({ key: 'cg.checkin.call', catalog_version: 1, active: true, def: { subject: 'caregiver', title: 'Check-in call from the Staffing Coordinator', stage: 'ready', sort: 105, owner_role: 'staffing_coordinator', proof: 'confirmed', permission: 'office', required: false, active: true, payers: [], after: ['cg.axiscare.active'] } })
+  DB.client_journey_step_def.push({ key: 'cg.checkin.call', catalog_version: 1, active: true, def: { subject: 'caregiver', title: 'Check-in call from the Staffing Coordinator', stage: 'ready', sort: 105, owner_role: 'staffing_coordinator', proof: 'confirmed', permission: 'hub', required: false, active: true, payers: [], after: ['cg.axiscare.active'] } })
   DB.client_journey.find((x) => x.journey_id === JID).status = 'open'
   const j0 = DB.client_journey.find((x) => x.journey_id === JID)
   let o = await CJI.openCheckin(db, j0, { staffing_email: 'krystal@mo-care.com' }, { email: 'hub' })
@@ -274,6 +274,7 @@ ck('list: approved, AxisCare confirmed, unlocked, may_approve_work for Samantha'
   ck('Done: the row completes by the office person, the card closes, shift texts no longer held', r.status === 200 && st('cg.checkin.call').state === 'complete' && ops().some((i) => i.id === 'cj_checkin_' + JID && i.status === 'done') && !(await WL.workLock(db)).axis.has('9001'), r.j?.approve)
   r = await call({ action: 'checkin', journey_id: JID, finish: true }, 'cc')
   ck('Done again: already done', r.status === 409)
+  r = await call({ action: 'get', journey_id: JID }, 'cc'); ck('the check-in row has no plain Confirm (only the call ticks finish it)', r.j.may['cg.checkin.call'] === false, r.j.may)
   { const j1 = DB.client_journey.find((x) => x.journey_id === JID); DB.client_journey_step = DB.client_journey_step.filter((x) => !(x.journey_id === JID && x.step_key === 'cg.checkin.call')); await CJI.openCheckin(db, j1, { checkin_call_live: true }, { email: 'hub' })
     ck('a new open check-in holds; turning checkin_call_live off releases the hold at once', (await WL.workLock(db)).axis.has('9001') && (DB.app_data.find((x) => x.key === 'ops_settings').data.checkin_call_live = false, !(await WL.workLock(db)).axis.has('9001'))) }
   ck('the new words have no em dash', !/—/.test(JSON.stringify(ops().filter((i) => i.kind === 'checkin_call'))) && !/—/.test(CJI.clearedText('Ava')) && !/—/.test(JSON.stringify(CJI.CHECKIN_TICKS)))
