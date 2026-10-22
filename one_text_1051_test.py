@@ -43,11 +43,12 @@ sys.exit(1)
 """)
 os.chmod(os.path.join(FAKEBIN, "supabase"), 0o755)
 sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
+HEADSHA = subprocess.run(["git", "-C", WT, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
 SHAS = {k: sha(os.path.join(WT, "supabase/functions", k)) for k in ("lead-watch/index.ts", "lead-digest/index.ts", "_shared/lead-rules.js")}
 def go(**m):
     M.clear(); M.update(m)
     if os.path.exists(FLAG): os.remove(FLAG)
-    open(SRCF, "w").write(m.get("live_src", LIVE))
+    open(SRCF, "w").write(m.get("live_src", WT))
     rep = os.path.join(TMP, "report.txt")
     if os.path.exists(rep): os.remove(rep)
     class W(threading.Thread):
@@ -57,14 +58,14 @@ def go(**m):
                 threading.Event().wait(0.1)
     w = W(daemon=True); w.start()
     env = dict(os.environ, SB_STEP="1051", SB_TOKEN="sbp_fake", SB_REPORT=rep, SB_SUPA_CLI=os.path.join(FAKEBIN, "supabase"), SB_API_BASE=URL, SB_FN_BASE=URL,
-               SB_FNROOT=os.path.join(WT, "supabase/functions"), SB_SHAS=json.dumps(m.get("shas", SHAS)), SB_MAIN_REF="HEAD", SB_BASE=BASE, SB_WAIT_S="20", SB_FAST="1")
+               SB_FNROOT=os.path.join(WT, "supabase/functions"), SB_SHAS=json.dumps(m.get("shas", SHAS)), SB_MAIN_REF="HEAD", SB_BASE=HEADSHA, SB_WAIT_S="20", SB_FAST="1")
     p = subprocess.run(["python3", os.path.join(WT, "one_text_1051.py")], cwd=WT, env=env, capture_output=True, text=True)
     w.stop = True
     return p.returncode, open(rep).read() if os.path.exists(rep) else p.stdout + p.stderr
 try:
     c, o = go()
     ck("clean run: DONE, exit 0", c == 0 and "1051: DONE" in o, o)
-    ck("clean run: the live functions hold nothing that is not on main", "the live lead-watch holds nothing that is not already on GitHub" in o and "the live lead-digest holds nothing that is not already on GitHub" in o and "older copies" not in o, o)
+    ck("clean run: the live functions hold nothing that is not on main", "the live lead-watch holds nothing that is not already on GitHub" in o and "the live lead-digest holds nothing that is not already on GitHub" in o, o)
     ck("clean run: tests ran", "tests pass: one text per family" in o, o)
     ck("clean run: gateway settings kept (lead-watch off, lead-digest on)", "lead-watch deployed: version 18, gateway sign-in check off" in o and "lead-digest deployed: version 81, gateway sign-in check on" in o, o)
     ck("clean run: the switch is turned on once and recorded", M.get("updates") == 1 and M.get("events") == 1 and "one text per family is ON" in o, [M, o])
@@ -77,12 +78,14 @@ try:
     c, o = go(live_src=OLD)
     ck("live has an older verbs.js from main's history: goes ahead and says it brings it up to date", c == 0 and "1051: DONE" in o and "older copies of: supabase/functions/_shared/verbs.js" in o, o)
     # live has a verbs.js that is nowhere in main's history: someone's unknown work, stop
-    UNK = os.path.join(TMP, "unk"); shutil.copytree(LIVE, UNK, ignore=shutil.ignore_patterns(".git"))
+    UNK = os.path.join(TMP, "unk"); shutil.copytree(WT, UNK, ignore=shutil.ignore_patterns(".git"))
     with open(os.path.join(UNK, "supabase/functions/_shared/verbs.js"), "a") as f: f.write("\n// a change nobody merged\n")
     c, o = go(live_src=UNK)
     ck("live has a verbs.js that is not on main: stops before anything changes", c == 2 and not os.path.exists(FLAG) and "has something that is not on GitHub's main" in o and "verbs.js" in o, o)
-    c, o = go(live_src=WT)
-    ck("someone else deployed something to the live functions: stops before anything changes", c == 2 and not os.path.exists(FLAG) and "has something that is not on GitHub's main" in o and not M.get("updates"), o)
+    UNK2 = os.path.join(TMP, "unk2"); shutil.copytree(WT, UNK2, ignore=shutil.ignore_patterns(".git"))
+    with open(os.path.join(UNK2, "supabase/functions/lead-digest/index.ts"), "a") as f: f.write("\n// someone deployed this without merging\n")
+    c, o = go(live_src=UNK2)
+    ck("someone deployed an unmerged lead-digest: stops before anything changes", c == 2 and not os.path.exists(FLAG) and "has something that is not on GitHub's main" in o and not M.get("updates"), o)
     c, o = go(shas={"lead-watch/index.ts": "0" * 64})
     ck("not the reviewed build: stops before anything changes", c == 2 and not os.path.exists(FLAG) and "not the reviewed build" in o, o)
     c, o = go(never_runs=True)

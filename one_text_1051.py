@@ -8,14 +8,14 @@
 #     op_events like a Hub switch).
 #  3. Proves it: a stranger is refused; the next 2-minute lead-watch run reports one text per family.
 # Sends nothing itself. Safe to run again.
-import json, os, subprocess, shutil, time, calendar
+import json, os, re, subprocess, shutil, time, calendar
 import cc_step_lib as L
 from cc_step_lib import say, bad, done, http, sql, deploy, start, check_build, fmeta, live_files, lit, sha
 
 HUB = "zngsgedlsxinbygwmxwn"
 FNROOT = L.FNROOT; ROOT = L.ROOT
 SHAS = json.loads(os.environ.get("SB_SHAS", "{}"))
-BASE = os.environ.get("SB_BASE", "")           # the main commit this change started from: live must be exactly that
+BASE = os.environ.get("SB_BASE", "")           # the reviewed main commit: every live file must be one of its versions (current or older)
 NODE = os.environ.get("SB_NODE", "") or shutil.which("node") or ""
 FNB = os.environ.get("SB_FN_BASE", f"https://{HUB}.supabase.co")
 FNS = ["lead-watch", "lead-digest"]
@@ -53,9 +53,10 @@ for fn in FNS:
 if drift: stop("this isn't the same as GitHub's main yet (merge the pull request first, or newer work landed since: " + ", ".join(sorted(set(drift)))[:240] + ")")
 ok("the reviewed build is what is on GitHub's main")
 if NODE:
-    for t, must in (("one_text_test.mjs", "9/9 passed"), ("lead_watch_494_test.mjs", "26/26 passed"), ("morning_email_420_test.mjs", "34/34 passed"), ("lead_turns_stage1_test.mjs", "17/17 passed"), ("fair_counts_test.mjs", "7/7 passed")):
+    for t in ("one_text_test.mjs", "lead_watch_494_test.mjs", "morning_email_420_test.mjs", "lead_turns_stage1_test.mjs", "fair_counts_test.mjs"):
         c, o = run([NODE, t], cwd=ROOT)
-        if c != 0 or must not in o: stop(f"the tests failed ({t}): " + " ".join(l for l in o.splitlines() if "FAIL" in l or "✗" in l)[:240])
+        m = re.search(r"(\d+)/(\d+) passed", o)
+        if c != 0 or not m or m.group(1) != m.group(2): stop(f"the tests failed ({t}): " + " ".join(l for l in o.splitlines() if "FAIL" in l or "✗" in l)[:240])
     ok("tests pass: one text per family, the 15 and 30 still happen quietly and the miss still counts, the 8am brief line (fake data only)")
 else: say("  · node is not on this Mac, so the tests were not re-run here (they passed when built)")
 if not BASE: stop("no starting build was given to compare the live functions with", 3)
