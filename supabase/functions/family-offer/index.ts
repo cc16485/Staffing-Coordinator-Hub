@@ -16,6 +16,7 @@ import { contactForOutbound, normalisePhone } from '../_shared/outreach.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { shiftAskBlock } from '../_shared/shift-ask-gate.ts'
 import { readCensus } from '../_shared/axis-census.ts'
+import { isWorking, inTrainingLive } from '../_shared/in-training.ts'   // 2026-10-22 In Training is onboarding
 import { jobCaller } from '../_shared/job-auth.ts'
 import { opEvent } from '../_shared/events.ts'
 import { chooseDepsFor } from '../_shared/family-offer-db.ts'
@@ -82,7 +83,9 @@ const deps: OfferDeps = {
   roster: async () => {
     const census = await readCensus()
     if (!census.ok) return []
-    const axActive = new Set(census.rows.filter((r) => r.active).map((r) => r.id))
+    /* 2026-10-22: In Training (onboarding) is never offered a family's visit once ops_settings.in_training_lock_live is on */
+    const trainLive = await inTrainingLive(db)
+    const axActive = new Set(census.rows.filter((r) => isWorking(r.active, r.status_label, trainLive)).map((r) => r.id))
     const nurses = new Set(arr(await key('nurse_staff')).map((s) => nameKey(String(s?.name || ''))))
     const av = arr(await key('caregiver_availability'))
     const out: Candidate[] = [], seen = new Set<string>()

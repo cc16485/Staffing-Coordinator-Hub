@@ -14,12 +14,15 @@
 //   - the shift needs transportation (needsTransport) and they are not an Approved Driver with a current license and
 //     insurance (Driver Compliance, 2026-10-13; transportEligible in _shared/driver-eligibility.ts, the one shared rule).
 //     Non-Driver, Pending Verification, Suspended and no driver record yet are all refused. Other shifts are unaffected.
+//   - In Training in AxisCare (2026-10-22, her rule: In Training is onboarding, never offered shifts), once
+//     ops_settings.in_training_lock_live is on (_shared/in-training.ts, the one rule).
 // Returns null (may text) or the reason, in words the office reads.
 // =============================================================================
 import { normalisePhone } from './outreach.ts'
 import { workLock, LOCK_WHY } from './work-lock.ts'
 import { transportEligible } from './driver-eligibility.ts'
 import { readCaregiverStatus } from './axiscare-caregiver.ts'
+import { isInTraining, inTrainingLive, IN_TRAINING_WHY } from './in-training.ts'
 
 // deno-lint-ignore no-explicit-any
 type Any = any
@@ -57,6 +60,7 @@ export async function shiftAskBlock(sb: Any, x: { cg: Any; name: string; axId: s
   const live = await (x.readStatus ?? readCaregiverStatus)(ax)
   if (!live.ok) return `AxisCare couldn't be checked for ${name} (${live.detail}), so nobody is texted until it can`
   if (!live.active) return `${name} is not active in AxisCare${live.label ? ' (' + live.label + ')' : ''}`
+  if (isInTraining(live.label) && await inTrainingLive(sb)) return `${name} is ${IN_TRAINING_WHY}`
   const [dno, dnr] = await Promise.all([read('coverage_do_not_offer'), read('dnr_log')])
   const lock = await workLock(sb, x.roster ?? null)
   return blockReason({ ...x, dno, dnr, locked: lock.ok ? lock.axis : null, lockWhy: lock.ok ? undefined : lock.why })

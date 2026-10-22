@@ -23,6 +23,7 @@
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { workLock } from '../_shared/work-lock.ts'
+import { isInTraining, inTrainingLive } from '../_shared/in-training.ts'   // 2026-10-22 In Training is onboarding
 
 /* C2a (2026-09-28): every change in AxisCare adds one line to axiscare_change_log (who, when, which client or caregiver,
    the kind, how it went, a short summary; never note text). Best effort: recording never blocks the change itself. */
@@ -214,7 +215,10 @@ Deno.serve(async (req) => {
   }
   const lock = await workLock(sb)
   if (!lock.ok) problems.push(`The new-hire readiness check couldn't be read (${lock.why}), so nothing goes into AxisCare until it can. Try again in a minute.`)
-  const grouped = groupSchedules(plan, roster, lock.ok ? lock.axis : new Set())
+  /* IN TRAINING IS ONBOARDING (2026-10-22, ops_settings.in_training_lock_live): held back like the readiness lock */
+  const locked = new Set<string>(lock.ok ? lock.axis : [])
+  if (await inTrainingLive(sb)) for (const g of cg.list) if (g?.id != null && g?.status?.active === true && isInTraining(g?.status?.label)) locked.add(String(g.id))
+  const grouped = groupSchedules(plan, roster, locked)
 
   const startDate = typeof b.start_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(b.start_date) ? b.start_date : (target ?? null)
   // services in use: the client's own visits first, then the agency's last two weeks

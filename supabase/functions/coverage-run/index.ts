@@ -46,6 +46,7 @@ import { adminRecipients } from '../_shared/clockin-admins.ts'
 import { caseEnded, chiNowNaive } from '../_shared/loops.ts'
 /* SLICE 5 (2026-10-10): a new hire with a readiness card is never offered a shift until Approved to Work and AxisCare read back Active */
 import { workLock, LOCK_WHY } from '../_shared/work-lock.ts'
+import { isInTraining, inTrainingLive, IN_TRAINING_WHY } from '../_shared/in-training.ts'   // 2026-10-22 In Training is onboarding
 import { OPEN_HOURS_DEFAULT, checkWording, inSendWindow, offeredCells, openHoursText } from '../_shared/open-hours.ts'
 import { newHireNeed } from '../_shared/new-hire.ts'
 import { readTransportNeed, readDriveGate, transportDecision } from '../_shared/driver-eligibility.ts'
@@ -743,6 +744,7 @@ async function buildCandidatesForCase(c: any):
   /* Census (fail closed, same as the waves), level map, nurse classes —
      and each caregiver's town + zip, for the who-lives-closest sort. */
   const axisActive = new Set<string>(), nurseAxis = new Set<string>()
+  const inTrainingAx = new Set<string>()   // 2026-10-22: active in AxisCare but In Training = onboarding, cut once the switch is on
   const caregiverLevel = new Map<string, number>()
   const cgCity = new Map<string, string>(), cgZip = new Map<string, string>(), cgHire = new Map<string, string>()
   let censusError: string | null = null
@@ -765,6 +767,7 @@ async function buildCandidatesForCase(c: any):
         for (const g of gRows)
           if (g?.status?.active === true && g?.id != null) {
             axisActive.add(String(g.id))
+            if (isInTraining(g?.status?.label)) inTrainingAx.add(String(g.id))
             const lv = careLevelOf(g?.classes)
             if (lv.level != null) caregiverLevel.set(String(g.id), lv.level)
             /* Caregivers carry mailingAddress, never residentialAddress —
@@ -931,6 +934,8 @@ async function buildCandidatesForCase(c: any):
   const callerOffId = String(c.calling_off_id || '')
   /* SLICE 5: the scheduling lock from the readiness cards (new path only); an unreadable lock holds everyone (fail closed) */
   const lock = await workLock(sb)
+  /* IN TRAINING IS ONBOARDING (2026-10-22): ops_settings.in_training_lock_live; off = nobody is cut for it (today's rule) */
+  const trainLive = await inTrainingLive(sb)
   /* DRIVER COMPLIANCE (2026-10-13). Her rule: Non-Driver, Pending Verification, Suspended (and no driver record yet) are
      never eligible for a shift that needs transporting the client; only Approved Drivers with a current license and
      insurance. Needs transportation = the client's care needs (need_transportation, latest layer), the lead checklist
@@ -970,6 +975,7 @@ async function buildCandidatesForCase(c: any):
     if (!x.axiscare_id || !axisActive.has(String(x.axiscare_id))) { cut(x, 'not active in the AxisCare census'); continue }
     if (!lock.ok) { cut(x, 'held: ' + lock.why + ' (fail closed)'); continue }
     if (lock.axis.has(String(x.axiscare_id)) || (x.offer_id && lock.offers.has(String(x.offer_id)))) { cut(x, LOCK_WHY); continue }
+    if (trainLive && inTrainingAx.has(String(x.axiscare_id))) { cut(x, IN_TRAINING_WHY); continue }
     if (nurseAxis.has(String(x.axiscare_id))) { cut(x, 'nurse-classed in AxisCare'); continue }
     if (clientLv != null) {
       const cgLv = caregiverLevel.get(String(x.axiscare_id))
@@ -1448,6 +1454,7 @@ Deno.serve(async (req) => {
      The old roster-only fallback is withdrawn. */
   const axisActive = new Set<string>()
   const caregiverLevel = new Map<string, number>()   // axiscare id → care level 1-3
+  const trainLiveW = await inTrainingLive(settings)
   const nurseAxis = new Set<string>()                // nurse-classed in AxisCare
   let censusError: string | null = null
   if (open.length) {
@@ -1467,7 +1474,8 @@ Deno.serve(async (req) => {
           ? (j?.results?.caregivers ?? j?.caregivers)
           : Object.values(j?.results?.caregivers ?? j?.caregivers ?? {})
         for (const g of gRows)
-          if (g?.status?.active === true && g?.id != null) {
+          /* 2026-10-22: In Training (onboarding) is not in the wave census once in_training_lock_live is on */
+          if (g?.status?.active === true && g?.id != null && !(trainLiveW && isInTraining(g?.status?.label))) {
             axisActive.add(String(g.id))
             const lv = careLevelOf(g?.classes)
             if (lv.level != null) caregiverLevel.set(String(g.id), lv.level)
