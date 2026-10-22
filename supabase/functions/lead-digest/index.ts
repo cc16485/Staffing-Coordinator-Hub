@@ -13,7 +13,9 @@
 // priorities · unowned triage · ticking clocks.
 // Admin extras: family-update calls (med/high care notes flagged by the
 // watcher) · write-ups needed (call-offs with under 4 hours notice) ·
-// yesterday's missed clock-ins and clock-outs (the call-to-confirm cards) · today's AxisCare schedule with open shifts.
+// yesterday's missed clock-ins and clock-outs (the call-to-confirm cards) · today's AxisCare schedule with open shifts ·
+// families who waited over 30 minutes for a first call since the last workday's brief (Speed to lead, 2026-10-22: with
+// one text per family on, this line replaces the 30-minute text; lead.rungs.manager_at, time off and covering marked).
 //
 // Missing-note detection waits on AxisCare exposing notes at all (the hourly
 // sweep still reports NONE FOUND); when that door opens both note sections
@@ -280,6 +282,21 @@ Deno.serve(async (req) => {
     .sort((a, b) => Number(b.status === 'open') - Number(a.status === 'open'))
   const missWord = (m: unknown) => m === 'in' ? 'no clock-in' : m === 'out' ? 'no clock-out' : 'no clock-in or clock-out'
 
+  // ── Families who waited over 30 minutes for a first call (Speed to lead, 2026-10-22) ──
+  //    The 30-minute step of lead-watch (lead.rungs.manager_at), on yesterday's date; on a Monday, Friday through Sunday.
+  const chiDay = (iso: unknown) => iso ? new Date(String(iso)).toLocaleDateString('en-CA', { timeZone: 'America/Chicago' }) : ''
+  const sinceDay = (() => { const d = new Date(today + 'T12:00:00Z').getUTCDay(); return new Date(Date.parse(today + 'T12:00:00') - (d === 1 ? 3 : 1) * 864e5).toISOString().slice(0, 10) })()
+  const longWaits = leads.filter((l) => { const at = chiDay(l?.rungs?.manager_at); return !!at && at >= sinceDay && at < today })
+    .sort((a, b) => String(a.rungs.manager_at).localeCompare(String(b.rungs.manager_at)))
+  const chiTime = (iso: unknown) => new Date(String(iso)).toLocaleString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' }).toLowerCase().replace(/\s+/g, '')
+  const waitWords = (l: any) => {
+    const raw = String(l.assigned_coordinator || l.speed_miss?.owner || '').trim()
+    const owner = raw.includes('@') ? raw.split('@')[0].replace(/^./, (c) => c.toUpperCase()) : raw.split(/\s+/)[0]
+    const why = l.rungs?.manager_excused === 'out' ? ` (${owner || 'the owner'} was out, not counted)` : l.rungs?.manager_excused === 'covering' ? ' (covering, not counted)' : ''
+    const first = l.first_human_attempt_at ? `first call ${chiTime(l.first_human_attempt_at)}` : 'not called yet'
+    return { owner, why, first, called: !!l.first_human_attempt_at }
+  }
+
   // ── While you were out: everything born after 5pm the last workday ──
   const dow = new Date(today + 'T12:00:00').getUTCDay() // 1=Mon
   const backDays = dow === 1 ? 3 : 1
@@ -478,6 +495,11 @@ Deno.serve(async (req) => {
         i.status === 'open' ? `<b style="color:${RED};">still to call</b> ${esc(i.client_first || 'the client')} to confirm the times` : 'times confirmed',
         `${HUB}/#mywork`, i.status === 'open' ? 'Call' : 'Open')).join('') +
       (missed.length > 8 ? `<div style="font-family:Arial,sans-serif;font-size:12px;color:${GRAY};padding-top:6px;">plus ${missed.length - 8} more in My Work</div>` : ''))
+    if (r.admin && longWaits.length) body += card('⏱', `Waited over 30 minutes for a first call (${longWaits.length})`, AMBER,
+      longWaits.slice(0, 8).map((l) => { const w = waitWords(l)
+        return row(`<b>${esc([l.first_name, l.last_name].filter(Boolean).join(' ') || 'A family')}</b>${w.owner ? ', ' + esc(w.owner) + '\'s lead' : ''}${esc(w.why)}`,
+          w.called ? esc(w.first) : `<b style="color:${RED};">${esc(w.first)}</b>`, `${HUB}/#p/L${encodeURIComponent(String(l.id))}/summary`, w.called ? 'Open' : 'Call') }).join('') +
+      (longWaits.length > 8 ? `<div style="font-family:Arial,sans-serif;font-size:12px;color:${GRAY};padding-top:6px;">plus ${longWaits.length - 8} more on Leads</div>` : ''))
     if (r.admin && acToday) body += card('🗓', `Today in AxisCare: ${acToday.total} visits`, TEAL,
       (acToday.open.length
         ? acToday.open.slice(0, 6).map((o) => row(`<b style="color:${RED};">Open shift</b> ${esc(o.time)} · ${esc(o.client)}`, '', `${HUB}/#coverage`, 'Cover')).join('') +

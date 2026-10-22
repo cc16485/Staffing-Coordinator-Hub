@@ -23,6 +23,9 @@
 // Off: everything below works exactly as before.
 // TIME OFF NEVER COUNTS (audit step 2, Samantha 2026-10-18), only while ops_settings.fair_counts_live: an owner who is out
 // on the Team page is not texted at 5 minutes (the person on Operations is, as cover) and is never counted late or as a miss.
+// ONE TEXT PER FAMILY (Samantha 2026-10-22, Speed to lead design approved), only while ops_settings.lead_one_text: the
+// 5-minute text is the only text. The 15 and 30 still happen with no text (stamped quiet: the backup's My Work, the
+// escalation card, the counted miss, and the 8am brief lists yesterday's 30-minute waits). LeadRules.oneText.
 // Off until ops_settings.lead_rungs_live (Owners Hub Admin page; Hub Settings → Leads); while off, the answer lists
 // what it WOULD do and nothing is written or sent. Auth: its schedule (x-cron-secret) or the owner's server key.
 // -----------------------------------------------------------------------------
@@ -199,7 +202,7 @@ Deno.serve(async (req) => {
   const isOut = (name: string) => !!P.outUntil(P.emailOf(name))
   const practiceTurns: Any[] = []
   const plan: Any = { live, quiet, turns: { on: turns, given: [] as string[], kept_while_out: 0 }, seats: { operations: ops.person ? firstOf(P.nameOf(ops.person)) : null, operations_from: ops.source, backup: opsBackup ? firstOf(P.nameOf(opsBackup)) : null, escalation: esc.person ? firstOf(P.nameOf(esc.person)) : null },
-    minutes: { owner: LR.FIRST_ATTEMPT_MINUTES, backup: set.backup_min, manager: set.manager_min }, filled: 0, moved: 0, rungs: { owner: 0, backup: 0, manager: 0 }, texted: 0, not_texted: 0, waiting_quiet: 0, written: 0 }
+    minutes: { owner: LR.FIRST_ATTEMPT_MINUTES, backup: set.backup_min, manager: set.manager_min }, filled: 0, moved: 0, rungs: { owner: 0, backup: 0, manager: 0 }, one_text: LR.oneText(settings), quiet_rungs: 0, texted: 0, not_texted: 0, waiting_quiet: 0, written: 0 }
   const itemOf = (id: string) => items.find((x) => String(x?.id) === 'ops_lead_' + id)
   const movedFrom: Record<string, number> = {}
   const link = async (l: Any, to: string) => makeLink(SECRET, String(l.id), to, linkExpiry(todayChi()))
@@ -270,10 +273,13 @@ Deno.serve(async (req) => {
         : (esc.person && esc.person !== owner ? esc.person : lead.person)
       if (quiet) { plan.waiting_quiet++; continue }          /* the text waits for 7am; the stamp waits with it, so nothing is skipped */
       plan.rungs[r.level]++
+      /* one text per family: the 15 and 30 happen without a text */
+      const noText = LR.oneText(settings) && r.level !== 'owner'
+      if (noText) plan.quiet_rungs++
       const whoFirst = who ? firstOf(P.nameOf(who)) : ''
       const mins = fa.open_minutes
       let msg = ''
-      if (who) {
+      if (who && !noText) {
         const lk = await link(l, who)
         const what = `${family} asked about care ${fa.came_in.replace(/^came in /, '')}${l.phone ? ' (' + l.phone + ')' : ''}`
         msg = r.level === 'owner' && ownerOut && who !== owner ? `${whoFirst}, covering for ${firstOf(P.nameOf(owner))} (out until ${ownerOut}): ${what}. ${mins} min and nobody has called yet. It stays ${firstOf(P.nameOf(owner))}'s lead. ${lk}`
@@ -281,9 +287,9 @@ Deno.serve(async (req) => {
           : r.level === 'backup' ? `${whoFirst}, backup: ${what}. ${mins} min and ${owner ? firstOf(P.nameOf(owner)) : 'nobody'} hasn't called yet. It's on your My Work; take it here: ${lk}`
           : `${whoFirst}: ${what}. ${mins} min and nobody has called (${owner ? firstOf(P.nameOf(owner)) : 'no owner'}). Counted as a miss. ${lk}`
       }
-      const sent = who ? await text(who, msg) : false
+      const sent = who && !noText ? await text(who, msg) : false
       if (!live) continue
-      LR.stampRung(l, r.level, { to: who, sent, owner, minutes: r.minutes, ...(ownerOut ? { excused: 'out' } : covering ? { excused: 'covering' } : {}) }, nowIso); dirty = true
+      LR.stampRung(l, r.level, { to: who, sent, owner, minutes: r.minutes, ...(noText ? { quiet: true } : {}), ...(ownerOut ? { excused: 'out' } : covering ? { excused: 'covering' } : {}) }, nowIso); dirty = true
       const it = itemOf(String(l.id))
       if (it && it.status === 'open') {
         if (r.level === 'backup' && who) { it.also_for = [...new Set([...(Array.isArray(it.also_for) ? it.also_for : []), who])]
@@ -291,7 +297,7 @@ Deno.serve(async (req) => {
         if (r.level === 'manager' && who) { it.escalation = { to: who, to_name: P.nameOf(who), seat: who === esc.person ? 'in_charge' : 'owner_escalation', level: 'urgent', why: `nobody has called this family in ${mins} minutes`, at: nowIso }; it.urgency = 'high'
           it.history = [...(Array.isArray(it.history) ? it.history : []), { at: nowIso, by: 'Cara', text: `Escalated to ${P.nameOf(who)}: nobody has called in ${mins} minutes (a miss)` }]; await put('ops_items', it) }
       }
-      try { await opEvent(sb, { job: 'lead-watch', verb: 'lead_rung', item_id: String(l.id), area: 'growth_leads', summary: `${r.level === 'owner' ? 'Owner' : r.level === 'backup' ? 'Backup' : 'In charge'} told at ${mins} minutes: nobody has called ${family}${who ? ' (' + firstOf(P.nameOf(who)) + (sent ? '' : ', text failed') + ')' : ' (nobody to tell)'}` }) } catch { /* nicety */ }
+      try { await opEvent(sb, { job: 'lead-watch', verb: 'lead_rung', item_id: String(l.id), area: 'growth_leads', summary: `${r.level === 'owner' ? 'Owner' : r.level === 'backup' ? 'Backup' : 'In charge'} told at ${mins} minutes: nobody has called ${family}${who ? ' (' + firstOf(P.nameOf(who)) + (noText ? ', no text: one text per family' : sent ? '' : ', text failed') + ')' : ' (nobody to tell)'}` }) } catch { /* nicety */ }
     }
     if (dirty && (live || turnsWrite)) { await put('leads', l); plan.written++ }   /* lead turns write on their own switch */
   }
