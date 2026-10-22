@@ -2,6 +2,7 @@
 // quiet-cards.ts · FEWER CARDS FROM coverage-watch (Samantha 2026-10-22, after read-only 1069 found 105 cards in the Team
 // Work pile: "stop EVV and Make it official cards", "coverage checks close themselves from AxisCare", "a weekly Make it
 // official list"). Pure: no clock, no database, no network; coverage-watch asks this file. Everything waits behind
+// the Settings > Tidier My Work switch (ops_settings.mywork_tidy_live, her call 2026-10-22: one switch for both halves) or
 // ops_settings.quieter_cards_live; off, coverage-watch makes exactly the cards it made before.
 //   · EVV review: no weekly card at all (EVV is retired since 2026-10-17).
 //   · "Was it covered?": a case left as needs_outcome is looked at again in AxisCare on later runs (14 days back, the
@@ -11,7 +12,7 @@
 // No em dashes in any words a person reads.
 // =============================================================================
 // deno-lint-ignore-file no-explicit-any
-export function quietOn(settings: any): boolean { return !!(settings && settings.quieter_cards_live === true) }
+export function quietOn(settings: any): boolean { return !!(settings && (settings.mywork_tidy_live === true || settings.quieter_cards_live === true)) }
 
 /** the Monday (YYYY-MM-DD) of the week a Central calendar day falls in */
 export function mondayOf(ymd: string): string {

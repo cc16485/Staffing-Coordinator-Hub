@@ -60,7 +60,8 @@ const item = (id) => APP.ops_items.find((i) => i.id === id), kase = (id) => APP.
 const Q = await import(path.join(process.cwd(), FN, '_shared/quiet-cards.ts'))
 
 /* ── 1 · the rules on their own ── */
-ck('rule · off unless quieter_cards_live is exactly true', !Q.quietOn({}) && !Q.quietOn({ quieter_cards_live: 'true' }) && !Q.quietOn(null) && Q.quietOn({ quieter_cards_live: true }))
+ck('rule · on with the Tidier My Work switch (or quieter_cards_live), only when exactly true', !Q.quietOn({}) && !Q.quietOn({ quieter_cards_live: 'true' }) && !Q.quietOn({ mywork_tidy_live: 'true' }) && !Q.quietOn(null)
+  && Q.quietOn({ mywork_tidy_live: true }) && Q.quietOn({ mywork_tidy_live: true }))
 ck('rule · the Monday of the week', Q.mondayOf('2026-10-22') === '2026-10-19' && Q.mondayOf('2026-10-19') === '2026-10-19' && Q.mondayOf('2026-10-25') === '2026-10-19')
 ck('rule · already suggested = old single cards and every weekly list, any status',
   [...Q.suggestedBefore([{ id: 'ops_regular_s11', status: 'done' }, { id: 'ops_regular_week_2026-10-12', status: 'resolved', sched_ids: ['12', '13'] }, { id: 'ops_x' }])].sort().join() === '11,12,13')
@@ -88,12 +89,12 @@ seedQ({ loops_close_live: true })
 let r = await run(CW)
 ck('switch off · the case is not looked at again (as before)', kase('q1').status === 'needs_outcome' && item('ops_covq_q1').status === 'open' && r.quieter_cards?.on === false && r.quieter_cards.rechecked.length === 0, r.quieter_cards)
 
-seedQ({ quieter_cards_live: true })
+seedQ({ mywork_tidy_live: true })
 r = await run(CW)
 ck('on, loops off · it reports what it would close and changes nothing', r.quieter_cards.rechecked.map((x) => x.case).join() === 'q1' && r.quieter_cards.rechecked[0].how === 'covered'
   && kase('q1').status === 'needs_outcome' && item('ops_covq_q1').status === 'open', r.quieter_cards)
 
-seedQ({ quieter_cards_live: true, loops_close_live: true })
+seedQ({ mywork_tidy_live: true, loops_close_live: true })
 r = await run(CW)
 const q1 = kase('q1'), qc = item('ops_covq_q1')
 ck('on · AxisCare shows Joyce clocked in: case closed as covered by her, by Cara', q1.status === 'resolved' && q1.resolved_how === 'covered' && q1.covered_by === 'Joyce Kim' && q1.resolved_by === 'cara' && /Later, AxisCare showed it/.test(q1.note), q1)
@@ -103,11 +104,11 @@ ck('on · nothing was texted or emailed', SENT.length === 0, SENT)
 const n2 = JSON.stringify(APP.ops_items); r = await run(CW)
 ck('on · running again changes nothing', JSON.stringify(APP.ops_items) === n2 && r.quieter_cards.rechecked.length === 0, r.quieter_cards)
 
-seedQ({ quieter_cards_live: true, loops_close_live: true }); VISITS[0].clockIn = null; VISITS[0].clockOut = null
+seedQ({ mywork_tidy_live: true, loops_close_live: true }); VISITS[0].clockIn = null; VISITS[0].clockOut = null
 r = await run(CW)
 ck('on · AxisCare still cannot say (no clock-in): the card stays for a person', kase('q1').status === 'needs_outcome' && item('ops_covq_q1').status === 'open' && r.quieter_cards.rechecked.length === 0)
 
-seedQ({ quieter_cards_live: true, loops_close_live: true }); APP.ops_items[0].status = 'done'
+seedQ({ mywork_tidy_live: true, loops_close_live: true }); APP.ops_items[0].status = 'done'
 r = await run(CW)
 ck('on · a card a person already answered is left alone', kase('q1').status === 'needs_outcome' && item('ops_covq_q1').status === 'done' && r.quieter_cards.rechecked.length === 0)
 
@@ -118,7 +119,7 @@ const evvSeed = (settings) => { reset(); Object.assign(APP.ops_settings, setting
 evvSeed({ loops_close_live: true })
 r = await run(CW)
 ck('switch off · Monday still makes the EVV review (as before)', APP.ops_items.some((i) => /^ops_evvrev_/.test(i.id)), APP.ops_items.map((i) => i.id))
-evvSeed({ loops_close_live: true, quieter_cards_live: true })
+evvSeed({ loops_close_live: true, mywork_tidy_live: true })
 r = await run(CW)
 ck('on · Monday makes no EVV review card', !APP.ops_items.some((i) => /^ops_evvrev_/.test(i.id)) && /EVV is retired/.test(JSON.stringify(r.evv_review)), [APP.ops_items.map((i) => i.id), r.evv_review])
 r = await run(CW, '?evv_review=1')
@@ -139,7 +140,7 @@ r = await run(CW, '?sweep=1')
 const singles = APP.ops_items.filter((i) => /^ops_regular_s/.test(i.id))
 ck('switch off · one card per schedule (as before)', singles.map((i) => i.id).sort().join() === 'ops_regular_sS1,ops_regular_sS2' && !APP.ops_items.some((i) => /^ops_regular_week_/.test(i.id)), APP.ops_items.map((i) => i.id))
 
-officialSeed({ quieter_cards_live: true })
+officialSeed({ mywork_tidy_live: true })
 r = await run(CW, '?sweep=1')
 const wk = item('ops_regular_week_2026-10-19')
 ck('on · ONE card for the week listing both', !APP.ops_items.some((i) => /^ops_regular_s/.test(i.id)) && wk?.status === 'open' && /^Make it official\? 2 schedules this week \(week of Oct 19\)$/.test(wk.title)
@@ -151,15 +152,15 @@ r = await run(CW, '?sweep=1')
 ck('on · next week: no new list for schedules already suggested', !item('ops_regular_week_2026-10-26'), APP.ops_items.map((i) => i.id))
 at('2026-10-21T05:02:00Z')
 
-officialSeed({ quieter_cards_live: true }); APP.ops_items = [{ id: 'ops_regular_sS1', status: 'done', title: 'old single card' }]
+officialSeed({ mywork_tidy_live: true }); APP.ops_items = [{ id: 'ops_regular_sS1', status: 'done', title: 'old single card' }]
 r = await run(CW, '?sweep=1')
 ck('on · a schedule on an old single card is never put on the list', item('ops_regular_week_2026-10-19')?.sched_ids.join() === 'S2' && /1 schedule this week/.test(item('ops_regular_week_2026-10-19').title), APP.ops_items)
 
-officialSeed({ quieter_cards_live: true }); APP.ops_settings.coverage_watch_live = false
+officialSeed({ mywork_tidy_live: true }); APP.ops_settings.coverage_watch_live = false
 r = await run(CW, '?sweep=1')
 ck('on, watcher off · it only reports the list', !item('ops_regular_week_2026-10-19') && r.quieter_cards.official_new === 2, r.quieter_cards)
 
 const failed = res.filter(([, ok]) => !ok)
 for (const [n, ok, note] of res) console.log((ok ? '  ok   ' : '  FAIL ') + n + (ok ? '' : '\n         ' + note))
-console.log(`\n${res.length - failed.length}/${res.length} passed`)
+console.log(`\n${res.length - failed.length}/${res.length} passed${failed.length ? '' : ' · ALL PASSED'}`)
 process.exit(failed.length ? 1 : 0)
