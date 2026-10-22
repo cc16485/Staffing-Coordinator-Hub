@@ -29,7 +29,9 @@ a = sys.argv[1:]
 if a[:2] == ['functions', 'deploy']: open(os.path.join({TMP!r}, 'deployed', a[2]), 'w').write(' '.join(a)); sys.exit(0)
 if a[:2] == ['functions', 'download']:
     src = os.path.join({W!r}, 'supabase', 'functions') if os.path.exists(os.path.join({TMP!r}, 'deployed', a[2])) or os.path.exists(os.path.join({TMP!r}, 'drift')) else os.path.join({BASE!r}, 'supabase', 'functions')
-    shutil.copytree(src, os.path.join(os.getcwd(), 'supabase', 'functions'), dirs_exist_ok=True); sys.exit(0)
+    shutil.copytree(src, os.path.join(os.getcwd(), 'supabase', 'functions'), dirs_exist_ok=True)
+    if os.path.exists(os.path.join({TMP!r}, 'drift')): open(os.path.join(os.getcwd(), 'supabase', 'functions', 'step1-sign', 'index.ts'), 'a').write('// someone else')
+    sys.exit(0)
 sys.exit(1)
 """); os.chmod(os.path.join(FAKEBIN, "supabase"), 0o755)
 SHAS = {"step1-sign/index.ts": sha(os.path.join(W, "supabase/functions/step1-sign/index.ts"))}
