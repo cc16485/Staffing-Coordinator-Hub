@@ -134,17 +134,27 @@ const OPS = () => T.app_data.find(r => r.key === 'ops_settings').data
    (callin_after_hours unset) every call-in texts the admins at any hour */
 globalThis.__cfo = []; world(null, { admin_alerted: null }); OPS().coverage_send_live = false; await tick();
 const smsDef = SENT.filter(m => m.type === 'SMS' && m.contactId === 'ct_4175550099'), mailDef = SENT.filter(m => m.type === 'Email'), cfoDef = globalThis.__cfo.filter(x => x.audience === 'staff')
+const attDef = (T.app_data.find(r => r.key === 'attendance_events') || {}).data || []
+/* 2026-10-22: a real call-in (opened from the phone) still says "called off" and still lands on attendance */
+globalThis.__cfo = []; world(null, { admin_alerted: null, opened_by: 'call-disposition' }); OPS().coverage_send_live = false; await tick();
+const smsPhone = SENT.filter(m => m.type === 'SMS' && m.contactId === 'ct_4175550099'), attPhone = (T.app_data.find(r => r.key === 'attendance_events') || {}).data || []
 /* her switch off (callin_after_hours false): the 425 rule, the text waits for morning */
 globalThis.__cfo = []; world(null, { admin_alerted: null }); OPS().coverage_send_live = false; OPS().callin_after_hours = false; await tick();
 const smsNo = SENT.filter(m => m.type === 'SMS' && m.contactId === 'ct_4175550099'), mailNo = SENT.filter(m => m.type === 'Email');
 globalThis.__cfo = []; world({ ...plan, coverage_need: 'must_cover' }, { admin_alerted: null }); OPS().coverage_send_live = false; OPS().callin_after_hours = false; await tick();
 const smsMust = SENT.filter(m => m.type === 'SMS' && m.contactId === 'ct_4175550099'), mailMust = SENT.filter(m => m.type === 'Email');
 globalThis.Date = RealDate;
-ck('426 · 3 AM, no plan, default (call-ins text after hours): the admin is texted AND emailed', smsDef.length === 1 && /^New call-in: LeeAnn Walker/.test(smsDef[0].message) && mailDef.length === 1, { smsDef, mailDef: mailDef.length });
+ck('426 · 3 AM, no plan, default (call-ins text after hours): the admin is texted AND emailed', smsDef.length === 1 && /^Shift with no caregiver: LeeAnn Walker/.test(smsDef[0].message) && mailDef.length === 1, { smsDef, mailDef: mailDef.length });
+ck('2026-10-22 · a shift taken off in AxisCare never says "called off" and never lands on the caregiver\'s attendance',
+  /Someone Else was taken off the shift in AxisCare/.test(smsDef[0]?.message || '') && !/called off/i.test(smsDef[0]?.message || '')
+  && !/called off/i.test(mailDef[0]?.html || '') && /^Shift with no caregiver/.test(mailDef[0]?.subject || '') && attDef.length === 0, { smsDef, attDef });
+ck('2026-10-22 · a real call-in (opened from the phone) still says "called off" and still lands on attendance',
+  smsPhone.length === 1 && /^New call-in: LeeAnn Walker.* Someone Else called off\./.test(smsPhone[0].message)
+  && attPhone.length === 1 && attPhone[0].type === 'callin' && attPhone[0].caregiver === 'Someone Else', { smsPhone, attPhone });
 ck('426 · ... and the text is passed as an after-hours exception (emergency) so the staff backstop lets it through', cfoDef.length === 1 && cfoDef[0].emergency === true, cfoDef);
 ck('3 AM, no plan, her switch OFF (callin_after_hours false): the admin gets the email only (the text waits for morning), as 425', smsNo.length === 0 && mailNo.length === 1, { smsNo, mailNo: mailNo.length });
 ck('3 AM, "must be covered" (even with the switch OFF): the admin is texted right away, marked MUST BE COVERED, and the email says so with the plan',
-  smsMust.length === 1 && /^MUST BE COVERED \(call-in plan\)\. /.test(smsMust[0].message) && mailMust.length === 1 && /^MUST COVER · Call-in: LeeAnn Walker/.test(mailMust[0].subject)
+  smsMust.length === 1 && /^MUST BE COVERED \(call-in plan\)\. /.test(smsMust[0].message) && mailMust.length === 1 && /^MUST COVER · Shift with no caregiver: LeeAnn Walker/.test(mailMust[0].subject)
   && mailMust[0].html.includes('Call-in plan: <b>Must be covered, no matter what · only ask Dixie Ray or Autumn Reid'), { smsMust, subj: mailMust[0]?.subject });
 
 fs.rmSync(tmpDir, { recursive: true, force: true });
