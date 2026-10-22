@@ -51,6 +51,7 @@ import { newHireNeed } from '../_shared/new-hire.ts'
 import { readTransportNeed, readDriveGate, transportDecision } from '../_shared/driver-eligibility.ts'
 import { MO_FROM } from '../_shared/office-from.ts'   // every text goes out from (417) 234-8494
 import { fallbackList } from '../_shared/notice-to.ts'
+import { takenOffNotCalledIn, offWords } from '../_shared/not-a-callin.ts'
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -1634,13 +1635,18 @@ Deno.serve(async (req) => {
           month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })
       /* CI2 (2026-10-03): each admin's text carries their OWN link to the call-in page (confirm, call, ask more, I've got
          it), instead of the board's address that needed a sign-in. */
-      const smsMsg = linkTemplate(String(settings.coverage_msg_admin_alert || '') ||
-        (manualSelect
+      /* Taken off in AxisCare is not a call-in (2026-10-22): the client may have cancelled, or the office approved the
+         time off, so the text never says the caregiver called off (_shared/not-a-callin.ts). */
+      const takenOff = takenOffNotCalledIn(c)
+      const smsMsg = linkTemplate((takenOff ? '' : String(settings.coverage_msg_admin_alert || '')) ||
+        (takenOff
+          ? `Shift with no caregiver: {client} {when}.{who} Seen at {called_at}. If the client cancelled, close it from your link. Otherwise choose who to ask: {link}`
+          : manualSelect
           ? `New call-in: {client} {when}.{who} Called in at {called_at}. Choose who to ask, confirm, or call from your link: {link}`
           : `New call-in: {client} {when}.{who} Called in at {called_at}. The callout engine is texting caregivers. Your link: {link}`))
         .replaceAll('{client}', String(c.client || 'client on the case'))
         .replaceAll('{when}', whenTxt)
-        .replaceAll('{who}', c.calling_off ? ` ${c.calling_off} called off.` : '')
+        .replaceAll('{who}', c.calling_off ? ` ${c.calling_off} ${offWords(c)}.` : '')
         .replaceAll('{called_at}', calledAt)
         .replace(/\s{2,}/g, ' ').trim()
         .replace(/^/, mustA ? 'MUST BE COVERED (call-in plan). ' : '')
@@ -1665,12 +1671,13 @@ Deno.serve(async (req) => {
           if (cid) {
             const wentA = await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
               'staff-alert', { channel: 'email', contactId: cid, address: adm, who: person?.name || adm }, {
-                subject: `${mustA ? 'MUST COVER · ' : ''}Call-in: ${c.client || 'coverage case'} ${whenTxt}`,
+                subject: `${mustA ? 'MUST COVER · ' : ''}${takenOff ? 'Shift with no caregiver' : 'Call-in'}: ${c.client || 'coverage case'} ${whenTxt}`,
                 html: `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.6;color:#1f2a36;">`
-                  + `<p><b>New call-in detected.</b></p>`
+                  + (takenOff ? `<p><b>A shift has no caregiver in AxisCare.</b> This is not counted as a call-in: AxisCare does not say why the caregiver came off (the client may have cancelled, or the time off was approved). If it really was a call-in, log it on the Attendance page.</p>`
+                    : `<p><b>New call-in detected.</b></p>`)
                   + `<p>Client: <b>${String(c.client || '?')}</b><br>Shift: <b>${whenTxt}</b>`
-                  + (c.calling_off ? `<br>Called off: <b>${String(c.calling_off)}</b>` : '<br>Called off: (unknown; opened from an AxisCare unassignment, which does not say who)')
-                  + `<br>Called in at: <b>${calledAt}</b> (Chicago)`
+                  + (c.calling_off ? `<br>${takenOff ? 'Was on the shift' : 'Called off'}: <b>${String(c.calling_off)}</b>` : takenOff ? '' : '<br>Called off: (unknown)')
+                  + `<br>${takenOff ? 'Seen' : 'Called in'} at: <b>${calledAt}</b> (Chicago)`
                   + (c.modification_reason ? `<br>Reason: ${String(c.modification_reason)}` : '')
                   + (planTxtA ? `<br>Call-in plan: <b>${planTxtA}</b>` : '')
                   + (planA.plan?.note ? `<br>Plan note: ${String(planA.plan.note).replace(/[<>&]/g, '')}` : '')
@@ -1711,8 +1718,9 @@ Deno.serve(async (req) => {
          Attendance record automatically, same shape the manual "Log it"
          button writes — reported_at + notice_hours feed the existing
          write-up triggers (short notice, too many in the window). Only when
-         we KNOW who called off; deterministic id = once per case. */
-      if (c.calling_off) {
+         we KNOW who called off; deterministic id = once per case. Never for a shift taken off in AxisCare
+         (2026-10-22): that is not a call-in and must not mark against the caregiver. */
+      if (c.calling_off && !takenOff) {
         let noticeHours: number | null = null
         if (c.shift_date && /^\d\d:\d\d/.test(String(c.shift_time || '')) && c.opened_at) {
           const chiOpened = new Date(String(c.opened_at))

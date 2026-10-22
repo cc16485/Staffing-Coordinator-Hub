@@ -31,6 +31,7 @@ import { confirmFill, closeCase, readCase, patchCase, CLOSE_HOW } from '../_shar
 import { textCaseAdmins, filledLine, caseWhat } from '../_shared/callin-notify.ts'
 import { ghlCallBridge } from '../_shared/ghl-call-bridge.ts'
 import { readPlan, isMustCover } from '../_shared/callin-plan.ts'
+import { takenOffNotCalledIn } from '../_shared/not-a-callin.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
                'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -101,7 +102,7 @@ Deno.serve(async (req) => {
     return json({ ok: true, me: me.first, status: c.status, open, kind: c.kind || 'calloff',
       client: String(c.client || ''), what: caseWhat(c), shift_date: c.shift_date || null,
       shift_time: String(c.shift_time || '').split('-').filter(Boolean).map(clock12).join(' to '), mins_to_start: minsToStart,
-      must_cover: isMustCover(plan?.plan), calling_off: c.calling_off || null, called_in_at: chi12(c.opened_at),
+      must_cover: isMustCover(plan?.plan), calling_off: c.calling_off || null, called_in_at: chi12(c.opened_at), taken_off: takenOffNotCalledIn(c),
       claimed: c.claimed_by_name ? { by: c.claimed_by_name, at: chi12(c.claimed_at), me: String(c.claimed_by || '').toLowerCase() === me.email } : null,
       yes: asked.filter((a) => a.state === 'yes').map((a) => ({ id: String(a.id), name: String(a.name || ''), at: chi12(a.replied_at), reply: a.reply ? String(a.reply).slice(0, 200) : null })),
       asked: asked.map((a) => ({ id: String(a.id), name: String(a.name || ''), state: STATE_WORD[String(a.state)] || String(a.state || ''), at: chi12(a.at),

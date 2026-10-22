@@ -331,8 +331,8 @@ Deno.serve(async (req) => {
       if (!error) {
         created++; openByVisit.add(visitId)
         await opEvent(sb, { job: 'coverage-watch', verb: 'coverage_opened', item_id: c.id, area: 'coverage',
-          summary: `Cara opened a call-off case${reopenNote ? ' again' : ''}: ${clientName || 'a client'} ${entry.shift_date} ${entry.shift_time}`
-            + (entry.calling_off ? `, ${entry.calling_off} calling off` : '') })
+          summary: `Cara opened a case for a shift with no caregiver${reopenNote ? ' again' : ''}: ${clientName || 'a client'} ${entry.shift_date} ${entry.shift_time}`
+            + (entry.calling_off ? `, ${entry.calling_off} was taken off it in AxisCare (not counted as a call-in)` : '') })
       }
     }
   }

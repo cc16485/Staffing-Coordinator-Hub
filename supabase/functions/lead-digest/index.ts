@@ -39,6 +39,7 @@ import { jobCaller } from '../_shared/job-auth.ts'
 import { reportSendProblem } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { loadNotClients, isNotClient } from '../_shared/client-quiet.ts'   // Office Staff and other not-clients (2026-10-12)
+import { takenOffNotCalledIn } from '../_shared/not-a-callin.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -255,6 +256,7 @@ Deno.serve(async (req) => {
 
   // ── Write-ups needed: call-offs with under 4 hours notice (last 3 days) ──
   const shortNotice = covCases.filter((c) => {
+    if (takenOffNotCalledIn(c)) return false   // taken off in AxisCare is not a call-in (2026-10-22)
     if (!c?.opened_at || !c?.shift_date || !/^\d\d:\d\d/.test(String(c.shift_time || ''))) return false
     if (String(c.shift_date) < new Date(Date.parse(today + 'T12:00:00') - 3 * 864e5).toISOString().slice(0, 10)) return false
     const openedChi = chi(c.opened_at); if (!openedChi) return false
