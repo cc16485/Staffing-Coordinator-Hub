@@ -97,7 +97,10 @@ const formOf = (id: string): FormKey | null => { for (const k of FORM_ORDER) if 
 const empty = (v: unknown) => v == null || v === '' || (Array.isArray(v) && !v.length) || (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v as object).length)
 
 /** One answer, cleaned to its kind; undefined = not acceptable. */
-export function clean(item: Item, v: unknown): unknown {
+/** `bad` (optional) collects the typed boxes on a card that could not be kept, as { row, k }: a phone or an email that does
+    not look right is left off that card and reported, never the whole list (2026-10-22: an applicant's second reference kept
+    showing "needs a yes" because one bad box threw away every reference she saved after it, and the page never said so). */
+export function clean(item: Item, v: unknown, bad?: { row: number; k: string }[]): unknown {
   const opts = item.options || []
   switch (item.kind) {
     case 'text': return typeof v === 'string' ? v.trim().slice(0, 1000) : undefined
@@ -132,7 +135,9 @@ export function clean(item: Item, v: unknown): unknown {
         for (const [k, x] of Object.entries(r as Record<string, unknown>)) {
           const f = (item.fields || []).find((ff) => ff.k === k); if (!f) return undefined
           if (x == null || x === '' || (Array.isArray(x) && !x.length)) continue
-          const c = cleanField(f, x); if (c === undefined) return undefined; row[k] = c
+          const c = cleanField(f, x)
+          if (c === undefined) { if (f.kind === 'tel' || f.kind === 'email') { bad?.push({ row: out.length, k }); continue } return undefined }
+          row[k] = c
         }
         /* a refresher is only for a task ticked on the same card; a lift type only when a lift is ticked */
         const tasks = Array.isArray(row.tasks) ? row.tasks as string[] : []
@@ -145,6 +150,8 @@ export function clean(item: Item, v: unknown): unknown {
     default: return undefined   // statement, photo: nothing to store in 2b
   }
 }
+/** What a card is called in the "please check" line the page shows. */
+const CARD_NOUN: Record<string, string> = { jobs: 'Job', family_care: 'Family or private-client care', professional_refs: 'Professional reference', personal_refs: 'Personal reference', backup_refs: 'Backup reference' }
 /** One box inside a card, cleaned to its kind; null = empty; undefined = not acceptable. */
 export function cleanField(f: Field, v: unknown): unknown {
   const opts = f.options || []
@@ -769,7 +776,7 @@ Deno.serve(async (req) => {
     if (action === 'save') {
       const screen = S(b.screen, 4); if (screen && !step1Screens(ctx).includes(screen)) return json({ ok: false, error: 'Which screen?' }, 400)
       const incoming = (b.answers && typeof b.answers === 'object' && !Array.isArray(b.answers)) ? b.answers as Record<string, unknown> : {}
-      const merged = { ...(row.answers || {}) } as Record<string, unknown>; const rejected: string[] = []
+      const merged = { ...(row.answers || {}) } as Record<string, unknown>; const rejected: string[] = [], fix: string[] = [], fix_at: { id: string; row: number; k: string }[] = []
       for (const [k, v] of Object.entries(incoming)) {
         if (IDENTITY_IDS.includes(k)) return json({ ok: false, error: 'The Social Security number, date of birth and license number go through the locked door, never here.' }, 400)
         if (k === 'initials') { const c = clean({ id: 'initials', label: '', kind: 'initials' }, v); if (c === undefined) rejected.push(k); else merged.initials = c; continue }
@@ -787,13 +794,16 @@ Deno.serve(async (req) => {
         if (sigs[fk]) return json({ ok: false, error: `${FORMS[fk].title} is already signed, so its answers cannot change. If something is wrong, call the office: (417) 234-8494.` }, 409)
         const item = itemsOf(FORMS[fk]).find((i) => i.id === k)!
         if (v == null || v === '') { delete merged[k]; continue }
-        const c = clean(item, v); if (c === undefined) { rejected.push(k); continue }
+        const bad: { row: number; k: string }[] = []
+        const c = clean(item, v, bad); if (c === undefined) { rejected.push(k); continue }
         merged[k] = c
+        for (const x of bad) fix_at.push({ id: k, ...x })
+        for (const x of bad) fix.push(`${CARD_NOUN[k] || item.label} ${x.row + 1}: ${(item.fields || []).find((f) => f.k === x.k)?.label.toLowerCase() || x.k}`)
       }
       const upd: Record<string, unknown> = { answers: merged }; if (screen) upd.current_screen = screen
       const { error } = await db.from('step1_forms').update(upd).eq('offer_id', id)
       if (error) return json({ ok: false, error: 'Could not save: ' + error.message }, 500)
-      return json({ ok: true, saved: Object.keys(incoming).length - rejected.length, rejected })
+      return json({ ok: true, saved: Object.keys(incoming).length - rejected.length, rejected, fix, fix_at })
     }
     if (action === 'identity') {
       if (kek.length < 40) return json({ ok: false, error: 'The lock is not set up on the server. Nothing was saved.' }, 500)
