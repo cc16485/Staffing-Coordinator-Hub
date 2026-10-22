@@ -198,6 +198,15 @@ r = await call({ action: 'sweep' }, 'cron')
 ck('sweep: the Ready for final approval card is raised once, the roster record is locked (work_lock true), the journey learns the AxisCare number', ops().some((i) => i.id === 'cj_final_' + JID && i.status === 'open' && i.kind === 'final_approval') && roster().work_lock === true && DB.client_journey[0].axiscare_caregiver_id === '9001', { cards: ops().map((i) => i.id), r: roster(), j: DB.client_journey[0] })
 await call({ action: 'sweep' }, 'cron')
 ck('sweep again: still one card', ops().filter((i) => i.id === 'cj_final_' + JID).length === 1)
+/* ═══ IN TRAINING PLAN v2, PART B (2026-10-22): automatic Approve to Work ═══ */
+ck('auto approve OFF (practice): the card is raised as before, ONE practice event says it would have approved, nothing approved', ev('auto_approve_practice').length === 1 && /auto_approve_work_live is off/.test(ev('auto_approve_practice')[0].reason) && st('cg.approve.work')?.state !== 'complete', ev('auto_approve_practice'))
+{ const SNAP = structuredClone(DB), G0 = GHL.messages.length
+  DB.app_data.find((x) => x.key === 'ops_settings').data.auto_approve_work_live = true
+  r = await call({ action: 'sweep' }, 'cron')
+  ck('auto approve ON: the sweep approves by itself (by The Hub, list auto), AxisCare stays practice (its own switch), the final card closes', r.j.auto_approved === 1 && st('cg.approve.work').state === 'complete' && st('cg.approve.work').evidence.confirmed.list === 'auto' && /^The Hub/.test(st('cg.approve.work').completed_by_name) && ev('axiscare_practice').length >= 1 && ops().some((i) => i.id === 'cj_final_' + JID && i.status === 'done'), r.j)
+  r = await call({ action: 'sweep' }, 'cron')
+  ck('auto approve ON, sweep again: nothing approved twice', !r.j.auto_approved && ev('approved_to_work').length === 1, r.j)
+  DB = SNAP; GHL.messages.length = G0 }
 r = await call({ action: 'confirm', journey_id: JID, step_key: 'cg.approve.work' }, 'sam')
 ck('the generic confirm cannot approve to work (its own button, AxisCare included)', r.status === 400 && /own button/.test(r.j.error), r)
 r = await call({ action: 'not_needed', journey_id: JID, step_key: 'cg.approve.work', reason: 'skip this one' }, 'sam')
@@ -211,7 +220,7 @@ ck('approve_work without a sign-in: refused', r.status === 401)
 /* practice first: both switches off */
 r = await call({ action: 'approve_work', journey_id: JID }, 'sam')
 ck('approve_work by Samantha (Work list), switches off: the stamp in her name with the exact time; AxisCare in practice (nothing sent, one practice row in the change log); the text recorded, not sent', r.status === 200 && st('cg.approve.work').state === 'complete' && st('cg.approve.work').completed_by === 'sam@mo-care.com' && st('cg.approve.work').completed_at === new Date().toISOString() && r.j.result.outcome === 'practice' && AX.calls.length === 0 && GHL.messages.length === 0 && DB.axiscare_change_log.length === 1 && DB.axiscare_change_log[0].kind === 'caregiver_status' && DB.axiscare_change_log[0].outcome === 'practice' && DB.axiscare_change_log[0].caregiver === '9001', { r: r.j.result, log: DB.axiscare_change_log, ax: AX.calls })
-ck('events: approved_to_work, axiscare_practice, cleared_text_practice with her words (Dementia course, Open Shifts, STOP, no em dash)', ev('approved_to_work').length === 1 && ev('axiscare_practice').length === 1 && ev('cleared_text_practice').length === 1 && /completed your Dementia course/.test(ev('cleared_text_practice')[0].detail.words) && /Open Shifts section of the AxisCare app/.test(ev('cleared_text_practice')[0].detail.words) && /Reply STOP/.test(ev('cleared_text_practice')[0].detail.words) && !/[—]/.test(ev('cleared_text_practice')[0].detail.words) && !/approved to work/i.test(ev('cleared_text_practice')[0].detail.words), ev('cleared_text_practice'))
+ck('events: approved_to_work, axiscare_practice, cleared_text_practice with her words (2026-10-22: finished orientation, the AxisCare app guide, the coordinator will call, STOP, no em dash)', ev('approved_to_work').length === 1 && ev('axiscare_practice').length === 1 && ev('cleared_text_practice').length === 1 && /you finished your orientation/.test(ev('cleared_text_practice')[0].detail.words) && /mo-care\.com\/axiscare-setup/.test(ev('cleared_text_practice')[0].detail.words) && /Reply STOP/.test(ev('cleared_text_practice')[0].detail.words) && !/[—]/.test(ev('cleared_text_practice')[0].detail.words) && !/approved to work/i.test(ev('cleared_text_practice')[0].detail.words), ev('cleared_text_practice'))
 ck('the answer: approved, AxisCare "practice", text "practice", still LOCKED (no read-back), Approved to Work pill not earned; the card is closed; the roster carries approved_to_work_at/by', r.j.approve.approved === true && r.j.approve.axiscare.state === 'practice' && r.j.approve.text.state === 'practice' && r.j.approve.locked === true && st('cg.axiscare.active')?.state !== 'complete' && ops().find((i) => i.id === 'cj_final_' + JID).status === 'done' && roster().approved_to_work_at && roster().approved_to_work_by === 'sam@mo-care.com', { a: r.j.approve, roster: roster() })
 r = await call({ action: 'approve_work', journey_id: JID }, 'sam')
 ck('approve_work twice: already approved', r.status === 409 && /Already approved/.test(r.j.error), r)
@@ -236,11 +245,39 @@ ck('workLock: unlocked after the stamp and the read-back', L.ok && !L.axis.has('
 /* the sweep sends the held text in hours */
 at('2026-10-13T15:00:00Z')   // 10am Chicago
 r = await call({ action: 'sweep' }, 'cron')
-ck('sweep in hours: the held text goes through GoHighLevel (contact upsert, one SMS with her words), state sent; the journey completes (active)', r.j.texts_sent === 1 && GHL.messages.length === 1 && GHL.messages[0].type === 'SMS' && /completed your Dementia course/.test(GHL.messages[0].message) && /Reply STOP/.test(GHL.messages[0].message) && st('cg.approve.work').evidence.text.state === 'sent' && ev('cleared_text_sent').length === 1 && DB.client_journey[0].status === 'active' && r.j.completed === 1, { r: r.j, msgs: GHL.messages, t: st('cg.approve.work').evidence.text })
+ck('sweep in hours: the held text goes through GoHighLevel (contact upsert, one SMS with her words), state sent; the journey completes (active)', r.j.texts_sent === 1 && GHL.messages.length === 1 && GHL.messages[0].type === 'SMS' && /you finished your orientation/.test(GHL.messages[0].message) && /Reply STOP/.test(GHL.messages[0].message) && st('cg.approve.work').evidence.text.state === 'sent' && ev('cleared_text_sent').length === 1 && DB.client_journey[0].status === 'active' && r.j.completed === 1, { r: r.j, msgs: GHL.messages, t: st('cg.approve.work').evidence.text })
 await call({ action: 'sweep' }, 'cron')
 ck('sweep again: no second text', GHL.messages.length === 1)
 r = await call({ action: 'list' }, 'sam')
 ck('list: approved, AxisCare confirmed, unlocked, may_approve_work for Samantha', r.j.rows[0].approved_to_work === true && r.j.rows[0].axiscare === 'confirmed' && r.j.rows[0].locked === false && r.j.may_approve_work === true, r.j)
+/* ═══ IN TRAINING PLAN v2, PART B (2026-10-22): the check-in call ═══ */
+{ const SNAP = structuredClone(DB), G0 = GHL.messages.length
+  DB.client_journey_step_def.push({ key: 'cg.checkin.call', catalog_version: 1, active: true, def: { subject: 'caregiver', title: 'Check-in call from the Staffing Coordinator', stage: 'ready', sort: 105, owner_role: 'staffing_coordinator', proof: 'confirmed', permission: 'office', required: false, active: true, payers: [], after: ['cg.axiscare.active'] } })
+  DB.client_journey.find((x) => x.journey_id === JID).status = 'open'
+  const j0 = DB.client_journey.find((x) => x.journey_id === JID)
+  let o = await CJI.openCheckin(db, j0, { staffing_email: 'krystal@mo-care.com' }, { email: 'hub' })
+  ck('check-in OFF (practice): no row, no card, one practice event, shift texts not held', o === 'practice' && !st('cg.checkin.call') && !ops().some((i) => i.id === 'cj_checkin_' + JID) && ev('checkin_practice').length >= 1)
+  DB.app_data.find((x) => x.key === 'ops_settings').data.checkin_call_live = true
+  o = await CJI.openCheckin(db, j0, { checkin_call_live: true }, { email: 'hub' })
+  ck('check-in ON: the row opens (waiting), ONE card "Check-in call with Ava Lee" (Recruiting and Orientation), opened again = already', o === 'opened' && st('cg.checkin.call').state === 'waiting' && ops().filter((i) => i.id === 'cj_checkin_' + JID && i.kind === 'checkin_call' && i.status === 'open' && /Check-in call with/.test(i.title) && i.domain === 'recruiting_orientation').length === 1 && (await CJI.openCheckin(db, j0, { checkin_call_live: true }, { email: 'hub' })) === 'already', ops().filter((i) => i.kind === 'checkin_call'))
+  let L2 = await WL.workLock(db)
+  ck('workLock: an open check-in call holds shift texts (locked again after Approve and Active)', L2.ok && L2.axis.has('9001'), L2)
+  r = await call({ action: 'get', journey_id: JID }, 'cc')
+  ck('the card answer: check-in open, locked, why = the check-in call', r.j.approve.checkin?.open === true && r.j.approve.locked === true && /check-in call/.test(r.j.approve.lock_why), r.j.approve)
+  r = await call({ action: 'checkin', journey_id: JID, no_answer: true, note: 'voicemail' }, 'cc')
+  ck('No answer: one try recorded, the row stays open, the card stays (due the next business day)', r.status === 200 && st('cg.checkin.call').evidence.tries.length === 1 && st('cg.checkin.call').state === 'waiting' && ops().some((i) => i.id === 'cj_checkin_' + JID && i.status === 'open') && ev('checkin_no_answer').length === 1, r.j)
+  r = await call({ action: 'checkin', journey_id: JID, ticks: { on_file: true, questions: true }, finish: true }, 'cc')
+  ck('Done with a tick missing: refused, nothing finished, the two ticks kept', r.status === 409 && st('cg.checkin.call').state === 'waiting' && st('cg.checkin.call').evidence.ticks.on_file && st('cg.checkin.call').evidence.ticks.questions && /ticks are saved/.test(r.j.error), r)
+  r = await call({ action: 'checkin', journey_id: JID, ticks: { app: true }, test_clock: 'declined' }, 'cc')
+  ck('ticks save as they go (all three now, test clock-in: no thanks)', r.status === 200 && ['on_file', 'questions', 'app'].every((k) => st('cg.checkin.call').evidence.ticks[k]) && st('cg.checkin.call').evidence.test_clock.choice === 'declined', st('cg.checkin.call'))
+  r = await call({ action: 'checkin', journey_id: JID, finish: true }, 'cc')
+  ck('Done: the row completes by the office person, the card closes, shift texts no longer held', r.status === 200 && st('cg.checkin.call').state === 'complete' && ops().some((i) => i.id === 'cj_checkin_' + JID && i.status === 'done') && !(await WL.workLock(db)).axis.has('9001'), r.j?.approve)
+  r = await call({ action: 'checkin', journey_id: JID, finish: true }, 'cc')
+  ck('Done again: already done', r.status === 409)
+  { const j1 = DB.client_journey.find((x) => x.journey_id === JID); DB.client_journey_step = DB.client_journey_step.filter((x) => !(x.journey_id === JID && x.step_key === 'cg.checkin.call')); await CJI.openCheckin(db, j1, { checkin_call_live: true }, { email: 'hub' })
+    ck('a new open check-in holds; turning checkin_call_live off releases the hold at once', (await WL.workLock(db)).axis.has('9001') && (DB.app_data.find((x) => x.key === 'ops_settings').data.checkin_call_live = false, !(await WL.workLock(db)).axis.has('9001'))) }
+  ck('the new words have no em dash', !/—/.test(JSON.stringify(ops().filter((i) => i.kind === 'checkin_call'))) && !/—/.test(CJI.clearedText('Ava')) && !/—/.test(JSON.stringify(CJI.CHECKIN_TICKS)))
+  DB = SNAP; GHL.messages.length = G0 }
 /* ═══ SLICE 7: the preparation writes, switches on, by Retry ═══ */
 DB.app_data.find((x) => x.key === 'ops_settings').data.axiscare_hire_date_live = true; DB.app_data.find((x) => x.key === 'ops_settings').data.axiscare_level_live = true
 AX.calls.length = 0

@@ -16,6 +16,16 @@
 //                                                      is its own line (the person who examined the documents) and confirms
 //                                                      nothing else. Then the Orientation Video Call invitation (wc_auto_invite_live,
 //                                                      else practice) through welcome-call's own door, same words and gates.
+//   IN TRAINING PLAN v2, PART B (Samantha approved 2026-10-22), with ops_settings.orientation_button_live:
+//   verify no longer sends the invitation; it opens the "Add to AxisCare as In Training" card instead, and the office sends with:
+//   { action: 'axis_sheet', candidate_id, check? }    what to type into AxisCare (name, phone, email, street, city, zip; the
+//                                                      birth date is shown by the Hub's own logged reveal); check: true also
+//                                                      finds them in AxisCare and checks the zip and birth date (nothing sent)
+//   { action: 'send_orientation', candidate_id }       Send orientation information: finds them In Training in AxisCare, checks
+//                                                      the zip and the birth date match their Step 1 (nothing is sent until they
+//                                                      do), asks the Training Platform for their orientation link without it
+//                                                      sending anything, then the ONE welcome message (booking, profile,
+//                                                      orientation, badge) through welcome-call's door. Pressing again = Send again.
 //   { action: 'still_open', candidate_id, task, preview? }   the office message when a task is still open (preview first)
 //   { action: 'undo', candidate_id, which: 'sent'|'reported'|'verified', reason }   who and why; sends nothing; deletes nothing
 //   { action: 'preview', first? }                      the four messages with a placeholder link
@@ -43,6 +53,8 @@ import { sentMessages, reminderMessages, receiptText, stillOpenText, isDoneReply
 import { testPerson } from '../_shared/test-people.ts'
 import { profileReminderMessages, profileLink } from '../_shared/welcome-message.ts'   /* 2026-10-21 the one welcome message + profile reminders */
 import { validKey, packetLine } from '../_shared/positions.ts'   /* LPN HIRING 2026-10-14: the Step 2 LPN packet tick */
+import { findPerson, matchProblems, axisCaregivers, axisCaregiver, axisAddress, axisDob, zip5, ymd } from '../_shared/axis-setup.ts'   /* 2026-10-22 In Training plan v2 */
+import { open as unseal } from '../_shared/step1-crypto.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret', 'Access-Control-Allow-Methods': 'POST, OPTIONS' }
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
@@ -164,10 +176,53 @@ async function deliver(db: Any, rec: Any, m: { text: string; subject?: string; h
 }
 const doneLink = (candId: string) => makeStep2Link(Deno.env.get('HUB_JOB_SECRET') ?? '', candId)
 /** the Orientation Video Call invitation through welcome-call's own server door (same words, gate and opt-out door) */
-async function inviteVia(c: Any, cid: string, by: string, only?: 'text', welcome = false): Promise<{ ok: boolean; status: number; j: Any }> {
-  const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/welcome-call`, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: Deno.env.get('SUPABASE_ANON_KEY') ?? '', Authorization: 'Bearer ' + (Deno.env.get('SUPABASE_ANON_KEY') ?? ''), 'x-cron-secret': Deno.env.get('HUB_JOB_SECRET') ?? '' }, body: JSON.stringify({ action: 'invite_auto', candidate_id: cid, first: c.first || '', last: c.last || '', phone: c.phone || '', email: c.email || '', by, ...(only ? { only } : {}), ...(welcome ? { welcome: true } : {}) }) })
+async function inviteVia(c: Any, cid: string, by: string, only?: 'text', welcome = false, orientationUrl?: string): Promise<{ ok: boolean; status: number; j: Any }> {
+  const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/welcome-call`, { method: 'POST', headers: { 'Content-Type': 'application/json', apikey: Deno.env.get('SUPABASE_ANON_KEY') ?? '', Authorization: 'Bearer ' + (Deno.env.get('SUPABASE_ANON_KEY') ?? ''), 'x-cron-secret': Deno.env.get('HUB_JOB_SECRET') ?? '' }, body: JSON.stringify({ action: 'invite_auto', candidate_id: cid, first: c.first || '', last: c.last || '', phone: c.phone || '', email: c.email || '', by, ...(only ? { only } : {}), ...(welcome ? { welcome: true } : {}), ...(orientationUrl ? { orientation_url: orientationUrl } : {}) }) })
   const j = await r.json().catch(() => ({}))
   return { ok: r.ok && !!j?.ok, status: r.status, j }
+}
+
+/* ── IN TRAINING PLAN v2, PART B (2026-10-22): the AxisCare setup card and Send orientation information ── */
+const TRAINING_JOB_OFFER = 'https://rdqujxiycycwhskyvrwa.supabase.co/functions/v1/job-offer'
+/** their Step 1 identity record: address and zip as they gave them, and whether a birth date is on file (sealed) */
+async function step1Id(db: Any, offerId: string): Promise<Any | null> {
+  if (!offerId) return null
+  const { data } = await db.from('step1_identity').select('address1,address2,city,state,zip,dob_sealed,purged_at').eq('offer_id', offerId).maybeSingle()
+  return data ?? null
+}
+/** the AxisCare check: found In Training by phone or email, and the zip and birth date the app sign-up needs. The birth date is
+    compared on the server and never shown here; the comparison is logged like a reveal (doc identity:dob, "compared"). */
+async function axisCheck(db: Any, c: Any, who: Any, send: typeof fetch = fetch): Promise<Any> {
+  const list = await axisCaregivers(send)
+  if (!list.ok) return { ok: false, found: false, problems: [list.why + ' Nothing was sent. Try again in a minute.'] }
+  const f = findPerson(list.all, [c.phone, c.mobile], [c.email])
+  if (!f.match) return { ok: false, found: false, short: f.short, problems: [f.why] }
+  const full = (await axisCaregiver(String(f.match.id), send)) || f.match
+  const addr = axisAddress(full), axDob = axisDob(full)
+  const id = await step1Id(db, S(c.offer_id, 64))
+  let dob: string | null = null, dobWhy: string | null = null
+  if (id?.dob_sealed && !id?.purged_at) {
+    try {
+      dob = ymd(await unseal(Deno.env.get('STEP1_KEK') ?? '', S(c.offer_id, 64), id.dob_sealed)) || null
+      await db.from('document_access_log').insert({ offer_id: S(c.offer_id, 64), doc: 'identity:dob', path: '(compared with AxisCare on the server; not shown)', by_person: who.person_id ?? null, by_email: who.email ?? null, by_name: who.name ?? null, reason: 'AxisCare app sign-up check (Send orientation information)' })
+    } catch { dobWhy = 'their Step 1 birth date could not be read, so it was not compared' }
+  } else dobWhy = 'no Step 1 birth date on file to compare with'
+  const problems = matchProblems({ zip: addr.zip, dob: axDob }, { zip: zip5(id?.zip), dob })
+  return { ok: !problems.length, found: true, axiscare_id: String(f.match.id), label: S(f.match?.status?.label, 40), zip: { axiscare: addr.zip || null, step1: zip5(id?.zip) || null, match: !!addr.zip && (!id?.zip || addr.zip === zip5(id.zip)) },
+    dob: { on_axiscare: !!axDob, compared: !!dob, match: !!axDob && (!dob || axDob === dob), note: dobWhy }, problems }
+}
+/** the Training Platform makes them (enrolls orientation) and hands back their link; it sends nothing itself (link_only) */
+async function orientationLinkOnly(c: Any, axId: string, send: typeof fetch = fetch): Promise<{ ok: true; url: string; status: string } | { ok: false; why: string }> {
+  const secret = Deno.env.get('OUTREACH_SECRET') ?? ''
+  if (secret.length < 32) return { ok: false, why: 'the server secret is not set' }
+  try {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 20000)
+    const r = await send(TRAINING_JOB_OFFER, { method: 'POST', signal: ctl.signal, headers: { 'Content-Type': 'application/json', 'x-outreach-secret': secret },
+      body: JSON.stringify({ action: 'orientation_link', link_only: true, offer_id: S(c.offer_id, 64) || undefined, axiscare_id: axId, phone: S(c.phone, 30), email: S(c.email, 160), first: S(c.first, 60), last: S(c.last, 60) }) })
+    clearTimeout(t); const j = await r.json().catch(() => ({}))
+    if (r.ok && /^https:\/\//.test(S(j?.url, 400))) return { ok: true, url: S(j.url, 400), status: S(j.status, 30) }
+    return { ok: false, why: S(j?.why || j?.error, 240) || 'the Training Platform answered ' + r.status }
+  } catch (e) { return { ok: false, why: S((e as Error)?.message, 120) || 'could not reach the Training Platform' } }
 }
 
 /** The caregiver's DONE (link or reply): counted only at Sent; the receipt; never verification. */
@@ -418,7 +473,15 @@ Deno.serve(async (req) => {
         await event(db, jr.j.journey_id, null, actor, 'step2_verified', { ticked, i9_section2: i9s2, confirmed, note: note || null, ...(np ? { nurse_packet: np } : {}) })
       }
       let invite: Any = { state: 'none' }
-      if (jr) {
+      /* IN TRAINING PLAN v2, PART B (2026-10-22): with orientation_button_live, nothing is sent at Verify. The Staffing Coordinator
+         gets the "Add to AxisCare as In Training" card and sends with Send orientation information. */
+      if (jr && st.orientation_button_live === true) {
+        invite = { state: 'button', at: now, why: 'Add them to AxisCare as In Training, then press Send orientation information.' }
+        await raiseCard(db, { id: 'step2_axsetup_' + cid, kind: 'axiscare_setup', urgency: 'today', who: name, candidate_id: cid, owner: S(st.staffing_email, 160).toLowerCase(),
+          title: 'Add ' + name + ' to AxisCare as In Training, then send their orientation information',
+          detail: `Step 2 is checked. Open their onboarding card: type the details shown (name, phone, email, address with zip code, birth date) into AxisCare and set their status to In Training. Then press Send orientation information. The Hub checks the zip code and birth date match first, because the AxisCare app sign-up needs them to.`,
+          due: dueNextBusinessDay(now, st.company_holidays, onb(st).hour, 1) })
+      } else if (jr) {
         if (st.wc_auto_invite_live !== true && !testPerson(st, c)) { invite = { state: 'practice', at: now, why: 'wc_auto_invite_live is off: the invitation was not sent; press Invite to Orientation Video Call yourself' } }
         else {
           try {
@@ -437,6 +500,37 @@ Deno.serve(async (req) => {
       if (!(await patch(db, p, fields))) return json({ error: 'Someone else changed this record at the same moment. Open it again and retry.' }, 409)
       for (const k of ['step2_notsent_', 'step2_verify_', 'step2_stalled_', 'step2_early_']) await closeCard(db, k + cid, 'Step 2 verified.')
       return json({ ok: true, state: 'verified', confirmed, invite, new_path: !!jr })
+    }
+    if (action === 'axis_sheet') {
+      if (state !== 'verified') return json({ error: 'Check Step 2 first. The AxisCare setup comes after Step 2 is checked.' }, 409)
+      const id = await step1Id(db, S(c.offer_id, 64))
+      const out: Any = { ok: true, name, first: S(c.first, 60), last: S(c.last, 60), phone: S(c.phone, 30), email: S(c.email, 160), offer_id: S(c.offer_id, 64) || null,
+        address: id && !id.purged_at ? { address1: S(id.address1, 120), address2: S(id.address2, 120), city: S(id.city, 60), state: S(id.state, 4), zip: S(id.zip, 12) } : null,
+        has_dob: !!(id?.dob_sealed && !id?.purged_at), sent: c.step2_invite?.orientation ? c.step2_invite : null, switch_live: st.orientation_button_live === true }
+      if (b.check === true) out.check = await axisCheck(db, c, who)
+      return json(out)
+    }
+    if (action === 'send_orientation') {
+      if (state !== 'verified') return json({ error: 'Check Step 2 first. Nothing was sent.' }, 409)
+      if (!jr) return json({ error: 'This is for people on the new onboarding path (they have a readiness card). Nothing was sent.' }, 409)
+      const chk = await axisCheck(db, c, who)
+      if (!chk.ok) return json({ error: 'Not sent yet. ' + chk.problems.join(' '), check: chk }, 409)
+      const link = await orientationLinkOnly(c, chk.axiscare_id)
+      if (!link.ok) return json({ error: 'Not sent: the Training Platform did not give their orientation link (' + link.why + '). Try again in a minute.', check: chk }, 502)
+      let invite: Any
+      try {
+        const r = await inviteVia(c, cid, who.name || who.email, undefined, true, link.url)
+        const j = r.j
+        invite = r.ok ? { state: j.texted || j.emailed ? 'sent' : j.text_held ? 'held' : 'failed', at: now, by: who.email, texted: !!j.texted, emailed: !!j.emailed, not_sent: j.not_sent || [], id: j.id || null, ...(j.text_held ? { text_held: true } : {}), welcome: true, profile_id: j.profile_id || null }
+          : { state: 'failed', at: now, by: who.email, why: j?.error || ('the welcome message answered ' + r.status) }
+      } catch (e) { invite = { state: 'failed', at: now, by: who.email, why: 'could not reach welcome-call: ' + String((e as Error)?.message ?? e).slice(0, 120) } }
+      invite.orientation = { url_sent: invite.state !== 'failed', training: link.status, axiscare_id: chk.axiscare_id, at: now }
+      const again = !!c.step2_invite?.orientation
+      await patch(db, p, { step2_invite: invite, step2_history: hist(c, { at: now, what: again ? 'orientation_sent_again' : 'orientation_sent', by: who.email, state: invite.state }) })
+      await event(db, jr.j.journey_id, null, actor, 'orientation_info_' + invite.state, { again, axiscare_id: chk.axiscare_id, texted: !!invite.texted, emailed: !!invite.emailed, not_sent: invite.not_sent || [] })
+      if (invite.state === 'failed') await raiseCard(db, { id: 'step2_invite_' + cid, kind: 'send_problem', urgency: 'today', who: name, candidate_id: cid, owner: S(st.staffing_email, 160).toLowerCase(), title: 'Orientation information did not go to ' + name, detail: String(invite.why || (invite.not_sent || []).join('; ') || 'refused') + '. Open their onboarding card and press Send again.' })
+      else await closeCard(db, 'step2_axsetup_' + cid, 'Orientation information sent.')
+      return json({ ok: invite.state !== 'failed', invite, check: chk, again })
     }
     if (action === 'still_open') {
       const task = S(b.task, 120); if (!task) return json({ error: 'Which task is still open?' }, 400)
