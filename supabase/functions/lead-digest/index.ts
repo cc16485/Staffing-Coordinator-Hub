@@ -42,6 +42,7 @@ import { reportSendProblem } from '../_shared/send-problems.ts'
 import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { loadNotClients, isNotClient } from '../_shared/client-quiet.ts'   // Office Staff and other not-clients (2026-10-12)
 import { takenOffNotCalledIn } from '../_shared/not-a-callin.ts'
+import * as BR from '../_shared/bonus-rules.ts'   // the new-clients line (bonus v2, 2026-10-22)
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -221,6 +222,16 @@ Deno.serve(async (req) => {
   // ── Booked today: interviews and assessments (everyone's brief). A load that fails is SAID in the email. ──
   let ivToday: Interview[] = [], ivErr = ''
   try { ivToday = await interviewsOn(sb, today, afternoonRule(opsSettings)) } catch (e) { ivErr = String((e as Error)?.message || e).slice(0, 160) }
+  /* 🎉 New clients (bonus v2, Samantha 2026-10-22): one line for the whole office, only while bonus_v2_live. The email goes to
+     several people, so no dollars: who made it to day 30, who is close, and the team goal. */
+  let ncLine = '', ncErr = ''
+  if (opsSettings.bonus_v2_live === true) {
+    try {
+      const { data } = await sb.from('app_data').select('data').eq('key', 'cc_bonuses').maybeSingle()
+      const set = BR.settingsOf(opsSettings)
+      ncLine = BR.morningLine(BR.scoreboard(Array.isArray(data?.data) ? data!.data : [], { email: '', first: '', owner: false }, set, today.slice(0, 7), today))
+    } catch (e) { ncErr = String((e as Error)?.message || e).slice(0, 160) }
+  }
   let asToday: Assessment[] = [], asErr = ''
   try {
     const { data, error } = await sb.from('app_data').select('data').eq('key', 'care_assessments').maybeSingle()
@@ -441,6 +452,8 @@ Deno.serve(async (req) => {
     else if (asToday.length) body += card('🏠', `Assessments today (${asToday.length})`, TEAL,
       asToday.map((a) => row(`<b>${esc(time12(a.min))}</b> · ${esc(a.name)}` + ivChip(a.status),
         esc([a.address || 'address not on file', a.who ? 'with ' + a.who : 'who is going is not on file'].join(' · ')), `${HUB}/#today`, 'Open')).join(''))
+    if (ncErr) body += card('🎉', 'New clients', RED, `<div style="font-family:Arial,sans-serif;font-size:13.5px;color:${RED};">Could not load the new-clients scoreboard (${esc(ncErr)}). Check Today in the Hub.</div>`)
+    else if (ncLine) body += card('🎉', 'New clients', TEAL, `<div style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;">${esc(ncLine)}</div>`)
     // 🌙 While you were out: the news.
     if (myOvernightOps.length || myOvernightLeads.length) {
       const when = (iso: unknown) => {

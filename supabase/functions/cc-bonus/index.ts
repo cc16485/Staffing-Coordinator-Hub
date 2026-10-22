@@ -20,6 +20,8 @@
 //              name on their offboarding (an exact full-name match to someone with a bonus on file, active or not;
 //              anyone else, a caregiver, gets office:false). It only lists: nothing is paid or cancelled because someone leaves (decision 3 is Samantha's).
 //              In the owners' list, a line whose person has an offboarding carries leaving {kind, last_day}.
+//     · scoreboard (v2, 2026-10-22) new clients this month per Care Coordinator and the team goal for everyone; dollars only
+//              for her own lines and for owners. While bonus_v2_live is off, owners only (practice).
 //   Decisions are never written to the office event record (everyone in the office reads it; pay is private): each line
 //   keeps its own history of who, when and why.
 // Nothing here texts, emails or calls anyone. AxisCare is only read.
@@ -65,18 +67,21 @@ async function people(): Promise<{ emailOf: (n: string) => string; nameOf: (e: s
 /** the daily check */
 async function sweep(write: boolean, ax = axVisitsReader()) {
   const st = await settings(), set = B.settingsOf(st), today = centralYmd(new Date()), nowIso = new Date().toISOString()
-  const [leads, lines, P] = await Promise.all([read('leads'), read(KEY), people()])
+  const [leads, lines, P, asmts] = await Promise.all([read('leads'), read(KEY), people(), read('care_assessments')])
   const { data: js } = await sb.from('client_journey').select('lead_id, axiscare_client_id, status, closed_reason, updated_at').eq('subject', 'client').not('lead_id', 'is', null)
   const jOf = new Map((js ?? []).map((j: Any) => [String(j.lead_id), j]))
   const plan: Any = { live: set.live, write, today, start: set.start, new_lines: [] as string[], updated: 0, unreadable: [] as string[], skipped: {} as Record<string, number>, written: 0 }
   const byLead = new Map(lines.map((x: Any) => [String(x.lead_id), x])), fresh = new Set<string>()
   for (const l of leads) {
     if (byLead.has(String(l?.id))) continue
-    const c = B.candidate(l, set)
+    const c = B.candidate(l, set, asmts)
     if (c.skip) { if (l?.first_shift_at) plan.skipped[c.skip] = (plan.skipped[c.skip] || 0) + 1; continue }
     const who = [l.client_first_name, l.client_last_name].filter(Boolean).join(' ').trim() || [l.first_name, l.last_name].filter(Boolean).join(' ').trim() || 'a client'
-    const line = { id: 'bonus_' + c.lead_id, lead_id: c.lead_id, client: who, recipient: c.recipient, recipient_email: P.emailOf(c.recipient), first_visit: c.first_visit, day30: c.day30,
-      amount: set.amount, status: 'on_the_way', hours: null, reasons: [], created_at: nowIso, history: [{ at: nowIso, by: 'cc-bonus', action: 'created', from: null, to: 'on_the_way', why: 'first visit ' + c.first_visit }] }
+    /* v2 (2026-10-22): $75, to whoever did the home visit (c.by says how it was decided), 3 visits by day 30 */
+    const line: Any = { id: 'bonus_' + c.lead_id, lead_id: c.lead_id, client: who, recipient: c.recipient, recipient_email: P.emailOf(c.recipient), first_visit: c.first_visit, day30: c.day30,
+      amount: set.v2 ? set.amount_v2 : set.amount, status: 'on_the_way', hours: null, reasons: [], created_at: nowIso,
+      history: [{ at: nowIso, by: 'cc-bonus', action: 'created', from: null, to: 'on_the_way', why: 'first visit ' + c.first_visit + (set.v2 ? (c.by === 'home_visit' ? '; home visit by ' + c.recipient : '; no home visit on file, so the lead owner') : '') }] }
+    if (set.v2) { line.rules = 'v2'; line.visits = null; line.by = c.by }
     plan.new_lines.push(`${who} → ${c.recipient}`); byLead.set(c.lead_id, line); lines.push(line); fresh.add(line.id)
   }
   for (const line of lines) {
@@ -84,15 +89,16 @@ async function sweep(write: boolean, ax = axVisitsReader()) {
     const l = leads.find((x: Any) => String(x?.id) === String(line.lead_id)), j: Any = jOf.get(String(line.lead_id))
     const axId = String(l?.axiscare_client_id || j?.axiscare_client_id || '').trim()
     const needRead = !(line.final_read_on && line.final_read_on > line.day30)   /* hours are final once read after day 30; only the end of care can still change */
-    let hours: number | null = line.hours ?? null, prior = !!line.prior_care
+    let hours: number | null = line.hours ?? null, prior = !!line.prior_care, visits: number | null = line.visits ?? null
     if (needRead) {
       const to = today < line.day30 ? today : line.day30
       const vs = /^\d+$/.test(axId) ? await ax(axId, addDaysYmd(line.first_visit, -B.DEFAULTS.returning_gap), to) : null
       if (vs == null) { plan.unreadable.push(line.client); hours = null }
-      else { hours = B.hoursOf(vs, line.first_visit, line.day30); prior = B.completedIn(vs, addDaysYmd(line.first_visit, -B.DEFAULTS.returning_gap), addDaysYmd(line.first_visit, -1)).length > 0 }
+      else { hours = B.hoursOf(vs, line.first_visit, line.day30); visits = B.completedIn(vs, line.first_visit, line.day30).length; prior = B.completedIn(vs, addDaysYmd(line.first_visit, -B.DEFAULTS.returning_gap), addDaysYmd(line.first_visit, -1)).length > 0 }
     }
     const ended = j && j.status === 'closed' && /^care ended/i.test(String(j.closed_reason || '')) ? centralYmd(j.updated_at || nowIso) : (l && String(l.status) === 'Lost' ? centralYmd(l.lost_at || nowIso) : null)
-    const next = B.evaluate(line, { today, hours, prior_care: prior, care_ended_on: ended }, set)
+    const next = B.evaluate(line, { today, hours, prior_care: prior, care_ended_on: ended, visits }, set)
+    if (next.status === 'ready' && line.status !== 'ready' && !next.earned_on) next.earned_on = today   /* v2: the day it was earned (the celebration) */
     next.prior_care = prior; if (needRead && hours != null) next.final_read_on = today
     if (next.status !== line.status) next.history = [...(line.history || []), { at: nowIso, by: 'cc-bonus', action: 'checked', from: line.status, to: next.status, why: (next.reasons || []).join('; ') || (next.status === 'ready' ? 'every rule met' : '') }].slice(-40)
     if (fresh.has(line.id) || JSON.stringify(next) !== JSON.stringify(line)) { if (!fresh.has(line.id)) plan.updated++; if (write) { await put(KEY, next); plan.written++ } }
@@ -141,10 +147,18 @@ Deno.serve(async (req) => {
     if (!line || !B.visible([line], me, set).length) return json({ error: 'That bonus is not on file.' }, 404)
     const r = B.act(line, String(body.do || ''), { email: me.email, name: me.name, owner: me.owner }, { why: body.why, paid_on: body.paid_on }, set, nowIso)
     if (r.error) return json({ error: r.error }, 400)
+    if (r.line.status === 'approved' && !r.line.earned_on) r.line.earned_on = centralYmd(nowIso)   /* an exception approved: earned that day */
     const { error } = await put(KEY, r.line)
     if (error) return json({ error: 'Could not save. Nothing changed.' }, 500)
     /* no office event: the event record is read by the whole office, and pay is private. The line keeps its own history. */
     return json({ ok: true, line: { ...r.line, words: B.progressWords(r.line, set), status_words: B.STATUS_WORDS[r.line.status] } })
+  }
+  /* v2 scoreboard (2026-10-22): counts and the team goal for everyone, dollars only for her own lines and for owners.
+     While bonus_v2_live is off only owners can see it (their practice preview). */
+  if (body.action === 'scoreboard') {
+    if (!set.v2 && !me.owner) return json({ off: true })
+    const today = centralYmd(new Date())
+    return json({ v2: set.v2, ...B.scoreboard(await read(KEY), { email: me.email, first: me.first, owner: me.owner }, set, today.slice(0, 7), today) })
   }
   if (body.action === 'separation') {
     if (!me.owner) return json({ error: 'Only Samantha or Zachary sees bonuses at separation.' }, 403)
