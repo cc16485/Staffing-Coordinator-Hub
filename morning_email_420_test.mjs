@@ -23,7 +23,7 @@ const reset = (o = {}) => { MAIL = []; RPC = []; OPTS = o; T = {
     { key: 'care_assessments', data: [{ id: 'A1', lead_id: 'L1', client_name: 'Mae Mom', visit_date: '2026-10-02', coordinator: 'Krystal', address: '1 Elm St, Nixa', status: 'Scheduled' }] },
     { key: 'ops_settings', data: { morning_brief_recipients: [{ name: 'Samantha', email: 'samantha@mo-care.com', admin: true }, { name: 'Krystal', email: 'krystal@mo-care.com', admin: false }], ...(o.ops || {}) } },
     { key: 'morning_brief_state', data: o.marker ? [{ id: 'sent_' + o.marker }] : [] },
-    { key: 'ops_items', data: o.items || [] }],
+    { key: 'ops_items', data: o.items || [] }, ...(o.bonuses ? [{ key: 'cc_bonuses', data: o.bonuses }] : [])],
   interview_bookings: o.noInterviews ? [] : BOOKINGS,
   job_applicants: [{ id: 'a1', first_name: 'Ava', last_name: 'Afternoon', phone: '4175559991' }, { id: 'a2', first_name: 'Ben', last_name: 'Morning', phone: '4175559992' },
     { id: 'a3', first_name: 'Cal', last_name: 'Missed', phone: '4175559993' }, { id: 'a4', first_name: 'Dee', last_name: 'Cancelled' }, { id: 'a5', first_name: 'Eve', last_name: 'Tomorrow' }] } }
@@ -116,6 +116,16 @@ try {
   ck('assessments can\'t load: the brief says so', /Could not load today's assessments \(statement timeout\)/.test(MAIL[0]?.html || '') && /Interviews today \(3\)/.test(MAIL[0]?.html || ''), (MAIL[0]?.html || '').slice(0, 300))
   r = await cron('2026-10-02T13:00:00Z', { noInterviews: true })
   ck('a day with no interviews: no interview card, nothing invented', !/Interviews today/.test(MAIL[0]?.html || ''))
+
+  // ---- bonus v2 (2026-10-22): the New clients line, counts only, never dollars ----
+  const BON = [{ id: 'b1', lead_id: 'x1', client: 'Rose Able', recipient: 'Angiel', recipient_email: 'ang@x', first_visit: '2026-09-02', day30: '2026-10-01', amount: 75, status: 'ready', earned_on: '2026-10-01', rules: 'v2' },
+    { id: 'b2', lead_id: 'x2', client: 'Hope Hall', recipient: 'Krystal', recipient_email: 'kry@x', first_visit: '2026-10-01', day30: '2026-10-30', amount: 75, status: 'on_the_way', day: 2, visits: 1, rules: 'v2' }]
+  r = await cron('2026-10-02T13:00:00Z', { ops: { bonus_v2_live: true, lead_rotation: { people: [{ name: 'Krystal' }, { name: 'Angiel' }] } }, bonuses: BON })
+  const nc = MAIL[0]?.html || ''
+  ck('bonus v2 on: a "New clients" line in everyone\'s brief: who made it to day 30 and the team goal', /New clients/.test(nc) && /Angiel(&#39;|\u2019)s Rose Able made it to day 30/.test(nc) && /Team goal: 1 of 8 new clients this month\. 7 more to team lunch/.test(nc) && /New clients/.test(MAIL[1]?.html || ''), nc.slice(0, 600))
+  ck('bonus v2: no dollar amount anywhere in the line', !/\$\s?75/.test(nc))
+  r = await cron('2026-10-02T13:00:00Z', { bonuses: BON })
+  ck('bonus v2 off: no New clients line', !/New clients/.test(MAIL[0]?.html || ''))
 
   // ---- Settings drive the rule ----
   r = await cron('2026-10-02T13:00:00Z', { ops: { afternoon_interviews: { from: '14:15', name: 'Krystal' } } })
