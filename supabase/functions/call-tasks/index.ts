@@ -45,6 +45,10 @@ const GHL = 'https://services.leadconnectorhq.com'
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
 const H = (tok: string, v = '2021-04-15') => ({ Authorization: `Bearer ${tok}`, Version: v, Accept: 'application/json' })
 export const PER_RUN = 6, PER_RUN_TEXTS = 6, LOOKBACK = 80, TEXT_QUIET_MS = 10 * 60e3, CONVOS = 40
+/* 1049 (2026-10-22): which calls to read. LOOKBACK is one page; the reader pages forward through the window (the start date,
+   never more than READ_DAYS back) instead of stopping at the oldest page. A call nobody has tried BEHIND_MS after it
+   happened makes the run report itself not ok (the "behind" alarm). */
+export const SCAN_PAGES = 25, READ_DAYS = 14, BEHIND_MS = 2 * 3600e3
 export const MAX_TRIES = 3, RETRY_MS = 30 * 60e3, WAIT_TRANSCRIPT_MS = 2 * 3600e3, MAX_ATTEMPT = 5
 export const LIVE_PER_RUN = 40, LIVE_LOOK_MS = 2 * 864e5
 export const WATCH_PER_RUN = 8, WATCH_DAYS = 14, WATCH_AFTER_DUE_MS = 3 * 864e5, CHECK_EVERY_MS = 60 * 60e3
@@ -75,6 +79,15 @@ async function triesOf(db: Any, ids: string[]): Promise<Tries> {
 /** Read it now: never read, or every try failed, fewer than 3 tries, and the last was 30+ minutes ago. */
 export function readNow(t: { n: number; ok: boolean; last: number } | undefined, now = Date.now()): boolean {
   return !t || (!t.ok && t.n < MAX_TRIES && now - t.last >= RETRY_MS)
+}
+/** 1049: where the reader starts looking: its start date, but never more than READ_DAYS back (older unread calls are let go). */
+export function windowStart(since: string, now = Date.now()): string {
+  return new Date(Math.max(Date.parse(since) || 0, now - READ_DAYS * 864e5)).toISOString()
+}
+/** 1049: the "behind" alarm: calls nobody has even tried BEHIND_MS after they happened, and the oldest of them. */
+export function behindOf(rows: Array<{ message_id: string; call_at: string }>, tries: Map<string, unknown>, now = Date.now()): { behind: number; oldest: string } {
+  const late = rows.filter((r) => !tries.has(r.message_id) && now - Date.parse(r.call_at) >= BEHIND_MS).map((r) => r.call_at).sort()
+  return { behind: late.length, oldest: late[0] || '' }
 }
 /** Everything a reading needs from the Hub, loaded once per run. */
 async function loadHub(db: Any) {
@@ -210,18 +223,43 @@ Deno.serve(async (req) => {
 
   /* 1 · which calls: named ones (owner), else the handled calls since the start that this version has not read */
   const named: string[] = caller === 'owner' && Array.isArray(body.message_ids) ? body.message_ids.map(String).slice(0, 20) : []
-  let seenQ = db.from('call_pull_seen').select('message_id, call_at, direction, seconds, caller, stage')
-  seenQ = named.length ? seenQ.in('message_id', named) : seenQ.gte('call_at', since).in('stage', ['done', 'practice', 'error', 'no_transcript']).order('call_at', { ascending: true }).limit(LOOKBACK)
-  const { data: seenRows, error: sErr } = await seenQ
-  if (sErr) { await beat(db, false, 'call_pull_seen read: ' + sErr.message); return json({ error: 'could not read the calls' }, 500) }
   /* COACHING CALLS (2026-10-18): never read; if they can't be checked, nothing is read this run */
   let isCoaching: (m: { id?: unknown; contactId?: unknown; at?: unknown }) => boolean
   try { isCoaching = await loadSkip(db) } catch (e) { await beat(db, false, String(e).slice(0, 200)); return json({ error: 'coaching calls could not be checked' }, 500) }
-  const ids = (seenRows ?? []).filter((r: { message_id: string }) => !isCoaching({ id: r.message_id })).map((r: { message_id: string }) => r.message_id)
-  const tries = await triesOf(db, ids)
-  const todo = (seenRows ?? []).filter((r: { message_id: string }) => ids.includes(r.message_id)).filter((r: { message_id: string }) => named.length ? (tries.get(r.message_id)?.n ?? 0) < MAX_ATTEMPT : readNow(tries.get(r.message_id)))
+  /* 1049 (2026-10-22): this used to read only the OLDEST 80 calls since the start date, so once those 80 were read it never
+     reached a newer call: stuck from Fri Oct 16 with 97 calls unread while every run said ok. Now it pages forward through
+     the window, page by page, and keeps every call this version still has to read (oldest first, so a brand-new call
+     still being transcribed never holds the backlog up). */
+  type Seen = { message_id: string; call_at: string; direction: string; seconds: number; caller: string; stage: string }
+  const seenRows: Seen[] = [], tries: Tries = new Map()
+  let pagesCapped = false
+  if (named.length) {
+    const { data, error: sErr } = await db.from('call_pull_seen').select('message_id, call_at, direction, seconds, caller, stage').in('message_id', named)
+    if (sErr) { await beat(db, false, 'call_pull_seen read: ' + sErr.message); return json({ error: 'could not read the calls' }, 500) }
+    seenRows.push(...(data ?? []))
+    for (const [k, v] of await triesOf(db, seenRows.map((r) => r.message_id))) tries.set(k, v)
+  } else {
+    let cursor = windowStart(since, Date.now())
+    const got = new Set<string>()
+    for (let pg = 0; ; pg++) {
+      if (pg >= SCAN_PAGES) { pagesCapped = true; break }
+      const { data, error: sErr } = await db.from('call_pull_seen').select('message_id, call_at, direction, seconds, caller, stage')
+        .gte('call_at', cursor).in('stage', ['done', 'practice', 'error', 'no_transcript']).order('call_at', { ascending: true }).limit(LOOKBACK)
+      if (sErr) { await beat(db, false, 'call_pull_seen read: ' + sErr.message); return json({ error: 'could not read the calls' }, 500) }
+      const page = ((data ?? []) as Seen[]).filter((r) => !got.has(r.message_id))
+      if (!page.length) break
+      for (const r of page) got.add(r.message_id)
+      seenRows.push(...page)
+      for (const [k, v] of await triesOf(db, page.map((r) => r.message_id))) tries.set(k, v)
+      cursor = page[page.length - 1].call_at
+      if ((data ?? []).length < LOOKBACK) break
+    }
+  }
+  const ids = seenRows.filter((r) => !isCoaching({ id: r.message_id })).map((r) => r.message_id)
+  const todo = seenRows.filter((r) => ids.includes(r.message_id)).filter((r) => named.length ? (tries.get(r.message_id)?.n ?? 0) < MAX_ATTEMPT : readNow(tries.get(r.message_id)))
     .slice(0, Number(body.limit) > 0 ? Math.min(Number(body.limit), 20) : PER_RUN)
-  const out: Record<string, number> = { calls: ids.length, read: 0, cards: 0, no_cards: 0, no_transcript: 0, errors: 0, could_not_read: 0, failed: 0 }
+  const triedNow = new Set<string>()   // 1049: tried in this run (its reading is saved), so not behind
+  const out: Record<string, Any> = { calls: ids.length, read: 0, cards: 0, no_cards: 0, no_transcript: 0, errors: 0, could_not_read: 0, failed: 0 }
   const hub = await loadHub(db)
 
   for (const s of named.length || todo.length ? todo : []) {
@@ -292,7 +330,14 @@ Deno.serve(async (req) => {
     if (row.error) { out.could_not_read++; if (row.attempt >= MAX_TRIES) out.failed++ }
     const { error: iErr } = await db.from('call_task_reading').insert(row)
     if (iErr && !/duplicate/i.test(iErr.message)) { out.errors++; out.save_failed = (out.save_failed || 0) + 1; continue }
+    triedNow.add(s.message_id)
     out.read++
+  }
+  /* 1049: what is still unread after this run, and the "behind" alarm */
+  if (!named.length) {
+    const left = seenRows.filter((r) => ids.includes(r.message_id) && !triedNow.has(r.message_id))
+    const lag = behindOf(left, tries, Date.now())
+    Object.assign(out, { unread: left.filter((r) => !tries.has(r.message_id)).length, behind: lag.behind, ...(lag.oldest ? { behind_since: lag.oldest } : {}), ...(pagesCapped ? { pages_capped: true } : {}) })
   }
   /* 6 · GoHighLevel texts (v10): each new burst of texts from one person, read with the thread around it */
   if (st.call_tasks_texts !== false) {
@@ -328,7 +373,9 @@ Deno.serve(async (req) => {
   /* The heartbeat fails only when the run itself broke (a reading could not be saved, GoHighLevel's text search or the
      promise watch could not run): the watchdog then tells the office. A call that could not be read is tried again and
      shown on the Practice tab; it does not fail the run. */
-  await beat(db, !(out.save_failed > 0) && !pw.broken, JSON.stringify(out))
+  /* 1049: behind = not ok, so a stuck reader shows as a problem instead of "ok"; the reason goes first so it fits the note */
+  const behindNote = out.behind > 0 ? `BEHIND: ${out.behind} call(s) unread more than ${BEHIND_MS / 3600e3} hours (oldest ${out.behind_since}) ` : ''
+  await beat(db, !(out.save_failed > 0) && !pw.broken && !(out.behind > 0), behindNote + JSON.stringify(out))
   return json({ ok: true, ...out })
 })
 
