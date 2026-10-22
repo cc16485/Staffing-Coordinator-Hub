@@ -24,6 +24,7 @@ import { jobCaller } from '../_shared/job-auth.ts'
 import { makeAvailLink, availExpiry } from '../_shared/prn-links.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { readCensus } from '../_shared/axis-census.ts'
+import { isWorking, inTrainingLive } from '../_shared/in-training.ts'   // 2026-10-22 In Training is onboarding
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -68,7 +69,9 @@ Deno.serve(async (req) => {
 
   const census = await readCensus()
   if (!census.ok) { if (q.get('dry') !== '1') await beat(db, false, 'held: ' + census.error); return json({ ok: false, held: 'AxisCare could not be read, so nobody was texted: ' + census.error, live }) }
-  const axActive = new Set(census.rows.filter((r) => r.active).map((r) => r.id))
+  /* 2026-10-22: In Training (onboarding) gets no 30-day text once ops_settings.in_training_lock_live is on */
+  const trainLive = await inTrainingLive(st)
+  const axActive = new Set(census.rows.filter((r) => isWorking(r.active, r.status_label, trainLive)).map((r) => r.id))
 
   const now = Date.now()
   // deno-lint-ignore no-explicit-any

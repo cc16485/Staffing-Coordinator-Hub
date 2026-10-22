@@ -11,6 +11,7 @@
 // -----------------------------------------------------------------------------
 import { careLevelOf } from '../_shared/care-level.ts'
 import { newHireNeed } from '../_shared/new-hire.ts'
+import { isInTraining, inTrainingLive, IN_TRAINING_WHY } from '../_shared/in-training.ts'   // 2026-10-22 In Training is onboarding
 import { workLock, LOCK_WHY } from '../_shared/work-lock.ts'   // Slice 5 used these without importing them (team_pool threw); fixed 2026-10-13
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: {
@@ -469,6 +470,7 @@ Deno.serve(async (req) => {
             zip: String(g?.mailingAddress?.postalCode ?? g?.residentialAddress?.postalCode ?? '').trim() || null,
             windows: null, availability_updated: null, target_hours: null,
             hire_date: String(g?.hireDate ?? g?.hire_date ?? '').slice(0, 10) || null,   // new hires who need hours (2026-10-12)
+            in_training: isInTraining(g?.status?.label),   // 2026-10-22: onboarding, flagged below once the switch is on
             visits: [] })
         }
         url6 = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
@@ -524,6 +526,9 @@ Deno.serve(async (req) => {
     const lock6 = await workLock(sb6)
     if (!lock6.ok) return json({ error: 'held: ' + lock6.why + ' (fail closed; nothing is offered until the readiness cards can be read)' }, 503)
     for (const p of pool.values()) { p.work_locked = lock6.axis.has(String(p.axiscare_id)); if (p.work_locked) p.work_lock_why = LOCK_WHY }
+    /* IN TRAINING IS ONBOARDING (2026-10-22, ops_settings.in_training_lock_live): flagged like the readiness lock, never hidden
+       (Team Builder still plans new hires); the Staffing Sheet and coverage count them out */
+    if (await inTrainingLive(sb6)) for (const p of pool.values()) if (p.in_training && !p.work_locked) { p.work_locked = true; p.work_lock_why = IN_TRAINING_WHY }
     /* NEW HIRES WHO NEED HOURS (her ask + B, 2026-10-12): hired in AxisCare in the last 60 days with nothing (or less
        than their weekly target) scheduled in these 14 days. A tag and a place first among equal fits, never a gate. */
     const hrs = (v: { start: string; end: string }) => { const a = /^(\d\d):(\d\d)$/.exec(v.start), z = /^(\d\d):(\d\d)$/.exec(v.end); if (!a || !z) return 0
@@ -557,6 +562,9 @@ Deno.serve(async (req) => {
     if (!token || !site) return json({ error: 'AxisCare credentials not set on this project' }, 502)
 
     // Active census with levels; nurses out.
+    /* 2026-10-22: In Training (onboarding) is left out once ops_settings.in_training_lock_live is on */
+    const { createClient: ccM } = await import('https://esm.sh/@supabase/supabase-js@2')
+    const trainLiveM = await inTrainingLive(ccM(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!))
     const levelOf = (classes: unknown): number | null => careLevelOf(classes).level   // Change 6b: one shared rule
     const active = new Map<string, { name: string; level: number | null }>()
     let url: string | null = `https://${site}.axiscare.com/api/caregivers`
@@ -569,7 +577,7 @@ Deno.serve(async (req) => {
         // deno-lint-ignore no-explicit-any
         const j: any = await r.json().catch(() => ({}))
         for (const g of rowsOf(j?.results?.caregivers ?? j?.caregivers)) {
-          if (g?.status?.active !== true || g?.id == null) continue
+          if (g?.status?.active !== true || g?.id == null || (trainLiveM && isInTraining(g?.status?.label))) continue
           const isNurse = rowsOf(g?.classes).some((k: any) =>
             /nurse|\bRN\b|\bLPN\b/i.test(String(k?.label ?? k?.code ?? '')))
           if (isNurse) continue
