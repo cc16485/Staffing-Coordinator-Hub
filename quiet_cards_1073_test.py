@@ -20,7 +20,7 @@ class H(http.server.BaseHTTPRequestHandler):
             if self.headers.get("Authorization") == "Bearer eyJservice" and "auth_check=1" in p and "coverage-watch" in p: return self._send(200, {"ok": True, "caller": "service"})
             return self._send(401, {"error": "not allowed"})
         q = body["query"]
-        if "quieter_cards_live" in q: return self._send(200, [{"quiet": None, "loops": "true"}])
+        if "mywork_tidy_live" in q: return self._send(200, [{"quiet": "false", "loops": "true"}])
         return self._send(400, {"message": "unexpected query " + q[:120]})
 srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H); threading.Thread(target=srv.serve_forever, daemon=True).start()
 URL = f"http://127.0.0.1:{srv.server_address[1]}"
@@ -55,11 +55,11 @@ def go(**m):
     return p.returncode, open(rep).read() if os.path.exists(rep) else p.stdout + p.stderr
 try:
     c, o = go()
-    ck("clean run: DONE, exit 0, quieter cards stay off", c == 0 and "1073: DONE" in o and "installed and OFF" in o, o)
+    ck("clean run: DONE, exit 0, switch untouched", c == 0 and "1073: DONE" in o and "start when Settings > Tidier My Work is on" in o, o)
     ck("clean run: tests ran and a stranger was refused", "one weekly list" in o and "coverage-watch: a caller with no key gets nothing (401)" in o, o)
     ck("clean run: deployed with its gateway setting kept", "coverage-watch deployed" in o and "gateway sign-in check off (kept)" in o, o)
     ck("clean run: the server key is let in, nothing run by hand", "the server key is let in" in o, o)
-    ck("clean run: says what is on and off now, and changes neither", "quieter cards on: false" in o and "(loops) on: true" in o, o)
+    ck("clean run: says what is on and off now, and changes neither", "Tidier My Work (and the quieter cards) on: false" in o and "(loops) on: true" in o, o)
     c, o = go(shas={"coverage-watch/index.ts": "0" * 64})
     ck("not the reviewed build: stops before anything changes", c == 2 and not os.path.exists(FLAG) and "not the reviewed build" in o, o)
 finally:

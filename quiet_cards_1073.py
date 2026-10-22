@@ -3,7 +3,8 @@
 # coverage checks close themselves from AxisCare, and a weekly Make it official list. Switched off, show me first").
 #  1. Checks first (nothing changes): the reviewed build is GitHub's main; the coverage tests pass (fake data only).
 #  2. Deploys coverage-watch (gateway setting kept). No database change. Everything new waits behind
-#     ops_settings.quieter_cards_live, which stays OFF: coverage-watch keeps making the same cards until she turns it on.
+#     Settings > Tidier My Work (ops_settings.mywork_tidy_live), which this step does not touch: coverage-watch keeps making the
+#     same cards until she turns that switch on.
 #  3. Proves it: a stranger is refused; the server key is let in (a sign-in check only, the watcher is not run by hand).
 # Sends nothing to anyone. Safe to run again.
 import json, os, subprocess, shutil, time
@@ -45,13 +46,13 @@ for k in sorted(L.need(FNROOT, FN)):
 if drift: stop("this isn't the same as GitHub's main yet (merge the pull request first, or newer work landed since: " + ", ".join(drift)[:240] + ")")
 ok("the reviewed build is what is on GitHub's main")
 if NODE:
-    for t, must in (("quiet_cards_test.mjs", "26/26 passed"), ("loops_phase2_test.mjs", "62/62"), ("open_shift_cards_test.mjs", "ALL GREEN")):
+    for t, must in (("quiet_cards_test.mjs", "ALL PASSED"), ("loops_phase2_test.mjs", "62/62"), ("open_shift_cards_test.mjs", "ALL GREEN")):
         c, o = run([NODE, t], cwd=ROOT)
         if c != 0 or must not in o: stop(f"the tests failed ({t}): " + " ".join(l.strip() for l in o.splitlines() if "FAIL" in l)[:240])
     ok("coverage tests pass, including no EVV card, checks closing from AxisCare and one weekly list (fake data only)")
 else: say("  · node is not on this Mac, so the tests were not re-run here (they passed when built)")
-okq, st = sql(HUB, "select data->>'quieter_cards_live' as quiet, data->>'loops_close_live' as loops from app_data where key = 'ops_settings'")
-if okq and st: say(f"  · quieter cards on: {st[0]['quiet'] or 'false'} · coverage checks close themselves (loops) on: {st[0]['loops'] or 'false'} (this step changes neither)")
+okq, st = sql(HUB, "select coalesce(data->>'mywork_tidy_live', 'false') as quiet, data->>'loops_close_live' as loops from app_data where key = 'ops_settings'")
+if okq and st: say(f"  · Tidier My Work (and the quieter cards) on: {st[0]['quiet'] or 'false'} · coverage checks close themselves (loops) on: {st[0]['loops'] or 'false'} (this step changes neither)")
 s_, m = fmeta(HUB, FN)
 if s_ != 200 or not m or "verify_jwt" not in m: stop(f"couldn't read how {FN} is set up live ({s_})", 3)
 gate = bool(m["verify_jwt"]); say(f"  · {FN} is live as version {m.get('version', '?')}, gateway sign-in check {'on' if gate else 'off'} (kept)")
@@ -72,5 +73,5 @@ if SERVICE:
     chk(s_ == 200 and j.get("ok") is True, f"{FN}: the server key is let in (sign-in check only; nothing ran)", f"{FN}: the server key was not let in ({s_})")
 else: say("  · couldn't read the server key, so the sign-in check was skipped (its 5-minute schedule runs it)")
 say()
-say("  1073: " + ("DONE. Quieter coverage cards are installed and OFF. Nothing changes until you turn on quieter_cards_live." if not L.fails else "NOT COMPLETE. See the ✗ lines above."))
+say("  1073: " + ("DONE. Quieter coverage cards are installed. They start when Settings > Tidier My Work is on." if not L.fails else "NOT COMPLETE. See the ✗ lines above."))
 done(0 if not L.fails else 1)

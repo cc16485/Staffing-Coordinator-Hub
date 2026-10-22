@@ -94,7 +94,7 @@ Deno.serve(async (req) => {
   const loopsLive = settings.loops_close_live === true && !forceDry
   const loopsSince = String(settings.loops_close_since || '')
   /* Fewer cards (2026-10-22, her: "stop EVV and Make it official cards", "coverage checks close themselves from AxisCare",
-     "a weekly Make it official list"), off until ops_settings.quieter_cards_live (_shared/quiet-cards.ts). Off: exactly as before. */
+     "a weekly Make it official list"), off until Settings > Tidier My Work is on (_shared/quiet-cards.ts). Off: exactly as before. */
   const quiet = quietOn(settings)
   // deno-lint-ignore no-explicit-any
   const quietPlan: any = { on: quiet, official_week: null, official_new: 0, evv_review: quiet ? 'not made (EVV is retired)' : 'made on Mondays as before', rechecked: [] }
