@@ -50,7 +50,11 @@ if NODE:
         if c != 0: stop(f"{t} failed: {last}")
         ok(f"{t}: {last.strip()} (fake data only)")
 else: say("  · node is not on this Mac, so the tests were not re-run here (they passed when built)")
-ps, pb = http("GET", f"{HUB_SITE}/family-app-panel.js?v={int(time.time())}")
+for i in range(10):   # the Hub's website takes a minute or two after a merge: wait for it rather than stop
+    ps, pb = http("GET", f"{HUB_SITE}/family-app-panel.js?v={int(time.time())}")
+    if ps == 200 and "confirmPhone" in (pb or ""): break
+    if i == 0: say("  · waiting for the Hub's website to update after the merge (up to 3 minutes)")
+    time.sleep(20)
 if ps != 200 or "confirmPhone" not in (pb or ""): stop("the Hub's Confirm number button isn't live yet (merge the Hub pull request, wait a minute, run again)", 2)
 ok("the Hub's Confirm number button is live")
 gate = {}
