@@ -34,6 +34,8 @@ world([person(1, { hipaa_authorized: null, welcome_ready_at: '2026-10-01T15:00:0
   person(4, { stopped_at: '2026-10-01', welcome_ready_at: '2026-10-01T15:00:00Z' }), person(5, { welcome_skip_at: '2026-10-02', welcome_ready_at: '2026-10-01T15:00:00Z' })])
 NOW = new Date('2026-10-20T15:00:00Z'); await run()
 ck('never a card for: no HIPAA permission, not an AxisCare responsible party, inactive client, opted out, or marked "No welcome"', !W.items.length, W.items)
+world([person(1, { hipaa_authorized: null, hipaa_office_ok_at: '2026-10-02T15:00:00Z', welcome_ready_at: '2026-10-01T15:00:00Z' }), person(2, { name: 'Tom Ray', email: 't@x.test', hipaa_authorized: false, hipaa_office_ok_at: '2026-10-02T15:00:00Z', welcome_ready_at: '2026-10-01T15:00:00Z' })]); await run()
+ck('HIPAA OK in the Hub counts for the reminder; AxisCare\'s explicit No still wins', W.items.length === 1 && /Lisa Ray/.test(W.items[0].detail) && !/Tom Ray/.test(W.items[0].detail), W.items)
 world([person(1, { relationship: 'Client', source: 'app_self', hipaa_authorized: null, welcome_ready_at: '2026-10-01T15:00:00Z' })]); await run()
 ck('the client themself counts (no HIPAA needed for their own care)', W.items.length === 1)
 world([person(1, { welcome_ready_at: '2026-10-01T15:00:00Z' }), person(2, { name: 'Tom Ray', email: 't@x.test', welcome_ready_at: '2026-10-01T15:00:00Z' })]); await run()

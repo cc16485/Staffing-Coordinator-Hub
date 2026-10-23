@@ -28,12 +28,18 @@
 //   scheduling_type {circle_id, kind}   the client's Care Scheduling Type; it also sets the App plan default (Flexible on,
 //            Regular and Combination off; the office can still change the App plan)
 //   welcome_skip {contact_id, on, reason}   "No welcome for this person" (closes the reminder card)
+//   hipaa_ok {contact_id, on}   her rule 2026-10-23: the office marks HIPAA OK in the Hub (who and when), so the welcome needn't
+//            wait for AxisCare's nightly copy. Kept through the nightly sync. AxisCare's explicit No still wins (refused here).
 //   late_billed {booking_id, on}   a late cancel's charge was added to the invoice (the weekly billing list, not a card)
 // Never texts or emails a family: invite returns the words for a person to send.
 // =============================================================================
 import { brand, brandFor, type Brand } from './brands.ts'
 import { placeCaregiver, central, tasksFor, testClients, stampWords, type Ax } from './family-app.ts'
 import { runFeeCheck, lastMonth, validMonth, type FeeDeps } from './family-fee.ts'
+
+// HIPAA permission for the welcome: AxisCare's yes, or the office's HIPAA OK in the Hub, unless AxisCare says an explicit No.
+// deno-lint-ignore no-explicit-any
+export const hipaaYes = (c: any): boolean => c?.hipaa_authorized === true || (c?.hipaa_authorized !== false && !!c?.hipaa_office_ok_at)
 
 export type OfficeDeps = {
   ax: Ax
@@ -286,7 +292,7 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     if (!active) return say(409, { error: `${client} isn't an active client in AxisCare, so the welcome can't go yet (their sign-ins wouldn't work).` })
     // HIPAA permission (as for care-note messages): the welcome leads to the client's schedule, notes and invoices
     const isClient = String(c.relationship ?? '').toLowerCase() === 'client'
-    const hipaaOk = isClient || c.hipaa_authorized === true
+    const hipaaOk = isClient || hipaaYes(c)
     const phone = st?.[`family_app_office_phone_${b.key}`] ?? b.phone
     const rps = await d.rpEmails(String(k.axiscare_client_id))
     const email = String(c.email ?? '').trim().toLowerCase()
@@ -302,12 +308,13 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     if (body?.send !== true) {
       const r = kind ? render(kind, withAxisDefault) : null
       return say(200, { preview: true, name: c.name, client, can_text: canText, can_email: canEmail, axis_email_on_file: onAxis, include_axis: withAxisDefault, hipaa_ok: hipaaOk,
+        hipaa_axis: c.hipaa_authorized ?? null, hipaa_office: c.hipaa_office_ok_at ? { at: c.hipaa_office_ok_at, by: c.hipaa_office_ok_by ?? null } : null,
         kinds: CARE_TYPES.map((x) => ({ key: x, label: CARE_TYPE_LABEL[x] })), kind, saved_kind: isCareType(k.care_scheduling_type) ? k.care_scheduling_type : null, sent,
         text: r?.text ?? null, text_with_axis: kind ? render(kind, true).text : null, text_without_axis: kind ? render(kind, false).text : null,
         email_subject: r?.email.subject ?? null, email_html: r?.email.html ?? null, brand: b.key })
     }
     if (!kind) return say(400, { error: 'Pick how this client schedules care (Regular, Flexible or Combination) first.' })
-    if (!hipaaOk) return say(409, { error: `${c.name} doesn't have HIPAA permission for ${client} on file, so the welcome (which opens ${client}'s schedule, notes and invoices) can't go. Check their permission in AxisCare first.` })
+    if (!hipaaOk) return say(409, { error: `${c.name} doesn't have HIPAA permission for ${client} on file, so the welcome (which opens ${client}'s schedule, notes and invoices) can't go. ${c.hipaa_authorized === false ? 'AxisCare says No; change it there if that\'s wrong.' : 'Mark HIPAA OK in the Hub, or check their permission in AxisCare.'}` })
     if (sent && body?.again !== true) return say(409, { already: sent, error: `Already sent${sent.to ? ` to ${sent.to} at the same email` : ''} on ${stampWords(new Date(sent.at))}${sent.by ? ` by ${sent.by}` : ''}. Send it again?` })
     // Family messages go 8 AM to 6 PM Central (the hours policy); after that it would be held, so say so plainly instead
     const hr = Math.floor(central(d.now()).minutes / 60)
@@ -347,6 +354,16 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     await d.updateContact(c.id, on ? { welcome_skip_at: nowIso, welcome_skip_by: staff.name, welcome_skip_reason: reason } : { welcome_skip_at: null, welcome_skip_by: null, welcome_skip_reason: null })
     await ev('family_welcome_skip', `${staff.name} ${on ? `marked "no welcome" for ${c.name}: ${reason}` : `cleared "no welcome" for ${c.name}`}`, { contact_id: c.id, on })
     return say(200, { ok: true })
+  }
+
+  if (action === 'hipaa_ok') {
+    const c = await d.contact(String(body?.contact_id ?? '').trim())
+    if (!c) return say(404, { error: 'That person isn\'t in a Family Circle.' })
+    const on = body?.on !== false
+    if (on && c.hipaa_authorized === false) return say(409, { error: `AxisCare says ${c.name} does NOT have HIPAA permission. If that's wrong, change it in AxisCare (the Hub copies it overnight).` })
+    if (!(await d.updateContact(c.id, on ? { hipaa_office_ok_at: nowIso, hipaa_office_ok_by: staff.name } : { hipaa_office_ok_at: null, hipaa_office_ok_by: null }))) return say(500, { error: 'Not saved. Please try again.' })
+    await ev('family_hipaa_ok', `${staff.name} ${on ? 'marked HIPAA OK in the Hub' : 'took back the Hub HIPAA OK'} for ${c.name}`, { contact_id: c.id, on })
+    return say(200, { ok: true, on, at: on ? nowIso : null, by: on ? staff.name : null })
   }
 
   // Her rule 2026-10-16: a short "About <client>" the office writes once, shown on the caregiver's offer link. First name only,

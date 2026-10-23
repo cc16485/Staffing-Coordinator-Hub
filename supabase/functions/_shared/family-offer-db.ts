@@ -154,7 +154,7 @@ export function chooseDepsFor(db: Any, ax: Ax, supabaseUrl: string): ChooseDeps 
     },
     // the welcome reminder (family-welcome-alert.ts): family members with an email on active circles, and whether the client is active
     candidates: async () => {
-      const { data: cs } = await db.from('circle_contacts').select('id, name, email, relationship, source, hipaa_authorized, stopped_at, axiscare_removed_at, circle_id, welcome_sent_at, welcome_skip_at, welcome_ready_at').not('email', 'is', null)
+      const { data: cs } = await db.from('circle_contacts').select('id, name, email, relationship, source, hipaa_authorized, hipaa_office_ok_at, stopped_at, axiscare_removed_at, circle_id, welcome_sent_at, welcome_skip_at, welcome_ready_at').not('email', 'is', null)
       const ids = [...new Set((cs ?? []).map((c: Any) => String(c.circle_id)))]
       const { data: ks } = ids.length ? await db.from('care_circles').select('id, client_name, axiscare_client_id, active').in('id', ids) : { data: [] }
       const ax = [...new Set((ks ?? []).map((k: Any) => String(k.axiscare_client_id ?? '')).filter(Boolean))]
