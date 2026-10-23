@@ -8,7 +8,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { opEvent } from '../_shared/events.ts'
 import { officeAction, type OfficeDeps } from '../_shared/family-app-office.ts'
-import { contactForOutbound } from '../_shared/outreach.ts'
+import { contactForOutbound, maySendTo, normalisePhone } from '../_shared/outreach.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
@@ -42,7 +42,7 @@ const famAdmin = (path: string, init: RequestInit = {}) => fetch(`${FAMILY_URL}/
   headers: { apikey: FAMILY_SERVICE, Authorization: `Bearer ${FAMILY_SERVICE}`, 'Content-Type': 'application/json', ...(init.headers ?? {}) } })
 
 const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
-const CONTACT_COLS = 'id, name, email, phone, sms_consent, circle_id, relationship, hipaa_authorized, hipaa_office_ok_at, hipaa_office_ok_by, stopped_at, axiscare_removed_at, app_user_id, app_status, app_can_book, app_invited_at, app_invited_by, welcome_sent_at, welcome_sent_by, welcome_version, welcome_how, welcome_skip_at, welcome_skip_reason'
+const CONTACT_COLS = 'id, name, email, phone, sms_consent, circle_id, relationship, hipaa_authorized, hipaa_office_ok_at, hipaa_office_ok_by, phone_confirmed_at, phone_confirmed_by, phone_confirmed_number, stopped_at, axiscare_removed_at, app_user_id, app_status, app_can_book, app_invited_at, app_invited_by, welcome_sent_at, welcome_sent_by, welcome_version, welcome_how, welcome_skip_at, welcome_skip_reason'
 
 // The App fee check (family-fee.ts): App plan clients are active Family Circles ticked app_plan with an AxisCare client.
 const appClients = async () => ((await db.from('care_circles').select('id, client_name, axiscare_client_id, app_plan_since, active').eq('app_plan', true)).data ?? [])
@@ -108,6 +108,23 @@ const deps: OfficeDeps = {
     if (!dest) return false
     const h = { Authorization: `Bearer ${token}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
     return await ghlSendChecked(db, h, 'circle-send', { channel, contactId: dest.contactId, address: channel === 'sms' ? c.phone : c.email, who: c.name }, payload)
+  },
+  phoneTrust: async (phone) => {
+    const v = await maySendTo(db, phone, {})
+    return v.allowed ? 'ok' : v.confidence === 'suspect' ? 'rejected' : v.confidence === 'probable' ? 'unconfirmed' : v.phone ? 'error' : 'none'
+  },
+  /* her rule 2026-10-23: a person confirms the number (who and when on phone_index); taking it back resets only a Hub confirmation */
+  confirmPhone: async (phone, by) => {
+    const p = normalisePhone(phone); if (!p) return 'none'
+    const { data: rows, error } = await db.from('phone_index').select('id, verification_status, verified_by').eq('phone', p)
+    if (error) return 'error'
+    // deno-lint-ignore no-explicit-any
+    if ((rows ?? []).some((r: any) => r.verification_status === 'rejected')) return 'rejected'
+    if (!(rows ?? []).length) return 'none'   // not an imported number: it can already be texted
+    const q = by
+      ? db.from('phone_index').update({ confidence: 'confirmed', verification_status: 'verified', verified_by: by, verified_at: new Date().toISOString() }).eq('phone', p).neq('verification_status', 'verified')
+      : db.from('phone_index').update({ confidence: 'probable', verification_status: 'unverified', verified_by: null, verified_at: null }).eq('phone', p).like('verified_by', '% (Hub)')
+    return (await q).error ? 'error' : 'ok'
   },
   logMessage: async (row) => { await db.from('circle_messages').insert(row) },
   login: {

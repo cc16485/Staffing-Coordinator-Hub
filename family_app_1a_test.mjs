@@ -252,6 +252,8 @@ const odeps = () => ({
   rpEmails: async () => OW.rpFail ? null : OW.rps,
   send: async (c, channel, payload) => { OW.sent.push([c.id, channel, payload]); return !(OW.sendFail || []).includes(channel) },
   logMessage: async (row) => { OW.log.push(row) },
+  phoneTrust: async (ph) => OW.trust?.[ph] ?? 'ok',
+  confirmPhone: async (ph, by) => { if (OW.trust?.[ph] === 'rejected') return 'rejected'; OW.confirmed = [ph, by]; if (OW.trust) OW.trust[ph] = by ? 'ok' : 'unconfirmed'; return 'ok' },
   plans: async () => [], setPlan: async (id, vals) => { OW.plan = { id, ...vals }; return true }, setAbout: async (id, vals) => { OW.about = { id, ...vals }; return true }, markBilled: async () => true, fee: null,
   login: {
     create: async (email) => { if (OW.createFails) return { error: 'boom' }; if (OW.logins[email]) return { error: 'A user with this email address has already been registered', exists: true }; OW.logins[email] = 'uid-' + email; return { id: OW.logins[email] } },
@@ -342,6 +344,27 @@ await office({ action: 'welcome', contact_id: '00000009-aaaa-4bbb-8ccc-000000000
 ck('no Texts OK: email only, never a text', OW.sent.length === 1 && OW.sent[0][1] === 'email', OW.sent)
 OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'].welcome_sent_at = null; OW.sendFail = ['email']; OW.sent = []; o = await office({ action: 'welcome', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', kind: 'both', send: true })
 ck('nothing went: said plainly, nothing recorded as sent', o.status === 502 && /Neither/.test(o.body.error) && !OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'].welcome_sent_at, o)
+// her rule 2026-10-23: a number from AxisCare isn't texted until a person confirms it; the welcome says so plainly
+reset(); oreset(); await office({ action: 'invite', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009' }); Object.assign(OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'], { phone: '870-350-6164', sms_consent: true, hipaa_authorized: true }); OW.trust = { '870-350-6164': 'unconfirmed' }
+o = await office({ action: 'welcome', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', kind: 'regular' })
+ck('preview: an unconfirmed number says the text will be held and why', o.body.phone_trust === 'unconfirmed' && /isn't confirmed yet, so the text was held/.test(o.body.text_held) && o.body.phone === '870-350-6164', o.body)
+o = await office({ action: 'welcome', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', kind: 'regular', send: true })
+ck('send: email goes, the text is never tried, and the answer says it was held', o.status === 200 && o.body.by_email === true && o.body.by_text === false && /text was held/.test(o.body.text_held) && !OW.sent.some((x) => x[1] === 'sms') && OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'].welcome_how === 'email', o)
+o = await office({ action: 'confirm_phone', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', on: true })
+ck('Confirm number: recorded with who and when, the number is confirmed as the office person', o.status === 200 && OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'].phone_confirmed_by === 'Krystal Land' && OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'].phone_confirmed_number === '870-350-6164' && OW.confirmed[1] === 'Krystal Land (Hub)' && OW.events.some((e) => e.verb === 'family_phone_confirmed'), o)
+o = await office({ action: 'welcome', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', kind: 'regular' })
+ck('preview after confirming: the text can go, shows who confirmed it', o.body.phone_trust === 'ok' && !o.body.text_held && o.body.phone_confirmed?.by === 'Krystal Land', o.body)
+OW.sent = []; o = await office({ action: 'welcome', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', kind: 'regular', send: true, again: true, by_email: false })
+ck('send the text now: only the text goes, and the record keeps the email too', o.status === 200 && OW.sent.length === 1 && OW.sent[0][1] === 'sms' && OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'].welcome_how === 'email + text', o)
+o = await office({ action: 'confirm_phone', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', on: false })
+ck('take it back: the Hub confirmation is cleared', o.status === 200 && OW.confirmed[1] === null && OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'].phone_confirmed_at === null, o)
+OW.trust['870-350-6164'] = 'rejected'
+o = await office({ action: 'confirm_phone', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', on: true })
+ck('a number marked wrong before: cannot be confirmed here, says to fix it in AxisCare', o.status === 409 && /fix it in AxisCare/.test(o.body.error), o)
+Object.assign(OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'], { email: '' }); OW.trust['870-350-6164'] = 'unconfirmed'; OW.sent = []
+o = await office({ action: 'welcome', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', kind: 'regular', send: true, again: true })
+ck('no email and the number is held: nothing sent, says why', o.status === 409 && /Nothing was sent\. .*isn't confirmed yet/.test(o.body.error) && OW.sent.length === 0, o)
+delete OW.trust
 o = await office({ action: 'scheduling_type', circle_id: 'c1', kind: 'weekly' })
 ck('Care Scheduling Type: only the three choices', o.status === 400)
 o = await office({ action: 'scheduling_type', circle_id: 'c1', kind: 'flexible' })
