@@ -73,8 +73,8 @@ const ax = async (method, p, body) => {
   }
   return r(404, { errors: ['unexpected ' + method + ' ' + p] })
 }
-const WHO = { lisa: [{ contact_id: 9, name: 'Lisa Ray', circle_id: 'c1', axiscare_client_id: '501', client_name: 'Dorothy Ray', can_book: true }],
-  viewer: [{ contact_id: 10, name: 'Tom Ray', circle_id: 'c1', axiscare_client_id: '501', client_name: 'Dorothy Ray', can_book: false }], nobody: [] }
+const WHO = { lisa: [{ contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', name: 'Lisa Ray', circle_id: 'c1', axiscare_client_id: '501', client_name: 'Dorothy Ray', can_book: true }],
+  viewer: [{ contact_id: '00000010-aaaa-4bbb-8ccc-000000000010', name: 'Tom Ray', circle_id: 'c1', axiscare_client_id: '501', client_name: 'Dorothy Ray', can_book: false }], nobody: [] }
 let bid = 0
 const deps = (who = 'lisa') => ({
   ax, now: () => NOW, supabaseUrl: 'https://h.co',
@@ -233,7 +233,7 @@ ck('AxisCare refuses the removal: cancelled for the family, office card to finis
 // ── the office ───────────────────────────────────────────────────────────────────────────────────────────────────────
 let OW
 function oreset(m = {}) {
-  OW = { contacts: { 9: { id: 9, name: 'Lisa Ray', email: 'Lisa@X.test', circle_id: 'c1', app_user_id: null, app_status: null }, 10: { id: 10, name: 'Tom', email: '', circle_id: 'c1' }, 11: { id: 11, name: 'Gone', email: 'g@x.test', circle_id: 'c1', stopped_at: '2026-01-01' } },
+  OW = { contacts: { '00000009-aaaa-4bbb-8ccc-000000000009': { id: '00000009-aaaa-4bbb-8ccc-000000000009', name: 'Lisa Ray', email: 'Lisa@X.test', circle_id: 'c1', app_user_id: null, app_status: null }, '00000010-aaaa-4bbb-8ccc-000000000010': { id: '00000010-aaaa-4bbb-8ccc-000000000010', name: 'Tom', email: '', circle_id: 'c1' }, '00000011-aaaa-4bbb-8ccc-000000000011': { id: '00000011-aaaa-4bbb-8ccc-000000000011', name: 'Gone', email: 'g@x.test', circle_id: 'c1', stopped_at: '2026-01-01' } },
     circles: { c1: { id: 'c1', client_name: 'Dorothy Ray', active: true, axiscare_client_id: '501' } }, logins: {}, blocked: {}, closed: [], events: [], createFails: false,
     rps: ['lisa@x.test'], rpFail: false, sent: [], log: [], sendFail: [], ...m }
 }
@@ -263,76 +263,76 @@ const staff = { name: 'Krystal Land', email: 'krystal@cc.test' }
 let CLOCK = null
 const office = (body) => off.officeAction(CLOCK ? { ...odeps(), now: () => CLOCK } : odeps(), staff, body)
 oreset()
-o = await office({ action: 'invite', contact_id: 9, can_book: true })
-ck('invite: login made (email lower-cased), turned on, words for a person to send, nothing sent', o.status === 200 && OW.contacts[9].app_user_id === 'uid-lisa@x.test' && OW.contacts[9].app_status === 'active' && OW.contacts[9].app_can_book === true && /family\.mo-care\.com/.test(o.body.words) && /Hi Lisa/.test(o.body.words) && OW.events[0].verb === 'family_app_invited', o)
-o = await office({ action: 'invite', contact_id: 10 })
+o = await office({ action: 'invite', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', can_book: true })
+ck('invite: login made (email lower-cased), turned on, words for a person to send, nothing sent', o.status === 200 && OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'].app_user_id === 'uid-lisa@x.test' && OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'].app_status === 'active' && OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'].app_can_book === true && /family\.mo-care\.com/.test(o.body.words) && /Hi Lisa/.test(o.body.words) && OW.events[0].verb === 'family_app_invited', o)
+o = await office({ action: 'invite', contact_id: '00000010-aaaa-4bbb-8ccc-000000000010' })
 ck('invite needs an email first', o.status === 409 && /email/.test(o.body.error), o)
-o = await office({ action: 'invite', contact_id: 11 })
+o = await office({ action: 'invite', contact_id: '00000011-aaaa-4bbb-8ccc-000000000011' })
 ck('invite refused for someone removed from the circle', o.status === 409, o)
 oreset(); OW.logins['lisa@x.test'] = 'uid-existing'
-o = await office({ action: 'invite', contact_id: 9 })
-ck('invite when the login already exists: reconnects to it', o.status === 200 && OW.contacts[9].app_user_id === 'uid-existing', o)
+o = await office({ action: 'invite', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009' })
+ck('invite when the login already exists: reconnects to it', o.status === 200 && OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'].app_user_id === 'uid-existing', o)
 oreset({ createFails: true })
-o = await office({ action: 'invite', contact_id: 9 })
-ck('login not created: nothing changed in the Hub', o.status === 502 && OW.contacts[9].app_status === null, o)
-oreset(); await office({ action: 'invite', contact_id: 9 })
-o = await office({ action: 'revoke', contact_id: 9 })
-ck('revoke: off in the Hub at once and sign-in blocked', o.status === 200 && OW.contacts[9].app_status === 'revoked' && OW.blocked['uid-lisa@x.test'] === true, o)
-o = await office({ action: 'invite', contact_id: 9 })
-ck('invite again after revoke: unblocked, same login', o.status === 200 && OW.blocked['uid-lisa@x.test'] === false && OW.contacts[9].app_status === 'active', o)
-o = await office({ action: 'can_book', contact_id: 9, on: false })
-ck('booking can be turned off for one person', o.status === 200 && OW.contacts[9].app_can_book === false, o)
+o = await office({ action: 'invite', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009' })
+ck('login not created: nothing changed in the Hub', o.status === 502 && OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'].app_status === null, o)
+oreset(); await office({ action: 'invite', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009' })
+o = await office({ action: 'revoke', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009' })
+ck('revoke: off in the Hub at once and sign-in blocked', o.status === 200 && OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'].app_status === 'revoked' && OW.blocked['uid-lisa@x.test'] === true, o)
+o = await office({ action: 'invite', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009' })
+ck('invite again after revoke: unblocked, same login', o.status === 200 && OW.blocked['uid-lisa@x.test'] === false && OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'].app_status === 'active', o)
+o = await office({ action: 'can_book', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', on: false })
+ck('booking can be turned off for one person', o.status === 200 && OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'].app_can_book === false, o)
 
 // welcome (her design 2026-10-17: a person picks the version, previews, sends; recorded; a second send asks first)
-reset(); oreset(); await office({ action: 'invite', contact_id: 9 }); Object.assign(OW.contacts[9], { phone: '4175550100', sms_consent: true, hipaa_authorized: true })
+reset(); oreset(); await office({ action: 'invite', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009' }); Object.assign(OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'], { phone: '4175550100', sms_consent: true, hipaa_authorized: true })
 ck('invite no longer turns on the App plan (it follows the Care Scheduling Type now)', !OW.plan, OW.plan)
-o = await office({ action: 'welcome', contact_id: 9 })
+o = await office({ action: 'welcome', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009' })
 ck('preview with no Care Scheduling Type: asks which version, shows no words yet, nothing sent', o.status === 200 && o.body.preview && o.body.kind === null && o.body.text === null && o.body.kinds.map((x) => x.label).join('|') === 'Regular Scheduled Care|Flexible Booking Care|Combination of Both' && OW.sent.length === 0, o.body)
-o = await office({ action: 'welcome', contact_id: 9, kind: 'flexible' })
+o = await office({ action: 'welcome', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', kind: 'flexible' })
 ck('preview Flexible: the Flexible text and email, both parts, MO phone', o.body.kind === 'flexible' && /request care for Dorothy whenever you need it/.test(o.body.text) && /Care when you need it/.test(o.body.email_html) && o.body.include_axis === true && o.body.axis_email_on_file === true && /234-8494/.test(o.body.text), o.body)
-o = await office({ action: 'welcome', contact_id: 9, send: true })
+o = await office({ action: 'welcome', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', send: true })
 ck('send without a version: refused (never guessed)', o.status === 400 && /Pick how this client schedules care/.test(o.body.error) && OW.sent.length === 0, o)
-OW.rps = ['someone@else.test']; o = await office({ action: 'welcome', contact_id: 9, kind: 'regular' })
+OW.rps = ['someone@else.test']; o = await office({ action: 'welcome', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', kind: 'regular' })
 ck('preview: email not on AxisCare -> flagged, AxisCare part left out by default', o.body.axis_email_on_file === false && o.body.include_axis === false && !/16485/.test(o.body.text) && /16485/.test(o.body.text_with_axis), o.body)
 OW.rps = ['lisa@x.test']
-o = await office({ action: 'welcome', contact_id: 9, kind: 'flexible', send: true, text: 'Edited words', include_axis: true })
+o = await office({ action: 'welcome', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', kind: 'flexible', send: true, text: 'Edited words', include_axis: true })
 const em = OW.sent.find((x) => x[1] === 'email')
 ck('send Flexible: the edited text, the Flexible email with both buttons, logged on the circle', o.status === 200 && o.body.by_text && o.body.by_email && OW.sent.find((x) => x[1] === 'sms')[2].message === 'Edited words'
    && /Open the Booking App/.test(em[2].html) && /Activate your account/.test(em[2].html) && /lisa@x\.test/.test(em[2].html) && OW.log[0].circle_id === 'c1' && OW.log[0].body === 'Edited words', [o.body, OW.log])
-ck('the record: date and time, who, which version, how', OW.contacts[9].welcome_sent_at === NOW.toISOString() && OW.contacts[9].welcome_sent_by === 'Krystal Land' && OW.contacts[9].welcome_version === 'flexible' && OW.contacts[9].welcome_how === 'text + email', OW.contacts[9])
+ck('the record: date and time, who, which version, how', OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'].welcome_sent_at === NOW.toISOString() && OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'].welcome_sent_by === 'Krystal Land' && OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'].welcome_version === 'flexible' && OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'].welcome_how === 'text + email', OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'])
 ck('the version is remembered on the client and sets the App plan default: Flexible = on', OW.plan?.care_scheduling_type === 'flexible' && OW.plan?.app_plan === true && OW.plan?.app_plan_since === '2026-10-20', OW.plan)
 ck('the reminder card closes once sent', OW.closed.some((x) => x[0] === 'fam_welcome_c1'))
 OW.circles.c1.care_scheduling_type = 'flexible'; OW.sent = []
-o = await office({ action: 'welcome', contact_id: 9, send: true })
+o = await office({ action: 'welcome', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', send: true })
 ck('a second send asks first ("Already sent on ... Send it again?"), sends nothing', o.status === 409 && o.body.already && /Already sent on Tue Oct 20, 2026 at 9 AM Central by Krystal Land\. Send it again\?/.test(o.body.error) && OW.sent.length === 0, o.body)
-o = await office({ action: 'welcome', contact_id: 9, send: true, again: true })
+o = await office({ action: 'welcome', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', send: true, again: true })
 ck('...and "again" sends it (the saved version), recorded again', o.status === 200 && OW.sent.length === 2 && o.body.version === 'flexible')
 OW.contacts[12] = { id: 12, name: 'Lisa (2nd row)', email: 'lisa@x.test', circle_id: 'c1', app_status: 'active', hipaa_authorized: true }
 o = await office({ action: 'welcome', contact_id: 12, send: true })
 ck('the same email for this client already got it (a couple sharing an inbox): asks first', o.status === 409 && /to Lisa Ray at the same email/.test(o.body.error), o.body)
-reset(); oreset(); await office({ action: 'invite', contact_id: 9 }); Object.assign(OW.contacts[9], { hipaa_authorized: null })
-o = await office({ action: 'welcome', contact_id: 9, kind: 'regular', send: true })
+reset(); oreset(); await office({ action: 'invite', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009' }); Object.assign(OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'], { hipaa_authorized: null })
+o = await office({ action: 'welcome', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', kind: 'regular', send: true })
 ck('no HIPAA permission on file: refused, says why, nothing sent', o.status === 409 && /HIPAA permission/.test(o.body.error) && OW.sent.length === 0, o)
-Object.assign(OW.contacts[9], { hipaa_authorized: true }); CLOCK = new Date('2026-10-21T00:30:00Z')   // 7:30 PM
-o = await office({ action: 'welcome', contact_id: 9, kind: 'regular', send: true })
+Object.assign(OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'], { hipaa_authorized: true }); CLOCK = new Date('2026-10-21T00:30:00Z')   // 7:30 PM
+o = await office({ action: 'welcome', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', kind: 'regular', send: true })
 ck('after 6 PM: says plainly it goes 8 AM to 6 PM, nothing sent (no false "card" message)', o.status === 409 && /between 8 AM and 6 PM/.test(o.body.error) && OW.sent.length === 0, o)
 CLOCK = null
-o = await office({ action: 'welcome', contact_id: 9, kind: 'regular', send: true, include_axis: false })
+o = await office({ action: 'welcome', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', kind: 'regular', send: true, include_axis: false })
 ck('Regular, without the AxisCare part: the email is the Booking App only', o.status === 200 && !/Activate your account/.test(OW.sent.find((x) => x[1] === 'email')[2].html))
 ck('Regular sets the App plan default off', OW.plan?.care_scheduling_type === 'regular' && OW.plan?.app_plan === false, OW.plan)
-reset(); oreset(); await office({ action: 'invite', contact_id: 9 }); Object.assign(OW.contacts[9], { hipaa_authorized: true, sms_consent: false })
-await office({ action: 'welcome', contact_id: 9, kind: 'both', send: true })
+reset(); oreset(); await office({ action: 'invite', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009' }); Object.assign(OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'], { hipaa_authorized: true, sms_consent: false })
+await office({ action: 'welcome', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', kind: 'both', send: true })
 ck('no Texts OK: email only, never a text', OW.sent.length === 1 && OW.sent[0][1] === 'email', OW.sent)
-OW.contacts[9].welcome_sent_at = null; OW.sendFail = ['email']; OW.sent = []; o = await office({ action: 'welcome', contact_id: 9, kind: 'both', send: true })
-ck('nothing went: said plainly, nothing recorded as sent', o.status === 502 && /Neither/.test(o.body.error) && !OW.contacts[9].welcome_sent_at, o)
+OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'].welcome_sent_at = null; OW.sendFail = ['email']; OW.sent = []; o = await office({ action: 'welcome', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', kind: 'both', send: true })
+ck('nothing went: said plainly, nothing recorded as sent', o.status === 502 && /Neither/.test(o.body.error) && !OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'].welcome_sent_at, o)
 o = await office({ action: 'scheduling_type', circle_id: 'c1', kind: 'weekly' })
 ck('Care Scheduling Type: only the three choices', o.status === 400)
 o = await office({ action: 'scheduling_type', circle_id: 'c1', kind: 'flexible' })
 ck('Care Scheduling Type can be changed anytime; Flexible turns the App plan on', o.status === 200 && OW.plan.app_plan === true && OW.events.some((e) => e.verb === 'family_scheduling_type'))
-o = await office({ action: 'welcome_skip', contact_id: 9, on: true })
+o = await office({ action: 'welcome_skip', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', on: true })
 ck('"No welcome" needs a reason', o.status === 400)
-o = await office({ action: 'welcome_skip', contact_id: 9, on: true, reason: 'Live-in client' })
-ck('"No welcome" recorded with who and why', o.status === 200 && OW.contacts[9].welcome_skip_reason === 'Live-in client' && OW.contacts[9].welcome_skip_by === 'Krystal Land')
+o = await office({ action: 'welcome_skip', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', on: true, reason: 'Live-in client' })
+ck('"No welcome" recorded with who and why', o.status === 200 && OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'].welcome_skip_reason === 'Live-in client' && OW.contacts['00000009-aaaa-4bbb-8ccc-000000000009'].welcome_skip_by === 'Krystal Land')
 // the caregiver About (her rule 2026-10-16)
 reset(); oreset()
 o = await office({ action: 'about', circle_id: 'c1', text: '  Dot loves   gardening and old movies.  ' })
@@ -347,17 +347,17 @@ o = await office({ action: 'place', booking_id: 'nope' })
 ck('(office place still answers)', o.status >= 400, o)
 
 // two brands (2026-10-16): the welcome is branded by the client's AxisCare state, never guessed
-reset({ clientState: 'OK' }); oreset(); await office({ action: 'invite', contact_id: 9 })
-o = await office({ action: 'welcome', contact_id: 9 })
+reset({ clientState: 'OK' }); oreset(); await office({ action: 'invite', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009' })
+o = await office({ action: 'welcome', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009' })
 ck('Oklahoma client: no welcome until the Oklahoma family app exists (never the Missouri one)', o.status === 409 && /isn't set up for Caring Companions Oklahoma yet/.test(o.body.error) && OW.sent.length === 0, o)
-reset({ clientState: '' }); oreset(); await office({ action: 'invite', contact_id: 9 })
-o = await office({ action: 'welcome', contact_id: 9, send: true, text: 'x' })
+reset({ clientState: '' }); oreset(); await office({ action: 'invite', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009' })
+o = await office({ action: 'welcome', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009', send: true, text: 'x' })
 ck('no state in AxisCare: nothing sent, the reason says fix the address (no Missouri default)', o.status === 409 && /isn't Missouri or Oklahoma/.test(o.body.error) && OW.sent.length === 0, o)
-reset({ clientState: 'KS' }); oreset(); await office({ action: 'invite', contact_id: 9 })
-o = await office({ action: 'welcome', contact_id: 9 })
+reset({ clientState: 'KS' }); oreset(); await office({ action: 'invite', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009' })
+o = await office({ action: 'welcome', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009' })
 ck('a Kansas address: refused, says what AxisCare has', o.status === 409 && /it says KS/.test(o.body.error), o)
 reset()
-oreset(); o = await office({ action: 'welcome', contact_id: 9 })
+oreset(); o = await office({ action: 'welcome', contact_id: '00000009-aaaa-4bbb-8ccc-000000000009' })
 ck('welcome before invite: refused', o.status === 409 && /Invite/.test(o.body.error), o)
 const ofx = fs.readFileSync(path.join(F, 'family-app-office/index.ts'), 'utf8')
 ck('welcome goes through the family-safe door: audience family, humanInitiated, named channel, checked send', /audience: 'family', humanInitiated: true, channel/.test(ofx) && /ghlSendChecked\(db/.test(ofx))

@@ -41,11 +41,11 @@ export type OfficeDeps = {
   // deno-lint-ignore no-explicit-any
   settings: () => Promise<any>
   // deno-lint-ignore no-explicit-any
-  contact: (id: number) => Promise<any | null>
+  contact: (id: string) => Promise<any | null>   // circle_contacts.id is a uuid
   // deno-lint-ignore no-explicit-any
   circle: (id: string) => Promise<any | null>
   // deno-lint-ignore no-explicit-any
-  updateContact: (id: number, vals: any) => Promise<boolean>
+  updateContact: (id: string, vals: any) => Promise<boolean>
   /** Everyone in one Family Circle (the welcome's "already sent to this email" check). Optional for older callers. */
   // deno-lint-ignore no-explicit-any
   circleContacts?: (circleId: string) => Promise<any[]>
@@ -224,7 +224,7 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
   }
 
   if (['invite', 'revoke', 'can_book'].includes(action)) {
-    const c = await d.contact(Number(body?.contact_id))
+    const c = await d.contact(String(body?.contact_id ?? '').trim())
     if (!c) return say(404, { error: 'That person isn\'t in a Family Circle.' })
     if (action === 'can_book') {
       const on = body?.on === true
@@ -262,7 +262,7 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
   }
 
   if (action === 'welcome') {
-    const c = await d.contact(Number(body?.contact_id))
+    const c = await d.contact(String(body?.contact_id ?? '').trim())
     if (!c) return say(404, { error: 'That person isn\'t in a Family Circle.' })
     if (c.app_status !== 'active') return say(409, { error: `Invite ${c.name} to the family app first.` })
     if (c.stopped_at || c.axiscare_removed_at) return say(409, { error: `${c.name} has been removed from the Family Circle.` })
@@ -340,7 +340,7 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
   }
 
   if (action === 'welcome_skip') {
-    const c = await d.contact(Number(body?.contact_id))
+    const c = await d.contact(String(body?.contact_id ?? '').trim())
     if (!c) return say(404, { error: 'That person isn\'t in a Family Circle.' })
     const on = body?.on !== false, reason = String(body?.reason ?? '').replace(/\s+/g, ' ').trim().slice(0, 200)
     if (on && !reason) return say(400, { error: 'Say why (for the record).' })
