@@ -42,7 +42,7 @@ const famAdmin = (path: string, init: RequestInit = {}) => fetch(`${FAMILY_URL}/
   headers: { apikey: FAMILY_SERVICE, Authorization: `Bearer ${FAMILY_SERVICE}`, 'Content-Type': 'application/json', ...(init.headers ?? {}) } })
 
 const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
-const CONTACT_COLS = 'id, name, email, phone, sms_consent, circle_id, relationship, hipaa_authorized, stopped_at, axiscare_removed_at, app_user_id, app_status, app_can_book, app_invited_at, app_invited_by, welcome_sent_at, welcome_sent_by, welcome_version, welcome_how, welcome_skip_at, welcome_skip_reason'
+const CONTACT_COLS = 'id, name, email, phone, sms_consent, circle_id, relationship, hipaa_authorized, hipaa_office_ok_at, hipaa_office_ok_by, stopped_at, axiscare_removed_at, app_user_id, app_status, app_can_book, app_invited_at, app_invited_by, welcome_sent_at, welcome_sent_by, welcome_version, welcome_how, welcome_skip_at, welcome_skip_reason'
 
 // The App fee check (family-fee.ts): App plan clients are active Family Circles ticked app_plan with an AxisCare client.
 const appClients = async () => ((await db.from('care_circles').select('id, client_name, axiscare_client_id, app_plan_since, active').eq('app_plan', true)).data ?? [])

@@ -32,7 +32,7 @@ export function isReady(c: Any, skip: string[]): boolean {
   const email = String(c.email ?? '').trim()
   const isClient = String(c.relationship ?? '').toLowerCase() === 'client'
   return !!email && !c.stopped_at && !c.axiscare_removed_at && c.circle_active !== false && !!c.axiscare_client_id && c.client_active === true &&
-    (c.source === 'axiscare' || isClient) && (c.hipaa_authorized === true || isClient) && !skip.includes(String(c.axiscare_client_id))
+    (c.source === 'axiscare' || isClient) && (c.hipaa_authorized === true || (c.hipaa_authorized !== false && !!c.hipaa_office_ok_at) || isClient)   /* 2026-10-23: or the office's HIPAA OK in the Hub, unless AxisCare says No */ && !skip.includes(String(c.axiscare_client_id))
 }
 
 export async function welcomeAlerts(d: WelcomeAlertDeps, opts: { dry?: boolean } = {}) {
