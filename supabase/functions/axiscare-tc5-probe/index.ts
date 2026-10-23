@@ -21,7 +21,13 @@
 // 2026-10-17 (914, after 913): AxisCare only takes schedules for an ACTIVE client, and Test Client 5 was inactive, so A
 // was not answered. only:'open_shift' runs A alone; it refuses unless Samantha has set #290 Active, and
 // set_status_after:'Inactive' puts it back afterwards (read back). A refusal names AxisCare's real reason.
+// 2026-10-23 (916, after 915 stopped 4 times on an Inactive Test Client 5): client:'practice' runs A on the AxisCare
+// Practice client instead (Samantha: "Point the open-shift test at the AxisCare Practice client instead of Test Client 5").
+// It is found by its exact name, the Hub's own rule (PRACTICE_NAME: "Practice" or "Practice Client"), must be the only
+// one and Active, and only A runs: no preferred-caregiver test and no status change (it is in use for test clock-ins).
+// Schedules and visits already on it are read first and never touched; cleanup deletes only what this run made.
 // =============================================================================
+import { PRACTICE_NAME } from '../_shared/client-quiet.ts'
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b, null, 1), { status: s, headers: { 'Content-Type': 'application/json' } })
 const VER = Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01'
 const TEST_CLIENT = 290
@@ -69,29 +75,50 @@ export function refusalReason(errors: Any): 'client_inactive' | 'caregiver_requi
 }
 const cgId = (x: Any) => (x && typeof x === 'object' ? (x.id ?? null) : x ?? null)
 
-async function clientRec(): Promise<Any> {
-  const r = await ax('GET', `/api/clients/${TEST_CLIENT}`)
+const nameOf = (c: Any) => [c?.firstName, c?.lastName].map((x: Any) => String(x ?? '').trim()).filter(Boolean).join(' ')
+/** every AxisCare client named exactly "Practice" or "Practice Client" (all pages) */
+async function practiceClients(): Promise<{ status: number; list: Any[] }> {
+  const list: Any[] = []; let status = 0
+  for (let page = 1, url: string | null = '/api/clients'; url && page <= 20; page++) {
+    const r = await ax('GET', url); status = r.status
+    if (!ok2(r.status)) return { status, list: [] }
+    for (const c of rowsOf(r.json?.results?.clients ?? r.json?.clients)) if (PRACTICE_NAME.test(nameOf(c))) list.push(c)
+    const nx = r.json?.results?.nextPage ?? r.json?.nextPage ?? null; url = nx ? String(nx).replace(/^https?:\/\/[^/]+/, '') : null
+  }
+  return { status, list }
+}
+async function clientRec(CID: number): Promise<Any> {
+  const r = await ax('GET', `/api/clients/${CID}`)
   return { status: r.status, rec: r.json?.results?.client ?? r.json?.results ?? r.json?.client ?? null }
 }
-async function schedulesFor(from: string, to: string) {
-  const r = await ax('GET', `/api/schedules?clientIds=${TEST_CLIENT}&startDate=${from}&endDate=${to}`)
+async function schedulesFor(CID: number, from: string, to: string) {
+  const r = await ax('GET', `/api/schedules?clientIds=${CID}&startDate=${from}&endDate=${to}`)
   return { status: r.status, list: rowsOf(r.json?.results?.schedules ?? r.json?.schedules ?? r.json?.results) }
 }
-async function visitsFor(from: string, to: string) {
-  const r = await ax('GET', `/api/visits?clientIds=${TEST_CLIENT}&startDate=${from}&endDate=${to}`)
+async function visitsFor(CID: number, from: string, to: string) {
+  const r = await ax('GET', `/api/visits?clientIds=${CID}&startDate=${from}&endDate=${to}`)
   return { status: r.status, list: rowsOf(r.json?.results?.visits ?? r.json?.visits).filter((v: Any) => v && !v.removed) }
 }
 
 Deno.serve(async (req) => {
   if (roleOf(req.headers.get('authorization')) !== 'service_role') return json({ error: 'owner script only' }, 403)
   const b: Any = await req.json().catch(() => ({}))
-  const go = b.go === true, out: Any = { test_client: TEST_CLIENT, go }
+  const practice = b.client === 'practice', who = practice ? 'The Practice client' : 'Test Client 5'
+  if (practice && (b.only !== 'open_shift' || b.set_status_after != null)) return json({ error: "the Practice client runs the open-shift test only (only:'open_shift'), and its status is never changed" }, 400)
+  let CID = TEST_CLIENT
+  if (practice) {
+    const pc = await practiceClients()
+    if (pc.list.length !== 1) return json({ target: 'practice', go: b.go === true, refused: pc.status !== 200 ? `AxisCare's client list could not be read (answered ${pc.status}): nothing was done`
+      : `AxisCare has ${pc.list.length} clients named "Practice" or "Practice Client" (${pc.list.map((c: Any) => '#' + c?.id).join(', ') || 'none'}); the test needs exactly one: nothing was done` }, 409)
+    CID = Number(pc.list[0].id)
+  }
+  const go = b.go === true, out: Any = { test_client: CID, target: practice ? 'practice' : 'test_client_5', go }
 
-  // the lock: client 290 must still be Test Client 5
-  const c0 = await clientRec()
-  const nm = [c0.rec?.firstName, c0.rec?.lastName].filter(Boolean).join(' ')
+  // the lock: client 290 must still be Test Client 5; the Practice client must still carry its exact name
+  const c0 = await clientRec(CID)
+  const nm = nameOf(c0.rec)
   out.client = { status: c0.status, name: nm, preferred_before: cgId(cgOf(c0.rec)), field_names: c0.rec ? Object.keys(c0.rec).filter((k) => /caregiver/i.test(k)) : [], client_status: statusOf(c0.rec) }
-  if (c0.status !== 200 || !/test client 5/i.test(nm)) return json({ ...out, refused: 'AxisCare client 290 is not "Test Client 5" (or could not be read): nothing was done' }, 409)
+  if (c0.status !== 200 || !(practice ? PRACTICE_NAME.test(nm) : /test client 5/i.test(nm))) return json({ ...out, refused: practice ? `AxisCare client ${CID} does not read as "Practice" (or could not be read): nothing was done` : 'AxisCare client 290 is not "Test Client 5" (or could not be read): nothing was done' }, 409)
 
   // a service code this agency uses (from a recent visit), for the schedule
   const recent = await ax('GET', `/api/visits?startDate=${chi(-14)}&endDate=${chi(0)}`)
@@ -111,18 +138,21 @@ Deno.serve(async (req) => {
   }
   out.placeholder = ph ? { id: ph.id, name: 'Canceled Shift' } : null
   const onlyA = b.only === 'open_shift'
-  if (onlyA && out.client.client_status.active !== true) return json({ ...out, not_active: 'Test Client 5 is ' + (out.client.client_status.label || 'not Active') + ' in AxisCare. AxisCare only takes schedules for an Active client: set it to Active first. Nothing was done.' }, 409)
+  if (onlyA && out.client.client_status.active !== true) return json({ ...out, not_active: who + ' is ' + (out.client.client_status.label || 'not Active') + ' in AxisCare. AxisCare only takes schedules for an Active client: set it to Active first. Nothing was done.' }, 409)
   if (!go) return json({ ...out, would: 'A: create one open-shift schedule on ' + pd.day + ' ' + pd.date + ' to ' + end + ' 9-11am, read it back, delete it, read back. B: set the preferred caregiver to the placeholder, read back, put it back, read back.' })
 
   /* ── A. OPEN SHIFT ── */
   const A: Any = {}; out.open_shift = A
   if (!svc) A.skipped = 'no service code found to use'
   else {
-    const before = await schedulesFor(pd.date, end)
-    A.schedules_before = before.list.length
+    /* what is already there is never touched (the Practice client has real test visits): only new ids count as this run's */
+    const sid = (s: Any) => String(s?.scheduleId ?? s?.id ?? '')
+    const before = await schedulesFor(CID, pd.date, end), vbefore = await visitsFor(CID, pd.date, end)
+    const oldS = new Set(before.list.map(sid)), oldV = new Set(vbefore.list.map((v: Any) => String(v?.id ?? '')))
+    A.schedules_before = before.list.length; A.visits_before = vbefore.list.length
     let r: Any = null; A.tried = []
     for (const code of codes.slice(0, 12)) {
-      r = await ax('POST', '/api/schedules', { clientId: TEST_CLIENT, days: [pd.day], startDate: pd.date, endDate: end, startTime: '09:00', endTime: '11:00', serviceCode: code, frequency: 1 })
+      r = await ax('POST', '/api/schedules', { clientId: CID, days: [pd.day], startDate: pd.date, endDate: end, startTime: '09:00', endTime: '11:00', serviceCode: code, frequency: 1 })
       A.tried.push({ code, status: r.status, errors: errs(r) })
       if (ok2(r.status) || !/service/i.test(JSON.stringify(errs(r) ?? ''))) { A.service_code = code; break }
     }
@@ -132,26 +162,27 @@ Deno.serve(async (req) => {
     A.accepted_without_caregiver = ok2(r.status)
     if (!ok2(r.status)) A.reason = refusalReason(errs(r))
     if (ok2(r.status)) {
-      const sb = await schedulesFor(pd.date, end)
-      const mine = sb.list.filter((s: Any) => ids.includes(String(s?.scheduleId ?? s?.id)) || (String(s?.startTime || '').startsWith('09:00') && String(s?.endTime || '').startsWith('11:00')))
+      const sb = await schedulesFor(CID, pd.date, end)
+      const mine = sb.list.filter((s: Any) => ids.includes(sid(s)) || (!oldS.has(sid(s)) && String(s?.startTime || '').startsWith('09:00') && String(s?.endTime || '').startsWith('11:00')))
       A.readback_schedule = { status: sb.status, found: mine.length, caregiver_on_it: mine.map((s: Any) => s?.caregiver?.id ?? null) }
-      const vb = await visitsFor(pd.date, end)
-      const vmine = vb.list.filter((v: Any) => String(v?.scheduledStartDate ?? v?.startDate ?? '').slice(11, 16) === '09:00')
+      const vb = await visitsFor(CID, pd.date, end)
+      const newV = (v: Any) => !oldV.has(String(v?.id ?? '')) && String(v?.scheduledStartDate ?? v?.startDate ?? '').slice(11, 16) === '09:00'
+      const vmine = vb.list.filter(newV)
       A.readback_visits = { status: vb.status, found: vmine.length, unassigned: vmine.filter((v: Any) => v?.caregiver?.id == null).length, ids: vmine.map((v: Any) => String(v.id)) }
       A.cleanup = []
-      const delIds = ids.length ? ids : mine.map((s: Any) => String(s?.scheduleId ?? s?.id)).filter(Boolean)
+      const delIds = (ids.length ? ids : mine.map(sid).filter(Boolean)).filter((id: string) => !oldS.has(id))
       for (const id of delIds) { const d = await ax('DELETE', `/api/schedules/${encodeURIComponent(id)}?effectiveDate=${pd.date}`); A.cleanup.push({ id, status: d.status, errors: errs(d) }) }
-      const sa = await schedulesFor(pd.date, end), va = await visitsFor(pd.date, end)
-      A.after_cleanup = { schedules_left: sa.list.filter((s: Any) => delIds.includes(String(s?.scheduleId ?? s?.id))).length,
-        visits_left: va.list.filter((v: Any) => String(v?.scheduledStartDate ?? v?.startDate ?? '').slice(11, 16) === '09:00').length }
-      A.clean = A.after_cleanup.schedules_left === 0 && A.after_cleanup.visits_left === 0
+      const sa = await schedulesFor(CID, pd.date, end), va = await visitsFor(CID, pd.date, end)
+      A.after_cleanup = { schedules_left: sa.list.filter((s: Any) => delIds.includes(sid(s))).length, visits_left: va.list.filter(newV).length,
+        untouched: before.list.every((s: Any) => sa.list.some((x: Any) => sid(x) === sid(s))) && vbefore.list.every((v: Any) => va.list.some((x: Any) => String(x?.id) === String(v?.id))) }
+      A.clean = A.after_cleanup.schedules_left === 0 && A.after_cleanup.visits_left === 0 && A.after_cleanup.untouched
     }
   }
 
   /* put the client's status back when asked (914): read back */
   if (typeof b.set_status_after === 'string' && /^(Inactive|Active)$/.test(b.set_status_after)) {
-    const r2 = await ax('PATCH', `/api/clients/${TEST_CLIENT}`, { status: b.set_status_after })
-    const back = await clientRec()
+    const r2 = await ax('PATCH', `/api/clients/${CID}`, { status: b.set_status_after })
+    const back = await clientRec(CID)
     out.status_after = { to: b.set_status_after, status: r2.status, errors: errs(r2), read_back: statusOf(back.rec).label, restored: statusOf(back.rec).label.toLowerCase() === b.set_status_after.toLowerCase() }
   }
   if (onlyA) return json(out)
@@ -161,15 +192,15 @@ Deno.serve(async (req) => {
   else {
     const was = cgId(cgOf(c0.rec))
     for (const field of ['preferredCaregiver', 'referredCaregiver']) {
-      const r = await ax('PATCH', `/api/clients/${TEST_CLIENT}`, { [field]: { id: Number(ph.id) } })
-      const back = await clientRec()
+      const r = await ax('PATCH', `/api/clients/${CID}`, { [field]: { id: Number(ph.id) } })
+      const back = await clientRec(CID)
       B[field] = { status: r.status, errors: errs(r), read_back: cgId(cgOf(back.rec)), took: String(cgId(cgOf(back.rec))) === String(ph.id) }
       if (B[field].took) { B.works_with = field; break }
     }
     if (B.works_with) {
       const restoreBody = { [B.works_with]: was == null ? null : { id: Number(was) } }
-      const r = await ax('PATCH', `/api/clients/${TEST_CLIENT}`, restoreBody)
-      const back = await clientRec()
+      const r = await ax('PATCH', `/api/clients/${CID}`, restoreBody)
+      const back = await clientRec(CID)
       B.restore = { to: was, status: r.status, errors: errs(r), read_back: cgId(cgOf(back.rec)), restored: String(cgId(cgOf(back.rec)) ?? '') === String(was ?? '') }
     }
   }
