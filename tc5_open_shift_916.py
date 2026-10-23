@@ -64,7 +64,7 @@ A = r.get("open_shift") or {}
 say(); say("A · OPEN SHIFT (a schedule with no caregiver)")
 if A.get("skipped"): bad("not tried: " + A["skipped"])
 elif A.get("accepted_without_caregiver"):
-    ok(f"AxisCare ACCEPTED a schedule with no caregiver (answered {A['create']['status']}, service {A.get('service_code')})")
+    ok(f"AxisCare ACCEPTED a schedule with no caregiver (answered {A['create']['status']}, service {A.get('service_code') or A.get('service_description')})")
     rs, rv = A.get("readback_schedule") or {}, A.get("readback_visits") or {}
     ok(f"read back: {rs.get('found', 0)} schedule, {rv.get('found', 0)} visit, {rv.get('unassigned', 0)} of them with no caregiver") if rs.get("found") else bad("read back: the schedule was not found after creating it")
     if A.get("clean"): ok("deleted and read back: the test shift is gone and the Practice client's own shifts are untouched")
@@ -75,11 +75,20 @@ else:
         ok(f"AxisCare REFUSED a schedule with no caregiver (answered {A.get('create', {}).get('status')}): {why}")
         say("  · so open shifts can't be sent; the Hub will list them for the coordinator to add in AxisCare instead")
     elif A.get("reason") == "service_not_on_client":
-        bad("none of the agency's services is set up on the Practice client's Billing tab (" + ", ".join(t.get("code", "") for t in (A.get("tried") or [])) + "), so the open-shift question is still not answered. Add one in AxisCare, then run this again")
+        bad("AxisCare would not take any of the agency's services for the Practice client, so the open-shift question is still not answered. Its exact words for each try are below; send this report to Claude")
     elif A.get("reason") == "client_inactive":
         bad(f"AxisCare says the Practice client is inactive ({why}), so the open-shift question is still not answered")
     else:
         bad(f"AxisCare refused the schedule for another reason (answered {A.get('create', {}).get('status')}): {why}. The open-shift question is not answered; Claude reads this before building on it")
+if not A.get("accepted_without_caregiver") and A.get("tried"):
+    say(); say("WHAT AXISCARE SAID TO EACH TRY")
+    for t in A["tried"]: say(f"  · {t.get('code') or 'by description: ' + str(t.get('description'))}: answered {t.get('status')}: {json.dumps(t.get('errors'))[:220]}")
+sf = (d.get("client") or {}).get("service_fields") or {}
+if not A.get("accepted_without_caregiver"):
+    say(); say("WHAT THE PRACTICE CLIENT'S RECORD SAYS ABOUT SERVICES")
+    if sf:
+        for k, v in sf.items(): say(f"  · {k}: {str(v)[:220]}")
+    else: say("  · nothing: AxisCare's client record has no service or billing fields")
 say()
 if L.fails: say("  RESULT: DONE WITH NOTES. The answers are above; anything marked ✗ needs a look. Nothing was texted.")
 else: say("  RESULT: DONE. The open-shift answer is in, the Practice client is as it was, and nothing was texted.")

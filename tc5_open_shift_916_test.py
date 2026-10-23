@@ -11,7 +11,7 @@ subprocess.run(["git", "-C", COPY, "checkout", "-q", HEAD], check=True)
 FNROOT = os.path.join(COPY, "supabase", "functions")
 SHAS = {"axiscare-tc5-probe/index.ts": hashlib.sha256(open(os.path.join(FNROOT, "axiscare-tc5-probe/index.ts"), "rb").read()).hexdigest()}
 M = {}; CALLS = []
-GOOD = {"plan": {"day": "Monday", "start": "2026-11-23", "end": "2026-11-29", "service_code": "PP - WC", "service_codes": ["PP - WC", "PP - PC"]}, "placeholder": {"id": 50}}
+GOOD = {"client": {"service_fields": {"services": "[\"PP - WC\"]"}}, "plan": {"day": "Monday", "start": "2026-11-23", "end": "2026-11-29", "service_code": "PP - WC", "service_codes": ["PP - WC", "PP - PC"]}, "placeholder": {"id": 50}}
 DONE = {"open_shift": {"accepted_without_caregiver": True, "service_code": "PP - PC", "create": {"status": 201}, "readback_schedule": {"found": 1}, "readback_visits": {"found": 1, "unassigned": 1}, "clean": True, "created_ids": ["700"]}}
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
@@ -69,8 +69,10 @@ c, out, dep = run(result=dict(DONE, open_shift={"accepted_without_caregiver": Fa
 ck("5 refused because the client is inactive: never reported as an open-shift refusal", "says the Practice client is inactive" in out and "REFUSED a schedule with no caregiver" not in out and "DONE WITH NOTES" in out, out)
 c, out, dep = run(result=dict(DONE, open_shift={"accepted_without_caregiver": True, "service_code": "PP - PC", "create": {"status": 201}, "readback_schedule": {"found": 1}, "readback_visits": {"found": 1, "unassigned": 1}, "clean": False, "after_cleanup": {"schedules_left": 1, "visits_left": 1, "untouched": True}, "created_ids": ["700"]}))
 ck("6 cleanup not finished: loud, says exactly what to remove in AxisCare", "cleanup did NOT finish" in out and "Practice client's 9-11am shift with no caregiver" in out and "700" in out and "DONE WITH NOTES" in out, out)
-c, out, dep = run(result=dict(DONE, open_shift={"accepted_without_caregiver": False, "reason": "service_not_on_client", "tried": [{"code": "PP - WC"}, {"code": "PP - PC"}], "create": {"status": 400, "errors": ["Invalid service code"]}}))
-ck("5b no service on the Practice client: says to add one in AxisCare, never an open-shift answer", "none of the agency's services is set up on the Practice client's Billing tab (PP - WC, PP - PC)" in out and "REFUSED a schedule with no caregiver" not in out, out)
+c, out, dep = run(result=dict(DONE, open_shift={"accepted_without_caregiver": False, "reason": "service_not_on_client", "tried": [{"code": "PP - WC", "status": 400, "errors": ["Invalid service code"]}, {"code": "PP - PC", "status": 400, "errors": ["Invalid service code"]}, {"description": "Personal Care", "status": 400, "errors": ["Invalid service description"]}], "create": {"status": 400, "errors": ["Invalid service code"]}}))
+ck("5b every service refused: says so, never an open-shift answer, and prints AxisCare's exact words for each try", "would not take any of the agency's services" in out and "REFUSED a schedule with no caregiver" not in out
+   and "· PP - WC: answered 400" in out and "· by description: Personal Care: answered 400" in out and "Invalid service code" in out, out)
+ck("5d the Practice client's service fields are printed", "WHAT THE PRACTICE CLIENT'S RECORD SAYS ABOUT SERVICES" in out and "· services: [\"PP - WC\"]" in out, out)
 ck("5c the plan line lists the services it will try", "trying the agency's services: PP - WC, PP - PC" in out)
 c, out, dep = run(shas={"axiscare-tc5-probe/index.ts": "0" * 64})
 ck("7 a build that isn't the reviewed one stops before anything", c != 0 and not dep and not probe_calls(), out)
