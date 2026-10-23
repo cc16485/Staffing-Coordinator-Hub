@@ -41,6 +41,8 @@ import { runFeeCheck, lastMonth, validMonth, type FeeDeps } from './family-fee.t
 // deno-lint-ignore no-explicit-any
 export const hipaaYes = (c: any): boolean => c?.hipaa_authorized === true || (c?.hipaa_authorized !== false && !!c?.hipaa_office_ok_at)
 
+export type PhoneTrust = 'ok' | 'unconfirmed' | 'rejected' | 'none' | 'error'
+
 export type OfficeDeps = {
   ax: Ax
   now: () => Date
@@ -72,6 +74,10 @@ export type OfficeDeps = {
   /** One send through the family-safe door (a person pressed Send). True when it went. */
   // deno-lint-ignore no-explicit-any
   send: (c: any, channel: 'sms' | 'email', payload: { message?: string; subject?: string; html?: string }) => Promise<boolean>
+  /** Can this number be texted (outreach.ts maySendTo): ok, unconfirmed (probable, from an import), rejected, or none. Optional. */
+  phoneTrust?: (phone: unknown) => Promise<PhoneTrust>
+  /** Confirm a number for texting (by = who, recorded) or take back a Hub confirmation (by = null). Optional. */
+  confirmPhone?: (phone: unknown, by: string | null) => Promise<'ok' | 'none' | 'rejected' | 'error'>
   // deno-lint-ignore no-explicit-any
   logMessage: (row: any) => Promise<void>
   /** The month-end App fee check (family-fee.ts) and the App plan tick on a client's Family Circle. */
@@ -298,6 +304,12 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     const email = String(c.email ?? '').trim().toLowerCase()
     const onAxis = rps === null ? null : (!!email && rps.includes(email))
     const canText = !!(c.phone && c.sms_consent), canEmail = !!email
+    /* her rule 2026-10-23: a number from AxisCare isn't texted until a person confirms it, and the welcome says so plainly */
+    const trust: PhoneTrust | null = !canText ? null : d.phoneTrust ? await d.phoneTrust(c.phone) : 'ok'
+    const textHeld = canText && trust !== 'ok'
+    const heldWhy = !textHeld ? null : trust === 'unconfirmed' ? `${first}'s number (${c.phone}) isn't confirmed yet, so the text was held. Confirm the number to send the text.`
+      : trust === 'rejected' ? `${first}'s number (${c.phone}) was reviewed and marked wrong, so the text was held. Check it with the family and fix it in AxisCare.`
+      : `The Hub couldn't check ${first}'s number just now, so the text was held.`
     const kind: CareType | null = isCareType(body?.kind) ? body.kind : isCareType(k.care_scheduling_type) ? k.care_scheduling_type : null
     // already sent to this person, or to the same email for this client (a couple sharing an inbox)
     const same = d.circleContacts ? (await d.circleContacts(String(c.circle_id))).filter((x) => x.id !== c.id && String(x.email ?? '').trim().toLowerCase() === email && x.welcome_sent_at) : []
@@ -311,7 +323,8 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
         hipaa_axis: c.hipaa_authorized ?? null, hipaa_office: c.hipaa_office_ok_at ? { at: c.hipaa_office_ok_at, by: c.hipaa_office_ok_by ?? null } : null,
         kinds: CARE_TYPES.map((x) => ({ key: x, label: CARE_TYPE_LABEL[x] })), kind, saved_kind: isCareType(k.care_scheduling_type) ? k.care_scheduling_type : null, sent,
         text: r?.text ?? null, text_with_axis: kind ? render(kind, true).text : null, text_without_axis: kind ? render(kind, false).text : null,
-        email_subject: r?.email.subject ?? null, email_html: r?.email.html ?? null, brand: b.key })
+        email_subject: r?.email.subject ?? null, email_html: r?.email.html ?? null, brand: b.key,
+        phone: c.phone ?? null, phone_trust: trust, text_held: heldWhy, phone_confirmed: c.phone_confirmed_at && c.phone_confirmed_number === c.phone ? { at: c.phone_confirmed_at, by: c.phone_confirmed_by ?? null } : null })
     }
     if (!kind) return say(400, { error: 'Pick how this client schedules care (Regular, Flexible or Combination) first.' })
     if (!hipaaOk) return say(409, { error: `${c.name} doesn't have HIPAA permission for ${client} on file, so the welcome (which opens ${client}'s schedule, notes and invoices) can't go. ${c.hipaa_authorized === false ? 'AxisCare says No; change it there if that\'s wrong.' : 'Mark HIPAA OK in the Hub, or check their permission in AxisCare.'}` })
@@ -323,19 +336,24 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     const r = render(kind, withAxis)
     const text = String(body?.text ?? '').trim() || r.text
     if (!canText && !canEmail) return say(409, { error: `There's no way to reach ${c.name}: no email, and no phone with Texts OK.` })
+    if (!canEmail && textHeld) return say(409, { error: `Nothing was sent. ${heldWhy}` })
+    if (body?.by_email === false && textHeld) return say(409, { error: `Nothing was sent. ${heldWhy}` })
     // the version is remembered on the client as its Care Scheduling Type (and sets the App plan default when it changes)
     if (k.care_scheduling_type !== kind) await saveCareType(String(k.id), k, kind)
     let byText = false, byEmail = false
-    if (canText && body?.by_text !== false) byText = await d.send(c, 'sms', { message: text })
+    if (canText && !textHeld && body?.by_text !== false) byText = await d.send(c, 'sms', { message: text })
     if (canEmail && body?.by_email !== false) byEmail = await d.send(c, 'email', { subject: r.email.subject, html: r.email.html })
     const how = [byText && 'text', byEmail && 'email'].filter(Boolean).join(' + ')
+    // a text sent afterwards (the number was confirmed later) adds to the record instead of replacing how it went
+    const howRec = body?.by_email === false && c.welcome_how ? [...new Set([...String(c.welcome_how).split(' + '), ...how.split(' + ')].filter(Boolean))].join(' + ') : how
     await d.logMessage({ circle_id: String(c.circle_id), kind: 'update', body: text, sent_by: staff.name, reached: byText || byEmail ? 1 : 0, skipped: byText || byEmail ? 0 : 1 })
     await ev('family_app_welcome', `${staff.name} sent ${c.name} the ${CARE_TYPE_LABEL[kind]} welcome (${how || 'nothing went'})`, { contact_id: c.id, by_text: byText, by_email: byEmail, include_axis: withAxis, version: kind, again: !!sent })
     if (!byText && !byEmail) return say(502, { error: 'Neither the text nor the email went through. If GoHighLevel refused it there\'s a Needs Attention card; otherwise they may have opted out.' })
     // the record: date and time, who, which version, how
-    await d.updateContact(c.id, { welcome_sent_at: nowIso, welcome_sent_by: staff.name, welcome_version: kind, welcome_how: how })
+    await d.updateContact(c.id, { welcome_sent_at: nowIso, welcome_sent_by: staff.name, welcome_version: kind, welcome_how: howRec })
     if (d.closeItem) await d.closeItem(`fam_welcome_${c.circle_id}`, staff.name, `Welcome sent to ${c.name}.`)
-    return say(200, { ok: true, by_text: byText, by_email: byEmail, sent_at: nowIso, version: kind })
+    return say(200, { ok: true, by_text: byText, by_email: byEmail, sent_at: nowIso, version: kind, text_held: heldWhy,
+      text_failed: canText && !textHeld && body?.by_text !== false && !byText })
   }
 
   if (action === 'scheduling_type') {
@@ -364,6 +382,20 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     if (!(await d.updateContact(c.id, on ? { hipaa_office_ok_at: nowIso, hipaa_office_ok_by: staff.name } : { hipaa_office_ok_at: null, hipaa_office_ok_by: null }))) return say(500, { error: 'Not saved. Please try again.' })
     await ev('family_hipaa_ok', `${staff.name} ${on ? 'marked HIPAA OK in the Hub' : 'took back the Hub HIPAA OK'} for ${c.name}`, { contact_id: c.id, on })
     return say(200, { ok: true, on, at: on ? nowIso : null, by: on ? staff.name : null })
+  }
+
+  if (action === 'confirm_phone') {
+    const c = await d.contact(String(body?.contact_id ?? '').trim())
+    if (!c) return say(404, { error: 'That person isn\'t in a Family Circle.' })
+    if (!c.phone) return say(409, { error: `There's no phone number for ${c.name}.` })
+    if (!d.confirmPhone) return say(503, { error: 'Not available yet.' })
+    const on = body?.on !== false
+    const r = await d.confirmPhone(c.phone, on ? `${staff.name} (Hub)` : null)
+    if (r === 'rejected') return say(409, { error: `${c.phone} was reviewed and marked wrong before, so it can't be confirmed here. Check it with the family and fix it in AxisCare.` })
+    if (r === 'error') return say(500, { error: 'Not saved. Please try again.' })
+    if (!(await d.updateContact(c.id, on ? { phone_confirmed_at: nowIso, phone_confirmed_by: staff.name, phone_confirmed_number: c.phone } : { phone_confirmed_at: null, phone_confirmed_by: null, phone_confirmed_number: null }))) return say(500, { error: 'Not saved. Please try again.' })
+    await ev('family_phone_confirmed', `${staff.name} ${on ? 'confirmed' : 'took back the confirmation of'} ${c.name}'s number`, { contact_id: c.id, on, already_ok: r === 'none' })
+    return say(200, { ok: true, on })
   }
 
   // Her rule 2026-10-16: a short "About <client>" the office writes once, shown on the caregiver's offer link. First name only,
