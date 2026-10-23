@@ -26,6 +26,9 @@
 // It is found by its exact name, the Hub's own rule (PRACTICE_NAME: "Practice" or "Practice Client"), must be the only
 // one and Active, and only A runs: no preferred-caregiver test and no status change (it is in use for test clock-ins).
 // Schedules and visits already on it are read first and never touched; cleanup deletes only what this run made.
+// 2026-10-23 (916 again): AxisCare refused every service code even after Samantha added PP - WC to the Practice client's
+// Billing tab. The result now carries AxisCare's exact words per try, what the client record says about services, and
+// tries each service by its description (serviceDescription) when every code is refused.
 // =============================================================================
 import { PRACTICE_NAME } from '../_shared/client-quiet.ts'
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b, null, 1), { status: s, headers: { 'Content-Type': 'application/json' } })
@@ -117,7 +120,8 @@ Deno.serve(async (req) => {
   // the lock: client 290 must still be Test Client 5; the Practice client must still carry its exact name
   const c0 = await clientRec(CID)
   const nm = nameOf(c0.rec)
-  out.client = { status: c0.status, name: nm, preferred_before: cgId(cgOf(c0.rec)), field_names: c0.rec ? Object.keys(c0.rec).filter((k) => /caregiver/i.test(k)) : [], client_status: statusOf(c0.rec) }
+  out.client = { status: c0.status, name: nm, preferred_before: cgId(cgOf(c0.rec)), field_names: c0.rec ? Object.keys(c0.rec).filter((k) => /caregiver/i.test(k)) : [], client_status: statusOf(c0.rec),
+    service_fields: Object.fromEntries(Object.entries(c0.rec ?? {}).filter(([k]) => /service|billing|payer|rate|auth/i.test(k)).map(([k, v]) => [k, JSON.stringify(v ?? null).slice(0, 300)])) }
   if (c0.status !== 200 || !(practice ? PRACTICE_NAME.test(nm) : /test client 5/i.test(nm))) return json({ ...out, refused: practice ? `AxisCare client ${CID} does not read as "Practice" (or could not be read): nothing was done` : 'AxisCare client 290 is not "Test Client 5" (or could not be read): nothing was done' }, 409)
 
   // a service code this agency uses (from a recent visit), for the schedule
@@ -126,8 +130,9 @@ Deno.serve(async (req) => {
   const codes = [...new Set([...(typeof b.service_code === 'string' && b.service_code ? [b.service_code] : []),
     ...rowsOf(recent.json?.results?.visits ?? recent.json?.visits).map((v: Any) => v?.service?.code ?? v?.serviceCode ?? null).filter(Boolean).map(String)])]
   const svc = codes[0] || ''
+  const descs = [...new Set(rowsOf(recent.json?.results?.visits ?? recent.json?.visits).map((v: Any) => v?.service?.description ?? v?.service?.name ?? v?.serviceDescription ?? null).filter(Boolean).map(String))]
   const pd = probeDay(Number(b.days_out) >= 21 ? Number(b.days_out) : 35), end = addDays(pd.date, 6)
-  out.plan = { service_code: svc || null, service_codes: codes, start: pd.date, end, day: pd.day, time: '09:00-11:00' }
+  out.plan = { service_code: svc || null, service_codes: codes, service_descriptions: descs, start: pd.date, end, day: pd.day, time: '09:00-11:00' }
   // the placeholder caregiver for the preference test: "Canceled Shift", never a real person
   let ph: Any = null
   for (let page = 1, url: string | null = '/api/caregivers?statuses=Active&limit=500'; url && page <= 5; page++) {
@@ -155,6 +160,12 @@ Deno.serve(async (req) => {
       r = await ax('POST', '/api/schedules', { clientId: CID, days: [pd.day], startDate: pd.date, endDate: end, startTime: '09:00', endTime: '11:00', serviceCode: code, frequency: 1 })
       A.tried.push({ code, status: r.status, errors: errs(r) })
       if (ok2(r.status) || !/service/i.test(JSON.stringify(errs(r) ?? ''))) { A.service_code = code; break }
+    }
+    /* every code refused for its service: try the same services by description, the other way AxisCare names one */
+    if (!A.service_code) for (const desc of descs.slice(0, 8)) {
+      r = await ax('POST', '/api/schedules', { clientId: CID, days: [pd.day], startDate: pd.date, endDate: end, startTime: '09:00', endTime: '11:00', serviceDescription: desc, frequency: 1 })
+      A.tried.push({ description: desc, status: r.status, errors: errs(r) })
+      if (ok2(r.status) || !/service/i.test(JSON.stringify(errs(r) ?? ''))) { A.service_description = desc; break }
     }
     A.create = { status: r.status, errors: errs(r), body_keys: Object.keys(r.json || {}) }
     const ids = rowsOf(r.json?.schedules ?? r.json?.results?.schedules ?? r.json?.results).map((x: Any) => x?.scheduleId ?? x?.id).filter((x: Any) => x != null).map(String)
