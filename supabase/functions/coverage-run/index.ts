@@ -57,7 +57,7 @@ import { MO_FROM } from '../_shared/office-from.ts'   // every text goes out fro
 import { fallbackList } from '../_shared/notice-to.ts'
 import { takenOffNotCalledIn, offWords } from '../_shared/not-a-callin.ts'
 /* CARA PHASE 1 (2026-10-23): the better list, behind ops_settings.cara_list_live (off = the list is exactly as before) */
-import { availStatus, availRank, UNKNOWN_WHY, weekOf, weekHoursBy, shiftHours, hoursFlag, overlapsFor, skillsNote, recommend } from '../_shared/cara-list.ts'
+import { availStatus, availRank, UNKNOWN_WHY, weekOf, weekHoursBy, shiftHours, hoursFlag, overlapsFor, skillsNote, recommend, boardOf } from '../_shared/cara-list.ts'
 import { loadSkillJudge } from '../_shared/cara-skills.ts'
 
 /* Straight-line miles between two zips' Census centroids — an honest
@@ -1209,6 +1209,26 @@ Deno.serve(async (req) => {
       const rows = [...pool.group0, ...pool.prn_other, ...pool.group1, ...pool.group2, ...pool.prn_ongoing]
       const blocked = [...pool.excluded, ...(pool.needs_verification || []).map((x) => ({ name: x.name, why: x.needs_verification }))]
       return jr({ ...recommend(kase, rows, blocked), meta: pool.meta.cara_list })
+    }
+    /* TIME RULES FOR THIS SHIFT (Samantha, 2026-10-24: "treat time flexibility and permission to split coverage as separate
+       settings. Exact Time should be the default"). time_flex: 'exact' | 'flexible_start' (how far the start may move, in
+       minutes, 30 to 180); handoff_ok: two caregivers may split it. These only describe what the office allows; nothing is
+       changed in AxisCare and no client or family is asked here. Recorded with who and when. */
+    if (body.action === 'set_time_rules') {
+      const tf = body.time_flex === 'flexible_start' ? 'flexible_start' : 'exact'
+      const fm = tf === 'flexible_start' ? Math.min(180, Math.max(30, Math.round(Number(body.flex_minutes) || 60))) : null
+      const patch = { time_flex: tf, flex_minutes: fm, handoff_ok: body.handoff_ok === true, time_rules_by: whoName.slice(0, 80), time_rules_at: nowIso() }
+      const { error } = await sb.rpc('coverage_case_patch', { p_id: String(kase.id), p_patch: patch, p_expect: { status: 'open' } })
+      if (error) return jr({ error: 'not saved: ' + error.message }, 500)
+      await opEvent(sb, { job: 'coverage-run', verb: 'time_rules_set', item_id: String(kase.id), area: 'coverage', actor_name: whoName,
+        summary: `${whoName} set ${kase.client || 'the shift'}: ${tf === 'exact' ? 'exact time' : 'flexible start, up to ' + fm + ' minutes'}; hand-off ${patch.handoff_ok ? 'allowed' : 'not allowed'}` })
+      return jr({ ok: true, ...patch })
+    }
+    /* THE RESPONSE BOARD (2026-10-24): everyone asked, in their column, with their exact answer and Cara's reasons. Read only. */
+    if (body.action === 'board') {
+      const pool = await buildCandidatesForCase(kase, { v2: true, includeAsked: true })
+      const rows = [...pool.group0, ...pool.prn_other, ...pool.group1, ...pool.group2, ...pool.prn_ongoing]
+      return jr({ ...boardOf(kase, rows, pool.excluded, pool.needs_verification || []), meta: pool.meta.cara_list })
     }
 
     if (body.action === 'send_selected') {

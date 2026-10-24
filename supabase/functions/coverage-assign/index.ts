@@ -78,6 +78,7 @@ Deno.serve(async (req) => {
     const out = await confirmFill(sb, { caseId, coveredBy: String(b.covered_by || ''), byName, notChosen: nc })
     if (out.outcome === 'filled') { const c2 = await readCase(sb, caseId); await tellOthers(c2, filledLine(c2, byName, { covered_by: out.covered_by })) }
     await logRun(caseId, 'confirm', out.outcome, out.outcome === 'filled' ? out.axiscare.status + ': ' + out.axiscare.detail : JSON.stringify(out).slice(0, 200))
+    if (out.outcome === 'not_eligible') return json({ error: out.detail, ...out }, 409)   /* Needs Verification (2026-10-24) */
     return json(out, out.outcome === 'not_found' ? 404 : out.outcome === 'bad_request' ? 400 : 200)
   }
   if (action === 'close') {

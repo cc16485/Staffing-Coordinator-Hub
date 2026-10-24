@@ -207,6 +207,10 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
     why: 'a PRN CNA whose availability is 60+ days old gets one check-in text with a one-tap link; weekdays 10 to 5 '
       + 'Central (enforced in the function), max 20 a day. Practice until ops_settings.prn_reconfirm_live. '
       + 'Cron: prn-reconfirm, weekdays 16:30 UTC (Desktop 358).' },
+  'shift-offer':        { class: 'urgent_internal', scheduled: false,
+    why: 'Cara\'s shift opportunity page (Samantha 2026-10-24): the one-time 6-digit code a caregiver asks for, texted to the '
+      + 'phone that got the shift offer, so only they see the client details and answer. Caregivers only, never a client or family. '
+      + 'Once a minute, 5 a day. Off until ops_settings.shift_page_live.' },
   'family-offer':       { class: 'urgent_internal', scheduled: true,
     why: 'a visit a family booked in the family app is offered to caregivers, each with their own link: the family\'s picks first '
       + '(4 hours), then the team in waves of 5; first yes goes on the schedule (Samantha 2026-10-16). Caregivers only, the '

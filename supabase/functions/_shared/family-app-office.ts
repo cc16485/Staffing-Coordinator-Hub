@@ -412,6 +412,22 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     return say(200, { ok: true, text })
   }
 
+  // 2026-10-24 (Cara's shift page): "What they enjoy", a short office-approved list beside the About (up to 6 items, a few
+  // words each). Shown to caregivers on a shift page after they confirm it's them. Empty = nothing shown.
+  if (action === 'enjoys') {
+    const k = await d.circle(String(body?.circle_id ?? ''))
+    if (!k) return say(404, { error: 'Family Circle not found.' })
+    if (!d.setAbout) return say(503, { error: 'Not available yet.' })
+    const raw = Array.isArray(body?.items) ? body.items : String(body?.items ?? '').split(',')
+    const items = [...new Set(raw.map((x: unknown) => String(x ?? '').replace(/\s+/g, ' ').trim()).filter(Boolean))] as string[]
+    if (items.length > 6) return say(400, { error: 'Please keep it to 6 things.' })
+    if (items.some((x) => x.length > 30)) return say(400, { error: 'Please keep each one short (a few words).' })
+    if (items.some((x) => /\d{3}/.test(x))) return say(400, { error: 'Please leave out numbers and addresses.' })
+    if (!(await d.setAbout(String(k.id), { caregiver_enjoys: items.length ? items : null, caregiver_enjoys_by: staff.email, caregiver_enjoys_at: d.now().toISOString() }))) return say(500, { error: 'Not saved. Please try again.' })
+    await ev('family_app_enjoys', `${staff.name} ${items.length ? 'updated' : 'cleared'} What they enjoy for ${k.client_name ?? 'a client'}`, { circle_id: k.id, items: items.length })
+    return say(200, { ok: true, items })
+  }
+
   if (action === 'app_plan') {
     const k = await d.circle(String(body?.circle_id ?? ''))
     if (!k) return say(404, { error: 'Family Circle not found.' })
