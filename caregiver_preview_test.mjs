@@ -82,14 +82,15 @@ const q = (t) => { const st = { f: [], inF: [] }; const b = {
     let rr = T[t] ?? []; for (const [c, v] of st.f) rr = rr.filter((x) => x[c] === v); for (const [c, v] of st.inF) rr = rr.filter((x) => v.includes(x[c]))
     return Promise.resolve({ data: rr, error: null }).then(ok, bad) } }; return b }
 globalThis.__db = { from: q, rpc: async () => ({ data: null, error: null }), auth: { getUser: async () => ({ data: { user: null }, error: { message: 'no' } }) } }
-let AXDOWN = false, LEVEL = 'Level 2'
-globalThis.fetch = async (url) => {
+let AXDOWN = false, LEVEL = 'Level 2'; const AIQ = [], AIREQ = []
+globalThis.fetch = async (url, o) => {
   url = String(url)
   if (url.startsWith('https://cc.mo-care.com/match-rules.js')) return new Response(RULES, { status: 200 })
+  if (url.startsWith('https://api.anthropic.com/')) { AIREQ.push(JSON.parse(o.body)); const a = AIQ.shift() || { enough: false, about: '', enjoys: [], used: [], left_out: [] }; return new Response(JSON.stringify(a.refusal ? { stop_reason: 'refusal', content: [] } : { stop_reason: 'end_turn', content: [{ type: 'thinking', thinking: '' }, { type: 'text', text: JSON.stringify(a) }] }), { status: 200 }) }
   if (url.includes('axiscare.com')) return AXDOWN ? new Response('', { status: 503 }) : new Response(JSON.stringify({ results: { client: { firstName: 'Ruth', lastName: 'Kay', classes: [{ label: LEVEL }], residentialAddress: { street1: '123 Main St', city: 'Nixa' } } } }), { status: 200 })
   return new Response('{}', { status: 200 })
 }
-const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: SVC, AXISCARE_TOKEN: 't', AXISCARE_SITE: '16485' }
+const ENV = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: SVC, AXISCARE_TOKEN: 't', AXISCARE_SITE: '16485', ANTHROPIC_API_KEY: 'sk-test' }
 let handler; globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (h) => { handler = h } }
 const WHO = { 'Bearer sam': ['Samantha Troutman', 'samantha@mo-care.com', ['owner_admin']], 'Bearer kry': ['Krystal Land', 'krystal@mo-care.com', ['care_coordinator']], 'Bearer sid': ['Sid Staffing', 'sid@mo-care.com', ['staffing_coordinator']] }
 fs.writeFileSync(`${FN}/_shared/_staff_stub_cgp.ts`, `export const OFFICE_ROLES = ['owner_admin','care_coordinator','staffing_coordinator']\nconst W: any = ${JSON.stringify(WHO)}\nexport async function requireStaff(_sb: any, req: Request) { const w = W[req.headers.get('authorization') || '']; return w ? { ok: true, name: w[0], email: w[1], person_id: 'p', roles: w[2] } : { ok: false, status: 401, error: 'Sign in first.' } }\n`)
@@ -179,6 +180,49 @@ ck('... and it follows them once they have an AxisCare id (the shift page finds 
   ck('the draft is only in the office\'s own preview (labelled draft)', pd2.version === 'draft' && /DRAFT/.test(pd2.about) && pa.version === 'approved' && !/DRAFT/.test(pa.about))
   APP.ops_settings = {}
   ck('switch off: the Booking App reads Family & Contacts exactly as before', (await deps.clientAbout('500')) === 'Ruth loves her garden.')
+}
+
+/* ── 4. step 2: the AI draft from the Life Story (2026-10-24) ── */
+{
+  const LD = await import(path.join(FN, '_shared/life-story-draft.ts'))
+  const PROF = { id: 'cp_ax500', life: { work: { text: 'Taught third grade for 30 years. Loves her rose garden.', by: 'Krystal Land', via: 'intake call', at: '2026-10-14' }, enjoys: { text: 'Her grandkids, old movies, the Cardinals', by: 'Krystal Land', via: 'intake call', at: '2026-10-14' } }, life_story: 'Has dementia and her son Mark is difficult. Loves coffee.' }
+  const LEAD = { id: 'lead-r', axiscare_client_id: '500', life: { work: { text: 'old lead answer' }, little: { text: 'Coffee and a cookie in the afternoon', by: 'Samantha Troutman', via: 'assessment', at: '2026-10-20' } } }
+  const src = LD.lifeSources(PROF, LEAD)
+  ck('Life Story sources: the profile wins, the inquiry fills the gap, the free-text box is included (labelled)', src.length === 4 && src[0].text.startsWith('Taught') && src.find((x) => x.key === 'little').via === 'assessment' && src.find((x) => x.key === 'more').label === 'Anything else about who they are', src)
+  ck('checks: health, family and money words are caught; ordinary interests are not', LD.sensitiveHit('She has dementia') === 'dementia' && LD.sensitiveHit('pays the bills') && LD.sensitiveHit('loves old movies and roses') === null && LD.sensitiveHit('likes fall leaves') === null)
+  ck('checks: an item is kept only if it shares a real word with the Life Story', LD.grounded('Rose gardening', 'Loves her rose garden') && LD.grounded('Old movies', 'old movies') && !LD.grounded('Knitting', 'Loves her rose garden'))
+  ck('checks: people named in the Life Story (her son Mark, Laura, her daughter) and the caller are found', JSON.stringify(LD.peopleNames('Has dementia and her son Mark is difficult. Laura, her daughter, visits.', ['Laura', 'Johnson']).sort()) === JSON.stringify(['Johnson', 'Laura', 'Mark']), LD.peopleNames('Has dementia and her son Mark is difficult. Laura, her daughter, visits.', ['Laura', 'Johnson']))
+  ck('checks: names or places not in the Life Story are caught (the client\'s first name and months are fine)', JSON.stringify(LD.unknownNames('Ruth loves the Cardinals and visits Branson in May.', 'the Cardinals', 'Ruth')) === '["Branson"]')
+  reset({}); APP.client_profiles = [PROF]; APP.leads = [LEAD]
+  ;[s, j] = await post({ action: 'draft', ...C }, 'Bearer kry')
+  ck('switch off: a coordinator can\'t draft yet (practice is owners only)', s === 403 && /practice/.test(j.error), j)
+  AIQ.push({ enough: true, about: 'Ruth taught third grade for 30 years and still loves her rose garden. She enjoys talking about her grandkids, an old movie, and a good Cardinals game.', enjoys: ['Rose gardening', 'Old movies', 'Cardinals baseball', 'Her grandkids', 'Coffee', 'Knitting'], used: [1, 2, 3], left_out: ['a health detail', 'a family matter'] })
+  ;[s, j] = await post({ action: 'draft', ...C }, 'Bearer sam')
+  ck('owner, switch off: a draft from the Life Story; an item not in it ("Knitting") is dropped; sources and left-out kinds returned', s === 200 && j.ok && /rose garden/.test(j.draft.about) && j.draft.enjoys.join() === 'Rose gardening,Old movies,Cardinals baseball,Her grandkids,Coffee' && JSON.stringify(j.draft.dropped) === '["Knitting"]' && j.draft.sources.length === 3 && j.draft.left_out.includes('a health detail'), j)
+  const req = AIREQ.pop()
+  ck('the AI is sent only the Life Story (not the care plan, notes or diagnosis facts), with the rules, on Claude Opus 5.5, no temperature, a JSON answer', req.model === 'claude-opus-5-5' && !('temperature' in req) && req.output_config.format.type === 'json_schema' && /Use only facts that are in the sources/.test(req.system) && /\[1\] Work and life: Taught third grade/.test(req.messages[0].content) && !/dementia_care|need_|Level 2/.test(req.messages[0].content), req.messages[0].content)
+  ck('nothing is saved by drafting', T.client_caregiver_profile.length === 0 && EVENTS.some((e) => e.verb === 'caregiver_preview_ai_draft'))
+  AIREQ.length = 0
+  AIQ.push({ enough: true, about: 'Ruth has dementia but loves her rose garden.', enjoys: ['Roses'], used: [1], left_out: [] }, { enough: true, about: 'Ruth loves her rose garden and old movies.', enjoys: ['Roses', 'Old movies'], used: [1, 2], left_out: ['a health detail'] })
+  ;[s, j] = await post({ action: 'draft', ...C }, 'Bearer sam')
+  ck('a draft that mentions a health detail is sent back once with the reason; the clean second draft is used', j.ok && !/dementia/i.test(j.draft.about) && AIREQ.length === 2 && /mentioned "dementia"/.test(AIREQ[1].messages[0].content), [j, AIREQ.length])
+  AIQ.push({ enough: true, about: 'Ruth loves visits from Mark.', enjoys: [], used: [4], left_out: [] }, { enough: true, about: 'Ruth loves visits from Mark and Jenny.', enjoys: [], used: [4], left_out: [] })
+  ;[s, j] = await post({ action: 'draft', ...C }, 'Bearer sam')
+  ck('a draft that keeps naming people or places not in the Life Story is refused (write it yourself)', j.ok === false && /write this one yourself/.test(j.why) && /belong to other people/.test(j.why) && /Mark/.test(j.why), j)
+  AIQ.push({ enough: false, about: '', enjoys: [], used: [], left_out: [] })
+  ;[s, j] = await post({ action: 'draft', ...C }, 'Bearer sam')
+  ck('not enough to go on: says so, writes nothing', j.ok === false && /isn't enough in Ruth Life Story|isn't enough in Ruth/.test(j.why), j)
+  AIQ.push({ refusal: true })
+  ;[s, j] = await post({ action: 'draft', ...C }, 'Bearer sam')
+  ck('the AI declines: says so', j.ok === false && /declined/.test(j.why), j)
+  APP.client_profiles = []; APP.leads = []; AIREQ.length = 0
+  ;[s, j] = await post({ action: 'draft', ...C }, 'Bearer sam')
+  ck('an empty Life Story: nothing sent to the AI, and it says what to do', j.ok === false && /Nothing in Ruth Life Story yet|Nothing in Ruth/.test(j.why) && AIREQ.length === 0, j)
+  APP.ops_settings = { cgp_ai_draft_live: true }; APP.client_profiles = [PROF]; AIQ.push({ enough: true, about: 'Ruth loves her rose garden.', enjoys: ['Roses'], used: [1], left_out: [] })
+  ;[s, j] = await post({ action: 'draft', ...C }, 'Bearer kry')
+  ck('switch on: a coordinator can draft', s === 200 && j.ok, j)
+  ;[s, j] = await post({ action: 'save', ...C, about: 'Ruth loves her rose garden.', enjoys: ['Roses'], ai_draft: true }, 'Bearer kry')
+  ck('saving it: a draft like any other, and the history says it came from an AI draft (approval still needed)', s === 200 && j.state.intro_pending && /\(from an AI draft\)/.test(j.history[0].what), j.history)
 }
 
 const bad = res.filter((x) => !x[1])
