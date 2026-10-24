@@ -12,7 +12,8 @@
 //   POST {action:'link', case_id, ask_id}       office staff: the caregiver's link, only while the page is switched on
 //   POST {action:'revoke'|'restore', case_id, ask_id}  office staff: take one person's link back (or give it back)
 // The page shows nothing about the client when the shift is filled, closed, started, changed, or the link was taken back.
-// Switch: ops_settings.shift_page_live (off: caregiver links answer "not open yet"; the office preview always works).
+// Switch: ops_settings.shift_page_live (off: caregiver links answer "not open yet", except for the owners' pilot caregivers,
+// ops_settings.shift_link_pilot, 2026-10-24; the office preview always works).
 // Never: an address or street, a last name, pay, photos, AxisCare changes, a text to a client or family.
 // Deployed with verify_jwt OFF (caregivers have no Hub login); this file does the checking.
 // =============================================================================
@@ -25,6 +26,7 @@ import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { opEvent } from '../_shared/events.ts'
 import { chiNowNaive } from '../_shared/loops.ts'
 import { textCaseAdmins, withLink } from '../_shared/callin-notify.ts'
+import { inPilot } from '../_shared/shift-link-texts.ts'
 
 const SECRET = Deno.env.get('HUB_JOB_SECRET') ?? ''
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } })
@@ -151,9 +153,11 @@ Deno.serve(async (req) => {
 
     /* ── the caregiver's own link ── */
     if (!await checkShiftLink(SECRET, b)) return json({ error: 'This link has ended or is not valid. Please call the office at (417) 234-8494.' }, 403)
-    if ((await settings()).shift_page_live !== true) return json({ error: 'This page isn\'t open yet. Please call the office at (417) 234-8494.' }, 403)
     const c = String(b.c), aId = String(b.a)
     const k = await readCase(c); const a = askOf(k, aId)
+    /* open for everyone once shift_page_live is on; before that, only for the owners' pilot caregivers (2026-10-24) */
+    const stP = await settings()
+    if (stP.shift_page_live !== true && !(a && (a.pilot_link === true || inPilot(stP, a.axiscare_id, a.name)))) return json({ error: 'This page isn\'t open yet. Please call the office at (417) 234-8494.' }, 403)
     const st0 = pageState(k, a, chiNowNaive())
     if (st0 !== 'open') return json({ ok: true, state: st0 })   /* filled, closed, started or taken back: nothing about the client */
     const vn = await visitNow(k)

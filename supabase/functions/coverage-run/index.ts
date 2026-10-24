@@ -60,6 +60,8 @@ import { takenOffNotCalledIn, offWords } from '../_shared/not-a-callin.ts'
 import { availStatus, availRank, UNKNOWN_WHY, weekOf, weekHoursBy, shiftHours, hoursFlag, overlapsFor, skillsNote, recommend, boardOf } from '../_shared/cara-list.ts'
 import { loadSkillJudge, careNow } from '../_shared/cara-skills.ts'
 import { previewRecords, stateOf } from '../_shared/caregiver-preview.ts'
+import { linkFor, partWelcome, patLineOf, linkTemplate as shiftLinkTemplate, fillLinked } from '../_shared/shift-link-texts.ts'
+import { makeShiftLink, shiftDayEnd } from '../_shared/shift-links.ts'
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -1325,7 +1327,18 @@ Deno.serve(async (req) => {
         .replaceAll('{address}', addr || 'the office has the address')
         .replaceAll('{when}', when)
         .replaceAll('{care}', careLine ? careLine + ' ' : '')
+        .replaceAll('{link}', '')
         .replace(/\s{2,}/g, ' ').trim()
+      /* THE SHIFT PAGE LINK (2026-10-24, her approval): each person's own link, for everyone once
+         shift_link_texts_live is on, before that only the owners' pilot caregivers. The standard wording then says
+         "all or part of it" or "one caregiver for the whole shift", the town only, no care line. A case's own edited
+         wording gets a link only where someone typed {link}. Interest checks never get one. */
+      const LINK_SECRET = Deno.env.get('HUB_JOB_SECRET') ?? ''
+      const linkEnd = shiftDayEnd(String(kase.shift_date || ''))
+      const townL = String(kase.client_city || '').trim()
+      const customFor = (k: string): string => k === 'tier1' ? (String(kase.msg_tier1 || '') || String(st.coverage_msg_tier1 || ''))
+        : k === 'prn' ? String(st.coverage_msg_prn || '')
+        : (String(kase.msg_other || '') || (isSameDay ? (String(st.coverage_msg_other_sameday || '') || String(st.coverage_msg_other || '')) : (String(st.coverage_msg_other_advance || '') || String(st.coverage_msg_other || ''))))
 
       const sent: string[] = [], failed: string[] = [], already: string[] = []
       for (const x of sendable) {
@@ -1334,11 +1347,27 @@ Deno.serve(async (req) => {
         const contact = await contactForOutbound(sb, ghl2,
           { phone, firstName: x.first || x.name }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'coverage-run' })
         if (!contact) { failed.push(`${x.name} (refused by the outbound gate or opted out of texts)`); continue }
-        const message = fillMsg(String(kase.kind) === 'interest' ? tmplInt
+        const askId = uid()
+        let message = fillMsg(String(kase.kind) === 'interest' ? tmplInt
           : x.prn_ask ? tmplP : (x.tier === 1 ? tmpl1 : tmplO), x)
+        const lk = linkFor(st, kase, x.axiscare_id, x.name)
+        let linked: 'live' | 'pilot' | null = null
+        if (lk && LINK_SECRET.length >= 32 && linkEnd) {
+          const kindT = x.prn_ask ? 'prn' : x.tier === 1 ? 'tier1' : isSameDay ? 'sameday' : 'other'
+          const custom = customFor(kindT)
+          const tmplL = custom ? (custom.includes('{link}') ? custom : null) : shiftLinkTemplate(kindT, partWelcome(kase))
+          if (tmplL) {
+            try {
+              const link = await makeShiftLink(LINK_SECRET, String(kase.id), askId, linkEnd)
+              message = fillLinked(tmplL, { first: x.first || 'there', client: clientShort, when, town: townL, pattern: patLineOf(kase), link })
+              linked = lk
+            } catch { /* no link could be made: today's text goes, unchanged */ }
+          }
+        }
         /* CI1: the ask is recorded BEFORE the text goes, under the case's lock, only if this person (same number or
            AxisCare id) hasn't been asked on this case: two coordinators sending at once text them once. */
-        const ask = { id: uid(), name: x.name, phone, channel: 'sms', at: nowIso(),
+        const ask = { id: askId, name: x.name, phone, channel: 'sms', at: nowIso(),
+          ...(linked ? { link_sent: linked, ...(linked === 'pilot' ? { pilot_link: true } : {}) } : {}),
           state: 'waiting', replied_at: null, tier: x.tier, auto: false, ...(x.prn_ask ? { prn: true } : {}),
           picked_by_coordinator: true, ghl_contact_id: contact.contactId, axiscare_id: x.axiscare_id ?? null,
           offered_for: `${String(kase.shift_date || '')}|${String(kase.shift_time || '')}`,   /* the hours this ask was sent for (2026-10-24) */
@@ -1417,6 +1446,15 @@ Deno.serve(async (req) => {
         if (!normalisePhone(a.phone)) { skipped.push(`${a.name} (no number on the ask)`); return false }
         return true
       })
+      /* {link} in a follow-up (2026-10-24): each person's own shift page link. Only for people who may get one (the switch
+         on, or the owners' pilot); anyone else means nothing is sent and the office is told who. */
+      const LINK_SECRET_F = Deno.env.get('HUB_JOB_SECRET') ?? ''
+      const wantsLink = text.includes('{link}')
+      if (wantsLink) {
+        const noLink = sendableF.filter((a) => !linkFor(stF, kase, a.axiscare_id, a.name)).map((a) => String(a.name))
+        if (noLink.length) return jr({ error: `Shift page links aren't on for ${noLink.join(', ')} yet. Take {link} out, or send only to the pilot caregivers. Nothing was sent.` }, 409)
+        if (LINK_SECRET_F.length < 32 || !shiftDayEnd(String(kase.shift_date || ''))) return jr({ error: 'A shift page link can\'t be made for this case (no shift date). Take {link} out. Nothing was sent.' }, 409)
+      }
       const by = typeof body.by === 'string' ? body.by.trim().slice(0, 80) : ''
       const headersF = { Authorization: `Bearer ${ghlF.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' }
       const sentF: string[] = [], sentIds: string[] = [], failedF: string[] = []
@@ -1426,7 +1464,11 @@ Deno.serve(async (req) => {
         const contact = await contactForOutbound(sb, ghlF,
           { phone, firstName: first }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'coverage-run' })
         if (!contact) { failedF.push(`${a.name} (refused by the outbound gate or opted out of texts)`); continue }
-        const message = text.replaceAll('{first_name}', first)
+        let message = text.replaceAll('{first_name}', first)
+        if (wantsLink) {
+          try { message = message.replaceAll('{link}', await makeShiftLink(LINK_SECRET_F, String(kase.id), String(a.id), shiftDayEnd(String(kase.shift_date || '')))) }
+          catch { failedF.push(`${a.name} (no link could be made, so nothing was sent)`); continue }
+        }
         const ok = await ghlSendChecked(sb, headersF, 'coverage-run',
           { channel: 'sms', contactId: contact.contactId, address: phone, who: a.name }, { message })
         if (!ok) { failedF.push(`${a.name} (the text was refused; see Send problems)`); continue }
