@@ -224,10 +224,8 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
       + 'with their own link: keep it the same or update it, and the outside-hours box (Samantha 2026-10-14). Weekdays 10 to 5 '
       + 'Central (enforced in the function), max 25 a run, AxisCare-active only. Practice until ops_settings.avail_checkin_live. '
       + 'Cron: availability-checkin, weekdays 17:00 UTC.' },
-  'shift-confirm':      { class: 'routine_internal', scheduled: true,
-    why: 'one morning text to each caregiver listing their own shifts today, deliberately '
-      + 'before the external window. It exists to surface problems before they become no-shows. '
-      + 'Cron: shift-confirm, 12:00 UTC daily, created by cron-shift-confirm.sql (~/Claude).' },
+  /* shift-confirm RETIRED 2026-10-23 (Samantha, Cara decision 5: "I don't want unnecessary messages going to caregivers with
+     established schedules"). It was never scheduled. First-shift and change reminders come in Cara Phase 4, wording hers. */
   'carematch-watch':    { class: 'routine_internal', scheduled: true,
     why: 'the morning after a caregiver\'s FIRST shift with a client: one text to the '
       + 'caregiver (staff, about their own shift) asking how it went, and one email to the '

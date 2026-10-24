@@ -51,7 +51,6 @@ export const SENDER_WORDS: Record<string, [string, string]> = {
   'family-offer': ['family visit offer text', 'scheduling_coverage'],
   'family-cancel': ['visit cancelled text to a caregiver', 'scheduling_coverage'],
   'coverage-reply': ['open shift reply', 'scheduling_coverage'],
-  'shift-confirm': ['shift confirmation', 'scheduling_coverage'],
   'team-ask': ['Team Builder text', 'scheduling_coverage'],
   'care-packet': ['caregiver packet text', 'client_care'],
   'client-agreement': ['signed Client Care Agreement copy (email)', 'client_care'],   // 873
