@@ -1,28 +1,26 @@
 // =============================================================================
 // shift-offer: Cara's shift opportunity page (Samantha, 2026-10-24). Rules and wording: _shared/shift-offer.ts.
 // One caregiver, one ask on one Cara case, one link (_shared/shift-links.ts: HMAC of case|ask|expiry, ends with the shift
-// day). The page is cc.mo-care.com/shift.html.
-//   POST {c,a,e,t, action:'view'}                 anyone holding the link: their first name, day, time, hours, town. Nothing
-//                                                  about the client.
-//   POST {c,a,e,t, action:'send_code'}             a one-time 6-digit code texted from (417) 234-8494 to the phone that got the
-//                                                  offer (once a minute, 5 a day; works 10 minutes)
-//   POST {c,a,e,t, action:'verify', code}          5 wrong codes lock the link; a right one opens a 2-hour session
-//   POST {c,a,e,t, action:'details', session}      the office-approved client details and the shift's time rules
-//   POST {c,a,e,t, action:'answer', session, kind, from?, to?, note?, question?}
-//                                                  saved onto their own ask, where a text reply goes; a yes is interest only
-//   POST {action:'preview', case_id, ask_id}       office staff (Hub sign-in): exactly what that caregiver would see, no code,
-//                                                  nothing saved; 'preview_answer' checks an answer without saving it
-//   POST {action:'link', case_id, ask_id}          office staff: the caregiver's link, only while the page is switched on
+// day). The page is cc.mo-care.com/shift.html. No code and no password (her call, 2026-10-24: "no need for a code on the
+// open shift"): the link itself opens the page, exactly like the family app's visit offer link.
+//   POST {c,a,e,t, action:'view'}     the shift and the office-approved details (only while it is open)
+//   POST {c,a,e,t, action:'answer', shift_key, kind, from?, to?, note?, question?}
+//                                     saved onto their own ask, where a text reply goes; a yes is interest only. Refused if
+//                                     the shift changed since they looked (shift_key) or AxisCare now shows other hours.
+//   POST {action:'preview', case_id, ask_id}    office staff (Hub sign-in): exactly what that caregiver sees, nothing saved;
+//                                               'preview_answer' checks an answer without saving it
+//   POST {action:'link', case_id, ask_id}       office staff: the caregiver's link, only while the page is switched on
+//   POST {action:'revoke'|'restore', case_id, ask_id}  office staff: take one person's link back (or give it back)
+// The page shows nothing about the client when the shift is filled, closed, started, changed, or the link was taken back.
 // Switch: ops_settings.shift_page_live (off: caregiver links answer "not open yet"; the office preview always works).
 // Never: an address or street, a last name, pay, photos, AxisCare changes, a text to a client or family.
 // Deployed with verify_jwt OFF (caregivers have no Hub login); this file does the checking.
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { checkShiftLink, makeShiftLink, shiftDayEnd } from '../_shared/shift-links.ts'
-import { pageState, preView, detailsView, checkAnswer, applyAnswer, answerSummary } from '../_shared/shift-offer.ts'
+import { pageState, detailsView, checkAnswer, applyAnswer, answerSummary, shiftKey, visitMatches } from '../_shared/shift-offer.ts'
 import { clientInfoFor } from '../_shared/cara-skills.ts'
-import { contactForOutbound, normalisePhone } from '../_shared/outreach.ts'
-import { ghlSendChecked } from '../_shared/send-problems.ts'
+import { normalisePhone } from '../_shared/outreach.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { opEvent } from '../_shared/events.ts'
 import { chiNowNaive } from '../_shared/loops.ts'
@@ -34,12 +32,6 @@ const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers
 const json = (o: unknown, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
 const ghl = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
 const nowIso = () => new Date().toISOString()
-const enc = new TextEncoder()
-const hex = (b: ArrayBuffer) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, '0')).join('')
-const hash = async (s: string) => hex(await crypto.subtle.digest('SHA-256', enc.encode('cc-cara-shift-code-v1:' + SECRET + ':' + s)))
-const same = (a: string, b: string) => { if (a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0 }
-const CODE_MIN = 10, SESSION_H = 2, MAX_TRIES = 5, MAX_SENDS_DAY = 5
-
 // deno-lint-ignore no-explicit-any
 async function settings(): Promise<any> { const { data } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle(); return data?.data ?? {} }
 // deno-lint-ignore no-explicit-any
@@ -50,12 +42,6 @@ async function readCase(id: string): Promise<any | null> {
 }
 // deno-lint-ignore no-explicit-any
 const askOf = (k: any, askId: string) => (Array.isArray(k?.asked) ? k.asked : []).find((a: any) => String(a?.id) === askId) ?? null
-const rowId = (c: string, a: string) => `${c}|${a}`
-// deno-lint-ignore no-explicit-any
-async function codeRow(c: string, a: string): Promise<any | null> { const { data } = await sb.from('shift_offer_codes').select('*').eq('id', rowId(c, a)).maybeSingle(); return data ?? null }
-// deno-lint-ignore no-explicit-any
-async function saveRow(c: string, a: string, vals: any) { await sb.from('shift_offer_codes').upsert({ id: rowId(c, a), case_id: c, ask_id: a, ...vals, updated_at: nowIso() }, { onConflict: 'id' }) }
-
 /* the AxisCare client (care level, and the town when the case doesn't carry one) */
 // deno-lint-ignore no-explicit-any
 async function axClient(id: string | null): Promise<any | null> {
@@ -77,11 +63,22 @@ async function details(k: any, ask: any, state: string) {
   const info = await clientInfoFor(sb, k.client_axiscare_id ? String(k.client_axiscare_id) : null, cl)
   return detailsView(kk, ask, state, { ...info, care_line: k.care_note || null })
 }
+/* THE SHIFT AS AXISCARE HAS IT NOW (2026-10-24: "If a shift changes after an offer is created, the caregiver cannot
+   unknowingly accept outdated hours"). The case's visit is read live: gone, or someone else now on it = closed; other day
+   or hours than the case = changed. AxisCare unreadable = 'unchecked' (the page shows the shift, an answer waits). */
 // deno-lint-ignore no-explicit-any
-async function sessionOk(c: string, a: string, session: unknown): Promise<boolean> {
-  const s = String(session ?? ''); if (!/^[A-Za-z0-9_-]{43}$/.test(s)) return false
-  const r = await codeRow(c, a); if (!r?.session_hash || !r.session_exp || Date.parse(r.session_exp) < Date.now()) return false
-  return same(await hash('s:' + s), String(r.session_hash))
+async function visitNow(k: any): Promise<'same' | 'changed' | 'closed' | 'unchecked' | 'no_visit'> {
+  if (!k?.axiscare_visit_id) return 'no_visit'
+  let token = ''; for (const n of ['AXISCARE_VISITS_TOKEN', 'AXISCARE_API_KEY', 'AXISCARE_TOKEN']) { const v = Deno.env.get(n); if (v) { token = v; break } }
+  const site = Deno.env.get('AXISCARE_SITE') || Deno.env.get('AXISCARE_SITE_NUMBER') || ''
+  if (!token || !/^\d+$/.test(site)) return 'unchecked'
+  try {
+    const r = await fetch(`https://${site}.axiscare.com/api/visits/${encodeURIComponent(String(k.axiscare_visit_id))}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01' } })
+    if (r.status === 404) return 'closed'
+    if (!r.ok) return 'unchecked'
+    // deno-lint-ignore no-explicit-any
+    const j: any = await r.json().catch(() => ({})); return visitMatches(k, j?.results?.visit ?? j?.results ?? null)
+  } catch { return 'unchecked' }
 }
 
 /* Save an answer onto the ask (fresh read, then the case written back, as coverage-reply does), and tell the office the
@@ -92,7 +89,7 @@ async function saveAnswer(caseId: string, askId: string, ans: any): Promise<{ ok
   const k = await readCase(caseId); const a0 = askOf(k, askId)
   if (!k || !a0 || pageState(k, a0, chiNowNaive()) !== 'open') return { ok: false, error: 'This shift is no longer open. Thank you for looking!' }
   const hadYes = (k.asked || []).some((x: { state?: string }) => x.state === 'yes')
-  const a = applyAnswer(a0, ans, nowIso())
+  const a = applyAnswer(a0, { ...ans, for: shiftKey(k) }, nowIso())
   k.asked = k.asked.map((x: { id?: string }) => String(x.id) === askId ? a : x)
   const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: k })
   if (error) return { ok: false, error: 'Not saved. Please try again in a minute.' }
@@ -127,13 +124,24 @@ Deno.serve(async (req) => {
   const action = String(b?.action || 'view')
   try {
     /* ── the office: preview and links ── */
-    if (action === 'preview' || action === 'preview_answer' || action === 'link') {
+    if (action === 'preview' || action === 'preview_answer' || action === 'link' || action === 'revoke' || action === 'restore') {
       const who = await requireStaff(sb, req, OFFICE_ROLES)
       if (!who.ok) return json({ error: who.error }, who.status)
       const k = await readCase(String(b.case_id || '')); const a = askOf(k, String(b.ask_id || ''))
       if (!k || !a) return json({ error: 'That person is not on this case.' }, 404)
-      const state = pageState(k, a, chiNowNaive())
-      if (action === 'preview') return json({ ok: true, preview: true, ...(await details(k, a, state)) })
+      /* TAKE A LINK BACK (2026-10-24): one person's link stops opening at once; their answers stay on the case */
+      if (action === 'revoke' || action === 'restore') {
+        const fresh = await readCase(String(k.id)); const on = action === 'revoke'
+        fresh.asked = fresh.asked.map((x: { id?: string }) => String(x.id) === String(a.id) ? { ...x, link_revoked: on, link_revoked_by: on ? who.name : null, link_revoked_at: on ? nowIso() : null } : x)
+        const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: fresh })
+        if (error) return json({ error: 'Not saved. Please try again.' }, 500)
+        await opEvent(sb, { job: 'shift-offer', verb: on ? 'shift_link_revoked' : 'shift_link_restored', item_id: String(k.id), area: 'coverage', actor_name: who.name,
+          summary: `${who.name} ${on ? 'took back' : 'gave back'} ${a.name}'s shift page link for ${k.client || 'a shift'}` })
+        return json({ ok: true, link_revoked: on })
+      }
+      const st0 = pageState(k, a, chiNowNaive()), vn = st0 === 'open' ? await visitNow(k) : 'same'
+      const state = vn === 'changed' ? 'changed' : vn === 'closed' ? 'closed' : st0
+      if (action === 'preview') return json({ ok: true, preview: true, checked: vn, ...(await details(k, a, state)) })
       if (action === 'preview_answer') { const ch = checkAnswer(k, b); return json(ch.ok ? { ok: true, preview: true, would_save: applyAnswer(a, ch.ans, nowIso()).reply } : { error: ch.error }, ch.ok ? 200 : 400) }
       if ((await settings()).shift_page_live !== true) return json({ error: 'The shift page is in practice: no caregiver links yet. Use Preview to see it as they would.' }, 409)
       return json({ ok: true, link: await makeShiftLink(SECRET, String(k.id), String(a.id), shiftDayEnd(String(k.shift_date || ''))) })
@@ -144,45 +152,14 @@ Deno.serve(async (req) => {
     if ((await settings()).shift_page_live !== true) return json({ error: 'This page isn\'t open yet. Please call the office at (417) 234-8494.' }, 403)
     const c = String(b.c), aId = String(b.a)
     const k = await readCase(c); const a = askOf(k, aId)
-    const state = pageState(k, a, chiNowNaive())
-    if (action === 'view') return json({ ok: true, ...(state !== 'open' ? { state } : preView(k, a, state)) })   /* filled, closed, started or taken back: just that */
-    if (state !== 'open') return json({ ok: true, state })   /* filled, closed, started or taken back: nothing about the client */
-
-    if (action === 'send_code') {
-      const phone = normalisePhone(a.phone)
-      if (!phone) return json({ error: 'We don\'t have a phone for you on this offer. Please call the office.' }, 409)
-      const r = await codeRow(c, aId)
-      if (r?.locked_at) return json({ error: 'This link is locked after too many tries. Please call the office.' }, 423)
-      const day = Date.now() - 86400000
-      const sends = (Array.isArray(r?.sends) ? r.sends : []).filter((t: string) => Date.parse(t) > day)
-      if (sends.length && Date.now() - Date.parse(sends[sends.length - 1]) < 60000) return json({ error: 'A code was just sent. Please wait a minute before asking for another.' }, 429)
-      if (sends.length >= MAX_SENDS_DAY) return json({ error: 'Too many codes today. Please call the office.' }, 429)
-      const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, '0')
-      const contact = await contactForOutbound(sb, ghl, { phone, firstName: String(a.name || '').split(' ')[0] }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'shift-offer' })
-      if (!contact) return json({ error: 'We couldn\'t text a code to your phone. Please call the office.' }, 409)
-      await saveRow(c, aId, { code_hash: await hash('c:' + code), code_sent_at: nowIso(), code_tries: 0, sends: [...sends, nowIso()] })
-      const okSend = await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' }, 'shift-offer',
-        { channel: 'sms', contactId: contact.contactId, address: phone, who: a.name }, { message: `Your Caring Companions code is ${code}. It works for ${CODE_MIN} minutes. Please don't share it.` })
-      if (!okSend) return json({ error: 'The code didn\'t go out. Please try again, or call the office.' }, 502)
-      return json({ ok: true, sent: true, to_last4: phone.slice(-4) })
-    }
-    if (action === 'verify') {
-      const r = await codeRow(c, aId)
-      if (r?.locked_at) return json({ error: 'This link is locked after too many tries. Please call the office.' }, 423)
-      if (!r?.code_hash || !r.code_sent_at || Date.now() - Date.parse(r.code_sent_at) > CODE_MIN * 60000) return json({ error: 'That code has expired. Please ask for a new one.' }, 410)
-      const good = same(await hash('c:' + String(b.code ?? '').replace(/\D/g, '').slice(0, 6)), String(r.code_hash))
-      if (!good) {
-        const tries = (Number(r.code_tries) || 0) + 1
-        await saveRow(c, aId, { code_tries: tries, ...(tries >= MAX_TRIES ? { locked_at: nowIso(), code_hash: null } : {}) })
-        return json({ error: tries >= MAX_TRIES ? 'Too many tries. This link is locked; please call the office.' : `That code didn't match. ${MAX_TRIES - tries} tr${MAX_TRIES - tries === 1 ? 'y' : 'ies'} left.` }, 401)
-      }
-      const session = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-      await saveRow(c, aId, { code_hash: null, code_tries: 0, session_hash: await hash('s:' + session), session_exp: new Date(Date.now() + SESSION_H * 3600000).toISOString() })
-      return json({ ok: true, session })
-    }
-    if (!await sessionOk(c, aId, b.session)) return json({ error: 'Please confirm it\'s you first (a code to your phone).', need_code: true }, 401)
-    if (action === 'details') return json({ ok: true, ...(await details(k, a, state)) })
+    const st0 = pageState(k, a, chiNowNaive())
+    if (st0 !== 'open') return json({ ok: true, state: st0 })   /* filled, closed, started or taken back: nothing about the client */
+    const vn = await visitNow(k)
+    if (vn === 'closed' || vn === 'changed') return json({ ok: true, state: vn })
+    if (action === 'view') return json({ ok: true, checked: vn, ...(await details(k, a, 'open')) })
     if (action === 'answer') {
+      if (vn === 'unchecked') return json({ error: 'We can\'t check the schedule right now, so your answer wasn\'t saved. Please try again in a few minutes, or call the office.' }, 503)
+      if (String(b.shift_key || '') !== shiftKey(k)) return json({ error: 'This shift changed while you were looking. Please look at the new details before you answer.', changed: true }, 409)
       const ch = checkAnswer(k, b); if (!ch.ok) return json({ error: ch.error }, 400)
       const out = await saveAnswer(c, aId, ch.ans); if (!out.ok) return json({ error: out.error }, 409)
       return json({ ok: true, answered: answerSummary(out.ask) })

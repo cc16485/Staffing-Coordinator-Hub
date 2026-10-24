@@ -155,6 +155,8 @@ export function recommend(kase: Any, rows: Any[], excluded: { name: string; why:
     const r = rows.find((x) => (a.axiscare_id && S(x.axiscare_id) === S(a.axiscare_id)) || nk(x.name) === nk(a.name))
     if (!r) { const ex = excluded.find((e) => nk(e.name) === nk(a.name)); notEligible.push({ name: S(a.name, 80), why: ex ? S(ex.why, 160) : 'no longer on the list' }); continue }
     const s = assess(kase, a, r)
+    const fk = S(a.answered_for || a.offered_for, 40)
+    if (fk && fk !== `${S(kase?.shift_date, 10)}|${S(kase?.shift_time, 20)}`) { notEligible.push({ name: S(a.name, 80), why: 'answered for the earlier hours (' + fk.replace('|', ' ') + '); check with them' }); continue }
     const item = { name: S(a.name, 80), axiscare_id: a.axiscare_id ?? r.axiscare_id ?? null, ask_id: a.id ?? null, replied_at: a.replied_at ?? null, ...s }
     if (isPartial(a)) partial.push(item); else scored.push(item)
   }
@@ -184,8 +186,16 @@ export function boardOf(kase: Any, rows: Any[], excluded: { name: string; why: s
     const eligibility = v ? { ok: false, why: S(v.needs_verification, 200) } : r ? { ok: true, why: 'Can be offered and confirmed' }
       : { ok: false, why: ex ? S(ex.why, 200) : 'No longer on the list for this shift' }
     const s = r ? assess(kase, a, r) : { score: 0, reasons: [], concerns: [] }
-    const isPick = !!rec.pick && rec.pick.ask_id === a.id
+    /* A CHANGED SHIFT (2026-10-24): an answer counts only for the hours it was given for. If the shift's day or hours
+       changed since, the answer stays on the board, marked, and can't be confirmed until someone checks with them. */
+    const forKey = S(a.answered_for || a.offered_for, 40)
+    const nowKey = `${S(kase?.shift_date, 10)}|${S(kase?.shift_time, 20)}`
+    const stale = !!forKey && forKey !== nowKey && (said === 'full' || said === 'partial')
+    const staleWhy = stale ? `Answered for ${forKey.replace('|', ' ')}; the shift is now ${nowKey.replace('|', ' ')}. Check with them before confirming.` : null
+    if (staleWhy) s.concerns = [staleWhy, ...s.concerns]
+    const isPick = !stale && !!rec.pick && rec.pick.ask_id === a.id
     const why = isPick ? 'Cara recommends them for this shift'
+      : stale ? 'Not recommended: they answered for the earlier hours'
       : !eligibility.ok ? 'Not recommended: ' + eligibility.why
       : said === 'partial' ? 'Not recommended alone: they can cover only part of the shift'
       : said === 'full' ? 'Another yes ranks higher' : said === 'question' ? 'Waiting on an answer to their question'
@@ -195,12 +205,17 @@ export function boardOf(kase: Any, rows: Any[], excluded: { name: string; why: s
       reply: S(a.reply, 500) || null, condition: S(a.condition, 160) || null, answer_kind: a.answer_kind ?? null,
       offer_from: a.offer_from ?? null, offer_to: a.offer_to ?? null, note: S(a.answer_note, 300) || null, prn: a.prn === true,
       read_by: a.read_by ?? null, eligibility, recommended: isPick, why, score: s.score, reasons: s.reasons, concerns: s.concerns,
-      can_confirm: column === 'full' && eligibility.ok })
+      stale, history: (Array.isArray(a.answer_history) ? a.answer_history : []).slice(-20), wants_regular: a.wants_regular === true && a.state === 'yes',
+      can_confirm: column === 'full' && eligibility.ok && !stale })
   }
   const order = ['full', 'partial', 'question', 'no', 'nv', 'waiting']
   people.sort((x, y) => order.indexOf(x.column) - order.indexOf(y.column) || (y.recommended ? 1 : 0) - (x.recommended ? 1 : 0) || y.score - x.score || S(x.replied_at).localeCompare(S(y.replied_at)))
   const counts: Record<string, number> = {}; for (const c of order) counts[c] = people.filter((p) => p.column === c).length
-  return { people, counts, pick: rec.pick, note: rec.note, time_flex: kase?.time_flex === 'flexible_start' ? 'flexible_start' : 'exact', handoff_ok: kase?.handoff_ok === true }
+  /* one time or every week (2026-10-24), the same reading as the shift page */
+  const p = kase?.shift_pattern, wd = S(p?.weekday, 20).replace(/s$/, '')
+  const pattern = p?.v === 2 && p.kind === 'open_ongoing' ? { kind: 'ongoing', label: wd ? `Open every ${wd}: could become someone's regular shift` : 'Open every week: could become someone\'s regular shift' }
+    : p?.v === 2 && (p.kind === 'one_time_cover' || p.kind === 'one_time') ? { kind: 'one_time', label: p.kind === 'one_time_cover' ? 'This week only: the regular caregiver is back after this' : 'One shift only' } : null
+  return { people, counts, pick: rec.pick, note: rec.note, pattern, time_flex: kase?.time_flex === 'flexible_start' ? 'flexible_start' : 'exact', handoff_ok: kase?.handoff_ok === true }
 }
 
 /** INTEREST vs ASSIGNED, one word for the Hub and the texts: */

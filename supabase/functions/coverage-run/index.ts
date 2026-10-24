@@ -1320,6 +1320,7 @@ Deno.serve(async (req) => {
         const ask = { id: uid(), name: x.name, phone, channel: 'sms', at: nowIso(),
           state: 'waiting', replied_at: null, tier: x.tier, auto: false, ...(x.prn_ask ? { prn: true } : {}),
           picked_by_coordinator: true, ghl_contact_id: contact.contactId, axiscare_id: x.axiscare_id ?? null,
+          offered_for: `${String(kase.shift_date || '')}|${String(kase.shift_time || '')}`,   /* the hours this ask was sent for (2026-10-24) */
           /* CI2: who asked, when the call-in page sent it (server to server, with the owner key) */
           ...(ownerCall && typeof body.asked_by === 'string' && body.asked_by.trim() ? { asked_by: body.asked_by.trim().slice(0, 80) } : {}) }
         const { data: held, error: holdErr } = await sb.rpc('coverage_case_add_ask', { p_id: String(kase.id), p_ask: ask })

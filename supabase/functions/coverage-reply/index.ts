@@ -31,7 +31,8 @@ import { officeQuiet } from '../_shared/quiet-hours.ts'
 import { adminRecipients } from '../_shared/clockin-admins.ts'
 import { callinLink, withLink } from '../_shared/callin-notify.ts'
 import { OPEN_HOURS_ACK_DEFAULT, offeredCells, readByWords, readOpenHoursReply } from '../_shared/open-hours.ts'
-import { readShiftReply, settleReply } from '../_shared/cara-reply.ts'   // CARA PHASE 1: the AI reads the answer (cara_reply_ai_live)
+import { readShiftReply, settleReply } from '../_shared/cara-reply.ts'
+import { withHistory, shiftKey } from '../_shared/shift-offer.ts'   // answer history and the hours an answer was for (2026-10-24)   // CARA PHASE 1: the AI reads the answer (cara_reply_ai_live)
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -224,6 +225,11 @@ Deno.serve(async (req) => {
     /\b(pass|not this time|next time)\b/.test(t)
   const stamp = new Date().toISOString()
   const prevReply = String(a.reply || '')
+  /* THE ANSWER HISTORY (2026-10-24): the answer standing now is kept before this text replaces it; and a text answer is
+     for the hours on the case right now (the board compares it with the shift if the shift changes later) */
+  a.answer_history = withHistory(a)
+  a.answer_channel = 'text'; delete a.answer_kind; delete a.offer_from; delete a.offer_to; delete a.answer_note; delete a.condition
+  a.answered_for = shiftKey(c)
   a.replied_at = stamp
   a.reply = text.slice(0, 500)
 
