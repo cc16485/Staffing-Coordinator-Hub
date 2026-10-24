@@ -237,8 +237,8 @@ ck('recommend: a yes with a condition carries the condition as a concern', j.pic
   ck('reply: an answer outside the six, or the AI erroring = failed (the word rules decide)', r2.failed && r3.failed)
   globalThis.Deno = prevDeno
   const src2 = fs.readFileSync(path.join(FN, 'coverage-reply/index.ts'), 'utf8')
-  ck('coverage-reply: cara_reply_ai_live true = live, "practice" = kept as ai_read_practice, off = no AI call at all; interest checks untouched; nothing texted from this step',
-    /settings\.cara_reply_ai_live === true \? 'live' : settings\.cara_reply_ai_live === 'practice' \? 'practice' : 'off'/.test(src2) && /a\.ai_read_practice = /.test(src2) && /if \(String\(c\.kind\) !== 'interest' && aiMode !== 'off'\) \{\n    const ai = await readShiftReply/.test(src2)) }
+  ck('coverage-reply: cara_reply_ai_live = live, cara_reply_ai_practice = kept as ai_read_practice, off = no AI call at all; interest checks untouched; nothing texted from this step',
+    /settings\.cara_reply_ai_live === true \? 'live' : settings\.cara_reply_ai_practice === true \? 'practice' : 'off'/.test(src2) && /a\.ai_read_practice = /.test(src2) && /if \(String\(c\.kind\) !== 'interest' && aiMode !== 'off'\) \{\n    const ai = await readShiftReply/.test(src2)) }
 
 for (const [n, o, d] of res) console.log((o ? 'PASS' : 'FAIL') + ' · ' + n + (o ? '' : '\n     ' + d))
 console.log(`${res.filter((x) => x[1]).length}/${res.length}`)

@@ -11,7 +11,7 @@
 // Safety, in this order: the AI never makes anyone assigned (a yes is interest; the office confirms); when the plain word
 // rules and the AI disagree (a "can't" the AI read as yes, a clean yes the AI read as no), a person decides; the AI not
 // answering = the word rules, as today. Nothing is texted back here (her rule 2026-09-19: collect every yes, answer
-// nobody until the office chooses). Switch ops_settings.cara_reply_ai_live: true = live; 'practice' = the AI's reading is
+// nobody until the office chooses). Switches: ops_settings.cara_reply_ai_live = live; cara_reply_ai_practice = the AI's reading is
 // kept beside the word rules' answer (ai_read_practice) and the word rules decide; off (default) = no AI call at all.
 // =============================================================================
 // deno-lint-ignore-file no-explicit-any

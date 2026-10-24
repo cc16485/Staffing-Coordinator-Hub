@@ -291,10 +291,10 @@ Deno.serve(async (req) => {
   }
   /* CARA PHASE 1 (2026-10-23): the AI reads the answer too (_shared/cara-reply.ts). Live (cara_reply_ai_live): the word
      rules and the AI together decide, a disagreement goes to a person, a "yes with a condition" is a yes that carries the
-     condition. 'practice': the AI's reading is kept beside the word rules' answer (ai_read_practice) and the word rules
+     condition. Practice (cara_reply_ai_practice): the AI's reading is kept beside the word rules' answer (ai_read_practice) and the word rules
      decide. Off (the default): no AI call at all, exactly as before. A yes
      is still only interest: nothing here assigns anyone or texts anyone back. Interest checks keep today's reading. */
-  const aiMode = settings.cara_reply_ai_live === true ? 'live' : settings.cara_reply_ai_live === 'practice' ? 'practice' : 'off'
+  const aiMode = settings.cara_reply_ai_live === true ? 'live' : settings.cara_reply_ai_practice === true ? 'practice' : 'off'
   if (String(c.kind) !== 'interest' && aiMode !== 'off') {
     const ai = await readShiftReply(text, c)
     const settled = settleReply({ isYes, isNo }, ai)
