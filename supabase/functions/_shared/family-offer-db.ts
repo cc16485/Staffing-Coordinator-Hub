@@ -16,6 +16,7 @@ import type { WelcomeAlertDeps } from './family-welcome-alert.ts'
 import type { MatchResult } from './family-offer.ts'
 import { approvedRules } from './approved-rules.ts'
 import { careLevelOf } from './care-level.ts'
+import { approvedIntro, previewRecords } from './caregiver-preview.ts'
 import { judge, homeNotes, type MatchClient, type MatchCaregiver } from './family-match.ts'
 
 // deno-lint-ignore no-explicit-any
@@ -184,6 +185,12 @@ export function chooseDepsFor(db: Any, ax: Ax, supabaseUrl: string): ChooseDeps 
       return (await db.from('family_bookings').select('*').eq('status', 'not_filled').eq('family_unfilled_pending', true).is('family_unfilled_at', null).gte('visit_date', today).limit(100)).data ?? []
     },
     clientAbout: async (axId) => {
+      /* Caregiver Preview on (2026-10-24, her call: "use the same approved Caregiver Preview profile for both Cara and the
+         Booking App"): the approved About only. Off: the Family Circle's About, as before. */
+      if (((await key('ops_settings')) ?? {}).caregiver_preview_live === true) {
+        const { row, circle } = await previewRecords(db, String(axId))
+        return approvedIntro(row, circle).about
+      }
       const { data } = await db.from('care_circles').select('caregiver_about').eq('axiscare_client_id', axId).eq('active', true).limit(1).maybeSingle()
       const t = String(data?.caregiver_about ?? '').trim()
       return t || null

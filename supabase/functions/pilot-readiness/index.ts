@@ -47,6 +47,8 @@ Deno.serve(async (req) => {
   if (list.error) return json({ error: 'AxisCare clients: ' + list.error }, 502)
   const active = list.clients.filter((c) => c?.status?.active === true && !tests.has(String(c.id)) && !isNotClient(String(c.id)) && !/\btest\b/i.test(`${c?.firstName ?? ''} ${c?.lastName ?? ''}`))
   const { data: circles } = await db.from('care_circles').select('id, axiscare_client_id, active, caregiver_about')
+  /* Caregiver Preview (2026-10-24): an About approved there counts too */
+  const { data: profiles } = await db.from('client_caregiver_profile').select('axiscare_client_id, approved_about, intro_approved_at')
   const { data: contacts } = await db.from('circle_contacts').select('circle_id, email, app_status, stopped_at, axiscare_removed_at')
   const roster = rowsOf(await key('caregivers'))
   const phoneOf = new Map(roster.filter((g) => S(g?.axiscare_id)).map((g) => [S(g.axiscare_id), S(g.phone).replace(/\D/g, '').length >= 10]))
@@ -66,7 +68,7 @@ Deno.serve(async (req) => {
     try { const e = await estimateRate(ax, id, state, st, today); rate = e.rate; rateFrom = e.rate == null ? null : (Number(st?.[`family_app_rate_${state}`]) === e.rate ? 'state' : 'client') } catch { /* none */ }
     rows.push({ ax: id, name: [S(c.firstName), S(c.lastName)].filter(Boolean).join(' '), state, clientEmail: S(c.personalEmail ?? c.email) || null,
       rpEmails: rps.map((p) => S(p?.email)).filter(Boolean), circleEmails: live.map((x) => S(x.email)).filter(Boolean),
-      appOn: live.filter((x) => x.app_status === 'active').length, rate, rateFrom, about: k.some((x) => S(x.caregiver_about).length > 0),
+      appOn: live.filter((x) => x.app_status === 'active').length, rate, rateFrom, about: (profiles ?? []).some((x) => S(x.axiscare_client_id) === id && x.intro_approved_at && S(x.approved_about).length > 0) || (!(profiles ?? []).some((x) => S(x.axiscare_client_id) === id && x.intro_approved_at) && k.some((x) => S(x.caregiver_about).length > 0)),
       recentCaregivers: cgs.length, reachable: cgs.filter((g) => phoneOf.get(g) === true).length })
   }
   return json({ ok: true, count: rows.length, text: report(rows) })
