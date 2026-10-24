@@ -109,13 +109,8 @@ try {
   ;[s, b] = await call(h, { body: { profile_id: 'x', client_name: 'Mary' } }); ck('caregiver-intro: no sign-in is refused (401)', s === 401, [s, b])
   ;[s, b] = await call(h, { who: 'caregiver', body: { profile_id: 'x', client_name: 'Mary' } }); ck('caregiver-intro: a signed-in account WITHOUT an office role is now refused (403); it used to get in', s === 403, [s, b])
   ;[s, b] = await call(h, { who: 'office', body: {} }); ck('caregiver-intro: an office member gets past the check (next stop: the body)', s === 400 && /profile/.test(b.error), [s, b])
-  // 6. shift-confirm: its schedule (vault secret) or the owner key; nobody else
-  h = await load('shift-confirm')
-  ;[s, b] = await call(h, { who: ANON, q: '?auth_check=1' }); ck('shift-confirm: the public key is refused (401); it used to be answered', s === 401, [s, b])
-  ;[s, b] = await call(h, { who: 'office', q: '?auth_check=1' }); ck('shift-confirm: a signed-in office member is refused too (it is a job, not a button)', s === 401, [s, b])
-  ;[s, b] = await call(h, { who: ANON, headers: { 'x-cron-secret': JOB }, q: '?auth_check=1' }); ck('shift-confirm: its own schedule, carrying the vault secret, gets in as cron', s === 200 && b.caller === 'cron', [s, b])
-  ;[s, b] = await call(h, { who: ANON, headers: { 'x-cron-secret': 'wrong'.repeat(9) }, q: '?auth_check=1' }); ck('shift-confirm: a wrong secret is refused', s === 401, [s, b])
-  ;[s, b] = await call(h, { who: SERVICE, q: '?auth_check=1' }); ck("shift-confirm: the owner's server key gets in as owner", s === 200 && b.caller === 'owner', [s, b])
+  // 6. shift-confirm: RETIRED 2026-10-23 (Cara decision 5); the function is gone from the repo
+  ck('shift-confirm: retired, no code left to deploy', !fs.existsSync(path.join(F, 'shift-confirm')))
   // 7. ops-escalate: no more token in the URL
   h = await load('ops-escalate')
   ;[s, b] = await call(h, { who: ANON, q: '?token=anything&auth_check=1' }); ck('ops-escalate: a token in the URL no longer opens it (401)', s === 401, [s, b])

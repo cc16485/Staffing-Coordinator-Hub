@@ -33,7 +33,11 @@ function mergeSkills(a: Record<string, Any>, b: Record<string, Any>) {
 const centralDay = (iso: string) => new Date(iso).toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
 function slotOf(t: string) { const h = Number(t.slice(0, 2)); if (!Number.isFinite(h)) return null; for (const [k, [a, z]] of Object.entries(WIN)) if ((h >= a && h < z) || (h + 24 >= a && h + 24 < z)) return k; return null }
 
-export function buildDarkReport(x: DarkIn): Any {
+/** The people and clients as the match rule sees them (cgOf, clientOf), shared by the dark report and Cara's call-off
+    list (_shared/cara-skills.ts, 2026-10-23). Only the inputs those two need: M, E, levelOf, payerOf, axCaregivers, axClients,
+    roster, overlay, availability, dnr, factsByClient, step1ByAx, lock. */
+export type PeopleIn = Pick<DarkIn, 'M' | 'E' | 'levelOf' | 'payerOf' | 'axCaregivers' | 'axClients' | 'roster' | 'overlay' | 'availability' | 'dnr' | 'factsByClient' | 'step1ByAx' | 'lock'>
+export function makePeople(x: PeopleIn) {
   const M = x.M, gaps = { dnr_unmatched: [] as string[], covered_by_unmatched: 0, no_journey_clients: [] as string[], no_availability: 0, drive_unknown: 0, restrictions_said: [] as string[], needs_verification: 0, lock_unreadable: !x.lock?.ok }
   /* the people, by AxisCare id */
   const axCg = new Map(x.axCaregivers.filter((g: Any) => g?.id != null).map((g: Any) => [String(g.id), g]))
@@ -74,6 +78,11 @@ export function buildDarkReport(x: DarkIn): Any {
     const out = { name, id, payer: x.payerOf(c.classes), level: x.levelOf(c.classes) || 1, plan_current: true, needs: ff.needs, facts: ff.facts, lift_type: ff.lift_type, advanced_tasks: ff.advanced_tasks, dnr_axiscare_ids: dnrIds, journey: rows != null }
     clCache.set(id, out); return out
   }
+  return { M, gaps, cgOf, clientOf, idOfName, axCg, avail, clCache }
+}
+
+export function buildDarkReport(x: DarkIn): Any {
+  const { M, gaps, cgOf, clientOf, idOfName, avail, clCache } = makePeople(x)
   /* each caregiver's visits, for "actually free" */
   const day = (v: Any) => S(v?.scheduledStartDate ?? v?.startDate, 30)
   const end = (v: Any) => S(v?.scheduledEndDate ?? v?.endDate, 30)

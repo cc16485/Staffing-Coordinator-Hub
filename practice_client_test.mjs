@@ -28,7 +28,7 @@ const uses = [
 ]
 for (const [f, re, what] of uses) ck(what, re.test(src(f)))
 ck('coverage-shifts: all eight visit loops skip it', (src('coverage-shifts/index.ts').match(/isNotClient\(v\)/g) || []).length === 8, (src('coverage-shifts/index.ts').match(/isNotClient\(v\)/g) || []).length)
-const already = [['timekeeper-watch/index.ts', /isQuiet\(/], ['late-watch/index.ts', /isQuiet\(/], ['missed-notes/index.ts', /isQuiet\(/], ['shift-confirm/index.ts', /isNotClient\(/], ['carematch-watch/index.ts', /isQuiet\(/], ['care-notes/index.ts', /isNotClient\(/], ['client-sync/index.ts', /isNotClient\(/], ['lead-digest/index.ts', /isNotClient\(|isQuiet\(/]]
+const already = [['timekeeper-watch/index.ts', /isQuiet\(/], ['late-watch/index.ts', /isQuiet\(/], ['missed-notes/index.ts', /isQuiet\(/], ['carematch-watch/index.ts', /isQuiet\(/], ['care-notes/index.ts', /isNotClient\(/], ['client-sync/index.ts', /isNotClient\(/], ['lead-digest/index.ts', /isNotClient\(|isQuiet\(/]]
 for (const [f, re] of already) ck('already skips it: ' + f.split('/')[0], re.test(src(f)))
 console.log(`\n${pass}/${pass + fail} passed`)
 process.exit(fail ? 1 : 0)

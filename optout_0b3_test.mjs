@@ -106,7 +106,7 @@ for (const [label, addr, want] of [['clean', CLEAN_E, 1], ['opted out', OPT_E, 0
 /* ── source scan: the heavy scheduled senders cannot skip the door ── */
 const src = (f) => fs.readFileSync(`${FN}/${f}/index.ts`, 'utf8')
 const cfoCalls = (s) => [...s.matchAll(/contactForOutbound\([\s\S]*?\{[^{}]*audience:[^{}]*\}\)/g)].map((m) => m[0])
-for (const f of ['coverage-run', 'timekeeper-watch', 'shift-confirm', 'carematch-watch', 'caregiver-availability']) {
+for (const f of ['coverage-run', 'timekeeper-watch', 'carematch-watch', 'caregiver-availability']   /* shift-confirm retired 2026-10-23 */) {
   const calls = cfoCalls(src(f)); const bad = calls.filter((c) => !/audience: 'staff'/.test(c) && !/channel: 'sms'/.test(c))
   ck(`scan · ${f}: every contactForOutbound call is a staff alert or names its channel (${calls.length} calls)`, calls.length > 0 && bad.length === 0, bad)
 }

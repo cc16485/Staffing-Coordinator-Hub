@@ -102,7 +102,7 @@ ck('textAdmin: an admin with no phone on file is no longer skipped silently: a c
 /* ── scan · every send site in the group ── */
 const SP = await import(path.join(process.cwd(), FN, '_shared/send-problems.ts'))
 const files = ['coverage-run', 'timekeeper-watch', 'coverage-reply', 'caregiver-availability', 'caregiver-intro', 'carematch-watch', 'team-ask',
-  'prn-reconfirm', 'shift-confirm', 'clockin-alert', 'late-watch', 'late-alert', 'missed-notes'].map((n) => [n, fs.readFileSync(`${FN}/${n}/index.ts`, 'utf8')])
+  'prn-reconfirm', /* shift-confirm retired 2026-10-23 */ 'clockin-alert', 'late-watch', 'late-alert', 'missed-notes'].map((n) => [n, fs.readFileSync(`${FN}/${n}/index.ts`, 'utf8')])
 files.push(['_shared/clockin-admins', fs.readFileSync(`${FN}/_shared/clockin-admins.ts`, 'utf8')])
 const raw = (s) => (s.match(/fetch\('https:\/\/services\.leadconnectorhq\.com\/conversations\/messages'/g) || []).length
 /* Only interactive sends that already answer the person with an error keep a raw post: team-ask (502 "Not sent"),
@@ -122,7 +122,7 @@ const senders = [...new Set(files.flatMap(([, s]) => [...s.matchAll(/'([a-z][a-z
 const unknown = senders.filter((x) => !SP.SENDER_WORDS[SP.senderKey(x)])
 ck('scan · every sender name these files use reads as a known message on a card (SENDER_WORDS)', senders.length >= 10 && !unknown.length, { senders, unknown })
 const changed = files.filter(([n, s]) => /send-problems\.ts'/.test(s)).map(([n]) => n)
-ck('scan · each changed file says why (NO SILENT FAILURES comment)', changed.every((n) => /NO SILENT FAILURES \(2026-10-01\)/.test(files.find(([m]) => m === n)[1])) && changed.length === 12, changed)
+ck('scan · each changed file says why (NO SILENT FAILURES comment)', changed.every((n) => /NO SILENT FAILURES \(2026-10-01\)/.test(files.find(([m]) => m === n)[1])) && changed.length === 11 /* 12 until shift-confirm was retired 2026-10-23 */, changed)
 
 console.log('\nNO SILENT FAILURES · slice 2 · SCHEDULING SENDERS\n' + '='.repeat(60)); let all = true
 for (const [n, g, note] of res) { all &&= g; console.log((g ? 'PASS  ' : 'FAIL  ') + n + (note ? '\n   └─ ' + note : '')) }

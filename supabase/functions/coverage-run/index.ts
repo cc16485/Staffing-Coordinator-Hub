@@ -42,7 +42,9 @@ import { careLevelOf } from '../_shared/care-level.ts'
 import { holdsAutoTexts, isMustCover, onlyAskCut, planLine, readPlan } from '../_shared/callin-plan.ts'
 import { callinLink, withLink, rememberAlerted, textCaseAdmins, caseWhat } from '../_shared/callin-notify.ts'
 import { reminderDue, reminderText } from '../_shared/callin-reminder.ts'
-import { adminRecipients } from '../_shared/clockin-admins.ts'
+import { adminRecipients, textAdmin } from '../_shared/clockin-admins.ts'
+import { urgencyOf, confirmed, criticalText, criticalRecipients } from '../_shared/cara-urgency.ts'   // CARA PHASE 1 step 2
+import { onDuty } from '../_shared/duty.ts'
 import { caseEnded, chiNowNaive } from '../_shared/loops.ts'
 /* SLICE 5 (2026-10-10): a new hire with a readiness card is never offered a shift until Approved to Work and AxisCare read back Active */
 import { workLock, LOCK_WHY } from '../_shared/work-lock.ts'
@@ -54,6 +56,9 @@ import { readTransportNeed, readDriveGate, transportDecision } from '../_shared/
 import { MO_FROM } from '../_shared/office-from.ts'   // every text goes out from (417) 234-8494
 import { fallbackList } from '../_shared/notice-to.ts'
 import { takenOffNotCalledIn, offWords } from '../_shared/not-a-callin.ts'
+/* CARA PHASE 1 (2026-10-23): the better list, behind ops_settings.cara_list_live (off = the list is exactly as before) */
+import { availStatus, availRank, UNKNOWN_WHY, weekOf, weekHoursBy, shiftHours, hoursFlag, overlapsFor, skillsNote, recommend } from '../_shared/cara-list.ts'
+import { loadSkillJudge } from '../_shared/cara-skills.ts'
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -161,7 +166,8 @@ export function prnFit(c: any, p: PrnMember, busy: boolean, nowChicago?: Date): 
 /* AVAILABILITY FOR EVERYONE (Samantha, 2026-10-14: "we need them to check availability"). The shift's day and time of day
    (its start, same bands as the availability page) against the times the caregiver gave us. A dated shift is one slot; an
    interest check or regular opening is each asked day at its start time, and counts as outside only when NONE of those days
-   fit. No availability on file = available any time (her 24-hour rule); no date or time on the case = nothing to check.
+   fit. No availability on file = no answer here; with Cara Phase 1 on (cara_list_live) that is "Unknown", never a fit
+   (her rule 2026-10-17, _shared/cara-list.ts availStatus); no date or time on the case = nothing to check.
    outside + ok: they ticked "also text me about open shifts outside my availability". */
 // deno-lint-ignore no-explicit-any
 export function availCheck(c: any, a: { windows?: Record<string, string[]> | null; outside_ok?: boolean | null } | null | undefined): { outside: boolean; ok: boolean; why: string | null } {
@@ -182,7 +188,7 @@ export function availCheck(c: any, a: { windows?: Record<string, string[]> | nul
   return { outside: true, ok: a?.outside_ok === true, why }
 }
 /* every availability record by AxisCare id (and record id), read once; unreadable = empty = everyone available */
-async function availLoad(): Promise<Map<string, { windows?: Record<string, string[]> | null; outside_ok?: boolean | null }>> {
+async function availLoad(): Promise<Map<string, { windows?: Record<string, string[]> | null; outside_ok?: boolean | null; target_hours?: unknown }>> {
   const out = new Map()
   try {
     const { data } = await sb.from('app_data').select('data').eq('key', 'caregiver_availability').maybeSingle()
@@ -656,7 +662,7 @@ async function dnrSetFor(clientName: string): Promise<Set<string>> {
    (re-derived server-side before sending, so a stale or tampered browser
    list can never text somebody the rules exclude). */
 // deno-lint-ignore no-explicit-any
-async function buildCandidatesForCase(c: any):
+async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked?: boolean } = {}):
   // deno-lint-ignore no-explicit-any
   // deno-lint-ignore no-explicit-any
   Promise<{ group0: any[]; group1: any[]; group2: any[]; prn_other: any[]; prn_ongoing: any[]; excluded: any[]; meta: Record<string, unknown> }> {
@@ -666,6 +672,9 @@ async function buildCandidatesForCase(c: any):
     excluded.push({ name: x.name, why })
 
   const cands = await candidatesFor(c)
+  /* CARA PHASE 1: on when the switch cara_list_live is on, or for the office's side-by-side preview (action candidates_v2) */
+  let v2 = opts.v2 === true
+  if (!v2) { try { const { data: s0 } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle(); v2 = s0?.data?.cara_list_live === true } catch { /* off */ } }
 
   const clientRes = c.client_axiscare_id
     ? { status: 'resolved', id: String(c.client_axiscare_id), detail: 'from the AxisCare visit' }
@@ -677,7 +686,9 @@ async function buildCandidatesForCase(c: any):
   let clientLv: number | null = typeof c.client_care_level === 'number' ? c.client_care_level : null
   let clientCity = String(c.client_city || '').trim()
   let clientZip = String(c.client_zip || '').trim()
-  if ((clientLv == null || !clientZip) && clientRes.id) {
+  // deno-lint-ignore no-explicit-any
+  let axClientRaw: any = null
+  if ((clientLv == null || !clientZip || v2) && clientRes.id) {
     try {
       const { token: t2, site: s2 } = axisCreds()
       if (t2 && s2) {
@@ -687,6 +698,7 @@ async function buildCandidatesForCase(c: any):
         // deno-lint-ignore no-explicit-any
         const j: any = await r.json().catch(() => ({}))
         const cl = j?.results?.client ?? j?.results ?? {}
+        if (r.ok) axClientRaw = cl
         if (clientLv == null) clientLv = careLevelOf(cl?.classes).level
         if (!clientCity) clientCity = String(cl?.residentialAddress?.city ?? '').trim()
         if (!clientZip) clientZip = String(cl?.residentialAddress?.postalCode ?? cl?.residentialAddress?.zip ?? '').trim()
@@ -749,6 +761,8 @@ async function buildCandidatesForCase(c: any):
   const inTrainingAx = new Set<string>()   // 2026-10-22: active in AxisCare but In Training = onboarding, cut once the switch is on
   const caregiverLevel = new Map<string, number>()
   const cgCity = new Map<string, string>(), cgZip = new Map<string, string>(), cgHire = new Map<string, string>()
+  // deno-lint-ignore no-explicit-any
+  const axCgRaw: any[] = []   // CARA PHASE 1: the census rows, for the skills rules
   let censusError: string | null = null
   {
     const { token, site } = axisCreds()
@@ -768,7 +782,7 @@ async function buildCandidatesForCase(c: any):
           : Object.values(j?.results?.caregivers ?? j?.caregivers ?? {})
         for (const g of gRows)
           if (g?.status?.active === true && g?.id != null) {
-            axisActive.add(String(g.id))
+            axisActive.add(String(g.id)); axCgRaw.push(g)
             if (isInTraining(g?.status?.label)) inTrainingAx.add(String(g.id))
             const lv = careLevelOf(g?.classes)
             if (lv.level != null) caregiverLevel.set(String(g.id), lv.level)
@@ -964,13 +978,35 @@ async function buildCandidatesForCase(c: any):
   // deno-lint-ignore no-explicit-any
   const group0: any[] = [], prnOther: any[] = [], prnOngoing: any[] = []   // PRN3
   const availAll = await availLoad()   // 2026-10-14: availability checked for everyone
+  /* CARA PHASE 1 context (only when v2): the week's hours, other open cases and plans (overlapping yeses), the skills rule */
+  let weekHrs = new Map<string, number>(), weekNote: string | null = null, shiftLen = 0
+  // deno-lint-ignore no-explicit-any
+  let otherCases: any[] = [], plans: any[] = []
+  let skills: Awaited<ReturnType<typeof loadSkillJudge>> | null = null
+  if (v2) {
+    shiftLen = shiftHours(String(c.shift_time || ''))
+    if (/^\d{4}-\d\d-\d\d$/.test(String(c.shift_date || ''))) {
+      let wkStart = 'sun'
+      try { const { data: s1 } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle(); if (/^(sun|mon|tue|wed|thu|fri|sat)$/.test(String(s1?.data?.payroll_week_start || ''))) wkStart = String(s1!.data.payroll_week_start) } catch { /* sun */ }
+      const [a, z] = weekOf(String(c.shift_date), wkStart)
+      const wk = await fetchVisits(`startDate=${a}&endDate=${z}`)
+      if (wk.error) weekNote = 'weekly hours not checked: ' + wk.error
+      else { weekHrs = weekHoursBy(wk.rows); weekNote = `weekly hours counted ${a} to ${z} from the AxisCare schedule` }
+    }
+    try {
+      const [{ data: kc }, { data: kp }] = await Promise.all([sb.from('app_data').select('data').eq('key', 'coverage_cases').maybeSingle(), sb.from('app_data').select('data').eq('key', 'staffing_plans').maybeSingle()])
+      otherCases = Array.isArray(kc?.data) ? kc!.data : []; plans = Array.isArray(kp?.data) ? kp!.data : []
+    } catch { /* no overlap flags rather than wrong ones */ }
+    const { data: rosterRow2 } = await sb.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
+    skills = await loadSkillJudge(sb, { clientAxId: clientRes.id, axClient: axClientRaw, axCaregivers: axCgRaw, roster: Array.isArray(rosterRow2?.data) ? rosterRow2!.data : [], lock, driveGate: driveLive, today: driveToday })
+  }
   for (const x of cands) {
     if (x.skipped && !x.may_autosend) { cut(x, String(x.skipped)); continue }
     if (dnr.has(nameKeyOf(String(x.name)))) { cut(x, 'Do-Not-Return for this client, never suggested'); continue }
     if (planR.error) { cut(x, "held: the client's call-in plan could not be read (fail closed)"); continue }
     const planCut = onlyAskCut(planR.plan, x, String(c.client || planR.plan?.client_name || ''))
     if (planCut) { cut(x, planCut); continue }
-    if (alreadyAsked.has(String(x.name).toLowerCase())) { cut(x, 'already asked on this case'); continue }
+    if (!opts.includeAsked && alreadyAsked.has(String(x.name).toLowerCase())) { cut(x, 'already asked on this case'); continue }   // includeAsked: only for Cara recommends, which judges the people who said yes
     if ((callerOff && String(x.name).toLowerCase() === callerOff)
         || (callerOffId && String(x.axiscare_id || '') === callerOffId)) { cut(x, 'the person who called off'); continue }
     if (!censusUsable) { cut(x, 'held: AxisCare census unreachable (fail closed)'); continue }
@@ -986,6 +1022,13 @@ async function buildCandidatesForCase(c: any):
     const drv = transportDecision(x, drive.level, driveLive, driveToday)
     if (drv.exclude) { cut(x, `not cleared to drive clients, and this shift needs transportation (${drv.why})`); continue }
     if (drv.note) driveNotes.push({ name: String(x.name), note: drv.note })
+    /* CARA PHASE 1: the verified-skills rules (match-rules.js): "not for this visit" leaves the list with the rule's reason */
+    let skillsLine: string | null = null
+    if (v2 && skills?.judge) {
+      const sn = skillsNote(skills.judge(String(x.axiscare_id)))
+      if (sn.cut) { cut(x, 'Skills rules: ' + sn.cut); continue }
+      skillsLine = sn.note
+    }
     const h = history.get(String(x.axiscare_id))
     const gap = wantGap.get(String(x.axiscare_id))
     const gid = String(x.axiscare_id)
@@ -1034,6 +1077,13 @@ async function buildCandidatesForCase(c: any):
        purpose); outside but they said OK to texts about those = ticked as usual, with the note. PRN keep their own rule. */
     const av = availCheck(c, availAll.get(gid))
     if (av.outside) Object.assign(row, av.ok ? { outside_ok_note: av.why + ', said OK to texts about those' } : { outside_avail: av.why })
+    /* CARA PHASE 1: Unknown is its own state (her rule 2026-10-17), plus the week's hours, overlapping yeses and the skills note */
+    if (v2) {
+      const st2 = availStatus(c, availAll.get(gid))
+      Object.assign(row, { avail_state: st2.state, avail_unknown: st2.state === 'unknown' ? UNKNOWN_WHY : null,
+        hours: weekNote && !/not checked/.test(weekNote) ? hoursFlag(weekHrs.get(gid) ?? 0, shiftLen, availAll.get(gid)?.target_hours as number | null) : null,
+        overlaps: overlapsFor(c, { axiscare_id: gid, name: String(x.name) }, otherCases, plans), skills_note: skillsLine })
+    }
     /* PRN3: the PRN CNA Team gets its own place, never mixed into the groups everyone else is ticked from. */
     const pm = prnTeam.get(gid)
     if (pm) {
@@ -1069,6 +1119,13 @@ async function buildCandidatesForCase(c: any):
     || (Number(b.recently_active) - Number(a.recently_active))
     || ((b.wants_more_hours ?? -999) - (a.wants_more_hours ?? -999)))
 
+  /* CARA PHASE 1 order (v2 only): a stated fit, then Unknown, then outside; then nobody already working, overlapping a
+     yes, or into overtime; inside that the order above is kept (Array.sort is stable) */
+  if (v2) {
+    // deno-lint-ignore no-explicit-any
+    const k2 = (r: any) => availRank(r.avail_state) * 8 + (r.working_then ? 4 : 0) + ((r.overlaps || []).length ? 2 : 0) + (r.hours?.level === 'ot' ? 1 : 0)
+    for (const g of [group0, group1, group2]) g.sort((a, b) => k2(a) - k2(b))
+  }
   /* driving only preferred: the same order, with everyone not cleared to drive moved after everyone who is (stable) */
   if (drive.level === 'preferred' && driveLive) for (const g of [group0, group1, group2, prnOther, prnOngoing]) {
     const yes = g.filter((r) => !r.drive_lower), no = g.filter((r) => r.drive_lower); g.splice(0, g.length, ...yes, ...no) }
@@ -1088,6 +1145,7 @@ async function buildCandidatesForCase(c: any):
     callin_plan: planR.plan ? planLine(planR.plan) : null,
     callin_plan_note: planR.plan?.note ?? null,
     callin_plan_unreadable: planR.error,
+    cara_list: v2 ? { on: true, skills: skills?.why ?? ('checked with match-rules ' + (skills?.rule_version || '')), client_state: skills?.client_state ?? null, hours: weekNote, availability_rule: 'no availability on file = Unknown, listed after a stated fit, never counted as a fit' } : { on: false },
   } }
 }
 
@@ -1133,6 +1191,16 @@ Deno.serve(async (req) => {
     if (body.action === 'candidates') {
       const out = await buildCandidatesForCase(kase)
       return jr(out)
+    }
+    /* CARA PHASE 1 (2026-10-23), both read only and allowed while cara_list_live is off, so the office can compare:
+       candidates_v2  the better list (Unknown availability, skills rules, week hours, overlapping yeses)
+       recommend      of the people who said YES, the one to confirm, with reasons and concerns. Interest only: nothing is
+                      assigned, texted or saved; the confirm stays the office's (coverage-assign, AxisCare read-back). */
+    if (body.action === 'candidates_v2') return jr(await buildCandidatesForCase(kase, { v2: true }))
+    if (body.action === 'recommend') {
+      const pool = await buildCandidatesForCase(kase, { v2: true, includeAsked: true })
+      const rows = [...pool.group0, ...pool.prn_other, ...pool.group1, ...pool.group2, ...pool.prn_ongoing]
+      return jr({ ...recommend(kase, rows, pool.excluded), meta: pool.meta.cara_list })
     }
 
     if (body.action === 'send_selected') {
@@ -1604,6 +1672,59 @@ Deno.serve(async (req) => {
         }
       }
     } catch (e) { console.error('[coverage-run] call-in reminder failed', e) }
+
+    /* ── CARA PHASE 1, step 2 (2026-10-23): URGENCY ON EVERY CASE, AND CRITICAL REACHES THE PEOPLE ON DUTY AT ONCE.
+       Her words: "Urgent alerts to the person on duty should happen immediately." The level is kept on the case only when
+       it changes. A case that turns Critical while nobody is confirmed texts the Staffing seat and In charge now (at any
+       hour: a shift within 3 hours, or a must-be-covered client), once per case. A case that is already Critical when it is
+       first seen goes with the call-in alert below (same run): the people on duty who are not on that alert list get the
+       Critical text, and nobody gets two texts. Switch
+       ops_settings.cara_urgency_live; off, the level and what WOULD have gone are kept as practice (urgency_practice). */
+    try {
+      if ((caller === 'cron' || commit) && c.kind !== 'interest') {
+        const urgLive = settings.cara_urgency_live === true
+        const plU = await readPlan(sb, c.client_axiscare_id, remPlans)
+        const u = urgencyOf(c, chiNowNaive(), { must: isMustCover(plU.plan) })
+        const fieldU = urgLive ? 'urgency' : 'urgency_practice'
+        const prevU = c[fieldU]
+        const patchU: Record<string, unknown> = {}
+        if (!prevU || prevU.level !== u.level) patchU[fieldU] = { level: u.level, why: u.why, at: nowIso() }
+        const doneKey = urgLive ? 'critical_alerted' : 'critical_alerted_practice'
+        if (u.level === 'critical' && !confirmed(c) && !c[doneKey]) {
+          {
+            const rd = async (k: string) => { const { data } = await sb.from('app_data').select('data').eq('key', k).maybeSingle(); return Array.isArray(data?.data) ? data!.data : [] }
+            const [dw, pos, cs] = await Promise.all([rd('duty_windows'), rd('positions'), rd('coordinator_staff')])
+            const admins = await adminRecipients(sb, settings)
+            const seats = onDuty(dw, settings, new Date(), pos, admins[0]?.email || '')
+            // deno-lint-ignore no-explicit-any
+            const staffFor = (email: string) => { const p = cs.find((x: any) => String(x?.email || '').trim().toLowerCase() === email); if (!p) return null
+              const name = String(p.name || email.split('@')[0]); return { email, name, first: name.split(/\s+/)[0], phone: normalisePhone(p.phone) || null } }
+            const who0 = criticalRecipients(seats, admins, staffFor)
+            /* first seen already Critical: the call-in alert goes to its list in this same run, so only the people on duty
+               who are NOT on that list get the Critical text (nobody gets two texts for one shift) */
+            const firstSeen = !c.admin_alerted
+            const who = firstSeen ? { ...who0, to: who0.to.filter((a) => !admins.some((x) => x.email === a.email)) } : who0
+            const when = [c.shift_date, span12(c.shift_time)].filter(Boolean).join(' ')
+            const reached: string[] = []
+            if (urgLive && ghl.token && ghl.locationId) {
+              for (const a of who.to) {
+                const link = await callinLink(String(c.id), a.email, c.shift_date)
+                // deno-lint-ignore no-explicit-any
+                if (await textAdmin(sb, ghl, a as any, withLink(criticalText(c, u, when), link), fetch, { emergency: true })) reached.push(a.email)
+              }
+              if (reached.length) await rememberAlerted(sb, String(c.id), reached)
+            }
+            patchU[doneKey] = { at: nowIso(), to: who.to.map((a) => a.email), why: who.why, ...(firstSeen ? { with_callin_alert: true } : {}), ...(urgLive ? { reached } : { practice: true, text: criticalText(c, u, when) }) }
+            if (urgLive) await opEvent(sb, { job: 'coverage-run', verb: 'coverage_critical', item_id: String(c.id), area: 'coverage',
+              summary: `Critical open shift: ${c.client || 'a client'} ${when} (${u.why}); texted ${reached.length} on duty` })
+          }
+        }
+        if (Object.keys(patchU).length) {
+          await sb.rpc('coverage_case_patch', { p_id: String(c.id), p_patch: patchU, p_expect: { status: 'open' } })
+          Object.assign(c, patchU)
+        }
+      }
+    } catch (e) { console.error('[coverage-run] urgency failed', e) }
 
     /* ── ADMIN ALERT ON DETECTION (her ask: are all admin alerted by text
        and email when a call-in is detected? They are now.) Every NEW case,

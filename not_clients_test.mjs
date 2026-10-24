@@ -24,7 +24,7 @@ ck('the quiet list every shift job checks now holds Office Staff, beside paused 
 /* every job that reads visits or clients leaves them out (by the source) */
 const src = (f) => fs.readFileSync(path.join(F, f), 'utf8');
 const jobs = {
-  'shift-confirm/index.ts': /isNotClient\(v\)\) \{ skippedVisits\+\+; continue \}/,
+  /* shift-confirm retired 2026-10-23 */
   'care-notes/index.ts': /!v\.removed && !isNotClient\(v\)\) list\.push/,
   'eligibility-sweep/index.ts': /if \(isNotClient\(v\)\) continue/,
   'lead-digest/index.ts': /!v\?\.removed && !isNotClient\(v\)\) visits\.push/,
