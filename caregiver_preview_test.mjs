@@ -227,6 +227,18 @@ ck('... and it follows them once they have an AxisCare id (the shift page finds 
   ck('saving it: a draft like any other, and the history says it came from an AI draft (approval still needed)', s === 200 && j.state.intro_pending && /\(from an AI draft\)/.test(j.history[0].what), j.history)
 }
 
+/* ── 4b. the wording fix (2026-10-24: "American spelling, no filler or added details, and keep short items like TV") ── */
+{
+  const LD = await import(path.join(FN, '_shared/life-story-draft.ts'))
+  ck('short items from the Life Story are kept ("TV", "pie"); an item not in it still is not', LD.grounded('TV', 'Likes TV.') && LD.grounded('Apple pie', 'Bakes pie on Sundays') && !LD.grounded('TV', 'Loves her garden') && !LD.grounded('Knitting', 'Likes TV.'))
+  ck('filler and British spelling are caught; plain sentences are not', LD.styleHit('It is one of her favourite ways to pass the time.') && LD.styleHit('Her colour is blue') === 'colour' && LD.styleHit('It lights up her day.') && LD.styleHit('Mae enjoys watching TV.') === null && LD.styleHit('Walt loves Johnny Cash and black coffee.') === null)
+  ck('the AI is told: American English, no filler, no added details', /Use American English spelling/.test(fs.readFileSync(path.join(FN, '_shared/life-story-draft.ts'), 'utf8')) && /Do not add filler or flourish/.test(fs.readFileSync(path.join(FN, '_shared/life-story-draft.ts'), 'utf8')))
+  reset({}); APP.client_profiles = [{ id: 'cp_ax500', client_name: 'Mae Lee', life: { enjoys: { text: 'Likes TV.' } } }]; AIREQ.length = 0
+  AIQ.push({ enough: true, about: 'Mae enjoys watching TV. It is one of her favourite ways to pass the time.', enjoys: ['TV'], used: [1], left_out: [] }, { enough: true, about: 'Mae enjoys watching TV.', enjoys: ['TV'], used: [1], left_out: [] })
+  ;[s, j] = await post({ axiscare_client_id: '500' }, 'Bearer OWNERKEY', '?test_draft=1')
+  ck('"Likes TV.": the padded British draft is sent back once; the plain one is used, and "TV" is kept', j.result.ok && j.result.about === 'Mae enjoys watching TV.' && j.result.enjoys.join() === 'TV' && AIREQ.length === 2 && /filler or British spelling/.test(AIREQ[1].messages[0].content), [j, AIREQ.length])
+}
+
 /* ── 5. the owner's test route (2026-10-24): the real AI on test Life Stories, nothing saved ── */
 {
   reset({}); AIREQ.length = 0
