@@ -91,7 +91,10 @@ export function readVisit(v: Any, t: Table): Read {
   const state: Read['state'] = v?.removed === true ? 'removed' : isPlaceholder(v?.caregiver, t) ? 'placeholder' : v?.caregiver?.id == null ? 'empty' : 'caregiver'
   const saysCancelled = m === 'client_cancelled' ? 'client' : m === 'couldnt_staff' ? 'us' : null
   let cancelled: Read['cancelled'] = null
-  if (state === 'removed') cancelled = saysCancelled ?? 'client'
+  /* a DELETED visit is cancelled only when its reason says so (2026-10-24, her rule after the first live run): AxisCare also
+     deletes and re-makes visits when the office edits a schedule (Edward's and April's, "Office Error" or no reason), so a
+     deletion alone says nothing about whether care is still needed */
+  if (state === 'removed') cancelled = saysCancelled
   else if (state === 'placeholder') cancelled = saysCancelled ?? 'client'
   else if (state === 'empty' && saysCancelled) cancelled = saysCancelled
   return { state, reason, cancelled,

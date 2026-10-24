@@ -679,9 +679,31 @@ Deno.serve(async (req) => {
       if (cc?.status !== 'open' || !cc?.axiscare_visit_id) continue
       const gone = removedById.get(String(cc.axiscare_visit_id))
       if (gone && !byVisitId.has(String(cc.axiscare_visit_id))) {
-        const rg = readOf(gone), how = closeHowFor(rg.cancelled || 'client')
-        const why = `The visit was deleted in AxisCare${rg.reason.name ? ` (reason "${rg.reason.name}")` : ''}, so Cara closed the case as ${how === 'couldnt_staff' ? 'couldn\'t staff' : 'client cancelled'}. No texts were sent.`
-        if (byId && live) await closeCancelled(cc, how, why); else planNote({ case: cc.id, client: cc.client || null, before: 'stays open', by_id: why })
+        const rg = readOf(gone)
+        if (rg.cancelled) {
+          const how = closeHowFor(rg.cancelled)
+          const why = `The visit was deleted in AxisCare with the reason "${rg.reason.name}", so Cara closed the case as ${how === 'couldnt_staff' ? 'couldn\'t staff' : 'client cancelled'}. No texts were sent.`
+          if (byId && live) await closeCancelled(cc, how, why); else planNote({ case: cc.id, client: cc.client || null, before: 'stays open', by_id: why })
+          continue
+        }
+        /* deleted WITHOUT a cancel reason: AxisCare also deletes and re-makes visits when a schedule is edited, so Cara can't
+           tell whether the shift still needs someone. The case stays open, a person is asked once, and nothing is sent. */
+        const why = `The visit was deleted in AxisCare${rg.reason.name ? ` with the reason "${rg.reason.name}"` : ' with no reason'}, which doesn't say it was cancelled (a schedule edit also deletes and re-makes visits). Check AxisCare: if the shift still needs someone, it may be on a new visit; if it was cancelled, close this case.`
+        if (!(byId && live)) { planNote({ case: cc.id, client: cc.client || null, before: 'stays open', by_id: 'stays open; a person is asked (deleted without a cancel reason)' }); continue }
+        if (cc.removed_hold !== String(gone?.id ?? '')) {
+          cc.removed_hold = String(gone?.id ?? '')
+          cc.note = [String(cc.note || '').trim(), why].filter(Boolean).join('\n')
+          await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: cc })
+          const qid = `ops_rdel_${String(cc.id).replace(/[^A-Za-z0-9]/g, '_').slice(-60)}`
+          if (!(await opsHas(qid))) {
+            const admins = (Array.isArray(settings.coverage_alert_admins) && settings.coverage_alert_admins.length) ? settings.coverage_alert_admins : await fallbackList(sb, 'scheduling_coverage')
+            await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id: qid, kind: 'coverage', domain: 'scheduling_coverage', status: 'open', urgency: 'high', coverage_case_id: cc.id,
+              title: `${cc.client || 'A client'}'s call-off visit was deleted in AxisCare: does it still need someone?`, about: cc.client || '', detail: why,
+              owner: String(admins[0] || ''), owner_name: '', created_at: nowIso, due: new Date(Date.now() + 2 * 3600e3).toISOString(), created_by: 'coverage-watch', opened_by: 'axiscare-reason' } })
+            opsIds?.add(qid)
+          }
+          reasonPlan.acted.push({ case: cc.id, asked: 'deleted without a cancel reason' })
+        }
         continue
       }
       const v = byVisitId.get(String(cc.axiscare_visit_id))
