@@ -42,6 +42,7 @@ import { fallbackList } from '../_shared/notice-to.ts'
 import { mergeFlagIntoWatch } from '../_shared/cara-visit-match.ts'   // CARA PHASE 1: one shift, one case
 import { quietOn, mondayOf, weekCard, weekCardId, suggestedBefore, recheckCases } from '../_shared/quiet-cards.ts'
 import { openShiftSkip, openShiftItem, openShiftCloseWhy, openShiftId, scheduleOf, OPEN_SHIFT_KIND, OPEN_SHIFT_PER_RUN, type OpenVisit } from '../_shared/open-shift.ts'
+import { reasonTable, readVisit, isPlaceholder, closeHowFor, MEANING_WORDS, type Table as ReasonTable } from '../_shared/visit-reasons.ts'   // 2026-10-24 reasons by id
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -127,6 +128,8 @@ Deno.serve(async (req) => {
   const endDate = new Date(Date.now() + HORIZON_HOURS * 3600000).toISOString().slice(0, 10)
   // deno-lint-ignore no-explicit-any
   const visits: any[] = []
+  // deno-lint-ignore no-explicit-any
+  const removedVisits: any[] = []   /* deleted in AxisCare: never worked, kept for the visit history (2026-10-24) */
   let fetchError: string | null = null
   try {
     let url: string | null = `https://${site}.axiscare.com/api/visits?startDate=${startDate}&endDate=${endDate}`
@@ -138,13 +141,37 @@ Deno.serve(async (req) => {
       // deno-lint-ignore no-explicit-any
       const j: any = await r.json().catch(() => ({}))
       for (const v of (j?.results?.visits ?? j?.visits ?? [])) {
-        if (v?.removed || isQuiet(v)) continue
+        if (isQuiet(v)) continue
+        if (v?.removed) { removedVisits.push(v); continue }
         visits.push(v)
       }
       url = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
     }
   } catch (err) { fetchError = String(err) }
   if (fetchError && !visits.length) return json({ error: fetchError }, 502)
+
+  /* ── WHAT EACH AXISCARE REASON MEANS (2026-10-24, her 6-reason plan; _shared/visit-reasons.ts) ──
+     AxisCare's reason list is read each run so a visit's reason NAME finds its id (a renamed reason keeps its id and its
+     meaning). ops_settings.visit_reasons_live decides; off (or the list can't be read): the old word match decides, and
+     reasonPlan.would says what reading by id would have done differently. "Canceled Shift" is never a cover either way. */
+  const reasonsLive = settings.visit_reasons_live === true && !forceDry
+  let rt: ReasonTable = reasonTable(null, settings), rtError: string | null = null
+  try {
+    const r = await fetch(`https://${site}.axiscare.com/api/visits/modification-reasons`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': AC_VERSION } })
+    // deno-lint-ignore no-explicit-any
+    const j: any = await r.json().catch(() => ({}))
+    const list = j?.results?.modificationReasons ?? j?.modificationReasons ?? null
+    if (r.ok) rt = reasonTable(Array.isArray(list) ? list : (list && typeof list === 'object' ? Object.values(list) : []), settings)
+    else rtError = `AxisCare answered ${r.status} for the reason list`
+  } catch (e) { rtError = 'AxisCare reason list: ' + String(e).slice(0, 80) }
+  const byId = reasonsLive && rt.ok
+  // deno-lint-ignore no-explicit-any
+  const reasonPlan: any = { live: reasonsLive, by_id: byId, list_read: rt.ok, error: rtError, would: [] as Record<string, unknown>[], acted: [] as Record<string, unknown>[] }
+  // deno-lint-ignore no-explicit-any
+  const readOf = (v: any) => readVisit(v, rt)
+  // deno-lint-ignore no-explicit-any
+  const whoOf = (v: any) => [String(v?.client?.firstName ?? '').trim(), String(v?.client?.lastName ?? '').trim()].filter(Boolean).join(' ') || 'a client'
+  const planNote = (row: Record<string, unknown>) => { if ((byId ? reasonPlan.acted : reasonPlan.would).length < 80) (byId ? reasonPlan.acted : reasonPlan.would).push(row) }
 
   // ── Existing cases: one case per visit, ever. ──
   const { data: caseRow } = await sb.from('app_data').select('data').eq('key', 'coverage_cases').maybeSingle()
@@ -213,6 +240,9 @@ Deno.serve(async (req) => {
   const vmItems: any[] = Array.isArray(vmRow?.data) ? vmRow!.data : []
   // deno-lint-ignore no-explicit-any
   const heldBy = new Map<string, any>(vmItems.map((m: any) => [String(m?.visit_id ?? ''), m]))
+  /* straight from one real caregiver to another (2026-10-24, her rule 3): if the reason is a call-off, it is recorded below */
+  // deno-lint-ignore no-explicit-any
+  const swaps: { v: any; from: string; to: string }[] = []
   try {
     for (const v of visits) {
       if (v?.caregiver?.id == null) continue
@@ -220,8 +250,10 @@ Deno.serve(async (req) => {
       const nm = [String(v.caregiver.firstName ?? '').trim(), String(v.caregiver.lastName ?? '').trim()]
         .filter(Boolean).join(' ')
       if (!nm) continue
+      if (isPlaceholder(v.caregiver, rt)) continue   /* "Canceled Shift" is nobody: the last real caregiver stays remembered */
       const prev = heldBy.get(vid)
       if (prev && prev.caregiver === nm) continue
+      if (prev?.caregiver) swaps.push({ v, from: String(prev.caregiver), to: nm })
       const item = { id: 'vm_' + vid.replace(/[^A-Za-z0-9]/g, '_'), visit_id: vid,
         caregiver: nm, seen_at: nowIso }
       heldBy.set(vid, item)
@@ -265,7 +297,12 @@ Deno.serve(async (req) => {
           : 'opens a case',
       })
     }
-    if (!reason || !reasonMatches(reason)) continue
+    /* 2026-10-24: by id, only "Caregiver Call Off" and "No Show" on an empty visit open a call-off case. Off: the word match. */
+    const rv = readOf(v)
+    const oldOpens = !!reason && reasonMatches(reason)
+    if (rt.ok && oldOpens !== rv.opens_case) planNote({ visit: String(v?.id ?? ''), client: whoOf(v), when: String(v?.scheduledStartDate ?? ''), reason: reason || '(no reason)',
+      before: oldOpens ? 'opens a call-off case' : 'no call-off case', by_id: rv.opens_case ? 'opens a call-off case' : rv.cancelled ? 'cancelled: no case, not an open shift' : rv.needs_care ? 'open-shift card, never a call-off' : 'no case' })
+    if (byId ? !rv.opens_case : (!reason || !reasonMatches(reason))) continue
     reasonMatched++
     const start = String(v?.scheduledStartDate ?? v?.startDate ?? '')
     if (startedNow(v, start)) { inPast++; continue }
@@ -339,6 +376,7 @@ Deno.serve(async (req) => {
         caller_phone: '', caller_contact_id: '',
         resolved_at: null, resolved_how: null, covered_by: null,
         ...(mg ? mg.watchExtra : {}),
+        ...(byId ? { reason_id: rv.reason.id, reason_meaning: rv.reason.meaning, reason_by_id: true } : {}),
       }
       const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
       if (!error && mg) await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: mg.flagClosed })
@@ -346,7 +384,19 @@ Deno.serve(async (req) => {
         created++; openByVisit.add(visitId)
         await opEvent(sb, { job: 'coverage-watch', verb: 'coverage_opened', item_id: c.id, area: 'coverage',
           summary: `Cara opened a case for a shift with no caregiver${reopenNote ? ' again' : ''}: ${clientName || 'a client'} ${entry.shift_date} ${entry.shift_time}`
-            + (entry.calling_off ? `, ${entry.calling_off} was taken off it in AxisCare (not counted as a call-in)` : '') })
+            + (entry.calling_off ? (byId && rv.reason.meaning === 'call_off' ? `, ${entry.calling_off} called off (AxisCare reason)` : byId && rv.reason.meaning === 'no_show' ? `, ${entry.calling_off} didn't show (AxisCare reason)` : `, ${entry.calling_off} was taken off it in AxisCare (not counted as a call-in)`) : '') })
+        /* a no-show is never logged by itself (Handbook 2U: it starts a termination review): a person confirms it */
+        if (byId && rv.reason.meaning === 'no_show') {
+          const nsId = `ops_ncns_${c.id}`
+          if (!(await opsHas(nsId))) {
+            const admins = (Array.isArray(settings.coverage_alert_admins) && settings.coverage_alert_admins.length) ? settings.coverage_alert_admins : await fallbackList(sb, 'scheduling_coverage')
+            await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id: nsId, kind: 'staffing', domain: 'scheduling_coverage', status: 'open', urgency: 'high',
+              title: `Confirm: ${entry.calling_off || 'the caregiver'} didn't show for ${clientName} (${entry.shift_date} ${entry.shift_time})`, about: entry.calling_off || clientName, coverage_case_id: c.id,
+              detail: 'AxisCare\'s reason on this visit is "No Show". A no-call/no-show starts a termination review (Handbook 2U), so it is not logged by itself. If it is right, log it on Performance > Attendance; if not, change the reason in AxisCare.',
+              owner: String(admins[0] || ''), owner_name: '', created_at: nowIso, due: new Date(Date.now() + 4 * 3600e3).toISOString(), created_by: 'coverage-watch', opened_by: 'axiscare-reason' } })
+            opsIds?.add(nsId)
+          }
+        }
       }
     }
   }
@@ -552,12 +602,18 @@ Deno.serve(async (req) => {
     // deno-lint-ignore no-explicit-any
     const openCaseSchedules = new Set<string>(openCases.filter((c: any) => /^cwo_s/.test(String(c?.id ?? ''))).map((c: any) => String(c.id).replace(/^cwo_s/, '')).filter(Boolean))
     for (const v of openCaseVisits) { const sc = scheduleOf(v); if (sc && openCases.some((c: { id?: unknown; axiscare_visit_id?: unknown }) => String(c.axiscare_visit_id) === v && /^cwo_/.test(String(c.id)))) openCaseSchedules.add(sc) }
-    const unassignedMap = new Map<string, OpenVisit>(), assigned = new Set<string>(), startMsOf = new Map<string, number>()
+    const unassignedMap = new Map<string, OpenVisit>(), assigned = new Set<string>(), startMsOf = new Map<string, number>(), cancelledVids = new Set<string>()
     for (const v of visits) {
       const vid = String(v?.id ?? ''); if (!vid) continue
       const st = String(v?.scheduledStartDate ?? v?.startDate ?? ''), en = String(v?.scheduledEndDate ?? v?.endDate ?? '')
       const sms = visitMs(st, v?.timezone); startMsOf.set(vid, sms)
       if (v?.caregiver?.id != null) { assigned.add(vid); continue }
+      /* 2026-10-24: an empty visit whose reason says cancelled is not an open shift (by id; off, only reported) */
+      const rvo = readOf(v)
+      if (rvo.cancelled) {
+        if (byId) { cancelledVids.add(vid); continue }
+        if (rt.ok) planNote({ visit: vid, client: whoOf(v), when: st, reason: rvo.reason.name, before: 'open-shift card', by_id: 'cancelled: no open-shift card' })
+      }
       unassignedMap.set(vid, { visitId: vid, start: st, end: en, startMs: sms, endMs: visitMs(en, v?.timezone), reason: String(v?.modificationReason?.name ?? '').trim(),
         client: [String(v?.client?.firstName ?? '').trim(), String(v?.client?.lastName ?? '').trim()].filter(Boolean).join(' '), clientId: v?.client?.id != null ? String(v.client.id) : null })
     }
@@ -582,7 +638,8 @@ Deno.serve(async (req) => {
     }
     /* close the ones that are settled (live only; never on a failed AxisCare read) */
     for (const c of ops.filter((i: { kind?: unknown; status?: unknown; created_by?: unknown }) => i?.kind === OPEN_SHIFT_KIND && i?.status === 'open' && i?.created_by === 'coverage-watch')) {
-      const why = openShiftCloseWhy(c, { ...ctx, unassigned: unassignedMap, assigned, startMsOf, fetched: !fetchError })
+      const why = cancelledVids.has(String(c.axiscare_visit_id || '')) ? 'the visit was cancelled in AxisCare (its reason says so)'
+        : openShiftCloseWhy(c, { ...ctx, unassigned: unassignedMap, assigned, startMsOf, fetched: !fetchError })
       if (!why || !openShift.live) continue
       const item = { ...c, status: 'done', closed_at: nowIso, closed_by: 'system', auto_closed_reason: why, last_activity_at: nowIso,
         history: [...(Array.isArray(c.history) ? c.history : []), { at: nowIso, by: 'Hub', text: 'Closed: ' + why }] }
@@ -608,10 +665,46 @@ Deno.serve(async (req) => {
   const outsideLeftOpen: Record<string, unknown>[] = []
   try {
     const byVisitId = new Map(visits.map(v => [String(v?.id ?? ''), v]))
+    const removedById = new Map(removedVisits.map(v => [String(v?.id ?? ''), v]))
+    /* 2026-10-24: a call-off case whose visit turns out cancelled closes as cancelled, never "covered", and sends nothing */
+    // deno-lint-ignore no-explicit-any
+    const closeCancelled = async (cc: any, how: string, why: string) => {
+      cc.status = 'resolved'; cc.resolved_at = nowIso; cc.resolved_how = how; cc.covered_by = null; cc.resolved_by = 'cara'
+      markNoClosureTexts(cc, nowIso, 'Cancelled in AxisCare: no "covered" or family texts.')
+      cc.note = [String(cc.note || '').trim(), why].filter(Boolean).join('\n')
+      const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: cc })
+      if (!error) await opEvent(sb, { job: 'coverage-watch', verb: 'coverage_cancelled_axiscare', item_id: String(cc.id), area: 'coverage', summary: `Cara closed ${cc.client || 'a'} call-off case: ${why}` })
+    }
     for (const cc of cases) {
       if (cc?.status !== 'open' || !cc?.axiscare_visit_id) continue
+      const gone = removedById.get(String(cc.axiscare_visit_id))
+      if (gone && !byVisitId.has(String(cc.axiscare_visit_id))) {
+        const rg = readOf(gone), how = closeHowFor(rg.cancelled || 'client')
+        const why = `The visit was deleted in AxisCare${rg.reason.name ? ` (reason "${rg.reason.name}")` : ''}, so Cara closed the case as ${how === 'couldnt_staff' ? 'couldn\'t staff' : 'client cancelled'}. No texts were sent.`
+        if (byId && live) await closeCancelled(cc, how, why); else planNote({ case: cc.id, client: cc.client || null, before: 'stays open', by_id: why })
+        continue
+      }
       const v = byVisitId.get(String(cc.axiscare_visit_id))
       if (!v) continue
+      const rvc = readOf(v)
+      if (rvc.cancelled) {
+        const how = closeHowFor(rvc.cancelled)
+        const why = rvc.state === 'placeholder'
+          ? `AxisCare shows the visit on the Canceled Shift placeholder${rvc.reason.name ? ` (reason "${rvc.reason.name}")` : ''}: it is cancelled, not covered. Cara closed the case as ${how === 'couldnt_staff' ? 'couldn\'t staff' : 'client cancelled'}. No texts were sent.`
+          : `The visit's reason in AxisCare is now "${rvc.reason.name}": cancelled, not an open shift. Cara closed the case. No texts were sent.`
+        if (byId && live) { await closeCancelled(cc, how, why); continue }
+        if (rt.ok) planNote({ case: cc.id, client: cc.client || null, before: rvc.state === 'placeholder' ? 'held open (the placeholder is never a cover)' : 'stays open', by_id: why })
+        /* the placeholder is never a cover, switch or not: leave the case for a person, say why once */
+        if (rvc.state === 'placeholder') {
+          outsideLeftOpen.push({ case: cc.id, caregiver_on_shift: 'Canceled Shift (placeholder)', calling_off: cc.calling_off || null, verdict: 'placeholder', dry: !live })
+          if (live && cc.outside_hold !== 'placeholder') {
+            cc.outside_hold = 'placeholder'
+            cc.note = [String(cc.note || '').trim(), 'AxisCare shows this visit on the Canceled Shift placeholder: it was cancelled, not covered. Close it on the board (client cancelled).'].filter(Boolean).join('\n')
+            await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: cc })
+          }
+          continue
+        }
+      }
       if (v?.caregiver?.id == null) {
         /* seen empty since the case opened: a later caregiver is a real cover */
         if (live && !cc.seen_unassigned_at) {
@@ -667,6 +760,122 @@ Deno.serve(async (req) => {
     }
   } catch { /* never let this block the watch */ }
 
+  /* ── REASONS BY ID, THE REST (2026-10-24, her 6-reason plan) ─────────────────────────────────────────────────────────
+     1. A visit we couldn't staff with no case: one "call the family" card (a person calls; Cara never does).
+     2. A reason Cara doesn't know (one someone added in AxisCare): one card asking what it means.
+     3. The reason says cancelled but a real caregiver is on the visit: one card asking which is right.
+     4. Straight from one caregiver to another with "Caregiver Call Off": the call-off is recorded for the caregiver who was
+        on it (a closed case, no texts, on Attendance), even though the visit was never empty.
+     5. The reason on a call-off case changed to something else: the automatic attendance record follows (removed if a
+        person hasn't acted on it yet).
+     6. Every visit's reason, caregiver and state is kept in visit_history whenever it changes (always on: nothing is
+        shown or sent from it). */
+  try {
+    const admins0 = async () => { const a = (Array.isArray(settings.coverage_alert_admins) && settings.coverage_alert_admins.length) ? settings.coverage_alert_admins : await fallbackList(sb, 'scheduling_coverage'); return String(a[0] || '') }
+    const caseVisits = new Set(history.map((cc: { axiscare_visit_id?: unknown }) => String(cc?.axiscare_visit_id ?? '')).filter(Boolean))
+    let cards = 0
+    const card = async (item: Record<string, unknown>) => {
+      if (cards >= 10 || await opsHas(String(item.id))) return
+      if (!byId || !live) { planNote({ card: item.title }); return }
+      const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { owner: await admins0(), owner_name: '', status: 'open', domain: 'scheduling_coverage', created_at: nowIso, created_by: 'coverage-watch', opened_by: 'axiscare-reason', ...item } })
+      if (!error) { cards++; opsIds?.add(String(item.id)); reasonPlan.acted.push({ card: item.title }) }
+    }
+    const unknownSeen = new Set<string>()
+    for (const v of visits) {
+      if (!rt.ok) break
+      const r = readOf(v), vid = String(v?.id ?? ''), when = String(v?.scheduledStartDate ?? v?.startDate ?? '')
+      const slug = vid.replace(/[^A-Za-z0-9]/g, '_').slice(-60)
+      if (r.cancelled === 'us' && !caseVisits.has(vid) && visitMs(when, v?.timezone) > Date.now())
+        await card({ id: `ops_nostaff_${slug}`, kind: 'family_call', urgency: 'urgent', title: `We couldn't staff ${whoOf(v)}'s visit (${when.slice(0, 10)} ${when.slice(11, 16)}): call the family`,
+          about: whoOf(v), axiscare_visit_id: vid, detail: 'AxisCare\'s reason on this visit is "Unable to Staff". Call the family and tell them; Cara never contacts a family about this. Then close this card.',
+          due: new Date(Date.now() + 3600e3).toISOString() })
+      if (r.reason.meaning === 'unknown' && !unknownSeen.has(r.reason.name.toLowerCase())) {
+        unknownSeen.add(r.reason.name.toLowerCase())
+        await card({ id: `ops_reason_${r.reason.name.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 50)}`, kind: 'staffing', urgency: 'normal', title: `New reason in AxisCare: "${r.reason.name}". What does it mean?`,
+          detail: 'Cara reads every AxisCare reason by what it means. This one is new, so until it is set in Hub Settings (What AxisCare reasons mean) Cara treats it like "no reason": the visit stays visible and is never a call-off.',
+          due: new Date(Date.now() + 24 * 3600e3).toISOString() })
+      }
+      if (r.mismatch && visitMs(when, v?.timezone) > Date.now())
+        await card({ id: `ops_rmis_${slug}`, kind: 'staffing', urgency: 'high', title: `${whoOf(v)} ${when.slice(0, 10)} ${when.slice(11, 16)}: the reason says cancelled, but ${String(v?.caregiver?.firstName ?? 'a caregiver')} is on it`,
+          about: whoOf(v), axiscare_visit_id: vid, detail: `AxisCare's reason is "${r.reason.name}" (${MEANING_WORDS[r.reason.meaning ?? 'unknown']}), but a caregiver is still assigned. If the visit is happening, change the reason; if it's cancelled, take the caregiver off (or use Cancel visit).`,
+          due: new Date(Date.now() + 4 * 3600e3).toISOString() })
+    }
+    /* 4. a direct swap recorded as a call-off */
+    for (const sw of swaps) {
+      if (!rt.ok) break
+      const r = readOf(sw.v), vid = String(sw.v?.id ?? '')
+      if (r.reason.meaning !== 'call_off' || caseVisits.has(vid) || isPlaceholder({ firstName: sw.from }, rt)) continue
+      const when = String(sw.v?.scheduledStartDate ?? sw.v?.startDate ?? '')
+      const id = 'cwr_' + vid.replace(/[^A-Za-z0-9]/g, '_') + '_' + sw.from.toLowerCase().replace(/[^a-z]/g, '').slice(0, 20)
+      const row = { visit: vid, client: whoOf(sw.v), when, from: sw.from, to: sw.to, by_id: `${sw.from} called off (AxisCare reason), ${sw.to} already on it: recorded, on Attendance, no texts` }
+      if (!(byId && live)) { planNote({ ...row, before: 'not seen (the visit was never empty)' }); continue }
+      if (cases.some((k: { id?: unknown }) => String(k?.id) === id)) continue
+      const cc: Record<string, unknown> = { id, client: whoOf(sw.v), client_axiscare_id: sw.v?.client?.id != null ? String(sw.v.client.id) : null, axiscare_visit_id: vid,
+        shift_date: when.slice(0, 10), shift_time: [when, String(sw.v?.scheduledEndDate ?? sw.v?.endDate ?? '')].map((x) => x ? x.slice(11, 16) : '').filter(Boolean).join('-'),
+        modification_reason: r.reason.name, calling_off: sw.from, reason: 'call_off', status: 'resolved', resolved_how: 'covered', covered_by: sw.to, resolved_by: 'cara', resolved_at: nowIso,
+        opened_at: nowIso, opened_by: 'axiscare-reason', reason_id: r.reason.id, reason_meaning: 'call_off', reason_by_id: true, asked: [],
+        note: `AxisCare shows "${r.reason.name}" and ${sw.to} now on the visit ${sw.from} had: the call-off is recorded for ${sw.from}. It was already covered, so nobody was asked or texted.` }
+      markNoClosureTexts(cc, nowIso, 'Recorded from AxisCare after it was already covered; no texts.')
+      const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: cc })
+      if (error) continue
+      await sb.rpc('upsert_app_data_item', { target_key: 'attendance_events', item: { id: 'att_cov_' + id, caregiver: sw.from, type: 'callin',
+        shift_date: String(cc.shift_date), shift_time: String(cc.shift_time), note: `From AxisCare: reason "${r.reason.name}" and ${sw.to} put on the visit. Change the reason in AxisCare if this wasn't a call-off.`,
+        logged_by: 'coverage-watch', created_at: nowIso, action_id: null, reported_at: nowIso, notice_hours: Math.round((visitMs(when, sw.v?.timezone) - Date.now()) / 360e3) / 10 } })
+      reasonPlan.acted.push(row)
+      await opEvent(sb, { job: 'coverage-watch', verb: 'callin_recorded_axiscare', item_id: id, area: 'coverage', summary: `${sw.from} called off ${whoOf(sw.v)} ${when.slice(0, 10)} (AxisCare reason); ${sw.to} already on it` })
+    }
+    /* 5. the reason changed away from a call-off: the automatic attendance record follows */
+    if (rt.ok) {
+      const byVid = new Map(visits.map((v) => [String(v?.id ?? ''), v]))
+      const { data: atRow } = await sb.from('app_data').select('data').eq('key', 'attendance_events').maybeSingle()
+      const att: Record<string, unknown>[] = Array.isArray(atRow?.data) ? atRow!.data : []
+      for (const cc of cases) {
+        if (cc?.reason_by_id !== true || cc?.reason_meaning !== 'call_off' || cc?.not_a_callin === true) continue
+        const v = byVid.get(String(cc.axiscare_visit_id ?? '')); if (!v) continue
+        const now = readOf(v).reason
+        if (!now.meaning || now.meaning === 'call_off' || now.meaning === 'unknown') continue
+        const ev = att.find((e) => String(e?.id) === 'att_cov_' + cc.id)
+        const why = `The reason in AxisCare is now "${now.name}" (${MEANING_WORDS[now.meaning]}), so this is no longer counted as a call-off.`
+        if (!(byId && live)) { planNote({ case: cc.id, before: 'stays on Attendance', by_id: why }); continue }
+        if (ev && !ev.action_id) await sb.rpc('delete_app_data_item', { target_key: 'attendance_events', item_id: String(ev.id) })
+        cc.not_a_callin = true; cc.reason_meaning_now = now.meaning
+        cc.note = [String(cc.note || '').trim(), why + (ev?.action_id ? ' A person already acted on the attendance record, so it was left for them.' : '')].filter(Boolean).join('\n')
+        await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: cc })
+        reasonPlan.acted.push({ case: cc.id, attendance: why })
+      }
+    }
+    /* 6. the visit history (always on) */
+    const all = [...visits, ...removedVisits]
+    const sigOf = (v: Record<string, any>) => { const r = rt.ok ? readOf(v) : null
+      return { reason_id: r?.reason.id ?? null, reason_name: String(v?.modificationReason?.name ?? '').trim() || null, caregiver_id: v?.caregiver?.id != null ? String(v.caregiver.id) : null,
+        caregiver_name: [String(v?.caregiver?.firstName ?? '').trim(), String(v?.caregiver?.lastName ?? '').trim()].filter(Boolean).join(' ') || null,
+        state: v?.removed === true ? 'removed' : r ? r.state : (v?.caregiver?.id == null ? 'empty' : 'caregiver'),
+        start: String(v?.scheduledStartDate ?? v?.startDate ?? '') || null, end: String(v?.scheduledEndDate ?? v?.endDate ?? '') || null } }
+    const ids = all.map((v) => String(v?.id ?? '')).filter(Boolean)
+    const last = new Map<string, string>()
+    for (let i = 0; i < ids.length; i += 100) {
+      const { data } = await sb.from('visit_last').select('visit_id, sig').in('visit_id', ids.slice(i, i + 100))
+      for (const r of (data ?? [])) last.set(String(r.visit_id), String(r.sig))
+    }
+    let logged = 0
+    for (const v of all) {
+      const vid = String(v?.id ?? ''); if (!vid || logged >= 200) continue
+      const g = sigOf(v), sig = JSON.stringify(g)
+      if (last.get(vid) === sig) continue
+      const { error } = await sb.from('visit_history').insert({ visit_id: vid, client_axiscare_id: v?.client?.id != null ? String(v.client.id) : null, ...g, seen_at: nowIso, first_seen: !last.has(vid) })
+      if (!error) { await sb.from('visit_last').upsert({ visit_id: vid, sig, seen_at: nowIso }); logged++ }
+    }
+    reasonPlan.history_logged = logged
+  } catch (e) { reasonPlan.error = (reasonPlan.error ? reasonPlan.error + '; ' : '') + String((e as Error)?.message || e).slice(0, 160) }
+  /* the latest "what reading by id would do", for the Hub (one row, replaced each run) */
+  /* today's cancelled visits (client or us), for the quiet "Cancelled today" line on Cara's Today: no card, nothing to close */
+  const chiToday = chiNowNaive().slice(0, 10)
+  const cancelledToday = rt.ok ? [...visits, ...removedVisits].filter((v) => String(v?.scheduledStartDate ?? v?.startDate ?? '').slice(0, 10) === chiToday)
+    .map((v) => ({ v, r: readOf(v) })).filter((x) => x.r.cancelled)
+    .map((x) => ({ client: String(x.v?.client?.firstName ?? '').trim() || 'a client', start: String(x.v?.scheduledStartDate ?? x.v?.startDate ?? '').slice(11, 16), by: x.r.cancelled, how: x.r.state, reason: x.r.reason.name || null }))
+    .sort((a, b) => a.start.localeCompare(b.start)).slice(0, 20) : []
+  try { await sb.from('app_data').upsert({ key: 'visit_reason_practice', data: { at: nowIso, live: reasonsLive, by_id: byId, list_read: rt.ok, error: reasonPlan.error ?? null, would: reasonPlan.would.slice(0, 60), acted: reasonPlan.acted.slice(0, 60), cancelled_today: cancelledToday, cancelled_day: chiToday }, updated_at: nowIso }, { onConflict: 'key' }) } catch { /* the report is a convenience */ }
+
   /* ── PHASE 2 · LOOPS THE HUB CLOSES BY ITSELF (2026-10-05) ───────────────
      1. A case whose shift is over: AxisCare shows who clocked in → closed (covered / covered other way), with NO
         closure texts; AxisCare can't say → the case leaves the board as 'needs_outcome' and ONE card asks a person
@@ -721,6 +930,21 @@ Deno.serve(async (req) => {
     }
     for (const cc of ended) {
       const inRange = pastFetched && String(cc.shift_date) >= oldest
+      /* 2026-10-24: a finished shift AxisCare shows as cancelled (placeholder, or a cancel reason with nobody on it) closes as cancelled */
+      const pastV = inRange && cc.axiscare_visit_id ? pastById.get(String(cc.axiscare_visit_id)) : null
+      const pastR = pastV ? readOf(pastV) : null
+      if (pastR?.cancelled) {
+        const how = closeHowFor(pastR.cancelled), why = `After the shift: AxisCare shows it cancelled (${pastR.state === 'placeholder' ? 'on the Canceled Shift placeholder' : `reason "${pastR.reason.name}"`}), so Cara closed the case (${how === 'couldnt_staff' ? 'couldn\'t staff' : 'client cancelled'}). No texts were sent.`
+        if (byId && loopsLive) {
+          cc.status = 'resolved'; cc.resolved_at = nowIso; cc.resolved_how = how; cc.covered_by = null; cc.resolved_by = 'cara'; cc.closed_after_shift = true
+          markNoClosureTexts(cc, nowIso, 'Cancelled in AxisCare; no texts sent.')
+          cc.note = [String(cc.note || '').trim(), why].filter(Boolean).join('\n')
+          await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: cc })
+          loops.cases_closed.push({ case: cc.id, client: cc.client || null, how, why })
+          continue
+        }
+        if (rt.ok) planNote({ case: cc.id, client: cc.client || null, before: 'a person is asked "Was it covered?"', by_id: why })
+      }
       const verdict = inRange && cc.axiscare_visit_id ? pastCaseVerdict(cc, pastById.get(String(cc.axiscare_visit_id)), outsideVerdict)
         : { how: null, why: inRange ? 'the case has no AxisCare visit' : (String(cc.shift_date) < oldest ? 'the shift is more than 14 days old' : 'AxisCare could not be read') }
       if (verdict.how) {
@@ -1311,6 +1535,7 @@ Deno.serve(async (req) => {
     covered_outside_the_board: coveredOutside,
     pattern_stamped: patternStamped,
     covered_outside_left_open: outsideLeftOpen,
+    reasons_by_id: reasonPlan,
     would_open: wouldOpen,
     ongoing_sweep: sweepDue
       ? { ran: true, schedules_with_open_dates: ongoingSchedules,

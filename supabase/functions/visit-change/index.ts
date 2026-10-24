@@ -21,6 +21,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { opEvent } from '../_shared/events.ts'
+import { reasonTable } from '../_shared/visit-reasons.ts'   // 2026-10-24: each reason's meaning, by AxisCare id
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -137,10 +138,14 @@ Deno.serve(async (req) => {
   try { b = await req.json() } catch { return json({ error: 'bad request' }, 400) }
   const { data: st } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
   const live = (st?.data ?? {}).visit_change_live === true
+  /* 2026-10-24 (reasons by id, ops_settings.visit_reasons_live): the Hub picks defaults by each reason's meaning, never by
+     its name, and a new day or time may go with no reason (a move isn't a cancellation). Off: exactly as before. */
+  const reasonsLive = (st?.data ?? {}).visit_reasons_live === true
 
   if (b.action === 'reasons') {
     const list = await reasons()
-    return json({ live, reasons: list.filter((r) => !r.disabled) })
+    const t = reasonTable(list, st?.data ?? {})
+    return json({ live, reasons_live: reasonsLive, reasons: list.filter((r) => !r.disabled).map((r) => ({ ...r, meaning: t.byName.get(String(r.name).trim().toLowerCase().replace(/\s+/g, ' '))?.meaning ?? 'unknown' })) })
   }
 
   if (b.action === 'get') {
@@ -167,7 +172,10 @@ Deno.serve(async (req) => {
       if (chiDay(new Date(c.at)) !== chiDay()) return json({ outcome: 'too_late', error: 'Changes can be undone here on the same day only. Change it back in AxisCare.' }, 409)
       id = c.visit_id; expect = c.after; set = { caregiver_id: c.before.caregiver_id ?? null, date: c.before.date, start: c.before.start, end: c.before.end }
       undoOf = c; changeId = 'u-' + c.id
-      const rs = await reasons(), off = rs.find((r) => !r.disabled && /office error/i.test(r.name)) || rs.find((r) => !r.disabled && /administrative/i.test(r.name))
+      const rs = await reasons(), tU = reasonTable(rs, st?.data ?? {})
+      /* by meaning first (a renamed "Office Error" keeps its id), then the old name match */
+      const off = rs.find((r) => !r.disabled && tU.byName.get(String(r.name).trim().toLowerCase().replace(/\s+/g, ' '))?.meaning === 'office_fix')
+        || rs.find((r) => !r.disabled && /office error/i.test(r.name)) || rs.find((r) => !r.disabled && /administrative/i.test(r.name))
       if (!off) return json({ error: 'AxisCare has no "Office Error" change reason to undo with. Change it back in AxisCare.' }, 409)
       reasonId = off.id
     } else {
@@ -175,7 +183,10 @@ Deno.serve(async (req) => {
       id = String(b.visit_id ?? ''); set = b.set ?? {}; expect = b.expect ?? null; reasonId = Number(b.reason_id)
       if (!id || !expect) return json({ error: 'which visit, and what did you see?' }, 400)
     }
-    const rs = await reasons(), reason = rs.find((r) => r.id === reasonId && !r.disabled)
+    const rs = await reasons()
+    /* a new day or time with no reason (reasons by id on): allowed only when the caregiver isn't being changed */
+    const noReasonOk = reasonsLive && b.action === 'change' && (!reasonId || reasonId === 0) && !('caregiver_id' in (set ?? {}))
+    const reason = noReasonOk ? { id: 0, name: '(no reason: a new day or time)', disabled: false } : rs.find((r) => r.id === reasonId && !r.disabled)
     if (!reason) return json({ outcome: 'refused', error: 'Pick one of AxisCare’s change reasons. Nothing was changed.' }, 422)
     const g = await ax('GET', vpath(id))
     if (g.status !== 200) return json({ error: `AxisCare answered ${g.status}. Nothing was changed.` }, 502)
@@ -187,7 +198,7 @@ Deno.serve(async (req) => {
       return json({ outcome: 'changed_meanwhile', error: 'Someone changed this visit since you opened it. Look again. Nothing was changed.', visit: cur }, 409)
     const p = plan(cur, set)
     if (!p.body) return json({ outcome: 'refused', error: p.why + ' Nothing was changed.' }, 422)
-    const r = await ax('PATCH', vpath(id), { ...p.body, modificationReason: reason.id })
+    const r = await ax('PATCH', vpath(id), { ...p.body, ...(reason.id ? { modificationReason: reason.id } : {}) })
     if (r.status !== 200) {
       await opEvent(sb, { verb: 'visit_change_refused', actor_name: who.name, actor_email: who.email, item_id: id, area: 'scheduling',
         summary: `AxisCare refused a change to ${cur.client}'s ${cur.date} visit`, data: { status: r.status, errors: r.json?.errors ?? null, set: p.body } })

@@ -18,6 +18,7 @@
  * a person's close stays 'done'.
  */
 
+import { isPlaceholder } from './visit-reasons.ts'
 // deno-lint-ignore no-explicit-any
 type Any = any
 
@@ -59,6 +60,8 @@ export function pastCaseVerdict(c: Any, visit: Any | undefined,
   if (!visit) return { how: null, why: 'AxisCare does not show this visit any more' }
   const cg = visit?.caregiver
   if (cg?.id == null) return { how: null, why: 'AxisCare shows nobody on the shift' }
+  /* 2026-10-24: the "Canceled Shift" placeholder is never a cover, whatever happens next */
+  if (isPlaceholder(cg)) return { how: null, why: 'AxisCare shows it on the Canceled Shift placeholder: cancelled, not covered' }
   const name = [String(cg.firstName ?? '').trim(), String(cg.lastName ?? '').trim()].filter(Boolean).join(' ') || ('caregiver ' + cg.id)
   if (!visit?.clockIn?.time) return { how: null, why: `AxisCare shows ${name} on the shift but no clock-in` }
   const v = outside(c, { id: cg.id, name })
@@ -87,7 +90,7 @@ export function itemsToCloseForCases(items: Any[], casesById: Map<string, Any>):
 /** A case closed as uncovered (after `sinceIso`, within `maxAgeDays`) with no family record yet needs a person to call. */
 export function familyCallNeeded(c: Any, sinceIso: string, nowMs: number, maxAgeDays = 3): boolean {
   if (!c || !CLOSED_CASE.has(String(c.status)) || c.status === 'needs_outcome') return false
-  if (c.resolved_how !== 'uncovered') return false
+  if (c.resolved_how !== 'uncovered' && c.resolved_how !== 'couldnt_staff') return false   /* 2026-10-24: "we couldn't staff it" also needs the family called */
   if (c.family_call_item || c.family_contact) return false
   if (c.family_notified && !c.family_no_recipients) return false
   const at = Date.parse(String(c.resolved_at ?? '')); if (!Number.isFinite(at)) return false

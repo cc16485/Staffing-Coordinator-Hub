@@ -54,6 +54,7 @@ import { eligibleMembers } from '../_shared/family-change-text.ts'
 import { DEFAULT_THANKS, DEFAULT_ASK, DEFAULT_FAMILY, FAMILY_MIN_DEFAULT, fill, clockAt, familyEligible, callLine, callLive, holdUntil, holdOptsOf } from '../_shared/late-notice.ts'
 import { officeQuiet, quietWords } from '../_shared/quiet-hours.ts'
 import { loadQuiet, isQuiet } from '../_shared/client-quiet.ts'
+import { isPlaceholder } from '../_shared/visit-reasons.ts'
 
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
 const AC_VERSION = '2023-10-01'
@@ -87,7 +88,7 @@ export async function listShifts(days: number, now = Date.now()): Promise<{ shif
     // deno-lint-ignore no-explicit-any
     const j: any = await r.json().catch(() => ({}))
     for (const v of rowsOf(j?.results?.visits)) {
-      if (!v || v.removed || isQuiet(v) || v?.caregiver?.id == null || v?.client?.id == null) continue
+      if (!v || v.removed || isQuiet(v) || v?.caregiver?.id == null || v?.client?.id == null || isPlaceholder(v?.caregiver)) continue   /* "Canceled Shift" is nobody (2026-10-24) */
       const start = visitMs(v?.scheduledStartDate ?? v?.startDate)
       if (!Number.isFinite(start) || start > now) continue
       const ci = v?.clockIn?.time ? visitMs(v.clockIn.time) : NaN
@@ -341,7 +342,7 @@ async function listVisits(fromDay: string, toDay: string): Promise<{ visits: Vis
     // deno-lint-ignore no-explicit-any
     const j: any = await r.json().catch(() => ({}))
     for (const v of rowsOf(j?.results?.visits)) {
-      if (!v || v.removed || isQuiet(v) || v?.caregiver?.id == null || v?.client?.id == null) continue
+      if (!v || v.removed || isQuiet(v) || v?.caregiver?.id == null || v?.client?.id == null || isPlaceholder(v?.caregiver)) continue   /* "Canceled Shift" is nobody (2026-10-24) */
       const start = visitMs(v?.scheduledStartDate ?? v?.startDate); if (!Number.isFinite(start)) continue
       const end = visitMs(v?.scheduledEndDate ?? v?.endDate)
       const ci = v?.clockIn?.time ? visitMs(v.clockIn.time) : NaN

@@ -93,6 +93,7 @@ import { ladder, onDuty } from '../_shared/duty.ts'
 import { officeQuiet, quietWords, afterHoursAllowed } from '../_shared/quiet-hours.ts'
 import { confirmTimesItem, cftId, hasCard, outAfterMin } from '../_shared/confirm-times.ts'
 import { loadQuiet, isQuiet } from '../_shared/client-quiet.ts'
+import { isPlaceholder } from '../_shared/visit-reasons.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -242,7 +243,8 @@ Deno.serve(async (req) => {
       if (!r.ok) { fetchError = `AxisCare responded ${r.status}`; break }
       // deno-lint-ignore no-explicit-any
       const j: any = await r.json().catch(() => ({}))
-      for (const v of rowsOf(j?.results?.visits ?? j?.visits)) if (!v?.removed && !isQuiet(v)) visits.push(v)
+      /* 2026-10-24: the "Canceled Shift" placeholder is nobody: its visits are cancelled, never a missed clock-in */
+      for (const v of rowsOf(j?.results?.visits ?? j?.visits)) if (!v?.removed && !isQuiet(v) && !isPlaceholder(v?.caregiver)) visits.push(v)
       url = j?.results?.nextPage ?? j?.nextPage ?? j?.results?.nextPageUrl ?? j?.nextPageUrl ?? null
     }
   } catch (err) { fetchError = String(err) }
