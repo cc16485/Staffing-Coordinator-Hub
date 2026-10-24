@@ -131,6 +131,17 @@ ck('preview needs a Hub sign-in', s === 401)
 ck('preview answer: says what would be saved, saves nothing', s === 200 && /part of it: 8am to 12pm/.test(j.would_save) && APP.coverage_cases[0].asked[0].state === 'waiting', j)
 ;[s, j] = await post({ action: 'link', case_id: 'cv1', ask_id: 'ask_1' }, 'Bearer staff')
 ck('switch off: no caregiver links are made (practice)', s === 409 && /practice/.test(j.error))
+/* the PILOT (2026-10-24): before shift pages open for everyone, the owners' pilot caregivers' links open */
+APP.coverage_cases[0].asked[0].pilot_link = true
+;[s, j] = await post({ ...L1, action: 'view' })
+ck('pilot: a link sent as a pilot link opens while shift pages are off for everyone else', s === 200 && j.caregiver_first === 'Maria', [s, j])
+delete APP.coverage_cases[0].asked[0].pilot_link; APP.ops_settings.shift_link_pilot = [{ axiscare_id: '9001', name: 'Maria Lane' }]
+;[s, j] = await post({ ...L1, action: 'view' })
+ck('pilot: someone on the pilot list opens too (e.g. a follow-up link)', s === 200 && j.caregiver_first === 'Maria', [s, j])
+const L2p = await linkFor('ask_2')
+;[s, j] = await post({ ...L2p, action: 'view' })
+ck('pilot: anyone not in the pilot still sees "not open yet"', s === 403 && /isn't open yet/.test(j.error), [s, j])
+delete APP.ops_settings.shift_link_pilot
 
 /* switch on: no code, the link opens it */
 reset(); L1 = await linkFor('ask_1')
@@ -197,6 +208,13 @@ ck('switch on: the office can get Pat\'s own link (the PRN Team works the same w
 ck('PRN: the page knows it is a PRN opportunity', s === 200 && j.prn === true)
 const srcFn = fs.readFileSync(`${FN}/shift-offer/index.ts`, 'utf8')
 ck('the function never writes AxisCare and texts nobody but the office (the first-yes alert)', !/method:\s*'(PATCH|POST|DELETE)'/.test(srcFn) && !/contactForOutbound|ghlSendChecked|send_code/.test(srcFn))
+
+/* TEXT AND PAGE BOTH (2026-10-24 pilot check): Maria texted YES, then answered No on the page; then the reverse order */
+reset(); { L1 = await linkFor('ask_1')
+  const a0 = APP.coverage_cases[0].asked[0]; Object.assign(a0, { state: 'yes', reply: 'Yes I can', replied_at: new Date().toISOString(), answer_channel: 'text' })
+  ;[s, j] = await post({ ...L1, action: 'answer', shift_key: KEY(), kind: 'no' })
+  const a1 = APP.coverage_cases[0].asked[0]
+  ck('text YES, then No on the page: the page answer stands; the texted YES is kept in the history', s === 200 && a1.state === 'no' && a1.answer_channel === 'page' && a1.answer_history.some((h) => h.state === 'yes' && h.channel === 'text'), a1) }
 
 for (const [n, o, d] of res) console.log((o ? 'PASS' : 'FAIL') + ' · ' + n + (o ? '' : '\n     ' + d))
 console.log(`${res.filter((x) => x[1]).length}/${res.length}`)
