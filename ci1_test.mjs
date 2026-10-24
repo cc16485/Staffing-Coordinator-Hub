@@ -94,7 +94,8 @@ ck('night rule: 6am, shift at 8am: sent; shift at noon: held', hold(c('2026-10-0
 ck('night rule: 10am: never held', hold(c('2026-10-09', '09:00-13:00'), {}, at('2026-10-06T15:00:00Z')) === false)
 ck('night rule: an interest check (no shift) at night: held', hold({}, {}, at('2026-10-06T03:00:00Z')) === true)
 ck('night rule: her settings (quiet 22 to 7) are used', hold(c('2026-10-07', '09:00-13:00'), { coverage_quiet_from: 22, coverage_quiet_until: 7 }, at('2026-10-06T02:30:00Z')) === false)
-ck('the coordinator\'s send checks the night rule before anything else is done', /if \(caregiverNightHold\(kase, st\)\)\s*\n\s*return jr\(\{ error: 'held:/.test(cr) && (() => { const ss = cr.slice(cr.indexOf("body.action === 'send_selected'")); return ss.indexOf('caregiverNightHold(kase, st)') > 0 && ss.indexOf('caregiverNightHold(kase, st)') < ss.indexOf('coverage_case_add_ask') })())
+ck('the coordinator\'s send checks the night rule before anything else is done', /if \(caregiverNightHold\(kase, st\)\)\s*\n\s*return jr\(\{ error: 'held:/.test(cr) && (() => { const ss = cr.slice(cr.indexOf("body.action === 'send_selected'")); return ss.indexOf('caregiverNightHold(kase, st)') > 0 && ss.indexOf('caregiverNightHold(kase, st)') < ss.indexOf('sendAsksTo(kase, st,') })()   /* 2026-10-24: the ask + text moved into sendAsksTo (shared with Let Cara run it) */
+  && /async function sendAsksTo[\s\S]*?coverage_case_add_ask[\s\S]*?conversations\/messages/.test(cr))
 
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? 'PASS ' : 'FAIL ') + n + (ok ? '' : '\n     ' + note)); if (ok) pass++ }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1)

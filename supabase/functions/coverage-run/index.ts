@@ -43,7 +43,7 @@ import { holdsAutoTexts, isMustCover, onlyAskCut, planLine, readPlan } from '../
 import { callinLink, withLink, rememberAlerted, textCaseAdmins, caseWhat } from '../_shared/callin-notify.ts'
 import { reminderDue, reminderText } from '../_shared/callin-reminder.ts'
 import { adminRecipients, textAdmin } from '../_shared/clockin-admins.ts'
-import { urgencyOf, confirmed, criticalText, criticalRecipients } from '../_shared/cara-urgency.ts'   // CARA PHASE 1 step 2
+import { urgencyOf, confirmed, criticalText, criticalRecipients, minsToStart } from '../_shared/cara-urgency.ts'   // CARA PHASE 1 step 2
 import { onDuty } from '../_shared/duty.ts'
 import { caseEnded, chiNowNaive } from '../_shared/loops.ts'
 /* SLICE 5 (2026-10-10): a new hire with a readiness card is never offered a shift until Approved to Work and AxisCare read back Active */
@@ -62,6 +62,7 @@ import { loadSkillJudge, careNow } from '../_shared/cara-skills.ts'
 import { previewRecords, stateOf } from '../_shared/caregiver-preview.ts'
 import { linkFor, partWelcome, patLineOf, linkTemplate as shiftLinkTemplate, fillLinked } from '../_shared/shift-link-texts.ts'
 import { makeShiftLink, shiftDayEnd } from '../_shared/shift-links.ts'
+import { LIVE_STATES, runRules, nextStep, pickWave, waveOrder, combosOf, partsWithoutHours, nextMorning, needsLine } from '../_shared/cara-run.ts'   // CARA PHASE 2 PART A
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -1159,6 +1160,352 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
   } }
 }
 
+/* ── CARA PHASE 2 PART A · "LET CARA RUN IT" (Samantha, 2026-10-24) ────────────────────────────────────────────────
+   A coordinator hands one case to Cara (cara_run, one row per case). Every 3 minutes, and right after an office tap,
+   caraAdvance() takes the case for 90 seconds (the lease), decides with _shared/cara-run.ts and acts: a wave (claimed
+   before any text goes, then sendAsksTo: the coordinator's own gates and wording), a pause on the first full-shift yes
+   that can be confirmed (the office is told; nothing is assigned), resuming when the office says "Not this one" or doesn't
+   answer in time, or stopping and handing it to the office. Every write names the version it read.
+   Switch ops_settings.cara_run_live (off): only owners can start one, and it's a PRACTICE run: the waves are worked out
+   and recorded as "would text", nobody is texted and no office item or text is made. Part B (after hours, by itself) is
+   not here. */
+// deno-lint-ignore no-explicit-any
+type Run = any
+const CARA_ITEM = (caseId: string) => `ops_cararun_${caseId}`
+async function caraRunRead(caseId: string): Promise<Run | null> {
+  const { data } = await sb.from('cara_run').select('*').eq('case_id', caseId).maybeSingle()
+  return data ?? null
+}
+/** One write, only if nobody else wrote since this copy was read. null = someone did (read again and decide again). */
+async function caraRunWrite(run: Run, patch: Record<string, unknown>): Promise<Run | null> {
+  const { data, error } = await sb.from('cara_run').update({ ...patch, version: Number(run.version) + 1, updated_at: nowIso() })
+    .eq('case_id', run.case_id).eq('version', run.version).select().maybeSingle()
+  return error ? null : (data ?? null)
+}
+async function caraEvent(run: Run, kind: string, actor: string, summary: string, detail: Record<string, unknown> = {}) {
+  try { await sb.from('cara_run_event').insert({ case_id: run.case_id, run_no: run.run_no ?? 1, kind, actor, summary: summary.slice(0, 500), detail }) }
+  catch { /* the history is an observer; the run itself is already saved */ }
+}
+// deno-lint-ignore no-explicit-any
+async function caraItem(c: any, run: Run, title: string, detail: string, urgency: 'high' | 'urgent' = 'high') {
+  const id = CARA_ITEM(String(c.id))
+  const { data: oi } = await sb.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+  // deno-lint-ignore no-explicit-any
+  const prev = (Array.isArray(oi?.data) ? oi!.data : []).find((x: any) => String(x?.id) === id)
+  const item: Record<string, unknown> = { ...(prev || {}), id, kind: 'coverage', coverage_case_id: c.id, title, about: c.client || '', detail,
+    domain: 'scheduling_coverage', status: 'open', urgency, created_at: prev?.status === 'open' ? prev.created_at : nowIso(),
+    due: new Date(Date.now() + 15 * 60000).toISOString(), created_by: 'coverage-run', opened_by: 'cara_run', cara_run_status: run.status }
+  if (!prev || prev.status !== 'open') { item.owner = ''; item.owner_name = '' }
+  await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item })
+}
+async function caraItemDone(caseId: string, why: string) {
+  try {
+    const id = CARA_ITEM(caseId)
+    const { data: oi } = await sb.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    const prev = (Array.isArray(oi?.data) ? oi!.data : []).find((x: any) => String(x?.id) === id)
+    if (prev && prev.status === 'open') await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...prev, status: 'done', closed_at: nowIso(), closed_by: 'Cara', close_note: why.slice(0, 200) } })
+  } catch { /* a card left open is visible; the run is already saved */ }
+}
+// deno-lint-ignore no-explicit-any
+async function caraTellOffice(c: any, line: string, anyHour = false): Promise<string[]> {
+  try {
+    const { data: stR } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+    const ghlT = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
+    if (!ghlT.token || !ghlT.locationId) return []
+    return await textCaseAdmins(sb, ghlT, stR?.data ?? {}, c, (link) => withLink(line, link), { anyHour })
+  } catch { return [] }
+}
+const caraWhen = (iso: string) => new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' }).replace(' ', '').toLowerCase()
+
+/** Move one run forward. Safe to call from anywhere at any time: the lease and the version checks make a second caller a no-op. */
+// deno-lint-ignore no-explicit-any
+async function caraAdvance(caseId: string, st: any): Promise<string> {
+  const run0 = await caraRunRead(caseId)
+  if (!run0 || !LIVE_STATES.includes(run0.status)) return 'not_running'
+  const lease = uid()
+  const { data: claimed } = await sb.from('cara_run').update({ lease_id: lease, lease_until: new Date(Date.now() + 90000).toISOString(), version: Number(run0.version) + 1, updated_at: nowIso() })
+    .eq('case_id', caseId).eq('version', run0.version).or(`lease_until.is.null,lease_until.lt.${nowIso()}`).select().maybeSingle()
+  if (!claimed) return 'busy'
+  let cur: Run = claimed
+  const save = async (patch: Record<string, unknown>, keepLease = false) => {
+    const w = await caraRunWrite(cur, keepLease ? patch : { ...patch, lease_id: null, lease_until: null }); if (w) cur = w; return w
+  }
+  let outcome = 'waited'
+  try {
+    for (let pass = 0; pass < 3; pass++) {
+      const c = await readCaseFresh(caseId)
+      const caseOpen = !!c && c.status === 'open'
+      const live = cur.practice !== true
+      if (caseOpen && live && (st.cara_run_live !== true || st.coverage_send_live !== true)) {
+        const why = st.cara_run_live !== true ? 'the "Let Cara run it" switch was turned off' : 'caregiver texting (coverage_send_live) was turned off'
+        if (await save({ status: 'stopped', ended_by: 'Cara', ended_at: nowIso(), end_why: `Stopped: ${why}` })) {
+          await caraEvent(cur, 'stopped', 'Cara', `Cara stopped: ${why}. Nothing more will be sent.`)
+          await caraItemDone(caseId, 'Cara stopped (switch off)')
+        }
+        return 'stopped_switch'
+      }
+      const m = c ? minsToStart(c, chiNowNaive()) : null
+      const rules = runRules(st, m)
+      let fullYes: { ask_id: string; name: string }[] = []
+      if (caseOpen && Array.isArray(c.asked) && c.asked.some((a: { state?: string }) => a?.state === 'yes')) {
+        const pool = await buildCandidatesForCase(c, { v2: true, includeAsked: true })
+        const rows = [...pool.group0, ...pool.prn_other, ...pool.group1, ...pool.group2, ...pool.prn_ongoing]
+        const b = boardOf(c, rows, pool.excluded, pool.needs_verification || [])
+        // deno-lint-ignore no-explicit-any
+        fullYes = b.people.filter((p: any) => p.can_confirm && p.ask_id).sort((x: any, y: any) => String(x.replied_at || '').localeCompare(String(y.replied_at || '')))
+          // deno-lint-ignore no-explicit-any
+          .map((p: any) => ({ ask_id: String(p.ask_id), name: String(p.name) }))
+      }
+      const step = nextStep(cur, { now: new Date(), caseOpen, minsToStart: m, fullYes, night: !!c && caregiverNightHold(c, st), rules })
+      const what = c ? caseWhat(c) : 'the shift'
+      if (step.do === 'finish') {
+        const why = !c ? 'The case is no longer on the board' : c.resolved_how === 'covered' ? `Covered: ${c.covered_by || 'confirmed'} (confirmed by ${c.confirmed_by || 'the office'})`
+          : `Closed by ${c.confirmed_by || 'the office'}: ${String(c.resolved_how || 'closed').replaceAll('_', ' ')}`
+        if (await save({ status: 'done', ended_by: c?.confirmed_by || 'the office', ended_at: nowIso(), end_why: why, needs: null })) {
+          const ax = c?.axiscare_assignment
+          await caraEvent(cur, 'finished', String(c?.confirmed_by || 'the office'), why + (c?.resolved_how === 'covered'
+            ? (['assigned', 'already'].includes(String(ax?.status)) ? '. On the AxisCare visit (checked).' : `. Not checked on AxisCare: ${ax?.detail || 'put them on the visit by hand'}.`) : '.'))
+          await caraItemDone(caseId, why)
+        }
+        return 'finished'
+      }
+      if (step.do === 'wait') { await save({}); return 'waited' }
+      if (step.do === 'pause') {
+        const by = new Date(Date.now() + rules.confirmWait * 60000).toISOString()
+        if (!(await save({ status: 'paused', paused_ask_id: step.ask_id, paused_name: step.name, paused_at: nowIso(), confirm_by: by,
+          seen_yes: [...(Array.isArray(cur.seen_yes) ? cur.seen_yes : []), step.ask_id] }))) return 'conflict'
+        if (live) {
+          await caraItem(c, cur, `Cara paused: ${step.name} said yes to the whole shift for ${c.client || 'the client'}. Confirm, or "Not this one"`,
+            `Cara stopped asking. Confirm ${step.name} on the board (it puts them on the AxisCare visit and checks it), or tap "Not this one" and Cara keeps asking. No answer by ${caraWhen(by)} and Cara keeps asking; ${step.name}'s yes stays on the board.`)
+          const to = await caraTellOffice(c, `Cara: ${step.name} said yes to the whole shift for ${what}. Cara stopped asking. Confirm or tap Not this one: {link}`)
+          await caraEvent(cur, 'paused', 'Cara', `${step.name} said yes to the whole shift. Cara stopped asking and told the office${to.length ? ` (texted ${to.length})` : ''}. Waiting for a confirm until ${caraWhen(by)}.`, { ask_id: step.ask_id, texted: to })
+          await opEvent(sb, { job: 'coverage-run', verb: 'cara_run_paused', item_id: caseId, area: 'coverage', summary: `Cara paused on ${what}: ${step.name} said yes to the whole shift` })
+        } else await caraEvent(cur, 'paused', 'Cara', `Practice: ${step.name} said yes to the whole shift. Cara would stop asking and tell the office (nobody was told). Waiting until ${caraWhen(by)}.`, { ask_id: step.ask_id })
+        return 'paused'
+      }
+      if (step.do === 'resume') {
+        if (!(await save({ status: 'running', paused_ask_id: null, paused_name: null, paused_at: null, confirm_by: null, next_wave_at: nowIso() }, true))) return 'conflict'
+        await caraEvent(cur, 'resumed', 'Cara', `${step.why}. Cara is asking again${step.escalate ? '; the yes stays on the board' : ''}.`, { escalate: step.escalate })
+        if (live && step.escalate && c) {
+          await caraItem(c, cur, `No answer on ${c.client || 'the client'}'s yes: Cara is asking more caregivers`, `${step.why}. Their yes is still on the board and can be confirmed. Cara has gone back to asking.`, 'urgent')
+          await caraTellOffice(c, `Cara: nobody confirmed the yes for ${what}, so Cara is asking more caregivers. The yes is still on the board: {link}`)
+        }
+        outcome = 'resumed'
+        continue   // the next wave can go in this same pass
+      }
+      if (step.do === 'needs_office') {
+        if (!(await save({ status: 'needs_office', needs: step.why }))) return 'conflict'
+        await caraEvent(cur, 'needs_office', 'Cara', `Cara stopped asking: ${step.why}. The office needs to take it from here.`)
+        if (live && c) {
+          await caraItem(c, cur, `Cara stopped on ${c.client || 'a shift'}: the office needs to take it`, `${step.why}. Everyone Cara asked, and every answer, is on the board.`, 'urgent')
+          await caraTellOffice(c, `Cara stopped on ${what}: ${step.why}. Please take it from here: {link}`, (m ?? 9999) < 180)
+          await opEvent(sb, { job: 'coverage-run', verb: 'cara_run_needs_office', item_id: caseId, area: 'coverage', summary: `Cara stopped on ${what}: ${step.why}` })
+        }
+        return 'needs_office'
+      }
+      if (step.do === 'hold_night') {
+        const until = nextMorning(new Date(), Number.isFinite(Number(st.coverage_quiet_until)) ? Number(st.coverage_quiet_until) : 8)
+        if (!(await save({ held_until: until, next_wave_at: until }))) return 'conflict'
+        await caraEvent(cur, 'night', 'Cara', `Quiet hours: wave ${(Number(cur.wave) || 0) + 1} waits until ${caraWhen(until)}.`)
+        return 'held_night'
+      }
+      if (step.do === 'wave') {
+        const pool1 = await buildCandidatesForCase(c)
+        let pref: unknown[] | null = null
+        if (st.cara_list_live === true) {
+          const p2 = await buildCandidatesForCase(c, { v2: true })
+          pref = [...p2.group0, ...p2.prn_other, ...p2.group1, ...p2.group2, ...p2.prn_ongoing]
+        }
+        const who = pickWave(waveOrder(sendableOf(pool1), pref as never), Array.isArray(c.asked) ? c.asked : [], rules.size)
+        if (!who.length) {
+          const why = 'Nobody left on Cara\'s list who hasn\'t been asked'
+          if (!(await save({ status: 'needs_office', needs: why }))) return 'conflict'
+          await caraEvent(cur, 'needs_office', 'Cara', `Cara stopped asking: ${why}. The office needs to take it from here.`)
+          if (live) { await caraItem(c, cur, `Cara stopped on ${c.client || 'a shift'}: nobody left to ask`, `${why}. Everyone Cara asked, and every answer, is on the board.`, 'urgent')
+            await caraTellOffice(c, `Cara stopped on ${what}: ${why}. Please take it from here: {link}`, (m ?? 9999) < 180) }
+          return 'needs_office'
+        }
+        /* THE WAVE IS CLAIMED BEFORE ANY TEXT: if this run dies halfway, the wave is not sent again; the people it didn't
+           reach are simply in the next wave (they were never asked) */
+        const next = new Date(Date.now() + rules.gap * 60000).toISOString()
+        if (!(await save({ wave: step.n, next_wave_at: next, held_until: null }, true))) return 'conflict'
+        // deno-lint-ignore no-explicit-any
+        const names = who.map((x: any) => String(x.name) + (x.prn_ask ? ' (PRN)' : ''))
+        if (!live) {
+          await caraEvent(cur, 'wave', 'Cara', `Practice: wave ${step.n} would text ${names.length}: ${names.join(', ')}. Nobody was texted. Next wave not before ${caraWhen(next)}.`, { would_text: names })
+        } else {
+          const res = await sendAsksTo(c, st, who, { askedBy: `Cara (started by ${cur.started_by})`, caraWave: step.n, caraRunNo: cur.run_no ?? 1 })
+          await caraEvent(cur, 'wave', 'Cara', `Wave ${step.n} sent to ${res.sent.length}: ${res.sent.join(', ') || 'nobody'}`
+            + (res.failed.length ? `. Not sent: ${res.failed.join('; ')}` : '') + (res.already.length ? `. Already asked: ${res.already.join(', ')}` : '')
+            + `. Next wave not before ${caraWhen(next)}.`, { sent: res.sent, failed: res.failed, already: res.already })
+          await opEvent(sb, { job: 'coverage-run', verb: 'cara_run_wave', item_id: caseId, area: 'coverage', summary: `Cara wave ${step.n} on ${what}: texted ${res.sent.length}` })
+        }
+        await save({})
+        return 'wave'
+      }
+    }
+    return outcome
+  } finally {
+    /* the lease is let go however this ended (a failed write leaves it to run out in 90 seconds) */
+    if (cur.lease_id === lease) await caraRunWrite(cur, { lease_id: null, lease_until: null })
+  }
+}
+
+/** Why Cara can't take this case, or null. */
+// deno-lint-ignore no-explicit-any
+function caraStartRefusal(kase: any, m: number | null, rules: { stopBefore: number }): string | null {
+  if (kase.status !== 'open') return 'This case is closed.'
+  if (String(kase.kind) === 'interest' || kase.open_hours === true) return 'Cara runs open shifts only, not interest checks or open hours.'
+  if (m == null) return 'This case has no date and start time yet.'
+  if (m < rules.stopBefore) return `The shift starts in under ${Math.round(rules.stopBefore / 6) / 10} hours: call people from the list instead. Cara only asks with time to spare.`
+  return null
+}
+
+/* Everyone the send gate allows for this case, in the list's order, with the tier their wording comes from. */
+// deno-lint-ignore no-explicit-any
+function sendableOf(pool: any): any[] {
+  return [...pool.group0.map((x: any) => ({ ...x, tier: 0, prn_ask: true })),
+          ...pool.prn_other.map((x: any) => ({ ...x, tier: 0, prn_ask: true })),
+          ...pool.group1.map((x: any) => ({ ...x, tier: 1 })),
+          ...pool.group2.map((x: any) => ({ ...x, tier: 3 })),
+          /* a regular opening asked of a PRN member is the ordinary ongoing ask, not a PRN one */
+          ...pool.prn_ongoing.map((x: any) => ({ ...x, tier: 3 }))]
+}
+
+/* THE ONE WAY A CAREGIVER IS ASKED ABOUT A SHIFT BY TEXT (moved here 2026-10-24 so "Let Cara run it" uses exactly the
+   coordinator's send): the caller passes only people the send gate allows (buildCandidatesForCase, re-derived on the server).
+   Per person: phone from the roster, the opt-out and identity gate (contactForOutbound), the case's own wording or the
+   standard one, the shift page link where it applies, the ask recorded under the case lock BEFORE the text (a person already
+   asked on this case is never texted again), and the ask taken back if the text fails. Cara's asks are marked auto and with
+   their wave; a coordinator's are picked_by_coordinator, as before. */
+// deno-lint-ignore no-explicit-any
+async function sendAsksTo(kase: any, st: any, sendable: any[], extra: { askedBy?: string | null; caraWave?: number; caraRunNo?: number } = {}):
+  Promise<{ sent: string[]; failed: string[]; already: string[] }> {
+  const ghl2 = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
+  if (!ghl2.token || !ghl2.locationId) return { sent: [], failed: sendable.map((x) => `${x.name} (GHL credentials not set)`), already: [] }
+  /* Phones come from the roster again (buildCandidates exposes last4
+     only); the identity + hours gates run inside contactForOutbound. */
+  const { data: rosterRow } = await sb.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
+  // deno-lint-ignore no-explicit-any
+  const roster = (Array.isArray(rosterRow?.data) ? rosterRow!.data : []) as any[]
+  const phoneOf = (nm: string) => {
+    const hit = roster.find(cg =>
+      nameKeyOf([clean(cg.first), clean(cg.last)].filter(Boolean).join(' ')) === nameKeyOf(nm))
+    return normalisePhone(hit?.phone)
+  }
+
+  const chiToday = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
+  const clientShort = firstNamesOf(String(kase.client || '')) || 'a client'
+  const when = [kase.shift_date ? friendlyDay(kase.shift_date) : '', span12(kase.shift_time)]
+    .filter(Boolean).join(' ') || 'as soon as possible (the office has details)'
+  const careLine = String(kase.care_note || '').trim()
+  const streetName = String(kase.client_street || '').trim()
+    .replace(/^\d+[A-Za-z]?(?:-\w+)?\s+/, '').replace(/^\d+$/, '').trim()
+  const addr = [streetName, String(kase.client_city || '').trim()].filter(Boolean).join(', ')
+  const isSameDay = kase.shift_date === chiToday
+  /* Interest checks (new-client broadcasts) speak differently: nobody is
+     "covering" anything yet — we're finding out who WANTS the hours
+     before the client meeting. One template for everyone. */
+  const tmplInt = String(kase.msg_interest || '') || String(st.coverage_msg_interest || '') ||
+    `Hi {first_name}, it's Caring Companions. We're meeting a potential new client{where}: {when}. {care}Would you be interested in these hours? Nothing is set yet - reply YES if you'd like to be considered, or NO. Questions welcome.`
+  const tmpl1 = String(kase.msg_tier1 || '') || String(st.coverage_msg_tier1 || '') ||
+    `Hi {first_name}, can you cover {client} {when}? It's Caring Companions. Reply YES or NO.`
+  const tmplO = String(kase.msg_other || '') ||
+    (isSameDay
+      ? (String(st.coverage_msg_other_sameday || '') || String(st.coverage_msg_other || '') ||
+         `Hi {first_name}, it's Caring Companions. Last-minute fill-in for {client} at {address}: {when}. {care}Can you take it? Reply YES or NO. Questions welcome.`)
+      : (String(st.coverage_msg_other_advance || '') || String(st.coverage_msg_other || '') ||
+         `Hi {first_name}, it's Caring Companions. We have an open shift for {client} at {address}: {when}. {care}Can you take it? Reply YES or NO. Questions welcome.`))
+  const tmplP = String(st.coverage_msg_prn || '') || PRN_DEFAULT_MSG
+  // deno-lint-ignore no-explicit-any
+  const fillMsg = (tmpl: string, x: any) => tmpl
+    .replaceAll(' at {address}', addr ? ` at ${addr}` : '')
+    .replaceAll('{first_name}', x.first || 'there')
+    .replaceAll('{pattern}', '')
+    .replaceAll('{client}', clientShort)
+    .replaceAll('{where}', kase.client_city ? ` in ${kase.client_city}` : '')
+    .replaceAll('{address}', addr || 'the office has the address')
+    .replaceAll('{when}', when)
+    .replaceAll('{care}', careLine ? careLine + ' ' : '')
+    .replaceAll('{link}', '')
+    .replace(/\s{2,}/g, ' ').trim()
+  /* THE SHIFT PAGE LINK (2026-10-24, her approval): each person's own link, for everyone once
+     shift_link_texts_live is on, before that only the owners' pilot caregivers. The standard wording then says
+     "all or part of it" or "one caregiver for the whole shift", the town only, no care line. A case's own edited
+     wording gets a link only where someone typed {link}. Interest checks never get one. */
+  const LINK_SECRET = Deno.env.get('HUB_JOB_SECRET') ?? ''
+  const linkEnd = shiftDayEnd(String(kase.shift_date || ''))
+  const townL = String(kase.client_city || '').trim()
+  const customFor = (k: string): string => k === 'tier1' ? (String(kase.msg_tier1 || '') || String(st.coverage_msg_tier1 || ''))
+    : k === 'prn' ? String(st.coverage_msg_prn || '')
+    : (String(kase.msg_other || '') || (isSameDay ? (String(st.coverage_msg_other_sameday || '') || String(st.coverage_msg_other || '')) : (String(st.coverage_msg_other_advance || '') || String(st.coverage_msg_other || ''))))
+
+  const sent: string[] = [], failed: string[] = [], already: string[] = []
+  for (const x of sendable) {
+    const phone = phoneOf(String(x.name))
+    if (!phone) { failed.push(`${x.name} (no phone on the roster)`); continue }
+    const contact = await contactForOutbound(sb, ghl2,
+      { phone, firstName: x.first || x.name }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'coverage-run' })
+    if (!contact) { failed.push(`${x.name} (refused by the outbound gate or opted out of texts)`); continue }
+    const askId = uid()
+    let message = fillMsg(String(kase.kind) === 'interest' ? tmplInt
+      : x.prn_ask ? tmplP : (x.tier === 1 ? tmpl1 : tmplO), x)
+    const lk = linkFor(st, kase, x.axiscare_id, x.name)
+    let linked: 'live' | 'pilot' | null = null
+    if (lk && LINK_SECRET.length >= 32 && linkEnd) {
+      const kindT = x.prn_ask ? 'prn' : x.tier === 1 ? 'tier1' : isSameDay ? 'sameday' : 'other'
+      const custom = customFor(kindT)
+      const tmplL = custom ? (custom.includes('{link}') ? custom : null) : shiftLinkTemplate(kindT, partWelcome(kase))
+      if (tmplL) {
+        try {
+          const link = await makeShiftLink(LINK_SECRET, String(kase.id), askId, linkEnd)
+          message = fillLinked(tmplL, { first: x.first || 'there', client: clientShort, when, town: townL, pattern: patLineOf(kase), link })
+          linked = lk
+        } catch { /* no link could be made: today's text goes, unchanged */ }
+      }
+    }
+    /* CI1: the ask is recorded BEFORE the text goes, under the case's lock, only if this person (same number or
+       AxisCare id) hasn't been asked on this case: two coordinators sending at once text them once. */
+    const ask = { id: askId, name: x.name, phone, channel: 'sms', at: nowIso(),
+      ...(linked ? { link_sent: linked, ...(linked === 'pilot' ? { pilot_link: true } : {}) } : {}),
+      state: 'waiting', replied_at: null, tier: x.tier, auto: false, ...(x.prn_ask ? { prn: true } : {}),
+      ...(extra.caraWave ? { auto: true, picked_by_coordinator: false, cara_wave: extra.caraWave, cara_run_no: extra.caraRunNo ?? 1 } : { picked_by_coordinator: true }),
+      ghl_contact_id: contact.contactId, axiscare_id: x.axiscare_id ?? null,
+      offered_for: `${String(kase.shift_date || '')}|${String(kase.shift_time || '')}`,   /* the hours this ask was sent for (2026-10-24) */
+      /* CI2: who asked, when the call-in page sent it (server to server, with the owner key) */
+      ...(extra.askedBy ? { asked_by: extra.askedBy } : {}) }
+    const { data: held, error: holdErr } = await sb.rpc('coverage_case_add_ask', { p_id: String(kase.id), p_ask: ask })
+    if (holdErr || held !== 'added') {
+      if (held === 'already_asked') already.push(String(x.name))
+      else failed.push(`${x.name} (${held === 'not_open' ? 'the case closed meanwhile' : 'could not record the ask, so it was not sent'})`)
+      continue
+    }
+    let ok = false
+    try {
+      const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${ghl2.token}`, Version: '2021-07-28',
+                   'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'SMS', fromNumber: MO_FROM, contactId: contact.contactId, message }),
+      })
+      ok = r.ok
+      if (!r.ok) failed.push(`${x.name} (SMS ${r.status})`)
+    } catch { failed.push(`${x.name} (send error)`) }
+    if (!ok) { await sb.rpc('coverage_case_remove_ask', { p_id: String(kase.id), p_ask_id: ask.id }); continue }
+    sent.push(String(x.name))
+    try {
+      await fetch(`https://services.leadconnectorhq.com/contacts/${contact.contactId}/tags`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${ghl2.token}`, Version: '2021-07-28',
+                   'Content-Type': 'application/json' },
+        body: JSON.stringify({ tags: ['coverage-asked'] }),
+      })
+    } catch { /* a missing tag only costs reply routing */ }
+  }
+  return { sent, failed, already }
+}
+
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -1186,15 +1533,32 @@ Deno.serve(async (req) => {
        staff record, role and hub access), or the owner's server key. It used to read "signed in" from the token
        without checking who: any account on the shared project could text caregivers from here. */
     const ownerCall = await ownerCaller(req)
-    let whoName = 'the owner'
+    let whoName = 'the owner', whoEmail = '', whoOwner = !!ownerCall
     if (!ownerCall) {
       const who = await requireStaff(sb, req, OFFICE_ROLES)
       if (!who.ok) return jr({ error: who.error }, who.status)
       whoName = String((who as { name?: string }).name || 'the office')
+      whoEmail = String((who as { email?: string }).email || '').toLowerCase()
+      whoOwner = Array.isArray((who as { roles?: string[] }).roles) && (who as { roles: string[] }).roles.includes('owner_admin')
     }
     if (body.action === 'open_hours') return await openHours(body, whoName, jr)
     const kase = await readCaseFresh(String(body.case_id || ''))
     if (!kase) return jr({ error: 'no such coverage case' }, 404)
+    /* CARA PHASE 2 PART A: the run on this case, its history and what still needs the office. Read only; also for a closed case. */
+    if (body.action === 'cara_run_get') {
+      const { data: stG } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+      const stg = stG?.data ?? {}
+      const run = await caraRunRead(String(kase.id))
+      const { data: ev } = await sb.from('cara_run_event').select('at, run_no, kind, actor, summary, detail').eq('case_id', String(kase.id)).order('at', { ascending: true }).limit(200)
+      const m = minsToStart(kase, chiNowNaive())
+      const rules = runRules(stg, m)
+      const live = stg.cara_run_live === true && stg.coverage_send_live === true
+      const canStart = kase.status === 'open' && (!run || ['stopped', 'needs_office'].includes(run.status)) && (live || whoOwner)
+      return jr({ run: run ? { ...run, lease_id: undefined } : null, events: ev ?? [], needs: needsLine(run, kase), switch_on: stg.cara_run_live === true, live,
+        practice_only: !live, can_start: canStart, start_refused: caraStartRefusal(kase, m, rules), rules,
+        asks: (Array.isArray(kase.asked) ? kase.asked : []).filter((a: { cara_wave?: number }) => a?.cara_wave).map((a: { id?: string; name?: string; cara_wave?: number; state?: string; at?: string; replied_at?: string }) =>
+          ({ id: a.id, name: a.name, wave: a.cara_wave, state: a.state, at: a.at, replied_at: a.replied_at ?? null })) })
+    }
     /* J1: only a shift that is still open (the Hub only shows the picker for open cases). */
     if (kase.status !== 'open') return jr({ error: 'this coverage case is no longer open, so nobody can be asked from it' }, 409)
 
@@ -1227,6 +1591,74 @@ Deno.serve(async (req) => {
         summary: `${whoName} set ${kase.client || 'the shift'}: ${tf === 'exact' ? 'exact time' : 'flexible start, up to ' + fm + ' minutes'}; hand-off ${patch.handoff_ok ? 'allowed' : 'not allowed'}` })
       return jr({ ok: true, ...patch })
     }
+    /* CARA PHASE 2 PART A · start ("Let Cara run it", or "Keep searching" after she stopped), take it back, not this one. */
+    if (body.action === 'cara_run_start') {
+      const { data: stS } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+      const sts = stS?.data ?? {}
+      const live = sts.cara_run_live === true && sts.coverage_send_live === true
+      if (!live && !whoOwner) return jr({ error: 'Let Cara run it is switched off. Only owners can try it, as practice.' }, 403)
+      const m = minsToStart(kase, chiNowNaive())
+      const refused = caraStartRefusal(kase, m, runRules(sts, m))
+      if (refused) return jr({ error: refused }, 409)
+      const prev = await caraRunRead(String(kase.id))
+      if (prev && LIVE_STATES.includes(prev.status)) return jr({ error: `Cara is already running this (started by ${prev.started_by}).`, run: prev }, 409)
+      const base = { status: 'running', practice: !live, started_by: whoName.slice(0, 80), started_email: whoEmail || null, started_at: nowIso(),
+        next_wave_at: nowIso(), held_until: null, paused_ask_id: null, paused_name: null, paused_at: null, confirm_by: null, needs: null,
+        lease_id: null, lease_until: null, ended_by: null, ended_at: null, end_why: null }
+      let run: Run | null = null
+      if (!prev) {
+        const { data, error } = await sb.from('cara_run').insert({ case_id: String(kase.id), run_no: 1, wave: 0, wave_base: 0, ...base }).select().maybeSingle()
+        if (error || !data) return jr({ error: 'Someone else just started Cara on this case. Refresh to see it.' }, 409)
+        run = data
+      } else {
+        run = await caraRunWrite(prev, { ...base, run_no: (Number(prev.run_no) || 1) + 1, wave_base: Number(prev.wave) || 0 })
+        if (!run) return jr({ error: 'Someone else just changed this run. Refresh to see it.' }, 409)
+      }
+      const again = prev ? (prev.status === 'needs_office' ? ' (keep searching)' : ' (again)') : ''
+      await caraEvent(run, 'started', whoName, `${whoName} let Cara run it${again}${run.practice ? ', as PRACTICE: nobody will be texted' : ''}. Waves of ${runRules(sts, m).size}, ${runRules(sts, m).gap} minutes apart, ${runRules(sts, m).maxWaves} at most.`)
+      await opEvent(sb, { job: 'coverage-run', verb: 'cara_run_started', item_id: String(kase.id), area: 'coverage', actor_name: whoName, actor_email: whoEmail || undefined,
+        summary: `${whoName} let Cara run ${caseWhat(kase)}${run.practice ? ' (practice)' : ''}` })
+      const did = await caraAdvance(String(kase.id), sts)
+      return jr({ ok: true, practice: run.practice, did, run: await caraRunRead(String(kase.id)) })
+    }
+    if (body.action === 'cara_run_stop' || body.action === 'cara_run_not_this_one') {
+      const isStop = body.action === 'cara_run_stop'
+      const askId = String(body.ask_id || '').slice(0, 80)
+      const why = String(body.why || '').trim().slice(0, 200)
+      // deno-lint-ignore no-explicit-any
+      const ask = (Array.isArray(kase.asked) ? kase.asked : []).find((a: any) => String(a?.id) === askId)
+      if (!isStop && !ask) return jr({ error: 'that answer is not on this case' }, 404)
+      for (let tries = 0; tries < 4; tries++) {
+        const run = await caraRunRead(String(kase.id))
+        if (!run) return jr({ error: 'Cara is not running this case' }, 404)
+        if (isStop) {
+          if (!LIVE_STATES.includes(run.status) && run.status !== 'needs_office') return jr({ error: `Cara is not running this case (${run.status}).` }, 409)
+          const w = await caraRunWrite(run, { status: 'stopped', ended_by: whoName.slice(0, 80), ended_at: nowIso(), end_why: `Taken back by ${whoName}${why ? ': ' + why : ''}`, needs: null, lease_id: null, lease_until: null })
+          if (!w) continue
+          await caraEvent(w, 'stopped', whoName, `${whoName} took it back${why ? ': ' + why : ''}. Cara won't send anything more. Answers still land on the board.`)
+          await caraItemDone(String(kase.id), `Taken back by ${whoName}`)
+          await opEvent(sb, { job: 'coverage-run', verb: 'cara_run_stopped', item_id: String(kase.id), area: 'coverage', actor_name: whoName, actor_email: whoEmail || undefined, summary: `${whoName} took ${caseWhat(kase)} back from Cara` })
+          return jr({ ok: true, run: w })
+        }
+        const declined = [...(Array.isArray(run.declined) ? run.declined : []).filter((d: { ask_id?: string }) => d?.ask_id !== askId),
+          { ask_id: askId, name: String(ask.name || ''), by: whoName.slice(0, 80), at: nowIso(), why: why || null }]
+        const wasPaused = run.status === 'paused' && run.paused_ask_id === askId
+        const patch: Record<string, unknown> = { declined }
+        if (wasPaused) Object.assign(patch, { status: 'running', paused_ask_id: null, paused_name: null, paused_at: null, confirm_by: null, next_wave_at: nowIso() })
+        const w = await caraRunWrite(run, patch)
+        if (!w) continue
+        await caraEvent(w, 'not_this_one', whoName, `${whoName}: not ${ask.name} for this shift${why ? ' (' + why + ')' : ''}.${wasPaused ? ' Cara is asking again.' : ''} ${ask.name} is not texted about it now; they hear "covered" when the case closes.`, { ask_id: askId })
+        await opEvent(sb, { job: 'coverage-run', verb: 'cara_run_not_this_one', item_id: String(kase.id), area: 'coverage', actor_name: whoName, actor_email: whoEmail || undefined, summary: `${whoName}: not ${ask.name} for ${caseWhat(kase)}` })
+        let did = 'not_running'
+        if (wasPaused) {
+          await caraItemDone(String(kase.id), `Not ${ask.name}: Cara is asking again`)
+          const { data: stN } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+          did = await caraAdvance(String(kase.id), stN?.data ?? {})
+        }
+        return jr({ ok: true, did, run: await caraRunRead(String(kase.id)) })
+      }
+      return jr({ error: 'The run kept changing while saving. Refresh and try again.' }, 409)
+    }
     /* THE RESPONSE BOARD (2026-10-24): everyone asked, in their column, with their exact answer and Cara's reasons. Read only. */
     if (body.action === 'board') {
       const pool = await buildCandidatesForCase(kase, { v2: true, includeAsked: true })
@@ -1251,7 +1683,11 @@ Deno.serve(async (req) => {
           profile = { label: ps.label, tone: ps.tone, has_intro: ps.has_intro, care_review: ps.care_review, axiscare_client_id: axId }
         }
       } catch { profile = null }
-      return jr({ ...boardOf(kase, rows, pool.excluded, pool.needs_verification || []), meta: pool.meta.cara_list, profile })
+      const bd = boardOf(kase, rows, pool.excluded, pool.needs_verification || [])
+      /* CARA PHASE 2 PART A: part-shift offers that fit together, part offers with no hours, and who the office said "Not this one" to */
+      let declined: unknown[] = []
+      try { const r = await caraRunRead(String(kase.id)); declined = Array.isArray(r?.declined) ? r.declined : [] } catch { declined = [] }
+      return jr({ ...bd, combos: combosOf(kase, bd.people), parts_without_hours: partsWithoutHours(bd.people), declined, meta: pool.meta.cara_list, profile })
     }
 
     if (body.action === 'send_selected') {
@@ -1273,134 +1709,12 @@ Deno.serve(async (req) => {
          that is not in group1/group2 right now cannot be texted, whatever
          the request says. The coordinator chooses WITHIN the safe set. */
       const pool = await buildCandidatesForCase(kase)
-      const sendable = [...pool.group0.map(x => ({ ...x, tier: 0, prn_ask: true })),
-                        ...pool.prn_other.map(x => ({ ...x, tier: 0, prn_ask: true })),
-                        ...pool.group1.map(x => ({ ...x, tier: 1 })),
-                        ...pool.group2.map(x => ({ ...x, tier: 3 })),
-                        /* a regular opening asked of a PRN member is the ordinary ongoing ask, not a PRN one */
-                        ...pool.prn_ongoing.map(x => ({ ...x, tier: 3 }))]
-        .filter(x => wanted.has(String(x.name).toLowerCase()))
+      const sendable = sendableOf(pool).filter(x => wanted.has(String(x.name).toLowerCase()))
       const refusedNames = [...wanted].filter(w =>
         !sendable.some(x => String(x.name).toLowerCase() === w))
 
-      /* Phones come from the roster again (buildCandidates exposes last4
-         only); the identity + hours gates run inside contactForOutbound. */
-      const { data: rosterRow } = await sb.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
-      // deno-lint-ignore no-explicit-any
-      const roster = (Array.isArray(rosterRow?.data) ? rosterRow!.data : []) as any[]
-      const phoneOf = (nm: string) => {
-        const hit = roster.find(cg =>
-          nameKeyOf([clean(cg.first), clean(cg.last)].filter(Boolean).join(' ')) === nameKeyOf(nm))
-        return normalisePhone(hit?.phone)
-      }
-
-      const chiToday = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
-      const clientShort = firstNamesOf(String(kase.client || '')) || 'a client'
-      const when = [kase.shift_date ? friendlyDay(kase.shift_date) : '', span12(kase.shift_time)]
-        .filter(Boolean).join(' ') || 'as soon as possible (the office has details)'
-      const careLine = String(kase.care_note || '').trim()
-      const streetName = String(kase.client_street || '').trim()
-        .replace(/^\d+[A-Za-z]?(?:-\w+)?\s+/, '').replace(/^\d+$/, '').trim()
-      const addr = [streetName, String(kase.client_city || '').trim()].filter(Boolean).join(', ')
-      const isSameDay = kase.shift_date === chiToday
-      /* Interest checks (new-client broadcasts) speak differently: nobody is
-         "covering" anything yet — we're finding out who WANTS the hours
-         before the client meeting. One template for everyone. */
-      const tmplInt = String(kase.msg_interest || '') || String(st.coverage_msg_interest || '') ||
-        `Hi {first_name}, it's Caring Companions. We're meeting a potential new client{where}: {when}. {care}Would you be interested in these hours? Nothing is set yet - reply YES if you'd like to be considered, or NO. Questions welcome.`
-      const tmpl1 = String(kase.msg_tier1 || '') || String(st.coverage_msg_tier1 || '') ||
-        `Hi {first_name}, can you cover {client} {when}? It's Caring Companions. Reply YES or NO.`
-      const tmplO = String(kase.msg_other || '') ||
-        (isSameDay
-          ? (String(st.coverage_msg_other_sameday || '') || String(st.coverage_msg_other || '') ||
-             `Hi {first_name}, it's Caring Companions. Last-minute fill-in for {client} at {address}: {when}. {care}Can you take it? Reply YES or NO. Questions welcome.`)
-          : (String(st.coverage_msg_other_advance || '') || String(st.coverage_msg_other || '') ||
-             `Hi {first_name}, it's Caring Companions. We have an open shift for {client} at {address}: {when}. {care}Can you take it? Reply YES or NO. Questions welcome.`))
-      const tmplP = String(st.coverage_msg_prn || '') || PRN_DEFAULT_MSG
-      // deno-lint-ignore no-explicit-any
-      const fillMsg = (tmpl: string, x: any) => tmpl
-        .replaceAll(' at {address}', addr ? ` at ${addr}` : '')
-        .replaceAll('{first_name}', x.first || 'there')
-        .replaceAll('{pattern}', '')
-        .replaceAll('{client}', clientShort)
-        .replaceAll('{where}', kase.client_city ? ` in ${kase.client_city}` : '')
-        .replaceAll('{address}', addr || 'the office has the address')
-        .replaceAll('{when}', when)
-        .replaceAll('{care}', careLine ? careLine + ' ' : '')
-        .replaceAll('{link}', '')
-        .replace(/\s{2,}/g, ' ').trim()
-      /* THE SHIFT PAGE LINK (2026-10-24, her approval): each person's own link, for everyone once
-         shift_link_texts_live is on, before that only the owners' pilot caregivers. The standard wording then says
-         "all or part of it" or "one caregiver for the whole shift", the town only, no care line. A case's own edited
-         wording gets a link only where someone typed {link}. Interest checks never get one. */
-      const LINK_SECRET = Deno.env.get('HUB_JOB_SECRET') ?? ''
-      const linkEnd = shiftDayEnd(String(kase.shift_date || ''))
-      const townL = String(kase.client_city || '').trim()
-      const customFor = (k: string): string => k === 'tier1' ? (String(kase.msg_tier1 || '') || String(st.coverage_msg_tier1 || ''))
-        : k === 'prn' ? String(st.coverage_msg_prn || '')
-        : (String(kase.msg_other || '') || (isSameDay ? (String(st.coverage_msg_other_sameday || '') || String(st.coverage_msg_other || '')) : (String(st.coverage_msg_other_advance || '') || String(st.coverage_msg_other || ''))))
-
-      const sent: string[] = [], failed: string[] = [], already: string[] = []
-      for (const x of sendable) {
-        const phone = phoneOf(String(x.name))
-        if (!phone) { failed.push(`${x.name} (no phone on the roster)`); continue }
-        const contact = await contactForOutbound(sb, ghl2,
-          { phone, firstName: x.first || x.name }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'coverage-run' })
-        if (!contact) { failed.push(`${x.name} (refused by the outbound gate or opted out of texts)`); continue }
-        const askId = uid()
-        let message = fillMsg(String(kase.kind) === 'interest' ? tmplInt
-          : x.prn_ask ? tmplP : (x.tier === 1 ? tmpl1 : tmplO), x)
-        const lk = linkFor(st, kase, x.axiscare_id, x.name)
-        let linked: 'live' | 'pilot' | null = null
-        if (lk && LINK_SECRET.length >= 32 && linkEnd) {
-          const kindT = x.prn_ask ? 'prn' : x.tier === 1 ? 'tier1' : isSameDay ? 'sameday' : 'other'
-          const custom = customFor(kindT)
-          const tmplL = custom ? (custom.includes('{link}') ? custom : null) : shiftLinkTemplate(kindT, partWelcome(kase))
-          if (tmplL) {
-            try {
-              const link = await makeShiftLink(LINK_SECRET, String(kase.id), askId, linkEnd)
-              message = fillLinked(tmplL, { first: x.first || 'there', client: clientShort, when, town: townL, pattern: patLineOf(kase), link })
-              linked = lk
-            } catch { /* no link could be made: today's text goes, unchanged */ }
-          }
-        }
-        /* CI1: the ask is recorded BEFORE the text goes, under the case's lock, only if this person (same number or
-           AxisCare id) hasn't been asked on this case: two coordinators sending at once text them once. */
-        const ask = { id: askId, name: x.name, phone, channel: 'sms', at: nowIso(),
-          ...(linked ? { link_sent: linked, ...(linked === 'pilot' ? { pilot_link: true } : {}) } : {}),
-          state: 'waiting', replied_at: null, tier: x.tier, auto: false, ...(x.prn_ask ? { prn: true } : {}),
-          picked_by_coordinator: true, ghl_contact_id: contact.contactId, axiscare_id: x.axiscare_id ?? null,
-          offered_for: `${String(kase.shift_date || '')}|${String(kase.shift_time || '')}`,   /* the hours this ask was sent for (2026-10-24) */
-          /* CI2: who asked, when the call-in page sent it (server to server, with the owner key) */
-          ...(ownerCall && typeof body.asked_by === 'string' && body.asked_by.trim() ? { asked_by: body.asked_by.trim().slice(0, 80) } : {}) }
-        const { data: held, error: holdErr } = await sb.rpc('coverage_case_add_ask', { p_id: String(kase.id), p_ask: ask })
-        if (holdErr || held !== 'added') {
-          if (held === 'already_asked') already.push(String(x.name))
-          else failed.push(`${x.name} (${held === 'not_open' ? 'the case closed meanwhile' : 'could not record the ask, so it was not sent'})`)
-          continue
-        }
-        let ok = false
-        try {
-          const r = await fetch('https://services.leadconnectorhq.com/conversations/messages', {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${ghl2.token}`, Version: '2021-07-28',
-                       'Content-Type': 'application/json' },
-            body: JSON.stringify({ type: 'SMS', fromNumber: MO_FROM, contactId: contact.contactId, message }),
-          })
-          ok = r.ok
-          if (!r.ok) failed.push(`${x.name} (SMS ${r.status})`)
-        } catch { failed.push(`${x.name} (send error)`) }
-        if (!ok) { await sb.rpc('coverage_case_remove_ask', { p_id: String(kase.id), p_ask_id: ask.id }); continue }
-        sent.push(String(x.name))
-        try {
-          await fetch(`https://services.leadconnectorhq.com/contacts/${contact.contactId}/tags`, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${ghl2.token}`, Version: '2021-07-28',
-                       'Content-Type': 'application/json' },
-            body: JSON.stringify({ tags: ['coverage-asked'] }),
-          })
-        } catch { /* a missing tag only costs reply routing */ }
-      }
+      const askedBy = ownerCall && typeof body.asked_by === 'string' && body.asked_by.trim() ? body.asked_by.trim().slice(0, 80) : null
+      const { sent, failed, already } = await sendAsksTo(kase, st, sendable, { askedBy })
       try {
         await sb.rpc('upsert_app_data_item', { target_key: 'automation_log', item: {
           id: 'auto_srv_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
@@ -2821,6 +3135,20 @@ Deno.serve(async (req) => {
         }
       }
     }
+  }
+
+  /* ── CARA PHASE 2 PART A: every running or paused "Let Cara run it" moves forward, each under its own lease (a second run
+     at the same moment, or an office tap, can't act on the same case twice). Runs on closed cases are finished here too. */
+  if (caller === 'cron' || commit) {
+    try {
+      const { data: runs } = await sb.from('cara_run').select('case_id').in('status', LIVE_STATES)
+      stats.cara_runs = {} as Record<string, number>
+      for (const r of runs ?? []) {
+        let did = 'error'
+        try { did = await caraAdvance(String(r.case_id), settings) } catch (e) { console.error('[coverage-run] cara run failed', r.case_id, e) }
+        stats.cara_runs[did] = (stats.cara_runs[did] || 0) + 1
+      }
+    } catch (e) { console.error('[coverage-run] cara runs read failed', e) }
   }
 
   await releaseRunLock()
