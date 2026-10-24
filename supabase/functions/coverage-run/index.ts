@@ -62,6 +62,7 @@ import { loadSkillJudge, careNow } from '../_shared/cara-skills.ts'
 import { previewRecords, stateOf } from '../_shared/caregiver-preview.ts'
 import { linkFor, partWelcome, patLineOf, linkTemplate as shiftLinkTemplate, fillLinked } from '../_shared/shift-link-texts.ts'
 import { makeShiftLink, shiftDayEnd } from '../_shared/shift-links.ts'
+import { isPlaceholderCaregiver } from '../_shared/cg-placeholder.ts'   // 2026-10-24: never a cover
 import { LIVE_STATES, runRules, nextStep, pickWave, waveOrder, combosOf, partsWithoutHours, nextMorning, needsLine } from '../_shared/cara-run.ts'   // CARA PHASE 2 PART A
 
 /* Straight-line miles between two zips' Census centroids — an honest
@@ -2967,6 +2968,14 @@ Deno.serve(async (req) => {
         if (String(cStale?.kind) === 'interest') continue
         const c = await readCaseFresh(cStale.id) ?? cStale
         if (c?.status === 'open' || c?.closure_notified) continue
+        /* 2026-10-24: "Canceled Shift" is nobody. A case closed as covered by the placeholder was cancelled: no "you're
+           confirmed", no "covered" courtesy texts and no family text (April Davidson's family was told "Canceled" was coming). */
+        if (c.resolved_how === 'covered' && isPlaceholderCaregiver(String(c.covered_by || ''))) {
+          c.closure_notified = nowIso(); c.closure_courtesy_count = 0; c.closure_skip_reason = 'Closed on the Canceled Shift placeholder: cancelled, no texts.'
+          if (!c.family_notified) { c.family_notified = nowIso(); c.family_notified_count = 0; c.family_no_recipients = true; c.family_skip_reason = 'cancelled (Canceled Shift placeholder)' }
+          await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
+          continue
+        }
         const askedList = Array.isArray(c.asked) ? c.asked : []
         /* The winner hears they're confirmed (CareQB's "Assign to Shift"
            message). They said yes to a shift; silence after that reads as

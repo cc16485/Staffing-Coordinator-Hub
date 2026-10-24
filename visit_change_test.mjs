@@ -2,7 +2,7 @@
 // node visit_change_test.mjs
 import fs from 'fs'; import path from 'path'
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 800)])
-let T, AX, PATCHES, RPCS, EVENTS, AXFAIL, DRIFT, SHAPE = 'nested'
+let T, AX, PATCHES, RPCS, EVENTS, AXFAIL, DRIFT, SHAPE = 'nested', NAME13 = 'Administrative Correction - Office Error'
 const today = new Date().toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
 const reset = (live = true) => { PATCHES = []; RPCS = []; EVENTS = []; AXFAIL = 0; DRIFT = false
   AX = { 's=12:d=2026-10-20': { id: 's=12:d=2026-10-20', client: { id: 900, firstName: 'Ed', lastName: 'Anderson' }, caregiver: { id: 5, firstName: 'Kim', lastName: 'Aide' },
@@ -24,7 +24,7 @@ globalThis.__db = { from: q, rpc: async (fn, a) => { RPCS.push([fn, a])
   auth: { getUser: async (jwt) => jwt === 'kr' ? { data: { user: { id: 'u-kr', email: 'krystal@mo-care.com', app_metadata: {} } }, error: null }
     : jwt === 'cg' ? { data: { user: { id: 'u-cg', email: 'cg@mo-care.com', app_metadata: {} } }, error: null } : { data: { user: null }, error: { message: 'bad' } } } }
 globalThis.fetch = async (url, o = {}) => { url = String(url); const m = o.method || 'GET'
-  if (url.endsWith('/api/visits/modification-reasons')) return new Response(JSON.stringify({ results: { modificationReasons: [{ id: 5, name: 'Staffing Change - Caregiver Change' }, { id: 6, name: 'Staffing Change - Caregiver Call Off' }, { id: 10, name: 'Schedule Change - Client Schedule Change' }, { id: 13, name: 'Administrative Correction - Office Error' }, { id: 99, name: 'Old', disabled: true }] } }), { status: 200 })
+  if (url.endsWith('/api/visits/modification-reasons')) return new Response(JSON.stringify({ results: { modificationReasons: [{ id: 5, name: 'Staffing Change - Caregiver Change' }, { id: 6, name: 'Staffing Change - Caregiver Call Off' }, { id: 10, name: 'Schedule Change - Client Schedule Change' }, { id: 13, name: NAME13 }, { id: 99, name: 'Old', disabled: true }] } }), { status: 200 })
   const id = decodeURIComponent(url.split('/api/visits/')[1] || ''), v = AX[id]
   if (!v) return new Response('{}', { status: 404 })
   if (m === 'PATCH') { const body = JSON.parse(o.body); PATCHES.push({ id, body }); if (AXFAIL) return new Response(JSON.stringify({ errors: ['Unknown modificationReason: 5'] }), { status: 422 })
@@ -91,6 +91,19 @@ try {
   reset(); SHAPE = 'empty'; r = await call({ action: 'change', visit_id: ED, expect: { caregiver_id: null, date: '', start: '', end: '' }, set: { caregiver_id: '7' }, reason_id: 5, change_id: 'chg-empty-0001' })
   ck('change: an unread visit is never changed, even when what the box "saw" was empty too', r.j.outcome === 'refused' && !PATCHES.length, r)
   SHAPE = 'nested'
+  /* 2026-10-24 REASONS BY ID (visit_reasons_live): meanings by id, a new day or time with no reason, undo by meaning */
+  reset(); T.app_data[0].data.visit_reasons_live = true; r = await call({ action: 'reasons' })
+  ck('reasons by id: each reason comes with its meaning (5 swap, 6 call-off, 13 office fix)', r.j.reasons_live === true && r.j.reasons.find((x) => x.id === 5).meaning === 'swap' && r.j.reasons.find((x) => x.id === 6).meaning === 'call_off' && r.j.reasons.find((x) => x.id === 13).meaning === 'office_fix', r.j)
+  reset(); T.app_data[0].data.visit_reasons_live = true; r = await change({ set: { start: '10:00', end: '15:00' }, reason_id: 0 })
+  ck('reasons by id: a new time can go with NO reason (a move is not a cancellation); AxisCare gets no reason', r.j.outcome === 'changed' && PATCHES.length === 1 && !('modificationReason' in PATCHES[0].body) && PATCHES[0].body.startTime === '10:00', [r.j, PATCHES])
+  reset(); T.app_data[0].data.visit_reasons_live = true; r = await change({ reason_id: 0 })
+  ck('reasons by id: taking a caregiver off or changing them still needs a reason', r.j.outcome === 'refused' && !PATCHES.length, r.j)
+  reset(); r = await change({ set: { start: '10:00', end: '15:00' }, reason_id: 0 })
+  ck('switch off: a change with no reason is refused, as before', r.j.outcome === 'refused' && !PATCHES.length, r.j)
+  reset(); T.app_data[0].data.visit_reasons_live = true; NAME13 = 'Office Entry Error'; r = await change()
+  r = await call({ action: 'undo', change_id: 'chg-0001-abcd' })
+  ck('undo after "Office Error" is renamed: still uses id 13 (found by its meaning)', r.j.outcome === 'changed' && PATCHES[1]?.body?.modificationReason === 13, [r.j, PATCHES])
+  NAME13 = 'Administrative Correction - Office Error'
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1)
