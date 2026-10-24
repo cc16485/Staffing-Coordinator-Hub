@@ -205,13 +205,17 @@ export function boardOf(kase: Any, rows: Any[], excluded: { name: string; why: s
       reply: S(a.reply, 500) || null, condition: S(a.condition, 160) || null, answer_kind: a.answer_kind ?? null,
       offer_from: a.offer_from ?? null, offer_to: a.offer_to ?? null, note: S(a.answer_note, 300) || null, prn: a.prn === true,
       read_by: a.read_by ?? null, eligibility, recommended: isPick, why, score: s.score, reasons: s.reasons, concerns: s.concerns,
-      stale, history: (Array.isArray(a.answer_history) ? a.answer_history : []).slice(-20),
+      stale, history: (Array.isArray(a.answer_history) ? a.answer_history : []).slice(-20), wants_regular: a.wants_regular === true && a.state === 'yes',
       can_confirm: column === 'full' && eligibility.ok && !stale })
   }
   const order = ['full', 'partial', 'question', 'no', 'nv', 'waiting']
   people.sort((x, y) => order.indexOf(x.column) - order.indexOf(y.column) || (y.recommended ? 1 : 0) - (x.recommended ? 1 : 0) || y.score - x.score || S(x.replied_at).localeCompare(S(y.replied_at)))
   const counts: Record<string, number> = {}; for (const c of order) counts[c] = people.filter((p) => p.column === c).length
-  return { people, counts, pick: rec.pick, note: rec.note, time_flex: kase?.time_flex === 'flexible_start' ? 'flexible_start' : 'exact', handoff_ok: kase?.handoff_ok === true }
+  /* one time or every week (2026-10-24), the same reading as the shift page */
+  const p = kase?.shift_pattern, wd = S(p?.weekday, 20).replace(/s$/, '')
+  const pattern = p?.v === 2 && p.kind === 'open_ongoing' ? { kind: 'ongoing', label: wd ? `Open every ${wd}: could become someone's regular shift` : 'Open every week: could become someone\'s regular shift' }
+    : p?.v === 2 && (p.kind === 'one_time_cover' || p.kind === 'one_time') ? { kind: 'one_time', label: p.kind === 'one_time_cover' ? 'This week only: the regular caregiver is back after this' : 'One shift only' } : null
+  return { people, counts, pick: rec.pick, note: rec.note, pattern, time_flex: kase?.time_flex === 'flexible_start' ? 'flexible_start' : 'exact', handoff_ok: kase?.handoff_ok === true }
 }
 
 /** INTEREST vs ASSIGNED, one word for the Hub and the texts: */

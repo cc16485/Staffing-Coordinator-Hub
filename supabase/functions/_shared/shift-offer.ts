@@ -58,6 +58,24 @@ export function answerSummary(ask: Any): Any {
   return { kind: k, what, at: ask.answered_at, note: S(ask.answer_note, 300) || null }
 }
 
+/** ONE TIME OR EVERY WEEK (Samantha, 2026-10-24: "make it clear if a shift is we need it covered, but it is also an ongoing
+    open shift if the caregiver wants it as a recurring shift"). From the weekly pattern coverage-watch stamps on the case
+    (shift_pattern v2, which reads AxisCare's schedule): ongoing = nobody is on this day in the coming weeks, so it could
+    become their regular shift; one_time = the regular caregiver is only off this once (or it is a single visit).
+    Unknown or mixed = nothing is said. */
+export function patternOf(k: Any): { kind: 'ongoing' | 'one_time'; weekday: string | null; label: string; sub: string; upcoming: number | null } | null {
+  const p = k?.shift_pattern
+  if (!p || p.v !== 2) return null
+  const wd = S(p.weekday, 20).replace(/s$/, '') || null
+  if (p.kind === 'open_ongoing') {
+    const n = (Array.isArray(p.open_dates) ? p.open_dates.length : Array.isArray(p.future_dates) ? p.future_dates.length : 0) + (Number(p.more_dates) || 0)
+    return { kind: 'ongoing', weekday: wd, label: wd ? `Open every ${wd}` : 'Open every week', sub: 'We need this one covered, and it could become your regular shift if you want it.', upcoming: n || null }
+  }
+  if (p.kind === 'one_time_cover') return { kind: 'one_time', weekday: wd, label: 'This week only', sub: 'The regular caregiver is back after this.', upcoming: null }
+  if (p.kind === 'one_time') return { kind: 'one_time', weekday: wd, label: 'One shift only', sub: 'Just this one visit.', upcoming: null }
+  return null
+}
+
 /** Pick an illustration from what the client enjoys (our own brand scenes; never a photo). */
 export function sceneFor(enjoys: string[]): string {
   const t = (enjoys || []).join(' ').toLowerCase()
@@ -71,7 +89,8 @@ export function detailsView(kase: Any, ask: Any, state: string, info: { about?: 
     help: (info.help || []).slice(0, 10), needs: (info.needs || []).slice(0, 8), home: (info.home || []).slice(0, 5), level: info.level ?? null,
     care_line: S(info.care_line, 160) || null,
     time_flex: kase?.time_flex === 'flexible_start' ? 'flexible_start' : 'exact', flex_minutes: kase?.time_flex === 'flexible_start' ? Number(kase?.flex_minutes) || 60 : null,
-    handoff_ok: kase?.handoff_ok === true, scene: sceneFor(enjoys), shift_from: span(kase)?.from ?? null, shift_to: span(kase)?.to ?? null, shift_key: shiftKey(kase) }
+    handoff_ok: kase?.handoff_ok === true, scene: sceneFor(enjoys), shift_from: span(kase)?.from ?? null, shift_to: span(kase)?.to ?? null, shift_key: shiftKey(kase),
+    pattern: patternOf(kase) }
 }
 
 /** Check an answer from the page. Times are HH:MM, quarter hours. part = inside the shift; diff = any times that day. */
@@ -79,8 +98,11 @@ export function checkAnswer(kase: Any, b: Any): { ok: true; ans: Any } | { ok: f
   const kind = S(b?.kind, 10)
   if (!['full', 'part', 'diff', 'no', 'question'].includes(kind)) return { ok: false, error: 'Please pick an answer.' }
   const note = S(b?.note, 300).replace(/\s+/g, ' ')
+  /* "I'd like this as my regular shift": only on a shift that is open every week, only with a yes (a wish the office
+     follows up; nothing is scheduled from it) */
+  const regular = b?.regular === true && patternOf(kase)?.kind === 'ongoing' && ['full', 'part', 'diff'].includes(kind)
   if (kind === 'question') { const q = S(b?.question, 500).replace(/\s+/g, ' '); if (q.length < 3) return { ok: false, error: 'Please type your question.' }; return { ok: true, ans: { kind, question: q, note } } }
-  if (kind === 'full' || kind === 'no') return { ok: true, ans: { kind, note } }
+  if (kind === 'full' || kind === 'no') return { ok: true, ans: { kind, note, ...(regular ? { regular } : {}) } }
   const from = S(b?.from, 5), to = S(b?.to, 5), f = hm(from), t = hm(to)
   if (f == null || t == null || f % 15 || t % 15) return { ok: false, error: 'Please pick a start and an end time.' }
   if (t <= f) return { ok: false, error: 'The end time needs to be after the start time.' }
@@ -90,9 +112,9 @@ export function checkAnswer(kase: Any, b: Any): { ok: true; ans: Any } | { ok: f
     if (sf != null && st != null && st <= sf) st += 1440
     if (sf == null || st == null) return { ok: false, error: 'This shift has no set times; please choose "different hours".' }
     if (f < sf || t > st) return { ok: false, error: `Part of the shift means times between ${clock12(s!.from)} and ${clock12(s!.to)}.` }
-    if (f === sf && t === st) return { ok: true, ans: { kind: 'full', note } }   // all of it is the whole shift
+    if (f === sf && t === st) return { ok: true, ans: { kind: 'full', note, ...(regular ? { regular } : {}) } }   // all of it is the whole shift
   }
-  return { ok: true, ans: { kind, from, to, note } }
+  return { ok: true, ans: { kind, from, to, note, ...(regular ? { regular } : {}) } }
 }
 
 /** THE ANSWER HISTORY (Samantha, 2026-10-24: "If a caregiver changes their answer, the board shows the current response
@@ -131,11 +153,12 @@ export function visitMatches(k: Any, v: Any): 'same' | 'changed' | 'closed' | 'u
     chose. The last 10 answers are kept, so a changed answer never hides the earlier one. */
 export function applyAnswer(ask: Any, ans: Any, nowIso: string): Any {
   const state = ans.kind === 'no' ? 'no' : ans.kind === 'question' ? 'inquiry' : 'yes'
-  const words = ans.kind === 'full' ? 'Yes, I can work the whole shift' : ans.kind === 'part' ? `Yes, but only part of it: ${clock12(ans.from)} to ${clock12(ans.to)}`
+  const words0 = ans.kind === 'full' ? 'Yes, I can work the whole shift' : ans.kind === 'part' ? `Yes, but only part of it: ${clock12(ans.from)} to ${clock12(ans.to)}`
     : ans.kind === 'diff' ? `I can work different hours that day: ${clock12(ans.from)} to ${clock12(ans.to)}` : ans.kind === 'no' ? "No, I can't work" : `Question: ${ans.question}`
+  const words = words0 + (ans.regular ? '. I\'d like this as my regular weekly shift' : '')
   const out: Any = { ...ask, state, reply: (words + (ans.note ? ` (note: ${ans.note})` : '')).slice(0, 500), replied_at: nowIso, answered_at: nowIso,
     answer_channel: 'page', answer_kind: ans.kind, offer_from: ans.from ?? null, offer_to: ans.to ?? null, answer_note: ans.note || null, answer_history: withHistory(ask), read_by: 'shift page',
-    answered_for: ans.for ?? null }
+    answered_for: ans.for ?? null, wants_regular: ans.regular === true }
   delete out.condition   /* the page says exactly which hours; a text's condition no longer applies */
   return out
 }

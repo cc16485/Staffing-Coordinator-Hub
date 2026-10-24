@@ -45,6 +45,13 @@ ck('visit now: same hours = same; other hours = changed; removed, or someone els
   && SO.visitMatches(KC, { caregiver: { id: 77, firstName: 'New', lastName: 'Person' }, scheduledStartDate: '2026-10-31T08:00:00', scheduledEndDate: '2026-10-31T17:00:00' }) === 'closed'
   && SO.visitMatches({ ...KC, calling_off: 'Kyra Linde' }, { caregiver: { id: 5, firstName: 'Kyra', lastName: 'Linde' }, scheduledStartDate: '2026-10-31T08:00:00', scheduledEndDate: '2026-10-31T17:00:00' }) === 'same'
   && SO.visitMatches(KC, null) === 'unchecked')
+{ const ON = { ...KC, shift_pattern: { v: 2, kind: 'open_ongoing', weekday: 'Saturday', open_dates: ['2026-11-07', '2026-11-14'] } }, ONE = { ...KC, shift_pattern: { v: 2, kind: 'one_time_cover', weekday: 'Saturday', regular_caregiver: 'Emma Daum' } }
+  ck('one time or every week: open every Saturday says it could become theirs; a one-time cover says this week only (no other caregiver named)', SO.patternOf(ON).label === 'Open every Saturday' && /could become your regular shift/.test(SO.patternOf(ON).sub) && SO.patternOf(ON).upcoming === 2
+    && SO.patternOf(ONE).label === 'This week only' && !/Emma/.test(JSON.stringify(SO.patternOf(ONE))) && SO.patternOf(KC) === null && SO.detailsView(ON, AS, 'open', {}).pattern.kind === 'ongoing')
+  const r1 = SO.checkAnswer(ON, { kind: 'full', regular: true }), r2 = SO.checkAnswer(ONE, { kind: 'full', regular: true }), r3 = SO.checkAnswer(ON, { kind: 'no', regular: true })
+  ck('"I\'d like this every week": kept only on an every-week shift and only with a yes', r1.ans.regular === true && !r2.ans.regular && !r3.ans.regular)
+  const ar = SO.applyAnswer(AS, r1.ans, 'x')
+  ck('... saved as a wish (wants_regular) in their words; nothing is scheduled', ar.wants_regular === true && /regular weekly shift/.test(ar.reply) && ar.state === 'yes') }
 ck('a question is an inquiry with their words', SO.applyAnswer(AS, { kind: 'question', question: 'Stairs?' }, 'x').state === 'inquiry')
 { const sec = 'x'.repeat(40), exp = Math.floor(Date.now() / 1000) + 3600
   const L = await SL.makeShiftLink(sec, 'cv1', 'ask_1', exp), q = Object.fromEntries(new URL(L).searchParams)
@@ -101,7 +108,7 @@ try { await import(tmp + '?' + Math.random()) } finally { fs.unlinkSync(tmp) }
 const post = async (body, auth) => { const r = await handler(new Request('https://x/functions/v1/shift-offer', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(auth ? { Authorization: auth } : {}) }, body: JSON.stringify(body) })); return [r.status, await r.json()] }
 const linkFor = async (ask) => { const L = await SL.makeShiftLink(SECRET, 'cv1', ask, SL.shiftDayEnd(future)); return Object.fromEntries(new URL(L).searchParams) }
 const KEY = () => future + '|08:00-17:00'
-const APPROVED = ['ok', 'checked', 'state', 'caregiver_first', 'prn', 'day', 'time', 'hours', 'town', 'answered', 'client_first', 'about', 'enjoys', 'help', 'needs', 'home', 'level', 'care_line', 'time_flex', 'flex_minutes', 'handoff_ok', 'scene', 'shift_from', 'shift_to', 'shift_key']
+const APPROVED = ['ok', 'checked', 'state', 'caregiver_first', 'prn', 'day', 'time', 'hours', 'town', 'answered', 'client_first', 'about', 'enjoys', 'help', 'needs', 'home', 'level', 'care_line', 'time_flex', 'flex_minutes', 'handoff_ok', 'scene', 'shift_from', 'shift_to', 'shift_key', 'pattern']
 
 /* switch off */
 reset({}); let L1 = await linkFor('ask_1'), s, j

@@ -70,7 +70,7 @@ if NODE:
         if c0 != 0: stop(f"couldn't read the Hub's {rf} from GitHub's main (needed by the tests)")
         open(os.path.join(hubdir, rf), "w").write(mr)
     env = dict(os.environ, HUB=hubdir, HUB_ROOT=hubdir)
-    for t, must in (("cara_p1_test.mjs", "87/87"), ("shift_page_test.mjs", "49/49"), ("coverage_reply_open_hours_test.mjs", "12/12"), ("prn3_coverage_test.mjs", "27/27"), ("driver_coverage_test.mjs", "26/26"),
+    for t, must in (("cara_p1_test.mjs", "89/89"), ("shift_page_test.mjs", "52/52"), ("coverage_reply_open_hours_test.mjs", "12/12"), ("prn3_coverage_test.mjs", "27/27"), ("driver_coverage_test.mjs", "26/26"),
                     ("ci1_test.mjs", "25/25"), ("callin_test.mjs", "31/31"), ("family_app_1a_test.mjs", "125/125"), ("match_dark_test.mjs", "30/30")):
         c, o = run([NODE, t], cwd=ROOT, env=env)
         if c != 0 or (must and must not in o) or "\nFAIL" in o: stop(f"the tests failed ({t}): " + " ".join(l.strip() for l in o.splitlines() if "FAIL" in l)[:240])
