@@ -40,6 +40,33 @@ import '../_shared/lead-rules.js'
 // deno-lint-ignore no-explicit-any
 const LR: any = (globalThis as any).LeadRules
 import { leadHits, returningCheck, returningItem } from '../_shared/returning.ts'
+/* CARA PHASE 1 (2026-10-23): a flagged call-off gets the caller's real AxisCare visit (ops_settings.cara_visit_match_live) */
+import { matchCallerVisit, attachFields, caseForVisit } from '../_shared/cara-visit-match.ts'
+
+/* The caller's visit for a flagged call-off. Live: the case gets the visit, client, date and time (one match) or the short
+   list (several). Off: the same answer is kept as visit_match_practice and nothing else changes. A flag for a visit that
+   already has a case is not made again: the message is added to that case instead (one shift, one case). */
+// deno-lint-ignore no-explicit-any
+async function caraVisit(db: any, srcRows: any[] | null, clientHint: string | null, live: boolean): Promise<{ fields: Record<string, unknown>; existing: any | null }> {
+  const cg = (srcRows || []).find((r: { entity_type?: string; source_id?: string }) => r.entity_type === 'caregiver' && r.source_id)
+  if (!cg) return { fields: {}, existing: null }
+  let token = ''; for (const n of ['AXISCARE_VISITS_TOKEN', 'AXISCARE_API_KEY', 'AXISCARE_TOKEN']) { const v = Deno.env.get(n); if (v) { token = v; break } }
+  const site = Deno.env.get('AXISCARE_SITE') || Deno.env.get('AXISCARE_SITE_NUMBER') || ''
+  const m = await matchCallerVisit(fetch, { site: /^\d+$/.test(site) ? site : '', token, version: Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01', cgAxId: String(cg.source_id), clientHint })
+  if (!live) return { fields: { visit_match_practice: m }, existing: null }
+  let existing = null
+  if (m.state === 'one' && m.chosen) {
+    const { data } = await db.from('app_data').select('data').eq('key', 'coverage_cases').maybeSingle()
+    existing = caseForVisit(Array.isArray(data?.data) ? data!.data : [], m.chosen.visit_id)
+  }
+  return { fields: { ...attachFields(m), calling_off_axiscare_id: String(cg.source_id) }, existing }
+}
+// deno-lint-ignore no-explicit-any
+async function addToExisting(db: any, kase: any, what: { text: string; source: string; evidence: string }) {
+  const said = Array.isArray(kase.caregiver_messages) ? kase.caregiver_messages : []
+  const item = { ...kase, caregiver_messages: [...said, { at: new Date().toISOString(), source: what.source, text: what.text.slice(0, 1000), evidence: what.evidence.slice(0, 300) }].slice(-10) }
+  await db.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item })
+}
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -136,7 +163,7 @@ Deno.serve(async (req) => {
         const personIds = [...new Set((phoneRows || []).map((r: any) => String(r.person_id)))]
         if (personIds.length === 1) {
           const { data: srcRows } = await supabaseS.from('person_source_id')
-            .select('entity_type').eq('person_id', personIds[0]).eq('system', 'axiscare')
+            .select('entity_type, source_id').eq('person_id', personIds[0]).eq('system', 'axiscare')
             .eq('confidence', 'confirmed').eq('needs_review', false)
           if ((srcRows || []).some((l) => l.entity_type === 'caregiver')) {
             const { data: pi } = await supabaseS.from('person_identity')
@@ -167,6 +194,11 @@ Deno.serve(async (req) => {
               out.heard = true; out.caller = cgName; out.verdict = verdict
               if (verdict.call_off === true && verdict.confidence !== 'low') {
                 if (flagLive) {
+                  const vm = await caraVisit(supabaseS, srcRows, verdict.client_name ? String(verdict.client_name) : null, setS?.data?.cara_visit_match_live === true)
+                  if (vm.existing) {
+                    await addToExisting(supabaseS, vm.existing, { text: smsText, source: 'text message', evidence: String(verdict.evidence || '') })
+                    out.added_to = vm.existing.id
+                  } else {
                   await supabaseS.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: {
                     id: flagId, status: 'flagged', kind: 'calloff',
                     client: String(verdict.client_name || '') || '(from text, confirm the client)',
@@ -176,8 +208,10 @@ Deno.serve(async (req) => {
                     flag_evidence: String(verdict.evidence || ''), flag_confidence: String(verdict.confidence || ''),
                     flag_source: 'text message', note: smsText.slice(0, 1000),
                     opened_at: new Date().toISOString(), opened_by: 'cara-flag-sms',
+                    ...vm.fields,
                   } })
                   out.flagged = flagId
+                  }
                 } else out.would_flag = flagId
               }
             } else out.skipped = 'a case for this caller already exists today'
@@ -400,7 +434,7 @@ Deno.serve(async (req) => {
         const personIds = [...new Set((phoneRows || []).map((r: any) => String(r.person_id)))]
         if (personIds.length === 1) {
           const { data: srcRows } = await supabase.from('person_source_id')
-            .select('entity_type').eq('person_id', personIds[0]).eq('system', 'axiscare')
+            .select('entity_type, source_id').eq('person_id', personIds[0]).eq('system', 'axiscare')
             .eq('confidence', 'confirmed').eq('needs_review', false)
           const isCaregiver = (srcRows || []).some((l) => l.entity_type === 'caregiver')
           if (isCaregiver) {
@@ -429,7 +463,11 @@ Deno.serve(async (req) => {
               try { verdict = JSON.parse(String(aj?.content?.[0]?.text || '{}').replace(/^```(json)?|```$/g, '').trim()) } catch { verdict = {} }
               flagged = { checked: true, caller: cgName, verdict }
               if (verdict.call_off === true && verdict.confidence !== 'low') {
-                if (flagLive) {
+                const vm = flagLive ? await caraVisit(supabase, srcRows, verdict.client_name ? String(verdict.client_name) : null, setD?.data?.cara_visit_match_live === true) : { fields: {}, existing: null }
+                if (flagLive && vm.existing) {
+                  await addToExisting(supabase, vm.existing, { text: summary, source: 'call summary', evidence: String(verdict.evidence || '') })
+                  flagged.added_to = vm.existing.id
+                } else if (flagLive) {
                   await put('coverage_cases', {
                     id: flagId, status: 'flagged', kind: 'calloff',
                     client: String(verdict.client_name || '') || '(from call, confirm the client)',
@@ -439,6 +477,7 @@ Deno.serve(async (req) => {
                     flag_evidence: String(verdict.evidence || ''), flag_confidence: String(verdict.confidence || ''),
                     flag_source: 'call summary', note: summary,
                     opened_at: new Date().toISOString(), opened_by: 'cara-flag',
+                    ...vm.fields,
                   })
                   flagged.created = flagId
                 } else flagged.would_create = flagId

@@ -39,6 +39,7 @@ import { attendanceCard, caseEnded, caseWhen, shiftAhead, chiNowNaive, evvDaySta
 import { loadQuiet, isQuiet, isNotClient } from '../_shared/client-quiet.ts'
 import { confirmTimesItem, hasCard, outAfterMin } from '../_shared/confirm-times.ts'
 import { fallbackList } from '../_shared/notice-to.ts'
+import { mergeFlagIntoWatch } from '../_shared/cara-visit-match.ts'   // CARA PHASE 1: one shift, one case
 import { quietOn, mondayOf, weekCard, weekCardId, suggestedBefore, recheckCases } from '../_shared/quiet-cards.ts'
 import { openShiftSkip, openShiftItem, openShiftCloseWhy, openShiftId, scheduleOf, OPEN_SHIFT_KIND, OPEN_SHIFT_PER_RUN, type OpenVisit } from '../_shared/open-shift.ts'
 
@@ -322,8 +323,13 @@ Deno.serve(async (req) => {
     wouldOpen.push(entry)
 
     if (live) {
+      const cwId = 'cw_' + visitId.replace(/[^A-Za-z0-9]/g, '_') + '_g' + ((genByVisit.get(visitId) ?? 0) + 1)
+      /* CARA PHASE 1 (cara_visit_match_live): the caregiver told us first by text or call, and Cara attached this visit to
+         that flag. The watch case carries what they said and the flag closes as merged into it. */
+      const flag = settings.cara_visit_match_live === true ? cases.find((k) => k?.status === 'flagged' && String(k?.axiscare_visit_id ?? '') === visitId) : null
+      const mg = flag ? mergeFlagIntoWatch(flag, cwId, nowIso) : null
       const c = {
-        id: 'cw_' + visitId.replace(/[^A-Za-z0-9]/g, '_') + '_g' + ((genByVisit.get(visitId) ?? 0) + 1),
+        id: cwId,
         ...entry,
         reason: 'call_off',
         note: reopenNote || `Opened automatically: shift unassigned in AxisCare with reason "${reason}".`,
@@ -332,8 +338,10 @@ Deno.serve(async (req) => {
         opened_at: nowIso, opened_by: 'axiscare-watch', seen_unassigned_at: nowIso,
         caller_phone: '', caller_contact_id: '',
         resolved_at: null, resolved_how: null, covered_by: null,
+        ...(mg ? mg.watchExtra : {}),
       }
       const { error } = await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
+      if (!error && mg) await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: mg.flagClosed })
       if (!error) {
         created++; openByVisit.add(visitId)
         await opEvent(sb, { job: 'coverage-watch', verb: 'coverage_opened', item_id: c.id, area: 'coverage',
