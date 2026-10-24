@@ -106,12 +106,16 @@ export async function factsFor(db: any, clientAxId: string): Promise<any[] | nul
     part is simply left out (the page still shows the shift). */
 export async function clientInfoFor(db: any, clientAxId: string | null, axClient: any | null): Promise<{ about: string | null; enjoys: string[]; help: string[]; needs: string[]; home: string[]; level: number | null }> {
   const out = { about: null as string | null, enjoys: [] as string[], help: [] as string[], needs: [] as string[], home: [] as string[], level: axClient ? careLevelOf(axClient.classes).level : null }
-  if (!clientAxId) return out
+  if (!clientAxId) { out.level = null; return out }
   try {
-    const { data: circ } = await db.from('care_circles').select('caregiver_about, caregiver_enjoys').eq('axiscare_client_id', clientAxId).eq('active', true).limit(1).maybeSingle()
+    const { data: circ } = await db.from('care_circles').select('caregiver_about, caregiver_enjoys, caregiver_share_care').eq('axiscare_client_id', clientAxId).eq('active', true).limit(1).maybeSingle()
     out.about = String(circ?.caregiver_about ?? '').trim() || null
     out.enjoys = (Array.isArray(circ?.caregiver_enjoys) ? circ.caregiver_enjoys : []).map((x: unknown) => String(x ?? '').trim()).filter(Boolean).slice(0, 6)
-  } catch { /* no About: the page shows the shift only */ }
+    /* ONLY WHAT THE OFFICE APPROVED (2026-10-24: "Client-facing information is restricted to explicitly approved
+       caregiver-sharing fields"): the care-plan parts (what they'd help with, level, skills, pets and smoking) show only
+       when the office ticked "Share the care needs on shift pages" for this client. */
+    if (circ?.caregiver_share_care !== true) { out.level = null; return out }
+  } catch { out.level = null; return out }
   try {
     const a = await approvedRules(db, 'match-rules.js'); if (!a.ok) return out
     ;(0, eval)(a.src); const M = (globalThis as any).CCMatch; if (!M) return out

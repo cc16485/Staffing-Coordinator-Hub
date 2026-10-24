@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-# 1096 · CARA'S RESPONSE BOARD AND SHIFT PAGE, SERVER HALF (2026-10-24, Samantha: "Start with the response board using
-# existing replies. Then build the single-shift opportunity page behind a separate switch, in practice mode. Do not send
-# new links to caregivers until I've reviewed and approved the finished experience.")
+# 1097 · CARA'S RESPONSE BOARD AND SHIFT PAGE, SERVER HALF, with her three checks (2026-10-24). Replaces 1096 (never run):
+# no code step on the shift page (her call: "no need for a code on the open shift"), so no code table.
 #  1. Checks first (nothing changes): the reviewed build is GitHub's main; the tests pass (fake data only); every Cara
-#     switch is off, including the two new ones (cara_board_live, shift_page_live).
-#  2. Database: shift_offer_codes (only hashes of the one-time code and the session, tries, a lock; server only) and
-#     care_circles.caregiver_enjoys (the office's What they enjoy). Nothing else.
-#  3. Deploys coverage-run (the board), coverage-assign and callin-alert (Needs Verification is never confirmed, once the
-#     better list is on), family-app-office (What they enjoy), and the NEW shift-offer (gateway sign-in check off:
-#     caregivers have no Hub login; it checks its own links, codes and sessions). No switch is touched: caregiver links
-#     answer "not open yet" and only the office preview works.
-#  4. Proves it: a made-up link is refused, the preview needs a Hub sign-in, the table is locked to the server, every
-#     switch is still off.
+#     switch is off, including cara_board_live and shift_page_live.
+#  2. Database: two optional fields on care_circles: What they enjoy, and "Share the care needs on shift pages" (off by
+#     default). Nothing else.
+#  3. Deploys coverage-run (the board, the hours each ask was for), coverage-reply (answer history), coverage-assign and
+#     callin-alert (Needs Verification is never confirmed, once the better list is on), family-app-office (What they enjoy,
+#     Share the care needs), and the NEW shift-offer (gateway sign-in check off: caregivers have no Hub login; it checks its
+#     own links, the shift in AxisCare now, and taken-back links). No switch is touched: caregiver links answer "not open
+#     yet" and only the office preview works.
+#  4. Proves it: a made-up link is refused, the preview needs a Hub sign-in, every switch is still off.
 # Sends nothing to anyone. Safe to run again.
 import json, os, subprocess, shutil, tempfile, time
 import cc_step_lib as L
@@ -23,7 +22,7 @@ SHAS = json.loads(os.environ.get("SB_SHAS", "{}"))
 NODE = os.environ.get("SB_NODE", "") or shutil.which("node") or ""
 if NODE == "none": NODE = ""   # the rehearsal's way to skip the tests
 FNB = os.environ.get("SB_FN_BASE", f"https://{HUB}.supabase.co")
-FNS = ["coverage-run", "coverage-assign", "callin-alert", "family-app-office"]
+FNS = ["coverage-run", "coverage-reply", "coverage-assign", "callin-alert", "family-app-office"]
 NEW = {"shift-offer": False}   # new function: gateway sign-in check off (it checks its own links)
 SWITCHES = ["cara_list_live", "cara_visit_match_live", "cara_urgency_live", "cara_reply_ai_practice", "cara_reply_ai_live", "cara_today_live", "cara_board_live", "shift_page_live"]
 HUB_REPO = os.environ.get("SB_HUB_REPO", "/Users/samantha/Claude/Projects/cc-hub-live")
@@ -51,7 +50,7 @@ def switches():
         except Exception: d = {}
     return {k: d.get(k) for k in SWITCHES}
 
-start("CARA: response board and shift page (server half)")
+start("CARA: response board and shift page, with the three checks (server half)")
 say("PART 1 · READ ONLY (nothing changes)")
 check_build(FNROOT, SHAS)
 MAIN = os.environ.get("SB_MAIN_REF", "origin/main")
@@ -64,14 +63,14 @@ for fn in FNS + list(NEW):
 if drift: stop("this isn't the same as GitHub's main yet (merge the pull request first, or newer work landed since: " + ", ".join(sorted(set(drift)))[:240] + ")")
 ok("the reviewed build is what is on GitHub's main")
 if NODE:
-    hubdir = tempfile.mkdtemp(prefix="cc1096hub-")
+    hubdir = tempfile.mkdtemp(prefix="cc1097hub-")
     run(["git", "-C", HUB_REPO, "fetch", "-q", "origin", "main"])
     for rf in ("match-rules.js", "eligibility-rules.js"):
         c0, mr = run(["git", "-C", HUB_REPO, "show", f"origin/main:{rf}"])
         if c0 != 0: stop(f"couldn't read the Hub's {rf} from GitHub's main (needed by the tests)")
         open(os.path.join(hubdir, rf), "w").write(mr)
     env = dict(os.environ, HUB=hubdir, HUB_ROOT=hubdir)
-    for t, must in (("cara_p1_test.mjs", "82/82"), ("shift_page_test.mjs", "43/43"), ("prn3_coverage_test.mjs", "27/27"), ("driver_coverage_test.mjs", "26/26"),
+    for t, must in (("cara_p1_test.mjs", "87/87"), ("shift_page_test.mjs", "49/49"), ("coverage_reply_open_hours_test.mjs", "12/12"), ("prn3_coverage_test.mjs", "27/27"), ("driver_coverage_test.mjs", "26/26"),
                     ("ci1_test.mjs", "25/25"), ("callin_test.mjs", "31/31"), ("family_app_1a_test.mjs", "125/125"), ("match_dark_test.mjs", "30/30")):
         c, o = run([NODE, t], cwd=ROOT, env=env)
         if c != 0 or (must and must not in o) or "\nFAIL" in o: stop(f"the tests failed ({t}): " + " ".join(l.strip() for l in o.splitlines() if "FAIL" in l)[:240])
@@ -88,12 +87,12 @@ for fn in FNS:
     if s_ != 200 or not m or "verify_jwt" not in m: stop(f"couldn't read how {fn} is set up live ({s_})", 3)
     gates[fn] = bool(m["verify_jwt"]); say(f"  · {fn} is live as version {m.get('version', '?')}, gateway sign-in check {'on' if gates[fn] else 'off'} (kept)")
 say(); say("PART 2 · CHANGE")
-okd, out = sql(HUB, open(os.path.join(ROOT, "shift_page_1096.sql")).read())
+okd, out = sql(HUB, open(os.path.join(ROOT, "cara_safety_1097.sql")).read())
 if not okd: stop("the database step failed (nothing else was changed): " + str(out)[:200], 4)
-okv, chk2 = sql(HUB, "select (select relrowsecurity from pg_class where oid = to_regclass('public.shift_offer_codes')) as rls, (select count(*) from information_schema.columns where table_name = 'care_circles' and column_name = 'caregiver_enjoys') as enjoys, (select has_table_privilege('anon', 'public.shift_offer_codes', 'select')) as anon_read, (select has_table_privilege('authenticated', 'public.shift_offer_codes', 'select')) as auth_read")
+okv, chk2 = sql(HUB, "select (select count(*) from information_schema.columns where table_name = 'care_circles' and column_name in ('caregiver_enjoys', 'caregiver_share_care')) as cols, (select count(*) from care_circles where caregiver_share_care) as sharing")
 r0 = (chk2 or [{}])[0] if okv else {}
-chk(okv and r0.get("rls") is True and int(r0.get("enjoys") or 0) == 1 and r0.get("anon_read") is False and r0.get("auth_read") is False,
-    "database: shift_offer_codes is there, server only (no anonymous or signed-in reading); What they enjoy column added",
+chk(okv and int(r0.get("cols") or 0) == 2 and int(r0.get("sharing") or 0) == 0,
+    "database: What they enjoy and Share the care needs added (no client is sharing care needs yet)",
     "database check failed: " + json.dumps(r0)[:200])
 for fn in FNS:
     if not deploy(HUB, FNROOT, fn, gates[fn]): say(f"  STOP at {fn}. Tell Claude. (The functions before it are deployed.)"); done(5)
@@ -114,5 +113,5 @@ chk(s_ == 401, f"shift-offer: the office preview needs a Hub sign-in ({s_})", f"
 sw2 = switches()
 chk(sw2 is not None and not [k for k, v in sw2.items() if v not in (None, False, "false")], "every Cara switch is still off (caregiver links don't open; the office preview works)", "a Cara switch is on after the step: tell Claude")
 say()
-say("  1096: " + ("DONE. The response board and the shift page are installed with every switch off. Next: merge the Hub and Owners Hub pull requests, then the preview." if not L.fails else "NOT COMPLETE. See the ✗ lines above."))
+say("  1097: " + ("DONE. The response board and the shift page (no code) are installed with every switch off. Next: merge the Hub and Owners Hub pull requests, then your preview." if not L.fails else "NOT COMPLETE. See the ✗ lines above."))
 done(0 if not L.fails else 1)

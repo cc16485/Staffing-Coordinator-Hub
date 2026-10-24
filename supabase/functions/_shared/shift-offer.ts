@@ -1,12 +1,13 @@
 // =============================================================================
 // shift-offer.ts · THE SHIFT OPPORTUNITY PAGE, pure rules (Samantha, 2026-10-24: "I want this to feel warm, polished, and
-// very easy for caregivers to use on their phones"; "I would prefer a secure one-time verification code"; "Keep client
+// very easy for caregivers to use on their phones"; later "no need for a code on the open shift"; "Keep client
 // information minimal, and don't show the street name or address before assignment"; "never promise or change client hours
 // without office approval"). The page is one caregiver's view of one ask on one Cara case.
-//   before the code: their first name, the day, the time, the hours and the town. Nothing about the client.
-//   after the code:  the client's first name, the office's approved About and What they enjoy, what they'd help with,
-//                    the care level and required skills, Good to know (pets, smoking), Exact time / Flexible start and
-//                    whether a hand-off is allowed. Never: an address or street, a last name, medical details, photos, pay.
+//   no code (her call, 2026-10-24: "no need for a code on the open shift"): the link opens the page, like the family
+//                    app's offer link. Shown: the day, time, hours, town; the client's first name, the office's approved
+//                    About and What they enjoy; and, only when the office ticked "share the care needs" for that client,
+//                    what they'd help with, level, skills and Good to know (pets, smoking); Exact time / Flexible start and
+//                    whether a hand-off is allowed. Never: an address or street, a last name, medical notes, photos, pay.
 //   answers:         full shift · part of it (times inside the shift) · different hours that day · no · a question,
 //                    each with an optional note. Saved onto the caregiver's own ask, exactly where a text reply goes, so
 //                    the response board, Cara recommends and Confirm all see it. A yes is interest only.
@@ -29,7 +30,8 @@ export function hoursOf(kase: Any): number | null {
 const dayWords = (ymd: string) => { if (!/^\d{4}-\d\d-\d\d$/.test(ymd)) return ymd; return new Date(ymd + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', timeZone: 'UTC' }) }
 
 /** Where the page stands. closed = filled, cancelled or closed by the office; ended = the shift has started; gone = the ask
-    isn't on the case any more (the office took it back). Only 'open' takes answers. */
+    isn't on the case any more, or the office took the link back. Only 'open' takes answers. (shift-offer adds 'changed'
+    and 'closed' from AxisCare's visit as it is now: visitMatches.) */
 export function pageState(kase: Any, ask: Any, chiNowNaive: string): 'open' | 'closed' | 'ended' | 'gone' {
   if (!kase) return 'gone'
   if (!ask || ask.link_revoked) return 'gone'
@@ -69,7 +71,7 @@ export function detailsView(kase: Any, ask: Any, state: string, info: { about?: 
     help: (info.help || []).slice(0, 10), needs: (info.needs || []).slice(0, 8), home: (info.home || []).slice(0, 5), level: info.level ?? null,
     care_line: S(info.care_line, 160) || null,
     time_flex: kase?.time_flex === 'flexible_start' ? 'flexible_start' : 'exact', flex_minutes: kase?.time_flex === 'flexible_start' ? Number(kase?.flex_minutes) || 60 : null,
-    handoff_ok: kase?.handoff_ok === true, scene: sceneFor(enjoys), shift_from: span(kase)?.from ?? null, shift_to: span(kase)?.to ?? null }
+    handoff_ok: kase?.handoff_ok === true, scene: sceneFor(enjoys), shift_from: span(kase)?.from ?? null, shift_to: span(kase)?.to ?? null, shift_key: shiftKey(kase) }
 }
 
 /** Check an answer from the page. Times are HH:MM, quarter hours. part = inside the shift; diff = any times that day. */
@@ -93,15 +95,47 @@ export function checkAnswer(kase: Any, b: Any): { ok: true; ans: Any } | { ok: f
   return { ok: true, ans: { kind, from, to, note } }
 }
 
+/** THE ANSWER HISTORY (Samantha, 2026-10-24: "If a caregiver changes their answer, the board shows the current response
+    while keeping the complete response history"). The answer standing on an ask now, as one history line, or null when
+    they haven't answered. Text and page answers alike; the last 20 are kept. */
+export function historyEntry(ask: Any): Any | null {
+  if (!ask || !ask.replied_at || !['yes', 'no', 'inquiry'].includes(ask.state)) return null
+  return { state: ask.state, kind: ask.answer_kind ?? null, from: ask.offer_from ?? null, to: ask.offer_to ?? null, reply: S(ask.reply, 500) || null,
+    note: ask.answer_note ?? null, condition: ask.condition ?? null, channel: ask.answer_channel === 'page' ? 'page' : 'text', at: ask.replied_at,
+    for: ask.answered_for ?? ask.offered_for ?? null }
+}
+export function withHistory(ask: Any): Any[] { const h = historyEntry(ask); return [...(Array.isArray(ask?.answer_history) ? ask.answer_history : []), ...(h ? [h] : [])].slice(-20) }
+/** The shift's day and hours as one key: an answer counts only for the hours it was given for (2026-10-24). */
+export const shiftKey = (k: Any) => `${S(k?.shift_date, 10)}|${S(k?.shift_time, 20)}`
+
+/** The case against the AxisCare visit as it is now: 'closed' when it was removed or someone other than the person who
+    came off is on it; 'changed' when its day or hours differ from the case; otherwise 'same'. */
+export function visitMatches(k: Any, v: Any): 'same' | 'changed' | 'closed' | 'unchecked' {
+  if (!v || typeof v !== 'object') return 'unchecked'
+  if (v.removed) return 'closed'
+  const cg = v.caregiver
+  if (cg && cg.id != null) {
+    const nk = (n: unknown) => S(n, 80).toLowerCase().replace(/[^a-z ]/g, '').replace(/\s+/g, ' ').trim()
+    const offId = S(k?.calling_off_axiscare_id || k?.calling_off_id, 20)
+    const offName = nk(k?.calling_off_said || k?.calling_off)
+    const isOff = (offId && S(cg.id) === offId) || (!!offName && nk(`${S(cg.firstName, 40)} ${S(cg.lastName, 40)}`) === offName)
+    if (!isOff) return 'closed'
+  }
+  const s0 = S(v.scheduledStartDate ?? v.startDate, 30), e0 = S(v.scheduledEndDate ?? v.endDate, 30)
+  if (!s0) return 'unchecked'
+  const now = `${s0.slice(0, 10)}|${s0.slice(11, 16)}-${e0.slice(11, 16)}`
+  return now === shiftKey(k) ? 'same' : 'changed'
+}
+
 /** The ask after an answer from the page: the same fields a text reply sets (state, reply, replied_at), plus what they
     chose. The last 10 answers are kept, so a changed answer never hides the earlier one. */
 export function applyAnswer(ask: Any, ans: Any, nowIso: string): Any {
   const state = ans.kind === 'no' ? 'no' : ans.kind === 'question' ? 'inquiry' : 'yes'
   const words = ans.kind === 'full' ? 'Yes, I can work the whole shift' : ans.kind === 'part' ? `Yes, but only part of it: ${clock12(ans.from)} to ${clock12(ans.to)}`
     : ans.kind === 'diff' ? `I can work different hours that day: ${clock12(ans.from)} to ${clock12(ans.to)}` : ans.kind === 'no' ? "No, I can't work" : `Question: ${ans.question}`
-  const hist = [...(Array.isArray(ask.answer_history) ? ask.answer_history : []), ...(ask.answer_channel === 'page' && ask.answered_at ? [{ kind: ask.answer_kind, from: ask.offer_from ?? null, to: ask.offer_to ?? null, note: ask.answer_note ?? null, at: ask.answered_at }] : [])].slice(-10)
   const out: Any = { ...ask, state, reply: (words + (ans.note ? ` (note: ${ans.note})` : '')).slice(0, 500), replied_at: nowIso, answered_at: nowIso,
-    answer_channel: 'page', answer_kind: ans.kind, offer_from: ans.from ?? null, offer_to: ans.to ?? null, answer_note: ans.note || null, answer_history: hist, read_by: 'shift page' }
+    answer_channel: 'page', answer_kind: ans.kind, offer_from: ans.from ?? null, offer_to: ans.to ?? null, answer_note: ans.note || null, answer_history: withHistory(ask), read_by: 'shift page',
+    answered_for: ans.for ?? null }
   delete out.condition   /* the page says exactly which hours; a text's condition no longer applies */
   return out
 }

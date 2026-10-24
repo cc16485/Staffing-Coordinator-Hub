@@ -181,6 +181,20 @@ ck('board: Needs Verification can never be confirmed, with the reason; only an e
 ck('board: the skills rules\' reason shows on someone they rule out', P('Eve Skills').eligibility.ok === false && /Skills rules: Dementia training/.test(P('Eve Skills').eligibility.why), P('Eve Skills'))
 ck('board: read only (AxisCare only read, nothing texted, the case unchanged)', AXCALLS.every((c) => c.method === 'GET') && !SENT.length && APP.coverage_cases[0].status === 'open' && !APP.coverage_cases[0].covered_by)
 ck('board: says the shift\'s time setting (Exact time by default, hand-off not allowed by default)', j.time_flex === 'exact' && j.handoff_ok === false)
+/* CHANGED ANSWERS AND CHANGED SHIFTS (2026-10-24) */
+{ const key = K().shift_date + '|' + K().shift_time
+  reset(K({ asked: [yes('Amy Fit', '9001', '2026-10-01T10:05:00Z', { offered_for: key, answer_history: [{ state: 'no', reply: 'no sorry', channel: 'text', at: '2026-10-01T09:00:00Z' }] }),
+                    yes('Dee Hours', '9004', '2026-10-01T09:00:00Z', { offered_for: K().shift_date + '|06:00-10:00' })] }))
+  j = await act({ action: 'board', case_id: 'cv1' })
+  const P2 = (n) => (j.people || []).find((p) => p.name === n)
+  ck('board: the current answer shows, with every earlier answer kept for the drawer', P2('Amy Fit').column === 'full' && P2('Amy Fit').history.length === 1 && P2('Amy Fit').history[0].reply === 'no sorry', P2('Amy Fit'))
+  ck('board: a yes given for earlier hours is marked, can\'t be confirmed, and is never Cara\'s pick', P2('Dee Hours').stale === true && P2('Dee Hours').can_confirm === false && !P2('Dee Hours').recommended
+    && /Answered for .* 06:00-10:00; the shift is now .*07:00-11:00/.test(P2('Dee Hours').concerns[0]) && P2('Amy Fit').recommended, P2('Dee Hours'))
+  j = await act({ action: 'recommend', case_id: 'cv1' })
+  ck('recommend: never picks a yes given for other hours; says why', j.pick?.name === 'Amy Fit' && j.not_eligible.some((x) => x.name === 'Dee Hours' && /earlier hours/.test(x.why)), j) }
+{ const cr = fs.readFileSync(path.join(FN, 'coverage-reply/index.ts'), 'utf8'), crun = fs.readFileSync(path.join(FN, 'coverage-run/index.ts'), 'utf8')
+  ck('a texted reply keeps the earlier answer in the history before it replaces it, and records the hours it was for', /a\.answer_history = withHistory\(a\)\n[\s\S]{0,200}a\.answered_for = shiftKey\(c\)\n  a\.replied_at = stamp/.test(cr))
+  ck('every ask sent records the hours it was sent for', /offered_for: `\$\{String\(kase\.shift_date \|\| ''\)\}\|\$\{String\(kase\.shift_time \|\| ''\)\}`/.test(crun)) }
 
 
 /* TIME RULES (2026-10-24): separate settings, Exact time by default */

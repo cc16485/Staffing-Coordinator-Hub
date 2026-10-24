@@ -428,6 +428,18 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     return say(200, { ok: true, items })
   }
 
+  // 2026-10-24: "Share the care needs on shift pages" (what they'd help with, level, skills, pets and smoking from the care
+  // plan). Off = a shift page shows only the shift, the About and What they enjoy. Recorded with who and when.
+  if (action === 'share_care') {
+    const k = await d.circle(String(body?.circle_id ?? ''))
+    if (!k) return say(404, { error: 'Family Circle not found.' })
+    if (!d.setAbout) return say(503, { error: 'Not available yet.' })
+    const on = body?.on === true
+    if (!(await d.setAbout(String(k.id), { caregiver_share_care: on, caregiver_share_care_by: staff.email, caregiver_share_care_at: d.now().toISOString() }))) return say(500, { error: 'Not saved. Please try again.' })
+    await ev('family_app_share_care', `${staff.name} ${on ? 'turned on' : 'turned off'} sharing the care needs on shift pages for ${k.client_name ?? 'a client'}`, { circle_id: k.id, on })
+    return say(200, { ok: true, on })
+  }
+
   if (action === 'app_plan') {
     const k = await d.circle(String(body?.circle_id ?? ''))
     if (!k) return say(404, { error: 'Family Circle not found.' })
