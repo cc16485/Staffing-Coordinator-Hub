@@ -12,6 +12,7 @@
 // family's caregiver-changed text) stays exactly where it is: coverage-run's next tick, unchanged.
 // =============================================================================
 
+import { clearedFor } from './cara-skills.ts'   // Needs Verification at confirm (2026-10-24)
 const AC_VERSION = Deno.env.get('AXISCARE_API_VERSION') || '2023-10-01'
 function axisCreds() {
   let token = ''
@@ -124,6 +125,7 @@ export type FillOut =
   | { outcome: 'filled'; covered_by: string; axiscare: AxisResult }
   | { outcome: 'already'; status: string; covered_by: string | null; confirmed_by: string | null; resolved_how: string | null; at: string | null }
   | { outcome: 'not_found' | 'error' | 'bad_request'; detail?: string }
+  | { outcome: 'not_eligible'; detail: string }
 
 /** One confirm wins. `notChosen`: what the OTHER yeses hear (her rule): {silent:true}, or {msg}, or undefined (default). */
 export async function confirmFill(
@@ -131,6 +133,27 @@ export async function confirmFill(
   db: any, p: { caseId: string; coveredBy: string; byName: string; notChosen?: { silent?: boolean; msg?: string } }, send: typeof fetch = fetch): Promise<FillOut> {
   const who = String(p.coveredBy || '').trim().slice(0, 80)
   if (!p.caseId || !who) return { outcome: 'bad_request', detail: 'which case, and who covers it?' }
+  /* NEEDS VERIFICATION (2026-10-24, with Cara's better list on: ops_settings.cara_list_live): nobody with an expired or
+     missing clearance is confirmed, from any door (the Hub board, the call-in link). Off: as before. */
+  try {
+    const { data: st } = await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+    if (st?.data?.cara_list_live === true) {
+      const { data: cr } = await db.from('app_data').select('data').eq('key', 'coverage_cases').maybeSingle()
+      // deno-lint-ignore no-explicit-any
+      const kase = (Array.isArray(cr?.data) ? cr!.data : []).find((x: any) => x?.id === p.caseId)
+      // deno-lint-ignore no-explicit-any
+      const ask = (Array.isArray(kase?.asked) ? kase.asked : []).find((a: any) => nameKey(a?.name) === nameKey(who))
+      let axId = String(ask?.axiscare_id || '')
+      if (!axId) {
+        const { data: cgRow } = await db.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
+        // deno-lint-ignore no-explicit-any
+        const hit = (Array.isArray(cgRow?.data) ? cgRow!.data : []).filter((g: any) => nameKey(`${g.first || ''} ${g.last || ''}`) === nameKey(who) && g.axiscare_id)
+        if (hit.length === 1) axId = String(hit[0].axiscare_id)
+      }
+      const cl = await clearedFor(db, axId)
+      if (!cl.ok) return { outcome: 'not_eligible', detail: `${who} can't be confirmed: ${cl.why}` }
+    }
+  } catch (e) { return { outcome: 'not_eligible', detail: 'Eligibility could not be checked just now, so nothing was changed: ' + String(e).slice(0, 100) } }
   const t = now()
   const patch: Record<string, unknown> = { status: 'done', resolved_how: 'covered', covered_by: who, resolved_at: t,
     confirmed_by: p.byName || null, confirmed_at: t, reopened_from: null }

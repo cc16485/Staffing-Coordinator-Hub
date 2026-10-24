@@ -160,8 +160,55 @@ ck('recommend: interest only: says nothing is assigned, writes nothing, texts no
 reset(K({ asked: [{ id: 'x', name: 'Amy Fit', axiscare_id: '9001', state: 'waiting' }] })); j = await act({ action: 'recommend', case_id: 'cv1' })
 ck('recommend: nobody said yes = no pick, said plainly', j.pick === null && j.note === 'Nobody has said yes yet.', j)
 reset(K({ asked: [yes('Amy Fit', '9001', '2026-10-01T10:05:00Z', { condition: 'only until 10' })] })); j = await act({ action: 'recommend', case_id: 'cv1' })
-ck('recommend: a yes with a condition carries the condition as a concern', j.pick?.concerns.includes('Said yes with a condition: only until 10'), j.pick)
+ck('recommend: a yes with a condition is part of the shift: never the pick on its own, listed with its condition', j.pick === null && j.partial?.[0]?.concerns.includes('Said yes with a condition: only until 10') && /Only part-of-the-shift answers/.test(j.note), j)
 
+/* THE RESPONSE BOARD (2026-10-24) */
+reset(K({ asked: [yes('Amy Fit', '9001', '2026-10-01T10:05:00Z'), yes('Dee Hours', '9004', '2026-10-01T09:00:00Z'),
+  yes('Ben Unknown', '9002', '2026-10-01T09:10:00Z', { answer_kind: 'part', offer_from: '07:00', offer_to: '09:00', answer_channel: 'page', answer_note: 'school pickup' }),
+  { id: 'aq', name: 'Fran Overlap', axiscare_id: '9006', state: 'inquiry', reply: 'are there stairs?', replied_at: '2026-10-01T09:20:00Z' },
+  { id: 'an', name: 'Cal Outside', axiscare_id: '9003', state: 'no', reply: 'sorry no', replied_at: '2026-10-01T09:30:00Z' },
+  yes('Hal Lapsed', '9007', '2026-10-01T08:00:00Z'), { id: 'aw', name: 'Eve Skills', axiscare_id: '9005', state: 'waiting' }] }))
+AXCALLS = []; j = await act({ action: 'board', case_id: 'cv1' })
+const P = (n) => (j.people || []).find((p) => p.name === n)
+ck('board: each person in their column: full, partial, question, no, Needs Verification, waiting', P('Amy Fit')?.column === 'full' && P('Dee Hours')?.column === 'full' && P('Ben Unknown')?.column === 'partial'
+  && P('Fran Overlap')?.column === 'question' && P('Cal Outside')?.column === 'no' && P('Hal Lapsed')?.column === 'nv' && P('Eve Skills')?.column === 'waiting' && j.counts.full === 2, j.people?.map((p) => [p.name, p.column]))
+ck('board: the exact answer, when, and how (text or shift page) for each person', P('Fran Overlap').reply === 'are there stairs?' && P('Fran Overlap').replied_at === '2026-10-01T09:20:00Z' && P('Ben Unknown').channel === 'shift page'
+  && P('Ben Unknown').offer_from === '07:00' && P('Ben Unknown').note === 'school pickup', [P('Fran Overlap'), P('Ben Unknown')])
+ck('board: Cara\'s pick says so; the others say why not (overtime ranks lower; part of the shift is never a pick alone)', P('Amy Fit').recommended && P('Amy Fit').why === 'Cara recommends them for this shift'
+  && P('Dee Hours').why === 'Another yes ranks higher' && P('Dee Hours').concerns.some((c) => /Overtime risk/.test(c)) && /only part of the shift/.test(P('Ben Unknown').why))
+ck('board: Needs Verification can never be confirmed, with the reason; only an eligible full yes can', P('Hal Lapsed').can_confirm === false && P('Hal Lapsed').eligibility.ok === false && /^Needs Verification: OIG/.test(P('Hal Lapsed').eligibility.why)
+  && P('Amy Fit').can_confirm && !P('Ben Unknown').can_confirm && !P('Fran Overlap').can_confirm)
+ck('board: the skills rules\' reason shows on someone they rule out', P('Eve Skills').eligibility.ok === false && /Skills rules: Dementia training/.test(P('Eve Skills').eligibility.why), P('Eve Skills'))
+ck('board: read only (AxisCare only read, nothing texted, the case unchanged)', AXCALLS.every((c) => c.method === 'GET') && !SENT.length && APP.coverage_cases[0].status === 'open' && !APP.coverage_cases[0].covered_by)
+ck('board: says the shift\'s time setting (Exact time by default, hand-off not allowed by default)', j.time_flex === 'exact' && j.handoff_ok === false)
+
+
+/* TIME RULES (2026-10-24): separate settings, Exact time by default */
+{ reset(K()); const pr = globalThis.__db.rpc; let patched = null
+  globalThis.__db.rpc = async (fn, a) => { if (fn === 'coverage_case_patch') { patched = a; Object.assign(APP.coverage_cases[0], a.p_patch); return { data: { ok: true }, error: null } } return pr(fn, a) }
+  let j2 = await act({ action: 'set_time_rules', case_id: 'cv1', time_flex: 'flexible_start', flex_minutes: 500, handoff_ok: true })
+  ck('time rules: flexible start (capped at 3 hours) and hand-off are separate, saved with who and when', j2.ok && APP.coverage_cases[0].time_flex === 'flexible_start' && APP.coverage_cases[0].flex_minutes === 180 && APP.coverage_cases[0].handoff_ok === true && !!APP.coverage_cases[0].time_rules_at && patched.p_expect.status === 'open', [j2, APP.coverage_cases[0]])
+  j2 = await act({ action: 'set_time_rules', case_id: 'cv1', handoff_ok: false })
+  ck('time rules: anything else = exact time; hand-off off unless ticked', APP.coverage_cases[0].time_flex === 'exact' && APP.coverage_cases[0].flex_minutes === null && APP.coverage_cases[0].handoff_ok === false)
+  ck('time rules: nothing touches AxisCare or texts anyone', !SENT.length)
+  globalThis.__db.rpc = pr }
+
+/* NEEDS VERIFICATION AT CONFIRM (2026-10-24): the server refuses, from any door */
+{ const CF = await import(path.join(FN, '_shared/coverage-fill.ts') + '?cf')
+  reset(K({ asked: [yes('Hal Lapsed', '9007', '2026-10-01T08:00:00Z'), yes('Amy Fit', '9001', '2026-10-01T09:00:00Z')] }), { cara_list_live: true })
+  let o = await CF.confirmFill(globalThis.__db, { caseId: 'cv1', coveredBy: 'Hal Lapsed', byName: 'Sam' })
+  ck('confirm, list switch on: someone who Needs Verification is refused with the reason, nothing changed', o.outcome === 'not_eligible' && /Hal Lapsed can't be confirmed: Needs Verification: OIG check over 30 days/.test(o.detail) && APP.coverage_cases[0].status === 'open' && !APP.coverage_cases[0].covered_by, o)
+  o = await CF.confirmFill(globalThis.__db, { caseId: 'cv1', coveredBy: 'Amy Fit', byName: 'Sam' })
+  ck('confirm, list switch on: an eligible person goes through to the usual confirm', o.outcome !== 'not_eligible', o)
+  reset(K({ asked: [yes('Hal Lapsed', '9007', '2026-10-01T08:00:00Z')] }))
+  o = await CF.confirmFill(globalThis.__db, { caseId: 'cv1', coveredBy: 'Hal Lapsed', byName: 'Sam' })
+  ck('confirm, list switch off: as before (no eligibility check yet)', o.outcome !== 'not_eligible', o)
+  reset(K({ asked: [yes('Hal Lapsed', '9007', '2026-10-01T08:00:00Z')] }), { cara_list_live: true }); T.rules_approved = []
+  const rf = globalThis.fetch; globalThis.fetch = async (u, x) => String(u).includes('api.github.com') ? new Response('no', { status: 503 }) : rf(u, x)
+  o = await CF.confirmFill(globalThis.__db, { caseId: 'cv1', coveredBy: 'Amy Fit', byName: 'Sam' }); globalThis.fetch = rf
+  ck('confirm, list switch on, rules unreadable: fails closed, says so, nothing changed', o.outcome === 'not_eligible' && /could not be checked just now/.test(o.detail) && APP.coverage_cases[0].status === 'open', o)
+  const ca = fs.readFileSync(path.join(FN, 'coverage-assign/index.ts'), 'utf8'), cl = fs.readFileSync(path.join(FN, 'callin-alert/index.ts'), 'utf8')
+  ck('both confirm doors answer 409 with the reason (Hub board and the call-in link)', /out\.outcome === 'not_eligible'\) return json\(\{ error: out\.detail, \.\.\.out \}, 409\)/.test(ca) && /out\.outcome === 'not_eligible'\) return json\(\{ error: out\.detail \+ ' Nothing was changed\.' \}, 409\)/.test(cl)) }
 
 /* ── 3. one case per real shift (_shared/cara-visit-match.ts) ── */
 { const VM = await import(path.join(FN, '_shared/cara-visit-match.ts'))

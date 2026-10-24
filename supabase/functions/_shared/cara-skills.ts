@@ -13,6 +13,7 @@ import { careLevelOf } from './care-level.ts'
 import { resolvePayer } from './client-events.ts'
 import { experienceSummary } from './step1-experience.ts'
 import { makePeople } from './match-dark.ts'
+import { workLock } from './work-lock.ts'
 
 const rowsOf = (v: any): any[] => Array.isArray(v) ? v : (v && typeof v === 'object') ? Object.values(v) : []
 const PAYER: Record<string, string> = { 'medicaid': 'medicaid', 'private pay': 'private', 'private': 'private', 'va': 'va', 'veterans affairs': 'va', 'ltc': 'ltc', 'long term care': 'ltc', 'long-term care': 'ltc', 'medicare guide': 'guide', 'guide': 'guide', 'cds': 'cds' }
@@ -68,4 +69,27 @@ export async function loadSkillJudge(db: any, p: { clientAxId: string | null; ax
       return { ...r, cleared_note: cg.cleared ? null : 'Not cleared to work: ' + String(cg.cleared_reason || 'a required check is not complete') } }
     return { judge, why: null, client_state: cs.status === 'ok' ? 'ok' : cs.status + ': ' + cs.message, rule_version: rules.CCMatch.VERSION ?? null }
   } catch (e) { return { judge: null, why: 'skills not checked: ' + String((e as Error)?.message || e).slice(0, 160), client_state: null, rule_version: null } }
+}
+
+/** NEEDS VERIFICATION AT CONFIRM (Samantha, 2026-10-24: "prevent unverified caregivers from being offered or confirmed").
+    Is this caregiver cleared to work right now? The same eligibility rule (eligibility-rules.js, CCElig) and the same
+    readiness lock as the list. Fails closed: if the rule or the records can't be read, the answer is "not checked" and the
+    confirm waits (the office can try again a minute later). Read only. */
+export async function clearedFor(db: any, axId: string): Promise<{ ok: boolean; why: string }> {
+  const id = String(axId || '').replace(/\D/g, '')
+  if (!id) return { ok: false, why: 'Needs Verification: no AxisCare caregiver id for this person' }
+  try {
+    const a = await approvedRules(db, 'eligibility-rules.js'); if (!a.ok) return { ok: false, why: 'Eligibility could not be checked just now (' + a.error + '). Nothing was changed; try again in a minute.' }
+    ;(0, eval)(a.src); const E = (globalThis as any).CCElig
+    if (!E?.eligibility) return { ok: false, why: 'Eligibility could not be checked just now (the rule did not load). Nothing was changed.' }
+    const { data } = await db.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
+    const r = rowsOf(data?.data).find((x: any) => String(x?.axiscare_id ?? '').replace(/\D/g, '') === id)
+    if (!r) return { ok: false, why: 'Needs Verification: no roster record in the Hub' }
+    const lock = await workLock(db, rowsOf(data?.data))
+    if (!lock.ok) return { ok: false, why: 'Eligibility could not be checked just now (' + lock.why + '). Nothing was changed.' }
+    if (lock.axis.has(id)) return { ok: false, why: 'Needs Verification: awaiting Approve to Work' }
+    const el = E.eligibility(r)
+    if (el && ['eligible', 'needs_verification'].includes(el.state)) return { ok: true, why: 'cleared' }
+    return { ok: false, why: 'Needs Verification: ' + String(el?.summary || el?.label || 'a required check is not complete') }
+  } catch (e) { return { ok: false, why: 'Eligibility could not be checked just now (' + String((e as Error)?.message || e).slice(0, 100) + '). Nothing was changed.' } }
 }

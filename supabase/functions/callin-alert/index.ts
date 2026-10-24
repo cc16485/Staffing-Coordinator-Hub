@@ -145,6 +145,7 @@ Deno.serve(async (req) => {
     const out = await confirmFill(sb, { caseId, coveredBy: who, byName: me.name,
       notChosen: nc?.silent === true ? { silent: true } : (typeof nc?.msg === 'string' && nc.msg.trim() ? { msg: nc.msg.trim() } : undefined) })
     if (out.outcome === 'already') return json({ ok: true, already: { how: out.resolved_how, covered_by: out.covered_by, by: out.confirmed_by } })
+    if (out.outcome === 'not_eligible') return json({ error: out.detail + ' Nothing was changed.' }, 409)   /* Needs Verification (2026-10-24) */
     if (out.outcome !== 'filled') return json({ error: 'Not saved; nothing changed. Try again, or use the board.' }, 409)
     await opEvent(sb, { actor_name: me.name, actor_email: me.email, verb: 'coverage_closed', item_id: caseId, area: 'coverage', summary: `${me.name} confirmed ${who} for ${caseWhat(c)} (from the call-in link)` })
     const told = await tell(filledLine(c, me.name, { covered_by: who }))
