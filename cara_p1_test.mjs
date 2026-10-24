@@ -218,5 +218,27 @@ ck('recommend: a yes with a condition carries the condition as a concern', j.pic
   ck('tick: a shift with a caregiver confirmed is never Critical-texted', !SENT.some((m) => /CRITICAL/.test(m.msg)))
   globalThis.__db.rpc = patchRpc }
 
+
+/* ── 6. understanding a reply (_shared/cara-reply.ts) ── */
+{ const R = await import(path.join(FN, '_shared/cara-reply.ts'))
+  const yesW = { isYes: true, isNo: false }, noW = { isYes: false, isNo: true }, qW = { isYes: false, isNo: false }
+  const ai = (answer, condition = null) => ({ answer, condition, quote: 'q', failed: false })
+  ck('reply: the AI not answering = the word rules, as today', R.settleReply(yesW, { failed: true }).state === 'yes' && R.settleReply(qW, null).state === 'inquiry' && R.settleReply(noW, null).by === 'words')
+  ck('reply: "yes but only until 3" = a yes that carries the condition (interest, nobody assigned)', R.settleReply(qW, ai('yes_condition', 'only until 3pm')).state === 'yes' && R.settleReply(qW, ai('yes_condition', 'only until 3pm')).condition === 'only until 3pm')
+  ck('reply: words and AI disagree = a person decides (a "can\'t" the AI read as yes; a clean yes the AI read as no)', R.settleReply(noW, ai('yes')).state === 'inquiry' && R.settleReply(yesW, ai('no')).state === 'inquiry' && /a person decides/.test(R.settleReply(yesW, ai('no')).why))
+  ck('reply: about a different shift, or a question, or unclear = a person', R.settleReply(qW, ai('other_shift')).state === 'inquiry' && /different shift/.test(R.settleReply(qW, ai('other_shift')).why) && R.settleReply(qW, ai('question')).state === 'inquiry' && R.settleReply(qW, ai('unclear')).state === 'inquiry')
+  ck('reply: a plain yes both ways = yes, read by words and AI', R.settleReply(yesW, ai('yes')).state === 'yes' && R.settleReply(yesW, ai('yes')).by === 'words and AI')
+  const prevDeno = globalThis.Deno; globalThis.Deno = { env: { get: (k) => k === 'ANTHROPIC_API_KEY' ? 'k' : prevDeno.env.get(k) } }
+  let sentBody = null
+  const r1 = await R.readShiftReply('yes but only till 3', { client: 'Ruth Kay', shift_date: '2026-10-31', shift_time: '09:00-17:00' }, async (u, o) => { sentBody = JSON.parse(o.body); return new Response(JSON.stringify({ content: [{ text: '{"answer":"yes_condition","condition":"until 3pm","quote":"yes but only till 3"}' }] }), { status: 200 }) })
+  ck('reply: the AI is told the client\'s FIRST name only, the day and time, and the reply', r1.answer === 'yes_condition' && r1.condition === 'until 3pm' && /Ruth, 2026-10-31 09:00-17:00/.test(sentBody.messages[0].content) && !/Kay/.test(sentBody.messages[0].content), [r1, sentBody?.messages])
+  const r2 = await R.readShiftReply('maybe', {}, async () => new Response(JSON.stringify({ content: [{ text: '{"answer":"maybe"}' }] }), { status: 200 }))
+  const r3 = await R.readShiftReply('yes', {}, async () => new Response('x', { status: 529 }))
+  ck('reply: an answer outside the six, or the AI erroring = failed (the word rules decide)', r2.failed && r3.failed)
+  globalThis.Deno = prevDeno
+  const src2 = fs.readFileSync(path.join(FN, 'coverage-reply/index.ts'), 'utf8')
+  ck('coverage-reply: cara_reply_ai_live true = live, "practice" = kept as ai_read_practice, off = no AI call at all; interest checks untouched; nothing texted from this step',
+    /settings\.cara_reply_ai_live === true \? 'live' : settings\.cara_reply_ai_live === 'practice' \? 'practice' : 'off'/.test(src2) && /a\.ai_read_practice = /.test(src2) && /if \(String\(c\.kind\) !== 'interest' && aiMode !== 'off'\) \{\n    const ai = await readShiftReply/.test(src2)) }
+
 for (const [n, o, d] of res) console.log((o ? 'PASS' : 'FAIL') + ' · ' + n + (o ? '' : '\n     ' + d))
 console.log(`${res.filter((x) => x[1]).length}/${res.length}`)

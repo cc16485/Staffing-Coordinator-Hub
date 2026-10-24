@@ -31,6 +31,7 @@ import { officeQuiet } from '../_shared/quiet-hours.ts'
 import { adminRecipients } from '../_shared/clockin-admins.ts'
 import { callinLink, withLink } from '../_shared/callin-notify.ts'
 import { OPEN_HOURS_ACK_DEFAULT, offeredCells, readByWords, readOpenHoursReply } from '../_shared/open-hours.ts'
+import { readShiftReply, settleReply } from '../_shared/cara-reply.ts'   // CARA PHASE 1: the AI reads the answer (cara_reply_ai_live)
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -215,10 +216,10 @@ Deno.serve(async (req) => {
      a minute, a wrong YES freezes the callout and lies to the caregiver. */
   const t = text.toLowerCase()
   const hasNeg = /(can'?t|cannot|can\s+not|won'?t|unable|not able|no way|i'?m not|don'?t think)/.test(t)
-  const isYes = !hasNeg && (
+  let isYes = !hasNeg && (
     /^\s*(y|yes|yeah|yep|yea|sure|absolutely|definitely|of course)\b/.test(t) ||
     /\b(i'?ll take|i can take|i can cover|i can do|i'?ll cover|i'?ll do it|count me in|i'?m available|works for me)\b/.test(t))
-  const isNo = hasNeg ||
+  let isNo = hasNeg ||
     /^\s*(n|no|nope|nah|sorry)\b/.test(t) ||
     /\b(pass|not this time|next time)\b/.test(t)
   const stamp = new Date().toISOString()
@@ -287,6 +288,23 @@ Deno.serve(async (req) => {
     }
     await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
     return json({ ok: true, routed, case_id: c.id, caregiver: a.name, state: a.state, cells: a.yes_cells })
+  }
+  /* CARA PHASE 1 (2026-10-23): the AI reads the answer too (_shared/cara-reply.ts). Live (cara_reply_ai_live): the word
+     rules and the AI together decide, a disagreement goes to a person, a "yes with a condition" is a yes that carries the
+     condition. 'practice': the AI's reading is kept beside the word rules' answer (ai_read_practice) and the word rules
+     decide. Off (the default): no AI call at all, exactly as before. A yes
+     is still only interest: nothing here assigns anyone or texts anyone back. Interest checks keep today's reading. */
+  const aiMode = settings.cara_reply_ai_live === true ? 'live' : settings.cara_reply_ai_live === 'practice' ? 'practice' : 'off'
+  if (String(c.kind) !== 'interest' && aiMode !== 'off') {
+    const ai = await readShiftReply(text, c)
+    const settled = settleReply({ isYes, isNo }, ai)
+    if (aiMode === 'live') {
+      a.read_by = settled.by; a.read_why = settled.why; a.ai_quote = ai.quote ?? null
+      if (settled.condition) a.condition = settled.condition; else delete a.condition
+      isYes = settled.state === 'yes'; isNo = settled.state === 'no'
+    } else if (!ai.failed) {
+      a.ai_read_practice = { answer: ai.answer, condition: ai.condition, quote: ai.quote, would_be: settled.state, words_say: isYes ? 'yes' : isNo ? 'no' : 'question', why: settled.why, at: stamp }
+    }
   }
   if (isYes) {
     /* THE WRONG-CLIENT YES (Lacey, first live callout: "I can cover wonda
