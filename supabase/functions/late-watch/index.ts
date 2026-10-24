@@ -55,7 +55,7 @@ import { DEFAULT_THANKS, DEFAULT_ASK, DEFAULT_FAMILY, FAMILY_MIN_DEFAULT, fill, 
 import { officeQuiet, quietWords } from '../_shared/quiet-hours.ts'
 import { loadQuiet, isQuiet } from '../_shared/client-quiet.ts'
 import { isPlaceholder } from '../_shared/visit-reasons.ts'
-import { cantComeCase, live } from '../_shared/clockin-v2.ts'   // Cara Phase 3
+import { cantComeCase, live as p3live } from '../_shared/clockin-v2.ts'   // Cara Phase 3
 import { opEvent } from '../_shared/events.ts'
 
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
@@ -596,7 +596,7 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
       const c = cantComeCase({ visit_id: String(n.visit_id), client: n.client_first || 'a client', client_axiscare_id: n.axiscare_client_id ?? null,
         shift_date: String(n.shift_date), shift_time: `${new Date(startMs).toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(11, 16)}-${v.end ? new Date(v.end).toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(11, 16) : ''}`.replace(/-$/, ''),
         caregiver: n.caregiver_name || '', caregiver_axiscare_id: String(n.axiscare_caregiver_id ?? '') || null, quote: n.call_quote || (said ? String(said.text).slice(0, 160) : null), source: 'running_late', now: nowIso })
-      if (live(st, 'cant_come_case_live')) {
+      if (p3live(st, 'cant_come_case_live')) {
         await db.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
         await db.from('late_notices').update({ cant_case_would: c.id, coverage_case_id: c.id, updated_at: nowIso }).eq('id', n.id)
         await opEvent(db, { job: 'late-watch', verb: 'coverage_opened', item_id: c.id, area: 'coverage', summary: `Cara opened a call-off case from ${n.caregiver_name}'s words ("can't make it") for ${n.client_first} ${t12}; attendance waits for a person` })
@@ -635,7 +635,7 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
     if (!n.seen_at && !quiet) {
       const rounds = Array.isArray(n.admin_rounds) ? n.admin_rounds : []
       const due = !n.admin_last_at || now - Date.parse(n.admin_last_at) >= repeatMin * MIN - 20e3
-      const unclear = n.kind === 'cant_make_it' && n.sure === false && live(st, 'late_unsure_live')
+      const unclear = n.kind === 'cant_make_it' && n.sure === false && p3live(st, 'late_unsure_live')
       const lead = unclear ? `Needs clarification: ${what}.` : n.kind === 'cant_make_it' ? `Can't make it: ${what}.` : `${rounds.length ? 'Still not seen. ' : ''}Running late: ${what}.`
       const tail = unclear ? 'They may not be coming. Call them, then tap:' : n.kind === 'cant_make_it' ? 'Tap to see it and open a coverage case:' : (etaTxt ? `Expected about ${etaTxt}.` : 'No arrival time given yet.') + ' Tap when you\'ve seen it:'
       const msg = (link: string) => `${lead} ${saidTxt}${saidTxt ? '. ' : ''}${tail} ${link}`.replace(/\s+/g, ' ').trim()
@@ -673,7 +673,7 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
       const note = callLine(n) + (n.call_quote ? ` "${String(n.call_quote).replace(/\s+/g, ' ').slice(0, 160)}"` : '')
         + (until != null && now < until ? ` The missed clock-in texts to the admins are paused until ${clockAt(until)} and start again then if there's still no clock-in.`
           : until != null ? ` The missed clock-in texts were paused until ${clockAt(until)}; still no clock-in, so they started again.`
-          : n.kind === 'cant_make_it' && n.sure === false && live(st, 'late_unsure_live') ? ' Cara isn\'t sure they are calling off. Call them to find out; the missed clock-in alert keeps going until they clock in or the shift is covered.'
+          : n.kind === 'cant_make_it' && n.sure === false && p3live(st, 'late_unsure_live') ? ' Cara isn\'t sure they are calling off. Call them to find out; the missed clock-in alert keeps going until they clock in or the shift is covered.'
           : n.kind === 'cant_make_it' ? ' Open a coverage case from the alert link if the shift needs covering.' : '')
       if (had && had.status === 'open' && had.late_call_note !== note) {
         const merged = { ...had, late_call_note: note, late_notice_id: n.id }
@@ -686,7 +686,7 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
       const fe = familyEligible(n, famMin)
       await putCard({ id: 'ops_late_' + n.id, kind: 'late_notice', domain: 'scheduling_coverage',
         status: 'open', urgency: n.seen_at ? 'today' : 'high', late_notice_id: n.id, caregiver: n.caregiver_name || '', about: n.caregiver_name || '',
-        title: n.kind === 'cant_make_it' && n.sure === false && live(st, 'late_unsure_live') ? `Needs clarification, call them: ${what}` : n.kind === 'cant_make_it' ? `Can't make it: ${what}` : `Running late: ${what}${etaTxt ? ', about ' + etaTxt : ''}`,
+        title: n.kind === 'cant_make_it' && n.sure === false && p3live(st, 'late_unsure_live') ? `Needs clarification, call them: ${what}` : n.kind === 'cant_make_it' ? `Can't make it: ${what}` : `Running late: ${what}${etaTxt ? ', about ' + etaTxt : ''}`,
         detail: `${saidTxt}${saidTxt ? '. ' : ''}${n.kind === 'late' ? (etaTxt ? `Expected about ${etaTxt}.` : 'No arrival time yet.') : 'Open a coverage case if the shift needs covering.'}`
           + (n.seen_at ? ` Seen by ${n.seen_by}.` : '') + (n.kind === 'late' && !fe.ok ? ` Family: ${fe.why}.` : ''),
         created_at: n.created_at, created_by: 'late-watch', opened_by: 'late-watch' })

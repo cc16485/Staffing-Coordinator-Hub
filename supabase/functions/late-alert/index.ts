@@ -217,7 +217,7 @@ Deno.serve(async (req) => {
       /* CARA PHASE 3: who is on shift before them, for the one-tap "can you stay?" (late_handoff_live) */
       handoff: n.kind === 'late' && !n.closed_at ? await (async () => { const h = await findHandoff({ visit_id: String(n.visit_id), client_axiscare_id: n.axiscare_client_id ?? null, shift_date: String(n.shift_date) }, (x) => visitMs(x))
         return h ? { first: h.first, asked: n.handoff_asked ? { at: clockAt(Date.parse(n.handoff_asked.at)), by: n.handoff_asked.by } : null } : null })() : null,
-      handoff_live: p3live(st, 'late_handoff_live') })
+      handoff_live: p3live(st, 'late_handoff_live'), unsure_live: p3live(st, 'late_unsure_live') })
   }
 
   /* CARA PHASE 3 · LATE HAND-OFF: only on this tap, once per notice, the caregiver on shift before them gets "can you

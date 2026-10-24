@@ -240,7 +240,7 @@ ck('ops-escalate 7:26 · a call missed at 7:10 is texted at its 15 minutes, as b
 /* ════ 5 · source scans: every internal (office, admin, coordinator) text path checks the quiet hours ════ */
 const src = (f) => fs.readFileSync(`${FN}/${f}`, 'utf8')
 const PATHS = [
-  ['timekeeper-watch/index.ts', /const quietNow = officeQuiet\(new Date\(\), settings\)/, /const loopQuiet = quietNow && !tkAfterHours/, /if \(loopQuiet\) \{ quietHeld\+\+; return 0 \}/, /if \(loopQuiet\) \{ quietHeld\+\+; continue \}/],
+  ['timekeeper-watch/index.ts', /const quietNow = officeQuiet\(new Date\(\), settings\)/, /const loopQuiet = quietNow && !tkAfterHours/, /if \(loopQuiet && !urgentAlone\) \{ quietHeld\+\+; return 0 \}/, /if \(loopQuiet && !\(atRiskLive && l\.must_cover === true\)\) \{ quietHeld\+\+; continue \}/],   /* 2026-10-24 Cara Phase 3: a client who can't be left alone is the one exception (clockin_at_risk_live) */
   ['clockin-alert/index.ts', /const quiet = officeQuiet\(new Date\(\), settings\) && !afterHours/, /loopLive && !quiet &&/],
   ['late-watch/index.ts', /const quiet = officeQuiet\(new Date\(now\), st\)/, /if \(!n\.seen_at && !quiet\)/, /final && adminLive && !quiet/],
   ['late-alert/index.ts', /if \(officeQuiet\(new Date\(\), st\)\) return 0/],
@@ -335,7 +335,7 @@ ck('426 Saturday 8:30pm · the office EVV nudge still does not go (informational
 /* H6 · sources: only the two exceptions read the switches; everything else stays on the plain quiet hours */
 { const tk = src('timekeeper-watch/index.ts'), ca = src('clockin-alert/index.ts'), cr = src('coverage-run/index.ts')
   ck('426 scan · timekeeper-watch: the loop texts pass the exception, the 6-text cap is untouched, the timekeeper_admin_loop_live switch is unchanged',
-    /textAdmin\(sb, ghl, a, msg, fetch, \{ emergency: tkAfterHours \}\)/.test(tk) && /const tkAfterHours = afterHoursAllowed\(settings, 'missed_clockin'\)/.test(tk)
+    /textAdmin\(sb, ghl, a, msg, fetch, \{ emergency: tkAfterHours \|\| urgentAlone \}\)/.test(tk) && /const tkAfterHours = afterHoursAllowed\(settings, 'missed_clockin'\)/.test(tk)
     && /if \(!final && had >= maxTexts\)/.test(tk) && /const loopLive = watchLive && settings\.timekeeper_admin_loop_live === true/.test(tk))
   ck('426 scan · clockin-alert: "Resolved by" passes the exception and still only goes to texted admins',
     /const afterHours = afterHoursAllowed\(settings, 'missed_clockin'\)/.test(ca) && /textAdmin\(sb, ghl, a, msg, fetch, \{ emergency: afterHours \}\)/.test(ca) && /if \(textedKeys && !\(Number\(textedKeys\[await adminKey\(a\.email\)\]\) > 0\)\) continue/.test(ca))

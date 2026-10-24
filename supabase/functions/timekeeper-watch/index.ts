@@ -695,7 +695,7 @@ Deno.serve(async (req) => {
           if (cid && await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
             'timekeeper-watch', { channel: 'sms', contactId: cid, address: normalisePhone(cgRec?.phone) ?? '', who: String(l.caregiver) }, { message: text2 })) {
             l.second_texted_at = nowIso; p3note(true, { alert: l.id, step: 'second text', to: String(l.caregiver).split(' ')[0] })
-          } else if (!cid) { l.second_texted_at = nowIso; l.notes = [...(l.notes || []), 'Second text not sent: they opted out of texts.'] }
+          } else if (!cid) { l.second_texted_at = nowIso; l.notes = [...(l.notes || []), 'Second text not sent: they opted out of texts, or their GoHighLevel contact could not be checked (see Refused texts).'] }
           await save(l)
         } else if (!l.second_would_at) { l.second_would_at = nowIso; p3note(false, { alert: l.id, step: 'second text would go', text: text2 }); await save(l) }
       }
