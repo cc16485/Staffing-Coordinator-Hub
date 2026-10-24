@@ -67,7 +67,7 @@ const future = (() => { const d = new Date(Date.now() + 3 * 86400000); return d.
 const reset = (settings = { shift_page_live: true }, kase = {}, share = true) => {
   SENT = []; AXC = []; VISIT = { id: 'v1', scheduledStartDate: future + 'T08:00:00', scheduledEndDate: future + 'T17:00:00', caregiver: null }
   APP = { ops_settings: settings, coordinator_staff: [], ops_items: [],
-    coverage_cases: [{ id: 'cv1', status: 'open', reason: 'call_off', client: 'Ruth Ann Kay', client_axiscare_id: '500', axiscare_visit_id: 'v1', client_city: 'Nixa', client_street: 'Main St', shift_date: future, shift_time: '08:00-17:00', care_note: 'Coffee at 10',
+    coverage_cases: [{ id: 'cv1', status: 'open', reason: 'call_off', client: 'Ruth Ann Kay', client_axiscare_id: '500', axiscare_visit_id: 'v1', client_city: 'Nixa', client_street: 'Main St', shift_date: future, shift_time: '08:00-17:00', care_note: 'Coffee at 10', care_note_share: true,
       asked: [{ id: 'ask_1', name: 'Maria Lane', phone: '4175550101', axiscare_id: '9001', state: 'waiting', at: new Date().toISOString(), offered_for: future + '|08:00-17:00' },
               { id: 'ask_2', name: 'Pat Prn', phone: '4175550102', axiscare_id: '9002', state: 'waiting', prn: true, at: new Date().toISOString() }], ...kase }] }
   T = { care_circles: [{ id: 'cc1', axiscare_client_id: '500', active: true, caregiver_about: 'Ruth is a retired teacher who loves a good laugh.', caregiver_enjoys: ['Gardening', 'Old movies'], caregiver_share_care: share }],
@@ -116,6 +116,14 @@ reset({}); let L1 = await linkFor('ask_1'), s, j
 ck('switch off: a caregiver\'s link says the page isn\'t open yet (nothing shown)', s === 403 && /isn't open yet/.test(j.error) && !j.caregiver_first, [s, j])
 ;[s, j] = await post({ action: 'preview', case_id: 'cv1', ask_id: 'ask_1' }, 'Bearer staff')
 ck('switch off: the office preview shows exactly what Maria would see', s === 200 && j.preview && j.client_first === 'Ruth Ann' && j.about && j.enjoys.join() === 'Gardening,Old movies' && j.help.includes("Dementia or Alzheimer's care") && j.home.includes('Cats in the home') && j.care_line === 'Coffee at 10' && j.checked === 'same', [s, j])
+APP.coverage_cases[0].care_note_share = false
+;[s, j] = await post({ action: 'preview', case_id: 'cv1', ask_id: 'ask_1' }, 'Bearer staff')
+ck('Good to know: the call-off\'s care note stays off the shift page unless "Share on shift page" was ticked', s === 200 && j.care_line === null, j.care_line)
+delete APP.coverage_cases[0].care_note_share
+;[s, j] = await post({ action: 'preview', case_id: 'cv1', ask_id: 'ask_1' }, 'Bearer staff')
+ck('... unticked by default (an older case with no tick): off the page', j.care_line === null, j.care_line)
+APP.coverage_cases[0].care_note_share = true
+;[s, j] = await post({ action: 'preview', case_id: 'cv1', ask_id: 'ask_1' }, 'Bearer staff')
 ck('preview: no last name, no street, no address anywhere', !/Kay|Main St|123/.test(JSON.stringify(j)), j)
 ;[s, j] = await post({ action: 'preview', case_id: 'cv1', ask_id: 'ask_1' })
 ck('preview needs a Hub sign-in', s === 401)

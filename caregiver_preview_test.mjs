@@ -156,6 +156,31 @@ ck('a client not in AxisCare yet: a draft can be written (kept on the lead)', s 
 ;[s, j] = await post({ action: 'get', axiscare_client_id: '777', lead_id: 'lead-9' }, 'Bearer kry')
 ck('... and it follows them once they have an AxisCare id (the shift page finds it by AxisCare id)', s === 200 && j.intro.draft.about === 'Bea loves birds.' && T.client_caregiver_profile.find((x) => x.lead_id === 'lead-9').axiscare_client_id === '777', j)
 
+/* ── 3. her check (2026-10-24): the Booking App and Cara use only the approved introduction; never a draft, never a
+   private care-plan note ── */
+{
+  const FOD = await import(path.join(FN, '_shared/family-offer-db.ts'))
+  reset({ caregiver_preview_live: true })
+  T.client_fact_current.push({ episode_id: 'e1', kind: 'care_notes', layer: 'plan', value: 'Diagnosed with Parkinsons; her son is difficult' }, { episode_id: 'e1', kind: 'door_code', layer: 'plan', value: '4411' }, { episode_id: 'e1', kind: 'medications', layer: 'current', value: 'Sinemet 25/100' })
+  await post({ action: 'save', ...C, about: 'Ruth taught school for 30 years.', enjoys: ['Gardening'] }, 'Bearer kry')
+  await post({ action: 'approve', ...C }, 'Bearer kry')
+  await post({ action: 'save', ...C, share_care: true }, 'Bearer kry')
+  await post({ action: 'approve', ...C }, 'Bearer sam')
+  await post({ action: 'save', ...C, about: 'DRAFT: not approved words' }, 'Bearer kry')
+  const deps = FOD.chooseDepsFor(globalThis.__db, async () => ({ status: 0, json: {} }), 'https://x.supabase.co')
+  const about = await deps.clientAbout('500')
+  ck('Booking App (the real reader): the approved About, never the draft', about === 'Ruth taught school for 30 years.', about)
+  const inf2 = await SK.clientInfoFor(globalThis.__db, '500', CL)
+  ck('Cara\'s shift page (the real reader): the approved About, never the draft', inf2.about === 'Ruth taught school for 30 years.' && !/DRAFT/.test(JSON.stringify(inf2)), inf2)
+  const [, pa] = await post({ action: 'preview', ...C, version: 'approved' }, 'Bearer kry')
+  const blob = JSON.stringify([about, inf2, pa])
+  ck('no private care-plan notes reach caregivers: no diagnosis, family note, door code or medication, only the match rules\' fixed labels', !/Parkinson|son is difficult|4411|Sinemet/.test(blob) && inf2.needs.length >= 1, blob.slice(0, 600))
+  const [, pd2] = await post({ action: 'preview', ...C, version: 'draft' }, 'Bearer kry')
+  ck('the draft is only in the office\'s own preview (labelled draft)', pd2.version === 'draft' && /DRAFT/.test(pd2.about) && pa.version === 'approved' && !/DRAFT/.test(pa.about))
+  APP.ops_settings = {}
+  ck('switch off: the Booking App reads Family & Contacts exactly as before', (await deps.clientAbout('500')) === 'Ruth loves her garden.')
+}
+
 const bad = res.filter((x) => !x[1])
 for (const [n, okk, note] of res) console.log(okk ? '  ✓' : '  ✗', n, okk ? '' : note)
 console.log(`\n${res.length - bad.length}/${res.length} passed`)
