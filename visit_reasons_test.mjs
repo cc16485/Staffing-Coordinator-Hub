@@ -29,7 +29,9 @@ const LIST = [[1, 'EVV Correction - Missed Clock-In'], [5, 'Staffing Change - Ca
   ck('Unable to Staff = cancelled by us', R.readVisit(v('Staffing Change - Unable to Staff', null), t).cancelled === 'us' && R.readVisit(v('Staffing Change - Unable to Staff', { id: 618, firstName: 'Canceled', lastName: 'Shift' }), t).cancelled === 'us')
   ck('the placeholder is cancelled whatever the reason says (even "Call Off"), by id 618 or by name', R.readVisit(v('Staffing Change - Caregiver Call Off', { id: 618 }), t).cancelled === 'client'
     && R.readVisit(v(null, { id: 9, firstName: 'Cancelled', lastName: 'Shift' }), t).state === 'placeholder' && !R.readVisit(v('Staffing Change - Caregiver Call Off', { id: 618 }), t).opens_case)
-  ck('a deleted visit is cancelled', R.readVisit(v('Schedule Change - Client Cancellation', null, { removed: true }), t).state === 'removed' && R.readVisit(v(null, null, { removed: true }), t).cancelled === 'client')
+  ck('a deleted visit is cancelled only when its reason says so', R.readVisit(v('Schedule Change - Client Cancellation', null, { removed: true }), t).cancelled === 'client' && R.readVisit(v('Staffing Change - Unable to Staff', null, { removed: true }), t).cancelled === 'us')
+  ck('a deleted visit with "Office Error" or no reason (a schedule edit) is NOT cancelled, and never opens a case or a card', (() => { const a = R.readVisit(v('Administrative Correction - Office Error', null, { removed: true }), t), b = R.readVisit(v(null, null, { removed: true }), t)
+    return a.state === 'removed' && a.cancelled === null && b.cancelled === null && !a.needs_care && !a.opens_case && !b.needs_care })())
   ck('no reason on an empty visit: an open shift, never a call-off', (() => { const r = R.readVisit(v(null, null), t); return r.needs_care && !r.opens_case && r.reason.meaning === null })())
   ck('cancelled reason but a real caregiver on it: a mismatch to ask about', R.readVisit(v('Schedule Change - Client Cancellation', { id: 44, firstName: 'Amy' }), t).mismatch)
   ck('a name AxisCare\'s list doesn\'t have: unknown (visible, never a call-off)', R.readVisit(v('Weird New Reason', null), t).reason.meaning === 'unknown' && !R.readVisit(v('Weird New Reason', null), t).opens_case)
@@ -70,6 +72,7 @@ function world(st = {}) {
     swapDirect: { id: vid(208, t8), start: t8, reason: 'Staffing Change - Caregiver Call Off', cg: { id: 46, firstName: 'Ben', lastName: 'New' } },
     noShow: { id: vid(209, t8), start: t8, reason: 'Staffing Change - No Show', cg: null },
     deleted: { id: vid(210, t8), start: t8, reason: 'Schedule Change - Client Cancellation', cg: null, removed: true },
+    deletedEdit: { id: vid(212, t8), start: t8, reason: 'Administrative Correction - Office Error', cg: null, removed: true },
     corrected: { id: vid(211, t8), start: t8, reason: 'Staffing Change - Caregiver Change', cg: { id: 47, firstName: 'Cy', lastName: 'Cover' } },
   }
   LISTNOW = LIST; LISTFAIL = false
@@ -77,6 +80,7 @@ function world(st = {}) {
     coverage_cases: [
       { id: 'cw_ph', axiscare_visit_id: AX.onPh.id, status: 'open', client: 'Pat Placeholder', calling_off: 'Dee Off', opened_at: new Date(NOW - HR).toISOString(), opened_by: 'axiscare-watch', resolved_at: null, seen_unassigned_at: 'x' },
       { id: 'cw_del', axiscare_visit_id: AX.deleted.id, status: 'open', client: 'Del Gone', opened_at: new Date(NOW - HR).toISOString(), opened_by: 'axiscare-watch', resolved_at: null },
+      { id: 'cw_del2', axiscare_visit_id: AX.deletedEdit.id, status: 'open', client: 'Ed Edit', opened_at: new Date(NOW - HR).toISOString(), opened_by: 'axiscare-watch', resolved_at: null },
       { id: 'cw_fix', axiscare_visit_id: AX.corrected.id, status: 'resolved', resolved_how: 'covered', covered_by: 'Cy Cover', client: 'Fix Me', calling_off: 'Fay First', reason_by_id: true, reason_meaning: 'call_off',
         opened_at: new Date(NOW - 3 * HR).toISOString(), resolved_at: new Date(NOW - 2 * HR).toISOString(), opened_by: 'axiscare-watch' } ],
     ops_items: [{ id: 'ops_open_' + AX.clientCancel.id.replace(/[^A-Za-z0-9]/g, '_'), kind: 'open_shift', status: 'open', created_by: 'coverage-watch', axiscare_visit_id: AX.clientCancel.id }],
@@ -129,10 +133,13 @@ ck('on: a call-off on an empty visit opens a case that says so (reason id 6, cal
 ck('on: the office\'s swap opens NO call-off case (it stays an open-shift card)', !caseFor(AX.swapEmpty), out.reasons_by_id)
 ck('on: a client cancellation opens no case, and its open-shift card closes saying it was cancelled', !caseFor(AX.clientCancel) && DB.ops_items.find((i) => i.kind === 'open_shift' && i.axiscare_visit_id === AX.clientCancel.id)?.status === 'done'
   && /cancelled in AxisCare/.test(DB.ops_items.find((i) => i.kind === 'open_shift' && i.axiscare_visit_id === AX.clientCancel.id).auto_closed_reason))
+ck('on: "Cancelled today" never lists a visit deleted by a schedule edit', !(DB.visit_reason_practice?.cancelled_today || []).some((x) => x.reason === 'Administrative Correction - Office Error'))
 const ph = DB.coverage_cases.find((c) => c.id === 'cw_ph')
 ck('on: the case on the placeholder closes as CLIENT CANCELLED, never covered, and no texts will go', ph.status === 'resolved' && ph.resolved_how === 'client_cancelled' && !ph.covered_by && !!ph.closure_notified && ph.family_no_recipients === true, ph)
 const del = DB.coverage_cases.find((c) => c.id === 'cw_del')
-ck('on: the case whose visit was deleted closes as client cancelled', del.status === 'resolved' && del.resolved_how === 'client_cancelled' && /deleted in AxisCare/.test(del.note), del)
+ck('on: the case whose visit was deleted WITH a cancel reason closes as client cancelled', del.status === 'resolved' && del.resolved_how === 'client_cancelled' && /deleted in AxisCare with the reason "Schedule Change - Client Cancellation"/.test(del.note), del)
+const del2 = DB.coverage_cases.find((c) => c.id === 'cw_del2')
+ck('on: the case whose visit was deleted with "Office Error" stays OPEN, says why, and a person is asked once', del2.status === 'open' && /doesn't say it was cancelled/.test(del2.note || '') && /does it still need someone\?/.test(item(/^ops_rdel_/)?.title || '') && item(/^ops_rdel_/).coverage_case_id === 'cw_del2', [del2, item(/^ops_rdel_/)])
 ck('on: couldn\'t staff = an urgent "call the family" card (a person calls)', item(/^ops_nostaff_/)?.urgency === 'urgent' && /call the family/.test(item(/^ops_nostaff_/).title) && item(/^ops_nostaff_/).kind === 'family_call', item(/^ops_nostaff_/))
 ck('on: a reason Cara doesn\'t know = one card asking what it means', /New reason in AxisCare: "Weird New Reason"/.test(item(/^ops_reason_/)?.title || ''))
 ck('on: cancelled reason with a caregiver still on it = one card asking which is right', /the reason says cancelled, but Lou is on it/.test(item(/^ops_rmis_/)?.title || ''))
