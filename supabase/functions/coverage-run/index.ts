@@ -58,7 +58,8 @@ import { fallbackList } from '../_shared/notice-to.ts'
 import { takenOffNotCalledIn, offWords } from '../_shared/not-a-callin.ts'
 /* CARA PHASE 1 (2026-10-23): the better list, behind ops_settings.cara_list_live (off = the list is exactly as before) */
 import { availStatus, availRank, UNKNOWN_WHY, weekOf, weekHoursBy, shiftHours, hoursFlag, overlapsFor, skillsNote, recommend, boardOf } from '../_shared/cara-list.ts'
-import { loadSkillJudge } from '../_shared/cara-skills.ts'
+import { loadSkillJudge, careNow } from '../_shared/cara-skills.ts'
+import { previewRecords, stateOf } from '../_shared/caregiver-preview.ts'
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -1228,7 +1229,27 @@ Deno.serve(async (req) => {
     if (body.action === 'board') {
       const pool = await buildCandidatesForCase(kase, { v2: true, includeAsked: true })
       const rows = [...pool.group0, ...pool.prn_other, ...pool.group1, ...pool.group2, ...pool.prn_ongoing]
-      return jr({ ...boardOf(kase, rows, pool.excluded, pool.needs_verification || []), meta: pool.meta.cara_list })
+      /* CAREGIVER PREVIEW (2026-10-24): the client's approved profile state, so the board can say when a shift page will show
+         only the shift (nothing approved yet) or the care summary is hidden because the care plan changed. Only while the
+         Caregiver Preview switch is on (off, shift pages don't read it). */
+      let profile = null
+      try {
+        const { data: stP } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+        const axId = String(kase.client_axiscare_id || '').trim()
+        if (stP?.data?.caregiver_preview_live === true && /^\d+$/.test(axId)) {
+          const { row, circle } = await previewRecords(sb, axId)
+          let cur: unknown[] | null = []
+          if (row?.approved_share_care === true) {
+            const { token: t3, site: s3 } = axisCreds(); let cl3 = null
+            if (t3 && s3) { const r3 = await fetch(`https://${s3}.axiscare.com/api/clients/${encodeURIComponent(axId)}`, { headers: { Authorization: `Bearer ${t3}`, Accept: 'application/json', 'X-AxisCare-Api-Version': AC_VERSION } }); if (r3.ok) { const j3 = await r3.json().catch(() => ({})); cl3 = j3?.results?.client ?? j3?.results ?? null } }
+            cur = await careNow(sb, axId, cl3)
+          }
+          // deno-lint-ignore no-explicit-any
+          const ps = stateOf(row, circle, cur as any)
+          profile = { label: ps.label, tone: ps.tone, has_intro: ps.has_intro, care_review: ps.care_review, axiscare_client_id: axId }
+        }
+      } catch { profile = null }
+      return jr({ ...boardOf(kase, rows, pool.excluded, pool.needs_verification || []), meta: pool.meta.cara_list, profile })
     }
 
     if (body.action === 'send_selected') {

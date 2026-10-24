@@ -14,6 +14,7 @@ import { resolvePayer } from './client-events.ts'
 import { experienceSummary } from './step1-experience.ts'
 import { makePeople } from './match-dark.ts'
 import { workLock } from './work-lock.ts'
+import { careItemsOf, approvedView, previewRecords, type CareItem } from './caregiver-preview.ts'
 
 const rowsOf = (v: any): any[] => Array.isArray(v) ? v : (v && typeof v === 'object') ? Object.values(v) : []
 const PAYER: Record<string, string> = { 'medicaid': 'medicaid', 'private pay': 'private', 'private': 'private', 'va': 'va', 'veterans affairs': 'va', 'ltc': 'ltc', 'long term care': 'ltc', 'long-term care': 'ltc', 'medicare guide': 'guide', 'guide': 'guide', 'cds': 'cds' }
@@ -99,14 +100,38 @@ export async function factsFor(db: any, clientAxId: string): Promise<any[] | nul
   return fs ?? []
 }
 
-/** THE SHIFT PAGE'S CLIENT DETAILS (2026-10-24), only what the office approved for caregivers: the About and What they
-    enjoy the office wrote on Family & Contacts (care_circles), what the caregiver would help with and the required
-    verified skills from the care plan (the match rules' own labels), Good to know (pets, smoking), and the care level.
-    Never an address, a last name, medication, diagnoses written as notes, or photos. Rules or records unreadable = that
-    part is simply left out (the page still shows the shift). */
+/** THE CARE SUMMARY FROM THE CARE PLAN NOW (Caregiver Preview, 2026-10-24): the items a caregiver could be shown, read from
+    the care plan (the source of truth) and the AxisCare care level. No Journey yet = only the level. null = the rules or
+    records couldn't be read (nothing is shown and no review is flagged). */
+export async function careNow(db: any, clientAxId: string | null, axClient: any | null): Promise<CareItem[] | null> {
+  if (!clientAxId) return null
+  try {
+    const a = await approvedRules(db, 'match-rules.js'); if (!a.ok) return null
+    ;(0, eval)(a.src); const M = (globalThis as any).CCMatch; if (!M) return null
+    const facts = await factsFor(db, clientAxId)
+    const level = axClient ? careLevelOf(axClient.classes).level : null
+    if (axClient == null) return null
+    return careItemsOf(M, facts ? M.fromFacts(facts) : {}, level)
+  } catch { return null }
+}
+
+/** THE SHIFT PAGE'S CLIENT DETAILS (2026-10-24), only what the office approved for caregivers.
+    Caregiver Preview on (ops_settings.caregiver_preview_live): the approved Caregiver Preview (_shared/caregiver-preview.ts):
+    the approved introduction, and the approved care summary only while the care plan still matches what was approved.
+    Off (as before): the About and What they enjoy on Family & Contacts (care_circles), and the care-plan parts when the
+    office ticked "Share the care needs on shift pages". Never an address, a last name, medication, diagnoses written as
+    notes, or photos. Rules or records unreadable = that part is simply left out (the page still shows the shift). */
 export async function clientInfoFor(db: any, clientAxId: string | null, axClient: any | null): Promise<{ about: string | null; enjoys: string[]; help: string[]; needs: string[]; home: string[]; level: number | null }> {
   const out = { about: null as string | null, enjoys: [] as string[], help: [] as string[], needs: [] as string[], home: [] as string[], level: axClient ? careLevelOf(axClient.classes).level : null }
   if (!clientAxId) { out.level = null; return out }
+  try {
+    const st = (await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()).data?.data ?? {}
+    if (st.caregiver_preview_live === true) {
+      const { row, circle } = await previewRecords(db, clientAxId)
+      const v = approvedView(row, circle, row?.approved_share_care === true ? await careNow(db, clientAxId, axClient) : [])
+      return { about: v.about, enjoys: v.enjoys, help: v.help, needs: v.needs, home: v.home, level: v.level }
+    }
+  } catch { out.level = null; return out }
   try {
     const { data: circ } = await db.from('care_circles').select('caregiver_about, caregiver_enjoys, caregiver_share_care').eq('axiscare_client_id', clientAxId).eq('active', true).limit(1).maybeSingle()
     out.about = String(circ?.caregiver_about ?? '').trim() || null
