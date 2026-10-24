@@ -665,7 +665,7 @@ async function dnrSetFor(clientName: string): Promise<Set<string>> {
 async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked?: boolean } = {}):
   // deno-lint-ignore no-explicit-any
   // deno-lint-ignore no-explicit-any
-  Promise<{ group0: any[]; group1: any[]; group2: any[]; prn_other: any[]; prn_ongoing: any[]; excluded: any[]; meta: Record<string, unknown> }> {
+  Promise<{ group0: any[]; group1: any[]; group2: any[]; prn_other: any[]; prn_ongoing: any[]; excluded: any[]; needs_verification?: any[]; meta: Record<string, unknown> }> {
   // deno-lint-ignore no-explicit-any
   const excluded: any[] = []
   const cut = (x: Record<string, unknown>, why: string) =>
@@ -977,6 +977,8 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
   const group1: any[] = [], group2: any[] = []
   // deno-lint-ignore no-explicit-any
   const group0: any[] = [], prnOther: any[] = [], prnOngoing: any[] = []   // PRN3
+  // deno-lint-ignore no-explicit-any
+  const needsVer: any[] = []   // CARA (2026-10-23): expired or missing clearances, listed, never offerable
   const availAll = await availLoad()   // 2026-10-14: availability checked for everyone
   /* CARA PHASE 1 context (only when v2): the week's hours, other open cases and plans (overlapping yeses), the skills rule */
   let weekHrs = new Map<string, number>(), weekNote: string | null = null, shiftLen = 0
@@ -1027,7 +1029,7 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
     if (v2 && skills?.judge) {
       const sn = skillsNote(skills.judge(String(x.axiscare_id)))
       if (sn.cut) { cut(x, 'Skills rules: ' + sn.cut); continue }
-      skillsLine = sn.note; clearedLine = sn.cleared_note ?? null   /* a lapsed check: listed, flagged (2026-10-23) */
+      skillsLine = sn.note; clearedLine = sn.cleared_note ?? null   /* an expired or missing clearance: Needs Verification (below) */
     }
     const h = history.get(String(x.axiscare_id))
     const gap = wantGap.get(String(x.axiscare_id))
@@ -1084,6 +1086,11 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
         hours: weekNote && !/not checked/.test(weekNote) ? hoursFlag(weekHrs.get(gid) ?? 0, shiftLen, availAll.get(gid)?.target_hours as number | null) : null,
         overlaps: overlapsFor(c, { axiscare_id: gid, name: String(x.name) }, otherCases, plans), skills_note: skillsLine, cleared_note: clearedLine })
     }
+    /* NEEDS VERIFICATION (Samantha, 2026-10-23): "caregivers with expired or missing required clearances cannot receive shift
+       offers until they're verified as eligible. They can appear in the list marked Needs Verification so our office knows
+       why they aren't eligible." Listed apart with the reason, never in a group: send_selected and Send Cara's list only
+       send from the groups, so nobody here can be texted from this list. */
+    if (v2 && clearedLine) { needsVer.push({ ...row, needs_verification: 'Needs Verification: ' + clearedLine.replace(/^Not cleared to work: /, '') }); continue }
     /* PRN3: the PRN CNA Team gets its own place, never mixed into the groups everyone else is ticked from. */
     const pm = prnTeam.get(gid)
     if (pm) {
@@ -1129,7 +1136,7 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
   /* driving only preferred: the same order, with everyone not cleared to drive moved after everyone who is (stable) */
   if (drive.level === 'preferred' && driveLive) for (const g of [group0, group1, group2, prnOther, prnOngoing]) {
     const yes = g.filter((r) => !r.drive_lower), no = g.filter((r) => r.drive_lower); g.splice(0, g.length, ...yes, ...no) }
-  return { group0, group1, group2, prn_other: prnOther, prn_ongoing: prnOngoing, excluded, meta: {
+  return { group0, group1, group2, prn_other: prnOther, prn_ongoing: prnOngoing, excluded, needs_verification: needsVer, meta: {
     transport: { level: drive.level, from: drive.from, unknown: driveUnknown, enforced: driveLive, notes: driveNotes,
       rule: drive.level && !driveLive ? 'Driver check (not enforced yet): the Admin switch "Only Approved Drivers get shifts that need transportation" is off, so nobody is left out or moved; each person not cleared carries the note'
         : drive.level === 'required' ? 'needs transportation: only Approved Drivers with a current license and insurance are listed'
@@ -1200,7 +1207,8 @@ Deno.serve(async (req) => {
     if (body.action === 'recommend') {
       const pool = await buildCandidatesForCase(kase, { v2: true, includeAsked: true })
       const rows = [...pool.group0, ...pool.prn_other, ...pool.group1, ...pool.group2, ...pool.prn_ongoing]
-      return jr({ ...recommend(kase, rows, pool.excluded), meta: pool.meta.cara_list })
+      const blocked = [...pool.excluded, ...(pool.needs_verification || []).map((x) => ({ name: x.name, why: x.needs_verification }))]
+      return jr({ ...recommend(kase, rows, blocked), meta: pool.meta.cara_list })
     }
 
     if (body.action === 'send_selected') {

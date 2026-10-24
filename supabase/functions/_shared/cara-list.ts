@@ -110,7 +110,7 @@ export function overlapsFor(kase: Any, cg: { axiscare_id?: string | null; name?:
 /** The skills rule's answer for the list: cut only on "not for this visit"; one more step and likely fit are notes. */
 export function skillsNote(r: Any): { cut: string | null; note: string | null; group: string | null; cleared_note?: string | null } {
   if (!r) return { cut: null, note: null, group: null }
-  /* a lapsed eligibility check is shown, never a cut (her rule 2026-10-23) */
+  /* an expired or missing clearance is not a skills cut: coverage-run lists it apart as Needs Verification (2026-10-23) */
   if (r.cleared_note) { const inner = skillsNote({ ...r, cleared_note: null }); return { ...inner, cleared_note: S(r.cleared_note, 200) } }
   if (r.group === 'not_for_visit') return { cut: S(r.reason, 200) || 'not a match for this client (skills rules)', note: null, group: r.group }
   if (r.group === 'one_more_step') return { cut: null, note: 'One more step: ' + S(r.reason, 160), group: r.group }

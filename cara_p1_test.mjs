@@ -120,7 +120,7 @@ ck('preview: Ben (nothing on file) is Unknown, labeled, and listed after Amy (a 
   && all(j).findIndex((x) => x.name === 'Amy Fit') < all(j).findIndex((x) => x.name === 'Ben Unknown'), all(j).map((x) => [x.name, x.avail_state]))
 ck('preview: Cal (outside) is after Ben (unknown)', all(j).findIndex((x) => x.name === 'Ben Unknown') < all(j).findIndex((x) => x.name === 'Cal Outside'))
 ck('preview: the skills rules cut Eve with the rule\'s own reason (dementia care required, training not complete)', !row(j, 'Eve Skills') && j.excluded.some((x) => x.name === 'Eve Skills' && x.why === 'Skills rules: Dementia training not complete'), j.excluded)
-ck('preview: a lapsed eligibility check never takes anyone off the list (her rule 2026-10-23): Hal is listed, flagged', !!row(j, 'Hal Lapsed') && row(j, 'Hal Lapsed').cleared_note === 'Not cleared to work: OIG check over 30 days' && !j.excluded.some((x) => x.name === 'Hal Lapsed'), [row(j, 'Hal Lapsed'), j.excluded])
+ck('preview: an expired clearance = Needs Verification: listed apart with the reason, never in an offerable group', !row(j, 'Hal Lapsed') && (j.needs_verification || []).some((x) => x.name === 'Hal Lapsed' && x.needs_verification === 'Needs Verification: OIG check over 30 days') && !j.excluded.some((x) => x.name === 'Hal Lapsed'), [j.needs_verification, j.excluded])
 ck('preview: Dee is flagged overtime risk (38h + 4h = 42h)', row(j, 'Dee Hours')?.hours?.level === 'ot' && /= 42h/.test(row(j, 'Dee Hours').hours.text), row(j, 'Dee Hours'))
 ck('preview: Fran is flagged for the yes she already gave on an overlapping open shift', (row(j, 'Fran Overlap')?.overlaps || []).some((o) => /another open shift then: Ida/.test(o)), row(j, 'Fran Overlap'))
 ck('preview: meta says what was checked (skills rule version, the work week, the Unknown rule)', j.meta?.cara_list?.on === true && /checked with match-rules 1\./.test(j.meta.cara_list.skills) && /weekly hours counted/.test(j.meta.cara_list.hours), j.meta?.cara_list)
@@ -138,16 +138,21 @@ reset(K(), { cara_list_live: true }); j = await act({ action: 'candidates', case
 ck('switch on: the normal list is the better list', j.meta?.cara_list?.on === true && !row(j, 'Eve Skills') && row(j, 'Ben Unknown')?.avail_state === 'unknown')
 j = await act({ action: 'send_selected', case_id: 'cv1', recipients: ['Eve Skills'] })
 ck('switch on: someone the skills rules rule out cannot be texted, even if the browser asks', !SENT.length && !(j.sent || []).length, j)
+j = await act({ action: 'send_selected', case_id: 'cv1', recipients: ['Hal Lapsed'] })
+ck('switch on: someone who Needs Verification cannot be texted a shift offer, even if the browser asks', !SENT.length && !(j.sent || []).length, j)
+reset(K()); j = await act({ action: 'send_selected', case_id: 'cv1', recipients: ['Hal Lapsed'] })
+ck('switch off: the list is as it is today (Needs Verification starts with the list switch)', (j.sent || []).length === 1, j)
 
 /* Cara recommends: of the yeses, one, with reasons and concerns; interest only */
 const yes = (n, id, at, extra = {}) => ({ id: 'a' + id, name: n, axiscare_id: id, state: 'yes', replied_at: at, ...extra })
 reset(K({ asked: [yes('Ben Unknown', '9002', '2026-10-01T10:00:00Z'), yes('Amy Fit', '9001', '2026-10-01T10:05:00Z'), yes('Dee Hours', '9004', '2026-10-01T09:00:00Z'),
-  yes('Fran Overlap', '9006', '2026-10-01T09:30:00Z'), yes('Eve Skills', '9005', '2026-10-01T09:10:00Z'), yes('Ghost Person', '9999', '2026-10-01T09:20:00Z'),
+  yes('Fran Overlap', '9006', '2026-10-01T09:30:00Z'), yes('Eve Skills', '9005', '2026-10-01T09:10:00Z'), yes('Hal Lapsed', '9007', '2026-10-01T08:00:00Z'), yes('Ghost Person', '9999', '2026-10-01T09:20:00Z'),
   { id: 'aw', name: 'Cal Outside', axiscare_id: '9003', state: 'waiting' }] }))
 AXCALLS = []; j = await act({ action: 'recommend', case_id: 'cv1' })
 ck('recommend: Amy (inside her availability, no concerns) even though others said yes first', j.pick?.name === 'Amy Fit' && j.pick.reasons.some((r) => /inside their availability/.test(r)) && !j.pick.concerns.length, j)
 ck('recommend: the others are listed with their concerns (Unknown, overtime, the overlapping yes)', (j.others || []).find((o) => o.name === 'Ben Unknown')?.concerns.includes(L.UNKNOWN_WHY)
   && (j.others || []).find((o) => o.name === 'Dee Hours')?.concerns.some((c) => /Overtime risk/.test(c)) && (j.others || []).find((o) => o.name === 'Fran Overlap')?.concerns.some((c) => /another open shift/.test(c)), j.others)
+ck('recommend: a yes from someone who Needs Verification is never recommended, and says why', j.not_eligible?.some((x) => x.name === 'Hal Lapsed' && /^Needs Verification: OIG/.test(x.why)), j.not_eligible)
 ck('recommend: a yes from someone the rules now rule out is never recommended, and says why', j.not_eligible?.some((x) => x.name === 'Eve Skills' && /Dementia training/.test(x.why)) && j.not_eligible?.some((x) => x.name === 'Ghost Person'), j.not_eligible)
 ck('recommend: only people who said yes (a waiting ask is not in it)', ![j.pick, ...(j.others || [])].some((x) => x?.name === 'Cal Outside'))
 ck('recommend: interest only: says nothing is assigned, writes nothing, texts nobody, only reads AxisCare', /Nothing is assigned until you confirm and AxisCare shows them/.test(j.note) && !SENT.length
