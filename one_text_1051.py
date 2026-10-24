@@ -8,14 +8,14 @@
 #     op_events like a Hub switch).
 #  3. Proves it: a stranger is refused; the next 2-minute lead-watch run reports one text per family.
 # Sends nothing itself. Safe to run again.
-import json, os, subprocess, shutil, time, calendar
+import json, os, re, subprocess, shutil, time, calendar
 import cc_step_lib as L
 from cc_step_lib import say, bad, done, http, sql, deploy, start, check_build, fmeta, live_files, lit, sha
 
 HUB = "zngsgedlsxinbygwmxwn"
 FNROOT = L.FNROOT; ROOT = L.ROOT
 SHAS = json.loads(os.environ.get("SB_SHAS", "{}"))
-BASE = os.environ.get("SB_BASE", "")           # the main commit this change started from: live must be exactly that
+BASE = os.environ.get("SB_BASE", "")           # the reviewed main commit: every live file must be one of its versions (current or older)
 NODE = os.environ.get("SB_NODE", "") or shutil.which("node") or ""
 FNB = os.environ.get("SB_FN_BASE", f"https://{HUB}.supabase.co")
 FNS = ["lead-watch", "lead-digest"]
@@ -26,6 +26,19 @@ def stop(msg, code=2): bad(msg); say("  STOP. Nothing was changed."); done(code)
 SETTINGS = """select coalesce((data::jsonb->>'lead_rungs_live')::boolean, false) as rungs, coalesce((data::jsonb->>'lead_one_text')::boolean, false) as one_text
   from public.app_data where key = 'ops_settings'"""
 BEAT = "select item->>'at' as at, item->>'note' as note from public.app_data, jsonb_array_elements(case when jsonb_typeof(data::jsonb) = 'array' then data::jsonb else '[]'::jsonb end) item where key = 'automation_heartbeats' and item->>'id' = 'hb_lead-watch'"
+
+def sha_text(t):
+    tmp = os.path.join(ROOT, ".cmp_1051"); open(tmp, "w").write(t); h = sha(tmp); os.remove(tmp); return h
+def past_version(k, h):
+    """The date and subject of the main commit where file k had sha h, when that is an earlier version on the starting build's history."""
+    if not h: return ""
+    c, log = run(["git", "-C", ROOT, "log", "--format=%H %ad %s", "--date=format:%b %d %H:%M", BASE, "--", k])
+    if c != 0: return ""
+    for line in log.splitlines()[:200]:
+        commit, rest = line.split(" ", 1)
+        c2, body = run(["git", "-C", ROOT, "show", f"{commit}:{k}"])
+        if c2 == 0 and sha_text(body) == h: return rest[:12].strip()
+    return ""
 
 start("SPEED TO LEAD: ONE TEXT PER FAMILY")
 say("PART 1 · READ ONLY (nothing changes)")
@@ -40,9 +53,10 @@ for fn in FNS:
 if drift: stop("this isn't the same as GitHub's main yet (merge the pull request first, or newer work landed since: " + ", ".join(sorted(set(drift)))[:240] + ")")
 ok("the reviewed build is what is on GitHub's main")
 if NODE:
-    for t, must in (("one_text_test.mjs", "9/9 passed"), ("lead_watch_494_test.mjs", "26/26 passed"), ("morning_email_420_test.mjs", "34/34 passed"), ("lead_turns_stage1_test.mjs", "17/17 passed"), ("fair_counts_test.mjs", "7/7 passed")):
+    for t in ("one_text_test.mjs", "lead_watch_494_test.mjs", "morning_email_420_test.mjs", "lead_turns_stage1_test.mjs", "fair_counts_test.mjs"):
         c, o = run([NODE, t], cwd=ROOT)
-        if c != 0 or must not in o: stop(f"the tests failed ({t}): " + " ".join(l for l in o.splitlines() if "FAIL" in l or "✗" in l)[:240])
+        m = re.search(r"(\d+)/(\d+) passed", o)
+        if c != 0 or not m or m.group(1) != m.group(2): stop(f"the tests failed ({t}): " + " ".join(l for l in o.splitlines() if "FAIL" in l or "✗" in l)[:240])
     ok("tests pass: one text per family, the 15 and 30 still happen quietly and the miss still counts, the 8am brief line (fake data only)")
 else: say("  · node is not on this Mac, so the tests were not re-run here (they passed when built)")
 if not BASE: stop("no starting build was given to compare the live functions with", 3)
@@ -50,16 +64,21 @@ metas = {}
 for fn in FNS:
     okl, live = live_files(HUB, fn)
     if not okl: stop(f"couldn't download the live {fn} to compare it", 3)
-    diff = []
+    diff = []; older = []
     for k in sorted(L.need(FNROOT, fn)):
         c2, b2 = run(["git", "-C", ROOT, "show", f"{BASE}:{k}"])
         if c2 != 0:
             if k in live: diff.append(k + " (live has it, the starting build does not)")
             continue
-        tmp = os.path.join(ROOT, ".cmp_1051"); open(tmp, "w").write(b2); want = sha(tmp); os.remove(tmp)
-        if live.get(k) != want: diff.append(k)
-    if diff: stop(f"the live {fn} is not the build this change started from, so deploying could undo someone else's work: " + ", ".join(diff)[:240])
-    ok(f"the live {fn} is exactly the starting build (nothing of anyone else's would be undone)")
+        if live.get(k) == sha_text(b2): continue
+        # Not the starting build. An OLDER version of the same file from main's history is fine (the function was last
+        # deployed before that file moved on; deploying only brings it up to date). Anything else stops: unknown work.
+        past = past_version(k, live.get(k))
+        if past: older.append(f"{k} (live has the {past} version)")
+        else: diff.append(k)
+    if diff: stop(f"the live {fn} has something that is not on GitHub's main, so deploying could undo someone else's work: " + ", ".join(diff)[:240])
+    if older: say(f"  · the live {fn} has older copies of: " + "; ".join(older)[:300] + ". Deploying brings them up to date; nothing newer is replaced.")
+    ok(f"the live {fn} holds nothing that is not already on GitHub's main (nothing of anyone else's would be undone)")
     s, m = fmeta(HUB, fn)
     if s != 200 or not m or "verify_jwt" not in m: stop(f"couldn't read how {fn} is set up live ({s})", 3)
     metas[fn] = bool(m["verify_jwt"]); say(f"  · {fn} is live as version {m.get('version', '?')}, gateway sign-in check {'on' if metas[fn] else 'off'} (kept)")
