@@ -42,6 +42,7 @@ const GROUPS: [RegExp, string][] = [
   [/\b(porch|patio|outdoors?|outside|fresh air|sunroom|yard)\b/i, 'time outside'],
   [/\b(birds?|squirrels?|bird ?watching)\b/i, 'birds'],
   [/\b(cats?|dogs?|kitty|puppy|pets?)\b/i, 'pets'],
+  [/\b(outings?|park|parks|going out|get(ting)? out|out of the house|lunch out|restaurants?|drive-?thru|shopping)\b/i, 'getting out'],
   [/\b(chat\w*|conversations?|visit\w*|talk\w*|socializ\w*|company|stories)\b/i, 'a good chat'],
   [/\b(reading|books?|novels?)\b/i, 'reading'],
   [/\b(nails?|manicure|hair (done|styled|curled|styling)|getting (her|his) hair)\b/i, 'being pampered'],
@@ -86,6 +87,9 @@ const SCHEMA = { type: 'object', additionalProperties: false, required: ['detail
 export const LIFE_MODEL = 'claude-haiku-4-5'
 /* the caregiver's own work ("made coffee", "fed the cats", "watered her plants", "helped her sort mail") */
 const TASK = /^(i |we |then |and )?(made|make|fed|feed|watered|helped|help|sorted|cleaned|washed|cooked|prepared|fixed|gave|took|refilled|bagged|vacuum\w*|folded|got her|got him|brought)\b/i
+const HELP = /\b(ask\w*|want\w*|need\w*)\s+(me|us)\s+to\b|\bhelp(ed|ing)?\s+(him|her|them|me)\b|\b(asked|needed) for help\b/i
+const VISITOR = /\b(called|calls?|phone calls?|came (by|over)|stopped by|dropped by|came to visit)\b/i
+const CARE_ITEM = /\b(mattress\w*|bed|beds|pillows?|recliner|lift chair|cushions?|wheelchair|walker|shower chair|commode|hearing|glasses)\b/i
 /* the client wanted, chose or loved it */
 const WANT = /\b(want\w*|ask\w*|request\w*|chose|choose|picked|love[sd]?|loving|enjoy\w*|favou?rite|craving|insist\w*|happy|smil\w*|laugh\w*|could ?n[o']t put)\b/i
 /* the note-specific words a Life Story never carries (beyond the Caregiver Preview's own list); exercise and therapy too
@@ -95,9 +99,11 @@ const REL = /\b(son|daughter|husband|wife|grand\w*|brother|sister|niece|nephew|f
 /** The few words kept as the source: other people's first names masked ("played cards with Lisa" -> "played cards with ..."),
     the client's own first name and well-known names (shows, teams, singers) are hard to tell apart, so any capitalised word
     after the first is masked unless it's the client's first name or in the topic itself. */
+/* ordinary words that start a sentence (never a person's name) */
+const STARTERS = new Set(['she', 'he', 'we', 'they', 'the', 'then', 'after', 'when', 'today', 'tonight', 'this', 'it', 'her', 'his', 'client', 'mrs', 'mr', 'ms', 'miss', 'once', 'later', 'while', 'had', 'did', 'played', 'watched', 'went', 'spent', 'enjoyed', 'loved', 'read', 'sat', 'a', 'an', 'our', 'good', 'great', 'very'])
 export function maskNames(words: string, clientFirst: string, topic: string): string {
   const keep = new Set([S(clientFirst).toLowerCase(), ...S(topic).toLowerCase().split(/\s+/), 'i', 'tv'])
-  return S(words).split(' ').map((w, i) => { const bare = w.replace(/[^A-Za-z]/g, ''); return i > 0 && /^[A-Z][a-z]+$/.test(bare) && !keep.has(bare.toLowerCase()) ? w.replace(bare, '...') : w }).join(' ')
+  return S(words).split(' ').map((w) => { const bare = w.replace(/[^A-Za-z]/g, ''); return /^[A-Z][a-z]+$/.test(bare) && !keep.has(bare.toLowerCase()) && !STARTERS.has(bare.toLowerCase()) ? w.replace(bare, '...') : w }).join(' ')
 }
 
 /** What this note shows the client enjoys, checked. failed = the AI couldn't be read (nothing is kept). */
@@ -116,13 +122,21 @@ export async function askLife(text: string, apiKey: string, fetchImpl: typeof fe
     let rejected = 0
     const details = (Array.isArray(d?.details) ? d.details : []).slice(0, 3).map((x: Any) => ({ topic: S(x?.topic).slice(0, 40), kind: S(x?.kind), words: S(x?.words).slice(0, 120) }))
       .filter((x: Any) => {
-        const nameOnly = x.kind === 'conversation' && /^[A-Z][a-z]+$/.test(x.topic)   /* "Lisa": a person, not a topic */
+        /* "Lisa": a person, not a topic (a single capitalised word, in no group, written mid-sentence in the note or opening the
+           words the AI relied on, like a name) */
+        const nameOnly = /^[A-Z][a-z]+$/.test(x.topic) && !groupOf(x.topic) && (new RegExp('[a-z,] ' + x.topic + '\\b').test(text) || x.words.startsWith(x.topic + ' '))
         /* the caregiver's own task (unless the client wanted it), the caregiver's own life, a meal simply eaten */
         const task = TASK.test(x.words) && !WANT.test(x.words)
         const mine = /\bmy\b/i.test(x.words)
         const plainMeal = x.kind === 'food_drink' && !WANT.test(x.words)
+        /* 2026-10-24 leftover misses: a request for help is a task, not an interest ("asked me to help him vacuum seal");
+           someone calling or visiting is a family or friends matter; comfort and care items (a mattress, a lift chair)
+           are not interests */
+        const helpReq = HELP.test(x.words)
+        const visitor = VISITOR.test(x.words) || VISITOR.test(x.topic)
+        const careItem = CARE_ITEM.test(x.topic)
         const ok = x.topic && LIFE_KINDS.includes(x.kind) && inNote(x.words, text) && !sensitiveHit(x.topic) && !sensitiveHit(x.words)
-          && !NOTE_SENSITIVE.test(x.topic) && !NOTE_SENSITIVE.test(x.words) && !REL.test(x.topic) && !nameOnly && !task && !mine && !plainMeal
+          && !NOTE_SENSITIVE.test(x.topic) && !NOTE_SENSITIVE.test(x.words) && !REL.test(x.topic) && !nameOnly && !task && !mine && !plainMeal && !helpReq && !visitor && !careItem
         if (!ok) rejected++
         return ok
       })
