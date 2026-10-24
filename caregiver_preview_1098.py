@@ -22,6 +22,7 @@ NODE = os.environ.get("SB_NODE", "") or shutil.which("node") or ""
 if NODE == "none": NODE = ""   # the rehearsal's way to skip the tests
 FNB = os.environ.get("SB_FN_BASE", f"https://{HUB}.supabase.co")
 FNS = ["coverage-run", "coverage-assign", "callin-alert", "shift-offer", "family-offer", "family-gateway", "pilot-readiness"]
+OPTIONAL = {"pilot-readiness"}   # a report function that may never have been installed live (1098 first run, 2026-10-24)
 NEW = {"caregiver-preview": True}   # new function: office staff only (gateway sign-in check on, and requireStaff)
 SWITCHES = ["caregiver_preview_live"]
 CARA = ["cara_list_live", "cara_visit_match_live", "cara_urgency_live", "cara_reply_ai_practice", "cara_reply_ai_live", "cara_today_live", "cara_board_live", "shift_page_live"]
@@ -83,8 +84,10 @@ ok("the Caregiver Preview switch is off")
 cara_on = [k for k in CARA if sw.get(k) not in (None, False, "false")]
 say("  · Cara switches on now (left exactly as they are): " + (", ".join(cara_on) if cara_on else "none"))
 gates = {}
-for fn in FNS:
+for fn in list(FNS):
     s_, m = fmeta(HUB, fn)
+    if s_ == 404 and fn in OPTIONAL:   # never installed live (pilot-readiness): left alone, nothing to update
+        FNS.remove(fn); say(f"  · {fn} is not installed live, so it is left alone"); continue
     if s_ != 200 or not m or "verify_jwt" not in m: stop(f"couldn't read how {fn} is set up live ({s_})", 3)
     gates[fn] = bool(m["verify_jwt"]); say(f"  · {fn} is live as version {m.get('version', '?')}, gateway sign-in check {'on' if gates[fn] else 'off'} (kept)")
 say(); say("PART 2 · CHANGE")
