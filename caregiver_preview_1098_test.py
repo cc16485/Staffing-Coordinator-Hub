@@ -16,6 +16,7 @@ class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if "/api-keys" in self.path: return self._send(200, [{"name": "anon", "api_key": "eyJanon"}, {"name": "service_role", "api_key": "eyJservice"}])
         m = re.match(r"/v1/projects/\w+/functions/([a-z-]+)$", self.path)
+        if m and m.group(1) == "pilot-readiness" and M.get("pr_missing"): return self._send(404, {})
         if m and m.group(1) in FNS: return self._send(200, {"version": 7, "verify_jwt": m.group(1) not in ("callin-alert", "shift-offer", "family-gateway")})
         if m and m.group(1) == "caregiver-preview": return self._send(200, {"version": 1, "verify_jwt": True})
         self._send(404, {})
@@ -72,6 +73,8 @@ try:
     ck("clean run: the database step ran and was checked (record there, no browser access, carried across)", M.get("ddl") and "the Caregiver Preview record is there, no browser access; 0 Family Circle entries carried across" in o, o)
     ck("clean run: the seven readers re-deployed with their gateway settings kept; the new caregiver-preview with the sign-in check on", sorted(d) == sorted(ALLF) and "shift-offer is live as version 7, gateway sign-in check off (kept)" in o and "caregiver-preview deployed: version 1, gateway sign-in check on" in o, [d, o])
     ck("clean run: no sign-in = nothing; a made-up shift link still refused", "caregiver-preview: needs a Hub sign-in (401)" in o and "a made-up link is still refused (403)" in o, o)
+    c, o, d = go(pr_missing=True, no_node=True)
+    ck("pilot-readiness not installed live (as on 10-24): left alone, the rest goes ahead, DONE", c == 0 and "1098: DONE" in o and "pilot-readiness is not installed live, so it is left alone" in o and "pilot-readiness" not in d and "caregiver-preview" in d, [d, o])
     c, o, d = go(rows=1, had=1, no_node=True)
     ck("existing Family Circle entries: counted as carried across", c == 0 and "1 Family Circle entry carried across" in o, o)
     c, o, d = go(settings={"caregiver_preview_live": True}, no_node=True)
