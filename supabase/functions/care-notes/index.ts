@@ -40,6 +40,7 @@
 //                   It never contacts anyone, and the caregiver is never told by the Hub.
 // -----------------------------------------------------------------------------
 import { jobCaller } from '../_shared/job-auth.ts'
+import { askLife, addMention, inLifeStory, maskNames } from '../_shared/life-notes.ts'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { textAdmin, type Admin } from '../_shared/clockin-admins.ts'
@@ -361,7 +362,7 @@ export async function clientCareOwner(db: any): Promise<{ email: string; name: s
   } catch { return { email: '', name: '' } }
 }
 // deno-lint-ignore no-explicit-any
-export async function flagRun(db: any, opts: { practice: boolean; hours?: number }) {
+export async function flagRun(db: any, opts: { practice: boolean; hours?: number; lifeOnly?: boolean; endHoursAgo?: number }) {
   const { token, site } = axisCreds()
   if (!token || !/^\d+$/.test(site)) return { error: 'AxisCare credentials not set on this project' }
   const { data: os } = await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
@@ -369,9 +370,11 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
   const kindLive = os?.data?.kind_words_suggest_live === true   /* My Desk 6b: its own switch (Owners Hub Admin page) */
   const levelsLive = os?.data?.care_notes_levels_live === true   /* red / yellow flags (her switch, Owners Hub Admin page) */
   const redTextLive = levelsLive && os?.data?.care_notes_red_text_live === true
+  /* Life Story step 3 (2026-10-24): what each note shows the client enjoys, collected in practice (nothing on profiles) */
+  const lifeOn = opts.lifeOnly === true || os?.data?.life_notes_practice === true || os?.data?.life_notes_live === true
   if (!opts.practice && !live) return { ok: true, off: true, note: 'switched off (ops_settings.care_notes_flag_live is not true)' }
   const state = (await readKey(db, 'care_notes_state')).find((x) => x?.id === 'state') ?? { id: 'state', last_look: '' }
-  const now = Date.now()
+  const now = Date.now() - Math.min(Math.max(Number(opts.endHoursAgo) || 0, 0), 14 * 24) * 3600e3
   const since = opts.practice ? now - (opts.hours ?? 48) * 3600e3
     : (state.last_look ? new Date(state.last_look).getTime() : now - 24 * 3600e3)
   const base = `https://${site}.axiscare.com`
@@ -392,7 +395,10 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
   const out = { ok: true, practice: opts.practice, window_hours: Math.round((now - since) / 3600e3), visits_finished: 0, read: 0, stopped_early: false,
     days_with_words: 0, already_flagged: 0, asked: 0, flagged: 0, urgent: 0, ai_could_not_read: 0, by_kind: {} as Record<string, number>, items_made: 0,
     levels_switch: levelsLive, red_text_switch: redTextLive, red: 0, yellow: 0, normal_day: 0, pattern_red: 0, red_texts: 0, by_level_kind: {} as Record<string, number>,
-    kind_switch: kindLive, kind_asked: 0, kind_found: 0, kind_not_in_note: 0, kind_ai_failed: 0, kind_already: 0, kind_suggested: 0 }
+    kind_switch: kindLive, kind_asked: 0, kind_found: 0, kind_not_in_note: 0, kind_ai_failed: 0, kind_already: 0, kind_suggested: 0,
+    life_on: lifeOn, life_asked: 0, life_ai_failed: 0, life_found: 0, life_rejected: 0, life_new: 0, life_combined: 0, life_known: 0, life_same_note: 0 }
+  // deno-lint-ignore no-explicit-any
+  const lifeCache: { profiles: any[] | null } = { profiles: null }
   // deno-lint-ignore no-explicit-any
   const groups = new Map<string, any[]>()
   /* read only the visits that could have finished since the last look: the list carries clock-out times when it has
@@ -434,6 +440,8 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
     out.days_with_words++
     const id = 'ops_carenote_' + k.replace(/[^A-Za-z0-9]/g, '_')
     const text = (note ? 'Care note: ' + note : 'No care note.') + (tasks.length ? '\nTasks: ' + tasks.join('; ') : '')
+    if (lifeOn && (!opts.practice || opts.lifeOnly)) await lifePass(db, k, text, last, out, lifeCache)
+    if (opts.lifeOnly) continue
     if (opts.practice || kindLive) await kindPass(db, opts.practice, k, text, last, out)
     if (have.has(id) && !opts.practice) { out.already_flagged++; continue }
     if (useLevels) { await levelPass(db, opts, { id, k, text, note, tasks, last, items, cc, cgs, incidents, redTextLive, now, out, have }); if (!opts.practice) continue }
@@ -461,7 +469,7 @@ export async function flagRun(db: any, opts: { practice: boolean; hours?: number
       created_at: new Date().toISOString(), created_by: 'care-notes', opened_by: 'care-note-flag' } })
     if (!error) out.items_made++
   }
-  if (!opts.practice) {
+  if (!opts.practice && !opts.lifeOnly) {
     if (!out.stopped_early) await db.rpc('upsert_app_data_item', { target_key: 'care_notes_state', item: { id: 'state', last_look: new Date(now).toISOString() } })
     try { await db.rpc('upsert_app_data_item', { target_key: 'automation_heartbeats', item: { id: 'hb_care-notes-flag', automation: 'care-notes-flag',
       at: new Date().toISOString(), ok: !out.stopped_early, note: (levelsLive ? `${out.red} red, ${out.yellow} yellow of ${out.red + out.yellow + out.normal_day} read` : `${out.flagged} flagged of ${out.asked} read`) + (kindLive ? `; ${out.kind_suggested} kind word${out.kind_suggested === 1 ? '' : 's'} suggested` : '') + (out.stopped_early ? '; AxisCare asked us to slow down' : '') } }) } catch { /* a beat must not stop the run */ }
@@ -580,6 +588,37 @@ export async function regradeRun(db: any, opts: { practice: boolean }) {
 /* My Desk 6b: one caregiver-client-day's kind words become a suggestion waiting for a person's yes (never straight into
    the jar). Counted only in practice. Once per day's note: a run that re-reads the same shifts finds it already there. */
 // deno-lint-ignore no-explicit-any
+/* LIFE STORY SUGGESTIONS (step 3, practice): ask the note what the client enjoys; combine by topic per client; mark
+   topics already in the Life Story as known. Writes only life_note_suggestion (status 'practice' or 'known'). */
+// deno-lint-ignore no-explicit-any
+async function lifePass(db: any, k: string, text: string, last: any, out: any, cache: { profiles: any[] | null }) {
+  const ax = String(last?.client?.id ?? ''); if (!/^\d+$/.test(ax)) return
+  const ref = 'carenote:' + k
+  out.life_asked++
+  const a = await askLife(text, Deno.env.get('ANTHROPIC_API_KEY') || '')
+  if (a.failed) { out.life_ai_failed++; return }
+  out.life_rejected += a.rejected
+  if (!a.details.length) return
+  if (!cache.profiles) cache.profiles = await readKey(db, 'client_profiles')
+  // deno-lint-ignore no-explicit-any
+  const prof = cache.profiles.find((p: any) => p?.id === 'cp_ax' + ax) || {}
+  // deno-lint-ignore no-explicit-any
+  const lifeText = [...Object.values(prof.life || {}).map((x: any) => String(x?.text ?? '')), String(prof.life_story ?? '')].join(' ')
+  const first = String(last?.client?.firstName ?? '').trim()
+  const cg = String(last?.caregiver?.firstName ?? '').trim()
+  const day = k.split('|')[2] || ''
+  for (const d of a.details) {
+    out.life_found++
+    const known = inLifeStory(d.topic, lifeText)
+    const { data: row } = await db.from('life_note_suggestion').select('*').eq('axiscare_client_id', ax).eq('topic_key', d.key).maybeSingle()
+    const next = addMention(row ?? null, { ax, client_first: first, topic: d.topic, key: d.key, kind: d.kind, ref, cg, day, visit_id: String(last?.id ?? ''), words: maskNames(d.words, first, d.topic), known }, new Date().toISOString())
+    if (!next) { out.life_same_note++; continue }
+    const { error } = row ? await db.from('life_note_suggestion').update(next).eq('id', row.id) : await db.from('life_note_suggestion').insert(next)
+    if (error) continue
+    if (known) out.life_known++; else if (row) out.life_combined++; else out.life_new++
+  }
+}
+// deno-lint-ignore no-explicit-any
 async function kindPass(db: any, practice: boolean, k: string, text: string, last: any, out: any) {
   const ref = 'carenote:' + k
   if (!practice) {
@@ -614,6 +653,13 @@ Deno.serve(async (req) => {
     if (!caller || (practice && caller !== 'owner')) return json({ error: 'not allowed' }, 401)
     const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
     return json(await flagRun(db, { practice, hours: Math.min(Math.max(Number(q.get('hours')) || 48, 1), 96) }))
+  }
+  /* Life Story step 3: read back over earlier notes for the practice collection (the owner's key only; reads AxisCare,
+     asks the AI, writes only life_note_suggestion). ?life=1&hours=96&end_hours=0 (a window ending end_hours ago). */
+  if (q.get('life') === '1') {
+    if ((await jobCaller(req, false)) !== 'owner') return json({ error: 'not allowed' }, 401)
+    const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+    return json(await flagRun(db, { practice: true, lifeOnly: true, hours: Math.min(Math.max(Number(q.get('hours')) || 48, 1), 96), endHoursAgo: Number(q.get('end_hours')) || 0 }))
   }
   if (q.get('regrade') === '1') {
     if ((await jobCaller(req, false)) !== 'owner') return json({ error: 'not allowed' }, 401)
