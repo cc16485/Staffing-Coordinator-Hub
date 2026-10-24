@@ -8,6 +8,10 @@
 //   POST {action:'draft', ...key}                                          the AI's draft introduction from the Life Story only
 //                                                                          (_shared/life-story-draft.ts); returned, not saved.
 //                                                                          Switch ops_settings.cgp_ai_draft_live (off: owners only)
+//   POST ?test_draft=1  {sources:[{label,text}], first_name, family_names?} or {axiscare_client_id | lead_id}
+//                       THE OWNER'S SERVER KEY ONLY (2026-10-24, her ask: "so you can run the real AI on test Life Stories
+//                       and the real ones once we add them"): the same draft, with exactly what was sent, nothing saved,
+//                       whatever the switch. For trying the real AI before coordinators get the button.
 //   POST {action:'preview', ...key, version:'approved'|'draft'}            the shift page exactly as a caregiver would see it,
 //                                                                          on a sample shift (no open shift needed); nothing saved
 // The client is the AxisCare client, or the lead until they're in AxisCare (the draft follows them when they're added).
@@ -16,6 +20,7 @@
 // =============================================================================
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
+import { jobCaller } from '../_shared/job-auth.ts'
 import { opEvent } from '../_shared/events.ts'
 import { careNow } from '../_shared/cara-skills.ts'
 import { detailsView } from '../_shared/shift-offer.ts'
@@ -64,6 +69,27 @@ async function write(row: Any): Promise<boolean> {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405)
+  if (new URL(req.url).searchParams.get('test_draft') === '1') {
+    if ((await jobCaller(req, false)) !== 'owner') return json({ error: 'not allowed' }, 401)
+    const tb: Any = await req.json().catch(() => ({}))
+    try {
+      let srcs: Any[], first = S(tb?.first_name), family: string[] = (Array.isArray(tb?.family_names) ? tb.family_names : []).map(S).filter(Boolean)
+      if (Array.isArray(tb?.sources)) srcs = tb.sources.slice(0, 6).map((x: Any) => ({ key: 'test', label: S(x?.label) || 'Life Story', text: S(x?.text).slice(0, 800), via: 'test', by: '', at: '' })).filter((x: Any) => x.text)
+      else {
+        const tax = /^\d+$/.test(S(tb?.axiscare_client_id)) ? S(tb.axiscare_client_id) : null, tlead = S(tb?.lead_id) || null
+        const rows = async (key: string) => { const d = (await sb.from('app_data').select('data').eq('key', key).maybeSingle()).data?.data; return Array.isArray(d) ? d : [] }
+        const profile = tax ? (await rows('client_profiles')).find((p: Any) => p?.id === 'cp_ax' + tax) ?? null : null
+        const leads = await rows('leads')
+        const lr = (tlead && leads.find((l: Any) => l?.id === tlead)) || (tax && leads.find((l: Any) => String(l?.axiscare_client_id ?? '') === tax)) || null
+        srcs = lifeSources(profile, lr)
+        if (!first) first = S(profile?.client_name || [lr?.client_first_name].filter(Boolean).join(' ')).split(' ')[0]
+        family = [...family, S(lr?.first_name), S(lr?.last_name)].filter(Boolean)
+      }
+      const out = await draftFromLifeStory(srcs, first, Deno.env.get('ANTHROPIC_API_KEY') ?? '', fetch, family)
+      await opEvent(sb, { job: 'caregiver-preview', verb: 'caregiver_preview_ai_test', item_id: 'test', area: 'clients', actor_name: 'Owner test (server key)', summary: `Test AI draft from a Life Story (${srcs.length} answers): ${out.ok ? 'drafted, nothing saved' : out.why}` })
+      return json({ test: true, saved: false, first_name: first, sent: srcs.map((x: Any) => ({ label: x.label, text: x.text })), result: out })
+    } catch (e) { return json({ error: String((e as Error)?.message ?? e).slice(0, 200) }, 500) }
+  }
   const who = await requireStaff(sb, req, OFFICE_ROLES)
   if (!who.ok) return json({ error: who.error }, who.status)
   const b: Any = await req.json().catch(() => ({}))
