@@ -55,7 +55,7 @@ def go(**m):
     if os.path.exists(rep): os.remove(rep)
     env = dict(os.environ, SB_STEP="1093", SB_TOKEN="sbp_fake", SB_REPORT=rep, SB_SUPA_CLI=os.path.join(FAKEBIN, "supabase"), SB_API_BASE=URL, SB_FN_BASE=URL,
                SB_FNROOT=os.path.join(WT, "supabase/functions"), SB_SHAS=json.dumps(m.get("shas", SHAS)), SB_MAIN_REF="HEAD", SB_SETTLE="0", SB_HUB_REPO=HUBREPO,
-               SB_NODE="" if m.get("no_node") else (shutil.which("node") or ""))
+               SB_NODE="none" if m.get("no_node") else (shutil.which("node") or ""))
     p = subprocess.run(["python3", os.path.join(WT, "cara_p1_1093.py")], cwd=WT, env=env, capture_output=True, text=True)
     dep = open(DEPLOYS).read().split() if os.path.exists(DEPLOYS) else []
     return p.returncode, (open(rep).read() if os.path.exists(rep) else p.stdout + p.stderr), dep

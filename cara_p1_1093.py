@@ -19,6 +19,7 @@ REF = HUB = "zngsgedlsxinbygwmxwn"
 FNROOT = L.FNROOT; ROOT = L.ROOT
 SHAS = json.loads(os.environ.get("SB_SHAS", "{}"))
 NODE = os.environ.get("SB_NODE", "") or shutil.which("node") or ""
+if NODE == "none": NODE = ""   # the rehearsal's way to skip the tests
 FNB = os.environ.get("SB_FN_BASE", f"https://{HUB}.supabase.co")
 FNS = ["coverage-run", "coverage-reply", "coverage-watch", "call-disposition", "match-dark"]
 SWITCHES = ["cara_list_live", "cara_visit_match_live", "cara_urgency_live", "cara_reply_ai_practice", "cara_reply_ai_live", "cara_today_live"]
@@ -62,9 +63,10 @@ ok("the reviewed build is what is on GitHub's main")
 if NODE:
     hubdir = tempfile.mkdtemp(prefix="cc1093hub-")
     run(["git", "-C", HUB_REPO, "fetch", "-q", "origin", "main"])
-    c0, mr = run(["git", "-C", HUB_REPO, "show", "origin/main:match-rules.js"])
-    if c0 != 0: stop("couldn't read the Hub's match-rules.js from GitHub's main (needed by the tests)")
-    open(os.path.join(hubdir, "match-rules.js"), "w").write(mr)
+    for rf in ("match-rules.js", "eligibility-rules.js"):
+        c0, mr = run(["git", "-C", HUB_REPO, "show", f"origin/main:{rf}"])
+        if c0 != 0: stop(f"couldn't read the Hub's {rf} from GitHub's main (needed by the tests)")
+        open(os.path.join(hubdir, rf), "w").write(mr)
     env = dict(os.environ, HUB=hubdir, HUB_ROOT=hubdir)
     for t, must in (("cara_p1_test.mjs", "62/62"), ("prn3_coverage_test.mjs", "27/27"), ("driver_coverage_test.mjs", "26/26"), ("open_hours_coverage_test.mjs", "14/14"),
                     ("match_dark_test.mjs", "30/30"), ("ci3_test.mjs", ""), ("callin_test.mjs", ""), ("coverage_reply_open_hours_test.mjs", "12/12"), ("coverage_reply_picker_test.mjs", "6/6")):
