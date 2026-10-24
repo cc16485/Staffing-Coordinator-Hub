@@ -20,7 +20,7 @@ ck('availability: inside = fits; outside = outside with the reason; outside + sa
   && L.availStatus({ shift_date: SAT, shift_time: '18:00-22:00' }, { windows: W(['sat'], ['morning']) }).why === 'outside their availability (not Saturdays evenings)'
   && L.availStatus({ shift_date: SAT, shift_time: '07:00-11:00' }, { windows: W(['sun'], ['morning']), outside_ok: true }).state === 'outside_ok')
 ck('availability order: a stated fit, then Unknown, then outside', L.availRank('fits') < L.availRank('unknown') && L.availRank('unknown') < L.availRank('outside') && L.availRank('outside_ok') === 0)
-ck('the work week: Sunday to Saturday by default; Monday start when set', JSON.stringify(L.weekOf('2026-10-28')) === '["2026-10-25","2026-10-31"]' && JSON.stringify(L.weekOf('2026-10-25', 'mon')) === '["2026-10-19","2026-10-25"]')
+ck('the work week: Monday to Sunday by default (her payroll week, 2026-10-23); another start when set', JSON.stringify(L.weekOf('2026-10-28')) === '["2026-10-26","2026-11-01"]' && JSON.stringify(L.weekOf('2026-11-01')) === '["2026-10-26","2026-11-01"]' && JSON.stringify(L.weekOf('2026-10-28', 'sun')) === '["2026-10-25","2026-10-31"]')
 ck('hours: over 40 = overtime risk, from 36 = near 40, over their own target = said so, otherwise nothing', L.hoursFlag(38, 4, null).level === 'ot' && /38h already this week \+ 4h = 42h/.test(L.hoursFlag(38, 4, null).text)
   && L.hoursFlag(33, 4, null).level === 'near' && L.hoursFlag(20, 4, 20).level === 'over_target' && L.hoursFlag(10, 4, 30).level === null && L.shiftHours('22:00-06:00') === 8)
 ck('overlapping spans, overnight included', L.spansOverlap('07:00-11:00', '10:00-12:00') && !L.spansOverlap('07:00-11:00', '11:00-12:00') && L.spansOverlap('22:00-06:00', '23:00-01:00') && !L.spansOverlap('22:00-06:00', '05:00-07:00'))
@@ -32,6 +32,7 @@ ck('overlapping spans, overnight included', L.spansOverlap('07:00-11:00', '10:00
   ck('overlaps: a yes on another open shift then, and a yes on a planned regular shift then (not yet in AxisCare), both named', f.length === 2 && /another open shift then: Ida 08:00-10:00/.test(f[0]) && /New Client, 08:00-12:00/.test(f[1]), f)
   ck('overlaps: a 2nd choice in the plan counts (by AxisCare id); a no, a plan already in AxisCare, and the case itself do not', L.overlapsFor(k, { axiscare_id: '77', name: 'X' }, cases, plans).length === 1
     && !L.overlapsFor(k, { name: 'Joe No' }, cases, plans).length && !L.overlapsFor(k, { name: 'Hal Pushed' }, cases, plans).length && !L.overlapsFor(cases[0], { name: 'Fran Overlap' }, cases, []).length) }
+ck('skills note: a lapsed check is a note, never a cut', !L.skillsNote({ group: 'ready', cleared_note: 'Not cleared to work: x' }).cut && L.skillsNote({ group: 'ready', cleared_note: 'Not cleared to work: x' }).cleared_note === 'Not cleared to work: x')
 ck('skills note: not for this visit = a cut with the reason; one more step = a note; likely fit = a note', L.skillsNote({ group: 'not_for_visit', reason: 'Dementia training not complete' }).cut === 'Dementia training not complete'
   && /^One more step/.test(L.skillsNote({ group: 'one_more_step', reason: 'Lift: says yes' }).note) && !L.skillsNote({ group: 'ready' }).cut && !L.skillsNote({ group: 'ready' }).note)
 ck('interest vs assigned: a yes is interest; confirmed but not read back is not "assigned"; only an AxisCare read-back is', L.fillState({ asked: [{ state: 'yes' }] }) === 'interest'
@@ -44,7 +45,7 @@ const SVC = 'svc_' + 'k'.repeat(60)
 const ymd = (d) => d.toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(0, 10)
 const nextSat = (() => { const d = new Date(); d.setDate(d.getDate() + 3); while (d.getDay() !== 6) d.setDate(d.getDate() + 1); return ymd(d) })()
 const facts = (req) => MR.SKILLS.map((s) => ({ episode_id: 'e1', kind: 'need_' + s.key, layer: 'plan', value: req.includes(s.key) ? 'required' : 'no' }))
-const CG = [['9001', 'Amy', 'Fit'], ['9002', 'Ben', 'Unknown'], ['9003', 'Cal', 'Outside'], ['9004', 'Dee', 'Hours'], ['9005', 'Eve', 'Skills'], ['9006', 'Fran', 'Overlap']]
+const CG = [['9001', 'Amy', 'Fit'], ['9002', 'Ben', 'Unknown'], ['9003', 'Cal', 'Outside'], ['9004', 'Dee', 'Hours'], ['9005', 'Eve', 'Skills'], ['9006', 'Fran', 'Overlap'], ['9007', 'Hal', 'Lapsed']]
 const reset = (kase, settings = {}) => {
   SENT = []
   /* Dee: 4 days of 12:00-21:30 that week (38h), never overlapping the 7-11am shift */
@@ -52,9 +53,9 @@ const reset = (kase, settings = {}) => {
   VISITS = [0, 1, 2, 3].map((i) => { const d = new Date(wk[0] + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + i); const y = d.toISOString().slice(0, 10)
     return { caregiver: { id: 9004 }, client: { id: 600, firstName: 'Other' }, scheduledStartDate: y + 'T12:00:00', scheduledEndDate: y + 'T21:30:00' } })
   APP = {
-    caregivers: CG.map(([id, f, l]) => ({ first: f, last: l, phone: '41755501' + id.slice(-2), axiscare_id: id, active: true, alz_date: id === '9005' ? null : '2025-01-01' })),
+    caregivers: CG.map(([id, f, l]) => ({ first: f, last: l, phone: '41755501' + id.slice(-2), axiscare_id: id, active: true, alz_date: id === '9005' ? null : '2025-01-01', ...(id === '9007' ? { elig: { state: 'lapsed', summary: 'OIG check over 30 days' } } : {}) })),
     caregiver_availability: [{ axiscare_id: '9001', windows: W(['sat'], ['morning']) }, { axiscare_id: '9003', windows: W(['sun'], ['morning']) },
-      { axiscare_id: '9004', windows: W(['sat'], ['morning']) }, { axiscare_id: '9005', windows: W(['sat'], ['morning']) }, { axiscare_id: '9006', windows: W(['sat'], ['morning']) }],
+      { axiscare_id: '9004', windows: W(['sat'], ['morning']) }, { axiscare_id: '9007', windows: W(['sat'], ['morning']) }, { axiscare_id: '9005', windows: W(['sat'], ['morning']) }, { axiscare_id: '9006', windows: W(['sat'], ['morning']) }],
     coverage_cases: [kase, { id: 'cv2', status: 'open', client: 'Ida Other', shift_date: nextSat, shift_time: '08:00-10:00', asked: [{ name: 'Fran Overlap', axiscare_id: '9006', state: 'yes' }] }],
     staffing_plans: [], caregiver_overlay: [], dnr_log: [],
     ops_settings: { coverage_send_live: true, coverage_quiet_from: 0, coverage_quiet_until: 0, ...settings }, responsibilities: [], nurse_staff: [], coverage_do_not_offer: [], client_checkins: [],
@@ -119,6 +120,7 @@ ck('preview: Ben (nothing on file) is Unknown, labeled, and listed after Amy (a 
   && all(j).findIndex((x) => x.name === 'Amy Fit') < all(j).findIndex((x) => x.name === 'Ben Unknown'), all(j).map((x) => [x.name, x.avail_state]))
 ck('preview: Cal (outside) is after Ben (unknown)', all(j).findIndex((x) => x.name === 'Ben Unknown') < all(j).findIndex((x) => x.name === 'Cal Outside'))
 ck('preview: the skills rules cut Eve with the rule\'s own reason (dementia care required, training not complete)', !row(j, 'Eve Skills') && j.excluded.some((x) => x.name === 'Eve Skills' && x.why === 'Skills rules: Dementia training not complete'), j.excluded)
+ck('preview: a lapsed eligibility check never takes anyone off the list (her rule 2026-10-23): Hal is listed, flagged', !!row(j, 'Hal Lapsed') && row(j, 'Hal Lapsed').cleared_note === 'Not cleared to work: OIG check over 30 days' && !j.excluded.some((x) => x.name === 'Hal Lapsed'), [row(j, 'Hal Lapsed'), j.excluded])
 ck('preview: Dee is flagged overtime risk (38h + 4h = 42h)', row(j, 'Dee Hours')?.hours?.level === 'ot' && /= 42h/.test(row(j, 'Dee Hours').hours.text), row(j, 'Dee Hours'))
 ck('preview: Fran is flagged for the yes she already gave on an overlapping open shift', (row(j, 'Fran Overlap')?.overlaps || []).some((o) => /another open shift then: Ida/.test(o)), row(j, 'Fran Overlap'))
 ck('preview: meta says what was checked (skills rule version, the work week, the Unknown rule)', j.meta?.cara_list?.on === true && /checked with match-rules 1\./.test(j.meta.cara_list.skills) && /weekly hours counted/.test(j.meta.cara_list.hours), j.meta?.cara_list)
