@@ -72,7 +72,7 @@ try:
     ck("clean run: the tests ran (fake data only)", "the Caregiver Preview and shift page tests pass" in o, o)
     ck("clean run: switches that are on are left as they are (and said), and checked unchanged after", "switches on now (left exactly as they are): cara_list_live, cara_today_live" in o and "every switch is exactly as it was" in o, o)
     ck("clean run: only caregiver-preview re-deployed, its gateway setting kept; the AI key checked by name only; no database change", d == ["caregiver-preview"] and "caregiver-preview is live as version 7, gateway sign-in check on (kept)" in o and "the AI key is set on the server" in o and not M.get("ddl"), [d, o])
-    ck("clean run: a draft needs a Hub sign-in", "a draft needs a Hub sign-in (401)" in o, o)
+    ck("clean run: a draft needs a Hub sign-in; the test route refuses anyone without the owner's key", "a draft needs a Hub sign-in (401)" in o and "the test route refuses anyone without the owner's key (401)" in o, o)
     os.environ["NO_AI_KEY"] = "1"; c, o, d = go(no_node=True); del os.environ["NO_AI_KEY"]
     ck("no AI key on the server: stops before anything changes", c == 2 and not d and "isn't set on the server" in o, [d, o])
     c, o, d = go(settings={"caregiver_preview_live": True, "cara_list_live": True}, no_node=True)

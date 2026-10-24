@@ -95,11 +95,13 @@ let handler; globalThis.Deno = { env: { get: (k) => ENV[k] }, serve: (h) => { ha
 const WHO = { 'Bearer sam': ['Samantha Troutman', 'samantha@mo-care.com', ['owner_admin']], 'Bearer kry': ['Krystal Land', 'krystal@mo-care.com', ['care_coordinator']], 'Bearer sid': ['Sid Staffing', 'sid@mo-care.com', ['staffing_coordinator']] }
 fs.writeFileSync(`${FN}/_shared/_staff_stub_cgp.ts`, `export const OFFICE_ROLES = ['owner_admin','care_coordinator','staffing_coordinator']\nconst W: any = ${JSON.stringify(WHO)}\nexport async function requireStaff(_sb: any, req: Request) { const w = W[req.headers.get('authorization') || '']; return w ? { ok: true, name: w[0], email: w[1], person_id: 'p', roles: w[2] } : { ok: false, status: 401, error: 'Sign in first.' } }\n`)
 process.on('exit', () => { try { fs.unlinkSync(`${FN}/_shared/_staff_stub_cgp.ts`) } catch { /* */ } })
+fs.writeFileSync(`${FN}/_shared/_job_stub_cgp.ts`, "export async function jobCaller(req: Request, _c = true) { return req.headers.get('authorization') === 'Bearer OWNERKEY' ? 'owner' : null }\n")
+process.on('exit', () => { try { fs.unlinkSync(`${FN}/_shared/_job_stub_cgp.ts`) } catch { /* */ } })
 const src = fs.readFileSync(`${FN}/caregiver-preview/index.ts`, 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
-  .replace(/(['"])\.\.\/_shared\/staff-auth\.ts\1/, "'../_shared/_staff_stub_cgp.ts'")
+  .replace(/(['"])\.\.\/_shared\/staff-auth\.ts\1/, "'../_shared/_staff_stub_cgp.ts'").replace(/(['"])\.\.\/_shared\/job-auth\.ts\1/, "'../_shared/_job_stub_cgp.ts'")
 const tmp = path.join(FN, 'caregiver-preview', '_cgp.ts'); fs.writeFileSync(tmp, src)
 try { await import(tmp + '?' + Math.random()) } finally { fs.unlinkSync(tmp) }
-const post = async (body, auth) => { const rr = await handler(new Request('https://x/functions/v1/caregiver-preview', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(auth ? { Authorization: auth } : {}) }, body: JSON.stringify(body) })); return [rr.status, await rr.json()] }
+const post = async (body, auth, qs = '') => { const rr = await handler(new Request('https://x/functions/v1/caregiver-preview' + qs, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(auth ? { Authorization: auth } : {}) }, body: JSON.stringify(body) })); return [rr.status, await rr.json()] }
 const C = { axiscare_client_id: '500', client_name: 'Ruth Kay' }
 let s, j
 reset()
@@ -223,6 +225,21 @@ ck('... and it follows them once they have an AxisCare id (the shift page finds 
   ck('switch on: a coordinator can draft', s === 200 && j.ok, j)
   ;[s, j] = await post({ action: 'save', ...C, about: 'Ruth loves her rose garden.', enjoys: ['Roses'], ai_draft: true }, 'Bearer kry')
   ck('saving it: a draft like any other, and the history says it came from an AI draft (approval still needed)', s === 200 && j.state.intro_pending && /\(from an AI draft\)/.test(j.history[0].what), j.history)
+}
+
+/* ── 5. the owner's test route (2026-10-24): the real AI on test Life Stories, nothing saved ── */
+{
+  reset({}); AIREQ.length = 0
+  ;[s, j] = await post({ sources: [{ label: 'Work and life', text: 'Retired nurse.' }], first_name: 'Ann' }, 'Bearer kry', '?test_draft=1')
+  ck('test route: a staff sign-in is not enough (the owner\'s server key only)', s === 401 && AIREQ.length === 0)
+  AIQ.push({ enough: true, about: 'Ann spent her career caring for others and loves her garden.', enjoys: ['Gardening'], used: [1, 2], left_out: ['a health detail'] })
+  ;[s, j] = await post({ sources: [{ label: 'Work and life', text: 'Retired nurse. Has COPD.' }, { label: 'Enjoys', text: 'Her garden; her son Tom visits Sundays.' }], first_name: 'Ann', family_names: ['Tom'] }, 'Bearer OWNERKEY', '?test_draft=1')
+  ck('test route: the owner\'s key gets the real draft and exactly what was sent; nothing saved', s === 200 && j.test === true && j.saved === false && j.result.ok && j.sent.length === 2 && T.client_caregiver_profile.length === 0 && EVENTS.some((e) => e.verb === 'caregiver_preview_ai_test'), j)
+  ck('test route: the same rules and checks (the same prompt went to the AI)', /Use only facts that are in the sources/.test(AIREQ[AIREQ.length - 1].system) && /\[2\] Enjoys: Her garden/.test(AIREQ[AIREQ.length - 1].messages[0].content))
+  APP.client_profiles = [{ id: 'cp_ax500', client_name: 'Ruth Kay', life: { work: { text: 'Taught third grade for 30 years.' } } }]
+  AIQ.push({ enough: true, about: 'Ruth taught third grade for 30 years.', enjoys: [], used: [1], left_out: [] })
+  ;[s, j] = await post({ axiscare_client_id: '500' }, 'Bearer OWNERKEY', '?test_draft=1')
+  ck('test route: a real client\'s Life Story by AxisCare id (whatever the switch); nothing saved', s === 200 && j.result.ok && j.first_name === 'Ruth' && j.sent[0].text === 'Taught third grade for 30 years.' && T.client_caregiver_profile.length === 0, j)
 }
 
 const bad = res.filter((x) => !x[1])

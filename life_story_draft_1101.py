@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # 1101 · CAREGIVER PREVIEW: DRAFT IT FROM THE LIFE STORY (Samantha, 2026-10-24, Life Story plan step 2). Re-deploys the
 # caregiver-preview function with its new "draft" action: the AI writes a draft introduction from the Life Story only
-# (checked for health, family and money words and for names not in the Life Story), returned to the tab, never saved.
+# (checked for health, family and money words and for names not in the Life Story), returned to the tab, never saved;
+# and an owner-only test route (?test_draft=1, the owner's server key) so the real AI can be tried before the switch is on.
 #  1. Checks first (nothing changes): the reviewed build is GitHub's main; the tests pass (fake data only); the AI key is set.
 #     Every switch is read and left exactly as it is ("Caregiver Preview AI draft", cgp_ai_draft_live, stays off).
 #  2. Re-deploys caregiver-preview with its gateway setting kept. No database change.
@@ -67,7 +68,7 @@ if NODE:
         if c0 != 0: stop(f"couldn't read the Hub's {rf} from GitHub's main (needed by the tests)")
         open(os.path.join(hubdir, rf), "w").write(mr)
     env = dict(os.environ, HUB=hubdir, HUB_ROOT=hubdir)
-    for t, must in (("caregiver_preview_test.mjs", "67/67"), ("shift_page_test.mjs", "58/58")):
+    for t, must in (("caregiver_preview_test.mjs", "71/71"), ("shift_page_test.mjs", "58/58")):
         c, o = run([NODE, t], cwd=ROOT, env=env)
         if c != 0 or (must and must not in o) or "\nFAIL" in o: stop(f"the tests failed ({t}): " + " ".join(l.strip() for l in o.splitlines() if "FAIL" in l)[:240])
     ok("the Caregiver Preview and shift page tests pass (fake data only)")
@@ -102,6 +103,8 @@ for fn in FNS:
     chk(s_ is not None and s_ != 200 and s_ < 500, f"{fn}: a caller with no key gets nothing ({s_})", f"{fn} answered a caller with no key ({s_})")
 s_, b_ = http("POST", f"{FNB}/functions/v1/caregiver-preview", {"action": "draft", "axiscare_client_id": "1"}, {"Content-Type": "application/json"})
 chk(s_ == 401, f"caregiver-preview: a draft needs a Hub sign-in ({s_})", f"caregiver-preview answered a draft without a sign-in ({s_})")
+s_, b_ = http("POST", f"{FNB}/functions/v1/caregiver-preview?test_draft=1", {"sources": [{"label": "x", "text": "y"}]}, {"Content-Type": "application/json"})
+chk(s_ == 401, f"caregiver-preview: the test route refuses anyone without the owner's key ({s_})", f"caregiver-preview's test route answered without the owner's key ({s_})")
 sw2 = switches()
 chk(sw2 is not None and sw2 == before, "every switch is exactly as it was", "a switch changed during the step: tell Claude")
 say()
