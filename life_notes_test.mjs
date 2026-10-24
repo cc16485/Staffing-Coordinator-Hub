@@ -25,13 +25,29 @@ const fakeAI = async (url, o) => { AIREQ.push(JSON.parse(o.body)); const a = AIQ
 const NOTE = 'Care note: Patsy did her word search, then we played cards. She had diarrhea all morning. She talked to Lisa. We watched Family Feud.'
 AIQ.push({ details: [{ topic: 'Word puzzles', kind: 'activity', words: 'did her word search' }, { topic: 'Diarrhea', kind: 'activity', words: 'She had diarrhea all morning' }, { topic: 'Lisa', kind: 'conversation', words: 'She talked to Lisa' }, { topic: 'Family Feud', kind: 'tv_music_books', words: 'We watched Family Feud' }] })
 let a = await LN.askLife(NOTE, 'k', fakeAI)
-ck('the AI\'s answer is checked: at most 3 looked at; a health detail and a person\'s name rejected; the rest kept', a.details.map((x) => x.topic).join() === 'Word puzzles' && a.rejected === 2, a)
+ck('the AI\'s answer is checked: at most 3 looked at; a health detail and a person\'s name rejected; the rest kept', a.details.map((x) => x.topic).join() === 'Puzzles' && a.rejected === 2, a)
 AIQ.push({ details: [{ topic: 'Bingo', kind: 'activity', words: 'loves bingo night' }, { topic: 'Her son', kind: 'conversation', words: 'talked to Lisa' }, { topic: 'Cards', kind: 'medical', words: 'played cards' }] })
 a = await LN.askLife(NOTE, 'k', fakeAI)
 ck('words not in the note, a family topic, and a kind outside the safe list are all rejected', a.details.length === 0 && a.rejected === 3, a)
 ck('the AI is told the safe kinds and the rules, answers in a fixed format, on Claude Haiku 4.5 (the note check\'s model), no temperature', AIREQ[0].model === 'claude-haiku-4-5' && !('temperature' in AIREQ[0]) && AIREQ[0].output_config.format.type === 'json_schema' && /Never anything about health/.test(AIREQ[0].system))
 AIQ.push('down'); a = await LN.askLife(NOTE, 'k', fakeAI)
 ck('the AI can\'t be reached: nothing kept', a.failed && a.details.length === 0)
+
+/* ── 1b. the four tweaks (2026-10-24, after the first read-back) ── */
+ck('similar topics are one: TV / television / TV shows / watching TV; drives / driving / scenery; chatting / visiting / conversation; word search / crossword / puzzle book', new Set(['TV', 'television', 'TV shows', 'watching TV'].map(LN.topicKey)).size === 1 && new Set(['drives', 'driving', 'Scenery drives'].map(LN.topicKey)).size === 1 && new Set(['chatting', 'visiting', 'conversation', 'socializing'].map(LN.topicKey)).size === 1 && new Set(['word search', 'crosswords', 'puzzle book'].map(LN.topicKey)).size === 1, ['TV', 'television', 'drives', 'chatting', 'word search'].map(LN.topicKey))
+ck('different things stay apart: game shows vs TV; football vs movies', LN.topicKey('game shows') !== LN.topicKey('TV') && LN.topicKey('college football') !== LN.topicKey('movies'))
+const N2 = 'Care note: I made coffee. Fed the cats. We talked about my wedding. She ate eggplant parmesan. She wanted Huey Magoos for lunch. She asked for a Dr Pepper. Did her leg exercise on her trike. Watched the health video exercises. She loves painting her nails.'
+AIQ.push({ details: [{ topic: 'Coffee', kind: 'food_drink', words: 'I made coffee' }, { topic: 'Weddings', kind: 'conversation', words: 'We talked about my wedding' }, { topic: 'Eggplant parmesan', kind: 'food_drink', words: 'She ate eggplant parmesan' }] })
+a = await LN.askLife(N2, 'k', fakeAI)
+ck('left out: the caregiver\'s task ("I made coffee"), the caregiver\'s own life ("my wedding"), a meal simply eaten', a.details.length === 0 && a.rejected === 3, a)
+AIQ.push({ details: [{ topic: 'Huey Magoos', kind: 'food_drink', words: 'She wanted Huey Magoos for lunch' }, { topic: 'Dr Pepper', kind: 'food_drink', words: 'She asked for a Dr Pepper' }, { topic: 'Nail painting', kind: 'activity', words: 'She loves painting her nails' }] })
+a = await LN.askLife(N2, 'k', fakeAI)
+ck('kept: food she wanted or asked for; something she loves; grouped labels ("Soda", "Being pampered")', a.details.length === 3 && a.details.map((x) => x.topic).join() === 'Huey Magoos,Soda,Being pampered', a)
+AIQ.push({ details: [{ topic: 'Leg exercise', kind: 'activity', words: 'Did her leg exercise on her trike' }, { topic: 'Videos', kind: 'activity', words: 'Watched the health video exercises' }, { topic: 'Cats', kind: 'activity', words: 'Fed the cats' }] })
+a = await LN.askLife(N2, 'k', fakeAI)
+ck('left out: exercise and therapy; feeding the cats (a task)', a.details.length === 0 && a.rejected === 3, a)
+ck('the AI is told: the client only, not caregiver tasks or the caregiver\'s life, food only when wanted, no exercise or therapy', /not the client's interests/.test(AIREQ[AIREQ.length - 1].system) && /caregiver's own life/.test(AIREQ[AIREQ.length - 1].system) && /wanted, asked for, chose or loved/.test(AIREQ[AIREQ.length - 1].system) && /exercise, therapy/.test(AIREQ[AIREQ.length - 1].system))
+ck('the show rule: generic topics and food only once seen often; known never; a specific interest once is enough', !LN.worthShowing({ topic_key: 'tv', kind: 'tv_music_books', status: 'practice', mentions: 1, caregivers: ['A'] }) && LN.worthShowing({ topic_key: 'tv', kind: 'tv_music_books', status: 'practice', mentions: 3, caregivers: ['A'] }) && !LN.worthShowing({ topic_key: 'huey magoo', kind: 'food_drink', status: 'practice', mentions: 1, caregivers: ['A'] }) && LN.worthShowing({ topic_key: 'birds', kind: 'activity', status: 'practice', mentions: 1, caregivers: ['A'] }) && !LN.worthShowing({ topic_key: 'cards and games', kind: 'activity', status: 'known', mentions: 9, caregivers: ['A', 'B'] }))
 
 /* ── 2. the real care-notes run ── */
 let T, APP
