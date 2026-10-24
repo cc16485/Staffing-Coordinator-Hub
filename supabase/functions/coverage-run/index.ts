@@ -986,8 +986,8 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
   if (v2) {
     shiftLen = shiftHours(String(c.shift_time || ''))
     if (/^\d{4}-\d\d-\d\d$/.test(String(c.shift_date || ''))) {
-      let wkStart = 'sun'
-      try { const { data: s1 } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle(); if (/^(sun|mon|tue|wed|thu|fri|sat)$/.test(String(s1?.data?.payroll_week_start || ''))) wkStart = String(s1!.data.payroll_week_start) } catch { /* sun */ }
+      let wkStart = 'mon'   // her payroll week: Monday to Sunday (2026-10-23)
+      try { const { data: s1 } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle(); if (/^(sun|mon|tue|wed|thu|fri|sat)$/.test(String(s1?.data?.payroll_week_start || ''))) wkStart = String(s1!.data.payroll_week_start) } catch { /* mon */ }
       const [a, z] = weekOf(String(c.shift_date), wkStart)
       const wk = await fetchVisits(`startDate=${a}&endDate=${z}`)
       if (wk.error) weekNote = 'weekly hours not checked: ' + wk.error
@@ -1023,11 +1023,11 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
     if (drv.exclude) { cut(x, `not cleared to drive clients, and this shift needs transportation (${drv.why})`); continue }
     if (drv.note) driveNotes.push({ name: String(x.name), note: drv.note })
     /* CARA PHASE 1: the verified-skills rules (match-rules.js): "not for this visit" leaves the list with the rule's reason */
-    let skillsLine: string | null = null
+    let skillsLine: string | null = null, clearedLine: string | null = null
     if (v2 && skills?.judge) {
       const sn = skillsNote(skills.judge(String(x.axiscare_id)))
       if (sn.cut) { cut(x, 'Skills rules: ' + sn.cut); continue }
-      skillsLine = sn.note
+      skillsLine = sn.note; clearedLine = sn.cleared_note ?? null   /* a lapsed check: listed, flagged (2026-10-23) */
     }
     const h = history.get(String(x.axiscare_id))
     const gap = wantGap.get(String(x.axiscare_id))
@@ -1082,7 +1082,7 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
       const st2 = availStatus(c, availAll.get(gid))
       Object.assign(row, { avail_state: st2.state, avail_unknown: st2.state === 'unknown' ? UNKNOWN_WHY : null,
         hours: weekNote && !/not checked/.test(weekNote) ? hoursFlag(weekHrs.get(gid) ?? 0, shiftLen, availAll.get(gid)?.target_hours as number | null) : null,
-        overlaps: overlapsFor(c, { axiscare_id: gid, name: String(x.name) }, otherCases, plans), skills_note: skillsLine })
+        overlaps: overlapsFor(c, { axiscare_id: gid, name: String(x.name) }, otherCases, plans), skills_note: skillsLine, cleared_note: clearedLine })
     }
     /* PRN3: the PRN CNA Team gets its own place, never mixed into the groups everyone else is ticked from. */
     const pm = prnTeam.get(gid)

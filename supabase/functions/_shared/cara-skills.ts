@@ -59,7 +59,12 @@ export async function loadSkillJudge(db: any, p: { clientAxId: string | null; ax
        call-off for someone already in care that would empty the list, so the flag is shown on the case instead and each
        person is judged on their own record */
     const csPeople = cs.status === 'flagged' || cs.status === 'not_matched' ? { status: 'ok', message: '' } : cs
-    const judge = (axId: string) => rules.CCMatch.evaluate(client, { ...P.cgOf(String(axId)), availability: { free: true } }, { today: p.today, driveGate: p.driveGate, clientState: csPeople })
+    /* "cleared to work" (OIG, licenses and the other eligibility checks) never takes anyone off a call-off list (Samantha,
+       2026-10-23: "no dont drop off"): the rule is asked as if they were cleared, so it still judges skills, level and the home,
+       and a lapsed check comes back as a note the office sees (cleared_note). The new-hire lock is still cut by coverage-run. */
+    const judge = (axId: string) => { const cg = P.cgOf(String(axId))
+      const r = rules.CCMatch.evaluate(client, { ...cg, cleared: true, availability: { free: true } }, { today: p.today, driveGate: p.driveGate, clientState: csPeople })
+      return { ...r, cleared_note: cg.cleared ? null : 'Not cleared to work: ' + String(cg.cleared_reason || 'a required check is not complete') } }
     return { judge, why: null, client_state: cs.status === 'ok' ? 'ok' : cs.status + ': ' + cs.message, rule_version: rules.CCMatch.VERSION ?? null }
   } catch (e) { return { judge: null, why: 'skills not checked: ' + String((e as Error)?.message || e).slice(0, 160), client_state: null, rule_version: null } }
 }

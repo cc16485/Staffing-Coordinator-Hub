@@ -41,8 +41,9 @@ export function availStatus(c: Any, a: { windows?: Record<string, string[]> | nu
 /** Sort weight: a stated fit first, then unknown, then outside (outside_ok counts as a fit: they asked to hear about those). */
 export const availRank = (s: Avail['state'] | undefined | null) => s === 'fits' || s === 'outside_ok' || s === 'no_shift' ? 0 : s === 'unknown' ? 1 : s === 'outside' ? 2 : 1
 
-/** The work week holding `ymd`: [first day, last day], starting on `start` ('sun' default, ops_settings.payroll_week_start). */
-export function weekOf(ymd: string, start = 'sun'): [string, string] {
+/** The work week holding `ymd`: [first day, last day]. Her payroll week is Monday to Sunday (Samantha, 2026-10-23), so 'mon'
+    is the default; ops_settings.payroll_week_start overrides it. */
+export function weekOf(ymd: string, start = 'mon'): [string, string] {
   const d = new Date(ymd + 'T12:00:00Z'), back = (d.getUTCDay() - Math.max(0, DAYS.indexOf(start)) + 7) % 7
   const a = new Date(d.getTime() - back * 86400000), z = new Date(a.getTime() + 6 * 86400000)
   return [a.toISOString().slice(0, 10), z.toISOString().slice(0, 10)]
@@ -107,8 +108,10 @@ export function overlapsFor(kase: Any, cg: { axiscare_id?: string | null; name?:
 }
 
 /** The skills rule's answer for the list: cut only on "not for this visit"; one more step and likely fit are notes. */
-export function skillsNote(r: Any): { cut: string | null; note: string | null; group: string | null } {
+export function skillsNote(r: Any): { cut: string | null; note: string | null; group: string | null; cleared_note?: string | null } {
   if (!r) return { cut: null, note: null, group: null }
+  /* a lapsed eligibility check is shown, never a cut (her rule 2026-10-23) */
+  if (r.cleared_note) { const inner = skillsNote({ ...r, cleared_note: null }); return { ...inner, cleared_note: S(r.cleared_note, 200) } }
   if (r.group === 'not_for_visit') return { cut: S(r.reason, 200) || 'not a match for this client (skills rules)', note: null, group: r.group }
   if (r.group === 'one_more_step') return { cut: null, note: 'One more step: ' + S(r.reason, 160), group: r.group }
   if (r.group === 'likely_fit') return { cut: null, note: 'Likely fit: the client\'s care plan is not fully confirmed', group: r.group }
@@ -141,6 +144,7 @@ export function recommend(kase: Any, rows: Any[], excluded: { name: string; why:
     if (r.hours?.level === 'ot') { score -= 30; concerns.push(r.hours.text) }
     else if (r.hours?.level === 'near' || r.hours?.level === 'over_target') { score -= 8; concerns.push(r.hours.text) }
     if (r.skills_note) { score -= 10; concerns.push(r.skills_note) }
+    if (r.cleared_note) { score -= 20; concerns.push(r.cleared_note) }
     if (r.this_client?.rating === 'concern' || (r.rep?.concerns ?? 0) > 1) { score -= 20; concerns.push('Concern calls on record' + (r.rep?.concerns ? ` (${r.rep.concerns})` : '')) }
     const cond = S(a.condition, 160); if (cond) { score -= 5; concerns.push('Said yes with a condition: ' + cond) }
     scored.push({ name: S(a.name, 80), axiscare_id: a.axiscare_id ?? r.axiscare_id ?? null, ask_id: a.id ?? null, replied_at: a.replied_at ?? null, score, reasons, concerns })
