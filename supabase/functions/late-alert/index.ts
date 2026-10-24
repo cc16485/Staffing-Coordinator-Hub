@@ -42,6 +42,7 @@ import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { officeQuiet } from '../_shared/quiet-hours.ts'
 import { ghlClientLink } from '../_shared/ghl-contact-link.ts'
 import { ghlCallBridge } from '../_shared/ghl-call-bridge.ts'
+import { findHandoff, handoffText, HANDOFF_TEXT, live as p3live } from '../_shared/clockin-v2.ts'   // Cara Phase 3: late hand-off
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
                'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -212,7 +213,37 @@ Deno.serve(async (req) => {
         skipped: n.family_skipped_at ? { by: n.family_skipped_by, at: clockAt(Date.parse(n.family_skipped_at)) } : null,
         arrived_can: !practice && n.closed_how === 'clocked_in' && told() && !arrivedSent,
         arrived_draft: fill(String(st.late_msg_arrived || DEFAULT_ARRIVED), { caregiver: cgFirst, client: n.client_first || 'your loved one' }) },
-      coverage_case: n.coverage_case_id || null })
+      coverage_case: n.coverage_case_id || null,
+      /* CARA PHASE 3: who is on shift before them, for the one-tap "can you stay?" (late_handoff_live) */
+      handoff: n.kind === 'late' && !n.closed_at ? await (async () => { const h = await findHandoff({ visit_id: String(n.visit_id), client_axiscare_id: n.axiscare_client_id ?? null, shift_date: String(n.shift_date) }, (x) => visitMs(x))
+        return h ? { first: h.first, asked: n.handoff_asked ? { at: clockAt(Date.parse(n.handoff_asked.at)), by: n.handoff_asked.by } : null } : null })() : null,
+      handoff_live: p3live(st, 'late_handoff_live') })
+  }
+
+  /* CARA PHASE 3 · LATE HAND-OFF: only on this tap, once per notice, the caregiver on shift before them gets "can you
+     stay until <late caregiver> gets there?" (her approved wording; "about N minutes" only when they gave a time) */
+  if (action === 'ask_stay') {
+    if (!p3live(st, 'late_handoff_live')) return json({ error: 'Asking the caregiver on shift to stay is switched off.' }, 409)
+    if (practice || n.closed_at || n.kind !== 'late') return json({ error: 'Not for this notice.' }, 409)
+    if (n.handoff_asked) return json({ error: `Already asked by ${n.handoff_asked.by}.` }, 409)
+    const h = await findHandoff({ visit_id: String(n.visit_id), client_axiscare_id: n.axiscare_client_id ?? null, shift_date: String(n.shift_date) }, (x) => visitMs(x))
+    if (!h) return json({ error: `Nobody is on shift with ${n.client_first} right before this visit now.` }, 409)
+    const { data: cgRow } = await sb.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    const cgRec = (Array.isArray(cgRow?.data) ? cgRow!.data : []).find((c: any) => String(c?.axiscare_id ?? '').trim() === h.caregiver_id)
+    const phone = normalisePhone(cgRec?.phone)
+    if (!phone) return json({ error: `No phone on the roster for ${h.first}. Call them from AxisCare.` }, 409)
+    const minutes = n.eta ? Math.max(5, Math.round((Date.parse(n.eta) - startMs) / 60000 / 5) * 5) : null
+    const text = handoffText(String(st.late_handoff_msg || '') || HANDOFF_TEXT, { first: String(cgRec?.first ?? '') || h.first, late_first: cgFirst, client: String(n.client_first), minutes })
+    const contact = await contactForOutbound(sb, ghl, { phone, firstName: h.first }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'late-alert' })
+    if (!contact) return json({ error: `${h.first} can't be texted (opted out, or the number isn't trusted). Call them.` }, 409)
+    const ok = await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+      'late-alert', { channel: 'sms', contactId: contact.contactId, address: phone, who: h.name }, { message: text })
+    if (!ok) return json({ error: 'The text did not go. It shows on Needs Attention.' }, 502)
+    await update({ handoff_asked: { at: nowIso, by: me.first, to: h.name, text } })
+    await opEvent(sb, { actor_email: me.email, actor_name: me.name, via: viaLink ? 'link' : 'hub', verb: 'handoff_asked', item_id: 'ops_late_' + n.id, area: 'coverage',
+      summary: `${me.name} asked ${h.name} to stay with ${n.client_first} until ${n.caregiver_name} arrives` })
+    return json({ ok: true, asked: h.first, text })
   }
 
   if (action === 'seen') {

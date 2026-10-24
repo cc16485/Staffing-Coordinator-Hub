@@ -2258,7 +2258,19 @@ Deno.serve(async (req) => {
          write-up triggers (short notice, too many in the window). Only when
          we KNOW who called off; deterministic id = once per case. Never for a shift taken off in AxisCare
          (2026-10-22): that is not a call-in and must not mark against the caregiver. */
-      if (c.calling_off && !takenOff) {
+      /* CARA PHASE 3 (2026-10-24, her rule): a case Cara opened from the caregiver's own words ("can't come") never logs
+         attendance by itself. One card asks a person to confirm it, then log it on Attendance. */
+      if (c.calling_off && !takenOff && c.attendance_confirm === true) {
+        const aid = `ops_attc_${String(c.id).replace(/[^A-Za-z0-9]/g, '_').slice(-80)}`
+        if (!haveItem.has(aid)) {
+          await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id: aid, kind: 'staffing', domain: 'scheduling_coverage', status: 'open', urgency: 'today',
+            coverage_case_id: c.id, about: String(c.calling_off), title: `Confirm: did ${c.calling_off} call off ${c.client || 'the client'} ${[c.shift_date, c.shift_time].filter(Boolean).join(' ')}?`,
+            detail: `Cara opened this call-off case from ${c.calling_off}'s own words${c.said ? `: "${String(c.said).slice(0, 200)}"` : ''}. It is not on their attendance yet. If it was a call-off, log it on Performance > Attendance; if not, close this card.`,
+            owner: '', owner_name: '', created_at: nowIso(), due: new Date(Date.now() + 24 * 3600e3).toISOString(), created_by: 'coverage-run', opened_by: 'caregiver-words' } })
+          haveItem.add(aid)
+        }
+      }
+      if (c.calling_off && !takenOff && c.attendance_confirm !== true) {
         let noticeHours: number | null = null
         if (c.shift_date && /^\d\d:\d\d/.test(String(c.shift_time || '')) && c.opened_at) {
           const chiOpened = new Date(String(c.opened_at))

@@ -94,6 +94,9 @@ import { officeQuiet, quietWords, afterHoursAllowed } from '../_shared/quiet-hou
 import { confirmTimesItem, cftId, hasCard, outAfterMin } from '../_shared/confirm-times.ts'
 import { loadQuiet, isQuiet } from '../_shared/client-quiet.ts'
 import { isPlaceholder } from '../_shared/visit-reasons.ts'
+import { SECOND_TEXT, fillText, secondTextDue, atRisk, live as p3live, fixedInAxis, noteDraft } from '../_shared/clockin-v2.ts'   // Cara Phase 3
+import { readPlan, isMustCover, type PlanRead } from '../_shared/callin-plan.ts'
+import { ghlStoredContactIfAllowed } from '../_shared/optout.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
 const json = (b: unknown, s = 200) =>
@@ -223,6 +226,14 @@ Deno.serve(async (req) => {
     ? Number(settings.timekeeper_clockout_grace_min) : 10
   // deno-lint-ignore no-explicit-any
   const skips: any[] = Array.isArray(settings.cara_skip) ? settings.cara_skip : []
+  /* CARA PHASE 3 (2026-10-24, _shared/clockin-v2.ts): each step its own switch, all off. Off: p3.would says what it would do. */
+  const noReplyLive = p3live(settings, 'clockin_no_reply_live') && watchLive
+  const atRiskLive = p3live(settings, 'clockin_at_risk_live') && watchLive
+  const cftAutoLive = p3live(settings, 'cft_autoclose_live') && watchLive
+  // deno-lint-ignore no-explicit-any
+  const p3: any = { no_reply_live: noReplyLive, at_risk_live: atRiskLive, cft_autoclose_live: cftAutoLive, would: [] as Record<string, unknown>[], did: [] as Record<string, unknown>[] }
+  const p3note = (isLive: boolean, row: Record<string, unknown>) => { const arr = isLive ? p3.did : p3.would; if (arr.length < 60) arr.push(row) }
+  const planCache = new Map<string, PlanRead>()
 
   const { token, site } = axisCreds()
   if (!token || !site) return json({ error: 'AxisCare credentials not set on this project' }, 502)
@@ -349,7 +360,8 @@ Deno.serve(async (req) => {
      cap; the text that reaches the cap says it is the last. */
   // deno-lint-ignore no-explicit-any
   const toAdmins = async (l: any, stage: string, message: (link: string, last: boolean) => string, onlyNotSnoozed: boolean) => {
-    if (loopQuiet) { quietHeld++; return 0 }
+    const urgentAlone = atRiskLive && l.must_cover === true   /* Phase 3: a client who can't be left alone: any hour */
+    if (loopQuiet && !urgentAlone) { quietHeld++; return 0 }
     l.admin_loop = l.admin_loop || { started_at: nowIso, sends: [], snooze: {} }
     const final = stage.startsWith('final')
     const counts: Record<string, number> | undefined = l.admin_loop.texts_to
@@ -366,7 +378,7 @@ Deno.serve(async (req) => {
       if (!final && had >= maxTexts) { skipped++; capHere++; continue }
       const link = LINK_SECRET ? await makeLink(LINK_SECRET, String(l.id), a.email, exp) : ''
       const msg = message(link, !final && had + 1 >= maxTexts)
-      const went = loopLive ? await textAdmin(sb, ghl, a, msg, fetch, { emergency: tkAfterHours }) : true
+      const went = loopLive ? await textAdmin(sb, ghl, a, msg, fetch, { emergency: tkAfterHours || urgentAlone }) : true
       if (went) { n++; if (!final) l.admin_loop.texts_to = { ...(l.admin_loop.texts_to || {}), [ak]: had + 1 } }
     }
     capped += capHere
@@ -394,6 +406,9 @@ Deno.serve(async (req) => {
       if (f.evv_sent_at) { l.evv_sent_at = f.evv_sent_at; l.evv_sent_by = f.evv_sent_by }
       if (f.admin_loop?.snooze) l.admin_loop = { ...(l.admin_loop || {}), snooze: { ...(l.admin_loop?.snooze || {}), ...f.admin_loop.snooze } }
       if (Array.isArray(f.replies) && f.replies.length > (Array.isArray(l.replies) ? l.replies.length : 0)) l.replies = f.replies   // C3: her reply
+      /* Phase 3: what clockin-reply read and did (practice or live) is never overwritten by this run's older copy */
+      for (const k of ['reply_reads', 'here_claim', 'cant_case']) if (f[k] !== undefined && l[k] === undefined) l[k] = f[k]
+      if (Array.isArray(f.reply_reads) && f.reply_reads.length > (Array.isArray(l.reply_reads) ? l.reply_reads.length : 0)) l.reply_reads = f.reply_reads
     }
     return sb.rpc('upsert_app_data_item', { target_key: 'timekeeper_cases', item: l })
   }
@@ -591,10 +606,14 @@ Deno.serve(async (req) => {
     if (!l.office_alerted_at && late >= graceMin) {
       const cg = byAxis.get(String(v.caregiver.id)) ?? byName.get(nameKeyOf(cgName))
       const cgPhone = normalisePhone(cg?.phone)
+      /* PHASE 3: the client's call-in plan says this shift must be covered (they can't safely be left alone): urgent from
+         the first alert, and the office texts go at any hour */
+      const mustCover = l.client_axiscare_id ? isMustCover((await readPlan(sb, l.client_axiscare_id, planCache)).plan) : false
+      if (mustCover) { if (atRiskLive) l.must_cover = true; p3note(atRiskLive, { alert: l.id, client: clientFirst, step: 'urgent from the start: the call-in plan says this client can\'t be left alone' }) }
       if (watchLive) {
         await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: {
           id: `ops_tk_${l.id}`, kind: 'staffing_issue',
-          title: `NO CLOCK-IN: ${cgName} for ${clientFirst}, ${clock12(shiftTime)} shift`,
+          title: `${l.must_cover ? 'URGENT, can\'t be left alone. ' : ''}NO CLOCK-IN: ${cgName} for ${clientFirst}, ${clock12(shiftTime)} shift`,
           about: cgName,
           detail: `${cgName} has not clocked in for ${clientFirst}'s ${clock12(shiftTime)} visit `
             + `(${Math.round(late)} minutes past start). `
@@ -605,7 +624,7 @@ Deno.serve(async (req) => {
             + (loopQuiet ? `It is quiet hours (no office texts ${quietTxt}), so nobody was texted; it waits here, and the texts start at the end of quiet hours if it is still open.`
               : tkAfterHours ? `Missed clock-in texts go at any hour, including ${quietTxt}.`
               : `No office texts ${quietTxt}; overnight it waits here.`),
-          domain: 'scheduling_coverage', status: 'open', urgency: 'high',
+          domain: 'scheduling_coverage', status: 'open', urgency: l.must_cover ? 'urgent' : 'high',
           owner: String(admins[0]), owner_name: String(admins[0]).split('@')[0],
           due: new Date(Date.now() + 3600 * 1000).toISOString(),
           created_at: nowIso, created_by: 'timekeeper-watch', opened_by: 'timekeeper',
@@ -653,7 +672,7 @@ Deno.serve(async (req) => {
         continue
       }
       /* quiet hours: skip this round entirely (nothing recorded, nothing queued); from 7am one text if still open */
-      if (loopQuiet) { quietHeld++; continue }
+      if (loopQuiet && !(atRiskLive && l.must_cover === true)) { quietHeld++; continue }
       /* 432: they told us on a call (or, with the notices live, a text) they're running late, with a time: this alert's
          admin texts wait until 5 minutes after it (recorded once on the alert, shown on the link page) */
       const lnHold = lateByVisit.get(String(l.visit_id))
@@ -665,6 +684,37 @@ Deno.serve(async (req) => {
         heldLate++; continue
       }
       const late = lateOf(l)
+      /* ── PHASE 3 · 15 minutes, no clock-in, no reply, nothing from the running-late watcher: one shorter second text ── */
+      const noticeOn = !!lateByVisit.get(String(l.visit_id))
+      const noReplyNow = secondTextDue(l, late, noticeOn)
+      if (noReplyNow) {
+        const cgRec = byAxis.get(String(l.caregiver_axiscare_id)) ?? byName.get(nameKeyOf(String(l.caregiver)))
+        const text2 = fillText(String(settings.timekeeper_msg_second || '') || SECOND_TEXT, { first_name: String(cgRec?.first ?? '') || String(l.caregiver).split(' ')[0], time: clock12(l.shift_time), client: String(l.client_first) })
+        if (noReplyLive && textLive && l.ghl_contact_id) {
+          const cid = await ghlStoredContactIfAllowed(sb, ghl, 'timekeeper-watch', { channel: 'sms', contactId: l.ghl_contact_id })
+          if (cid && await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+            'timekeeper-watch', { channel: 'sms', contactId: cid, address: normalisePhone(cgRec?.phone) ?? '', who: String(l.caregiver) }, { message: text2 })) {
+            l.second_texted_at = nowIso; p3note(true, { alert: l.id, step: 'second text', to: String(l.caregiver).split(' ')[0] })
+          } else if (!cid) { l.second_texted_at = nowIso; l.notes = [...(l.notes || []), 'Second text not sent: they opted out of texts.'] }
+          await save(l)
+        } else if (!l.second_would_at) { l.second_would_at = nowIso; p3note(false, { alert: l.id, step: 'second text would go', text: text2 }); await save(l) }
+      }
+      /* ── PHASE 3 · 30 minutes still unconfirmed: the client is at risk; the card asks: call the client, or open coverage ── */
+      if (atRisk(late) && !l.at_risk_at && !l.at_risk_would_at) {
+        if (atRiskLive) {
+          l.at_risk_at = nowIso
+          const { data: oiR } = await sb.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+          // deno-lint-ignore no-explicit-any
+          const it = (Array.isArray(oiR?.data) ? oiR!.data : []).find((x: any) => String(x?.id) === `ops_tk_${l.id}`)
+          if (it && it.status === 'open') await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...it, urgency: 'urgent', at_risk: true,
+            title: `At risk: ${l.client_first} may be without care (${String(l.caregiver).split(' ')[0]}, ${clock12(l.shift_time)}): call ${l.client_first} or open coverage`,
+            detail: `${late} minutes and no clock-in from ${l.caregiver}${l.here_claim ? ' (they texted that they are there, which is not arrival)' : ''}. `
+              + `Call ${l.client_first} or the family to find out whether ${String(l.caregiver).split(' ')[0]} is there. If not, open a coverage case. ` + String(it.detail || ''),
+            last_activity_at: nowIso } })
+          p3note(true, { alert: l.id, step: 'at risk at 30 minutes', client: l.client_first })
+        } else { l.at_risk_would_at = nowIso; p3note(false, { alert: l.id, step: 'at risk at 30 minutes would show', client: l.client_first }) }
+        await save(l)
+      }
       const endStamp = v ? String(v?.scheduledEndDate ?? v?.endDate ?? '') : ''
       const afterEnd = l.shift_date !== day || (endStamp ? minutesSince(endStamp) > 0 : false)
       /* the first "shift has ended" text comes on the usual beat; after that, every 30 minutes */
@@ -695,6 +745,8 @@ Deno.serve(async (req) => {
         ? `${cl}'s ${t12} shift has ended and the missed clock-in for ${cg} is still not resolved.${said}${stop(last)}${link}`
         : stage === 'thirty'
         ? `${late} min and still not resolved: no clock-in from ${cg} for ${cl}'s ${t12} shift. ${cl} may be without care.${said}${stop(last)}${link}`
+        : (noReplyLive && l.second_texted_at && !(Array.isArray(l.replies) && l.replies.length) && !noticeOn)
+        ? `No clock-in, no reply: ${cg} for ${cl}'s ${t12} shift (${late} min past start).${said}${stop(last)}${link}`
         : `Still no clock-in: ${cg} for ${cl}'s ${t12} shift (${late} min past start).${said}${stop(last)}${link}`).trim()
       const sentBefore = loopSent
       loopSent += await toAdmins(l, stage, msg, true)
@@ -789,7 +841,41 @@ Deno.serve(async (req) => {
   const evvChase = { retired: '2026-10-17: no Saturday EVV reminder; there are no forms to process' }
   const wouldTextNext: unknown[] = []
 
+  /* ── PHASE 3 · AFTER A FIX (cft_autoclose_live, off): an open "Call <client> to confirm the times" card from the last 14
+     days closes itself once AxisCare shows what it was missing (read only, one visit read per card, at most 20 a run).
+     The card keeps what was missing and who it was about; what AxisCare shows now is added beside it, so the history
+     is never overwritten. Open cards also carry a ready note for the AxisCare correction. ── */
+  try {
+    const oldest = new Date(Date.now() - 14 * 864e5).toISOString().slice(0, 10)
+    // deno-lint-ignore no-explicit-any
+    /* every 10 minutes is plenty (the watcher runs every 2): fewer AxisCare reads */
+    const cards = new Date().getMinutes() % 10 >= 2 ? [] : [...opsByIdC.values()].filter((x: any) => x?.kind === 'confirm_times' && x?.status === 'open' && String(x?.shift_date || '') >= oldest && x?.visit_id).slice(0, 20)
+    for (const c of cards) {
+      const draft = noteDraft(c)
+      if (cftAutoLive && c.note_draft !== draft) { c.note_draft = draft; await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: c }) }
+      let v = byVisitId.get(String(c.visit_id))
+      if (!v || String(c.shift_date) !== day) {
+        try {
+          const r = await fetch(`https://${site}.axiscare.com/api/visits/${encodeURIComponent(String(c.visit_id))}`, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': AC_VERSION } })
+          // deno-lint-ignore no-explicit-any
+          const j: any = r.ok ? await r.json().catch(() => null) : null
+          v = j?.results?.visit ?? j?.visit ?? null
+        } catch { v = null }
+      }
+      if (!fixedInAxis(c, v)) continue
+      const now = { clock_in: clockHM(v?.clockIn), clock_out: clockHM(v?.clockOut) }
+      const why = `AxisCare now shows ${[now.clock_in ? 'a clock-in at ' + clock12(now.clock_in) : '', now.clock_out ? 'a clock-out at ' + clock12(now.clock_out) : ''].filter(Boolean).join(' and ')}, so Cara closed this card. What was missing is kept above.`
+      if (!cftAutoLive) { p3note(false, { card: c.id, step: 'would close: AxisCare shows the times now', ...now }); continue }
+      const item = { ...c, status: 'done', closed_at: nowIso, closed_by: 'Cara', auto_closed_reason: why, axiscare_times_now: { ...now, seen_at: nowIso },
+        history: [...(Array.isArray(c.history) ? c.history : []), { at: nowIso, by: 'Cara', text: why }] }
+      await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item })
+      p3note(true, { card: c.id, step: 'closed: AxisCare shows the times now', ...now })
+      await opEvent(sb, { job: 'timekeeper-watch', verb: 'item_resolved', item_id: String(c.id), area: 'coverage', summary: `Cara closed "${String(c.title).slice(0, 120)}": ${why}` })
+    }
+  } catch (e) { p3.error = String((e as Error)?.message || e).slice(0, 160) }
+
   const summary = {
+    phase3: p3,
     routing: routeInfo,
     confirm_times: { live: cftLive, out_after_min: cftOutAfter, from_missed_clockin: cftFromIn, from_missed_clockout: cftFromOut, already_had_a_card: cftAlready },
     mode: !watchLive ? 'DRY RUN' : textLive ? 'LIVE (watch + text)' : 'LIVE (watch only, texting off)',

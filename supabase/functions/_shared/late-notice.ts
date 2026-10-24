@@ -17,12 +17,14 @@ export const HOLD_AFTER_ETA_MIN = 5, HOLD_NO_TIME_MIN = 15
 export const HOLD_CALL_MAX_MIN = 120
 export type NoticeLite = { visit_id: string; kind: string; eta: string | null; status: string; said_at?: string | null
   call_at?: string | null; call_by?: string | null; call_by_email?: string | null; call_quote?: string | null; caregiver_name?: string | null
-  client_first?: string | null; shift_start?: string | null; call_message_id?: string | null }
+  client_first?: string | null; shift_start?: string | null; call_message_id?: string | null; sure?: boolean | null }
 /* callOnly: the running-late notices are in practice (late_watch_live off), so only a call's notice may hold, and
    only "late" with a time. callHold: ops_settings.late_call_live is not false. Without opts: the L1 rule as it was. */
-export type HoldOpts = { callOnly: boolean; callHold: boolean }
-export const holdOptsOf = (st: { late_watch_live?: unknown; late_call_live?: unknown } | null | undefined): HoldOpts =>
-  ({ callOnly: st?.late_watch_live !== true, callHold: st?.late_call_live !== false })
+/* unsureAlarm (Cara Phase 3, 2026-10-24, ops_settings.late_unsure_live): an UNSURE "can't make it" ("I'm not sure I can make
+   it") is "Needs clarification", so the missed clock-in alarm keeps going; only a sure one holds it. Off: as before. */
+export type HoldOpts = { callOnly: boolean; callHold: boolean; unsureAlarm?: boolean }
+export const holdOptsOf = (st: { late_watch_live?: unknown; late_call_live?: unknown; late_unsure_live?: unknown } | null | undefined): HoldOpts =>
+  ({ callOnly: st?.late_watch_live !== true, callHold: st?.late_call_live !== false, unsureAlarm: st?.late_unsure_live === true })
 export const callLive = (st: { late_call_live?: unknown } | null | undefined) => st?.late_call_live !== false
 /** Until when the missed clock-in waits for this notice (ms), or null when it doesn't. */
 export function holdUntil(n: NoticeLite | null | undefined, shiftStartMs: number, opts?: HoldOpts): number | null {
@@ -36,7 +38,7 @@ export function holdUntil(n: NoticeLite | null | undefined, shiftStartMs: number
 export function lateHold(n: NoticeLite | null | undefined, shiftStartMs: number, now = Date.now(), opts?: HoldOpts): 'none' | 'skip' | 'hold' {
   if (!n || (n.status !== 'open' && n.status !== 'seen')) return 'none'
   if (opts?.callOnly && (!n.call_at || !opts.callHold || n.kind !== 'late' || !n.eta)) return 'none'
-  if (n.kind === 'cant_make_it') return 'skip'
+  if (n.kind === 'cant_make_it') return opts?.unsureAlarm && n.sure === false ? 'none' : 'skip'
   const until = holdUntil(n, shiftStartMs, opts)
   return until != null && now < until ? 'hold' : 'none'
 }
@@ -45,7 +47,7 @@ export function lateHold(n: NoticeLite | null | undefined, shiftStartMs: number,
 export async function liveNotices(sb: any, day: string): Promise<Map<string, NoticeLite>> {
   const out = new Map<string, NoticeLite>()
   try {
-    let r = await sb.from('late_notices').select('visit_id, kind, eta, status, said_at, call_at, call_by, call_by_email, call_quote, call_message_id, caregiver_name, client_first, shift_start').eq('shift_date', day).in('status', ['open', 'seen'])
+    let r = await sb.from('late_notices').select('visit_id, kind, eta, status, said_at, call_at, call_by, call_by_email, call_quote, call_message_id, caregiver_name, client_first, shift_start, sure').eq('shift_date', day).in('status', ['open', 'seen'])
     /* before 432's columns exist, the L1 columns */
     if (r?.error) r = await sb.from('late_notices').select('visit_id, kind, eta, status, said_at').eq('shift_date', day).in('status', ['open', 'seen'])
     if (r?.error) return out

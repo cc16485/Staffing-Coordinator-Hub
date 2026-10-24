@@ -38,6 +38,10 @@ import { ghlClientLink } from '../_shared/ghl-contact-link.ts'
 import { ghlCallBridge } from '../_shared/ghl-call-bridge.ts'
 import { callLine, holdUntil, holdOptsOf, clockAt, familyEligible, FAMILY_MIN_DEFAULT } from '../_shared/late-notice.ts'
 import { makeLink as makeLateLink, linkExpiry as lateLinkExpiry } from '../_shared/late-links.ts'
+import { findHandoff, handoffText, HANDOFF_TEXT, live as p3live } from '../_shared/clockin-v2.ts'   // Cara Phase 3
+import { visitMs } from '../_shared/held-shift.ts'
+import { contactForOutbound } from '../_shared/outreach.ts'
+import { ghlSendChecked } from '../_shared/send-problems.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
                'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -169,7 +173,13 @@ Deno.serve(async (req) => {
           family_told: (Array.isArray(n.family) ? n.family : []).length > 0 }
       }
     } catch { /* the page works without it */ }
-    return json({ ok: true, me: me.first, late_call: lateCall, caregiver_first: cgFirst, client_first: l.client_first, shift_date: l.shift_date,
+    /* CARA PHASE 3: what Cara read in their replies, and who is on shift before them (the late hand-off) */
+    const hand = !l.resolved_at ? await findHandoff({ visit_id: String(l.visit_id), client_axiscare_id: l.client_axiscare_id ?? null, shift_date: String(l.shift_date) }, (st) => visitMs(st)) : null
+    const p3 = { reads: (Array.isArray(l.reply_reads) ? l.reply_reads : []).slice(-3).map((x: { at: string; kind: string; quote: string | null; would: string; acted: boolean }) => ({ at: chi12(x.at), kind: x.kind, quote: x.quote, would: x.would, acted: x.acted })),
+      here_claim: l.here_claim ? { at: chi12(l.here_claim.at), quote: l.here_claim.quote } : null,
+      handoff: hand ? { first: hand.first, asked: l.handoff_asked ? { at: chi12(l.handoff_asked.at), by: l.handoff_asked.by } : null } : null,
+      handoff_live: p3live(settings, 'late_handoff_live') }
+    return json({ ok: true, me: me.first, late_call: lateCall, phase3: p3, caregiver_first: cgFirst, client_first: l.client_first, shift_date: l.shift_date,
       shift_time: clock12(l.shift_time), minutes_past_start: minutesPast(String(l.shift_date), String(l.shift_time)),
       texted_at: chi12(l.texted_at), caregiver_phone: normalisePhone(cg?.phone) || null, client_phone: clientPhone,
       client_ghl: clientGhl, caregiver_ghl: caregiverGhl,
@@ -186,6 +196,36 @@ Deno.serve(async (req) => {
 
   if (l.resolved_at)
     return json({ ok: true, already: true, ...status() })
+
+  /* CARA PHASE 3 · LATE HAND-OFF (late_handoff_live): only on this tap, once per alert, the caregiver on shift before
+     the late one gets "can you stay until <late caregiver> gets there?" (her approved wording). Nothing else is sent. */
+  if (action === 'ask_stay') {
+    if (!p3live(settings, 'late_handoff_live')) return json({ error: 'Asking the caregiver on shift to stay is switched off.' }, 409)
+    const fresh = await readLadder()
+    if (!fresh || fresh.resolved_at) return json({ ok: true, already: true, ...status() })
+    if (fresh.handoff_asked) return json({ error: `Already asked by ${fresh.handoff_asked.by}.`, ...status() }, 409)
+    const hand = await findHandoff({ visit_id: String(l.visit_id), client_axiscare_id: l.client_axiscare_id ?? null, shift_date: String(l.shift_date) }, (st) => visitMs(st))
+    if (!hand) return json({ error: 'Nobody is on shift with ' + l.client_first + ' right before this visit now.' }, 409)
+    const { data: cgRow } = await sb.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
+    // deno-lint-ignore no-explicit-any
+    const cgRec = (Array.isArray(cgRow?.data) ? cgRow!.data : []).find((c: any) => String(c?.axiscare_id ?? '').trim() === hand.caregiver_id)
+    const phone = normalisePhone(cgRec?.phone)
+    if (!phone) return json({ error: `No phone on the roster for ${hand.first}. Call them from AxisCare.` }, 409)
+    let minutes: number | null = null
+    try { const { data: n } = await sb.from('late_notices').select('eta, shift_start, kind').eq('visit_id', String(l.visit_id)).maybeSingle()
+      if (n?.kind === 'late' && n.eta) minutes = Math.max(5, Math.round((Date.parse(n.eta) - Date.parse(n.shift_start)) / 60000 / 5) * 5) } catch { /* no time: no minutes */ }
+    const text = handoffText(String(settings.late_handoff_msg || '') || HANDOFF_TEXT, { first: String(cgRec?.first ?? '') || hand.first, late_first: cgFirst, client: String(l.client_first), minutes })
+    const contact = await contactForOutbound(sb, ghl, { phone, firstName: hand.first }, 'urgent_internal', { audience: 'caregiver', channel: 'sms', sender: 'clockin-alert' })
+    if (!contact) return json({ error: `${hand.first} can't be texted (opted out, or the number isn't trusted). Call them.` }, 409)
+    const ok = await ghlSendChecked(sb, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json' },
+      'clockin-alert', { channel: 'sms', contactId: contact.contactId, address: phone, who: hand.name }, { message: text })
+    if (!ok) return json({ error: 'The text did not go. It shows on Needs Attention.' }, 502)
+    fresh.handoff_asked = { at: new Date().toISOString(), by: me.first, to: hand.name, text }
+    await save(fresh); Object.assign(l, fresh)
+    await opEvent(sb, { actor_email: me.email, actor_name: me.name, via: 'link', verb: 'handoff_asked', item_id: `ops_tk_${l.id}`, area: 'coverage',
+      summary: `${me.name} asked ${hand.name} to stay with ${l.client_first} until ${l.caregiver} arrives` })
+    return json({ ok: true, asked: hand.first, text, ...status() })
+  }
 
   if (action === 'snooze') {
     l.admin_loop = l.admin_loop || { started_at: new Date().toISOString(), sends: [], snooze: {} }
