@@ -5,6 +5,9 @@
 //                                                                          summary now, the state, and what this person may approve
 //   POST {action:'save',    ...key, about?, enjoys?, share_care?, hidden?}  a draft change (who and when recorded)
 //   POST {action:'approve', ...key}                                        approve what this person may (second person for care)
+//   POST {action:'draft', ...key}                                          the AI's draft introduction from the Life Story only
+//                                                                          (_shared/life-story-draft.ts); returned, not saved.
+//                                                                          Switch ops_settings.cgp_ai_draft_live (off: owners only)
 //   POST {action:'preview', ...key, version:'approved'|'draft'}            the shift page exactly as a caregiver would see it,
 //                                                                          on a sample shift (no open shift needed); nothing saved
 // The client is the AxisCare client, or the lead until they're in AxisCare (the draft follows them when they're added).
@@ -16,6 +19,7 @@ import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 import { opEvent } from '../_shared/events.ts'
 import { careNow } from '../_shared/cara-skills.ts'
 import { detailsView } from '../_shared/shift-offer.ts'
+import { lifeSources, draftFromLifeStory } from '../_shared/life-story-draft.ts'
 import { cleanAbout, cleanEnjoys, approvedView, draftView, approvedIntro, draftIntro, stateOf, canApprove, applySave, applyApprove, sampleShift, APPROVER_ROLES } from '../_shared/caregiver-preview.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } })
@@ -69,11 +73,27 @@ Deno.serve(async (req) => {
   if (!ax && !lead) return json({ error: 'Which client? (no AxisCare client or lead given)' }, 400)
   const me = { name: who.name, email: who.email, roles: who.roles }
   try {
-    const live = ((await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()).data?.data ?? {}).caregiver_preview_live === true
+    const stAll = (await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()).data?.data ?? {}
+    const live = stAll.caregiver_preview_live === true
     let { row, circle } = await load(ax, lead)
     const cl = ax ? await axClient(ax) : null
     const current = ax ? await careNow(sb, ax, cl) : null
     const clientName = S(b?.client_name) || S(row?.client_name) || [S(cl?.firstName), S(cl?.lastName)].filter(Boolean).join(' ') || null
+
+    /* THE AI DRAFT (2026-10-24, Life Story step 2): from the Life Story only; nothing saved */
+    if (action === 'draft') {
+      if (stAll.cgp_ai_draft_live !== true && !(who.roles || []).includes('owner_admin')) return json({ error: 'Drafting from the Life Story is in practice: only owners can try it until it is switched on.' }, 403)
+      const rows = async (key: string) => { const d = (await sb.from('app_data').select('data').eq('key', key).maybeSingle()).data?.data; return Array.isArray(d) ? d : [] }
+      const profile = ax ? (await rows('client_profiles')).find((p: Any) => p?.id === 'cp_ax' + ax) ?? null : null
+      const leads = await rows('leads')
+      const leadRow = (lead && leads.find((l: Any) => l?.id === lead)) || (ax && leads.find((l: Any) => String(l?.axiscare_client_id ?? '') === ax)) || null
+      const first = (clientName || '').split(' ')[0]
+      const family = [S(leadRow?.first_name), S(leadRow?.last_name)].filter(Boolean)   /* the caller: never named in the introduction */
+      const out = await draftFromLifeStory(lifeSources(profile, leadRow), first, Deno.env.get('ANTHROPIC_API_KEY') ?? '', fetch, family)
+      await opEvent(sb, { job: 'caregiver-preview', verb: out.ok ? 'caregiver_preview_ai_draft' : 'caregiver_preview_ai_draft_none', item_id: ax ? 'ax:' + ax : 'lead:' + lead, area: 'clients', actor_name: who.name,
+        summary: `${who.name} asked for an AI draft of the Caregiver Preview for ${clientName || 'a client'}: ${out.ok ? 'drafted (not saved)' : out.why}` })
+      return json(out.ok ? { ok: true, draft: out } : { ok: false, why: out.why })
+    }
 
     if (action === 'save') {
       const patch: Any = {}
@@ -81,6 +101,7 @@ Deno.serve(async (req) => {
       if ('enjoys' in b) { const c = cleanEnjoys(b.enjoys); if (!c.ok) return json({ error: c.error }, 400); patch.enjoys = c.items }
       if ('share_care' in b) patch.share_care = b.share_care === true
       if ('hidden' in b) patch.hidden = (Array.isArray(b.hidden) ? b.hidden : []).map(S).filter((k: string) => /^(help|needs|level|home):[\w.-]+$/.test(k)).slice(0, 40)
+      if (b.ai_draft === true) patch.ai = true   /* saved from an AI draft: said so in the history */
       const out = applySave(row, circle, patch, me, nowIso(), { client_key: ax ? 'ax:' + ax : 'lead:' + lead, axiscare_client_id: ax ?? row?.axiscare_client_id ?? null, lead_id: lead ?? row?.lead_id ?? null, client_name: clientName })
       if (out.changed.length || !row) {   /* nothing new = nothing written */
         if (!(await write(out.row))) return json({ error: 'Not saved. Please try again.' }, 500)

@@ -176,7 +176,7 @@ export function applySave(row: Any | null, circle: Any | null, patch: Any, who: 
   if ('hidden' in patch && !same(arr(patch.hidden).sort(), arr(r.draft_hidden).sort())) { r.draft_hidden = arr(patch.hidden); careDid.push('changed which care items show') }
   if (careDid.length) { r.care_changed_at = now; r.care_changed_by = who.email }
   const all = [...did.map((x) => 'changed ' + x), ...careDid]
-  if (all.length) r.history = hist(row, { at: now, by: who.name || who.email, what: all.join(', '), kind: 'draft' })
+  if (all.length) r.history = hist(row, { at: now, by: who.name || who.email, what: all.join(', ') + (patch.ai === true && did.length ? ' (from an AI draft)' : ''), kind: 'draft' })
   r.updated_at = now
   return { row: r, changed: all }
 }
