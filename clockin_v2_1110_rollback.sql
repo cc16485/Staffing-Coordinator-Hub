@@ -1,0 +1,1 @@
+-- 1110 rollback: alter table public.late_notices drop column if exists cant_case_would; alter table public.late_notices drop column if exists handoff_asked;

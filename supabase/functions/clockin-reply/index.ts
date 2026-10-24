@@ -10,6 +10,8 @@
 // Nothing is sent from here, and nothing resolves the alert: a person still does that.
 // -----------------------------------------------------------------------------
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { readReply, live, cantComeCase } from '../_shared/clockin-v2.ts'   // Cara Phase 3
+import { opEvent } from '../_shared/events.ts'
 
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } })
 const digits = (p: unknown) => String(p ?? '').replace(/\D/g, '').slice(-10)
@@ -56,8 +58,51 @@ Deno.serve(async (req) => {
     .sort((a: any, c: any) => String(c.opened_at).localeCompare(String(a.opened_at)))
   if (!open.length) { await log({ outcome: 'no open missed clock-in' }); return json({ ok: true, outcome: 'no open missed clock-in' }) }
   const l = open[0]
-  l.replies = [...(Array.isArray(l.replies) ? l.replies : []), { at: new Date().toISOString(), text: message.slice(0, 500) }].slice(-10)
+  const nowIso = new Date().toISOString()
+  l.replies = [...(Array.isArray(l.replies) ? l.replies : []), { at: nowIso, text: message.slice(0, 500) }].slice(-10)
+  /* CARA PHASE 3 (2026-10-24): the reply is READ. Her rules: a reply never counts as arrival; "can't come" opens a
+     call-off case at once and attendance waits for a person. Switches clockin_here_live and cant_come_case_live (off):
+     the reading is still kept on the alert as practice (what Cara WOULD do), and nothing else changes. */
+  const { data: stRow } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+  const st = stRow?.data ?? {}
+  const rd = await readReply(message, { client: l.client_first, time: l.shift_time })
+  const hereLive = live(st, 'clockin_here_live'), cantLive = live(st, 'cant_come_case_live')
+  if (!rd.failed) {
+    const would = rd.kind === 'here' ? 'the alert becomes "Call ' + l.client_first + ' to confirm arrival" (never marked arrived)'
+      : rd.kind === 'cant' ? 'a call-off case opens now; attendance waits for a person'
+      : rd.kind === 'unsure' ? '"Needs clarification: call them"; the missed clock-in alert keeps going'
+      : rd.kind === 'late' ? 'the running-late watcher holds the office texts until the time they gave plus 5 minutes'
+      : 'shown to the office as they wrote it'
+    l.reply_reads = [...(Array.isArray(l.reply_reads) ? l.reply_reads : []), { at: nowIso, kind: rd.kind, quote: rd.quote,
+      acted: (rd.kind === 'here' && hereLive) || (rd.kind === 'cant' && cantLive), would }].slice(-10)
+    if (rd.kind === 'here' && hereLive && !l.here_claim) {
+      l.here_claim = { at: nowIso, quote: rd.quote }
+      const { data: oi } = await sb.from('app_data').select('data').eq('key', 'ops_items').maybeSingle()
+      // deno-lint-ignore no-explicit-any
+      const it = (Array.isArray(oi?.data) ? oi!.data : []).find((x: any) => String(x?.id) === `ops_tk_${l.id}`)
+      if (it && it.status === 'open') await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...it,
+        title: `Call ${l.client_first} to confirm ${String(l.caregiver).split(' ')[0]} arrived (${l.client_first} ${l.shift_time}): no clock-in yet`,
+        detail: `${l.caregiver} replied${rd.quote ? `: "${rd.quote}"` : ''}. That says they're there, but a text is never arrival. `
+          + `Call ${l.client_first} (or the family) to confirm they arrived and when. Then help them clock in, or confirm the times on the visit. `
+          + String(it.detail || ''),
+        last_activity_at: nowIso } })
+    }
+    if (rd.kind === 'cant' && cantLive) {
+      const { data: cc } = await sb.from('app_data').select('data').eq('key', 'coverage_cases').maybeSingle()
+      // deno-lint-ignore no-explicit-any
+      const has = (Array.isArray(cc?.data) ? cc!.data : []).some((c: any) => c?.status === 'open' && String(c?.axiscare_visit_id ?? '') === String(l.visit_id))
+      if (!has) {
+        const c = cantComeCase({ visit_id: String(l.visit_id), client: String(l.client_first || ''), client_axiscare_id: l.client_axiscare_id ?? null,
+          shift_date: String(l.shift_date), shift_time: String(l.shift_time || ''), caregiver: String(l.caregiver || ''), caregiver_axiscare_id: l.caregiver_axiscare_id ?? null,
+          quote: rd.quote, source: 'reply', now: nowIso })
+        await sb.rpc('upsert_app_data_item', { target_key: 'coverage_cases', item: c })
+        l.cant_case = c.id
+        await opEvent(sb, { job: 'clockin-reply', verb: 'coverage_opened', item_id: c.id, area: 'coverage',
+          summary: `Cara opened a call-off case from ${l.caregiver}'s reply ("can't come") for ${l.client_first} ${l.shift_time}; attendance waits for a person` })
+      }
+    }
+  }
   await sb.rpc('upsert_app_data_item', { target_key: 'timekeeper_cases', item: l })
-  await log({ outcome: 'attached', alert: l.id })
-  return json({ ok: true, outcome: 'attached' })
+  await log({ outcome: 'attached', alert: l.id, read: rd.failed ? 'failed' : rd.kind })
+  return json({ ok: true, outcome: 'attached', read: rd.failed ? null : rd.kind })
 })
