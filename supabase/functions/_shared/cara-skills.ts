@@ -33,15 +33,7 @@ export async function loadSkillJudge(db: any, p: { clientAxId: string | null; ax
     }
     const key = async (k: string) => { const { data } = await db.from('app_data').select('data').eq('key', k).maybeSingle(); return data?.data ?? null }
     const [overlay, dnr, availability] = await Promise.all(['caregiver_overlay', 'dnr_log', 'caregiver_availability'].map(key))
-    /* the client's care needs: AxisCare client → person → active Journey → the fact record (none = no Journey, an incomplete client) */
-    let facts: any[] | null = null
-    const { data: ps } = await db.from('person_source_id').select('person_id').eq('system', 'axiscare').eq('entity_type', 'client').eq('source_id', p.clientAxId)
-    const persons = (ps ?? []).map((r: any) => r.person_id)
-    if (persons.length) {
-      const { data: eps } = await db.from('journey_episode').select('episode_id, state, created_at').in('person_id', persons)
-      const ep = (eps ?? []).filter((e: any) => ['provisional', 'open', 'converted', 'established'].includes(e.state)).sort((a: any, z: any) => String(z.created_at).localeCompare(String(a.created_at)))[0]
-      if (ep) { const { data: fs } = await db.from('client_fact_current').select('episode_id, kind, layer, value').eq('episode_id', ep.episode_id).in('layer', ['plan', 'current']); facts = fs ?? [] }
-    }
+    const facts = await factsFor(db, p.clientAxId)
     /* Step 1 skills pictures, for roster caregivers who came through the new Step 1 */
     const step1ByAx: Record<string, any> = {}
     const withOffer = rowsOf(p.roster).filter((r: any) => r?.offer_id && r?.axiscare_id)
@@ -92,4 +84,47 @@ export async function clearedFor(db: any, axId: string): Promise<{ ok: boolean; 
     if (el && ['eligible', 'needs_verification'].includes(el.state)) return { ok: true, why: 'cleared' }
     return { ok: false, why: 'Needs Verification: ' + String(el?.summary || el?.label || 'a required check is not complete') }
   } catch (e) { return { ok: false, why: 'Eligibility could not be checked just now (' + String((e as Error)?.message || e).slice(0, 100) + '). Nothing was changed.' } }
+}
+
+/** The client's care-plan facts: AxisCare client → person → active Journey → client_fact_current (plan and current
+    layers). null = no Journey (an incomplete client). */
+export async function factsFor(db: any, clientAxId: string): Promise<any[] | null> {
+  const { data: ps } = await db.from('person_source_id').select('person_id').eq('system', 'axiscare').eq('entity_type', 'client').eq('source_id', clientAxId)
+  const persons = (ps ?? []).map((r: any) => r.person_id)
+  if (!persons.length) return null
+  const { data: eps } = await db.from('journey_episode').select('episode_id, state, created_at').in('person_id', persons)
+  const ep = (eps ?? []).filter((e: any) => ['provisional', 'open', 'converted', 'established'].includes(e.state)).sort((a: any, z: any) => String(z.created_at).localeCompare(String(a.created_at)))[0]
+  if (!ep) return null
+  const { data: fs } = await db.from('client_fact_current').select('episode_id, kind, layer, value').eq('episode_id', ep.episode_id).in('layer', ['plan', 'current'])
+  return fs ?? []
+}
+
+/** THE SHIFT PAGE'S CLIENT DETAILS (2026-10-24), only what the office approved for caregivers: the About and What they
+    enjoy the office wrote on Family & Contacts (care_circles), what the caregiver would help with and the required
+    verified skills from the care plan (the match rules' own labels), Good to know (pets, smoking), and the care level.
+    Never an address, a last name, medication, diagnoses written as notes, or photos. Rules or records unreadable = that
+    part is simply left out (the page still shows the shift). */
+export async function clientInfoFor(db: any, clientAxId: string | null, axClient: any | null): Promise<{ about: string | null; enjoys: string[]; help: string[]; needs: string[]; home: string[]; level: number | null }> {
+  const out = { about: null as string | null, enjoys: [] as string[], help: [] as string[], needs: [] as string[], home: [] as string[], level: axClient ? careLevelOf(axClient.classes).level : null }
+  if (!clientAxId) return out
+  try {
+    const { data: circ } = await db.from('care_circles').select('caregiver_about, caregiver_enjoys').eq('axiscare_client_id', clientAxId).eq('active', true).limit(1).maybeSingle()
+    out.about = String(circ?.caregiver_about ?? '').trim() || null
+    out.enjoys = (Array.isArray(circ?.caregiver_enjoys) ? circ.caregiver_enjoys : []).map((x: unknown) => String(x ?? '').trim()).filter(Boolean).slice(0, 6)
+  } catch { /* no About: the page shows the shift only */ }
+  try {
+    const a = await approvedRules(db, 'match-rules.js'); if (!a.ok) return out
+    ;(0, eval)(a.src); const M = (globalThis as any).CCMatch; if (!M) return out
+    const ff = M.fromFacts((await factsFor(db, clientAxId)) || [])
+    for (const sk of M.SKILLS || []) {
+      const n = ff.needs?.[sk.key]; const v = n && typeof n === 'object' ? n.value : n
+      if (v === 'required' || v === 'preferred') out.help.push(sk.label)
+      if (v === 'required' && ['plan', 'current'].includes(n?.stage)) out.needs.push(sk.label)
+    }
+    const f = ff.facts || {}
+    if (f.cats === true) out.home.push('Cats in the home')
+    if (f.dogs === true) out.home.push('Dogs in the home')
+    if (f.smoking === true) out.home.push('Someone smokes in the home')
+  } catch { /* care plan unreadable: left out */ }
+  return out
 }
