@@ -61,7 +61,9 @@ async function details(k: any, ask: any, state: string) {
   const cl = await axClient(k.client_axiscare_id ? String(k.client_axiscare_id) : null)
   const kk = { ...k, client_city: k.client_city || String(cl?.residentialAddress?.city ?? '').trim() || null }
   const info = await clientInfoFor(sb, k.client_axiscare_id ? String(k.client_axiscare_id) : null, cl)
-  return detailsView(kk, ask, state, { ...info, care_line: k.care_note || null })
+  /* Good to know (2026-10-24, her call): the call-off's care note shows on the shift page only when the coordinator ticked
+     "Share on shift page" for it; unticked = it stays off the page (the text message is unchanged) */
+  return detailsView(kk, ask, state, { ...info, care_line: k.care_note_share === true ? (k.care_note || null) : null })
 }
 /* THE SHIFT AS AXISCARE HAS IT NOW (2026-10-24: "If a shift changes after an offer is created, the caregiver cannot
    unknowingly accept outdated hours"). The case's visit is read live: gone, or someone else now on it = closed; other day
