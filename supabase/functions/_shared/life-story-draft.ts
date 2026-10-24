@@ -36,13 +36,21 @@ export const sensitiveHit = (t: string): string | null => { const m = SENSITIVE.
 
 const STOP = new Set(['about', 'their', 'there', 'they', 'them', 'with', 'from', 'that', 'this', 'have', 'loves', 'love', 'likes', 'like', 'enjoys', 'enjoy', 'enjoyed', 'good', 'great', 'favorite', 'very', 'really', 'always', 'time', 'every', 'still', 'what', 'when', 'some', 'things', 'thing', 'day', 'days'])
 const words = (t: string) => (S(t).toLowerCase().match(/[a-z]{4,}/g) || []).filter((w) => !STOP.has(w))
+const shorts = (t: string) => (S(t).toLowerCase().match(/\b[a-z]{2,3}\b/g) || []).filter((w) => !SHORT_STOP.has(w))
+const SHORT_STOP = new Set(['the', 'and', 'her', 'his', 'she', 'him', 'for', 'with', 'are', 'was', 'has', 'had', 'but', 'not', 'any', 'all', 'our', 'out', 'too', 'off', 'who', 'its', 'one', 'two', 'day', 'get', 'got', 'old', 'new', 'big', 'lot', 'of', 'on', 'in', 'at', 'to', 'a', 'an', 'is', 'it', 'up', 'by', 'or', 'as', 'be', 'do', 'go', 'so', 'we', 'my', 'me', 'he', 'us'])
 const stem = (w: string) => w.slice(0, 5)
-/** Does this short item come from the Life Story? (one real word in common, by its first five letters) */
+/** Does this short item come from the Life Story? One real word in common (by its first five letters), or a short word
+    like "TV" or "pie" that appears in it exactly (2026-10-24: "keep short items like TV"). */
 export function grounded(item: string, sourceText: string): boolean {
-  const have = new Set(words(sourceText).map(stem))
-  const ws = words(item)
-  return ws.length > 0 && ws.some((w) => have.has(stem(w)))
+  const have = new Set(words(sourceText).map(stem)), haveShort = new Set(shorts(sourceText))
+  const ws = words(item), ss = shorts(item)
+  return ws.some((w) => have.has(stem(w))) || (ss.length > 0 && ss.some((w) => haveShort.has(w)))
 }
+/** British spellings and filler that adds nothing the Life Story said (2026-10-24: "American spelling, no filler or added
+    details"). A draft with one is sent back once. */
+const BRITISH = /\b(favourite|favour|colour|neighbour|honour|humour|flavour|labour|theatre|centre|organise|realise|recognise|travelled|jewellery|programme|whilst|mum)\b/i
+const FILLER = /\b(one of (his|her|their) favou?rite ways|(to )?pass the time|brings? (him|her|them) (so much )?joy|light(s)? up (his|her|their) (day|face)|never fails to|is sure to|truly|cherishe[sd]|treasure[sd]?|a true|always ready|warm(s)? (his|her|their) heart)\b/i
+export const styleHit = (t: string): string | null => { const m = BRITISH.exec(t) || FILLER.exec(t); return m ? m[0] : null }
 const REL = '(?:son|daughter|husband|wife|partner|boyfriend|girlfriend|grandson|granddaughter|grandchild|brother|sister|niece|nephew|cousin|friend|neighbou?r|caregiver|aide|mom|mother|dad|father|aunt|uncle)'
 /** People's names in the Life Story ("her son Mark", "Mark, her son", "daughter Laura") plus the family names we know from
     the inquiry (the caller). A draft must never use them. */
@@ -72,7 +80,8 @@ Rules:
 - Use only facts that are in the sources. Do not add, guess, embellish or generalise beyond them. If the sources say little, write little.
 - First name only for the client. Never mention anyone else by name, and do not describe family relationships or family matters.
 - Leave out anything about health, conditions, memory, mood, medication, personal care, toileting, mobility or equipment, money, legal matters, or where they live. If a source mixes these with interests, use only the interests.
-- About: two or three short, friendly sentences in plain words, 400 characters at most, written about the client in the third person.
+- About: one to three short, friendly sentences in plain words, 400 characters at most, written about the client in the third person. Use American English spelling.
+- Say only what the sources say. Do not add filler or flourish such as "one of her favorite ways to pass the time" or "it lights up her day", and do not add small details like amounts, containers, times of day or feelings ("a glass of", "every morning", "she treasures") that the sources don't give. One plain sentence is better than two padded ones.
 - Enjoys: up to six short items of one to three words each (activities, topics, foods, routines), each taken from the sources.
 - If the sources hold nothing usable for an introduction, set enough to false and leave about empty.
 - List the source numbers you used, and say in a few words what kinds of things you left out (for example "a health detail"), or nothing if you left nothing out.`
@@ -117,6 +126,8 @@ export async function draftFromLifeStory(srcs: ReturnType<typeof lifeSources>, f
     let d: Any; try { d = JSON.parse(text) } catch { return { ok: false, why: 'The AI answer could not be read. Try again.' } }
     if (d.enough === false || !S(d.about)) return { ok: false, why: `There isn't enough in ${firstName || 'their'} Life Story for an introduction yet. Add a little more about what they enjoy, then try again.` }
     const about = S(d.about)
+    const style = styleHit(about)
+    if (style) { note = `it said "${style}", which is filler or British spelling; say only what the sources say, in American English`; continue }
     const hit = sensitiveHit(about) || (Array.isArray(d.enjoys) ? d.enjoys.map((x: unknown) => sensitiveHit(S(x))).find(Boolean) : null)
     const people = peopleNames(sourceText, familyNames).filter((n) => n.toLowerCase() !== S(firstName).toLowerCase())
     const named = people.filter((n) => new RegExp('\\b' + n + '\\b').test(about + ' ' + (Array.isArray(d.enjoys) ? d.enjoys.join(' ') : '')))
@@ -131,5 +142,5 @@ export async function draftFromLifeStory(srcs: ReturnType<typeof lifeSources>, f
     const sources = (used.length ? [...new Set(used)].map((n) => srcs[n - 1]) : srcs).map((s) => ({ label: s.label, via: s.via, by: s.by, at: s.at }))
     return { ok: true, about: a.text, enjoys: e.items, sources, dropped, left_out: (Array.isArray(d.left_out) ? d.left_out : []).map(S).filter(Boolean).slice(0, 5) }
   }
-  return { ok: false, why: 'The AI kept including something that must be left out (' + note + '). Please write this one yourself.' }
+  return { ok: false, why: 'The AI kept including something it shouldn\'t (' + note + '). Please write this one yourself.' }
 }

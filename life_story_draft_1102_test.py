@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+# Rehearsal of 1102 (life_story_draft_1102.py) against a FAKE Supabase (management API, functions, SQL) and a FAKE supabase CLI, from
+# a fresh worktree of this commit (as the Desktop step runs it). Never touches a real project.  python3 life_story_draft_1102_test.py
+# (SB_HUB_REPO = a care-coordinator-hub clone with origin/main, for match-rules.js; default ../cc-hub-cara-p1)
+import json, os, subprocess, tempfile, threading, http.server, hashlib, re, shutil
+HERE = os.path.dirname(os.path.abspath(__file__))
+HUBREPO = os.environ.get("SB_HUB_REPO", os.path.join(HERE, "..", "cc-hub-cara-p1"))
+res = []; ck = lambda n, c, note="": res.append((n, bool(c), "" if c else str(note)[-1500:]))
+M = {}
+FNS = ["caregiver-preview"]
+ALLF = FNS
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def _send(self, code, obj):
+        b = json.dumps(obj).encode(); self.send_response(code); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(b)
+    def do_GET(self):
+        if "/api-keys" in self.path: return self._send(200, [{"name": "anon", "api_key": "eyJanon"}, {"name": "service_role", "api_key": "eyJservice"}])
+        m = re.match(r"/v1/projects/\w+/functions/([a-z-]+)$", self.path)
+        if m and m.group(1) == "pilot-readiness" and M.get("pr_missing"): return self._send(404, {})
+        if m and m.group(1) in FNS: return self._send(200, {"version": 7, "verify_jwt": m.group(1) not in ("callin-alert", "shift-offer", "family-gateway")})
+        if m and m.group(1) == "caregiver-preview": return self._send(200, {"version": 1, "verify_jwt": True})
+        self._send(404, {})
+    def do_PATCH(self): self._send(200, {})
+    def do_DELETE(self):
+        M.setdefault("deleted", []).append(self.path); self._send(200, {})
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length") or 0); body = json.loads(self.rfile.read(n) or b"{}"); p = self.path
+        if p.startswith("/functions/v1/caregiver-preview"): return self._send(401, {"error": "no"})
+        if p.startswith("/functions/v1/"):
+            return self._send(401, {"error": "not allowed"})
+        q = body["query"]
+        if "key = 'ops_settings'" in q:
+            n_ = M.setdefault("reads", 0); M["reads"] = n_ + 1
+            st = dict(M.get("settings", {"cara_list_live": True, "cara_today_live": True}))
+            if M.get("flip_after") and n_ >= 1: st["caregiver_preview_live"] = True
+            return self._send(200, [{"data": st}])
+        if "create table if not exists public.client_caregiver_profile" in q: M["ddl"] = True; return self._send(400, {"message": "boom"}) if M.get("ddl_fail") else self._send(201, [])
+        if "as open_grants" in q: return self._send(200, [{"rows": M.get("rows", 0), "had": M.get("had", 0), "open_grants": M.get("grants", 0)}])
+        return self._send(400, {"message": "unexpected query " + q[:120]})
+srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H); threading.Thread(target=srv.serve_forever, daemon=True).start()
+URL = f"http://127.0.0.1:{srv.server_address[1]}"
+TMP = tempfile.mkdtemp(prefix="t1102-"); WT = os.path.join(TMP, "wt")
+subprocess.run(["git", "-C", HERE, "worktree", "add", "-q", "--detach", WT, "HEAD"], check=True)
+FAKEBIN = os.path.join(TMP, "bin"); os.makedirs(FAKEBIN); DEPLOYS = os.path.join(TMP, "deploys")
+open(os.path.join(FAKEBIN, "supabase"), "w").write(f"""#!/usr/bin/env python3
+import sys, os, shutil
+a = sys.argv[1:]
+if a[:2] == ['secrets', 'list']: print('NAME DIGEST\\n' + ('' if os.environ.get('NO_AI_KEY') else 'ANTHROPIC_API_KEY abc\\n')); sys.exit(0)
+if a[:2] == ['functions', 'deploy']: open({DEPLOYS!r}, 'a').write(a[2] + '\\n'); sys.exit(0)
+if a[:2] == ['functions', 'download']:
+    shutil.copytree(os.path.join({WT!r}, 'supabase', 'functions'), os.path.join(os.getcwd(), 'supabase', 'functions'), dirs_exist_ok=True); sys.exit(0)
+sys.exit(1)
+""")
+os.chmod(os.path.join(FAKEBIN, "supabase"), 0o755)
+sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
+FILES = ["caregiver-preview/index.ts", "_shared/life-story-draft.ts", "_shared/caregiver-preview.ts"]
+SHAS = {k: sha(os.path.join(WT, "supabase/functions", k)) for k in FILES}
+def go(**m):
+    M.clear(); M.update(m)
+    if os.path.exists(DEPLOYS): os.remove(DEPLOYS)
+    rep = os.path.join(TMP, "report.txt")
+    if os.path.exists(rep): os.remove(rep)
+    env = dict(os.environ, SB_STEP="1102", SB_TOKEN="sbp_fake", SB_REPORT=rep, SB_SUPA_CLI=os.path.join(FAKEBIN, "supabase"), SB_API_BASE=URL, SB_FN_BASE=URL,
+               SB_FNROOT=os.path.join(WT, "supabase/functions"), SB_SHAS=json.dumps(m.get("shas", SHAS)), SB_MAIN_REF="HEAD", SB_SETTLE="0", SB_HUB_REPO=HUBREPO,
+               SB_NODE="none" if m.get("no_node") else (shutil.which("node") or ""))
+    p = subprocess.run(["python3", os.path.join(WT, "life_story_draft_1102.py")], cwd=WT, env=env, capture_output=True, text=True)
+    dep = open(DEPLOYS).read().split() if os.path.exists(DEPLOYS) else []
+    return p.returncode, (open(rep).read() if os.path.exists(rep) else p.stdout + p.stderr), dep
+try:
+    c, o, d = go()
+    ck("clean run: DONE, exit 0", c == 0 and "1102: DONE" in o, o)
+    ck("clean run: the tests ran (fake data only)", "the Caregiver Preview and shift page tests pass" in o, o)
+    ck("clean run: switches that are on are left as they are (and said), and checked unchanged after", "switches on now (left exactly as they are): cara_list_live, cara_today_live" in o and "every switch is exactly as it was" in o, o)
+    ck("clean run: only caregiver-preview re-deployed, its gateway setting kept; the AI key checked by name only; no database change", d == ["caregiver-preview"] and "caregiver-preview is live as version 7, gateway sign-in check on (kept)" in o and "the AI key is set on the server" in o and not M.get("ddl"), [d, o])
+    ck("clean run: a draft needs a Hub sign-in; the test route refuses anyone without the owner's key", "a draft needs a Hub sign-in (401)" in o and "the test route refuses anyone without the owner's key (401)" in o, o)
+    os.environ["NO_AI_KEY"] = "1"; c, o, d = go(no_node=True); del os.environ["NO_AI_KEY"]
+    ck("no AI key on the server: stops before anything changes", c == 2 and not d and "isn't set on the server" in o, [d, o])
+    c, o, d = go(settings={"caregiver_preview_live": True, "cara_list_live": True}, no_node=True)
+    ck("any switch may be on: it is left alone, the step still runs", c == 0 and "1102: DONE" in o and "caregiver_preview_live" in o, o)
+    c, o, d = go(flip_after=True, no_node=True)
+    ck("a switch changed during the step: said loudly, not DONE", c == 1 and "a switch changed during the step" in o, o)
+    c, o, d = go(shas={**SHAS, "shift-offer/index.ts": "0" * 64}, no_node=True)
+    ck("not the reviewed build: stops before anything changes", c == 2 and not d and "not the reviewed build" in o, o)
+finally:
+    subprocess.run(["git", "-C", HERE, "worktree", "remove", "--force", WT]); shutil.rmtree(TMP, ignore_errors=True); srv.shutdown()
+ok = sum(1 for r in res if r[1])
+for n, g, note in res: print(("  ✓ " if g else "  ✗ ") + n + ("" if g else "\n      " + note))
+print(f"\n{ok}/{len(res)} passed"); raise SystemExit(0 if ok == len(res) else 1)
