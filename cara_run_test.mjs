@@ -26,7 +26,13 @@ const R = await import(path.join(FN, '_shared/cara-run.ts'))
   ck('step: a full-shift yes that can be confirmed = pause, before anything else is sent', JSON.stringify(R.nextStep(run(), X({ fullYes: [{ ask_id: 'a1', name: 'Tara' }] }))) === '{"do":"pause","ask_id":"a1","name":"Tara"}')
   ck('step: a yes the office said "Not this one" to never pauses Cara', R.nextStep(run({ declined: [{ ask_id: 'a1' }] }), X({ fullYes: [{ ask_id: 'a1', name: 'Tara' }] })).do === 'wave')
   ck('step: a yes Cara already paused for (and the wait ran out) does not pause her again', R.nextStep(run({ seen_yes: ['a1'] }), X({ fullYes: [{ ask_id: 'a1', name: 'Tara' }] })).do === 'wave')
-  ck('step: under 2 hours to the shift = handed to the office, no more waves', /under 2 hours/.test(R.nextStep(run(), X({ minsToStart: 100 })).why || '') && R.nextStep(run(), X({ minsToStart: 100 })).do === 'needs_office')
+  /* her rule (2026-10-24): "DO NOT STOP with 2 hours" */
+  { const ru = R.runRules({}, 100)
+    ck('under 2 hours: faster and wider (10 a wave, 5 minutes apart), never handed back for the time alone', ru.urgent && ru.size === 10 && ru.gap === 5 && R.nextStep(run(), X({ minsToStart: 100, rules: ru })).do === 'urgent'
+      && JSON.stringify(R.nextStep(run({ urgent_at: 'x' }), X({ minsToStart: 100, rules: ru }))) === '{"do":"wave","n":1}', [ru, R.nextStep(run(), X({ minsToStart: 100, rules: ru }))])
+    ck('under 2 hours: no 3-wave limit (wave 7 still goes), but the shift ending hands it to the office',
+      R.nextStep(run({ urgent_at: 'x', wave: 6 }), X({ minsToStart: 30, rules: ru })).do === 'wave' && R.nextStep(run({ urgent_at: 'x', wave: 6 }), X({ minsToStart: -500, minsToEnd: 0, rules: ru })).do === 'needs_office')
+    ck('the shift has started but not ended: Cara keeps asking', R.nextStep(run({ urgent_at: 'x' }), X({ minsToStart: -30, minsToEnd: 450, rules: ru })).do === 'wave') }
   ck('step: 3 waves sent and no yes = the office takes it (never just dropped)', R.nextStep(run({ wave: 3 }), X()).do === 'needs_office' && /3 waves sent/.test(R.nextStep(run({ wave: 3 }), X()).why))
   ck('step: "Keep searching" after 3 waves gives 3 more, numbering carries on', JSON.stringify(R.nextStep(run({ wave: 3, wave_base: 3 }), X())) === '{"do":"wave","n":4}' && R.nextStep(run({ wave: 6, wave_base: 3 }), X()).do === 'needs_office')
   ck('step: quiet hours = hold the wave', R.nextStep(run(), X({ night: true })).do === 'hold_night')
@@ -66,7 +72,7 @@ const reset = (kase, settings = {}) => {
   APP = {
     caregivers: CG.map(([id, f, l]) => ({ first: f, last: l, phone: '41755501' + id.slice(-2), axiscare_id: id, active: true, alz_date: '2025-01-01' })),
     caregiver_availability: [], coverage_cases: [kase], staffing_plans: [], caregiver_overlay: [], dnr_log: [], ops_items: [],
-    ops_settings: { coverage_send_live: true, coverage_quiet_from: 0, coverage_quiet_until: 0, coverage_alert_admins: ['sam@x.com'], ...settings },
+    ops_settings: { coverage_send_live: true, coverage_quiet_from: 0, coverage_quiet_until: 0, office_quiet_start: 0, office_quiet_end: 0, coverage_alert_admins: ['sam@x.com'], ...settings },   /* no quiet hours, so the result never depends on the hour the test runs */
     coordinator_staff: [{ email: 'sam@x.com', name: 'Sam Owner', phone: '4175550900' }],
     responsibilities: [], nurse_staff: [], coverage_do_not_offer: [], client_checkins: [],
   }
@@ -236,7 +242,7 @@ ck('switch turned off: the live run stops and says why; nothing more is sent', r
 const soon = new Date(Date.now() + 90 * 60000); const soonT = soon.toLocaleString('sv-SE', { timeZone: 'America/Chicago' }).slice(11, 16)
 reset(K({ shift_date: ymd(soon), shift_time: `${soonT}-23:59` }), { cara_run_live: true })
 j = await act({ action: 'cara_run_start', case_id: 'cv1' }, KAY)
-ck('under 2 hours to the shift: Cara won\'t start ("call people from the list")', j.status === 409 && /under 2 hours/.test(j.error) && !run(), j)
+ck('under 2 hours to the shift: Cara STARTS (her rule: "DO NOT STOP with 2 hours"), tells the office once, and wave 1 asks 10', j.ok && run()?.urgent_at && ev('urgent').length === 1 && run()?.wave === 1 && caseOf().asked.length === 10, [j, ev('urgent')])
 reset(K({ kind: 'interest' }), { cara_run_live: true })
 j = await act({ action: 'cara_run_start', case_id: 'cv1' }, KAY)
 ck('interest checks: not Cara\'s to run', j.status === 409 && /open shifts only/.test(j.error))
@@ -250,6 +256,35 @@ j = await act({ action: 'send_selected', case_id: 'cv1', recipients: ['Amy Test'
 ck('the coordinator\'s own send: same as before (picked by the coordinator, not marked Cara)', j.sent?.length === 2 && caseOf().asked.every((a) => a.picked_by_coordinator === true && a.auto === false && !a.cara_wave) && CG_SENT().length === 2, [j, caseOf().asked[0]])
 j = await act({ action: 'send_selected', case_id: 'cv1', recipients: ['Amy Test'] }, KAY)
 ck('the coordinator\'s own send: someone already asked is not texted again', !(j.sent || []).length && CG_SENT().length === 2, j)
+
+
+/* ── ASK EVERYONE NOW and the LAST-MINUTE BONUS (Samantha 2026-10-24) ── */
+reset(K({ shift_time: '08:00-16:00' }), { cara_run_live: true })
+APP.caregiver_availability = [{ id: 'av4', axiscare_id: '9004', windows: { sun: ['morning'] } }]   // Dee: outside her availability
+let ae = await act({ action: 'ask_everyone', case_id: 'cv1', preview: true }, KAY)
+ck('ask everyone, preview: every eligible caregiver not yet asked (15), never Dee (outside her availability, with the reason); nothing sent',
+  ae.names?.length === 15 && !ae.names.includes('Dee Test') && ae.left_out.some((x) => x.name === 'Dee Test' && /outside their availability/.test(x.why)) && !CG_SENT().length && !caseOf().asked.length, ae)
+ae = await act({ action: 'ask_everyone', case_id: 'cv1', send: true, names: [...ae.names.slice(0, 12), 'Dee Test', 'Nobody Real'] }, KAY)
+ck('ask everyone, send: only the confirmed names that are still eligible are texted (12); Dee and an unknown name are refused', ae.sent?.length === 12 && ae.refused === 2 && CG_SENT().length === 12 && caseOf().asked.length === 12, ae)
+ae = await act({ action: 'ask_everyone', case_id: 'cv1', preview: true }, KAY)
+ck('ask everyone again: only the 3 not yet asked are listed (nobody texted twice)', ae.names?.length === 3 && ae.already_asked === 12, ae)
+ck('ask everyone: recorded with who did it', (T.op_events || []).some((e) => e.verb === 'ask_everyone' && e.actor_name === 'Kay Coord'), T.op_events)
+APP.ops_settings.coverage_send_live = false
+ae = await act({ action: 'ask_everyone', case_id: 'cv1', send: true, names: ae.names }, KAY)
+ck('ask everyone with texting switched off: refused, nothing sent', ae.status === 409 && CG_SENT().length === 12, ae)
+
+reset(K({ shift_time: '08:00-16:00' }), { cara_run_live: true })
+let bz = await act({ action: 'set_bonus', case_id: 'cv1', amount: 600 }, KAY)
+ck('bonus: more than $500 or not a whole amount is refused', bz.status === 400)
+bz = await act({ action: 'set_bonus', case_id: 'cv1', amount: 25, note: 'last minute' }, KAY)
+ck('bonus: set with who and when, kept in the history', bz.ok && caseOf().bonus?.amount === 25 && caseOf().bonus.by === 'Kay Coord' && caseOf().bonus_history.length === 1, caseOf())
+await act({ action: 'send_selected', case_id: 'cv1', recipients: ['Amy Test'] }, KAY)
+ck('bonus: the text says it plainly, before the question', /\$25 bonus for taking this shift\. Can you take it\?/.test(CG_SENT()[0]?.msg || ''), CG_SENT()[0])
+ck('bonus: the ask records the amount (for payroll)', caseOf().asked[0]?.bonus === 25, caseOf().asked[0])
+await act({ action: 'cara_run_start', case_id: 'cv1' }, KAY)
+ck('bonus: Cara\'s waves carry it too', CG_SENT().slice(1).every((x) => /\$25 bonus/.test(x.msg)) && CG_SENT().length > 1, CG_SENT().map((x) => x.msg.slice(0, 60)))
+bz = await act({ action: 'set_bonus', case_id: 'cv1', amount: 0 }, KAY)
+ck('bonus: taken off with 0 (history keeps both)', bz.ok && caseOf().bonus === null && caseOf().bonus_history.length === 2, caseOf())
 
 for (const [n, o, d] of res) console.log((o ? 'PASS' : 'FAIL') + ' · ' + n + (o ? '' : '\n     ' + d))
 console.log(`${res.filter((x) => x[1]).length}/${res.length}`)
