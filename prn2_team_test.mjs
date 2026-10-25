@@ -184,5 +184,19 @@ r = await call({ action: 'shift', axiscare_caregiver_id: '9001', case_id: 'cv2',
 ck('... not recorded for someone who is an ongoing caregiver now', r.j.outcome === 'not_prn' && T.prn_shift_log.length === 2, r)
 r = await call({ action: 'shift', axiscare_caregiver_id: 'x', case_id: '', kind: 'maybe' }); ck('... a malformed request is refused', r.status === 400, r)
 r = await call({ action: 'list' }); ck('... and the list carries the shift record', r.j.shifts?.length === 2, r)
+
+/* SHORT NOTICE (2026-10-24, her wave rules): a person records what a PRN member said; never set by itself */
+reset(); await call({ action: 'start', applicant_id: A1 })
+r = await call({ action: 'short_notice', applicant_id: A1, ok: 'yes', how: 'call' }); ck('short notice: yes or no must be a real yes or no', r.status === 400, r)
+r = await call({ action: 'short_notice', applicant_id: A1, ok: true }); ck('short notice: how they told us is required (call, text, in person)', r.status === 400 && /how did they tell you/.test(r.j.error), r)
+T.job_applicants[0].prn.notice = '48h'; T.job_applicants[0].prn.interests = ['calloffs']
+r = await call({ action: 'short_notice', applicant_id: A1, ok: true, how: 'call', note: 'Same day is fine if before 10am' })
+const pr = T.job_applicants[0].prn
+ck('short notice: recorded with who, when, how, the note and their notice at the time; their other answers kept', r.j.outcome === 'recorded' && pr.short_notice_ok === true && pr.short_notice.by === 'Krystal' && pr.short_notice.how === 'call'
+  && pr.short_notice.note === 'Same day is fine if before 10am' && pr.short_notice.notice === '48h' && pr.notice === '48h' && pr.days.length === 2 && pr.interests[0] === 'calloffs', pr)
+r = await call({ action: 'short_notice', applicant_id: A1, ok: false, how: 'text' })
+ck('short notice: changed later = the new answer wins and both are kept in the history', T.job_applicants[0].prn.short_notice_ok === false && T.job_applicants[0].prn.short_notice_history.length === 2 && T.job_applicants[0].prn.short_notice_history[0].ok === true, T.job_applicants[0].prn)
+reset(); r = await call({ action: 'short_notice', applicant_id: A1, ok: true, how: 'call' }); ck('short notice: only for someone on a PRN pay track', r.j.outcome === 'no_track' && !T.job_applicants[0].prn.short_notice, r)
+reset(); STAFF.ok = false; r = await call({ action: 'short_notice', applicant_id: A1, ok: true, how: 'call' }); ck('short notice: not office staff = refused', r.status === 401, r)
 for (const [n, o, d] of res) console.log((o ? 'PASS' : 'FAIL') + ' · ' + n + (o ? '' : '\n     ' + d))
 console.log(`${res.filter((x) => x[1]).length}/${res.length}`)
