@@ -64,7 +64,7 @@ import { linkFor, partWelcome, patLineOf, linkTemplate as shiftLinkTemplate, fil
 import { makeShiftLink, shiftDayEnd } from '../_shared/shift-links.ts'
 import { isPlaceholderCaregiver } from '../_shared/cg-placeholder.ts'   // 2026-10-24: never a cover
 import { LIVE_STATES, runRules, nextStep, pickWave, waveOrder, combosOf, partsWithoutHours, nextMorning, needsLine } from '../_shared/cara-run.ts'   // CARA PHASE 2 PART A
-import { judgeForWaves, pickWaveV2 } from '../_shared/cara-waves.ts'   // her wave rules (2026-10-24), switch cara_wave_rules_live
+import { judgeForWaves, pickWaveV2, bandsOfTimes, caseBands, sameTimeOfDay } from '../_shared/cara-waves.ts'   // her wave rules (2026-10-24), switch cara_wave_rules_live
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -884,8 +884,13 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
     }
   } catch { /* no reputation = no boost, never a block */ }
 
-  /* Worked-with-this-client history (group 1) + recent activity + hunger. */
-  const history = new Map<string, { visits: number; last: string }>()
+  /* Worked-with-this-client history (group 1) + recent activity + hunger. SAME TIME OF DAY (her ask 2026-10-24, Dan's
+     overnight): each visit's part of the day is kept too, so someone who works this client's overnights is told apart from
+     someone who covered a daytime visit (used only with ops_settings.cara_same_time_live on). */
+  const history = new Map<string, { visits: number; last: string; same_time: number; same_time_last: string }>()
+  const cBands = caseBands(c)
+  let sameTimeLive = false
+  try { const { data: stS } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle(); sameTimeLive = stS?.data?.cara_same_time_live === true } catch { /* off */ }
   if (clientRes.id) {
     const h = await fetchVisits(
       `startDate=${dISO(180)}&endDate=${dISO(0)}&clientIds=${encodeURIComponent(clientRes.id)}`)
@@ -893,10 +898,14 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
       const cg = v?.caregiver?.id; if (cg == null) continue
       const k = String(cg)
       const day = String(v?.date ?? v?.startDate ?? v?.start ?? '')
-      const cur = history.get(k) ?? { visits: 0, last: '' }
-      history.set(k, { visits: cur.visits + 1, last: day > cur.last ? day : cur.last })
+      const vb = bandsOfTimes(String(v?.scheduledStartDate ?? v?.startDate ?? '').slice(11, 16), String(v?.scheduledEndDate ?? v?.endDate ?? '').slice(11, 16))
+      const same = sameTimeOfDay(cBands, vb)
+      const cur = history.get(k) ?? { visits: 0, last: '', same_time: 0, same_time_last: '' }
+      history.set(k, { visits: cur.visits + 1, last: day > cur.last ? day : cur.last,
+        same_time: cur.same_time + (same ? 1 : 0), same_time_last: same && day > cur.same_time_last ? day : cur.same_time_last })
     }
   }
+  const bandWord = cBands.includes('overnight') ? 'overnight' : cBands.length === 1 ? ({ morning: 'morning', afternoon: 'daytime', evening: 'evening' } as Record<string, string>)[cBands[0]] : 'at this time of day'
   const recent = await fetchVisits(`startDate=${dISO(14)}&endDate=${dISO(0)}`)
   const recentlyActive = new Set(recent.rows.map(v => String(v?.caregiver?.id ?? '')).filter(Boolean))
   const wantGap = new Map<string, number>()
@@ -1070,7 +1079,7 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
       wants_more_hours: gap != null && gap > 0 ? Math.round(gap) : null,
       new_hire: newHire.get(gid) ?? null,   // a new hire who still needs hours (2026-10-12)
       recently_active: recentlyActive.has(gid),
-      history: h ? { visits: h.visits, last: h.last } : null,
+      history: h ? { visits: h.visits, last: h.last, same_time: h.same_time, same_time_last: h.same_time_last } : null,
       city, miles, same_town: sameTown,
       free_then: conflicts == null ? null : conflicts === 0,
       conflicts_then: conflicts,
@@ -1080,7 +1089,7 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
         concerns: repRec.concerns, total: repRec.total } : null,
       this_client: mine ? { rating: mine.rating, favorite: mine.favorite } : null,
       drive_note: drv.note, drive_lower: drv.rankLower,
-      why: h ? `${h.visits} visit${h.visits === 1 ? '' : 's'} with this client, last ${h.last || '?'}`
+      why: h ? `${h.visits} visit${h.visits === 1 ? '' : 's'} with this client` + (sameTimeLive && cBands.length ? `, ${h.same_time} ${bandWord}` : '') + `, last ${h.last || '?'}`
         : recentlyActive.has(gid) ? 'worked a shift in the last 14 days'
         : 'active caregiver, no recent history',
     }
@@ -1125,8 +1134,10 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
      take this and delight the client" reads top-down. */
   group1.sort((a, b) => ((a.outside_avail ? 1 : 0) - (b.outside_avail ? 1 : 0))   // outside their availability sinks (2026-10-14)
     || ((a.working_then ? 1 : 0) - (b.working_then ? 1 : 0))
+    || (sameTimeLive ? ((b.history?.same_time ? 1 : 0) - (a.history?.same_time ? 1 : 0)) : 0)   /* her ask: same time of day first */
     || ((b.new_hire ? 1 : 0) - (a.new_hire ? 1 : 0))   /* her "B": a new hire who needs hours first among equal fits */
     || ((b.this_client?.favorite ? 1 : 0) - (a.this_client?.favorite ? 1 : 0))
+    || (sameTimeLive ? (b.history?.same_time ?? 0) - (a.history?.same_time ?? 0) : 0)
     || (b.history?.visits ?? 0) - (a.history?.visits ?? 0))
   group2.sort((a, b) =>
     ((a.outside_avail ? 1 : 0) - (b.outside_avail ? 1 : 0))   // outside their availability sinks (2026-10-14)
@@ -1327,7 +1338,7 @@ async function caraAdvance(caseId: string, st: any): Promise<string> {
         const asked0 = Array.isArray(c.asked) ? c.asked : []
         const p2 = await buildCandidatesForCase(c, { v2: true })
         const all2 = [...p2.group0, ...p2.prn_other, ...p2.group1, ...p2.group2, ...p2.prn_ongoing]
-        const judged = judgeForWaves(all2, c, { minsToStart: m, ongoing: isOngoingCase(c) })
+        const judged = judgeForWaves(all2, c, { minsToStart: m, ongoing: isOngoingCase(c), sameTime: st.cara_same_time_live === true })
         const since0 = (Number(cur.wave) || 0) - (Number(cur.wave_base) || 0)
         const v2pick = pickWaveV2(judged.ordered, asked0, { size: rules.size, wavesLeft: Math.max(1, rules.maxWaves - since0), urgent: m != null && m <= 1440,
           partSlots: Number.isFinite(Number(st.cara_wave_part_slots)) ? Math.max(0, Math.min(rules.size, Number(st.cara_wave_part_slots))) : 2 })
@@ -2536,8 +2547,9 @@ Deno.serve(async (req) => {
         }
       }
     }
-    const history = new Map<string, { visits: number; last: string }>()
+    const history = new Map<string, { visits: number; last: string; same_time: number }>()
     let historyError: string | null = null
+    const cBandsW = caseBands(c)   /* her ask (2026-10-24): same time of day first, with cara_same_time_live on */
     if (clientRes.id) {
       const h = await fetchVisits(
         `startDate=${dISO(180)}&endDate=${dISO(0)}&clientIds=${encodeURIComponent(clientRes.id)}`)
@@ -2547,8 +2559,9 @@ Deno.serve(async (req) => {
         if (cg == null) continue
         const k = String(cg)
         const day = String(v?.date ?? v?.startDate ?? v?.start ?? '')
-        const cur = history.get(k) ?? { visits: 0, last: '' }
-        history.set(k, { visits: cur.visits + 1, last: day > cur.last ? day : cur.last })
+        const same = sameTimeOfDay(cBandsW, bandsOfTimes(String(v?.scheduledStartDate ?? v?.startDate ?? '').slice(11, 16), String(v?.scheduledEndDate ?? v?.endDate ?? '').slice(11, 16)))
+        const cur = history.get(k) ?? { visits: 0, last: '', same_time: 0 }
+        history.set(k, { visits: cur.visits + 1, last: day > cur.last ? day : cur.last, same_time: cur.same_time + (same ? 1 : 0) })
       }
     }
     const tierOf = (x: any): { tier: number; why: string } => {
@@ -2593,6 +2606,7 @@ Deno.serve(async (req) => {
     const sendable = cands.filter(x => x.may_autosend && !x.prn_skip && !x.avail_skip).sort((a: any, b: any) =>
       (a.tier - b.tier) ||
       ((a.outside_ask ? 1 : 0) - (b.outside_ask ? 1 : 0)) ||
+      (settings.cara_same_time_live === true ? ((history.get(String(b.axiscare_id ?? ''))?.same_time ?? 0) > 0 ? 1 : 0) - ((history.get(String(a.axiscare_id ?? ''))?.same_time ?? 0) > 0 ? 1 : 0) : 0) ||
       ((history.get(String(b.axiscare_id ?? ''))?.visits ?? 0) -
        (history.get(String(a.axiscare_id ?? ''))?.visits ?? 0)) ||
       ((wantGap.get(String(b.axiscare_id ?? '')) ?? -999) -
