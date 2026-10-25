@@ -20,6 +20,9 @@
 //      shift type they picked first); room in the week (not near 40 hours or past what they want); travel (a schedule
 //      that chains, then distance); a new hire who needs hours; rated well by other clients; recently active; wants more
 //      hours. A familiar caregiver who is free always comes before a PRN member who has never met the client.
+//   4b. SAME TIME OF DAY (her ask 2026-10-24, Dan's overnight): among caregivers who know the client, those who have worked
+//      this client at the same time of day (overnight, mornings, daytime, evenings) come first. Switch
+//      ops_settings.cara_same_time_live (off): no change.
 //   5. URGENT SAME-DAY PARTS: a shift starting within a day, when the whole-shift people left can't fill the waves left,
 //      saves up to 2 places in each wave for people who can do part of it, instead of waiting through every wave.
 // Only decisions here (no reads or writes), so every rule is tested. Switch ops_settings.cara_wave_rules_live (off): the
@@ -54,6 +57,27 @@ export function slotsOf(c: Any): { day: string; band: string }[] {
     for (const [band, a, z] of parts) if (sp[0] < z && a < sp[1]) out.push({ day, band })
   }
   return out
+}
+
+/** The parts of the day a visit from start to end (HH:MM, an end at or before the start wraps past midnight) spends time in. */
+export function bandsOfTimes(start: string, end: string): string[] {
+  const a = hm(S(start, 5)), z0 = hm(S(end, 5)); if (a == null || z0 == null) return []
+  const z = z0 <= a ? z0 + 1440 : z0, out = new Set<string>()
+  for (const d of [-1, 0, 1]) {
+    const b = d * 1440
+    const parts: [string, number, number][] = [['morning', b + 360, b + 720], ['afternoon', b + 720, b + 1020], ['evening', b + 1020, b + 1320], ['overnight', b + 1320, b + 1800]]
+    for (const [band, x, y] of parts) if (a < y && x < z) out.add(band)
+  }
+  return BAND_KEYS.filter((k) => out.has(k))
+}
+/** The case's parts of the day (from its shift time), or [] with no time. */
+export function caseBands(c: Any): string[] { const m = /^(\d\d:\d\d)-(\d\d:\d\d)$/.exec(S(c?.shift_time, 20)); return m ? bandsOfTimes(m[1], m[2]) : [] }
+/** A visit counts as "the same time of day" when it shares the case's main part of the day: overnight when the case touches
+    the overnight, otherwise any part they share. */
+export function sameTimeOfDay(caseB: string[], visitB: string[]): boolean {
+  if (!caseB.length || !visitB.length) return false
+  if (caseB.includes('overnight')) return visitB.includes('overnight')
+  return visitB.some((b) => caseB.includes(b))
 }
 
 export type ShiftAvail = { state: 'full' | 'partial' | 'none' | 'unknown' | 'no_shift'; outside_ok: boolean; missing: string[]; why: string | null }
@@ -111,7 +135,7 @@ export type Out = { name: string; axiscare_id: string | null; why: string }
 
 /** Hard exclusions and the order, for one case. rows: the list's people (any group); each may carry windows/outside_ok
     (their availability) and prn_pref (PRN Team: notice, interests, days, times, short_notice_ok). */
-export function judgeForWaves(rows: Any[], c: Any, x: { minsToStart: number | null; ongoing: boolean }): { ordered: Judged[]; excluded: Out[]; conflicts: Out[] } {
+export function judgeForWaves(rows: Any[], c: Any, x: { minsToStart: number | null; ongoing: boolean; sameTime?: boolean }): { ordered: Judged[]; excluded: Out[]; conflicts: Out[] } {
   const ordered: Judged[] = [], excluded: Out[] = [], conflicts: Out[] = []
   const types = shiftTypes(c, x.minsToStart)
   const out = (r: Any, why: string) => excluded.push({ name: S(r?.name, 80), axiscare_id: r?.axiscare_id != null ? S(r.axiscare_id, 20) : null, why })
@@ -133,7 +157,9 @@ export function judgeForWaves(rows: Any[], c: Any, x: { minsToStart: number | nu
       prnMatch = picks.some((p) => types.includes(p))
     }
     const visits = Number(r.history?.visits) || 0
-    const familiar = (r.this_client?.favorite ? 1_000_000 : 0) + visits * 1000
+    const same = x.sameTime ? (Number(r.history?.same_time) || 0) : 0
+    /* her ask (2026-10-24): same time of day first, then the client's favorite, then visits at that time, then all visits */
+    const familiar = (same > 0 ? 1e12 : 0) + (r.this_client?.favorite ? 1e9 : 0) + same * 1e5 + visits * 10
     ordered.push({ row: r, avail: av, prn: isPrn, prn_match: prnMatch, familiar,
       note: av.state === 'none' ? av.why + ', said OK to texts about those' : av.state === 'partial' ? av.why : av.state === 'unknown' ? av.why : null })
   }

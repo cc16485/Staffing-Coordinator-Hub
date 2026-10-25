@@ -78,6 +78,24 @@ ck('travel: a schedule that chains first, then distance', JSON.stringify(names(r
 r = J([P('A1'), P('N1', { new_hire: { need: 10 } }), P('R1', { rep: { favorites: 3 } })])
 ck('then a new hire who needs hours, then rated well by other clients', JSON.stringify(names(r)) === '["N1","R1","A1"]', names(r))
 
+
+/* SAME TIME OF DAY (her ask 2026-10-24, Dan's overnight) */
+ck('time of day: a 10pm to 6am visit is overnight; 7am to 3pm is morning and daytime', JSON.stringify(W.bandsOfTimes('22:00', '06:00')) === '["overnight"]' && JSON.stringify(W.bandsOfTimes('07:00', '15:00')) === '["morning","afternoon"]')
+ck('time of day: for an overnight case only overnight visits count; for a morning case any visit touching mornings',
+  W.sameTimeOfDay(['overnight'], ['overnight']) && !W.sameTimeOfDay(['overnight'], ['evening']) && !W.sameTimeOfDay(['overnight'], ['morning']) && W.sameTimeOfDay(['morning'], ['morning', 'afternoon']) && !W.sameTimeOfDay(['morning'], ['evening']))
+{ const N = (name, visits, same, o = {}) => P(name, { windows: { sat: ['evening', 'overnight'], sun: ['overnight', 'morning'] }, history: { visits, last: '2026-10-20', same_time: same }, ...o })
+  const cN = C({ shift_time: '22:00-06:00' })
+  const rows = [N('Day Dee', 30, 0), N('Night Nan', 3, 3), N('Fav Fay', 12, 0, { this_client: { favorite: true } }), PRN('Pete', { notice: 'same_day', days: ['sat', 'sun'], times: ['evening', 'overnight', 'morning'] })]
+  const off = names(W.judgeForWaves(rows, cN, { minsToStart: 120, ongoing: false }))
+  const on = names(W.judgeForWaves(rows, cN, { minsToStart: 120, ongoing: false, sameTime: true }))
+  ck('switch off: the order is unchanged (favorite, then most visits, then the PRN member)', JSON.stringify(off) === '["Fav Fay","Day Dee","Night Nan","Pete"]', off)
+  ck('switch on: the overnight regular comes first among those who know the client, ahead of the favorite and the 30-visit daytime caregiver', JSON.stringify(on) === '["Night Nan","Fav Fay","Day Dee","Pete"]', on)
+  const on2 = names(W.judgeForWaves([N('Two', 9, 2), N('Six', 6, 6)], cN, { minsToStart: 120, ongoing: false, sameTime: true }))
+  ck('switch on: among overnight regulars, more overnights first', JSON.stringify(on2) === '["Six","Two"]', on2)
+  const on3 = names(W.judgeForWaves([N('Night Nan', 3, 3), N('Whole Wes', 0, 0, { history: null })], cN, { minsToStart: 120, ongoing: false, sameTime: true }))
+  ck('switch on: availability still comes first (an overnight regular who can only do part of it is after a whole-shift person)',
+    JSON.stringify(names(W.judgeForWaves([N('Night Nan', 3, 3, { windows: { sat: ['overnight'] } }), N('Whole Wes', 0, 0, { history: null })], C({ shift_time: '20:00-06:00' }), { minsToStart: 120, ongoing: false, sameTime: true }))) === '["Whole Wes","Night Nan"]') }
+
 /* waves and urgent parts */
 const many = (n, o) => Array.from({ length: n }, (_, i) => P(o.p + ' ' + 'abcdefghijklmnopqrstuvwxyz'[i], o))
 const ord = (rows) => J(rows).ordered
@@ -217,6 +235,27 @@ ck('switch on: the wave record says her rules were used', ev('wave')[0]?.detail?
   j = await act({ action: 'cara_run_start', case_id: 'cv1' }, KAY)
   const a1 = caseOf().asked.map((a) => a.name)
   ck(`urgent same-day (${day} ${time}) with only 2 whole-shift people: wave 1 = those 2 + part-shift people, no waiting through 3 waves`, j.ok && a1.length === 5 && a1.includes('Amy Test') && a1.includes('Ben Test'), [j, a1])
+}
+
+
+/* SAME TIME OF DAY on the real server: Dan-like client, an overnight shift; Cal has 10 daytime visits, Amy 3 overnights */
+{
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async (url, o) => { const u = String(url)
+    if (/axiscare\.com\/api\/visits\?/.test(u) && /clientIds=500/.test(u)) {
+      const V = (id, d, s0, e0) => ({ id: Math.random(), caregiver: { id: Number(id) }, client: { id: 500 }, date: d, scheduledStartDate: d + 'T' + s0 + ':00', scheduledEndDate: d + 'T' + e0 + ':00' })
+      const visits = [...Array.from({ length: 10 }, (_, i) => V('9003', '2026-10-' + String(10 + i).padStart(2, '0'), '08:00', '16:00')),
+                      ...Array.from({ length: 3 }, (_, i) => V('9001', '2026-10-' + String(10 + i).padStart(2, '0'), '22:00', '06:00'))]
+      return new Response(JSON.stringify({ results: { visits }, nextPage: null }), { status: 200 }) }
+    return realFetch(url, o) }
+  const night = () => { reset(K({ shift_time: '22:00-06:00' }), { cara_run_live: true, cara_list_live: true }); APP.caregiver_availability = CG.map(([id]) => AV(id, { sat: ['evening', 'overnight'] })) }
+  night(); let L = await act({ action: 'candidates', case_id: 'cv1' }, KAY)
+  ck('server, switch off: the list ranks Cal (10 daytime visits) above Amy (3 overnights), as today', L.group1?.[0]?.name === 'Cal Test' && L.group1?.[1]?.name === 'Amy Test' && !/overnight/.test(L.group1[0].why), L.group1)
+  night(); APP.ops_settings.cara_same_time_live = true; L = await act({ action: 'candidates', case_id: 'cv1' }, KAY)
+  ck('server, switch on: Amy (3 overnights with this client) comes first, and the reason says so', L.group1?.[0]?.name === 'Amy Test' && /3 visits with this client, 3 overnight/.test(L.group1[0].why) && /0 overnight/.test(L.group1[1].why), L.group1)
+  night(); Object.assign(APP.ops_settings, { cara_same_time_live: true, cara_wave_rules_live: true }); await act({ action: 'cara_run_start', case_id: 'cv1' }, KAY)
+  ck('server, switch on with her wave rules: Cara\'s wave 1 asks Amy first, then Cal', caseOf().asked[0]?.name === 'Amy Test' && caseOf().asked[1]?.name === 'Cal Test', caseOf().asked.map((a) => a.name))
+  globalThis.fetch = realFetch
 }
 
 for (const [n, o, d] of res) console.log((o ? 'PASS' : 'FAIL') + ' · ' + n + (o ? '' : '\n     ' + d))
