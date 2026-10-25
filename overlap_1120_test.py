@@ -24,6 +24,10 @@ class H(http.server.BaseHTTPRequestHandler):
         M.setdefault("deleted", []).append(self.path); self._send(200, {})
     def do_POST(self):
         n = int(self.headers.get("Content-Length") or 0); body = json.loads(self.rfile.read(n) or b"{}"); p = self.path
+        if p.startswith("/functions/v1/coverage-run") and self.headers.get("Authorization") == "Bearer eyJservice":
+            M.setdefault("probes", []).append(body)
+            return self._send(200, {"read_only": True, "read_range": ["a", "b"], "visits_read": 42, "working": [{"name": "Edna Night", "clocked_in_now": True, "conflicts": ["Clocked in now with Dan (scheduled 10pm to 6am)"]}],
+                "cases": [{"client": "Dan P", "shift": "2026-10-25 22:00-06:00", "ready": 9, "working_listed_as_do_not_ask": ["Edna Night: Already working then: Clocked in now with Dan"], "working_in_ready": M.get("bad_ready", [])}]})
         if p.startswith("/functions/v1/"):
             return self._send(401, {"error": "not allowed"})
         q = body["query"]
