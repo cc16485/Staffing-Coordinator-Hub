@@ -32,8 +32,8 @@ class H(http.server.BaseHTTPRequestHandler):
             st = dict(M.get("settings", {"cara_list_live": True, "cara_today_live": True}))
             if M.get("flip_after") and n_ >= 1: st["visit_reasons_live"] = True
             return self._send(200, [{"data": st}])
-        if "add column if not exists handoff_asked" in q: M["ddl"] = True; return self._send(400, {"message": "boom"}) if M.get("ddl_fail") else self._send(201, [])
-        if "as cols" in q: return self._send(200, [{"cols": M.get("cols", 2)}])
+        if "add column if not exists urgent_at" in q: M["ddl"] = True; return self._send(400, {"message": "boom"}) if M.get("ddl_fail") else self._send(201, [])
+        if "as cols" in q: return self._send(200, [{"cols": M.get("cols", 1)}])
         return self._send(400, {"message": "unexpected query " + q[:120]})
 srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H); threading.Thread(target=srv.serve_forever, daemon=True).start()
 URL = f"http://127.0.0.1:{srv.server_address[1]}"
