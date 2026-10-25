@@ -24,7 +24,7 @@ import { reviewNote } from '../_shared/family-review.ts'
 import { clientInfoFor } from '../_shared/cara-skills.ts'
 import { sceneFor } from '../_shared/shift-offer.ts'
 import { appProfile } from '../_shared/app-profile.ts'
-import { aiProfileCheck } from '../_shared/family-profile.ts'
+import { aiProfileCheck, aiPhotoCheck, PHOTO_BUCKET } from '../_shared/family-profile.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -127,6 +127,12 @@ const deps: Deps = {
     get: async (axId) => { const r = await db.from('family_client_profile').select('*').eq('axiscare_client_id', axId).maybeSingle(); return r.error ? undefined : r.data ?? null },
     save: async (row) => !(await db.from('family_client_profile').upsert(row, { onConflict: 'axiscare_client_id' })).error,
     aiCheck: (text) => aiProfileCheck(text, Deno.env.get('ANTHROPIC_API_KEY') ?? ''),
+  },
+  photo: {
+    put: async (axId, bytes) => { const path = `${axId}/${Date.now()}.jpg`; const r = await db.storage.from(PHOTO_BUCKET).upload(path, bytes, { contentType: 'image/jpeg', upsert: false }); return r.error ? null : path },
+    remove: async (path) => { await db.storage.from(PHOTO_BUCKET).remove([path]) },
+    url: async (path) => (await db.storage.from(PHOTO_BUCKET).createSignedUrl(path, 3600)).data?.signedUrl ?? null,
+    aiCheck: (b64) => aiPhotoCheck(b64, Deno.env.get('ANTHROPIC_API_KEY') ?? ''),
   },
   activity: async (row) => { await db.from('family_app_activity').insert(row) },
   opened: async (who) => {

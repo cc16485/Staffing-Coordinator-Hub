@@ -117,3 +117,48 @@ export function familyWordsForOffice(p: FamilyProfile): { about: string; enjoys:
   for (const x of parts) { const next = about ? about + ' ' + x : x; if (next.length > ABOUT_MAX) break; about = next }
   return { about: about || (parts[0] ?? '').slice(0, ABOUT_MAX), enjoys: p.enjoys.slice(0, ENJOYS_MAX) }
 }
+
+// ── THE CLIENT'S PHOTO (Samantha, 2026-10-25: "should we give the opportunity but optional to upload a photo of client"; her yes:
+//    "optional client photo in the Booking App, shown to confirmed caregivers, with a download button so the office can add it to
+//    AxisCare"). AxisCare's API has no client photo field, so the office adds it to AxisCare by hand from the Hub's download.
+//  - Optional. Only someone who can book adds it, and only after ticking that they have permission to share it with caregivers.
+//  - Face only: the app trims it to a square and shrinks it; an AI look checks it is one person's face and nothing private.
+//  - Never on an open offer (many caregivers see those): only the caregiver CONFIRMED on a visit sees it, on their visit page.
+//  - The family can change or remove it anytime; the office can remove it. Kept private (signed links that expire in an hour).
+//  - Switch: ops_settings.client_photo_live. ─────────────────────────────────────────────────────────────────────────────────
+export const PHOTO_SWITCH = 'client_photo_live'
+export const photoOn = (st: Any) => st?.[PHOTO_SWITCH] === true
+export const PHOTO_MAX_BYTES = 400 * 1024
+export const PHOTO_BUCKET = 'client-photos'
+export const PHOTO_CONSENT_WORDS = 'I have permission to share this photo with Caring Companions caregivers.'
+/** The app's photo (a JPEG data URL, already trimmed and shrunk), as bytes. */
+export function decodePhoto(dataUrl: unknown): { ok: true; bytes: Uint8Array; b64: string } | { ok: false; error: string } {
+  const m = /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl ?? ''))
+  if (!m) return { ok: false, error: 'That photo didn\'t come through. Please pick it again.' }
+  if (m[1].length * 3 / 4 > PHOTO_MAX_BYTES) return { ok: false, error: 'That photo is too large. Please pick it again.' }
+  let bytes: Uint8Array
+  try { const bin = atob(m[1]); bytes = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i) } catch { return { ok: false, error: 'That photo didn\'t come through. Please pick it again.' } }
+  if (bytes.length < 2000 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return { ok: false, error: 'That photo didn\'t come through. Please pick it again.' }
+  return { ok: true, bytes, b64: m[1] }
+}
+const PHOTO_SYSTEM = 'A family is adding a photo of their elderly loved one so the home-care caregiver confirmed for a visit can recognize ' +
+  'them at the door. Check the photo. It is fine if it clearly shows ONE person\'s face (an older adult), even with a little background. ' +
+  'It is NOT fine if: no face can be seen, several people are the main subject, a child is the main subject, it shows nudity or the person ' +
+  'undressed or in a hospital bed or with medical equipment, it shows mail, documents, a house number or street sign, or it is not a real ' +
+  'photo of a person. Answer ONLY minified JSON: {"ok":true} or {"ok":false,"why":"<one short, kind sentence telling the family what to change>"}'
+/** null = unavailable (no key, error, timeout): the photo is kept then (the family ticked permission; the office can remove it). */
+export async function aiPhotoCheck(b64: string, key: string, send: typeof fetch = fetch, timeoutMs = AI_TIMEOUT_MS): Promise<{ ok: boolean; why: string } | null> {
+  if (!key || !b64) return null
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), timeoutMs)
+  try {
+    const r = await send('https://api.anthropic.com/v1/messages', { method: 'POST', signal: ctl.signal,
+      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+      body: JSON.stringify({ model: AI_MODEL, max_tokens: 120, temperature: 0, system: PHOTO_SYSTEM,
+        messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } }, { type: 'text', text: 'Check this photo.' }] }] }) })
+    if (!r.ok) return null
+    const j = await r.json().catch(() => null)
+    const m = String(j?.content?.[0]?.text ?? '').match(/\{[\s\S]*\}/); if (!m) return null
+    const a = JSON.parse(m[0])
+    return a.ok === true ? { ok: true, why: '' } : { ok: false, why: String(a.why ?? '').slice(0, 200) || 'Please use a photo that shows just their face.' }
+  } catch { return null } finally { clearTimeout(timer) }
+}

@@ -37,3 +37,14 @@ alter table public.family_app_activity enable row level security;
 revoke all on public.family_app_activity from anon, authenticated;
 grant all on public.family_app_activity to service_role;
 grant usage, select on sequence public.family_app_activity_id_seq to service_role;
+
+-- THE CLIENT'S PHOTO (2026-10-25): optional, added by the family in the Booking App; shown only to the caregiver confirmed on a
+-- visit, through signed links that expire. A private storage bucket (no public access; only the server reads and writes it).
+alter table public.family_client_profile add column if not exists photo_path text;
+alter table public.family_client_profile add column if not exists photo_at timestamptz;
+alter table public.family_client_profile add column if not exists photo_by text;
+alter table public.family_client_profile add column if not exists photo_consent text;
+alter table public.family_client_profile add column if not exists photo_ai text;
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('client-photos', 'client-photos', false, 409600, array['image/jpeg'])
+on conflict (id) do update set public = false, file_size_limit = 409600, allowed_mime_types = array['image/jpeg'];

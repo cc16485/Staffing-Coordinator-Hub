@@ -74,6 +74,8 @@ export type OfferDeps = {
   clientAbout?: (axiscareClientId: string) => Promise<string | null>
   /** 2026-10-25 (app-profile.ts): the full approved profile for the offer page, or null (switch off). */
   clientProfile?: (axiscareClientId: string) => Promise<Any | null>
+  /** 2026-10-25 (family-profile.ts): a signed link to the client's photo, or null. Asked for only once THIS caregiver is confirmed. */
+  clientPhoto?: (axiscareClientId: string) => Promise<string | null>
   /** Release 1: requests that ended unfilled whose family hasn't been told yet. */
   unfilledDue?: () => Promise<Any[]>
   /** Release 3: the Hub's matching rulebook for this request (family-match.ts); ok:false = offers wait (fail closed) */
@@ -522,6 +524,8 @@ export async function offerPage(d: OfferDeps, offerId: string, body: Any): Promi
       about: d.clientAbout ? await d.clientAbout(String(b.axiscare_client_id)) : null,
       // 2026-10-25: the same profile as the call-in shift page (app_profile_live on); the page shows it in place of About
       profile: d.clientProfile ? await d.clientProfile(String(b.axiscare_client_id)) : null,
+      // 2026-10-25: the client's photo, only for the caregiver confirmed on this visit (never on an open offer)
+      photo: state === 'yours' && d.clientPhoto ? await d.clientPhoto(String(b.axiscare_client_id)).catch(() => null) : null,
       // Release 3: what to know before saying yes (cats, dogs, smoking from the care plan); the caregiver decides
       home: Array.isArray(b.home_notes) ? b.home_notes : [] }
   }

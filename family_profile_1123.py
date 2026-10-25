@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-# 1123 · THE FAMILY'S OWN PROFILE + THE BOOKING APP PAGE (2026-10-25, Samantha: "the family who signs up for the app has access
+# 1123 · THE FAMILY'S OWN PROFILE + THE CLIENT'S PHOTO + THE BOOKING APP PAGE (2026-10-25, Samantha: "the family who signs up for the app has access
 # to make their profile"; "if the office makes changes to our profile that we use for shifts, dont make it auto change the
 # families profile they made for booking app"; "i want a good view of everything that happens in the app"). Staffing #636 merged.
 #  1. Checks first (nothing changes): the reviewed build is GitHub's main; the tests pass (fake data only); the switches
-#     family_profile_live and app_activity_live are not on.
-#  2. Database: two new tables, family_client_profile and family_app_activity (server only; no browser access).
+#     family_profile_live, client_photo_live and app_activity_live are not on.
+#  2. Database: two new tables, family_client_profile and family_app_activity, and a private photo store client-photos
+#     (server only; no browser access).
 #  3. Deploys the server pieces that use the changed files, each keeping its gateway setting (one never put live is left alone).
 #  4. Proves the doors still refuse strangers, and both switches are still off.
 # Sends nothing. Every switch left as it is. From now on the Hub records when a family member opens the app (for the page).
@@ -24,7 +25,7 @@ ok = lambda s: say("  ✓ " + s)
 def run(args, cwd=None): p = subprocess.run(args, cwd=cwd, capture_output=True, text=True); return p.returncode, (p.stdout or "") + (p.stderr or "")
 def stop(msg, code=2): bad(msg); say("  STOP. Nothing was changed."); done(code)
 def switch_on():
-    okq, st = sql(HUB, "select coalesce(data->>'family_profile_live', '') || '|' || coalesce(data->>'app_activity_live', '') as v from app_data where key = 'ops_settings'")
+    okq, st = sql(HUB, "select coalesce(data->>'family_profile_live', '') || '|' || coalesce(data->>'app_activity_live', '') || '|' || coalesce(data->>'client_photo_live', '') as v from app_data where key = 'ops_settings'")
     return None if not okq else "true" in (st[0]["v"] if st else "")
 
 start("THE FAMILY'S OWN PROFILE + THE BOOKING APP PAGE")
@@ -44,8 +45,8 @@ if NODE:
 else: say("  · node is not on this Mac, so the tests were not re-run here (they passed when built)")
 on = switch_on()
 if on is None: stop("couldn't read the Hub settings", 3)
-if on: stop("family_profile_live or app_activity_live is already ON. This step only installs with them off. Tell Claude.", 3)
-ok("family_profile_live and app_activity_live are off (nobody sees a change until you turn them on)")
+if on: stop("family_profile_live, client_photo_live or app_activity_live is already ON. This step only installs with them off. Tell Claude.", 3)
+ok("family_profile_live, client_photo_live and app_activity_live are off (nobody sees a change until you turn them on)")
 gate = {}
 for fn in FNS:
     s, m = fmeta(HUB, fn)
@@ -63,6 +64,11 @@ for t in ("family_client_profile", "family_app_activity"):
         f"(select count(*) from information_schema.role_table_grants where table_name = '{t}' and grantee in ('anon', 'authenticated')) as open_grants")
     c = (chk or [{}])[0] if okv else {}
     (ok if okv and int(c.get("made", 0)) == 1 and c.get("rls") is True and int(c.get("open_grants", 1)) == 0 else bad)(f"{t} made; locked to the server (no browser access)")
+okb, bk = sql(HUB, "select public, file_size_limit, allowed_mime_types from storage.buckets where id = 'client-photos'")
+b0 = (bk or [{}])[0] if okb else {}
+(ok if okb and b0.get("public") is False and int(b0.get("file_size_limit") or 0) == 409600 else bad)("client-photos photo store made; private (no public links)")
+okc, cols = sql(HUB, "select count(*) as n from information_schema.columns where table_name = 'family_client_profile' and column_name like 'photo_%'")
+(ok if okc and int((cols or [{}])[0].get("n", 0)) == 5 else bad)("the photo columns are on family_client_profile")
 if L.fails: say("  STOP. Tell Claude. (The tables are the only change so far; nothing uses them yet.)"); done(4)
 say(); say("2 · THE SERVER PIECES")
 for fn in [f for f in FNS if f in gate]:
@@ -74,7 +80,7 @@ for fn in [f for f in FNS if f in gate]:
     (ok if s in (401, 403) else bad)(f"{fn}: a caller with no sign-in gets nothing ({s})")
 s, b = http("POST", f"https://{HUB}.supabase.co/functions/v1/family-offer", {"o": "1", "e": "1", "t": "x", "action": "view"})
 (ok if s in (400, 401, 403, 404) else bad)(f"family-offer: a made-up offer link opens nothing ({s})")
-(ok if switch_on() is False else bad)("family_profile_live and app_activity_live are still off")
+(ok if switch_on() is False else bad)("family_profile_live, client_photo_live and app_activity_live are still off")
 say()
-say("  1123: " + ("DONE. Installed with both switches off. Next: turn on app_activity_live to see the Booking App page (owners see it already), then family_profile_live when you want families to write their profile." if not L.fails else "NOT COMPLETE. See the ✗ lines above. Tell Claude."))
+say("  1123: " + ("DONE. Installed with all three switches off. Next: turn on app_activity_live to see the Booking App page (owners see it already), family_profile_live when you want families to write their profile, and client_photo_live for photos." if not L.fails else "NOT COMPLETE. See the ✗ lines above. Tell Claude."))
 done(0 if not L.fails else 1)

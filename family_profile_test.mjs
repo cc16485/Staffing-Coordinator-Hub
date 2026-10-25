@@ -42,11 +42,12 @@ const deps = (canBook = true) => ({
   profiles: async () => [], bookings: async () => [], insertBooking: async () => null, updateBooking: async () => true, officeItem: async () => true,
   event: async (row) => { W.events.push(row) },
   caregiverView: async (id, client, f) => AP.appProfile(info, 'porch', f ?? null),
-  familyProfile: { get: async () => W.readFails ? undefined : W.row, save: async (row) => { if (W.saveFails) return false; W.row = row; return true }, aiCheck: async () => W.ai },
+  familyProfile: { get: async () => W.readFails ? undefined : W.row, save: async (row) => { if (W.saveFails) return false; W.row = { ...(W.row ?? {}), ...row }; return true }   /* like the upsert: only the columns sent change */, aiCheck: async () => W.ai },
   activity: async (row) => { W.acts.push(row) }, opened: async (who) => { W.opens.push(who.length) },
+  photo: { put: async (id, bytes) => { if (W.putFails) return null; const p = id + '/' + (++W.n) + '.jpg'; W.files[p] = bytes.length; return p }, remove: async (p) => { delete W.files[p] }, url: async (p) => 'https://signed/' + p, aiCheck: async () => W.pai },
 })
 const go = (body, canBook) => fam.familyAction(deps(canBook), { id: 'u', email: 'lisa@x.test' }, { client: '501', ...body })
-const reset = (st = {}) => { W = { settings: { family_fee_check_ready: true, app_profile_live: true, ...st }, events: [], acts: [], opens: [], row: null, ai: { ok: true, why: '' }, readFails: false, saveFails: false } }
+const reset = (st = {}) => { W = { settings: { family_fee_check_ready: true, app_profile_live: true, ...st }, events: [], acts: [], opens: [], row: null, ai: { ok: true, why: '' }, readFails: false, saveFails: false, files: {}, n: 0, pai: { ok: true, why: '' }, putFails: false } }
 
 reset()
 let o = await go({ action: 'me' })
@@ -79,6 +80,36 @@ W.readFails = true; o = await go({ action: 'save_profile', profile: good })
 ck('ON: the old profile can\'t be read = not saved, try again', o.status === 503)
 W.readFails = false; W.saveFails = true; o = await go({ action: 'save_profile', profile: { ...good, little: 'Tea' } })
 ck('ON: a failed save says it didn\'t save', o.status === 500 && /didn't save/.test(o.body.error))
+
+// the client's photo
+const jpg = (n = 5000) => { const b = Buffer.alloc(n, 7); b[0] = 0xff; b[1] = 0xd8; return 'data:image/jpeg;base64,' + b.toString('base64') }
+ck('decodePhoto: a JPEG data URL passes; PNG, junk, tiny or too big refused', FP.decodePhoto(jpg()).ok && !FP.decodePhoto('data:image/png;base64,AAAA').ok && !FP.decodePhoto(jpg(500)).ok && !FP.decodePhoto(jpg(500 * 1024)).ok && !FP.decodePhoto('data:image/jpeg;base64,' + Buffer.alloc(5000, 7).toString('base64')).ok)
+reset({ family_profile_live: true })
+o = await go({ action: 'save_photo', photo: jpg(), consent: true })
+ck('photo switch OFF: refused, nothing stored', o.status === 409 && !Object.keys(W.files).length)
+o = await go({ action: 'home' })
+ck('photo switch OFF: the editor says photos are off', o.body.family_profile.photo_on === false)
+reset({ family_profile_live: true, client_photo_live: true })
+o = await go({ action: 'save_photo', photo: jpg() })
+ck('no permission ticked: refused', o.status === 400 && /permission/.test(o.body.error) && !Object.keys(W.files).length)
+o = await go({ action: 'save_photo', photo: jpg(), consent: true }, false)
+ck('a see-only login can\'t add one', o.status === 403)
+W.pai = { ok: false, why: 'Please use a photo of just her face.' }
+o = await go({ action: 'save_photo', photo: jpg(), consent: true })
+ck('the AI look can stop it, in its words; nothing stored; recorded', o.status === 400 && /just her face/.test(o.body.error) && !Object.keys(W.files).length && W.acts.some((a) => a.kind === 'photo_blocked'))
+W.pai = { ok: true, why: '' }
+o = await go({ action: 'save_photo', photo: jpg(), consent: true })
+const first = W.row?.photo_path
+ck('added: stored privately, who and the permission recorded, the family sees it on a signed link', o.status === 200 && first && W.files[first] && /ticked "I have permission/.test(W.row.photo_consent) && o.body.family_profile.photo_url === 'https://signed/' + first && /Only the caregiver confirmed/.test(o.body.message), o.body)
+o = await go({ action: 'save_profile', profile: good })
+ck('saving the words afterwards keeps the photo', o.status === 200 && o.body.family_profile.photo_url === 'https://signed/' + first)
+o = await go({ action: 'save_photo', photo: jpg(6000), consent: true })
+ck('changed: the new one stored, the old file deleted', o.status === 200 && W.row.photo_path !== first && !W.files[first] && W.files[W.row.photo_path])
+W.putFails = true; const keepP = W.row.photo_path; o = await go({ action: 'save_photo', photo: jpg(), consent: true })
+ck('a failed upload says so; the old photo stays', o.status === 500 && W.row.photo_path === keepP)
+W.putFails = false
+o = await go({ action: 'remove_photo' })
+ck('removed by the family: file deleted, nothing shown, recorded', o.status === 200 && !W.row.photo_path && !Object.keys(W.files).length && !o.body.family_profile.photo_url && W.acts.some((a) => a.kind === 'photo_removed'))
 
 // the office's Booking App page (read only)
 const od = { now: () => NOW, activity: async (from) => ({ ok: true, from, people: [{ name: 'Lisa Ray' }] }) }

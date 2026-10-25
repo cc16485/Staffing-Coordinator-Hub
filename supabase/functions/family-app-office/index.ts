@@ -86,7 +86,9 @@ const deps: OfficeDeps = {
     const { data: acts } = await db.from('family_app_activity').select('id, at, contact_id, axiscare_client_id, name, kind, summary, data').gte('at', from).order('at', { ascending: false }).limit(1000)
     const { data: evs } = await db.from('op_events').select('id, at, actor_name, verb, summary, data').eq('area', 'family_app').gte('at', from).order('at', { ascending: false }).limit(500)
     const { data: bks } = await db.from('family_bookings').select('id, axiscare_client_id, client_name, contact_id, requested_by_name, visit_date, start_time, end_time, window_start, window_end, hours, kind, tasks, note, note_hidden, status, caregiver_name, method, created_at, cancelled_at, cancelled_by, ended_why').gte('created_at', from).order('created_at', { ascending: false }).limit(500)
-    const { data: profs } = await db.from('family_client_profile').select('*')
+    const { data: profs0 } = await db.from('family_client_profile').select('*')
+    // deno-lint-ignore no-explicit-any
+    const profs = await Promise.all((profs0 ?? []).map(async (f: any) => ({ ...f, photo_url: f.photo_path ? (await db.storage.from('client-photos').createSignedUrl(f.photo_path, 3600)).data?.signedUrl ?? null : null })))
     /* the Booking App's own sign-in record (last real sign-in with the emailed code), read from the family app's login list */
     const signin: Record<string, { last: string | null; made: string | null }> = {}
     if (FAMILY_URL && FAMILY_SERVICE) {

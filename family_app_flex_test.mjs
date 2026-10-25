@@ -116,6 +116,7 @@ const ROSTER = [
   { axiscare_id: '44', name: 'Dee Cee', first: 'Dee', phone: '+14175550104', avail: { windows: { mon: ['morning'] } } },
 ]
 const offDeps = () => ({
+  clientPhoto: async () => W.photoUrl ?? null,
   ...famDeps(),
   openBookings: async (from) => W.bookings.filter((b) => b.status === 'waiting_for_caregiver' && !b.caregiver_axiscare_id && b.visit_date >= from),
   booking: async (id) => W.bookings.find((b) => b.id === id) ?? null,
@@ -226,6 +227,10 @@ o = await page(so.id, { action: 'answer', yes: true, start: '09:00' })
 ck('Sarah says yes later: told someone else took it, nothing changes', o.body.taken === true && /Someone else took this one/.test(o.body.message) && b.caregiver_axiscare_id === '88', o)
 o = await page(mo.id, { action: 'view' })
 ck('Maria opens her link again: "yours" with the start she picked', o.body.state === 'yours' && o.body.picked === '11:30')
+ck('photo (2026-10-25): the caregiver confirmed on the visit sees the client\'s photo', (W.photoUrl = 'https://signed/p.jpg', o = await page(mo.id, { action: 'view' }), o.body.photo === 'https://signed/p.jpg'), o.body.photo)
+o = await page(so.id, { action: 'view' })
+ck('photo (2026-10-25): a caregiver NOT on the visit never gets it', o.body.state !== 'yours' && o.body.photo === null, o.body)
+W.photoUrl = null
 o = await go({ action: 'bookings' })
 ck('the family sees who and when in the app', o.body.bookings[0].caregiver === 'Maria L.' && o.body.bookings[0].start === '11:30' && o.body.bookings[0].status === 'placed', o.body)
 ck('no text or email to the family anywhere (only caregiver texts were sent)', W.texts.every((t) => ['77', '88'].includes(t.to)))

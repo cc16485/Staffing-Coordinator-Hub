@@ -25,7 +25,7 @@ import { opEvent } from '../_shared/events.ts'
 import { careNow } from '../_shared/cara-skills.ts'
 import { detailsView } from '../_shared/shift-offer.ts'
 import { lifeSources, draftFromLifeStory } from '../_shared/life-story-draft.ts'
-import { rowToProfile, familyWordsForOffice, QUESTIONS } from '../_shared/family-profile.ts'
+import { rowToProfile, familyWordsForOffice, QUESTIONS, PHOTO_BUCKET } from '../_shared/family-profile.ts'
 import { cleanAbout, cleanEnjoys, approvedView, draftView, approvedIntro, draftIntro, stateOf, canApprove, applySave, applyApprove, sampleShift, APPROVER_ROLES } from '../_shared/caregiver-preview.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } })
@@ -171,6 +171,19 @@ Deno.serve(async (req) => {
       return json(await view(row, circle, current, me, live, cl, ax))
     }
 
+    /* THE CLIENT'S PHOTO (2026-10-25): the office can remove a photo the family added (kept in the Booking App page's record). */
+    if (action === 'remove_photo') {
+      if (!ax) return json({ error: 'Which client?' }, 400)
+      const { data: fr } = await sb.from('family_client_profile').select('photo_path').eq('axiscare_client_id', ax).maybeSingle()
+      if (!fr?.photo_path) return json({ error: 'There is no photo.' }, 409)
+      const { error } = await sb.from('family_client_profile').update({ photo_path: null, photo_at: nowIso(), photo_by: who.name + ' (office)', photo_consent: null, photo_ai: null }).eq('axiscare_client_id', ax)
+      if (error) return json({ error: 'Not saved. Please try again.' }, 500)
+      await sb.storage.from(PHOTO_BUCKET).remove([fr.photo_path]).catch(() => null)
+      await sb.from('family_app_activity').insert({ axiscare_client_id: ax, name: who.name, kind: 'photo_removed', summary: `${who.name} (office) removed ${clientName || 'the client'}'s photo` })
+      await opEvent(sb, { job: 'caregiver-preview', verb: 'client_photo_removed', item_id: 'ax:' + ax, area: 'clients', actor_name: who.name, summary: `${who.name} removed the family's photo of ${clientName || 'a client'}` })
+      return json(await view(row, circle, current, me, live, cl, ax))
+    }
+
     /* A FAMILY'S SUGGESTION (2026-10-25, app-profile.ts): the office marks it used or not used. It never changes the profile by
        itself: whoever uses it edits the draft and approves as usual. */
     if (action === 'suggestion_close') {
@@ -222,7 +235,8 @@ async function view(row: Any, circle: Any, current: Any, me: Any, live: boolean,
     /* 2026-10-25: open suggestions from families in the Booking App (oldest first); empty when there are none */
     /* 2026-10-25: the family's own Booking App profile (separate; shown here to read and, if wanted, copy) */
     family: ax ? await (async () => { const r = (await sb.from('family_client_profile').select('*').eq('axiscare_client_id', ax).maybeSingle()).data ?? null; const p = rowToProfile(r)
-      return p ? { ...p, life: QUESTIONS.map((q) => ({ label: q.caregiver, text: p[q.key] })).filter((x) => x.text), updated_at: r.updated_at, updated_by: r.updated_by_name, history: (Array.isArray(r.history) ? r.history : []).slice(-10).reverse() } : null })() : null,
+      const photo = r?.photo_path ? { url: (await sb.storage.from(PHOTO_BUCKET).createSignedUrl(r.photo_path, 3600, { download: `${(S(clientName) || 'client').replace(/[^A-Za-z0-9 ]/g, '').replace(/ +/g, '-')}-photo.jpg` })).data?.signedUrl ?? null, view: (await sb.storage.from(PHOTO_BUCKET).createSignedUrl(r.photo_path, 3600)).data?.signedUrl ?? null, by: r.photo_by, at: r.photo_at, ai: r.photo_ai } : null
+      return p || photo ? { ...(p ?? { about: null, work: null, talk: null, little: null, enjoys: [] }), life: p ? QUESTIONS.map((q) => ({ label: q.caregiver, text: p[q.key] })).filter((x) => x.text) : [], updated_at: r.updated_at, updated_by: r.updated_by_name, history: (Array.isArray(r.history) ? r.history : []).slice(-10).reverse(), photo, written: !!p } : null })() : null,
     suggestions: ax ? ((await sb.from('client_profile_suggestions').select('id, contact_name, text, created_at').eq('axiscare_client_id', ax).eq('status', 'open').order('created_at').limit(20)).data ?? []) : [],
   }
 }
