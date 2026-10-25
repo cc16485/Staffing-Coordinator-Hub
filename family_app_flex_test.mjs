@@ -397,7 +397,7 @@ const chooseDeps = () => ({ ...offDeps(),
   textFamily: async (b, message) => { if (W.famFail) return { ok: false, why: 'refused' }; (W.fam ??= []).push({ to: b.contact_id, message }); return { ok: true } },
   confirmDue: async () => W.bookings.filter((b) => b.status === 'placed' && b.family_confirm_pending === true && !b.family_confirmed_at),
   tellFamily: async (b, sms, email) => { if (W.tellFail) return { ok: false, why: W.tellFail }; const how = W.noConsent ? 'email' : 'sms'; (W.told ??= []).push({ to: b.contact_id, how, sms, email }); return { ok: true, how } },
-  clientAbout: async (ax) => W.about ?? null })
+  clientAbout: async (ax) => W.about ?? null, clientProfile: async (ax) => W.profile ?? null })
 const famC = () => ({ ...famDeps(), choose: {
   counts: async (ids) => { const out = {}; for (const x of W.offers) if (ids.includes(x.booking_id) && x.state === 'interested') out[x.booking_id] = (out[x.booking_id] ?? 0) + 1; return out },
   list: (b) => fo.interestedCards(chooseDeps(), b),
@@ -506,6 +506,11 @@ oc = await pageC(offerOf('77').id, { action: 'view' })
 ck('page: the family asked for Sarah, so it says so; the office\'s About shows', oc.body.asked_for_you === true && /sweet tea/.test(oc.body.about), oc.body)
 NOW = new Date('2026-10-20T19:00:00Z'); await runC(); NOW = new Date('2026-10-20T14:00:00Z')
 const team = W.offers.find((x) => x.booking_id === b.id && x.caregiver_axiscare_id !== '77')
+ck('page (2026-10-25): no profile while app_profile_live is off', oc.body.profile === null, oc.body.profile)
+W.profile = { about: 'Dot taught school.', enjoys: ['Gardening'], help: [], needs: [], home: [], level: null, scene: 'garden', basics: false }
+oc = await pageC(offerOf('77').id, { action: 'view' })
+ck('page (2026-10-25): switch on = the full approved profile, as on the call-in shift page', oc.body.profile?.about === 'Dot taught school.' && oc.body.profile.scene === 'garden', oc.body.profile)
+W.profile = null
 if (team) { oc = await pageC(team.id, { action: 'view' }); ck('page: a team caregiver the family did NOT ask for sees nothing about being asked for', oc.body.asked_for_you === false, oc.body) }
 W.about = null; oc = await pageC(offerOf('77').id, { action: 'view' })
 ck('page: no About written = no About (null)', oc.body.about === null, oc.body.about)

@@ -72,6 +72,8 @@ export type OfferDeps = {
   tellFamily?: (b: Any, sms: string, email: { subject: string; html: string }, approvalKey?: 'family_confirm_text_approved' | 'family_unfilled_text_approved' | 'family_cgchange_text_approved' | 'family_timechange_text_approved' | 'family_declined_text_approved' | 'family_couldnt_text_approved') => Promise<{ ok: boolean; how?: 'sms' | 'email'; why?: string }>
   /** The office's short "About <client>" for caregivers (care_circles.caregiver_about), or null. */
   clientAbout?: (axiscareClientId: string) => Promise<string | null>
+  /** 2026-10-25 (app-profile.ts): the full approved profile for the offer page, or null (switch off). */
+  clientProfile?: (axiscareClientId: string) => Promise<Any | null>
   /** Release 1: requests that ended unfilled whose family hasn't been told yet. */
   unfilledDue?: () => Promise<Any[]>
   /** Release 3: the Hub's matching rulebook for this request (family-match.ts); ok:false = offers wait (fail closed) */
@@ -518,6 +520,8 @@ export async function offerPage(d: OfferDeps, offerId: string, body: Any): Promi
       asked_for_you: Array.isArray(b.preferred_caregiver_ids) && b.preferred_caregiver_ids.map(String).includes(cg),
       // the office's short About for caregivers (first name only; no address or medical detail); empty = no row
       about: d.clientAbout ? await d.clientAbout(String(b.axiscare_client_id)) : null,
+      // 2026-10-25: the same profile as the call-in shift page (app_profile_live on); the page shows it in place of About
+      profile: d.clientProfile ? await d.clientProfile(String(b.axiscare_client_id)) : null,
       // Release 3: what to know before saying yes (cats, dogs, smoking from the care plan); the caregiver decides
       home: Array.isArray(b.home_notes) ? b.home_notes : [] }
   }

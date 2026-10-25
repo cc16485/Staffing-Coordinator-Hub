@@ -145,8 +145,23 @@ Deno.serve(async (req) => {
       await opEvent(sb, { job: 'caregiver-preview', verb: 'caregiver_preview_approved', item_id: out.row.client_key, area: 'clients', actor_name: who.name,
         summary: `${who.name} approved ${out.approved.join(' and ')} on the Caregiver Preview for ${clientName || 'a client'}` })
       ;({ row, circle } = await load(ax, lead))
-      const v = await view(row, circle, current, me, live, cl)
+      const v = await view(row, circle, current, me, live, cl, ax)
       return json({ ...v, approved: out.approved, note: out.why || null })
+    }
+
+    /* A FAMILY'S SUGGESTION (2026-10-25, app-profile.ts): the office marks it used or not used. It never changes the profile by
+       itself: whoever uses it edits the draft and approves as usual. */
+    if (action === 'suggestion_close') {
+      if (!ax) return json({ error: 'Which client?' }, 400)
+      const id = Number(b?.id), how = b?.used === true ? 'used' : 'not_used'
+      if (!(id > 0)) return json({ error: 'Which suggestion?' }, 400)
+      const { data, error } = await sb.from('client_profile_suggestions').update({ status: how, closed_at: nowIso(), closed_by: who.name })
+        .eq('id', id).eq('axiscare_client_id', ax).eq('status', 'open').select('id, contact_name')
+      if (error) return json({ error: 'Not saved. Please try again.' }, 500)
+      if (!data?.length) return json({ error: 'Someone already handled that suggestion.' }, 409)
+      await opEvent(sb, { job: 'caregiver-preview', verb: 'caregiver_preview_suggestion_' + how, item_id: 'ax:' + ax, area: 'clients', actor_name: who.name,
+        summary: `${who.name} marked ${S(data[0].contact_name) || 'a family member'}'s suggestion for ${clientName || 'a client'} as ${how === 'used' ? 'used' : 'not used'}` })
+      return json(await view(row, circle, current, me, live, cl, ax))
     }
 
     if (action === 'preview') {
@@ -157,7 +172,7 @@ Deno.serve(async (req) => {
       return json({ ok: true, preview: true, sample: true, version, ...detailsView(kase, { name: '' }, 'open', info) })
     }
 
-    if (action === 'get' || action === 'save') return json(await view(row, circle, current, me, live, cl))
+    if (action === 'get' || action === 'save') return json(await view(row, circle, current, me, live, cl, ax))
     return json({ error: 'unknown action' }, 400)
   } catch (e) {
     console.error('caregiver-preview', String((e as Error)?.message ?? e))
@@ -165,7 +180,7 @@ Deno.serve(async (req) => {
   }
 })
 
-async function view(row: Any, circle: Any, current: Any, me: Any, live: boolean, cl: Any) {
+async function view(row: Any, circle: Any, current: Any, me: Any, live: boolean, cl: Any, ax: string | null = null) {
   const st = stateOf(row, circle, current), can = canApprove(row, circle, current, me)
   const dHidden: string[] = Array.isArray(row?.draft_hidden) ? row.draft_hidden : [], aKeys: string[] = Array.isArray(row?.approved_care_items) ? row.approved_care_items : []
   const { data: names } = await sb.from('staff_roles').select('person_id, role').eq('entity', 'cc_ihs').in('role', APPROVER_ROLES)
@@ -182,5 +197,7 @@ async function view(row: Any, circle: Any, current: Any, me: Any, live: boolean,
     state: st, can: { edit: true, approve_intro: can.intro, approve_care: can.care, why: can.why },
     approvers: people,
     history: (Array.isArray(row?.history) ? row.history : []).slice(-10).reverse(),
+    /* 2026-10-25: open suggestions from families in the Booking App (oldest first); empty when there are none */
+    suggestions: ax ? ((await sb.from('client_profile_suggestions').select('id, contact_name, text, created_at').eq('axiscare_client_id', ax).eq('status', 'open').order('created_at').limit(20)).data ?? []) : [],
   }
 }

@@ -21,6 +21,9 @@ import { axClients } from '../_shared/client-lookup.ts'
 import { contactForOutbound, normalisePhone } from '../_shared/outreach.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
 import { reviewNote } from '../_shared/family-review.ts'
+import { clientInfoFor } from '../_shared/cara-skills.ts'
+import { sceneFor } from '../_shared/shift-offer.ts'
+import { appProfile } from '../_shared/app-profile.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -116,6 +119,12 @@ const deps: Deps = {
   // Release 3: the Family Circle's app tasks (null = all companion tasks) and its Help us fill flag
   reviewNote: (note, tasks) => reviewNote(note, tasks, Deno.env.get('ANTHROPIC_API_KEY') ?? ''),
   circleFlags: async (circleId) => { const { data } = await db.from('care_circles').select('app_tasks, help_fill').eq('id', circleId).maybeSingle(); return data ? { app_tasks: data.app_tasks ?? null, help_fill: data.help_fill ?? null } : null },
+  // 2026-10-25 (app-profile.ts): the same approved Caregiver Preview the shift page reads; and the family's suggestions
+  caregiverView: async (axId, client) => { const info = await clientInfoFor(db, axId, client); return appProfile(info, sceneFor(info.enjoys)) },
+  suggest: {
+    openCount: async (axId, contactId) => { const r = await db.from('client_profile_suggestions').select('id', { count: 'exact', head: true }).eq('axiscare_client_id', axId).eq('contact_id', contactId).eq('status', 'open'); return r.error ? null : r.count ?? 0 },
+    add: async (row) => !(await db.from('client_profile_suggestions').insert(row)).error,
+  },
   insertBooking: async (row) => { const { data, error } = await db.from('family_bookings').insert(row).select('id').single(); return error || !data ? null : { id: String(data.id) } },
   updateBooking: async (id, vals) => !(await db.from('family_bookings').update({ ...vals, updated_at: new Date().toISOString() }).eq('id', id)).error,
   officeItem: async (item) => !(await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item })).error,
