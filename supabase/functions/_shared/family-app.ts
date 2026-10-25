@@ -9,6 +9,7 @@
 // Pure logic + small injected dependencies so it runs under Node tests.
 // =============================================================================
 
+import { appProfileOn, cleanSuggestion, SUGGEST_OPEN_MAX, SUGGEST_THANKS } from './app-profile.ts'
 import { brand, brandFor, brandView } from './brands.ts'
 import { planRequest, earliestStart, words as answerWords } from './answer-by.ts'
 import { NOTE_MAX, checkNote, noteBlockWords, helpFillOn, officeCanHelp, HELP_ADD, HELP_LATE, type AiVerdict } from './family-review.ts'
@@ -353,6 +354,15 @@ export type Deps = {
   circleFlags?: (circleId: string) => Promise<{ app_tasks: string[] | null; help_fill: any } | null>
   /** Release 3: AI's second opinion on the family's note, at Send (family-review.ts); null = unavailable */
   reviewNote?: (note: string, tasks: string[]) => Promise<AiVerdict>
+  /** 2026-10-25 (app-profile.ts): what caregivers see about this client (app_profile_live on; appProfile shape). Optional. */
+  // deno-lint-ignore no-explicit-any
+  caregiverView?: (axiscareClientId: string, client: any) => Promise<any | null>
+  /** 2026-10-25: a family's "Suggest a change" to that profile (open ones count against SUGGEST_OPEN_MAX). Optional. */
+  suggest?: {
+    openCount: (axiscareClientId: string, contactId: number) => Promise<number | null>   // null = couldn't be read
+    // deno-lint-ignore no-explicit-any
+    add: (row: any) => Promise<boolean>
+  }
   /** Close an open office card (the "Place a caregiver" card of a visit the family cancelled). Optional. */
   closeItem?: (id: string, by: string, text: string) => Promise<void>
 }
@@ -491,7 +501,23 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
     const mine = (await deps.bookings(w.axiscare_client_id)).filter((b) => b.visit_date >= today && OPEN.includes(b.status))
     const est = await estimateRate(deps.ax, w.axiscare_client_id, state, st, today)
     return say(200, { client: { id: w.axiscare_client_id, name: clientName, state }, brand: bnd ? { ...brandView(bnd), phone: phone ?? bnd.phone } : null, can_book: w.can_book, office_phone: phone, rate: est.rate, short_extra: est.short_extra, short_under_hours: est.short_under_hours, visits,
-      waiting: mine.map(bookingView), tasks: allowedTasks(), note_max: NOTE_MAX, hours: hoursFor(state, st), earliest: earliestByDay(now, hoursFor(state, st), st) })
+      waiting: mine.map(bookingView), tasks: allowedTasks(), note_max: NOTE_MAX, hours: hoursFor(state, st), earliest: earliestByDay(now, hoursFor(state, st), st),
+      // 2026-10-25: "What caregivers see" (app-profile.ts); absent while app_profile_live is off
+      ...(appProfileOn(st) && deps.caregiverView ? { cg_view: { ...(await deps.caregiverView(w.axiscare_client_id, client).catch(() => null) ?? { basics: true }), town: String(client?.residentialAddress?.city ?? '').trim() || null }, can_suggest: !!deps.suggest } : {}) })
+  }
+
+  // 2026-10-25: Suggest a change to what caregivers see. It waits for the office's approval on the Caregiver Preview tab.
+  if (action === 'suggest_profile') {
+    if (!appProfileOn(st) || !deps.suggest) return say(409, { error: 'This isn\'t available yet.' })
+    const c = cleanSuggestion(body?.text)
+    if (!c.ok) return say(400, { error: c.error })
+    const open = await deps.suggest.openCount(w.axiscare_client_id, w.contact_id)
+    if (open === null) return say(503, { error: 'It didn\'t send. Please try again in a minute.' })
+    if (open >= SUGGEST_OPEN_MAX) return say(409, { error: `We already have ${SUGGEST_OPEN_MAX} of your suggestions to look at. Please wait until we've gone through those.` })
+    const ok = await deps.suggest.add({ axiscare_client_id: w.axiscare_client_id, circle_id: w.circle_id, contact_id: w.contact_id, contact_name: w.name, text: c.text })
+    if (!ok) return say(500, { error: 'It didn\'t send. Please try again.' })
+    await deps.event({ actor_kind: 'person', actor_email: user.email ?? undefined, actor_name: w.name, via: 'link', verb: 'family_profile_suggestion', area: 'family_app', summary: `${w.name} suggested a change to what caregivers see about ${clientName}`, data: { client: w.axiscare_client_id, contact_id: w.contact_id } })
+    return say(200, { ok: true, message: SUGGEST_THANKS(clientName) })
   }
 
   // Release 1: what the family will be told before they send ("You'll hear from us by ..."), or the earliest time they can ask.
