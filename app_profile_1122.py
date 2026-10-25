@@ -49,6 +49,7 @@ ok("the switch app_profile_live is off (families and caregivers see no change un
 gate = {}
 for fn in FNS:
     s, m = fmeta(HUB, fn)
+    if s == 404: say(f"  · {fn} isn't live (never put live), so it is left alone"); continue
     if s != 200 or not m or "verify_jwt" not in m: stop(f"couldn't read how {fn} is set up live ({s})", 3)
     gate[fn] = bool(m["verify_jwt"]); say(f"  · {fn} is live as version {m.get('version', '?')}, gateway sign-in check {'on' if gate[fn] else 'off'} (kept)")
 
@@ -63,11 +64,11 @@ c = (chk or [{}])[0] if okv else {}
 (ok if okv and int(c.get("made", 0)) == 1 and c.get("rls") is True and int(c.get("open_grants", 1)) == 0 else bad)("client_profile_suggestions made; locked to the server (no browser access)")
 if L.fails: say("  STOP. Tell Claude. (The table is the only change so far; nothing uses it yet.)"); done(4)
 say(); say("2 · THE SERVER PIECES")
-for fn in FNS:
+for fn in [f for f in FNS if f in gate]:
     if not deploy(HUB, FNROOT, fn, gate[fn]): say("  STOP. Tell Claude. (Anything above this line is in; the rest is unchanged.)"); done(5)
 
 say(); say("PART 3 · PROOF")
-for fn in FNS:
+for fn in [f for f in FNS if f in gate]:
     s, b = http("POST", f"https://{HUB}.supabase.co/functions/v1/{fn}", {"action": "list"})
     (ok if s in (401, 403) else bad)(f"{fn}: a caller with no sign-in gets nothing ({s})")
 s, b = http("POST", f"https://{HUB}.supabase.co/functions/v1/family-offer", {"o": "1", "e": "1", "t": "x", "action": "view"})
