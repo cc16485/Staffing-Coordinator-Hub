@@ -64,6 +64,7 @@ import { linkFor, partWelcome, patLineOf, linkTemplate as shiftLinkTemplate, fil
 import { makeShiftLink, shiftDayEnd } from '../_shared/shift-links.ts'
 import { isPlaceholderCaregiver } from '../_shared/cg-placeholder.ts'   // 2026-10-24: never a cover
 import { LIVE_STATES, runRules, nextStep, pickWave, waveOrder, combosOf, partsWithoutHours, nextMorning, needsLine } from '../_shared/cara-run.ts'   // CARA PHASE 2 PART A
+import { judgeForWaves, pickWaveV2 } from '../_shared/cara-waves.ts'   // her wave rules (2026-10-24), switch cara_wave_rules_live
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -132,7 +133,9 @@ export const PRN_NOTICE_H: Record<string, number> = { same_day: 0, few_hours: 3,
 const PRN_NOTICE_WORD: Record<string, string> = { few_hours: 'a few hours', '24h': '24 hours', '48h': '48 hours' }
 const DAY_WORD: Record<string, string> = { mon: 'Mondays', tue: 'Tuesdays', wed: 'Wednesdays', thu: 'Thursdays', fri: 'Fridays', sat: 'Saturdays', sun: 'Sundays' }
 const BAND_WORD: Record<string, string> = { morning: 'mornings', afternoon: 'daytimes', evening: 'evenings', overnight: 'overnights' }
-type PrnMember = { notice: string | null; windows: Record<string, string[]> | null; confirmed_at: string | null; outside_ok?: boolean }
+type PrnMember = { notice: string | null; windows: Record<string, string[]> | null; confirmed_at: string | null; outside_ok?: boolean
+  /* her wave rules (2026-10-24, _shared/cara-waves.ts): the rest of their PRN answers */
+  days?: string[] | null; times?: string[] | null; interests?: string[] | null; short_notice_ok?: boolean }
 // deno-lint-ignore no-explicit-any
 export function isOngoingCase(c: any): boolean {
   return String(c?.kind) === 'interest' || c?.shift_pattern?.kind === 'open_ongoing' || String(c?.reason) === 'open'
@@ -216,7 +219,8 @@ async function prnTeamLoad(): Promise<Map<string, PrnMember>> {
       const id = String(t.axiscare_caregiver_id)
       const a = (apps ?? []).find((x: { id: string }) => x.id === t.applicant_id)
       const item = av.find((x) => String(x?.axiscare_id ?? '') === id || String(x?.id ?? '') === id)
-      out.set(id, { notice: a?.prn?.notice ?? null, windows: item?.windows ?? null, confirmed_at: item?.updated_at ?? null, outside_ok: item?.outside_ok === true })
+      out.set(id, { notice: a?.prn?.notice ?? null, windows: item?.windows ?? null, confirmed_at: item?.updated_at ?? null, outside_ok: item?.outside_ok === true,
+        days: a?.prn?.days ?? null, times: a?.prn?.times ?? null, interests: a?.prn?.interests ?? null, short_notice_ok: a?.prn?.short_notice_ok === true })
     }
   } catch { /* no PRN data = nobody is treated as PRN; everything else unchanged */ }
   return out
@@ -1090,6 +1094,10 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
       Object.assign(row, { avail_state: st2.state, avail_unknown: st2.state === 'unknown' ? UNKNOWN_WHY : null,
         hours: weekNote && !/not checked/.test(weekNote) ? hoursFlag(weekHrs.get(gid) ?? 0, shiftLen, availAll.get(gid)?.target_hours as number | null) : null,
         overlaps: overlapsFor(c, { axiscare_id: gid, name: String(x.name) }, otherCases, plans), skills_note: skillsLine, cleared_note: clearedLine })
+      /* her wave rules (_shared/cara-waves.ts): their availability for the whole shift, and a PRN member's own answers */
+      const avw = availAll.get(gid), pmw = prnTeam.get(gid)
+      Object.assign(row, { windows: avw?.windows ?? null, outside_ok: avw?.outside_ok === true,
+        prn_pref: pmw ? { notice: pmw.notice, days: pmw.days ?? null, times: pmw.times ?? null, interests: pmw.interests ?? null, short_notice_ok: pmw.short_notice_ok === true } : null })
     }
     /* NEEDS VERIFICATION (Samantha, 2026-10-23): "caregivers with expired or missing required clearances cannot receive shift
        offers until they're verified as eligible. They can appear in the list marked Needs Verification so our office knows
@@ -1312,13 +1320,33 @@ async function caraAdvance(caseId: string, st: any): Promise<string> {
         return 'held_night'
       }
       if (step.do === 'wave') {
-        const pool1 = await buildCandidatesForCase(c)
-        let pref: unknown[] | null = null
-        if (st.cara_list_live === true) {
-          const p2 = await buildCandidatesForCase(c, { v2: true })
-          pref = [...p2.group0, ...p2.prn_other, ...p2.group1, ...p2.group2, ...p2.prn_ongoing]
+        /* HER WAVE RULES (2026-10-24, _shared/cara-waves.ts): hard exclusions, whole-shift availability, PRN notice, the
+           familiar-first order and urgent same-day parts. Switch cara_wave_rules_live off: the waves work as before and each
+           records who these rules would have asked instead. */
+        const rulesLive = st.cara_wave_rules_live === true
+        const asked0 = Array.isArray(c.asked) ? c.asked : []
+        const p2 = await buildCandidatesForCase(c, { v2: true })
+        const all2 = [...p2.group0, ...p2.prn_other, ...p2.group1, ...p2.group2, ...p2.prn_ongoing]
+        const judged = judgeForWaves(all2, c, { minsToStart: m, ongoing: isOngoingCase(c) })
+        const since0 = (Number(cur.wave) || 0) - (Number(cur.wave_base) || 0)
+        const v2pick = pickWaveV2(judged.ordered, asked0, { size: rules.size, wavesLeft: Math.max(1, rules.maxWaves - since0), urgent: m != null && m <= 1440,
+          partSlots: Number.isFinite(Number(st.cara_wave_part_slots)) ? Math.max(0, Math.min(rules.size, Number(st.cara_wave_part_slots))) : 2 })
+        // deno-lint-ignore no-explicit-any
+        let who: any[]
+        if (rulesLive) {
+          // deno-lint-ignore no-explicit-any
+          const byName = new Map(sendableOf(p2).map((x: any) => [String(x.name).toLowerCase(), x]))
+          who = v2pick.map((j) => byName.get(String(j.row.name).toLowerCase())).filter(Boolean)
+            // deno-lint-ignore no-explicit-any
+            .map((x: any) => ({ ...x, prn_ask: !!x.prn_pref && !isOngoingCase(c) }))
+        } else {
+          const pool1 = await buildCandidatesForCase(c)
+          const pref = st.cara_list_live === true ? all2 : null
+          who = pickWave(waveOrder(sendableOf(pool1), pref as never), asked0, rules.size)
         }
-        const who = pickWave(waveOrder(sendableOf(pool1), pref as never), Array.isArray(c.asked) ? c.asked : [], rules.size)
+        const rulesNote = { rules: rulesLive ? 'her wave rules' : 'before her wave rules (switch off)',
+          rules_would: rulesLive ? null : v2pick.map((j) => String(j.row.name) + (j.avail.state === 'partial' ? ' (part of it)' : '')),
+          left_out: judged.excluded.slice(0, 40), to_clarify: judged.conflicts.slice(0, 20) }
         if (!who.length) {
           const why = 'Nobody left on Cara\'s list who hasn\'t been asked'
           if (!(await save({ status: 'needs_office', needs: why }))) return 'conflict'
@@ -1334,12 +1362,13 @@ async function caraAdvance(caseId: string, st: any): Promise<string> {
         // deno-lint-ignore no-explicit-any
         const names = who.map((x: any) => String(x.name) + (x.prn_ask ? ' (PRN)' : ''))
         if (!live) {
-          await caraEvent(cur, 'wave', 'Cara', `Practice: wave ${step.n} would text ${names.length}: ${names.join(', ')}. Nobody was texted. Next wave not before ${caraWhen(next)}.`, { would_text: names })
+          await caraEvent(cur, 'wave', 'Cara', `Practice: wave ${step.n} would text ${names.length}: ${names.join(', ')}. Nobody was texted. Next wave not before ${caraWhen(next)}.`
+            + (rulesNote.rules_would ? ` Her wave rules would ask: ${rulesNote.rules_would.join(', ') || 'nobody'}.` : ''), { would_text: names, ...rulesNote })
         } else {
           const res = await sendAsksTo(c, st, who, { askedBy: `Cara (started by ${cur.started_by})`, caraWave: step.n, caraRunNo: cur.run_no ?? 1 })
           await caraEvent(cur, 'wave', 'Cara', `Wave ${step.n} sent to ${res.sent.length}: ${res.sent.join(', ') || 'nobody'}`
             + (res.failed.length ? `. Not sent: ${res.failed.join('; ')}` : '') + (res.already.length ? `. Already asked: ${res.already.join(', ')}` : '')
-            + `. Next wave not before ${caraWhen(next)}.`, { sent: res.sent, failed: res.failed, already: res.already })
+            + `. Next wave not before ${caraWhen(next)}.`, { sent: res.sent, failed: res.failed, already: res.already, ...rulesNote })
           await opEvent(sb, { job: 'coverage-run', verb: 'cara_run_wave', item_id: caseId, area: 'coverage', summary: `Cara wave ${step.n} on ${what}: texted ${res.sent.length}` })
         }
         await save({})
