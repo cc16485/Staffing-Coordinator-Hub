@@ -97,7 +97,9 @@ ck('an ongoing caregiver (moved off the PRN Team) is treated like everyone else'
 ck('the most recently confirmed availability leads the PRN group', j.group0[0].name === 'Sarah Prn', names(j.group0))
 VISITS = [{ caregiver: { id: 9001 }, client: { firstName: 'Other' }, scheduledStartDate: nextSat + 'T06:00:00', scheduledEndDate: nextSat + 'T09:00:00' }]
 APP.coverage_cases = [K()]; j = await act({ action: 'candidates', case_id: 'cv1' })
-ck('a PRN member already working then is not in the fit group', !names(j.group0).includes('Sarah Prn') && j.prn_other.some((x) => x.name === 'Sarah Prn' && x.prn.why === 'already working then'), j)
+/* her top priority (2026-10-25): someone already working then is never offered the shift, PRN or not; the reason names the visit */
+ck('a PRN member already working then is not offered it at all, and the reason names the visit', !names(j.group0).includes('Sarah Prn') && !j.prn_other.some((x) => x.name === 'Sarah Prn')
+   && j.excluded.some((x) => x.name === 'Sarah Prn' && x.code === 'working' && /^Already working then: Scheduled 6am to 9am with Other$/.test(x.why)), j.excluded)
 reset(K({ reason: 'open', shift_pattern: { v: 2, kind: 'open_ongoing', weekday: 'Saturday' } })); j = await act({ action: 'candidates', case_id: 'cv1' })
 ck('a regular opening: no PRN group; all three PRN listed apart ("would mean moving to ongoing"); the rest unchanged',
    !j.group0.length && !j.prn_other.length && names(j.prn_ongoing).length === 3 && /moving to ongoing at \$18/.test(j.meta.prn_case) && names(j.group2).includes('Bob Regular'), j)

@@ -65,7 +65,8 @@ import { makeShiftLink, shiftDayEnd } from '../_shared/shift-links.ts'
 import { isPlaceholderCaregiver } from '../_shared/cg-placeholder.ts'   // 2026-10-24: never a cover
 import { LIVE_STATES, runRules, nextStep, pickWave, waveOrder, combosOf, partsWithoutHours, nextMorning, needsLine } from '../_shared/cara-run.ts'   // CARA PHASE 2 PART A
 import { judgeForWaves, pickWaveV2, bandsOfTimes, caseBands, sameTimeOfDay } from '../_shared/cara-waves.ts'
-import { skillCode, threeGroups, checkApproval } from '../_shared/ask-list.ts'   // the three-group ask list (2026-10-24), switch ask_list_live   // her wave rules (2026-10-24), switch cara_wave_rules_live
+import { skillCode, threeGroups, checkApproval } from '../_shared/ask-list.ts'
+import { conflictsFor, readRange, wallMin } from '../_shared/overlap.ts'   // already working then (her top priority, 2026-10-25)   // the three-group ask list (2026-10-24), switch ask_list_live   // her wave rules (2026-10-24), switch cara_wave_rules_live
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -1029,6 +1030,7 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
     const { data: rosterRow2 } = await sb.from('app_data').select('data').eq('key', 'caregivers').maybeSingle()
     skills = await loadSkillJudge(sb, { clientAxId: clientRes.id, axClient: axClientRaw, axCaregivers: axCgRaw, roster: Array.isArray(rosterRow2?.data) ? rosterRow2!.data : [], lock, driveGate: driveLive, today: driveToday })
   }
+  const sched = await scheduleConflicts(c)
   for (const x of cands) {
     if (x.skipped && !x.may_autosend) { const sk = String(x.skipped); cut(x, sk, /no phone/i.test(sk) ? 'no_phone' : /no longer active/i.test(sk) ? 'inactive' : /^nurse/i.test(sk) ? 'nurse' : /office domain/i.test(sk) ? 'office' : /do-not-offer/i.test(sk) ? 'do_not_offer' : 'skipped'); continue }
     if (dnr.has(nameKeyOf(String(x.name)))) { cut(x, 'Do-Not-Return for this client, never suggested', 'dnr'); continue }
@@ -1044,6 +1046,10 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
     if (lock.axis.has(String(x.axiscare_id)) || (x.offer_id && lock.offers.has(String(x.offer_id)))) { cut(x, LOCK_WHY, 'lock'); continue }
     if (trainLive && inTrainingAx.has(String(x.axiscare_id))) { cut(x, IN_TRAINING_WHY, 'in_training'); continue }
     if (nurseAxis.has(String(x.axiscare_id))) { cut(x, 'nurse-classed in AxisCare', 'nurse'); continue }
+    /* ALREADY WORKING THEN (her top priority, 2026-10-25): never offered a shift that overlaps one they are scheduled for or
+       clocked in on, whoever sends; AxisCare unreadable = nobody (fail closed) */
+    if (sched.held) { cut(x, 'held: ' + sched.held + ', so nobody is texted until it can be checked (fail closed)', 'held'); continue }
+    { const cf = sched.by.get(String(x.axiscare_id)); if (cf && cf.length) { cut(x, 'Already working then: ' + cf.map((k: { line: string }) => k.line).join('; '), 'working', { conflicts: cf }); continue } }
     if (clientLv != null) {
       const cgLv = caregiverLevel.get(String(x.axiscare_id))
       if (cgLv != null && cgLv < clientLv) { cut(x, `Level ${cgLv} caregiver; client needs Level ${clientLv}`, 'level', { cg_level: cgLv, client_level: clientLv, care: skills?.detail ? skills.detail(String(x.axiscare_id)) : null }); continue }
@@ -1175,6 +1181,7 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
         : drive.level === 'required' ? 'needs transportation: only Approved Drivers with a current license and insurance are listed'
         : drive.level === 'preferred' ? 'transportation preferred: people not cleared to drive are listed after the rest, never left out'
         : 'no transportation need on record' + (driveUnknown ? ' (not determined: ' + driveUnknown + ')' : '') },
+    schedule: { checked: sched.checked, held: sched.held, conflicts: sched.by.size, read_at: sched.read_at },
     prn_case: ongoingCase ? 'regular opening: PRN members listed apart (taking it would mean moving to ongoing at $18)' : 'call-off or one-time: PRN members who fit are asked first',
     client_resolution: `${clientRes.status}: ${clientRes.detail}`,
     client_level: clientLv,
@@ -1414,6 +1421,18 @@ async function caraAdvance(caseId: string, st: any): Promise<string> {
   }
 }
 
+/** ALREADY WORKING THEN (2026-10-25): AxisCare read now, the day before to the day after, every caregiver's visits that overlap
+    the whole shift (scheduled or clocked in). held = AxisCare could not be read: nobody may be texted (fail closed). */
+// deno-lint-ignore no-explicit-any
+async function scheduleConflicts(c: any): Promise<{ checked: boolean; held: string | null; by: Map<string, any[]>; read_at: string }> {
+  const range = readRange(c)
+  if (!range || !/^\d\d:\d\d-\d\d:\d\d$/.test(String(c?.shift_time || ''))) return { checked: false, held: null, by: new Map(), read_at: nowIso() }
+  const r = await fetchVisits(`startDate=${range[0]}&endDate=${range[1]}`)
+  if (r.error) return { checked: false, held: `AxisCare's schedule could not be read (${r.error})`, by: new Map(), read_at: nowIso() }
+  let ph = '618'; try { const { data } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle(); if (/^\d+$/.test(String(data?.data?.placeholder_caregiver_id || ''))) ph = String(data!.data.placeholder_caregiver_id) } catch { /* default */ }
+  return { checked: true, held: null, by: conflictsFor(r.rows, c, wallMin(chiNowNaive())!, { ownVisitId: c?.axiscare_visit_id ?? null, placeholderId: ph }), read_at: nowIso() }
+}
+
 /** The three groups for one case (her ask-list rules): the list with everyone already asked kept, judged by her wave rules. */
 // deno-lint-ignore no-explicit-any
 async function askListFor(kase: any, st: any): Promise<{ groups: any; meta: any }> {
@@ -1641,6 +1660,38 @@ Deno.serve(async (req) => {
       whoOwner = Array.isArray((who as { roles?: string[] }).roles) && (who as { roles: string[] }).roles.includes('owner_admin')
     }
     if (body.action === 'open_hours') return await openHours(body, whoName, jr)
+    /* OVERLAP PROBE (owner's server key only, READ ONLY; her ask 2026-10-25: "test an actual current-shift overlap and a future
+       scheduled-shift overlap using read-only AxisCare data"): for a date and hours, who AxisCare has working then (scheduled or
+       clocked in now), exactly as every send checks it, and which open cases' Ready lists hold anyone working then (must be none).
+       Reads AxisCare and the Hub; writes nothing, texts nobody. */
+    if (body.action === 'overlap_probe') {
+      if (!ownerCall) return jr({ error: 'owner key only' }, 403)
+      const probeCase = { shift_date: String(body.date || ''), shift_time: String(body.time || '') }
+      const range = readRange(probeCase)
+      if (!range || !/^\d\d:\d\d-\d\d:\d\d$/.test(probeCase.shift_time)) return jr({ error: 'date YYYY-MM-DD and time HH:MM-HH:MM please' }, 400)
+      const r = await fetchVisits(`startDate=${range[0]}&endDate=${range[1]}`)
+      if (r.error) return jr({ held: r.error, window: probeCase })
+      const by = conflictsFor(r.rows, probeCase, wallMin(chiNowNaive())!, {})
+      // deno-lint-ignore no-explicit-any
+      const nameOf = (id: string) => { const v = r.rows.find((x: any) => String(x?.caregiver?.id) === id); return [v?.caregiver?.firstName, v?.caregiver?.lastName].filter(Boolean).join(' ') || 'caregiver ' + id }
+      const working = [...by.entries()].map(([id, cf]) => ({ axiscare_id: id, name: nameOf(id), clocked_in_now: cf.some((k) => k.clocked_in), conflicts: cf.map((k) => k.line) }))
+      /* every open case's Ready list against its own shift, as the office would see it now */
+      const { data: cc } = await sb.from('app_data').select('data').eq('key', 'coverage_cases').maybeSingle()
+      // deno-lint-ignore no-explicit-any
+      const open = (Array.isArray(cc?.data) ? cc!.data : []).filter((k: any) => k && k.status === 'open' && /^\d\d:\d\d-\d\d:\d\d$/.test(String(k.shift_time || '')) && String(k.kind) !== 'interest').slice(0, 8)
+      const cases = []
+      for (const k of open) {
+        const { data: setP } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+        const lists = await askListFor(k, setP?.data ?? {})
+        const sc = await scheduleConflicts(k)
+        // deno-lint-ignore no-explicit-any
+        const badReady = (lists.groups.ready || []).filter((x: any) => x.axiscare_id && sc.by.has(String(x.axiscare_id))).map((x: any) => x.name)
+        // deno-lint-ignore no-explicit-any
+        cases.push({ id: k.id, client: k.client, shift: `${k.shift_date} ${k.shift_time}`, ready: (lists.groups.ready || []).length, working_listed_as_do_not_ask: (lists.groups.dont || []).filter((x: any) => x.code === 'working').map((x: any) => x.name + ': ' + x.why),
+          working_in_ready: badReady, schedule: lists.meta?.schedule ?? null })
+      }
+      return jr({ read_only: true, window: probeCase, read_range: range, visits_read: r.rows.length, working, cases })
+    }
     const kase = await readCaseFresh(String(body.case_id || ''))
     if (!kase) return jr({ error: 'no such coverage case' }, 404)
     /* CARA PHASE 2 PART A: the run on this case, its history and what still needs the office. Read only; also for a closed case. */
@@ -1958,8 +2009,13 @@ Deno.serve(async (req) => {
       const askedF: any[] = Array.isArray(kase.asked) ? kase.asked : []
       const skipped: string[] = []
       const unknown = [...wantedIds].filter((id) => !askedF.some((a) => String(a?.id) === id))
+      /* ALREADY WORKING THEN (2026-10-25): a follow-up never goes to someone who has since been scheduled elsewhere then */
+      const schedF = await scheduleConflicts(kase)
+      if (schedF.held) return jr({ error: `${schedF.held}. Nothing was sent; try again in a minute, or call them.`, held_schedule: true }, 409)
       const sendableF = askedF.filter((a) => wantedIds.has(String(a?.id))).filter((a) => {
         if (a.state === 'yes') { skipped.push(`${a.name} (said yes: confirm them instead)`); return false }
+        { const cf = a.axiscare_id ? schedF.by.get(String(a.axiscare_id)) : null
+          if (cf && cf.length) { skipped.push(`${a.name} (already working then: ${cf.map((k: { line: string }) => k.line).join('; ')})`); return false } }
         if (a.auto !== true && a.picked_by_coordinator !== true) { skipped.push(`${a.name} (asked by phone, not by text)`); return false }
         if (!normalisePhone(a.phone)) { skipped.push(`${a.name} (no number on the ask)`); return false }
         return true
@@ -2689,27 +2745,11 @@ Deno.serve(async (req) => {
        another visit at that exact time wastes the wave's best minutes. One
        same-day visits fetch; overlap on the naive HH:MM window. Overnight
        windows (end before start) skip the check rather than guess. */
-    const busyThen = new Set<string>()
-    let busyCheck = 'no shift date/time on the case, busy check off'
-    if (c.shift_date && /^\d\d:\d\d-\d\d:\d\d$/.test(String(c.shift_time || ''))) {
-      const [shStart, shEnd] = String(c.shift_time).split('-')
-      if (shEnd <= shStart) busyCheck = 'overnight window, busy check off (cannot compare across midnight safely)'
-      else {
-        const day = await fetchVisits(`startDate=${c.shift_date}&endDate=${c.shift_date}`)
-        if (day.error) busyCheck = `could not read the day's schedule (${day.error}), busy check off`
-        else {
-          for (const v of day.rows) {
-            const cg = v?.caregiver?.id
-            if (cg == null) continue
-            const vs = String(v?.scheduledStartDate ?? v?.startDate ?? '').slice(11, 16)
-            const ve = String(v?.scheduledEndDate ?? v?.endDate ?? '').slice(11, 16)
-            if (!vs || !ve || ve <= vs) continue
-            if (vs < shEnd && ve > shStart) busyThen.add(String(cg))
-          }
-          busyCheck = `${busyThen.size} caregiver(s) already on a visit during this window`
-        }
-      }
-    }
+    /* ALREADY WORKING THEN (2026-10-25): the same check as every other send (overnights, clocked in now, fail closed) */
+    const schedW = await scheduleConflicts(c)
+    const busyThen = new Set<string>([...schedW.by.keys()])
+    const busyCheck = schedW.held ? schedW.held + ': nobody is texted (fail closed)' : !schedW.checked ? 'no shift date/time on the case, busy check off'
+      : `${busyThen.size} caregiver(s) already working during this shift (AxisCare read ${schedW.read_at})`
     const history = new Map<string, { visits: number; last: string; same_time: number }>()
     let historyError: string | null = null
     const cBandsW = caseBands(c)   /* her ask (2026-10-24): same time of day first, with cara_same_time_live on */
@@ -2828,7 +2868,7 @@ Deno.serve(async (req) => {
                            return true
                          })
                          .filter((x: any) => {
-                           if (!x.axiscare_id || !busyThen.has(String(x.axiscare_id))) return true
+                           if (!schedW.held && (!x.axiscare_id || !busyThen.has(String(x.axiscare_id)))) return true
                            busySkipped++; return false
                          })
                          .filter((x: any) => {
