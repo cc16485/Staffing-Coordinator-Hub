@@ -9,6 +9,7 @@
 //   • Cara recommends, a person confirms (assignment stays office-approved)
 // Pure: everything comes in as arguments, nothing is read or written (Node tests: cara_p1_test.mjs).
 // =============================================================================
+import { approvalOf } from './ask-list.ts'   // the three-group ask list (2026-10-24)
 // deno-lint-ignore-file no-explicit-any
 type Any = any
 
@@ -183,7 +184,10 @@ export function boardOf(kase: Any, rows: Any[], excluded: { name: string; why: s
     const ex = excluded.find((e) => nk(e.name) === nk(a.name))
     const said = a.state === 'yes' ? (isPartial(a) ? 'partial' : 'full') : a.state === 'inquiry' ? 'question' : a.state === 'no' ? 'no' : 'waiting'
     const column = v && (said === 'full' || said === 'partial') ? 'nv' : said
+    /* a care-review approval for this shift (ask-list.ts, 2026-10-24) makes a yes confirmable; it never changes their level */
+    const appr = !r && !v ? approvalOf(kase, a) : null
     const eligibility = v ? { ok: false, why: S(v.needs_verification, 200) } : r ? { ok: true, why: 'Can be offered and confirmed' }
+      : appr ? { ok: true, why: `Approved for this shift after a care review by ${S(appr.by, 60)}` }
       : { ok: false, why: ex ? S(ex.why, 200) : 'No longer on the list for this shift' }
     const s = r ? assess(kase, a, r) : { score: 0, reasons: [], concerns: [] }
     /* A CHANGED SHIFT (2026-10-24): an answer counts only for the hours it was given for. If the shift's day or hours

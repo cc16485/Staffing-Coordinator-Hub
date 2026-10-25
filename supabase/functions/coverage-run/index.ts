@@ -64,7 +64,8 @@ import { linkFor, partWelcome, patLineOf, linkTemplate as shiftLinkTemplate, fil
 import { makeShiftLink, shiftDayEnd } from '../_shared/shift-links.ts'
 import { isPlaceholderCaregiver } from '../_shared/cg-placeholder.ts'   // 2026-10-24: never a cover
 import { LIVE_STATES, runRules, nextStep, pickWave, waveOrder, combosOf, partsWithoutHours, nextMorning, needsLine } from '../_shared/cara-run.ts'   // CARA PHASE 2 PART A
-import { judgeForWaves, pickWaveV2, bandsOfTimes, caseBands, sameTimeOfDay } from '../_shared/cara-waves.ts'   // her wave rules (2026-10-24), switch cara_wave_rules_live
+import { judgeForWaves, pickWaveV2, bandsOfTimes, caseBands, sameTimeOfDay } from '../_shared/cara-waves.ts'
+import { skillCode, threeGroups, checkApproval } from '../_shared/ask-list.ts'   // the three-group ask list (2026-10-24), switch ask_list_live   // her wave rules (2026-10-24), switch cara_wave_rules_live
 
 /* Straight-line miles between two zips' Census centroids — an honest
    estimate for "who lives closest", never a route. Null when either zip
@@ -677,8 +678,10 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
   Promise<{ group0: any[]; group1: any[]; group2: any[]; prn_other: any[]; prn_ongoing: any[]; excluded: any[]; needs_verification?: any[]; meta: Record<string, unknown> }> {
   // deno-lint-ignore no-explicit-any
   const excluded: any[] = []
-  const cut = (x: Record<string, unknown>, why: string) =>
-    excluded.push({ name: x.name, why })
+  /* THE THREE-GROUP ASK LIST (2026-10-24): each cut carries a code, so the list can tell a non-negotiable limit from a
+     care gap a coordinator may review (her rule: Cara never waives a care requirement herself) */
+  const cut = (x: Record<string, unknown>, why: string, code = 'other', extra: Record<string, unknown> = {}) =>
+    excluded.push({ name: x.name, why, code, axiscare_id: x.axiscare_id ?? null, ...extra })
 
   const cands = await candidatesFor(c)
   /* CARA PHASE 1: on when the switch cara_list_live is on, or for the office's side-by-side preview (action candidates_v2) */
@@ -1021,32 +1024,32 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
     skills = await loadSkillJudge(sb, { clientAxId: clientRes.id, axClient: axClientRaw, axCaregivers: axCgRaw, roster: Array.isArray(rosterRow2?.data) ? rosterRow2!.data : [], lock, driveGate: driveLive, today: driveToday })
   }
   for (const x of cands) {
-    if (x.skipped && !x.may_autosend) { cut(x, String(x.skipped)); continue }
-    if (dnr.has(nameKeyOf(String(x.name)))) { cut(x, 'Do-Not-Return for this client, never suggested'); continue }
-    if (planR.error) { cut(x, "held: the client's call-in plan could not be read (fail closed)"); continue }
+    if (x.skipped && !x.may_autosend) { cut(x, String(x.skipped), /no phone/i.test(String(x.skipped)) ? 'no_phone' : 'skipped'); continue }
+    if (dnr.has(nameKeyOf(String(x.name)))) { cut(x, 'Do-Not-Return for this client, never suggested', 'dnr'); continue }
+    if (planR.error) { cut(x, "held: the client's call-in plan could not be read (fail closed)", 'held'); continue }
     const planCut = onlyAskCut(planR.plan, x, String(c.client || planR.plan?.client_name || ''))
-    if (planCut) { cut(x, planCut); continue }
-    if (!opts.includeAsked && alreadyAsked.has(String(x.name).toLowerCase())) { cut(x, 'already asked on this case'); continue }   // includeAsked: only for Cara recommends, which judges the people who said yes
+    if (planCut) { cut(x, planCut, 'plan_only'); continue }
+    if (!opts.includeAsked && alreadyAsked.has(String(x.name).toLowerCase())) { cut(x, 'already asked on this case', 'asked'); continue }   // includeAsked: only for Cara recommends, which judges the people who said yes
     if ((callerOff && String(x.name).toLowerCase() === callerOff)
-        || (callerOffId && String(x.axiscare_id || '') === callerOffId)) { cut(x, 'the person who called off'); continue }
-    if (!censusUsable) { cut(x, 'held: AxisCare census unreachable (fail closed)'); continue }
-    if (!x.axiscare_id || !axisActive.has(String(x.axiscare_id))) { cut(x, 'not active in the AxisCare census'); continue }
-    if (!lock.ok) { cut(x, 'held: ' + lock.why + ' (fail closed)'); continue }
-    if (lock.axis.has(String(x.axiscare_id)) || (x.offer_id && lock.offers.has(String(x.offer_id)))) { cut(x, LOCK_WHY); continue }
-    if (trainLive && inTrainingAx.has(String(x.axiscare_id))) { cut(x, IN_TRAINING_WHY); continue }
-    if (nurseAxis.has(String(x.axiscare_id))) { cut(x, 'nurse-classed in AxisCare'); continue }
+        || (callerOffId && String(x.axiscare_id || '') === callerOffId)) { cut(x, 'the person who called off', 'caller'); continue }
+    if (!censusUsable) { cut(x, 'held: AxisCare census unreachable (fail closed)', 'held'); continue }
+    if (!x.axiscare_id || !axisActive.has(String(x.axiscare_id))) { cut(x, 'not active in the AxisCare census', 'inactive'); continue }
+    if (!lock.ok) { cut(x, 'held: ' + lock.why + ' (fail closed)', 'held'); continue }
+    if (lock.axis.has(String(x.axiscare_id)) || (x.offer_id && lock.offers.has(String(x.offer_id)))) { cut(x, LOCK_WHY, 'lock'); continue }
+    if (trainLive && inTrainingAx.has(String(x.axiscare_id))) { cut(x, IN_TRAINING_WHY, 'in_training'); continue }
+    if (nurseAxis.has(String(x.axiscare_id))) { cut(x, 'nurse-classed in AxisCare', 'nurse'); continue }
     if (clientLv != null) {
       const cgLv = caregiverLevel.get(String(x.axiscare_id))
-      if (cgLv != null && cgLv < clientLv) { cut(x, `Level ${cgLv} caregiver; client needs Level ${clientLv}`); continue }
+      if (cgLv != null && cgLv < clientLv) { cut(x, `Level ${cgLv} caregiver; client needs Level ${clientLv}`, 'level', { cg_level: cgLv, client_level: clientLv, care: skills?.detail ? skills.detail(String(x.axiscare_id)) : null }); continue }
     }
     const drv = transportDecision(x, drive.level, driveLive, driveToday)
-    if (drv.exclude) { cut(x, `not cleared to drive clients, and this shift needs transportation (${drv.why})`); continue }
+    if (drv.exclude) { cut(x, `not cleared to drive clients, and this shift needs transportation (${drv.why})`, 'drive', { care: skills?.detail ? skills.detail(String(x.axiscare_id)) : null }); continue }
     if (drv.note) driveNotes.push({ name: String(x.name), note: drv.note })
     /* CARA PHASE 1: the verified-skills rules (match-rules.js): "not for this visit" leaves the list with the rule's reason */
     let skillsLine: string | null = null, clearedLine: string | null = null
     if (v2 && skills?.judge) {
       const sn = skillsNote(skills.judge(String(x.axiscare_id)))
-      if (sn.cut) { cut(x, 'Skills rules: ' + sn.cut); continue }
+      if (sn.cut) { cut(x, 'Skills rules: ' + sn.cut, skillCode(sn.cut), { care: skills.detail ? skills.detail(String(x.axiscare_id)) : null }); continue }
       skillsLine = sn.note; clearedLine = sn.cleared_note ?? null   /* an expired or missing clearance: Needs Verification (below) */
     }
     const h = history.get(String(x.axiscare_id))
@@ -1405,6 +1408,14 @@ async function caraAdvance(caseId: string, st: any): Promise<string> {
   }
 }
 
+/** The three groups for one case (her ask-list rules): the list with everyone already asked kept, judged by her wave rules. */
+// deno-lint-ignore no-explicit-any
+async function askListFor(kase: any, st: any): Promise<{ groups: any; meta: any }> {
+  const p = await buildCandidatesForCase(kase, { v2: true, includeAsked: true })
+  const judged = judgeForWaves([...p.group0, ...p.prn_other, ...p.group1, ...p.group2, ...p.prn_ongoing, ...(p.needs_verification || [])], kase,
+    { minsToStart: minsToStart(kase, chiNowNaive()), ongoing: isOngoingCase(kase), sameTime: st?.cara_same_time_live === true })
+  return { groups: threeGroups(kase, judged.ordered, judged.excluded, p.excluded), meta: p.meta }
+}
 /** The bonus the office set on this case, in whole dollars (0 = none). */
 // deno-lint-ignore no-explicit-any
 export function bonusOf(c: any): number { const n = Math.round(Number(c?.bonus?.amount)); return Number.isFinite(n) && n > 0 && n <= 500 ? n : 0 }
@@ -1802,6 +1813,61 @@ Deno.serve(async (req) => {
       } catch { /* logging must never block */ }
       return jr({ sent, failed, already_asked: already, refused_not_eligible: refusedNames,
         note: 'Replies land on the case like any other ask. Watch the board.' })
+    }
+
+    /* THE THREE-GROUP ASK LIST (Samantha 2026-10-24, mockup PtLEzsAjvGybxXsTtXk926): every caregiver for this shift in
+       Ready to ask / Possible with your review / Do not ask, with whether they were contacted and exactly why. Read only. */
+    if (body.action === 'ask_list') {
+      const { data: setA } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+      // deno-lint-ignore no-explicit-any
+      const stA: any = setA?.data ?? {}
+      const lists = await askListFor(kase, stA)
+      return jr({ ...lists.groups, live: stA.ask_list_live === true, meta: lists.meta })
+    }
+    /* A CARE REVIEW, APPROVED FOR THIS SHIFT ONLY (her rule: "Cara should NEVER independently waive care-level requirements
+       or change a client's care plan"). The office person moves or drops the tasks that stand in the way, confirms what is
+       left is within the caregiver's verified skills and allowed by policy and the payer, and says who agreed and why. It
+       is recorded on the shift (never on the caregiver or the plan), a card is made for any moved task, and then the offer
+       goes to that one caregiver. The switch ask_list_live must be on. */
+    if (body.action === 'review_approve') {
+      const { data: setR2 } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+      // deno-lint-ignore no-explicit-any
+      const stR: any = setR2?.data ?? {}
+      if (stR.ask_list_live !== true) return jr({ error: 'The three-group ask list is switched off (ops_settings.ask_list_live). Nothing was recorded or sent.' }, 409)
+      const lists = await askListFor(kase, stR)
+      const id = String(body.axiscare_id || ''), nm = String(body.name || '').toLowerCase()
+      // deno-lint-ignore no-explicit-any
+      const row = lists.groups.review.find((x: any) => (id && x.axiscare_id === id) || (!id && x.name.toLowerCase() === nm))
+      const chk = checkApproval(row, body)
+      if (!chk.ok) return jr({ error: chk.why, still: chk.still }, 409)
+      if (body.send !== false) {
+        if (stR.coverage_send_live !== true) return jr({ error: 'sending is switched off (ops_settings.coverage_send_live). Nothing was recorded or sent.' }, 409)
+        if (caregiverNightHold(kase, stR)) return jr({ error: 'held: caregivers are not texted 9pm to 8am unless the shift starts within 3 hours. Nothing was recorded or sent; call them.', held_night: true }, 409)
+      }
+      const rec = { id: 'rv_' + Date.now().toString(36), at: nowIso(), by: whoName, by_email: whoEmail, for: `${String(kase.shift_date || '')}|${String(kase.shift_time || '')}`,
+        name: row.name, axiscare_id: row.axiscare_id, cg_level: row.cg_level, client_level: row.client_level, gap: row.why,
+        adjusted: chk.adjusted, moved_to: String(body.moved_to || '').trim().slice(0, 120) || null,
+        agreed_by: String(body.agreed_by || '').trim().slice(0, 200) || null, why: String(body.why || '').trim().slice(0, 300),
+        checks: { skills: true, payer: true } }
+      const prev = Array.isArray(kase.review_approvals) ? kase.review_approvals : []
+      const { error: pe } = await sb.rpc('coverage_case_patch', { p_id: String(kase.id), p_patch: { review_approvals: [...prev, rec].slice(-30) }, p_expect: { status: 'open' } })
+      if (pe) return jr({ error: 'could not record the approval, so nothing was sent: ' + pe.message }, 500)
+      const moved = chk.adjusted.filter((a: { change: string }) => a.change === 'moved')
+      if (moved.length) {
+        await sb.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id: `ops_rvmove_${kase.id}_${rec.id}`, kind: 'coverage', coverage_case_id: kase.id, status: 'open', urgency: 'high',
+          domain: 'scheduling_coverage', about: kase.client || '', created_at: nowIso(), created_by: 'coverage-run', opened_by: 'review_approve',
+          title: `Put ${moved.map((a: { label: string }) => a.label.toLowerCase()).join(' and ')} for ${String(kase.client || 'the client').split(' ')[0]} on ${rec.moved_to} in AxisCare`,
+          detail: `${whoName} moved it off ${caseWhat(kase)} so ${row.name} could cover (care review, ${rec.agreed_by || 'agreed'}).` } })
+      }
+      await opEvent(sb, { actor_email: whoEmail, actor_name: whoName, via: 'hub', verb: 'review_approved', item_id: String(kase.id), area: 'coverage',
+        summary: `${whoName} approved ${row.name} for ${caseWhat(kase)} after a care review` + (chk.adjusted.length ? ` (${chk.adjusted.map((a: { label: string; change: string }) => a.label + ': ' + (a.change === 'moved' ? 'moved' : 'not needed')).join('; ')})` : '') })
+      let sent: string[] = [], failed: string[] = [], already: string[] = []
+      if (body.send !== false) {
+        const fresh = (await readCaseFresh(String(kase.id))) || kase
+        const r2 = await sendAsksTo(fresh, stR, [{ name: row.name, first: String(row.name).split(' ')[0], axiscare_id: row.axiscare_id, tier: 3 }])
+        sent = r2.sent; failed = r2.failed; already = r2.already
+      }
+      return jr({ ok: true, approval: rec, sent, failed, already_asked: already })
     }
 
     /* LAST-MINUTE BONUS (her ask 2026-10-24): the office sets (or clears, 0) a dollar bonus on this shift. Every ask texted

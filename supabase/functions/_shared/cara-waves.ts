@@ -131,28 +131,28 @@ export function prnRule(c: Any, p: Any, minsToStart: number | null, ongoing: boo
 }
 
 export type Judged = { row: Any; avail: ShiftAvail; prn: boolean; prn_match: boolean; familiar: number; note: string | null }
-export type Out = { name: string; axiscare_id: string | null; why: string }
+export type Out = { name: string; axiscare_id: string | null; why: string; code?: string }
 
 /** Hard exclusions and the order, for one case. rows: the list's people (any group); each may carry windows/outside_ok
     (their availability) and prn_pref (PRN Team: notice, interests, days, times, short_notice_ok). */
 export function judgeForWaves(rows: Any[], c: Any, x: { minsToStart: number | null; ongoing: boolean; sameTime?: boolean }): { ordered: Judged[]; excluded: Out[]; conflicts: Out[] } {
   const ordered: Judged[] = [], excluded: Out[] = [], conflicts: Out[] = []
   const types = shiftTypes(c, x.minsToStart)
-  const out = (r: Any, why: string) => excluded.push({ name: S(r?.name, 80), axiscare_id: r?.axiscare_id != null ? S(r.axiscare_id, 20) : null, why })
+  const out = (r: Any, why: string, code = 'other') => excluded.push({ name: S(r?.name, 80), axiscare_id: r?.axiscare_id != null ? S(r.axiscare_id, 20) : null, why, code })
   for (const r of rows) {
     if (!r || !r.name) continue
-    if (r.needs_verification) { out(r, S(r.needs_verification)); continue }
-    if (r.working_then) { out(r, `already scheduled in AxisCare then (${S(r.working_then.detail, 160)})`); continue }
-    if (Array.isArray(r.overlaps) && r.overlaps.length) { out(r, S(r.overlaps[0], 160)); continue }
-    if (r.hours?.level === 'ot') { out(r, S(r.hours.text) || 'this shift would take them over 40 hours this week'); continue }
+    if (r.needs_verification) { out(r, S(r.needs_verification), 'needs_verification'); continue }
+    if (r.working_then) { out(r, `already scheduled in AxisCare then (${S(r.working_then.detail, 160)})`, 'working'); continue }
+    if (Array.isArray(r.overlaps) && r.overlaps.length) { out(r, S(r.overlaps[0], 160), 'overlap'); continue }
+    if (r.hours?.level === 'ot') { out(r, S(r.hours.text) || 'this shift would take them over 40 hours this week', 'overtime'); continue }
     const isPrn = !!r.prn_pref
     const av = shiftAvail(c, isPrn ? prnWindows(r.windows, r.prn_pref) : r.windows, r.outside_ok === true)
-    if (av.state === 'none' && !av.outside_ok) { out(r, (isPrn ? 'PRN Team: ' : '') + av.why); continue }
+    if (av.state === 'none' && !av.outside_ok) { out(r, (isPrn ? 'PRN Team: ' : '') + av.why, 'outside'); continue }
     let prnMatch = false
     if (isPrn) {
       const pr = prnRule(c, r.prn_pref, x.minsToStart, x.ongoing)
       if (pr.conflict) conflicts.push({ name: S(r.name, 80), axiscare_id: r.axiscare_id != null ? S(r.axiscare_id, 20) : null, why: pr.conflict })
-      if (!pr.ok) { out(r, pr.why || 'PRN Team: not for this shift'); continue }
+      if (!pr.ok) { out(r, pr.why || 'PRN Team: not for this shift', x.ongoing ? 'prn_ongoing' : pr.conflict ? 'prn_conflict' : 'prn_notice'); continue }
       const picks: string[] = Array.isArray(r.prn_pref.interests) ? r.prn_pref.interests : []
       prnMatch = picks.some((p) => types.includes(p))
     }
