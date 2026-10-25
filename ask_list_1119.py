@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # 1119 · THREE-GROUP LIST, INACTIVE FIX (Samantha, 2026-10-24: "Its putting inactive caregivers in axiscare in the 3 list"). Anyone
-# AxisCare has inactive is only counted on the three-group list, never listed, whatever cut them first.
+# AxisCare has inactive is only counted on the three-group list, never listed, whatever cut them first. Also: dates read
+# "Oct 24" (not AxisCare's raw stamp) and the "Canceled Shift" placeholder is never listed (her screenshots, 2026-10-24).
 # Ready to ask / Possible with your review / Do not ask, and a care review a coordinator approves for one shift (never a
 # change to a caregiver's level or the care plan). Switch ask_list_live stays OFF (owners see a preview; approving is refused).
 #  1. Checks first (nothing changes): the reviewed build is GitHub's main; the tests pass (fake data only).
@@ -66,7 +67,7 @@ if NODE:
         if c0 != 0: stop(f"couldn't read the Hub's {rf} from GitHub's main (needed by the tests)")
         open(os.path.join(hubdir, rf), "w").write(mr)
     env = dict(os.environ, HUB=hubdir, HUB_ROOT=hubdir)
-    for t, must in (("ask_list_test.mjs", "23/23"), ("wave_rules_test.mjs", "50/50"), ("cara_run_test.mjs", "70/70"), ("prn2_team_test.mjs", "46/46"), ("cara_p1_test.mjs", "89/89"), ("prn3_coverage_test.mjs", "27/27"), ("prn4_server_test.mjs", "22/22"), ("driver_coverage_test.mjs", "26/26"), ("open_hours_coverage_test.mjs", "14/14"), ("visit_reasons_test.mjs", "44/44"), ("callin_test.mjs", "31/31"), ("practice_client_test.mjs", "20/20")):
+    for t, must in (("ask_list_test.mjs", "25/25"), ("wave_rules_test.mjs", "50/50"), ("cara_run_test.mjs", "70/70"), ("prn2_team_test.mjs", "46/46"), ("cara_p1_test.mjs", "89/89"), ("prn3_coverage_test.mjs", "27/27"), ("prn4_server_test.mjs", "22/22"), ("driver_coverage_test.mjs", "26/26"), ("open_hours_coverage_test.mjs", "14/14"), ("visit_reasons_test.mjs", "44/44"), ("callin_test.mjs", "31/31"), ("practice_client_test.mjs", "20/20")):
         c, o = run([NODE, t], cwd=ROOT, env=env)
         if c != 0 or (must and must not in o) or "\nFAIL" in o: stop(f"the tests failed ({t}): " + " ".join(l.strip() for l in o.splitlines() if "FAIL" in l)[:240])
     ok("the three-group list, the wave rules, Let Cara run it, Cara's list, PRN, driver and coverage tests pass (fake data only)")
@@ -93,5 +94,5 @@ for fn in FNS:
 sw2 = switches()
 chk(sw2 is not None and sw2 == before, "every switch is exactly as it was", "a switch changed during the step: tell Claude")
 say()
-say("  1119: " + ("DONE. Inactive caregivers no longer show on the three-group list. Every switch is as it was." if not L.fails else "NOT COMPLETE. See the ✗ lines above."))
+say("  1119: " + ("DONE. Inactive caregivers and the placeholder no longer show on the three-group list; dates read plainly. Every switch is as it was. Next: Claude merges the simple card." if not L.fails else "NOT COMPLETE. See the ✗ lines above."))
 done(0 if not L.fails else 1)

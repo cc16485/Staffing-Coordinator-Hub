@@ -80,6 +80,8 @@ export function threeGroups(kase: Any, ready: Any[], judgedOut: Any[], listOut: 
   }
   for (const e of listOut) {
     /* inactive in AxisCare (whatever cut them first), retired roster records, nurses and office staff: counted, never listed */
+    /* the "Canceled Shift" placeholder is not a person (her screenshots, 2026-10-24): never listed or counted */
+    if (/^cancel+ed( shifts?)?$/i.test(S(e.name, 40))) continue
     if (HIDDEN_CODES.includes(e.code) || e.ax_active === false) { if (e.code !== 'asked') out.hidden++; continue }
     if (CARE_CODES.includes(e.code)) {
       const blocking = blockingTasks(e.care, e.cg_level ?? e.care?.cg_level)

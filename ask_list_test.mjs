@@ -42,6 +42,9 @@ ck('approval: records exactly which tasks changed and how', JSON.stringify(A.che
   ck('inactive in AxisCare is never listed, whatever cut them first (no phone, the roster, office staff): only counted', g.hidden === 3 && !['Gone NoPhone', 'Gone Roster', 'Office Sam'].some((n) => [...g.ready, ...g.review, ...g.dont].some((x) => x.name === n)), g)
   ck('active people cut for no phone or do-not-offer still show under Do not ask, with the reason', g.dont.some((x) => x.name === 'Here NoPhone' && x.label === 'No phone on file') && g.dont.some((x) => x.name === 'Here DNO' && x.label === 'Asked not to be offered shifts'), g.dont) }
 
+{ const g = A.threeGroups({ asked: [] }, [], [], [{ name: 'Canceled Shift', axiscare_id: '618', code: 'no_phone', why: 'no phone on file', ax_active: true }])
+  ck('the "Canceled Shift" placeholder is never listed or counted', !g.dont.length && g.hidden === 0, g) }
+
 /* ── 2. the real coverage-run ── */
 let T, APP, SENT
 const SVC = 'svc_' + 'k'.repeat(60)
@@ -150,6 +153,7 @@ ck('server: a roster caregiver who is NOT active in AxisCare (no phone) is not l
 ck('server: an ACTIVE caregiver with no phone still shows under Do not ask, with the reason', (L.dont || []).some((x) => x.name === 'Nora Nophone' && x.label === 'No phone on file'), L.dont)
 const amy = (L.review || []).find((x) => x.name === 'Amy Test')
 ck('server: Amy (Level 1) is under Possible with your review, as a care review, with Bathing as what stands in the way', amy?.kind === 'care' && (amy.blocking || []).some((t) => t.key === 'bathing') && amy.cg_level === 1, [amy, L.review?.map((x) => x.name + ':' + x.code)])
+ck('server: dates read like "Oct 24", never AxisCare\'s raw stamp', ![...(L.ready || [])].some((x) => /\d{4}-\d\d-\d\dT/.test(x.why)), L.ready?.map((x) => x.why))
 ck('server: everyone else is ready or not asked, never dropped; none contacted yet; the switch reads off', (L.ready || []).length > 5 && L.ready.every((x) => !x.contacted) && L.live === false, [L.ready?.length, L.live])
 let ap = await act({ action: 'review_approve', case_id: 'cv1', axiscare_id: '9001', adjust: { bathing: 'moved' }, moved_to: 'Sun 9am visit', checks: { skills: true, payer: true }, agreed_by: 'Lisa (daughter), phone', why: 'only the shower is Level 2' }, KAY)
 ck('switch off: an approval is refused; nothing recorded, nobody texted', ap.status === 409 && !caseOf().review_approvals && !CG_SENT().length, ap)
