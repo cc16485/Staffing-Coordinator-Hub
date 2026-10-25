@@ -1277,8 +1277,20 @@ async function caraAdvance(caseId: string, st: any): Promise<string> {
           // deno-lint-ignore no-explicit-any
           .map((p: any) => ({ ask_id: String(p.ask_id), name: String(p.name) }))
       }
-      const step = nextStep(cur, { now: new Date(), caseOpen, minsToStart: m, fullYes, night: !!c && caregiverNightHold(c, st), rules })
       const what = c ? caseWhat(c) : 'the shift'
+      const mEnd = c && m != null ? m + shiftLenMin(c) : null
+      let step = nextStep(cur, { now: new Date(), caseOpen, minsToStart: m, minsToEnd: mEnd, fullYes, night: !!c && caregiverNightHold(c, st), rules })
+      /* THE LAST 2 HOURS (her rule 2026-10-24): tell the office once that Cara keeps going, faster and wider; then carry on */
+      if (step.do === 'urgent') {
+        const at = nowIso()
+        if (!(await save({ urgent_at: at }))) return 'conflict'
+        await caraEvent(cur, 'urgent', 'Cara', `Under ${Math.round(rules.stopBefore / 6) / 10} hours to the shift: Cara keeps asking, ${rules.size} at a time every ${rules.gap} minutes, until someone says yes, the list runs out or the shift ends.`)
+        if (live && c) {
+          await caraItem(c, cur, `Under 2 hours: Cara is still asking for ${c.client || 'this shift'} (faster now)`, `Cara keeps asking ${rules.size} at a time every ${rules.gap} minutes. "Ask everyone now" texts everyone eligible at once. Call people too.`, 'urgent')
+          await caraTellOffice(c, `Cara: ${what} starts in under 2 hours and nobody has said yes. Cara keeps asking, faster now. Call people too: {link}`, true)
+        }
+        step = nextStep({ ...cur, urgent_at: at }, { now: new Date(), caseOpen, minsToStart: m, minsToEnd: mEnd, fullYes, night: !!c && caregiverNightHold(c, st), rules })
+      }
       if (step.do === 'finish') {
         const why = !c ? 'The case is no longer on the board' : c.resolved_how === 'covered' ? `Covered: ${c.covered_by || 'confirmed'} (confirmed by ${c.confirmed_by || 'the office'})`
           : `Closed by ${c.confirmed_by || 'the office'}: ${String(c.resolved_how || 'closed').replaceAll('_', ' ')}`
@@ -1393,13 +1405,32 @@ async function caraAdvance(caseId: string, st: any): Promise<string> {
   }
 }
 
+/** The bonus the office set on this case, in whole dollars (0 = none). */
+// deno-lint-ignore no-explicit-any
+export function bonusOf(c: any): number { const n = Math.round(Number(c?.bonus?.amount)); return Number.isFinite(n) && n > 0 && n <= 500 ? n : 0 }
+/** The ask with the bonus said plainly, before "Reply YES" when the text has it, else at the end. */
+export function withBonus(message: string, amount: number): string {
+  const line = `$${amount} bonus for taking this shift.`
+  if (message.includes(line)) return message
+  const i = message.search(/\s*(Can you take it\?|Reply YES)/)
+  return i > 0 ? message.slice(0, i) + ' ' + line + message.slice(i) : message.trimEnd() + ' ' + line
+}
+/** The shift's length in minutes (an overnight wraps), 0 when it has no time. */
+// deno-lint-ignore no-explicit-any
+export function shiftLenMin(c: any): number {
+  const mm = /^(\d\d):(\d\d)-(\d\d):(\d\d)$/.exec(String(c?.shift_time || ''))
+  if (!mm) return 0
+  const a = Number(mm[1]) * 60 + Number(mm[2]), z = Number(mm[3]) * 60 + Number(mm[4])
+  return z > a ? z - a : z + 1440 - a
+}
 /** Why Cara can't take this case, or null. */
 // deno-lint-ignore no-explicit-any
 function caraStartRefusal(kase: any, m: number | null, rules: { stopBefore: number }): string | null {
   if (kase.status !== 'open') return 'This case is closed.'
   if (String(kase.kind) === 'interest' || kase.open_hours === true) return 'Cara runs open shifts only, not interest checks or open hours.'
   if (m == null) return 'This case has no date and start time yet.'
-  if (m < rules.stopBefore) return `The shift starts in under ${Math.round(rules.stopBefore / 6) / 10} hours: call people from the list instead. Cara only asks with time to spare.`
+  /* her rule (2026-10-24): never refused for being close to the shift; only once it has ended */
+  if (m + shiftLenMin(kase) <= 0) return 'This shift has already ended.'
   return null
 }
 
@@ -1506,6 +1537,10 @@ async function sendAsksTo(kase: any, st: any, sendable: any[], extra: { askedBy?
         } catch { /* no link could be made: today's text goes, unchanged */ }
       }
     }
+    /* LAST-MINUTE BONUS (Samantha 2026-10-24: "also give the option of adding a bonus for last minute shifts"): an amount the
+       office set on this case goes into every ask from then on (never on an interest check), and is kept on the ask */
+    const bonusAmt = String(kase.kind) !== 'interest' ? bonusOf(kase) : 0
+    if (bonusAmt) message = withBonus(message, bonusAmt)
     /* CI1: the ask is recorded BEFORE the text goes, under the case's lock, only if this person (same number or
        AxisCare id) hasn't been asked on this case: two coordinators sending at once text them once. */
     const ask = { id: askId, name: x.name, phone, channel: 'sms', at: nowIso(),
@@ -1514,6 +1549,7 @@ async function sendAsksTo(kase: any, st: any, sendable: any[], extra: { askedBy?
       ...(extra.caraWave ? { auto: true, picked_by_coordinator: false, cara_wave: extra.caraWave, cara_run_no: extra.caraRunNo ?? 1 } : { picked_by_coordinator: true }),
       ghl_contact_id: contact.contactId, axiscare_id: x.axiscare_id ?? null,
       offered_for: `${String(kase.shift_date || '')}|${String(kase.shift_time || '')}`,   /* the hours this ask was sent for (2026-10-24) */
+      ...(bonusAmt ? { bonus: bonusAmt } : {}),
       /* CI2: who asked, when the call-in page sent it (server to server, with the owner key) */
       ...(extra.askedBy ? { asked_by: extra.askedBy } : {}) }
     const { data: held, error: holdErr } = await sb.rpc('coverage_case_add_ask', { p_id: String(kase.id), p_ask: ask })
@@ -1766,6 +1802,56 @@ Deno.serve(async (req) => {
       } catch { /* logging must never block */ }
       return jr({ sent, failed, already_asked: already, refused_not_eligible: refusedNames,
         note: 'Replies land on the case like any other ask. Watch the board.' })
+    }
+
+    /* LAST-MINUTE BONUS (her ask 2026-10-24): the office sets (or clears, 0) a dollar bonus on this shift. Every ask texted
+       after that says it; who set it and when is kept (payroll is told by the card; the Hub never changes pay). */
+    if (body.action === 'set_bonus') {
+      const amt = Math.round(Number(body.amount))
+      if (!Number.isFinite(amt) || amt < 0 || amt > 500) return jr({ error: 'the bonus must be a whole dollar amount from 0 to 500' }, 400)
+      const rec = { amount: amt, by: whoName, at: nowIso(), note: typeof body.note === 'string' ? body.note.trim().slice(0, 200) : null }
+      const hist = Array.isArray(kase.bonus_history) ? kase.bonus_history : []
+      const { error } = await sb.rpc('coverage_case_patch', { p_id: String(kase.id), p_patch: { bonus: amt ? rec : null, bonus_history: [...hist, rec].slice(-20) }, p_expect: { status: 'open' } })
+      if (error) return jr({ error: 'could not save the bonus: ' + error.message }, 500)
+      await opEvent(sb, { actor_email: whoEmail, actor_name: whoName, via: 'hub', verb: amt ? 'bonus_set' : 'bonus_cleared', item_id: String(kase.id), area: 'coverage',
+        summary: amt ? `${whoName} added a $${amt} bonus to ${caseWhat(kase)}` : `${whoName} took the bonus off ${caseWhat(kase)}` })
+      return jr({ ok: true, bonus: amt ? rec : null })
+    }
+
+    /* ASK EVERYONE NOW (Samantha 2026-10-24, Dan's overnight: "I need this shift to go out to everyone when we are this last
+       minute!!"). Everyone eligible for this shift who hasn't been asked, at once: the same hard rules as Cara's waves
+       (never anyone already working then, with a yes elsewhere then, over 40 hours, outside their availability, a PRN member
+       short of their notice, Needs Verification, In Training, Do-Not-Return...), the familiar first. preview: the names and
+       who is left out and why, nothing sent. send: only the names the office saw and confirmed, re-checked here. */
+    if (body.action === 'ask_everyone') {
+      const { data: setR } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
+      // deno-lint-ignore no-explicit-any
+      const st: any = setR?.data ?? {}
+      const mE = minsToStart(kase, chiNowNaive())
+      const p2 = await buildCandidatesForCase(kase, { v2: true })
+      const judged = judgeForWaves([...p2.group0, ...p2.prn_other, ...p2.group1, ...p2.group2, ...p2.prn_ongoing, ...(p2.needs_verification || [])], kase,
+        { minsToStart: mE, ongoing: isOngoingCase(kase), sameTime: st.cara_same_time_live === true })
+      const asked0 = Array.isArray(kase.asked) ? kase.asked : []
+      const everyone = pickWaveV2(judged.ordered, asked0, { size: 500, wavesLeft: 1, urgent: false })
+      const night = caregiverNightHold(kase, st)
+      const leftOut = [...judged.excluded, ...(p2.excluded || []).map((x: { name?: string; why?: string }) => ({ name: String(x.name || ''), axiscare_id: null, why: String(x.why || '') }))]
+        .filter((x) => !/no longer active|office domain/i.test(x.why))
+      if (body.preview === true || body.send !== true)
+        return jr({ names: everyone.map((j) => String(j.row.name)), notes: everyone.map((j) => ({ name: String(j.row.name), note: j.note, why: j.row.why })),
+          already_asked: asked0.length, left_out: leftOut.slice(0, 80), held_night: night, send_live: st.coverage_send_live === true })
+      if (st.coverage_send_live !== true) return jr({ error: 'sending is switched off (ops_settings.coverage_send_live), nothing sent' }, 409)
+      if (night) return jr({ error: 'held: caregivers are not texted 9pm to 8am unless the shift starts within 3 hours. Nothing was sent; call them.', held_night: true }, 409)
+      const ok = new Set(everyone.map((j) => String(j.row.name).toLowerCase()))
+      const wanted = (Array.isArray(body.names) ? body.names : []).map((n: unknown) => String(n).toLowerCase()).filter((n: string) => ok.has(n))
+      if (!wanted.length) return jr({ error: 'nobody to send to (the list changed: look again)' }, 409)
+      // deno-lint-ignore no-explicit-any
+      const byName = new Map(sendableOf(p2).map((x: any) => [String(x.name).toLowerCase(), x]))
+      // deno-lint-ignore no-explicit-any
+      const rows = wanted.map((n: string) => byName.get(n)).filter(Boolean).map((x: any) => ({ ...x, prn_ask: !!x.prn_pref && !isOngoingCase(kase) }))
+      const { sent, failed, already } = await sendAsksTo(kase, st, rows)
+      await opEvent(sb, { actor_email: whoEmail, actor_name: whoName, via: 'hub', verb: 'ask_everyone', item_id: String(kase.id), area: 'coverage',
+        summary: `${whoName} asked everyone eligible (${sent.length}) for ${caseWhat(kase)}` })
+      return jr({ sent, failed, already_asked: already, refused: (Array.isArray(body.names) ? body.names.length : 0) - wanted.length })
     }
 
     if (body.action === 'follow_up') {

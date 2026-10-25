@@ -126,7 +126,7 @@ const reset = (kase, settings = {}) => {
   APP = {
     caregivers: CG.map(([id, f, l]) => ({ first: f, last: l, phone: '41755501' + id.slice(-2), axiscare_id: id, active: true, alz_date: '2025-01-01' })),
     caregiver_availability: [], coverage_cases: [kase], staffing_plans: [], caregiver_overlay: [], dnr_log: [], ops_items: [],
-    ops_settings: { coverage_send_live: true, coverage_quiet_from: 0, coverage_quiet_until: 0, coverage_alert_admins: ['sam@x.com'], ...settings },
+    ops_settings: { coverage_send_live: true, coverage_quiet_from: 0, coverage_quiet_until: 0, office_quiet_start: 0, office_quiet_end: 0, coverage_alert_admins: ['sam@x.com'], ...settings },   /* no quiet hours, so the result never depends on the hour the test runs */
     coordinator_staff: [{ email: 'sam@x.com', name: 'Sam Owner', phone: '4175550900' }],
     responsibilities: [], nurse_staff: [], coverage_do_not_offer: [], client_checkins: [],
   }

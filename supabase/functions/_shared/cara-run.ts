@@ -19,20 +19,27 @@ const S = (v: unknown, n = 200) => String(v ?? '').trim().slice(0, n)
 export type RunStatus = 'running' | 'paused' | 'needs_office' | 'stopped' | 'done'
 export const LIVE_STATES: RunStatus[] = ['running', 'paused']
 
-export type Rules = { size: number; gap: number; maxWaves: number; confirmWait: number; stopBefore: number }
+export type Rules = { size: number; gap: number; maxWaves: number; confirmWait: number; stopBefore: number; urgent: boolean }
 
 /** The run's rules, from ops_settings (her recommended numbers are the defaults). Same-day = the shift starts within a day. */
 export function runRules(st: Any, minsToStart: number | null): Rules {
   const n = (k: string, d: number, lo: number, hi: number) => { const v = Number(st?.[k]); return Number.isFinite(v) && v >= lo && v <= hi ? Math.round(v) : d }
   const soon = minsToStart != null && minsToStart <= 24 * 60
-  const gap = soon ? n('cara_run_gap_sameday_min', 10, 5, 60) : n('cara_run_gap_min', 20, 5, 120)
-  return { size: n('cara_run_wave_size', 5, 1, 10), gap, maxWaves: n('cara_run_max_waves', 3, 1, 5),
-    confirmWait: n('cara_run_confirm_wait_min', gap, 5, 120), stopBefore: n('cara_run_stop_before_min', 120, 30, 360) }
+  /* THE LAST 2 HOURS (Samantha 2026-10-24: "DO NOT STOP with 2 hours, that's when we need messages and calls going out the
+     most!!"): Cara no longer hands the shift back at 2 hours. Inside them she asks faster and wider (10 a wave, 5 minutes
+     apart), with no 3-wave limit, until someone says yes, the list runs out or the shift ends; the office is told once. */
+  const urgentBefore = n('cara_run_stop_before_min', 120, 30, 360)
+  const urgent = minsToStart != null && minsToStart < urgentBefore
+  const gap = urgent ? n('cara_run_gap_urgent_min', 5, 3, 30) : soon ? n('cara_run_gap_sameday_min', 10, 5, 60) : n('cara_run_gap_min', 20, 5, 120)
+  return { size: urgent ? n('cara_run_wave_size_urgent', 10, 1, 25) : n('cara_run_wave_size', 5, 1, 10), gap, maxWaves: n('cara_run_max_waves', 3, 1, 5),
+    confirmWait: n('cara_run_confirm_wait_min', gap, 5, 120), stopBefore: urgentBefore, urgent }
 }
 
 export type Ctx = {
   now: Date
   caseOpen: boolean
+  /** minutes until the shift ENDS (null = unknown): Cara keeps asking until then */
+  minsToEnd?: number | null
   minsToStart: number | null
   /** eligible full-shift yeses on the board right now (board can_confirm), oldest answer first */
   fullYes: { ask_id: string; name: string }[]
@@ -47,6 +54,7 @@ export type Step =
   | { do: 'needs_office'; why: string }
   | { do: 'hold_night' }
   | { do: 'wave'; n: number }
+  | { do: 'urgent' }
 
 const declinedIds = (run: Any) => new Set((Array.isArray(run?.declined) ? run.declined : []).map((d: Any) => S(d?.ask_id, 80)))
 const seenIds = (run: Any) => new Set((Array.isArray(run?.seen_yes) ? run.seen_yes : []).map((x: unknown) => S(x, 80)))
@@ -70,14 +78,16 @@ export function nextStep(run: Any, x: Ctx): Step {
   const seen = seenIds(run)
   const fresh = yes.find((y) => !seen.has(y.ask_id))
   if (fresh) return { do: 'pause', ask_id: fresh.ask_id, name: fresh.name }
-  if (x.minsToStart != null && x.minsToStart < x.rules.stopBefore)
-    return { do: 'needs_office', why: x.minsToStart < 0 ? 'The shift has started: handed to the person on duty'
-      : `The shift starts in under ${Math.round(x.rules.stopBefore / 60 * 10) / 10} hours: handed to the person on duty` }
+  if (x.minsToEnd != null && x.minsToEnd <= 0) return { do: 'needs_office', why: 'The shift has ended: handed to the office' }
+  const urgent = x.minsToStart != null && x.minsToStart < x.rules.stopBefore
+  /* the last 2 hours: the office is told once, then Cara keeps going (never handed back for the time alone) */
+  if (urgent && !run.urgent_at) return { do: 'urgent' }
   const due = Date.parse(S(run.next_wave_at, 40))
   if (Number.isFinite(due) && x.now.getTime() < due) return { do: 'wait', why: 'next wave not due yet' }
-  /* waves since this start ("Keep searching" after 3 waves gives 3 more; the numbering carries on) */
+  /* waves since this start ("Keep searching" after 3 waves gives 3 more; the numbering carries on); in the last 2 hours
+     there is no wave limit: she keeps asking until the list runs out */
   const waves = Number(run.wave) || 0, since = waves - (Number(run.wave_base) || 0)
-  if (since >= x.rules.maxWaves) return { do: 'needs_office', why: `${since} wave${since === 1 ? '' : 's'} sent and no full-shift yes that can be confirmed` }
+  if (!urgent && since >= x.rules.maxWaves) return { do: 'needs_office', why: `${since} wave${since === 1 ? '' : 's'} sent and no full-shift yes that can be confirmed` }
   if (x.night) return { do: 'hold_night' }
   return { do: 'wave', n: waves + 1 }
 }
