@@ -21,6 +21,7 @@ import { judge, homeNotes, type MatchClient, type MatchCaregiver } from './famil
 import { clientInfoFor } from './cara-skills.ts'
 import { sceneFor } from './shift-offer.ts'
 import { appProfile, appProfileOn } from './app-profile.ts'
+import { familyProfileOn, rowToProfile, photoOn, PHOTO_BUCKET } from './family-profile.ts'
 
 // deno-lint-ignore no-explicit-any
 type Any = any
@@ -30,7 +31,7 @@ const SENDERS: Record<string, string> = { family_confirm_text_approved: 'family-
   family_declined_text_approved: 'family-offer (request declined)', family_couldnt_text_approved: "family-offer (help us fill: couldn't fill)" }
 const PROFILE_COLS = 'axiscare_id, first_name, last_name, preferred_name, about, experience, why_this_work, years_experience, photo_path, photo_url, video_path, consent, published, status, photo_hidden, video_hidden'
 
-export function chooseDepsFor(db: Any, ax: Ax, supabaseUrl: string): ChooseDeps & Required<Pick<import('./family-offer.ts').OfferDeps, 'textFamily' | 'confirmDue' | 'tellFamily' | 'clientAbout' | 'clientProfile' | 'unfilledDue'>> &
+export function chooseDepsFor(db: Any, ax: Ax, supabaseUrl: string): ChooseDeps & Required<Pick<import('./family-offer.ts').OfferDeps, 'textFamily' | 'confirmDue' | 'tellFamily' | 'clientAbout' | 'clientProfile' | 'clientPhoto' | 'unfilledDue'>> &
   Pick<SyncDeps, 'placedAhead' | 'coverage' | 'changeDue'> & Pick<WelcomeAlertDeps, 'candidates' | 'stampReady' | 'openCards'> & { matchFor: (b: Any) => Promise<MatchResult>; heldDue: () => Promise<Any[]>; declinedDue: () => Promise<Any[]> } {
   const key = async (k: string): Promise<Any> => (await db.from('app_data').select('data').eq('key', k).maybeSingle()).data?.data
   const ghl = () => ({ token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' })
@@ -200,11 +201,19 @@ export function chooseDepsFor(db: Any, ax: Ax, supabaseUrl: string): ChooseDeps 
     },
     clientProfile: async (axId) => {
       /* 2026-10-25 (app-profile.ts): the full approved Caregiver Preview, as on the call-in shift page; off = null (as before) */
-      if (!appProfileOn((await key('ops_settings')) ?? {})) return null
+      const st = (await key('ops_settings')) ?? {}
+      if (!appProfileOn(st)) return null
       const r = await ax('GET', `/api/clients/${encodeURIComponent(String(axId))}`)
       const cl = r.status === 200 ? (r.json?.results?.client ?? r.json?.results ?? null) : null
       const info = await clientInfoFor(db, String(axId), cl)
-      return appProfile(info, sceneFor(info.enjoys))
+      /* 2026-10-25 (family-profile.ts): the family's own profile when they wrote one (family_profile_live); else the office's */
+      const fam = familyProfileOn(st) ? rowToProfile((await db.from('family_client_profile').select('*').eq('axiscare_client_id', String(axId)).maybeSingle()).data ?? null) : null
+      return appProfile(info, sceneFor(fam ? [...fam.enjoys, fam.talk ?? '', fam.little ?? ''] : info.enjoys), fam)
+    },
+    clientPhoto: async (axId) => {
+      if (!photoOn((await key('ops_settings')) ?? {})) return null
+      const { data } = await db.from('family_client_profile').select('photo_path').eq('axiscare_client_id', String(axId)).maybeSingle()
+      return data?.photo_path ? (await db.storage.from(PHOTO_BUCKET).createSignedUrl(data.photo_path, 3600)).data?.signedUrl ?? null : null
     },
     textFamily: async (b, message) => {
       const st = (await key('ops_settings')) ?? {}

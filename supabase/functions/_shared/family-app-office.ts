@@ -91,6 +91,9 @@ export type OfficeDeps = {
   setAbout?: (circleId: string, vals: any) => Promise<boolean>
   // deno-lint-ignore no-explicit-any
   markBilled: (month: string, axiscareClientId: string, vals: any) => Promise<boolean>
+  /** 2026-10-25: everything families do in the Booking App, for the Hub's Booking App page (read only). Optional. */
+  // deno-lint-ignore no-explicit-any
+  activity?: (fromIso: string) => Promise<any>
   login: {
     create: (email: string, name: string) => Promise<{ id: string } | { error: string; exists?: boolean }>
     find: (email: string) => Promise<string | null>
@@ -237,6 +240,15 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
       app_plan: plan, app_plan_since: plan ? (k.app_plan === true ? k.app_plan_since : central(d.now()).date) : k.app_plan_since ?? null, app_plan_by: `${staff.email} (scheduling type)` }
     await d.setPlan(circleId, vals)
     await ev('family_scheduling_type', `${staff.name} set ${k.client_name ?? 'a client'} to ${CARE_TYPE_LABEL[kind]} (App plan ${plan ? 'on' : 'off'})`, { circle_id: circleId, kind, app_plan: plan })
+  }
+
+  /* THE BOOKING APP PAGE (Samantha 2026-10-25: "how can we see in the hub that a family has signed up and what it all says",
+     "what person made a booking app account or signed into one and when", "i want a good view of everything that happens in
+     the app"). Read only: every app person, their opens, requests, profile changes and what the app stopped. */
+  if (action === 'activity') {
+    if (!d.activity) return say(501, { error: 'The Booking App page isn\'t set up on the server yet.' })
+    const days = Math.min(Math.max(Number(body?.days) || 90, 7), 365)
+    return say(200, await d.activity(new Date(d.now().getTime() - days * 86400000).toISOString()))
   }
 
   if (action === 'list') {
