@@ -24,8 +24,10 @@ TESTS = ("family_profile_test.mjs", "app_profile_test.mjs", "family_app_1a_test.
 ok = lambda s: say("  ✓ " + s)
 def run(args, cwd=None): p = subprocess.run(args, cwd=cwd, capture_output=True, text=True); return p.returncode, (p.stdout or "") + (p.stderr or "")
 def stop(msg, code=2): bad(msg); say("  STOP. Nothing was changed."); done(code)
+LAST = {"why": ""}
 def switch_on():
     okq, st = sql(HUB, "select coalesce(data->>'family_profile_live', '') || '|' || coalesce(data->>'app_activity_live', '') || '|' || coalesce(data->>'client_photo_live', '') as v from app_data where key = 'ops_settings'")
+    if not okq: LAST["why"] = str(st)[:200]
     return None if not okq else "true" in (st[0]["v"] if st else "")
 
 start("THE FAMILY'S OWN PROFILE + THE BOOKING APP PAGE")
@@ -44,7 +46,7 @@ if NODE:
         ok(f"{t}: {last.strip()} (fake data only)")
 else: say("  · node is not on this Mac, so the tests were not re-run here (they passed when built)")
 on = switch_on()
-if on is None: stop("couldn't read the Hub settings", 3)
+if on is None: stop("couldn't read the Hub settings. Supabase answered: " + (LAST["why"] or "nothing") + ". If it mentions the token (unauthorized, invalid or expired), make a new access token and run again.", 3)
 if on: stop("family_profile_live, client_photo_live or app_activity_live is already ON. This step only installs with them off. Tell Claude.", 3)
 ok("family_profile_live, client_photo_live and app_activity_live are off (nobody sees a change until you turn them on)")
 gate = {}
