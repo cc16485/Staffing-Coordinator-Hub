@@ -252,7 +252,7 @@ ck('switch on: the wave record says her rules were used', ev('wave')[0]?.detail?
   night(); let L = await act({ action: 'candidates', case_id: 'cv1' }, KAY)
   ck('server, switch off: the list ranks Cal (10 daytime visits) above Amy (3 overnights), as today', L.group1?.[0]?.name === 'Cal Test' && L.group1?.[1]?.name === 'Amy Test' && !/overnight/.test(L.group1[0].why), L.group1)
   night(); APP.ops_settings.cara_same_time_live = true; L = await act({ action: 'candidates', case_id: 'cv1' }, KAY)
-  ck('server, switch on: Amy (3 overnights with this client) comes first, and the reason says so', L.group1?.[0]?.name === 'Amy Test' && /3 visits with this client, 3 overnight/.test(L.group1[0].why) && /0 overnight/.test(L.group1[1].why), L.group1)
+  ck('server, switch on: Amy (3 overnights with this client) comes first, and the reason says so (the date reads "Oct 12")', L.group1?.[0]?.name === 'Amy Test' && /3 visits with this client, 3 overnight, last Oct 12$/.test(L.group1[0].why) && /0 overnight/.test(L.group1[1].why), L.group1)
   night(); Object.assign(APP.ops_settings, { cara_same_time_live: true, cara_wave_rules_live: true }); await act({ action: 'cara_run_start', case_id: 'cv1' }, KAY)
   ck('server, switch on with her wave rules: Cara\'s wave 1 asks Amy first, then Cal', caseOf().asked[0]?.name === 'Amy Test' && caseOf().asked[1]?.name === 'Cal Test', caseOf().asked.map((a) => a.name))
   globalThis.fetch = realFetch

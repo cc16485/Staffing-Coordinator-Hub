@@ -1098,7 +1098,7 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
         concerns: repRec.concerns, total: repRec.total } : null,
       this_client: mine ? { rating: mine.rating, favorite: mine.favorite } : null,
       drive_note: drv.note, drive_lower: drv.rankLower,
-      why: h ? `${h.visits} visit${h.visits === 1 ? '' : 's'} with this client` + (sameTimeLive && cBands.length ? `, ${h.same_time} ${bandWord}` : '') + `, last ${h.last || '?'}`
+      why: h ? `${h.visits} visit${h.visits === 1 ? '' : 's'} with this client` + (sameTimeLive && cBands.length ? `, ${h.same_time} ${bandWord}` : '') + `, last ${dayWord(h.last)}`
         : recentlyActive.has(gid) ? 'worked a shift in the last 14 days'
         : 'active caregiver, no recent history',
     }
@@ -1421,6 +1421,11 @@ async function askListFor(kase: any, st: any): Promise<{ groups: any; meta: any 
   const judged = judgeForWaves([...p.group0, ...p.prn_other, ...p.group1, ...p.group2, ...p.prn_ongoing, ...(p.needs_verification || [])], kase,
     { minsToStart: minsToStart(kase, chiNowNaive()), ongoing: isOngoingCase(kase), sameTime: st?.cara_same_time_live === true })
   return { groups: threeGroups(kase, judged.ordered, judged.excluded, p.excluded), meta: p.meta }
+}
+/** A visit's date as the office reads it ("Oct 24"), from AxisCare's "2026-10-24T07:45:00-05:00" (2026-10-24, her screenshots). */
+export function dayWord(iso: unknown): string {
+  const m = /^(\d{4})-(\d\d)-(\d\d)/.exec(String(iso || '')); if (!m) return '?'
+  return ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(m[2]) - 1] + ' ' + Number(m[3])
 }
 /** The bonus the office set on this case, in whole dollars (0 = none). */
 // deno-lint-ignore no-explicit-any
