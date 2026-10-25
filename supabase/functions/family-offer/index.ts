@@ -6,7 +6,8 @@
 //        o = the offer, e = expiry, t = HMAC of (o|e) keyed by HUB_JOB_SECRET with its own purpose label. Nothing else
 //        about them travels in the link; a forged, changed or expired link gets nothing.
 // Deployed with verify_jwt OFF (caregivers have no Hub login); this file does the checking.
-// OFF until ops_settings.family_offer_live === true. Never texts or emails a family.
+// OFF until ops_settings.family_offer_live === true. Never texts or emails a family, except the AxisCare welcome email
+// (family-welcome-alert.ts), only while her switch ops_settings.family_axis_welcome_auto is on.
 // =============================================================================
 import { isPlaceholderCaregiver } from '../_shared/cg-placeholder.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -22,6 +23,7 @@ import { opEvent } from '../_shared/events.ts'
 import { chooseDepsFor } from '../_shared/family-offer-db.ts'
 import { syncPlaced, type SyncDeps } from '../_shared/family-sync.ts'
 import { welcomeAlerts, type WelcomeAlertDeps } from '../_shared/family-welcome-alert.ts'
+import { axisWelcomeFor } from '../_shared/family-app-office.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -125,8 +127,29 @@ const deps: OfferDeps = {
 const syncDeps: SyncDeps = { ax, now: () => new Date(), settings: deps.settings, placedAhead: cd.placedAhead, coverage: cd.coverage, changeDue: cd.changeDue,
   updateBooking: deps.updateBooking, officeItem: deps.officeItem, closeItem: deps.closeItem, event: deps.event, tellFamily: cd.tellFamily }
 
-// The welcome reminder (2026-10-17): one card per client when a ready family hasn't had its welcome after a business day.
-const welcomeDeps: WelcomeAlertDeps = { now: () => new Date(), settings: deps.settings, candidates: cd.candidates, stampReady: cd.stampReady, openCards: cd.openCards, officeItem: deps.officeItem, closeItem: deps.closeItem }
+// The AxisCare welcome (2026-10-17 reminder; 2026-10-25 her "the one to access axiscare should go automatically to everyone in
+// the family circle"): sent on its own while ops_settings.family_axis_welcome_auto is on, else one reminder card per client.
+// The email is the same one the office's button sends (axisWelcomeFor); it goes through the family door, declared as the one
+// capability she switched on (explicitlyEnabled), email only, with the opt-out check and the hours policy.
+// deno-lint-ignore no-explicit-any
+const sendAxis = async (c: any): Promise<{ ok: boolean; why?: string }> => {
+  const st = await deps.settings()
+  const m = await axisWelcomeFor({ ax }, st, c, { client_name: c.client_name, axiscare_client_id: c.axiscare_client_id })
+  if (!m.ok) return { ok: false, why: m.why }
+  if (!ghl.token || !ghl.locationId) return { ok: false, why: 'GoHighLevel is not set up on the server' }
+  const first = String(c.name || '').split(' ')[0] || 'there'
+  const dest = await contactForOutbound(db, ghl, { email: c.email, firstName: first }, 'proactive_external',
+    { audience: 'family', explicitlyEnabled: true, channel: 'email', sender: 'family-axis-welcome' })
+  if (!dest) return { ok: false, why: 'the email was refused (they opted out, or it is outside sending hours); see the Needs Attention card' }
+  const ok = await ghlSendChecked(db, { Authorization: `Bearer ${ghl.token}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' },
+    'family-axis-welcome', { channel: 'email', contactId: dest.contactId, address: c.email, who: c.name }, { subject: m.subject, html: m.html })
+  try { await db.from('circle_messages').insert({ circle_id: String(c.circle_id), kind: 'update', body: m.subject, sent_by: 'automatic', reached: ok ? 1 : 0, skipped: ok ? 0 : 1 }) } catch { /* the record on the person is what counts */ }
+  await deps.event({ actor_kind: 'system', actor_name: 'family app', via: 'family-offer', verb: 'family_axis_welcome', area: 'family_app',
+    summary: `The AxisCare welcome ${ok ? 'went' : 'did not go'} to ${c.name} for ${c.client_name ?? 'their client'} (automatic)`, data: { contact_id: c.id, by_email: ok, auto: true } })
+  return ok ? { ok: true } : { ok: false, why: 'GoHighLevel refused the email (Needs Attention card raised)' }
+}
+const welcomeDeps: WelcomeAlertDeps = { now: () => new Date(), settings: deps.settings, candidates: cd.candidates, stampReady: cd.stampReady, openCards: cd.openCards, officeItem: deps.officeItem, closeItem: deps.closeItem,
+  sendAxis, markAxis: cd.markAxis }
 
 // deno-lint-ignore no-explicit-any
 async function beat(ok: boolean, note: string) {
@@ -151,7 +174,7 @@ Deno.serve(async (req) => {
     try { sync = await syncPlaced(syncDeps, { dry }) } catch (e) { sync = { error: String((e as Error)?.message ?? e).slice(0, 200) } }
     let welcome: Record<string, unknown>
     try { welcome = await welcomeAlerts(welcomeDeps, { dry }) } catch (e) { welcome = { error: String((e as Error)?.message ?? e).slice(0, 200) } }
-    if (!dry) await beat(out.failed === 0 && !sync.error && !welcome.error, JSON.stringify({ ...out, would: undefined, skipped: out.skipped.slice(0, 5), sync: { ...sync, would: undefined }, welcome: { ...welcome, would: undefined } }))
+    if (!dry) await beat(out.failed === 0 && !sync.error && !welcome.error, JSON.stringify({ ...out, would: undefined, skipped: out.skipped.slice(0, 5), sync: { ...sync, would: undefined }, welcome: { ...welcome, would: undefined, would_send: undefined } }))
     return json({ ok: true, ...out, sync, welcome })
   } catch (e) {
     console.error('family-offer', String((e as Error)?.message ?? e))

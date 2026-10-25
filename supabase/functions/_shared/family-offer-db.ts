@@ -31,7 +31,7 @@ const SENDERS: Record<string, string> = { family_confirm_text_approved: 'family-
 const PROFILE_COLS = 'axiscare_id, first_name, last_name, preferred_name, about, experience, why_this_work, years_experience, photo_path, photo_url, video_path, consent, published, status, photo_hidden, video_hidden'
 
 export function chooseDepsFor(db: Any, ax: Ax, supabaseUrl: string): ChooseDeps & Required<Pick<import('./family-offer.ts').OfferDeps, 'textFamily' | 'confirmDue' | 'tellFamily' | 'clientAbout' | 'clientProfile' | 'unfilledDue'>> &
-  Pick<SyncDeps, 'placedAhead' | 'coverage' | 'changeDue'> & Pick<WelcomeAlertDeps, 'candidates' | 'stampReady' | 'openCards'> & { matchFor: (b: Any) => Promise<MatchResult>; heldDue: () => Promise<Any[]>; declinedDue: () => Promise<Any[]> } {
+  Pick<SyncDeps, 'placedAhead' | 'coverage' | 'changeDue'> & Pick<WelcomeAlertDeps, 'candidates' | 'stampReady' | 'openCards'> & Required<Pick<WelcomeAlertDeps, 'markAxis'>> & { matchFor: (b: Any) => Promise<MatchResult>; heldDue: () => Promise<Any[]>; declinedDue: () => Promise<Any[]> } {
   const key = async (k: string): Promise<Any> => (await db.from('app_data').select('data').eq('key', k).maybeSingle()).data?.data
   const ghl = () => ({ token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' })
   const headers = (t: string) => ({ Authorization: `Bearer ${t}`, Version: '2021-07-28', 'Content-Type': 'application/json' })
@@ -158,7 +158,7 @@ export function chooseDepsFor(db: Any, ax: Ax, supabaseUrl: string): ChooseDeps 
     },
     // the welcome reminder (family-welcome-alert.ts): family members with an email on active circles, and whether the client is active
     candidates: async () => {
-      const { data: cs } = await db.from('circle_contacts').select('id, name, email, relationship, source, hipaa_authorized, hipaa_office_ok_at, stopped_at, axiscare_removed_at, circle_id, welcome_sent_at, welcome_skip_at, welcome_ready_at').not('email', 'is', null)
+      const { data: cs } = await db.from('circle_contacts').select('id, name, email, relationship, source, hipaa_authorized, hipaa_office_ok_at, stopped_at, axiscare_removed_at, circle_id, welcome_sent_at, welcome_skip_at, welcome_ready_at, axis_welcome_sent_at, axis_welcome_failed_at, axis_welcome_failed_why, phone, sms_consent').not('email', 'is', null)
       const ids = [...new Set((cs ?? []).map((c: Any) => String(c.circle_id)))]
       const { data: ks } = ids.length ? await db.from('care_circles').select('id, client_name, axiscare_client_id, active').in('id', ids) : { data: [] }
       const ax = [...new Set((ks ?? []).map((k: Any) => String(k.axiscare_client_id ?? '')).filter(Boolean))]
@@ -170,6 +170,7 @@ export function chooseDepsFor(db: Any, ax: Ax, supabaseUrl: string): ChooseDeps 
       return (cs ?? []).map((c: Any) => { const k = (ks ?? []).find((x: Any) => String(x.id) === String(c.circle_id)) ?? {}
         return { ...c, client_name: k.client_name ?? null, axiscare_client_id: k.axiscare_client_id ?? null, circle_active: k.active !== false, client_active: activeAx.has(String(k.axiscare_client_id ?? '')) } })
     },
+    markAxis: async (id, vals) => { await db.from('circle_contacts').update(vals).eq('id', id) },
     stampReady: async (id, at) => { await db.from('circle_contacts').update({ welcome_ready_at: at }).eq('id', id).is('welcome_ready_at', null) },
     openCards: async () => arr(await key('ops_items')).filter((x) => String(x?.id ?? '').startsWith('fam_welcome_') && x?.status !== 'done').map((x) => String(x.id)),
     placedAhead: async (from, to) => (await db.from('family_bookings').select('*').eq('status', 'placed').not('axiscare_visit_id', 'is', null)

@@ -215,6 +215,11 @@ export const SENDER_REGISTER: Record<string, { class: OutreachClass; why: string
       + 'interested, the family picks; chosen / not chosen / no longer needed texts to those caregivers; and ONE family text (her named '
       + 'exception): to the person who booked, once, when caregivers are interested, 8am to 8pm, Texts OK only, through audience '
       + '\'family\' with explicitlyEnabled backed by ops_settings.family_choose_text_approved. Off until family_choose_live.' },
+  'family-axis-welcome': { class: 'proactive_external', scheduled: true,
+    why: 'the AxisCare Family Portal welcome email (Samantha 2026-10-25: "the one to access axiscare should go automatically to '
+      + 'everyone in the family circle"): once per family member who is an AxisCare responsible party with HIPAA permission on an '
+      + 'active client, weekdays 8 AM to 6 PM, email only, never the Booking App. Audience \'family\' with explicitlyEnabled backed by '
+      + 'her switch ops_settings.family_axis_welcome_auto. Cron: family-offer, every 10 minutes. A send that does not go raises the office card.' },
   'family-cancel':      { class: 'urgent_internal', scheduled: false,
     why: 'a family cancelled a visit they booked in the family app: one text to the caregiver who was placed on it, at once, so '
       + 'they don\'t go (Samantha 2026-10-16). Caregivers only, never the family. Sent from family-gateway when the family taps '
