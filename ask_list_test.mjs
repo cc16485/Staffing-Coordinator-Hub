@@ -34,6 +34,14 @@ ck('approval: records exactly which tasks changed and how', JSON.stringify(A.che
     && g.review.find((x) => x.name === 'Jody D')?.kind === 'call' && g.review.find((x) => x.name === 'Jody D').label === 'Overtime'
     && ['Denise R', 'Mary E', 'Kim A', 'Katie P'].every((n) => g.dont.some((x) => x.name === n)) && g.hidden === 1 && !g.dont.some((x) => x.name === 'Old'), g) }
 
+
+/* her report (2026-10-24): "it's putting inactive caregivers in AxisCare in the 3 list" */
+{ const g = A.threeGroups({ asked: [] }, [], [], [{ name: 'Gone NoPhone', axiscare_id: '91', code: 'no_phone', why: 'no phone on file', ax_active: false },
+    { name: 'Gone Roster', axiscare_id: '92', code: 'inactive', why: 'no longer active', ax_active: null }, { name: 'Office Sam', code: 'office', why: 'holds an office domain' },
+    { name: 'Here NoPhone', axiscare_id: '93', code: 'no_phone', why: 'no phone on file', ax_active: true }, { name: 'Here DNO', axiscare_id: '94', code: 'do_not_offer', why: 'asked not to be offered extra shifts', ax_active: true }])
+  ck('inactive in AxisCare is never listed, whatever cut them first (no phone, the roster, office staff): only counted', g.hidden === 3 && !['Gone NoPhone', 'Gone Roster', 'Office Sam'].some((n) => [...g.ready, ...g.review, ...g.dont].some((x) => x.name === n)), g)
+  ck('active people cut for no phone or do-not-offer still show under Do not ask, with the reason', g.dont.some((x) => x.name === 'Here NoPhone' && x.label === 'No phone on file') && g.dont.some((x) => x.name === 'Here DNO' && x.label === 'Asked not to be offered shifts'), g.dont) }
+
 /* ── 2. the real coverage-run ── */
 let T, APP, SENT
 const SVC = 'svc_' + 'k'.repeat(60)
@@ -124,17 +132,22 @@ const yes = (name, o = {}) => { const a = caseOf().asked.find((x) => x.name === 
 const realFetch2 = globalThis.fetch
 const LEVEL = { '9001': 'Level 1', '9002': 'Level 2', '9003': 'Level 2' }
 globalThis.fetch = async (url, o) => { const u = String(url)
-  if (/axiscare\.com\/api\/caregivers(\?|$)/.test(u)) return new Response(JSON.stringify({ results: { caregivers: APP.caregivers.map((c) => ({ id: Number(c.axiscare_id), firstName: c.first, lastName: c.last, status: { active: true },
+  if (/axiscare\.com\/api\/caregivers(\?|$)/.test(u)) return new Response(JSON.stringify({ results: { caregivers: APP.caregivers.map((c) => ({ id: Number(c.axiscare_id), firstName: c.first, lastName: c.last, status: { active: !INACTIVE.has(c.axiscare_id) },
     classes: LEVEL[c.axiscare_id] ? [{ label: LEVEL[c.axiscare_id] }] : [{ label: 'Level 2' }], mailingAddress: { city: 'Nixa', postalCode: '65714' } })), nextPage: null } }), { status: 200 })
   if (/axiscare\.com\/api\/clients\//.test(u)) return new Response(JSON.stringify({ results: { client: { firstName: 'Ruth', lastName: 'Kay', classes: [{ label: 'Private Pay' }, { label: 'Level 2' }], residentialAddress: { city: 'Nixa', postalCode: '65714' } } } }), { status: 200 })
   if (/axiscare\.com\/api\/caregivers\/\d+/.test(u) && o && o.method && o.method !== 'GET') { AXIS_WRITES.push(u); return new Response('{}', { status: 200 }) }
   return realFetch2(url, o) }
-const AXIS_WRITES = []
+const AXIS_WRITES = [], INACTIVE = new Set()
 const setup = (settings = {}) => { reset(K({ shift_time: '22:00-06:00' }), { cara_run_live: true, cara_list_live: true, ...settings })
   T.client_fact_current = facts().map((f) => f.kind === 'need_bathing' ? { ...f, value: 'required' } : f)
   APP.dnr_log = [{ client: 'Ruth Kay', caregiver: 'Eve Test', active: true }] }
 setup()
+APP.caregivers.push({ first: 'Inez', last: 'Gone', axiscare_id: '9099', active: true, alz_date: '2025-01-01' }, { first: 'Nora', last: 'Nophone', axiscare_id: '9098', active: true, alz_date: '2025-01-01' })   // both no phone
+INACTIVE.add('9099')   // Inez: not active in AxisCare; Nora: active
 let L = await act({ action: 'ask_list', case_id: 'cv1' }, KAY)
+const everyone = [...(L.ready || []), ...(L.review || []), ...(L.dont || [])]
+ck('server: a roster caregiver who is NOT active in AxisCare (no phone) is not listed anywhere, only counted', !everyone.some((x) => x.name === 'Inez Gone') && L.hidden >= 1, [L.dont, L.hidden])
+ck('server: an ACTIVE caregiver with no phone still shows under Do not ask, with the reason', (L.dont || []).some((x) => x.name === 'Nora Nophone' && x.label === 'No phone on file'), L.dont)
 const amy = (L.review || []).find((x) => x.name === 'Amy Test')
 ck('server: Amy (Level 1) is under Possible with your review, as a care review, with Bathing as what stands in the way', amy?.kind === 'care' && (amy.blocking || []).some((t) => t.key === 'bathing') && amy.cg_level === 1, [amy, L.review?.map((x) => x.name + ':' + x.code)])
 ck('server: everyone else is ready or not asked, never dropped; none contacted yet; the switch reads off', (L.ready || []).length > 5 && L.ready.every((x) => !x.contacted) && L.live === false, [L.ready?.length, L.live])

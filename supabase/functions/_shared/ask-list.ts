@@ -31,10 +31,10 @@ export function skillCode(reason: string): string {
 
 export const CARE_CODES = ['level', 'drive', 'skill']
 export const CALL_CODES = ['overtime', 'outside', 'prn_notice', 'prn_conflict', 'prn_ongoing', 'overlap']
-export const HIDDEN_CODES = ['inactive', 'nurse', 'asked']
+export const HIDDEN_CODES = ['inactive', 'nurse', 'office', 'asked']
 const DONT_WORDS: Record<string, string> = { dnr: 'Do Not Return', needs_verification: 'Clearance', working: 'Working then', lock: 'Not approved to work yet',
   in_training: 'In Training', caller: 'Called off', plan_only: "Client's call-in plan", held: 'Could not be checked', no_phone: 'No phone on file',
-  training: 'Required care', restriction: 'Their own limit', client_requires: "Client's requirement", skills_other: 'Not a match', skipped: 'Not on the list', other: 'Not on the list' }
+  do_not_offer: 'Asked not to be offered shifts', training: 'Required care', restriction: 'Their own limit', client_requires: "Client's requirement", skills_other: 'Not a match', skipped: 'Not on the list', other: 'Not on the list' }
 const CALL_WORDS: Record<string, string> = { overtime: 'Overtime', outside: 'Outside their times', prn_notice: 'PRN notice', prn_conflict: 'PRN preference to clarify', prn_ongoing: 'PRN, regular opening', overlap: 'Said yes elsewhere then' }
 const CARE_WORDS: Record<string, string> = { level: 'Level', drive: 'Driving', skill: 'Skill' }
 
@@ -79,7 +79,8 @@ export function threeGroups(kase: Any, ready: Any[], judgedOut: Any[], listOut: 
     else add('dont', row(e, 'dont', 'dont', DONT_WORDS[e.code] || 'Not asked', e.why, { code: e.code }))
   }
   for (const e of listOut) {
-    if (HIDDEN_CODES.includes(e.code)) { if (e.code !== 'asked') out.hidden++; continue }
+    /* inactive in AxisCare (whatever cut them first), retired roster records, nurses and office staff: counted, never listed */
+    if (HIDDEN_CODES.includes(e.code) || e.ax_active === false) { if (e.code !== 'asked') out.hidden++; continue }
     if (CARE_CODES.includes(e.code)) {
       const blocking = blockingTasks(e.care, e.cg_level ?? e.care?.cg_level)
       add('review', row(e, 'review', 'care', CARE_WORDS[e.code] || 'Care review', e.why, { code: e.code, care: e.care ?? null, cg_level: e.cg_level ?? e.care?.cg_level ?? null,
