@@ -351,13 +351,15 @@ async function candidatesFor(_c: any) {
   for (const cg of roster) {
     const name = [clean(cg.first), clean(cg.last)].filter(Boolean).join(' ').trim()
     if (!name) continue
-    if (cg.active === false) { out.push({ name, skipped: 'no longer active' }); continue }
+    /* the AxisCare id rides along on every skip (2026-10-24), so the three-group list can hide anyone AxisCare has inactive */
+    const axId = clean(cg.axiscare_id) || null
+    if (cg.active === false) { out.push({ name, axiscare_id: axId, skipped: 'no longer active' }); continue }
     if (nurseNames.has(nameKeyOf(name))) {
-      out.push({ name, skipped: 'nurse: nursing staff are never coverage candidates' }); continue }
+      out.push({ name, axiscare_id: axId, skipped: 'nurse: nursing staff are never coverage candidates' }); continue }
     if ((clean(cg.axiscare_id) && dnoIds.has(clean(cg.axiscare_id)))
         || dnoPhones.has(normalisePhone(cg.phone) ?? '')
         || dnoNames.has(nameKeyOf(name))) {
-      out.push({ name, eligibility: 'do_not_offer',
+      out.push({ name, axiscare_id: axId, eligibility: 'do_not_offer',
                  skipped: 'asked not to be offered extra shifts (do-not-offer list)' }); continue }
     /* THE ROSTER MIXES OFFICE STAFF WITH FIELD CAREGIVERS. The dry run named
        Samantha and Krystal in wave 1 — ringing the CEO and the supervisor to
@@ -368,13 +370,13 @@ async function candidatesFor(_c: any) {
     const isOffice = officeDomain.has(key) || officeDomain.has(nameKeyOf(name))
     const isCapable = coverageCapable.has(key)
     if (isOffice && !isCapable) {
-      out.push({ name, eligibility: 'office_not_eligible',
+      out.push({ name, axiscare_id: axId, eligibility: 'office_not_eligible',
                  skipped: 'holds an office domain and no coverage capability is recorded' })
       continue
     }
     const eligibility = isOffice ? 'office_but_capable' : 'ordinary'
     const phone = normalisePhone(cg.phone)
-    if (!phone) { out.push({ name, skipped: 'no phone on file' }); continue }
+    if (!phone) { out.push({ name, axiscare_id: axId, skipped: 'no phone on file' }); continue }
 
     /* THE GATE. A probable identity may be shown to a human; it may never
        authorise an automatic message. */
@@ -680,8 +682,12 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
   const excluded: any[] = []
   /* THE THREE-GROUP ASK LIST (2026-10-24): each cut carries a code, so the list can tell a non-negotiable limit from a
      care gap a coordinator may review (her rule: Cara never waives a care requirement herself) */
+  /* ax_active (2026-10-24, her report "it's putting inactive caregivers in AxisCare in the 3 list"): whether AxisCare's census
+     has them active, so a person cut for another reason first (no phone, do-not-offer, the roster) who is inactive in
+     AxisCare is only counted on the three-group list, never listed. Read when the cut happens (the census is read by then). */
   const cut = (x: Record<string, unknown>, why: string, code = 'other', extra: Record<string, unknown> = {}) =>
-    excluded.push({ name: x.name, why, code, axiscare_id: x.axiscare_id ?? null, ...extra })
+    excluded.push({ name: x.name, why, code, axiscare_id: x.axiscare_id ?? null,
+      ax_active: censusUsable ? !!(x.axiscare_id && axisActive.has(String(x.axiscare_id))) : null, ...extra })
 
   const cands = await candidatesFor(c)
   /* CARA PHASE 1: on when the switch cara_list_live is on, or for the office's side-by-side preview (action candidates_v2) */
@@ -1024,7 +1030,7 @@ async function buildCandidatesForCase(c: any, opts: { v2?: boolean; includeAsked
     skills = await loadSkillJudge(sb, { clientAxId: clientRes.id, axClient: axClientRaw, axCaregivers: axCgRaw, roster: Array.isArray(rosterRow2?.data) ? rosterRow2!.data : [], lock, driveGate: driveLive, today: driveToday })
   }
   for (const x of cands) {
-    if (x.skipped && !x.may_autosend) { cut(x, String(x.skipped), /no phone/i.test(String(x.skipped)) ? 'no_phone' : 'skipped'); continue }
+    if (x.skipped && !x.may_autosend) { const sk = String(x.skipped); cut(x, sk, /no phone/i.test(sk) ? 'no_phone' : /no longer active/i.test(sk) ? 'inactive' : /^nurse/i.test(sk) ? 'nurse' : /office domain/i.test(sk) ? 'office' : /do-not-offer/i.test(sk) ? 'do_not_offer' : 'skipped'); continue }
     if (dnr.has(nameKeyOf(String(x.name)))) { cut(x, 'Do-Not-Return for this client, never suggested', 'dnr'); continue }
     if (planR.error) { cut(x, "held: the client's call-in plan could not be read (fail closed)", 'held'); continue }
     const planCut = onlyAskCut(planR.plan, x, String(c.client || planR.plan?.client_name || ''))
