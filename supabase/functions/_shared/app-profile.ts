@@ -16,6 +16,7 @@
 
 // deno-lint-ignore no-explicit-any
 type Any = any
+import { QUESTIONS } from './family-profile.ts'
 export const APP_PROFILE_SWITCH = 'app_profile_live'
 export const appProfileOn = (st: Any) => st?.[APP_PROFILE_SWITCH] === true
 export const SUGGEST_MAX = 500, SUGGEST_OPEN_MAX = 3
@@ -24,11 +25,18 @@ const arr = (v: unknown, n = 12): string[] => (Array.isArray(v) ? v : []).map((x
 
 /** The profile as a caregiver sees it on an app offer (and as the family sees it in the preview). info = clientInfoFor's
     answer (the approved Caregiver Preview, care items only when approved for sharing); scene = shift-offer's sceneFor. */
-export function appProfile(info: Any | null, scene: string) {
-  const about = S(info?.about) || null, enjoys = arr(info?.enjoys, 6)
+export function appProfile(info: Any | null, scene: string, fam: Any | null = null) {
   const help = arr(info?.help), needs = arr(info?.needs), home = arr(info?.home, 6)
   const level = Number(info?.level) > 0 ? Number(info.level) : null
-  return { about, enjoys, help, needs, home, level, scene: scene || 'porch', basics: !about && !enjoys.length }
+  /* 2026-10-25 (family-profile.ts): the family's own profile, when they wrote one, is what a Booking App offer shows; the
+     care summary still comes from the care plan (info). Not written = the office's approved profile, as before. */
+  if (fam) {
+    const life = QUESTIONS.map((q) => ({ label: q.caregiver, text: S(fam[q.key]) })).filter((x) => x.text)
+    const about = S(fam.about) || null, enjoys = arr(fam.enjoys, 6)
+    return { about, enjoys, life, help, needs, home, level, scene: scene || 'porch', basics: !about && !enjoys.length && !life.length, source: 'family' }
+  }
+  const about = S(info?.about) || null, enjoys = arr(info?.enjoys, 6)
+  return { about, enjoys, life: [] as { label: string; text: string }[], help, needs, home, level, scene: scene || 'porch', basics: !about && !enjoys.length, source: 'office' }
 }
 
 /** A family's suggestion: one short message, no links. */

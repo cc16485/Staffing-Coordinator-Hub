@@ -10,6 +10,7 @@
 // =============================================================================
 
 import { appProfileOn, cleanSuggestion, SUGGEST_OPEN_MAX, SUGGEST_THANKS } from './app-profile.ts'
+import { familyProfileOn, cleanFamilyProfile, rowToProfile, applyFamilySave, allText, isEmpty, QUESTIONS, ABOUT_MAX, ANSWER_MAX, ENJOYS_MAX, photoOn, decodePhoto, PHOTO_CONSENT_WORDS } from './family-profile.ts'
 import { brand, brandFor, brandView } from './brands.ts'
 import { planRequest, earliestStart, words as answerWords } from './answer-by.ts'
 import { NOTE_MAX, checkNote, noteBlockWords, helpFillOn, officeCanHelp, HELP_ADD, HELP_LATE, type AiVerdict } from './family-review.ts'
@@ -356,13 +357,34 @@ export type Deps = {
   reviewNote?: (note: string, tasks: string[]) => Promise<AiVerdict>
   /** 2026-10-25 (app-profile.ts): what caregivers see about this client (app_profile_live on; appProfile shape). Optional. */
   // deno-lint-ignore no-explicit-any
-  caregiverView?: (axiscareClientId: string, client: any) => Promise<any | null>
+  caregiverView?: (axiscareClientId: string, client: any, fam?: any) => Promise<any | null>
   /** 2026-10-25: a family's "Suggest a change" to that profile (open ones count against SUGGEST_OPEN_MAX). Optional. */
   suggest?: {
     openCount: (axiscareClientId: string, contactId: number) => Promise<number | null>   // null = couldn't be read
     // deno-lint-ignore no-explicit-any
     add: (row: any) => Promise<boolean>
   }
+  /** 2026-10-25 (family-profile.ts): the family's own profile for Booking App offers. Optional. */
+  familyProfile?: {
+    // deno-lint-ignore no-explicit-any
+    get: (axiscareClientId: string) => Promise<any | null | undefined>   // undefined = couldn't be read
+    // deno-lint-ignore no-explicit-any
+    save: (row: any) => Promise<boolean>
+    aiCheck: (text: string) => Promise<{ ok: boolean; why: string } | null>
+  }
+  /** 2026-10-25 (family-profile.ts): the client's photo in private storage. Optional. */
+  photo?: {
+    put: (axiscareClientId: string, bytes: Uint8Array) => Promise<string | null>   // the stored path, or null
+    remove: (path: string) => Promise<void>
+    url: (path: string) => Promise<string | null>   // a signed link that expires
+    aiCheck: (b64: string) => Promise<{ ok: boolean; why: string } | null>
+  }
+  /** 2026-10-25: what families do in the app, for the Hub's Booking App page (opens, profile saves). Optional; never blocks. */
+  // deno-lint-ignore no-explicit-any
+  activity?: (row: any) => Promise<void>
+  /** an app open, at most one per person per 30 minutes (the store decides) */
+  // deno-lint-ignore no-explicit-any
+  opened?: (who: any[]) => Promise<void>
   /** Close an open office card (the "Place a caregiver" card of a visit the family cancelled). Optional. */
   closeItem?: (id: string, by: string, text: string) => Promise<void>
 }
@@ -476,7 +498,10 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
   const who = (await deps.whoIs(user.id)).filter((w) => w.axiscare_client_id)
   if (!who.length) return say(403, { error: "This login isn't connected to anyone's care yet. Please call the office." })
   const action = String(body?.action ?? '')
-  if (action === 'me') return say(200, { name: who[0].name, clients: who.map((w) => ({ id: w.axiscare_client_id, name: w.client_name, can_book: w.can_book })) })
+  if (action === 'me') {
+    if (deps.opened) await deps.opened(who).catch(() => null)   // 2026-10-25: the Hub's Booking App page (sign-ins and opens)
+    return say(200, { name: who[0].name, clients: who.map((w) => ({ id: w.axiscare_client_id, name: w.client_name, can_book: w.can_book })) })
+  }
 
   const w = body?.client ? who.find((x) => x.axiscare_client_id === String(body.client)) : who.length === 1 ? who[0] : null
   if (!w) return say(403, { error: 'Please pick whose care to look at.' })
@@ -496,6 +521,20 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
   const allowedTasks = () => { const all = tasksFor(state, st); const only = Array.isArray(cf?.app_tasks) && cf!.app_tasks.length ? cf!.app_tasks : null; return only ? all.filter((t) => only.includes(t)) : all }
   const helpFill = helpFillOn(cf?.help_fill, today)
 
+  /* What caregivers see (app-profile.ts), and the family's own profile to edit (family-profile.ts, 2026-10-25) */
+  const famOn = familyProfileOn(st) && !!deps.familyProfile
+  const famRow = async () => famOn ? await deps.familyProfile!.get(w.axiscare_client_id).catch(() => undefined) : null
+  const cgView = async (row?: unknown) => {
+    const fr = row === undefined ? await famRow() : row
+    const fam = fr === undefined ? null : rowToProfile(fr)
+    // deno-lint-ignore no-explicit-any
+    const v: any = await deps.caregiverView!(w.axiscare_client_id, client, fam).catch(() => null) ?? { basics: true }
+    return { cg_view: { ...v, town: String(client?.residentialAddress?.city ?? '').trim() || null }, can_suggest: !!deps.suggest && !famOn,
+      ...(famOn ? { family_profile: { ...(fam ?? { about: null, work: null, talk: null, little: null, enjoys: [] }), readable: fr !== undefined, can_edit: w.can_book,
+        updated_at: fr && (fr as any).updated_at || null, updated_by: fr && (fr as any).updated_by_name || null,
+        photo_on: photoOn(st) && !!deps.photo, photo_consent_words: PHOTO_CONSENT_WORDS, photo_url: photoOn(st) && deps.photo && fr && (fr as any).photo_path ? await deps.photo.url((fr as any).photo_path).catch(() => null) : null, photo_by: fr && (fr as any).photo_by || null, photo_at: fr && (fr as any).photo_at || null, questions: QUESTIONS.map((q) => ({ key: q.key, label: q.label })), limits: { about: ABOUT_MAX, answer: ANSWER_MAX, enjoys: ENJOYS_MAX } } } : {}) }
+  }
+
   if (action === 'home') {
     const visits = (await clientVisits(deps.ax, w.axiscare_client_id, today, addDays(today, 21))).map(visitView).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start))
     const mine = (await deps.bookings(w.axiscare_client_id)).filter((b) => b.visit_date >= today && OPEN.includes(b.status))
@@ -503,7 +542,67 @@ export async function familyAction(deps: Deps, user: { id: string; email?: strin
     return say(200, { client: { id: w.axiscare_client_id, name: clientName, state }, brand: bnd ? { ...brandView(bnd), phone: phone ?? bnd.phone } : null, can_book: w.can_book, office_phone: phone, rate: est.rate, short_extra: est.short_extra, short_under_hours: est.short_under_hours, visits,
       waiting: mine.map(bookingView), tasks: allowedTasks(), note_max: NOTE_MAX, hours: hoursFor(state, st), earliest: earliestByDay(now, hoursFor(state, st), st),
       // 2026-10-25: "What caregivers see" (app-profile.ts); absent while app_profile_live is off
-      ...(appProfileOn(st) && deps.caregiverView ? { cg_view: { ...(await deps.caregiverView(w.axiscare_client_id, client).catch(() => null) ?? { basics: true }), town: String(client?.residentialAddress?.city ?? '').trim() || null }, can_suggest: !!deps.suggest } : {}) })
+      ...(appProfileOn(st) && deps.caregiverView ? await cgView() : {}) })
+  }
+
+  // 2026-10-25: the family writes their loved one's profile. Straight to caregivers after the checks; nothing waits for the office.
+  if (action === 'save_profile') {
+    if (!famOn || !appProfileOn(st)) return say(409, { error: 'This isn\'t available yet.' })
+    if (!w.can_book) return say(403, { error: 'Your login can see visits. Ask the office to turn on booking for you to write the profile.' })
+    const c = cleanFamilyProfile(body?.profile)
+    if (!c.ok) {
+      if (deps.activity) await deps.activity({ contact_id: String(w.contact_id), axiscare_client_id: w.axiscare_client_id, name: w.name, kind: 'profile_blocked', summary: `${w.name}'s profile save was stopped: ${c.error}`, data: { field: c.field } }).catch(() => null)
+      return say(400, { error: c.error, field: c.field })
+    }
+    const before = await deps.familyProfile!.get(w.axiscare_client_id).catch(() => undefined)
+    if (before === undefined) return say(503, { error: "It didn't save. Please try again in a minute." })
+    let ai: 'checked' | 'unavailable' = 'unavailable'
+    if (!isEmpty(c.profile)) {
+      const v = await deps.familyProfile!.aiCheck(allText(c.profile)).catch(() => null)
+      if (v && !v.ok) {
+        if (deps.activity) await deps.activity({ contact_id: String(w.contact_id), axiscare_client_id: w.axiscare_client_id, name: w.name, kind: 'profile_blocked', summary: `${w.name}'s profile save was stopped by the AI check: ${v.why}`, data: { ai: true } }).catch(() => null)
+        return say(400, { error: v.why })
+      }
+      if (v) ai = 'checked'
+    }
+    const out = applyFamilySave(before, c.profile, { contact_id: w.contact_id, name: w.name }, w.axiscare_client_id, now.toISOString(), ai)
+    if (!out.changes.length && before) return say(200, { ok: true, message: 'No changes to save.', ...(await cgView(before)) })
+    if (!(await deps.familyProfile!.save(out.row))) return say(500, { error: "It didn't save. Please try again." })
+    if (deps.activity) await deps.activity({ contact_id: String(w.contact_id), axiscare_client_id: w.axiscare_client_id, name: w.name, kind: 'profile_saved',
+      summary: `${w.name} ${before ? 'changed' : 'wrote'} ${clientName}'s profile for caregivers (${out.changes.map((x) => x.field).join(', ')})`, data: { changes: out.changes, ai } }).catch(() => null)
+    await deps.event({ actor_kind: 'person', actor_email: user.email ?? undefined, actor_name: w.name, via: 'link', verb: 'family_profile_saved', area: 'family_app', summary: `${w.name} ${before ? 'changed' : 'wrote'} ${clientName}'s Booking App profile`, data: { client: w.axiscare_client_id, fields: out.changes.map((x) => x.field), ai } })
+    return say(200, { ok: true, message: `Saved. Caregivers see this when we offer them a visit you request for ${clientName}.`, ...(await cgView({ ...(before ?? {}), ...out.row })) })
+  }
+
+  // 2026-10-25: the client's photo (optional). Only the caregiver confirmed on a visit sees it; the family can change or remove it.
+  if (action === 'save_photo' || action === 'remove_photo') {
+    if (!famOn || !photoOn(st) || !deps.photo) return say(409, { error: 'This isn\'t available yet.' })
+    if (!w.can_book) return say(403, { error: 'Your login can see visits. Ask the office to turn on booking for you to add a photo.' })
+    const before = await deps.familyProfile!.get(w.axiscare_client_id).catch(() => undefined)
+    if (before === undefined) return say(503, { error: "It didn't save. Please try again in a minute." })
+    const rec = (kind: string, summary: string, data: Record<string, unknown> = {}) => deps.activity ? deps.activity({ contact_id: String(w.contact_id), axiscare_client_id: w.axiscare_client_id, name: w.name, kind, summary, data }).catch(() => null) : null
+    const keep = { axiscare_client_id: w.axiscare_client_id, ...(before ? {} : { created_at: now.toISOString(), enjoys: [], history: [] }) }
+    if (action === 'remove_photo') {
+      if (!before?.photo_path) return say(200, { ok: true, message: 'There is no photo.', ...(await cgView(before)) })
+      const row = { ...before, photo_path: null, photo_at: now.toISOString(), photo_by: w.name, photo_consent: null, photo_ai: null }
+      if (!(await deps.familyProfile!.save(row))) return say(500, { error: "It didn't save. Please try again." })
+      await deps.photo.remove(before.photo_path).catch(() => null)
+      await rec('photo_removed', `${w.name} removed ${clientName}'s photo`)
+      return say(200, { ok: true, message: 'Photo removed.', ...(await cgView(row)) })
+    }
+    if (body?.consent !== true) return say(400, { error: 'Please tick that you have permission to share this photo.' })
+    const d = decodePhoto(body?.photo)
+    if (!d.ok) return say(400, { error: d.error })
+    const v = await deps.photo.aiCheck(d.b64).catch(() => null)
+    if (v && !v.ok) { await rec('photo_blocked', `${w.name}'s photo for ${clientName} was stopped by the AI check: ${v.why}`); return say(400, { error: v.why }) }
+    const path = await deps.photo.put(w.axiscare_client_id, d.bytes)
+    if (!path) return say(500, { error: "The photo didn't save. Please try again." })
+    const row = { ...(before ?? {}), ...keep, photo_path: path, photo_at: now.toISOString(), photo_by: w.name, photo_consent: `${w.name} ticked "${PHOTO_CONSENT_WORDS}" ${now.toISOString()}`, photo_ai: v ? 'checked' : 'unavailable' }
+    if (!(await deps.familyProfile!.save(row))) { await deps.photo.remove(path).catch(() => null); return say(500, { error: "The photo didn't save. Please try again." }) }
+    if (before?.photo_path) await deps.photo.remove(before.photo_path).catch(() => null)
+    await rec('photo_saved', `${w.name} ${before?.photo_path ? 'changed' : 'added'} ${clientName}'s photo`, { ai: v ? 'checked' : 'unavailable' })
+    await deps.event({ actor_kind: 'person', actor_email: user.email ?? undefined, actor_name: w.name, via: 'link', verb: 'family_photo_saved', area: 'family_app', summary: `${w.name} ${before?.photo_path ? 'changed' : 'added'} ${clientName}'s photo in the Booking App`, data: { client: w.axiscare_client_id } })
+    return say(200, { ok: true, message: `Photo saved. Only the caregiver confirmed for a visit sees it.`, ...(await cgView(row)) })
   }
 
   // 2026-10-25: Suggest a change to what caregivers see. It waits for the office's approval on the Caregiver Preview tab.
