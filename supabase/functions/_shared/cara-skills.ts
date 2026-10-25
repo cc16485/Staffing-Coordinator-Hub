@@ -20,7 +20,7 @@ const rowsOf = (v: any): any[] => Array.isArray(v) ? v : (v && typeof v === 'obj
 const PAYER: Record<string, string> = { 'medicaid': 'medicaid', 'private pay': 'private', 'private': 'private', 'va': 'va', 'veterans affairs': 'va', 'ltc': 'ltc', 'long term care': 'ltc', 'long-term care': 'ltc', 'medicare guide': 'guide', 'guide': 'guide', 'cds': 'cds' }
 const payerOf = (classes: any) => { const p = resolvePayer(rowsOf(classes)).payer; return p ? (PAYER[p.toLowerCase()] || p.toLowerCase()) : null }
 
-export type SkillJudge = { judge: ((axId: string) => any) | null; why: string | null; client_state: string | null; rule_version: string | null }
+export type SkillJudge = { judge: ((axId: string) => any) | null; detail?: (axId: string) => any; why: string | null; client_state: string | null; rule_version: string | null }
 
 /** clientAxId + the AxisCare client record; axCaregivers = the census rows already read; roster = app_data caregivers. */
 export async function loadSkillJudge(db: any, p: { clientAxId: string | null; axClient: any | null; axCaregivers: any[]; roster: any[]; lock: any; driveGate: boolean; today: string }): Promise<SkillJudge> {
@@ -60,7 +60,16 @@ export async function loadSkillJudge(db: any, p: { clientAxId: string | null; ax
     const judge = (axId: string) => { const cg = P.cgOf(String(axId))
       const r = rules.CCMatch.evaluate(client, { ...cg, cleared: true, availability: { free: true } }, { today: p.today, driveGate: p.driveGate, clientState: csPeople })
       return { ...r, cleared_note: cg.cleared ? null : 'Not cleared to work: ' + String(cg.cleared_reason || 'a required check is not complete') } }
-    return { judge, why: null, client_state: cs.status === 'ok' ? 'ok' : cs.status + ': ' + cs.message, rule_version: rules.CCMatch.VERSION ?? null }
+    /* THE THREE-GROUP ASK LIST (2026-10-24): the client's required care for this shift, task by task, against this
+       caregiver's approved level and verified skills, so a coordinator sees exactly what stands in the way */
+    const M = rules.CCMatch
+    const detail = (axId: string) => { const cg = P.cgOf(String(axId)), needs = client?.needs || {}
+      const tasks = (M.SKILLS || []).filter((s: any) => { const n = needs[s.key]; const o = n && typeof n === 'object' ? n : { value: n, stage: n == null ? null : 'plan' }
+        return ['plan', 'current'].includes(o.stage) && o.value === 'required' })
+        .map((s: any) => { const st = String(((cg.skills || {})[s.key] || {}).standing || 'none')
+          return { key: s.key, label: s.label, level: s.level, check_first: !!s.checkFirst, standing: st, verified: (M.VERIFIED || []).includes(st), restricted: (cg.restrictions || []).includes(s.key) } })
+      return { client_level: typeof M.levelNeeded === 'function' ? M.levelNeeded(client) : null, cg_level: Number(cg.level) || 1, tasks } }
+    return { judge, detail, why: null, client_state: cs.status === 'ok' ? 'ok' : cs.status + ': ' + cs.message, rule_version: rules.CCMatch.VERSION ?? null }
   } catch (e) { return { judge: null, why: 'skills not checked: ' + String((e as Error)?.message || e).slice(0, 160), client_state: null, rule_version: null } }
 }
 
