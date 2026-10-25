@@ -24,6 +24,7 @@ import { reviewNote } from '../_shared/family-review.ts'
 import { clientInfoFor } from '../_shared/cara-skills.ts'
 import { sceneFor } from '../_shared/shift-offer.ts'
 import { appProfile } from '../_shared/app-profile.ts'
+import { aiProfileCheck } from '../_shared/family-profile.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -120,7 +121,21 @@ const deps: Deps = {
   reviewNote: (note, tasks) => reviewNote(note, tasks, Deno.env.get('ANTHROPIC_API_KEY') ?? ''),
   circleFlags: async (circleId) => { const { data } = await db.from('care_circles').select('app_tasks, help_fill').eq('id', circleId).maybeSingle(); return data ? { app_tasks: data.app_tasks ?? null, help_fill: data.help_fill ?? null } : null },
   // 2026-10-25 (app-profile.ts): the same approved Caregiver Preview the shift page reads; and the family's suggestions
-  caregiverView: async (axId, client) => { const info = await clientInfoFor(db, axId, client); return appProfile(info, sceneFor(info.enjoys)) },
+  caregiverView: async (axId, client, fam) => { const info = await clientInfoFor(db, axId, client); return appProfile(info, sceneFor(fam ? [...(fam.enjoys ?? []), fam.talk ?? '', fam.little ?? ''] : info.enjoys), fam ?? null) },
+  // 2026-10-25 (family-profile.ts): the family's own profile, and what families do in the app (the Hub's Booking App page)
+  familyProfile: {
+    get: async (axId) => { const r = await db.from('family_client_profile').select('*').eq('axiscare_client_id', axId).maybeSingle(); return r.error ? undefined : r.data ?? null },
+    save: async (row) => !(await db.from('family_client_profile').upsert(row, { onConflict: 'axiscare_client_id' })).error,
+    aiCheck: (text) => aiProfileCheck(text, Deno.env.get('ANTHROPIC_API_KEY') ?? ''),
+  },
+  activity: async (row) => { await db.from('family_app_activity').insert(row) },
+  opened: async (who) => {
+    const since = new Date(Date.now() - 30 * 60000).toISOString()
+    for (const w of who) {
+      const { count } = await db.from('family_app_activity').select('id', { count: 'exact', head: true }).eq('contact_id', String(w.contact_id)).eq('kind', 'open').gte('at', since)
+      if (!count) await db.from('family_app_activity').insert({ contact_id: String(w.contact_id), axiscare_client_id: w.axiscare_client_id, name: w.name, kind: 'open', summary: `${w.name} opened the Booking App` })
+    }
+  },
   suggest: {
     openCount: async (axId, contactId) => { const r = await db.from('client_profile_suggestions').select('id', { count: 'exact', head: true }).eq('axiscare_client_id', axId).eq('contact_id', contactId).eq('status', 'open'); return r.error ? null : r.count ?? 0 },
     add: async (row) => !(await db.from('client_profile_suggestions').insert(row)).error,

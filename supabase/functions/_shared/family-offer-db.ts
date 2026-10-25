@@ -21,6 +21,7 @@ import { judge, homeNotes, type MatchClient, type MatchCaregiver } from './famil
 import { clientInfoFor } from './cara-skills.ts'
 import { sceneFor } from './shift-offer.ts'
 import { appProfile, appProfileOn } from './app-profile.ts'
+import { familyProfileOn, rowToProfile } from './family-profile.ts'
 
 // deno-lint-ignore no-explicit-any
 type Any = any
@@ -200,11 +201,14 @@ export function chooseDepsFor(db: Any, ax: Ax, supabaseUrl: string): ChooseDeps 
     },
     clientProfile: async (axId) => {
       /* 2026-10-25 (app-profile.ts): the full approved Caregiver Preview, as on the call-in shift page; off = null (as before) */
-      if (!appProfileOn((await key('ops_settings')) ?? {})) return null
+      const st = (await key('ops_settings')) ?? {}
+      if (!appProfileOn(st)) return null
       const r = await ax('GET', `/api/clients/${encodeURIComponent(String(axId))}`)
       const cl = r.status === 200 ? (r.json?.results?.client ?? r.json?.results ?? null) : null
       const info = await clientInfoFor(db, String(axId), cl)
-      return appProfile(info, sceneFor(info.enjoys))
+      /* 2026-10-25 (family-profile.ts): the family's own profile when they wrote one (family_profile_live); else the office's */
+      const fam = familyProfileOn(st) ? rowToProfile((await db.from('family_client_profile').select('*').eq('axiscare_client_id', String(axId)).maybeSingle()).data ?? null) : null
+      return appProfile(info, sceneFor(fam ? [...fam.enjoys, fam.talk ?? '', fam.little ?? ''] : info.enjoys), fam)
     },
     textFamily: async (b, message) => {
       const st = (await key('ops_settings')) ?? {}

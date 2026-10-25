@@ -25,6 +25,7 @@ import { opEvent } from '../_shared/events.ts'
 import { careNow } from '../_shared/cara-skills.ts'
 import { detailsView } from '../_shared/shift-offer.ts'
 import { lifeSources, draftFromLifeStory } from '../_shared/life-story-draft.ts'
+import { rowToProfile, familyWordsForOffice, QUESTIONS } from '../_shared/family-profile.ts'
 import { cleanAbout, cleanEnjoys, approvedView, draftView, approvedIntro, draftIntro, stateOf, canApprove, applySave, applyApprove, sampleShift, APPROVER_ROLES } from '../_shared/caregiver-preview.ts'
 
 const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } })
@@ -149,6 +150,27 @@ Deno.serve(async (req) => {
       return json({ ...v, approved: out.approved, note: out.why || null })
     }
 
+    /* "USE THE FAMILY'S WORDS" (2026-10-25, family-profile.ts): copies the family's Booking App profile into this office draft.
+       Her rule: the two profiles stay separate, so this is the only way the family's words reach the shift profile, and it is
+       an ordinary draft that is approved as usual. The family's own profile is never touched from here. */
+    if (action === 'use_family_words') {
+      if (!ax) return json({ error: 'Which client?' }, 400)
+      const fam = rowToProfile((await sb.from('family_client_profile').select('*').eq('axiscare_client_id', ax).maybeSingle()).data ?? null)
+      if (!fam) return json({ error: 'The family hasn\'t written a profile yet.' }, 409)
+      const wds = familyWordsForOffice(fam)
+      const ca = cleanAbout(wds.about); if (!ca.ok) return json({ error: ca.error }, 400)
+      const ce = cleanEnjoys(wds.enjoys); if (!ce.ok) return json({ error: ce.error }, 400)
+      const out = applySave(row, circle, { about: ca.text, enjoys: ce.items }, me, nowIso(), { client_key: 'ax:' + ax, axiscare_client_id: ax, lead_id: row?.lead_id ?? null, client_name: clientName })
+      const h = out.row.history; if (out.changed.length && Array.isArray(h) && h.length) h[h.length - 1] = { ...h[h.length - 1], what: h[h.length - 1].what + " (from the family's Booking App profile)" }
+      if (out.changed.length || !row) {
+        if (!(await write(out.row))) return json({ error: 'Not saved. Please try again.' }, 500)
+        await opEvent(sb, { job: 'caregiver-preview', verb: 'caregiver_preview_draft', item_id: 'ax:' + ax, area: 'clients', actor_name: who.name,
+          summary: `${who.name} copied the family's words into the Caregiver Preview draft for ${clientName || 'a client'} (approve to use on shifts)` })
+      }
+      ;({ row, circle } = await load(ax, lead))
+      return json(await view(row, circle, current, me, live, cl, ax))
+    }
+
     /* A FAMILY'S SUGGESTION (2026-10-25, app-profile.ts): the office marks it used or not used. It never changes the profile by
        itself: whoever uses it edits the draft and approves as usual. */
     if (action === 'suggestion_close') {
@@ -198,6 +220,9 @@ async function view(row: Any, circle: Any, current: Any, me: Any, live: boolean,
     approvers: people,
     history: (Array.isArray(row?.history) ? row.history : []).slice(-10).reverse(),
     /* 2026-10-25: open suggestions from families in the Booking App (oldest first); empty when there are none */
+    /* 2026-10-25: the family's own Booking App profile (separate; shown here to read and, if wanted, copy) */
+    family: ax ? await (async () => { const r = (await sb.from('family_client_profile').select('*').eq('axiscare_client_id', ax).maybeSingle()).data ?? null; const p = rowToProfile(r)
+      return p ? { ...p, life: QUESTIONS.map((q) => ({ label: q.caregiver, text: p[q.key] })).filter((x) => x.text), updated_at: r.updated_at, updated_by: r.updated_by_name, history: (Array.isArray(r.history) ? r.history : []).slice(-10).reverse() } : null })() : null,
     suggestions: ax ? ((await sb.from('client_profile_suggestions').select('id, contact_name, text, created_at').eq('axiscare_client_id', ax).eq('status', 'open').order('created_at').limit(20)).data ?? []) : [],
   }
 }

@@ -76,6 +76,39 @@ const deps: OfficeDeps = {
     // deno-lint-ignore no-explicit-any
     return (cs ?? []).map((c: any) => { const k = (ks ?? []).find((x: any) => String(x.id) === String(c.circle_id)); return { contact_id: c.id, name: c.name, email: c.email, client_name: k?.client_name ?? null, axiscare_client_id: k?.axiscare_client_id ?? null, status: c.app_status, can_book: c.app_can_book === true, invited_at: c.app_invited_at, invited_by: c.app_invited_by } })
   },
+  // 2026-10-25: the Hub's Booking App page (read only)
+  activity: async (from) => {
+    const { data: cs } = await db.from('circle_contacts').select('id, circle_id, name, relationship, email, app_status, app_can_book, app_invited_at, app_user_id, app_invited_by, welcome_sent_at, welcome_sent_by, welcome_version, welcome_skip_at, welcome_skip_reason, stopped_at, axiscare_removed_at').not('app_status', 'is', null)
+    // deno-lint-ignore no-explicit-any
+    const ids = [...new Set((cs ?? []).map((c: any) => c.circle_id))]
+    const { data: ks } = ids.length ? await db.from('care_circles').select('id, client_name, axiscare_client_id').in('id', ids) : { data: [] }
+    const { data: opens } = await db.from('family_app_activity').select('contact_id, at').eq('kind', 'open').order('at', { ascending: true }).limit(5000)
+    const { data: acts } = await db.from('family_app_activity').select('id, at, contact_id, axiscare_client_id, name, kind, summary, data').gte('at', from).order('at', { ascending: false }).limit(1000)
+    const { data: evs } = await db.from('op_events').select('id, at, actor_name, verb, summary, data').eq('area', 'family_app').gte('at', from).order('at', { ascending: false }).limit(500)
+    const { data: bks } = await db.from('family_bookings').select('id, axiscare_client_id, client_name, contact_id, requested_by_name, visit_date, start_time, end_time, window_start, window_end, hours, kind, tasks, note, note_hidden, status, caregiver_name, method, created_at, cancelled_at, cancelled_by, ended_why').gte('created_at', from).order('created_at', { ascending: false }).limit(500)
+    const { data: profs } = await db.from('family_client_profile').select('*')
+    /* the Booking App's own sign-in record (last real sign-in with the emailed code), read from the family app's login list */
+    const signin: Record<string, { last: string | null; made: string | null }> = {}
+    if (FAMILY_URL && FAMILY_SERVICE) {
+      for (let page = 1; page <= 10; page++) {
+        const j = await (await famAdmin(`/users?page=${page}&per_page=200`)).json().catch(() => ({}))
+        // deno-lint-ignore no-explicit-any
+        const users: any[] = j?.users ?? []
+        for (const u of users) signin[String(u.id)] = { last: u.last_sign_in_at ?? null, made: u.created_at ?? null }
+        if (users.length < 200) break
+      }
+    }
+    // deno-lint-ignore no-explicit-any
+    const people = (cs ?? []).map((c: any) => {
+      // deno-lint-ignore no-explicit-any
+      const k = (ks ?? []).find((x: any) => String(x.id) === String(c.circle_id)), mine = (opens ?? []).filter((o: any) => String(o.contact_id) === String(c.id))
+      const si = c.app_user_id ? signin[String(c.app_user_id)] : undefined
+      const { app_user_id: _u, ...rest } = c
+      return { ...rest, client_name: k?.client_name ?? null, axiscare_client_id: k?.axiscare_client_id ?? null, first_open: mine[0]?.at ?? null, last_open: mine[mine.length - 1]?.at ?? null, opens: mine.length,
+        last_sign_in: si?.last ?? null, login_made: si?.made ?? null, sign_in_readable: !!(FAMILY_URL && FAMILY_SERVICE) }
+    })
+    return { ok: true, from, people, activity: acts ?? [], events: evs ?? [], bookings: bks ?? [], profiles: profs ?? [], recording_since: (opens ?? [])[0]?.at ?? null }
+  },
   recentBookings: async (from) => (await db.from('family_bookings').select('*, family_offers(caregiver_name, state, wave, sent_at, answered_at, picked_start)').gte('visit_date', from).order('visit_date', { ascending: true })).data ?? [],
   booking: async (id) => /^[0-9a-f-]{36}$/i.test(id) ? (await db.from('family_bookings').select('*').eq('id', id).maybeSingle()).data ?? null : null,
   updateBooking: async (id, vals) => !(await db.from('family_bookings').update({ ...vals, updated_at: new Date().toISOString() }).eq('id', id)).error,
