@@ -21,6 +21,10 @@
 //             confirmed on a shift, or backed out after confirming. Kept per person and shift, never edited.
 //   move      {applicant_id, to: 'ongoing'|'prn_team', effective_date, reason, from}: the track change, then the
 //             PRN Team class off (to ongoing; CNA stays) or back on (to prn_team) in AxisCare, read back and logged.
+//   short_notice {applicant_id, ok: true|false, how: 'call'|'text'|'in_person', note?} (2026-10-24, her wave rules): what
+//             a PRN member told the office about shifts on less notice than they asked for. ok true = Cara may ask them on
+//             short notice; false = keep their notice. Kept on their PRN answers with who, when and how, every change in
+//             short_notice_history (never edited). Never set by itself: a person asks them and records the answer.
 //   to_cna_team {applicant_id, effective_date, reason}: (1037) a PRN Caregiver who earned a CNA joins the PRN CNA Team at its
 //             rate. A deliberate office step, recorded in the history (who, when, why). AxisCare: their PRN TEAM -
 //             CAREGIVER class becomes PRN TEAM - CNA (and CNA is added), read back and logged.
@@ -189,6 +193,20 @@ Deno.serve(async (req) => {
   }
   if (!tr) return json({ outcome: 'no_track', detail: 'they are not on a pay track yet (the PRN offer starts it)' })
 
+  if (action === 'short_notice') {
+    if (typeof b.ok !== 'boolean') return json({ error: 'yes or no?' }, 400)
+    const how = b.how === 'call' || b.how === 'text' || b.how === 'in_person' ? b.how : ''
+    if (!how) return json({ error: 'how did they tell you (call, text or in person)?' }, 400)
+    const note = typeof b.note === 'string' ? b.note.trim().slice(0, 300) : ''
+    const prn = (a.prn && typeof a.prn === 'object') ? a.prn : {}
+    const rec = { ok: b.ok, by, at: new Date().toISOString(), how, note: note || null, notice: prn.notice ?? null }
+    const hist = Array.isArray(prn.short_notice_history) ? prn.short_notice_history : []
+    const next = { ...prn, short_notice_ok: b.ok, short_notice: rec, short_notice_history: [...hist, rec].slice(-50) }
+    const { error } = await db.from('job_applicants').update({ prn: next }).eq('id', id)
+    if (error) return json({ error: 'could not save it: ' + error.message }, 500)
+    return json({ outcome: 'recorded', short_notice: rec })
+  }
+
   if (action === 'link') {
     const cg = typeof b.axiscare_caregiver_id === 'string' || typeof b.axiscare_caregiver_id === 'number' ? String(b.axiscare_caregiver_id).trim() : ''
     if (!/^\d+$/.test(cg)) return json({ error: 'which caregiver?' }, 400)
@@ -337,5 +355,5 @@ Deno.serve(async (req) => {
     return json({ outcome: 'moved', team: 'cna', rate, change: data, axiscare: axis })
   }
 
-  return json({ error: "action must be 'list', 'start', 'link', 'classes', 'mark', 'move' or 'to_cna_team'" }, 400)
+  return json({ error: "action must be 'list', 'start', 'link', 'classes', 'mark', 'move', 'short_notice' or 'to_cna_team'" }, 400)
 })
