@@ -159,11 +159,21 @@ export function welcomeEmail(first: string, client: string, email: string, phone
   // "How booking works": checked against the app 2026-10-17 (2 hours, 7 to 6, familiar caregivers first, confirmed only on a
   // yes, no charge if nobody, free cancel before confirmation, 24 hours after, then 2 hours). No texts go out while it's checked,
   // so it says the app shows where the request stands.
+  // Her rule 2026-10-25: the app gives families direct access to our caregivers, so the email says plainly that it's Wellness
+  // Care only, it skips the higher short-visit rate and the 8-hour weekly minimum (Missouri's regular-care rules, so those two
+  // lines are Missouri only), the office isn't part of app bookings, and a request isn't guaranteed if no caregiver responds.
+  const mo = b.key !== 'OK'
   const howBooking = `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:20px 0 0;background:${C.pale};border-radius:12px"><tr><td style="padding:16px 18px 18px">` +
     `<div style="${font}font-size:15px;font-weight:700;color:${C.navy};margin:0 0 2px">How booking works</div>` +
-    bullets([(b.key === 'OK' ? `Visits are at least 2 hours, ${h(appHours(b.key))}.` : `Visits are at least 2 hours, any day between ${h(appHours(b.key))}.`), `We offer your request to caregivers who know ${cl} first, then to others who are available.`,
-      "The app shows where your request stands and when you'll hear from us.", "A visit is confirmed only when a caregiver accepts. If no one is available, we let you know, and there's no charge.",
-      "Cancel a request anytime before it's confirmed. Once confirmed, there's no fee if you cancel at least 24 hours ahead; later cancellations are charged 2 hours."]) + `</td></tr></table>`
+    bullets([
+      '<b>Wellness Care only:</b> companionship, meals, light housekeeping, errands and other everyday help. Personal care, like bathing or dressing, is scheduled with our office.',
+      ...(mo ? ['<b>No weekly minimum.</b> You don\'t need our 8-hour weekly minimum or a set schedule to use the app.', '<b>No short-visit rate.</b> Visits booked in the app avoid our higher rate for short shifts.'] : []),
+      (b.key === 'OK' ? `Visits are at least 2 hours, ${h(appHours(b.key))}.` : `Visits are at least 2 hours, any day between ${h(appHours(b.key))}.`),
+      `Your request goes straight to our caregivers, starting with those who know ${cl}, then others who are available.`,
+      'Cancel a request anytime before it\'s confirmed. Once confirmed, there\'s no fee if you cancel at least 24 hours ahead; later cancellations are charged 2 hours.']) +
+    `<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:16px 0 0;background:${C.honeyPale};border-left:4px solid ${C.honey};border-radius:8px"><tr><td style="padding:14px 16px;${font}font-size:15px;line-height:1.55;color:${C.ink}">` +
+      `<b>Please know before you book</b><br>Our office staff aren't involved in app bookings, so the app is the place to follow your request. A visit isn't guaranteed: it's confirmed only when a caregiver accepts. If no caregiver responds, the visit won't happen, and there's no charge.</td></tr></table>` +
+    `</td></tr></table>`
   const axisBody = (kind === 'flexible'
       ? p('Once a visit is confirmed, AxisCare is where you can see it, along with care notes and invoices.', 0) + bullets([`See ${cl}'s confirmed visits`, 'Read care notes from completed visits', 'View invoices and billing'])
       : p(kind === 'both' ? `Follow ${cl}'s recurring schedule and every visit in one place.` : `Follow ${cl}'s care from anywhere.`, 0) + bullets(['View upcoming caregiver visits', 'Read care notes from completed visits', 'View invoices and billing'])) +
@@ -173,7 +183,7 @@ export function welcomeEmail(first: string, client: string, email: string, phone
     small(`After that, sign in anytime at <a href="${AXIS_URL}" style="color:${C.teal};font-weight:700;text-decoration:none">16485.axiscare.com</a>.`)
   const appMain = kind === 'flexible' || !withAxis
   const appBody = (kind === 'flexible' || (!withAxis && kind !== 'both' && kind !== 'regular')
-      ? p(`Request care for ${cl} on the days and times that suit your family.`, 0) + bullets(['No recurring weekly schedule required', 'Request a visit whenever care is needed', 'Choose the day and time that work for you', 'Ask for companionship, meals, light housekeeping, errands and other everyday help', 'Follow your request in the app while we check caregiver availability'])
+      ? p(`Request care for ${cl} on the days and times that suit your family.`, 0) + bullets(['No recurring weekly schedule required', 'Request a visit whenever care is needed', 'Choose the day and time that work for you', 'Ask for companionship, meals, light housekeeping, errands and other everyday help', 'Follow your request in the app as caregivers respond'])
       : kind === 'both' ? p(`Request care on other days or times whenever a little more support would help. It's the easy way to add flexibility around ${cl}'s regular schedule.`, 0)
       : p(`Whenever additional care would be helpful, you can request a visit outside ${cl}'s regular schedule. It doesn't change the regular schedule, and using it is entirely up to you.`, 0)) +
     `<div style="${font}font-size:15px;font-weight:700;color:${C.navy};margin:18px 0 0">How to sign in</div>` +
