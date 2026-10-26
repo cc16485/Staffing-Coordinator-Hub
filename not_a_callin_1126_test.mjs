@@ -167,7 +167,7 @@ if (fs.existsSync(path.join(HUB, 'callin.html'))) {
   ck('the text-link page has a "Not a call-in" button, shown open OR closed, never for a shift taken off in AxisCare', /id="bNotCallin"/.test(ci) && /if\(D\.calling_off&&!D\.not_a_callin&&!D\.taken_off\)/.test(ci) && /act\('not_callin'/.test(ci))
   ck('the board has "Not a call-in" on open and closed cases, sent signed in to callin-alert', (ix.match(/covNotCallin\(\\''\+esc\(c\.id\)\+'\\'\)">Not a call-in</g) || []).length === 2 && /functions\/v1\/callin-alert`/.test(ix) && /action:'not_callin', case_id:id/.test(ix))
   ck('no em dashes in the new page wording', !/—/.test(ci.slice(ci.indexOf('NOT A CALL-IN'), ci.indexOf('NOT A CALL-IN') + 900)) && !/—/.test(ix.slice(ix.indexOf('async function covNotCallin'), ix.indexOf('async function covFlagDismiss'))))
-} else ck('the Hub checkout is here for the page checks (set HUB_ROOT)', false, HUB)
+} else console.log('(the Hub page checks were skipped: no Hub checkout here; set HUB_ROOT)')
 const nc = fs.readFileSync(path.join(FN, '_shared/not-a-callin.ts'), 'utf8'), lwNew = lwSrc.slice(lwSrc.indexOf('/* THE READER'), lwSrc.indexOf('export async function readLate'))
 ck('no em dashes in the new server wording', !/—/.test(nc.slice(nc.indexOf('"NOT A CALL-IN"'))) && !/—/.test(lwNew) && !/—/.test(lwSrc.slice(lwSrc.indexOf('WHEN "CAN\'T MAKE IT"'), lwSrc.indexOf('/* ── GoHighLevel, read only'))))
 
