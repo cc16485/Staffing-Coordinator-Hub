@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# 1126 · NOT A CALL-IN (2026-10-26, Samantha: "the ai's reading of what a caregiver is saying on a call needs to improve
+# 1127 · NOT A CALL-IN (2026-10-26, Samantha: "the ai's reading of what a caregiver is saying on a call needs to improve
 # ... why it was marked as a call in ... there was no way to say that this was not a call in from the text link"; then
 # "Yes, build all three fixes."). Angiel Falig's 4pm call for Patsy on 10-25: the running-late reader opened a call-off
 # case from her retelling "I said, I'm already driving", a minute after Samantha marked her there.
@@ -23,7 +23,7 @@ FNB = os.environ.get("SB_FN_BASE", f"https://{HUB}.supabase.co")
 FNS = ["late-watch", "callin-alert", "coverage-run"]
 CASE = os.environ.get("SB_CASE", "cwc_s_109_d_2026_10_25")     # Angiel Falig, Patsy, 2026-10-25 4pm
 WHO = "Angiel"
-NOTE = "Angiel was at Patsy's and could not clock in (no range); Samantha marked her there at 4:09pm. Cara misread her call as a call-off (Desktop 1126)."
+NOTE = "Angiel was at Patsy's and could not clock in (no range); Samantha marked her there at 4:09pm. Cara misread her call as a call-off (Desktop 1127)."
 ok = lambda s: say("  ✓ " + s)
 def chk(good, msg, badmsg=None): (ok(msg) if good else bad(badmsg or msg))
 def run(args, cwd=None): p = subprocess.run(args, cwd=cwd, capture_output=True, text=True); return p.returncode, (p.stdout or "") + (p.stderr or "")
@@ -49,7 +49,7 @@ for fn in FNS + ["late-read-probe"]:
 if drift: stop("this isn't the same as GitHub's main yet (merge the pull request first, or newer work landed since: " + ", ".join(sorted(set(drift)))[:240] + ")")
 ok("the reviewed build is what is on GitHub's main")
 if NODE:
-    for t, must in (("not_a_callin_1126_test.mjs", " passed"), ("callin_test.mjs", "31/31 passed"), ("late_watch_test.mjs", "20/20"),
+    for t, must in (("not_a_callin_1127_test.mjs", " passed"), ("callin_test.mjs", "31/31 passed"), ("late_watch_test.mjs", "20/20"),
                     ("call_late_432_test.mjs", "60/60"), ("late_l1_test.mjs", "63/63"), ("late_read_probe_test.mjs", "5/5")):
         c, o = run([NODE, t], cwd=ROOT)
         if c != 0 or must not in o: stop(f"the tests failed ({t}): " + " ".join(l for l in o.splitlines() if "FAIL" in l)[:240])
@@ -79,7 +79,7 @@ for fn in FNS:
     if not deploy(HUB, FNROOT, fn, metas[fn]): say("  STOP. Tell Claude. (Functions before this one are deployed; nothing else was changed.)"); done(5)
 if case and not case["not_a_callin"]:
     patch = {"not_a_callin": True, "not_a_callin_by": "Samantha Troutman", "not_a_callin_by_email": "samantha@mo-care.com", "not_a_callin_note": NOTE,
-             "note": "\n".join(x for x in [str(case.get("note") or "").strip(), "Not a call-in: marked by Samantha Troutman (Desktop 1126). " + NOTE] if x)}
+             "note": "\n".join(x for x in [str(case.get("note") or "").strip(), "Not a call-in: marked by Samantha Troutman (Desktop 1127). " + NOTE] if x)}
     if ev: patch["removed_attendance_event"] = ev
     okq, r = sql(HUB, f"select public.coverage_case_patch({lit(CASE)}, {lit(json.dumps(patch))}::jsonb, '{{}}'::jsonb) as r")
     chk(okq and (r[0]["r"] or {}).get("outcome") == "ok", f"case {CASE} marked \"not a call-in\"", f"case {CASE} could not be marked: {str(r)[:200]}")
@@ -98,7 +98,7 @@ for h in hrc:
     okq, r = sql(HUB, f"update public.hr_cases set status = 'dismissed', review_note = {lit('Not a call-in. ' + NOTE)}, updated_at = now() where id = {lit(h['id'])}")
     chk(okq, f"HR suggestion \"{h['title']}\" dismissed", f"HR suggestion {h['id']} could not be dismissed: {str(r)[:200]}")
 if card and card.get("status") == "open":
-    item = dict(card, status="done", closed_by="Samantha Troutman", close_note="Not a call-in (Desktop 1126).")
+    item = dict(card, status="done", closed_by="Samantha Troutman", close_note="Not a call-in (Desktop 1127).")
     okq, r = sql(HUB, f"select public.upsert_app_data_item('ops_items', {lit(json.dumps(item))}::jsonb)")
     chk(okq, "the Confirm card closed", f"the Confirm card could not be closed: {str(r)[:200]}")
 
@@ -149,6 +149,6 @@ else:
         p = subprocess.run([L.SUPA, "functions", "delete", "late-read-probe", "--project-ref", HUB], cwd=ROOT, env=envx, capture_output=True, text=True, input="y\n")
         chk(p.returncode == 0, "the reader check was removed", "couldn't remove the reader check (it only answers the owner key): " + (p.stderr or p.stdout)[-160:])
 say()
-say("  1126: " + ("DONE. A phone call no longer opens a call-in by itself, the reader is stronger, \"Not a call-in\" is on your text link and the board, and Angiel's is cleared." if not L.fails else "NOT COMPLETE. See the ✗ lines above."))
+say("  1127: " + ("DONE. A phone call no longer opens a call-in by itself, the reader is stronger, \"Not a call-in\" is on your text link and the board, and Angiel's is cleared." if not L.fails else "NOT COMPLETE. See the ✗ lines above."))
 say("  Nobody was texted.")
 done(0 if not L.fails else 1)

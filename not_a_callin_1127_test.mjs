@@ -1,10 +1,10 @@
-// 1126 · NOT A CALL-IN (2026-10-26, Angiel Falig's 4pm call for Patsy: the running-late reader opened a call-off case
+// 1127 · NOT A CALL-IN (2026-10-26, Angiel Falig's 4pm call for Patsy: the running-late reader opened a call-off case
 // from her retelling "I said, I'm already driving", a minute after Samantha had marked her there, and the text link had
 // no way to say it was not a call-in). Against stand-ins only: a fake database, a fake AI, no GoHighLevel or AxisCare.
 //   1. the reader: the call reader's model, the whole call, the never-a-call-off rules; no words of theirs = never sure
 //   2. the hold: a phone call, or a missed clock-in a PERSON settled, never opens a case by itself; a text still does
 //   3. "Not a call-in": the shared helper, the text link (open AND already-closed cases), the board's signed-in path
-// node not_a_callin_1126_test.mjs
+// node not_a_callin_1127_test.mjs
 import fs from 'fs'; import path from 'path'
 { const RealDate = Date, FIXED = RealDate.parse('2026-10-25T21:30:00Z')
   globalThis.Date = class extends RealDate { constructor(...a) { super(...(a.length ? a : [FIXED])) } static now() { return FIXED } } }
@@ -76,7 +76,7 @@ const k = () => APP.coverage_cases[0]
 const lwSrc = fs.readFileSync(path.join(FN, 'late-watch/index.ts'), 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
   .replace("from '../_shared/job-auth.ts'", "from '" + path.resolve(ROOT, 'test_stubs/job-auth-by-role.mjs') + "'")
   .replace(/from '\.\.\/_shared\/([\w.-]+\.(?:ts|js))'/g, (_, m) => "from '" + path.join(FN, '_shared', m) + "'")
-const lwTmp = path.join(FN, 'late-watch', '_t1126.ts'); fs.writeFileSync(lwTmp, lwSrc)
+const lwTmp = path.join(FN, 'late-watch', '_t1127.ts'); fs.writeFileSync(lwTmp, lwSrc)
 let LW; try { LW = await import(lwTmp + '?' + Math.random()) } finally { fs.unlinkSync(lwTmp) }
 handler = null
 const start = Date.parse('2026-10-25T21:00:00Z')   // 4pm Central
@@ -133,7 +133,7 @@ ck('helper: a case that isn\'t on file changes nothing', (await NC.markNotACalli
 
 /* the server: callin-alert */
 const caSrc = fs.readFileSync(path.join(FN, 'callin-alert/index.ts'), 'utf8').replace(/^import \{ createClient \} from .*$/m, 'const createClient = () => globalThis.__db')
-const caTmp = path.join(FN, 'callin-alert', '_t1126.ts'); fs.writeFileSync(caTmp, caSrc)
+const caTmp = path.join(FN, 'callin-alert', '_t1127.ts'); fs.writeFileSync(caTmp, caSrc)
 try { await import(caTmp + '?' + Math.random()) } finally { fs.unlinkSync(caTmp) }
 const LK = await import(path.join(FN, '_shared/callin-links.ts'))
 const link = async (email = 'samantha@mo-care.com') => Object.fromEntries(new URL(await LK.makeLink(SECRET, 'cwc_s_109_d_2026_10_25', email, LK.linkExpiry('2026-10-25'))).searchParams)
