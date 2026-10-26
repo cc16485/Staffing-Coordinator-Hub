@@ -121,7 +121,7 @@ export function assign<T extends { at: number }>(shifts: Shift[], msgs: T[]): Ma
 }
 
 /* ── the AI reads their texts for one shift ── */
-export type Reading = { kind: 'late' | 'cant_make_it' | 'other'; eta: number | null; sure: boolean; failed: boolean; quote?: string | null; why?: string | null }
+export type Reading = { kind: 'late' | 'cant_make_it' | 'other'; eta: number | null; sure: boolean; failed: boolean; quote?: string | null; why?: string | null; error?: string; tries?: number }
 /* 432: a quote is kept only when it is really in what they said (the AI copies; it must never put words in a mouth). */
 const squash = (x: unknown) => String(x ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 export const quoteIn = (quote: unknown, said: string): string | null => {
@@ -157,26 +157,53 @@ export const LATE_SYSTEM = 'You read texts a home-care caregiver sent the office
   + 'quote: the caregiver\'s own words that say they are late or not coming, copied EXACTLY from the text or transcript '
   + '(under 160 characters), or "" when there are none. why: one short sentence on what decided it. Answer ONLY minified JSON: '
   + '{"kind":"late"|"cant_make_it"|"other","eta":"HH:MM" or "","sure":bool,"quote":"...","why":"..."}'
+/* A BUSY AI IS TRIED AGAIN (Samantha, 2026-10-26, after 1127b: 4 of 20 readings came back with no answer, back to back,
+   and nothing said why). A "too busy" (429, 529), a server error (5xx) or no connection is tried up to 2 more times,
+   a moment apart (the AI's own retry-after, at most 5 seconds). Any other refusal is not retried. A read that still
+   fails says why (error), and late-watch keeps the last few reasons on its state and in the run's answer. */
+export const READ_TRIES = 3
+const retryable = (status: number | null) => status == null || status === 429 || status === 529 || status >= 500
+export const statusWords = (status: number | null, detail = '') => (status == null ? 'no connection to the AI'
+  : status === 429 ? 'the AI said too many requests (429)' : status === 529 ? 'the AI was overloaded (529)'
+  : status >= 500 ? `the AI had a server error (${status})` : `the AI refused the request (${status})`) + (detail ? ': ' + detail.slice(0, 120) : '')
 export async function readLate(shiftStart: number, texts: { at: number; body: string }[]): Promise<Reading> {
-  const failed: Reading = { kind: 'other', eta: null, sure: false, failed: true, quote: null }
+  const failed = (error: string, tries = 0): Reading => ({ kind: 'other', eta: null, sure: false, failed: true, quote: null, error, tries })
   const key = Deno.env.get('ANTHROPIC_API_KEY') || ''
-  if (!key || !texts.length) return failed
+  if (!key) return failed('no AI key on the server')
+  if (!texts.length) return failed('nothing to read')
   const lines = texts.map((t) => `[${chiClock(t.at)}] ${t.body.slice(0, t.body.startsWith('(phone call)') ? 6000 : 600)}`).join('\n')
-  try {
-    const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST',
-      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: LATE_MODEL, max_tokens: 400, system: LATE_SYSTEM,   // no temperature: this model refuses it (457, 458; 1127 found every read failing)
-        messages: [{ role: 'user', content: `Shift starts ${chiClock(shiftStart)}.\nTexts (with the time each was sent):\n${lines}`.slice(0, 16000) }] }) })
-    if (!r.ok) return failed
-    const j = await r.json().catch(() => null)
-    const m = String(j?.content?.[0]?.text ?? '').match(/\{[\s\S]*\}/); if (!m) return failed
-    const a = JSON.parse(m[0])
-    const kind = a.kind === 'late' || a.kind === 'cant_make_it' ? a.kind : 'other'
-    const quote = kind === 'other' ? null : quoteIn(a.quote, texts.map((t) => t.body).join('\n'))
-    /* a "can't make it" with no words of theirs to show for it is never sure (the AI must not put words in a mouth) */
-    return { kind, eta: kind === 'late' ? etaOn(String(a.eta ?? ''), shiftStart) : null, sure: a.sure === true && (kind !== 'cant_make_it' || !!quote), failed: false,
-      quote, why: typeof a.why === 'string' ? a.why.slice(0, 200) : null }
-  } catch { return failed }
+  const body = JSON.stringify({ model: LATE_MODEL, max_tokens: 400, system: LATE_SYSTEM,   // no temperature: this model refuses it (457, 458; 1127 found every read failing)
+    messages: [{ role: 'user', content: `Shift starts ${chiClock(shiftStart)}.\nTexts (with the time each was sent):\n${lines}`.slice(0, 16000) }] })
+  const pause = Number(Deno.env.get('LATE_AI_RETRY_MS') ?? '1500')
+  let last = ''
+  for (let n = 1; n <= READ_TRIES; n++) {
+    let r: Response | null = null
+    try {
+      r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST',
+        headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }, body })
+    } catch { r = null }
+    if (!r || !r.ok) {
+      const status = r ? r.status : null
+      let detail = ''
+      try { if (r) { const j = await r.json(); detail = String(j?.error?.message ?? '') } } catch { /* no body */ }
+      last = statusWords(status, detail)
+      if (!retryable(status) || n === READ_TRIES) return failed(last, n)
+      const ra = Number(r?.headers.get('retry-after'))
+      await sleep(Math.min(5000, Number.isFinite(ra) && ra > 0 ? ra * 1000 : pause * n))
+      continue
+    }
+    try {
+      const j = await r.json().catch(() => null)
+      const m = String(j?.content?.[0]?.text ?? '').match(/\{[\s\S]*\}/); if (!m) return failed('the AI answered without a reading', n)
+      const a = JSON.parse(m[0])
+      const kind = a.kind === 'late' || a.kind === 'cant_make_it' ? a.kind : 'other'
+      const quote = kind === 'other' ? null : quoteIn(a.quote, texts.map((t) => t.body).join('\n'))
+      /* a "can't make it" with no words of theirs to show for it is never sure (the AI must not put words in a mouth) */
+      return { kind, eta: kind === 'late' ? etaOn(String(a.eta ?? ''), shiftStart) : null, sure: a.sure === true && (kind !== 'cant_make_it' || !!quote), failed: false,
+        quote, why: typeof a.why === 'string' ? a.why.slice(0, 200) : null, tries: n }
+    } catch { return failed('the AI\'s reading could not be understood', n) }
+  }
+  return failed(last || 'no answer', READ_TRIES)
 }
 
 /* WHEN "CAN'T MAKE IT" MAY OPEN A CALL-OFF CASE BY ITSELF (Samantha, 2026-10-26, Angiel's call: "there was no way to say
@@ -410,7 +437,8 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
   const repeatMin = Number(st.late_admin_repeat_min) >= 2 ? Number(st.late_admin_repeat_min) : 5
   /* 432: a call's notice is live by itself while the notices are in practice (late_call_live, ON unless switched off) */
   const callsLive = callLive(st) && !dry
-  const out = { live, dry, caregivers_watched: 0, messages_new: 0, read: 0, ai_failed: 0, notices_new: 0, notices_changed: 0,
+  const aiErrors: { at: string; why: string; tries: number }[] = []
+  const out = { live, dry, caregivers_watched: 0, messages_new: 0, read: 0, ai_failed: 0, ai_failed_why: aiErrors, notices_new: 0, notices_changed: 0,
     cg_texts: 0, admin_texts: 0, closed: 0, no_phone: 0, not_in_ghl: 0, would: 0,
     office_quiet: false as string | false, admin_held_quiet: 0,
     calls_live: callsLive, calls_read: 0, calls_waiting_transcript: 0, calls_no_transcript: 0, transcripts: '' as string, missed_clockin_notes: 0 }
@@ -497,7 +525,7 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
       out.messages_new += fresh.length
       got.sort((a, b) => a.m.at - b.m.at)
       const rd = await readLate(v.start, got.map((x) => ({ at: x.m.at, body: (x.m.kind === 'call' ? '(phone call) ' : '') + x.m.body })))
-      if (rd.failed) { out.ai_failed++; continue }                 /* read again next run */
+      if (rd.failed) { out.ai_failed++; aiErrors.push({ at: nowIso, why: String(rd.error || 'no answer'), tries: rd.tries ?? 0 }); continue }   /* read again next run; why is kept */
       out.read++
       if (!dry) for (const x of fresh) readIds[x.m.id] = now
       const prev = noticeByVisit.get(v.id)
@@ -547,7 +575,8 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
   if (tday.none >= 2 && tday.got === 0)
     out.transcripts = `No transcript from GoHighLevel for ${tday.none} answered call(s) with caregivers today, ${CALL_WAIT_MIN} minutes or more after the call. Call transcription may be off in GoHighLevel (or not on this number), so calls can't be read for running late.`
   else if (out.calls_no_transcript) out.transcripts = `${out.calls_no_transcript} call(s) still had no transcript ${CALL_WAIT_MIN} minutes after the call; left unread.`
-  if (!dry) await db.rpc('upsert_app_data_item', { target_key: 'late_watch_state', item: { id: 'state', read: readIds, no_transcript: gaveUp, users, transcripts: tday, at: nowIso } })
+  if (!dry) await db.rpc('upsert_app_data_item', { target_key: 'late_watch_state', item: { id: 'state', read: readIds, no_transcript: gaveUp, users, transcripts: tday, at: nowIso,
+    ai_errors: [...(Array.isArray(state.ai_errors) ? state.ai_errors : []), ...aiErrors].slice(-10) } })
 
   /* 2 · every notice from today: what happens next */
   const ghl = { token: Deno.env.get('GHL_TOKEN') ?? '', locationId: Deno.env.get('GHL_LOCATION_ID') ?? '' }
