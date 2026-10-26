@@ -232,7 +232,7 @@ export async function askSuggest(text: string, lib: Any[], fetchImpl: typeof fet
   try {
     const r = await fetchImpl('https://api.anthropic.com/v1/messages', { method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-sonnet-5-5', max_tokens: 700, temperature: 0,
+      body: JSON.stringify({ model: 'claude-sonnet-5-5', max_tokens: 700,   // no temperature: this model refuses it (every suggestion was failing)
         system: 'You help a home-care office choose which how-to topics to send the caregivers of one client. You get what the office '
           + 'knows about the client and a fixed list of topics. Pick ONLY topics from the list whose skill a caregiver will actually '
           + 'use with this client, based on what the text says. Do not guess beyond the text. For each, give one plain reason of at '
