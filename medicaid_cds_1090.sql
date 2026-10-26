@@ -11,3 +11,10 @@ do $$ begin
   if exists (select 1 from public.client_journey_step_def where key = 'intake.payer' and def::text like '%Medicaid IHS / HCBS%') then
     raise exception '1090 self-check: Medicaid IHS is still offered as a payer'; end if;
 end $$;
+
+-- Cara's CDS answer (website knowledge, same database): the "short call" now names the sister company's number
+-- (the chat's call button dials Cara's own line). Only changes N001 if it still has the old ending.
+update public.kb_items
+   set answer = 'Sometimes. Missouri Consumer Directed Services can pay a family member as the attendant when the consumer is eligible for the program and directs their own care. A spouse cannot be paid as the attendant. Whether a particular daughter qualifies depends on the consumer''s eligibility, so it is worth a short call to our sister company, Caring Companions Consumer Directed Services: (417) 218-2888 or caringcds.com.'
+ where id = 'N001'
+   and answer like '%so it is worth a short call to check.';
