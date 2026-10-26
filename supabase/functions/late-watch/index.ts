@@ -172,21 +172,30 @@ export async function readLate(shiftStart: number, texts: { at: number; body: st
   if (!key) return failed('no AI key on the server')
   if (!texts.length) return failed('nothing to read')
   const lines = texts.map((t) => `[${chiClock(t.at)}] ${t.body.slice(0, t.body.startsWith('(phone call)') ? 6000 : 600)}`).join('\n')
-  const body = JSON.stringify({ model: LATE_MODEL, max_tokens: 400, system: LATE_SYSTEM,   // no temperature: this model refuses it (457, 458; 1127 found every read failing)
-    messages: [{ role: 'user', content: `Shift starts ${chiClock(shiftStart)}.\nTexts (with the time each was sent):\n${lines}`.slice(0, 16000) }] })
+  /* 1127c found "answered without a reading": this model may think first, so its answer is the TEXT block (often not the
+     first block), and thinking counts against max_tokens. Low effort keeps thinking short for a one-line answer; the
+     server-side fallback retries a safety decline on another model (Claude API only). */
+  const msgs = [{ role: 'user', content: `Shift starts ${chiClock(shiftStart)}.\nTexts (with the time each was sent):\n${lines}`.slice(0, 16000) }]
+  const full = JSON.stringify({ model: LATE_MODEL, max_tokens: 2000, system: LATE_SYSTEM,   // no temperature: this model refuses it (457, 458; 1127 found every read failing)
+    output_config: { effort: 'low' }, fallbacks: 'default', messages: msgs })
+  /* if the API ever refuses those two options (a 400), one plain request still reads it, so the watcher never goes blind
+     the way it did after 1127 */
+  const plain = JSON.stringify({ model: LATE_MODEL, max_tokens: 2000, system: LATE_SYSTEM, messages: msgs })
+  let body = full, plainUsed = false
   const pause = Number(Deno.env.get('LATE_AI_RETRY_MS') ?? '1500')
   let last = ''
   for (let n = 1; n <= READ_TRIES; n++) {
     let r: Response | null = null
     try {
       r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST',
-        headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }, body })
+        headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json', ...(plainUsed ? {} : { 'anthropic-beta': 'server-side-fallback-2026-07-01' }) }, body })
     } catch { r = null }
     if (!r || !r.ok) {
       const status = r ? r.status : null
       let detail = ''
       try { if (r) { const j = await r.json(); detail = String(j?.error?.message ?? '') } } catch { /* no body */ }
       last = statusWords(status, detail)
+      if (status === 400 && !plainUsed && n < READ_TRIES) { body = plain; plainUsed = true; continue }
       if (!retryable(status) || n === READ_TRIES) return failed(last, n)
       const ra = Number(r?.headers.get('retry-after'))
       await sleep(Math.min(5000, Number.isFinite(ra) && ra > 0 ? ra * 1000 : pause * n))
@@ -194,7 +203,15 @@ export async function readLate(shiftStart: number, texts: { at: number; body: st
     }
     try {
       const j = await r.json().catch(() => null)
-      const m = String(j?.content?.[0]?.text ?? '').match(/\{[\s\S]*\}/); if (!m) return failed('the AI answered without a reading', n)
+      if (j?.stop_reason === 'refusal') return failed('the AI declined to read this' + (j?.stop_details?.category ? ` (${j.stop_details.category})` : ''), n)
+      // deno-lint-ignore no-explicit-any
+      const said = (Array.isArray(j?.content) ? j.content : []).filter((b: any) => b && (b.type === 'text' || b.type == null)).map((b: any) => String(b.text ?? '')).join('\n')
+      const m = said.match(/\{[\s\S]*\}/)
+      if (!m) {
+        last = j?.stop_reason === 'max_tokens' ? 'the AI ran out of room before its reading' : `the AI answered without a reading (stop: ${j?.stop_reason ?? 'none'}; blocks: ${(Array.isArray(j?.content) ? j.content : []).map((b: { type?: string }) => b?.type).join(',') || 'none'})`
+        if (n < READ_TRIES) continue   /* the model may answer properly on a second try */
+        return failed(last, n)
+      }
       const a = JSON.parse(m[0])
       const kind = a.kind === 'late' || a.kind === 'cant_make_it' ? a.kind : 'other'
       const quote = kind === 'other' ? null : quoteIn(a.quote, texts.map((t) => t.body).join('\n'))
