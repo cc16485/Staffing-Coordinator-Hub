@@ -15,6 +15,7 @@ import type { SyncDeps } from './family-sync.ts'
 import type { WelcomeAlertDeps } from './family-welcome-alert.ts'
 import type { MatchResult } from './family-offer.ts'
 import { approvedRules } from './approved-rules.ts'
+import { linkedEmailsByClient } from './axis-linked-contacts.ts'
 import { careLevelOf } from './care-level.ts'
 import { approvedIntro, previewRecords } from './caregiver-preview.ts'
 import { judge, homeNotes, type MatchClient, type MatchCaregiver } from './family-match.ts'
@@ -162,14 +163,16 @@ export function chooseDepsFor(db: Any, ax: Ax, supabaseUrl: string): ChooseDeps 
       const { data: cs } = await db.from('circle_contacts').select('id, name, email, relationship, source, hipaa_authorized, hipaa_office_ok_at, stopped_at, axiscare_removed_at, circle_id, welcome_sent_at, welcome_skip_at, welcome_ready_at, axis_welcome_sent_at, axis_welcome_failed_at, axis_welcome_failed_why, phone, sms_consent').not('email', 'is', null)
       const ids = [...new Set((cs ?? []).map((c: Any) => String(c.circle_id)))]
       const { data: ks } = ids.length ? await db.from('care_circles').select('id, client_name, axiscare_client_id, active').in('id', ids) : { data: [] }
-      const ax = [...new Set((ks ?? []).map((k: Any) => String(k.axiscare_client_id ?? '')).filter(Boolean))]
-      const { data: ps } = ax.length ? await db.from('person_source_id').select('person_id, source_id').eq('system', 'axiscare').eq('entity_type', 'client').in('source_id', ax) : { data: [] }
+      const axIds = [...new Set((ks ?? []).map((k: Any) => String(k.axiscare_client_id ?? '')).filter(Boolean))]
+      const { data: ps } = axIds.length ? await db.from('person_source_id').select('person_id, source_id').eq('system', 'axiscare').eq('entity_type', 'client').in('source_id', axIds) : { data: [] }
       const persons = [...new Set((ps ?? []).map((p: Any) => p.person_id))]
       const { data: rs } = persons.length ? await db.from('person_role').select('person_id').eq('role', 'client').eq('status', 'active').in('person_id', persons) : { data: [] }
       const activePerson = new Set((rs ?? []).map((r: Any) => String(r.person_id)))
       const activeAx = new Set((ps ?? []).filter((p: Any) => activePerson.has(String(p.person_id))).map((p: Any) => String(p.source_id)))
+      const linked = await linkedEmailsByClient(ax).catch(() => null)   // 2026-10-26: AxisCare Linked Contacts (a 4th+ family member)
       return (cs ?? []).map((c: Any) => { const k = (ks ?? []).find((x: Any) => String(x.id) === String(c.circle_id)) ?? {}
-        return { ...c, client_name: k.client_name ?? null, axiscare_client_id: k.axiscare_client_id ?? null, circle_active: k.active !== false, client_active: activeAx.has(String(k.axiscare_client_id ?? '')) } })
+        const axis_linked = !!linked?.get(String(k.axiscare_client_id ?? ''))?.includes(String(c.email ?? '').trim().toLowerCase())
+        return { ...c, client_name: k.client_name ?? null, axiscare_client_id: k.axiscare_client_id ?? null, circle_active: k.active !== false, client_active: activeAx.has(String(k.axiscare_client_id ?? '')), axis_linked } })
     },
     markAxis: async (id, vals) => { await db.from('circle_contacts').update(vals).eq('id', id) },
     stampReady: async (id, at) => { await db.from('circle_contacts').update({ welcome_ready_at: at }).eq('id', id).is('welcome_ready_at', null) },

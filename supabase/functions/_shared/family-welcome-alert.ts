@@ -6,8 +6,9 @@
 // email on its own (when ops_settings.family_axis_welcome_auto === true: her explicit switch for this one capability with family
 // members). The Booking App email is never sent here; a person sends it (family-app-office.ts, action welcome).
 //
-// A family member is READY for the AxisCare welcome when: their email came from AxisCare as a responsible party on the client (so
-// the portal's Activate account works for them), they have HIPAA permission on file (or they are the client), they haven't opted
+// A family member is READY for the AxisCare welcome when: their email came from AxisCare as a responsible party on the client, or
+// is on a Contact linked to the client in AxisCare (2026-10-26, past the three responsible-party slots; axis_linked) (so the
+// portal's Activate account works for them), they have HIPAA permission on file (or they are the client), they haven't opted
 // out or been removed, the client's Family Circle is active and the client is active, and the client isn't on the "no welcome"
 // list (ops_settings.family_welcome_skip_clients: AxisCare ids).
 // Ready and not sent: during office hours (Monday to Friday, 8 AM to 6 PM) the email goes, once per email per client (a couple
@@ -40,7 +41,7 @@ export function isReady(c: Any, skip: string[]): boolean {
   const email = String(c.email ?? '').trim()
   const isClient = String(c.relationship ?? '').toLowerCase() === 'client'
   return !!email && !c.stopped_at && !c.axiscare_removed_at && c.circle_active !== false && !!c.axiscare_client_id && c.client_active === true &&
-    (c.source === 'axiscare' || isClient) && (c.hipaa_authorized === true || (c.hipaa_authorized !== false && !!c.hipaa_office_ok_at) || isClient)   /* 2026-10-23: or the office's HIPAA OK in the Hub, unless AxisCare says No */ && !skip.includes(String(c.axiscare_client_id))
+    (c.source === 'axiscare' || c.axis_linked === true || isClient) && (c.hipaa_authorized === true || (c.hipaa_authorized !== false && !!c.hipaa_office_ok_at) || isClient)   /* 2026-10-23: or the office's HIPAA OK in the Hub, unless AxisCare says No */ && !skip.includes(String(c.axiscare_client_id))
 }
 
 const mailKey = (c: Any) => `${c.circle_id}|${String(c.email ?? '').trim().toLowerCase()}`

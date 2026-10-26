@@ -447,7 +447,7 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
     if (!m.ok) return say(409, { error: `Nothing was sent: ${m.why}.` })
     const isClient = String(c.relationship ?? '').toLowerCase() === 'client'
     const hipaaOk = isClient || hipaaYes(c)
-    // AxisCare's Activate account works only for an email on the client's AxisCare record (a responsible party)
+    // AxisCare's Activate account works only for an email on the client's AxisCare record (a responsible party, or a Contact linked to the client)
     const rps = await d.rpEmails(String(k.axiscare_client_id))
     const onAxis = rps === null ? null : rps.includes(email)
     const same = d.circleContacts ? (await d.circleContacts(String(c.circle_id))).filter((x) => x.id !== c.id && String(x.email ?? '').trim().toLowerCase() === email && x.axis_welcome_sent_at) : []
@@ -457,7 +457,7 @@ export async function officeAction(d: OfficeDeps, staff: Staff, body: any): Prom
       hipaa_office: c.hipaa_office_ok_at ? { at: c.hipaa_office_ok_at, by: c.hipaa_office_ok_by ?? null } : null, axis_email_on_file: onAxis, sent,
       failed: c.axis_welcome_failed_at ? { at: c.axis_welcome_failed_at, why: c.axis_welcome_failed_why ?? null } : null, email_subject: m.subject, email_html: m.html })
     if (!hipaaOk) return say(409, { error: `${c.name} doesn't have HIPAA permission for ${k.client_name ?? 'the client'} on file, so the AxisCare welcome (which opens their schedule, notes and invoices) can't go.` })
-    if (onAxis === false) return say(409, { error: `${c.name}'s email isn't on the client's AxisCare record, so Activate account won't work for them. Add them as a responsible party in AxisCare first.` })
+    if (onAxis === false) return say(409, { error: `${c.name}'s email isn't on the client's AxisCare record, so Activate account won't work for them. Add them as a responsible party in AxisCare, or (past three) as a Contact linked to the client, first.` })
     if (sent && body?.again !== true) return say(409, { already: sent, error: `Already sent${sent.to ? ` to ${sent.to} at the same email` : ''} on ${stampWords(new Date(sent.at))}${sent.by ? ` by ${sent.by}` : ''}. Send it again?` })
     const hr = Math.floor(central(d.now()).minutes / 60)
     if (hr < 8 || hr >= 18) return say(409, { error: 'Welcomes go out between 8 AM and 6 PM. Nothing was sent; please send it then.' })
