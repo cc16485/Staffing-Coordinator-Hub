@@ -19,6 +19,10 @@
 //   candidates  the ranked list (coverage-run's own, server to server): PRN who fit, worked with this client, good matches
 //   ask         {recipients: [names]}: coverage-run's own send (its eligibility, wording, night rule, one ask per person)
 //   bridge      {target: 'caller' | 'client' | <ask id>}: "Call" rings this admin's phone first (433's bridge)
+//   not_callin  {note?}: "Not a call-in" (2026-10-26, Angiel's call): open or already closed, the case is marked not a
+//               call-in, an open one closes, the call-in comes off their attendance (_shared/not-a-callin.ts); the
+//               others who got the call-in text hear it. The Hub board sends the same action signed in (a staff sign-in
+//               instead of a link: {case_id, action: 'not_callin', note?}).
 // The family and the client are never texted from here. A confirmed fill's family text is the one she already
 // approved, sent by coverage-run's next tick exactly as from the board.
 // -----------------------------------------------------------------------------
@@ -31,7 +35,8 @@ import { confirmFill, closeCase, readCase, patchCase, CLOSE_HOW } from '../_shar
 import { textCaseAdmins, filledLine, caseWhat } from '../_shared/callin-notify.ts'
 import { ghlCallBridge } from '../_shared/ghl-call-bridge.ts'
 import { readPlan, isMustCover } from '../_shared/callin-plan.ts'
-import { takenOffNotCalledIn } from '../_shared/not-a-callin.ts'
+import { takenOffNotCalledIn, markNotACallin } from '../_shared/not-a-callin.ts'
+import { requireStaff, OFFICE_ROLES } from '../_shared/staff-auth.ts'
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
                'Access-Control-Allow-Methods': 'POST, OPTIONS' }
@@ -53,6 +58,18 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
   if (req.method !== 'POST') return json({ error: 'not allowed' }, 405)
   const b = await req.json().catch(() => ({})) as Record<string, unknown>
+  /* the Hub board's "Not a call-in": a signed-in office person instead of a link (2026-10-26) */
+  if (b.action === 'not_callin' && b.case_id && !b.c && /^Bearer\s+/i.test(req.headers.get('Authorization') || '')) {
+    const sbS = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+    const who = await requireStaff(sbS, req, OFFICE_ROLES)
+    if (!who.ok) return json({ error: who.error }, who.status)
+    const r = await markNotACallin(sbS, String(b.case_id), { name: who.name || who.email, email: who.email }, typeof b.note === 'string' ? b.note : '')
+    if (r.outcome === 'not_found') return json({ error: 'This call-in is no longer on file.' }, 404)
+    if (r.outcome !== 'marked') return json({ error: 'Not saved; nothing changed. Try again.' }, 409)
+    await opEvent(sbS, { actor_name: who.name, actor_email: who.email, verb: 'coverage_closed', item_id: String(b.case_id), area: 'coverage',
+      summary: `${who.name || who.email} marked case ${b.case_id} not a call-in (from the board)` })
+    return json({ ok: true, ...r })
+  }
   if (!(await checkLink(Deno.env.get('HUB_JOB_SECRET') || '', b))) return json({ error: 'This link is not valid or has expired.' }, 401)
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
   const { data: setRow } = await sb.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()
@@ -102,7 +119,7 @@ Deno.serve(async (req) => {
     return json({ ok: true, me: me.first, status: c.status, open, kind: c.kind || 'calloff',
       client: String(c.client || ''), what: caseWhat(c), shift_date: c.shift_date || null,
       shift_time: String(c.shift_time || '').split('-').filter(Boolean).map(clock12).join(' to '), mins_to_start: minsToStart,
-      must_cover: isMustCover(plan?.plan), calling_off: c.calling_off || null, called_in_at: chi12(c.opened_at), taken_off: takenOffNotCalledIn(c),
+      must_cover: isMustCover(plan?.plan), calling_off: c.calling_off || null, called_in_at: chi12(c.opened_at), taken_off: takenOffNotCalledIn(c), not_a_callin: c.not_a_callin === true ? { by: c.not_a_callin_by || null, at: chi12(c.not_a_callin_at) } : null,
       claimed: c.claimed_by_name ? { by: c.claimed_by_name, at: chi12(c.claimed_at), me: String(c.claimed_by || '').toLowerCase() === me.email } : null,
       yes: asked.filter((a) => a.state === 'yes').map((a) => ({ id: String(a.id), name: String(a.name || ''), at: chi12(a.replied_at), reply: a.reply ? String(a.reply).slice(0, 200) : null })),
       asked: asked.map((a) => ({ id: String(a.id), name: String(a.name || ''), state: STATE_WORD[String(a.state)] || String(a.state || ''), at: chi12(a.at),
@@ -123,6 +140,15 @@ Deno.serve(async (req) => {
     const a = asked.find((x) => String(x.id) === t)
     if (!a) return json({ error: 'Call whom?' }, 400)
     return json(await ghlCallBridge(sb, ghl, settings, caller, { phone: normalisePhone(a.phone), label: firstOf(a.name) }))
+  }
+
+  if (action === 'not_callin') {
+    const r = await markNotACallin(sb, caseId, { name: me.name, email: me.email }, typeof b.note === 'string' ? b.note : '')
+    if (r.outcome !== 'marked') return json({ error: 'Not saved; nothing changed.' }, 409)
+    await opEvent(sb, { actor_name: me.name, actor_email: me.email, verb: 'coverage_closed', item_id: caseId, area: 'coverage',
+      summary: `${me.name} marked the call-in for ${caseWhat(c)} not a call-in${c.calling_off ? ` (${c.calling_off} did not call off)` : ''} (from the call-in link)` })
+    const told = r.closed ? await tell(`${me.first} closed ${caseWhat(c)}: not a call-in${c.calling_off ? `, ${firstOf(c.calling_off)} did not call off` : ''}.`) : []
+    return json({ ok: true, ...r, others_told: told.length })
   }
 
   if (!open) return json({ ok: true, already: { how: c.resolved_how, covered_by: c.covered_by || null, by: c.confirmed_by || null } })
