@@ -102,7 +102,7 @@ Deno.serve(async (req) => {
     let b64 = ''; for (let i = 0; i < buf.length; i += 0x8000) b64 += String.fromCharCode(...buf.subarray(i, i + 0x8000))
     const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-sonnet-5-5', max_tokens: 4000, system: LOOK_SYSTEM,   // 457c: this model refuses a temperature setting
+      body: JSON.stringify({ model: 'claude-sonnet-5-5', max_tokens: 8000, system: LOOK_SYSTEM,   // 457c: this model refuses a temperature setting
         messages: [{ role: 'user', content: [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: btoa(b64) } },
           { type: 'text', text: 'List the sections and question labels of this form. Labels only, never answers.' }] }] }) })
     /* 457b: the first run got a bare 400 twice. Say why (the AI's own reason, numbers and links scrubbed) and the size. */
@@ -113,7 +113,17 @@ Deno.serve(async (req) => {
       out.files.push({ result: `the AI could not read it (${r.status}${why ? ': ' + why : ''})`, kb: Math.round(buf.byteLength / 1024), head: new TextDecoder().decode(buf.subarray(0, 8)).replace(/[^\x20-\x7e]/g, '?') })
       continue
     }
-    const look = cleanLook(String((await r.json())?.content?.[0]?.text ?? ''))
+    /* the model may think first, so the answer is the TEXT block (often not the first one; late-watch 1127c). No answer says how the reply stopped. */
+    // deno-lint-ignore no-explicit-any
+    const rj: any = await r.json().catch(() => null)
+    // deno-lint-ignore no-explicit-any
+    const blocks: any[] = Array.isArray(rj?.content) ? rj.content : []
+    const said = blocks.filter((x) => x?.type === 'text').map((x) => String(x.text ?? '')).join('\n')
+    if (rj?.stop_reason === 'refusal' || !said.includes('{')) {
+      out.files.push({ result: rj?.stop_reason === 'refusal' ? 'the AI declined to read it' : rj?.stop_reason === 'max_tokens' ? 'the AI ran out of room before its answer' : `the AI gave no answer (stop: ${rj?.stop_reason ?? 'none'}; blocks: ${blocks.map((x) => x?.type).join(',') || 'none'})`, kb: Math.round(buf.byteLength / 1024) })
+      continue
+    }
+    const look = cleanLook(said)
     out.files.push({ result: 'read', kb: Math.round(buf.byteLength / 1024), pages: look.pages, sections: look.sections.length })
     for (const s of look.sections) { const set = seen.get(s.title) ?? new Set<string>(); s.labels.forEach((l) => set.add(l)); seen.set(s.title, set) }
   }
