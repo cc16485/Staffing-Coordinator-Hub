@@ -194,5 +194,13 @@ ck('office actions check the signed-in staff member themselves (the function is 
 ck('CORS from day one: the cors headers and an OPTIONS answer', /'Access-Control-Allow-Origin': '\*'/.test(fsrc) && /req\.method === 'OPTIONS'/.test(fsrc))
 ck('no em dash in anything the function says to a person', !DASH.test(fsrc.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\[\\u2014\\u2015\]/g, '')))
 
+// 10-26: claude-sonnet-5-5 may think first, so the answer is a later TEXT block (late-watch missed 2 of 20 reading content[0])
+{ const th = { type: 'thinking', thinking: 'Dana is a CNA.', signature: 's' }, says = (j) => { try { M.aiAnswer(j); return '' } catch (e) { return e.message } }
+  ck('the draft reads the text block after a thinking block', M.aiAnswer({ content: [th, { type: 'text', text: '{"about":"x"}' }] }) === '{"about":"x"}')
+  ck('only thinking, out of room: says it ran out of room (never the words)', says({ content: [th], stop_reason: 'max_tokens' }) === 'the AI ran out of room before its answer')
+  ck('no answer: says how the reply stopped and what came back', says({ content: [th], stop_reason: 'end_turn' }) === 'no answer (stop: end_turn; blocks: thinking)')
+  ck('a safety decline says so', /^the AI declined/.test(says({ content: [], stop_reason: 'refusal' })))
+  ck('draft and enhance leave room to think first (3000)', (fsrc.match(/max_tokens: 3000/g) || []).length === 2) }
+
 let all = true; console.log('\nCAREGIVER PROFILE 2a · TEST\n' + '='.repeat(50)); for (const [n, g, note] of res) { all &&= g; console.log((g ? 'PASS  ' : 'FAIL  ') + n + (note ? '\n   └─ ' + note : '')) }
 console.log(all ? `ALL ${res.length} CHECKS PASS` : 'FAILED'); if (!all) process.exitCode = 1

@@ -232,7 +232,7 @@ export async function askSuggest(text: string, lib: Any[], fetchImpl: typeof fet
   try {
     const r = await fetchImpl('https://api.anthropic.com/v1/messages', { method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-sonnet-5-5', max_tokens: 700,   // no temperature: this model refuses it (every suggestion was failing)
+      body: JSON.stringify({ model: 'claude-sonnet-5-5', max_tokens: 2000,   // room to think first; no temperature: this model refuses it (every suggestion was failing)
         system: 'You help a home-care office choose which how-to topics to send the caregivers of one client. You get what the office '
           + 'knows about the client and a fixed list of topics. Pick ONLY topics from the list whose skill a caregiver will actually '
           + 'use with this client, based on what the text says. Do not guess beyond the text. For each, give one plain reason of at '
@@ -241,7 +241,11 @@ export async function askSuggest(text: string, lib: Any[], fetchImpl: typeof fet
         messages: [{ role: 'user', content: text }] }) })
     if (!r.ok) return null
     const j = await r.json().catch(() => null)
-    const m = String(j?.content?.[0]?.text ?? '').match(/\{[\s\S]*\}/); if (!m) return null
+    /* the model may think first, so the answer is the TEXT block (often not the first one); late-watch missed 2 of 20 (1127c) */
+    if (j?.stop_reason === 'refusal') { console.warn('suggest: the AI declined' + (j?.stop_details?.category ? ` (${j.stop_details.category})` : '')); return null }
+    const blocks: Any[] = Array.isArray(j?.content) ? j.content : []
+    const m = blocks.filter((b) => b?.type === 'text').map((b) => String(b.text ?? '')).join('\n').match(/\{[\s\S]*\}/)
+    if (!m) { console.warn(j?.stop_reason === 'max_tokens' ? 'suggest: the AI ran out of room before its answer' : `suggest: no answer (stop: ${j?.stop_reason ?? 'none'}; blocks: ${blocks.map((b) => b?.type).join(',') || 'none'})`); return null }
     const a = JSON.parse(m[0])
     const keys = new Set(lib.map((t: Any) => t.key)), seen = new Set<string>()
     return (Array.isArray(a?.topics) ? a.topics : []).filter((x: Any) => keys.has(String(x?.key)) && !seen.has(String(x.key)) && seen.add(String(x.key)))

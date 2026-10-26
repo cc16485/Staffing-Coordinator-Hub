@@ -256,6 +256,17 @@ export function applicationFacts(first: string, app: any, questions: Record<stri
 }
 
 /* The model's reply, made safe: three strings, no em dashes, no last name, length-capped, prompts where empty. */
+/* The model may think first, so the answer is every TEXT block, not content[0] (late-watch missed 2 of 20 that way, 1127c).
+   No answer throws, saying how the reply stopped (never its words), so the office gets the usual "could not" note. */
+// deno-lint-ignore no-explicit-any
+export function aiAnswer(j: any): string {
+  if (j?.stop_reason === 'refusal') throw new Error('the AI declined' + (j?.stop_details?.category ? ` (${j.stop_details.category})` : ''))
+  // deno-lint-ignore no-explicit-any
+  const blocks: any[] = Array.isArray(j?.content) ? j.content : []
+  const text = blocks.filter((b) => b?.type === 'text').map((b) => String(b.text ?? '')).join('\n')
+  if (!text.includes('{')) throw new Error(j?.stop_reason === 'max_tokens' ? 'the AI ran out of room before its answer' : `no answer (stop: ${j?.stop_reason ?? 'none'}; blocks: ${blocks.map((b) => b?.type).join(',') || 'none'})`)
+  return text
+}
 export function sanitiseDraft(raw: unknown, first = '', last = '') {
   // deno-lint-ignore no-explicit-any
   let o: any = raw
@@ -544,12 +555,12 @@ Deno.serve(async (req) => {
         const r = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-          body: JSON.stringify({ model: AI_MODEL, max_tokens: 900, system: DRAFT_SYSTEM,   // 458: no temperature (this model refuses it; every draft was failing)
+          body: JSON.stringify({ model: AI_MODEL, max_tokens: 3000, system: DRAFT_SYSTEM,   // 458: no temperature (this model refuses it; every draft was failing)
             messages: [{ role: 'user', content: 'Facts about this caregiver:\n' + JSON.stringify(facts, null, 2) }] }),
         })
         if (!r.ok) throw new Error('AI ' + r.status)
         const j = await r.json()
-        draft = sanitiseDraft(String(j?.content?.[0]?.text ?? ''), first, last)
+        draft = sanitiseDraft(aiAnswer(j), first, last)
       } catch (e) {
         console.error('draft failed', String((e as Error)?.message ?? e))
         aiNote = 'The AI could not write a draft just now, so the draft is all questions to ask on the call. You can try Redo draft later.'
@@ -620,13 +631,13 @@ Deno.serve(async (req) => {
     try {
       const r = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST', headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: AI_MODEL, max_tokens: 1200, system: ENHANCE_SYSTEM,
+        body: JSON.stringify({ model: AI_MODEL, max_tokens: 3000, system: ENHANCE_SYSTEM,
           messages: [{ role: 'user', content: 'Their profile now:\n' + JSON.stringify({ about: strip(theirs.about), experience: strip(theirs.experience), why: strip(theirs.why) }, null, 2)
             + '\n\nFacts from their application and interview:\n' + JSON.stringify(facts, null, 2) }] }),
       })
       if (!r.ok) throw new Error('AI ' + r.status)
       const j = await r.json()
-      const suggestion = sanitiseEnhance(String(j?.content?.[0]?.text ?? ''), theirs, JSON.stringify(facts), first, p.last_name || '')
+      const suggestion = sanitiseEnhance(aiAnswer(j), theirs, JSON.stringify(facts), first, p.last_name || '')
       return json({ ok: true, suggestion, application_found: !!app || !!s1, step1_found: !!s1 })
     } catch (e) {
       console.error('enhance failed', String((e as Error)?.message ?? e))

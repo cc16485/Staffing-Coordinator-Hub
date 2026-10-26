@@ -3,7 +3,7 @@
 import fs from 'fs'; import path from 'path'
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 700)])
 const SECRET = 'x'.repeat(40)
-let T, EVENTS, FAIL, SENT, GHL_FAIL, CALLS, VISITS = [], AX_FAIL = false, AI_ANSWER = null, AI_SEEN = []
+let T, EVENTS, FAIL, SENT, GHL_FAIL, CALLS, VISITS = [], AX_FAIL = false, AI_ANSWER = null, AI_SEEN = [], AI_THINK = false
 const TOPICS = () => [
   { key: 'turning', title: 'Turning and repositioning', notes: 'Turn every 2 hours.', active: true, videos: [{ title: 'Lie on the side', url: 'https://www.youtube.com/watch?v=6M5_eTPUWpo', publisher: 'The Hospice Care Plan', minutes: 5 }] },
   { key: 'purewick_male', title: 'PureWick (male)', notes: 'Check it every 2 hours.', active: true, videos: [{ title: 'PureWick Male in-service', url: 'https://vimeo.com/968970613', publisher: 'BD', minutes: 6 }, { title: 'IFU', url: 'https://example.com/ifu.pdf' }] },
@@ -34,7 +34,7 @@ const q = (t) => { const st = { f: [], op: 'select', row: null, sel: false }; co
 globalThis.__db = { from: q, rpc: async (fn, a) => { if (fn === 'upsert_app_data_item') { const row = T.app_data.find((r) => r.key === a.target_key); const i = row.data.findIndex((x) => x.id === a.item.id); if (i >= 0) row.data[i] = a.item; else row.data.push(a.item) } return { data: null, error: null } },
   auth: { getUser: async (jwt) => ({ kr: 'u-kr', sa: 'u-sa', cg: 'u-cg' })[jwt] ? { data: { user: { id: ({ kr: 'u-kr', sa: 'u-sa', cg: 'u-cg' })[jwt], email: jwt + '@mo-care.com', app_metadata: {} } }, error: null } : { data: { user: null }, error: { message: 'bad' } } } }
 globalThis.fetch = async (url, o) => { url = String(url); CALLS.push(url); const body = o && o.body ? JSON.parse(o.body) : {}
-  if (url.includes('api.anthropic.com')) { AI_SEEN.push(body); return AI_ANSWER == null ? new Response('{}', { status: 500 }) : new Response(JSON.stringify({ content: [{ type: 'text', text: AI_ANSWER }] }), { status: 200 }) }
+  if (url.includes('api.anthropic.com')) { AI_SEEN.push(body); return AI_ANSWER == null ? new Response('{}', { status: 500 }) : new Response(JSON.stringify({ content: [...(AI_THINK ? [{ type: 'thinking', thinking: 'Turning fits.', signature: 's' }] : []), { type: 'text', text: AI_ANSWER }], stop_reason: 'end_turn' }), { status: 200 }) }
   if (url.includes('axiscare.com/api/visits')) return AX_FAIL ? new Response('{}', { status: 500 }) : new Response(JSON.stringify({ results: { visits: VISITS, nextPage: null } }), { status: 200 })
   if (url.includes('/contacts/upsert')) return new Response(JSON.stringify({ contact: { id: 'C:' + body.phone, dnd: false } }), { status: 200 })
   if (url.includes('/conversations/messages')) { if (GHL_FAIL) return new Response('{"message":"nope"}', { status: 500 }); SENT.push({ to: body.contactId, text: body.message }); return new Response('{}', { status: 200 }) }
@@ -239,9 +239,21 @@ try {
       const near = all.slice(Math.max(0, i - 4), i + 1).join('\n'), m = [...near.matchAll(/model:\s*(?:'([\w-]+)'|([A-Z_]+))/g)].pop()
       const model = m ? (m[1] || named[m[2]] || m[2]) : '?'
       if (!m || SONNET.test(model)) hits.push(path.relative(FN, f) + ':' + (i + 1) + ' ' + model) })
-    ck('no Sonnet 5.5 or Opus 5.5 call in any function sends a temperature (they refuse it)', !hits.length, hits) }
+    ck('no Sonnet 5.5 or Opus 5.5 call in any function sends a temperature (they refuse it)', !hits.length, hits)
+    /* 10-26: these models may think first, so the answer is a later TEXT block; reading only content[0] made late-watch miss
+       2 of 20 (1127c). Any file that calls Sonnet/Opus 5.5 (by name or through a constant) must not read content[0]. */
+    const first = []
+    for (const [f, s] of src) { const code = s.split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n').replace(/\/\*[\s\S]*?\*\//g, '')
+      const own = {}; for (const m of code.matchAll(/\b([A-Z_]+)\s*=\s*(?:[^'"\n]*\|\|\s*)?['"](claude-[\w-]+)['"]/g)) own[m[1]] = m[2]
+      const models = [...code.matchAll(/['"](claude-[\w-]+)['"]/g)].map((m) => m[1]).concat([...code.matchAll(/model:\s*([A-Z_]+)/g)].map((m) => own[m[1]] || named[m[1]]))
+      if (!models.some((x) => SONNET.test(x || ''))) continue
+      code.split('\n').forEach((line, i) => { if (/content\s*(\?\.)?\s*\[\s*0\s*\]/.test(line)) first.push(path.relative(FN, f) + ': ' + line.trim().slice(0, 90)) }) }
+    ck('no Sonnet 5.5 or Opus 5.5 caller reads only content[0] (the answer may come after a thinking block)', !first.length, first) }
+  AI_THINK = true; AI_ANSWER = '{"topics":[{"key":"turning","why":"They stay in bed."}]}'; r = await call({ action: 'suggest', ax: '900', lead_id: 'L1', about: 'Call hospice first.' }); AI_THINK = false
+  ck('suggest: a reply that thinks first still gives the suggestions (the answer is the text block)', r.j.outcome === 'ok' && r.j.suggestions.map((x) => x.topic).join() === 'turning', r.j)
+  ck('suggest leaves room to think before answering (max_tokens 2000)', AI_SEEN[AI_SEEN.length - 1].max_tokens >= 2000, AI_SEEN[AI_SEEN.length - 1].max_tokens)
   AI_ANSWER = null; r = await call({ action: 'suggest', ax: '900', lead_id: 'L1', about: '' }); ck('the AI not answering: says so, no suggestions', r.j.outcome === 'ai_failed' && !r.j.suggestions.length, r.j)
-  AI_ANSWER = '{"topics":[]}'; r = await call({ action: 'suggest', ax: '555', about: '' }); ck('nothing known about the client: "nothing to read", the AI never asked', r.j.outcome === 'nothing_to_read' && AI_SEEN.length === 2, r.j)
+  AI_ANSWER = '{"topics":[]}'; r = await call({ action: 'suggest', ax: '555', about: '' }); ck('nothing known about the client: "nothing to read", the AI never asked', r.j.outcome === 'nothing_to_read' && AI_SEEN.length === 3, r.j)
 
   // helpers
   ck('YouTube ids from watch, youtu.be and shorts links; anything else no player', M.youtubeId('https://youtu.be/6M5_eTPUWpo') === '6M5_eTPUWpo' && M.youtubeId('https://www.youtube.com/shorts/6M5_eTPUWpo') === '6M5_eTPUWpo' && M.youtubeId('https://evil.com/watch?v=6M5_eTPUWpo') === null)
