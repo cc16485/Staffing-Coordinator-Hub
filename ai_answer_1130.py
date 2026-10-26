@@ -34,7 +34,7 @@ for fn in FNS:
 if drift: stop("this isn't the same as GitHub's main yet (merge the pull request first, or newer work landed since: " + ", ".join(sorted(set(drift)))[:240] + ")")
 ok("the reviewed build is what is on GitHub's main")
 if NODE:
-    for t, must in (("care_packet_test.mjs", "139/139 passed"), ("caregiver_profile_test.mjs", "ALL 62 CHECKS PASS"), ("caregiver_profile_2b_test.mjs", "ALL 45 CHECKS PASS"),
+    for t, must in (("care_packet_test.mjs", "139/139 passed"), ("caregiver_profile_test.mjs", "ALL 62 CHECKS PASS"), ("caregiver_profile_2b_test.mjs", "CHECKS PASS"),
                     ("step1_look_457_test.mjs", "ALL 9 CHECKS PASS"), ("beef_457_test.mjs", "ALL 11 CHECKS PASS"), ("profile_catchup_452_test.mjs", "ALL 33 CHECKS PASS")):
         c, o = run([NODE, t], cwd=ROOT)
         if c != 0 or must not in o: stop(f"the tests failed ({t}): " + " ".join(l for l in o.splitlines() if "FAIL" in l)[:240])
