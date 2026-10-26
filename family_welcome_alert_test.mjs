@@ -69,6 +69,12 @@ await A.welcomeAlerts(autoDeps(true))
 ck('...and it is not retried on every run (one try, then the office)', W.sends.length === 1 && W.items.length === 1)
 world([person(1)], { family_axis_welcome_auto: true }); r = await A.welcomeAlerts(autoDeps(), { dry: true })
 ck('dry run with the switch on: says who would get it, sends nothing', r.would_send.length === 1 && !W.sends && !W.people[0].axis_welcome_sent_at, r)
+// 2026-10-26 (Dan Probstfield's 4th family member): a person typed in the office whose email is on a Contact LINKED to the client in AxisCare
+world([person(1, { name: 'Damian Ray', email: 'd@x.test', source: null, hipaa_authorized: null, hipaa_office_ok_at: '2026-10-26T15:00:00Z', axis_linked: true }),
+  person(2, { name: 'Ann Ray', email: 'a@x.test', source: null, hipaa_authorized: null, hipaa_office_ok_at: '2026-10-26T15:00:00Z' }),
+  person(3, { name: 'Ed Ray', email: 'e@x.test', source: null, hipaa_authorized: null, axis_linked: true })], { family_axis_welcome_auto: true }); NOW = new Date('2026-10-19T15:00:00Z')
+r = await A.welcomeAlerts(autoDeps(), { dry: true })
+ck('a linked AxisCare contact with HIPAA OK gets it; not linked, or linked without HIPAA, does not', r.would_send.length === 1 && r.would_send[0].name === 'Damian Ray', r)
 for (const [n, okk, note] of res) console.log((okk ? '  ✓ ' : '  ✗ ') + n + (okk ? '' : '\n      ' + note))
 const bad = res.filter((x) => !x[1]).length
 console.log(`\n  welcome reminder: ${res.length - bad}/${res.length} passed`); process.exit(bad ? 1 : 0)

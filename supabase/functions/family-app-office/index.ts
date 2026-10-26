@@ -10,6 +10,7 @@ import { opEvent } from '../_shared/events.ts'
 import { officeAction, type OfficeDeps } from '../_shared/family-app-office.ts'
 import { contactForOutbound, maySendTo, normalisePhone } from '../_shared/outreach.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
+import { linkedEmailsByClient } from '../_shared/axis-linked-contacts.ts'
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -125,12 +126,15 @@ const deps: OfficeDeps = {
   event: async (row) => { await opEvent(db, row) },
   rpEmails: async (cid) => {
     const r = await ax('GET', `/api/clients/${encodeURIComponent(cid)}/responsibleParties`)
-    if (r.status === 404) return []
-    if (r.status !== 200) return null
-    const raw = r.json?.results?.responsibleParties ?? r.json?.results ?? []
+    if (r.status !== 200 && r.status !== 404) return null
+    const raw = r.status === 404 ? [] : r.json?.results?.responsibleParties ?? r.json?.results ?? []
     // deno-lint-ignore no-explicit-any
     // AxisCare sometimes answers a list as an index-keyed object (the rowsOf lesson in circles-sync): read both shapes
-    return (Array.isArray(raw) ? raw : raw && typeof raw === 'object' ? Object.values(raw) : []).map((p: any) => String(p?.email ?? p?.personalEmail ?? '').trim().toLowerCase()).filter(Boolean)
+    const rps = (Array.isArray(raw) ? raw : raw && typeof raw === 'object' ? Object.values(raw) : []).map((p: any) => String(p?.email ?? p?.personalEmail ?? '').trim().toLowerCase()).filter(Boolean)
+    /* 2026-10-26: plus Contacts linked to the client in AxisCare (her "more than 3 contacts axiscare allows us to link contacts") */
+    const linked = await linkedEmailsByClient(ax, true).catch(() => null)
+    if (!linked) return rps.length ? rps : null
+    return [...new Set([...rps, ...(linked.get(String(cid)) ?? [])])]
   },
   /* The welcome goes through the same family-safe door as every Family Circle message: audience 'family', allowed only
      because a person pressed Send; opt-outs, Texts OK and the hours policy all apply; a refusal raises a Needs Attention card. */
