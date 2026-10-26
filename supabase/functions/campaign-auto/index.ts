@@ -18,8 +18,9 @@
 // do-not-disturb contacts are skipped. A summary email goes to the Springfield lead after
 // every autopilot run that sends anything.
 //
-// Library JSON is hosted at caring-companions.pages.dev/email-assets/library.json
-// (generated from her design zip). Auth: ?token= like the other hub functions.
+// Library JSON is mo-care.com/email-assets/library.json (built from her design file by the website's
+// tools/build-email-library.mjs). Until 2026-10-26 it was read from caring-companions.pages.dev, which had stopped
+// updating before mid-September, so the autopilot was sending an old copy. Auth: ?token= like the other hub functions.
 // -----------------------------------------------------------------------------
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -46,9 +47,9 @@ const json = (body: unknown, status = 200) =>
    ?auth_check=1 answers whether the caller is authorized and does nothing else. */
 export const CAMPAIGN_ROLES = OFFICE_ROLES
 
-const LIB_URL = 'https://caring-companions.pages.dev/email-assets/library.json'
-const ASSETS = 'https://caring-companions.pages.dev/email-assets'
-const LOGO = 'https://caring-companions.pages.dev/email-assets/cc-logo.png'
+const LIB_URL = 'https://mo-care.com/email-assets/library.json'
+const ASSETS = 'https://mo-care.com/email-assets'
+const LOGO = 'https://mo-care.com/email-assets/cc-logo.png'
 
 // When each "when" phrase is due (MM-DD ranges, America/Chicago).
 const WINDOWS: Record<string, [string, string]> = {
