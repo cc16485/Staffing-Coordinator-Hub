@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # 1130 · THREE MORE AI HELPERS READ THE ANSWER, NOT THE THINKING (2026-10-26). The running-late reader missed 2 of 20 because
 # this AI may think before it answers and the reader only looked at the first block (fixed in 1127d). The same habit was in:
-# Suggest topics (caregiver packets), Draft / Redo draft and Help me polish (caregiver profiles), and the Step 1 form look.
+# Suggest topics (caregiver packets), the AI draft and AI suggestions on caregiver profiles, and the Step 1 form look.
 #  1. Checks first (nothing changes): the reviewed build is GitHub's main; the tests pass (fake data only).
 #  2. Deploys care-packet, caregiver-profile and step1-look (gateway settings kept).
 #  3. Proves it: each is the reviewed build live, and a stranger is refused.
@@ -54,6 +54,6 @@ for fn in FNS:
     s, b = http("POST", f"{FNB}/functions/v1/{fn}", {})
     chk(s in (400, 401, 403), f"{fn}: a caller with no key gets nothing ({s})", f"{fn} answered a stranger ({s})")
 say()
-say("  1130: " + ("DONE. Suggest topics, Draft / Help me polish and the Step 1 form look read the AI's answer even when it thinks first, and say how the reply stopped if there is none." if not L.fails else "NOT COMPLETE. See the ✗ lines above (each says why)."))
-say("  The real check is the next time someone taps Suggest topics or Redo draft. Nobody was texted.")
+say("  1130: " + ("DONE. Suggest topics, the caregiver profile AI draft and suggestions, and the Step 1 form look read the AI's answer even when it thinks first, and say how the reply stopped if there is none." if not L.fails else "NOT COMPLETE. See the ✗ lines above (each says why)."))
+say("  The real check is the next time someone asks for topic suggestions or a profile draft. Nobody was texted.")
 done(0 if not L.fails else 1)
