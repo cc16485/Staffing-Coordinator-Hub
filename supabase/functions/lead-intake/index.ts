@@ -16,6 +16,7 @@ import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { officeQuietNow } from '../_shared/quiet-hours.ts'
 import { leadResponseHours, leadHoursNow } from '../_shared/lead-hours.ts'
 import { fallbackPeople } from '../_shared/notice-to.ts'
+import { normalCode, matchPartner, partnerFields, type PartnerMatch } from '../_shared/partner-code.ts'
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -86,13 +87,17 @@ Deno.serve(async (req) => {
     const norm = (s: unknown) => String(s ?? '').toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, ' ').trim()
     const dig = (s: unknown) => String(s ?? '').replace(/\D/g, '').slice(-10)
     let orgId: string | null = null
+    /* a partner link (2026-10-26): their code, when it matches exactly one active partner, links that partner */
+    let viaCode: PartnerMatch | null = null
     try {
       const { data: od } = await sbR.from('app_data').select('data').eq('key', 'referral_orgs').maybeSingle()
       const orgs: Record<string, unknown>[] = Array.isArray(od?.data) ? od!.data : []
+      viaCode = matchPartner(orgs, normalCode(pick('partner_code', 'ref_code')))
+      if (viaCode?.status === 'linked') orgId = String(viaCode.org.id)
       const byName = rOrg ? orgs.filter((o) => norm(o.name) === norm(rOrg)) : []
       const byPhone = !byName.length && dig(rPhone).length === 10 ? orgs.filter((o) => dig(o.phone) === dig(rPhone)) : []
       const hit = byName.length === 1 ? byName : byPhone.length === 1 ? byPhone : []
-      if (hit.length === 1) orgId = String(hit[0].id)
+      if (!orgId && hit.length === 1) orgId = String(hit[0].id)
     } catch { /* unlinked is safe: a person links it */ }
     const now = new Date().toISOString(), today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' })
     const typeLabel = TYPE_LABEL[rType] || ''
@@ -102,6 +107,7 @@ Deno.serve(async (req) => {
       source: 'Referral', referral_source_name: rOrg || rName, referral_subtype: SUB[rType] || 'other', referral_urgency: urg,
       referrer: { name: rName, org: rOrg, type: rType, type_label: typeLabel, phone: rPhone, email: rEmail },
       ...(orgId ? { referral_org_id: orgId } : rOrg ? { referral_org_suggest: { name: rOrg, type: typeLabel } } : {}),
+      ...(viaCode?.status === 'linked' ? { referral_via: 'partner_form', partner_code: viaCode.code } : viaCode ? partnerFields(viaCode, true, new Date().toISOString()).fields : {}),
       status: 'New',
       interest_notes: [situation, 'Referred by ' + [rName, rOrg].filter(Boolean).join(', ') + (typeLabel ? ' (' + typeLabel + ')' : '') + '.',
         'Urgency: ' + ({ urgent: 'Urgent', within_week: 'Within a week', routine: 'Routine' } as Record<string, string>)[urg] + '.',
@@ -224,16 +230,39 @@ Deno.serve(async (req) => {
     ref: (notes || '').slice(0, 200) })
 
   const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+  /* A partner link (Referral Partner Program, 2026-10-26). Read before the family check, applied after it. */
+  const code = normalCode(pick('partner_code', 'ref_code'))
+  let partner: PartnerMatch | null = null
+  if (code) {
+    try {
+      const { data: od } = await supabase.from('app_data').select('data').eq('key', 'referral_orgs').maybeSingle()
+      partner = matchPartner(Array.isArray(od?.data) ? od!.data : [], code)
+    } catch { partner = { status: 'unknown', code } }   // can't read the partners: link nobody, note the code
+  }
   /* 5b C: the form always makes a new inquiry (it never rewrites one). If the family may already be
      known (an earlier inquiry, AxisCare, a Family Circle) it is flagged, and one "is this the same
      family?" item goes on My Work. A failed check never loses the inquiry. */
   let flag = null
+  let familyChecked = false
+  const seen: { axiscare_checked?: boolean } = {}
   try {
     const { data: lr } = await supabase.from('app_data').select('data').eq('key', 'leads').maybeSingle()
     const hits = leadHits(Array.isArray(lr?.data) ? lr!.data : [], [phone], email)
-    flag = await returningCheck(supabase, 'website form', { phones: [phone], email, first, last }, [...hits.open, ...hits.closed])
+    flag = await returningCheck(supabase, 'website form', { phones: [phone], email, first, last }, [...hits.open, ...hits.closed], fetch, seen)
+    familyChecked = true
   } catch (e) { console.warn('[lead-intake] returning check skipped:', e) }
   if (flag) (lead as Record<string, unknown>).possibly_returning = flag
+  /* HER RULE (2026-10-26): a link never overwrites a family's referral source. The partner is attached only to a family
+     that is new to us: the check ran, found nobody, and AxisCare was read. Otherwise the source stays as it is and the
+     notes say the link came in (the notes go with the inquiry if a person folds it into the family's record). What
+     they typed in "how did you hear" is kept, never thrown away. */
+  if (partner) {
+    const known = !familyChecked || !!flag || seen.axiscare_checked !== true
+    const pf = partnerFields(partner, known, new Date().toISOString())
+    if (pf.fields.referral_org_id && heard) pf.fields.heard_from_typed = heard
+    Object.assign(lead, pf.fields)
+    lead.interest_notes = [lead.interest_notes, pf.note].filter(Boolean).join('\n')
+  }
   const { error } = await supabase.rpc('upsert_app_data_item', { target_key: 'leads', item: lead })
   if (!error && flag) await supabase.rpc('upsert_app_data_item', { target_key: 'ops_items', item: returningItem(lead, flag, 'website form') })
   if (!error) await opEvent(supabase, { verb: 'lead_inquiry', item_id: String(lead.id), area: 'growth_leads',
