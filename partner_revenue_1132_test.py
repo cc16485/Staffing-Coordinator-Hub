@@ -12,7 +12,8 @@ class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         m = re.match(r"/v1/projects/\w+/functions/([a-z-]+)$", self.path)
         if m and m.group(1) == "partner-revenue":
-            if M.get("exists") or M.get("deployed"): return self._send(200, {"version": 2 if M.get("deployed") else 1, "verify_jwt": True})
+            deployed = os.path.exists(DEPLOYS)
+            if M.get("exists") or deployed: return self._send(200, {"version": 2 if deployed else 1, "verify_jwt": True})
             return self._send(404, {})
         self._send(404, {})
     def do_PATCH(self): self._send(200, {})
