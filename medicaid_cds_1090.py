@@ -3,7 +3,8 @@
 # Medicaid, point to Caring Companions Consumer Directed Services, caringcds.com, 417-218-2888).
 #  1. Checks first (nothing changes): the reviewed build is GitHub's main.
 #  2. Applies medicaid_cds_1090.sql: the intake payer step's how-to gets her staff script (options stay as 910 set them),
-#     and Cara's CDS answer N001 names the sister company's number. Deploys lead-nurture (day-260 email). Gateway kept.
+#     and Cara's CDS answer N001 names the sister company's number. lead-nurture was retired 2026-10-07 (491 deleted it from
+#     the server), so its new day-260 wording is history only and nothing is deployed for it.
 #  3. Proves it by reading the live rows back.
 # Sends nothing to anyone. The CC Hub switch "Medicaid goes to CDS" stays OFF. Safe to run again.
 import json, os, subprocess
@@ -33,14 +34,16 @@ ok("the reviewed build is what is on GitHub's main")
 good, r = sql(HUB, "select count(*)::int n from public.client_journey_step_def where key='intake.payer'")
 if not good or not r or r[0]["n"] != 1: stop("couldn't find the intake payer step live")
 s_, m = fmeta(HUB, FN)
-if s_ != 200 or not m or "verify_jwt" not in m: stop(f"couldn't read how {FN} is set up live ({s_})", 3)
-gate = bool(m["verify_jwt"]); say(f"  · {FN} is live as version {m.get('version', '?')}, gateway sign-in check {'on' if gate else 'off'} (kept)")
+retired = s_ == 404
+if retired: say(f"  · {FN} is not on the server (retired 2026-10-07), so there is nothing to deploy for it")
+elif s_ != 200 or not m or "verify_jwt" not in m: stop(f"couldn't read how {FN} is set up live ({s_})", 3)
+else: gate = bool(m["verify_jwt"]); say(f"  · {FN} is live as version {m.get('version', '?')}, gateway sign-in check {'on' if gate else 'off'} (kept)")
 
 say(); say("PART 2 · CHANGE")
 good, r = sql(HUB, open(os.path.join(ROOT, "medicaid_cds_1090.sql")).read())
 chk(good, "the payer step how-to and Cara's CDS answer updated", "the SQL did not apply: " + str(r)[:300])
 if L.fails: say("  STOP. Nothing else was changed. Tell Claude."); done(4)
-if not deploy(HUB, FNROOT, FN, gate): say("  STOP. Tell Claude. (The SQL above is applied; it is safe to run 1090 again.)"); done(5)
+if not retired and not deploy(HUB, FNROOT, FN, gate): say("  STOP. Tell Claude. (The SQL above is applied; it is safe to run 1090 again.)"); done(5)
 
 say(); say("PART 3 · PROOF")
 good, r = sql(HUB, "select def->'howto'->>1 h, def::text like '%Medicaid IHS / HCBS%' old from public.client_journey_step_def where key='intake.payer'")
