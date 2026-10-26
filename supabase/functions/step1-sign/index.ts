@@ -33,6 +33,7 @@ import { step1FormPdf, type IdentityState } from '../_shared/step1-pdf.ts'
 import { longDateTime } from '../_shared/offer-documents.ts'
 import { practicePerson } from '../_shared/optout.ts'
 import { driverFromStep1 } from '../_shared/driver.ts'
+import { step1Alert } from '../_shared/step1-alert.ts'
 import { offerSigned } from '../_shared/positions.ts'   /* LPN HIRING 2026-10-14: the one "offer signed" rule */
 import { stepOneRecord, stepOneDeclination, declinationPdf, declinationFingerprint, BUCKET as HEPB_BUCKET, journeyMirror, raiseCard as hepbCard, ownerEmails, publicStatus } from '../_shared/hepb.ts'
 import { makeHepbLink } from '../_shared/applicant-links.ts'
@@ -51,6 +52,13 @@ export const ESIGN_WORDS = 'I agree to complete and sign my Step 1 paperwork ele
 export const SCREENS = step1Screens()
 export const IDENTITY_IDS = ['ssn', 'dob', 'license_number', 'nurse_license_number']   /* nurse_license_number: LPN HIRING 2026-10-14 */
 const MAP_TABLES = new Set(['windows', 'specialties', 'matching_facts'])
+/** work that runs after the caregiver's page has its answer (the Step 1 alert's sending); never throws */
+function afterAnswer(p: Promise<unknown>) {
+  // deno-lint-ignore no-explicit-any
+  const er = (globalThis as any).EdgeRuntime
+  if (er && typeof er.waitUntil === 'function') er.waitUntil(p)
+  else p.catch(() => {})
+}
 const COLS = 'id,first_name,last_name,phone,email,position,offered_by,onboarding_path,offer_status,offer_signed_at,pd_signed_at,offer_withdrawn_at,offer_declined_at,step1_sent_at,step1_done_at,position_key'
 
 function trn() {
@@ -929,6 +937,9 @@ Deno.serve(async (req) => {
       let entered: Record<string, unknown> = { skipped: true }
       if (done) {
         entered = await enterChecks(db, id, who, o, at)
+        /* STEP 1 ALERT (Samantha 2026-10-26): every admin gets one text and one email to start the checks and references
+           (her switch step1_alert_live; never a practice or training hire; a failed send is a card). Never throws. */
+        entered.alert = await step1Alert(db, { offerId: id, o, who, answers, at }, { later: afterAnswer })
         /* a record made or linked just now never saw the earlier forms: land them all now (an existing one already has them) */
         if (entered.ok === true && entered.how !== 'already') {
           for (const f of FORM_ORDER) { const p = landingPatch(f, answers, String(sigs[f]?.at || at)); if (p && f !== form) await land(db, id, p, 'step1 ' + f + ' (at completion)') }

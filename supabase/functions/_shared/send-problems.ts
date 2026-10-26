@@ -76,6 +76,7 @@ export const SENDER_WORDS: Record<string, [string, string]> = {
   'campaign-send': ['campaign message', 'family_enquiries'],
   'campaign-auto': ['campaign message', 'family_enquiries'],
   'staff-alert': ['alert to the office', 'office_ops'],
+  'step1-alert': ['Step 1 done alert to the admins', 'office_ops'],   // 1136
   'family-change-text': ['caregiver-change text to the family', 'client_care'],
   'lead-digest': ['morning brief email', 'office_ops'],
   'hr-alert': ['HR alert to Zach (no names or details)', 'office_ops'],
