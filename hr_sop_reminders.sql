@@ -53,10 +53,10 @@ begin
     if not live then continue; end if;
     title := 'Write-up, ' || (words->>nx.step) || ': ' || public.hr_short_name(w->>'caregiver');
     detail := coalesce(w->>'level', 'Write-up') || '. ' || case when nx.due = today then 'Due today' else 'Was due ' || to_char(nx.due, 'Mon FMDD') end
-      || ' (Corrective Action SOP). Open it on HR, Formal cases.';
+      || ' (Corrective Action SOP). Open it on Performance, Formal cases.';
     if ex is not null and ex->>'status' = 'open' and ex->>'title' = title and ex->>'detail' = detail then continue; end if;
     perform public.upsert_app_data_item('ops_items', jsonb_build_object('id', cid, 'kind', 'hr_file', 'source_id', w->>'id', 'sensitive', true,
-      'title', title, 'detail', detail, 'next_action', 'Do this step on HR, Formal cases.', 'about', public.hr_short_name(w->>'caregiver'), 'owner', zach,
+      'title', title, 'detail', detail, 'next_action', 'Do this step on Performance, Formal cases.', 'about', public.hr_short_name(w->>'caregiver'), 'owner', zach,
       'domain', 'caregiver_performance', 'urgency', case when nx.due < today then 'today' else 'normal' end, 'status', 'open',
       'created_at', coalesce(ex->>'created_at', now()::text), 'last_activity_at', now(), 'due', ((nx.due::text || ' 17:00')::timestamp at time zone 'America/Chicago'),
       'opened_by', 'system', 'link', '#hr/formal'));

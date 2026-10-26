@@ -95,7 +95,7 @@ begin
     'id', 'ops_coach_' || c.id, 'kind', 'coaching', 'source_id', c.id::text, 'sensitive', false,
     'title', case when calls_live and c.kind = 'coaching' then 'Coaching call due: ' || short
                   else (case when c.kind = 'recognition' then 'Pass on kind words to ' else 'Coaching talk with ' end) || c.caregiver end,
-    'detail', case when calls_live and c.kind = 'coaching' then 'Open it on the HR page.' else c.topic end, 'next_action', case when c.kind = 'recognition' then 'Tell them, then record it on the HR page.' else 'Have the conversation, then record it on the HR page.' end,
+    'detail', case when calls_live and c.kind = 'coaching' then 'Open it on the Performance page.' else c.topic end, 'next_action', case when c.kind = 'recognition' then 'Tell them, then record it on the Performance page.' else 'Have the conversation, then record it on the Performance page.' end,
     'about', c.caregiver, 'owner', c.assigned_to, 'domain', 'caregiver_performance', 'urgency', case when c.priority = 'soon' then 'today' else 'normal' end,
     'status', case when c.status = 'open' then 'open' else 'done' end,
     'closed_at', case when c.status = 'open' then null else to_jsonb(now()) end,
