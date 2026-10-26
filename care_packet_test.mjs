@@ -230,6 +230,16 @@ try {
   ck('medications are never sent to the AI', !/MORPHINE/i.test(sent), sent)
   ck('the AI is given only the active library to choose from', /"key":"turning"/.test(AI_SEEN[AI_SEEN.length - 1].system) && !/"key":"old"/.test(AI_SEEN[AI_SEEN.length - 1].system))
   ck('nothing is saved by suggesting', !T.care_packets.length)
+  ck('suggest sends no temperature (this model refuses it, so every suggestion failed live)', !('temperature' in AI_SEEN[AI_SEEN.length - 1]), Object.keys(AI_SEEN[AI_SEEN.length - 1] || {}))
+  { const FN = path.join(process.cwd(), F), SONNET = /^claude-(sonnet|opus)-5-5$/, files = [], walk = (d) => fs.readdirSync(d, { withFileTypes: true }).forEach((e) => e.isDirectory() ? walk(path.join(d, e.name)) : /\.ts$/.test(e.name) && files.push(path.join(d, e.name)))
+    walk(FN); const src = files.map((f) => [f, fs.readFileSync(f, 'utf8')]), named = {}
+    for (const [, s] of src) for (const m of s.matchAll(/\b([A-Z_]+)\s*=\s*'(claude-[\w-]+)'/g)) named[m[1]] = m[2]
+    const hits = []
+    for (const [f, s] of src) s.split('\n').map((l) => l.replace(/\/\/.*$/, '')).forEach((line, i, all) => { if (!/\btemperature\s*:/.test(line)) return
+      const near = all.slice(Math.max(0, i - 4), i + 1).join('\n'), m = [...near.matchAll(/model:\s*(?:'([\w-]+)'|([A-Z_]+))/g)].pop()
+      const model = m ? (m[1] || named[m[2]] || m[2]) : '?'
+      if (!m || SONNET.test(model)) hits.push(path.relative(FN, f) + ':' + (i + 1) + ' ' + model) })
+    ck('no Sonnet 5.5 or Opus 5.5 call in any function sends a temperature (they refuse it)', !hits.length, hits) }
   AI_ANSWER = null; r = await call({ action: 'suggest', ax: '900', lead_id: 'L1', about: '' }); ck('the AI not answering: says so, no suggestions', r.j.outcome === 'ai_failed' && !r.j.suggestions.length, r.j)
   AI_ANSWER = '{"topics":[]}'; r = await call({ action: 'suggest', ax: '555', about: '' }); ck('nothing known about the client: "nothing to read", the AI never asked', r.j.outcome === 'nothing_to_read' && AI_SEEN.length === 2, r.j)
 
