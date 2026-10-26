@@ -16,6 +16,7 @@ import { ghlStaffContact } from '../_shared/staff-contact.ts'
 import { officeQuietNow } from '../_shared/quiet-hours.ts'
 import { leadResponseHours, leadHoursNow } from '../_shared/lead-hours.ts'
 import { fallbackPeople } from '../_shared/notice-to.ts'
+import { readApplication, alreadyApplied, ownerAlert, ownerEmails } from '../_shared/ambassador-app.ts'
 import { normalCode, matchPartner, partnerFields, type PartnerMatch } from '../_shared/partner-code.ts'
 
 const cors = {
@@ -69,6 +70,38 @@ Deno.serve(async (req) => {
        · the partner record is linked ONLY on one exact match (same name, or same phone); otherwise the lead says "new
          partner to confirm" and nothing in Referrers is created or changed
      The office alert goes out as for any inquiry, saying it's a referral, from whom, and how urgent. */
+  /* ── A COMMUNITY AMBASSADOR APPLICATION (mo-care.com/ambassadors, Samantha approved 2026-10-26) ───────────────────────
+     Never a lead: one referral_orgs item, type "Community Ambassador", status "applied", for an owner to approve on
+     Referral Partners. Nothing is sent to the applicant (the page shows the confirmation); the owners get one email. */
+  if (pick('kind') === 'ambassador_application') {
+    const r = readApplication(body)
+    if ('error' in r) return json({ error: r.error }, 400)
+    const sbA = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+    let orgs: Record<string, unknown>[] = []
+    try { const { data: od } = await sbA.from('app_data').select('data').eq('key', 'referral_orgs').maybeSingle(); orgs = Array.isArray(od?.data) ? od!.data : [] }
+    catch { return json({ error: 'could not save the application' }, 500) }
+    const prev = alreadyApplied(orgs, r.item)
+    if (prev) return json({ status: 'application received', already: true })
+    const { error: aErr } = await sbA.rpc('upsert_app_data_item', { target_key: 'referral_orgs', item: r.item })
+    if (aErr) return json({ error: 'could not save the application' }, 500)
+    try { await opEvent(sbA, { verb: 'ambassador_applied', item_id: String(r.item.id), area: 'growth_leads', actor_name: r.item.name, summary: `${r.item.name} applied to be a Community Ambassador` }) } catch { /* the record is saved */ }
+    let alertedA = 0
+    try {
+      const ghlToken = Deno.env.get('GHL_TOKEN'), ghlLocation = Deno.env.get('GHL_LOCATION_ID')
+      if (ghlToken && ghlLocation) {
+        const h = { Authorization: `Bearer ${ghlToken}`, Version: '2021-07-28', 'Content-Type': 'application/json', Accept: 'application/json' }
+        const msg = ownerAlert(r.item)
+        for (const email of await ownerEmails(sbA)) {
+          try {
+            const cid = await ghlStaffContact({ token: ghlToken, locationId: ghlLocation }, { channel: 'email', email, phone: null, firstName: email.split('@')[0] })
+            if (cid && await ghlSendChecked(sbA, h, 'staff-alert', { channel: 'email', contactId: cid, address: email, who: email }, msg)) alertedA++
+          } catch { /* next owner */ }
+        }
+      }
+    } catch { /* the record is saved */ }
+    return json({ status: 'application received', id: r.item.id, flagged: r.flags.length > 0, alerted: alertedA })
+  }
+
   if (pick('kind') === 'professional_referral') {
     const rName = pick('referrer_name'), rOrg = pick('referrer_org'), rType = pick('referrer_type')
     const rContact = pick('referrer_contact', 'referrer_phone', 'referrer_email')
