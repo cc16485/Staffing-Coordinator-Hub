@@ -86,6 +86,7 @@ AI_ANSWER = { kind: 'cant_make_it', eta: '', sure: true, quote: "I don't think I
 let rd = await LW.readLate(start, [{ at: start + 6 * 60e3, body: call }])
 const sys = String(AI[0]?.system || ''), userTxt = String(AI[0]?.messages?.[0]?.content || '')
 ck('the reader uses the call reader\'s model (not the small one)', AI[0]?.model === 'claude-sonnet-5-5' && AI[0]?.model === LW.LATE_MODEL, AI[0]?.model)
+ck('the reader sends no temperature (this model refuses it, so every read failed live on 10-26)', AI[0] && !('temperature' in AI[0]), Object.keys(AI[0] || {}))
 ck('the reader is told retelling an earlier talk, being on the way or driving, and clock-in trouble are never a call-off',
   /retelling an earlier conversation/.test(sys) && /"I said\.\.\."/.test(sys) && /on the way, driving, already there/.test(sys) && /asking to be clocked in/.test(sys) && /read the whole call/.test(sys), sys.slice(0, 400))
 ck('the whole call goes to the reader, not the first 2,500 characters (her words were at the end)', userTxt.includes("I said, I'm already driving") && call.length > 2500, userTxt.length)
