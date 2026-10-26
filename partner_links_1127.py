@@ -9,7 +9,7 @@
 #  2. Re-deploys lead-intake only, gateway setting kept (off: the public form can't sign in). No database change.
 #  3. Proves it: a caller with the wrong key gets nothing; a bot submission saves nothing; no inquiry was added.
 # Safe to run again.
-import json, os, subprocess, shutil, time
+import json, os, subprocess, shutil, time, hashlib
 import cc_step_lib as L
 from cc_step_lib import say, bad, done, http, sql, deploy, start, check_build, fmeta, live_files
 
@@ -55,9 +55,9 @@ if not okl: stop(f"couldn't download the live {FN} to compare it", 3)
 if BASE:
     newer = []
     for k, h in sorted(livef.items()):
-        c3, b3 = run(["git", "-C", ROOT, "show", f"{BASE}:{k}"])
-        if c3 != 0 and k in CHANGED: continue          # partner-code.ts is new in this step
-        if c3 != 0 or __import__("hashlib").sha256(b3.encode()).hexdigest() != h: newer.append(k)
+        if k in CHANGED: continue                       # this step's own files
+        g = subprocess.run(["git", "-C", ROOT, "show", f"{BASE}:{k}"], capture_output=True)
+        if g.returncode != 0 or hashlib.sha256(g.stdout).hexdigest() != h: newer.append(k)
     if newer: say("  · the live lead-intake will also pick up these already-merged files from main: " + ", ".join(newer)[:300])
     else: ok("the live lead-intake is the version this step was built on; only this step's files change")
 okq, pc = sql(HUB, "select count(*) filter (where coalesce(x->>'partner_code', '') <> '') as coded, count(*) as all_ from app_data, jsonb_array_elements(case when jsonb_typeof(data) = 'array' then data else '[]'::jsonb end) x where key = 'referral_orgs'")
