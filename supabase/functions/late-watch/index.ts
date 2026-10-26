@@ -121,7 +121,7 @@ export function assign<T extends { at: number }>(shifts: Shift[], msgs: T[]): Ma
 }
 
 /* ── the AI reads their texts for one shift ── */
-export type Reading = { kind: 'late' | 'cant_make_it' | 'other'; eta: number | null; sure: boolean; failed: boolean; quote?: string | null }
+export type Reading = { kind: 'late' | 'cant_make_it' | 'other'; eta: number | null; sure: boolean; failed: boolean; quote?: string | null; why?: string | null }
 /* 432: a quote is kept only when it is really in what they said (the AI copies; it must never put words in a mouth). */
 const squash = (x: unknown) => String(x ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 export const quoteIn = (quote: unknown, said: string): string | null => {
@@ -135,37 +135,67 @@ export function etaOn(hhmm: string, shiftStart: number): number | null {
   if (!Number.isFinite(t) || t < shiftStart - BEFORE_MIN * MIN || t > shiftStart + 8 * 60 * MIN) return null
   return t
 }
+/* THE READER (2026-10-26, Angiel Falig's 4pm call for Patsy: the small model read her retelling "I said, I'm already
+   driving ... I don't think I can do it this early" as "can't make it", sure, a minute after the office had marked her
+   there). Now the call reader's own model, the whole call, and plain rules for what is never a call-off. */
+export const LATE_MODEL = 'claude-sonnet-5-5'
+export const LATE_SYSTEM = 'You read texts a home-care caregiver sent the office around one shift, and phone calls between them. The shift starts at the time given. '
+  + 'Decide what they say about THIS shift, today: "late" (they will be there but late), "cant_make_it" (they are not '
+  + 'coming: calling off, sick, emergency), or "other" (anything else). '
+  + 'cant_make_it needs the caregiver to say plainly, in their own voice, that they will not work THIS shift. These are NEVER cant_make_it: '
+  + 'retelling an earlier conversation or what someone said ("I said...", "I was like...", "she told me...", "I told her I can\'t"); '
+  + 'another day, another time or another client; being on the way, driving, already there or at the client\'s; asking to be clocked in, '
+  + 'trouble with the app, the phone or the clock-in; questions, confirmations, mileage, pay, or anything unrelated. '
+  + 'When the texts or call show they are working or coming (there, on the way, clocked in, the office agreed a clock-in time), it is not cant_make_it, '
+  + 'even if a line elsewhere sounds like one. '
+  + 'If late, give the time they expect to arrive as 24-hour HH:MM: "15 min late" means the start plus '
+  + '15; "10 min out" or "be there in 10" means the text\'s own time plus 10; a clock time they give is that time. '
+  + 'No time given = "". sure is false when anything is unclear or points both ways; only a plain statement is sure. '
+  + 'A line starting "(phone call)" is the transcript of a phone call between the office and the caregiver, both '
+  + 'sides, maybe labelled Speaker 1 / Speaker 2, and transcripts have errors: read the whole call before deciding. Only what the CAREGIVER says about their own arrival counts (never '
+  + 'the office person\'s guesses or questions), and "in 8 minutes" on a call means the call\'s own time plus 8. '
+  + 'quote: the caregiver\'s own words that say they are late or not coming, copied EXACTLY from the text or transcript '
+  + '(under 160 characters), or "" when there are none. why: one short sentence on what decided it. Answer ONLY minified JSON: '
+  + '{"kind":"late"|"cant_make_it"|"other","eta":"HH:MM" or "","sure":bool,"quote":"...","why":"..."}'
 export async function readLate(shiftStart: number, texts: { at: number; body: string }[]): Promise<Reading> {
   const failed: Reading = { kind: 'other', eta: null, sure: false, failed: true, quote: null }
   const key = Deno.env.get('ANTHROPIC_API_KEY') || ''
   if (!key || !texts.length) return failed
-  const lines = texts.map((t) => `[${chiClock(t.at)}] ${t.body.slice(0, t.body.startsWith('(phone call)') ? 2500 : 600)}`).join('\n')
+  const lines = texts.map((t) => `[${chiClock(t.at)}] ${t.body.slice(0, t.body.startsWith('(phone call)') ? 6000 : 600)}`).join('\n')
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 260, temperature: 0,
-        system: 'You read texts a home-care caregiver sent the office around one shift. The shift starts at the time given. '
-          + 'Decide what the texts say about THIS shift: "late" (they will be there but late), "cant_make_it" (they are not '
-          + 'coming: calling off, sick, emergency), or "other" (anything else: questions, confirmations, on the way on time, '
-          + 'unrelated). If late, give the time they expect to arrive as 24-hour HH:MM: "15 min late" means the start plus '
-          + '15; "10 min out" or "be there in 10" means the text\'s own time plus 10; a clock time they give is that time. '
-          + 'No time given = "". sure is false when the texts are unclear. '
-          + 'A line starting "(phone call)" is the transcript of a phone call between the office and the caregiver, both '
-          + 'sides, maybe labelled Speaker 1 / Speaker 2: only what the CAREGIVER says about their own arrival counts (never '
-          + 'the office person\'s guesses or questions), and "in 8 minutes" on a call means the call\'s own time plus 8. '
-          + 'quote: the caregiver\'s own words that say they are late or not coming, copied EXACTLY from the text or transcript '
-          + '(under 160 characters), or "" when there are none. Answer ONLY minified JSON: '
-          + '{"kind":"late"|"cant_make_it"|"other","eta":"HH:MM" or "","sure":bool,"quote":"..."}',
-        messages: [{ role: 'user', content: `Shift starts ${chiClock(shiftStart)}.\nTexts (with the time each was sent):\n${lines}`.slice(0, 8000) }] }) })
+      body: JSON.stringify({ model: LATE_MODEL, max_tokens: 400, temperature: 0, system: LATE_SYSTEM,
+        messages: [{ role: 'user', content: `Shift starts ${chiClock(shiftStart)}.\nTexts (with the time each was sent):\n${lines}`.slice(0, 16000) }] }) })
     if (!r.ok) return failed
     const j = await r.json().catch(() => null)
     const m = String(j?.content?.[0]?.text ?? '').match(/\{[\s\S]*\}/); if (!m) return failed
     const a = JSON.parse(m[0])
     const kind = a.kind === 'late' || a.kind === 'cant_make_it' ? a.kind : 'other'
-    return { kind, eta: kind === 'late' ? etaOn(String(a.eta ?? ''), shiftStart) : null, sure: a.sure === true, failed: false,
-      quote: kind === 'other' ? null : quoteIn(a.quote, texts.map((t) => t.body).join('\n')) }
+    const quote = kind === 'other' ? null : quoteIn(a.quote, texts.map((t) => t.body).join('\n'))
+    /* a "can't make it" with no words of theirs to show for it is never sure (the AI must not put words in a mouth) */
+    return { kind, eta: kind === 'late' ? etaOn(String(a.eta ?? ''), shiftStart) : null, sure: a.sure === true && (kind !== 'cant_make_it' || !!quote), failed: false,
+      quote, why: typeof a.why === 'string' ? a.why.slice(0, 200) : null }
   } catch { return failed }
 }
+
+/* WHEN "CAN'T MAKE IT" MAY OPEN A CALL-OFF CASE BY ITSELF (Samantha, 2026-10-26, Angiel's call: "there was no way to say
+   that this was not a call in"). Only from the caregiver's own TEXT. A phone call had a person from the office on it, so
+   that person decides (the running-late card still shows what was said). And never once a person has settled the missed
+   clock-in for that visit (she was there, on her way, the visit wasn't happening): their word stands over the AI's.
+   Returns why it is held, or null when it may open. */
+// deno-lint-ignore no-explicit-any
+export function cantCaseHold(n: any, settled: any | null): string | null {
+  if (settled && settled.resolved_at && settled.resolved_by) return `a person already settled the missed clock-in${settled.resolved_by_name ? ' (' + settled.resolved_by_name + (settled.resolved_reason ? ': ' + String(settled.resolved_reason).replace(/_/g, ' ') : '') + ')' : ''}`
+  // deno-lint-ignore no-explicit-any
+  if (n?.source === 'call' || (Array.isArray(n?.said) ? n.said : []).some((x: any) => x?.channel === 'call'))
+    return 'it came from a phone call, so the office person on the call decides'
+  return null
+}
+/* A person settled the missed clock-in and she was working (she was there, or the visit wasn't happening): the
+   running-late notice has nothing left to do. */
+// deno-lint-ignore no-explicit-any
+export const settledWorking = (settled: any | null) => !!settled?.resolved_at && !!settled?.resolved_by && ['forgot_clock_in', 'not_happening'].includes(String(settled.resolved_reason || ''))
 
 /* ── GoHighLevel, read only: find the contact by phone, then their texts and calls since a time ── */
 type Msg = { at: number; kind: 'text' | 'call'; body: string; id: string; dir?: 'in' | 'out'; userId?: string; tried?: boolean; secs?: number | null }
@@ -420,6 +450,11 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
   const openAlert = new Map<string, any>()
   // deno-lint-ignore no-explicit-any
   for (const l of (Array.isArray(tkRow?.data) ? tkRow!.data : []) as any[]) if (l && l.kind !== 'clock_out' && !l.resolved_at && l.visit_id != null) openAlert.set(String(l.visit_id), l)
+  /* 2026-10-26: missed clock-ins a PERSON already settled (resolved_by: the text link), by visit; their word stands over the AI's */
+  // deno-lint-ignore no-explicit-any
+  const settledAlert = new Map<string, any>()
+  // deno-lint-ignore no-explicit-any
+  for (const l of (Array.isArray(tkRow?.data) ? tkRow!.data : []) as any[]) if (l && l.kind !== 'clock_out' && l.resolved_at && l.resolved_by && l.resolved_how !== 'coverage_case' && l.visit_id != null) settledAlert.set(String(l.visit_id), l)
 
   /* 1 · read: caregivers with a shift in the window and no clock-in */
   const watched = visits.filter((v) => v.clockIn == null && ((now >= v.start - lookMin * MIN && now <= v.start + AFTER_MIN * MIN) || openAlert.has(v.id)))
@@ -586,11 +621,20 @@ export async function run(db: any, opts: { dry?: boolean; now?: number } = {}) {
     const cc = openCases.find((c: any) => String(c.axiscare_visit_id ?? '') === String(n.visit_id))
     if (cc) { await close('coverage_case', `A coverage case has ${n.client_first}'s ${t12} shift now (${n.caregiver_name}). No more running-late texts.`, { coverage_case_id: String(cc.id) }); continue }
     if (now > startMs + 12 * 3600e3) { await close('day_ended', null); continue }
+    const settled = settledAlert.get(String(n.visit_id)) ?? null
+    if (settledWorking(settled)) { await close('office_settled', `${settled.resolved_by_name || 'The office'} settled ${n.client_first}'s ${t12} shift: ${cgFirst} ${String(settled.resolved_reason) === 'forgot_clock_in' ? 'was there and forgot to clock in' : 'had no visit to work'}. No more running-late texts.`); continue }
     /* CARA PHASE 3 (2026-10-24): "can't make it" opens a call-off case on that visit at once (cant_come_case_live, off).
        Attendance waits for a person to confirm. The admins are told by the case's own new-call-in alert, and this notice
        closes into the case on the next run. Off: the notice records what WOULD have opened. */
     /* only a SURE "can't make it" opens a case (her rule after the nine-sentence test, 2026-10-24): an unsure one is
        "Needs clarification" (late_unsure_live) and a person calls */
+    const hold = n.kind === 'cant_make_it' && n.sure === true && n.status !== 'practice' && !n.cant_case_would ? cantCaseHold(n, settled) : null
+    if (hold) {
+      await db.from('late_notices').update({ cant_case_would: 'held: ' + hold, updated_at: nowIso }).eq('id', n.id)
+      n.cant_case_would = 'held: ' + hold
+      // deno-lint-ignore no-explicit-any
+      ;(out as any).cant_cases_held = ((out as any).cant_cases_held || 0) + 1
+    }
     if (n.kind === 'cant_make_it' && n.sure === true && n.status !== 'practice' && !n.cant_case_would) {
       const said = (Array.isArray(n.said) ? n.said : []).at(-1)
       const c = cantComeCase({ visit_id: String(n.visit_id), client: n.client_first || 'a client', client_axiscare_id: n.axiscare_client_id ?? null,
