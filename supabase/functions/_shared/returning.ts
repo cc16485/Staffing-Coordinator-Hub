@@ -38,7 +38,7 @@ export type Flag = { at: string; by: string; matches: Array<Record<string, unkno
    or null when nothing matched. AxisCare being down never blocks the inquiry; the flag says so. */
 // deno-lint-ignore no-explicit-any
 export async function returningCheck(db: any, by: string, q: { phones: unknown[]; email?: unknown; first?: unknown; last?: unknown; dob?: unknown },
-                                     inquiries: Lead[], fetcher: typeof fetch = fetch): Promise<Flag | null> {
+                                     inquiries: Lead[], fetcher: typeof fetch = fetch, out?: { axiscare_checked?: boolean }): Promise<Flag | null> {
   const em = String(q.email ?? '').trim().toLowerCase()
   const matches: Array<Record<string, unknown>> = inquiries.map((l) => ({ kind: 'inquiry', lead_id: String(l.id), name: leadName(l),
     status: l.archived === true ? 'archived' : String(l.status || 'New'),
@@ -52,6 +52,8 @@ export async function returningCheck(db: any, by: string, q: { phones: unknown[]
     for (const m of (r.matches ?? []).filter((x) => !(x.why.length === 1 && x.why[0] === 'name_only'))) matches.push({ kind: 'axiscare', axiscare_client_id: m.axiscare_client_id, name: m.name,
       active: m.active, status: m.status, why: m.why, family: m.family ?? [] })
   } catch { checked = false }
+  /* partner links (2026-10-26) need to know AxisCare was read even when nothing matched */
+  if (out) out.axiscare_checked = checked
   if (!matches.length) return null
   return { at: new Date().toISOString(), by, matches: matches.slice(0, 10), axiscare_checked: checked }
 }
