@@ -62,7 +62,10 @@ try {
   ck('a new family through a partner link: saved, source Referral, linked to that partner, marked "from the link"', r.s === 200 && r.j.status === 'lead created' && L.source === 'Referral' && L.referral_org_id === 'org-jane' && L.referral_source_name === 'Ozark Senior Moves' && L.referral_via === 'link' && L.partner_code === 'JANE-K7' && !L.partner_link_seen, L)
   ck('...the notes say so: "Came through Ozark Senior Moves\'s partner link (JANE-K7)."', /Came through Ozark Senior Moves's partner link \(JANE-K7\)\./.test(L.interest_notes) && /Help for my mom/.test(L.interest_notes), L.interest_notes)
   ck('...the office alert names the partner', SENT.some((m) => /Heard about us from:<\/b> Ozark Senior Moves/.test(m.html || '')), SENT.map((m) => m.subject))
-  ck('...the family still gets their normal acknowledgment, nothing more, and nothing goes to the partner', r.j.acked === true && !SENT.some((m) => /partner|JANE/i.test(m.message || '')), SENT.map((m) => m.message || m.subject))
+  /* only what reaches the FAMILY (the office alert to staff may name the partner; that's the office being told, by design).
+     Fixed 2026-10-26: this check used to read the staff alert text too, so it failed during office hours only. */
+  const toFamily = SENT.filter((m) => /^Hi Gary|We received your request/.test(m.message || m.subject || ''))
+  ck('...the family still gets their normal acknowledgment, nothing more, and nothing goes to the partner', r.j.acked === true && toFamily.length >= 1 && !toFamily.some((m) => /partner|JANE/i.test((m.message || '') + (m.html || ''))), SENT.map((m) => m.message || m.subject))
   ck('...the partner list is never changed', orgsSame())
 
   /* 2 · tidy-up of the code */
