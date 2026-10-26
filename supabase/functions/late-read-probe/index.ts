@@ -46,7 +46,7 @@ Deno.serve(async (req) => {
     const row: Record<string, unknown> = { sentence: s }
     for (const [label, at] of [['before', start - before * 60e3], ['reply', start + after * 60e3]] as const) {
       const r = await LW.readLate(start, [{ at, body: s }])
-      row[label] = { kind: r.kind, sure: r.sure, eta: r.eta != null ? LW.chiClock(r.eta) : null, quote: r.quote ?? null, failed: r.failed, sent_at: LW.chiClock(at) }
+      row[label] = { kind: r.kind, sure: r.sure, eta: r.eta != null ? LW.chiClock(r.eta) : null, quote: r.quote ?? null, failed: r.failed, error: r.error ?? null, tries: r.tries ?? null, sent_at: LW.chiClock(at) }
     }
     out.push(row)
   }
