@@ -165,7 +165,7 @@ export async function readLate(shiftStart: number, texts: { at: number; body: st
   try {
     const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST',
       headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: LATE_MODEL, max_tokens: 400, temperature: 0, system: LATE_SYSTEM,
+      body: JSON.stringify({ model: LATE_MODEL, max_tokens: 400, system: LATE_SYSTEM,   // no temperature: this model refuses it (457, 458; 1127 found every read failing)
         messages: [{ role: 'user', content: `Shift starts ${chiClock(shiftStart)}.\nTexts (with the time each was sent):\n${lines}`.slice(0, 16000) }] }) })
     if (!r.ok) return failed
     const j = await r.json().catch(() => null)
