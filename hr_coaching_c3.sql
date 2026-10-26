@@ -59,7 +59,7 @@ begin
   end if;
   if ex is not null and ex->>'status' = 'open' then return; end if;
   perform public.upsert_app_data_item('ops_items', jsonb_build_object('id', card_id, 'kind', 'coaching', 'source_id', c.id::text, 'sensitive', true,
-    'title', title, 'detail', detail, 'next_action', 'Open it on the HR page.', 'about', public.hr_short_name(c.caregiver), 'owner', owner_email,
+    'title', title, 'detail', detail, 'next_action', 'Open it on the Performance page.', 'about', public.hr_short_name(c.caregiver), 'owner', owner_email,
     'domain', 'caregiver_performance', 'urgency', urgency, 'status', 'open', 'created_at', now(), 'last_activity_at', now(), 'due', now(), 'opened_by', 'system', 'link', link));
 end $f$;
 revoke all on function public.hr_coach_side_card(text, public.hr_coaching, text, text, text, text, text, boolean) from public, anon, authenticated;
@@ -88,7 +88,7 @@ begin
     'title', case when c.subject_type = 'office' then 'Office coaching due: ' || short
                   when calls_live and c.kind = 'coaching' then 'Coaching call due: ' || short
                   else (case when c.kind = 'recognition' then 'Pass on kind words to ' else 'Coaching talk with ' end) || c.caregiver end,
-    'detail', case when c.subject_type = 'office' or (calls_live and c.kind = 'coaching') then 'Open it on the HR page.' else c.topic end, 'next_action', case when c.kind = 'recognition' then 'Tell them, then record it on the HR page.' else 'Have the conversation, then record it on the HR page.' end,
+    'detail', case when c.subject_type = 'office' or (calls_live and c.kind = 'coaching') then 'Open it on the Performance page.' else c.topic end, 'next_action', case when c.kind = 'recognition' then 'Tell them, then record it on the Performance page.' else 'Have the conversation, then record it on the Performance page.' end,
     'about', c.caregiver, 'owner', c.assigned_to, 'domain', 'caregiver_performance', 'urgency', case when c.priority = 'soon' then 'today' else 'normal' end,
     'status', case when c.status = 'open' then 'open' else 'done' end,
     'closed_at', case when c.status = 'open' then null else to_jsonb(now()) end,
@@ -199,7 +199,7 @@ begin
     n_check := n_check + 1;
     if live then
       perform public.hr_coach_side_card('ops_coach_check_' || c.id, c, c.assigned_to, 'Did it improve? ' || public.hr_short_name(c.caregiver),
-        'The follow-up check for a coaching talk on ' || to_char(c.held_on, 'Mon FMDD') || '. Answer it on HR, Coaching.', '#hr/coaching', 'normal', true);
+        'The follow-up check for a coaching talk on ' || to_char(c.held_on, 'Mon FMDD') || '. Answer it on Performance, Coaching.', '#hr/coaching', 'normal', true);
       update public.hr_coaching set check_card_at = now() where id = c.id;
     end if;
   end loop;
@@ -207,7 +207,7 @@ begin
     n_notyet := n_notyet + 1;
     if live then
       perform public.hr_coach_side_card('ops_coach_notyet_' || c.id, c, zach, 'Coaching did not help yet: ' || public.hr_short_name(c.caregiver),
-        'The coach says it is still happening after the follow-up check. Decide the next step on HR.', '#hr/oversight', 'normal', true);
+        'The coach says it is still happening after the follow-up check. Decide the next step on Performance.', '#hr/oversight', 'normal', true);
       update public.hr_coaching set notyet_card_at = now() where id = c.id;
     end if;
   end loop;
