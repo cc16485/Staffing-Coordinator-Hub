@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# 1133 · STAFFING SERVER · COMMUNITY AMBASSADOR APPLICATIONS (Samantha approved step 1, 2026-10-26).
+# 1134 · STAFFING SERVER · COMMUNITY AMBASSADOR APPLICATIONS (Samantha approved step 1, 2026-10-26).
 # lead-intake learns the mo-care.com/ambassadors application: it becomes ONE Referral Partner Desk record (type Community
 # Ambassador, status applied), never a lead; healthcare work is flagged for the owners; the owners get one email.
 # Nothing is sent to the applicant, no mailing address is kept, and nothing is about money.
@@ -86,5 +86,5 @@ chk(n1 == n0, f"no inquiry was added by this step ({n1})", f"the inquiry count m
 a1 = amb_count()
 chk(a1 == a0, f"no ambassador application was added by this step ({a1})", f"the application count moved from {a0} to {a1}: tell Claude")
 say()
-say("  1133: " + ("DONE. The server takes ambassador applications (never as leads). Next: Claude merges the Hub approval step, then the website page." if not L.fails else "NOT COMPLETE. See the ✗ lines above."))
+say("  1134: " + ("DONE. The server takes ambassador applications (never as leads). Next: Claude merges the Hub approval step, then the website page." if not L.fails else "NOT COMPLETE. See the ✗ lines above."))
 done(0 if not L.fails else 1)

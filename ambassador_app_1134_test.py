@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Rehearsal of 1133 (ambassador_app_1133.py) against a FAKE Supabase (management API, functions, SQL) and a FAKE supabase CLI,
-# from a fresh worktree of this commit (as the Desktop step runs it). Never touches a real project.  python3 ambassador_app_1133_test.py
+# Rehearsal of 1134 (ambassador_app_1134.py) against a FAKE Supabase (management API, functions, SQL) and a FAKE supabase CLI,
+# from a fresh worktree of this commit (as the Desktop step runs it). Never touches a real project.  python3 ambassador_app_1134_test.py
 import json, os, subprocess, tempfile, threading, http.server, hashlib, re, shutil
 HERE = os.path.dirname(os.path.abspath(__file__))
 res = []; ck = lambda n, c, note="": res.append((n, bool(c), "" if c else str(note)[-1500:]))
@@ -29,7 +29,7 @@ class H(http.server.BaseHTTPRequestHandler):
         return self._send(400, {"message": "unexpected query " + q[:120]})
 srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H); threading.Thread(target=srv.serve_forever, daemon=True).start()
 URL = f"http://127.0.0.1:{srv.server_address[1]}"
-TMP = tempfile.mkdtemp(prefix="t1133-"); WT = os.path.join(TMP, "wt")
+TMP = tempfile.mkdtemp(prefix="t1134-"); WT = os.path.join(TMP, "wt")
 subprocess.run(["git", "-C", HERE, "worktree", "add", "-q", "--detach", WT, "HEAD"], check=True)
 FAKEBIN = os.path.join(TMP, "bin"); os.makedirs(FAKEBIN); DEPLOYS = os.path.join(TMP, "deploys")
 open(os.path.join(FAKEBIN, "supabase"), "w").write(f"""#!/usr/bin/env python3
@@ -49,15 +49,15 @@ def go(**m):
     if os.path.exists(DEPLOYS): os.remove(DEPLOYS)
     rep = os.path.join(TMP, "report.txt")
     if os.path.exists(rep): os.remove(rep)
-    env = dict(os.environ, SB_STEP="1133", SB_TOKEN="sbp_fake", SB_REPORT=rep, SB_SUPA_CLI=os.path.join(FAKEBIN, "supabase"), SB_API_BASE=URL, SB_FN_BASE=URL,
+    env = dict(os.environ, SB_STEP="1134", SB_TOKEN="sbp_fake", SB_REPORT=rep, SB_SUPA_CLI=os.path.join(FAKEBIN, "supabase"), SB_API_BASE=URL, SB_FN_BASE=URL,
                SB_FNROOT=os.path.join(WT, "supabase/functions"), SB_SHAS=json.dumps(m.get("shas", SHAS)), SB_MAIN_REF="HEAD", SB_BASE="HEAD~1", SB_SETTLE="0",
                SB_FORM_TOKEN="tok", SB_NODE="none" if m.get("no_node") else (shutil.which("node") or ""))
-    p = subprocess.run(["python3", os.path.join(WT, "ambassador_app_1133.py")], cwd=WT, env=env, capture_output=True, text=True)
+    p = subprocess.run(["python3", os.path.join(WT, "ambassador_app_1134.py")], cwd=WT, env=env, capture_output=True, text=True)
     dep = open(DEPLOYS).read().split("\n")[:-1] if os.path.exists(DEPLOYS) else []
     return p.returncode, (open(rep).read() if os.path.exists(rep) else p.stdout + p.stderr), dep
 try:
     c, o, d = go()
-    ck("clean run: DONE, exit 0", c == 0 and "1133: DONE" in o, o)
+    ck("clean run: DONE, exit 0", c == 0 and "1134: DONE" in o, o)
     ck("clean run: the tests ran (fake data only)", "the ambassador application, partner link, web referral and app sign-up tests pass" in o, o)
     ck("clean run: lead-intake only, re-deployed with the gateway check kept off", d == ["lead-intake nojwt"] and "gateway sign-in check off (kept)" in o, [d, o])
     ck("clean run: says how many ambassador applications are saved, and none was added", "ambassador applications saved now: 0" in o and "no ambassador application was added by this step (0)" in o, o)
