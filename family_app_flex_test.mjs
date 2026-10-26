@@ -347,7 +347,9 @@ ck('the sender is registered (outreach SENDER_REGISTER and Needs Attention words
 // 2026-10-16 her two named family messages (caregivers are interested; a caregiver is confirmed) go ONLY through family-offer-db.ts,
 // each behind its own recorded approval; the engine itself never addresses a family
 const fdb = fs.readFileSync(path.join(F, '_shared/family-offer-db.ts'), 'utf8')
-ck('no family send in the offer engine itself (only through the two approved family messages)', !/audience: 'family'|circle-send/i.test(fx2 + shared))
+// 2026-10-25: the one exception in family-offer/index.ts is the AxisCare welcome email (her switch family_axis_welcome_auto)
+const fx2Rest = fx2.replace(/const sendAxis = [\s\S]*?\n}\n/, '')
+ck('no family send in the offer engine itself (only the two approved family messages, and the AxisCare welcome behind its own switch)', !/audience: 'family'|circle-send/i.test(fx2Rest + shared) && /sender: 'family-axis-welcome'/.test(fx2) && (fx2.match(/audience: 'family'/g) ?? []).length === 1)
 ck('...each family message checks its own recorded approval first', /family_choose_text_approved/.test(fdb.slice(fdb.indexOf('textFamily:'))) && /family_confirm_text_approved/.test(fdb.slice(fdb.indexOf('tellFamily:'), fdb.indexOf('clientAbout:'))))
 ck('no secret or key in any file', ![fx2, shared, fs.readFileSync(path.join(F, '_shared/offer-links.ts'), 'utf8')].some((s) => /sb_secret_|sbp_|eyJhbGci/.test(s)))
 const all = [shared, fs.readFileSync(path.join(F, '_shared/family-app.ts'), 'utf8'), fs.readFileSync(path.join(F, '_shared/family-app-office.ts'), 'utf8'), fx2, fs.readFileSync('family_app_flex.sql', 'utf8')]
