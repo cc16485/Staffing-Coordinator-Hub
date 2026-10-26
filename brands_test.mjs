@@ -38,25 +38,26 @@ if (oldSrc) {
   try {
     const OLD = await import(pathToFileURL(tmp).href), NEW = await imp('family-app-office.ts')
     void OLD
-    // 2026-10-17 her brief ("Family Welcome Email, Text Messages & Scheduling Type") and approval: three versions, word for word
+    // 2026-10-17 her brief ("Family Welcome Email, Text Messages & Scheduling Type") and approval; 2026-10-25 HER CHANGE: two
+    // separate emails, the AxisCare one (automatic, AxisCare only) and the Booking App one (by hand, the app only)
     const W = { first: 'Lisa', client: 'Dorothy', email: 'lisa.ray@example.com', phone: '(417) 234-8494' }
-    const T = (k, ax = true) => NEW.welcomeText(W.first, W.client, W.email, W.phone, ax, NEW_MO(), k), E = (k, ax = true, pilot = true) => NEW.welcomeEmail(W.first, W.client, W.email, W.phone, ax, NEW_MO(), pilot, k)
-    ck('WELCOME texts: the three approved texts, word for word',
-      T('regular') === "Hi Lisa, welcome to Caring Companions! You can follow Dorothy's visits, care notes and invoices in the AxisCare Family Portal. Set it up here: https://16485.axiscare.com/?user-connect.php&action=activate Your welcome email has the steps, plus our optional Booking App. Questions? (417) 234-8494" &&
-      T('flexible') === "Hi Lisa, welcome to Caring Companions! You can request care for Dorothy whenever you need it in our Booking App: https://family.mo-care.com Sign in with lisa.ray@example.com and we'll email you a code. Your welcome email has the full steps. Questions? (417) 234-8494" &&
-      T('both') === "Hi Lisa, welcome to Caring Companions! Follow Dorothy's visits, care notes and invoices in the AxisCare Family Portal, and request care on other days in our Booking App (https://family.mo-care.com). Your welcome email has the steps for both. Questions? (417) 234-8494", [T('regular'), T('flexible'), T('both')])
+    const T = (k) => NEW.welcomeText(W.first, W.client, W.email, W.phone, NEW_MO(), k), E = (k, pilot = true) => NEW.welcomeEmail(W.first, W.client, W.email, W.phone, NEW_MO(), pilot, k)
+    const AX = NEW.axisWelcomeEmail(W.first, W.client, W.email, W.phone, NEW_MO())
+    ck('BOOKING APP texts: the app only, never AxisCare',
+      T('flexible') === "Hi Lisa, welcome to Caring Companions! You can request care for Dorothy whenever you need it in our Booking App: https://family.mo-care.com Sign in with lisa.ray@example.com and we'll email you a code. Your email has the full steps. Questions? (417) 234-8494" &&
+      T('regular') === "Hi Lisa, you can now request care for Dorothy on other days or times in the Caring Companions Booking App: https://family.mo-care.com Sign in with lisa.ray@example.com and we'll email you a code. Your email has the full steps. Questions? (417) 234-8494" &&
+      T('both') === T('regular'), [T('regular'), T('flexible'), T('both')])
     const r = E('regular').html, f = E('flexible').html, b2 = E('both').html
-    const order = (html) => html.indexOf('Activate your account') < html.indexOf('Open the Booking App') ? 'axis-first' : 'app-first'
-    ck('WELCOME emails: Regular = AxisCare first, Booking App marked Optional; Flexible = app first; Combination = AxisCare then app, both solid buttons',
-      order(r) === 'axis-first' && />Optional</.test(r) && order(f) === 'app-first' && !/>Optional</.test(f) && order(b2) === 'axis-first' && !/>Optional</.test(b2), [order(r), order(f), order(b2)])
-    ck('WELCOME emails: Flexible never says "extra" or "additional visits"; nobody is told regular visits "stay as they are"', !/extra|additional visit/i.test(f) && !/stay just as they are/i.test(r + f + b2))
-    ck('WELCOME emails: the right links (AxisCare activation, AxisCare sign-in, the Booking App, the phone) and How booking works', [r, f, b2].every((x) => x.includes('href="https://16485.axiscare.com/?user-connect.php&action=activate"') && x.includes('href="https://16485.axiscare.com/"') && x.includes('href="https://family.mo-care.com"') && x.includes('tel:+14172348494') && /How booking works/.test(x) && /any day between 7 AM and 6 PM/.test(x)))
-    ck('WELCOME emails (her rule 10-25): Wellness Care only, no 8-hour weekly minimum, no short-visit rate, office not involved, not guaranteed', [r, f, b2].every((x) => /Wellness Care only/.test(x) && /8-hour weekly minimum/.test(x) && /higher rate for short shifts/.test(x) && /office staff aren't involved in app bookings/.test(x) && /A visit isn't guaranteed/.test(x) && /If no caregiver responds, the visit won't happen/.test(x)))
-    ck('WELCOME emails: pilot line on by default, off by the setting; no em dashes', /first families to use the Booking App/.test(r) && !/first families/.test(E('regular', true, false).html) && !/—/.test(r + f + b2 + T('regular') + T('flexible') + T('both')))
-    ck('WELCOME without the AxisCare part: only the Booking App section, and the text is the app text', !/Activate your account/.test(E('regular', false).html) && /Open the Booking App/.test(E('regular', false).html) && /Booking App: https:\/\/family/.test(T('regular', false)))
+    ck('AXISCARE email: AxisCare only (activation, sign-in, the phone), not a word about the Booking App', AX.html.includes('href="https://16485.axiscare.com/?user-connect.php&action=activate"') && AX.html.includes('href="https://16485.axiscare.com/"') && AX.html.includes('tel:+14172348494') && /lisa\.ray@example\.com/.test(AX.html) && !/Booking App|family\.mo-care|first families/.test(AX.html) && AX.subject === "Welcome to Caring Companions: follow Dorothy's care online", AX.subject)
+    ck('AXISCARE email never assumes set days (app-only clients are real)', !/set days|recurring schedule|regular schedule/i.test(AX.html))
+    ck('BOOKING APP emails: the app only, no AxisCare in any version', [r, f, b2].every((x) => /Open the Booking App/.test(x) && !/Activate your account|16485/.test(x)))
+    ck('BOOKING APP emails: Flexible never says "extra" or "additional visits"; nobody is told regular visits "stay as they are"', !/extra|additional visit/i.test(f) && !/stay just as they are/i.test(r + f + b2))
+    ck('BOOKING APP emails: the app link, the phone and How booking works', [r, f, b2].every((x) => x.includes('href="https://family.mo-care.com"') && x.includes('tel:+14172348494') && /How booking works/.test(x) && /any day between 7 AM and 6 PM/.test(x)))
+    ck('BOOKING APP emails (her rule 10-25): Wellness Care only, no 8-hour weekly minimum, no short-visit rate, office not involved, not guaranteed', [r, f, b2].every((x) => /Wellness Care only/.test(x) && /8-hour weekly minimum/.test(x) && /higher rate for short shifts/.test(x) && /office staff aren't involved in app bookings/.test(x) && /A visit isn't guaranteed/.test(x) && /If no caregiver responds, the visit won't happen/.test(x)))
+    ck('pilot line on the Booking App email by default, off by the setting; no em dashes anywhere', /first families to use the Booking App/.test(r) && !/first families/.test(E('regular', false).html) && !/—/.test(r + f + b2 + AX.html + T('regular') + T('flexible')))
     const okb = B.brand('OK'); okb.app_url = 'https://family.example'; okb.app_host = 'family.example'
-    const t = NEW.welcomeText('Ann', 'Bea', 'a@b.c', '(405) 500-1758', false, okb, 'flexible'), em = NEW.welcomeEmail('Ann', 'Bea', 'a@b.c', '(405) 500-1758', false, okb, true, 'flexible')
-    ck('an Oklahoma welcome (once its app exists) carries no Missouri name, site or number', /welcome to Caring Companions Oklahoma/.test(t) && !/mo-care|417|In-Home Senior Care/.test(t + em.html + em.subject) && /Welcome to Caring Companions Oklahoma/.test(em.subject), { t, s: em.subject })
+    const t = NEW.welcomeText('Ann', 'Bea', 'a@b.c', '(405) 500-1758', okb, 'flexible'), em = NEW.welcomeEmail('Ann', 'Bea', 'a@b.c', '(405) 500-1758', okb, true, 'flexible'), ax2 = NEW.axisWelcomeEmail('Ann', 'Bea', 'a@b.c', '(405) 500-1758', okb)
+    ck('an Oklahoma welcome (once its app exists) carries no Missouri name, site or number', /welcome to Caring Companions Oklahoma/.test(t) && !/mo-care|417|In-Home Senior Care/.test(t + em.html + em.subject + ax2.html + ax2.subject) && /Welcome to Caring Companions Oklahoma/.test(em.subject + ax2.subject), { t, s: em.subject })
   } finally { fs.unlinkSync(tmp) }
 } else console.log('  (origin/main not readable: the Missouri guard was skipped)')
 function NEW_MO() { return B.brand('MO') }

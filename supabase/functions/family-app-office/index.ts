@@ -42,7 +42,7 @@ const famAdmin = (path: string, init: RequestInit = {}) => fetch(`${FAMILY_URL}/
   headers: { apikey: FAMILY_SERVICE, Authorization: `Bearer ${FAMILY_SERVICE}`, 'Content-Type': 'application/json', ...(init.headers ?? {}) } })
 
 const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } })
-const CONTACT_COLS = 'id, name, email, phone, sms_consent, circle_id, relationship, hipaa_authorized, hipaa_office_ok_at, hipaa_office_ok_by, phone_confirmed_at, phone_confirmed_by, phone_confirmed_number, stopped_at, axiscare_removed_at, app_user_id, app_status, app_can_book, app_invited_at, app_invited_by, welcome_sent_at, welcome_sent_by, welcome_version, welcome_how, welcome_skip_at, welcome_skip_reason'
+const CONTACT_COLS = 'id, name, email, phone, sms_consent, circle_id, relationship, hipaa_authorized, hipaa_office_ok_at, hipaa_office_ok_by, phone_confirmed_at, phone_confirmed_by, phone_confirmed_number, stopped_at, axiscare_removed_at, app_user_id, app_status, app_can_book, app_invited_at, app_invited_by, welcome_sent_at, welcome_sent_by, welcome_version, welcome_how, welcome_skip_at, welcome_skip_reason, axis_welcome_sent_at, axis_welcome_sent_by, axis_welcome_how, axis_welcome_failed_at, axis_welcome_failed_why'
 
 // The App fee check (family-fee.ts): App plan clients are active Family Circles ticked app_plan with an AxisCare client.
 const appClients = async () => ((await db.from('care_circles').select('id, client_name, axiscare_client_id, app_plan_since, active').eq('app_plan', true)).data ?? [])
@@ -65,7 +65,7 @@ const deps: OfficeDeps = {
   now: () => new Date(),
   settings: async () => (await db.from('app_data').select('data').eq('key', 'ops_settings').maybeSingle()).data?.data ?? {},
   contact: async (id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ? (await db.from('circle_contacts').select(CONTACT_COLS).eq('id', id).maybeSingle()).data ?? null : null,
-  circle: async (id) => (await db.from('care_circles').select('id, client_name, active, axiscare_client_id, app_plan, app_plan_since, help_fill, app_tasks, care_scheduling_type').eq('id', id).maybeSingle()).data ?? null,
+  circle: async (id) => (await db.from('care_circles').select('id, client_name, active, axiscare_client_id, app_plan, app_plan_since, help_fill, app_tasks, care_scheduling_type, booking_app_off_at').eq('id', id).maybeSingle()).data ?? null,
   updateContact: async (id, vals) => !(await db.from('circle_contacts').update(vals).eq('id', id)).error,
   circleContacts: async (cid) => (await db.from('circle_contacts').select(CONTACT_COLS).eq('circle_id', cid)).data ?? [],
   members: async () => {
