@@ -235,13 +235,13 @@ export function injuryReviewSummary(r: InjuryReview): string {
    with why; only the HR lead (or Samantha) writes what was found and what happens next. Saved once, never changed. Work
    injury cards go to the HR lead too. ── */
 export const HR_LEAD = 'zach@mo-care.com'
-export const INV_WHY = { notes: "The report doesn't match the shift notes", late: "The office wasn't told when it happened", story: "Stories don't match (client, family or caregiver)",
+export const INV_WHY = { signed: 'Every signed incident report goes to Zach (automatic)', notes: "The report doesn't match the shift notes", late: "The office wasn't told when it happened", story: "Stories don't match (client, family or caregiver)",
   ane: 'Possible abuse or neglect', other: 'Something else' } as const
 export const INV_OUTCOME = { explained: 'Nothing more to do (it was explained)', coaching: 'A coaching conversation', formal: 'A formal case (write-up)', ended: 'Ending their work with us', other: 'Something else' } as const
 export type InvAsk = { why: (keyof typeof INV_WHY)[]; note: string }
 export type InvFindings = { outcome: keyof typeof INV_OUTCOME; findings: string; spoke_with: string }
 export function cleanAsk(raw: Any): InvAsk {
-  const why = (Array.isArray(raw?.why) ? raw.why : []).map(String).filter((k: string, i: number, a: string[]) => k in INV_WHY && a.indexOf(k) === i) as (keyof typeof INV_WHY)[]
+  const why = (Array.isArray(raw?.why) ? raw.why : []).map(String).filter((k: string, i: number, a: string[]) => k in INV_WHY && k !== 'signed' && a.indexOf(k) === i)   /* 'signed' is only the automatic hand-off's */ as (keyof typeof INV_WHY)[]
   return { why, note: str(raw?.note, 1500) }
 }
 export function askMissing(a: InvAsk): string {
