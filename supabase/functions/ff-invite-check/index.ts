@@ -42,24 +42,31 @@ async function visitFacts(today: string): Promise<{ ok: boolean; truncated: bool
   const site = Deno.env.get('AXISCARE_SITE') || Deno.env.get('AXISCARE_SITE_NUMBER') || ''
   const firstByClient = new Map<string, string>(), workedCg = new Set<string>()
   if (!token || !/^\d+$/.test(site)) return { ok: false, truncated: false, firstByClient, workedCg, error: 'AxisCare credentials are not set' }
-  let url: string | null = `https://${site}.axiscare.com/api/visits?startDate=${R.VISITS_FROM}&endDate=${today}`
+  /* four weeks at a time, so no one request asks AxisCare for months of visits */
+  const windows: Array<[string, string]> = []
+  for (let from = R.VISITS_FROM; from <= today; from = R.addDays(from, 28)) { const to = R.addDays(from, 27); windows.push([from, to < today ? to : today]) }
+  let url: string | null = null
   try {
-    for (let page = 0; url && page < 120; page++) {
-      let r: Response | null = null
-      for (let i = 0; i < 3; i++) {
-        r = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': '2023-10-01' } })
-        if (r.status === 429) { await new Promise((ok) => setTimeout(ok, 2000 * (i + 1))); continue }
-        break
+    for (const [from, to] of windows) {
+      url = `https://${site}.axiscare.com/api/visits?startDate=${from}&endDate=${to}`
+      for (let page = 0; url && page < 60; page++) {
+        let r: Response | null = null
+        for (let i = 0; i < 3; i++) {
+          r = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'X-AxisCare-Api-Version': '2023-10-01' } })
+          if (r.status === 429) { await new Promise((ok) => setTimeout(ok, 2000 * (i + 1))); continue }
+          break
+        }
+        if (!r || !r.ok) return { ok: false, truncated: false, firstByClient, workedCg, error: `AxisCare's visit list answered ${r?.status ?? 'nothing'}` }
+        const j: Any = await r.json().catch(() => ({}))
+        for (const v of rowsOf(j?.results?.visits ?? j?.visits)) {
+          if (!R.completed(v)) continue
+          const day = R.dayOf(v?.clockIn?.time ?? v?.clockIn), cl = S(v?.client?.id), cg = S(v?.caregiver?.id)
+          if (cl && day && (!firstByClient.has(cl) || day < firstByClient.get(cl)!)) firstByClient.set(cl, day)
+          if (cg) workedCg.add(cg)
+        }
+        url = j?.results?.nextPage ?? j?.nextPage ?? null
       }
-      if (!r || !r.ok) return { ok: false, truncated: false, firstByClient, workedCg, error: `AxisCare's visit list answered ${r?.status ?? 'nothing'}` }
-      const j: Any = await r.json().catch(() => ({}))
-      for (const v of rowsOf(j?.results?.visits ?? j?.visits)) {
-        if (!R.completed(v)) continue
-        const day = R.dayOf(v?.clockIn?.time ?? v?.clockIn), cl = S(v?.client?.id), cg = S(v?.caregiver?.id)
-        if (cl && day && (!firstByClient.has(cl) || day < firstByClient.get(cl)!)) firstByClient.set(cl, day)
-        if (cg) workedCg.add(cg)
-      }
-      url = j?.results?.nextPage ?? j?.nextPage ?? null
+      if (url) break   // a window longer than this reads: said below as truncated
     }
   } catch (e) { return { ok: false, truncated: false, firstByClient, workedCg, error: 'AxisCare could not be reached: ' + String(e).slice(0, 120) } }
   return { ok: true, truncated: !!url, firstByClient, workedCg }
