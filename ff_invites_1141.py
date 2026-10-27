@@ -55,7 +55,7 @@ for k in sorted(L.need(FNROOT, FN) | {SQLF}):
 if drift: stop("this isn't the same as GitHub's main yet (merge the pull request first, or newer work landed since: " + ", ".join(drift)[:240] + ")")
 ok("the reviewed build is what is on GitHub's main")
 if NODE:
-    for t, must in (("ff_invite_check_test.mjs", "54/54"), ("audience_guard_test.mjs", "21/21"), ("campaign_auto_hold_test.mjs", "8/8")):
+    for t, must in (("ff_invite_check_test.mjs", "93/93"), ("audience_guard_test.mjs", "21/21"), ("campaign_auto_hold_test.mjs", "8/8")):
         c, o = run([NODE, t], cwd=ROOT)
         if c != 0 or must not in o: stop(f"the tests failed ({t}): " + " ".join(l.strip() for l in o.splitlines() if "✗" in l)[:240])
     ok("the invite check and campaign guard tests pass (fake data only)")
