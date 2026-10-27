@@ -16,9 +16,9 @@ const cg = (id, first, last, hire, o = {}) => ({ id, firstName: first, lastName:
 const cl = (id, first, last, o = {}) => ({ id, firstName: first, lastName: last, status: { active: o.active !== false, label: o.active === false ? 'Discharged' : 'Active' }, classes: o.classes ?? [] })
 const visit = (client, caregiver, day, o = {}) => ({ id: `${client}-${caregiver}-${day}`, client: { id: client }, caregiver: { id: caregiver },
   clockIn: o.noOut === 'in' ? null : { time: day + 'T15:00:00Z' }, clockOut: o.noOut ? null : { time: day + 'T19:00:00Z' }, removed: !!o.removed })
-let T, AX, SENT, AXDOWN, ISSUEDOWN, OPTDOWN, MSGS, CONTACTS, FAILMSG
+let T, AX, SENT, AXDOWN, ISSUEDOWN, OPTDOWN, MSGS, CONTACTS, FAILMSG, VISDOWN
 const reset = () => {
-  AXDOWN = false; ISSUEDOWN = false; OPTDOWN = false; SENT = []; MSGS = []; CONTACTS = {}; FAILMSG = ''
+  AXDOWN = false; ISSUEDOWN = false; OPTDOWN = false; VISDOWN = false; SENT = []; MSGS = []; CONTACTS = {}; FAILMSG = ''
   AX = {
     caregivers: [cg(1, 'Ann', 'Able', '2026-09-01'), cg(2, 'Bea', 'Best', '2026-11-01'), cg(3, 'Cal', 'Cole', '2026-09-01'), cg(4, 'Dee', 'Dunn', '2026-09-01', { active: false }),
       cg(5, 'Eve', 'East', '2026-09-01'), cg(6, 'Fay', 'Ford', '2026-09-01', { phone: '' }), cg(7, 'Gus', 'Gray', '2026-06-01'), cg(8, 'Pat', 'Practice', '2026-09-01', { phone: '4175550183', email: 'pat@practice.invalid' }),
@@ -84,7 +84,7 @@ const reset = () => {
       { address: 'fay@example.com', channel: 'email', opted_out: true, source: 'stop' }],
     job_applicants: [{ phone: '(417) 555-0005', sms_consent: false, created_at: '2026-08-01' }, { phone: '4175550001', sms_consent: true, created_at: '2026-08-01' }],
     client_pause: [{ axiscare_client_id: '112', status: 'open' }],
-    person_role: [], person_source_id: [], phone_index: [], ff_invites: [], ff_card_requests: [],
+    person_role: [], person_source_id: [], phone_index: [], ff_invites: [], ff_card_requests: [], ff_rewards: [],
     /* the office: Sam and Kry sign in; Kris Lane (by name) and Zed (by email) are office staff who are also AxisCare caregivers */
     staff_roles: [{ person_id: 'p-s', entity: 'cc_ihs', role: 'owner_admin' }, { person_id: 'p-k', entity: 'cc_ihs', role: 'care_coordinator' }, { person_id: 'p-kl', entity: 'cc_ihs', role: 'care_coordinator' }, { person_id: 'p-z', entity: 'cc_ihs', role: 'owner_admin' }],
     persons: [{ person_id: 'p-s', full_name: 'Sam Boss', primary_email: 'sam@mo-care.com', active: true }, { person_id: 'p-k', full_name: 'Kry Desk', primary_email: 'kry@mo-care.com', active: true },
@@ -170,7 +170,8 @@ globalThis.fetch = async (url, o = {}) => { const u = String(url)
   if (u.includes('/api/visits')) {
     if (AXDOWN) return new Response('{}', { status: 500 })
     const p = new URL(u), page = Number(p.searchParams.get('page') || 0), from = p.searchParams.get('startDate'), to = p.searchParams.get('endDate')
-    const vs = AX.visits.filter((v) => { const d = (v.clockIn?.time || v.clockOut?.time || '2026-09-01').slice(0, 10); return d >= from && d <= to })
+    const cid = p.searchParams.get('clientIds'); if (cid && VISDOWN) return new Response('{}', { status: 500 })
+    const vs = AX.visits.filter((v) => { const d = (v.clockIn?.time || v.clockOut?.time || '2026-09-01').slice(0, 10); return d >= from && d <= to && (!cid || String(v.client.id) === cid) })
     const half = Math.ceil(vs.length / 2), slice = page === 0 ? vs.slice(0, half) : vs.slice(half)
     return new Response(JSON.stringify({ results: { visits: Object.fromEntries(slice.map((v, i) => [i, v])), nextPage: page === 0 ? u + '&page=1' : null } }), { status: 200 })
   }
@@ -308,6 +309,66 @@ try {
   await owner('jwt-sam', { action: 'switch', name: 'ff_program_paused', on: true }); r = await owner('jwt-sam', { action: 'resend', key: 'fam_1' })
   ck('Resend while paused is refused', r.s === 409 && /paused/.test(r.j.error), r.j)
 
+
+  /* ── STEP 5: the $100 lines ── */
+  const days = (ax, from, n, hours) => Array.from({ length: n }, (_, i) => { const d = new RealDate(RealDate.parse(from + 'T12:00:00Z') + i * 864e5).toISOString().slice(0, 10)
+    return { id: `r${ax}-${d}`, client: { id: ax }, caregiver: { id: 1 }, clockIn: { time: d + 'T15:00:00Z' }, clockOut: { time: new RealDate(RealDate.parse(d + 'T15:00:00Z') + hours * 36e5).toISOString() } } })
+  const setupRewards = () => {
+    T.app_data.referral_orgs = [
+      { id: 'ff_fam_1', name: 'Dana Ridge', type: 'Friends & Family', program_track: 'friends', program_status: 'active', partner_code: 'DANA-K7', ff_key: 'fam_1', ff_kind: 'family', ff_client: 'Rose Ridge', ff_client_ax: '101' },
+      { id: 'ff_cg_1', name: 'Ann Able', type: 'Friends & Family', program_track: 'friends', program_status: 'active', partner_code: 'ANN-M4', ff_key: 'cg_1', ff_kind: 'caregiver' },
+      { id: 'org-pro', name: 'Mercy Hospital', partner_code: 'MERCY-K7' }]
+    const L2 = (id, org, ax, fund, fs, o = {}) => ({ id, referral_org_id: org, axiscare_client_id: ax, funding_source: fund, first_shift_at: fs, status: 'Converted', created_at: '2026-10-01T15:00:00Z', ...o })
+    T.app_data.leads.push(
+      L2('R1', 'ff_fam_1', '201', 'private', '2026-10-20T15:00:00Z', { first_name: 'Nell', last_name: 'New', client_first_name: 'Nora', client_last_name: 'New' }),
+      L2('R2', 'ff_cg_1', '202', 'private', '2026-10-21T15:00:00Z', { first_name: 'Otto', last_name: 'Able', client_first_name: 'Opal', client_last_name: 'Able' }),
+      L2('R3', 'ff_fam_1', '203', 'ltc', '2026-10-22T15:00:00Z', { client_first_name: 'Lena', client_last_name: 'Long' }),
+      L2('R4', 'ff_fam_1', '204', 'private', '2026-10-23T15:00:00Z', { client_first_name: 'Pete', client_last_name: 'Prior' }),
+      L2('R5', 'ff_fam_1', '101', 'private', '2026-10-24T15:00:00Z', { client_first_name: 'Rose', client_last_name: 'Ridge' }),
+      L2('R6', 'ff_fam_1', '206', 'private', null, { client_first_name: 'Not', client_last_name: 'Started' }),
+      L2('R7', 'org-pro', '207', 'private', '2026-10-20T15:00:00Z', { client_first_name: 'Pro', client_last_name: 'Referral' }),
+      L2('R8', 'ff_cg_1', '208', 'private', '2026-10-25T15:00:00Z', { client_first_name: 'Few', client_last_name: 'Hours' }))
+    AX.visits.push(...days('201', '2026-10-20', 6, 4), ...days('202', '2026-10-21', 5, 5), ...days('203', '2026-10-22', 6, 4), ...days('204', '2026-09-01', 1, 3), ...days('204', '2026-10-23', 6, 4),
+      ...days('101', '2026-10-24', 6, 4), ...days('208', '2026-10-25', 3, 4), ...days('207', '2026-10-20', 6, 4))
+  }
+  const line = (lid) => T.ff_rewards.find((x) => x.lead_id === lid)?.line
+  reset(); setupRewards(); r = await call()
+  ck('the morning run keeps a $100 line for each Friends & Family referral that has had its first visit (6), not the unstarted one or a professional partner\'s', T.ff_rewards.length === 6 && !line('R6') && !line('R7') && r.j.rewards?.created === 6, { n: T.ff_rewards.length, rewards: r.j.rewards })
+  ck('...while Invitations are OFF (tracking runs anyway, as she decided), and nobody is contacted', r.j.live === false && !MSGS.length)
+  ck('Nora (Dana\'s referral): 24 hours read from AxisCare, payment not checked: On the way', line('R1')?.hours === 24 && line('R1').status === 'on_the_way' && line('R1').referrer === 'Dana Ridge' && line('R1').referrer_kind === 'family' && line('R1').amount === 100, line('R1'))
+  ck("...Opal (Ann the caregiver's referral) shares Ann's last name: the reason shows already", (line('R2')?.reasons || []).some((w) => /maybe their own relative/.test(w)), line('R2'))
+  ck('...Lena pays with long-term care insurance: "reviewed separately"', (line('R3')?.reasons || []).some((w) => /long-term care insurance \(reviewed separately\)/.test(w)), line('R3'))
+  ck('...Pete had a visit back in September: "served this client before"', (line('R4')?.reasons || []).some((w) => /served this client before/.test(w)), line('R4'))
+  ck("...Dana referring her own client (Rose): self-referral", (line('R5')?.reasons || []).some((w) => /referred their own client/.test(w)), line('R5'))
+  ck('...Few Hours: 12 of 20', line('R8')?.hours === 12, line('R8'))
+  const own = async (body) => owner('jwt-sam', { action: 'reward', ...body })
+  r = await own({ lead_id: 'R1', op: 'approve' }); ck('approving before 20 hours AND payment received is refused', r.s === 409 && /20 completed hours and payment received first/.test(r.j.error), r.j)
+  r = await own({ lead_id: 'R1', op: 'payment', on: true }); ck('the owner ticks "payment received": Nora is READY for approval', r.s === 200 && line('R1').status === 'ready' && line('R1').payment_checked_by === 'Sam Boss' && /^Ready/.test(r.j.line.words), r.j)
+  r = await own({ lead_id: 'R8', op: 'payment', on: true }); ck('payment received but only 12 hours: still On the way (two separate checks)', line('R8').status === 'on_the_way')
+  r = await owner('jwt-kry', { action: 'reward', lead_id: 'R1', op: 'approve' }); ck('a Care Coordinator cannot touch a reward line', r.s === 403)
+  r = await own({ lead_id: 'R1', op: 'approve' }); ck('an owner approves a READY line', r.s === 200 && line('R1').status === 'approved' && line('R1').decided_by === 'Sam Boss')
+  r = await own({ lead_id: 'R1', op: 'done' }); ck('Credit applied needs the date', r.s === 409 && /What date did the credit go on the invoice/.test(r.j.error))
+  r = await own({ lead_id: 'R1', op: 'done', date: '2026-11-21' }); ck("a family line ends as Credit applied, with the date", line('R1').status === 'applied' && line('R1').done_on === '2026-11-21' && /Credit applied 2026-11-21/.test(r.j.line.words), r.j)
+  await own({ lead_id: 'R2', op: 'payment', on: true })
+  ck('Opal: 25 hours and payment received, but a reason: UNDER REVIEW', line('R2').status === 'under_review', line('R2'))
+  r = await own({ lead_id: 'R2', op: 'approve' }); ck('approving an Under review line needs a written reason', r.s === 409 && /Say why/.test(r.j.error))
+  r = await own({ lead_id: 'R2', op: 'approve', why: 'Not related, checked with Ann' }); ck('...with a reason it is approved, and the reason is kept', line('R2').status === 'approved' && line('R2').decision_why === 'Not related, checked with Ann')
+  r = await own({ lead_id: 'R2', op: 'done', date: '2026-11-27' }); ck('a caregiver line ends as Paid, on the payroll date', line('R2').status === 'paid' && /Paid on the 2026-11-27 payroll/.test(r.j.line.words), r.j)
+  r = await own({ lead_id: 'R4', op: 'not_earned' }); ck('Not earned needs a reason', r.s === 409)
+  r = await own({ lead_id: 'R4', op: 'not_earned', why: 'A returning client' }); ck('...with a reason it is Not earned', line('R4').status === 'not_earned')
+  ck('every change keeps who, when and why', (line('R2').history || []).filter((h) => h.by === 'Sam Boss').length >= 3 && line('R2').history.some((h) => h.why === 'Not related, checked with Ann'))
+  AX.visits.push(...days('208', '2026-11-10', 3, 4)); r = await call()
+  ck('the next morning: Few Hours reaches 24 hours with payment already ticked: READY', line('R8').hours === 24 && line('R8').status === 'ready' && line('R8').hours_met_on === '2026-11-20', line('R8'))
+  ck('...settled lines (applied, paid, not earned) are left alone', line('R1').status === 'applied' && line('R2').status === 'paid' && line('R4').status === 'not_earned')
+  T.app_data.leads.push({ id: 'R9', referral_org_id: 'ff_cg_1', axiscare_client_id: '201', funding_source: 'private', first_shift_at: '2026-11-01T15:00:00Z', status: 'Converted', created_at: '2026-11-01T15:00:00Z', client_first_name: 'Nora', client_last_name: 'New' })
+  await call()
+  ck('a second referral for the same client: "another referral reward already exists" (one per new client)', (line('R9')?.reasons || []).some((w) => /another referral reward already exists/.test(w)), line('R9'))
+  VISDOWN = true; const h8 = line('R3').hours; r = await call(); VISDOWN = false
+  ck("AxisCare visits can't be read: said in the run's problems, hours kept as they were, never a guess", /AxisCare visits couldn't be read/.test(r.j.problems.join()) && line('R3').hours === h8 && (line('R3').reasons || []).some((w) => /couldn't be checked in AxisCare/.test(w)), r.j.problems)
+  r = await owner('jwt-sam', { action: 'list' })
+  ck('the owner list carries the reward lines with their words, the amount and the 20 hours', Array.isArray(r.j.rewards) && r.j.rewards.length === 7 && r.j.amount === 100 && r.j.min_hours === 20 && r.j.rewards.every((x) => x.words), r.j.rewards?.map((x) => x.words))
+  ck('nobody was texted or emailed by any of this', !MSGS.length)
+
   /* ── the printed card request (mo-care.com/refer-a-friend) ── */
   let handler2; globalThis.Deno.serve = (h) => { handler2 = h }
   fs.writeFileSync(path.join(tmp, 'card.ts'), shared(fs.readFileSync(path.join(F, 'ff-card-request/index.ts'), 'utf8')))
@@ -351,7 +412,7 @@ try {
   ck('every one of the six serious kinds waits 30 days after it is resolved', R.SERIOUS.length === 6 && R.SERIOUS.every((c) => R.concernsOf([{ category: c, state: 'resolved', axiscare_client_id: '1', resolved_at: '2026-11-19T15:00:00Z' }], [], {}, '2026-11-20').byAx.size === 1))
   ck('every open issue state but Resolved and "Closed, no action needed" holds', ['reported', 'triaged', 'in_progress', 'waiting', 'resolving', 'follow_up'].every((s) => R.concernsOf([{ category: 'billing_hours_question', state: s, axiscare_client_id: '1' }], [], {}, '2026-11-20').byAx.size === 1))
   /* no em dashes in anything a person reads */
-  const words = ['_shared/ff-invite-rules.ts', '_shared/ff-invite-send.ts', 'ff-invite-check/index.ts', 'ff-card-request/index.ts'].map((f) => fs.readFileSync(path.join(F, f), 'utf8')).join('')
+  const words = ['_shared/ff-invite-rules.ts', '_shared/ff-invite-send.ts', '_shared/ff-reward-rules.ts', 'ff-invite-check/index.ts', 'ff-card-request/index.ts'].map((f) => fs.readFileSync(path.join(F, f), 'utf8')).join('')
   ck('no em dashes in the code or its words (rules, wording, both functions)', !words.includes('\u2014'))
 } catch (e) { ck('the test ran', false, String(e?.stack || e)) }
 finally { fs.rmSync(tmp, { recursive: true, force: true }) }
