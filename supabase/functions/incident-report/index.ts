@@ -18,6 +18,9 @@
 //   open    { id }                                -> { url } five minutes; every open logged
 //   relink  { id }                                -> as start: a NEW link for a report still waiting (the old link stops)
 //   cancel  { id }                                a waiting link stops working
+//   review  { id, family, medical, careplan, ane, note }   Stage 2: the office's checklist on a signed report; closes the
+//           card; a care plan change makes a card for the Client Care owner. Saved once, never changed.
+//   list    { caregiver }                         Stage 2: a caregiver's reports (their Performance tab)
 // ── The caregiver (https://cc.mo-care.com/incident.html?t=<code>; no sign-in)
 //   view    { t }                                 -> { first, client_first, happened_on, questions[], note_words, status, practice }
 //   submit  { t, answers, typed_name, strokes, consent: true }  -> { copy_url }
@@ -32,6 +35,7 @@ import { contactForOutbound, normalisePhone } from '../_shared/outreach.ts'
 import { MO_FROM } from '../_shared/office-from.ts'
 import { logOpen, ipOf, clientSubject } from '../_shared/doc-log.ts'
 import { reportSendProblem, ownerFor } from '../_shared/send-problems.ts'
+import { cleanReview, reviewMissing, reviewSummary, HOTLINE } from '../_shared/incident.ts'
 import { BUCKET, LINK_DAYS, OFFICE_PHONE, MAX_TEXT, QUESTIONS, TRUE_WORDS, labelFor, cleanAnswers, answersMissing, toldLate, cleanStrokes, sha256, newToken,
   tokenOk, nameMatches, firstName, shortName, linkFor, draftText, reminderText, caseName, cardState, reminderDue, inReminderHours, noteWords, reportPdf } from '../_shared/incident.ts'
 
@@ -41,6 +45,7 @@ const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: 
 type Any = any
 const PUBLIC = ['view', 'submit']
 const SHOW = 'id,kind,practice,client_ax,client_name,caregiver,happened_on,source_item_id,card_id,status,expires_at,started_by,started_by_name,started_at,sent_at,sent_by,opened_at,reminded_at,submitted_at,signed_name,told_late,pdf_path,cancelled_at,cancelled_by'
+const SHOW_REVIEW = SHOW + ',review,reviewed_by,reviewed_by_name,reviewed_at'
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
@@ -91,6 +96,7 @@ Deno.serve(async (req: Request) => {
       if (error || !data?.signedUrl) throw new Error('could not open the report')
       return json({ ok: true, url: data.signedUrl, expires_in: 300 })
     }
+    if (action === 'review') return await review(db, me, r, b)
     if (action === 'cancel') {
       if (r.status !== 'waiting') return json({ error: 'Only a report still waiting to be filled in can be cancelled.' }, 409)
       const { data: done } = await db.from('incident_report').update({ status: 'cancelled', token_hash: null, cancelled_at: new Date().toISOString(), cancelled_by: me.email })
@@ -119,17 +125,56 @@ async function opsItems(db: Any): Promise<Any[]> { const { data } = await db.fro
 
 /* ── the office's list: a client's reports, or the ones on cards ── */
 async function list(db: Any, live: boolean, b: Any) {
-  let q = db.from('incident_report').select(SHOW + ',answers').order('started_at', { ascending: false }).limit(100)
-  const ax = String(b?.client_ax ?? '')
+  let q = db.from('incident_report').select(SHOW_REVIEW + ',answers').order('started_at', { ascending: false }).limit(100)
+  const ax = String(b?.client_ax ?? ''), cg = String(b?.caregiver ?? '').trim().replace(/\s+/g, ' ')
   const ids = (Array.isArray(b?.ids) ? b.ids : []).map(String).filter((x: string) => /^[0-9a-f-]{36}$/i.test(x)).slice(0, 50)
   if (/^\d+$/.test(ax)) q = q.eq('client_ax', ax)
   else if (ids.length) q = q.in('id', ids)
+  else if (cg.split(' ').length >= 2) q = q.eq('caregiver', cg.slice(0, 120))
   else return json({ error: 'Say which client or which reports.' }, 400)
   const { data, error } = await q
   if (error) throw new Error(error.message)
   const reports = (data || []).map((r: Any) => ({ ...r, answers: r.status === 'submitted' ? r.answers : null,
     questions: r.status === 'submitted' ? QUESTIONS.filter((x) => r.answers && r.answers[x.k] !== undefined).map((x) => ({ k: x.k, label: labelFor(x, r.client_name) })) : null }))
-  return json({ ok: true, live, reports })
+  return json({ ok: true, live, reports, hotline: HOTLINE })
+}
+
+/* ── Stage 2: the office's review of a signed report ── */
+async function review(db: Any, me: Any, r: Any, b: Any) {
+  if (r.status !== 'submitted') return json({ error: 'Only a signed report can be reviewed.' }, 409)
+  if (r.reviewed_at) return json({ error: 'This report was already reviewed by ' + (r.reviewed_by_name || r.reviewed_by) + '.' }, 409)
+  const rv = cleanReview(b)
+  const missing = reviewMissing(rv)
+  if (missing) return json({ error: missing }, 400)
+  const at = new Date().toISOString()
+  const { data: done, error } = await db.from('incident_report').update({ review: rv, reviewed_by: me.email, reviewed_by_name: me.name, reviewed_at: at })
+    .eq('id', r.id).eq('status', 'submitted').is('reviewed_at', null).select('*').maybeSingle()
+  if (error || !done) return json({ error: 'Someone else reviewed it first. Reload.' }, 409)
+  const summary = reviewSummary(rv)
+  await event(db, r.id, 'reviewed', me, { ane: rv.ane.suspect === true, careplan: rv.careplan.change })
+  const out: Record<string, unknown> = { ok: true, summary }
+  if (!done.practice) {
+    try {
+      const items = await opsItems(db)
+      const id = done.card_id || 'ops_inc_' + String(done.id).slice(0, 8)
+      const prev = items.find((x) => x && x.id === id)
+      if (prev) {
+        const history = (Array.isArray(prev.history) ? prev.history : []).concat([{ at, by: me.name, text: 'Reviewed: ' + summary }])
+        await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { ...prev, status: 'done', closed_at: at, closed_by: me.email, close_note: 'Reviewed: ' + summary,
+          next_action: 'Reviewed by ' + me.name + '.', history, last_activity_at: at } })
+      }
+      if (rv.careplan.change) {
+        const owner = await ownerFor(db, 'client_care') || me.email
+        await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id: 'ops_inccp_' + String(done.id).slice(0, 8), kind: 'client_issue', domain: 'client_care', status: 'open',
+          urgency: 'today', owner, owner_name: '', created_at: at, created_by: me.name, created_by_email: me.email, opened_by: 'person', source: 'incident_report', source_id: done.id,
+          incident_id: done.id, client_ax: done.client_ax || '', about: done.client_name, title: 'Update the care plan after the incident: ' + caseName(done),
+          detail: rv.careplan.note, next_action: 'Update ' + firstName(done.client_name) + '\'s care plan (and tell the caregivers who work with them).',
+          due: new Date(Date.now() + 2 * 864e5).toISOString(), last_activity_at: at } })
+        out.careplan_card = true
+      }
+    } catch { /* the review itself is saved; the card can be closed by hand */ }
+  }
+  return json(out)
 }
 
 /* ── the office starts one: who, which client, which day; a private link and the words to check ── */

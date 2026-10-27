@@ -137,6 +137,42 @@ export function noteWords(detail: unknown): string {
   return (m ? m[1] : '').replace(/—/g, ',').trim().slice(0, 1500)
 }
 
+/* ── Stage 2 (2026-10-27): the office's review of a signed report. Every question answered before it closes. ──
+   Missouri's Adult Abuse and Neglect Hotline for suspected abuse, neglect or exploitation (caregivers and agencies are
+   mandated reporters): 1-800-392-0210, open every day. */
+export const HOTLINE = '1-800-392-0210'
+export const MEDICAL = { none: 'No care needed', doctor: 'Saw or called their doctor', urgent: 'Urgent care or the ER', '911': '911 was called', declined: 'Care was offered and declined' } as const
+export type Review = { family: { told: 'yes' | 'not_needed'; who?: string; when?: string; why?: string }; medical: { what: keyof typeof MEDICAL; note?: string };
+  careplan: { change: boolean; note?: string }; ane: { suspect: boolean; hotline_at?: string; reference?: string }; note?: string }
+const str = (v: unknown, n = 300) => String(v ?? '').replace(/\u2014/g, ',').trim().slice(0, n)
+/** Only the known fields, trimmed. */
+export function cleanReview(raw: Any): Review {
+  const f = raw?.family || {}, m = raw?.medical || {}, c = raw?.careplan || {}, a = raw?.ane || {}
+  return { family: f.told === 'yes' ? { told: 'yes', who: str(f.who, 120), when: str(f.when, 80) } : f.told === 'not_needed' ? { told: 'not_needed', why: str(f.why) } : { told: '' as 'yes' },
+    medical: { what: (Object.keys(MEDICAL).includes(String(m.what)) ? String(m.what) : '') as keyof typeof MEDICAL, note: str(m.note) },
+    careplan: { change: c.change === true, note: str(c.note) },
+    ane: a.suspect === true ? { suspect: true, hotline_at: str(a.hotline_at, 80), reference: str(a.reference, 80) } : { suspect: a.suspect === false ? false : (null as unknown as boolean) },
+    note: str(raw?.note, 1500) }
+}
+/** The first thing still missing, in the office's words. '' when the review can close. */
+export function reviewMissing(r: Review): string {
+  if (r.family.told === 'yes' && (!r.family.who || !r.family.when)) return 'Say who in the family was told, and when.'
+  if (r.family.told === 'not_needed' && (r.family.why || '').length < 5) return 'Say why the family did not need to be told.'
+  if (r.family.told !== 'yes' && r.family.told !== 'not_needed') return 'Was the family told? (A person calls them; the Hub never does.)'
+  if (!r.medical.what) return 'Did the client need medical care?'
+  if (r.medical.what !== 'none' && (r.medical.note || '').length < 3) return 'Say a little about the medical care (who, where, what they said).'
+  if (r.careplan.change && (r.careplan.note || '').length < 5) return 'Say what in the care plan needs to change.'
+  if (r.ane.suspect !== true && r.ane.suspect !== false) return 'Could this be abuse, neglect or exploitation? Answer yes or no.'
+  if (r.ane.suspect && (!r.ane.hotline_at || !r.ane.reference)) return `Call the hotline (${HOTLINE}) and write down when you called and the report number they gave you.`
+  return ''
+}
+/** One line for the card and the history: what the office did. */
+export function reviewSummary(r: Review): string {
+  return [r.family.told === 'yes' ? `Family told (${r.family.who}, ${r.family.when})` : 'Family not told: ' + r.family.why,
+    MEDICAL[r.medical.what], r.careplan.change ? 'care plan to change' : 'no care plan change',
+    r.ane.suspect ? `hotline called ${r.ane.hotline_at}, report ${r.ane.reference}` : 'not abuse or neglect'].join(' · ')
+}
+
 const longDay = (d: Date) => d.toLocaleDateString('en-US', { timeZone: 'America/Chicago', month: 'long', day: 'numeric', year: 'numeric' })
 const longTime = (d: Date) => d.toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' })
 export type Signed = { typedName: string; strokes: number[][][]; at: Date; ip: string; agent: string }
