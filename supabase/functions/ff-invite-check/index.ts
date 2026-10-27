@@ -20,6 +20,7 @@ import { readCensus } from '../_shared/axis-census.ts'
 import { loadGuard, verdict } from '../_shared/audience-guard.ts'
 import { loadQuiet, quietSet, isNotClient, isPracticeName } from '../_shared/client-quiet.ts'
 import { testPerson } from '../_shared/test-people.ts'
+import { isPlaceholderCaregiver } from '../_shared/cg-placeholder.ts'
 import { practicePerson, practiceEmail, normPhone, normEmail } from '../_shared/optout.ts'
 import * as R from '../_shared/ff-invite-rules.ts'
 
@@ -105,7 +106,7 @@ async function check(today: string) {
   let concerns: R.Concerns | null = null
   try {
     const [iss, cats] = await Promise.all([
-      sb.from('client_issue').select('id, category, state, axiscare_client_id, client_name_free_text, reported_at, created_at, resolved_at')
+      sb.from('client_issue').select('id, category, state, axiscare_client_id, client_name_free_text, reported_at, resolved_at')   /* the issue table has reported_at, no created_at (1141 found it) */
         .or(`state.not.in.(${R.CLOSED_STATES.join(',')}),resolved_at.gte.${since}`),
       sb.from('issue_category').select('code, label')])
     if (iss.error || cats.error) throw new Error('read')
@@ -121,7 +122,7 @@ async function check(today: string) {
     const reAt = new Map<string, string>()
     for (const o of arr(censusState)) if (o?.kind === 'reactivated' && o.axiscare_id) { const k = S(o.axiscare_id); if (!reAt.has(k) || S(o.observed_at) > reAt.get(k)!) reAt.set(k, S(o.observed_at)) }
     const rec = new Map<string, Any>(); for (const c of arr(roster)) if (c?.axiscare_id) rec.set(S(c.axiscare_id), c)
-    const cgs = census.rows.filter((g) => g.active && !practicePerson(g.phone, g.email) && !testPerson(st, { phone: g.phone, email: g.email }))
+    const cgs = census.rows.filter((g) => g.active && !isPlaceholderCaregiver(g.first, g.last) && !practicePerson(g.phone, g.email) && !testPerson(st, { phone: g.phone, email: g.email }))   /* "Canceled Shift" is nobody (1141 listed it) */
     const opt = await optOuts(cgs.flatMap((g) => [normPhone(g.phone), normEmail(g.email)].filter(Boolean) as string[]))
     if (!opt.ok) problems.push("the opt-out record couldn't be read, so no caregiver is listed as ready")
     /* their latest application's yes or no to texts (no application on file is not a no) */

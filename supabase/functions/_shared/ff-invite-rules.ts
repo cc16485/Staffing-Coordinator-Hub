@@ -100,7 +100,7 @@ export function concernsOf(issues: any[], items: any[], labels: Record<string, s
     const cat = S(i.category), label = labels[cat] || 'Client issue'
     if (NOT_A_CONCERN.includes(cat)) continue
     if (!CLOSED_STATES.includes(S(i.state))) {
-      const on = dayOf(i.reported_at ?? i.created_at)
+      const on = dayOf(i.reported_at)
       add(i.axiscare_client_id, i.client_name_free_text, `Open client issue: ${label}${on ? ` (since ${words(on)})` : ''}`)
       continue
     }

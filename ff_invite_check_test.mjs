@@ -22,7 +22,7 @@ const reset = () => {
   AX = {
     caregivers: [cg(1, 'Ann', 'Able', '2026-09-01'), cg(2, 'Bea', 'Best', '2026-11-01'), cg(3, 'Cal', 'Cole', '2026-09-01'), cg(4, 'Dee', 'Dunn', '2026-09-01', { active: false }),
       cg(5, 'Eve', 'East', '2026-09-01'), cg(6, 'Fay', 'Ford', '2026-09-01', { phone: '' }), cg(7, 'Gus', 'Gray', '2026-06-01'), cg(8, 'Pat', 'Practice', '2026-09-01', { phone: '4175550183', email: 'pat@practice.invalid' }),
-      cg(9, 'Ida', 'Ivy', ''), cg(10, 'Jan', 'Jolly', '', { phone: '', email: '' })],
+      cg(9, 'Ida', 'Ivy', ''), cg(10, 'Jan', 'Jolly', '', { phone: '', email: '' }), cg(11, 'Canceled', 'Shift', '2026-10-16', { phone: '', email: '' })],
     clients: [cl(101, 'Rose', 'Ridge'), cl(102, 'Bob', 'Bell'), cl(103, 'Cara', 'Cross', { classes: [{ code: 'L2', label: 'Level 2 - Personal Care' }, { code: 'LTC', label: 'Long Term Care Insurance' }] }),
       cl(104, 'Dan', 'Dale'), cl(105, 'Eli', 'Elm'), cl(106, 'Flo', 'Fern'), cl(107, 'Gil', 'Gold'), cl(108, 'Hal', 'Hart'),
       cl(109, 'Ivy', 'Ink', { classes: [{ code: 'L1', label: 'Level 1 - Wellness Care' }, { code: 'PP', label: 'Private Pay' }] }), cl(110, 'Jo', 'Jay'), cl(111, 'Kim', 'Lee'),
@@ -88,13 +88,25 @@ const reset = () => {
   }
 }
 
-/* ── a small fake database: select with eq / in / not is null / lt / gte / or (this check's own), upsert, delete ── */
+/* ── a small fake database: select with eq / in / not is null / lt / gte / or (this check's own), upsert, delete ──
+   1141 found the check asking client_issue for a column it doesn't have, so every table this check reads now refuses an
+   unknown column, as the real database does (columns copied from the real tables) */
+const SCHEMA = {
+  client_issue: 'id category client_person_id axiscare_client_id client_name_free_text client_link_status reported_by_person_id reported_by_name reported_by_role about_caregiver_id state urgency summary detail owner domain waiting_on resolution_note resolved_at resolved_by follow_up_due follow_up_done reached_samantha_at samantha_reason source source_ref reported_at updated_at',
+  issue_category: 'code label default_domain default_urgency target_hours follow_up_required follow_up_days notify_beyond_owner owner_authority',
+  circle_contacts: 'id circle_id name email phone relationship source sms_consent hipaa_authorized hipaa_office_ok_at stopped_at axiscare_removed_at welcome_sent_at welcome_skip_at welcome_ready_at axis_welcome_sent_at axis_welcome_failed_at axis_welcome_failed_why',
+  care_circles: 'id client_name axiscare_client_id active',
+  contact_optout_current: 'address channel opted_out source',
+  job_applicants: 'phone sms_consent created_at',
+  client_journey: 'lead_id axiscare_client_id status closed_reason is_test subject updated_at' }
 function q(t) {
-  const st = { f: [], op: 'select', row: null, single: false, head: false }
+  const st = { f: [], op: 'select', row: null, single: false, head: false, cols: '*' }
   const val = (r, k) => k === 'data' ? r.data : r[k]
   const rowsOf = () => t === 'app_data' ? Object.entries(T.app_data).map(([key, data]) => ({ key, data })) : (T[t] || [])
   const run = () => {
     if (t === 'identity_door_audit') return { data: null, error: { message: 'permission denied' } }
+    if (st.op === 'select' && SCHEMA[t] && st.cols !== '*') { const have = SCHEMA[t].split(' '), bad = st.cols.split(',').map((c) => c.trim()).filter((c) => c && !have.includes(c))
+      if (bad.length) { (T._bad_cols = T._bad_cols || []).push(t + ': ' + bad.join(', ')); return { data: null, error: { message: `column ${t}.${bad[0]} does not exist` } } } }
     if (t === 'client_issue' && ISSUEDOWN) return { data: null, error: { message: 'down' } }
     if (t === 'contact_optout_current' && OPTDOWN) return { data: null, error: { message: 'down' } }
     if (st.op === 'upsert') {
@@ -116,6 +128,7 @@ function q(t) {
     if (k === 'or') return (expr) => { const m = /^state\.not\.in\.\(([^)]*)\),resolved_at\.gte\.(.+)$/.exec(expr); const closed = m[1].split(','); st.f.push((r) => !closed.includes(r.state) || (r.resolved_at && String(r.resolved_at) >= m[2])); return b }
     if (k === 'upsert' || k === 'update' || k === 'insert') return (r) => { st.op = k; st.row = r; return b }
     if (k === 'delete') return () => { st.op = 'delete'; return b }
+    if (k === 'select') return (cols) => { st.cols = String(cols ?? '*'); return b }
     if (k === 'single' || k === 'maybeSingle') return () => { st.single = true; return Promise.resolve(run()) }
     return () => b } })
   return b
@@ -161,6 +174,7 @@ try {
   reset(); r = await call()
   const j = r.j
   ck('a clean run: ok, nothing it could not read', r.s === 200 && j.ok === true && j.problems.length === 0, j.problems)
+  ck('every column it asks for exists in the real tables (what 1141 found)', !T._bad_cols, T._bad_cols)
   ck('it sends NOTHING: no text, no email, no GoHighLevel, no card, no task', j.sent === 0 && SENT.length === 0 && !T._w_app_data && T.app_data.ops_items.length === 6, { SENT, w: T._w_app_data })
   ck('the switch is reported as off', j.live === false)
   /* caregivers */
@@ -172,6 +186,7 @@ try {
   ck('Fay has no phone and opted out of email: HELD', row(j, 'cg_6')?.status === 'held' && /No phone, opted out of email/.test(row(j, 'cg_6').why.join()) && !row(j, 'cg_6').channels.length, row(j, 'cg_6'))
   ck('Gus came back to active on Nov 10 (hired in June): the 30 days count from Nov 10, WAITING until Dec 10', row(j, 'cg_7')?.status === 'waiting' && row(j, 'cg_7').ready_on === '2026-12-10', row(j, 'cg_7'))
   ck('a practice hire (555-0183, @practice.invalid) is never listed', !row(j, 'cg_8'))
+  ck('the AxisCare "Canceled Shift" placeholder is nobody: never listed (1141 listed it)', !row(j, 'cg_11'))
   ck('Ida has no AxisCare hire date: her Approve to Work date (Sep 15) is used, READY', row(j, 'cg_9')?.status === 'ready' && row(j, 'cg_9').ready_on === '2026-10-15', row(j, 'cg_9'))
   ck('Jan has no hire date, no phone, no email: HELD with each reason', row(j, 'cg_10')?.status === 'held' && /No Active date/.test(row(j, 'cg_10').why.join()) && /No phone or email/.test(row(j, 'cg_10').why.join()), row(j, 'cg_10'))
   /* families */
