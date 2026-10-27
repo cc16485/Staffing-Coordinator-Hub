@@ -3,7 +3,7 @@
 #     Performance tab for anyone in the office, and + New coaching talk for owners only. Coordinators ask, Zach decides.")
 #  1. Checks first (nothing changes): the reviewed database change is GitHub's main; the HR tables and the coaching
 #     tracker it builds on are installed; who Zach's alerts and cards go to.
-#  2. Adds hr_case_add (Tell Zach; owners' coaching talks) and hr_case_decide (Zach decides) to the database. No server
+#  2. Adds hr_case_add (Tell Zach; coaching talks started by owners or Care Coordinators) and hr_case_decide (Zach decides) to the database. No server
 #     function changes. Texts nobody.
 #  3. Proof: the public key can't call either; a signed-in page still can't add HR cases directly; someone not signed in
 #     is refused; nothing was added.

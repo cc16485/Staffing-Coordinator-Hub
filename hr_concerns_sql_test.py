@@ -27,6 +27,10 @@ create function public.hr_short_name(n text) returns text language sql immutable
 create table public.cards (item jsonb)
 create function public.upsert_app_data_item(target_key text, item jsonb) returns void language sql as $$delete from public.cards where item->>'id' = item->>'id'; insert into public.cards values (item)$$
 create table public.assigned (p jsonb)
+create function public.hr_is_coordinator() returns boolean language sql stable as $$select exists (select 1 from public.staff_roles r where r.person_id = public.desk_me() and r.role = 'care_coordinator')$$
+create table public.hr_coaching (id uuid primary key default gen_random_uuid(), case_id text unique, axiscare_caregiver_id text not null, caregiver text not null, kind text not null, topic text not null, facts jsonb, handbook text, talking_points text, priority text, assigned_to text, assigned_by text, due_on date, status text default 'open')
+create table public.hr_coaching_log (coaching_id uuid, by_email text, action text, detail jsonb)
+create function public.hr_coaching_card(c public.hr_coaching) returns void language sql as $$insert into public.cards values (jsonb_build_object('id', 'ops_coach_' || c.id, 'owner', c.assigned_to, 'kind', 'coaching'))$$
 create table public.hr_cases (id text primary key, axiscare_caregiver_id text not null, caregiver text not null, kind text not null check (kind in ('recognition','coaching','recurring','serious')), rule text not null, title text not null, facts jsonb not null default '[]', handbook text not null default '', source_ids text[] not null default '{}', practice boolean not null default true, status text not null default 'open', review text, review_note text, reviewed_by text, reviewed_at timestamptz, created_at timestamptz not null default now(), updated_at timestamptz not null default now())
 grant select on public.hr_cases to authenticated""".split("\n"):
     db.run(q)
@@ -64,12 +68,20 @@ card = db.run("select item from public.cards where item->>'id' like 'ops_hrconce
 ck("...a sensitive card on Zach's My Work that opens his Incidents page, no details on it", card["owner"] == "zach@mo-care.com" and card["sensitive"] is True and card["link"] == "#hr/incidents" and card["status"] == "open" and "hip" not in json.dumps(card) and card["title"] == "From the office: Ashley L.", card)
 as_("stef"); r, e = add({**C, "serious": "true"}); ck("a staffing coordinator can tell Zach too; serious makes it urgent", e == "" and db.run("select count(*) from public.hr_cases where kind = 'serious'")[0][0] == 1
   and any(c[0]["urgency"] == "urgent" for c in db.run("select item from public.cards")), e)
-r, e = add({**C, "type": "coaching", "topic": "Calling the office", "assigned_to": "krystal@mo-care.com", "due_on": TODAY}); ck("a coordinator cannot add a coaching talk", "Only Samantha or Zach adds" in e)
+r, e = add({**C, "type": "coaching", "topic": "Calling the office", "assigned_to": "krystal@mo-care.com", "due_on": TODAY}); ck("a staffing coordinator cannot start a coaching talk (Tell Zach instead)", "Use Tell Zach" in e)
+as_("krystal")
+SCHED = {"type": "coaching", "caregiver": "Dana Church", "axiscare_id": "91", "topic": "Scheduling goes through the office", "what": "Peggy's daughter emailed: Dana told them which days she needs off and they are scheduling it between themselves.", "happened_on": TODAY, "assigned_to": "krystal@mo-care.com", "due_on": TODAY, "talking_points": "Dana, ..."}
+r, e = add({**SCHED, "assigned_to": "nobody@mo-care.com"}); ck("a coordinator's talk still goes only to a coordinator or owner (nothing saved)", "Coaching goes to" in e and db.run("select count(*) from public.hr_cases where caregiver = 'Dana Church'")[0][0] == 0)
+r, e = add({**SCHED, "due_on": "2099-01-01"}); ck("...and needs a due day within 30 days", "due date" in e)
+r, e = add(SCHED)
+cc = db.run("select caregiver, kind, topic, assigned_to, assigned_by, status from public.hr_coaching where caregiver = 'Dana Church'")
+ck("a care coordinator starts a coaching talk (the Peggy scheduling example): the coaching record, assigned, who started it", e == "" and cc and cc[0] == ["Dana Church", "coaching", "Scheduling goes through the office", "krystal@mo-care.com", "krystal@mo-care.com", "open"], [e, cc])
+ck("...logged as started by a coordinator, with its My Work card", db.run("select detail->>'started_by' from public.hr_coaching_log")[0][0] == "coordinator" and db.run("select count(*) from public.cards where item->>'kind' = 'coaching'")[0][0] == 1)
 as_("zach"); r, e = add({**C, "type": "coaching", "topic": "", "assigned_to": "krystal@mo-care.com", "due_on": TODAY}); ck("a coaching talk needs what it is about", "what the talk is about" in e)
 r, e = add({**C, "type": "coaching", "topic": "Calling the office after an incident", "assigned_to": "krystal@mo-care.com", "due_on": TODAY, "talking_points": "Ashley, ..."})
-ck("Zach adds a coaching talk: a coaching case, assigned the same way as the agent's", e == "" and db.run("select count(*) from public.hr_cases where rule = 'owner_coaching' and kind = 'coaching' and status = 'reviewed'")[0][0] == 1
-  and json.loads(json.dumps(db.run("select p from public.assigned")[0][0]))["assigned_to"] == "krystal@mo-care.com", e)
-r, e = add({**C, "type": "coaching", "topic": "Calling the office", "assigned_to": "krystal@mo-care.com", "due_on": ""}); ck("...a bad assignment saves nothing (all or nothing)", "due date" in e and db.run("select count(*) from public.hr_cases where rule = 'owner_coaching'")[0][0] == 1)
+ck("Zach adds a coaching talk: a coaching case, assigned the same way as the agent's", e == "" and db.run("select count(*) from public.hr_cases where rule = 'owner_coaching' and caregiver = 'Ashley Lloyd' and kind = 'coaching' and status = 'reviewed'")[0][0] == 1
+  and json.loads(json.dumps(db.run("select p from public.assigned")[-1][0]))["assigned_to"] == "krystal@mo-care.com", e)
+r, e = add({**C, "type": "coaching", "topic": "Calling the office", "assigned_to": "krystal@mo-care.com", "due_on": ""}); ck("...a bad assignment saves nothing (all or nothing)", "due date" in e and db.run("select count(*) from public.hr_cases where rule = 'owner_coaching' and caregiver = 'Ashley Lloyd'")[0][0] == 1)
 cid = db.run("select id from public.hr_cases where rule = 'office_concern' and kind = 'recurring'")[0][0]
 dec = lambda i, p: tryq("select public.hr_case_decide(:i, cast(:p as jsonb))", i=i, p=json.dumps(p))
 as_("krystal"); ck("a coordinator cannot decide", "Only Samantha or Zach decides" in dec(cid, {"decision": "nothing", "note": "fine now"})[1])
@@ -81,7 +93,7 @@ ck("...his card closes", db.run("select item->>'status' from public.cards where 
 ck("...decided once", "Already decided" in dec(cid, {"decision": "nothing", "note": "changed my mind"})[1])
 sid = db.run("select id from public.hr_cases where kind = 'serious'")[0][0]
 r, e = dec(sid, {"decision": "formal"}); ck("a formal case decision is saved (the Hub then opens the write-up draft)", e == "" and db.run("select status, decision from public.hr_cases where id = :i", i=sid)[0] == ["reviewed", "formal"], e)
-oid = db.run("select id from public.hr_cases where rule = 'owner_coaching'")[0][0]
+oid = db.run("select id from public.hr_cases where rule = 'owner_coaching' and caregiver = 'Ashley Lloyd'")[0][0]
 ck("only office concerns are decided here", "not on file" in dec(oid, {"decision": "nothing", "note": "x x x x"})[1])
 ck("the public key and signed-in pages cannot add cases directly", not db.run("select has_function_privilege('anon', 'public.hr_case_add(jsonb)', 'execute') or has_table_privilege('authenticated', 'public.hr_cases', 'insert')")[0][0])
 srv.cleanup() if hasattr(srv, "cleanup") else None

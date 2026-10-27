@@ -6,8 +6,11 @@
 --     caregiver: an open hr_cases row (rule office_concern, kind recurring, or serious when they say so), never practice.
 --     Only Samantha and Zach can read it (hr_cases row security, unchanged). Zach's alerts already count open recurring
 --     and serious cases; a card goes on Zach's My Work.
---   · hr_case_add({type:'coaching', ...})  owners only: a coaching case (rule owner_coaching) assigned to a coordinator in
---     the same step, through hr_coaching_act('assign') so every rule and card of the coaching tracker still applies.
+--   · hr_case_add({type:'coaching', ...})  owners AND care coordinators (her change 2026-10-27: "care coordinators can
+--     initiate a coaching call too!", e.g. a caregiver arranging days off with the family instead of the office): a
+--     coaching case (rule owner_coaching) assigned in the same step. An owner's goes through hr_coaching_act('assign');
+--     a coordinator's makes the same coaching record, log line and My Work card here (that door is owners only). Zach
+--     sees every one on Coaching oversight.
 --   · hr_case_decide(id, {decision})       owners only, on an office concern: coaching (assigned the same way), formal
 --     (the Hub then opens the write-up draft), or nothing more (with why). Saved once; closes Zach's card.
 -- =============================================================================
@@ -50,10 +53,13 @@ declare
   today date := (now() at time zone 'America/Chicago')::date;
   k public.hr_cases;
   r jsonb;
+  c public.hr_coaching;
+  to_e text;
+  due date;
 begin
   if me = '' or not is_office then raise exception 'Only the office can do this.'; end if;
   if typ not in ('concern','coaching') then raise exception 'Say whether this is a concern for Zach or a coaching talk.'; end if;
-  if typ = 'coaching' and not is_owner then raise exception 'Only Samantha or Zach adds a coaching talk. Use Tell Zach instead.'; end if;
+  if typ = 'coaching' and not (is_owner or public.hr_is_coordinator()) then raise exception 'Only Samantha, Zach or a Care Coordinator starts a coaching talk. Use Tell Zach instead.'; end if;
   if cg !~ '^\S+( \S+)+$' then raise exception 'Pick the caregiver (first and last name).'; end if;
   if length(cg) > 120 then raise exception 'That name is too long.'; end if;
   if length(what) < 15 then raise exception 'Say what happened (a sentence or more).'; end if;
@@ -75,9 +81,26 @@ begin
     values ('owner_' || gen_random_uuid(), left(btrim(coalesce(p->>'axiscare_id', '')), 40), cg, 'coaching', 'owner_coaching', left(topic, 120),
             jsonb_build_array(jsonb_build_object('date', d::text, 'what', what, 'by', coalesce(my_name, me))), false, 'open', me, coalesce(my_name, me), 'coaching', me, now())
     returning * into k;
-  r := public.hr_coaching_act(null, 'assign', jsonb_build_object('case_id', k.id, 'assigned_to', p->>'assigned_to', 'due_on', p->>'due_on',
-         'priority', p->>'priority', 'talking_points', p->>'talking_points'));
-  return jsonb_build_object('ok', true, 'id', k.id, 'assigned', r);
+  if is_owner then
+    r := public.hr_coaching_act(null, 'assign', jsonb_build_object('case_id', k.id, 'assigned_to', p->>'assigned_to', 'due_on', p->>'due_on',
+           'priority', p->>'priority', 'talking_points', p->>'talking_points'));
+    return jsonb_build_object('ok', true, 'id', k.id, 'assigned', r);
+  end if;
+  /* a Care Coordinator: the same checks and record as hr_coaching_act('assign') */
+  to_e := lower(btrim(coalesce(p->>'assigned_to', '')));
+  if not exists (select 1 from public.persons pe join public.staff_roles sr on sr.person_id = pe.person_id
+                 where lower(pe.primary_email) = to_e and pe.active and sr.entity = 'cc_ihs' and sr.role in ('care_coordinator','owner_admin')) then
+    raise exception 'Coaching goes to a Care Coordinator (or an owner).'; end if;
+  begin due := nullif(p->>'due_on', '')::date; exception when others then due := null; end;
+  if due is null or due < today or due > today + 30 then raise exception 'Pick a due date between today and 30 days from now.'; end if;
+  insert into public.hr_coaching (case_id, axiscare_caregiver_id, caregiver, kind, topic, facts, handbook, talking_points, priority, assigned_to, assigned_by, due_on)
+    values (k.id, k.axiscare_caregiver_id, k.caregiver, 'coaching', k.title, k.facts, '', coalesce(p->>'talking_points', ''),
+            case when p->>'priority' = 'soon' then 'soon' else 'normal' end, to_e, me, due)
+    returning * into c;
+  update public.hr_cases set status = 'reviewed', updated_at = now() where id = k.id;
+  insert into public.hr_coaching_log (coaching_id, by_email, action, detail) values (c.id, me, 'assign', (p - 'talking_points') || jsonb_build_object('started_by', 'coordinator'));
+  perform public.hr_coaching_card(c);
+  return jsonb_build_object('ok', true, 'id', k.id, 'assigned', to_jsonb(c));
 end $f$;
 revoke all on function public.hr_case_add(jsonb) from public, anon;
 grant execute on function public.hr_case_add(jsonb) to authenticated;
