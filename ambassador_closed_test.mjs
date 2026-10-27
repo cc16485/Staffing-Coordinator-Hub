@@ -1,9 +1,10 @@
-// Community Ambassador applications (2026-10-26): the REAL lead-intake with sample applications, against a fake database
-// and a fake GoHighLevel. Never a lead; one "applied" ambassador record; healthcare flagged, not moved; owners told.
+// Community Ambassador applications CLOSED (her decision 5, 2026-10-26): the REAL lead-intake against a fake database and
+// a fake GoHighLevel. A late application is refused with words the old page shows; nothing is saved or sent.
+// node ambassador_closed_test.mjs
 // node ambassador_app_test.mjs
 import fs from 'fs'; import path from 'path'
 const res = []; const ck = (n, c, note) => res.push([n, !!c, c ? '' : String(JSON.stringify(note ?? null)).slice(0, 1000)])
-const F = 'supabase/functions', tmp = fs.mkdtempSync(path.join(process.cwd(), '_amb_'))
+const F = 'supabase/functions', tmp = fs.mkdtempSync(path.join(process.cwd(), '_ambc_'))
 const clone = (x) => JSON.parse(JSON.stringify(x))
 let T, SENT
 const reset = () => {
@@ -47,40 +48,20 @@ try {
   const APP = (o) => Object.assign({ kind: 'ambassador_application', first_name: 'Linda', last_name: 'Ortiz', email: 'Linda@Example.com', phone: '417-555-0123', town: 'Nixa',
     share: ['friends', 'community', 'bogus'], works_in_healthcare: 'no', works_for_us: 'no', agree: { adult: true, guidelines: true, volunteer: true, privacy: true } }, o)
 
-  reset(); let r = await post(APP()); let A = orgs().find((o) => o.program_track === 'ambassador')
-  ck('a complete application: saved, answered "application received"', r.s === 200 && r.j.status === 'application received' && A, [r, A])
-  ck('...as ONE Referral Partner Desk record: type Community Ambassador, status applied, no code (so nothing can link to it yet)', A.type === 'Community Ambassador' && A.program_status === 'applied' && !A.partner_code && orgs().length === 2, A)
-  ck('...the answers kept: name, email (tidied), phone, town, how they\'d share (unknown choices dropped), agreements with the time', A.name === 'Linda Ortiz' && A.email === 'linda@example.com' && A.application.town === 'Nixa'
-    && A.application.share.join('|') === 'Friends and family|Church or community group' && A.application.agreed.volunteer_unpaid_not_employment === true && !!A.application.agreed.at, A.application)
+  reset(); let r = await post(APP())
+  ck('a complete application: refused (400) with words the old page shows: closed, and our phone number', r.s === 400 && /program has closed/.test(r.j.error) && /\(417\) 234-8494/.test(r.j.error) && r.j.closed === true, r)
+  ck('...nothing saved: the Referral Partner Desk is unchanged (no ambassador record)', orgs().length === 1 && orgs()[0].id === 'org-mercy', orgs())
   ck('...NEVER a lead: nothing in Leads, no "same family?" item', leads().length === 0 && T.app_data.find((x) => x.key === 'ops_items').data.length === 0, leads())
-  ck('...nothing sent to the applicant (no acknowledgment text or email); the page shows the confirmation', !SENT.some((m) => /linda/i.test(JSON.stringify(m)) && /received your request|Hi Linda/.test(m.message || m.html || '')), SENT)
-  ck('...the two owners get one email each ("New Community Ambassador application: Linda Ortiz"); Krystal (a Care Coordinator) gets nothing', r.j.alerted === 2 && SENT.filter((m) => /New Community Ambassador application: Linda Ortiz/.test(m.subject || '')).length === 2
-    && !SENT.some((m) => /krystal/i.test(JSON.stringify(m))), SENT.map((m) => [m.subject, m.contactId]))
-  ck('...no money anywhere in the record or the email', !/\$|reward|commission|pay rate/i.test(JSON.stringify(A) + JSON.stringify(SENT)))
-  ck('...no mailing address is asked for or kept', !/address|street|zip/i.test(Object.keys(A.application).join(',')))
-
-  reset(); r = await post(APP({ works_in_healthcare: 'yes', healthcare_where: 'Social worker at Mercy', email: 'dana@x.com', phone: '', first_name: 'Dana', last_name: 'Smith' })); A = orgs().find((o) => o.program_track === 'ambassador')
-  ck('works in healthcare: FLAGGED for the owners, not moved anywhere (still an ambassador application, status applied)', r.j.flagged === true && A.program_track === 'ambassador' && A.program_status === 'applied' && A.application.flags.join() === 'healthcare' && A.application.healthcare_where === 'Social worker at Mercy', A)
-  ck('...the owners\' email says it needs a look and why', SENT.some((m) => /needs a look/.test(m.subject || '') && /works in healthcare or a regulated field \(Social worker at Mercy\)/.test(m.html || '')), SENT.map((m) => m.subject))
-  reset(); r = await post(APP({ works_for_us: 'yes' }))
-  ck('works for Caring Companions: flagged "employee"', orgs().find((o) => o.program_track === 'ambassador').application.flags.join() === 'employee')
-
-  reset(); r = await post(APP({ email: 'linda@example.com' })); r = await post(APP({ email: 'LINDA@example.com', phone: '' }))
-  ck('the same person applies twice: no second record, a friendly "received"', orgs().filter((o) => o.program_track === 'ambassador').length === 1 && r.j.already === true && r.s === 200)
-
-  for (const [n, o, msg] of [['no last name', { last_name: '' }, 'first and last name'], ['no email or phone', { email: '', phone: '' }, 'email or a mobile'], ['a broken email', { email: 'linda@' }, "doesn't look right"],
-      ['no town', { town: '' }, 'your town'], ['a box not checked', { agree: { adult: true, guidelines: true, volunteer: false, privacy: true } }, 'check each box']]) {
-    reset(); r = await post(APP(o))
-    ck(`${n}: refused with a clear reason, nothing saved, nobody emailed`, r.s === 400 && new RegExp(msg).test(r.j.error) && orgs().length === 1 && !SENT.length, r)
-  }
-  reset(); r = await post(APP({ website: 'spam' }))
-  ck('the spam trap drops bots, application or not', orgs().length === 1 && !SENT.length)
-  reset(); r = await post(APP({ mailing_address: '12 Main St', street: 'x' })); A = orgs().find((o) => o.program_track === 'ambassador')
-  ck('a mailing address sent anyway is ignored', !JSON.stringify(A).includes('Main St'))
-  reset(); r = await post(APP({ partner_code: 'JANE-K7' })); A = orgs().find((o) => o.program_track === 'ambassador')
-  ck('came through someone\'s link: noted on the application, nothing linked or credited', A.application.came_through_code === 'JANE-K7' && !A.referral_org_id && leads().length === 0)
+  ck('...nobody is emailed or texted (no owner alert, nothing to the applicant)', SENT.length === 0, SENT)
+  reset(); r = await post(APP({ works_in_healthcare: 'yes', partner_code: 'JANE-K7' }))
+  ck('a late application through someone\'s link: refused the same way, nothing linked', r.s === 400 && orgs().length === 1 && leads().length === 0 && !SENT.length)
+  reset(); T.app_data.find((x) => x.key === 'referral_orgs').data.push({ id: 'amb-linda', name: 'Linda Ortiz', type: 'Community Ambassador', program_track: 'ambassador', program_status: 'applied' })
+  r = await post(APP())
+  ck('an application already on file stays exactly as it was', orgs().length === 2 && orgs()[1].program_status === 'applied', orgs())
   reset(); r = await post({ name: 'Mary Jones', phone: '4175550333', message: 'Help for my dad' })
-  ck('a family inquiry is unchanged: still a lead, no ambassador record', leads().length === 1 && leads()[0].source === 'Website' && orgs().length === 1)
+  ck('a family inquiry is unchanged: still a lead', r.s === 200 && leads().length === 1 && leads()[0].source === 'Website' && orgs().length === 1, r)
+  reset(); r = await post({ name: 'Gary Miller', phone: '4175550142', message: 'Help for my mom', partner_code: 'JANE-K7' })
+  ck('...and a referral code on a family form is still read (here an unknown code, kept for an owner to check)', leads().length === 1 && (leads()[0].partner_link_seen || {}).code === 'JANE-K7', leads()[0])
 } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
 let pass = 0; for (const [n, ok, note] of res) { console.log((ok ? '  ✓ ' : '  ✗ ') + n + (ok ? '' : '\n      ' + note)); if (ok) pass++ }
 console.log(`\n${pass}/${res.length} passed`); process.exit(pass === res.length ? 0 : 1)
