@@ -206,6 +206,28 @@ ck('...a cancelled report cannot get a new link', (await call({ action: 'relink'
 ck('a made-up link is refused', (await call({ action: 'view', t: 'x'.repeat(43) })).s === 404 && (await call({ action: 'view', t: 'bad' })).s === 404)
 reset(); r = await call({ action: 'start', source_item_id: 'flag1', happened_on: '2026-10-26' }); R1().expires_at = new Date(Date.now() - 1000).toISOString()
 ck('an expired link says to call for a new one', (await call({ action: 'view', t: tok(r.j.link) })).j.status === 'expired' && (await call({ action: 'submit', t: tok(r.j.link), answers: full, typed_name: 'Ashley Lloyd', strokes: sig, consent: true })).s === 410)
+// ---- Stage 2: the office's review ----
+const RV = { family: { told: 'yes', who: 'Carol\'s daughter Jan', when: 'Oct 26, 3pm' }, medical: { what: 'none' }, careplan: { change: true, note: 'Gait belt for every bathroom transfer.' }, ane: { suspect: false }, note: '' }
+ck('review rules: every question needs an answer', /family told/.test(R.reviewMissing(R.cleanReview({}))) && /medical care/.test(R.reviewMissing(R.cleanReview({ family: RV.family })))
+  && /abuse, neglect/.test(R.reviewMissing(R.cleanReview({ ...RV, ane: {} }))) && R.reviewMissing(R.cleanReview(RV)) === '')
+ck('...family told needs who and when; not told needs why', /who in the family/.test(R.reviewMissing(R.cleanReview({ ...RV, family: { told: 'yes' } }))) && /why the family/.test(R.reviewMissing(R.cleanReview({ ...RV, family: { told: 'not_needed' } }))))
+ck('...suspected abuse or neglect needs the hotline call and its report number', /1-800-392-0210/.test(R.reviewMissing(R.cleanReview({ ...RV, ane: { suspect: true } }))) && R.reviewMissing(R.cleanReview({ ...RV, ane: { suspect: true, hotline_at: 'Oct 27 9am', reference: 'R123' } })) === '')
+ck('...a care plan change says what', /what in the care plan/.test(R.reviewMissing(R.cleanReview({ ...RV, careplan: { change: true } }))))
+ck('the summary line', R.reviewSummary(R.cleanReview(RV)) === "Family told (Carol's daughter Jan, Oct 26, 3pm) · No care needed · care plan to change · not abuse or neglect", R.reviewSummary(R.cleanReview(RV)))
+reset({ live: true }); r = await call({ action: 'start', source_item_id: 'flag1', happened_on: '2026-10-26' }); const Lv = r.j.link
+r = await call({ action: 'review', id: R1().id, ...RV }); ck('a report not signed yet cannot be reviewed', r.s === 409)
+await call({ action: 'submit', t: tok(Lv), answers: full, typed_name: 'Ashley Lloyd', strokes: sig, consent: true })
+r = await call({ action: 'review', id: R1().id, ...RV, ane: {} }); ck('a review with a question unanswered is refused', r.s === 400 && /abuse/.test(r.j.error))
+r = await call({ action: 'review', id: R1().id, ...RV })
+const icard = APP.ops_items.find((x) => x.incident_id === R1().id && x.domain === 'incidents'), cpc = APP.ops_items.find((x) => x.id.startsWith('ops_inccp_'))
+ck('the review saves, with who did it', r.s === 200 && R1().reviewed_by === 'krystal@mo-care.com' && R1().review.family.who === "Carol's daughter Jan", r.j)
+ck('...closes the incident card with what was done', icard.status === 'done' && /^Reviewed: Family told/.test(icard.close_note), icard)
+ck('...a care plan change is a card for the Client Care owner', cpc && cpc.domain === 'client_care' && cpc.status === 'open' && /Update the care plan/.test(cpc.title) && cpc.client_ax === '501' && /Gait belt/.test(cpc.detail), cpc)
+r = await call({ action: 'review', id: R1().id, ...RV }); ck('...and it can only be saved once', r.s === 409)
+r = await call({ action: 'list', caregiver: 'Ashley  Lloyd' })
+ck('a caregiver\'s reports (their Performance tab), with the review', r.s === 200 && r.j.reports.length === 1 && r.j.reports[0].review && r.j.hotline === '1-800-392-0210', r.j)
+ck('...one name is not enough to list', (await call({ action: 'list', caregiver: 'Ashley' })).s === 400)
+
 // the Desktop step's sample
 reset({ who: null }); OWNERKEY = true; r = await call({ action: 'sample' })
 ck('the sample: a practice report for Test Caregiver, on no card', r.s === 200 && T.incident_report[0].practice && T.incident_report[0].source_item_id === 'practice-sample' && !APP.ops_items.some((x) => x.kind === 'client_issue'))

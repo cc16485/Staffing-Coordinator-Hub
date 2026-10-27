@@ -44,6 +44,13 @@ ck("the history can only be added to", "only be added to" in tryq("update incide
 db.run("insert into storage.objects (bucket_id, name) values ('incident-docs', 'reports/1/a.pdf'), ('other', 'x')")
 ck("a PDF can't be deleted, moved or renamed", "cannot be deleted" in tryq("delete from storage.objects where bucket_id = 'incident-docs'") and "cannot be moved" in tryq("update storage.objects set name = 'y' where bucket_id = 'incident-docs'"))
 ck("...other stores are untouched by the guard", tryq("delete from storage.objects where bucket_id = 'other'") == "")
+SQL2 = open(os.path.join(HERE, "incident_review.sql")).read()
+ck("Stage 2 applies, twice", tryq(SQL2) == "" and tryq(SQL2) == "")
+r3 = db.run("insert into incident_report (client_name, caregiver, happened_on, started_by) values ('E F', 'G H', '2026-10-26', 'x') returning id")[0][0]
+ck("a report not signed can't be reviewed", "Only a signed" in tryq(f"update incident_report set review = '{{}}', reviewed_at = now() where id = '{r3}'"))
+ck("a signed report can be reviewed", tryq(f"update incident_report set review = '{{\"note\":\"x\"}}', reviewed_by = 'k', reviewed_at = now() where id = '{rid}'") == "")
+ck("...and the review can't change after", "cannot be changed" in tryq(f"update incident_report set review = '{{}}' where id = '{rid}'"))
+ck("Stage 1's guards still hold after Stage 2", "cannot be changed" in tryq(f"update incident_report set answers = '{{}}' where id = '{rid}'") and "cannot be deleted" in tryq(f"delete from incident_report where id = '{rid}'"))
 ck("a kind other than client / employee injury is refused", "check" in tryq("insert into incident_report (client_name, caregiver, happened_on, started_by, kind) values ('a','b','2026-10-26','x','other')").lower())
 srv.cleanup() if hasattr(srv, "cleanup") else None
 for n, okk, note in res: print(("  ✓ " if okk else "  ✗ ") + n + ("" if okk else "\n      " + note))
