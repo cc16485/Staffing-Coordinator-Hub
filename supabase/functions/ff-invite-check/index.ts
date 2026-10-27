@@ -11,6 +11,11 @@
 // email. Each gets their own link, made the first time (a Referral Partner record with program_track 'friends'). Weekdays
 // 8 AM to 6 PM only, at most 60 a morning. A send that can't go raises a Needs Attention card and is not retried by itself.
 // Owners (signed in to the Hub) can list, Skip, undo a Skip, Resend, and flip the two switches.
+// STEP 5 (Samantha 2026-10-27: "Yes, start step 5: the $100 credit and bonus tracking, live as I decided."): every morning it also
+// keeps the $100 lines (ff_rewards, ff-reward-rules.ts): each inquiry that came through a Friends & Family link and has had its
+// first visit, its completed hours from AxisCare, the owner's "payment received" tick, and Ready / Under review. Owners approve,
+// mark Not earned (with a reason), then Credit applied (family) or Paid (caregiver, the payroll date). Nothing pays by itself,
+// and nothing here contacts anyone. Tracking runs whatever the Invitations switch says.
 //
 // It reads AxisCare (caregivers, clients, visits since Aug 1; GETs only) and the Hub (the roster, inquiries, Family
 // Circles, client issues, cards, opt-outs, applications). If AxisCare or the complaint records can't be read, nobody is
@@ -29,6 +34,8 @@ import { isPlaceholderCaregiver } from '../_shared/cg-placeholder.ts'
 import { practicePerson, practiceEmail, normPhone, normEmail } from '../_shared/optout.ts'
 import * as R from '../_shared/ff-invite-rules.ts'
 import * as X from '../_shared/ff-invite-send.ts'
+import * as W from '../_shared/ff-reward-rules.ts'
+import { axVisitsReader } from '../_shared/packet-visits.ts'
 import { requireStaff } from '../_shared/staff-auth.ts'
 import { contactForOutbound, maySend } from '../_shared/outreach.ts'
 import { ghlSendChecked } from '../_shared/send-problems.ts'
@@ -276,6 +283,40 @@ async function setSwitch(name: string, on: boolean, who: string) {
 }
 const strip = (out: Any) => { const { addr: _a, invOf: _i, invOk: _o, ...rest } = out; return rest }
 
+/* ── the $100 lines (step 5) ── */
+async function rewardSweep(today: string, ax = axVisitsReader()): Promise<{ lines: number; created: number; ready: number; problems: string[] }> {
+  const res = { lines: 0, created: 0, ready: 0, problems: [] as string[] }
+  const at = new Date().toISOString()
+  const [leads, orgs] = await Promise.all([key('leads'), key('referral_orgs')])
+  const { data: js } = await sb.from('client_journey').select('lead_id, axiscare_client_id').eq('subject', 'client').not('lead_id', 'is', null)
+  const axOfLead = new Map<string, string>((js ?? []).filter((j: Any) => j.axiscare_client_id).map((j: Any) => [S(j.lead_id), S(j.axiscare_client_id)]))
+  const { data: rows, error } = await sb.from('ff_rewards').select('lead_id, line, created_at')
+  if (error) { res.problems.push("the reward record couldn't be read, so no reward line was checked"); return res }
+  const have = new Map<string, Any>((rows ?? []).map((r: Any) => [S(r.lead_id), r.line]))
+  const pairs = W.referred(arr(leads), arr(orgs))
+  for (const { lead, org } of pairs) {
+    const axId = S(lead.axiscare_client_id) || axOfLead.get(S(lead.id)) || ''
+    let line = have.get(S(lead.id))
+    if (!line) { line = W.newLine(lead, org, axId, at); res.created++ }
+    else if (axId && !line.client_ax) line = { ...line, client_ax: axId }
+    if (['not_earned', 'applied', 'paid'].includes(line.status)) { have.set(S(lead.id), line); continue }
+    let hours: number | null = null, prior: boolean | null = null
+    const vs = /^\d+$/.test(axId) ? await ax(axId, R.VISITS_FROM, today) : null
+    if (vs == null) res.problems.push(`${line.client_name}: AxisCare visits couldn't be read`)
+    else { hours = W.hoursFrom(vs, line.first_visit); prior = W.completedFrom(vs, R.VISITS_FROM, line.first_visit).length > 0 }
+    const other = [...have.values()].some((x: Any) => x && S(x.lead_id) !== S(lead.id) && x.client_ax && S(x.client_ax) === S(axId) && S(x.created_at) <= S(line.created_at) && x.status !== 'not_earned')
+    const next = W.evaluate(line, { today, hours, reasons: W.reviewReasons(line, { lead, org, prior, otherLineForClient: other }) })
+    if (next.status !== line.status) next.history = [...arr(line.history), { at, by: 'automatic', action: 'checked', from: line.status, to: next.status, why: (next.reasons || []).join('; ') || (next.status === 'ready' ? '20 hours and payment received' : '') }].slice(-40)
+    have.set(S(lead.id), next)
+    if (JSON.stringify(next) !== JSON.stringify(line) || !rows?.some((r: Any) => S(r.lead_id) === S(lead.id))) {
+      const { error: e2 } = await sb.from('ff_rewards').upsert({ lead_id: S(lead.id), status: next.status, line: next, updated_at: at }, { onConflict: 'lead_id' })
+      if (e2) res.problems.push(`${line.client_name}: the reward line couldn't be saved`)
+    }
+  }
+  res.lines = have.size; res.ready = [...have.values()].filter((x: Any) => x.status === 'ready').length
+  return res
+}
+
 async function saveRun(today: string, at: string, out: Any, sent: number) {
   const { error } = await sb.from('ff_invite_runs').upsert({ run_day: today, ran_at: at, ok: out.problems.length === 0, problems: out.problems, live: out.live, summary: out.summary, people: out.rows, sent }, { onConflict: 'run_day' })
   await sb.from('ff_invite_runs').delete().lt('run_day', R.addDays(today, -30))
@@ -290,13 +331,26 @@ async function ownerAction(req: Request, me: { email: string; name: string }) {
     const st = (await key('ops_settings')) ?? {}
     const { data: runs } = await sb.from('ff_invite_runs').select('run_day, ran_at, ok, problems, live, summary, people, sent').order('run_day', { ascending: false }).limit(1)
     const { data: inv } = await sb.from('ff_invites').select('person_key, kind, name, client_name, code, status, channels, first_sent_at, last_sent_at, sends, sent_by, skipped_at, skipped_by, skip_why').order('updated_at', { ascending: false }).limit(1000)
-    return json({ ok: true, run: runs?.[0] ?? null, invites: inv ?? [], switches: { live: st.ff_invites_live === true, paused: st.ff_program_paused === true, log: arr(st.ff_switch_log).slice(-5) }, cap: X.DAILY_CAP })
+    const { data: rw } = await sb.from('ff_rewards').select('lead_id, status, line, updated_at').order('updated_at', { ascending: false }).limit(500)
+    const rewards = (rw ?? []).map((r: Any) => ({ ...r.line, words: W.progressWords(r.line) }))
+    return json({ ok: true, run: runs?.[0] ?? null, invites: inv ?? [], rewards, amount: W.AMOUNT, min_hours: W.MIN_HOURS, switches: { live: st.ff_invites_live === true, paused: st.ff_program_paused === true, log: arr(st.ff_switch_log).slice(-5) }, cap: X.DAILY_CAP })
   }
   if (action === 'switch') {
     const name = S(b.name)
     if (!['ff_invites_live', 'ff_program_paused'].includes(name) || typeof b.on !== 'boolean') return json({ error: 'Unknown switch.' }, 400)
     const err = await setSwitch(name, b.on, me.name || me.email)
     return err ? json({ error: 'The switch was not changed: ' + err + '.' }, 500) : json({ ok: true, name, on: b.on })
+  }
+  if (action === 'reward') {
+    const lid = S(b.lead_id)
+    const { data: row } = await sb.from('ff_rewards').select('lead_id, line').eq('lead_id', lid).maybeSingle()
+    if (!row) return json({ error: 'That reward line was not found.' }, 404)
+    const r = W.act(row.line, S(b.op), me, b, new Date().toISOString())
+    if (r.error) return json({ error: r.error }, 409)
+    let next = r.line
+    if (S(b.op) === 'payment' || S(b.op) === 'reopen') next = W.evaluate(next, { today, hours: null, reasons: next.reasons || [] })
+    const { error } = await sb.from('ff_rewards').update({ status: next.status, line: next, updated_at: new Date().toISOString() }).eq('lead_id', lid)
+    return error ? json({ error: "The change wasn't saved." }, 500) : json({ ok: true, line: { ...next, words: W.progressWords(next) } })
   }
   const pk = S(b.key)
   if (!/^(cg|fam)_[\w.@-]+$/.test(pk)) return json({ error: 'Which person?' }, 400)
@@ -363,10 +417,14 @@ Deno.serve(async (req) => {
       if (due.length > X.DAILY_CAP) held.push(`${due.length - X.DAILY_CAP} more are ready; they go tomorrow morning (60 a morning at most)`)
     }
   }
+  /* the $100 lines: tracked every morning, whatever the Invitations switch says (her decision: live) */
+  let rewards: Any = null
+  if (!dry) { try { rewards = await rewardSweep(today) } catch (e) { rewards = { problems: ['the reward check stopped: ' + String((e as Error)?.message ?? e).slice(0, 120)] } } }
+  if (rewards?.problems?.length) out.problems.push(...rewards.problems)
   const rest = strip(out)
   if (!dry) {
     const error = await saveRun(today, at, out, sent)
     if (error) return json({ ok: false, saved: false, error: "the list couldn't be saved: " + error.message, sent, sent_to: sentTo, ...rest }, 500)
   }
-  return json({ ok: out.problems.length === 0, saved: !dry, day: today, sent, sent_to: sentTo, held, ...rest })
+  return json({ ok: out.problems.length === 0, saved: !dry, day: today, sent, sent_to: sentTo, held, rewards, ...rest })
 })
