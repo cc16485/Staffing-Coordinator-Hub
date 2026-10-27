@@ -23,6 +23,12 @@
 //   list    { caregiver }                         Stage 2: a caregiver's reports (their Performance tab)
 //   start   { kind: 'employee_injury', caregiver, happened_on, client_name? }   Stage 3: a work injury report. Its card goes
 //           to the HR owner (caregiver_performance), never onto a client's profile; its review is the workers' comp checklist.
+//   (HR, 2026-10-27) work injury cards go to the HR lead (Zach), not the Caregiver performance owner.
+//   investigate { id, why[], note }                anyone in the office hands a report to the HR lead (Zach) to look into:
+//           a card for him, saved once. Never on a cancelled report.
+//   findings    { id, findings, outcome, spoke_with }  owner_admin only (Zach, Samantha): what he found and what happens
+//           next; closes his card. Saved once, never changed. Only owner_admin sees the findings words.
+//   list    { hr: true }                           owner_admin only: every report, newest first (Zach's Incidents page)
 // ── The caregiver (https://cc.mo-care.com/incident.html?t=<code>; no sign-in)
 //   view    { t }                                 -> { first, client_first, happened_on, questions[], note_words, status, practice }
 //   submit  { t, answers, typed_name, strokes, consent: true }  -> { copy_url }
@@ -38,6 +44,7 @@ import { MO_FROM } from '../_shared/office-from.ts'
 import { logOpen, ipOf, clientSubject } from '../_shared/doc-log.ts'
 import { reportSendProblem, ownerFor } from '../_shared/send-problems.ts'
 import { cleanReview, reviewMissing, reviewSummary, HOTLINE, questionsFor, isInjury, cleanInjuryReview, injuryReviewMissing, injuryReviewSummary, compDue } from '../_shared/incident.ts'
+import { HR_LEAD, INV_WHY, INV_OUTCOME, cleanAsk, askMissing, askSummary, cleanFindings, findingsMissing } from '../_shared/incident.ts'
 import { BUCKET, LINK_DAYS, OFFICE_PHONE, MAX_TEXT, QUESTIONS, TRUE_WORDS, labelFor, cleanAnswers, answersMissing, toldLate, cleanStrokes, sha256, newToken,
   tokenOk, nameMatches, firstName, shortName, linkFor, draftText, reminderText, caseName, cardState, reminderDue, inReminderHours, noteWords, reportPdf } from '../_shared/incident.ts'
 
@@ -47,7 +54,7 @@ const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: 
 type Any = any
 const PUBLIC = ['view', 'submit']
 const SHOW = 'id,kind,practice,client_ax,client_name,caregiver,happened_on,source_item_id,card_id,status,expires_at,started_by,started_by_name,started_at,sent_at,sent_by,opened_at,reminded_at,submitted_at,signed_name,told_late,pdf_path,cancelled_at,cancelled_by'
-const SHOW_REVIEW = SHOW + ',review,reviewed_by,reviewed_by_name,reviewed_at'
+const SHOW_REVIEW = SHOW + ',review,reviewed_by,reviewed_by_name,reviewed_at,inv_ask,inv_asked_by,inv_asked_by_name,inv_asked_at,inv_findings,inv_by,inv_by_name,inv_at'
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
@@ -74,8 +81,9 @@ Deno.serve(async (req: Request) => {
     const who = await requireStaff(db, req, OFFICE_ROLES)
     if (!who.ok) return json({ error: who.status === 403 ? 'Only the office can do this.' : who.error }, who.status)
     const me = { email: who.email, name: who.name, person_id: who.person_id }
+    const hr = (who.roles || []).includes('owner_admin')
     const live = await isLive(db)
-    if (action === 'list') return await list(db, live, b)
+    if (action === 'list') return await list(db, live, b, hr)
     if (action === 'start') return await start(db, me, live, b)
     const r = await getReport(db, b?.id)
     if (!r) return json({ error: 'That report is not on file. Reload and try again.' }, 404)
@@ -99,6 +107,8 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, url: data.signedUrl, expires_in: 300 })
     }
     if (action === 'review') return await review(db, me, r, b)
+    if (action === 'investigate') return await investigate(db, me, r, b)
+    if (action === 'findings') { if (!hr) return json({ error: 'Only Zach or Samantha can write what was found.' }, 403); return await findings(db, me, r, b) }
     if (action === 'cancel') {
       if (r.status !== 'waiting') return json({ error: 'Only a report still waiting to be filled in can be cancelled.' }, 409)
       const { data: done } = await db.from('incident_report').update({ status: 'cancelled', token_hash: null, cancelled_at: new Date().toISOString(), cancelled_by: me.email })
@@ -126,11 +136,12 @@ async function event(db: Any, id: string, kind: string, who: { email?: string; n
 async function opsItems(db: Any): Promise<Any[]> { const { data } = await db.from('app_data').select('data').eq('key', 'ops_items').maybeSingle(); return Array.isArray(data?.data) ? data.data : [] }
 
 /* ── the office's list: a client's reports, or the ones on cards ── */
-async function list(db: Any, live: boolean, b: Any) {
+async function list(db: Any, live: boolean, b: Any, hr = false) {
   let q = db.from('incident_report').select(SHOW_REVIEW + ',answers').order('started_at', { ascending: false }).limit(100)
   const ax = String(b?.client_ax ?? ''), cg = String(b?.caregiver ?? '').trim().replace(/\s+/g, ' ')
   const ids = (Array.isArray(b?.ids) ? b.ids : []).map(String).filter((x: string) => /^[0-9a-f-]{36}$/i.test(x)).slice(0, 50)
-  if (/^\d+$/.test(ax)) q = q.eq('client_ax', ax).eq('kind', 'client')   /* a work injury is HR's, never on a client's profile */
+  if (b?.hr === true) { if (!hr) return json({ error: 'Only Zach or Samantha can see every report.' }, 403) }
+  else if (/^\d+$/.test(ax)) q = q.eq('client_ax', ax).eq('kind', 'client')   /* a work injury is HR's, never on a client's profile */
   else if (ids.length) q = q.in('id', ids)
   else if (cg.split(' ').length >= 2) q = q.eq('caregiver', cg.slice(0, 120))
   else return json({ error: 'Say which client or which reports.' }, 400)
@@ -138,8 +149,9 @@ async function list(db: Any, live: boolean, b: Any) {
   if (error) throw new Error(error.message)
   const reports = (data || []).map((r: Any) => ({ ...r, answers: r.status === 'submitted' ? r.answers : null,
     questions: r.status === 'submitted' ? questionsFor(r.kind).filter((x) => r.answers && r.answers[x.k] !== undefined).map((x) => ({ k: x.k, label: labelFor(x, r.client_name) })) : null,
-    comp_due: isInjury(r) ? compDue(r) : null }))
-  return json({ ok: true, live, reports, hotline: HOTLINE })
+    comp_due: isInjury(r) ? compDue(r) : null,
+    inv_findings: r.inv_findings && !hr ? { outcome: r.inv_findings.outcome } : r.inv_findings }))   /* only HR reads what was found */
+  return json({ ok: true, live, reports, hotline: HOTLINE, hr, inv: { why: INV_WHY, outcome: INV_OUTCOME } })
 }
 
 /* ── Stage 2: the office's review of a signed report ── */
@@ -168,7 +180,7 @@ async function review(db: Any, me: Any, r: Any, b: Any) {
           next_action: 'Reviewed by ' + me.name + '.', history, last_activity_at: at } })
       }
       if (inj && rv.safety.fix) {
-        const owner = await ownerFor(db, done.client_ax ? 'client_care' : 'caregiver_performance') || me.email
+        const owner = done.client_ax ? (await ownerFor(db, 'client_care') || me.email) : HR_LEAD
         await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item: { id: 'ops_incsf_' + String(done.id).slice(0, 8), kind: 'client_issue', domain: done.client_ax ? 'client_care' : 'caregiver_performance',
           status: 'open', urgency: 'today', owner, owner_name: '', created_at: at, created_by: me.name, created_by_email: me.email, opened_by: 'person', source: 'incident_report', source_id: done.id,
           client_ax: done.client_ax || '', about: done.client_name || shortName(done.caregiver), title: 'Fix what caused a work injury: ' + caseName(done),
@@ -187,6 +199,57 @@ async function review(db: Any, me: Any, r: Any, b: Any) {
     } catch { /* the review itself is saved; the card can be closed by hand */ }
   }
   return json(out)
+}
+
+/* ── HR (2026-10-27): hand a report to Zach to look into, and his findings ── */
+async function investigate(db: Any, me: Any, r: Any, b: Any) {
+  if (r.status === 'cancelled') return json({ error: 'This report was cancelled.' }, 409)
+  if (r.inv_asked_at) return json({ error: 'Already with Zach to look into (asked by ' + (r.inv_asked_by_name || r.inv_asked_by) + ').' }, 409)
+  const a = cleanAsk(b), missing = askMissing(a)
+  if (missing) return json({ error: missing }, 400)
+  const at = new Date().toISOString()
+  const { data: done, error } = await db.from('incident_report').update({ inv_ask: a, inv_asked_by: me.email, inv_asked_by_name: me.name, inv_asked_at: at })
+    .eq('id', r.id).is('inv_asked_at', null).select('*').maybeSingle()
+  if (error) throw new Error(error.message)
+  if (!done) return json({ error: 'It changed while you were looking. Reload.' }, 409)
+  await event(db, r.id, 'investigate', me, { why: a.why })
+  const card = await invCard(db, done, null)
+  return json({ ok: true, summary: askSummary(a), card })
+}
+async function findings(db: Any, me: Any, r: Any, b: Any) {
+  if (!r.inv_asked_at) return json({ error: 'Nobody has asked for this one to be looked into.' }, 409)
+  if (r.inv_at) return json({ error: 'What was found is already written, by ' + (r.inv_by_name || r.inv_by) + '.' }, 409)
+  const f = cleanFindings(b), missing = findingsMissing(f)
+  if (missing) return json({ error: missing }, 400)
+  const at = new Date().toISOString()
+  const { data: done, error } = await db.from('incident_report').update({ inv_findings: f, inv_by: me.email, inv_by_name: me.name, inv_at: at })
+    .eq('id', r.id).is('inv_at', null).select('*').maybeSingle()
+  if (error) throw new Error(error.message)
+  if (!done) return json({ error: 'It changed while you were looking. Reload.' }, 409)
+  await event(db, r.id, 'findings', me, { outcome: f.outcome })
+  await invCard(db, done, me)
+  return json({ ok: true, outcome: INV_OUTCOME[f.outcome] })
+}
+/* Zach's card: one per report handed to him; it closes when he writes what he found */
+async function invCard(db: Any, r: Any, closer: Any): Promise<boolean> {
+  if (r.practice) return false
+  try {
+    const at = new Date().toISOString(), id = 'ops_incinv_' + String(r.id).slice(0, 8)
+    const prev = (await opsItems(db)).find((x) => x && x.id === id)
+    const a = r.inv_ask || { why: [], note: '' }, ane = (a.why || []).includes('ane')
+    const what = isInjury(r) ? 'work injury report, ' + caseName(r) : 'incident report, ' + caseName(r) + ', ' + shortName(r.caregiver)
+    const item = closer
+      ? { ...(prev || {}), id, status: 'done', closed_at: at, closed_by: closer.email, close_note: 'Looked into: ' + INV_OUTCOME[r.inv_findings.outcome as keyof typeof INV_OUTCOME], next_action: 'Looked into by ' + closer.name + '.', last_activity_at: at }
+      : { id, kind: 'client_issue', domain: 'caregiver_performance', status: 'open', urgency: ane ? 'urgent' : 'today', owner: HR_LEAD, owner_name: '', sensitive: true,
+          created_at: at, created_by: r.inv_asked_by_name, created_by_email: r.inv_asked_by, opened_by: 'person', source: 'incident_report', source_id: r.id, incident_id: r.id,
+          client_ax: '', about: shortName(r.caregiver), caregiver: r.caregiver, link: '#hr/incidents', title: 'Look into: ' + what,
+          detail: askSummary(a) + '\n"' + a.note + '"\nAsked by ' + r.inv_asked_by_name + '.',
+          next_action: 'Read the report and the shift notes, talk with who you need to, then write what you found on the report.',
+          due: new Date(Date.now() + (ane ? 1 : 3) * 864e5).toISOString(), last_activity_at: at }
+    if (closer && !prev) return false
+    const { error } = await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item })
+    return !error
+  } catch { return false }
 }
 
 /* ── the office starts one: who, which client, which day; a private link and the words to check ── */
@@ -331,12 +394,12 @@ async function card(db: Any, r: Any, now: Date = new Date()): Promise<boolean> {
     if (prev && (prev.status === 'done' || prev.status === 'resolved')) return false   // a person closed it; leave it closed
     if (prev && prev.next_action === s.next && prev.urgency === s.urgency && (s.open || prev.status !== 'open')) return false
     const inj = isInjury(r)
-    const owner = prev?.owner || await ownerFor(db, inj ? 'caregiver_performance' : 'incidents') || r.started_by
+    const owner = prev?.owner || (inj ? HR_LEAD : await ownerFor(db, 'incidents') || r.started_by)
     const at = now.toISOString()
     const item = { ...(prev || { created_at: at, owner, owner_name: '', created_by: r.started_by_name || r.started_by, created_by_email: r.started_by, opened_by: 'person', source: r.source_item_id ? 'shift_flag' : 'incident_report' }),
       id, kind: 'client_issue', domain: inj ? 'caregiver_performance' : 'incidents', incident_id: r.id, source_id: r.source_item_id || prev?.source_id || null,
       client_ax: inj ? '' : (r.client_ax || ''), about: inj ? shortName(r.caregiver) : r.client_name, sensitive: inj || undefined,
-      caregiver: r.caregiver, title: inj ? 'Work injury report: ' + caseName(r) : 'Incident report: ' + caseName(r) + ', ' + shortName(r.caregiver), next_action: s.next, urgency: s.urgency,
+      caregiver: r.caregiver, link: inj ? '#hr/incidents' : undefined, title: inj ? 'Work injury report: ' + caseName(r) : 'Incident report: ' + caseName(r) + ', ' + shortName(r.caregiver), next_action: s.next, urgency: s.urgency,
       due: prev?.due && s.urgency !== 'urgent' ? prev.due : new Date(now.getTime() + (s.urgency === 'urgent' ? 2 : 24) * 36e5).toISOString(),
       status: s.open ? 'open' : 'done', closed_at: s.open ? null : at, closed_by: s.open ? null : 'system', close_note: s.open ? null : s.next, last_activity_at: at }
     const { error } = await db.rpc('upsert_app_data_item', { target_key: 'ops_items', item })

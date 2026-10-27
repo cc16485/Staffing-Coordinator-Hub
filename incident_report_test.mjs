@@ -88,7 +88,7 @@ globalThis.__db = { from: q,
     createSignedUrl: (p, s) => Promise.resolve({ data: { signedUrl: 'https://signed/' + p + '?s=' + s }, error: null }) }) } }
 globalThis.__who = () => WHO; globalThis.__ownerKey = () => OWNERKEY; globalThis.__cron = () => CRON; globalThis.__sent = (x) => SENT.push(x); globalThis.__log = (x) => LOG.push(x); globalThis.__problem = (x) => PROBLEMS.push(x)
 const stubs = {
-  '_inc_auth.ts': "export const OFFICE_ROLES = ['owner_admin','care_coordinator','staffing_coordinator']\nexport const requireStaff = async (db, req, roles) => { const w = globalThis.__who(); if (!w) return { ok: false, status: 401, error: 'Sign in' }; if (w === 'outsider') return { ok: false, status: 403, error: 'no' }; return { ok: true, person_id: 'p1', name: w === 'krystal' ? 'Krystal Test' : 'Samantha Test', email: w + '@mo-care.com', roles: ['care_coordinator'] } }\n",
+  '_inc_auth.ts': "export const OFFICE_ROLES = ['owner_admin','care_coordinator','staffing_coordinator']\nexport const requireStaff = async (db, req, roles) => { const w = globalThis.__who(); if (!w) return { ok: false, status: 401, error: 'Sign in' }; if (w === 'outsider') return { ok: false, status: 403, error: 'no' }; return { ok: true, person_id: 'p1', name: w === 'krystal' ? 'Krystal Test' : w === 'zach' ? 'Zach Test' : 'Samantha Test', email: w + '@mo-care.com', roles: w === 'krystal' ? ['care_coordinator'] : ['owner_admin'] } }\n",
   '_inc_job.ts': "export const ownerCaller = async () => globalThis.__ownerKey()\nexport const jobCaller = async () => globalThis.__cron() ? 'cron' : globalThis.__ownerKey() ? 'owner' : null\n",
   '_inc_out.ts': "export const normalisePhone = (p) => { const d = String(p || '').replace(/\\D/g, ''); return d.length === 10 ? '+1' + d : null }\nexport const contactForOutbound = async (db, ghl, person, kind, opts) => { globalThis.__sent({ check: true, kind, opts: { audience: opts.audience, channel: opts.channel, humanInitiated: opts.humanInitiated, sender: opts.sender } }); if (globalThis.__optout) { opts.onOptOut(['STOP']); return null } return { contactId: 'c1' } }\n",
   '_inc_log.ts': "export const logOpen = async (db, r) => { globalThis.__log(r); return !globalThis.__logFail }\nexport const ipOf = () => '9.9.9.9'\nexport const clientSubject = (ax) => 'client:' + ax\n",
@@ -250,7 +250,7 @@ reset({ live: true }); r = await call({ action: 'start', kind: 'employee_injury'
 ck('a work injury is not started from a shift-note flag', r.s === 400)
 r = await call({ action: 'start', kind: 'employee_injury', caregiver: 'Ashley Lloyd', happened_on: '2026-10-26' }); const Li = r.j.link
 let ic = APP.ops_items.find((x) => x.incident_id === R1().id)
-ck('work injury: no client needed; the card goes to the HR owner, marked sensitive, no client on it', r.s === 200 && R1().kind === 'employee_injury' && ic.domain === 'caregiver_performance' && ic.sensitive === true && ic.client_ax === '' && ic.title === 'Work injury report: Ashley L., Oct 26' && /sorry you were hurt/.test(r.j.draft), ic)
+ck('work injury: no client needed; the card goes to Zach (HR lead), marked sensitive, no client on it', r.s === 200 && R1().kind === 'employee_injury' && ic.owner === 'zach@mo-care.com' && ic.link === '#hr/incidents' && ic.domain === 'caregiver_performance' && ic.sensitive === true && ic.client_ax === '' && ic.title === 'Work injury report: Ashley L., Oct 26' && /sorry you were hurt/.test(r.j.draft), ic)
 r = await call({ action: 'view', t: tok(Li) }); ck('her page: the injury questions', r.j.kind === 'employee_injury' && r.j.questions.some((q) => q.k === 'body'))
 r = await call({ action: 'submit', t: tok(Li), answers: { ...inj, body: '' }, typed_name: 'Ashley Lloyd', strokes: sig, consent: true }); ck('a missing injury answer is refused', r.s === 400 && /body/.test(r.j.error))
 r = await call({ action: 'submit', t: tok(Li), answers: inj, typed_name: 'Ashley Lloyd', strokes: sig, consent: true }); ck('she signs it', r.s === 200 && R1().answers.body === 'lower back')
@@ -260,7 +260,38 @@ r = await call({ action: 'list', caregiver: 'Ashley Lloyd' }); ck('...but it sho
 r = await call({ action: 'review', id: R1().id, ...IR, comp: {} }); ck('the comp checklist needs every answer', r.s === 400 && /workers' comp/.test(r.j.error))
 r = await call({ action: 'review', id: R1().id, ...IR })
 const sfc = APP.ops_items.find((x) => x.id.startsWith('ops_incsf_'))
-ck('the comp checklist saves, closes the HR card, and a safety fix is its own card', r.s === 200 && /claim WC-123/.test(r.j.summary) && APP.ops_items.find((x) => x.incident_id === R1().id).status === 'done' && sfc && /Fix what caused/.test(sfc.title) && /transfer board/.test(sfc.detail), [r.j, sfc])
+ck('the comp checklist saves, closes the HR card, and a safety fix is its own card', r.s === 200 && /claim WC-123/.test(r.j.summary) && APP.ops_items.find((x) => x.incident_id === R1().id).status === 'done' && sfc && sfc.owner === 'zach@mo-care.com' && /Fix what caused/.test(sfc.title) && /transfer board/.test(sfc.detail), [r.j, sfc])
+
+// ---- HR (2026-10-27): Zach looks into a report the office hands him ----
+ck('the ask needs why and what was noticed', /Pick why/.test(R.askMissing(R.cleanAsk({}))) && /what you noticed/.test(R.askMissing(R.cleanAsk({ why: ['notes'] })))
+  && R.askMissing(R.cleanAsk({ why: ['notes', 'notes', 'evil'], note: 'Her report says she called; the notes say nothing about a call.' })) === '' && JSON.stringify(R.cleanAsk({ why: ['notes', 'notes', 'evil'] }).why) === '["notes"]')
+ck('findings need words and what happens next', /what you found/.test(R.findingsMissing(R.cleanFindings({ outcome: 'coaching' }))) && /what happens next/.test(R.findingsMissing(R.cleanFindings({ findings: 'Talked with Ashley and Carol\'s daughter.' }))))
+reset({ live: true }); r = await call({ action: 'start', source_item_id: 'flag1', happened_on: '2026-10-26' }); const Lz = r.j.link
+await call({ action: 'submit', t: tok(Lz), answers: full, typed_name: 'Ashley Lloyd', strokes: sig, consent: true })
+const ASK = { why: ['notes', 'late'], note: 'Her report says Carol was not hurt; her shift note says Carol hit her hip.' }
+r = await call({ action: 'investigate', id: R1().id, why: [] }); ck('handing to Zach without why is refused', r.s === 400 && /Pick why/.test(r.j.error))
+r = await call({ action: 'investigate', id: R1().id, ...ASK })
+const zc = APP.ops_items.find((x) => x.id.startsWith('ops_incinv_'))
+ck('a care coordinator hands it to Zach: saved with who asked, a card for Zach', r.s === 200 && R1().inv_asked_by === 'krystal@mo-care.com' && zc && zc.owner === 'zach@mo-care.com' && zc.status === 'open' && zc.incident_id === R1().id
+  && zc.sensitive === true && zc.client_ax === '' && /^Look into: incident report, Carol F\., Oct 26, Ashley L\./.test(zc.title) && /hit her hip/.test(zc.detail) && zc.link === '#hr/incidents', zc)
+ck('...the office review card is still open (they are separate)', APP.ops_items.find((x) => x.incident_id === R1().id && x.domain === 'incidents').status === 'open')
+ck('...it can only be asked once', (await call({ action: 'investigate', id: R1().id, ...ASK })).s === 409)
+r = await call({ action: 'findings', id: R1().id, findings: 'Talked with Ashley; she forgot to call. Coaching on calling the office.', outcome: 'coaching' })
+ck('a care coordinator cannot write the findings', r.s === 403 && !R1().inv_at)
+r = await call({ action: 'list', hr: true }); ck('...or see every report', r.s === 403)
+WHO = 'zach'
+r = await call({ action: 'list', hr: true }); ck('Zach sees every report, with what to look into', r.s === 200 && r.j.reports.length === 1 && r.j.reports[0].inv_ask.why.length === 2 && r.j.hr === true && r.j.inv.why.notes, r.j)
+r = await call({ action: 'findings', id: R1().id, findings: 'short', outcome: 'coaching' }); ck('findings need a real sentence', r.s === 400)
+const F = { findings: 'Talked with Ashley; she forgot to call and wrote it in her note only. Carol\'s hip checked by her daughter, fine.', outcome: 'coaching', spoke_with: 'Ashley, Carol\'s daughter Jan' }
+r = await call({ action: 'findings', id: R1().id, ...F })
+ck('Zach writes what he found: saved with who, his card closes', r.s === 200 && R1().inv_by === 'zach@mo-care.com' && R1().inv_findings.outcome === 'coaching' && APP.ops_items.find((x) => x.id.startsWith('ops_incinv_')).status === 'done', r.j)
+ck('...saved once', (await call({ action: 'findings', id: R1().id, ...F })).s === 409)
+WHO = 'krystal'; r = await call({ action: 'list', client_ax: '501' })
+ck('the office sees the outcome but not Zach\'s words', r.j.reports[0].inv_findings.outcome === 'coaching' && !r.j.reports[0].inv_findings.findings, r.j.reports[0].inv_findings)
+reset({ live: true }); r = await call({ action: 'start', source_item_id: 'flag1', happened_on: '2026-10-26' }); await call({ action: 'cancel', id: R1().id })
+ck('a cancelled report cannot be handed to Zach', (await call({ action: 'investigate', id: R1().id, ...ASK })).s === 409)
+reset(); r = await call({ action: 'start', source_item_id: 'flag1', happened_on: '2026-10-26' }); r = await call({ action: 'investigate', id: R1().id, why: ['ane'], note: 'Practice: checking that nothing is made.' })
+ck('practice: handing to Zach is saved but makes no card', r.s === 200 && !!R1().inv_asked_at && !APP.ops_items.some((x) => x.id.startsWith('ops_incinv_')))
 
 // the Desktop step's sample
 reset({ who: null }); OWNERKEY = true; r = await call({ action: 'sample' })
