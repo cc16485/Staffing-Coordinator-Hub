@@ -85,7 +85,7 @@ os.chmod(os.path.join(FAKEBIN, "supabase"), 0o755)
 sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
 FILES = ["ff-invite-check/index.ts", "_shared/ff-invite-rules.ts", "_shared/ff-invite-send.ts", "ff-card-request/index.ts"]
 SHAS = {k: sha(os.path.join(WT, "supabase/functions", k)) for k in FILES}
-SQLSHA = sha(os.path.join(WT, "ff_invites_1141.sql"))
+SQLSHA = sha(os.path.join(WT, "ff_invites_send_1143.sql"))
 def go(**m):
     M.clear(); M.update(m)
     for f_ in (DEPLOYS, FLAG):
