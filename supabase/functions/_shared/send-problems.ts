@@ -58,6 +58,7 @@ export const SENDER_WORDS: Record<string, [string, string]> = {
   'agreement-link': ['Client Care Agreement link to sign from home', 'client_care'],   // 874
   'agreement-code': ['6-digit code to open the Client Care Agreement', 'client_care'],   // 874
   'kind-tell': ['kind words text to a caregiver', 'caregivers'],
+  'incident-report': ['incident report link to a caregiver', 'incidents'],   // incident report, 2026-10-27
   'carematch-watch': ['care match message', 'scheduling_coverage'],
   'late-watch': ['running-late message', 'scheduling_coverage'],
   'late-alert': ['running-late message', 'scheduling_coverage'],

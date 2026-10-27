@@ -87,6 +87,16 @@ export class BrandPdf {
     this.y -= pad; for (const ln of lines) { this.y -= lh * 0.78; this.textAt(ln, ML + pad + 4, this.y, 'R', size, TEXT); this.y -= lh * 0.22 } this.y = top - h - 10
   }
   hr(color: RGB = RULE, gap = 10) { this.ensure(gap * 2); this.y -= gap; this.line(ML, this.y, PAGE_W - MR, this.y, color, 0.8); this.y -= gap }
+  /** a finger signature drawn as lines (incident report, 2026-10-27): strokes of [x, y] points, 0 to 1 inside a w by h box,
+   *  y from the top as the phone drew it; placed at the left margin under the current line */
+  drawing(strokes: number[][][], w: number, h: number) {
+    this.ensure(h + 14); this.y -= 4
+    const top = this.y, pt = (p: number[]) => `${(ML + 4 + p[0] * w).toFixed(2)} ${(top - p[1] * h).toFixed(2)}`
+    const path = strokes.filter((s) => s.length).map((s) => s.length === 1 ? `${pt(s[0])} m ${pt([s[0][0] + 0.004, s[0][1]])} l` : `${pt(s[0])} m ` + s.slice(1).map((p) => `${pt(p)} l`).join(' ')).join(' ')
+    if (path) this.op(`q ${col(NAVY)} RG 1.4 w 1 J 1 j ${path} S Q`)
+    this.y = top - h - 2; this.line(ML, this.y, ML + w + 8, this.y, MUTED, 0.6)
+    this.y -= 11; this.textAt('SIGNATURE (DRAWN)', ML, this.y, 'S', 7.5, MUTED, 1.2); this.y -= 4
+  }
   /** the signature area: the typed name over a line with a small caps label, plus date and audit lines */
   signatureArea(typedName: string, signedWhen: string, audit: string[]) {
     // every audit line is wrapped to the text width (a browser name can be 150 characters), so the block's height is known before it is placed
