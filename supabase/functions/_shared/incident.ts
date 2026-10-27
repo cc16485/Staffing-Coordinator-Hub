@@ -230,6 +230,35 @@ export function injuryReviewSummary(r: InjuryReview): string {
     WORK[r.work.status] + (r.work.until ? ' until ' + r.work.until : ''), r.safety.fix ? 'safety fix needed' : 'no safety fix'].join(' · ')
 }
 
+/* ── HR (Samantha 2026-10-27): "Zach needs to be involved in incident reports as well... it needs to be investigated
+   further which i dont want the care coordinators to have to do". Anyone in the office may hand a report to the HR lead
+   with why; only the HR lead (or Samantha) writes what was found and what happens next. Saved once, never changed. Work
+   injury cards go to the HR lead too. ── */
+export const HR_LEAD = 'zach@mo-care.com'
+export const INV_WHY = { notes: "The report doesn't match the shift notes", late: "The office wasn't told when it happened", story: "Stories don't match (client, family or caregiver)",
+  ane: 'Possible abuse or neglect', other: 'Something else' } as const
+export const INV_OUTCOME = { explained: 'Nothing more to do (it was explained)', coaching: 'A coaching conversation', formal: 'A formal case (write-up)', ended: 'Ending their work with us', other: 'Something else' } as const
+export type InvAsk = { why: (keyof typeof INV_WHY)[]; note: string }
+export type InvFindings = { outcome: keyof typeof INV_OUTCOME; findings: string; spoke_with: string }
+export function cleanAsk(raw: Any): InvAsk {
+  const why = (Array.isArray(raw?.why) ? raw.why : []).map(String).filter((k: string, i: number, a: string[]) => k in INV_WHY && a.indexOf(k) === i) as (keyof typeof INV_WHY)[]
+  return { why, note: str(raw?.note, 1500) }
+}
+export function askMissing(a: InvAsk): string {
+  if (!a.why.length) return 'Pick why it needs a closer look.'
+  if (a.note.length < 10) return 'Say what you noticed, so Zach knows where to start.'
+  return ''
+}
+export function cleanFindings(raw: Any): InvFindings {
+  return { outcome: (String(raw?.outcome) in INV_OUTCOME ? String(raw.outcome) : '') as keyof typeof INV_OUTCOME, findings: str(raw?.findings, 4000), spoke_with: str(raw?.spoke_with, 300) }
+}
+export function findingsMissing(f: InvFindings): string {
+  if (f.findings.length < 20) return 'Write what you found (a sentence or more).'
+  if (!f.outcome) return 'Pick what happens next.'
+  return ''
+}
+export const askSummary = (a: InvAsk) => a.why.map((k) => INV_WHY[k]).join(' · ')
+
 const longDay = (d: Date) => d.toLocaleDateString('en-US', { timeZone: 'America/Chicago', month: 'long', day: 'numeric', year: 'numeric' })
 const longTime = (d: Date) => d.toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit' })
 export type Signed = { typedName: string; strokes: number[][][]; at: Date; ip: string; agent: string }
